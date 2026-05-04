@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HITACHI Rail T&C Portal — BART CBTC Project</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="chart.umd.js"></script>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- TOP NAV (Hitachi style) -->
+<nav id="topnav">
+  <div class="nav-inner">
+    <div class="brand">
+      <div class="logo-mark"></div>
+      <div class="brand-text">
+        <span class="brand-hitachi">HITACHI</span>
+        <span class="brand-sub">Rail | T&amp;C Portal</span>
+      </div>
+    </div>
+    <div class="nav-links">
+      <a href="#" class="nav-link active" data-page="dashboard">Dashboard</a>
+      <a href="#" class="nav-link" data-page="activities">SAT Activities</a>
+      <a href="#" class="nav-link" data-page="lineitems">Line Items</a>
+      <a href="#" class="nav-link" data-page="punchlist">Punch List</a>
+      <a href="#" class="nav-link" data-page="locations">Locations</a>
+      <a href="#" class="nav-link" data-page="team">Team</a>
+      <a href="#" class="nav-link" data-page="docs">Documents</a>
+      <a href="#" class="nav-link nav-link-field" data-page="field">⊕ Field Log</a>
+    </div>
+    <div class="nav-right">
+      <span class="project-tag">BART CBTC</span>
+    </div>
+  </div>
+</nav>
+
+<!-- ==== DASHBOARD ==== -->
+<section class="page active" id="page-dashboard">
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-bg"></div>
+    <div class="hero-content">
+      <div class="hero-eyebrow">Real-time Project Status</div>
+      <h1 class="hero-title">Testing &amp; Commissioning <span class="hero-accent">Portal</span></h1>
+      <p class="hero-sub">SFBART CBTC — Live status across all subsystems, locations and phases.</p>
+      <div class="hero-meta">
+        <div class="hero-meta-item">
+          <span class="hero-meta-label">Last update</span>
+          <span class="hero-meta-value" id="hero-update">—</span>
+        </div>
+        <div class="hero-meta-item">
+          <span class="hero-meta-label">Project</span>
+          <span class="hero-meta-value">BART CBTC</span>
+        </div>
+        <div class="hero-meta-item">
+          <span class="hero-meta-label">Client</span>
+          <span class="hero-meta-value">Bay Area Rapid Transit</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOP KPI ROW -->
+  <div class="container">
+    <div class="kpi-grid">
+      <div class="kpi-card kpi-primary">
+        <div class="kpi-label">Overall Progress</div>
+        <div class="kpi-value" id="kpi-progress">—</div>
+        <div class="kpi-bar"><div class="kpi-bar-fill" id="kpi-progress-bar"></div></div>
+        <div class="kpi-meta" id="kpi-progress-meta">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Pass Rate</div>
+        <div class="kpi-value" id="kpi-passrate">—</div>
+        <div class="kpi-meta good" id="kpi-passrate-meta">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">SAT Activities</div>
+        <div class="kpi-value" id="kpi-activities">—</div>
+        <div class="kpi-meta" id="kpi-activities-meta">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Open Punch Items</div>
+        <div class="kpi-value" id="kpi-punch">—</div>
+        <div class="kpi-meta warn" id="kpi-punch-meta">—</div>
+      </div>
+    </div>
+
+    <!-- SECONDARY METRIC ROW -->
+    <div class="metric-row" id="metric-row"></div>
+
+    <!-- PHASE PROGRESS HERO -->
+    <div class="section-block">
+      <div class="section-head">
+        <div>
+          <h2 class="section-title">Phase Progress</h2>
+          <p class="section-sub">SAT Activities completion across project phases</p>
+        </div>
+      </div>
+      <div class="phase-grid" id="phase-grid"></div>
+    </div>
+
+    <!-- SUBSYSTEM PERFORMANCE -->
+    <div class="section-block">
+      <div class="section-head">
+        <div>
+          <h2 class="section-title">Subsystem Performance</h2>
+          <p class="section-sub">Pass / fail rates by subsystem from line item testing</p>
+        </div>
+      </div>
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div class="chart-title">Line Items by Status</div>
+          <div class="chart-wrap chart-wrap-pie"><canvas id="chart-li-status" role="img" aria-label="Line item status breakdown"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Pass Rate by Subsystem</div>
+          <div class="chart-wrap"><canvas id="chart-subsys-rate" role="img" aria-label="Pass rate by subsystem"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PUNCH LIST + LOCATIONS -->
+    <div class="charts-grid">
+      <div class="chart-card">
+        <div class="chart-title">Punch Items by Trade</div>
+        <div class="chart-wrap chart-wrap-tall"><canvas id="chart-punch-trade" role="img" aria-label="Punch items by trade"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">SAT Activities by Location</div>
+        <div class="chart-wrap chart-wrap-tall"><canvas id="chart-loc" role="img" aria-label="Activities by location"></canvas></div>
+      </div>
+    </div>
+
+    <!-- AT-RISK / ATTENTION -->
+    <div class="section-block">
+      <div class="section-head">
+        <div>
+          <h2 class="section-title">Needs Attention</h2>
+          <p class="section-sub">High priority open punch items and failed line items</p>
+        </div>
+      </div>
+      <div class="attention-grid">
+        <div class="attention-card">
+          <div class="attention-head">
+            <span class="attention-tag tag-fail">Failed Tests</span>
+            <a href="#" class="link-arrow" data-goto="lineitems" data-filter="status:Failed">View all →</a>
+          </div>
+          <div id="failed-list" class="mini-list"></div>
+        </div>
+        <div class="attention-card">
+          <div class="attention-head">
+            <span class="attention-tag tag-high">High Priority Punch</span>
+            <a href="#" class="link-arrow" data-goto="punchlist" data-filter="priority:high">View all →</a>
+          </div>
+          <div id="high-punch-list" class="mini-list"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ==== SAT ACTIVITIES ==== -->
+<section class="page" id="page-activities">
+  <div class="page-hero">
+    <div class="container">
+      <div class="page-eyebrow">SAT Activities</div>
+      <h1 class="page-title">Site Acceptance Testing Activities</h1>
+      <p class="page-sub" id="ap-summary">—</p>
+    </div>
+  </div>
+  <div class="container">
+    <div class="filter-bar">
+      <input type="text" id="ap-search" placeholder="Search activities..." class="filter-input">
+      <select id="ap-status-filter" class="filter-select"></select>
+      <select id="ap-subsys-filter" class="filter-select"></select>
+      <select id="ap-phase-filter" class="filter-select"></select>
+      <select id="ap-location-filter" class="filter-select"></select>
+      <button class="filter-clear" onclick="clearAPFilters()">Reset</button>
+    </div>
+    <div class="data-card">
+      <div class="data-card-head">
+        <span id="ap-count" class="data-count">—</span>
+        <button class="export-btn" onclick="exportAP()">Export CSV</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table" id="ap-table">
+          <thead>
+            <tr>
+              <th data-sort="Name">Activity Name</th>
+              <th data-sort="SubSystem-">Subsystem</th>
+              <th data-sort="Phase">Phase</th>
+              <th data-sort="Test Level">Test Level</th>
+              <th data-sort="Location">Location</th>
+              <th data-sort="Progress">Progress</th>
+              <th data-sort="Status">Status</th>
+            </tr>
+          </thead>
+          <tbody id="ap-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==== LINE ITEMS ==== -->
+<section class="page" id="page-lineitems">
+  <div class="page-hero">
+    <div class="container">
+      <div class="page-eyebrow">Line Items</div>
+      <h1 class="page-title">Test Line Items</h1>
+      <p class="page-sub" id="li-summary">—</p>
+    </div>
+  </div>
+  <div class="container">
+    <div class="kpi-grid kpi-grid-mini">
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Passed</div><div class="kpi-value good" id="li-passed">—</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Failed</div><div class="kpi-value bad" id="li-failed">—</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">In Progress</div><div class="kpi-value info" id="li-inprog">—</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Open</div><div class="kpi-value" id="li-open">—</div></div>
+    </div>
+    <div class="filter-bar">
+      <input type="text" id="li-search" placeholder="Search line items..." class="filter-input">
+      <select id="li-status-filter" class="filter-select"></select>
+      <select id="li-subsys-filter" class="filter-select"></select>
+      <select id="li-location-filter" class="filter-select"></select>
+      <button class="filter-clear" onclick="clearLIFilters()">Reset</button>
+    </div>
+    <div class="data-card">
+      <div class="data-card-head">
+        <span id="li-count" class="data-count">—</span>
+        <button class="export-btn" onclick="exportLI()">Export CSV</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table" id="li-table">
+          <thead>
+            <tr>
+              <th data-sort="Title">Title</th>
+              <th data-sort="Section Title">Section</th>
+              <th data-sort="Plan Commissioning: SubSystem-">Subsystem</th>
+              <th data-sort="Location">Location</th>
+              <th data-sort="Plan Name">Activity</th>
+              <th data-sort="Status">Status</th>
+            </tr>
+          </thead>
+          <tbody id="li-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==== PUNCH LIST ==== -->
+<section class="page" id="page-punchlist">
+  <div class="page-hero">
+    <div class="container">
+      <div class="page-eyebrow">Punch List</div>
+      <h1 class="page-title">Issue &amp; Defect Tracker</h1>
+      <p class="page-sub" id="pl-summary">—</p>
+    </div>
+  </div>
+  <div class="container">
+    <div class="kpi-grid kpi-grid-mini">
+      <div class="kpi-card kpi-mini"><div class="kpi-label">High Priority</div><div class="kpi-value bad" id="pl-high">—</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Work Required</div><div class="kpi-value warn" id="pl-work">—</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Ready to Close</div><div class="kpi-value info" id="pl-ready">—</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Closed</div><div class="kpi-value good" id="pl-closed">—</div></div>
+    </div>
+    <div class="filter-bar">
+      <input type="text" id="pl-search" placeholder="Search punch items..." class="filter-input">
+      <select id="pl-status-filter" class="filter-select"></select>
+      <select id="pl-priority-filter" class="filter-select"></select>
+      <select id="pl-trade-filter" class="filter-select"></select>
+      <select id="pl-type-filter" class="filter-select"></select>
+      <select id="pl-location-filter" class="filter-select"></select>
+      <button class="filter-clear" onclick="clearPLFilters()">Reset</button>
+    </div>
+    <div class="data-card">
+      <div class="data-card-head">
+        <span id="pl-count" class="data-count">—</span>
+        <button class="export-btn" onclick="exportPL()">Export CSV</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table" id="pl-table">
+          <thead>
+            <tr>
+              <th data-sort="Number">#</th>
+              <th data-sort="Title">Title</th>
+              <th data-sort="Trade">Trade</th>
+              <th data-sort="Priority">Priority</th>
+              <th data-sort="Type">Type</th>
+              <th data-sort="Location">Location</th>
+              <th data-sort="Status">Status</th>
+            </tr>
+          </thead>
+          <tbody id="pl-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==== LOCATIONS ==== -->
+<section class="page" id="page-locations">
+  <div class="page-hero">
+    <div class="container">
+      <div class="page-eyebrow">Locations</div>
+      <h1 class="page-title">Site Status by Location</h1>
+      <p class="page-sub">Each BART site with current testing progress and open issues</p>
+    </div>
+  </div>
+  <div class="container">
+    <div class="locations-grid" id="locations-grid"></div>
+  </div>
+</section>
+
+<!-- ==== TEAM ==== -->
+<section class="page" id="page-team">
+  <div class="page-hero">
+    <div class="container">
+      <div class="page-eyebrow">Organization</div>
+      <h1 class="page-title">Testing &amp; Commissioning Team</h1>
+      <p class="page-sub">Hitachi Rail STS USA — BART CBTC Project</p>
+    </div>
+  </div>
+  <div class="container">
+    <div class="org-tree" id="org-tree"></div>
+  </div>
+</section>
+
+<!-- ==== DOCS ==== -->
+<section class="page" id="page-docs">
+  <div class="page-hero">
+    <div class="container">
+      <div class="page-eyebrow">Documents</div>
+      <h1 class="page-title">Project Documentation</h1>
+      <p class="page-sub">CDRLs, test reports and reference materials</p>
+    </div>
+  </div>
+  <div class="container">
+    <div class="docs-grid" id="docs-grid">
+      <div class="docs-empty">
+        <div class="docs-empty-icon"></div>
+        <h3>Documents library coming soon</h3>
+        <p>This section will host links to CDRLs, signed test reports, procedures, and reference docs from your TeamCenter or SharePoint.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==== FIELD LOGGING ==== -->
+<section class="page" id="page-field">
+  <div class="page-hero">
+    <div class="container">
+      <div class="page-eyebrow">Field Team</div>
+      <h1 class="page-title">Field Logging</h1>
+      <p class="page-sub">Log test results and submit daily delay reports</p>
+    </div>
+  </div>
+  <div class="container">
+
+    <!-- LOGIN -->
+    <div id="field-login" class="field-login-card">
+      <div class="field-login-icon"></div>
+      <h2 class="field-login-title">Field Team Login</h2>
+      <p class="field-login-sub">Enter your 4-digit PIN to access the test logging form</p>
+      <div class="field-login-form">
+        <select id="login-name" class="filter-select login-input">
+          <option value="">Select your name</option>
+        </select>
+        <div class="pin-wrap">
+          <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="login-pin" placeholder="• • • •" class="pin-input">
+        </div>
+        <button id="login-btn" class="login-btn">Sign In</button>
+        <div id="login-error" class="login-error"></div>
+      </div>
+    </div>
+
+    <!-- LOGGED IN VIEW -->
+    <div id="field-app" style="display:none;">
+
+      <!-- User bar -->
+      <div class="user-bar">
+        <div class="user-bar-left">
+          <div class="user-avatar" id="user-avatar">—</div>
+          <div>
+            <div class="user-greeting">Signed in as</div>
+            <div class="user-name" id="user-name">—</div>
+          </div>
+        </div>
+        <button class="logout-btn" onclick="logout()">Sign out</button>
+      </div>
+
+      <!-- Tabs -->
+      <div class="form-tabs">
+        <button class="form-tab active" data-tab="result">Log Test Result</button>
+        <button class="form-tab" data-tab="delay">Daily Delay Log</button>
+        <button class="form-tab" data-tab="queue">My Submissions</button>
+      </div>
+
+      <!-- Test Result Tab -->
+      <div class="form-panel active" id="form-result">
+        <div class="form-card">
+          <h3 class="form-card-title">Log a Test Result</h3>
+          <p class="form-card-sub">Select the test you completed and the result. The status of that test will update automatically.</p>
+
+          <div class="form-grid">
+            <div class="form-field">
+              <label>Phase</label>
+              <select id="r-phase" class="form-input"></select>
+            </div>
+            <div class="form-field">
+              <label>Location</label>
+              <select id="r-location" class="form-input"></select>
+            </div>
+            <div class="form-field">
+              <label>Subsystem</label>
+              <select id="r-subsystem" class="form-input"></select>
+            </div>
+            <div class="form-field">
+              <label>Activity</label>
+              <select id="r-activity" class="form-input"></select>
+            </div>
+            <div class="form-field form-field-full">
+              <label>Test Case</label>
+              <select id="r-testid" class="form-input"></select>
+              <div class="form-hint" id="r-test-info"></div>
+            </div>
+
+            <div class="form-field form-field-full">
+              <label>Result</label>
+              <div class="result-buttons">
+                <button type="button" class="result-btn result-pass" data-value="Pass">Pass</button>
+                <button type="button" class="result-btn result-fail" data-value="Fail">Fail</button>
+                <button type="button" class="result-btn result-partial" data-value="Partial">Partial</button>
+                <button type="button" class="result-btn result-blocked" data-value="Blocked">Blocked</button>
+              </div>
+              <input type="hidden" id="r-result" />
+            </div>
+
+            <div class="form-field">
+              <label>Date Tested</label>
+              <input type="date" id="r-date" class="form-input">
+            </div>
+            <div class="form-field">
+              <label>Attempt Number</label>
+              <input type="number" id="r-attempt" min="1" value="1" class="form-input">
+            </div>
+            <div class="form-field">
+              <label>Number of Testers</label>
+              <input type="number" id="r-testers" min="1" value="1" class="form-input">
+            </div>
+            <div class="form-field">
+              <label>Test Hours</label>
+              <input type="number" id="r-hours" min="0" step="0.5" placeholder="e.g. 2.5" class="form-input">
+            </div>
+            <div class="form-field form-field-full">
+              <label>Team / Crew Name</label>
+              <input type="text" id="r-team" placeholder="e.g. ATS Team A" class="form-input">
+            </div>
+
+            <div class="form-field form-field-full conditional" id="r-fail-block" style="display:none;">
+              <label>Reason for Failure</label>
+              <textarea id="r-fail-reason" rows="2" placeholder="Describe what went wrong..." class="form-input"></textarea>
+            </div>
+            <div class="form-field form-field-full conditional" id="r-blocked-block" style="display:none;">
+              <label>Reason for Blocking</label>
+              <textarea id="r-blocked-reason" rows="2" placeholder="What's blocking the test? Who can resolve?" class="form-input"></textarea>
+            </div>
+
+            <div class="form-field form-field-full">
+              <label>Notes (optional)</label>
+              <textarea id="r-notes" rows="2" placeholder="Any other observations..." class="form-input"></textarea>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button class="form-submit" onclick="submitTestResult()">Submit Test Result</button>
+            <button class="form-secondary" onclick="resetResultForm()">Clear</button>
+          </div>
+          <div id="r-message" class="form-message"></div>
+        </div>
+      </div>
+
+      <!-- Delay Log Tab -->
+      <div class="form-panel" id="form-delay">
+        <div class="form-card">
+          <h3 class="form-card-title">Daily Delay Log</h3>
+          <p class="form-card-sub">Submit your end-of-day report. Test counts auto-fill from your submissions today.</p>
+
+          <div class="form-grid">
+            <div class="form-field">
+              <label>Date</label>
+              <input type="date" id="d-date" class="form-input">
+            </div>
+            <div class="form-field">
+              <label>Location</label>
+              <select id="d-location" class="form-input"></select>
+            </div>
+            <div class="form-field">
+              <label>Subsystem</label>
+              <select id="d-subsystem" class="form-input"></select>
+            </div>
+            <div class="form-field">
+              <label>Number of Testers</label>
+              <input type="number" id="d-testers" min="1" value="1" class="form-input">
+            </div>
+            <div class="form-field">
+              <label>Idle Hours</label>
+              <input type="number" id="d-idle" min="0" step="0.5" value="0" class="form-input">
+            </div>
+            <div class="form-field"></div>
+
+            <div class="form-field form-field-full">
+              <div class="counts-grid">
+                <div class="count-tile good"><div class="count-label">Total Logged</div><div class="count-value" id="d-total-logged">0</div></div>
+                <div class="count-tile good"><div class="count-label">Passed</div><div class="count-value" id="d-total-passed">0</div></div>
+                <div class="count-tile bad"><div class="count-label">Failed</div><div class="count-value" id="d-total-failed">0</div></div>
+                <div class="count-tile warn"><div class="count-label">Partial</div><div class="count-value" id="d-total-partial">0</div></div>
+                <div class="count-tile"><div class="count-label">Blocked</div><div class="count-value" id="d-total-blocked">0</div></div>
+              </div>
+              <div class="form-hint">Auto-calculated from your submissions today. Refresh button below to recompute.</div>
+              <button class="recount-btn" onclick="recountToday()">↻ Recount</button>
+            </div>
+
+            <div class="form-field form-field-full">
+              <label>Was there a delay today?</label>
+              <div class="delay-toggle">
+                <button type="button" class="toggle-btn active" data-delay="No">No delay</button>
+                <button type="button" class="toggle-btn" data-delay="Yes">Yes, had a delay</button>
+              </div>
+              <input type="hidden" id="d-delay-occurred" value="No">
+            </div>
+
+            <div class="form-field conditional delay-field" style="display:none;">
+              <label>Delay Category</label>
+              <select id="d-delay-category" class="form-input">
+                <option value="">Select...</option>
+                <option>Equipment / Hardware Issue</option>
+                <option>Software / Configuration Issue</option>
+                <option>Access / Track Time</option>
+                <option>Vendor / 3rd Party</option>
+                <option>Documentation Missing</option>
+                <option>Personnel Shortage</option>
+                <option>Weather</option>
+                <option>Safety / Stop Work</option>
+                <option>Other</option>
+              </select>
+            </div>
+            <div class="form-field conditional delay-field" style="display:none;">
+              <label>Delay Duration (hours)</label>
+              <input type="number" id="d-delay-duration" min="0" step="0.5" class="form-input">
+            </div>
+            <div class="form-field form-field-full conditional delay-field" style="display:none;">
+              <label>Delay Notes</label>
+              <textarea id="d-delay-notes" rows="2" placeholder="Describe the delay..." class="form-input"></textarea>
+            </div>
+
+            <div class="form-field form-field-full">
+              <label>Overall Day Notes</label>
+              <textarea id="d-overall-notes" rows="2" placeholder="Summary of the day's work..." class="form-input"></textarea>
+            </div>
+            <div class="form-field form-field-full">
+              <label>Plan for Next Day</label>
+              <textarea id="d-next-plan" rows="2" placeholder="What's planned tomorrow?" class="form-input"></textarea>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button class="form-submit" onclick="submitDelayLog()">Submit Daily Log</button>
+            <button class="form-secondary" onclick="resetDelayForm()">Clear</button>
+          </div>
+          <div id="d-message" class="form-message"></div>
+        </div>
+      </div>
+
+      <!-- Queue / My Submissions -->
+      <div class="form-panel" id="form-queue">
+        <div class="form-card">
+          <h3 class="form-card-title">My Submissions</h3>
+          <p class="form-card-sub">Submissions made from this device. Pending items will be sent when online.</p>
+          <div id="queue-list" class="queue-list"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+<footer id="footer">
+  <div class="footer-inner">
+    <div class="footer-left">
+      <div class="footer-brand">
+        <span class="brand-hitachi">HITACHI</span>
+        <span class="footer-sep">·</span>
+        <span>Rail T&amp;C Portal</span>
+      </div>
+      <div class="footer-meta">BART CBTC Project · Internal use only</div>
+    </div>
+    <div class="footer-right">
+      <span class="footer-meta">Data refreshed daily from project tracking system</span>
+    </div>
+  </div>
+</footer>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
