@@ -894,7 +894,7 @@ function exportPL() {
 // INIT
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
-  await loadTestItems();
+  await Promise.all([loadTestItems(), loadTemplates()]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -909,6 +909,28 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 let TI = DATA.testItems || []; // populated from Supabase on init; falls back to data.js
 const FIELD_USERS = DATA.fieldUsers || [];
+
+async function loadTemplates() {
+  try {
+    const { data, error } = await _sb.from('templates').select('*').order('created_at');
+    if (error) throw error;
+    if (data && data.length > 0) {
+      TEMPLATES.length = 0;
+      data.forEach(r => TEMPLATES.push({
+        id:          r.id,
+        name:        r.name,
+        subsystem:   r.subsystem,
+        description: r.description,
+        createdBy:   r.created_by,
+        createdAt:   r.created_at,
+        testCases:   r.test_cases || [],
+      }));
+      console.log(`Loaded ${TEMPLATES.length} templates from Supabase`);
+    }
+  } catch (err) {
+    console.warn('Supabase templates load failed, using data.js fallback:', err.message);
+  }
+}
 
 async function loadTestItems() {
   try {
@@ -2132,7 +2154,7 @@ function openNewTemplateModal() {
   });
 }
 
-function saveNewTemplate() {
+async function saveNewTemplate() {
   const name      = document.getElementById('ntpl-name').value.trim();
   const subsystem = document.getElementById('ntpl-subsystem').value;
   const desc      = document.getElementById('ntpl-desc').value.trim();
@@ -2153,6 +2175,12 @@ function saveNewTemplate() {
     createdAt: new Date().toISOString(),
     testCases,
   };
+  const { error } = await _sb.from('templates').insert({
+    id: newTpl.id, name: newTpl.name, subsystem: newTpl.subsystem,
+    description: newTpl.description, created_by: newTpl.createdBy,
+    created_at: newTpl.createdAt, test_cases: newTpl.testCases,
+  });
+  if (error) { toast('Save failed: ' + error.message, 'error'); return; }
   TEMPLATES.push(newTpl);
   logAudit('Created Activity Template', name, `${testCases.length} test cases`);
   closeModal();
@@ -2216,7 +2244,7 @@ function editTemplate(id) {
   });
 }
 
-function saveEditTemplate(id) {
+async function saveEditTemplate(id) {
   const tpl = TEMPLATES.find(t => t.id === id);
   if (!tpl) return;
   const name      = document.getElementById('etpl-name').value.trim();
@@ -2228,6 +2256,10 @@ function saveEditTemplate(id) {
     .filter(tc => tc.code.trim() || tc.name.trim())
     .map(tc => ({ code: tc.code.trim(), name: tc.name.trim(), category: tc.category.trim(), procedure, duration: 1 }));
   if (!testCases.length) { toast('Add at least one test case', 'error'); return; }
+  const { error } = await _sb.from('templates').update({
+    name, subsystem, description: desc, test_cases: testCases,
+  }).eq('id', id);
+  if (error) { toast('Save failed: ' + error.message, 'error'); return; }
   tpl.name = name; tpl.subsystem = subsystem; tpl.description = desc; tpl.testCases = testCases;
   logAudit('Edited Activity Template', name, `${testCases.length} test cases`);
   closeModal();
@@ -2235,12 +2267,14 @@ function saveEditTemplate(id) {
   renderAdminPortal();
 }
 
-function deleteTemplate(id) {
+async function deleteTemplate(id) {
   const tpl = TEMPLATES.find(t => t.id === id);
   if (!tpl) return;
   const deployCount = DEPLOYMENTS.filter(d => d.templateId === id).length;
   const warn = deployCount > 0 ? ` This template has ${deployCount} active deployment(s).` : '';
   if (!confirm(`Delete template "${tpl.name}"?${warn}\n\nThis cannot be undone.`)) return;
+  const { error } = await _sb.from('templates').delete().eq('id', id);
+  if (error) { toast('Delete failed: ' + error.message, 'error'); return; }
   const idx = TEMPLATES.indexOf(tpl);
   TEMPLATES.splice(idx, 1);
   logAudit('Deleted Activity Template', tpl.name);
