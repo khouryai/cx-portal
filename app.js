@@ -894,7 +894,7 @@ function exportPL() {
 // INIT
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
-  await Promise.all([loadTestItems(), loadTemplates(), loadLocations()]);
+  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB()]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -3410,376 +3410,489 @@ async function submitIntakeFinal(count) {
 }
 
 // ==========================================================================
-// PUNCH WORKFLOW — Kanban + Detail
+// PUNCH LIST — Supabase-backed list view with create/edit/detail
 // ==========================================================================
+let PUNCH_DB = [];
+let _plTab = 'all', _plPage = 1, _plSearch = '';
+let _plStatusFilter = '', _plPhaseFilter = '', _plLocFilter = '';
+let _plSubFilter = '', _plPriorityFilter = '';
+const PL_PAGE_SIZE = 25;
+
+async function loadPunchDB() {
+  try {
+    const { data, error } = await _sb.from('punch_items').select('*').order('number', { ascending: false });
+    if (error) throw error;
+    PUNCH_DB = data || [];
+    console.log(`Loaded ${PUNCH_DB.length} punch items`);
+  } catch(err) { console.warn('Punch items load failed:', err.message); PUNCH_DB = []; }
+}
+
+function _isMyPunchItem(p) {
+  if (!currentRoleUser) return false;
+  const n = currentRoleUser.name;
+  return p.created_by === n || p.punch_item_manager === n || p.final_approver === n ||
+    (p.assignees||[]).includes(n) || (p.distribution_list||[]).includes(n);
+}
+
+function _plStatusBadge(status) {
+  const map = {
+    work_required:   ['Work Required', '#d97706','#fef3c7'],
+    in_progress:     ['In Progress',   '#1d4ed8','#dbeafe'],
+    ready_for_review:['Ready for Review','#7c3aed','#ede9fe'],
+    closed:          ['Closed',        '#059669','#d1fae5'],
+    voided:          ['Voided',        '#6b7280','#f3f4f6'],
+  };
+  const [label,color,bg] = map[status] || ['Unknown','#6b7280','#f3f4f6'];
+  return `<span style="display:inline-block;padding:2px 9px;border-radius:12px;font-size:11px;font-weight:600;background:${bg};color:${color};white-space:nowrap;">${label}</span>`;
+}
+
+function _plPriorityBadge(priority) {
+  const map = { Low:'#059669,#d1fae5', Medium:'#d97706,#fef3c7', High:'#dc2626,#fee2e2', Critical:'#7c3aed,#ede9fe' };
+  const [color,bg] = (map[priority]||'#6b7280,#f3f4f6').split(',');
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${bg};color:${color};">${escapeHtml(priority||'—')}</span>`;
+}
+
+function _plBallInCourt(p) {
+  if (p.status === 'closed' || p.status === 'voided') return '—';
+  if (p.status === 'ready_for_review') return p.punch_item_manager || 'Punch Manager';
+  const a = p.assignees || [];
+  return a.length ? a.join(', ') : 'Unassigned';
+}
+
+function _plLocName(id) { return id ? (LOCS.find(l => l.id === id)?.name || id) : '—'; }
+
 function renderPunchWorkflow() {
   const root = document.getElementById('punch-workflow-content');
   if (!root || !currentRoleUser) return;
 
-  // Filter punches by role
-  let visible = PUNCH_ITEMS;
-  if (currentRoleUser.role === 'technician') {
-    visible = PUNCH_ITEMS.filter(p => p.assignedToTechnician === currentRoleUser.name || p.status === 'open');
-  } else if (currentRoleUser.role === 'client') {
-    visible = PUNCH_ITEMS.filter(p => p.status === 'client_approval_pending' || (p.status === 'closed' && p.client_approved));
-  }
+  const all  = PUNCH_DB.filter(p => !p.is_deleted);
+  const bin  = PUNCH_DB.filter(p => p.is_deleted);
+  const my   = all.filter(p => _isMyPunchItem(p));
 
-  // Update title/subtitle by role
-  document.getElementById('pw-title').textContent =
-    currentRoleUser.role === 'client' ? 'Punch List — Client Approvals' :
-    currentRoleUser.role === 'technician' ? 'My Assigned Punch Items' :
-    'Punch List Management';
+  let items = _plTab === 'bin' ? bin : _plTab === 'my' ? my : all;
+  if (_plSearch)       items = items.filter(p => (p.title||'').toLowerCase().includes(_plSearch.toLowerCase()) || String(p.number).includes(_plSearch));
+  if (_plStatusFilter) items = items.filter(p => p.status === _plStatusFilter);
+  if (_plPhaseFilter)  items = items.filter(p => p.phase === _plPhaseFilter);
+  if (_plLocFilter)    items = items.filter(p => p.location === _plLocFilter);
+  if (_plSubFilter)    items = items.filter(p => p.subsystem === _plSubFilter);
+  if (_plPriorityFilter) items = items.filter(p => p.priority === _plPriorityFilter);
 
-  // Group by status
-  const cols = {
-    open: visible.filter(p => p.status === 'open' || (p.status === 'in_progress' && currentRoleUser.role === 'punch_manager')),
-    in_progress: visible.filter(p => p.status === 'in_progress'),
-    ready_for_signoff: visible.filter(p => p.status === 'ready_for_signoff'),
-    client_approval_pending: visible.filter(p => p.status === 'client_approval_pending'),
-    closed: visible.filter(p => p.status === 'closed').slice(0, 5),
-  };
+  const total = items.length;
+  const pages = Math.max(1, Math.ceil(total / PL_PAGE_SIZE));
+  if (_plPage > pages) _plPage = pages;
+  const paged = items.slice((_plPage-1)*PL_PAGE_SIZE, _plPage*PL_PAGE_SIZE);
 
-  const showCreateBtn = ['admin', 'field_engineer'].includes(currentRoleUser.role);
+  const openItems = all.filter(p => p.status !== 'closed' && p.status !== 'voided');
+  const overdue   = openItems.filter(p => p.due_date && new Date(p.due_date) < new Date());
+  const phases    = LOCS.filter(l => l.level === 1).sort((a,b) => a.sort_order - b.sort_order);
+  const locPool   = _plPhaseFilter ? LOCS.filter(l => l.level === 2 && l.parent_id === _plPhaseFilter) : LOCS.filter(l => l.level === 2);
+  const hasFilter = _plSearch || _plStatusFilter || _plPhaseFilter || _plLocFilter || _plSubFilter || _plPriorityFilter;
 
   root.innerHTML = `
-    ${showCreateBtn ? `
-      <div class="admin-section-head" style="margin-bottom:16px;">
-        <div></div>
-        <button class="admin-action-btn" onclick="openNewPunchModal()">+ Create Punch Item</button>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:2px solid var(--gray-200);padding-bottom:0;">
+      <div style="display:flex;gap:0;">
+        ${[['my',`My Items (${my.length})`],['all',`All Items (${all.length})`],['bin',`Recycle Bin (${bin.length})`]].map(([id,label])=>`
+          <button class="admin-tab${_plTab===id?' active':''}" onclick="_plSetTab('${id}')">${label}</button>`).join('')}
       </div>
-    ` : ''}
-
-    <div class="punch-board">
-      ${[
-        ['Open / Assignable', 'open'],
-        ['In Progress', 'in_progress'],
-        ['Ready for Sign-off', 'ready_for_signoff'],
-        ['Client Approval', 'client_approval_pending'],
-      ].map(([title, key]) => `
-        <div class="punch-column">
-          <div class="punch-column-head">
-            <div class="punch-column-title">${title}</div>
-            <div class="punch-column-count">${cols[key].length}</div>
-          </div>
-          ${cols[key].length === 0 ?
-            '<div style="font-size:12px;color:var(--gray-500);text-align:center;padding:20px 0;">No items</div>' :
-            cols[key].map(p => renderPunchCard(p)).join('')
-          }
-        </div>
-      `).join('')}
+      <button class="admin-action-btn" onclick="openNewPunchModal()">+ Create</button>
     </div>
 
-    ${cols.closed.length > 0 ? `
-      <div class="admin-section" style="margin-top: 32px;">
-        <div class="admin-section-title" style="margin-bottom: 12px;">Recently Closed</div>
-        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;">
-          ${cols.closed.map(p => renderPunchCard(p)).join('')}
-        </div>
+    <div class="kpi-grid kpi-grid-mini" style="margin-bottom:20px;">
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Total Open</div><div class="kpi-value">${openItems.length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Work Required</div><div class="kpi-value" style="color:var(--warn);">${all.filter(p=>p.status==='work_required').length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">In Progress</div><div class="kpi-value">${all.filter(p=>p.status==='in_progress').length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Overdue</div><div class="kpi-value" style="color:var(--bad);">${overdue.length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Closed</div><div class="kpi-value good">${all.filter(p=>p.status==='closed').length}</div></div>
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+      <div style="position:relative;flex:1;min-width:200px;">
+        <input type="text" class="form-input" placeholder="Search title or #…" value="${escapeHtml(_plSearch)}"
+          oninput="_plSetSearch(this.value)" style="padding-left:32px;font-size:13px;">
+        <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--gray-400);font-size:16px;">⌕</span>
       </div>
-    ` : ''}
+      <select class="form-input" style="width:160px;font-size:13px;" onchange="_plSetFilter('status',this.value)">
+        <option value="">All Statuses</option>
+        ${[['work_required','Work Required'],['in_progress','In Progress'],['ready_for_review','Ready for Review'],['closed','Closed'],['voided','Voided']].map(([v,l])=>`<option value="${v}" ${_plStatusFilter===v?'selected':''}>${l}</option>`).join('')}
+      </select>
+      <select class="form-input" style="width:140px;font-size:13px;" onchange="_plPhaseChange(this.value)">
+        <option value="">All Phases</option>
+        ${phases.map(p=>`<option value="${p.id}" ${_plPhaseFilter===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
+      </select>
+      <select class="form-input" style="width:160px;font-size:13px;" onchange="_plSetFilter('loc',this.value)">
+        <option value="">All Locations</option>
+        ${locPool.map(l=>`<option value="${l.id}" ${_plLocFilter===l.id?'selected':''}>${escapeHtml(l.name)}</option>`).join('')}
+      </select>
+      <select class="form-input" style="width:130px;font-size:13px;" onchange="_plSetFilter('sub',this.value)">
+        <option value="">All Subsystems</option>
+        ${SUBSYSTEMS_LIST.map(s=>`<option value="${s}" ${_plSubFilter===s?'selected':''}>${s}</option>`).join('')}
+      </select>
+      <select class="form-input" style="width:120px;font-size:13px;" onchange="_plSetFilter('priority',this.value)">
+        <option value="">All Priorities</option>
+        ${['Low','Medium','High','Critical'].map(p=>`<option value="${p}" ${_plPriorityFilter===p?'selected':''}>${p}</option>`).join('')}
+      </select>
+      ${hasFilter ? `<button class="form-secondary" style="white-space:nowrap;font-size:12px;" onclick="_plClearFilters()">✕ Clear All</button>` : ''}
+    </div>
+
+    <div class="data-card" style="padding:0;overflow:hidden;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="width:50px;">#</th>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Ball In Court</th>
+            <th>Subsystem</th>
+            <th>Phase / Location</th>
+            <th>Priority</th>
+            <th>Due Date</th>
+            <th>PIM</th>
+            <th style="width:60px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${paged.length ? paged.map(p => {
+            const isOverdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== 'closed' && p.status !== 'voided';
+            const dueStr = p.due_date ? new Date(p.due_date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+            return `<tr onclick="openPunchDetail('${p.id}')" style="cursor:pointer;">
+              <td style="font-weight:600;color:var(--gray-600);">${p.number||'—'}</td>
+              <td style="max-width:220px;">
+                <div style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(p.title)}</div>
+                <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(p.type||'')}</div>
+              </td>
+              <td>${_plStatusBadge(p.status)}</td>
+              <td style="font-size:12px;color:var(--gray-700);">${escapeHtml(_plBallInCourt(p))}</td>
+              <td style="font-size:12px;">${escapeHtml(p.subsystem||'—')}</td>
+              <td style="font-size:12px;color:var(--gray-700);">${escapeHtml(_plLocName(p.phase))} / ${escapeHtml(_plLocName(p.location))}</td>
+              <td>${_plPriorityBadge(p.priority)}</td>
+              <td style="font-size:12px;${isOverdue?'color:#dc2626;font-weight:600;':''}">${dueStr}${isOverdue?' ⚠':''}</td>
+              <td style="font-size:12px;">${escapeHtml(p.punch_item_manager||'—')}</td>
+              <td onclick="event.stopPropagation()">
+                <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openPunchDetail('${p.id}')">View</button>
+              </td>
+            </tr>`;
+          }).join('') : `<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--gray-400);">${_plTab==='bin'?'Recycle bin is empty':'No punch items match your filters'}</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+
+    ${pages > 1 ? `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;font-size:13px;color:var(--gray-600);">
+        <span>Showing ${(_plPage-1)*PL_PAGE_SIZE+1}–${Math.min(_plPage*PL_PAGE_SIZE,total)} of ${total}</span>
+        <div style="display:flex;gap:6px;">
+          <button class="form-secondary" ${_plPage<=1?'disabled':''} onclick="_plSetPage(${_plPage-1})">← Prev</button>
+          <span style="padding:6px 12px;font-weight:600;">${_plPage} / ${pages}</span>
+          <button class="form-secondary" ${_plPage>=pages?'disabled':''} onclick="_plSetPage(${_plPage+1})">Next →</button>
+        </div>
+      </div>` : ''}
   `;
 }
 
-function renderPunchCard(p) {
-  const sub = p.assignedToTechnician ? `→ ${p.assignedToTechnician}` : 'unassigned';
-  return `
-    <div class="punch-card priority-${p.priority}" onclick="openPunchDetail('${p.id}')">
-      <div class="punch-card-num">#${p.number} · ${escapeHtml(p.subsystem)}</div>
-      <div class="punch-card-title">${escapeHtml(p.title)}</div>
-      <div class="punch-card-meta">
-        <span>${escapeHtml(p.location)}</span>
-        <span>· ${sub}</span>
-      </div>
-    </div>
-  `;
+function _plSetTab(t)    { _plTab=t; _plPage=1; renderPunchWorkflow(); }
+function _plSetSearch(v) { _plSearch=v; _plPage=1; renderPunchWorkflow(); }
+function _plSetPage(n)   { _plPage=n; renderPunchWorkflow(); }
+function _plSetFilter(k,v) {
+  if (k==='status') _plStatusFilter=v;
+  else if (k==='loc') _plLocFilter=v;
+  else if (k==='sub') _plSubFilter=v;
+  else if (k==='priority') _plPriorityFilter=v;
+  _plPage=1; renderPunchWorkflow();
 }
+function _plPhaseChange(id) { _plPhaseFilter=id; _plLocFilter=''; _plPage=1; renderPunchWorkflow(); }
+function _plClearFilters()  { _plSearch=''; _plStatusFilter=''; _plPhaseFilter=''; _plLocFilter=''; _plSubFilter=''; _plPriorityFilter=''; _plPage=1; renderPunchWorkflow(); }
 
 function openPunchDetail(id) {
-  const p = PUNCH_ITEMS.find(x => x.id === id);
+  const p = PUNCH_DB.find(x => x.id === id);
   if (!p) return;
-
-  const role = currentRoleUser.role;
-  const canAssignTech = role === 'punch_manager' || role === 'admin';
-  const canMarkInProgress = (role === 'technician' && p.assignedToTechnician === currentRoleUser.name);
-  const canSubmitSignoff = canMarkInProgress && p.status === 'in_progress';
-  const canApprovePM = (role === 'punch_manager' || role === 'admin') && p.status === 'ready_for_signoff';
-  const canApproveClient = role === 'client' && p.status === 'client_approval_pending';
-
+  const phaseName = _plLocName(p.phase), locName = _plLocName(p.location);
+  const history = (p.history||[]);
   modal({
-    title: `Punch #${p.number} · ${escapeHtml(p.title)}`,
-    sub: `${escapeHtml(p.location)} · ${escapeHtml(p.subsystem)} · ${escapeHtml(p.priority)} priority`,
+    title: `Punch #${p.number}`,
+    sub: escapeHtml(p.title),
     size: 'large',
     body: `
-      <div class="punch-detail-section">
-        <h4>Description</h4>
-        <p style="font-size: 14px; color: var(--gray-800); line-height: 1.6;">${escapeHtml(p.description)}</p>
-      </div>
-
-      <div class="punch-detail-section">
-        <h4>Details</h4>
-        <div class="punch-detail-meta">
-          <div class="punch-detail-meta-item">
-            <div class="label">Status</div>
-            <div class="value">${getStatusBadge(p.status.replace(/_/g, ' '))}</div>
-          </div>
-          <div class="punch-detail-meta-item">
-            <div class="label">Created By</div>
-            <div class="value">${escapeHtml(p.createdBy)}</div>
-          </div>
-          <div class="punch-detail-meta-item">
-            <div class="label">Assigned To (Tech)</div>
-            <div class="value">${p.assignedToTechnician ? escapeHtml(p.assignedToTechnician) : '<span style="color:var(--gray-500)">Unassigned</span>'}</div>
-          </div>
-          <div class="punch-detail-meta-item">
-            <div class="label">Type</div>
-            <div class="value">${escapeHtml(p.type)} · ${escapeHtml(p.trade)}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:20px;">
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:6px;">STATUS</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            ${_plStatusBadge(p.status)}
+            <select class="form-input" style="font-size:12px;padding:4px 8px;" onchange="updatePunchStatus('${p.id}',this.value)">
+              ${[['work_required','Work Required'],['in_progress','In Progress'],['ready_for_review','Ready for Review'],['closed','Closed'],['voided','Voided']].map(([v,l])=>`<option value="${v}" ${p.status===v?'selected':''}>${l}</option>`).join('')}
+            </select>
           </div>
         </div>
-      </div>
-
-      <div class="punch-detail-section">
-        <h4>Photos — Before</h4>
-        <div class="photo-grid">
-          ${p.photos_before.length === 0 ?
-            '<div class="photo-thumb placeholder">No before photos</div>' :
-            p.photos_before.map(ph => `<div class="photo-thumb"><img src="${ph}" onclick="viewPhoto('${ph}')"></div>`).join('')
-          }
-          ${canMarkInProgress ? `
-            <label class="photo-upload-btn">
-              <span class="plus">+</span>
-              <span>Add Before</span>
-              <input type="file" accept="image/*" multiple style="display:none" onchange="addPhoto(event, '${p.id}', 'before')">
-            </label>
-          ` : ''}
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:6px;">BALL IN COURT</div>
+          <div style="font-size:13px;">${escapeHtml(_plBallInCourt(p))}</div>
         </div>
       </div>
-
-      <div class="punch-detail-section">
-        <h4>Photos — After</h4>
-        <div class="photo-grid">
-          ${p.photos_after.length === 0 ?
-            '<div class="photo-thumb placeholder">No after photos</div>' :
-            p.photos_after.map(ph => `<div class="photo-thumb"><img src="${ph}" onclick="viewPhoto('${ph}')"></div>`).join('')
-          }
-          ${canMarkInProgress ? `
-            <label class="photo-upload-btn">
-              <span class="plus">+</span>
-              <span>Add After</span>
-              <input type="file" accept="image/*" multiple style="display:none" onchange="addPhoto(event, '${p.id}', 'after')">
-            </label>
-          ` : ''}
-        </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;padding:16px;background:var(--gray-50);border-radius:8px;">
+        ${[
+          ['Type', p.type],['Priority', p.priority],['Subsystem', p.subsystem],
+          ['Phase', phaseName],['Location', locName],['Schedule Impact', p.schedule_impact],
+          ['Punch Item Manager', p.punch_item_manager],['Final Approver', p.final_approver],
+          ['Due Date', p.due_date ? new Date(p.due_date+'T00:00:00').toLocaleDateString() : null],
+          ['Category of Failure', p.category_of_failure],['Type of Failure', p.type_of_failure],
+          ['RTC / Work Item ID', p.rtc_work_item_id],['Created By', p.created_by],
+          ['Created', p.created_at ? dateAgo(p.created_at) : null],
+          ['Assignees', (p.assignees||[]).join(', ')],
+        ].map(([label,val])=>`
+          <div>
+            <div style="font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">${label}</div>
+            <div style="font-size:13px;">${escapeHtml(val||'—')}</div>
+          </div>`).join('')}
       </div>
-
-      ${p.closure_notes || canSubmitSignoff ? `
-        <div class="punch-detail-section">
-          <h4>Closure Notes</h4>
-          ${canSubmitSignoff ? `
-            <textarea id="punch-closure-notes" class="form-input" rows="3" placeholder="Describe the work completed...">${escapeHtml(p.closure_notes)}</textarea>
-          ` : `
-            <p style="font-size: 14px; color: var(--gray-800); line-height: 1.6;">${escapeHtml(p.closure_notes || '—')}</p>
-          `}
-        </div>
-      ` : ''}
-
-      ${canApproveClient ? `
-        <div class="punch-detail-section">
-          <h4>Closure Submitted by Technician</h4>
-          <p style="font-size: 14px; color: var(--gray-800); line-height: 1.6; padding: 12px; background: var(--gray-50); border-radius: 8px;">${escapeHtml(p.closure_notes)}</p>
-          <h4 style="margin-top: 16px;">Your Approval Notes (Optional)</h4>
-          <textarea id="client-approval-notes" class="form-input" rows="2" placeholder="Any observations..."></textarea>
-        </div>
-      ` : ''}
-
-      <div class="punch-detail-section">
-        <h4>History</h4>
-        <div class="history-timeline">
-          ${p.history.map(h => `
-            <div class="history-item">
-              <div class="history-action">${escapeHtml(h.action)}</div>
-              <div class="history-meta">${escapeHtml(h.by)} · ${dateAgo(h.at)}</div>
-              ${h.note ? `<div class="history-note">"${escapeHtml(h.note)}"</div>` : ''}
-            </div>
-          `).join('')}
+      ${p.description ? `
+        <div style="margin-bottom:20px;">
+          <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:6px;">DESCRIPTION</div>
+          <div style="font-size:13px;color:var(--gray-800);line-height:1.6;white-space:pre-wrap;">${escapeHtml(p.description)}</div>
+        </div>` : ''}
+      <div>
+        <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:8px;">HISTORY</div>
+        <div style="display:flex;flex-direction:column;gap:6px;max-height:180px;overflow-y:auto;">
+          ${history.length ? history.slice().reverse().map(h=>`
+            <div style="display:flex;gap:10px;align-items:flex-start;font-size:12px;">
+              <div style="width:6px;height:6px;border-radius:50%;background:var(--hitachi-red);margin-top:5px;flex-shrink:0;"></div>
+              <div><span style="font-weight:500;">${escapeHtml(h.action)}</span> <span style="color:var(--gray-500);">· ${escapeHtml(h.by)} · ${dateAgo(h.at)}</span></div>
+            </div>`).join('') : '<div style="color:var(--gray-400);font-size:12px;">No history</div>'}
         </div>
       </div>
     `,
     footer: `
-      <button class="admin-action-btn-secondary" onclick="closeModal()">Close</button>
-      ${canAssignTech && !p.assignedToTechnician ? `<button class="admin-action-btn" onclick="assignTechnician('${p.id}')">Assign Technician</button>` : ''}
-      ${canMarkInProgress && p.status === 'open' ? `<button class="admin-action-btn" onclick="punchAction('${p.id}', 'start')">Start Work</button>` : ''}
-      ${canSubmitSignoff ? `<button class="admin-action-btn" onclick="punchAction('${p.id}', 'submit_signoff')">Submit for Sign-off</button>` : ''}
-      ${canApprovePM ? `<button class="admin-action-btn" onclick="punchAction('${p.id}', 'pm_approve')">Approve & Send to Client</button>` : ''}
-      ${canApproveClient ? `<button class="admin-action-btn" onclick="punchAction('${p.id}', 'client_approve')">Approve & Close</button>` : ''}
+      <button class="form-secondary" onclick="closeModal()">Close</button>
+      ${p.is_deleted
+        ? `<button class="form-secondary" onclick="restorePunch('${p.id}')">Restore from Bin</button>`
+        : `<button class="form-secondary" style="color:var(--bad);" onclick="softDeletePunch('${p.id}')">Move to Bin</button>`}
+      <button class="form-submit" onclick="closeModal();openEditPunchModal('${p.id}')">Edit</button>
     `,
   });
 }
 
-function assignTechnician(id) {
-  const techs = USERS_V2.filter(u => u.role === 'technician');
-  const choices = techs.map((t, i) => `${i+1}. ${t.name}`).join('\n');
-  const which = prompt(`Assign to which technician?\n\n${choices}\n\nEnter number:`);
-  const tech = techs[parseInt(which) - 1];
-  if (!tech) return;
-  const p = PUNCH_ITEMS.find(x => x.id === id);
-  p.assignedToTechnician = tech.name;
-  p.history.push({
-    action: 'Assigned to Technician',
-    by: currentRoleUser.name,
-    at: new Date().toISOString(),
-    note: '',
-  });
-  logAudit('Punch Assigned', `Punch #${p.number}`, `→ ${tech.name}`);
-  closeModal();
-  renderPunchWorkflow();
-  toast(`Assigned to ${tech.name}`, 'success');
-}
-
-function punchAction(id, action) {
-  const p = PUNCH_ITEMS.find(x => x.id === id);
+async function updatePunchStatus(id, status) {
+  const p = PUNCH_DB.find(x => x.id === id);
   if (!p) return;
-  const now = new Date().toISOString();
-  if (action === 'start') {
-    p.status = 'in_progress';
-    p.history.push({ action: 'Status: In Progress', by: currentRoleUser.name, at: now, note: '' });
-  } else if (action === 'submit_signoff') {
-    const notes = document.getElementById('punch-closure-notes')?.value || '';
-    if (!notes.trim()) { toast('Please add closure notes', 'warn'); return; }
-    p.status = 'ready_for_signoff';
-    p.closure_notes = notes;
-    p.history.push({ action: 'Status: Ready for Sign-off', by: currentRoleUser.name, at: now, note: 'Awaiting punch manager review' });
-  } else if (action === 'pm_approve') {
-    p.status = 'client_approval_pending';
-    p.history.push({ action: 'Approved by Punch Manager', by: currentRoleUser.name, at: now, note: '' });
-    p.history.push({ action: 'Sent to Client for Approval', by: currentRoleUser.name, at: now, note: '' });
-  } else if (action === 'client_approve') {
-    const notes = document.getElementById('client-approval-notes')?.value || '';
-    p.status = 'closed';
-    p.client_approved = true;
-    p.client_approval_notes = notes;
-    p.history.push({ action: 'Approved by Client', by: currentRoleUser.name, at: now, note: notes });
-    p.history.push({ action: 'Closed', by: 'System', at: now, note: '' });
-  }
-  logAudit('Punch ' + action, `Punch #${p.number}`, `Status → ${p.status}`);
-  closeModal();
-  renderPunchWorkflow();
-  toast(`Punch #${p.number} updated`, 'success');
+  const history = [...(p.history||[]), { action: `Status → ${status.replace(/_/g,' ')}`, by: currentRoleUser.name, at: new Date().toISOString() }];
+  const updates = { status, history, updated_at: new Date().toISOString() };
+  if (status === 'closed') { updates.closed_at = new Date().toISOString(); updates.closed_by = currentRoleUser.name; }
+  const { error } = await _sb.from('punch_items').update(updates).eq('id', id);
+  if (error) { toast('Update failed: ' + error.message, 'error'); return; }
+  Object.assign(p, updates);
+  toast(`Status → ${status.replace(/_/g,' ')}`, 'success');
+  closeModal(); renderPunchWorkflow();
 }
 
-function addPhoto(event, punchId, type) {
-  const p = PUNCH_ITEMS.find(x => x.id === punchId);
-  const files = event.target.files;
-  for (const file of files) {
-    const reader = new FileReader();
-    reader.onload = e => {
-      if (type === 'before') p.photos_before.push(e.target.result);
-      else p.photos_after.push(e.target.result);
-      logAudit('Photo Uploaded', `Punch #${p.number}`, `${type} photo added`);
-      // Refresh modal
-      closeModal();
-      openPunchDetail(punchId);
-    };
-    reader.readAsDataURL(file);
-  }
-  toast(`${files.length} photo${files.length > 1 ? 's' : ''} added`, 'success');
+async function softDeletePunch(id) {
+  if (!confirm('Move to Recycle Bin?')) return;
+  const { error } = await _sb.from('punch_items').update({ is_deleted: true }).eq('id', id);
+  if (error) { toast('Failed: ' + error.message, 'error'); return; }
+  const p = PUNCH_DB.find(x => x.id === id); if (p) p.is_deleted = true;
+  closeModal(); toast('Moved to Recycle Bin', 'success'); renderPunchWorkflow();
 }
 
-function viewPhoto(src) {
-  modal({
-    title: 'Photo',
-    body: `<img src="${src}" style="width:100%;border-radius:8px;">`,
-    footer: `<button class="admin-action-btn" onclick="closeModal()">Close</button>`,
-  });
+async function restorePunch(id) {
+  const { error } = await _sb.from('punch_items').update({ is_deleted: false }).eq('id', id);
+  if (error) { toast('Failed: ' + error.message, 'error'); return; }
+  const p = PUNCH_DB.find(x => x.id === id); if (p) p.is_deleted = false;
+  closeModal(); toast('Restored', 'success'); renderPunchWorkflow();
+}
+
+function _punchFormHTML(p) {
+  const phases = LOCS.filter(l => l.level === 1).sort((a,b) => a.sort_order - b.sort_order);
+  const locs   = p?.phase ? LOCS.filter(l => l.level === 2 && l.parent_id === p.phase) : [];
+  const v = (id) => p ? escapeHtml(p[id]||'') : '';
+  const sel = (id, val) => p?.[id] === val ? 'selected' : '';
+  return `
+    <div class="form-grid">
+      <div class="form-field form-field-full">
+        <label>Title *</label>
+        <input type="text" id="np-title" class="form-input" placeholder="Describe the punch item" value="${v('title')}">
+      </div>
+      <div class="form-field">
+        <label>Type *</label>
+        <select id="np-type" class="form-input">
+          <option value="">Select…</option>
+          ${['Defect','Issue','NCR','Observation','RFI'].map(t=>`<option ${sel('type',t)}>${t}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Priority *</label>
+        <select id="np-priority" class="form-input">
+          ${['Low','Medium','High','Critical'].map(t=>`<option ${sel('priority',t)||(!p&&t==='Medium'?'selected':'')}>${t}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Punch Item Manager *</label>
+        <input type="text" id="np-pim" class="form-input" placeholder="Name" value="${p?v('punch_item_manager'):escapeHtml(currentRoleUser?.name||'')}">
+      </div>
+      <div class="form-field">
+        <label>Final Approver *</label>
+        <input type="text" id="np-approver" class="form-input" placeholder="Name" value="${v('final_approver')}">
+      </div>
+      <div class="form-field form-field-full">
+        <label>Assignees <span style="font-weight:400;color:var(--gray-500);">(comma-separated)</span></label>
+        <input type="text" id="np-assignees" class="form-input" placeholder="Name 1, Name 2" value="${p?(p.assignees||[]).join(', '):''}">
+      </div>
+      <div class="form-field form-field-full">
+        <label>Distribution List <span style="font-weight:400;color:var(--gray-500);">(comma-separated)</span></label>
+        <input type="text" id="np-distlist" class="form-input" placeholder="Name 1, Name 2" value="${p?(p.distribution_list||[]).join(', '):''}">
+      </div>
+      <div class="form-field">
+        <label>Phase</label>
+        <select id="np-phase" class="form-input" onchange="npFilterLoc()">
+          <option value="">Select phase…</option>
+          ${phases.map(ph=>`<option value="${ph.id}" ${p?.phase===ph.id?'selected':''}>${escapeHtml(ph.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Location</label>
+        <select id="np-location" class="form-input">
+          ${locs.length ? '<option value="">Select location…</option>'+locs.map(l=>`<option value="${l.id}" ${p?.location===l.id?'selected':''}>${escapeHtml(l.name)}</option>`).join('')
+            : '<option value="">Select phase first…</option>'}
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Subsystem *</label>
+        <select id="np-subsystem" class="form-input">
+          <option value="">Select…</option>
+          ${SUBSYSTEMS_LIST.map(s=>`<option ${sel('subsystem',s)}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Schedule Impact</label>
+        <select id="np-schedule" class="form-input">
+          <option value="">None</option>
+          ${['Minor','Moderate','Major','Critical'].map(s=>`<option ${sel('schedule_impact',s)}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Due Date</label>
+        <input type="date" id="np-due" class="form-input" value="${v('due_date')}">
+      </div>
+      <div class="form-field form-field-full">
+        <label>Description</label>
+        <textarea id="np-desc" class="form-input" rows="4" placeholder="Describe the issue in detail…">${v('description')}</textarea>
+      </div>
+      <div class="form-field">
+        <label>Category of Test Failure</label>
+        <select id="np-cat" class="form-input">
+          <option value="">Select…</option>
+          ${['Hardware Failure','Software Defect','Procedure Issue','Documentation Error','Integration Issue','Environmental','Design Issue','Other'].map(s=>`<option ${sel('category_of_failure',s)}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Type of Failure</label>
+        <select id="np-failtype" class="form-input">
+          <option value="">Select…</option>
+          ${['First Occurrence','Repeat Failure','Systematic Issue'].map(s=>`<option ${sel('type_of_failure',s)}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-field">
+        <label>RTC / Work Item ID</label>
+        <input type="text" id="np-rtc" class="form-input" placeholder="e.g. RTC-12345" value="${v('rtc_work_item_id')}">
+      </div>
+      <div class="form-field" style="display:flex;align-items:center;gap:8px;padding-top:24px;">
+        <input type="checkbox" id="np-private" style="width:16px;height:16px;" ${p?.is_private?'checked':''}>
+        <label for="np-private" style="cursor:pointer;font-size:13px;">Private — visible to assignees and managers only</label>
+      </div>
+    </div>
+  `;
+}
+
+function npFilterLoc() {
+  const phaseId = document.getElementById('np-phase')?.value;
+  const locSel  = document.getElementById('np-location');
+  if (!locSel) return;
+  const children = phaseId ? LOCS.filter(l => l.parent_id === phaseId).sort((a,b)=>a.sort_order-b.sort_order) : [];
+  locSel.innerHTML = children.length
+    ? '<option value="">Select location…</option>' + children.map(l=>`<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('')
+    : '<option value="">Select phase first…</option>';
 }
 
 function openNewPunchModal() {
   modal({
     title: 'New Punch List Item',
-    sub: 'Create a new issue, defect, or work item',
-    body: `
-      <div class="form-grid">
-        <div class="form-field form-field-full">
-          <label>Title</label>
-          <input type="text" id="np-title" class="form-input" placeholder="Short description of the issue">
-        </div>
-        <div class="form-field">
-          <label>Subsystem</label>
-          <select id="np-subsystem" class="form-input">
-            <option>DCS</option><option>ATS</option><option>IXL</option>
-            <option>CORE CBTC</option><option>PS&TP</option><option>IAMS</option>
-            <option>SCADA</option><option>CYBER</option><option>TCH</option><option>OTHER</option>
-          </select>
-        </div>
-        <div class="form-field">
-          <label>Location</label>
-          <select id="np-location" class="form-input">
-            ${LOCATIONS.map(l => `<option value="${l.name}">${escapeHtml(l.name)}</option>`).join('')}
-          </select>
-        </div>
-        <div class="form-field">
-          <label>Priority</label>
-          <select id="np-priority" class="form-input">
-            <option value="high">High</option>
-            <option value="medium" selected>Medium</option>
-            <option value="low">Low</option>
-          </select>
-        </div>
-        <div class="form-field">
-          <label>Type</label>
-          <select id="np-type" class="form-input">
-            <option>SAT</option><option>FAT</option><option>SW FAT</option>
-            <option>PICO</option><option>Construction</option><option>Other</option>
-          </select>
-        </div>
-        <div class="form-field form-field-full">
-          <label>Description</label>
-          <textarea id="np-desc" class="form-input" rows="4" placeholder="Detailed description of the issue..."></textarea>
-        </div>
-      </div>
-    `,
+    size: 'large',
+    body: _punchFormHTML(null),
     footer: `
-      <button class="admin-action-btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="admin-action-btn" onclick="saveNewPunch()">Create Punch Item</button>
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" onclick="saveNewPunchItem(true)">Save &amp; Create New</button>
+      <button class="form-submit" onclick="saveNewPunchItem(false)">Save</button>
     `,
   });
 }
 
-function saveNewPunch() {
-  const title = document.getElementById('np-title').value.trim();
-  const desc = document.getElementById('np-desc').value.trim();
-  if (!title) { toast('Title is required', 'warn'); return; }
+function openEditPunchModal(id) {
+  const p = PUNCH_DB.find(x => x.id === id);
+  if (!p) return;
+  modal({
+    title: `Edit Punch #${p.number}`,
+    size: 'large',
+    body: _punchFormHTML(p),
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="saveEditPunchItem('${id}')">Save Changes</button>
+    `,
+  });
+}
 
-  const number = Math.max(0, ...PUNCH_ITEMS.map(p => p.number)) + 1;
-  const newPunch = {
-    id: 'punch-' + Date.now(),
-    number,
-    title,
-    description: desc,
-    subsystem: document.getElementById('np-subsystem').value,
-    location: document.getElementById('np-location').value,
-    priority: document.getElementById('np-priority').value,
-    type: document.getElementById('np-type').value,
-    trade: document.getElementById('np-subsystem').value,
-    createdBy: currentRoleUser.name,
-    createdAt: new Date().toISOString(),
-    assignedTo: 'Mustafa Isik',
-    assignedToTechnician: null,
-    status: 'open',
-    photos_before: [],
-    photos_after: [],
-    closure_notes: '',
-    client_approved: false,
-    client_approval_notes: '',
-    history: [
-      { action: 'Created', by: currentRoleUser.name, at: new Date().toISOString(), note: '' },
-      { action: 'Assigned to Punch Manager', by: 'System', at: new Date().toISOString(), note: 'Auto-routed to Mustafa Isik' },
-    ],
+function _readPunchForm() {
+  return {
+    title:              document.getElementById('np-title').value.trim(),
+    type:               document.getElementById('np-type').value,
+    priority:           document.getElementById('np-priority').value,
+    punch_item_manager: document.getElementById('np-pim').value.trim(),
+    final_approver:     document.getElementById('np-approver').value.trim(),
+    assignees:          document.getElementById('np-assignees').value.split(',').map(s=>s.trim()).filter(Boolean),
+    distribution_list:  document.getElementById('np-distlist').value.split(',').map(s=>s.trim()).filter(Boolean),
+    phase:              document.getElementById('np-phase').value || null,
+    location:           document.getElementById('np-location').value || null,
+    subsystem:          document.getElementById('np-subsystem').value || null,
+    schedule_impact:    document.getElementById('np-schedule').value || null,
+    due_date:           document.getElementById('np-due').value || null,
+    description:        document.getElementById('np-desc').value.trim(),
+    category_of_failure:document.getElementById('np-cat').value || null,
+    type_of_failure:    document.getElementById('np-failtype').value || null,
+    rtc_work_item_id:   document.getElementById('np-rtc').value.trim() || null,
+    is_private:         document.getElementById('np-private').checked,
   };
-  PUNCH_ITEMS.unshift(newPunch);
-  logAudit('Punch Created', `Punch #${number}`, escapeHtml(title));
-  closeModal();
-  renderPunchWorkflow();
-  toast(`Punch #${number} created and assigned to Mustafa Isik`, 'success');
+}
+
+async function saveNewPunchItem(createAnother) {
+  const form = _readPunchForm();
+  if (!form.title)               { toast('Title is required', 'error'); return; }
+  if (!form.type)                { toast('Type is required', 'error'); return; }
+  if (!form.punch_item_manager)  { toast('Punch Item Manager is required', 'error'); return; }
+
+  const nextNum = PUNCH_DB.length ? Math.max(...PUNCH_DB.map(p=>p.number||0)) + 1 : 1;
+  const row = {
+    ...form, number: nextNum, status: 'work_required',
+    ball_in_court: form.assignees[0] || null,
+    created_by: currentRoleUser.name,
+    date_notified: new Date().toISOString(),
+    is_deleted: false,
+    history: [{ action: 'Created', by: currentRoleUser.name, at: new Date().toISOString() }],
+  };
+  const { data, error } = await _sb.from('punch_items').insert(row).select().single();
+  if (error) { toast('Save failed: ' + error.message, 'error'); return; }
+  PUNCH_DB.unshift(data);
+  logAudit('Punch Created', `#${nextNum} ${form.title}`);
+  toast(`Punch #${nextNum} created`, 'success');
+  if (createAnother) { closeModal(); openNewPunchModal(); }
+  else { closeModal(); renderPunchWorkflow(); }
+}
+
+async function saveEditPunchItem(id) {
+  const form = _readPunchForm();
+  if (!form.title) { toast('Title is required', 'error'); return; }
+  const p = PUNCH_DB.find(x => x.id === id);
+  if (!p) return;
+  const updates = { ...form, updated_at: new Date().toISOString(),
+    history: [...(p.history||[]), { action: 'Edited', by: currentRoleUser.name, at: new Date().toISOString() }] };
+  const { error } = await _sb.from('punch_items').update(updates).eq('id', id);
+  if (error) { toast('Save failed: ' + error.message, 'error'); return; }
+  Object.assign(p, updates);
+  toast('Punch item updated', 'success');
+  closeModal(); renderPunchWorkflow();
 }
 
 // ==========================================================================
@@ -3865,10 +3978,3 @@ function closeModal() {
   document.getElementById('modal-overlay')?.classList.remove('active');
 }
 
-// ==========================================================================
-// INIT V2
-// ==========================================================================
-document.addEventListener('DOMContentLoaded', () => {
-  // V2 login replaces V1
-  setTimeout(() => initLoginV2(), 100);
-});
