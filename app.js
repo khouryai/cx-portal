@@ -11,7 +11,14 @@ const ORG = DATA.org;
 // ── Supabase config ─────────────────────────────────────────
 const SUPABASE_URL      = 'https://uqtwiucxktljhukmgmxg.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxdHdpdWN4a3Rsamh1a21nbXhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NDMxMDcsImV4cCI6MjA5MzUxOTEwN30.nJuQOOyvGpGphSqiNxrO2_p1oYroev8mVdNn9unxmdI';
-const _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+let _sb = null;
+try {
+  _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  window._sb = _sb;
+  console.log('[Supabase] Client initialized OK');
+} catch(e) {
+  console.error('[Supabase] FAILED to init:', e.message);
+}
 // ────────────────────────────────────────────────────────────
 
 // Color palette (matches CSS)
