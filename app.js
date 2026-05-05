@@ -1783,7 +1783,8 @@ function _adminLocationsHTML() {
           <div class="admin-section-title">Location Hierarchy</div>
           <p class="section-sub">Define phases and stations — used across field intake, templates, and reporting</p>
         </div>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="form-secondary" id="loc-delete-btn" style="display:none;font-size:12px;padding:6px 12px;color:var(--red-600);" onclick="bulkDeleteLocations()">Delete Selected</button>
           <label style="cursor:pointer;">
             <input type="file" accept=".csv" onchange="handleLocationImport(this)" style="display:none">
             <div class="admin-action-btn-secondary" style="display:inline-block;cursor:pointer;padding:9px 16px;font-size:13px;font-weight:600;border:1px solid var(--gray-300);border-radius:var(--radius-sm);">↑ Import CSV</div>
@@ -1791,6 +1792,12 @@ function _adminLocationsHTML() {
           <button class="admin-action-btn-secondary" onclick="downloadLocationTemplate()">↓ CSV Template</button>
           <button class="admin-action-btn" onclick="openAddLocationModal(null, 1)">+ Add Phase</button>
         </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);cursor:pointer;">
+          <input type="checkbox" id="loc-select-all" onchange="locToggleSelectAll(this.checked)"> Select all
+        </label>
+        <span id="loc-selected-count" style="font-size:12px;color:var(--gray-500);"></span>
       </div>
       <div class="loc-tree">
         ${tree.length ? tree.map(n => _renderLocNode(n, 0)).join('') : `<div class="data-card" style="padding:32px;text-align:center;color:var(--gray-500);">No locations yet — click + Add Phase to start, or import a CSV.</div>`}
@@ -1817,6 +1824,7 @@ function _renderLocNode(node, depth) {
     <div class="${levelClass}" style="margin-left:${indent}px;">
       <div class="loc-node-row">
         <div class="loc-node-name">
+          <input type="checkbox" class="loc-cb" data-id="${node.id}" onchange="locUpdateSelection()" style="margin-right:6px;">
           ${depth > 0 ? '<span class="loc-indent">└─</span>' : ''}
           <span class="loc-level-badge">L${node.level}</span>
           ${escapeHtml(node.name)}
@@ -1830,6 +1838,50 @@ function _renderLocNode(node, depth) {
     </div>
     ${node.children.map(c => _renderLocNode(c, depth + 1)).join('')}
   `;
+}
+
+function locToggleSelectAll(checked) {
+  document.querySelectorAll('.loc-cb').forEach(cb => { cb.checked = checked; });
+  locUpdateSelection();
+}
+
+function locUpdateSelection() {
+  const checked = document.querySelectorAll('.loc-cb:checked');
+  const btn = document.getElementById('loc-delete-btn');
+  const count = document.getElementById('loc-selected-count');
+  if (btn) btn.style.display = checked.length ? 'inline-block' : 'none';
+  if (count) count.textContent = checked.length ? `${checked.length} selected` : '';
+}
+
+async function bulkDeleteLocations() {
+  const checked = [...document.querySelectorAll('.loc-cb:checked')];
+  if (!checked.length) return;
+  const ids = checked.map(cb => cb.dataset.id);
+  // Warn if any selected node still has children not also selected
+  const unselectedChildren = LOCS.filter(l => l.parent_id && ids.includes(l.parent_id) && !ids.includes(l.id));
+  if (unselectedChildren.length) {
+    toast(`Some selected locations have sub-locations not selected. Select all children too, or delete them first.`, 'error');
+    return;
+  }
+  if (!confirm(`Delete ${ids.length} location${ids.length > 1 ? 's' : ''}? This cannot be undone.`)) return;
+
+  // Delete children-first order (deepest level first)
+  const ordered = ids.slice().sort((a, b) => {
+    const la = LOCS.find(l => l.id === a)?.level || 0;
+    const lb = LOCS.find(l => l.id === b)?.level || 0;
+    return lb - la;
+  });
+
+  let failed = 0;
+  for (const id of ordered) {
+    const { error } = await _sb.from('locations').delete().eq('id', id);
+    if (error) { console.error('Delete failed for', id, error.message); failed++; }
+    else { const i = LOCS.findIndex(l => l.id === id); if (i !== -1) LOCS.splice(i, 1); }
+  }
+
+  if (failed) toast(`Deleted ${ids.length - failed}, failed ${failed}`, 'warn');
+  else toast(`Deleted ${ids.length} location${ids.length > 1 ? 's' : ''}`, 'success');
+  renderAdminTabBody();
 }
 
 // ==========================================================================
