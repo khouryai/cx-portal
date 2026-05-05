@@ -2128,7 +2128,7 @@ function renderIntakeStep2() {
           <label>Location</label>
           <select id="ai-location" class="form-input" onchange="filterAddTestcases()">
             <option value="">Select location...</option>
-            ${[...new Set(TEST_INSTANCES.map(t => t.location))].sort().map(l => `<option value="${l}">${l}</option>`).join('')}
+            ${[...new Set(TI.map(t => t.Location))].filter(Boolean).sort().map(l => `<option value="${l}">${l}</option>`).join('')}
           </select>
         </div>
         <div class="form-field">
@@ -2231,9 +2231,9 @@ function filterAddTestcases() {
   const loc = document.getElementById('ai-location').value;
   const sel = document.getElementById('ai-testid');
   if (!loc) { sel.innerHTML = '<option value="">Select test case...</option>'; return; }
-  const items = TEST_INSTANCES.filter(t => t.location === loc && t.applicable);
+  const items = TI.filter(t => t.Location === loc);
   sel.innerHTML = '<option value="">Select test case...</option>' +
-    items.map(t => `<option value="${t.id}">${escapeHtml(t.testCode)} · ${escapeHtml(t.testName)}</option>`).join('');
+    items.map(t => `<option value="${t.TestID}">${escapeHtml(t.TestCaseCode)} · ${escapeHtml(t.TestName)}</option>`).join('');
 }
 
 function addIntakeAddition() {
@@ -2244,10 +2244,20 @@ function addIntakeAddition() {
     toast('Please fill in location, test case, and status', 'warn');
     return;
   }
-  const t = TEST_INSTANCES.find(x => x.id === tid);
+  const t = TI.find(x => x.TestID === tid);
   if (!t) return;
   intakeAdditions.push({
-    ...t,
+    id: t.TestID,
+    testCode: t.TestCaseCode,
+    testName: t.TestName,
+    location: t.Location,
+    subsystem: t.Subsystem,
+    phase: t.Phase,
+    activity: t.Activity,
+    testProcedure: t.TestProcedure,
+    templateName: t.Activity || '',
+    applicable: true,
+    _isRealItem: true,
     status,
     blockedReason: document.getElementById('ai-blocked-reason').value,
     failedReason: document.getElementById('ai-failed-reason').value,
@@ -2266,22 +2276,83 @@ function toggleDelayI3(btn, isYes) {
   btn.classList.add('active');
 }
 
-function submitIntakeFinal(count) {
-  // Apply status updates from intake additions
-  intakeAdditions.forEach(a => {
-    const t = TEST_INSTANCES.find(x => x.id === a.id);
-    if (t) {
-      t.status = a.status;
-      t.blockedReason = a.blockedReason;
-      t.failedReason = a.failedReason;
-      t.lastUpdatedBy = currentRoleUser.name;
-      t.lastUpdatedAt = new Date().toISOString();
+async function submitIntakeFinal(count) {
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const todayUpdates = TEST_INSTANCES.filter(t =>
+    t.lastUpdatedBy === currentRoleUser.name &&
+    t.lastUpdatedAt && new Date(t.lastUpdatedAt) >= todayStart &&
+    ['passed', 'failed', 'blocked', 'in_progress'].includes(t.status)
+  );
+  const allItems = [...todayUpdates, ...intakeAdditions];
+
+  const dateVal       = document.getElementById('i3-date')?.value || new Date().toISOString().split('T')[0];
+  const testers       = parseInt(document.getElementById('i3-testers')?.value) || 1;
+  const idleHours     = parseFloat(document.getElementById('i3-idle')?.value) || 0;
+  const delayOccurred = document.querySelector('.toggle-btn.active')?.dataset.val || 'No';
+  const overallNotes  = document.getElementById('i3-notes')?.value || '';
+  const nextDayPlan   = document.getElementById('i3-next')?.value || '';
+
+  const resultMap = { passed: 'Pass', failed: 'Fail', blocked: 'Blocked', in_progress: 'Partial' };
+
+  const resultRows = allItems.map((item, idx) => ({
+    result_id:         'R-' + Date.now() + '-' + idx,
+    test_id:           item._isRealItem ? item.id : null,
+    test_name:         item.testName || null,
+    phase:             item.phase || null,
+    location:          item.location || null,
+    subsystem:         item.subsystem || null,
+    activity:          item.activity || null,
+    test_case_code:    item.testCode || null,
+    test_procedure:    item.testProcedure || item.procedure || null,
+    result:            resultMap[item.status] || 'Partial',
+    completed_by:      currentRoleUser.name,
+    date_tested:       dateVal,
+    submitted_by:      currentRoleUser.name,
+    number_of_testers: testers,
+    failed_reason:     item.failedReason || null,
+    blocked_reason:    item.blockedReason || null,
+    notes:             item.notes || null,
+    new_status:        item.status,
+  }));
+
+  const logRow = {
+    log_id:             'DL-' + Date.now(),
+    log_date:           dateVal,
+    location:           allItems[0]?.location || null,
+    subsystem:          allItems[0]?.subsystem || null,
+    submitted_by:       currentRoleUser.name,
+    number_of_testers:  testers,
+    idle_hours:         idleHours,
+    total_tests_logged: allItems.length,
+    total_passed:       allItems.filter(i => i.status === 'passed').length,
+    total_failed:       allItems.filter(i => i.status === 'failed').length,
+    total_partial:      allItems.filter(i => i.status === 'in_progress').length,
+    total_blocked:      allItems.filter(i => i.status === 'blocked').length,
+    delay_occurred:     delayOccurred,
+    overall_notes:      overallNotes,
+    next_day_plan:      nextDayPlan,
+  };
+
+  try {
+    if (resultRows.length > 0) {
+      const { error: rErr } = await _sb.from('test_results').insert(resultRows);
+      if (rErr) throw rErr;
     }
-  });
-  logAudit('Field Intake Submitted', `${count} test cases logged`, 'Daily report generated');
-  intakeAdditions = [];
-  intakeStep = 1;
-  toast(`Daily log submitted! ${count} tests logged. Report emailed to PM team.`, 'success');
+    const { error: lErr } = await _sb.from('delay_log').insert([logRow]);
+    if (lErr) throw lErr;
+
+    intakeAdditions.forEach(a => {
+      const t = TEST_INSTANCES.find(x => x.id === a.id);
+      if (t) { t.status = a.status; t.blockedReason = a.blockedReason; t.failedReason = a.failedReason; t.lastUpdatedBy = currentRoleUser.name; t.lastUpdatedAt = new Date().toISOString(); }
+    });
+    logAudit('Field Intake Submitted', `${count} test cases logged`, 'Daily report generated');
+    intakeAdditions = [];
+    intakeStep = 1;
+    toast(`Daily log submitted! ${count} tests logged.`, 'success');
+  } catch (err) {
+    console.error('Supabase submit error:', err);
+    toast(`Submit failed: ${err.message}`, 'error');
+  }
   renderFieldIntake();
   renderTestMatrix();
 }
