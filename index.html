@@ -30,7 +30,12 @@
       <a href="#" class="nav-link" data-page="locations">Locations</a>
       <a href="#" class="nav-link" data-page="team">Team</a>
       <a href="#" class="nav-link" data-page="docs">Documents</a>
-      <a href="#" class="nav-link nav-link-field" data-page="field">⊕ Field Log</a>
+      <a href="#" class="nav-link nav-link-field" data-page="login" id="nav-login">⊕ Sign In</a>
+      <a href="#" class="nav-link nav-role" data-page="admin" data-role="admin" style="display:none;">Admin</a>
+      <a href="#" class="nav-link nav-role" data-page="field-intake" data-role="field admin" style="display:none;">Field Intake</a>
+      <a href="#" class="nav-link nav-role" data-page="test-matrix" data-role="field admin punch_manager" style="display:none;">Test Matrix</a>
+      <a href="#" class="nav-link nav-role" data-page="punch-workflow" data-role="punch_manager technician admin client" style="display:none;">Punch Workflow</a>
+      <a href="#" class="nav-link nav-role" data-page="audit" data-role="admin" style="display:none;">Audit Log</a>
     </div>
     <div class="nav-right">
       <span class="project-tag">BART CBTC</span>
@@ -354,22 +359,20 @@
   </div>
 </section>
 
-<!-- ==== FIELD LOGGING ==== -->
-<section class="page" id="page-field">
+<!-- ==== UNIVERSAL LOGIN ==== -->
+<section class="page" id="page-login">
   <div class="page-hero">
     <div class="container">
-      <div class="page-eyebrow">Field Team</div>
-      <h1 class="page-title">Field Logging</h1>
-      <p class="page-sub">Log test results and submit daily delay reports</p>
+      <div class="page-eyebrow">Sign In</div>
+      <h1 class="page-title">Portal Sign In</h1>
+      <p class="page-sub">Sign in to access role-specific tools — admin, field intake, punch workflow</p>
     </div>
   </div>
   <div class="container">
-
-    <!-- LOGIN -->
     <div id="field-login" class="field-login-card">
       <div class="field-login-icon"></div>
-      <h2 class="field-login-title">Field Team Login</h2>
-      <p class="field-login-sub">Enter your 4-digit PIN to access the test logging form</p>
+      <h2 class="field-login-title">Sign In</h2>
+      <p class="field-login-sub">Select your name and enter your 4-digit PIN</p>
       <div class="field-login-form">
         <select id="login-name" class="filter-select login-input">
           <option value="">Select your name</option>
@@ -379,13 +382,98 @@
         </div>
         <button id="login-btn" class="login-btn">Sign In</button>
         <div id="login-error" class="login-error"></div>
+        <div class="login-help">
+          <strong>Demo PINs:</strong><br>
+          Admin (Alex Khoury): 1234 · Field (John Sterrett): 1111<br>
+          Punch Mgr (Mustafa Isik): 5555 · Tech (Davinder Nagra): 6666<br>
+          Client (BART Inspector): 0000
+        </div>
       </div>
     </div>
+  </div>
+</section>
 
-    <!-- LOGGED IN VIEW -->
+<!-- ==== ADMIN PORTAL ==== -->
+<section class="page" id="page-admin">
+  <div class="page-hero">
+    <div class="container">
+      <div class="role-badge role-admin-badge">Admin Portal</div>
+      <h1 class="page-title">Template Management</h1>
+      <p class="page-sub">Create test case templates and deploy them to project locations</p>
+    </div>
+  </div>
+  <div class="container">
+    <div id="admin-content"></div>
+  </div>
+</section>
+
+<!-- ==== FIELD INTAKE (3-step) ==== -->
+<section class="page" id="page-field-intake">
+  <div class="page-hero">
+    <div class="container">
+      <div class="role-badge role-field-badge">Field Team</div>
+      <h1 class="page-title">Field Intake</h1>
+      <p class="page-sub">Submit your daily test results and delay log</p>
+    </div>
+  </div>
+  <div class="container">
+    <div id="field-intake-content"></div>
+  </div>
+</section>
+
+<!-- ==== TEST MATRIX VIEW ==== -->
+<section class="page" id="page-test-matrix">
+  <div class="page-hero">
+    <div class="container">
+      <div class="role-badge role-field-badge">Test Matrix</div>
+      <h1 class="page-title">Test Case Details</h1>
+      <p class="page-sub">Live status — toggle test cases as you complete them</p>
+    </div>
+  </div>
+  <div class="container">
+    <div id="test-matrix-content"></div>
+  </div>
+</section>
+
+<!-- ==== PUNCH WORKFLOW ==== -->
+<section class="page" id="page-punch-workflow">
+  <div class="page-hero">
+    <div class="container">
+      <div class="role-badge role-punch-badge">Punch Workflow</div>
+      <h1 class="page-title" id="pw-title">Punch List Management</h1>
+      <p class="page-sub" id="pw-subtitle">Track issues from creation to client approval</p>
+    </div>
+  </div>
+  <div class="container">
+    <div id="punch-workflow-content"></div>
+  </div>
+</section>
+
+<!-- ==== AUDIT LOG ==== -->
+<section class="page" id="page-audit">
+  <div class="page-hero">
+    <div class="container">
+      <div class="role-badge role-admin-badge">Admin</div>
+      <h1 class="page-title">Audit Log</h1>
+      <p class="page-sub">Complete history of all admin and field actions across the portal</p>
+    </div>
+  </div>
+  <div class="container">
+    <div id="audit-content"></div>
+  </div>
+</section>
+
+<!-- ==== LEGACY FIELD LOGGING (kept as fallback / old form) ==== -->
+<section class="page" id="page-field">
+  <div class="page-hero">
+    <div class="container">
+      <div class="page-eyebrow">Field Team (Legacy)</div>
+      <h1 class="page-title">Field Logging</h1>
+      <p class="page-sub">Direct test result and delay log entry (replaced by 3-step Field Intake)</p>
+    </div>
+  </div>
+  <div class="container">
     <div id="field-app" style="display:none;">
-
-      <!-- User bar -->
       <div class="user-bar">
         <div class="user-bar-left">
           <div class="user-avatar" id="user-avatar">—</div>

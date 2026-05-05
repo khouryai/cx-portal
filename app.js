@@ -1434,5 +1434,1343 @@ function renderQueue() {
 // Hook into init
 const _origInit = document.addEventListener;
 document.addEventListener('DOMContentLoaded', () => {
-  initField();
+  // V1 initField disabled - V2 initLoginV2 below handles login for all roles
+  // initField();
+});
+
+// ==========================================================================
+// PROTOTYPE V2 — Role-based features
+// ==========================================================================
+
+const USERS_V2 = DATA.users_v2 || [];
+const TEMPLATES = DATA.templates || [];
+const LOCATIONS = DATA.locations || [];
+const DEPLOYMENTS = DATA.deployments || [];
+let TEST_INSTANCES = DATA.testInstances || [];
+let PUNCH_ITEMS = DATA.punchItems || [];
+let AUDIT_LOG = DATA.auditLog || [];
+
+const ROLE_LABELS = {
+  admin: 'Admin',
+  field: 'Field',
+  punch_manager: 'Punch Mgr',
+  technician: 'Tech',
+  client: 'Client',
+};
+const ROLE_TITLES = {
+  admin: 'Administrator',
+  field: 'Field Engineer',
+  punch_manager: 'Punch List Manager',
+  technician: 'Technician',
+  client: 'Client / Inspector',
+};
+
+let currentRoleUser = null;
+
+// ==========================================================================
+// LOGIN V2 — supports all 5 roles
+// ==========================================================================
+function initLoginV2() {
+  // Replace the login dropdown with the V2 user list (all roles)
+  const sel = document.getElementById('login-name');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Select your name</option>' +
+    USERS_V2.map(u => `<option value="${escapeHtml(u.name)}">${escapeHtml(u.name)} — ${ROLE_TITLES[u.role]}</option>`).join('');
+
+  // Restore session
+  const saved = sessionStorage.getItem('hitachi_role_user');
+  if (saved) {
+    try {
+      currentRoleUser = JSON.parse(saved);
+      onLoggedIn();
+    } catch {}
+  }
+
+  // Hijack the existing login button
+  const btn = document.getElementById('login-btn');
+  if (btn) {
+    btn.replaceWith(btn.cloneNode(true)); // remove old listeners
+    document.getElementById('login-btn').addEventListener('click', tryLoginV2);
+  }
+  document.getElementById('login-pin')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') tryLoginV2();
+  });
+}
+
+function tryLoginV2() {
+  const name = document.getElementById('login-name').value;
+  const pin = document.getElementById('login-pin').value;
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = '';
+
+  if (!name) { errEl.textContent = 'Please select your name'; return; }
+  if (!pin || pin.length !== 4) { errEl.textContent = 'Please enter your 4-digit PIN'; return; }
+
+  const user = USERS_V2.find(u => u.name === name && u.pin === pin);
+  if (!user) {
+    errEl.textContent = 'Invalid name or PIN. Please try again.';
+    document.getElementById('login-pin').value = '';
+    return;
+  }
+
+  currentRoleUser = { name: user.name, role: user.role, title: user.title };
+  sessionStorage.setItem('hitachi_role_user', JSON.stringify(currentRoleUser));
+  onLoggedIn();
+
+  // Auto-route to the most relevant page for the role
+  const homePage = {
+    admin: 'admin',
+    field: 'field-intake',
+    punch_manager: 'punch-workflow',
+    technician: 'punch-workflow',
+    client: 'punch-workflow',
+  }[user.role] || 'dashboard';
+  showPage(homePage);
+}
+
+function onLoggedIn() {
+  // Show role-specific nav links
+  document.querySelectorAll('.nav-role').forEach(link => {
+    const allowed = (link.dataset.role || '').split(' ');
+    link.style.display = allowed.includes(currentRoleUser.role) ? '' : 'none';
+  });
+
+  // Replace Sign In nav with user pill
+  const navLogin = document.getElementById('nav-login');
+  if (navLogin) navLogin.style.display = 'none';
+
+  // Add user pill in nav (or update existing)
+  let pill = document.getElementById('nav-user-pill');
+  if (!pill) {
+    pill = document.createElement('div');
+    pill.id = 'nav-user-pill';
+    pill.className = 'user-bar-pill';
+    document.querySelector('.nav-right')?.prepend(pill);
+  }
+  const initials = currentRoleUser.name.split(' ').filter(Boolean).slice(0, 2).map(n => n[0]).join('').toUpperCase();
+  pill.innerHTML = `
+    <div class="user-avatar" style="width:28px;height:28px;font-size:11px;">${initials}</div>
+    <div style="font-size:12px;font-weight:500;color:var(--black);">${escapeHtml(currentRoleUser.name)}</div>
+    <button class="logout-mini" onclick="logoutV2()">Sign out</button>
+  `;
+
+  // Render any open page
+  renderAdminPortal();
+  renderFieldIntake();
+  renderTestMatrix();
+  renderPunchWorkflow();
+  renderAuditLog();
+}
+
+function logoutV2() {
+  currentRoleUser = null;
+  sessionStorage.removeItem('hitachi_role_user');
+  document.querySelectorAll('.nav-role').forEach(link => link.style.display = 'none');
+  document.getElementById('nav-user-pill')?.remove();
+  document.getElementById('nav-login').style.display = '';
+  showPage('dashboard');
+}
+
+// ==========================================================================
+// TOAST NOTIFICATIONS
+// ==========================================================================
+function toast(msg, type = 'success') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  const icon = type === 'success' ? '✓' : type === 'error' ? '!' : type === 'warn' ? '⚠' : 'ℹ';
+  el.innerHTML = `<div class="icon">${icon}</div><div>${escapeHtml(msg)}</div>`;
+  document.body.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateY(20px)'; el.style.transition = 'all 0.3s'; }, 3500);
+  setTimeout(() => el.remove(), 4000);
+}
+
+function logAudit(action, target, details, notes = '') {
+  if (!currentRoleUser) return;
+  const entry = {
+    id: 'a-' + Date.now(),
+    user: currentRoleUser.name,
+    role: currentRoleUser.role,
+    action, target, details,
+    timestamp: new Date().toISOString(),
+    notes,
+  };
+  AUDIT_LOG.unshift(entry);
+  renderAuditLog();
+}
+
+function dateAgo(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const now = new Date();
+  const diff = (now - d) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+  if (diff < 604800) return Math.floor(diff/86400) + 'd ago';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// ==========================================================================
+// ADMIN PORTAL — Template Management & Deployment
+// ==========================================================================
+function renderAdminPortal() {
+  const root = document.getElementById('admin-content');
+  if (!root || !currentRoleUser) return;
+  if (currentRoleUser.role !== 'admin') {
+    root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3><p>This area is restricted to Admin role.</p></div>`;
+    return;
+  }
+
+  const nDeployments = DEPLOYMENTS.length;
+  const nTemplates = TEMPLATES.length;
+  const nInstances = TEST_INSTANCES.length;
+  const nApplicable = TEST_INSTANCES.filter(t => t.applicable).length;
+
+  root.innerHTML = `
+    <div class="kpi-grid kpi-grid-mini">
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Templates</div><div class="kpi-value">${nTemplates}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Active Deployments</div><div class="kpi-value">${nDeployments}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Test Cases (Total)</div><div class="kpi-value">${nInstances}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Applicable</div><div class="kpi-value good">${nApplicable}</div></div>
+    </div>
+
+    <div class="admin-section">
+      <div class="admin-section-head">
+        <div>
+          <div class="admin-section-title">Test Case Templates</div>
+          <p class="section-sub">Create reusable templates that can be deployed across multiple locations</p>
+        </div>
+        <button class="admin-action-btn" onclick="openNewTemplateModal()">+ New Template</button>
+      </div>
+      <div class="template-grid">
+        ${TEMPLATES.map(tpl => `
+          <div class="template-card" onclick="openDeployModal('${tpl.id}')">
+            <div class="template-card-head">
+              <span class="template-tag">${escapeHtml(tpl.subsystem)}</span>
+            </div>
+            <div class="template-card-name">${escapeHtml(tpl.name)}</div>
+            <div class="template-card-sub">${escapeHtml(tpl.description)}</div>
+            <div class="template-card-stats">
+              <span><b>${tpl.testCases.length}</b> test cases</span>
+              <span><b>${DEPLOYMENTS.filter(d => d.templateId === tpl.id).length}</b> deployments</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <div class="admin-section">
+      <div class="admin-section-head">
+        <div>
+          <div class="admin-section-title">Recent Deployments</div>
+          <p class="section-sub">Templates deployed to locations with applicability matrices</p>
+        </div>
+      </div>
+      <div class="data-card">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Template</th>
+              <th>Locations</th>
+              <th>Test Cases</th>
+              <th>Deployed By</th>
+              <th>When</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${DEPLOYMENTS.map(d => {
+              const totalTC = d.locations.reduce((sum, l) => sum + l.applicable.length, 0);
+              return `
+                <tr>
+                  <td><span class="cell-name">${escapeHtml(d.templateName)}</span></td>
+                  <td>${d.locations.map(l => `<span class="tag" style="margin-right:4px">${escapeHtml(l.code)}</span>`).join('')}</td>
+                  <td><b>${totalTC}</b> applicable across ${d.locations.length} locations</td>
+                  <td>${escapeHtml(d.deployedBy)}</td>
+                  <td>${dateAgo(d.deployedAt)}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function openDeployModal(templateId) {
+  const tpl = TEMPLATES.find(t => t.id === templateId);
+  if (!tpl) return;
+
+  // Initialize state — all locations off, all TCs on by default if location is on
+  const state = {};
+  LOCATIONS.forEach(loc => {
+    state[loc.code] = { enabled: false, applicable: tpl.testCases.map(tc => tc.code) };
+  });
+
+  modal({
+    title: `Deploy: ${tpl.name}`,
+    sub: `Toggle locations and pick which test cases apply at each one`,
+    size: 'large',
+    body: `
+      <div style="margin-bottom: 16px;">
+        <p style="font-size: 13px; color: var(--gray-700);">
+          Select which locations this template applies to, then refine which test cases apply at each location.
+        </p>
+      </div>
+      <div id="deploy-locs">
+        ${LOCATIONS.map(loc => `
+          <div class="deploy-loc-row" id="dep-row-${loc.code}">
+            <div class="deploy-loc-head">
+              <div class="deploy-loc-toggle" data-code="${loc.code}" onclick="toggleDeployLoc('${loc.code}')"></div>
+              <div class="deploy-loc-name">${escapeHtml(loc.name)}</div>
+              <div class="deploy-loc-count" id="dep-count-${loc.code}">0 of ${tpl.testCases.length} test cases</div>
+            </div>
+            <div class="deploy-tc-list">
+              ${tpl.testCases.map(tc => `
+                <label class="deploy-tc-item">
+                  <input type="checkbox" data-loc="${loc.code}" data-tc="${tc.code}" checked onchange="updateDeployCount('${loc.code}', ${tpl.testCases.length})">
+                  <span>${escapeHtml(tc.code)} · ${escapeHtml(tc.name)}</span>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `,
+    footer: `
+      <button class="admin-action-btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn" onclick="confirmDeploy('${templateId}')">Deploy to Selected Locations</button>
+    `,
+  });
+
+  // Set initial state
+  setTimeout(() => {
+    LOCATIONS.forEach(loc => updateDeployCount(loc.code, tpl.testCases.length));
+  }, 50);
+}
+
+function toggleDeployLoc(code) {
+  const toggle = document.querySelector(`.deploy-loc-toggle[data-code="${code}"]`);
+  const row = document.getElementById(`dep-row-${code}`);
+  toggle.classList.toggle('on');
+  row.classList.toggle('disabled', !toggle.classList.contains('on'));
+}
+
+function updateDeployCount(code, total) {
+  const checked = document.querySelectorAll(`input[data-loc="${code}"]:checked`).length;
+  const el = document.getElementById(`dep-count-${code}`);
+  if (el) el.textContent = `${checked} of ${total} test cases`;
+}
+
+function confirmDeploy(templateId) {
+  const tpl = TEMPLATES.find(t => t.id === templateId);
+  const enabledLocs = [];
+
+  LOCATIONS.forEach(loc => {
+    const toggle = document.querySelector(`.deploy-loc-toggle[data-code="${loc.code}"]`);
+    if (!toggle.classList.contains('on')) return;
+    const applicable = [];
+    document.querySelectorAll(`input[data-loc="${loc.code}"]:checked`).forEach(cb => {
+      applicable.push(cb.dataset.tc);
+    });
+    if (applicable.length > 0) enabledLocs.push({ code: loc.code, applicable, notes: '' });
+  });
+
+  if (enabledLocs.length === 0) {
+    toast('Please select at least one location with test cases', 'warn');
+    return;
+  }
+
+  // Add deployment
+  const newDep = {
+    id: 'dep-' + Date.now(),
+    templateId,
+    templateName: tpl.name,
+    deployedBy: currentRoleUser.name,
+    deployedAt: new Date().toISOString(),
+    locations: enabledLocs,
+  };
+  DEPLOYMENTS.unshift(newDep);
+
+  // Generate test instances
+  enabledLocs.forEach(loc => {
+    loc.applicable.forEach(tcCode => {
+      const tc = tpl.testCases.find(t => t.code === tcCode);
+      TEST_INSTANCES.push({
+        id: `ti-${newDep.id}-${loc.code}-${tcCode}`,
+        deploymentId: newDep.id,
+        templateName: tpl.name,
+        subsystem: tpl.subsystem,
+        location: loc.code,
+        testCode: tcCode,
+        testName: tc.name,
+        procedure: tc.procedure,
+        duration: tc.duration,
+        status: 'not_started',
+        applicable: true,
+        lastUpdatedBy: null,
+        lastUpdatedAt: null,
+        notes: '',
+      });
+    });
+  });
+
+  logAudit('Deployed Template',
+    `${tpl.name} to ${enabledLocs.map(l => l.code).join(', ')}`,
+    `${enabledLocs.reduce((s, l) => s + l.applicable.length, 0)} test cases created`);
+
+  closeModal();
+  toast(`Deployed ${tpl.name} to ${enabledLocs.length} location${enabledLocs.length > 1 ? 's' : ''}`, 'success');
+  renderAdminPortal();
+  renderTestMatrix();
+}
+
+function openNewTemplateModal() {
+  modal({
+    title: 'Create Template',
+    sub: 'Define a reusable test case template',
+    body: `
+      <div class="form-grid">
+        <div class="form-field form-field-full">
+          <label>Template Name</label>
+          <input type="text" id="ntpl-name" class="form-input" placeholder="e.g. CBTC Wayside SAT">
+        </div>
+        <div class="form-field">
+          <label>Subsystem</label>
+          <select id="ntpl-subsystem" class="form-input">
+            <option>DCS</option><option>ATS</option><option>IXL</option>
+            <option>CORE CBTC</option><option>PS&TP</option><option>IAMS</option>
+            <option>SCADA</option><option>CYBER</option><option>TCH</option>
+          </select>
+        </div>
+        <div class="form-field form-field-full">
+          <label>Description</label>
+          <textarea id="ntpl-desc" class="form-input" rows="2" placeholder="What does this template cover?"></textarea>
+        </div>
+        <div class="form-field form-field-full">
+          <label>Test Cases (one per line, format: CODE | Name | Procedure)</label>
+          <textarea id="ntpl-cases" class="form-input" rows="8" placeholder="DCS-SAT-01 | Network Test | CDRL 9.04.53"></textarea>
+        </div>
+      </div>
+    `,
+    footer: `
+      <button class="admin-action-btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn" onclick="saveNewTemplate()">Create Template</button>
+    `,
+  });
+}
+
+function saveNewTemplate() {
+  const name = document.getElementById('ntpl-name').value.trim();
+  const subsystem = document.getElementById('ntpl-subsystem').value;
+  const desc = document.getElementById('ntpl-desc').value.trim();
+  const casesText = document.getElementById('ntpl-cases').value.trim();
+  if (!name || !casesText) {
+    toast('Name and test cases required', 'error');
+    return;
+  }
+  const testCases = casesText.split('\n').map(line => {
+    const parts = line.split('|').map(p => p.trim());
+    return { code: parts[0] || '', name: parts[1] || '', procedure: parts[2] || '', duration: 1 };
+  }).filter(tc => tc.code && tc.name);
+
+  const newTpl = {
+    id: 'tpl-' + Date.now(),
+    name, subsystem, description: desc,
+    createdBy: currentRoleUser.name,
+    createdAt: new Date().toISOString(),
+    testCases,
+  };
+  TEMPLATES.push(newTpl);
+  logAudit('Created Template', name, `${testCases.length} test cases`);
+  closeModal();
+  toast(`Created template: ${name}`, 'success');
+  renderAdminPortal();
+}
+
+// ==========================================================================
+// TEST MATRIX VIEW — Live status toggle scratchpad
+// ==========================================================================
+let matrixFilter = { location: '', subsystem: '', applicable: 'all' };
+
+function renderTestMatrix() {
+  const root = document.getElementById('test-matrix-content');
+  if (!root || !currentRoleUser) return;
+
+  // Stats
+  const filtered = TEST_INSTANCES.filter(t =>
+    (!matrixFilter.location || t.location === matrixFilter.location) &&
+    (!matrixFilter.subsystem || t.subsystem === matrixFilter.subsystem) &&
+    (matrixFilter.applicable === 'all' ||
+      (matrixFilter.applicable === 'yes' && t.applicable) ||
+      (matrixFilter.applicable === 'no' && !t.applicable))
+  );
+
+  const totals = {
+    passed: filtered.filter(t => t.applicable && t.status === 'passed').length,
+    failed: filtered.filter(t => t.applicable && t.status === 'failed').length,
+    blocked: filtered.filter(t => t.applicable && t.status === 'blocked').length,
+    inProgress: filtered.filter(t => t.applicable && t.status === 'in_progress').length,
+    notStarted: filtered.filter(t => t.applicable && t.status === 'not_started').length,
+  };
+
+  // Group by location > subsystem > template
+  const groups = {};
+  filtered.forEach(t => {
+    const key = `${t.location} · ${t.subsystem} · ${t.templateName}`;
+    if (!groups[key]) groups[key] = { location: t.location, subsystem: t.subsystem, template: t.templateName, items: [] };
+    groups[key].items.push(t);
+  });
+
+  const isAdmin = currentRoleUser.role === 'admin';
+
+  root.innerHTML = `
+    <div class="matrix-summary">
+      <div class="matrix-stat"><div class="matrix-stat-label">Passed</div><div class="matrix-stat-value good">${totals.passed}</div></div>
+      <div class="matrix-stat"><div class="matrix-stat-label">Failed</div><div class="matrix-stat-value bad">${totals.failed}</div></div>
+      <div class="matrix-stat"><div class="matrix-stat-label">Blocked</div><div class="matrix-stat-value warn">${totals.blocked}</div></div>
+      <div class="matrix-stat"><div class="matrix-stat-label">In Progress</div><div class="matrix-stat-value info">${totals.inProgress}</div></div>
+      <div class="matrix-stat"><div class="matrix-stat-label">Not Started</div><div class="matrix-stat-value">${totals.notStarted}</div></div>
+    </div>
+
+    <div class="matrix-filter-bar">
+      <select class="filter-select" id="mx-loc" onchange="updateMatrixFilter()">
+        <option value="">All Locations</option>
+        ${LOCATIONS.map(l => `<option value="${l.code}" ${matrixFilter.location === l.code ? 'selected' : ''}>${escapeHtml(l.name)}</option>`).join('')}
+      </select>
+      <select class="filter-select" id="mx-sub" onchange="updateMatrixFilter()">
+        <option value="">All Subsystems</option>
+        ${[...new Set(TEST_INSTANCES.map(t => t.subsystem))].sort().map(s => `<option value="${s}" ${matrixFilter.subsystem === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+      </select>
+      <select class="filter-select" id="mx-app" onchange="updateMatrixFilter()">
+        <option value="all" ${matrixFilter.applicable === 'all' ? 'selected' : ''}>All test cases</option>
+        <option value="yes" ${matrixFilter.applicable === 'yes' ? 'selected' : ''}>Applicable only</option>
+        <option value="no" ${matrixFilter.applicable === 'no' ? 'selected' : ''}>Not applicable only</option>
+      </select>
+    </div>
+
+    ${Object.keys(groups).length === 0 ? `
+      <div class="docs-empty">
+        <h3>No test cases match your filters</h3>
+        <p>Try clearing filters or selecting a different location.</p>
+      </div>
+    ` : Object.values(groups).map(g => `
+      <div class="matrix-section">
+        <div class="matrix-section-head">
+          <div>
+            <div class="matrix-section-title">${escapeHtml(g.location)} — ${escapeHtml(g.subsystem)}</div>
+            <div class="matrix-section-meta">${escapeHtml(g.template)} · ${g.items.length} test cases</div>
+          </div>
+          <div class="matrix-section-meta">
+            ${g.items.filter(t => t.applicable && t.status === 'passed').length} / ${g.items.filter(t => t.applicable).length} passed
+          </div>
+        </div>
+        ${g.items.map(t => renderMatrixRow(t, isAdmin)).join('')}
+      </div>
+    `).join('')}
+  `;
+}
+
+function renderMatrixRow(t, isAdmin) {
+  const statuses = ['passed', 'failed', 'blocked', 'in_progress'];
+  const labels = { passed: 'Pass', failed: 'Fail', blocked: 'Block', in_progress: 'In Progress' };
+  return `
+    <div class="matrix-tc-row ${!t.applicable ? 'not-applicable' : ''}">
+      <div class="matrix-tc-code">${escapeHtml(t.testCode)}</div>
+      <div>
+        <div class="matrix-tc-name">${escapeHtml(t.testName)}</div>
+        <div class="matrix-tc-meta">
+          ${escapeHtml(t.procedure)}
+          ${t.lastUpdatedBy ? `· last updated by <b>${escapeHtml(t.lastUpdatedBy)}</b> ${dateAgo(t.lastUpdatedAt)}` : ''}
+          ${!t.applicable && t.naReason ? `· <span style="color:var(--bad)">${escapeHtml(t.naReason)}</span>` : ''}
+        </div>
+      </div>
+      <div class="matrix-tc-status-buttons">
+        ${statuses.map(s => `
+          <button class="tc-status-btn ${t.status === s ? 'active ' + s : ''}"
+            onclick="setTestStatus('${t.id}', '${s}')"
+            ${!t.applicable ? 'disabled' : ''}>${labels[s]}</button>
+        `).join('')}
+      </div>
+      ${isAdmin ? `
+        <button class="tc-na-toggle" onclick="toggleNA('${t.id}')">
+          ${t.applicable ? 'Mark N/A' : 'N/A — restore'}
+        </button>
+      ` : ''}
+    </div>
+  `;
+}
+
+function updateMatrixFilter() {
+  matrixFilter.location = document.getElementById('mx-loc').value;
+  matrixFilter.subsystem = document.getElementById('mx-sub').value;
+  matrixFilter.applicable = document.getElementById('mx-app').value;
+  renderTestMatrix();
+}
+
+function setTestStatus(id, status) {
+  const t = TEST_INSTANCES.find(x => x.id === id);
+  if (!t) return;
+  t.status = status;
+  t.lastUpdatedBy = currentRoleUser.name;
+  t.lastUpdatedAt = new Date().toISOString();
+  logAudit('Test Status Update', `${t.testCode} @ ${t.location}`, `→ ${status}`);
+  renderTestMatrix();
+  toast(`${t.testCode} marked ${status}`, 'success');
+}
+
+function toggleNA(id) {
+  const t = TEST_INSTANCES.find(x => x.id === id);
+  if (!t) return;
+  t.applicable = !t.applicable;
+  if (!t.applicable) {
+    const reason = prompt('Reason for marking N/A?');
+    if (reason === null) { t.applicable = true; return; }
+    t.naReason = reason;
+    logAudit('Toggled N/A', `${t.testCode} @ ${t.location}`, 'Marked Not Applicable', reason);
+  } else {
+    t.naReason = '';
+    logAudit('Toggled N/A', `${t.testCode} @ ${t.location}`, 'Restored as Applicable');
+  }
+  renderTestMatrix();
+  toast(`${t.testCode} ${t.applicable ? 'restored as applicable' : 'marked N/A'}`, 'success');
+}
+
+// ==========================================================================
+// FIELD INTAKE — 3 step workflow
+// ==========================================================================
+let intakeStep = 1;
+let intakeAdditions = [];
+
+function renderFieldIntake() {
+  const root = document.getElementById('field-intake-content');
+  if (!root || !currentRoleUser) return;
+  if (!['field', 'admin'].includes(currentRoleUser.role)) {
+    root.innerHTML = `<div class="docs-empty"><h3>Field & Admin only</h3></div>`;
+    return;
+  }
+
+  // Get test cases the field user has toggled today
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const todayUpdates = TEST_INSTANCES.filter(t =>
+    t.lastUpdatedBy === currentRoleUser.name &&
+    t.lastUpdatedAt &&
+    new Date(t.lastUpdatedAt) >= todayStart &&
+    ['passed', 'failed', 'blocked', 'in_progress'].includes(t.status)
+  );
+
+  const allItems = [...todayUpdates, ...intakeAdditions];
+
+  root.innerHTML = `
+    <div class="intake-stepper">
+      <div class="intake-step ${intakeStep >= 1 ? 'active' : ''} ${intakeStep > 1 ? 'completed' : ''}">
+        <span class="intake-step-num">1</span>Review Today's Tests
+      </div>
+      <div class="intake-step ${intakeStep === 2 ? 'active' : intakeStep > 2 ? 'completed' : ''}">
+        <span class="intake-step-num">2</span>Add Missing Items
+      </div>
+      <div class="intake-step ${intakeStep === 3 ? 'active' : ''}">
+        <span class="intake-step-num">3</span>Submit Daily Log
+      </div>
+    </div>
+    ${intakeStep === 1 ? renderIntakeStep1(allItems) :
+      intakeStep === 2 ? renderIntakeStep2() :
+      renderIntakeStep3(allItems)}
+  `;
+}
+
+function renderIntakeStep1(items) {
+  if (items.length === 0) {
+    return `
+      <div class="form-card">
+        <h3 class="form-card-title">Step 1: Review Today's Tests</h3>
+        <p class="form-card-sub">These are the test cases you toggled in the Test Matrix today.</p>
+        <div class="intake-summary-empty">
+          <h3 style="font-size: 16px; margin-bottom: 8px;">No tests logged today</h3>
+          <p style="font-size: 13px;">Open the Test Matrix and toggle statuses on test cases as you work, or skip to Step 2 to add items manually.</p>
+        </div>
+        <div class="form-actions">
+          <button class="form-secondary" onclick="showPage('test-matrix')">Open Test Matrix</button>
+          <button class="form-submit" onclick="setIntakeStep(2)">Continue to Step 2 →</button>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="form-card">
+      <h3 class="form-card-title">Step 1: Review Today's Tests</h3>
+      <p class="form-card-sub">${items.length} test case${items.length > 1 ? 's' : ''} toggled today. Verify these are correct before submitting.</p>
+      <div class="intake-summary-list">
+        ${items.map(t => {
+          const statusBg = t.status === 'passed' ? 'badge-passed' :
+                           t.status === 'failed' ? 'badge-failed' :
+                           t.status === 'blocked' ? 'badge-pending' : 'badge-progress';
+          return `
+            <div class="intake-summary-row">
+              <span class="badge ${statusBg}">${t.status}</span>
+              <div>
+                <div style="font-weight: 600; font-size: 13px;">${escapeHtml(t.testCode)} · ${escapeHtml(t.testName)}</div>
+                <div style="font-size: 11px; color: var(--gray-700); margin-top: 2px;">${escapeHtml(t.location)} · ${escapeHtml(t.subsystem)} · ${escapeHtml(t.templateName)}</div>
+              </div>
+              <div style="font-size: 11px; color: var(--gray-700);">${dateAgo(t.lastUpdatedAt)}</div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+      <div class="form-actions">
+        <button class="form-secondary" onclick="showPage('test-matrix')">↺ Edit in Test Matrix</button>
+        <button class="form-submit" onclick="setIntakeStep(2)">Continue to Step 2 →</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderIntakeStep2() {
+  return `
+    <div class="form-card">
+      <h3 class="form-card-title">Step 2: Add Missing Items</h3>
+      <p class="form-card-sub">Add any test cases you completed today that aren't already in your list.</p>
+
+      <div id="intake-additions" style="margin-bottom:16px;">
+        ${intakeAdditions.length === 0 ?
+          '<div class="form-hint">No additional items yet</div>' :
+          intakeAdditions.map((a, i) => `
+            <div class="intake-summary-row" style="background: var(--gray-50); border-radius: 8px; margin-bottom: 6px;">
+              <span class="badge badge-${a.status === 'passed' ? 'passed' : a.status === 'failed' ? 'failed' : a.status === 'blocked' ? 'pending' : 'progress'}">${a.status}</span>
+              <div>
+                <div style="font-weight: 600; font-size: 13px;">${escapeHtml(a.testCode)} · ${escapeHtml(a.testName)}</div>
+                <div style="font-size: 11px; color: var(--gray-700); margin-top: 2px;">${escapeHtml(a.location)} · ${escapeHtml(a.subsystem)}</div>
+              </div>
+              <button class="logout-mini" onclick="removeIntakeAddition(${i})">Remove</button>
+            </div>
+          `).join('')
+        }
+      </div>
+
+      <div class="form-grid">
+        <div class="form-field">
+          <label>Location</label>
+          <select id="ai-location" class="form-input" onchange="filterAddTestcases()">
+            <option value="">Select location...</option>
+            ${[...new Set(TEST_INSTANCES.map(t => t.location))].sort().map(l => `<option value="${l}">${l}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Test Case</label>
+          <select id="ai-testid" class="form-input"></select>
+        </div>
+        <div class="form-field form-field-full">
+          <label>Status</label>
+          <div class="result-buttons">
+            <button type="button" class="result-btn result-pass" data-value="passed" onclick="selectAddStatus(this, 'passed')">Pass</button>
+            <button type="button" class="result-btn result-fail" data-value="failed" onclick="selectAddStatus(this, 'failed')">Fail</button>
+            <button type="button" class="result-btn result-partial" data-value="blocked" onclick="selectAddStatus(this, 'blocked')">Blocked</button>
+            <button type="button" class="result-btn result-blocked" data-value="in_progress" onclick="selectAddStatus(this, 'in_progress')">In Progress</button>
+          </div>
+        </div>
+        <div class="form-field form-field-full" id="ai-blocked-block" style="display:none;">
+          <label>Blocking Reason</label>
+          <textarea id="ai-blocked-reason" class="form-input" rows="2" placeholder="Why is this blocked? Who can resolve?"></textarea>
+        </div>
+        <div class="form-field form-field-full" id="ai-failed-block" style="display:none;">
+          <label>Failure Reason</label>
+          <textarea id="ai-failed-reason" class="form-input" rows="2" placeholder="What went wrong?"></textarea>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button class="form-secondary" onclick="setIntakeStep(1)">← Back</button>
+        <button class="form-secondary" onclick="addIntakeAddition()">+ Add to Queue</button>
+        <button class="form-submit" onclick="setIntakeStep(3)">Continue to Step 3 →</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderIntakeStep3(items) {
+  return `
+    <div class="form-card">
+      <h3 class="form-card-title">Step 3: Submit Daily Log</h3>
+      <p class="form-card-sub">Review the day's summary and submit. Punch list manager and project leadership will receive the daily report email.</p>
+
+      <div class="form-grid">
+        <div class="form-field form-field-full">
+          <div class="counts-grid">
+            <div class="count-tile good"><div class="count-label">Total</div><div class="count-value">${items.length}</div></div>
+            <div class="count-tile good"><div class="count-label">Passed</div><div class="count-value">${items.filter(i => i.status === 'passed').length}</div></div>
+            <div class="count-tile bad"><div class="count-label">Failed</div><div class="count-value">${items.filter(i => i.status === 'failed').length}</div></div>
+            <div class="count-tile warn"><div class="count-label">Blocked</div><div class="count-value">${items.filter(i => i.status === 'blocked').length}</div></div>
+            <div class="count-tile"><div class="count-label">In Progress</div><div class="count-value">${items.filter(i => i.status === 'in_progress').length}</div></div>
+          </div>
+        </div>
+
+        <div class="form-field">
+          <label>Date</label>
+          <input type="date" id="i3-date" class="form-input" value="${new Date().toISOString().split('T')[0]}">
+        </div>
+        <div class="form-field">
+          <label>Number of Testers</label>
+          <input type="number" id="i3-testers" class="form-input" value="2" min="1">
+        </div>
+        <div class="form-field">
+          <label>Idle Hours</label>
+          <input type="number" id="i3-idle" class="form-input" value="0" min="0" step="0.5">
+        </div>
+        <div class="form-field">
+          <label>Was there a delay?</label>
+          <div class="delay-toggle">
+            <button type="button" class="toggle-btn active" data-val="No" onclick="toggleDelayI3(this, false)">No</button>
+            <button type="button" class="toggle-btn" data-val="Yes" onclick="toggleDelayI3(this, true)">Yes</button>
+          </div>
+        </div>
+
+        <div class="form-field form-field-full">
+          <label>Overall Day Notes</label>
+          <textarea id="i3-notes" class="form-input" rows="3" placeholder="Summary of the day's work..."></textarea>
+        </div>
+        <div class="form-field form-field-full">
+          <label>Plan for Next Day</label>
+          <textarea id="i3-next" class="form-input" rows="2" placeholder="What's planned tomorrow?"></textarea>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button class="form-secondary" onclick="setIntakeStep(2)">← Back</button>
+        <button class="form-submit" onclick="submitIntakeFinal(${items.length})">Submit Daily Log + Send Report</button>
+      </div>
+    </div>
+  `;
+}
+
+function setIntakeStep(s) { intakeStep = s; renderFieldIntake(); }
+
+function selectAddStatus(btn, status) {
+  document.querySelectorAll('.result-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  document.getElementById('ai-blocked-block').style.display = status === 'blocked' ? '' : 'none';
+  document.getElementById('ai-failed-block').style.display = status === 'failed' ? '' : 'none';
+}
+
+function filterAddTestcases() {
+  const loc = document.getElementById('ai-location').value;
+  const sel = document.getElementById('ai-testid');
+  if (!loc) { sel.innerHTML = '<option value="">Select test case...</option>'; return; }
+  const items = TEST_INSTANCES.filter(t => t.location === loc && t.applicable);
+  sel.innerHTML = '<option value="">Select test case...</option>' +
+    items.map(t => `<option value="${t.id}">${escapeHtml(t.testCode)} · ${escapeHtml(t.testName)}</option>`).join('');
+}
+
+function addIntakeAddition() {
+  const loc = document.getElementById('ai-location').value;
+  const tid = document.getElementById('ai-testid').value;
+  const status = document.querySelector('.result-btn.selected')?.dataset.value;
+  if (!loc || !tid || !status) {
+    toast('Please fill in location, test case, and status', 'warn');
+    return;
+  }
+  const t = TEST_INSTANCES.find(x => x.id === tid);
+  if (!t) return;
+  intakeAdditions.push({
+    ...t,
+    status,
+    blockedReason: document.getElementById('ai-blocked-reason').value,
+    failedReason: document.getElementById('ai-failed-reason').value,
+  });
+  toast('Added to queue', 'success');
+  renderFieldIntake();
+}
+
+function removeIntakeAddition(i) {
+  intakeAdditions.splice(i, 1);
+  renderFieldIntake();
+}
+
+function toggleDelayI3(btn, isYes) {
+  document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function submitIntakeFinal(count) {
+  // Apply status updates from intake additions
+  intakeAdditions.forEach(a => {
+    const t = TEST_INSTANCES.find(x => x.id === a.id);
+    if (t) {
+      t.status = a.status;
+      t.blockedReason = a.blockedReason;
+      t.failedReason = a.failedReason;
+      t.lastUpdatedBy = currentRoleUser.name;
+      t.lastUpdatedAt = new Date().toISOString();
+    }
+  });
+  logAudit('Field Intake Submitted', `${count} test cases logged`, 'Daily report generated');
+  intakeAdditions = [];
+  intakeStep = 1;
+  toast(`Daily log submitted! ${count} tests logged. Report emailed to PM team.`, 'success');
+  renderFieldIntake();
+  renderTestMatrix();
+}
+
+// ==========================================================================
+// PUNCH WORKFLOW — Kanban + Detail
+// ==========================================================================
+function renderPunchWorkflow() {
+  const root = document.getElementById('punch-workflow-content');
+  if (!root || !currentRoleUser) return;
+
+  // Filter punches by role
+  let visible = PUNCH_ITEMS;
+  if (currentRoleUser.role === 'technician') {
+    visible = PUNCH_ITEMS.filter(p => p.assignedToTechnician === currentRoleUser.name || p.status === 'open');
+  } else if (currentRoleUser.role === 'client') {
+    visible = PUNCH_ITEMS.filter(p => p.status === 'client_approval_pending' || (p.status === 'closed' && p.client_approved));
+  }
+
+  // Update title/subtitle by role
+  document.getElementById('pw-title').textContent =
+    currentRoleUser.role === 'client' ? 'Punch List — Client Approvals' :
+    currentRoleUser.role === 'technician' ? 'My Assigned Punch Items' :
+    'Punch List Management';
+
+  // Group by status
+  const cols = {
+    open: visible.filter(p => p.status === 'open' || (p.status === 'in_progress' && currentRoleUser.role === 'punch_manager')),
+    in_progress: visible.filter(p => p.status === 'in_progress'),
+    ready_for_signoff: visible.filter(p => p.status === 'ready_for_signoff'),
+    client_approval_pending: visible.filter(p => p.status === 'client_approval_pending'),
+    closed: visible.filter(p => p.status === 'closed').slice(0, 5),
+  };
+
+  const showCreateBtn = ['admin', 'field', 'punch_manager'].includes(currentRoleUser.role);
+
+  root.innerHTML = `
+    ${showCreateBtn ? `
+      <div class="admin-section-head" style="margin-bottom:16px;">
+        <div></div>
+        <button class="admin-action-btn" onclick="openNewPunchModal()">+ Create Punch Item</button>
+      </div>
+    ` : ''}
+
+    <div class="punch-board">
+      ${[
+        ['Open / Assignable', 'open'],
+        ['In Progress', 'in_progress'],
+        ['Ready for Sign-off', 'ready_for_signoff'],
+        ['Client Approval', 'client_approval_pending'],
+      ].map(([title, key]) => `
+        <div class="punch-column">
+          <div class="punch-column-head">
+            <div class="punch-column-title">${title}</div>
+            <div class="punch-column-count">${cols[key].length}</div>
+          </div>
+          ${cols[key].length === 0 ?
+            '<div style="font-size:12px;color:var(--gray-500);text-align:center;padding:20px 0;">No items</div>' :
+            cols[key].map(p => renderPunchCard(p)).join('')
+          }
+        </div>
+      `).join('')}
+    </div>
+
+    ${cols.closed.length > 0 ? `
+      <div class="admin-section" style="margin-top: 32px;">
+        <div class="admin-section-title" style="margin-bottom: 12px;">Recently Closed</div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;">
+          ${cols.closed.map(p => renderPunchCard(p)).join('')}
+        </div>
+      </div>
+    ` : ''}
+  `;
+}
+
+function renderPunchCard(p) {
+  const sub = p.assignedToTechnician ? `→ ${p.assignedToTechnician}` : 'unassigned';
+  return `
+    <div class="punch-card priority-${p.priority}" onclick="openPunchDetail('${p.id}')">
+      <div class="punch-card-num">#${p.number} · ${escapeHtml(p.subsystem)}</div>
+      <div class="punch-card-title">${escapeHtml(p.title)}</div>
+      <div class="punch-card-meta">
+        <span>${escapeHtml(p.location)}</span>
+        <span>· ${sub}</span>
+      </div>
+    </div>
+  `;
+}
+
+function openPunchDetail(id) {
+  const p = PUNCH_ITEMS.find(x => x.id === id);
+  if (!p) return;
+
+  const role = currentRoleUser.role;
+  const canAssignTech = role === 'punch_manager' || role === 'admin';
+  const canMarkInProgress = (role === 'technician' && p.assignedToTechnician === currentRoleUser.name);
+  const canSubmitSignoff = canMarkInProgress && p.status === 'in_progress';
+  const canApprovePM = (role === 'punch_manager' || role === 'admin') && p.status === 'ready_for_signoff';
+  const canApproveClient = role === 'client' && p.status === 'client_approval_pending';
+
+  modal({
+    title: `Punch #${p.number} · ${escapeHtml(p.title)}`,
+    sub: `${escapeHtml(p.location)} · ${escapeHtml(p.subsystem)} · ${escapeHtml(p.priority)} priority`,
+    size: 'large',
+    body: `
+      <div class="punch-detail-section">
+        <h4>Description</h4>
+        <p style="font-size: 14px; color: var(--gray-800); line-height: 1.6;">${escapeHtml(p.description)}</p>
+      </div>
+
+      <div class="punch-detail-section">
+        <h4>Details</h4>
+        <div class="punch-detail-meta">
+          <div class="punch-detail-meta-item">
+            <div class="label">Status</div>
+            <div class="value">${getStatusBadge(p.status.replace(/_/g, ' '))}</div>
+          </div>
+          <div class="punch-detail-meta-item">
+            <div class="label">Created By</div>
+            <div class="value">${escapeHtml(p.createdBy)}</div>
+          </div>
+          <div class="punch-detail-meta-item">
+            <div class="label">Assigned To (Tech)</div>
+            <div class="value">${p.assignedToTechnician ? escapeHtml(p.assignedToTechnician) : '<span style="color:var(--gray-500)">Unassigned</span>'}</div>
+          </div>
+          <div class="punch-detail-meta-item">
+            <div class="label">Type</div>
+            <div class="value">${escapeHtml(p.type)} · ${escapeHtml(p.trade)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="punch-detail-section">
+        <h4>Photos — Before</h4>
+        <div class="photo-grid">
+          ${p.photos_before.length === 0 ?
+            '<div class="photo-thumb placeholder">No before photos</div>' :
+            p.photos_before.map(ph => `<div class="photo-thumb"><img src="${ph}" onclick="viewPhoto('${ph}')"></div>`).join('')
+          }
+          ${canMarkInProgress ? `
+            <label class="photo-upload-btn">
+              <span class="plus">+</span>
+              <span>Add Before</span>
+              <input type="file" accept="image/*" multiple style="display:none" onchange="addPhoto(event, '${p.id}', 'before')">
+            </label>
+          ` : ''}
+        </div>
+      </div>
+
+      <div class="punch-detail-section">
+        <h4>Photos — After</h4>
+        <div class="photo-grid">
+          ${p.photos_after.length === 0 ?
+            '<div class="photo-thumb placeholder">No after photos</div>' :
+            p.photos_after.map(ph => `<div class="photo-thumb"><img src="${ph}" onclick="viewPhoto('${ph}')"></div>`).join('')
+          }
+          ${canMarkInProgress ? `
+            <label class="photo-upload-btn">
+              <span class="plus">+</span>
+              <span>Add After</span>
+              <input type="file" accept="image/*" multiple style="display:none" onchange="addPhoto(event, '${p.id}', 'after')">
+            </label>
+          ` : ''}
+        </div>
+      </div>
+
+      ${p.closure_notes || canSubmitSignoff ? `
+        <div class="punch-detail-section">
+          <h4>Closure Notes</h4>
+          ${canSubmitSignoff ? `
+            <textarea id="punch-closure-notes" class="form-input" rows="3" placeholder="Describe the work completed...">${escapeHtml(p.closure_notes)}</textarea>
+          ` : `
+            <p style="font-size: 14px; color: var(--gray-800); line-height: 1.6;">${escapeHtml(p.closure_notes || '—')}</p>
+          `}
+        </div>
+      ` : ''}
+
+      ${canApproveClient ? `
+        <div class="punch-detail-section">
+          <h4>Closure Submitted by Technician</h4>
+          <p style="font-size: 14px; color: var(--gray-800); line-height: 1.6; padding: 12px; background: var(--gray-50); border-radius: 8px;">${escapeHtml(p.closure_notes)}</p>
+          <h4 style="margin-top: 16px;">Your Approval Notes (Optional)</h4>
+          <textarea id="client-approval-notes" class="form-input" rows="2" placeholder="Any observations..."></textarea>
+        </div>
+      ` : ''}
+
+      <div class="punch-detail-section">
+        <h4>History</h4>
+        <div class="history-timeline">
+          ${p.history.map(h => `
+            <div class="history-item">
+              <div class="history-action">${escapeHtml(h.action)}</div>
+              <div class="history-meta">${escapeHtml(h.by)} · ${dateAgo(h.at)}</div>
+              ${h.note ? `<div class="history-note">"${escapeHtml(h.note)}"</div>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `,
+    footer: `
+      <button class="admin-action-btn-secondary" onclick="closeModal()">Close</button>
+      ${canAssignTech && !p.assignedToTechnician ? `<button class="admin-action-btn" onclick="assignTechnician('${p.id}')">Assign Technician</button>` : ''}
+      ${canMarkInProgress && p.status === 'open' ? `<button class="admin-action-btn" onclick="punchAction('${p.id}', 'start')">Start Work</button>` : ''}
+      ${canSubmitSignoff ? `<button class="admin-action-btn" onclick="punchAction('${p.id}', 'submit_signoff')">Submit for Sign-off</button>` : ''}
+      ${canApprovePM ? `<button class="admin-action-btn" onclick="punchAction('${p.id}', 'pm_approve')">Approve & Send to Client</button>` : ''}
+      ${canApproveClient ? `<button class="admin-action-btn" onclick="punchAction('${p.id}', 'client_approve')">Approve & Close</button>` : ''}
+    `,
+  });
+}
+
+function assignTechnician(id) {
+  const techs = USERS_V2.filter(u => u.role === 'technician');
+  const choices = techs.map((t, i) => `${i+1}. ${t.name}`).join('\n');
+  const which = prompt(`Assign to which technician?\n\n${choices}\n\nEnter number:`);
+  const tech = techs[parseInt(which) - 1];
+  if (!tech) return;
+  const p = PUNCH_ITEMS.find(x => x.id === id);
+  p.assignedToTechnician = tech.name;
+  p.history.push({
+    action: 'Assigned to Technician',
+    by: currentRoleUser.name,
+    at: new Date().toISOString(),
+    note: '',
+  });
+  logAudit('Punch Assigned', `Punch #${p.number}`, `→ ${tech.name}`);
+  closeModal();
+  renderPunchWorkflow();
+  toast(`Assigned to ${tech.name}`, 'success');
+}
+
+function punchAction(id, action) {
+  const p = PUNCH_ITEMS.find(x => x.id === id);
+  if (!p) return;
+  const now = new Date().toISOString();
+  if (action === 'start') {
+    p.status = 'in_progress';
+    p.history.push({ action: 'Status: In Progress', by: currentRoleUser.name, at: now, note: '' });
+  } else if (action === 'submit_signoff') {
+    const notes = document.getElementById('punch-closure-notes')?.value || '';
+    if (!notes.trim()) { toast('Please add closure notes', 'warn'); return; }
+    p.status = 'ready_for_signoff';
+    p.closure_notes = notes;
+    p.history.push({ action: 'Status: Ready for Sign-off', by: currentRoleUser.name, at: now, note: 'Awaiting punch manager review' });
+  } else if (action === 'pm_approve') {
+    p.status = 'client_approval_pending';
+    p.history.push({ action: 'Approved by Punch Manager', by: currentRoleUser.name, at: now, note: '' });
+    p.history.push({ action: 'Sent to Client for Approval', by: currentRoleUser.name, at: now, note: '' });
+  } else if (action === 'client_approve') {
+    const notes = document.getElementById('client-approval-notes')?.value || '';
+    p.status = 'closed';
+    p.client_approved = true;
+    p.client_approval_notes = notes;
+    p.history.push({ action: 'Approved by Client', by: currentRoleUser.name, at: now, note: notes });
+    p.history.push({ action: 'Closed', by: 'System', at: now, note: '' });
+  }
+  logAudit('Punch ' + action, `Punch #${p.number}`, `Status → ${p.status}`);
+  closeModal();
+  renderPunchWorkflow();
+  toast(`Punch #${p.number} updated`, 'success');
+}
+
+function addPhoto(event, punchId, type) {
+  const p = PUNCH_ITEMS.find(x => x.id === punchId);
+  const files = event.target.files;
+  for (const file of files) {
+    const reader = new FileReader();
+    reader.onload = e => {
+      if (type === 'before') p.photos_before.push(e.target.result);
+      else p.photos_after.push(e.target.result);
+      logAudit('Photo Uploaded', `Punch #${p.number}`, `${type} photo added`);
+      // Refresh modal
+      closeModal();
+      openPunchDetail(punchId);
+    };
+    reader.readAsDataURL(file);
+  }
+  toast(`${files.length} photo${files.length > 1 ? 's' : ''} added`, 'success');
+}
+
+function viewPhoto(src) {
+  modal({
+    title: 'Photo',
+    body: `<img src="${src}" style="width:100%;border-radius:8px;">`,
+    footer: `<button class="admin-action-btn" onclick="closeModal()">Close</button>`,
+  });
+}
+
+function openNewPunchModal() {
+  modal({
+    title: 'New Punch List Item',
+    sub: 'Create a new issue, defect, or work item',
+    body: `
+      <div class="form-grid">
+        <div class="form-field form-field-full">
+          <label>Title</label>
+          <input type="text" id="np-title" class="form-input" placeholder="Short description of the issue">
+        </div>
+        <div class="form-field">
+          <label>Subsystem</label>
+          <select id="np-subsystem" class="form-input">
+            <option>DCS</option><option>ATS</option><option>IXL</option>
+            <option>CORE CBTC</option><option>PS&TP</option><option>IAMS</option>
+            <option>SCADA</option><option>CYBER</option><option>TCH</option><option>OTHER</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Location</label>
+          <select id="np-location" class="form-input">
+            ${LOCATIONS.map(l => `<option value="${l.name}">${escapeHtml(l.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Priority</label>
+          <select id="np-priority" class="form-input">
+            <option value="high">High</option>
+            <option value="medium" selected>Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Type</label>
+          <select id="np-type" class="form-input">
+            <option>SAT</option><option>FAT</option><option>SW FAT</option>
+            <option>PICO</option><option>Construction</option><option>Other</option>
+          </select>
+        </div>
+        <div class="form-field form-field-full">
+          <label>Description</label>
+          <textarea id="np-desc" class="form-input" rows="4" placeholder="Detailed description of the issue..."></textarea>
+        </div>
+      </div>
+    `,
+    footer: `
+      <button class="admin-action-btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn" onclick="saveNewPunch()">Create Punch Item</button>
+    `,
+  });
+}
+
+function saveNewPunch() {
+  const title = document.getElementById('np-title').value.trim();
+  const desc = document.getElementById('np-desc').value.trim();
+  if (!title) { toast('Title is required', 'warn'); return; }
+
+  const number = Math.max(0, ...PUNCH_ITEMS.map(p => p.number)) + 1;
+  const newPunch = {
+    id: 'punch-' + Date.now(),
+    number,
+    title,
+    description: desc,
+    subsystem: document.getElementById('np-subsystem').value,
+    location: document.getElementById('np-location').value,
+    priority: document.getElementById('np-priority').value,
+    type: document.getElementById('np-type').value,
+    trade: document.getElementById('np-subsystem').value,
+    createdBy: currentRoleUser.name,
+    createdAt: new Date().toISOString(),
+    assignedTo: 'Mustafa Isik',
+    assignedToTechnician: null,
+    status: 'open',
+    photos_before: [],
+    photos_after: [],
+    closure_notes: '',
+    client_approved: false,
+    client_approval_notes: '',
+    history: [
+      { action: 'Created', by: currentRoleUser.name, at: new Date().toISOString(), note: '' },
+      { action: 'Assigned to Punch Manager', by: 'System', at: new Date().toISOString(), note: 'Auto-routed to Mustafa Isik' },
+    ],
+  };
+  PUNCH_ITEMS.unshift(newPunch);
+  logAudit('Punch Created', `Punch #${number}`, escapeHtml(title));
+  closeModal();
+  renderPunchWorkflow();
+  toast(`Punch #${number} created and assigned to Mustafa Isik`, 'success');
+}
+
+// ==========================================================================
+// AUDIT LOG
+// ==========================================================================
+function renderAuditLog() {
+  const root = document.getElementById('audit-content');
+  if (!root || !currentRoleUser) return;
+  if (currentRoleUser.role !== 'admin') {
+    root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`;
+    return;
+  }
+
+  root.innerHTML = `
+    <div class="data-card">
+      <div class="data-card-head">
+        <span class="data-count">${AUDIT_LOG.length} entries</span>
+        <button class="export-btn" onclick="exportAudit()">Export CSV</button>
+      </div>
+      <div class="table-wrap">
+        ${AUDIT_LOG.map(e => `
+          <div class="audit-row role-${e.role}">
+            <div class="audit-time">${new Date(e.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+            <div class="audit-user-pill">
+              <span>${escapeHtml(e.user)}</span>
+              <span class="role-mini">${escapeHtml(ROLE_LABELS[e.role] || e.role)}</span>
+            </div>
+            <div class="audit-action">${escapeHtml(e.action)}</div>
+            <div>
+              <div class="audit-target">${escapeHtml(e.target)}</div>
+              <div class="audit-details">${escapeHtml(e.details)} ${e.notes ? `· "${escapeHtml(e.notes)}"` : ''}</div>
+            </div>
+            <div class="audit-time">${dateAgo(e.timestamp)}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function exportAudit() {
+  const cols = [
+    { key: 'timestamp', label: 'Timestamp' },
+    { key: 'user', label: 'User' },
+    { key: 'role', label: 'Role' },
+    { key: 'action', label: 'Action' },
+    { key: 'target', label: 'Target' },
+    { key: 'details', label: 'Details' },
+    { key: 'notes', label: 'Notes' },
+  ];
+  downloadCSV(toCSV(AUDIT_LOG, cols), 'audit_log.csv');
+}
+
+// ==========================================================================
+// MODAL HELPERS
+// ==========================================================================
+function modal({ title, sub, body, footer, size }) {
+  let overlay = document.getElementById('modal-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'modal-overlay';
+    overlay.className = 'modal-overlay';
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = `
+    <div class="modal ${size === 'large' ? 'modal-large' : ''}">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">${title}</div>
+          ${sub ? `<div class="modal-sub">${sub}</div>` : ''}
+        </div>
+        <button class="modal-close" onclick="closeModal()">×</button>
+      </div>
+      <div class="modal-body">${body || ''}</div>
+      ${footer ? `<div class="modal-footer">${footer}</div>` : ''}
+    </div>
+  `;
+  overlay.classList.add('active');
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay')?.classList.remove('active');
+}
+
+// ==========================================================================
+// INIT V2
+// ==========================================================================
+document.addEventListener('DOMContentLoaded', () => {
+  // V2 login replaces V1
+  setTimeout(() => initLoginV2(), 100);
 });
