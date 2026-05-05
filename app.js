@@ -894,7 +894,7 @@ function exportPL() {
 // INIT
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
-  await Promise.all([loadTestItems(), loadTemplates()]);
+  await Promise.all([loadTestItems(), loadTemplates(), loadLocations()]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -929,6 +929,23 @@ async function loadTemplates() {
     }
   } catch (err) {
     console.warn('Supabase templates load failed, using data.js fallback:', err.message);
+  }
+}
+
+async function loadLocations() {
+  try {
+    const { data, error } = await _sb.from('locations').select('*').order('level').order('sort_order');
+    if (error) throw error;
+    LOCS = (data || []).map(r => ({
+      id:        r.id,
+      name:      r.name,
+      parent_id: r.parent_id || null,
+      level:     r.level,
+      sort_order: r.sort_order || 0,
+    }));
+    console.log(`Loaded ${LOCS.length} locations from Supabase`);
+  } catch (err) {
+    console.warn('Supabase locations load failed:', err.message);
   }
 }
 
@@ -1449,7 +1466,9 @@ document.addEventListener('DOMContentLoaded', () => {
 const USERS_V2 = DATA.users_v2 || [];
 const TEMPLATES = DATA.templates || [];
 const LOCATIONS = DATA.locations || [];
+let LOCS = []; // hierarchical locations loaded from Supabase
 const DEPLOYMENTS = DATA.deployments || [];
+let _adminTab = 'templates';
 let TEST_INSTANCES = DATA.testInstances || [];
 let PUNCH_ITEMS = DATA.punchItems || [];
 let AUDIT_LOG = DATA.auditLog || [];
@@ -1624,49 +1643,110 @@ function renderAdminPortal() {
     root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3><p>This area is restricted to Admin role.</p></div>`;
     return;
   }
+  const tabs = [
+    { id: 'templates', label: 'Activity Templates' },
+    { id: 'testcases', label: 'Test Items' },
+    { id: 'locations', label: 'Locations' },
+    { id: 'overview',  label: 'Overview' },
+  ];
+  root.innerHTML = `
+    <div class="admin-tabs">
+      ${tabs.map(t => `<button class="admin-tab${_adminTab === t.id ? ' active' : ''}" onclick="setAdminTab('${t.id}')">${t.label}</button>`).join('')}
+    </div>
+    <div id="admin-tab-body"></div>
+  `;
+  renderAdminTabBody();
+}
 
+function setAdminTab(tab) {
+  _adminTab = tab;
+  document.querySelectorAll('.admin-tab').forEach(el => {
+    el.classList.toggle('active', el.textContent.trim() === { templates:'Activity Templates', testcases:'Test Items', locations:'Locations', overview:'Overview' }[tab]);
+  });
+  renderAdminTabBody();
+}
+
+function renderAdminTabBody() {
+  const body = document.getElementById('admin-tab-body');
+  if (!body) return;
+  if (_adminTab === 'templates') body.innerHTML = _adminTemplatesHTML();
+  else if (_adminTab === 'testcases') body.innerHTML = _adminTestItemsHTML();
+  else if (_adminTab === 'locations') body.innerHTML = _adminLocationsHTML();
+  else body.innerHTML = _adminOverviewHTML();
+}
+
+function _adminOverviewHTML() {
   const nDeployments = DEPLOYMENTS.length;
   const nTemplates = TEMPLATES.length;
-  const nInstances = TEST_INSTANCES.length;
-  const nApplicable = TEST_INSTANCES.filter(t => t.applicable).length;
-
-  root.innerHTML = `
-    <div class="kpi-grid kpi-grid-mini">
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Templates</div><div class="kpi-value">${nTemplates}</div></div>
+  const nItems = TI.length;
+  const nLocs = LOCS.length;
+  return `
+    <div class="kpi-grid kpi-grid-mini" style="margin-bottom:28px;">
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Activity Templates</div><div class="kpi-value">${nTemplates}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Active Deployments</div><div class="kpi-value">${nDeployments}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Test Cases (Total)</div><div class="kpi-value">${nInstances}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Applicable</div><div class="kpi-value good">${nApplicable}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Test Items</div><div class="kpi-value">${nItems}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Locations</div><div class="kpi-value">${nLocs}</div></div>
     </div>
+    <div class="admin-section">
+      <div class="admin-section-head">
+        <div><div class="admin-section-title">Recent Deployments</div></div>
+      </div>
+      <div class="data-card">
+        <table class="data-table">
+          <thead><tr><th>Template</th><th>Locations</th><th>Test Cases</th><th>Deployed By</th><th>When</th></tr></thead>
+          <tbody>
+            ${DEPLOYMENTS.length ? DEPLOYMENTS.map(d => {
+              const totalTC = d.locations.reduce((sum, l) => sum + l.applicable.length, 0);
+              return `<tr>
+                <td><span class="cell-name">${escapeHtml(d.templateName)}</span></td>
+                <td>${d.locations.map(l => `<span class="tag" style="margin-right:4px">${escapeHtml(l.code)}</span>`).join('')}</td>
+                <td><b>${totalTC}</b> applicable across ${d.locations.length} locations</td>
+                <td>${escapeHtml(d.deployedBy)}</td>
+                <td>${dateAgo(d.deployedAt)}</td>
+              </tr>`;
+            }).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--gray-500);padding:24px;">No deployments yet</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
 
+function _adminTemplatesHTML() {
+  return `
     <div class="admin-section">
       <div class="admin-section-head">
         <div>
-          <div class="admin-section-title">Test Case Templates</div>
+          <div class="admin-section-title">Activity Templates</div>
           <p class="section-sub">Create reusable templates that can be deployed across multiple locations</p>
         </div>
         <button class="admin-action-btn" onclick="openNewTemplateModal()">+ New Template</button>
       </div>
-      <div class="template-grid">
+      ${TEMPLATES.length ? `<div class="template-grid">
         ${TEMPLATES.map(tpl => `
           <div class="template-card">
             <div class="template-card-head" style="display:flex;align-items:center;justify-content:space-between;">
               <span class="template-tag">${escapeHtml(tpl.subsystem)}</span>
-              <div style="display:flex;gap:6px;" onclick="event.stopPropagation()">
+              <div style="display:flex;gap:6px;">
                 <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="editTemplate('${tpl.id}')">Edit</button>
                 <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--red-600);" onclick="deleteTemplate('${tpl.id}')">Delete</button>
               </div>
             </div>
             <div class="template-card-name" style="cursor:pointer;" onclick="openDeployModal('${tpl.id}')">${escapeHtml(tpl.name)}</div>
-            <div class="template-card-sub">${escapeHtml(tpl.description)}</div>
+            <div class="template-card-sub">${escapeHtml(tpl.description || '')}</div>
             <div class="template-card-stats">
               <span><b>${tpl.testCases.length}</b> test cases</span>
               <span><b>${DEPLOYMENTS.filter(d => d.templateId === tpl.id).length}</b> deployments</span>
             </div>
           </div>
         `).join('')}
-      </div>
+      </div>` : `<div class="data-card" style="padding:32px;text-align:center;color:var(--gray-500);">No templates yet — click + New Template to create one.</div>`}
     </div>
+  `;
+}
 
+function _adminTestItemsHTML() {
+  return `
     <div class="admin-section">
       <div class="admin-section-head">
         <div>
@@ -1675,56 +1755,248 @@ function renderAdminPortal() {
         </div>
         <button class="admin-action-btn" onclick="downloadImportTemplate()">↓ Download Template</button>
       </div>
-      <div class="data-card" style="padding:20px; text-align:center;">
-        <p style="font-size:13px; color:var(--gray-700); margin-bottom:16px;">
-          Fill in the template CSV, then upload it here. You'll see a full review before anything is saved — new items are listed separately from any that will overwrite existing ones.
+      <div class="data-card" style="padding:24px;text-align:center;">
+        <p style="font-size:13px;color:var(--gray-700);margin-bottom:16px;">
+          Fill in the template CSV, then upload it here. You'll see a full review before anything is saved.
         </p>
         <label style="cursor:pointer;">
           <input type="file" accept=".csv" onchange="handleImportFile(this)" style="display:none">
-          <div class="admin-action-btn" style="display:inline-block; cursor:pointer;">📂 Choose CSV to Import</div>
+          <div class="admin-action-btn" style="display:inline-block;cursor:pointer;">📂 Choose CSV to Import</div>
         </label>
-        <p style="font-size:11px; color:var(--gray-500); margin-top:12px;">
+        <p style="font-size:11px;color:var(--gray-500);margin-top:12px;">
           Valid Status values: Future · Not Started · In Progress · Pass · Fail · Partial · Blocked
         </p>
       </div>
-    </div>
-
-    <div class="admin-section">
-      <div class="admin-section-head">
-        <div>
-          <div class="admin-section-title">Recent Deployments</div>
-          <p class="section-sub">Templates deployed to locations with applicability matrices</p>
-        </div>
-      </div>
-      <div class="data-card">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Template</th>
-              <th>Locations</th>
-              <th>Test Cases</th>
-              <th>Deployed By</th>
-              <th>When</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${DEPLOYMENTS.map(d => {
-              const totalTC = d.locations.reduce((sum, l) => sum + l.applicable.length, 0);
-              return `
-                <tr>
-                  <td><span class="cell-name">${escapeHtml(d.templateName)}</span></td>
-                  <td>${d.locations.map(l => `<span class="tag" style="margin-right:4px">${escapeHtml(l.code)}</span>`).join('')}</td>
-                  <td><b>${totalTC}</b> applicable across ${d.locations.length} locations</td>
-                  <td>${escapeHtml(d.deployedBy)}</td>
-                  <td>${dateAgo(d.deployedAt)}</td>
-                </tr>
-              `;
-            }).join('')}
-          </tbody>
-        </table>
+      <div style="margin-top:20px;">
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px;color:var(--gray-700);">${TI.length} test items loaded</div>
       </div>
     </div>
   `;
+}
+
+function _adminLocationsHTML() {
+  const tree = _buildLocTree(LOCS);
+  return `
+    <div class="admin-section">
+      <div class="admin-section-head">
+        <div>
+          <div class="admin-section-title">Location Hierarchy</div>
+          <p class="section-sub">Define phases and stations — used across field intake, templates, and reporting</p>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <label style="cursor:pointer;">
+            <input type="file" accept=".csv" onchange="handleLocationImport(this)" style="display:none">
+            <div class="admin-action-btn-secondary" style="display:inline-block;cursor:pointer;padding:9px 16px;font-size:13px;font-weight:600;border:1px solid var(--gray-300);border-radius:var(--radius-sm);">↑ Import CSV</div>
+          </label>
+          <button class="admin-action-btn-secondary" onclick="downloadLocationTemplate()">↓ CSV Template</button>
+          <button class="admin-action-btn" onclick="openAddLocationModal(null, 1)">+ Add Phase</button>
+        </div>
+      </div>
+      <div class="loc-tree">
+        ${tree.length ? tree.map(n => _renderLocNode(n, 0)).join('') : `<div class="data-card" style="padding:32px;text-align:center;color:var(--gray-500);">No locations yet — click + Add Phase to start, or import a CSV.</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function _buildLocTree(locs) {
+  const map = {};
+  locs.forEach(l => { map[l.id] = { ...l, children: [] }; });
+  const roots = [];
+  locs.forEach(l => {
+    if (l.parent_id && map[l.parent_id]) map[l.parent_id].children.push(map[l.id]);
+    else roots.push(map[l.id]);
+  });
+  return roots;
+}
+
+function _renderLocNode(node, depth) {
+  const indent = depth * 28;
+  const levelClass = `loc-level-${Math.min(node.level, 3)}`;
+  return `
+    <div class="${levelClass}" style="margin-left:${indent}px;">
+      <div class="loc-node-row">
+        <div class="loc-node-name">
+          ${depth > 0 ? '<span class="loc-indent">└─</span>' : ''}
+          <span class="loc-level-badge">L${node.level}</span>
+          ${escapeHtml(node.name)}
+        </div>
+        <div class="loc-node-actions">
+          <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openAddLocationModal('${node.id}', ${node.level + 1})">+ Sub-level</button>
+          <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openEditLocationModal('${node.id}')">Edit</button>
+          <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--red-600);" onclick="deleteLocation('${node.id}')">Delete</button>
+        </div>
+      </div>
+    </div>
+    ${node.children.map(c => _renderLocNode(c, depth + 1)).join('')}
+  `;
+}
+
+// ==========================================================================
+// LOCATION MANAGEMENT
+// ==========================================================================
+function openAddLocationModal(parentId, level) {
+  const parentName = parentId ? (LOCS.find(l => l.id === parentId)?.name || '') : null;
+  modal({
+    title: parentId ? `Add Sub-level under "${parentName}"` : 'Add Phase (Level 1)',
+    size: 'small',
+    body: `
+      <div class="form-field">
+        <label>Name</label>
+        <input type="text" id="loc-name" class="form-input" placeholder="${level === 1 ? 'e.g. Phase 0' : 'e.g. W40 Millbrae'}">
+      </div>
+      <div class="form-field" style="margin-top:12px;">
+        <label>Sort Order <span style="font-weight:400;color:var(--gray-500);">(optional, lower = first)</span></label>
+        <input type="number" id="loc-sort" class="form-input" value="0" min="0">
+      </div>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="saveNewLocation('${parentId || ''}', ${level})">Add</button>
+    `,
+  });
+  setTimeout(() => document.getElementById('loc-name')?.focus(), 50);
+}
+
+async function saveNewLocation(parentId, level) {
+  const name = document.getElementById('loc-name').value.trim();
+  const sort  = parseInt(document.getElementById('loc-sort').value) || 0;
+  if (!name) { toast('Name is required', 'error'); return; }
+  const id = 'loc-' + Date.now();
+  const { error } = await _sb.from('locations').insert({
+    id, name, parent_id: parentId || null, level, sort_order: sort,
+  });
+  if (error) { toast('Save failed: ' + error.message, 'error'); return; }
+  LOCS.push({ id, name, parent_id: parentId || null, level, sort_order: sort });
+  closeModal();
+  toast(`Added: ${name}`, 'success');
+  renderAdminTabBody();
+}
+
+function openEditLocationModal(id) {
+  const loc = LOCS.find(l => l.id === id);
+  if (!loc) return;
+  modal({
+    title: 'Edit Location',
+    size: 'small',
+    body: `
+      <div class="form-field">
+        <label>Name</label>
+        <input type="text" id="eloc-name" class="form-input" value="${escapeHtml(loc.name)}">
+      </div>
+      <div class="form-field" style="margin-top:12px;">
+        <label>Sort Order</label>
+        <input type="number" id="eloc-sort" class="form-input" value="${loc.sort_order || 0}" min="0">
+      </div>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="saveEditLocation('${id}')">Save</button>
+    `,
+  });
+  setTimeout(() => document.getElementById('eloc-name')?.focus(), 50);
+}
+
+async function saveEditLocation(id) {
+  const loc  = LOCS.find(l => l.id === id);
+  if (!loc) return;
+  const name = document.getElementById('eloc-name').value.trim();
+  const sort = parseInt(document.getElementById('eloc-sort').value) || 0;
+  if (!name) { toast('Name is required', 'error'); return; }
+  const { error } = await _sb.from('locations').update({ name, sort_order: sort }).eq('id', id);
+  if (error) { toast('Save failed: ' + error.message, 'error'); return; }
+  loc.name = name; loc.sort_order = sort;
+  closeModal();
+  toast(`Saved: ${name}`, 'success');
+  renderAdminTabBody();
+}
+
+async function deleteLocation(id) {
+  const loc = LOCS.find(l => l.id === id);
+  if (!loc) return;
+  const children = LOCS.filter(l => l.parent_id === id);
+  if (children.length) {
+    toast(`Remove the ${children.length} sub-location(s) under "${loc.name}" first`, 'error');
+    return;
+  }
+  if (!confirm(`Delete "${loc.name}"? This cannot be undone.`)) return;
+  const { error } = await _sb.from('locations').delete().eq('id', id);
+  if (error) { toast('Delete failed: ' + error.message, 'error'); return; }
+  LOCS.splice(LOCS.indexOf(loc), 1);
+  toast(`Deleted: ${loc.name}`, 'success');
+  renderAdminTabBody();
+}
+
+function downloadLocationTemplate() {
+  const csv = 'Level,Name,ParentName\n1,Phase 0,\n1,Phase 1,\n1,Phase 2,\n2,W40 Millbrae,Phase 0\n2,M10,Phase 2';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
+  a.download = 'Locations_Template.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+let _locImportRows = [];
+
+function handleLocationImport(input) {
+  const file = input.files[0]; if (!file) return; input.value = '';
+  file.text().then(text => {
+    const rows = parseCSVGeneric(text);
+    _locImportRows = rows.filter(r => r.Level && r.Name).map(r => ({
+      level:      parseInt(r.Level) || 1,
+      name:       r.Name.trim(),
+      parentName: (r.ParentName || '').trim(),
+    }));
+    if (!_locImportRows.length) { toast('No valid rows found — need Level, Name, ParentName columns', 'error'); return; }
+    modal({
+      title: 'Review Location Import',
+      size: 'medium',
+      body: `
+        <p style="font-size:13px;color:var(--gray-700);margin-bottom:16px;">${_locImportRows.length} locations will be imported. Existing locations with the same name + level are skipped.</p>
+        <div class="data-card" style="padding:0;max-height:300px;overflow-y:auto;">
+          <table class="data-table">
+            <thead><tr><th>Level</th><th>Name</th><th>Parent</th></tr></thead>
+            <tbody>
+              ${_locImportRows.map(r => `<tr>
+                <td><span class="loc-level-badge">L${r.level}</span></td>
+                <td>${escapeHtml(r.name)}</td>
+                <td>${escapeHtml(r.parentName) || '—'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      `,
+      footer: `
+        <button class="form-secondary" onclick="closeModal()">Cancel</button>
+        <button class="form-submit" onclick="executeLocationImport()">Import ${_locImportRows.length} Locations</button>
+      `,
+    });
+  });
+}
+
+async function executeLocationImport() {
+  // Build in-order: parents first (sort by level ascending)
+  const sorted = [..._locImportRows].sort((a, b) => a.level - b.level);
+  const nameToId = {};
+  // Seed from existing LOCS
+  LOCS.forEach(l => { nameToId[`${l.level}:${l.name}`] = l.id; });
+
+  let added = 0;
+  for (const row of sorted) {
+    const key = `${row.level}:${row.name}`;
+    if (nameToId[key]) continue; // already exists
+    const parentKey = row.parentName ? `${row.level - 1}:${row.parentName}` : null;
+    const parentId  = parentKey ? (nameToId[parentKey] || null) : null;
+    const id = 'loc-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+    const { error } = await _sb.from('locations').insert({ id, name: row.name, parent_id: parentId, level: row.level, sort_order: 0 });
+    if (error) { toast('Import error on "' + row.name + '": ' + error.message, 'error'); continue; }
+    LOCS.push({ id, name: row.name, parent_id: parentId, level: row.level, sort_order: 0 });
+    nameToId[key] = id;
+    added++;
+  }
+  closeModal();
+  toast(`Imported ${added} location(s)`, 'success');
+  renderAdminTabBody();
 }
 
 // ==========================================================================

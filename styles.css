@@ -1795,6 +1795,63 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
 }
 .template-card-stats b { color: var(--black); font-weight: 600; }
 
+/* Admin tabs */
+.admin-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--gray-200);
+  margin-bottom: 28px;
+}
+.admin-tab {
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-600);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.15s;
+  border-radius: 0;
+  background: none;
+}
+.admin-tab:hover { color: var(--black); }
+.admin-tab.active { color: var(--hitachi-red); border-bottom-color: var(--hitachi-red); }
+
+/* Location hierarchy tree */
+.loc-tree { display: flex; flex-direction: column; gap: 2px; }
+.loc-node-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-sm);
+  transition: background 0.1s;
+}
+.loc-node-row:hover { background: var(--gray-50); }
+.loc-node-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--black);
+}
+.loc-level-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--gray-100);
+  color: var(--gray-600);
+  letter-spacing: 0.05em;
+}
+.loc-level-1 > .loc-node-row { border-left: 3px solid var(--hitachi-red); }
+.loc-level-2 > .loc-node-row { border-left: 3px solid var(--gray-400); }
+.loc-level-3 > .loc-node-row { border-left: 3px solid var(--gray-300); }
+.loc-indent { color: var(--gray-400); font-size: 12px; margin-right: 2px; }
+.loc-node-actions { display: flex; gap: 6px; }
+
 /* Modal */
 .modal-overlay {
   position: fixed;
