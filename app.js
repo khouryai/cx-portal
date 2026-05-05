@@ -8,6 +8,12 @@ const LI = DATA.lineItems;
 const PL = DATA.punchList;
 const ORG = DATA.org;
 
+// ── Supabase config ─────────────────────────────────────────
+const SUPABASE_URL      = 'https://uqtwiucxktljhukmgmxg.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxdHdpdWN4a3Rsamh1a21nbXhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NDMxMDcsImV4cCI6MjA5MzUxOTEwN30.nJuQOOyvGpGphSqiNxrO2_p1oYroev8mVdNn9unxmdI';
+const _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// ────────────────────────────────────────────────────────────
+
 // Color palette (matches CSS)
 const COLORS = {
   red: '#e60012',
@@ -880,7 +886,8 @@ function exportPL() {
 // ==========================================
 // INIT
 // ==========================================
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadTestItems();
   initDashboard();
   initActivities();
   initLineItems();
@@ -893,13 +900,39 @@ document.addEventListener('DOMContentLoaded', () => {
 // FIELD LOGGING - Login + Forms
 // ==========================================
 
-const TI = DATA.testItems || [];
+let TI = DATA.testItems || []; // populated from Supabase on init; falls back to data.js
 const FIELD_USERS = DATA.fieldUsers || [];
 
-// SharePoint config
-const SP_SITE = 'https://hitachigroupeur.sharepoint.com/sites/BARTCBTCCommissioningTeam';
-const SP_RESULTS_LIST = 'PortalTestResults';
-const SP_DELAY_LIST = 'PortalDelayLog';
+async function loadTestItems() {
+  try {
+    const { data, error } = await _sb.from('test_items').select('*').order('test_id');
+    if (error) throw error;
+    if (data && data.length > 0) {
+      TI = data.map(r => ({
+        TestID:        r.test_id,
+        Phase:         r.phase,
+        Location:      r.location,
+        Subsystem:     r.subsystem,
+        Activity:      r.activity,
+        TestCategory:  r.test_category,
+        TestCaseCode:  r.test_case_code,
+        TestName:      r.test_name,
+        TestProcedure: r.test_procedure,
+        TestPhase:     r.test_phase,
+        Status:        r.status,
+        ActivityID:    r.activity_id,
+        Weight:        r.weight,
+        CompletedBy:   r.completed_by,
+        CompletedDate: r.completed_date,
+        BlockedReason: r.blocked_reason,
+        Notes:         r.notes,
+      }));
+      console.log(`Loaded ${TI.length} test items from Supabase`);
+    }
+  } catch (err) {
+    console.warn('Supabase test_items load failed, using data.js fallback:', err.message);
+  }
+}
 
 let currentUser = null;
 let selectedResult = null;
@@ -1202,8 +1235,7 @@ function submitDelayLog() {
   });
 }
 
-function sendSubmission(payload, messageId, onSuccess) {
-  // Add to local queue first (offline safety net)
+async function sendSubmission(payload, messageId, onSuccess) {
   const queue = loadQueue();
   const queueEntry = {
     id: 'q-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
@@ -1214,129 +1246,72 @@ function sendSubmission(payload, messageId, onSuccess) {
   queue.push(queueEntry);
   saveQueue(queue);
 
-  showMessage(messageId, 'queued', 'Submitting...');
+  showMessage(messageId, 'queued', 'Submitting…');
 
-  // Build SharePoint list item from payload
   const isResult = payload.type === 'TestResult';
-  const listName = isResult ? SP_RESULTS_LIST : SP_DELAY_LIST;
   const r = payload.record;
   const su = payload.statusUpdate || {};
 
-  const spItem = isResult ? {
-    ResultID: r.ResultID || '',
-    TestID: r.TestID || '',
-    TestName: r.TestName || '',
-    AttemptNumber: r.AttemptNumber || 1,
-    Phase: r.Phase || '',
-    Location: r.Location || '',
-    Subsystem: r.Subsystem || '',
-    Activity: r.Activity || '',
-    TestCaseCode: r.TestCaseCode || '',
-    TestProcedure: r.TestProcedure || '',
-    Result: r.Result || '',
-    Team: r.Team || '',
-    CompletedBy: r.CompletedBy || '',
-    DateTested: r.DateTested || '',
-    NumberOfTesters: r.NumberOfTesters || 1,
-    TestHours: r.TestHours || 0,
-    FailedReason: r.FailedReason || '',
-    BlockedReason: r.BlockedReason || '',
-    Notes: r.Notes || '',
-    NewStatus: su.NewStatus || '',
-    CompletedDate: su.CompletedDate || '',
-    Title: r.ResultID || 'Result',
+  const dbRow = isResult ? {
+    result_id:         r.ResultID,
+    test_id:           r.TestID,
+    test_name:         r.TestName,
+    attempt_number:    r.AttemptNumber,
+    phase:             r.Phase,
+    location:          r.Location,
+    subsystem:         r.Subsystem,
+    activity:          r.Activity,
+    test_case_code:    r.TestCaseCode,
+    test_procedure:    r.TestProcedure,
+    result:            r.Result,
+    team:              r.Team,
+    completed_by:      r.CompletedBy,
+    date_tested:       r.DateTested || null,
+    submitted_by:      r.CompletedBy,
+    number_of_testers: r.NumberOfTesters,
+    test_hours:        r.TestHours,
+    failed_reason:     r.FailedReason,
+    blocked_reason:    r.BlockedReason,
+    notes:             r.Notes,
+    new_status:        su.NewStatus,
   } : {
-    LogID: r.LogID || '',
-    LogDate: r.LogDate || '',
-    Location: r.Location || '',
-    Subsystem: r.Subsystem || '',
-    SubmittedBy: r.SubmittedBy || '',
-    NumberOfTesters: r.NumberOfTesters || 1,
-    IdleHours: r.IdleHours || 0,
-    TotalTestsLogged: r.TotalTestsLogged || 0,
-    TotalPassed: r.TotalPassed || 0,
-    TotalFailed: r.TotalFailed || 0,
-    TotalPartial: r.TotalPartial || 0,
-    TotalBlocked: r.TotalBlocked || 0,
-    DelayOccurred: r.DelayOccurred || 'No',
-    DelayCategory: r.DelayCategory || '',
-    DelayDuration: r.DelayDuration || 0,
-    DelayNotes: r.DelayNotes || '',
-    OverallNotes: r.OverallNotes || '',
-    NextDayPlan: r.NextDayPlan || '',
-    Title: r.LogID || 'Log',
+    log_id:             r.LogID,
+    log_date:           r.LogDate || null,
+    location:           r.Location,
+    subsystem:          r.Subsystem,
+    submitted_by:       r.SubmittedBy,
+    number_of_testers:  r.NumberOfTesters,
+    idle_hours:         r.IdleHours,
+    total_tests_logged: r.TotalTestsLogged,
+    total_passed:       r.TotalPassed,
+    total_failed:       r.TotalFailed,
+    total_partial:      r.TotalPartial,
+    total_blocked:      r.TotalBlocked,
+    delay_occurred:     r.DelayOccurred,
+    delay_category:     r.DelayCategory,
+    delay_duration:     r.DelayDuration,
+    delay_notes:        r.DelayNotes,
+    overall_notes:      r.OverallNotes,
+    next_day_plan:      r.NextDayPlan,
   };
 
-  const endpoint = `${SP_SITE}/_api/web/lists/getbytitle('${listName}')/items`;
+  const table = isResult ? 'test_results' : 'delay_log';
 
-  fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Accept': 'application/json;odata=nometadata',
-      'Content-Type': 'application/json;odata=nometadata',
-      'X-RequestDigest': 'needed',
-    },
-    credentials: 'include',
-    body: JSON.stringify(spItem),
-  })
-  .then(async res => {
-    // SharePoint REST needs a request digest for POST
-    // If we get 403, fetch the digest first then retry
-    if (res.status === 403) {
-      return getDigestAndRetry(endpoint, spItem, listName);
-    }
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
-    }
-    return res.json();
-  })
-  .then(() => {
+  try {
+    const { error } = await _sb.from(table).insert([dbRow]);
+    if (error) throw error;
     queueEntry.status = 'sent';
     queueEntry.sentAt = new Date().toISOString();
     saveQueue(loadQueue().map(q => q.id === queueEntry.id ? queueEntry : q));
-    showMessage(messageId, 'success', '✓ Submitted to SharePoint successfully!');
+    showMessage(messageId, 'success', '✓ Submitted successfully!');
     if (onSuccess) onSuccess();
-  })
-  .catch(err => {
+  } catch (err) {
     queueEntry.status = 'failed';
     queueEntry.error = err.message;
     saveQueue(loadQueue().map(q => q.id === queueEntry.id ? queueEntry : q));
-    showMessage(messageId, 'queued',
-      `⚠ Saved locally — not yet synced. ${err.message.includes('digest') || err.message.includes('403')
-        ? 'Make sure you are signed into SharePoint in this browser.'
-        : 'Check your network connection.'} View in My Submissions.`);
+    showMessage(messageId, 'queued', '⚠ Saved locally — will sync when connection is restored. View in My Submissions.');
     if (onSuccess) onSuccess();
-  });
-}
-
-async function getDigestAndRetry(endpoint, spItem, listName) {
-  // Fetch the SharePoint request digest (required for POST)
-  const digestRes = await fetch(`${SP_SITE}/_api/contextinfo`, {
-    method: 'POST',
-    headers: { 'Accept': 'application/json;odata=nometadata' },
-    credentials: 'include',
-  });
-  if (!digestRes.ok) throw new Error('Could not get SharePoint digest. Are you signed into SharePoint?');
-  const digestData = await digestRes.json();
-  const digest = digestData.FormDigestValue;
-
-  const retryRes = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Accept': 'application/json;odata=nometadata',
-      'Content-Type': 'application/json;odata=nometadata',
-      'X-RequestDigest': digest,
-    },
-    credentials: 'include',
-    body: JSON.stringify(spItem),
-  });
-
-  if (!retryRes.ok) {
-    const text = await retryRes.text();
-    throw new Error(`SharePoint error ${retryRes.status}: ${text.slice(0, 300)}`);
   }
-  return retryRes.json();
 }
 
 function showMessage(id, type, text) {
