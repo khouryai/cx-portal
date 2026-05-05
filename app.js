@@ -901,6 +901,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initPunchList();
   initLocations();
   initOrg();
+  initAuth();
 });
 
 // ==========================================
@@ -1489,80 +1490,107 @@ const ROLE_TITLES = {
 };
 
 let currentRoleUser = null;
+let currentProfile  = null;
 
 // ==========================================================================
-// LOGIN V2 — supports all 5 roles
+// SUPABASE AUTH — email + password, session persisted by Supabase
 // ==========================================================================
-function initLoginV2() {
-  // Replace the login dropdown with the V2 user list (all roles)
-  const sel = document.getElementById('login-name');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">Select your name</option>' +
-    USERS_V2.map(u => `<option value="${escapeHtml(u.name)}">${escapeHtml(u.name)} — ${ROLE_TITLES[u.role]}</option>`).join('');
-
-  // Restore session
-  const saved = sessionStorage.getItem('hitachi_role_user');
-  if (saved) {
-    try {
-      currentRoleUser = JSON.parse(saved);
-      onLoggedIn();
-    } catch {}
-  }
-
-  // Hijack the existing login button
-  const btn = document.getElementById('login-btn');
-  if (btn) {
-    btn.replaceWith(btn.cloneNode(true)); // remove old listeners
-    document.getElementById('login-btn').addEventListener('click', tryLoginV2);
-  }
-  document.getElementById('login-pin')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') tryLoginV2();
+function initAuth() {
+  _sb.auth.onAuthStateChange(async (event, session) => {
+    if (session?.user && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED')) {
+      await _loadCurrentProfile(session.user);
+    } else if (!session) {
+      _onSignedOut();
+    }
+  });
+  // Check for existing session on load
+  _sb.auth.getSession().then(({ data: { session } }) => {
+    if (!session) _onSignedOut();
   });
 }
 
-function tryLoginV2() {
-  const name = document.getElementById('login-name').value;
-  const pin = document.getElementById('login-pin').value;
-  const errEl = document.getElementById('login-error');
-  errEl.textContent = '';
-
-  if (!name) { errEl.textContent = 'Please select your name'; return; }
-  if (!pin || pin.length !== 4) { errEl.textContent = 'Please enter your 4-digit PIN'; return; }
-
-  const user = USERS_V2.find(u => u.name === name && u.pin === pin);
-  if (!user) {
-    errEl.textContent = 'Invalid name or PIN. Please try again.';
-    document.getElementById('login-pin').value = '';
-    return;
+async function _loadCurrentProfile(user) {
+  try {
+    const { data, error } = await _sb.from('profiles').select('*').eq('id', user.id).single();
+    if (error || !data) {
+      await _sb.auth.signOut();
+      showAuthError('Your account is not set up yet — contact your admin.');
+      return;
+    }
+    if (!data.is_active) {
+      await _sb.auth.signOut();
+      showAuthError('Your account has been deactivated — contact your admin.');
+      return;
+    }
+    currentProfile  = data;
+    currentRoleUser = {
+      name:      data.full_name,
+      role:      data.role,
+      title:     { admin:'Administrator', field_engineer:'Field Engineer', readonly:'Read Only' }[data.role] || data.role,
+      subsystem: data.subsystem || null,
+    };
+    // Apply subsystem filter to test items if set
+    if (currentRoleUser.subsystem) {
+      TI = TI.filter(t => (t.Subsystem || '').toLowerCase() === currentRoleUser.subsystem.toLowerCase());
+    }
+    document.getElementById('login-overlay').classList.add('hidden');
+    onLoggedIn();
+  } catch(err) {
+    console.error('Profile load failed:', err);
+    showAuthError('Failed to load profile — try refreshing.');
   }
+}
 
-  currentRoleUser = { name: user.name, role: user.role, title: user.title };
-  sessionStorage.setItem('hitachi_role_user', JSON.stringify(currentRoleUser));
-  onLoggedIn();
+function _onSignedOut() {
+  currentRoleUser = null;
+  currentProfile  = null;
+  document.getElementById('login-overlay').classList.remove('hidden');
+  document.querySelectorAll('.nav-role').forEach(l => l.style.display = 'none');
+  document.getElementById('nav-user-pill')?.remove();
+  const navLogin = document.getElementById('nav-login');
+  if (navLogin) navLogin.style.display = '';
+}
 
-  // Auto-route to the most relevant page for the role
-  const homePage = {
-    admin: 'admin',
-    field: 'field-intake',
-    punch_manager: 'punch-workflow',
-    technician: 'punch-workflow',
-    client: 'punch-workflow',
-  }[user.role] || 'dashboard';
-  showPage(homePage);
+async function signIn() {
+  const email    = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const btn      = document.getElementById('auth-btn');
+  showAuthError('');
+  if (!email || !password) { showAuthError('Enter your email and password.'); return; }
+  btn.textContent = 'Signing in…'; btn.disabled = true;
+  const { error } = await _sb.auth.signInWithPassword({ email, password });
+  if (error) {
+    showAuthError(error.message);
+    btn.textContent = 'Sign In'; btn.disabled = false;
+  }
+  // onAuthStateChange handles the rest on success
+}
+
+async function signOut() {
+  await _sb.auth.signOut();
+  showPage('dashboard');
+}
+
+async function sendPasswordReset() {
+  const email = document.getElementById('auth-email').value.trim();
+  if (!email) { showAuthError('Enter your email address first.'); return; }
+  const { error } = await _sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.href });
+  showAuthError(error ? error.message : 'Reset link sent — check your email.');
+}
+
+function showAuthError(msg) {
+  const el = document.getElementById('auth-error');
+  if (el) el.textContent = msg;
 }
 
 function onLoggedIn() {
-  // Show role-specific nav links
   document.querySelectorAll('.nav-role').forEach(link => {
     const allowed = (link.dataset.role || '').split(' ');
     link.style.display = allowed.includes(currentRoleUser.role) ? '' : 'none';
   });
-
-  // Replace Sign In nav with user pill
   const navLogin = document.getElementById('nav-login');
   if (navLogin) navLogin.style.display = 'none';
 
-  // Add user pill in nav (or update existing)
   let pill = document.getElementById('nav-user-pill');
   if (!pill) {
     pill = document.createElement('div');
@@ -1570,28 +1598,18 @@ function onLoggedIn() {
     pill.className = 'user-bar-pill';
     document.querySelector('.nav-right')?.prepend(pill);
   }
-  const initials = currentRoleUser.name.split(' ').filter(Boolean).slice(0, 2).map(n => n[0]).join('').toUpperCase();
+  const initials = currentRoleUser.name.split(' ').filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase();
+  const subBadge = currentRoleUser.subsystem
+    ? `<span style="font-size:10px;background:#dbeafe;color:#1d4ed8;padding:1px 6px;border-radius:10px;margin-left:4px;">${escapeHtml(currentRoleUser.subsystem)}</span>` : '';
   pill.innerHTML = `
     <div class="user-avatar" style="width:28px;height:28px;font-size:11px;">${initials}</div>
-    <div style="font-size:12px;font-weight:500;color:var(--black);">${escapeHtml(currentRoleUser.name)}</div>
-    <button class="logout-mini" onclick="logoutV2()">Sign out</button>
+    <div style="font-size:12px;font-weight:500;color:var(--black);">${escapeHtml(currentRoleUser.name)}${subBadge}</div>
+    <button class="logout-mini" onclick="signOut()">Sign out</button>
   `;
 
-  // Render any open page
-  renderAdminPortal();
-  renderFieldIntake();
-  renderTestMatrix();
-  renderPunchWorkflow();
-  renderAuditLog();
-}
-
-function logoutV2() {
-  currentRoleUser = null;
-  sessionStorage.removeItem('hitachi_role_user');
-  document.querySelectorAll('.nav-role').forEach(link => link.style.display = 'none');
-  document.getElementById('nav-user-pill')?.remove();
-  document.getElementById('nav-login').style.display = '';
-  showPage('dashboard');
+  const homePage = { admin:'admin', field_engineer:'field-intake', readonly:'dashboard' }[currentRoleUser.role] || 'dashboard';
+  showPage(homePage);
+  renderAdminPortal(); renderFieldIntake(); renderTestMatrix(); renderPunchWorkflow(); renderAuditLog();
 }
 
 // ==========================================================================
@@ -1644,10 +1662,11 @@ function renderAdminPortal() {
     return;
   }
   const tabs = [
-    { id: 'templates', label: 'Activity Templates' },
-    { id: 'testcases', label: 'Test Items' },
-    { id: 'locations', label: 'Locations' },
-    { id: 'overview',  label: 'Overview' },
+    { id: 'templates',  label: 'Activity Templates' },
+    { id: 'testcases',  label: 'Test Items' },
+    { id: 'locations',  label: 'Locations' },
+    { id: 'directory',  label: 'Directory' },
+    { id: 'overview',   label: 'Overview' },
   ];
   root.innerHTML = `
     <div class="admin-tabs">
@@ -1660,8 +1679,9 @@ function renderAdminPortal() {
 
 function setAdminTab(tab) {
   _adminTab = tab;
+  const labelMap = { templates:'Activity Templates', testcases:'Test Items', locations:'Locations', directory:'Directory', overview:'Overview' };
   document.querySelectorAll('.admin-tab').forEach(el => {
-    el.classList.toggle('active', el.textContent.trim() === { templates:'Activity Templates', testcases:'Test Items', locations:'Locations', overview:'Overview' }[tab]);
+    el.classList.toggle('active', el.textContent.trim() === labelMap[tab]);
   });
   renderAdminTabBody();
 }
@@ -1672,6 +1692,7 @@ function renderAdminTabBody() {
   if (_adminTab === 'templates') body.innerHTML = _adminTemplatesHTML();
   else if (_adminTab === 'testcases') body.innerHTML = _adminTestItemsHTML();
   else if (_adminTab === 'locations') body.innerHTML = _adminLocationsHTML();
+  else if (_adminTab === 'directory') { body.innerHTML = _adminDirectoryHTML(); setTimeout(_loadDirectoryUsers, 0); }
   else body.innerHTML = _adminOverviewHTML();
 }
 
@@ -2707,6 +2728,191 @@ async function deleteTemplate(id) {
 }
 
 // ==========================================================================
+// ADMIN DIRECTORY — User management
+// ==========================================================================
+const SUBSYSTEMS_LIST = ['DCS','ATS','IXL','CORE CBTC','PS&TP','IAMS','SCADA','CYBER','TCH'];
+
+function _adminDirectoryHTML() {
+  return `
+    <div class="admin-section">
+      <div class="admin-section-head">
+        <div>
+          <div class="admin-section-title">User Directory</div>
+          <p class="section-sub">Manage portal access, roles, and subsystem visibility</p>
+        </div>
+        <button class="admin-action-btn" onclick="openInviteUserModal()">+ Invite User</button>
+      </div>
+      <div class="data-card" id="dir-table-wrap" style="padding:0;">
+        <div style="padding:24px;text-align:center;color:var(--gray-400);font-size:13px;">Loading users…</div>
+      </div>
+    </div>
+  `;
+}
+
+async function _loadDirectoryUsers() {
+  const wrap = document.getElementById('dir-table-wrap');
+  if (!wrap) return;
+  const { data, error } = await _sb.from('profiles').select('*').order('created_at');
+  if (error) { wrap.innerHTML = `<div style="padding:20px;color:#dc2626;font-size:13px;">${error.message}</div>`; return; }
+  if (!data || !data.length) {
+    wrap.innerHTML = `<div style="padding:32px;text-align:center;color:var(--gray-400);font-size:13px;">No users yet — click + Invite User to add one.</div>`;
+    return;
+  }
+  const roleLabel = { admin:'Administrator', field_engineer:'Field Engineer', readonly:'Read Only' };
+  wrap.innerHTML = `
+    <table class="dir-table">
+      <thead>
+        <tr>
+          <th style="width:40px;"></th>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Role</th>
+          <th>Subsystem</th>
+          <th>Status</th>
+          <th style="width:80px;"></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.map(u => {
+          const initials = u.full_name.split(' ').filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase();
+          return `<tr>
+            <td><div class="user-avatar-sm">${escapeHtml(initials)}</div></td>
+            <td style="font-weight:500;">${escapeHtml(u.full_name)}</td>
+            <td style="color:var(--gray-600);font-size:12px;">${escapeHtml(u.email||'')}</td>
+            <td>
+              <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:140px;"
+                onchange="updateProfileRole('${u.id}',this.value)">
+                <option value="readonly"      ${u.role==='readonly'      ?'selected':''}>Read Only</option>
+                <option value="field_engineer" ${u.role==='field_engineer'?'selected':''}>Field Engineer</option>
+                <option value="admin"          ${u.role==='admin'         ?'selected':''}>Administrator</option>
+              </select>
+            </td>
+            <td>
+              <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:130px;"
+                onchange="updateProfileSubsystem('${u.id}',this.value)">
+                <option value="" ${!u.subsystem?'selected':''}>All subsystems</option>
+                ${SUBSYSTEMS_LIST.map(s=>`<option value="${s}" ${u.subsystem===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+            </td>
+            <td>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;white-space:nowrap;">
+                <input type="checkbox" ${u.is_active?'checked':''} onchange="updateProfileActive('${u.id}',this.checked)">
+                <span style="color:${u.is_active?'var(--good)':'var(--gray-500)'};">${u.is_active?'Active':'Inactive'}</span>
+              </label>
+            </td>
+            <td>
+              <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--red-600);"
+                onclick="deleteUserConfirm('${u.id}','${escapeHtml(u.full_name).replace(/'/g,'')}')">Remove</button>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+async function updateProfileRole(id, role) {
+  const { error } = await _sb.from('profiles').update({ role }).eq('id', id);
+  if (error) toast('Update failed: ' + error.message, 'error');
+  else toast('Role updated', 'success');
+}
+
+async function updateProfileSubsystem(id, subsystem) {
+  const { error } = await _sb.from('profiles').update({ subsystem: subsystem || null }).eq('id', id);
+  if (error) toast('Update failed: ' + error.message, 'error');
+  else toast('Subsystem updated', 'success');
+}
+
+async function updateProfileActive(id, is_active) {
+  const { error } = await _sb.from('profiles').update({ is_active }).eq('id', id);
+  if (error) toast('Update failed: ' + error.message, 'error');
+  else toast(is_active ? 'User activated' : 'User deactivated', 'success');
+}
+
+async function deleteUserConfirm(id, name) {
+  if (!confirm(`Remove "${name}" from the portal?\n\nThis removes their profile and access. Their Supabase auth account is preserved.`)) return;
+  const { error } = await _sb.from('profiles').delete().eq('id', id);
+  if (error) { toast('Remove failed: ' + error.message, 'error'); return; }
+  toast(`Removed ${name}`, 'success');
+  _loadDirectoryUsers();
+}
+
+function openInviteUserModal() {
+  modal({
+    title: 'Invite User',
+    sub: 'Create a new portal account',
+    size: 'medium',
+    body: `
+      <div class="form-grid">
+        <div class="form-field form-field-full">
+          <label>Full Name</label>
+          <input type="text" id="inv-name" class="form-input" placeholder="Jane Smith">
+        </div>
+        <div class="form-field form-field-full">
+          <label>Email</label>
+          <input type="email" id="inv-email" class="form-input" placeholder="jane@example.com">
+        </div>
+        <div class="form-field form-field-full">
+          <label>Temporary Password <span style="font-weight:400;color:var(--gray-500);">(share this securely — user can change later)</span></label>
+          <input type="text" id="inv-password" class="form-input" placeholder="At least 6 characters">
+        </div>
+        <div class="form-field">
+          <label>Role</label>
+          <select id="inv-role" class="form-input">
+            <option value="readonly">Read Only — Dashboards only</option>
+            <option value="field_engineer">Field Engineer — Field intake + Test Matrix</option>
+            <option value="admin">Administrator — Full access</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Subsystem <span style="font-weight:400;color:var(--gray-500);">(optional — blank = all)</span></label>
+          <select id="inv-subsystem" class="form-input">
+            <option value="">All subsystems</option>
+            ${SUBSYSTEMS_LIST.map(s=>`<option value="${s}">${s}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <p style="font-size:12px;color:var(--gray-500);margin-top:14px;line-height:1.5;">
+        The user will receive a confirmation email from Supabase. Once confirmed, they log in with the temporary password above.
+        If email confirmation is disabled in Supabase Auth settings, they can log in immediately.
+      </p>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="inviteUser()">Create Account</button>
+    `,
+  });
+}
+
+async function inviteUser() {
+  const name      = document.getElementById('inv-name').value.trim();
+  const email     = document.getElementById('inv-email').value.trim();
+  const password  = document.getElementById('inv-password').value;
+  const role      = document.getElementById('inv-role').value;
+  const subsystem = document.getElementById('inv-subsystem').value;
+
+  if (!name || !email || !password) { toast('Name, email, and password are all required', 'error'); return; }
+  if (password.length < 6) { toast('Password must be at least 6 characters', 'error'); return; }
+
+  const { data, error } = await _sb.auth.signUp({
+    email, password,
+    options: { data: { full_name: name } },
+  });
+  if (error) { toast('Account creation failed: ' + error.message, 'error'); return; }
+  if (!data.user) { toast('Unexpected error — no user returned', 'error'); return; }
+
+  const { error: profErr } = await _sb.from('profiles').insert({
+    id: data.user.id, email, full_name: name,
+    role, subsystem: subsystem || null, is_active: true,
+  });
+  if (profErr) { toast('Profile save failed: ' + profErr.message, 'error'); return; }
+
+  closeModal();
+  toast(`Account created for ${name}. Share the temp password securely.`, 'success');
+  _loadDirectoryUsers();
+}
+
+// ==========================================================================
 // TEST MATRIX VIEW — Live status toggle scratchpad
 // ==========================================================================
 let matrixFilter = { location: '', subsystem: '', applicable: 'all' };
@@ -2863,7 +3069,7 @@ let intakeAdditions = [];
 function renderFieldIntake() {
   const root = document.getElementById('field-intake-content');
   if (!root || !currentRoleUser) return;
-  if (!['field', 'admin'].includes(currentRoleUser.role)) {
+  if (!['field_engineer', 'admin'].includes(currentRoleUser.role)) {
     root.innerHTML = `<div class="docs-empty"><h3>Field & Admin only</h3></div>`;
     return;
   }
@@ -3230,7 +3436,7 @@ function renderPunchWorkflow() {
     closed: visible.filter(p => p.status === 'closed').slice(0, 5),
   };
 
-  const showCreateBtn = ['admin', 'field', 'punch_manager'].includes(currentRoleUser.role);
+  const showCreateBtn = ['admin', 'field_engineer'].includes(currentRoleUser.role);
 
   root.innerHTML = `
     ${showCreateBtn ? `

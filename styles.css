@@ -2459,6 +2459,38 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
   .intake-stepper { flex-direction: column; }
 }
 
+/* Login overlay */
+.login-overlay {
+  position: fixed; inset: 0;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  z-index: 2000;
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity 0.2s;
+}
+.login-overlay.hidden { display: none; }
+.login-card {
+  background: var(--white);
+  border-radius: 16px;
+  padding: 40px;
+  width: 100%; max-width: 400px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+.login-brand { margin-bottom: 32px; }
+.login-brand-name { font-size: 24px; font-weight: 800; color: var(--black); letter-spacing: -0.03em; }
+.login-brand-sub { font-size: 13px; color: var(--gray-500); margin-top: 4px; }
+
+/* Directory / user table */
+.dir-table { width: 100%; border-collapse: collapse; }
+.dir-table th { font-size: 11px; font-weight: 600; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.05em; padding: 8px 12px; border-bottom: 1px solid var(--gray-200); text-align: left; }
+.dir-table td { padding: 10px 12px; border-bottom: 1px solid var(--gray-100); font-size: 13px; vertical-align: middle; }
+.dir-table tr:last-child td { border-bottom: none; }
+.dir-table tr:hover td { background: var(--gray-50); }
+.role-pill { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
+.role-pill-admin { background: #1e1e2e; color: #fff; }
+.role-pill-field_engineer { background: #dbeafe; color: #1d4ed8; }
+.role-pill-readonly { background: var(--gray-100); color: var(--gray-600); }
+.user-avatar-sm { width: 32px; height: 32px; border-radius: 50%; background: var(--hitachi-red); color: white; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
 /* Toast notifications */
 .toast {
   position: fixed;

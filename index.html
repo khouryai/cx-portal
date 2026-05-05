@@ -13,6 +13,28 @@
 </head>
 <body>
 
+<div id="login-overlay" class="login-overlay">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="login-brand-name">CX Portal</div>
+      <div class="login-brand-sub">BART CBTC Testing &amp; Commissioning</div>
+    </div>
+    <div class="form-field">
+      <label>Email</label>
+      <input type="email" id="auth-email" class="form-input" placeholder="you@example.com" autocomplete="username" onkeydown="if(event.key==='Enter')signIn()">
+    </div>
+    <div class="form-field" style="margin-top:12px;">
+      <label>Password</label>
+      <input type="password" id="auth-password" class="form-input" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')signIn()">
+    </div>
+    <div id="auth-error" style="color:#dc2626;font-size:12px;margin-top:8px;min-height:18px;"></div>
+    <button id="auth-btn" class="login-btn" style="width:100%;margin-top:16px;" onclick="signIn()">Sign In</button>
+    <div style="text-align:center;margin-top:14px;">
+      <a href="#" onclick="sendPasswordReset();return false;" style="font-size:12px;color:var(--gray-500);">Forgot password?</a>
+    </div>
+  </div>
+</div>
+
 <!-- TOP NAV (Hitachi style) -->
 <nav id="topnav">
   <div class="nav-inner">
@@ -33,9 +55,9 @@
       <a href="#" class="nav-link" data-page="docs">Documents</a>
       <a href="#" class="nav-link nav-link-field" data-page="login" id="nav-login">⊕ Sign In</a>
       <a href="#" class="nav-link nav-role" data-page="admin" data-role="admin" style="display:none;">Admin</a>
-      <a href="#" class="nav-link nav-role" data-page="field-intake" data-role="field admin" style="display:none;">Field Intake</a>
-      <a href="#" class="nav-link nav-role" data-page="test-matrix" data-role="field admin punch_manager" style="display:none;">Test Matrix</a>
-      <a href="#" class="nav-link nav-role" data-page="punch-workflow" data-role="punch_manager technician admin client" style="display:none;">Punch Workflow</a>
+      <a href="#" class="nav-link nav-role" data-page="field-intake" data-role="field_engineer admin" style="display:none;">Field Intake</a>
+      <a href="#" class="nav-link nav-role" data-page="test-matrix" data-role="field_engineer admin" style="display:none;">Test Matrix</a>
+      <a href="#" class="nav-link nav-role" data-page="punch-workflow" data-role="admin" style="display:none;">Punch Workflow</a>
       <a href="#" class="nav-link nav-role" data-page="audit" data-role="admin" style="display:none;">Audit Log</a>
     </div>
     <div class="nav-right">
@@ -360,37 +382,10 @@
   </div>
 </section>
 
-<!-- ==== UNIVERSAL LOGIN ==== -->
+<!-- ==== LOGIN PAGE (overlay handles auth now) ==== -->
 <section class="page" id="page-login">
-  <div class="page-hero">
-    <div class="container">
-      <div class="page-eyebrow">Sign In</div>
-      <h1 class="page-title">Portal Sign In</h1>
-      <p class="page-sub">Sign in to access role-specific tools — admin, field intake, punch workflow</p>
-    </div>
-  </div>
-  <div class="container">
-    <div id="field-login" class="field-login-card">
-      <div class="field-login-icon"></div>
-      <h2 class="field-login-title">Sign In</h2>
-      <p class="field-login-sub">Select your name and enter your 4-digit PIN</p>
-      <div class="field-login-form">
-        <select id="login-name" class="filter-select login-input">
-          <option value="">Select your name</option>
-        </select>
-        <div class="pin-wrap">
-          <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="login-pin" placeholder="• • • •" class="pin-input">
-        </div>
-        <button id="login-btn" class="login-btn">Sign In</button>
-        <div id="login-error" class="login-error"></div>
-        <div class="login-help">
-          <strong>Demo PINs:</strong><br>
-          Admin (Alex Khoury): 1234 · Field (John Sterrett): 1111<br>
-          Punch Mgr (Mustafa Isik): 5555 · Tech (Davinder Nagra): 6666<br>
-          Client (BART Inspector): 0000
-        </div>
-      </div>
-    </div>
+  <div class="container" style="padding-top:80px;text-align:center;">
+    <p style="color:var(--gray-500);">Please use the sign-in overlay to log in.</p>
   </div>
 </section>
 
