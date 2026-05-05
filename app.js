@@ -2006,15 +2006,78 @@ function confirmDeploy(templateId) {
   renderTestMatrix();
 }
 
+// ==========================================================================
+// TEMPLATE CREATION — Activity-based with inline test case builder
+// ==========================================================================
+let _templateCases = [];
+
+function _tcRowsHTML() {
+  return _templateCases.map((tc, i) => `
+    <div style="display:grid;grid-template-columns:140px 1fr 130px 32px 32px;gap:6px;align-items:center;margin-bottom:6px;">
+      <input type="text" class="form-input" style="font-size:12px;padding:6px 8px;" placeholder="Code e.g. DCS-01"
+        value="${escapeHtml(tc.code)}" oninput="_templateCases[${i}].code=this.value">
+      <input type="text" class="form-input" style="font-size:12px;padding:6px 8px;" placeholder="Test Case Name"
+        value="${escapeHtml(tc.name)}" oninput="_templateCases[${i}].name=this.value">
+      <input type="text" class="form-input" style="font-size:12px;padding:6px 8px;" placeholder="Category"
+        value="${escapeHtml(tc.category)}" oninput="_templateCases[${i}].category=this.value">
+      <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;" title="Duplicate" onclick="duplicateTemplateCase(${i})">⧉</button>
+      <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;color:var(--bad);" title="Remove" onclick="removeTemplateCase(${i})" ${_templateCases.length === 1 ? 'disabled' : ''}>×</button>
+    </div>
+  `).join('');
+}
+
+function addTemplateCase() {
+  _templateCases.push({ code:'', name:'', category:'' });
+  document.getElementById('tc-rows').innerHTML = _tcRowsHTML();
+}
+
+function duplicateTemplateCase(i) {
+  _templateCases.splice(i + 1, 0, { ..._templateCases[i] });
+  document.getElementById('tc-rows').innerHTML = _tcRowsHTML();
+}
+
+function removeTemplateCase(i) {
+  if (_templateCases.length === 1) return;
+  _templateCases.splice(i, 1);
+  document.getElementById('tc-rows').innerHTML = _tcRowsHTML();
+}
+
+function downloadTemplateCaseCSV() {
+  const csv = 'Code,Name,Category\n"DCS-SAT-01","Network Connectivity Test","Hardware SAT"';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
+  a.download = 'TestCases_Template.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function handleTemplateCaseImport(input) {
+  const file = input.files[0]; if (!file) return; input.value = '';
+  file.text().then(text => {
+    const rows = parseCSV(text);
+    const imported = rows.map(r => ({
+      code:     r.Code     || r.TestCaseCode || r['Test Case Code'] || '',
+      name:     r.Name     || r.TestName     || r['Test Case Name'] || '',
+      category: r.Category || r.TestCategory || r['Test Category']  || '',
+    })).filter(r => r.code || r.name);
+    if (!imported.length) { toast('Could not find Code/Name/Category columns', 'warn'); return; }
+    _templateCases = imported;
+    document.getElementById('tc-rows').innerHTML = _tcRowsHTML();
+    toast(`Loaded ${imported.length} test cases from CSV`, 'success');
+  });
+}
+
 function openNewTemplateModal() {
+  _templateCases = [{ code:'', name:'', category:'' }];
   modal({
-    title: 'Create Template',
-    sub: 'Define a reusable test case template',
+    title: 'Create Activity Template',
+    sub: 'Define a reusable set of test cases for an activity',
+    size: 'large',
     body: `
-      <div class="form-grid">
+      <div class="form-grid" style="margin-bottom:20px;">
         <div class="form-field form-field-full">
-          <label>Template Name</label>
-          <input type="text" id="ntpl-name" class="form-input" placeholder="e.g. CBTC Wayside SAT">
+          <label>Activity Name</label>
+          <input type="text" id="ntpl-name" class="form-input" placeholder="e.g. ATS LATS Hardware SAT">
         </div>
         <div class="form-field">
           <label>Subsystem</label>
@@ -2026,34 +2089,54 @@ function openNewTemplateModal() {
         </div>
         <div class="form-field form-field-full">
           <label>Description</label>
-          <textarea id="ntpl-desc" class="form-input" rows="2" placeholder="What does this template cover?"></textarea>
+          <textarea id="ntpl-desc" class="form-input" rows="2" placeholder="What does this activity cover?"></textarea>
         </div>
         <div class="form-field form-field-full">
-          <label>Test Cases (one per line, format: CODE | Name | Procedure)</label>
-          <textarea id="ntpl-cases" class="form-input" rows="8" placeholder="DCS-SAT-01 | Network Test | CDRL 9.04.53"></textarea>
+          <label>Test Procedure <span style="font-weight:400;color:var(--gray-500);">(applies to all test cases in this template)</span></label>
+          <textarea id="ntpl-procedure" class="form-input" rows="3" placeholder="e.g. Refer to CDRL 9.04.53 Section 4. Power on system, verify comms, run test sequence..."></textarea>
         </div>
       </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div style="font-weight:600;font-size:13px;">Test Cases</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="form-secondary" style="font-size:12px;padding:5px 10px;" onclick="downloadTemplateCaseCSV()">↓ CSV Template</button>
+          <label style="cursor:pointer;">
+            <input type="file" accept=".csv" onchange="handleTemplateCaseImport(this)" style="display:none">
+            <div class="form-secondary" style="font-size:12px;padding:5px 10px;cursor:pointer;display:inline-block;">📂 Import CSV</div>
+          </label>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:140px 1fr 130px 32px 32px;gap:6px;margin-bottom:6px;padding:0 2px;">
+        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">CODE</div>
+        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">TEST CASE NAME</div>
+        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">CATEGORY</div>
+        <div></div><div></div>
+      </div>
+      <div id="tc-rows">${_tcRowsHTML()}</div>
+      <button class="form-secondary" style="width:100%;margin-top:8px;font-size:13px;" onclick="addTemplateCase()">+ Add Test Case</button>
     `,
     footer: `
-      <button class="admin-action-btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="admin-action-btn" onclick="saveNewTemplate()">Create Template</button>
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="saveNewTemplate()">Create Activity Template</button>
     `,
   });
 }
 
 function saveNewTemplate() {
-  const name = document.getElementById('ntpl-name').value.trim();
+  const name      = document.getElementById('ntpl-name').value.trim();
   const subsystem = document.getElementById('ntpl-subsystem').value;
-  const desc = document.getElementById('ntpl-desc').value.trim();
-  const casesText = document.getElementById('ntpl-cases').value.trim();
-  if (!name || !casesText) {
-    toast('Name and test cases required', 'error');
-    return;
-  }
-  const testCases = casesText.split('\n').map(line => {
-    const parts = line.split('|').map(p => p.trim());
-    return { code: parts[0] || '', name: parts[1] || '', procedure: parts[2] || '', duration: 1 };
-  }).filter(tc => tc.code && tc.name);
+  const desc      = document.getElementById('ntpl-desc').value.trim();
+  const procedure = document.getElementById('ntpl-procedure').value.trim();
+
+  if (!name) { toast('Activity Name is required', 'error'); return; }
+
+  const testCases = _templateCases
+    .filter(tc => tc.code.trim() || tc.name.trim())
+    .map(tc => ({ code: tc.code.trim(), name: tc.name.trim(), category: tc.category.trim(), procedure, duration: 1 }));
+
+  if (!testCases.length) { toast('Add at least one test case', 'error'); return; }
 
   const newTpl = {
     id: 'tpl-' + Date.now(),
@@ -2063,9 +2146,9 @@ function saveNewTemplate() {
     testCases,
   };
   TEMPLATES.push(newTpl);
-  logAudit('Created Template', name, `${testCases.length} test cases`);
+  logAudit('Created Activity Template', name, `${testCases.length} test cases`);
   closeModal();
-  toast(`Created template: ${name}`, 'success');
+  toast(`Created activity: ${name}`, 'success');
   renderAdminPortal();
 }
 
