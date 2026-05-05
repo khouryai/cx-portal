@@ -2491,6 +2491,18 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
 .role-pill-readonly { background: var(--gray-100); color: var(--gray-600); }
 .user-avatar-sm { width: 32px; height: 32px; border-radius: 50%; background: var(--hitachi-red); color: white; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 
+/* Typeahead / tag-input */
+.ta-wrap { position: relative; }
+.ta-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; min-height: 0; }
+.ta-tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; background: var(--hitachi-red); color: #fff; border-radius: 12px; font-size: 12px; font-weight: 500; }
+.ta-remove { background: none; border: none; color: rgba(255,255,255,0.8); cursor: pointer; font-size: 14px; line-height: 1; padding: 0; display: flex; align-items: center; }
+.ta-remove:hover { color: #fff; }
+.ta-search { width: 100%; }
+.ta-drop { position: absolute; left: 0; right: 0; top: calc(100% + 2px); background: #fff; border: 1px solid var(--gray-200); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.12); z-index: 500; max-height: 200px; overflow-y: auto; }
+.ta-drop.hidden { display: none; }
+.ta-option { padding: 8px 12px; font-size: 13px; cursor: pointer; color: var(--gray-800); }
+.ta-option:hover { background: var(--gray-50); }
+
 /* Toast notifications */
 .toast {
   position: fixed;

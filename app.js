@@ -894,7 +894,7 @@ function exportPL() {
 // INIT
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
-  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB()]);
+  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers()]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -948,6 +948,23 @@ async function loadLocations() {
   } catch (err) {
     console.warn('Supabase locations load failed:', err.message);
   }
+}
+
+async function loadFieldsetConfig() {
+  try {
+    const { data, error } = await _sb.from('fieldset_config').select('*');
+    if (error) throw error;
+    FIELDSET_CONFIG = {};
+    (data || []).forEach(row => { FIELDSET_CONFIG[row.field_key] = row.options || []; });
+  } catch (err) { console.warn('Fieldset config load failed:', err.message); }
+}
+
+async function _loadProfileUsers() {
+  try {
+    const { data, error } = await _sb.from('profiles').select('full_name, role').eq('is_active', true);
+    if (error) throw error;
+    PROFILE_USERS = (data || []).filter(u => u.full_name).sort((a,b) => a.full_name.localeCompare(b.full_name));
+  } catch (err) { console.warn('Profile users load failed:', err.message); }
 }
 
 async function loadTestItems() {
@@ -1468,6 +1485,8 @@ const USERS_V2 = DATA.users_v2 || [];
 const TEMPLATES = DATA.templates || [];
 const LOCATIONS = DATA.locations || [];
 let LOCS = []; // hierarchical locations loaded from Supabase
+let FIELDSET_CONFIG = {}; // { punch_type:[], priority:[], ... } loaded from Supabase
+let PROFILE_USERS = []; // { full_name, role } for typeahead
 const DEPLOYMENTS = DATA.deployments || [];
 let _adminTab = 'templates';
 let TEST_INSTANCES = DATA.testInstances || [];
@@ -1662,11 +1681,12 @@ function renderAdminPortal() {
     return;
   }
   const tabs = [
-    { id: 'templates',  label: 'Activity Templates' },
-    { id: 'testcases',  label: 'Test Items' },
-    { id: 'locations',  label: 'Locations' },
-    { id: 'directory',  label: 'Directory' },
-    { id: 'overview',   label: 'Overview' },
+    { id: 'templates',   label: 'Activity Templates' },
+    { id: 'testcases',   label: 'Test Items' },
+    { id: 'locations',   label: 'Locations' },
+    { id: 'directory',   label: 'Directory' },
+    { id: 'fieldconfig', label: 'Field Config' },
+    { id: 'overview',    label: 'Overview' },
   ];
   root.innerHTML = `
     <div class="admin-tabs">
@@ -1679,7 +1699,7 @@ function renderAdminPortal() {
 
 function setAdminTab(tab) {
   _adminTab = tab;
-  const labelMap = { templates:'Activity Templates', testcases:'Test Items', locations:'Locations', directory:'Directory', overview:'Overview' };
+  const labelMap = { templates:'Activity Templates', testcases:'Test Items', locations:'Locations', directory:'Directory', fieldconfig:'Field Config', overview:'Overview' };
   document.querySelectorAll('.admin-tab').forEach(el => {
     el.classList.toggle('active', el.textContent.trim() === labelMap[tab]);
   });
@@ -1693,6 +1713,7 @@ function renderAdminTabBody() {
   else if (_adminTab === 'testcases') body.innerHTML = _adminTestItemsHTML();
   else if (_adminTab === 'locations') body.innerHTML = _adminLocationsHTML();
   else if (_adminTab === 'directory') { body.innerHTML = _adminDirectoryHTML(); setTimeout(_loadDirectoryUsers, 0); }
+  else if (_adminTab === 'fieldconfig') body.innerHTML = _adminFieldConfigHTML();
   else body.innerHTML = _adminOverviewHTML();
 }
 
@@ -2728,9 +2749,82 @@ async function deleteTemplate(id) {
 }
 
 // ==========================================================================
-// ADMIN DIRECTORY — User management
+// ADMIN FIELD CONFIG — Configurable dropdown options for Punch List
 // ==========================================================================
 const SUBSYSTEMS_LIST = ['DCS','ATS','IXL','CORE CBTC','PS&TP','IAMS','SCADA','CYBER','TCH'];
+
+const FIELDCONFIG_DEFS = [
+  { key: 'punch_type',          label: 'Punch Item Type' },
+  { key: 'priority',            label: 'Priority' },
+  { key: 'category_of_failure', label: 'Category of Failure' },
+  { key: 'type_of_failure',     label: 'Type of Failure' },
+  { key: 'schedule_impact',     label: 'Schedule Impact' },
+  { key: 'punch_subsystem',     label: 'Subsystem' },
+];
+
+function _fsCfg(key) { return FIELDSET_CONFIG[key] || []; }
+
+function _adminFieldConfigHTML() {
+  return `
+    <div class="admin-section">
+      <div class="admin-section-head">
+        <div>
+          <div class="admin-section-title">Configurable Field Options</div>
+          <p class="section-sub">Manage the dropdown options available in the Punch List form</p>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px;">
+        ${FIELDCONFIG_DEFS.map(def => `
+          <div class="data-card" style="padding:20px;">
+            <div style="font-weight:600;font-size:14px;margin-bottom:12px;color:var(--gray-800);">${def.label}</div>
+            <div id="fsc-list-${def.key}" style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px;">
+              ${_fsCfg(def.key).map((opt,i) => `
+                <div style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:var(--gray-50);border-radius:6px;font-size:13px;">
+                  <span style="flex:1;">${escapeHtml(opt)}</span>
+                  <button class="form-secondary" style="padding:2px 8px;font-size:11px;color:var(--bad);"
+                    onclick="fscRemoveOption('${def.key}',${i})">Remove</button>
+                </div>`).join('') || '<div style="font-size:12px;color:var(--gray-400);">No options yet</div>'}
+            </div>
+            <div style="display:flex;gap:6px;">
+              <input type="text" id="fsc-new-${def.key}" class="form-input" style="font-size:13px;"
+                placeholder="Add new option…" onkeydown="if(event.key==='Enter')fscAddOption('${def.key}')">
+              <button class="admin-action-btn" style="white-space:nowrap;" onclick="fscAddOption('${def.key}')">Add</button>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
+async function fscAddOption(key) {
+  const input = document.getElementById(`fsc-new-${key}`);
+  const val = input?.value.trim();
+  if (!val) return;
+  const cur = [..._fsCfg(key)];
+  if (cur.includes(val)) { toast('Option already exists', 'error'); return; }
+  cur.push(val);
+  await _fscSave(key, cur);
+  input.value = '';
+}
+
+async function fscRemoveOption(key, idx) {
+  const cur = [..._fsCfg(key)];
+  cur.splice(idx, 1);
+  await _fscSave(key, cur);
+}
+
+async function _fscSave(key, options) {
+  const { error } = await _sb.from('fieldset_config')
+    .upsert({ field_key: key, options, updated_at: new Date().toISOString() }, { onConflict: 'field_key' });
+  if (error) { toast('Save failed: ' + error.message, 'error'); return; }
+  FIELDSET_CONFIG[key] = options;
+  toast('Saved', 'success');
+  renderAdminTabBody();
+}
+
+// ==========================================================================
+// ADMIN DIRECTORY — User management
+// ==========================================================================
 
 function _adminDirectoryHTML() {
   return `
@@ -3410,6 +3504,80 @@ async function submitIntakeFinal(count) {
 }
 
 // ==========================================================================
+// TYPEAHEAD HELPERS — for multi-select people fields
+// ==========================================================================
+function _taUsers(adminOnly) {
+  return PROFILE_USERS
+    .filter(u => !adminOnly ? u.role !== 'readonly' : u.role === 'admin')
+    .map(u => u.full_name);
+}
+
+function _taGetVals(id) {
+  const v = document.getElementById(id)?.value || '';
+  return v ? v.split(',').map(s => s.trim()).filter(Boolean) : [];
+}
+
+function _taRenderTags(id, vals) {
+  const el = document.getElementById(id + '-tags');
+  if (!el) return;
+  el.innerHTML = vals.map(v =>
+    `<span class="ta-tag">${escapeHtml(v)}<button type="button" class="ta-remove" onmousedown="event.preventDefault();_taRemove('${id}','${v.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')">×</button></span>`
+  ).join('');
+}
+
+function _taFilter(id, adminOnly) {
+  const q = (document.getElementById(id + '-search')?.value || '').toLowerCase();
+  const drop = document.getElementById(id + '-drop');
+  if (!drop) return;
+  if (!q) { drop.classList.add('hidden'); return; }
+  const cur = _taGetVals(id);
+  const pool = _taUsers(adminOnly).filter(u => u.toLowerCase().includes(q) && !cur.includes(u));
+  if (!pool.length) { drop.classList.add('hidden'); return; }
+  drop.classList.remove('hidden');
+  drop.innerHTML = pool.slice(0, 8).map(u =>
+    `<div class="ta-option" onmousedown="event.preventDefault();_taSelect('${id}','${u.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}',${adminOnly})">${escapeHtml(u)}</div>`
+  ).join('');
+}
+
+function _taSelect(id, val, adminOnly) {
+  const cur = _taGetVals(id);
+  if (!cur.includes(val)) cur.push(val);
+  const hidden = document.getElementById(id);
+  if (hidden) hidden.value = cur.join(',');
+  _taRenderTags(id, cur);
+  const search = document.getElementById(id + '-search');
+  if (search) search.value = '';
+  const drop = document.getElementById(id + '-drop');
+  if (drop) drop.classList.add('hidden');
+}
+
+function _taRemove(id, val) {
+  const cur = _taGetVals(id).filter(v => v !== val);
+  const hidden = document.getElementById(id);
+  if (hidden) hidden.value = cur.join(',');
+  _taRenderTags(id, cur);
+}
+
+function _taInitField(id, vals, adminOnly) {
+  const hidden = document.getElementById(id);
+  if (hidden) hidden.value = vals.join(',');
+  _taRenderTags(id, vals);
+}
+
+function _taHTML(id, adminOnly) {
+  return `
+    <div class="ta-wrap">
+      <div class="ta-tags" id="${id}-tags"></div>
+      <input type="text" id="${id}-search" class="ta-search form-input" placeholder="Type to search users…"
+        autocomplete="off" oninput="_taFilter('${id}',${adminOnly})"
+        onblur="setTimeout(()=>{ const d=document.getElementById('${id}-drop'); if(d)d.classList.add('hidden'); },150)">
+      <div class="ta-drop hidden" id="${id}-drop"></div>
+    </div>
+    <input type="hidden" id="${id}" value="">
+  `;
+}
+
+// ==========================================================================
 // PUNCH LIST — Supabase-backed list view with create/edit/detail
 // ==========================================================================
 let PUNCH_DB = [];
@@ -3494,7 +3662,10 @@ function renderPunchWorkflow() {
         ${[['my',`My Items (${my.length})`],['all',`All Items (${all.length})`],['bin',`Recycle Bin (${bin.length})`]].map(([id,label])=>`
           <button class="admin-tab${_plTab===id?' active':''}" onclick="_plSetTab('${id}')">${label}</button>`).join('')}
       </div>
-      <button class="admin-action-btn" onclick="openNewPunchModal()">+ Create</button>
+      <div style="display:flex;gap:8px;">
+        <button class="form-secondary" onclick="openPunchImportModal()" style="font-size:13px;">⬆ Import CSV</button>
+        <button class="admin-action-btn" onclick="openNewPunchModal()">+ Create New</button>
+      </div>
     </div>
 
     <div class="kpi-grid kpi-grid-mini" style="margin-bottom:20px;">
@@ -3697,10 +3868,14 @@ async function restorePunch(id) {
 }
 
 function _punchFormHTML(p) {
-  const phases = LOCS.filter(l => l.level === 1).sort((a,b) => a.sort_order - b.sort_order);
-  const locs   = p?.phase ? LOCS.filter(l => l.level === 2 && l.parent_id === p.phase) : [];
-  const v = (id) => p ? escapeHtml(p[id]||'') : '';
+  const phases  = LOCS.filter(l => l.level === 1).sort((a,b) => a.sort_order - b.sort_order);
+  const locs    = p?.phase ? LOCS.filter(l => l.level === 2 && l.parent_id === p.phase) : [];
+  const v   = (id) => p ? escapeHtml(p[id]||'') : '';
   const sel = (id, val) => p?.[id] === val ? 'selected' : '';
+  const fOpts = (key, selVal) => (_fsCfg(key).length ? _fsCfg(key) : []).map(o => `<option ${o===selVal?'selected':''}>${escapeHtml(o)}</option>`).join('');
+  const allUsers  = PROFILE_USERS.filter(u => u.role !== 'readonly').map(u => u.full_name);
+  const adminOnly = PROFILE_USERS.filter(u => u.role === 'admin').map(u => u.full_name);
+  const pimVal    = p ? v('punch_item_manager') : escapeHtml(currentRoleUser?.name||'');
   return `
     <div class="form-grid">
       <div class="form-field form-field-full">
@@ -3711,30 +3886,33 @@ function _punchFormHTML(p) {
         <label>Type *</label>
         <select id="np-type" class="form-input">
           <option value="">Select…</option>
-          ${['Defect','Issue','NCR','Observation','RFI'].map(t=>`<option ${sel('type',t)}>${t}</option>`).join('')}
+          ${fOpts('punch_type', p?.type)||['Defect','Issue','NCR','Observation','RFI'].map(t=>`<option ${sel('type',t)}>${t}</option>`).join('')}
         </select>
       </div>
       <div class="form-field">
         <label>Priority *</label>
         <select id="np-priority" class="form-input">
-          ${['Low','Medium','High','Critical'].map(t=>`<option ${sel('priority',t)||(!p&&t==='Medium'?'selected':'')}>${t}</option>`).join('')}
+          ${((_fsCfg('priority').length ? _fsCfg('priority') : ['Low','Medium','High','Critical'])
+            .map(t=>`<option ${sel('priority',t)||(!p&&t==='Medium'?'selected':'')}>${t}</option>`)).join('')}
         </select>
       </div>
       <div class="form-field">
         <label>Punch Item Manager *</label>
-        <input type="text" id="np-pim" class="form-input" placeholder="Name" value="${p?v('punch_item_manager'):escapeHtml(currentRoleUser?.name||'')}">
+        <input type="text" id="np-pim" class="form-input" list="pim-datalist" placeholder="Name" value="${pimVal}" autocomplete="off">
+        <datalist id="pim-datalist">${allUsers.map(u=>`<option value="${escapeHtml(u)}">`).join('')}</datalist>
       </div>
       <div class="form-field">
-        <label>Final Approver *</label>
-        <input type="text" id="np-approver" class="form-input" placeholder="Name" value="${v('final_approver')}">
+        <label>Final Approver * <span style="font-weight:400;color:var(--gray-500);font-size:11px;">(Admins only)</span></label>
+        <input type="text" id="np-approver" class="form-input" list="approver-datalist" placeholder="Name" value="${v('final_approver')}" autocomplete="off">
+        <datalist id="approver-datalist">${adminOnly.map(u=>`<option value="${escapeHtml(u)}">`).join('')}</datalist>
       </div>
       <div class="form-field form-field-full">
-        <label>Assignees <span style="font-weight:400;color:var(--gray-500);">(comma-separated)</span></label>
-        <input type="text" id="np-assignees" class="form-input" placeholder="Name 1, Name 2" value="${p?(p.assignees||[]).join(', '):''}">
+        <label>Assignees</label>
+        ${_taHTML('np-assignees', false)}
       </div>
       <div class="form-field form-field-full">
-        <label>Distribution List <span style="font-weight:400;color:var(--gray-500);">(comma-separated)</span></label>
-        <input type="text" id="np-distlist" class="form-input" placeholder="Name 1, Name 2" value="${p?(p.distribution_list||[]).join(', '):''}">
+        <label>Distribution List</label>
+        ${_taHTML('np-distlist', false)}
       </div>
       <div class="form-field">
         <label>Phase</label>
@@ -3751,17 +3929,17 @@ function _punchFormHTML(p) {
         </select>
       </div>
       <div class="form-field">
-        <label>Subsystem *</label>
+        <label>Subsystem</label>
         <select id="np-subsystem" class="form-input">
           <option value="">Select…</option>
-          ${SUBSYSTEMS_LIST.map(s=>`<option ${sel('subsystem',s)}>${s}</option>`).join('')}
+          ${(_fsCfg('punch_subsystem').length ? _fsCfg('punch_subsystem') : SUBSYSTEMS_LIST).map(s=>`<option ${sel('subsystem',s)}>${s}</option>`).join('')}
         </select>
       </div>
       <div class="form-field">
         <label>Schedule Impact</label>
         <select id="np-schedule" class="form-input">
           <option value="">None</option>
-          ${['Minor','Moderate','Major','Critical'].map(s=>`<option ${sel('schedule_impact',s)}>${s}</option>`).join('')}
+          ${(_fsCfg('schedule_impact').length ? _fsCfg('schedule_impact') : ['Minor','Moderate','Major','Critical']).map(s=>`<option ${sel('schedule_impact',s)}>${s}</option>`).join('')}
         </select>
       </div>
       <div class="form-field">
@@ -3773,17 +3951,17 @@ function _punchFormHTML(p) {
         <textarea id="np-desc" class="form-input" rows="4" placeholder="Describe the issue in detail…">${v('description')}</textarea>
       </div>
       <div class="form-field">
-        <label>Category of Test Failure</label>
+        <label>Category of Failure</label>
         <select id="np-cat" class="form-input">
           <option value="">Select…</option>
-          ${['Hardware Failure','Software Defect','Procedure Issue','Documentation Error','Integration Issue','Environmental','Design Issue','Other'].map(s=>`<option ${sel('category_of_failure',s)}>${s}</option>`).join('')}
+          ${(_fsCfg('category_of_failure').length ? _fsCfg('category_of_failure') : ['Hardware Failure','Software Defect','Procedure Issue','Documentation Error','Integration Issue','Environmental','Design Issue','Other']).map(s=>`<option ${sel('category_of_failure',s)}>${s}</option>`).join('')}
         </select>
       </div>
       <div class="form-field">
         <label>Type of Failure</label>
         <select id="np-failtype" class="form-input">
           <option value="">Select…</option>
-          ${['First Occurrence','Repeat Failure','Systematic Issue'].map(s=>`<option ${sel('type_of_failure',s)}>${s}</option>`).join('')}
+          ${(_fsCfg('type_of_failure').length ? _fsCfg('type_of_failure') : ['First Occurrence','Repeat Failure','Systematic Issue']).map(s=>`<option ${sel('type_of_failure',s)}>${s}</option>`).join('')}
         </select>
       </div>
       <div class="form-field">
@@ -3819,6 +3997,7 @@ function openNewPunchModal() {
       <button class="form-submit" onclick="saveNewPunchItem(false)">Save</button>
     `,
   });
+  setTimeout(() => { _taInitField('np-assignees', [], false); _taInitField('np-distlist', [], false); }, 30);
 }
 
 function openEditPunchModal(id) {
@@ -3833,6 +4012,10 @@ function openEditPunchModal(id) {
       <button class="form-submit" onclick="saveEditPunchItem('${id}')">Save Changes</button>
     `,
   });
+  setTimeout(() => {
+    _taInitField('np-assignees', p.assignees || [], false);
+    _taInitField('np-distlist', p.distribution_list || [], false);
+  }, 30);
 }
 
 function _readPunchForm() {
@@ -3896,6 +4079,154 @@ async function saveEditPunchItem(id) {
 }
 
 // ==========================================================================
+// PUNCH LIST — CSV IMPORT
+// ==========================================================================
+function openPunchImportModal() {
+  modal({
+    title: 'Import Punch Items — CSV',
+    size: 'large',
+    body: `
+      <div style="margin-bottom:16px;">
+        <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px;">
+          Upload a CSV file to bulk-create punch items. Download the template to see required columns.
+        </p>
+        <button class="form-secondary" style="font-size:12px;" onclick="downloadPunchTemplate()">⬇ Download CSV Template</button>
+      </div>
+      <div class="form-field">
+        <label>Select CSV File</label>
+        <input type="file" id="punch-import-file" accept=".csv" class="form-input" onchange="previewPunchImport(this)">
+      </div>
+      <div id="punch-import-preview" style="margin-top:16px;"></div>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" id="punch-import-btn" onclick="executePunchImport()" disabled>Import</button>
+    `,
+  });
+}
+
+function downloadPunchTemplate() {
+  const cols = 'Title,Type,Priority,Phase,Location,Subsystem,Punch Item Manager,Final Approver,Assignees,Distribution List,Due Date,Description,Category of Failure,Type of Failure,Schedule Impact,RTC Work Item ID';
+  const ex   = 'Example defect title,Defect,High,Phase 1,W40 Millbrae,DCS,John Smith,Jane Doe,"Alice, Bob","Charlie, Dave",2025-12-31,Detailed description here,Hardware Failure,First Occurrence,Minor,RTC-1234';
+  downloadCSV(cols + '\n' + ex, 'punch_import_template.csv');
+}
+
+let _punchImportRows = [];
+
+function previewPunchImport(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const text = e.target.result;
+    const rows = parseCSVGeneric(text);
+    if (!rows.length) {
+      document.getElementById('punch-import-preview').innerHTML =
+        `<div style="color:#dc2626;font-size:13px;">No data rows found in file.</div>`;
+      return;
+    }
+    // Validate and map rows
+    _punchImportRows = [];
+    const errors = [];
+    rows.forEach((row, i) => {
+      const title = (row['Title'] || '').trim();
+      if (!title) { errors.push(`Row ${i+2}: Title is required`); return; }
+      // Resolve phase/location IDs
+      let phaseId = null, locId = null;
+      const phaseName = (row['Phase'] || '').trim();
+      const locName   = (row['Location'] || '').trim();
+      if (phaseName) {
+        const ph = LOCS.find(l => l.level === 1 && l.name.toLowerCase().includes(phaseName.toLowerCase()));
+        if (ph) {
+          phaseId = ph.id;
+          if (locName) {
+            const lo = LOCS.find(l => l.level === 2 && l.parent_id === ph.id && l.name.toLowerCase().includes(locName.toLowerCase()));
+            if (lo) locId = lo.id;
+            else errors.push(`Row ${i+2}: Location "${locName}" not found under "${ph.name}"`);
+          }
+        } else {
+          errors.push(`Row ${i+2}: Phase "${phaseName}" not found in master list`);
+        }
+      }
+      _punchImportRows.push({
+        title, type: row['Type']||null, priority: row['Priority']||'Medium',
+        phase: phaseId, location: locId,
+        subsystem: row['Subsystem']||null,
+        punch_item_manager: row['Punch Item Manager']||null,
+        final_approver: row['Final Approver']||null,
+        assignees: (row['Assignees']||'').split(',').map(s=>s.trim()).filter(Boolean),
+        distribution_list: (row['Distribution List']||'').split(',').map(s=>s.trim()).filter(Boolean),
+        due_date: row['Due Date']||null,
+        description: row['Description']||null,
+        category_of_failure: row['Category of Failure']||null,
+        type_of_failure: row['Type of Failure']||null,
+        schedule_impact: row['Schedule Impact']||null,
+        rtc_work_item_id: row['RTC Work Item ID']||null,
+      });
+    });
+    const preview = document.getElementById('punch-import-preview');
+    const importBtn = document.getElementById('punch-import-btn');
+    if (errors.length) {
+      preview.innerHTML = `
+        <div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:12px;margin-bottom:12px;">
+          <div style="font-weight:600;font-size:13px;color:#dc2626;margin-bottom:6px;">Validation Errors (${errors.length})</div>
+          ${errors.map(e=>`<div style="font-size:12px;color:#b91c1c;">• ${escapeHtml(e)}</div>`).join('')}
+        </div>
+        ${_punchImportRows.length ? `<div style="font-size:13px;color:var(--gray-600);">${_punchImportRows.length} valid row(s) will be imported.</div>` : ''}
+      `;
+      importBtn.disabled = _punchImportRows.length === 0;
+    } else {
+      preview.innerHTML = `
+        <div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:8px;padding:12px;">
+          <div style="font-weight:600;font-size:13px;color:#059669;">${_punchImportRows.length} item(s) ready to import</div>
+        </div>
+        <div class="data-card" style="padding:0;overflow:hidden;margin-top:12px;max-height:220px;overflow-y:auto;">
+          <table class="data-table" style="font-size:12px;">
+            <thead><tr><th>#</th><th>Title</th><th>Type</th><th>Priority</th><th>Phase / Location</th></tr></thead>
+            <tbody>
+              ${_punchImportRows.map((r,i)=>`<tr>
+                <td>${i+1}</td><td>${escapeHtml(r.title)}</td>
+                <td>${escapeHtml(r.type||'—')}</td><td>${escapeHtml(r.priority)}</td>
+                <td>${escapeHtml(_plLocName(r.phase))} / ${escapeHtml(_plLocName(r.location))}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+      importBtn.disabled = false;
+    }
+  };
+  reader.readAsText(file);
+}
+
+async function executePunchImport() {
+  if (!_punchImportRows.length) return;
+  const importBtn = document.getElementById('punch-import-btn');
+  importBtn.disabled = true;
+  importBtn.textContent = 'Importing…';
+  let nextNum = PUNCH_DB.length ? Math.max(...PUNCH_DB.map(p => p.number || 0)) + 1 : 1;
+  let ok = 0, fail = 0;
+  for (const row of _punchImportRows) {
+    const record = {
+      ...row, number: nextNum++,
+      status: 'work_required',
+      is_deleted: false,
+      created_by: currentRoleUser.name,
+      date_notified: new Date().toISOString(),
+      history: [{ action: 'Created via Import', by: currentRoleUser.name, at: new Date().toISOString() }],
+    };
+    const { data, error } = await _sb.from('punch_items').insert(record).select().single();
+    if (error) { console.error('Import row failed:', error.message); fail++; }
+    else { PUNCH_DB.unshift(data); ok++; }
+  }
+  toast(`Imported ${ok} item(s)${fail ? `, ${fail} failed` : ''}`, fail ? 'error' : 'success');
+  logAudit('Punch Import', `${ok} items imported`);
+  _punchImportRows = [];
+  closeModal();
+  renderPunchWorkflow();
+}
+
+// ==========================================================================
 // AUDIT LOG
 // ==========================================================================
 function renderAuditLog() {
@@ -3955,7 +4286,7 @@ function modal({ title, sub, body, footer, size }) {
     overlay = document.createElement('div');
     overlay.id = 'modal-overlay';
     overlay.className = 'modal-overlay';
-    overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
+    // Clicking outside does NOT close — user must use Cancel button
     document.body.appendChild(overlay);
   }
   overlay.innerHTML = `
