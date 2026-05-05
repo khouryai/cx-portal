@@ -2814,8 +2814,9 @@ async function fscRemoveOption(key, idx) {
 }
 
 async function _fscSave(key, options) {
+  const def = FIELDCONFIG_DEFS.find(d => d.key === key);
   const { error } = await _sb.from('fieldset_config')
-    .upsert({ field_key: key, options, updated_at: new Date().toISOString() }, { onConflict: 'field_key' });
+    .upsert({ field_key: key, label: def?.label || key, options, updated_at: new Date().toISOString() }, { onConflict: 'field_key' });
   if (error) { toast('Save failed: ' + error.message, 'error'); return; }
   FIELDSET_CONFIG[key] = options;
   toast('Saved', 'success');
