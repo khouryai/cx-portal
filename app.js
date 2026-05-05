@@ -1644,6 +1644,28 @@ function renderAdminPortal() {
     <div class="admin-section">
       <div class="admin-section-head">
         <div>
+          <div class="admin-section-title">Import Test Items</div>
+          <p class="section-sub">Upload a CSV to add new test cases or update existing ones — status is fully controlled by your file.</p>
+        </div>
+        <button class="admin-action-btn" onclick="downloadImportTemplate()">↓ Download Template</button>
+      </div>
+      <div class="data-card" style="padding:20px; text-align:center;">
+        <p style="font-size:13px; color:var(--gray-700); margin-bottom:16px;">
+          Fill in the template CSV, then upload it here. You'll see a full review before anything is saved — new items are listed separately from any that will overwrite existing ones.
+        </p>
+        <label style="cursor:pointer;">
+          <input type="file" accept=".csv" onchange="handleImportFile(this)" style="display:none">
+          <div class="admin-action-btn" style="display:inline-block; cursor:pointer;">📂 Choose CSV to Import</div>
+        </label>
+        <p style="font-size:11px; color:var(--gray-500); margin-top:12px;">
+          Valid Status values: Future · Not Started · In Progress · Pass · Fail · Partial · Blocked
+        </p>
+      </div>
+    </div>
+
+    <div class="admin-section">
+      <div class="admin-section-head">
+        <div>
           <div class="admin-section-title">Recent Deployments</div>
           <p class="section-sub">Templates deployed to locations with applicability matrices</p>
         </div>
@@ -1677,6 +1699,183 @@ function renderAdminPortal() {
       </div>
     </div>
   `;
+}
+
+// ==========================================================================
+// TEST ITEM CSV IMPORT
+// ==========================================================================
+let _importPendingRows = [];
+
+function downloadImportTemplate() {
+  const headers = ['TestID','Phase','Location','Subsystem','Activity','TestCategory','TestCaseCode','TestName','TestProcedure','TestPhase','Status','ActivityID','PlannedDate','Weight','Notes'];
+  const example = ['P2-W40-ATS-EXAMPLE','Phase 2','W40','ATS','ATS SAT','Hardware SAT','HW-SAT-XX','Example Test Name','1. Do step one. 2. Verify result.','SAT','Future','ACT-001','2025-06-01','1','Optional notes'];
+  const csv = headers.join(',') + '\n' + example.map(v => `"${v}"`).join(',');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'TestItems_Import_Template.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function splitCSVLine(line) {
+  const result = []; let cur = ''; let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else { inQ = !inQ; } }
+    else if (c === ',' && !inQ) { result.push(cur); cur = ''; }
+    else { cur += c; }
+  }
+  result.push(cur);
+  return result;
+}
+
+function parseCSV(text) {
+  const lines = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n').filter(l => l.trim());
+  if (lines.length < 2) return [];
+  const headers = splitCSVLine(lines[0]).map(h => h.trim().replace(/^"|"$/g,''));
+  return lines.slice(1).map(line => {
+    const vals = splitCSVLine(line);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = (vals[i] || '').trim().replace(/^"|"$/g,''); });
+    return obj;
+  }).filter(r => r.TestID && r.TestID.trim() !== '');
+}
+
+function parseImportDate(val) {
+  if (!val || !val.trim()) return null;
+  const d = new Date(val.trim());
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function importStatusBadge(status) {
+  const s = (status || '').toLowerCase().trim();
+  if (s === 'pass' || s === 'passed') return 'passed';
+  if (s === 'fail' || s === 'failed') return 'failed';
+  if (s === 'blocked') return 'pending';
+  if (s === 'in progress' || s === 'in_progress' || s === 'partial') return 'progress';
+  return 'neutral';
+}
+
+async function handleImportFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+  let text;
+  try { text = await file.text(); } catch(e) { toast('Could not read file', 'error'); return; }
+
+  const rows = parseCSV(text);
+  if (rows.length === 0) {
+    toast('No valid rows found — make sure the TestID column is filled in.', 'warn');
+    return;
+  }
+
+  const existingMap = {};
+  TI.forEach(t => { existingMap[t.TestID] = t; });
+
+  const conflicts = rows.filter(r => existingMap[r.TestID]);
+  const newItems  = rows.filter(r => !existingMap[r.TestID]);
+  _importPendingRows = rows;
+
+  const conflictHTML = conflicts.length > 0 ? `
+    <div style="margin-bottom:20px;padding:16px;border:1px solid var(--warn);border-radius:8px;background:rgba(217,119,6,0.05);">
+      <div style="font-weight:600;font-size:14px;color:var(--warn);margin-bottom:12px;">
+        ⚠ ${conflicts.length} existing test case${conflicts.length > 1 ? 's' : ''} will be overwritten
+      </div>
+      <div style="max-height:220px;overflow-y:auto;margin-bottom:14px;">
+        <table class="data-table">
+          <thead><tr><th>Test ID</th><th>Test Name</th><th>Current Status</th><th></th><th>New Status</th></tr></thead>
+          <tbody>
+            ${conflicts.map(r => {
+              const old = existingMap[r.TestID];
+              const oldSt = old?.Status || '—';
+              const newSt = r.Status || 'Future';
+              return `<tr>
+                <td style="font-size:12px;font-weight:600;">${escapeHtml(r.TestID)}</td>
+                <td style="font-size:12px;">${escapeHtml(r.TestName || '')}</td>
+                <td><span class="badge badge-${importStatusBadge(oldSt)}">${escapeHtml(oldSt)}</span></td>
+                <td style="color:var(--gray-500);font-size:11px;text-align:center;">→</td>
+                <td><span class="badge badge-${importStatusBadge(newSt)}" style="${oldSt !== newSt ? 'font-weight:700;' : ''}">${escapeHtml(newSt)}</span></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;user-select:none;">
+        <input type="checkbox" id="import-cb" style="width:16px;height:16px;" onchange="document.getElementById('do-import-btn').disabled=!this.checked">
+        I confirm I want to overwrite these ${conflicts.length} existing test case${conflicts.length > 1 ? 's' : ''}
+      </label>
+    </div>` : '';
+
+  const newHTML = newItems.length > 0 ? `
+    <div style="padding:16px;border:1px solid var(--good);border-radius:8px;background:rgba(0,135,90,0.05);">
+      <div style="font-weight:600;font-size:14px;color:var(--good);margin-bottom:12px;">
+        ✓ ${newItems.length} new test case${newItems.length > 1 ? 's' : ''} to add
+      </div>
+      <div style="max-height:220px;overflow-y:auto;">
+        <table class="data-table">
+          <thead><tr><th>Test ID</th><th>Test Name</th><th>Status</th></tr></thead>
+          <tbody>
+            ${newItems.map(r => `<tr>
+              <td style="font-size:12px;font-weight:600;">${escapeHtml(r.TestID)}</td>
+              <td style="font-size:12px;">${escapeHtml(r.TestName || '')}</td>
+              <td><span class="badge badge-${importStatusBadge(r.Status||'Future')}">${escapeHtml(r.Status||'Future')}</span></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : '';
+
+  modal({
+    title: 'Review Import',
+    sub: `${rows.length} rows — ${newItems.length} new · ${conflicts.length} will overwrite existing`,
+    size: 'large',
+    body: conflictHTML + newHTML,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" id="do-import-btn" ${conflicts.length > 0 ? 'disabled' : ''} onclick="executeImport()">
+        Import ${rows.length} test case${rows.length !== 1 ? 's' : ''}
+      </button>`,
+  });
+}
+
+async function executeImport() {
+  if (!_importPendingRows.length || !_sb) return;
+  const btn = document.getElementById('do-import-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+
+  const dbRows = _importPendingRows.map(r => ({
+    test_id:        r.TestID.trim(),
+    phase:          r.Phase         || null,
+    location:       r.Location      || null,
+    subsystem:      r.Subsystem     || null,
+    activity:       r.Activity      || null,
+    test_category:  r.TestCategory  || null,
+    test_case_code: r.TestCaseCode  || '',
+    test_name:      r.TestName      || null,
+    test_procedure: r.TestProcedure || null,
+    test_phase:     r.TestPhase     || null,
+    status:         r.Status        || 'Future',
+    activity_id:    r.ActivityID    || null,
+    planned_date:   parseImportDate(r.PlannedDate),
+    weight:         r.Weight ? parseFloat(r.Weight) : null,
+    notes:          r.Notes         || null,
+    synced_at:      new Date().toISOString(),
+  }));
+
+  try {
+    const { error } = await _sb.from('test_items').upsert(dbRows, { onConflict: 'test_id' });
+    if (error) throw error;
+    await loadTestItems();
+    closeModal();
+    _importPendingRows = [];
+    toast(`Imported ${dbRows.length} test case${dbRows.length !== 1 ? 's' : ''} successfully!`, 'success');
+    renderAdminPortal();
+  } catch (err) {
+    console.error('Import failed:', err);
+    toast(`Import failed: ${err.message}`, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = `Import ${dbRows.length} test cases`; }
+  }
 }
 
 function openDeployModal(templateId) {

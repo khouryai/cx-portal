@@ -49,7 +49,7 @@ function mapRow(row) {
     test_name:              row['TestName']              ?? null,
     test_procedure:         row['TestProcedure']         ?? null,
     test_phase:             row['TestPhase']             ?? null,
-    status:                 row['Status']                ?? 'Future',
+    // status intentionally excluded — owned by portal/CSV import, not Excel sync
     activity_id:            row['ActivityID']            ?? null,
     planned_date:           parseDate(row['PlannedDate']),
     p6_start_date:          parseDate(row['P6StartDate']),
