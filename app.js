@@ -2896,7 +2896,10 @@ async function inviteUser() {
 
   const { data, error } = await _sb.auth.signUp({
     email, password,
-    options: { data: { full_name: name } },
+    options: {
+      emailRedirectTo: window.location.origin + window.location.pathname,
+      data: { full_name: name },
+    },
   });
   if (error) { toast('Account creation failed: ' + error.message, 'error'); return; }
   if (!data.user) { toast('Unexpected error — no user returned', 'error'); return; }
