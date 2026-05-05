@@ -1626,11 +1626,15 @@ function renderAdminPortal() {
       </div>
       <div class="template-grid">
         ${TEMPLATES.map(tpl => `
-          <div class="template-card" onclick="openDeployModal('${tpl.id}')">
-            <div class="template-card-head">
+          <div class="template-card">
+            <div class="template-card-head" style="display:flex;align-items:center;justify-content:space-between;">
               <span class="template-tag">${escapeHtml(tpl.subsystem)}</span>
+              <div style="display:flex;gap:6px;" onclick="event.stopPropagation()">
+                <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="editTemplate('${tpl.id}')">Edit</button>
+                <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--red-600);" onclick="deleteTemplate('${tpl.id}')">Delete</button>
+              </div>
             </div>
-            <div class="template-card-name">${escapeHtml(tpl.name)}</div>
+            <div class="template-card-name" style="cursor:pointer;" onclick="openDeployModal('${tpl.id}')">${escapeHtml(tpl.name)}</div>
             <div class="template-card-sub">${escapeHtml(tpl.description)}</div>
             <div class="template-card-stats">
               <span><b>${tpl.testCases.length}</b> test cases</span>
@@ -1730,7 +1734,7 @@ function splitCSVLine(line) {
   return result;
 }
 
-function parseCSV(text) {
+function parseCSVGeneric(text) {
   const lines = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n').filter(l => l.trim());
   if (lines.length < 2) return [];
   const headers = splitCSVLine(lines[0]).map(h => h.trim().replace(/^"|"$/g,''));
@@ -1739,7 +1743,11 @@ function parseCSV(text) {
     const obj = {};
     headers.forEach((h, i) => { obj[h] = (vals[i] || '').trim().replace(/^"|"$/g,''); });
     return obj;
-  }).filter(r => r.TestID && r.TestID.trim() !== '');
+  });
+}
+
+function parseCSV(text) {
+  return parseCSVGeneric(text).filter(r => r.TestID && r.TestID.trim() !== '');
 }
 
 function parseImportDate(val) {
@@ -2054,7 +2062,7 @@ function downloadTemplateCaseCSV() {
 function handleTemplateCaseImport(input) {
   const file = input.files[0]; if (!file) return; input.value = '';
   file.text().then(text => {
-    const rows = parseCSV(text);
+    const rows = parseCSVGeneric(text);
     const imported = rows.map(r => ({
       code:     r.Code     || r.TestCaseCode || r['Test Case Code'] || '',
       name:     r.Name     || r.TestName     || r['Test Case Name'] || '',
@@ -2149,6 +2157,94 @@ function saveNewTemplate() {
   logAudit('Created Activity Template', name, `${testCases.length} test cases`);
   closeModal();
   toast(`Created activity: ${name}`, 'success');
+  renderAdminPortal();
+}
+
+function editTemplate(id) {
+  const tpl = TEMPLATES.find(t => t.id === id);
+  if (!tpl) return;
+  _templateCases = tpl.testCases.map(tc => ({ code: tc.code, name: tc.name, category: tc.category }));
+  modal({
+    title: 'Edit Activity Template',
+    sub: tpl.name,
+    size: 'large',
+    body: `
+      <div class="form-grid" style="margin-bottom:20px;">
+        <div class="form-field form-field-full">
+          <label>Activity Name</label>
+          <input type="text" id="etpl-name" class="form-input" value="${escapeHtml(tpl.name)}">
+        </div>
+        <div class="form-field">
+          <label>Subsystem</label>
+          <select id="etpl-subsystem" class="form-input">
+            ${['DCS','ATS','IXL','CORE CBTC','PS&TP','IAMS','SCADA','CYBER','TCH'].map(s =>
+              `<option${s === tpl.subsystem ? ' selected' : ''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field form-field-full">
+          <label>Description</label>
+          <textarea id="etpl-desc" class="form-input" rows="2">${escapeHtml(tpl.description || '')}</textarea>
+        </div>
+        <div class="form-field form-field-full">
+          <label>Test Procedure <span style="font-weight:400;color:var(--gray-500);">(applies to all test cases)</span></label>
+          <textarea id="etpl-procedure" class="form-input" rows="3">${escapeHtml(tpl.testCases[0]?.procedure || '')}</textarea>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div style="font-weight:600;font-size:13px;">Test Cases</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="form-secondary" style="font-size:12px;padding:5px 10px;" onclick="downloadTemplateCaseCSV()">↓ CSV Template</button>
+          <label style="cursor:pointer;">
+            <input type="file" accept=".csv" onchange="handleTemplateCaseImport(this)" style="display:none">
+            <div class="form-secondary" style="font-size:12px;padding:5px 10px;cursor:pointer;display:inline-block;">📂 Import CSV</div>
+          </label>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:140px 1fr 130px 32px 32px;gap:6px;margin-bottom:6px;padding:0 2px;">
+        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">CODE</div>
+        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">TEST CASE NAME</div>
+        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">CATEGORY</div>
+        <div></div><div></div>
+      </div>
+      <div id="tc-rows">${_tcRowsHTML()}</div>
+      <button class="form-secondary" style="width:100%;margin-top:8px;font-size:13px;" onclick="addTemplateCase()">+ Add Test Case</button>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="saveEditTemplate('${id}')">Save Changes</button>
+    `,
+  });
+}
+
+function saveEditTemplate(id) {
+  const tpl = TEMPLATES.find(t => t.id === id);
+  if (!tpl) return;
+  const name      = document.getElementById('etpl-name').value.trim();
+  const subsystem = document.getElementById('etpl-subsystem').value;
+  const desc      = document.getElementById('etpl-desc').value.trim();
+  const procedure = document.getElementById('etpl-procedure').value.trim();
+  if (!name) { toast('Activity Name is required', 'error'); return; }
+  const testCases = _templateCases
+    .filter(tc => tc.code.trim() || tc.name.trim())
+    .map(tc => ({ code: tc.code.trim(), name: tc.name.trim(), category: tc.category.trim(), procedure, duration: 1 }));
+  if (!testCases.length) { toast('Add at least one test case', 'error'); return; }
+  tpl.name = name; tpl.subsystem = subsystem; tpl.description = desc; tpl.testCases = testCases;
+  logAudit('Edited Activity Template', name, `${testCases.length} test cases`);
+  closeModal();
+  toast(`Saved: ${name}`, 'success');
+  renderAdminPortal();
+}
+
+function deleteTemplate(id) {
+  const tpl = TEMPLATES.find(t => t.id === id);
+  if (!tpl) return;
+  const deployCount = DEPLOYMENTS.filter(d => d.templateId === id).length;
+  const warn = deployCount > 0 ? ` This template has ${deployCount} active deployment(s).` : '';
+  if (!confirm(`Delete template "${tpl.name}"?${warn}\n\nThis cannot be undone.`)) return;
+  const idx = TEMPLATES.indexOf(tpl);
+  TEMPLATES.splice(idx, 1);
+  logAudit('Deleted Activity Template', tpl.name);
+  toast(`Deleted: ${tpl.name}`, 'success');
   renderAdminPortal();
 }
 
