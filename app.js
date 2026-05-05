@@ -2059,6 +2059,19 @@ function importStatusBadge(status) {
   return 'neutral';
 }
 
+// Returns { exact: bool, name: string } or null if no match at all
+function _matchLoc(value, level, parentId) {
+  if (!value || !LOCS.length) return null;
+  const v = value.toLowerCase().trim();
+  const pool = LOCS.filter(l => l.level === level && (parentId == null || l.parent_id === parentId));
+  const exact = pool.find(l => l.name.toLowerCase() === v);
+  if (exact) return { exact: true, name: exact.name, id: exact.id };
+  // partial: input is contained in a known name or vice-versa
+  const partial = pool.find(l => l.name.toLowerCase().includes(v) || v.includes(l.name.toLowerCase()));
+  if (partial) return { exact: false, name: partial.name, id: partial.id };
+  return null;
+}
+
 async function handleImportFile(input) {
   const file = input.files[0];
   if (!file) return;
@@ -2075,16 +2088,55 @@ async function handleImportFile(input) {
   const existingMap = {};
   TI.forEach(t => { existingMap[t.TestID] = t; });
 
+  // Location validation (only if master list is loaded)
+  const locWarnings = [];
+  if (LOCS.length > 0) {
+    rows.forEach(r => {
+      const phaseMatch = _matchLoc(r.Phase || '', 1, null);
+      const locMatch   = phaseMatch ? _matchLoc(r.Location || '', 2, phaseMatch.id) : null;
+
+      if (r.Phase && !phaseMatch) {
+        locWarnings.push({ id: r.TestID, field: 'Phase', value: r.Phase, suggestion: null });
+      } else if (r.Phase && phaseMatch && !phaseMatch.exact) {
+        locWarnings.push({ id: r.TestID, field: 'Phase', value: r.Phase, suggestion: phaseMatch.name });
+      }
+      if (r.Location && phaseMatch && !locMatch) {
+        locWarnings.push({ id: r.TestID, field: 'Location', value: r.Location, suggestion: null });
+      } else if (r.Location && locMatch && !locMatch.exact) {
+        locWarnings.push({ id: r.TestID, field: 'Location', value: r.Location, suggestion: locMatch.name });
+      }
+    });
+  }
+
   const conflicts = rows.filter(r => existingMap[r.TestID]);
   const newItems  = rows.filter(r => !existingMap[r.TestID]);
   _importPendingRows = rows;
 
+  const warnHTML = locWarnings.length > 0 ? `
+    <div style="margin-bottom:16px;padding:14px;border:1px solid #d97706;border-radius:8px;background:rgba(217,119,6,0.05);">
+      <div style="font-weight:600;font-size:13px;color:#d97706;margin-bottom:10px;">⚠ ${locWarnings.length} location name${locWarnings.length > 1 ? 's' : ''} don't match the master list</div>
+      <div style="max-height:140px;overflow-y:auto;">
+        <table class="data-table">
+          <thead><tr><th>Test ID</th><th>Field</th><th>In CSV</th><th>Master List Says</th></tr></thead>
+          <tbody>
+            ${locWarnings.map(w => `<tr>
+              <td style="font-size:11px;font-weight:600;">${escapeHtml(w.id)}</td>
+              <td style="font-size:11px;">${escapeHtml(w.field)}</td>
+              <td style="font-size:11px;color:#dc2626;">${escapeHtml(w.value)}</td>
+              <td style="font-size:11px;color:#16a34a;">${w.suggestion ? escapeHtml(w.suggestion) : '<em style="color:var(--gray-400)">no match found</em>'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <p style="font-size:11px;color:var(--gray-600);margin-top:8px;">You can still import — mismatched names will be stored as-is. Fix the CSV or update the master locations list.</p>
+    </div>` : '';
+
   const conflictHTML = conflicts.length > 0 ? `
-    <div style="margin-bottom:20px;padding:16px;border:1px solid var(--warn);border-radius:8px;background:rgba(217,119,6,0.05);">
+    <div style="margin-bottom:16px;padding:16px;border:1px solid var(--warn);border-radius:8px;background:rgba(217,119,6,0.05);">
       <div style="font-weight:600;font-size:14px;color:var(--warn);margin-bottom:12px;">
         ⚠ ${conflicts.length} existing test case${conflicts.length > 1 ? 's' : ''} will be overwritten
       </div>
-      <div style="max-height:220px;overflow-y:auto;margin-bottom:14px;">
+      <div style="max-height:200px;overflow-y:auto;margin-bottom:14px;">
         <table class="data-table">
           <thead><tr><th>Test ID</th><th>Test Name</th><th>Current Status</th><th></th><th>New Status</th></tr></thead>
           <tbody>
@@ -2114,13 +2166,15 @@ async function handleImportFile(input) {
       <div style="font-weight:600;font-size:14px;color:var(--good);margin-bottom:12px;">
         ✓ ${newItems.length} new test case${newItems.length > 1 ? 's' : ''} to add
       </div>
-      <div style="max-height:220px;overflow-y:auto;">
+      <div style="max-height:200px;overflow-y:auto;">
         <table class="data-table">
-          <thead><tr><th>Test ID</th><th>Test Name</th><th>Status</th></tr></thead>
+          <thead><tr><th>Test ID</th><th>Test Name</th><th>Phase</th><th>Location</th><th>Status</th></tr></thead>
           <tbody>
             ${newItems.map(r => `<tr>
               <td style="font-size:12px;font-weight:600;">${escapeHtml(r.TestID)}</td>
               <td style="font-size:12px;">${escapeHtml(r.TestName || '')}</td>
+              <td style="font-size:12px;">${escapeHtml(r.Phase || '')}</td>
+              <td style="font-size:12px;">${escapeHtml(r.Location || '')}</td>
               <td><span class="badge badge-${importStatusBadge(r.Status||'Future')}">${escapeHtml(r.Status||'Future')}</span></td>
             </tr>`).join('')}
           </tbody>
@@ -2132,7 +2186,7 @@ async function handleImportFile(input) {
     title: 'Review Import',
     sub: `${rows.length} rows — ${newItems.length} new · ${conflicts.length} will overwrite existing`,
     size: 'large',
-    body: conflictHTML + newHTML,
+    body: warnHTML + conflictHTML + newHTML,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
       <button class="form-submit" id="do-import-btn" ${conflicts.length > 0 ? 'disabled' : ''} onclick="executeImport()">
@@ -2180,91 +2234,136 @@ async function executeImport() {
   }
 }
 
+let _deploySelections = []; // [{ locId, locName, phase, location, tcCodes:[] }]
+let _deployTplId = null;
+
 function openDeployModal(templateId) {
   const tpl = TEMPLATES.find(t => t.id === templateId);
   if (!tpl) return;
+  _deployTplId = templateId;
+  _deploySelections = [];
 
-  // Initialize state — all locations off, all TCs on by default if location is on
-  const state = {};
-  LOCATIONS.forEach(loc => {
-    state[loc.code] = { enabled: false, applicable: tpl.testCases.map(tc => tc.code) };
-  });
+  const phases = LOCS.filter(l => l.level === 1).sort((a,b) => a.sort_order - b.sort_order);
+  const noLocs = phases.length === 0;
 
   modal({
     title: `Deploy: ${tpl.name}`,
-    sub: `Toggle locations and pick which test cases apply at each one`,
+    sub: `${tpl.subsystem} · ${tpl.testCases.length} test cases`,
     size: 'large',
     body: `
-      <div style="margin-bottom: 16px;">
-        <p style="font-size: 13px; color: var(--gray-700);">
-          Select which locations this template applies to, then refine which test cases apply at each location.
-        </p>
+      ${noLocs ? `<div style="padding:12px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-size:13px;margin-bottom:16px;">
+        No locations in master list yet — go to Admin → Locations to add them first.
+      </div>` : ''}
+      <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:flex-end;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--gray-200);">
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--gray-500);display:block;margin-bottom:4px;">PHASE</label>
+          <select id="dep-phase" class="form-input" onchange="deployFilterLocations()" ${noLocs ? 'disabled' : ''}>
+            <option value="">Select phase…</option>
+            ${phases.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--gray-500);display:block;margin-bottom:4px;">LOCATION</label>
+          <select id="dep-location" class="form-input" ${noLocs ? 'disabled' : ''}>
+            <option value="">Select phase first…</option>
+          </select>
+        </div>
+        <button class="admin-action-btn" onclick="deployAddLocation('${templateId}')" style="white-space:nowrap;" ${noLocs ? 'disabled' : ''}>+ Add</button>
       </div>
-      <div id="deploy-locs">
-        ${LOCATIONS.map(loc => `
-          <div class="deploy-loc-row" id="dep-row-${loc.code}">
-            <div class="deploy-loc-head">
-              <div class="deploy-loc-toggle" data-code="${loc.code}" onclick="toggleDeployLoc('${loc.code}')"></div>
-              <div class="deploy-loc-name">${escapeHtml(loc.name)}</div>
-              <div class="deploy-loc-count" id="dep-count-${loc.code}">0 of ${tpl.testCases.length} test cases</div>
-            </div>
-            <div class="deploy-tc-list">
-              ${tpl.testCases.map(tc => `
-                <label class="deploy-tc-item">
-                  <input type="checkbox" data-loc="${loc.code}" data-tc="${tc.code}" checked onchange="updateDeployCount('${loc.code}', ${tpl.testCases.length})">
-                  <span>${escapeHtml(tc.code)} · ${escapeHtml(tc.name)}</span>
-                </label>
-              `).join('')}
-            </div>
-          </div>
-        `).join('')}
+      <div id="deploy-selections">
+        <div style="text-align:center;color:var(--gray-400);font-size:13px;padding:20px 0;">No locations added yet</div>
       </div>
     `,
     footer: `
       <button class="admin-action-btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="admin-action-btn" onclick="confirmDeploy('${templateId}')">Deploy to Selected Locations</button>
+      <button class="admin-action-btn" id="dep-confirm-btn" onclick="confirmDeploy('${templateId}')">Deploy</button>
     `,
   });
-
-  // Set initial state
-  setTimeout(() => {
-    LOCATIONS.forEach(loc => updateDeployCount(loc.code, tpl.testCases.length));
-  }, 50);
 }
 
-function toggleDeployLoc(code) {
-  const toggle = document.querySelector(`.deploy-loc-toggle[data-code="${code}"]`);
-  const row = document.getElementById(`dep-row-${code}`);
-  toggle.classList.toggle('on');
-  row.classList.toggle('disabled', !toggle.classList.contains('on'));
+function deployFilterLocations() {
+  const phaseId = document.getElementById('dep-phase').value;
+  const locSel  = document.getElementById('dep-location');
+  if (!phaseId) { locSel.innerHTML = '<option value="">Select phase first…</option>'; return; }
+  const children = LOCS.filter(l => l.parent_id === phaseId).sort((a,b) => a.sort_order - b.sort_order);
+  locSel.innerHTML = children.length
+    ? '<option value="">Select location…</option>' + children.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('')
+    : '<option value="">No locations under this phase</option>';
 }
 
-function updateDeployCount(code, total) {
-  const checked = document.querySelectorAll(`input[data-loc="${code}"]:checked`).length;
-  const el = document.getElementById(`dep-count-${code}`);
-  if (el) el.textContent = `${checked} of ${total} test cases`;
+function deployAddLocation(templateId) {
+  const tpl      = TEMPLATES.find(t => t.id === templateId);
+  const phaseEl  = document.getElementById('dep-phase');
+  const locEl    = document.getElementById('dep-location');
+  const phaseId  = phaseEl.value;
+  const locId    = locEl.value;
+  if (!phaseId) { toast('Select a phase first', 'warn'); return; }
+  if (!locId)   { toast('Select a location', 'warn'); return; }
+  if (_deploySelections.find(s => s.locId === locId)) { toast('Location already added', 'warn'); return; }
+
+  const phase = LOCS.find(l => l.id === phaseId);
+  const loc   = LOCS.find(l => l.id === locId);
+  _deploySelections.push({
+    locId, locName: loc.name, phaseName: phase.name,
+    tcCodes: tpl.testCases.map(tc => tc.code),
+  });
+  _renderDeploySelections(tpl);
+  // Reset dropdowns
+  locEl.value = '';
+}
+
+function deployRemoveLocation(locId) {
+  _deploySelections = _deploySelections.filter(s => s.locId !== locId);
+  const tpl = TEMPLATES.find(t => t.id === _deployTplId);
+  _renderDeploySelections(tpl);
+}
+
+function _renderDeploySelections(tpl) {
+  const el = document.getElementById('deploy-selections');
+  if (!el) return;
+  if (!_deploySelections.length) {
+    el.innerHTML = '<div style="text-align:center;color:var(--gray-400);font-size:13px;padding:20px 0;">No locations added yet</div>';
+    return;
+  }
+  el.innerHTML = _deploySelections.map((s, si) => `
+    <div style="border:1px solid var(--gray-200);border-radius:8px;margin-bottom:10px;overflow:hidden;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);">
+        <div style="font-weight:600;font-size:13px;">
+          <span style="color:var(--gray-500);font-weight:400;">${escapeHtml(s.phaseName)} /</span> ${escapeHtml(s.locName)}
+          <span style="font-size:11px;color:var(--gray-500);font-weight:400;margin-left:8px;" id="dep-count-${s.locId}">${s.tcCodes.length} of ${tpl.testCases.length} test cases</span>
+        </div>
+        <button onclick="deployRemoveLocation('${s.locId}')" style="font-size:11px;color:var(--red-600);background:none;border:none;cursor:pointer;padding:2px 6px;">✕ Remove</button>
+      </div>
+      <div style="padding:10px 14px;display:flex;flex-wrap:wrap;gap:6px;">
+        ${tpl.testCases.map(tc => `
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:4px;padding:4px 8px;cursor:pointer;">
+            <input type="checkbox" data-si="${si}" data-tc="${tc.code}" ${s.tcCodes.includes(tc.code) ? 'checked' : ''}
+              onchange="_deployToggleTc(${si},'${tc.code}',this.checked)">
+            <span>${escapeHtml(tc.code)}</span>
+          </label>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+function _deployToggleTc(si, tcCode, checked) {
+  if (checked) { if (!_deploySelections[si].tcCodes.includes(tcCode)) _deploySelections[si].tcCodes.push(tcCode); }
+  else { _deploySelections[si].tcCodes = _deploySelections[si].tcCodes.filter(c => c !== tcCode); }
+  const tpl = TEMPLATES.find(t => t.id === _deployTplId);
+  const s = _deploySelections[si];
+  const el = document.getElementById(`dep-count-${s.locId}`);
+  if (el) el.textContent = `${s.tcCodes.length} of ${tpl.testCases.length} test cases`;
 }
 
 function confirmDeploy(templateId) {
   const tpl = TEMPLATES.find(t => t.id === templateId);
-  const enabledLocs = [];
+  if (!_deploySelections.length) { toast('Add at least one location', 'warn'); return; }
+  const empty = _deploySelections.filter(s => !s.tcCodes.length);
+  if (empty.length) { toast(`"${empty[0].locName}" has no test cases selected`, 'warn'); return; }
 
-  LOCATIONS.forEach(loc => {
-    const toggle = document.querySelector(`.deploy-loc-toggle[data-code="${loc.code}"]`);
-    if (!toggle.classList.contains('on')) return;
-    const applicable = [];
-    document.querySelectorAll(`input[data-loc="${loc.code}"]:checked`).forEach(cb => {
-      applicable.push(cb.dataset.tc);
-    });
-    if (applicable.length > 0) enabledLocs.push({ code: loc.code, applicable, notes: '' });
-  });
+  const enabledLocs = _deploySelections.map(s => ({ code: s.locId, name: s.locName, phase: s.phaseName, applicable: s.tcCodes }));
 
-  if (enabledLocs.length === 0) {
-    toast('Please select at least one location with test cases', 'warn');
-    return;
-  }
-
-  // Add deployment
   const newDep = {
     id: 'dep-' + Date.now(),
     templateId,
@@ -2275,7 +2374,6 @@ function confirmDeploy(templateId) {
   };
   DEPLOYMENTS.unshift(newDep);
 
-  // Generate test instances
   enabledLocs.forEach(loc => {
     loc.applicable.forEach(tcCode => {
       const tc = tpl.testCases.find(t => t.code === tcCode);
@@ -2285,10 +2383,11 @@ function confirmDeploy(templateId) {
         templateName: tpl.name,
         subsystem: tpl.subsystem,
         location: loc.code,
+        phase: loc.phase,
         testCode: tcCode,
-        testName: tc.name,
-        procedure: tc.procedure,
-        duration: tc.duration,
+        testName: tc?.name || tcCode,
+        procedure: tc?.procedure || '',
+        duration: tc?.duration || 1,
         status: 'not_started',
         applicable: true,
         lastUpdatedBy: null,
@@ -2299,10 +2398,11 @@ function confirmDeploy(templateId) {
   });
 
   logAudit('Deployed Template',
-    `${tpl.name} to ${enabledLocs.map(l => l.code).join(', ')}`,
+    `${tpl.name} → ${enabledLocs.map(l => l.name).join(', ')}`,
     `${enabledLocs.reduce((s, l) => s + l.applicable.length, 0)} test cases created`);
 
   closeModal();
+  _deploySelections = [];
   toast(`Deployed ${tpl.name} to ${enabledLocs.length} location${enabledLocs.length > 1 ? 's' : ''}`, 'success');
   renderAdminPortal();
   renderTestMatrix();
