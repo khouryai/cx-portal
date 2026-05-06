@@ -1622,7 +1622,7 @@ function onLoggedIn() {
     ? `<span style="font-size:10px;background:#dbeafe;color:#1d4ed8;padding:1px 6px;border-radius:10px;margin-left:4px;">${escapeHtml(currentRoleUser.subsystem)}</span>` : '';
   pill.innerHTML = `
     <div class="user-avatar" style="width:28px;height:28px;font-size:11px;">${initials}</div>
-    <div style="font-size:12px;font-weight:500;color:var(--black);">${escapeHtml(currentRoleUser.name)}${subBadge}</div>
+    <div style="font-size:12px;font-weight:500;color:rgba(255,255,255,0.9);">${escapeHtml(currentRoleUser.name)}${subBadge}</div>
     <button class="logout-mini" onclick="signOut()">Sign out</button>
   `;
 
@@ -1712,7 +1712,7 @@ function renderAdminTabBody() {
   if (_adminTab === 'templates') body.innerHTML = _adminTemplatesHTML();
   else if (_adminTab === 'testcases') body.innerHTML = _adminTestItemsHTML();
   else if (_adminTab === 'locations') body.innerHTML = _adminLocationsHTML();
-  else if (_adminTab === 'directory') { body.innerHTML = _adminDirectoryHTML(); setTimeout(_loadDirectoryUsers, 0); }
+  else if (_adminTab === 'directory') { body.innerHTML = _adminDirectoryHTML(); _loadDirectoryUsers(); }
   else if (_adminTab === 'fieldconfig') body.innerHTML = _adminFieldConfigHTML();
   else body.innerHTML = _adminOverviewHTML();
 }
@@ -2847,12 +2847,13 @@ function _adminDirectoryHTML() {
 async function _loadDirectoryUsers() {
   const wrap = document.getElementById('dir-table-wrap');
   if (!wrap) return;
-  const { data, error } = await _sb.from('profiles').select('*').order('created_at');
-  if (error) { wrap.innerHTML = `<div style="padding:20px;color:#dc2626;font-size:13px;">${error.message}</div>`; return; }
-  if (!data || !data.length) {
-    wrap.innerHTML = `<div style="padding:32px;text-align:center;color:var(--gray-400);font-size:13px;">No users yet — click + Invite User to add one.</div>`;
-    return;
-  }
+  try {
+    const { data, error } = await _sb.from('profiles').select('*').order('created_at');
+    if (error) throw error;
+    if (!data || !data.length) {
+      wrap.innerHTML = `<div style="padding:32px;text-align:center;color:var(--gray-400);font-size:13px;">No users yet — click + Invite User to add one.</div>`;
+      return;
+    }
   const roleLabel = { admin:'Administrator', field_engineer:'Field Engineer', readonly:'Read Only', client:'Client' };
   wrap.innerHTML = `
     <table class="dir-table">
@@ -2869,10 +2870,11 @@ async function _loadDirectoryUsers() {
       </thead>
       <tbody>
         ${data.map(u => {
-          const initials = u.full_name.split(' ').filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase();
+          const name = u.full_name || u.email || '?';
+          const initials = name.split(' ').filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase() || '?';
           return `<tr>
             <td><div class="user-avatar-sm">${escapeHtml(initials)}</div></td>
-            <td style="font-weight:500;">${escapeHtml(u.full_name)}</td>
+            <td style="font-weight:500;">${escapeHtml(name)}</td>
             <td style="color:var(--gray-600);font-size:12px;">${escapeHtml(u.email||'')}</td>
             <td>
               <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:140px;"
@@ -2905,6 +2907,10 @@ async function _loadDirectoryUsers() {
       </tbody>
     </table>
   `;
+  } catch (err) {
+    console.error('_loadDirectoryUsers error:', err);
+    wrap.innerHTML = `<div style="padding:20px;color:#dc2626;font-size:13px;">Error loading users: ${escapeHtml(err.message)}</div>`;
+  }
 }
 
 async function updateProfileRole(id, role) {
