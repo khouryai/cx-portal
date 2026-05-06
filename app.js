@@ -3668,15 +3668,31 @@ function _isMyPunchItem(p) {
     (p.assignees||[]).includes(n) || (p.distribution_list||[]).includes(n);
 }
 
+const PL_STATUS_LABELS = {
+  draft:             'Draft',
+  initiated:         'Initiated',
+  in_dispute:        'In Dispute',
+  work_required:     'Work Required',
+  work_not_accepted: 'Work Not Accepted',
+  ready_for_review:  'Ready for Review',
+  ready_to_close:    'Ready to Close',
+  not_accepted:      'Not Accepted',
+  closed:            'Closed',
+};
+
 function _plStatusBadge(status) {
   const map = {
-    work_required:   ['Work Required', '#d97706','#fef3c7'],
-    in_progress:     ['In Progress',   '#1d4ed8','#dbeafe'],
-    ready_for_review:['Ready for Review','#7c3aed','#ede9fe'],
-    closed:          ['Closed',        '#059669','#d1fae5'],
-    voided:          ['Voided',        '#6b7280','#f3f4f6'],
+    draft:             ['Draft',             '#6b7280','#f3f4f6'],
+    initiated:         ['Initiated',         '#1d4ed8','#dbeafe'],
+    in_dispute:        ['In Dispute',        '#ea580c','#ffedd5'],
+    work_required:     ['Work Required',     '#d97706','#fef3c7'],
+    work_not_accepted: ['Work Not Accepted', '#dc2626','#fee2e2'],
+    ready_for_review:  ['Ready for Review',  '#7c3aed','#ede9fe'],
+    ready_to_close:    ['Ready to Close',    '#0369a1','#e0f2fe'],
+    not_accepted:      ['Not Accepted',      '#9f1239','#ffe4e6'],
+    closed:            ['Closed',            '#059669','#d1fae5'],
   };
-  const [label,color,bg] = map[status] || ['Unknown','#6b7280','#f3f4f6'];
+  const [label,color,bg] = map[status] || [status||'Unknown','#6b7280','#f3f4f6'];
   return `<span style="display:inline-block;padding:2px 9px;border-radius:12px;font-size:11px;font-weight:600;background:${bg};color:${color};white-space:nowrap;">${label}</span>`;
 }
 
@@ -3687,10 +3703,18 @@ function _plPriorityBadge(priority) {
 }
 
 function _plBallInCourt(p) {
-  if (p.status === 'closed' || p.status === 'voided') return '—';
-  if (p.status === 'ready_for_review') return p.punch_item_manager || 'Punch Manager';
-  const a = p.assignees || [];
-  return a.length ? a.join(', ') : 'Unassigned';
+  switch (p.status) {
+    case 'closed':            return '—';
+    case 'draft':             return p.created_by || 'Creator';
+    case 'initiated':         return p.punch_item_manager || 'PIM';
+    case 'in_dispute':        return p.punch_item_manager || 'PIM';
+    case 'work_required':
+    case 'work_not_accepted': { const a = p.assignees||[]; return a.length ? a.join(', ') : 'Assignees'; }
+    case 'ready_for_review':  return p.punch_item_manager || 'PIM';
+    case 'ready_to_close':    return p.final_approver || 'Final Approver';
+    case 'not_accepted':      return p.punch_item_manager || 'PIM';
+    default: return '—';
+  }
 }
 
 function _plLocName(id) { return id ? (LOCS.find(l => l.id === id)?.name || id) : '—'; }
@@ -3716,7 +3740,7 @@ function renderPunchWorkflow() {
   if (_plPage > pages) _plPage = pages;
   const paged = items.slice((_plPage-1)*PL_PAGE_SIZE, _plPage*PL_PAGE_SIZE);
 
-  const openItems = all.filter(p => p.status !== 'closed' && p.status !== 'voided');
+  const openItems = all.filter(p => p.status !== 'closed');
   const overdue   = openItems.filter(p => p.due_date && new Date(p.due_date) < new Date());
   const phases    = LOCS.filter(l => l.level === 1).sort((a,b) => a.sort_order - b.sort_order);
   const locPool   = _plPhaseFilter ? LOCS.filter(l => l.level === 2 && l.parent_id === _plPhaseFilter) : LOCS.filter(l => l.level === 2);
@@ -3736,8 +3760,8 @@ function renderPunchWorkflow() {
 
     <div class="kpi-grid kpi-grid-mini" style="margin-bottom:20px;">
       <div class="kpi-card kpi-mini"><div class="kpi-label">Total Open</div><div class="kpi-value">${openItems.length}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Work Required</div><div class="kpi-value" style="color:var(--warn);">${all.filter(p=>p.status==='work_required').length}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">In Progress</div><div class="kpi-value">${all.filter(p=>p.status==='in_progress').length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Work Required</div><div class="kpi-value" style="color:var(--warn);">${all.filter(p=>p.status==='work_required'||p.status==='work_not_accepted').length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Ready to Close</div><div class="kpi-value" style="color:#0369a1;">${all.filter(p=>p.status==='ready_to_close').length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Overdue</div><div class="kpi-value" style="color:var(--bad);">${overdue.length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Closed</div><div class="kpi-value good">${all.filter(p=>p.status==='closed').length}</div></div>
     </div>
@@ -3750,7 +3774,7 @@ function renderPunchWorkflow() {
       </div>
       <select class="form-input" style="width:160px;font-size:13px;" onchange="_plSetFilter('status',this.value)">
         <option value="">All Statuses</option>
-        ${[['work_required','Work Required'],['in_progress','In Progress'],['ready_for_review','Ready for Review'],['closed','Closed'],['voided','Voided']].map(([v,l])=>`<option value="${v}" ${_plStatusFilter===v?'selected':''}>${l}</option>`).join('')}
+        ${Object.entries(PL_STATUS_LABELS).map(([v,l])=>`<option value="${v}" ${_plStatusFilter===v?'selected':''}>${l}</option>`).join('')}
       </select>
       <select class="form-input" style="width:140px;font-size:13px;" onchange="_plPhaseChange(this.value)">
         <option value="">All Phases</option>
@@ -3838,59 +3862,132 @@ function _plSetFilter(k,v) {
 function _plPhaseChange(id) { _plPhaseFilter=id; _plLocFilter=''; _plPage=1; renderPunchWorkflow(); }
 function _plClearFilters()  { _plSearch=''; _plStatusFilter=''; _plPhaseFilter=''; _plLocFilter=''; _plSubFilter=''; _plPriorityFilter=''; _plPage=1; renderPunchWorkflow(); }
 
+function _punchWorkflowActions(p) {
+  const role    = currentRoleUser?.role;
+  const name    = currentRoleUser?.name;
+  const isAdmin = role === 'admin';
+  const isPIM   = p.punch_item_manager === name;
+  const isFinal = p.final_approver === name;
+  const isCreator  = p.created_by === name;
+  const isAssignee = (p.assignees||[]).includes(name);
+  const btn = (label, status, style='secondary') =>
+    `<button class="form-${style}" style="font-size:12px;" onclick="advancePunchStatus('${p.id}','${status}')">${label}</button>`;
+
+  if (p.status === 'closed') return '';
+  const actions = [];
+  switch (p.status) {
+    case 'draft':
+      if (isCreator||isAdmin) { actions.push(btn('Send to PIM','initiated','submit')); actions.push(btn('Close','closed')); }
+      break;
+    case 'initiated':
+      if (isPIM||isAdmin) { actions.push(btn('Send to Assignees','work_required','submit')); actions.push(btn('Dispute','in_dispute')); }
+      if (isAdmin) actions.push(btn('Close','closed'));
+      break;
+    case 'in_dispute':
+      if (isPIM||isAdmin) actions.push(btn('Send to Assignees','work_required','submit'));
+      if (isCreator||isAdmin) actions.push(btn('Close','closed'));
+      break;
+    case 'work_required':
+      if (isAssignee||role==='field_engineer'||isAdmin) actions.push(btn('Mark Ready for Review','ready_for_review','submit'));
+      if (isPIM||isAdmin) actions.push(btn('Work Not Accepted','work_not_accepted'));
+      break;
+    case 'work_not_accepted':
+      if (isAssignee||role==='field_engineer'||isAdmin) actions.push(btn('Mark Ready for Review','ready_for_review','submit'));
+      if (isPIM||isAdmin) actions.push(btn('Mark Ready to Close','ready_to_close','submit'));
+      break;
+    case 'ready_for_review':
+      if (isPIM||isAdmin) { actions.push(btn('Mark Ready to Close','ready_to_close','submit')); actions.push(btn('Work Not Accepted','work_not_accepted')); }
+      break;
+    case 'ready_to_close':
+      if (isFinal||isAdmin) { actions.push(btn('Close Item','closed','submit')); actions.push(btn('Not Accepted','not_accepted')); }
+      break;
+    case 'not_accepted':
+      if (isPIM||isAdmin) actions.push(btn('Send Back to Assignees','work_required','submit'));
+      if (isAdmin) actions.push(btn('Close','closed'));
+      break;
+  }
+  return actions.join('');
+}
+
 function openPunchDetail(id) {
   const p = PUNCH_DB.find(x => x.id === id);
   if (!p) return;
   const phaseName = _plLocName(p.phase), locName = _plLocName(p.location);
-  const history = (p.history||[]);
+  const canComment = currentRoleUser?.role === 'admin' || currentRoleUser?.role === 'field_engineer' || currentRoleUser?.role === 'client';
+  const comments = (p.comments||[]).slice().reverse();
+  const history  = (p.history||[]).slice().reverse();
+
   modal({
     title: `Punch #${p.number}`,
     sub: escapeHtml(p.title),
     size: 'large',
     body: `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:20px;">
-        <div>
-          <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:6px;">STATUS</div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            ${_plStatusBadge(p.status)}
-            <select class="form-input" style="font-size:12px;padding:4px 8px;" onchange="updatePunchStatus('${p.id}',this.value)">
-              ${[['work_required','Work Required'],['in_progress','In Progress'],['ready_for_review','Ready for Review'],['closed','Closed'],['voided','Voided']].map(([v,l])=>`<option value="${v}" ${p.status===v?'selected':''}>${l}</option>`).join('')}
-            </select>
-          </div>
+      <!-- Status bar -->
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:12px 16px;background:var(--gray-50);border-radius:8px;margin-bottom:18px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          ${_plStatusBadge(p.status)}
+          ${_plPriorityBadge(p.priority)}
+          <span style="font-size:12px;color:var(--gray-600);">Ball in court: <strong>${escapeHtml(_plBallInCourt(p))}</strong></span>
         </div>
-        <div>
-          <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:6px;">BALL IN COURT</div>
-          <div style="font-size:13px;">${escapeHtml(_plBallInCourt(p))}</div>
-        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">${_punchWorkflowActions(p)}</div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;padding:16px;background:var(--gray-50);border-radius:8px;">
+
+      <!-- Metadata grid -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px;padding:14px;background:var(--gray-50);border-radius:8px;">
         ${[
-          ['Type', p.type],['Priority', p.priority],['Subsystem', p.subsystem],
-          ['Phase', phaseName],['Location', locName],['Schedule Impact', p.schedule_impact],
-          ['Punch Item Manager', p.punch_item_manager],['Final Approver', p.final_approver],
-          ['Due Date', p.due_date ? new Date(p.due_date+'T00:00:00').toLocaleDateString() : null],
-          ['Category of Failure', p.category_of_failure],['Type of Failure', p.type_of_failure],
-          ['RTC / Work Item ID', p.rtc_work_item_id],['Created By', p.created_by],
-          ['Created', p.created_at ? dateAgo(p.created_at) : null],
-          ['Assignees', (p.assignees||[]).join(', ')],
+          ['Type', p.type], ['Subsystem', p.subsystem], ['Schedule Impact', p.schedule_impact],
+          ['Phase', phaseName], ['Location', locName], ['Due Date', p.due_date ? new Date(p.due_date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : null],
+          ['Punch Item Manager', p.punch_item_manager], ['Final Approver', p.final_approver], ['Created By', p.created_by],
+          ['Assignees', (p.assignees||[]).join(', ')], ['Category of Failure', p.category_of_failure], ['Type of Failure', p.type_of_failure],
+          ['RTC / Work Item ID', p.rtc_work_item_id], ['Private', p.is_private ? 'Yes' : 'No'], ['Created', p.created_at ? dateAgo(p.created_at) : null],
         ].map(([label,val])=>`
           <div>
             <div style="font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">${label}</div>
-            <div style="font-size:13px;">${escapeHtml(val||'—')}</div>
+            <div style="font-size:12px;color:var(--gray-800);">${escapeHtml(val||'—')}</div>
           </div>`).join('')}
       </div>
+
       ${p.description ? `
-        <div style="margin-bottom:20px;">
-          <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:6px;">DESCRIPTION</div>
-          <div style="font-size:13px;color:var(--gray-800);line-height:1.6;white-space:pre-wrap;">${escapeHtml(p.description)}</div>
+        <div style="margin-bottom:18px;">
+          <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em;">Description</div>
+          <div style="font-size:13px;color:var(--gray-800);line-height:1.6;white-space:pre-wrap;padding:10px 14px;background:var(--gray-50);border-radius:8px;">${escapeHtml(p.description)}</div>
         </div>` : ''}
+
+      <!-- Comments -->
+      <div style="margin-bottom:18px;">
+        <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px;">Comments (${(p.comments||[]).length})</div>
+        <div style="display:flex;flex-direction:column;gap:10px;max-height:200px;overflow-y:auto;margin-bottom:10px;" id="punch-comments-${id}">
+          ${comments.length ? comments.map(c => {
+            const initials = (c.by||'?').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+            const roleLabel = {admin:'Admin',field_engineer:'Field Engineer',client:'Client',readonly:'Read Only'}[c.by_role]||c.by_role||'';
+            return `<div style="display:flex;gap:10px;align-items:flex-start;">
+              <div style="width:32px;height:32px;border-radius:50%;background:var(--hitachi-red);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${initials}</div>
+              <div style="flex:1;background:var(--gray-50);border-radius:8px;padding:8px 12px;">
+                <div style="font-size:12px;font-weight:600;color:var(--gray-800);">${escapeHtml(c.by)} <span style="font-weight:400;color:var(--gray-500);">· ${roleLabel} · ${dateAgo(c.at)}</span></div>
+                <div style="font-size:13px;color:var(--gray-700);margin-top:4px;white-space:pre-wrap;">${escapeHtml(c.text)}</div>
+              </div>
+            </div>`;
+          }).join('') : '<div style="font-size:12px;color:var(--gray-400);padding:8px 0;">No comments yet</div>'}
+        </div>
+        ${canComment ? `
+          <div style="display:flex;gap:8px;align-items:flex-end;">
+            <textarea id="punch-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…" style="flex:1;font-size:13px;resize:none;"></textarea>
+            <button class="form-submit" style="white-space:nowrap;height:fit-content;" onclick="addPunchComment('${id}')">Post</button>
+          </div>` : ''}
+      </div>
+
+      <!-- History -->
       <div>
-        <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:8px;">HISTORY</div>
-        <div style="display:flex;flex-direction:column;gap:6px;max-height:180px;overflow-y:auto;">
-          ${history.length ? history.slice().reverse().map(h=>`
+        <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px;">Activity History</div>
+        <div style="display:flex;flex-direction:column;gap:8px;max-height:220px;overflow-y:auto;">
+          ${history.length ? history.map(h => `
             <div style="display:flex;gap:10px;align-items:flex-start;font-size:12px;">
               <div style="width:6px;height:6px;border-radius:50%;background:var(--hitachi-red);margin-top:5px;flex-shrink:0;"></div>
-              <div><span style="font-weight:500;">${escapeHtml(h.action)}</span> <span style="color:var(--gray-500);">· ${escapeHtml(h.by)} · ${dateAgo(h.at)}</span></div>
+              <div style="flex:1;">
+                <div><span style="font-weight:600;">${escapeHtml(h.action)}</span> <span style="color:var(--gray-500);">· ${escapeHtml(h.by||'')} · ${dateAgo(h.at)}</span></div>
+                ${(h.changes||[]).length ? `<ul style="margin:4px 0 0 0;padding-left:16px;color:var(--gray-600);">${h.changes.map(c=>`<li>${escapeHtml(c)}</li>`).join('')}</ul>` : ''}
+                ${h.note ? `<div style="color:var(--gray-600);margin-top:2px;">Note: ${escapeHtml(h.note)}</div>` : ''}
+              </div>
             </div>`).join('') : '<div style="color:var(--gray-400);font-size:12px;">No history</div>'}
         </div>
       </div>
@@ -3900,22 +3997,59 @@ function openPunchDetail(id) {
       ${p.is_deleted
         ? `<button class="form-secondary" onclick="restorePunch('${p.id}')">Restore from Bin</button>`
         : `<button class="form-secondary" style="color:var(--bad);" onclick="softDeletePunch('${p.id}')">Move to Bin</button>`}
-      <button class="form-submit" onclick="closeModal();openEditPunchModal('${p.id}')">Edit</button>
+      ${p.status !== 'closed' ? `<button class="form-submit" onclick="closeModal();openEditPunchModal('${p.id}')">Edit</button>` : ''}
     `,
   });
 }
 
-async function updatePunchStatus(id, status) {
+async function advancePunchStatus(id, newStatus) {
   const p = PUNCH_DB.find(x => x.id === id);
   if (!p) return;
-  const history = [...(p.history||[]), { action: `Status → ${status.replace(/_/g,' ')}`, by: currentRoleUser.name, at: new Date().toISOString() }];
-  const updates = { status, history, updated_at: new Date().toISOString() };
-  if (status === 'closed') { updates.closed_at = new Date().toISOString(); updates.closed_by = currentRoleUser.name; }
+  const oldLabel = PL_STATUS_LABELS[p.status] || p.status;
+  const newLabel = PL_STATUS_LABELS[newStatus] || newStatus;
+  const histEntry = {
+    action: `Status: ${oldLabel} → ${newLabel}`,
+    by: currentRoleUser.name,
+    at: new Date().toISOString(),
+  };
+  const updates = {
+    status: newStatus,
+    history: [...(p.history||[]), histEntry],
+    updated_at: new Date().toISOString(),
+  };
+  if (newStatus === 'closed') {
+    updates.closed_at = new Date().toISOString();
+    updates.closed_by = currentRoleUser.name;
+  }
   const { error } = await _sb.from('punch_items').update(updates).eq('id', id);
-  if (error) { toast('Update failed: ' + error.message, 'error'); return; }
+  if (error) { toast('Failed: ' + error.message, 'error'); return; }
   Object.assign(p, updates);
-  toast(`Status → ${status.replace(/_/g,' ')}`, 'success');
-  closeModal(); renderPunchWorkflow();
+  toast(`${newLabel}`, 'success');
+  closeModal();
+  openPunchDetail(id);
+  renderPunchWorkflow();
+}
+
+async function addPunchComment(id) {
+  const input = document.getElementById(`punch-comment-input-${id}`);
+  const text = input?.value.trim();
+  if (!text) { toast('Comment cannot be empty', 'error'); return; }
+  const p = PUNCH_DB.find(x => x.id === id);
+  if (!p) return;
+  const comment = {
+    id: crypto.randomUUID(),
+    text,
+    by: currentRoleUser.name,
+    by_role: currentRoleUser.role,
+    at: new Date().toISOString(),
+  };
+  const comments = [...(p.comments||[]), comment];
+  const { error } = await _sb.from('punch_items').update({ comments }).eq('id', id);
+  if (error) { toast('Comment failed: ' + error.message, 'error'); return; }
+  p.comments = comments;
+  toast('Comment posted', 'success');
+  closeModal();
+  openPunchDetail(id);
 }
 
 async function softDeletePunch(id) {
@@ -4117,12 +4251,15 @@ async function saveNewPunchItem(createAnother) {
 
     const nums = PUNCH_DB.map(p => p.number || 0);
     const nextNum = nums.length ? Math.max(...nums) + 1 : 1;
+    // If creator IS the PIM, item starts as Initiated; otherwise Draft
+    const initialStatus = form.punch_item_manager === currentRoleUser.name ? 'initiated' : 'draft';
     const row = {
-      ...form, number: nextNum, status: 'work_required',
-      ball_in_court: form.assignees[0] || null,
+      ...form, number: nextNum, status: initialStatus,
+      ball_in_court: form.punch_item_manager || null,
       created_by: currentRoleUser.name,
       date_notified: new Date().toISOString(),
       is_deleted: false,
+      comments: [],
       history: [{ action: 'Created', by: currentRoleUser.name, at: new Date().toISOString() }],
     };
     const { data, error } = await _sb.from('punch_items').insert(row).select().single();
@@ -4138,19 +4275,47 @@ async function saveNewPunchItem(createAnother) {
   }
 }
 
+function _punchFieldDiff(oldP, newForm) {
+  const track = [
+    ['title','Title'],['type','Type'],['priority','Priority'],
+    ['punch_item_manager','Punch Item Manager'],['final_approver','Final Approver'],
+    ['subsystem','Subsystem'],['schedule_impact','Schedule Impact'],
+    ['due_date','Due Date'],['description','Description'],
+    ['category_of_failure','Category of Failure'],['type_of_failure','Type of Failure'],
+    ['rtc_work_item_id','RTC ID'],['is_private','Private'],
+  ];
+  const changes = [];
+  for (const [key, label] of track) {
+    const o = String(oldP[key] ?? ''), n = String(newForm[key] ?? '');
+    if (o !== n) changes.push(`${label}: "${o||'—'}" → "${n||'—'}"`);
+  }
+  const oA = (oldP.assignees||[]).join(', '), nA = (newForm.assignees||[]).join(', ');
+  if (oA !== nA) changes.push(`Assignees: "${oA||'—'}" → "${nA||'—'}"`);
+  const oD = (oldP.distribution_list||[]).join(', '), nD = (newForm.distribution_list||[]).join(', ');
+  if (oD !== nD) changes.push(`Distribution List: "${oD||'—'}" → "${nD||'—'}"`);
+  return changes;
+}
+
 async function saveEditPunchItem(id) {
   try {
     const form = _readPunchForm();
     if (!form.title) { toast('Title is required', 'error'); return; }
     const p = PUNCH_DB.find(x => x.id === id);
     if (!p) return;
+    const changes = _punchFieldDiff(p, form);
+    const histEntry = {
+      action: changes.length ? `Edited (${changes.length} change${changes.length>1?'s':''})` : 'Edited (no changes)',
+      changes,
+      by: currentRoleUser.name,
+      at: new Date().toISOString(),
+    };
     const updates = { ...form, updated_at: new Date().toISOString(),
-      history: [...(p.history||[]), { action: 'Edited', by: currentRoleUser.name, at: new Date().toISOString() }] };
+      history: [...(p.history||[]), histEntry] };
     const { error } = await _sb.from('punch_items').update(updates).eq('id', id);
     if (error) { toast('Save failed: ' + error.message, 'error'); return; }
     Object.assign(p, updates);
     toast('Punch item updated', 'success');
-    closeModal(); renderPunchWorkflow();
+    closeModal(); openPunchDetail(id);
   } catch (err) {
     toast('Unexpected error: ' + err.message, 'error');
     console.error('saveEditPunchItem error:', err);
