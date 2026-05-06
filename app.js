@@ -3342,11 +3342,19 @@ async function _mxSaveStatus(status, r) {
   const upd = { status };
   if (status === 'Pass') { upd.completed_by = currentRoleUser?.name; upd.completed_date = new Date().toISOString(); }
   try {
-    const { error } = await _sb.from('test_items').update(upd).eq('test_id', r.TestID);
+    const { error, count } = await _sb.from('test_items').update(upd, { count: 'exact' }).eq('test_id', r.TestID);
     if (error) throw error;
+    if (count === 0) {
+      console.warn('[mxSaveStatus] 0 rows updated for test_id:', r.TestID, '— check if this ID exists in test_items');
+      toast(`⚠ Status changed locally but not saved — test_id "${r.TestID}" not found in DB`, 'warn');
+      return;
+    }
     toast(`${r.TestCaseCode} → ${status}`, 'success');
     logAudit('Test Status Update', `${r.TestCaseCode} @ ${r.Location}`, `→ ${status}`);
-  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
+  } catch(e) {
+    console.error('[mxSaveStatus] error:', e);
+    toast('Save failed: ' + e.message, 'error');
+  }
 }
 
 function _mxSaveReason(testId, reason) {
@@ -3672,6 +3680,10 @@ function renderIntakeStep3(items) {
             ${delayCats.map(c=>`<option>${escapeHtml(c)}</option>`).join('')}
           </select>
         </div>
+        <div class="form-field" id="i3-delay-hrs-wrap" style="display:none;">
+          <label>Delay Hours</label>
+          <input type="number" id="i3-delay-hrs" class="form-input" value="0" min="0" step="0.5">
+        </div>
         <div class="form-field form-field-full">
           <label>Overall Day Notes</label>
           <textarea id="i3-notes" class="form-input" rows="3" placeholder="Summary of the day's work…"></textarea>
@@ -3748,8 +3760,11 @@ function removeIntakeAddition(i) {
 function toggleDelayI3(btn, isYes) {
   document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  const wrap = document.getElementById('i3-delay-cat-wrap');
-  if (wrap) wrap.style.display = isYes ? '' : 'none';
+  const show = isYes ? '' : 'none';
+  const catWrap = document.getElementById('i3-delay-cat-wrap');
+  const hrsWrap = document.getElementById('i3-delay-hrs-wrap');
+  if (catWrap) catWrap.style.display = show;
+  if (hrsWrap) hrsWrap.style.display = show;
 }
 
 async function submitIntakeFinal() {
@@ -3767,29 +3782,31 @@ async function submitIntakeFinal() {
   const testers       = parseInt(document.getElementById('i3-testers')?.value)   || 1;
   const idleHours     = parseFloat(document.getElementById('i3-idle')?.value)    || 0;
   const delayOccurred = document.querySelector('.toggle-btn.active')?.dataset.val || 'No';
-  const delayCat      = document.getElementById('i3-delay-cat')?.value           || null;
-  const overallNotes  = document.getElementById('i3-notes')?.value               || '';
-  const nextDayPlan   = document.getElementById('i3-next')?.value                || '';
+  const delayCat      = delayOccurred === 'Yes' ? (document.getElementById('i3-delay-cat')?.value || null) : null;
+  const delayHrs      = delayOccurred === 'Yes' ? (parseFloat(document.getElementById('i3-delay-hrs')?.value) || 0) : 0;
+  const overallNotes  = document.getElementById('i3-notes')?.value || '';
+  const nextDayPlan   = document.getElementById('i3-next')?.value  || '';
 
+  // test_results rows — only columns confirmed in original schema
   const resultRows = allItems.map((item, idx) => ({
     result_id:         'R-' + Date.now() + '-' + idx,
-    test_id:           item.testId || item.id || null,
-    test_name:         item.testName        || null,
-    phase:             item.phase           || null,
-    location:          item.location        || null,
-    subsystem:         item.subsystem       || null,
-    activity:          item.activity        || null,
-    test_case_code:    item.testCode        || null,
-    test_procedure:    item.testProcedure   || null,
-    result:            item.status          || null,
+    test_id:           item.testId || item.id  || null,
+    test_name:         item.testName           || null,
+    phase:             item.phase              || null,
+    location:          item.location           || null,
+    subsystem:         item.subsystem          || null,
+    activity:          item.activity           || null,
+    test_case_code:    item.testCode           || null,
+    test_procedure:    item.testProcedure      || null,
+    result:            item.status             || null,
+    new_status:        item.status             || null,
     completed_by:      currentRoleUser.name,
     date_tested:       dateVal,
     submitted_by:      currentRoleUser.name,
     number_of_testers: testers,
-    failed_reason:     item.failedReason    || null,
-    blocked_reason:    item.blockedReason   || null,
-    hours_spent:       item.hours           || 0,
-    notes:             item.notes           || null,
+    failed_reason:     item.failedReason       || null,
+    blocked_reason:    item.blockedReason      || null,
+    notes:             item.notes              || null,
   }));
 
   const logRow = {
@@ -3806,28 +3823,43 @@ async function submitIntakeFinal() {
     total_partial:      allItems.filter(i => i.status === 'In Progress').length,
     total_blocked:      allItems.filter(i => i.status === 'Blocked').length,
     delay_occurred:     delayOccurred,
-    delay_category:     delayOccurred === 'Yes' ? delayCat : null,
+    delay_category:     delayCat,
+    delay_hours:        delayHrs,
     overall_notes:      overallNotes,
     next_day_plan:      nextDayPlan,
   };
 
-  try {
-    if (resultRows.length > 0) {
-      const { error: rErr } = await _sb.from('test_results').insert(resultRows);
-      if (rErr) throw rErr;
-    }
-    const { error: lErr } = await _sb.from('delay_log').insert([logRow]);
-    if (lErr) throw lErr;
+  let anySuccess = false;
+  let errors = [];
 
-    logAudit('Daily Log Submitted', `${allItems.length} test cases logged`, 'Daily report generated');
-    _sessionLog    = [];
-    intakeAdditions = [];
-    intakeStep = 1;
-    toast(`Daily log submitted! ${allItems.length} tests logged.`, 'success');
-  } catch (err) {
-    console.error('Supabase submit error:', err);
-    toast(`Submit failed: ${err.message}`, 'error');
+  if (resultRows.length > 0) {
+    const { error: rErr } = await _sb.from('test_results').insert(resultRows);
+    if (rErr) {
+      console.error('[submitIntakeFinal] test_results insert failed:', rErr);
+      errors.push('test_results: ' + rErr.message);
+    } else {
+      anySuccess = true;
+    }
   }
+
+  const { error: lErr } = await _sb.from('delay_log').insert([logRow]);
+  if (lErr) {
+    console.error('[submitIntakeFinal] delay_log insert failed:', lErr);
+    errors.push('delay_log: ' + lErr.message);
+  } else {
+    anySuccess = true;
+  }
+
+  if (errors.length) {
+    toast('Submit error — check console: ' + errors[0], 'error');
+    return;
+  }
+
+  logAudit('Daily Log Submitted', `${allItems.length} test cases logged`, 'Daily report generated');
+  _sessionLog     = [];
+  intakeAdditions = [];
+  intakeStep      = 1;
+  toast(`Daily log submitted! ${allItems.length} tests logged.`, 'success');
   renderFieldIntake();
   renderTestMatrix();
 }
