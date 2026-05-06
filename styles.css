@@ -2489,6 +2489,7 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
 .role-pill-admin { background: #1e1e2e; color: #fff; }
 .role-pill-field_engineer { background: #dbeafe; color: #1d4ed8; }
 .role-pill-readonly { background: var(--gray-100); color: var(--gray-600); }
+.role-pill-client { background: #d1fae5; color: #065f46; }
 .user-avatar-sm { width: 32px; height: 32px; border-radius: 50%; background: var(--hitachi-red); color: white; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 
 /* Typeahead / tag-input */

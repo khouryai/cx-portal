@@ -1545,7 +1545,7 @@ async function _loadCurrentProfile(user) {
     currentRoleUser = {
       name:      data.full_name,
       role:      data.role,
-      title:     { admin:'Administrator', field_engineer:'Field Engineer', readonly:'Read Only' }[data.role] || data.role,
+      title:     { admin:'Administrator', field_engineer:'Field Engineer', readonly:'Read Only', client:'Client' }[data.role] || data.role,
       subsystem: data.subsystem || null,
     };
     // Apply subsystem filter to test items if set
@@ -1626,7 +1626,7 @@ function onLoggedIn() {
     <button class="logout-mini" onclick="signOut()">Sign out</button>
   `;
 
-  const homePage = { admin:'admin', field_engineer:'field-intake', readonly:'dashboard' }[currentRoleUser.role] || 'dashboard';
+  const homePage = { admin:'admin', field_engineer:'field-intake', readonly:'dashboard', client:'dashboard' }[currentRoleUser.role] || 'dashboard';
   showPage(homePage);
   renderAdminPortal(); renderFieldIntake(); renderTestMatrix(); renderPunchWorkflow(); renderAuditLog();
 }
@@ -2853,7 +2853,7 @@ async function _loadDirectoryUsers() {
     wrap.innerHTML = `<div style="padding:32px;text-align:center;color:var(--gray-400);font-size:13px;">No users yet — click + Invite User to add one.</div>`;
     return;
   }
-  const roleLabel = { admin:'Administrator', field_engineer:'Field Engineer', readonly:'Read Only' };
+  const roleLabel = { admin:'Administrator', field_engineer:'Field Engineer', readonly:'Read Only', client:'Client' };
   wrap.innerHTML = `
     <table class="dir-table">
       <thead>
@@ -2880,6 +2880,7 @@ async function _loadDirectoryUsers() {
                 <option value="readonly"      ${u.role==='readonly'      ?'selected':''}>Read Only</option>
                 <option value="field_engineer" ${u.role==='field_engineer'?'selected':''}>Field Engineer</option>
                 <option value="admin"          ${u.role==='admin'         ?'selected':''}>Administrator</option>
+                <option value="client"         ${u.role==='client'        ?'selected':''}>Client</option>
               </select>
             </td>
             <td>
@@ -2957,6 +2958,7 @@ function openInviteUserModal() {
             <option value="readonly">Read Only — Dashboards only</option>
             <option value="field_engineer">Field Engineer — Field intake + Test Matrix</option>
             <option value="admin">Administrator — Full access</option>
+            <option value="client">Client — Dashboard + Punch List view</option>
           </select>
         </div>
         <div class="form-field">
@@ -3513,6 +3515,69 @@ function _taUsers(adminOnly) {
     .map(u => u.full_name);
 }
 
+function _taUsersByFilter(filter) {
+  if (filter === 'admin')        return PROFILE_USERS.filter(u => u.role === 'admin').map(u => u.full_name);
+  if (filter === 'admin_client') return PROFILE_USERS.filter(u => u.role === 'admin' || u.role === 'client').map(u => u.full_name);
+  return PROFILE_USERS.filter(u => u.role !== 'readonly').map(u => u.full_name);
+}
+
+// Single-select typeahead (for PIM, Final Approver)
+function _taHTMLSingle(id, filter) {
+  return `
+    <div class="ta-wrap">
+      <div class="ta-tags" id="${id}-tags"></div>
+      <input type="text" id="${id}-search" class="ta-search form-input" placeholder="Type to search…"
+        autocomplete="off" oninput="_taFilterSingle('${id}','${filter}')"
+        onblur="setTimeout(()=>{ const d=document.getElementById('${id}-drop'); if(d)d.classList.add('hidden'); },150)">
+      <div class="ta-drop hidden" id="${id}-drop"></div>
+    </div>
+    <input type="hidden" id="${id}" value="">
+  `;
+}
+
+function _taFilterSingle(id, filter) {
+  const q = (document.getElementById(id + '-search')?.value || '').toLowerCase();
+  const drop = document.getElementById(id + '-drop');
+  if (!drop) return;
+  if (!q) { drop.classList.add('hidden'); return; }
+  const pool = _taUsersByFilter(filter).filter(u => u.toLowerCase().includes(q));
+  if (!pool.length) { drop.classList.add('hidden'); return; }
+  drop.classList.remove('hidden');
+  drop.innerHTML = pool.slice(0, 8).map(u =>
+    `<div class="ta-option" onmousedown="event.preventDefault();_taSelectSingle('${id}','${u.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')">${escapeHtml(u)}</div>`
+  ).join('');
+}
+
+function _taSelectSingle(id, val) {
+  const hidden = document.getElementById(id);
+  if (hidden) hidden.value = val;
+  _taRenderTagsSingle(id, val);
+  const search = document.getElementById(id + '-search');
+  if (search) search.value = '';
+  const drop = document.getElementById(id + '-drop');
+  if (drop) drop.classList.add('hidden');
+}
+
+function _taRenderTagsSingle(id, val) {
+  const el = document.getElementById(id + '-tags');
+  if (!el) return;
+  el.innerHTML = val
+    ? `<span class="ta-tag">${escapeHtml(val)}<button type="button" class="ta-remove" onmousedown="event.preventDefault();_taClearSingle('${id}')">×</button></span>`
+    : '';
+}
+
+function _taClearSingle(id) {
+  const hidden = document.getElementById(id);
+  if (hidden) hidden.value = '';
+  _taRenderTagsSingle(id, '');
+}
+
+function _taInitSingle(id, val) {
+  const hidden = document.getElementById(id);
+  if (hidden) hidden.value = val || '';
+  _taRenderTagsSingle(id, val || '');
+}
+
 function _taGetVals(id) {
   const v = document.getElementById(id)?.value || '';
   return v ? v.split(',').map(s => s.trim()).filter(Boolean) : [];
@@ -3874,9 +3939,6 @@ function _punchFormHTML(p) {
   const v   = (id) => p ? escapeHtml(p[id]||'') : '';
   const sel = (id, val) => p?.[id] === val ? 'selected' : '';
   const fOpts = (key, selVal) => (_fsCfg(key).length ? _fsCfg(key) : []).map(o => `<option ${o===selVal?'selected':''}>${escapeHtml(o)}</option>`).join('');
-  const allUsers  = PROFILE_USERS.filter(u => u.role !== 'readonly').map(u => u.full_name);
-  const adminOnly = PROFILE_USERS.filter(u => u.role === 'admin').map(u => u.full_name);
-  const pimVal    = p ? v('punch_item_manager') : escapeHtml(currentRoleUser?.name||'');
   return `
     <div class="form-grid">
       <div class="form-field form-field-full">
@@ -3898,14 +3960,12 @@ function _punchFormHTML(p) {
         </select>
       </div>
       <div class="form-field">
-        <label>Punch Item Manager *</label>
-        <input type="text" id="np-pim" class="form-input" list="pim-datalist" placeholder="Name" value="${pimVal}" autocomplete="off">
-        <datalist id="pim-datalist">${allUsers.map(u=>`<option value="${escapeHtml(u)}">`).join('')}</datalist>
+        <label>Punch Item Manager * <span style="font-weight:400;color:var(--gray-500);font-size:11px;">(Admin users)</span></label>
+        ${_taHTMLSingle('np-pim','admin')}
       </div>
       <div class="form-field">
-        <label>Final Approver * <span style="font-weight:400;color:var(--gray-500);font-size:11px;">(Admins only)</span></label>
-        <input type="text" id="np-approver" class="form-input" list="approver-datalist" placeholder="Name" value="${v('final_approver')}" autocomplete="off">
-        <datalist id="approver-datalist">${adminOnly.map(u=>`<option value="${escapeHtml(u)}">`).join('')}</datalist>
+        <label>Final Approver <span style="font-weight:400;color:var(--gray-500);font-size:11px;">(Admin / Client)</span></label>
+        ${_taHTMLSingle('np-approver','admin_client')}
       </div>
       <div class="form-field form-field-full">
         <label>Assignees</label>
@@ -3998,7 +4058,12 @@ function openNewPunchModal() {
       <button class="form-submit" onclick="saveNewPunchItem(false)">Save</button>
     `,
   });
-  setTimeout(() => { _taInitField('np-assignees', [], false); _taInitField('np-distlist', [], false); }, 30);
+  setTimeout(() => {
+    _taInitField('np-assignees', [], false);
+    _taInitField('np-distlist', [], false);
+    _taInitSingle('np-pim', currentRoleUser?.name || '');
+    _taInitSingle('np-approver', '');
+  }, 30);
 }
 
 function openEditPunchModal(id) {
@@ -4016,6 +4081,8 @@ function openEditPunchModal(id) {
   setTimeout(() => {
     _taInitField('np-assignees', p.assignees || [], false);
     _taInitField('np-distlist', p.distribution_list || [], false);
+    _taInitSingle('np-pim', p.punch_item_manager || '');
+    _taInitSingle('np-approver', p.final_approver || '');
   }, 30);
 }
 
@@ -4042,41 +4109,52 @@ function _readPunchForm() {
 }
 
 async function saveNewPunchItem(createAnother) {
-  const form = _readPunchForm();
-  if (!form.title)               { toast('Title is required', 'error'); return; }
-  if (!form.type)                { toast('Type is required', 'error'); return; }
-  if (!form.punch_item_manager)  { toast('Punch Item Manager is required', 'error'); return; }
+  try {
+    const form = _readPunchForm();
+    if (!form.title)               { toast('Title is required', 'error'); return; }
+    if (!form.type)                { toast('Type is required', 'error'); return; }
+    if (!form.punch_item_manager)  { toast('Punch Item Manager is required', 'error'); return; }
 
-  const nextNum = PUNCH_DB.length ? Math.max(...PUNCH_DB.map(p=>p.number||0)) + 1 : 1;
-  const row = {
-    ...form, number: nextNum, status: 'work_required',
-    ball_in_court: form.assignees[0] || null,
-    created_by: currentRoleUser.name,
-    date_notified: new Date().toISOString(),
-    is_deleted: false,
-    history: [{ action: 'Created', by: currentRoleUser.name, at: new Date().toISOString() }],
-  };
-  const { data, error } = await _sb.from('punch_items').insert(row).select().single();
-  if (error) { toast('Save failed: ' + error.message, 'error'); return; }
-  PUNCH_DB.unshift(data);
-  logAudit('Punch Created', `#${nextNum} ${form.title}`);
-  toast(`Punch #${nextNum} created`, 'success');
-  if (createAnother) { closeModal(); openNewPunchModal(); }
-  else { closeModal(); renderPunchWorkflow(); }
+    const nums = PUNCH_DB.map(p => p.number || 0);
+    const nextNum = nums.length ? Math.max(...nums) + 1 : 1;
+    const row = {
+      ...form, number: nextNum, status: 'work_required',
+      ball_in_court: form.assignees[0] || null,
+      created_by: currentRoleUser.name,
+      date_notified: new Date().toISOString(),
+      is_deleted: false,
+      history: [{ action: 'Created', by: currentRoleUser.name, at: new Date().toISOString() }],
+    };
+    const { data, error } = await _sb.from('punch_items').insert(row).select().single();
+    if (error) { toast('Save failed: ' + error.message, 'error'); return; }
+    PUNCH_DB.unshift(data);
+    logAudit('Punch Created', `#${nextNum} ${form.title}`);
+    toast(`Punch #${nextNum} created`, 'success');
+    if (createAnother) { closeModal(); openNewPunchModal(); }
+    else { closeModal(); renderPunchWorkflow(); }
+  } catch (err) {
+    toast('Unexpected error: ' + err.message, 'error');
+    console.error('saveNewPunchItem error:', err);
+  }
 }
 
 async function saveEditPunchItem(id) {
-  const form = _readPunchForm();
-  if (!form.title) { toast('Title is required', 'error'); return; }
-  const p = PUNCH_DB.find(x => x.id === id);
-  if (!p) return;
-  const updates = { ...form, updated_at: new Date().toISOString(),
-    history: [...(p.history||[]), { action: 'Edited', by: currentRoleUser.name, at: new Date().toISOString() }] };
-  const { error } = await _sb.from('punch_items').update(updates).eq('id', id);
-  if (error) { toast('Save failed: ' + error.message, 'error'); return; }
-  Object.assign(p, updates);
-  toast('Punch item updated', 'success');
-  closeModal(); renderPunchWorkflow();
+  try {
+    const form = _readPunchForm();
+    if (!form.title) { toast('Title is required', 'error'); return; }
+    const p = PUNCH_DB.find(x => x.id === id);
+    if (!p) return;
+    const updates = { ...form, updated_at: new Date().toISOString(),
+      history: [...(p.history||[]), { action: 'Edited', by: currentRoleUser.name, at: new Date().toISOString() }] };
+    const { error } = await _sb.from('punch_items').update(updates).eq('id', id);
+    if (error) { toast('Save failed: ' + error.message, 'error'); return; }
+    Object.assign(p, updates);
+    toast('Punch item updated', 'success');
+    closeModal(); renderPunchWorkflow();
+  } catch (err) {
+    toast('Unexpected error: ' + err.message, 'error');
+    console.error('saveEditPunchItem error:', err);
+  }
 }
 
 // ==========================================================================
@@ -4203,28 +4281,38 @@ function previewPunchImport(input) {
 async function executePunchImport() {
   if (!_punchImportRows.length) return;
   const importBtn = document.getElementById('punch-import-btn');
-  importBtn.disabled = true;
-  importBtn.textContent = 'Importing…';
-  let nextNum = PUNCH_DB.length ? Math.max(...PUNCH_DB.map(p => p.number || 0)) + 1 : 1;
-  let ok = 0, fail = 0;
-  for (const row of _punchImportRows) {
-    const record = {
-      ...row, number: nextNum++,
-      status: 'work_required',
-      is_deleted: false,
-      created_by: currentRoleUser.name,
-      date_notified: new Date().toISOString(),
-      history: [{ action: 'Created via Import', by: currentRoleUser.name, at: new Date().toISOString() }],
-    };
-    const { data, error } = await _sb.from('punch_items').insert(record).select().single();
-    if (error) { console.error('Import row failed:', error.message); fail++; }
-    else { PUNCH_DB.unshift(data); ok++; }
+  if (importBtn) { importBtn.disabled = true; importBtn.textContent = 'Importing…'; }
+  try {
+    const nums = PUNCH_DB.map(p => p.number || 0);
+    let nextNum = nums.length ? Math.max(...nums) + 1 : 1;
+    let ok = 0, fail = 0;
+    for (const row of _punchImportRows) {
+      const record = {
+        ...row, number: nextNum++,
+        status: 'work_required',
+        is_deleted: false,
+        created_by: currentRoleUser.name,
+        date_notified: new Date().toISOString(),
+        history: [{ action: 'Created via Import', by: currentRoleUser.name, at: new Date().toISOString() }],
+      };
+      try {
+        const { data, error } = await _sb.from('punch_items').insert(record).select().single();
+        if (error) { console.error('Import row failed:', error.message); fail++; }
+        else { PUNCH_DB.unshift(data); ok++; }
+      } catch (rowErr) {
+        console.error('Import row exception:', rowErr.message); fail++;
+      }
+    }
+    toast(`Imported ${ok} item(s)${fail ? `, ${fail} failed — check console` : ''}`, fail && !ok ? 'error' : 'success');
+    logAudit('Punch Import', `${ok} items imported`);
+    _punchImportRows = [];
+    closeModal();
+    renderPunchWorkflow();
+  } catch (err) {
+    toast('Import failed: ' + err.message, 'error');
+    console.error('executePunchImport error:', err);
+    if (importBtn) { importBtn.disabled = false; importBtn.textContent = 'Import'; }
   }
-  toast(`Imported ${ok} item(s)${fail ? `, ${fail} failed` : ''}`, fail ? 'error' : 'success');
-  logAudit('Punch Import', `${ok} items imported`);
-  _punchImportRows = [];
-  closeModal();
-  renderPunchWorkflow();
 }
 
 // ==========================================================================
