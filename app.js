@@ -1102,6 +1102,7 @@ async function loadTestItems() {
         CompletedBy:   r.completed_by,
         CompletedDate: r.completed_date,
         BlockedReason: r.blocked_reason,
+        FailedReason:  r.failed_reason || null,
         Notes:         r.notes,
         TestReport:    r.test_report || null,
       }));
@@ -1703,6 +1704,9 @@ async function signIn() {
 
 async function signOut() {
   await _sb.auth.signOut();
+  _sessionLog     = [];
+  intakeAdditions = [];
+  intakeStep      = 1;
   showPage('dashboard');
 }
 
@@ -2883,6 +2887,7 @@ const FIELDCONFIG_DEFS = [
   { key: 'type_of_failure',     label: 'Type of Failure' },
   { key: 'schedule_impact',     label: 'Schedule Impact' },
   { key: 'punch_subsystem',     label: 'Subsystem' },
+  { key: 'delay_category',      label: 'Delay Category' },
 ];
 
 function _fsCfg(key) { return FIELDSET_CONFIG[key] || []; }
@@ -3251,19 +3256,32 @@ function renderTestMatrix() {
   `;
 }
 
+let _sessionLog = []; // tracks status changes made this session for Daily Log step 1
+
 function _renderTIMatrixRow(r, isAdmin) {
-  const current = r.Status || 'Not Started';
-  const statuses = ['Complete','In Progress','Blocked','Not Started'];
-  const btnClass = { 'Complete':'complete','In Progress':'in_progress','Blocked':'blocked','Not Started':'not_started' };
+  const current   = r.Status || 'Not Started';
+  const statuses  = ['Not Started','In Progress','Complete','Failed','Blocked'];
+  const showReason = current === 'Failed' || current === 'Blocked';
+  const reasonVal  = current === 'Failed' ? (r.FailedReason||'') : (r.BlockedReason||'');
+  const tid = escapeHtml(String(r.TestID));
   return `
     <div class="matrix-tc-row">
       <div class="matrix-tc-code">${escapeHtml(r.TestCaseCode||'—')}</div>
       <div style="flex:1;min-width:0;">
         <div class="matrix-tc-name">${escapeHtml(r.TestName||'—')}</div>
-        ${r.TestProcedure||r.CompletedBy ? `<div class="matrix-tc-meta">${escapeHtml(r.TestProcedure||'')}${r.CompletedBy?` · completed by <b>${escapeHtml(r.CompletedBy)}</b>`:''}</div>` : ''}
+        ${r.TestProcedure ? `<div class="matrix-tc-meta">${escapeHtml(r.TestProcedure)}</div>` : ''}
+        ${r.CompletedBy ? `<div class="matrix-tc-meta">Completed by <b>${escapeHtml(r.CompletedBy)}</b></div>` : ''}
       </div>
-      <div class="matrix-tc-status-buttons">
-        ${statuses.map(s => `<button class="tc-status-btn ${current===s?'active '+btnClass[s]:''}" onclick="setTestStatusTI('${escapeHtml(r.TestID)}','${s}')">${s}</button>`).join('')}
+      <div style="display:flex;flex-direction:column;gap:6px;min-width:200px;">
+        <select class="form-input" style="font-size:12px;padding:5px 8px;" onchange="_mxStatusChange('${tid}',this.value)">
+          ${statuses.map(s=>`<option value="${s}" ${current===s?'selected':''}>${s}</option>`).join('')}
+        </select>
+        <div id="mx-reason-${tid}" style="${showReason?'':'display:none;'}">
+          <input type="text" id="mx-ri-${tid}" class="form-input" style="font-size:12px;padding:5px 8px;"
+            placeholder="${current==='Failed'?'Failure reason...':'Blocked reason...'}"
+            value="${escapeHtml(reasonVal)}"
+            onblur="_mxSaveReason('${tid}',this.value)">
+        </div>
       </div>
     </div>
   `;
@@ -3278,24 +3296,67 @@ function _mxClearFilters() {
   renderTestMatrix();
 }
 
-async function setTestStatusTI(testId, status) {
+function _mxStatusChange(testId, status) {
   const r = TI.find(t => String(t.TestID) === String(testId));
   if (!r) return;
+
+  // Track session log (update existing entry or create new)
+  const existing = _sessionLog.find(e => String(e.testId) === String(testId));
+  if (existing) {
+    existing.newStatus  = status;
+    existing.changedAt  = new Date().toISOString();
+  } else {
+    _sessionLog.push({
+      testId, testCode: r.TestCaseCode, testName: r.TestName,
+      phase: r.Phase, location: r.Location, subsystem: r.Subsystem, activity: r.Activity,
+      prevStatus: r.Status || 'Not Started', newStatus: status,
+      changedAt: new Date().toISOString(),
+      failedReason: r.FailedReason||'', blockedReason: r.BlockedReason||'', hours: 0
+    });
+  }
+
   r.Status = status;
   if (status === 'Complete') { r.CompletedBy = currentRoleUser.name; r.CompletedDate = new Date().toISOString(); }
-  renderTestMatrix();
+
+  // Toggle reason input without re-rendering the full matrix
+  const reasonEl = document.getElementById(`mx-reason-${testId}`);
+  const reasonInput = document.getElementById(`mx-ri-${testId}`);
+  if (reasonEl) {
+    const needReason = status === 'Failed' || status === 'Blocked';
+    reasonEl.style.display = needReason ? '' : 'none';
+    if (reasonInput) reasonInput.placeholder = status === 'Failed' ? 'Failure reason...' : 'Blocked reason...';
+  }
+
+  _mxSaveStatus(testId, status, r);
+}
+
+async function _mxSaveStatus(testId, status, r) {
+  const upd = { status };
+  if (status === 'Complete') { upd.completed_by = currentRoleUser.name; upd.completed_date = new Date().toISOString(); }
   try {
-    const upd = { status };
-    if (status === 'Complete') { upd.completed_by = currentRoleUser.name; upd.completed_date = new Date().toISOString(); }
-    const { error } = await _sb.from('test_items').update(upd).eq('test_id', testId);
+    const { error } = await _sb.from('test_items').update(upd).eq('test_id', String(testId));
     if (error) throw error;
     toast(`${r.TestCaseCode} → ${status}`, 'success');
     logAudit('Test Status Update', `${r.TestCaseCode} @ ${r.Location}`, `→ ${status}`);
   } catch(e) { toast('Save failed: ' + e.message, 'error'); }
 }
 
-// Keep legacy function name used elsewhere
-function setTestStatus(id, status) { setTestStatusTI(id, status); }
+function _mxSaveReason(testId, reason) {
+  const r = TI.find(t => String(t.TestID) === String(testId));
+  if (!r) return;
+  const isFailed = r.Status === 'Failed';
+  if (isFailed) r.FailedReason = reason; else r.BlockedReason = reason;
+  const logEntry = _sessionLog.find(e => String(e.testId) === String(testId));
+  if (logEntry) { if (isFailed) logEntry.failedReason = reason; else logEntry.blockedReason = reason; }
+  const upd = isFailed ? { failed_reason: reason } : { blocked_reason: reason };
+  _sb.from('test_items').update(upd).eq('test_id', String(testId)).then(({error}) => {
+    if (error) toast('Reason save failed: ' + error.message, 'error');
+  });
+}
+
+// Legacy wrappers
+async function setTestStatusTI(testId, status) { _mxStatusChange(testId, status); }
+function setTestStatus(id, status) { _mxStatusChange(id, status); }
 
 let _pendingActivityEdit = null;
 
@@ -3359,6 +3420,21 @@ async function saveActivityEdit() {
 // ==========================================================================
 let intakeStep = 1;
 let intakeAdditions = [];
+let _s2Phase = '', _s2Loc = '', _s2Act = '';
+
+function _updateSessionHours(idx, val) {
+  if (_sessionLog[idx]) _sessionLog[idx].hours = parseFloat(val) || 0;
+}
+
+function _s2SetPhase(v) { _s2Phase=v; _s2Loc=''; _s2Act=''; renderFieldIntake(); }
+function _s2SetLoc(v)   { _s2Loc=v; _s2Act=''; renderFieldIntake(); }
+function _s2SetAct(v)   { _s2Act=v; renderFieldIntake(); }
+
+function ai_toggleReasonFields() {
+  const s = document.getElementById('ai-status')?.value;
+  document.getElementById('ai-failed-block').style.display = s==='Failed'  ? '' : 'none';
+  document.getElementById('ai-blocked-block').style.display = s==='Blocked' ? '' : 'none';
+}
 
 function renderFieldIntake() {
   const root = document.getElementById('field-intake-content');
@@ -3368,16 +3444,7 @@ function renderFieldIntake() {
     return;
   }
 
-  // Get test cases the field user has toggled today
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-  const todayUpdates = TEST_INSTANCES.filter(t =>
-    t.lastUpdatedBy === currentRoleUser.name &&
-    t.lastUpdatedAt &&
-    new Date(t.lastUpdatedAt) >= todayStart &&
-    ['passed', 'failed', 'blocked', 'in_progress'].includes(t.status)
-  );
-
-  const allItems = [...todayUpdates, ...intakeAdditions];
+  const allItems = [..._sessionLog.map(e => ({...e, _fromLog:true})), ...intakeAdditions];
 
   root.innerHTML = `
     <div class="intake-stepper">
@@ -3391,53 +3458,71 @@ function renderFieldIntake() {
         <span class="intake-step-num">3</span>Submit Daily Log
       </div>
     </div>
-    ${intakeStep === 1 ? renderIntakeStep1(allItems) :
+    ${intakeStep === 1 ? renderIntakeStep1() :
       intakeStep === 2 ? renderIntakeStep2() :
       renderIntakeStep3(allItems)}
   `;
 }
 
-function renderIntakeStep1(items) {
-  if (items.length === 0) {
+function renderIntakeStep1() {
+  const log = _sessionLog;
+  if (!log.length && !intakeAdditions.length) {
     return `
       <div class="form-card">
         <h3 class="form-card-title">Step 1: Review Today's Tests</h3>
-        <p class="form-card-sub">These are the test cases you toggled in the Test Matrix today.</p>
+        <p class="form-card-sub">No status changes recorded yet this session. Update statuses in the Test Matrix to see them here.</p>
         <div class="intake-summary-empty">
-          <h3 style="font-size: 16px; margin-bottom: 8px;">No tests logged today</h3>
-          <p style="font-size: 13px;">Open the Test Matrix and toggle statuses on test cases as you work, or skip to Step 2 to add items manually.</p>
+          <h3 style="font-size:16px;margin-bottom:8px;">No tests logged yet</h3>
+          <p style="font-size:13px;">Open the Test Matrix, update test case statuses as you work, then return here to complete the Daily Log.</p>
         </div>
         <div class="form-actions">
           <button class="form-secondary" onclick="showPage('test-matrix')">Open Test Matrix</button>
-          <button class="form-submit" onclick="setIntakeStep(2)">Continue to Step 2 →</button>
+          <button class="form-submit" onclick="setIntakeStep(2)">Skip to Step 2 →</button>
         </div>
       </div>
     `;
   }
 
+  const allEntries = [
+    ...log.map((e,i) => ({...e, _idx:i, _fromLog:true})),
+    ...intakeAdditions.map((a,i) => ({...a, _idx:i, _fromAdditions:true}))
+  ];
+  const statusColor = s => ({Complete:'#059669','In Progress':'#1d4ed8',Failed:'#dc2626',Blocked:'#d97706','Not Started':'#6b7280'}[s]||'#6b7280');
+
   return `
     <div class="form-card">
       <h3 class="form-card-title">Step 1: Review Today's Tests</h3>
-      <p class="form-card-sub">${items.length} test case${items.length > 1 ? 's' : ''} toggled today. Verify these are correct before submitting.</p>
-      <div class="intake-summary-list">
-        ${items.map(t => {
-          const statusBg = t.status === 'passed' ? 'badge-passed' :
-                           t.status === 'failed' ? 'badge-failed' :
-                           t.status === 'blocked' ? 'badge-pending' : 'badge-progress';
+      <p class="form-card-sub">${allEntries.length} test case${allEntries.length!==1?'s':''} recorded this session. Add hours spent and verify transitions.</p>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
+        ${allEntries.map(e => {
+          const isFailed  = e.newStatus==='Failed'  || e.status==='Failed';
+          const isBlocked = e.newStatus==='Blocked' || e.status==='Blocked';
+          const ns = e._fromLog ? e.newStatus : e.status;
+          const ps = e._fromLog ? e.prevStatus : null;
+          const reason = e.failedReason||e.blockedReason||'';
           return `
-            <div class="intake-summary-row">
-              <span class="badge ${statusBg}">${t.status}</span>
+            <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;display:grid;grid-template-columns:1fr 120px;gap:12px;align-items:start;">
               <div>
-                <div style="font-weight: 600; font-size: 13px;">${escapeHtml(t.testCode)} · ${escapeHtml(t.testName)}</div>
-                <div style="font-size: 11px; color: var(--gray-700); margin-top: 2px;">${escapeHtml(t.location)} · ${escapeHtml(t.subsystem)} · ${escapeHtml(t.templateName)}</div>
+                <div style="font-weight:600;font-size:13px;margin-bottom:3px;">${escapeHtml(e.testCode)} · ${escapeHtml(e.testName)}</div>
+                <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(e.phase||'—')} · ${escapeHtml(e.location||'—')} · ${escapeHtml(e.activity||'—')}</div>
+                <div style="margin-top:6px;font-size:12px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                  ${ps ? `<span style="background:#e5e7eb;color:#374151;padding:2px 8px;border-radius:10px;">${escapeHtml(ps)}</span><span style="color:var(--gray-400);">→</span>` : ''}
+                  <span style="background:${statusColor(ns)}20;color:${statusColor(ns)};padding:2px 8px;border-radius:10px;font-weight:600;">${escapeHtml(ns)}</span>
+                  ${reason ? `<span style="font-size:11px;color:#dc2626;">✗ ${escapeHtml(reason)}</span>` : ''}
+                </div>
               </div>
-              <div style="font-size: 11px; color: var(--gray-700);">${dateAgo(t.lastUpdatedAt)}</div>
+              <div>
+                <label style="font-size:11px;color:var(--gray-500);display:block;margin-bottom:4px;">Hours Spent</label>
+                <input type="number" min="0" step="0.25" class="form-input" style="font-size:13px;padding:5px 8px;"
+                  value="${e.hours||0}"
+                  ${e._fromLog ? `onchange="_updateSessionHours(${e._idx},this.value)"` : `onchange="_updateAdditionHours(${e._idx},this.value)"`}>
+              </div>
             </div>
           `;
         }).join('')}
       </div>
       <div class="form-actions">
-        <button class="form-secondary" onclick="showPage('test-matrix')">↺ Edit in Test Matrix</button>
+        <button class="form-secondary" onclick="showPage('test-matrix')">↺ Back to Test Matrix</button>
         <button class="form-submit" onclick="setIntakeStep(2)">Continue to Step 2 →</button>
       </div>
     </div>
@@ -3445,61 +3530,82 @@ function renderIntakeStep1(items) {
 }
 
 function renderIntakeStep2() {
+  const phases = [...new Set(TI.map(r=>r.Phase).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const locs   = [...new Set(TI.filter(r=>!_s2Phase||r.Phase===_s2Phase).map(r=>r.Location).filter(Boolean))].sort();
+  const acts   = [...new Set(TI.filter(r=>(!_s2Phase||r.Phase===_s2Phase)&&(!_s2Loc||r.Location===_s2Loc)).map(r=>r.Activity).filter(Boolean))].sort();
+  const tests  = TI.filter(r=>(!_s2Phase||r.Phase===_s2Phase)&&(!_s2Loc||r.Location===_s2Loc)&&(!_s2Act||r.Activity===_s2Act));
+
   return `
     <div class="form-card">
       <h3 class="form-card-title">Step 2: Add Missing Items</h3>
-      <p class="form-card-sub">Add any test cases you completed today that aren't already in your list.</p>
-
-      <div id="intake-additions" style="margin-bottom:16px;">
+      <p class="form-card-sub">Add test cases completed today that weren't updated via the Test Matrix.</p>
+      <div style="margin-bottom:16px;">
         ${intakeAdditions.length === 0 ?
-          '<div class="form-hint">No additional items yet</div>' :
-          intakeAdditions.map((a, i) => `
-            <div class="intake-summary-row" style="background: var(--gray-50); border-radius: 8px; margin-bottom: 6px;">
-              <span class="badge badge-${a.status === 'passed' ? 'passed' : a.status === 'failed' ? 'failed' : a.status === 'blocked' ? 'pending' : 'progress'}">${a.status}</span>
-              <div>
-                <div style="font-weight: 600; font-size: 13px;">${escapeHtml(a.testCode)} · ${escapeHtml(a.testName)}</div>
-                <div style="font-size: 11px; color: var(--gray-700); margin-top: 2px;">${escapeHtml(a.location)} · ${escapeHtml(a.subsystem)}</div>
+          '<div style="font-size:13px;color:var(--gray-400);padding:8px 0;">No manually-added items yet</div>' :
+          intakeAdditions.map((a,i) => `
+            <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;display:flex;gap:12px;align-items:center;margin-bottom:6px;">
+              <div style="flex:1;">
+                <div style="font-weight:600;font-size:13px;">${escapeHtml(a.testCode||'—')} · ${escapeHtml(a.testName||'—')}</div>
+                <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(a.phase||'—')} · ${escapeHtml(a.location||'—')} · ${escapeHtml(a.activity||'—')}</div>
+                <div style="font-size:11px;margin-top:2px;">Status: <b>${escapeHtml(a.status||'—')}</b>${a.hours?` · ${a.hours}h`:''}${a.failedReason?` · ${escapeHtml(a.failedReason)}`:''}${a.blockedReason?` · ${escapeHtml(a.blockedReason)}`:''}</div>
               </div>
-              <button class="logout-mini" onclick="removeIntakeAddition(${i})">Remove</button>
-            </div>
-          `).join('')
-        }
+              <button class="logout-mini" onclick="removeIntakeAddition(${i})" style="color:#dc2626;">Remove</button>
+            </div>`).join('')}
       </div>
 
       <div class="form-grid">
         <div class="form-field">
+          <label>Phase</label>
+          <select class="form-input" onchange="_s2SetPhase(this.value)">
+            <option value="">All Phases</option>
+            ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_s2Phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field">
           <label>Location</label>
-          <select id="ai-location" class="form-input" onchange="filterAddTestcases()">
-            <option value="">Select location...</option>
-            ${[...new Set(TI.map(t => t.Location))].filter(Boolean).sort().map(l => `<option value="${l}">${l}</option>`).join('')}
+          <select class="form-input" onchange="_s2SetLoc(this.value)">
+            <option value="">Select location…</option>
+            ${locs.map(l=>`<option value="${escapeHtml(l)}" ${_s2Loc===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Activity</label>
+          <select class="form-input" onchange="_s2SetAct(this.value)">
+            <option value="">All Activities</option>
+            ${acts.map(a=>`<option value="${escapeHtml(a)}" ${_s2Act===a?'selected':''}>${escapeHtml(a)}</option>`).join('')}
           </select>
         </div>
         <div class="form-field">
           <label>Test Case</label>
-          <select id="ai-testid" class="form-input"></select>
+          <select id="ai-testid" class="form-input">
+            <option value="">Select test case…</option>
+            ${tests.map(t=>`<option value="${escapeHtml(t.TestID)}">${escapeHtml(t.TestCaseCode)} · ${escapeHtml(t.TestName)}</option>`).join('')}
+          </select>
         </div>
-        <div class="form-field form-field-full">
+        <div class="form-field">
           <label>Status</label>
-          <div class="result-buttons">
-            <button type="button" class="result-btn result-pass" data-value="passed" onclick="selectAddStatus(this, 'passed')">Pass</button>
-            <button type="button" class="result-btn result-fail" data-value="failed" onclick="selectAddStatus(this, 'failed')">Fail</button>
-            <button type="button" class="result-btn result-partial" data-value="blocked" onclick="selectAddStatus(this, 'blocked')">Blocked</button>
-            <button type="button" class="result-btn result-blocked" data-value="in_progress" onclick="selectAddStatus(this, 'in_progress')">In Progress</button>
-          </div>
+          <select id="ai-status" class="form-input" onchange="ai_toggleReasonFields()">
+            <option value="">Select status…</option>
+            ${['Not Started','In Progress','Complete','Failed','Blocked'].map(s=>`<option>${s}</option>`).join('')}
+          </select>
         </div>
-        <div class="form-field form-field-full" id="ai-blocked-block" style="display:none;">
-          <label>Blocking Reason</label>
-          <textarea id="ai-blocked-reason" class="form-input" rows="2" placeholder="Why is this blocked? Who can resolve?"></textarea>
+        <div class="form-field">
+          <label>Hours Spent</label>
+          <input type="number" id="ai-hours" class="form-input" min="0" step="0.25" placeholder="0.0">
         </div>
         <div class="form-field form-field-full" id="ai-failed-block" style="display:none;">
           <label>Failure Reason</label>
-          <textarea id="ai-failed-reason" class="form-input" rows="2" placeholder="What went wrong?"></textarea>
+          <textarea id="ai-failed-reason" class="form-input" rows="2" placeholder="What failed and why?"></textarea>
+        </div>
+        <div class="form-field form-field-full" id="ai-blocked-block" style="display:none;">
+          <label>Blocked Reason</label>
+          <textarea id="ai-blocked-reason" class="form-input" rows="2" placeholder="Why is this blocked? Who can resolve?"></textarea>
         </div>
       </div>
 
       <div class="form-actions">
         <button class="form-secondary" onclick="setIntakeStep(1)">← Back</button>
-        <button class="form-secondary" onclick="addIntakeAddition()">+ Add to Queue</button>
+        <button class="form-secondary" onclick="addIntakeAddition()">+ Add to List</button>
         <button class="form-submit" onclick="setIntakeStep(3)">Continue to Step 3 →</button>
       </div>
     </div>
@@ -3507,22 +3613,30 @@ function renderIntakeStep2() {
 }
 
 function renderIntakeStep3(items) {
+  const allItems = [..._sessionLog, ...intakeAdditions];
+  const complete  = allItems.filter(i=>(i.newStatus||i.status)==='Complete').length;
+  const failed    = allItems.filter(i=>(i.newStatus||i.status)==='Failed').length;
+  const blocked   = allItems.filter(i=>(i.newStatus||i.status)==='Blocked').length;
+  const inprog    = allItems.filter(i=>(i.newStatus||i.status)==='In Progress').length;
+  const totalHrs  = allItems.reduce((s,i)=>s+(i.hours||0),0).toFixed(1);
+  const delayCats = _fsCfg('delay_category');
+
   return `
     <div class="form-card">
       <h3 class="form-card-title">Step 3: Submit Daily Log</h3>
-      <p class="form-card-sub">Review the day's summary and submit. Punch list manager and project leadership will receive the daily report email.</p>
+      <p class="form-card-sub">Review and submit the day's testing record.</p>
 
       <div class="form-grid">
         <div class="form-field form-field-full">
           <div class="counts-grid">
-            <div class="count-tile good"><div class="count-label">Total</div><div class="count-value">${items.length}</div></div>
-            <div class="count-tile good"><div class="count-label">Passed</div><div class="count-value">${items.filter(i => i.status === 'passed').length}</div></div>
-            <div class="count-tile bad"><div class="count-label">Failed</div><div class="count-value">${items.filter(i => i.status === 'failed').length}</div></div>
-            <div class="count-tile warn"><div class="count-label">Blocked</div><div class="count-value">${items.filter(i => i.status === 'blocked').length}</div></div>
-            <div class="count-tile"><div class="count-label">In Progress</div><div class="count-value">${items.filter(i => i.status === 'in_progress').length}</div></div>
+            <div class="count-tile"><div class="count-label">Total</div><div class="count-value">${allItems.length}</div></div>
+            <div class="count-tile good"><div class="count-label">Complete</div><div class="count-value">${complete}</div></div>
+            <div class="count-tile bad"><div class="count-label">Failed</div><div class="count-value">${failed}</div></div>
+            <div class="count-tile warn"><div class="count-label">Blocked</div><div class="count-value">${blocked}</div></div>
+            <div class="count-tile"><div class="count-label">In Progress</div><div class="count-value">${inprog}</div></div>
+            <div class="count-tile info"><div class="count-label">Total Hours</div><div class="count-value">${totalHrs}</div></div>
           </div>
         </div>
-
         <div class="form-field">
           <label>Date</label>
           <input type="date" id="i3-date" class="form-input" value="${new Date().toISOString().split('T')[0]}">
@@ -3536,16 +3650,22 @@ function renderIntakeStep3(items) {
           <input type="number" id="i3-idle" class="form-input" value="0" min="0" step="0.5">
         </div>
         <div class="form-field">
-          <label>Was there a delay?</label>
+          <label>Delay Occurred?</label>
           <div class="delay-toggle">
-            <button type="button" class="toggle-btn active" data-val="No" onclick="toggleDelayI3(this, false)">No</button>
-            <button type="button" class="toggle-btn" data-val="Yes" onclick="toggleDelayI3(this, true)">Yes</button>
+            <button type="button" class="toggle-btn active" data-val="No" onclick="toggleDelayI3(this,false)">No</button>
+            <button type="button" class="toggle-btn" data-val="Yes" onclick="toggleDelayI3(this,true)">Yes</button>
           </div>
         </div>
-
+        <div class="form-field" id="i3-delay-cat-wrap" style="display:none;">
+          <label>Delay Category</label>
+          <select id="i3-delay-cat" class="form-input">
+            <option value="">Select category…</option>
+            ${delayCats.map(c=>`<option>${escapeHtml(c)}</option>`).join('')}
+          </select>
+        </div>
         <div class="form-field form-field-full">
           <label>Overall Day Notes</label>
-          <textarea id="i3-notes" class="form-input" rows="3" placeholder="Summary of the day's work..."></textarea>
+          <textarea id="i3-notes" class="form-input" rows="3" placeholder="Summary of the day's work…"></textarea>
         </div>
         <div class="form-field form-field-full">
           <label>Plan for Next Day</label>
@@ -3555,7 +3675,7 @@ function renderIntakeStep3(items) {
 
       <div class="form-actions">
         <button class="form-secondary" onclick="setIntakeStep(2)">← Back</button>
-        <button class="form-submit" onclick="submitIntakeFinal(${items.length})">Submit Daily Log + Send Report</button>
+        <button class="form-submit" onclick="submitIntakeFinal()">Submit Daily Log</button>
       </div>
     </div>
   `;
@@ -3579,33 +3699,35 @@ function filterAddTestcases() {
     items.map(t => `<option value="${t.TestID}">${escapeHtml(t.TestCaseCode)} · ${escapeHtml(t.TestName)}</option>`).join('');
 }
 
+function _updateAdditionHours(idx, val) {
+  if (intakeAdditions[idx]) intakeAdditions[idx].hours = parseFloat(val) || 0;
+}
+
 function addIntakeAddition() {
-  const loc = document.getElementById('ai-location').value;
-  const tid = document.getElementById('ai-testid').value;
-  const status = document.querySelector('.result-btn.selected')?.dataset.value;
-  if (!loc || !tid || !status) {
-    toast('Please fill in location, test case, and status', 'warn');
+  const tid    = document.getElementById('ai-testid').value;
+  const status = document.getElementById('ai-status').value;
+  if (!tid || !status) {
+    toast('Please select a test case and status', 'warn');
     return;
   }
-  const t = TI.find(x => x.TestID === tid);
+  const t = TI.find(x => String(x.TestID) === String(tid));
   if (!t) return;
   intakeAdditions.push({
-    id: t.TestID,
-    testCode: t.TestCaseCode,
-    testName: t.TestName,
-    location: t.Location,
-    subsystem: t.Subsystem,
-    phase: t.Phase,
-    activity: t.Activity,
+    testId:       t.TestID,
+    testCode:     t.TestCaseCode,
+    testName:     t.TestName,
+    location:     t.Location,
+    subsystem:    t.Subsystem,
+    phase:        t.Phase,
+    activity:     t.Activity,
     testProcedure: t.TestProcedure,
-    templateName: t.Activity || '',
-    applicable: true,
-    _isRealItem: true,
+    _isRealItem:  true,
     status,
-    blockedReason: document.getElementById('ai-blocked-reason').value,
-    failedReason: document.getElementById('ai-failed-reason').value,
+    hours:        parseFloat(document.getElementById('ai-hours')?.value) || 0,
+    blockedReason: document.getElementById('ai-blocked-reason')?.value || '',
+    failedReason:  document.getElementById('ai-failed-reason')?.value  || '',
   });
-  toast('Added to queue', 'success');
+  toast('Added to list', 'success');
   renderFieldIntake();
 }
 
@@ -3617,61 +3739,65 @@ function removeIntakeAddition(i) {
 function toggleDelayI3(btn, isYes) {
   document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  const wrap = document.getElementById('i3-delay-cat-wrap');
+  if (wrap) wrap.style.display = isYes ? '' : 'none';
 }
 
-async function submitIntakeFinal(count) {
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-  const todayUpdates = TEST_INSTANCES.filter(t =>
-    t.lastUpdatedBy === currentRoleUser.name &&
-    t.lastUpdatedAt && new Date(t.lastUpdatedAt) >= todayStart &&
-    ['passed', 'failed', 'blocked', 'in_progress'].includes(t.status)
-  );
-  const allItems = [...todayUpdates, ...intakeAdditions];
+async function submitIntakeFinal() {
+  const allItems = [
+    ..._sessionLog.map(e => ({ ...e, status: e.newStatus })),
+    ...intakeAdditions,
+  ];
 
-  const dateVal       = document.getElementById('i3-date')?.value || new Date().toISOString().split('T')[0];
-  const testers       = parseInt(document.getElementById('i3-testers')?.value) || 1;
-  const idleHours     = parseFloat(document.getElementById('i3-idle')?.value) || 0;
+  if (!allItems.length) {
+    toast('No test cases to submit', 'warn');
+    return;
+  }
+
+  const dateVal       = document.getElementById('i3-date')?.value       || new Date().toISOString().split('T')[0];
+  const testers       = parseInt(document.getElementById('i3-testers')?.value)   || 1;
+  const idleHours     = parseFloat(document.getElementById('i3-idle')?.value)    || 0;
   const delayOccurred = document.querySelector('.toggle-btn.active')?.dataset.val || 'No';
-  const overallNotes  = document.getElementById('i3-notes')?.value || '';
-  const nextDayPlan   = document.getElementById('i3-next')?.value || '';
-
-  const resultMap = { passed: 'Pass', failed: 'Fail', blocked: 'Blocked', in_progress: 'Partial' };
+  const delayCat      = document.getElementById('i3-delay-cat')?.value           || null;
+  const overallNotes  = document.getElementById('i3-notes')?.value               || '';
+  const nextDayPlan   = document.getElementById('i3-next')?.value                || '';
 
   const resultRows = allItems.map((item, idx) => ({
     result_id:         'R-' + Date.now() + '-' + idx,
-    test_id:           item._isRealItem ? item.id : null,
-    test_name:         item.testName || null,
-    phase:             item.phase || null,
-    location:          item.location || null,
-    subsystem:         item.subsystem || null,
-    activity:          item.activity || null,
-    test_case_code:    item.testCode || null,
-    test_procedure:    item.testProcedure || item.procedure || null,
-    result:            resultMap[item.status] || 'Partial',
+    test_id:           item.testId || item.id || null,
+    test_name:         item.testName        || null,
+    phase:             item.phase           || null,
+    location:          item.location        || null,
+    subsystem:         item.subsystem       || null,
+    activity:          item.activity        || null,
+    test_case_code:    item.testCode        || null,
+    test_procedure:    item.testProcedure   || null,
+    result:            item.status          || null,
     completed_by:      currentRoleUser.name,
     date_tested:       dateVal,
     submitted_by:      currentRoleUser.name,
     number_of_testers: testers,
-    failed_reason:     item.failedReason || null,
-    blocked_reason:    item.blockedReason || null,
-    notes:             item.notes || null,
-    new_status:        item.status,
+    failed_reason:     item.failedReason    || null,
+    blocked_reason:    item.blockedReason   || null,
+    hours_spent:       item.hours           || 0,
+    notes:             item.notes           || null,
   }));
 
   const logRow = {
     log_id:             'DL-' + Date.now(),
     log_date:           dateVal,
-    location:           allItems[0]?.location || null,
-    subsystem:          allItems[0]?.subsystem || null,
+    location:           allItems[0]?.location  || null,
+    subsystem:          allItems[0]?.subsystem  || null,
     submitted_by:       currentRoleUser.name,
     number_of_testers:  testers,
     idle_hours:         idleHours,
     total_tests_logged: allItems.length,
-    total_passed:       allItems.filter(i => i.status === 'passed').length,
-    total_failed:       allItems.filter(i => i.status === 'failed').length,
-    total_partial:      allItems.filter(i => i.status === 'in_progress').length,
-    total_blocked:      allItems.filter(i => i.status === 'blocked').length,
+    total_passed:       allItems.filter(i => i.status === 'Complete').length,
+    total_failed:       allItems.filter(i => i.status === 'Failed').length,
+    total_partial:      allItems.filter(i => i.status === 'In Progress').length,
+    total_blocked:      allItems.filter(i => i.status === 'Blocked').length,
     delay_occurred:     delayOccurred,
+    delay_category:     delayOccurred === 'Yes' ? delayCat : null,
     overall_notes:      overallNotes,
     next_day_plan:      nextDayPlan,
   };
@@ -3684,14 +3810,11 @@ async function submitIntakeFinal(count) {
     const { error: lErr } = await _sb.from('delay_log').insert([logRow]);
     if (lErr) throw lErr;
 
-    intakeAdditions.forEach(a => {
-      const t = TEST_INSTANCES.find(x => x.id === a.id);
-      if (t) { t.status = a.status; t.blockedReason = a.blockedReason; t.failedReason = a.failedReason; t.lastUpdatedBy = currentRoleUser.name; t.lastUpdatedAt = new Date().toISOString(); }
-    });
-    logAudit('Field Intake Submitted', `${count} test cases logged`, 'Daily report generated');
+    logAudit('Daily Log Submitted', `${allItems.length} test cases logged`, 'Daily report generated');
+    _sessionLog    = [];
     intakeAdditions = [];
     intakeStep = 1;
-    toast(`Daily log submitted! ${count} tests logged.`, 'success');
+    toast(`Daily log submitted! ${allItems.length} tests logged.`, 'success');
   } catch (err) {
     console.error('Supabase submit error:', err);
     toast(`Submit failed: ${err.message}`, 'error');
