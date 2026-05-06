@@ -3797,7 +3797,6 @@ async function submitIntakeFinal() {
     const submitter     = currentRoleUser.name;
 
     const resultRows = allItems.map((item, idx) => ({
-      result_id:         'R-' + Date.now() + '-' + idx,
       test_id:           item.testId || item.id  || null,
       test_name:         item.testName           || null,
       phase:             item.phase              || null,
@@ -3818,7 +3817,6 @@ async function submitIntakeFinal() {
     }));
 
     const logRow = {
-      log_id:             'DL-' + Date.now(),
       log_date:           dateVal,
       location:           allItems[0]?.location  || null,
       subsystem:          allItems[0]?.subsystem  || null,
