@@ -57,6 +57,8 @@ function showPage(name) {
   });
   // Close all dropdowns on navigation
   document.querySelectorAll('.nav-dd').forEach(dd => dd.classList.remove('open'));
+  // Re-render pages that need fresh state on each visit
+  if (name === 'field-intake') renderFieldIntake();
   window.scrollTo(0, 0);
 }
 
@@ -97,11 +99,16 @@ function getStatusBadge(status) {
   if (!status) return '<span class="badge badge-notstarted">—</span>';
   const s = status.toString();
   const map = {
+    'Pass': 'badge-passed',
     'Passed': 'badge-passed',
     'Closed': 'badge-closed',
+    'Fail': 'badge-failed',
     'Failed': 'badge-failed',
-    'Open': 'badge-open',
+    'Blocked': 'badge-warn',
+    'Not Started': 'badge-notstarted',
+    'Not Applicable': 'badge-notstarted',
     'In Progress': 'badge-inprog',
+    'Open': 'badge-open',
     'Activity Not Started': 'badge-notstarted',
     'Pending Test Report Acceptance': 'badge-pending',
     'Work Required': 'badge-work',
@@ -699,9 +706,9 @@ function renderLITable() {
   );
 
   // Update KPI mini cards with filtered counts
-  document.getElementById('li-passed').textContent = data.filter(r => r.Status === 'Complete').length.toLocaleString();
+  document.getElementById('li-passed').textContent = data.filter(r => r.Status === 'Pass').length.toLocaleString();
   document.getElementById('li-inprog').textContent = data.filter(r => r.Status === 'In Progress').length.toLocaleString();
-  document.getElementById('li-failed').textContent = data.filter(r => r.Status === 'Blocked').length.toLocaleString();
+  document.getElementById('li-failed').textContent = data.filter(r => r.Status === 'Fail' || r.Status === 'Blocked').length.toLocaleString();
   document.getElementById('li-open').textContent   = data.filter(r => !r.Status || r.Status === 'Not Started').length.toLocaleString();
 
   if (liSort.col) {
@@ -2944,7 +2951,7 @@ async function fscRemoveOption(key, idx) {
 async function _fscSave(key, options) {
   const def = FIELDCONFIG_DEFS.find(d => d.key === key);
   const { error } = await _sb.from('fieldset_config')
-    .upsert({ field_key: key, label: def?.label || key, options, updated_at: new Date().toISOString() }, { onConflict: 'field_key' });
+    .upsert({ field_key: key, label: def?.label || key, options }, { onConflict: 'field_key' });
   if (error) { toast('Save failed: ' + error.message, 'error'); return; }
   FIELDSET_CONFIG[key] = options;
   toast('Saved', 'success');
@@ -3260,9 +3267,9 @@ let _sessionLog = []; // tracks status changes made this session for Daily Log s
 
 function _renderTIMatrixRow(r, isAdmin) {
   const current   = r.Status || 'Not Started';
-  const statuses  = ['Not Started','In Progress','Complete','Failed','Blocked'];
-  const showReason = current === 'Failed' || current === 'Blocked';
-  const reasonVal  = current === 'Failed' ? (r.FailedReason||'') : (r.BlockedReason||'');
+  const statuses  = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable'];
+  const showReason = current === 'Fail' || current === 'Blocked';
+  const reasonVal  = current === 'Fail' ? (r.FailedReason||'') : (r.BlockedReason||'');
   const tid = escapeHtml(String(r.TestID));
   return `
     <div class="matrix-tc-row">
@@ -3278,7 +3285,7 @@ function _renderTIMatrixRow(r, isAdmin) {
         </select>
         <div id="mx-reason-${tid}" style="${showReason?'':'display:none;'}">
           <input type="text" id="mx-ri-${tid}" class="form-input" style="font-size:12px;padding:5px 8px;"
-            placeholder="${current==='Failed'?'Failure reason...':'Blocked reason...'}"
+            placeholder="${current==='Fail'?'Failure reason...':'Blocked reason...'}"
             value="${escapeHtml(reasonVal)}"
             onblur="_mxSaveReason('${tid}',this.value)">
         </div>
@@ -3300,14 +3307,15 @@ function _mxStatusChange(testId, status) {
   const r = TI.find(t => String(t.TestID) === String(testId));
   if (!r) return;
 
-  // Track session log (update existing entry or create new)
-  const existing = _sessionLog.find(e => String(e.testId) === String(testId));
+  // Track session log — store r.TestID (raw, unescaped) as the canonical id
+  const rawId = r.TestID;
+  const existing = _sessionLog.find(e => String(e.testId) === String(rawId));
   if (existing) {
-    existing.newStatus  = status;
-    existing.changedAt  = new Date().toISOString();
+    existing.newStatus = status;
+    existing.changedAt = new Date().toISOString();
   } else {
     _sessionLog.push({
-      testId, testCode: r.TestCaseCode, testName: r.TestName,
+      testId: rawId, testCode: r.TestCaseCode, testName: r.TestName,
       phase: r.Phase, location: r.Location, subsystem: r.Subsystem, activity: r.Activity,
       prevStatus: r.Status || 'Not Started', newStatus: status,
       changedAt: new Date().toISOString(),
@@ -3316,25 +3324,25 @@ function _mxStatusChange(testId, status) {
   }
 
   r.Status = status;
-  if (status === 'Complete') { r.CompletedBy = currentRoleUser.name; r.CompletedDate = new Date().toISOString(); }
+  if (status === 'Pass') { r.CompletedBy = currentRoleUser.name; r.CompletedDate = new Date().toISOString(); }
 
   // Toggle reason input without re-rendering the full matrix
   const reasonEl = document.getElementById(`mx-reason-${testId}`);
   const reasonInput = document.getElementById(`mx-ri-${testId}`);
   if (reasonEl) {
-    const needReason = status === 'Failed' || status === 'Blocked';
+    const needReason = status === 'Fail' || status === 'Blocked';
     reasonEl.style.display = needReason ? '' : 'none';
-    if (reasonInput) reasonInput.placeholder = status === 'Failed' ? 'Failure reason...' : 'Blocked reason...';
+    if (reasonInput) reasonInput.placeholder = status === 'Fail' ? 'Failure reason...' : 'Blocked reason...';
   }
 
-  _mxSaveStatus(testId, status, r);
+  _mxSaveStatus(status, r);
 }
 
-async function _mxSaveStatus(testId, status, r) {
+async function _mxSaveStatus(status, r) {
   const upd = { status };
-  if (status === 'Complete') { upd.completed_by = currentRoleUser.name; upd.completed_date = new Date().toISOString(); }
+  if (status === 'Pass') { upd.completed_by = currentRoleUser?.name; upd.completed_date = new Date().toISOString(); }
   try {
-    const { error } = await _sb.from('test_items').update(upd).eq('test_id', String(testId));
+    const { error } = await _sb.from('test_items').update(upd).eq('test_id', r.TestID);
     if (error) throw error;
     toast(`${r.TestCaseCode} → ${status}`, 'success');
     logAudit('Test Status Update', `${r.TestCaseCode} @ ${r.Location}`, `→ ${status}`);
@@ -3344,18 +3352,18 @@ async function _mxSaveStatus(testId, status, r) {
 function _mxSaveReason(testId, reason) {
   const r = TI.find(t => String(t.TestID) === String(testId));
   if (!r) return;
-  const isFailed = r.Status === 'Failed';
-  if (isFailed) r.FailedReason = reason; else r.BlockedReason = reason;
-  const logEntry = _sessionLog.find(e => String(e.testId) === String(testId));
-  if (logEntry) { if (isFailed) logEntry.failedReason = reason; else logEntry.blockedReason = reason; }
-  const upd = isFailed ? { failed_reason: reason } : { blocked_reason: reason };
-  _sb.from('test_items').update(upd).eq('test_id', String(testId)).then(({error}) => {
+  const isFail = r.Status === 'Fail';
+  if (isFail) r.FailedReason = reason; else r.BlockedReason = reason;
+  const logEntry = _sessionLog.find(e => String(e.testId) === String(r.TestID));
+  if (logEntry) { if (isFail) logEntry.failedReason = reason; else logEntry.blockedReason = reason; }
+  const upd = isFail ? { failed_reason: reason } : { blocked_reason: reason };
+  _sb.from('test_items').update(upd).eq('test_id', r.TestID).then(({error}) => {
     if (error) toast('Reason save failed: ' + error.message, 'error');
   });
 }
 
 // Legacy wrappers
-async function setTestStatusTI(testId, status) { _mxStatusChange(testId, status); }
+function setTestStatusTI(testId, status) { _mxStatusChange(testId, status); }
 function setTestStatus(id, status) { _mxStatusChange(id, status); }
 
 let _pendingActivityEdit = null;
@@ -3432,7 +3440,8 @@ function _s2SetAct(v)   { _s2Act=v; renderFieldIntake(); }
 
 function ai_toggleReasonFields() {
   const s = document.getElementById('ai-status')?.value;
-  document.getElementById('ai-failed-block').style.display = s==='Failed'  ? '' : 'none';
+  // Fail → show failed block; Blocked → show blocked block
+  document.getElementById('ai-failed-block').style.display = s==='Fail'  ? '' : 'none';
   document.getElementById('ai-blocked-block').style.display = s==='Blocked' ? '' : 'none';
 }
 
@@ -3487,7 +3496,7 @@ function renderIntakeStep1() {
     ...log.map((e,i) => ({...e, _idx:i, _fromLog:true})),
     ...intakeAdditions.map((a,i) => ({...a, _idx:i, _fromAdditions:true}))
   ];
-  const statusColor = s => ({Complete:'#059669','In Progress':'#1d4ed8',Failed:'#dc2626',Blocked:'#d97706','Not Started':'#6b7280'}[s]||'#6b7280');
+  const statusColor = s => ({'Pass':'#059669','In Progress':'#1d4ed8','Fail':'#dc2626','Blocked':'#d97706','Not Started':'#6b7280','Not Applicable':'#9ca3af'}[s]||'#6b7280');
 
   return `
     <div class="form-card">
@@ -3586,7 +3595,7 @@ function renderIntakeStep2() {
           <label>Status</label>
           <select id="ai-status" class="form-input" onchange="ai_toggleReasonFields()">
             <option value="">Select status…</option>
-            ${['Not Started','In Progress','Complete','Failed','Blocked'].map(s=>`<option>${s}</option>`).join('')}
+            ${['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable'].map(s=>`<option>${s}</option>`).join('')}
           </select>
         </div>
         <div class="form-field">
@@ -3614,8 +3623,8 @@ function renderIntakeStep2() {
 
 function renderIntakeStep3(items) {
   const allItems = [..._sessionLog, ...intakeAdditions];
-  const complete  = allItems.filter(i=>(i.newStatus||i.status)==='Complete').length;
-  const failed    = allItems.filter(i=>(i.newStatus||i.status)==='Failed').length;
+  const complete  = allItems.filter(i=>(i.newStatus||i.status)==='Pass').length;
+  const failed    = allItems.filter(i=>(i.newStatus||i.status)==='Fail').length;
   const blocked   = allItems.filter(i=>(i.newStatus||i.status)==='Blocked').length;
   const inprog    = allItems.filter(i=>(i.newStatus||i.status)==='In Progress').length;
   const totalHrs  = allItems.reduce((s,i)=>s+(i.hours||0),0).toFixed(1);
@@ -3647,7 +3656,7 @@ function renderIntakeStep3(items) {
         </div>
         <div class="form-field">
           <label>Idle Hours</label>
-          <input type="number" id="i3-idle" class="form-input" value="0" min="0" step="0.5">
+          <input type="number" id="i3-idle" class="form-input" value="${Math.max(0, 8 - parseFloat(totalHrs)).toFixed(1)}" min="0" step="0.5">
         </div>
         <div class="form-field">
           <label>Delay Occurred?</label>
@@ -3792,8 +3801,8 @@ async function submitIntakeFinal() {
     number_of_testers:  testers,
     idle_hours:         idleHours,
     total_tests_logged: allItems.length,
-    total_passed:       allItems.filter(i => i.status === 'Complete').length,
-    total_failed:       allItems.filter(i => i.status === 'Failed').length,
+    total_passed:       allItems.filter(i => i.status === 'Pass').length,
+    total_failed:       allItems.filter(i => i.status === 'Fail').length,
     total_partial:      allItems.filter(i => i.status === 'In Progress').length,
     total_blocked:      allItems.filter(i => i.status === 'Blocked').length,
     delay_occurred:     delayOccurred,

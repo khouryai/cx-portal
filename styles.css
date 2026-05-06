@@ -848,6 +848,7 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 }
 .badge-passed, .badge-closed { background: var(--good-light); color: var(--good); }
 .badge-failed { background: var(--bad-light); color: var(--bad); }
+.badge-warn { background: #fef3c7; color: #92400e; }
 .badge-open { background: var(--gray-100); color: var(--gray-800); }
 .badge-inprog, .badge-progress { background: var(--info-light); color: var(--info); }
 .badge-pending { background: var(--pending-light); color: var(--pending); }
