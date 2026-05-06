@@ -46,9 +46,17 @@ Chart.defaults.borderColor = '#ebebeb';
 // ==========================================
 function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page-' + name).classList.add('active');
-  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
-  document.querySelector(`[data-page="${name}"]`)?.classList.add('active');
+  document.getElementById('page-' + name)?.classList.add('active');
+  document.querySelectorAll('.nav-link, .nav-dd-item').forEach(l => l.classList.remove('active'));
+  document.querySelector(`.nav-link[data-page="${name}"]`)?.classList.add('active');
+  document.querySelector(`.nav-dd-item[data-page="${name}"]`)?.classList.add('active');
+  // Highlight parent dropdown toggle when a child page is active
+  document.querySelectorAll('.nav-dd').forEach(dd => {
+    const hasActive = !!dd.querySelector('.nav-dd-item.active');
+    dd.querySelector('.nav-dd-toggle')?.classList.toggle('active-group', hasActive);
+  });
+  // Close all dropdowns on navigation
+  document.querySelectorAll('.nav-dd').forEach(dd => dd.classList.remove('open'));
   window.scrollTo(0, 0);
 }
 
@@ -56,8 +64,30 @@ document.querySelectorAll('.nav-link').forEach(link => {
   link.addEventListener('click', e => {
     e.preventDefault();
     const page = link.dataset.page;
-    showPage(page);
+    if (page) showPage(page);
   });
+});
+
+document.querySelectorAll('.nav-dd-item').forEach(item => {
+  item.addEventListener('click', e => {
+    e.preventDefault();
+    const page = item.dataset.page;
+    if (page) showPage(page);
+  });
+});
+
+function _navDdToggle(id) {
+  const dd = document.getElementById(id);
+  const isOpen = dd.classList.contains('open');
+  document.querySelectorAll('.nav-dd').forEach(d => d.classList.remove('open'));
+  if (!isOpen) dd.classList.add('open');
+}
+
+// Close dropdowns on outside click
+document.addEventListener('click', e => {
+  if (!e.target.closest('.nav-dd')) {
+    document.querySelectorAll('.nav-dd').forEach(d => d.classList.remove('open'));
+  }
 });
 
 // ==========================================
@@ -1565,6 +1595,8 @@ function _onSignedOut() {
   currentProfile  = null;
   document.getElementById('login-overlay').classList.remove('hidden');
   document.querySelectorAll('.nav-role').forEach(l => l.style.display = 'none');
+  document.querySelectorAll('.nav-dd-role').forEach(l => l.style.display = '');
+  document.querySelectorAll('.nav-dd').forEach(d => d.classList.remove('open'));
   document.getElementById('nav-user-pill')?.remove();
   const navLogin = document.getElementById('nav-login');
   if (navLogin) navLogin.style.display = '';
@@ -1606,6 +1638,11 @@ function onLoggedIn() {
   document.querySelectorAll('.nav-role').forEach(link => {
     const allowed = (link.dataset.role || '').split(' ');
     link.style.display = allowed.includes(currentRoleUser.role) ? '' : 'none';
+  });
+  // Filter individual items inside the Tools dropdown
+  document.querySelectorAll('.nav-dd-role').forEach(item => {
+    const allowed = (item.dataset.role || '').split(' ');
+    item.style.display = allowed.includes(currentRoleUser.role) ? '' : 'none';
   });
   const navLogin = document.getElementById('nav-login');
   if (navLogin) navLogin.style.display = 'none';

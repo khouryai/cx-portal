@@ -65,14 +65,35 @@
       </div>
     </div>
 
-    <!-- Nav links (post-login, role-gated) -->
+    <!-- Nav links -->
     <div class="nav-links">
       <a href="#" class="nav-link active" data-page="dashboard">Dashboard</a>
-      <a href="#" class="nav-link nav-role" data-page="field-intake"   data-role="field_engineer admin" style="display:none;">Field Intake</a>
-      <a href="#" class="nav-link nav-role" data-page="test-matrix"    data-role="field_engineer admin" style="display:none;">Test Matrix</a>
-      <a href="#" class="nav-link nav-role" data-page="punch-workflow" data-role="admin field_engineer client" style="display:none;">Punch List</a>
-      <a href="#" class="nav-link nav-role" data-page="admin"          data-role="admin" style="display:none;">Admin</a>
-      <a href="#" class="nav-link nav-role" data-page="audit"          data-role="admin" style="display:none;">Audit Log</a>
+
+      <!-- Views dropdown — always visible -->
+      <div class="nav-dd" id="nav-dd-views">
+        <button class="nav-dd-toggle" onclick="_navDdToggle('nav-dd-views')">Views <span class="nav-dd-chevron">▾</span></button>
+        <div class="nav-dd-menu">
+          <a href="#" class="nav-dd-item" data-page="activities">SAT Activities</a>
+          <a href="#" class="nav-dd-item" data-page="lineitems">Line Items</a>
+          <a href="#" class="nav-dd-item" data-page="punchlist">Punch List</a>
+          <a href="#" class="nav-dd-item" data-page="locations">Locations</a>
+          <a href="#" class="nav-dd-item" data-page="team">Organization</a>
+          <a href="#" class="nav-dd-item" data-page="docs">Documents</a>
+        </div>
+      </div>
+
+      <!-- Tools dropdown — hidden until login, role-gated per item -->
+      <div class="nav-dd nav-role" id="nav-dd-tools" data-role="field_engineer admin client" style="display:none;">
+        <button class="nav-dd-toggle" onclick="_navDdToggle('nav-dd-tools')">Tools <span class="nav-dd-chevron">▾</span></button>
+        <div class="nav-dd-menu">
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="field-intake"   data-role="field_engineer admin">Field Intake</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="test-matrix"    data-role="field_engineer admin">Test Matrix</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="punch-workflow" data-role="admin field_engineer client">Punch Workflow</a>
+          <div class="nav-dd-divider"></div>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="admin" data-role="admin">Admin Panel</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="audit" data-role="admin">Audit Log</a>
+        </div>
+      </div>
     </div>
 
     <!-- Right: project tag + user pill -->

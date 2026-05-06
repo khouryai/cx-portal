@@ -1701,6 +1701,47 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
 }
 .logout-mini:hover { background: rgba(220,38,38,0.2); color: #fca5a5; border-color: rgba(220,38,38,0.4); }
 
+/* ── Dropdown navigation ─────────────────────────────────────────── */
+.nav-dd { position: relative; display: flex; align-items: center; }
+.nav-dd-toggle {
+  background: none; border: none; cursor: pointer;
+  padding: 6px 10px; border-radius: 6px;
+  font-size: 13px; font-weight: 500;
+  color: rgba(255,255,255,0.6);
+  display: flex; align-items: center; gap: 4px;
+  transition: color 0.15s, background 0.15s;
+  font-family: inherit;
+}
+.nav-dd-toggle:hover,
+.nav-dd-toggle.active-group { color: #fff; background: rgba(255,255,255,0.1); }
+.nav-dd-chevron { font-size: 10px; display: inline-block; transition: transform 0.2s; }
+.nav-dd.open .nav-dd-chevron { transform: rotate(180deg); }
+.nav-dd-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  background: #1f2937;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  padding: 6px;
+  min-width: 185px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+  z-index: 300;
+}
+.nav-dd.open .nav-dd-menu { display: block; }
+.nav-dd-item {
+  display: block;
+  padding: 8px 12px; border-radius: 6px;
+  font-size: 13px; font-weight: 500;
+  color: rgba(255,255,255,0.7);
+  text-decoration: none; white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+.nav-dd-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
+.nav-dd-item.active { background: rgba(255,255,255,0.13); color: #fff; }
+.nav-dd-divider { height: 1px; background: rgba(255,255,255,0.1); margin: 5px 0; }
+
 .login-help {
   background: var(--gray-50);
   border-radius: var(--radius-sm);
