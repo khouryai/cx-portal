@@ -572,28 +572,43 @@ function renderAPTable() {
 }
 
 // ==========================================
-// LINE ITEMS PAGE
+// TEST CASES PAGE  (sourced from TI / test_items)
 // ==========================================
 let liSort = { col: null, asc: false };
 
 function initLineItems() {
-  document.getElementById('li-summary').textContent = `${LI.length.toLocaleString()} test line items across all SAT activities`;
+  // TI is already subsystem-filtered at login for non-admin users
+  const base = TI;
+  const userSubsys = currentRoleUser?.subsystem || null;
+  const isAdmin = currentRoleUser?.role === 'admin';
 
-  document.getElementById('li-passed').textContent = LI.filter(r => r.Status === 'Passed').length;
-  document.getElementById('li-failed').textContent = LI.filter(r => r.Status === 'Failed').length;
-  document.getElementById('li-inprog').textContent = LI.filter(r => r.Status === 'In Progress').length;
-  document.getElementById('li-open').textContent = LI.filter(r => r.Status === 'Open').length;
+  document.getElementById('li-summary').textContent =
+    `${base.length.toLocaleString()} test cases${userSubsys && !isAdmin ? ` · ${userSubsys}` : ' across all subsystems'}`;
 
-  const statuses = [...new Set(LI.map(r => r.Status).filter(Boolean))].sort();
-  const subsys = [...new Set(LI.map(r => r['Plan Commissioning: SubSystem-']).filter(Boolean))].sort();
-  const locs = [...new Set(LI.map(r => r.Location).filter(Boolean))].sort();
+  // Populate filter dropdowns from the (already-scoped) TI data
+  const subsystems = [...new Set(base.map(r => r.Subsystem).filter(Boolean))].sort();
+  const phases     = [...new Set(base.map(r => String(r.Phase || '')).filter(Boolean))].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
+  const locs       = [...new Set(base.map(r => r.Location).filter(Boolean))].sort();
+  const activities = [...new Set(base.map(r => r.Activity).filter(Boolean))].sort();
+  const statuses   = [...new Set(base.map(r => r.Status).filter(Boolean))].sort();
 
-  populateSelect('li-status-filter', 'All statuses', statuses);
-  populateSelect('li-subsys-filter', 'All subsystems', subsys);
-  populateSelect('li-location-filter', 'All locations', locs);
+  populateSelect('li-subsys-filter',   'All subsystems', subsystems);
+  populateSelect('li-phase-filter',    'All phases',     phases.map(p => `Phase ${p}`));
+  populateSelect('li-location-filter', 'All locations',  locs);
+  populateSelect('li-activity-filter', 'All activities', activities);
+  populateSelect('li-status-filter',   'All statuses',   statuses);
 
-  ['li-search','li-status-filter','li-subsys-filter','li-location-filter'].forEach(id => {
-    document.getElementById(id).addEventListener('input', renderLITable);
+  // For non-admin with a subsystem, pre-select their subsystem and hide the filter
+  const subsysEl = document.getElementById('li-subsys-filter');
+  if (userSubsys && !isAdmin) {
+    subsysEl.value = userSubsys;
+    subsysEl.style.display = 'none';
+  } else {
+    subsysEl.style.display = '';
+  }
+
+  ['li-search','li-subsys-filter','li-phase-filter','li-location-filter','li-activity-filter','li-status-filter'].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', renderLITable);
   });
 
   document.querySelectorAll('#li-table th[data-sort]').forEach(th => {
@@ -609,49 +624,69 @@ function initLineItems() {
 }
 
 function clearLIFilters() {
-  ['li-search','li-status-filter','li-subsys-filter','li-location-filter'].forEach(id => document.getElementById(id).value = '');
+  ['li-search','li-phase-filter','li-location-filter','li-activity-filter','li-status-filter'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  // Only reset subsystem filter for admins (non-admin has it locked)
+  if (currentRoleUser?.role === 'admin') {
+    const el = document.getElementById('li-subsys-filter');
+    if (el) el.value = '';
+  }
   renderLITable();
 }
 
 function renderLITable() {
-  const search = document.getElementById('li-search').value.toLowerCase();
-  const statusF = document.getElementById('li-status-filter').value;
+  const search  = document.getElementById('li-search').value.toLowerCase();
   const subsysF = document.getElementById('li-subsys-filter').value;
-  const locF = document.getElementById('li-location-filter').value;
+  const phaseF  = document.getElementById('li-phase-filter').value.replace('Phase ', '');
+  const locF    = document.getElementById('li-location-filter').value;
+  const actF    = document.getElementById('li-activity-filter').value;
+  const statusF = document.getElementById('li-status-filter').value;
 
-  let data = LI.filter(r =>
-    (!search || (r.Title && r.Title.toLowerCase().includes(search)) || (r['Plan Name'] && r['Plan Name'].toLowerCase().includes(search))) &&
-    (!statusF || r.Status === statusF) &&
-    (!subsysF || r['Plan Commissioning: SubSystem-'] === subsysF) &&
-    (!locF || r.Location === locF)
+  let data = TI.filter(r =>
+    (!search  || (r.TestName     && r.TestName.toLowerCase().includes(search))
+              || (r.TestCaseCode && r.TestCaseCode.toLowerCase().includes(search))
+              || (r.Activity     && r.Activity.toLowerCase().includes(search))) &&
+    (!subsysF || r.Subsystem === subsysF) &&
+    (!phaseF  || String(r.Phase || '').trim() === phaseF) &&
+    (!locF    || r.Location === locF) &&
+    (!actF    || r.Activity === actF) &&
+    (!statusF || r.Status === statusF)
   );
+
+  // Update KPI mini cards with filtered counts
+  document.getElementById('li-passed').textContent = data.filter(r => r.Status === 'Complete').length.toLocaleString();
+  document.getElementById('li-inprog').textContent = data.filter(r => r.Status === 'In Progress').length.toLocaleString();
+  document.getElementById('li-failed').textContent = data.filter(r => r.Status === 'Blocked').length.toLocaleString();
+  document.getElementById('li-open').textContent   = data.filter(r => !r.Status || r.Status === 'Not Started').length.toLocaleString();
 
   if (liSort.col) {
     data = [...data].sort((a, b) => {
-      const av = a[liSort.col] || '';
-      const bv = b[liSort.col] || '';
-      const cmp = av.toString().localeCompare(bv.toString(), undefined, { numeric: true });
+      const av = a[liSort.col] ?? '';
+      const bv = b[liSort.col] ?? '';
+      const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
       return liSort.asc ? cmp : -cmp;
     });
   }
 
-  // Render only first 500 rows to keep page snappy with very large datasets
   const renderRows = data.slice(0, 500);
+  const truncated  = data.length > 500 ? ` (showing first 500 — refine filters for more)` : '';
 
-  const tbody = document.getElementById('li-body');
-  tbody.innerHTML = renderRows.map(r => `
+  document.getElementById('li-body').innerHTML = renderRows.map(r => `
     <tr>
-      <td><span class="cell-name">${escapeHtml(r.Title)}</span></td>
-      <td>${escapeHtml(r['Section Title'] || '—')}</td>
-      <td><span class="tag">${escapeHtml(r['Plan Commissioning: SubSystem-'] || '—')}</span></td>
+      <td class="cell-mono">${escapeHtml(r.TestCaseCode || '—')}</td>
+      <td><span class="cell-name">${escapeHtml(r.TestName || '—')}</span></td>
+      <td><span class="tag">${escapeHtml(r.Subsystem || '—')}</span></td>
+      <td class="cell-mono">Phase ${escapeHtml(String(r.Phase || '—').trim())}</td>
       <td>${escapeHtml(r.Location || '—')}</td>
-      <td><span class="cell-sub" style="font-size:12px">${escapeHtml(r['Plan Name'] || '—')}</span></td>
+      <td><span class="cell-sub" style="font-size:12px">${escapeHtml(r.Activity || '—')}</span></td>
       <td>${getStatusBadge(r.Status)}</td>
     </tr>
   `).join('');
 
-  const truncated = data.length > 500 ? ` (showing first 500 — refine filters for more)` : '';
-  document.getElementById('li-count').textContent = `Showing ${renderRows.length.toLocaleString()} of ${LI.length.toLocaleString()} line items${truncated}`;
+  document.getElementById('li-count').textContent =
+    `Showing ${renderRows.length.toLocaleString()} of ${data.length.toLocaleString()} test cases${truncated}`;
 
   document.querySelectorAll('#li-table th').forEach(th => th.classList.remove('sorted','sorted-asc'));
   if (liSort.col) {
@@ -667,11 +702,6 @@ let plSort = { col: null, asc: false };
 
 function initPunchList() {
   document.getElementById('pl-summary').textContent = `${PL.length.toLocaleString()} punch items across all trades and locations`;
-
-  document.getElementById('pl-high').textContent = PL.filter(r => r.Priority === 'high').length;
-  document.getElementById('pl-work').textContent = PL.filter(r => r.Status === 'Work Required').length;
-  document.getElementById('pl-ready').textContent = PL.filter(r => r.Status === 'Ready To Close').length;
-  document.getElementById('pl-closed').textContent = PL.filter(r => r.Status === 'Closed').length;
 
   const statuses = [...new Set(PL.map(r => r.Status).filter(Boolean))].sort();
   const priorities = ['high', 'medium', 'low'];
@@ -753,8 +783,14 @@ function renderPLTable() {
     </tr>
   `).join('');
 
+  // Update KPI cards with filtered counts
+  document.getElementById('pl-high').textContent   = data.filter(r => r.Priority === 'high').length.toLocaleString();
+  document.getElementById('pl-work').textContent   = data.filter(r => r.Status === 'Work Required').length.toLocaleString();
+  document.getElementById('pl-ready').textContent  = data.filter(r => r.Status === 'Ready To Close').length.toLocaleString();
+  document.getElementById('pl-closed').textContent = data.filter(r => r.Status === 'Closed').length.toLocaleString();
+
   const truncated = data.length > 500 ? ` (showing first 500 — refine filters for more)` : '';
-  document.getElementById('pl-count').textContent = `Showing ${renderRows.length.toLocaleString()} of ${PL.length.toLocaleString()} punch items${truncated}`;
+  document.getElementById('pl-count').textContent = `Showing ${renderRows.length.toLocaleString()} of ${data.length.toLocaleString()} punch items${truncated}`;
 
   document.querySelectorAll('#pl-table th').forEach(th => th.classList.remove('sorted','sorted-asc'));
   if (plSort.col) {
@@ -895,14 +931,18 @@ function exportAP() {
 
 function exportLI() {
   const cols = [
-    { key: 'Title', label: 'Title' },
-    { key: 'Section Title', label: 'Section' },
-    { key: 'Plan Commissioning: SubSystem-', label: 'Subsystem' },
-    { key: 'Location', label: 'Location' },
-    { key: 'Plan Name', label: 'Activity' },
-    { key: 'Status', label: 'Status' },
+    { key: 'TestCaseCode', label: 'Code' },
+    { key: 'TestName',     label: 'Test Name' },
+    { key: 'Subsystem',    label: 'Subsystem' },
+    { key: 'Phase',        label: 'Phase' },
+    { key: 'Location',     label: 'Location' },
+    { key: 'Activity',     label: 'Activity' },
+    { key: 'TestCategory', label: 'Category' },
+    { key: 'Status',       label: 'Status' },
+    { key: 'Weight',       label: 'Weight' },
+    { key: 'Notes',        label: 'Notes' },
   ];
-  downloadCSV(toCSV(LI, cols), 'line_items.csv');
+  downloadCSV(toCSV(TI, cols), 'test_cases.csv');
 }
 
 function exportPL() {
@@ -1665,6 +1705,8 @@ function onLoggedIn() {
 
   const homePage = { admin:'admin', field_engineer:'field-intake', readonly:'dashboard', client:'dashboard' }[currentRoleUser.role] || 'dashboard';
   showPage(homePage);
+  // Re-init views that are subsystem-scoped after login applies TI filter
+  initLineItems();
   renderAdminPortal(); renderFieldIntake(); renderTestMatrix(); renderPunchWorkflow(); renderAuditLog();
 }
 

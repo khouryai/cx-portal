@@ -74,7 +74,7 @@
         <button class="nav-dd-toggle" onclick="_navDdToggle('nav-dd-views')">Views <span class="nav-dd-chevron">▾</span></button>
         <div class="nav-dd-menu">
           <a href="#" class="nav-dd-item" data-page="activities">SAT Activities</a>
-          <a href="#" class="nav-dd-item" data-page="lineitems">Line Items</a>
+          <a href="#" class="nav-dd-item" data-page="lineitems">Test Cases</a>
           <a href="#" class="nav-dd-item" data-page="punchlist">Punch List</a>
           <a href="#" class="nav-dd-item" data-page="locations">Locations</a>
           <a href="#" class="nav-dd-item" data-page="team">Organization</a>
@@ -276,27 +276,29 @@
   </div>
 </section>
 
-<!-- ==== LINE ITEMS ==== -->
+<!-- ==== TEST CASES ==== -->
 <section class="page" id="page-lineitems">
   <div class="page-hero">
     <div class="container">
-      <div class="page-eyebrow">Line Items</div>
-      <h1 class="page-title">Test Line Items</h1>
+      <div class="page-eyebrow">Test Cases</div>
+      <h1 class="page-title">Test Case Details</h1>
       <p class="page-sub" id="li-summary">—</p>
     </div>
   </div>
   <div class="container">
     <div class="kpi-grid kpi-grid-mini">
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Passed</div><div class="kpi-value good" id="li-passed">—</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Failed</div><div class="kpi-value bad" id="li-failed">—</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Complete</div><div class="kpi-value good" id="li-passed">—</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">In Progress</div><div class="kpi-value info" id="li-inprog">—</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Open</div><div class="kpi-value" id="li-open">—</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Blocked</div><div class="kpi-value bad" id="li-failed">—</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Not Started</div><div class="kpi-value" id="li-open">—</div></div>
     </div>
     <div class="filter-bar">
-      <input type="text" id="li-search" placeholder="Search line items..." class="filter-input">
-      <select id="li-status-filter" class="filter-select"></select>
+      <input type="text" id="li-search" placeholder="Search test cases..." class="filter-input">
       <select id="li-subsys-filter" class="filter-select"></select>
+      <select id="li-phase-filter" class="filter-select"></select>
       <select id="li-location-filter" class="filter-select"></select>
+      <select id="li-activity-filter" class="filter-select"></select>
+      <select id="li-status-filter" class="filter-select"></select>
       <button class="filter-clear" onclick="clearLIFilters()">Reset</button>
     </div>
     <div class="data-card">
@@ -308,11 +310,12 @@
         <table class="data-table" id="li-table">
           <thead>
             <tr>
-              <th data-sort="Title">Title</th>
-              <th data-sort="Section Title">Section</th>
-              <th data-sort="Plan Commissioning: SubSystem-">Subsystem</th>
+              <th data-sort="TestCaseCode">Code</th>
+              <th data-sort="TestName">Test Name</th>
+              <th data-sort="Subsystem">Subsystem</th>
+              <th data-sort="Phase">Phase</th>
               <th data-sort="Location">Location</th>
-              <th data-sort="Plan Name">Activity</th>
+              <th data-sort="Activity">Activity</th>
               <th data-sort="Status">Status</th>
             </tr>
           </thead>
