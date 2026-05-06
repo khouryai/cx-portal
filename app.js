@@ -3297,7 +3297,21 @@ function renderTestMatrix() {
             </div>
             <div class="matrix-section-meta" id="mx-grp-count-${idx}">${done} / ${g.items.length} passed</div>
           </div>
-          ${g.items.map(r => _renderTIMatrixRow(r, isAdmin)).join('')}
+          ${(() => {
+            // Sub-group items by TestProcedure
+            const tpMap = {};
+            g.items.forEach(r => {
+              const tp = r.TestProcedure || '(No Procedure)';
+              if (!tpMap[tp]) tpMap[tp] = [];
+              tpMap[tp].push(r);
+            });
+            return Object.entries(tpMap).map(([tp, tpItems]) => `
+              <div class="matrix-tp-section">
+                <div class="matrix-tp-header">${escapeHtml(tp)}</div>
+                ${tpItems.map(r => _renderTIMatrixRow(r, isAdmin)).join('')}
+              </div>
+            `).join('');
+          })()}
         </div>`;
       }).join('');
     })()}
@@ -3319,7 +3333,6 @@ function _renderTIMatrixRow(r, isAdmin) {
       <div class="matrix-tc-code">${escapeHtml(r.TestCaseCode||'—')}</div>
       <div style="flex:1;min-width:0;">
         <div class="matrix-tc-name">${escapeHtml(r.TestName||'—')}</div>
-        ${r.TestProcedure ? `<div class="matrix-tc-meta">${escapeHtml(r.TestProcedure)}</div>` : ''}
         ${r.CompletedBy ? `<div class="matrix-tc-meta">Completed by <b>${escapeHtml(r.CompletedBy)}</b></div>` : ''}
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;min-width:200px;">
@@ -3591,19 +3604,20 @@ function renderIntakeStep1() {
           const ps = e._fromLog ? e.prevStatus : null;
           const reason = e.failedReason||e.blockedReason||'';
           return `
-            <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;display:grid;grid-template-columns:1fr 120px;gap:12px;align-items:start;">
-              <div>
+            <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;display:flex;gap:16px;align-items:center;">
+              <div style="flex:1;min-width:0;">
                 <div style="font-weight:600;font-size:13px;margin-bottom:3px;">${escapeHtml(e.testCode)} · ${escapeHtml(e.testName)}</div>
-                <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(e.phase||'—')} · ${escapeHtml(e.location||'—')} · ${escapeHtml(e.activity||'—')}</div>
-                <div style="margin-top:6px;font-size:12px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                <div style="font-size:11px;color:var(--gray-500);margin-bottom:5px;">${escapeHtml(e.phase||'—')} · ${escapeHtml(e.location||'—')} · ${escapeHtml(e.activity||'—')}</div>
+                <div style="font-size:12px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                   ${ps ? `<span style="background:#e5e7eb;color:#374151;padding:2px 8px;border-radius:10px;">${escapeHtml(ps)}</span><span style="color:var(--gray-400);">→</span>` : ''}
                   <span style="background:${statusColor(ns)}20;color:${statusColor(ns)};padding:2px 8px;border-radius:10px;font-weight:600;">${escapeHtml(ns)}</span>
                   ${reason ? `<span style="font-size:11px;color:#dc2626;">✗ ${escapeHtml(reason)}</span>` : ''}
                 </div>
               </div>
-              <div>
-                <label style="font-size:11px;color:var(--gray-500);display:block;margin-bottom:4px;">Hours Spent</label>
-                <input type="number" min="0" step="0.25" class="form-input" style="font-size:13px;padding:5px 8px;"
+              <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;width:110px;">
+                <label style="font-size:11px;color:var(--gray-500);white-space:nowrap;">Hours Spent</label>
+                <input type="number" min="0" step="0.25" class="form-input"
+                  style="width:100%;text-align:center;"
                   value="${e.hours||0}"
                   ${e._fromLog ? `onchange="_updateSessionHours(${e._idx},this.value)"` : `onchange="_updateAdditionHours(${e._idx},this.value)"`}>
               </div>
@@ -3882,10 +3896,16 @@ async function submitIntakeFinal() {
     // test_results.result CHECK constraint: only Pass | Fail | Partial | Blocked allowed
     const toResult = s => ({ 'Pass':'Pass', 'Fail':'Fail', 'Blocked':'Blocked', 'In Progress':'Partial' }[s] || null);
 
+    // Shared timestamp for all IDs generated in this submit batch
+    const _batchTs = Date.now();
+    const _dateKey = dateVal.replace(/-/g, '');
+    const _userKey = submitter.replace(/\s+/g, '').toUpperCase().slice(0, 4);
+
     // Only insert rows that have a DB-valid result (skip Not Started / Not Applicable)
     const resultRows = allItems
       .filter(item => toResult(item.status) !== null && (item.testId || item.id))
-      .map(item => ({
+      .map((item, i) => ({
+        result_id:         `RES-${_dateKey}-${_userKey}-${_batchTs}-${String(i + 1).padStart(3, '0')}`,
         test_id:           item.testId || item.id,
         test_name:         item.testName        || null,
         phase:             item.phase           || null,
@@ -3907,6 +3927,7 @@ async function submitIntakeFinal() {
       }));
 
     const logRow = {
+      log_id:             `LOG-${_dateKey}-${_userKey}-${_batchTs}`,
       log_date:           dateVal,
       location:           allItems[0]?.location  || null,
       subsystem:          allItems[0]?.subsystem  || null,
