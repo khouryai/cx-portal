@@ -63,17 +63,8 @@ function showPage(name) {
   window.scrollTo(0, 0);
 }
 
-// When the user returns to the tab/window, reload TI so any out-of-band Supabase
-// changes are reflected, then re-render the matrix if it's the active page.
-document.addEventListener('visibilitychange', async () => {
-  if (document.visibilityState !== 'visible' || !currentRoleUser) return;
-  try {
-    await loadTestItems();
-    if (document.getElementById('page-test-matrix')?.classList.contains('active')) {
-      renderTestMatrix();
-    }
-  } catch (e) { console.warn('[visibilitychange] TI reload failed:', e?.message); }
-});
+// (removed visibilitychange handler — it was reloading TI mid-flight and
+// clobbering pending saves, causing dropdown changes to silently drop)
 
 document.querySelectorAll('.nav-link').forEach(link => {
   link.addEventListener('click', e => {
@@ -3898,12 +3889,28 @@ async function submitIntakeFinal() {
 
     console.log('[submitIntakeFinal] inserting', resultRows.length, 'test_results +', 1, 'delay_log');
 
+    // Race the supabase call against a 15s timeout so we never get stuck on "Submitting…"
+    const withTimeout = (p, label) => Promise.race([
+      p,
+      new Promise((_, rej) => setTimeout(() => rej(new Error(label + ' timed out after 15s — network or Supabase issue')), 15000))
+    ]);
+
     if (resultRows.length > 0) {
-      const { error: rErr } = await _sb.from('test_results').insert(resultRows);
+      console.log('[submitIntakeFinal] → test_results.insert');
+      // .select() forces PostgREST to return the inserted rows, which avoids
+      // a known supabase-js v2 quirk where insert() without select can hang.
+      const { data: rData, error: rErr } = await withTimeout(
+        _sb.from('test_results').insert(resultRows).select(), 'test_results'
+      );
+      console.log('[submitIntakeFinal] ← test_results returned:', rData?.length ?? 0, 'rows, error:', rErr);
       if (rErr) throw new Error('test_results insert failed: ' + rErr.message);
     }
 
-    const { error: lErr } = await _sb.from('delay_log').insert([logRow]);
+    console.log('[submitIntakeFinal] → delay_log.insert');
+    const { data: lData, error: lErr } = await withTimeout(
+      _sb.from('delay_log').insert([logRow]).select(), 'delay_log'
+    );
+    console.log('[submitIntakeFinal] ← delay_log returned:', lData?.length ?? 0, 'rows, error:', lErr);
     if (lErr) throw new Error('delay_log insert failed: ' + lErr.message);
 
     logAudit('Daily Log Submitted', `${allItems.length} test cases logged`, 'Daily report generated');
