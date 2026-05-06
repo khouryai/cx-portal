@@ -3757,6 +3757,10 @@ function renderIntakeStep3(items) {
           <label>Delay Hours</label>
           <input type="number" id="i3-delay-hrs" class="form-input" value="0" min="0" step="0.5">
         </div>
+        <div class="form-field form-field-full" id="i3-delay-notes-wrap" style="display:none;">
+          <label>Delay Notes</label>
+          <textarea id="i3-delay-notes" class="form-input" rows="2" placeholder="Describe the delay…"></textarea>
+        </div>
         <div class="form-field form-field-full">
           <label>Overall Day Notes</label>
           <textarea id="i3-notes" class="form-input" rows="3" placeholder="Summary of the day's work…"></textarea>
@@ -3834,10 +3838,12 @@ function toggleDelayI3(btn, isYes) {
   document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   const show = isYes ? '' : 'none';
-  const catWrap = document.getElementById('i3-delay-cat-wrap');
-  const hrsWrap = document.getElementById('i3-delay-hrs-wrap');
-  if (catWrap) catWrap.style.display = show;
-  if (hrsWrap) hrsWrap.style.display = show;
+  const catWrap   = document.getElementById('i3-delay-cat-wrap');
+  const hrsWrap   = document.getElementById('i3-delay-hrs-wrap');
+  const notesWrap = document.getElementById('i3-delay-notes-wrap');
+  if (catWrap)   catWrap.style.display   = show;
+  if (hrsWrap)   hrsWrap.style.display   = show;
+  if (notesWrap) notesWrap.style.display = show;
 }
 
 async function submitIntakeFinal() {
@@ -3868,6 +3874,7 @@ async function submitIntakeFinal() {
     const delayOccurred = activeToggle?.dataset.val || 'No';
     const delayCat      = delayOccurred === 'Yes' ? (document.getElementById('i3-delay-cat')?.value || null) : null;
     const delayHrs      = delayOccurred === 'Yes' ? (parseFloat(document.getElementById('i3-delay-hrs')?.value) || 0) : 0;
+    const delayNotes    = delayOccurred === 'Yes' ? (document.getElementById('i3-delay-notes')?.value || null) : null;
     const overallNotes  = document.getElementById('i3-notes')?.value || '';
     const nextDayPlan   = document.getElementById('i3-next')?.value  || '';
     const submitter     = currentRoleUser.name;
@@ -3914,6 +3921,7 @@ async function submitIntakeFinal() {
       delay_occurred:     delayOccurred,
       delay_category:     delayCat,
       delay_hours:        delayHrs,
+      delay_notes:        delayNotes,
       overall_notes:      overallNotes,
       next_day_plan:      nextDayPlan,
     };
