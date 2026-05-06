@@ -2154,10 +2154,13 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
   cursor: pointer;
 }
 .tc-status-btn:hover { border-color: var(--gray-400); }
-.tc-status-btn.active.passed { background: var(--good); color: var(--white); border-color: var(--good); }
-.tc-status-btn.active.failed { background: var(--bad); color: var(--white); border-color: var(--bad); }
-.tc-status-btn.active.blocked { background: var(--warn); color: var(--white); border-color: var(--warn); }
+.tc-status-btn.active.passed      { background: var(--good); color: var(--white); border-color: var(--good); }
+.tc-status-btn.active.failed      { background: var(--bad); color: var(--white); border-color: var(--bad); }
+.tc-status-btn.active.blocked     { background: var(--warn); color: var(--white); border-color: var(--warn); }
 .tc-status-btn.active.in_progress { background: var(--info); color: var(--white); border-color: var(--info); }
+/* New TI-based status names */
+.tc-status-btn.active.complete    { background: var(--good); color: var(--white); border-color: var(--good); }
+.tc-status-btn.active.not_started { background: #6b7280; color: var(--white); border-color: #6b7280; }
 
 .tc-na-toggle {
   font-size: 11px;

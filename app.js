@@ -493,9 +493,11 @@ function initActivities() {
   populateSelect('ap-phase-filter', 'All phases', phases.map(p => `Phase ${p}`));
   populateSelect('ap-location-filter', 'All locations', locs);
 
-  ['ap-search','ap-status-filter','ap-subsys-filter','ap-phase-filter','ap-location-filter'].forEach(id => {
+  ['ap-search','ap-status-filter','ap-subsys-filter'].forEach(id => {
     document.getElementById(id).addEventListener('input', renderAPTable);
   });
+  document.getElementById('ap-phase-filter').addEventListener('input', () => { _apCascadeLocation(); renderAPTable(); });
+  document.getElementById('ap-location-filter').addEventListener('input', renderAPTable);
 
   // Sort handlers
   document.querySelectorAll('#ap-table th[data-sort]').forEach(th => {
@@ -508,6 +510,16 @@ function initActivities() {
   });
 
   renderAPTable();
+}
+
+function _apCascadeLocation() {
+  const subsysF = document.getElementById('ap-subsys-filter').value;
+  const phaseF  = document.getElementById('ap-phase-filter').value.replace('Phase ', '');
+  const avail   = AP.filter(r => (!subsysF || r['SubSystem-'] === subsysF) && (!phaseF || String(r.Phase).trim() === phaseF));
+  const locs    = [...new Set(avail.map(r => r.Location).filter(Boolean))].sort();
+  const cur     = document.getElementById('ap-location-filter').value;
+  populateSelect('ap-location-filter', 'All locations', locs);
+  if (!locs.includes(cur)) document.getElementById('ap-location-filter').value = '';
 }
 
 function clearAPFilters() {
@@ -593,7 +605,7 @@ function initLineItems() {
   const statuses   = [...new Set(base.map(r => r.Status).filter(Boolean))].sort();
 
   populateSelect('li-subsys-filter',   'All subsystems', subsystems);
-  populateSelect('li-phase-filter',    'All phases',     phases.map(p => `Phase ${p}`));
+  populateSelect('li-phase-filter',    'All phases',     phases);
   populateSelect('li-location-filter', 'All locations',  locs);
   populateSelect('li-activity-filter', 'All activities', activities);
   populateSelect('li-status-filter',   'All statuses',   statuses);
@@ -607,9 +619,12 @@ function initLineItems() {
     subsysEl.style.display = '';
   }
 
-  ['li-search','li-subsys-filter','li-phase-filter','li-location-filter','li-activity-filter','li-status-filter'].forEach(id => {
-    document.getElementById(id)?.addEventListener('input', renderLITable);
-  });
+  document.getElementById('li-subsys-filter')?.addEventListener('input', () => { _liCascade(0); renderLITable(); });
+  document.getElementById('li-phase-filter')?.addEventListener('input',  () => { _liCascade(1); renderLITable(); });
+  document.getElementById('li-location-filter')?.addEventListener('input',() => { _liCascade(2); renderLITable(); });
+  document.getElementById('li-activity-filter')?.addEventListener('input', renderLITable);
+  document.getElementById('li-status-filter')?.addEventListener('input',   renderLITable);
+  document.getElementById('li-search')?.addEventListener('input',           renderLITable);
 
   document.querySelectorAll('#li-table th[data-sort]').forEach(th => {
     th.addEventListener('click', () => {
@@ -621,6 +636,34 @@ function initLineItems() {
   });
 
   renderLITable();
+}
+
+function _liCascade(level) {
+  const subsysF = document.getElementById('li-subsys-filter').value;
+  const phaseF  = document.getElementById('li-phase-filter').value;
+  const locF    = document.getElementById('li-location-filter').value;
+
+  if (level <= 0) {
+    const phases = [...new Set(TI.filter(r => !subsysF || r.Subsystem === subsysF).map(r => r.Phase).filter(Boolean))].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
+    const cur = document.getElementById('li-phase-filter').value;
+    populateSelect('li-phase-filter', 'All phases', phases);
+    if (!phases.includes(cur)) document.getElementById('li-phase-filter').value = '';
+  }
+
+  if (level <= 1) {
+    const ph = document.getElementById('li-phase-filter').value;
+    const locs = [...new Set(TI.filter(r => (!subsysF || r.Subsystem === subsysF) && (!ph || r.Phase === ph)).map(r => r.Location).filter(Boolean))].sort();
+    const cur = document.getElementById('li-location-filter').value;
+    populateSelect('li-location-filter', 'All locations', locs);
+    if (!locs.includes(cur)) document.getElementById('li-location-filter').value = '';
+  }
+
+  const ph2 = document.getElementById('li-phase-filter').value;
+  const loc2 = document.getElementById('li-location-filter').value;
+  const acts = [...new Set(TI.filter(r => (!subsysF || r.Subsystem === subsysF) && (!ph2 || r.Phase === ph2) && (!loc2 || r.Location === loc2)).map(r => r.Activity).filter(Boolean))].sort();
+  const curAct = document.getElementById('li-activity-filter').value;
+  populateSelect('li-activity-filter', 'All activities', acts);
+  if (!acts.includes(curAct)) document.getElementById('li-activity-filter').value = '';
 }
 
 function clearLIFilters() {
@@ -639,7 +682,7 @@ function clearLIFilters() {
 function renderLITable() {
   const search  = document.getElementById('li-search').value.toLowerCase();
   const subsysF = document.getElementById('li-subsys-filter').value;
-  const phaseF  = document.getElementById('li-phase-filter').value.replace('Phase ', '');
+  const phaseF  = document.getElementById('li-phase-filter').value;
   const locF    = document.getElementById('li-location-filter').value;
   const actF    = document.getElementById('li-activity-filter').value;
   const statusF = document.getElementById('li-status-filter').value;
@@ -649,7 +692,7 @@ function renderLITable() {
               || (r.TestCaseCode && r.TestCaseCode.toLowerCase().includes(search))
               || (r.Activity     && r.Activity.toLowerCase().includes(search))) &&
     (!subsysF || r.Subsystem === subsysF) &&
-    (!phaseF  || String(r.Phase || '').trim() === phaseF) &&
+    (!phaseF  || r.Phase === phaseF) &&
     (!locF    || r.Location === locF) &&
     (!actF    || r.Activity === actF) &&
     (!statusF || r.Status === statusF)
@@ -678,7 +721,7 @@ function renderLITable() {
       <td class="cell-mono">${escapeHtml(r.TestCaseCode || '—')}</td>
       <td><span class="cell-name">${escapeHtml(r.TestName || '—')}</span></td>
       <td><span class="tag">${escapeHtml(r.Subsystem || '—')}</span></td>
-      <td class="cell-mono">Phase ${escapeHtml(String(r.Phase || '—').trim())}</td>
+      <td class="cell-mono">${escapeHtml(String(r.Phase || '—').trim())}</td>
       <td>${escapeHtml(r.Location || '—')}</td>
       <td><span class="cell-sub" style="font-size:12px">${escapeHtml(r.Activity || '—')}</span></td>
       <td>${getStatusBadge(r.Status)}</td>
@@ -1060,6 +1103,7 @@ async function loadTestItems() {
         CompletedDate: r.completed_date,
         BlockedReason: r.blocked_reason,
         Notes:         r.notes,
+        TestReport:    r.test_report || null,
       }));
       console.log(`Loaded ${TI.length} test items from Supabase`);
     }
@@ -2178,8 +2222,8 @@ async function executeLocationImport() {
 let _importPendingRows = [];
 
 function downloadImportTemplate() {
-  const headers = ['TestID','Phase','Location','Subsystem','Activity','TestCategory','TestCaseCode','TestName','TestProcedure','TestPhase','Status','ActivityID','PlannedDate','Weight','Notes'];
-  const example = ['P2-W40-ATS-EXAMPLE','Phase 2','W40','ATS','ATS SAT','Hardware SAT','HW-SAT-XX','Example Test Name','1. Do step one. 2. Verify result.','SAT','Future','ACT-001','2025-06-01','1','Optional notes'];
+  const headers = ['TestID','Phase','Location','Subsystem','Activity','TestCategory','TestCaseCode','TestName','TestProcedure','TestPhase','Status','ActivityID','PlannedDate','Weight','Notes','TestReport'];
+  const example = ['P2-W40-ATS-EXAMPLE','Phase 2','W40','ATS','ATS SAT','Hardware SAT','HW-SAT-XX','Example Test Name','1. Do step one. 2. Verify result.','SAT','Future','ACT-001','2025-06-01','1','Optional notes','https://docs.example.com/report'];
   const csv = headers.join(',') + '\n' + example.map(v => `"${v}"`).join(',');
   const blob = new Blob([csv], { type: 'text/csv' });
   const a = document.createElement('a');
@@ -3100,149 +3144,201 @@ async function inviteUser() {
 // ==========================================================================
 // TEST MATRIX VIEW — Live status toggle scratchpad
 // ==========================================================================
-let matrixFilter = { location: '', subsystem: '', applicable: 'all' };
+let matrixFilter = { phase: '', location: '', subsystem: '', activity: '', applicable: 'all' };
 
 function renderTestMatrix() {
   const root = document.getElementById('test-matrix-content');
   if (!root || !currentRoleUser) return;
 
-  // Stats
-  const filtered = TEST_INSTANCES.filter(t =>
-    (!matrixFilter.location || t.location === matrixFilter.location) &&
-    (!matrixFilter.subsystem || t.subsystem === matrixFilter.subsystem) &&
+  const isAdmin  = currentRoleUser.role === 'admin';
+
+  // Cascaded option pools from TI
+  const subsystems = [...new Set(TI.map(r => r.Subsystem).filter(Boolean))].sort();
+  const phasePool  = [...new Set(TI.filter(r => !matrixFilter.subsystem || r.Subsystem === matrixFilter.subsystem).map(r => r.Phase).filter(Boolean))].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
+  const locPool    = [...new Set(TI.filter(r =>
+    (!matrixFilter.subsystem || r.Subsystem === matrixFilter.subsystem) &&
+    (!matrixFilter.phase || r.Phase === matrixFilter.phase)
+  ).map(r => r.Location).filter(Boolean))].sort();
+  const actPool    = [...new Set(TI.filter(r =>
+    (!matrixFilter.subsystem || r.Subsystem === matrixFilter.subsystem) &&
+    (!matrixFilter.phase || r.Phase === matrixFilter.phase) &&
+    (!matrixFilter.location || r.Location === matrixFilter.location)
+  ).map(r => r.Activity).filter(Boolean))].sort();
+
+  // Apply all filters
+  let filtered = TI.filter(r =>
+    (!matrixFilter.subsystem || r.Subsystem === matrixFilter.subsystem) &&
+    (!matrixFilter.phase     || r.Phase === matrixFilter.phase) &&
+    (!matrixFilter.location  || r.Location === matrixFilter.location) &&
+    (!matrixFilter.activity  || r.Activity === matrixFilter.activity) &&
     (matrixFilter.applicable === 'all' ||
-      (matrixFilter.applicable === 'yes' && t.applicable) ||
-      (matrixFilter.applicable === 'no' && !t.applicable))
+     (matrixFilter.applicable === 'yes' && r.Status && r.Status !== 'Not Started') ||
+     (matrixFilter.applicable === 'no'  && (!r.Status || r.Status === 'Not Started')))
   );
 
-  const totals = {
-    passed: filtered.filter(t => t.applicable && t.status === 'passed').length,
-    failed: filtered.filter(t => t.applicable && t.status === 'failed').length,
-    blocked: filtered.filter(t => t.applicable && t.status === 'blocked').length,
-    inProgress: filtered.filter(t => t.applicable && t.status === 'in_progress').length,
-    notStarted: filtered.filter(t => t.applicable && t.status === 'not_started').length,
-  };
+  const complete   = filtered.filter(r => r.Status === 'Complete').length;
+  const inprog     = filtered.filter(r => r.Status === 'In Progress').length;
+  const blocked    = filtered.filter(r => r.Status === 'Blocked').length;
+  const notStarted = filtered.filter(r => !r.Status || r.Status === 'Not Started').length;
 
-  // Group by location > subsystem > template
+  // Group by Phase + Location + Subsystem + Activity
   const groups = {};
-  filtered.forEach(t => {
-    const key = `${t.location} · ${t.subsystem} · ${t.templateName}`;
-    if (!groups[key]) groups[key] = { location: t.location, subsystem: t.subsystem, template: t.templateName, items: [] };
-    groups[key].items.push(t);
+  filtered.forEach(r => {
+    const key = `${r.Phase||''}||${r.Location||''}||${r.Subsystem||''}||${r.Activity||''}`;
+    if (!groups[key]) groups[key] = { phase: r.Phase||'—', location: r.Location||'—', subsystem: r.Subsystem||'—', activity: r.Activity||'—', testReport: r.TestReport||'', items: [] };
+    groups[key].items.push(r);
   });
 
-  const isAdmin = currentRoleUser.role === 'admin';
+  const hasFilter = matrixFilter.phase || matrixFilter.location || matrixFilter.subsystem || matrixFilter.activity;
 
   root.innerHTML = `
     <div class="matrix-summary">
-      <div class="matrix-stat"><div class="matrix-stat-label">Passed</div><div class="matrix-stat-value good">${totals.passed}</div></div>
-      <div class="matrix-stat"><div class="matrix-stat-label">Failed</div><div class="matrix-stat-value bad">${totals.failed}</div></div>
-      <div class="matrix-stat"><div class="matrix-stat-label">Blocked</div><div class="matrix-stat-value warn">${totals.blocked}</div></div>
-      <div class="matrix-stat"><div class="matrix-stat-label">In Progress</div><div class="matrix-stat-value info">${totals.inProgress}</div></div>
-      <div class="matrix-stat"><div class="matrix-stat-label">Not Started</div><div class="matrix-stat-value">${totals.notStarted}</div></div>
+      <div class="matrix-stat"><div class="matrix-stat-label">Complete</div><div class="matrix-stat-value good">${complete}</div></div>
+      <div class="matrix-stat"><div class="matrix-stat-label">In Progress</div><div class="matrix-stat-value info">${inprog}</div></div>
+      <div class="matrix-stat"><div class="matrix-stat-label">Blocked</div><div class="matrix-stat-value warn">${blocked}</div></div>
+      <div class="matrix-stat"><div class="matrix-stat-label">Not Started</div><div class="matrix-stat-value">${notStarted}</div></div>
+      <div class="matrix-stat"><div class="matrix-stat-label">Total</div><div class="matrix-stat-value">${filtered.length}</div></div>
     </div>
 
     <div class="matrix-filter-bar">
-      <select class="filter-select" id="mx-loc" onchange="updateMatrixFilter()">
-        <option value="">All Locations</option>
-        ${LOCATIONS.map(l => `<option value="${l.code}" ${matrixFilter.location === l.code ? 'selected' : ''}>${escapeHtml(l.name)}</option>`).join('')}
-      </select>
-      <select class="filter-select" id="mx-sub" onchange="updateMatrixFilter()">
+      ${isAdmin ? `<select class="filter-select" onchange="_mxSetFilter('subsystem',this.value)">
         <option value="">All Subsystems</option>
-        ${[...new Set(TEST_INSTANCES.map(t => t.subsystem))].sort().map(s => `<option value="${s}" ${matrixFilter.subsystem === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+        ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${matrixFilter.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+      </select>` : ''}
+      <select class="filter-select" onchange="_mxPhaseChange(this.value)">
+        <option value="">All Phases</option>
+        ${phasePool.map(p=>`<option value="${escapeHtml(p)}" ${matrixFilter.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
       </select>
-      <select class="filter-select" id="mx-app" onchange="updateMatrixFilter()">
-        <option value="all" ${matrixFilter.applicable === 'all' ? 'selected' : ''}>All test cases</option>
-        <option value="yes" ${matrixFilter.applicable === 'yes' ? 'selected' : ''}>Applicable only</option>
-        <option value="no" ${matrixFilter.applicable === 'no' ? 'selected' : ''}>Not applicable only</option>
+      <select class="filter-select" onchange="_mxLocChange(this.value)">
+        <option value="">All Locations</option>
+        ${locPool.map(l=>`<option value="${escapeHtml(l)}" ${matrixFilter.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
       </select>
+      <select class="filter-select" onchange="_mxSetFilter('activity',this.value)">
+        <option value="">All Activities</option>
+        ${actPool.map(a=>`<option value="${escapeHtml(a)}" ${matrixFilter.activity===a?'selected':''}>${escapeHtml(a)}</option>`).join('')}
+      </select>
+      <select class="filter-select" onchange="_mxSetFilter('applicable',this.value)">
+        <option value="all" ${matrixFilter.applicable==='all'?'selected':''}>All test cases</option>
+        <option value="yes" ${matrixFilter.applicable==='yes'?'selected':''}>With status only</option>
+        <option value="no"  ${matrixFilter.applicable==='no'?'selected':''}>Not started only</option>
+      </select>
+      ${hasFilter ? `<button class="filter-clear" onclick="_mxClearFilters()">Reset</button>` : ''}
     </div>
 
     ${Object.keys(groups).length === 0 ? `
-      <div class="docs-empty">
-        <h3>No test cases match your filters</h3>
-        <p>Try clearing filters or selecting a different location.</p>
-      </div>
-    ` : Object.values(groups).map(g => `
+      <div class="docs-empty"><h3>No test cases match your filters</h3><p>Try clearing filters or selecting a different location.</p></div>
+    ` : Object.values(groups).map(g => {
+      const done = g.items.filter(r => r.Status === 'Complete').length;
+      const editKey = encodeURIComponent(JSON.stringify({phase:g.phase,location:g.location,subsystem:g.subsystem,activity:g.activity,testReport:g.testReport}));
+      return `
       <div class="matrix-section">
         <div class="matrix-section-head">
-          <div>
-            <div class="matrix-section-title">${escapeHtml(g.location)} — ${escapeHtml(g.subsystem)}</div>
-            <div class="matrix-section-meta">${escapeHtml(g.template)} · ${g.items.length} test cases</div>
+          <div style="flex:1;">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <div class="matrix-section-title">${escapeHtml(g.activity)}</div>
+              ${g.testReport ? `<a href="${escapeHtml(g.testReport)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--hitachi-red);font-weight:500;text-decoration:none;">📄 Test Report</a>` : ''}
+              ${isAdmin ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openEditActivityModal(decodeURIComponent('${editKey}'))">Edit</button>` : ''}
+            </div>
+            <div class="matrix-section-meta">${escapeHtml(g.phase)} · ${escapeHtml(g.location)} · ${escapeHtml(g.subsystem)}</div>
           </div>
-          <div class="matrix-section-meta">
-            ${g.items.filter(t => t.applicable && t.status === 'passed').length} / ${g.items.filter(t => t.applicable).length} passed
-          </div>
+          <div class="matrix-section-meta">${done} / ${g.items.length} complete</div>
         </div>
-        ${g.items.map(t => renderMatrixRow(t, isAdmin)).join('')}
-      </div>
-    `).join('')}
+        ${g.items.map(r => _renderTIMatrixRow(r, isAdmin)).join('')}
+      </div>`;
+    }).join('')}
   `;
 }
 
-function renderMatrixRow(t, isAdmin) {
-  const statuses = ['passed', 'failed', 'blocked', 'in_progress'];
-  const labels = { passed: 'Pass', failed: 'Fail', blocked: 'Block', in_progress: 'In Progress' };
+function _renderTIMatrixRow(r, isAdmin) {
+  const current = r.Status || 'Not Started';
+  const statuses = ['Complete','In Progress','Blocked','Not Started'];
+  const btnClass = { 'Complete':'complete','In Progress':'in_progress','Blocked':'blocked','Not Started':'not_started' };
   return `
-    <div class="matrix-tc-row ${!t.applicable ? 'not-applicable' : ''}">
-      <div class="matrix-tc-code">${escapeHtml(t.testCode)}</div>
-      <div>
-        <div class="matrix-tc-name">${escapeHtml(t.testName)}</div>
-        <div class="matrix-tc-meta">
-          ${escapeHtml(t.procedure)}
-          ${t.lastUpdatedBy ? `· last updated by <b>${escapeHtml(t.lastUpdatedBy)}</b> ${dateAgo(t.lastUpdatedAt)}` : ''}
-          ${!t.applicable && t.naReason ? `· <span style="color:var(--bad)">${escapeHtml(t.naReason)}</span>` : ''}
-        </div>
+    <div class="matrix-tc-row">
+      <div class="matrix-tc-code">${escapeHtml(r.TestCaseCode||'—')}</div>
+      <div style="flex:1;min-width:0;">
+        <div class="matrix-tc-name">${escapeHtml(r.TestName||'—')}</div>
+        ${r.TestProcedure||r.CompletedBy ? `<div class="matrix-tc-meta">${escapeHtml(r.TestProcedure||'')}${r.CompletedBy?` · completed by <b>${escapeHtml(r.CompletedBy)}</b>`:''}</div>` : ''}
       </div>
       <div class="matrix-tc-status-buttons">
-        ${statuses.map(s => `
-          <button class="tc-status-btn ${t.status === s ? 'active ' + s : ''}"
-            onclick="setTestStatus('${t.id}', '${s}')"
-            ${!t.applicable ? 'disabled' : ''}>${labels[s]}</button>
-        `).join('')}
+        ${statuses.map(s => `<button class="tc-status-btn ${current===s?'active '+btnClass[s]:''}" onclick="setTestStatusTI('${escapeHtml(r.TestID)}','${s}')">${s}</button>`).join('')}
       </div>
-      ${isAdmin ? `
-        <button class="tc-na-toggle" onclick="toggleNA('${t.id}')">
-          ${t.applicable ? 'Mark N/A' : 'N/A — restore'}
-        </button>
-      ` : ''}
     </div>
   `;
 }
 
-function updateMatrixFilter() {
-  matrixFilter.location = document.getElementById('mx-loc').value;
-  matrixFilter.subsystem = document.getElementById('mx-sub').value;
-  matrixFilter.applicable = document.getElementById('mx-app').value;
+function _mxPhaseChange(v) { matrixFilter.phase=v; matrixFilter.location=''; matrixFilter.activity=''; renderTestMatrix(); }
+function _mxLocChange(v)   { matrixFilter.location=v; matrixFilter.activity=''; renderTestMatrix(); }
+function _mxSetFilter(k,v) { matrixFilter[k]=v; renderTestMatrix(); }
+function _mxClearFilters() {
+  const sub = currentRoleUser?.role!=='admin' ? (currentRoleUser?.subsystem||'') : '';
+  matrixFilter = { phase:'', location:'', subsystem:sub, activity:'', applicable:'all' };
   renderTestMatrix();
 }
 
-function setTestStatus(id, status) {
-  const t = TEST_INSTANCES.find(x => x.id === id);
-  if (!t) return;
-  t.status = status;
-  t.lastUpdatedBy = currentRoleUser.name;
-  t.lastUpdatedAt = new Date().toISOString();
-  logAudit('Test Status Update', `${t.testCode} @ ${t.location}`, `→ ${status}`);
+async function setTestStatusTI(testId, status) {
+  const r = TI.find(t => String(t.TestID) === String(testId));
+  if (!r) return;
+  r.Status = status;
+  if (status === 'Complete') { r.CompletedBy = currentRoleUser.name; r.CompletedDate = new Date().toISOString(); }
   renderTestMatrix();
-  toast(`${t.testCode} marked ${status}`, 'success');
+  try {
+    const upd = { status };
+    if (status === 'Complete') { upd.completed_by = currentRoleUser.name; upd.completed_date = new Date().toISOString(); }
+    const { error } = await _sb.from('test_items').update(upd).eq('test_id', testId);
+    if (error) throw error;
+    toast(`${r.TestCaseCode} → ${status}`, 'success');
+    logAudit('Test Status Update', `${r.TestCaseCode} @ ${r.Location}`, `→ ${status}`);
+  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
 }
 
-function toggleNA(id) {
-  const t = TEST_INSTANCES.find(x => x.id === id);
-  if (!t) return;
-  t.applicable = !t.applicable;
-  if (!t.applicable) {
-    const reason = prompt('Reason for marking N/A?');
-    if (reason === null) { t.applicable = true; return; }
-    t.naReason = reason;
-    logAudit('Toggled N/A', `${t.testCode} @ ${t.location}`, 'Marked Not Applicable', reason);
-  } else {
-    t.naReason = '';
-    logAudit('Toggled N/A', `${t.testCode} @ ${t.location}`, 'Restored as Applicable');
-  }
-  renderTestMatrix();
-  toast(`${t.testCode} ${t.applicable ? 'restored as applicable' : 'marked N/A'}`, 'success');
+// Keep legacy function name used elsewhere
+function setTestStatus(id, status) { setTestStatusTI(id, status); }
+
+function openEditActivityModal(jsonStr) {
+  let data;
+  try { data = JSON.parse(jsonStr); } catch(e) { toast('Parse error', 'error'); return; }
+  modal({
+    title: 'Edit Activity',
+    size: 'medium',
+    body: `
+      <div class="form-field">
+        <label>Activity Name</label>
+        <input type="text" id="ea-name" class="form-input" value="${escapeHtml(data.activity||'')}">
+      </div>
+      <div class="form-field" style="margin-top:12px;">
+        <label>Test Report (URL or reference)</label>
+        <input type="text" id="ea-report" class="form-input" placeholder="https://..." value="${escapeHtml(data.testReport||'')}">
+      </div>
+      <p style="font-size:12px;color:var(--gray-500);margin-top:12px;">Changes apply to all test cases under this activity: <b>${escapeHtml(data.phase)} · ${escapeHtml(data.location)} · ${escapeHtml(data.subsystem)}</b></p>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn" onclick="saveActivityEdit(${JSON.stringify(JSON.stringify({phase:data.phase,location:data.location,subsystem:data.subsystem,activity:data.activity}))})">Save Changes</button>
+    `
+  });
+}
+
+async function saveActivityEdit(keyJson) {
+  let key;
+  try { key = JSON.parse(keyJson); } catch(e) { toast('Parse error','error'); return; }
+  const name   = document.getElementById('ea-name').value.trim();
+  const report = document.getElementById('ea-report').value.trim();
+  if (!name) { toast('Activity name required','error'); return; }
+
+  const rows = TI.filter(r => r.Activity===key.activity && r.Location===key.location && r.Phase===key.phase && r.Subsystem===key.subsystem);
+  if (!rows.length) { toast('No matching test cases','error'); return; }
+
+  rows.forEach(r => { r.Activity=name; r.TestReport=report; });
+  try {
+    const ids = rows.map(r => r.TestID);
+    const { error } = await _sb.from('test_items').update({ activity: name, test_report: report }).in('test_id', ids);
+    if (error) throw error;
+    toast(`Updated ${rows.length} test cases`, 'success');
+    closeModal();
+    renderTestMatrix();
+    initLineItems(); // refresh cascaded options
+  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
 }
 
 // ==========================================================================
@@ -3734,7 +3830,12 @@ function _taHTML(id, adminOnly) {
 let PUNCH_DB = [];
 let _plTab = 'all', _plPage = 1, _plSearch = '';
 let _plStatusFilter = '', _plPhaseFilter = '', _plLocFilter = '';
-let _plSubFilter = '', _plPriorityFilter = '';
+let _plSubFilter = '', _plPriorityFilter = '', _plActivityFilter = '';
+
+function _punchDeriveActivity(code) {
+  if (!code) return null;
+  return TI.find(r => r.TestCaseCode === code)?.Activity || null;
+}
 const PL_PAGE_SIZE = 25;
 
 async function loadPunchDB() {
@@ -3819,6 +3920,13 @@ function renderPunchWorkflow() {
   if (_plLocFilter)    items = items.filter(p => p.location === _plLocFilter);
   if (_plSubFilter)    items = items.filter(p => p.subsystem === _plSubFilter);
   if (_plPriorityFilter) items = items.filter(p => p.priority === _plPriorityFilter);
+  if (_plActivityFilter) {
+    const actCodes = new Set(TI.filter(r => r.Activity === _plActivityFilter).map(r => r.TestCaseCode));
+    items = items.filter(p => actCodes.has(p.test_case_code));
+  }
+
+  // Build activity options from all punch items (via TI lookup)
+  const plActivities = [...new Set(all.map(p => _punchDeriveActivity(p.test_case_code)).filter(Boolean))].sort();
 
   const total = items.length;
   const pages = Math.max(1, Math.ceil(total / PL_PAGE_SIZE));
@@ -3829,7 +3937,7 @@ function renderPunchWorkflow() {
   const overdue   = openItems.filter(p => p.due_date && new Date(p.due_date) < new Date());
   const phases    = LOCS.filter(l => l.level === 1).sort((a,b) => a.sort_order - b.sort_order);
   const locPool   = _plPhaseFilter ? LOCS.filter(l => l.level === 2 && l.parent_id === _plPhaseFilter) : LOCS.filter(l => l.level === 2);
-  const hasFilter = _plSearch || _plStatusFilter || _plPhaseFilter || _plLocFilter || _plSubFilter || _plPriorityFilter;
+  const hasFilter = _plSearch || _plStatusFilter || _plPhaseFilter || _plLocFilter || _plSubFilter || _plPriorityFilter || _plActivityFilter;
 
   root.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:2px solid var(--gray-200);padding-bottom:0;">
@@ -3877,6 +3985,10 @@ function renderPunchWorkflow() {
         <option value="">All Priorities</option>
         ${['Low','Medium','High','Critical'].map(p=>`<option value="${p}" ${_plPriorityFilter===p?'selected':''}>${p}</option>`).join('')}
       </select>
+      ${plActivities.length ? `<select class="form-input" style="width:160px;font-size:13px;" onchange="_plSetFilter('activity',this.value)">
+        <option value="">All Activities</option>
+        ${plActivities.map(a=>`<option value="${escapeHtml(a)}" ${_plActivityFilter===a?'selected':''}>${escapeHtml(a)}</option>`).join('')}
+      </select>` : ''}
       ${hasFilter ? `<button class="form-secondary" style="white-space:nowrap;font-size:12px;" onclick="_plClearFilters()">✕ Clear All</button>` : ''}
     </div>
 
@@ -3938,14 +4050,15 @@ function _plSetTab(t)    { _plTab=t; _plPage=1; renderPunchWorkflow(); }
 function _plSetSearch(v) { _plSearch=v; _plPage=1; renderPunchWorkflow(); }
 function _plSetPage(n)   { _plPage=n; renderPunchWorkflow(); }
 function _plSetFilter(k,v) {
-  if (k==='status') _plStatusFilter=v;
+  if (k==='status')   _plStatusFilter=v;
   else if (k==='loc') _plLocFilter=v;
   else if (k==='sub') _plSubFilter=v;
   else if (k==='priority') _plPriorityFilter=v;
+  else if (k==='activity') _plActivityFilter=v;
   _plPage=1; renderPunchWorkflow();
 }
 function _plPhaseChange(id) { _plPhaseFilter=id; _plLocFilter=''; _plPage=1; renderPunchWorkflow(); }
-function _plClearFilters()  { _plSearch=''; _plStatusFilter=''; _plPhaseFilter=''; _plLocFilter=''; _plSubFilter=''; _plPriorityFilter=''; _plPage=1; renderPunchWorkflow(); }
+function _plClearFilters()  { _plSearch=''; _plStatusFilter=''; _plPhaseFilter=''; _plLocFilter=''; _plSubFilter=''; _plPriorityFilter=''; _plActivityFilter=''; _plPage=1; renderPunchWorkflow(); }
 
 function _punchWorkflowActions(p) {
   const role    = currentRoleUser?.role;
