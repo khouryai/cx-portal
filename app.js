@@ -3344,18 +3344,19 @@ async function _mxSaveStatus(status, r) {
   const upd = { status };
   if (status === 'Pass') { upd.completed_by = currentRoleUser?.name; upd.completed_date = new Date().toISOString(); }
   try {
-    const { error, count } = await _sb.from('test_items').update(upd, { count: 'exact' }).eq('test_id', r.TestID);
+    // .select() returns the updated rows so we can verify the update actually matched
+    const { data, error } = await _sb.from('test_items').update(upd).eq('test_id', r.TestID).select();
     if (error) throw error;
-    if (count === 0) {
-      console.warn('[mxSaveStatus] 0 rows updated for test_id:', r.TestID, '— check if this ID exists in test_items');
-      toast(`⚠ Status changed locally but not saved — test_id "${r.TestID}" not found in DB`, 'warn');
+    if (!data || data.length === 0) {
+      console.warn('[mxSaveStatus] 0 rows matched for test_id:', JSON.stringify(r.TestID));
+      toast(`⚠ Save did not match any row in DB (test_id "${r.TestID}")`, 'warn');
       return;
     }
     toast(`${r.TestCaseCode} → ${status}`, 'success');
     logAudit('Test Status Update', `${r.TestCaseCode} @ ${r.Location}`, `→ ${status}`);
   } catch(e) {
     console.error('[mxSaveStatus] error:', e);
-    toast('Save failed: ' + e.message, 'error');
+    toast('Save failed: ' + (e.message || 'unknown error'), 'error');
   }
 }
 
@@ -3770,8 +3771,14 @@ function toggleDelayI3(btn, isYes) {
 }
 
 async function submitIntakeFinal() {
+  console.log('[submitIntakeFinal] click received');
+  const btn = event?.target?.closest?.('button');
+  if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+  const restoreBtn = () => { if (btn) { btn.disabled = false; btn.textContent = 'Submit Daily Log'; } };
+
   try {
-    if (!_sb || !currentRoleUser) return;
+    if (!_sb)             { alert('Supabase client not initialized.'); restoreBtn(); return; }
+    if (!currentRoleUser) { alert('Not logged in — please sign in first.'); restoreBtn(); return; }
 
     const allItems = [
       ..._sessionLog.map(e => ({ ...e, status: e.newStatus })),
@@ -3779,7 +3786,8 @@ async function submitIntakeFinal() {
     ];
 
     if (!allItems.length) {
-      toast('No test cases to submit — update statuses in the Test Matrix first', 'warn');
+      alert('No test cases to submit. Update statuses in the Test Matrix first, or add items in Step 2.');
+      restoreBtn();
       return;
     }
 
@@ -3840,25 +3848,27 @@ async function submitIntakeFinal() {
       next_day_plan:      nextDayPlan,
     };
 
+    console.log('[submitIntakeFinal] inserting', resultRows.length, 'test_results +', 1, 'delay_log');
+
     if (resultRows.length > 0) {
       const { error: rErr } = await _sb.from('test_results').insert(resultRows);
-      if (rErr) throw new Error('test_results: ' + rErr.message);
+      if (rErr) throw new Error('test_results insert failed: ' + rErr.message);
     }
 
     const { error: lErr } = await _sb.from('delay_log').insert([logRow]);
-    if (lErr) throw new Error('delay_log: ' + lErr.message);
+    if (lErr) throw new Error('delay_log insert failed: ' + lErr.message);
 
     logAudit('Daily Log Submitted', `${allItems.length} test cases logged`, 'Daily report generated');
     _sessionLog     = [];
     intakeAdditions = [];
     intakeStep      = 1;
-    toast(`Daily log submitted! ${allItems.length} tests logged.`, 'success');
+    alert(`✓ Daily log submitted!\n\n${resultRows.length} test result(s) saved\n1 daily log row saved`);
     renderFieldIntake();
-    renderTestMatrix();
 
   } catch (err) {
-    console.error('[submitIntakeFinal] unexpected error:', err);
-    alert('Unexpected error: ' + err.message + '\n\nCheck browser console (F12) for full details.');
+    console.error('[submitIntakeFinal] error:', err);
+    alert('Submit failed: ' + (err?.message || JSON.stringify(err)));
+    restoreBtn();
   }
 }
 
