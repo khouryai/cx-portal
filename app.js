@@ -3768,100 +3768,104 @@ function toggleDelayI3(btn, isYes) {
 }
 
 async function submitIntakeFinal() {
-  const allItems = [
-    ..._sessionLog.map(e => ({ ...e, status: e.newStatus })),
-    ...intakeAdditions,
-  ];
+  try {
+    console.log('[submitIntakeFinal] called');
 
-  if (!allItems.length) {
-    toast('No test cases to submit', 'warn');
-    return;
-  }
+    if (!_sb) { alert('Supabase client not initialized — check your connection.'); return; }
+    if (!currentRoleUser) { alert('Not logged in.'); return; }
 
-  const dateVal       = document.getElementById('i3-date')?.value       || new Date().toISOString().split('T')[0];
-  const testers       = parseInt(document.getElementById('i3-testers')?.value)   || 1;
-  const idleHours     = parseFloat(document.getElementById('i3-idle')?.value)    || 0;
-  const delayOccurred = document.querySelector('.toggle-btn.active')?.dataset.val || 'No';
-  const delayCat      = delayOccurred === 'Yes' ? (document.getElementById('i3-delay-cat')?.value || null) : null;
-  const delayHrs      = delayOccurred === 'Yes' ? (parseFloat(document.getElementById('i3-delay-hrs')?.value) || 0) : 0;
-  const overallNotes  = document.getElementById('i3-notes')?.value || '';
-  const nextDayPlan   = document.getElementById('i3-next')?.value  || '';
+    const allItems = [
+      ..._sessionLog.map(e => ({ ...e, status: e.newStatus })),
+      ...intakeAdditions,
+    ];
 
-  // test_results rows — only columns confirmed in original schema
-  const resultRows = allItems.map((item, idx) => ({
-    result_id:         'R-' + Date.now() + '-' + idx,
-    test_id:           item.testId || item.id  || null,
-    test_name:         item.testName           || null,
-    phase:             item.phase              || null,
-    location:          item.location           || null,
-    subsystem:         item.subsystem          || null,
-    activity:          item.activity           || null,
-    test_case_code:    item.testCode           || null,
-    test_procedure:    item.testProcedure      || null,
-    result:            item.status             || null,
-    new_status:        item.status             || null,
-    completed_by:      currentRoleUser.name,
-    date_tested:       dateVal,
-    submitted_by:      currentRoleUser.name,
-    number_of_testers: testers,
-    failed_reason:     item.failedReason       || null,
-    blocked_reason:    item.blockedReason      || null,
-    notes:             item.notes              || null,
-  }));
-
-  const logRow = {
-    log_id:             'DL-' + Date.now(),
-    log_date:           dateVal,
-    location:           allItems[0]?.location  || null,
-    subsystem:          allItems[0]?.subsystem  || null,
-    submitted_by:       currentRoleUser.name,
-    number_of_testers:  testers,
-    idle_hours:         idleHours,
-    total_tests_logged: allItems.length,
-    total_passed:       allItems.filter(i => i.status === 'Pass').length,
-    total_failed:       allItems.filter(i => i.status === 'Fail').length,
-    total_partial:      allItems.filter(i => i.status === 'In Progress').length,
-    total_blocked:      allItems.filter(i => i.status === 'Blocked').length,
-    delay_occurred:     delayOccurred,
-    delay_category:     delayCat,
-    delay_hours:        delayHrs,
-    overall_notes:      overallNotes,
-    next_day_plan:      nextDayPlan,
-  };
-
-  let anySuccess = false;
-  let errors = [];
-
-  if (resultRows.length > 0) {
-    const { error: rErr } = await _sb.from('test_results').insert(resultRows);
-    if (rErr) {
-      console.error('[submitIntakeFinal] test_results insert failed:', rErr);
-      errors.push('test_results: ' + rErr.message);
-    } else {
-      anySuccess = true;
+    if (!allItems.length) {
+      toast('No test cases to submit — update statuses in the Test Matrix first', 'warn');
+      return;
     }
-  }
 
-  const { error: lErr } = await _sb.from('delay_log').insert([logRow]);
-  if (lErr) {
-    console.error('[submitIntakeFinal] delay_log insert failed:', lErr);
-    errors.push('delay_log: ' + lErr.message);
-  } else {
-    anySuccess = true;
-  }
+    const dateVal       = document.getElementById('i3-date')?.value || new Date().toISOString().split('T')[0];
+    const testers       = parseInt(document.getElementById('i3-testers')?.value) || 1;
+    const idleHours     = parseFloat(document.getElementById('i3-idle')?.value) || 0;
+    // scope toggle query to step-3 card to avoid picking up other pages' toggles
+    const activeToggle  = document.getElementById('field-intake-content')?.querySelector('.toggle-btn.active');
+    const delayOccurred = activeToggle?.dataset.val || 'No';
+    const delayCat      = delayOccurred === 'Yes' ? (document.getElementById('i3-delay-cat')?.value || null) : null;
+    const delayHrs      = delayOccurred === 'Yes' ? (parseFloat(document.getElementById('i3-delay-hrs')?.value) || 0) : 0;
+    const overallNotes  = document.getElementById('i3-notes')?.value || '';
+    const nextDayPlan   = document.getElementById('i3-next')?.value  || '';
+    const submitter     = currentRoleUser.name;
 
-  if (errors.length) {
-    toast('Submit error — check console: ' + errors[0], 'error');
-    return;
-  }
+    const resultRows = allItems.map((item, idx) => ({
+      result_id:         'R-' + Date.now() + '-' + idx,
+      test_id:           item.testId || item.id  || null,
+      test_name:         item.testName           || null,
+      phase:             item.phase              || null,
+      location:          item.location           || null,
+      subsystem:         item.subsystem          || null,
+      activity:          item.activity           || null,
+      test_case_code:    item.testCode           || null,
+      test_procedure:    item.testProcedure      || null,
+      result:            item.status             || null,
+      new_status:        item.status             || null,
+      completed_by:      submitter,
+      date_tested:       dateVal,
+      submitted_by:      submitter,
+      number_of_testers: testers,
+      failed_reason:     item.failedReason       || null,
+      blocked_reason:    item.blockedReason      || null,
+      notes:             item.notes              || null,
+    }));
 
-  logAudit('Daily Log Submitted', `${allItems.length} test cases logged`, 'Daily report generated');
-  _sessionLog     = [];
-  intakeAdditions = [];
-  intakeStep      = 1;
-  toast(`Daily log submitted! ${allItems.length} tests logged.`, 'success');
-  renderFieldIntake();
-  renderTestMatrix();
+    const logRow = {
+      log_id:             'DL-' + Date.now(),
+      log_date:           dateVal,
+      location:           allItems[0]?.location  || null,
+      subsystem:          allItems[0]?.subsystem  || null,
+      submitted_by:       submitter,
+      number_of_testers:  testers,
+      idle_hours:         idleHours,
+      total_tests_logged: allItems.length,
+      total_passed:       allItems.filter(i => i.status === 'Pass').length,
+      total_failed:       allItems.filter(i => i.status === 'Fail').length,
+      total_partial:      allItems.filter(i => i.status === 'In Progress').length,
+      total_blocked:      allItems.filter(i => i.status === 'Blocked').length,
+      delay_occurred:     delayOccurred,
+      delay_category:     delayCat,
+      delay_hours:        delayHrs,
+      overall_notes:      overallNotes,
+      next_day_plan:      nextDayPlan,
+    };
+
+    console.log('[submitIntakeFinal] resultRows:', resultRows.length, 'logRow:', logRow);
+
+    const errors = [];
+
+    if (resultRows.length > 0) {
+      const { error: rErr } = await _sb.from('test_results').insert(resultRows);
+      if (rErr) { console.error('[test_results] insert error:', rErr); errors.push('test_results: ' + rErr.message); }
+    }
+
+    const { error: lErr } = await _sb.from('delay_log').insert([logRow]);
+    if (lErr) { console.error('[delay_log] insert error:', lErr); errors.push('delay_log: ' + lErr.message); }
+
+    if (errors.length) {
+      alert('Submit failed:\n\n' + errors.join('\n\n') + '\n\nSee browser console (F12) for details.');
+      return;
+    }
+
+    logAudit('Daily Log Submitted', `${allItems.length} test cases logged`, 'Daily report generated');
+    _sessionLog     = [];
+    intakeAdditions = [];
+    intakeStep      = 1;
+    toast(`Daily log submitted! ${allItems.length} tests logged.`, 'success');
+    renderFieldIntake();
+    renderTestMatrix();
+
+  } catch (err) {
+    console.error('[submitIntakeFinal] unexpected error:', err);
+    alert('Unexpected error: ' + err.message + '\n\nCheck browser console (F12) for full details.');
+  }
 }
 
 // ==========================================================================
