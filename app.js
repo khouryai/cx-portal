@@ -2951,7 +2951,7 @@ async function fscRemoveOption(key, idx) {
 async function _fscSave(key, options) {
   const def = FIELDCONFIG_DEFS.find(d => d.key === key);
   const { error } = await _sb.from('fieldset_config')
-    .upsert({ field_key: key, label: def?.label || key, options }, { onConflict: 'field_key' });
+    .upsert({ field_key: key, label: def?.label || key, options, updated_at: new Date().toISOString() }, { onConflict: 'field_key' });
   if (error) { toast('Save failed: ' + error.message, 'error'); return; }
   FIELDSET_CONFIG[key] = options;
   toast('Saved', 'success');
@@ -3266,7 +3266,9 @@ function renderTestMatrix() {
 let _sessionLog = []; // tracks status changes made this session for Daily Log step 1
 
 function _renderTIMatrixRow(r, isAdmin) {
-  const current   = r.Status || 'Not Started';
+  // 'Future' is the DB default — treat as Not Started in the UI
+  const legacyMap = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
+  const current   = legacyMap[r.Status] || r.Status || 'Not Started';
   const statuses  = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable'];
   const showReason = current === 'Fail' || current === 'Blocked';
   const reasonVal  = current === 'Fail' ? (r.FailedReason||'') : (r.BlockedReason||'');
@@ -3769,10 +3771,7 @@ function toggleDelayI3(btn, isYes) {
 
 async function submitIntakeFinal() {
   try {
-    console.log('[submitIntakeFinal] called');
-
-    if (!_sb) { alert('Supabase client not initialized — check your connection.'); return; }
-    if (!currentRoleUser) { alert('Not logged in.'); return; }
+    if (!_sb || !currentRoleUser) return;
 
     const allItems = [
       ..._sessionLog.map(e => ({ ...e, status: e.newStatus })),
@@ -3787,7 +3786,6 @@ async function submitIntakeFinal() {
     const dateVal       = document.getElementById('i3-date')?.value || new Date().toISOString().split('T')[0];
     const testers       = parseInt(document.getElementById('i3-testers')?.value) || 1;
     const idleHours     = parseFloat(document.getElementById('i3-idle')?.value) || 0;
-    // scope toggle query to step-3 card to avoid picking up other pages' toggles
     const activeToggle  = document.getElementById('field-intake-content')?.querySelector('.toggle-btn.active');
     const delayOccurred = activeToggle?.dataset.val || 'No';
     const delayCat      = delayOccurred === 'Yes' ? (document.getElementById('i3-delay-cat')?.value || null) : null;
@@ -3796,25 +3794,32 @@ async function submitIntakeFinal() {
     const nextDayPlan   = document.getElementById('i3-next')?.value  || '';
     const submitter     = currentRoleUser.name;
 
-    const resultRows = allItems.map((item, idx) => ({
-      test_id:           item.testId || item.id  || null,
-      test_name:         item.testName           || null,
-      phase:             item.phase              || null,
-      location:          item.location           || null,
-      subsystem:         item.subsystem          || null,
-      activity:          item.activity           || null,
-      test_case_code:    item.testCode           || null,
-      test_procedure:    item.testProcedure      || null,
-      result:            item.status             || null,
-      new_status:        item.status             || null,
-      completed_by:      submitter,
-      date_tested:       dateVal,
-      submitted_by:      submitter,
-      number_of_testers: testers,
-      failed_reason:     item.failedReason       || null,
-      blocked_reason:    item.blockedReason      || null,
-      notes:             item.notes              || null,
-    }));
+    // test_results.result CHECK constraint: only Pass | Fail | Partial | Blocked allowed
+    const toResult = s => ({ 'Pass':'Pass', 'Fail':'Fail', 'Blocked':'Blocked', 'In Progress':'Partial' }[s] || null);
+
+    // Only insert rows that have a DB-valid result (skip Not Started / Not Applicable)
+    const resultRows = allItems
+      .filter(item => toResult(item.status) !== null && (item.testId || item.id))
+      .map(item => ({
+        test_id:           item.testId || item.id,
+        test_name:         item.testName        || null,
+        phase:             item.phase           || null,
+        location:          item.location        || null,
+        subsystem:         item.subsystem       || null,
+        activity:          item.activity        || null,
+        test_case_code:    item.testCode        || null,
+        test_procedure:    item.testProcedure   || null,
+        result:            toResult(item.status),
+        new_status:        item.status          || null,
+        completed_by:      submitter,
+        date_tested:       dateVal,
+        submitted_by:      submitter,
+        number_of_testers: testers,
+        failed_reason:     item.failedReason    || null,
+        blocked_reason:    item.blockedReason   || null,
+        hours_spent:       item.hours           || 0,
+        notes:             item.notes           || null,
+      }));
 
     const logRow = {
       log_date:           dateVal,
@@ -3835,22 +3840,13 @@ async function submitIntakeFinal() {
       next_day_plan:      nextDayPlan,
     };
 
-    console.log('[submitIntakeFinal] resultRows:', resultRows.length, 'logRow:', logRow);
-
-    const errors = [];
-
     if (resultRows.length > 0) {
       const { error: rErr } = await _sb.from('test_results').insert(resultRows);
-      if (rErr) { console.error('[test_results] insert error:', rErr); errors.push('test_results: ' + rErr.message); }
+      if (rErr) throw new Error('test_results: ' + rErr.message);
     }
 
     const { error: lErr } = await _sb.from('delay_log').insert([logRow]);
-    if (lErr) { console.error('[delay_log] insert error:', lErr); errors.push('delay_log: ' + lErr.message); }
-
-    if (errors.length) {
-      alert('Submit failed:\n\n' + errors.join('\n\n') + '\n\nSee browser console (F12) for details.');
-      return;
-    }
+    if (lErr) throw new Error('delay_log: ' + lErr.message);
 
     logAudit('Daily Log Submitted', `${allItems.length} test cases logged`, 'Daily report generated');
     _sessionLog     = [];
