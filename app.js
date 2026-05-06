@@ -3875,12 +3875,6 @@ async function submitIntakeFinal() {
       ...intakeAdditions,
     ];
 
-    if (!allItems.length) {
-      alert('No test cases to submit. Update statuses in the Test Matrix first, or add items in Step 2.');
-      restoreBtn();
-      return;
-    }
-
     const dateVal       = document.getElementById('i3-date')?.value || new Date().toISOString().split('T')[0];
     const testers       = parseInt(document.getElementById('i3-testers')?.value) || 1;
     const idleHours     = parseFloat(document.getElementById('i3-idle')?.value) || 0;
@@ -3963,7 +3957,7 @@ async function submitIntakeFinal() {
     _sessionLog     = [];
     intakeAdditions = [];
     intakeStep      = 1;
-    alert(`✓ Daily log submitted!\n\n${resultRows.length} test result(s) saved\n1 daily log row saved`);
+    alert(`✓ Daily log submitted!\n\n${resultRows.length > 0 ? `${resultRows.length} test result(s) saved\n` : 'No test results logged (delay-only day)\n'}1 daily log row saved`);
     renderFieldIntake();
 
   } catch (err) {
@@ -4117,6 +4111,7 @@ let PUNCH_DB = [];
 let _plTab = 'all', _plPage = 1, _plSearch = '';
 let _plStatusFilter = '', _plPhaseFilter = '', _plLocFilter = '';
 let _plSubFilter = '', _plPriorityFilter = '', _plActivityFilter = '';
+let _plSelected = new Set(); // IDs of punch items checked for PDF export
 
 function _punchDeriveActivity(code) {
   if (!code) return null;
@@ -4278,10 +4273,18 @@ function renderPunchWorkflow() {
       ${hasFilter ? `<button class="form-secondary" style="white-space:nowrap;font-size:12px;" onclick="_plClearFilters()">✕ Clear All</button>` : ''}
     </div>
 
+    ${_plSelected.size > 0 ? `
+      <div style="display:flex;align-items:center;gap:12px;padding:10px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:12px;">
+        <span style="font-size:13px;font-weight:600;color:#1d4ed8;">${_plSelected.size} item${_plSelected.size===1?'':'s'} selected</span>
+        <button class="form-submit" style="font-size:12px;padding:5px 14px;" onclick="exportPunchPDF([..._plSelected])">⬇ Export ${_plSelected.size} as PDF</button>
+        <button class="form-secondary" style="font-size:12px;padding:5px 12px;" onclick="_plClearSelection()">✕ Clear</button>
+      </div>` : ''}
+
     <div class="data-card" style="padding:0;overflow:hidden;">
       <table class="data-table">
         <thead>
           <tr>
+            <th style="width:36px;text-align:center;"></th>
             <th style="width:50px;">#</th>
             <th>Title</th>
             <th>Status</th>
@@ -4299,6 +4302,9 @@ function renderPunchWorkflow() {
             const isOverdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== 'closed' && p.status !== 'voided';
             const dueStr = p.due_date ? new Date(p.due_date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
             return `<tr onclick="openPunchDetail('${p.id}')" style="cursor:pointer;">
+              <td onclick="event.stopPropagation()" style="text-align:center;">
+                <input type="checkbox" ${_plSelected.has(p.id)?'checked':''} onchange="_plToggleSelect('${p.id}',this.checked)" style="width:15px;height:15px;cursor:pointer;">
+              </td>
               <td style="font-weight:600;color:var(--gray-600);">${p.number||'—'}</td>
               <td style="max-width:220px;">
                 <div style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(p.title)}</div>
@@ -4315,7 +4321,7 @@ function renderPunchWorkflow() {
                 <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openPunchDetail('${p.id}')">View</button>
               </td>
             </tr>`;
-          }).join('') : `<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--gray-400);">${_plTab==='bin'?'Recycle bin is empty':'No punch items match your filters'}</td></tr>`}
+          }).join('') : `<tr><td colspan="11" style="text-align:center;padding:32px;color:var(--gray-400);">${_plTab==='bin'?'Recycle bin is empty':'No punch items match your filters'}</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -4345,6 +4351,106 @@ function _plSetFilter(k,v) {
 }
 function _plPhaseChange(id) { _plPhaseFilter=id; _plLocFilter=''; _plPage=1; renderPunchWorkflow(); }
 function _plClearFilters()  { _plSearch=''; _plStatusFilter=''; _plPhaseFilter=''; _plLocFilter=''; _plSubFilter=''; _plPriorityFilter=''; _plActivityFilter=''; _plPage=1; renderPunchWorkflow(); }
+
+function _plToggleSelect(id, checked) {
+  if (checked) _plSelected.add(id);
+  else _plSelected.delete(id);
+  renderPunchWorkflow();
+}
+function _plClearSelection() { _plSelected = new Set(); renderPunchWorkflow(); }
+
+function exportPunchPDF(ids) {
+  const items = ids.map(id => PUNCH_DB.find(x => x.id === id)).filter(Boolean);
+  if (!items.length) { toast('No items found', 'warn'); return; }
+
+  const statusLabels = window.PL_STATUS_LABELS || {};
+  const fmtDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+  const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  const pagesHtml = items.map((p, pi) => {
+    const phaseName = _plLocName(p.phase), locName = _plLocName(p.location);
+
+    // Build merged timeline
+    const merged = [
+      ...(p.comments||[]).map(c => ({ ...c, _type: 'comment' })),
+      ...(p.history||[]).map(h => ({ ...h, _type: 'history' })),
+    ].sort((a, b) => new Date(a.at) - new Date(b.at));
+
+    const timelineHtml = merged.length ? merged.map(entry => {
+      const ts = new Date(entry.at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
+      if (entry._type === 'comment') {
+        const roleLabel = {admin:'Admin',field_engineer:'Field Eng.',client:'Client',readonly:'Read Only'}[entry.by_role]||entry.by_role||'';
+        return `<div class="tl-item tl-comment">
+          <div class="tl-badge tl-badge-comment">Comment</div>
+          <div class="tl-meta">${esc(entry.by)} · ${roleLabel} · ${ts}</div>
+          <div class="tl-body">${esc(entry.text)}</div>
+        </div>`;
+      } else {
+        const changes = (entry.changes||[]).map(c=>`<li>${esc(c)}</li>`).join('');
+        return `<div class="tl-item tl-action">
+          <div class="tl-badge tl-badge-action">Action</div>
+          <div class="tl-meta"><strong>${esc(entry.action)}</strong> · ${esc(entry.by||'')} · ${ts}</div>
+          ${changes ? `<ul style="margin:4px 0 0 12px;padding:0;">${changes}</ul>` : ''}
+          ${entry.note ? `<div style="color:#555;margin-top:2px;">Note: ${esc(entry.note)}</div>` : ''}
+        </div>`;
+      }
+    }).join('') : '<div style="color:#999;font-size:12px;">No activity recorded</div>';
+
+    const fields = [
+      ['Punch #', p.number], ['Status', statusLabels[p.status]||p.status], ['Priority', p.priority],
+      ['Type', p.type], ['Subsystem', p.subsystem], ['Schedule Impact', p.schedule_impact],
+      ['Phase', phaseName], ['Location', locName], ['Due Date', fmtDate(p.due_date)],
+      ['Punch Item Manager', p.punch_item_manager], ['Final Approver', p.final_approver], ['Created By', p.created_by],
+      ['Assignees', (p.assignees||[]).join(', ')], ['Category of Failure', p.category_of_failure], ['Type of Failure', p.type_of_failure],
+      ['Ball In Court', _plBallInCourt(p)], ['Created', p.created_at ? new Date(p.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'], ['RTC / Work Item', p.rtc_work_item_id],
+    ];
+
+    return `<div class="punch-page${pi > 0 ? ' page-break' : ''}">
+      <div class="header">
+        <div class="header-left"><div class="org-name">BART CBTC — Testing &amp; Commissioning Portal</div><div class="export-label">Punch List Export · ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div></div>
+        <div class="punch-num">#${esc(String(p.number||'—'))}</div>
+      </div>
+      <h1 class="punch-title">${esc(p.title)}</h1>
+      ${p.description ? `<div class="description">${esc(p.description)}</div>` : ''}
+      <div class="fields-grid">${fields.map(([l,v])=>`<div class="field"><div class="field-label">${l}</div><div class="field-value">${esc(v||'—')}</div></div>`).join('')}</div>
+      <div class="section-title">Activity &amp; Comments</div>
+      <div class="timeline">${timelineHtml}</div>
+    </div>`;
+  }).join('');
+
+  const win = window.open('', '_blank', 'width=900,height=700');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+  <title>Punch Export</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff;padding:0;}
+    .punch-page{padding:32px 40px;max-width:860px;margin:0 auto;}
+    .page-break{page-break-before:always;}
+    .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;padding-bottom:12px;border-bottom:2px solid #e60012;}
+    .org-name{font-size:11px;font-weight:700;color:#e60012;text-transform:uppercase;letter-spacing:.06em;}
+    .export-label{font-size:10px;color:#777;margin-top:3px;}
+    .punch-num{font-size:28px;font-weight:700;color:#e60012;}
+    .punch-title{font-size:18px;font-weight:700;color:#111;margin-bottom:12px;line-height:1.4;}
+    .description{font-size:12px;color:#444;line-height:1.6;background:#f7f7f7;padding:10px 14px;border-radius:6px;margin-bottom:16px;white-space:pre-wrap;}
+    .fields-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 16px;margin-bottom:20px;padding:14px;background:#f9f9f9;border-radius:6px;}
+    .field-label{font-size:9px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;}
+    .field-value{font-size:12px;color:#222;}
+    .section-title{font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;padding-top:4px;border-top:1px solid #eee;}
+    .timeline{display:flex;flex-direction:column;gap:0;}
+    .tl-item{padding:8px 12px;border-bottom:1px solid #f0f0f0;display:flex;flex-direction:column;gap:3px;}
+    .tl-comment{background:#fff;}
+    .tl-action{background:#f9f9f9;}
+    .tl-badge{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;margin-bottom:2px;text-transform:uppercase;letter-spacing:.04em;}
+    .tl-badge-comment{background:#fef3e0;color:#d97706;}
+    .tl-badge-action{background:#e5e7eb;color:#555;}
+    .tl-meta{font-size:11px;color:#444;}
+    .tl-body{font-size:12px;color:#222;white-space:pre-wrap;}
+    @media print{body{padding:0;}@page{margin:16mm 14mm;}}
+  </style>
+  </head><body>${pagesHtml}</body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 600);
+}
 
 function _punchWorkflowActions(p) {
   const role    = currentRoleUser?.role;
@@ -4437,47 +4543,60 @@ function openPunchDetail(id) {
           <div style="font-size:13px;color:var(--gray-800);line-height:1.6;white-space:pre-wrap;padding:10px 14px;background:var(--gray-50);border-radius:8px;">${escapeHtml(p.description)}</div>
         </div>` : ''}
 
-      <!-- Comments -->
-      <div style="margin-bottom:18px;">
-        <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px;">Comments (${(p.comments||[]).length})</div>
-        <div style="display:flex;flex-direction:column;gap:10px;max-height:200px;overflow-y:auto;margin-bottom:10px;" id="punch-comments-${id}">
-          ${comments.length ? comments.map(c => {
-            const initials = (c.by||'?').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
-            const roleLabel = {admin:'Admin',field_engineer:'Field Engineer',client:'Client',readonly:'Read Only'}[c.by_role]||c.by_role||'';
-            return `<div style="display:flex;gap:10px;align-items:flex-start;">
-              <div style="width:32px;height:32px;border-radius:50%;background:var(--hitachi-red);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${initials}</div>
-              <div style="flex:1;background:var(--gray-50);border-radius:8px;padding:8px 12px;">
-                <div style="font-size:12px;font-weight:600;color:var(--gray-800);">${escapeHtml(c.by)} <span style="font-weight:400;color:var(--gray-500);">· ${roleLabel} · ${dateAgo(c.at)}</span></div>
-                <div style="font-size:13px;color:var(--gray-700);margin-top:4px;white-space:pre-wrap;">${escapeHtml(c.text)}</div>
-              </div>
-            </div>`;
-          }).join('') : '<div style="font-size:12px;color:var(--gray-400);padding:8px 0;">No comments yet</div>'}
+      <!-- Combined Activity & Comments Timeline -->
+      <div>
+        <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:14px;">
+          Activity &amp; Comments
         </div>
+        <div style="display:flex;flex-direction:column;gap:0;max-height:340px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;padding:4px 0;" id="punch-timeline-${id}">
+          ${(() => {
+            const merged = [
+              ...(p.comments||[]).map(c => ({ ...c, _type: 'comment' })),
+              ...(p.history||[]).map(h => ({ ...h, _type: 'history' })),
+            ].sort((a, b) => new Date(a.at) - new Date(b.at));
+
+            if (!merged.length) return '<div style="font-size:12px;color:var(--gray-400);padding:14px 16px;">No activity yet</div>';
+
+            return merged.map(entry => {
+              if (entry._type === 'comment') {
+                const initials = (entry.by||'?').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+                const roleLabel = {admin:'Admin',field_engineer:'Field Engineer',client:'Client',readonly:'Read Only'}[entry.by_role]||entry.by_role||'';
+                return `
+                  <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border-bottom:1px solid var(--gray-100);">
+                    <div style="width:30px;height:30px;border-radius:50%;background:var(--hitachi-red);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${initials}</div>
+                    <div style="flex:1;min-width:0;">
+                      <div style="font-size:12px;font-weight:600;color:var(--gray-800);">${escapeHtml(entry.by)} <span style="font-weight:400;color:var(--gray-500);">· ${roleLabel} · ${dateAgo(entry.at)}</span></div>
+                      <div style="font-size:13px;color:var(--gray-700);margin-top:3px;white-space:pre-wrap;">${escapeHtml(entry.text)}</div>
+                    </div>
+                    <span style="font-size:10px;background:#fef3e0;color:var(--warn);padding:2px 6px;border-radius:8px;flex-shrink:0;font-weight:600;">Comment</span>
+                  </div>`;
+              } else {
+                return `
+                  <div style="display:flex;gap:10px;align-items:flex-start;padding:9px 14px;border-bottom:1px solid var(--gray-100);background:var(--gray-50);">
+                    <div style="width:8px;height:8px;border-radius:50%;background:var(--hitachi-red);margin-top:4px;flex-shrink:0;"></div>
+                    <div style="flex:1;min-width:0;font-size:12px;">
+                      <span style="font-weight:600;color:var(--gray-800);">${escapeHtml(entry.action)}</span>
+                      <span style="color:var(--gray-500);"> · ${escapeHtml(entry.by||'')} · ${dateAgo(entry.at)}</span>
+                      ${(entry.changes||[]).length ? `<ul style="margin:4px 0 0 0;padding-left:14px;color:var(--gray-600);">${entry.changes.map(c=>`<li>${escapeHtml(c)}</li>`).join('')}</ul>` : ''}
+                      ${entry.note ? `<div style="color:var(--gray-600);margin-top:2px;">Note: ${escapeHtml(entry.note)}</div>` : ''}
+                    </div>
+                    <span style="font-size:10px;background:var(--gray-200);color:var(--gray-700);padding:2px 6px;border-radius:8px;flex-shrink:0;font-weight:600;">Action</span>
+                  </div>`;
+              }
+            }).join('');
+          })()}
+        </div>
+
         ${canComment ? `
-          <div style="display:flex;gap:8px;align-items:flex-end;">
+          <div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;">
             <textarea id="punch-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…" style="flex:1;font-size:13px;resize:none;"></textarea>
             <button class="form-submit" style="white-space:nowrap;height:fit-content;" onclick="addPunchComment('${id}')">Post</button>
           </div>` : ''}
       </div>
-
-      <!-- History -->
-      <div>
-        <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px;">Activity History</div>
-        <div style="display:flex;flex-direction:column;gap:8px;max-height:220px;overflow-y:auto;">
-          ${history.length ? history.map(h => `
-            <div style="display:flex;gap:10px;align-items:flex-start;font-size:12px;">
-              <div style="width:6px;height:6px;border-radius:50%;background:var(--hitachi-red);margin-top:5px;flex-shrink:0;"></div>
-              <div style="flex:1;">
-                <div><span style="font-weight:600;">${escapeHtml(h.action)}</span> <span style="color:var(--gray-500);">· ${escapeHtml(h.by||'')} · ${dateAgo(h.at)}</span></div>
-                ${(h.changes||[]).length ? `<ul style="margin:4px 0 0 0;padding-left:16px;color:var(--gray-600);">${h.changes.map(c=>`<li>${escapeHtml(c)}</li>`).join('')}</ul>` : ''}
-                ${h.note ? `<div style="color:var(--gray-600);margin-top:2px;">Note: ${escapeHtml(h.note)}</div>` : ''}
-              </div>
-            </div>`).join('') : '<div style="color:var(--gray-400);font-size:12px;">No history</div>'}
-        </div>
-      </div>
     `,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Close</button>
+      <button class="form-secondary" onclick="exportPunchPDF(['${p.id}'])">⬇ Export PDF</button>
       ${p.is_deleted
         ? `<button class="form-secondary" onclick="restorePunch('${p.id}')">Restore from Bin</button>`
         : `<button class="form-secondary" style="color:var(--bad);" onclick="softDeletePunch('${p.id}')">Move to Bin</button>`}
