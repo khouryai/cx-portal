@@ -3225,27 +3225,29 @@ function renderTestMatrix() {
       ${hasFilter ? `<button class="filter-clear" onclick="_mxClearFilters()">Reset</button>` : ''}
     </div>
 
-    ${Object.keys(groups).length === 0 ? `
-      <div class="docs-empty"><h3>No test cases match your filters</h3><p>Try clearing filters or selecting a different location.</p></div>
-    ` : Object.values(groups).map(g => {
-      const done = g.items.filter(r => r.Status === 'Complete').length;
-      const editKey = encodeURIComponent(JSON.stringify({phase:g.phase,location:g.location,subsystem:g.subsystem,activity:g.activity,testReport:g.testReport}));
-      return `
-      <div class="matrix-section">
-        <div class="matrix-section-head">
-          <div style="flex:1;">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-              <div class="matrix-section-title">${escapeHtml(g.activity)}</div>
-              ${g.testReport ? `<a href="${escapeHtml(g.testReport)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--hitachi-red);font-weight:500;text-decoration:none;">📄 Test Report</a>` : ''}
-              ${isAdmin ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openEditActivityModal(decodeURIComponent('${editKey}'))">Edit</button>` : ''}
+    ${(() => {
+      // Store groups globally so onclick handlers can access by index — avoids all JSON/quote escaping issues
+      window._mxGroups = Object.values(groups);
+      if (!window._mxGroups.length) return `<div class="docs-empty"><h3>No test cases match your filters</h3><p>Try clearing filters or selecting a different location.</p></div>`;
+      return window._mxGroups.map((g, idx) => {
+        const done = g.items.filter(r => r.Status === 'Complete').length;
+        return `
+        <div class="matrix-section">
+          <div class="matrix-section-head">
+            <div style="flex:1;">
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <div class="matrix-section-title">${escapeHtml(g.activity)}</div>
+                ${g.testReport ? `<span style="font-size:12px;color:var(--gray-600);font-weight:500;">📄 CDRL: ${escapeHtml(g.testReport)}</span>` : ''}
+                ${isAdmin ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openEditActivityModal(${idx})">Edit</button>` : ''}
+              </div>
+              <div class="matrix-section-meta">${escapeHtml(g.phase)} · ${escapeHtml(g.location)} · ${escapeHtml(g.subsystem)}</div>
             </div>
-            <div class="matrix-section-meta">${escapeHtml(g.phase)} · ${escapeHtml(g.location)} · ${escapeHtml(g.subsystem)}</div>
+            <div class="matrix-section-meta">${done} / ${g.items.length} complete</div>
           </div>
-          <div class="matrix-section-meta">${done} / ${g.items.length} complete</div>
-        </div>
-        ${g.items.map(r => _renderTIMatrixRow(r, isAdmin)).join('')}
-      </div>`;
-    }).join('')}
+          ${g.items.map(r => _renderTIMatrixRow(r, isAdmin)).join('')}
+        </div>`;
+      }).join('');
+    })()}
   `;
 }
 
@@ -3295,9 +3297,12 @@ async function setTestStatusTI(testId, status) {
 // Keep legacy function name used elsewhere
 function setTestStatus(id, status) { setTestStatusTI(id, status); }
 
-function openEditActivityModal(jsonStr) {
-  let data;
-  try { data = JSON.parse(jsonStr); } catch(e) { toast('Parse error', 'error'); return; }
+let _pendingActivityEdit = null;
+
+function openEditActivityModal(idx) {
+  const data = (window._mxGroups || [])[idx];
+  if (!data) { toast('Could not load activity data', 'error'); return; }
+  _pendingActivityEdit = data;
   modal({
     title: 'Edit Activity',
     size: 'medium',
@@ -3307,27 +3312,31 @@ function openEditActivityModal(jsonStr) {
         <input type="text" id="ea-name" class="form-input" value="${escapeHtml(data.activity||'')}">
       </div>
       <div class="form-field" style="margin-top:12px;">
-        <label>Test Report (URL or reference)</label>
-        <input type="text" id="ea-report" class="form-input" placeholder="https://..." value="${escapeHtml(data.testReport||'')}">
+        <label>CDRL Reference</label>
+        <input type="text" id="ea-report" class="form-input" placeholder="e.g. CDRL-A001" value="${escapeHtml(data.testReport||'')}">
       </div>
       <p style="font-size:12px;color:var(--gray-500);margin-top:12px;">Changes apply to all test cases under this activity: <b>${escapeHtml(data.phase)} · ${escapeHtml(data.location)} · ${escapeHtml(data.subsystem)}</b></p>
     `,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="admin-action-btn" onclick="saveActivityEdit(${JSON.stringify(JSON.stringify({phase:data.phase,location:data.location,subsystem:data.subsystem,activity:data.activity}))})">Save Changes</button>
+      <button class="admin-action-btn" onclick="saveActivityEdit()">Save Changes</button>
     `
   });
 }
 
-async function saveActivityEdit(keyJson) {
-  let key;
-  try { key = JSON.parse(keyJson); } catch(e) { toast('Parse error','error'); return; }
+async function saveActivityEdit() {
+  const data = _pendingActivityEdit;
+  if (!data) { toast('No activity selected','error'); return; }
+
   const name   = document.getElementById('ea-name').value.trim();
   const report = document.getElementById('ea-report').value.trim();
   if (!name) { toast('Activity name required','error'); return; }
 
-  const rows = TI.filter(r => r.Activity===key.activity && r.Location===key.location && r.Phase===key.phase && r.Subsystem===key.subsystem);
-  if (!rows.length) { toast('No matching test cases','error'); return; }
+  const rows = TI.filter(r => r.Activity===data.activity && r.Location===data.location && r.Phase===data.phase && r.Subsystem===data.subsystem);
+  if (!rows.length) { toast('No matching test cases found','error'); return; }
+
+  const btn = document.querySelector('.modal-footer .admin-action-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
   rows.forEach(r => { r.Activity=name; r.TestReport=report; });
   try {
@@ -3335,10 +3344,14 @@ async function saveActivityEdit(keyJson) {
     const { error } = await _sb.from('test_items').update({ activity: name, test_report: report }).in('test_id', ids);
     if (error) throw error;
     toast(`Updated ${rows.length} test cases`, 'success');
+    _pendingActivityEdit = null;
     closeModal();
     renderTestMatrix();
-    initLineItems(); // refresh cascaded options
-  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
+    initLineItems();
+  } catch(e) {
+    toast('Save failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+  }
 }
 
 // ==========================================================================
