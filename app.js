@@ -19,6 +19,37 @@ try {
 } catch(e) {
   console.error('[Supabase] FAILED to init:', e.message);
 }
+
+// Direct REST-API insert that bypasses supabase-js — workaround for cases where
+// the client's insert() hangs (we've seen this with bulk inserts to test_results).
+// Uses native fetch with a 15s AbortController timeout so it can never get stuck.
+async function _dbInsert(table, rows) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: {
+        apikey:        SUPABASE_ANON_KEY,
+        Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
+        'Content-Type':'application/json',
+        Prefer:        'return=representation',
+      },
+      body: JSON.stringify(rows),
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`${table} insert failed (${res.status}): ${errBody}`);
+    }
+    return await res.json();
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error(`${table} insert timed out after 15s`);
+    throw e;
+  }
+}
 // ────────────────────────────────────────────────────────────
 
 // Color palette (matches CSS)
@@ -3889,29 +3920,15 @@ async function submitIntakeFinal() {
 
     console.log('[submitIntakeFinal] inserting', resultRows.length, 'test_results +', 1, 'delay_log');
 
-    // Race the supabase call against a 15s timeout so we never get stuck on "Submitting…"
-    const withTimeout = (p, label) => Promise.race([
-      p,
-      new Promise((_, rej) => setTimeout(() => rej(new Error(label + ' timed out after 15s — network or Supabase issue')), 15000))
-    ]);
-
     if (resultRows.length > 0) {
-      console.log('[submitIntakeFinal] → test_results.insert');
-      // .select() forces PostgREST to return the inserted rows, which avoids
-      // a known supabase-js v2 quirk where insert() without select can hang.
-      const { data: rData, error: rErr } = await withTimeout(
-        _sb.from('test_results').insert(resultRows).select(), 'test_results'
-      );
-      console.log('[submitIntakeFinal] ← test_results returned:', rData?.length ?? 0, 'rows, error:', rErr);
-      if (rErr) throw new Error('test_results insert failed: ' + rErr.message);
+      console.log('[submitIntakeFinal] → test_results.insert (direct fetch)');
+      const rData = await _dbInsert('test_results', resultRows);
+      console.log('[submitIntakeFinal] ← test_results returned:', rData?.length ?? 0, 'rows');
     }
 
-    console.log('[submitIntakeFinal] → delay_log.insert');
-    const { data: lData, error: lErr } = await withTimeout(
-      _sb.from('delay_log').insert([logRow]).select(), 'delay_log'
-    );
-    console.log('[submitIntakeFinal] ← delay_log returned:', lData?.length ?? 0, 'rows, error:', lErr);
-    if (lErr) throw new Error('delay_log insert failed: ' + lErr.message);
+    console.log('[submitIntakeFinal] → delay_log.insert (direct fetch)');
+    const lData = await _dbInsert('delay_log', [logRow]);
+    console.log('[submitIntakeFinal] ← delay_log returned:', lData?.length ?? 0, 'rows');
 
     logAudit('Daily Log Submitted', `${allItems.length} test cases logged`, 'Daily report generated');
     _sessionLog     = [];
