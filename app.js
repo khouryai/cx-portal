@@ -59,8 +59,21 @@ function showPage(name) {
   document.querySelectorAll('.nav-dd').forEach(dd => dd.classList.remove('open'));
   // Re-render pages that need fresh state on each visit
   if (name === 'field-intake') renderFieldIntake();
+  if (name === 'test-matrix') renderTestMatrix();
   window.scrollTo(0, 0);
 }
+
+// When the user returns to the tab/window, reload TI so any out-of-band Supabase
+// changes are reflected, then re-render the matrix if it's the active page.
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible' || !currentRoleUser) return;
+  try {
+    await loadTestItems();
+    if (document.getElementById('page-test-matrix')?.classList.contains('active')) {
+      renderTestMatrix();
+    }
+  } catch (e) { console.warn('[visibilitychange] TI reload failed:', e?.message); }
+});
 
 document.querySelectorAll('.nav-link').forEach(link => {
   link.addEventListener('click', e => {
@@ -3188,10 +3201,15 @@ function renderTestMatrix() {
      (matrixFilter.applicable === 'no'  && (!r.Status || r.Status === 'Not Started')))
   );
 
-  const complete   = filtered.filter(r => r.Status === 'Complete').length;
+  // 'Complete'/'Passed'/'Future' are legacy DB values — treat them with current names
+  const isPass = s => s === 'Pass' || s === 'Complete' || s === 'Passed';
+  const isFail = s => s === 'Fail' || s === 'Failed';
+  const isNotStarted = s => !s || s === 'Not Started' || s === 'Future';
+  const complete   = filtered.filter(r => isPass(r.Status)).length;
+  const failed     = filtered.filter(r => isFail(r.Status)).length;
   const inprog     = filtered.filter(r => r.Status === 'In Progress').length;
   const blocked    = filtered.filter(r => r.Status === 'Blocked').length;
-  const notStarted = filtered.filter(r => !r.Status || r.Status === 'Not Started').length;
+  const notStarted = filtered.filter(r => isNotStarted(r.Status)).length;
 
   // Group by Phase + Location + Subsystem + Activity
   const groups = {};
@@ -3205,10 +3223,11 @@ function renderTestMatrix() {
 
   root.innerHTML = `
     <div class="matrix-summary">
-      <div class="matrix-stat"><div class="matrix-stat-label">Complete</div><div class="matrix-stat-value good">${complete}</div></div>
-      <div class="matrix-stat"><div class="matrix-stat-label">In Progress</div><div class="matrix-stat-value info">${inprog}</div></div>
-      <div class="matrix-stat"><div class="matrix-stat-label">Blocked</div><div class="matrix-stat-value warn">${blocked}</div></div>
-      <div class="matrix-stat"><div class="matrix-stat-label">Not Started</div><div class="matrix-stat-value">${notStarted}</div></div>
+      <div class="matrix-stat"><div class="matrix-stat-label">Pass</div><div class="matrix-stat-value good" id="mx-stat-pass">${complete}</div></div>
+      <div class="matrix-stat"><div class="matrix-stat-label">Fail</div><div class="matrix-stat-value bad" id="mx-stat-fail">${failed}</div></div>
+      <div class="matrix-stat"><div class="matrix-stat-label">In Progress</div><div class="matrix-stat-value info" id="mx-stat-inprog">${inprog}</div></div>
+      <div class="matrix-stat"><div class="matrix-stat-label">Blocked</div><div class="matrix-stat-value warn" id="mx-stat-blocked">${blocked}</div></div>
+      <div class="matrix-stat"><div class="matrix-stat-label">Not Started</div><div class="matrix-stat-value" id="mx-stat-notstarted">${notStarted}</div></div>
       <div class="matrix-stat"><div class="matrix-stat-label">Total</div><div class="matrix-stat-value">${filtered.length}</div></div>
     </div>
 
@@ -3242,9 +3261,9 @@ function renderTestMatrix() {
       window._mxGroups = Object.values(groups);
       if (!window._mxGroups.length) return `<div class="docs-empty"><h3>No test cases match your filters</h3><p>Try clearing filters or selecting a different location.</p></div>`;
       return window._mxGroups.map((g, idx) => {
-        const done = g.items.filter(r => r.Status === 'Complete').length;
+        const done = g.items.filter(r => isPass(r.Status)).length;
         return `
-        <div class="matrix-section">
+        <div class="matrix-section" data-mx-group="${idx}">
           <div class="matrix-section-head">
             <div style="flex:1;">
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -3254,7 +3273,7 @@ function renderTestMatrix() {
               </div>
               <div class="matrix-section-meta">${escapeHtml(g.phase)} · ${escapeHtml(g.location)} · ${escapeHtml(g.subsystem)}</div>
             </div>
-            <div class="matrix-section-meta">${done} / ${g.items.length} complete</div>
+            <div class="matrix-section-meta" id="mx-grp-count-${idx}">${done} / ${g.items.length} passed</div>
           </div>
           ${g.items.map(r => _renderTIMatrixRow(r, isAdmin)).join('')}
         </div>`;
@@ -3337,7 +3356,36 @@ function _mxStatusChange(testId, status) {
     if (reasonInput) reasonInput.placeholder = status === 'Fail' ? 'Failure reason...' : 'Blocked reason...';
   }
 
+  _mxRefreshCounts();
   _mxSaveStatus(status, r);
+}
+
+// Recompute the matrix summary tiles + per-activity tallies from current TI state
+function _mxRefreshCounts() {
+  const isPass = s => s === 'Pass' || s === 'Complete' || s === 'Passed';
+  const isFail = s => s === 'Fail' || s === 'Failed';
+  const isNotStarted = s => !s || s === 'Not Started' || s === 'Future';
+
+  // Determine which rows are currently in the visible filter
+  const filtered = TI.filter(r =>
+    (!matrixFilter.subsystem || r.Subsystem === matrixFilter.subsystem) &&
+    (!matrixFilter.phase     || r.Phase === matrixFilter.phase) &&
+    (!matrixFilter.location  || r.Location === matrixFilter.location) &&
+    (!matrixFilter.activity  || r.Activity === matrixFilter.activity)
+  );
+
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  set('mx-stat-pass',       filtered.filter(r => isPass(r.Status)).length);
+  set('mx-stat-fail',       filtered.filter(r => isFail(r.Status)).length);
+  set('mx-stat-inprog',     filtered.filter(r => r.Status === 'In Progress').length);
+  set('mx-stat-blocked',    filtered.filter(r => r.Status === 'Blocked').length);
+  set('mx-stat-notstarted', filtered.filter(r => isNotStarted(r.Status)).length);
+
+  // Update each per-activity tally
+  (window._mxGroups || []).forEach((g, idx) => {
+    const done = g.items.filter(r => isPass(r.Status)).length;
+    set(`mx-grp-count-${idx}`, `${done} / ${g.items.length} passed`);
+  });
 }
 
 async function _mxSaveStatus(status, r) {
