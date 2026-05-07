@@ -23,7 +23,27 @@ try {
 // Direct REST-API insert that bypasses supabase-js — workaround for cases where
 // the client's insert() hangs (we've seen this with bulk inserts to test_results).
 // Uses native fetch with a 15s AbortController timeout so it can never get stuck.
+// ── _dbInsert / _dbUpdate — native fetch helpers ─────────────────────────────
+// These bypass the supabase-js client entirely. The JS client caches its auth
+// header internally and does NOT reliably re-read the JWT after a browser tab
+// resumes from a background/throttled state. Native fetch re-reads the session
+// fresh on every call, which is why daily-log submits switched to this approach.
+// _mxSaveStatus (test matrix status writes) now also uses _dbUpdate for the
+// same reason: tab-switch + status change was silently dropping DB writes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function _getAuthHeader() {
+  // Always pull the live access_token from the Supabase session store.
+  // Falls back to the anon key if no session exists (shouldn't happen while logged in).
+  try {
+    const { data: { session } } = await _sb.auth.getSession();
+    if (session?.access_token) return 'Bearer ' + session.access_token;
+  } catch(e) { console.warn('[_getAuthHeader] getSession failed:', e.message); }
+  return 'Bearer ' + SUPABASE_ANON_KEY;
+}
+
 async function _dbInsert(table, rows) {
+  const authHeader = await _getAuthHeader();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
   try {
@@ -32,7 +52,7 @@ async function _dbInsert(table, rows) {
       signal: ctrl.signal,
       headers: {
         apikey:        SUPABASE_ANON_KEY,
-        Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
+        Authorization: authHeader,
         'Content-Type':'application/json',
         Prefer:        'return=representation',
       },
@@ -50,7 +70,41 @@ async function _dbInsert(table, rows) {
     throw e;
   }
 }
-// ────────────────────────────────────────────────────────────
+
+// PATCH a single row; `match` is an object of { col: value } equality filters.
+// Returns the array of updated rows (Prefer: return=representation).
+async function _dbUpdate(table, patch, match) {
+  const authHeader = await _getAuthHeader();
+  const qs = Object.entries(match)
+    .map(([k, v]) => `${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`)
+    .join('&');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${qs}`, {
+      method: 'PATCH',
+      signal: ctrl.signal,
+      headers: {
+        apikey:        SUPABASE_ANON_KEY,
+        Authorization: authHeader,
+        'Content-Type':'application/json',
+        Prefer:        'return=representation',
+      },
+      body: JSON.stringify(patch),
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`${table} update failed (${res.status}): ${errBody}`);
+    }
+    return await res.json(); // array of updated rows
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error(`${table} update timed out after 15s`);
+    throw e;
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Color palette (matches CSS)
 const COLORS = {
@@ -3506,25 +3560,33 @@ function _mxRefreshCounts() {
 }
 
 async function _mxSaveStatus(status, r) {
-  _mxSavePending = true; // block tab-resume TI reload while this is in flight
-  const upd = { status };
-  if (status === 'Pass') { upd.completed_by = currentRoleUser?.name; upd.completed_date = new Date().toISOString(); }
+  // Uses _dbUpdate (native fetch) instead of the supabase-js client.
+  // Reason: supabase-js caches its JWT internally and does not reliably
+  // re-read it after a browser tab resumes — causing silent write failures
+  // after tab switches. _dbUpdate calls _getAuthHeader() which calls
+  // _sb.auth.getSession() fresh on every invocation, guaranteeing a valid token.
+  _mxSavePending = true;
+  const patch = { status };
+  if (status === 'Pass') {
+    patch.completed_by   = currentRoleUser?.name;
+    patch.completed_date = new Date().toISOString();
+  }
+  console.log(`[mxSaveStatus] → test_items test_id="${r.TestID}" status="${status}"`);
   try {
-    // .select() returns the updated rows so we can verify the update actually matched
-    const { data, error } = await _sb.from('test_items').update(upd).eq('test_id', r.TestID).select();
-    if (error) throw error;
-    if (!data || data.length === 0) {
-      console.warn('[mxSaveStatus] 0 rows matched for test_id:', JSON.stringify(r.TestID));
+    const rows = await _dbUpdate('test_items', patch, { test_id: r.TestID });
+    if (!rows || rows.length === 0) {
+      console.warn('[mxSaveStatus] 0 rows matched:', r.TestID);
       toast(`⚠ Save did not match any row in DB (test_id "${r.TestID}")`, 'warn');
       return;
     }
+    console.log(`[mxSaveStatus] ✓ updated ${rows.length} row(s)`);
     toast(`${r.TestCaseCode} → ${status}`, 'success');
     logAudit('Test Status Update', `${r.TestCaseCode} @ ${r.Location}`, `→ ${status}`);
   } catch(e) {
-    console.error('[mxSaveStatus] error:', e);
+    console.error('[mxSaveStatus] ✗ failed:', e.message);
     toast('Save failed: ' + (e.message || 'unknown error'), 'error');
   } finally {
-    _mxSavePending = false; // always clear, even on error
+    _mxSavePending = false;
   }
 }
 
@@ -3535,9 +3597,12 @@ function _mxSaveReason(testId, reason) {
   if (isFail) r.FailedReason = reason; else r.BlockedReason = reason;
   const logEntry = _sessionLog.find(e => String(e.testId) === String(r.TestID));
   if (logEntry) { if (isFail) logEntry.failedReason = reason; else logEntry.blockedReason = reason; }
-  const upd = isFail ? { failed_reason: reason } : { blocked_reason: reason };
-  _sb.from('test_items').update(upd).eq('test_id', r.TestID).then(({error}) => {
-    if (error) toast('Reason save failed: ' + error.message, 'error');
+  const patch = isFail ? { failed_reason: reason } : { blocked_reason: reason };
+  // Use _dbUpdate (native fetch) for the same reason as _mxSaveStatus:
+  // supabase-js JWT caching causes silent failures after tab switches.
+  _dbUpdate('test_items', patch, { test_id: r.TestID }).catch(err => {
+    console.error('[mxSaveReason] failed:', err.message);
+    toast('Reason save failed: ' + err.message, 'error');
   });
 }
 
