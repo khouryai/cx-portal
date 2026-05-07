@@ -4363,93 +4363,148 @@ function exportPunchPDF(ids) {
   const items = ids.map(id => PUNCH_DB.find(x => x.id === id)).filter(Boolean);
   if (!items.length) { toast('No items found', 'warn'); return; }
 
-  const statusLabels = window.PL_STATUS_LABELS || {};
+  // PL_STATUS_LABELS is a const in the same scope — do NOT use window.PL_STATUS_LABELS
+  // (const/let top-level vars are NOT added to window in non-module scripts)
+  const statusLabels = PL_STATUS_LABELS || {};
   const fmtDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
-  const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const esc = s => (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
-  const pagesHtml = items.map((p, pi) => {
-    const phaseName = _plLocName(p.phase), locName = _plLocName(p.location);
+  const pagesHtml = items.map((item, pi) => {
+    const phaseName = _plLocName(item.phase);
+    const locName   = _plLocName(item.location);
 
-    // Build merged timeline
+    // Merged chronological timeline
     const merged = [
-      ...(p.comments||[]).map(c => ({ ...c, _type: 'comment' })),
-      ...(p.history||[]).map(h => ({ ...h, _type: 'history' })),
+      ...(item.comments||[]).map(c => ({ ...c, _type: 'comment' })),
+      ...(item.history||[]).map(h => ({ ...h, _type: 'history' })),
     ].sort((a, b) => new Date(a.at) - new Date(b.at));
 
     const timelineHtml = merged.length ? merged.map(entry => {
       const ts = new Date(entry.at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
       if (entry._type === 'comment') {
-        const roleLabel = {admin:'Admin',field_engineer:'Field Eng.',client:'Client',readonly:'Read Only'}[entry.by_role]||entry.by_role||'';
+        const roleLabel = {admin:'Admin',field_engineer:'Field Eng.',client:'Client',readonly:'Read Only'}[entry.by_role] || entry.by_role || '';
         return `<div class="tl-item tl-comment">
           <div class="tl-badge tl-badge-comment">Comment</div>
-          <div class="tl-meta">${esc(entry.by)} · ${roleLabel} · ${ts}</div>
+          <div class="tl-meta">${esc(entry.by)} · ${esc(roleLabel)} · ${ts}</div>
           <div class="tl-body">${esc(entry.text)}</div>
         </div>`;
       } else {
-        const changes = (entry.changes||[]).map(c=>`<li>${esc(c)}</li>`).join('');
+        const changeItems = (entry.changes||[]).map(ch => `<li>${esc(ch)}</li>`).join('');
         return `<div class="tl-item tl-action">
           <div class="tl-badge tl-badge-action">Action</div>
           <div class="tl-meta"><strong>${esc(entry.action)}</strong> · ${esc(entry.by||'')} · ${ts}</div>
-          ${changes ? `<ul style="margin:4px 0 0 12px;padding:0;">${changes}</ul>` : ''}
+          ${changeItems ? `<ul style="margin:4px 0 0 12px;padding:0;">${changeItems}</ul>` : ''}
           ${entry.note ? `<div style="color:#555;margin-top:2px;">Note: ${esc(entry.note)}</div>` : ''}
         </div>`;
       }
-    }).join('') : '<div style="color:#999;font-size:12px;">No activity recorded</div>';
+    }).join('') : '<div style="color:#999;font-size:12px;padding:8px 0;">No activity recorded</div>';
 
     const fields = [
-      ['Punch #', p.number], ['Status', statusLabels[p.status]||p.status], ['Priority', p.priority],
-      ['Type', p.type], ['Subsystem', p.subsystem], ['Schedule Impact', p.schedule_impact],
-      ['Phase', phaseName], ['Location', locName], ['Due Date', fmtDate(p.due_date)],
-      ['Punch Item Manager', p.punch_item_manager], ['Final Approver', p.final_approver], ['Created By', p.created_by],
-      ['Assignees', (p.assignees||[]).join(', ')], ['Category of Failure', p.category_of_failure], ['Type of Failure', p.type_of_failure],
-      ['Ball In Court', _plBallInCourt(p)], ['Created', p.created_at ? new Date(p.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'], ['RTC / Work Item', p.rtc_work_item_id],
+      ['Punch #',             item.number],
+      ['Status',              statusLabels[item.status] || item.status],
+      ['Priority',            item.priority],
+      ['Type',                item.type],
+      ['Subsystem',           item.subsystem],
+      ['Schedule Impact',     item.schedule_impact],
+      ['Phase',               phaseName],
+      ['Location',            locName],
+      ['Due Date',            fmtDate(item.due_date)],
+      ['Punch Item Manager',  item.punch_item_manager],
+      ['Final Approver',      item.final_approver],
+      ['Created By',          item.created_by],
+      ['Assignees',           (item.assignees||[]).join(', ')],
+      ['Category of Failure', item.category_of_failure],
+      ['Type of Failure',     item.type_of_failure],
+      ['Ball In Court',       _plBallInCourt(item)],
+      ['RTC / Work Item',     item.rtc_work_item_id],
+      ['Created',             item.created_at ? new Date(item.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'],
     ];
 
     return `<div class="punch-page${pi > 0 ? ' page-break' : ''}">
-      <div class="header">
-        <div class="header-left"><div class="org-name">BART CBTC — Testing &amp; Commissioning Portal</div><div class="export-label">Punch List Export · ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div></div>
-        <div class="punch-num">#${esc(String(p.number||'—'))}</div>
+      <div class="ph">
+        <div>
+          <div class="org">BART CBTC — Testing &amp; Commissioning Portal</div>
+          <div class="exp-lbl">Punch List Export · ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
+        </div>
+        <div class="pnum">#${esc(String(item.number||'—'))}</div>
       </div>
-      <h1 class="punch-title">${esc(p.title)}</h1>
-      ${p.description ? `<div class="description">${esc(p.description)}</div>` : ''}
-      <div class="fields-grid">${fields.map(([l,v])=>`<div class="field"><div class="field-label">${l}</div><div class="field-value">${esc(v||'—')}</div></div>`).join('')}</div>
-      <div class="section-title">Activity &amp; Comments</div>
+      <h1 class="ptitle">${esc(item.title)}</h1>
+      ${item.description ? `<div class="pdesc">${esc(item.description)}</div>` : ''}
+      <div class="fgrid">${fields.map(([l,v])=>`<div class="fd"><div class="fl">${l}</div><div class="fv">${esc(v||'—')}</div></div>`).join('')}</div>
+      <div class="stitle">Activity &amp; Comments</div>
       <div class="timeline">${timelineHtml}</div>
     </div>`;
   }).join('');
 
-  const win = window.open('', '_blank', 'width=900,height=700');
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
-  <title>Punch Export</title>
-  <style>
+  const css = `
     *{box-sizing:border-box;margin:0;padding:0;}
-    body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff;padding:0;}
+    body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff;}
     .punch-page{padding:32px 40px;max-width:860px;margin:0 auto;}
-    .page-break{page-break-before:always;}
-    .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;padding-bottom:12px;border-bottom:2px solid #e60012;}
-    .org-name{font-size:11px;font-weight:700;color:#e60012;text-transform:uppercase;letter-spacing:.06em;}
-    .export-label{font-size:10px;color:#777;margin-top:3px;}
-    .punch-num{font-size:28px;font-weight:700;color:#e60012;}
-    .punch-title{font-size:18px;font-weight:700;color:#111;margin-bottom:12px;line-height:1.4;}
-    .description{font-size:12px;color:#444;line-height:1.6;background:#f7f7f7;padding:10px 14px;border-radius:6px;margin-bottom:16px;white-space:pre-wrap;}
-    .fields-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 16px;margin-bottom:20px;padding:14px;background:#f9f9f9;border-radius:6px;}
-    .field-label{font-size:9px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;}
-    .field-value{font-size:12px;color:#222;}
-    .section-title{font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;padding-top:4px;border-top:1px solid #eee;}
-    .timeline{display:flex;flex-direction:column;gap:0;}
+    .page-break{page-break-before:always;padding-top:32px;}
+    .ph{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;padding-bottom:12px;border-bottom:2px solid #e60012;}
+    .org{font-size:11px;font-weight:700;color:#e60012;text-transform:uppercase;letter-spacing:.06em;}
+    .exp-lbl{font-size:10px;color:#777;margin-top:3px;}
+    .pnum{font-size:28px;font-weight:700;color:#e60012;}
+    .ptitle{font-size:18px;font-weight:700;color:#111;margin-bottom:12px;line-height:1.4;}
+    .pdesc{font-size:12px;color:#444;line-height:1.6;background:#f7f7f7;padding:10px 14px;border-radius:6px;margin-bottom:16px;white-space:pre-wrap;}
+    .fgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 16px;margin-bottom:20px;padding:14px;background:#f9f9f9;border-radius:6px;}
+    .fl{font-size:9px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;}
+    .fv{font-size:12px;color:#222;word-break:break-word;}
+    .stitle{font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;padding-top:12px;border-top:1px solid #eee;}
+    .timeline{border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;}
     .tl-item{padding:8px 12px;border-bottom:1px solid #f0f0f0;display:flex;flex-direction:column;gap:3px;}
+    .tl-item:last-child{border-bottom:none;}
     .tl-comment{background:#fff;}
-    .tl-action{background:#f9f9f9;}
-    .tl-badge{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;margin-bottom:2px;text-transform:uppercase;letter-spacing:.04em;}
+    .tl-action{background:#f9fafb;}
+    .tl-badge{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;margin-bottom:2px;text-transform:uppercase;letter-spacing:.04em;width:fit-content;}
     .tl-badge-comment{background:#fef3e0;color:#d97706;}
     .tl-badge-action{background:#e5e7eb;color:#555;}
     .tl-meta{font-size:11px;color:#444;}
-    .tl-body{font-size:12px;color:#222;white-space:pre-wrap;}
-    @media print{body{padding:0;}@page{margin:16mm 14mm;}}
-  </style>
-  </head><body>${pagesHtml}</body></html>`);
-  win.document.close();
-  setTimeout(() => win.print(), 600);
+    .tl-body{font-size:12px;color:#222;white-space:pre-wrap;margin-top:2px;}
+    @media print{
+      body{padding:0;}
+      @page{margin:16mm 14mm;size:A4;}
+      .page-break{page-break-before:always;}
+    }
+  `;
+
+  const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Punch Export</title><style>${css}</style></head><body>${pagesHtml}<script>window.onload=function(){window.print();}<\/script></body></html>`;
+
+  // ── Strategy: Blob URL → hidden iframe → contentWindow.print() ─────────────
+  // This avoids popup blockers entirely (no window.open needed).
+  // The iframe loads the blob, fires onload, then we call print() on its window.
+  try {
+    const blob   = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+
+    const frame = document.createElement('iframe');
+    frame.style.cssText = 'position:fixed;top:-10000px;left:-10000px;width:1px;height:1px;border:none;opacity:0;';
+    document.body.appendChild(frame);
+
+    frame.onload = () => {
+      try {
+        frame.contentWindow.focus();
+        frame.contentWindow.print();
+      } catch(printErr) {
+        console.error('[PDF] iframe print failed, falling back:', printErr);
+        // Fallback: open blob URL in a new tab so user can Ctrl+P manually
+        window.open(blobUrl, '_blank');
+      }
+      // Clean up after print dialog closes (or after 60s timeout)
+      const cleanup = () => {
+        if (document.body.contains(frame)) document.body.removeChild(frame);
+        URL.revokeObjectURL(blobUrl);
+      };
+      frame.contentWindow.onafterprint = cleanup;
+      setTimeout(cleanup, 60000);
+    };
+
+    frame.src = blobUrl;
+    toast(`Preparing PDF for ${items.length} item${items.length===1?'':'s'}…`, 'success');
+  } catch(e) {
+    console.error('[PDF] export failed:', e);
+    toast('PDF export failed: ' + e.message, 'error');
+  }
 }
 
 function _punchWorkflowActions(p) {
