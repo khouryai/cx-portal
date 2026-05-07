@@ -32,23 +32,34 @@ try {
 // same reason: tab-switch + status change was silently dropping DB writes.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function _getAuthHeader() {
+// Read the JWT directly from localStorage — completely bypasses supabase-js auth client
+// which hangs indefinitely after signInWithPassword on this environment.
+// Supabase-js v2 stores the session under key: sb-{project_ref}-auth-token
+function _getSessionFromStorage() {
   try {
-    const { data: { session } } = await _sb.auth.getSession();
-    if (session?.access_token) {
-      const expiresAt = session.expires_at * 1000;
-      const minsLeft  = ((expiresAt - Date.now()) / 60000).toFixed(1);
-      const expired   = Date.now() > expiresAt;
-      console.log(`[auth] token ${expired ? '⛔ EXPIRED' : '✓ valid'} | expires in ${minsLeft} min`);
-      return 'Bearer ' + session.access_token;
-    }
-    console.warn('[auth] ⚠ no access_token in session — falling back to anon key');
-  } catch(e) { console.warn('[_getAuthHeader] getSession threw:', e.message); }
+    const ref = SUPABASE_URL.replace('https://', '').split('.')[0]; // e.g. "uqtwiucxktljhukmgmxg"
+    const raw = localStorage.getItem(`sb-${ref}-auth-token`);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+
+// Synchronous — no await needed. Reads token from localStorage directly.
+function _getAuthHeader() {
+  const session = _getSessionFromStorage();
+  if (session?.access_token) {
+    const expiresAt = (session.expires_at || 0) * 1000;
+    const minsLeft  = ((expiresAt - Date.now()) / 60000).toFixed(1);
+    const expired   = Date.now() > expiresAt;
+    console.log(`[auth] token ${expired ? '⛔ EXPIRED' : '✓ valid'} | expires in ${minsLeft} min`);
+    return 'Bearer ' + session.access_token;
+  }
+  console.warn('[auth] ⚠ no session in localStorage — falling back to anon key');
   return 'Bearer ' + SUPABASE_ANON_KEY;
 }
 
 async function _dbInsert(table, rows) {
-  const authHeader = await _getAuthHeader();
+  const authHeader = _getAuthHeader();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
   try {
@@ -79,7 +90,7 @@ async function _dbInsert(table, rows) {
 // PATCH a single row; `match` is an object of { col: value } equality filters.
 // Returns the array of updated rows (Prefer: return=representation).
 async function _dbUpdate(table, patch, match) {
-  const authHeader = await _getAuthHeader();
+  const authHeader = _getAuthHeader();
   const qs = Object.entries(match)
     .map(([k, v]) => `${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`)
     .join('&');
@@ -120,7 +131,7 @@ async function _dbUpdate(table, patch, match) {
 // Returns the array of matching rows. Uses native fetch with 15s timeout to bypass
 // supabase-js client state issues (same reason as _dbInsert / _dbUpdate).
 async function _dbSelect(table, match = {}, select = '*') {
-  const authHeader = await _getAuthHeader();
+  const authHeader = _getAuthHeader();
   const qs = Object.entries(match)
     .map(([k, v]) => `${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`)
     .join('&');
@@ -166,22 +177,21 @@ async function _dbSelect(table, match = {}, select = '*') {
 window.runDiagnostics = async function() {
   console.group('%c[DIAGNOSTICS] CX Portal Health Check', 'color:#e60012;font-size:14px;font-weight:bold');
 
-  // 1. Auth / session
+  // 1. Auth / session (read directly from localStorage — bypasses supabase-js hang)
   console.group('1. Auth Session');
   try {
-    const { data: { session }, error } = await _sb.auth.getSession();
-    if (error) { console.error('getSession error:', error.message); }
-    else if (!session) { console.warn('⚠ NO active session — user not logged in'); }
+    const session = _getSessionFromStorage();
+    if (!session) { console.warn('⚠ NO active session in localStorage — user not logged in'); }
     else {
       const exp = new Date(session.expires_at * 1000);
       const minsLeft = ((session.expires_at * 1000 - Date.now()) / 60000).toFixed(1);
       const isExp = Date.now() > session.expires_at * 1000;
-      console.log('User:', session.user.email);
+      console.log('User:', session.user?.email);
       console.log('Token status:', isExp ? '⛔ EXPIRED' : `✓ valid for ${minsLeft} more minutes`);
       console.log('Expires at:', exp.toLocaleString());
-      console.log('Access token (first 30 chars):', session.access_token.slice(0, 30) + '…');
+      console.log('Token (first 30):', session.access_token?.slice(0, 30) + '…');
     }
-  } catch(e) { console.error('getSession threw:', e.message); }
+  } catch(e) { console.error('session read threw:', e.message); }
   console.groupEnd();
 
   // 2. App state
@@ -307,10 +317,8 @@ async function refreshApp() {
   console.log('[refreshApp] rehydrating after tab resume…');
 
   // 1. Re-verify session — sign out cleanly if it has expired
-  try {
-    const { data: { session } } = await _sb.auth.getSession();
-    if (!session) { console.warn('[refreshApp] session lost — signing out'); _onSignedOut(); return; }
-  } catch (e) { console.warn('[refreshApp] getSession failed:', e.message); }
+  const session = _getSessionFromStorage();
+  if (!session) { console.warn('[refreshApp] session lost — signing out'); _onSignedOut(); return; }
 
   // 2. Reload punch items (always safe — not mid-edit)
   try { await loadPunchDB(); } catch(e) { console.warn('[refreshApp] punch reload failed:', e.message); }
@@ -1969,9 +1977,8 @@ function initAuth() {
     }
   });
   // Check for existing session on load (covers hard refresh / returning user)
-  _sb.auth.getSession().then(({ data: { session } }) => {
-    if (!session) _onSignedOut();
-  });
+  // Read directly from localStorage — bypasses supabase-js auth client hang.
+  if (!_getSessionFromStorage()) _onSignedOut();
 }
 
 async function _loadCurrentProfile(user, accessToken) {
@@ -1984,7 +1991,7 @@ async function _loadCurrentProfile(user, accessToken) {
     // Use the access token passed in directly from onAuthStateChange — avoids calling
     // _sb.auth.getSession() which can hang while supabase-js is still settling.
     // Falls back to _getAuthHeader() for cases like session restore on page load.
-    const authHeader = accessToken ? `Bearer ${accessToken}` : await _getAuthHeader();
+    const authHeader = accessToken ? `Bearer ${accessToken}` : _getAuthHeader();
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15000);
     const res = await fetch(
@@ -3739,8 +3746,8 @@ async function _mxSaveStatus(status, r) {
   // Uses _dbUpdate (native fetch) instead of the supabase-js client.
   // Reason: supabase-js caches its JWT internally and does not reliably
   // re-read it after a browser tab resumes — causing silent write failures
-  // after tab switches. _dbUpdate calls _getAuthHeader() which calls
-  // _sb.auth.getSession() fresh on every invocation, guaranteeing a valid token.
+  // after tab switches. _dbUpdate calls _getAuthHeader() which reads the JWT
+  // directly from localStorage on every invocation, guaranteeing a valid token.
   _mxSavePending = true;
   const patch = { status };
   if (status === 'Pass') {
