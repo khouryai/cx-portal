@@ -1964,7 +1964,13 @@ function initAuth() {
       return;
     }
     if (event === 'SIGNED_IN' && session?.user) {
-      // Pass access_token directly to avoid any _sb.auth calls inside _loadCurrentProfile.
+      if (currentRoleUser) {
+        // Already authenticated — this is the supabase-js GoTrueClient finishing its
+        // delayed internal init. Ignore: we already restored from localStorage and
+        // the user is on their current page. Re-running would navigate them away.
+        console.log('[auth] SIGNED_IN — already authenticated, ignoring delayed event');
+        return;
+      }
       await _loadCurrentProfile(session.user, session.access_token);
     } else if (event === 'SIGNED_OUT' || !session) {
       _onSignedOut();
