@@ -287,6 +287,12 @@ function showPage(name) {
   if (name === 'field-intake')   renderFieldIntake();
   if (name === 'test-matrix')   renderTestMatrix();
   if (name === 'test-reporting') renderTestReporting();
+  if (name === 'admin-am')         renderAdminAM();
+  if (name === 'admin-templates')  renderAdminTemplates();
+  if (name === 'admin-locations')  renderAdminLocations();
+  if (name === 'admin-fieldconfig') renderAdminFieldConfig();
+  if (name === 'admin-directory')  { renderAdminDirectory(); }
+  if (name === 'admin-overview')   renderAdminOverview();
   window.scrollTo(0, 0);
 }
 
@@ -2123,11 +2129,11 @@ function onLoggedIn() {
     <button class="logout-mini" onclick="signOut()">Sign out</button>
   `;
 
-  const homePage = { admin:'admin', field_engineer:'field-intake', readonly:'dashboard', client:'dashboard' }[currentRoleUser.role] || 'dashboard';
+  const homePage = { admin:'admin-am', field_engineer:'field-intake', readonly:'dashboard', client:'dashboard' }[currentRoleUser.role] || 'dashboard';
   showPage(homePage);
   // Re-init views that are subsystem-scoped after login applies TI filter
   initLineItems();
-  renderAdminPortal(); renderFieldIntake(); renderTestMatrix(); renderPunchWorkflow(); renderAuditLog(); renderTestReporting();
+  renderAdminPortal(); renderAdminAM(); renderAdminTemplates(); renderFieldIntake(); renderTestMatrix(); renderPunchWorkflow(); renderAuditLog(); renderTestReporting();
 }
 
 // ==========================================================================
@@ -2170,6 +2176,52 @@ function dateAgo(iso) {
 }
 
 // ==========================================================================
+// ADMIN PAGE RENDERS — one per nav section (replaces monolithic tab bar)
+// ==========================================================================
+function renderAdminAM() {
+  const root = document.getElementById('admin-am-content');
+  if (!root || !currentRoleUser) return;
+  if (currentRoleUser.role !== 'admin') { root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`; return; }
+  root.innerHTML = _adminActivityManagerHTML();
+}
+
+function renderAdminTemplates() {
+  const root = document.getElementById('admin-templates-content');
+  if (!root || !currentRoleUser) return;
+  if (currentRoleUser.role !== 'admin') { root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`; return; }
+  root.innerHTML = _adminTemplatesHTML();
+}
+
+function renderAdminLocations() {
+  const root = document.getElementById('admin-locations-content');
+  if (!root || !currentRoleUser) return;
+  if (currentRoleUser.role !== 'admin') { root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`; return; }
+  root.innerHTML = _adminLocationsHTML();
+}
+
+function renderAdminFieldConfig() {
+  const root = document.getElementById('admin-fieldconfig-content');
+  if (!root || !currentRoleUser) return;
+  if (currentRoleUser.role !== 'admin') { root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`; return; }
+  root.innerHTML = _adminFieldConfigHTML();
+}
+
+function renderAdminDirectory() {
+  const root = document.getElementById('admin-directory-content');
+  if (!root || !currentRoleUser) return;
+  if (currentRoleUser.role !== 'admin') { root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`; return; }
+  root.innerHTML = _adminDirectoryHTML();
+  _loadDirectoryUsers();
+}
+
+function renderAdminOverview() {
+  const root = document.getElementById('admin-overview-content');
+  if (!root || !currentRoleUser) return;
+  if (currentRoleUser.role !== 'admin') { root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`; return; }
+  root.innerHTML = _adminOverviewHTML();
+}
+
+// ==========================================================================
 // ADMIN PORTAL — Template Management & Deployment
 // ==========================================================================
 function renderAdminPortal() {
@@ -2195,6 +2247,10 @@ function renderAdminPortal() {
     <div id="admin-tab-body"></div>
   `;
   renderAdminTabBody();
+  // Also refresh standalone admin pages
+  renderAdminAM();
+  renderAdminTemplates();
+  renderAdminOverview();
 }
 
 function setAdminTab(tab) {
@@ -2272,6 +2328,7 @@ function _adminTemplatesHTML() {
               <span class="template-tag">${escapeHtml(tpl.subsystem)}</span>
               <div style="display:flex;gap:6px;">
                 <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="editTemplate('${tpl.id}')">Edit</button>
+                <button class="admin-action-btn" style="font-size:11px;padding:3px 8px;" onclick="openDeployModal('${tpl.id}')">Deploy</button>
                 <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--red-600);" onclick="deleteTemplate('${tpl.id}')">Delete</button>
               </div>
             </div>
@@ -2822,6 +2879,7 @@ async function executeImport() {
     _importPendingRows = [];
     toast(`Imported ${dbRows.length} test case${dbRows.length !== 1 ? 's' : ''} successfully!`, 'success');
     renderAdminPortal();
+    renderAdminTemplates();
   } catch (err) {
     console.error('Import failed:', err);
     toast(`Import failed: ${err.message}`, 'error');
@@ -3000,6 +3058,7 @@ function confirmDeploy(templateId) {
   _deploySelections = [];
   toast(`Deployed ${tpl.name} to ${enabledLocs.length} location${enabledLocs.length > 1 ? 's' : ''}`, 'success');
   renderAdminPortal();
+  renderAdminTemplates();
   renderTestMatrix();
 }
 
@@ -3153,6 +3212,7 @@ async function saveNewTemplate() {
   closeModal();
   toast(`Created activity: ${name}`, 'success');
   renderAdminPortal();
+  renderAdminTemplates();
 }
 
 function editTemplate(id) {
@@ -3232,6 +3292,7 @@ async function saveEditTemplate(id) {
   closeModal();
   toast(`Saved: ${name}`, 'success');
   renderAdminPortal();
+  renderAdminTemplates();
 }
 
 async function deleteTemplate(id) {
@@ -3247,6 +3308,7 @@ async function deleteTemplate(id) {
   logAudit('Deleted Activity Template', tpl.name);
   toast(`Deleted: ${tpl.name}`, 'success');
   renderAdminPortal();
+  renderAdminTemplates();
 }
 
 // ==========================================================================
@@ -3625,7 +3687,6 @@ function renderTestMatrix() {
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                 <div class="matrix-section-title">${escapeHtml(g.activity)}</div>
                 ${g.testReport ? `<span style="font-size:12px;color:var(--gray-600);font-weight:500;">📄 Test Report CDRL: ${escapeHtml(g.testReport)}</span>` : ''}
-                ${isAdmin ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openEditActivityModal(${idx})">Edit</button>` : ''}
               </div>
               <div class="matrix-section-meta">${escapeHtml(g.phase)} · ${escapeHtml(g.location)} · ${escapeHtml(g.subsystem)}</div>
             </div>
@@ -3662,8 +3723,9 @@ function _renderTIMatrixRow(r, isAdmin) {
   const showReason = current === 'Fail' || current === 'Blocked';
   const reasonVal  = current === 'Fail' ? (r.FailedReason||'') : (r.BlockedReason||'');
   const tid = escapeHtml(String(r.TestID));
+  const notesVal = r.Notes || '';
   return `
-    <div class="matrix-tc-row">
+    <div class="matrix-tc-row" style="flex-wrap:wrap;">
       <div class="matrix-tc-code">${escapeHtml(r.TestCaseCode||'—')}</div>
       <div style="flex:1;min-width:0;">
         <div class="matrix-tc-name">${escapeHtml(r.TestName||'—')}</div>
@@ -3679,6 +3741,12 @@ function _renderTIMatrixRow(r, isAdmin) {
             value="${escapeHtml(reasonVal)}"
             onblur="_mxSaveReason('${tid}',this.value)">
         </div>
+      </div>
+      <div style="width:100%;padding:4px 0 0 0;">
+        <input type="text" class="form-input" style="font-size:11px;padding:4px 8px;color:var(--gray-600);"
+          placeholder="Notes…"
+          value="${escapeHtml(notesVal)}"
+          onblur="_mxSaveNotes('${tid}',this.value)">
       </div>
     </div>
   `;
@@ -3818,6 +3886,16 @@ function _mxSaveReason(testId, reason) {
   _dbUpdate('test_items', patch, { test_id: r.TestID }).catch(err => {
     console.error('[mxSaveReason] failed:', err.message);
     toast('Reason save failed: ' + err.message, 'error');
+  });
+}
+
+function _mxSaveNotes(testId, notes) {
+  const r = TI.find(t => String(t.TestID) === String(testId));
+  if (!r) return;
+  r.Notes = notes || null;
+  _dbUpdate('test_items', { notes: notes || null }, { test_id: r.TestID }).catch(err => {
+    console.error('[mxSaveNotes] failed:', err.message);
+    toast('Notes save failed: ' + err.message, 'error');
   });
 }
 
@@ -5864,16 +5942,17 @@ function _amStatusBadge(s) {
   return `<span class="badge badge-open">Open</span>`;
 }
 
-function _adminActivityManagerHTML() {
-  const all = _amGetActivities();
+let _amDrilldownKey = null; // currently open drill-down activity key
 
-  // Build filter option pools
+function _adminActivityManagerHTML() {
+  if (_amDrilldownKey) return _amDrilldownHTML(_amDrilldownKey);
+
+  const all = _amGetActivities();
   const phases     = [...new Set(all.map(a=>a.phase)   .filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   const locations  = [...new Set(all.map(a=>a.location).filter(Boolean))].sort();
   const subsystems = [...new Set(all.map(a=>a.subsystem).filter(Boolean))].sort();
   const statuses   = ['Open','Closed','Future Test'];
 
-  // Apply filters
   let filtered = all.filter(a => {
     const st = _amComputeStatus(a);
     return (!_amFilters.phase     || a.phase     === _amFilters.phase)     &&
@@ -5885,12 +5964,23 @@ function _adminActivityManagerHTML() {
   const hasFilters = _amFilters.phase || _amFilters.location || _amFilters.subsystem || _amFilters.status;
   const selCount   = _amSelected.size;
 
+  const selectedActivities = all.filter(a => _amSelected.has(a.key));
+  const hasFutureTest   = selectedActivities.some(a => _amComputeStatus(a) === 'Future Test');
+  const hasNonFuture    = selectedActivities.some(a => _amComputeStatus(a) !== 'Future Test');
+
   return `
     <div class="admin-section">
-      <div class="admin-section-head">
+      <div class="admin-section-head" style="flex-wrap:wrap;gap:8px;">
         <div>
           <div class="admin-section-title">Activity Manager</div>
           <p class="section-sub">${all.length} activities across all phases and locations</p>
+        </div>
+        <div style="display:flex;gap:8px;flex-shrink:0;">
+          <label style="cursor:pointer;">
+            <input type="file" accept=".csv" onchange="handleImportFile(this)" style="display:none">
+            <div class="admin-action-btn" style="display:inline-block;cursor:pointer;background:var(--gray-700);">📂 Import Test Items</div>
+          </label>
+          <button class="form-secondary" onclick="downloadImportTemplate()">↓ CSV Template</button>
         </div>
       </div>
 
@@ -5920,7 +6010,8 @@ function _adminActivityManagerHTML() {
       ${selCount > 0 ? `
         <div class="am-bulk-bar">
           <span><b>${selCount}</b> activit${selCount===1?'y':'ies'} selected</span>
-          <button class="admin-action-btn" style="background:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>
+          ${hasNonFuture ? `<button class="admin-action-btn" style="background:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
+          ${hasFutureTest ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
           <button class="form-secondary" style="font-size:12px;" onclick="_amClearSelection()">Clear selection</button>
         </div>
       ` : ''}
@@ -5940,6 +6031,7 @@ function _adminActivityManagerHTML() {
                 <th>Phase</th>
                 <th>Status</th>
                 <th style="min-width:160px;">Completion</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -5949,16 +6041,17 @@ function _adminActivityManagerHTML() {
                 const pct = total > 0 ? Math.round((done/total)*100) : 0;
                 const isSel = _amSelected.has(a.key);
                 const procFull = a.testProcedure || '';
-                const procShort = procFull.length > 50 ? procFull.slice(0,50)+'…' : (procFull || '—');
+                const procShort = procFull.length > 40 ? procFull.slice(0,40)+'…' : (procFull || '—');
+                const safeKey = encodeURIComponent(a.key);
                 return `
                   <tr style="${isSel?'background:#f5f3ff;':''}">
                     <td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} onchange="_amToggleRow('${escapeHtml(a.key)}',this.checked)"></td>
                     <td>
-                      <div style="font-weight:600;font-size:13px;">${escapeHtml(a.activity)}</div>
+                      <div style="font-weight:600;font-size:13px;cursor:pointer;color:var(--info);" onclick="_amOpenDrilldown('${escapeHtml(a.key)}')" title="Click to view test items">${escapeHtml(a.activity)}</div>
                       ${a.futureTestReason ? `<div style="font-size:11px;color:#5b21b6;margin-top:2px;">↳ ${escapeHtml(a.futureTestReason)}</div>` : ''}
                     </td>
                     <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
-                    <td style="font-size:12px;max-width:180px;" title="${escapeHtml(procFull)}">${escapeHtml(procShort)}</td>
+                    <td style="font-size:12px;max-width:160px;" title="${escapeHtml(procFull)}">${escapeHtml(procShort)}</td>
                     <td style="font-size:12px;">${escapeHtml(a.testReport||'—')}</td>
                     <td style="font-size:12px;">${escapeHtml(a.location)}</td>
                     <td style="font-size:12px;">${escapeHtml(a.phase)}</td>
@@ -5969,15 +6062,304 @@ function _adminActivityManagerHTML() {
                         <span class="am-progress-label">${done}/${total}</span>
                       </div>
                     </td>
+                    <td>
+                      <div style="display:flex;gap:4px;">
+                        <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_amOpenDrilldown('${escapeHtml(a.key)}')">View</button>
+                        <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_amOpenEditModal('${escapeHtml(a.key)}')">Edit</button>
+                      </div>
+                    </td>
                   </tr>
                 `;
-              }).join('') : `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--gray-500);">No activities match the current filters</td></tr>`}
+              }).join('') : `<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--gray-500);">No activities match the current filters</td></tr>`}
             </tbody>
           </table>
         </div>
       </div>
     </div>
   `;
+}
+
+function _amDrilldownHTML(key) {
+  const act = _amGetActivities().find(a => a.key === key);
+  if (!act) return `<div class="docs-empty"><h3>Activity not found</h3></div>`;
+  const isAdmin = currentRoleUser?.role === 'admin';
+  const st = _amComputeStatus(act);
+  const { done, total } = _amComputeCompletion(act);
+  const statuses = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'];
+  const legacyMap = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
+
+  return `
+    <div class="admin-section">
+      <div style="margin-bottom:16px;">
+        <button class="form-secondary" style="font-size:12px;" onclick="_amCloseDrilldown()">← Back to Activity Manager</button>
+      </div>
+      <div style="background:#f9fafb;border:1px solid var(--gray-200);border-radius:10px;padding:16px 20px;margin-bottom:20px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div style="font-size:18px;font-weight:700;">${escapeHtml(act.activity)}</div>
+            <div style="font-size:13px;color:var(--gray-500);margin-top:4px;">${escapeHtml(act.phase)} · ${escapeHtml(act.location)} · ${escapeHtml(act.subsystem)}</div>
+            ${act.testReport ? `<div style="font-size:12px;color:var(--gray-600);margin-top:4px;">📄 Test Report CDRL: ${escapeHtml(act.testReport)}</div>` : ''}
+            ${act.futureTestReason ? `<div style="font-size:12px;color:#5b21b6;margin-top:4px;">Future Test Reason: ${escapeHtml(act.futureTestReason)}</div>` : ''}
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            ${_amStatusBadge(st)}
+            <div class="am-progress-wrap" style="min-width:120px;">
+              <div class="am-progress-bar"><div class="am-progress-fill" style="width:${total>0?Math.round((done/total)*100):0}%;background:${done===total&&total>0?'var(--good)':'var(--info)'}"></div></div>
+              <span class="am-progress-label">${done}/${total}</span>
+            </div>
+            ${isAdmin ? `<button class="admin-action-btn" style="font-size:12px;" onclick="_amOpenEditModal('${escapeHtml(key)}')">Edit Activity</button>` : ''}
+          </div>
+        </div>
+      </div>
+
+      <div class="data-card">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="min-width:120px;">Test ID</th>
+                <th>Test Name</th>
+                <th>Test Procedure</th>
+                <th>CDRL</th>
+                <th style="min-width:160px;">Status</th>
+                <th style="min-width:180px;">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${act.items.map(r => {
+                const cur = legacyMap[r.Status] || r.Status || 'Not Started';
+                const showReason = cur === 'Fail' || cur === 'Blocked';
+                const reasonVal = cur === 'Fail' ? (r.FailedReason||'') : (r.BlockedReason||'');
+                const tid = escapeHtml(String(r.TestID));
+                return `
+                  <tr>
+                    <td style="font-size:11px;font-family:monospace;">${escapeHtml(r.TestCaseCode||r.TestID||'—')}</td>
+                    <td>
+                      <div style="font-weight:500;font-size:13px;">${escapeHtml(r.TestName||'—')}</div>
+                      ${r.CompletedBy ? `<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(r.CompletedBy)}</div>` : ''}
+                    </td>
+                    <td style="font-size:12px;max-width:160px;" title="${escapeHtml(r.TestProcedure||'')}">${escapeHtml((r.TestProcedure||'').slice(0,50)+(r.TestProcedure&&r.TestProcedure.length>50?'…':''))}</td>
+                    <td style="font-size:12px;">${escapeHtml(r.TestReport||'—')}</td>
+                    <td>
+                      ${isAdmin ? `
+                        <select class="form-input" style="font-size:12px;padding:4px 6px;" onchange="_mxStatusChange('${tid}',this.value)">
+                          ${statuses.map(s=>`<option value="${s}" ${cur===s?'selected':''}>${s}</option>`).join('')}
+                        </select>
+                        ${showReason ? `<input type="text" class="form-input" style="font-size:11px;padding:3px 6px;margin-top:4px;" placeholder="${cur==='Fail'?'Failure reason...':'Blocked reason...'}" value="${escapeHtml(reasonVal)}" onblur="_mxSaveReason('${tid}',this.value)">` : ''}
+                      ` : `<span class="badge ${({'Pass':'badge-passed','Fail':'badge-failed','Blocked':'badge-warn','Not Applicable':'badge-notstarted','In Progress':'badge-inprog','Future Test':'badge-futuretest'}[cur]||'badge-notstarted')}">${escapeHtml(cur)}</span>`}
+                    </td>
+                    <td>
+                      <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function _amOpenDrilldown(key) {
+  _amDrilldownKey = key;
+  _reRenderAMTab();
+}
+
+function _amCloseDrilldown() {
+  _amDrilldownKey = null;
+  _reRenderAMTab();
+}
+
+function _amOpenEditModal(key) {
+  const act = _amGetActivities().find(a => a.key === key);
+  if (!act) return;
+  const phases     = [...new Set(TI.map(r=>r.Phase)   .filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const locations  = [...new Set(TI.map(r=>r.Location).filter(Boolean))].sort();
+  const subsystems = [...new Set(TI.map(r=>r.Subsystem).filter(Boolean))].sort();
+  const st = _amComputeStatus(act);
+  modal({
+    title: 'Edit Activity',
+    size: 'large',
+    body: `
+      <div class="form-grid">
+        <div class="form-field form-field-full">
+          <label>Activity Name</label>
+          <input type="text" id="am-edit-name" class="form-input" value="${escapeHtml(act.activity)}">
+        </div>
+        <div class="form-field">
+          <label>Phase</label>
+          <select id="am-edit-phase" class="form-input">
+            ${phases.map(p=>`<option value="${escapeHtml(p)}" ${act.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Location</label>
+          <select id="am-edit-location" class="form-input">
+            ${locations.map(l=>`<option value="${escapeHtml(l)}" ${act.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Subsystem</label>
+          <select id="am-edit-subsystem" class="form-input">
+            ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${act.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Test Report CDRL</label>
+          <input type="text" id="am-edit-report" class="form-input" placeholder="e.g. CDRL 9.05.25" value="${escapeHtml(act.testReport||'')}">
+        </div>
+        <div class="form-field form-field-full">
+          <label>Test Procedure</label>
+          <textarea id="am-edit-procedure" class="form-input" rows="2" placeholder="e.g. CDRL 9.04.53 Section 4...">${escapeHtml(act.testProcedure||'')}</textarea>
+        </div>
+        ${st === 'Future Test' ? `
+        <div class="form-field form-field-full">
+          <label>Future Test Reason</label>
+          <textarea id="am-edit-ft-reason" class="form-input" rows="2">${escapeHtml(act.futureTestReason||'')}</textarea>
+        </div>` : ''}
+      </div>
+      <p style="font-size:12px;color:var(--gray-500);margin-top:12px;">
+        Changes to Activity Name, Phase, Location, or Subsystem update all child test items. Activity Status is auto-calculated from test item statuses.
+      </p>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" onclick="_amSaveEdit('${escapeHtml(key)}')">Save Changes</button>`
+  });
+}
+
+async function _amSaveEdit(key) {
+  const act = _amGetActivities().find(a => a.key === key);
+  if (!act) return;
+
+  const newName      = document.getElementById('am-edit-name')?.value.trim();
+  const newPhase     = document.getElementById('am-edit-phase')?.value;
+  const newLocation  = document.getElementById('am-edit-location')?.value;
+  const newSubsystem = document.getElementById('am-edit-subsystem')?.value;
+  const newReport    = document.getElementById('am-edit-report')?.value.trim() || null;
+  const newProcedure = document.getElementById('am-edit-procedure')?.value.trim() || null;
+  const newFTReason  = document.getElementById('am-edit-ft-reason')?.value.trim() || null;
+
+  if (!newName) { toast('Activity name is required', 'error'); return; }
+
+  const btn = document.querySelector('.modal-footer .admin-action-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  try {
+    // Update all test items that belong to this activity
+    const patch = {
+      activity:       newName,
+      phase:          newPhase,
+      location:       newLocation,
+      subsystem:      newSubsystem,
+      test_report:    newReport,
+      test_procedure: newProcedure,
+    };
+    const updates = act.items.map(r => _dbUpdate('test_items', patch, { test_id: r.TestID }));
+    await Promise.all(updates);
+
+    // Update in-memory TI
+    act.items.forEach(r => {
+      r.Activity      = newName;
+      r.Phase         = newPhase;
+      r.Location      = newLocation;
+      r.Subsystem     = newSubsystem;
+      r.TestReport    = newReport;
+      r.TestProcedure = newProcedure;
+    });
+
+    // Update future_test_reason if applicable
+    if (newFTReason !== null) {
+      const existing = _activityRecords.find(ar =>
+        ar.phase === act.phase && ar.location === act.location &&
+        ar.subsystem === act.subsystem && ar.activity_name === act.activity
+      );
+      if (existing) {
+        await _dbUpdate('activity_records', { future_test_reason: newFTReason, updated_at: new Date().toISOString() }, { id: existing.id });
+        existing.future_test_reason = newFTReason;
+      }
+    }
+
+    logAudit('Activity Edited', newName, `Phase: ${newPhase} · Location: ${newLocation}`);
+    toast(`Activity updated: ${newName}`, 'success');
+    closeModal();
+    _amDrilldownKey = null; // reset drill-down (key may have changed)
+    _reRenderAMTab();
+    renderTestMatrix();
+  } catch(e) {
+    toast('Save failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+  }
+}
+
+function _amOpenDeployToFieldModal() {
+  const all = _amGetActivities();
+  const selected = all.filter(a => _amSelected.has(a.key) && _amComputeStatus(a) === 'Future Test');
+  if (!selected.length) { toast('No Future Test activities selected', 'error'); return; }
+  const totalItems = selected.reduce((sum,a) => sum + a.items.length, 0);
+  modal({
+    title: 'Deploy Activities to Field',
+    size: 'medium',
+    body: `
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 16px;margin-bottom:16px;">
+        <div style="font-weight:600;color:#059669;margin-bottom:4px;">${selected.length} activit${selected.length===1?'y':'ies'} · ${totalItems} test items</div>
+        <div style="font-size:12px;color:#047857;">All test items will be set to "Not Started" and Future Test Reason will be cleared.</div>
+      </div>
+      <div style="max-height:140px;overflow-y:auto;margin-bottom:8px;">
+        ${selected.map(a=>`<div style="font-size:12px;padding:3px 0;border-bottom:1px solid #f3f4f6;">${escapeHtml(a.activity)} <span style="color:var(--gray-500);">· ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</span></div>`).join('')}
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" style="background:#059669;" onclick="_amConfirmDeployToField()">Confirm & Deploy</button>`
+  });
+}
+
+async function _amConfirmDeployToField() {
+  const all = _amGetActivities();
+  const selected = all.filter(a => _amSelected.has(a.key) && _amComputeStatus(a) === 'Future Test');
+  const allItems = selected.flatMap(a => a.items);
+
+  const btn = document.querySelector('.modal-footer .admin-action-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Deploying…'; }
+
+  try {
+    // Set all test items to Not Started
+    const updates = allItems.map(r => _dbUpdate('test_items',
+      { status: 'Not Started', failed_reason: null, blocked_reason: null, completed_by: null, completed_date: null },
+      { test_id: r.TestID }
+    ));
+    await Promise.all(updates);
+
+    // Update in-memory
+    allItems.forEach(r => {
+      r.Status = 'Not Started';
+      r.FailedReason = null;
+      r.BlockedReason = null;
+      r.CompletedBy = null;
+      r.CompletedDate = null;
+    });
+
+    // Clear future_test_reason in activity_records
+    for (const act of selected) {
+      const existing = _activityRecords.find(ar =>
+        ar.phase === act.phase && ar.location === act.location &&
+        ar.subsystem === act.subsystem && ar.activity_name === act.activity
+      );
+      if (existing) {
+        await _dbUpdate('activity_records', { future_test_reason: null, updated_at: new Date().toISOString() }, { id: existing.id });
+        existing.future_test_reason = null;
+      }
+    }
+
+    logAudit('Deploy to Field', `${selected.length} activities`, `${allItems.length} items → Not Started`);
+    toast(`${allItems.length} test items deployed to field`, 'success');
+    _amSelected.clear();
+    closeModal();
+    renderTestMatrix();
+    _reRenderAMTab();
+  } catch(e) {
+    toast('Deploy failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm & Deploy'; }
+  }
 }
 
 function _amSetFilter(k, v) {
@@ -6016,6 +6398,10 @@ function _amClearSelection() {
 }
 
 function _reRenderAMTab() {
+  // Update the standalone admin-am page
+  const amRoot = document.getElementById('admin-am-content');
+  if (amRoot) amRoot.innerHTML = _adminActivityManagerHTML();
+  // Also update the legacy tab body if it exists
   const body = document.getElementById('admin-tab-body');
   if (body && _adminTab === 'activitymanager') body.innerHTML = _adminActivityManagerHTML();
 }

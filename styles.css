@@ -857,6 +857,18 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .badge-ready { background: var(--info-light); color: var(--info); }
 .badge-draft { background: var(--gray-100); color: var(--gray-600); }
 .badge-initiated { background: var(--pending-light); color: var(--pending); }
+
+.nav-dd-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.4);
+  padding: 10px 16px 4px;
+  cursor: default;
+  pointer-events: none;
+  user-select: none;
+}
 .badge-futuretest { background: #ede9fe; color: #5b21b6; }
 .badge-review { background: #dbeafe; color: #1e40af; }
 .badge-accepted { background: var(--good-light); color: var(--good); }

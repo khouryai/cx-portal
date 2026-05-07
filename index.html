@@ -83,16 +83,32 @@
       </div>
 
       <!-- Tools dropdown — hidden until login, role-gated per item -->
-      <div class="nav-dd nav-role" id="nav-dd-tools" data-role="field_engineer admin client" style="display:none;">
+      <div class="nav-dd nav-role" id="nav-dd-tools" data-role="field_engineer admin" style="display:none;">
         <button class="nav-dd-toggle" onclick="_navDdToggle('nav-dd-tools')">Tools <span class="nav-dd-chevron">▾</span></button>
         <div class="nav-dd-menu">
-          <a href="#" class="nav-dd-item nav-dd-role" data-page="field-intake"      data-role="field_engineer admin">Daily Log</a>
-          <a href="#" class="nav-dd-item nav-dd-role" data-page="test-matrix"       data-role="field_engineer admin">Test Matrix</a>
-          <a href="#" class="nav-dd-item nav-dd-role" data-page="punch-workflow"    data-role="admin field_engineer client">Punch Workflow</a>
-          <a href="#" class="nav-dd-item nav-dd-role" data-page="test-reporting"    data-role="field_engineer admin">Test Reporting</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="field-intake"   data-role="field_engineer admin">Daily Log</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="test-matrix"    data-role="field_engineer admin">Test Matrix</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="punch-workflow" data-role="admin field_engineer">Punch Workflow</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="test-reporting" data-role="field_engineer admin">Test Reporting</a>
+        </div>
+      </div>
+
+      <!-- Admin dropdown — admin only -->
+      <div class="nav-dd nav-role" id="nav-dd-admin" data-role="admin" style="display:none;">
+        <button class="nav-dd-toggle" onclick="_navDdToggle('nav-dd-admin')">Admin <span class="nav-dd-chevron">▾</span></button>
+        <div class="nav-dd-menu">
+          <div class="nav-dd-group-label">Planning</div>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="admin-am"        data-role="admin">Activity Manager</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="admin-templates" data-role="admin">Activity Templates</a>
           <div class="nav-dd-divider"></div>
-          <a href="#" class="nav-dd-item nav-dd-role" data-page="admin" data-role="admin">Admin Panel</a>
-          <a href="#" class="nav-dd-item nav-dd-role" data-page="audit" data-role="admin">Audit Log</a>
+          <div class="nav-dd-group-label">Configuration</div>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="admin-locations"  data-role="admin">Locations</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="admin-fieldconfig" data-role="admin">Field Config</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="admin-directory"  data-role="admin">Directory</a>
+          <div class="nav-dd-divider"></div>
+          <div class="nav-dd-group-label">System</div>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="admin-overview"   data-role="admin">Overview</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="audit"            data-role="admin">Audit Log</a>
         </div>
       </div>
     </div>
@@ -730,6 +746,90 @@
   </div>
   <div class="container">
     <div id="test-reporting-content"></div>
+  </div>
+</section>
+
+<!-- ==== ADMIN: ACTIVITY MANAGER ==== -->
+<section class="page" id="page-admin-am">
+  <div class="page-hero">
+    <div class="container">
+      <div class="role-badge role-admin-badge">Admin</div>
+      <h1 class="page-title">Activity Manager</h1>
+      <p class="page-sub">View, filter, and manage all test activities and their test items</p>
+    </div>
+  </div>
+  <div class="container">
+    <div id="admin-am-content"></div>
+  </div>
+</section>
+
+<!-- ==== ADMIN: ACTIVITY TEMPLATES ==== -->
+<section class="page" id="page-admin-templates">
+  <div class="page-hero">
+    <div class="container">
+      <div class="role-badge role-admin-badge">Admin</div>
+      <h1 class="page-title">Activity Templates</h1>
+      <p class="page-sub">Create reusable templates and deploy them to project locations</p>
+    </div>
+  </div>
+  <div class="container">
+    <div id="admin-templates-content"></div>
+  </div>
+</section>
+
+<!-- ==== ADMIN: LOCATIONS ==== -->
+<section class="page" id="page-admin-locations">
+  <div class="page-hero">
+    <div class="container">
+      <div class="role-badge role-admin-badge">Admin</div>
+      <h1 class="page-title">Locations</h1>
+      <p class="page-sub">Define phases, regions, and stations used across the portal</p>
+    </div>
+  </div>
+  <div class="container">
+    <div id="admin-locations-content"></div>
+  </div>
+</section>
+
+<!-- ==== ADMIN: FIELD CONFIG ==== -->
+<section class="page" id="page-admin-fieldconfig">
+  <div class="page-hero">
+    <div class="container">
+      <div class="role-badge role-admin-badge">Admin</div>
+      <h1 class="page-title">Field Config</h1>
+      <p class="page-sub">Configure dropdown values used in field forms and punch workflow</p>
+    </div>
+  </div>
+  <div class="container">
+    <div id="admin-fieldconfig-content"></div>
+  </div>
+</section>
+
+<!-- ==== ADMIN: DIRECTORY ==== -->
+<section class="page" id="page-admin-directory">
+  <div class="page-hero">
+    <div class="container">
+      <div class="role-badge role-admin-badge">Admin</div>
+      <h1 class="page-title">Directory</h1>
+      <p class="page-sub">Manage users, roles, and permissions</p>
+    </div>
+  </div>
+  <div class="container">
+    <div id="admin-directory-content"></div>
+  </div>
+</section>
+
+<!-- ==== ADMIN: OVERVIEW ==== -->
+<section class="page" id="page-admin-overview">
+  <div class="page-hero">
+    <div class="container">
+      <div class="role-badge role-admin-badge">Admin</div>
+      <h1 class="page-title">Overview</h1>
+      <p class="page-sub">System stats and recent deployment history</p>
+    </div>
+  </div>
+  <div class="container">
+    <div id="admin-overview-content"></div>
   </div>
 </section>
 
