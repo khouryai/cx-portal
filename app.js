@@ -3693,15 +3693,21 @@ function _mxStatusChange(testId, status) {
   const rawId = r.TestID;
   const existing = _sessionLog.find(e => String(e.testId) === String(rawId));
   if (existing) {
-    existing.newStatus = status;
-    existing.changedAt = new Date().toISOString();
+    existing.newStatus     = status;
+    existing.changedAt     = new Date().toISOString();
+    // Clear reason fields that no longer apply to the new status
+    existing.failedReason  = status === 'Fail'    ? (existing.failedReason  || '') : '';
+    existing.blockedReason = status === 'Blocked'  ? (existing.blockedReason || '') : '';
   } else {
     _sessionLog.push({
       testId: rawId, testCode: r.TestCaseCode, testName: r.TestName,
       phase: r.Phase, location: r.Location, subsystem: r.Subsystem, activity: r.Activity,
       prevStatus: r.Status || 'Not Started', newStatus: status,
       changedAt: new Date().toISOString(),
-      failedReason: r.FailedReason||'', blockedReason: r.BlockedReason||'', hours: 0
+      // Only carry over a reason if the NEW status actually warrants it
+      failedReason:  status === 'Fail'    ? (r.FailedReason  || '') : '',
+      blockedReason: status === 'Blocked' ? (r.BlockedReason || '') : '',
+      hours: 0
     });
   }
 
@@ -3947,7 +3953,7 @@ function renderIntakeStep1() {
           const isBlocked = e.newStatus==='Blocked' || e.status==='Blocked';
           const ns = e._fromLog ? e.newStatus : e.status;
           const ps = e._fromLog ? e.prevStatus : null;
-          const reason = e.failedReason||e.blockedReason||'';
+          const reason = (ns === 'Fail' ? e.failedReason : ns === 'Blocked' ? e.blockedReason : '') || '';
           return `
             <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;display:flex;gap:16px;align-items:center;">
               <div style="flex:1;min-width:0;">
