@@ -116,6 +116,46 @@ async function _dbUpdate(table, patch, match) {
     throw e;
   }
 }
+// SELECT rows from a table; `match` is an object of { col: value } equality filters.
+// Returns the array of matching rows. Uses native fetch with 15s timeout to bypass
+// supabase-js client state issues (same reason as _dbInsert / _dbUpdate).
+async function _dbSelect(table, match = {}, select = '*') {
+  const authHeader = await _getAuthHeader();
+  const qs = Object.entries(match)
+    .map(([k, v]) => `${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`)
+    .join('&');
+  const url = `${SUPABASE_URL}/rest/v1/${table}?${qs ? qs + '&' : ''}select=${encodeURIComponent(select)}`;
+  console.log(`[_dbSelect] GET ${table} WHERE ${JSON.stringify(match)}`);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  const t0 = Date.now();
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      signal: ctrl.signal,
+      headers: {
+        apikey:        SUPABASE_ANON_KEY,
+        Authorization: authHeader,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+    });
+    clearTimeout(timer);
+    const ms = Date.now() - t0;
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error(`[_dbSelect] ✗ HTTP ${res.status} after ${ms}ms:`, errBody);
+      throw new Error(`${table} select failed (${res.status}): ${errBody}`);
+    }
+    const rows = await res.json();
+    console.log(`[_dbSelect] ✓ HTTP 200 in ${ms}ms — ${rows.length} row(s)`);
+    return rows;
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error(`${table} select timed out after 15s`);
+    throw e;
+  }
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── BUILT-IN DIAGNOSTICS ──────────────────────────────────────────────────────
@@ -1917,16 +1957,27 @@ function initAuth() {
 }
 
 async function _loadCurrentProfile(user) {
+  // Reset sign-in button if it's stuck (in case we're called from onAuthStateChange
+  // after a previous sign-in attempt that timed out mid-way).
+  const btn = document.getElementById('auth-btn');
+  if (btn) { btn.textContent = 'Signing in…'; btn.disabled = true; }
+
   try {
-    const { data, error } = await _sb.from('profiles').select('*').eq('id', user.id).single();
-    if (error || !data) {
+    // Use native fetch (_dbSelect) instead of supabase-js to avoid hanging
+    // on the profiles query — the supabase-js client can get stuck after auth.
+    const rows = await _dbSelect('profiles', { id: user.id });
+    const data = rows?.[0];
+
+    if (!data) {
       await _sb.auth.signOut();
       showAuthError('Your account is not set up yet — contact your admin.');
+      if (btn) { btn.textContent = 'Sign In'; btn.disabled = false; }
       return;
     }
     if (!data.is_active) {
       await _sb.auth.signOut();
       showAuthError('Your account has been deactivated — contact your admin.');
+      if (btn) { btn.textContent = 'Sign In'; btn.disabled = false; }
       return;
     }
     currentProfile  = data;
@@ -1945,6 +1996,7 @@ async function _loadCurrentProfile(user) {
   } catch(err) {
     console.error('Profile load failed:', err);
     showAuthError('Failed to load profile — try refreshing.');
+    if (btn) { btn.textContent = 'Sign In'; btn.disabled = false; }
   }
 }
 
