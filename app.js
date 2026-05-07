@@ -3707,6 +3707,8 @@ function _mxStatusChange(testId, status) {
 
   r.Status = status;
   if (status === 'Pass') { r.CompletedBy = currentRoleUser.name; r.CompletedDate = new Date().toISOString(); }
+  if (status !== 'Fail')    r.FailedReason  = null;
+  if (status !== 'Blocked') r.BlockedReason = null;
 
   // Toggle reason input without re-rendering the full matrix
   const reasonEl = document.getElementById(`mx-reason-${testId}`);
@@ -3761,6 +3763,9 @@ async function _mxSaveStatus(status, r) {
     patch.completed_by   = currentRoleUser?.name;
     patch.completed_date = new Date().toISOString();
   }
+  // Clear reason fields when status no longer warrants them
+  if (status !== 'Fail')    patch.failed_reason  = null;
+  if (status !== 'Blocked') patch.blocked_reason = null;
   console.log(`[mxSaveStatus] → test_items test_id="${r.TestID}" status="${status}"`);
   try {
     const rows = await _dbUpdate('test_items', patch, { test_id: r.TestID });
