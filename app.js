@@ -1956,29 +1956,34 @@ let currentProfile  = null;
 // SUPABASE AUTH — email + password, session persisted by Supabase
 // ==========================================================================
 function initAuth() {
+  // onAuthStateChange handles SIGN_IN and SIGNED_OUT events.
+  // We skip INITIAL_SESSION here — it's handled manually below via localStorage
+  // because supabase-js GoTrueClient can hang during its internal init, which
+  // would prevent INITIAL_SESSION from ever firing.
   _sb.auth.onAuthStateChange(async (event, session) => {
     console.log('[auth] event:', event);
-    if (session?.user) {
-      if (event === 'TOKEN_REFRESHED') {
-        // JWT silently refreshed in background — user is already authenticated.
-        // Do NOT re-run _loadCurrentProfile: it calls onLoggedIn() which would
-        // re-apply the subsystem TI filter a second time, corrupting the array.
-        console.log('[auth] token refreshed silently — no profile reload needed');
-        return;
-      }
-      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
-        // Pass access_token directly — avoids calling _sb.auth.getSession() inside
-        // _loadCurrentProfile which can hang while the supabase-js auth client
-        // is still settling after signInWithPassword.
-        await _loadCurrentProfile(session.user, session.access_token);
-      }
-    } else if (!session) {
+    if (event === 'INITIAL_SESSION') return; // handled manually below
+    if (event === 'TOKEN_REFRESHED') {
+      console.log('[auth] token refreshed silently — no profile reload needed');
+      return;
+    }
+    if (event === 'SIGNED_IN' && session?.user) {
+      // Pass access_token directly to avoid any _sb.auth calls inside _loadCurrentProfile.
+      await _loadCurrentProfile(session.user, session.access_token);
+    } else if (event === 'SIGNED_OUT' || !session) {
       _onSignedOut();
     }
   });
-  // Check for existing session on load (covers hard refresh / returning user)
-  // Read directly from localStorage — bypasses supabase-js auth client hang.
-  if (!_getSessionFromStorage()) _onSignedOut();
+
+  // Restore existing session directly from localStorage — no supabase-js call needed.
+  // This covers hard refresh and returning users without waiting for GoTrueClient init.
+  const stored = _getSessionFromStorage();
+  if (stored?.user && stored?.access_token) {
+    console.log('[auth] restoring session from localStorage for:', stored.user.email);
+    _loadCurrentProfile(stored.user, stored.access_token);
+  } else {
+    _onSignedOut();
+  }
 }
 
 async function _loadCurrentProfile(user, accessToken) {
