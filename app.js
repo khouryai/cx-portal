@@ -33,12 +33,17 @@ try {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function _getAuthHeader() {
-  // Always pull the live access_token from the Supabase session store.
-  // Falls back to the anon key if no session exists (shouldn't happen while logged in).
   try {
     const { data: { session } } = await _sb.auth.getSession();
-    if (session?.access_token) return 'Bearer ' + session.access_token;
-  } catch(e) { console.warn('[_getAuthHeader] getSession failed:', e.message); }
+    if (session?.access_token) {
+      const expiresAt = session.expires_at * 1000;
+      const minsLeft  = ((expiresAt - Date.now()) / 60000).toFixed(1);
+      const expired   = Date.now() > expiresAt;
+      console.log(`[auth] token ${expired ? '⛔ EXPIRED' : '✓ valid'} | expires in ${minsLeft} min`);
+      return 'Bearer ' + session.access_token;
+    }
+    console.warn('[auth] ⚠ no access_token in session — falling back to anon key');
+  } catch(e) { console.warn('[_getAuthHeader] getSession threw:', e.message); }
   return 'Bearer ' + SUPABASE_ANON_KEY;
 }
 
@@ -78,10 +83,13 @@ async function _dbUpdate(table, patch, match) {
   const qs = Object.entries(match)
     .map(([k, v]) => `${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`)
     .join('&');
+  const url = `${SUPABASE_URL}/rest/v1/${table}?${qs}`;
+  console.log(`[_dbUpdate] PATCH ${table} WHERE ${JSON.stringify(match)} patch=${JSON.stringify(patch)}`);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
+  const t0 = Date.now();
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${qs}`, {
+    const res = await fetch(url, {
       method: 'PATCH',
       signal: ctrl.signal,
       headers: {
@@ -93,11 +101,15 @@ async function _dbUpdate(table, patch, match) {
       body: JSON.stringify(patch),
     });
     clearTimeout(timer);
+    const ms = Date.now() - t0;
     if (!res.ok) {
       const errBody = await res.text();
+      console.error(`[_dbUpdate] ✗ HTTP ${res.status} after ${ms}ms:`, errBody);
       throw new Error(`${table} update failed (${res.status}): ${errBody}`);
     }
-    return await res.json(); // array of updated rows
+    const rows = await res.json();
+    console.log(`[_dbUpdate] ✓ HTTP 200 in ${ms}ms — ${rows.length} row(s) updated`);
+    return rows;
   } catch (e) {
     clearTimeout(timer);
     if (e.name === 'AbortError') throw new Error(`${table} update timed out after 15s`);
@@ -105,6 +117,89 @@ async function _dbUpdate(table, patch, match) {
   }
 }
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── BUILT-IN DIAGNOSTICS ──────────────────────────────────────────────────────
+// Call window.runDiagnostics() in the browser console at any time to get a
+// full health report: session validity, TI count, a live write probe to
+// test_items, and the current tab-visibility state.
+// ─────────────────────────────────────────────────────────────────────────────
+window.runDiagnostics = async function() {
+  console.group('%c[DIAGNOSTICS] CX Portal Health Check', 'color:#e60012;font-size:14px;font-weight:bold');
+
+  // 1. Auth / session
+  console.group('1. Auth Session');
+  try {
+    const { data: { session }, error } = await _sb.auth.getSession();
+    if (error) { console.error('getSession error:', error.message); }
+    else if (!session) { console.warn('⚠ NO active session — user not logged in'); }
+    else {
+      const exp = new Date(session.expires_at * 1000);
+      const minsLeft = ((session.expires_at * 1000 - Date.now()) / 60000).toFixed(1);
+      const isExp = Date.now() > session.expires_at * 1000;
+      console.log('User:', session.user.email);
+      console.log('Token status:', isExp ? '⛔ EXPIRED' : `✓ valid for ${minsLeft} more minutes`);
+      console.log('Expires at:', exp.toLocaleString());
+      console.log('Access token (first 30 chars):', session.access_token.slice(0, 30) + '…');
+    }
+  } catch(e) { console.error('getSession threw:', e.message); }
+  console.groupEnd();
+
+  // 2. App state
+  console.group('2. App State');
+  console.log('currentRoleUser:', currentRoleUser ? `${currentRoleUser.name} (${currentRoleUser.role})` : '⚠ null');
+  console.log('TI loaded:', TI.length, 'test items');
+  console.log('_mxSavePending:', _mxSavePending);
+  console.log('_lastHiddenAt:', _lastHiddenAt ? new Date(_lastHiddenAt).toLocaleString() : 'never hidden');
+  const awayMs = _lastHiddenAt ? Date.now() - _lastHiddenAt : 0;
+  console.log('Away for (if currently visible):', (awayMs / 1000).toFixed(0) + 's');
+  console.groupEnd();
+
+  // 3. Live write probe — PATCH the first test item with its own current status (no visible change)
+  console.group('3. Live Write Probe (test_items PATCH)');
+  const probe = TI[0];
+  if (!probe) { console.warn('No test items loaded — cannot probe'); }
+  else {
+    console.log('Probing test_id:', probe.TestID, '| current status:', probe.Status);
+    try {
+      const rows = await _dbUpdate('test_items', { status: probe.Status }, { test_id: probe.TestID });
+      console.log('✓ PATCH succeeded — DB is reachable and writable');
+      console.log('Returned row status:', rows[0]?.status);
+    } catch(e) {
+      console.error('✗ PATCH failed:', e.message);
+    }
+  }
+  console.groupEnd();
+
+  // 4. supabase-js client direct test (compare against native fetch above)
+  console.group('4. supabase-js Client Probe (same write via _sb)');
+  if (probe) {
+    try {
+      const { data, error } = await _sb.from('test_items')
+        .update({ status: probe.Status })
+        .eq('test_id', probe.TestID)
+        .select();
+      if (error) console.error('✗ supabase-js error:', error.message, '| code:', error.code);
+      else if (!data?.length) console.warn('⚠ supabase-js returned 0 rows (RLS or wrong test_id)');
+      else console.log('✓ supabase-js succeeded — rows returned:', data.length);
+    } catch(e) { console.error('✗ supabase-js threw:', e.message); }
+  }
+  console.groupEnd();
+
+  // 5. Verdict
+  console.group('5. Verdict');
+  console.log('If probe 3 (native fetch) ✓ and probe 4 (supabase-js) ✗ after a tab switch:');
+  console.log('  → Confirmed: supabase-js JWT cache stale. Fix: _dbUpdate already in place.');
+  console.log('If both 3 and 4 fail with 401:');
+  console.log('  → Session expired. Trigger sign-out and force re-login.');
+  console.log('If both 3 and 4 fail with 403:');
+  console.log('  → RLS policy blocking the write. Check Supabase RLS rules for test_items.');
+  console.log('If both succeed but DB still not updating:');
+  console.log('  → Check Supabase table in dashboard immediately after the probe.');
+  console.groupEnd();
+
+  console.groupEnd(); // top-level DIAGNOSTICS group
+  return '✓ Diagnostics complete — check the groups above';
+};
 
 // Color palette (matches CSS)
 const COLORS = {
