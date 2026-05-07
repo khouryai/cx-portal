@@ -220,31 +220,27 @@ window.runDiagnostics = async function() {
   }
   console.groupEnd();
 
-  // 4. supabase-js client direct test (compare against native fetch above)
-  console.group('4. supabase-js Client Probe (same write via _sb)');
-  if (probe) {
-    try {
-      const { data, error } = await _sb.from('test_items')
-        .update({ status: probe.Status })
-        .eq('test_id', probe.TestID)
-        .select();
-      if (error) console.error('✗ supabase-js error:', error.message, '| code:', error.code);
-      else if (!data?.length) console.warn('⚠ supabase-js returned 0 rows (RLS or wrong test_id)');
-      else console.log('✓ supabase-js succeeded — rows returned:', data.length);
-    } catch(e) { console.error('✗ supabase-js threw:', e.message); }
+  // 4. Token health from localStorage
+  console.group('4. Token Health');
+  const s = _getSessionFromStorage();
+  if (s) {
+    const nowMs = Date.now();
+    const expMs = (s.expires_at || 0) * 1000;
+    const expired = nowMs > expMs;
+    console.log('expires_at:', new Date(expMs).toLocaleString());
+    console.log('status:', expired ? '⛔ EXPIRED' : `✓ valid for ${((expMs - nowMs) / 60000).toFixed(1)} min`);
+    console.log('user:', s.user?.email);
+  } else {
+    console.warn('No session in localStorage');
   }
   console.groupEnd();
 
   // 5. Verdict
   console.group('5. Verdict');
-  console.log('If probe 3 (native fetch) ✓ and probe 4 (supabase-js) ✗ after a tab switch:');
-  console.log('  → Confirmed: supabase-js JWT cache stale. Fix: _dbUpdate already in place.');
-  console.log('If both 3 and 4 fail with 401:');
-  console.log('  → Session expired. Trigger sign-out and force re-login.');
-  console.log('If both 3 and 4 fail with 403:');
-  console.log('  → RLS policy blocking the write. Check Supabase RLS rules for test_items.');
-  console.log('If both succeed but DB still not updating:');
-  console.log('  → Check Supabase table in dashboard immediately after the probe.');
+  console.log('Native fetch PATCH (section 3) is the sole write path — supabase-js data client not used.');
+  console.log('If PATCH ✓: DB writes are working correctly.');
+  console.log('If PATCH 401: Token expired — sign out and sign back in.');
+  console.log('If PATCH 403: RLS policy blocking — check Supabase test_items RLS rules.');
   console.groupEnd();
 
   console.groupEnd(); // top-level DIAGNOSTICS group
