@@ -1327,10 +1327,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 let TI = DATA.testItems || []; // populated from Supabase on init; falls back to data.js
 const FIELD_USERS = DATA.fieldUsers || [];
 
+// Lightweight anon-key fetch for startup data loads (no auth needed / no getSession call).
+// Uses a 15s AbortController timeout so it can never hang the DOMContentLoaded bootstrap.
+async function _fetchAnon(path) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      signal: ctrl.signal,
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Accept: 'application/json' },
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch(e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error('request timed out after 15s');
+    throw e;
+  }
+}
+
 async function loadTemplates() {
   try {
-    const { data, error } = await _sb.from('templates').select('*').order('created_at');
-    if (error) throw error;
+    const data = await _fetchAnon('templates?select=*&order=created_at.asc');
     if (data && data.length > 0) {
       TEMPLATES.length = 0;
       data.forEach(r => TEMPLATES.push({
@@ -1351,8 +1370,7 @@ async function loadTemplates() {
 
 async function loadLocations() {
   try {
-    const { data, error } = await _sb.from('locations').select('*').order('level').order('sort_order');
-    if (error) throw error;
+    const data = await _fetchAnon('locations?select=*&order=level.asc,sort_order.asc');
     LOCS = (data || []).map(r => ({
       id:        r.id,
       name:      r.name,
@@ -1368,8 +1386,7 @@ async function loadLocations() {
 
 async function loadFieldsetConfig() {
   try {
-    const { data, error } = await _sb.from('fieldset_config').select('*');
-    if (error) throw error;
+    const data = await _fetchAnon('fieldset_config?select=*');
     FIELDSET_CONFIG = {};
     (data || []).forEach(row => { FIELDSET_CONFIG[row.field_key] = row.options || []; });
   } catch (err) { console.warn('Fieldset config load failed:', err.message); }
@@ -1377,16 +1394,14 @@ async function loadFieldsetConfig() {
 
 async function _loadProfileUsers() {
   try {
-    const { data, error } = await _sb.from('profiles').select('full_name, role').eq('is_active', true);
-    if (error) throw error;
+    const data = await _fetchAnon('profiles?select=full_name,role&is_active=eq.true');
     PROFILE_USERS = (data || []).filter(u => u.full_name).sort((a,b) => a.full_name.localeCompare(b.full_name));
   } catch (err) { console.warn('Profile users load failed:', err.message); }
 }
 
 async function loadTestItems() {
   try {
-    const { data, error } = await _sb.from('test_items').select('*').order('test_id');
-    if (error) throw error;
+    const data = await _fetchAnon('test_items?select=*&order=test_id.asc');
     if (data && data.length > 0) {
       TI = data.map(r => ({
         TestID:        r.test_id,
@@ -4418,8 +4433,7 @@ const PL_PAGE_SIZE = 25;
 
 async function loadPunchDB() {
   try {
-    const { data, error } = await _sb.from('punch_items').select('*').order('number', { ascending: false });
-    if (error) throw error;
+    const data = await _fetchAnon('punch_items?select=*&order=number.desc');
     PUNCH_DB = data || [];
     console.log(`Loaded ${PUNCH_DB.length} punch items`);
   } catch(err) { console.warn('Punch items load failed:', err.message); PUNCH_DB = []; }
