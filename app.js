@@ -94,8 +94,80 @@ function showPage(name) {
   window.scrollTo(0, 0);
 }
 
-// (removed visibilitychange handler — it was reloading TI mid-flight and
-// clobbering pending saves, causing dropdown changes to silently drop)
+// ── TAB VISIBILITY & SESSION RECOVERY ──────────────────────────────────────
+// Root causes of "app breaks after switching tabs":
+//   1. visibilitychange handler was removed (it was clobbering in-flight saves)
+//      → fixed by guarding TI reload behind _mxSavePending flag
+//   2. No refreshApp() — data only fetched once on DOMContentLoaded
+//   3. TOKEN_REFRESHED fired _loadCurrentProfile → double-applied subsystem filter
+//      → fixed by skipping profile reload when user is already authenticated
+//   4. No session re-check on tab resume — stale/expired session went undetected
+//
+// Strategy:
+//   · Track tab-hidden timestamp; on return, refresh only if >30s elapsed
+//   · _mxSavePending flag prevents TI reload during an in-flight status save
+//   · Debounce to consolidate rapid visibility events into a single refresh
+//   · Singleton Supabase client (already the case — created once at file top)
+// ────────────────────────────────────────────────────────────────────────────
+let _lastHiddenAt  = 0;
+let _refreshTimer  = null;
+let _mxSavePending = false; // true while _mxSaveStatus is awaiting Supabase
+
+async function refreshApp() {
+  if (!currentRoleUser || !_sb) return;
+  console.log('[refreshApp] rehydrating after tab resume…');
+
+  // 1. Re-verify session — sign out cleanly if it has expired
+  try {
+    const { data: { session } } = await _sb.auth.getSession();
+    if (!session) { console.warn('[refreshApp] session lost — signing out'); _onSignedOut(); return; }
+  } catch (e) { console.warn('[refreshApp] getSession failed:', e.message); }
+
+  // 2. Reload punch items (always safe — not mid-edit)
+  try { await loadPunchDB(); } catch(e) { console.warn('[refreshApp] punch reload failed:', e.message); }
+
+  // 3. Reload test items only when no status save is in flight
+  if (!_mxSavePending) {
+    try {
+      await loadTestItems();
+      // Re-apply subsystem filter — loadTestItems() fetches all items unfiltered
+      if (currentRoleUser.subsystem) {
+        TI = TI.filter(t => (t.Subsystem||'').toLowerCase() === currentRoleUser.subsystem.toLowerCase());
+      }
+    } catch(e) { console.warn('[refreshApp] TI reload failed:', e.message); }
+  } else {
+    console.log('[refreshApp] TI reload skipped — status save in progress');
+  }
+
+  // 4. Re-render live-data views; skip Daily Log mid-form to preserve user input
+  renderTestMatrix();
+  renderPunchWorkflow();
+  if (intakeStep === 1) renderFieldIntake();
+  console.log('[refreshApp] done');
+}
+
+function _onTabBecameVisible() {
+  if (!currentRoleUser) return;
+  const awayMs = Date.now() - _lastHiddenAt;
+  if (_lastHiddenAt === 0 || awayMs < 30_000) return; // ignore brief alt-tabs (<30s)
+  console.log(`[tab] returned after ${(awayMs / 1000).toFixed(0)}s — scheduling refresh`);
+  clearTimeout(_refreshTimer);
+  _refreshTimer = setTimeout(() => refreshApp(), 1500); // 1.5s debounce
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    _lastHiddenAt = Date.now();
+  } else {
+    _onTabBecameVisible();
+  }
+});
+
+window.addEventListener('focus', () => {
+  // Secondary trigger: window.focus fires on alt-tab back even without
+  // a full visibility change (e.g. child dialog closes back to app)
+  if (!document.hidden) _onTabBecameVisible();
+});
 
 document.querySelectorAll('.nav-link').forEach(link => {
   link.addEventListener('click', e => {
@@ -1673,13 +1745,23 @@ let currentProfile  = null;
 // ==========================================================================
 function initAuth() {
   _sb.auth.onAuthStateChange(async (event, session) => {
-    if (session?.user && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED')) {
-      await _loadCurrentProfile(session.user);
+    console.log('[auth] event:', event);
+    if (session?.user) {
+      if (event === 'TOKEN_REFRESHED') {
+        // JWT silently refreshed in background — user is already authenticated.
+        // Do NOT re-run _loadCurrentProfile: it calls onLoggedIn() which would
+        // re-apply the subsystem TI filter a second time, corrupting the array.
+        console.log('[auth] token refreshed silently — no profile reload needed');
+        return;
+      }
+      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+        await _loadCurrentProfile(session.user);
+      }
     } else if (!session) {
       _onSignedOut();
     }
   });
-  // Check for existing session on load
+  // Check for existing session on load (covers hard refresh / returning user)
   _sb.auth.getSession().then(({ data: { session } }) => {
     if (!session) _onSignedOut();
   });
@@ -3424,6 +3506,7 @@ function _mxRefreshCounts() {
 }
 
 async function _mxSaveStatus(status, r) {
+  _mxSavePending = true; // block tab-resume TI reload while this is in flight
   const upd = { status };
   if (status === 'Pass') { upd.completed_by = currentRoleUser?.name; upd.completed_date = new Date().toISOString(); }
   try {
@@ -3440,6 +3523,8 @@ async function _mxSaveStatus(status, r) {
   } catch(e) {
     console.error('[mxSaveStatus] error:', e);
     toast('Save failed: ' + (e.message || 'unknown error'), 'error');
+  } finally {
+    _mxSavePending = false; // always clear, even on error
   }
 }
 
