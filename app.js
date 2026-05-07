@@ -1959,7 +1959,10 @@ function initAuth() {
         return;
       }
       if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
-        await _loadCurrentProfile(session.user);
+        // Pass access_token directly — avoids calling _sb.auth.getSession() inside
+        // _loadCurrentProfile which can hang while the supabase-js auth client
+        // is still settling after signInWithPassword.
+        await _loadCurrentProfile(session.user, session.access_token);
       }
     } else if (!session) {
       _onSignedOut();
@@ -1971,16 +1974,27 @@ function initAuth() {
   });
 }
 
-async function _loadCurrentProfile(user) {
+async function _loadCurrentProfile(user, accessToken) {
   // Reset sign-in button if it's stuck (in case we're called from onAuthStateChange
   // after a previous sign-in attempt that timed out mid-way).
   const btn = document.getElementById('auth-btn');
   if (btn) { btn.textContent = 'Signing in…'; btn.disabled = true; }
 
   try {
-    // Use native fetch (_dbSelect) instead of supabase-js to avoid hanging
-    // on the profiles query — the supabase-js client can get stuck after auth.
-    const rows = await _dbSelect('profiles', { id: user.id });
+    // Use the access token passed in directly from onAuthStateChange — avoids calling
+    // _sb.auth.getSession() which can hang while supabase-js is still settling.
+    // Falls back to _getAuthHeader() for cases like session restore on page load.
+    const authHeader = accessToken ? `Bearer ${accessToken}` : await _getAuthHeader();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}&select=*`,
+      { signal: ctrl.signal, headers: { apikey: SUPABASE_ANON_KEY, Authorization: authHeader, Accept: 'application/json' } }
+    );
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`profiles fetch failed (${res.status}): ${await res.text()}`);
+    const rows = await res.json();
+    console.log(`[_loadCurrentProfile] ✓ got ${rows.length} profile row(s)`);
     const data = rows?.[0];
 
     if (!data) {
