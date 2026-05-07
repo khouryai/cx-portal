@@ -254,6 +254,56 @@ create table if not exists audit_log (
 
 
 -- ============================================================
+-- TEST REPORTS — tracks CDRL submissions, revisions, acceptance status
+-- ============================================================
+create table if not exists test_reports (
+  id              uuid primary key default gen_random_uuid(),
+  title           text not null,
+  cdrl_number     text,
+  revision        text default 'A',
+  status          text default 'Not Started',
+  -- valid statuses: Not Started | In Review | Accepted | Accepted as Noted
+  --                 Accepted as Noted Resubmit | Resubmit | Rejected
+  subsystem       text,
+  notes           text,
+  parent_id       uuid references test_reports(id) on delete cascade,
+  -- parent_id null = original report; non-null = revision of parent
+  created_by      text,
+  created_at      timestamptz default now(),
+  updated_at      timestamptz default now(),
+  updated_by      text
+);
+
+create index if not exists test_reports_parent_idx on test_reports (parent_id);
+create index if not exists test_reports_status_idx on test_reports (status);
+
+
+-- ============================================================
+-- ACTIVITY RECORDS — stores activity-level metadata
+-- (future_test_reason, manual overrides) keyed by
+-- phase + location + subsystem + activity_name
+-- ============================================================
+create table if not exists activity_records (
+  id                  uuid primary key default gen_random_uuid(),
+  phase               text not null,
+  location            text not null,
+  subsystem           text not null,
+  activity_name       text not null,
+  future_test_reason  text,
+  created_at          timestamptz default now(),
+  updated_at          timestamptz default now(),
+  unique (phase, location, subsystem, activity_name)
+);
+
+
+-- ============================================================
+-- Additional columns added to test_items after initial schema
+-- ============================================================
+alter table test_items add column if not exists test_report   text;
+alter table test_items add column if not exists failed_reason text;
+
+
+-- ============================================================
 -- ROW LEVEL SECURITY
 -- Disabled for now (no Auth yet). Enable after Supabase Auth setup.
 -- When ready: alter table test_items enable row level security; etc.

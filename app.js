@@ -284,8 +284,9 @@ function showPage(name) {
   // Close all dropdowns on navigation
   document.querySelectorAll('.nav-dd').forEach(dd => dd.classList.remove('open'));
   // Re-render pages that need fresh state on each visit
-  if (name === 'field-intake') renderFieldIntake();
-  if (name === 'test-matrix') renderTestMatrix();
+  if (name === 'field-intake')   renderFieldIntake();
+  if (name === 'test-matrix')   renderTestMatrix();
+  if (name === 'test-reporting') renderTestReporting();
   window.scrollTo(0, 0);
 }
 
@@ -407,6 +408,7 @@ function getStatusBadge(status) {
     'Blocked': 'badge-warn',
     'Not Started': 'badge-notstarted',
     'Not Applicable': 'badge-notstarted',
+    'Future Test': 'badge-futuretest',
     'In Progress': 'badge-inprog',
     'Open': 'badge-open',
     'Activity Not Started': 'badge-notstarted',
@@ -1314,7 +1316,7 @@ function exportPL() {
 // INIT
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
-  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers()]);
+  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords()]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -1929,6 +1931,8 @@ let _adminTab = 'templates';
 let TEST_INSTANCES = DATA.testInstances || [];
 let PUNCH_ITEMS = DATA.punchItems || [];
 let AUDIT_LOG = DATA.auditLog || [];
+let _testReports = [];        // loaded from Supabase test_reports
+let _activityRecords = [];    // loaded from Supabase activity_records (future_test_reason store)
 
 const ROLE_LABELS = {
   admin: 'Admin',
@@ -2123,7 +2127,7 @@ function onLoggedIn() {
   showPage(homePage);
   // Re-init views that are subsystem-scoped after login applies TI filter
   initLineItems();
-  renderAdminPortal(); renderFieldIntake(); renderTestMatrix(); renderPunchWorkflow(); renderAuditLog();
+  renderAdminPortal(); renderFieldIntake(); renderTestMatrix(); renderPunchWorkflow(); renderAuditLog(); renderTestReporting();
 }
 
 // ==========================================================================
@@ -2176,12 +2180,13 @@ function renderAdminPortal() {
     return;
   }
   const tabs = [
-    { id: 'templates',   label: 'Activity Templates' },
-    { id: 'testcases',   label: 'Test Items' },
-    { id: 'locations',   label: 'Locations' },
-    { id: 'directory',   label: 'Directory' },
-    { id: 'fieldconfig', label: 'Field Config' },
-    { id: 'overview',    label: 'Overview' },
+    { id: 'templates',       label: 'Activity Templates' },
+    { id: 'testcases',       label: 'Test Items' },
+    { id: 'locations',       label: 'Locations' },
+    { id: 'directory',       label: 'Directory' },
+    { id: 'fieldconfig',     label: 'Field Config' },
+    { id: 'activitymanager', label: 'Activity Manager' },
+    { id: 'overview',        label: 'Overview' },
   ];
   root.innerHTML = `
     <div class="admin-tabs">
@@ -2194,7 +2199,7 @@ function renderAdminPortal() {
 
 function setAdminTab(tab) {
   _adminTab = tab;
-  const labelMap = { templates:'Activity Templates', testcases:'Test Items', locations:'Locations', directory:'Directory', fieldconfig:'Field Config', overview:'Overview' };
+  const labelMap = { templates:'Activity Templates', testcases:'Test Items', locations:'Locations', directory:'Directory', fieldconfig:'Field Config', activitymanager:'Activity Manager', overview:'Overview' };
   document.querySelectorAll('.admin-tab').forEach(el => {
     el.classList.toggle('active', el.textContent.trim() === labelMap[tab]);
   });
@@ -2204,11 +2209,12 @@ function setAdminTab(tab) {
 function renderAdminTabBody() {
   const body = document.getElementById('admin-tab-body');
   if (!body) return;
-  if (_adminTab === 'templates') body.innerHTML = _adminTemplatesHTML();
-  else if (_adminTab === 'testcases') body.innerHTML = _adminTestItemsHTML();
-  else if (_adminTab === 'locations') body.innerHTML = _adminLocationsHTML();
-  else if (_adminTab === 'directory') { body.innerHTML = _adminDirectoryHTML(); _loadDirectoryUsers(); }
-  else if (_adminTab === 'fieldconfig') body.innerHTML = _adminFieldConfigHTML();
+  if (_adminTab === 'templates')           body.innerHTML = _adminTemplatesHTML();
+  else if (_adminTab === 'testcases')      body.innerHTML = _adminTestItemsHTML();
+  else if (_adminTab === 'locations')      body.innerHTML = _adminLocationsHTML();
+  else if (_adminTab === 'directory')      { body.innerHTML = _adminDirectoryHTML(); _loadDirectoryUsers(); }
+  else if (_adminTab === 'fieldconfig')    body.innerHTML = _adminFieldConfigHTML();
+  else if (_adminTab === 'activitymanager') { body.innerHTML = _adminActivityManagerHTML(); }
   else body.innerHTML = _adminOverviewHTML();
 }
 
@@ -3553,11 +3559,12 @@ function renderTestMatrix() {
   const isPass = s => s === 'Pass' || s === 'Complete' || s === 'Passed';
   const isFail = s => s === 'Fail' || s === 'Failed';
   const isNotStarted = s => !s || s === 'Not Started' || s === 'Future';
-  const complete   = filtered.filter(r => isPass(r.Status)).length;
-  const failed     = filtered.filter(r => isFail(r.Status)).length;
-  const inprog     = filtered.filter(r => r.Status === 'In Progress').length;
-  const blocked    = filtered.filter(r => r.Status === 'Blocked').length;
-  const notStarted = filtered.filter(r => isNotStarted(r.Status)).length;
+  const complete    = filtered.filter(r => isPass(r.Status)).length;
+  const failed      = filtered.filter(r => isFail(r.Status)).length;
+  const inprog      = filtered.filter(r => r.Status === 'In Progress').length;
+  const blocked     = filtered.filter(r => r.Status === 'Blocked').length;
+  const futureTest  = filtered.filter(r => r.Status === 'Future Test').length;
+  const notStarted  = filtered.filter(r => isNotStarted(r.Status)).length;
 
   // Group by Phase + Location + Subsystem + Activity
   const groups = {};
@@ -3576,6 +3583,7 @@ function renderTestMatrix() {
       <div class="matrix-stat"><div class="matrix-stat-label">In Progress</div><div class="matrix-stat-value info" id="mx-stat-inprog">${inprog}</div></div>
       <div class="matrix-stat"><div class="matrix-stat-label">Blocked</div><div class="matrix-stat-value warn" id="mx-stat-blocked">${blocked}</div></div>
       <div class="matrix-stat"><div class="matrix-stat-label">Not Started</div><div class="matrix-stat-value" id="mx-stat-notstarted">${notStarted}</div></div>
+      ${futureTest ? `<div class="matrix-stat"><div class="matrix-stat-label">Future Test</div><div class="matrix-stat-value" style="color:#5b21b6;" id="mx-stat-futuretest">${futureTest}</div></div>` : ''}
       <div class="matrix-stat"><div class="matrix-stat-label">Total</div><div class="matrix-stat-value">${filtered.length}</div></div>
     </div>
 
@@ -3616,7 +3624,7 @@ function renderTestMatrix() {
             <div style="flex:1;">
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                 <div class="matrix-section-title">${escapeHtml(g.activity)}</div>
-                ${g.testReport ? `<span style="font-size:12px;color:var(--gray-600);font-weight:500;">📄 CDRL: ${escapeHtml(g.testReport)}</span>` : ''}
+                ${g.testReport ? `<span style="font-size:12px;color:var(--gray-600);font-weight:500;">📄 Test Report CDRL: ${escapeHtml(g.testReport)}</span>` : ''}
                 ${isAdmin ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openEditActivityModal(${idx})">Edit</button>` : ''}
               </div>
               <div class="matrix-section-meta">${escapeHtml(g.phase)} · ${escapeHtml(g.location)} · ${escapeHtml(g.subsystem)}</div>
@@ -3650,7 +3658,7 @@ function _renderTIMatrixRow(r, isAdmin) {
   // 'Future' is the DB default — treat as Not Started in the UI
   const legacyMap = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
   const current   = legacyMap[r.Status] || r.Status || 'Not Started';
-  const statuses  = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable'];
+  const statuses  = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'];
   const showReason = current === 'Fail' || current === 'Blocked';
   const reasonVal  = current === 'Fail' ? (r.FailedReason||'') : (r.BlockedReason||'');
   const tid = escapeHtml(String(r.TestID));
@@ -3749,6 +3757,7 @@ function _mxRefreshCounts() {
   set('mx-stat-inprog',     filtered.filter(r => r.Status === 'In Progress').length);
   set('mx-stat-blocked',    filtered.filter(r => r.Status === 'Blocked').length);
   set('mx-stat-notstarted', filtered.filter(r => isNotStarted(r.Status)).length);
+  set('mx-stat-futuretest', filtered.filter(r => r.Status === 'Future Test').length);
 
   // Update each per-activity tally
   (window._mxGroups || []).forEach((g, idx) => {
@@ -3768,6 +3777,11 @@ async function _mxSaveStatus(status, r) {
   if (status === 'Pass') {
     patch.completed_by   = currentRoleUser?.name;
     patch.completed_date = new Date().toISOString();
+  }
+  // Clear completion metadata when reverting from Pass
+  if (status !== 'Pass' && status !== 'Not Applicable') {
+    patch.completed_by   = null;
+    patch.completed_date = null;
   }
   // Clear reason fields when status no longer warrants them
   if (status !== 'Fail')    patch.failed_reason  = null;
@@ -3826,8 +3840,8 @@ function openEditActivityModal(idx) {
         <input type="text" id="ea-name" class="form-input" value="${escapeHtml(data.activity||'')}">
       </div>
       <div class="form-field" style="margin-top:12px;">
-        <label>CDRL Reference</label>
-        <input type="text" id="ea-report" class="form-input" placeholder="e.g. CDRL-A001" value="${escapeHtml(data.testReport||'')}">
+        <label>Test Report CDRL</label>
+        <input type="text" id="ea-report" class="form-input" placeholder="e.g. CDRL 9.05.25" value="${escapeHtml(data.testReport||'')}">
       </div>
       <p style="font-size:12px;color:var(--gray-500);margin-top:12px;">Changes apply to all test cases under this activity: <b>${escapeHtml(data.phase)} · ${escapeHtml(data.location)} · ${escapeHtml(data.subsystem)}</b></p>
     `,
@@ -3941,7 +3955,7 @@ function renderIntakeStep1() {
     ...log.map((e,i) => ({...e, _idx:i, _fromLog:true})),
     ...intakeAdditions.map((a,i) => ({...a, _idx:i, _fromAdditions:true}))
   ];
-  const statusColor = s => ({'Pass':'#059669','In Progress':'#1d4ed8','Fail':'#dc2626','Blocked':'#d97706','Not Started':'#6b7280','Not Applicable':'#9ca3af'}[s]||'#6b7280');
+  const statusColor = s => ({'Pass':'#059669','In Progress':'#1d4ed8','Fail':'#dc2626','Blocked':'#d97706','Not Started':'#6b7280','Not Applicable':'#9ca3af','Future Test':'#5b21b6'}[s]||'#6b7280');
 
   return `
     <div class="form-card">
@@ -5537,6 +5551,556 @@ function exportAudit() {
     { key: 'notes', label: 'Notes' },
   ];
   downloadCSV(toCSV(AUDIT_LOG, cols), 'audit_log.csv');
+}
+
+// ==========================================================================
+// TEST REPORTS — loader & CRUD
+// ==========================================================================
+async function loadTestReports() {
+  try {
+    const data = await _fetchAnon('test_reports?select=*&order=created_at.asc');
+    _testReports = data || [];
+  } catch(e) { console.warn('[loadTestReports] failed:', e.message); }
+}
+
+async function loadActivityRecords() {
+  try {
+    const data = await _fetchAnon('activity_records?select=*');
+    _activityRecords = data || [];
+  } catch(e) { console.warn('[loadActivityRecords] failed:', e.message); }
+}
+
+const TR_STATUSES = ['Not Started','In Review','Accepted','Accepted as Noted','Accepted as Noted Resubmit','Resubmit','Rejected'];
+
+function _trStatusBadge(s) {
+  const map = {
+    'Not Started':                'badge-notstarted',
+    'In Review':                  'badge-review',
+    'Accepted':                   'badge-accepted',
+    'Accepted as Noted':          'badge-accepted',
+    'Accepted as Noted Resubmit': 'badge-resubmit',
+    'Resubmit':                   'badge-resubmit',
+    'Rejected':                   'badge-rejected',
+  };
+  return `<span class="badge ${map[s]||'badge-notstarted'}">${escapeHtml(s||'Not Started')}</span>`;
+}
+
+function renderTestReporting() {
+  const root = document.getElementById('test-reporting-content');
+  if (!root) return;
+  if (!currentRoleUser) { root.innerHTML = ''; return; }
+  const isAdmin = currentRoleUser.role === 'admin';
+
+  // Build parent → children tree
+  const parents = _testReports.filter(r => !r.parent_id);
+  const children = r => _testReports.filter(c => c.parent_id === r.id);
+
+  const subsystems = [...new Set(_testReports.map(r => r.subsystem).filter(Boolean))].sort();
+
+  root.innerHTML = `
+    <div class="admin-section">
+      <div class="admin-section-head">
+        <div>
+          <div class="admin-section-title">Test Reports</div>
+          <p class="section-sub">Track CDRL submissions, revisions, and acceptance status</p>
+        </div>
+        ${isAdmin ? `<button class="admin-action-btn" onclick="openNewTestReportModal()">+ New Report</button>` : ''}
+      </div>
+      ${!_testReports.length ? `
+        <div class="docs-empty"><h3>No reports yet</h3><p>${isAdmin ? 'Create your first test report above.' : 'No test reports have been created yet.'}</p></div>
+      ` : parents.map(p => _trReportCardHTML(p, children(p), isAdmin)).join('')}
+    </div>
+  `;
+}
+
+function _trReportCardHTML(r, revisions, isAdmin) {
+  const canEdit = isAdmin || currentRoleUser?.role === 'field_engineer';
+  return `
+    <div class="tr-report-card">
+      <div style="display:flex;align-items:flex-start;gap:12px;">
+        <div style="flex:1;min-width:0;">
+          <div class="tr-report-title">${escapeHtml(r.title)} <span style="font-size:12px;color:var(--gray-500);font-weight:400;">Rev ${escapeHtml(r.revision||'A')}</span></div>
+          <div class="tr-report-meta">${r.cdrl_number ? `CDRL: ${escapeHtml(r.cdrl_number)} · ` : ''}${r.subsystem ? escapeHtml(r.subsystem)+' · ' : ''}${_trStatusBadge(r.status)}</div>
+          ${r.notes ? `<div style="font-size:12px;color:var(--gray-600);margin-top:6px;">${escapeHtml(r.notes)}</div>` : ''}
+        </div>
+        <div class="tr-report-actions">
+          ${canEdit ? `<button class="form-secondary" style="font-size:12px;padding:4px 10px;" onclick="openEditTestReportModal('${r.id}')">Edit</button>` : ''}
+          ${isAdmin ? `<button class="admin-action-btn" style="font-size:12px;padding:4px 10px;" onclick="openAddRevisionModal('${r.id}')">+ Revision</button>` : ''}
+        </div>
+      </div>
+    </div>
+    ${revisions.map(c => `
+      <div class="tr-report-card tr-revision">
+        <div style="display:flex;align-items:flex-start;gap:12px;">
+          <div style="flex:1;min-width:0;">
+            <div class="tr-report-title">${escapeHtml(c.title)} <span style="font-size:12px;color:var(--gray-500);font-weight:400;">Rev ${escapeHtml(c.revision||'A')}</span></div>
+            <div class="tr-report-meta">${c.cdrl_number ? `CDRL: ${escapeHtml(c.cdrl_number)} · ` : ''}${_trStatusBadge(c.status)}</div>
+            ${c.notes ? `<div style="font-size:12px;color:var(--gray-600);margin-top:6px;">${escapeHtml(c.notes)}</div>` : ''}
+          </div>
+          <div class="tr-report-actions">
+            ${canEdit ? `<button class="form-secondary" style="font-size:12px;padding:4px 10px;" onclick="openEditTestReportModal('${c.id}')">Edit</button>` : ''}
+          </div>
+        </div>
+      </div>
+    `).join('')}
+  `;
+}
+
+function _trStatusSelectHTML(currentVal, id) {
+  return `<select id="${id}" class="form-input">
+    ${TR_STATUSES.map(s => `<option value="${s}" ${currentVal===s?'selected':''}>${s}</option>`).join('')}
+  </select>`;
+}
+
+function openNewTestReportModal() {
+  const subsystems = [...new Set(TI.map(r=>r.Subsystem).filter(Boolean))].sort();
+  modal({
+    title: 'New Test Report',
+    size: 'medium',
+    body: `
+      <div class="form-grid">
+        <div class="form-field form-field-full"><label>Title</label><input type="text" id="tr-title" class="form-input" placeholder="e.g. DCS SAT Test Report"></div>
+        <div class="form-field"><label>CDRL Number</label><input type="text" id="tr-cdrl" class="form-input" placeholder="e.g. CDRL 9.05.25"></div>
+        <div class="form-field"><label>Revision</label><input type="text" id="tr-rev" class="form-input" value="A" placeholder="A"></div>
+        <div class="form-field"><label>Subsystem</label><select id="tr-subsystem" class="form-input"><option value="">— Select —</option>${subsystems.map(s=>`<option>${escapeHtml(s)}</option>`).join('')}</select></div>
+        <div class="form-field"><label>Status</label>${_trStatusSelectHTML('Not Started','tr-status')}</div>
+        <div class="form-field form-field-full"><label>Notes</label><textarea id="tr-notes" class="form-input" rows="2" placeholder="Optional notes..."></textarea></div>
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" onclick="saveNewTestReport()">Create Report</button>`
+  });
+}
+
+async function saveNewTestReport() {
+  const title = document.getElementById('tr-title')?.value.trim();
+  if (!title) { toast('Title is required','error'); return; }
+  const row = {
+    title,
+    cdrl_number: document.getElementById('tr-cdrl')?.value.trim() || null,
+    revision:    document.getElementById('tr-rev')?.value.trim()  || 'A',
+    status:      document.getElementById('tr-status')?.value      || 'Not Started',
+    subsystem:   document.getElementById('tr-subsystem')?.value   || null,
+    notes:       document.getElementById('tr-notes')?.value.trim() || null,
+    created_by:  currentRoleUser?.name,
+    updated_by:  currentRoleUser?.name,
+  };
+  const btn = document.querySelector('.modal-footer .admin-action-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const inserted = await _dbInsert('test_reports', [row]);
+    _testReports.push(...inserted);
+    logAudit('Test Report Created', title, `CDRL: ${row.cdrl_number||'—'}`);
+    toast('Test report created', 'success');
+    closeModal();
+    renderTestReporting();
+  } catch(e) {
+    toast('Save failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Create Report'; }
+  }
+}
+
+function openEditTestReportModal(id) {
+  const r = _testReports.find(x => x.id === id);
+  if (!r) { toast('Report not found','error'); return; }
+  const isAdmin = currentRoleUser?.role === 'admin';
+  const subsystems = [...new Set(TI.map(t=>t.Subsystem).filter(Boolean))].sort();
+  modal({
+    title: 'Edit Test Report',
+    size: 'medium',
+    body: `
+      <div class="form-grid">
+        <div class="form-field form-field-full"><label>Title</label><input type="text" id="tr-title" class="form-input" value="${escapeHtml(r.title)}" ${!isAdmin?'disabled':''}></div>
+        <div class="form-field"><label>CDRL Number</label><input type="text" id="tr-cdrl" class="form-input" value="${escapeHtml(r.cdrl_number||'')}" ${!isAdmin?'disabled':''}></div>
+        <div class="form-field"><label>Revision</label><input type="text" id="tr-rev" class="form-input" value="${escapeHtml(r.revision||'A')}" ${!isAdmin?'disabled':''}></div>
+        <div class="form-field"><label>Subsystem</label><select id="tr-subsystem" class="form-input" ${!isAdmin?'disabled':''}><option value="">— Select —</option>${subsystems.map(s=>`<option ${r.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select></div>
+        <div class="form-field"><label>Status</label>${_trStatusSelectHTML(r.status,'tr-status')}</div>
+        <div class="form-field form-field-full"><label>Notes</label><textarea id="tr-notes" class="form-input" rows="2">${escapeHtml(r.notes||'')}</textarea></div>
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" onclick="saveTestReportEdit('${id}')">Save Changes</button>`
+  });
+}
+
+async function saveTestReportEdit(id) {
+  const r = _testReports.find(x => x.id === id);
+  if (!r) return;
+  const isAdmin = currentRoleUser?.role === 'admin';
+  const patch = {
+    status:     document.getElementById('tr-status')?.value || r.status,
+    notes:      document.getElementById('tr-notes')?.value.trim() || null,
+    updated_by: currentRoleUser?.name,
+    updated_at: new Date().toISOString(),
+  };
+  if (isAdmin) {
+    patch.title      = document.getElementById('tr-title')?.value.trim() || r.title;
+    patch.cdrl_number = document.getElementById('tr-cdrl')?.value.trim() || null;
+    patch.revision   = document.getElementById('tr-rev')?.value.trim() || r.revision;
+    patch.subsystem  = document.getElementById('tr-subsystem')?.value || null;
+  }
+  const btn = document.querySelector('.modal-footer .admin-action-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    await _dbUpdate('test_reports', patch, { id });
+    Object.assign(r, patch);
+    logAudit('Test Report Updated', r.title, `Status: ${patch.status}`);
+    toast('Report updated', 'success');
+    closeModal();
+    renderTestReporting();
+  } catch(e) {
+    toast('Save failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+  }
+}
+
+function openAddRevisionModal(parentId) {
+  const parent = _testReports.find(r => r.id === parentId);
+  if (!parent) return;
+  // Suggest next revision letter
+  const siblings = _testReports.filter(r => r.parent_id === parentId);
+  const lastRev  = siblings.length ? siblings[siblings.length-1].revision : parent.revision;
+  const nextRev  = lastRev ? String.fromCharCode(lastRev.charCodeAt(0)+1) : 'B';
+  modal({
+    title: `Add Revision — ${escapeHtml(parent.title)}`,
+    size: 'medium',
+    body: `
+      <p style="font-size:13px;color:var(--gray-600);margin-bottom:16px;">A new revision will be created with fresh status (Not Started), linked to the original report.</p>
+      <div class="form-grid">
+        <div class="form-field"><label>Revision</label><input type="text" id="tr-rev" class="form-input" value="${escapeHtml(nextRev)}"></div>
+        <div class="form-field"><label>Status</label>${_trStatusSelectHTML('Not Started','tr-status')}</div>
+        <div class="form-field form-field-full"><label>Notes</label><textarea id="tr-notes" class="form-input" rows="2" placeholder="Notes for this revision..."></textarea></div>
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" onclick="saveNewRevision('${parentId}')">Add Revision</button>`
+  });
+}
+
+async function saveNewRevision(parentId) {
+  const parent = _testReports.find(r => r.id === parentId);
+  if (!parent) return;
+  const row = {
+    title:       parent.title,
+    cdrl_number: parent.cdrl_number,
+    revision:    document.getElementById('tr-rev')?.value.trim() || 'B',
+    status:      document.getElementById('tr-status')?.value || 'Not Started',
+    subsystem:   parent.subsystem,
+    notes:       document.getElementById('tr-notes')?.value.trim() || null,
+    parent_id:   parentId,
+    created_by:  currentRoleUser?.name,
+    updated_by:  currentRoleUser?.name,
+  };
+  const btn = document.querySelector('.modal-footer .admin-action-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const inserted = await _dbInsert('test_reports', [row]);
+    _testReports.push(...inserted);
+    logAudit('Test Report Revision Added', parent.title, `Rev ${row.revision}`);
+    toast(`Revision ${row.revision} added`, 'success');
+    closeModal();
+    renderTestReporting();
+  } catch(e) {
+    toast('Save failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Add Revision'; }
+  }
+}
+
+// ==========================================================================
+// ACTIVITY MANAGER — Admin tab
+// ==========================================================================
+let _amFilters = { phase:'', location:'', subsystem:'', status:'' };
+let _amSelected = new Set(); // selected activity keys for bulk action
+
+function _amGetActivities() {
+  // Derive unique activities from TI
+  const map = new Map();
+  TI.forEach(r => {
+    const key = `${r.Phase||''}||${r.Location||''}||${r.Subsystem||''}||${r.Activity||''}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        phase:         r.Phase    || '—',
+        location:      r.Location || '—',
+        subsystem:     r.Subsystem|| '—',
+        activity:      r.Activity || '—',
+        testProcedure: r.TestProcedure || '',
+        testReport:    r.TestReport   || '',
+        items: [],
+      });
+    }
+    map.get(key).items.push(r);
+  });
+  // Attach future_test_reason from _activityRecords
+  map.forEach(act => {
+    const rec = _activityRecords.find(ar =>
+      ar.phase === act.phase && ar.location === act.location &&
+      ar.subsystem === act.subsystem && ar.activity_name === act.activity
+    );
+    act.futureTestReason = rec?.future_test_reason || '';
+  });
+  return [...map.values()];
+}
+
+function _amComputeStatus(act) {
+  const items = act.items;
+  if (!items.length) return 'Open';
+  const allFuture = items.every(r => r.Status === 'Future Test');
+  if (allFuture) return 'Future Test';
+  const allDone = items.every(r => r.Status === 'Pass' || r.Status === 'Not Applicable' ||
+    r.Status === 'Complete' || r.Status === 'Passed');
+  if (allDone) return 'Closed';
+  return 'Open';
+}
+
+function _amComputeCompletion(act) {
+  // Exclude Future Test items from denominator
+  const eligible = act.items.filter(r => r.Status !== 'Future Test');
+  const done = eligible.filter(r => r.Status === 'Pass' || r.Status === 'Not Applicable' ||
+    r.Status === 'Complete' || r.Status === 'Passed').length;
+  return { done, total: eligible.length };
+}
+
+function _amStatusBadge(s) {
+  if (s === 'Closed')      return `<span class="badge badge-passed">Closed</span>`;
+  if (s === 'Future Test') return `<span class="badge badge-futuretest">Future Test</span>`;
+  return `<span class="badge badge-open">Open</span>`;
+}
+
+function _adminActivityManagerHTML() {
+  const all = _amGetActivities();
+
+  // Build filter option pools
+  const phases     = [...new Set(all.map(a=>a.phase)   .filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const locations  = [...new Set(all.map(a=>a.location).filter(Boolean))].sort();
+  const subsystems = [...new Set(all.map(a=>a.subsystem).filter(Boolean))].sort();
+  const statuses   = ['Open','Closed','Future Test'];
+
+  // Apply filters
+  let filtered = all.filter(a => {
+    const st = _amComputeStatus(a);
+    return (!_amFilters.phase     || a.phase     === _amFilters.phase)     &&
+           (!_amFilters.location  || a.location  === _amFilters.location)  &&
+           (!_amFilters.subsystem || a.subsystem === _amFilters.subsystem) &&
+           (!_amFilters.status    || st          === _amFilters.status);
+  });
+
+  const hasFilters = _amFilters.phase || _amFilters.location || _amFilters.subsystem || _amFilters.status;
+  const selCount   = _amSelected.size;
+
+  return `
+    <div class="admin-section">
+      <div class="admin-section-head">
+        <div>
+          <div class="admin-section-title">Activity Manager</div>
+          <p class="section-sub">${all.length} activities across all phases and locations</p>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="am-filter-bar">
+        <select class="filter-select" onchange="_amSetFilter('phase',this.value)">
+          <option value="">All Phases</option>
+          ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_amFilters.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
+        </select>
+        <select class="filter-select" onchange="_amSetFilter('location',this.value)">
+          <option value="">All Locations</option>
+          ${locations.map(l=>`<option value="${escapeHtml(l)}" ${_amFilters.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
+        </select>
+        <select class="filter-select" onchange="_amSetFilter('subsystem',this.value)">
+          <option value="">All Subsystems</option>
+          ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_amFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+        </select>
+        <select class="filter-select" onchange="_amSetFilter('status',this.value)">
+          <option value="">All Statuses</option>
+          ${statuses.map(s=>`<option value="${s}" ${_amFilters.status===s?'selected':''}>${s}</option>`).join('')}
+        </select>
+        ${hasFilters ? `<button class="filter-clear" onclick="_amClearFilters()">Reset</button>` : ''}
+        <span style="margin-left:auto;font-size:12px;color:var(--gray-500);">${filtered.length} of ${all.length} shown</span>
+      </div>
+
+      <!-- Bulk action bar (visible when selection > 0) -->
+      ${selCount > 0 ? `
+        <div class="am-bulk-bar">
+          <span><b>${selCount}</b> activit${selCount===1?'y':'ies'} selected</span>
+          <button class="admin-action-btn" style="background:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>
+          <button class="form-secondary" style="font-size:12px;" onclick="_amClearSelection()">Clear selection</button>
+        </div>
+      ` : ''}
+
+      <!-- Table -->
+      <div class="data-card">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="am-cb-col"><input type="checkbox" id="am-cb-all" onchange="_amToggleAll(this.checked)" title="Select all"></th>
+                <th>Activity Name</th>
+                <th>Subsystem</th>
+                <th>Test Procedure</th>
+                <th>Test Report CDRL</th>
+                <th>Location</th>
+                <th>Phase</th>
+                <th>Status</th>
+                <th style="min-width:160px;">Completion</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filtered.length ? filtered.map(a => {
+                const st = _amComputeStatus(a);
+                const { done, total } = _amComputeCompletion(a);
+                const pct = total > 0 ? Math.round((done/total)*100) : 0;
+                const isSel = _amSelected.has(a.key);
+                const procFull = a.testProcedure || '';
+                const procShort = procFull.length > 50 ? procFull.slice(0,50)+'…' : (procFull || '—');
+                return `
+                  <tr style="${isSel?'background:#f5f3ff;':''}">
+                    <td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} onchange="_amToggleRow('${escapeHtml(a.key)}',this.checked)"></td>
+                    <td>
+                      <div style="font-weight:600;font-size:13px;">${escapeHtml(a.activity)}</div>
+                      ${a.futureTestReason ? `<div style="font-size:11px;color:#5b21b6;margin-top:2px;">↳ ${escapeHtml(a.futureTestReason)}</div>` : ''}
+                    </td>
+                    <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
+                    <td style="font-size:12px;max-width:180px;" title="${escapeHtml(procFull)}">${escapeHtml(procShort)}</td>
+                    <td style="font-size:12px;">${escapeHtml(a.testReport||'—')}</td>
+                    <td style="font-size:12px;">${escapeHtml(a.location)}</td>
+                    <td style="font-size:12px;">${escapeHtml(a.phase)}</td>
+                    <td>${_amStatusBadge(st)}</td>
+                    <td>
+                      <div class="am-progress-wrap">
+                        <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;${pct===100?'background:var(--good);':pct>0?'background:var(--info);':'background:var(--gray-300);'}"></div></div>
+                        <span class="am-progress-label">${done}/${total}</span>
+                      </div>
+                    </td>
+                  </tr>
+                `;
+              }).join('') : `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--gray-500);">No activities match the current filters</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function _amSetFilter(k, v) {
+  _amFilters[k] = v;
+  _amSelected.clear();
+  _reRenderAMTab();
+}
+
+function _amClearFilters() {
+  _amFilters = { phase:'', location:'', subsystem:'', status:'' };
+  _amSelected.clear();
+  _reRenderAMTab();
+}
+
+function _amToggleRow(key, checked) {
+  if (checked) _amSelected.add(key); else _amSelected.delete(key);
+  _reRenderAMTab();
+}
+
+function _amToggleAll(checked) {
+  const all = _amGetActivities().filter(a => {
+    const st = _amComputeStatus(a);
+    return (!_amFilters.phase     || a.phase     === _amFilters.phase)    &&
+           (!_amFilters.location  || a.location  === _amFilters.location) &&
+           (!_amFilters.subsystem || a.subsystem === _amFilters.subsystem)&&
+           (!_amFilters.status    || st          === _amFilters.status);
+  });
+  if (checked) all.forEach(a => _amSelected.add(a.key));
+  else _amSelected.clear();
+  _reRenderAMTab();
+}
+
+function _amClearSelection() {
+  _amSelected.clear();
+  _reRenderAMTab();
+}
+
+function _reRenderAMTab() {
+  const body = document.getElementById('admin-tab-body');
+  if (body && _adminTab === 'activitymanager') body.innerHTML = _adminActivityManagerHTML();
+}
+
+function _amOpenFutureTestModal() {
+  if (!_amSelected.size) return;
+  const all = _amGetActivities();
+  const selected = all.filter(a => _amSelected.has(a.key));
+  const totalItems = selected.reduce((sum,a) => sum + a.items.length, 0);
+  modal({
+    title: 'Mark Activities as Future Test',
+    size: 'medium',
+    body: `
+      <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:12px 16px;margin-bottom:16px;">
+        <div style="font-weight:600;color:#5b21b6;margin-bottom:4px;">${_amSelected.size} activit${_amSelected.size===1?'y':'ies'} selected · ${totalItems} test items affected</div>
+        <div style="font-size:12px;color:#6d28d9;">All test items within these activities will be updated to "Future Test" status.</div>
+      </div>
+      <div style="margin-bottom:12px;max-height:120px;overflow-y:auto;">
+        ${selected.map(a=>`<div style="font-size:12px;padding:3px 0;border-bottom:1px solid #f3f4f6;">${escapeHtml(a.activity)} <span style="color:var(--gray-500);">· ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</span></div>`).join('')}
+      </div>
+      <div class="form-field">
+        <label>Future Test Reason <span style="color:var(--bad);">*</span></label>
+        <textarea id="am-ft-reason" class="form-input" rows="3" placeholder="e.g. DCS SAT Testing - Future Test - Pending Wayside Installation"></textarea>
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" style="background:#5b21b6;" onclick="_amConfirmFutureTest()">Confirm & Update All</button>`
+  });
+}
+
+async function _amConfirmFutureTest() {
+  const reason = document.getElementById('am-ft-reason')?.value.trim();
+  if (!reason) { toast('A Future Test Reason is required','error'); return; }
+
+  const all      = _amGetActivities();
+  const selected = all.filter(a => _amSelected.has(a.key));
+  const allItems = selected.flatMap(a => a.items);
+
+  const btn = document.querySelector('.modal-footer .admin-action-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Updating…'; }
+
+  try {
+    // 1. Cascade status to all test items in parallel
+    const updates = allItems.map(r => _dbUpdate('test_items',
+      { status: 'Future Test', failed_reason: null, blocked_reason: null, completed_by: null, completed_date: null },
+      { test_id: r.TestID }
+    ));
+    await Promise.all(updates);
+
+    // 2. Update in-memory TI
+    allItems.forEach(r => {
+      r.Status        = 'Future Test';
+      r.FailedReason  = null;
+      r.BlockedReason = null;
+      r.CompletedBy   = null;
+      r.CompletedDate = null;
+    });
+
+    // 3. Store future_test_reason in activity_records
+    for (const act of selected) {
+      const existing = _activityRecords.find(ar =>
+        ar.phase === act.phase && ar.location === act.location &&
+        ar.subsystem === act.subsystem && ar.activity_name === act.activity
+      );
+      if (existing) {
+        await _dbUpdate('activity_records', { future_test_reason: reason, updated_at: new Date().toISOString() }, { id: existing.id });
+        existing.future_test_reason = reason;
+      } else {
+        const inserted = await _dbInsert('activity_records', [{
+          phase: act.phase, location: act.location, subsystem: act.subsystem,
+          activity_name: act.activity, future_test_reason: reason
+        }]);
+        _activityRecords.push(...inserted);
+      }
+    }
+
+    logAudit('Bulk Future Test', `${selected.length} activities`, reason);
+    toast(`${allItems.length} test items updated to Future Test`, 'success');
+    _amSelected.clear();
+    closeModal();
+    renderTestMatrix();
+    _reRenderAMTab();
+  } catch(e) {
+    toast('Update failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm & Update All'; }
+  }
 }
 
 // ==========================================================================

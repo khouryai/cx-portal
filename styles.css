@@ -857,6 +857,11 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .badge-ready { background: var(--info-light); color: var(--info); }
 .badge-draft { background: var(--gray-100); color: var(--gray-600); }
 .badge-initiated { background: var(--pending-light); color: var(--pending); }
+.badge-futuretest { background: #ede9fe; color: #5b21b6; }
+.badge-review { background: #dbeafe; color: #1e40af; }
+.badge-accepted { background: var(--good-light); color: var(--good); }
+.badge-resubmit { background: var(--warn-light); color: var(--warn); }
+.badge-rejected { background: var(--bad-light); color: var(--bad); }
 
 .priority-pill {
   display: inline-block;
@@ -2612,3 +2617,69 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
   font-weight: 700;
   font-size: 12px;
 }
+
+/* ===================================
+   ACTIVITY MANAGER PROGRESS BAR
+   =================================== */
+.am-progress-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.am-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--gray-100);
+  border-radius: 99px;
+  overflow: hidden;
+  min-width: 60px;
+}
+.am-progress-fill {
+  height: 100%;
+  border-radius: 99px;
+  background: var(--good);
+  transition: width 0.4s ease;
+}
+.am-progress-label {
+  font-size: 11px;
+  color: var(--gray-600);
+  white-space: nowrap;
+}
+.am-cb-col { width: 32px; text-align: center; }
+.am-filter-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  align-items: center;
+}
+.am-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #ede9fe;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: #5b21b6;
+}
+
+/* ===================================
+   TEST REPORTING SECTION
+   =================================== */
+.tr-report-card {
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-bottom: 10px;
+}
+.tr-report-card.tr-revision {
+  margin-left: 28px;
+  border-left: 3px solid var(--gray-300);
+  border-radius: 0 10px 10px 0;
+}
+.tr-report-title { font-weight: 600; font-size: 14px; }
+.tr-report-meta  { font-size: 12px; color: var(--gray-500); margin-top: 2px; }
+.tr-report-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }

@@ -86,9 +86,10 @@
       <div class="nav-dd nav-role" id="nav-dd-tools" data-role="field_engineer admin client" style="display:none;">
         <button class="nav-dd-toggle" onclick="_navDdToggle('nav-dd-tools')">Tools <span class="nav-dd-chevron">▾</span></button>
         <div class="nav-dd-menu">
-          <a href="#" class="nav-dd-item nav-dd-role" data-page="field-intake"   data-role="field_engineer admin">Daily Log</a>
-          <a href="#" class="nav-dd-item nav-dd-role" data-page="test-matrix"    data-role="field_engineer admin">Test Matrix</a>
-          <a href="#" class="nav-dd-item nav-dd-role" data-page="punch-workflow" data-role="admin field_engineer client">Punch Workflow</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="field-intake"      data-role="field_engineer admin">Daily Log</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="test-matrix"       data-role="field_engineer admin">Test Matrix</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="punch-workflow"    data-role="admin field_engineer client">Punch Workflow</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="test-reporting"    data-role="field_engineer admin">Test Reporting</a>
           <div class="nav-dd-divider"></div>
           <a href="#" class="nav-dd-item nav-dd-role" data-page="admin" data-role="admin">Admin Panel</a>
           <a href="#" class="nav-dd-item nav-dd-role" data-page="audit" data-role="admin">Audit Log</a>
@@ -718,6 +719,20 @@
     </div>
   </div>
 </section>
+<!-- ==== TEST REPORTING ==== -->
+<section class="page" id="page-test-reporting">
+  <div class="page-hero">
+    <div class="container">
+      <div class="role-badge role-field-badge">Tools</div>
+      <h1 class="page-title">Test Reporting</h1>
+      <p class="page-sub">Manage test report CDRLs, revisions, and acceptance status</p>
+    </div>
+  </div>
+  <div class="container">
+    <div id="test-reporting-content"></div>
+  </div>
+</section>
+
 <footer id="footer">
   <div class="footer-inner">
     <div class="footer-left">
