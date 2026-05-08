@@ -87,7 +87,7 @@
         <button class="nav-dd-toggle" onclick="_navDdToggle('nav-dd-tools')">Tools <span class="nav-dd-chevron">▾</span></button>
         <div class="nav-dd-menu">
           <a href="#" class="nav-dd-item nav-dd-role" data-page="field-intake"   data-role="field_engineer admin">Daily Log</a>
-          <a href="#" class="nav-dd-item nav-dd-role" data-page="test-matrix"    data-role="field_engineer admin">Test Matrix</a>
+          <a href="#" class="nav-dd-item nav-dd-role" data-page="test-register"  data-role="field_engineer admin">Test Register</a>
           <a href="#" class="nav-dd-item nav-dd-role" data-page="punch-workflow" data-role="admin field_engineer">Punch Workflow</a>
           <a href="#" class="nav-dd-item nav-dd-role" data-page="test-reporting" data-role="field_engineer admin">Test Reporting</a>
         </div>
@@ -98,7 +98,6 @@
         <button class="nav-dd-toggle" onclick="_navDdToggle('nav-dd-admin')">Admin <span class="nav-dd-chevron">▾</span></button>
         <div class="nav-dd-menu">
           <div class="nav-dd-group-label">Planning</div>
-          <a href="#" class="nav-dd-item nav-dd-role" data-page="admin-am"        data-role="admin">Activity Manager</a>
           <a href="#" class="nav-dd-item nav-dd-role" data-page="admin-templates" data-role="admin">Activity Templates</a>
           <div class="nav-dd-divider"></div>
           <div class="nav-dd-group-label">Configuration</div>
@@ -476,17 +475,17 @@
   </div>
 </section>
 
-<!-- ==== TEST MATRIX VIEW ==== -->
-<section class="page" id="page-test-matrix">
+<!-- ==== TEST REGISTER ==== -->
+<section class="page" id="page-test-register">
   <div class="page-hero">
     <div class="container">
-      <div class="role-badge role-field-badge">Test Matrix</div>
-      <h1 class="page-title">Test Case Details</h1>
-      <p class="page-sub">Live status — toggle test cases as you complete them</p>
+      <div class="role-badge role-field-badge">Test Register</div>
+      <h1 class="page-title">Test Register</h1>
+      <p class="page-sub">Activities, procedures and test cases — live status across all phases and locations</p>
     </div>
   </div>
   <div class="container">
-    <div id="test-matrix-content"></div>
+    <div id="test-register-content"></div>
   </div>
 </section>
 
@@ -746,20 +745,6 @@
   </div>
   <div class="container">
     <div id="test-reporting-content"></div>
-  </div>
-</section>
-
-<!-- ==== ADMIN: ACTIVITY MANAGER ==== -->
-<section class="page" id="page-admin-am">
-  <div class="page-hero">
-    <div class="container">
-      <div class="role-badge role-admin-badge">Admin</div>
-      <h1 class="page-title">Activity Manager</h1>
-      <p class="page-sub">View, filter, and manage all test activities and their test items</p>
-    </div>
-  </div>
-  <div class="container">
-    <div id="admin-am-content"></div>
   </div>
 </section>
 

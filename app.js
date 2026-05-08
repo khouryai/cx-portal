@@ -284,11 +284,10 @@ function showPage(name) {
   // Close all dropdowns on navigation
   document.querySelectorAll('.nav-dd').forEach(dd => dd.classList.remove('open'));
   // Re-render pages that need fresh state on each visit
-  if (name === 'field-intake')   renderFieldIntake();
-  if (name === 'test-matrix')   renderTestMatrix();
-  if (name === 'test-reporting') renderTestReporting();
-  if (name === 'admin-am')         renderAdminAM();
-  if (name === 'admin-templates')  renderAdminTemplates();
+  if (name === 'field-intake')    renderFieldIntake();
+  if (name === 'test-register')   renderTestRegister();
+  if (name === 'test-reporting')  renderTestReporting();
+  if (name === 'admin-templates') renderAdminTemplates();
   if (name === 'admin-locations')  renderAdminLocations();
   if (name === 'admin-fieldconfig') renderAdminFieldConfig();
   if (name === 'admin-directory')  { renderAdminDirectory(); }
@@ -340,7 +339,7 @@ async function refreshApp() {
   }
 
   // 4. Re-render live-data views; skip Daily Log mid-form to preserve user input
-  renderTestMatrix();
+  renderTestRegister();
   renderPunchWorkflow();
   if (intakeStep === 1) renderFieldIntake();
   console.log('[refreshApp] done');
@@ -2129,11 +2128,11 @@ function onLoggedIn() {
     <button class="logout-mini" onclick="signOut()">Sign out</button>
   `;
 
-  const homePage = { admin:'admin-am', field_engineer:'field-intake', readonly:'dashboard', client:'dashboard' }[currentRoleUser.role] || 'dashboard';
+  const homePage = { admin:'test-register', field_engineer:'field-intake', readonly:'dashboard', client:'dashboard' }[currentRoleUser.role] || 'dashboard';
   showPage(homePage);
   // Re-init views that are subsystem-scoped after login applies TI filter
   initLineItems();
-  renderAdminPortal(); renderAdminAM(); renderAdminTemplates(); renderFieldIntake(); renderTestMatrix(); renderPunchWorkflow(); renderAuditLog(); renderTestReporting();
+  renderAdminPortal(); renderAdminTemplates(); renderTestRegister(); renderFieldIntake(); renderPunchWorkflow(); renderAuditLog(); renderTestReporting();
 }
 
 // ==========================================================================
@@ -2248,7 +2247,6 @@ function renderAdminPortal() {
   `;
   renderAdminTabBody();
   // Also refresh standalone admin pages
-  renderAdminAM();
   renderAdminTemplates();
   renderAdminOverview();
 }
@@ -3059,7 +3057,7 @@ function confirmDeploy(templateId) {
   toast(`Deployed ${tpl.name} to ${enabledLocs.length} location${enabledLocs.length > 1 ? 's' : ''}`, 'success');
   renderAdminPortal();
   renderAdminTemplates();
-  renderTestMatrix();
+  renderTestRegister();
 }
 
 // ==========================================================================
@@ -3952,7 +3950,7 @@ async function saveActivityEdit() {
     toast(`Updated ${rows.length} test cases`, 'success');
     _pendingActivityEdit = null;
     closeModal();
-    renderTestMatrix();
+    renderTestRegister();
     initLineItems();
   } catch(e) {
     toast('Save failed: ' + e.message, 'error');
@@ -4019,10 +4017,10 @@ function renderIntakeStep1() {
         <p class="form-card-sub">No status changes recorded yet this session. Update statuses in the Test Matrix to see them here.</p>
         <div class="intake-summary-empty">
           <h3 style="font-size:16px;margin-bottom:8px;">No tests logged yet</h3>
-          <p style="font-size:13px;">Open the Test Matrix, update test case statuses as you work, then return here to complete the Daily Log.</p>
+          <p style="font-size:13px;">Open the Test Register, update test case statuses as you work, then return here to complete the Daily Log.</p>
         </div>
         <div class="form-actions">
-          <button class="form-secondary" onclick="showPage('test-matrix')">Open Test Matrix</button>
+          <button class="form-secondary" onclick="showPage('test-register')">Open Test Register</button>
           <button class="form-submit" onclick="setIntakeStep(2)">Skip to Step 2 →</button>
         </div>
       </div>
@@ -4069,7 +4067,7 @@ function renderIntakeStep1() {
         }).join('')}
       </div>
       <div class="form-actions">
-        <button class="form-secondary" onclick="showPage('test-matrix')">↺ Back to Test Matrix</button>
+        <button class="form-secondary" onclick="showPage('test-register')">↺ Back to Test Register</button>
         <button class="form-submit" onclick="setIntakeStep(2)">Continue to Step 2 →</button>
       </div>
     </div>
@@ -5882,10 +5880,224 @@ async function saveNewRevision(parentId) {
 }
 
 // ==========================================================================
-// ACTIVITY MANAGER — Admin tab
+// ACTIVITY MANAGER / TEST REGISTER — shared state
 // ==========================================================================
-let _amFilters = { phase:'', location:'', subsystem:'', status:'' };
+let _amFilters  = { phase:'', location:'', subsystem:'', status:'' };
 let _amSelected = new Set(); // selected activity keys for bulk action
+let _trExpanded = new Set(); // expanded activity keys in Test Register
+
+// ==========================================================================
+// TEST REGISTER — unified Activity + Test Case view
+// ==========================================================================
+function renderTestRegister() {
+  const root = document.getElementById('test-register-content');
+  if (!root || !currentRoleUser) return;
+  root.innerHTML = _testRegisterHTML();
+}
+
+function _trToggle(key) {
+  if (_trExpanded.has(key)) _trExpanded.delete(key); else _trExpanded.add(key);
+  _reRenderTR();
+}
+
+function _testRegisterHTML() {
+  const isAdmin = currentRoleUser?.role === 'admin';
+  const all = _amGetActivities();
+
+  const phases     = [...new Set(all.map(a=>a.phase)   .filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const locations  = [...new Set(all.map(a=>a.location).filter(Boolean))].sort();
+  const subsystems = [...new Set(all.map(a=>a.subsystem).filter(Boolean))].sort();
+  const actStatuses = ['Open','Closed','Future Test'];
+
+  const filtered = all.filter(a => {
+    const st = _amComputeStatus(a);
+    return (!_amFilters.phase     || a.phase     === _amFilters.phase)     &&
+           (!_amFilters.location  || a.location  === _amFilters.location)  &&
+           (!_amFilters.subsystem || a.subsystem === _amFilters.subsystem) &&
+           (!_amFilters.status    || st          === _amFilters.status);
+  });
+
+  const hasFilters = _amFilters.phase || _amFilters.location || _amFilters.subsystem || _amFilters.status;
+  const selCount   = _amSelected.size;
+
+  const selectedActivities = all.filter(a => _amSelected.has(a.key));
+  const hasFutureTest = selectedActivities.some(a => _amComputeStatus(a) === 'Future Test');
+  const hasNonFuture  = selectedActivities.some(a => _amComputeStatus(a) !== 'Future Test');
+
+  const tcStatuses = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'];
+  const legacyMap  = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
+
+  // column count: [cb](admin) | [expand] | Activity | Subsystem | Location | Phase | Status | Completion | [Actions](admin)
+  const colCount = isAdmin ? 9 : 7;
+
+  const actRows = filtered.map(a => {
+    const st = _amComputeStatus(a);
+    const { done, total } = _amComputeCompletion(a);
+    const pct = total > 0 ? Math.round((done/total)*100) : 0;
+    const isSel = _amSelected.has(a.key);
+    const isExpanded = _trExpanded.has(a.key);
+    const safeKey = escapeHtml(a.key);
+
+    const actRow = `
+      <tr style="${isSel?'background:#f5f3ff;':''}" class="tr-activity-row">
+        ${isAdmin ? `<td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} onchange="_amToggleRow('${safeKey}',this.checked)"></td>` : ''}
+        <td style="width:28px;padding:8px 2px;text-align:center;">
+          <button onclick="_trToggle('${safeKey}')" style="background:none;border:none;cursor:pointer;font-size:13px;color:var(--gray-400);padding:0 4px;" title="${isExpanded?'Collapse':'Expand'}">${isExpanded?'▼':'▶'}</button>
+        </td>
+        <td>
+          <div style="font-weight:600;font-size:13px;cursor:pointer;color:var(--gray-800);" onclick="_trToggle('${safeKey}')">${escapeHtml(a.activity)}</div>
+          ${a.futureTestReason ? `<div style="font-size:11px;color:#5b21b6;margin-top:2px;">↳ ${escapeHtml(a.futureTestReason)}</div>` : ''}
+        </td>
+        <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
+        <td style="font-size:12px;">${escapeHtml(a.location)}</td>
+        <td style="font-size:12px;">${escapeHtml(a.phase)}</td>
+        <td>${_amStatusBadge(st)}</td>
+        <td>
+          <div class="am-progress-wrap">
+            <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;${pct===100?'background:var(--good);':pct>0?'background:var(--info);':'background:var(--gray-300);'}"></div></div>
+            <span class="am-progress-label">${done}/${total}</span>
+          </div>
+        </td>
+        ${isAdmin ? `<td><button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_amOpenEditModal('${safeKey}')">Edit</button></td>` : ''}
+      </tr>`;
+
+    if (!isExpanded) return actRow;
+
+    // Group test items by Test Procedure
+    const tpMap = {};
+    a.items.forEach(r => {
+      const tp = r.TestProcedure || '(No Procedure)';
+      if (!tpMap[tp]) tpMap[tp] = [];
+      tpMap[tp].push(r);
+    });
+
+    const indent = isAdmin ? '60px' : '44px';
+    const expandedRows = Object.entries(tpMap).flatMap(([tp, tpItems]) => {
+      const tpRow = `
+        <tr>
+          <td colspan="${colCount}" style="padding:0;">
+            <div style="padding:6px 16px 6px ${indent};font-size:11px;font-weight:700;color:var(--gray-500);background:#f1f5f9;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;letter-spacing:.5px;text-transform:uppercase;">
+              📋 ${escapeHtml(tp)}
+            </div>
+          </td>
+        </tr>`;
+
+      const tcRows = tpItems.map(r => {
+        const cur = legacyMap[r.Status] || r.Status || 'Not Started';
+        const showReason = cur === 'Fail' || cur === 'Blocked';
+        const reasonVal  = cur === 'Fail' ? (r.FailedReason||'') : (r.BlockedReason||'');
+        const tid = escapeHtml(String(r.TestID));
+        return `
+          <tr class="tr-tc-row">
+            <td colspan="${colCount}" style="padding:0;background:#fafafa;">
+              <div style="display:flex;align-items:flex-start;gap:12px;padding:8px 16px 8px ${indent};border-bottom:1px solid #f3f4f6;">
+                <div style="width:120px;flex-shrink:0;">
+                  <div style="font-size:11px;font-family:monospace;color:var(--gray-600);">${escapeHtml(r.TestCaseCode||r.TestID||'—')}</div>
+                </div>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-weight:500;font-size:13px;">${escapeHtml(r.TestName||'—')}</div>
+                  ${r.CompletedBy ? `<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(r.CompletedBy)}</div>` : ''}
+                </div>
+                <div style="display:flex;flex-direction:column;gap:4px;min-width:190px;flex-shrink:0;">
+                  <select class="form-input" style="font-size:12px;padding:4px 6px;" onchange="_mxStatusChange('${tid}',this.value)">
+                    ${tcStatuses.map(s=>`<option value="${s}" ${cur===s?'selected':''}>${s}</option>`).join('')}
+                  </select>
+                  <div id="mx-reason-${tid}" style="${showReason?'':'display:none;'}">
+                    <input type="text" id="mx-ri-${tid}" class="form-input" style="font-size:11px;padding:3px 6px;"
+                      placeholder="${cur==='Fail'?'Failure reason...':'Blocked reason...'}"
+                      value="${escapeHtml(reasonVal)}"
+                      onblur="_mxSaveReason('${tid}',this.value)">
+                  </div>
+                </div>
+                <div style="min-width:150px;flex-shrink:0;">
+                  <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
+                </div>
+              </div>
+            </td>
+          </tr>`;
+      }).join('');
+
+      return tpRow + tcRows;
+    }).join('');
+
+    return actRow + expandedRows;
+  }).join('');
+
+  return `
+    <div class="admin-section">
+      <!-- Header + toolbar -->
+      <div class="admin-section-head" style="flex-wrap:wrap;gap:8px;">
+        <div>
+          <div class="admin-section-title">Test Register</div>
+          <p class="section-sub">${all.length} activities · ${TI.length} test cases across all phases and locations</p>
+        </div>
+        ${isAdmin ? `
+        <div style="display:flex;gap:8px;flex-shrink:0;">
+          <label style="cursor:pointer;">
+            <input type="file" accept=".csv" onchange="handleImportFile(this)" style="display:none">
+            <div class="admin-action-btn" style="display:inline-block;cursor:pointer;background:var(--gray-700);">📂 Import Test Items</div>
+          </label>
+          <button class="form-secondary" onclick="downloadImportTemplate()">↓ CSV Template</button>
+        </div>` : ''}
+      </div>
+
+      <!-- Filters -->
+      <div class="am-filter-bar">
+        <select class="filter-select" onchange="_amSetFilter('phase',this.value)">
+          <option value="">All Phases</option>
+          ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_amFilters.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
+        </select>
+        <select class="filter-select" onchange="_amSetFilter('location',this.value)">
+          <option value="">All Locations</option>
+          ${locations.map(l=>`<option value="${escapeHtml(l)}" ${_amFilters.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
+        </select>
+        <select class="filter-select" onchange="_amSetFilter('subsystem',this.value)">
+          <option value="">All Subsystems</option>
+          ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_amFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+        </select>
+        <select class="filter-select" onchange="_amSetFilter('status',this.value)">
+          <option value="">All Statuses</option>
+          ${actStatuses.map(s=>`<option value="${s}" ${_amFilters.status===s?'selected':''}>${s}</option>`).join('')}
+        </select>
+        ${hasFilters ? `<button class="filter-clear" onclick="_amClearFilters()">Reset</button>` : ''}
+        <span style="margin-left:auto;font-size:12px;color:var(--gray-500);">${filtered.length} of ${all.length} shown</span>
+      </div>
+
+      <!-- Bulk action bar (admin only) -->
+      ${isAdmin && selCount > 0 ? `
+        <div class="am-bulk-bar">
+          <span><b>${selCount}</b> activit${selCount===1?'y':'ies'} selected</span>
+          ${hasNonFuture  ? `<button class="admin-action-btn" style="background:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
+          ${hasFutureTest ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
+          <button class="form-secondary" style="font-size:12px;" onclick="_amClearSelection()">Clear selection</button>
+        </div>` : ''}
+
+      <!-- Main table -->
+      <div class="data-card">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                ${isAdmin ? `<th class="am-cb-col"><input type="checkbox" id="am-cb-all" onchange="_amToggleAll(this.checked)" title="Select all"></th>` : ''}
+                <th style="width:28px;"></th>
+                <th>Activity Name</th>
+                <th>Subsystem</th>
+                <th>Location</th>
+                <th>Phase</th>
+                <th>Status</th>
+                <th style="min-width:160px;">Completion</th>
+                ${isAdmin ? `<th>Actions</th>` : ''}
+              </tr>
+            </thead>
+            <tbody>
+              ${filtered.length ? actRows : `<tr><td colspan="${colCount}" style="text-align:center;padding:40px;color:var(--gray-500);">No activities match the current filters</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
 
 function _amGetActivities() {
   // Derive unique activities from TI
@@ -6164,12 +6376,12 @@ function _amDrilldownHTML(key) {
 
 function _amOpenDrilldown(key) {
   _amDrilldownKey = key;
-  _reRenderAMTab();
+  _reRenderTR();
 }
 
 function _amCloseDrilldown() {
   _amDrilldownKey = null;
-  _reRenderAMTab();
+  _reRenderTR();
 }
 
 function _amOpenEditModal(key) {
@@ -6283,9 +6495,8 @@ async function _amSaveEdit(key) {
     logAudit('Activity Edited', newName, `Phase: ${newPhase} · Location: ${newLocation}`);
     toast(`Activity updated: ${newName}`, 'success');
     closeModal();
-    _amDrilldownKey = null; // reset drill-down (key may have changed)
-    _reRenderAMTab();
-    renderTestMatrix();
+    _amDrilldownKey = null;
+    _reRenderTR();
   } catch(e) {
     toast('Save failed: ' + e.message, 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
@@ -6354,8 +6565,7 @@ async function _amConfirmDeployToField() {
     toast(`${allItems.length} test items deployed to field`, 'success');
     _amSelected.clear();
     closeModal();
-    renderTestMatrix();
-    _reRenderAMTab();
+    _reRenderTR();
   } catch(e) {
     toast('Deploy failed: ' + e.message, 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Confirm & Deploy'; }
@@ -6365,18 +6575,18 @@ async function _amConfirmDeployToField() {
 function _amSetFilter(k, v) {
   _amFilters[k] = v;
   _amSelected.clear();
-  _reRenderAMTab();
+  _reRenderTR();
 }
 
 function _amClearFilters() {
   _amFilters = { phase:'', location:'', subsystem:'', status:'' };
   _amSelected.clear();
-  _reRenderAMTab();
+  _reRenderTR();
 }
 
 function _amToggleRow(key, checked) {
   if (checked) _amSelected.add(key); else _amSelected.delete(key);
-  _reRenderAMTab();
+  _reRenderTR();
 }
 
 function _amToggleAll(checked) {
@@ -6389,19 +6599,18 @@ function _amToggleAll(checked) {
   });
   if (checked) all.forEach(a => _amSelected.add(a.key));
   else _amSelected.clear();
-  _reRenderAMTab();
+  _reRenderTR();
 }
 
 function _amClearSelection() {
   _amSelected.clear();
-  _reRenderAMTab();
+  _reRenderTR();
 }
 
-function _reRenderAMTab() {
-  // Update the standalone admin-am page
-  const amRoot = document.getElementById('admin-am-content');
-  if (amRoot) amRoot.innerHTML = _adminActivityManagerHTML();
-  // Also update the legacy tab body if it exists
+function _reRenderTR() {
+  const root = document.getElementById('test-register-content');
+  if (root) root.innerHTML = _testRegisterHTML();
+  // Also update legacy admin tab body if activity manager tab is open
   const body = document.getElementById('admin-tab-body');
   if (body && _adminTab === 'activitymanager') body.innerHTML = _adminActivityManagerHTML();
 }
@@ -6481,8 +6690,7 @@ async function _amConfirmFutureTest() {
     toast(`${allItems.length} test items updated to Future Test`, 'success');
     _amSelected.clear();
     closeModal();
-    renderTestMatrix();
-    _reRenderAMTab();
+    _reRenderTR();
   } catch(e) {
     toast('Update failed: ' + e.message, 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Confirm & Update All'; }
