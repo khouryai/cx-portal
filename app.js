@@ -6228,26 +6228,34 @@ function _amDrilldownHTML(key) {
   const isAdmin = currentRoleUser?.role === 'admin';
   const st = _amComputeStatus(act);
   const { done, total } = _amComputeCompletion(act);
+  const pct = total > 0 ? Math.round((done/total)*100) : 0;
   const statuses = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'];
   const legacyMap = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
+  const tpMap = {};
+  act.items.forEach(r => {
+    const tp = r.TestProcedure || '(No Procedure)';
+    if (!tpMap[tp]) tpMap[tp] = [];
+    tpMap[tp].push(r);
+  });
 
   return `
     <div class="admin-section">
-      <div style="margin-bottom:16px;">
-        <button class="form-secondary" style="font-size:12px;" onclick="_amCloseDrilldown()">← Back to Activity Manager</button>
-      </div>
-      <div style="background:#f9fafb;border:1px solid var(--gray-200);border-radius:10px;padding:16px 20px;margin-bottom:20px;">
+      <div class="tr-page-header">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
           <div>
-            <div style="font-size:18px;font-weight:700;">${escapeHtml(act.activity)}</div>
-            <div style="font-size:13px;color:var(--gray-500);margin-top:4px;">${escapeHtml(act.phase)} · ${escapeHtml(act.location)} · ${escapeHtml(act.subsystem)}</div>
+            <button class="form-secondary" style="font-size:12px;margin-bottom:12px;" onclick="_amCloseDrilldown()">← Back to Test Register</button>
+            <div style="font-size:24px;font-weight:800;color:var(--black);">${escapeHtml(act.activity)}</div>
+            <div style="font-size:13px;color:var(--gray-600);margin-top:6px;">
+              ${escapeHtml(act.subsystem)} · ${escapeHtml(act.location)} · ${escapeHtml(act.phase)}
+              ${act.testReport ? ` · Test Report CDRL: ${escapeHtml(act.testReport)}` : ''}
+            </div>
             ${act.testReport ? `<div style="font-size:12px;color:var(--gray-600);margin-top:4px;">📄 Test Report CDRL: ${escapeHtml(act.testReport)}</div>` : ''}
             ${act.futureTestReason ? `<div style="font-size:12px;color:#5b21b6;margin-top:4px;">Future Test Reason: ${escapeHtml(act.futureTestReason)}</div>` : ''}
           </div>
           <div style="display:flex;align-items:center;gap:12px;">
             ${_amStatusBadge(st)}
-            <div class="am-progress-wrap" style="min-width:120px;">
-              <div class="am-progress-bar"><div class="am-progress-fill" style="width:${total>0?Math.round((done/total)*100):0}%;background:${done===total&&total>0?'var(--good)':'var(--info)'}"></div></div>
+            <div class="am-progress-wrap" style="min-width:180px;">
+              <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;background:${pct===100?'var(--good)':'var(--info)'}"></div></div>
               <span class="am-progress-label">${done}/${total}</span>
             </div>
             ${isAdmin ? `<button class="admin-action-btn" style="font-size:12px;" onclick="_amOpenEditModal('${escapeHtml(key)}')">Edit Activity</button>` : ''}
@@ -6255,21 +6263,24 @@ function _amDrilldownHTML(key) {
         </div>
       </div>
 
-      <div class="data-card">
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th style="min-width:120px;">Test ID</th>
-                <th>Test Name</th>
-                <th>Test Procedure</th>
-                <th>CDRL</th>
-                <th style="min-width:160px;">Status</th>
-                <th style="min-width:180px;">Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${act.items.map(r => {
+      ${Object.entries(tpMap).map(([tp, tpItems]) => `
+        <div class="tr-procedure-card">
+          <div class="tr-procedure-head">
+            <div class="tr-procedure-title">${escapeHtml(tp)}</div>
+            <div class="section-sub">${tpItems.length} test case${tpItems.length===1?'':'s'}</div>
+          </div>
+          <div class="table-wrap" style="max-height:none;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="min-width:140px;">Test Case Code</th>
+                  <th>Test Name</th>
+                  <th style="min-width:170px;">Status</th>
+                  <th style="min-width:240px;">Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${tpItems.map(r => {
                 const cur = legacyMap[r.Status] || r.Status || 'Not Started';
                 const showReason = cur === 'Fail' || cur === 'Blocked';
                 const reasonVal = cur === 'Fail' ? (r.FailedReason||'') : (r.BlockedReason||'');
@@ -6281,10 +6292,8 @@ function _amDrilldownHTML(key) {
                       <div style="font-weight:500;font-size:13px;">${escapeHtml(r.TestName||'—')}</div>
                       ${r.CompletedBy ? `<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(r.CompletedBy)}</div>` : ''}
                     </td>
-                    <td style="font-size:12px;max-width:160px;" title="${escapeHtml(r.TestProcedure||'')}">${escapeHtml((r.TestProcedure||'').slice(0,50)+(r.TestProcedure&&r.TestProcedure.length>50?'…':''))}</td>
-                    <td style="font-size:12px;">${escapeHtml(r.TestReport||'—')}</td>
                     <td>
-                      ${isAdmin ? `
+                      ${['admin','field_engineer'].includes(currentRoleUser?.role) ? `
                         <select class="form-input" style="font-size:12px;padding:4px 6px;" onchange="_mxStatusChange('${tid}',this.value)">
                           ${statuses.map(s=>`<option value="${s}" ${cur===s?'selected':''}>${s}</option>`).join('')}
                         </select>
@@ -6297,10 +6306,11 @@ function _amDrilldownHTML(key) {
                   </tr>
                 `;
               }).join('')}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      `).join('')}
     </div>
   `;
 }
@@ -6353,10 +6363,6 @@ function _amOpenEditModal(key) {
           <label>Test Report CDRL</label>
           <input type="text" id="am-edit-report" class="form-input" placeholder="e.g. CDRL 9.05.25" value="${escapeHtml(act.testReport||'')}">
         </div>
-        <div class="form-field form-field-full">
-          <label>Test Procedure</label>
-          <textarea id="am-edit-procedure" class="form-input" rows="2" placeholder="e.g. CDRL 9.04.53 Section 4...">${escapeHtml(act.testProcedure||'')}</textarea>
-        </div>
         ${st === 'Future Test' ? `
         <div class="form-field form-field-full">
           <label>Future Test Reason</label>
@@ -6380,7 +6386,6 @@ async function _amSaveEdit(key) {
   const newLocation  = document.getElementById('am-edit-location')?.value;
   const newSubsystem = document.getElementById('am-edit-subsystem')?.value;
   const newReport    = document.getElementById('am-edit-report')?.value.trim() || null;
-  const newProcedure = document.getElementById('am-edit-procedure')?.value.trim() || null;
   const newFTReason  = document.getElementById('am-edit-ft-reason')?.value.trim() || null;
 
   if (!newName) { toast('Activity name is required', 'error'); return; }
@@ -6396,7 +6401,6 @@ async function _amSaveEdit(key) {
       location:       newLocation,
       subsystem:      newSubsystem,
       test_report:    newReport,
-      test_procedure: newProcedure,
     };
     const updates = act.items.map(r => _dbUpdate('test_items', patch, { test_id: r.TestID }));
     await Promise.all(updates);
@@ -6408,7 +6412,6 @@ async function _amSaveEdit(key) {
       r.Location      = newLocation;
       r.Subsystem     = newSubsystem;
       r.TestReport    = newReport;
-      r.TestProcedure = newProcedure;
     });
 
     // Update future_test_reason if applicable
