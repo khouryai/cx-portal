@@ -127,6 +127,24 @@ async function _dbUpdate(table, patch, match) {
     throw e;
   }
 }
+// DELETE rows; `match` is an object of { col: value } equality filters.
+async function _dbDelete(table, match) {
+  const authHeader = _getAuthHeader();
+  const qs = Object.entries(match)
+    .map(([k,v]) => `${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`).join('&');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${qs}`, {
+      method: 'DELETE', signal: ctrl.signal,
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: authHeader, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+    });
+    clearTimeout(timer);
+    if (!res.ok) { const e = await res.text(); throw new Error(`${table} delete failed (${res.status}): ${e}`); }
+    return await res.json();
+  } catch(e) { clearTimeout(timer); if (e.name==='AbortError') throw new Error(`${table} delete timed out`); throw e; }
+}
+
 // SELECT rows from a table; `match` is an object of { col: value } equality filters.
 // Returns the array of matching rows. Uses native fetch with 15s timeout to bypass
 // supabase-js client state issues (same reason as _dbInsert / _dbUpdate).
@@ -286,6 +304,7 @@ function showPage(name) {
   // Re-render pages that need fresh state on each visit
   if (name === 'field-intake')    renderFieldIntake();
   if (name === 'test-register')   renderTestRegister();
+  if (name === 'tcv')             renderTCV();
   if (name === 'test-reporting')  renderTestReporting();
   if (name === 'admin-templates') renderAdminTemplates();
   if (name === 'admin-locations')  renderAdminLocations();
@@ -5880,6 +5899,494 @@ async function saveNewRevision(parentId) {
 }
 
 // ==========================================================================
+// TEST CASE VIEW (TCV)
+// ==========================================================================
+let _tcvKey      = null;   // activity key currently open
+let _tcvEditMode = false;  // admin edit mode
+let _tcvPending  = {};     // { [testId]: { code?, name?, procedure? } } — pending field edits
+let _tcvNewItems = [];     // [{ _tmpId, code, name, procedure, status, notes, _insertAfterId }]
+let _tcvSelected = new Set(); // selected TC IDs (real or tmp) for bulk actions
+
+function _tcvOpen(key) {
+  _tcvKey = key; _tcvEditMode = false; _tcvPending = {}; _tcvNewItems = []; _tcvSelected.clear();
+  showPage('tcv');
+}
+function _tcvBack() {
+  _tcvKey = null; _tcvEditMode = false; _tcvPending = {}; _tcvNewItems = []; _tcvSelected.clear();
+  showPage('test-register');
+}
+function renderTCV() {
+  const hRoot = document.getElementById('tcv-hero-content');
+  const cRoot = document.getElementById('tcv-content');
+  if (!hRoot || !cRoot || !currentRoleUser) return;
+  if (!_tcvKey) { hRoot.innerHTML = ''; cRoot.innerHTML = '<div class="docs-empty"><h3>No activity selected</h3></div>'; return; }
+  hRoot.innerHTML = _tcvHeroHTML();
+  cRoot.innerHTML = _tcvContentHTML();
+}
+function _reRenderTCV() { renderTCV(); }
+
+function _tcvGetAct() { return _amGetActivities().find(a => a.key === _tcvKey) || null; }
+
+// Build sections map: proc → [displayItem, ...]  (merges TI + pending + new items)
+function _tcvGetSections() {
+  const act = _tcvGetAct();
+  if (!act) return {};
+  const sectionMap = {};
+
+  act.items.forEach(r => {
+    const p = _tcvPending[r.TestID] || {};
+    const proc = p.procedure !== undefined ? p.procedure : (r.TestProcedure || '(No Procedure)');
+    if (!sectionMap[proc]) sectionMap[proc] = [];
+    sectionMap[proc].push({
+      _id: r.TestID, _isNew: false, _insertAfterId: null,
+      _editCode: p.code !== undefined ? p.code : (r.TestCaseCode || ''),
+      _editName: p.name !== undefined ? p.name : (r.TestName || ''),
+      status: r.Status, notes: r.Notes, completedBy: r.CompletedBy,
+      failedReason: r.FailedReason, blockedReason: r.BlockedReason, _orig: r,
+    });
+  });
+
+  // Interleave copies/new items into their sections
+  Object.keys(sectionMap).forEach(proc => {
+    const result = [];
+    sectionMap[proc].forEach(item => {
+      result.push(item);
+      _tcvNewItems.filter(ni => (ni.procedure||'(No Procedure)') === proc && ni._insertAfterId === item._id)
+        .forEach(ni => result.push(_tcvNiToItem(ni)));
+    });
+    _tcvNewItems.filter(ni => (ni.procedure||'(No Procedure)') === proc && !ni._insertAfterId)
+      .forEach(ni => result.push(_tcvNiToItem(ni)));
+    sectionMap[proc] = result;
+  });
+
+  // Sections that exist only from new items
+  _tcvNewItems.forEach(ni => {
+    const proc = ni.procedure || '(No Procedure)';
+    if (!sectionMap[proc]) sectionMap[proc] = [];
+    if (!sectionMap[proc].find(i => i._id === ni._tmpId)) sectionMap[proc].push(_tcvNiToItem(ni));
+  });
+
+  return sectionMap;
+}
+function _tcvNiToItem(ni) {
+  return { _id: ni._tmpId, _isNew: true, _insertAfterId: ni._insertAfterId,
+    _editCode: ni.code, _editName: ni.name,
+    status: ni.status || 'Not Started', notes: ni.notes || '',
+    completedBy: null, failedReason: null, blockedReason: null, _orig: null };
+}
+
+// ── Hero HTML ──────────────────────────────────────────────────────────────
+function _tcvHeroHTML() {
+  const act = _tcvGetAct();
+  if (!act) return '';
+  const isAdmin = currentRoleUser?.role === 'admin';
+  const st = _amComputeStatus(act);
+  const { done, total } = _amComputeCompletion(act);
+  const pct = total > 0 ? Math.round((done/total)*100) : 0;
+  return `
+    ${_tcvEditMode ? `<div class="tcv-edit-banner">✏️ Edit Mode Active — unsaved changes. Click Save to commit or Cancel to discard.</div>` : ''}
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+      <div>
+        <button class="form-secondary" style="font-size:12px;margin-bottom:12px;" onclick="_tcvBack()">← Back to Test Register</button>
+        <h1 class="page-title" style="margin:0 0 4px;">${escapeHtml(act.activity)}</h1>
+        <p class="page-sub" style="margin:0;">${escapeHtml(act.phase)} · ${escapeHtml(act.location)} · ${escapeHtml(act.subsystem)}${act.testReport ? ` · 📄 ${escapeHtml(act.testReport)}` : ''}</p>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
+          ${_amStatusBadge(st)}
+          <div class="am-progress-wrap" style="min-width:180px;">
+            <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;${pct===100?'background:var(--good);':'background:var(--info);'}"></div></div>
+            <span class="am-progress-label">${done}/${total} complete</span>
+          </div>
+        </div>
+      </div>
+      ${isAdmin ? `
+      <div style="display:flex;gap:8px;align-items:flex-start;padding-top:4px;">
+        ${_tcvEditMode ? `
+          <button class="form-secondary" onclick="_tcvCancel()">Cancel</button>
+          <button class="admin-action-btn tcv-save-btn" style="background:var(--good);" onclick="_tcvSave()">Save Changes</button>
+        ` : `
+          <button class="admin-action-btn" onclick="_tcvEnterEditMode()">✏️ Edit</button>
+        `}
+      </div>` : ''}
+    </div>`;
+}
+
+// ── Content HTML ──────────────────────────────────────────────────────────
+function _tcvContentHTML() {
+  const act = _tcvGetAct();
+  if (!act) return '<div class="docs-empty"><h3>Activity not found</h3></div>';
+  const isAdmin = currentRoleUser?.role === 'admin';
+  const sections = _tcvGetSections();
+  const procList = Object.keys(sections);
+  const legacyMap = { 'Future':'Not Started','Passed':'Pass','Failed':'Fail','Complete':'Pass' };
+  const tcStatuses = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'];
+
+  const sectionsHTML = procList.map(proc => {
+    const items = sections[proc];
+    const sectionSel = items.filter(i => _tcvSelected.has(i._id));
+    const allSel = items.length > 0 && sectionSel.length === items.length;
+    return `
+      <div class="tcv-section">
+        <div class="tcv-section-head">
+          <label class="tcv-cb-label" title="Select all in section">
+            <input type="checkbox" ${allSel?'checked':''} onchange="_tcvToggleSection('${escapeHtml(proc)}',this.checked)">
+          </label>
+          <span class="tcv-section-title">📋 ${escapeHtml(proc)}</span>
+          ${isAdmin && _tcvEditMode ? `<button class="tcv-icon-btn" onclick="_tcvRenameProcedure('${escapeHtml(proc)}')" title="Rename procedure" style="margin-left:6px;">✏️</button>` : ''}
+          <span style="margin-left:auto;font-size:12px;color:var(--gray-500);">${items.length} test case${items.length!==1?'s':''}</span>
+        </div>
+        <div class="tcv-col-head">
+          <div class="tcv-col-cb"></div>
+          <div class="tcv-col-code">Code</div>
+          <div class="tcv-col-name">Test Name</div>
+          <div class="tcv-col-status">Status</div>
+          <div class="tcv-col-notes">Notes</div>
+          ${isAdmin && _tcvEditMode ? `<div class="tcv-col-actions"></div>` : ''}
+        </div>
+        ${items.map(item => _tcvRowHTML(item, isAdmin, legacyMap, tcStatuses)).join('')}
+        ${isAdmin && _tcvEditMode ? `
+          <div class="tcv-add-row">
+            <button class="form-secondary" style="font-size:12px;" onclick="_tcvAddTC('${escapeHtml(proc)}')">+ Add Test Case</button>
+          </div>` : ''}
+      </div>`;
+  }).join('');
+
+  return `
+    <div>
+      ${procList.length ? sectionsHTML : `<div class="docs-empty" style="margin-top:32px;"><h3>No test cases in this activity</h3>${_tcvEditMode?`<button class="admin-action-btn" onclick="_tcvAddTC('General')">+ Add First Test Case</button>`:''}</div>`}
+    </div>
+    ${_tcvBulkBarHTML(isAdmin, procList)}`;
+}
+
+function _tcvRowHTML(item, isAdmin, legacyMap, tcStatuses) {
+  const cur = legacyMap[item.status] || item.status || 'Not Started';
+  const showReason = cur === 'Fail' || cur === 'Blocked';
+  const reasonVal  = cur === 'Fail' ? (item.failedReason||'') : (item.blockedReason||'');
+  const tid = escapeHtml(String(item._id));
+  const isSel = _tcvSelected.has(item._id);
+  return `
+    <div class="tcv-tc-row${isSel?' tcv-tc-selected':''}" data-tc-id="${tid}">
+      <div class="tcv-col-cb"><input type="checkbox" ${isSel?'checked':''} onchange="_tcvToggleTC('${tid}',this.checked)"></div>
+      <div class="tcv-col-code">
+        ${isAdmin && _tcvEditMode
+          ? `<input type="text" class="form-input tcv-edit-input" placeholder="Code" value="${escapeHtml(item._editCode)}" oninput="${item._isNew?`_tcvPendNewCode('${tid}',this.value)`:`_tcvPendCode('${tid}',this.value)`}">`
+          : `<span class="tcv-code-text">${escapeHtml(item._editCode||'—')}</span>`}
+      </div>
+      <div class="tcv-col-name">
+        ${isAdmin && _tcvEditMode
+          ? `<input type="text" class="form-input tcv-edit-input" placeholder="Test name" value="${escapeHtml(item._editName)}" oninput="${item._isNew?`_tcvPendNewName('${tid}',this.value)`:`_tcvPendName('${tid}',this.value)`}">`
+          : `<div style="font-weight:500;font-size:13px;">${escapeHtml(item._editName||'—')}</div>${item.completedBy?`<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(item.completedBy)}</div>`:''}`}
+      </div>
+      <div class="tcv-col-status">
+        ${item._isNew
+          ? `<span class="badge badge-notstarted">Not Started</span>`
+          : `<select class="form-input" style="font-size:12px;padding:4px 6px;" onchange="_tcvStatusChange('${tid}',this.value)">
+               ${tcStatuses.map(s=>`<option value="${s}" ${cur===s?'selected':''}>${s}</option>`).join('')}
+             </select>
+             <div id="tcv-reason-${tid}" style="${showReason?'':'display:none;'}margin-top:4px;">
+               <input type="text" id="tcv-ri-${tid}" class="form-input" style="font-size:11px;padding:3px 6px;"
+                 placeholder="${cur==='Fail'?'Failure reason...':'Blocked reason...'}"
+                 value="${escapeHtml(reasonVal)}" onblur="_tcvSaveReason('${tid}',this.value)">
+             </div>`}
+      </div>
+      <div class="tcv-col-notes">
+        <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;"
+          placeholder="Notes…" value="${escapeHtml(item.notes||'')}"
+          onblur="_tcvSaveNotes('${tid}',this.value)">
+      </div>
+      ${isAdmin && _tcvEditMode ? `
+        <div class="tcv-col-actions">
+          ${!item._isNew ? `<button class="tcv-icon-btn" onclick="_tcvCopyTC('${tid}')" title="Duplicate">⧉</button>` : ''}
+          <button class="tcv-icon-btn tcv-icon-red" onclick="_tcvDeleteTC('${tid}')" title="Delete">🗑</button>
+        </div>` : ''}
+    </div>`;
+}
+
+function _tcvBulkBarHTML(isAdmin, procList) {
+  if (_tcvSelected.size === 0) return `<div id="tcv-bulk-bar"></div>`;
+  const count = _tcvSelected.size;
+  const tcStatuses = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'];
+  return `
+    <div id="tcv-bulk-bar" class="tcv-bulk-bar">
+      <span class="tcv-bulk-count"><b>${count}</b> selected</span>
+      <div class="tcv-bulk-controls">
+        <select id="tcv-bulk-status" class="filter-select" style="font-size:12px;">
+          <option value="">— Set Status —</option>
+          ${tcStatuses.map(s=>`<option value="${s}">${s}</option>`).join('')}
+        </select>
+        <input type="text" id="tcv-bulk-notes" class="form-input" style="font-size:12px;min-width:160px;" placeholder="Bulk note…">
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap;cursor:pointer;color:#fff;">
+          <input type="radio" name="tcv-notes-mode" value="append" checked> Append
+        </label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap;cursor:pointer;color:#fff;">
+          <input type="radio" name="tcv-notes-mode" value="overwrite"> Overwrite
+        </label>
+        ${isAdmin && _tcvEditMode ? `
+          <input type="text" id="tcv-bulk-proc" class="form-input" style="font-size:12px;min-width:140px;" list="tcv-proc-dl" placeholder="Move to procedure…">
+          <datalist id="tcv-proc-dl">${procList.map(p=>`<option value="${escapeHtml(p)}">`).join('')}</datalist>` : ''}
+        <button class="admin-action-btn" style="font-size:12px;" onclick="_tcvApplyBulk()">Apply</button>
+        ${isAdmin ? `<button class="admin-action-btn" style="background:#dc2626;font-size:12px;" onclick="_tcvBulkDelete()">Delete</button>` : ''}
+        <button class="form-secondary" style="font-size:12px;" onclick="_tcvClearSelection()">Clear</button>
+      </div>
+    </div>`;
+}
+
+// ── Edit mode ───────────────────────────────────────────────────────────────
+function _tcvEnterEditMode() { _tcvEditMode = true; _reRenderTCV(); }
+function _tcvCancel()        { _tcvEditMode = false; _tcvPending = {}; _tcvNewItems = []; _tcvSelected.clear(); _reRenderTCV(); }
+
+async function _tcvSave() {
+  const act = _tcvGetAct();
+  if (!act) return;
+  const btn = document.querySelector('.tcv-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    // 1. Apply pending edits to existing items
+    const pendKeys = Object.keys(_tcvPending);
+    await Promise.all(pendKeys.map(id => {
+      const p = _tcvPending[id];
+      const patch = {};
+      if (p.code !== undefined)      patch.test_case_code = p.code;
+      if (p.name !== undefined)      patch.test_name = p.name;
+      if (p.procedure !== undefined) patch.test_procedure = p.procedure;
+      if (!Object.keys(patch).length) return Promise.resolve();
+      const r = TI.find(t => String(t.TestID) === String(id));
+      if (r) { if (p.code!==undefined) r.TestCaseCode=p.code; if (p.name!==undefined) r.TestName=p.name; if (p.procedure!==undefined) r.TestProcedure=p.procedure; }
+      return _dbUpdate('test_items', patch, { test_id: id });
+    }));
+
+    // 2. Save new items
+    for (const ni of _tcvNewItems) {
+      const newId = 'PORTAL-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substr(2,6).toUpperCase();
+      const row = {
+        test_id: newId, test_case_code: ni.code||'', test_name: ni.name||'',
+        test_procedure: ni.procedure||null, status: ni.status||'Not Started', notes: ni.notes||null,
+        activity: act.activity, phase: act.phase, location: act.location, subsystem: act.subsystem, test_report: act.testReport||null,
+      };
+      await _dbInsert('test_items', [row]);
+      TI.push({ TestID:newId, TestCaseCode:ni.code||'', TestName:ni.name||'', TestProcedure:ni.procedure||null,
+        Status:'Not Started', Notes:null, Activity:act.activity, Phase:act.phase, Location:act.location,
+        Subsystem:act.subsystem, TestReport:act.testReport||null, CompletedBy:null, CompletedDate:null, FailedReason:null, BlockedReason:null });
+    }
+
+    logAudit('TCV Save', act.activity, `${pendKeys.length} edits, ${_tcvNewItems.length} new`);
+    toast('Changes saved', 'success');
+    _tcvPending = {}; _tcvNewItems = []; _tcvEditMode = false; _tcvSelected.clear();
+    _reRenderTCV();
+  } catch(e) {
+    toast('Save failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+  }
+}
+
+// ── Pending state handlers ──────────────────────────────────────────────────
+function _tcvPendCode(id, val) { if (!_tcvPending[id]) _tcvPending[id]={}; _tcvPending[id].code = val; }
+function _tcvPendName(id, val) { if (!_tcvPending[id]) _tcvPending[id]={}; _tcvPending[id].name = val; }
+function _tcvPendNewCode(tmpId, val) { const ni=_tcvNewItems.find(n=>n._tmpId===tmpId); if (ni) ni.code=val; }
+function _tcvPendNewName(tmpId, val) { const ni=_tcvNewItems.find(n=>n._tmpId===tmpId); if (ni) ni.name=val; }
+
+// ── Status / Notes / Reason (real-time for existing, in-mem for new) ───────
+function _tcvStatusChange(id, status) {
+  const ni = _tcvNewItems.find(n => n._tmpId === id);
+  if (ni) { ni.status = status; return; }
+  // Existing: reuse _mxStatusChange for session log + DB save
+  _mxStatusChange(String(id), status);
+  // Toggle reason field in TCV
+  const reasonEl = document.getElementById(`tcv-reason-${id}`);
+  const reasonIn  = document.getElementById(`tcv-ri-${id}`);
+  if (reasonEl) { const need = status==='Fail'||status==='Blocked'; reasonEl.style.display = need?'':'none'; if (reasonIn) reasonIn.placeholder = status==='Fail'?'Failure reason...':'Blocked reason...'; }
+}
+function _tcvSaveNotes(id, val) {
+  const ni = _tcvNewItems.find(n => n._tmpId === id);
+  if (ni) { ni.notes = val; return; }
+  _mxSaveNotes(id, val);
+}
+function _tcvSaveReason(id, val) {
+  const ni = _tcvNewItems.find(n => n._tmpId === id);
+  if (ni) return;
+  _mxSaveReason(id, val);
+}
+
+// ── TC actions ──────────────────────────────────────────────────────────────
+function _tcvAddTC(proc) {
+  const tmpId = 'NEW' + Date.now() + Math.random().toString(36).substr(2,4).toUpperCase();
+  _tcvNewItems.push({ _tmpId: tmpId, code:'', name:'', procedure: proc, status:'Not Started', notes:'', _insertAfterId: null });
+  _reRenderTCV();
+  setTimeout(() => { const el = document.querySelector(`[data-tc-id="${tmpId}"] input[placeholder="Code"]`); if (el) el.focus(); }, 60);
+}
+
+function _tcvCopyTC(id) {
+  const r = TI.find(t => String(t.TestID) === String(id));
+  if (!r) return;
+  const p = _tcvPending[id] || {};
+  const tmpId = 'NEW' + Date.now() + Math.random().toString(36).substr(2,4).toUpperCase();
+  const act = _tcvGetAct();
+  const proc = p.procedure !== undefined ? p.procedure : (r.TestProcedure || '(No Procedure)');
+  _tcvNewItems.push({ _tmpId: tmpId, code: (p.code||r.TestCaseCode||'')+'-Copy', name: (p.name||r.TestName||'')+'-Copy',
+    procedure: proc, status:'Not Started', notes:'', _insertAfterId: id });
+  toast('Copied — edit fields then Save', 'info');
+  _reRenderTCV();
+}
+
+function _tcvDeleteTC(id) {
+  // If it's an unsaved new item, remove immediately without confirm
+  const newIdx = _tcvNewItems.findIndex(n => n._tmpId === id);
+  if (newIdx >= 0) { _tcvNewItems.splice(newIdx, 1); _reRenderTCV(); return; }
+  const r = TI.find(t => String(t.TestID) === String(id));
+  const code = r?.TestCaseCode || id;
+  const name = r?.TestName || '';
+  modal({
+    title: 'Delete Test Case',
+    body: `<div class="tcv-del-confirm"><div class="tcv-del-warn">⚠ Permanent deletion — cannot be undone</div>
+      <p style="font-size:13px;margin:8px 0 0;">Delete <strong>${escapeHtml(code)}: ${escapeHtml(name)}</strong>?</p></div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+             <button class="tcv-del-btn" onclick="_tcvConfirmDelete('${escapeHtml(id)}','${escapeHtml(code)}','${escapeHtml(name)}')">Delete Permanently</button>`
+  });
+}
+
+async function _tcvConfirmDelete(id, code, name) {
+  const btn = document.querySelector('.modal-footer .tcv-del-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+  try {
+    await _dbDelete('test_items', { test_id: id });
+    const idx = TI.findIndex(t => String(t.TestID) === String(id));
+    if (idx >= 0) TI.splice(idx, 1);
+    delete _tcvPending[id];
+    _tcvSelected.delete(id);
+    logAudit('TC Deleted', code, name, id);
+    toast(`Deleted: ${code}`, 'success');
+    closeModal();
+    _reRenderTCV();
+  } catch(e) {
+    toast('Delete failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Delete Permanently'; }
+  }
+}
+
+// ── Procedure rename ────────────────────────────────────────────────────────
+function _tcvRenameProcedure(oldProc) {
+  modal({
+    title: 'Rename Test Procedure',
+    body: `<div class="form-field"><label>New Procedure Name</label>
+      <input type="text" id="tcv-proc-rename" class="form-input" value="${escapeHtml(oldProc)}"></div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+             <button class="admin-action-btn" onclick="_tcvConfirmRename('${escapeHtml(oldProc)}')">Rename</button>`
+  });
+  setTimeout(() => { const el = document.getElementById('tcv-proc-rename'); if (el) { el.select(); } }, 80);
+}
+function _tcvConfirmRename(oldProc) {
+  const newProc = document.getElementById('tcv-proc-rename')?.value.trim();
+  if (!newProc || newProc === oldProc) { closeModal(); return; }
+  // Update all existing items in this section
+  const act = _tcvGetAct();
+  act?.items.forEach(r => {
+    const p = _tcvPending[r.TestID] || {};
+    const eff = p.procedure !== undefined ? p.procedure : (r.TestProcedure || '(No Procedure)');
+    if (eff === oldProc) { if (!_tcvPending[r.TestID]) _tcvPending[r.TestID]={}; _tcvPending[r.TestID].procedure = newProc; }
+  });
+  _tcvNewItems.forEach(ni => { if ((ni.procedure||'(No Procedure)') === oldProc) ni.procedure = newProc; });
+  closeModal();
+  toast(`Renamed to "${newProc}" — Save to commit`, 'info');
+  _reRenderTCV();
+}
+
+// ── Bulk selection ──────────────────────────────────────────────────────────
+function _tcvToggleTC(id, checked) {
+  if (checked) _tcvSelected.add(id); else _tcvSelected.delete(id);
+  _reRenderTCV();
+}
+function _tcvToggleSection(proc, checked) {
+  const sections = _tcvGetSections();
+  (sections[proc] || []).forEach(i => { if (checked) _tcvSelected.add(i._id); else _tcvSelected.delete(i._id); });
+  _reRenderTCV();
+}
+function _tcvClearSelection() { _tcvSelected.clear(); _reRenderTCV(); }
+
+// ── Bulk apply ──────────────────────────────────────────────────────────────
+async function _tcvApplyBulk() {
+  const statusVal = document.getElementById('tcv-bulk-status')?.value;
+  const notesVal  = document.getElementById('tcv-bulk-notes')?.value.trim();
+  const notesMode = document.querySelector('input[name="tcv-notes-mode"]:checked')?.value || 'append';
+  const procVal   = document.getElementById('tcv-bulk-proc')?.value.trim();
+  const ids = [..._tcvSelected];
+  if (!ids.length) return;
+  const isAdmin = currentRoleUser?.role === 'admin';
+  try {
+    if (statusVal) {
+      await Promise.all(ids.map(id => {
+        const ni = _tcvNewItems.find(n => n._tmpId === id);
+        if (ni) { ni.status = statusVal; return Promise.resolve(); }
+        const r = TI.find(t => String(t.TestID) === String(id));
+        if (!r) return Promise.resolve();
+        r.Status = statusVal;
+        if (statusVal==='Pass') { r.CompletedBy=currentRoleUser.name; r.CompletedDate=new Date().toISOString(); }
+        if (statusVal!=='Fail') r.FailedReason=null;
+        if (statusVal!=='Blocked') r.BlockedReason=null;
+        // Update session log
+        _mxStatusChange(String(id), statusVal);
+        return Promise.resolve(); // _mxStatusChange already handles DB save via _mxSaveStatus
+      }));
+    }
+    if (notesVal) {
+      await Promise.all(ids.map(id => {
+        const ni = _tcvNewItems.find(n => n._tmpId === id);
+        if (ni) { ni.notes = notesMode==='append' ? (ni.notes ? ni.notes+'\n'+notesVal : notesVal) : notesVal; return Promise.resolve(); }
+        const r = TI.find(t => String(t.TestID) === String(id));
+        if (!r) return Promise.resolve();
+        r.Notes = notesMode==='append' ? (r.Notes ? r.Notes+'\n'+notesVal : notesVal) : notesVal;
+        return _dbUpdate('test_items', { notes: r.Notes }, { test_id: id });
+      }));
+    }
+    if (procVal && isAdmin && _tcvEditMode) {
+      ids.forEach(id => {
+        const ni = _tcvNewItems.find(n => n._tmpId === id);
+        if (ni) { ni.procedure = procVal; return; }
+        if (!_tcvPending[id]) _tcvPending[id]={};
+        _tcvPending[id].procedure = procVal;
+      });
+    }
+    toast(`Applied to ${ids.length} test case${ids.length!==1?'s':''}`, 'success');
+    _tcvSelected.clear();
+    _reRenderTCV();
+  } catch(e) { toast('Apply failed: ' + e.message, 'error'); }
+}
+
+function _tcvBulkDelete() {
+  const ids = [..._tcvSelected];
+  if (!ids.length) return;
+  const existingIds = ids.filter(id => !String(id).startsWith('NEW'));
+  const newIds = ids.filter(id => String(id).startsWith('NEW'));
+  const total = existingIds.length + newIds.length;
+  modal({
+    title: 'Delete Selected Test Cases',
+    body: `<div class="tcv-del-confirm"><div class="tcv-del-warn">⚠ Permanent deletion — cannot be undone</div>
+      <p style="font-size:13px;margin:8px 0 0;">Permanently delete <strong>${total}</strong> test case${total!==1?'s':''}?</p></div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+             <button class="tcv-del-btn" onclick="_tcvConfirmBulkDelete()">Delete All</button>`
+  });
+}
+
+async function _tcvConfirmBulkDelete() {
+  const ids = [..._tcvSelected];
+  const existingIds = ids.filter(id => !String(id).startsWith('NEW'));
+  const newIds = ids.filter(id => String(id).startsWith('NEW'));
+  const btn = document.querySelector('.modal-footer .tcv-del-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+  try {
+    await Promise.all(existingIds.map(id => _dbDelete('test_items', { test_id: id })));
+    existingIds.forEach(id => { const i = TI.findIndex(t => String(t.TestID)===String(id)); if (i>=0) TI.splice(i,1); delete _tcvPending[id]; });
+    newIds.forEach(tmpId => { const i = _tcvNewItems.findIndex(n => n._tmpId===tmpId); if (i>=0) _tcvNewItems.splice(i,1); });
+    if (existingIds.length) logAudit('Bulk TC Delete', `${existingIds.length} items`, existingIds.join(', '));
+    toast(`Deleted ${ids.length} test case${ids.length!==1?'s':''}`, 'success');
+    _tcvSelected.clear();
+    closeModal();
+    _reRenderTCV();
+  } catch(e) {
+    toast('Delete failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Delete All'; }
+  }
+}
+
+// ==========================================================================
 // ACTIVITY MANAGER / TEST REGISTER — shared state
 // ==========================================================================
 let _amFilters  = { phase:'', location:'', subsystem:'', status:'' };
@@ -5893,11 +6400,6 @@ function renderTestRegister() {
   const root = document.getElementById('test-register-content');
   if (!root || !currentRoleUser) return;
   root.innerHTML = _testRegisterHTML();
-}
-
-function _trToggle(key) {
-  if (_trExpanded.has(key)) _trExpanded.delete(key); else _trExpanded.add(key);
-  _reRenderTR();
 }
 
 function _testRegisterHTML() {
@@ -5924,28 +6426,24 @@ function _testRegisterHTML() {
   const hasFutureTest = selectedActivities.some(a => _amComputeStatus(a) === 'Future Test');
   const hasNonFuture  = selectedActivities.some(a => _amComputeStatus(a) !== 'Future Test');
 
-  const tcStatuses = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'];
-  const legacyMap  = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
-
-  // column count: [cb](admin) | [expand] | Activity | Subsystem | Location | Phase | Status | Completion | [Actions](admin)
-  const colCount = isAdmin ? 9 : 7;
+  // columns: [cb(admin)] | Actions | Activity Name | Subsystem | Location | Phase | Status | Completion
+  const colCount = isAdmin ? 8 : 7;
 
   const actRows = filtered.map(a => {
     const st = _amComputeStatus(a);
     const { done, total } = _amComputeCompletion(a);
     const pct = total > 0 ? Math.round((done/total)*100) : 0;
     const isSel = _amSelected.has(a.key);
-    const isExpanded = _trExpanded.has(a.key);
     const safeKey = escapeHtml(a.key);
-
-    const actRow = `
+    return `
       <tr style="${isSel?'background:#f5f3ff;':''}" class="tr-activity-row">
         ${isAdmin ? `<td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} onchange="_amToggleRow('${safeKey}',this.checked)"></td>` : ''}
-        <td style="width:28px;padding:8px 2px;text-align:center;">
-          <button onclick="_trToggle('${safeKey}')" style="background:none;border:none;cursor:pointer;font-size:13px;color:var(--gray-400);padding:0 4px;" title="${isExpanded?'Collapse':'Expand'}">${isExpanded?'▼':'▶'}</button>
+        <td style="white-space:nowrap;">
+          ${isAdmin ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;margin-right:4px;" onclick="_amOpenEditModal('${safeKey}')">Edit</button>` : ''}
+          <button class="admin-action-btn" style="font-size:11px;padding:3px 10px;" onclick="_tcvOpen('${safeKey}')">Open</button>
         </td>
         <td>
-          <div style="font-weight:600;font-size:13px;cursor:pointer;color:var(--gray-800);" onclick="_trToggle('${safeKey}')">${escapeHtml(a.activity)}</div>
+          <div style="font-weight:600;font-size:13px;">${escapeHtml(a.activity)}</div>
           ${a.futureTestReason ? `<div style="font-size:11px;color:#5b21b6;margin-top:2px;">↳ ${escapeHtml(a.futureTestReason)}</div>` : ''}
         </td>
         <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
@@ -5958,74 +6456,11 @@ function _testRegisterHTML() {
             <span class="am-progress-label">${done}/${total}</span>
           </div>
         </td>
-        ${isAdmin ? `<td><button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_amOpenEditModal('${safeKey}')">Edit</button></td>` : ''}
       </tr>`;
-
-    if (!isExpanded) return actRow;
-
-    // Group test items by Test Procedure
-    const tpMap = {};
-    a.items.forEach(r => {
-      const tp = r.TestProcedure || '(No Procedure)';
-      if (!tpMap[tp]) tpMap[tp] = [];
-      tpMap[tp].push(r);
-    });
-
-    const indent = isAdmin ? '60px' : '44px';
-    const expandedRows = Object.entries(tpMap).flatMap(([tp, tpItems]) => {
-      const tpRow = `
-        <tr>
-          <td colspan="${colCount}" style="padding:0;">
-            <div style="padding:6px 16px 6px ${indent};font-size:11px;font-weight:700;color:var(--gray-500);background:#f1f5f9;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;letter-spacing:.5px;text-transform:uppercase;">
-              📋 ${escapeHtml(tp)}
-            </div>
-          </td>
-        </tr>`;
-
-      const tcRows = tpItems.map(r => {
-        const cur = legacyMap[r.Status] || r.Status || 'Not Started';
-        const showReason = cur === 'Fail' || cur === 'Blocked';
-        const reasonVal  = cur === 'Fail' ? (r.FailedReason||'') : (r.BlockedReason||'');
-        const tid = escapeHtml(String(r.TestID));
-        return `
-          <tr class="tr-tc-row">
-            <td colspan="${colCount}" style="padding:0;background:#fafafa;">
-              <div style="display:flex;align-items:flex-start;gap:12px;padding:8px 16px 8px ${indent};border-bottom:1px solid #f3f4f6;">
-                <div style="width:120px;flex-shrink:0;">
-                  <div style="font-size:11px;font-family:monospace;color:var(--gray-600);">${escapeHtml(r.TestCaseCode||r.TestID||'—')}</div>
-                </div>
-                <div style="flex:1;min-width:0;">
-                  <div style="font-weight:500;font-size:13px;">${escapeHtml(r.TestName||'—')}</div>
-                  ${r.CompletedBy ? `<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(r.CompletedBy)}</div>` : ''}
-                </div>
-                <div style="display:flex;flex-direction:column;gap:4px;min-width:190px;flex-shrink:0;">
-                  <select class="form-input" style="font-size:12px;padding:4px 6px;" onchange="_mxStatusChange('${tid}',this.value)">
-                    ${tcStatuses.map(s=>`<option value="${s}" ${cur===s?'selected':''}>${s}</option>`).join('')}
-                  </select>
-                  <div id="mx-reason-${tid}" style="${showReason?'':'display:none;'}">
-                    <input type="text" id="mx-ri-${tid}" class="form-input" style="font-size:11px;padding:3px 6px;"
-                      placeholder="${cur==='Fail'?'Failure reason...':'Blocked reason...'}"
-                      value="${escapeHtml(reasonVal)}"
-                      onblur="_mxSaveReason('${tid}',this.value)">
-                  </div>
-                </div>
-                <div style="min-width:150px;flex-shrink:0;">
-                  <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
-                </div>
-              </div>
-            </td>
-          </tr>`;
-      }).join('');
-
-      return tpRow + tcRows;
-    }).join('');
-
-    return actRow + expandedRows;
   }).join('');
 
   return `
     <div class="admin-section">
-      <!-- Header + toolbar -->
       <div class="admin-section-head" style="flex-wrap:wrap;gap:8px;">
         <div>
           <div class="admin-section-title">Test Register</div>
@@ -6040,8 +6475,6 @@ function _testRegisterHTML() {
           <button class="form-secondary" onclick="downloadImportTemplate()">↓ CSV Template</button>
         </div>` : ''}
       </div>
-
-      <!-- Filters -->
       <div class="am-filter-bar">
         <select class="filter-select" onchange="_amSetFilter('phase',this.value)">
           <option value="">All Phases</option>
@@ -6062,8 +6495,6 @@ function _testRegisterHTML() {
         ${hasFilters ? `<button class="filter-clear" onclick="_amClearFilters()">Reset</button>` : ''}
         <span style="margin-left:auto;font-size:12px;color:var(--gray-500);">${filtered.length} of ${all.length} shown</span>
       </div>
-
-      <!-- Bulk action bar (admin only) -->
       ${isAdmin && selCount > 0 ? `
         <div class="am-bulk-bar">
           <span><b>${selCount}</b> activit${selCount===1?'y':'ies'} selected</span>
@@ -6071,22 +6502,19 @@ function _testRegisterHTML() {
           ${hasFutureTest ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
           <button class="form-secondary" style="font-size:12px;" onclick="_amClearSelection()">Clear selection</button>
         </div>` : ''}
-
-      <!-- Main table -->
       <div class="data-card">
         <div class="table-wrap">
           <table class="data-table">
             <thead>
               <tr>
                 ${isAdmin ? `<th class="am-cb-col"><input type="checkbox" id="am-cb-all" onchange="_amToggleAll(this.checked)" title="Select all"></th>` : ''}
-                <th style="width:28px;"></th>
+                <th style="width:${isAdmin?'130px':'80px'};">Actions</th>
                 <th>Activity Name</th>
                 <th>Subsystem</th>
                 <th>Location</th>
                 <th>Phase</th>
                 <th>Status</th>
                 <th style="min-width:160px;">Completion</th>
-                ${isAdmin ? `<th>Actions</th>` : ''}
               </tr>
             </thead>
             <tbody>
@@ -6422,10 +6850,6 @@ function _amOpenEditModal(key) {
           <label>Test Report CDRL</label>
           <input type="text" id="am-edit-report" class="form-input" placeholder="e.g. CDRL 9.05.25" value="${escapeHtml(act.testReport||'')}">
         </div>
-        <div class="form-field form-field-full">
-          <label>Test Procedure</label>
-          <textarea id="am-edit-procedure" class="form-input" rows="2" placeholder="e.g. CDRL 9.04.53 Section 4...">${escapeHtml(act.testProcedure||'')}</textarea>
-        </div>
         ${st === 'Future Test' ? `
         <div class="form-field form-field-full">
           <label>Future Test Reason</label>
@@ -6449,7 +6873,6 @@ async function _amSaveEdit(key) {
   const newLocation  = document.getElementById('am-edit-location')?.value;
   const newSubsystem = document.getElementById('am-edit-subsystem')?.value;
   const newReport    = document.getElementById('am-edit-report')?.value.trim() || null;
-  const newProcedure = document.getElementById('am-edit-procedure')?.value.trim() || null;
   const newFTReason  = document.getElementById('am-edit-ft-reason')?.value.trim() || null;
 
   if (!newName) { toast('Activity name is required', 'error'); return; }
@@ -6458,26 +6881,16 @@ async function _amSaveEdit(key) {
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
   try {
-    // Update all test items that belong to this activity
-    const patch = {
-      activity:       newName,
-      phase:          newPhase,
-      location:       newLocation,
-      subsystem:      newSubsystem,
-      test_report:    newReport,
-      test_procedure: newProcedure,
-    };
+    const patch = { activity: newName, phase: newPhase, location: newLocation, subsystem: newSubsystem, test_report: newReport };
     const updates = act.items.map(r => _dbUpdate('test_items', patch, { test_id: r.TestID }));
     await Promise.all(updates);
 
-    // Update in-memory TI
     act.items.forEach(r => {
-      r.Activity      = newName;
-      r.Phase         = newPhase;
-      r.Location      = newLocation;
-      r.Subsystem     = newSubsystem;
-      r.TestReport    = newReport;
-      r.TestProcedure = newProcedure;
+      r.Activity  = newName;
+      r.Phase     = newPhase;
+      r.Location  = newLocation;
+      r.Subsystem = newSubsystem;
+      r.TestReport = newReport;
     });
 
     // Update future_test_reason if applicable
