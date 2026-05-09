@@ -5915,6 +5915,9 @@ let _trEditMode = false;
 let _trDraftItems = null;
 let _trSelected = new Set();
 let _trBulkMsg = '';
+let _trBulkMode = false;
+let _trEmptySections = [];
+let _trDragId = null;
 
 // ==========================================================================
 // TEST REGISTER — unified Activity + Test Case view
@@ -6272,6 +6275,7 @@ function _amDrilldownHTML(key) {
     if (!tpMap[tp]) tpMap[tp] = [];
     tpMap[tp].push(r);
   });
+  if (_trEditMode) _trEmptySections.forEach(tp => { if (!tpMap[tp]) tpMap[tp] = []; });
 
   return `
     <div class="admin-section">
@@ -6294,16 +6298,17 @@ function _amDrilldownHTML(key) {
               <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;background:${pct===100?'var(--good)':'var(--info)'}"></div></div>
               <span class="am-progress-label">${done}/${total}</span>
             </div>
-            ${isAdmin ? (_trEditMode ? `<button class="form-secondary" style="font-size:12px;" onclick="_trCancelEdit()">Cancel</button><button class="admin-action-btn" style="font-size:12px;" onclick="_trSaveEdit('${escapeHtml(key)}')">Save</button>` : `<button class="admin-action-btn" style="font-size:12px;" onclick="_trStartEdit('${escapeHtml(key)}')">Edit</button>`) : ''}
+            <button class="${_trBulkMode?'admin-action-btn':'form-secondary'}" style="font-size:12px;" onclick="_trToggleBulkEdit()">${_trBulkMode?'Bulk Edit On':'Bulk Edit'}</button>
+            ${isAdmin ? (_trEditMode ? `<button class="form-secondary" style="font-size:12px;" onclick="_trAddSection()">+ Add Test Section</button><button class="form-secondary" style="font-size:12px;" onclick="_trCancelEdit()">Cancel</button><button class="admin-action-btn" style="font-size:12px;" onclick="_trSaveEdit('${escapeHtml(key)}')">Save</button>` : `<button class="admin-action-btn" style="font-size:12px;" onclick="_trStartEdit('${escapeHtml(key)}')">Edit</button>`) : ''}
           </div>
         </div>
       </div>
 
       ${Object.entries(tpMap).map(([tp, tpItems]) => `
-        <div class="tr-procedure-card">
+        <div class="tr-procedure-card" ${_trEditMode && isAdmin ? `ondragover="event.preventDefault()" ondrop="_trDropCase('${escapeHtml(tp)}',null)"` : ''}>
           <div class="tr-procedure-head">
             <div style="display:flex;align-items:center;gap:10px;">
-              <input type="checkbox" ${tpItems.length && tpItems.every(r => _trSelected.has(String(r.TestID))) ? 'checked' : ''} onchange="_trSelectSection('${escapeHtml(tp)}',this.checked)" title="Select All in Section">
+              ${_trBulkMode ? `<input type="checkbox" ${tpItems.length && tpItems.every(r => _trSelected.has(String(r.TestID))) ? 'checked' : ''} onchange="_trSelectSection('${escapeHtml(tp)}',this.checked)" title="Select All in Section">` : ''}
               <div class="tr-procedure-title">${_trEditMode && isAdmin ? `<input class="form-input" style="font-weight:700;min-width:320px;" value="${escapeHtml(tp)}" onchange="_trRenameProcedure('${escapeHtml(tp)}',this.value)">` : escapeHtml(tp)}</div>
             </div>
             <div class="section-sub">${tpItems.length} test case${tpItems.length===1?'':'s'}</div>
@@ -6312,7 +6317,8 @@ function _amDrilldownHTML(key) {
             <table class="data-table">
               <thead>
                 <tr>
-                  <th style="width:34px;"></th>
+                  ${_trBulkMode ? `<th style="width:34px;"></th>` : ''}
+                  ${_trEditMode && isAdmin ? `<th style="width:34px;"></th>` : ''}
                   <th style="min-width:140px;">Test Case Code</th>
                   <th>Test Name</th>
                   <th style="min-width:170px;">Status</th>
@@ -6327,8 +6333,9 @@ function _amDrilldownHTML(key) {
                 const reasonVal = cur === 'Fail' ? (r.FailedReason||'') : (r.BlockedReason||'');
                 const tid = escapeHtml(String(r.TestID));
                 return `
-                  <tr>
-                    <td><input type="checkbox" ${_trSelected.has(String(r.TestID))?'checked':''} onchange="_trToggleSelect('${tid}',this.checked)"></td>
+                  <tr ${_trEditMode && isAdmin ? `draggable="true" ondragstart="_trDragStart('${tid}')" ondragover="event.preventDefault()" ondrop="_trDropCase('${escapeHtml(tp)}','${tid}')"` : ''}>
+                    ${_trBulkMode ? `<td><input type="checkbox" ${_trSelected.has(String(r.TestID))?'checked':''} onchange="_trToggleSelect('${tid}',this.checked)"></td>` : ''}
+                    ${_trEditMode && isAdmin ? `<td style="cursor:grab;color:var(--gray-400);font-size:14px;">☰</td>` : ''}
                     <td style="font-size:11px;font-family:monospace;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestCaseCode||'')}" onchange="_trDraftChange('${tid}','TestCaseCode',this.value)">` : escapeHtml(r.TestCaseCode||r.TestID||'—')}</td>
                     <td>
                       <div style="font-weight:500;font-size:13px;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestName||'')}" onchange="_trDraftChange('${tid}','TestName',this.value)">` : escapeHtml(r.TestName||'—')}</div>
@@ -6355,7 +6362,7 @@ function _amDrilldownHTML(key) {
           ${_trEditMode && isAdmin ? `<div style="padding:12px 16px;border-top:1px solid var(--gray-100);"><button class="form-secondary" onclick="_trAddCase('${escapeHtml(tp)}')">+ Add Test Case</button></div>` : ''}
         </div>
       `).join('')}
-      ${selectedCount ? _trBulkBarHTML(selectedCount, Object.keys(tpMap), isAdmin) : ''}
+      ${_trBulkMode ? _trBulkBarHTML(selectedCount) : ''}
     </div>
   `;
 }
@@ -6369,6 +6376,7 @@ function _trStartEdit(key) {
   if (!act) return;
   _trEditMode = true;
   _trDraftItems = act.items.map(r => ({ ...r, _isNew:false, _dirty:false }));
+  _trEmptySections = [];
   _reRenderTR();
 }
 
@@ -6377,6 +6385,9 @@ function _trCancelEdit() {
   _trDraftItems = null;
   _trSelected.clear();
   _trBulkMsg = '';
+  _trBulkMode = false;
+  _trEmptySections = [];
+  _trDragId = null;
   _reRenderTR();
 }
 
@@ -6395,6 +6406,18 @@ function _trRenameProcedure(oldTp, newTp) {
       r._dirty = true;
     }
   });
+  _trEmptySections = _trEmptySections.map(s => s === oldTp ? newTp.trim() : s);
+  _reRenderTR();
+}
+
+function _trAddSection() {
+  if (!_trEditMode) return;
+  const name = prompt('Enter new Test Section name');
+  if (!name || !name.trim()) return;
+  const tp = name.trim();
+  const exists = (_trDraftItems || []).some(r => (r.TestProcedure || '(No Procedure)') === tp) || _trEmptySections.includes(tp);
+  if (exists) { toast('Test Section already exists', 'error'); return; }
+  _trEmptySections.push(tp);
   _reRenderTR();
 }
 
@@ -6408,7 +6431,7 @@ function _trAddCase(tp) {
     Status: 'Not Started',
     Notes: '',
     Activity: act.activity,
-    TestProcedure: tp,
+    TestProcedure: tp === '(No Procedure)' ? '' : tp,
     Phase: act.phase,
     Location: act.location,
     Subsystem: act.subsystem,
@@ -6416,6 +6439,7 @@ function _trAddCase(tp) {
     _isNew: true,
     _dirty: true,
   });
+  _trEmptySections = _trEmptySections.filter(s => s !== tp);
   _reRenderTR();
 }
 
@@ -6426,7 +6450,7 @@ function _trCopyCase(testId) {
   _trDraftItems.splice(idx + 1, 0, {
     ...src,
     TestID: _trNewId(),
-    TestCaseCode: '',
+    TestCaseCode: src.TestCaseCode ? src.TestCaseCode + '-Copy' : '',
     TestName: (src.TestName || '') + '-Copy',
     Status: 'Not Started',
     CompletedBy: null,
@@ -6436,6 +6460,25 @@ function _trCopyCase(testId) {
     _isNew: true,
     _dirty: true,
   });
+  _reRenderTR();
+}
+
+function _trDragStart(testId) {
+  _trDragId = String(testId);
+}
+
+function _trDropCase(targetProcedure, beforeTestId) {
+  if (!_trEditMode || !_trDraftItems || !_trDragId) return;
+  const fromIdx = _trDraftItems.findIndex(r => String(r.TestID) === String(_trDragId));
+  if (fromIdx < 0) return;
+  const [item] = _trDraftItems.splice(fromIdx, 1);
+  item.TestProcedure = targetProcedure === '(No Procedure)' ? '' : targetProcedure;
+  item._dirty = true;
+  let toIdx = beforeTestId ? _trDraftItems.findIndex(r => String(r.TestID) === String(beforeTestId)) : -1;
+  if (toIdx < 0) toIdx = _trDraftItems.length;
+  _trDraftItems.splice(toIdx, 0, item);
+  _trEmptySections = _trEmptySections.filter(s => s !== targetProcedure);
+  _trDragId = null;
   _reRenderTR();
 }
 
@@ -6468,6 +6511,9 @@ async function _trSaveEdit(key) {
     _trDraftItems = null;
     _trSelected.clear();
     _trBulkMsg = '';
+    _trBulkMode = false;
+    _trEmptySections = [];
+    _trDragId = null;
     _reRenderTR();
   } catch(e) {
     toast('Save failed: ' + e.message, 'error');
@@ -6504,16 +6550,14 @@ async function _trDeleteCase(testId) {
   }
 }
 
-function _trBulkBarHTML(count, procedures, isAdmin) {
+function _trBulkBarHTML(count) {
   return `
     <div class="tr-bulk-bar">
       <span><b>${count}</b> selected</span>
       ${_trBulkMsg ? `<span style="color:#bbf7d0;font-size:12px;">${escapeHtml(_trBulkMsg)}</span>` : ''}
       <select id="tr-bulk-status" class="form-input"><option value="">Bulk Status</option>${['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'].map(s=>`<option value="${s}">${s}</option>`).join('')}</select>
       <input id="tr-bulk-notes" class="form-input" placeholder="Bulk notes">
-      <select id="tr-bulk-notes-mode" class="form-input"><option value="append">Append</option><option value="overwrite">Overwrite</option></select>
       <button class="admin-action-btn" onclick="_trApplyBulkField()">Apply</button>
-      ${isAdmin ? `<input id="tr-bulk-procedure" class="form-input" placeholder="Bulk Test Procedure" list="tr-proc-list"><datalist id="tr-proc-list">${procedures.map(p=>`<option value="${escapeHtml(p)}"></option>`).join('')}</datalist><button class="form-secondary" onclick="_trApplyBulkProcedure()" ${_trEditMode?'':'disabled'}>Set Procedure</button><button class="form-secondary" style="color:var(--bad);" onclick="_trBulkDelete()">Delete Selected</button>` : ''}
       <button class="form-secondary" onclick="_trClearSelection()">Clear Selection</button>
     </div>
   `;
@@ -6538,10 +6582,17 @@ function _trClearSelection() {
   _reRenderTR();
 }
 
+function _trToggleBulkEdit() {
+  _trBulkMode = !_trBulkMode;
+  _trSelected.clear();
+  _trBulkMsg = '';
+  _reRenderTR();
+}
+
 async function _trApplyBulkField() {
   const status = document.getElementById('tr-bulk-status')?.value;
   const notes = document.getElementById('tr-bulk-notes')?.value;
-  const mode = document.getElementById('tr-bulk-notes-mode')?.value || 'append';
+  if (!_trSelected.size) { toast('Select at least one test case', 'error'); return; }
   if (!status && !notes) { toast('Choose a status or enter notes', 'error'); return; }
   try {
     for (const id of [..._trSelected]) {
@@ -6550,9 +6601,8 @@ async function _trApplyBulkField() {
       const patch = {};
       if (status) { patch.status = status; r.Status = status; }
       if (notes) {
-        const newNotes = mode === 'overwrite' ? notes : [r.Notes, notes].filter(Boolean).join('\n');
-        patch.notes = newNotes;
-        r.Notes = newNotes;
+        patch.notes = notes;
+        r.Notes = notes;
       }
       await _dbUpdate('test_items', patch, { test_id: r.TestID });
     }
@@ -6562,20 +6612,6 @@ async function _trApplyBulkField() {
   } catch(e) {
     toast('Bulk apply failed: ' + e.message, 'error');
   }
-}
-
-function _trApplyBulkProcedure() {
-  if (!_trEditMode || !_trDraftItems) { toast('Bulk procedure requires Edit Mode', 'error'); return; }
-  const tp = document.getElementById('tr-bulk-procedure')?.value.trim();
-  if (!tp) { toast('Enter a target procedure', 'error'); return; }
-  _trDraftItems.forEach(r => {
-    if (_trSelected.has(String(r.TestID))) {
-      r.TestProcedure = tp;
-      r._dirty = true;
-    }
-  });
-  _trBulkMsg = 'Procedure queued for Save';
-  _reRenderTR();
 }
 
 async function _trBulkDelete() {
@@ -6595,6 +6631,13 @@ function _amOpenDrilldown(key) {
 
 function _amCloseDrilldown() {
   _amDrilldownKey = null;
+  _trEditMode = false;
+  _trDraftItems = null;
+  _trSelected.clear();
+  _trBulkMsg = '';
+  _trBulkMode = false;
+  _trEmptySections = [];
+  _trDragId = null;
   _reRenderTR();
 }
 
