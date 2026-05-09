@@ -2695,3 +2695,27 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
 .tr-report-title { font-weight: 600; font-size: 14px; }
 .tr-report-meta  { font-size: 12px; color: var(--gray-500); margin-top: 2px; }
 .tr-report-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+
+.tr-bulk-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 80;
+  width: min(1180px, calc(100vw - 32px));
+  background: #111827;
+  color: var(--white);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 18px 48px rgba(0,0,0,.25);
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tr-bulk-bar .form-input {
+  min-width: 140px;
+  max-width: 220px;
+  padding: 6px 8px;
+  font-size: 12px;
+}

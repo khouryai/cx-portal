@@ -5913,6 +5913,8 @@ let _amFilters  = { phase:'', location:'', subsystem:'', status:'' };
 let _amSelected = new Set(); // selected activity keys for bulk action
 let _trEditMode = false;
 let _trDraftItems = null;
+let _trSelected = new Set();
+let _trBulkMsg = '';
 
 // ==========================================================================
 // TEST REGISTER — unified Activity + Test Case view
@@ -6261,6 +6263,7 @@ function _amDrilldownHTML(key) {
   const statuses = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'];
   const legacyMap = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
   const viewItems = _trEditMode && _trDraftItems ? _trDraftItems : act.items;
+  const selectedCount = _trSelected.size;
   const tpMap = {};
   viewItems.forEach(r => {
     const tp = r.TestProcedure || '(No Procedure)';
@@ -6297,13 +6300,17 @@ function _amDrilldownHTML(key) {
       ${Object.entries(tpMap).map(([tp, tpItems]) => `
         <div class="tr-procedure-card">
           <div class="tr-procedure-head">
-            <div class="tr-procedure-title">${_trEditMode && isAdmin ? `<input class="form-input" style="font-weight:700;min-width:320px;" value="${escapeHtml(tp)}" onchange="_trRenameProcedure('${escapeHtml(tp)}',this.value)">` : escapeHtml(tp)}</div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <input type="checkbox" ${tpItems.length && tpItems.every(r => _trSelected.has(String(r.TestID))) ? 'checked' : ''} onchange="_trSelectSection('${escapeHtml(tp)}',this.checked)" title="Select All in Section">
+              <div class="tr-procedure-title">${_trEditMode && isAdmin ? `<input class="form-input" style="font-weight:700;min-width:320px;" value="${escapeHtml(tp)}" onchange="_trRenameProcedure('${escapeHtml(tp)}',this.value)">` : escapeHtml(tp)}</div>
+            </div>
             <div class="section-sub">${tpItems.length} test case${tpItems.length===1?'':'s'}</div>
           </div>
           <div class="table-wrap" style="max-height:none;">
             <table class="data-table">
               <thead>
                 <tr>
+                  <th style="width:34px;"></th>
                   <th style="min-width:140px;">Test Case Code</th>
                   <th>Test Name</th>
                   <th style="min-width:170px;">Status</th>
@@ -6319,6 +6326,7 @@ function _amDrilldownHTML(key) {
                 const tid = escapeHtml(String(r.TestID));
                 return `
                   <tr>
+                    <td><input type="checkbox" ${_trSelected.has(String(r.TestID))?'checked':''} onchange="_trToggleSelect('${tid}',this.checked)"></td>
                     <td style="font-size:11px;font-family:monospace;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestCaseCode||'')}" onchange="_trDraftChange('${tid}','TestCaseCode',this.value)">` : escapeHtml(r.TestCaseCode||r.TestID||'—')}</td>
                     <td>
                       <div style="font-weight:500;font-size:13px;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestName||'')}" onchange="_trDraftChange('${tid}','TestName',this.value)">` : escapeHtml(r.TestName||'—')}</div>
@@ -6345,6 +6353,7 @@ function _amDrilldownHTML(key) {
           ${_trEditMode && isAdmin ? `<div style="padding:12px 16px;border-top:1px solid var(--gray-100);"><button class="form-secondary" onclick="_trAddCase('${escapeHtml(tp)}')">+ Add Test Case</button></div>` : ''}
         </div>
       `).join('')}
+      ${selectedCount ? _trBulkBarHTML(selectedCount, Object.keys(tpMap), isAdmin) : ''}
     </div>
   `;
 }
@@ -6364,6 +6373,8 @@ function _trStartEdit(key) {
 function _trCancelEdit() {
   _trEditMode = false;
   _trDraftItems = null;
+  _trSelected.clear();
+  _trBulkMsg = '';
   _reRenderTR();
 }
 
@@ -6453,6 +6464,8 @@ async function _trSaveEdit(key) {
     toast('Test case changes saved', 'success');
     _trEditMode = false;
     _trDraftItems = null;
+    _trSelected.clear();
+    _trBulkMsg = '';
     _reRenderTR();
   } catch(e) {
     toast('Save failed: ' + e.message, 'error');
@@ -6481,11 +6494,96 @@ async function _trDeleteCase(testId) {
       if (idx !== -1) TI.splice(idx, 1);
     }
     if (_trDraftItems) _trDraftItems = _trDraftItems.filter(x => String(x.TestID) !== String(testId));
+    _trSelected.delete(String(testId));
     toast('Test case deleted', 'success');
     _reRenderTR();
   } catch(e) {
     toast('Delete failed: ' + e.message, 'error');
   }
+}
+
+function _trBulkBarHTML(count, procedures, isAdmin) {
+  return `
+    <div class="tr-bulk-bar">
+      <span><b>${count}</b> selected</span>
+      ${_trBulkMsg ? `<span style="color:#bbf7d0;font-size:12px;">${escapeHtml(_trBulkMsg)}</span>` : ''}
+      <select id="tr-bulk-status" class="form-input"><option value="">Bulk Status</option>${['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'].map(s=>`<option value="${s}">${s}</option>`).join('')}</select>
+      <input id="tr-bulk-notes" class="form-input" placeholder="Bulk notes">
+      <select id="tr-bulk-notes-mode" class="form-input"><option value="append">Append</option><option value="overwrite">Overwrite</option></select>
+      <button class="admin-action-btn" onclick="_trApplyBulkField()">Apply</button>
+      ${isAdmin ? `<input id="tr-bulk-procedure" class="form-input" placeholder="Bulk Test Procedure" list="tr-proc-list"><datalist id="tr-proc-list">${procedures.map(p=>`<option value="${escapeHtml(p)}"></option>`).join('')}</datalist><button class="form-secondary" onclick="_trApplyBulkProcedure()" ${_trEditMode?'':'disabled'}>Set Procedure</button><button class="form-secondary" style="color:var(--bad);" onclick="_trBulkDelete()">Delete Selected</button>` : ''}
+      <button class="form-secondary" onclick="_trClearSelection()">Clear Selection</button>
+    </div>
+  `;
+}
+
+function _trToggleSelect(testId, checked) {
+  if (checked) _trSelected.add(String(testId)); else _trSelected.delete(String(testId));
+  _reRenderTR();
+}
+
+function _trSelectSection(tp, checked) {
+  const act = _amGetActivities().find(a => a.key === _amDrilldownKey);
+  if (!act) return;
+  const rows = (_trEditMode && _trDraftItems ? _trDraftItems : act.items).filter(r => (r.TestProcedure || '(No Procedure)') === tp);
+  rows.forEach(r => checked ? _trSelected.add(String(r.TestID)) : _trSelected.delete(String(r.TestID)));
+  _reRenderTR();
+}
+
+function _trClearSelection() {
+  _trSelected.clear();
+  _trBulkMsg = '';
+  _reRenderTR();
+}
+
+async function _trApplyBulkField() {
+  const status = document.getElementById('tr-bulk-status')?.value;
+  const notes = document.getElementById('tr-bulk-notes')?.value;
+  const mode = document.getElementById('tr-bulk-notes-mode')?.value || 'append';
+  if (!status && !notes) { toast('Choose a status or enter notes', 'error'); return; }
+  try {
+    for (const id of [..._trSelected]) {
+      const r = TI.find(x => String(x.TestID) === String(id));
+      if (!r) continue;
+      const patch = {};
+      if (status) { patch.status = status; r.Status = status; }
+      if (notes) {
+        const newNotes = mode === 'overwrite' ? notes : [r.Notes, notes].filter(Boolean).join('\n');
+        patch.notes = newNotes;
+        r.Notes = newNotes;
+      }
+      await _dbUpdate('test_items', patch, { test_id: r.TestID });
+    }
+    _trBulkMsg = 'Bulk changes applied';
+    toast('Bulk changes applied', 'success');
+    _reRenderTR();
+  } catch(e) {
+    toast('Bulk apply failed: ' + e.message, 'error');
+  }
+}
+
+function _trApplyBulkProcedure() {
+  if (!_trEditMode || !_trDraftItems) { toast('Bulk procedure requires Edit Mode', 'error'); return; }
+  const tp = document.getElementById('tr-bulk-procedure')?.value.trim();
+  if (!tp) { toast('Enter a target procedure', 'error'); return; }
+  _trDraftItems.forEach(r => {
+    if (_trSelected.has(String(r.TestID))) {
+      r.TestProcedure = tp;
+      r._dirty = true;
+    }
+  });
+  _trBulkMsg = 'Procedure queued for Save';
+  _reRenderTR();
+}
+
+async function _trBulkDelete() {
+  const ids = [..._trSelected];
+  if (!ids.length) return;
+  if (!confirm(`Permanently delete ${ids.length} selected test case${ids.length===1?'':'s'}? This cannot be undone.`)) return;
+  for (const id of ids) await _trDeleteCase(id);
+  _trSelected.clear();
+  _trBulkMsg = '';
+  _reRenderTR();
 }
 
 function _amOpenDrilldown(key) {
