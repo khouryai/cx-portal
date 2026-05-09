@@ -5884,7 +5884,6 @@ async function saveNewRevision(parentId) {
 // ==========================================================================
 let _amFilters  = { phase:'', location:'', subsystem:'', status:'' };
 let _amSelected = new Set(); // selected activity keys for bulk action
-let _trExpanded = new Set(); // expanded activity keys in Test Register
 
 // ==========================================================================
 // TEST REGISTER — unified Activity + Test Case view
@@ -5893,11 +5892,6 @@ function renderTestRegister() {
   const root = document.getElementById('test-register-content');
   if (!root || !currentRoleUser) return;
   root.innerHTML = _testRegisterHTML();
-}
-
-function _trToggle(key) {
-  if (_trExpanded.has(key)) _trExpanded.delete(key); else _trExpanded.add(key);
-  _reRenderTR();
 }
 
 function _testRegisterHTML() {
@@ -5924,28 +5918,27 @@ function _testRegisterHTML() {
   const hasFutureTest = selectedActivities.some(a => _amComputeStatus(a) === 'Future Test');
   const hasNonFuture  = selectedActivities.some(a => _amComputeStatus(a) !== 'Future Test');
 
-  const tcStatuses = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'];
-  const legacyMap  = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
-
-  // column count: [cb](admin) | [expand] | Activity | Subsystem | Location | Phase | Status | Completion | [Actions](admin)
-  const colCount = isAdmin ? 9 : 7;
+  // column count: [cb](admin) | Actions | Activity | Subsystem | Location | Phase | Status | Completion
+  const colCount = isAdmin ? 8 : 7;
 
   const actRows = filtered.map(a => {
     const st = _amComputeStatus(a);
     const { done, total } = _amComputeCompletion(a);
     const pct = total > 0 ? Math.round((done/total)*100) : 0;
     const isSel = _amSelected.has(a.key);
-    const isExpanded = _trExpanded.has(a.key);
     const safeKey = escapeHtml(a.key);
 
     const actRow = `
       <tr style="${isSel?'background:#f5f3ff;':''}" class="tr-activity-row">
         ${isAdmin ? `<td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} onchange="_amToggleRow('${safeKey}',this.checked)"></td>` : ''}
-        <td style="width:28px;padding:8px 2px;text-align:center;">
-          <button onclick="_trToggle('${safeKey}')" style="background:none;border:none;cursor:pointer;font-size:13px;color:var(--gray-400);padding:0 4px;" title="${isExpanded?'Collapse':'Expand'}">${isExpanded?'▼':'▶'}</button>
+        <td>
+          <div style="display:flex;gap:4px;">
+            ${isAdmin ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_amOpenEditModal('${safeKey}')">Edit</button>` : ''}
+            <button class="admin-action-btn" style="font-size:11px;padding:3px 8px;" onclick="_amOpenDrilldown('${safeKey}')">Open</button>
+          </div>
         </td>
         <td>
-          <div style="font-weight:600;font-size:13px;cursor:pointer;color:var(--gray-800);" onclick="_trToggle('${safeKey}')">${escapeHtml(a.activity)}</div>
+          <div style="font-weight:600;font-size:13px;color:var(--gray-800);">${escapeHtml(a.activity)}</div>
           ${a.futureTestReason ? `<div style="font-size:11px;color:#5b21b6;margin-top:2px;">↳ ${escapeHtml(a.futureTestReason)}</div>` : ''}
         </td>
         <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
@@ -5958,69 +5951,8 @@ function _testRegisterHTML() {
             <span class="am-progress-label">${done}/${total}</span>
           </div>
         </td>
-        ${isAdmin ? `<td><button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_amOpenEditModal('${safeKey}')">Edit</button></td>` : ''}
       </tr>`;
-
-    if (!isExpanded) return actRow;
-
-    // Group test items by Test Procedure
-    const tpMap = {};
-    a.items.forEach(r => {
-      const tp = r.TestProcedure || '(No Procedure)';
-      if (!tpMap[tp]) tpMap[tp] = [];
-      tpMap[tp].push(r);
-    });
-
-    const indent = isAdmin ? '60px' : '44px';
-    const expandedRows = Object.entries(tpMap).flatMap(([tp, tpItems]) => {
-      const tpRow = `
-        <tr>
-          <td colspan="${colCount}" style="padding:0;">
-            <div style="padding:6px 16px 6px ${indent};font-size:11px;font-weight:700;color:var(--gray-500);background:#f1f5f9;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;letter-spacing:.5px;text-transform:uppercase;">
-              📋 ${escapeHtml(tp)}
-            </div>
-          </td>
-        </tr>`;
-
-      const tcRows = tpItems.map(r => {
-        const cur = legacyMap[r.Status] || r.Status || 'Not Started';
-        const showReason = cur === 'Fail' || cur === 'Blocked';
-        const reasonVal  = cur === 'Fail' ? (r.FailedReason||'') : (r.BlockedReason||'');
-        const tid = escapeHtml(String(r.TestID));
-        return `
-          <tr class="tr-tc-row">
-            <td colspan="${colCount}" style="padding:0;background:#fafafa;">
-              <div style="display:flex;align-items:flex-start;gap:12px;padding:8px 16px 8px ${indent};border-bottom:1px solid #f3f4f6;">
-                <div style="width:120px;flex-shrink:0;">
-                  <div style="font-size:11px;font-family:monospace;color:var(--gray-600);">${escapeHtml(r.TestCaseCode||r.TestID||'—')}</div>
-                </div>
-                <div style="flex:1;min-width:0;">
-                  <div style="font-weight:500;font-size:13px;">${escapeHtml(r.TestName||'—')}</div>
-                  ${r.CompletedBy ? `<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(r.CompletedBy)}</div>` : ''}
-                </div>
-                <div style="display:flex;flex-direction:column;gap:4px;min-width:190px;flex-shrink:0;">
-                  <select class="form-input" style="font-size:12px;padding:4px 6px;" onchange="_mxStatusChange('${tid}',this.value)">
-                    ${tcStatuses.map(s=>`<option value="${s}" ${cur===s?'selected':''}>${s}</option>`).join('')}
-                  </select>
-                  <div id="mx-reason-${tid}" style="${showReason?'':'display:none;'}">
-                    <input type="text" id="mx-ri-${tid}" class="form-input" style="font-size:11px;padding:3px 6px;"
-                      placeholder="${cur==='Fail'?'Failure reason...':'Blocked reason...'}"
-                      value="${escapeHtml(reasonVal)}"
-                      onblur="_mxSaveReason('${tid}',this.value)">
-                  </div>
-                </div>
-                <div style="min-width:150px;flex-shrink:0;">
-                  <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
-                </div>
-              </div>
-            </td>
-          </tr>`;
-      }).join('');
-
-      return tpRow + tcRows;
-    }).join('');
-
-    return actRow + expandedRows;
+    return actRow;
   }).join('');
 
   return `
@@ -6079,14 +6011,13 @@ function _testRegisterHTML() {
             <thead>
               <tr>
                 ${isAdmin ? `<th class="am-cb-col"><input type="checkbox" id="am-cb-all" onchange="_amToggleAll(this.checked)" title="Select all"></th>` : ''}
-                <th style="width:28px;"></th>
+                <th>Actions</th>
                 <th>Activity Name</th>
                 <th>Subsystem</th>
                 <th>Location</th>
                 <th>Phase</th>
                 <th>Status</th>
                 <th style="min-width:160px;">Completion</th>
-                ${isAdmin ? `<th>Actions</th>` : ''}
               </tr>
             </thead>
             <tbody>
