@@ -127,6 +127,33 @@ async function _dbUpdate(table, patch, match) {
     throw e;
   }
 }
+
+async function _dbDelete(table, match) {
+  const authHeader = _getAuthHeader();
+  const qs = Object.entries(match)
+    .map(([k, v]) => `${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`)
+    .join('&');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${qs}`, {
+      method: 'DELETE',
+      signal: ctrl.signal,
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: authHeader,
+        Prefer: 'return=representation',
+      },
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`${table} delete failed (${res.status}): ${await res.text()}`);
+    return await res.json();
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error(`${table} delete timed out after 15s`);
+    throw e;
+  }
+}
 // SELECT rows from a table; `match` is an object of { col: value } equality filters.
 // Returns the array of matching rows. Uses native fetch with 15s timeout to bypass
 // supabase-js client state issues (same reason as _dbInsert / _dbUpdate).
@@ -5884,6 +5911,8 @@ async function saveNewRevision(parentId) {
 // ==========================================================================
 let _amFilters  = { phase:'', location:'', subsystem:'', status:'' };
 let _amSelected = new Set(); // selected activity keys for bulk action
+let _trEditMode = false;
+let _trDraftItems = null;
 
 // ==========================================================================
 // TEST REGISTER — unified Activity + Test Case view
@@ -6231,8 +6260,9 @@ function _amDrilldownHTML(key) {
   const pct = total > 0 ? Math.round((done/total)*100) : 0;
   const statuses = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'];
   const legacyMap = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
+  const viewItems = _trEditMode && _trDraftItems ? _trDraftItems : act.items;
   const tpMap = {};
-  act.items.forEach(r => {
+  viewItems.forEach(r => {
     const tp = r.TestProcedure || '(No Procedure)';
     if (!tpMap[tp]) tpMap[tp] = [];
     tpMap[tp].push(r);
@@ -6240,6 +6270,7 @@ function _amDrilldownHTML(key) {
 
   return `
     <div class="admin-section">
+      ${_trEditMode ? `<div style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-weight:800;">Edit Mode Active</div>` : ''}
       <div class="tr-page-header">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
           <div>
@@ -6258,7 +6289,7 @@ function _amDrilldownHTML(key) {
               <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;background:${pct===100?'var(--good)':'var(--info)'}"></div></div>
               <span class="am-progress-label">${done}/${total}</span>
             </div>
-            ${isAdmin ? `<button class="admin-action-btn" style="font-size:12px;" onclick="_amOpenEditModal('${escapeHtml(key)}')">Edit Activity</button>` : ''}
+            ${isAdmin ? (_trEditMode ? `<button class="form-secondary" style="font-size:12px;" onclick="_trCancelEdit()">Cancel</button><button class="admin-action-btn" style="font-size:12px;" onclick="_trSaveEdit('${escapeHtml(key)}')">Save</button>` : `<button class="admin-action-btn" style="font-size:12px;" onclick="_trStartEdit('${escapeHtml(key)}')">Edit</button>`) : ''}
           </div>
         </div>
       </div>
@@ -6266,7 +6297,7 @@ function _amDrilldownHTML(key) {
       ${Object.entries(tpMap).map(([tp, tpItems]) => `
         <div class="tr-procedure-card">
           <div class="tr-procedure-head">
-            <div class="tr-procedure-title">${escapeHtml(tp)}</div>
+            <div class="tr-procedure-title">${_trEditMode && isAdmin ? `<input class="form-input" style="font-weight:700;min-width:320px;" value="${escapeHtml(tp)}" onchange="_trRenameProcedure('${escapeHtml(tp)}',this.value)">` : escapeHtml(tp)}</div>
             <div class="section-sub">${tpItems.length} test case${tpItems.length===1?'':'s'}</div>
           </div>
           <div class="table-wrap" style="max-height:none;">
@@ -6277,6 +6308,7 @@ function _amDrilldownHTML(key) {
                   <th>Test Name</th>
                   <th style="min-width:170px;">Status</th>
                   <th style="min-width:240px;">Notes</th>
+                  ${_trEditMode && isAdmin ? `<th style="width:86px;">Actions</th>` : ''}
                 </tr>
               </thead>
               <tbody>
@@ -6287,9 +6319,9 @@ function _amDrilldownHTML(key) {
                 const tid = escapeHtml(String(r.TestID));
                 return `
                   <tr>
-                    <td style="font-size:11px;font-family:monospace;">${escapeHtml(r.TestCaseCode||r.TestID||'—')}</td>
+                    <td style="font-size:11px;font-family:monospace;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestCaseCode||'')}" onchange="_trDraftChange('${tid}','TestCaseCode',this.value)">` : escapeHtml(r.TestCaseCode||r.TestID||'—')}</td>
                     <td>
-                      <div style="font-weight:500;font-size:13px;">${escapeHtml(r.TestName||'—')}</div>
+                      <div style="font-weight:500;font-size:13px;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestName||'')}" onchange="_trDraftChange('${tid}','TestName',this.value)">` : escapeHtml(r.TestName||'—')}</div>
                       ${r.CompletedBy ? `<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(r.CompletedBy)}</div>` : ''}
                     </td>
                     <td>
@@ -6303,16 +6335,157 @@ function _amDrilldownHTML(key) {
                     <td>
                       <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
                     </td>
+                    ${_trEditMode && isAdmin ? `<td><button class="form-secondary" style="font-size:13px;padding:4px 7px;" onclick="_trCopyCase('${tid}')">⧉</button><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);margin-left:4px;" onclick="_trDeleteCase('${tid}')">🗑</button></td>` : ''}
                   </tr>
                 `;
               }).join('')}
               </tbody>
             </table>
           </div>
+          ${_trEditMode && isAdmin ? `<div style="padding:12px 16px;border-top:1px solid var(--gray-100);"><button class="form-secondary" onclick="_trAddCase('${escapeHtml(tp)}')">+ Add Test Case</button></div>` : ''}
         </div>
       `).join('')}
     </div>
   `;
+}
+
+function _trNewId() {
+  return `TC-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+}
+
+function _trStartEdit(key) {
+  const act = _amGetActivities().find(a => a.key === key);
+  if (!act) return;
+  _trEditMode = true;
+  _trDraftItems = act.items.map(r => ({ ...r, _isNew:false, _dirty:false }));
+  _reRenderTR();
+}
+
+function _trCancelEdit() {
+  _trEditMode = false;
+  _trDraftItems = null;
+  _reRenderTR();
+}
+
+function _trDraftChange(testId, field, value) {
+  const r = _trDraftItems?.find(x => String(x.TestID) === String(testId));
+  if (!r) return;
+  r[field] = value;
+  r._dirty = true;
+}
+
+function _trRenameProcedure(oldTp, newTp) {
+  if (!_trDraftItems || !newTp.trim()) return;
+  _trDraftItems.forEach(r => {
+    if ((r.TestProcedure || '(No Procedure)') === oldTp) {
+      r.TestProcedure = newTp.trim();
+      r._dirty = true;
+    }
+  });
+  _reRenderTR();
+}
+
+function _trAddCase(tp) {
+  const act = _amGetActivities().find(a => a.key === _amDrilldownKey);
+  if (!act || !_trDraftItems) return;
+  _trDraftItems.push({
+    TestID: _trNewId(),
+    TestCaseCode: '',
+    TestName: '',
+    Status: 'Not Started',
+    Notes: '',
+    Activity: act.activity,
+    TestProcedure: tp,
+    Phase: act.phase,
+    Location: act.location,
+    Subsystem: act.subsystem,
+    TestReport: act.testReport || null,
+    _isNew: true,
+    _dirty: true,
+  });
+  _reRenderTR();
+}
+
+function _trCopyCase(testId) {
+  const idx = _trDraftItems?.findIndex(x => String(x.TestID) === String(testId));
+  if (idx === undefined || idx < 0) return;
+  const src = _trDraftItems[idx];
+  _trDraftItems.splice(idx + 1, 0, {
+    ...src,
+    TestID: _trNewId(),
+    TestCaseCode: '',
+    TestName: (src.TestName || '') + '-Copy',
+    Status: 'Not Started',
+    CompletedBy: null,
+    CompletedDate: null,
+    FailedReason: null,
+    BlockedReason: null,
+    _isNew: true,
+    _dirty: true,
+  });
+  _reRenderTR();
+}
+
+async function _trSaveEdit(key) {
+  if (!_trDraftItems) return;
+  const btn = document.querySelector('.tr-page-header .admin-action-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const rowPatch = r => ({
+      test_id: r.TestID,
+      test_case_code: r.TestCaseCode || null,
+      test_name: r.TestName || null,
+      status: r.Status || 'Not Started',
+      notes: r.Notes || null,
+      activity: r.Activity || null,
+      test_procedure: r.TestProcedure || null,
+      phase: r.Phase || null,
+      location: r.Location || null,
+      subsystem: r.Subsystem || null,
+      test_report: r.TestReport || null,
+    });
+    const inserts = _trDraftItems.filter(r => r._isNew).map(r => _dbInsert('test_items', [rowPatch(r)]));
+    const updates = _trDraftItems.filter(r => !r._isNew && r._dirty).map(r => _dbUpdate('test_items', rowPatch(r), { test_id: r.TestID }));
+    await Promise.all([...inserts, ...updates]);
+    await loadTestItems();
+    if (currentRoleUser.subsystem) TI = TI.filter(t => (t.Subsystem||'').toLowerCase() === currentRoleUser.subsystem.toLowerCase());
+    logAudit('Test Case Edit Save', 'Test Register', `${inserts.length} added · ${updates.length} updated`);
+    toast('Test case changes saved', 'success');
+    _trEditMode = false;
+    _trDraftItems = null;
+    _reRenderTR();
+  } catch(e) {
+    toast('Save failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+  }
+}
+
+async function _trDeleteCase(testId) {
+  const r = (_trDraftItems || []).find(x => String(x.TestID) === String(testId)) || TI.find(x => String(x.TestID) === String(testId));
+  if (!r) return;
+  if (!confirm(`Are you sure you want to permanently delete ${r.TestCaseCode || r.TestName || r.TestID}? This cannot be undone.`)) return;
+  try {
+    if (!r._isNew) {
+      await _dbDelete('test_items', { test_id: r.TestID });
+      await _dbInsert('audit_log', [{
+        id: 'a-' + Date.now(),
+        user_name: currentRoleUser?.name,
+        role: currentRoleUser?.role,
+        action: 'Test Case Deleted',
+        target: r.TestID,
+        details: r.TestName || '',
+        timestamp: new Date().toISOString(),
+        notes: `Deleted ${r.TestID} ${r.TestName || ''}`,
+      }]);
+      const idx = TI.findIndex(x => String(x.TestID) === String(r.TestID));
+      if (idx !== -1) TI.splice(idx, 1);
+    }
+    if (_trDraftItems) _trDraftItems = _trDraftItems.filter(x => String(x.TestID) !== String(testId));
+    toast('Test case deleted', 'success');
+    _reRenderTR();
+  } catch(e) {
+    toast('Delete failed: ' + e.message, 'error');
+  }
 }
 
 function _amOpenDrilldown(key) {
