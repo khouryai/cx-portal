@@ -5926,6 +5926,8 @@ function renderTestRegister() {
 }
 
 function _testRegisterHTML() {
+  if (_amDrilldownKey) return _amDrilldownHTML(_amDrilldownKey);
+
   const isAdmin = currentRoleUser?.role === 'admin';
   const all = _amGetActivities();
 
