@@ -1385,6 +1385,24 @@ async function _fetchAnon(path) {
   }
 }
 
+async function _fetchCurrentAuth(path) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      signal: ctrl.signal,
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), Accept: 'application/json' },
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    return await res.json();
+  } catch(e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error('request timed out after 15s');
+    throw e;
+  }
+}
+
 async function loadTemplates() {
   try {
     const data = await _fetchAnon('templates?select=*&order=created_at.asc');
@@ -1461,6 +1479,7 @@ async function loadTestItems() {
         FailedReason:  r.failed_reason || null,
         Notes:         r.notes,
         TestReport:    r.test_report || null,
+        TestReportID:  r.test_report_id || null,
       }));
       console.log(`Loaded ${TI.length} test items from Supabase`);
     }
@@ -1963,8 +1982,14 @@ let _adminTab = 'templates';
 let TEST_INSTANCES = DATA.testInstances || [];
 let PUNCH_ITEMS = DATA.punchItems || [];
 let AUDIT_LOG = DATA.auditLog || [];
+let DB_AUDIT_EVENTS = [];
 let _testReports = [];        // loaded from Supabase test_reports
 let _activityRecords = [];    // loaded from Supabase activity_records (future_test_reason store)
+let _trpFilters = { search:'', status:'', subsystem:'', phase:'', location:'' };
+let _trpExpanded = new Set();
+let _trpSyncInFlight = false;
+let _trpAutoSyncAttempted = new Set();
+let _trpSearchTimer = null;
 
 const ROLE_LABELS = {
   admin: 'Admin',
@@ -2160,6 +2185,8 @@ function onLoggedIn() {
   // Re-init views that are subsystem-scoped after login applies TI filter
   initLineItems();
   renderAdminPortal(); renderAdminTemplates(); renderTestRegister(); renderFieldIntake(); renderPunchWorkflow(); renderAuditLog(); renderTestReporting();
+  refreshAuditLog().catch(err => console.warn('[audit] refresh failed:', err.message));
+  loadTestReports().then(renderTestReporting).catch(err => console.warn('[loadTestReports after login] failed:', err.message));
 }
 
 // ==========================================================================
@@ -2186,6 +2213,19 @@ function logAudit(action, target, details, notes = '') {
     notes,
   };
   AUDIT_LOG.unshift(entry);
+  _dbInsert('audit_log', [{
+    id: entry.id,
+    user_name: entry.user,
+    role: entry.role,
+    action: entry.action,
+    target: entry.target,
+    details: entry.details,
+    timestamp: entry.timestamp,
+    notes: entry.notes,
+    table_name: 'audit_log',
+    record_id: entry.id,
+    source: 'Portal Audit',
+  }]).catch(err => console.warn('[audit] persist skipped:', err.message));
   renderAuditLog();
 }
 
@@ -3748,6 +3788,7 @@ function _renderTIMatrixRow(r, isAdmin) {
   const showReason = current === 'Fail' || current === 'Blocked';
   const reasonVal  = current === 'Fail' ? (r.FailedReason||'') : (r.BlockedReason||'');
   const tid = escapeHtml(String(r.TestID));
+  const domId = encodeURIComponent(String(r.TestID));
   const notesVal = r.Notes || '';
   return `
     <div class="matrix-tc-row" style="flex-wrap:wrap;">
@@ -3757,14 +3798,14 @@ function _renderTIMatrixRow(r, isAdmin) {
         ${r.CompletedBy ? `<div class="matrix-tc-meta">Completed by <b>${escapeHtml(r.CompletedBy)}</b></div>` : ''}
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;min-width:200px;">
-        <select class="form-input" style="font-size:12px;padding:5px 8px;" onchange="_mxStatusChange('${tid}',this.value)">
+        <select class="form-input mx-status-select" onchange="_mxStatusChange('${tid}',this.value,this)">
           ${statuses.map(s=>`<option value="${s}" ${current===s?'selected':''}>${s}</option>`).join('')}
         </select>
-        <div id="mx-reason-${tid}" style="${showReason?'':'display:none;'}">
-          <input type="text" id="mx-ri-${tid}" class="form-input" style="font-size:12px;padding:5px 8px;"
+        <div id="mx-reason-${domId}" class="mx-reason-wrap" style="${showReason?'':'display:none;'}">
+          <input type="text" id="mx-ri-${domId}" class="form-input mx-reason-input" style="font-size:12px;padding:5px 8px;"
             placeholder="${current==='Fail'?'Failure reason...':'Blocked reason...'}"
             value="${escapeHtml(reasonVal)}"
-            onblur="_mxSaveReason('${tid}',this.value)">
+            oninput="_mxSaveReason('${tid}',this.value)">
         </div>
       </div>
       <div style="width:100%;padding:4px 0 0 0;">
@@ -3786,48 +3827,116 @@ function _mxClearFilters() {
   renderTestMatrix();
 }
 
-function _mxStatusChange(testId, status) {
+function _mxStatusChange(testId, status, el = null) {
+  const r = TI.find(t => String(t.TestID) === String(testId));
+  if (!r) return;
+  _mxApplyStatusChange(testId, status, status === 'Fail' ? r.FailedReason : status === 'Blocked' ? r.BlockedReason : '', el);
+}
+
+async function _logTestItemStatusHistory(r, oldStatus, newStatus, opts = {}) {
+  if (!r || oldStatus === newStatus) return;
+  try {
+    await _dbInsert('test_item_status_history', [{
+      test_id:        r.TestID,
+      test_case_code: r.TestCaseCode || null,
+      test_name:      r.TestName || null,
+      phase:          r.Phase || null,
+      location:       r.Location || null,
+      subsystem:      r.Subsystem || null,
+      activity:       r.Activity || null,
+      old_status:     oldStatus || null,
+      new_status:     newStatus || null,
+      changed_by:     opts.changedBy || currentRoleUser?.name || currentProfile?.full_name || null,
+      changed_role:   currentRoleUser?.role || currentProfile?.role || null,
+      source:         opts.source || null,
+      reason:         opts.reason || null,
+      notes:          opts.notes || null,
+    }]);
+  } catch (err) {
+    console.warn('[statusHistory] insert skipped:', err.message);
+  }
+}
+
+async function _updateTestItemStatus(testId, status, opts = {}) {
+  const r = opts.row || TI.find(t => String(t.TestID) === String(testId));
+  if (!r) return null;
+  const reason = opts.reason || '';
+  const oldStatus = r.Status || null;
+  const patch = { status };
+  if (status === 'Pass') {
+    patch.completed_by = opts.completedBy || currentRoleUser?.name || currentProfile?.full_name || null;
+    patch.completed_date = opts.completedDate || new Date().toISOString();
+  } else if (status !== 'Not Applicable') {
+    patch.completed_by = null;
+    patch.completed_date = null;
+  }
+  patch.failed_reason = status === 'Fail' ? reason : null;
+  patch.blocked_reason = status === 'Blocked' ? reason : null;
+  if (Object.prototype.hasOwnProperty.call(opts, 'notes')) patch.notes = opts.notes || null;
+
+  r.Status = status;
+  r.FailedReason = patch.failed_reason;
+  r.BlockedReason = patch.blocked_reason;
+  if (Object.prototype.hasOwnProperty.call(patch, 'completed_by')) r.CompletedBy = patch.completed_by;
+  if (Object.prototype.hasOwnProperty.call(patch, 'completed_date')) r.CompletedDate = patch.completed_date;
+  if (Object.prototype.hasOwnProperty.call(patch, 'notes')) r.Notes = patch.notes;
+
+  const rows = await _dbUpdate('test_items', patch, { test_id: r.TestID });
+  if (!rows || rows.length === 0) throw new Error(`No test_items row matched test_id "${r.TestID}"`);
+  await _logTestItemStatusHistory(r, oldStatus, status, opts);
+  return rows;
+}
+
+function _mxApplyStatusChange(testId, status, reason = '', el = null) {
   const r = TI.find(t => String(t.TestID) === String(testId));
   if (!r) return;
 
-  // Track session log — store r.TestID (raw, unescaped) as the canonical id
   const rawId = r.TestID;
   const existing = _sessionLog.find(e => String(e.testId) === String(rawId));
   if (existing) {
     existing.newStatus     = status;
     existing.changedAt     = new Date().toISOString();
-    // Clear reason fields that no longer apply to the new status
-    existing.failedReason  = status === 'Fail'    ? (existing.failedReason  || '') : '';
-    existing.blockedReason = status === 'Blocked'  ? (existing.blockedReason || '') : '';
+    existing.failedReason  = status === 'Fail'    ? reason : '';
+    existing.blockedReason = status === 'Blocked' ? reason : '';
   } else {
     _sessionLog.push({
       testId: rawId, testCode: r.TestCaseCode, testName: r.TestName,
       phase: r.Phase, location: r.Location, subsystem: r.Subsystem, activity: r.Activity,
       prevStatus: r.Status || 'Not Started', newStatus: status,
       changedAt: new Date().toISOString(),
-      // Only carry over a reason if the NEW status actually warrants it
-      failedReason:  status === 'Fail'    ? (r.FailedReason  || '') : '',
-      blockedReason: status === 'Blocked' ? (r.BlockedReason || '') : '',
+      failedReason:  status === 'Fail'    ? reason : '',
+      blockedReason: status === 'Blocked' ? reason : '',
       hours: 0
     });
   }
 
   r.Status = status;
-  if (status === 'Pass') { r.CompletedBy = currentRoleUser.name; r.CompletedDate = new Date().toISOString(); }
-  if (status !== 'Fail')    r.FailedReason  = null;
-  if (status !== 'Blocked') r.BlockedReason = null;
+  r.FailedReason = status === 'Fail' ? reason : null;
+  r.BlockedReason = status === 'Blocked' ? reason : null;
+  if (status === 'Pass') {
+    r.CompletedBy = currentRoleUser?.name || null;
+    r.CompletedDate = new Date().toISOString();
+  } else if (status !== 'Not Applicable') {
+    r.CompletedBy = null;
+    r.CompletedDate = null;
+  }
 
-  // Toggle reason input without re-rendering the full matrix
-  const reasonEl = document.getElementById(`mx-reason-${testId}`);
-  const reasonInput = document.getElementById(`mx-ri-${testId}`);
+  const rowEl = el?.closest?.('.matrix-tc-row');
+  const domId = encodeURIComponent(String(testId));
+  const reasonEl = rowEl?.querySelector?.('.mx-reason-wrap') || document.getElementById(`mx-reason-${domId}`);
+  const reasonInput = rowEl?.querySelector?.('.mx-reason-input') || document.getElementById(`mx-ri-${domId}`);
   if (reasonEl) {
     const needReason = status === 'Fail' || status === 'Blocked';
     reasonEl.style.display = needReason ? '' : 'none';
-    if (reasonInput) reasonInput.placeholder = status === 'Fail' ? 'Failure reason...' : 'Blocked reason...';
+    if (reasonInput) {
+      reasonInput.placeholder = status === 'Fail' ? 'Failure reason...' : 'Blocked reason...';
+      reasonInput.value = reason || '';
+      if (needReason) setTimeout(() => reasonInput.focus(), 0);
+    }
   }
 
   _mxRefreshCounts();
-  _mxSaveStatus(status, r);
+  _mxSaveStatus(status, r, reason);
 }
 
 // Recompute the matrix summary tiles + per-activity tallies from current TI state
@@ -3859,34 +3968,16 @@ function _mxRefreshCounts() {
   });
 }
 
-async function _mxSaveStatus(status, r) {
+async function _mxSaveStatus(status, r, reason = '') {
   // Uses _dbUpdate (native fetch) instead of the supabase-js client.
   // Reason: supabase-js caches its JWT internally and does not reliably
   // re-read it after a browser tab resumes — causing silent write failures
   // after tab switches. _dbUpdate calls _getAuthHeader() which reads the JWT
   // directly from localStorage on every invocation, guaranteeing a valid token.
   _mxSavePending = true;
-  const patch = { status };
-  if (status === 'Pass') {
-    patch.completed_by   = currentRoleUser?.name;
-    patch.completed_date = new Date().toISOString();
-  }
-  // Clear completion metadata when reverting from Pass
-  if (status !== 'Pass' && status !== 'Not Applicable') {
-    patch.completed_by   = null;
-    patch.completed_date = null;
-  }
-  // Clear reason fields when status no longer warrants them
-  if (status !== 'Fail')    patch.failed_reason  = null;
-  if (status !== 'Blocked') patch.blocked_reason = null;
   console.log(`[mxSaveStatus] → test_items test_id="${r.TestID}" status="${status}"`);
   try {
-    const rows = await _dbUpdate('test_items', patch, { test_id: r.TestID });
-    if (!rows || rows.length === 0) {
-      console.warn('[mxSaveStatus] 0 rows matched:', r.TestID);
-      toast(`⚠ Save did not match any row in DB (test_id "${r.TestID}")`, 'warn');
-      return;
-    }
+    const rows = await _updateTestItemStatus(r.TestID, status, { row: r, reason, source: 'Test Matrix' });
     console.log(`[mxSaveStatus] ✓ updated ${rows.length} row(s)`);
     toast(`${r.TestCaseCode} → ${status}`, 'success');
     logAudit('Test Status Update', `${r.TestCaseCode} @ ${r.Location}`, `→ ${status}`);
@@ -3902,6 +3993,8 @@ function _mxSaveReason(testId, reason) {
   const r = TI.find(t => String(t.TestID) === String(testId));
   if (!r) return;
   const isFail = r.Status === 'Fail';
+  const isBlocked = r.Status === 'Blocked';
+  if (!isFail && !isBlocked) return;
   if (isFail) r.FailedReason = reason; else r.BlockedReason = reason;
   const logEntry = _sessionLog.find(e => String(e.testId) === String(r.TestID));
   if (logEntry) { if (isFail) logEntry.failedReason = reason; else logEntry.blockedReason = reason; }
@@ -3934,6 +4027,8 @@ function openEditActivityModal(idx) {
   const data = (window._mxGroups || [])[idx];
   if (!data) { toast('Could not load activity data', 'error'); return; }
   _pendingActivityEdit = data;
+  const selectedReport = _trpFindRecordForActivity(data);
+  const customReport = selectedReport ? '' : (data.testReport || '');
   modal({
     title: 'Edit Activity',
     size: 'medium',
@@ -3943,8 +4038,8 @@ function openEditActivityModal(idx) {
         <input type="text" id="ea-name" class="form-input" value="${escapeHtml(data.activity||'')}">
       </div>
       <div class="form-field" style="margin-top:12px;">
-        <label>Test Report CDRL</label>
-        <input type="text" id="ea-report" class="form-input" placeholder="e.g. CDRL 9.05.25" value="${escapeHtml(data.testReport||'')}">
+        <label>Test Report</label>
+        ${_trpReportSelectHTML(selectedReport?.id || '', customReport)}
       </div>
       <p style="font-size:12px;color:var(--gray-500);margin-top:12px;">Changes apply to all test cases under this activity: <b>${escapeHtml(data.phase)} · ${escapeHtml(data.location)} · ${escapeHtml(data.subsystem)}</b></p>
     `,
@@ -3960,7 +4055,8 @@ async function saveActivityEdit() {
   if (!data) { toast('No activity selected','error'); return; }
 
   const name   = document.getElementById('ea-name').value.trim();
-  const report = document.getElementById('ea-report').value.trim();
+  const beforeLink = _trpCurrentActivityReportLink(data);
+  let afterLink = _trpReportLinkFromModal();
   if (!name) { toast('Activity name required','error'); return; }
 
   const rows = TI.filter(r => r.Activity===data.activity && r.Location===data.location && r.Phase===data.phase && r.Subsystem===data.subsystem);
@@ -3969,11 +4065,15 @@ async function saveActivityEdit() {
   const btn = document.querySelector('.modal-footer .admin-action-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
-  rows.forEach(r => { r.Activity=name; r.TestReport=report; });
   try {
-    const ids = rows.map(r => r.TestID);
-    const { error } = await _sb.from('test_items').update({ activity: name, test_report: report }).in('test_id', ids);
-    if (error) throw error;
+    afterLink = await _trpResolveReportLink(afterLink, { phase: data.phase, location: data.location, subsystem: data.subsystem, activity: name });
+    const patch = { activity: name, ..._trpReportLinkPatch(afterLink) };
+    await Promise.all(rows.map(r => _dbUpdate('test_items', patch, { test_id: r.TestID })));
+    rows.forEach(r => { r.Activity = name; });
+    _trpApplyReportLinkToItems(rows, afterLink);
+    const reportDetails = _trpReportLinkAuditDetails(beforeLink, afterLink, rows.length);
+    logAudit('Activity Edited', name, [reportDetails, `Phase: ${data.phase} · Location: ${data.location}`].filter(Boolean).join(' · '));
+    _trpLogActivityReportLinkChange(name, beforeLink, afterLink, rows.length, `Phase: ${data.phase} · Location: ${data.location}`);
     toast(`Updated ${rows.length} test cases`, 'success');
     _pendingActivityEdit = null;
     closeModal();
@@ -4178,7 +4278,7 @@ function renderIntakeStep2() {
       <div class="form-actions">
         <button class="form-secondary" onclick="setIntakeStep(1)">← Back</button>
         <button class="form-secondary" onclick="addIntakeAddition()">+ Add to List</button>
-        <button class="form-submit" onclick="setIntakeStep(3)">Continue to Step 3 →</button>
+        <button class="form-submit" onclick="continueIntakeStep3()">Continue to Step 3 →</button>
       </div>
     </div>
   `;
@@ -4292,7 +4392,7 @@ function addIntakeAddition() {
   }
   const t = TI.find(x => String(x.TestID) === String(tid));
   if (!t) return;
-  intakeAdditions.push({
+  const row = {
     testId:       t.TestID,
     testCode:     t.TestCaseCode,
     testName:     t.TestName,
@@ -4306,8 +4406,28 @@ function addIntakeAddition() {
     hours:        parseFloat(document.getElementById('ai-hours')?.value) || 0,
     blockedReason: document.getElementById('ai-blocked-reason')?.value || '',
     failedReason:  document.getElementById('ai-failed-reason')?.value  || '',
-  });
+  };
+  const existingIdx = intakeAdditions.findIndex(a => String(a.testId) === String(tid));
+  if (existingIdx >= 0) intakeAdditions[existingIdx] = row;
+  else intakeAdditions.push(row);
   toast('Added to list', 'success');
+  renderFieldIntake();
+}
+
+function continueIntakeStep3() {
+  const tid = document.getElementById('ai-testid')?.value;
+  const status = document.getElementById('ai-status')?.value;
+  const hours = document.getElementById('ai-hours')?.value;
+  const failedReason = document.getElementById('ai-failed-reason')?.value;
+  const blockedReason = document.getElementById('ai-blocked-reason')?.value;
+  if (tid || status || hours || failedReason || blockedReason) {
+    if (!tid || !status) {
+      toast('Please select a test case and status before continuing', 'warn');
+      return;
+    }
+    addIntakeAddition();
+  }
+  intakeStep = 3;
   renderFieldIntake();
 }
 
@@ -4384,7 +4504,7 @@ async function submitIntakeFinal() {
         number_of_testers: testers,
         failed_reason:     item.failedReason    || null,
         blocked_reason:    item.blockedReason   || null,
-        hours_spent:       item.hours           || 0,
+        test_hours:        item.hours           || 0,
         notes:             item.notes           || null,
       }));
 
@@ -4403,7 +4523,7 @@ async function submitIntakeFinal() {
       total_blocked:      allItems.filter(i => i.status === 'Blocked').length,
       delay_occurred:     delayOccurred,
       delay_category:     delayCat,
-      delay_hours:        delayHrs,
+      delay_duration:     delayHrs,
       delay_notes:        delayNotes,
       overall_notes:      overallNotes,
       next_day_plan:      nextDayPlan,
@@ -5608,6 +5728,116 @@ async function executePunchImport() {
 // ==========================================================================
 // AUDIT LOG
 // ==========================================================================
+function _auditNormalizeLocal(e) {
+  return {
+    id: e.id || `local-${e.timestamp || Date.now()}`,
+    timestamp: e.timestamp || new Date().toISOString(),
+    user: e.user || e.user_name || 'System',
+    role: e.role || '',
+    action: e.action || 'Audit Event',
+    target: e.target || '',
+    details: e.details || '',
+    notes: e.notes || '',
+    source: e.source || 'Portal Audit',
+    table: e.table || 'audit_log',
+  };
+}
+
+function _auditNormalizeStatusHistory(e) {
+  return {
+    id: `status-${e.id}`,
+    timestamp: e.changed_at || new Date().toISOString(),
+    user: e.changed_by || 'System',
+    role: e.changed_role || '',
+    action: 'Test Status Changed',
+    target: e.test_case_code || e.test_id || '',
+    details: `${e.old_status || '—'} → ${e.new_status || '—'}${e.test_name ? ` · ${e.test_name}` : ''}`,
+    notes: [e.source, e.reason, e.notes].filter(Boolean).join(' · '),
+    source: e.source || 'Status History',
+    table: 'test_item_status_history',
+    test_id: e.test_id || '',
+    phase: e.phase || '',
+    location: e.location || '',
+    subsystem: e.subsystem || '',
+    activity: e.activity || '',
+  };
+}
+
+function _auditNormalizeDbChange(e) {
+  const recordId = e.record_id || '';
+  const changed = Array.isArray(e.changed_columns) && e.changed_columns.length
+    ? `Changed: ${e.changed_columns.join(', ')}`
+    : '';
+  return {
+    id: `db-${e.id}`,
+    timestamp: e.changed_at || new Date().toISOString(),
+    user: e.changed_by || e.actor_email || 'Database',
+    role: e.actor_role || '',
+    action: `DB ${e.operation || 'CHANGE'}`,
+    target: `${e.table_name || ''}${recordId ? `:${recordId}` : ''}`,
+    details: changed || e.operation || '',
+    notes: e.source || '',
+    source: 'DB Trigger',
+    table: e.table_name || 'db_change_log',
+    record_id: recordId,
+    operation: e.operation || '',
+  };
+}
+
+function _auditEvents() {
+  const local = (AUDIT_LOG || []).map(_auditNormalizeLocal);
+  return [...DB_AUDIT_EVENTS, ...local]
+    .sort((a,b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+}
+
+async function loadDbAuditEvents() {
+  const events = [];
+  try {
+    const rows = await _dbSelect('audit_log', {}, '*');
+    events.push(...(rows || []).map(r => _auditNormalizeLocal({
+      id: r.id,
+      user: r.user_name,
+      role: r.role,
+      action: r.action,
+      target: r.target,
+      details: r.details,
+      timestamp: r.timestamp,
+      notes: r.notes,
+      source: 'DB Audit Log',
+      table: 'audit_log',
+    })));
+  } catch (err) {
+    console.warn('[audit] audit_log load skipped:', err.message);
+  }
+  try {
+    const rows = await _dbSelect('test_item_status_history', {}, '*');
+    events.push(...(rows || []).map(_auditNormalizeStatusHistory));
+  } catch (err) {
+    console.warn('[audit] status history load skipped:', err.message);
+  }
+  try {
+    const rows = await _dbSelect('db_change_log', {}, '*');
+    events.push(...(rows || []).map(_auditNormalizeDbChange));
+  } catch (err) {
+    console.warn('[audit] db change log load skipped:', err.message);
+  }
+  DB_AUDIT_EVENTS = events;
+}
+
+async function refreshAuditLog() {
+  await loadDbAuditEvents();
+  renderAuditLog();
+}
+
+function _auditClassName(value) {
+  return String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown';
+}
+
+function _auditInitials(value) {
+  const parts = String(value || 'System').split(/[\s@._-]+/).filter(Boolean);
+  return (parts.length ? parts.slice(0, 2).map(p => p[0]).join('') : 'S').toUpperCase();
+}
+
 function renderAuditLog() {
   const root = document.getElementById('audit-content');
   if (!root || !currentRoleUser) return;
@@ -5615,29 +5845,50 @@ function renderAuditLog() {
     root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`;
     return;
   }
+  const entries = _auditEvents();
 
   root.innerHTML = `
     <div class="data-card">
       <div class="data-card-head">
-        <span class="data-count">${AUDIT_LOG.length} entries</span>
-        <button class="export-btn" onclick="exportAudit()">Export CSV</button>
+        <span class="data-count">${entries.length} entries</span>
+        <div style="display:flex;gap:8px;">
+          <button class="form-secondary" onclick="refreshAuditLog()">Refresh</button>
+          <button class="export-btn" onclick="exportAudit()">Export CSV</button>
+        </div>
       </div>
       <div class="table-wrap">
-        ${AUDIT_LOG.map(e => `
-          <div class="audit-row role-${e.role}">
-            <div class="audit-time">${new Date(e.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
-            <div class="audit-user-pill">
-              <span>${escapeHtml(e.user)}</span>
-              <span class="role-mini">${escapeHtml(ROLE_LABELS[e.role] || e.role)}</span>
+        ${entries.map(e => {
+          const roleLabel = ROLE_LABELS[e.role] || '';
+          const dbRole = roleLabel ? '' : e.role;
+          const sourceLabel = e.source || e.table || 'Audit';
+          return `
+            <div class="audit-row role-${_auditClassName(e.role)} source-${_auditClassName(sourceLabel)}">
+              <div class="audit-time">
+                <div>${new Date(e.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                <div class="audit-relative">${dateAgo(e.timestamp)}</div>
+              </div>
+              <div class="audit-user-card">
+                <div class="audit-avatar">${escapeHtml(_auditInitials(e.user))}</div>
+                <div class="audit-user-main">
+                  <div class="audit-user-name">${escapeHtml(e.user)}</div>
+                  <div class="audit-chip-row">
+                    ${roleLabel ? `<span class="role-mini">${escapeHtml(roleLabel)}</span>` : ''}
+                    ${dbRole ? `<span class="audit-db-role">${escapeHtml(dbRole)}</span>` : ''}
+                  </div>
+                </div>
+              </div>
+              <div class="audit-action-card">
+                <div class="audit-action">${escapeHtml(e.action)}</div>
+                <span class="audit-source-chip">${escapeHtml(sourceLabel)}</span>
+              </div>
+              <div class="audit-event-body">
+                <div class="audit-target">${escapeHtml(e.target)}</div>
+                <div class="audit-details">${escapeHtml(e.details)}${e.notes ? ` · "${escapeHtml(e.notes)}"` : ''}</div>
+                <div class="audit-details audit-table-line">${escapeHtml(e.table || '')}</div>
+              </div>
             </div>
-            <div class="audit-action">${escapeHtml(e.action)}</div>
-            <div>
-              <div class="audit-target">${escapeHtml(e.target)}</div>
-              <div class="audit-details">${escapeHtml(e.details)} ${e.notes ? `· "${escapeHtml(e.notes)}"` : ''}</div>
-            </div>
-            <div class="audit-time">${dateAgo(e.timestamp)}</div>
-          </div>
-        `).join('')}
+          `;
+        }).join('') || `<div class="docs-empty"><h3>No audit events found</h3></div>`}
       </div>
     </div>
   `;
@@ -5653,7 +5904,7 @@ function exportAudit() {
     { key: 'details', label: 'Details' },
     { key: 'notes', label: 'Notes' },
   ];
-  downloadCSV(toCSV(AUDIT_LOG, cols), 'audit_log.csv');
+  downloadCSV(toCSV(_auditEvents(), cols), 'audit_log.csv');
 }
 
 // ==========================================================================
@@ -5661,7 +5912,7 @@ function exportAudit() {
 // ==========================================================================
 async function loadTestReports() {
   try {
-    const data = await _fetchAnon('test_reports?select=*&order=created_at.asc');
+    const data = await _fetchCurrentAuth('test_reports?select=*&order=created_at.asc');
     _testReports = data || [];
   } catch(e) { console.warn('[loadTestReports] failed:', e.message); }
 }
@@ -5674,6 +5925,499 @@ async function loadActivityRecords() {
 }
 
 const TR_STATUSES = ['Not Started','In Review','Accepted','Accepted as Noted','Accepted as Noted Resubmit','Resubmit','Rejected'];
+
+const TRP_SOURCE_LABELS = {
+  'master-linked': 'Master + TI',
+  'master-only': 'Master Only',
+  derived: 'Referenced from Test Items',
+};
+
+function _trpCanManage() {
+  return ['admin', 'field_engineer'].includes(currentRoleUser?.role);
+}
+
+function _trpCanView() {
+  return ['admin', 'field_engineer', 'client', 'readonly'].includes(currentRoleUser?.role);
+}
+
+function _trpCleanReportValue(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function _trpReportKey(value) {
+  const clean = _trpCleanReportValue(value);
+  if (!clean) return '';
+  return clean
+    .replace(/^CDRL[\s#:.\-]*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+function _trpInferCdrlNumber(value) {
+  const clean = _trpCleanReportValue(value);
+  if (!clean) return null;
+  if (/^CDRL\b/i.test(clean) || /^\d+(\.\d+)+/.test(clean)) return clean;
+  return null;
+}
+
+function _trpRecordKeys(r) {
+  return [...new Set([r?.cdrl_number, r?.title].map(_trpReportKey).filter(Boolean))];
+}
+
+function _trpFindRecordByText(value) {
+  const key = _trpReportKey(value);
+  if (!key) return null;
+  return _testReports.find(r => _trpRecordKeys(r).includes(key)) || null;
+}
+
+function _trpReportLabel(r) {
+  return [r.cdrl_number, r.title, r.revision ? `Rev ${r.revision}` : ''].filter(Boolean).join(' · ');
+}
+
+function _trpFindRecordForActivity(act) {
+  const id = act?.items?.find(t => t.TestReportID)?.TestReportID;
+  if (id) {
+    const byId = _testReports.find(r => String(r.id) === String(id));
+    if (byId) return byId;
+  }
+  return _trpFindRecordByText(act?.testReport || '');
+}
+
+function _trpReportSelectHTML(selectedId, customValue) {
+  const sorted = [..._testReports].sort((a, b) =>
+    _trpReportLabel(a).localeCompare(_trpReportLabel(b), undefined, { numeric: true, sensitivity: 'base' })
+  );
+  return `
+    <select id="am-edit-report-id" class="form-input" onchange="_amToggleCustomReport()">
+      <option value="" ${!selectedId && !customValue ? 'selected' : ''}>— No Report —</option>
+      <option value="__custom__" ${customValue ? 'selected' : ''}>— Enter Manually —</option>
+      ${sorted.map(r => `<option value="${escapeHtml(r.id)}" ${String(selectedId || '') === String(r.id) ? 'selected' : ''}>${escapeHtml(_trpReportLabel(r))}</option>`).join('')}
+    </select>
+    <input type="text" id="am-edit-report" class="form-input" style="margin-top:8px;${customValue ? '' : 'display:none;'}" placeholder="e.g. CDRL 9.05.25" value="${escapeHtml(customValue || '')}">
+  `;
+}
+
+function _amToggleCustomReport() {
+  const mode = document.getElementById('am-edit-report-id')?.value || '';
+  const input = document.getElementById('am-edit-report');
+  if (!input) return;
+  input.style.display = mode === '__custom__' ? '' : 'none';
+  if (mode !== '__custom__') input.value = '';
+}
+
+function _trpReportLinkFromModal() {
+  const selectedReportId = document.getElementById('am-edit-report-id')?.value || '';
+  const selectedReport = selectedReportId && selectedReportId !== '__custom__'
+    ? _testReports.find(r => String(r.id) === String(selectedReportId))
+    : null;
+  const customReport = document.getElementById('am-edit-report')?.value.trim() || null;
+  const report = selectedReport
+    ? (selectedReport.cdrl_number || selectedReport.title || null)
+    : (selectedReportId === '__custom__' ? customReport : null);
+  return {
+    report,
+    reportId: selectedReport?.id || null,
+    record: selectedReport,
+    mode: selectedReport ? 'record' : (selectedReportId === '__custom__' ? 'custom' : 'none'),
+    label: selectedReport ? _trpReportLabel(selectedReport) : (report || 'No Report'),
+  };
+}
+
+function _trpReportLinkFromRecord(report) {
+  if (!report) return { report: null, reportId: null, record: null, mode: 'none', label: 'No Report' };
+  return {
+    report: report.cdrl_number || report.title || null,
+    reportId: report.id || null,
+    record: report,
+    mode: 'record',
+    label: _trpReportLabel(report),
+  };
+}
+
+async function _trpResolveReportLink(link, context = {}) {
+  if (!link?.report || link.mode !== 'custom') return link;
+  const existing = _trpFindRecordByText(link.report);
+  if (existing) return _trpReportLinkFromRecord(existing);
+  const title = _trpCleanReportValue(link.report);
+  if (!title) return { report: null, reportId: null, record: null, mode: 'none', label: 'No Report' };
+  const payload = {
+    title,
+    cdrl_number: _trpInferCdrlNumber(title),
+    revision: 'A',
+    status: 'Not Started',
+    phase: context.phase || null,
+    location: context.location || null,
+    subsystem: context.subsystem || null,
+    notes: context.activity ? `Created from Activity Edit: ${context.activity}` : 'Created from Activity Edit',
+    created_by: currentRoleUser?.name,
+    updated_by: currentRoleUser?.name,
+    updated_at: new Date().toISOString(),
+  };
+  const inserted = await _dbInsert('test_reports', [payload]);
+  if (!inserted?.length) throw new Error('No report row was created. Check test_reports RLS INSERT policy.');
+  _testReports.push(...inserted);
+  logAudit('Test Report Created', title, `Manual report created from Activity Edit${context.activity ? ` · ${context.activity}` : ''}`);
+  return _trpReportLinkFromRecord(inserted[0]);
+}
+
+function _trpCurrentActivityReportLink(act) {
+  const selectedReport = _trpFindRecordForActivity(act);
+  const itemReportId = act?.items?.find(t => t.TestReportID)?.TestReportID || null;
+  const itemReport = act?.testReport || act?.items?.find(t => t.TestReport)?.TestReport || null;
+  const report = selectedReport ? (selectedReport.cdrl_number || selectedReport.title || null) : itemReport;
+  return {
+    report,
+    reportId: selectedReport?.id || itemReportId || null,
+    record: selectedReport || null,
+    mode: selectedReport ? 'record' : (itemReport ? 'custom' : 'none'),
+    label: selectedReport ? _trpReportLabel(selectedReport) : (itemReport || 'No Report'),
+  };
+}
+
+function _trpReportLinkPatch(link) {
+  return {
+    test_report: link?.report || null,
+    test_report_id: link?.reportId || null,
+  };
+}
+
+function _trpApplyReportLinkToItems(items, link) {
+  (items || []).forEach(r => {
+    r.TestReport = link?.report || null;
+    r.TestReportID = link?.reportId || null;
+  });
+}
+
+function _trpReportLinkChanged(before, after) {
+  return String(before?.reportId || '') !== String(after?.reportId || '') ||
+    _trpCleanReportValue(before?.report || '') !== _trpCleanReportValue(after?.report || '');
+}
+
+function _trpReportLinkAuditDetails(before, after, count) {
+  if (!_trpReportLinkChanged(before, after)) return '';
+  const itemText = `${count} test case${count===1?'':'s'}`;
+  const beforeLabel = before?.label || 'No Report';
+  const afterLabel = after?.label || 'No Report';
+  if ((before?.mode || 'none') === 'none' && (after?.mode || 'none') !== 'none') return `Linked ${itemText} to ${afterLabel}${after?.mode === 'custom' ? ' (manual)' : ''}`;
+  if ((before?.mode || 'none') !== 'none' && (after?.mode || 'none') === 'none') return `Unlinked ${itemText} from ${beforeLabel}`;
+  return `Changed ${itemText}: ${beforeLabel} → ${afterLabel}${after?.mode === 'custom' ? ' (manual)' : ''}`;
+}
+
+function _trpReportLinkAuditAction(before, after) {
+  if (!_trpReportLinkChanged(before, after)) return '';
+  if ((before?.mode || 'none') === 'none' && (after?.mode || 'none') !== 'none') return 'Test Report Linked';
+  if ((before?.mode || 'none') !== 'none' && (after?.mode || 'none') === 'none') return 'Test Report Unlinked';
+  return 'Test Report Changed';
+}
+
+function _trpLogActivityReportLinkChange(activityName, before, after, count, context = '') {
+  const action = _trpReportLinkAuditAction(before, after);
+  if (!action) return;
+  const details = [_trpReportLinkAuditDetails(before, after, count), context].filter(Boolean).join(' · ');
+  logAudit(action, activityName, details);
+}
+
+function _trpStatusCounts(items) {
+  const counts = { total: items.length, passed: 0, failed: 0, blocked: 0, inProgress: 0, notStarted: 0, future: 0 };
+  items.forEach(r => {
+    const s = String(r.Status || '').toLowerCase();
+    if (['pass', 'passed', 'complete', 'completed'].includes(s)) counts.passed++;
+    else if (['fail', 'failed'].includes(s)) counts.failed++;
+    else if (s === 'blocked') counts.blocked++;
+    else if (s === 'in progress') counts.inProgress++;
+    else if (s === 'future test' || s === 'future') counts.future++;
+    else counts.notStarted++;
+  });
+  return counts;
+}
+
+function _trpBuildLinkMap() {
+  const map = new Map();
+  TI.forEach(r => {
+    const byId = r.TestReportID ? _testReports.find(rep => String(rep.id) === String(r.TestReportID)) : null;
+    const raw = _trpCleanReportValue(r.TestReport || byId?.cdrl_number || byId?.title);
+    const key = byId ? `id:${byId.id}` : _trpReportKey(raw);
+    if (!key) return;
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        reportId: byId?.id || null,
+        display: raw || byId?.cdrl_number || byId?.title || '',
+        rawValues: new Map(),
+        items: [],
+        activityMap: new Map(),
+        phases: new Set(),
+        locations: new Set(),
+        subsystems: new Set(),
+      });
+    }
+    const link = map.get(key);
+    link.items.push(r);
+    link.rawValues.set(raw, (link.rawValues.get(raw) || 0) + 1);
+    const phase = r.Phase || '-';
+    const location = r.Location || '-';
+    const subsystem = r.Subsystem || '-';
+    const activity = r.Activity || '-';
+    const activityKey = `${phase}||${location}||${subsystem}||${activity}`;
+    if (!link.activityMap.has(activityKey)) {
+      link.activityMap.set(activityKey, { key: activityKey, phase, location, subsystem, activity, items: [] });
+    }
+    link.activityMap.get(activityKey).items.push(r);
+    if (phase && phase !== '-') link.phases.add(phase);
+    if (location && location !== '-') link.locations.add(location);
+    if (subsystem && subsystem !== '-') link.subsystems.add(subsystem);
+  });
+
+  map.forEach(link => {
+    let bestValue = link.display;
+    let bestCount = 0;
+    link.rawValues.forEach((count, value) => {
+      if (count > bestCount) { bestValue = value; bestCount = count; }
+    });
+    link.display = bestValue;
+    link.activities = [...link.activityMap.values()].map(act => ({
+      ...act,
+      counts: _trpStatusCounts(act.items),
+    })).sort((a, b) =>
+      `${a.phase} ${a.location} ${a.subsystem} ${a.activity}`.localeCompare(
+        `${b.phase} ${b.location} ${b.subsystem} ${b.activity}`,
+        undefined,
+        { numeric: true, sensitivity: 'base' }
+      )
+    );
+    link.activityCount = link.activities.length;
+    link.testCaseCount = link.items.length;
+    link.counts = _trpStatusCounts(link.items);
+    link.phases = [...link.phases].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    link.locations = [...link.locations].sort();
+    link.subsystems = [...link.subsystems].sort();
+  });
+  return map;
+}
+
+function _trpEmptyLink(key, display) {
+  return {
+    key,
+    display,
+    items: [],
+    activities: [],
+    activityCount: 0,
+    testCaseCount: 0,
+    counts: _trpStatusCounts([]),
+    phases: [],
+    locations: [],
+    subsystems: [],
+  };
+}
+
+function _trpMergeLinksForKeys(keys, linkMap, display) {
+  const matches = keys.map(k => linkMap.get(k)).filter(Boolean);
+  if (!matches.length) return _trpEmptyLink(keys[0] || '', display || '');
+  const itemMap = new Map();
+  const activityMap = new Map();
+  const phases = new Set();
+  const locations = new Set();
+  const subsystems = new Set();
+  matches.forEach(link => {
+    link.items.forEach(item => itemMap.set(String(item.TestID || `${item.TestCaseCode}-${item.TestName}`), item));
+    link.activities.forEach(act => {
+      if (!activityMap.has(act.key)) {
+        activityMap.set(act.key, { key: act.key, phase: act.phase, location: act.location, subsystem: act.subsystem, activity: act.activity, items: [] });
+      }
+      const target = activityMap.get(act.key);
+      const seen = new Set(target.items.map(item => String(item.TestID || `${item.TestCaseCode}-${item.TestName}`)));
+      act.items.forEach(item => {
+        const id = String(item.TestID || `${item.TestCaseCode}-${item.TestName}`);
+        if (!seen.has(id)) {
+          target.items.push(item);
+          seen.add(id);
+        }
+      });
+    });
+    link.phases.forEach(v => phases.add(v));
+    link.locations.forEach(v => locations.add(v));
+    link.subsystems.forEach(v => subsystems.add(v));
+  });
+  const items = [...itemMap.values()];
+  const activities = [...activityMap.values()].map(act => ({ ...act, counts: _trpStatusCounts(act.items) })).sort((a, b) =>
+    `${a.phase} ${a.location} ${a.subsystem} ${a.activity}`.localeCompare(
+      `${b.phase} ${b.location} ${b.subsystem} ${b.activity}`,
+      undefined,
+      { numeric: true, sensitivity: 'base' }
+    )
+  );
+  return {
+    key: keys[0] || matches[0].key,
+    display: matches[0].display || display || '',
+    items,
+    activities,
+    activityCount: activities.length,
+    testCaseCount: items.length,
+    counts: _trpStatusCounts(items),
+    phases: [...phases].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    locations: [...locations].sort(),
+    subsystems: [...subsystems].sort(),
+  };
+}
+
+function _trpRowFromRecord(r, link) {
+  const subsystems = [...new Set([r.subsystem, ...(link.subsystems || [])].filter(Boolean))].sort();
+  const phases = [...new Set([r.phase, ...(link.phases || [])].filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const locations = [...new Set([r.location, ...(link.locations || [])].filter(Boolean))].sort();
+  return {
+    uid: r.id,
+    id: r.id,
+    record: r,
+    isDerived: false,
+    source: link.testCaseCount ? 'master-linked' : 'master-only',
+    sourceLabel: link.testCaseCount ? TRP_SOURCE_LABELS['master-linked'] : TRP_SOURCE_LABELS['master-only'],
+    key: _trpRecordKeys(r)[0] || r.id,
+    title: r.title || r.cdrl_number || 'Untitled Test Report',
+    cdrl_number: r.cdrl_number || '',
+    revision: r.revision || 'A',
+    status: r.status || 'Not Started',
+    phase: r.phase || _trpSummaryValue(link.phases),
+    location: r.location || _trpSummaryValue(link.locations),
+    subsystem: r.subsystem || '',
+    subsystems,
+    notes: r.notes || '',
+    parent_id: r.parent_id || null,
+    created_by: r.created_by || '',
+    created_at: r.created_at || '',
+    updated_by: r.updated_by || '',
+    updated_at: r.updated_at || '',
+    activities: link.activities || [],
+    activityCount: link.activityCount || 0,
+    testCaseCount: link.testCaseCount || 0,
+    counts: link.counts || _trpStatusCounts([]),
+    phases,
+    locations,
+  };
+}
+
+function _trpRowFromLink(link) {
+  const title = link.display || 'Untitled Test Report';
+  const cdrl = _trpInferCdrlNumber(title) || '';
+  const subsystem = link.subsystems.length === 1 ? link.subsystems[0] : '';
+  const phase = _trpSummaryValue(link.phases);
+  const location = _trpSummaryValue(link.locations);
+  return {
+    uid: `derived:${link.key}`,
+    id: null,
+    record: null,
+    isDerived: true,
+    source: 'derived',
+    sourceLabel: TRP_SOURCE_LABELS.derived,
+    key: link.key,
+    title,
+    cdrl_number: cdrl,
+    revision: 'A',
+    status: 'Not Started',
+    phase,
+    location,
+    subsystem,
+    subsystems: link.subsystems || [],
+    notes: 'Referenced from Test Items',
+    parent_id: null,
+    created_by: '',
+    created_at: '',
+    updated_by: '',
+    updated_at: '',
+    activities: link.activities || [],
+    activityCount: link.activityCount || 0,
+    testCaseCount: link.testCaseCount || 0,
+    counts: link.counts || _trpStatusCounts([]),
+    phases: link.phases || [],
+    locations: link.locations || [],
+  };
+}
+
+function _trpBuildReportRows() {
+  const linkMap = _trpBuildLinkMap();
+  const matchedLinkKeys = new Set();
+  const rows = [];
+
+  _testReports.forEach(r => {
+    const keys = [`id:${r.id}`, ..._trpRecordKeys(r)];
+    const link = _trpMergeLinksForKeys(keys, linkMap, r.title || r.cdrl_number || '');
+    keys.forEach(k => { if (linkMap.has(k)) matchedLinkKeys.add(k); });
+    rows.push(_trpRowFromRecord(r, link));
+  });
+
+  linkMap.forEach((link, key) => {
+    if (!matchedLinkKeys.has(key)) rows.push(_trpRowFromLink(link));
+  });
+
+  return rows.sort((a, b) => {
+    const nameCmp = (a.cdrl_number || a.title || '').localeCompare(b.cdrl_number || b.title || '', undefined, { numeric: true, sensitivity: 'base' });
+    if (nameCmp) return nameCmp;
+    const revCmp = String(a.revision || '').localeCompare(String(b.revision || ''), undefined, { numeric: true, sensitivity: 'base' });
+    if (revCmp) return revCmp;
+    return String(a.id || a.uid).localeCompare(String(b.id || b.uid));
+  });
+}
+
+function _trpDecodeUid(uid) {
+  try { return decodeURIComponent(uid); }
+  catch { return uid; }
+}
+
+function _trpFindReportRow(uid) {
+  const decoded = _trpDecodeUid(uid);
+  return _trpBuildReportRows().find(r => r.uid === decoded || r.id === decoded);
+}
+
+function _trpRowMatches(row, filters) {
+  const search = _trpCleanReportValue(filters.search).toLowerCase();
+  if (search) {
+    const haystack = [
+      row.title, row.cdrl_number, row.revision, row.status, row.subsystem, row.notes,
+      row.created_by, row.updated_by, row.sourceLabel,
+      ...row.activities.flatMap(a => [a.activity, a.phase, a.location, a.subsystem]),
+      ...row.activities.flatMap(a => a.items.map(t => `${t.TestCaseCode || ''} ${t.TestName || ''}`)),
+    ].join(' ').toLowerCase();
+    if (!haystack.includes(search)) return false;
+  }
+  if (filters.status && row.status !== filters.status) return false;
+  if (filters.subsystem && !row.subsystems.includes(filters.subsystem) && row.subsystem !== filters.subsystem) return false;
+  if (filters.phase && !row.phases.includes(filters.phase)) return false;
+  if (filters.location && !row.locations.includes(filters.location)) return false;
+  return true;
+}
+
+function _trpFilteredRows(rows, ignoreKey = '') {
+  const filters = { ..._trpFilters };
+  if (ignoreKey) filters[ignoreKey] = '';
+  return rows.filter(row => _trpRowMatches(row, filters));
+}
+
+function _trpFilterOptions(rows, key) {
+  const values = new Set();
+  _trpFilteredRows(rows, key).forEach(row => {
+    if (key === 'status' && row.status) values.add(row.status);
+    if (key === 'subsystem') [row.subsystem, ...row.subsystems].filter(Boolean).forEach(v => values.add(v));
+    if (key === 'phase') row.phases.forEach(v => values.add(v));
+    if (key === 'location') row.locations.forEach(v => values.add(v));
+  });
+  return [...values].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function _trpSetFilter(key, value) {
+  _trpFilters[key] = value;
+  renderTestReporting();
+}
+
+function _trpSetSearch(value) {
+  _trpFilters.search = value;
+  clearTimeout(_trpSearchTimer);
+  _trpSearchTimer = setTimeout(renderTestReporting, 180);
+}
+
+function _trpClearFilters() {
+  _trpFilters = { search:'', status:'', subsystem:'', phase:'', location:'' };
+  renderTestReporting();
+}
 
 function _trStatusBadge(s) {
   const map = {
@@ -5688,75 +6432,253 @@ function _trStatusBadge(s) {
   return `<span class="badge ${map[s]||'badge-notstarted'}">${escapeHtml(s||'Not Started')}</span>`;
 }
 
-function renderTestReporting() {
-  const root = document.getElementById('test-reporting-content');
-  if (!root) return;
-  if (!currentRoleUser) { root.innerHTML = ''; return; }
-  const isAdmin = currentRoleUser.role === 'admin';
+function _trpStatusOptions(currentVal) {
+  const current = _trpCleanReportValue(currentVal);
+  const statuses = [...TR_STATUSES];
+  if (current && !statuses.includes(current)) statuses.unshift(current);
+  return statuses;
+}
 
-  // Build parent → children tree
-  const parents = _testReports.filter(r => !r.parent_id);
-  const children = r => _testReports.filter(c => c.parent_id === r.id);
-
-  const subsystems = [...new Set(_testReports.map(r => r.subsystem).filter(Boolean))].sort();
-
-  root.innerHTML = `
-    <div class="admin-section">
-      <div class="admin-section-head">
-        <div>
-          <div class="admin-section-title">Test Reports</div>
-          <p class="section-sub">Track CDRL submissions, revisions, and acceptance status</p>
-        </div>
-        ${isAdmin ? `<button class="admin-action-btn" onclick="openNewTestReportModal()">+ New Report</button>` : ''}
-      </div>
-      ${!_testReports.length ? `
-        <div class="docs-empty"><h3>No reports yet</h3><p>${isAdmin ? 'Create your first test report above.' : 'No test reports have been created yet.'}</p></div>
-      ` : parents.map(p => _trReportCardHTML(p, children(p), isAdmin)).join('')}
+function _trpStatusSummaryHTML(counts) {
+  return `
+    <div class="trp-status-counts">
+      <span class="trp-count trp-count-pass">P ${counts.passed}</span>
+      <span class="trp-count trp-count-fail">F ${counts.failed}</span>
+      <span class="trp-count trp-count-block">B ${counts.blocked}</span>
+      <span class="trp-count trp-count-progress">IP ${counts.inProgress}</span>
     </div>
   `;
 }
 
-function _trReportCardHTML(r, revisions, isAdmin) {
-  const canEdit = isAdmin || currentRoleUser?.role === 'field_engineer';
+function _trpStatusSummaryFullHTML(counts) {
   return `
-    <div class="tr-report-card">
-      <div style="display:flex;align-items:flex-start;gap:12px;">
-        <div style="flex:1;min-width:0;">
-          <div class="tr-report-title">${escapeHtml(r.title)} <span style="font-size:12px;color:var(--gray-500);font-weight:400;">Rev ${escapeHtml(r.revision||'A')}</span></div>
-          <div class="tr-report-meta">${r.cdrl_number ? `CDRL: ${escapeHtml(r.cdrl_number)} · ` : ''}${r.subsystem ? escapeHtml(r.subsystem)+' · ' : ''}${_trStatusBadge(r.status)}</div>
-          ${r.notes ? `<div style="font-size:12px;color:var(--gray-600);margin-top:6px;">${escapeHtml(r.notes)}</div>` : ''}
+    <div class="trp-status-counts trp-status-counts-full">
+      <span class="trp-count trp-count-pass">Passed: ${counts.passed}</span>
+      <span class="trp-count trp-count-fail">Failed: ${counts.failed}</span>
+      <span class="trp-count trp-count-block">Blocked: ${counts.blocked}</span>
+      <span class="trp-count trp-count-progress">In Progress: ${counts.inProgress}</span>
+      <span class="trp-count trp-count-future">Future Tests: ${counts.future}</span>
+    </div>
+  `;
+}
+
+function _trpSummaryValue(values, fallback = '') {
+  const clean = [...new Set((values || []).map(v => String(v || '').trim()).filter(Boolean))];
+  if (!clean.length) return fallback || '';
+  if (clean.length === 1) return clean[0];
+  return `${clean.length} Multiple`;
+}
+
+function _trpFormatDate(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return escapeHtml(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function _trpSourceBadge(row) {
+  const cls = row.source === 'derived' ? 'badge-review' : row.source === 'master-linked' ? 'badge-accepted' : 'badge-notstarted';
+  return `<span class="badge ${cls}">${escapeHtml(row.sourceLabel)}</span>`;
+}
+
+function _trpStatusControlHTML(row, canManage) {
+  if (!canManage) return _trStatusBadge(row.status);
+  const uid = encodeURIComponent(row.uid);
+  return `<select class="form-input trp-status-select" onchange="_trpUpdateStatus('${uid}',this)">
+    ${_trpStatusOptions(row.status).map(s => `<option value="${escapeHtml(s)}" ${row.status===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+  </select>`;
+}
+
+function renderTestReporting() {
+  const root = document.getElementById('test-reporting-content');
+  if (!root) return;
+  if (!currentRoleUser) { root.innerHTML = ''; return; }
+  if (!_trpCanView()) {
+    root.innerHTML = `<div class="docs-empty"><h3>Not available</h3><p>Your role does not have access to Test Reporting.</p></div>`;
+    return;
+  }
+
+  const canManage = _trpCanManage();
+  const rows = _trpBuildReportRows();
+  const filtered = _trpFilteredRows(rows);
+  const derivedCount = rows.filter(r => r.isDerived).length;
+  const linkedCount = rows.filter(r => r.testCaseCount > 0).length;
+  const activityCount = rows.reduce((sum, r) => sum + r.activityCount, 0);
+  const testCaseCount = rows.reduce((sum, r) => sum + r.testCaseCount, 0);
+  const hasFilters = Object.values(_trpFilters).some(Boolean);
+  const statusOptions = _trpFilterOptions(rows, 'status');
+  const subsystemOptions = _trpFilterOptions(rows, 'subsystem');
+  const phaseOptions = _trpFilterOptions(rows, 'phase');
+  const locationOptions = _trpFilterOptions(rows, 'location');
+
+  root.innerHTML = `
+    <div class="admin-section trp-shell">
+      <div class="tr-modern-header">
+        <div class="tr-modern-header-main">
+          <div class="role-badge role-field-badge">Reporting Register</div>
+          <div class="admin-section-title">Test Reports</div>
+          <div class="tr-header-stats">
+            <span><b>${filtered.length}</b> shown</span>
+            <span><b>${rows.length}</b> reports</span>
+            <span><b>${linkedCount}</b> linked</span>
+            <span><b>${activityCount}</b> activities</span>
+            <span><b>${testCaseCount}</b> test cases</span>
+            ${derivedCount ? `<span><b>${derivedCount}</b> from TI</span>` : ''}
+          </div>
         </div>
-        <div class="tr-report-actions">
-          ${canEdit ? `<button class="form-secondary" style="font-size:12px;padding:4px 10px;" onclick="openEditTestReportModal('${r.id}')">Edit</button>` : ''}
-          ${isAdmin ? `<button class="admin-action-btn" style="font-size:12px;padding:4px 10px;" onclick="openAddRevisionModal('${r.id}')">+ Revision</button>` : ''}
+        <div class="tr-modern-toolbar">
+          ${canManage && derivedCount ? `<button class="form-secondary" onclick="_trpSyncMissingReports()" ${_trpSyncInFlight?'disabled':''}>${_trpSyncInFlight?'Syncing...':`Sync Missing (${derivedCount})`}</button>` : ''}
+          ${canManage ? `<button class="admin-action-btn" onclick="openNewTestReportModal()">+ New Report</button>` : ''}
         </div>
+      </div>
+
+      <div class="am-filter-bar tr-filter-toolbar">
+        <input class="filter-input" value="${escapeHtml(_trpFilters.search)}" placeholder="Search reports, CDRLs, activities, test cases..." oninput="_trpSetSearch(this.value)">
+        <select class="filter-select" onchange="_trpSetFilter('status',this.value)">
+          <option value="">All Report Statuses</option>
+          ${statusOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.status===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+        </select>
+        <select class="filter-select" onchange="_trpSetFilter('subsystem',this.value)">
+          <option value="">All Subsystems</option>
+          ${subsystemOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+        </select>
+        <select class="filter-select" onchange="_trpSetFilter('phase',this.value)">
+          <option value="">All Phases</option>
+          ${phaseOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.phase===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+        </select>
+        <select class="filter-select" onchange="_trpSetFilter('location',this.value)">
+          <option value="">All Locations</option>
+          ${locationOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.location===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+        </select>
+        ${hasFilters ? `<button class="filter-clear" onclick="_trpClearFilters()">Reset</button>` : ''}
+        <span style="margin-left:auto;font-size:12px;color:var(--gray-500);">${filtered.length} of ${rows.length} shown</span>
+      </div>
+
+      ${rows.length ? _trpReportTableHTML(filtered, canManage) : `
+        <div class="docs-empty"><h3>No reports found</h3><p>No Test Report values exist in Test Items and no master report records have been created.</p></div>
+      `}
+    </div>
+  `;
+  _trpQueueAutoSync(rows);
+}
+
+function _trpReportTableHTML(rows, canManage) {
+  return `
+    <div class="data-card trp-table-card">
+      <div class="data-card-head">
+        <span class="data-count">${rows.length} report${rows.length===1?'':'s'}</span>
+        <span class="data-count">Expand Linked Activities to view test case status totals</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table trp-report-table">
+          <thead>
+            <tr>
+              <th>Report</th>
+              <th>Status</th>
+              <th>Phase</th>
+              <th>Location</th>
+              <th>Subsystem</th>
+              <th>Notes</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.length ? rows.map(r => _trpReportRowHTML(r, canManage)).join('') : `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--gray-500);">No reports match the current filters</td></tr>`}
+          </tbody>
+        </table>
       </div>
     </div>
-    ${revisions.map(c => `
-      <div class="tr-report-card tr-revision">
-        <div style="display:flex;align-items:flex-start;gap:12px;">
-          <div style="flex:1;min-width:0;">
-            <div class="tr-report-title">${escapeHtml(c.title)} <span style="font-size:12px;color:var(--gray-500);font-weight:400;">Rev ${escapeHtml(c.revision||'A')}</span></div>
-            <div class="tr-report-meta">${c.cdrl_number ? `CDRL: ${escapeHtml(c.cdrl_number)} · ` : ''}${_trStatusBadge(c.status)}</div>
-            ${c.notes ? `<div style="font-size:12px;color:var(--gray-600);margin-top:6px;">${escapeHtml(c.notes)}</div>` : ''}
-          </div>
-          <div class="tr-report-actions">
-            ${canEdit ? `<button class="form-secondary" style="font-size:12px;padding:4px 10px;" onclick="openEditTestReportModal('${c.id}')">Edit</button>` : ''}
-          </div>
+  `;
+}
+
+function _trpReportRowHTML(row, canManage) {
+  const uid = encodeURIComponent(row.uid);
+  const expanded = _trpExpanded.has(row.uid);
+  const subsystemText = row.subsystems.length ? row.subsystems.map(s => `<span class="tag">${escapeHtml(s)}</span>`).join(' ') : '-';
+  const phaseText = row.phases.length ? row.phases.map(s => `<span class="tag" title="${escapeHtml(s)}">${escapeHtml(s)}</span>`).join(' ') : '-';
+  const locationText = row.locations.length ? row.locations.map(s => `<span class="tag" title="${escapeHtml(s)}">${escapeHtml(s)}</span>`).join(' ') : '-';
+  const actions = [
+    `<button class="form-secondary tr-mini-btn" onclick="_trpToggleLinks('${uid}')">${expanded?'Hide':'View'} Links</button>`,
+    canManage ? `<button class="form-secondary tr-mini-btn" onclick="openEditTestReportModal('${uid}')">${row.isDerived?'Create/Edit':'Edit'}</button>` : '',
+    canManage && row.isDerived ? `<button class="admin-action-btn tr-mini-btn" onclick="_trpCreateDerivedReport('${uid}')">Sync</button>` : '',
+    canManage && !row.isDerived ? `<button class="form-secondary tr-mini-btn" onclick="openAddRevisionModal('${escapeHtml(row.id)}')">+ Rev</button>` : '',
+    canManage && !row.isDerived ? `<button class="form-secondary tr-mini-btn tr-danger-btn" onclick="_trpDeleteReport('${uid}')">Delete</button>` : '',
+  ].filter(Boolean).join('');
+  const linkSummary = `${row.activityCount} Activit${row.activityCount===1?'y':'ies'} · ${row.testCaseCount} Test Case${row.testCaseCount===1?'':'s'} Linked`;
+
+  return `
+    <tr class="trp-main-row ${expanded ? 'is-expanded' : ''}">
+      <td>
+        <div class="tr-report-title trp-report-name" title="${escapeHtml(row.title)}">${escapeHtml(row.title)}</div>
+        <div class="trp-report-meta-line">
+          <span class="tag">Rev ${escapeHtml(row.revision || 'A')}</span>
+          <span>${escapeHtml(linkSummary)}</span>
+        </div>
+        <div class="trp-report-meta-line trp-report-meta-muted">${escapeHtml(row.sourceLabel || '')}</div>
+      </td>
+      <td>${_trpStatusControlHTML(row, canManage)}</td>
+      <td><div class="trp-tag-stack trp-phase-stack">${phaseText}</div></td>
+      <td><div class="trp-tag-stack trp-location-stack">${locationText}</div></td>
+      <td><div class="trp-tag-stack">${subsystemText}</div></td>
+      <td><div class="trp-notes-cell">${escapeHtml(row.notes || '-')}</div></td>
+      <td><div class="tr-report-actions">${actions}</div></td>
+    </tr>
+    ${expanded ? `<tr class="trp-details-row"><td colspan="7">${_trpLinkedActivitiesHTML(row)}</td></tr>` : ''}
+  `;
+}
+
+function _trpLinkedActivitiesHTML(row) {
+  if (!row.activities.length) {
+    return `<div class="trp-linked-panel trp-linked-empty">No linked activities or test cases were found for this report.</div>`;
+  }
+  return `
+    <div class="trp-linked-panel">
+      <div class="trp-linked-head">
+        <div>
+          <div class="trp-linked-title">Linked Activities</div>
+          <div class="section-sub">${row.activityCount} Activities · ${row.testCaseCount} Test Cases Linked</div>
         </div>
       </div>
-    `).join('')}
+      <div class="trp-linked-list">
+        ${row.activities.map(act => {
+          const st = _amComputeStatus(act);
+          const { done, total } = _amComputeCompletion(act);
+          const pct = total ? Math.round((done / total) * 100) : 0;
+          return `
+            <div class="trp-linked-item">
+              <div class="trp-linked-main">
+                <div class="trp-linked-name">${escapeHtml(act.activity)}</div>
+                <div class="tr-report-meta">${escapeHtml(act.phase)} · ${escapeHtml(act.location)} · ${escapeHtml(act.subsystem)}</div>
+              </div>
+              <div class="trp-linked-side">
+                ${_amStatusBadge(st)}
+                <div class="am-progress-wrap">
+                  <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;${pct===100?'background:var(--good);':pct>0?'background:var(--info);':'background:var(--gray-300);'}"></div></div>
+                  <span class="am-progress-label">${done}/${total}</span>
+                </div>
+                <span class="cell-sub">${act.items.length} test case${act.items.length===1?'':'s'}</span>
+                ${_trpStatusSummaryFullHTML(act.counts)}
+                ${_trpCanManage() ? `<button class="form-secondary tr-mini-btn tr-danger-btn" onclick="_trpUnlinkActivity('${encodeURIComponent(row.uid)}','${encodeURIComponent(act.key)}')">Unlink</button>` : ''}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
   `;
 }
 
 function _trStatusSelectHTML(currentVal, id) {
   return `<select id="${id}" class="form-input">
-    ${TR_STATUSES.map(s => `<option value="${s}" ${currentVal===s?'selected':''}>${s}</option>`).join('')}
+    ${_trpStatusOptions(currentVal).map(s => `<option value="${escapeHtml(s)}" ${currentVal===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
   </select>`;
 }
 
 function openNewTestReportModal() {
+  if (!_trpCanManage()) { toast('You do not have permission to create reports', 'error'); return; }
   const subsystems = [...new Set(TI.map(r=>r.Subsystem).filter(Boolean))].sort();
+  const phases = [...new Set(TI.map(r=>r.Phase).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const locations = [...new Set(TI.map(r=>r.Location).filter(Boolean))].sort();
   modal({
     title: 'New Test Report',
     size: 'medium',
@@ -5765,6 +6687,8 @@ function openNewTestReportModal() {
         <div class="form-field form-field-full"><label>Title</label><input type="text" id="tr-title" class="form-input" placeholder="e.g. DCS SAT Test Report"></div>
         <div class="form-field"><label>CDRL Number</label><input type="text" id="tr-cdrl" class="form-input" placeholder="e.g. CDRL 9.05.25"></div>
         <div class="form-field"><label>Revision</label><input type="text" id="tr-rev" class="form-input" value="A" placeholder="A"></div>
+        <div class="form-field"><label>Phase</label><select id="tr-phase" class="form-input"><option value="">— Select —</option>${phases.map(s=>`<option>${escapeHtml(s)}</option>`).join('')}</select></div>
+        <div class="form-field"><label>Location</label><select id="tr-location" class="form-input"><option value="">— Select —</option>${locations.map(s=>`<option>${escapeHtml(s)}</option>`).join('')}</select></div>
         <div class="form-field"><label>Subsystem</label><select id="tr-subsystem" class="form-input"><option value="">— Select —</option>${subsystems.map(s=>`<option>${escapeHtml(s)}</option>`).join('')}</select></div>
         <div class="form-field"><label>Status</label>${_trStatusSelectHTML('Not Started','tr-status')}</div>
         <div class="form-field form-field-full"><label>Notes</label><textarea id="tr-notes" class="form-input" rows="2" placeholder="Optional notes..."></textarea></div>
@@ -5775,12 +6699,15 @@ function openNewTestReportModal() {
 }
 
 async function saveNewTestReport() {
+  if (!_trpCanManage()) { toast('You do not have permission to save reports', 'error'); return; }
   const title = document.getElementById('tr-title')?.value.trim();
   if (!title) { toast('Title is required','error'); return; }
   const row = {
     title,
     cdrl_number: document.getElementById('tr-cdrl')?.value.trim() || null,
     revision:    document.getElementById('tr-rev')?.value.trim()  || 'A',
+    phase:       document.getElementById('tr-phase')?.value       || null,
+    location:    document.getElementById('tr-location')?.value    || null,
     status:      document.getElementById('tr-status')?.value      || 'Not Started',
     subsystem:   document.getElementById('tr-subsystem')?.value   || null,
     notes:       document.getElementById('tr-notes')?.value.trim() || null,
@@ -5795,60 +6722,74 @@ async function saveNewTestReport() {
     logAudit('Test Report Created', title, `CDRL: ${row.cdrl_number||'—'}`);
     toast('Test report created', 'success');
     closeModal();
-    renderTestReporting();
+    await _trpRefreshData();
   } catch(e) {
     toast('Save failed: ' + e.message, 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Create Report'; }
   }
 }
 
-function openEditTestReportModal(id) {
-  const r = _testReports.find(x => x.id === id);
-  if (!r) { toast('Report not found','error'); return; }
-  const isAdmin = currentRoleUser?.role === 'admin';
-  const subsystems = [...new Set(TI.map(t=>t.Subsystem).filter(Boolean))].sort();
+function openEditTestReportModal(uid) {
+  if (!_trpCanManage()) { toast('You do not have permission to edit reports', 'error'); return; }
+  const row = _trpFindReportRow(uid);
+  if (!row) { toast('Report not found','error'); return; }
+  const safeUid = encodeURIComponent(row.uid);
+  const subsystems = [...new Set([...TI.map(t=>t.Subsystem).filter(Boolean), ...row.subsystems])].sort();
+  const phases = [...new Set([...TI.map(t=>t.Phase).filter(Boolean), ...row.phases])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const locations = [...new Set([...TI.map(t=>t.Location).filter(Boolean), ...row.locations])].sort();
   modal({
-    title: 'Edit Test Report',
+    title: row.isDerived ? 'Create Report Record' : 'Edit Test Report',
     size: 'medium',
     body: `
+      ${row.isDerived ? `<div class="trp-derived-callout">This report is referenced by Test Items but is missing from the master test_reports table. Saving will create it with status "${escapeHtml(row.status)}".</div>` : ''}
       <div class="form-grid">
-        <div class="form-field form-field-full"><label>Title</label><input type="text" id="tr-title" class="form-input" value="${escapeHtml(r.title)}" ${!isAdmin?'disabled':''}></div>
-        <div class="form-field"><label>CDRL Number</label><input type="text" id="tr-cdrl" class="form-input" value="${escapeHtml(r.cdrl_number||'')}" ${!isAdmin?'disabled':''}></div>
-        <div class="form-field"><label>Revision</label><input type="text" id="tr-rev" class="form-input" value="${escapeHtml(r.revision||'A')}" ${!isAdmin?'disabled':''}></div>
-        <div class="form-field"><label>Subsystem</label><select id="tr-subsystem" class="form-input" ${!isAdmin?'disabled':''}><option value="">— Select —</option>${subsystems.map(s=>`<option ${r.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select></div>
-        <div class="form-field"><label>Status</label>${_trStatusSelectHTML(r.status,'tr-status')}</div>
-        <div class="form-field form-field-full"><label>Notes</label><textarea id="tr-notes" class="form-input" rows="2">${escapeHtml(r.notes||'')}</textarea></div>
+        <div class="form-field form-field-full"><label>Title</label><input type="text" id="tr-title" class="form-input" value="${escapeHtml(row.title)}"></div>
+        <div class="form-field"><label>CDRL Number</label><input type="text" id="tr-cdrl" class="form-input" value="${escapeHtml(row.cdrl_number||'')}"></div>
+        <div class="form-field"><label>Revision</label><input type="text" id="tr-rev" class="form-input" value="${escapeHtml(row.revision||'A')}"></div>
+        <div class="form-field"><label>Phase</label><select id="tr-phase" class="form-input"><option value="">- Select -</option>${phases.map(s=>`<option ${row.phase===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select></div>
+        <div class="form-field"><label>Location</label><select id="tr-location" class="form-input"><option value="">- Select -</option>${locations.map(s=>`<option ${row.location===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select></div>
+        <div class="form-field"><label>Subsystem</label><select id="tr-subsystem" class="form-input"><option value="">- Select -</option>${subsystems.map(s=>`<option ${row.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select></div>
+        <div class="form-field"><label>Status</label>${_trStatusSelectHTML(row.status,'tr-status')}</div>
+        <div class="form-field form-field-full"><label>Notes</label><textarea id="tr-notes" class="form-input" rows="2">${escapeHtml(row.notes||'')}</textarea></div>
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" onclick="saveTestReportEdit('${id}')">Save Changes</button>`
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" onclick="saveTestReportEdit('${safeUid}')">${row.isDerived?'Create Record':'Save Changes'}</button>`
   });
 }
 
-async function saveTestReportEdit(id) {
-  const r = _testReports.find(x => x.id === id);
-  if (!r) return;
-  const isAdmin = currentRoleUser?.role === 'admin';
+async function saveTestReportEdit(uid) {
+  if (!_trpCanManage()) { toast('You do not have permission to save reports', 'error'); return; }
+  const row = _trpFindReportRow(uid);
+  if (!row) return;
+  const title = document.getElementById('tr-title')?.value.trim();
+  if (!title) { toast('Title is required', 'error'); return; }
   const patch = {
-    status:     document.getElementById('tr-status')?.value || r.status,
+    title,
+    cdrl_number: document.getElementById('tr-cdrl')?.value.trim() || null,
+    revision:    document.getElementById('tr-rev')?.value.trim() || 'A',
+    phase:       document.getElementById('tr-phase')?.value || null,
+    location:    document.getElementById('tr-location')?.value || null,
+    subsystem:   document.getElementById('tr-subsystem')?.value || null,
+    status:     document.getElementById('tr-status')?.value || row.status,
     notes:      document.getElementById('tr-notes')?.value.trim() || null,
     updated_by: currentRoleUser?.name,
     updated_at: new Date().toISOString(),
   };
-  if (isAdmin) {
-    patch.title      = document.getElementById('tr-title')?.value.trim() || r.title;
-    patch.cdrl_number = document.getElementById('tr-cdrl')?.value.trim() || null;
-    patch.revision   = document.getElementById('tr-rev')?.value.trim() || r.revision;
-    patch.subsystem  = document.getElementById('tr-subsystem')?.value || null;
-  }
   const btn = document.querySelector('.modal-footer .admin-action-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
-    await _dbUpdate('test_reports', patch, { id });
-    Object.assign(r, patch);
-    logAudit('Test Report Updated', r.title, `Status: ${patch.status}`);
-    toast('Report updated', 'success');
+    if (row.isDerived) {
+      await _trpCreateReportRecord(row, patch);
+      toast('Report record created', 'success');
+    } else {
+      const updated = await _dbUpdate('test_reports', patch, { id: row.id });
+      if (!updated?.length) throw new Error('No report row was updated. Check test_reports RLS SELECT/UPDATE policies.');
+      const target = _testReports.find(x => x.id === row.id);
+      if (target) Object.assign(target, updated[0] || patch);
+      toast('Report updated', 'success');
+    }
     closeModal();
-    renderTestReporting();
+    await _trpRefreshData();
   } catch(e) {
     toast('Save failed: ' + e.message, 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
@@ -5856,6 +6797,7 @@ async function saveTestReportEdit(id) {
 }
 
 function openAddRevisionModal(parentId) {
+  if (!_trpCanManage()) { toast('You do not have permission to add revisions', 'error'); return; }
   const parent = _testReports.find(r => r.id === parentId);
   if (!parent) return;
   // Suggest next revision letter
@@ -5878,6 +6820,7 @@ function openAddRevisionModal(parentId) {
 }
 
 async function saveNewRevision(parentId) {
+  if (!_trpCanManage()) { toast('You do not have permission to add revisions', 'error'); return; }
   const parent = _testReports.find(r => r.id === parentId);
   if (!parent) return;
   const row = {
@@ -5885,6 +6828,8 @@ async function saveNewRevision(parentId) {
     cdrl_number: parent.cdrl_number,
     revision:    document.getElementById('tr-rev')?.value.trim() || 'B',
     status:      document.getElementById('tr-status')?.value || 'Not Started',
+    phase:       parent.phase || null,
+    location:    parent.location || null,
     subsystem:   parent.subsystem,
     notes:       document.getElementById('tr-notes')?.value.trim() || null,
     parent_id:   parentId,
@@ -5899,10 +6844,225 @@ async function saveNewRevision(parentId) {
     logAudit('Test Report Revision Added', parent.title, `Rev ${row.revision}`);
     toast(`Revision ${row.revision} added`, 'success');
     closeModal();
-    renderTestReporting();
+    await _trpRefreshData();
   } catch(e) {
     toast('Save failed: ' + e.message, 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Add Revision'; }
+  }
+}
+
+async function _trpCreateReportRecord(row, overrides = {}) {
+  const payload = {
+    title:       overrides.title ?? row.title ?? row.cdrl_number ?? 'Untitled Test Report',
+    cdrl_number: overrides.cdrl_number !== undefined ? overrides.cdrl_number : (row.cdrl_number || _trpInferCdrlNumber(row.title)),
+    revision:    overrides.revision ?? row.revision ?? 'A',
+    status:      overrides.status ?? row.status ?? 'Not Started',
+    phase:       overrides.phase !== undefined ? overrides.phase : (row.phase || (row.phases?.length === 1 ? row.phases[0] : null)),
+    location:    overrides.location !== undefined ? overrides.location : (row.location || (row.locations?.length === 1 ? row.locations[0] : null)),
+    subsystem:   overrides.subsystem !== undefined ? overrides.subsystem : (row.subsystem || (row.subsystems?.length === 1 ? row.subsystems[0] : null)),
+    notes:       overrides.notes !== undefined ? overrides.notes : (row.notes || 'Referenced from Test Items'),
+    parent_id:   overrides.parent_id !== undefined ? overrides.parent_id : (row.parent_id || null),
+    created_by:  currentRoleUser?.name,
+    updated_by:  currentRoleUser?.name,
+    updated_at:  new Date().toISOString(),
+  };
+  if (!payload.title) payload.title = payload.cdrl_number || 'Untitled Test Report';
+  if (row.isDerived) {
+    const existing = _testReports.find(r => _trpRecordKeys(r).includes(row.key));
+    if (existing) {
+      const patch = { ...payload };
+      delete patch.created_by;
+      const updated = await _dbUpdate('test_reports', patch, { id: existing.id });
+      if (!updated?.length) throw new Error('No report row was updated. Check test_reports RLS SELECT/UPDATE policies.');
+      Object.assign(existing, updated[0] || patch);
+      return existing;
+    }
+  }
+  const inserted = await _dbInsert('test_reports', [payload]);
+  if (!inserted?.length) throw new Error('No report row was created. Check test_reports RLS INSERT policy.');
+  _testReports.push(...inserted);
+  await _trpLinkItemsToReport(row, inserted[0]);
+  return inserted[0];
+}
+
+async function _trpLinkItemsToReport(row, report) {
+  if (!row?.activities?.length || !report?.id) return;
+  const ids = [...new Set(row.activities.flatMap(a => a.items || []).map(t => t.TestID).filter(Boolean))];
+  const link = { report: report.cdrl_number || report.title || null, reportId: report.id, record: report, mode: 'record', label: _trpReportLabel(report) };
+  await Promise.all(ids.map(testId => _dbUpdate('test_items', _trpReportLinkPatch(link), { test_id: testId })));
+  _trpApplyReportLinkToItems(TI.filter(t => ids.some(id => String(id) === String(t.TestID))), link);
+}
+
+async function _trpCreateDerivedReport(uid) {
+  if (!_trpCanManage()) { toast('You do not have permission to sync reports', 'error'); return; }
+  const row = _trpFindReportRow(uid);
+  if (!row) { toast('Report not found', 'error'); return; }
+  if (!row.isDerived) { toast('Report already exists in the master table', 'warn'); return; }
+  try {
+    await _trpCreateReportRecord(row);
+    toast('Report record created from Test Items', 'success');
+    await _trpRefreshData();
+  } catch(e) {
+    toast('Report sync failed: ' + e.message, 'error');
+  }
+}
+
+async function _trpSyncMissingReports(manual = true, uidList = null) {
+  if (!_trpCanManage()) { toast('You do not have permission to sync reports', 'error'); return; }
+  if (_trpSyncInFlight) return;
+  let rows = _trpBuildReportRows().filter(r => r.isDerived);
+  if (uidList) {
+    const wanted = new Set(uidList.map(_trpDecodeUid));
+    rows = rows.filter(r => wanted.has(r.uid));
+  }
+  if (!rows.length) {
+    if (manual) toast('No missing report records to sync', 'success');
+    return;
+  }
+  _trpSyncInFlight = true;
+  try {
+    for (const row of rows) await _trpCreateReportRecord(row);
+    toast(`Synced ${rows.length} missing report record${rows.length===1?'':'s'}`, 'success');
+    await _trpRefreshData();
+  } catch(e) {
+    toast('Report sync failed: ' + e.message, 'error');
+  } finally {
+    _trpSyncInFlight = false;
+  }
+}
+
+function _trpQueueAutoSync(rows) {
+  if (!_trpCanManage() || _trpSyncInFlight) return;
+  if (!document.getElementById('page-test-reporting')?.classList.contains('active')) return;
+  const missing = rows.filter(r => r.isDerived && !_trpAutoSyncAttempted.has(r.uid));
+  if (!missing.length) return;
+  missing.forEach(r => _trpAutoSyncAttempted.add(r.uid));
+  setTimeout(() => _trpSyncMissingReports(false, missing.map(r => r.uid)), 0);
+}
+
+async function _trpRefreshData() {
+  await Promise.all([loadTestReports(), loadTestItems()]);
+  if (currentRoleUser?.subsystem) TI = TI.filter(t => (t.Subsystem||'').toLowerCase() === currentRoleUser.subsystem.toLowerCase());
+  renderTestReporting();
+}
+
+function _trpReportFamilyIds(reportId) {
+  const ids = new Set();
+  const visit = id => {
+    if (!id || ids.has(String(id))) return;
+    ids.add(String(id));
+    _testReports.filter(r => String(r.parent_id || '') === String(id)).forEach(r => visit(r.id));
+  };
+  visit(reportId);
+  return [...ids];
+}
+
+function _trpLinkedItemsForRow(row, reportIds = []) {
+  const items = new Map();
+  (row?.activities || []).flatMap(a => a.items || []).forEach(t => {
+    if (t?.TestID) items.set(String(t.TestID), t);
+  });
+  const idSet = new Set(reportIds.map(String));
+  if (idSet.size) {
+    TI.filter(t => t.TestReportID && idSet.has(String(t.TestReportID))).forEach(t => {
+      if (t?.TestID) items.set(String(t.TestID), t);
+    });
+  }
+  return [...items.values()];
+}
+
+async function _trpClearTestItemReportLinks(items) {
+  const ids = [...new Set((items || []).map(t => t.TestID).filter(Boolean))];
+  await Promise.all(ids.map(testId => _dbUpdate('test_items', { test_report: null, test_report_id: null }, { test_id: testId })));
+  return ids.length;
+}
+
+async function _trpUnlinkActivity(uid, activityKey) {
+  if (!_trpCanManage()) { toast('You do not have permission to unlink reports', 'error'); return; }
+  const row = _trpFindReportRow(uid);
+  if (!row) { toast('Report not found', 'error'); return; }
+  const decodedKey = _trpDecodeUid(activityKey);
+  const act = row.activities.find(a => a.key === decodedKey);
+  if (!act) { toast('Linked activity not found', 'error'); return; }
+  const count = act.items.length;
+  if (!count) return;
+  if (!confirm(`Unlink "${act.activity}" from "${row.title}"?\n\nThis clears Test Report links from ${count} test case${count===1?'':'s'}.`)) return;
+  try {
+    await _trpClearTestItemReportLinks(act.items);
+    logAudit('Test Report Activity Unlinked', row.title, `${act.activity}: ${count} test case${count===1?'':'s'}`);
+    toast(`Unlinked ${count} test case${count===1?'':'s'}`, 'success');
+    await _trpRefreshData();
+  } catch(e) {
+    toast('Unlink failed: ' + e.message, 'error');
+  }
+}
+
+async function _trpDeleteReport(uid) {
+  if (!_trpCanManage()) { toast('You do not have permission to delete reports', 'error'); return; }
+  const row = _trpFindReportRow(uid);
+  if (!row || row.isDerived || !row.id) { toast('Report record not found', 'error'); return; }
+  const familyIds = _trpReportFamilyIds(row.id);
+  const childCount = familyIds.length - 1;
+  const linkedItems = _trpLinkedItemsForRow(row, familyIds);
+  const msg = [
+    `Delete "${row.title}"?`,
+    childCount ? `This will also delete ${childCount} revision${childCount===1?'':'s'}.` : '',
+    linkedItems.length ? `This will clear related Test Report links from ${linkedItems.length} test case${linkedItems.length===1?'':'s'}.` : '',
+    'This cannot be undone.',
+  ].filter(Boolean).join('\n\n');
+  if (!confirm(msg)) return;
+  try {
+    await _trpClearTestItemReportLinks(linkedItems);
+    const childIds = familyIds.filter(id => String(id) !== String(row.id));
+    for (const id of childIds) await _dbDelete('test_reports', { id });
+    const deleted = await _dbDelete('test_reports', { id: row.id });
+    if (!deleted?.length) throw new Error('No report row was deleted. Check test_reports RLS SELECT/DELETE policies.');
+    familyIds.forEach(id => {
+      const idx = _testReports.findIndex(r => String(r.id) === String(id));
+      if (idx !== -1) _testReports.splice(idx, 1);
+    });
+    _trpExpanded.delete(row.uid);
+    logAudit('Test Report Deleted', row.title, `${linkedItems.length} related test case link${linkedItems.length===1?'':'s'} cleared`);
+    toast('Test report deleted', 'success');
+    await _trpRefreshData();
+  } catch(e) {
+    toast('Delete failed: ' + e.message, 'error');
+  }
+}
+
+function _trpToggleLinks(uid) {
+  const decoded = _trpDecodeUid(uid);
+  if (_trpExpanded.has(decoded)) _trpExpanded.delete(decoded);
+  else _trpExpanded.add(decoded);
+  renderTestReporting();
+}
+
+async function _trpUpdateStatus(uid, el) {
+  if (!_trpCanManage()) { toast('You do not have permission to update report status', 'error'); return; }
+  const row = _trpFindReportRow(uid);
+  if (!row) { toast('Report not found', 'error'); return; }
+  const newStatus = el?.value || 'Not Started';
+  const oldStatus = row.status || 'Not Started';
+  if (newStatus === oldStatus && !row.isDerived) return;
+  if (el) el.disabled = true;
+  try {
+    if (row.isDerived) {
+      await _trpCreateReportRecord(row, { status: newStatus, notes: row.notes });
+      toast('Report record created and status saved', 'success');
+    } else {
+      const patch = { status: newStatus, updated_by: currentRoleUser?.name, updated_at: new Date().toISOString() };
+      const updated = await _dbUpdate('test_reports', patch, { id: row.id });
+      if (!updated?.length) throw new Error('No report row was updated. Check test_reports RLS SELECT/UPDATE policies.');
+      const target = _testReports.find(r => r.id === row.id);
+      if (target) Object.assign(target, updated[0] || patch);
+      toast('Report status updated', 'success');
+    }
+    await _trpRefreshData();
+  } catch(e) {
+    if (el) el.value = oldStatus;
+    toast('Status update failed: ' + e.message, 'error');
+  } finally {
+    if (el) el.disabled = false;
   }
 }
 
@@ -5953,6 +7113,10 @@ function _testRegisterHTML() {
   const selectedActivities = all.filter(a => _amSelected.has(a.key));
   const hasFutureTest = selectedActivities.some(a => _amComputeStatus(a) === 'Future Test');
   const hasNonFuture  = selectedActivities.some(a => _amComputeStatus(a) !== 'Future Test');
+  const closedCount = filtered.filter(a => _amComputeStatus(a) === 'Closed').length;
+  const openCount = filtered.filter(a => _amComputeStatus(a) === 'Open').length;
+  const futureCount = filtered.filter(a => _amComputeStatus(a) === 'Future Test').length;
+  const overallPct = TI.length ? Math.round((TI.filter(r => ['Pass','Passed','Complete','Not Applicable'].includes(r.Status)).length / TI.length) * 100) : 0;
 
   // column count: [cb](admin) | Actions | Activity | Subsystem | Location | Phase | Status | Completion
   const colCount = isAdmin ? 8 : 7;
@@ -5968,13 +7132,13 @@ function _testRegisterHTML() {
       <tr style="${isSel?'background:#f5f3ff;':''}" class="tr-activity-row">
         ${isAdmin ? `<td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} onchange="_amToggleRow('${safeKey}',this.checked)"></td>` : ''}
         <td>
-          <div style="display:flex;gap:4px;">
-            ${isAdmin ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_amOpenEditModal('${safeKey}')">Edit</button>` : ''}
-            <button class="admin-action-btn" style="font-size:11px;padding:3px 8px;" onclick="_amOpenDrilldown('${safeKey}')">Open</button>
+          <div class="tr-row-actions">
+            ${isAdmin ? `<button class="form-secondary tr-mini-btn" onclick="_amOpenEditModal('${safeKey}')">Edit</button>` : ''}
+            <button class="admin-action-btn tr-mini-btn" onclick="_amOpenDrilldown('${safeKey}')">Open</button>
           </div>
         </td>
         <td>
-          <div style="font-weight:600;font-size:13px;color:var(--gray-800);">${escapeHtml(a.activity)}</div>
+          <div class="tr-activity-title">${escapeHtml(a.activity)}</div>
           ${a.futureTestReason ? `<div style="font-size:11px;color:#5b21b6;margin-top:2px;">↳ ${escapeHtml(a.futureTestReason)}</div>` : ''}
         </td>
         <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
@@ -5992,15 +7156,23 @@ function _testRegisterHTML() {
   }).join('');
 
   return `
-    <div class="admin-section">
+    <div class="admin-section tr-register-shell">
       <!-- Header + toolbar -->
-      <div class="admin-section-head" style="flex-wrap:wrap;gap:8px;">
-        <div>
+      <div class="tr-modern-header">
+        <div class="tr-modern-header-main">
+          <div class="role-badge role-field-badge">Operations Register</div>
           <div class="admin-section-title">Test Register</div>
+          <div class="tr-header-stats">
+            <span><b>${filtered.length}</b> shown</span>
+            <span><b>${openCount}</b> open</span>
+            <span><b>${closedCount}</b> closed</span>
+            ${futureCount ? `<span><b>${futureCount}</b> future</span>` : ''}
+            <span><b>${overallPct}%</b> complete</span>
+          </div>
           <p class="section-sub">${all.length} activities · ${TI.length} test cases across all phases and locations</p>
         </div>
         ${isAdmin ? `
-        <div style="display:flex;gap:8px;flex-shrink:0;">
+        <div class="tr-modern-toolbar">
           <label style="cursor:pointer;">
             <input type="file" accept=".csv" onchange="handleImportFile(this)" style="display:none">
             <div class="admin-action-btn" style="display:inline-block;cursor:pointer;background:var(--gray-700);">📂 Import Test Items</div>
@@ -6010,7 +7182,7 @@ function _testRegisterHTML() {
       </div>
 
       <!-- Filters -->
-      <div class="am-filter-bar">
+      <div class="am-filter-bar tr-filter-toolbar">
         <select class="filter-select" onchange="_amSetFilter('phase',this.value)">
           <option value="">All Phases</option>
           ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_amFilters.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
@@ -6041,7 +7213,7 @@ function _testRegisterHTML() {
         </div>` : ''}
 
       <!-- Main table -->
-      <div class="data-card">
+      <div class="data-card tr-register-table-card">
         <div class="table-wrap">
           <table class="data-table">
             <thead>
@@ -6278,13 +7450,13 @@ function _amDrilldownHTML(key) {
   if (_trEditMode) _trEmptySections.forEach(tp => { if (!tpMap[tp]) tpMap[tp] = []; });
 
   return `
-    <div class="admin-section">
-      ${_trEditMode ? `<div style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-weight:800;">Edit Mode Active</div>` : ''}
+    <div class="admin-section tr-drilldown-shell">
+      ${_trEditMode ? `<div class="tr-edit-banner">Edit Mode Active</div>` : ''}
       <div class="tr-page-header">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
-          <div>
+        <div class="tr-page-header-grid">
+          <div class="tr-page-header-main">
             <button class="form-secondary" style="font-size:12px;margin-bottom:12px;" onclick="_amCloseDrilldown()">← Back to Test Register</button>
-            <div style="font-size:24px;font-weight:800;color:var(--black);">${escapeHtml(act.activity)}</div>
+            <div class="tr-drilldown-title">${escapeHtml(act.activity)}</div>
             <div style="font-size:13px;color:var(--gray-600);margin-top:6px;">
               ${escapeHtml(act.subsystem)} · ${escapeHtml(act.location)} · ${escapeHtml(act.phase)}
               ${act.testReport ? ` · Test Report CDRL: ${escapeHtml(act.testReport)}` : ''}
@@ -6292,7 +7464,7 @@ function _amDrilldownHTML(key) {
             ${act.testReport ? `<div style="font-size:12px;color:var(--gray-600);margin-top:4px;">📄 Test Report CDRL: ${escapeHtml(act.testReport)}</div>` : ''}
             ${act.futureTestReason ? `<div style="font-size:12px;color:#5b21b6;margin-top:4px;">Future Test Reason: ${escapeHtml(act.futureTestReason)}</div>` : ''}
           </div>
-          <div style="display:flex;align-items:center;gap:12px;">
+          <div class="tr-page-actions">
             ${_amStatusBadge(st)}
             <div class="am-progress-wrap" style="min-width:180px;">
               <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;background:${pct===100?'var(--good)':'var(--info)'}"></div></div>
@@ -6314,7 +7486,7 @@ function _amDrilldownHTML(key) {
             <div class="section-sub">${tpItems.length} test case${tpItems.length===1?'':'s'}</div>
           </div>
           <div class="table-wrap" style="max-height:none;">
-            <table class="data-table">
+            <table class="data-table tr-case-table">
               <thead>
                 <tr>
                   ${_trBulkMode ? `<th style="width:34px;"></th>` : ''}
@@ -6332,6 +7504,7 @@ function _amDrilldownHTML(key) {
                 const showReason = cur === 'Fail' || cur === 'Blocked';
                 const reasonVal = cur === 'Fail' ? (r.FailedReason||'') : (r.BlockedReason||'');
                 const tid = escapeHtml(String(r.TestID));
+                const domId = encodeURIComponent(String(r.TestID));
                 return `
                   <tr ${_trEditMode && isAdmin ? `draggable="true" ondragstart="_trDragStart('${tid}')" ondragover="event.preventDefault()" ondrop="_trDropCase('${escapeHtml(tp)}','${tid}')"` : ''}>
                     ${_trBulkMode ? `<td><input type="checkbox" ${_trSelected.has(String(r.TestID))?'checked':''} onchange="_trToggleSelect('${tid}',this.checked)"></td>` : ''}
@@ -6343,10 +7516,12 @@ function _amDrilldownHTML(key) {
                     </td>
                     <td>
                       ${['admin','field_engineer'].includes(currentRoleUser?.role) ? `
-                        <select class="form-input" style="font-size:12px;padding:4px 6px;" onchange="_mxStatusChange('${tid}',this.value)">
+                        <select class="form-input mx-status-select" style="font-size:12px;padding:4px 6px;" onchange="_mxStatusChange('${tid}',this.value,this)">
                           ${statuses.map(s=>`<option value="${s}" ${cur===s?'selected':''}>${s}</option>`).join('')}
                         </select>
-                        ${showReason ? `<input type="text" class="form-input" style="font-size:11px;padding:3px 6px;margin-top:4px;" placeholder="${cur==='Fail'?'Failure reason...':'Blocked reason...'}" value="${escapeHtml(reasonVal)}" onblur="_mxSaveReason('${tid}',this.value)">` : ''}
+                        <div id="mx-reason-${domId}" class="mx-reason-wrap" style="${showReason?'':'display:none;'}">
+                          <input type="text" id="mx-ri-${domId}" class="form-input mx-reason-input" style="font-size:11px;padding:3px 6px;margin-top:4px;" placeholder="${cur==='Fail'?'Failure reason...':'Blocked reason...'}" value="${escapeHtml(reasonVal)}" oninput="_mxSaveReason('${tid}',this.value)">
+                        </div>
                       ` : `<span class="badge ${({'Pass':'badge-passed','Fail':'badge-failed','Blocked':'badge-warn','Not Applicable':'badge-notstarted','In Progress':'badge-inprog','Future Test':'badge-futuretest'}[cur]||'badge-notstarted')}">${escapeHtml(cur)}</span>`}
                     </td>
                     <td>
@@ -6528,16 +7703,7 @@ async function _trDeleteCase(testId) {
   try {
     if (!r._isNew) {
       await _dbDelete('test_items', { test_id: r.TestID });
-      await _dbInsert('audit_log', [{
-        id: 'a-' + Date.now(),
-        user_name: currentRoleUser?.name,
-        role: currentRoleUser?.role,
-        action: 'Test Case Deleted',
-        target: r.TestID,
-        details: r.TestName || '',
-        timestamp: new Date().toISOString(),
-        notes: `Deleted ${r.TestID} ${r.TestName || ''}`,
-      }]);
+      logAudit('Test Case Deleted', r.TestID, r.TestName || '', `Deleted ${r.TestID} ${r.TestName || ''}`);
       const idx = TI.findIndex(x => String(x.TestID) === String(r.TestID));
       if (idx !== -1) TI.splice(idx, 1);
     }
@@ -6595,16 +7761,16 @@ async function _trApplyBulkField() {
   if (!_trSelected.size) { toast('Select at least one test case', 'error'); return; }
   if (!status && !notes) { toast('Choose a status or enter notes', 'error'); return; }
   try {
+    const completedDate = new Date().toISOString();
+    const completedBy = currentRoleUser?.name || currentProfile?.full_name || null;
     for (const id of [..._trSelected]) {
       const r = TI.find(x => String(x.TestID) === String(id));
       if (!r) continue;
-      const patch = {};
-      if (status) { patch.status = status; r.Status = status; }
-      if (notes) {
-        patch.notes = notes;
+      if (status) await _updateTestItemStatus(r.TestID, status, { row: r, notes, completedBy, completedDate, source: 'Test Register Bulk Edit' });
+      else if (notes) {
         r.Notes = notes;
+        await _dbUpdate('test_items', { notes }, { test_id: r.TestID });
       }
-      await _dbUpdate('test_items', patch, { test_id: r.TestID });
     }
     _trBulkMsg = 'Bulk changes applied';
     toast('Bulk changes applied', 'success');
@@ -6644,6 +7810,8 @@ function _amCloseDrilldown() {
 function _amOpenEditModal(key) {
   const act = _amGetActivities().find(a => a.key === key);
   if (!act) return;
+  const selectedReport = _trpFindRecordForActivity(act);
+  const customReport = selectedReport ? '' : (act.testReport || '');
   const phases     = [...new Set(TI.map(r=>r.Phase)   .filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   const locations  = [...new Set(TI.map(r=>r.Location).filter(Boolean))].sort();
   const subsystems = [...new Set(TI.map(r=>r.Subsystem).filter(Boolean))].sort();
@@ -6676,8 +7844,8 @@ function _amOpenEditModal(key) {
           </select>
         </div>
         <div class="form-field">
-          <label>Test Report CDRL</label>
-          <input type="text" id="am-edit-report" class="form-input" placeholder="e.g. CDRL 9.05.25" value="${escapeHtml(act.testReport||'')}">
+          <label>Test Report</label>
+          ${_trpReportSelectHTML(selectedReport?.id || '', customReport)}
         </div>
         ${st === 'Future Test' ? `
         <div class="form-field form-field-full">
@@ -6689,11 +7857,11 @@ function _amOpenEditModal(key) {
         Changes to Activity Name, Phase, Location, or Subsystem update all child test items. Activity Status is auto-calculated from test item statuses.
       </p>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" onclick="_amSaveEdit('${escapeHtml(key)}')">Save Changes</button>`
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amSaveEdit('${escapeHtml(key)}',true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" onclick="_amSaveEdit('${escapeHtml(key)}')">Save Changes</button>`
   });
 }
 
-async function _amSaveEdit(key) {
+async function _amSaveEdit(key, deployToField = false) {
   const act = _amGetActivities().find(a => a.key === key);
   if (!act) return;
 
@@ -6701,22 +7869,24 @@ async function _amSaveEdit(key) {
   const newPhase     = document.getElementById('am-edit-phase')?.value;
   const newLocation  = document.getElementById('am-edit-location')?.value;
   const newSubsystem = document.getElementById('am-edit-subsystem')?.value;
-  const newReport    = document.getElementById('am-edit-report')?.value.trim() || null;
+  const beforeLink = _trpCurrentActivityReportLink(act);
+  let afterLink = _trpReportLinkFromModal();
   const newFTReason  = document.getElementById('am-edit-ft-reason')?.value.trim() || null;
 
   if (!newName) { toast('Activity name is required', 'error'); return; }
 
-  const btn = document.querySelector('.modal-footer .admin-action-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  const btn = event?.target?.closest?.('button') || document.querySelector('.modal-footer .admin-action-btn');
+  if (btn) { btn.disabled = true; btn.textContent = deployToField ? 'Deploying…' : 'Saving…'; }
 
   try {
+    afterLink = await _trpResolveReportLink(afterLink, { phase: newPhase, location: newLocation, subsystem: newSubsystem, activity: newName });
     // Update all test items that belong to this activity
     const patch = {
       activity:       newName,
       phase:          newPhase,
       location:       newLocation,
       subsystem:      newSubsystem,
-      test_report:    newReport,
+      ..._trpReportLinkPatch(afterLink),
     };
     const updates = act.items.map(r => _dbUpdate('test_items', patch, { test_id: r.TestID }));
     await Promise.all(updates);
@@ -6727,8 +7897,8 @@ async function _amSaveEdit(key) {
       r.Phase         = newPhase;
       r.Location      = newLocation;
       r.Subsystem     = newSubsystem;
-      r.TestReport    = newReport;
     });
+    _trpApplyReportLinkToItems(act.items, afterLink);
 
     // Update future_test_reason if applicable
     if (newFTReason !== null) {
@@ -6742,14 +7912,32 @@ async function _amSaveEdit(key) {
       }
     }
 
-    logAudit('Activity Edited', newName, `Phase: ${newPhase} · Location: ${newLocation}`);
-    toast(`Activity updated: ${newName}`, 'success');
+    if (deployToField) {
+      await Promise.all(act.items.map(r => _updateTestItemStatus(r.TestID, 'Not Started', { row: r, source: 'Activity Edit Deploy to Field' })));
+      const records = _activityRecords.filter(ar =>
+        (ar.phase === act.phase && ar.location === act.location && ar.subsystem === act.subsystem && ar.activity_name === act.activity) ||
+        (ar.phase === newPhase && ar.location === newLocation && ar.subsystem === newSubsystem && ar.activity_name === newName)
+      );
+      for (const rec of records) {
+        await _dbUpdate('activity_records', { future_test_reason: null, updated_at: new Date().toISOString() }, { id: rec.id });
+        rec.future_test_reason = null;
+      }
+      const reportDetails = _trpReportLinkAuditDetails(beforeLink, afterLink, act.items.length);
+      logAudit('Deploy to Field', newName, [reportDetails, `${act.items.length} items → Not Started`].filter(Boolean).join(' · '));
+      _trpLogActivityReportLinkChange(newName, beforeLink, afterLink, act.items.length, `Phase: ${newPhase} · Location: ${newLocation}`);
+      toast(`${act.items.length} test items deployed to field`, 'success');
+    } else {
+      const reportDetails = _trpReportLinkAuditDetails(beforeLink, afterLink, act.items.length);
+      logAudit('Activity Edited', newName, [reportDetails, `Phase: ${newPhase} · Location: ${newLocation}`].filter(Boolean).join(' · '));
+      _trpLogActivityReportLinkChange(newName, beforeLink, afterLink, act.items.length, `Phase: ${newPhase} · Location: ${newLocation}`);
+      toast(`Activity updated: ${newName}`, 'success');
+    }
     closeModal();
     _amDrilldownKey = null;
     _reRenderTR();
   } catch(e) {
-    toast('Save failed: ' + e.message, 'error');
-    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+    toast((deployToField ? 'Deploy' : 'Save') + ' failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = deployToField ? 'Deploy to Field' : 'Save Changes'; }
   }
 }
 
@@ -6784,20 +7972,8 @@ async function _amConfirmDeployToField() {
 
   try {
     // Set all test items to Not Started
-    const updates = allItems.map(r => _dbUpdate('test_items',
-      { status: 'Not Started', failed_reason: null, blocked_reason: null, completed_by: null, completed_date: null },
-      { test_id: r.TestID }
-    ));
+    const updates = allItems.map(r => _updateTestItemStatus(r.TestID, 'Not Started', { row: r, source: 'Bulk Deploy to Field' }));
     await Promise.all(updates);
-
-    // Update in-memory
-    allItems.forEach(r => {
-      r.Status = 'Not Started';
-      r.FailedReason = null;
-      r.BlockedReason = null;
-      r.CompletedBy = null;
-      r.CompletedDate = null;
-    });
 
     // Clear future_test_reason in activity_records
     for (const act of selected) {
@@ -6903,22 +8079,10 @@ async function _amConfirmFutureTest() {
 
   try {
     // 1. Cascade status to all test items in parallel
-    const updates = allItems.map(r => _dbUpdate('test_items',
-      { status: 'Future Test', failed_reason: null, blocked_reason: null, completed_by: null, completed_date: null },
-      { test_id: r.TestID }
-    ));
+    const updates = allItems.map(r => _updateTestItemStatus(r.TestID, 'Future Test', { row: r, source: 'Mark Future Test', reason }));
     await Promise.all(updates);
 
-    // 2. Update in-memory TI
-    allItems.forEach(r => {
-      r.Status        = 'Future Test';
-      r.FailedReason  = null;
-      r.BlockedReason = null;
-      r.CompletedBy   = null;
-      r.CompletedDate = null;
-    });
-
-    // 3. Store future_test_reason in activity_records
+    // 2. Store future_test_reason in activity_records
     for (const act of selected) {
       const existing = _activityRecords.find(ar =>
         ar.phase === act.phase && ar.location === act.location &&
