@@ -300,19 +300,12 @@ Chart.defaults.borderColor = '#ebebeb';
 function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + name)?.classList.add('active');
-  document.querySelectorAll('.nav-link, .nav-dd-item').forEach(l => l.classList.remove('active'));
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
   document.querySelector(`.nav-link[data-page="${name}"]`)?.classList.add('active');
-  document.querySelector(`.nav-dd-item[data-page="${name}"]`)?.classList.add('active');
-  // Highlight parent dropdown toggle when a child page is active
-  document.querySelectorAll('.nav-dd').forEach(dd => {
-    const hasActive = !!dd.querySelector('.nav-dd-item.active');
-    dd.querySelector('.nav-dd-toggle')?.classList.toggle('active-group', hasActive);
-  });
-  // Close all dropdowns on navigation
-  document.querySelectorAll('.nav-dd').forEach(dd => dd.classList.remove('open'));
   // Re-render pages that need fresh state on each visit
   if (name === 'field-intake')    renderFieldIntake();
   if (name === 'test-register')   renderTestRegister();
+  if (name === 'tcv')             renderTCV();
   if (name === 'test-reporting')  renderTestReporting();
   if (name === 'admin-templates') renderAdminTemplates();
   if (name === 'admin-locations')  renderAdminLocations();
@@ -403,27 +396,6 @@ document.querySelectorAll('.nav-link').forEach(link => {
   });
 });
 
-document.querySelectorAll('.nav-dd-item').forEach(item => {
-  item.addEventListener('click', e => {
-    e.preventDefault();
-    const page = item.dataset.page;
-    if (page) showPage(page);
-  });
-});
-
-function _navDdToggle(id) {
-  const dd = document.getElementById(id);
-  const isOpen = dd.classList.contains('open');
-  document.querySelectorAll('.nav-dd').forEach(d => d.classList.remove('open'));
-  if (!isOpen) dd.classList.add('open');
-}
-
-// Close dropdowns on outside click
-document.addEventListener('click', e => {
-  if (!e.target.closest('.nav-dd')) {
-    document.querySelectorAll('.nav-dd').forEach(d => d.classList.remove('open'));
-  }
-});
 
 // ==========================================
 // HELPERS
@@ -2109,9 +2081,8 @@ function _onSignedOut() {
   currentProfile  = null;
   document.getElementById('login-overlay').classList.remove('hidden');
   document.querySelectorAll('.nav-role').forEach(l => l.style.display = 'none');
-  document.querySelectorAll('.nav-dd-role').forEach(l => l.style.display = '');
-  document.querySelectorAll('.nav-dd').forEach(d => d.classList.remove('open'));
-  document.getElementById('nav-user-pill')?.remove();
+  const pill = document.getElementById('nav-user-pill');
+  if (pill) { pill.style.display = 'none'; pill.innerHTML = ''; }
   const navLogin = document.getElementById('nav-login');
   if (navLogin) navLogin.style.display = '';
 }
@@ -2164,21 +2135,24 @@ function onLoggedIn() {
   const navLogin = document.getElementById('nav-login');
   if (navLogin) navLogin.style.display = 'none';
 
-  let pill = document.getElementById('nav-user-pill');
-  if (!pill) {
-    pill = document.createElement('div');
-    pill.id = 'nav-user-pill';
-    pill.className = 'user-bar-pill';
-    document.querySelector('.nav-right')?.prepend(pill);
+  // Populate sidebar user card
+  const pill = document.getElementById('nav-user-pill');
+  if (pill) {
+    pill.style.display = 'flex';
+    const initials = currentRoleUser.name.split(' ').filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase();
+    const roleLabel = { admin:'Administrator', field_engineer:'Field Engineer', readonly:'Read Only', client:'Client' }[currentRoleUser.role] || currentRoleUser.role;
+    const subNote = currentRoleUser.subsystem ? ` · ${currentRoleUser.subsystem}` : '';
+    pill.innerHTML = `
+      <div class="user-avatar" style="width:32px;height:32px;font-size:12px;flex-shrink:0;">${initials}</div>
+      <div class="sidenav-user-info">
+        <div class="sidenav-user-name">${escapeHtml(currentRoleUser.name)}</div>
+        <div class="sidenav-user-role">${roleLabel}${subNote}</div>
+      </div>
+      <button class="sidenav-signout" onclick="signOut()" title="Sign out">
+        <svg width="15" height="15" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 001 1h8a1 1 0 100-2H4V5h7a1 1 0 100-2H3zm10.293 4.293a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 01-1.414-1.414L14.586 11H9a1 1 0 110-2h5.586l-1.293-1.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+      </button>
+    `;
   }
-  const initials = currentRoleUser.name.split(' ').filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase();
-  const subBadge = currentRoleUser.subsystem
-    ? `<span style="font-size:10px;background:#dbeafe;color:#1d4ed8;padding:1px 6px;border-radius:10px;margin-left:4px;">${escapeHtml(currentRoleUser.subsystem)}</span>` : '';
-  pill.innerHTML = `
-    <div class="user-avatar" style="width:28px;height:28px;font-size:11px;">${initials}</div>
-    <div style="font-size:12px;font-weight:500;color:rgba(255,255,255,0.9);">${escapeHtml(currentRoleUser.name)}${subBadge}</div>
-    <button class="logout-mini" onclick="signOut()">Sign out</button>
-  `;
 
   const homePage = { admin:'test-register', field_engineer:'field-intake', readonly:'dashboard', client:'dashboard' }[currentRoleUser.role] || 'dashboard';
   showPage(homePage);
