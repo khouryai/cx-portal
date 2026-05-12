@@ -4476,3 +4476,197 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   background: var(--good) !important;
 }
 .tcv-save-btn:hover { background: #065f46 !important; }
+
+/* ===================================
+   P6 SCHEDULE ADMIN TOOL
+   =================================== */
+
+/* Shell / tab chrome */
+.p6-shell { display: flex; flex-direction: column; gap: 0; }
+
+/* ── Import tab ───────────────────────────────── */
+.p6-import-layout {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.p6-import-layout > .data-card { flex: 0 0 auto; }
+
+/* Schedule-type toggle buttons */
+.p6-type-btn {
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--white);
+  color: var(--gray-700);
+  border: none;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.p6-type-btn:hover { background: var(--gray-100); }
+.p6-type-btn.active {
+  background: var(--near-black);
+  color: var(--white);
+}
+
+/* Drop zone */
+.p6-dropzone {
+  border: 2px dashed var(--gray-300);
+  border-radius: var(--radius-md);
+  padding: 32px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.p6-dropzone:hover {
+  border-color: var(--hitachi-red);
+  background: var(--hitachi-red-light);
+}
+.p6-dropzone.drag-over {
+  border-color: var(--hitachi-red);
+  background: var(--hitachi-red-light);
+  transform: scale(1.01);
+}
+
+/* ── Mapping tab ──────────────────────────────── */
+.p6-mapping-layout {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  height: calc(100vh - 260px);
+  min-height: 480px;
+}
+
+.p6-mapping-left {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.p6-mapping-right {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Scrollable activity list */
+.p6-activity-list {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  background: var(--white);
+}
+
+/* Activity rows */
+.p6-act-row {
+  border-bottom: 1px solid var(--gray-100);
+  transition: background 0.1s;
+}
+.p6-act-row:last-child { border-bottom: none; }
+.p6-act-row.p6-act-linked { border-left: 3px solid var(--good); }
+.p6-act-row.p6-act-unlinked { border-left: 3px solid var(--bad); }
+
+.p6-act-row-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+}
+.p6-act-row-header:hover { background: var(--gray-50); }
+
+/* Link detail panel (expanded) */
+.p6-link-detail {
+  padding: 12px 16px 14px;
+  background: var(--gray-50);
+  border-top: 1px solid var(--gray-100);
+}
+
+/* P6 activities list (right panel) */
+.p6-p6-list {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  background: var(--white);
+}
+
+.p6-p6-row {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--gray-100);
+  font-size: 12px;
+  transition: background 0.1s;
+}
+.p6-p6-row:last-child { border-bottom: none; }
+.p6-p6-row:hover { background: var(--gray-50); }
+.p6-p6-row.p6-p6-mapped {
+  background: #f0fdf4;
+  border-left: 3px solid var(--good);
+}
+
+/* ── Health tab ───────────────────────────────── */
+.p6-health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
+}
+
+/* ── Weights tab ──────────────────────────────── */
+.p6-weights-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.p6-weights-table th,
+.p6-weights-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--gray-100);
+}
+.p6-weights-table th {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--gray-600);
+  background: var(--gray-50);
+}
+.p6-weights-table input[type="number"] {
+  width: 80px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--gray-200);
+  border-radius: 6px;
+  text-align: center;
+}
+.p6-weights-table input[type="date"] {
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--gray-200);
+  border-radius: 6px;
+}
+.p6-weights-table input:focus {
+  outline: none;
+  border-color: var(--hitachi-red);
+}
+
+/* ── Responsive ───────────────────────────────── */
+@media (max-width: 900px) {
+  .p6-mapping-layout {
+    flex-direction: column;
+    height: auto;
+  }
+  .p6-mapping-left,
+  .p6-mapping-right { width: 100%; height: 400px; }
+  .p6-health-grid { grid-template-columns: 1fr; }
+}

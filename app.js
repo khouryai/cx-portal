@@ -299,7 +299,7 @@ Chart.defaults.borderColor = '#ebebeb';
 // ==========================================
 // ROUTING
 // ==========================================
-const _adminPages = new Set(['admin-templates','admin-locations','admin-fieldconfig','admin-directory','audit']);
+const _adminPages = new Set(['admin-templates','admin-locations','admin-fieldconfig','admin-directory','audit','admin-p6']);
 let _adminModeOn = false;
 
 function showPage(name) {
@@ -318,6 +318,8 @@ function showPage(name) {
   if (name === 'admin-locations')  renderAdminLocations();
   if (name === 'admin-fieldconfig') renderAdminFieldConfig();
   if (name === 'admin-directory')  renderAdminDirectory();
+  if (name === 'admin-p6')         renderAdminP6();
+  if (name === 'schedule')         renderSchedulePage();
   window.scrollTo(0, 0);
 }
 
@@ -373,6 +375,7 @@ async function refreshApp() {
 
   // 2. Reload punch items (always safe — not mid-edit)
   try { await loadPunchDB(); } catch(e) { console.warn('[refreshApp] punch reload failed:', e.message); }
+  try { await loadP6Data(); }  catch(e) { console.warn('[refreshApp] P6 reload failed:',  e.message); }
 
   // 3. Reload test items only when no status save is in flight
   if (!_mxSavePending) {
@@ -1349,7 +1352,7 @@ function exportPL() {
 // INIT
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
-  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords()]);
+  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadP6Data()]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -1986,6 +1989,12 @@ let AUDIT_LOG = DATA.auditLog || [];
 let DB_AUDIT_EVENTS = [];
 let _testReports = [];        // loaded from Supabase test_reports
 let _activityRecords = [];    // loaded from Supabase activity_records (future_test_reason store)
+
+// ── P6 Schedule globals ───────────────────────────────────────────────────────
+let P6_BATCHES  = [];   // p6_import_batches
+let P6_ACTS     = [];   // p6_activities (current batches only)
+let P6_MAP      = [];   // p6_activity_map
+let P6_PATTERNS = [];   // p6_learn_patterns
 let _trpFilters = { search:'', status:'', subsystem:'', phase:'', location:'' };
 let _trpExpanded = new Set();
 let _trpSyncInFlight = false;
@@ -6038,6 +6047,22 @@ async function loadActivityRecords() {
   } catch(e) { console.warn('[loadActivityRecords] failed:', e.message); }
 }
 
+// ── P6 data loader ────────────────────────────────────────────────────────────
+async function loadP6Data() {
+  try {
+    const [batches, acts, map, patterns] = await Promise.all([
+      _fetchAnon('p6_import_batches?select=*&order=imported_at.desc'),
+      _fetchAnon('p6_activities?select=*&order=p6_location_code.asc,p6_name.asc'),
+      _fetchAnon('p6_activity_map?select=*'),
+      _fetchAnon('p6_learn_patterns?select=*&order=confidence.desc'),
+    ]);
+    P6_BATCHES  = batches  || [];
+    P6_ACTS     = acts     || [];
+    P6_MAP      = map      || [];
+    P6_PATTERNS = patterns || [];
+  } catch(e) { console.warn('[loadP6Data] failed:', e.message); }
+}
+
 const TR_STATUSES = ['Not Started','In Review','Accepted','Accepted as Noted','Accepted as Noted Resubmit','Resubmit','Rejected'];
 
 const TRP_SOURCE_LABELS = {
@@ -8310,5 +8335,1150 @@ function modal({ title, sub, body, footer, size }) {
 
 function closeModal() {
   document.getElementById('modal-overlay')?.classList.remove('active');
+}
+
+// =============================================================================
+// P6 SCHEDULE — ADMIN TOOL
+// =============================================================================
+
+let _p6Tab      = 'import';   // 'import' | 'mapping' | 'health' | 'weights'
+let _p6MapTab   = 'activity'; // 'activity' | 'testcase'
+let _p6MappingFilters = { phase:'', location:'', subsystem:'', linked:'' };
+let _p6WeightFilter   = { phase:'', location:'', subsystem:'' };
+let _p6ImportType     = 'baseline'; // 'baseline' | 'current'
+
+function renderAdminP6() {
+  const root = document.getElementById('p6-hero-content');
+  const cont = document.getElementById('p6-admin-content');
+  if (!root || !cont) return;
+  root.innerHTML = `
+    <div class="page-hero-inner">
+      <div class="role-badge role-admin-badge">Admin Tool</div>
+      <h1 class="page-hero-title">P6 Schedule</h1>
+      <p class="page-hero-sub">Import P6 exports, map activities, manage weights and track schedule changes.</p>
+    </div>`;
+  cont.innerHTML = _p6AdminHTML();
+}
+
+function _p6AdminHTML() {
+  const tabs = [
+    { id:'import',  label:'📥 Import' },
+    { id:'mapping', label:'🔗 Mapping' },
+    { id:'health',  label:'🩺 Health' },
+    { id:'weights', label:'⚖️ Weights' },
+  ];
+  return `
+    <div class="admin-section p6-shell">
+      <div class="admin-tabs" style="margin-bottom:24px;">
+        ${tabs.map(t=>`<button class="admin-tab${_p6Tab===t.id?' active':''}" onclick="_p6SetTab('${t.id}')">${t.label}</button>`).join('')}
+      </div>
+      ${_p6Tab === 'import'  ? _p6ImportTabHTML()  : ''}
+      ${_p6Tab === 'mapping' ? _p6MappingTabHTML() : ''}
+      ${_p6Tab === 'health'  ? _p6HealthTabHTML()  : ''}
+      ${_p6Tab === 'weights' ? _p6WeightsTabHTML() : ''}
+    </div>`;
+}
+
+function _p6SetTab(t) { _p6Tab = t; renderAdminP6(); }
+
+// ─── IMPORT TAB ───────────────────────────────────────────────────────────────
+function _p6ImportTabHTML() {
+  const baselineBatch  = P6_BATCHES.find(b => b.schedule_type === 'baseline' && b.is_current);
+  const currentBatch   = P6_BATCHES.find(b => b.schedule_type === 'current'  && b.is_current);
+  const isRebaseline   = _p6ImportType === 'baseline' && !!baselineBatch;
+
+  const recentBatches  = [...P6_BATCHES].slice(0, 8);
+
+  return `
+    <div class="p6-import-layout">
+      <!-- Upload card -->
+      <div class="data-card" style="padding:24px;max-width:560px;">
+        <div style="font-size:15px;font-weight:700;margin-bottom:18px;">Upload P6 Schedule Export</div>
+
+        <!-- Baseline / Current toggle -->
+        <div style="margin-bottom:18px;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;color:var(--gray-600);margin-bottom:8px;">SCHEDULE TYPE</div>
+          <div style="display:flex;gap:0;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
+            <button onclick="_p6SetImportType('baseline')" class="p6-type-btn${_p6ImportType==='baseline'?' active':''}" style="flex:1;">
+              Baseline ${baselineBatch ? '<span class="badge badge-passed" style="font-size:10px;">Already set</span>' : ''}
+            </button>
+            <button onclick="_p6SetImportType('current')" class="p6-type-btn${_p6ImportType==='current'?' active':''}" style="flex:1;">
+              Current ${currentBatch ? '<span class="badge badge-review" style="font-size:10px;">Rev loaded</span>' : ''}
+            </button>
+          </div>
+          ${isRebaseline ? `
+            <div style="margin-top:10px;padding:10px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:12px;color:#9a3412;">
+              ⚠ A baseline already exists. Uploading again will mark this as a <strong>Re-baseline</strong>. You will be required to enter a reason.
+            </div>` : ''}
+        </div>
+
+        <!-- Title -->
+        <div class="form-field" style="margin-bottom:14px;">
+          <label class="login-label">SCHEDULE TITLE</label>
+          <input id="p6-import-title" class="form-input" placeholder="e.g. Rev 063 — Jan 2026" style="font-size:13px;">
+        </div>
+
+        ${isRebaseline ? `
+        <div class="form-field" style="margin-bottom:14px;">
+          <label class="login-label">RE-BASELINE REASON (required)</label>
+          <textarea id="p6-rebaseline-note" class="form-input" rows="2" placeholder="Reason for re-baselining..." style="font-size:13px;"></textarea>
+        </div>` : ''}
+
+        <!-- Notes -->
+        <div class="form-field" style="margin-bottom:18px;">
+          <label class="login-label">NOTES (optional)</label>
+          <textarea id="p6-import-notes" class="form-input" rows="2" placeholder="Schedule update notes, key changes..." style="font-size:13px;"></textarea>
+        </div>
+
+        <!-- File drop zone -->
+        <div class="p6-dropzone" id="p6-dropzone" onclick="document.getElementById('p6-file-input').click()"
+          ondragover="event.preventDefault();this.classList.add('drag-over')"
+          ondragleave="this.classList.remove('drag-over')"
+          ondrop="_p6HandleDrop(event)">
+          <svg width="32" height="32" viewBox="0 0 20 20" fill="currentColor" style="color:var(--gray-400);margin-bottom:10px;">
+            <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+          </svg>
+          <div style="font-size:13px;font-weight:600;color:var(--gray-600);">Drop Excel file here or click to browse</div>
+          <div style="font-size:11px;color:var(--gray-400);margin-top:4px;">.xlsx files only</div>
+          <input type="file" id="p6-file-input" accept=".xlsx" style="display:none" onchange="_p6HandleFileSelect(this)">
+        </div>
+
+        <div id="p6-import-preview" style="margin-top:16px;"></div>
+      </div>
+
+      <!-- Import history -->
+      <div style="flex:1;min-width:280px;">
+        <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--gray-700);">Import History</div>
+        ${recentBatches.length ? `
+          <div class="data-card" style="padding:0;overflow:hidden;">
+            ${recentBatches.map(b => `
+              <div style="padding:12px 16px;border-bottom:1px solid var(--gray-100);display:flex;align-items:flex-start;gap:12px;">
+                <span class="badge ${b.schedule_type==='baseline'?'badge-passed':'badge-review'}" style="font-size:10px;flex-shrink:0;margin-top:2px;">
+                  ${b.is_rebaseline ? 'Re-baseline' : b.schedule_type === 'baseline' ? 'Baseline' : 'Current'}
+                </span>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(b.title)}</div>
+                  <div style="font-size:11px;color:var(--gray-500);margin-top:2px;">
+                    ${new Date(b.imported_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}
+                    · ${b.row_count || 0} activities
+                    · by ${escapeHtml(b.imported_by||'—')}
+                  </div>
+                  ${b.notes ? `<div style="font-size:11px;color:var(--gray-500);margin-top:2px;font-style:italic;">${escapeHtml(b.notes)}</div>` : ''}
+                  ${b.rebaseline_note ? `<div style="font-size:11px;color:#9a3412;margin-top:2px;">↳ ${escapeHtml(b.rebaseline_note)}</div>` : ''}
+                </div>
+                ${b.is_current ? '<span style="font-size:10px;font-weight:700;color:var(--good);">CURRENT</span>' : ''}
+              </div>`).join('')}
+          </div>` : `<div class="docs-empty" style="padding:32px;"><h3>No imports yet</h3><p>Upload your first P6 schedule above.</p></div>`}
+      </div>
+    </div>`;
+}
+
+function _p6SetImportType(t) { _p6ImportType = t; renderAdminP6(); }
+
+function _p6HandleDrop(e) {
+  e.preventDefault();
+  document.getElementById('p6-dropzone')?.classList.remove('drag-over');
+  const file = e.dataTransfer?.files?.[0];
+  if (file) _p6ParseFile(file);
+}
+function _p6HandleFileSelect(input) {
+  const file = input.files?.[0];
+  if (file) _p6ParseFile(file);
+}
+
+function _p6ParseFile(file) {
+  if (!file.name.endsWith('.xlsx')) { toast('Please upload an .xlsx file', 'error'); return; }
+  const preview = document.getElementById('p6-import-preview');
+  if (preview) preview.innerHTML = `<div style="font-size:12px;color:var(--gray-500);">Parsing file…</div>`;
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb   = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+      const ws   = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
+
+      // Find header row (has "Activity ID" in col 0 or 1)
+      let headerIdx = -1;
+      for (let i = 0; i < Math.min(5, rows.length); i++) {
+        if (rows[i].some(c => String(c||'').includes('Activity ID'))) { headerIdx = i; break; }
+      }
+      if (headerIdx < 0) { toast('Could not find Activity ID column in this file', 'error'); return; }
+
+      const headers = rows[headerIdx].map(h => String(h||'').trim());
+      const idCol   = headers.findIndex(h => h === 'Activity ID');
+      const nameCol = headers.findIndex(h => h === 'Activity Name');
+      const startCol= headers.findIndex(h => h === 'Start');
+      const finCol  = headers.findIndex(h => h === 'Finish');
+      const durCol  = headers.findIndex(h => h === 'Remaining Duration');
+      const unitCol = headers.findIndex(h => h === 'Budgeted Units');
+
+      const activities = [];
+      for (let i = headerIdx + 1; i < rows.length; i++) {
+        const row  = rows[i];
+        const p6id = String(row[idCol] || '').trim();
+        if (!p6id || !p6id.match(/^[0-9A-Z]/)) continue; // skip summary/header rows
+        if (p6id.toLowerCase().includes('activity id')) continue;
+
+        const rawStart  = String(row[startCol]  || '').trim();
+        const rawFinish = String(row[finCol]     || '').trim();
+        const isActual  = rawStart.endsWith(' A') || rawFinish.endsWith(' A');
+        const startDate = _p6ParseDate(rawStart);
+        const finDate   = _p6ParseDate(rawFinish);
+
+        // Extract location code from P6 ID: 0-P2-TC-{LOC}-FA-...
+        const locMatch  = p6id.match(/^[^-]+-[^-]+-[^-]+-([^-]+)-/);
+        const locCode   = locMatch ? locMatch[1] : '';
+
+        // Remaining duration: "54d" → 54
+        const durStr    = String(row[durCol] || '').replace('d','').trim();
+        const durDays   = parseInt(durStr) || 0;
+
+        activities.push({
+          p6_id: p6id,
+          p6_name: String(row[nameCol] || '').trim(),
+          p6_location_code: locCode,
+          start_date: startDate,
+          finish_date: finDate,
+          remaining_duration_days: durDays,
+          budgeted_units: parseFloat(row[unitCol]) || 0,
+          is_actual: isActual,
+        });
+      }
+
+      window._p6Parsed = activities;
+      _p6ShowPreview(activities);
+    } catch(err) {
+      toast('Failed to parse file: ' + err.message, 'error');
+      if (preview) preview.innerHTML = '';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function _p6ParseDate(raw) {
+  if (!raw) return null;
+  // Remove " A" suffix (actual indicator)
+  const cleaned = raw.replace(/ A$/, '').trim();
+  // Format "14-Aug-25" → parse manually
+  const m = cleaned.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/);
+  if (m) {
+    const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+    const yr = parseInt(m[3]) < 100 ? 2000 + parseInt(m[3]) : parseInt(m[3]);
+    const d  = new Date(yr, months[m[2]], parseInt(m[1]));
+    return isNaN(d) ? null : d.toISOString().slice(0,10);
+  }
+  // ISO format
+  const d = new Date(cleaned);
+  return isNaN(d) ? null : d.toISOString().slice(0,10);
+}
+
+function _p6ShowPreview(activities) {
+  const preview = document.getElementById('p6-import-preview');
+  if (!preview) return;
+  const locs = [...new Set(activities.map(a => a.p6_location_code).filter(Boolean))].sort();
+  preview.innerHTML = `
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px;">
+      <div style="font-size:13px;font-weight:700;color:#065f46;margin-bottom:10px;">✓ ${activities.length} activities parsed</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:#047857;margin-bottom:12px;">
+        <span><b>${locs.length}</b> locations: ${locs.join(', ')}</span>
+        <span><b>${activities.filter(a=>a.is_actual).length}</b> actuals</span>
+        <span><b>${activities.filter(a=>!a.is_actual).length}</b> planned</span>
+      </div>
+      <button class="admin-action-btn" onclick="_p6ConfirmImport()" style="width:100%;">
+        Confirm Import
+      </button>
+    </div>`;
+}
+
+async function _p6ConfirmImport() {
+  const title = document.getElementById('p6-import-title')?.value.trim();
+  const notes = document.getElementById('p6-import-notes')?.value.trim();
+  const rebaseNote = document.getElementById('p6-rebaseline-note')?.value.trim();
+
+  if (!title) { toast('Please enter a schedule title', 'error'); return; }
+  const baselineBatch = P6_BATCHES.find(b => b.schedule_type === 'baseline' && b.is_current);
+  const isRebase      = _p6ImportType === 'baseline' && !!baselineBatch;
+  if (isRebase && !rebaseNote) { toast('Please enter a re-baseline reason', 'error'); return; }
+
+  const activities = window._p6Parsed;
+  if (!activities?.length) { toast('No parsed activities to import', 'error'); return; }
+
+  try {
+    // 1. Mark previous batch of same type as not current
+    const prevOfType = P6_BATCHES.filter(b => b.schedule_type === _p6ImportType && b.is_current);
+    for (const b of prevOfType) {
+      await _dbUpdate('p6_import_batches', b.id, { is_current: false });
+    }
+
+    // 2. Create new batch record
+    const batchRow = {
+      title,
+      schedule_type: _p6ImportType,
+      is_rebaseline: isRebase,
+      rebaseline_note: rebaseNote || null,
+      notes: notes || null,
+      imported_by: currentRoleUser?.name || 'Admin',
+      row_count: activities.length,
+      is_current: true,
+    };
+    const [batch] = await _dbInsert('p6_import_batches', [batchRow]);
+    if (!batch?.id) throw new Error('Batch insert did not return id');
+
+    // 3. Insert activities in chunks of 50
+    const withBatch = activities.map(a => ({ ...a, batch_id: batch.id }));
+    for (let i = 0; i < withBatch.length; i += 50) {
+      await _dbInsert('p6_activities', withBatch.slice(i, i + 50));
+    }
+
+    await loadP6Data();
+    toast(`✓ Imported ${activities.length} activities (${_p6ImportType})`, 'success');
+    window._p6Parsed = null;
+    renderAdminP6();
+
+    // Auto-switch to mapping tab after first import
+    if (P6_BATCHES.length === 1) { _p6Tab = 'mapping'; renderAdminP6(); }
+  } catch(err) {
+    console.error('[P6 import]', err);
+    toast('Import failed: ' + err.message, 'error');
+  }
+}
+
+// ─── MAPPING TAB ──────────────────────────────────────────────────────────────
+
+function _p6MappingTabHTML() {
+  const activities = _amGetActivities(); // portal activities
+
+  // Cascade filter options (same pattern as other tools)
+  const phases     = [...new Set(activities.map(a=>a.phase).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const locations  = [...new Set(activities
+    .filter(a => !_p6MappingFilters.phase || a.phase === _p6MappingFilters.phase)
+    .map(a=>a.location).filter(Boolean))].sort();
+  const subsystems = [...new Set(activities
+    .filter(a =>
+      (!_p6MappingFilters.phase     || a.phase     === _p6MappingFilters.phase) &&
+      (!_p6MappingFilters.location  || a.location  === _p6MappingFilters.location))
+    .map(a=>a.subsystem).filter(Boolean))].sort();
+
+  let visibleActs = activities.filter(a =>
+    (!_p6MappingFilters.phase     || a.phase     === _p6MappingFilters.phase)     &&
+    (!_p6MappingFilters.location  || a.location  === _p6MappingFilters.location)  &&
+    (!_p6MappingFilters.subsystem || a.subsystem === _p6MappingFilters.subsystem)
+  );
+
+  if (_p6MappingFilters.linked === 'unlinked') visibleActs = visibleActs.filter(a => !_p6IsActivityLinked(a));
+  if (_p6MappingFilters.linked === 'linked')   visibleActs = visibleActs.filter(a =>  _p6IsActivityLinked(a));
+
+  // Current P6 activities from latest batch (prefer current, fall back to baseline)
+  const curBatch  = P6_BATCHES.find(b => b.schedule_type === 'current'  && b.is_current);
+  const baseBatch = P6_BATCHES.find(b => b.schedule_type === 'baseline' && b.is_current);
+  const useBatch  = curBatch || baseBatch;
+  const p6List    = useBatch ? P6_ACTS.filter(a => a.batch_id === useBatch.id) : [];
+
+  if (!p6List.length) return `
+    <div class="docs-empty">
+      <h3>No P6 schedule loaded</h3>
+      <p>Import a P6 schedule on the Import tab first.</p>
+    </div>`;
+
+  return `
+    <div class="p6-mapping-layout">
+      <!-- LEFT: Portal activities -->
+      <div class="p6-mapping-left">
+        <div style="font-size:13px;font-weight:700;margin-bottom:12px;">
+          Portal Activities
+          <span style="font-weight:400;color:var(--gray-500);margin-left:8px;">${visibleActs.length} shown</span>
+        </div>
+
+        <!-- Cascade filters -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+          <select class="filter-select" style="font-size:12px;" onchange="_p6MapFilter('phase',this.value)">
+            <option value="">All Phases</option>
+            ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_p6MappingFilters.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
+          </select>
+          <select class="filter-select" style="font-size:12px;" onchange="_p6MapFilter('location',this.value)">
+            <option value="">All Locations</option>
+            ${locations.map(l=>`<option value="${escapeHtml(l)}" ${_p6MappingFilters.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
+          </select>
+          <select class="filter-select" style="font-size:12px;" onchange="_p6MapFilter('subsystem',this.value)">
+            <option value="">All Subsystems</option>
+            ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_p6MappingFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+          </select>
+          <select class="filter-select" style="font-size:12px;" onchange="_p6MapFilter('linked',this.value)">
+            <option value="">All</option>
+            <option value="unlinked" ${_p6MappingFilters.linked==='unlinked'?'selected':''}>🔴 Unlinked</option>
+            <option value="linked"   ${_p6MappingFilters.linked==='linked'?'selected':''}>🟢 Linked</option>
+          </select>
+        </div>
+
+        <!-- Activity list -->
+        <div class="p6-activity-list">
+          ${visibleActs.map(a => {
+            const linked  = _p6GetActivityLinks(a);
+            const isLinked = linked.length > 0;
+            const expanded = window._p6Expanded?.has(a.key);
+            return `
+              <div class="p6-act-row ${isLinked?'p6-act-linked':'p6-act-unlinked'}">
+                <div class="p6-act-row-header" onclick="_p6ToggleActExpand('${escapeHtml(a.key)}')">
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(a.activity)}</div>
+                    <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(a.subsystem)} · ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                    ${isLinked
+                      ? `<span class="badge badge-passed" style="font-size:10px;">🟢 ${linked.length} link${linked.length>1?'s':''}</span>`
+                      : `<span class="badge badge-notstarted" style="font-size:10px;">🔴 Unlinked</span>`}
+                    <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor" style="color:var(--gray-400);transform:rotate(${expanded?'90':'0'}deg);transition:transform 0.15s;">
+                      <path fill-rule="evenodd" d="M7.293 4.707a1 1 0 011.414 0l5 5a1 1 0 010 1.414l-5 5a1 1 0 01-1.414-1.414L11.586 10 7.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    </svg>
+                  </div>
+                </div>
+                ${expanded ? _p6ActivityLinkDetail(a, p6List) : ''}
+              </div>`;
+          }).join('')}
+          ${!visibleActs.length ? `<div style="padding:32px;text-align:center;color:var(--gray-400);">No activities match filters</div>` : ''}
+        </div>
+      </div>
+
+      <!-- RIGHT: P6 list -->
+      <div class="p6-mapping-right">
+        <div style="font-size:13px;font-weight:700;margin-bottom:12px;">
+          P6 Activities
+          <span style="font-weight:400;color:var(--gray-500);margin-left:8px;">${p6List.length} in ${useBatch?.title||'—'}</span>
+        </div>
+        <div class="p6-p6-list">
+          ${p6List.map(p => {
+            const mappedCount = P6_MAP.filter(m => m.p6_activity_id === p.id).length;
+            return `
+              <div class="p6-p6-row ${mappedCount?'p6-p6-mapped':''}">
+                <div style="font-size:11px;font-weight:700;color:var(--gray-500);font-family:monospace;">${escapeHtml(p.p6_id)}</div>
+                <div style="font-size:12px;font-weight:600;margin:2px 0;">${escapeHtml(p.p6_name)}</div>
+                <div style="font-size:11px;color:var(--gray-500);">
+                  ${p.start_date ? _fmtDate(p.start_date) : '—'} → ${p.finish_date ? _fmtDate(p.finish_date) : '—'}
+                  ${p.is_actual ? '<span style="color:#059669;font-weight:600;"> ✓ Actual</span>' : ''}
+                </div>
+                ${mappedCount ? `<div style="font-size:10px;color:var(--good);margin-top:4px;font-weight:600;">↔ ${mappedCount} portal link${mappedCount>1?'s':''}</div>` : ''}
+              </div>`;
+          }).join('')}
+        </div>
+      </div>
+    </div>`;
+}
+
+function _p6IsActivityLinked(act) {
+  return P6_MAP.some(m =>
+    m.portal_phase     === act.phase    &&
+    m.portal_location  === act.location &&
+    m.portal_subsystem === act.subsystem&&
+    m.portal_activity  === act.activity &&
+    !m.portal_test_case_code
+  );
+}
+
+function _p6GetActivityLinks(act) {
+  return P6_MAP.filter(m =>
+    m.portal_phase     === act.phase    &&
+    m.portal_location  === act.location &&
+    m.portal_subsystem === act.subsystem&&
+    m.portal_activity  === act.activity
+  );
+}
+
+function _p6ToggleActExpand(key) {
+  if (!window._p6Expanded) window._p6Expanded = new Set();
+  window._p6Expanded.has(key) ? window._p6Expanded.delete(key) : window._p6Expanded.add(key);
+  renderAdminP6();
+}
+
+function _p6ActivityLinkDetail(act, p6List) {
+  const links    = _p6GetActivityLinks(act);
+  const actLink  = links.find(l => !l.portal_test_case_code);
+  const tcLinks  = links.filter(l => !!l.portal_test_case_code);
+
+  // Auto-suggest from learn patterns
+  const suggestion = _p6AutoSuggest(act, p6List);
+
+  return `
+    <div class="p6-link-detail">
+      <!-- Activity-level link -->
+      <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;color:var(--gray-500);margin-bottom:8px;">ACTIVITY-LEVEL LINK</div>
+      ${actLink ? `
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;margin-bottom:8px;">
+          <div style="flex:1;font-size:12px;">
+            <span style="font-weight:600;">${escapeHtml(_p6ActName(actLink.p6_activity_id))}</span>
+            <span style="color:var(--gray-500);margin-left:4px;">${escapeHtml(_p6ActDates(actLink.p6_activity_id))}</span>
+          </div>
+          <button class="form-secondary tr-mini-btn" onclick="_p6UnlinkActivity('${escapeHtml(actLink.id)}')">Unlink</button>
+        </div>` : `
+        <div style="margin-bottom:8px;">
+          ${suggestion ? `
+            <div style="padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;margin-bottom:6px;font-size:12px;">
+              💡 Suggested: <b>${escapeHtml(suggestion.p6_name)}</b>
+              <div style="display:flex;gap:6px;margin-top:6px;">
+                <button class="admin-action-btn tr-mini-btn" onclick="_p6AcceptSuggestion('${escapeHtml(act.key)}','${escapeHtml(suggestion.id)}')">Accept</button>
+                <button class="form-secondary tr-mini-btn" onclick="_p6DismissSuggestion('${escapeHtml(act.key)}')">Dismiss</button>
+              </div>
+            </div>` : ''}
+          <select class="form-input" style="font-size:12px;" id="p6-sel-${escapeHtml(act.key)}" onchange="">
+            <option value="">— Select P6 Activity —</option>
+            ${p6List.map(p=>`<option value="${escapeHtml(p.id)}">[${escapeHtml(p.p6_location_code)}] ${escapeHtml(p.p6_name)}</option>`).join('')}
+          </select>
+          <button class="admin-action-btn tr-mini-btn" style="margin-top:6px;width:100%;"
+            onclick="_p6LinkActivity('${escapeHtml(act.key)}',document.getElementById('p6-sel-${escapeHtml(act.key)}').value,'${escapeHtml(act.phase)}','${escapeHtml(act.location)}','${escapeHtml(act.subsystem)}','${escapeHtml(act.activity)}')">
+            Link Activity
+          </button>
+        </div>`}
+
+      <!-- Test-case-level links -->
+      <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;color:var(--gray-500);margin:12px 0 8px;">TEST-CASE LEVEL LINKS <span style="font-weight:400;color:var(--gray-400);">(optional — for granular mapping)</span></div>
+      ${act.items.map(item => {
+        const tcLink = tcLinks.find(l => l.portal_test_case_code === item.TestCaseCode);
+        return `
+          <div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--gray-100);">
+            <div style="flex:1;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gray-700);">${escapeHtml(item.TestCaseCode||'')} — ${escapeHtml(item.TestName||'')}</div>
+            ${tcLink ? `
+              <span style="font-size:10px;color:var(--good);font-weight:600;white-space:nowrap;">↔ ${escapeHtml(_p6ActName(tcLink.p6_activity_id))}</span>
+              <button class="form-secondary tr-mini-btn" onclick="_p6UnlinkActivity('${escapeHtml(tcLink.id)}')">✕</button>
+            ` : `
+              <select class="form-input" style="font-size:11px;padding:3px 6px;height:auto;" id="p6-tc-sel-${escapeHtml(item.TestCaseCode||'')}">
+                <option value="">—</option>
+                ${p6List.map(p=>`<option value="${escapeHtml(p.id)}">[${escapeHtml(p.p6_location_code)}] ${escapeHtml(p.p6_name)}</option>`).join('')}
+              </select>
+              <button class="admin-action-btn tr-mini-btn" onclick="_p6LinkTestCase('${escapeHtml(act.key)}','${escapeHtml(item.TestCaseCode||'')}','${escapeHtml(act.phase)}','${escapeHtml(act.location)}','${escapeHtml(act.subsystem)}','${escapeHtml(act.activity)}')">Link</button>
+            `}
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function _p6ActName(p6ActivityId) {
+  const a = P6_ACTS.find(x => x.id === p6ActivityId);
+  return a ? a.p6_name : '—';
+}
+function _p6ActDates(p6ActivityId) {
+  const a = P6_ACTS.find(x => x.id === p6ActivityId);
+  if (!a) return '';
+  return `${a.start_date ? _fmtDate(a.start_date) : '—'} → ${a.finish_date ? _fmtDate(a.finish_date) : '—'}`;
+}
+
+function _p6AutoSuggest(act, p6List) {
+  if (window._p6Dismissed?.has(act.key)) return null;
+  // Check learn patterns first
+  const pattern = P6_PATTERNS.find(p =>
+    p.portal_activity_name === act.activity &&
+    (!p.portal_subsystem || p.portal_subsystem === act.subsystem)
+  );
+  if (pattern) {
+    // Find matching P6 activity at this location
+    const match = p6List.find(p =>
+      p.p6_name.includes(pattern.p6_name_pattern) &&
+      p.p6_location_code === _p6LocCode(act.location)
+    );
+    if (match) return match;
+  }
+  return null;
+}
+
+function _p6LocCode(locationName) {
+  // Extract location code from name: "W40 Millbrae Station" → "W40"
+  const m = locationName.match(/^([A-Z][0-9]+)/);
+  return m ? m[1] : '';
+}
+
+function _p6DismissSuggestion(key) {
+  if (!window._p6Dismissed) window._p6Dismissed = new Set();
+  window._p6Dismissed.add(key);
+  renderAdminP6();
+}
+
+async function _p6AcceptSuggestion(actKey, p6Id) {
+  const all = _amGetActivities();
+  const act = all.find(a => a.key === actKey);
+  if (!act) return;
+  await _p6LinkActivity(actKey, p6Id, act.phase, act.location, act.subsystem, act.activity);
+}
+
+function _p6MapFilter(k, v) {
+  _p6MappingFilters[k] = v;
+  if (k === 'phase')    { _p6MappingFilters.location = ''; _p6MappingFilters.subsystem = ''; }
+  if (k === 'location') { _p6MappingFilters.subsystem = ''; }
+  renderAdminP6();
+}
+
+async function _p6LinkActivity(actKey, p6Id, phase, location, subsystem, activity) {
+  if (!p6Id) { toast('Select a P6 activity first', 'error'); return; }
+  try {
+    const row = {
+      p6_activity_id:    p6Id,
+      portal_phase:      phase,
+      portal_location:   location,
+      portal_subsystem:  subsystem,
+      portal_activity:   activity,
+      portal_test_case_code: null,
+      linked_by: currentRoleUser?.name || 'Admin',
+    };
+    await _dbInsert('p6_activity_map', [row]);
+    // Store learn pattern
+    const p6Act = P6_ACTS.find(a => a.id === p6Id);
+    if (p6Act) await _p6StorePattern(p6Act.p6_name, activity, subsystem);
+    await loadP6Data();
+    // Update activity_id on test_items for this activity
+    await _p6PropagateActivityId(phase, location, subsystem, activity, p6Id, null);
+    // Check for batch suggestions at other locations
+    await _p6CheckBatchSuggestions(activity, subsystem, p6Act);
+    renderAdminP6();
+    toast('Activity linked', 'success');
+  } catch(e) { toast('Link failed: ' + e.message, 'error'); }
+}
+
+async function _p6LinkTestCase(actKey, testCaseCode, phase, location, subsystem, activity) {
+  const p6Id = document.getElementById(`p6-tc-sel-${testCaseCode}`)?.value;
+  if (!p6Id) { toast('Select a P6 activity first', 'error'); return; }
+  try {
+    const row = {
+      p6_activity_id:       p6Id,
+      portal_phase:         phase,
+      portal_location:      location,
+      portal_subsystem:     subsystem,
+      portal_activity:      activity,
+      portal_test_case_code: testCaseCode,
+      linked_by: currentRoleUser?.name || 'Admin',
+    };
+    await _dbInsert('p6_activity_map', [row]);
+    // Update activity_id on the specific test item
+    await _p6PropagateActivityId(phase, location, subsystem, activity, p6Id, testCaseCode);
+    await loadP6Data();
+    renderAdminP6();
+    toast('Test case linked', 'success');
+  } catch(e) { toast('Link failed: ' + e.message, 'error'); }
+}
+
+async function _p6UnlinkActivity(mapId) {
+  try {
+    await _dbDelete('p6_activity_map', mapId);
+    await loadP6Data();
+    renderAdminP6();
+    toast('Unlinked', 'success');
+  } catch(e) { toast('Unlink failed: ' + e.message, 'error'); }
+}
+
+async function _p6PropagateActivityId(phase, location, subsystem, activity, p6Id, testCaseCode) {
+  // Write P6 ID into test_items.activity_id for direct lookups
+  try {
+    const p6Act = P6_ACTS.find(a => a.id === p6Id);
+    if (!p6Act) return;
+    const items = TI.filter(t =>
+      t.Phase === phase && t.Location === location &&
+      t.Subsystem === subsystem && t.Activity === activity &&
+      (!testCaseCode || t.TestCaseCode === testCaseCode)
+    );
+    for (const item of items) {
+      await _dbUpdate('test_items', item.TestID || item.test_id, { activity_id: p6Act.p6_id });
+    }
+    await loadTestItems();
+  } catch(e) { console.warn('[p6Propagate]', e.message); }
+}
+
+async function _p6StorePattern(p6Name, portalActivity, subsystem) {
+  // Extract the descriptive part from P6 name: "[T&C] W40 (Ph2) - IXL Sim Test" → "IXL Sim Test"
+  const pattern = p6Name.replace(/^\[T&C\]\s+\w+\s+\(Ph\d+\)\s+-\s+/, '').trim();
+  try {
+    // Upsert: increment confidence if already exists
+    const existing = P6_PATTERNS.find(p => p.p6_name_pattern === pattern && p.portal_activity_name === portalActivity);
+    if (existing) {
+      await _dbUpdate('p6_learn_patterns', existing.id, {
+        confidence: existing.confidence + 1,
+        last_confirmed_at: new Date().toISOString(),
+      });
+    } else {
+      await _dbInsert('p6_learn_patterns', [{
+        p6_name_pattern: pattern,
+        portal_activity_name: portalActivity,
+        portal_subsystem: subsystem || null,
+        confidence: 1,
+        last_confirmed_at: new Date().toISOString(),
+      }]);
+    }
+  } catch(e) { console.warn('[p6Pattern]', e.message); }
+}
+
+async function _p6CheckBatchSuggestions(activityName, subsystem, p6Act) {
+  // Find all OTHER portal activities with the same name that are unlinked
+  const allPortal = _amGetActivities();
+  const unlinked  = allPortal.filter(a =>
+    a.activity === activityName &&
+    a.subsystem === subsystem  &&
+    !_p6IsActivityLinked(a)
+  );
+  if (!unlinked.length) return;
+
+  // Find matching P6 activities at those locations
+  const suggestions = unlinked.map(a => {
+    const locCode = _p6LocCode(a.location);
+    const match   = P6_ACTS.find(p =>
+      p.p6_name.replace(/^\[T&C\]\s+\w+\s+\(Ph\d+\)\s+-\s+/, '').trim() ===
+      p6Act.p6_name.replace(/^\[T&C\]\s+\w+\s+\(Ph\d+\)\s+-\s+/, '').trim() &&
+      p.p6_location_code === locCode
+    );
+    return match ? { portalAct: a, p6Match: match } : null;
+  }).filter(Boolean);
+
+  if (!suggestions.length) return;
+
+  // Show batch suggestion modal
+  const rows = suggestions.map(s => `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--gray-100);">
+      <input type="checkbox" checked id="p6bs-${escapeHtml(s.portalAct.key)}" style="width:15px;height:15px;">
+      <div style="flex:1;font-size:12px;">
+        <div style="font-weight:600;">${escapeHtml(s.portalAct.activity)}</div>
+        <div style="color:var(--gray-500);">${escapeHtml(s.portalAct.location)} · ${escapeHtml(s.portalAct.phase)}</div>
+      </div>
+      <div style="font-size:11px;color:var(--gray-500);text-align:right;">
+        → ${escapeHtml(s.p6Match.p6_name)}<br>
+        ${s.p6Match.start_date ? _fmtDate(s.p6Match.start_date) : '—'} → ${s.p6Match.finish_date ? _fmtDate(s.p6Match.finish_date) : '—'}
+      </div>
+    </div>`).join('');
+
+  modal({
+    title: `💡 ${suggestions.length} Similar Match${suggestions.length>1?'es':''} Found`,
+    size: 'medium',
+    body: `
+      <p style="font-size:13px;color:var(--gray-600);margin-bottom:16px;">
+        Based on your link for <b>${escapeHtml(activityName)}</b>, these other locations appear to have matching P6 activities. Accept the ones you want to auto-link:
+      </p>
+      <div>${rows}</div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Skip</button>
+      <button class="admin-action-btn" onclick="_p6AcceptBatchSuggestions(${JSON.stringify(suggestions.map(s=>({actKey:s.portalAct.key,p6Id:s.p6Match.id,phase:s.portalAct.phase,location:s.portalAct.location,subsystem:s.portalAct.subsystem,activity:s.portalAct.activity})))})">
+        Accept Selected
+      </button>`,
+  });
+}
+
+async function _p6AcceptBatchSuggestions(suggestions) {
+  closeModal();
+  let count = 0;
+  for (const s of suggestions) {
+    const cb = document.getElementById(`p6bs-${s.actKey}`);
+    if (cb && !cb.checked) continue;
+    try {
+      const row = {
+        p6_activity_id: s.p6Id, portal_phase: s.phase,
+        portal_location: s.location, portal_subsystem: s.subsystem,
+        portal_activity: s.activity, portal_test_case_code: null,
+        linked_by: currentRoleUser?.name || 'Admin',
+        is_auto_suggested: true, was_confirmed: true,
+      };
+      await _dbInsert('p6_activity_map', [row]);
+      await _p6PropagateActivityId(s.phase, s.location, s.subsystem, s.activity, s.p6Id, null);
+      count++;
+    } catch(e) { console.warn('[batch suggest]', e.message); }
+  }
+  if (count) {
+    await loadP6Data();
+    renderAdminP6();
+    toast(`✓ ${count} activities auto-linked`, 'success');
+  }
+}
+
+// ─── HEALTH TAB ───────────────────────────────────────────────────────────────
+function _p6HealthTabHTML() {
+  const allPortal  = _amGetActivities();
+  const curBatch   = P6_BATCHES.find(b => b.schedule_type === 'current'  && b.is_current);
+  const baseBatch  = P6_BATCHES.find(b => b.schedule_type === 'baseline' && b.is_current);
+  const p6Current  = curBatch  ? P6_ACTS.filter(a => a.batch_id === curBatch.id)  : [];
+  const p6Baseline = baseBatch ? P6_ACTS.filter(a => a.batch_id === baseBatch.id) : [];
+
+  const unlinkedP6     = p6Current.filter(p => !P6_MAP.some(m => m.p6_activity_id === p.id));
+  const unlinkedPortal = allPortal.filter(a => !_p6IsActivityLinked(a));
+
+  // Date changes: compare current vs baseline by P6 ID
+  const dateChanges = p6Current.map(cur => {
+    const base = p6Baseline.find(b => b.p6_id === cur.p6_id);
+    if (!base) return null;
+    const startDiff = base.start_date && cur.start_date
+      ? Math.round((new Date(cur.start_date) - new Date(base.start_date)) / 86400000) : 0;
+    const finDiff   = base.finish_date && cur.finish_date
+      ? Math.round((new Date(cur.finish_date) - new Date(base.finish_date)) / 86400000) : 0;
+    if (startDiff === 0 && finDiff === 0) return null;
+    return { p6: cur, startDiff, finDiff };
+  }).filter(Boolean);
+
+  return `
+    <div class="p6-health-grid">
+      <div class="data-card" style="padding:20px;">
+        <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;justify-content:space-between;">
+          🔴 Unlinked P6 Activities <span>${unlinkedP6.length}</span>
+        </div>
+        ${unlinkedP6.length ? unlinkedP6.map(p=>`
+          <div style="padding:8px 0;border-bottom:1px solid var(--gray-100);font-size:12px;">
+            <div style="font-weight:600;">${escapeHtml(p.p6_name)}</div>
+            <div style="color:var(--gray-500);">${escapeHtml(p.p6_id)} · ${p.start_date?_fmtDate(p.start_date):'—'} → ${p.finish_date?_fmtDate(p.finish_date):'—'}</div>
+          </div>`).join('')
+          : `<div style="color:var(--good);font-size:12px;">✓ All P6 activities are linked</div>`}
+      </div>
+
+      <div class="data-card" style="padding:20px;">
+        <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;justify-content:space-between;">
+          🟡 Unlinked Portal Activities <span>${unlinkedPortal.length}</span>
+        </div>
+        ${unlinkedPortal.length ? unlinkedPortal.map(a=>`
+          <div style="padding:8px 0;border-bottom:1px solid var(--gray-100);font-size:12px;">
+            <div style="font-weight:600;">${escapeHtml(a.activity)}</div>
+            <div style="color:var(--gray-500);">${escapeHtml(a.subsystem)} · ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</div>
+            <button class="form-secondary tr-mini-btn" style="margin-top:4px;" onclick="_p6SetTab('mapping');_p6MapFilter('location','${escapeHtml(a.location)}');_p6ToggleActExpand('${escapeHtml(a.key)}')">Go to Mapping →</button>
+          </div>`).join('')
+          : `<div style="color:var(--good);font-size:12px;">✓ All portal activities are linked</div>`}
+      </div>
+
+      <div class="data-card" style="padding:20px;">
+        <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;justify-content:space-between;">
+          📅 Schedule Changes (Current vs Baseline) <span>${dateChanges.length}</span>
+        </div>
+        ${!baseBatch || !curBatch
+          ? `<div style="font-size:12px;color:var(--gray-500);">Import both a Baseline and Current schedule to see changes.</div>`
+          : dateChanges.length ? dateChanges.map(c=>`
+            <div style="padding:8px 0;border-bottom:1px solid var(--gray-100);font-size:12px;">
+              <div style="font-weight:600;">${escapeHtml(c.p6.p6_name)}</div>
+              <div style="margin-top:3px;display:flex;gap:12px;flex-wrap:wrap;">
+                ${c.startDiff !== 0 ? `<span style="color:${c.startDiff>0?'#dc2626':'#059669'};">Start: ${c.startDiff>0?'+':''}${c.startDiff}d</span>` : ''}
+                ${c.finDiff   !== 0 ? `<span style="color:${c.finDiff  >0?'#dc2626':'#059669'};">Finish: ${c.finDiff>0?'+':''}${c.finDiff}d</span>` : ''}
+              </div>
+            </div>`).join('')
+          : `<div style="color:var(--good);font-size:12px;">✓ No schedule changes between baseline and current</div>`}
+      </div>
+
+      <div class="data-card" style="padding:20px;">
+        <div style="font-size:13px;font-weight:700;margin-bottom:12px;">🧠 Auto-Learn Patterns</div>
+        ${P6_PATTERNS.length ? P6_PATTERNS.slice(0,10).map(p=>`
+          <div style="padding:6px 0;border-bottom:1px solid var(--gray-100);font-size:12px;display:flex;gap:8px;align-items:center;">
+            <div style="flex:1;">
+              <span style="color:var(--gray-500);">${escapeHtml(p.p6_name_pattern)}</span>
+              <span style="color:var(--gray-400);margin:0 4px;">→</span>
+              <span style="font-weight:600;">${escapeHtml(p.portal_activity_name)}</span>
+            </div>
+            <span class="badge badge-review" style="font-size:10px;">confidence: ${p.confidence}</span>
+          </div>`).join('')
+          : `<div style="font-size:12px;color:var(--gray-500);">No patterns learned yet. Start linking activities to build the pattern library.</div>`}
+      </div>
+    </div>`;
+}
+
+// ─── WEIGHTS TAB ──────────────────────────────────────────────────────────────
+function _p6WeightsTabHTML() {
+  const allPortal = _amGetActivities();
+  const phases    = [...new Set(allPortal.map(a=>a.phase).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const locations = [...new Set(allPortal
+    .filter(a => !_p6WeightFilter.phase || a.phase === _p6WeightFilter.phase)
+    .map(a=>a.location).filter(Boolean))].sort();
+  const subsystems= [...new Set(allPortal
+    .filter(a =>
+      (!_p6WeightFilter.phase    || a.phase    === _p6WeightFilter.phase) &&
+      (!_p6WeightFilter.location || a.location === _p6WeightFilter.location))
+    .map(a=>a.subsystem).filter(Boolean))].sort();
+
+  const visible = allPortal.filter(a =>
+    (!_p6WeightFilter.phase     || a.phase     === _p6WeightFilter.phase)     &&
+    (!_p6WeightFilter.location  || a.location  === _p6WeightFilter.location)  &&
+    (!_p6WeightFilter.subsystem || a.subsystem === _p6WeightFilter.subsystem)
+  );
+
+  return `
+    <div class="admin-section">
+      <div class="admin-section-head" style="flex-wrap:wrap;gap:10px;margin-bottom:18px;">
+        <div>
+          <div class="admin-section-title">Activity & Test Case Weights</div>
+          <p class="section-sub">Layer 1: activity weight (project importance) · Layer 2: test case weight within activity (default 1)</p>
+        </div>
+        <button class="form-secondary" onclick="_p6SaveAllWeights()">Save All Weights</button>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">
+        <select class="filter-select" onchange="_p6WeightFilterChange('phase',this.value)">
+          <option value="">All Phases</option>
+          ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_p6WeightFilter.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
+        </select>
+        <select class="filter-select" onchange="_p6WeightFilterChange('location',this.value)">
+          <option value="">All Locations</option>
+          ${locations.map(l=>`<option value="${escapeHtml(l)}" ${_p6WeightFilter.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
+        </select>
+        <select class="filter-select" onchange="_p6WeightFilterChange('subsystem',this.value)">
+          <option value="">All Subsystems</option>
+          ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_p6WeightFilter.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="data-card" style="padding:0;overflow:hidden;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Activity</th>
+              <th>Subsystem</th>
+              <th>Location</th>
+              <th>Phase</th>
+              <th style="min-width:100px;text-align:center;">Activity Weight</th>
+              <th style="min-width:80px;text-align:center;">Test Cases</th>
+              <th style="text-align:center;">Planned Date</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${visible.map(a => {
+              const rec = _activityRecords.find(r =>
+                r.phase === a.phase && r.location === a.location &&
+                r.subsystem === a.subsystem && r.activity_name === a.activity);
+              const actWeight   = rec?.activity_weight ?? 1;
+              const plannedDate = rec?.planned_date || '';
+              // Get current P6 start as suggestion
+              const link = P6_MAP.find(m =>
+                m.portal_phase === a.phase && m.portal_location === a.location &&
+                m.portal_subsystem === a.subsystem && m.portal_activity === a.activity && !m.portal_test_case_code);
+              const p6Act = link ? P6_ACTS.find(x => x.id === link.p6_activity_id) : null;
+              const p6Start = p6Act?.start_date || '';
+              const safeKey = escapeHtml(a.key);
+              return `
+                <tr>
+                  <td style="font-size:12px;font-weight:500;">${escapeHtml(a.activity)}</td>
+                  <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
+                  <td style="font-size:12px;">${escapeHtml(a.location)}</td>
+                  <td style="font-size:12px;">${escapeHtml(a.phase)}</td>
+                  <td style="text-align:center;">
+                    <input type="number" min="0" step="0.5" class="form-input" style="width:70px;text-align:center;font-size:12px;padding:4px;"
+                      id="w-act-${safeKey}" value="${actWeight}">
+                  </td>
+                  <td style="text-align:center;">
+                    <button class="form-secondary tr-mini-btn" onclick="_p6OpenTCWeights('${safeKey}')">
+                      ${a.items.length} cases
+                    </button>
+                  </td>
+                  <td style="text-align:center;">
+                    <input type="date" class="form-input" style="font-size:12px;padding:4px;"
+                      id="w-plan-${safeKey}" value="${plannedDate || p6Start}"
+                      title="${p6Start ? 'Auto-filled from P6 current start: ' + p6Start : 'No P6 date linked'}">
+                  </td>
+                  <td>
+                    <button class="admin-action-btn tr-mini-btn" onclick="_p6SaveActivityWeight('${safeKey}','${escapeHtml(a.phase)}','${escapeHtml(a.location)}','${escapeHtml(a.subsystem)}','${escapeHtml(a.activity)}')">Save</button>
+                  </td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function _p6WeightFilterChange(k, v) {
+  _p6WeightFilter[k] = v;
+  if (k === 'phase')    { _p6WeightFilter.location = ''; _p6WeightFilter.subsystem = ''; }
+  if (k === 'location') { _p6WeightFilter.subsystem = ''; }
+  renderAdminP6();
+}
+
+async function _p6SaveActivityWeight(actKey, phase, location, subsystem, activity) {
+  const wVal   = parseFloat(document.getElementById(`w-act-${actKey}`)?.value) || 1;
+  const pDate  = document.getElementById(`w-plan-${actKey}`)?.value || null;
+  try {
+    const rec = _activityRecords.find(r =>
+      r.phase === phase && r.location === location &&
+      r.subsystem === subsystem && r.activity_name === activity);
+    if (rec) {
+      await _dbUpdate('activity_records', rec.id, { activity_weight: wVal, planned_date: pDate });
+    } else {
+      await _dbInsert('activity_records', [{ phase, location, subsystem, activity_name: activity, activity_weight: wVal, planned_date: pDate }]);
+    }
+    await loadActivityRecords();
+    toast('Saved', 'success');
+  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function _p6SaveAllWeights() {
+  const all = _amGetActivities();
+  let saved = 0;
+  for (const a of all) {
+    const safeKey = a.key.replace(/[^a-zA-Z0-9]/g, '_');
+    const wEl = document.getElementById(`w-act-${a.key}`) || document.getElementById(`w-act-${safeKey}`);
+    const pEl = document.getElementById(`w-plan-${a.key}`) || document.getElementById(`w-plan-${safeKey}`);
+    if (!wEl && !pEl) continue;
+    const wVal  = parseFloat(wEl?.value) || 1;
+    const pDate = pEl?.value || null;
+    try {
+      const rec = _activityRecords.find(r =>
+        r.phase === a.phase && r.location === a.location &&
+        r.subsystem === a.subsystem && r.activity_name === a.activity);
+      if (rec) {
+        await _dbUpdate('activity_records', rec.id, { activity_weight: wVal, planned_date: pDate });
+      } else {
+        await _dbInsert('activity_records', [{ phase: a.phase, location: a.location, subsystem: a.subsystem, activity_name: a.activity, activity_weight: wVal, planned_date: pDate }]);
+      }
+      saved++;
+    } catch(e) { console.warn('[saveAllWeights]', e.message); }
+  }
+  await loadActivityRecords();
+  toast(`Saved ${saved} activities`, 'success');
+}
+
+function _p6OpenTCWeights(actKey) {
+  const all = _amGetActivities();
+  const act = all.find(a => a.key === actKey);
+  if (!act) return;
+  const rows = act.items.map(item => `
+    <tr>
+      <td style="font-size:12px;">${escapeHtml(item.TestCaseCode||'')}</td>
+      <td style="font-size:12px;">${escapeHtml(item.TestName||'')}</td>
+      <td style="text-align:center;">
+        <input type="number" min="0" step="0.5" class="form-input" style="width:60px;text-align:center;font-size:12px;padding:4px;"
+          id="tcw-${escapeHtml(item.TestID||item.test_id||'')}" value="${item.Weight ?? 1}">
+      </td>
+    </tr>`).join('');
+
+  modal({
+    title: `Test Case Weights — ${act.activity}`,
+    size: 'medium',
+    body: `
+      <p style="font-size:12px;color:var(--gray-500);margin-bottom:12px;">Set the relative weight of each test case within this activity. Default = 1 (equal weight).</p>
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th>Code</th><th>Test Case</th><th style="text-align:center;">Weight</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn" onclick="_p6SaveTCWeights('${escapeHtml(actKey)}')">Save Weights</button>`,
+  });
+}
+
+async function _p6SaveTCWeights(actKey) {
+  const all = _amGetActivities();
+  const act = all.find(a => a.key === actKey);
+  if (!act) return;
+  let saved = 0;
+  for (const item of act.items) {
+    const id  = item.TestID || item.test_id;
+    const el  = document.getElementById(`tcw-${escapeHtml(id||'')}`);
+    if (!el) continue;
+    const wVal = parseFloat(el.value) || 1;
+    try {
+      await _dbUpdate('test_items', id, { weight: wVal });
+      saved++;
+    } catch(e) { console.warn('[tcWeight]', e.message); }
+  }
+  await loadTestItems();
+  closeModal();
+  toast(`Saved ${saved} test case weights`, 'success');
+}
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function _fmtDate(d) {
+  if (!d) return '—';
+  const dt = new Date(d + 'T00:00:00');
+  return dt.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+}
+
+// =============================================================================
+// SCHEDULE VIEW PAGE (all roles)
+// =============================================================================
+function renderSchedulePage() {
+  const hero = document.getElementById('schedule-hero-content');
+  const cont = document.getElementById('schedule-content');
+  if (!hero || !cont) return;
+
+  hero.innerHTML = `
+    <div class="page-hero-inner">
+      <div class="role-badge role-field-badge">Schedule</div>
+      <h1 class="page-hero-title">Project Schedule</h1>
+      <p class="page-hero-sub">P6-linked activity schedule, planned dates and progress tracking.</p>
+    </div>`;
+
+  const hasData = P6_BATCHES.length > 0;
+  if (!hasData) {
+    cont.innerHTML = `
+      <div class="docs-empty">
+        <h3>No schedule data yet</h3>
+        <p>An admin needs to import a P6 schedule and map it to portal activities first.</p>
+        ${currentRoleUser?.role === 'admin' ? `<button class="admin-action-btn" onclick="showPage('admin-p6')">Go to P6 Admin →</button>` : ''}
+      </div>`;
+    return;
+  }
+
+  const allPortal = _amGetActivities();
+  const curBatch  = P6_BATCHES.find(b => b.schedule_type === 'current'  && b.is_current);
+  const baseBatch = P6_BATCHES.find(b => b.schedule_type === 'baseline' && b.is_current);
+
+  // Build schedule rows
+  const rows = allPortal.map(a => {
+    const rec    = _activityRecords.find(r =>
+      r.phase === a.phase && r.location === a.location &&
+      r.subsystem === a.subsystem && r.activity_name === a.activity);
+    const mapLink = P6_MAP.find(m =>
+      m.portal_phase === a.phase && m.portal_location === a.location &&
+      m.portal_subsystem === a.subsystem && m.portal_activity === a.activity && !m.portal_test_case_code);
+
+    const p6Cur  = mapLink && curBatch  ? P6_ACTS.find(x => x.id === mapLink.p6_activity_id && x.batch_id === curBatch.id)  : null;
+    const p6Base = mapLink && baseBatch ? P6_ACTS.find(x => x.p6_id === p6Cur?.p6_id && x.batch_id === baseBatch.id) : null;
+
+    const { done, total } = _amComputeCompletion(a);
+    const pct = total > 0 ? Math.round((done/total)*100) : 0;
+    const status = _amComputeStatus(a);
+
+    const finDiff = p6Cur && p6Base && p6Cur.finish_date && p6Base.finish_date
+      ? Math.round((new Date(p6Cur.finish_date) - new Date(p6Base.finish_date)) / 86400000) : null;
+
+    return { a, rec, p6Cur, p6Base, pct, status, finDiff, done, total };
+  });
+
+  cont.innerHTML = `
+    <div class="admin-section">
+      <div class="admin-section-head" style="margin-bottom:20px;">
+        <div>
+          <div class="admin-section-title">Activity Schedule</div>
+          <p class="section-sub">
+            ${curBatch  ? `Current: <b>${escapeHtml(curBatch.title)}</b>` : 'No current schedule'}
+            ${baseBatch ? ` · Baseline: <b>${escapeHtml(baseBatch.title)}</b>` : ''}
+          </p>
+        </div>
+      </div>
+
+      <div class="data-card" style="padding:0;overflow:hidden;">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Activity</th>
+                <th>Subsystem</th>
+                <th>Location</th>
+                <th>Phase</th>
+                <th>Planned Date</th>
+                <th>P6 Start (Current)</th>
+                <th>P6 Finish (Current)</th>
+                <th>Variance</th>
+                <th>Progress</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(({a, rec, p6Cur, finDiff, pct, status}) => `
+                <tr>
+                  <td style="font-size:12px;font-weight:500;">${escapeHtml(a.activity)}</td>
+                  <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
+                  <td style="font-size:12px;">${escapeHtml(a.location)}</td>
+                  <td style="font-size:12px;">${escapeHtml(a.phase)}</td>
+                  <td style="font-size:12px;">${rec?.planned_date ? _fmtDate(rec.planned_date) : '<span style="color:var(--gray-400);">—</span>'}</td>
+                  <td style="font-size:12px;">${p6Cur?.start_date  ? _fmtDate(p6Cur.start_date)  : '<span style="color:var(--gray-400);">Not linked</span>'}</td>
+                  <td style="font-size:12px;">${p6Cur?.finish_date ? _fmtDate(p6Cur.finish_date) : '<span style="color:var(--gray-400);">—</span>'}</td>
+                  <td style="font-size:12px;font-weight:600;${finDiff===null?'':finDiff>0?'color:#dc2626;':finDiff<0?'color:#059669;':''}">
+                    ${finDiff === null ? '<span style="color:var(--gray-400);">—</span>' : finDiff === 0 ? 'On time' : `${finDiff>0?'+':''}${finDiff}d`}
+                  </td>
+                  <td>
+                    <div class="am-progress-wrap">
+                      <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;background:${pct===100?'var(--good)':pct>0?'var(--info)':'var(--gray-300)'};"></div></div>
+                      <span class="am-progress-label">${pct}%</span>
+                    </div>
+                  </td>
+                  <td>${_amStatusBadge(status)}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>`;
 }
 
