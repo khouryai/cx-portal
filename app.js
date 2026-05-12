@@ -4897,7 +4897,7 @@ function renderPunchWorkflow() {
             <th>Phase / Location</th>
             <th>Priority</th>
             <th>Due Date</th>
-            <th>PIM</th>
+            <th style="min-width:110px;">PIM</th>
             <th style="width:60px;"></th>
           </tr>
         </thead>
@@ -4920,7 +4920,7 @@ function renderPunchWorkflow() {
               <td style="font-size:12px;color:var(--gray-700);">${escapeHtml(_plLocName(p.phase))} / ${escapeHtml(_plLocName(p.location))}</td>
               <td>${_plPriorityBadge(p.priority)}</td>
               <td style="font-size:12px;${isOverdue?'color:#dc2626;font-weight:600;':''}">${dueStr}${isOverdue?' ⚠':''}</td>
-              <td style="font-size:12px;">${escapeHtml(p.punch_item_manager||'—')}</td>
+              <td style="font-size:12px;white-space:nowrap;">${escapeHtml(p.punch_item_manager||'—')}</td>
               <td onclick="event.stopPropagation()">
                 <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openPunchDetail('${p.id}')">View</button>
               </td>
@@ -7269,7 +7269,7 @@ function _testRegisterHTML() {
             <thead>
               <tr>
                 ${isAdmin ? `<th class="am-cb-col"><input type="checkbox" id="am-cb-all" onchange="_amToggleAll(this.checked)" title="Select all"></th>` : ''}
-                <th>Actions</th>
+                <th style="min-width:90px;white-space:nowrap;">Actions</th>
                 <th>Activity Name</th>
                 <th>Subsystem</th>
                 <th>Location</th>
