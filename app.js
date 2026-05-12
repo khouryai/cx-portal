@@ -4811,8 +4811,17 @@ function renderPunchWorkflow() {
 
   const openItems = all.filter(p => p.status !== 'closed');
   const overdue   = openItems.filter(p => p.due_date && new Date(p.due_date) < new Date());
-  const phases    = LOCS.filter(l => l.level === 1).sort((a,b) => a.sort_order - b.sort_order);
-  const locPool   = _plPhaseFilter ? LOCS.filter(l => l.level === 2 && l.parent_id === _plPhaseFilter) : LOCS.filter(l => l.level === 2);
+
+  // Dynamic cascade Phase → Location → Subsystem from current tab's base items
+  const baseItems   = _plTab === 'bin' ? bin : _plTab === 'my' ? my : all;
+  const phaseIds    = new Set(baseItems.map(p => p.phase).filter(Boolean));
+  const phases      = LOCS.filter(l => l.level === 1 && phaseIds.has(l.id)).sort((a,b) => a.sort_order - b.sort_order);
+  const afterPhase  = _plPhaseFilter ? baseItems.filter(p => p.phase === _plPhaseFilter) : baseItems;
+  const locIds      = new Set(afterPhase.map(p => p.location).filter(Boolean));
+  const locPool     = LOCS.filter(l => l.level === 2 && locIds.has(l.id));
+  const afterLoc    = _plLocFilter ? afterPhase.filter(p => p.location === _plLocFilter) : afterPhase;
+  const subPool     = [...new Set(afterLoc.map(p => p.subsystem).filter(Boolean))].sort();
+
   const hasFilter = _plSearch || _plStatusFilter || _plPhaseFilter || _plLocFilter || _plSubFilter || _plPriorityFilter || _plActivityFilter;
 
   root.innerHTML = `
@@ -4855,7 +4864,7 @@ function renderPunchWorkflow() {
       </select>
       <select class="form-input" style="width:130px;font-size:13px;" onchange="_plSetFilter('sub',this.value)">
         <option value="">All Subsystems</option>
-        ${SUBSYSTEMS_LIST.map(s=>`<option value="${s}" ${_plSubFilter===s?'selected':''}>${s}</option>`).join('')}
+        ${subPool.map(s=>`<option value="${escapeHtml(s)}" ${_plSubFilter===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
       </select>
       <select class="form-input" style="width:120px;font-size:13px;" onchange="_plSetFilter('priority',this.value)">
         <option value="">All Priorities</option>
@@ -4938,13 +4947,13 @@ function _plSetSearch(v) { _plSearch=v; _plPage=1; renderPunchWorkflow(); }
 function _plSetPage(n)   { _plPage=n; renderPunchWorkflow(); }
 function _plSetFilter(k,v) {
   if (k==='status')   _plStatusFilter=v;
-  else if (k==='loc') _plLocFilter=v;
+  else if (k==='loc') { _plLocFilter=v; _plSubFilter=''; }  // cascade: loc change resets sub
   else if (k==='sub') _plSubFilter=v;
   else if (k==='priority') _plPriorityFilter=v;
   else if (k==='activity') _plActivityFilter=v;
   _plPage=1; renderPunchWorkflow();
 }
-function _plPhaseChange(id) { _plPhaseFilter=id; _plLocFilter=''; _plPage=1; renderPunchWorkflow(); }
+function _plPhaseChange(id) { _plPhaseFilter=id; _plLocFilter=''; _plSubFilter=''; _plPage=1; renderPunchWorkflow(); }
 function _plClearFilters()  { _plSearch=''; _plStatusFilter=''; _plPhaseFilter=''; _plLocFilter=''; _plSubFilter=''; _plPriorityFilter=''; _plActivityFilter=''; _plPage=1; renderPunchWorkflow(); }
 
 function _plToggleSelect(id, checked) {
@@ -6413,6 +6422,9 @@ function _trpFilterOptions(rows, key) {
 
 function _trpSetFilter(key, value) {
   _trpFilters[key] = value;
+  // Cascade: phase change resets location; location change resets (non-locked) subsystem
+  if (key === 'phase')    _trpFilters.location = '';
+  if (key === 'location') _trpFilters.subsystem = currentRoleUser?.subsystem || '';
   renderTestReporting();
 }
 
@@ -6423,7 +6435,8 @@ function _trpSetSearch(value) {
 }
 
 function _trpClearFilters() {
-  _trpFilters = { search:'', status:'', subsystem:'', phase:'', location:'' };
+  const userSub = currentRoleUser?.subsystem || '';
+  _trpFilters = { search:'', status:'', subsystem: userSub, phase:'', location:'' };
   renderTestReporting();
 }
 
@@ -6506,6 +6519,10 @@ function renderTestReporting() {
     return;
   }
 
+  // Subsystem lock: if the signed-in user has a subsystem assigned, pin the filter
+  const trpUserSub = currentRoleUser?.subsystem || '';
+  if (trpUserSub && _trpFilters.subsystem !== trpUserSub) _trpFilters.subsystem = trpUserSub;
+
   const canManage = _trpCanManage();
   const rows = _trpBuildReportRows();
   const filtered = _trpFilteredRows(rows);
@@ -6546,10 +6563,6 @@ function renderTestReporting() {
           <option value="">All Report Statuses</option>
           ${statusOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.status===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
         </select>
-        <select class="filter-select" onchange="_trpSetFilter('subsystem',this.value)">
-          <option value="">All Subsystems</option>
-          ${subsystemOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
-        </select>
         <select class="filter-select" onchange="_trpSetFilter('phase',this.value)">
           <option value="">All Phases</option>
           ${phaseOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.phase===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
@@ -6558,6 +6571,12 @@ function renderTestReporting() {
           <option value="">All Locations</option>
           ${locationOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.location===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
         </select>
+        ${trpUserSub
+          ? `<span class="filter-locked-tag" title="Auto-filtered to your assigned subsystem">📌 ${escapeHtml(trpUserSub)}</span>`
+          : `<select class="filter-select" onchange="_trpSetFilter('subsystem',this.value)">
+              <option value="">All Subsystems</option>
+              ${subsystemOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+            </select>`}
         ${hasFilters ? `<button class="filter-clear" onclick="_trpClearFilters()">Reset</button>` : ''}
         <span style="margin-left:auto;font-size:12px;color:var(--gray-500);">${filtered.length} of ${rows.length} shown</span>
       </div>
@@ -7102,9 +7121,30 @@ function _testRegisterHTML() {
   const isAdmin = currentRoleUser?.role === 'admin';
   const all = _amGetActivities();
 
-  const phases     = [...new Set(all.map(a=>a.phase)   .filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
-  const locations  = [...new Set(all.map(a=>a.location).filter(Boolean))].sort();
-  const subsystems = [...new Set(all.map(a=>a.subsystem).filter(Boolean))].sort();
+  // Subsystem lock: if the signed-in user has a subsystem assigned, pin the filter
+  const userSub = currentRoleUser?.subsystem || '';
+  if (userSub && _amFilters.subsystem !== userSub) _amFilters.subsystem = userSub;
+
+  // Cascade Phase → Location → Subsystem (only options present in current data)
+  const phases = [...new Set(all
+    .filter(a => !_amFilters.subsystem || a.subsystem === _amFilters.subsystem)
+    .map(a => a.phase).filter(Boolean)
+  )].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
+
+  const locations = [...new Set(all
+    .filter(a =>
+      (!_amFilters.subsystem || a.subsystem === _amFilters.subsystem) &&
+      (!_amFilters.phase     || a.phase     === _amFilters.phase)
+    ).map(a => a.location).filter(Boolean)
+  )].sort();
+
+  const subsystems = [...new Set(all
+    .filter(a =>
+      (!_amFilters.phase    || a.phase    === _amFilters.phase) &&
+      (!_amFilters.location || a.location === _amFilters.location)
+    ).map(a => a.subsystem).filter(Boolean)
+  )].sort();
+
   const actStatuses = ['Open','Closed','Future Test'];
 
   const filtered = all.filter(a => {
@@ -7199,10 +7239,12 @@ function _testRegisterHTML() {
           <option value="">All Locations</option>
           ${locations.map(l=>`<option value="${escapeHtml(l)}" ${_amFilters.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
         </select>
-        <select class="filter-select" onchange="_amSetFilter('subsystem',this.value)">
-          <option value="">All Subsystems</option>
-          ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_amFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
-        </select>
+        ${userSub
+          ? `<span class="filter-locked-tag" title="Auto-filtered to your assigned subsystem">📌 ${escapeHtml(userSub)}</span>`
+          : `<select class="filter-select" onchange="_amSetFilter('subsystem',this.value)">
+              <option value="">All Subsystems</option>
+              ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_amFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+            </select>`}
         <select class="filter-select" onchange="_amSetFilter('status',this.value)">
           <option value="">All Statuses</option>
           ${actStatuses.map(s=>`<option value="${s}" ${_amFilters.status===s?'selected':''}>${s}</option>`).join('')}
@@ -7307,10 +7349,28 @@ function _adminActivityManagerHTML() {
   if (_amDrilldownKey) return _amDrilldownHTML(_amDrilldownKey);
 
   const all = _amGetActivities();
-  const phases     = [...new Set(all.map(a=>a.phase)   .filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
-  const locations  = [...new Set(all.map(a=>a.location).filter(Boolean))].sort();
-  const subsystems = [...new Set(all.map(a=>a.subsystem).filter(Boolean))].sort();
-  const statuses   = ['Open','Closed','Future Test'];
+
+  // Cascade Phase → Location → Subsystem (admin activity manager has no subsystem lock)
+  const phases = [...new Set(all
+    .filter(a => !_amFilters.subsystem || a.subsystem === _amFilters.subsystem)
+    .map(a => a.phase).filter(Boolean)
+  )].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
+
+  const locations = [...new Set(all
+    .filter(a =>
+      (!_amFilters.subsystem || a.subsystem === _amFilters.subsystem) &&
+      (!_amFilters.phase     || a.phase     === _amFilters.phase)
+    ).map(a => a.location).filter(Boolean)
+  )].sort();
+
+  const subsystems = [...new Set(all
+    .filter(a =>
+      (!_amFilters.phase    || a.phase    === _amFilters.phase) &&
+      (!_amFilters.location || a.location === _amFilters.location)
+    ).map(a => a.subsystem).filter(Boolean)
+  )].sort();
+
+  const statuses = ['Open','Closed','Future Test'];
 
   let filtered = all.filter(a => {
     const st = _amComputeStatus(a);
@@ -8008,12 +8068,16 @@ async function _amConfirmDeployToField() {
 
 function _amSetFilter(k, v) {
   _amFilters[k] = v;
+  // Cascade resets: phase change clears location + (non-locked) subsystem
+  if (k === 'phase')    { _amFilters.location = ''; _amFilters.subsystem = currentRoleUser?.subsystem || ''; }
+  if (k === 'location') { _amFilters.subsystem = currentRoleUser?.subsystem || ''; }
   _amSelected.clear();
   _reRenderTR();
 }
 
 function _amClearFilters() {
-  _amFilters = { phase:'', location:'', subsystem:'', status:'' };
+  const userSub = currentRoleUser?.subsystem || '';
+  _amFilters = { phase:'', location:'', subsystem: userSub, status:'' };
   _amSelected.clear();
   _reRenderTR();
 }

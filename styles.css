@@ -806,6 +806,21 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   color: var(--hitachi-red);
   background: var(--hitachi-red-light);
 }
+/* Locked subsystem pill shown when a user has a subsystem assigned */
+.filter-locked-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #5b21b6;
+  background: #ede9fe;
+  border: 1px solid #c4b5fd;
+  border-radius: 6px;
+  white-space: nowrap;
+  cursor: default;
+}
 
 /* ===================================
    DATA TABLE
