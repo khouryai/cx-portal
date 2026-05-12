@@ -2151,11 +2151,45 @@ async function signOut() {
   showPage('dashboard');
 }
 
-async function sendPasswordReset() {
-  const email = document.getElementById('auth-email').value.trim();
-  if (!email) { showAuthError('Enter your email address first.'); return; }
+// ── Forgot Password modal ─────────────────────────────────────────────────
+function openForgotPassword() {
+  // Pre-fill with whatever is already typed in the sign-in email field
+  const prefill = document.getElementById('auth-email')?.value.trim() || '';
+  const inp = document.getElementById('fp-email');
+  if (inp && prefill) inp.value = prefill;
+  const msg = document.getElementById('fp-msg');
+  if (msg) { msg.textContent = ''; msg.style.color = ''; }
+  const btn = document.getElementById('fp-btn');
+  if (btn) { btn.textContent = 'Send Reset Link'; btn.disabled = false; }
+  const m = document.getElementById('forgot-password-modal');
+  if (m) { m.style.display = 'flex'; }
+  setTimeout(() => { if (!prefill) document.getElementById('fp-email')?.focus(); }, 50);
+}
+
+function closeForgotPassword() {
+  const m = document.getElementById('forgot-password-modal');
+  if (m) m.style.display = 'none';
+}
+
+async function submitPasswordReset() {
+  const email = document.getElementById('fp-email')?.value.trim();
+  const msg   = document.getElementById('fp-msg');
+  const btn   = document.getElementById('fp-btn');
+  if (!email) {
+    if (msg) { msg.textContent = 'Please enter your email address.'; msg.style.color = '#dc2626'; }
+    return;
+  }
+  if (btn) { btn.textContent = 'Sending…'; btn.disabled = true; }
+  if (msg) { msg.textContent = ''; }
   const { error } = await _sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.href });
-  showAuthError(error ? error.message : 'Reset link sent — check your email.');
+  if (error) {
+    if (msg) { msg.textContent = error.message; msg.style.color = '#dc2626'; }
+    if (btn) { btn.textContent = 'Send Reset Link'; btn.disabled = false; }
+  } else {
+    if (msg) { msg.textContent = '✓ Reset link sent — check your inbox.'; msg.style.color = '#16a34a'; }
+    if (btn) { btn.textContent = 'Link Sent'; btn.disabled = true; }
+    setTimeout(closeForgotPassword, 3000);
+  }
 }
 
 function showAuthError(msg) {
@@ -2211,10 +2245,12 @@ function _rayCopyEmail() {
 function _rayOpenEmail() {
   window.open(`mailto:${_RA_EMAIL}?subject=Portal%20Access%20Request&body=Hello%2C%0A%0AI%20would%20like%20to%20request%20access%20to%20the%20BART%20CBTC%20T%26C%20Portal.%0A%0AName%3A%20%0ACompany%20%2F%20Role%3A%20%0A`, '_blank');
 }
-// Close modal on backdrop click
+// Close modals on backdrop click
 document.addEventListener('click', e => {
-  const m = document.getElementById('request-access-modal');
-  if (m && e.target === m) closeRequestAccess();
+  const ra = document.getElementById('request-access-modal');
+  if (ra && e.target === ra) closeRequestAccess();
+  const fp = document.getElementById('forgot-password-modal');
+  if (fp && e.target === fp) closeForgotPassword();
 });
 
 function onLoggedIn() {
