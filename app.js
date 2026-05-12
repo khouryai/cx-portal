@@ -297,11 +297,15 @@ Chart.defaults.borderColor = '#ebebeb';
 // ==========================================
 // ROUTING
 // ==========================================
+const _adminPages = new Set(['admin-templates','admin-locations','admin-fieldconfig','admin-directory','audit','admin-overview']);
+
 function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + name)?.classList.add('active');
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
   document.querySelector(`.nav-link[data-page="${name}"]`)?.classList.add('active');
+  // Auto-expand admin toggle when navigating to an admin page
+  if (_adminPages.has(name)) _sidenavAdminOpen();
   // Re-render pages that need fresh state on each visit
   if (name === 'field-intake')    renderFieldIntake();
   if (name === 'test-register')   renderTestRegister();
@@ -310,9 +314,23 @@ function showPage(name) {
   if (name === 'admin-templates') renderAdminTemplates();
   if (name === 'admin-locations')  renderAdminLocations();
   if (name === 'admin-fieldconfig') renderAdminFieldConfig();
-  if (name === 'admin-directory')  { renderAdminDirectory(); }
-  if (name === 'admin-overview')   renderAdminOverview();
+  if (name === 'admin-directory')  renderAdminDirectory();
   window.scrollTo(0, 0);
+}
+
+function _sidenavAdminToggle() {
+  const items  = document.getElementById('nav-admin-items');
+  const toggle = document.getElementById('nav-admin-toggle');
+  if (!items) return;
+  const isOpen = toggle?.classList.contains('open');
+  items.style.display  = isOpen ? 'none' : '';
+  toggle?.classList.toggle('open', !isOpen);
+}
+function _sidenavAdminOpen() {
+  const items  = document.getElementById('nav-admin-items');
+  const toggle = document.getElementById('nav-admin-toggle');
+  if (items)  items.style.display = '';
+  toggle?.classList.add('open');
 }
 
 // ── TAB VISIBILITY & SESSION RECOVERY ──────────────────────────────────────
@@ -2081,6 +2099,10 @@ function _onSignedOut() {
   currentProfile  = null;
   document.getElementById('login-overlay').classList.remove('hidden');
   document.querySelectorAll('.nav-role').forEach(l => l.style.display = 'none');
+  // Collapse admin section
+  const adminItems = document.getElementById('nav-admin-items');
+  if (adminItems) adminItems.style.display = 'none';
+  document.getElementById('nav-admin-toggle')?.classList.remove('open');
   const pill = document.getElementById('nav-user-pill');
   if (pill) { pill.style.display = 'none'; pill.innerHTML = ''; }
   const navLogin = document.getElementById('nav-login');

@@ -4096,6 +4096,68 @@ body * {
 }
 
 /* ===================================
+   ADMIN COLLAPSIBLE NAV GROUP
+   =================================== */
+.nav-admin-group {
+  display: flex;
+  flex-direction: column;
+}
+.nav-admin-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.55);
+  background: none;
+  border: none;
+  border-left: 3px solid transparent;
+  border-radius: 8px;
+  padding: 9px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.nav-admin-toggle:hover {
+  color: #fff;
+  background: rgba(255,255,255,0.07);
+}
+.nav-admin-toggle.open {
+  color: #fff;
+  background: rgba(255,255,255,0.08);
+  border-left-color: rgba(230,0,18,0.55);
+}
+.nav-admin-chevron {
+  transition: transform 0.22s ease;
+}
+.nav-admin-toggle.open .nav-admin-chevron {
+  transform: rotate(90deg);
+}
+
+/* Sub-items */
+.nav-admin-items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 0 4px 16px;
+  margin-left: 14px;
+  border-left: 1px solid rgba(255,255,255,0.09);
+}
+.nav-admin-item {
+  font-size: 12px !important;
+  padding: 7px 10px !important;
+  border-radius: 6px !important;
+  border-left-width: 2px !important;
+}
+.nav-admin-item .nav-icon {
+  width: 15px !important;
+  height: 15px !important;
+}
+
+/* ===================================
    TEST CASE VIEW (TCV)
    =================================== */
 
