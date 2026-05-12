@@ -4096,65 +4096,118 @@ body * {
 }
 
 /* ===================================
-   ADMIN COLLAPSIBLE NAV GROUP
+   SIDEBAR COLLAPSE
    =================================== */
-.nav-admin-group {
-  display: flex;
-  flex-direction: column;
+#sidenav {
+  transition: width 0.26s cubic-bezier(0.4,0,0.2,1);
 }
-.nav-admin-toggle {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  color: rgba(255,255,255,0.55);
+body.sb-collapsed #sidenav {
+  width: 0;
+  border-right-color: transparent;
+  overflow: hidden;
+}
+.page, #footer {
+  transition: margin-left 0.26s cubic-bezier(0.4,0,0.2,1);
+}
+body.sb-collapsed .page,
+body.sb-collapsed #footer {
+  margin-left: 0;
+}
+
+/* Collapse arrow button in brand bar */
+.sidenav-collapse-btn {
+  margin-left: auto;
+  flex-shrink: 0;
   background: none;
   border: none;
-  border-left: 3px solid transparent;
+  cursor: pointer;
+  color: rgba(255,255,255,0.3);
+  padding: 5px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s, background 0.15s;
+}
+.sidenav-collapse-btn:hover {
+  color: rgba(255,255,255,0.8);
+  background: rgba(255,255,255,0.08);
+}
+
+/* Floating re-open tab (appears at left edge when sidebar is hidden) */
+.sidenav-reopen-btn {
+  position: fixed;
+  top: 14px;
+  left: 0;
+  z-index: 300;
+  background: #111827;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  color: rgba(255,255,255,0.65);
+  padding: 10px 11px;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  box-shadow: 3px 0 14px rgba(0,0,0,0.35);
+  transition: color 0.15s, background 0.15s;
+}
+.sidenav-reopen-btn:hover { color: #fff; background: #1f2937; }
+body.sb-collapsed .sidenav-reopen-btn { display: flex; }
+
+/* ===================================
+   ADMIN MODE TOGGLE (top of nav, admin only)
+   =================================== */
+.sidenav-admin-bar {
+  padding: 8px 8px 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  flex-shrink: 0;
+}
+.sidenav-admin-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.45);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
   border-radius: 8px;
-  padding: 9px 12px;
+  padding: 8px 12px;
   cursor: pointer;
   text-align: left;
   transition: color 0.15s, background 0.15s, border-color 0.15s;
   white-space: nowrap;
 }
-.nav-admin-toggle:hover {
-  color: #fff;
+.sidenav-admin-mode-btn:hover {
+  color: rgba(255,255,255,0.8);
   background: rgba(255,255,255,0.07);
+  border-color: rgba(255,255,255,0.14);
 }
-.nav-admin-toggle.open {
+.sidenav-admin-mode-btn.active {
   color: #fff;
-  background: rgba(255,255,255,0.08);
-  border-left-color: rgba(230,0,18,0.55);
+  background: rgba(230,0,18,0.18);
+  border-color: rgba(230,0,18,0.4);
 }
-.nav-admin-chevron {
-  transition: transform 0.22s ease;
-}
-.nav-admin-toggle.open .nav-admin-chevron {
-  transform: rotate(90deg);
-}
+.sidenav-admin-mode-btn .nav-icon { width: 14px; height: 14px; opacity: 0.6; }
+.sidenav-admin-mode-btn.active .nav-icon { opacity: 1; }
 
-/* Sub-items */
-.nav-admin-items {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 4px 0 4px 16px;
-  margin-left: 14px;
-  border-left: 1px solid rgba(255,255,255,0.09);
+/* Pill indicator on the Admin button */
+.sidenav-admin-mode-indicator {
+  margin-left: auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.2);
+  flex-shrink: 0;
+  transition: background 0.2s;
 }
-.nav-admin-item {
-  font-size: 12px !important;
-  padding: 7px 10px !important;
-  border-radius: 6px !important;
-  border-left-width: 2px !important;
-}
-.nav-admin-item .nav-icon {
-  width: 15px !important;
-  height: 15px !important;
+.sidenav-admin-mode-btn.active .sidenav-admin-mode-indicator {
+  background: var(--hitachi-red);
+  box-shadow: 0 0 6px rgba(230,0,18,0.6);
 }
 
 /* ===================================

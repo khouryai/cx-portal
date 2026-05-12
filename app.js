@@ -297,40 +297,49 @@ Chart.defaults.borderColor = '#ebebeb';
 // ==========================================
 // ROUTING
 // ==========================================
-const _adminPages = new Set(['admin-templates','admin-locations','admin-fieldconfig','admin-directory','audit','admin-overview']);
+const _adminPages = new Set(['admin-templates','admin-locations','admin-fieldconfig','admin-directory','audit']);
+let _adminModeOn = false;
 
 function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + name)?.classList.add('active');
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
   document.querySelector(`.nav-link[data-page="${name}"]`)?.classList.add('active');
-  // Auto-expand admin toggle when navigating to an admin page
-  if (_adminPages.has(name)) _sidenavAdminOpen();
+  // Auto-switch to admin mode when navigating to an admin page
+  if (_adminPages.has(name) && !_adminModeOn) _sidenavAdminOpen();
   // Re-render pages that need fresh state on each visit
-  if (name === 'field-intake')    renderFieldIntake();
-  if (name === 'test-register')   renderTestRegister();
-  if (name === 'tcv')             renderTCV();
-  if (name === 'test-reporting')  renderTestReporting();
-  if (name === 'admin-templates') renderAdminTemplates();
+  if (name === 'field-intake')     renderFieldIntake();
+  if (name === 'test-register')    renderTestRegister();
+  if (name === 'tcv')              renderTCV();
+  if (name === 'test-reporting')   renderTestReporting();
+  if (name === 'admin-templates')  renderAdminTemplates();
   if (name === 'admin-locations')  renderAdminLocations();
   if (name === 'admin-fieldconfig') renderAdminFieldConfig();
   if (name === 'admin-directory')  renderAdminDirectory();
   window.scrollTo(0, 0);
 }
 
+// ── Sidebar collapse ─────────────────────────────────────────────────────────
+function _sidenavCollapse() {
+  document.body.classList.toggle('sb-collapsed');
+}
+
+// ── Admin mode — full nav swap ────────────────────────────────────────────────
 function _sidenavAdminToggle() {
-  const items  = document.getElementById('nav-admin-items');
-  const toggle = document.getElementById('nav-admin-toggle');
-  if (!items) return;
-  const isOpen = toggle?.classList.contains('open');
-  items.style.display  = isOpen ? 'none' : '';
-  toggle?.classList.toggle('open', !isOpen);
+  _adminModeOn = !_adminModeOn;
+  _applySidenavAdminMode();
 }
 function _sidenavAdminOpen() {
-  const items  = document.getElementById('nav-admin-items');
-  const toggle = document.getElementById('nav-admin-toggle');
-  if (items)  items.style.display = '';
-  toggle?.classList.add('open');
+  _adminModeOn = true;
+  _applySidenavAdminMode();
+}
+function _applySidenavAdminMode() {
+  const regular = document.getElementById('nav-regular-items');
+  const admin   = document.getElementById('nav-admin-items');
+  const btn     = document.getElementById('nav-admin-toggle');
+  if (regular) regular.style.display = _adminModeOn ? 'none' : '';
+  if (admin)   admin.style.display   = _adminModeOn ? '' : 'none';
+  btn?.classList.toggle('active', _adminModeOn);
 }
 
 // ── TAB VISIBILITY & SESSION RECOVERY ──────────────────────────────────────
@@ -2099,10 +2108,13 @@ function _onSignedOut() {
   currentProfile  = null;
   document.getElementById('login-overlay').classList.remove('hidden');
   document.querySelectorAll('.nav-role').forEach(l => l.style.display = 'none');
-  // Collapse admin section
+  // Reset admin mode
+  _adminModeOn = false;
   const adminItems = document.getElementById('nav-admin-items');
   if (adminItems) adminItems.style.display = 'none';
-  document.getElementById('nav-admin-toggle')?.classList.remove('open');
+  const regularItems = document.getElementById('nav-regular-items');
+  if (regularItems) regularItems.style.display = '';
+  document.getElementById('nav-admin-toggle')?.classList.remove('active');
   const pill = document.getElementById('nav-user-pill');
   if (pill) { pill.style.display = 'none'; pill.innerHTML = ''; }
   const navLogin = document.getElementById('nav-login');
