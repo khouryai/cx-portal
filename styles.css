@@ -2693,24 +2693,106 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
 }
 
 /* Login overlay */
+/* ── Login / Sign-in page ───────────────────────────────────── */
 .login-overlay {
   position: fixed; inset: 0;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  background: #eef0f3;
   z-index: 2000;
-  display: flex; align-items: center; justify-content: center;
-  transition: opacity 0.2s;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
 }
 .login-overlay.hidden { display: none; }
-.login-card {
-  background: var(--white);
-  border-radius: 16px;
-  padding: 40px;
-  width: 100%; max-width: 400px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+
+/* Top bar */
+.login-topbar {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 32px;
+  pointer-events: none;
 }
-.login-brand { margin-bottom: 32px; }
-.login-brand-name { font-size: 24px; font-weight: 800; color: var(--black); letter-spacing: 0; }
-.login-brand-sub { font-size: 13px; color: var(--gray-500); margin-top: 4px; }
+.login-topbar-brand {
+  font-size: 15px; font-weight: 700; color: #111; letter-spacing: -0.01em;
+}
+.login-topbar-status {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: #555;
+  pointer-events: none;
+}
+.login-db-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #bbb; flex-shrink: 0;
+  transition: background 0.4s;
+}
+.login-db-dot.online  { background: #16a34a; }
+.login-db-dot.offline { background: #dc2626; }
+.login-db-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; }
+
+/* Card */
+.login-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 40px 36px;
+  width: 100%; max-width: 430px;
+  border: 1.5px solid rgba(230,0,18,0.35);
+  box-shadow: 0 2px 24px rgba(0,0,0,0.07);
+  display: flex; flex-direction: column; align-items: center;
+}
+
+/* Hitachi red wordmark badge */
+.login-hitachi-badge {
+  background: #e60012;
+  color: #fff;
+  font-size: 12px; font-weight: 900; letter-spacing: 0.14em;
+  padding: 5px 20px;
+  border-radius: 4px;
+  margin-bottom: 18px;
+  display: inline-block;
+}
+
+.login-brand { margin-bottom: 28px; text-align: center; }
+.login-brand-name { font-size: 26px; font-weight: 800; color: #111; letter-spacing: -0.02em; }
+.login-brand-sub  { font-size: 13px; color: #888; margin-top: 4px; }
+
+/* Labels inside login card */
+.login-label {
+  display: block;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.07em; color: #666;
+  margin-bottom: 6px;
+}
+
+/* Sign-in button (scoped to login overlay to override shared .login-btn rules) */
+.login-overlay .login-btn {
+  width: 100%; margin-top: 18px;
+  background: #e60012; color: #fff;
+  border: none; border-radius: 8px;
+  padding: 14px; font-size: 15px; font-weight: 600;
+  cursor: pointer; letter-spacing: 0.01em;
+  transition: background 0.15s;
+  transform: none; box-shadow: none;
+}
+.login-overlay .login-btn:hover:not(:disabled) { background: #c5000f; transform: none; box-shadow: none; }
+.login-overlay .login-btn:disabled { background: #ccc; cursor: not-allowed; }
+
+/* Links row */
+.login-links {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 18px;
+}
+.login-link {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.07em;
+  color: #999; text-decoration: none;
+  transition: color 0.15s;
+}
+.login-link:hover { color: #e60012; }
+.login-link-sep { font-size: 11px; color: #ccc; }
+
+/* Encrypted badge */
+.login-encrypted-badge {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 28px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: #bbb;
+  text-transform: uppercase;
+}
+/* ── end Login ──────────────────────────────────────────────── */
 
 /* Directory / user table */
 .dir-table { width: 100%; border-collapse: collapse; }
@@ -3703,23 +3785,7 @@ textarea:focus-visible {
   font-weight: 700;
 }
 
-/* Login */
-.login-overlay {
-  background:
-    linear-gradient(135deg, rgba(17,24,39,0.96), rgba(17,24,39,0.9)),
-    #111827;
-}
-
-.login-card,
-.field-login-card {
-  border-radius: 8px;
-  border: 1px solid rgba(255,255,255,0.14);
-  box-shadow: 0 28px 70px rgba(0,0,0,0.28);
-}
-
-.login-brand-name {
-  color: var(--text-main);
-}
+/* Login — stale dark-theme overrides removed; new styles in main section above */
 
 /* Modals, toasts, empty states */
 .modal-overlay {

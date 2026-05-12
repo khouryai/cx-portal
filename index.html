@@ -14,24 +14,75 @@
 <body>
 
 <div id="login-overlay" class="login-overlay">
+
+  <!-- Top bar -->
+  <div class="login-topbar">
+    <div class="login-topbar-brand">Hitachi Rail</div>
+    <div class="login-topbar-status">
+      <span class="login-db-dot" id="login-db-dot"></span>
+      <span class="login-db-label" id="login-db-label">CHECKING…</span>
+    </div>
+  </div>
+
+  <!-- Center card -->
   <div class="login-card">
+    <!-- Hitachi wordmark badge -->
+    <div class="login-hitachi-badge">HITACHI</div>
+
     <div class="login-brand">
-      <div class="login-brand-name">CX Portal</div>
+      <div class="login-brand-name">Hitachi Rail</div>
       <div class="login-brand-sub">BART CBTC Testing &amp; Commissioning</div>
     </div>
-    <div class="form-field">
-      <label>Email</label>
-      <input type="email" id="auth-email" class="form-input" placeholder="you@example.com" autocomplete="username" onkeydown="if(event.key==='Enter')signIn()">
+
+    <div class="form-field" style="width:100%;">
+      <label class="login-label">EMAIL</label>
+      <input type="email" id="auth-email" class="form-input" placeholder="you@example.com"
+        autocomplete="username" onkeydown="if(event.key==='Enter')signIn()">
     </div>
-    <div class="form-field" style="margin-top:12px;">
-      <label>Password</label>
-      <input type="password" id="auth-password" class="form-input" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')signIn()">
+    <div class="form-field" style="margin-top:14px;width:100%;">
+      <label class="login-label">PASSWORD</label>
+      <input type="password" id="auth-password" class="form-input" placeholder="••••••••"
+        autocomplete="current-password" onkeydown="if(event.key==='Enter')signIn()">
     </div>
-    <div id="auth-error" style="color:#dc2626;font-size:12px;margin-top:8px;min-height:18px;"></div>
-    <button id="auth-btn" class="login-btn" style="width:100%;margin-top:16px;" onclick="signIn()">Sign In</button>
-    <div style="text-align:center;margin-top:14px;">
-      <a href="#" onclick="sendPasswordReset();return false;" style="font-size:12px;color:var(--gray-500);">Forgot password?</a>
+
+    <div id="auth-error" style="color:#dc2626;font-size:12px;margin-top:8px;min-height:18px;width:100%;"></div>
+
+    <button id="auth-btn" class="login-btn" onclick="signIn()">Sign In</button>
+
+    <div class="login-links">
+      <a href="#" class="login-link" onclick="sendPasswordReset();return false;">FORGOT PASSWORD?</a>
+      <span class="login-link-sep">•</span>
+      <a href="#" class="login-link" onclick="openRequestAccess();return false;">REQUEST ACCESS</a>
     </div>
+
+    <div class="login-encrypted-badge">
+      <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor" style="flex-shrink:0;opacity:0.6;">
+        <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/>
+      </svg>
+      ENTERPRISE ENCRYPTED
+    </div>
+  </div>
+
+</div>
+
+<!-- Request Access Modal -->
+<div id="request-access-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:3000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:14px;padding:32px 28px;max-width:380px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.2);text-align:center;">
+    <div style="width:48px;height:48px;border-radius:50%;background:#fee2e2;margin:0 auto 16px;display:flex;align-items:center;justify-content:center;">
+      <svg width="22" height="22" viewBox="0 0 20 20" fill="#e60012"><path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/><path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/></svg>
+    </div>
+    <div style="font-size:18px;font-weight:700;color:#111;margin-bottom:6px;">Request Portal Access</div>
+    <div style="font-size:13px;color:#666;margin-bottom:20px;">Contact the system administrator to request an account:</div>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin-bottom:20px;">
+      <div style="font-size:11px;font-weight:600;letter-spacing:0.06em;color:#888;margin-bottom:4px;">ADMINISTRATOR</div>
+      <div style="font-size:14px;font-weight:600;color:#111;">Alexander Khoury</div>
+      <div style="font-size:13px;color:#e60012;margin-top:2px;">Alexander.Khoury@hitachirail.com</div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:center;">
+      <button onclick="_rayCopyEmail()" style="flex:1;padding:10px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#374151;">📋 Copy Email</button>
+      <button onclick="_rayOpenEmail()" style="flex:1;padding:10px;background:#e60012;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#fff;">✉ Send Email</button>
+    </div>
+    <button onclick="closeRequestAccess()" style="margin-top:16px;font-size:12px;color:#999;background:none;border:none;cursor:pointer;">Dismiss</button>
   </div>
 </div>
 

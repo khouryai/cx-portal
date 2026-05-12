@@ -19,6 +19,8 @@ try {
 } catch(e) {
   console.error('[Supabase] FAILED to init:', e.message);
 }
+// Kick off DB connectivity check as soon as possible (non-blocking)
+setTimeout(() => { if (typeof _checkDbStatus === 'function') _checkDbStatus(); }, 0);
 
 // Direct REST-API insert that bypasses supabase-js — workaround for cases where
 // the client's insert() hangs (we've seen this with bulk inserts to test_results).
@@ -2106,7 +2108,12 @@ async function _loadCurrentProfile(user, accessToken) {
 function _onSignedOut() {
   currentRoleUser = null;
   currentProfile  = null;
+  // Always reset the auth button so it never stays stuck on "Signing in…"
+  const authBtn = document.getElementById('auth-btn');
+  if (authBtn) { authBtn.textContent = 'Sign In'; authBtn.disabled = false; }
+  document.getElementById('auth-error')?.textContent && (document.getElementById('auth-error').textContent = '');
   document.getElementById('login-overlay').classList.remove('hidden');
+  _checkDbStatus(); // refresh connectivity indicator each time sign-in page appears
   document.querySelectorAll('.nav-role').forEach(l => l.style.display = 'none');
   // Reset admin mode
   _adminModeOn = false;
@@ -2155,6 +2162,60 @@ function showAuthError(msg) {
   const el = document.getElementById('auth-error');
   if (el) el.textContent = msg;
 }
+
+// ── DB connectivity indicator on sign-in page ─────────────────────────────
+async function _checkDbStatus() {
+  const dot   = document.getElementById('login-db-dot');
+  const label = document.getElementById('login-db-label');
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id&limit=1`, {
+      method: 'GET',
+      signal: ctrl.signal,
+      headers: { apikey: SUPABASE_ANON_KEY }
+    });
+    clearTimeout(timer);
+    if (res.ok || res.status === 406) {
+      // 406 = "not acceptable" (format mismatch) but server responded → online
+      if (dot)   { dot.classList.add('online'); dot.classList.remove('offline'); }
+      if (label) label.textContent = 'SYSTEM ONLINE';
+    } else {
+      if (dot)   { dot.classList.add('offline'); dot.classList.remove('online'); }
+      if (label) label.textContent = 'SYSTEM DEGRADED';
+    }
+  } catch {
+    if (dot)   { dot.classList.add('offline'); dot.classList.remove('online'); }
+    if (label) label.textContent = 'SYSTEM OFFLINE';
+  }
+}
+
+// ── Request Access modal ──────────────────────────────────────────────────
+const _RA_EMAIL = 'Alexander.Khoury@hitachirail.com';
+
+function openRequestAccess() {
+  const m = document.getElementById('request-access-modal');
+  if (m) { m.style.display = 'flex'; }
+}
+function closeRequestAccess() {
+  const m = document.getElementById('request-access-modal');
+  if (m) { m.style.display = 'none'; }
+}
+function _rayCopyEmail() {
+  navigator.clipboard.writeText(_RA_EMAIL).then(() => {
+    const btn = event.target;
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => { btn.textContent = '📋 Copy Email'; }, 2000);
+  }).catch(() => { prompt('Copy this email:', _RA_EMAIL); });
+}
+function _rayOpenEmail() {
+  window.open(`mailto:${_RA_EMAIL}?subject=Portal%20Access%20Request&body=Hello%2C%0A%0AI%20would%20like%20to%20request%20access%20to%20the%20BART%20CBTC%20T%26C%20Portal.%0A%0AName%3A%20%0ACompany%20%2F%20Role%3A%20%0A`, '_blank');
+}
+// Close modal on backdrop click
+document.addEventListener('click', e => {
+  const m = document.getElementById('request-access-modal');
+  if (m && e.target === m) closeRequestAccess();
+});
 
 function onLoggedIn() {
   document.querySelectorAll('.nav-role').forEach(link => {
