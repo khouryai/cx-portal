@@ -8727,7 +8727,7 @@ function _p6MappingTabHTML() {
               window._p6ActData[sid] = a;
               const linked   = _p6GetActivityLinks(a);
               const isLinked = linked.length > 0;
-              const expanded = window._p6Expanded?.has(sid);
+              const expanded = window._p6ExpandedSid === sid;
               return `
                 <div class="p6-act-row ${isLinked?'p6-act-linked':'p6-act-unlinked'}">
                   <div class="p6-act-row-header" onclick="_p6ToggleActExpand('${sid}')">
@@ -8884,9 +8884,18 @@ function _p6SSVal(sid) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Accordion: only one activity open at a time
 function _p6ToggleActExpand(sid) {
-  if (!window._p6Expanded) window._p6Expanded = new Set();
-  window._p6Expanded.has(sid) ? window._p6Expanded.delete(sid) : window._p6Expanded.add(sid);
+  window._p6ExpandedSid = (window._p6ExpandedSid === sid) ? null : sid;
+  // Reset TC open state when switching activities
+  window._p6TCOpen = new Set();
+  renderAdminP6();
+}
+
+// Separate toggle for the TC links section within an expanded activity
+function _p6ToggleTCSection(sid) {
+  if (!window._p6TCOpen) window._p6TCOpen = new Set();
+  window._p6TCOpen.has(sid) ? window._p6TCOpen.delete(sid) : window._p6TCOpen.add(sid);
   renderAdminP6();
 }
 
@@ -8927,41 +8936,55 @@ function _p6ActivityLinkDetail(act, p6List, sid) {
           </button>
         </div>`}
 
-      <!-- ── TEST-CASE LEVEL LINKS ─────────────────────────── -->
-      <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;color:var(--gray-500);margin:10px 0 4px;">
-        TEST-CASE LEVEL LINKS
-        <span style="font-weight:400;color:var(--gray-400);"> — override individual test cases that map to a different P6 sub-activity</span>
-      </div>
-      ${!actLink ? `<div style="font-size:11px;color:var(--gray-400);padding:4px 0 8px;">Link the activity first, then optionally override individual test cases below.</div>` : ''}
-
-      <!-- Bulk link row -->
-      <div style="display:flex;gap:6px;align-items:center;padding:6px 0 8px;border-bottom:1px solid var(--gray-200);margin-bottom:6px;flex-wrap:wrap;">
-        <span style="font-size:11px;color:var(--gray-600);white-space:nowrap;font-weight:600;">Bulk link all to:</span>
-        <div style="flex:1;min-width:180px;">${_p6SS(sid + '_bulk', p6List, 'Search…')}</div>
-        <button class="admin-action-btn tr-mini-btn"
-          onclick="_p6BulkLinkTCs(_p6SSVal('${sid}_bulk'),'${sid}')">Apply All</button>
-      </div>
-
-      ${act.items.map(item => {
-        const tcLink = tcLinks.find(l => l.portal_test_case_code === item.TestCaseCode);
-        const tcCode = escapeHtml(item.TestCaseCode || '');
-        const tcSid  = sid + '_tc_' + tcCode.replace(/[^a-zA-Z0-9]/g,'_');
+      <!-- ── TEST-CASE LEVEL LINKS (collapsed by default) ─── -->
+      ${(()=>{
+        const tcOpen = window._p6TCOpen?.has(sid);
+        const tcLinkedCount = tcLinks.length;
         return `
-          <div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--gray-100);">
-            <div style="flex:1;min-width:0;">
-              <div style="font-size:11px;font-weight:600;color:var(--gray-800);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(item.TestCaseCode||'')}</div>
-              <div style="font-size:10px;color:var(--gray-500);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(item.TestName||'')}</div>
-            </div>
-            ${tcLink ? `
-              <span style="font-size:10px;color:var(--good);font-weight:600;white-space:nowrap;flex-shrink:0;">↔ ${escapeHtml(_p6ActName(tcLink.p6_activity_id))}</span>
-              <button class="form-secondary tr-mini-btn" onclick="_p6UnlinkActivity('${escapeHtml(tcLink.id)}')">✕</button>
-            ` : `
-              <div style="flex:2;min-width:120px;">${_p6SS(tcSid, p6List, '—')}</div>
-              <button class="admin-action-btn tr-mini-btn"
-                onclick="_p6LinkTestCase(_p6SSVal('${tcSid}'),'${tcCode}','${sid}')">Link</button>
-            `}
+          <div style="border-top:1px solid var(--gray-100);margin-top:10px;padding-top:8px;">
+            <button class="form-secondary tr-mini-btn" style="width:100%;display:flex;align-items:center;justify-content:space-between;"
+              onclick="_p6ToggleTCSection('${sid}')">
+              <span style="font-size:11px;font-weight:700;letter-spacing:0.05em;color:var(--gray-600);">
+                TEST-CASE OVERRIDES ${tcLinkedCount ? `<span style="color:var(--good);">(${tcLinkedCount} linked)</span>` : '(optional)'}
+              </span>
+              <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" style="color:var(--gray-400);transform:rotate(${tcOpen?'90':'0'}deg);transition:transform 0.15s;flex-shrink:0;">
+                <path fill-rule="evenodd" d="M7.293 4.707a1 1 0 011.414 0l5 5a1 1 0 010 1.414l-5 5a1 1 0 01-1.414-1.414L11.586 10 7.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+              </svg>
+            </button>
+            ${tcOpen ? `
+              <div style="margin-top:8px;">
+                <p style="font-size:11px;color:var(--gray-400);margin-bottom:8px;">Only needed if specific test cases map to a different P6 sub-activity than the activity-level link above.</p>
+                <!-- Bulk link row -->
+                <div style="display:flex;gap:6px;align-items:center;padding:6px 0 8px;border-bottom:1px solid var(--gray-200);margin-bottom:6px;flex-wrap:wrap;">
+                  <span style="font-size:11px;color:var(--gray-600);white-space:nowrap;font-weight:600;">Bulk link all to:</span>
+                  <div style="flex:1;min-width:180px;">${_p6SS(sid + '_bulk', p6List, 'Search…')}</div>
+                  <button class="admin-action-btn tr-mini-btn"
+                    onclick="_p6BulkLinkTCs(_p6SSVal('${sid}_bulk'),'${sid}')">Apply All</button>
+                </div>
+                ${act.items.map(item => {
+                  const tcLink = tcLinks.find(l => l.portal_test_case_code === item.TestCaseCode);
+                  const tcCode = escapeHtml(item.TestCaseCode || '');
+                  const tcSid  = sid + '_tc_' + tcCode.replace(/[^a-zA-Z0-9]/g,'_');
+                  return `
+                    <div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--gray-100);">
+                      <div style="flex:1;min-width:0;">
+                        <div style="font-size:11px;font-weight:600;color:var(--gray-800);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(item.TestCaseCode||'')}</div>
+                        <div style="font-size:10px;color:var(--gray-500);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(item.TestName||'')}</div>
+                      </div>
+                      ${tcLink ? `
+                        <span style="font-size:10px;color:var(--good);font-weight:600;white-space:nowrap;flex-shrink:0;">↔ ${escapeHtml(_p6ActName(tcLink.p6_activity_id))}</span>
+                        <button class="form-secondary tr-mini-btn" onclick="_p6UnlinkActivity('${escapeHtml(tcLink.id)}')">✕</button>
+                      ` : `
+                        <div style="flex:2;min-width:120px;">${_p6SS(tcSid, p6List, '—')}</div>
+                        <button class="admin-action-btn tr-mini-btn"
+                          onclick="_p6LinkTestCase(_p6SSVal('${tcSid}'),'${tcCode}','${sid}')">Link</button>
+                      `}
+                    </div>`;
+                }).join('')}
+              </div>
+            ` : ''}
           </div>`;
-      }).join('')}
+      })()}
     </div>`;
 }
 
@@ -9070,10 +9093,20 @@ function _p6MapFilter(k, v) {
 // sid resolves to the activity via window._p6ActData[sid]
 async function _p6LinkActivity(p6Id, sid) {
   if (!p6Id) { toast('Select a P6 activity first', 'error'); return; }
+  if (window._p6Linking) return; // double-click guard
+  window._p6Linking = true;
   const a = window._p6ActData?.[sid];
-  if (!a) { toast('Activity data not found — please refresh', 'error'); return; }
+  if (!a) { window._p6Linking = false; toast('Activity data not found — please refresh', 'error'); return; }
   const { phase, location, subsystem, activity } = a;
   try {
+    // Upsert: delete any existing activity-level link for this portal activity first
+    const existing = P6_MAP.filter(m =>
+      m.portal_phase === phase && m.portal_location === location &&
+      m.portal_subsystem === subsystem && m.portal_activity === activity &&
+      !m.portal_test_case_code);
+    for (const old of existing) {
+      await _dbDelete('p6_activity_map', { id: old.id });
+    }
     await _dbInsert('p6_activity_map', [{
       p6_activity_id: p6Id,
       portal_phase: phase, portal_location: location,
@@ -9089,6 +9122,7 @@ async function _p6LinkActivity(p6Id, sid) {
     renderAdminP6();
     toast('Activity linked ✓', 'success');
   } catch(e) { toast('Link failed: ' + e.message, 'error'); }
+  finally { window._p6Linking = false; }
 }
 
 async function _p6LinkTestCase(p6Id, testCaseCode, sid) {
@@ -9624,15 +9658,30 @@ function renderSchedulePage() {
 
   // Build schedule rows
   const rows = allPortal.map(a => {
-    const rec    = _activityRecords.find(r =>
+    const rec     = _activityRecords.find(r =>
       r.phase === a.phase && r.location === a.location &&
       r.subsystem === a.subsystem && r.activity_name === a.activity);
-    const mapLink = P6_MAP.find(m =>
-      m.portal_phase === a.phase && m.portal_location === a.location &&
-      m.portal_subsystem === a.subsystem && m.portal_activity === a.activity && !m.portal_test_case_code);
 
-    const p6Cur  = mapLink && curBatch  ? P6_ACTS.find(x => x.id === mapLink.p6_activity_id && x.batch_id === curBatch.id)  : null;
-    const p6Base = mapLink && baseBatch ? P6_ACTS.find(x => x.p6_id === p6Cur?.p6_id && x.batch_id === baseBatch.id) : null;
+    // Find the activity-level map link (most recently created = last in array)
+    const mapLinks = P6_MAP.filter(m =>
+      m.portal_phase === a.phase && m.portal_location === a.location &&
+      m.portal_subsystem === a.subsystem && m.portal_activity === a.activity &&
+      !m.portal_test_case_code);
+    const mapLink = mapLinks[mapLinks.length - 1] || null; // use most recent link
+
+    // Look up the linked P6 activity directly by UUID — batch-agnostic
+    const p6Linked = mapLink ? P6_ACTS.find(x => x.id === mapLink.p6_activity_id) : null;
+    const p6LinkedBatch = p6Linked ? P6_BATCHES.find(b => b.id === p6Linked.batch_id) : null;
+
+    // If linked activity is from current batch, find baseline counterpart; vice versa
+    const p6Cur  = p6Linked && p6LinkedBatch?.schedule_type === 'current'  ? p6Linked
+                 : (curBatch  && p6Linked ? P6_ACTS.find(x => x.p6_id === p6Linked.p6_id && x.batch_id === curBatch.id)  : null);
+    const p6Base = p6Linked && p6LinkedBatch?.schedule_type === 'baseline' ? p6Linked
+                 : (baseBatch && p6Linked ? P6_ACTS.find(x => x.p6_id === p6Linked.p6_id && x.batch_id === baseBatch.id) : null);
+
+    // Use current if available, else fall back to baseline for display
+    const p6Show  = p6Cur || p6Base;
+    const p6Label = !p6Cur && p6Base ? '(Baseline)' : '';
 
     const { done, total } = _amComputeCompletion(a);
     const pct = total > 0 ? Math.round((done/total)*100) : 0;
@@ -9641,7 +9690,7 @@ function renderSchedulePage() {
     const finDiff = p6Cur && p6Base && p6Cur.finish_date && p6Base.finish_date
       ? Math.round((new Date(p6Cur.finish_date) - new Date(p6Base.finish_date)) / 86400000) : null;
 
-    return { a, rec, p6Cur, p6Base, pct, status, finDiff, done, total };
+    return { a, rec, p6Show, p6Label, p6Cur, p6Base, pct, status, finDiff, done, total };
   });
 
   cont.innerHTML = `
@@ -9666,23 +9715,27 @@ function renderSchedulePage() {
                 <th>Location</th>
                 <th>Phase</th>
                 <th>Planned Date</th>
-                <th>P6 Start (Current)</th>
-                <th>P6 Finish (Current)</th>
-                <th>Variance</th>
+                <th>P6 Start</th>
+                <th>P6 Finish</th>
+                <th>Variance vs Baseline</th>
                 <th>Progress</th>
                 <th>Status</th>
               </tr>
             </thead>
             <tbody>
-              ${rows.map(({a, rec, p6Cur, finDiff, pct, status}) => `
+              ${rows.map(({a, rec, p6Show, p6Label, finDiff, pct, status}) => `
                 <tr>
                   <td style="font-size:12px;font-weight:500;">${escapeHtml(a.activity)}</td>
                   <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
                   <td style="font-size:12px;">${escapeHtml(a.location)}</td>
                   <td style="font-size:12px;">${escapeHtml(a.phase)}</td>
                   <td style="font-size:12px;">${rec?.planned_date ? _fmtDate(rec.planned_date) : '<span style="color:var(--gray-400);">—</span>'}</td>
-                  <td style="font-size:12px;">${p6Cur?.start_date  ? _fmtDate(p6Cur.start_date)  : '<span style="color:var(--gray-400);">Not linked</span>'}</td>
-                  <td style="font-size:12px;">${p6Cur?.finish_date ? _fmtDate(p6Cur.finish_date) : '<span style="color:var(--gray-400);">—</span>'}</td>
+                  <td style="font-size:12px;">
+                    ${p6Show?.start_date ? `${_fmtDate(p6Show.start_date)}<span style="font-size:10px;color:var(--gray-400);margin-left:4px;">${p6Label}</span>` : '<span style="color:var(--gray-400);">Not linked</span>'}
+                  </td>
+                  <td style="font-size:12px;">
+                    ${p6Show?.finish_date ? `${_fmtDate(p6Show.finish_date)}<span style="font-size:10px;color:var(--gray-400);margin-left:4px;">${p6Label}</span>` : '<span style="color:var(--gray-400);">—</span>'}
+                  </td>
                   <td style="font-size:12px;font-weight:600;${finDiff===null?'':finDiff>0?'color:#dc2626;':finDiff<0?'color:#059669;':''}">
                     ${finDiff === null ? '<span style="color:var(--gray-400);">—</span>' : finDiff === 0 ? 'On time' : `${finDiff>0?'+':''}${finDiff}d`}
                   </td>

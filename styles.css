@@ -250,7 +250,7 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
    PAGES
    =================================== */
 .page { display: none; margin-left: 240px; animation: fadeIn 0.4s var(--easing); }
-.page.active { display: block; }
+.page.active { display: block; min-height: 100vh; }
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
@@ -857,7 +857,8 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 
 .table-wrap {
   overflow-x: auto;
-  max-height: 70vh;
+  /* No max-height here — pages handle their own scroll.
+     Tools with many rows apply .table-wrap-bounded for a contained scroller. */
 }
 .data-table {
   width: 100%;
@@ -3606,7 +3607,6 @@ textarea:focus-visible {
 }
 
 .table-wrap {
-  max-height: 72vh;
   background: #ffffff;
   border-radius: 0 0 12px 12px;
 }
