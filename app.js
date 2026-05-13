@@ -1991,10 +1991,15 @@ let _testReports = [];        // loaded from Supabase test_reports
 let _activityRecords = [];    // loaded from Supabase activity_records (future_test_reason store)
 
 // ── P6 Schedule globals ───────────────────────────────────────────────────────
-let P6_BATCHES  = [];   // p6_import_batches
-let P6_ACTS     = [];   // p6_activities (current batches only)
-let P6_MAP      = [];   // p6_activity_map
-let P6_PATTERNS = [];   // p6_learn_patterns
+let P6_BATCHES     = [];   // p6_import_batches
+let P6_ACTS        = [];   // p6_activities
+let P6_MAP         = [];   // p6_activity_map
+let P6_PATTERNS    = [];   // p6_learn_patterns
+let P6_DISMISSALS  = [];   // p6_activity_dismissals
+
+// ── Health tab filter state ───────────────────────────────────────────────────
+let _p6HealthFilter = { search: '', dateMode: 'all', dateFrom: '', dateTo: '' };
+let _p6HealthLinkOpen = new Set(); // p6 activity IDs with link-panel expanded
 let _trpFilters = { search:'', status:'', subsystem:'', phase:'', location:'' };
 let _trpExpanded = new Set();
 let _trpSyncInFlight = false;
@@ -6050,16 +6055,18 @@ async function loadActivityRecords() {
 // ── P6 data loader ────────────────────────────────────────────────────────────
 async function loadP6Data() {
   try {
-    const [batches, acts, map, patterns] = await Promise.all([
+    const [batches, acts, map, patterns, dismissals] = await Promise.all([
       _fetchAnon('p6_import_batches?select=*&order=imported_at.desc'),
       _fetchAnon('p6_activities?select=*&order=p6_location_code.asc,p6_name.asc'),
       _fetchAnon('p6_activity_map?select=*'),
       _fetchAnon('p6_learn_patterns?select=*&order=confidence.desc'),
+      _fetchAnon('p6_activity_dismissals?select=*'),
     ]);
-    P6_BATCHES  = batches  || [];
-    P6_ACTS     = acts     || [];
-    P6_MAP      = map      || [];
-    P6_PATTERNS = patterns || [];
+    P6_BATCHES    = batches    || [];
+    P6_ACTS       = acts       || [];
+    P6_MAP        = map        || [];
+    P6_PATTERNS   = patterns   || [];
+    P6_DISMISSALS = dismissals || [];
   } catch(e) { console.warn('[loadP6Data] failed:', e.message); }
 }
 
@@ -7457,6 +7464,18 @@ function _amComputeCompletion(act) {
   const done = eligible.filter(r => r.Status === 'Pass' || r.Status === 'Not Applicable' ||
     r.Status === 'Complete' || r.Status === 'Passed').length;
   return { done, total: eligible.length };
+}
+
+// Weighted completion using test_items.weight (Layer 2) — used for P6 progress display
+const _P6_DONE_STATUSES = new Set(['Pass','Passed','Complete','Not Applicable']);
+function _p6WeightedCompletion(act) {
+  const eligible = act.items.filter(r => r.Status !== 'Future Test');
+  const totalW   = eligible.reduce((s, r) => s + (parseFloat(r.weight) || 1), 0);
+  const doneW    = eligible
+    .filter(r => _P6_DONE_STATUSES.has(r.Status))
+    .reduce((s, r) => s + (parseFloat(r.weight) || 1), 0);
+  const pct = totalW > 0 ? Math.round((doneW / totalW) * 100) : 0;
+  return { doneW, totalW, pct };
 }
 
 function _amStatusBadge(s) {
@@ -9275,27 +9294,50 @@ async function _p6AcceptBatchSuggestions(suggestions) {
 
 // ─── HEALTH TAB ───────────────────────────────────────────────────────────────
 function _p6HealthTabHTML() {
-  if (!window._p6RemindLater) {
-    try {
-      const stored = localStorage.getItem('p6_remind_later');
-      window._p6RemindLater = stored ? new Set(JSON.parse(stored)) : new Set();
-    } catch(e) { window._p6RemindLater = new Set(); }
-  }
-
   const allPortal  = _amGetActivities();
   const curBatch   = P6_BATCHES.find(b => b.schedule_type === 'current'  && b.is_current);
   const baseBatch  = P6_BATCHES.find(b => b.schedule_type === 'baseline' && b.is_current);
 
-  // Use whichever batch exists — don't require current to find unlinked activities
+  // Use whichever batch exists — batch-agnostic unlinked detection
   const primaryBatch = curBatch || baseBatch;
   const allP6        = primaryBatch ? P6_ACTS.filter(a => a.batch_id === primaryBatch.id) : [];
   const p6Baseline   = baseBatch ? P6_ACTS.filter(a => a.batch_id === baseBatch.id) : [];
   const p6Current    = curBatch  ? P6_ACTS.filter(a => a.batch_id === curBatch.id)  : [];
 
-  const unlinkedP6     = allP6.filter(p =>
+  // Dismissed IDs (server-side, shared across all users)
+  const dismissedIds = new Set(P6_DISMISSALS.map(d => d.p6_activity_id));
+  const dismissedList = P6_DISMISSALS.map(d => allP6.find(p => p.id === d.p6_activity_id)).filter(Boolean);
+
+  let unlinkedP6 = allP6.filter(p =>
     !P6_MAP.some(m => m.p6_activity_id === p.id) &&
-    !window._p6RemindLater.has(p.id)
+    !dismissedIds.has(p.id)
   );
+
+  // ── Apply search filter ──
+  const srch = (_p6HealthFilter.search || '').toLowerCase().trim();
+  if (srch) unlinkedP6 = unlinkedP6.filter(p => (p.p6_name||'').toLowerCase().includes(srch) || (p.p6_id||'').toLowerCase().includes(srch));
+
+  // ── Apply date filter ──
+  const today = new Date(); today.setHours(0,0,0,0);
+  const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate()+n); return x; };
+  if (_p6HealthFilter.dateMode !== 'all') {
+    let from = null, to = null;
+    if (_p6HealthFilter.dateMode === '30d')   { to = addDays(today, 30); }
+    if (_p6HealthFilter.dateMode === '6m')    { to = addDays(today, 182); }
+    if (_p6HealthFilter.dateMode === '1y')    { to = addDays(today, 365); }
+    if (_p6HealthFilter.dateMode === 'range') {
+      from = _p6HealthFilter.dateFrom ? new Date(_p6HealthFilter.dateFrom) : null;
+      to   = _p6HealthFilter.dateTo   ? new Date(_p6HealthFilter.dateTo)   : null;
+    }
+    unlinkedP6 = unlinkedP6.filter(p => {
+      if (!p.start_date) return false;
+      const sd = new Date(p.start_date);
+      if (from && sd < from) return false;
+      if (to   && sd > to)   return false;
+      return true;
+    });
+  }
+
   const unlinkedPortal = allPortal.filter(a => !_p6IsActivityLinked(a));
 
   // Date changes: compare current vs baseline by P6 ID
@@ -9311,30 +9353,63 @@ function _p6HealthTabHTML() {
   }).filter(Boolean);
 
   const batchLabel = primaryBatch
-    ? `${primaryBatch.schedule_type === 'current' ? 'Current' : 'Baseline'} schedule · ${primaryBatch.imported_at ? _fmtDate(primaryBatch.imported_at) : ''}`
+    ? `${primaryBatch.schedule_type === 'current' ? 'Current' : 'Baseline'} · imported ${primaryBatch.imported_at ? _fmtDate(primaryBatch.imported_at) : ''}`
     : '';
+
+  // Portal activities list for the link-from-health dropdown
+  const portalOpts = allPortal.map(a =>
+    `<option value="${escapeHtml(a.key)}">${escapeHtml(a.phase)} | ${escapeHtml(a.location)} | ${escapeHtml(a.subsystem)} | ${escapeHtml(a.activity)}</option>`
+  ).join('');
 
   return `
     <div style="display:flex;flex-direction:column;gap:18px;">
 
-      <!-- ── Unlinked P6 Activities (full-width) ── -->
+      <!-- ── Unlinked P6 Activities ── -->
       <div class="data-card" style="padding:20px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+
+        <!-- Header row -->
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
           <div>
             <span style="font-size:13px;font-weight:700;">🔴 Unlinked P6 Activities</span>
             <span class="badge badge-review" style="margin-left:8px;font-size:11px;">${unlinkedP6.length}</span>
             ${batchLabel ? `<span style="font-size:11px;color:var(--gray-500);margin-left:10px;">(${escapeHtml(batchLabel)})</span>` : ''}
+            ${dismissedList.length ? `<button class="form-secondary tr-mini-btn" style="margin-left:12px;" onclick="_p6HShowDismissed()">👁 Show ${dismissedList.length} snoozed</button>` : ''}
           </div>
           ${unlinkedP6.length ? `
-          <div style="display:flex;gap:8px;align-items:center;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;">
               <input type="checkbox" id="p6h-sel-all" onchange="_p6HSelectAll(this.checked)"> Select all
             </label>
-            <button class="form-secondary tr-mini-btn" onclick="_p6HBulkRemindLater()">⏰ Remind Later (selected)</button>
-            <button class="form-secondary tr-mini-btn" style="color:#dc2626;" onclick="_p6HBulkRemove()">🗑 Remove Selected</button>
+            <button class="form-secondary tr-mini-btn" onclick="_p6HBulkRemindLater()">⏰ Snooze selected</button>
+            <button class="form-secondary tr-mini-btn" style="color:#dc2626;" onclick="_p6HBulkRemove()">🗑 Remove selected</button>
           </div>` : ''}
         </div>
 
+        <!-- Filters row -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
+          <input class="form-input" type="text" placeholder="🔍 Search P6 activity name…" style="flex:1;min-width:180px;max-width:320px;font-size:12px;"
+            value="${escapeHtml(_p6HealthFilter.search)}"
+            oninput="_p6HealthFilter.search=this.value;renderAdminP6()">
+          <select class="filter-select" style="font-size:12px;" onchange="_p6HDateMode(this.value)">
+            <option value="all"   ${_p6HealthFilter.dateMode==='all'  ?'selected':''}>All start dates</option>
+            <option value="30d"   ${_p6HealthFilter.dateMode==='30d'  ?'selected':''}>Starting within 30 days</option>
+            <option value="6m"    ${_p6HealthFilter.dateMode==='6m'   ?'selected':''}>Starting within 6 months</option>
+            <option value="1y"    ${_p6HealthFilter.dateMode==='1y'   ?'selected':''}>Starting within 1 year</option>
+            <option value="range" ${_p6HealthFilter.dateMode==='range'?'selected':''}>Custom date range</option>
+          </select>
+          ${_p6HealthFilter.dateMode === 'range' ? `
+            <input type="date" class="form-input" style="font-size:12px;width:140px;" value="${_p6HealthFilter.dateFrom}"
+              onchange="_p6HealthFilter.dateFrom=this.value;renderAdminP6()">
+            <span style="font-size:12px;color:var(--gray-500);">to</span>
+            <input type="date" class="form-input" style="font-size:12px;width:140px;" value="${_p6HealthFilter.dateTo}"
+              onchange="_p6HealthFilter.dateTo=this.value;renderAdminP6()">
+          ` : ''}
+          ${srch || _p6HealthFilter.dateMode !== 'all' ? `
+            <button class="form-secondary tr-mini-btn" onclick="_p6HealthFilter={search:'',dateMode:'all',dateFrom:'',dateTo:''};renderAdminP6()">✕ Clear filters</button>
+          ` : ''}
+        </div>
+
+        <!-- Table -->
         ${unlinkedP6.length ? `
         <div style="overflow-x:auto;">
           <table class="data-table" style="width:100%;">
@@ -9345,25 +9420,54 @@ function _p6HealthTabHTML() {
                 <th>P6 ID</th>
                 <th>Start</th>
                 <th>Finish</th>
-                <th style="width:160px;text-align:center;">Actions</th>
+                <th style="min-width:220px;text-align:center;">Actions</th>
               </tr>
             </thead>
             <tbody>
-              ${unlinkedP6.map(p => `
+              ${unlinkedP6.map(p => {
+                const linkOpen = _p6HealthLinkOpen.has(p.id);
+                const escapedId = escapeHtml(p.id);
+                return `
                 <tr>
-                  <td><input type="checkbox" class="p6h-chk" data-pid="${escapeHtml(p.id)}" onchange="_p6HUpdateSelCount()"></td>
+                  <td><input type="checkbox" class="p6h-chk" data-pid="${escapedId}" onchange="_p6HUpdateSelCount()"></td>
                   <td style="font-weight:500;">${escapeHtml(p.p6_name)}</td>
                   <td style="color:var(--gray-500);font-size:11px;">${escapeHtml(p.p6_id||'')}</td>
                   <td style="font-size:12px;">${p.start_date  ? _fmtDate(p.start_date)  : '—'}</td>
                   <td style="font-size:12px;">${p.finish_date ? _fmtDate(p.finish_date) : '—'}</td>
                   <td style="text-align:center;white-space:nowrap;">
-                    <button class="form-secondary tr-mini-btn" title="Remind me later" onclick="_p6HRemindLater('${escapeHtml(p.id)}')">⏰ Remind Later</button>
-                    <button class="form-secondary tr-mini-btn" style="color:#dc2626;" title="Remove from schedule" onclick="_p6HRemove('${escapeHtml(p.id)}','${escapeHtml(p.p6_name).replace(/'/g,"\\'")}')">🗑 Remove</button>
+                    <button class="form-secondary tr-mini-btn" onclick="_p6HToggleLink('${escapedId}')"
+                      style="${linkOpen?'background:var(--hitachi-red);color:#fff;':''}" >
+                      🔗 Link to Activity
+                    </button>
+                    <button class="form-secondary tr-mini-btn" title="Snooze — hide until restored" onclick="_p6HRemindLater('${escapedId}')">⏰</button>
+                    <button class="form-secondary tr-mini-btn" style="color:#dc2626;" title="Remove from schedule" onclick="_p6HRemove('${escapedId}','${escapeHtml(p.p6_name).replace(/'/g,"\\'")}')">🗑</button>
                   </td>
-                </tr>`).join('')}
+                </tr>
+                ${linkOpen ? `
+                <tr>
+                  <td colspan="6" style="padding:12px 16px;background:var(--gray-50);border-bottom:2px solid var(--hitachi-red);">
+                    <div style="display:flex;flex-direction:column;gap:8px;max-width:600px;">
+                      <div style="font-size:12px;font-weight:600;color:var(--gray-700);">
+                        Link <em>${escapeHtml(p.p6_name)}</em> to one or more portal activities:
+                      </div>
+                      <select id="p6h-link-sel-${escapedId}" class="form-input" multiple size="5" style="font-size:12px;">
+                        ${portalOpts}
+                      </select>
+                      <div style="font-size:11px;color:var(--gray-500);">Hold Ctrl / Cmd to select multiple activities.</div>
+                      <div style="display:flex;gap:8px;">
+                        <button class="admin-action-btn" style="font-size:12px;padding:6px 14px;" onclick="_p6HLinkSave('${escapedId}')">Save Links</button>
+                        <button class="form-secondary" style="font-size:12px;padding:6px 14px;" onclick="_p6HToggleLink('${escapedId}')">Cancel</button>
+                      </div>
+                    </div>
+                  </td>
+                </tr>` : ''}`;
+              }).join('')}
             </tbody>
           </table>
-        </div>` : `<div style="color:var(--good);font-size:12px;">✓ All P6 activities are linked</div>`}
+        </div>`
+        : `<div style="padding:12px 0;color:${srch||_p6HealthFilter.dateMode!=='all'?'var(--gray-500)':'var(--good)'};font-size:12px;">
+            ${srch||_p6HealthFilter.dateMode!=='all' ? 'No activities match the current filters.' : '✓ All P6 activities are linked'}
+           </div>`}
       </div>
 
       <!-- ── Lower 3-column grid ── -->
@@ -9423,15 +9527,132 @@ function _p6HealthTabHTML() {
     </div>`;
 }
 
-// Per-row: Remind Later
-function _p6HRemindLater(pid) {
-  if (!window._p6RemindLater) window._p6RemindLater = new Set();
-  window._p6RemindLater.add(pid);
-  try { localStorage.setItem('p6_remind_later', JSON.stringify([...window._p6RemindLater])); } catch(e) {}
+// ── Health tab filter helpers ─────────────────────────────────────────────────
+function _p6HDateMode(mode) {
+  _p6HealthFilter.dateMode = mode;
+  if (mode !== 'range') { _p6HealthFilter.dateFrom = ''; _p6HealthFilter.dateTo = ''; }
   renderAdminP6();
 }
 
-// Per-row: Remove from schedule (deletes p6_activities row)
+// ── Link toggle ───────────────────────────────────────────────────────────────
+function _p6HToggleLink(pid) {
+  _p6HealthLinkOpen.has(pid) ? _p6HealthLinkOpen.delete(pid) : _p6HealthLinkOpen.add(pid);
+  renderAdminP6();
+}
+
+// Save links from Health tab: one P6 activity → one or more portal activities
+async function _p6HLinkSave(p6Id) {
+  const sel = document.getElementById(`p6h-link-sel-${p6Id}`);
+  if (!sel) return;
+  const keys = [...sel.selectedOptions].map(o => o.value);
+  if (!keys.length) { toast('Select at least one portal activity', 'error'); return; }
+
+  const allPortal = _amGetActivities();
+  let linked = 0;
+  for (const key of keys) {
+    const a = allPortal.find(x => x.key === key);
+    if (!a) continue;
+    const { phase, location, subsystem, activity } = a;
+    // Skip if already linked
+    const alreadyLinked = P6_MAP.some(m =>
+      m.p6_activity_id === p6Id &&
+      m.portal_phase === phase && m.portal_location === location &&
+      m.portal_subsystem === subsystem && m.portal_activity === activity &&
+      !m.portal_test_case_code);
+    if (alreadyLinked) continue;
+    try {
+      await _dbInsert('p6_activity_map', [{
+        p6_activity_id: p6Id,
+        portal_phase: phase, portal_location: location,
+        portal_subsystem: subsystem, portal_activity: activity,
+      }]);
+      linked++;
+    } catch(e) { console.warn('[_p6HLinkSave]', e.message); }
+  }
+  if (linked > 0) {
+    toast(`Linked to ${linked} portal activit${linked===1?'y':'ies'}`, 'success');
+    _p6HealthLinkOpen.delete(p6Id);
+    await loadP6Data();
+  } else {
+    toast('All selected activities were already linked', 'info');
+  }
+}
+
+// ── Snooze / Dismiss (server-side, shared across all users) ──────────────────
+async function _p6HRemindLater(pid) {
+  try {
+    await _dbInsert('p6_activity_dismissals', [{ p6_activity_id: pid, dismissed_by: currentRoleUser?.name || 'admin' }]);
+    toast('Snoozed — click "Show snoozed" to restore', 'success');
+    await loadP6Data();
+  } catch(e) { toast('Snooze failed: ' + e.message, 'error'); }
+}
+
+async function _p6HBulkRemindLater() {
+  const sel = [...document.querySelectorAll('.p6h-chk:checked')].map(c => c.dataset.pid);
+  if (!sel.length) { toast('Select at least one activity', 'error'); return; }
+  try {
+    for (const pid of sel) {
+      await _dbInsert('p6_activity_dismissals', [{ p6_activity_id: pid, dismissed_by: currentRoleUser?.name || 'admin' }]);
+    }
+    toast(`${sel.length} activit${sel.length===1?'y':'ies'} snoozed`, 'success');
+    await loadP6Data();
+  } catch(e) { toast('Snooze failed: ' + e.message, 'error'); }
+}
+
+// Show modal listing all snoozed activities with a restore option
+function _p6HShowDismissed() {
+  const allPortal = _amGetActivities(); // for context (unused here but available)
+  const dismissed = P6_DISMISSALS.map(d => {
+    const p = P6_ACTS.find(x => x.id === d.p6_activity_id);
+    return p ? { ...d, p6_name: p.p6_name, p6_id: p.p6_id } : { ...d, p6_name: d.p6_activity_id, p6_id: '' };
+  });
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal-box" style="max-width:560px;width:95%;">
+      <div class="modal-head">
+        <div class="modal-title">⏰ Snoozed P6 Activities (${dismissed.length})</div>
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
+      </div>
+      <div class="modal-body" style="max-height:400px;overflow-y:auto;">
+        ${dismissed.length ? dismissed.map(d => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--gray-100);gap:12px;">
+            <div style="font-size:12px;">
+              <div style="font-weight:600;">${escapeHtml(d.p6_name)}</div>
+              <div style="color:var(--gray-500);font-size:11px;">Snoozed by ${escapeHtml(d.dismissed_by||'—')} on ${_fmtDate(d.dismissed_at)}</div>
+            </div>
+            <button class="form-secondary tr-mini-btn" onclick="_p6HRestoreOne('${escapeHtml(d.id)}',this)">Restore</button>
+          </div>`).join('')
+        : `<div style="font-size:12px;color:var(--gray-500);">Nothing snoozed.</div>`}
+      </div>
+      <div class="modal-foot">
+        ${dismissed.length ? `<button class="admin-action-btn" onclick="_p6HRestoreAll()">Restore All</button>` : ''}
+        <button class="form-secondary" onclick="this.closest('.modal-overlay').remove()">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+async function _p6HRestoreOne(dismissalId, btn) {
+  try {
+    await _dbDelete('p6_activity_dismissals', { id: dismissalId });
+    btn?.closest('div[style]')?.remove();
+    await loadP6Data();
+    toast('Activity restored to unlinked list', 'success');
+  } catch(e) { toast('Restore failed: ' + e.message, 'error'); }
+}
+
+async function _p6HRestoreAll() {
+  try {
+    for (const d of P6_DISMISSALS) await _dbDelete('p6_activity_dismissals', { id: d.id });
+    document.querySelector('.modal-overlay')?.remove();
+    await loadP6Data();
+    toast('All snoozed activities restored', 'success');
+  } catch(e) { toast('Restore failed: ' + e.message, 'error'); }
+}
+
+// ── Remove from schedule (deletes p6_activities row) ─────────────────────────
 async function _p6HRemove(pid, name) {
   if (!confirm(`Remove "${name}" from the P6 schedule? This deletes the imported activity row.`)) return;
   try {
@@ -9441,23 +9662,6 @@ async function _p6HRemove(pid, name) {
   } catch(e) { toast('Remove failed: ' + e.message, 'error'); }
 }
 
-// Bulk: toggle all checkboxes
-function _p6HSelectAll(checked) {
-  document.querySelectorAll('.p6h-chk').forEach(c => c.checked = checked);
-}
-
-// Bulk: Remind Later for selected
-function _p6HBulkRemindLater() {
-  const sel = [...document.querySelectorAll('.p6h-chk:checked')].map(c => c.dataset.pid);
-  if (!sel.length) { toast('Select at least one activity', 'error'); return; }
-  if (!window._p6RemindLater) window._p6RemindLater = new Set();
-  sel.forEach(pid => window._p6RemindLater.add(pid));
-  try { localStorage.setItem('p6_remind_later', JSON.stringify([...window._p6RemindLater])); } catch(e) {}
-  toast(`${sel.length} activit${sel.length===1?'y':'ies'} snoozed`, 'success');
-  renderAdminP6();
-}
-
-// Bulk: Remove selected from schedule
 async function _p6HBulkRemove() {
   const sel = [...document.querySelectorAll('.p6h-chk:checked')].map(c => c.dataset.pid);
   if (!sel.length) { toast('Select at least one activity', 'error'); return; }
@@ -9469,7 +9673,11 @@ async function _p6HBulkRemove() {
   } catch(e) { toast('Bulk remove failed: ' + e.message, 'error'); }
 }
 
-// Update select-all checkbox state when individual boxes change
+// ── Select-all checkbox helpers ───────────────────────────────────────────────
+function _p6HSelectAll(checked) {
+  document.querySelectorAll('.p6h-chk').forEach(c => c.checked = checked);
+}
+
 function _p6HUpdateSelCount() {
   const all  = document.querySelectorAll('.p6h-chk');
   const chkd = document.querySelectorAll('.p6h-chk:checked');
@@ -9805,14 +10013,13 @@ function renderSchedulePage() {
     const p6Show  = p6Cur || p6Base;
     const p6Label = !p6Cur && p6Base ? '(Baseline)' : '';
 
-    const { done, total } = _amComputeCompletion(a);
-    const pct = total > 0 ? Math.round((done/total)*100) : 0;
+    const { pct, doneW, totalW } = _p6WeightedCompletion(a);
     const status = _amComputeStatus(a);
 
     const finDiff = p6Cur && p6Base && p6Cur.finish_date && p6Base.finish_date
       ? Math.round((new Date(p6Cur.finish_date) - new Date(p6Base.finish_date)) / 86400000) : null;
 
-    return { a, rec, p6Show, p6Label, p6Cur, p6Base, pct, status, finDiff, done, total };
+    return { a, rec, p6Show, p6Label, p6Cur, p6Base, pct, doneW, totalW, status, finDiff };
   });
 
   cont.innerHTML = `
@@ -9845,7 +10052,7 @@ function renderSchedulePage() {
               </tr>
             </thead>
             <tbody>
-              ${rows.map(({a, rec, p6Show, p6Label, finDiff, pct, status}) => `
+              ${rows.map(({a, rec, p6Show, p6Label, finDiff, pct, doneW, totalW, status}) => `
                 <tr>
                   <td style="font-size:12px;font-weight:500;">${escapeHtml(a.activity)}</td>
                   <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
@@ -9861,7 +10068,7 @@ function renderSchedulePage() {
                   <td style="font-size:12px;font-weight:600;${finDiff===null?'':finDiff>0?'color:#dc2626;':finDiff<0?'color:#059669;':''}">
                     ${finDiff === null ? '<span style="color:var(--gray-400);">—</span>' : finDiff === 0 ? 'On time' : `${finDiff>0?'+':''}${finDiff}d`}
                   </td>
-                  <td>
+                  <td title="Weighted by test case weight: ${doneW.toFixed(1)} / ${totalW.toFixed(1)} pts">
                     <div class="am-progress-wrap">
                       <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;background:${pct===100?'var(--good)':pct>0?'var(--info)':'var(--gray-300)'};"></div></div>
                       <span class="am-progress-label">${pct}%</span>
