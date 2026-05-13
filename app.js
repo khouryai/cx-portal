@@ -10344,14 +10344,25 @@ function _assetParsePrefix(name) {
   return parts[0] || '';
 }
 
-function _assetFindParentRow(testCaseCode, locationPrefix) {
-  const code   = (testCaseCode || '').trim().toUpperCase();
+function _assetFindParentRow(testCaseName, locationPrefix, subsystem) {
+  const name   = (testCaseName || '').trim().toLowerCase();
   const prefix = (locationPrefix || '').toUpperCase();
-  const matches = TI.filter(r =>
-    !r.ParentTestId &&
-    (r.TestCaseCode || '').toUpperCase() === code &&
-    (r.Location     || '').toUpperCase().replace(/\s+/g,'').startsWith(prefix.replace(/\s+/g,''))
-  );
+  const sub    = (subsystem || '').toLowerCase();
+  const matches = TI.filter(r => {
+    if (r.ParentTestId) return false;                                                       // exclude child rows
+    if ((r.TestName || '').trim().toLowerCase() !== name) return false;                     // name match
+    if (prefix && !(r.Location || '').toUpperCase().replace(/\s+/g,'').startsWith(prefix.replace(/\s+/g,''))) return false; // location prefix
+    if (sub && (r.Subsystem || '').toLowerCase() !== sub) return false;                     // subsystem (optional)
+    return true;
+  });
+  // If subsystem filtered to nothing, fall back without subsystem
+  if (!matches.length && sub) {
+    return TI.find(r =>
+      !r.ParentTestId &&
+      (r.TestName || '').trim().toLowerCase() === name &&
+      (r.Location || '').toUpperCase().replace(/\s+/g,'').startsWith(prefix.replace(/\s+/g,''))
+    ) || null;
+  }
   return matches[0] || null;
 }
 
@@ -10477,12 +10488,13 @@ async function _assetImportCSV(file) {
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) { toast('CSV has no data rows', 'error'); return; }
 
-  // Parse header: Device Type | Device Name | Test Case
+  // Parse header: Device Type | Device Name | Subsystem | Test Case Name
   const header = lines[0].split(',').map(h => h.trim().toLowerCase());
   const iType  = header.findIndex(h => h.includes('type'));
-  const iName  = header.findIndex(h => h.includes('name') || h.includes('device'));
-  const iTc    = header.findIndex(h => h.includes('test'));
-  if (iName < 0 || iTc < 0) { toast('CSV must have "Device Name" and "Test Case" columns', 'error'); return; }
+  const iName  = header.findIndex(h => h.includes('device name') || (h.includes('name') && !h.includes('test')));
+  const iSub   = header.findIndex(h => h.includes('subsystem'));
+  const iTc    = header.findIndex(h => h.includes('test case') || h.includes('test name'));
+  if (iName < 0 || iTc < 0) { toast('CSV must have "Device Name" and "Test Case Name" columns', 'error'); return; }
 
   // Create import batch
   const [batch] = await _dbInsert('asset_import_batches', [{
@@ -10498,16 +10510,18 @@ async function _assetImportCSV(file) {
     const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
     const deviceType = iType >= 0 ? (cols[iType] || '') : '';
     const deviceName = cols[iName] || '';
-    const tcRaw      = cols[iTc]   || '';
+    const subsystem  = iSub >= 0  ? (cols[iSub]  || '') : '';
+    const tcRaw      = cols[iTc]  || '';
     if (!deviceName) continue;
 
     const prefix = _assetParsePrefix(deviceName);
 
     // Upsert asset
     let [assetRow] = await _dbUpsert('assets', [{
-      device_type: deviceType || null,
-      name: deviceName,
-      location_prefix: prefix || null,
+      device_type:     deviceType || null,
+      name:            deviceName,
+      location_prefix: prefix     || null,
+      subsystem:       subsystem  || null,
       import_batch_id: batch.id,
     }], 'name');
     if (!assetRow) {
@@ -10519,10 +10533,10 @@ async function _assetImportCSV(file) {
     const aIdx = ASSETS.findIndex(a => a.name === deviceName);
     if (aIdx >= 0) ASSETS[aIdx] = assetRow; else ASSETS.push(assetRow);
 
-    // Link each test case code
+    // Link each test case name (pipe-separated)
     const tcCodes = tcRaw.split('|').map(t => t.trim()).filter(Boolean);
     for (const code of tcCodes) {
-      const parentRow = _assetFindParentRow(code, prefix);
+      const parentRow = _assetFindParentRow(code, prefix, subsystem);
       if (!parentRow) { skippedTc.push(`${deviceName} → ${code}`); continue; }
       try {
         await _assetLinkToParent(assetRow, parentRow);
@@ -10616,7 +10630,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
 }
 
 // ── Admin Asset page state ────────────────────────────────────────────────────
-let _assetFilter = { search: '', type: '', prefix: '' };
+let _assetFilter = { search: '', type: '', prefix: '', sub: '' };
 let _assetManagePanelId = null; // asset id whose link-panel is open
 
 function renderAdminAssets() {
@@ -10625,18 +10639,33 @@ function renderAdminAssets() {
   root.innerHTML = _assetPageHTML();
 }
 
+function _assetDownloadTemplate() {
+  const headers = 'Device Type,Device Name,Subsystem,Test Case Name';
+  const example = [
+    'ATC Cabinet,W40-AC01,ATS Software SAT - Static,ATS-MLK Functional Bit Verification Test',
+    'ATC Cabinet,W40-AC01,ATS Software SAT - Static,ATS Initialization Test | ATS Mode Control Test',
+    'Speed Sensor,W40-SS02,ATS Hardware,Speed Sensor Calibration Test',
+  ].join('\n');
+  const blob = new Blob([headers + '\n' + example], { type: 'text/csv' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'asset_import_template.csv'; a.click();
+}
+
 function _assetPageHTML() {
   const isAdmin = currentRoleUser?.role === 'admin';
   if (!isAdmin) return `<div class="docs-empty"><h3>Admin access required</h3></div>`;
 
   const types    = [...new Set(ASSETS.map(a => a.device_type).filter(Boolean))].sort();
   const prefixes = [...new Set(ASSETS.map(a => a.location_prefix).filter(Boolean))].sort();
+  const subs     = [...new Set(ASSETS.map(a => a.subsystem).filter(Boolean))].sort();
+  const allSubs  = [...new Set(TI.map(r => r.Subsystem).filter(Boolean))].sort();
 
   const filtered = ASSETS.filter(a => {
     const s = _assetFilter.search.toLowerCase();
     if (s && !a.name.toLowerCase().includes(s) && !(a.device_type||'').toLowerCase().includes(s)) return false;
-    if (_assetFilter.type   && a.device_type      !== _assetFilter.type)   return false;
-    if (_assetFilter.prefix && a.location_prefix  !== _assetFilter.prefix) return false;
+    if (_assetFilter.type   && a.device_type     !== _assetFilter.type)   return false;
+    if (_assetFilter.prefix && a.location_prefix !== _assetFilter.prefix) return false;
+    if (_assetFilter.sub    && a.subsystem        !== _assetFilter.sub)    return false;
     return true;
   });
 
@@ -10647,11 +10676,14 @@ function _assetPageHTML() {
         <div class="admin-section-header"><h3 class="admin-section-title">📥 Import Assets (CSV)</h3></div>
         <div style="padding:16px;">
           <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px;">
-            CSV columns: <code>Device Type, Device Name, Test Case</code><br>
-            Multiple test cases per row: separate with <code>|</code> (e.g. <code>CTP.01.01 | CTP.02.03</code>)
+            Columns: <code>Device Type, Device Name, Subsystem, Test Case Name</code><br>
+            Multiple test cases per row: separate with <code>|</code>
           </p>
-          <input type="file" id="asset-csv-input" accept=".csv" style="display:none;" onchange="_assetHandleFile(this.files[0])">
-          <button class="admin-action-btn" onclick="document.getElementById('asset-csv-input').click()">Choose CSV File</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <input type="file" id="asset-csv-input" accept=".csv" style="display:none;" onchange="_assetHandleFile(this.files[0])">
+            <button class="admin-action-btn" onclick="document.getElementById('asset-csv-input').click()">📂 Choose CSV File</button>
+            <button class="form-secondary" onclick="_assetDownloadTemplate()">⬇ Download Template</button>
+          </div>
           ${ASSET_BATCHES.length ? `
             <div style="margin-top:12px;font-size:12px;color:var(--gray-500);">
               Last import: <strong>${escapeHtml(ASSET_BATCHES[0].filename||'—')}</strong> by ${escapeHtml(ASSET_BATCHES[0].imported_by||'—')}
@@ -10666,6 +10698,10 @@ function _assetPageHTML() {
         <div style="padding:16px;display:flex;flex-direction:column;gap:8px;">
           <input id="asset-add-type" class="form-input" placeholder="Device Type (e.g. ATC Cabinet)">
           <input id="asset-add-name" class="form-input" placeholder="Device Name (e.g. W40-AC01)" oninput="_assetPreviewPrefix()">
+          <select id="asset-add-sub" class="form-input">
+            <option value="">Subsystem (optional)</option>
+            ${allSubs.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
+          </select>
           <div id="asset-add-prefix-preview" style="font-size:12px;color:var(--gray-500);"></div>
           <button class="admin-action-btn" onclick="_assetAddManual()">Add Asset</button>
         </div>
@@ -10688,15 +10724,19 @@ function _assetPageHTML() {
 
     <!-- Filter Bar -->
     <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
-      <input class="form-input" style="max-width:240px;" placeholder="Search name or type…"
+      <input class="form-input" style="max-width:220px;" placeholder="Search name or type…"
         value="${escapeHtml(_assetFilter.search)}" oninput="_assetSetFilter('search',this.value)">
-      <select class="form-input" style="max-width:180px;" onchange="_assetSetFilter('type',this.value)">
+      <select class="form-input" style="max-width:160px;" onchange="_assetSetFilter('type',this.value)">
         <option value="">All Types</option>
         ${types.map(t => `<option value="${escapeHtml(t)}" ${_assetFilter.type===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}
       </select>
-      <select class="form-input" style="max-width:160px;" onchange="_assetSetFilter('prefix',this.value)">
+      <select class="form-input" style="max-width:140px;" onchange="_assetSetFilter('prefix',this.value)">
         <option value="">All Locations</option>
         ${prefixes.map(p => `<option value="${escapeHtml(p)}" ${_assetFilter.prefix===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
+      </select>
+      <select class="form-input" style="max-width:220px;" onchange="_assetSetFilter('sub',this.value)">
+        <option value="">All Subsystems</option>
+        ${subs.map(s => `<option value="${escapeHtml(s)}" ${_assetFilter.sub===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
       </select>
       <span style="font-size:13px;color:var(--gray-500);">${filtered.length} asset${filtered.length!==1?'s':''}</span>
     </div>
@@ -10708,6 +10748,7 @@ function _assetPageHTML() {
           <thead><tr>
             <th>Device Name</th>
             <th>Type</th>
+            <th>Subsystem</th>
             <th>Location</th>
             <th>Linked Test Cases</th>
             <th>Progress</th>
@@ -10715,7 +10756,7 @@ function _assetPageHTML() {
           </tr></thead>
           <tbody>
             ${filtered.length ? filtered.map(a => _assetRowHTML(a)).join('') : `
-              <tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:32px;">
+              <tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:32px;">
                 No assets found. Import a CSV or add one manually.
               </td></tr>`}
           </tbody>
@@ -10738,6 +10779,7 @@ function _assetRowHTML(a) {
     <tr>
       <td style="font-weight:600;font-family:monospace;font-size:13px;">${escapeHtml(a.name)}</td>
       <td style="font-size:13px;">${escapeHtml(a.device_type || '—')}</td>
+      <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.subsystem || '—')}</td>
       <td><span style="font-size:12px;background:#f3f4f6;padding:2px 8px;border-radius:4px;">${escapeHtml(a.location_prefix || '—')}</span></td>
       <td style="font-size:13px;">${links.length} test case${links.length!==1?'s':''}</td>
       <td>
@@ -10758,7 +10800,7 @@ function _assetRowHTML(a) {
 }
 
 function _assetManagePanelHTML(assetId) {
-  const asset  = ASSETS.find(a => a.id === assetId);
+  const asset = ASSETS.find(a => a.id === assetId);
   if (!asset) return '';
   const links  = ASSET_LINKS.filter(l => l.asset_id === assetId);
   const linked = links.map(l => {
@@ -10767,50 +10809,105 @@ function _assetManagePanelHTML(assetId) {
     return { link: l, parent, child };
   }).filter(x => x.parent);
 
-  // All parent test_items (not yet linked to this asset) for the add dropdown
-  const allParents = TI.filter(r =>
-    r.IsParent &&
-    !links.some(l => String(l.parent_test_id) === String(r.TestID))
+  // Candidate rows for linking: any non-child test item not already linked to this asset
+  // Optionally pre-filtered by asset's subsystem and location prefix
+  const alreadyLinked = new Set(links.map(l => String(l.parent_test_id)));
+  const candidates = TI.filter(r =>
+    !r.ParentTestId &&                   // not a child row itself
+    !alreadyLinked.has(String(r.TestID)) // not already linked
   );
 
-  const sc = (s) => _assetStatusColor(s);
+  // Filter by asset subsystem if set
+  const subFiltered = asset.subsystem
+    ? candidates.filter(r => (r.Subsystem || '') === asset.subsystem)
+    : candidates;
+
+  // Build activity list from candidates
+  const activityOptions = [...new Set(subFiltered.map(r => r.Activity).filter(Boolean))].sort();
+
+  const sc = s => _assetStatusColor(s);
 
   return `
     <div class="admin-section" style="margin-top:20px;border:2px solid var(--primary);">
       <div class="admin-section-header" style="display:flex;justify-content:space-between;align-items:center;">
-        <h3 class="admin-section-title">🔗 Linked Test Cases — ${escapeHtml(asset.name)}</h3>
+        <h3 class="admin-section-title">🔗 Linked Test Cases — ${escapeHtml(asset.name)}
+          ${asset.subsystem ? `<span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:8px;">${escapeHtml(asset.subsystem)}</span>` : ''}
+        </h3>
         <button class="form-secondary" onclick="_assetCloseManageLinks()">Close ✕</button>
       </div>
       <div style="padding:16px;">
-        ${linked.length ? `
-          <table class="data-table" style="margin-bottom:16px;">
-            <thead><tr><th>Test Case</th><th>Activity</th><th>Status</th><th>Weight</th><th></th></tr></thead>
-            <tbody>
-              ${linked.map(({link, parent, child}) => `
-                <tr>
-                  <td style="font-family:monospace;font-size:12px;">${escapeHtml(parent.TestCaseCode||parent.TestID)}<br>
-                    <span style="font-size:11px;color:var(--gray-500);">${escapeHtml(parent.TestName||'')}</span></td>
-                  <td style="font-size:12px;">${escapeHtml(parent.Activity||'')}<br>
-                    <span style="font-size:11px;color:var(--gray-500);">${escapeHtml(parent.Location||'')} · ${escapeHtml(parent.Phase||'')}</span></td>
-                  <td>${child ? `<span style="font-size:12px;font-weight:600;color:${sc(child.Status)}">${escapeHtml(child.Status||'Not Started')}</span>` : '—'}</td>
-                  <td style="font-size:12px;">${child ? (parseFloat(child.Weight)||0).toFixed(3) : '—'}</td>
-                  <td><button class="form-secondary tr-mini-btn" style="color:var(--bad);"
-                    onclick="_assetUnlinkConfirm('${assetId}','${link.parent_test_id}')">Unlink</button></td>
-                </tr>`).join('')}
-            </tbody>
-          </table>` : `<p style="color:var(--gray-400);font-size:13px;">No test cases linked yet.</p>`}
 
-        <!-- Link to additional parent rows -->
-        ${allParents.length ? `
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-            <select id="asset-link-select-${assetId}" class="form-input" style="max-width:360px;">
-              <option value="">— Select test case to link —</option>
-              ${allParents.map(p => `<option value="${escapeHtml(String(p.TestID))}">${escapeHtml(p.TestCaseCode||'')} · ${escapeHtml(p.TestName||'')} (${escapeHtml(p.Location||'')})</option>`).join('')}
-            </select>
-            <button class="admin-action-btn" onclick="_assetLinkFromPanel('${assetId}')">Add Link</button>
-          </div>` : `<p style="font-size:12px;color:var(--gray-400);">All parent test cases are already linked.</p>`}
+        <!-- Currently linked test cases -->
+        ${linked.length ? `
+          <div style="margin-bottom:20px;">
+            <div style="font-size:12px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Currently Linked</div>
+            <table class="data-table">
+              <thead><tr><th>Test Case</th><th>Activity</th><th>Status</th><th>Weight</th><th></th></tr></thead>
+              <tbody>
+                ${linked.map(({link, parent, child}) => `
+                  <tr>
+                    <td>
+                      <div style="font-weight:600;font-size:13px;">${escapeHtml(parent.TestName||'—')}</div>
+                      <div style="font-size:11px;font-family:monospace;color:var(--gray-500);">${escapeHtml(parent.TestCaseCode||'')}</div>
+                    </td>
+                    <td style="font-size:12px;">${escapeHtml(parent.Activity||'—')}<br>
+                      <span style="font-size:11px;color:var(--gray-500);">${escapeHtml(parent.Location||'')} · ${escapeHtml(parent.Phase||'')}</span></td>
+                    <td><span style="font-size:12px;font-weight:600;color:${sc(child?.Status||'Not Started')}">${escapeHtml(child?.Status||'Not Started')}</span></td>
+                    <td style="font-size:12px;">${child ? (parseFloat(child.Weight)||0).toFixed(3) : '—'}</td>
+                    <td><button class="form-secondary tr-mini-btn" style="color:var(--bad);"
+                      onclick="_assetUnlinkConfirm('${assetId}','${link.parent_test_id}')">Unlink</button></td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>` : `<p style="color:var(--gray-400);font-size:13px;margin-bottom:16px;">No test cases linked yet.</p>`}
+
+        <!-- Add new link: Activity → Test Case Name two-level selection -->
+        <div style="font-size:12px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Link to a Test Case</div>
+        ${activityOptions.length === 0 && subFiltered.length === 0 ? `
+          <p style="font-size:12px;color:var(--gray-400);">All available test cases are already linked.</p>` : `
+          <div style="display:flex;flex-direction:column;gap:10px;max-width:560px;">
+            ${!asset.subsystem ? `
+              <div style="font-size:12px;color:#d97706;background:#fffbeb;border:1px solid #fcd34d;padding:6px 10px;border-radius:6px;">
+                ℹ This asset has no subsystem defined. Showing all test activities.
+                <a href="#" onclick="_assetOpenEdit('${assetId}');return false;" style="color:var(--primary);margin-left:4px;">Set subsystem →</a>
+              </div>` : ''}
+            <div>
+              <label class="form-label" style="font-size:12px;">1. Select Test Activity</label>
+              <select id="aml-act-${assetId}" class="form-input" onchange="_assetPopulateTcSelect('${assetId}')">
+                <option value="">— Select Activity —</option>
+                ${activityOptions.map(act => `<option value="${escapeHtml(act)}">${escapeHtml(act)}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="form-label" style="font-size:12px;">2. Select Test Case</label>
+              <select id="aml-tc-${assetId}" class="form-input">
+                <option value="">— Select Activity first —</option>
+              </select>
+            </div>
+            <div>
+              <button class="admin-action-btn" onclick="_assetLinkFromPanel('${assetId}')">Link to Test Case</button>
+            </div>
+          </div>`}
       </div>
     </div>`;
+}
+
+function _assetPopulateTcSelect(assetId) {
+  const act     = document.getElementById(`aml-act-${assetId}`)?.value;
+  const tcSel   = document.getElementById(`aml-tc-${assetId}`);
+  if (!tcSel) return;
+  const asset   = ASSETS.find(a => a.id === assetId);
+  const linked  = new Set(ASSET_LINKS.filter(l => l.asset_id === assetId).map(l => String(l.parent_test_id)));
+  const options = TI.filter(r =>
+    !r.ParentTestId &&
+    !linked.has(String(r.TestID)) &&
+    r.Activity === act &&
+    (!asset?.subsystem || r.Subsystem === asset.subsystem)
+  );
+  tcSel.innerHTML = options.length
+    ? `<option value="">— Select Test Case —</option>` +
+      options.map(r => `<option value="${escapeHtml(String(r.TestID))}">${escapeHtml(r.TestName||r.TestCaseCode||r.TestID)}${r.Location ? ` (${escapeHtml(r.Location)})` : ''}</option>`).join('')
+    : `<option value="">No unlinked test cases in this activity</option>`;
 }
 
 // ── Asset page actions ────────────────────────────────────────────────────────
@@ -10843,18 +10940,21 @@ async function _assetHandleFile(file) {
 async function _assetAddManual() {
   const deviceType = document.getElementById('asset-add-type')?.value.trim() || '';
   const deviceName = document.getElementById('asset-add-name')?.value.trim() || '';
+  const subsystem  = document.getElementById('asset-add-sub')?.value  || '';
   if (!deviceName) { toast('Device Name is required', 'error'); return; }
   const prefix = _assetParsePrefix(deviceName);
   try {
     const [row] = await _dbUpsert('assets', [{
       device_type: deviceType || null, name: deviceName,
-      location_prefix: prefix || null, import_batch_id: null,
+      location_prefix: prefix || null, subsystem: subsystem || null,
+      import_batch_id: null,
     }], 'name');
     const aIdx = ASSETS.findIndex(a => a.name === deviceName);
     if (aIdx >= 0) ASSETS[aIdx] = row; else ASSETS.push(row);
     toast(`Asset "${deviceName}" added`, 'success');
     document.getElementById('asset-add-type').value = '';
     document.getElementById('asset-add-name').value = '';
+    const subEl = document.getElementById('asset-add-sub'); if (subEl) subEl.value = '';
     renderAdminAssets();
   } catch(e) { toast('Add failed: ' + e.message, 'error'); }
 }
@@ -10862,7 +10962,8 @@ async function _assetAddManual() {
 function _assetOpenEdit(assetId) {
   const a = ASSETS.find(x => x.id === assetId);
   if (!a) return;
-  openModal({
+  const allSubs = [...new Set(TI.map(r => r.Subsystem).filter(Boolean))].sort();
+  modal({
     title: `Edit Asset — ${escapeHtml(a.name)}`,
     body: `
       <div style="display:flex;flex-direction:column;gap:12px;">
@@ -10870,6 +10971,11 @@ function _assetOpenEdit(assetId) {
           <input id="ae-type" class="form-input" value="${escapeHtml(a.device_type||'')}"></div>
         <div><label class="form-label">Device Name</label>
           <input id="ae-name" class="form-input" value="${escapeHtml(a.name)}" oninput="_assetEditPreviewPrefix()"></div>
+        <div><label class="form-label">Subsystem</label>
+          <select id="ae-sub" class="form-input">
+            <option value="">— None —</option>
+            ${allSubs.map(s => `<option value="${escapeHtml(s)}" ${a.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+          </select></div>
         <div id="ae-prefix-preview" style="font-size:12px;color:var(--gray-500);">Location prefix: ${escapeHtml(a.location_prefix||'—')}</div>
       </div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
@@ -10886,12 +10992,13 @@ function _assetEditPreviewPrefix() {
 async function _assetSaveEdit(assetId) {
   const deviceType = document.getElementById('ae-type')?.value.trim() || '';
   const deviceName = document.getElementById('ae-name')?.value.trim() || '';
+  const subsystem  = document.getElementById('ae-sub')?.value  || '';
   if (!deviceName) { toast('Device Name required', 'error'); return; }
   const prefix = _assetParsePrefix(deviceName);
   try {
-    await _dbUpdate('assets', { device_type: deviceType||null, name: deviceName, location_prefix: prefix||null }, { id: assetId });
+    await _dbUpdate('assets', { device_type: deviceType||null, name: deviceName, location_prefix: prefix||null, subsystem: subsystem||null }, { id: assetId });
     const a = ASSETS.find(x => x.id === assetId);
-    if (a) { a.device_type = deviceType; a.name = deviceName; a.location_prefix = prefix; }
+    if (a) { a.device_type = deviceType; a.name = deviceName; a.location_prefix = prefix; a.subsystem = subsystem; }
     closeModal(); renderAdminAssets(); toast('Asset saved', 'success');
   } catch(e) { toast('Save failed: ' + e.message, 'error'); }
 }
@@ -10939,8 +11046,8 @@ async function _assetUnlinkConfirm(assetId, parentTestId) {
 }
 
 async function _assetLinkFromPanel(assetId) {
-  const sel = document.getElementById(`asset-link-select-${assetId}`)?.value;
-  if (!sel) { toast('Select a test case to link', 'error'); return; }
+  const sel = document.getElementById(`aml-tc-${assetId}`)?.value;
+  if (!sel) { toast('Select an Activity then a Test Case first', 'error'); return; }
   const asset     = ASSETS.find(a => a.id === assetId);
   const parentRow = TI.find(r => String(r.TestID) === String(sel));
   if (!asset || !parentRow) { toast('Asset or test case not found', 'error'); return; }
