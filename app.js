@@ -8513,11 +8513,17 @@ function _p6ParseFile(file) {
       const durCol  = headers.findIndex(h => h === 'Remaining Duration');
       const unitCol = headers.findIndex(h => h === 'Budgeted Units');
 
+      // WBS/summary band names to exclude (project-level nodes, not real activities)
+      const WBS_EXCLUDE = /^\[?project schedule\]?$/i;
+
       const activities = [];
       for (let i = headerIdx + 1; i < rows.length; i++) {
-        const row  = rows[i];
-        const p6id = String(row[idCol] || '').trim();
-        if (!p6id || !p6id.match(/^[0-9A-Z]/)) continue; // skip summary/header rows
+        const row    = rows[i];
+        const p6id   = String(row[idCol]   || '').trim();
+        const p6name = String(row[nameCol] || '').trim();
+        if (!p6id)  continue;                            // blank ID row
+        if (!p6name || WBS_EXCLUDE.test(p6name)) continue; // no name or WBS band
+        if (!p6id.match(/^[0-9A-Z]/)) continue;         // skip non-activity IDs
         if (p6id.toLowerCase().includes('activity id')) continue;
 
         const rawStart  = String(row[startCol]  || '').trim();
@@ -8536,7 +8542,7 @@ function _p6ParseFile(file) {
 
         activities.push({
           p6_id: p6id,
-          p6_name: String(row[nameCol] || '').trim(),
+          p6_name: p6name,
           p6_location_code: locCode,
           start_date: startDate,
           finish_date: finDate,
@@ -8608,7 +8614,7 @@ async function _p6ConfirmImport() {
     // 1. Mark previous batch of same type as not current
     const prevOfType = P6_BATCHES.filter(b => b.schedule_type === _p6ImportType && b.is_current);
     for (const b of prevOfType) {
-      await _dbUpdate('p6_import_batches', b.id, { is_current: false });
+      await _dbUpdate('p6_import_batches', { is_current: false }, { id: b.id });
     }
 
     // 2. Create new batch record
@@ -8740,26 +8746,40 @@ function _p6MappingTabHTML() {
         </div>
       </div>
 
-      <!-- RIGHT: P6 list -->
+      <!-- RIGHT: P6 reference panel -->
       <div class="p6-mapping-right">
-        <div style="font-size:13px;font-weight:700;margin-bottom:12px;">
-          P6 Activities
-          <span style="font-weight:400;color:var(--gray-500);margin-left:8px;">${p6List.length} in ${useBatch?.title||'—'}</span>
+        <div style="font-size:13px;font-weight:700;margin-bottom:4px;">
+          P6 Reference Panel
+          <span style="font-weight:400;color:var(--gray-500);margin-left:8px;">${p6List.length} activities</span>
         </div>
+        <p style="font-size:11px;color:var(--gray-500);margin-bottom:10px;line-height:1.4;">
+          All P6 activities from <b>${useBatch?.title||'—'}</b>.
+          Green = already linked to a portal activity.
+          Filter the left panel by location to narrow this list.
+        </p>
+        <input type="text" class="form-input" style="font-size:12px;margin-bottom:8px;" placeholder="🔍 Filter P6 list…"
+          oninput="document.querySelectorAll('.p6-p6-row').forEach(r=>{r.style.display=this.value&&!r.textContent.toLowerCase().includes(this.value.toLowerCase())?'none':''})">
         <div class="p6-p6-list">
-          ${p6List.map(p => {
-            const mappedCount = P6_MAP.filter(m => m.p6_activity_id === p.id).length;
-            return `
-              <div class="p6-p6-row ${mappedCount?'p6-p6-mapped':''}">
-                <div style="font-size:11px;font-weight:700;color:var(--gray-500);font-family:monospace;">${escapeHtml(p.p6_id)}</div>
-                <div style="font-size:12px;font-weight:600;margin:2px 0;">${escapeHtml(p.p6_name)}</div>
-                <div style="font-size:11px;color:var(--gray-500);">
-                  ${p.start_date ? _fmtDate(p.start_date) : '—'} → ${p.finish_date ? _fmtDate(p.finish_date) : '—'}
-                  ${p.is_actual ? '<span style="color:#059669;font-weight:600;"> ✓ Actual</span>' : ''}
-                </div>
-                ${mappedCount ? `<div style="font-size:10px;color:var(--good);margin-top:4px;font-weight:600;">↔ ${mappedCount} portal link${mappedCount>1?'s':''}</div>` : ''}
-              </div>`;
-          }).join('')}
+          ${(()=>{
+            // If a location filter is active, prioritise matching location code activities at top
+            const locCode = _p6MappingFilters.location ? _p6LocCode(_p6MappingFilters.location) : '';
+            const sorted  = locCode
+              ? [...p6List.filter(p=>p.p6_location_code===locCode), ...p6List.filter(p=>p.p6_location_code!==locCode)]
+              : p6List;
+            return sorted.map(p => {
+              const mappedCount = P6_MAP.filter(m => m.p6_activity_id === p.id).length;
+              return `
+                <div class="p6-p6-row ${mappedCount?'p6-p6-mapped':''}">
+                  <div style="font-size:10px;font-weight:700;color:var(--gray-400);font-family:monospace;">${escapeHtml(p.p6_id)}</div>
+                  <div style="font-size:12px;font-weight:600;margin:2px 0;line-height:1.3;">${escapeHtml(p.p6_name)}</div>
+                  <div style="font-size:11px;color:var(--gray-500);">
+                    ${p.start_date ? _fmtDate(p.start_date) : '—'} → ${p.finish_date ? _fmtDate(p.finish_date) : '—'}
+                    ${p.is_actual ? '<span style="color:#059669;font-weight:600;"> ✓ Actual</span>' : ''}
+                  </div>
+                  ${mappedCount ? `<div style="font-size:10px;color:var(--good);margin-top:3px;font-weight:600;">↔ ${mappedCount} portal link${mappedCount>1?'s':''}</div>` : ''}
+                </div>`;
+            }).join('');
+          })()}
         </div>
       </div>
     </div>`;
@@ -8794,61 +8814,134 @@ function _p6ActivityLinkDetail(act, p6List) {
   const links    = _p6GetActivityLinks(act);
   const actLink  = links.find(l => !l.portal_test_case_code);
   const tcLinks  = links.filter(l => !!l.portal_test_case_code);
+  const safeKey  = escapeHtml(act.key);
 
   // Auto-suggest from learn patterns
   const suggestion = _p6AutoSuggest(act, p6List);
 
+  // Build option list (once, reused for activity + bulk TC selects)
+  const p6Opts = `<option value="">— Select P6 Activity —</option>` +
+    p6List.map(p => `<option value="${escapeHtml(p.id)}">[${escapeHtml(p.p6_location_code||'?')}] ${escapeHtml(p.p6_name)}</option>`).join('');
+
   return `
     <div class="p6-link-detail">
-      <!-- Activity-level link -->
+      <!-- ── ACTIVITY-LEVEL LINK ───────────────────────────── -->
       <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;color:var(--gray-500);margin-bottom:8px;">ACTIVITY-LEVEL LINK</div>
       ${actLink ? `
-        <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;margin-bottom:10px;">
           <div style="flex:1;font-size:12px;">
-            <span style="font-weight:600;">${escapeHtml(_p6ActName(actLink.p6_activity_id))}</span>
-            <span style="color:var(--gray-500);margin-left:4px;">${escapeHtml(_p6ActDates(actLink.p6_activity_id))}</span>
+            <div style="font-weight:600;">${escapeHtml(_p6ActName(actLink.p6_activity_id))}</div>
+            <div style="color:var(--gray-500);font-size:11px;">${escapeHtml(_p6ActDates(actLink.p6_activity_id))}</div>
           </div>
           <button class="form-secondary tr-mini-btn" onclick="_p6UnlinkActivity('${escapeHtml(actLink.id)}')">Unlink</button>
         </div>` : `
-        <div style="margin-bottom:8px;">
+        <div style="margin-bottom:10px;">
           ${suggestion ? `
-            <div style="padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;margin-bottom:6px;font-size:12px;">
+            <div style="padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;margin-bottom:8px;font-size:12px;">
               💡 Suggested: <b>${escapeHtml(suggestion.p6_name)}</b>
               <div style="display:flex;gap:6px;margin-top:6px;">
-                <button class="admin-action-btn tr-mini-btn" onclick="_p6AcceptSuggestion('${escapeHtml(act.key)}','${escapeHtml(suggestion.id)}')">Accept</button>
-                <button class="form-secondary tr-mini-btn" onclick="_p6DismissSuggestion('${escapeHtml(act.key)}')">Dismiss</button>
+                <button class="admin-action-btn tr-mini-btn" onclick="_p6AcceptSuggestion('${safeKey}','${escapeHtml(suggestion.id)}')">Accept</button>
+                <button class="form-secondary tr-mini-btn" onclick="_p6DismissSuggestion('${safeKey}')">Dismiss</button>
               </div>
             </div>` : ''}
-          <select class="form-input" style="font-size:12px;" id="p6-sel-${escapeHtml(act.key)}" onchange="">
-            <option value="">— Select P6 Activity —</option>
-            ${p6List.map(p=>`<option value="${escapeHtml(p.id)}">[${escapeHtml(p.p6_location_code)}] ${escapeHtml(p.p6_name)}</option>`).join('')}
-          </select>
+          <input type="text" class="form-input" style="font-size:12px;margin-bottom:4px;" placeholder="🔍 Search P6 activities…"
+            oninput="_p6FilterOpts(this,'p6-sel-${safeKey}')">
+          <select class="form-input" style="font-size:12px;" id="p6-sel-${safeKey}">${p6Opts}</select>
           <button class="admin-action-btn tr-mini-btn" style="margin-top:6px;width:100%;"
-            onclick="_p6LinkActivity('${escapeHtml(act.key)}',document.getElementById('p6-sel-${escapeHtml(act.key)}').value,'${escapeHtml(act.phase)}','${escapeHtml(act.location)}','${escapeHtml(act.subsystem)}','${escapeHtml(act.activity)}')">
+            onclick="_p6LinkActivity('${safeKey}',document.getElementById('p6-sel-${safeKey}').value,'${escapeHtml(act.phase)}','${escapeHtml(act.location)}','${escapeHtml(act.subsystem)}','${escapeHtml(act.activity)}')">
             Link Activity
           </button>
         </div>`}
 
-      <!-- Test-case-level links -->
-      <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;color:var(--gray-500);margin:12px 0 8px;">TEST-CASE LEVEL LINKS <span style="font-weight:400;color:var(--gray-400);">(optional — for granular mapping)</span></div>
+      <!-- ── TEST-CASE LEVEL LINKS ─────────────────────────── -->
+      <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;color:var(--gray-500);margin:10px 0 4px;">
+        TEST-CASE LEVEL LINKS
+        <span style="font-weight:400;color:var(--gray-400);"> — optional overrides for test cases that map to a different P6 sub-activity</span>
+      </div>
+
+      ${!actLink ? `<div style="font-size:11px;color:var(--gray-400);padding:4px 0 8px;">Link the activity first, then optionally override individual test cases below.</div>` : ''}
+
+      <!-- Bulk link: set all TC to same P6 activity -->
+      <div style="display:flex;gap:6px;align-items:center;padding:6px 0 8px;border-bottom:1px solid var(--gray-200);margin-bottom:6px;">
+        <span style="font-size:11px;color:var(--gray-600);white-space:nowrap;font-weight:600;">Bulk link all to:</span>
+        <input type="text" class="form-input" style="font-size:11px;padding:3px 6px;height:auto;flex:1;" placeholder="🔍 Search…"
+          oninput="_p6FilterOpts(this,'p6-bulk-sel-${safeKey}')">
+        <select class="form-input" style="font-size:11px;padding:3px 6px;height:auto;flex:2;" id="p6-bulk-sel-${safeKey}">${p6Opts}</select>
+        <button class="admin-action-btn tr-mini-btn"
+          onclick="_p6BulkLinkTCs('${safeKey}','${escapeHtml(act.phase)}','${escapeHtml(act.location)}','${escapeHtml(act.subsystem)}','${escapeHtml(act.activity)}')">Apply All</button>
+      </div>
+
       ${act.items.map(item => {
         const tcLink = tcLinks.find(l => l.portal_test_case_code === item.TestCaseCode);
+        const tcCode = escapeHtml(item.TestCaseCode || '');
         return `
           <div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--gray-100);">
-            <div style="flex:1;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gray-700);">${escapeHtml(item.TestCaseCode||'')} — ${escapeHtml(item.TestName||'')}</div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:11px;font-weight:600;color:var(--gray-800);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(item.TestCaseCode||'')}</div>
+              <div style="font-size:10px;color:var(--gray-500);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(item.TestName||'')}</div>
+            </div>
             ${tcLink ? `
-              <span style="font-size:10px;color:var(--good);font-weight:600;white-space:nowrap;">↔ ${escapeHtml(_p6ActName(tcLink.p6_activity_id))}</span>
+              <span style="font-size:10px;color:var(--good);font-weight:600;white-space:nowrap;flex-shrink:0;">↔ ${escapeHtml(_p6ActName(tcLink.p6_activity_id))}</span>
               <button class="form-secondary tr-mini-btn" onclick="_p6UnlinkActivity('${escapeHtml(tcLink.id)}')">✕</button>
             ` : `
-              <select class="form-input" style="font-size:11px;padding:3px 6px;height:auto;" id="p6-tc-sel-${escapeHtml(item.TestCaseCode||'')}">
-                <option value="">—</option>
-                ${p6List.map(p=>`<option value="${escapeHtml(p.id)}">[${escapeHtml(p.p6_location_code)}] ${escapeHtml(p.p6_name)}</option>`).join('')}
+              <select class="form-input" style="font-size:11px;padding:3px 6px;height:auto;flex:2;" id="p6-tc-sel-${tcCode}">
+                ${p6Opts}
               </select>
-              <button class="admin-action-btn tr-mini-btn" onclick="_p6LinkTestCase('${escapeHtml(act.key)}','${escapeHtml(item.TestCaseCode||'')}','${escapeHtml(act.phase)}','${escapeHtml(act.location)}','${escapeHtml(act.subsystem)}','${escapeHtml(act.activity)}')">Link</button>
+              <button class="admin-action-btn tr-mini-btn"
+                onclick="_p6LinkTestCase('${safeKey}','${tcCode}','${escapeHtml(act.phase)}','${escapeHtml(act.location)}','${escapeHtml(act.subsystem)}','${escapeHtml(act.activity)}')">Link</button>
             `}
           </div>`;
       }).join('')}
     </div>`;
+}
+
+// Filter <select> options based on text search input (live search)
+function _p6FilterOpts(input, selectId) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const q = input.value.toLowerCase();
+  Array.from(sel.options).forEach(opt => {
+    opt.style.display = (!q || opt.text.toLowerCase().includes(q) || !opt.value) ? '' : 'none';
+  });
+  // If current selection is now hidden, reset it
+  const cur = sel.options[sel.selectedIndex];
+  if (cur && cur.style.display === 'none') sel.selectedIndex = 0;
+}
+
+// Bulk-link all test cases within an activity to a single P6 activity
+async function _p6BulkLinkTCs(actKey, phase, location, subsystem, activity) {
+  const p6Id = document.getElementById(`p6-bulk-sel-${actKey}`)?.value;
+  if (!p6Id) { toast('Select a P6 activity first', 'error'); return; }
+  const all = _amGetActivities();
+  const act = all.find(a => a.key === actKey);
+  if (!act) return;
+
+  // Confirm
+  if (!confirm(`Link all ${act.items.length} test cases to "${_p6ActName(p6Id)}"?`)) return;
+
+  let done = 0;
+  for (const item of act.items) {
+    // Skip already-linked
+    const existing = P6_MAP.find(m =>
+      m.portal_test_case_code === item.TestCaseCode &&
+      m.portal_phase === phase && m.portal_location === location &&
+      m.portal_subsystem === subsystem && m.portal_activity === activity);
+    if (existing) {
+      await _dbDelete('p6_activity_map', { id: existing.id }).catch(()=>{});
+    }
+    try {
+      await _dbInsert('p6_activity_map', [{
+        p6_activity_id: p6Id,
+        portal_phase: phase, portal_location: location,
+        portal_subsystem: subsystem, portal_activity: activity,
+        portal_test_case_code: item.TestCaseCode || null,
+      }]);
+      done++;
+    } catch(e) { console.warn('[bulkLinkTC]', e.message); }
+  }
+  await loadP6Data();
+  toast(`Linked ${done} test cases`, 'success');
+  renderAdminP6();
 }
 
 function _p6ActName(p6ActivityId) {
@@ -8973,7 +9066,7 @@ async function _p6PropagateActivityId(phase, location, subsystem, activity, p6Id
       (!testCaseCode || t.TestCaseCode === testCaseCode)
     );
     for (const item of items) {
-      await _dbUpdate('test_items', item.TestID || item.test_id, { activity_id: p6Act.p6_id });
+      await _dbUpdate('test_items', { activity_id: p6Act.p6_id }, { test_id: item.TestID || item.test_id });
     }
     await loadTestItems();
   } catch(e) { console.warn('[p6Propagate]', e.message); }
@@ -8986,10 +9079,10 @@ async function _p6StorePattern(p6Name, portalActivity, subsystem) {
     // Upsert: increment confidence if already exists
     const existing = P6_PATTERNS.find(p => p.p6_name_pattern === pattern && p.portal_activity_name === portalActivity);
     if (existing) {
-      await _dbUpdate('p6_learn_patterns', existing.id, {
+      await _dbUpdate('p6_learn_patterns', {
         confidence: existing.confidence + 1,
         last_confirmed_at: new Date().toISOString(),
-      });
+      }, { id: existing.id });
     } else {
       await _dbInsert('p6_learn_patterns', [{
         p6_name_pattern: pattern,
@@ -9282,9 +9375,9 @@ async function _p6SaveActivityWeight(actKey, phase, location, subsystem, activit
       r.phase === phase && r.location === location &&
       r.subsystem === subsystem && r.activity_name === activity);
     if (rec) {
-      await _dbUpdate('activity_records', rec.id, { activity_weight: wVal, planned_date: pDate });
+      await _dbUpdate('activity_records', { activity_weight: wVal, planned_date: pDate || null }, { id: rec.id });
     } else {
-      await _dbInsert('activity_records', [{ phase, location, subsystem, activity_name: activity, activity_weight: wVal, planned_date: pDate }]);
+      await _dbInsert('activity_records', [{ phase, location, subsystem, activity_name: activity, activity_weight: wVal, planned_date: pDate || null }]);
     }
     await loadActivityRecords();
     toast('Saved', 'success');
@@ -9306,9 +9399,9 @@ async function _p6SaveAllWeights() {
         r.phase === a.phase && r.location === a.location &&
         r.subsystem === a.subsystem && r.activity_name === a.activity);
       if (rec) {
-        await _dbUpdate('activity_records', rec.id, { activity_weight: wVal, planned_date: pDate });
+        await _dbUpdate('activity_records', { activity_weight: wVal, planned_date: pDate || null }, { id: rec.id });
       } else {
-        await _dbInsert('activity_records', [{ phase: a.phase, location: a.location, subsystem: a.subsystem, activity_name: a.activity, activity_weight: wVal, planned_date: pDate }]);
+        await _dbInsert('activity_records', [{ phase: a.phase, location: a.location, subsystem: a.subsystem, activity_name: a.activity, activity_weight: wVal, planned_date: pDate || null }]);
       }
       saved++;
     } catch(e) { console.warn('[saveAllWeights]', e.message); }
@@ -9321,28 +9414,58 @@ function _p6OpenTCWeights(actKey) {
   const all = _amGetActivities();
   const act = all.find(a => a.key === actKey);
   if (!act) return;
+
   const rows = act.items.map(item => `
     <tr>
-      <td style="font-size:12px;">${escapeHtml(item.TestCaseCode||'')}</td>
+      <td style="font-size:12px;font-weight:600;white-space:nowrap;">${escapeHtml(item.TestCaseCode||'')}</td>
       <td style="font-size:12px;">${escapeHtml(item.TestName||'')}</td>
-      <td style="text-align:center;">
-        <input type="number" min="0" step="0.5" class="form-input" style="width:60px;text-align:center;font-size:12px;padding:4px;"
+      <td style="text-align:center;white-space:nowrap;">
+        <input type="number" min="0" step="0.5" class="form-input"
+          style="width:70px;text-align:center;font-size:12px;padding:5px 4px;"
           id="tcw-${escapeHtml(item.TestID||item.test_id||'')}" value="${item.Weight ?? 1}">
       </td>
     </tr>`).join('');
 
+  const safeKey = escapeHtml(actKey);
+
   modal({
     title: `Test Case Weights — ${act.activity}`,
-    size: 'medium',
+    size: 'large',
     body: `
-      <p style="font-size:12px;color:var(--gray-500);margin-bottom:12px;">Set the relative weight of each test case within this activity. Default = 1 (equal weight).</p>
-      <div class="table-wrap"><table class="data-table">
-        <thead><tr><th>Code</th><th>Test Case</th><th style="text-align:center;">Weight</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>`,
+      <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;margin-bottom:16px;flex-wrap:wrap;">
+        <span style="font-size:12px;color:var(--gray-600);font-weight:600;white-space:nowrap;">Bulk set all weights to:</span>
+        <input type="number" id="tcw-bulk-val" min="0" step="0.5" value="1"
+          class="form-input" style="width:80px;font-size:13px;padding:5px 8px;text-align:center;">
+        <button class="admin-action-btn tr-mini-btn" onclick="_p6ApplyBulkWeight('${safeKey}')">Apply to All</button>
+        <span style="font-size:11px;color:var(--gray-400);margin-left:auto;">Default = 1 (equal weight). Higher = more important.</span>
+      </div>
+      <div class="table-wrap" style="max-height:55vh;overflow-y:auto;">
+        <table class="data-table" style="min-width:520px;">
+          <thead><tr>
+            <th style="white-space:nowrap;">Test Case Code</th>
+            <th>Test Name</th>
+            <th style="text-align:center;white-space:nowrap;">Weight</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="admin-action-btn" onclick="_p6SaveTCWeights('${escapeHtml(actKey)}')">Save Weights</button>`,
+      <button class="admin-action-btn" onclick="_p6SaveTCWeights('${safeKey}')">Save All Weights</button>`,
+  });
+}
+
+// Apply same weight to all visible TC inputs in the modal
+function _p6ApplyBulkWeight(actKey) {
+  const bulkVal = parseFloat(document.getElementById('tcw-bulk-val')?.value);
+  if (isNaN(bulkVal) || bulkVal < 0) { toast('Enter a valid weight ≥ 0', 'error'); return; }
+  const all = _amGetActivities();
+  const act = all.find(a => a.key === actKey);
+  if (!act) return;
+  act.items.forEach(item => {
+    const id = item.TestID || item.test_id;
+    const el = document.getElementById(`tcw-${escapeHtml(id||'')}`);
+    if (el) el.value = bulkVal;
   });
 }
 
@@ -9357,7 +9480,7 @@ async function _p6SaveTCWeights(actKey) {
     if (!el) continue;
     const wVal = parseFloat(el.value) || 1;
     try {
-      await _dbUpdate('test_items', id, { weight: wVal });
+      await _dbUpdate('test_items', { weight: wVal }, { test_id: id });
       saved++;
     } catch(e) { console.warn('[tcWeight]', e.message); }
   }
