@@ -10344,15 +10344,23 @@ function _assetParsePrefix(name) {
   return parts[0] || '';
 }
 
+function _assetNormalizeName(s) {
+  return (s || '').trim()
+    .replace(/[–—‒‐]/g, '-') // en-dash, em-dash → hyphen
+    .replace(/\s*-\s*/g, ' - ')                  // normalise spaces around dashes
+    .replace(/\s+/g, ' ')                         // collapse multiple spaces
+    .toLowerCase();
+}
+
 function _assetFindParentRow(testCaseName, locationPrefix, subsystem, exactLocation) {
-  const name  = (testCaseName  || '').trim().toLowerCase();
+  const name  = _assetNormalizeName(testCaseName);
   const prefix= (locationPrefix|| '').toUpperCase();
   const sub   = (subsystem     || '').toLowerCase();
   const loc   = (exactLocation || '').toLowerCase();
 
   const matches = TI.filter(r => {
     if (r.ParentTestId) return false;
-    if ((r.TestName || '').trim().toLowerCase() !== name) return false;
+    if (_assetNormalizeName(r.TestName) !== name) return false;
     // Location: exact match takes precedence over prefix
     if (loc) {
       // Location column can be a prefix (e.g. "W40") or full name ("W40 Millbrae Station")
@@ -10367,7 +10375,7 @@ function _assetFindParentRow(testCaseName, locationPrefix, subsystem, exactLocat
   if (!matches.length && sub) {
     return TI.find(r => {
       if (r.ParentTestId) return false;
-      if ((r.TestName || '').trim().toLowerCase() !== name) return false;
+      if (_assetNormalizeName(r.TestName) !== name) return false;
       if (loc) return (r.Location || '').toLowerCase().startsWith(loc);
       return !prefix || (r.Location || '').toUpperCase().replace(/\s+/g,'').startsWith(prefix.replace(/\s+/g,''));
     }) || null;
@@ -10530,7 +10538,7 @@ async function _assetUnlink(assetId, parentTestId) {
 }
 
 // ── CSV import ────────────────────────────────────────────────────────────────
-async function _assetImportCSV(file) {
+async function _assetImportCSV(file, onProgress) {
   const text = await file.text();
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) { toast('CSV has no data rows', 'error'); return; }
@@ -10554,6 +10562,7 @@ async function _assetImportCSV(file) {
   let linkedCount = 0, skippedTc = [], skippedDup = 0;
   const affectedParents = new Set();
 
+  const dataRows = lines.length - 1;
   for (let i = 1; i < lines.length; i++) {
     const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
     const deviceType = iType >= 0 ? (cols[iType] || '') : '';
@@ -10562,6 +10571,7 @@ async function _assetImportCSV(file) {
     const subsystem  = iSub >= 0  ? (cols[iSub]  || '') : '';
     const tcRaw      = cols[iTc]  || '';
     if (!deviceName) continue;
+    if (onProgress) onProgress(i, dataRows, `Processing: ${deviceName}`);
 
     const prefix = _assetParsePrefix(deviceName);
 
@@ -10744,6 +10754,7 @@ function _assetPageHTML() {
             <button class="admin-action-btn" onclick="document.getElementById('asset-csv-input').click()">📂 Choose CSV File</button>
             <button class="form-secondary" onclick="_assetDownloadTemplate()">⬇ Download Template</button>
           </div>
+          <div id="asset-import-progress"></div>
           ${ASSET_BATCHES.length ? `
             <div style="margin-top:12px;font-size:12px;color:var(--gray-500);">
               Last import: <strong>${escapeHtml(ASSET_BATCHES[0].filename||'—')}</strong> by ${escapeHtml(ASSET_BATCHES[0].imported_by||'—')}
@@ -11008,17 +11019,35 @@ function _assetPreviewPrefix() {
   if (el) el.textContent = prefix ? `Location prefix: ${prefix}` : '';
 }
 
+function _assetUpdateProgress(current, total, label) {
+  const bar = document.getElementById('asset-import-progress');
+  if (!bar) return;
+  if (!total) { bar.innerHTML = ''; return; }
+  const pct = Math.round((current / total) * 100);
+  bar.innerHTML = `
+    <div style="margin-top:12px;">
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--gray-600);margin-bottom:4px;">
+        <span style="max-width:75%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(label)}</span>
+        <span>${current} / ${total} (${pct}%)</span>
+      </div>
+      <div style="background:var(--gray-200);border-radius:4px;height:8px;overflow:hidden;">
+        <div style="width:${pct}%;height:100%;background:var(--primary);border-radius:4px;transition:width 0.15s;"></div>
+      </div>
+    </div>`;
+}
+
 async function _assetHandleFile(file) {
   if (!file) return;
   const btn = document.querySelector('#admin-assets-content .admin-action-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  if (btn) btn.disabled = true;
   try {
-    await _assetImportCSV(file);
+    await _assetImportCSV(file, _assetUpdateProgress);
   } catch(e) {
     alert('Import failed: ' + e.message);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Choose CSV File'; }
+    if (btn) btn.disabled = false;
     document.getElementById('asset-csv-input').value = '';
+    _assetUpdateProgress(0, 0, '');
   }
 }
 
