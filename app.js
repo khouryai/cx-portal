@@ -9306,7 +9306,6 @@ function _p6HealthTabHTML() {
 
   // Dismissed IDs (server-side, shared across all users)
   const dismissedIds = new Set(P6_DISMISSALS.map(d => d.p6_activity_id));
-  const dismissedList = P6_DISMISSALS.map(d => allP6.find(p => p.id === d.p6_activity_id)).filter(Boolean);
 
   let unlinkedP6 = allP6.filter(p =>
     !P6_MAP.some(m => m.p6_activity_id === p.id) &&
@@ -9356,10 +9355,19 @@ function _p6HealthTabHTML() {
     ? `${primaryBatch.schedule_type === 'current' ? 'Current' : 'Baseline'} · imported ${primaryBatch.imported_at ? _fmtDate(primaryBatch.imported_at) : ''}`
     : '';
 
-  // Portal activities list for the link-from-health dropdown
-  const portalOpts = allPortal.map(a =>
-    `<option value="${escapeHtml(a.key)}">${escapeHtml(a.phase)} | ${escapeHtml(a.location)} | ${escapeHtml(a.subsystem)} | ${escapeHtml(a.activity)}</option>`
-  ).join('');
+  // Portal activities checklist items (reused per-row link panel)
+  const portalCheckItems = allPortal.map(a => {
+    const safeKey = escapeHtml(a.key);
+    const searchText = `${a.phase} ${a.location} ${a.subsystem} ${a.activity}`.toLowerCase();
+    return `<label class="p6h-link-item" data-search="${escapeHtml(searchText)}"
+      style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--gray-100);">
+      <input type="checkbox" class="p6h-link-chk" value="${safeKey}" style="margin-top:2px;flex-shrink:0;">
+      <div style="font-size:12px;line-height:1.4;">
+        <div style="font-weight:500;">${escapeHtml(a.activity)}</div>
+        <div style="color:var(--gray-500);font-size:11px;">${escapeHtml(a.phase)} · ${escapeHtml(a.location)} · ${escapeHtml(a.subsystem)}</div>
+      </div>
+    </label>`;
+  }).join('');
 
   return `
     <div style="display:flex;flex-direction:column;gap:18px;">
@@ -9373,7 +9381,7 @@ function _p6HealthTabHTML() {
             <span style="font-size:13px;font-weight:700;">🔴 Unlinked P6 Activities</span>
             <span class="badge badge-review" style="margin-left:8px;font-size:11px;">${unlinkedP6.length}</span>
             ${batchLabel ? `<span style="font-size:11px;color:var(--gray-500);margin-left:10px;">(${escapeHtml(batchLabel)})</span>` : ''}
-            ${dismissedList.length ? `<button class="form-secondary tr-mini-btn" style="margin-left:12px;" onclick="_p6HShowDismissed()">👁 Show ${dismissedList.length} snoozed</button>` : ''}
+            ${P6_DISMISSALS.length ? `<button class="form-secondary tr-mini-btn" style="margin-left:12px;" onclick="_p6HShowDismissed()">👁 Show ${P6_DISMISSALS.length} snoozed</button>` : ''}
           </div>
           ${unlinkedP6.length ? `
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -9445,18 +9453,23 @@ function _p6HealthTabHTML() {
                 </tr>
                 ${linkOpen ? `
                 <tr>
-                  <td colspan="6" style="padding:12px 16px;background:var(--gray-50);border-bottom:2px solid var(--hitachi-red);">
-                    <div style="display:flex;flex-direction:column;gap:8px;max-width:600px;">
+                  <td colspan="6" style="padding:14px 16px;background:var(--gray-50);border-bottom:2px solid var(--hitachi-red);">
+                    <div style="display:flex;flex-direction:column;gap:10px;max-width:620px;">
                       <div style="font-size:12px;font-weight:600;color:var(--gray-700);">
-                        Link <em>${escapeHtml(p.p6_name)}</em> to one or more portal activities:
+                        Link <em>${escapeHtml(p.p6_name)}</em> to portal activities:
                       </div>
-                      <select id="p6h-link-sel-${escapedId}" class="form-input" multiple size="5" style="font-size:12px;">
-                        ${portalOpts}
-                      </select>
-                      <div style="font-size:11px;color:var(--gray-500);">Hold Ctrl / Cmd to select multiple activities.</div>
+                      <input type="text" class="form-input" placeholder="🔍 Search activities…"
+                        style="font-size:12px;"
+                        oninput="_p6HLinkFilter('${escapedId}',this.value)">
+                      <div id="p6h-link-list-${escapedId}"
+                        style="max-height:240px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;background:#fff;">
+                        ${portalCheckItems}
+                      </div>
                       <div style="display:flex;gap:8px;">
-                        <button class="admin-action-btn" style="font-size:12px;padding:6px 14px;" onclick="_p6HLinkSave('${escapedId}')">Save Links</button>
-                        <button class="form-secondary" style="font-size:12px;padding:6px 14px;" onclick="_p6HToggleLink('${escapedId}')">Cancel</button>
+                        <button class="admin-action-btn" style="font-size:12px;padding:6px 14px;"
+                          onclick="_p6HLinkSave('${escapedId}')">Save Links</button>
+                        <button class="form-secondary" style="font-size:12px;padding:6px 14px;"
+                          onclick="_p6HToggleLink('${escapedId}')">Cancel</button>
                       </div>
                     </div>
                   </td>
@@ -9540,11 +9553,22 @@ function _p6HToggleLink(pid) {
   renderAdminP6();
 }
 
+// Filter the link-panel checklist by search text
+function _p6HLinkFilter(pid, query) {
+  const q = query.toLowerCase().trim();
+  const list = document.getElementById(`p6h-link-list-${pid}`);
+  if (!list) return;
+  list.querySelectorAll('.p6h-link-item').forEach(item => {
+    const match = !q || (item.dataset.search || '').includes(q);
+    item.style.display = match ? '' : 'none';
+  });
+}
+
 // Save links from Health tab: one P6 activity → one or more portal activities
 async function _p6HLinkSave(p6Id) {
-  const sel = document.getElementById(`p6h-link-sel-${p6Id}`);
-  if (!sel) return;
-  const keys = [...sel.selectedOptions].map(o => o.value);
+  const list = document.getElementById(`p6h-link-list-${p6Id}`);
+  if (!list) return;
+  const keys = [...list.querySelectorAll('.p6h-link-chk:checked')].map(c => c.value);
   if (!keys.length) { toast('Select at least one portal activity', 'error'); return; }
 
   const allPortal = _amGetActivities();
@@ -9584,6 +9608,7 @@ async function _p6HRemindLater(pid) {
     await _dbInsert('p6_activity_dismissals', [{ p6_activity_id: pid, dismissed_by: currentRoleUser?.name || 'admin' }]);
     toast('Snoozed — click "Show snoozed" to restore', 'success');
     await loadP6Data();
+    renderAdminP6();
   } catch(e) { toast('Snooze failed: ' + e.message, 'error'); }
 }
 
@@ -9596,15 +9621,16 @@ async function _p6HBulkRemindLater() {
     }
     toast(`${sel.length} activit${sel.length===1?'y':'ies'} snoozed`, 'success');
     await loadP6Data();
+    renderAdminP6();
   } catch(e) { toast('Snooze failed: ' + e.message, 'error'); }
 }
 
 // Show modal listing all snoozed activities with a restore option
 function _p6HShowDismissed() {
-  const allPortal = _amGetActivities(); // for context (unused here but available)
+  // Look across ALL imported P6 activities (any batch) to find names
   const dismissed = P6_DISMISSALS.map(d => {
     const p = P6_ACTS.find(x => x.id === d.p6_activity_id);
-    return p ? { ...d, p6_name: p.p6_name, p6_id: p.p6_id } : { ...d, p6_name: d.p6_activity_id, p6_id: '' };
+    return { ...d, p6_name: p ? p.p6_name : `(ID: ${d.p6_activity_id})`, p6_id: p?.p6_id || '' };
   });
 
   const modal = document.createElement('div');
