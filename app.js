@@ -10344,24 +10344,32 @@ function _assetParsePrefix(name) {
   return parts[0] || '';
 }
 
-function _assetFindParentRow(testCaseName, locationPrefix, subsystem) {
-  const name   = (testCaseName || '').trim().toLowerCase();
-  const prefix = (locationPrefix || '').toUpperCase();
-  const sub    = (subsystem || '').toLowerCase();
+function _assetFindParentRow(testCaseName, locationPrefix, subsystem, exactLocation) {
+  const name  = (testCaseName  || '').trim().toLowerCase();
+  const prefix= (locationPrefix|| '').toUpperCase();
+  const sub   = (subsystem     || '').toLowerCase();
+  const loc   = (exactLocation || '').toLowerCase();
+
   const matches = TI.filter(r => {
-    if (r.ParentTestId) return false;                                                       // exclude child rows
-    if ((r.TestName || '').trim().toLowerCase() !== name) return false;                     // name match
-    if (prefix && !(r.Location || '').toUpperCase().replace(/\s+/g,'').startsWith(prefix.replace(/\s+/g,''))) return false; // location prefix
-    if (sub && (r.Subsystem || '').toLowerCase() !== sub) return false;                     // subsystem (optional)
+    if (r.ParentTestId) return false;
+    if ((r.TestName || '').trim().toLowerCase() !== name) return false;
+    // Location: exact match takes precedence over prefix
+    if (loc) {
+      if ((r.Location || '').toLowerCase() !== loc) return false;
+    } else if (prefix) {
+      if (!(r.Location || '').toUpperCase().replace(/\s+/g,'').startsWith(prefix.replace(/\s+/g,''))) return false;
+    }
+    if (sub && (r.Subsystem || '').toLowerCase() !== sub) return false;
     return true;
   });
-  // If subsystem filtered to nothing, fall back without subsystem
+  // Fall back: drop subsystem filter if nothing found
   if (!matches.length && sub) {
-    return TI.find(r =>
-      !r.ParentTestId &&
-      (r.TestName || '').trim().toLowerCase() === name &&
-      (r.Location || '').toUpperCase().replace(/\s+/g,'').startsWith(prefix.replace(/\s+/g,''))
-    ) || null;
+    return TI.find(r => {
+      if (r.ParentTestId) return false;
+      if ((r.TestName || '').trim().toLowerCase() !== name) return false;
+      if (loc) return (r.Location || '').toLowerCase() === loc;
+      return !prefix || (r.Location || '').toUpperCase().replace(/\s+/g,'').startsWith(prefix.replace(/\s+/g,''));
+    }) || null;
   }
   return matches[0] || null;
 }
@@ -10526,10 +10534,11 @@ async function _assetImportCSV(file) {
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) { toast('CSV has no data rows', 'error'); return; }
 
-  // Parse header: Device Type | Device Name | Subsystem | Test Case Name
+  // Parse header: Device Type | Device Name | Location | Subsystem | Test Case Name
   const header = lines[0].split(',').map(h => h.trim().toLowerCase());
   const iType  = header.findIndex(h => h.includes('type'));
   const iName  = header.findIndex(h => h.includes('device name') || (h.includes('name') && !h.includes('test')));
+  const iLoc   = header.findIndex(h => h.includes('location'));
   const iSub   = header.findIndex(h => h.includes('subsystem'));
   const iTc    = header.findIndex(h => h.includes('test case') || h.includes('test name'));
   if (iName < 0 || iTc < 0) { toast('CSV must have "Device Name" and "Test Case Name" columns', 'error'); return; }
@@ -10548,6 +10557,7 @@ async function _assetImportCSV(file) {
     const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
     const deviceType = iType >= 0 ? (cols[iType] || '') : '';
     const deviceName = cols[iName] || '';
+    const location   = iLoc >= 0  ? (cols[iLoc]  || '') : '';
     const subsystem  = iSub >= 0  ? (cols[iSub]  || '') : '';
     const tcRaw      = cols[iTc]  || '';
     if (!deviceName) continue;
@@ -10559,6 +10569,7 @@ async function _assetImportCSV(file) {
       device_type:     deviceType || null,
       name:            deviceName,
       location_prefix: prefix     || null,
+      location:        location   || null,
       subsystem:       subsystem  || null,
       import_batch_id: batch.id,
     }], 'name');
@@ -10574,7 +10585,7 @@ async function _assetImportCSV(file) {
     // Link each test case name (pipe-separated)
     const tcCodes = tcRaw.split('|').map(t => t.trim()).filter(Boolean);
     for (const code of tcCodes) {
-      const parentRow = _assetFindParentRow(code, prefix, subsystem);
+      const parentRow = _assetFindParentRow(code, prefix, subsystem, location);
       if (!parentRow) { skippedTc.push(`${deviceName} → ${code}`); continue; }
       try {
         await _assetLinkToParent(assetRow, parentRow);
@@ -10678,7 +10689,8 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
 
 // ── Admin Asset page state ────────────────────────────────────────────────────
 let _assetFilter = { search: '', type: '', prefix: '', sub: '' };
-let _assetManagePanelId = null; // asset id whose link-panel is open
+let _assetManagePanelId = null; // asset id whose link-panel is open (inline)
+let _assetSelected = new Set(); // asset ids checked for bulk ops
 
 function renderAdminAssets() {
   const root = document.getElementById('admin-assets-content');
@@ -10687,11 +10699,11 @@ function renderAdminAssets() {
 }
 
 function _assetDownloadTemplate() {
-  const headers = 'Device Type,Device Name,Subsystem,Test Case Name';
+  const headers = 'Device Type,Device Name,Location,Subsystem,Test Case Name';
   const example = [
-    'ATC Cabinet,W40-AC01,ATS Software SAT - Static,ATS-MLK Functional Bit Verification Test',
-    'ATC Cabinet,W40-AC01,ATS Software SAT - Static,ATS Initialization Test | ATS Mode Control Test',
-    'Speed Sensor,W40-SS02,ATS Hardware,Speed Sensor Calibration Test',
+    'ATC Cabinet,W40-AC01,W40 Millbrae Station,ATS Software SAT - Static,ATS-MLK Functional Bit Verification Test',
+    'ATC Cabinet,W40-AC01,W40 Millbrae Station,ATS Software SAT - Static,ATS Initialization Test | ATS Mode Control Test',
+    'Speed Sensor,W40-SS02,W40 Millbrae Station,ATS Hardware,Speed Sensor Calibration Test',
   ].join('\n');
   const blob = new Blob([headers + '\n' + example], { type: 'text/csv' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
@@ -10723,8 +10735,8 @@ function _assetPageHTML() {
         <div class="admin-section-header"><h3 class="admin-section-title">📥 Import Assets (CSV)</h3></div>
         <div style="padding:16px;">
           <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px;">
-            Columns: <code>Device Type, Device Name, Subsystem, Test Case Name</code><br>
-            Multiple test cases per row: separate with <code>|</code>
+            Columns: <code>Device Type, Device Name, Location, Subsystem, Test Case Name</code><br>
+            Multiple test cases: separate with <code>|</code> in the Test Case Name cell
           </p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <input type="file" id="asset-csv-input" accept=".csv" style="display:none;" onchange="_assetHandleFile(this.files[0])">
@@ -10745,6 +10757,10 @@ function _assetPageHTML() {
         <div style="padding:16px;display:flex;flex-direction:column;gap:8px;">
           <input id="asset-add-type" class="form-input" placeholder="Device Type (e.g. ATC Cabinet)">
           <input id="asset-add-name" class="form-input" placeholder="Device Name (e.g. W40-AC01)" oninput="_assetPreviewPrefix()">
+          <select id="asset-add-loc" class="form-input">
+            <option value="">Location (optional)</option>
+            ${[...new Set(TI.map(r=>r.Location).filter(Boolean))].sort().map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('')}
+          </select>
           <select id="asset-add-sub" class="form-input">
             <option value="">Subsystem (optional)</option>
             ${allSubs.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
@@ -10788,31 +10804,37 @@ function _assetPageHTML() {
       <span style="font-size:13px;color:var(--gray-500);">${filtered.length} asset${filtered.length!==1?'s':''}</span>
     </div>
 
+    <!-- Bulk action bar -->
+    ${_assetSelected.size > 0 ? `
+      <div style="display:flex;align-items:center;gap:12px;background:#1e293b;color:#fff;padding:10px 18px;border-radius:8px;margin-bottom:12px;">
+        <span style="font-size:13px;font-weight:600;">${_assetSelected.size} asset${_assetSelected.size!==1?'s':''} selected</span>
+        <button class="admin-action-btn" style="background:#dc2626;" onclick="_assetBulkDelete()">🗑 Delete Selected</button>
+        <button class="form-secondary" style="font-size:12px;color:#fff;border-color:#fff4;" onclick="_assetClearSelection()">Clear</button>
+      </div>` : ''}
+
     <!-- Asset Table -->
     <div class="admin-section">
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr>
+            <th style="width:36px;"><input type="checkbox" title="Select all" onchange="_assetSelectAll(this.checked)"></th>
             <th>Device Name</th>
             <th>Type</th>
-            <th>Subsystem</th>
             <th>Location</th>
-            <th>Linked Test Cases</th>
+            <th>Subsystem</th>
+            <th>Linked</th>
             <th>Progress</th>
-            <th style="width:180px;">Actions</th>
+            <th style="width:160px;">Actions</th>
           </tr></thead>
           <tbody>
             ${filtered.length ? filtered.map(a => _assetRowHTML(a)).join('') : `
-              <tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:32px;">
+              <tr><td colspan="8" style="text-align:center;color:var(--gray-400);padding:32px;">
                 No assets found. Import a CSV or add one manually.
               </td></tr>`}
           </tbody>
         </table>
       </div>
     </div>
-
-    <!-- Manage Links Panel (inline) -->
-    ${_assetManagePanelId ? _assetManagePanelHTML(_assetManagePanelId) : ''}
   `;
 }
 
@@ -10822,13 +10844,17 @@ function _assetRowHTML(a) {
   const passCount  = childRows.filter(r => r.Status === 'Pass').length;
   const total      = childRows.length;
   const pct        = total > 0 ? Math.round((passCount / total) * 100) : 0;
-  return `
-    <tr>
+  const isOpen     = _assetManagePanelId === a.id;
+  const isChecked  = _assetSelected.has(a.id);
+
+  const mainRow = `
+    <tr style="${isOpen ? 'background:#eff6ff;' : ''}">
+      <td><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="_assetToggleSelect('${a.id}',this.checked)"></td>
       <td style="font-weight:600;font-family:monospace;font-size:13px;">${escapeHtml(a.name)}</td>
       <td style="font-size:13px;">${escapeHtml(a.device_type || '—')}</td>
+      <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.location || a.location_prefix || '—')}</td>
       <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.subsystem || '—')}</td>
-      <td><span style="font-size:12px;background:#f3f4f6;padding:2px 8px;border-radius:4px;">${escapeHtml(a.location_prefix || '—')}</span></td>
-      <td style="font-size:13px;">${links.length} test case${links.length!==1?'s':''}</td>
+      <td style="font-size:13px;">${links.length}</td>
       <td>
         ${total > 0 ? `
           <div style="display:flex;align-items:center;gap:8px;">
@@ -10836,14 +10862,24 @@ function _assetRowHTML(a) {
               <div style="width:${pct}%;background:${pct===100?'#16a34a':'#3b82f6'};height:6px;border-radius:4px;"></div>
             </div>
             <span style="font-size:11px;color:var(--gray-600);">${passCount}/${total}</span>
-          </div>` : `<span style="color:var(--gray-400);font-size:12px;">Not linked</span>`}
+          </div>` : `<span style="color:var(--gray-400);font-size:12px;">—</span>`}
       </td>
       <td>
-        <button class="form-secondary tr-mini-btn" onclick="_assetOpenManageLinks('${a.id}')">🔗 Links</button>
+        <button class="form-secondary tr-mini-btn${isOpen?' admin-action-btn':''}" onclick="_assetOpenManageLinks('${a.id}')">${isOpen?'🔗 Close':'🔗 Links'}</button>
         <button class="form-secondary tr-mini-btn" onclick="_assetOpenEdit('${a.id}')">✏️</button>
         <button class="form-secondary tr-mini-btn" style="color:var(--bad);" onclick="_assetDelete('${a.id}')">🗑</button>
       </td>
     </tr>`;
+
+  // Inline expanded links panel — sits immediately below the asset row
+  const panelRow = isOpen ? `
+    <tr>
+      <td colspan="8" style="padding:0;border-bottom:2px solid var(--primary);">
+        <div style="padding:4px 0 12px 0;">${_assetManagePanelHTML(a.id)}</div>
+      </td>
+    </tr>` : '';
+
+  return mainRow + panelRow;
 }
 
 function _assetManagePanelHTML(assetId) {
@@ -10875,12 +10911,13 @@ function _assetManagePanelHTML(assetId) {
   const sc = s => _assetStatusColor(s);
 
   return `
-    <div class="admin-section" style="margin-top:20px;border:2px solid var(--primary);">
-      <div class="admin-section-header" style="display:flex;justify-content:space-between;align-items:center;">
-        <h3 class="admin-section-title">🔗 Linked Test Cases — ${escapeHtml(asset.name)}
-          ${asset.subsystem ? `<span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:8px;">${escapeHtml(asset.subsystem)}</span>` : ''}
-        </h3>
-        <button class="form-secondary" onclick="_assetCloseManageLinks()">Close ✕</button>
+    <div style="background:#eff6ff;border-top:1px solid #bfdbfe;padding-bottom:4px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px 0;">
+        <div style="font-size:13px;font-weight:700;color:var(--primary);">🔗 ${escapeHtml(asset.name)}
+          ${asset.location  ? `<span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:8px;">${escapeHtml(asset.location)}</span>` : ''}
+          ${asset.subsystem ? `<span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:4px;">· ${escapeHtml(asset.subsystem)}</span>` : ''}
+        </div>
+        <button class="form-secondary" style="font-size:11px;" onclick="_assetCloseManageLinks()">Close ✕</button>
       </div>
       <div style="padding:16px;">
 
@@ -10987,20 +11024,22 @@ async function _assetHandleFile(file) {
 async function _assetAddManual() {
   const deviceType = document.getElementById('asset-add-type')?.value.trim() || '';
   const deviceName = document.getElementById('asset-add-name')?.value.trim() || '';
+  const location   = document.getElementById('asset-add-loc')?.value  || '';
   const subsystem  = document.getElementById('asset-add-sub')?.value  || '';
   if (!deviceName) { toast('Device Name is required', 'error'); return; }
   const prefix = _assetParsePrefix(deviceName);
   try {
     const [row] = await _dbUpsert('assets', [{
       device_type: deviceType || null, name: deviceName,
-      location_prefix: prefix || null, subsystem: subsystem || null,
-      import_batch_id: null,
+      location_prefix: prefix || null, location: location || null,
+      subsystem: subsystem || null, import_batch_id: null,
     }], 'name');
     const aIdx = ASSETS.findIndex(a => a.name === deviceName);
     if (aIdx >= 0) ASSETS[aIdx] = row; else ASSETS.push(row);
     toast(`Asset "${deviceName}" added`, 'success');
     document.getElementById('asset-add-type').value = '';
     document.getElementById('asset-add-name').value = '';
+    const locEl = document.getElementById('asset-add-loc'); if (locEl) locEl.value = '';
     const subEl = document.getElementById('asset-add-sub'); if (subEl) subEl.value = '';
     renderAdminAssets();
   } catch(e) { toast('Add failed: ' + e.message, 'error'); }
@@ -11010,6 +11049,7 @@ function _assetOpenEdit(assetId) {
   const a = ASSETS.find(x => x.id === assetId);
   if (!a) return;
   const allSubs = [...new Set(TI.map(r => r.Subsystem).filter(Boolean))].sort();
+  const allLocs = [...new Set(TI.map(r => r.Location).filter(Boolean))].sort();
   modal({
     title: `Edit Asset — ${escapeHtml(a.name)}`,
     body: `
@@ -11018,6 +11058,11 @@ function _assetOpenEdit(assetId) {
           <input id="ae-type" class="form-input" value="${escapeHtml(a.device_type||'')}"></div>
         <div><label class="form-label">Device Name</label>
           <input id="ae-name" class="form-input" value="${escapeHtml(a.name)}" oninput="_assetEditPreviewPrefix()"></div>
+        <div><label class="form-label">Location</label>
+          <select id="ae-loc" class="form-input">
+            <option value="">— None —</option>
+            ${allLocs.map(l => `<option value="${escapeHtml(l)}" ${a.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
+          </select></div>
         <div><label class="form-label">Subsystem</label>
           <select id="ae-sub" class="form-input">
             <option value="">— None —</option>
@@ -11039,13 +11084,14 @@ function _assetEditPreviewPrefix() {
 async function _assetSaveEdit(assetId) {
   const deviceType = document.getElementById('ae-type')?.value.trim() || '';
   const deviceName = document.getElementById('ae-name')?.value.trim() || '';
+  const location   = document.getElementById('ae-loc')?.value  || '';
   const subsystem  = document.getElementById('ae-sub')?.value  || '';
   if (!deviceName) { toast('Device Name required', 'error'); return; }
   const prefix = _assetParsePrefix(deviceName);
   try {
-    await _dbUpdate('assets', { device_type: deviceType||null, name: deviceName, location_prefix: prefix||null, subsystem: subsystem||null }, { id: assetId });
+    await _dbUpdate('assets', { device_type: deviceType||null, name: deviceName, location_prefix: prefix||null, location: location||null, subsystem: subsystem||null }, { id: assetId });
     const a = ASSETS.find(x => x.id === assetId);
-    if (a) { a.device_type = deviceType; a.name = deviceName; a.location_prefix = prefix; a.subsystem = subsystem; }
+    if (a) { a.device_type = deviceType; a.name = deviceName; a.location_prefix = prefix; a.location = location; a.subsystem = subsystem; }
     closeModal(); renderAdminAssets(); toast('Asset saved', 'success');
   } catch(e) { toast('Save failed: ' + e.message, 'error'); }
 }
@@ -11078,6 +11124,53 @@ function _assetOpenManageLinks(assetId) {
 function _assetCloseManageLinks() {
   _assetManagePanelId = null;
   renderAdminAssets();
+}
+
+function _assetToggleSelect(id, checked) {
+  if (checked) _assetSelected.add(id); else _assetSelected.delete(id);
+  renderAdminAssets();
+}
+
+function _assetSelectAll(checked) {
+  // Select/deselect all currently visible (filtered) assets
+  const filtered = ASSETS.filter(a => {
+    const s = _assetFilter.search.toLowerCase();
+    if (s && !a.name.toLowerCase().includes(s) && !(a.device_type||'').toLowerCase().includes(s)) return false;
+    if (_assetFilter.type   && a.device_type     !== _assetFilter.type)   return false;
+    if (_assetFilter.prefix && a.location_prefix !== _assetFilter.prefix) return false;
+    if (_assetFilter.sub    && a.subsystem        !== _assetFilter.sub)    return false;
+    return true;
+  });
+  filtered.forEach(a => { if (checked) _assetSelected.add(a.id); else _assetSelected.delete(a.id); });
+  renderAdminAssets();
+}
+
+function _assetClearSelection() {
+  _assetSelected.clear();
+  renderAdminAssets();
+}
+
+async function _assetBulkDelete() {
+  const ids = [..._assetSelected];
+  if (!ids.length) return;
+  const names = ids.map(id => ASSETS.find(a => a.id === id)?.name || id).join(', ');
+  const totalChildren = ids.reduce((n, id) => n + TI.filter(r => r.AssetId === id).length, 0);
+  if (!confirm(`Permanently delete ${ids.length} asset${ids.length!==1?'s':''}:\n${names}\n\nThis will also remove ${totalChildren} linked test instance${totalChildren!==1?'s':''}. This cannot be undone.`)) return;
+
+  for (const id of ids) {
+    const links = ASSET_LINKS.filter(l => l.asset_id === id);
+    for (const l of links) {
+      try { await _assetUnlink(id, l.parent_test_id); } catch(_){}
+    }
+    await _dbDelete('assets', { id });
+    ASSETS = ASSETS.filter(a => a.id !== id);
+    ASSET_LINKS = ASSET_LINKS.filter(l => l.asset_id !== id);
+  }
+
+  _assetSelected.clear();
+  renderAdminAssets();
+  _reRenderTR();
+  toast(`${ids.length} asset${ids.length!==1?'s':''} deleted`, 'success');
 }
 
 async function _assetUnlinkConfirm(assetId, parentTestId) {
