@@ -7804,7 +7804,7 @@ function _amDrilldownHTML(key) {
                     <tr ${_trEditMode && isAdmin ? `draggable="true" ondragstart="_trDragStart('${tid}')" ondragover="event.preventDefault()" ondrop="_trDropCase('${escapeHtml(tp)}','${tid}')"` : ''}>
                       ${_trBulkMode ? `<td><input type="checkbox" ${_trSelected.has(String(r.TestID))?'checked':''} onchange="_trToggleSelect('${tid}',this.checked)"></td>` : ''}
                       ${_trEditMode && isAdmin ? `<td style="cursor:grab;color:var(--gray-400);font-size:14px;">☰</td>` : ''}
-                      <td style="font-size:11px;font-family:monospace;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestCaseCode||'')}" onchange="_trDraftChange('${tid}','TestCaseCode',this.value)">` : escapeHtml(r.TestCaseCode||r.TestID||'—')}</td>
+                      <td style="font-size:11px;font-family:monospace;min-width:140px;">${_trEditMode && isAdmin ? `<input class="form-input" style="font-size:11px;font-family:monospace;min-width:120px;" value="${escapeHtml(r.TestCaseCode||'')}" onchange="_trDraftChange('${tid}','TestCaseCode',this.value)">` : escapeHtml(r.TestCaseCode||r.TestID||'—')}</td>
                       <td>
                         <div style="font-weight:500;font-size:13px;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestName||'')}" onchange="_trDraftChange('${tid}','TestName',this.value)">` : escapeHtml(r.TestName||'—')}</div>
                         ${r.CompletedBy ? `<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(r.CompletedBy)}</div>` : ''}
@@ -10370,19 +10370,57 @@ function _assetStatusColor(s) {
   return ({Pass:'#16a34a',Fail:'#dc2626','In Progress':'#d97706',Blocked:'#7c3aed','Not Started':'#9ca3af','Not Applicable':'#6b7280','Future Test':'#3b82f6'})[s] || '#9ca3af';
 }
 
-// ── Auto-pass: when all children pass, close the parent ──────────────────────
+// ── Auto-pass: derive parent status from children in real time ────────────────
 async function _assetAutoPassCheck(parentTestId) {
   if (!parentTestId) return;
   const parent = TI.find(r => String(r.TestID) === String(parentTestId));
   if (!parent || !parent.IsParent) return;
   const children = TI.filter(r => String(r.ParentTestId) === String(parentTestId));
   if (!children.length) return;
+
+  const allFuture = children.every(c => c.Status === 'Future Test');
   const allClosed = children.every(c => c.Status === 'Pass' || c.Status === 'Not Applicable');
   const anyActive = children.some(c => c.Status !== 'Not Started' && c.Status !== 'Future Test');
-  const newStatus = allClosed ? 'Pass' : anyActive ? 'In Progress' : 'Not Started';
+
+  const newStatus = allFuture  ? 'Future Test'
+                  : allClosed  ? 'Pass'
+                  : anyActive  ? 'In Progress'
+                  : 'Not Started';
+
   if (parent.Status === newStatus) return;
   parent.Status = newStatus;
   await _dbUpdate('test_items', { status: newStatus }, { test_id: String(parentTestId) });
+
+  // Update the DOM badge directly — no full re-render needed
+  _assetUpdateParentDOMBadge(parentTestId, newStatus);
+}
+
+// Patch the parent badge + summary line in the live DOM after auto-pass
+function _assetUpdateParentDOMBadge(parentTestId, newStatus) {
+  const safeId   = String(parentTestId).replace(/[^a-zA-Z0-9]/g, '-');
+  const badgeEl  = document.getElementById(`apb-${safeId}`);
+  const sumEl    = document.getElementById(`aps-${safeId}`);
+  if (!badgeEl && !sumEl) return;
+
+  const badgeCls = {
+    'Pass':'badge-passed', 'Fail':'badge-failed', 'Blocked':'badge-warn',
+    'Not Applicable':'badge-notstarted', 'In Progress':'badge-inprog',
+    'Future Test':'badge-futuretest', 'Not Started':'badge-notstarted',
+  }[newStatus] || 'badge-notstarted';
+
+  if (badgeEl) {
+    badgeEl.className = `badge ${badgeCls}`;
+    badgeEl.textContent = newStatus;
+  }
+  if (sumEl) {
+    const children  = TI.filter(r => String(r.ParentTestId) === String(parentTestId));
+    const passCount = children.filter(c => c.Status === 'Pass').length;
+    const total     = children.length;
+    const pending   = total - passCount;
+    sumEl.innerHTML = `📦 ${total} asset${total !== 1 ? 's' : ''} &nbsp;·&nbsp; `
+      + `<span style="color:#16a34a;">${passCount} Pass</span>`
+      + (pending > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${pending} pending</span>` : '');
+  }
 }
 
 // ── Weight redistribution ─────────────────────────────────────────────────────
@@ -10565,23 +10603,32 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
   const totalCount = children.length;
   const parentCur  = legacyMap[parent.Status] || parent.Status || 'Not Started';
   const badgeCls   = {'Pass':'badge-passed','Fail':'badge-failed','Blocked':'badge-warn','Not Applicable':'badge-notstarted','In Progress':'badge-inprog','Future Test':'badge-futuretest'}[parentCur] || 'badge-notstarted';
+  const safeId     = String(parent.TestID).replace(/[^a-zA-Z0-9]/g, '-');
+  const ptid       = escapeHtml(String(parent.TestID));
 
   const parentRowHtml = `
     <tr style="background:#f3f4f6;">
       ${_trBulkMode ? `<td></td>` : ''}
-      ${_trBulkMode || _trEditMode ? '' : ''}
-      <td style="font-size:11px;font-family:monospace;color:var(--gray-700);">
+      ${_trEditMode && isAdmin ? `<td></td>` : ''}
+      <td style="font-size:11px;font-family:monospace;color:var(--gray-700);min-width:140px;">
         <span style="font-size:10px;margin-right:4px;color:var(--gray-400);">▶</span>
-        ${escapeHtml(parent.TestCaseCode || parent.TestID || '—')}
+        ${_trEditMode && isAdmin
+          ? `<input class="form-input" style="font-size:11px;font-family:monospace;min-width:120px;" value="${escapeHtml(parent.TestCaseCode||'')}" onchange="_trDraftChange('${ptid}','TestCaseCode',this.value)">`
+          : escapeHtml(parent.TestCaseCode || parent.TestID || '—')}
       </td>
       <td>
-        <div style="font-weight:600;font-size:13px;">${escapeHtml(parent.TestName || '—')}</div>
-        <div style="font-size:11px;color:var(--gray-500);margin-top:2px;">
+        ${_trEditMode && isAdmin
+          ? `<input class="form-input" style="font-weight:600;font-size:13px;width:100%;" value="${escapeHtml(parent.TestName||'')}" onchange="_trDraftChange('${ptid}','TestName',this.value)">`
+          : `<div style="font-weight:600;font-size:13px;">${escapeHtml(parent.TestName || '—')}</div>`}
+        <div id="aps-${safeId}" style="font-size:11px;color:var(--gray-500);margin-top:2px;">
           📦 ${totalCount} asset${totalCount !== 1 ? 's' : ''} &nbsp;·&nbsp;
           <span style="color:#16a34a;">${passCount} Pass</span>${totalCount - passCount > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${totalCount - passCount} pending</span>` : ''}
         </div>
       </td>
-      <td><span class="badge ${badgeCls}">${escapeHtml(parentCur)}</span> <span style="font-size:10px;color:var(--gray-400);">auto</span></td>
+      <td>
+        <span class="badge ${badgeCls}" id="apb-${safeId}">${escapeHtml(parentCur)}</span>
+        <span style="font-size:10px;color:var(--gray-400);">auto</span>
+      </td>
       <td style="font-size:11px;color:var(--gray-400);font-style:italic;">Managed by assets</td>
       ${_trEditMode && isAdmin ? `<td></td>` : ''}
     </tr>`;
