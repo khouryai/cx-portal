@@ -10346,9 +10346,10 @@ function _assetParsePrefix(name) {
 
 function _assetNormalizeName(s) {
   return (s || '').trim()
-    .replace(/[–—‒‐]/g, '-') // en-dash, em-dash → hyphen
-    .replace(/\s*-\s*/g, ' - ')                  // normalise spaces around dashes
-    .replace(/\s+/g, ' ')                         // collapse multiple spaces
+    // all Unicode dash variants → plain hyphen
+    .replace(/[‐‑‒–—―−﹘﹣－]/g, '-')
+    .replace(/\s*-\s*/g, ' - ')  // normalise spaces around dashes
+    .replace(/\s+/g, ' ')        // collapse multiple spaces
     .toLowerCase();
 }
 
@@ -10358,29 +10359,23 @@ function _assetFindParentRow(testCaseName, locationPrefix, subsystem, exactLocat
   const sub   = (subsystem     || '').toLowerCase();
   const loc   = (exactLocation || '').toLowerCase();
 
-  const matches = TI.filter(r => {
-    if (r.ParentTestId) return false;
-    if (_assetNormalizeName(r.TestName) !== name) return false;
-    // Location: exact match takes precedence over prefix
-    if (loc) {
-      // Location column can be a prefix (e.g. "W40") or full name ("W40 Millbrae Station")
-      if (!(r.Location || '').toLowerCase().startsWith(loc)) return false;
-    } else if (prefix) {
-      if (!(r.Location || '').toUpperCase().replace(/\s+/g,'').startsWith(prefix.replace(/\s+/g,''))) return false;
-    }
-    if (sub && (r.Subsystem || '').toLowerCase() !== sub) return false;
+  const locOk = r => {
+    if (loc)    return (r.Location || '').toLowerCase().startsWith(loc);
+    if (prefix) return (r.Location || '').toUpperCase().replace(/\s+/g,'').startsWith(prefix.replace(/\s+/g,''));
     return true;
-  });
-  // Fall back: drop subsystem filter if nothing found
-  if (!matches.length && sub) {
-    return TI.find(r => {
-      if (r.ParentTestId) return false;
-      if (_assetNormalizeName(r.TestName) !== name) return false;
-      if (loc) return (r.Location || '').toLowerCase().startsWith(loc);
-      return !prefix || (r.Location || '').toUpperCase().replace(/\s+/g,'').startsWith(prefix.replace(/\s+/g,''));
-    }) || null;
-  }
-  return matches[0] || null;
+  };
+
+  // Pass 1: name + location + subsystem
+  let hit = TI.find(r => !r.ParentTestId && _assetNormalizeName(r.TestName) === name && locOk(r) && (!sub || (r.Subsystem||'').toLowerCase() === sub));
+  if (hit) return hit;
+
+  // Pass 2: drop subsystem
+  hit = TI.find(r => !r.ParentTestId && _assetNormalizeName(r.TestName) === name && locOk(r));
+  if (hit) return hit;
+
+  // Pass 3: name only — location/prefix may be wrong in the CSV
+  hit = TI.find(r => !r.ParentTestId && _assetNormalizeName(r.TestName) === name);
+  return hit || null;
 }
 
 function _assetStatusColor(s) {
