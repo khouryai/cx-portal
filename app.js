@@ -7412,6 +7412,7 @@ function _testRegisterHTML() {
           <span><b>${selCount}</b> activit${selCount===1?'y':'ies'} selected</span>
           ${hasNonFuture  ? `<button class="admin-action-btn" style="background:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
           ${hasFutureTest ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
+          <button class="admin-action-btn" style="background:#dc2626;" onclick="_amBulkDeleteActivities()">🗑 Delete Selected</button>
           <button class="form-secondary" style="font-size:12px;" onclick="_amClearSelection()">Clear selection</button>
         </div>` : ''}
 
@@ -7596,6 +7597,7 @@ function _adminActivityManagerHTML() {
           <span><b>${selCount}</b> activit${selCount===1?'y':'ies'} selected</span>
           ${hasNonFuture ? `<button class="admin-action-btn" style="background:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
           ${hasFutureTest ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
+          <button class="admin-action-btn" style="background:#dc2626;" onclick="_amBulkDeleteActivities()">🗑 Delete Selected</button>
           <button class="form-secondary" style="font-size:12px;" onclick="_amClearSelection()">Clear selection</button>
         </div>
       ` : ''}
@@ -8090,7 +8092,7 @@ function _amOpenEditModal(key) {
         Changes to Activity Name, Phase, Location, or Subsystem update all child test items. Activity Status is auto-calculated from test item statuses.
       </p>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amSaveEdit('${escapeHtml(key)}',true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" onclick="_amSaveEdit('${escapeHtml(key)}')">Save Changes</button>`
+    footer: `<button class="admin-action-btn" style="background:#dc2626;margin-right:auto;" onclick="_amDeleteActivity('${escapeHtml(key)}')">🗑 Delete Activity</button><button class="form-secondary" onclick="closeModal()">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amSaveEdit('${escapeHtml(key)}',true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" onclick="_amSaveEdit('${escapeHtml(key)}')">Save Changes</button>`
   });
 }
 
@@ -8172,6 +8174,71 @@ async function _amSaveEdit(key, deployToField = false) {
     toast((deployToField ? 'Deploy' : 'Save') + ' failed: ' + e.message, 'error');
     if (btn) { btn.disabled = false; btn.textContent = deployToField ? 'Deploy to Field' : 'Save Changes'; }
   }
+}
+
+// ── Delete a single activity (all its test_items) from Supabase ───────────────
+async function _amDeleteActivity(key) {
+  const act = _amGetActivities().find(a => a.key === key);
+  if (!act) return;
+  const itemCount = act.items.length;
+  if (!confirm(
+    `Delete activity "${act.activity}" and all ${itemCount} test case${itemCount !== 1 ? 's' : ''}?\n\n` +
+    `Phase: ${act.phase}\nLocation: ${act.location}\nSubsystem: ${act.subsystem}\n\n` +
+    `This cannot be undone.`
+  )) return;
+  closeModal();
+  try {
+    // Delete FK-dependent child rows first
+    for (const r of act.items) {
+      if (!r.TestID) continue;
+      try { await _dbDelete('test_results',             { test_id: r.TestID }); } catch(_) {}
+      try { await _dbDelete('test_item_status_history', { test_id: r.TestID }); } catch(_) {}
+    }
+    // Delete the test_items themselves
+    await _dbDelete('test_items', {
+      phase:     act.phase,
+      location:  act.location,
+      subsystem: act.subsystem,
+      activity:  act.activity,
+    });
+    _amSelected.delete(key);
+    await loadTestItems();
+    toast(`Deleted "${act.activity}" (${itemCount} test case${itemCount !== 1 ? 's' : ''})`, 'success');
+    renderTestRegister();
+    renderAdminPortal();
+  } catch(e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ── Bulk delete selected activities ──────────────────────────────────────────
+async function _amBulkDeleteActivities() {
+  const all      = _amGetActivities();
+  const selected = all.filter(a => _amSelected.has(a.key));
+  if (!selected.length) return;
+  const totalItems = selected.reduce((s, a) => s + a.items.length, 0);
+  if (!confirm(
+    `Delete ${selected.length} activit${selected.length !== 1 ? 'ies' : 'y'} and ${totalItems} test case${totalItems !== 1 ? 's' : ''}?\n\n` +
+    `This cannot be undone.`
+  )) return;
+  try {
+    for (const act of selected) {
+      for (const r of act.items) {
+        if (!r.TestID) continue;
+        try { await _dbDelete('test_results',             { test_id: r.TestID }); } catch(_) {}
+        try { await _dbDelete('test_item_status_history', { test_id: r.TestID }); } catch(_) {}
+      }
+      await _dbDelete('test_items', {
+        phase:     act.phase,
+        location:  act.location,
+        subsystem: act.subsystem,
+        activity:  act.activity,
+      });
+    }
+    _amSelected.clear();
+    await loadTestItems();
+    toast(`Deleted ${selected.length} activit${selected.length !== 1 ? 'ies' : 'y'} (${totalItems} test cases)`, 'success');
+    renderTestRegister();
+    renderAdminPortal();
+  } catch(e) { toast('Bulk delete failed: ' + e.message, 'error'); }
 }
 
 function _amOpenDeployToFieldModal() {
