@@ -4684,6 +4684,31 @@ async function submitIntakeFinal() {
     const lData = await _dbInsert('delay_log', [logRow]);
     console.log('[submitIntakeFinal] ← delay_log returned:', lData?.length ?? 0, 'rows');
 
+    // Fire-and-forget email summary via Supabase Edge Function (non-blocking)
+    (async () => {
+      try {
+        const _emailRes = await fetch(
+          'https://uqtwiucxktljhukmgmxg.supabase.co/functions/v1/send-daily-log-email',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              logRow,
+              submitterEmail: currentProfile?.email || '',
+            }),
+          }
+        );
+        const _emailJson = await _emailRes.json().catch(() => ({}));
+        if (_emailRes.ok) {
+          console.log('[submitIntakeFinal] email sent, id:', _emailJson.id);
+        } else {
+          console.warn('[submitIntakeFinal] email failed:', _emailJson);
+        }
+      } catch (_emailErr) {
+        console.warn('[submitIntakeFinal] email error (non-blocking):', _emailErr);
+      }
+    })();
+
     logAudit('Daily Log Submitted', `${allItems.length} test cases logged`, 'Daily report generated');
     _sessionLog     = [];
     intakeAdditions = [];
