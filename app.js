@@ -10534,7 +10534,12 @@ async function _assetUnlink(assetId, parentTestId) {
 
 // ── CSV import ────────────────────────────────────────────────────────────────
 async function _assetImportCSV(file, onProgress) {
-  const text = await file.text();
+  // Detect encoding: Excel saves CSVs as Windows-1252 which breaks UTF-8 for dashes etc.
+  const buf  = await file.arrayBuffer();
+  const utf8 = new TextDecoder('utf-8', { fatal: false }).decode(buf);
+  const text = utf8.includes('�')
+    ? new TextDecoder('windows-1252').decode(buf)
+    : utf8;
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) { toast('CSV has no data rows', 'error'); return; }
 
