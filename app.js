@@ -9480,33 +9480,53 @@ function _p6OpenTCWeights(actKey) {
   const act = all.find(a => a.key === actKey);
   if (!act) return;
 
-  const rows = act.items.map(item => `
-    <tr>
-      <td style="font-size:12px;font-weight:600;white-space:nowrap;">${escapeHtml(item.TestCaseCode||'')}</td>
-      <td style="font-size:12px;">${escapeHtml(item.TestName||'')}</td>
-      <td style="text-align:center;white-space:nowrap;">
-        <input type="number" min="0" step="0.5" class="form-input"
-          style="width:70px;text-align:center;font-size:12px;padding:5px 4px;"
-          id="tcw-${escapeHtml(item.TestID||item.test_id||'')}" value="${item.Weight ?? 1}">
-      </td>
-    </tr>`).join('');
-
   const safeKey = escapeHtml(actKey);
+
+  const rows = act.items.map(item => {
+    const tid = escapeHtml(item.TestID || item.test_id || '');
+    return `
+      <tr>
+        <td style="text-align:center;padding:6px 8px;">
+          <input type="checkbox" class="tcw-chk" data-tid="${tid}" checked
+            style="width:15px;height:15px;cursor:pointer;"
+            onchange="_p6TCWUpdateSelCount()">
+        </td>
+        <td style="font-size:12px;font-weight:600;white-space:nowrap;">${escapeHtml(item.TestCaseCode||'')}</td>
+        <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(item.TestName||'')}</td>
+        <td style="text-align:center;white-space:nowrap;">
+          <input type="number" min="0" step="0.5" class="form-input"
+            style="width:70px;text-align:center;font-size:12px;padding:5px 4px;"
+            id="tcw-${tid}" value="${item.Weight ?? 1}">
+        </td>
+      </tr>`;
+  }).join('');
 
   modal({
     title: `Test Case Weights — ${act.activity}`,
     size: 'large',
     body: `
-      <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;margin-bottom:16px;flex-wrap:wrap;">
-        <span style="font-size:12px;color:var(--gray-600);font-weight:600;white-space:nowrap;">Bulk set all weights to:</span>
+      <!-- Bulk apply bar -->
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;margin-bottom:14px;flex-wrap:wrap;">
+        <span style="font-size:12px;font-weight:600;color:var(--gray-600);white-space:nowrap;">Set weight to:</span>
         <input type="number" id="tcw-bulk-val" min="0" step="0.5" value="1"
-          class="form-input" style="width:80px;font-size:13px;padding:5px 8px;text-align:center;">
-        <button class="admin-action-btn tr-mini-btn" onclick="_p6ApplyBulkWeight('${safeKey}')">Apply to All</button>
-        <span style="font-size:11px;color:var(--gray-400);margin-left:auto;">Default = 1 (equal weight). Higher = more important.</span>
+          class="form-input" style="width:76px;font-size:13px;padding:5px 8px;text-align:center;">
+        <button class="admin-action-btn tr-mini-btn" onclick="_p6ApplyBulkWeight()">
+          Apply to <span id="tcw-sel-count">${act.items.length}</span> selected
+        </button>
+        <div style="display:flex;gap:8px;margin-left:auto;align-items:center;">
+          <button class="form-secondary tr-mini-btn" onclick="_p6TCWSelectAll(true)">Select all</button>
+          <button class="form-secondary tr-mini-btn" onclick="_p6TCWSelectAll(false)">Deselect all</button>
+          <span style="font-size:11px;color:var(--gray-400);">Default = 1 · Higher = more important</span>
+        </div>
       </div>
+      <!-- Table -->
       <div class="table-wrap" style="max-height:55vh;overflow-y:auto;">
-        <table class="data-table" style="min-width:520px;">
+        <table class="data-table" style="min-width:540px;">
           <thead><tr>
+            <th style="width:36px;text-align:center;">
+              <input type="checkbox" checked style="cursor:pointer;"
+                onchange="_p6TCWSelectAll(this.checked)">
+            </th>
             <th style="white-space:nowrap;">Test Case Code</th>
             <th>Test Name</th>
             <th style="text-align:center;white-space:nowrap;">Weight</th>
@@ -9520,16 +9540,27 @@ function _p6OpenTCWeights(actKey) {
   });
 }
 
-// Apply same weight to all visible TC inputs in the modal
-function _p6ApplyBulkWeight(actKey) {
+function _p6TCWUpdateSelCount() {
+  const checked = document.querySelectorAll('.tcw-chk:checked').length;
+  const el = document.getElementById('tcw-sel-count');
+  if (el) el.textContent = checked;
+}
+
+function _p6TCWSelectAll(checked) {
+  document.querySelectorAll('.tcw-chk').forEach(cb => { cb.checked = checked; });
+  // sync header checkbox
+  const hdr = document.querySelector('thead input[type="checkbox"]');
+  if (hdr) hdr.checked = checked;
+  _p6TCWUpdateSelCount();
+}
+
+// Apply bulk weight only to checked rows
+function _p6ApplyBulkWeight() {
   const bulkVal = parseFloat(document.getElementById('tcw-bulk-val')?.value);
   if (isNaN(bulkVal) || bulkVal < 0) { toast('Enter a valid weight ≥ 0', 'error'); return; }
-  const all = _amGetActivities();
-  const act = all.find(a => a.key === actKey);
-  if (!act) return;
-  act.items.forEach(item => {
-    const id = item.TestID || item.test_id;
-    const el = document.getElementById(`tcw-${escapeHtml(id||'')}`);
+  document.querySelectorAll('.tcw-chk:checked').forEach(cb => {
+    const tid = cb.dataset.tid;
+    const el  = document.getElementById(`tcw-${tid}`);
     if (el) el.value = bulkVal;
   });
 }
