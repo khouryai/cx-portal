@@ -1998,8 +1998,9 @@ let P6_PATTERNS    = [];   // p6_learn_patterns
 let P6_DISMISSALS  = [];   // p6_activity_dismissals
 
 // ── Health tab filter state ───────────────────────────────────────────────────
-let _p6HealthFilter = { search: '', dateMode: 'all', dateFrom: '', dateTo: '' };
-let _p6HealthLinkOpen = new Set(); // p6 activity IDs with link-panel expanded
+let _p6HealthFilter     = { search: '', dateMode: 'all', dateFrom: '', dateTo: '' };
+let _p6HealthLinkOpen   = new Set(); // p6 activity IDs with link-panel expanded
+let _p6HShowingSnoozed  = false;     // toggle snoozed section visibility
 let _trpFilters = { search:'', status:'', subsystem:'', phase:'', location:'' };
 let _trpExpanded = new Set();
 let _trpSyncInFlight = false;
@@ -9381,7 +9382,9 @@ function _p6HealthTabHTML() {
             <span style="font-size:13px;font-weight:700;">🔴 Unlinked P6 Activities</span>
             <span class="badge badge-review" style="margin-left:8px;font-size:11px;">${unlinkedP6.length}</span>
             ${batchLabel ? `<span style="font-size:11px;color:var(--gray-500);margin-left:10px;">(${escapeHtml(batchLabel)})</span>` : ''}
-            ${P6_DISMISSALS.length ? `<button class="form-secondary tr-mini-btn" style="margin-left:12px;" onclick="_p6HShowDismissed()">👁 Show ${P6_DISMISSALS.length} snoozed</button>` : ''}
+            ${P6_DISMISSALS.length ? `<button class="form-secondary tr-mini-btn" style="margin-left:12px;${_p6HShowingSnoozed?'background:var(--hitachi-red);color:#fff;':''}" onclick="_p6HShowingSnoozed=!_p6HShowingSnoozed;renderAdminP6()">
+              ${_p6HShowingSnoozed ? '▲ Hide snoozed' : `👁 Show ${P6_DISMISSALS.length} snoozed`}
+            </button>` : ''}
           </div>
           ${unlinkedP6.length ? `
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -9482,6 +9485,44 @@ function _p6HealthTabHTML() {
             ${srch||_p6HealthFilter.dateMode!=='all' ? 'No activities match the current filters.' : '✓ All P6 activities are linked'}
            </div>`}
       </div>
+
+      <!-- ── Snoozed activities (inline, toggled) ── -->
+      ${_p6HShowingSnoozed ? (() => {
+        const snoozed = P6_DISMISSALS.map(d => {
+          const p = P6_ACTS.find(x => x.id === d.p6_activity_id);
+          return { ...d, p6_name: p ? p.p6_name : `(ID: ${d.p6_activity_id})`, p6_id: p?.p6_id || '' };
+        });
+        return `
+        <div class="data-card" style="padding:20px;border-left:3px solid var(--hitachi-red);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+            <span style="font-size:13px;font-weight:700;">⏰ Snoozed P6 Activities (${snoozed.length})</span>
+            ${snoozed.length ? `<button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_p6HRestoreAll()">Unsnooze All</button>` : ''}
+          </div>
+          ${snoozed.length ? `
+          <table class="data-table" style="width:100%;">
+            <thead><tr>
+              <th>P6 Activity Name</th>
+              <th>P6 ID</th>
+              <th>Snoozed By</th>
+              <th>Snoozed On</th>
+              <th style="width:100px;text-align:center;">Action</th>
+            </tr></thead>
+            <tbody>
+              ${snoozed.map(d => `
+              <tr>
+                <td style="font-weight:500;">${escapeHtml(d.p6_name)}</td>
+                <td style="font-size:11px;color:var(--gray-500);">${escapeHtml(d.p6_id)}</td>
+                <td style="font-size:12px;">${escapeHtml(d.dismissed_by||'—')}</td>
+                <td style="font-size:12px;">${_fmtDate(d.dismissed_at)}</td>
+                <td style="text-align:center;">
+                  <button class="admin-action-btn" style="font-size:11px;padding:4px 10px;"
+                    onclick="_p6HRestoreOne('${escapeHtml(d.id)}')">Unsnooze</button>
+                </td>
+              </tr>`).join('')}
+            </tbody>
+          </table>` : `<div style="font-size:12px;color:var(--gray-500);">Nothing currently snoozed.</div>`}
+        </div>`;
+      })() : ''}
 
       <!-- ── Lower 3-column grid ── -->
       <div class="p6-health-grid">
@@ -9625,56 +9666,22 @@ async function _p6HBulkRemindLater() {
   } catch(e) { toast('Snooze failed: ' + e.message, 'error'); }
 }
 
-// Show modal listing all snoozed activities with a restore option
-function _p6HShowDismissed() {
-  // Look across ALL imported P6 activities (any batch) to find names
-  const dismissed = P6_DISMISSALS.map(d => {
-    const p = P6_ACTS.find(x => x.id === d.p6_activity_id);
-    return { ...d, p6_name: p ? p.p6_name : `(ID: ${d.p6_activity_id})`, p6_id: p?.p6_id || '' };
-  });
-
-  const modal = document.createElement('div');
-  modal.className = 'modal-overlay';
-  modal.innerHTML = `
-    <div class="modal-box" style="max-width:560px;width:95%;">
-      <div class="modal-head">
-        <div class="modal-title">⏰ Snoozed P6 Activities (${dismissed.length})</div>
-        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
-      </div>
-      <div class="modal-body" style="max-height:400px;overflow-y:auto;">
-        ${dismissed.length ? dismissed.map(d => `
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--gray-100);gap:12px;">
-            <div style="font-size:12px;">
-              <div style="font-weight:600;">${escapeHtml(d.p6_name)}</div>
-              <div style="color:var(--gray-500);font-size:11px;">Snoozed by ${escapeHtml(d.dismissed_by||'—')} on ${_fmtDate(d.dismissed_at)}</div>
-            </div>
-            <button class="form-secondary tr-mini-btn" onclick="_p6HRestoreOne('${escapeHtml(d.id)}',this)">Restore</button>
-          </div>`).join('')
-        : `<div style="font-size:12px;color:var(--gray-500);">Nothing snoozed.</div>`}
-      </div>
-      <div class="modal-foot">
-        ${dismissed.length ? `<button class="admin-action-btn" onclick="_p6HRestoreAll()">Restore All</button>` : ''}
-        <button class="form-secondary" onclick="this.closest('.modal-overlay').remove()">Close</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-}
-
-async function _p6HRestoreOne(dismissalId, btn) {
+async function _p6HRestoreOne(dismissalId) {
   try {
     await _dbDelete('p6_activity_dismissals', { id: dismissalId });
-    btn?.closest('div[style]')?.remove();
     await loadP6Data();
-    toast('Activity restored to unlinked list', 'success');
+    renderAdminP6();
+    toast('Activity returned to unlinked list', 'success');
   } catch(e) { toast('Restore failed: ' + e.message, 'error'); }
 }
 
 async function _p6HRestoreAll() {
   try {
-    for (const d of P6_DISMISSALS) await _dbDelete('p6_activity_dismissals', { id: d.id });
-    document.querySelector('.modal-overlay')?.remove();
+    for (const d of [...P6_DISMISSALS]) await _dbDelete('p6_activity_dismissals', { id: d.id });
+    _p6HShowingSnoozed = false;
     await loadP6Data();
-    toast('All snoozed activities restored', 'success');
+    renderAdminP6();
+    toast('All snoozed activities returned to unlinked list', 'success');
   } catch(e) { toast('Restore failed: ' + e.message, 'error'); }
 }
 
