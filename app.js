@@ -9514,8 +9514,8 @@ function _p6HealthTabHTML() {
                 <td style="font-size:11px;color:var(--gray-500);">${escapeHtml(d.p6_id)}</td>
                 <td style="font-size:12px;">${escapeHtml(d.dismissed_by||'—')}</td>
                 <td style="font-size:12px;">${_fmtDate(d.dismissed_at)}</td>
-                <td style="text-align:center;">
-                  <button class="admin-action-btn" style="font-size:11px;padding:4px 10px;"
+                <td style="text-align:center;white-space:nowrap;">
+                  <button class="admin-action-btn" style="font-size:11px;padding:4px 12px;white-space:nowrap;"
                     onclick="_p6HRestoreOne('${escapeHtml(d.id)}')">Unsnooze</button>
                 </td>
               </tr>`).join('')}
@@ -9985,7 +9985,9 @@ async function _p6SaveTCWeights(actKey) {
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function _fmtDate(d) {
   if (!d) return '—';
-  const dt = new Date(d + 'T00:00:00');
+  // Full ISO timestamps already have a T — don't append another one
+  const dt = /T/.test(String(d)) ? new Date(d) : new Date(d + 'T00:00:00');
+  if (isNaN(dt.getTime())) return '—';
   return dt.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
 }
 
