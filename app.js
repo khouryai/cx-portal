@@ -3194,57 +3194,89 @@ function _deployToggleTc(si, tcCode, checked) {
   if (el) el.textContent = `${s.tcCodes.length} of ${tpl.testCases.length} test cases`;
 }
 
-function confirmDeploy(templateId) {
+async function confirmDeploy(templateId) {
   const tpl = TEMPLATES.find(t => t.id === templateId);
   if (!_deploySelections.length) { toast('Add at least one location', 'warn'); return; }
   const empty = _deploySelections.filter(s => !s.tcCodes.length);
   if (empty.length) { toast(`"${empty[0].locName}" has no test cases selected`, 'warn'); return; }
 
-  const enabledLocs = _deploySelections.map(s => ({ code: s.locId, name: s.locName, phase: s.phaseName, applicable: s.tcCodes }));
+  // Disable button while saving
+  const btn = document.getElementById('dep-confirm-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Deploying…'; }
 
-  const newDep = {
-    id: 'dep-' + Date.now(),
-    templateId,
-    templateName: tpl.name,
-    deployedBy: currentRoleUser.name,
-    deployedAt: new Date().toISOString(),
-    locations: enabledLocs,
-  };
-  DEPLOYMENTS.unshift(newDep);
+  const depId   = 'dep-' + Date.now();
+  const now     = new Date().toISOString();
+  const actor   = currentRoleUser?.name || 'admin';
+  const totalLocs = _deploySelections.length;
 
-  enabledLocs.forEach(loc => {
-    loc.applicable.forEach(tcCode => {
-      const tc = tpl.testCases.find(t => t.code === tcCode);
-      TEST_INSTANCES.push({
-        id: `ti-${newDep.id}-${loc.code}-${tcCode}`,
-        deploymentId: newDep.id,
-        templateName: tpl.name,
-        subsystem: tpl.subsystem,
-        location: loc.code,
-        phase: loc.phase,
-        testCode: tcCode,
-        testName: tc?.name || tcCode,
-        procedure: tc?.procedure || '',
-        duration: tc?.duration || 1,
-        status: 'not_started',
-        applicable: true,
-        lastUpdatedBy: null,
-        lastUpdatedAt: null,
-        notes: '',
-      });
+  try {
+    // ── 1. Build test_items rows ──────────────────────────────────────────────
+    const rows = [];
+    for (const s of _deploySelections) {
+      for (const tcCode of s.tcCodes) {
+        const tc = tpl.testCases.find(t => t.code === tcCode);
+        rows.push({
+          test_id:        `${depId}-${s.locId}-${tcCode}`,
+          phase:          s.phaseName,
+          location:       s.locName,
+          subsystem:      tpl.subsystem,
+          activity:       tpl.name,
+          test_category:  tc?.category || '',
+          test_case_code: tcCode,
+          test_name:      tc?.name || tcCode,
+          test_procedure: tc?.procedure || '',
+          status:         'Not Started',
+          weight:         1,
+          synced_at:      now,
+        });
+      }
+    }
+
+    if (!rows.length) { toast('No test cases to deploy', 'warn'); return; }
+
+    // ── 2. Insert test_items into Supabase in batches of 50 ──────────────────
+    const BATCH = 50;
+    for (let i = 0; i < rows.length; i += BATCH) {
+      await _dbInsert('test_items', rows.slice(i, i + BATCH));
+    }
+
+    // ── 3. Record deployment in Supabase ─────────────────────────────────────
+    await _dbInsert('deployments', [{
+      id:            depId,
+      template_id:   templateId,
+      template_name: tpl.name,
+      deployed_by:   actor,
+      deployed_at:   now,
+    }]);
+
+    // ── 4. Update in-memory DEPLOYMENTS so the overview reflects the new entry
+    const enabledLocs = _deploySelections.map(s => ({
+      code: s.locId, name: s.locName, phase: s.phaseName, applicable: s.tcCodes,
+    }));
+    DEPLOYMENTS.unshift({
+      id: depId, templateId, templateName: tpl.name,
+      deployedBy: actor, deployedAt: now, locations: enabledLocs,
     });
-  });
 
-  logAudit('Deployed Template',
-    `${tpl.name} → ${enabledLocs.map(l => l.name).join(', ')}`,
-    `${enabledLocs.reduce((s, l) => s + l.applicable.length, 0)} test cases created`);
+    // ── 5. Reload TI from Supabase so the Test Register shows the new items ──
+    await loadTestItems();
 
-  closeModal();
-  _deploySelections = [];
-  toast(`Deployed ${tpl.name} to ${enabledLocs.length} location${enabledLocs.length > 1 ? 's' : ''}`, 'success');
-  renderAdminPortal();
-  renderAdminTemplates();
-  renderTestRegister();
+    logAudit('Deployed Template',
+      `${tpl.name} → ${enabledLocs.map(l => l.name).join(', ')}`,
+      `${rows.length} test cases created`);
+
+    closeModal();
+    _deploySelections = [];
+    toast(`✓ Deployed ${rows.length} test case${rows.length !== 1 ? 's' : ''} across ${totalLocs} location${totalLocs !== 1 ? 's' : ''}`, 'success');
+    renderAdminPortal();
+    renderAdminTemplates();
+    renderTestRegister();
+
+  } catch(e) {
+    console.error('[confirmDeploy]', e);
+    toast('Deploy failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Deploy'; }
+  }
 }
 
 // ==========================================================================
