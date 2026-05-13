@@ -3261,6 +3261,36 @@ async function confirmDeploy(templateId) {
 
     // ── 5. Reload TI from Supabase so the Test Register shows the new items ──
     await loadTestItems();
+    await loadAssetData();
+
+    // ── 6. Auto-create generic child assets defined in the template ───────────
+    for (const s of _deploySelections) {
+      for (const tcCode of s.tcCodes) {
+        const tc = tpl.testCases.find(t => t.code === tcCode);
+        if (!tc?.assets?.trim()) continue;
+        const parentId  = `${depId}-${s.locId}-${tcCode}`;
+        const parentRow = TI.find(r => String(r.TestID) === parentId);
+        if (!parentRow) continue;
+        const assetNames = tc.assets.split(',').map(a => a.trim()).filter(Boolean);
+        for (const aName of assetNames) {
+          try {
+            let [assetRow] = await _dbUpsert('assets', [{
+              name:            aName,
+              device_type:     'Generic',
+              location:        s.locName       || null,
+              subsystem:       tpl.subsystem   || null,
+              location_prefix: null,
+              import_batch_id: null,
+            }], 'name,location,subsystem');
+            if (!assetRow) assetRow = ASSETS.find(a => a.name === aName && (a.location||'') === (s.locName||'') && (a.subsystem||'') === (tpl.subsystem||''));
+            if (!assetRow) continue;
+            const aIdx = ASSETS.findIndex(a => a.id === assetRow.id);
+            if (aIdx >= 0) ASSETS[aIdx] = assetRow; else ASSETS.push(assetRow);
+            await _assetLinkToParent(assetRow, parentRow);
+          } catch(e) { console.warn('[deploy generic asset]', aName, e.message); }
+        }
+      }
+    }
 
     logAudit('Deployed Template',
       `${tpl.name} → ${enabledLocs.map(l => l.name).join(', ')}`,
@@ -3287,13 +3317,16 @@ let _templateCases = [];
 
 function _tcRowsHTML() {
   return _templateCases.map((tc, i) => `
-    <div style="display:grid;grid-template-columns:140px 1fr 130px 32px 32px;gap:6px;align-items:center;margin-bottom:6px;">
+    <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 32px 32px;gap:6px;align-items:center;margin-bottom:6px;">
       <input type="text" class="form-input" style="font-size:12px;padding:6px 8px;" placeholder="Code e.g. DCS-01"
         value="${escapeHtml(tc.code)}" oninput="_templateCases[${i}].code=this.value">
       <input type="text" class="form-input" style="font-size:12px;padding:6px 8px;" placeholder="Test Case Name"
         value="${escapeHtml(tc.name)}" oninput="_templateCases[${i}].name=this.value">
       <input type="text" class="form-input" style="font-size:12px;padding:6px 8px;" placeholder="Category"
         value="${escapeHtml(tc.category)}" oninput="_templateCases[${i}].category=this.value">
+      <input type="text" class="form-input" style="font-size:12px;padding:6px 8px;" placeholder="Assets e.g. MLK A, MLK B"
+        value="${escapeHtml(tc.assets||'')}" oninput="_templateCases[${i}].assets=this.value"
+        title="Comma-separated generic asset names auto-linked as children on deploy">
       <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;" title="Duplicate" onclick="duplicateTemplateCase(${i})">⧉</button>
       <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;color:var(--bad);" title="Remove" onclick="removeTemplateCase(${i})" ${_templateCases.length === 1 ? 'disabled' : ''}>×</button>
     </div>
@@ -3382,10 +3415,11 @@ function openNewTemplateModal() {
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:140px 1fr 130px 32px 32px;gap:6px;margin-bottom:6px;padding:0 2px;">
+      <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 32px 32px;gap:6px;margin-bottom:6px;padding:0 2px;">
         <div style="font-size:11px;color:var(--gray-500);font-weight:600;">CODE</div>
         <div style="font-size:11px;color:var(--gray-500);font-weight:600;">TEST CASE NAME</div>
         <div style="font-size:11px;color:var(--gray-500);font-weight:600;">CATEGORY</div>
+        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">ASSETS (GENERIC)</div>
         <div></div><div></div>
       </div>
       <div id="tc-rows">${_tcRowsHTML()}</div>
@@ -3408,7 +3442,7 @@ async function saveNewTemplate() {
 
   const testCases = _templateCases
     .filter(tc => tc.code.trim() || tc.name.trim())
-    .map(tc => ({ code: tc.code.trim(), name: tc.name.trim(), category: tc.category.trim(), procedure, duration: 1 }));
+    .map(tc => ({ code: tc.code.trim(), name: tc.name.trim(), category: tc.category.trim(), assets: (tc.assets||'').trim(), procedure, duration: 1 }));
 
   if (!testCases.length) { toast('Add at least one test case', 'error'); return; }
 
@@ -3436,7 +3470,7 @@ async function saveNewTemplate() {
 function editTemplate(id) {
   const tpl = TEMPLATES.find(t => t.id === id);
   if (!tpl) return;
-  _templateCases = tpl.testCases.map(tc => ({ code: tc.code, name: tc.name, category: tc.category }));
+  _templateCases = tpl.testCases.map(tc => ({ code: tc.code, name: tc.name, category: tc.category, assets: tc.assets||'' }));
   modal({
     title: 'Edit Activity Template',
     sub: tpl.name,
@@ -3473,10 +3507,11 @@ function editTemplate(id) {
           </label>
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:140px 1fr 130px 32px 32px;gap:6px;margin-bottom:6px;padding:0 2px;">
+      <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 32px 32px;gap:6px;margin-bottom:6px;padding:0 2px;">
         <div style="font-size:11px;color:var(--gray-500);font-weight:600;">CODE</div>
         <div style="font-size:11px;color:var(--gray-500);font-weight:600;">TEST CASE NAME</div>
         <div style="font-size:11px;color:var(--gray-500);font-weight:600;">CATEGORY</div>
+        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">ASSETS (GENERIC)</div>
         <div></div><div></div>
       </div>
       <div id="tc-rows">${_tcRowsHTML()}</div>
@@ -3499,7 +3534,7 @@ async function saveEditTemplate(id) {
   if (!name) { toast('Activity Name is required', 'error'); return; }
   const testCases = _templateCases
     .filter(tc => tc.code.trim() || tc.name.trim())
-    .map(tc => ({ code: tc.code.trim(), name: tc.name.trim(), category: tc.category.trim(), procedure, duration: 1 }));
+    .map(tc => ({ code: tc.code.trim(), name: tc.name.trim(), category: tc.category.trim(), assets: (tc.assets||'').trim(), procedure, duration: 1 }));
   if (!testCases.length) { toast('Add at least one test case', 'error'); return; }
   const { error } = await _sb.from('templates').update({
     name, subsystem, description: desc, test_cases: testCases,
@@ -7821,6 +7856,7 @@ function _amDrilldownHTML(key) {
                       </td>
                       <td>
                         <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
+                        ${isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<button class="form-secondary" style="font-size:11px;padding:2px 6px;margin-top:4px;" onclick="_trAddGenericChild('${tid}')">＋ Asset</button>` : ''}
                       </td>
                       ${_trEditMode && isAdmin ? `<td><button class="form-secondary" style="font-size:13px;padding:4px 7px;" onclick="_trCopyCase('${tid}')">⧉</button><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);margin-left:4px;" onclick="_trDeleteCase('${tid}')">🗑</button></td>` : ''}
                     </tr>
@@ -10565,39 +10601,45 @@ async function _assetImportCSV(file, onProgress) {
   const dataRows = lines.length - 1;
   for (let i = 1; i < lines.length; i++) {
     const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-    const deviceType = iType >= 0 ? (cols[iType] || '') : '';
-    const deviceName = cols[iName] || '';
-    const location   = iLoc >= 0  ? (cols[iLoc]  || '') : '';
-    const subsystem  = iSub >= 0  ? (cols[iSub]  || '') : '';
-    const tcRaw      = cols[iTc]  || '';
+    const deviceType   = iType >= 0 ? (cols[iType] || '') : '';
+    const deviceName   = cols[iName] || '';
+    const location     = iLoc >= 0  ? (cols[iLoc]  || '') : '';
+    const subsystemRaw = iSub >= 0  ? (cols[iSub]  || '') : '';
+    // Support pipe-separated subsystems e.g. "DCS|COMMS"
+    const subsystems   = subsystemRaw.split('|').map(s => s.trim()).filter(Boolean);
+    const tcRaw        = cols[iTc]  || '';
     if (!deviceName) continue;
     if (onProgress) onProgress(i, dataRows, `Processing: ${deviceName}`);
 
     const prefix = _assetParsePrefix(deviceName);
 
-    // Upsert asset
+    // Upsert asset — composite unique key: (name, location, subsystem)
     let [assetRow] = await _dbUpsert('assets', [{
-      device_type:     deviceType || null,
+      device_type:     deviceType    || null,
       name:            deviceName,
-      location_prefix: prefix     || null,
-      location:        location   || null,
-      subsystem:       subsystem  || null,
+      location_prefix: prefix        || null,
+      location:        location      || null,
+      subsystem:       subsystemRaw  || null,
       import_batch_id: batch.id,
-    }], 'name');
+    }], 'name,location,subsystem');
     if (!assetRow) {
-      // Fetch existing
-      const found = ASSETS.find(a => a.name === deviceName);
+      // Fetch existing by composite key
+      const found = ASSETS.find(a => a.name === deviceName && (a.location||'') === (location||'') && (a.subsystem||'') === (subsystemRaw||''));
       if (found) assetRow = found; else continue;
     }
-    // Sync local ASSETS array
-    const aIdx = ASSETS.findIndex(a => a.name === deviceName);
+    // Sync local ASSETS array (composite match)
+    const aIdx = ASSETS.findIndex(a => a.id === assetRow.id);
     if (aIdx >= 0) ASSETS[aIdx] = assetRow; else ASSETS.push(assetRow);
 
-    // Link each test case name (pipe-separated)
+    // Link each test case name (pipe-separated), try each subsystem
     const tcCodes = tcRaw.split('|').map(t => t.trim()).filter(Boolean);
     for (const code of tcCodes) {
-      const parentRow = _assetFindParentRow(code, prefix, subsystem, location);
-      if (!parentRow) { skippedTc.push(`${deviceName} → "${code}" (loc: ${location||prefix||'?'}, sub: ${subsystem||'any'})`); continue; }
+      let parentRow = null;
+      for (const sub of (subsystems.length ? subsystems : [''])) {
+        parentRow = _assetFindParentRow(code, prefix, sub, location);
+        if (parentRow) break;
+      }
+      if (!parentRow) { skippedTc.push(`${deviceName} → "${code}" (loc: ${location||prefix||'?'}, sub: ${subsystemRaw||'any'})`); continue; }
       try {
         await _assetLinkToParent(assetRow, parentRow);
         affectedParents.add(String(parentRow.TestID));
@@ -10617,6 +10659,64 @@ async function _assetImportCSV(file, onProgress) {
   if (skippedDup) msg += ` ${skippedDup} already linked (skipped).`;
   if (skippedTc.length) msg += `\n\nUnresolved test cases (check codes & location prefix):\n• ${skippedTc.slice(0, 10).join('\n• ')}`;
   alert(msg);
+}
+
+// ── Manually add a generic child asset from the test register ─────────────────
+function _trAddGenericChild(testId) {
+  const parentRow = TI.find(r => String(r.TestID) === String(testId));
+  if (!parentRow) return;
+  modal({
+    title: '＋ Add Generic Asset',
+    sub: parentRow.TestName || testId,
+    body: `
+      <div class="form-grid">
+        <div class="form-field form-field-full">
+          <label>Asset Name <span style="color:var(--bad)">*</span></label>
+          <input id="gca-name" class="form-input" placeholder="e.g. MLK A" autofocus>
+        </div>
+        <div class="form-field form-field-full">
+          <label>Device Type <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
+          <input id="gca-type" class="form-input" placeholder="e.g. Switch, AP, Relay…">
+        </div>
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="_trSaveGenericChild('${escapeHtml(String(testId))}')">Add Asset</button>`,
+  });
+}
+
+async function _trSaveGenericChild(testId) {
+  const assetName = (document.getElementById('gca-name')?.value || '').trim();
+  const assetType = (document.getElementById('gca-type')?.value || '').trim();
+  if (!assetName) { toast('Asset name is required', 'error'); return; }
+
+  const parentRow = TI.find(r => String(r.TestID) === String(testId));
+  if (!parentRow) { toast('Test case not found', 'error'); return; }
+
+  closeModal();
+  try {
+    let [assetRow] = await _dbUpsert('assets', [{
+      name:            assetName,
+      device_type:     assetType  || null,
+      location:        parentRow.Location  || null,
+      subsystem:       parentRow.Subsystem || null,
+      location_prefix: null,
+      import_batch_id: null,
+    }], 'name,location,subsystem');
+    if (!assetRow) {
+      assetRow = ASSETS.find(a => a.name === assetName && (a.location||'') === (parentRow.Location||'') && (a.subsystem||'') === (parentRow.Subsystem||''));
+    }
+    if (!assetRow) { toast('Failed to create asset', 'error'); return; }
+    const aIdx = ASSETS.findIndex(a => a.id === assetRow.id);
+    if (aIdx >= 0) ASSETS[aIdx] = assetRow; else ASSETS.push(assetRow);
+
+    await _assetLinkToParent(assetRow, parentRow);
+    toast(`Asset "${assetName}" linked`, 'success');
+    _reRenderTR();
+    if (document.getElementById('admin-assets-content')) renderAdminAssets();
+  } catch(e) {
+    toast('Error: ' + e.message, 'error');
+  }
 }
 
 // ── Test register: render parent row + child asset rows ───────────────────────
@@ -10640,7 +10740,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
       </td>
       <td>
         ${_trEditMode && isAdmin
-          ? `<input class="form-input" style="font-weight:600;font-size:13px;width:100%;" value="${escapeHtml(parent.TestName||'')}" onchange="_trDraftChange('${ptid}','TestName',this.value)">`
+          ? `<input class="form-input" style="font-weight:600;font-size:13px;" value="${escapeHtml(parent.TestName||'')}" onchange="_trDraftChange('${ptid}','TestName',this.value)">`
           : `<div style="font-weight:600;font-size:13px;">${escapeHtml(parent.TestName || '—')}</div>`}
         <div id="aps-${safeId}" style="font-size:11px;color:var(--gray-500);margin-top:2px;">
           📦 ${totalCount} asset${totalCount !== 1 ? 's' : ''} &nbsp;·&nbsp;
@@ -10668,6 +10768,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
     return `
       <tr style="background:#fafafa;border-left:3px solid ${sc}20;">
         ${_trBulkMode ? `<td style="padding-left:20px;"><input type="checkbox" ${_trSelected.has(String(c.TestID)) ? 'checked' : ''} onchange="_trToggleSelect('${ctid}',this.checked)"></td>` : ''}
+        ${_trEditMode && isAdmin ? `<td></td>` : ''}
         <td style="padding-left:24px;font-size:11px;font-family:monospace;color:var(--gray-500);">
           <span style="color:var(--gray-300);">└</span> ${escapeHtml(assetName)}
           ${deviceType ? `<div style="font-size:10px;color:var(--gray-400);margin-top:1px;">${escapeHtml(deviceType)}</div>` : ''}
