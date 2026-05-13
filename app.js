@@ -3240,16 +3240,7 @@ async function confirmDeploy(templateId) {
       await _dbInsert('test_items', rows.slice(i, i + BATCH));
     }
 
-    // ── 3. Record deployment in Supabase ─────────────────────────────────────
-    await _dbInsert('deployments', [{
-      id:            depId,
-      template_id:   templateId,
-      template_name: tpl.name,
-      deployed_by:   actor,
-      deployed_at:   now,
-    }]);
-
-    // ── 4. Update in-memory DEPLOYMENTS so the overview reflects the new entry
+    // ── 3. Update in-memory DEPLOYMENTS so the overview reflects the new entry
     const enabledLocs = _deploySelections.map(s => ({
       code: s.locId, name: s.locName, phase: s.phaseName, applicable: s.tcCodes,
     }));
