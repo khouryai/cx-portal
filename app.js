@@ -4685,6 +4685,19 @@ async function submitIntakeFinal() {
     console.log('[submitIntakeFinal] ← delay_log returned:', lData?.length ?? 0, 'rows');
 
     // Fire-and-forget email summary via Supabase Edge Function (non-blocking)
+    const _testSummary = allItems.map(item => ({
+      code:          item.testCode        || item.test_case_code || '',
+      name:          item.testName        || item.test_name      || '',
+      location:      item.location        || '',
+      subsystem:     item.subsystem       || '',
+      activity:      item.activity        || '',
+      fromStatus:    item.oldStatus       || item.prevStatus     || 'Not Started',
+      toStatus:      item.status          || '',
+      failedReason:  item.failedReason    || null,
+      blockedReason: item.blockedReason   || null,
+      notes:         item.notes           || null,
+      hours:         item.hours           || 0,
+    }));
     (async () => {
       try {
         const _emailRes = await fetch(
@@ -4695,6 +4708,7 @@ async function submitIntakeFinal() {
             body: JSON.stringify({
               logRow,
               submitterEmail: currentProfile?.email || '',
+              testSummary: _testSummary,
             }),
           }
         );
