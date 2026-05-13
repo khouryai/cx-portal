@@ -8040,8 +8040,37 @@ async function _trApplyBulkField() {
     for (const id of [..._trSelected]) {
       const r = TI.find(x => String(x.TestID) === String(id));
       if (!r) continue;
-      if (status) await _updateTestItemStatus(r.TestID, status, { row: r, notes, completedBy, completedDate, source: 'Test Register Bulk Edit' });
-      else if (notes) {
+      if (status) {
+        const oldStatus = r.Status || 'Not Started'; // capture before _updateTestItemStatus mutates r.Status
+        await _updateTestItemStatus(r.TestID, status, { row: r, notes, completedBy, completedDate, source: 'Test Register Bulk Edit' });
+        // Push into _sessionLog so Step 1 of the daily log captures bulk edits
+        const existing = _sessionLog.find(e => String(e.testId) === String(r.TestID));
+        if (existing) {
+          existing.newStatus     = status;
+          existing.changedAt     = new Date().toISOString();
+          existing.failedReason  = status === 'Fail'    ? (notes || '') : '';
+          existing.blockedReason = status === 'Blocked' ? (notes || '') : '';
+          if (notes) existing.notes = notes;
+        } else {
+          _sessionLog.push({
+            testId:        r.TestID,
+            testCode:      r.TestCaseCode,
+            testName:      r.TestName,
+            phase:         r.Phase,
+            location:      r.Location,
+            subsystem:     r.Subsystem,
+            activity:      r.Activity,
+            oldStatus,
+            prevStatus:    oldStatus,
+            newStatus:     status,
+            changedAt:     new Date().toISOString(),
+            failedReason:  status === 'Fail'    ? (notes || '') : '',
+            blockedReason: status === 'Blocked' ? (notes || '') : '',
+            notes:         notes || '',
+            hours:         0,
+          });
+        }
+      } else if (notes) {
         r.Notes = notes;
         await _dbUpdate('test_items', { notes }, { test_id: r.TestID });
       }
