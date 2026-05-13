@@ -9505,7 +9505,7 @@ function _p6HealthTabHTML() {
               <th>P6 ID</th>
               <th>Snoozed By</th>
               <th>Snoozed On</th>
-              <th style="width:100px;text-align:center;">Action</th>
+              <th style="text-align:center;">Action</th>
             </tr></thead>
             <tbody>
               ${snoozed.map(d => `
@@ -9515,7 +9515,7 @@ function _p6HealthTabHTML() {
                 <td style="font-size:12px;">${escapeHtml(d.dismissed_by||'—')}</td>
                 <td style="font-size:12px;">${_fmtDate(d.dismissed_at)}</td>
                 <td style="text-align:center;white-space:nowrap;">
-                  <button class="admin-action-btn" style="font-size:11px;padding:4px 12px;white-space:nowrap;"
+                  <button class="form-secondary tr-mini-btn" style="white-space:nowrap;"
                     onclick="_p6HRestoreOne('${escapeHtml(d.id)}')">Unsnooze</button>
                 </td>
               </tr>`).join('')}
