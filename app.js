@@ -8719,29 +8719,35 @@ function _p6MappingTabHTML() {
 
         <!-- Activity list -->
         <div class="p6-activity-list">
-          ${visibleActs.map(a => {
-            const linked  = _p6GetActivityLinks(a);
-            const isLinked = linked.length > 0;
-            const expanded = window._p6Expanded?.has(a.key);
-            return `
-              <div class="p6-act-row ${isLinked?'p6-act-linked':'p6-act-unlinked'}">
-                <div class="p6-act-row-header" onclick="_p6ToggleActExpand('${escapeHtml(a.key)}')">
-                  <div style="flex:1;min-width:0;">
-                    <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(a.activity)}</div>
-                    <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(a.subsystem)} · ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</div>
+          ${(()=>{
+            // Reset act data store for this render
+            window._p6ActData = {};
+            return visibleActs.map(a => {
+              const sid      = _p6Sid(a.key);
+              window._p6ActData[sid] = a;
+              const linked   = _p6GetActivityLinks(a);
+              const isLinked = linked.length > 0;
+              const expanded = window._p6Expanded?.has(sid);
+              return `
+                <div class="p6-act-row ${isLinked?'p6-act-linked':'p6-act-unlinked'}">
+                  <div class="p6-act-row-header" onclick="_p6ToggleActExpand('${sid}')">
+                    <div style="flex:1;min-width:0;">
+                      <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(a.activity)}</div>
+                      <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(a.subsystem)} · ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                      ${isLinked
+                        ? `<span class="badge badge-passed" style="font-size:10px;">🟢 ${linked.length} link${linked.length>1?'s':''}</span>`
+                        : `<span class="badge badge-notstarted" style="font-size:10px;">🔴 Unlinked</span>`}
+                      <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor" style="color:var(--gray-400);transform:rotate(${expanded?'90':'0'}deg);transition:transform 0.15s;">
+                        <path fill-rule="evenodd" d="M7.293 4.707a1 1 0 011.414 0l5 5a1 1 0 010 1.414l-5 5a1 1 0 01-1.414-1.414L11.586 10 7.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                      </svg>
+                    </div>
                   </div>
-                  <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-                    ${isLinked
-                      ? `<span class="badge badge-passed" style="font-size:10px;">🟢 ${linked.length} link${linked.length>1?'s':''}</span>`
-                      : `<span class="badge badge-notstarted" style="font-size:10px;">🔴 Unlinked</span>`}
-                    <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor" style="color:var(--gray-400);transform:rotate(${expanded?'90':'0'}deg);transition:transform 0.15s;">
-                      <path fill-rule="evenodd" d="M7.293 4.707a1 1 0 011.414 0l5 5a1 1 0 010 1.414l-5 5a1 1 0 01-1.414-1.414L11.586 10 7.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
-                    </svg>
-                  </div>
-                </div>
-                ${expanded ? _p6ActivityLinkDetail(a, p6List) : ''}
-              </div>`;
-          }).join('')}
+                  ${expanded ? _p6ActivityLinkDetail(a, p6List, sid) : ''}
+                </div>`;
+            }).join('');
+          })()}
           ${!visibleActs.length ? `<div style="padding:32px;text-align:center;color:var(--gray-400);">No activities match filters</div>` : ''}
         </div>
       </div>
@@ -8804,24 +8810,94 @@ function _p6GetActivityLinks(act) {
   );
 }
 
-function _p6ToggleActExpand(key) {
+// ── Stable DOM-safe ID from an activity key ──────────────────────────────────
+function _p6Sid(key) {
+  return 'pa_' + key.replace(/[^a-zA-Z0-9]/g, '_');
+}
+
+// ── Merged search-dropdown component ─────────────────────────────────────────
+// Renders a single combined search+list control; value stored in hidden input.
+function _p6SS(sid, p6List, placeholder) {
+  const opts = p6List.map(p =>
+    `<div class="p6-ss-opt" data-id="${escapeHtml(p.id)}" onmousedown="_p6SSPick('${sid}',this)">
+       <span class="p6-ss-loc">[${escapeHtml(p.p6_location_code||'?')}]</span> ${escapeHtml(p.p6_name)}
+     </div>`
+  ).join('');
+  return `
+    <div class="p6-ss" id="p6-ss-${sid}">
+      <input class="p6-ss-inp form-input" type="text" autocomplete="off"
+        placeholder="${escapeHtml(placeholder||'Search P6 activities…')}"
+        oninput="_p6SSFilter('${sid}')"
+        onfocus="_p6SSOpen('${sid}')"
+        onblur="_p6SSClose('${sid}')">
+      <div class="p6-ss-drop" id="p6-ss-drop-${sid}">
+        <div class="p6-ss-opts">${opts}</div>
+        <div class="p6-ss-none" style="display:none;padding:8px 12px;font-size:12px;color:var(--gray-400);">No matches</div>
+      </div>
+      <input type="hidden" id="p6-ss-val-${sid}">
+    </div>`;
+}
+
+function _p6SSFilter(sid) {
+  const wrap = document.getElementById(`p6-ss-${sid}`);
+  if (!wrap) return;
+  const q    = wrap.querySelector('.p6-ss-inp').value.toLowerCase().trim();
+  const drop = document.getElementById(`p6-ss-drop-${sid}`);
+  drop.style.display = 'block';
+  let any = false;
+  drop.querySelectorAll('.p6-ss-opt').forEach(o => {
+    const show = !q || o.textContent.toLowerCase().includes(q);
+    o.style.display = show ? '' : 'none';
+    if (show) any = true;
+  });
+  drop.querySelector('.p6-ss-none').style.display = any ? 'none' : '';
+}
+
+function _p6SSOpen(sid) {
+  const drop = document.getElementById(`p6-ss-drop-${sid}`);
+  if (drop) drop.style.display = 'block';
+}
+
+// Use setTimeout so onblur fires after onmousedown pick completes
+function _p6SSClose(sid) {
+  setTimeout(() => {
+    const drop = document.getElementById(`p6-ss-drop-${sid}`);
+    if (drop) drop.style.display = 'none';
+  }, 200);
+}
+
+function _p6SSPick(sid, el) {
+  const wrap = document.getElementById(`p6-ss-${sid}`);
+  if (!wrap) return;
+  const id   = el.dataset.id;
+  const name = el.textContent.trim();
+  wrap.querySelector('.p6-ss-inp').value = name;
+  document.getElementById(`p6-ss-val-${sid}`).value = id;
+  wrap.querySelectorAll('.p6-ss-opt').forEach(o => o.classList.remove('selected'));
+  el.classList.add('selected');
+  document.getElementById(`p6-ss-drop-${sid}`).style.display = 'none';
+}
+
+function _p6SSVal(sid) {
+  return document.getElementById(`p6-ss-val-${sid}`)?.value || '';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _p6ToggleActExpand(sid) {
   if (!window._p6Expanded) window._p6Expanded = new Set();
-  window._p6Expanded.has(key) ? window._p6Expanded.delete(key) : window._p6Expanded.add(key);
+  window._p6Expanded.has(sid) ? window._p6Expanded.delete(sid) : window._p6Expanded.add(sid);
   renderAdminP6();
 }
 
-function _p6ActivityLinkDetail(act, p6List) {
+// sid = _p6Sid(act.key) — safe alphanumeric DOM id suffix
+function _p6ActivityLinkDetail(act, p6List, sid) {
   const links    = _p6GetActivityLinks(act);
   const actLink  = links.find(l => !l.portal_test_case_code);
   const tcLinks  = links.filter(l => !!l.portal_test_case_code);
-  const safeKey  = escapeHtml(act.key);
 
   // Auto-suggest from learn patterns
   const suggestion = _p6AutoSuggest(act, p6List);
-
-  // Build option list (once, reused for activity + bulk TC selects)
-  const p6Opts = `<option value="">— Select P6 Activity —</option>` +
-    p6List.map(p => `<option value="${escapeHtml(p.id)}">[${escapeHtml(p.p6_location_code||'?')}] ${escapeHtml(p.p6_name)}</option>`).join('');
 
   return `
     <div class="p6-link-detail">
@@ -8840,15 +8916,13 @@ function _p6ActivityLinkDetail(act, p6List) {
             <div style="padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;margin-bottom:8px;font-size:12px;">
               💡 Suggested: <b>${escapeHtml(suggestion.p6_name)}</b>
               <div style="display:flex;gap:6px;margin-top:6px;">
-                <button class="admin-action-btn tr-mini-btn" onclick="_p6AcceptSuggestion('${safeKey}','${escapeHtml(suggestion.id)}')">Accept</button>
-                <button class="form-secondary tr-mini-btn" onclick="_p6DismissSuggestion('${safeKey}')">Dismiss</button>
+                <button class="admin-action-btn tr-mini-btn" onclick="_p6AcceptSuggestion('${sid}','${escapeHtml(suggestion.id)}')">Accept</button>
+                <button class="form-secondary tr-mini-btn" onclick="_p6DismissSuggestion('${sid}')">Dismiss</button>
               </div>
             </div>` : ''}
-          <input type="text" class="form-input" style="font-size:12px;margin-bottom:4px;" placeholder="🔍 Search P6 activities…"
-            oninput="_p6FilterOpts(this,'p6-sel-${safeKey}')">
-          <select class="form-input" style="font-size:12px;" id="p6-sel-${safeKey}">${p6Opts}</select>
+          ${_p6SS(sid + '_act', p6List, 'Search P6 activities…')}
           <button class="admin-action-btn tr-mini-btn" style="margin-top:6px;width:100%;"
-            onclick="_p6LinkActivity('${safeKey}',document.getElementById('p6-sel-${safeKey}').value,'${escapeHtml(act.phase)}','${escapeHtml(act.location)}','${escapeHtml(act.subsystem)}','${escapeHtml(act.activity)}')">
+            onclick="_p6LinkActivity(_p6SSVal('${sid}_act'),'${sid}')">
             Link Activity
           </button>
         </div>`}
@@ -8856,24 +8930,22 @@ function _p6ActivityLinkDetail(act, p6List) {
       <!-- ── TEST-CASE LEVEL LINKS ─────────────────────────── -->
       <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;color:var(--gray-500);margin:10px 0 4px;">
         TEST-CASE LEVEL LINKS
-        <span style="font-weight:400;color:var(--gray-400);"> — optional overrides for test cases that map to a different P6 sub-activity</span>
+        <span style="font-weight:400;color:var(--gray-400);"> — override individual test cases that map to a different P6 sub-activity</span>
       </div>
-
       ${!actLink ? `<div style="font-size:11px;color:var(--gray-400);padding:4px 0 8px;">Link the activity first, then optionally override individual test cases below.</div>` : ''}
 
-      <!-- Bulk link: set all TC to same P6 activity -->
-      <div style="display:flex;gap:6px;align-items:center;padding:6px 0 8px;border-bottom:1px solid var(--gray-200);margin-bottom:6px;">
+      <!-- Bulk link row -->
+      <div style="display:flex;gap:6px;align-items:center;padding:6px 0 8px;border-bottom:1px solid var(--gray-200);margin-bottom:6px;flex-wrap:wrap;">
         <span style="font-size:11px;color:var(--gray-600);white-space:nowrap;font-weight:600;">Bulk link all to:</span>
-        <input type="text" class="form-input" style="font-size:11px;padding:3px 6px;height:auto;flex:1;" placeholder="🔍 Search…"
-          oninput="_p6FilterOpts(this,'p6-bulk-sel-${safeKey}')">
-        <select class="form-input" style="font-size:11px;padding:3px 6px;height:auto;flex:2;" id="p6-bulk-sel-${safeKey}">${p6Opts}</select>
+        <div style="flex:1;min-width:180px;">${_p6SS(sid + '_bulk', p6List, 'Search…')}</div>
         <button class="admin-action-btn tr-mini-btn"
-          onclick="_p6BulkLinkTCs('${safeKey}','${escapeHtml(act.phase)}','${escapeHtml(act.location)}','${escapeHtml(act.subsystem)}','${escapeHtml(act.activity)}')">Apply All</button>
+          onclick="_p6BulkLinkTCs(_p6SSVal('${sid}_bulk'),'${sid}')">Apply All</button>
       </div>
 
       ${act.items.map(item => {
         const tcLink = tcLinks.find(l => l.portal_test_case_code === item.TestCaseCode);
         const tcCode = escapeHtml(item.TestCaseCode || '');
+        const tcSid  = sid + '_tc_' + tcCode.replace(/[^a-zA-Z0-9]/g,'_');
         return `
           <div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--gray-100);">
             <div style="flex:1;min-width:0;">
@@ -8884,11 +8956,9 @@ function _p6ActivityLinkDetail(act, p6List) {
               <span style="font-size:10px;color:var(--good);font-weight:600;white-space:nowrap;flex-shrink:0;">↔ ${escapeHtml(_p6ActName(tcLink.p6_activity_id))}</span>
               <button class="form-secondary tr-mini-btn" onclick="_p6UnlinkActivity('${escapeHtml(tcLink.id)}')">✕</button>
             ` : `
-              <select class="form-input" style="font-size:11px;padding:3px 6px;height:auto;flex:2;" id="p6-tc-sel-${tcCode}">
-                ${p6Opts}
-              </select>
+              <div style="flex:2;min-width:120px;">${_p6SS(tcSid, p6List, '—')}</div>
               <button class="admin-action-btn tr-mini-btn"
-                onclick="_p6LinkTestCase('${safeKey}','${tcCode}','${escapeHtml(act.phase)}','${escapeHtml(act.location)}','${escapeHtml(act.subsystem)}','${escapeHtml(act.activity)}')">Link</button>
+                onclick="_p6LinkTestCase(_p6SSVal('${tcSid}'),'${tcCode}','${sid}')">Link</button>
             `}
           </div>`;
       }).join('')}
@@ -8908,12 +8978,13 @@ function _p6FilterOpts(input, selectId) {
   if (cur && cur.style.display === 'none') sel.selectedIndex = 0;
 }
 
-// Bulk-link all test cases within an activity to a single P6 activity
-async function _p6BulkLinkTCs(actKey, phase, location, subsystem, activity) {
-  const p6Id = document.getElementById(`p6-bulk-sel-${actKey}`)?.value;
+async function _p6BulkLinkTCs(p6Id, sid) {
   if (!p6Id) { toast('Select a P6 activity first', 'error'); return; }
+  const a = window._p6ActData?.[sid];
+  if (!a) { toast('Activity data not found — please refresh', 'error'); return; }
+  const { phase, location, subsystem, activity } = a;
   const all = _amGetActivities();
-  const act = all.find(a => a.key === actKey);
+  const act = all.find(x => x.key === a.key);
   if (!act) return;
 
   // Confirm
@@ -8984,11 +9055,9 @@ function _p6DismissSuggestion(key) {
   renderAdminP6();
 }
 
-async function _p6AcceptSuggestion(actKey, p6Id) {
-  const all = _amGetActivities();
-  const act = all.find(a => a.key === actKey);
-  if (!act) return;
-  await _p6LinkActivity(actKey, p6Id, act.phase, act.location, act.subsystem, act.activity);
+// Called from suggestion banner: sid = _p6Sid(act.key), p6Id = suggestion uuid
+async function _p6AcceptSuggestion(sid, p6Id) {
+  await _p6LinkActivity(p6Id, sid);
 }
 
 function _p6MapFilter(k, v) {
@@ -8998,57 +9067,53 @@ function _p6MapFilter(k, v) {
   renderAdminP6();
 }
 
-async function _p6LinkActivity(actKey, p6Id, phase, location, subsystem, activity) {
+// sid resolves to the activity via window._p6ActData[sid]
+async function _p6LinkActivity(p6Id, sid) {
   if (!p6Id) { toast('Select a P6 activity first', 'error'); return; }
+  const a = window._p6ActData?.[sid];
+  if (!a) { toast('Activity data not found — please refresh', 'error'); return; }
+  const { phase, location, subsystem, activity } = a;
   try {
-    const row = {
-      p6_activity_id:    p6Id,
-      portal_phase:      phase,
-      portal_location:   location,
-      portal_subsystem:  subsystem,
-      portal_activity:   activity,
+    await _dbInsert('p6_activity_map', [{
+      p6_activity_id: p6Id,
+      portal_phase: phase, portal_location: location,
+      portal_subsystem: subsystem, portal_activity: activity,
       portal_test_case_code: null,
       linked_by: currentRoleUser?.name || 'Admin',
-    };
-    await _dbInsert('p6_activity_map', [row]);
-    // Store learn pattern
-    const p6Act = P6_ACTS.find(a => a.id === p6Id);
+    }]);
+    const p6Act = P6_ACTS.find(x => x.id === p6Id);
     if (p6Act) await _p6StorePattern(p6Act.p6_name, activity, subsystem);
     await loadP6Data();
-    // Update activity_id on test_items for this activity
     await _p6PropagateActivityId(phase, location, subsystem, activity, p6Id, null);
-    // Check for batch suggestions at other locations
     await _p6CheckBatchSuggestions(activity, subsystem, p6Act);
     renderAdminP6();
-    toast('Activity linked', 'success');
+    toast('Activity linked ✓', 'success');
   } catch(e) { toast('Link failed: ' + e.message, 'error'); }
 }
 
-async function _p6LinkTestCase(actKey, testCaseCode, phase, location, subsystem, activity) {
-  const p6Id = document.getElementById(`p6-tc-sel-${testCaseCode}`)?.value;
+async function _p6LinkTestCase(p6Id, testCaseCode, sid) {
   if (!p6Id) { toast('Select a P6 activity first', 'error'); return; }
+  const a = window._p6ActData?.[sid];
+  if (!a) { toast('Activity data not found — please refresh', 'error'); return; }
+  const { phase, location, subsystem, activity } = a;
   try {
-    const row = {
-      p6_activity_id:       p6Id,
-      portal_phase:         phase,
-      portal_location:      location,
-      portal_subsystem:     subsystem,
-      portal_activity:      activity,
-      portal_test_case_code: testCaseCode,
+    await _dbInsert('p6_activity_map', [{
+      p6_activity_id: p6Id,
+      portal_phase: phase, portal_location: location,
+      portal_subsystem: subsystem, portal_activity: activity,
+      portal_test_case_code: testCaseCode || null,
       linked_by: currentRoleUser?.name || 'Admin',
-    };
-    await _dbInsert('p6_activity_map', [row]);
-    // Update activity_id on the specific test item
+    }]);
     await _p6PropagateActivityId(phase, location, subsystem, activity, p6Id, testCaseCode);
     await loadP6Data();
     renderAdminP6();
-    toast('Test case linked', 'success');
+    toast('Test case linked ✓', 'success');
   } catch(e) { toast('Link failed: ' + e.message, 'error'); }
 }
 
 async function _p6UnlinkActivity(mapId) {
   try {
-    await _dbDelete('p6_activity_map', mapId);
+    await _dbDelete('p6_activity_map', { id: mapId });
     await loadP6Data();
     renderAdminP6();
     toast('Unlinked', 'success');

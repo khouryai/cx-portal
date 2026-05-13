@@ -4660,6 +4660,57 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   border-color: var(--hitachi-red);
 }
 
+/* ── Merged search-dropdown (.p6-ss) ──────────── */
+.p6-ss { position: relative; }
+
+.p6-ss-inp {
+  width: 100%;
+  border-radius: var(--radius-sm) !important;
+}
+
+.p6-ss-drop {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  display: none;
+}
+
+.p6-ss-opts {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.p6-ss-opt {
+  padding: 7px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  border-bottom: 1px solid var(--gray-100);
+  transition: background 0.08s;
+}
+.p6-ss-opt:last-child { border-bottom: none; }
+.p6-ss-opt:hover { background: var(--gray-50); }
+.p6-ss-opt.selected {
+  background: var(--hitachi-red-light);
+  font-weight: 600;
+  color: var(--hitachi-red);
+}
+
+.p6-ss-loc {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--gray-500);
+  font-family: monospace;
+  margin-right: 4px;
+}
+
 /* ── Responsive ───────────────────────────────── */
 @media (max-width: 900px) {
   .p6-mapping-layout {
