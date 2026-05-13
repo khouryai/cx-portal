@@ -9275,13 +9275,27 @@ async function _p6AcceptBatchSuggestions(suggestions) {
 
 // ─── HEALTH TAB ───────────────────────────────────────────────────────────────
 function _p6HealthTabHTML() {
+  if (!window._p6RemindLater) {
+    try {
+      const stored = localStorage.getItem('p6_remind_later');
+      window._p6RemindLater = stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch(e) { window._p6RemindLater = new Set(); }
+  }
+
   const allPortal  = _amGetActivities();
   const curBatch   = P6_BATCHES.find(b => b.schedule_type === 'current'  && b.is_current);
   const baseBatch  = P6_BATCHES.find(b => b.schedule_type === 'baseline' && b.is_current);
-  const p6Current  = curBatch  ? P6_ACTS.filter(a => a.batch_id === curBatch.id)  : [];
-  const p6Baseline = baseBatch ? P6_ACTS.filter(a => a.batch_id === baseBatch.id) : [];
 
-  const unlinkedP6     = p6Current.filter(p => !P6_MAP.some(m => m.p6_activity_id === p.id));
+  // Use whichever batch exists — don't require current to find unlinked activities
+  const primaryBatch = curBatch || baseBatch;
+  const allP6        = primaryBatch ? P6_ACTS.filter(a => a.batch_id === primaryBatch.id) : [];
+  const p6Baseline   = baseBatch ? P6_ACTS.filter(a => a.batch_id === baseBatch.id) : [];
+  const p6Current    = curBatch  ? P6_ACTS.filter(a => a.batch_id === curBatch.id)  : [];
+
+  const unlinkedP6     = allP6.filter(p =>
+    !P6_MAP.some(m => m.p6_activity_id === p.id) &&
+    !window._p6RemindLater.has(p.id)
+  );
   const unlinkedPortal = allPortal.filter(a => !_p6IsActivityLinked(a));
 
   // Date changes: compare current vs baseline by P6 ID
@@ -9296,64 +9310,172 @@ function _p6HealthTabHTML() {
     return { p6: cur, startDiff, finDiff };
   }).filter(Boolean);
 
+  const batchLabel = primaryBatch
+    ? `${primaryBatch.schedule_type === 'current' ? 'Current' : 'Baseline'} schedule · ${primaryBatch.imported_at ? _fmtDate(primaryBatch.imported_at) : ''}`
+    : '';
+
   return `
-    <div class="p6-health-grid">
+    <div style="display:flex;flex-direction:column;gap:18px;">
+
+      <!-- ── Unlinked P6 Activities (full-width) ── -->
       <div class="data-card" style="padding:20px;">
-        <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;justify-content:space-between;">
-          🔴 Unlinked P6 Activities <span>${unlinkedP6.length}</span>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+          <div>
+            <span style="font-size:13px;font-weight:700;">🔴 Unlinked P6 Activities</span>
+            <span class="badge badge-review" style="margin-left:8px;font-size:11px;">${unlinkedP6.length}</span>
+            ${batchLabel ? `<span style="font-size:11px;color:var(--gray-500);margin-left:10px;">(${escapeHtml(batchLabel)})</span>` : ''}
+          </div>
+          ${unlinkedP6.length ? `
+          <div style="display:flex;gap:8px;align-items:center;">
+            <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;">
+              <input type="checkbox" id="p6h-sel-all" onchange="_p6HSelectAll(this.checked)"> Select all
+            </label>
+            <button class="form-secondary tr-mini-btn" onclick="_p6HBulkRemindLater()">⏰ Remind Later (selected)</button>
+            <button class="form-secondary tr-mini-btn" style="color:#dc2626;" onclick="_p6HBulkRemove()">🗑 Remove Selected</button>
+          </div>` : ''}
         </div>
-        ${unlinkedP6.length ? unlinkedP6.map(p=>`
-          <div style="padding:8px 0;border-bottom:1px solid var(--gray-100);font-size:12px;">
-            <div style="font-weight:600;">${escapeHtml(p.p6_name)}</div>
-            <div style="color:var(--gray-500);">${escapeHtml(p.p6_id)} · ${p.start_date?_fmtDate(p.start_date):'—'} → ${p.finish_date?_fmtDate(p.finish_date):'—'}</div>
-          </div>`).join('')
-          : `<div style="color:var(--good);font-size:12px;">✓ All P6 activities are linked</div>`}
+
+        ${unlinkedP6.length ? `
+        <div style="overflow-x:auto;">
+          <table class="data-table" style="width:100%;">
+            <thead>
+              <tr>
+                <th style="width:32px;"></th>
+                <th>P6 Activity Name</th>
+                <th>P6 ID</th>
+                <th>Start</th>
+                <th>Finish</th>
+                <th style="width:160px;text-align:center;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${unlinkedP6.map(p => `
+                <tr>
+                  <td><input type="checkbox" class="p6h-chk" data-pid="${escapeHtml(p.id)}" onchange="_p6HUpdateSelCount()"></td>
+                  <td style="font-weight:500;">${escapeHtml(p.p6_name)}</td>
+                  <td style="color:var(--gray-500);font-size:11px;">${escapeHtml(p.p6_id||'')}</td>
+                  <td style="font-size:12px;">${p.start_date  ? _fmtDate(p.start_date)  : '—'}</td>
+                  <td style="font-size:12px;">${p.finish_date ? _fmtDate(p.finish_date) : '—'}</td>
+                  <td style="text-align:center;white-space:nowrap;">
+                    <button class="form-secondary tr-mini-btn" title="Remind me later" onclick="_p6HRemindLater('${escapeHtml(p.id)}')">⏰ Remind Later</button>
+                    <button class="form-secondary tr-mini-btn" style="color:#dc2626;" title="Remove from schedule" onclick="_p6HRemove('${escapeHtml(p.id)}','${escapeHtml(p.p6_name).replace(/'/g,"\\'")}')">🗑 Remove</button>
+                  </td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>` : `<div style="color:var(--good);font-size:12px;">✓ All P6 activities are linked</div>`}
       </div>
 
-      <div class="data-card" style="padding:20px;">
-        <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;justify-content:space-between;">
-          🟡 Unlinked Portal Activities <span>${unlinkedPortal.length}</span>
-        </div>
-        ${unlinkedPortal.length ? unlinkedPortal.map(a=>`
-          <div style="padding:8px 0;border-bottom:1px solid var(--gray-100);font-size:12px;">
-            <div style="font-weight:600;">${escapeHtml(a.activity)}</div>
-            <div style="color:var(--gray-500);">${escapeHtml(a.subsystem)} · ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</div>
-            <button class="form-secondary tr-mini-btn" style="margin-top:4px;" onclick="_p6SetTab('mapping');_p6MapFilter('location','${escapeHtml(a.location)}');_p6ToggleActExpand('${escapeHtml(a.key)}')">Go to Mapping →</button>
-          </div>`).join('')
-          : `<div style="color:var(--good);font-size:12px;">✓ All portal activities are linked</div>`}
-      </div>
+      <!-- ── Lower 3-column grid ── -->
+      <div class="p6-health-grid">
 
-      <div class="data-card" style="padding:20px;">
-        <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;justify-content:space-between;">
-          📅 Schedule Changes (Current vs Baseline) <span>${dateChanges.length}</span>
-        </div>
-        ${!baseBatch || !curBatch
-          ? `<div style="font-size:12px;color:var(--gray-500);">Import both a Baseline and Current schedule to see changes.</div>`
-          : dateChanges.length ? dateChanges.map(c=>`
+        <div class="data-card" style="padding:20px;">
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;justify-content:space-between;">
+            🟡 Unlinked Portal Activities <span>${unlinkedPortal.length}</span>
+          </div>
+          ${unlinkedPortal.length ? unlinkedPortal.map(a => {
+            const sid = _p6Sid(a.key);
+            return `
             <div style="padding:8px 0;border-bottom:1px solid var(--gray-100);font-size:12px;">
-              <div style="font-weight:600;">${escapeHtml(c.p6.p6_name)}</div>
-              <div style="margin-top:3px;display:flex;gap:12px;flex-wrap:wrap;">
-                ${c.startDiff !== 0 ? `<span style="color:${c.startDiff>0?'#dc2626':'#059669'};">Start: ${c.startDiff>0?'+':''}${c.startDiff}d</span>` : ''}
-                ${c.finDiff   !== 0 ? `<span style="color:${c.finDiff  >0?'#dc2626':'#059669'};">Finish: ${c.finDiff>0?'+':''}${c.finDiff}d</span>` : ''}
-              </div>
-            </div>`).join('')
-          : `<div style="color:var(--good);font-size:12px;">✓ No schedule changes between baseline and current</div>`}
-      </div>
+              <div style="font-weight:600;">${escapeHtml(a.activity)}</div>
+              <div style="color:var(--gray-500);">${escapeHtml(a.subsystem)} · ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</div>
+              <button class="form-secondary tr-mini-btn" style="margin-top:4px;"
+                onclick="_p6SetTab('mapping');_p6MapFilter('location','${escapeHtml(a.location)}');_p6ToggleActExpand('${sid}')">
+                Go to Mapping →
+              </button>
+            </div>`;
+          }).join('')
+          : `<div style="color:var(--good);font-size:12px;">✓ All portal activities are linked</div>`}
+        </div>
 
-      <div class="data-card" style="padding:20px;">
-        <div style="font-size:13px;font-weight:700;margin-bottom:12px;">🧠 Auto-Learn Patterns</div>
-        ${P6_PATTERNS.length ? P6_PATTERNS.slice(0,10).map(p=>`
-          <div style="padding:6px 0;border-bottom:1px solid var(--gray-100);font-size:12px;display:flex;gap:8px;align-items:center;">
-            <div style="flex:1;">
-              <span style="color:var(--gray-500);">${escapeHtml(p.p6_name_pattern)}</span>
-              <span style="color:var(--gray-400);margin:0 4px;">→</span>
-              <span style="font-weight:600;">${escapeHtml(p.portal_activity_name)}</span>
-            </div>
-            <span class="badge badge-review" style="font-size:10px;">confidence: ${p.confidence}</span>
-          </div>`).join('')
-          : `<div style="font-size:12px;color:var(--gray-500);">No patterns learned yet. Start linking activities to build the pattern library.</div>`}
+        <div class="data-card" style="padding:20px;">
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;justify-content:space-between;">
+            📅 Schedule Changes (Current vs Baseline) <span>${dateChanges.length}</span>
+          </div>
+          ${!baseBatch || !curBatch
+            ? `<div style="font-size:12px;color:var(--gray-500);">Import both a Baseline and Current schedule to see changes.</div>`
+            : dateChanges.length ? dateChanges.map(c=>`
+              <div style="padding:8px 0;border-bottom:1px solid var(--gray-100);font-size:12px;">
+                <div style="font-weight:600;">${escapeHtml(c.p6.p6_name)}</div>
+                <div style="margin-top:3px;display:flex;gap:12px;flex-wrap:wrap;">
+                  ${c.startDiff !== 0 ? `<span style="color:${c.startDiff>0?'#dc2626':'#059669'};">Start: ${c.startDiff>0?'+':''}${c.startDiff}d</span>` : ''}
+                  ${c.finDiff   !== 0 ? `<span style="color:${c.finDiff  >0?'#dc2626':'#059669'};">Finish: ${c.finDiff>0?'+':''}${c.finDiff}d</span>` : ''}
+                </div>
+              </div>`).join('')
+            : `<div style="color:var(--good);font-size:12px;">✓ No schedule changes between baseline and current</div>`}
+        </div>
+
+        <div class="data-card" style="padding:20px;">
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px;">🧠 Auto-Learn Patterns</div>
+          ${P6_PATTERNS.length ? P6_PATTERNS.slice(0,10).map(p=>`
+            <div style="padding:6px 0;border-bottom:1px solid var(--gray-100);font-size:12px;display:flex;gap:8px;align-items:center;">
+              <div style="flex:1;">
+                <span style="color:var(--gray-500);">${escapeHtml(p.p6_name_pattern)}</span>
+                <span style="color:var(--gray-400);margin:0 4px;">→</span>
+                <span style="font-weight:600;">${escapeHtml(p.portal_activity_name)}</span>
+              </div>
+              <span class="badge badge-review" style="font-size:10px;">confidence: ${p.confidence}</span>
+            </div>`).join('')
+            : `<div style="font-size:12px;color:var(--gray-500);">No patterns learned yet. Start linking activities to build the pattern library.</div>`}
+        </div>
+
       </div>
     </div>`;
+}
+
+// Per-row: Remind Later
+function _p6HRemindLater(pid) {
+  if (!window._p6RemindLater) window._p6RemindLater = new Set();
+  window._p6RemindLater.add(pid);
+  try { localStorage.setItem('p6_remind_later', JSON.stringify([...window._p6RemindLater])); } catch(e) {}
+  renderAdminP6();
+}
+
+// Per-row: Remove from schedule (deletes p6_activities row)
+async function _p6HRemove(pid, name) {
+  if (!confirm(`Remove "${name}" from the P6 schedule? This deletes the imported activity row.`)) return;
+  try {
+    await _dbDelete('p6_activities', { id: pid });
+    toast('P6 activity removed', 'success');
+    await loadP6Data();
+  } catch(e) { toast('Remove failed: ' + e.message, 'error'); }
+}
+
+// Bulk: toggle all checkboxes
+function _p6HSelectAll(checked) {
+  document.querySelectorAll('.p6h-chk').forEach(c => c.checked = checked);
+}
+
+// Bulk: Remind Later for selected
+function _p6HBulkRemindLater() {
+  const sel = [...document.querySelectorAll('.p6h-chk:checked')].map(c => c.dataset.pid);
+  if (!sel.length) { toast('Select at least one activity', 'error'); return; }
+  if (!window._p6RemindLater) window._p6RemindLater = new Set();
+  sel.forEach(pid => window._p6RemindLater.add(pid));
+  try { localStorage.setItem('p6_remind_later', JSON.stringify([...window._p6RemindLater])); } catch(e) {}
+  toast(`${sel.length} activit${sel.length===1?'y':'ies'} snoozed`, 'success');
+  renderAdminP6();
+}
+
+// Bulk: Remove selected from schedule
+async function _p6HBulkRemove() {
+  const sel = [...document.querySelectorAll('.p6h-chk:checked')].map(c => c.dataset.pid);
+  if (!sel.length) { toast('Select at least one activity', 'error'); return; }
+  if (!confirm(`Remove ${sel.length} P6 activit${sel.length===1?'y':'ies'} from the schedule?`)) return;
+  try {
+    for (const pid of sel) await _dbDelete('p6_activities', { id: pid });
+    toast(`${sel.length} activit${sel.length===1?'y':'ies'} removed`, 'success');
+    await loadP6Data();
+  } catch(e) { toast('Bulk remove failed: ' + e.message, 'error'); }
+}
+
+// Update select-all checkbox state when individual boxes change
+function _p6HUpdateSelCount() {
+  const all  = document.querySelectorAll('.p6h-chk');
+  const chkd = document.querySelectorAll('.p6h-chk:checked');
+  const selAll = document.getElementById('p6h-sel-all');
+  if (selAll) selAll.indeterminate = chkd.length > 0 && chkd.length < all.length;
+  if (selAll) selAll.checked = all.length > 0 && chkd.length === all.length;
 }
 
 // ─── WEIGHTS TAB ──────────────────────────────────────────────────────────────
