@@ -10355,7 +10355,8 @@ function _assetFindParentRow(testCaseName, locationPrefix, subsystem, exactLocat
     if ((r.TestName || '').trim().toLowerCase() !== name) return false;
     // Location: exact match takes precedence over prefix
     if (loc) {
-      if ((r.Location || '').toLowerCase() !== loc) return false;
+      // Location column can be a prefix (e.g. "W40") or full name ("W40 Millbrae Station")
+      if (!(r.Location || '').toLowerCase().startsWith(loc)) return false;
     } else if (prefix) {
       if (!(r.Location || '').toUpperCase().replace(/\s+/g,'').startsWith(prefix.replace(/\s+/g,''))) return false;
     }
@@ -10367,7 +10368,7 @@ function _assetFindParentRow(testCaseName, locationPrefix, subsystem, exactLocat
     return TI.find(r => {
       if (r.ParentTestId) return false;
       if ((r.TestName || '').trim().toLowerCase() !== name) return false;
-      if (loc) return (r.Location || '').toLowerCase() === loc;
+      if (loc) return (r.Location || '').toLowerCase().startsWith(loc);
       return !prefix || (r.Location || '').toUpperCase().replace(/\s+/g,'').startsWith(prefix.replace(/\s+/g,''));
     }) || null;
   }
@@ -10586,7 +10587,7 @@ async function _assetImportCSV(file) {
     const tcCodes = tcRaw.split('|').map(t => t.trim()).filter(Boolean);
     for (const code of tcCodes) {
       const parentRow = _assetFindParentRow(code, prefix, subsystem, location);
-      if (!parentRow) { skippedTc.push(`${deviceName} → ${code}`); continue; }
+      if (!parentRow) { skippedTc.push(`${deviceName} → "${code}" (loc: ${location||prefix||'?'}, sub: ${subsystem||'any'})`); continue; }
       try {
         await _assetLinkToParent(assetRow, parentRow);
         affectedParents.add(String(parentRow.TestID));
@@ -10701,9 +10702,9 @@ function renderAdminAssets() {
 function _assetDownloadTemplate() {
   const headers = 'Device Type,Device Name,Location,Subsystem,Test Case Name';
   const example = [
-    'ATC Cabinet,W40-AC01,W40 Millbrae Station,ATS Software SAT - Static,ATS-MLK Functional Bit Verification Test',
-    'ATC Cabinet,W40-AC01,W40 Millbrae Station,ATS Software SAT - Static,ATS Initialization Test | ATS Mode Control Test',
-    'Speed Sensor,W40-SS02,W40 Millbrae Station,ATS Hardware,Speed Sensor Calibration Test',
+    'ATC Cabinet,W40-AC01,W40,ATS Software SAT - Static,ATS-MLK Functional Bit Verification Test',
+    'ATC Cabinet,W40-AC01,W40,ATS Software SAT - Static,ATS Initialization Test | ATS Mode Control Test',
+    'Speed Sensor,W40-SS02,W40,ATS Hardware,Speed Sensor Calibration Test',
   ].join('\n');
   const blob = new Blob([headers + '\n' + example], { type: 'text/csv' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
