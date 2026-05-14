@@ -11701,6 +11701,8 @@ let _mtgItemOpen     = {};
 let _mtgSearch       = '';
 let _mtgSeriesFilter = '';
 let _mtgStatusFilter = '';
+let _quillInstances  = {};   // itemId → Quill instance
+let _mtgEditorContent = {};  // itemId → initial HTML (set during render)
 
 // ─── Data Loaders ─────────────────────────────────────────────
 async function loadMeetings() {
@@ -11727,6 +11729,7 @@ async function _mtgLoadDetail(id) {
     items:       items || [],
     attendees:   att  || [],
     actionItems: ai   || [],
+    prevItems:   [],
   };
   _mtgPrevMtgs = mtg?.series
     ? MEETINGS
@@ -11734,17 +11737,33 @@ async function _mtgLoadDetail(id) {
         .sort((a, b) => new Date(b.meeting_date) - new Date(a.meeting_date))
         .slice(0, 2)
     : [];
+  // Load items (with minutes) from previous meetings for inline "Previous Minutes" display
+  for (const pm of _mtgPrevMtgs) {
+    try {
+      const pmItems = await _fetchAnon(
+        `meeting_items?meeting_id=eq.${pm.id}&select=id,title,meeting_origin_id,minutes_notes,meeting_id&order=sort_order.asc`
+      ) || [];
+      pmItems.forEach(pi => {
+        _mtgDetail.prevItems.push({ ...pi, _pmTitle: pm.title, _pmDate: pm.meeting_date });
+      });
+    } catch(e) { console.warn('[_mtgLoadDetail] prevItems', e.message); }
+  }
 }
 
 // ─── Main Render Router ───────────────────────────────────────
 async function renderMeetings() {
   const el = document.getElementById('mtg-content');
   if (!el) return;
+  // Destroy old Quill instances and clear state before re-rendering
+  _quillInstances  = {};
+  _mtgEditorContent = {};
   if (_mtgDetailId) {
     el.innerHTML = '<p style="text-align:center;padding:60px;color:var(--gray-500);">Loading…</p>';
     try {
       await _mtgLoadDetail(_mtgDetailId);
       el.innerHTML = _mtgDetailPageHTML();
+      // Init Quill editors for any already-expanded items
+      setTimeout(_mtgInitQuillEditors, 0);
     } catch(e) {
       el.innerHTML = `<p style="color:var(--bad);padding:20px;">Error loading meeting: ${escapeHtml(e.message)}</p>`;
     }
@@ -11898,7 +11917,6 @@ function _mtgDetailPageHTML() {
       ${_mtgInfoHTML(m, isAdmin)}
       ${_mtgAttendeesHTML(attendees, m.id, isAdmin)}
       ${_mtgAgendaHTML(m, categories, items, actionItems, isAdmin, inMinutes)}
-      ${_mtgPrevMinutesHTML()}
     </div>`;
 }
 
@@ -12037,21 +12055,31 @@ function _mtgItemHTML(item, catNum, itemNum, actionItems, meetingId, inMinutes, 
             ${[
               ['Item Assignee', item.assignee||'—'],
               ['Due Date',      item.due_date ? _fmtDate(item.due_date) : '—'],
-              ['Priority',      item.priority||'—'],
             ].map(([l,v]) => `
               <div style="margin-bottom:12px;">
                 <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:3px;">${l}</div>
                 <div>${escapeHtml(v)}</div>
               </div>`).join('')}
-            <div style="margin-bottom:14px;">
-              <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:3px;">Item Status</div>
+            <div style="margin-bottom:12px;">
+              <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:4px;">Item Status</div>
               <span style="background:${sc}18;color:${sc};border:1px solid ${sc}40;padding:2px 8px;border-radius:10px;font-size:11px;">${escapeHtml(item.status||'Open')}</span>
+            </div>
+            <div style="margin-bottom:14px;">
+              <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:3px;">Priority</div>
+              <div>${escapeHtml(item.priority||'—')}</div>
+            </div>
+            <div style="margin-bottom:14px;">
+              <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:3px;">Meeting Origin</div>
+              <div>${escapeHtml(item.meeting_origin_id ? '1' : '—')}</div>
             </div>
             <!-- Action Items -->
             <div style="border-top:1px solid var(--gray-200);padding-top:12px;">
-              <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:8px;">Action Items (${itemAI.length})</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;">Tasks (${itemAI.length})</div>
+                ${isAdmin ? `<button class="form-secondary" style="padding:2px 8px;font-size:11px;" onclick="openMtgActionItemModal(null,'${item.id}','${meetingId}')">+ Create Task</button>` : ''}
+              </div>
               ${itemAI.length === 0
-                ? '<div style="color:var(--gray-400);font-size:12px;">None</div>'
+                ? '<div style="color:var(--gray-400);font-size:12px;">No tasks yet.</div>'
                 : itemAI.map(ai => {
                     const aic = ai.status === 'Closed' ? '#27ae60' : '#E67E22';
                     return `<div style="background:white;border:1px solid var(--gray-200);border-radius:5px;padding:7px 9px;margin-bottom:6px;font-size:12px;">
@@ -12066,23 +12094,27 @@ function _mtgItemHTML(item, catNum, itemNum, actionItems, meetingId, inMinutes, 
                       </div>
                     </div>`;
                   }).join('')}
-              ${isAdmin ? `<button class="form-secondary" style="padding:3px 10px;font-size:11px;margin-top:4px;" onclick="openMtgActionItemModal(null,'${item.id}','${meetingId}')">+ Action Item</button>` : ''}
             </div>
           </div>
           <!-- Right content panel -->
           <div style="padding:14px 16px;">
-            <div style="margin-bottom:${inMinutes?'14px':'0'};">
+            ${item.description ? `
+            <div style="margin-bottom:16px;">
               <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:6px;">Description</div>
-              <div style="font-size:13px;color:${item.description?'var(--gray-700)':'var(--gray-400)'};">${item.description ? escapeHtml(item.description) : 'No description.'}</div>
-            </div>
+              <div style="font-size:13px;color:var(--gray-700);">${escapeHtml(item.description)}</div>
+            </div>` : ''}
             ${inMinutes ? `
-            <div style="border-top:1px solid var(--gray-100);padding-top:14px;margin-top:14px;">
+            <div style="border-top:${item.description?'1px solid var(--gray-100)':'none'};padding-top:${item.description?'14px':'0'};margin-top:${item.description?'14px':'0'};">
               <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:8px;">Official Documented Meeting Minutes</div>
               ${isAdmin
                 ? `${_mtgRichEditorHTML('minutes-'+item.id, item.minutes_notes||'')}
                    <button class="form-secondary" style="margin-top:8px;padding:4px 14px;font-size:12px;" onclick="saveMtgItemMinutes('${item.id}')">💾 Save Notes</button>`
-                : `<div style="font-size:13px;min-height:60px;color:${item.minutes_notes?'var(--gray-700)':'var(--gray-400)'};">${item.minutes_notes || 'No minutes recorded.'}</div>`}
-            </div>` : ''}
+                : `<div class="mtg-prev-content" style="min-height:40px;">${item.minutes_notes || '<span style="color:var(--gray-400);">No minutes recorded.</span>'}</div>`}
+            </div>
+            ${_mtgItemPrevMinutesHTML(item)}
+            ` : `
+            ${!item.description ? `<div style="color:var(--gray-400);font-size:13px;">No description.</div>` : ''}
+            `}
           </div>
         </div>
       </div>
@@ -12092,7 +12124,13 @@ function _mtgItemHTML(item, catNum, itemNum, actionItems, meetingId, inMinutes, 
 function _mtgToggleItem(itemId) {
   _mtgItemOpen[itemId] = !_mtgItemOpen[itemId];
   const el = document.getElementById(`item-body-${itemId}`);
-  if (el) el.style.display = _mtgItemOpen[itemId] ? '' : 'none';
+  if (el) {
+    el.style.display = _mtgItemOpen[itemId] ? '' : 'none';
+    if (_mtgItemOpen[itemId]) {
+      // Initialize Quill for this item's editor on first expand
+      setTimeout(() => _mtgInitQuillEditor('minutes-' + itemId), 30);
+    }
+  }
 }
 
 function _mtgFilterItems(status) {
@@ -12101,108 +12139,93 @@ function _mtgFilterItems(status) {
   });
 }
 
-// ─── Rich Text Editor ─────────────────────────────────────────
+// ─── Quill Rich Text Editor ───────────────────────────────────
+// Returns an HTML container; Quill is initialized via _mtgInitQuillEditor after DOM render.
 function _mtgRichEditorHTML(id, content) {
-  const btns = [
-    { cmd:'bold',                lbl:'<b>B</b>',    title:'Bold (Ctrl+B)' },
-    { cmd:'italic',              lbl:'<i>I</i>',    title:'Italic (Ctrl+I)' },
-    { cmd:'underline',           lbl:'<u>U</u>',    title:'Underline (Ctrl+U)' },
-    { sep: true },
-    { cmd:'insertUnorderedList', lbl:'• Bullets',   title:'Bullet List' },
-    { cmd:'insertOrderedList',   lbl:'1. Numbers',  title:'Numbered List' },
-    { sep: true },
-    { cmd:'indent',              lbl:'→ Indent',    title:'Indent (Tab)' },
-    { cmd:'outdent',             lbl:'← Outdent',   title:'Outdent (Shift+Tab)' },
-    { sep: true },
-    { cmd:'removeFormat',        lbl:'✕ Clear',     title:'Clear Formatting' },
-  ];
-  const toolbarBtns = btns.map(b => b.sep
-    ? `<span style="width:1px;background:var(--gray-300);margin:2px 4px;align-self:stretch;display:inline-block;"></span>`
-    : `<button title="${b.title}" type="button"
-        style="background:white;border:1px solid var(--gray-200);border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px;line-height:1.4;color:#333;white-space:nowrap;"
-        onmousedown="event.preventDefault();_mtgEditorCmd('${b.cmd}')">${b.lbl}</button>`
-  ).join('');
-
+  _mtgEditorContent[id] = content || '';
   return `
-    <div style="border:1px solid var(--gray-300);border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);">
-      <div style="background:#f7f7f7;border-bottom:1px solid var(--gray-200);padding:6px 10px;display:flex;align-items:center;gap:3px;flex-wrap:wrap;">
-        ${toolbarBtns}
-      </div>
-      <div id="${id}" contenteditable="true"
-        style="min-height:200px;padding:14px 16px;font-size:14px;line-height:1.7;outline:none;background:white;color:#1a1a1a;"
-        onkeydown="_mtgEditorKeydown(event,'${id}')"
-      >${content || '<p><br></p>'}</div>
+    <div class="mtg-quill-wrap" data-ql-id="${id}"
+      style="border:1px solid var(--gray-300);border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06);">
+      <div id="ql-${id}"></div>
     </div>`;
 }
 
-function _mtgEditorCmd(cmd) {
-  document.execCommand(cmd, false, null);
+// Initialize Quill on a single editor by its logical id (e.g. "minutes-<uuid>")
+function _mtgInitQuillEditor(id) {
+  if (_quillInstances[id] || typeof Quill === 'undefined') return;
+  const container = document.getElementById(`ql-${id}`);
+  if (!container) return;
+  const q = new Quill(container, {
+    theme: 'snow',
+    placeholder: 'Type meeting minutes here…',
+    modules: {
+      toolbar: [
+        ['bold', 'italic', 'underline'],
+        [{ list: 'ordered' }, { list: 'bullet' }],
+        [{ indent: '-1'   }, { indent: '+1' }],
+        ['clean'],
+      ],
+    },
+  });
+  const html = _mtgEditorContent[id] || '';
+  if (html) q.root.innerHTML = html;
+  _quillInstances[id] = q;
 }
 
-function _mtgEditorKeydown(e, editorId) {
-  if (e.key === 'Tab') {
-    e.preventDefault();
-    if (e.shiftKey) {
-      document.execCommand('outdent', false, null);
-    } else {
-      // If inside a list, indent the list item; otherwise insert spaces
-      const sel = window.getSelection();
-      if (sel && sel.rangeCount > 0) {
-        const node = sel.getRangeAt(0).startContainer;
-        let inList = false;
-        let n = node;
-        while (n && n.id !== editorId) {
-          if (n.nodeName === 'LI' || n.nodeName === 'UL' || n.nodeName === 'OL') { inList = true; break; }
-          n = n.parentNode;
-        }
-        if (inList) {
-          document.execCommand('indent', false, null);
-        } else {
-          document.execCommand('insertText', false, '    ');
-        }
-      }
-    }
-  }
+// Initialize all Quill editors currently visible in the DOM
+function _mtgInitQuillEditors() {
+  document.querySelectorAll('.mtg-quill-wrap[data-ql-id]').forEach(wrap => {
+    _mtgInitQuillEditor(wrap.dataset.qlId);
+  });
 }
 
 async function saveMtgItemMinutes(itemId) {
-  const el = document.getElementById(`minutes-${itemId}`);
-  if (!el) return;
+  const q = _quillInstances[`minutes-${itemId}`];
+  if (!q) { toast('Editor not ready', 'warn'); return; }
+  const html = q.root.innerHTML;
   try {
-    await _dbUpdate('meeting_items', { minutes_notes: el.innerHTML, updated_at: new Date().toISOString() }, { id: itemId });
+    await _dbUpdate('meeting_items', { minutes_notes: html, updated_at: new Date().toISOString() }, { id: itemId });
     const item = _mtgDetail?.items?.find(i => i.id === itemId);
-    if (item) item.minutes_notes = el.innerHTML;
+    if (item) item.minutes_notes = html;
     toast('Minutes saved', 'success');
   } catch(e) { toast('Save failed: ' + e.message, 'error'); }
 }
 
-// ─── Previous Meetings Panel ──────────────────────────────────
-function _mtgPrevMinutesHTML() {
-  if (!_mtgPrevMtgs?.length) return '';
+// ─── Per-item Previous Minutes panel ─────────────────────────
+function _mtgItemPrevMinutesHTML(item) {
+  const prevItems = (_mtgDetail?.prevItems || []).filter(pi => {
+    // Match by meeting_origin_id if both have it, otherwise fall back to title match
+    if (item.meeting_origin_id && pi.meeting_origin_id) {
+      return pi.meeting_origin_id === item.meeting_origin_id;
+    }
+    return pi.title?.toLowerCase() === item.title?.toLowerCase();
+  }).filter(pi => pi.minutes_notes && pi.minutes_notes.replace(/<[^>]*>/g,'').trim());
+
+  if (!prevItems.length) return '';
+
+  // Group by meeting (using _pmTitle/_pmDate)
+  const grouped = {};
+  prevItems.forEach(pi => {
+    const key = pi._pmTitle || pi.meeting_id;
+    if (!grouped[key]) grouped[key] = { title: pi._pmTitle, date: pi._pmDate, notes: [] };
+    grouped[key].notes.push(pi.minutes_notes);
+  });
+
   return `
-    <div style="margin-top:16px;">
-      <div style="font-size:12px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Previous Meeting Minutes</div>
-      ${_mtgPrevMtgs.map(pm => `
-        <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;margin-bottom:10px;overflow:hidden;">
-          <div style="padding:12px 16px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:var(--gray-50);border-bottom:1px solid var(--gray-200);"
-            onclick="_mtgTogglePrev('prev-${pm.id}')">
-            <span style="font-weight:600;font-size:14px;">
-              ${escapeHtml(pm.title||'')}
-              <span style="font-weight:400;color:var(--gray-400);font-size:13px;"> — ${pm.meeting_date ? _fmtDate(pm.meeting_date) : ''}</span>
-            </span>
-            <span style="font-size:12px;color:var(--primary);">▼ Expand</span>
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--gray-100);">
+      <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;">Previous Minutes</div>
+      ${Object.values(grouped).map((g, i) => `
+        <div style="${i > 0 ? 'margin-top:14px;padding-top:14px;border-top:1px solid var(--gray-100);' : ''}">
+          <div style="font-size:13px;font-weight:600;color:var(--gray-600);margin-bottom:8px;text-align:center;">
+            ${escapeHtml(g.title||'')}
+            ${g.date ? `<span style="font-weight:400;color:var(--gray-400);"> — ${_fmtDate(g.date)}</span>` : ''}
           </div>
-          <div id="prev-${pm.id}" style="display:none;padding:14px 16px;">
-            <button class="form-secondary" style="padding:4px 14px;font-size:12px;" onclick="_mtgOpenDetail('${pm.id}')">View Full Meeting →</button>
-          </div>
+          <div class="mtg-prev-content">${g.notes.join('')}</div>
         </div>`).join('')}
     </div>`;
 }
 
-function _mtgTogglePrev(id) {
-  const el = document.getElementById(id);
-  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
-}
+// (Previous Meetings panel moved inline to each agenda item — see _mtgItemPrevMinutesHTML)
 
 // ─── CREATE / EDIT MEETING MODAL ─────────────────────────────
 function openMtgModal(editId) {
