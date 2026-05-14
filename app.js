@@ -3322,7 +3322,8 @@ async function confirmDeploy(templateId) {
 // ==========================================================================
 // TEMPLATE CREATION — Activity-based with inline test case builder
 // ==========================================================================
-let _templateCases = [];
+let _templateCases  = [];
+let _editTemplateId = null; // store current template id to avoid embedding in onclick
 
 function _tcRowsHTML() {
   return _templateCases.map((tc, i) => `
@@ -3479,6 +3480,7 @@ async function saveNewTemplate() {
 function editTemplate(id) {
   const tpl = TEMPLATES.find(t => t.id === id);
   if (!tpl) return;
+  _editTemplateId = id; // store so save button doesn't need to embed it in onclick
   _templateCases = tpl.testCases.map(tc => ({ code: tc.code, name: tc.name, category: tc.category, assets: tc.assets||'' }));
   modal({
     title: 'Edit Activity Template',
@@ -3528,33 +3530,46 @@ function editTemplate(id) {
     `,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-submit" onclick="saveEditTemplate('${id}')">Save Changes</button>
+      <button class="form-submit" onclick="saveEditTemplate()">Save Changes</button>
     `,
   });
 }
 
-async function saveEditTemplate(id) {
-  const tpl = TEMPLATES.find(t => t.id === id);
-  if (!tpl) return;
-  const name      = document.getElementById('etpl-name').value.trim();
-  const subsystem = document.getElementById('etpl-subsystem').value;
-  const desc      = document.getElementById('etpl-desc').value.trim();
-  const procedure = document.getElementById('etpl-procedure').value.trim();
+async function saveEditTemplate() {
+  const id  = _editTemplateId;
+  const tpl = id ? TEMPLATES.find(t => t.id === id) : null;
+  if (!tpl) { toast('Template not found', 'error'); return; }
+
+  const name      = document.getElementById('etpl-name')?.value.trim();
+  const subsystem = document.getElementById('etpl-subsystem')?.value;
+  const desc      = document.getElementById('etpl-desc')?.value.trim();
+  const procedure = document.getElementById('etpl-procedure')?.value.trim();
   if (!name) { toast('Activity Name is required', 'error'); return; }
+
   const testCases = _templateCases
     .filter(tc => tc.code.trim() || tc.name.trim())
     .map(tc => ({ code: tc.code.trim(), name: tc.name.trim(), category: tc.category.trim(), assets: (tc.assets||'').trim(), procedure, duration: 1 }));
   if (!testCases.length) { toast('Add at least one test case', 'error'); return; }
-  const { error } = await _sb.from('templates').update({
-    name, subsystem, description: desc, test_cases: testCases,
-  }).eq('id', id);
-  if (error) { toast('Save failed: ' + error.message, 'error'); return; }
-  tpl.name = name; tpl.subsystem = subsystem; tpl.description = desc; tpl.testCases = testCases;
-  logAudit('Edited Activity Template', name, `${testCases.length} test cases`);
-  closeModal();
-  toast(`Saved: ${name}`, 'success');
-  renderAdminPortal();
-  renderAdminTemplates();
+
+  const btn = document.querySelector('.modal-footer .form-submit');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  try {
+    // Use _dbUpdate (native fetch) — avoids supabase-js JWT caching silent failures
+    await _dbUpdate('templates', {
+      name, subsystem, description: desc, test_cases: testCases,
+    }, { id });
+
+    tpl.name = name; tpl.subsystem = subsystem; tpl.description = desc; tpl.testCases = testCases;
+    logAudit('Edited Activity Template', name, `${testCases.length} test cases`);
+    closeModal();
+    toast(`Saved: ${name}`, 'success');
+    renderAdminPortal();
+    renderAdminTemplates();
+  } catch(e) {
+    toast('Save failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+  }
 }
 
 async function deleteTemplate(id) {
@@ -8040,7 +8055,7 @@ function _amDrilldownHTML(key) {
                   <th>Test Name</th>
                   <th style="min-width:170px;">Status</th>
                   <th style="min-width:240px;">Notes</th>
-                  ${_trEditMode && isAdmin ? `<th style="width:86px;">Actions</th>` : ''}
+                  ${isAdmin ? `<th style="width:86px;">Actions</th>` : ''}
                 </tr>
               </thead>
               <tbody>
@@ -8079,7 +8094,7 @@ function _amDrilldownHTML(key) {
                         <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
                         ${isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<button class="form-secondary" style="font-size:11px;padding:2px 6px;margin-top:4px;" onclick="_trAddGenericChild('${tid}')">＋ Asset</button>` : ''}
                       </td>
-                      ${_trEditMode && isAdmin ? `<td><button class="form-secondary" style="font-size:13px;padding:4px 7px;" onclick="_trCopyCase('${tid}')">⧉</button><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);margin-left:4px;" onclick="_trDeleteCase('${tid}')">🗑</button></td>` : ''}
+                      ${isAdmin ? `<td style="white-space:nowrap;">${_trEditMode ? `<button class="form-secondary" style="font-size:13px;padding:4px 7px;" onclick="_trCopyCase('${tid}')">⧉</button> ` : ''}<button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteCase('${tid}')" data-tippy-content="Delete test case">🗑</button></td>` : ''}
                     </tr>
                   `;
                 }).join('')}
@@ -8265,6 +8280,69 @@ async function _trDeleteCase(testId) {
     _reRenderTR();
   } catch(e) {
     toast('Delete failed: ' + e.message, 'error');
+  }
+}
+
+// Delete a parent test case and ALL its linked child asset rows
+async function _trDeleteParentCase(testId) {
+  const parent   = TI.find(r => String(r.TestID) === String(testId));
+  if (!parent) return;
+  const children = TI.filter(r => String(r.ParentTestId) === String(testId));
+  if (!confirm(
+    `Delete "${parent.TestCaseCode || parent.TestName || testId}" and all ${children.length} linked asset row${children.length !== 1 ? 's' : ''}?\n\nThis cannot be undone.`
+  )) return;
+  try {
+    // 1. Remove asset links and child test_items
+    for (const c of children) {
+      if (c.AssetId) {
+        try { await _assetUnlink(c.AssetId, testId); } catch(_) {}
+      }
+      try {
+        await _dbDelete('test_results',             { test_id: c.TestID });
+        await _dbDelete('test_item_status_history', { test_id: c.TestID });
+      } catch(_) {}
+      try { await _dbDelete('test_items', { test_id: c.TestID }); } catch(_) {}
+    }
+    // 2. Remove the parent test_item
+    try { await _dbDelete('test_results',             { test_id: parent.TestID }); } catch(_) {}
+    try { await _dbDelete('test_item_status_history', { test_id: parent.TestID }); } catch(_) {}
+    await _dbDelete('test_items', { test_id: parent.TestID });
+    // 3. Prune TI in memory
+    const idsToRemove = new Set([String(testId), ...children.map(c => String(c.TestID))]);
+    TI.splice(0, TI.length, ...TI.filter(r => !idsToRemove.has(String(r.TestID))));
+    _trExpandedParents.delete(String(testId));
+    logAudit('Parent Test Case Deleted', parent.TestID, parent.TestName || '', `Deleted parent + ${children.length} asset rows`);
+    toast(`Deleted "${parent.TestCaseCode || parent.TestName}" + ${children.length} asset row${children.length !== 1 ? 's' : ''}`, 'success');
+    _reRenderTR();
+  } catch(e) {
+    toast('Delete failed: ' + e.message, 'error');
+  }
+}
+
+// Delete a single asset child row (unlinks the asset and removes the test_item)
+async function _trDeleteAssetRow(childTestId) {
+  const child = TI.find(r => String(r.TestID) === String(childTestId));
+  if (!child) return;
+  const asset = child.AssetId ? ASSETS.find(a => a.id === child.AssetId) : null;
+  const label = asset ? asset.name : (child.TestCaseCode || childTestId);
+  if (!confirm(`Remove asset "${label}" from this test case? The asset record itself will be kept.\n\nThis cannot be undone.`)) return;
+  try {
+    // Unlink the asset (removes asset_test_links row and resets child test_item)
+    if (child.AssetId && child.ParentTestId) {
+      await _assetUnlink(child.AssetId, child.ParentTestId);
+    } else {
+      // Fallback: just delete the child test_item
+      try { await _dbDelete('test_results',             { test_id: child.TestID }); } catch(_) {}
+      try { await _dbDelete('test_item_status_history', { test_id: child.TestID }); } catch(_) {}
+      await _dbDelete('test_items', { test_id: child.TestID });
+      const idx = TI.findIndex(r => String(r.TestID) === String(childTestId));
+      if (idx !== -1) TI.splice(idx, 1);
+    }
+    toast(`Asset "${label}" removed from test case`, 'success');
+    _reRenderTR();
+    if (document.getElementById('admin-assets-content')) renderAdminAssets();
+  } catch(e) {
+    toast('Remove failed: ' + e.message, 'error');
   }
 }
 
@@ -11051,7 +11129,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
         <span style="font-size:10px;color:var(--gray-400);">auto</span>
       </td>
       <td style="font-size:11px;color:var(--gray-400);font-style:italic;">${expanded ? 'Click to collapse' : 'Click to expand'}</td>
-      ${_trEditMode && isAdmin ? `<td></td>` : ''}
+      ${isAdmin ? `<td onclick="event.stopPropagation();"><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="event.stopPropagation();_trDeleteParentCase('${ptid}')" data-tippy-content="Delete parent + all assets">🗑</button></td>` : ''}
     </tr>`;
 
   // Child rows only rendered when expanded
@@ -11092,7 +11170,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
           <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…"
             value="${escapeHtml(c.Notes || '')}" onblur="_mxSaveNotes('${ctid}',this.value)">
         </td>
-        ${_trEditMode && isAdmin ? `<td></td>` : ''}
+        ${isAdmin ? `<td><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteAssetRow('${ctid}')" data-tippy-content="Remove asset from test case">🗑</button></td>` : ''}
       </tr>`;
   }).join('') : '';
 
