@@ -4092,6 +4092,9 @@ function _mxApplyStatusChange(testId, status, reason = '', el = null) {
   if (!r) return;
 
   const rawId = r.TestID;
+  // Resolve asset name if this is a child asset row
+  const assetRecord = r.AssetId ? ASSETS.find(a => a.id === r.AssetId) : null;
+  const assetName   = assetRecord ? assetRecord.name : null;
   const existing = _sessionLog.find(e => String(e.testId) === String(rawId));
   if (existing) {
     existing.newStatus     = status;
@@ -4102,6 +4105,8 @@ function _mxApplyStatusChange(testId, status, reason = '', el = null) {
     _sessionLog.push({
       testId: rawId, testCode: r.TestCaseCode, testName: r.TestName,
       phase: r.Phase, location: r.Location, subsystem: r.Subsystem, activity: r.Activity,
+      assetId: r.AssetId || null, assetName,
+      isAssetRow: !!r.ParentTestId,
       prevStatus: r.Status || 'Not Started', newStatus: status,
       changedAt: new Date().toISOString(),
       failedReason:  status === 'Fail'    ? reason : '',
@@ -4290,15 +4295,16 @@ async function saveActivityEdit() {
 // ==========================================================================
 let intakeStep = 1;
 let intakeAdditions = [];
-let _s2Phase = '', _s2Loc = '', _s2Act = '';
+let _s2Phase = '', _s2Loc = '', _s2Act = '', _s2TestId = '', _s2AssetId = '';
 
 function _updateSessionHours(idx, val) {
   if (_sessionLog[idx]) _sessionLog[idx].hours = parseFloat(val) || 0;
 }
 
-function _s2SetPhase(v) { _s2Phase=v; _s2Loc=''; _s2Act=''; renderFieldIntake(); }
-function _s2SetLoc(v)   { _s2Loc=v; _s2Act=''; renderFieldIntake(); }
-function _s2SetAct(v)   { _s2Act=v; renderFieldIntake(); }
+function _s2SetPhase(v)  { _s2Phase=v; _s2Loc=''; _s2Act=''; _s2TestId=''; _s2AssetId=''; renderFieldIntake(); }
+function _s2SetLoc(v)    { _s2Loc=v; _s2Act=''; _s2TestId=''; _s2AssetId=''; renderFieldIntake(); }
+function _s2SetTestId(v) { _s2TestId=v; _s2AssetId=''; renderFieldIntake(); }
+function _s2SetAct(v)   { _s2Act=v; _s2TestId=''; _s2AssetId=''; renderFieldIntake(); }
 
 function ai_toggleReasonFields() {
   const s = document.getElementById('ai-status')?.value;
@@ -4318,7 +4324,7 @@ function renderFieldIntake() {
 
   const allItems = [..._sessionLog.map(e => ({...e, _fromLog:true})), ...intakeAdditions];
 
-  root.innerHTML = `
+  _htmlPreserveFocus(root, `
     <div class="intake-stepper">
       <div class="intake-step ${intakeStep >= 1 ? 'active' : ''} ${intakeStep > 1 ? 'completed' : ''}">
         <span class="intake-step-num">1</span>Review Today's Tests
@@ -4333,7 +4339,7 @@ function renderFieldIntake() {
     ${intakeStep === 1 ? renderIntakeStep1() :
       intakeStep === 2 ? renderIntakeStep2() :
       renderIntakeStep3(allItems)}
-  `;
+  `);
 }
 
 function renderIntakeStep1() {
@@ -4375,7 +4381,7 @@ function renderIntakeStep1() {
           return `
             <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;display:flex;gap:16px;align-items:center;">
               <div style="flex:1;min-width:0;">
-                <div style="font-weight:600;font-size:13px;margin-bottom:3px;">${escapeHtml(e.testCode)} · ${escapeHtml(e.testName)}</div>
+                <div style="font-weight:600;font-size:13px;margin-bottom:3px;">${escapeHtml(e.testCode)} · ${escapeHtml(e.testName)}${e.assetName ? ` <span style="background:#dbeafe;color:#1d4ed8;font-size:11px;padding:1px 7px;border-radius:10px;font-weight:500;margin-left:4px;">📦 ${escapeHtml(e.assetName)}</span>` : ''}</div>
                 <div style="font-size:11px;color:var(--gray-500);margin-bottom:5px;">${escapeHtml(e.phase||'—')} · ${escapeHtml(e.location||'—')} · ${escapeHtml(e.activity||'—')}</div>
                 <div style="font-size:12px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                   ${ps ? `<span style="background:#e5e7eb;color:#374151;padding:2px 8px;border-radius:10px;">${escapeHtml(ps)}</span><span style="color:var(--gray-400);">→</span>` : ''}
@@ -4406,7 +4412,19 @@ function renderIntakeStep2() {
   const phases = [...new Set(TI.map(r=>r.Phase).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   const locs   = [...new Set(TI.filter(r=>!_s2Phase||r.Phase===_s2Phase).map(r=>r.Location).filter(Boolean))].sort();
   const acts   = [...new Set(TI.filter(r=>(!_s2Phase||r.Phase===_s2Phase)&&(!_s2Loc||r.Location===_s2Loc)).map(r=>r.Activity).filter(Boolean))].sort();
-  const tests  = TI.filter(r=>(!_s2Phase||r.Phase===_s2Phase)&&(!_s2Loc||r.Location===_s2Loc)&&(!_s2Act||r.Activity===_s2Act));
+  // Exclude child asset rows from the test case selector — user picks the parent, then picks the asset
+  const tests  = TI.filter(r=>
+    !r.ParentTestId &&
+    (!_s2Phase||r.Phase===_s2Phase)&&(!_s2Loc||r.Location===_s2Loc)&&(!_s2Act||r.Activity===_s2Act)
+  );
+  // When a test case is selected, find its child asset rows
+  const selectedTest = _s2TestId ? TI.find(r=>String(r.TestID)===String(_s2TestId)) : null;
+  const childAssets  = selectedTest ? TI.filter(r=>String(r.ParentTestId)===String(_s2TestId)) : [];
+  // Map child rows to their ASSETS records for display
+  const childAssetOptions = childAssets.map(c => {
+    const a = ASSETS.find(x=>x.id===c.AssetId);
+    return { tiRow: c, asset: a, label: a ? a.name : `Asset ${c.TestID}` };
+  });
 
   return `
     <div class="form-card">
@@ -4429,35 +4447,43 @@ function renderIntakeStep2() {
       <div class="form-grid">
         <div class="form-field">
           <label>Phase</label>
-          <select class="form-input" onchange="_s2SetPhase(this.value)">
+          <select class="filter-select" onchange="_s2SetPhase(this.value)">
             <option value="">All Phases</option>
             ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_s2Phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
           </select>
         </div>
         <div class="form-field">
           <label>Location</label>
-          <select class="form-input" onchange="_s2SetLoc(this.value)">
+          <select class="filter-select" onchange="_s2SetLoc(this.value)">
             <option value="">Select location…</option>
             ${locs.map(l=>`<option value="${escapeHtml(l)}" ${_s2Loc===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
           </select>
         </div>
         <div class="form-field">
           <label>Activity</label>
-          <select class="form-input" onchange="_s2SetAct(this.value)">
+          <select class="filter-select" onchange="_s2SetAct(this.value)">
             <option value="">All Activities</option>
             ${acts.map(a=>`<option value="${escapeHtml(a)}" ${_s2Act===a?'selected':''}>${escapeHtml(a)}</option>`).join('')}
           </select>
         </div>
         <div class="form-field">
           <label>Test Case</label>
-          <select id="ai-testid" class="form-input">
+          <select id="ai-testid" class="filter-select" onchange="_s2SetTestId(this.value)">
             <option value="">Select test case…</option>
-            ${tests.map(t=>`<option value="${escapeHtml(t.TestID)}">${escapeHtml(t.TestCaseCode)} · ${escapeHtml(t.TestName)}</option>`).join('')}
+            ${tests.map(t=>`<option value="${escapeHtml(t.TestID)}" ${_s2TestId===String(t.TestID)?'selected':''}>${escapeHtml(t.TestCaseCode)} · ${escapeHtml(t.TestName)}</option>`).join('')}
           </select>
         </div>
+        ${childAssetOptions.length > 0 ? `
+        <div class="form-field">
+          <label>Asset <span style="font-size:11px;font-weight:400;color:var(--gray-500);">(this test case has ${childAssetOptions.length} asset${childAssetOptions.length!==1?'s':''})</span></label>
+          <select id="ai-assetid" class="filter-select" onchange="_s2AssetId=this.value">
+            <option value="">— Log for all assets / parent —</option>
+            ${childAssetOptions.map(o=>`<option value="${escapeHtml(String(o.tiRow.TestID))}" ${_s2AssetId===String(o.tiRow.TestID)?'selected':''}>${escapeHtml(o.label)}</option>`).join('')}
+          </select>
+        </div>` : ''}
         <div class="form-field">
           <label>Status</label>
-          <select id="ai-status" class="form-input" onchange="ai_toggleReasonFields()">
+          <select id="ai-status" class="filter-select" onchange="ai_toggleReasonFields()">
             <option value="">Select status…</option>
             ${['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable'].map(s=>`<option>${s}</option>`).join('')}
           </select>
@@ -4585,32 +4611,41 @@ function _updateAdditionHours(idx, val) {
 }
 
 function addIntakeAddition() {
-  const tid    = document.getElementById('ai-testid').value;
-  const status = document.getElementById('ai-status').value;
+  const tid      = document.getElementById('ai-testid')?.value;
+  const assetTid = document.getElementById('ai-assetid')?.value || _s2AssetId || '';
+  const status   = document.getElementById('ai-status')?.value;
   if (!tid || !status) {
     toast('Please select a test case and status', 'warn');
     return;
   }
-  const t = TI.find(x => String(x.TestID) === String(tid));
+  // If a specific asset is selected, log against that child TI row instead
+  const effectiveTid = assetTid || tid;
+  const t = TI.find(x => String(x.TestID) === String(effectiveTid));
   if (!t) return;
+  // For display, also resolve asset name if it's a child row
+  const assetRecord = t.AssetId ? ASSETS.find(a => a.id === t.AssetId) : null;
   const row = {
-    testId:       t.TestID,
-    testCode:     t.TestCaseCode,
-    testName:     t.TestName,
-    location:     t.Location,
-    subsystem:    t.Subsystem,
-    phase:        t.Phase,
-    activity:     t.Activity,
+    testId:        t.TestID,
+    testCode:      t.TestCaseCode,
+    testName:      t.TestName,
+    location:      t.Location,
+    subsystem:     t.Subsystem,
+    phase:         t.Phase,
+    activity:      t.Activity,
     testProcedure: t.TestProcedure,
-    _isRealItem:  true,
+    assetId:       t.AssetId || null,
+    assetName:     assetRecord ? assetRecord.name : null,
+    isAssetRow:    !!t.ParentTestId,
+    _isRealItem:   true,
     status,
-    hours:        parseFloat(document.getElementById('ai-hours')?.value) || 0,
+    hours:         parseFloat(document.getElementById('ai-hours')?.value) || 0,
     blockedReason: document.getElementById('ai-blocked-reason')?.value || '',
     failedReason:  document.getElementById('ai-failed-reason')?.value  || '',
   };
-  const existingIdx = intakeAdditions.findIndex(a => String(a.testId) === String(tid));
+  const existingIdx = intakeAdditions.findIndex(a => String(a.testId) === String(effectiveTid));
   if (existingIdx >= 0) intakeAdditions[existingIdx] = row;
   else intakeAdditions.push(row);
+  _s2TestId = ''; _s2AssetId = '';
   toast('Added to list', 'success');
   renderFieldIntake();
 }
@@ -4785,6 +4820,7 @@ async function submitIntakeFinal() {
     _sessionLog     = [];
     intakeAdditions = [];
     intakeStep      = 1;
+    _s2Phase = ''; _s2Loc = ''; _s2Act = ''; _s2TestId = ''; _s2AssetId = '';
     alert(`✓ Daily log submitted!\n\n${resultRows.length > 0 ? `${resultRows.length} test result(s) saved\n` : 'No test results logged (delay-only day)\n'}1 daily log row saved`);
     renderFieldIntake();
 
@@ -6788,7 +6824,7 @@ function renderTestReporting() {
   const phaseOptions = _trpFilterOptions(rows, 'phase');
   const locationOptions = _trpFilterOptions(rows, 'location');
 
-  root.innerHTML = `
+  _htmlPreserveFocus(root, `
     <div class="admin-section trp-shell">
       <div class="tr-modern-header">
         <div class="tr-modern-header-main">
@@ -6837,7 +6873,7 @@ function renderTestReporting() {
         <div class="docs-empty"><h3>No reports found</h3><p>No Test Report values exist in Test Items and no master report records have been created.</p></div>
       `}
     </div>
-  `;
+  `);
   _trpQueueAutoSync(rows);
 }
 
@@ -7503,6 +7539,7 @@ function _trDrillSearchInput(val) {
 // ==========================================================================
 let _amFilters  = { phase:'', location:'', subsystem:'', status:'', search:'' };
 let _amSelected = new Set(); // selected activity keys for bulk action
+let _amCurrentEditKey = null; // key of the activity currently open in Edit modal
 let _trEditMode = false;
 let _trDraftItems = null;
 let _trSelected = new Set();
@@ -7510,6 +7547,7 @@ let _trBulkMsg = '';
 let _trBulkMode = false;
 let _trEmptySections = [];
 let _trDragId = null;
+let _trExpandedParents = new Set(); // TestIDs of expanded parent/asset groups (collapsed by default)
 
 // ==========================================================================
 // TEST REGISTER — unified Activity + Test Case view
@@ -8269,6 +8307,13 @@ function _trClearSelection() {
   _reRenderTR();
 }
 
+function _trToggleParent(testId) {
+  const id = String(testId);
+  if (_trExpandedParents.has(id)) _trExpandedParents.delete(id);
+  else _trExpandedParents.add(id);
+  _reRenderTR();
+}
+
 function _trToggleBulkEdit() {
   _trBulkMode = !_trBulkMode;
   _trSelected.clear();
@@ -8334,9 +8379,27 @@ async function _trBulkDelete() {
   const ids = [..._trSelected];
   if (!ids.length) return;
   if (!confirm(`Permanently delete ${ids.length} selected test case${ids.length===1?'':'s'}? This cannot be undone.`)) return;
-  for (const id of ids) await _trDeleteCase(id);
+  // Delete all in one pass — bypass _trDeleteCase's per-item confirm
+  let deleted = 0;
+  for (const id of ids) {
+    const r = (_trDraftItems || []).find(x => String(x.TestID) === String(id)) || TI.find(x => String(x.TestID) === String(id));
+    if (!r) continue;
+    try {
+      if (!r._isNew) {
+        await _dbDelete('test_items', { test_id: r.TestID });
+        logAudit('Test Case Deleted', r.TestID, r.TestName || '', `Bulk deleted ${r.TestID} ${r.TestName || ''}`);
+        const idx = TI.findIndex(x => String(x.TestID) === String(r.TestID));
+        if (idx !== -1) TI.splice(idx, 1);
+      }
+      if (_trDraftItems) _trDraftItems = _trDraftItems.filter(x => String(x.TestID) !== String(id));
+      deleted++;
+    } catch(e) {
+      toast(`Failed to delete ${r.TestCaseCode || id}: ${e.message}`, 'error');
+    }
+  }
   _trSelected.clear();
   _trBulkMsg = '';
+  if (deleted) toast(`${deleted} test case${deleted===1?'':'s'} deleted`, 'success');
   _reRenderTR();
 }
 
@@ -8354,12 +8417,14 @@ function _amCloseDrilldown() {
   _trBulkMode = false;
   _trEmptySections = [];
   _trDragId = null;
+  _trExpandedParents.clear(); // reset collapsed state when leaving drilldown
   _reRenderTR();
 }
 
 function _amOpenEditModal(key) {
   const act = _amGetActivities().find(a => a.key === key);
   if (!act) return;
+  _amCurrentEditKey = key; // store so onclick handlers don't need to embed it
   const selectedReport = _trpFindRecordForActivity(act);
   const customReport = selectedReport ? '' : (act.testReport || '');
   const phases     = [...new Set(TI.map(r=>r.Phase)   .filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
@@ -8407,13 +8472,14 @@ function _amOpenEditModal(key) {
         Changes to Activity Name, Phase, Location, or Subsystem update all child test items. Activity Status is auto-calculated from test item statuses.
       </p>
     `,
-    footer: `<button class="admin-action-btn" style="background:#dc2626;margin-right:auto;" onclick="_amDeleteActivity('${escapeHtml(key)}')">🗑 Delete Activity</button><button class="form-secondary" onclick="closeModal()">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amSaveEdit('${escapeHtml(key)}',true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" onclick="_amSaveEdit('${escapeHtml(key)}')">Save Changes</button>`
+    footer: `<button class="admin-action-btn" style="background:#dc2626;margin-right:auto;" onclick="_amDeleteActivity()">🗑 Delete Activity</button><button class="form-secondary" onclick="closeModal()">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amSaveEdit(true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" onclick="_amSaveEdit()">Save Changes</button>`
   });
 }
 
-async function _amSaveEdit(key, deployToField = false) {
+async function _amSaveEdit(deployToField = false) {
+  const key = _amCurrentEditKey;
   const act = _amGetActivities().find(a => a.key === key);
-  if (!act) return;
+  if (!act) { toast('Activity not found', 'error'); return; }
 
   const newName      = document.getElementById('am-edit-name')?.value.trim();
   const newPhase     = document.getElementById('am-edit-phase')?.value;
@@ -8425,7 +8491,9 @@ async function _amSaveEdit(key, deployToField = false) {
 
   if (!newName) { toast('Activity name is required', 'error'); return; }
 
-  const btn = event?.target?.closest?.('button') || document.querySelector('.modal-footer .admin-action-btn');
+  // Find the Save/Deploy button (last .admin-action-btn in footer, not the Delete button)
+  const footerBtns = [...document.querySelectorAll('.modal-footer .admin-action-btn')];
+  const btn = footerBtns.find(b => b.textContent.includes(deployToField ? 'Deploy' : 'Save')) || footerBtns[footerBtns.length - 1];
   if (btn) { btn.disabled = true; btn.textContent = deployToField ? 'Deploying…' : 'Saving…'; }
 
   try {
@@ -8492,7 +8560,8 @@ async function _amSaveEdit(key, deployToField = false) {
 }
 
 // ── Delete a single activity (all its test_items) from Supabase ───────────────
-async function _amDeleteActivity(key) {
+async function _amDeleteActivity() {
+  const key = _amCurrentEditKey;
   const act = _amGetActivities().find(a => a.key === key);
   if (!act) return;
   const itemCount = act.items.length;
@@ -8652,9 +8721,34 @@ function _amClearSelection() {
   _reRenderTR();
 }
 
+// ── Focus-preserving innerHTML helper ────────────────────────────────────────
+// Saves the focused text input's state before an innerHTML replace and
+// restores focus + cursor position afterward.  Pass the container element
+// (or null to skip), plus the new html string.
+function _htmlPreserveFocus(container, html) {
+  const ae  = document.activeElement;
+  const tag = ae?.tagName;
+  const isText = (tag === 'INPUT' && ae.type !== 'checkbox' && ae.type !== 'radio') || tag === 'TEXTAREA';
+  const focusCls  = isText ? (ae.className.split(' ').find(c => /tr-search|filter-input|mtg-search|rma-search|asset-search|pl-search/.test(c)) || null) : null;
+  const focusId   = isText ? (ae.id || null) : null;
+  const sel       = isText ? (ae.selectionStart ?? ae.value.length) : -1;
+
+  if (container) container.innerHTML = html;
+
+  if (!isText || sel < 0) return;
+
+  // Try to re-focus by ID first, then by class
+  const refocus = (focusId && document.getElementById(focusId))
+               || (focusCls && document.querySelector(`.${focusCls}`));
+  if (refocus) {
+    refocus.focus();
+    try { refocus.setSelectionRange(sel, sel); } catch (_) {}
+  }
+}
+
 function _reRenderTR() {
   const root = document.getElementById('test-register-content');
-  if (root) root.innerHTML = _testRegisterHTML();
+  if (root) _htmlPreserveFocus(root, _testRegisterHTML());
   // Also update legacy admin tab body if activity manager tab is open
   const body = document.getElementById('admin-tab-body');
   if (body && _adminTab === 'activitymanager') body.innerHTML = _adminActivityManagerHTML();
@@ -10663,9 +10757,13 @@ function _assetUpdateParentDOMBadge(parentTestId, newStatus) {
     const passCount = children.filter(c => c.Status === 'Pass').length;
     const total     = children.length;
     const pending   = total - passCount;
-    sumEl.innerHTML = `📦 ${total} asset${total !== 1 ? 's' : ''} &nbsp;·&nbsp; `
+    const isAdmin   = currentRoleUser?.role === 'admin';
+    const safePtid  = escapeHtml(String(parentTestId));
+    sumEl.innerHTML = `<span>📦 ${total} asset${total !== 1 ? 's' : ''} &nbsp;·&nbsp; `
       + `<span style="color:#16a34a;">${passCount} Pass</span>`
-      + (pending > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${pending} pending</span>` : '');
+      + (pending > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${pending} pending</span>` : '')
+      + `</span>`
+      + (isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trAddGenericChild('${safePtid}')">＋ Asset</button>` : '');
   }
 }
 
@@ -10917,7 +11015,7 @@ async function _trSaveGenericChild(testId) {
   }
 }
 
-// ── Test register: render parent row + child asset rows ───────────────────────
+// ── Test register: render parent row + child asset rows (collapsible) ────────
 function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
   const passCount  = children.filter(c => c.Status === 'Pass').length;
   const totalCount = children.length;
@@ -10925,35 +11023,39 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
   const badgeCls   = {'Pass':'badge-passed','Fail':'badge-failed','Blocked':'badge-warn','Not Applicable':'badge-notstarted','In Progress':'badge-inprog','Future Test':'badge-futuretest'}[parentCur] || 'badge-notstarted';
   const safeId     = String(parent.TestID).replace(/[^a-zA-Z0-9]/g, '-');
   const ptid       = escapeHtml(String(parent.TestID));
+  const expanded   = _trExpandedParents.has(String(parent.TestID));
+  const chevron    = expanded ? '▼' : '▶';
 
   const parentRowHtml = `
-    <tr style="background:#f3f4f6;">
-      ${_trBulkMode ? `<td></td>` : ''}
-      ${_trEditMode && isAdmin ? `<td></td>` : ''}
+    <tr style="background:#f0f1f3;cursor:pointer;" onclick="_trToggleParent('${ptid}')">
+      ${_trBulkMode ? `<td onclick="event.stopPropagation()"></td>` : ''}
+      ${_trEditMode && isAdmin ? `<td onclick="event.stopPropagation()"></td>` : ''}
       <td style="font-size:11px;font-family:monospace;color:var(--gray-700);min-width:140px;">
-        <span style="font-size:10px;margin-right:4px;color:var(--gray-400);">▶</span>
+        <span style="font-size:12px;margin-right:6px;color:var(--gray-500);transition:transform .15s;">${chevron}</span>
         ${_trEditMode && isAdmin
-          ? `<input class="form-input" style="font-size:11px;font-family:monospace;min-width:120px;" value="${escapeHtml(parent.TestCaseCode||'')}" onchange="_trDraftChange('${ptid}','TestCaseCode',this.value)">`
+          ? `<input class="form-input" style="font-size:11px;font-family:monospace;min-width:120px;" value="${escapeHtml(parent.TestCaseCode||'')}" onclick="event.stopPropagation()" onchange="_trDraftChange('${ptid}','TestCaseCode',this.value)">`
           : escapeHtml(parent.TestCaseCode || parent.TestID || '—')}
       </td>
       <td>
         ${_trEditMode && isAdmin
-          ? `<input class="form-input" style="font-weight:600;font-size:13px;" value="${escapeHtml(parent.TestName||'')}" onchange="_trDraftChange('${ptid}','TestName',this.value)">`
+          ? `<input class="form-input" style="font-weight:600;font-size:13px;" value="${escapeHtml(parent.TestName||'')}" onclick="event.stopPropagation()" onchange="_trDraftChange('${ptid}','TestName',this.value)">`
           : `<div style="font-weight:600;font-size:13px;">${escapeHtml(parent.TestName || '—')}</div>`}
-        <div id="aps-${safeId}" style="font-size:11px;color:var(--gray-500);margin-top:2px;">
-          📦 ${totalCount} asset${totalCount !== 1 ? 's' : ''} &nbsp;·&nbsp;
-          <span style="color:#16a34a;">${passCount} Pass</span>${totalCount - passCount > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${totalCount - passCount} pending</span>` : ''}
+        <div id="aps-${safeId}" style="font-size:11px;color:var(--gray-500);margin-top:2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span>📦 ${totalCount} asset${totalCount !== 1 ? 's' : ''} &nbsp;·&nbsp;
+          <span style="color:#16a34a;">${passCount} Pass</span>${totalCount - passCount > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${totalCount - passCount} pending</span>` : ''}</span>
+          ${isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trAddGenericChild('${ptid}')">＋ Asset</button>` : ''}
         </div>
       </td>
       <td>
         <span class="badge ${badgeCls}" id="apb-${safeId}">${escapeHtml(parentCur)}</span>
         <span style="font-size:10px;color:var(--gray-400);">auto</span>
       </td>
-      <td style="font-size:11px;color:var(--gray-400);font-style:italic;">Managed by assets</td>
+      <td style="font-size:11px;color:var(--gray-400);font-style:italic;">${expanded ? 'Click to collapse' : 'Click to expand'}</td>
       ${_trEditMode && isAdmin ? `<td></td>` : ''}
     </tr>`;
 
-  const childRowsHtml = children.map(c => {
+  // Child rows only rendered when expanded
+  const childRowsHtml = expanded ? children.map(c => {
     const asset      = ASSETS.find(a => a.id === c.AssetId);
     const assetName  = asset ? asset.name : '—';
     const deviceType = asset ? (asset.device_type || '') : '';
@@ -10964,7 +11066,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
     const domId      = encodeURIComponent(String(c.TestID));
     const sc         = _assetStatusColor(cur);
     return `
-      <tr style="background:#fafafa;border-left:3px solid ${sc}20;">
+      <tr style="background:#fafafa;border-left:3px solid ${sc}40;">
         ${_trBulkMode ? `<td style="padding-left:20px;"><input type="checkbox" ${_trSelected.has(String(c.TestID)) ? 'checked' : ''} onchange="_trToggleSelect('${ctid}',this.checked)"></td>` : ''}
         ${_trEditMode && isAdmin ? `<td></td>` : ''}
         <td style="padding-left:24px;font-size:11px;font-family:monospace;color:var(--gray-500);">
@@ -10992,7 +11094,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
         </td>
         ${_trEditMode && isAdmin ? `<td></td>` : ''}
       </tr>`;
-  }).join('');
+  }).join('') : '';
 
   return parentRowHtml + childRowsHtml;
 }
@@ -11005,7 +11107,7 @@ let _assetSelected = new Set(); // asset ids checked for bulk ops
 function renderAdminAssets() {
   const root = document.getElementById('admin-assets-content');
   if (!root) return;
-  root.innerHTML = _assetPageHTML();
+  _htmlPreserveFocus(root, _assetPageHTML());
 }
 
 function _assetDownloadTemplate() {
@@ -11098,7 +11200,7 @@ function _assetPageHTML() {
 
     <!-- Filter Bar -->
     <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
-      <input class="form-input" style="max-width:220px;" placeholder="Search name or type…"
+      <input id="asset-search-input" class="form-input" style="max-width:220px;" placeholder="Search name or type…"
         value="${escapeHtml(_assetFilter.search)}" oninput="_assetSetFilter('search',this.value)">
       <select class="form-input" style="max-width:160px;" onchange="_assetSetFilter('type',this.value)">
         <option value="">All Types</option>
@@ -11537,7 +11639,7 @@ async function _assetLinkFromPanel(assetId) {
 function renderRMA() {
   const root = document.getElementById('rma-content');
   if (!root || !currentRoleUser) return;
-  root.innerHTML = _rmaPageHTML();
+  _htmlPreserveFocus(root, _rmaPageHTML());
   setTimeout(_initPageLibraries, 80);
 }
 
@@ -11630,7 +11732,7 @@ function _rmaPageHTML() {
     metCard(openLocs, 'Locations', 'with open RMAs', openLocs ? '#7c3aed' : 'var(--gray-400)') +
     `</div>` +
     `<div class="data-card" style="padding:14px 16px;margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">` +
-    `<input class="form-input" style="font-size:13px;min-width:200px;flex:1;" placeholder="🔍 Search RMA #, serial, manufacturer…" ` +
+    `<input id="rma-search-input" class="form-input" style="font-size:13px;min-width:200px;flex:1;" placeholder="🔍 Search RMA #, serial, manufacturer…" ` +
     `value="${escapeHtml(_rmaFilter.search)}" oninput="_rmaFilter.search=this.value;renderRMA()">` +
     `<select class="form-input" style="font-size:13px;" onchange="_rmaFilter.status=this.value;renderRMA()">` +
     `<option value="">All Statuses</option>` +
@@ -11952,7 +12054,7 @@ async function renderMeetings() {
       el.innerHTML = `<p style="color:var(--bad);padding:20px;">Error loading meeting: ${escapeHtml(e.message)}</p>`;
     }
   } else {
-    el.innerHTML = _mtgListPageHTML();
+    _htmlPreserveFocus(el, _mtgListPageHTML());
   }
 }
 
@@ -11989,7 +12091,7 @@ function _mtgListPageHTML() {
   return `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;gap:12px;flex-wrap:wrap;">
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <input class="form-input" placeholder="🔍 Search meetings…" style="width:210px;"
+        <input id="mtg-search-input" class="form-input" placeholder="🔍 Search meetings…" style="width:210px;"
           value="${escapeHtml(_mtgSearch)}" oninput="_mtgSearch=this.value;renderMeetings()">
         <select class="form-input" style="width:210px;" onchange="_mtgSeriesFilter=this.value;renderMeetings()">
           <option value="">All Series</option>
