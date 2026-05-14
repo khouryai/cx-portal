@@ -4572,7 +4572,7 @@ function renderIntakeStep3(items) {
         </div>
         <div class="form-field" id="i3-delay-cat-wrap" style="display:none;">
           <label>Delay Category</label>
-          <select id="i3-delay-cat" class="form-input">
+          <select id="i3-delay-cat" class="filter-select">
             <option value="">Select category…</option>
             ${delayCats.map(c=>`<option>${escapeHtml(c)}</option>`).join('')}
           </select>
@@ -5107,7 +5107,7 @@ function renderPunchWorkflow() {
 
   const hasFilter = _plSearch || _plStatusFilter || _plPhaseFilter || _plLocFilter || _plSubFilter || _plPriorityFilter || _plActivityFilter;
 
-  root.innerHTML = `
+  _htmlPreserveFocus(root, `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:2px solid var(--gray-200);padding-bottom:0;">
       <div style="display:flex;gap:0;">
         ${[['my',`My Items (${my.length})`],['all',`All Items (${all.length})`],['bin',`Recycle Bin (${bin.length})`]].map(([id,label])=>`
@@ -5129,31 +5129,31 @@ function renderPunchWorkflow() {
 
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
       <div style="position:relative;flex:1;min-width:200px;">
-        <input type="text" class="form-input" placeholder="Search title or #…" value="${escapeHtml(_plSearch)}"
+        <input type="text" id="pl-search-input" class="form-input pl-search" placeholder="Search title or #…" value="${escapeHtml(_plSearch)}"
           oninput="_plSetSearch(this.value)" style="padding-left:32px;font-size:13px;">
         <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--gray-400);font-size:16px;">⌕</span>
       </div>
-      <select class="form-input" style="width:160px;font-size:13px;" onchange="_plSetFilter('status',this.value)">
+      <select class="filter-select" onchange="_plSetFilter('status',this.value)">
         <option value="">All Statuses</option>
         ${Object.entries(PL_STATUS_LABELS).map(([v,l])=>`<option value="${v}" ${_plStatusFilter===v?'selected':''}>${l}</option>`).join('')}
       </select>
-      <select class="form-input" style="width:140px;font-size:13px;" onchange="_plPhaseChange(this.value)">
+      <select class="filter-select" onchange="_plPhaseChange(this.value)">
         <option value="">All Phases</option>
         ${phases.map(p=>`<option value="${p.id}" ${_plPhaseFilter===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
       </select>
-      <select class="form-input" style="width:160px;font-size:13px;" onchange="_plSetFilter('loc',this.value)">
+      <select class="filter-select" onchange="_plSetFilter('loc',this.value)">
         <option value="">All Locations</option>
         ${locPool.map(l=>`<option value="${l.id}" ${_plLocFilter===l.id?'selected':''}>${escapeHtml(l.name)}</option>`).join('')}
       </select>
-      <select class="form-input" style="width:130px;font-size:13px;" onchange="_plSetFilter('sub',this.value)">
+      <select class="filter-select" onchange="_plSetFilter('sub',this.value)">
         <option value="">All Subsystems</option>
         ${subPool.map(s=>`<option value="${escapeHtml(s)}" ${_plSubFilter===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
       </select>
-      <select class="form-input" style="width:120px;font-size:13px;" onchange="_plSetFilter('priority',this.value)">
+      <select class="filter-select" onchange="_plSetFilter('priority',this.value)">
         <option value="">All Priorities</option>
         ${['Low','Medium','High','Critical'].map(p=>`<option value="${p}" ${_plPriorityFilter===p?'selected':''}>${p}</option>`).join('')}
       </select>
-      ${plActivities.length ? `<select class="form-input" style="width:160px;font-size:13px;" onchange="_plSetFilter('activity',this.value)">
+      ${plActivities.length ? `<select class="filter-select" onchange="_plSetFilter('activity',this.value)">
         <option value="">All Activities</option>
         ${plActivities.map(a=>`<option value="${escapeHtml(a)}" ${_plActivityFilter===a?'selected':''}>${escapeHtml(a)}</option>`).join('')}
       </select>` : ''}
@@ -5222,7 +5222,8 @@ function renderPunchWorkflow() {
           <button class="form-secondary" ${_plPage>=pages?'disabled':''} onclick="_plSetPage(${_plPage+1})">Next →</button>
         </div>
       </div>` : ''}
-  `;
+  `);
+  setTimeout(_initPageLibraries, 80);
 }
 
 function _plSetTab(t)    { _plTab=t; _plPage=1; renderPunchWorkflow(); }
@@ -8055,7 +8056,7 @@ function _amDrilldownHTML(key) {
                   <th>Test Name</th>
                   <th style="min-width:170px;">Status</th>
                   <th style="min-width:240px;">Notes</th>
-                  ${isAdmin ? `<th style="width:86px;">Actions</th>` : ''}
+                  ${_trEditMode && isAdmin ? `<th style="width:86px;">Actions</th>` : ''}
                 </tr>
               </thead>
               <tbody>
@@ -8092,9 +8093,9 @@ function _amDrilldownHTML(key) {
                       </td>
                       <td>
                         <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
-                        ${isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<button class="form-secondary" style="font-size:11px;padding:2px 6px;margin-top:4px;" onclick="_trAddGenericChild('${tid}')">＋ Asset</button>` : ''}
+                        ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<button class="form-secondary" style="font-size:11px;padding:2px 6px;margin-top:4px;" onclick="_trAddGenericChild('${tid}')">＋ Asset</button>` : ''}
                       </td>
-                      ${isAdmin ? `<td style="white-space:nowrap;">${_trEditMode ? `<button class="form-secondary" style="font-size:13px;padding:4px 7px;" onclick="_trCopyCase('${tid}')">⧉</button> ` : ''}<button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteCase('${tid}')" data-tippy-content="Delete test case">🗑</button></td>` : ''}
+                      ${_trEditMode && isAdmin ? `<td style="white-space:nowrap;"><button class="form-secondary" style="font-size:13px;padding:4px 7px;" onclick="_trCopyCase('${tid}')">⧉</button> <button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteCase('${tid}')" data-tippy-content="Delete test case">🗑</button></td>` : ''}
                     </tr>
                   `;
                 }).join('')}
@@ -10841,7 +10842,7 @@ function _assetUpdateParentDOMBadge(parentTestId, newStatus) {
       + `<span style="color:#16a34a;">${passCount} Pass</span>`
       + (pending > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${pending} pending</span>` : '')
       + `</span>`
-      + (isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trAddGenericChild('${safePtid}')">＋ Asset</button>` : '');
+      + (_trEditMode && isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trAddGenericChild('${safePtid}')">＋ Asset</button>` : '');
   }
 }
 
@@ -11121,7 +11122,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
         <div id="aps-${safeId}" style="font-size:11px;color:var(--gray-500);margin-top:2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <span>📦 ${totalCount} asset${totalCount !== 1 ? 's' : ''} &nbsp;·&nbsp;
           <span style="color:#16a34a;">${passCount} Pass</span>${totalCount - passCount > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${totalCount - passCount} pending</span>` : ''}</span>
-          ${isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trAddGenericChild('${ptid}')">＋ Asset</button>` : ''}
+          ${_trEditMode && isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trAddGenericChild('${ptid}')">＋ Asset</button>` : ''}
         </div>
       </td>
       <td>
@@ -11129,7 +11130,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
         <span style="font-size:10px;color:var(--gray-400);">auto</span>
       </td>
       <td style="font-size:11px;color:var(--gray-400);font-style:italic;">${expanded ? 'Click to collapse' : 'Click to expand'}</td>
-      ${isAdmin ? `<td onclick="event.stopPropagation();"><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="event.stopPropagation();_trDeleteParentCase('${ptid}')" data-tippy-content="Delete parent + all assets">🗑</button></td>` : ''}
+      ${_trEditMode && isAdmin ? `<td onclick="event.stopPropagation();"><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="event.stopPropagation();_trDeleteParentCase('${ptid}')" data-tippy-content="Delete parent + all assets">🗑</button></td>` : ''}
     </tr>`;
 
   // Child rows only rendered when expanded
@@ -11170,7 +11171,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
           <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…"
             value="${escapeHtml(c.Notes || '')}" onblur="_mxSaveNotes('${ctid}',this.value)">
         </td>
-        ${isAdmin ? `<td><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteAssetRow('${ctid}')" data-tippy-content="Remove asset from test case">🗑</button></td>` : ''}
+        ${_trEditMode && isAdmin ? `<td><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteAssetRow('${ctid}')" data-tippy-content="Remove asset from test case">🗑</button></td>` : ''}
       </tr>`;
   }).join('') : '';
 
@@ -12134,6 +12135,7 @@ async function renderMeetings() {
   } else {
     _htmlPreserveFocus(el, _mtgListPageHTML());
   }
+  setTimeout(_initPageLibraries, 80);
 }
 
 // ─── LIST PAGE ────────────────────────────────────────────────
@@ -12171,11 +12173,11 @@ function _mtgListPageHTML() {
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
         <input id="mtg-search-input" class="form-input" placeholder="🔍 Search meetings…" style="width:210px;"
           value="${escapeHtml(_mtgSearch)}" oninput="_mtgSearch=this.value;renderMeetings()">
-        <select class="form-input" style="width:210px;" onchange="_mtgSeriesFilter=this.value;renderMeetings()">
+        <select class="filter-select" onchange="_mtgSeriesFilter=this.value;renderMeetings()">
           <option value="">All Series</option>
           ${series.map(s => `<option value="${escapeHtml(s)}" ${_mtgSeriesFilter===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
         </select>
-        <select class="form-input" style="width:130px;" onchange="_mtgStatusFilter=this.value;renderMeetings()">
+        <select class="filter-select" onchange="_mtgStatusFilter=this.value;renderMeetings()">
           <option value="">All Statuses</option>
           <option value="Agenda"  ${_mtgStatusFilter==='Agenda' ?'selected':''}>Agenda</option>
           <option value="Minutes" ${_mtgStatusFilter==='Minutes'?'selected':''}>Minutes</option>
@@ -12349,7 +12351,7 @@ function _mtgAgendaHTML(m, categories, items, actionItems, isAdmin, inMinutes) {
       <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:2px solid var(--gray-200);">
         <span style="font-weight:600;font-size:14px;">Agenda</span>
         <div style="display:flex;gap:8px;align-items:center;">
-          <select class="form-input" style="width:130px;padding:4px 8px;font-size:12px;" onchange="_mtgFilterItems(this.value)">
+          <select class="filter-select" onchange="_mtgFilterItems(this.value)">
             <option value="">All Statuses</option>
             <option value="Open">Open</option>
             <option value="Closed">Closed</option>
