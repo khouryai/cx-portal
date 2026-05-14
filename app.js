@@ -299,7 +299,7 @@ Chart.defaults.borderColor = '#ebebeb';
 // ==========================================
 // ROUTING
 // ==========================================
-const _adminPages = new Set(['admin-templates','admin-locations','admin-fieldconfig','admin-directory','audit','admin-p6','admin-assets']);
+const _adminPages = new Set(['admin-templates','admin-locations','admin-fieldconfig','admin-directory','audit','admin-p6','admin-assets','admin-planning']);
 let _adminModeOn = false;
 
 function showPage(name) {
@@ -323,6 +323,8 @@ function showPage(name) {
   if (name === 'rma')              renderRMA();
   if (name === 'schedule')         renderSchedulePage();
   if (name === 'meetings')         { loadMeetings().then(() => { loadMtgTemplates(); renderMeetings(); }); }
+  if (name === 'lookahead')        { loadPlanningData().then(renderLookahead); }
+  if (name === 'admin-planning')   { loadPlanningData().then(renderAdminPlanning); }
   window.scrollTo(0, 0);
   // Init libraries for any page — auto-detects selects, tooltips, date inputs
   setTimeout(_initPageLibraries, 150);
@@ -13292,4 +13294,368 @@ async function deleteMtgTemplate(id) {
     toast('Template deleted', 'success');
     openMtgTemplatesModal();
   } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ============================================================
+// LOOKAHEAD / PLANNING MODULE — Batch 1 Foundation
+// ============================================================
+//
+// Tables:
+//   planning_resources, pto_requests, planning_import_batches,
+//   planning_activities, planning_events, planning_event_resources,
+//   planning_conflicts
+//
+// Cell color → shift mapping (used in Batch 3 importer):
+//   Yellow = day_shift   (default 0700–1500)
+//   Blue   = night_shift (default 2000–0700)
+//   Black  = blanket_shift (all-day)
+//   Red    = cancelled (admin must add cancellation_reason)
+
+// ── Global state ─────────────────────────────────────────────
+let PLANNING_RESOURCES   = [];   // planning_resources rows
+let PLANNING_EVENTS      = [];   // planning_events rows (current/active batch + manual + pto)
+let PLANNING_ACTIVITIES  = [];   // planning_activities rows
+let PLANNING_BATCHES     = [];   // planning_import_batches rows
+let PLANNING_EVENT_RES   = [];   // planning_event_resources join rows
+let PLANNING_CONFLICTS   = [];   // planning_conflicts rows
+let PTO_REQUESTS         = [];   // pto_requests rows
+
+let _lookaheadTab        = 'calendar';                 // calendar | lookahead | gantt | resources | pto
+let _adminPlanningTab    = 'upload';                   // upload | review | conflicts | resources | history
+let _planningLoadedAt    = 0;                          // cache flag
+
+// ── Data loaders ─────────────────────────────────────────────
+async function loadPlanningData(force = false) {
+  // Cache for 30s to avoid hammering on tab switches
+  if (!force && Date.now() - _planningLoadedAt < 30_000) return;
+  try {
+    const [resources, events, activities, batches, eventRes, conflicts, pto] = await Promise.all([
+      _fetchAnon('planning_resources?select=*&order=display_name.asc'),
+      _fetchAnon('planning_events?select=*&order=event_date.asc'),
+      _fetchAnon('planning_activities?select=*&order=created_at.desc'),
+      _fetchAnon('planning_import_batches?select=*&order=uploaded_at.desc'),
+      _fetchAnon('planning_event_resources?select=*'),
+      _fetchAnon('planning_conflicts?select=*&order=created_at.desc'),
+      _fetchAnon('pto_requests?select=*&order=start_date.desc'),
+    ]);
+    PLANNING_RESOURCES  = resources  || [];
+    PLANNING_EVENTS     = events     || [];
+    PLANNING_ACTIVITIES = activities || [];
+    PLANNING_BATCHES    = batches    || [];
+    PLANNING_EVENT_RES  = eventRes   || [];
+    PLANNING_CONFLICTS  = conflicts  || [];
+    PTO_REQUESTS        = pto        || [];
+    _planningLoadedAt   = Date.now();
+    // First-time bootstrap: seed planning_resources from portal users
+    if (PLANNING_RESOURCES.length === 0) await _planningBootstrapResources();
+  } catch (err) {
+    console.warn('Planning data load failed:', err.message);
+    toast('Planning data load failed: ' + err.message, 'error');
+  }
+}
+
+function _planningDeriveInitials(name) {
+  if (!name) return '';
+  return name.split(/\s+/).map(w => w[0] || '').join('').slice(0, 4).toUpperCase();
+}
+
+async function _planningBootstrapResources() {
+  // Pull active portal users (profiles) and create matching planning_resources rows.
+  // Resource type derived from profile role.
+  try {
+    const profs = await _fetchAnon('profiles?select=id,full_name,role,email&is_active=eq.true');
+    if (!profs || !profs.length) return;
+    const seed = profs.filter(p => p.full_name).map(p => ({
+      user_id:       p.id,
+      display_name:  p.full_name,
+      initials:      _planningDeriveInitials(p.full_name),
+      resource_type: (p.role === 'admin' ? 'admin'
+                    : p.role === 'field_engineer' ? 'field_engineer'
+                    : 'manual'),
+      email:         p.email || null,
+      is_active:     true,
+    }));
+    if (!seed.length) return;
+    await _dbInsert('planning_resources', seed);
+    PLANNING_RESOURCES = await _fetchAnon('planning_resources?select=*&order=display_name.asc');
+    toast(`Seeded ${seed.length} resources from portal users`, 'success');
+  } catch (err) {
+    console.warn('Resource bootstrap failed:', err.message);
+  }
+}
+
+// ── Main Lookahead page render ────────────────────────────────
+function renderLookahead() {
+  const hero = document.getElementById('lookahead-hero-content');
+  const body = document.getElementById('lookahead-content');
+  if (!body || !currentRoleUser) return;
+  const isAdmin = currentRoleUser?.role === 'admin';
+
+  if (hero) hero.innerHTML = `
+    <h1 style="margin:0;font-size:28px;font-weight:700;">Lookahead</h1>
+    <p style="margin:6px 0 0;color:var(--gray-500);font-size:14px;">
+      Operational planning view — weekly lookahead, resource availability, PTO, and P6 overlay.
+    </p>`;
+
+  const tabs = [
+    ['calendar',  'Calendar'],
+    ['lookahead', 'Lookahead Timeline'],
+    ['gantt',     'Gantt'],
+    ['resources', 'Resources'],
+    ['pto',       'PTO'],
+  ];
+
+  body.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:2px solid var(--gray-200);padding-bottom:0;">
+      <div style="display:flex;gap:0;">
+        ${tabs.map(([id, label]) => `
+          <button class="admin-tab${_lookaheadTab === id ? ' active' : ''}" onclick="_lookaheadSetTab('${id}')">${label}</button>
+        `).join('')}
+      </div>
+      <div style="display:flex;gap:8px;">
+        ${isAdmin ? `<button class="form-secondary" onclick="showPage('admin-planning')">⚙ Admin Planning</button>` : ''}
+        <button class="form-secondary" onclick="loadPlanningData(true).then(renderLookahead);">↻ Refresh</button>
+      </div>
+    </div>
+    <div id="lookahead-tab-body"></div>
+  `;
+  _renderLookaheadTabBody();
+}
+
+function _lookaheadSetTab(t) { _lookaheadTab = t; _renderLookaheadTabBody(); }
+
+function _renderLookaheadTabBody() {
+  const el = document.getElementById('lookahead-tab-body');
+  if (!el) return;
+  const tab = _lookaheadTab;
+  if (tab === 'calendar')  el.innerHTML = _laCalendarStub();
+  if (tab === 'lookahead') el.innerHTML = _laLookaheadStub();
+  if (tab === 'gantt')     el.innerHTML = _laGanttStub();
+  if (tab === 'resources') el.innerHTML = _laResourcesStub();
+  if (tab === 'pto')       el.innerHTML = _laPTOStub();
+}
+
+// ── Stub renderers (replaced in Batch 2+) ────────────────────
+function _laStubCard(title, msg, batch) {
+  return `
+    <div class="data-card" style="padding:32px;text-align:center;">
+      <div style="font-size:48px;margin-bottom:12px;">📅</div>
+      <h3 style="margin:0 0 8px;font-size:18px;font-weight:600;">${title}</h3>
+      <p style="margin:0;color:var(--gray-500);font-size:13px;max-width:520px;margin:0 auto;">${msg}</p>
+      <div style="margin-top:14px;font-size:11px;color:var(--gray-400);">Coming in ${batch}</div>
+    </div>`;
+}
+
+function _laCalendarStub() {
+  const eventCount = PLANNING_EVENTS.length;
+  const ptoApproved = PTO_REQUESTS.filter(p => p.status === 'approved').length;
+  return `
+    <div class="kpi-grid kpi-grid-mini" style="margin-bottom:16px;">
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Planned Events</div><div class="kpi-value">${eventCount}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Resources</div><div class="kpi-value">${PLANNING_RESOURCES.filter(r => r.is_active).length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Approved PTO</div><div class="kpi-value">${ptoApproved}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Conflicts</div><div class="kpi-value" style="color:var(--bad);">${PLANNING_CONFLICTS.filter(c => !c.is_acknowledged).length}</div></div>
+    </div>
+    ${_laStubCard(
+      'Calendar view',
+      'Month / week / day calendar with shift-color coded events, PTO overlay, and resource filter. Will use @event-calendar/core.',
+      'Batch 4'
+    )}`;
+}
+
+function _laLookaheadStub() {
+  return _laStubCard(
+    'Lookahead Timeline',
+    '2 / 3 / 4-week timeline grouped by location, subsystem, or resource. Will use vis-timeline.',
+    'Batch 4'
+  );
+}
+
+function _laGanttStub() {
+  return _laStubCard(
+    'Gantt view',
+    'Activity bars with P6 baseline / current overlay rows for variance review.',
+    'Batch 5'
+  );
+}
+
+function _laResourcesStub() {
+  const rows = PLANNING_RESOURCES.filter(r => r.is_active).slice(0, 50);
+  return `
+    <div class="data-card" style="padding:0;overflow:hidden;">
+      <div style="padding:14px 16px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;align-items:center;">
+        <strong style="font-size:14px;">Active Resources (${PLANNING_RESOURCES.filter(r => r.is_active).length})</strong>
+        <span style="font-size:11px;color:var(--gray-400);">Availability board lands in Batch 4</span>
+      </div>
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Initials</th><th>Type</th><th>Email</th></tr></thead>
+        <tbody>
+          ${rows.length === 0
+            ? `<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--gray-400);">No resources yet — bootstrap will seed from portal users on first admin visit.</td></tr>`
+            : rows.map(r => `
+              <tr>
+                <td>${escapeHtml(r.display_name)}</td>
+                <td style="font-family:monospace;">${escapeHtml(r.initials || '')}</td>
+                <td>${escapeHtml(r.resource_type)}</td>
+                <td style="font-size:12px;color:var(--gray-500);">${escapeHtml(r.email || '—')}</td>
+              </tr>
+            `).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function _laPTOStub() {
+  const pending  = PTO_REQUESTS.filter(p => p.status === 'pending').length;
+  const approved = PTO_REQUESTS.filter(p => p.status === 'approved').length;
+  return `
+    <div class="kpi-grid kpi-grid-mini" style="margin-bottom:16px;">
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Pending</div><div class="kpi-value" style="color:var(--warn);">${pending}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Approved</div><div class="kpi-value good">${approved}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Total Requests</div><div class="kpi-value">${PTO_REQUESTS.length}</div></div>
+    </div>
+    ${_laStubCard(
+      'PTO Requests',
+      'Submit, review, and approve PTO. All approved PTO will appear on the calendar for everyone. Personal reasons hidden from non-admins.',
+      'Batch 2'
+    )}`;
+}
+
+// ── Main Admin Planning page render ──────────────────────────
+function renderAdminPlanning() {
+  const hero = document.getElementById('admin-planning-hero-content');
+  const body = document.getElementById('admin-planning-content');
+  if (!body) return;
+  if (currentRoleUser?.role !== 'admin') {
+    body.innerHTML = `<div class="docs-empty"><h3>Admin only</h3><p>You don't have permission to view this page.</p></div>`;
+    return;
+  }
+
+  if (hero) hero.innerHTML = `
+    <h1 style="margin:0;font-size:28px;font-weight:700;">Planning Admin</h1>
+    <p style="margin:6px 0 0;color:var(--gray-500);font-size:14px;">
+      Upload weekly lookahead, resolve unmatched rows, manage resources, and review conflicts.
+    </p>`;
+
+  const tabs = [
+    ['upload',    'Upload Lookahead'],
+    ['review',    'Review Queue'],
+    ['conflicts', 'Conflicts'],
+    ['resources', 'Resources'],
+    ['history',   'Import History'],
+  ];
+
+  body.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:2px solid var(--gray-200);padding-bottom:0;">
+      <div style="display:flex;gap:0;">
+        ${tabs.map(([id, label]) => `
+          <button class="admin-tab${_adminPlanningTab === id ? ' active' : ''}" onclick="_adminPlanningSetTab('${id}')">${label}</button>
+        `).join('')}
+      </div>
+      <button class="form-secondary" onclick="loadPlanningData(true).then(renderAdminPlanning);">↻ Refresh</button>
+    </div>
+    <div id="admin-planning-tab-body"></div>
+  `;
+  _renderAdminPlanningTabBody();
+}
+
+function _adminPlanningSetTab(t) { _adminPlanningTab = t; _renderAdminPlanningTabBody(); }
+
+function _renderAdminPlanningTabBody() {
+  const el = document.getElementById('admin-planning-tab-body');
+  if (!el) return;
+  const tab = _adminPlanningTab;
+  if (tab === 'upload')    el.innerHTML = _apUploadStub();
+  if (tab === 'review')    el.innerHTML = _apReviewStub();
+  if (tab === 'conflicts') el.innerHTML = _apConflictsStub();
+  if (tab === 'resources') el.innerHTML = _apResourcesStub();
+  if (tab === 'history')   el.innerHTML = _apHistoryStub();
+}
+
+function _apUploadStub() {
+  return `
+    <div class="data-card" style="padding:32px;">
+      <h3 style="margin:0 0 10px;font-size:18px;font-weight:600;">Upload Weekly Lookahead</h3>
+      <p style="margin:0 0 16px;color:var(--gray-500);font-size:13px;">
+        Upload the weekly <strong>Look-Ahead.xlsx</strong> file. Importer reads only the <code>Look-Ahead</code> sheet,
+        ignores hidden historical columns, and uses cell fill colors to derive shift type:
+      </p>
+      <ul style="font-size:13px;color:var(--gray-700);line-height:1.8;padding-left:22px;">
+        <li><span style="display:inline-block;width:14px;height:14px;background:#FFEB3B;border:1px solid #999;vertical-align:middle;"></span> Yellow → Day shift (0700–1500 default)</li>
+        <li><span style="display:inline-block;width:14px;height:14px;background:#2196F3;border:1px solid #999;vertical-align:middle;"></span> Blue → Night shift (2000–0700 default)</li>
+        <li><span style="display:inline-block;width:14px;height:14px;background:#000;vertical-align:middle;"></span> Black → Blanket shift (all-day)</li>
+        <li><span style="display:inline-block;width:14px;height:14px;background:#F44336;vertical-align:middle;"></span> Red → Cancellation (admin must add reason)</li>
+      </ul>
+      <div style="margin-top:18px;padding:14px;background:#fef9c3;border:1px solid #fde68a;border-radius:8px;font-size:12px;color:#92400e;">
+        ⚠ Importer arrives in <strong>Batch 3</strong>. ExcelJS, matching engine, and preview UI are wired up there.
+      </div>
+    </div>`;
+}
+
+function _apReviewStub() {
+  return _laStubCard('Review Queue', 'Unmatched activities and unknown resource initials land here for admin resolution.', 'Batch 3');
+}
+
+function _apConflictsStub() {
+  const open = PLANNING_CONFLICTS.filter(c => !c.is_acknowledged).length;
+  return `
+    <div class="kpi-grid kpi-grid-mini" style="margin-bottom:16px;">
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Open Conflicts</div><div class="kpi-value" style="color:var(--bad);">${open}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Acknowledged</div><div class="kpi-value">${PLANNING_CONFLICTS.length - open}</div></div>
+    </div>
+    ${_laStubCard('Conflict Dashboard', 'PTO overlaps, double bookings, P6 variance, manual override differences, unmatched resources.', 'Batch 5')}`;
+}
+
+function _apResourcesStub() {
+  const all = PLANNING_RESOURCES;
+  return `
+    <div class="data-card" style="padding:0;overflow:hidden;">
+      <div style="padding:14px 16px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;align-items:center;">
+        <strong style="font-size:14px;">All Resources (${all.length})</strong>
+        <button class="admin-action-btn" disabled style="opacity:.55;cursor:not-allowed;" title="Add Resource lands in Batch 2">+ Add Resource</button>
+      </div>
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Initials</th><th>Type</th><th>Email</th><th>Active</th></tr></thead>
+        <tbody>
+          ${all.length === 0
+            ? `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--gray-400);">No resources. First admin visit auto-seeds from portal users.</td></tr>`
+            : all.map(r => `
+              <tr>
+                <td>${escapeHtml(r.display_name)}</td>
+                <td style="font-family:monospace;">${escapeHtml(r.initials || '')}</td>
+                <td>${escapeHtml(r.resource_type)}</td>
+                <td style="font-size:12px;color:var(--gray-500);">${escapeHtml(r.email || '—')}</td>
+                <td>${r.is_active ? '✓' : '—'}</td>
+              </tr>
+            `).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function _apHistoryStub() {
+  return `
+    <div class="data-card" style="padding:0;overflow:hidden;">
+      <div style="padding:14px 16px;border-bottom:1px solid var(--gray-200);">
+        <strong style="font-size:14px;">Import History (${PLANNING_BATCHES.length})</strong>
+      </div>
+      <table class="data-table">
+        <thead><tr><th>Uploaded</th><th>File</th><th>Week</th><th>Status</th><th>Rows</th></tr></thead>
+        <tbody>
+          ${PLANNING_BATCHES.length === 0
+            ? `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--gray-400);">No imports yet.</td></tr>`
+            : PLANNING_BATCHES.map(b => {
+                const sum = b.summary_json || {};
+                return `
+                  <tr>
+                    <td style="font-size:12px;">${b.uploaded_at ? new Date(b.uploaded_at).toLocaleString() : '—'}</td>
+                    <td>${escapeHtml(b.filename || '—')}</td>
+                    <td style="font-size:12px;">${b.week_start || '—'} → ${b.week_end || '—'}</td>
+                    <td><span class="badge ${b.status === 'imported' ? 'badge-passed' : b.status === 'superseded' ? 'badge-notstarted' : b.status === 'failed' ? 'badge-failed' : 'badge-warn'}">${escapeHtml(b.status)}</span></td>
+                    <td style="font-size:12px;">${sum.imported_count || 0}</td>
+                  </tr>`;
+              }).join('')}
+        </tbody>
+      </table>
+    </div>`;
 }

@@ -195,6 +195,11 @@
         Test Reporting
       </a>
 
+      <a href="#" class="nav-link nav-role" data-page="lookahead" data-role="field_engineer admin client readonly" style="display:none;">
+        <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm9 7H5v8h10V9zM7 11h2v2H7v-2zm6 0h-2v2h2v-2z" clip-rule="evenodd"/></svg>
+        Lookahead
+      </a>
+
       <!-- VIEWS section — all roles after login -->
       <div class="sidenav-section-label nav-role" data-role="field_engineer admin client readonly" style="display:none;">Views</div>
 
@@ -261,6 +266,10 @@
       <a href="#" class="nav-link" data-page="admin-assets">
         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z"/></svg>
         Asset Management
+      </a>
+      <a href="#" class="nav-link" data-page="admin-planning">
+        <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm3 1h6v2H7V5zm0 4h6v2H7V9zm0 4h4v2H7v-2z" clip-rule="evenodd"/></svg>
+        Planning
       </a>
     </div><!-- /#nav-admin-items -->
 
@@ -1047,6 +1056,30 @@
   </div>
 </section>
 
+<!-- ── LOOKAHEAD / TEAM PLANNING (all roles) ─────────────── -->
+<section class="page" id="page-lookahead">
+  <div class="page-hero">
+    <div class="container">
+      <div id="lookahead-hero-content"></div>
+    </div>
+  </div>
+  <div class="container" style="padding-bottom:120px;">
+    <div id="lookahead-content"></div>
+  </div>
+</section>
+
+<!-- ── ADMIN: PLANNING (admin only) ──────────────────────── -->
+<section class="page" id="page-admin-planning">
+  <div class="page-hero">
+    <div class="container">
+      <div id="admin-planning-hero-content"></div>
+    </div>
+  </div>
+  <div class="container" style="padding-bottom:120px;">
+    <div id="admin-planning-content"></div>
+  </div>
+</section>
+
 <footer id="footer">
   <div class="footer-inner">
     <div class="footer-left">
@@ -1080,6 +1113,17 @@
 <script src="https://cdn.jsdelivr.net/npm/tippy.js@6/dist/tippy-bundle.umd.min.js"></script>
 <!-- Quill rich text editor -->
 <script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>
+
+<!-- ── Planning Module Libraries ─────────────────────────── -->
+<!-- ExcelJS – reads cell fill colors (for Lookahead import) -->
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<!-- @event-calendar/core – MIT calendar with resource timeline -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@event-calendar/build@4/dist/event-calendar.min.css">
+<script src="https://cdn.jsdelivr.net/npm/@event-calendar/build@4/dist/event-calendar.min.js"></script>
+<!-- vis-timeline – Apache-2.0 timeline/Gantt -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vis-timeline@7/styles/vis-timeline-graph2d.min.css">
+<script src="https://cdn.jsdelivr.net/npm/vis-timeline@7/standalone/umd/vis-timeline-graph2d.min.js"></script>
+
 <script src="data.js"></script>
 <script src="app.js"></script>
 </body>
