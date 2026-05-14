@@ -7341,9 +7341,199 @@ async function _trpUpdateStatus(uid, el) {
 }
 
 // ==========================================================================
+// ==========================================================================
+// MODERN UI LIBRARIES — Alpine.js · Flatpickr · Tom Select · Fuse.js
+//                       Day.js · AutoAnimate · Tippy.js
+//
+// Pattern: Each tool that uses these libraries calls _trInitModernUI()
+// after its render function sets innerHTML. Alpine components live in
+// index.html with x-data="toolPanel()" and communicate via custom events.
+// ==========================================================================
+
+// ─── Day.js helper (drop-in replacement for _fmtDate in new UI) ──────────
+function _dayFmt(d, fmt = 'MMM D, YYYY') {
+  if (!d || typeof dayjs === 'undefined') return _fmtDate(d);
+  const dt = dayjs(d);
+  return dt.isValid() ? dt.format(fmt) : '—';
+}
+
+// ─── Fuse.js search instance for Test Register ───────────────────────────
+let _trFuse = null;
+let _trDrillSearch = '';  // search within drilldown view
+
+function _trBuildFuse(activities) {
+  if (typeof Fuse === 'undefined') return;
+  _trFuse = new Fuse(activities, {
+    keys: ['activity', 'subsystem', 'location', 'phase'],
+    threshold: 0.35,
+    includeScore: true,
+    ignoreLocation: true,
+  });
+}
+
+// ─── Tom Select — re-init after every re-render ──────────────────────────
+const _tomInstances = {}; // track live instances by element id
+
+function _trInitTomSelect() {
+  if (typeof TomSelect === 'undefined') return;
+  const filterDefs = [
+    { id: 'tr-filter-phase',     key: 'phase'     },
+    { id: 'tr-filter-location',  key: 'location'  },
+    { id: 'tr-filter-subsystem', key: 'subsystem' },
+    { id: 'tr-filter-status',    key: 'status'    },
+  ];
+  filterDefs.forEach(({ id, key }) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el.tomselect) { el.tomselect.destroy(); }
+    new TomSelect(el, {
+      create: false,
+      allowEmptyOption: true,
+      maxOptions: 200,
+      onChange: (v) => _amSetFilter(key, v),
+    });
+  });
+}
+
+// ─── Tippy.js — init/refresh tooltips after each render ──────────────────
+function _trInitTippy() {
+  if (typeof tippy === 'undefined') return;
+  // Destroy stale instances first
+  document.querySelectorAll('[data-tippy-content]').forEach(el => {
+    if (el._tippy) el._tippy.destroy();
+  });
+  tippy('[data-tippy-content]', {
+    placement: 'top',
+    arrow: true,
+    animation: 'shift-away',
+    theme: 'portal',
+    delay: [300, 0],
+  });
+}
+
+// ─── AutoAnimate — apply to Test Register content wrapper ────────────────
+function _trInitAutoAnimate() {
+  if (typeof autoAnimate === 'undefined') return;
+  const el = document.getElementById('test-register-content');
+  if (el && !el._aaInit) {
+    autoAnimate(el, { duration: 180 });
+    el._aaInit = true;
+  }
+}
+
+// ─── Master init — called after every Test Register render ───────────────
+function _trInitModernUI() {
+  // Small timeout lets the DOM settle before library init
+  setTimeout(() => {
+    _trInitTomSelect();
+    _trInitTippy();
+    _trInitAutoAnimate();
+  }, 40);
+}
+
+// ─── Fuse drilldown search handler ───────────────────────────────────────
+let _trDrillFuse = null;
+function _trDrillSearchInput(val) {
+  _trDrillSearch = val;
+  _reRenderTR();
+}
+
+// ─── Alpine.js Quick Update Panel ────────────────────────────────────────
+// This function is picked up by Alpine (x-data="trQuickPanel()").
+// Open from any JS via: document.dispatchEvent(new CustomEvent('tr-open-panel', { detail: itemData }))
+function trQuickPanel() {
+  return {
+    show: false,
+    saving: false,
+    item: {
+      testId: '', testCaseCode: '', testName: '', context: '',
+      status: 'Not Started', reason: '', completedBy: '', completedDate: '', notes: '',
+    },
+    statuses: ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'],
+
+    get showReason() { return this.item.status === 'Fail' || this.item.status === 'Blocked'; },
+
+    init() {
+      // Listen for open requests from regular JS
+      document.addEventListener('tr-open-panel', (e) => {
+        this.item = { ...e.detail };
+        this.show = true;
+        this.$nextTick(() => this._initFlatpickr());
+      });
+    },
+
+    _initFlatpickr() {
+      if (typeof flatpickr === 'undefined') return;
+      const el = document.getElementById('tr-panel-date-input');
+      if (!el) return;
+      if (el._flatpickr) el._flatpickr.destroy();
+      const self = this;
+      flatpickr(el, {
+        dateFormat: 'Y-m-d',
+        defaultDate: self.item.completedDate || null,
+        maxDate: 'today',
+        onChange(_, dateStr) { self.item.completedDate = dateStr; },
+      });
+    },
+
+    close() {
+      this.show = false;
+      const el = document.getElementById('tr-panel-date-input');
+      if (el?._flatpickr) el._flatpickr.destroy();
+    },
+
+    onStatusChange() {
+      if (!this.showReason) this.item.reason = '';
+    },
+
+    async save() {
+      if (this.showReason && !this.item.reason.trim()) {
+        toast(`Please provide a ${this.item.status.toLowerCase()} reason`, 'warn'); return;
+      }
+      this.saving = true;
+      try {
+        await _updateTestItemStatus(this.item.testId, this.item.status, {
+          reason:        this.item.reason,
+          completedBy:   this.item.completedBy || currentRoleUser?.name || '',
+          completedDate: this.item.completedDate
+            ? new Date(this.item.completedDate + 'T12:00:00').toISOString()
+            : null,
+          notes:         this.item.notes,
+          source:        'quick-panel',
+        });
+        _reRenderTR();
+        this.close();
+        toast('Test item updated', 'success');
+      } catch(e) {
+        toast('Error: ' + e.message, 'error');
+      } finally { this.saving = false; }
+    },
+  };
+}
+
+// ─── Open Quick Panel from regular JS ────────────────────────────────────
+function _trOpenQuickPanel(testId) {
+  const r = TI.find(t => String(t.TestID) === String(testId));
+  if (!r) return;
+  const legacyMap = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
+  document.dispatchEvent(new CustomEvent('tr-open-panel', {
+    detail: {
+      testId:        r.TestID,
+      testCaseCode:  r.TestCaseCode || r.TestID || '',
+      testName:      r.TestName || '—',
+      context:       [r.Subsystem, r.Location, r.Phase].filter(Boolean).join(' · '),
+      status:        legacyMap[r.Status] || r.Status || 'Not Started',
+      reason:        r.FailedReason || r.BlockedReason || '',
+      completedBy:   r.CompletedBy || '',
+      completedDate: r.CompletedDate ? String(r.CompletedDate).split('T')[0] : '',
+      notes:         r.Notes || '',
+    },
+  }));
+}
+
 // ACTIVITY MANAGER / TEST REGISTER — shared state
 // ==========================================================================
-let _amFilters  = { phase:'', location:'', subsystem:'', status:'' };
+let _amFilters  = { phase:'', location:'', subsystem:'', status:'', search:'' };
 let _amSelected = new Set(); // selected activity keys for bulk action
 let _trEditMode = false;
 let _trDraftItems = null;
@@ -7360,6 +7550,7 @@ function renderTestRegister() {
   const root = document.getElementById('test-register-content');
   if (!root || !currentRoleUser) return;
   root.innerHTML = _testRegisterHTML();
+  _trInitModernUI();
 }
 
 function _testRegisterHTML() {
@@ -7394,7 +7585,7 @@ function _testRegisterHTML() {
 
   const actStatuses = ['Open','Closed','Future Test'];
 
-  const filtered = all.filter(a => {
+  let filtered = all.filter(a => {
     const st = _amComputeStatus(a);
     return (!_amFilters.phase     || a.phase     === _amFilters.phase)     &&
            (!_amFilters.location  || a.location  === _amFilters.location)  &&
@@ -7402,7 +7593,14 @@ function _testRegisterHTML() {
            (!_amFilters.status    || st          === _amFilters.status);
   });
 
-  const hasFilters = _amFilters.phase || _amFilters.location || _amFilters.subsystem || _amFilters.status;
+  // Fuse.js fuzzy search across activity / subsystem / location / phase
+  const searchQ = (_amFilters.search || '').trim();
+  if (searchQ && typeof Fuse !== 'undefined') {
+    _trBuildFuse(filtered);
+    if (_trFuse) filtered = _trFuse.search(searchQ).map(r => r.item);
+  }
+
+  const hasFilters = _amFilters.phase || _amFilters.location || _amFilters.subsystem || _amFilters.status || _amFilters.search;
   const selCount   = _amSelected.size;
 
   const selectedActivities = all.filter(a => _amSelected.has(a.key));
@@ -7441,7 +7639,8 @@ function _testRegisterHTML() {
         <td style="font-size:12px;">${escapeHtml(a.phase)}</td>
         <td>${_amStatusBadge(st)}</td>
         <td>
-          <div class="am-progress-wrap">
+          <div class="am-progress-wrap"
+            data-tippy-content="${done} of ${total} test cases complete (${pct}%)">
             <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;${pct===100?'background:var(--good);':pct>0?'background:var(--info);':'background:var(--gray-300);'}"></div></div>
             <span class="am-progress-label">${done}/${total}</span>
           </div>
@@ -7476,27 +7675,35 @@ function _testRegisterHTML() {
         </div>` : ''}
       </div>
 
-      <!-- Filters -->
+      <!-- Filters + Fuse.js search -->
       <div class="am-filter-bar tr-filter-toolbar">
-        <select class="filter-select" onchange="_amSetFilter('phase',this.value)">
+        <!-- Fuse.js fuzzy search -->
+        <div class="tr-search-wrap">
+          <span class="tr-search-icon">🔍</span>
+          <input class="tr-search-input" type="text" placeholder="Search activities…"
+            value="${escapeHtml(_amFilters.search||'')}"
+            oninput="clearTimeout(window._trSearchTimer);window._trSearchTimer=setTimeout(()=>_amSetFilter('search',this.value),260)">
+        </div>
+        <!-- Tom Select filter dropdowns (IDs required for _trInitTomSelect) -->
+        <select class="filter-select" id="tr-filter-phase">
           <option value="">All Phases</option>
           ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_amFilters.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
         </select>
-        <select class="filter-select" onchange="_amSetFilter('location',this.value)">
+        <select class="filter-select" id="tr-filter-location">
           <option value="">All Locations</option>
           ${locations.map(l=>`<option value="${escapeHtml(l)}" ${_amFilters.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
         </select>
         ${userSub
-          ? `<span class="filter-locked-tag" title="Auto-filtered to your assigned subsystem">📌 ${escapeHtml(userSub)}</span>`
-          : `<select class="filter-select" onchange="_amSetFilter('subsystem',this.value)">
+          ? `<span class="filter-locked-tag" data-tippy-content="Auto-filtered to your assigned subsystem">📌 ${escapeHtml(userSub)}</span>`
+          : `<select class="filter-select" id="tr-filter-subsystem">
               <option value="">All Subsystems</option>
               ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_amFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
             </select>`}
-        <select class="filter-select" onchange="_amSetFilter('status',this.value)">
+        <select class="filter-select" id="tr-filter-status">
           <option value="">All Statuses</option>
           ${actStatuses.map(s=>`<option value="${s}" ${_amFilters.status===s?'selected':''}>${s}</option>`).join('')}
         </select>
-        ${hasFilters ? `<button class="filter-clear" onclick="_amClearFilters()">Reset</button>` : ''}
+        ${hasFilters ? `<button class="filter-clear" onclick="_amClearFilters()">✕ Reset</button>` : ''}
         <span style="margin-left:auto;font-size:12px;color:var(--gray-500);">${filtered.length} of ${all.length} shown</span>
       </div>
 
@@ -7526,7 +7733,7 @@ function _testRegisterHTML() {
                 <th style="min-width:160px;">Completion</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="tr-activities-tbody">
               ${filtered.length ? actRows : `<tr><td colspan="${colCount}" style="text-align:center;padding:40px;color:var(--gray-500);">No activities match the current filters</td></tr>`}
             </tbody>
           </table>
@@ -7828,6 +8035,7 @@ function _amDrilldownHTML(key) {
                   <th style="min-width:170px;">Status</th>
                   <th style="min-width:240px;">Notes</th>
                   ${_trEditMode && isAdmin ? `<th style="width:86px;">Actions</th>` : ''}
+                  <th style="width:90px;"></th>
                 </tr>
               </thead>
               <tbody>
@@ -7865,6 +8073,10 @@ function _amDrilldownHTML(key) {
                       <td>
                         <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
                         ${isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<button class="form-secondary" style="font-size:11px;padding:2px 6px;margin-top:4px;" onclick="_trAddGenericChild('${tid}')">＋ Asset</button>` : ''}
+                      </td>
+                      <td style="white-space:nowrap;">
+                        <button class="tr-qp-btn" onclick="_trOpenQuickPanel('${tid}')"
+                          data-tippy-content="Open full update panel">✏ Update</button>
                       </td>
                       ${_trEditMode && isAdmin ? `<td><button class="form-secondary" style="font-size:13px;padding:4px 7px;" onclick="_trCopyCase('${tid}')">⧉</button><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);margin-left:4px;" onclick="_trDeleteCase('${tid}')">🗑</button></td>` : ''}
                     </tr>
@@ -8442,7 +8654,7 @@ function _amSetFilter(k, v) {
 
 function _amClearFilters() {
   const userSub = currentRoleUser?.subsystem || '';
-  _amFilters = { phase:'', location:'', subsystem: userSub, status:'' };
+  _amFilters = { phase:'', location:'', subsystem: userSub, status:'', search:'' };
   _amSelected.clear();
   _reRenderTR();
 }
@@ -8476,6 +8688,7 @@ function _reRenderTR() {
   // Also update legacy admin tab body if activity manager tab is open
   const body = document.getElementById('admin-tab-body');
   if (body && _adminTab === 'activitymanager') body.innerHTML = _adminActivityManagerHTML();
+  _trInitModernUI();
 }
 
 function _amOpenFutureTestModal() {

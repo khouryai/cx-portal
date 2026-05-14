@@ -12,6 +12,12 @@
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <link rel="stylesheet" href="styles.css" />
 <link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet" />
+<!-- Flatpickr – date picker -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+<!-- Tom Select – enhanced dropdowns -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select/dist/css/tom-select.min.css">
+<!-- Tippy.js – tooltips -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tippy.js@6/dist/tippy.css">
 </head>
 <body>
 
@@ -1057,6 +1063,117 @@
   </div>
 </footer>
 
+<!-- ═══════════════════════════════════════════════════════════
+     ALPINE.JS QUICK UPDATE PANEL — Test Register
+     Reusable slide-out drawer pattern. Clone x-data="toolPanel()"
+     for other tools, swapping out the field config in app.js.
+     ═══════════════════════════════════════════════════════════ -->
+<div id="tr-quick-panel-root" x-data="trQuickPanel()" style="display:contents;">
+
+  <!-- Backdrop -->
+  <div
+    x-show="show"
+    x-transition.opacity.duration.200ms
+    @click="close()"
+    style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9200;display:none;">
+  </div>
+
+  <!-- Slide-out panel -->
+  <div
+    x-show="show"
+    x-transition:enter="tr-panel-slide-enter"
+    x-transition:enter-start="tr-panel-slide-start"
+    x-transition:enter-end="tr-panel-slide-end"
+    x-transition:leave="tr-panel-slide-enter"
+    x-transition:leave-start="tr-panel-slide-end"
+    x-transition:leave-end="tr-panel-slide-start"
+    @keydown.escape.window="close()"
+    style="position:fixed;top:0;right:0;height:100vh;width:460px;max-width:100vw;background:white;z-index:9201;
+           display:flex;flex-direction:column;overflow:hidden;
+           box-shadow:-6px 0 32px rgba(0,0,0,.18);">
+
+    <!-- Panel Header -->
+    <div style="padding:22px 24px 18px;border-bottom:1px solid #e5e7eb;flex-shrink:0;background:#fafafa;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+        <div style="min-width:0;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#e60012;margin-bottom:5px;" x-text="item.testCaseCode || 'Test Item'"></div>
+          <div style="font-size:16px;font-weight:700;color:#111827;line-height:1.35;" x-text="item.testName"></div>
+          <div style="font-size:12px;color:#6b7280;margin-top:5px;" x-text="item.context"></div>
+        </div>
+        <button @click="close()" style="flex-shrink:0;background:none;border:none;cursor:pointer;color:#9ca3af;font-size:22px;line-height:1;padding:2px 4px;" title="Close">&times;</button>
+      </div>
+    </div>
+
+    <!-- Panel Body (scrollable) -->
+    <div style="flex:1;overflow-y:auto;padding:22px 24px;">
+
+      <!-- Status -->
+      <div class="qp-field">
+        <label class="qp-label">Status</label>
+        <select id="tr-panel-status-select" x-model="item.status" @change="onStatusChange()">
+          <template x-for="s in statuses" :key="s"><option :value="s" x-text="s" :selected="item.status === s"></option></template>
+        </select>
+      </div>
+
+      <!-- Fail / Blocked reason (conditional) -->
+      <div class="qp-field" x-show="showReason" x-transition>
+        <label class="qp-label qp-label-warn" x-text="item.status + ' Reason *'"></label>
+        <textarea class="qp-textarea qp-textarea-warn" x-model="item.reason" rows="3"
+          :placeholder="'Describe why the test ' + item.status.toLowerCase() + 'ed…'"></textarea>
+      </div>
+
+      <!-- Completed By (Pass only) -->
+      <div class="qp-field" x-show="item.status === 'Pass'" x-transition>
+        <label class="qp-label">Completed By</label>
+        <input class="qp-input" x-model="item.completedBy" type="text" placeholder="Name of person who completed the test">
+      </div>
+
+      <!-- Completed Date (Pass only) — Flatpickr initialised in openPanel() -->
+      <div class="qp-field" x-show="item.status === 'Pass'" x-transition>
+        <label class="qp-label">Completed Date</label>
+        <input id="tr-panel-date-input" class="qp-input" type="text" placeholder="Select date…" readonly
+               style="background:white;cursor:pointer;">
+      </div>
+
+      <!-- Notes — always visible -->
+      <div class="qp-field">
+        <label class="qp-label">Notes</label>
+        <textarea class="qp-textarea" x-model="item.notes" rows="4" placeholder="Add any notes about this test…"></textarea>
+      </div>
+
+    </div>
+
+    <!-- Panel Footer -->
+    <div style="padding:16px 24px;border-top:1px solid #e5e7eb;flex-shrink:0;display:flex;gap:10px;background:#fafafa;">
+      <button @click="save()" :disabled="saving"
+        style="flex:1;background:#e60012;color:white;border:none;border-radius:7px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;transition:opacity .15s;"
+        :style="saving ? 'opacity:.6;cursor:not-allowed;' : ''"
+        x-text="saving ? 'Saving…' : 'Save Changes'">
+      </button>
+      <button @click="close()"
+        style="padding:12px 22px;background:#f3f4f6;border:none;border-radius:7px;font-size:14px;font-weight:500;cursor:pointer;">
+        Cancel
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modern UI Library Stack ──────────────────────────────── -->
+<!-- Alpine.js – reactive components (defer = loads after DOM) -->
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+<!-- Flatpickr – beautiful date/time picker -->
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<!-- Tom Select – searchable, taggable selects -->
+<script src="https://cdn.jsdelivr.net/npm/tom-select/dist/js/tom-select.complete.min.js"></script>
+<!-- Fuse.js – fuzzy search -->
+<script src="https://cdn.jsdelivr.net/npm/fuse.js/dist/fuse.min.js"></script>
+<!-- Day.js – lightweight date formatting -->
+<script src="https://cdn.jsdelivr.net/npm/dayjs/dayjs.min.js"></script>
+<!-- AutoAnimate – zero-config list animations -->
+<script src="https://cdn.jsdelivr.net/npm/@formkit/auto-animate/index.umd.js"></script>
+<!-- Tippy.js – tooltips and popovers -->
+<script src="https://cdn.jsdelivr.net/npm/tippy.js@6/dist/tippy-bundle.umd.min.js"></script>
+<!-- Quill rich text editor -->
 <script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>
 <script src="data.js"></script>
 <script src="app.js"></script>
