@@ -303,6 +303,8 @@ const _adminPages = new Set(['admin-templates','admin-locations','admin-fieldcon
 let _adminModeOn = false;
 
 function showPage(name) {
+  // Tear down planning calendar/timeline instances on any page change to avoid leaks
+  if (typeof _planningCleanupInstances === 'function') _planningCleanupInstances();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + name)?.classList.add('active');
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
@@ -13324,6 +13326,23 @@ let _lookaheadTab        = 'calendar';                 // calendar | lookahead |
 let _adminPlanningTab    = 'upload';                   // upload | review | conflicts | resources | history
 let _planningLoadedAt    = 0;                          // cache flag
 
+// Calendar / timeline state
+let _planningCalView     = 'dayGridMonth';             // dayGridMonth | timeGridWeek | timeGridDay | listWeek
+let _planningCalInstance = null;
+let _planningTLInstance  = null;                       // vis-timeline instance for lookahead/gantt/resources
+let _laTimelineGroupBy   = 'resource';                 // resource | location | subsystem
+let _laTimelineWindow    = 14;                         // 14 / 21 / 28 days
+
+// Shift visual styles — used across calendar, timeline, badges
+const _SHIFT_VISUAL = {
+  day_shift:     { bg: '#FFEB3B', text: '#1f2937', label: 'Day',     icon: '☀' },
+  night_shift:   { bg: '#2196F3', text: '#ffffff', label: 'Night',   icon: '☾' },
+  blanket_shift: { bg: '#1f2937', text: '#ffffff', label: 'Blanket', icon: '■' },
+  custom:        { bg: '#6b7280', text: '#ffffff', label: 'Custom',  icon: '◆' },
+};
+const _CANCEL_VISUAL   = { bg: '#fecaca', text: '#7f1d1d', label: 'Cancelled', icon: '✕' };
+const _PTO_VISUAL      = { bg: '#fef3c7', text: '#92400e', label: 'PTO',       icon: '🌴' };
+
 // ── Data loaders ─────────────────────────────────────────────
 async function loadPlanningData(force = false) {
   // Cache for 30s to avoid hammering on tab switches
@@ -13422,17 +13441,29 @@ function renderLookahead() {
   _renderLookaheadTabBody();
 }
 
-function _lookaheadSetTab(t) { _lookaheadTab = t; _renderLookaheadTabBody(); }
+function _lookaheadSetTab(t) {
+  _planningCleanupInstances();
+  _lookaheadTab = t;
+  _renderLookaheadTabBody();
+}
+
+function _planningCleanupInstances() {
+  try { if (_planningCalInstance && typeof _planningCalInstance.destroy === 'function') _planningCalInstance.destroy(); } catch(_) {}
+  try { if (_planningTLInstance  && typeof _planningTLInstance.destroy  === 'function') _planningTLInstance.destroy();  } catch(_) {}
+  _planningCalInstance = null;
+  _planningTLInstance  = null;
+}
 
 function _renderLookaheadTabBody() {
   const el = document.getElementById('lookahead-tab-body');
   if (!el) return;
+  _planningCleanupInstances();
   const tab = _lookaheadTab;
-  if (tab === 'calendar')  el.innerHTML = _laCalendarStub();
-  if (tab === 'lookahead') el.innerHTML = _laLookaheadStub();
-  if (tab === 'gantt')     el.innerHTML = _laGanttStub();
-  if (tab === 'resources') el.innerHTML = _laResourcesStub();
-  if (tab === 'pto')       el.innerHTML = _laPTOStub();
+  if (tab === 'calendar')  { el.innerHTML = _laCalendarHTML();      setTimeout(_laMountCalendar, 30); }
+  if (tab === 'lookahead') { el.innerHTML = _laLookaheadHTML();     setTimeout(_laMountLookaheadTL, 30); }
+  if (tab === 'gantt')     { el.innerHTML = _laGanttHTML();         setTimeout(_laMountGanttTL,    30); }
+  if (tab === 'resources') { el.innerHTML = _laResourcesBoardHTML();setTimeout(_laMountResourcesTL,30); }
+  if (tab === 'pto')       { el.innerHTML = _laPTOStub(); }
 }
 
 // ── Stub renderers (replaced in Batch 2+) ────────────────────
@@ -13446,82 +13477,696 @@ function _laStubCard(title, msg, batch) {
     </div>`;
 }
 
-function _laCalendarStub() {
-  const eventCount = PLANNING_EVENTS.length;
-  const today      = new Date().toISOString().slice(0, 10);
-  const outToday   = _ptoActiveOnDate(today);
-  const pending    = PTO_REQUESTS.filter(p => p.status === 'pending').length;
+// ── Shared helpers ───────────────────────────────────────────
+function _planningEventsForRender() {
+  // Returns calendar-style normalized events (lookahead + PTO)
+  const events = PLANNING_EVENTS.map(e => {
+    const isCancel = e.status === 'cancelled';
+    const v = isCancel ? _CANCEL_VISUAL : (_SHIFT_VISUAL[e.shift_type] || _SHIFT_VISUAL.custom);
+    return { source: e, visual: v, isCancel };
+  });
+  const pto = PTO_REQUESTS
+    .filter(p => p.status === 'approved')
+    .map(p => ({
+      source: p,
+      visual: _PTO_VISUAL,
+      isPTO: true,
+    }));
+  return { events, pto };
+}
+
+function _planningResourceAssignmentsForEvent(eventId) {
+  return PLANNING_EVENT_RES
+    .filter(er => er.event_id === eventId)
+    .map(er => ({
+      assignment: er,
+      resource:   PLANNING_RESOURCES.find(r => r.id === er.resource_id) || null,
+    }));
+}
+
+function _planningKPIStrip() {
+  const today    = new Date().toISOString().slice(0, 10);
+  const outToday = _ptoActiveOnDate(today);
+  const pending  = PTO_REQUESTS.filter(p => p.status === 'pending').length;
+  const upcoming = PLANNING_EVENTS.filter(e => e.event_date >= today && e.status !== 'cancelled').length;
+  const cancelled= PLANNING_EVENTS.filter(e => e.event_date >= today && e.status === 'cancelled').length;
   return `
     <div class="kpi-grid kpi-grid-mini" style="margin-bottom:16px;">
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Planned Events</div><div class="kpi-value">${eventCount}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Upcoming Events</div><div class="kpi-value">${upcoming}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Resources</div><div class="kpi-value">${PLANNING_RESOURCES.filter(r => r.is_active).length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Out Today</div><div class="kpi-value" style="color:${outToday.length ? '#92400e' : 'var(--gray-700)'};">${outToday.length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">PTO Pending</div><div class="kpi-value" style="color:${pending ? 'var(--warn)' : 'var(--gray-700)'};">${pending}</div></div>
-    </div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Cancelled (upcoming)</div><div class="kpi-value" style="color:${cancelled ? 'var(--bad)' : 'var(--gray-700)'};">${cancelled}</div></div>
+    </div>`;
+}
+
+function _planningShiftLegend() {
+  return `
+    <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--gray-600);margin-bottom:14px;padding:8px 12px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;">
+      <strong style="color:var(--gray-700);">Legend:</strong>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#FFEB3B;border:1px solid #999;vertical-align:middle;margin-right:4px;"></span> Day shift</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#2196F3;border:1px solid #999;vertical-align:middle;margin-right:4px;"></span> Night shift</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#1f2937;vertical-align:middle;margin-right:4px;"></span> Blanket</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#fecaca;border:1px solid #7f1d1d;vertical-align:middle;margin-right:4px;"></span> Cancelled</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#fef3c7;border:1px solid #92400e;vertical-align:middle;margin-right:4px;"></span> 🌴 PTO</span>
+    </div>`;
+}
+
+// ── CALENDAR TAB ─────────────────────────────────────────────
+function _laCalendarHTML() {
+  const today    = new Date().toISOString().slice(0, 10);
+  const outToday = _ptoActiveOnDate(today);
+
+  return `
+    ${_planningKPIStrip()}
     ${outToday.length ? `
       <div style="margin-bottom:14px;padding:10px 14px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
         🌴 <strong>Out today:</strong> ${outToday.map(x => escapeHtml(x.resource?.display_name || '—')).join(', ')}
       </div>` : ''}
-    ${_laStubCard(
-      'Calendar view',
-      'Month / week / day calendar with shift-color coded events, PTO overlay, and resource filter. Will use @event-calendar/core.',
-      'Batch 4'
-    )}`;
+    ${_planningShiftLegend()}
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+      ${[['dayGridMonth','Month'],['timeGridWeek','Week'],['timeGridDay','Day'],['listWeek','List']].map(([v,l]) => `
+        <button class="admin-tab${_planningCalView === v ? ' active' : ''}" style="font-size:12px;padding:6px 14px;" onclick="_planningSetCalView('${v}')">${l}</button>
+      `).join('')}
+    </div>
+
+    <div class="data-card" style="padding:14px;">
+      <div id="planning-calendar" style="min-height:640px;"></div>
+    </div>`;
 }
 
-function _laLookaheadStub() {
-  return _laStubCard(
-    'Lookahead Timeline',
-    '2 / 3 / 4-week timeline grouped by location, subsystem, or resource. Will use vis-timeline.',
-    'Batch 4'
+function _planningSetCalView(v) {
+  _planningCalView = v;
+  if (_planningCalInstance) {
+    try { _planningCalInstance.setOption('view', v); } catch(_) { _renderLookaheadTabBody(); }
+    // Update tab button active state
+    document.querySelectorAll('#lookahead-tab-body .admin-tab').forEach(b => {
+      b.classList.toggle('active', b.textContent.trim() === ({dayGridMonth:'Month',timeGridWeek:'Week',timeGridDay:'Day',listWeek:'List'}[v] || ''));
+    });
+  } else {
+    _renderLookaheadTabBody();
+  }
+}
+
+function _laMountCalendar() {
+  const target = document.getElementById('planning-calendar');
+  if (!target) return;
+  if (typeof EventCalendar === 'undefined') {
+    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">Calendar library not loaded — refresh the page.</div>`;
+    return;
+  }
+
+  const { events, pto } = _planningEventsForRender();
+
+  const ecEvents = [];
+  events.forEach(({ source: e, visual: v, isCancel }) => {
+    const dt = e.event_date;
+    const startISO = e.all_day || !e.start_time
+      ? dt
+      : `${dt}T${(e.start_time || '00:00').slice(0,5)}:00`;
+    let endISO;
+    if (e.all_day) {
+      // event-calendar end is exclusive for all-day; add a day
+      endISO = dayjs(dt).add(1, 'day').format('YYYY-MM-DD');
+    } else if (e.end_time) {
+      const overnight = (e.end_time <= e.start_time);
+      const endDate = overnight ? dayjs(dt).add(1, 'day').format('YYYY-MM-DD') : dt;
+      endISO = `${endDate}T${e.end_time.slice(0,5)}:00`;
+    } else {
+      endISO = `${dt}T${(e.start_time || '00:00').slice(0,5)}:00`;
+    }
+    ecEvents.push({
+      id: e.id,
+      title: (isCancel ? '✕ ' : (v.icon ? v.icon + ' ' : '')) + (e.title || '(no title)'),
+      start: startISO,
+      end:   endISO,
+      allDay: !!e.all_day,
+      backgroundColor: v.bg,
+      borderColor:     isCancel ? '#7f1d1d' : v.bg,
+      textColor:       v.text,
+      extendedProps: { type: 'event', data: e, isCancel },
+    });
+  });
+  pto.forEach(({ source: p, visual: v }) => {
+    ecEvents.push({
+      id: 'pto-' + p.id,
+      title: `🌴 ${_ptoResourceName(p.resource_id)}`,
+      start: p.start_date,
+      end:   dayjs(p.end_date).add(1, 'day').format('YYYY-MM-DD'),
+      allDay: true,
+      backgroundColor: v.bg,
+      borderColor:     '#fde68a',
+      textColor:       v.text,
+      display:         'background',
+      extendedProps: { type: 'pto', data: p },
+    });
+    // Also add a foreground chip so user sees who's out
+    ecEvents.push({
+      id: 'pto-fg-' + p.id,
+      title: `🌴 ${_ptoResourceName(p.resource_id)}`,
+      start: p.start_date,
+      end:   dayjs(p.end_date).add(1, 'day').format('YYYY-MM-DD'),
+      allDay: true,
+      backgroundColor: '#fde68a',
+      borderColor:     '#fbbf24',
+      textColor:       '#92400e',
+      extendedProps: { type: 'pto', data: p },
+    });
+  });
+
+  try {
+    _planningCalInstance = new EventCalendar(target, {
+      view: _planningCalView,
+      firstDay: 1, // Monday
+      height: 720,
+      events: ecEvents,
+      slotMinTime: '06:00:00',
+      slotMaxTime: '24:00:00',
+      headerToolbar: {
+        start: 'title',
+        center: '',
+        end: 'today prev,next',
+      },
+      eventClick(info) {
+        const props = info.event.extendedProps || {};
+        if (props.type === 'pto') {
+          _planningOpenPTODetail(props.data);
+        } else if (props.type === 'event') {
+          _planningOpenEventDetail(props.data.id);
+        }
+      },
+      eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
+    });
+  } catch(err) {
+    console.error('Calendar mount failed:', err);
+    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">Failed to mount calendar: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// ── LOOKAHEAD TIMELINE TAB ───────────────────────────────────
+function _laLookaheadHTML() {
+  return `
+    ${_planningKPIStrip()}
+    ${_planningShiftLegend()}
+
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+      <div>
+        <label style="font-size:11px;color:var(--gray-500);margin-right:4px;">Group by:</label>
+        <select class="filter-select" onchange="_laSetTimelineGroup(this.value)">
+          <option value="resource"  ${_laTimelineGroupBy === 'resource'  ? 'selected' : ''}>Resource</option>
+          <option value="location"  ${_laTimelineGroupBy === 'location'  ? 'selected' : ''}>Location</option>
+          <option value="subsystem" ${_laTimelineGroupBy === 'subsystem' ? 'selected' : ''}>Subsystem</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--gray-500);margin-right:4px;">Window:</label>
+        ${[['14','2 weeks'],['21','3 weeks'],['28','4 weeks']].map(([v,l]) => `
+          <button class="admin-tab${_laTimelineWindow === parseInt(v) ? ' active' : ''}" style="font-size:12px;padding:6px 14px;" onclick="_laSetTimelineWindow(${v})">${l}</button>
+        `).join('')}
+      </div>
+    </div>
+
+    <div class="data-card" style="padding:14px;">
+      <div id="lookahead-timeline" style="min-height:640px;"></div>
+    </div>`;
+}
+
+function _laSetTimelineGroup(g) { _laTimelineGroupBy = g; _renderLookaheadTabBody(); }
+function _laSetTimelineWindow(d) { _laTimelineWindow = d; _renderLookaheadTabBody(); }
+
+function _laMountLookaheadTL() {
+  const target = document.getElementById('lookahead-timeline');
+  if (!target) return;
+  if (typeof vis === 'undefined') {
+    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">vis-timeline library not loaded — refresh the page.</div>`;
+    return;
+  }
+
+  // Build groups from selected dimension
+  let groupSpecs = [];
+  if (_laTimelineGroupBy === 'resource') {
+    groupSpecs = PLANNING_RESOURCES.filter(r => r.is_active).map(r => ({ id: 'res-' + r.id, content: escapeHtml(r.display_name) }));
+    groupSpecs.push({ id: 'res-unassigned', content: '<em style="color:#9ca3af;">Unassigned</em>' });
+  } else if (_laTimelineGroupBy === 'location') {
+    const locs = [...new Set(PLANNING_EVENTS.map(e => e.location).filter(Boolean))].sort();
+    groupSpecs = locs.map(l => ({ id: 'loc-' + l, content: escapeHtml(l) }));
+    groupSpecs.push({ id: 'loc-unknown', content: '<em style="color:#9ca3af;">No location</em>' });
+  } else { // subsystem — derive from linked test_items
+    const subSet = new Set();
+    PLANNING_EVENTS.forEach(e => {
+      const ti = e.test_item_id ? TI.find(t => String(t.TestID) === String(e.test_item_id)) : null;
+      if (ti?.Subsystem) subSet.add(ti.Subsystem);
+    });
+    groupSpecs = [...subSet].sort().map(s => ({ id: 'sub-' + s, content: escapeHtml(s) }));
+    groupSpecs.push({ id: 'sub-unknown', content: '<em style="color:#9ca3af;">No subsystem</em>' });
+  }
+
+  // Build items
+  const items = [];
+  PLANNING_EVENTS.forEach(e => {
+    const isCancel = e.status === 'cancelled';
+    const v = isCancel ? _CANCEL_VISUAL : (_SHIFT_VISUAL[e.shift_type] || _SHIFT_VISUAL.custom);
+    const dt = e.event_date;
+    const startTime = (e.all_day || !e.start_time) ? '00:00' : e.start_time.slice(0,5);
+    const endTime   = (e.all_day || !e.end_time)   ? '23:59' : e.end_time.slice(0,5);
+    const overnight = !e.all_day && e.start_time && e.end_time && e.end_time <= e.start_time;
+    const startISO  = `${dt}T${startTime}:00`;
+    const endDate   = overnight ? dayjs(dt).add(1,'day').format('YYYY-MM-DD') : dt;
+    const endISO    = `${endDate}T${endTime}:00`;
+
+    let groupIds = [];
+    if (_laTimelineGroupBy === 'resource') {
+      const assigned = PLANNING_EVENT_RES.filter(er => er.event_id === e.id);
+      if (assigned.length) groupIds = assigned.map(a => 'res-' + a.resource_id);
+      else groupIds = ['res-unassigned'];
+    } else if (_laTimelineGroupBy === 'location') {
+      groupIds = [e.location ? 'loc-' + e.location : 'loc-unknown'];
+    } else {
+      const ti = e.test_item_id ? TI.find(t => String(t.TestID) === String(e.test_item_id)) : null;
+      groupIds = [ti?.Subsystem ? 'sub-' + ti.Subsystem : 'sub-unknown'];
+    }
+
+    groupIds.forEach(gid => {
+      items.push({
+        id: `${e.id}::${gid}`,
+        group: gid,
+        content: `<span style="font-size:11px;">${escapeHtml((e.title || '').slice(0, 50))}</span>`,
+        start: startISO,
+        end:   endISO,
+        style: `background-color:${v.bg};color:${v.text};border-color:${isCancel ? '#7f1d1d' : v.bg};${isCancel ? 'text-decoration:line-through;' : ''}`,
+        title: `${escapeHtml(e.title || '')} (${v.label})`,
+        _eventId: e.id,
+      });
+    });
+  });
+
+  // PTO as background items (only when grouping by resource)
+  if (_laTimelineGroupBy === 'resource') {
+    PTO_REQUESTS.filter(p => p.status === 'approved').forEach(p => {
+      items.push({
+        id: 'pto-' + p.id,
+        group: 'res-' + p.resource_id,
+        content: `🌴 PTO`,
+        start: p.start_date,
+        end:   dayjs(p.end_date).add(1,'day').format('YYYY-MM-DD'),
+        type: 'background',
+        style: 'background-color:rgba(252,211,77,0.45);',
+      });
+    });
+  }
+
+  if (!groupSpecs.length) groupSpecs = [{ id: 'empty', content: 'No data' }];
+
+  const start = dayjs().startOf('day').toDate();
+  const end   = dayjs().startOf('day').add(_laTimelineWindow, 'day').toDate();
+
+  try {
+    _planningTLInstance = new vis.Timeline(
+      target,
+      new vis.DataSet(items),
+      new vis.DataSet(groupSpecs),
+      {
+        start, end,
+        min: dayjs().subtract(7, 'day').toDate(),
+        max: dayjs().add(180, 'day').toDate(),
+        stack: true,
+        showCurrentTime: true,
+        orientation: { axis: 'top' },
+        margin: { item: 8, axis: 6 },
+        zoomMin: 1000 * 60 * 60 * 12,   // half-day
+        zoomMax: 1000 * 60 * 60 * 24 * 90, // 90 days
+        groupOrder: 'content',
+        editable: false,
+      },
+    );
+    _planningTLInstance.on('select', (props) => {
+      if (!props.items?.length) return;
+      const raw = props.items[0];
+      const item = items.find(i => i.id === raw);
+      if (item?._eventId) _planningOpenEventDetail(item._eventId);
+    });
+  } catch(err) {
+    console.error('Timeline mount failed:', err);
+    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">Failed to mount timeline: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// ── GANTT TAB ────────────────────────────────────────────────
+function _laGanttHTML() {
+  return `
+    ${_planningKPIStrip()}
+    ${_planningShiftLegend()}
+
+    <div style="margin-bottom:12px;font-size:13px;color:var(--gray-600);">
+      Activity bars across the planning window — one row per planning activity, with P6 baseline shown as a faded background bar where available.
+    </div>
+
+    <div class="data-card" style="padding:14px;">
+      <div id="gantt-timeline" style="min-height:640px;"></div>
+    </div>`;
+}
+
+function _laMountGanttTL() {
+  const target = document.getElementById('gantt-timeline');
+  if (!target) return;
+  if (typeof vis === 'undefined') {
+    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">vis-timeline library not loaded — refresh the page.</div>`;
+    return;
+  }
+
+  // Groups: one per planning_activity that has events
+  const actsWithEvents = PLANNING_ACTIVITIES.filter(a =>
+    PLANNING_EVENTS.some(e => e.planning_activity_id === a.id)
   );
+  const groupSpecs = actsWithEvents.map(a => ({
+    id: 'act-' + a.id,
+    content: `<div style="font-size:11px;line-height:1.3;"><strong>${escapeHtml((a.activity_id_text || '—').slice(0, 16))}</strong><br><span style="color:#9ca3af;">${escapeHtml((a.description || '').slice(0, 40))}</span></div>`,
+  }));
+
+  const items = [];
+  PLANNING_EVENTS.forEach(e => {
+    if (!e.planning_activity_id) return;
+    const isCancel = e.status === 'cancelled';
+    const v = isCancel ? _CANCEL_VISUAL : (_SHIFT_VISUAL[e.shift_type] || _SHIFT_VISUAL.custom);
+    const dt = e.event_date;
+    const startTime = (e.all_day || !e.start_time) ? '00:00' : e.start_time.slice(0,5);
+    const endTime   = (e.all_day || !e.end_time)   ? '23:59' : e.end_time.slice(0,5);
+    const overnight = !e.all_day && e.start_time && e.end_time && e.end_time <= e.start_time;
+    const endDate   = overnight ? dayjs(dt).add(1,'day').format('YYYY-MM-DD') : dt;
+    items.push({
+      id: e.id,
+      group: 'act-' + e.planning_activity_id,
+      content: `<span style="font-size:10px;">${v.icon}</span>`,
+      start: `${dt}T${startTime}:00`,
+      end:   `${endDate}T${endTime}:00`,
+      style: `background-color:${v.bg};color:${v.text};border-color:${isCancel ? '#7f1d1d' : v.bg};`,
+      title: `${escapeHtml(e.title || '')} · ${v.label}${isCancel ? ' (CANCELLED)' : ''}`,
+      _eventId: e.id,
+    });
+  });
+
+  // P6 baseline overlay (background bar where p6_activity_id is set)
+  if (Array.isArray(P6_ACTS)) {
+    PLANNING_ACTIVITIES.forEach(a => {
+      if (!a.linked_p6_activity_id) return;
+      const p6 = P6_ACTS.find(x => x.id === a.linked_p6_activity_id);
+      if (!p6 || !p6.start_date || !p6.end_date) return;
+      items.push({
+        id: 'p6-' + a.id,
+        group: 'act-' + a.id,
+        start: p6.start_date,
+        end:   p6.end_date,
+        type:  'background',
+        style: 'background-color:rgba(99,102,241,0.10);border:1px dashed rgba(99,102,241,0.45);',
+        title: `P6 baseline: ${escapeHtml(p6.activity_id || '')}`,
+      });
+    });
+  }
+
+  if (!groupSpecs.length) {
+    target.innerHTML = `<div style="padding:48px;text-align:center;color:var(--gray-400);font-size:13px;">No planning activities to chart yet. Import a lookahead first.</div>`;
+    return;
+  }
+
+  try {
+    _planningTLInstance = new vis.Timeline(
+      target,
+      new vis.DataSet(items),
+      new vis.DataSet(groupSpecs),
+      {
+        start: dayjs().subtract(7, 'day').toDate(),
+        end:   dayjs().add(28, 'day').toDate(),
+        stack: false,
+        showCurrentTime: true,
+        margin: { item: 6 },
+        zoomMin: 1000 * 60 * 60 * 24,
+        zoomMax: 1000 * 60 * 60 * 24 * 180,
+        editable: false,
+      },
+    );
+    _planningTLInstance.on('select', (props) => {
+      if (!props.items?.length) return;
+      const item = items.find(i => i.id === props.items[0]);
+      if (item?._eventId) _planningOpenEventDetail(item._eventId);
+    });
+  } catch(err) {
+    console.error('Gantt mount failed:', err);
+    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">Failed to mount Gantt: ${escapeHtml(err.message)}</div>`;
+  }
 }
 
-function _laGanttStub() {
-  return _laStubCard(
-    'Gantt view',
-    'Activity bars with P6 baseline / current overlay rows for variance review.',
-    'Batch 5'
-  );
-}
-
-function _laResourcesStub() {
-  const rows = PLANNING_RESOURCES.filter(r => r.is_active).slice(0, 100);
-  const today = new Date().toISOString().slice(0, 10);
+// ── RESOURCES TAB (availability board) ───────────────────────
+function _laResourcesBoardHTML() {
+  const today    = new Date().toISOString().slice(0, 10);
   const outToday = _ptoActiveOnDate(today);
-  const outTodayIds = new Set(outToday.map(x => x.request.resource_id));
-
   return `
     ${outToday.length ? `
       <div style="margin-bottom:14px;padding:10px 14px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
-        🌴 <strong>${outToday.length} resource${outToday.length === 1 ? '' : 's'} out today:</strong>
-        ${outToday.map(x => escapeHtml(x.resource?.display_name || '—')).join(', ')}
+        🌴 <strong>Out today:</strong> ${outToday.map(x => escapeHtml(x.resource?.display_name || '—')).join(', ')}
       </div>` : ''}
+    ${_planningShiftLegend()}
 
-    <div class="data-card" style="padding:0;overflow:hidden;">
-      <div style="padding:14px 16px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;align-items:center;">
-        <strong style="font-size:14px;">Active Resources (${PLANNING_RESOURCES.filter(r => r.is_active).length})</strong>
-        <span style="font-size:11px;color:var(--gray-400);">Availability board lands in Batch 4</span>
-      </div>
-      <table class="data-table">
-        <thead><tr><th>Name</th><th>Initials</th><th>Type</th><th>Email</th><th>Status</th></tr></thead>
-        <tbody>
-          ${rows.length === 0
-            ? `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--gray-400);">No resources yet — bootstrap will seed from portal users on first admin visit.</td></tr>`
-            : rows.map(r => `
-              <tr>
-                <td>${escapeHtml(r.display_name)}</td>
-                <td style="font-family:monospace;">${escapeHtml(r.initials || '')}</td>
-                <td>${escapeHtml(r.resource_type)}</td>
-                <td style="font-size:12px;color:var(--gray-500);">${escapeHtml(r.email || '—')}</td>
-                <td>${outTodayIds.has(r.id)
-                  ? `<span class="badge badge-warn">🌴 Out today</span>`
-                  : `<span class="badge badge-passed">Available</span>`}</td>
-              </tr>
-            `).join('')}
-        </tbody>
-      </table>
+    <div style="margin-bottom:12px;font-size:13px;color:var(--gray-600);">
+      Resource availability across the next 14 days. PTO blocks shaded yellow. Click any event to edit.
+    </div>
+
+    <div class="data-card" style="padding:14px;">
+      <div id="resources-timeline" style="min-height:600px;"></div>
     </div>`;
+}
+
+function _laMountResourcesTL() {
+  const target = document.getElementById('resources-timeline');
+  if (!target) return;
+  if (typeof vis === 'undefined') {
+    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">vis-timeline library not loaded — refresh the page.</div>`;
+    return;
+  }
+
+  const active = PLANNING_RESOURCES.filter(r => r.is_active).sort((a,b) => a.display_name.localeCompare(b.display_name));
+  if (!active.length) {
+    target.innerHTML = `<div style="padding:48px;text-align:center;color:var(--gray-400);font-size:13px;">No active resources yet.</div>`;
+    return;
+  }
+
+  const groupSpecs = active.map(r => ({
+    id: 'res-' + r.id,
+    content: `<div style="display:flex;align-items:center;gap:6px;font-size:12px;"><strong>${escapeHtml(r.display_name)}</strong>${r.initials ? `<span style="font-family:monospace;font-size:10px;color:#9ca3af;">${escapeHtml(r.initials)}</span>` : ''}</div>`,
+  }));
+
+  const items = [];
+  // Events assigned to each resource
+  PLANNING_EVENT_RES.forEach(er => {
+    const e = PLANNING_EVENTS.find(x => x.id === er.event_id);
+    if (!e) return;
+    const isCancel = e.status === 'cancelled';
+    const v = isCancel ? _CANCEL_VISUAL : (_SHIFT_VISUAL[e.shift_type] || _SHIFT_VISUAL.custom);
+    const dt = e.event_date;
+    const startTime = (e.all_day || !e.start_time) ? '00:00' : e.start_time.slice(0,5);
+    const endTime   = (e.all_day || !e.end_time)   ? '23:59' : e.end_time.slice(0,5);
+    const overnight = !e.all_day && e.start_time && e.end_time && e.end_time <= e.start_time;
+    const endDate   = overnight ? dayjs(dt).add(1,'day').format('YYYY-MM-DD') : dt;
+
+    // PTO conflict highlight
+    const conflict = _ptoOverlapsRange(er.resource_id, dt, e.start_time, e.end_time);
+    const conflictStyle = conflict ? 'box-shadow:0 0 0 2px var(--bad);' : '';
+
+    items.push({
+      id: er.id,
+      group: 'res-' + er.resource_id,
+      content: `<span style="font-size:11px;">${v.icon} ${escapeHtml((e.title || '').slice(0, 40))}</span>`,
+      start: `${dt}T${startTime}:00`,
+      end:   `${endDate}T${endTime}:00`,
+      style: `background-color:${v.bg};color:${v.text};border-color:${isCancel ? '#7f1d1d' : v.bg};${isCancel ? 'text-decoration:line-through;' : ''}${conflictStyle}`,
+      title: conflict
+        ? `⚠ PTO CONFLICT: ${escapeHtml(e.title || '')} clashes with approved PTO`
+        : `${escapeHtml(e.title || '')} · ${v.label}`,
+      _eventId: e.id,
+    });
+  });
+
+  // PTO blocks as backgrounds
+  PTO_REQUESTS.filter(p => p.status === 'approved').forEach(p => {
+    items.push({
+      id: 'pto-' + p.id,
+      group: 'res-' + p.resource_id,
+      content: `🌴 PTO`,
+      start: p.start_date,
+      end:   dayjs(p.end_date).add(1, 'day').format('YYYY-MM-DD'),
+      type: 'background',
+      style: 'background-color:rgba(252,211,77,0.45);',
+    });
+  });
+
+  try {
+    _planningTLInstance = new vis.Timeline(
+      target,
+      new vis.DataSet(items),
+      new vis.DataSet(groupSpecs),
+      {
+        start: dayjs().startOf('day').toDate(),
+        end:   dayjs().startOf('day').add(14, 'day').toDate(),
+        stack: true,
+        showCurrentTime: true,
+        margin: { item: 6 },
+        zoomMin: 1000 * 60 * 60 * 12,
+        zoomMax: 1000 * 60 * 60 * 24 * 90,
+        editable: false,
+        orientation: { axis: 'top' },
+      },
+    );
+    _planningTLInstance.on('select', (props) => {
+      if (!props.items?.length) return;
+      const item = items.find(i => i.id === props.items[0]);
+      if (item?._eventId) _planningOpenEventDetail(item._eventId);
+    });
+  } catch(err) {
+    console.error('Resources timeline mount failed:', err);
+    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">Failed to mount: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// ── Event Detail Modal ───────────────────────────────────────
+function _planningOpenEventDetail(eventId) {
+  const e = PLANNING_EVENTS.find(x => x.id === eventId);
+  if (!e) return;
+
+  const isAdmin = currentRoleUser?.role === 'admin';
+  const isCancel = e.status === 'cancelled';
+  const v = isCancel ? _CANCEL_VISUAL : (_SHIFT_VISUAL[e.shift_type] || _SHIFT_VISUAL.custom);
+  const assignments = _planningResourceAssignmentsForEvent(e.id);
+  const ti = e.test_item_id ? TI.find(t => String(t.TestID) === String(e.test_item_id)) : null;
+
+  // PTO conflicts per assigned resource
+  const conflicts = [];
+  assignments.forEach(a => {
+    if (!a.resource) return;
+    const c = _ptoOverlapsRange(a.resource.id, e.event_date, e.start_time, e.end_time);
+    if (c) conflicts.push({ resource: a.resource, pto: c });
+  });
+
+  const timeStr = e.all_day
+    ? 'All day'
+    : `${(e.start_time || '00:00').slice(0,5)} – ${(e.end_time || '23:59').slice(0,5)}${
+        e.start_time && e.end_time && e.end_time <= e.start_time ? ' (overnight)' : ''
+      }`;
+
+  modal({
+    title: e.title || '(no title)',
+    sub:   `${e.event_date} · ${v.label}${e.is_locked ? ' · 🔒 Locked' : ''}${e.source === 'lookahead' ? ' · From import' : ''}`,
+    body: `
+      <div style="display:grid;grid-template-columns:140px 1fr;gap:8px 14px;font-size:13px;">
+        <div style="color:var(--gray-500);">Status:</div>
+        <div>
+          <span class="badge" style="background:${v.bg};color:${v.text};border:1px solid ${isCancel ? '#7f1d1d' : v.bg};">${v.icon} ${v.label}</span>
+          ${isCancel && e.cancellation_reason ? `<div style="margin-top:6px;font-size:12px;color:#7f1d1d;background:#fef2f2;padding:6px 10px;border-radius:6px;">Reason: ${escapeHtml(e.cancellation_reason)}</div>` : ''}
+        </div>
+
+        <div style="color:var(--gray-500);">Time:</div>
+        <div>${escapeHtml(timeStr)}</div>
+
+        <div style="color:var(--gray-500);">Location:</div>
+        <div>${escapeHtml(e.location || '—')}</div>
+
+        <div style="color:var(--gray-500);">Test Item:</div>
+        <div>${ti ? `<strong>${escapeHtml(ti.TestCaseCode || ti.TestID)}</strong> — ${escapeHtml(ti.TestName || '')}` : '<em style="color:#9ca3af;">Not linked</em>'}</div>
+
+        <div style="color:var(--gray-500);">Source:</div>
+        <div>${escapeHtml(e.source)}${e.work_hours_raw ? ` · Hours: ${escapeHtml(e.work_hours_raw)}` : ''}</div>
+
+        <div style="color:var(--gray-500);">Resources:</div>
+        <div>
+          ${assignments.length === 0
+            ? '<em style="color:#9ca3af;">No resources assigned</em>'
+            : assignments.map(a => `
+                <span class="badge ${conflicts.find(c => c.resource.id === a.resource?.id) ? 'badge-failed' : 'badge-passed'}" style="margin:2px 4px 2px 0;">
+                  ${a.resource ? escapeHtml(a.resource.display_name) : '—'}
+                  ${conflicts.find(c => c.resource.id === a.resource?.id) ? ' ⚠ PTO' : ''}
+                </span>`).join('')}
+        </div>
+
+        ${e.notes ? `
+          <div style="color:var(--gray-500);">Notes:</div>
+          <div style="font-size:12px;">${escapeHtml(e.notes)}</div>` : ''}
+      </div>
+
+      ${conflicts.length ? `
+        <div style="margin-top:14px;padding:10px 14px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;font-size:13px;color:#7f1d1d;">
+          ⚠ <strong>PTO conflict${conflicts.length === 1 ? '' : 's'}:</strong>
+          ${conflicts.map(c => `${escapeHtml(c.resource.display_name)} (${escapeHtml(c.pto.start_date)} → ${escapeHtml(c.pto.end_date)})`).join('; ')}
+        </div>` : ''}
+    `,
+    footer: isAdmin ? `
+      <button class="form-secondary" onclick="closeModal()">Close</button>
+      <button class="form-secondary" onclick="_planningToggleLock('${e.id}')">${e.is_locked ? '🔓 Unlock' : '🔒 Lock'}</button>
+      ${!isCancel ? `<button class="form-secondary" style="color:var(--bad);" onclick="_planningCancelEvent('${e.id}')">✕ Cancel Event</button>` : ''}
+      ${isCancel && !e.cancellation_reason ? `<button class="form-submit" onclick="_planningAddCancellationReason('${e.id}')">+ Add Cancel Reason</button>` : ''}
+    ` : `
+      <button class="form-secondary" onclick="closeModal()">Close</button>
+    `,
+  });
+  document.getElementById('modal-overlay')?.classList.add('active');
+}
+
+function _planningOpenPTODetail(p) {
+  const isAdmin = currentRoleUser?.role === 'admin';
+  const r = PLANNING_RESOURCES.find(x => x.id === p.resource_id);
+  modal({
+    title: `🌴 PTO — ${r?.display_name || '—'}`,
+    sub:   _ptoFmtRange(p),
+    body: `
+      <div style="display:grid;grid-template-columns:140px 1fr;gap:8px 14px;font-size:13px;">
+        <div style="color:var(--gray-500);">Status:</div>
+        <div><span class="badge badge-passed">Approved</span></div>
+        <div style="color:var(--gray-500);">Days:</div>
+        <div>${_ptoDays(p)}</div>
+        ${isAdmin && p.reason ? `
+          <div style="color:var(--gray-500);">Reason:</div>
+          <div style="font-size:12px;">${escapeHtml(p.reason)}</div>` : ''}
+        ${p.partial_day ? `
+          <div style="color:var(--gray-500);">Partial:</div>
+          <div>${p.partial_start?.slice(0,5)} – ${p.partial_end?.slice(0,5)}</div>` : ''}
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
+  document.getElementById('modal-overlay')?.classList.add('active');
+}
+
+async function _planningToggleLock(eventId) {
+  const e = PLANNING_EVENTS.find(x => x.id === eventId);
+  if (!e) return;
+  try {
+    await _dbUpdate('planning_events', { is_locked: !e.is_locked, updated_by: currentProfile?.id || null }, { id: eventId });
+    toast(`Event ${e.is_locked ? 'unlocked' : 'locked'}`, 'success');
+    closeModal();
+    await loadPlanningData(true);
+    _renderLookaheadTabBody();
+  } catch(err) {
+    toast('Update failed: ' + err.message, 'error');
+  }
+}
+
+async function _planningCancelEvent(eventId) {
+  const reason = prompt('Cancellation reason (required):');
+  if (reason === null) return;
+  if (!reason.trim()) { toast('Reason cannot be blank', 'error'); return; }
+  try {
+    await _dbUpdate('planning_events', {
+      status:              'cancelled',
+      cancellation_reason: reason.trim(),
+      cancellation_by:     currentProfile?.id || null,
+      cancellation_at:     new Date().toISOString(),
+      updated_by:          currentProfile?.id || null,
+    }, { id: eventId });
+    toast('Event cancelled', 'success');
+    closeModal();
+    await loadPlanningData(true);
+    _renderLookaheadTabBody();
+  } catch(err) {
+    toast('Cancel failed: ' + err.message, 'error');
+  }
 }
 
 // ── PTO Tab ──────────────────────────────────────────────────
