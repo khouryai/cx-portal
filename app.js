@@ -320,6 +320,7 @@ function showPage(name) {
   if (name === 'admin-directory')  renderAdminDirectory();
   if (name === 'admin-p6')         renderAdminP6();
   if (name === 'admin-assets')     renderAdminAssets();
+  if (name === 'rma')              renderRMA();
   if (name === 'schedule')         renderSchedulePage();
   window.scrollTo(0, 0);
 }
@@ -378,6 +379,7 @@ async function refreshApp() {
   try { await loadPunchDB(); } catch(e) { console.warn('[refreshApp] punch reload failed:', e.message); }
   try { await loadP6Data(); }  catch(e) { console.warn('[refreshApp] P6 reload failed:',  e.message); }
   try { await loadAssetData(); } catch(e) { console.warn('[refreshApp] asset reload failed:', e.message); }
+  try { await loadRMAs(); }     catch(e) { console.warn('[refreshApp] RMA reload failed:',   e.message); }
 
   // 3. Reload test items only when no status save is in flight
   if (!_mxSavePending) {
@@ -1354,7 +1356,7 @@ function exportPL() {
 // INIT
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
-  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadP6Data(), loadAssetData()]);
+  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadP6Data(), loadAssetData(), loadRMAs()]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -2006,6 +2008,10 @@ let P6_DISMISSALS  = [];   // p6_activity_dismissals
 let ASSETS        = [];  // assets table rows
 let ASSET_BATCHES = [];  // asset_import_batches table rows
 let ASSET_LINKS   = [];  // asset_test_links table rows
+
+// ── RMA globals ───────────────────────────────────────────────────────────────
+let RMAS = [];
+let _rmaFilter = { status: '', location: '', search: '' };
 
 // ── Health tab filter state ───────────────────────────────────────────────────
 let _p6HealthFilter     = { search: '', dateMode: 'all', dateFrom: '', dateTo: '' };
@@ -3577,6 +3583,7 @@ const FIELDCONFIG_DEFS = [
   { key: 'schedule_impact',     label: 'Schedule Impact' },
   { key: 'punch_subsystem',     label: 'Subsystem' },
   { key: 'delay_category',      label: 'Delay Category' },
+  { key: 'rma_status',          label: 'RMA Status' },
 ];
 
 function _fsCfg(key) { return FIELDSET_CONFIG[key] || []; }
@@ -10368,6 +10375,13 @@ async function loadAssetData() {
   } catch(e) { console.warn('[loadAssetData] failed:', e.message); }
 }
 
+async function loadRMAs() {
+  try {
+    const data = await _fetchAnon('rmas?select=*&order=created_at.desc');
+    RMAS = data || [];
+  } catch(e) { console.warn('[loadRMAs] failed:', e.message); }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function _assetParsePrefix(name) {
   // e.g. "W40-AC01" → "W40", "ATS-W40-AC01" → try to match a known location prefix
@@ -11330,3 +11344,343 @@ async function _assetLinkFromPanel(assetId) {
   } catch(e) { toast('Link failed: ' + e.message, 'error'); }
 }
 
+
+
+// ==========================================================================
+// RMA — Return Merchandise Authorization
+// ==========================================================================
+
+function renderRMA() {
+  const root = document.getElementById('rma-content');
+  if (!root || !currentRoleUser) return;
+  root.innerHTML = _rmaPageHTML();
+}
+
+function _rmaStatusColor(s) {
+  return ({ 'Open':'#2563eb','Pending Replacement':'#d97706','Shipped':'#7c3aed',
+            'Awaiting Return':'#db2777','Closed':'#16a34a','Cancelled':'#6b7280' })[s] || '#374151';
+}
+
+function _rmaStatusBadge(s) {
+  const c = _rmaStatusColor(s);
+  return `<span style="display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700;background:${c}18;color:${c};border:1px solid ${c}40;">${escapeHtml(s||'—')}</span>`;
+}
+
+function _rmaPageHTML() {
+  const canEdit  = ['admin','field_engineer'].includes(currentRoleUser?.role);
+  const statuses = _fsCfg('rma_status').length ? _fsCfg('rma_status') : ['Open','Pending Replacement','Shipped','Awaiting Return','Closed','Cancelled'];
+  const locOpts  = [...new Set(LOCS.filter(l => l.level === 2).map(l => l.name))].sort();
+
+  const srch = (_rmaFilter.search || '').toLowerCase();
+  const filtered = RMAS.filter(r => {
+    if (_rmaFilter.status   && r.status   !== _rmaFilter.status)   return false;
+    if (_rmaFilter.location && r.location !== _rmaFilter.location)  return false;
+    if (srch && !`${r.rma_number} ${r.serial_number||''} ${r.manufacturer||''} ${r.location||''}`.toLowerCase().includes(srch)) return false;
+    return true;
+  });
+
+  const openRMAs = RMAS.filter(r => r.status !== 'Closed' && r.status !== 'Cancelled');
+  const now      = Date.now();
+  const avgDays  = openRMAs.length
+    ? Math.round(openRMAs.reduce((sum,r) => sum + (now - new Date(r.created_at).getTime()) / 86400000, 0) / openRMAs.length)
+    : 0;
+  const openLocs = new Set(openRMAs.map(r => r.location).filter(Boolean)).size;
+
+  const metCard = (val, label, sub, color) =>
+    `<div class="data-card" style="padding:20px;flex:1;min-width:140px;">` +
+    `<div style="font-size:28px;font-weight:700;color:${color};">${val}</div>` +
+    `<div style="font-size:13px;font-weight:600;color:var(--gray-700);margin-top:2px;">${label}</div>` +
+    (sub ? `<div style="font-size:11px;color:var(--gray-400);margin-top:3px;">${sub}</div>` : '') +
+    `</div>`;
+
+  const hasFilter = _rmaFilter.status || _rmaFilter.location || _rmaFilter.search;
+
+  let tableHTML = '';
+  if (filtered.length === 0) {
+    tableHTML = `<div style="padding:48px;text-align:center;color:var(--gray-400);">` +
+      `<div style="font-size:32px;margin-bottom:8px;">📋</div>` +
+      `<div style="font-size:14px;">${RMAS.length ? 'No RMAs match your filters' : 'No RMAs yet — click + New RMA to get started'}</div></div>`;
+  } else {
+    const rows = filtered.map(r => {
+      const actions = canEdit
+        ? `<button class="form-secondary" style="font-size:12px;padding:4px 10px;margin-left:4px;" onclick="openRMAModal('${r.id}')">✏ Edit</button>` +
+          `<button class="form-secondary" style="font-size:12px;padding:4px 10px;margin-left:4px;color:var(--bad);" onclick="deleteRMA('${r.id}')">🗑</button>`
+        : '';
+      return `<tr style="border-bottom:1px solid var(--gray-100);" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">` +
+        `<td style="padding:12px 16px;"><div style="font-size:13px;font-weight:600;color:var(--gray-900);">${escapeHtml(r.rma_number)}</div>` +
+        (r.due_date ? `<div style="font-size:11px;color:var(--gray-400);margin-top:2px;">Due ${_fmtDate(r.due_date)}</div>` : '') + `</td>` +
+        `<td style="padding:12px 16px;">${_rmaStatusBadge(r.status)}</td>` +
+        `<td style="padding:12px 16px;font-size:13px;color:var(--gray-700);">${escapeHtml(r.location||'—')}</td>` +
+        `<td style="padding:12px 16px;"><div style="font-size:13px;color:var(--gray-800);">${escapeHtml(r.manufacturer||'—')}</div>` +
+        (r.serial_number ? `<div style="font-size:11px;font-family:monospace;color:var(--gray-400);margin-top:2px;">S/N: ${escapeHtml(r.serial_number)}</div>` : '') + `</td>` +
+        `<td style="padding:12px 16px;font-size:13px;color:var(--gray-600);">${escapeHtml(r.created_by||'—')}</td>` +
+        `<td style="padding:12px 16px;font-size:12px;color:var(--gray-500);white-space:nowrap;">${_fmtDate(r.created_at)}</td>` +
+        `<td style="padding:12px 16px;text-align:right;white-space:nowrap;">` +
+        `<button class="form-secondary" style="font-size:12px;padding:4px 10px;" onclick="_rmaViewModal('${r.id}')">👁 View</button>${actions}</td></tr>`;
+    }).join('');
+    tableHTML = `<table style="width:100%;border-collapse:collapse;">` +
+      `<thead><tr style="background:var(--gray-50);border-bottom:1px solid var(--gray-200);">` +
+      `<th style="padding:10px 16px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:600;text-transform:uppercase;white-space:nowrap;">RMA Number</th>` +
+      `<th style="padding:10px 16px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:600;text-transform:uppercase;">Status</th>` +
+      `<th style="padding:10px 16px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:600;text-transform:uppercase;">Location</th>` +
+      `<th style="padding:10px 16px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:600;text-transform:uppercase;">Manufacturer / S/N</th>` +
+      `<th style="padding:10px 16px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:600;text-transform:uppercase;">Created By</th>` +
+      `<th style="padding:10px 16px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:600;text-transform:uppercase;white-space:nowrap;">Date</th>` +
+      `<th style="padding:10px 16px;text-align:right;font-size:11px;color:var(--gray-500);font-weight:600;text-transform:uppercase;">Actions</th>` +
+      `</tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  return `<div style="padding:0;">` +
+    `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;">` +
+    `<div><h2 style="margin:0;font-size:20px;font-weight:700;">Return Merchandise Authorization</h2>` +
+    `<p style="margin:4px 0 0;font-size:13px;color:var(--gray-500);">Track equipment defects and field replacements</p></div>` +
+    `<div style="display:flex;gap:8px;flex-wrap:wrap;">` +
+    `<button class="form-secondary" style="font-size:12px;" onclick="_rmaCSVExport()">⬇ Export CSV</button>` +
+    (canEdit ? `<button class="admin-action-btn" onclick="openRMAModal(null)">+ New RMA</button>` : '') +
+    `</div></div>` +
+    `<div style="display:flex;gap:16px;margin-bottom:24px;flex-wrap:wrap;">` +
+    metCard(RMAS.length, 'Total RMAs', '', 'var(--gray-800)') +
+    metCard(openRMAs.length, 'Open', 'not closed or cancelled', '#2563eb') +
+    metCard(avgDays + 'd', 'Avg Days Open', 'for open RMAs', openRMAs.length ? '#d97706' : 'var(--gray-400)') +
+    metCard(openLocs, 'Locations', 'with open RMAs', openLocs ? '#7c3aed' : 'var(--gray-400)') +
+    `</div>` +
+    `<div class="data-card" style="padding:14px 16px;margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">` +
+    `<input class="form-input" style="font-size:13px;min-width:200px;flex:1;" placeholder="🔍 Search RMA #, serial, manufacturer…" ` +
+    `value="${escapeHtml(_rmaFilter.search)}" oninput="_rmaFilter.search=this.value;renderRMA()">` +
+    `<select class="form-input" style="font-size:13px;" onchange="_rmaFilter.status=this.value;renderRMA()">` +
+    `<option value="">All Statuses</option>` +
+    statuses.map(st => `<option value="${escapeHtml(st)}" ${_rmaFilter.status===st?'selected':''}>${escapeHtml(st)}</option>`).join('') +
+    `</select>` +
+    `<select class="form-input" style="font-size:13px;" onchange="_rmaFilter.location=this.value;renderRMA()">` +
+    `<option value="">All Locations</option>` +
+    locOpts.map(l => `<option value="${escapeHtml(l)}" ${_rmaFilter.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('') +
+    `</select>` +
+    (hasFilter ? `<button class="form-secondary" style="font-size:12px;" onclick="_rmaFilter={status:'',location:'',search:''};renderRMA()">✕ Clear</button>` : '') +
+    `</div>` +
+    `<div class="data-card" style="padding:0;overflow:hidden;">${tableHTML}</div></div>`;
+}
+
+function openRMAModal(rmaId) {
+  const rma      = rmaId ? RMAS.find(r => r.id === rmaId) : null;
+  const statuses = _fsCfg('rma_status').length ? _fsCfg('rma_status') : ['Open','Pending Replacement','Shipped','Awaiting Return','Closed','Cancelled'];
+  const locations = LOCS.filter(l => l.level === 2).sort((a,b) => a.name.localeCompare(b.name));
+  const today    = new Date().toISOString().slice(0,10);
+  const v        = (id, fallback) => escapeHtml(rma?.[id] || fallback || '');
+
+  modal({
+    title: rma ? `Edit RMA — ${rma.rma_number}` : 'New RMA',
+    size:  'large',
+    body:
+      `<div class="form-grid">` +
+      `<div class="form-field form-field-full"><label>RMA Number <span style="color:var(--bad)">*</span></label>` +
+      `<input id="rma-number" class="form-input" placeholder="e.g. RMA-201075569-W30-D_NR3P Vital Relay" value="${v('rma_number')}"></div>` +
+      `<div class="form-field"><label>Status <span style="color:var(--bad)">*</span></label>` +
+      `<select id="rma-status" class="form-input">` +
+      statuses.map(s => `<option value="${escapeHtml(s)}" ${(rma?.status||'Open')===s?'selected':''}>${escapeHtml(s)}</option>`).join('') +
+      `</select></div>` +
+      `<div class="form-field"><label>Location <span style="color:var(--bad)">*</span></label>` +
+      `<select id="rma-location" class="form-input"><option value="">— Select Location —</option>` +
+      locations.map(l => `<option value="${escapeHtml(l.name)}" ${rma?.location===l.name?'selected':''}>${escapeHtml(l.name)}</option>`).join('') +
+      `</select></div>` +
+      `<div class="form-field"><label>Issued Date</label><input id="rma-issued" type="date" class="form-input" value="${rma?.issued_date||today}"></div>` +
+      `<div class="form-field"><label>Due Date</label><input id="rma-due" type="date" class="form-input" value="${rma?.due_date||today}"></div>` +
+      `<div class="form-field"><label>Quantity</label><input id="rma-qty" type="number" class="form-input" min="0.01" step="0.01" value="${rma?.quantity||1}"></div>` +
+      `</div>` +
+      `<div style="margin:20px 0 12px;font-size:12px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:0.05em;border-top:1px solid var(--gray-200);padding-top:16px;">Field Engineer Details</div>` +
+      `<div class="form-grid">` +
+      `<div class="form-field"><label>Manufacturer</label><input id="rma-mfr" class="form-input" placeholder="e.g. Hitachi" value="${v('manufacturer')}"></div>` +
+      `<div class="form-field"><label>Serial Number (Faulty)</label><input id="rma-sn" class="form-input" style="font-family:monospace;" placeholder="e.g. 2400123" value="${v('serial_number')}"></div>` +
+      `<div class="form-field"><label>Replacement Serial Number</label><input id="rma-rsn" class="form-input" style="font-family:monospace;" placeholder="e.g. 2500046" value="${v('replacement_serial_number')}"></div>` +
+      `<div class="form-field"><label>Manufacturer P/N</label><input id="rma-mpn" class="form-input" style="font-family:monospace;" placeholder="e.g. N438007802" value="${v('manufacturer_pn')}"></div>` +
+      `<div class="form-field"><label>STS P/N</label><input id="rma-spn" class="form-input" style="font-family:monospace;" placeholder="e.g. N438007802" value="${v('sts_pn')}"></div>` +
+      `<div class="form-field form-field-full"><label>Material Description for Shipment</label>` +
+      `<textarea id="rma-matdesc" class="form-input" rows="2" placeholder="Description…">${v('material_description')}</textarea></div>` +
+      `<div class="form-field form-field-full"><label>Notes</label>` +
+      `<textarea id="rma-notes" class="form-input" rows="2" placeholder="Additional notes…">${v('notes')}</textarea></div>` +
+      `</div>`,
+    footer:
+      `<button class="form-secondary" onclick="closeModal()">Cancel</button>` +
+      `<button class="form-submit" onclick="saveRMA(${rmaId ? `'${rmaId}'` : 'null'})">${rma ? 'Save Changes' : 'Create RMA'}</button>`,
+  });
+}
+
+async function saveRMA(editId) {
+  const rmaNumber = (document.getElementById('rma-number')?.value || '').trim();
+  const status    = document.getElementById('rma-status')?.value   || 'Open';
+  const location  = document.getElementById('rma-location')?.value || '';
+  if (!rmaNumber) { toast('RMA Number is required', 'error'); return; }
+  if (!location)  { toast('Location is required',   'error'); return; }
+
+  const g = id => (document.getElementById(id)?.value || '').trim() || null;
+  const payload = {
+    rma_number: rmaNumber, status, location,
+    issued_date:               document.getElementById('rma-issued')?.value || null,
+    due_date:                  document.getElementById('rma-due')?.value    || null,
+    quantity:                  parseFloat(document.getElementById('rma-qty')?.value || '1'),
+    manufacturer:              g('rma-mfr'),
+    serial_number:             g('rma-sn'),
+    replacement_serial_number: g('rma-rsn'),
+    manufacturer_pn:           g('rma-mpn'),
+    sts_pn:                    g('rma-spn'),
+    material_description:      g('rma-matdesc'),
+    notes:                     g('rma-notes'),
+    updated_at:                new Date().toISOString(),
+  };
+
+  closeModal();
+  try {
+    if (editId) {
+      const existing  = RMAS.find(r => r.id === editId);
+      const oldStatus = existing?.status;
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/rmas?id=eq.${editId}`, {
+        method: 'PATCH',
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const [updated] = await res.json();
+      const idx = RMAS.findIndex(r => r.id === editId);
+      if (idx >= 0) RMAS[idx] = updated;
+      toast('RMA updated', 'success');
+      if (oldStatus !== status) _rmaSendEmail(updated, 'status_changed', oldStatus).catch(()=>{});
+    } else {
+      payload.created_by       = currentRoleUser?.name  || '';
+      payload.created_by_email = currentProfile?.email  || '';
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/rmas`, {
+        method: 'POST',
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const [created] = await res.json();
+      RMAS.unshift(created);
+      toast('RMA created', 'success');
+      _rmaSendEmail(created, 'created', null).catch(()=>{});
+    }
+    logAudit(editId ? 'RMA Updated' : 'RMA Created', rmaNumber, `Status: ${status} · ${location}`);
+    renderRMA();
+  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function deleteRMA(id) {
+  const rma = RMAS.find(r => r.id === id);
+  if (!rma) return;
+  if (!confirm(`Delete RMA "${rma.rma_number}"?\n\nThis cannot be undone.`)) return;
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rmas?id=eq.${id}`, {
+    method: 'DELETE', headers: { 'apikey': SUPABASE_ANON_KEY },
+  });
+  if (!res.ok) { toast('Delete failed', 'error'); return; }
+  RMAS.splice(RMAS.findIndex(r => r.id === id), 1);
+  toast('RMA deleted', 'success');
+  logAudit('RMA Deleted', rma.rma_number);
+  renderRMA();
+}
+
+function _rmaViewModal(id) {
+  const r = RMAS.find(x => x.id === id);
+  if (!r) return;
+  const row = (label, val) => val
+    ? `<tr><td style="padding:7px 16px 7px 0;font-size:13px;color:#6b7280;font-weight:500;white-space:nowrap;width:210px;">${label}</td>` +
+      `<td style="padding:7px 0;font-size:13px;color:#111827;">${escapeHtml(String(val))}</td></tr>`
+    : '';
+  modal({
+    title: `RMA — ${r.rma_number}`,
+    size:  'large',
+    body:
+      `<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #e5e7eb;">` +
+      `${_rmaStatusBadge(r.status)}<span style="font-size:12px;color:var(--gray-500);">Created ${_fmtDate(r.created_at)} by ${escapeHtml(r.created_by||'—')}</span></div>` +
+      `<table style="width:100%;border-collapse:collapse;margin-bottom:4px;">` +
+      row('Location',    r.location) +
+      row('Quantity',    r.quantity ? `${r.quantity} ea` : null) +
+      row('Issued Date', r.issued_date ? _fmtDate(r.issued_date) : null) +
+      row('Due Date',    r.due_date   ? _fmtDate(r.due_date)    : null) +
+      `</table>` +
+      `<div style="margin:16px 0 10px;font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:0.06em;border-top:1px solid #e5e7eb;padding-top:14px;">Field Engineer Details</div>` +
+      `<table style="width:100%;border-collapse:collapse;margin-bottom:4px;">` +
+      row('Manufacturer',         r.manufacturer) +
+      row('Serial Number',        r.serial_number) +
+      row('Replacement Serial #', r.replacement_serial_number) +
+      row('Manufacturer P/N',     r.manufacturer_pn) +
+      row('STS P/N',              r.sts_pn) +
+      row('Material Description', r.material_description) +
+      `</table>` +
+      (r.notes ? `<div style="margin-top:14px;padding:12px 14px;background:var(--gray-50);border-radius:6px;font-size:13px;color:var(--gray-700);"><strong>Notes:</strong> ${escapeHtml(r.notes)}</div>` : ''),
+    footer:
+      `<button class="form-secondary" onclick="closeModal()">Close</button>` +
+      `<button class="form-secondary" onclick="closeModal();_rmaPrintPDF('${id}')">🖨 Print / PDF</button>`,
+  });
+}
+
+function _rmaPrintPDF(id) {
+  const r = RMAS.find(x => x.id === id);
+  if (!r) return;
+  const cell = (label, val) =>
+    `<td style="padding:7px 16px 7px 0;font-size:12px;font-weight:600;color:#374151;width:180px;vertical-align:top;">${label}</td>` +
+    `<td style="padding:7px 16px 7px 0;font-size:12px;color:#111827;vertical-align:top;">${escapeHtml(String(val||'—'))}</td>`;
+
+  const html = [
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>RMA ' + r.rma_number + '</title>',
+    '<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;color:#111827;background:#fff;padding:32px;}',
+    '.hdr{display:flex;justify-content:space-between;padding-bottom:16px;border-bottom:2px solid #C8001A;margin-bottom:20px;}',
+    '.co{font-size:14px;font-weight:700;color:#C8001A;}.co-sub{font-size:11px;color:#6b7280;margin-top:2px;}',
+    '.proj{text-align:right;font-size:11px;color:#6b7280;}h1{font-size:17px;font-weight:700;text-align:center;margin-bottom:20px;}',
+    '.sec{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#C8001A;margin:18px 0 8px;padding-top:14px;border-top:1px solid #e5e7eb;}',
+    'table{width:100%;border-collapse:collapse;}',
+    '.ftr{margin-top:40px;padding-top:10px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;font-size:10px;color:#9ca3af;}',
+    '@media print{body{padding:16px;}}</style></head><body>',
+    '<div class="hdr"><div><div class="co">Hitachi Rail STS</div>',
+    '<div class="co-sub">1000 Technology Dr, Pittsburgh, Pennsylvania 15219-3120</div>',
+    '<div class="co-sub">P: +1 (412) 688-2400</div></div>',
+    '<div class="proj"><div style="font-size:12px;font-weight:600;">Project: 49GH-110 BART CBTC System</div>',
+    '<div>2150 Webster St. 2nd Floor</div><div>Oakland, California 94612</div></div></div>',
+    '<h1>RMA - Return Merchandise Authorization<br><span style="font-size:14px;font-weight:400;">#' + escapeHtml(r.rma_number) + '</span></h1>',
+    '<table>',
+    '<tr>' + cell('Status', r.status) + cell('Created Date', _fmtDate(r.created_at)) + '</tr>',
+    '<tr>' + cell('Issued Date', r.issued_date ? _fmtDate(r.issued_date) : '—') + cell('Due Date', r.due_date ? _fmtDate(r.due_date) : '—') + '</tr>',
+    '<tr>' + cell('Location', r.location) + cell('Quantity', (r.quantity||1) + ' ea') + '</tr>',
+    '<tr>' + cell('Received From', r.created_by) + '<td colspan="2"></td></tr>',
+    '</table>',
+    '<div class="sec">Completed by Field Engineer</div>',
+    '<table>',
+    '<tr>' + cell('Manufacturer', r.manufacturer) + cell('Serial Number', r.serial_number) + '</tr>',
+    '<tr>' + cell('Replacement Serial #', r.replacement_serial_number) + cell('Manufacturer P/N', r.manufacturer_pn) + '</tr>',
+    '<tr>' + cell('STS P/N', r.sts_pn) + '<td colspan="2"></td></tr>',
+    '<tr><td style="padding:7px 16px 7px 0;font-size:12px;font-weight:600;color:#374151;vertical-align:top;">Material Description</td>',
+    '<td colspan="3" style="padding:7px 0;font-size:12px;color:#111827;">' + escapeHtml(r.material_description||'—') + '</td></tr>',
+    '</table>',
+    r.notes ? '<div style="margin-top:14px;padding:10px 14px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:4px;font-size:12px;"><strong>Notes:</strong> ' + escapeHtml(r.notes) + '</div>' : '',
+    '<div class="ftr"><span>Hitachi Rail STS</span><span>Page 1 of 1</span>',
+    '<span>Printed On: ' + new Date().toLocaleString('en-US',{dateStyle:'long',timeStyle:'short'}) + '</span></div>',
+    '</body></html>'
+  ].join('');
+
+  const w = window.open('','_blank','width=900,height=700');
+  w.document.write(html); w.document.close(); w.focus();
+  setTimeout(() => w.print(), 500);
+}
+
+function _rmaCSVExport() {
+  const headers = ['RMA Number','Status','Location','Manufacturer','Serial Number','Replacement S/N',
+    'Manufacturer P/N','STS P/N','Quantity','Issued Date','Due Date','Created By','Created At','Notes'];
+  const rows = RMAS.map(r => [
+    r.rma_number, r.status, r.location||'', r.manufacturer||'', r.serial_number||'',
+    r.replacement_serial_number||'', r.manufacturer_pn||'', r.sts_pn||'',
+    r.quantity||1, r.issued_date||'', r.due_date||'',
+    r.created_by||'', r.created_at ? _fmtDate(r.created_at) : '', r.notes||'',
+  ].map(v => '"' + String(v).replace(/"/g,'""') + '"'));
+  const csv = [headers.map(h => '"' + h + '"').join(','), ...rows.map(r => r.join(','))].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download = 'RMAs-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+}
+
+async function _rmaSendEmail(rma, eventType, oldStatus) {
+  try {
+    await fetch('https://uqtwiucxktljhukmgmxg.supabase.co/functions/v1/send-rma-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rma, creatorEmail: rma.created_by_email || '', eventType, oldStatus }),
+    });
+  } catch(e) { console.warn('[_rmaSendEmail]', e.message); }
+}
