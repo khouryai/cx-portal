@@ -13448,14 +13448,20 @@ function _laStubCard(title, msg, batch) {
 
 function _laCalendarStub() {
   const eventCount = PLANNING_EVENTS.length;
-  const ptoApproved = PTO_REQUESTS.filter(p => p.status === 'approved').length;
+  const today      = new Date().toISOString().slice(0, 10);
+  const outToday   = _ptoActiveOnDate(today);
+  const pending    = PTO_REQUESTS.filter(p => p.status === 'pending').length;
   return `
     <div class="kpi-grid kpi-grid-mini" style="margin-bottom:16px;">
       <div class="kpi-card kpi-mini"><div class="kpi-label">Planned Events</div><div class="kpi-value">${eventCount}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Resources</div><div class="kpi-value">${PLANNING_RESOURCES.filter(r => r.is_active).length}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Approved PTO</div><div class="kpi-value">${ptoApproved}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Conflicts</div><div class="kpi-value" style="color:var(--bad);">${PLANNING_CONFLICTS.filter(c => !c.is_acknowledged).length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Out Today</div><div class="kpi-value" style="color:${outToday.length ? '#92400e' : 'var(--gray-700)'};">${outToday.length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">PTO Pending</div><div class="kpi-value" style="color:${pending ? 'var(--warn)' : 'var(--gray-700)'};">${pending}</div></div>
     </div>
+    ${outToday.length ? `
+      <div style="margin-bottom:14px;padding:10px 14px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
+        🌴 <strong>Out today:</strong> ${outToday.map(x => escapeHtml(x.resource?.display_name || '—')).join(', ')}
+      </div>` : ''}
     ${_laStubCard(
       'Calendar view',
       'Month / week / day calendar with shift-color coded events, PTO overlay, and resource filter. Will use @event-calendar/core.',
@@ -13480,24 +13486,37 @@ function _laGanttStub() {
 }
 
 function _laResourcesStub() {
-  const rows = PLANNING_RESOURCES.filter(r => r.is_active).slice(0, 50);
+  const rows = PLANNING_RESOURCES.filter(r => r.is_active).slice(0, 100);
+  const today = new Date().toISOString().slice(0, 10);
+  const outToday = _ptoActiveOnDate(today);
+  const outTodayIds = new Set(outToday.map(x => x.request.resource_id));
+
   return `
+    ${outToday.length ? `
+      <div style="margin-bottom:14px;padding:10px 14px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
+        🌴 <strong>${outToday.length} resource${outToday.length === 1 ? '' : 's'} out today:</strong>
+        ${outToday.map(x => escapeHtml(x.resource?.display_name || '—')).join(', ')}
+      </div>` : ''}
+
     <div class="data-card" style="padding:0;overflow:hidden;">
       <div style="padding:14px 16px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;align-items:center;">
         <strong style="font-size:14px;">Active Resources (${PLANNING_RESOURCES.filter(r => r.is_active).length})</strong>
         <span style="font-size:11px;color:var(--gray-400);">Availability board lands in Batch 4</span>
       </div>
       <table class="data-table">
-        <thead><tr><th>Name</th><th>Initials</th><th>Type</th><th>Email</th></tr></thead>
+        <thead><tr><th>Name</th><th>Initials</th><th>Type</th><th>Email</th><th>Status</th></tr></thead>
         <tbody>
           ${rows.length === 0
-            ? `<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--gray-400);">No resources yet — bootstrap will seed from portal users on first admin visit.</td></tr>`
+            ? `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--gray-400);">No resources yet — bootstrap will seed from portal users on first admin visit.</td></tr>`
             : rows.map(r => `
               <tr>
                 <td>${escapeHtml(r.display_name)}</td>
                 <td style="font-family:monospace;">${escapeHtml(r.initials || '')}</td>
                 <td>${escapeHtml(r.resource_type)}</td>
                 <td style="font-size:12px;color:var(--gray-500);">${escapeHtml(r.email || '—')}</td>
+                <td>${outTodayIds.has(r.id)
+                  ? `<span class="badge badge-warn">🌴 Out today</span>`
+                  : `<span class="badge badge-passed">Available</span>`}</td>
               </tr>
             `).join('')}
         </tbody>
@@ -13505,20 +13524,347 @@ function _laResourcesStub() {
     </div>`;
 }
 
+// ── PTO Tab ──────────────────────────────────────────────────
+let _ptoFilter = 'all';            // all | pending | approved | rejected | mine
+let _ptoEditingId = null;          // for edit/review modal
+
+function _ptoCurrentResource() {
+  // Find planning_resource row for the logged-in user
+  if (!currentProfile) return null;
+  return PLANNING_RESOURCES.find(r => r.user_id === currentProfile.id) || null;
+}
+
+function _ptoResourceName(resourceId) {
+  const r = PLANNING_RESOURCES.find(x => x.id === resourceId);
+  return r ? r.display_name : '—';
+}
+
+function _ptoFmtRange(p) {
+  if (!p.start_date) return '—';
+  const s = new Date(p.start_date + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+  if (!p.end_date || p.end_date === p.start_date) {
+    if (p.partial_day && p.partial_start && p.partial_end) return `${s} (${p.partial_start.slice(0,5)}–${p.partial_end.slice(0,5)})`;
+    return s;
+  }
+  const e = new Date(p.end_date + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+  return `${s} → ${e}`;
+}
+
+function _ptoDays(p) {
+  if (!p.start_date || !p.end_date) return 0;
+  const s = new Date(p.start_date + 'T00:00:00');
+  const e = new Date(p.end_date   + 'T00:00:00');
+  const days = Math.round((e - s) / 86400000) + 1;
+  return p.partial_day ? 0.5 : Math.max(1, days);
+}
+
 function _laPTOStub() {
+  const isAdmin    = currentRoleUser?.role === 'admin';
+  const myResource = _ptoCurrentResource();
+  const canSubmit  = isAdmin || (myResource !== null);
+
   const pending  = PTO_REQUESTS.filter(p => p.status === 'pending').length;
   const approved = PTO_REQUESTS.filter(p => p.status === 'approved').length;
+  const rejected = PTO_REQUESTS.filter(p => p.status === 'rejected').length;
+  const totalDays = PTO_REQUESTS.filter(p => p.status === 'approved').reduce((s,p) => s + _ptoDays(p), 0);
+
+  let filtered = PTO_REQUESTS;
+  if (_ptoFilter === 'pending')   filtered = filtered.filter(p => p.status === 'pending');
+  if (_ptoFilter === 'approved')  filtered = filtered.filter(p => p.status === 'approved');
+  if (_ptoFilter === 'rejected')  filtered = filtered.filter(p => p.status === 'rejected');
+  if (_ptoFilter === 'mine')      filtered = filtered.filter(p => myResource && p.resource_id === myResource.id);
+
+  const filterChips = [
+    ['all',      `All (${PTO_REQUESTS.length})`],
+    ['pending',  `Pending (${pending})`],
+    ['approved', `Approved (${approved})`],
+    ['rejected', `Rejected (${rejected})`],
+    ['mine',     'My Requests'],
+  ];
+
   return `
     <div class="kpi-grid kpi-grid-mini" style="margin-bottom:16px;">
       <div class="kpi-card kpi-mini"><div class="kpi-label">Pending</div><div class="kpi-value" style="color:var(--warn);">${pending}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Approved</div><div class="kpi-value good">${approved}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Total Requests</div><div class="kpi-value">${PTO_REQUESTS.length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Rejected</div><div class="kpi-value" style="color:var(--gray-500);">${rejected}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Total Days Out</div><div class="kpi-value">${totalDays}</div></div>
     </div>
-    ${_laStubCard(
-      'PTO Requests',
-      'Submit, review, and approve PTO. All approved PTO will appear on the calendar for everyone. Personal reasons hidden from non-admins.',
-      'Batch 2'
-    )}`;
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;justify-content:space-between;">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${filterChips.map(([id, label]) => `
+          <button class="admin-tab${_ptoFilter === id ? ' active' : ''}" style="font-size:12px;padding:6px 12px;" onclick="_ptoSetFilter('${id}')">${label}</button>
+        `).join('')}
+      </div>
+      <div style="display:flex;gap:8px;">
+        ${canSubmit
+          ? `<button class="admin-action-btn" onclick="_ptoOpenSubmitModal()">+ Submit PTO</button>`
+          : `<button class="admin-action-btn" disabled style="opacity:.55;cursor:not-allowed;" title="No planning resource linked to your account">+ Submit PTO</button>`}
+      </div>
+    </div>
+
+    <div class="data-card" style="padding:0;overflow:hidden;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Resource</th>
+            <th>Dates</th>
+            <th>Days</th>
+            ${isAdmin ? `<th>Reason</th>` : ''}
+            <th>Status</th>
+            <th>Submitted</th>
+            <th style="width:160px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filtered.length === 0
+            ? `<tr><td colspan="${isAdmin ? 7 : 6}" style="text-align:center;padding:32px;color:var(--gray-400);">No PTO requests${_ptoFilter !== 'all' ? ' in this filter' : ' yet'}.</td></tr>`
+            : filtered.map(p => _ptoRowHTML(p, isAdmin, myResource)).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    ${!isAdmin ? `
+      <div style="margin-top:14px;padding:10px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:11px;color:#0c4a6e;">
+        ℹ All approved PTO is visible to everyone. Personal reasons are visible only to admins.
+      </div>` : ''}
+  `;
+}
+
+function _ptoRowHTML(p, isAdmin, myResource) {
+  const statusBadge = {
+    pending:   `<span class="badge badge-warn">Pending</span>`,
+    approved:  `<span class="badge badge-passed">Approved</span>`,
+    rejected:  `<span class="badge badge-failed">Rejected</span>`,
+    cancelled: `<span class="badge badge-notstarted">Cancelled</span>`,
+  }[p.status] || escapeHtml(p.status);
+
+  const isMine = myResource && p.resource_id === myResource.id;
+  const submitted = p.created_at ? new Date(p.created_at).toLocaleDateString('en-US',{ month:'short', day:'numeric' }) : '—';
+
+  let actions = '';
+  if (isAdmin && p.status === 'pending') {
+    actions = `
+      <button class="form-secondary" style="font-size:11px;padding:4px 8px;color:#16a34a;" onclick="_ptoReview('${p.id}','approve')">✓ Approve</button>
+      <button class="form-secondary" style="font-size:11px;padding:4px 8px;color:var(--bad);margin-left:4px;" onclick="_ptoReview('${p.id}','reject')">✕ Reject</button>`;
+  } else if (isAdmin && p.status !== 'pending') {
+    actions = `<button class="form-secondary" style="font-size:11px;padding:4px 8px;" onclick="_ptoReview('${p.id}','reopen')">↺ Reopen</button>`;
+  } else if (isMine && p.status === 'pending') {
+    actions = `<button class="form-secondary" style="font-size:11px;padding:4px 8px;color:var(--bad);" onclick="_ptoCancel('${p.id}')">Cancel</button>`;
+  } else {
+    actions = `<span style="font-size:11px;color:var(--gray-400);">—</span>`;
+  }
+
+  return `
+    <tr>
+      <td>${escapeHtml(_ptoResourceName(p.resource_id))}</td>
+      <td style="font-size:13px;">${escapeHtml(_ptoFmtRange(p))}</td>
+      <td style="font-size:13px;">${_ptoDays(p)}</td>
+      ${isAdmin ? `<td style="font-size:12px;color:var(--gray-600);max-width:240px;">${escapeHtml((p.reason || '').slice(0, 80))}${(p.reason || '').length > 80 ? '…' : ''}</td>` : ''}
+      <td>${statusBadge}</td>
+      <td style="font-size:12px;color:var(--gray-500);">${submitted}</td>
+      <td>${actions}</td>
+    </tr>`;
+}
+
+function _ptoSetFilter(f) { _ptoFilter = f; _renderLookaheadTabBody(); }
+
+// ── Submit PTO Modal ─────────────────────────────────────────
+function _ptoOpenSubmitModal() {
+  const isAdmin    = currentRoleUser?.role === 'admin';
+  const myResource = _ptoCurrentResource();
+
+  // Admins can pick any active resource; non-admins are locked to their own
+  const resourcePicker = isAdmin
+    ? `
+      <select id="pto-resource" class="form-input" required>
+        <option value="">— Select resource —</option>
+        ${PLANNING_RESOURCES.filter(r => r.is_active)
+          .sort((a,b) => a.display_name.localeCompare(b.display_name))
+          .map(r => `<option value="${r.id}" ${myResource && r.id === myResource.id ? 'selected' : ''}>${escapeHtml(r.display_name)}${r.initials ? ` (${escapeHtml(r.initials)})` : ''}</option>`)
+          .join('')}
+      </select>`
+    : `<input class="form-input" value="${escapeHtml(myResource?.display_name || 'No linked resource')}" disabled>
+       <input type="hidden" id="pto-resource" value="${myResource?.id || ''}">`;
+
+  const today = new Date().toISOString().slice(0,10);
+
+  modal({
+    title: 'Submit PTO Request',
+    sub:   'Submit a request for time off. Admin will review and approve.',
+    body: `
+      <div class="form-grid">
+        <div class="form-field form-field-full">
+          <label>Resource</label>
+          ${resourcePicker}
+        </div>
+        <div class="form-field">
+          <label>Start Date</label>
+          <input type="date" id="pto-start" class="form-input" value="${today}" required>
+        </div>
+        <div class="form-field">
+          <label>End Date</label>
+          <input type="date" id="pto-end" class="form-input" value="${today}" required>
+        </div>
+        <div class="form-field form-field-full">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="pto-partial" onchange="_ptoTogglePartial(this.checked)">
+            <span>Partial day only</span>
+          </label>
+        </div>
+        <div class="form-field" id="pto-partial-start-wrap" style="display:none;">
+          <label>Start Time</label>
+          <input type="time" id="pto-partial-start" class="form-input" value="09:00">
+        </div>
+        <div class="form-field" id="pto-partial-end-wrap" style="display:none;">
+          <label>End Time</label>
+          <input type="time" id="pto-partial-end" class="form-input" value="13:00">
+        </div>
+        <div class="form-field form-field-full">
+          <label>Reason</label>
+          <textarea id="pto-reason" class="form-input" rows="3" placeholder="Vacation, sick leave, family event, etc."></textarea>
+          <div style="font-size:11px;color:var(--gray-500);margin-top:4px;">ℹ Reason is visible to admins only.</div>
+        </div>
+      </div>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="_ptoSubmit()">Submit Request</button>
+    `,
+  });
+  document.getElementById('modal-overlay')?.classList.add('active');
+}
+
+function _ptoTogglePartial(on) {
+  document.getElementById('pto-partial-start-wrap').style.display = on ? '' : 'none';
+  document.getElementById('pto-partial-end-wrap').style.display   = on ? '' : 'none';
+  // Force same-day when partial
+  if (on) {
+    const start = document.getElementById('pto-start').value;
+    document.getElementById('pto-end').value = start;
+  }
+}
+
+async function _ptoSubmit() {
+  const resourceId = document.getElementById('pto-resource')?.value || '';
+  const startDate  = document.getElementById('pto-start').value;
+  const endDate    = document.getElementById('pto-end').value;
+  const partial    = document.getElementById('pto-partial').checked;
+  const partialS   = partial ? document.getElementById('pto-partial-start').value : null;
+  const partialE   = partial ? document.getElementById('pto-partial-end').value   : null;
+  const reason     = document.getElementById('pto-reason').value.trim();
+
+  if (!resourceId)          { toast('Resource is required', 'error'); return; }
+  if (!startDate || !endDate) { toast('Start and end dates required', 'error'); return; }
+  if (new Date(endDate) < new Date(startDate)) { toast('End date must be on or after start date', 'error'); return; }
+  if (partial && (!partialS || !partialE)) { toast('Partial day requires both times', 'error'); return; }
+  if (partial && partialE <= partialS) { toast('Partial end time must be after start time', 'error'); return; }
+
+  const btns = [...document.querySelectorAll('.modal-footer .form-submit')];
+  const btn = btns[btns.length - 1];
+  if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+
+  try {
+    await _dbInsert('pto_requests', [{
+      user_id:       currentProfile?.id || null,
+      resource_id:   resourceId,
+      start_date:    startDate,
+      end_date:      endDate,
+      partial_day:   partial,
+      partial_start: partialS,
+      partial_end:   partialE,
+      reason:        reason || null,
+      status:        'pending',
+    }]);
+    closeModal();
+    toast('PTO request submitted', 'success');
+    await loadPlanningData(true);
+    if (_lookaheadTab === 'pto') _renderLookaheadTabBody();
+  } catch(err) {
+    toast('Submit failed: ' + err.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Submit Request'; }
+  }
+}
+
+// ── Admin: approve / reject / reopen ─────────────────────────
+async function _ptoReview(id, action) {
+  if (currentRoleUser?.role !== 'admin') { toast('Admin only', 'error'); return; }
+  const req = PTO_REQUESTS.find(p => p.id === id);
+  if (!req) return;
+
+  const labels = { approve: 'Approve', reject: 'Reject', reopen: 'Reopen for review' };
+  const newStatus = { approve: 'approved', reject: 'rejected', reopen: 'pending' }[action];
+  const promptNote = action === 'reject' ? 'Reason for rejection (optional):'
+                  : action === 'approve' ? 'Review notes (optional):'
+                  : 'Notes (optional):';
+  const note = prompt(`${labels[action]} PTO for ${_ptoResourceName(req.resource_id)} (${_ptoFmtRange(req)})\n\n${promptNote}`);
+  if (note === null) return; // cancelled
+
+  try {
+    await _dbUpdate('pto_requests', {
+      status:       newStatus,
+      reviewed_by:  currentProfile?.id || null,
+      reviewed_at:  new Date().toISOString(),
+      review_notes: note || null,
+    }, { id });
+    toast(`PTO ${newStatus}`, 'success');
+    await loadPlanningData(true);
+    if (_lookaheadTab === 'pto') _renderLookaheadTabBody();
+  } catch(err) {
+    toast('Update failed: ' + err.message, 'error');
+  }
+}
+
+async function _ptoCancel(id) {
+  const req = PTO_REQUESTS.find(p => p.id === id);
+  if (!req) return;
+  if (!confirm(`Cancel your PTO request for ${_ptoFmtRange(req)}?`)) return;
+  try {
+    await _dbUpdate('pto_requests', { status: 'cancelled' }, { id });
+    toast('Request cancelled', 'success');
+    await loadPlanningData(true);
+    if (_lookaheadTab === 'pto') _renderLookaheadTabBody();
+  } catch(err) {
+    toast('Cancel failed: ' + err.message, 'error');
+  }
+}
+
+// ── PTO conflict detection utility (used by Batch 4 calendar) ─
+function _ptoOverlapsRange(resourceId, dateISO, startTime, endTime) {
+  // Returns the conflicting approved PTO row or null
+  if (!resourceId || !dateISO) return null;
+  const target = new Date(dateISO + 'T00:00:00');
+  const candidates = PTO_REQUESTS.filter(p =>
+    p.status === 'approved' &&
+    p.resource_id === resourceId
+  );
+  for (const p of candidates) {
+    const s = new Date(p.start_date + 'T00:00:00');
+    const e = new Date(p.end_date   + 'T00:00:00');
+    if (target < s || target > e) continue;
+    if (!p.partial_day) return p;
+    // Partial day: check time overlap if event has times
+    if (!startTime || !endTime || !p.partial_start || !p.partial_end) return p;
+    if (startTime < p.partial_end && endTime > p.partial_start) return p;
+  }
+  return null;
+}
+
+function _ptoActiveOnDate(dateISO) {
+  // Returns array of { request, resource } for all approved PTO active on dateISO
+  if (!dateISO) return [];
+  const target = new Date(dateISO + 'T00:00:00');
+  return PTO_REQUESTS
+    .filter(p => p.status === 'approved')
+    .filter(p => {
+      const s = new Date(p.start_date + 'T00:00:00');
+      const e = new Date(p.end_date   + 'T00:00:00');
+      return target >= s && target <= e;
+    })
+    .map(p => ({
+      request:  p,
+      resource: PLANNING_RESOURCES.find(r => r.id === p.resource_id) || null,
+    }));
 }
 
 // ── Main Admin Planning page render ──────────────────────────
