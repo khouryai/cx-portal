@@ -322,6 +322,7 @@ function showPage(name) {
   if (name === 'admin-assets')     renderAdminAssets();
   if (name === 'rma')              renderRMA();
   if (name === 'schedule')         renderSchedulePage();
+  if (name === 'meetings')         { loadMeetings().then(() => { loadMtgTemplates(); renderMeetings(); }); }
   window.scrollTo(0, 0);
 }
 
@@ -11683,4 +11684,1199 @@ async function _rmaSendEmail(rma, eventType, oldStatus) {
       body: JSON.stringify({ rma, creatorEmail: rma.created_by_email || '', eventType, oldStatus }),
     });
   } catch(e) { console.warn('[_rmaSendEmail]', e.message); }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   MEETINGS TOOL
+   ═══════════════════════════════════════════════════════════════ */
+
+// ─── State ────────────────────────────────────────────────────
+let MEETINGS         = [];
+let MTG_TEMPLATES    = [];
+let _mtgDetailId     = null;
+let _mtgDetail       = null; // { meeting, categories, items, attendees, actionItems }
+let _mtgPrevMtgs     = [];
+let _mtgItemOpen     = {};
+let _mtgSearch       = '';
+let _mtgSeriesFilter = '';
+let _mtgStatusFilter = '';
+
+// ─── Data Loaders ─────────────────────────────────────────────
+async function loadMeetings() {
+  try { MEETINGS = await _fetchAnon('meetings?select=*&order=meeting_date.desc') || []; }
+  catch(e) { console.warn('[loadMeetings]', e.message); }
+}
+
+async function loadMtgTemplates() {
+  try { MTG_TEMPLATES = await _fetchAnon('meeting_templates?select=*&order=name.asc') || []; }
+  catch(e) { console.warn('[loadMtgTemplates]', e.message); }
+}
+
+async function _mtgLoadDetail(id) {
+  const [mtg, cats, items, att, ai] = await Promise.all([
+    _fetchAnon(`meetings?id=eq.${id}&select=*`).then(r => (r||[])[0]),
+    _fetchAnon(`meeting_categories?meeting_id=eq.${id}&select=*&order=sort_order.asc`),
+    _fetchAnon(`meeting_items?meeting_id=eq.${id}&select=*&order=sort_order.asc`),
+    _fetchAnon(`meeting_attendees?meeting_id=eq.${id}&select=*&order=name.asc`),
+    _fetchAnon(`meeting_action_items?meeting_id=eq.${id}&select=*&order=created_at.asc`),
+  ]);
+  _mtgDetail = {
+    meeting:     mtg  || {},
+    categories:  cats || [],
+    items:       items || [],
+    attendees:   att  || [],
+    actionItems: ai   || [],
+  };
+  _mtgPrevMtgs = mtg?.series
+    ? MEETINGS
+        .filter(m => m.series === mtg.series && m.id !== id && m.status === 'Minutes')
+        .sort((a, b) => new Date(b.meeting_date) - new Date(a.meeting_date))
+        .slice(0, 2)
+    : [];
+}
+
+// ─── Main Render Router ───────────────────────────────────────
+async function renderMeetings() {
+  const el = document.getElementById('mtg-content');
+  if (!el) return;
+  if (_mtgDetailId) {
+    el.innerHTML = '<p style="text-align:center;padding:60px;color:var(--gray-500);">Loading…</p>';
+    try {
+      await _mtgLoadDetail(_mtgDetailId);
+      el.innerHTML = _mtgDetailPageHTML();
+    } catch(e) {
+      el.innerHTML = `<p style="color:var(--bad);padding:20px;">Error loading meeting: ${escapeHtml(e.message)}</p>`;
+    }
+  } else {
+    el.innerHTML = _mtgListPageHTML();
+  }
+}
+
+// ─── LIST PAGE ────────────────────────────────────────────────
+function _mtgListPageHTML() {
+  const isAdmin = currentRoleUser?.role === 'admin';
+  const series  = [...new Set(MEETINGS.map(m => m.series).filter(Boolean))].sort();
+
+  const filtered = MEETINGS.filter(m => {
+    const s = _mtgSearch.toLowerCase();
+    if (s && !((m.title||'').toLowerCase().includes(s) || (m.series||'').toLowerCase().includes(s))) return false;
+    if (_mtgSeriesFilter && m.series !== _mtgSeriesFilter) return false;
+    if (_mtgStatusFilter && m.status !== _mtgStatusFilter) return false;
+    return true;
+  });
+
+  const grouped = {}, noSeries = [];
+  filtered.forEach(m => m.series ? (grouped[m.series] = grouped[m.series] || []).push(m) : noSeries.push(m));
+
+  let rowsHTML = '';
+  Object.entries(grouped).forEach(([ser, mtgs]) => {
+    rowsHTML += `
+      <tr class="mtg-series-hdr" style="background:var(--gray-50);cursor:pointer;" onclick="_mtgToggleSeries(this)">
+        <td colspan="6" style="padding:10px 14px;font-weight:600;font-size:13px;border-bottom:1px solid var(--gray-200);">
+          <span class="mtg-chev" style="display:inline-block;margin-right:8px;transition:transform .2s;transform:rotate(90deg);">▶</span>
+          ${escapeHtml(ser)}
+          <span style="font-weight:400;font-size:12px;color:var(--gray-400);margin-left:6px;">(${mtgs.length})</span>
+        </td>
+      </tr>
+      ${mtgs.map(m => _mtgListRowHTML(m, true, isAdmin)).join('')}`;
+  });
+  noSeries.forEach(m => { rowsHTML += _mtgListRowHTML(m, false, isAdmin); });
+
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;gap:12px;flex-wrap:wrap;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <input class="form-input" placeholder="🔍 Search meetings…" style="width:210px;"
+          value="${escapeHtml(_mtgSearch)}" oninput="_mtgSearch=this.value;renderMeetings()">
+        <select class="form-input" style="width:210px;" onchange="_mtgSeriesFilter=this.value;renderMeetings()">
+          <option value="">All Series</option>
+          ${series.map(s => `<option value="${escapeHtml(s)}" ${_mtgSeriesFilter===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+        </select>
+        <select class="form-input" style="width:130px;" onchange="_mtgStatusFilter=this.value;renderMeetings()">
+          <option value="">All Statuses</option>
+          <option value="Agenda"  ${_mtgStatusFilter==='Agenda' ?'selected':''}>Agenda</option>
+          <option value="Minutes" ${_mtgStatusFilter==='Minutes'?'selected':''}>Minutes</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;">
+        ${isAdmin ? `<button class="form-secondary" onclick="openMtgTemplatesModal()">⚙ Templates</button>` : ''}
+        ${isAdmin ? `<button class="form-primary" onclick="openMtgModal()">+ Create Meeting</button>` : ''}
+      </div>
+    </div>
+    ${filtered.length === 0
+      ? '<p style="text-align:center;padding:60px;color:var(--gray-400);">No meetings found.</p>'
+      : `<div style="background:white;border-radius:8px;border:1px solid var(--gray-200);overflow:hidden;">
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+              <tr style="background:var(--gray-50);border-bottom:2px solid var(--gray-200);">
+                <th style="padding:10px 14px;text-align:left;font-weight:600;">Title</th>
+                <th style="padding:10px 8px;text-align:left;font-weight:600;width:50px;">#</th>
+                <th style="padding:10px 8px;text-align:left;font-weight:600;white-space:nowrap;">Date</th>
+                <th style="padding:10px 8px;text-align:left;font-weight:600;">Location</th>
+                <th style="padding:10px 8px;text-align:left;font-weight:600;">Status</th>
+                <th style="padding:10px 8px;width:130px;"></th>
+              </tr>
+            </thead>
+            <tbody>${rowsHTML}</tbody>
+          </table>
+        </div>`}`;
+}
+
+function _mtgListRowHTML(m, indented, isAdmin) {
+  const pad = indented ? 'padding-left:36px;' : 'padding-left:14px;';
+  return `
+    <tr class="${indented?'mtg-series-row':''}"
+      style="border-bottom:1px solid var(--gray-100);cursor:pointer;transition:background .12s;"
+      onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''"
+      onclick="_mtgOpenDetail('${m.id}')">
+      <td style="padding:10px 14px 10px 0;${pad}font-weight:500;">${escapeHtml(m.title||'')}</td>
+      <td style="padding:10px 8px;color:var(--gray-400);">${m.meeting_number||'—'}</td>
+      <td style="padding:10px 8px;white-space:nowrap;">${m.meeting_date ? _fmtDate(m.meeting_date) : '—'}</td>
+      <td style="padding:10px 8px;color:var(--gray-500);">${escapeHtml(m.location||'—')}</td>
+      <td style="padding:10px 8px;">${_mtgStatusBadge(m.status)}</td>
+      <td style="padding:10px 8px;" onclick="event.stopPropagation()">
+        ${isAdmin ? `
+          <button class="form-secondary" style="padding:3px 10px;font-size:12px;" onclick="openMtgModal('${m.id}')">Edit</button>
+          <button class="form-secondary" style="padding:3px 10px;font-size:12px;color:var(--bad);" onclick="deleteMtg('${m.id}')">Del</button>` : ''}
+      </td>
+    </tr>`;
+}
+
+function _mtgToggleSeries(hdrRow) {
+  const chev = hdrRow.querySelector('.mtg-chev');
+  let row = hdrRow.nextElementSibling;
+  const willShow = row?.style.display === 'none';
+  while (row && row.classList.contains('mtg-series-row')) {
+    row.style.display = willShow ? '' : 'none';
+    row = row.nextElementSibling;
+  }
+  if (chev) chev.style.transform = willShow ? 'rotate(90deg)' : 'rotate(0deg)';
+}
+
+function _mtgStatusBadge(status) {
+  const c = status === 'Minutes' ? '#0072CE' : '#C8001A';
+  return `<span style="background:${c}18;color:${c};border:1px solid ${c}40;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;">${escapeHtml(status||'Agenda')}</span>`;
+}
+
+async function _mtgOpenDetail(id) {
+  _mtgDetailId = id;
+  _mtgItemOpen = {};
+  await renderMeetings();
+}
+
+function _mtgCloseDetail() {
+  _mtgDetailId = null;
+  renderMeetings();
+}
+
+// ─── DETAIL PAGE ─────────────────────────────────────────────
+function _mtgDetailPageHTML() {
+  const { meeting: m, categories, items, attendees, actionItems } = _mtgDetail;
+  const isAdmin    = currentRoleUser?.role === 'admin';
+  const inMinutes  = m.status === 'Minutes';
+  const shortTitle = (m.title||'').length > 48 ? (m.title||'').slice(0,48)+'…' : (m.title||'');
+  return `
+    <div>
+      <div style="font-size:13px;color:var(--gray-500);margin-bottom:14px;">
+        <span style="cursor:pointer;color:var(--primary);" onclick="_mtgCloseDetail()">← Meetings</span>
+        <span style="margin:0 6px;color:var(--gray-300);">›</span>
+        <span>${escapeHtml(shortTitle)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+        <h2 style="margin:0;font-size:18px;font-weight:700;line-height:1.4;">
+          ${inMinutes ? `<span style="color:var(--gray-400);font-weight:400;font-size:15px;">Meeting Minutes for </span>` : ''}
+          ${escapeHtml(m.title||'')}
+          &nbsp;${_mtgStatusBadge(m.status)}
+        </h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          ${isAdmin ? `<button class="form-primary" onclick="createFollowUpMtg('${m.id}')">Follow-Up Meeting</button>` : ''}
+          <button class="form-secondary" onclick="_mtgPrintPDF('${m.id}')">⬇ Export PDF</button>
+          ${isAdmin && !inMinutes ? `<button class="form-secondary" onclick="convertToMinutesMode('${m.id}')">📝 Convert to Minutes</button>` : ''}
+          ${isAdmin ? `<button class="form-secondary" onclick="openMtgModal('${m.id}')">✏ Edit</button>` : ''}
+        </div>
+      </div>
+      ${_mtgInfoHTML(m, isAdmin)}
+      ${_mtgAttendeesHTML(attendees, m.id, isAdmin)}
+      ${_mtgAgendaHTML(m, categories, items, actionItems, isAdmin, inMinutes)}
+      ${_mtgPrevMinutesHTML()}
+    </div>`;
+}
+
+function _mtgInfoHTML(m, isAdmin) {
+  const f = (label, val, raw) => `
+    <div>
+      <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:3px;">${label}</div>
+      <div style="font-size:13px;">${raw ? val : escapeHtml(val||'—')}</div>
+    </div>`;
+  return `
+    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;margin-bottom:14px;overflow:hidden;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--gray-200);">
+        <span style="font-weight:600;font-size:14px;">Meeting Information</span>
+        ${isAdmin ? `<button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgModal('${m.id}')">✏ Edit</button>` : ''}
+      </div>
+      <div style="padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:14px 32px;">
+        ${f('Number', m.meeting_number ? String(m.meeting_number) : '—')}
+        ${f('Name', m.title)}
+        ${f('Meeting Link', m.meeting_link
+          ? `<a href="${escapeHtml(m.meeting_link)}" target="_blank" style="color:var(--primary);">${escapeHtml(m.meeting_link)}</a>`
+          : '—', true)}
+        ${f('Location', m.location)}
+        ${f('Date', m.meeting_date ? _fmtDate(m.meeting_date) : '—')}
+        ${f('Timezone', m.timezone || 'America/Los_Angeles')}
+        ${f('Start Time', m.start_time)}
+        ${f('End Time', m.end_time)}
+        ${f('Private Meeting', m.is_private ? 'Yes' : 'No')}
+        ${f('Draft Meeting',   m.is_draft   ? 'Yes' : 'No')}
+      </div>
+      ${m.overview ? `<div style="padding:0 16px 16px;">
+        <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:4px;">Overview</div>
+        <div style="font-size:13px;color:var(--gray-700);">${escapeHtml(m.overview)}</div>
+      </div>` : ''}
+    </div>`;
+}
+
+function _mtgAttendeesHTML(attendees, meetingId, isAdmin) {
+  return `
+    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;margin-bottom:14px;overflow:hidden;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--gray-200);">
+        <span style="font-weight:600;font-size:14px;">Attendees (${attendees.length})</span>
+        ${isAdmin ? `<div style="display:flex;gap:6px;">
+          <button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgImportAttendeesModal('${meetingId}')">📥 Import CSV</button>
+          <button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgAddAttendeeModal('${meetingId}')">+ Add</button>
+        </div>` : ''}
+      </div>
+      <div style="padding:14px 16px;">
+        ${attendees.length === 0
+          ? '<p style="color:var(--gray-400);font-size:13px;margin:0;">No attendees added yet.</p>'
+          : `<div style="display:flex;flex-wrap:wrap;gap:7px;">
+              ${attendees.map(a => `
+                <div style="display:flex;align-items:center;gap:6px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:20px;padding:4px 12px;font-size:13px;">
+                  <span style="width:7px;height:7px;border-radius:50%;background:${a.attended?'#27ae60':'#bbb'};display:inline-block;flex-shrink:0;"></span>
+                  <span>${escapeHtml(a.name)}</span>
+                  ${a.company ? `<span style="color:var(--gray-400);font-size:11px;">(${escapeHtml(a.company)})</span>` : ''}
+                  ${isAdmin ? `<button style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:15px;line-height:1;padding:0 0 0 2px;" onclick="deleteMtgAttendee('${a.id}','${meetingId}')">×</button>` : ''}
+                </div>`).join('')}
+            </div>`}
+      </div>
+    </div>`;
+}
+
+function _mtgAgendaHTML(m, categories, items, actionItems, isAdmin, inMinutes) {
+  return `
+    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:2px solid var(--gray-200);">
+        <span style="font-weight:600;font-size:14px;">Agenda</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select class="form-input" style="width:130px;padding:4px 8px;font-size:12px;" onchange="_mtgFilterItems(this.value)">
+            <option value="">All Statuses</option>
+            <option value="Open">Open</option>
+            <option value="Closed">Closed</option>
+          </select>
+          ${isAdmin ? `<button class="form-secondary" style="padding:4px 12px;font-size:12px;" onclick="openMtgCategoryModal(null,'${m.id}')">+ Add Category</button>` : ''}
+        </div>
+      </div>
+      <div id="mtg-agenda-body">
+        ${categories.length === 0
+          ? '<p style="padding:20px 16px;color:var(--gray-400);font-size:13px;">No agenda categories yet. Click "+ Add Category" to get started.</p>'
+          : categories.map((cat, ci) => _mtgCategoryHTML(cat, ci, items, actionItems, m.id, inMinutes, isAdmin)).join('')}
+      </div>
+    </div>`;
+}
+
+function _mtgCategoryHTML(cat, catIdx, items, actionItems, meetingId, inMinutes, isAdmin) {
+  const catItems = items.filter(i => i.category_id === cat.id);
+  return `
+    <div class="mtg-cat" style="border-bottom:1px solid var(--gray-100);">
+      <div style="display:flex;align-items:center;padding:11px 16px;background:#fafafa;gap:8px;cursor:pointer;" onclick="_mtgToggleCat('${cat.id}')">
+        <span style="color:var(--gray-300);font-size:12px;user-select:none;">⋮⋮</span>
+        <span id="cat-chev-${cat.id}" style="font-size:11px;color:var(--primary);transition:transform .2s;display:inline-block;">▼</span>
+        <span style="font-weight:700;font-size:14px;flex:1;">${escapeHtml(cat.title)}</span>
+        ${isAdmin ? `<span onclick="event.stopPropagation()">
+          <button class="form-secondary" style="padding:2px 8px;font-size:12px;" onclick="openMtgCategoryModal('${cat.id}','${meetingId}')">✏</button>
+          <button class="form-secondary" style="padding:2px 8px;font-size:12px;color:var(--bad);" onclick="deleteMtgCategory('${cat.id}','${meetingId}')">🗑</button>
+        </span>` : ''}
+      </div>
+      <div id="cat-body-${cat.id}">
+        ${catItems.map((item, ii) => _mtgItemHTML(item, catIdx+1, ii+1, actionItems, meetingId, inMinutes, isAdmin)).join('')}
+        ${isAdmin ? `<div style="padding:8px 16px;"><button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgItemModal(null,'${cat.id}','${meetingId}')">+ Add Item</button></div>` : ''}
+      </div>
+    </div>`;
+}
+
+function _mtgToggleCat(catId) {
+  const body = document.getElementById(`cat-body-${catId}`);
+  const chev = document.getElementById(`cat-chev-${catId}`);
+  if (!body) return;
+  const hide = body.style.display !== 'none';
+  body.style.display = hide ? 'none' : '';
+  if (chev) chev.style.transform = hide ? 'rotate(-90deg)' : 'rotate(0deg)';
+}
+
+function _mtgItemHTML(item, catNum, itemNum, actionItems, meetingId, inMinutes, isAdmin) {
+  const num      = `${catNum}.${itemNum}`;
+  const itemAI   = actionItems.filter(a => a.meeting_item_id === item.id);
+  const expanded = !!_mtgItemOpen[item.id];
+  const sc       = item.status === 'Closed' ? '#27ae60' : '#E67E22';
+
+  return `
+    <div class="mtg-item" data-item-id="${item.id}" data-status="${escapeHtml(item.status||'Open')}" style="border-top:1px solid var(--gray-100);">
+      <div style="display:flex;align-items:center;padding:10px 16px;cursor:pointer;gap:8px;" onclick="_mtgToggleItem('${item.id}')">
+        <span style="color:var(--gray-300);font-size:11px;user-select:none;">⋮⋮</span>
+        <span style="color:var(--primary);font-weight:700;font-size:12px;min-width:30px;">${escapeHtml(num)}</span>
+        <span style="flex:1;font-size:13px;font-weight:500;">${escapeHtml(item.title)}</span>
+        <span style="background:${sc}18;color:${sc};border:1px solid ${sc}40;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">${escapeHtml(item.status||'Open')}</span>
+        ${isAdmin ? `<span onclick="event.stopPropagation()">
+          <button class="form-secondary" style="padding:2px 8px;font-size:12px;" onclick="openMtgItemModal('${item.id}','${item.category_id}','${meetingId}')">✏</button>
+          <button class="form-secondary" style="padding:2px 8px;font-size:12px;color:var(--bad);" onclick="deleteMtgItem('${item.id}','${meetingId}')">🗑</button>
+        </span>` : ''}
+      </div>
+      <div id="item-body-${item.id}" style="display:${expanded?'':'none'};border-top:1px solid var(--gray-100);">
+        <div style="display:grid;grid-template-columns:220px 1fr;min-height:120px;">
+          <!-- Left meta panel -->
+          <div style="padding:14px 16px;border-right:1px solid var(--gray-100);background:var(--gray-50);font-size:13px;">
+            ${[
+              ['Item Assignee', item.assignee||'—'],
+              ['Due Date',      item.due_date ? _fmtDate(item.due_date) : '—'],
+              ['Priority',      item.priority||'—'],
+            ].map(([l,v]) => `
+              <div style="margin-bottom:12px;">
+                <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:3px;">${l}</div>
+                <div>${escapeHtml(v)}</div>
+              </div>`).join('')}
+            <div style="margin-bottom:14px;">
+              <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:3px;">Item Status</div>
+              <span style="background:${sc}18;color:${sc};border:1px solid ${sc}40;padding:2px 8px;border-radius:10px;font-size:11px;">${escapeHtml(item.status||'Open')}</span>
+            </div>
+            <!-- Action Items -->
+            <div style="border-top:1px solid var(--gray-200);padding-top:12px;">
+              <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:8px;">Action Items (${itemAI.length})</div>
+              ${itemAI.length === 0
+                ? '<div style="color:var(--gray-400);font-size:12px;">None</div>'
+                : itemAI.map(ai => {
+                    const aic = ai.status === 'Closed' ? '#27ae60' : '#E67E22';
+                    return `<div style="background:white;border:1px solid var(--gray-200);border-radius:5px;padding:7px 9px;margin-bottom:6px;font-size:12px;">
+                      <div style="font-weight:500;margin-bottom:3px;">${escapeHtml(ai.description)}</div>
+                      ${ai.assignee ? `<div style="color:var(--gray-500);">→ ${escapeHtml(ai.assignee)}</div>` : ''}
+                      ${ai.due_date ? `<div style="color:var(--gray-400);">Due: ${_fmtDate(ai.due_date)}</div>` : ''}
+                      <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+                        <span style="background:${aic}18;color:${aic};border:1px solid ${aic}40;padding:1px 7px;border-radius:8px;font-size:10px;">${escapeHtml(ai.status||'Open')}</span>
+                        ${isAdmin ? `
+                          <button style="background:none;border:none;cursor:pointer;color:var(--primary);font-size:11px;padding:0;" onclick="openMtgActionItemModal('${ai.id}','${item.id}','${meetingId}')">Edit</button>
+                          <button style="background:none;border:none;cursor:pointer;color:var(--bad);font-size:11px;padding:0;" onclick="deleteMtgActionItem('${ai.id}','${meetingId}')">Del</button>` : ''}
+                      </div>
+                    </div>`;
+                  }).join('')}
+              ${isAdmin ? `<button class="form-secondary" style="padding:3px 10px;font-size:11px;margin-top:4px;" onclick="openMtgActionItemModal(null,'${item.id}','${meetingId}')">+ Action Item</button>` : ''}
+            </div>
+          </div>
+          <!-- Right content panel -->
+          <div style="padding:14px 16px;">
+            <div style="margin-bottom:${inMinutes?'14px':'0'};">
+              <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:6px;">Description</div>
+              <div style="font-size:13px;color:${item.description?'var(--gray-700)':'var(--gray-400)'};">${item.description ? escapeHtml(item.description) : 'No description.'}</div>
+            </div>
+            ${inMinutes ? `
+            <div style="border-top:1px solid var(--gray-100);padding-top:14px;margin-top:14px;">
+              <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:8px;">Official Documented Meeting Minutes</div>
+              ${isAdmin
+                ? `${_mtgRichEditorHTML('minutes-'+item.id, item.minutes_notes||'')}
+                   <button class="form-secondary" style="margin-top:8px;padding:4px 14px;font-size:12px;" onclick="saveMtgItemMinutes('${item.id}')">💾 Save Notes</button>`
+                : `<div style="font-size:13px;min-height:60px;color:${item.minutes_notes?'var(--gray-700)':'var(--gray-400)'};">${item.minutes_notes || 'No minutes recorded.'}</div>`}
+            </div>` : ''}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function _mtgToggleItem(itemId) {
+  _mtgItemOpen[itemId] = !_mtgItemOpen[itemId];
+  const el = document.getElementById(`item-body-${itemId}`);
+  if (el) el.style.display = _mtgItemOpen[itemId] ? '' : 'none';
+}
+
+function _mtgFilterItems(status) {
+  document.querySelectorAll('.mtg-item').forEach(el => {
+    el.style.display = (!status || el.dataset.status === status) ? '' : 'none';
+  });
+}
+
+// ─── Rich Text Editor ─────────────────────────────────────────
+function _mtgRichEditorHTML(id, content) {
+  const btns = [
+    ['bold',               '<b>B</b>',   'Bold'],
+    ['italic',             '<i>I</i>',   'Italic'],
+    ['underline',          '<u>U</u>',   'Underline'],
+    ['insertUnorderedList','• List',     'Bullet List'],
+    ['insertOrderedList',  '1. List',    'Numbered List'],
+    ['indent',             '⇥ Indent',  'Indent'],
+    ['outdent',            '⇤ Outdent', 'Outdent'],
+  ];
+  return `
+    <div style="border:1px solid var(--gray-300);border-radius:6px;overflow:hidden;">
+      <div style="background:var(--gray-50);border-bottom:1px solid var(--gray-200);padding:4px 6px;display:flex;gap:3px;flex-wrap:wrap;">
+        ${btns.map(([cmd, lbl, title]) => `
+          <button title="${title}" type="button"
+            style="background:white;border:1px solid var(--gray-200);border-radius:3px;padding:2px 8px;cursor:pointer;font-size:12px;line-height:1.5;"
+            onmousedown="event.preventDefault();document.execCommand('${cmd}',false,null)">${lbl}</button>`).join('')}
+      </div>
+      <div id="${id}" contenteditable="true"
+        style="min-height:140px;padding:10px 12px;font-size:13px;outline:none;line-height:1.6;"
+      >${content}</div>
+    </div>`;
+}
+
+async function saveMtgItemMinutes(itemId) {
+  const el = document.getElementById(`minutes-${itemId}`);
+  if (!el) return;
+  try {
+    await _dbUpdate('meeting_items', { minutes_notes: el.innerHTML, updated_at: new Date().toISOString() }, { id: itemId });
+    const item = _mtgDetail?.items?.find(i => i.id === itemId);
+    if (item) item.minutes_notes = el.innerHTML;
+    toast('Minutes saved', 'success');
+  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+// ─── Previous Meetings Panel ──────────────────────────────────
+function _mtgPrevMinutesHTML() {
+  if (!_mtgPrevMtgs?.length) return '';
+  return `
+    <div style="margin-top:16px;">
+      <div style="font-size:12px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Previous Meeting Minutes</div>
+      ${_mtgPrevMtgs.map(pm => `
+        <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;margin-bottom:10px;overflow:hidden;">
+          <div style="padding:12px 16px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:var(--gray-50);border-bottom:1px solid var(--gray-200);"
+            onclick="_mtgTogglePrev('prev-${pm.id}')">
+            <span style="font-weight:600;font-size:14px;">
+              ${escapeHtml(pm.title||'')}
+              <span style="font-weight:400;color:var(--gray-400);font-size:13px;"> — ${pm.meeting_date ? _fmtDate(pm.meeting_date) : ''}</span>
+            </span>
+            <span style="font-size:12px;color:var(--primary);">▼ Expand</span>
+          </div>
+          <div id="prev-${pm.id}" style="display:none;padding:14px 16px;">
+            <button class="form-secondary" style="padding:4px 14px;font-size:12px;" onclick="_mtgOpenDetail('${pm.id}')">View Full Meeting →</button>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function _mtgTogglePrev(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+// ─── CREATE / EDIT MEETING MODAL ─────────────────────────────
+function openMtgModal(editId) {
+  const m      = editId ? (MEETINGS.find(x => x.id === editId) || {}) : {};
+  const series = [...new Set(MEETINGS.map(x => x.series).filter(Boolean))].sort();
+  modal({
+    title: editId ? 'Edit Meeting' : 'Create Meeting',
+    size: 'large',
+    body: `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+        <div style="grid-column:span 2;">
+          <label class="form-label">Title *</label>
+          <input class="form-input" id="mtg-title" value="${escapeHtml(m.title||'')}" placeholder="e.g. BART CBTC: T&C Readiness Meeting">
+        </div>
+        <div style="grid-column:span 2;">
+          <label class="form-label">Series <span style="font-weight:400;color:var(--gray-400);font-size:11px;">(groups meetings in the list)</span></label>
+          <input class="form-input" id="mtg-series" value="${escapeHtml(m.series||'')}" list="mtg-series-list" placeholder="e.g. BART CBTC: T&C Readiness Meeting">
+          <datalist id="mtg-series-list">${series.map(s => `<option value="${escapeHtml(s)}">`).join('')}</datalist>
+        </div>
+        <div>
+          <label class="form-label">Date</label>
+          <input class="form-input" type="date" id="mtg-date" value="${m.meeting_date||''}">
+        </div>
+        <div>
+          <label class="form-label">Location</label>
+          <input class="form-input" id="mtg-location" value="${escapeHtml(m.location||'')}">
+        </div>
+        <div>
+          <label class="form-label">Start Time</label>
+          <input class="form-input" id="mtg-start" value="${escapeHtml(m.start_time||'')}" placeholder="10:00 AM">
+        </div>
+        <div>
+          <label class="form-label">End Time</label>
+          <input class="form-input" id="mtg-end" value="${escapeHtml(m.end_time||'')}" placeholder="11:00 AM">
+        </div>
+        <div style="grid-column:span 2;">
+          <label class="form-label">Meeting Link</label>
+          <input class="form-input" id="mtg-link" value="${escapeHtml(m.meeting_link||'')}" placeholder="https://teams.microsoft.com/…">
+        </div>
+        <div style="grid-column:span 2;">
+          <label class="form-label">Overview / Description</label>
+          <textarea class="form-input" id="mtg-overview" rows="3" placeholder="Brief summary of this meeting's purpose…">${escapeHtml(m.overview||'')}</textarea>
+        </div>
+        <div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+            <input type="checkbox" id="mtg-private" ${m.is_private?'checked':''}> Private Meeting
+          </label>
+        </div>
+        <div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+            <input type="checkbox" id="mtg-draft" ${m.is_draft?'checked':''}> Draft Meeting
+          </label>
+        </div>
+        ${!editId && MTG_TEMPLATES.length > 0 ? `
+        <div style="grid-column:span 2;">
+          <label class="form-label">Use Template <span style="font-weight:400;color:var(--gray-400);font-size:11px;">(optional — pre-populates agenda)</span></label>
+          <select class="form-input" id="mtg-template">
+            <option value="">No template — start blank</option>
+            ${MTG_TEMPLATES.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}
+          </select>
+        </div>` : `<div style="display:none"><input id="mtg-template" value=""></div>`}
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-primary" onclick="saveMtg('${editId||''}')">${editId ? 'Save Changes' : 'Create Meeting'}</button>`,
+  });
+  setTimeout(() => document.getElementById('mtg-title')?.focus(), 100);
+}
+
+async function saveMtg(editId) {
+  const title = document.getElementById('mtg-title')?.value?.trim();
+  if (!title) { toast('Title is required', 'error'); return; }
+  const payload = {
+    title,
+    series:       document.getElementById('mtg-series')?.value?.trim()    || null,
+    meeting_date: document.getElementById('mtg-date')?.value              || null,
+    location:     document.getElementById('mtg-location')?.value?.trim()  || null,
+    start_time:   document.getElementById('mtg-start')?.value?.trim()     || null,
+    end_time:     document.getElementById('mtg-end')?.value?.trim()       || null,
+    meeting_link: document.getElementById('mtg-link')?.value?.trim()      || null,
+    overview:     document.getElementById('mtg-overview')?.value?.trim()  || null,
+    is_private:   document.getElementById('mtg-private')?.checked  || false,
+    is_draft:     document.getElementById('mtg-draft')?.checked    || false,
+    updated_at:   new Date().toISOString(),
+    created_by:   currentRoleUser?.name || null,
+  };
+  try {
+    if (editId) {
+      await _dbUpdate('meetings', payload, { id: editId });
+      const idx = MEETINGS.findIndex(m => m.id === editId);
+      if (idx >= 0) Object.assign(MEETINGS[idx], payload);
+      if (_mtgDetail?.meeting?.id === editId) Object.assign(_mtgDetail.meeting, payload);
+      closeModal();
+      toast('Meeting updated', 'success');
+      if (_mtgDetailId) await renderMeetings(); else renderMeetings();
+    } else {
+      const templateId = document.getElementById('mtg-template')?.value || null;
+      payload.status     = 'Agenda';
+      payload.created_at = new Date().toISOString();
+      if (templateId) payload.template_id = templateId;
+      const [created] = await _dbInsert('meetings', [payload]);
+      MEETINGS.unshift(created);
+      if (templateId && created) await _mtgApplyTemplate(created.id, templateId);
+      closeModal();
+      toast('Meeting created', 'success');
+      _mtgDetailId = created.id;
+      _mtgItemOpen = {};
+      await renderMeetings();
+    }
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function _mtgApplyTemplate(meetingId, templateId) {
+  try {
+    const tmplCats = await _fetchAnon(`meeting_template_categories?template_id=eq.${templateId}&select=*&order=sort_order.asc`) || [];
+    for (const tc of tmplCats) {
+      const [cat] = await _dbInsert('meeting_categories', [{ meeting_id: meetingId, title: tc.title, sort_order: tc.sort_order || 0 }]);
+      const tmplItems = await _fetchAnon(`meeting_template_items?template_category_id=eq.${tc.id}&select=*&order=sort_order.asc`) || [];
+      for (const ti of tmplItems) {
+        await _dbInsert('meeting_items', [{
+          meeting_id: meetingId, category_id: cat.id, title: ti.title,
+          description: ti.description || null, sort_order: ti.sort_order || 0,
+          status: 'Open', meeting_origin_id: meetingId,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }]);
+      }
+    }
+  } catch(e) { console.warn('[_mtgApplyTemplate]', e.message); }
+}
+
+async function deleteMtg(id) {
+  if (!confirm('Delete this meeting and all its agenda items, minutes, and attendees?')) return;
+  try {
+    await _dbDelete('meetings', { id });
+    MEETINGS = MEETINGS.filter(m => m.id !== id);
+    if (_mtgDetailId === id) _mtgDetailId = null;
+    toast('Meeting deleted', 'success');
+    renderMeetings();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ─── CATEGORY MODAL ──────────────────────────────────────────
+function openMtgCategoryModal(editId, meetingId) {
+  const cat = editId ? (_mtgDetail?.categories?.find(c => c.id === editId) || {}) : {};
+  modal({
+    title: editId ? 'Edit Category' : 'Add Category',
+    body: `
+      <label class="form-label">Category Title *</label>
+      <input class="form-input" id="mtg-cat-title" value="${escapeHtml(cat.title||'')}" placeholder="e.g. T&C Activities">`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-primary" onclick="saveMtgCategory('${editId||''}','${meetingId}')">${editId ? 'Save' : 'Add Category'}</button>`,
+  });
+  setTimeout(() => document.getElementById('mtg-cat-title')?.focus(), 100);
+}
+
+async function saveMtgCategory(editId, meetingId) {
+  const title = document.getElementById('mtg-cat-title')?.value?.trim();
+  if (!title) { toast('Title required', 'error'); return; }
+  try {
+    if (editId) {
+      await _dbUpdate('meeting_categories', { title }, { id: editId });
+      const cat = _mtgDetail?.categories?.find(c => c.id === editId);
+      if (cat) cat.title = title;
+    } else {
+      const maxOrder = Math.max(0, ...(_mtgDetail?.categories||[]).map(c => c.sort_order||0));
+      const [cat] = await _dbInsert('meeting_categories', [{ meeting_id: meetingId, title, sort_order: maxOrder + 1 }]);
+      if (_mtgDetail) _mtgDetail.categories.push(cat);
+    }
+    closeModal();
+    await renderMeetings();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function deleteMtgCategory(catId, meetingId) {
+  if (!confirm('Delete this category and all its items?')) return;
+  try {
+    await _dbDelete('meeting_categories', { id: catId });
+    if (_mtgDetail) {
+      _mtgDetail.categories  = _mtgDetail.categories.filter(c => c.id !== catId);
+      _mtgDetail.items       = _mtgDetail.items.filter(i => i.category_id !== catId);
+    }
+    await renderMeetings();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ─── ITEM MODAL ──────────────────────────────────────────────
+function openMtgItemModal(editId, categoryId, meetingId) {
+  const item = editId ? (_mtgDetail?.items?.find(i => i.id === editId) || {}) : {};
+  modal({
+    title: editId ? 'Edit Agenda Item' : 'Add Agenda Item',
+    size: 'large',
+    body: `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+        <div style="grid-column:span 2;">
+          <label class="form-label">Item Title *</label>
+          <input class="form-input" id="mtg-item-title" value="${escapeHtml(item.title||'')}" placeholder="e.g. 2 Week Lookahead">
+        </div>
+        <div style="grid-column:span 2;">
+          <label class="form-label">Description</label>
+          <textarea class="form-input" id="mtg-item-desc" rows="3" placeholder="Brief description of this agenda item…">${escapeHtml(item.description||'')}</textarea>
+        </div>
+        <div>
+          <label class="form-label">Assignee</label>
+          <input class="form-input" id="mtg-item-assignee" value="${escapeHtml(item.assignee||'')}">
+        </div>
+        <div>
+          <label class="form-label">Due Date</label>
+          <input class="form-input" type="date" id="mtg-item-due" value="${item.due_date||''}">
+        </div>
+        <div>
+          <label class="form-label">Status</label>
+          <select class="form-input" id="mtg-item-status">
+            <option value="Open"   ${(item.status||'Open')==='Open'  ?'selected':''}>Open</option>
+            <option value="Closed" ${item.status==='Closed'?'selected':''}>Closed</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Priority</label>
+          <select class="form-input" id="mtg-item-priority">
+            <option value="">— None —</option>
+            ${['Low','Medium','High','Critical'].map(p => `<option value="${p}" ${item.priority===p?'selected':''}>${p}</option>`).join('')}
+          </select>
+        </div>
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-primary" onclick="saveMtgItem('${editId||''}','${categoryId}','${meetingId}')">${editId ? 'Save Changes' : 'Add Item'}</button>`,
+  });
+  setTimeout(() => document.getElementById('mtg-item-title')?.focus(), 100);
+}
+
+async function saveMtgItem(editId, categoryId, meetingId) {
+  const title = document.getElementById('mtg-item-title')?.value?.trim();
+  if (!title) { toast('Title required', 'error'); return; }
+  const payload = {
+    title,
+    description: document.getElementById('mtg-item-desc')?.value?.trim()     || null,
+    assignee:    document.getElementById('mtg-item-assignee')?.value?.trim()  || null,
+    due_date:    document.getElementById('mtg-item-due')?.value               || null,
+    status:      document.getElementById('mtg-item-status')?.value            || 'Open',
+    priority:    document.getElementById('mtg-item-priority')?.value          || null,
+    updated_at:  new Date().toISOString(),
+  };
+  try {
+    if (editId) {
+      await _dbUpdate('meeting_items', payload, { id: editId });
+      const item = _mtgDetail?.items?.find(i => i.id === editId);
+      if (item) Object.assign(item, payload);
+    } else {
+      const maxOrder = Math.max(0, ...(_mtgDetail?.items||[]).filter(i => i.category_id === categoryId).map(i => i.sort_order||0));
+      Object.assign(payload, {
+        category_id: categoryId, meeting_id: meetingId,
+        sort_order: maxOrder + 1, meeting_origin_id: meetingId,
+        created_at: new Date().toISOString(),
+      });
+      const [item] = await _dbInsert('meeting_items', [payload]);
+      if (_mtgDetail) _mtgDetail.items.push(item);
+    }
+    closeModal();
+    await renderMeetings();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function deleteMtgItem(itemId, meetingId) {
+  if (!confirm('Delete this agenda item and its action items?')) return;
+  try {
+    await _dbDelete('meeting_items', { id: itemId });
+    if (_mtgDetail) {
+      _mtgDetail.items       = _mtgDetail.items.filter(i => i.id !== itemId);
+      _mtgDetail.actionItems = _mtgDetail.actionItems.filter(a => a.meeting_item_id !== itemId);
+    }
+    await renderMeetings();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ─── ACTION ITEM MODAL ────────────────────────────────────────
+function openMtgActionItemModal(editId, itemId, meetingId) {
+  const ai = editId ? (_mtgDetail?.actionItems?.find(a => a.id === editId) || {}) : {};
+  modal({
+    title: editId ? 'Edit Action Item' : 'Add Action Item',
+    body: `
+      <div style="display:grid;gap:12px;">
+        <div>
+          <label class="form-label">Description *</label>
+          <textarea class="form-input" id="mtg-ai-desc" rows="2" placeholder="What needs to be done?">${escapeHtml(ai.description||'')}</textarea>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label class="form-label">Assignee</label>
+            <input class="form-input" id="mtg-ai-assignee" value="${escapeHtml(ai.assignee||'')}">
+          </div>
+          <div>
+            <label class="form-label">Due Date</label>
+            <input class="form-input" type="date" id="mtg-ai-due" value="${ai.due_date||''}">
+          </div>
+        </div>
+        <div>
+          <label class="form-label">Status</label>
+          <select class="form-input" id="mtg-ai-status">
+            <option value="Open"   ${(ai.status||'Open')==='Open'  ?'selected':''}>Open</option>
+            <option value="Closed" ${ai.status==='Closed'?'selected':''}>Closed</option>
+          </select>
+        </div>
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-primary" onclick="saveMtgActionItem('${editId||''}','${itemId}','${meetingId}')">${editId ? 'Save' : 'Add'}</button>`,
+  });
+  setTimeout(() => document.getElementById('mtg-ai-desc')?.focus(), 100);
+}
+
+async function saveMtgActionItem(editId, itemId, meetingId) {
+  const desc = document.getElementById('mtg-ai-desc')?.value?.trim();
+  if (!desc) { toast('Description required', 'error'); return; }
+  const payload = {
+    description: desc,
+    assignee:   document.getElementById('mtg-ai-assignee')?.value?.trim() || null,
+    due_date:   document.getElementById('mtg-ai-due')?.value              || null,
+    status:     document.getElementById('mtg-ai-status')?.value           || 'Open',
+    updated_at: new Date().toISOString(),
+  };
+  try {
+    if (editId) {
+      await _dbUpdate('meeting_action_items', payload, { id: editId });
+      const ai = _mtgDetail?.actionItems?.find(a => a.id === editId);
+      if (ai) Object.assign(ai, payload);
+    } else {
+      Object.assign(payload, {
+        meeting_item_id: itemId, meeting_id: meetingId,
+        created_at: new Date().toISOString(),
+      });
+      const [ai] = await _dbInsert('meeting_action_items', [payload]);
+      if (_mtgDetail) _mtgDetail.actionItems.push(ai);
+    }
+    closeModal();
+    await renderMeetings();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function deleteMtgActionItem(aiId, meetingId) {
+  if (!confirm('Delete this action item?')) return;
+  try {
+    await _dbDelete('meeting_action_items', { id: aiId });
+    if (_mtgDetail) _mtgDetail.actionItems = _mtgDetail.actionItems.filter(a => a.id !== aiId);
+    await renderMeetings();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ─── ATTENDEES ───────────────────────────────────────────────
+function openMtgAddAttendeeModal(meetingId) {
+  modal({
+    title: 'Add Attendee',
+    body: `
+      <div style="display:grid;gap:12px;">
+        <div>
+          <label class="form-label">Name *</label>
+          <input class="form-input" id="mtg-att-name" placeholder="Full name">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label class="form-label">Email</label>
+            <input class="form-input" type="email" id="mtg-att-email" placeholder="name@company.com">
+          </div>
+          <div>
+            <label class="form-label">Company</label>
+            <input class="form-input" id="mtg-att-company" placeholder="Hitachi Rail">
+          </div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+          <input type="checkbox" id="mtg-att-attended" checked> Mark as Attended
+        </label>
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-primary" onclick="saveMtgAttendee('${meetingId}')">Add Attendee</button>`,
+  });
+  setTimeout(() => document.getElementById('mtg-att-name')?.focus(), 100);
+}
+
+async function saveMtgAttendee(meetingId) {
+  const name = document.getElementById('mtg-att-name')?.value?.trim();
+  if (!name) { toast('Name required', 'error'); return; }
+  try {
+    const [att] = await _dbInsert('meeting_attendees', [{
+      meeting_id: meetingId,
+      name,
+      email:      document.getElementById('mtg-att-email')?.value?.trim()   || null,
+      company:    document.getElementById('mtg-att-company')?.value?.trim() || null,
+      attended:   document.getElementById('mtg-att-attended')?.checked ?? true,
+      created_at: new Date().toISOString(),
+    }]);
+    if (_mtgDetail) _mtgDetail.attendees.push(att);
+    closeModal();
+    await renderMeetings();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function deleteMtgAttendee(attId, meetingId) {
+  try {
+    await _dbDelete('meeting_attendees', { id: attId });
+    if (_mtgDetail) _mtgDetail.attendees = _mtgDetail.attendees.filter(a => a.id !== attId);
+    await renderMeetings();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+function openMtgImportAttendeesModal(meetingId) {
+  modal({
+    title: 'Import Attendees from Teams CSV',
+    size: 'large',
+    body: `
+      <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px;">
+        Paste your Microsoft Teams attendance report CSV below.<br>
+        Supported columns: <strong>Full Name</strong> or <strong>Name</strong>. Email detected automatically if present.
+      </p>
+      <textarea class="form-input" id="mtg-csv-input" rows="10"
+        style="font-family:monospace;font-size:12px;" placeholder="Paste Teams attendance CSV here…"></textarea>
+      <div id="mtg-csv-preview" style="margin-top:12px;font-size:13px;"></div>`,
+    footer: `
+      <button class="form-secondary" onclick="_mtgPreviewCSV()">Preview</button>
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-primary" onclick="_mtgImportCSV('${meetingId}')">Import</button>`,
+  });
+}
+
+function _mtgPreviewCSV() {
+  const text   = document.getElementById('mtg-csv-input')?.value || '';
+  const parsed = _mtgParseTeamsCSV(text);
+  const el     = document.getElementById('mtg-csv-preview');
+  if (!el) return;
+  if (!parsed.length) { el.innerHTML = '<p style="color:var(--bad);">No attendees found — check CSV format.</p>'; return; }
+  el.innerHTML = `<p style="margin-bottom:8px;"><strong>${parsed.length}</strong> attendees detected:</p>
+    <div style="max-height:180px;overflow-y:auto;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:4px;padding:8px;">
+      ${parsed.map(a => `<div style="padding:2px 0;">${escapeHtml(a.name)}${a.email ? ` <span style="color:var(--gray-400);font-size:11px;">${escapeHtml(a.email)}</span>` : ''}</div>`).join('')}
+    </div>`;
+}
+
+function _mtgParseTeamsCSV(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers  = lines[0].split(',').map(h => h.replace(/^"|"$/g, '').trim().toLowerCase());
+  const nameCol  = headers.findIndex(h => h.includes('full name') || h === 'name' || h.includes('participant'));
+  const emailCol = headers.findIndex(h => h.includes('email') || h.includes('upn') || h.includes('principal'));
+  if (nameCol < 0) return [];
+  const seen = new Set(), result = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = _mtgCSVLine(lines[i]);
+    const name = (cols[nameCol] || '').trim();
+    if (!name || seen.has(name.toLowerCase()) || name.toLowerCase() === 'name') continue;
+    seen.add(name.toLowerCase());
+    result.push({ name, email: emailCol >= 0 ? (cols[emailCol] || '').trim() || null : null });
+  }
+  return result;
+}
+
+function _mtgCSVLine(line) {
+  const r = []; let cur = '', q = false;
+  for (const c of line) {
+    if (c === '"') { q = !q; continue; }
+    if (c === ',' && !q) { r.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  r.push(cur);
+  return r;
+}
+
+async function _mtgImportCSV(meetingId) {
+  const text   = document.getElementById('mtg-csv-input')?.value || '';
+  const parsed = _mtgParseTeamsCSV(text);
+  if (!parsed.length) { toast('No attendees found in CSV', 'error'); return; }
+  try {
+    const existing = new Set((_mtgDetail?.attendees||[]).map(a => a.name.toLowerCase()));
+    const toInsert = parsed
+      .filter(a => !existing.has(a.name.toLowerCase()))
+      .map(a => ({ meeting_id: meetingId, name: a.name, email: a.email || null, attended: true, created_at: new Date().toISOString() }));
+    if (toInsert.length > 0) {
+      const inserted = await _dbInsert('meeting_attendees', toInsert);
+      if (_mtgDetail) _mtgDetail.attendees.push(...(inserted || []));
+    }
+    closeModal();
+    toast(`Imported ${toInsert.length} attendee(s) (${parsed.length - toInsert.length} already present)`, 'success');
+    await renderMeetings();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ─── CONVERT TO MINUTES ──────────────────────────────────────
+async function convertToMinutesMode(meetingId) {
+  if (!confirm('Convert to Minutes Mode? This enables per-item notes recording for the meeting.')) return;
+  try {
+    await _dbUpdate('meetings', { status: 'Minutes', updated_at: new Date().toISOString() }, { id: meetingId });
+    const m = MEETINGS.find(x => x.id === meetingId);
+    if (m) m.status = 'Minutes';
+    if (_mtgDetail?.meeting) _mtgDetail.meeting.status = 'Minutes';
+    toast('Meeting is now in Minutes Mode', 'success');
+    await renderMeetings();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ─── FOLLOW-UP MEETING ────────────────────────────────────────
+async function createFollowUpMtg(meetingId) {
+  if (!confirm('Create a follow-up meeting? This will clone the full agenda and carry forward all open action items.')) return;
+  const src = _mtgDetail?.meeting || MEETINGS.find(m => m.id === meetingId);
+  if (!src) { toast('Source meeting not found', 'error'); return; }
+  try {
+    const [newMtg] = await _dbInsert('meetings', [{
+      title: src.title, series: src.series, location: src.location,
+      meeting_link: src.meeting_link, timezone: src.timezone || 'America/Los_Angeles',
+      is_private: src.is_private, is_draft: src.is_draft, overview: src.overview,
+      status: 'Agenda', parent_meeting_id: meetingId,
+      created_by: currentRoleUser?.name || null,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }]);
+    MEETINGS.unshift(newMtg);
+
+    const srcCats  = _mtgDetail?.categories || [];
+    const srcItems = _mtgDetail?.items       || [];
+    const srcAI    = _mtgDetail?.actionItems || [];
+
+    for (const cat of srcCats) {
+      const [newCat] = await _dbInsert('meeting_categories', [{
+        meeting_id: newMtg.id, title: cat.title, sort_order: cat.sort_order || 0,
+      }]);
+      for (const item of srcItems.filter(i => i.category_id === cat.id)) {
+        const [newItem] = await _dbInsert('meeting_items', [{
+          meeting_id: newMtg.id, category_id: newCat.id,
+          title: item.title, description: item.description,
+          assignee: item.assignee, due_date: item.due_date,
+          status: 'Open', priority: item.priority,
+          sort_order: item.sort_order || 0,
+          meeting_origin_id: item.meeting_origin_id || meetingId,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }]);
+        for (const ai of srcAI.filter(a => a.meeting_item_id === item.id && a.status !== 'Closed')) {
+          await _dbInsert('meeting_action_items', [{
+            meeting_id: newMtg.id, meeting_item_id: newItem.id,
+            description: ai.description, assignee: ai.assignee,
+            due_date: ai.due_date, status: ai.status,
+            created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+          }]);
+        }
+      }
+    }
+
+    toast('Follow-up meeting created!', 'success');
+    _mtgDetailId = newMtg.id;
+    _mtgItemOpen = {};
+    await renderMeetings();
+  } catch(e) { toast('Error creating follow-up: ' + e.message, 'error'); }
+}
+
+// ─── PDF EXPORT ──────────────────────────────────────────────
+async function _mtgPrintPDF(meetingId) {
+  if (!_mtgDetail || _mtgDetail.meeting?.id !== meetingId) {
+    toast('Loading meeting data…', 'success');
+    await _mtgLoadDetail(meetingId);
+  }
+  const { meeting: m, categories, items, attendees, actionItems } = _mtgDetail;
+  const inMinutes = m.status === 'Minutes';
+
+  const agendaHTML = categories.map((cat, ci) => {
+    const catItems = items.filter(i => i.category_id === cat.id);
+    return `
+      <div style="margin-bottom:18px;">
+        <div style="font-size:13px;font-weight:700;background:#f4f4f4;padding:7px 10px;border-left:4px solid #C8001A;margin-bottom:8px;">${escapeHtml(cat.title)}</div>
+        ${catItems.map((item, ii) => {
+          const itemAI = actionItems.filter(a => a.meeting_item_id === item.id);
+          return `
+            <div style="margin-bottom:10px;padding:9px 10px;border:1px solid #e5e7eb;border-radius:3px;">
+              <div style="font-weight:600;font-size:12px;margin-bottom:4px;">${ci+1}.${ii+1} ${escapeHtml(item.title)}</div>
+              ${item.description ? `<div style="font-size:11px;color:#555;margin-bottom:5px;">${escapeHtml(item.description)}</div>` : ''}
+              <div style="font-size:10px;color:#888;margin-bottom:5px;">${[
+                item.assignee ? `Assignee: ${item.assignee}` : '',
+                item.due_date ? `Due: ${item.due_date}` : '',
+                `Status: ${item.status||'Open'}`,
+              ].filter(Boolean).join(' · ')}</div>
+              ${inMinutes && item.minutes_notes ? `<div style="margin-top:7px;padding:7px;background:#fefefe;border:1px solid #eee;border-radius:3px;font-size:11px;"><strong style="color:#C8001A;">Minutes:</strong> ${item.minutes_notes}</div>` : ''}
+              ${itemAI.length ? `<div style="margin-top:7px;">
+                <div style="font-size:10px;font-weight:700;color:#666;margin-bottom:3px;">Action Items:</div>
+                ${itemAI.map(ai => `<div style="font-size:10px;padding:3px 7px;background:#fff8f0;border-left:3px solid #E67E22;margin-bottom:2px;">
+                  ${escapeHtml(ai.description)}${ai.assignee ? ` — ${escapeHtml(ai.assignee)}` : ''}${ai.due_date ? ` (Due: ${ai.due_date})` : ''} [${escapeHtml(ai.status||'Open')}]
+                </div>`).join('')}
+              </div>` : ''}
+            </div>`;
+        }).join('')}
+      </div>`;
+  }).join('');
+
+  const w = window.open('', '_blank', 'width=900,height=700');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+    <title>${inMinutes ? 'Meeting Minutes — ' : ''}${escapeHtml(m.title||'')}</title>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0;}
+      body{font-family:Arial,sans-serif;color:#111;background:#fff;padding:32px;}
+      @media print{body{padding:16px;}}
+    </style>
+  </head><body>
+    <div style="display:flex;justify-content:space-between;padding-bottom:14px;border-bottom:3px solid #C8001A;margin-bottom:20px;">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:#C8001A;">Hitachi Rail STS</div>
+        <div style="font-size:11px;color:#666;">BART CBTC T&amp;C Portal</div>
+      </div>
+      <div style="text-align:right;font-size:11px;color:#666;">
+        <div style="font-weight:700;font-size:13px;">Meeting #${m.meeting_number||''}</div>
+        <div>${m.meeting_date||''}</div>
+      </div>
+    </div>
+    <h1 style="font-size:17px;font-weight:700;margin-bottom:14px;">
+      ${inMinutes ? 'Meeting Minutes for ' : ''}${escapeHtml(m.title||'')}
+    </h1>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;font-size:11px;">
+      ${[['Date',m.meeting_date],['Start Time',m.start_time],['End Time',m.end_time],['Location',m.location]]
+        .filter(([,v]) => v)
+        .map(([l,v]) => `<div><div style="font-weight:700;color:#C8001A;text-transform:uppercase;font-size:9px;">${l}</div><div>${escapeHtml(v)}</div></div>`)
+        .join('')}
+    </div>
+    ${m.overview ? `<div style="margin-bottom:14px;font-size:12px;color:#444;font-style:italic;">${escapeHtml(m.overview)}</div>` : ''}
+    ${attendees.length ? `
+      <div style="margin-bottom:16px;">
+        <div style="font-size:11px;font-weight:700;color:#C8001A;text-transform:uppercase;margin-bottom:6px;">Attendees</div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px;">
+          ${attendees.map(a => `<span style="font-size:11px;background:#f5f5f5;padding:2px 9px;border-radius:10px;">${escapeHtml(a.name)}${a.company ? ` (${escapeHtml(a.company)})` : ''}</span>`).join('')}
+        </div>
+      </div>` : ''}
+    <div style="font-size:11px;font-weight:700;color:#C8001A;text-transform:uppercase;border-bottom:1px solid #eee;padding-bottom:6px;margin-bottom:12px;">Agenda</div>
+    ${agendaHTML}
+    <div style="margin-top:30px;padding-top:10px;border-top:1px solid #eee;display:flex;justify-content:space-between;font-size:9px;color:#aaa;">
+      <span>Hitachi Rail STS — BART CBTC T&amp;C Portal</span>
+      <span>Printed: ${new Date().toLocaleString('en-US',{dateStyle:'long',timeStyle:'short'})}</span>
+    </div>
+  </body></html>`);
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 600);
+}
+
+// ─── TEMPLATES ────────────────────────────────────────────────
+function openMtgTemplatesModal() {
+  modal({
+    title: 'Meeting Templates',
+    size: 'large',
+    body: `
+      <div id="mtg-tpl-list">
+        ${MTG_TEMPLATES.length === 0
+          ? '<p style="color:var(--gray-400);font-size:13px;">No templates yet. Create one to pre-populate agenda categories and items when creating a new meeting.</p>'
+          : MTG_TEMPLATES.map(t => `
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:11px 14px;border:1px solid var(--gray-200);border-radius:6px;margin-bottom:8px;">
+                <div>
+                  <div style="font-weight:600;font-size:14px;">${escapeHtml(t.name)}</div>
+                  ${t.description ? `<div style="font-size:12px;color:var(--gray-500);">${escapeHtml(t.description)}</div>` : ''}
+                </div>
+                <div style="display:flex;gap:6px;">
+                  <button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgTemplateEditModal('${t.id}')">Edit</button>
+                  <button class="form-secondary" style="padding:3px 12px;font-size:12px;color:var(--bad);" onclick="deleteMtgTemplate('${t.id}')">Delete</button>
+                </div>
+              </div>`).join('')}
+      </div>
+      <button class="form-secondary" style="margin-top:12px;" onclick="openMtgTemplateEditModal(null)">+ New Template</button>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
+}
+
+function openMtgTemplateEditModal(editId) {
+  const t = editId ? (MTG_TEMPLATES.find(x => x.id === editId) || {}) : {};
+  modal({
+    title: editId ? 'Edit Template' : 'New Template',
+    body: `
+      <div style="display:grid;gap:12px;">
+        <div>
+          <label class="form-label">Template Name *</label>
+          <input class="form-input" id="mtg-tpl-name" value="${escapeHtml(t.name||'')}">
+        </div>
+        <div>
+          <label class="form-label">Description</label>
+          <textarea class="form-input" id="mtg-tpl-desc" rows="2">${escapeHtml(t.description||'')}</textarea>
+        </div>
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="openMtgTemplatesModal()">← Back</button>
+      <button class="form-primary" onclick="saveMtgTemplate('${editId||''}')">${editId ? 'Save' : 'Create Template'}</button>`,
+  });
+  setTimeout(() => document.getElementById('mtg-tpl-name')?.focus(), 100);
+}
+
+async function saveMtgTemplate(editId) {
+  const name = document.getElementById('mtg-tpl-name')?.value?.trim();
+  if (!name) { toast('Name required', 'error'); return; }
+  const payload = {
+    name,
+    description: document.getElementById('mtg-tpl-desc')?.value?.trim() || null,
+    updated_at:  new Date().toISOString(),
+  };
+  try {
+    if (editId) {
+      await _dbUpdate('meeting_templates', payload, { id: editId });
+      const t = MTG_TEMPLATES.find(x => x.id === editId);
+      if (t) Object.assign(t, payload);
+    } else {
+      payload.created_at = new Date().toISOString();
+      payload.created_by = currentRoleUser?.name || null;
+      const [t] = await _dbInsert('meeting_templates', [payload]);
+      MTG_TEMPLATES.push(t);
+    }
+    toast('Template saved', 'success');
+    openMtgTemplatesModal();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function deleteMtgTemplate(id) {
+  if (!confirm('Delete this template?')) return;
+  try {
+    await _dbDelete('meeting_templates', { id });
+    MTG_TEMPLATES = MTG_TEMPLATES.filter(t => t.id !== id);
+    toast('Template deleted', 'success');
+    openMtgTemplatesModal();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
 }

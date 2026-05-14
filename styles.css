@@ -1698,6 +1698,19 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
 }
 .form-submit:hover { background: var(--hitachi-red-hover); transform: translateY(-1px); }
 .form-submit:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.form-primary {
+  background: var(--primary);
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: var(--radius-sm);
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.form-primary:hover { opacity: 0.88; }
+
 .form-secondary {
   background: var(--gray-100);
   color: var(--gray-800);
