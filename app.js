@@ -13923,23 +13923,793 @@ function _apUploadStub() {
     <div class="data-card" style="padding:32px;">
       <h3 style="margin:0 0 10px;font-size:18px;font-weight:600;">Upload Weekly Lookahead</h3>
       <p style="margin:0 0 16px;color:var(--gray-500);font-size:13px;">
-        Upload the weekly <strong>Look-Ahead.xlsx</strong> file. Importer reads only the <code>Look-Ahead</code> sheet,
-        ignores hidden historical columns, and uses cell fill colors to derive shift type:
+        Upload the weekly <strong>Look-Ahead.xlsx</strong> file. The importer reads only the
+        <code>Look-Ahead</code> sheet, ignores hidden historical columns, and uses cell fill colors to derive shift type:
       </p>
       <ul style="font-size:13px;color:var(--gray-700);line-height:1.8;padding-left:22px;">
-        <li><span style="display:inline-block;width:14px;height:14px;background:#FFEB3B;border:1px solid #999;vertical-align:middle;"></span> Yellow → Day shift (0700–1500 default)</li>
-        <li><span style="display:inline-block;width:14px;height:14px;background:#2196F3;border:1px solid #999;vertical-align:middle;"></span> Blue → Night shift (2000–0700 default)</li>
+        <li><span style="display:inline-block;width:14px;height:14px;background:#FFEB3B;border:1px solid #999;vertical-align:middle;"></span> Yellow → Day shift (default 0700–1500)</li>
+        <li><span style="display:inline-block;width:14px;height:14px;background:#2196F3;border:1px solid #999;vertical-align:middle;"></span> Blue → Night shift (default 2000–0700)</li>
         <li><span style="display:inline-block;width:14px;height:14px;background:#000;vertical-align:middle;"></span> Black → Blanket shift (all-day)</li>
-        <li><span style="display:inline-block;width:14px;height:14px;background:#F44336;vertical-align:middle;"></span> Red → Cancellation (admin must add reason)</li>
+        <li><span style="display:inline-block;width:14px;height:14px;background:#F44336;vertical-align:middle;"></span> Red → Cancelled (admin must enter reason)</li>
       </ul>
-      <div style="margin-top:18px;padding:14px;background:#fef9c3;border:1px solid #fde68a;border-radius:8px;font-size:12px;color:#92400e;">
-        ⚠ Importer arrives in <strong>Batch 3</strong>. ExcelJS, matching engine, and preview UI are wired up there.
+
+      <div style="margin-top:22px;padding:18px;background:#f9fafb;border:1px dashed var(--gray-300);border-radius:8px;text-align:center;">
+        <input type="file" id="lookahead-file-input" accept=".xlsx" style="display:none;" onchange="_lookaheadParseFile(this.files[0])">
+        <button class="admin-action-btn" onclick="document.getElementById('lookahead-file-input').click()">⬆ Choose .xlsx File</button>
+        <div style="margin-top:8px;font-size:11px;color:var(--gray-500);">
+          New imports become the master plan. Future-dated events from the previous batch are replaced
+          (admin overrides marked locked are preserved).
+        </div>
       </div>
+
+      <div id="lookahead-import-status" style="margin-top:14px;"></div>
     </div>`;
 }
 
 function _apReviewStub() {
-  return _laStubCard('Review Queue', 'Unmatched activities and unknown resource initials land here for admin resolution.', 'Batch 3');
+  const isAdmin = currentRoleUser?.role === 'admin';
+  if (!isAdmin) return `<div class="docs-empty"><h3>Admin only</h3></div>`;
+
+  const unmatched = PLANNING_ACTIVITIES.filter(a => a.match_status === 'unmatched');
+  const suggested = PLANNING_ACTIVITIES.filter(a => a.match_status === 'suggested');
+  const unknownInitials = PLANNING_CONFLICTS.filter(c => c.conflict_type === 'unmatched_resource' && !c.is_acknowledged);
+  const cancellationsNeedingReason = PLANNING_EVENTS.filter(e => e.status === 'cancelled' && !e.cancellation_reason);
+
+  return `
+    <div class="kpi-grid kpi-grid-mini" style="margin-bottom:16px;">
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Unmatched</div><div class="kpi-value" style="color:var(--warn);">${unmatched.length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Suggested</div><div class="kpi-value" style="color:#2563eb;">${suggested.length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Unknown Initials</div><div class="kpi-value" style="color:var(--warn);">${unknownInitials.length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Cancellations Pending Reason</div><div class="kpi-value" style="color:var(--bad);">${cancellationsNeedingReason.length}</div></div>
+    </div>
+
+    ${cancellationsNeedingReason.length ? `
+      <div class="data-card" style="padding:0;overflow:hidden;margin-bottom:18px;">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:#fef2f2;">
+          <strong style="font-size:13px;color:#b91c1c;">🚫 Cancellations needing reason (${cancellationsNeedingReason.length})</strong>
+          <span style="font-size:11px;color:var(--gray-500);margin-left:8px;">Red cells in the import — admin must enter why each was cancelled.</span>
+        </div>
+        <table class="data-table">
+          <thead><tr><th>Date</th><th>Activity</th><th>Location</th><th>Action</th></tr></thead>
+          <tbody>
+            ${cancellationsNeedingReason.slice(0, 50).map(e => `
+              <tr>
+                <td style="font-size:13px;">${e.event_date || '—'}</td>
+                <td>${escapeHtml(e.title || '—')}</td>
+                <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(e.location || '—')}</td>
+                <td><button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_planningAddCancellationReason('${e.id}')">+ Add Reason</button></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : ''}
+
+    ${unknownInitials.length ? `
+      <div class="data-card" style="padding:0;overflow:hidden;margin-bottom:18px;">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:#fffbeb;">
+          <strong style="font-size:13px;color:#92400e;">👤 Unknown resource initials (${unknownInitials.length})</strong>
+          <span style="font-size:11px;color:var(--gray-500);margin-left:8px;">Map to existing or create as a manual resource.</span>
+        </div>
+        <table class="data-table">
+          <thead><tr><th>Initials</th><th>Detected</th><th>Action</th></tr></thead>
+          <tbody>
+            ${unknownInitials.slice(0, 50).map(c => {
+              const payload = c.payload_json || {};
+              return `
+                <tr>
+                  <td style="font-family:monospace;font-weight:600;">${escapeHtml(payload.token || '—')}</td>
+                  <td style="font-size:11px;color:var(--gray-500);">${c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}</td>
+                  <td>
+                    <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_planningResolveInitials('${c.id}','create','${escapeHtml(payload.token || '')}')">+ Create Resource</button>
+                    <button class="form-secondary" style="font-size:11px;padding:4px 10px;margin-left:4px;" onclick="_planningResolveInitials('${c.id}','map','${escapeHtml(payload.token || '')}')">Map to Existing</button>
+                    <button class="form-secondary" style="font-size:11px;padding:4px 10px;margin-left:4px;" onclick="_planningResolveInitials('${c.id}','dismiss','${escapeHtml(payload.token || '')}')">Dismiss</button>
+                  </td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>` : ''}
+
+    <div class="data-card" style="padding:0;overflow:hidden;">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);">
+        <strong style="font-size:13px;">Unmatched activities (${unmatched.length})</strong>
+        <span style="font-size:11px;color:var(--gray-500);margin-left:8px;">No portal activity could be linked automatically. Admin can link manually.</span>
+      </div>
+      <table class="data-table">
+        <thead><tr><th>Activity ID</th><th>Description</th><th>Location</th><th>Resource</th><th>Action</th></tr></thead>
+        <tbody>
+          ${unmatched.length === 0
+            ? `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--gray-400);">No unmatched activities. 🎉</td></tr>`
+            : unmatched.slice(0, 100).map(a => `
+                <tr>
+                  <td style="font-family:monospace;font-size:11px;">${escapeHtml(a.activity_id_text || '—')}</td>
+                  <td>${escapeHtml(a.description || '—')}</td>
+                  <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.location || '—')}</td>
+                  <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.resource_raw || '—')}</td>
+                  <td><button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_planningLinkActivity('${a.id}')">🔗 Link</button></td>
+                </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// ============================================================
+// LOOKAHEAD IMPORTER — Batch 3
+// ============================================================
+
+let _lookaheadParsedFile = null;        // { filename, sheetName, weekStart, weekEnd, rows, events, unknownInitials, summary }
+let _lookaheadIsImporting = false;
+
+// Reference shift colors (RGB). Anything within COLOR_THRESHOLD is matched.
+const _SHIFT_COLOR_TARGETS = {
+  day_shift:     { r: 0xFF, g: 0xEB, b: 0x3B }, // bright yellow
+  night_shift:   { r: 0x21, g: 0x96, b: 0xF3 }, // bright blue
+  blanket_shift: { r: 0x00, g: 0x00, b: 0x00 }, // black
+  cancelled:     { r: 0xF4, g: 0x43, b: 0x36 }, // red
+};
+const _SHIFT_COLOR_THRESHOLD = 160;     // Euclidean distance in RGB space
+
+const _SHIFT_DEFAULT_TIMES = {
+  day_shift:     { start: '07:00', end: '15:00', all_day: false },
+  night_shift:   { start: '20:00', end: '07:00', all_day: false },
+  blanket_shift: { start: null,    end: null,    all_day: true  },
+  cancelled:     { start: null,    end: null,    all_day: true  },
+};
+
+// Detect shift from an ExcelJS cell fill ARGB hex.
+function _shiftFromColorHex(argb) {
+  if (!argb || typeof argb !== 'string') return null;
+  const hex = argb.replace(/^#/, '').padStart(8, '0');
+  const r = parseInt(hex.slice(2, 4), 16);
+  const g = parseInt(hex.slice(4, 6), 16);
+  const b = parseInt(hex.slice(6, 8), 16);
+  // White / near-white = no fill
+  if (r > 240 && g > 240 && b > 240) return null;
+  let best = null, bestDist = Infinity;
+  for (const [shift, c] of Object.entries(_SHIFT_COLOR_TARGETS)) {
+    const d = Math.sqrt((r-c.r)**2 + (g-c.g)**2 + (b-c.b)**2);
+    if (d < bestDist) { bestDist = d; best = shift; }
+  }
+  return bestDist < _SHIFT_COLOR_THRESHOLD ? best : null;
+}
+
+function _cellFillHex(cell) {
+  // ExcelJS exposes cell.fill.fgColor.argb or .bgColor.argb
+  const f = cell?.fill;
+  if (!f) return null;
+  if (f.fgColor && f.fgColor.argb) return f.fgColor.argb;
+  if (f.bgColor && f.bgColor.argb) return f.bgColor.argb;
+  return null;
+}
+
+function _parseWorkHoursStr(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim().replace(/[–—]/g, '-'); // en/em dash → hyphen
+  // Match patterns like 0700-1500, 0700 - 1500, 7:00-15:00, 7am-3pm
+  const m = s.match(/(\d{1,2})[:.]?(\d{2})?\s*(?:am|pm)?\s*-\s*(\d{1,2})[:.]?(\d{2})?\s*(?:am|pm)?/i);
+  if (!m) return null;
+  const fmt = (h, mm) => `${String(parseInt(h)).padStart(2,'0')}:${String(parseInt(mm||'0')).padStart(2,'0')}`;
+  const start = fmt(m[1], m[2]);
+  const end   = fmt(m[3], m[4]);
+  const startMin = parseInt(m[1]) * 60 + parseInt(m[2]||'0');
+  const endMin   = parseInt(m[3]) * 60 + parseInt(m[4]||'0');
+  return { start, end, overnight: endMin <= startMin, raw: s };
+}
+
+function _normDesc(s) {
+  return (s || '')
+    .toString()
+    .toLowerCase()
+    .replace(/^cdrl[\s:#-]*\d*/i, '')   // strip CDRL prefixes
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// ── Matching engine ─────────────────────────────────────────
+function _matchPlanningActivity(row) {
+  const idText = (row.activity_id_text || '').trim();
+
+  // 1. Exact Activity ID against TI (test_items)
+  if (idText) {
+    const tiByCode = TI.find(t => String(t.TestCaseCode || '').toLowerCase() === idText.toLowerCase());
+    if (tiByCode) return { status: 'matched', test_item_id: tiByCode.TestID, p6_activity_id: null, confidence: 1.0 };
+    const tiById = TI.find(t => String(t.TestID || '').toLowerCase() === idText.toLowerCase());
+    if (tiById) return { status: 'matched', test_item_id: tiById.TestID, p6_activity_id: null, confidence: 1.0 };
+  }
+
+  // 2. P6 activity map — match by activity_id then walk through p6_activity_map → test_item_id
+  if (idText && Array.isArray(P6_ACTS)) {
+    const p6 = P6_ACTS.find(a => String(a.activity_id || '').toLowerCase() === idText.toLowerCase());
+    if (p6) {
+      const map = (P6_MAP || []).find(m => m.p6_activity_id === p6.id);
+      if (map?.test_item_id) {
+        return { status: 'matched', test_item_id: map.test_item_id, p6_activity_id: p6.id, confidence: 0.95 };
+      }
+      return { status: 'suggested', test_item_id: null, p6_activity_id: p6.id, confidence: 0.70 };
+    }
+  }
+
+  // 3. Normalized description match against TI.TestName
+  const target = _normDesc(row.description);
+  if (target.length > 4) {
+    const exact = TI.find(t => _normDesc(t.TestName) === target);
+    if (exact) return { status: 'matched', test_item_id: exact.TestID, p6_activity_id: null, confidence: 0.85 };
+  }
+
+  // 4. Fuse fuzzy on TI.TestName + TestCaseCode
+  if (window.Fuse && TI.length && (row.description || idText)) {
+    const fuse = new Fuse(TI, {
+      keys: [{ name: 'TestName', weight: 0.7 }, { name: 'TestCaseCode', weight: 0.3 }],
+      threshold: 0.45,
+      includeScore: true,
+      ignoreLocation: true,
+    });
+    const q = (row.description || '') + ' ' + (row.location || '');
+    const results = fuse.search(q.trim());
+    if (results.length && results[0].score < 0.45) {
+      return {
+        status: 'suggested',
+        test_item_id: results[0].item.TestID,
+        p6_activity_id: null,
+        confidence: +(1 - results[0].score).toFixed(2),
+      };
+    }
+  }
+
+  return { status: 'unmatched', test_item_id: null, p6_activity_id: null, confidence: 0 };
+}
+
+// ── Resource initials parser ─────────────────────────────────
+function _parseResourceTokens(raw) {
+  if (!raw) return { matched: [], unknown: [] };
+  const tokens = String(raw)
+    .split(/[,\/;|]+/)
+    .map(t => t.trim().toUpperCase())
+    .filter(t => t.length >= 1 && t.length <= 6);
+  const matched = [], unknown = [];
+  for (const t of tokens) {
+    const r = PLANNING_RESOURCES.find(x => x.is_active && (x.initials || '').toUpperCase() === t);
+    if (r) matched.push({ token: t, resource: r });
+    else unknown.push(t);
+  }
+  return { matched, unknown };
+}
+
+// ── Date column resolver ────────────────────────────────────
+// Looks at rows 2-6 above col, returns ISO date string or null.
+function _resolveDateForColumn(ws, col, defaultYear) {
+  // Walk back through cells to handle merged month/week labels
+  const monthRow = 4, dayRow = 5;
+  let monthVal = ws.getCell(monthRow, col).value;
+  if (!monthVal) {
+    for (let c = col - 1; c >= 8; c--) {
+      const v = ws.getCell(monthRow, c).value;
+      if (v) { monthVal = v; break; }
+    }
+  }
+  let dayVal = ws.getCell(dayRow, col).value;
+  if (!dayVal) return null;
+  // dayVal may be a number or string
+  const day = parseInt(typeof dayVal === 'object' ? dayVal.result || dayVal.text || 0 : dayVal);
+  if (!day || isNaN(day)) return null;
+  const monthStr = String(monthVal || '').trim();
+  const months = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+  const m = months.findIndex(mn => monthStr.toLowerCase().startsWith(mn));
+  if (m < 0) return null;
+  const year = defaultYear || new Date().getFullYear();
+  const d = new Date(Date.UTC(year, m, day));
+  return d.toISOString().slice(0, 10);
+}
+
+// ── Parse uploaded .xlsx file ────────────────────────────────
+async function _lookaheadParseFile(file) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.xlsx')) { toast('Please upload an .xlsx file', 'error'); return; }
+  if (typeof ExcelJS === 'undefined') { toast('ExcelJS library not loaded — refresh the page', 'error'); return; }
+  if (currentRoleUser?.role !== 'admin') { toast('Admin only', 'error'); return; }
+
+  const statusEl = document.getElementById('lookahead-import-status');
+  if (statusEl) statusEl.innerHTML = `<div style="font-size:13px;color:var(--gray-500);">⏳ Parsing <strong>${escapeHtml(file.name)}</strong>…</div>`;
+
+  try {
+    const buf = await file.arrayBuffer();
+    const wb  = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf);
+
+    const ws = wb.worksheets.find(w => /look[\s-]*ahead/i.test(w.name)) || wb.worksheets[0];
+    if (!ws) throw new Error('No worksheets found in file');
+
+    // Build visible-date-column map
+    const dateCols = [];   // [{ col, dateISO }]
+    const maxCol = Math.min(ws.columnCount || 200, 600); // cap to avoid runaway
+    for (let c = 8; c <= maxCol; c++) {
+      const colDef = ws.getColumn(c);
+      if (colDef && colDef.hidden) continue;
+      const dateISO = _resolveDateForColumn(ws, c, new Date().getFullYear());
+      if (dateISO) dateCols.push({ col: c, dateISO });
+    }
+    if (!dateCols.length) throw new Error('Could not detect any date columns (rows 4-5). Confirm the sheet uses the expected header layout.');
+
+    // Parse rows starting at row 7 (data rows)
+    const rows = [];
+    const events = [];
+    const unknownInitialsSet = new Set();
+    const allDates = [];
+    const startDataRow = 7;
+    const lastRow = ws.actualRowCount || ws.rowCount || 200;
+    for (let r = startDataRow; r <= lastRow; r++) {
+      const cellB = ws.getCell(r, 2); // Activity ID
+      const cellC = ws.getCell(r, 3); // Description
+      const cellD = ws.getCell(r, 4); // Location
+      const cellE = ws.getCell(r, 5); // SSWP
+      const cellF = ws.getCell(r, 6); // Resource (renamed from Party to Action)
+      const cellG = ws.getCell(r, 7); // Work Hours
+
+      const idText      = String(cellB.value || '').trim();
+      const description = String(cellC.value || '').trim();
+      const location    = String(cellD.value || '').trim();
+      const sswp        = String(cellE.value || '').trim();
+      const resourceRaw = String(cellF.value || '').trim();
+      const hoursRaw    = String(cellG.value || '').trim();
+
+      // Skip empty rows (all key fields blank)
+      if (!idText && !description && !resourceRaw) continue;
+      // Skip header repeat rows
+      if (/^activity\s*id$/i.test(idText)) continue;
+
+      const match = _matchPlanningActivity({ activity_id_text: idText, description, location });
+      const { matched: matchedRes, unknown: unknownTokens } = _parseResourceTokens(resourceRaw);
+      unknownTokens.forEach(t => unknownInitialsSet.add(t));
+
+      const rowMeta = {
+        source_row_number: r,
+        activity_id_text:  idText || null,
+        description:       description || null,
+        location:          location || null,
+        sswp:              sswp || null,
+        resource_raw:      resourceRaw || null,
+        work_hours_raw:    hoursRaw || null,
+        match,
+        matchedResources:  matchedRes,
+        unknownInitials:   unknownTokens,
+        rowEvents:         [],
+      };
+
+      // Scan date columns for fill colors → events
+      const hours = _parseWorkHoursStr(hoursRaw);
+      for (const dc of dateCols) {
+        const cell = ws.getCell(r, dc.col);
+        const fill = _cellFillHex(cell);
+        const shift = _shiftFromColorHex(fill);
+        if (!shift) continue;
+        const def = _SHIFT_DEFAULT_TIMES[shift];
+        // Work hours override default times (unless shift is blanket/cancelled)
+        let startT = def.start, endT = def.end, allDay = def.all_day;
+        if (hours && (shift === 'day_shift' || shift === 'night_shift')) {
+          startT = hours.start;
+          endT   = hours.end;
+          allDay = false;
+        }
+        const ev = {
+          event_date:      dc.dateISO,
+          start_time:      startT,
+          end_time:        endT,
+          all_day:         allDay,
+          title:           description || idText || '(no title)',
+          location:        location || null,
+          work_hours_raw:  hoursRaw || null,
+          shift_type:      shift === 'cancelled' ? 'blanket_shift' : shift,
+          cell_color_hex:  fill,
+          status:          shift === 'cancelled' ? 'cancelled' : 'planned',
+          resource_ids:    matchedRes.map(m => m.resource.id),
+        };
+        rowMeta.rowEvents.push(ev);
+        events.push(ev);
+        allDates.push(dc.dateISO);
+      }
+
+      rows.push(rowMeta);
+    }
+
+    const sortedDates = allDates.sort();
+    _lookaheadParsedFile = {
+      filename:   file.name,
+      sheetName:  ws.name,
+      weekStart:  sortedDates[0] || null,
+      weekEnd:    sortedDates[sortedDates.length - 1] || null,
+      rows,
+      events,
+      unknownInitials: [...unknownInitialsSet],
+      summary: {
+        total_rows:      rows.length,
+        total_events:    events.length,
+        matched_count:   rows.filter(r => r.match.status === 'matched').length,
+        suggested_count: rows.filter(r => r.match.status === 'suggested').length,
+        unmatched_count: rows.filter(r => r.match.status === 'unmatched').length,
+        cancellations:   events.filter(e => e.status === 'cancelled').length,
+        date_columns:    dateCols.length,
+      },
+    };
+
+    if (statusEl) statusEl.innerHTML = '';
+    _lookaheadOpenPreviewModal();
+  } catch (err) {
+    console.error('Lookahead parse failed:', err);
+    if (statusEl) statusEl.innerHTML = `<div style="color:var(--bad);font-size:13px;">❌ Parse failed: ${escapeHtml(err.message)}</div>`;
+    toast('Parse failed: ' + err.message, 'error');
+  }
+}
+
+// ── Preview modal ────────────────────────────────────────────
+function _lookaheadOpenPreviewModal() {
+  const f = _lookaheadParsedFile;
+  if (!f) return;
+  const s = f.summary;
+  const sampleRows = f.rows.slice(0, 20);
+
+  modal({
+    title: 'Lookahead Import Preview',
+    sub:   `${escapeHtml(f.filename)} · ${escapeHtml(f.sheetName)} · ${f.weekStart || '—'} → ${f.weekEnd || '—'}`,
+    size:  'large',
+    body: `
+      <div class="kpi-grid kpi-grid-mini" style="margin-bottom:18px;">
+        <div class="kpi-card kpi-mini"><div class="kpi-label">Rows</div><div class="kpi-value">${s.total_rows}</div></div>
+        <div class="kpi-card kpi-mini"><div class="kpi-label">Events</div><div class="kpi-value">${s.total_events}</div></div>
+        <div class="kpi-card kpi-mini"><div class="kpi-label">Date Cols</div><div class="kpi-value">${s.date_columns}</div></div>
+        <div class="kpi-card kpi-mini"><div class="kpi-label">Matched</div><div class="kpi-value good">${s.matched_count}</div></div>
+        <div class="kpi-card kpi-mini"><div class="kpi-label">Suggested</div><div class="kpi-value" style="color:#2563eb;">${s.suggested_count}</div></div>
+        <div class="kpi-card kpi-mini"><div class="kpi-label">Unmatched</div><div class="kpi-value" style="color:var(--warn);">${s.unmatched_count}</div></div>
+        <div class="kpi-card kpi-mini"><div class="kpi-label">Cancellations</div><div class="kpi-value" style="color:var(--bad);">${s.cancellations}</div></div>
+        <div class="kpi-card kpi-mini"><div class="kpi-label">Unknown Initials</div><div class="kpi-value" style="color:var(--warn);">${f.unknownInitials.length}</div></div>
+      </div>
+
+      ${f.unknownInitials.length ? `
+        <div style="margin-bottom:14px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
+          ⚠ Unknown initials: <strong>${f.unknownInitials.map(escapeHtml).join(', ')}</strong> — they'll land in the Review Queue after import.
+        </div>` : ''}
+
+      ${s.cancellations > 0 ? `
+        <div style="margin-bottom:14px;padding:10px 14px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;font-size:13px;color:#991b1b;">
+          🚫 <strong>${s.cancellations}</strong> red-cell cancellation${s.cancellations === 1 ? '' : 's'} detected — admin must enter a reason for each in the Review Queue after import.
+        </div>` : ''}
+
+      <div style="font-size:13px;color:var(--gray-600);margin:14px 0 6px;">Sample (first 20 rows):</div>
+      <div style="max-height:340px;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">
+        <table class="data-table" style="font-size:12px;margin:0;">
+          <thead style="position:sticky;top:0;background:var(--gray-50);z-index:1;">
+            <tr>
+              <th>Activity ID</th>
+              <th>Description</th>
+              <th>Location</th>
+              <th>Resource</th>
+              <th>Hours</th>
+              <th>Match</th>
+              <th>Events</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sampleRows.map(r => {
+              const matchBadge = {
+                matched:   `<span class="badge badge-passed">✓ ${(r.match.confidence*100).toFixed(0)}%</span>`,
+                suggested: `<span class="badge" style="background:#dbeafe;color:#1e40af;">~ ${(r.match.confidence*100).toFixed(0)}%</span>`,
+                unmatched: `<span class="badge badge-warn">✕</span>`,
+              }[r.match.status] || '—';
+              const evCount = r.rowEvents.length;
+              const evIcons = r.rowEvents.map(ev => {
+                const c = { day_shift: '#FFEB3B', night_shift: '#2196F3', blanket_shift: '#000', cancelled: '#F44336' }[ev.shift_type] || '#ccc';
+                return `<span title="${escapeHtml(ev.event_date)} (${escapeHtml(ev.shift_type)})" style="display:inline-block;width:10px;height:10px;background:${ev.status === 'cancelled' ? '#F44336' : c};margin-right:2px;border:1px solid #999;"></span>`;
+              }).join('');
+              return `
+                <tr>
+                  <td style="font-family:monospace;font-size:11px;">${escapeHtml(r.activity_id_text || '—')}</td>
+                  <td>${escapeHtml((r.description || '—').slice(0, 60))}${(r.description || '').length > 60 ? '…' : ''}</td>
+                  <td>${escapeHtml(r.location || '—')}</td>
+                  <td>${escapeHtml(r.resource_raw || '—')}</td>
+                  <td>${escapeHtml(r.work_hours_raw || '—')}</td>
+                  <td>${matchBadge}</td>
+                  <td>${evCount > 0 ? `${evCount} ${evIcons}` : '—'}</td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <div style="margin-top:14px;padding:10px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:12px;color:#0c4a6e;">
+        ℹ This will become the master plan. Future-dated events from the previous batch will be replaced (locked admin overrides preserved).
+      </div>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="_lookaheadCancelImport()">Cancel</button>
+      <button class="form-submit" onclick="_lookaheadConfirmImport()">Import ${s.total_events} Events</button>
+    `,
+  });
+  document.getElementById('modal-overlay')?.classList.add('active');
+}
+
+function _lookaheadCancelImport() {
+  _lookaheadParsedFile = null;
+  closeModal();
+}
+
+// ── Confirm import: insert all records, supersede prior batch ──
+async function _lookaheadConfirmImport() {
+  if (_lookaheadIsImporting) return;
+  if (!_lookaheadParsedFile) return;
+  _lookaheadIsImporting = true;
+
+  const btns = [...document.querySelectorAll('.modal-footer .form-submit')];
+  const btn = btns[btns.length - 1];
+  const origLabel = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+
+  const f = _lookaheadParsedFile;
+  try {
+    // 1. Insert the batch
+    const batchRows = await _dbInsert('planning_import_batches', [{
+      filename:    f.filename,
+      uploaded_by: currentProfile?.id || null,
+      sheet_name:  f.sheetName,
+      week_start:  f.weekStart,
+      week_end:    f.weekEnd,
+      status:      'draft',
+      summary_json: f.summary,
+    }]);
+    const batchId = (batchRows && batchRows[0] && batchRows[0].id) || null;
+    if (!batchId) throw new Error('Batch insert returned no id');
+
+    // 2. Insert activities (chunks of 100)
+    const activityPayload = f.rows.map(r => ({
+      batch_id:              batchId,
+      source_row_number:     r.source_row_number,
+      activity_id_text:      r.activity_id_text,
+      description:           r.description,
+      location:              r.location,
+      sswp:                  r.sswp,
+      resource_raw:          r.resource_raw,
+      work_hours_raw:        r.work_hours_raw,
+      linked_test_item_id:   r.match.test_item_id,
+      linked_p6_activity_id: r.match.p6_activity_id,
+      match_status:          r.match.status,
+      match_confidence:      r.match.confidence,
+    }));
+    const insertedActivities = [];
+    for (let i = 0; i < activityPayload.length; i += 100) {
+      const slice = activityPayload.slice(i, i + 100);
+      const ret = await _dbInsert('planning_activities', slice);
+      if (Array.isArray(ret)) insertedActivities.push(...ret);
+    }
+    // Map row index → inserted activity id (rows insert in the same order)
+    const rowToActivityId = {};
+    f.rows.forEach((r, idx) => {
+      if (insertedActivities[idx]) rowToActivityId[idx] = insertedActivities[idx].id;
+    });
+
+    // 3. Insert events
+    const eventPayload = [];
+    f.rows.forEach((r, idx) => {
+      const aid = rowToActivityId[idx];
+      r.rowEvents.forEach(ev => {
+        eventPayload.push({
+          planning_activity_id: aid,
+          test_item_id:         r.match.test_item_id,
+          p6_activity_id:       r.match.p6_activity_id,
+          title:                ev.title,
+          event_date:           ev.event_date,
+          start_time:           ev.start_time,
+          end_time:             ev.end_time,
+          all_day:              ev.all_day,
+          location:             ev.location,
+          work_hours_raw:       ev.work_hours_raw,
+          shift_type:           ev.shift_type,
+          cell_color_hex:       ev.cell_color_hex,
+          source:               'lookahead',
+          status:               ev.status,
+          created_by:           currentProfile?.id || null,
+        });
+      });
+    });
+    const insertedEvents = [];
+    for (let i = 0; i < eventPayload.length; i += 100) {
+      const slice = eventPayload.slice(i, i + 100);
+      const ret = await _dbInsert('planning_events', slice);
+      if (Array.isArray(ret)) insertedEvents.push(...ret);
+    }
+
+    // 4. Insert event_resources for matched resource initials
+    // Map event back to its row via index — events were pushed in row order
+    const eventResources = [];
+    let evIdx = 0;
+    f.rows.forEach(r => {
+      r.rowEvents.forEach(_ => {
+        const insertedEv = insertedEvents[evIdx];
+        if (insertedEv && r.matchedResources.length) {
+          r.matchedResources.forEach(mr => {
+            eventResources.push({
+              event_id:          insertedEv.id,
+              resource_id:       mr.resource.id,
+              role:              'owner',
+              assignment_source: 'lookahead_initials',
+            });
+          });
+        }
+        evIdx++;
+      });
+    });
+    if (eventResources.length) {
+      for (let i = 0; i < eventResources.length; i += 100) {
+        await _dbInsert('planning_event_resources', eventResources.slice(i, i + 100));
+      }
+    }
+
+    // 5. Conflict rows for unknown initials
+    const unknownConflicts = f.unknownInitials.map(token => ({
+      conflict_type:  'unmatched_resource',
+      severity:       'warning',
+      message:        `Unknown resource initials "${token}" in lookahead import`,
+      payload_json:   { token, batch_id: batchId },
+    }));
+    if (unknownConflicts.length) await _dbInsert('planning_conflicts', unknownConflicts);
+
+    // 6. Supersede prior batches (delete their future-dated, non-locked events)
+    await _lookaheadSupersedePriorBatches(batchId);
+
+    // 7. Mark new batch as imported
+    await _dbUpdate('planning_import_batches', { status: 'imported' }, { id: batchId });
+
+    closeModal();
+    toast(`Imported ${insertedEvents.length} events from ${f.filename}`, 'success');
+    _lookaheadParsedFile = null;
+    await loadPlanningData(true);
+    if (typeof renderAdminPlanning === 'function') renderAdminPlanning();
+  } catch (err) {
+    console.error('Import failed:', err);
+    toast('Import failed: ' + err.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = origLabel || 'Confirm Import'; }
+  } finally {
+    _lookaheadIsImporting = false;
+  }
+}
+
+async function _lookaheadSupersedePriorBatches(newBatchId) {
+  const today = new Date().toISOString().slice(0, 10);
+  const prior = PLANNING_BATCHES.filter(b => b.status === 'imported' && b.id !== newBatchId);
+  for (const b of prior) {
+    // Delete future, non-locked events from prior batch
+    try {
+      const priorActivities = PLANNING_ACTIVITIES.filter(a => a.batch_id === b.id);
+      const priorActIds = new Set(priorActivities.map(a => a.id));
+      const priorFutureEvents = PLANNING_EVENTS.filter(e =>
+        priorActIds.has(e.planning_activity_id) &&
+        !e.is_locked &&
+        e.event_date >= today
+      );
+      for (const ev of priorFutureEvents) {
+        await _dbDelete('planning_events', { id: ev.id });
+      }
+      await _dbUpdate('planning_import_batches', { status: 'superseded' }, { id: b.id });
+    } catch (err) {
+      console.warn(`Failed to supersede batch ${b.id}:`, err.message);
+    }
+  }
+}
+
+// ── Review Queue handlers ────────────────────────────────────
+async function _planningAddCancellationReason(eventId) {
+  const ev = PLANNING_EVENTS.find(e => e.id === eventId);
+  if (!ev) return;
+  const reason = prompt(`Cancellation reason for "${ev.title}" on ${ev.event_date}:`);
+  if (reason === null) return;
+  if (!reason.trim()) { toast('Reason cannot be blank', 'error'); return; }
+  try {
+    await _dbUpdate('planning_events', {
+      cancellation_reason: reason.trim(),
+      cancellation_by:     currentProfile?.id || null,
+      cancellation_at:     new Date().toISOString(),
+    }, { id: eventId });
+    toast('Cancellation reason saved', 'success');
+    await loadPlanningData(true);
+    renderAdminPlanning();
+  } catch(err) {
+    toast('Save failed: ' + err.message, 'error');
+  }
+}
+
+async function _planningResolveInitials(conflictId, action, token) {
+  const c = PLANNING_CONFLICTS.find(x => x.id === conflictId);
+  if (!c) return;
+
+  if (action === 'dismiss') {
+    if (!confirm(`Dismiss "${token}" without creating a resource?`)) return;
+    await _dbUpdate('planning_conflicts', {
+      is_acknowledged: true,
+      acknowledged_by: currentProfile?.id || null,
+      acknowledged_at: new Date().toISOString(),
+    }, { id: conflictId });
+    await loadPlanningData(true);
+    renderAdminPlanning();
+    return;
+  }
+
+  if (action === 'create') {
+    const name = prompt(`Create new resource for initials "${token}".\n\nDisplay name:`);
+    if (!name || !name.trim()) return;
+    try {
+      await _dbInsert('planning_resources', [{
+        display_name:  name.trim(),
+        initials:      token,
+        resource_type: 'manual',
+        is_active:     true,
+      }]);
+      await _dbUpdate('planning_conflicts', {
+        is_acknowledged: true,
+        acknowledged_by: currentProfile?.id || null,
+        acknowledged_at: new Date().toISOString(),
+      }, { id: conflictId });
+      toast(`Resource "${name.trim()}" created with initials ${token}`, 'success');
+      await loadPlanningData(true);
+      renderAdminPlanning();
+    } catch(err) {
+      toast('Create failed: ' + err.message, 'error');
+    }
+    return;
+  }
+
+  if (action === 'map') {
+    const choices = PLANNING_RESOURCES.filter(r => r.is_active);
+    if (!choices.length) { toast('No active resources to map to', 'error'); return; }
+    const list = choices.map((r, i) => `${i+1}. ${r.display_name}${r.initials ? ` (${r.initials})` : ''}`).join('\n');
+    const sel = prompt(`Map "${token}" to which existing resource?\n\n${list}\n\nEnter the number:`);
+    const idx = parseInt(sel) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= choices.length) return;
+    const target = choices[idx];
+    try {
+      // Append the token to the target's initials if not already there
+      const existing = (target.initials || '').split(/[,;\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+      if (!existing.includes(token)) existing.push(token);
+      await _dbUpdate('planning_resources', { initials: existing.join(',') }, { id: target.id });
+      await _dbUpdate('planning_conflicts', {
+        is_acknowledged: true,
+        acknowledged_by: currentProfile?.id || null,
+        acknowledged_at: new Date().toISOString(),
+      }, { id: conflictId });
+      toast(`"${token}" mapped to ${target.display_name}`, 'success');
+      await loadPlanningData(true);
+      renderAdminPlanning();
+    } catch(err) {
+      toast('Map failed: ' + err.message, 'error');
+    }
+  }
+}
+
+async function _planningLinkActivity(activityId) {
+  const a = PLANNING_ACTIVITIES.find(x => x.id === activityId);
+  if (!a) return;
+  // Minimal flow: prompt for a TestCaseCode or TestID
+  const q = prompt(`Link to test item by code or ID.\n\nActivity: ${a.description || a.activity_id_text}\n\nEnter Test Case Code or Test ID:`);
+  if (!q || !q.trim()) return;
+  const ti = TI.find(t =>
+    String(t.TestCaseCode || '').toLowerCase() === q.trim().toLowerCase() ||
+    String(t.TestID || '').toLowerCase() === q.trim().toLowerCase()
+  );
+  if (!ti) { toast(`No test item found for "${q}"`, 'error'); return; }
+  try {
+    await _dbUpdate('planning_activities', {
+      linked_test_item_id: ti.TestID,
+      match_status:        'manual',
+      match_confidence:    1.0,
+      is_manual_override:  true,
+    }, { id: activityId });
+    // Propagate to associated events
+    const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === activityId);
+    for (const ev of evs) {
+      await _dbUpdate('planning_events', { test_item_id: ti.TestID }, { id: ev.id });
+    }
+    toast(`Linked to ${ti.TestCaseCode || ti.TestID}`, 'success');
+    await loadPlanningData(true);
+    renderAdminPlanning();
+  } catch(err) {
+    toast('Link failed: ' + err.message, 'error');
+  }
 }
 
 function _apConflictsStub() {

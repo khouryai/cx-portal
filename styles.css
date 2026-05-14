@@ -3599,6 +3599,23 @@ textarea:focus-visible {
 .admin-tab.active {
   color: #ffffff;
   background: var(--dark-surface);
+  border-bottom-color: transparent;
+}
+
+/* Hover gives a subtle preview of the same dark pill so the user feels the
+   "selected" state slide to wherever they're about to click. */
+.admin-tab:not(.active):hover,
+.form-tab:not(.active):hover {
+  color: #ffffff;
+  background: var(--dark-surface);
+  opacity: 0.75;
+}
+
+/* Active stays dark on hover — no flash to the lighter hover variant. */
+.admin-tab.active:hover,
+.form-tab.active:hover {
+  background: var(--dark-surface);
+  opacity: 1;
 }
 
 .form-tab.active::after {
