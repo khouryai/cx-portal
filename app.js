@@ -12052,34 +12052,18 @@ function _mtgItemHTML(item, catNum, itemNum, actionItems, meetingId, inMinutes, 
         <div style="display:grid;grid-template-columns:220px 1fr;min-height:120px;">
           <!-- Left meta panel -->
           <div style="padding:14px 16px;border-right:1px solid var(--gray-100);background:var(--gray-50);font-size:13px;">
-            ${[
-              ['Item Assignee', item.assignee||'—'],
-              ['Due Date',      item.due_date ? _fmtDate(item.due_date) : '—'],
-            ].map(([l,v]) => `
-              <div style="margin-bottom:12px;">
-                <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:3px;">${l}</div>
-                <div>${escapeHtml(v)}</div>
-              </div>`).join('')}
             <div style="margin-bottom:12px;">
               <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:4px;">Item Status</div>
               <span style="background:${sc}18;color:${sc};border:1px solid ${sc}40;padding:2px 8px;border-radius:10px;font-size:11px;">${escapeHtml(item.status||'Open')}</span>
             </div>
-            <div style="margin-bottom:14px;">
-              <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:3px;">Priority</div>
-              <div>${escapeHtml(item.priority||'—')}</div>
-            </div>
-            <div style="margin-bottom:14px;">
-              <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:3px;">Meeting Origin</div>
-              <div>${escapeHtml(item.meeting_origin_id ? '1' : '—')}</div>
-            </div>
             <!-- Action Items -->
-            <div style="border-top:1px solid var(--gray-200);padding-top:12px;">
+            <div style="border-top:1px solid var(--gray-200);padding-top:12px;margin-top:4px;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;">Tasks (${itemAI.length})</div>
-                ${isAdmin ? `<button class="form-secondary" style="padding:2px 8px;font-size:11px;" onclick="openMtgActionItemModal(null,'${item.id}','${meetingId}')">+ Create Task</button>` : ''}
+                <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;">Action Items (${itemAI.length})</div>
+                ${isAdmin ? `<button class="form-secondary" style="padding:2px 8px;font-size:11px;" onclick="openMtgActionItemModal(null,'${item.id}','${meetingId}')">+ Add</button>` : ''}
               </div>
               ${itemAI.length === 0
-                ? '<div style="color:var(--gray-400);font-size:12px;">No tasks yet.</div>'
+                ? '<div style="color:var(--gray-400);font-size:12px;">None yet.</div>'
                 : itemAI.map(ai => {
                     const aic = ai.status === 'Closed' ? '#27ae60' : '#E67E22';
                     return `<div style="background:white;border:1px solid var(--gray-200);border-radius:5px;padding:7px 9px;margin-bottom:6px;font-size:12px;">
