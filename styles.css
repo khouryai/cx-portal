@@ -4920,7 +4920,14 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   border-color: var(--hitachi-red) !important;
 }
 .flatpickr-day:hover { background: #fff0f1 !important; }
-.flatpickr-months .flatpickr-month { background: var(--hitachi-red) !important; color: white !important; }
+.flatpickr-months .flatpickr-month { background: #f9fafb !important; color: #111827 !important; border-bottom: 1px solid #e5e7eb; }
+.flatpickr-current-month,
+.flatpickr-current-month .flatpickr-monthDropdown-months,
+.flatpickr-current-month input.cur-year { color: #111827 !important; font-weight: 600; }
+.flatpickr-months .flatpickr-prev-month,
+.flatpickr-months .flatpickr-next-month { color: #374151 !important; fill: #374151 !important; }
+.flatpickr-months .flatpickr-prev-month:hover,
+.flatpickr-months .flatpickr-next-month:hover { color: var(--hitachi-red) !important; fill: var(--hitachi-red) !important; }
 .flatpickr-weekday { color: var(--hitachi-red) !important; font-weight: 600 !important; }
 
 /* ─── Tippy.js portal theme ──────────────────────────────────── */

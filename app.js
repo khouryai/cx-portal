@@ -324,6 +324,8 @@ function showPage(name) {
   if (name === 'schedule')         renderSchedulePage();
   if (name === 'meetings')         { loadMeetings().then(() => { loadMtgTemplates(); renderMeetings(); }); }
   window.scrollTo(0, 0);
+  // Init libraries for any page — auto-detects selects, tooltips, date inputs
+  setTimeout(_initPageLibraries, 150);
 }
 
 // ── Sidebar collapse ─────────────────────────────────────────────────────────
@@ -4312,6 +4314,7 @@ function renderFieldIntake() {
     root.innerHTML = `<div class="docs-empty"><h3>Field & Admin only</h3></div>`;
     return;
   }
+  setTimeout(_initPageLibraries, 80);
 
   const allItems = [..._sessionLog.map(e => ({...e, _fromLog:true})), ...intakeAdditions];
 
@@ -6092,6 +6095,7 @@ function renderAuditLog() {
     return;
   }
   const entries = _auditEvents();
+  setTimeout(_initPageLibraries, 80);
 
   root.innerHTML = `
     <div class="data-card">
@@ -6765,6 +6769,7 @@ function renderTestReporting() {
     root.innerHTML = `<div class="docs-empty"><h3>Not available</h3><p>Your role does not have access to Test Reporting.</p></div>`;
     return;
   }
+  setTimeout(_initPageLibraries, 80);
 
   // Subsystem lock: if the signed-in user has a subsystem assigned, pin the filter
   const trpUserSub = currentRoleUser?.subsystem || '';
@@ -7421,15 +7426,69 @@ function _trInitAutoAnimate() {
   }
 }
 
-// ─── Master init — called after every Test Register render ───────────────
-function _trInitModernUI() {
-  // Small timeout lets the DOM settle before library init
+// ─── GLOBAL init — called after every page render ────────────────────────
+// Works across ALL tools. Just add class="filter-select" to any <select>,
+// data-tippy-content="..." to any element, or type="date" to any input.
+function _initPageLibraries() {
   setTimeout(() => {
-    _trInitTomSelect();
-    _trInitTippy();
-    _trInitAutoAnimate();
-  }, 40);
+    // ── Tom Select: upgrade every .filter-select not yet initialised ──
+    if (typeof TomSelect !== 'undefined') {
+      document.querySelectorAll('select.filter-select').forEach(el => {
+        if (el.tomselect) return; // already live
+        new TomSelect(el, {
+          create: false,
+          allowEmptyOption: true,
+          maxOptions: 300,
+          // Tom Select fires the native 'change' event on the hidden <select>,
+          // so all existing onchange="..." handlers still work automatically.
+        });
+      });
+    }
+
+    // ── Tippy: refresh all tooltip targets ────────────────────────────
+    if (typeof tippy !== 'undefined') {
+      document.querySelectorAll('[data-tippy-content]').forEach(el => {
+        if (el._tippy) el._tippy.destroy();
+      });
+      tippy('[data-tippy-content]', {
+        placement: 'top',
+        arrow: true,
+        animation: 'shift-away',
+        theme: 'portal',
+        delay: [300, 0],
+      });
+    }
+
+    // ── Flatpickr: replace every native date input project-wide ──────
+    if (typeof flatpickr !== 'undefined') {
+      document.querySelectorAll('input[type="date"]:not([data-fp-done])').forEach(el => {
+        el.dataset.fpDone = '1';
+        const saved = el.value;
+        const fp = flatpickr(el, {
+          dateFormat: 'Y-m-d',
+          defaultDate: saved || null,
+          allowInput: true,
+          onChange(_, dateStr) {
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          },
+        });
+      });
+    }
+
+    // ── AutoAnimate: apply once to each main content container ────────
+    if (typeof autoAnimate !== 'undefined') {
+      ['test-register-content','punch-workflow-content','rma-content',
+       'mtg-content','field-intake-content','audit-content',
+       'test-reporting-content','schedule-content'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && !el._aaInit) { autoAnimate(el, { duration: 180 }); el._aaInit = true; }
+      });
+    }
+  }, 50);
 }
+
+// Keep old name as alias so existing calls don't break
+function _trInitModernUI() { _initPageLibraries(); }
 
 // ─── Fuse drilldown search handler ───────────────────────────────────────
 let _trDrillFuse = null;
@@ -7438,98 +7497,7 @@ function _trDrillSearchInput(val) {
   _reRenderTR();
 }
 
-// ─── Alpine.js Quick Update Panel ────────────────────────────────────────
-// This function is picked up by Alpine (x-data="trQuickPanel()").
-// Open from any JS via: document.dispatchEvent(new CustomEvent('tr-open-panel', { detail: itemData }))
-function trQuickPanel() {
-  return {
-    show: false,
-    saving: false,
-    item: {
-      testId: '', testCaseCode: '', testName: '', context: '',
-      status: 'Not Started', reason: '', completedBy: '', completedDate: '', notes: '',
-    },
-    statuses: ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'],
-
-    get showReason() { return this.item.status === 'Fail' || this.item.status === 'Blocked'; },
-
-    init() {
-      // Listen for open requests from regular JS
-      document.addEventListener('tr-open-panel', (e) => {
-        this.item = { ...e.detail };
-        this.show = true;
-        this.$nextTick(() => this._initFlatpickr());
-      });
-    },
-
-    _initFlatpickr() {
-      if (typeof flatpickr === 'undefined') return;
-      const el = document.getElementById('tr-panel-date-input');
-      if (!el) return;
-      if (el._flatpickr) el._flatpickr.destroy();
-      const self = this;
-      flatpickr(el, {
-        dateFormat: 'Y-m-d',
-        defaultDate: self.item.completedDate || null,
-        maxDate: 'today',
-        onChange(_, dateStr) { self.item.completedDate = dateStr; },
-      });
-    },
-
-    close() {
-      this.show = false;
-      const el = document.getElementById('tr-panel-date-input');
-      if (el?._flatpickr) el._flatpickr.destroy();
-    },
-
-    onStatusChange() {
-      if (!this.showReason) this.item.reason = '';
-    },
-
-    async save() {
-      if (this.showReason && !this.item.reason.trim()) {
-        toast(`Please provide a ${this.item.status.toLowerCase()} reason`, 'warn'); return;
-      }
-      this.saving = true;
-      try {
-        await _updateTestItemStatus(this.item.testId, this.item.status, {
-          reason:        this.item.reason,
-          completedBy:   this.item.completedBy || currentRoleUser?.name || '',
-          completedDate: this.item.completedDate
-            ? new Date(this.item.completedDate + 'T12:00:00').toISOString()
-            : null,
-          notes:         this.item.notes,
-          source:        'quick-panel',
-        });
-        _reRenderTR();
-        this.close();
-        toast('Test item updated', 'success');
-      } catch(e) {
-        toast('Error: ' + e.message, 'error');
-      } finally { this.saving = false; }
-    },
-  };
-}
-
-// ─── Open Quick Panel from regular JS ────────────────────────────────────
-function _trOpenQuickPanel(testId) {
-  const r = TI.find(t => String(t.TestID) === String(testId));
-  if (!r) return;
-  const legacyMap = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
-  document.dispatchEvent(new CustomEvent('tr-open-panel', {
-    detail: {
-      testId:        r.TestID,
-      testCaseCode:  r.TestCaseCode || r.TestID || '',
-      testName:      r.TestName || '—',
-      context:       [r.Subsystem, r.Location, r.Phase].filter(Boolean).join(' · '),
-      status:        legacyMap[r.Status] || r.Status || 'Not Started',
-      reason:        r.FailedReason || r.BlockedReason || '',
-      completedBy:   r.CompletedBy || '',
-      completedDate: r.CompletedDate ? String(r.CompletedDate).split('T')[0] : '',
-      notes:         r.Notes || '',
-    },
-  }));
-}
+// (Alpine panel removed — status/completed_by/date captured automatically on status change)
 
 // ACTIVITY MANAGER / TEST REGISTER — shared state
 // ==========================================================================
@@ -8035,7 +8003,6 @@ function _amDrilldownHTML(key) {
                   <th style="min-width:170px;">Status</th>
                   <th style="min-width:240px;">Notes</th>
                   ${_trEditMode && isAdmin ? `<th style="width:86px;">Actions</th>` : ''}
-                  <th style="width:90px;"></th>
                 </tr>
               </thead>
               <tbody>
@@ -8073,10 +8040,6 @@ function _amDrilldownHTML(key) {
                       <td>
                         <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
                         ${isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<button class="form-secondary" style="font-size:11px;padding:2px 6px;margin-top:4px;" onclick="_trAddGenericChild('${tid}')">＋ Asset</button>` : ''}
-                      </td>
-                      <td style="white-space:nowrap;">
-                        <button class="tr-qp-btn" onclick="_trOpenQuickPanel('${tid}')"
-                          data-tippy-content="Open full update panel">✏ Update</button>
                       </td>
                       ${_trEditMode && isAdmin ? `<td><button class="form-secondary" style="font-size:13px;padding:4px 7px;" onclick="_trCopyCase('${tid}')">⧉</button><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);margin-left:4px;" onclick="_trDeleteCase('${tid}')">🗑</button></td>` : ''}
                     </tr>
@@ -8268,14 +8231,21 @@ async function _trDeleteCase(testId) {
 }
 
 function _trBulkBarHTML(count) {
+  const isAdmin = currentRoleUser?.role === 'admin';
   return `
     <div class="tr-bulk-bar">
-      <span><b>${count}</b> selected</span>
+      <span><b>${count}</b> test case${count===1?'':'s'} selected</span>
       ${_trBulkMsg ? `<span style="color:#bbf7d0;font-size:12px;">${escapeHtml(_trBulkMsg)}</span>` : ''}
-      <select id="tr-bulk-status" class="form-input"><option value="">Bulk Status</option>${['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'].map(s=>`<option value="${s}">${s}</option>`).join('')}</select>
-      <input id="tr-bulk-notes" class="form-input" placeholder="Bulk notes">
+      <select id="tr-bulk-status" class="form-input" style="min-width:160px;">
+        <option value="">— Bulk Status —</option>
+        ${['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'].map(s=>`<option value="${s}">${s}</option>`).join('')}
+      </select>
+      <input id="tr-bulk-notes" class="form-input" placeholder="Bulk notes (optional)" style="min-width:180px;">
       <button class="admin-action-btn" onclick="_trApplyBulkField()">Apply</button>
-      <button class="form-secondary" onclick="_trClearSelection()">Clear Selection</button>
+      <div style="width:1px;background:rgba(255,255,255,.2);align-self:stretch;"></div>
+      ${isAdmin ? `<button class="admin-action-btn" style="background:#dc2626;" onclick="_trBulkDelete()"
+        data-tippy-content="Permanently delete selected test cases">🗑 Delete (${count})</button>` : ''}
+      <button class="form-secondary" style="font-size:12px;" onclick="_trClearSelection()">Clear</button>
     </div>
   `;
 }
@@ -11568,6 +11538,7 @@ function renderRMA() {
   const root = document.getElementById('rma-content');
   if (!root || !currentRoleUser) return;
   root.innerHTML = _rmaPageHTML();
+  setTimeout(_initPageLibraries, 80);
 }
 
 function _rmaStatusColor(s) {
