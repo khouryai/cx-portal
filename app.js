@@ -13332,6 +13332,8 @@ let _planningCalInstance = null;
 let _planningTLInstance  = null;                       // vis-timeline instance for lookahead/gantt/resources
 let _laTimelineGroupBy   = 'resource';                 // resource | location | subsystem
 let _laTimelineWindow    = 14;                         // 14 / 21 / 28 days
+let _planningShowP6      = false;                      // Calendar/Timeline P6 overlay toggle
+let _conflictFilter      = 'all';                      // all | pto | double | p6 | hours | unmatched
 
 // Shift visual styles — used across calendar, timeline, badges
 const _SHIFT_VISUAL = {
@@ -13428,7 +13430,7 @@ function renderLookahead() {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:2px solid var(--gray-200);padding-bottom:0;">
       <div style="display:flex;gap:0;">
         ${tabs.map(([id, label]) => `
-          <button class="admin-tab${_lookaheadTab === id ? ' active' : ''}" onclick="_lookaheadSetTab('${id}')">${label}</button>
+          <button class="admin-tab${_lookaheadTab === id ? ' active' : ''}" data-la-tab="${id}" onclick="_lookaheadSetTab('${id}')">${label}</button>
         `).join('')}
       </div>
       <div style="display:flex;gap:8px;">
@@ -13444,6 +13446,10 @@ function renderLookahead() {
 function _lookaheadSetTab(t) {
   _planningCleanupInstances();
   _lookaheadTab = t;
+  // Move the dark "active" pill to the clicked tab
+  document.querySelectorAll('#lookahead-content [data-la-tab]').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('data-la-tab') === t);
+  });
   _renderLookaheadTabBody();
 }
 
@@ -13547,8 +13553,12 @@ function _laCalendarHTML() {
 
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
       ${[['dayGridMonth','Month'],['timeGridWeek','Week'],['timeGridDay','Day'],['listWeek','List']].map(([v,l]) => `
-        <button class="admin-tab${_planningCalView === v ? ' active' : ''}" style="font-size:12px;padding:6px 14px;" onclick="_planningSetCalView('${v}')">${l}</button>
+        <button class="admin-tab${_planningCalView === v ? ' active' : ''}" data-cal-view="${v}" style="font-size:12px;padding:6px 14px;" onclick="_planningSetCalView('${v}')">${l}</button>
       `).join('')}
+      <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);cursor:pointer;">
+        <input type="checkbox" id="cal-p6-toggle" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
+        Show P6 schedule
+      </label>
     </div>
 
     <div class="data-card" style="padding:14px;">
@@ -13558,15 +13568,20 @@ function _laCalendarHTML() {
 
 function _planningSetCalView(v) {
   _planningCalView = v;
+  // Move the dark active pill to the clicked view button
+  document.querySelectorAll('#lookahead-tab-body [data-cal-view]').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('data-cal-view') === v);
+  });
   if (_planningCalInstance) {
-    try { _planningCalInstance.setOption('view', v); } catch(_) { _renderLookaheadTabBody(); }
-    // Update tab button active state
-    document.querySelectorAll('#lookahead-tab-body .admin-tab').forEach(b => {
-      b.classList.toggle('active', b.textContent.trim() === ({dayGridMonth:'Month',timeGridWeek:'Week',timeGridDay:'Day',listWeek:'List'}[v] || ''));
-    });
-  } else {
-    _renderLookaheadTabBody();
+    try { _planningCalInstance.setOption('view', v); return; } catch(_) {}
   }
+  _renderLookaheadTabBody();
+}
+
+function _planningTogglePO6Overlay(on) {
+  _planningShowP6 = !!on;
+  // Re-render the calendar so P6 events appear/disappear
+  if (_lookaheadTab === 'calendar') _renderLookaheadTabBody();
 }
 
 function _laMountCalendar() {
@@ -13635,6 +13650,24 @@ function _laMountCalendar() {
     });
   });
 
+  // P6 overlay events (when toggle is on)
+  if (_planningShowP6 && Array.isArray(P6_ACTS)) {
+    P6_ACTS.forEach(p6 => {
+      if (!p6.start_date || !p6.finish_date) return;
+      ecEvents.push({
+        id: 'p6-' + p6.id,
+        title: `📋 ${p6.p6_id || ''} ${(p6.p6_name || '').slice(0,40)}`,
+        start: p6.start_date,
+        end:   dayjs(p6.finish_date).add(1, 'day').format('YYYY-MM-DD'),
+        allDay: true,
+        backgroundColor: 'rgba(99,102,241,0.15)',
+        borderColor:     '#6366f1',
+        textColor:       '#3730a3',
+        extendedProps: { type: 'p6', data: p6 },
+      });
+    });
+  }
+
   try {
     _planningCalInstance = new EventCalendar(target, {
       view: _planningCalView,
@@ -13650,11 +13683,9 @@ function _laMountCalendar() {
       },
       eventClick(info) {
         const props = info.event.extendedProps || {};
-        if (props.type === 'pto') {
-          _planningOpenPTODetail(props.data);
-        } else if (props.type === 'event') {
-          _planningOpenEventDetail(props.data.id);
-        }
+        if (props.type === 'pto')        _planningOpenPTODetail(props.data);
+        else if (props.type === 'p6')    _planningOpenP6Detail(props.data);
+        else if (props.type === 'event') _planningOpenEventDetail(props.data.id);
       },
       eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
     });
@@ -13682,9 +13713,13 @@ function _laLookaheadHTML() {
       <div>
         <label style="font-size:11px;color:var(--gray-500);margin-right:4px;">Window:</label>
         ${[['14','2 weeks'],['21','3 weeks'],['28','4 weeks']].map(([v,l]) => `
-          <button class="admin-tab${_laTimelineWindow === parseInt(v) ? ' active' : ''}" style="font-size:12px;padding:6px 14px;" onclick="_laSetTimelineWindow(${v})">${l}</button>
+          <button class="admin-tab${_laTimelineWindow === parseInt(v) ? ' active' : ''}" data-tl-window="${v}" style="font-size:12px;padding:6px 14px;" onclick="_laSetTimelineWindow(${v})">${l}</button>
         `).join('')}
       </div>
+      <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);cursor:pointer;">
+        <input type="checkbox" id="tl-p6-toggle" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
+        Show P6 schedule
+      </label>
     </div>
 
     <div class="data-card" style="padding:14px;">
@@ -13776,6 +13811,27 @@ function _laMountLookaheadTL() {
     });
   }
 
+  // P6 overlay — add dedicated "P6 Schedule" group when toggle is on
+  if (_planningShowP6 && Array.isArray(P6_ACTS)) {
+    groupSpecs.push({
+      id: 'p6-schedule',
+      content: '<div style="color:#3730a3;font-size:11px;"><strong>📋 P6 Schedule</strong></div>',
+    });
+    P6_ACTS.forEach(p6 => {
+      if (!p6.start_date || !p6.finish_date) return;
+      items.push({
+        id: 'p6-' + p6.id,
+        group: 'p6-schedule',
+        content: `<span style="font-size:11px;color:#3730a3;">${escapeHtml((p6.p6_name || p6.p6_id || '').slice(0,50))}</span>`,
+        start: p6.start_date,
+        end:   dayjs(p6.finish_date).add(1,'day').format('YYYY-MM-DD'),
+        style: 'background-color:rgba(99,102,241,0.18);color:#3730a3;border-color:rgba(99,102,241,0.5);',
+        title: `P6: ${escapeHtml(p6.p6_id || '')} (${p6.start_date} → ${p6.finish_date})`,
+        _p6Id: p6.id,
+      });
+    });
+  }
+
   if (!groupSpecs.length) groupSpecs = [{ id: 'empty', content: 'No data' }];
 
   const start = dayjs().startOf('day').toDate();
@@ -13805,6 +13861,10 @@ function _laMountLookaheadTL() {
       const raw = props.items[0];
       const item = items.find(i => i.id === raw);
       if (item?._eventId) _planningOpenEventDetail(item._eventId);
+      else if (item?._p6Id) {
+        const p6 = P6_ACTS.find(x => x.id === item._p6Id);
+        if (p6) _planningOpenP6Detail(p6);
+      }
     });
   } catch(err) {
     console.error('Timeline mount failed:', err);
@@ -13866,20 +13926,20 @@ function _laMountGanttTL() {
     });
   });
 
-  // P6 baseline overlay (background bar where p6_activity_id is set)
+  // P6 schedule overlay (background bar where p6_activity_id is set)
   if (Array.isArray(P6_ACTS)) {
     PLANNING_ACTIVITIES.forEach(a => {
       if (!a.linked_p6_activity_id) return;
       const p6 = P6_ACTS.find(x => x.id === a.linked_p6_activity_id);
-      if (!p6 || !p6.start_date || !p6.end_date) return;
+      if (!p6 || !p6.start_date || !p6.finish_date) return;
       items.push({
         id: 'p6-' + a.id,
         group: 'act-' + a.id,
         start: p6.start_date,
-        end:   p6.end_date,
+        end:   dayjs(p6.finish_date).add(1, 'day').format('YYYY-MM-DD'),
         type:  'background',
         style: 'background-color:rgba(99,102,241,0.10);border:1px dashed rgba(99,102,241,0.45);',
-        title: `P6 baseline: ${escapeHtml(p6.activity_id || '')}`,
+        title: `P6 schedule: ${escapeHtml(p6.p6_id || '')} (${p6.start_date} → ${p6.finish_date})`,
       });
     });
   }
@@ -14540,7 +14600,7 @@ function renderAdminPlanning() {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:2px solid var(--gray-200);padding-bottom:0;">
       <div style="display:flex;gap:0;">
         ${tabs.map(([id, label]) => `
-          <button class="admin-tab${_adminPlanningTab === id ? ' active' : ''}" onclick="_adminPlanningSetTab('${id}')">${label}</button>
+          <button class="admin-tab${_adminPlanningTab === id ? ' active' : ''}" data-ap-tab="${id}" onclick="_adminPlanningSetTab('${id}')">${label}</button>
         `).join('')}
       </div>
       <button class="form-secondary" onclick="loadPlanningData(true).then(renderAdminPlanning);">↻ Refresh</button>
@@ -14550,7 +14610,13 @@ function renderAdminPlanning() {
   _renderAdminPlanningTabBody();
 }
 
-function _adminPlanningSetTab(t) { _adminPlanningTab = t; _renderAdminPlanningTabBody(); }
+function _adminPlanningSetTab(t) {
+  _adminPlanningTab = t;
+  document.querySelectorAll('#admin-planning-content [data-ap-tab]').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('data-ap-tab') === t);
+  });
+  _renderAdminPlanningTabBody();
+}
 
 function _renderAdminPlanningTabBody() {
   const el = document.getElementById('admin-planning-tab-body');
@@ -14762,13 +14828,14 @@ function _matchPlanningActivity(row) {
     if (tiById) return { status: 'matched', test_item_id: tiById.TestID, p6_activity_id: null, confidence: 1.0 };
   }
 
-  // 2. P6 activity map — match by activity_id then walk through p6_activity_map → test_item_id
+  // 2. P6 activity map — match by p6_id then walk through p6_activity_map → test_item via portal_test_case_code
   if (idText && Array.isArray(P6_ACTS)) {
-    const p6 = P6_ACTS.find(a => String(a.activity_id || '').toLowerCase() === idText.toLowerCase());
+    const p6 = P6_ACTS.find(a => String(a.p6_id || '').toLowerCase() === idText.toLowerCase());
     if (p6) {
       const map = (P6_MAP || []).find(m => m.p6_activity_id === p6.id);
-      if (map?.test_item_id) {
-        return { status: 'matched', test_item_id: map.test_item_id, p6_activity_id: p6.id, confidence: 0.95 };
+      if (map?.portal_test_case_code) {
+        const ti = TI.find(t => String(t.TestCaseCode || '').toLowerCase() === String(map.portal_test_case_code).toLowerCase());
+        if (ti) return { status: 'matched', test_item_id: ti.TestID, p6_activity_id: p6.id, confidence: 0.95 };
       }
       return { status: 'suggested', test_item_id: null, p6_activity_id: p6.id, confidence: 0.70 };
     }
@@ -15357,14 +15424,372 @@ async function _planningLinkActivity(activityId) {
   }
 }
 
+// ============================================================
+// CONFLICT COMPUTATION ENGINE — Batch 5
+// ============================================================
+//
+// Detects:
+//   pto_overlap        — event resource has approved PTO that overlaps event
+//   double_booked      — same resource on two events at same time
+//   p6_date_variance   — lookahead event date vs linked P6 schedule diverges
+//   outside_work_hours — event starts before 06:00 or ends after 23:00 (configurable)
+//                        and isn't tagged as a night shift
+//   unmatched_resource — already created at import; kept here for completeness
+
+const _CONFLICT_P6_VARIANCE_DAYS_WARNING  = 3;   // > 3 days off P6 → warning
+const _CONFLICT_P6_VARIANCE_DAYS_CRITICAL = 14;  // > 14 days off P6 → critical
+const _CONFLICT_WORK_HOURS_EARLY  = '06:00';
+const _CONFLICT_WORK_HOURS_LATE   = '23:00';
+
+function _planningEventsOverlap(a, b) {
+  // Both must be on the same date OR have an overnight span that crosses
+  if (a.event_date !== b.event_date) {
+    // Cross-midnight check: if a is overnight, its end is on a.event_date+1
+    if (a.all_day || b.all_day) return a.event_date === b.event_date;
+    return false;
+  }
+  if (a.all_day || b.all_day) return true;
+  // Times — handle overnight (end <= start means goes to next day)
+  const toMin = (t) => {
+    if (!t) return 0;
+    const [h, m] = t.split(':');
+    return parseInt(h) * 60 + parseInt(m);
+  };
+  let aStart = toMin(a.start_time), aEnd = toMin(a.end_time);
+  let bStart = toMin(b.start_time), bEnd = toMin(b.end_time);
+  if (aEnd <= aStart) aEnd += 24 * 60;
+  if (bEnd <= bStart) bEnd += 24 * 60;
+  return aStart < bEnd && bStart < aEnd;
+}
+
+function _planningOutsideWorkHours(ev) {
+  if (ev.all_day) return false;
+  if (ev.shift_type === 'night_shift') return false; // night shifts allowed past hours
+  const early = ev.start_time && ev.start_time < _CONFLICT_WORK_HOURS_EARLY;
+  const late  = ev.end_time   && ev.end_time   > _CONFLICT_WORK_HOURS_LATE;
+  return early || late;
+}
+
+async function _planningRecomputeConflicts(silentSuccess = false) {
+  if (currentRoleUser?.role !== 'admin') return;
+  const newConflicts = [];
+
+  // Build a lookup of resource assignments per event
+  const eventResources = {};
+  PLANNING_EVENT_RES.forEach(er => {
+    (eventResources[er.event_id] = eventResources[er.event_id] || []).push(er.resource_id);
+  });
+
+  // 1. PTO overlaps — event assigned to a resource with approved PTO that day
+  PLANNING_EVENTS.forEach(ev => {
+    if (ev.status === 'cancelled') return;
+    const resIds = eventResources[ev.id] || [];
+    resIds.forEach(resId => {
+      const pto = _ptoOverlapsRange(resId, ev.event_date, ev.start_time, ev.end_time);
+      if (pto) {
+        const r = PLANNING_RESOURCES.find(x => x.id === resId);
+        newConflicts.push({
+          event_id: ev.id,
+          resource_id: resId,
+          conflict_type: 'pto_overlap',
+          severity: 'critical',
+          message: `${r?.display_name || 'Resource'} is on approved PTO during "${ev.title}" on ${ev.event_date}`,
+          payload_json: { pto_id: pto.id, event_id: ev.id, resource_id: resId },
+        });
+      }
+    });
+  });
+
+  // 2. Double-booked — same resource on two events whose times overlap on same date
+  const byResource = {};
+  PLANNING_EVENT_RES.forEach(er => {
+    const ev = PLANNING_EVENTS.find(e => e.id === er.event_id);
+    if (!ev || ev.status === 'cancelled') return;
+    (byResource[er.resource_id] = byResource[er.resource_id] || []).push(ev);
+  });
+  Object.entries(byResource).forEach(([resId, evs]) => {
+    for (let i = 0; i < evs.length; i++) {
+      for (let j = i + 1; j < evs.length; j++) {
+        if (_planningEventsOverlap(evs[i], evs[j])) {
+          const r = PLANNING_RESOURCES.find(x => x.id === resId);
+          newConflicts.push({
+            event_id: evs[i].id,
+            resource_id: resId,
+            conflict_type: 'double_booked',
+            severity: 'critical',
+            message: `${r?.display_name || 'Resource'} is double-booked on ${evs[i].event_date}: "${evs[i].title}" + "${evs[j].title}"`,
+            payload_json: { other_event_id: evs[j].id, resource_id: resId },
+          });
+        }
+      }
+    }
+  });
+
+  // 3. P6 date variance — lookahead event date vs linked P6 schedule
+  if (Array.isArray(P6_ACTS)) {
+    PLANNING_ACTIVITIES.forEach(a => {
+      if (!a.linked_p6_activity_id) return;
+      const p6 = P6_ACTS.find(x => x.id === a.linked_p6_activity_id);
+      if (!p6 || !p6.start_date || !p6.finish_date) return;
+      const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === a.id && e.status !== 'cancelled');
+      if (!evs.length) return;
+      const p6Start = dayjs(p6.start_date);
+      const p6End   = dayjs(p6.finish_date);
+      evs.forEach(ev => {
+        const d = dayjs(ev.event_date);
+        let varianceDays = 0;
+        if (d.isBefore(p6Start))      varianceDays = p6Start.diff(d, 'day');
+        else if (d.isAfter(p6End))    varianceDays = d.diff(p6End, 'day');
+        else return; // within P6 window — no variance
+        if (varianceDays < _CONFLICT_P6_VARIANCE_DAYS_WARNING) return;
+        const severity = varianceDays >= _CONFLICT_P6_VARIANCE_DAYS_CRITICAL ? 'critical' : 'warning';
+        newConflicts.push({
+          event_id: ev.id,
+          conflict_type: 'p6_date_variance',
+          severity,
+          message: `Event on ${ev.event_date} is ${varianceDays} day${varianceDays === 1 ? '' : 's'} outside P6 window (${p6.start_date} → ${p6.finish_date}) for P6 activity ${p6.p6_id || ''}`,
+          payload_json: { p6_activity_id: p6.id, variance_days: varianceDays, p6_start: p6.start_date, p6_finish: p6.finish_date },
+        });
+      });
+    });
+  }
+
+  // 4. Outside work hours
+  PLANNING_EVENTS.forEach(ev => {
+    if (ev.status === 'cancelled') return;
+    if (!_planningOutsideWorkHours(ev)) return;
+    newConflicts.push({
+      event_id: ev.id,
+      conflict_type: 'outside_work_hours',
+      severity: 'info',
+      message: `Event "${ev.title}" on ${ev.event_date} (${ev.start_time || ''}–${ev.end_time || ''}) runs outside ${_CONFLICT_WORK_HOURS_EARLY}–${_CONFLICT_WORK_HOURS_LATE}`,
+      payload_json: { start: ev.start_time, end: ev.end_time },
+    });
+  });
+
+  // Delete existing un-acknowledged auto-generated conflicts (keep manual/ack'd)
+  const autoTypes = ['pto_overlap', 'double_booked', 'p6_date_variance', 'outside_work_hours'];
+  const toDelete = PLANNING_CONFLICTS.filter(c =>
+    autoTypes.includes(c.conflict_type) &&
+    !c.is_acknowledged
+  );
+  for (const c of toDelete) {
+    try { await _dbDelete('planning_conflicts', { id: c.id }); } catch(_) {}
+  }
+
+  // Insert new conflicts in chunks
+  if (newConflicts.length) {
+    for (let i = 0; i < newConflicts.length; i += 100) {
+      try { await _dbInsert('planning_conflicts', newConflicts.slice(i, i + 100)); } catch(err) { console.warn('Conflict insert chunk failed:', err.message); }
+    }
+  }
+
+  await loadPlanningData(true);
+  if (!silentSuccess) toast(`Conflicts recomputed: ${newConflicts.length} found`, newConflicts.length ? 'warn' : 'success');
+  if (typeof renderAdminPlanning === 'function' && _adminPlanningTab === 'conflicts') renderAdminPlanning();
+}
+
+// ── Single-row + bulk acknowledge ────────────────────────────
+async function _planningAcknowledgeConflict(conflictId) {
+  try {
+    await _dbUpdate('planning_conflicts', {
+      is_acknowledged: true,
+      acknowledged_by: currentProfile?.id || null,
+      acknowledged_at: new Date().toISOString(),
+    }, { id: conflictId });
+    await loadPlanningData(true);
+    renderAdminPlanning();
+  } catch(err) {
+    toast('Acknowledge failed: ' + err.message, 'error');
+  }
+}
+
+async function _planningBulkAck() {
+  const open = PLANNING_CONFLICTS.filter(c => !c.is_acknowledged);
+  const rows = _conflictFilter === 'all' ? open : open.filter(c => c.conflict_type === _conflictFilter);
+  if (!rows.length) return;
+  if (!confirm(`Acknowledge ${rows.length} conflict${rows.length === 1 ? '' : 's'}?`)) return;
+  try {
+    for (const c of rows) {
+      await _dbUpdate('planning_conflicts', {
+        is_acknowledged: true,
+        acknowledged_by: currentProfile?.id || null,
+        acknowledged_at: new Date().toISOString(),
+      }, { id: c.id });
+    }
+    toast(`${rows.length} conflict${rows.length === 1 ? '' : 's'} acknowledged`, 'success');
+    await loadPlanningData(true);
+    renderAdminPlanning();
+  } catch(err) {
+    toast('Bulk ack failed: ' + err.message, 'error');
+  }
+}
+
+// ── P6 detail modal ─────────────────────────────────────────
+function _planningOpenP6Detail(p6) {
+  if (!p6) return;
+  // Find linked planning activities + events
+  const linkedActs = PLANNING_ACTIVITIES.filter(a => a.linked_p6_activity_id === p6.id);
+  const linkedEvs  = PLANNING_EVENTS.filter(e => linkedActs.some(a => a.id === e.planning_activity_id));
+  const map        = (P6_MAP || []).find(m => m.p6_activity_id === p6.id);
+  const varianceEvents = [];
+  const p6Start = dayjs(p6.start_date);
+  const p6End   = p6.finish_date ? dayjs(p6.finish_date) : null;
+  linkedEvs.forEach(ev => {
+    const d = dayjs(ev.event_date);
+    if (p6End && (d.isBefore(p6Start) || d.isAfter(p6End))) {
+      const variance = d.isBefore(p6Start) ? p6Start.diff(d, 'day') : d.diff(p6End, 'day');
+      varianceEvents.push({ ev, variance });
+    }
+  });
+
+  modal({
+    title: `📋 ${p6.p6_id || 'P6 Activity'}`,
+    sub:   p6.p6_name || '',
+    body: `
+      <div style="display:grid;grid-template-columns:140px 1fr;gap:8px 14px;font-size:13px;">
+        <div style="color:var(--gray-500);">Start:</div>
+        <div>${p6.start_date || '—'}</div>
+        <div style="color:var(--gray-500);">Finish:</div>
+        <div>${p6.finish_date || '—'}</div>
+        <div style="color:var(--gray-500);">Location:</div>
+        <div>${escapeHtml(p6.p6_location_code || '—')}</div>
+        <div style="color:var(--gray-500);">Remaining:</div>
+        <div>${p6.remaining_duration_days != null ? p6.remaining_duration_days + ' days' : '—'}</div>
+        <div style="color:var(--gray-500);">Status:</div>
+        <div>${p6.is_actual ? '<span class="badge badge-passed">Actual</span>' : '<span class="badge badge-notstarted">Planned</span>'}</div>
+        <div style="color:var(--gray-500);">Linked:</div>
+        <div>
+          ${map?.portal_test_case_code
+            ? `<strong>${escapeHtml(map.portal_test_case_code)}</strong>${map.was_confirmed ? ' ✓' : ''}`
+            : '<em style="color:#9ca3af;">Not linked</em>'}
+        </div>
+        <div style="color:var(--gray-500);">Lookahead Events:</div>
+        <div>${linkedEvs.length} event${linkedEvs.length === 1 ? '' : 's'} across ${linkedActs.length} activity${linkedActs.length === 1 ? '' : 'ies'}</div>
+      </div>
+
+      ${varianceEvents.length ? `
+        <div style="margin-top:14px;padding:10px 14px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:12px;color:#92400e;">
+          ⚠ <strong>${varianceEvents.length} event${varianceEvents.length === 1 ? '' : 's'} outside P6 window:</strong><br>
+          ${varianceEvents.slice(0, 5).map(v => `• ${escapeHtml(v.ev.title || '')} on ${v.ev.event_date} (${v.variance} day${v.variance === 1 ? '' : 's'} off)`).join('<br>')}
+          ${varianceEvents.length > 5 ? `<br>… and ${varianceEvents.length - 5} more` : ''}
+        </div>` : ''}
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
+  document.getElementById('modal-overlay')?.classList.add('active');
+}
+
+// ── Wire live conflict recompute into existing flows ─────────
+//
+// The original handlers (lookahead import, PTO approve, event cancel/lock,
+// activity link) are augmented by calling _planningRecomputeConflicts(true)
+// after their successful completion. Done by wrapping rather than editing
+// each call site individually.
+(() => {
+  const wrap = (name) => {
+    const orig = window[name];
+    if (typeof orig !== 'function') return;
+    window[name] = async function(...args) {
+      const ret = await orig.apply(this, args);
+      try { await _planningRecomputeConflicts(true); } catch(_) {}
+      return ret;
+    };
+  };
+  // After import completes, recompute against the full new dataset
+  wrap('_lookaheadConfirmImport');
+  // PTO state changes can resolve or create overlaps
+  wrap('_ptoReview');
+  wrap('_ptoSubmit');
+  wrap('_ptoCancel');
+  // Event lifecycle changes
+  wrap('_planningCancelEvent');
+  wrap('_planningToggleLock');
+  wrap('_planningLinkActivity');
+})();
+
 function _apConflictsStub() {
-  const open = PLANNING_CONFLICTS.filter(c => !c.is_acknowledged).length;
+  const open = PLANNING_CONFLICTS.filter(c => !c.is_acknowledged);
+  const byType = {};
+  open.forEach(c => { byType[c.conflict_type] = (byType[c.conflict_type] || 0) + 1; });
+
+  const TYPE_META = {
+    pto_overlap:                { label: 'PTO Overlap',          icon: '🌴', color: '#92400e' },
+    double_booked:              { label: 'Double Booked',        icon: '⚡', color: '#b45309' },
+    outside_work_hours:         { label: 'Outside Work Hours',   icon: '🌙', color: '#3730a3' },
+    p6_date_variance:           { label: 'P6 Variance',          icon: '📋', color: '#6366f1' },
+    manual_override_difference: { label: 'Override Differs',     icon: '🔒', color: '#7c3aed' },
+    unmatched_resource:         { label: 'Unmatched Resource',   icon: '👤', color: '#dc2626' },
+    missing_activity_link:      { label: 'Unmatched Activity',   icon: '🔗', color: '#b91c1c' },
+  };
+
+  const filterChips = [
+    ['all',         `All (${open.length})`],
+    ['pto_overlap', `🌴 PTO (${byType.pto_overlap || 0})`],
+    ['double_booked', `⚡ Double (${byType.double_booked || 0})`],
+    ['p6_date_variance', `📋 P6 (${byType.p6_date_variance || 0})`],
+    ['outside_work_hours', `🌙 Hours (${byType.outside_work_hours || 0})`],
+    ['unmatched_resource', `👤 Resources (${byType.unmatched_resource || 0})`],
+  ];
+
+  let rows = open;
+  if (_conflictFilter !== 'all') rows = rows.filter(c => c.conflict_type === _conflictFilter);
+
   return `
     <div class="kpi-grid kpi-grid-mini" style="margin-bottom:16px;">
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Open Conflicts</div><div class="kpi-value" style="color:var(--bad);">${open}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Acknowledged</div><div class="kpi-value">${PLANNING_CONFLICTS.length - open}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Open</div><div class="kpi-value" style="color:var(--bad);">${open.length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Critical</div><div class="kpi-value" style="color:#dc2626;">${open.filter(c => c.severity === 'critical').length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Warnings</div><div class="kpi-value" style="color:var(--warn);">${open.filter(c => c.severity === 'warning').length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Acknowledged</div><div class="kpi-value">${PLANNING_CONFLICTS.length - open.length}</div></div>
     </div>
-    ${_laStubCard('Conflict Dashboard', 'PTO overlaps, double bookings, P6 variance, manual override differences, unmatched resources.', 'Batch 5')}`;
+
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:14px;justify-content:space-between;">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${filterChips.map(([id, label]) => `
+          <button class="admin-tab${_conflictFilter === id ? ' active' : ''}" data-conflict-filter="${id}" style="font-size:12px;padding:6px 12px;" onclick="_planningSetConflictFilter('${id}')">${label}</button>
+        `).join('')}
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="form-secondary" onclick="_planningRecomputeConflicts(true)">↻ Recompute</button>
+        ${rows.length ? `<button class="admin-action-btn" onclick="_planningBulkAck()">✓ Acknowledge ${rows.length}</button>` : ''}
+      </div>
+    </div>
+
+    <div class="data-card" style="padding:0;overflow:hidden;">
+      <table class="data-table">
+        <thead>
+          <tr><th>Type</th><th>Severity</th><th>Message</th><th>Detected</th><th style="width:120px;">Action</th></tr>
+        </thead>
+        <tbody>
+          ${rows.length === 0
+            ? `<tr><td colspan="5" style="text-align:center;padding:40px;color:var(--gray-400);">🎉 No conflicts${_conflictFilter !== 'all' ? ' in this filter' : ''}.</td></tr>`
+            : rows.slice(0, 200).map(c => {
+                const meta = TYPE_META[c.conflict_type] || { label: c.conflict_type, icon: '!', color: 'var(--gray-700)' };
+                const sevBadge = c.severity === 'critical' ? `<span class="badge badge-failed">CRITICAL</span>`
+                              : c.severity === 'warning'  ? `<span class="badge badge-warn">WARNING</span>`
+                              : `<span class="badge badge-notstarted">INFO</span>`;
+                const payload = c.payload_json || {};
+                const eventLink = c.event_id ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;margin-right:4px;" onclick="_planningOpenEventDetail('${c.event_id}')">View Event</button>` : '';
+                return `
+                  <tr>
+                    <td style="font-size:13px;"><span style="color:${meta.color};font-weight:600;">${meta.icon} ${meta.label}</span></td>
+                    <td>${sevBadge}</td>
+                    <td style="font-size:12px;color:var(--gray-700);">${escapeHtml(c.message || '—')}</td>
+                    <td style="font-size:11px;color:var(--gray-500);">${c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}</td>
+                    <td>${eventLink}<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_planningAcknowledgeConflict('${c.id}')">✓ Ack</button></td>
+                  </tr>`;
+              }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function _planningSetConflictFilter(f) {
+  _conflictFilter = f;
+  document.querySelectorAll('#admin-planning-content [data-conflict-filter]').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('data-conflict-filter') === f);
+  });
+  _renderAdminPlanningTabBody();
 }
 
 function _apResourcesStub() {
