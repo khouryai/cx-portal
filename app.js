@@ -12104,26 +12104,65 @@ function _mtgFilterItems(status) {
 // ─── Rich Text Editor ─────────────────────────────────────────
 function _mtgRichEditorHTML(id, content) {
   const btns = [
-    ['bold',               '<b>B</b>',   'Bold'],
-    ['italic',             '<i>I</i>',   'Italic'],
-    ['underline',          '<u>U</u>',   'Underline'],
-    ['insertUnorderedList','• List',     'Bullet List'],
-    ['insertOrderedList',  '1. List',    'Numbered List'],
-    ['indent',             '⇥ Indent',  'Indent'],
-    ['outdent',            '⇤ Outdent', 'Outdent'],
+    { cmd:'bold',                lbl:'<b>B</b>',    title:'Bold (Ctrl+B)' },
+    { cmd:'italic',              lbl:'<i>I</i>',    title:'Italic (Ctrl+I)' },
+    { cmd:'underline',           lbl:'<u>U</u>',    title:'Underline (Ctrl+U)' },
+    { sep: true },
+    { cmd:'insertUnorderedList', lbl:'• Bullets',   title:'Bullet List' },
+    { cmd:'insertOrderedList',   lbl:'1. Numbers',  title:'Numbered List' },
+    { sep: true },
+    { cmd:'indent',              lbl:'→ Indent',    title:'Indent (Tab)' },
+    { cmd:'outdent',             lbl:'← Outdent',   title:'Outdent (Shift+Tab)' },
+    { sep: true },
+    { cmd:'removeFormat',        lbl:'✕ Clear',     title:'Clear Formatting' },
   ];
+  const toolbarBtns = btns.map(b => b.sep
+    ? `<span style="width:1px;background:var(--gray-300);margin:2px 4px;align-self:stretch;display:inline-block;"></span>`
+    : `<button title="${b.title}" type="button"
+        style="background:white;border:1px solid var(--gray-200);border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px;line-height:1.4;color:#333;white-space:nowrap;"
+        onmousedown="event.preventDefault();_mtgEditorCmd('${b.cmd}')">${b.lbl}</button>`
+  ).join('');
+
   return `
-    <div style="border:1px solid var(--gray-300);border-radius:6px;overflow:hidden;">
-      <div style="background:var(--gray-50);border-bottom:1px solid var(--gray-200);padding:4px 6px;display:flex;gap:3px;flex-wrap:wrap;">
-        ${btns.map(([cmd, lbl, title]) => `
-          <button title="${title}" type="button"
-            style="background:white;border:1px solid var(--gray-200);border-radius:3px;padding:2px 8px;cursor:pointer;font-size:12px;line-height:1.5;"
-            onmousedown="event.preventDefault();document.execCommand('${cmd}',false,null)">${lbl}</button>`).join('')}
+    <div style="border:1px solid var(--gray-300);border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+      <div style="background:#f7f7f7;border-bottom:1px solid var(--gray-200);padding:6px 10px;display:flex;align-items:center;gap:3px;flex-wrap:wrap;">
+        ${toolbarBtns}
       </div>
       <div id="${id}" contenteditable="true"
-        style="min-height:140px;padding:10px 12px;font-size:13px;outline:none;line-height:1.6;"
-      >${content}</div>
+        style="min-height:200px;padding:14px 16px;font-size:14px;line-height:1.7;outline:none;background:white;color:#1a1a1a;"
+        onkeydown="_mtgEditorKeydown(event,'${id}')"
+      >${content || '<p><br></p>'}</div>
     </div>`;
+}
+
+function _mtgEditorCmd(cmd) {
+  document.execCommand(cmd, false, null);
+}
+
+function _mtgEditorKeydown(e, editorId) {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    if (e.shiftKey) {
+      document.execCommand('outdent', false, null);
+    } else {
+      // If inside a list, indent the list item; otherwise insert spaces
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        const node = sel.getRangeAt(0).startContainer;
+        let inList = false;
+        let n = node;
+        while (n && n.id !== editorId) {
+          if (n.nodeName === 'LI' || n.nodeName === 'UL' || n.nodeName === 'OL') { inList = true; break; }
+          n = n.parentNode;
+        }
+        if (inList) {
+          document.execCommand('indent', false, null);
+        } else {
+          document.execCommand('insertText', false, '    ');
+        }
+      }
+    }
+  }
 }
 
 async function saveMtgItemMinutes(itemId) {
@@ -12173,62 +12212,63 @@ function openMtgModal(editId) {
     title: editId ? 'Edit Meeting' : 'Create Meeting',
     size: 'large',
     body: `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
         <div style="grid-column:span 2;">
-          <label class="form-label">Title *</label>
-          <input class="form-input" id="mtg-title" value="${escapeHtml(m.title||'')}" placeholder="e.g. BART CBTC: T&C Readiness Meeting">
+          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Meeting Title *</label>
+          <input class="form-input" id="mtg-title" value="${escapeHtml(m.title||'')}"
+            placeholder="e.g. BART CBTC: T&C Readiness Meeting"
+            style="font-size:15px;padding:12px 14px;border-radius:6px;">
         </div>
         <div style="grid-column:span 2;">
-          <label class="form-label">Series <span style="font-weight:400;color:var(--gray-400);font-size:11px;">(groups meetings in the list)</span></label>
-          <input class="form-input" id="mtg-series" value="${escapeHtml(m.series||'')}" list="mtg-series-list" placeholder="e.g. BART CBTC: T&C Readiness Meeting">
+          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Series
+            <span style="font-weight:400;color:var(--gray-400);font-size:11px;margin-left:6px;">groups meetings together in the list</span>
+          </label>
+          <input class="form-input" id="mtg-series" value="${escapeHtml(m.series||'')}" list="mtg-series-list"
+            placeholder="e.g. Weekly T&C Deployment Review"
+            style="font-size:14px;padding:11px 14px;border-radius:6px;">
           <datalist id="mtg-series-list">${series.map(s => `<option value="${escapeHtml(s)}">`).join('')}</datalist>
         </div>
         <div>
-          <label class="form-label">Date</label>
-          <input class="form-input" type="date" id="mtg-date" value="${m.meeting_date||''}">
+          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Date</label>
+          <input class="form-input" type="date" id="mtg-date" value="${m.meeting_date||''}"
+            style="font-size:14px;padding:11px 14px;border-radius:6px;">
         </div>
-        <div>
-          <label class="form-label">Location</label>
-          <input class="form-input" id="mtg-location" value="${escapeHtml(m.location||'')}">
-        </div>
-        <div>
-          <label class="form-label">Start Time</label>
-          <input class="form-input" id="mtg-start" value="${escapeHtml(m.start_time||'')}" placeholder="10:00 AM">
-        </div>
-        <div>
-          <label class="form-label">End Time</label>
-          <input class="form-input" id="mtg-end" value="${escapeHtml(m.end_time||'')}" placeholder="11:00 AM">
-        </div>
-        <div style="grid-column:span 2;">
-          <label class="form-label">Meeting Link</label>
-          <input class="form-input" id="mtg-link" value="${escapeHtml(m.meeting_link||'')}" placeholder="https://teams.microsoft.com/…">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Start Time</label>
+            <input class="form-input" id="mtg-start" value="${escapeHtml(m.start_time||'')}" placeholder="10:00 AM"
+              style="font-size:14px;padding:11px 14px;border-radius:6px;">
+          </div>
+          <div>
+            <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">End Time</label>
+            <input class="form-input" id="mtg-end" value="${escapeHtml(m.end_time||'')}" placeholder="11:00 AM"
+              style="font-size:14px;padding:11px 14px;border-radius:6px;">
+          </div>
         </div>
         <div style="grid-column:span 2;">
-          <label class="form-label">Overview / Description</label>
-          <textarea class="form-input" id="mtg-overview" rows="3" placeholder="Brief summary of this meeting's purpose…">${escapeHtml(m.overview||'')}</textarea>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Overview</label>
+          <textarea class="form-input" id="mtg-overview" rows="3"
+            placeholder="Brief summary of this meeting's purpose…"
+            style="font-size:14px;padding:11px 14px;border-radius:6px;resize:vertical;">${escapeHtml(m.overview||'')}</textarea>
         </div>
         <div>
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
-            <input type="checkbox" id="mtg-private" ${m.is_private?'checked':''}> Private Meeting
-          </label>
-        </div>
-        <div>
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
-            <input type="checkbox" id="mtg-draft" ${m.is_draft?'checked':''}> Draft Meeting
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;padding:10px 14px;border:1px solid var(--gray-200);border-radius:6px;background:var(--gray-50);">
+            <input type="checkbox" id="mtg-private" ${m.is_private?'checked':''}
+              style="width:16px;height:16px;accent-color:var(--hitachi-red);"> Private Meeting
           </label>
         </div>
         ${!editId && MTG_TEMPLATES.length > 0 ? `
-        <div style="grid-column:span 2;">
-          <label class="form-label">Use Template <span style="font-weight:400;color:var(--gray-400);font-size:11px;">(optional — pre-populates agenda)</span></label>
-          <select class="form-input" id="mtg-template">
+        <div>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Template</label>
+          <select class="form-input" id="mtg-template" style="font-size:14px;padding:11px 14px;border-radius:6px;">
             <option value="">No template — start blank</option>
             ${MTG_TEMPLATES.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}
           </select>
         </div>` : `<div style="display:none"><input id="mtg-template" value=""></div>`}
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-primary" onclick="saveMtg('${editId||''}')">${editId ? 'Save Changes' : 'Create Meeting'}</button>`,
+      <button class="form-secondary" onclick="closeModal()" style="padding:10px 22px;font-size:14px;">Cancel</button>
+      <button class="form-submit" onclick="saveMtg('${editId||''}')" style="padding:10px 24px;font-size:14px;border-radius:6px;">${editId ? 'Save Changes' : 'Create Meeting'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-title')?.focus(), 100);
 }
@@ -12238,15 +12278,12 @@ async function saveMtg(editId) {
   if (!title) { toast('Title is required', 'error'); return; }
   const payload = {
     title,
-    series:       document.getElementById('mtg-series')?.value?.trim()    || null,
-    meeting_date: document.getElementById('mtg-date')?.value              || null,
-    location:     document.getElementById('mtg-location')?.value?.trim()  || null,
-    start_time:   document.getElementById('mtg-start')?.value?.trim()     || null,
-    end_time:     document.getElementById('mtg-end')?.value?.trim()       || null,
-    meeting_link: document.getElementById('mtg-link')?.value?.trim()      || null,
-    overview:     document.getElementById('mtg-overview')?.value?.trim()  || null,
-    is_private:   document.getElementById('mtg-private')?.checked  || false,
-    is_draft:     document.getElementById('mtg-draft')?.checked    || false,
+    series:       document.getElementById('mtg-series')?.value?.trim()   || null,
+    meeting_date: document.getElementById('mtg-date')?.value             || null,
+    start_time:   document.getElementById('mtg-start')?.value?.trim()    || null,
+    end_time:     document.getElementById('mtg-end')?.value?.trim()      || null,
+    overview:     document.getElementById('mtg-overview')?.value?.trim() || null,
+    is_private:   document.getElementById('mtg-private')?.checked || false,
     updated_at:   new Date().toISOString(),
     created_by:   currentRoleUser?.name || null,
   };
@@ -12311,11 +12348,13 @@ function openMtgCategoryModal(editId, meetingId) {
   modal({
     title: editId ? 'Edit Category' : 'Add Category',
     body: `
-      <label class="form-label">Category Title *</label>
-      <input class="form-input" id="mtg-cat-title" value="${escapeHtml(cat.title||'')}" placeholder="e.g. T&C Activities">`,
+      <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Category Title *</label>
+      <input class="form-input" id="mtg-cat-title" value="${escapeHtml(cat.title||'')}"
+        placeholder="e.g. T&C Activities"
+        style="font-size:15px;padding:12px 14px;border-radius:6px;">`,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-primary" onclick="saveMtgCategory('${editId||''}','${meetingId}')">${editId ? 'Save' : 'Add Category'}</button>`,
+      <button class="form-submit" onclick="saveMtgCategory('${editId||''}','${meetingId}')">${editId ? 'Save Changes' : 'Add Category'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-cat-title')?.focus(), 100);
 }
@@ -12357,41 +12396,30 @@ function openMtgItemModal(editId, categoryId, meetingId) {
     title: editId ? 'Edit Agenda Item' : 'Add Agenda Item',
     size: 'large',
     body: `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-        <div style="grid-column:span 2;">
-          <label class="form-label">Item Title *</label>
-          <input class="form-input" id="mtg-item-title" value="${escapeHtml(item.title||'')}" placeholder="e.g. 2 Week Lookahead">
-        </div>
-        <div style="grid-column:span 2;">
-          <label class="form-label">Description</label>
-          <textarea class="form-input" id="mtg-item-desc" rows="3" placeholder="Brief description of this agenda item…">${escapeHtml(item.description||'')}</textarea>
+      <div style="display:grid;gap:18px;">
+        <div>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Item Title *</label>
+          <input class="form-input" id="mtg-item-title" value="${escapeHtml(item.title||'')}"
+            placeholder="e.g. 2 Week Lookahead"
+            style="font-size:15px;padding:12px 14px;border-radius:6px;">
         </div>
         <div>
-          <label class="form-label">Assignee</label>
-          <input class="form-input" id="mtg-item-assignee" value="${escapeHtml(item.assignee||'')}">
+          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Description</label>
+          <textarea class="form-input" id="mtg-item-desc" rows="4"
+            placeholder="Brief description of this agenda item…"
+            style="font-size:14px;padding:12px 14px;border-radius:6px;resize:vertical;">${escapeHtml(item.description||'')}</textarea>
         </div>
         <div>
-          <label class="form-label">Due Date</label>
-          <input class="form-input" type="date" id="mtg-item-due" value="${item.due_date||''}">
-        </div>
-        <div>
-          <label class="form-label">Status</label>
-          <select class="form-input" id="mtg-item-status">
+          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Status</label>
+          <select class="form-input" id="mtg-item-status" style="font-size:14px;padding:11px 14px;border-radius:6px;">
             <option value="Open"   ${(item.status||'Open')==='Open'  ?'selected':''}>Open</option>
             <option value="Closed" ${item.status==='Closed'?'selected':''}>Closed</option>
-          </select>
-        </div>
-        <div>
-          <label class="form-label">Priority</label>
-          <select class="form-input" id="mtg-item-priority">
-            <option value="">— None —</option>
-            ${['Low','Medium','High','Critical'].map(p => `<option value="${p}" ${item.priority===p?'selected':''}>${p}</option>`).join('')}
           </select>
         </div>
       </div>`,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-primary" onclick="saveMtgItem('${editId||''}','${categoryId}','${meetingId}')">${editId ? 'Save Changes' : 'Add Item'}</button>`,
+      <button class="form-submit" onclick="saveMtgItem('${editId||''}','${categoryId}','${meetingId}')">${editId ? 'Save Changes' : 'Add Item'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-item-title')?.focus(), 100);
 }
@@ -12401,11 +12429,8 @@ async function saveMtgItem(editId, categoryId, meetingId) {
   if (!title) { toast('Title required', 'error'); return; }
   const payload = {
     title,
-    description: document.getElementById('mtg-item-desc')?.value?.trim()     || null,
-    assignee:    document.getElementById('mtg-item-assignee')?.value?.trim()  || null,
-    due_date:    document.getElementById('mtg-item-due')?.value               || null,
-    status:      document.getElementById('mtg-item-status')?.value            || 'Open',
-    priority:    document.getElementById('mtg-item-priority')?.value          || null,
+    description: document.getElementById('mtg-item-desc')?.value?.trim() || null,
+    status:      document.getElementById('mtg-item-status')?.value        || 'Open',
     updated_at:  new Date().toISOString(),
   };
   try {
@@ -12445,25 +12470,31 @@ function openMtgActionItemModal(editId, itemId, meetingId) {
   const ai = editId ? (_mtgDetail?.actionItems?.find(a => a.id === editId) || {}) : {};
   modal({
     title: editId ? 'Edit Action Item' : 'Add Action Item',
+    size: 'large',
     body: `
-      <div style="display:grid;gap:12px;">
+      <div style="display:grid;gap:18px;">
         <div>
-          <label class="form-label">Description *</label>
-          <textarea class="form-input" id="mtg-ai-desc" rows="2" placeholder="What needs to be done?">${escapeHtml(ai.description||'')}</textarea>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Description *</label>
+          <textarea class="form-input" id="mtg-ai-desc" rows="3"
+            placeholder="What needs to be done?"
+            style="font-size:14px;padding:12px 14px;border-radius:6px;resize:vertical;">${escapeHtml(ai.description||'')}</textarea>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
           <div>
-            <label class="form-label">Assignee</label>
-            <input class="form-input" id="mtg-ai-assignee" value="${escapeHtml(ai.assignee||'')}">
+            <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Assignee</label>
+            <input class="form-input" id="mtg-ai-assignee" value="${escapeHtml(ai.assignee||'')}"
+              placeholder="Name or team"
+              style="font-size:14px;padding:11px 14px;border-radius:6px;">
           </div>
           <div>
-            <label class="form-label">Due Date</label>
-            <input class="form-input" type="date" id="mtg-ai-due" value="${ai.due_date||''}">
+            <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Due Date</label>
+            <input class="form-input" type="date" id="mtg-ai-due" value="${ai.due_date||''}"
+              style="font-size:14px;padding:11px 14px;border-radius:6px;">
           </div>
         </div>
         <div>
-          <label class="form-label">Status</label>
-          <select class="form-input" id="mtg-ai-status">
+          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Status</label>
+          <select class="form-input" id="mtg-ai-status" style="font-size:14px;padding:11px 14px;border-radius:6px;">
             <option value="Open"   ${(ai.status||'Open')==='Open'  ?'selected':''}>Open</option>
             <option value="Closed" ${ai.status==='Closed'?'selected':''}>Closed</option>
           </select>
@@ -12471,7 +12502,7 @@ function openMtgActionItemModal(editId, itemId, meetingId) {
       </div>`,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-primary" onclick="saveMtgActionItem('${editId||''}','${itemId}','${meetingId}')">${editId ? 'Save' : 'Add'}</button>`,
+      <button class="form-submit" onclick="saveMtgActionItem('${editId||''}','${itemId}','${meetingId}')">${editId ? 'Save Changes' : 'Add Action Item'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-ai-desc')?.focus(), 100);
 }
@@ -12517,29 +12548,33 @@ async function deleteMtgActionItem(aiId, meetingId) {
 function openMtgAddAttendeeModal(meetingId) {
   modal({
     title: 'Add Attendee',
+    size: 'large',
     body: `
-      <div style="display:grid;gap:12px;">
+      <div style="display:grid;gap:18px;">
         <div>
-          <label class="form-label">Name *</label>
-          <input class="form-input" id="mtg-att-name" placeholder="Full name">
+          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Name *</label>
+          <input class="form-input" id="mtg-att-name" placeholder="Full name"
+            style="font-size:15px;padding:12px 14px;border-radius:6px;">
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
           <div>
-            <label class="form-label">Email</label>
-            <input class="form-input" type="email" id="mtg-att-email" placeholder="name@company.com">
+            <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Email</label>
+            <input class="form-input" type="email" id="mtg-att-email" placeholder="name@company.com"
+              style="font-size:14px;padding:11px 14px;border-radius:6px;">
           </div>
           <div>
-            <label class="form-label">Company</label>
-            <input class="form-input" id="mtg-att-company" placeholder="Hitachi Rail">
+            <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Company</label>
+            <input class="form-input" id="mtg-att-company" placeholder="Hitachi Rail"
+              style="font-size:14px;padding:11px 14px;border-radius:6px;">
           </div>
         </div>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
-          <input type="checkbox" id="mtg-att-attended" checked> Mark as Attended
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;padding:10px 14px;border:1px solid var(--gray-200);border-radius:6px;background:var(--gray-50);">
+          <input type="checkbox" id="mtg-att-attended" checked style="width:16px;height:16px;accent-color:var(--hitachi-red);"> Mark as Attended
         </label>
       </div>`,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-primary" onclick="saveMtgAttendee('${meetingId}')">Add Attendee</button>`,
+      <button class="form-submit" onclick="saveMtgAttendee('${meetingId}')">Add Attendee</button>`,
   });
   setTimeout(() => document.getElementById('mtg-att-name')?.focus(), 100);
 }
@@ -12585,7 +12620,7 @@ function openMtgImportAttendeesModal(meetingId) {
     footer: `
       <button class="form-secondary" onclick="_mtgPreviewCSV()">Preview</button>
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-primary" onclick="_mtgImportCSV('${meetingId}')">Import</button>`,
+      <button class="form-submit" onclick="_mtgImportCSV('${meetingId}')">Import</button>`,
   });
 }
 
@@ -12829,20 +12864,25 @@ function openMtgTemplateEditModal(editId) {
   const t = editId ? (MTG_TEMPLATES.find(x => x.id === editId) || {}) : {};
   modal({
     title: editId ? 'Edit Template' : 'New Template',
+    size: 'large',
     body: `
-      <div style="display:grid;gap:12px;">
+      <div style="display:grid;gap:18px;">
         <div>
-          <label class="form-label">Template Name *</label>
-          <input class="form-input" id="mtg-tpl-name" value="${escapeHtml(t.name||'')}">
+          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Template Name *</label>
+          <input class="form-input" id="mtg-tpl-name" value="${escapeHtml(t.name||'')}"
+            placeholder="e.g. Weekly T&C Review"
+            style="font-size:15px;padding:12px 14px;border-radius:6px;">
         </div>
         <div>
-          <label class="form-label">Description</label>
-          <textarea class="form-input" id="mtg-tpl-desc" rows="2">${escapeHtml(t.description||'')}</textarea>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Description</label>
+          <textarea class="form-input" id="mtg-tpl-desc" rows="3"
+            placeholder="What is this template used for?"
+            style="font-size:14px;padding:12px 14px;border-radius:6px;resize:vertical;">${escapeHtml(t.description||'')}</textarea>
         </div>
       </div>`,
     footer: `
       <button class="form-secondary" onclick="openMtgTemplatesModal()">← Back</button>
-      <button class="form-primary" onclick="saveMtgTemplate('${editId||''}')">${editId ? 'Save' : 'Create Template'}</button>`,
+      <button class="form-submit" onclick="saveMtgTemplate('${editId||''}')">${editId ? 'Save Changes' : 'Create Template'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-tpl-name')?.focus(), 100);
 }
