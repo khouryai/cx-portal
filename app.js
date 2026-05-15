@@ -13826,7 +13826,7 @@ function _laRenderMonthView(body) {
             style="background:${bg};color:${fg};border-left:3px solid ${sc ? sc.border : (isCancel ? '#7f1d1d' : bg)};"
             data-cal-tippy="${tip}"
             onclick="_planningOpenEventDetail('${e.id}')"
-          >${v.icon ? `<span class="cal-event-icon">${v.icon}</span>` : ''}<span class="cal-event-label">${escapeHtml((e.title||'').slice(0,28))}</span></div>`;
+          ><span class="cal-event-label">${escapeHtml((e.title||'').slice(0,28))}</span></div>`;
         } else if (item.kind === 'pto') {
           html += `<div class="cal-event cal-event-pto"
             onclick="_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))"
@@ -13918,7 +13918,7 @@ function _laRenderWeekView(body) {
           const tip = _laEventTippy(e, v, asgns);
           html += `<div class="cal-allday-event" style="background:${bg};color:${fg};"
             data-cal-tippy="${tip}" onclick="_planningOpenEventDetail('${e.id}')"
-          >${v.icon||''} ${escapeHtml((e.title||'').slice(0,22))}</div>`;
+          >${escapeHtml((e.title||'').slice(0,22))}</div>`;
         } else if (item.kind === 'pto') {
           html += `<div class="cal-allday-event cal-event-pto"
             onclick="_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))"
@@ -14058,7 +14058,7 @@ function _laRenderDayView(body) {
       const tip  = _laEventTippy(e, v, asgns);
       html += `<div class="cal-allday-event" style="background:${bg};color:${fg};"
         data-cal-tippy="${tip}" onclick="_planningOpenEventDetail('${e.id}')"
-      >${v.icon||''} ${escapeHtml(e.title||'(no title)')}</div>`;
+      >${escapeHtml(e.title||'(no title)')}</div>`;
     });
     html += `</div>`;
   }
@@ -14328,7 +14328,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
             style="background:${v.bg};color:${v.text};"
             onclick="_planningOpenEventDetail('${s.event_id}')"
             data-tlg-tip="${tip}"
-          >${v.icon}</div>`;
+          >${s.cellLabel ? `<span class="tlg-cell-location">${escapeHtml(s.cellLabel)}</span>` : ''}</div>`;
         });
         if (inP6 && !shifts.length) html += `<div class="tlg-p6-hint">P6</div>`;
       }
@@ -14945,7 +14945,7 @@ function _laMountResourcesTL() {
       .map(er => PLANNING_EVENTS.find(e => e.id === er.event_id))
       .filter(Boolean);
 
-    // Mark PTO-conflicted events with warning icon in the title
+    // Mark PTO-conflicted events; include location as cell label
     const byDate = {};
     evs.filter(e => days.includes(e.event_date)).forEach(e => {
       const isCancel = e.status === 'cancelled';
@@ -14953,7 +14953,8 @@ function _laMountResourcesTL() {
       (byDate[e.event_date] = byDate[e.event_date] || []).push({
         event_id: e.id, shift_type: e.shift_type, start_time: e.start_time,
         end_time: e.end_time, all_day: !!e.all_day, isCancel,
-        title: `${conflict ? '⚠ CONFLICT: ' : ''}${e.title || ''}`,
+        title:     `${conflict ? '⚠ CONFLICT: ' : ''}${e.title || ''}`,
+        cellLabel: e.location || '',   // shown inside the coloured cell
       });
     });
 
