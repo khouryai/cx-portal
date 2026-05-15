@@ -14162,6 +14162,7 @@ function _tlgShiftVisual(s) {
 // ── Annotate consecutive same-shift runs ─────────────────────────
 function _tlgAnnotateRuns(groups, days) {
   groups.forEach(g => {
+    if (!g.byDate) return; // skip header/divider rows (no shift data)
     days.forEach((iso, idx) => {
       const shifts = g.byDate[iso] || [];
       // Only merge single-shift days (not split cells)
