@@ -13735,7 +13735,7 @@ function _laEventTippy(e, v, assignments) {
       ${e.location ? `<div class="cal-tip-row"><span>📍</span> ${escapeHtml(e.location)}</div>` : ''}
       <div class="cal-tip-row"><span>👤</span> ${escapeHtml(res)}</div>
       <div class="cal-tip-row"><span>🔄</span> ${escapeHtml(v.label)}</div>
-      ${e.status === 'cancelled' && e.cancellation_reason ? `<div class="cal-tip-row" style="color:#ef4444;"><span>✕</span> ${escapeHtml(e.cancellation_reason)}</div>` : ''}
+      ${e.status === 'cancelled' && e.cancellation_reason ? `<div class="cal-tip-row" style="color:#ef4444;"><span>✕</span> ${escapeHtml(e.cancellation_reason)}${e.cancellation_responsible_party ? ` · <strong>${escapeHtml(e.cancellation_responsible_party)}</strong>` : ''}</div>` : ''}
     </div>`.replace(/"/g, '&quot;');
 }
 
@@ -15218,7 +15218,10 @@ function _planningOpenEventDetail(eventId) {
         <div style="color:var(--gray-500);">Status:</div>
         <div>
           <span class="badge" style="background:${v.bg};color:${v.text};border:1px solid ${isCancel ? '#7f1d1d' : v.bg};">${v.icon} ${v.label}</span>
-          ${isCancel && e.cancellation_reason ? `<div style="margin-top:6px;font-size:12px;color:#7f1d1d;background:#fef2f2;padding:6px 10px;border-radius:6px;">Reason: ${escapeHtml(e.cancellation_reason)}</div>` : ''}
+          ${isCancel && e.cancellation_reason ? `<div style="margin-top:6px;font-size:12px;color:#7f1d1d;background:#fef2f2;padding:6px 10px;border-radius:6px;line-height:1.6;">
+            <span style="font-weight:600;">Reason:</span> ${escapeHtml(e.cancellation_reason)}
+            ${e.cancellation_responsible_party ? `<span style="margin-left:8px;padding:1px 8px;background:#fee2e2;border-radius:10px;font-weight:700;font-size:11px;">⚠ ${escapeHtml(e.cancellation_responsible_party)}</span>` : ''}
+          </div>` : ''}
         </div>
 
         <div style="color:var(--gray-500);">Time:</div>
@@ -16623,24 +16626,72 @@ async function _lookaheadSupersedePriorBatches(newBatchId) {
 }
 
 // ── Review Queue handlers ────────────────────────────────────
-async function _planningAddCancellationReason(eventId) {
+
+// Shared modal for entering a cancellation reason + responsible party
+function _cancelReasonModalOpen(subTitle, onSave) {
+  modal({
+    title: '🚫 Cancellation Reason',
+    sub:   subTitle,
+    size:  'small',
+    body: `
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <label class="form-label">Reason *</label>
+          <textarea id="cr-reason" class="form-input" rows="3"
+            placeholder="Describe why this activity was cancelled…"
+            style="resize:vertical;width:100%;box-sizing:border-box;"></textarea>
+        </div>
+        <div>
+          <label class="form-label">Responsible Party</label>
+          <select id="cr-party" class="form-input"
+            onchange="document.getElementById('cr-party-other').style.display=this.value==='Other'?'':'none';">
+            <option value="">Select…</option>
+            <option value="BART">BART</option>
+            <option value="HITACHI">HITACHI</option>
+            <option value="REI">REI</option>
+            <option value="Other">Other</option>
+          </select>
+          <input type="text" id="cr-party-other" class="form-input"
+            style="margin-top:6px;display:none;" placeholder="Specify responsible party…">
+        </div>
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn" onclick="_cancelReasonSubmit()">Save</button>`,
+  });
+  window._cancelReasonOnSave = onSave;
+}
+
+function _cancelReasonSubmit() {
+  const reason = (document.getElementById('cr-reason')?.value || '').trim();
+  if (!reason) { toast('Reason cannot be blank', 'error'); return; }
+  const partyEl = document.getElementById('cr-party');
+  const party = partyEl?.value === 'Other'
+    ? (document.getElementById('cr-party-other')?.value?.trim() || 'Other')
+    : (partyEl?.value || null);
+  closeModal();
+  window._cancelReasonOnSave?.({ reason, party });
+  window._cancelReasonOnSave = null;
+}
+
+function _planningAddCancellationReason(eventId) {
   const ev = PLANNING_EVENTS.find(e => e.id === eventId);
   if (!ev) return;
-  const reason = prompt(`Cancellation reason for "${ev.title}" on ${ev.event_date}:`);
-  if (reason === null) return;
-  if (!reason.trim()) { toast('Reason cannot be blank', 'error'); return; }
-  try {
-    await _dbUpdate('planning_events', {
-      cancellation_reason: reason.trim(),
-      cancellation_by:     currentProfile?.id || null,
-      cancellation_at:     new Date().toISOString(),
-    }, { id: eventId });
-    toast('Cancellation reason saved', 'success');
-    await loadPlanningData(true);
-    renderAdminPlanning();
-  } catch(err) {
-    toast('Save failed: ' + err.message, 'error');
-  }
+  _cancelReasonModalOpen(`"${escapeHtml(ev.title)}" · ${ev.event_date}`, async ({ reason, party }) => {
+    try {
+      await _dbUpdate('planning_events', {
+        cancellation_reason:            reason,
+        cancellation_responsible_party: party || null,
+        cancellation_by:                currentProfile?.id || null,
+        cancellation_at:                new Date().toISOString(),
+      }, { id: eventId });
+      toast('Cancellation reason saved ✓', 'success');
+      await loadPlanningData(true);
+      renderAdminPlanning();
+    } catch(err) {
+      toast('Save failed: ' + err.message, 'error');
+    }
+  });
 }
 
 // ── Cancellation reason multi-select ────────────────────────
@@ -16670,30 +16721,30 @@ function _cancelToggleAll(checked) {
   });
 }
 
-async function _cancelBulkReason() {
+function _cancelBulkReason() {
   if (!_cancelSelIds.size) return;
   const n = _cancelSelIds.size;
-  const reason = prompt(`Enter cancellation reason for ${n} event${n > 1 ? 's' : ''}:`);
-  if (reason === null) return;
-  if (!reason.trim()) { toast('Reason cannot be blank', 'error'); return; }
-  let saved = 0;
-  const ids = [..._cancelSelIds];
-  for (const id of ids) {
-    try {
-      await _dbUpdate('planning_events', {
-        cancellation_reason: reason.trim(),
-        cancellation_by:     currentProfile?.id || null,
-        cancellation_at:     new Date().toISOString(),
-      }, { id });
-      saved++;
-    } catch (err) {
-      console.warn(`Failed to save reason for ${id}:`, err.message);
+  _cancelReasonModalOpen(`Applying to ${n} selected event${n > 1 ? 's' : ''}`, async ({ reason, party }) => {
+    const ids = [..._cancelSelIds];
+    let saved = 0;
+    for (const id of ids) {
+      try {
+        await _dbUpdate('planning_events', {
+          cancellation_reason:            reason,
+          cancellation_responsible_party: party || null,
+          cancellation_by:                currentProfile?.id || null,
+          cancellation_at:                new Date().toISOString(),
+        }, { id });
+        saved++;
+      } catch (err) {
+        console.warn(`Failed for ${id}:`, err.message);
+      }
     }
-  }
-  _cancelSelIds.clear();
-  toast(`Reason saved for ${saved} event${saved > 1 ? 's' : ''} ✓`, 'success');
-  await loadPlanningData(true);
-  renderAdminPlanning();
+    _cancelSelIds.clear();
+    toast(`Reason saved for ${saved} event${saved > 1 ? 's' : ''} ✓`, 'success');
+    await loadPlanningData(true);
+    renderAdminPlanning();
+  });
 }
 
 async function _planningResolveInitials(conflictId, action, token) {
