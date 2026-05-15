@@ -1797,6 +1797,11 @@ function submitDelayLog() {
       DelayCategory: selectedDelayOccurred === 'Yes' ? document.getElementById('d-delay-category').value : '',
       DelayDuration: selectedDelayOccurred === 'Yes' ? parseFloat(document.getElementById('d-delay-duration').value) || 0 : 0,
       DelayNotes: selectedDelayOccurred === 'Yes' ? document.getElementById('d-delay-notes').value : '',
+      DelayResponsibleParty: selectedDelayOccurred === 'Yes' ? (() => {
+        const sel = document.getElementById('d-responsible-party')?.value || '';
+        if (sel === 'Other') return document.getElementById('d-responsible-party-other')?.value?.trim() || 'Other';
+        return sel;
+      })() : '',
       OverallNotes: document.getElementById('d-overall-notes').value,
       NextDayPlan: document.getElementById('d-next-plan').value,
     }
@@ -1859,12 +1864,13 @@ async function sendSubmission(payload, messageId, onSuccess) {
     total_failed:       r.TotalFailed,
     total_partial:      r.TotalPartial,
     total_blocked:      r.TotalBlocked,
-    delay_occurred:     r.DelayOccurred,
-    delay_category:     r.DelayCategory,
-    delay_duration:     r.DelayDuration,
-    delay_notes:        r.DelayNotes,
-    overall_notes:      r.OverallNotes,
-    next_day_plan:      r.NextDayPlan,
+    delay_occurred:           r.DelayOccurred,
+    delay_category:           r.DelayCategory,
+    delay_duration:           r.DelayDuration,
+    delay_notes:              r.DelayNotes,
+    delay_responsible_party:  r.DelayResponsibleParty || null,
+    overall_notes:            r.OverallNotes,
+    next_day_plan:            r.NextDayPlan,
   };
 
   const table = isResult ? 'test_results' : 'delay_log';
@@ -1918,6 +1924,12 @@ function resetDelayForm() {
   document.getElementById('d-delay-category').value = '';
   document.getElementById('d-delay-duration').value = '';
   document.getElementById('d-delay-notes').value = '';
+  const rp = document.getElementById('d-responsible-party');
+  if (rp) rp.value = '';
+  const rpo = document.getElementById('d-responsible-party-other');
+  if (rpo) rpo.value = '';
+  const rpOtherWrap = document.getElementById('d-resp-other-wrap');
+  if (rpOtherWrap) rpOtherWrap.style.display = 'none';
   document.getElementById('d-overall-notes').value = '';
   document.getElementById('d-next-plan').value = '';
   document.querySelectorAll('.toggle-btn').forEach((b, i) => b.classList.toggle('active', i === 0));
@@ -13679,9 +13691,18 @@ function _planningSubsystemColor(name) {
 
 function _planningGetSubsystem(ev) {
   // ev = raw planning_event row
+  // 1. Direct on event
   if (ev.subsystem) return ev.subsystem;
+  // 2. On linked activity
   const act = PLANNING_ACTIVITIES.find(a => a.id === ev.planning_activity_id);
-  return act?.subsystem || null;
+  if (act?.subsystem) return act.subsystem;
+  // 3. From first assigned resource's subsystem
+  const er = PLANNING_EVENT_RES.find(r => r.event_id === ev.id);
+  if (er) {
+    const res = PLANNING_RESOURCES.find(r => r.id === er.resource_id);
+    if (res?.subsystem) return res.subsystem;
+  }
+  return null;
 }
 
 function _planningSubsystemLegend() {
@@ -14907,13 +14928,30 @@ function _laMountLookaheadTL() {
   } else if (_laTimelineGroupBy === 'subsystem') {
     const subMap = {};
     PLANNING_EVENTS.filter(e => days.includes(e.event_date)).forEach(e => {
-      const sub = _planningGetSubsystem(e) || 'Other';
-      if (!subMap[sub]) subMap[sub] = [];
-      subMap[sub].push(e);
+      // Collect all subsystems: event direct → activity → each assigned resource
+      const directSub  = e.subsystem || null;
+      const act        = PLANNING_ACTIVITIES.find(a => a.id === e.planning_activity_id);
+      const actSub     = act?.subsystem || null;
+      const resSubs    = PLANNING_EVENT_RES
+        .filter(er => er.event_id === e.id)
+        .map(er => PLANNING_RESOURCES.find(r => r.id === er.resource_id)?.subsystem)
+        .filter(Boolean);
+
+      const allSubs = [...new Set([directSub, actSub, ...resSubs].filter(Boolean))];
+      const buckets = allSubs.length ? allSubs : ['Other'];
+
+      buckets.forEach(sub => {
+        if (!subMap[sub]) subMap[sub] = [];
+        subMap[sub].push(e);
+      });
     });
-    Object.keys(subMap).sort().forEach(sub => {
+
+    // Sort: known subsystems first (alphabetically), then Other last
+    const subsKeys = Object.keys(subMap).sort((a, b) =>
+      a === 'Other' ? 1 : b === 'Other' ? -1 : a.localeCompare(b)
+    );
+    subsKeys.forEach(sub => {
       const c = _planningSubsystemColor(sub === 'Other' ? null : sub);
-      // Subsystem view → show location in each cell
       groups.push({ id: 'sub-' + sub, label: sub, color: c.bg,
         byDate: _laBuildByDate(subMap[sub], days, e => e.location || '') });
     });

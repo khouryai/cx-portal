@@ -878,6 +878,20 @@
               <label>Delay Notes</label>
               <textarea id="d-delay-notes" rows="2" placeholder="Describe the delay..." class="form-input"></textarea>
             </div>
+            <div class="form-field conditional delay-field" style="display:none;">
+              <label>Responsible Party</label>
+              <select id="d-responsible-party" class="form-input" onchange="document.getElementById('d-resp-other-wrap').style.display=this.value==='Other'?'':'none';">
+                <option value="">Select...</option>
+                <option value="BART">BART</option>
+                <option value="HITACHI">HITACHI</option>
+                <option value="REI">REI</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div class="form-field conditional delay-field" id="d-resp-other-wrap" style="display:none;">
+              <label>Other — specify</label>
+              <input type="text" id="d-responsible-party-other" class="form-input" placeholder="Enter responsible party...">
+            </div>
 
             <div class="form-field form-field-full">
               <label>Overall Day Notes</label>
