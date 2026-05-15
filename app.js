@@ -15196,28 +15196,48 @@ function _planningOpenEventDetail(eventId) {
         <div style="font-size:12px;">${_sourceLabel}${e.work_hours_raw ? `<span style="color:var(--gray-500);"> · Hours: ${escapeHtml(e.work_hours_raw)}</span>` : ''}</div>
 
         <div style="color:var(--gray-500);">Resources:</div>
-        <div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;">
-          ${assignments.length === 0
-            ? '<em style="color:#9ca3af;">No resources assigned</em>'
-            : assignments.map(a => {
-                const hasPTO = !!conflicts.find(c => c.resource?.id === a.resource?.id);
-                const badgeClass = hasPTO ? 'badge-failed' : 'badge-passed';
-                const removeBtn = isAdmin
-                  ? `<button onclick="event.stopPropagation();_planningRemoveEventResource('${e.id}','${a.resource?.id}')"
-                       style="background:none;border:none;cursor:pointer;color:inherit;opacity:.65;font-size:13px;line-height:1;padding:0 0 0 3px;"
-                       title="Remove ${escapeHtml(a.resource?.display_name || '')}">×</button>`
-                  : '';
-                return `<span class="badge ${badgeClass}" style="display:inline-flex;align-items:center;gap:2px;">
-                  ${a.resource ? escapeHtml(a.resource.display_name) : '—'}
-                  ${hasPTO ? ' ⚠ PTO' : ''}
-                  ${removeBtn}
-                </span>`;
-              }).join('')}
+        <div>
+          <div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin-bottom:${isAdmin ? '8px' : '0'};">
+            ${assignments.length === 0
+              ? '<em style="color:#9ca3af;">No resources assigned</em>'
+              : assignments.map(a => {
+                  const hasPTO = !!conflicts.find(c => c.resource?.id === a.resource?.id);
+                  const badgeClass = hasPTO ? 'badge-failed' : 'badge-passed';
+                  const removeBtn = isAdmin
+                    ? `<button onclick="event.stopPropagation();_planningRemoveEventResource('${e.id}','${a.resource?.id}')"
+                         style="background:none;border:none;cursor:pointer;color:inherit;opacity:.65;font-size:13px;line-height:1;padding:0 0 0 3px;"
+                         title="Remove ${escapeHtml(a.resource?.display_name || '')}">×</button>`
+                    : '';
+                  return `<span class="badge ${badgeClass}" style="display:inline-flex;align-items:center;gap:2px;">
+                    ${a.resource ? escapeHtml(a.resource.display_name) : '—'}
+                    ${hasPTO ? ' ⚠ PTO' : ''}
+                    ${removeBtn}
+                  </span>`;
+                }).join('')}
+          </div>
+          ${isAdmin ? (() => {
+            const assigned = new Set(assignments.map(a => a.resource?.id).filter(Boolean));
+            const available = PLANNING_RESOURCES.filter(r => r.is_active && !assigned.has(r.id));
+            return available.length ? `
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <select id="ped-res-select" class="form-input" style="font-size:12px;padding:4px 8px;height:32px;flex:1;min-width:160px;">
+                  <option value="">— Assign resource…</option>
+                  ${available.map(r => `<option value="${r.id}">${escapeHtml(r.display_name)}${r.initials ? ' ('+escapeHtml(r.initials)+')' : ''}${r.subsystem ? ' · '+escapeHtml(r.subsystem) : ''}</option>`).join('')}
+                </select>
+                <button class="admin-action-btn" style="font-size:12px;padding:4px 12px;height:32px;" onclick="_planningAssignResourceFromDetail('${e.id}')">Assign</button>
+              </div>` : '<em style="font-size:11px;color:var(--gray-400);">All active resources assigned</em>';
+          })() : ''}
         </div>
 
-        ${e.notes ? `
-          <div style="color:var(--gray-500);">Notes:</div>
-          <div style="font-size:12px;">${escapeHtml(e.notes)}</div>` : ''}
+        <div style="color:var(--gray-500);">Notes:</div>
+        <div>
+          ${isAdmin ? `
+            <textarea id="ped-notes" class="form-input" rows="3"
+              style="font-size:12px;resize:vertical;width:100%;box-sizing:border-box;"
+              placeholder="Add notes about this activity…">${escapeHtml(e.notes || '')}</textarea>
+            <button class="form-secondary" style="font-size:11px;padding:3px 10px;margin-top:4px;" onclick="_planningUpdateEventNotes('${e.id}')">💾 Save Notes</button>
+          ` : `<div style="font-size:12px;">${e.notes ? escapeHtml(e.notes) : '<em style="color:#9ca3af;">No notes</em>'}</div>`}
+        </div>
       </div>
 
       ${conflicts.length ? `
@@ -15280,6 +15300,49 @@ async function _planningDeleteEvent(eventId) {
     _laMountCalendar();
   } catch (err) {
     toast('Delete failed: ' + err.message, 'error');
+  }
+}
+
+async function _planningAssignResourceFromDetail(eventId) {
+  const sel = document.getElementById('ped-res-select');
+  const resourceId = sel?.value;
+  if (!resourceId) { toast('Select a resource first', 'warn'); return; }
+  const res = PLANNING_RESOURCES.find(r => r.id === resourceId);
+  // Duplicate guard
+  if (PLANNING_EVENT_RES.some(er => er.event_id === eventId && er.resource_id === resourceId)) {
+    toast(`${res?.display_name || 'Resource'} is already assigned`, 'warn'); return;
+  }
+  try {
+    const [row] = await _dbInsert('planning_event_resources', [{
+      event_id:          eventId,
+      resource_id:       resourceId,
+      role:              'crew',
+      assignment_source: 'manual',
+    }]);
+    if (row) PLANNING_EVENT_RES.push(row);
+    toast(`${res?.display_name || 'Resource'} assigned ✓`, 'success');
+    // Re-open modal to reflect new assignment
+    _planningOpenEventDetail(eventId);
+    // Background refresh
+    loadPlanningData(true).then(() => {
+      if (_lookaheadTab === 'lookahead') _laMountLookaheadTL();
+      if (_lookaheadTab === 'resources') _laMountResourcesTL();
+    });
+  } catch (err) {
+    toast('Assignment failed: ' + err.message, 'error');
+  }
+}
+
+async function _planningUpdateEventNotes(eventId) {
+  const notes = (document.getElementById('ped-notes')?.value || '').trim();
+  try {
+    await _dbUpdate('planning_events', { notes: notes || null }, { id: eventId });
+    // Optimistic local update
+    const ev = PLANNING_EVENTS.find(e => e.id === eventId);
+    if (ev) ev.notes = notes || null;
+    toast('Notes saved ✓', 'success');
+  } catch (err) {
+    toast('Save failed: ' + err.message, 'error');
   }
 }
 
@@ -15785,25 +15848,31 @@ function _apReviewStub() {
   const cancellationsNeedingReason = PLANNING_EVENTS.filter(e => e.status === 'cancelled' && !e.cancellation_reason);
 
   return `
-    <div class="kpi-grid kpi-grid-mini" style="margin-bottom:16px;">
+    <div class="kpi-grid kpi-grid-mini" style="margin-bottom:16px;grid-template-columns:repeat(5,1fr);">
       <div class="kpi-card kpi-mini"><div class="kpi-label">Unmatched</div><div class="kpi-value" style="color:var(--warn);">${unmatched.length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">No Schedule Link</div><div class="kpi-value" style="color:var(--gray-500);">${noLink.length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Suggested</div><div class="kpi-value" style="color:#2563eb;">${suggested.length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Unknown Initials</div><div class="kpi-value" style="color:var(--warn);">${unknownInitials.length}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Cancellations Pending Reason</div><div class="kpi-value" style="color:var(--bad);">${cancellationsNeedingReason.length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Cancellations Pending</div><div class="kpi-value" style="color:var(--bad);">${cancellationsNeedingReason.length}</div></div>
     </div>
 
     ${cancellationsNeedingReason.length ? `
       <div class="data-card" style="padding:0;overflow:hidden;margin-bottom:18px;">
-        <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:#fef2f2;">
+        <div style="padding:10px 14px;border-bottom:1px solid var(--gray-200);background:#fef2f2;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#b91c1c;">
+            <input type="checkbox" id="cancel-sel-all" onchange="_cancelToggleAll(this.checked)" style="width:14px;height:14px;">
+            All
+          </label>
           <strong style="font-size:13px;color:#b91c1c;">🚫 Cancellations needing reason (${cancellationsNeedingReason.length})</strong>
-          <span style="font-size:11px;color:var(--gray-500);margin-left:8px;">Red cells in the import — admin must enter why each was cancelled.</span>
+          <span style="font-size:11px;color:var(--gray-500);">Select items then apply a shared reason, or add individually.</span>
+          <button id="cancel-bulk-btn" class="admin-action-btn" style="font-size:11px;padding:4px 12px;margin-left:auto;display:none;" onclick="_cancelBulkReason()">➕ Add Reason to Selected</button>
         </div>
         <table class="data-table">
-          <thead><tr><th>Date</th><th>Activity</th><th>Location</th><th>Action</th></tr></thead>
+          <thead><tr><th style="width:30px;"></th><th>Date</th><th>Activity</th><th>Location</th><th>Action</th></tr></thead>
           <tbody>
             ${cancellationsNeedingReason.slice(0, 50).map(e => `
-              <tr>
+              <tr id="cancel-row-${e.id}">
+                <td><input type="checkbox" class="cancel-sel-cb" data-id="${e.id}" onchange="_cancelToggleSel('${e.id}',this.checked)" style="width:14px;height:14px;cursor:pointer;"></td>
                 <td style="font-size:13px;">${e.event_date || '—'}</td>
                 <td>${escapeHtml(e.title || '—')}</td>
                 <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(e.location || '—')}</td>
@@ -16534,6 +16603,59 @@ async function _planningAddCancellationReason(eventId) {
   } catch(err) {
     toast('Save failed: ' + err.message, 'error');
   }
+}
+
+// ── Cancellation reason multi-select ────────────────────────
+let _cancelSelIds = new Set();
+
+function _cancelToggleSel(eventId, checked) {
+  if (checked) _cancelSelIds.add(eventId);
+  else         _cancelSelIds.delete(eventId);
+  const btn = document.getElementById('cancel-bulk-btn');
+  if (btn) {
+    const n = _cancelSelIds.size;
+    btn.style.display = n ? 'inline-block' : 'none';
+    btn.textContent = `➕ Add Reason to ${n} Selected`;
+  }
+  const allCb = document.getElementById('cancel-sel-all');
+  if (allCb) {
+    const total = document.querySelectorAll('.cancel-sel-cb').length;
+    allCb.indeterminate = _cancelSelIds.size > 0 && _cancelSelIds.size < total;
+    allCb.checked = _cancelSelIds.size === total;
+  }
+}
+
+function _cancelToggleAll(checked) {
+  document.querySelectorAll('.cancel-sel-cb').forEach(cb => {
+    cb.checked = checked;
+    _cancelToggleSel(cb.dataset.id, checked);
+  });
+}
+
+async function _cancelBulkReason() {
+  if (!_cancelSelIds.size) return;
+  const n = _cancelSelIds.size;
+  const reason = prompt(`Enter cancellation reason for ${n} event${n > 1 ? 's' : ''}:`);
+  if (reason === null) return;
+  if (!reason.trim()) { toast('Reason cannot be blank', 'error'); return; }
+  let saved = 0;
+  const ids = [..._cancelSelIds];
+  for (const id of ids) {
+    try {
+      await _dbUpdate('planning_events', {
+        cancellation_reason: reason.trim(),
+        cancellation_by:     currentProfile?.id || null,
+        cancellation_at:     new Date().toISOString(),
+      }, { id });
+      saved++;
+    } catch (err) {
+      console.warn(`Failed to save reason for ${id}:`, err.message);
+    }
+  }
+  _cancelSelIds.clear();
+  toast(`Reason saved for ${saved} event${saved > 1 ? 's' : ''} ✓`, 'success');
+  await loadPlanningData(true);
+  renderAdminPlanning();
 }
 
 async function _planningResolveInitials(conflictId, action, token) {
