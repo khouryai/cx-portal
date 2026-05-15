@@ -1378,17 +1378,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ==========================================
 
 let TI = DATA.testItems || []; // populated from Supabase on init; falls back to data.js
-const FIELD_USERS = DATA.fieldUsers || [];
+// Note: FIELD_USERS / PIN auth removed — authentication is now handled by Supabase Auth (email + password).
 
-// Lightweight anon-key fetch for startup data loads (no auth needed / no getSession call).
+// Fetch helper — always sends the best available token:
+//   • Authenticated session from localStorage → passes JWT (satisfies RLS)
+//   • No session yet (first load before sign-in) → falls back to anon key,
+//     which will be blocked by RLS and silently return empty data.
+//     Data is re-loaded after sign-in inside onLoggedIn().
 // Uses a 15s AbortController timeout so it can never hang the DOMContentLoaded bootstrap.
 async function _fetchAnon(path) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
+  // _getAuthHeader() reads the JWT from localStorage; falls back to anon key if no session.
+  let authHeader;
+  try { authHeader = _getAuthHeader(); } catch { authHeader = 'Bearer ' + SUPABASE_ANON_KEY; }
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
       signal: ctrl.signal,
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Accept: 'application/json' },
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: authHeader, Accept: 'application/json' },
     });
     clearTimeout(timer);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1520,110 +1527,8 @@ function loadQueue() {
 }
 function saveQueue(q) { localStorage.setItem(LS_QUEUE, JSON.stringify(q)); }
 
-function initField() {
-  // Populate user dropdown
-  const sel = document.getElementById('login-name');
-  sel.innerHTML = '<option value="">Select your name</option>' +
-    FIELD_USERS.map(u => `<option value="${escapeHtml(u.name)}">${escapeHtml(u.name)}</option>`).join('');
-
-  // Restore session
-  const saved = sessionStorage.getItem(LS_USER);
-  if (saved) {
-    try {
-      currentUser = JSON.parse(saved);
-      enterFieldApp();
-    } catch {}
-  }
-
-  document.getElementById('login-btn').addEventListener('click', tryLogin);
-  document.getElementById('login-pin').addEventListener('keydown', e => {
-    if (e.key === 'Enter') tryLogin();
-  });
-
-  // Tab switching
-  document.querySelectorAll('.form-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.form-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      document.querySelectorAll('.form-panel').forEach(p => p.classList.remove('active'));
-      document.getElementById('form-' + tab.dataset.tab).classList.add('active');
-      if (tab.dataset.tab === 'queue') renderQueue();
-      if (tab.dataset.tab === 'delay') recountToday();
-    });
-  });
-
-  // Result buttons
-  document.querySelectorAll('.result-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.result-btn').forEach(b => b.classList.remove('selected'));
-      btn.classList.add('selected');
-      selectedResult = btn.dataset.value;
-      document.getElementById('r-result').value = selectedResult;
-      // Show/hide conditional fields
-      document.getElementById('r-fail-block').style.display = selectedResult === 'Fail' ? '' : 'none';
-      document.getElementById('r-blocked-block').style.display = selectedResult === 'Blocked' ? '' : 'none';
-    });
-  });
-
-  // Delay toggle
-  document.querySelectorAll('.toggle-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      selectedDelayOccurred = btn.dataset.delay;
-      document.getElementById('d-delay-occurred').value = selectedDelayOccurred;
-      document.querySelectorAll('.delay-field').forEach(f => {
-        f.style.display = selectedDelayOccurred === 'Yes' ? '' : 'none';
-      });
-    });
-  });
-
-  // Set default dates
-  const today = new Date().toISOString().split('T')[0];
-  if (document.getElementById('r-date')) document.getElementById('r-date').value = today;
-  if (document.getElementById('d-date')) document.getElementById('d-date').value = today;
-}
-
-function tryLogin() {
-  const name = document.getElementById('login-name').value;
-  const pin = document.getElementById('login-pin').value;
-  const errEl = document.getElementById('login-error');
-  errEl.textContent = '';
-
-  if (!name) { errEl.textContent = 'Please select your name'; return; }
-  if (!pin || pin.length !== 4) { errEl.textContent = 'Please enter your 4-digit PIN'; return; }
-
-  const user = FIELD_USERS.find(u => u.name === name && u.pin === pin);
-  if (!user) {
-    errEl.textContent = 'Invalid name or PIN. Please try again.';
-    document.getElementById('login-pin').value = '';
-    return;
-  }
-
-  currentUser = { name: user.name, role: user.role };
-  sessionStorage.setItem(LS_USER, JSON.stringify(currentUser));
-  enterFieldApp();
-}
-
-function logout() {
-  currentUser = null;
-  sessionStorage.removeItem(LS_USER);
-  document.getElementById('field-app').style.display = 'none';
-  document.getElementById('field-login').style.display = '';
-  document.getElementById('login-pin').value = '';
-}
-
-function enterFieldApp() {
-  document.getElementById('field-login').style.display = 'none';
-  document.getElementById('field-app').style.display = '';
-  document.getElementById('user-name').textContent = currentUser.name;
-  const initials = currentUser.name.split(' ').filter(Boolean).slice(0, 2).map(n => n[0]).join('').toUpperCase();
-  document.getElementById('user-avatar').textContent = initials;
-
-  populateDropdownsResult();
-  populateDropdownsDelay();
-  recountToday();
-}
+// initField / tryLogin / logout (V1 PIN auth) removed.
+// Authentication is now handled by Supabase Auth — see initAuth() / signIn() / signOut().
 
 // Cascading dropdowns - Test Result form
 function populateDropdownsResult() {
@@ -1990,12 +1895,7 @@ function renderQueue() {
   }).join('');
 }
 
-// Hook into init
-const _origInit = document.addEventListener;
-document.addEventListener('DOMContentLoaded', () => {
-  // V1 initField disabled - V2 initLoginV2 below handles login for all roles
-  // initField();
-});
+// (V1 PIN auth entry point removed — initAuth() in DOMContentLoaded handles all auth)
 
 // ==========================================================================
 // PROTOTYPE V2 — Role-based features
@@ -2337,11 +2237,28 @@ function onLoggedIn() {
 
   const homePage = { admin:'test-register', field_engineer:'field-intake', readonly:'dashboard', client:'dashboard' }[currentRoleUser.role] || 'dashboard';
   showPage(homePage);
-  // Re-init views that are subsystem-scoped after login applies TI filter
-  initLineItems();
-  renderAdminPortal(); renderAdminTemplates(); renderTestRegister(); renderFieldIntake(); renderPunchWorkflow(); renderAuditLog(); renderTestReporting();
-  refreshAuditLog().catch(err => console.warn('[audit] refresh failed:', err.message));
-  loadTestReports().then(renderTestReporting).catch(err => console.warn('[loadTestReports after login] failed:', err.message));
+
+  // Re-load all data tables now that we have an authenticated token.
+  // RLS blocks unauthenticated startup loads, so this is the real data fetch.
+  Promise.all([
+    loadTestItems(),
+    loadTemplates(),
+    loadLocations(),
+    loadPunchDB(),
+    loadFieldsetConfig(),
+    _loadProfileUsers(),
+    loadTestReports(),
+    loadActivityRecords(),
+    loadP6Data(),
+    loadAssetData(),
+    loadRMAs(),
+  ]).then(() => {
+    // Re-init views with freshly loaded data
+    initLineItems();
+    renderAdminPortal(); renderAdminTemplates(); renderTestRegister(); renderFieldIntake();
+    renderPunchWorkflow(); renderAuditLog(); renderTestReporting();
+    refreshAuditLog().catch(err => console.warn('[audit] refresh failed:', err.message));
+  }).catch(err => console.warn('[onLoggedIn data reload] partial failure:', err.message));
 }
 
 // ==========================================================================
