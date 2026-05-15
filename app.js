@@ -15747,7 +15747,9 @@ const _SHIFT_COLOR_TARGETS = {
   blanket_shift: { r: 0x00, g: 0x00, b: 0x00 }, // black
   cancelled:     { r: 0xF4, g: 0x43, b: 0x36 }, // red
 };
-const _SHIFT_COLOR_THRESHOLD = 160;     // Euclidean distance in RGB space
+const _SHIFT_COLOR_THRESHOLD = 115;     // Euclidean distance in RGB space
+// 115 keeps real shift colors (yellow ≈62, blue ≈22, red ≈87) while rejecting
+// gray weekend-column fills (dark gray ≈151, light gray ≈164).
 
 const _SHIFT_DEFAULT_TIMES = {
   day_shift:     { start: '07:00', end: '15:00', all_day: false },
@@ -15780,6 +15782,20 @@ function _cellFillHex(cell) {
   if (f.fgColor && f.fgColor.argb) return f.fgColor.argb;
   if (f.bgColor && f.bgColor.argb) return f.bgColor.argb;
   return null;
+}
+
+// Safely extract plain text from an ExcelJS cell value (handles rich text,
+// formulas, dates, and plain strings / numbers).
+function _cellText(cell) {
+  const v = cell?.value;
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number') return String(v);
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (v && Array.isArray(v.richText)) return v.richText.map(rt => rt.text || '').join('');
+  if (v && v.result !== undefined) return String(v.result ?? '');
+  if (v && v.text !== undefined) return String(v.text ?? '');
+  return '';
 }
 
 function _parseWorkHoursStr(raw) {
@@ -15893,7 +15909,7 @@ function _resolveDateForColumn(ws, col, defaultYear) {
   const monthRow = 4, dayRow = 5;
   let monthVal = ws.getCell(monthRow, col).value;
   if (!monthVal) {
-    for (let c = col - 1; c >= 8; c--) {
+    for (let c = col - 1; c >= 1; c--) {
       const v = ws.getCell(monthRow, c).value;
       if (v) { monthVal = v; break; }
     }
@@ -15930,14 +15946,32 @@ async function _lookaheadParseFile(file) {
     const ws = wb.worksheets.find(w => /look[\s-]*ahead/i.test(w.name)) || wb.worksheets[0];
     if (!ws) throw new Error('No worksheets found in file');
 
-    // Build visible-date-column map
+    // Build visible-date-column map by scanning row 4 (month) and row 5 (day).
+    // We iterate cells that actually have values rather than a sequential column
+    // loop — this handles files where date columns start at very high column
+    // numbers (e.g. column 1146) without performance issues or arbitrary caps.
     const dateCols = [];   // [{ col, dateISO }]
-    const maxCol = Math.min(ws.columnCount || 200, 600); // cap to avoid runaway
-    for (let c = 8; c <= maxCol; c++) {
-      const colDef = ws.getColumn(c);
-      if (colDef && colDef.hidden) continue;
-      const dateISO = _resolveDateForColumn(ws, c, new Date().getFullYear());
-      if (dateISO) dateCols.push({ col: c, dateISO });
+    const MONTHS_LA = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+    const curYear = new Date().getFullYear();
+
+    // Collect all column numbers that have any content in rows 4 or 5
+    const _dateColCandidates = new Set();
+    ws.getRow(4).eachCell({ includeEmpty: false }, (_, c) => _dateColCandidates.add(c));
+    ws.getRow(5).eachCell({ includeEmpty: false }, (_, c) => _dateColCandidates.add(c));
+
+    let _carryMonthIdx = -1; // carry forward merged/spanned month labels
+    for (const c of [..._dateColCandidates].sort((a, b) => a - b)) {
+      if (ws.getColumn(c).hidden) continue;
+      const monthRaw = ws.getCell(4, c).value;
+      const monthStr = String(monthRaw || '').trim().toLowerCase();
+      const mIdx = MONTHS_LA.findIndex(m => monthStr.startsWith(m));
+      if (mIdx >= 0) _carryMonthIdx = mIdx;
+      if (_carryMonthIdx < 0) continue;
+      const dayRaw = ws.getCell(5, c).value;
+      const day = parseInt(typeof dayRaw === 'object' ? (dayRaw?.result ?? dayRaw?.text ?? 0) : dayRaw);
+      if (!day || isNaN(day)) continue;
+      const d = new Date(Date.UTC(curYear, _carryMonthIdx, day));
+      dateCols.push({ col: c, dateISO: d.toISOString().slice(0, 10) });
     }
     if (!dateCols.length) throw new Error('Could not detect any date columns (rows 4-5). Confirm the sheet uses the expected header layout.');
 
@@ -15949,26 +15983,23 @@ async function _lookaheadParseFile(file) {
     const startDataRow = 7;
     const lastRow = ws.actualRowCount || ws.rowCount || 200;
     for (let r = startDataRow; r <= lastRow; r++) {
-      const cellB = ws.getCell(r, 2); // Activity ID
-      const cellC = ws.getCell(r, 3); // Description
-      const cellD = ws.getCell(r, 4); // Location
-      const cellE = ws.getCell(r, 5); // SSWP
-      const cellF = ws.getCell(r, 6); // Resource (renamed from Party to Action)
-      const cellG = ws.getCell(r, 7); // Work Hours
+      // Use _cellText() to safely handle plain strings, rich-text, formulas, dates
+      const idText      = _cellText(ws.getCell(r, 2)).trim(); // internal ref — not P6 ID
+      const description = _cellText(ws.getCell(r, 3)).trim(); // Description of Work
+      const location    = _cellText(ws.getCell(r, 4)).trim(); // Location
+      const sswp        = _cellText(ws.getCell(r, 5)).trim(); // SSWP#
+      const resourceRaw = _cellText(ws.getCell(r, 6)).trim(); // Team/party label
+      const hoursRaw    = _cellText(ws.getCell(r, 7)).trim(); // Time range
 
-      const idText      = String(cellB.value || '').trim();
-      const description = String(cellC.value || '').trim();
-      const location    = String(cellD.value || '').trim();
-      const sswp        = String(cellE.value || '').trim();
-      const resourceRaw = String(cellF.value || '').trim();
-      const hoursRaw    = String(cellG.value || '').trim();
+      // Skip empty rows — description is the authoritative anchor field
+      if (!description) continue;
+      // Skip header/divider rows (these have text but no shift cells)
+      if (/^activity\s*id$/i.test(idText) || /^description\s*of/i.test(description)) continue;
 
-      // Skip empty rows (all key fields blank)
-      if (!idText && !description && !resourceRaw) continue;
-      // Skip header repeat rows
-      if (/^activity\s*id$/i.test(idText)) continue;
-
-      const match = _matchPlanningActivity({ activity_id_text: idText, description, location });
+      // Match using description + location only (activity ID from the file is an
+      // internal reference number, not a P6 ID — P6 links come from the tool's
+      // own schedule match tables via description + location).
+      const match = _matchPlanningActivity({ activity_id_text: null, description, location });
       const { matched: matchedRes, unknown: unknownTokens } = _parseResourceTokens(resourceRaw);
       unknownTokens.forEach(t => unknownInitialsSet.add(t));
 
@@ -16018,6 +16049,10 @@ async function _lookaheadParseFile(file) {
         events.push(ev);
         allDates.push(dc.dateISO);
       }
+
+      // Only import rows that have at least one shift event (skip structural
+      // header/divider rows that contain text but no colored activity cells).
+      if (!rowMeta.rowEvents.length) continue;
 
       rows.push(rowMeta);
     }
