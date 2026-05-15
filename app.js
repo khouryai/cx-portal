@@ -16602,6 +16602,8 @@ async function _lookaheadParseFile(file) {
     const startDataRow = 7;
     const lastRow = ws.actualRowCount || ws.rowCount || 200;
     for (let r = startDataRow; r <= lastRow; r++) {
+      // Skip hidden rows — they exist in the worksheet but are not part of the visible plan
+      if (ws.getRow(r).hidden) continue;
       // Use _cellText() to safely handle plain strings, rich-text, formulas, dates
       const idText      = _cellText(ws.getCell(r, 2)).trim(); // internal ref — not P6 ID
       const description = _cellText(ws.getCell(r, 3)).trim(); // Description of Work
