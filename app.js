@@ -16852,10 +16852,25 @@ async function _lookaheadConfirmImport() {
     });
 
     // 3. Insert events
+    // Build a dedup key set for already-existing cancelled events so re-importing the
+    // same file doesn't create duplicate cancellations (supersede preserves cancels
+    // intentionally, but that means we must skip them on the way in too).
+    const _norm = s => (s || '').trim().toLowerCase();
+    const existingCancelKeys = new Set(
+      PLANNING_EVENTS
+        .filter(e => e.status === 'cancelled')
+        .map(e => `${e.event_date}|${_norm(e.title)}|${_norm(e.location)}`)
+    );
+
     const eventPayload = [];
     f.rows.forEach((r, idx) => {
       const aid = rowToActivityId[idx];
       r.rowEvents.forEach(ev => {
+        // Skip cancelled events whose (date + title + location) already exist in DB
+        if (ev.status === 'cancelled') {
+          const k = `${ev.event_date}|${_norm(ev.title)}|${_norm(ev.location)}`;
+          if (existingCancelKeys.has(k)) return;
+        }
         eventPayload.push({
           planning_activity_id: aid,
           test_item_id:         r.match.test_item_id,
