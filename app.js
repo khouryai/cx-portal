@@ -13333,7 +13333,7 @@ let _planningCalDate     = new Date();                 // anchor date for curren
 let _planningCalInstance = null;                       // legacy — no longer used (kept for cleanup safety)
 let _planningTLInstance  = null;                       // vis-timeline instance for lookahead/gantt/resources
 let _planningCalNowTimer = null;                       // setInterval handle for the "now" line
-let _laTimelineGroupBy   = 'resource';                 // resource | location | subsystem | activity
+let _laTimelineGroupBy   = 'activity';                 // activity | resource | subsystem | location
 let _laTimelineWindow    = 14;                         // 14 / 21 / 28 days
 let _planningShowP6      = false;                      // Calendar/Timeline P6 overlay toggle
 let _conflictFilter      = 'all';                      // all | pto | double | p6 | hours | unmatched
@@ -13425,12 +13425,11 @@ function renderLookahead() {
       Operational planning view — weekly lookahead, resource availability, PTO, and P6 overlay.
     </p>`;
 
-  // Redirect legacy 'gantt' tab to 'lookahead'
-  if (_lookaheadTab === 'gantt') _lookaheadTab = 'lookahead';
+  // Redirect legacy tabs
+  if (_lookaheadTab === 'gantt' || _lookaheadTab === 'resources') _lookaheadTab = 'lookahead';
   const tabs = [
     ['calendar',  'Calendar'],
     ['lookahead', 'Lookahead'],
-    ['resources', 'Resources'],
     ['pto',       'PTO'],
   ];
 
@@ -13474,9 +13473,8 @@ function _renderLookaheadTabBody() {
   if (!el) return;
   _planningCleanupInstances();
   const tab = _lookaheadTab;
-  if (tab === 'calendar')  { el.innerHTML = _laCalendarHTML();       setTimeout(_laMountCalendar,    30); }
-  if (tab === 'lookahead') { el.innerHTML = _laLookaheadHTML();      setTimeout(_laMountLookaheadTL, 30); }
-  if (tab === 'resources') { el.innerHTML = _laResourcesBoardHTML(); setTimeout(_laMountResourcesTL, 30); }
+  if (tab === 'calendar')  { el.innerHTML = _laCalendarHTML();  setTimeout(_laMountCalendar,    30); }
+  if (tab === 'lookahead') { el.innerHTML = _laLookaheadHTML(); setTimeout(_laMountLookaheadTL, 30); }
   if (tab === 'pto')       { el.innerHTML = _laPTOStub(); }
 }
 
@@ -13649,10 +13647,8 @@ function _laGetTitle() {
 
 function _planningTogglePO6Overlay(on) {
   _planningShowP6 = !!on;
-  // Re-render whichever tab is currently visible — no refresh needed
   if      (_lookaheadTab === 'calendar')  _laMountCalendar();
   else if (_lookaheadTab === 'lookahead') _laMountLookaheadTL();
-  else if (_lookaheadTab === 'resources') _laMountResourcesTL();
 }
 
 // ── Subsystem colour palette ─────────────────────────────────
@@ -14260,6 +14256,18 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     html += `<div style="padding:48px;text-align:center;color:var(--gray-400);font-size:13px;">No activities in this window yet. Import a lookahead or adjust the date range.</div>`;
   }
   groups.forEach(g => {
+    // ── Location divider row ──────────────────────────────────
+    if (g.isLocHeader) {
+      html += `<div class="tlg-row tlg-loc-hdr-row">
+        <div class="tlg-label tlg-loc-hdr-label">📍 ${escapeHtml(g.label)}</div>
+        <div class="tlg-cells">${days.map(iso => {
+          const isToday = iso === todayISO;
+          return `<div class="tlg-cell tlg-loc-hdr-cell${isToday ? ' tlg-today-col' : ''}"></div>`;
+        }).join('')}</div>
+      </div>`;
+      return;
+    }
+
     const actId = g.activityId || '';
     html += `<div class="tlg-row tlg-data-row${_laAssignMode && actId ? ' la-row-droppable' : ''}"${actId ? ` data-activity-id="${actId}"` : ''}>`;
 
@@ -14351,8 +14359,8 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       p6inWindow.forEach(p6 => {
         html += `<div class="tlg-row tlg-data-row">`;
         html += `<div class="tlg-label tlg-row-label tlg-p6-row-label">
-          <span class="tlg-label-main" style="font-size:10px;">${escapeHtml(p6.p6_id||'—')}</span>
-          <span class="tlg-label-sub">${escapeHtml((p6.p6_name||'').slice(0,24))}</span>
+          <span class="tlg-label-main" style="font-size:10px;word-break:break-word;">${escapeHtml(p6.p6_name || p6.p6_id || '—')}</span>
+          <span class="tlg-label-sub" style="font-family:monospace;font-size:9px;opacity:.7;">${escapeHtml(p6.p6_id||'')}</span>
         </div>`;
         html += `<div class="tlg-cells">`;
         days.forEach(iso => {
@@ -14413,18 +14421,18 @@ function _laLookaheadHTML() {
     ${_planningKPIStrip()}
     ${_planningShiftLegend()}
 
-    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
-      <div>
-        <label style="font-size:11px;color:var(--gray-500);margin-right:4px;">Group by:</label>
-        <select class="filter-select" onchange="_laSetTimelineGroup(this.value)" ${_laAssignMode ? 'disabled' : ''}>
-          <option value="resource"  ${_laTimelineGroupBy === 'resource'  ? 'selected' : ''}>Resource</option>
-          <option value="subsystem" ${_laTimelineGroupBy === 'subsystem' ? 'selected' : ''}>Subsystem</option>
-          <option value="location"  ${_laTimelineGroupBy === 'location'  ? 'selected' : ''}>Location</option>
-          <option value="activity"  ${_laTimelineGroupBy === 'activity'  ? 'selected' : ''}>Activity</option>
-        </select>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:0;">
+        <span style="font-size:11px;color:var(--gray-500);margin-right:8px;white-space:nowrap;">View:</span>
+        ${[['activity','Activity'],['resource','Resource'],['subsystem','Subsystem'],['location','Location']].map(([v,l]) => `
+          <button class="admin-tab${_laTimelineGroupBy === v ? ' active' : ''}"
+            style="font-size:12px;padding:6px 14px;"
+            onclick="_laSetTimelineGroup('${v}')"
+            ${_laAssignMode && v !== 'activity' ? 'disabled title="Exit assign mode to switch view"' : ''}>${l}</button>
+        `).join('')}
       </div>
-      <div>
-        <label style="font-size:11px;color:var(--gray-500);margin-right:4px;">Window:</label>
+      <div style="display:flex;align-items:center;gap:0;">
+        <span style="font-size:11px;color:var(--gray-500);margin-right:8px;white-space:nowrap;">Window:</span>
         ${[['14','2 wks'],['21','3 wks'],['28','4 wks']].map(([v,l]) => `
           <button class="admin-tab${_laTimelineWindow === parseInt(v) ? ' active' : ''}" style="font-size:12px;padding:6px 14px;" onclick="_laSetTimelineWindow(${v})">${l}</button>
         `).join('')}
@@ -14788,29 +14796,48 @@ function _laMountLookaheadTL() {
       groups.push({ id: 'loc-' + loc, label: loc, color: c.bg, byDate: _laBuildByDate(locMap[loc], days) });
     });
 
-  } else { // activity — one row per planning activity, label = description
-    PLANNING_ACTIVITIES
-      .filter(a => PLANNING_EVENTS.some(e => e.planning_activity_id === a.id && days.includes(e.event_date)))
-      .sort((a, b) => (a.description || a.activity_id_text || '').localeCompare(b.description || b.activity_id_text || ''))
-      .forEach(a => {
-        const sub = a.subsystem || null;
-        const c   = _planningSubsystemColor(sub);
-        const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === a.id);
-        // Assigned resources for this activity
-        const assignedResources = PLANNING_ACTIVITY_RES
-          .filter(ar => ar.planning_activity_id === a.id)
-          .map(ar => PLANNING_RESOURCES.find(r => r.id === ar.resource_id))
-          .filter(Boolean);
-        groups.push({
-          id:               'act-' + a.id,
-          activityId:       a.id,
-          assignedResources,
-          label:            (a.description || a.activity_id_text || '—').slice(0, 30),
-          sublabel:         sub || '',
-          color:            c.bg,
-          byDate:           _laBuildByDate(evs, days),
-        });
+  } else { // activity — grouped by location, then activity description within each
+    const actsInWindow = PLANNING_ACTIVITIES
+      .filter(a => PLANNING_EVENTS.some(e => e.planning_activity_id === a.id && days.includes(e.event_date)));
+
+    // Bucket by location, sorted alphabetically
+    const locBuckets = {};
+    actsInWindow.forEach(a => {
+      const loc = (a.location || '(No Location)').trim();
+      if (!locBuckets[loc]) locBuckets[loc] = [];
+      locBuckets[loc].push(a);
+    });
+
+    Object.keys(locBuckets).sort().forEach(loc => {
+      // ── Location divider row ──────────────────────────────────
+      groups.push({
+        id:              'loc-hdr-' + loc,
+        isLocHeader:     true,
+        label:           loc,
       });
+
+      // ── Activity rows within this location ────────────────────
+      locBuckets[loc]
+        .sort((a, b) => (a.description || a.activity_id_text || '').localeCompare(b.description || b.activity_id_text || ''))
+        .forEach(a => {
+          const sub = a.subsystem || null;
+          const c   = _planningSubsystemColor(sub);
+          const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === a.id);
+          const assignedResources = PLANNING_ACTIVITY_RES
+            .filter(ar => ar.planning_activity_id === a.id)
+            .map(ar => PLANNING_RESOURCES.find(r => r.id === ar.resource_id))
+            .filter(Boolean);
+          groups.push({
+            id:               'act-' + a.id,
+            activityId:       a.id,
+            assignedResources,
+            label:            (a.description || a.activity_id_text || '—').slice(0, 32),
+            sublabel:         sub || '',
+            color:            c.bg,
+            byDate:           _laBuildByDate(evs, days),
+          });
+        });
+    });
   }
 
   _laRenderGrid(target, { groups, days, milestones });
