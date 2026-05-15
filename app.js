@@ -15943,7 +15943,12 @@ async function _lookaheadParseFile(file) {
     const wb  = new ExcelJS.Workbook();
     await wb.xlsx.load(buf);
 
-    const ws = wb.worksheets.find(w => /look[\s-]*ahead/i.test(w.name)) || wb.worksheets[0];
+    // Prefer a visible sheet whose name matches "Look-Ahead" (some files have a
+    // hidden sheet with a similar name that appears first in the list).
+    const ws = wb.worksheets.find(w => /look[\s-]*ahead/i.test(w.name) && w.state !== 'hidden')
+            || wb.worksheets.find(w => /look[\s-]*ahead/i.test(w.name))
+            || wb.worksheets.find(w => w.state !== 'hidden')
+            || wb.worksheets[0];
     if (!ws) throw new Error('No worksheets found in file');
 
     // Build visible-date-column map by scanning row 4 (month) and row 5 (day).
