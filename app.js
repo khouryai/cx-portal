@@ -13349,7 +13349,7 @@ const _SHIFT_VISUAL = {
   blanket_shift: { bg: '#1f2937', text: '#ffffff', label: 'Blanket', icon: '■' },
   custom:        { bg: '#6b7280', text: '#ffffff', label: 'Custom',  icon: '◆' },
 };
-const _CANCEL_VISUAL   = { bg: '#fecaca', text: '#7f1d1d', label: 'Cancelled', icon: '✕' };
+const _CANCEL_VISUAL   = { bg: '#b91c1c', text: '#ffffff', label: 'Cancelled', icon: '✕' };
 const _PTO_VISUAL      = { bg: '#fef3c7', text: '#92400e', label: 'PTO',       icon: '🌴' };
 
 // ── Data loaders ─────────────────────────────────────────────
@@ -14008,125 +14008,122 @@ function _laRenderWeekView(body) {
   body.innerHTML = html;
 }
 
-// ── DAY VIEW ─────────────────────────────────────────────────
+// ── DAY VIEW (list layout — full detail per event) ───────────
 function _laRenderDayView(body) {
   const todayISO = new Date().toISOString().slice(0, 10);
   const iso      = dayjs(_planningCalDate).format('YYYY-MM-DD');
   const isToday  = iso === todayISO;
+  const dayLabel = dayjs(iso).format('dddd, MMMM D, YYYY');
 
   const { events, pto } = _planningEventsForRender();
-  const allDay  = [];
-  const timed   = [];
+  const items = [];
 
   events.forEach(({ source: e, visual: v, isCancel }) => {
     if (e.event_date !== iso) return;
-    if (e.all_day || !e.start_time) allDay.push({ e, v, isCancel });
-    else                             timed.push({ e, v, isCancel });
+    items.push({ kind: 'event', e, v, isCancel });
   });
   pto.forEach(({ source: p }) => {
-    if (iso >= p.start_date && iso <= p.end_date) allDay.push({ kind: 'pto', p });
+    if (iso >= p.start_date && iso <= p.end_date) items.push({ kind: 'pto', p });
+  });
+  if (_planningShowP6 && Array.isArray(P6_ACTS)) {
+    P6_ACTS.forEach(p6 => {
+      if (p6.start_date && p6.finish_date && iso >= p6.start_date && iso <= p6.finish_date)
+        items.push({ kind: 'p6', p6 });
+    });
+  }
+
+  // Sort events: timed first (by start_time), then all-day, then PTO/P6
+  items.sort((a, b) => {
+    const rank = x => x.kind === 'pto' ? 2 : x.kind === 'p6' ? 3 : (x.e.all_day || !x.e.start_time ? 1 : 0);
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
+    if (a.kind === 'event' && b.kind === 'event') {
+      return (a.e.start_time || '00:00').localeCompare(b.e.start_time || '00:00');
+    }
+    return 0;
   });
 
-  const HOUR_START = 6, HOUR_END = 24;
-  const TOTAL_MINS = (HOUR_END - HOUR_START) * 60;
-  const PX_PER_MIN = 2;
-  const GRID_H     = TOTAL_MINS * PX_PER_MIN;
+  let html = `<div class="cal-day-list-wrap">`;
 
-  let html = `<div class="cal-day-wrap">`;
+  // Date header
+  html += `<div class="cal-day-list-header${isToday ? ' cal-day-list-today' : ''}">
+    <span class="cal-day-list-dow">${dayjs(iso).format('ddd')}</span>
+    <span class="cal-day-list-date">${dayjs(iso).date()}</span>
+    <span class="cal-day-list-month">${dayjs(iso).format('MMMM YYYY')}</span>
+    ${isToday ? '<span class="cal-day-list-todaybadge">Today</span>' : ''}
+  </div>`;
 
-  // All-day strip
-  if (allDay.length > 0) {
-    html += `<div class="cal-day-allday">`;
-    allDay.forEach(item => {
-      if (item.kind === 'pto') {
-        html += `<div class="cal-allday-event cal-event-pto"
+  if (items.length === 0) {
+    html += `<div class="cal-day-list-empty">No activities scheduled for this day.</div>`;
+  } else {
+    html += `<div class="cal-day-list-cards">`;
+    items.forEach(item => {
+      if (item.kind === 'event') {
+        const { e, v, isCancel } = item;
+        const sub    = _planningGetSubsystem(e);
+        const sc     = sub ? _planningSubsystemColor(sub) : null;
+        const bg     = sc ? sc.bg   : v.bg;
+        const fg     = sc ? sc.fg   : v.text;
+        const bdr    = sc ? sc.border : (isCancel ? '#7f1d1d' : bg);
+        const asgns  = _planningResourceAssignmentsForEvent(e.id);
+        const tip    = _laEventTippy(e, v, asgns);
+
+        const timeStr = e.all_day || !e.start_time
+          ? 'All day'
+          : `${e.start_time.slice(0,5)}${e.end_time ? ' – ' + e.end_time.slice(0,5) : ''}`;
+
+        const resNames = asgns.map(a => a.resource?.display_name || '').filter(Boolean);
+        const resHtml  = resNames.length
+          ? `<div class="cal-dl-chip-res">${resNames.map(n => `<span class="cal-dl-res-badge">${escapeHtml(n)}</span>`).join('')}</div>`
+          : '';
+
+        const metaParts = [
+          timeStr,
+          e.location ? `📍 ${e.location}` : '',
+          sub ? `${sub}` : '',
+        ].filter(Boolean);
+
+        html += `<div class="cal-dl-chip${isCancel ? ' cal-dl-chip-cancelled' : ''}"
+          style="border-left:4px solid ${bdr};background:${bg};color:${fg};"
+          data-cal-tippy="${tip}"
+          onclick="_planningOpenEventDetail('${e.id}')"
+        >
+          <div class="cal-dl-chip-header">
+            <span class="cal-dl-chip-title">${escapeHtml(e.title || '(no title)')}</span>
+            <span class="cal-dl-chip-badge" style="background:${bdr};color:${fg};opacity:.85;">${v.icon} ${v.label}</span>
+          </div>
+          <div class="cal-dl-chip-meta">${metaParts.map(escapeHtml).join(' · ')}</div>
+          ${resHtml}
+          ${e.notes ? `<div class="cal-dl-chip-notes">${escapeHtml(e.notes.slice(0, 120))}${e.notes.length > 120 ? '…' : ''}</div>` : ''}
+        </div>`;
+
+      } else if (item.kind === 'pto') {
+        html += `<div class="cal-dl-chip cal-dl-chip-pto"
           onclick="_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))"
-        >🌴 ${escapeHtml(_ptoResourceName(item.p.resource_id))}</div>`;
-        return;
+        >
+          <div class="cal-dl-chip-header">
+            <span class="cal-dl-chip-title">🌴 ${escapeHtml(_ptoResourceName(item.p.resource_id))}</span>
+            <span class="cal-dl-chip-badge" style="background:#d1fae5;color:#065f46;">PTO</span>
+          </div>
+          <div class="cal-dl-chip-meta">${escapeHtml(_ptoFmtRange(item.p))}</div>
+        </div>`;
+
+      } else if (item.kind === 'p6') {
+        html += `<div class="cal-dl-chip cal-dl-chip-p6"
+          onclick="_planningOpenP6Detail(P6_ACTS.find(x=>x.id==='${item.p6.id}'))"
+        >
+          <div class="cal-dl-chip-header">
+            <span class="cal-dl-chip-title">📋 ${escapeHtml((item.p6.p6_name || item.p6.p6_id || '').slice(0, 80))}</span>
+            <span class="cal-dl-chip-badge" style="background:#e0e7ff;color:#3730a3;">P6</span>
+          </div>
+          <div class="cal-dl-chip-meta">${escapeHtml(item.p6.p6_id || '')} · ${escapeHtml(item.p6.start_date || '')} – ${escapeHtml(item.p6.finish_date || '')}</div>
+        </div>`;
       }
-      const { e, v, isCancel } = item;
-      const sub  = _planningGetSubsystem(e);
-      const sc   = sub ? _planningSubsystemColor(sub) : null;
-      const bg   = sc ? sc.bg : v.bg;
-      const fg   = sc ? sc.fg : v.text;
-      const asgns = _planningResourceAssignmentsForEvent(e.id);
-      const tip  = _laEventTippy(e, v, asgns);
-      html += `<div class="cal-allday-event" style="background:${bg};color:${fg};"
-        data-cal-tippy="${tip}" onclick="_planningOpenEventDetail('${e.id}')"
-      >${escapeHtml(e.title||'(no title)')}</div>`;
     });
     html += `</div>`;
   }
 
-  // Time column — outer scrolls, inner positions
-  html += `<div class="cal-time-grid cal-time-grid-day" id="cal-time-grid">`;
-  html += `<div style="position:relative;height:${GRID_H}px;">`;
-  for (let h = HOUR_START; h <= HOUR_END; h++) {
-    const top = (h - HOUR_START) * 60 * PX_PER_MIN;
-    html += `<div class="cal-hour-line" style="top:${top}px;">
-      <span class="cal-hour-label">${h < 24 ? String(h).padStart(2,'0')+':00' : ''}</span>
-    </div>`;
-  }
-  html += `<div class="cal-day-col-bg${isToday ? ' cal-today-bg' : ''}" style="left:52px;right:0;height:${GRID_H}px;position:absolute;"></div>`;
-
-  timed.forEach(({ e, v, isCancel }) => {
-    const [sh,sm] = (e.start_time||'06:00').split(':').map(Number);
-    const [eh,em] = (e.end_time  ||'07:00').split(':').map(Number);
-    const startMin = Math.max(0, sh*60+(sm||0) - HOUR_START*60);
-    let   endMin   = eh*60+(em||0) - HOUR_START*60;
-    if (endMin <= startMin) endMin = startMin + 60;
-    endMin = Math.min(endMin, TOTAL_MINS);
-    const top    = startMin * PX_PER_MIN;
-    const height = Math.max((endMin - startMin) * PX_PER_MIN, 28);
-    const sub    = _planningGetSubsystem(e);
-    const sc     = sub ? _planningSubsystemColor(sub) : null;
-    const bg     = sc ? sc.soft : (isCancel ? '#fecaca' : v.bg);
-    const fg     = sc ? sc.border : v.text;
-    const borderL = sc ? sc.bg : (isCancel ? '#7f1d1d' : v.bg);
-    const asgns  = _planningResourceAssignmentsForEvent(e.id);
-    const tip    = _laEventTippy(e, v, asgns);
-    html += `<div class="cal-time-event cal-time-event-day${isCancel ? ' cal-time-event-cancelled' : ''}"
-      style="left:56px;right:12px;top:${top}px;height:${height}px;background:${bg};color:${fg};border-left:4px solid ${borderL};"
-      data-cal-tippy="${tip}"
-      onclick="_planningOpenEventDetail('${e.id}')"
-    >
-      <div class="cal-time-event-title">${escapeHtml(e.title || '(no title)')}</div>
-      <div class="cal-time-event-meta">${(e.start_time||'').slice(0,5)}${e.end_time ? ' – '+e.end_time.slice(0,5) : ''}${e.location ? ' · '+escapeHtml(e.location) : ''}</div>
-    </div>`;
-  });
-
-  // Now-line
-  if (isToday) {
-    const now    = new Date();
-    const nowMin = now.getHours()*60 + now.getMinutes() - HOUR_START*60;
-    if (nowMin >= 0 && nowMin <= TOTAL_MINS) {
-      const top = nowMin * PX_PER_MIN;
-      html += `<div class="cal-now-line" style="top:${top}px;left:52px;right:0;"></div>`;
-      html += `<div class="cal-now-tick" style="top:${top}px;"></div>`;
-    }
-  }
-  html += `</div></div></div>`;  // inner, time-grid, day-wrap
+  html += `</div>`;
   body.innerHTML = html;
-
-  // Scroll to working hours
-  requestAnimationFrame(() => {
-    const grid = document.getElementById('cal-time-grid');
-    if (!grid) return;
-    const now     = new Date();
-    const nowMin  = now.getHours()*60 + now.getMinutes() - HOUR_START*60;
-    const scrollTo= Math.max(0, (nowMin > 0 ? nowMin : (8-HOUR_START)*60) - 60) * PX_PER_MIN;
-    grid.scrollTop = scrollTo;
-  });
-
-  _planningCalNowTimer = setInterval(() => {
-    const nl = body.querySelector('.cal-now-line');
-    const nt = body.querySelector('.cal-now-tick');
-    if (!nl) return;
-    const nowMin = new Date().getHours()*60 + new Date().getMinutes() - HOUR_START*60;
-    const top    = Math.max(0, nowMin) * PX_PER_MIN;
-    nl.style.top = top + 'px';
-    if (nt) nt.style.top = top + 'px';
-  }, 30_000);
 }
 
 // ── LOOKAHEAD TIMELINE TAB ───────────────────────────────────
@@ -15148,6 +15145,19 @@ function _planningOpenEventDetail(eventId) {
   const assignments = _planningResourceAssignmentsForEvent(e.id);
   const ti = e.test_item_id ? TI.find(t => String(t.TestID) === String(e.test_item_id)) : null;
 
+  // Resolve batch info for source display
+  const _evActivity = e.planning_activity_id ? PLANNING_ACTIVITIES.find(a => a.id === e.planning_activity_id) : null;
+  const _evBatch    = _evActivity?.batch_id ? PLANNING_BATCHES.find(b => b.id === _evActivity.batch_id) : null;
+  const _sourceLabel = (() => {
+    if (e.source === 'lookahead' && _evBatch) {
+      const ts = _evBatch.uploaded_at ? new Date(_evBatch.uploaded_at).toLocaleString() : '—';
+      const fn = _evBatch.filename ? _evBatch.filename.replace(/\.[^.]+$/, '') : '—';
+      return `Lookahead Import — ${fn} · ${ts}`;
+    }
+    if (e.source === 'manual') return 'Manual Entry';
+    return escapeHtml(e.source || '—');
+  })();
+
   // PTO conflicts per assigned resource
   const conflicts = [];
   assignments.forEach(a => {
@@ -15183,7 +15193,7 @@ function _planningOpenEventDetail(eventId) {
         <div>${ti ? `<strong>${escapeHtml(ti.TestCaseCode || ti.TestID)}</strong> — ${escapeHtml(ti.TestName || '')}` : '<em style="color:#9ca3af;">Not linked</em>'}</div>
 
         <div style="color:var(--gray-500);">Source:</div>
-        <div>${escapeHtml(e.source)}${e.work_hours_raw ? ` · Hours: ${escapeHtml(e.work_hours_raw)}` : ''}</div>
+        <div style="font-size:12px;">${_sourceLabel}${e.work_hours_raw ? `<span style="color:var(--gray-500);"> · Hours: ${escapeHtml(e.work_hours_raw)}</span>` : ''}</div>
 
         <div style="color:var(--gray-500);">Resources:</div>
         <div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;">
@@ -15221,6 +15231,7 @@ function _planningOpenEventDetail(eventId) {
       <button class="form-secondary" onclick="_planningToggleLock('${e.id}')">${e.is_locked ? '🔓 Unlock' : '🔒 Lock'}</button>
       ${!isCancel ? `<button class="form-secondary" style="color:var(--bad);" onclick="_planningCancelEvent('${e.id}')">✕ Cancel Event</button>` : ''}
       ${isCancel && !e.cancellation_reason ? `<button class="form-submit" onclick="_planningAddCancellationReason('${e.id}')">+ Add Cancel Reason</button>` : ''}
+      ${!e.is_locked ? `<button class="form-secondary" style="color:#7f1d1d;border-color:#fca5a5;" onclick="_planningDeleteEvent('${e.id}')">🗑 Delete</button>` : ''}
     ` : `
       <button class="form-secondary" onclick="closeModal()">Close</button>
     `,
@@ -15246,6 +15257,29 @@ async function _planningRemoveEventResource(eventId, resourceId) {
     });
   } catch (err) {
     toast('Remove failed: ' + err.message, 'error');
+  }
+}
+
+async function _planningDeleteEvent(eventId) {
+  const ev = PLANNING_EVENTS.find(e => e.id === eventId);
+  if (!ev) return;
+  if (ev.is_locked) { toast('Cannot delete a locked event', 'error'); return; }
+  if (!confirm(`Delete "${ev.title}" on ${ev.event_date}? This cannot be undone.`)) return;
+  try {
+    // Remove all resource assignments first
+    const erRows = PLANNING_EVENT_RES.filter(er => er.event_id === eventId);
+    for (const er of erRows) {
+      await _dbDelete('planning_event_resources', { id: er.id });
+    }
+    await _dbDelete('planning_events', { id: eventId });
+    closeModal();
+    toast('Event deleted', 'success');
+    await loadPlanningData(true);
+    if (_lookaheadTab === 'lookahead') _laMountLookaheadTL();
+    if (_lookaheadTab === 'resources') _laMountResourcesTL();
+    _laMountCalendar();
+  } catch (err) {
+    toast('Delete failed: ' + err.message, 'error');
   }
 }
 
@@ -16440,22 +16474,41 @@ async function _lookaheadConfirmImport() {
 }
 
 async function _lookaheadSupersedePriorBatches(newBatchId) {
-  const today = new Date().toISOString().slice(0, 10);
+  // Determine the date range covered by the new batch
+  const newBatch = PLANNING_BATCHES.find(b => b.id === newBatchId);
+  const rangeStart = newBatch?.week_start || null;
+  const rangeEnd   = newBatch?.week_end   || null;
+
   const prior = PLANNING_BATCHES.filter(b => b.status === 'imported' && b.id !== newBatchId);
   for (const b of prior) {
-    // Delete future, non-locked events from prior batch
     try {
       const priorActivities = PLANNING_ACTIVITIES.filter(a => a.batch_id === b.id);
       const priorActIds = new Set(priorActivities.map(a => a.id));
-      const priorFutureEvents = PLANNING_EVENTS.filter(e =>
+
+      // Delete events within the new batch's full date range that are:
+      //   • not locked
+      //   • not cancelled (cancellations persist forever)
+      const eventsToDelete = PLANNING_EVENTS.filter(e =>
         priorActIds.has(e.planning_activity_id) &&
         !e.is_locked &&
-        e.event_date >= today
+        e.status !== 'cancelled' &&
+        (!rangeStart || e.event_date >= rangeStart) &&
+        (!rangeEnd   || e.event_date <= rangeEnd)
       );
-      for (const ev of priorFutureEvents) {
+
+      for (const ev of eventsToDelete) {
+        // Remove event_resources first to avoid orphans
+        const erRows = PLANNING_EVENT_RES.filter(er => er.event_id === ev.id);
+        for (const er of erRows) {
+          await _dbDelete('planning_event_resources', { id: er.id });
+        }
         await _dbDelete('planning_events', { id: ev.id });
       }
-      await _dbUpdate('planning_import_batches', { status: 'superseded' }, { id: b.id });
+
+      // Only mark superseded if we fully replaced it (same range); otherwise leave as imported
+      if (rangeStart && rangeEnd) {
+        await _dbUpdate('planning_import_batches', { status: 'superseded' }, { id: b.id });
+      }
     } catch (err) {
       console.warn(`Failed to supersede batch ${b.id}:`, err.message);
     }
@@ -17007,13 +17060,16 @@ function _apConflictsStub() {
                               : `<span class="badge badge-notstarted">INFO</span>`;
                 const payload = c.payload_json || {};
                 const eventLink = c.event_id ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;margin-right:4px;" onclick="_planningOpenEventDetail('${c.event_id}')">View Event</button>` : '';
+                const createResBtn = c.conflict_type === 'unmatched_resource' && payload.token
+                  ? `<button class="admin-action-btn" style="font-size:11px;padding:3px 8px;margin-right:4px;" onclick="_apAddResourceModalWithInitials('${escapeHtml(payload.token)}')">+ Create Resource</button>`
+                  : '';
                 return `
                   <tr>
                     <td style="font-size:13px;"><span style="color:${meta.color};font-weight:600;">${meta.icon} ${meta.label}</span></td>
                     <td>${sevBadge}</td>
                     <td style="font-size:12px;color:var(--gray-700);">${escapeHtml(c.message || '—')}</td>
                     <td style="font-size:11px;color:var(--gray-500);">${c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}</td>
-                    <td>${eventLink}<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_planningAcknowledgeConflict('${c.id}')">✓ Ack</button></td>
+                    <td style="white-space:nowrap;">${eventLink}${createResBtn}<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_planningAcknowledgeConflict('${c.id}')">✓ Ack</button></td>
                   </tr>`;
               }).join('')}
         </tbody>
@@ -17149,12 +17205,12 @@ async function _apSaveResourceEdit(resourceId) {
   const type     = document.getElementById('ares-type')?.value;
   if (!name) { toast('Name is required', 'error'); return; }
   try {
-    await _dbUpdate('planning_resources', resourceId, {
+    await _dbUpdate('planning_resources', {
       display_name:  name,
       initials:      initials || null,
       subsystem:     subsys,
       resource_type: type,
-    });
+    }, { id: resourceId });
     closeModal();
     await loadPlanningData(true);
     renderAdminPlanning();
@@ -17202,6 +17258,17 @@ function _apAddResourceModal() {
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
       <button class="admin-action-btn" onclick="_apCreateResource()">Add Resource</button>`,
   });
+}
+
+function _apAddResourceModalWithInitials(token) {
+  _apAddResourceModal();
+  // Pre-fill the initials (and name hint) once the modal DOM is ready
+  setTimeout(() => {
+    const inp = document.getElementById('ares-initials');
+    if (inp) inp.value = (token || '').toUpperCase().slice(0, 4);
+    const nameInp = document.getElementById('ares-name');
+    if (nameInp && !nameInp.value) nameInp.placeholder = `Name for "${token}"`;
+  }, 90);
 }
 
 async function _apCreateResource() {
