@@ -13649,8 +13649,10 @@ function _laGetTitle() {
 
 function _planningTogglePO6Overlay(on) {
   _planningShowP6 = !!on;
-  // Re-render the calendar so P6 events appear/disappear
-  if (_lookaheadTab === 'calendar') _renderLookaheadTabBody();
+  // Re-render whichever tab is currently visible — no refresh needed
+  if      (_lookaheadTab === 'calendar')  _laMountCalendar();
+  else if (_lookaheadTab === 'lookahead') _laMountLookaheadTL();
+  else if (_lookaheadTab === 'resources') _laMountResourcesTL();
 }
 
 // ── Subsystem colour palette ─────────────────────────────────
@@ -15017,14 +15019,23 @@ function _planningOpenEventDetail(eventId) {
         <div>${escapeHtml(e.source)}${e.work_hours_raw ? ` · Hours: ${escapeHtml(e.work_hours_raw)}` : ''}</div>
 
         <div style="color:var(--gray-500);">Resources:</div>
-        <div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;">
           ${assignments.length === 0
             ? '<em style="color:#9ca3af;">No resources assigned</em>'
-            : assignments.map(a => `
-                <span class="badge ${conflicts.find(c => c.resource.id === a.resource?.id) ? 'badge-failed' : 'badge-passed'}" style="margin:2px 4px 2px 0;">
+            : assignments.map(a => {
+                const hasPTO = !!conflicts.find(c => c.resource?.id === a.resource?.id);
+                const badgeClass = hasPTO ? 'badge-failed' : 'badge-passed';
+                const removeBtn = isAdmin
+                  ? `<button onclick="event.stopPropagation();_planningRemoveEventResource('${e.id}','${a.resource?.id}')"
+                       style="background:none;border:none;cursor:pointer;color:inherit;opacity:.65;font-size:13px;line-height:1;padding:0 0 0 3px;"
+                       title="Remove ${escapeHtml(a.resource?.display_name || '')}">×</button>`
+                  : '';
+                return `<span class="badge ${badgeClass}" style="display:inline-flex;align-items:center;gap:2px;">
                   ${a.resource ? escapeHtml(a.resource.display_name) : '—'}
-                  ${conflicts.find(c => c.resource.id === a.resource?.id) ? ' ⚠ PTO' : ''}
-                </span>`).join('')}
+                  ${hasPTO ? ' ⚠ PTO' : ''}
+                  ${removeBtn}
+                </span>`;
+              }).join('')}
         </div>
 
         ${e.notes ? `
@@ -15048,6 +15059,27 @@ function _planningOpenEventDetail(eventId) {
     `,
   });
   document.getElementById('modal-overlay')?.classList.add('active');
+}
+
+async function _planningRemoveEventResource(eventId, resourceId) {
+  if (!resourceId) return;
+  const res = PLANNING_RESOURCES.find(r => r.id === resourceId);
+  try {
+    await _dbDelete('planning_event_resources', { event_id: eventId, resource_id: resourceId });
+    // Optimistic local remove so re-opened modal reflects change instantly
+    const idx = PLANNING_EVENT_RES.findIndex(er => er.event_id === eventId && er.resource_id === resourceId);
+    if (idx > -1) PLANNING_EVENT_RES.splice(idx, 1);
+    toast(`${res?.display_name || 'Resource'} removed`, 'success');
+    // Re-open modal with fresh data
+    _planningOpenEventDetail(eventId);
+    // Refresh timeline + resource board in background
+    loadPlanningData(true).then(() => {
+      if (_lookaheadTab === 'lookahead') _laMountLookaheadTL();
+      if (_lookaheadTab === 'resources') _laMountResourcesTL();
+    });
+  } catch (err) {
+    toast('Remove failed: ' + err.message, 'error');
+  }
 }
 
 function _planningOpenPTODetail(p) {
@@ -16692,6 +16724,7 @@ function _planningOpenP6Detail(p6) {
   // Event lifecycle changes
   wrap('_planningCancelEvent');
   wrap('_planningToggleLock');
+  wrap('_planningRemoveEventResource');
   wrap('_planningLinkActivity');
   wrap('_planningConfirmLink');
   wrap('_planningMarkNoLink');
