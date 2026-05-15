@@ -13338,7 +13338,9 @@ let _laTimelineWindow    = 14;                         // 14 / 21 / 28 days
 let _planningShowP6      = false;                      // Calendar/Timeline P6 overlay toggle
 let _conflictFilter      = 'all';                      // all | pto | double | p6 | hours | unmatched
 let _laAssignMode        = false;                      // Assign Resources drag-and-drop mode
-let _laCurrentDragRes    = null;                       // resourceId being dragged
+let _laCurrentDragRes    = null;                       // resourceId(s) being dragged — now an array
+let _laSelectedResIds    = new Set();                  // multi-selected resource card IDs
+let _laSelectedCellKeys  = new Set();                  // multi-selected event IDs for bulk remove
 
 // Shift visual styles — used across calendar, timeline, badges
 const _SHIFT_VISUAL = {
@@ -13391,7 +13393,7 @@ async function _planningBootstrapResources() {
   // Pull active portal users (profiles) and create matching planning_resources rows.
   // Resource type derived from profile role.
   try {
-    const profs = await _fetchAnon('profiles?select=id,full_name,role,email&is_active=eq.true');
+    const profs = await _fetchAnon('profiles?select=id,full_name,role,email,subsystem&is_active=eq.true');
     if (!profs || !profs.length) return;
     const seed = profs.filter(p => p.full_name).map(p => ({
       user_id:       p.id,
@@ -13401,6 +13403,7 @@ async function _planningBootstrapResources() {
                     : p.role === 'field_engineer' ? 'field_engineer'
                     : 'manual'),
       email:         p.email || null,
+      subsystem:     p.subsystem || null,
       is_active:     true,
     }));
     if (!seed.length) return;
@@ -14328,12 +14331,16 @@ function _laRenderGrid(target, { groups, days, milestones }) {
         shifts.forEach(s => {
           const v   = _tlgShiftVisual(s);
           const tip = _tlgShiftTip(s, v);
-          const runClass = `tlg-run-${s.run || 'solo'}`;
-          html += `<div class="tlg-shift-block ${runClass}${s.isCancel ? ' tlg-shift-cancelled' : ''}"
+          const runClass  = `tlg-run-${s.run || 'solo'}`;
+          const isCellSel = _laAssignMode && _laSelectedCellKeys.has(s.event_id);
+          const clickFn   = _laAssignMode
+            ? `_laToggleCellSelect('${s.event_id}',this)`
+            : `_planningOpenEventDetail('${s.event_id}')`;
+          html += `<div class="tlg-shift-block ${runClass}${s.isCancel ? ' tlg-shift-cancelled' : ''}${isCellSel ? ' la-cell-selected' : ''}"
             style="background:${v.bg};color:${v.text};"
-            onclick="_planningOpenEventDetail('${s.event_id}')"
+            onclick="${clickFn}"
             data-tlg-tip="${tip}"
-          >${s.cellLabel ? `<span class="tlg-cell-location">${escapeHtml(s.cellLabel)}</span>` : ''}</div>`;
+          >${s.cellLabel ? `<span class="tlg-cell-location">${escapeHtml(s.cellLabel)}</span>` : ''}${isCellSel ? `<span class="la-cell-sel-mark">✓</span>` : ''}</div>`;
         });
         if (inP6 && !shifts.length) html += `<div class="tlg-p6-hint">P6</div>`;
       }
@@ -14458,8 +14465,14 @@ function _laLookaheadHTML() {
     </div>
 
     ${_laAssignMode ? `
-    <div class="la-assign-banner">
-      <span>🟥 Drop on the <strong>activity label</strong> to assign for the full activity &nbsp;·&nbsp; 🟩 Drop on a <strong>coloured shift cell</strong> to assign to that specific day only</span>
+    <div class="la-assign-banner" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <span>🟥 Drop on the <strong>activity label</strong> to assign for the full activity &nbsp;·&nbsp; 🟩 Drop on a <strong>coloured shift cell</strong> to assign to that specific day only &nbsp;·&nbsp; <strong>Click a colored cell</strong> to select it for bulk remove</span>
+      ${_laSelectedCellKeys.size > 0 ? `
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+          <span style="font-size:12px;font-weight:600;color:#fff;">${_laSelectedCellKeys.size} cell${_laSelectedCellKeys.size>1?'s':''} selected</span>
+          <button class="form-secondary" style="font-size:11px;padding:4px 10px;background:#fff;color:var(--hitachi-red);border-color:#fff;" onclick="_laClearCellSelection()">✕ Clear</button>
+          <button class="admin-action-btn" style="font-size:11px;padding:4px 10px;background:#fff;color:var(--hitachi-red);border-color:#fff;" onclick="_laBulkRemoveCellResources()">🗑 Remove all users</button>
+        </div>` : ''}
     </div>` : ''}
 
     <div style="display:flex;gap:12px;align-items:flex-start;">
@@ -14477,6 +14490,10 @@ function _laToggleAssignMode() {
   if (_laAssignMode) {
     // Force activity group-by when entering assign mode
     _laTimelineGroupBy = 'activity';
+  } else {
+    // Clear all selection state when exiting assign mode
+    _laSelectedResIds.clear();
+    _laSelectedCellKeys.clear();
   }
   _renderLookaheadTabBody();
 }
@@ -14492,29 +14509,38 @@ function _laResourcePanelHTML() {
   const TYPE_LABELS = { admin: 'Admin', field_engineer: 'Field Engineers', manual: 'Team Members', other: 'Other' };
   const colors = ['#e60012','#1e40af','#00875a','#b45309','#5b21b6','#065f46','#9a3412','#1f2937'];
 
+  const selCount = _laSelectedResIds.size;
+
   let html = `<div class="la-res-panel" id="la-res-panel">
     <div class="la-res-panel-head">
       <div style="font-size:12px;font-weight:700;color:var(--charcoal);">Resources</div>
       <div style="font-size:11px;color:var(--gray-400);">${active.length} active</div>
     </div>
-    <div style="padding:8px;">
+    <div style="padding:6px 8px;display:flex;flex-direction:column;gap:5px;">
       <input type="text" class="la-res-search" placeholder="🔍 Search…" oninput="_laFilterResPanel(this.value)">
+      <div id="la-sel-bar" style="display:${selCount?'flex':'none'};align-items:center;justify-content:space-between;background:var(--hitachi-red);color:#fff;border-radius:5px;padding:4px 8px;font-size:11px;font-weight:600;">
+        <span>${selCount} selected</span>
+        <button onclick="_laClearResSelection()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:11px;padding:0;">✕ Clear</button>
+      </div>
     </div>
+    <div style="padding:4px 8px 4px;font-size:10px;color:var(--gray-400);">Click to select · drag to assign</div>
     <div class="la-res-list" id="la-res-list">`;
 
   Object.entries(byType).forEach(([type, members]) => {
     html += `<div class="la-res-group-label">${TYPE_LABELS[type] || type}</div>`;
     members.forEach((r, i) => {
-      const color = colors[i % colors.length];
+      const color   = colors[i % colors.length];
       const initials = r.initials || r.display_name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-      html += `<div class="la-res-card" draggable="true"
+      const isSel   = _laSelectedResIds.has(r.id);
+      html += `<div class="la-res-card${isSel ? ' la-res-card-selected' : ''}" draggable="true"
         data-res-id="${r.id}"
         data-res-name="${escapeHtml(r.display_name)}"
+        onclick="_laToggleResSelect('${r.id}')"
         ondragstart="_laStartResourceDrag('${r.id}',this)"
         ondragend="_laEndResourceDrag(this)">
         <div class="la-res-avatar" style="background:${color};">${escapeHtml(initials)}</div>
-        <div class="la-res-name">${escapeHtml(r.display_name)}</div>
-        <div class="la-drag-handle" title="Drag to assign">⠿</div>
+        <div class="la-res-name">${escapeHtml(r.display_name)}${r.subsystem ? `<div style="font-size:9px;opacity:.7;margin-top:1px;">${escapeHtml(r.subsystem)}</div>` : ''}</div>
+        ${isSel ? `<div class="la-res-check">✓</div>` : `<div class="la-drag-handle" title="Drag to assign">⠿</div>`}
       </div>`;
     });
   });
@@ -14545,9 +14571,79 @@ function _laFilterResPanel(query) {
   });
 }
 
+// ─── Resource card selection ──────────────────────────────────
+function _laToggleResSelect(resourceId) {
+  if (_laSelectedResIds.has(resourceId)) {
+    _laSelectedResIds.delete(resourceId);
+  } else {
+    _laSelectedResIds.add(resourceId);
+  }
+  // Re-render panel in place (preserves search query)
+  const panel = document.getElementById('la-res-panel');
+  if (panel) panel.outerHTML = _laResourcePanelHTML();
+}
+
+function _laClearResSelection() {
+  _laSelectedResIds.clear();
+  const panel = document.getElementById('la-res-panel');
+  if (panel) panel.outerHTML = _laResourcePanelHTML();
+}
+
+// ─── Cell multi-select (assign mode, for bulk remove) ─────────
+function _laToggleCellSelect(eventId, el) {
+  if (_laSelectedCellKeys.has(eventId)) {
+    _laSelectedCellKeys.delete(eventId);
+    el?.classList.remove('la-cell-selected');
+  } else {
+    _laSelectedCellKeys.add(eventId);
+    el?.classList.add('la-cell-selected');
+  }
+  // Re-render the assign banner to update the selected-count / action buttons
+  _laMountLookaheadTL();
+}
+
+function _laClearCellSelection() {
+  _laSelectedCellKeys.clear();
+  _laMountLookaheadTL();
+}
+
+async function _laBulkRemoveCellResources() {
+  const eventIds = [..._laSelectedCellKeys];
+  if (!eventIds.length) return;
+
+  const totalRows = PLANNING_EVENT_RES.filter(er => eventIds.includes(er.event_id)).length;
+  if (!totalRows) { toast('No resources assigned to selected cells', 'warn'); return; }
+
+  const count = eventIds.length;
+  if (!confirm(`Remove all resources from ${count} shift${count>1?'s':''}? This cannot be undone.`)) return;
+
+  try {
+    // Delete event_resources for each selected event
+    for (const eid of eventIds) {
+      const rows = PLANNING_EVENT_RES.filter(er => er.event_id === eid);
+      for (const row of rows) {
+        await _dbDelete('planning_event_resources', { event_id: eid, resource_id: row.resource_id });
+      }
+    }
+    _laSelectedCellKeys.clear();
+    toast(`Resources cleared from ${count} shift${count>1?'s':''}`, 'success');
+    await loadPlanningData(true);
+    _laMountLookaheadTL();
+  } catch (err) {
+    toast('Bulk remove failed: ' + err.message, 'error');
+  }
+}
+
 // ─── HTML5 Drag-and-Drop ─────────────────────────────────────
 function _laStartResourceDrag(resourceId, el) {
-  _laCurrentDragRes = resourceId;
+  // If the dragged card is part of the selection, carry ALL selected IDs.
+  // Otherwise drag only this card (and clear the selection).
+  if (_laSelectedResIds.has(resourceId)) {
+    _laCurrentDragRes = [..._laSelectedResIds];
+  } else {
+    _laSelectedResIds.clear();
+    _laCurrentDragRes = [resourceId];
+  }
   if (el) el.classList.add('la-res-card-dragging');
 }
 
@@ -14568,7 +14664,7 @@ function _laInitAssignDnD(gridEl) {
   }
 
   gridEl.addEventListener('dragover', e => {
-    if (!_laCurrentDragRes) return;
+    if (!_laCurrentDragRes || !_laCurrentDragRes.length) return;
 
     // Priority: cell (specific date) > label (whole activity)
     const cell  = e.target.closest('.la-cell-droppable');
@@ -14601,19 +14697,23 @@ function _laInitAssignDnD(gridEl) {
     const label = !cell && e.target.closest('.la-drop-label');
     _clearHighlights();
 
-    const resourceId = _laCurrentDragRes;
+    const resourceIds = _laCurrentDragRes;  // now an array
     _laCurrentDragRes = null;
-    if (!resourceId) return;
+    if (!resourceIds || !resourceIds.length) return;
 
     if (cell) {
-      // Drop on a shift cell → assign to that specific event/date
+      // Drop on a shift cell → assign all selected resources to that specific event/date
       const activityId = cell.dataset.activityId;
       const eventDate  = cell.dataset.eventDate;
-      if (activityId && eventDate) _laAssignResourceToEvent(activityId, eventDate, resourceId);
+      if (activityId && eventDate) {
+        resourceIds.forEach(rid => _laAssignResourceToEvent(activityId, eventDate, rid));
+      }
     } else if (label) {
-      // Drop on the row label → assign to the full activity (all dates)
+      // Drop on the row label → assign all selected resources to the full activity
       const activityId = label.dataset.activityId;
-      if (activityId) _laAssignResourceToActivity(activityId, resourceId);
+      if (activityId) {
+        resourceIds.forEach(rid => _laAssignResourceToActivity(activityId, rid));
+      }
     }
   });
 }
@@ -16909,29 +17009,215 @@ function _planningSetConflictFilter(f) {
 
 function _apResourcesStub() {
   const all = PLANNING_RESOURCES;
+  const SUBSYSTEMS = ['IXL','ATS','DCS','POWER','SCADA','TCH','IAMS','CYBER','P.SEC','OCC','SYS','Other'];
   return `
     <div class="data-card" style="padding:0;overflow:hidden;">
       <div style="padding:14px 16px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;align-items:center;">
         <strong style="font-size:14px;">All Resources (${all.length})</strong>
-        <button class="admin-action-btn" disabled style="opacity:.55;cursor:not-allowed;" title="Add Resource lands in Batch 2">+ Add Resource</button>
+        <button class="admin-action-btn" onclick="_apAddResourceModal()">+ Add Resource</button>
       </div>
       <table class="data-table">
-        <thead><tr><th>Name</th><th>Initials</th><th>Type</th><th>Email</th><th>Active</th></tr></thead>
+        <thead><tr><th>Name</th><th>Initials</th><th>Subsystem</th><th>Type</th><th>Email</th><th>Active</th><th></th></tr></thead>
         <tbody>
           ${all.length === 0
-            ? `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--gray-400);">No resources. First admin visit auto-seeds from portal users.</td></tr>`
-            : all.map(r => `
-              <tr>
-                <td>${escapeHtml(r.display_name)}</td>
-                <td style="font-family:monospace;">${escapeHtml(r.initials || '')}</td>
-                <td>${escapeHtml(r.resource_type)}</td>
-                <td style="font-size:12px;color:var(--gray-500);">${escapeHtml(r.email || '—')}</td>
-                <td>${r.is_active ? '✓' : '—'}</td>
-              </tr>
-            `).join('')}
+            ? `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--gray-400);">No resources. First admin visit auto-seeds from portal users.</td></tr>`
+            : all.map(r => {
+                const linkedProfile = r.user_id ? true : false;
+                const subsysDisplay = r.subsystem
+                  ? `<span class="badge badge-passed" style="font-size:11px;">${escapeHtml(r.subsystem)}</span>`
+                  : `<span style="color:var(--gray-400);font-size:12px;">—</span>`;
+                return `
+                <tr>
+                  <td>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                      <div class="user-avatar-sm" style="flex-shrink:0;">${escapeHtml(r.initials || (r.display_name||'?')[0])}</div>
+                      <div>
+                        <div style="font-weight:600;font-size:13px;">${escapeHtml(r.display_name)}</div>
+                        ${linkedProfile ? `<div style="font-size:10px;color:var(--gray-400);">Portal user</div>` : `<div style="font-size:10px;color:var(--gray-400);">Manual</div>`}
+                      </div>
+                    </div>
+                  </td>
+                  <td style="font-family:monospace;font-size:13px;">${escapeHtml(r.initials || '')}</td>
+                  <td>${subsysDisplay}</td>
+                  <td><span style="font-size:12px;">${escapeHtml(r.resource_type || '—')}</span></td>
+                  <td style="font-size:12px;color:var(--gray-500);">${escapeHtml(r.email || '—')}</td>
+                  <td>
+                    <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                      <input type="checkbox" ${r.is_active ? 'checked' : ''} onchange="_apToggleResourceActive('${r.id}',this.checked)">
+                      <span style="font-size:12px;color:${r.is_active ? 'var(--good)' : 'var(--gray-400)'};">${r.is_active ? 'Active' : 'Inactive'}</span>
+                    </label>
+                  </td>
+                  <td>
+                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_apEditResourceModal('${r.id}')">✏ Edit</button>
+                  </td>
+                </tr>`;
+              }).join('')}
         </tbody>
       </table>
     </div>`;
+}
+
+// ── Resource edit modal ───────────────────────────────────────
+function _apEditResourceModal(resourceId) {
+  const r = PLANNING_RESOURCES.find(x => x.id === resourceId);
+  if (!r) return;
+  const SUBSYSTEMS = ['IXL','ATS','DCS','POWER','SCADA','TCH','IAMS','CYBER','P.SEC','OCC','SYS','Other'];
+  // If linked to a portal user, show their profile subsystem as a hint
+  const profileSubsys = r.user_id
+    ? (PROFILES_CACHE?.find?.(p => p.id === r.user_id)?.subsystem || null)
+    : null;
+
+  modal({
+    title: '✏ Edit Resource',
+    sub:   escapeHtml(r.display_name),
+    size:  'medium',
+    body: `
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <label class="form-label">Display Name</label>
+          <input id="ares-name" class="form-input" value="${escapeHtml(r.display_name)}">
+        </div>
+        <div>
+          <label class="form-label">Initials</label>
+          <input id="ares-initials" class="form-input" style="width:80px;" maxlength="4" value="${escapeHtml(r.initials||'')}">
+        </div>
+        <div>
+          <label class="form-label">Subsystem
+            ${profileSubsys ? `<span style="font-size:11px;color:var(--gray-400);margin-left:6px;">Profile: <strong>${escapeHtml(profileSubsys)}</strong></span>` : ''}
+          </label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;" id="ares-subsys-pills">
+            <button class="admin-tab${!r.subsystem ? ' active' : ''}" style="font-size:11px;padding:4px 10px;" onclick="_apResSubsysPick(null)">None</button>
+            ${SUBSYSTEMS.map(s => `<button class="admin-tab${r.subsystem===s?' active':''}" style="font-size:11px;padding:4px 10px;" onclick="_apResSubsysPick('${s}')">${s}</button>`).join('')}
+          </div>
+          <input type="hidden" id="ares-subsys-val" value="${escapeHtml(r.subsystem||'')}">
+        </div>
+        <div>
+          <label class="form-label">Resource Type</label>
+          <select id="ares-type" class="form-input">
+            ${['field_engineer','admin','crew','client_witness','manual'].map(t =>
+              `<option value="${t}" ${r.resource_type===t?'selected':''}>${t}</option>`
+            ).join('')}
+          </select>
+        </div>
+        ${profileSubsys && profileSubsys !== r.subsystem ? `
+          <div style="background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:10px 12px;font-size:12px;">
+            💡 Portal profile has subsystem <strong>${escapeHtml(profileSubsys)}</strong>.
+            <button class="form-secondary" style="font-size:11px;padding:2px 8px;margin-left:8px;" onclick="_apResSubsysPick('${escapeHtml(profileSubsys)}')">Sync from profile</button>
+          </div>
+        ` : ''}
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn" onclick="_apSaveResourceEdit('${resourceId}')">Save</button>`,
+  });
+}
+
+function _apResSubsysPick(val) {
+  document.getElementById('ares-subsys-val').value = val || '';
+  document.querySelectorAll('#ares-subsys-pills .admin-tab').forEach(b => {
+    const bVal = b.textContent === 'None' ? '' : b.textContent.trim();
+    b.classList.toggle('active', bVal === (val || ''));
+  });
+}
+
+async function _apSaveResourceEdit(resourceId) {
+  const name     = (document.getElementById('ares-name')?.value || '').trim();
+  const initials = (document.getElementById('ares-initials')?.value || '').trim().toUpperCase();
+  const subsys   = (document.getElementById('ares-subsys-val')?.value || '').trim() || null;
+  const type     = document.getElementById('ares-type')?.value;
+  if (!name) { toast('Name is required', 'error'); return; }
+  try {
+    await _dbUpdate('planning_resources', resourceId, {
+      display_name:  name,
+      initials:      initials || null,
+      subsystem:     subsys,
+      resource_type: type,
+    });
+    closeModal();
+    await loadPlanningData(true);
+    renderAdminPlanning();
+    toast('Resource updated ✓', 'success');
+  } catch (err) {
+    toast('Save failed: ' + err.message, 'error');
+  }
+}
+
+function _apAddResourceModal() {
+  const SUBSYSTEMS = ['IXL','ATS','DCS','POWER','SCADA','TCH','IAMS','CYBER','P.SEC','OCC','SYS','Other'];
+  modal({
+    title: '+ Add Resource',
+    size:  'medium',
+    body: `
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <label class="form-label">Display Name *</label>
+          <input id="ares-name" class="form-input" placeholder="Full name">
+        </div>
+        <div>
+          <label class="form-label">Initials</label>
+          <input id="ares-initials" class="form-input" style="width:80px;" maxlength="4" placeholder="e.g. JS">
+        </div>
+        <div>
+          <label class="form-label">Subsystem</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;" id="ares-subsys-pills">
+            <button class="admin-tab active" style="font-size:11px;padding:4px 10px;" onclick="_apResSubsysPick(null)">None</button>
+            ${SUBSYSTEMS.map(s => `<button class="admin-tab" style="font-size:11px;padding:4px 10px;" onclick="_apResSubsysPick('${s}')">${s}</button>`).join('')}
+          </div>
+          <input type="hidden" id="ares-subsys-val" value="">
+        </div>
+        <div>
+          <label class="form-label">Resource Type</label>
+          <select id="ares-type" class="form-input">
+            ${['manual','field_engineer','admin','crew','client_witness'].map(t => `<option value="${t}">${t}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Email</label>
+          <input id="ares-email" class="form-input" type="email" placeholder="optional">
+        </div>
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn" onclick="_apCreateResource()">Add Resource</button>`,
+  });
+}
+
+async function _apCreateResource() {
+  const name     = (document.getElementById('ares-name')?.value || '').trim();
+  const initials = (document.getElementById('ares-initials')?.value || '').trim().toUpperCase();
+  const subsys   = (document.getElementById('ares-subsys-val')?.value || '').trim() || null;
+  const type     = document.getElementById('ares-type')?.value || 'manual';
+  const email    = (document.getElementById('ares-email')?.value || '').trim() || null;
+  if (!name) { toast('Name is required', 'error'); return; }
+  const derived = initials || name.split(/\s+/).filter(Boolean).slice(0,2).map(w => w[0]).join('').toUpperCase();
+  try {
+    await _dbInsert('planning_resources', [{
+      display_name:  name,
+      initials:      derived || null,
+      subsystem:     subsys,
+      resource_type: type,
+      email,
+      is_active:     true,
+    }]);
+    closeModal();
+    await loadPlanningData(true);
+    renderAdminPlanning();
+    toast(`${name} added ✓`, 'success');
+  } catch (err) {
+    toast('Create failed: ' + err.message, 'error');
+  }
+}
+
+async function _apToggleResourceActive(resourceId, isActive) {
+  try {
+    await _dbUpdate('planning_resources', resourceId, { is_active: isActive });
+    const r = PLANNING_RESOURCES.find(x => x.id === resourceId);
+    if (r) r.is_active = isActive;
+    toast(`${r?.display_name || 'Resource'} ${isActive ? 'activated' : 'deactivated'}`, 'success');
+  } catch (err) {
+    toast('Update failed: ' + err.message, 'error');
+    renderAdminPlanning(); // revert checkbox
+  }
 }
 
 function _apHistoryStub() {
