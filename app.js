@@ -13834,7 +13834,7 @@ function _laRenderMonthView(body) {
         }
       });
       if (overflow > 0) {
-        html += `<div class="cal-event cal-event-more">+${overflow} more</div>`;
+        html += `<div class="cal-event cal-event-more" onclick="_laShowDayOverflow('${iso}')">+${overflow} more</div>`;
       }
       html += `</div></div>`;
     }
@@ -13843,170 +13843,166 @@ function _laRenderMonthView(body) {
   body.innerHTML = html;
 }
 
-// ── WEEK VIEW ────────────────────────────────────────────────
+// Show all events for a given ISO date in a modal (triggered by "+N more")
+function _laShowDayOverflow(iso) {
+  const { events, pto } = _planningEventsForRender();
+  const items = [];
+  events.forEach(({ source: e, visual: v, isCancel }) => {
+    if (e.event_date === iso) items.push({ kind: 'event', e, v, isCancel });
+  });
+  pto.forEach(({ source: p }) => {
+    if (iso >= p.start_date && iso <= p.end_date) items.push({ kind: 'pto', p });
+  });
+  if (_planningShowP6 && Array.isArray(P6_ACTS)) {
+    P6_ACTS.forEach(p6 => {
+      if (p6.start_date && p6.finish_date && p6.start_date <= iso && p6.finish_date >= iso)
+        items.push({ kind: 'p6', p6 });
+    });
+  }
+
+  const dayLabel = dayjs(iso).format('dddd, MMMM D');
+  let bodyHtml = `<div style="display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow-y:auto;padding-right:4px;">`;
+  items.forEach(item => {
+    if (item.kind === 'event') {
+      const { e, v, isCancel } = item;
+      const sub  = _planningGetSubsystem(e);
+      const sc   = sub ? _planningSubsystemColor(sub) : null;
+      const bg   = sc ? sc.bg  : v.bg;
+      const fg   = sc ? sc.fg  : v.text;
+      const bdr  = sc ? sc.border : (isCancel ? '#7f1d1d' : bg);
+      const meta = [e.start_time ? e.start_time.slice(0,5) + (e.end_time ? ' – '+e.end_time.slice(0,5) : '') : '',
+                    e.location || ''].filter(Boolean).join(' · ');
+      bodyHtml += `<div style="background:${bg};color:${fg};border-left:4px solid ${bdr};padding:7px 10px;border-radius:5px;cursor:pointer;font-size:13px;"
+        onclick="closeModal();_planningOpenEventDetail('${e.id}')">
+        <div style="font-weight:600;margin-bottom:2px;">${escapeHtml(e.title||'(no title)')}</div>
+        ${meta ? `<div style="font-size:11px;opacity:.8;">${escapeHtml(meta)}</div>` : ''}
+      </div>`;
+    } else if (item.kind === 'pto') {
+      bodyHtml += `<div style="background:#fef3c7;color:#92400e;border-left:4px solid #f59e0b;padding:7px 10px;border-radius:5px;cursor:pointer;font-size:13px;"
+        onclick="closeModal();_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))">
+        🌴 ${escapeHtml(_ptoResourceName(item.p.resource_id))} — PTO
+      </div>`;
+    } else if (item.kind === 'p6') {
+      bodyHtml += `<div style="background:#f0fdf4;color:#166534;border-left:4px solid #22c55e;padding:7px 10px;border-radius:5px;font-size:13px;">
+        📋 <strong>${escapeHtml(item.p6.p6_id||'')}</strong> ${escapeHtml((item.p6.p6_name||'').slice(0,60))}
+      </div>`;
+    }
+  });
+  bodyHtml += `</div>`;
+
+  modal({
+    title: dayLabel,
+    sub:   `${items.length} activit${items.length === 1 ? 'y' : 'ies'}`,
+    body:  bodyHtml,
+    size:  'medium',
+    footer:`<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
+}
+
+// ── WEEK VIEW (simple list layout — no time grid) ────────────
 function _laRenderWeekView(body) {
   const todayISO = new Date().toISOString().slice(0, 10);
   const monday   = _laMondayOf(_planningCalDate);
-  const days     = Array.from({length:7}, (_, i) => monday.add(i, 'day'));
+  const days     = Array.from({ length: 7 }, (_, i) => monday.add(i, 'day'));
   const isoList  = days.map(d => d.format('YYYY-MM-DD'));
 
   const { events, pto } = _planningEventsForRender();
 
-  // Separate all-day vs timed events
-  const allDayByDate   = {};
-  const timedByDate    = {};
-  isoList.forEach(iso => { allDayByDate[iso] = []; timedByDate[iso] = []; });
+  // Group all items by date
+  const byDate = {};
+  isoList.forEach(iso => { byDate[iso] = []; });
 
   events.forEach(({ source: e, visual: v, isCancel }) => {
-    if (!isoList.includes(e.event_date)) return;
-    if (e.all_day || !e.start_time) {
-      allDayByDate[e.event_date].push({ kind: 'event', e, v, isCancel });
-    } else {
-      timedByDate[e.event_date].push({ kind: 'event', e, v, isCancel });
-    }
+    if (byDate[e.event_date]) byDate[e.event_date].push({ kind: 'event', e, v, isCancel });
   });
   pto.forEach(({ source: p }) => {
     let d = dayjs(p.start_date);
     const endD = dayjs(p.end_date);
     while (!d.isAfter(endD)) {
       const iso = d.format('YYYY-MM-DD');
-      if (allDayByDate[iso]) allDayByDate[iso].push({ kind: 'pto', p });
+      if (byDate[iso]) byDate[iso].push({ kind: 'pto', p });
       d = d.add(1, 'day');
     }
   });
-
-  // ── Build HTML ──
-  const HOUR_START = 6, HOUR_END = 24;
-  const TOTAL_MINS = (HOUR_END - HOUR_START) * 60;
-  const PX_PER_MIN = 1.5;           // 90px per hour
-  const GRID_H     = TOTAL_MINS * PX_PER_MIN;
-
-  // Column headers
-  let html = `<div class="cal-week-wrap">`;
-  html += `<div class="cal-week-header">`;
-  html += `<div class="cal-time-gutter"></div>`;
-  days.forEach((d, i) => {
-    const iso = isoList[i];
-    const isToday = iso === todayISO;
-    html += `<div class="cal-col-header${isToday ? ' cal-today-col' : ''}">
-      <div class="cal-col-dow">${d.format('ddd')}</div>
-      <div class="cal-col-date${isToday ? ' cal-today-date' : ''}">${d.date()}</div>
-    </div>`;
-  });
-  html += `</div>`;
-
-  // All-day strip
-  const hasAllDay = isoList.some(iso => allDayByDate[iso].length > 0);
-  if (hasAllDay) {
-    html += `<div class="cal-allday-row">`;
-    html += `<div class="cal-time-gutter cal-time-gutter-label">All day</div>`;
-    days.forEach((_, i) => {
-      const iso = isoList[i];
-      html += `<div class="cal-allday-cell">`;
-      allDayByDate[iso].forEach(item => {
-        if (item.kind === 'event') {
-          const { e, v, isCancel } = item;
-          const sub = _planningGetSubsystem(e);
-          const sc  = sub ? _planningSubsystemColor(sub) : null;
-          const bg  = sc ? sc.bg : v.bg;
-          const fg  = sc ? sc.fg : v.text;
-          const asgns = _planningResourceAssignmentsForEvent(e.id);
-          const tip = _laEventTippy(e, v, asgns);
-          html += `<div class="cal-allday-event" style="background:${bg};color:${fg};"
-            data-cal-tippy="${tip}" onclick="_planningOpenEventDetail('${e.id}')"
-          >${escapeHtml((e.title||'').slice(0,22))}</div>`;
-        } else if (item.kind === 'pto') {
-          html += `<div class="cal-allday-event cal-event-pto"
-            onclick="_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))"
-          >🌴 ${escapeHtml(_ptoResourceName(item.p.resource_id))}</div>`;
-        }
+  if (_planningShowP6 && Array.isArray(P6_ACTS)) {
+    P6_ACTS.forEach(p6 => {
+      if (!p6.start_date || !p6.finish_date) return;
+      isoList.forEach(iso => {
+        if (iso >= p6.start_date && iso <= p6.finish_date && byDate[iso])
+          byDate[iso].push({ kind: 'p6', p6 });
       });
-      html += `</div>`;
     });
-    html += `</div>`;
   }
 
-  // Time grid — outer div scrolls, inner div is the positioning context
-  html += `<div class="cal-time-grid" id="cal-time-grid">`;
-  html += `<div style="position:relative;height:${GRID_H}px;">`;
-  // Hour lines
-  for (let h = HOUR_START; h <= HOUR_END; h++) {
-    const top = (h - HOUR_START) * 60 * PX_PER_MIN;
-    html += `<div class="cal-hour-line" style="top:${top}px;">
-      <span class="cal-hour-label">${h < 24 ? String(h).padStart(2,'0')+':00' : ''}</span>
-    </div>`;
-  }
-  // Day column backgrounds + events
-  days.forEach((_, i) => {
+  // ── Build HTML: 7-column card grid ──────────────────────────
+  let html = `<div class="cal-week-list-grid">`;
+
+  // Header row
+  days.forEach((d, i) => {
     const iso     = isoList[i];
     const isToday = iso === todayISO;
-    const colLeft = `calc(${(i/7)*100}% + 52px)`;  // 52px = gutter width
-    const colW    = `calc(${(1/7)*100}% - 2px)`;
-    html += `<div class="cal-day-col-bg${isToday ? ' cal-today-bg' : ''}" style="left:${colLeft};width:${colW};height:${GRID_H}px;"></div>`;
-    timedByDate[iso].forEach(item => {
-      if (item.kind !== 'event') return;
-      const { e, v, isCancel } = item;
-      const [sh,sm] = (e.start_time||'06:00').split(':').map(Number);
-      const [eh,em] = (e.end_time  ||'07:00').split(':').map(Number);
-      const startMin = Math.max(0, (sh * 60 + (sm||0)) - HOUR_START * 60);
-      let   endMin   = (eh * 60 + (em||0)) - HOUR_START * 60;
-      if (endMin <= startMin) endMin = startMin + 60;  // overnight or same-time → 1h block
-      endMin = Math.min(endMin, TOTAL_MINS);
-      const top    = startMin * PX_PER_MIN;
-      const height = Math.max((endMin - startMin) * PX_PER_MIN, 22);
-      const sub    = _planningGetSubsystem(e);
-      const sc     = sub ? _planningSubsystemColor(sub) : null;
-      const bg     = sc ? sc.soft : (isCancel ? '#fecaca' : v.bg);
-      const fg     = sc ? sc.border : v.text;
-      const borderL = sc ? sc.bg : (isCancel ? '#7f1d1d' : v.bg);
-      const asgns  = _planningResourceAssignmentsForEvent(e.id);
-      const tip    = _laEventTippy(e, v, asgns);
-      html += `<div class="cal-time-event${isCancel ? ' cal-time-event-cancelled' : ''}"
-        style="left:${colLeft};width:${colW};top:${top}px;height:${height}px;background:${bg};color:${fg};border-left:3px solid ${borderL};"
-        data-cal-tippy="${tip}"
-        onclick="_planningOpenEventDetail('${e.id}')"
-      >
-        <div class="cal-time-event-title">${escapeHtml(e.title || '(no title)')}</div>
-        <div class="cal-time-event-meta">${(e.start_time||'').slice(0,5)}${e.end_time ? ' – '+e.end_time.slice(0,5) : ''}</div>
-      </div>`;
-    });
+    const isWknd  = d.day() === 0 || d.day() === 6;
+    html += `<div class="cal-wl-header${isToday ? ' cal-wl-today-hdr' : ''}${isWknd ? ' cal-wl-weekend-hdr' : ''}">
+      <span class="cal-wl-dow">${d.format('ddd')}</span>
+      <span class="cal-wl-date${isToday ? ' cal-today-num' : ''}">${d.date()}</span>
+    </div>`;
   });
-  // Now-line (only if today is visible)
-  if (isoList.includes(todayISO)) {
-    const now    = new Date();
-    const nowMin = now.getHours() * 60 + now.getMinutes() - HOUR_START * 60;
-    if (nowMin >= 0 && nowMin <= TOTAL_MINS) {
-      const top    = nowMin * PX_PER_MIN;
-      const colIdx = isoList.indexOf(todayISO);
-      const left   = `calc(${(colIdx/7)*100}% + 52px)`;
-      const width  = `calc(${(1/7)*100}% - 2px)`;
-      html += `<div class="cal-now-line" style="top:${top}px;left:${left};width:${width};"></div>`;
-      html += `<div class="cal-now-tick" style="top:${top}px;"></div>`;
+
+  // Content columns
+  days.forEach((d, i) => {
+    const iso     = isoList[i];
+    const isToday = iso === todayISO;
+    const isWknd  = d.day() === 0 || d.day() === 6;
+    const items   = byDate[iso] || [];
+
+    html += `<div class="cal-wl-col${isToday ? ' cal-wl-today-col' : ''}${isWknd ? ' cal-wl-weekend-col' : ''}">`;
+    if (items.length === 0) {
+      html += `<div class="cal-wl-empty">—</div>`;
+    } else {
+      items.forEach(item => {
+        if (item.kind === 'event') {
+          const { e, v, isCancel } = item;
+          const sub   = _planningGetSubsystem(e);
+          const sc    = sub ? _planningSubsystemColor(sub) : null;
+          const bg    = sc ? sc.bg   : v.bg;
+          const fg    = sc ? sc.fg   : v.text;
+          const bdr   = sc ? sc.border : (isCancel ? '#7f1d1d' : bg);
+          const asgns = _planningResourceAssignmentsForEvent(e.id);
+          const tip   = _laEventTippy(e, v, asgns);
+          const meta  = [
+            e.start_time ? e.start_time.slice(0,5) + (e.end_time ? '–'+e.end_time.slice(0,5) : '') : '',
+            e.location || '',
+          ].filter(Boolean).join(' · ');
+          html += `<div class="cal-wl-chip${isCancel ? ' cal-wl-chip-cancelled' : ''}"
+            style="background:${bg};color:${fg};border-left:3px solid ${bdr};"
+            data-cal-tippy="${tip}"
+            onclick="_planningOpenEventDetail('${e.id}')"
+          >
+            <div class="cal-wl-chip-title">${escapeHtml(e.title || '(no title)')}</div>
+            ${meta ? `<div class="cal-wl-chip-meta">${escapeHtml(meta)}</div>` : ''}
+          </div>`;
+        } else if (item.kind === 'pto') {
+          html += `<div class="cal-wl-chip cal-wl-chip-pto"
+            onclick="_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))"
+          >
+            <div class="cal-wl-chip-title">🌴 ${escapeHtml(_ptoResourceName(item.p.resource_id))}</div>
+            <div class="cal-wl-chip-meta">PTO</div>
+          </div>`;
+        } else if (item.kind === 'p6') {
+          html += `<div class="cal-wl-chip cal-wl-chip-p6"
+            onclick="_planningOpenP6Detail(P6_ACTS.find(x=>x.id==='${item.p6.id}'))"
+          >
+            <div class="cal-wl-chip-title">📋 ${escapeHtml((item.p6.p6_name || item.p6.p6_id || '').slice(0, 50))}</div>
+            <div class="cal-wl-chip-meta">${escapeHtml(item.p6.p6_id || '')}</div>
+          </div>`;
+        }
+      });
     }
-  }
-  html += `</div></div></div>`;  // close inner, time-grid, week-wrap
-  body.innerHTML = html;
-
-  // Scroll to now (or 08:00 fallback) after render
-  requestAnimationFrame(() => {
-    const grid = document.getElementById('cal-time-grid');
-    if (!grid) return;
-    const now     = new Date();
-    const nowMin  = now.getHours() * 60 + now.getMinutes() - HOUR_START * 60;
-    const scrollTo= Math.max(0, (nowMin > 0 ? nowMin : (8-HOUR_START)*60) - 60) * PX_PER_MIN;
-    grid.scrollTop = scrollTo;
+    html += `</div>`;
   });
 
-  // Live now-line timer
-  _planningCalNowTimer = setInterval(() => {
-    const nowLine = body.querySelector('.cal-now-line');
-    const nowTick = body.querySelector('.cal-now-tick');
-    if (!nowLine) return;
-    const nowMin = new Date().getHours()*60 + new Date().getMinutes() - HOUR_START*60;
-    const top    = Math.max(0, nowMin) * PX_PER_MIN;
-    nowLine.style.top = top + 'px';
-    if (nowTick) nowTick.style.top = top + 'px';
-  }, 30_000);
+  html += `</div>`;
+  body.innerHTML = html;
 }
 
 // ── DAY VIEW ─────────────────────────────────────────────────
