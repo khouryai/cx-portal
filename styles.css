@@ -5753,8 +5753,8 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
 
 /* ── Sticky left label column ────────────────────────────────── */
 .tlg-label {
-  width: 162px;
-  min-width: 162px;
+  width: 260px;
+  min-width: 260px;
   flex-shrink: 0;
   border-right: 2px solid var(--gray-300);
   position: sticky;

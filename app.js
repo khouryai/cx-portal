@@ -14308,7 +14308,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       style="background:${g.color||'#6b7280'};"
       ${_laAssignMode && actId ? `data-activity-id="${actId}" title="Drop here to assign for the full activity"` : ''}>
       <div class="tlg-label-inner">
-        <span class="tlg-label-main">${escapeHtml(g.label)}</span>
+        <span class="tlg-label-main" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>
         ${g.sublabel ? `<span class="tlg-label-sub">${escapeHtml(g.sublabel)}</span>` : ''}
       </div>
       ${assignedChips}${dropHintHTML}
@@ -15005,7 +15005,7 @@ function _laMountLookaheadTL() {
             id:               'act-' + a.id,
             activityId:       a.id,
             assignedResources,
-            label:            (a.description || a.activity_id_text || '—').slice(0, 32),
+            label:            a.description || a.activity_id_text || '—',
             sublabel:         sub || '',
             color:            c.bg,
             byDate:           _laBuildByDate(evs, days, e => _planningEventResourceInitials(e.id)),
