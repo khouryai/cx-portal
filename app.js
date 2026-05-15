@@ -17675,7 +17675,7 @@ function _apResourcesStub() {
         <button class="admin-action-btn" onclick="_apAddResourceModal()">+ Add Resource</button>
       </div>
       <table class="data-table">
-        <thead><tr><th>Name</th><th>Initials</th><th>Subsystem</th><th>Type</th><th>Email</th><th>Active</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Initials</th><th>Subsystem</th><th>Type</th><th>Email</th><th>Active</th><th style="width:110px;"></th></tr></thead>
         <tbody>
           ${all.length === 0
             ? `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--gray-400);">No resources. First admin visit auto-seeds from portal users.</td></tr>`
@@ -17705,8 +17705,9 @@ function _apResourcesStub() {
                       <span style="font-size:12px;color:${r.is_active ? 'var(--good)' : 'var(--gray-400)'};">${r.is_active ? 'Active' : 'Inactive'}</span>
                     </label>
                   </td>
-                  <td>
+                  <td style="white-space:nowrap;">
                     <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_apEditResourceModal('${r.id}')">✏ Edit</button>
+                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px;color:#b91c1c;border-color:#fca5a5;" onclick="_apDeleteResource('${r.id}','${escapeHtml(r.display_name)}')">🗑</button>
                   </td>
                 </tr>`;
               }).join('')}
@@ -17886,6 +17887,25 @@ async function _apToggleResourceActive(resourceId, isActive) {
   } catch (err) {
     toast('Update failed: ' + err.message, 'error');
     renderAdminPlanning(); // revert checkbox
+  }
+}
+
+async function _apDeleteResource(resourceId, displayName) {
+  if (!confirm(`Delete resource "${displayName}"?\n\nThis will also remove all their event assignments. This cannot be undone.`)) return;
+  try {
+    // Remove event assignments first
+    const erRows = PLANNING_EVENT_RES.filter(er => er.resource_id === resourceId);
+    for (const er of erRows) await _dbDelete('planning_event_resources', { id: er.id });
+    // Remove activity-level assignments
+    const arRows = PLANNING_ACTIVITY_RES.filter(ar => ar.resource_id === resourceId);
+    for (const ar of arRows) await _dbDelete('planning_activity_resources', { id: ar.id });
+    // Delete the resource
+    await _dbDelete('planning_resources', { id: resourceId });
+    toast(`${displayName} deleted`, 'success');
+    await loadPlanningData(true);
+    renderAdminPlanning();
+  } catch (err) {
+    toast('Delete failed: ' + err.message, 'error');
   }
 }
 
