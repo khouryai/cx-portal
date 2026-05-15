@@ -5438,3 +5438,283 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   flex-shrink: 0;
   width: 16px;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   TIMELINE GRID  — Swimlane / Gantt / Resources
+   Matches the Calendar Timeline screenshot aesthetic:
+   coloured left-pill labels · month gradient bar · day columns
+   full-cell shift blocks · stacked split for multiple shifts
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Outer shell ─────────────────────────────────────────────── */
+.tlg-shell {
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: 12px;
+  overflow-x: auto;
+  overflow-y: visible;
+  box-shadow: 0 2px 12px rgba(0,0,0,.07);
+  scrollbar-width: thin;
+  scrollbar-color: var(--gray-300) transparent;
+  font-family: inherit;
+}
+.tlg-shell::-webkit-scrollbar { height: 6px; }
+.tlg-shell::-webkit-scrollbar-track { background: transparent; }
+.tlg-shell::-webkit-scrollbar-thumb { background: var(--gray-300); border-radius: 3px; }
+
+/* ── Row (flex, shared across all header + body rows) ─────────── */
+.tlg-row {
+  display: flex;
+  border-bottom: 1px solid var(--gray-200);
+  min-width: max-content;
+}
+.tlg-row:last-child { border-bottom: none; }
+
+/* ── Sticky left label column ────────────────────────────────── */
+.tlg-label {
+  width: 162px;
+  min-width: 162px;
+  flex-shrink: 0;
+  border-right: 2px solid var(--gray-300);
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: #fff;
+}
+
+/* ── Day cells container ─────────────────────────────────────── */
+.tlg-cells {
+  display: flex;
+  flex: 1;
+}
+
+/* ── Individual day cell ─────────────────────────────────────── */
+.tlg-cell {
+  flex: 1;
+  min-width: 46px;
+  max-width: 80px;
+  border-right: 1px solid var(--gray-200);
+  box-sizing: border-box;
+}
+.tlg-cell:last-child { border-right: none; }
+.tlg-today-col { background: rgba(0,120,212,.05) !important; }
+.tlg-weekend   { background: rgba(0,0,0,.025) !important; }
+
+/* ── Milestone strip ─────────────────────────────────────────── */
+.tlg-ms-row { border-bottom: none; }
+.tlg-ms-gutter {
+  height: 54px;
+  background: #fff;
+}
+.tlg-ms-cell {
+  height: 54px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding-bottom: 4px;
+  overflow: visible;
+  position: relative;
+}
+.tlg-today-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: #e53935;
+  font-weight: 700;
+  line-height: 1;
+  z-index: 2;
+}
+.tlg-today-label { font-size: 8px; letter-spacing: .04em; white-space: nowrap; }
+.tlg-today-arr   { font-size: 13px; margin-top: 1px; }
+.tlg-ms-mark {
+  font-size: 13px;
+  color: #f59e0b;
+  cursor: default;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tlg-ms-mark:hover::after {
+  content: attr(title);
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1f2937;
+  color: #fff;
+  font-size: 10px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 20;
+}
+
+/* ── Month bar ───────────────────────────────────────────────── */
+.tlg-month-row { border-bottom: none; }
+.tlg-month-gutter {
+  background: var(--gray-100);
+  border-right: 2px solid var(--gray-300);
+}
+.tlg-month-pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  color: #fff;
+  padding: 7px 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  border-right: 2px solid rgba(255,255,255,.3);
+  min-width: 0;
+  text-shadow: 0 1px 2px rgba(0,0,0,.2);
+}
+.tlg-month-pill:last-child { border-right: none; }
+
+/* ── Day header row ──────────────────────────────────────────── */
+.tlg-day-hdr-row { background: var(--gray-50); border-bottom: 2px solid var(--gray-300); }
+.tlg-day-gutter  { background: var(--gray-50); }
+.tlg-day-hdr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 2px;
+  height: 44px;
+}
+.tlg-dow      { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--gray-400); }
+.tlg-date-num { font-size: 13px; font-weight: 500; color: var(--gray-600); }
+.tlg-today-date {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #0078D4;
+  color: #fff !important;
+  font-weight: 700;
+  font-size: 11px;
+}
+.tlg-weekend .tlg-date-num { color: var(--gray-400); }
+
+/* ── Body rows ───────────────────────────────────────────────── */
+.tlg-data-row { min-height: 52px; }
+.tlg-data-row:nth-child(even) .tlg-cells { background: rgba(0,0,0,.012); }
+.tlg-data-row:hover { background: #f0f7ff; }
+.tlg-data-row:hover .tlg-label { filter: brightness(1.06); }
+
+/* ── Row label pill ──────────────────────────────────────────── */
+.tlg-row-label {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 8px 10px;
+  color: #fff;
+  min-height: 52px;
+  background: #6b7280;
+  border-right: 2px solid var(--gray-300);
+}
+.tlg-label-main {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  word-break: break-word;
+  text-shadow: 0 1px 2px rgba(0,0,0,.2);
+}
+.tlg-label-sub {
+  font-size: 10px;
+  opacity: .85;
+  margin-top: 2px;
+  font-weight: 500;
+}
+
+/* ── Data cells ──────────────────────────────────────────────── */
+.tlg-data-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px;
+  min-height: 52px;
+}
+.tlg-p6-bg { background: rgba(99,102,241,.06) !important; }
+.tlg-p6-hint {
+  font-size: 8px;
+  font-weight: 600;
+  color: rgba(99,102,241,.45);
+  text-align: center;
+  padding: 2px 0;
+  letter-spacing: .08em;
+  margin: auto 0;
+}
+
+/* ── Shift blocks (the coloured day cells) ───────────────────── */
+.tlg-shift-block {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  padding: 3px 2px;
+  cursor: pointer;
+  min-height: 22px;
+  text-align: center;
+  overflow: hidden;
+  transition: filter .1s, transform .08s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.10);
+}
+.tlg-shift-block:hover {
+  filter: brightness(.92);
+  transform: scale(1.04);
+  z-index: 1;
+  position: relative;
+}
+.tlg-shift-icon { font-size: 10px; line-height: 1; }
+.tlg-shift-time {
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+  text-align: center;
+}
+.tlg-shift-pto {
+  background: #fef3c7 !important;
+  color: #92400e !important;
+  border: 1px solid #fde68a;
+  box-shadow: none;
+}
+.tlg-shift-p6 {
+  background: rgba(99,102,241,.15) !important;
+  color: #3730a3 !important;
+  border: 1px dashed rgba(99,102,241,.4);
+  box-shadow: none;
+  font-size: 9px;
+}
+
+/* ── P6 section (overlay rows at bottom) ─────────────────────── */
+.tlg-p6-section { border-top: 2px dashed rgba(99,102,241,.3); }
+.tlg-p6-hdr-row { background: rgba(99,102,241,.06); }
+.tlg-p6-section-label {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #3730a3;
+  background: rgba(99,102,241,.08);
+}
+.tlg-p6-row-label { background: rgba(99,102,241,.65) !important; }
+
+/* ── Empty / no-data state ───────────────────────────────────── */
+.tlg-shell [style*="padding:48px"] {
+  font-size: 13px;
+  color: var(--gray-400);
+}

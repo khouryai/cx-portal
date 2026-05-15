@@ -14128,6 +14128,177 @@ function _laRenderDayView(body) {
 }
 
 // ── LOOKAHEAD TIMELINE TAB ───────────────────────────────────
+// ── Month colour palette for timeline headers ─────────────────
+const _TL_MONTH_COLORS = [
+  '#f97316','#3b82f6','#ef4444','#8b5cf6',
+  '#10b981','#f59e0b','#0ea5e9','#ec4899',
+  '#14b8a6','#84cc16','#f43f5e','#6366f1',
+];
+
+// ── Shared grid renderer (Lookahead, Gantt, Resources) ────────
+function _laRenderGrid(target, { groups, days, milestones }) {
+  if (!target) return;
+  if (!days.length) {
+    target.innerHTML = `<div style="padding:48px;text-align:center;color:var(--gray-400);font-size:13px;">No data to display. Import a lookahead first.</div>`;
+    return;
+  }
+  const todayISO = new Date().toISOString().slice(0, 10);
+
+  // Build month spans
+  const monthSpans = [];
+  let mi = 0;
+  while (mi < days.length) {
+    const d = dayjs(days[mi]);
+    const m = d.month(), y = d.year();
+    let j = mi;
+    while (j < days.length && dayjs(days[j]).month() === m && dayjs(days[j]).year() === y) j++;
+    monthSpans.push({ label: d.format('MMM YYYY'), count: j - mi });
+    mi = j;
+  }
+
+  let html = `<div class="tlg-shell">`;
+
+  // ── Milestone strip ──────────────────────────────────────────
+  html += `<div class="tlg-row tlg-ms-row"><div class="tlg-label tlg-ms-gutter"></div><div class="tlg-cells">`;
+  days.forEach(iso => {
+    const isToday = iso === todayISO;
+    const marks = milestones.filter(mk => mk.date === iso);
+    html += `<div class="tlg-cell tlg-ms-cell">`;
+    if (isToday) html += `<div class="tlg-today-marker"><span class="tlg-today-label">Today</span><span class="tlg-today-arr">▼</span></div>`;
+    marks.forEach(mk => html += `<div class="tlg-ms-mark" title="${escapeHtml(mk.label)}">${escapeHtml(mk.icon||'◆')}</div>`);
+    html += `</div>`;
+  });
+  html += `</div></div>`;
+
+  // ── Month bar ────────────────────────────────────────────────
+  html += `<div class="tlg-row tlg-month-row"><div class="tlg-label tlg-month-gutter"></div><div class="tlg-cells">`;
+  monthSpans.forEach((span, si) => {
+    const color = _TL_MONTH_COLORS[si % _TL_MONTH_COLORS.length];
+    html += `<div class="tlg-month-pill" style="flex:${span.count};background:${color};">${span.label}</div>`;
+  });
+  html += `</div></div>`;
+
+  // ── Day header ───────────────────────────────────────────────
+  html += `<div class="tlg-row tlg-day-hdr-row"><div class="tlg-label tlg-day-gutter"></div><div class="tlg-cells">`;
+  days.forEach(iso => {
+    const d = dayjs(iso);
+    const isToday = iso === todayISO;
+    const dow = d.day();
+    const isWknd = dow === 0 || dow === 6;
+    html += `<div class="tlg-cell tlg-day-hdr${isToday ? ' tlg-today-col' : ''}${isWknd ? ' tlg-weekend' : ''}">
+      <div class="tlg-dow">${d.format('dd').slice(0,1)}</div>
+      <div class="tlg-date-num${isToday ? ' tlg-today-date' : ''}">${d.date()}</div>
+    </div>`;
+  });
+  html += `</div></div>`;
+
+  // ── Body rows ────────────────────────────────────────────────
+  if (!groups.length) {
+    html += `<div style="padding:48px;text-align:center;color:var(--gray-400);font-size:13px;">No activities in this window yet. Import a lookahead or adjust the date range.</div>`;
+  }
+  groups.forEach(g => {
+    html += `<div class="tlg-row tlg-data-row">`;
+    html += `<div class="tlg-label tlg-row-label" style="background:${g.color||'#6b7280'};">
+      <span class="tlg-label-main">${escapeHtml(g.label)}</span>
+      ${g.sublabel ? `<span class="tlg-label-sub">${escapeHtml(g.sublabel)}</span>` : ''}
+    </div>`;
+    html += `<div class="tlg-cells">`;
+    days.forEach(iso => {
+      const isToday = iso === todayISO;
+      const dow = dayjs(iso).day();
+      const isWknd = dow === 0 || dow === 6;
+      const shifts  = g.byDate[iso] || [];
+      const ptoEntry = g.ptoByDate && g.ptoByDate[iso];
+      const inP6    = g.p6Range && g.p6Range.has(iso);
+
+      html += `<div class="tlg-cell tlg-data-cell${isToday ? ' tlg-today-col' : ''}${isWknd ? ' tlg-weekend' : ''}${inP6 && !shifts.length ? ' tlg-p6-bg' : ''}">`;
+
+      if (ptoEntry) {
+        html += `<div class="tlg-shift-block tlg-shift-pto"
+          onclick="(function(){const p=PTO_REQUESTS.find(x=>x.id==='${ptoEntry.id}');if(p)_planningOpenPTODetail(p);})()"
+        >🌴<span class="tlg-shift-time">PTO</span></div>`;
+      } else {
+        shifts.forEach(s => {
+          const v  = s.isCancel ? _CANCEL_VISUAL : (_SHIFT_VISUAL[s.shift_type] || _SHIFT_VISUAL.custom);
+          const ts = s.all_day ? 'All day' :
+            `${(s.start_time||'').slice(0,5)}${s.end_time ? '–'+s.end_time.slice(0,5) : ''}`;
+          html += `<div class="tlg-shift-block"
+            style="background:${v.bg};color:${v.text};${s.isCancel ? 'opacity:.65;text-decoration:line-through;' : ''}"
+            onclick="_planningOpenEventDetail('${s.event_id}')"
+            title="${escapeHtml(s.title||'')}"
+          ><span class="tlg-shift-icon">${v.icon}</span><span class="tlg-shift-time">${escapeHtml(ts)}</span></div>`;
+        });
+        // P6 background hint when no actual shift (faint bar)
+        if (inP6 && shifts.length === 0) {
+          html += `<div class="tlg-p6-hint">P6</div>`;
+        }
+      }
+      html += `</div>`;
+    });
+    html += `</div></div>`;
+  });
+
+  // ── P6 schedule section (Lookahead overlay rows) ─────────────
+  if (_planningShowP6 && Array.isArray(P6_ACTS) && P6_ACTS.length) {
+    const p6inWindow = P6_ACTS.filter(p6 =>
+      p6.start_date && p6.finish_date &&
+      days.some(iso => iso >= p6.start_date && iso <= p6.finish_date)
+    );
+    if (p6inWindow.length) {
+      html += `<div class="tlg-p6-section">`;
+      html += `<div class="tlg-row tlg-p6-hdr-row"><div class="tlg-label tlg-p6-section-label">📋 P6 Baseline</div><div class="tlg-cells">`;
+      days.forEach(() => html += `<div class="tlg-cell"></div>`);
+      html += `</div></div>`;
+      p6inWindow.forEach(p6 => {
+        html += `<div class="tlg-row tlg-data-row">`;
+        html += `<div class="tlg-label tlg-row-label tlg-p6-row-label">
+          <span class="tlg-label-main" style="font-size:10px;">${escapeHtml(p6.p6_id||'—')}</span>
+          <span class="tlg-label-sub">${escapeHtml((p6.p6_name||'').slice(0,24))}</span>
+        </div>`;
+        html += `<div class="tlg-cells">`;
+        days.forEach(iso => {
+          const isToday = iso === todayISO;
+          const active  = iso >= p6.start_date && iso <= p6.finish_date;
+          html += `<div class="tlg-cell tlg-data-cell${isToday ? ' tlg-today-col' : ''}">`;
+          if (active) html += `<div class="tlg-shift-block tlg-shift-p6"
+            onclick="(function(){const p=P6_ACTS.find(x=>x.id==='${p6.id}');if(p)_planningOpenP6Detail(p);})()"
+            title="${escapeHtml((p6.p6_id||'')+' '+( p6.p6_name||''))}"
+          ><span class="tlg-shift-time">${escapeHtml(p6.p6_id||'')}</span></div>`;
+          html += `</div>`;
+        });
+        html += `</div></div>`;
+      });
+      html += `</div>`;
+    }
+  }
+
+  html += `</div>`;  // tlg-shell
+  target.innerHTML = html;
+}
+
+// ── Helper: build shift entries for a date map ─────────────────
+function _laBuildByDate(events, days) {
+  const byDate = {};
+  events.forEach(e => {
+    if (!days.includes(e.event_date)) return;
+    const isCancel = e.status === 'cancelled';
+    (byDate[e.event_date] = byDate[e.event_date] || []).push({
+      event_id: e.id, shift_type: e.shift_type, start_time: e.start_time,
+      end_time: e.end_time, all_day: !!e.all_day, isCancel, title: e.title || '',
+    });
+  });
+  return byDate;
+}
+
+// ── Helper: build PTO coverage map for a resource ──────────────
+function _laBuildPtoByDate(resourceId, days) {
+  const map = {};
+  PTO_REQUESTS.filter(p => p.status === 'approved' && p.resource_id === resourceId).forEach(p => {
+    days.forEach(iso => { if (iso >= p.start_date && iso <= p.end_date) map[iso] = p; });
+  });
+  return map;
+}
+
 function _laLookaheadHTML() {
   return `
     ${_planningKPIStrip()}
@@ -14144,18 +14315,18 @@ function _laLookaheadHTML() {
       </div>
       <div>
         <label style="font-size:11px;color:var(--gray-500);margin-right:4px;">Window:</label>
-        ${[['14','2 weeks'],['21','3 weeks'],['28','4 weeks']].map(([v,l]) => `
+        ${[['14','2 wks'],['21','3 wks'],['28','4 wks']].map(([v,l]) => `
           <button class="admin-tab${_laTimelineWindow === parseInt(v) ? ' active' : ''}" data-tl-window="${v}" style="font-size:12px;padding:6px 14px;" onclick="_laSetTimelineWindow(${v})">${l}</button>
         `).join('')}
       </div>
       <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);cursor:pointer;">
-        <input type="checkbox" id="tl-p6-toggle" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
-        Show P6 schedule
+        <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
+        P6 baseline
       </label>
     </div>
 
-    <div class="data-card" style="padding:14px;">
-      <div id="lookahead-timeline" style="min-height:640px;"></div>
+    <div class="data-card" style="padding:0;overflow:hidden;">
+      <div id="lookahead-timeline"></div>
     </div>`;
 }
 
@@ -14165,143 +14336,82 @@ function _laSetTimelineWindow(d) { _laTimelineWindow = d; _renderLookaheadTabBod
 function _laMountLookaheadTL() {
   const target = document.getElementById('lookahead-timeline');
   if (!target) return;
-  if (typeof vis === 'undefined') {
-    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">vis-timeline library not loaded — refresh the page.</div>`;
-    return;
-  }
 
-  // Build groups from selected dimension
-  let groupSpecs = [];
-  if (_laTimelineGroupBy === 'resource') {
-    groupSpecs = PLANNING_RESOURCES.filter(r => r.is_active).map(r => ({ id: 'res-' + r.id, content: escapeHtml(r.display_name) }));
-    groupSpecs.push({ id: 'res-unassigned', content: '<em style="color:#9ca3af;">Unassigned</em>' });
-  } else if (_laTimelineGroupBy === 'location') {
-    const locs = [...new Set(PLANNING_EVENTS.map(e => e.location).filter(Boolean))].sort();
-    groupSpecs = locs.map(l => ({ id: 'loc-' + l, content: escapeHtml(l) }));
-    groupSpecs.push({ id: 'loc-unknown', content: '<em style="color:#9ca3af;">No location</em>' });
-  } else { // subsystem — derive from linked test_items
-    const subSet = new Set();
-    PLANNING_EVENTS.forEach(e => {
-      const ti = e.test_item_id ? TI.find(t => String(t.TestID) === String(e.test_item_id)) : null;
-      if (ti?.Subsystem) subSet.add(ti.Subsystem);
+  // Date window: today → today + N days
+  const winStart = dayjs().startOf('day');
+  const days = Array.from({ length: _laTimelineWindow }, (_, i) =>
+    winStart.add(i, 'day').format('YYYY-MM-DD')
+  );
+
+  // Milestones: batch upload dates + P6 point milestones
+  const milestones = [];
+  (PLANNING_BATCHES || []).forEach(b => {
+    const iso = (b.uploaded_at || '').slice(0, 10);
+    if (days.includes(iso)) milestones.push({ date: iso, label: `Import: ${b.batch_name || iso}`, icon: '●' });
+  });
+  if (_planningShowP6 && Array.isArray(P6_ACTS)) {
+    P6_ACTS.forEach(p6 => {
+      if (p6.start_date === p6.finish_date && days.includes(p6.finish_date))
+        milestones.push({ date: p6.finish_date, label: p6.p6_id || 'P6 milestone', icon: '★' });
     });
-    groupSpecs = [...subSet].sort().map(s => ({ id: 'sub-' + s, content: escapeHtml(s) }));
-    groupSpecs.push({ id: 'sub-unknown', content: '<em style="color:#9ca3af;">No subsystem</em>' });
   }
 
-  // Build items
-  const items = [];
-  PLANNING_EVENTS.forEach(e => {
-    const isCancel = e.status === 'cancelled';
-    const v = isCancel ? _CANCEL_VISUAL : (_SHIFT_VISUAL[e.shift_type] || _SHIFT_VISUAL.custom);
-    const dt = e.event_date;
-    const startTime = (e.all_day || !e.start_time) ? '00:00' : e.start_time.slice(0,5);
-    const endTime   = (e.all_day || !e.end_time)   ? '23:59' : e.end_time.slice(0,5);
-    const overnight = !e.all_day && e.start_time && e.end_time && e.end_time <= e.start_time;
-    const startISO  = `${dt}T${startTime}:00`;
-    const endDate   = overnight ? dayjs(dt).add(1,'day').format('YYYY-MM-DD') : dt;
-    const endISO    = `${endDate}T${endTime}:00`;
+  // Build groups
+  const groups = [];
 
-    let groupIds = [];
-    if (_laTimelineGroupBy === 'resource') {
-      const assigned = PLANNING_EVENT_RES.filter(er => er.event_id === e.id);
-      if (assigned.length) groupIds = assigned.map(a => 'res-' + a.resource_id);
-      else groupIds = ['res-unassigned'];
-    } else if (_laTimelineGroupBy === 'location') {
-      groupIds = [e.location ? 'loc-' + e.location : 'loc-unknown'];
-    } else {
-      const ti = e.test_item_id ? TI.find(t => String(t.TestID) === String(e.test_item_id)) : null;
-      groupIds = [ti?.Subsystem ? 'sub-' + ti.Subsystem : 'sub-unknown'];
+  if (_laTimelineGroupBy === 'resource') {
+    PLANNING_RESOURCES
+      .filter(r => r.is_active)
+      .sort((a, b) => a.display_name.localeCompare(b.display_name))
+      .forEach(r => {
+        const evs = PLANNING_EVENTS.filter(e => {
+          return PLANNING_EVENT_RES.some(er => er.event_id === e.id && er.resource_id === r.id);
+        });
+        if (!evs.length && !PTO_REQUESTS.some(p => p.resource_id === r.id && p.status === 'approved')) return;
+        const c = _planningSubsystemColor(r.display_name);
+        groups.push({
+          id: 'res-' + r.id,
+          label: r.display_name,
+          sublabel: r.initials || '',
+          color: c.bg,
+          byDate: _laBuildByDate(evs, days),
+          ptoByDate: _laBuildPtoByDate(r.id, days),
+        });
+      });
+    // Unassigned
+    const unassigned = PLANNING_EVENTS.filter(e =>
+      days.includes(e.event_date) && !PLANNING_EVENT_RES.some(er => er.event_id === e.id)
+    );
+    if (unassigned.length) {
+      groups.push({ id: 'res-unassigned', label: 'Unassigned', sublabel: '', color: '#9ca3af', byDate: _laBuildByDate(unassigned, days) });
     }
 
-    groupIds.forEach(gid => {
-      items.push({
-        id: `${e.id}::${gid}`,
-        group: gid,
-        content: `<span style="font-size:11px;">${escapeHtml((e.title || '').slice(0, 50))}</span>`,
-        start: startISO,
-        end:   endISO,
-        style: `background-color:${v.bg};color:${v.text};border-color:${isCancel ? '#7f1d1d' : v.bg};${isCancel ? 'text-decoration:line-through;' : ''}`,
-        title: `${escapeHtml(e.title || '')} (${v.label})`,
-        _eventId: e.id,
-      });
+  } else if (_laTimelineGroupBy === 'subsystem') {
+    const subMap = {};
+    PLANNING_EVENTS.filter(e => days.includes(e.event_date)).forEach(e => {
+      const sub = _planningGetSubsystem(e) || 'Other';
+      if (!subMap[sub]) subMap[sub] = [];
+      subMap[sub].push(e);
     });
-  });
+    Object.keys(subMap).sort().forEach(sub => {
+      const c = _planningSubsystemColor(sub === 'Other' ? null : sub);
+      groups.push({ id: 'sub-' + sub, label: sub, color: c.bg, byDate: _laBuildByDate(subMap[sub], days) });
+    });
 
-  // PTO as background items (only when grouping by resource)
-  if (_laTimelineGroupBy === 'resource') {
-    PTO_REQUESTS.filter(p => p.status === 'approved').forEach(p => {
-      items.push({
-        id: 'pto-' + p.id,
-        group: 'res-' + p.resource_id,
-        content: `🌴 PTO`,
-        start: p.start_date,
-        end:   dayjs(p.end_date).add(1,'day').format('YYYY-MM-DD'),
-        type: 'background',
-        style: 'background-color:rgba(252,211,77,0.45);',
-      });
+  } else { // location
+    const locMap = {};
+    PLANNING_EVENTS.filter(e => days.includes(e.event_date)).forEach(e => {
+      const loc = e.location || 'No location';
+      if (!locMap[loc]) locMap[loc] = [];
+      locMap[loc].push(e);
+    });
+    Object.keys(locMap).sort().forEach(loc => {
+      const c = _planningSubsystemColor(loc === 'No location' ? null : loc);
+      groups.push({ id: 'loc-' + loc, label: loc, color: c.bg, byDate: _laBuildByDate(locMap[loc], days) });
     });
   }
 
-  // P6 overlay — add dedicated "P6 Schedule" group when toggle is on
-  if (_planningShowP6 && Array.isArray(P6_ACTS)) {
-    groupSpecs.push({
-      id: 'p6-schedule',
-      content: '<div style="color:#3730a3;font-size:11px;"><strong>📋 P6 Schedule</strong></div>',
-    });
-    P6_ACTS.forEach(p6 => {
-      if (!p6.start_date || !p6.finish_date) return;
-      items.push({
-        id: 'p6-' + p6.id,
-        group: 'p6-schedule',
-        content: `<span style="font-size:11px;color:#3730a3;">${escapeHtml((p6.p6_name || p6.p6_id || '').slice(0,50))}</span>`,
-        start: p6.start_date,
-        end:   dayjs(p6.finish_date).add(1,'day').format('YYYY-MM-DD'),
-        style: 'background-color:rgba(99,102,241,0.18);color:#3730a3;border-color:rgba(99,102,241,0.5);',
-        title: `P6: ${escapeHtml(p6.p6_id || '')} (${p6.start_date} → ${p6.finish_date})`,
-        _p6Id: p6.id,
-      });
-    });
-  }
-
-  if (!groupSpecs.length) groupSpecs = [{ id: 'empty', content: 'No data' }];
-
-  const start = dayjs().startOf('day').toDate();
-  const end   = dayjs().startOf('day').add(_laTimelineWindow, 'day').toDate();
-
-  try {
-    _planningTLInstance = new vis.Timeline(
-      target,
-      new vis.DataSet(items),
-      new vis.DataSet(groupSpecs),
-      {
-        start, end,
-        min: dayjs().subtract(7, 'day').toDate(),
-        max: dayjs().add(180, 'day').toDate(),
-        stack: true,
-        showCurrentTime: true,
-        orientation: { axis: 'top' },
-        margin: { item: 8, axis: 6 },
-        zoomMin: 1000 * 60 * 60 * 12,   // half-day
-        zoomMax: 1000 * 60 * 60 * 24 * 90, // 90 days
-        groupOrder: 'content',
-        editable: false,
-      },
-    );
-    _planningTLInstance.on('select', (props) => {
-      if (!props.items?.length) return;
-      const raw = props.items[0];
-      const item = items.find(i => i.id === raw);
-      if (item?._eventId) _planningOpenEventDetail(item._eventId);
-      else if (item?._p6Id) {
-        const p6 = P6_ACTS.find(x => x.id === item._p6Id);
-        if (p6) _planningOpenP6Detail(p6);
-      }
-    });
-  } catch(err) {
-    console.error('Timeline mount failed:', err);
-    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">Failed to mount timeline: ${escapeHtml(err.message)}</div>`;
-  }
+  _laRenderGrid(target, { groups, days, milestones });
 }
 
 // ── GANTT TAB ────────────────────────────────────────────────
@@ -14310,102 +14420,77 @@ function _laGanttHTML() {
     ${_planningKPIStrip()}
     ${_planningShiftLegend()}
 
-    <div style="margin-bottom:12px;font-size:13px;color:var(--gray-600);">
-      Activity bars across the planning window — one row per planning activity, with P6 baseline shown as a faded background bar where available.
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+      <span style="font-size:13px;color:var(--gray-600);">One row per activity — cells shaded by shift type. P6 baseline shown when overlay is on.</span>
+      <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);cursor:pointer;">
+        <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
+        P6 baseline
+      </label>
     </div>
 
-    <div class="data-card" style="padding:14px;">
-      <div id="gantt-timeline" style="min-height:640px;"></div>
+    <div class="data-card" style="padding:0;overflow:hidden;">
+      <div id="gantt-timeline"></div>
     </div>`;
 }
 
 function _laMountGanttTL() {
   const target = document.getElementById('gantt-timeline');
   if (!target) return;
-  if (typeof vis === 'undefined') {
-    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">vis-timeline library not loaded — refresh the page.</div>`;
-    return;
-  }
 
-  // Groups: one per planning_activity that has events
   const actsWithEvents = PLANNING_ACTIVITIES.filter(a =>
     PLANNING_EVENTS.some(e => e.planning_activity_id === a.id)
   );
-  const groupSpecs = actsWithEvents.map(a => ({
-    id: 'act-' + a.id,
-    content: `<div style="font-size:11px;line-height:1.3;"><strong>${escapeHtml((a.activity_id_text || '—').slice(0, 16))}</strong><br><span style="color:#9ca3af;">${escapeHtml((a.description || '').slice(0, 40))}</span></div>`,
-  }));
-
-  const items = [];
-  PLANNING_EVENTS.forEach(e => {
-    if (!e.planning_activity_id) return;
-    const isCancel = e.status === 'cancelled';
-    const v = isCancel ? _CANCEL_VISUAL : (_SHIFT_VISUAL[e.shift_type] || _SHIFT_VISUAL.custom);
-    const dt = e.event_date;
-    const startTime = (e.all_day || !e.start_time) ? '00:00' : e.start_time.slice(0,5);
-    const endTime   = (e.all_day || !e.end_time)   ? '23:59' : e.end_time.slice(0,5);
-    const overnight = !e.all_day && e.start_time && e.end_time && e.end_time <= e.start_time;
-    const endDate   = overnight ? dayjs(dt).add(1,'day').format('YYYY-MM-DD') : dt;
-    items.push({
-      id: e.id,
-      group: 'act-' + e.planning_activity_id,
-      content: `<span style="font-size:10px;">${v.icon}</span>`,
-      start: `${dt}T${startTime}:00`,
-      end:   `${endDate}T${endTime}:00`,
-      style: `background-color:${v.bg};color:${v.text};border-color:${isCancel ? '#7f1d1d' : v.bg};`,
-      title: `${escapeHtml(e.title || '')} · ${v.label}${isCancel ? ' (CANCELLED)' : ''}`,
-      _eventId: e.id,
-    });
-  });
-
-  // P6 schedule overlay (background bar where p6_activity_id is set)
-  if (Array.isArray(P6_ACTS)) {
-    PLANNING_ACTIVITIES.forEach(a => {
-      if (!a.linked_p6_activity_id) return;
-      const p6 = P6_ACTS.find(x => x.id === a.linked_p6_activity_id);
-      if (!p6 || !p6.start_date || !p6.finish_date) return;
-      items.push({
-        id: 'p6-' + a.id,
-        group: 'act-' + a.id,
-        start: p6.start_date,
-        end:   dayjs(p6.finish_date).add(1, 'day').format('YYYY-MM-DD'),
-        type:  'background',
-        style: 'background-color:rgba(99,102,241,0.10);border:1px dashed rgba(99,102,241,0.45);',
-        title: `P6 schedule: ${escapeHtml(p6.p6_id || '')} (${p6.start_date} → ${p6.finish_date})`,
-      });
-    });
-  }
-
-  if (!groupSpecs.length) {
+  if (!actsWithEvents.length) {
     target.innerHTML = `<div style="padding:48px;text-align:center;color:var(--gray-400);font-size:13px;">No planning activities to chart yet. Import a lookahead first.</div>`;
     return;
   }
 
-  try {
-    _planningTLInstance = new vis.Timeline(
-      target,
-      new vis.DataSet(items),
-      new vis.DataSet(groupSpecs),
-      {
-        start: dayjs().subtract(7, 'day').toDate(),
-        end:   dayjs().add(28, 'day').toDate(),
-        stack: false,
-        showCurrentTime: true,
-        margin: { item: 6 },
-        zoomMin: 1000 * 60 * 60 * 24,
-        zoomMax: 1000 * 60 * 60 * 24 * 180,
-        editable: false,
-      },
-    );
-    _planningTLInstance.on('select', (props) => {
-      if (!props.items?.length) return;
-      const item = items.find(i => i.id === props.items[0]);
-      if (item?._eventId) _planningOpenEventDetail(item._eventId);
+  // Date window: span all event dates (capped at 90 days from earliest)
+  const allDates = PLANNING_EVENTS.map(e => e.event_date).filter(Boolean).sort();
+  if (!allDates.length) { target.innerHTML = `<div style="padding:48px;text-align:center;color:var(--gray-400);">No events imported yet.</div>`; return; }
+  const winStart = allDates[0];
+  const winEnd   = dayjs(allDates[allDates.length - 1]).format('YYYY-MM-DD');
+  const capEnd   = dayjs(winStart).add(90, 'day').format('YYYY-MM-DD');
+  const endISO   = winEnd > capEnd ? capEnd : winEnd;
+  const days = [];
+  let d = dayjs(winStart);
+  while (!d.isAfter(dayjs(endISO))) { days.push(d.format('YYYY-MM-DD')); d = d.add(1, 'day'); }
+
+  // P6 milestones
+  const milestones = [];
+  if (_planningShowP6 && Array.isArray(P6_ACTS)) {
+    P6_ACTS.forEach(p6 => {
+      if (p6.start_date === p6.finish_date && days.includes(p6.finish_date))
+        milestones.push({ date: p6.finish_date, label: p6.p6_id || 'Milestone', icon: '★' });
     });
-  } catch(err) {
-    console.error('Gantt mount failed:', err);
-    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">Failed to mount Gantt: ${escapeHtml(err.message)}</div>`;
   }
+
+  // Groups: one per activity, coloured by subsystem
+  const groups = actsWithEvents.map(a => {
+    const sub = a.subsystem || null;
+    const c   = _planningSubsystemColor(sub);
+    const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === a.id);
+
+    // P6 baseline range for this activity
+    let p6Range = null;
+    if (_planningShowP6 && a.linked_p6_activity_id) {
+      const p6 = P6_ACTS.find(x => x.id === a.linked_p6_activity_id);
+      if (p6 && p6.start_date && p6.finish_date) {
+        p6Range = new Set(days.filter(iso => iso >= p6.start_date && iso <= p6.finish_date));
+      }
+    }
+
+    return {
+      id: 'act-' + a.id,
+      label: (a.activity_id_text || a.description || '—').slice(0, 24),
+      sublabel: sub || '',
+      color: c.bg,
+      byDate: _laBuildByDate(evs, days),
+      p6Range,
+    };
+  });
+
+  _laRenderGrid(target, { groups, days, milestones });
 }
 
 // ── RESOURCES TAB (availability board) ───────────────────────
@@ -14420,103 +14505,64 @@ function _laResourcesBoardHTML() {
     ${_planningShiftLegend()}
 
     <div style="margin-bottom:12px;font-size:13px;color:var(--gray-600);">
-      Resource availability across the next 14 days. PTO blocks shaded yellow. Click any event to edit.
+      Resource availability — 2-week rolling window. PTO shown in amber. ⚠ = PTO conflict. Click any cell to view details.
     </div>
 
-    <div class="data-card" style="padding:14px;">
-      <div id="resources-timeline" style="min-height:600px;"></div>
+    <div class="data-card" style="padding:0;overflow:hidden;">
+      <div id="resources-timeline"></div>
     </div>`;
 }
 
 function _laMountResourcesTL() {
   const target = document.getElementById('resources-timeline');
   if (!target) return;
-  if (typeof vis === 'undefined') {
-    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">vis-timeline library not loaded — refresh the page.</div>`;
-    return;
-  }
 
-  const active = PLANNING_RESOURCES.filter(r => r.is_active).sort((a,b) => a.display_name.localeCompare(b.display_name));
+  const active = PLANNING_RESOURCES
+    .filter(r => r.is_active)
+    .sort((a, b) => a.display_name.localeCompare(b.display_name));
+
   if (!active.length) {
     target.innerHTML = `<div style="padding:48px;text-align:center;color:var(--gray-400);font-size:13px;">No active resources yet.</div>`;
     return;
   }
 
-  const groupSpecs = active.map(r => ({
-    id: 'res-' + r.id,
-    content: `<div style="display:flex;align-items:center;gap:6px;font-size:12px;"><strong>${escapeHtml(r.display_name)}</strong>${r.initials ? `<span style="font-family:monospace;font-size:10px;color:#9ca3af;">${escapeHtml(r.initials)}</span>` : ''}</div>`,
-  }));
+  // 2-week window from today
+  const winStart = dayjs().startOf('day');
+  const days = Array.from({ length: 14 }, (_, i) =>
+    winStart.add(i, 'day').format('YYYY-MM-DD')
+  );
 
-  const items = [];
-  // Events assigned to each resource
-  PLANNING_EVENT_RES.forEach(er => {
-    const e = PLANNING_EVENTS.find(x => x.id === er.event_id);
-    if (!e) return;
-    const isCancel = e.status === 'cancelled';
-    const v = isCancel ? _CANCEL_VISUAL : (_SHIFT_VISUAL[e.shift_type] || _SHIFT_VISUAL.custom);
-    const dt = e.event_date;
-    const startTime = (e.all_day || !e.start_time) ? '00:00' : e.start_time.slice(0,5);
-    const endTime   = (e.all_day || !e.end_time)   ? '23:59' : e.end_time.slice(0,5);
-    const overnight = !e.all_day && e.start_time && e.end_time && e.end_time <= e.start_time;
-    const endDate   = overnight ? dayjs(dt).add(1,'day').format('YYYY-MM-DD') : dt;
+  const groups = active.map(r => {
+    const c = _planningSubsystemColor(r.display_name);
+    // Events assigned to this resource
+    const evs = PLANNING_EVENT_RES
+      .filter(er => er.resource_id === r.id)
+      .map(er => PLANNING_EVENTS.find(e => e.id === er.event_id))
+      .filter(Boolean);
 
-    // PTO conflict highlight
-    const conflict = _ptoOverlapsRange(er.resource_id, dt, e.start_time, e.end_time);
-    const conflictStyle = conflict ? 'box-shadow:0 0 0 2px var(--bad);' : '';
-
-    items.push({
-      id: er.id,
-      group: 'res-' + er.resource_id,
-      content: `<span style="font-size:11px;">${v.icon} ${escapeHtml((e.title || '').slice(0, 40))}</span>`,
-      start: `${dt}T${startTime}:00`,
-      end:   `${endDate}T${endTime}:00`,
-      style: `background-color:${v.bg};color:${v.text};border-color:${isCancel ? '#7f1d1d' : v.bg};${isCancel ? 'text-decoration:line-through;' : ''}${conflictStyle}`,
-      title: conflict
-        ? `⚠ PTO CONFLICT: ${escapeHtml(e.title || '')} clashes with approved PTO`
-        : `${escapeHtml(e.title || '')} · ${v.label}`,
-      _eventId: e.id,
+    // Mark PTO-conflicted events with warning icon in the title
+    const byDate = {};
+    evs.filter(e => days.includes(e.event_date)).forEach(e => {
+      const isCancel = e.status === 'cancelled';
+      const conflict = _ptoOverlapsRange(r.id, e.event_date, e.start_time, e.end_time);
+      (byDate[e.event_date] = byDate[e.event_date] || []).push({
+        event_id: e.id, shift_type: e.shift_type, start_time: e.start_time,
+        end_time: e.end_time, all_day: !!e.all_day, isCancel,
+        title: `${conflict ? '⚠ CONFLICT: ' : ''}${e.title || ''}`,
+      });
     });
+
+    return {
+      id: 'res-' + r.id,
+      label: r.display_name,
+      sublabel: r.initials || '',
+      color: c.bg,
+      byDate,
+      ptoByDate: _laBuildPtoByDate(r.id, days),
+    };
   });
 
-  // PTO blocks as backgrounds
-  PTO_REQUESTS.filter(p => p.status === 'approved').forEach(p => {
-    items.push({
-      id: 'pto-' + p.id,
-      group: 'res-' + p.resource_id,
-      content: `🌴 PTO`,
-      start: p.start_date,
-      end:   dayjs(p.end_date).add(1, 'day').format('YYYY-MM-DD'),
-      type: 'background',
-      style: 'background-color:rgba(252,211,77,0.45);',
-    });
-  });
-
-  try {
-    _planningTLInstance = new vis.Timeline(
-      target,
-      new vis.DataSet(items),
-      new vis.DataSet(groupSpecs),
-      {
-        start: dayjs().startOf('day').toDate(),
-        end:   dayjs().startOf('day').add(14, 'day').toDate(),
-        stack: true,
-        showCurrentTime: true,
-        margin: { item: 6 },
-        zoomMin: 1000 * 60 * 60 * 12,
-        zoomMax: 1000 * 60 * 60 * 24 * 90,
-        editable: false,
-        orientation: { axis: 'top' },
-      },
-    );
-    _planningTLInstance.on('select', (props) => {
-      if (!props.items?.length) return;
-      const item = items.find(i => i.id === props.items[0]);
-      if (item?._eventId) _planningOpenEventDetail(item._eventId);
-    });
-  } catch(err) {
-    console.error('Resources timeline mount failed:', err);
-    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">Failed to mount: ${escapeHtml(err.message)}</div>`;
-  }
+  _laRenderGrid(target, { groups, days, milestones: [] });
 }
 
 // ── Event Detail Modal ───────────────────────────────────────
