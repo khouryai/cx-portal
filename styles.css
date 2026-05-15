@@ -5863,10 +5863,11 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   line-height: 1;
 }
 
-/* ── Drop zone row styling ─────────────────────────────────── */
+/* ── Drop zone — activity label (full-row assign) ──────────── */
 .la-drop-label {
   position: relative;
   cursor: copy;
+  transition: box-shadow .12s;
 }
 .la-drop-label::after {
   content: '';
@@ -5878,13 +5879,37 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   opacity: 0;
   transition: opacity .15s;
 }
-.la-row-droppable.la-drop-over .la-drop-label::after {
+/* When dragging over the label — red glow (assign whole activity) */
+.la-drop-label.la-row-label-over {
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,.8), 0 0 0 3px var(--hitachi-red);
+}
+.la-drop-label.la-row-label-over::after {
   opacity: 1;
 }
-.la-row-droppable.la-drop-over {
-  outline: 2px solid rgba(230,0,18,.5);
+
+/* ── Drop zone — individual shift cell (single-day assign) ─── */
+.la-cell-droppable {
+  cursor: copy;
+  position: relative;
+}
+.la-cell-droppable::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border: 2px dashed rgba(0,135,90,.5);
+  border-radius: 4px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .12s;
+}
+/* When dragging over a cell — green glow (assign single shift) */
+.la-cell-droppable.la-cell-drop-over {
+  outline: 2px solid #00875a;
   outline-offset: -2px;
-  background: rgba(230,0,18,.03);
+  background: rgba(0,135,90,.08) !important;
+}
+.la-cell-droppable.la-cell-drop-over::after {
+  opacity: 1;
 }
 
 /* ── Row label layout when assign mode ────────────────────── */

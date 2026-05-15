@@ -14276,7 +14276,9 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       ? `<span class="la-drop-hint-text">drop here</span>`
       : '';
 
-    html += `<div class="tlg-label tlg-row-label${_laAssignMode && actId ? ' la-drop-label' : ''}" style="background:${g.color||'#6b7280'};">
+    html += `<div class="tlg-label tlg-row-label${_laAssignMode && actId ? ' la-drop-label' : ''}"
+      style="background:${g.color||'#6b7280'};"
+      ${_laAssignMode && actId ? `data-activity-id="${actId}" title="Drop here to assign for the full activity"` : ''}>
       <div class="tlg-label-inner">
         <span class="tlg-label-main">${escapeHtml(g.label)}</span>
         ${g.sublabel ? `<span class="tlg-label-sub">${escapeHtml(g.sublabel)}</span>` : ''}
@@ -14301,7 +14303,14 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       if (inP6 && !shifts.length && !ptoEntry) cellClass += ' tlg-p6-bg';
       if (run === 'start' || run === 'mid') cellClass += ' tlg-run-bridge';
 
-      html += `<div class="${cellClass}">`;
+      // Assign mode: cells with shifts become individual drop targets
+      const isCellDroppable = _laAssignMode && actId && shifts.length > 0 && !ptoEntry;
+      if (isCellDroppable) cellClass += ' la-cell-droppable';
+      const cellDropAttrs = isCellDroppable
+        ? ` data-activity-id="${actId}" data-event-date="${iso}"`
+        : '';
+
+      html += `<div class="${cellClass}"${cellDropAttrs}>`;
 
       if (ptoEntry) {
         html += `<div class="tlg-shift-block tlg-shift-pto tlg-run-solo"
@@ -14429,7 +14438,7 @@ function _laLookaheadHTML() {
 
     ${_laAssignMode ? `
     <div class="la-assign-banner">
-      <span>🎯 Drag a resource from the panel and drop it onto an activity row to assign them.</span>
+      <span>🟥 Drop on the <strong>activity label</strong> to assign for the full activity &nbsp;·&nbsp; 🟩 Drop on a <strong>coloured shift cell</strong> to assign to that specific day only</span>
     </div>` : ''}
 
     <div style="display:flex;gap:12px;align-items:flex-start;">
@@ -14529,31 +14538,62 @@ function _laEndResourceDrag(el) {
 }
 
 function _laInitAssignDnD(gridEl) {
+  let _overCell  = null;
+  let _overLabel = null;
+
+  function _clearHighlights() {
+    if (_overCell)  { _overCell.classList.remove('la-cell-drop-over');   _overCell  = null; }
+    if (_overLabel) { _overLabel.classList.remove('la-row-label-over');  _overLabel = null; }
+  }
+
   gridEl.addEventListener('dragover', e => {
-    const row = e.target.closest('.la-row-droppable');
-    if (!row || !_laCurrentDragRes) return;
+    if (!_laCurrentDragRes) return;
+
+    // Priority: cell (specific date) > label (whole activity)
+    const cell  = e.target.closest('.la-cell-droppable');
+    const label = !cell && e.target.closest('.la-drop-label');
+    if (!cell && !label) return;
+
     e.preventDefault();
-    // Highlight only the hovered row
-    gridEl.querySelectorAll('.la-row-droppable').forEach(r => r.classList.remove('la-drop-over'));
-    row.classList.add('la-drop-over');
+    e.dataTransfer.dropEffect = 'copy';
+
+    if (cell && cell !== _overCell) {
+      _clearHighlights();
+      cell.classList.add('la-cell-drop-over');
+      _overCell = cell;
+    } else if (label && label !== _overLabel) {
+      _clearHighlights();
+      label.classList.add('la-row-label-over');
+      _overLabel = label;
+    }
   });
 
   gridEl.addEventListener('dragleave', e => {
-    const row = e.target.closest('.la-row-droppable');
-    if (row && !row.contains(e.relatedTarget)) {
-      row.classList.remove('la-drop-over');
-    }
+    // Only clear if leaving the highlighted element entirely
+    if (_overCell  && !_overCell.contains(e.relatedTarget))  { _overCell.classList.remove('la-cell-drop-over');  _overCell  = null; }
+    if (_overLabel && !_overLabel.contains(e.relatedTarget)) { _overLabel.classList.remove('la-row-label-over'); _overLabel = null; }
   });
 
   gridEl.addEventListener('drop', e => {
     e.preventDefault();
-    const row = e.target.closest('.la-row-droppable');
-    if (!row) return;
-    row.classList.remove('la-drop-over');
-    const activityId = row.dataset.activityId;
+    const cell  = e.target.closest('.la-cell-droppable');
+    const label = !cell && e.target.closest('.la-drop-label');
+    _clearHighlights();
+
     const resourceId = _laCurrentDragRes;
     _laCurrentDragRes = null;
-    if (activityId && resourceId) _laAssignResourceToActivity(activityId, resourceId);
+    if (!resourceId) return;
+
+    if (cell) {
+      // Drop on a shift cell → assign to that specific event/date
+      const activityId = cell.dataset.activityId;
+      const eventDate  = cell.dataset.eventDate;
+      if (activityId && eventDate) _laAssignResourceToEvent(activityId, eventDate, resourceId);
+    } else if (label) {
+      // Drop on the row label → assign to the full activity (all dates)
+      const activityId = label.dataset.activityId;
+      if (activityId) _laAssignResourceToActivity(activityId, resourceId);
+    }
   });
 }
 
@@ -14605,6 +14645,45 @@ async function _laAssignResourceToActivity(activityId, resourceId) {
     if (idx > -1) PLANNING_ACTIVITY_RES.splice(idx, 1);
     _laMountLookaheadTL();
     toast('Assignment failed: ' + err.message, 'error');
+  }
+}
+
+async function _laAssignResourceToEvent(activityId, eventDate, resourceId) {
+  // Find the specific event for this activity on this date
+  const ev = PLANNING_EVENTS.find(e =>
+    e.planning_activity_id === activityId && e.event_date === eventDate
+  );
+  if (!ev) {
+    toast('No shift scheduled on this date for this activity', 'warn');
+    return;
+  }
+
+  // Duplicate guard
+  if (PLANNING_EVENT_RES.some(er => er.event_id === ev.id && er.resource_id === resourceId)) {
+    const res = PLANNING_RESOURCES.find(r => r.id === resourceId);
+    toast(`${res?.display_name || 'Resource'} is already on this shift`, 'warn');
+    return;
+  }
+
+  const res  = PLANNING_RESOURCES.find(r => r.id === resourceId);
+  const dateLabel = dayjs(eventDate).format('ddd MMM D');
+
+  try {
+    await _dbInsert('planning_event_resources', {
+      event_id:          ev.id,
+      resource_id:       resourceId,
+      role:              'crew',
+      assignment_source: 'manual',
+    });
+    toast(`${res?.display_name || 'Resource'} → ${dateLabel} shift ✓`, 'success');
+    await loadPlanningData(true);
+    _laMountLookaheadTL();
+  } catch (err) {
+    if (err.message?.includes('23505') || err.message?.includes('duplicate')) {
+      toast(`${res?.display_name || 'Resource'} is already on this shift`, 'warn');
+    } else {
+      toast('Assignment failed: ' + err.message, 'error');
+    }
   }
 }
 
@@ -16618,6 +16697,7 @@ function _planningOpenP6Detail(p6) {
   wrap('_planningMarkNoLink');
   wrap('_laToggleAssignMode');
   wrap('_laAssignResourceToActivity');
+  wrap('_laAssignResourceToEvent');
   wrap('_laRemoveActivityResource');
   wrap('_laFilterResPanel');
 })();
