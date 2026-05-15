@@ -13334,6 +13334,7 @@ let PLANNING_EVENT_RES        = [];   // planning_event_resources join rows
 let PLANNING_ACTIVITY_RES     = [];   // planning_activity_resources join rows (activity-level assignments)
 let PLANNING_CONFLICTS        = [];   // planning_conflicts rows
 let PTO_REQUESTS              = [];   // pto_requests rows
+let DELAY_LOG                 = [];   // delay_log rows (for Delays & Cancellations report)
 
 let _lookaheadTab        = 'calendar';                 // calendar | lookahead | resources | pto
 let _adminPlanningTab    = 'upload';                   // upload | review | conflicts | resources | history
@@ -13369,7 +13370,7 @@ async function loadPlanningData(force = false) {
   // Cache for 30s to avoid hammering on tab switches
   if (!force && Date.now() - _planningLoadedAt < 30_000) return;
   try {
-    const [resources, events, activities, batches, eventRes, activityRes, conflicts, pto] = await Promise.all([
+    const [resources, events, activities, batches, eventRes, activityRes, conflicts, pto, delayLog] = await Promise.all([
       _fetchAnon('planning_resources?select=*&order=display_name.asc'),
       _fetchAnon('planning_events?select=*&order=event_date.asc'),
       _fetchAnon('planning_activities?select=*&order=created_at.desc'),
@@ -13378,6 +13379,7 @@ async function loadPlanningData(force = false) {
       _fetchAnon('planning_activity_resources?select=*'),
       _fetchAnon('planning_conflicts?select=*&order=created_at.desc'),
       _fetchAnon('pto_requests?select=*&order=start_date.desc'),
+      _fetchAnon('delay_log?select=*&delay_occurred=eq.Yes&order=log_date.desc'),
     ]);
     PLANNING_RESOURCES    = resources    || [];
     PLANNING_EVENTS       = events       || [];
@@ -13387,6 +13389,7 @@ async function loadPlanningData(force = false) {
     PLANNING_ACTIVITY_RES = activityRes  || [];
     PLANNING_CONFLICTS    = conflicts    || [];
     PTO_REQUESTS          = pto          || [];
+    DELAY_LOG             = delayLog     || [];
     _planningLoadedAt   = Date.now();
     // First-time bootstrap: seed planning_resources from portal users
     if (PLANNING_RESOURCES.length === 0) await _planningBootstrapResources();
@@ -13443,9 +13446,10 @@ function renderLookahead() {
   // Redirect legacy tabs
   if (_lookaheadTab === 'gantt' || _lookaheadTab === 'resources') _lookaheadTab = 'lookahead';
   const tabs = [
-    ['calendar',  'Calendar'],
-    ['lookahead', 'Lookahead'],
-    ['pto',       'PTO'],
+    ['calendar',      'Calendar'],
+    ['lookahead',     'Lookahead'],
+    ['pto',           'PTO'],
+    ['cancellations', 'Delays & Cancellations'],
   ];
 
   body.innerHTML = `
@@ -13488,9 +13492,10 @@ function _renderLookaheadTabBody() {
   if (!el) return;
   _planningCleanupInstances();
   const tab = _lookaheadTab;
-  if (tab === 'calendar')  { el.innerHTML = _laCalendarHTML();  setTimeout(_laMountCalendar,    30); }
-  if (tab === 'lookahead') { el.innerHTML = _laLookaheadHTML(); setTimeout(_laMountLookaheadTL, 30); }
-  if (tab === 'pto')       { el.innerHTML = _laPTOStub(); }
+  if (tab === 'calendar')      { el.innerHTML = _laCalendarHTML();         setTimeout(_laMountCalendar,    30); }
+  if (tab === 'lookahead')     { el.innerHTML = _laLookaheadHTML();         setTimeout(_laMountLookaheadTL, 30); }
+  if (tab === 'pto')           { el.innerHTML = _laPTOStub(); }
+  if (tab === 'cancellations') { el.innerHTML = _laCancellationsTabHTML(); }
 }
 
 // ── Stub renderers (replaced in Batch 2+) ────────────────────
@@ -15750,6 +15755,353 @@ async function _ptoCancel(id) {
   } catch(err) {
     toast('Cancel failed: ' + err.message, 'error');
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// DELAYS & CANCELLATIONS REPORT TAB
+// ══════════════════════════════════════════════════════════════
+
+let _cancelRpt = {
+  dateFrom:  '',
+  dateTo:    '',
+  type:      'all',   // all | cancellations | delays
+  party:     '',
+  location:  '',
+  subsystem: '',
+};
+let _cancelRptSel = new Set();   // IDs of rows selected for export
+
+// Build normalised rows from both data sources
+function _cancelRptBuildRows() {
+  const rows = [];
+
+  // ── 1. Cancelled planning events ─────────────────────────────
+  PLANNING_EVENTS.filter(e => e.status === 'cancelled').forEach(e => {
+    const act = PLANNING_ACTIVITIES.find(a => a.id === e.planning_activity_id);
+    const sub = _planningGetSubsystem(e) || act?.subsystem || '';
+    const batch = act?.batch_id ? PLANNING_BATCHES.find(b => b.id === act.batch_id) : null;
+    const sourceLabel = e.source === 'lookahead' && batch
+      ? `Lookahead Import · ${batch.filename || ''}`
+      : e.source === 'manual' ? 'Manual' : (e.source || '—');
+    const cancelledByRes = e.cancellation_by
+      ? (PLANNING_RESOURCES.find(r => r.id === e.cancellation_by)?.display_name || e.cancellation_by)
+      : '—';
+    rows.push({
+      _id:    'cancel-' + e.id,
+      _type:  'cancellation',
+      date:   e.event_date || '',
+      title:  e.title || '(no title)',
+      location:  e.location || act?.location || '',
+      subsystem: sub,
+      shift:  e.shift_type || '',
+      reason: e.cancellation_reason || '',
+      party:  e.cancellation_responsible_party || '',
+      source: sourceLabel,
+      loggedBy:  cancelledByRes,
+      loggedAt:  e.cancellation_at ? new Date(e.cancellation_at).toLocaleString() : '',
+      duration:  '',
+      notes:     e.notes || '',
+    });
+  });
+
+  // ── 2. Delay log entries (delay_occurred = Yes) ───────────────
+  DELAY_LOG.forEach(d => {
+    rows.push({
+      _id:    'delay-' + (d.id || Math.random()),
+      _type:  'delay',
+      date:   d.log_date || '',
+      title:  d.delay_category || 'Delay',
+      location:  d.location || '',
+      subsystem: d.subsystem || '',
+      shift:  '',
+      reason: d.delay_notes || '',
+      party:  d.delay_responsible_party || '',
+      source: 'Field Report',
+      loggedBy:  d.submitted_by || '',
+      loggedAt:  d.created_at ? new Date(d.created_at).toLocaleString() : '',
+      duration:  d.delay_duration ? d.delay_duration + ' hr' : '',
+      notes:     d.overall_notes || '',
+    });
+  });
+
+  return rows.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+}
+
+function _cancelRptApplyFilters(rows) {
+  return rows.filter(r => {
+    if (_cancelRpt.type === 'cancellations' && r._type !== 'cancellation') return false;
+    if (_cancelRpt.type === 'delays'         && r._type !== 'delay')        return false;
+    if (_cancelRpt.dateFrom && r.date < _cancelRpt.dateFrom) return false;
+    if (_cancelRpt.dateTo   && r.date > _cancelRpt.dateTo)   return false;
+    if (_cancelRpt.party    && !r.party.toLowerCase().includes(_cancelRpt.party.toLowerCase())) return false;
+    if (_cancelRpt.location && !r.location.toLowerCase().includes(_cancelRpt.location.toLowerCase())) return false;
+    if (_cancelRpt.subsystem && r.subsystem !== _cancelRpt.subsystem) return false;
+    return true;
+  });
+}
+
+function _cancelRptSetFilter(key, val) {
+  _cancelRpt[key] = val;
+  _cancelRptSel.clear();
+  document.getElementById('cancel-rpt-body').innerHTML = _cancelRptTableBody();
+  _cancelRptUpdateBulkBtn();
+}
+
+function _cancelRptToggleSel(id, checked) {
+  if (checked) _cancelRptSel.add(id); else _cancelRptSel.delete(id);
+  _cancelRptUpdateBulkBtn();
+}
+
+function _cancelRptToggleAll(checked) {
+  document.querySelectorAll('.crpt-cb').forEach(cb => {
+    cb.checked = checked;
+    _cancelRptToggleSel(cb.dataset.id, checked);
+  });
+}
+
+function _cancelRptUpdateBulkBtn() {
+  const n = _cancelRptSel.size;
+  const btn = document.getElementById('crpt-export-btn');
+  const allCb = document.getElementById('crpt-sel-all');
+  if (btn) btn.textContent = n ? `📄 Export PDF (${n} selected)` : '📄 Export All as PDF';
+  const total = document.querySelectorAll('.crpt-cb').length;
+  if (allCb) {
+    allCb.indeterminate = n > 0 && n < total;
+    allCb.checked = total > 0 && n === total;
+  }
+}
+
+function _cancelRptTableBody() {
+  const allRows = _cancelRptBuildRows();
+  const filtered = _cancelRptApplyFilters(allRows);
+
+  if (!filtered.length) {
+    return `<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--gray-400);">
+      No records match the current filters.</td></tr>`;
+  }
+
+  return filtered.map(r => {
+    const isCxl  = r._type === 'cancellation';
+    const color  = isCxl ? '#b91c1c' : '#b45309';
+    const badge  = isCxl
+      ? `<span class="badge" style="background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;font-size:10px;">✕ Cancellation</span>`
+      : `<span class="badge" style="background:#fffbeb;color:#b45309;border:1px solid #fde68a;font-size:10px;">⚠ Delay</span>`;
+    const checked = _cancelRptSel.has(r._id) ? 'checked' : '';
+    return `<tr style="border-left:3px solid ${color};">
+      <td style="width:32px;padding:8px 6px;">
+        <input type="checkbox" class="crpt-cb" data-id="${r._id}" ${checked}
+          onchange="_cancelRptToggleSel('${r._id}',this.checked)" style="width:14px;height:14px;cursor:pointer;">
+      </td>
+      <td style="white-space:nowrap;font-size:12px;font-weight:600;">${escapeHtml(r.date || '—')}</td>
+      <td>${badge}</td>
+      <td style="font-size:12px;max-width:220px;">${escapeHtml(r.title)}</td>
+      <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(r.location || '—')}</td>
+      <td style="font-size:12px;">${escapeHtml(r.subsystem || '—')}</td>
+      <td style="font-size:12px;max-width:200px;">
+        ${r.reason ? escapeHtml(r.reason) : '<em style="color:#9ca3af;">—</em>'}
+        ${r.duration ? `<div style="font-size:11px;color:#b45309;margin-top:2px;">⏱ ${escapeHtml(r.duration)}</div>` : ''}
+      </td>
+      <td style="font-size:12px;">
+        ${r.party ? `<span class="badge" style="background:#fee2e2;color:#7f1d1d;font-size:11px;font-weight:700;">${escapeHtml(r.party)}</span>` : '<span style="color:#9ca3af;">—</span>'}
+      </td>
+      <td style="font-size:11px;color:var(--gray-500);">
+        <div>${escapeHtml(r.source)}</div>
+        <div style="margin-top:2px;">${escapeHtml(r.loggedBy)}${r.loggedAt ? ` · ${escapeHtml(r.loggedAt)}` : ''}</div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function _laCancellationsTabHTML() {
+  const allRows   = _cancelRptBuildRows();
+  const cancels   = allRows.filter(r => r._type === 'cancellation').length;
+  const delays    = allRows.filter(r => r._type === 'delay').length;
+
+  // Unique subsystems + parties for filter dropdowns
+  const subsystems = [...new Set(allRows.map(r => r.subsystem).filter(Boolean))].sort();
+  const parties    = [...new Set(allRows.map(r => r.party).filter(Boolean))].sort();
+
+  return `
+  <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;align-items:center;">
+    <div class="kpi-card kpi-mini" style="flex:none;min-width:130px;">
+      <div class="kpi-label">Total Records</div>
+      <div class="kpi-value" style="font-size:28px;">${allRows.length}</div>
+    </div>
+    <div class="kpi-card kpi-mini" style="flex:none;min-width:130px;border-left:4px solid #b91c1c;">
+      <div class="kpi-label">Cancellations</div>
+      <div class="kpi-value" style="font-size:28px;color:#b91c1c;">${cancels}</div>
+    </div>
+    <div class="kpi-card kpi-mini" style="flex:none;min-width:130px;border-left:4px solid #b45309;">
+      <div class="kpi-label">Delays Logged</div>
+      <div class="kpi-value" style="font-size:28px;color:#b45309;">${delays}</div>
+    </div>
+  </div>
+
+  <div class="crpt-filter-bar" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;padding:12px 14px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;">
+    <div>
+      <div class="form-label" style="margin-bottom:3px;font-size:11px;">Type</div>
+      <div style="display:flex;gap:0;">
+        ${[['all','All'],['cancellations','Cancellations'],['delays','Delays']].map(([v,l]) =>
+          `<button class="admin-tab${_cancelRpt.type===v?' active':''}" style="font-size:11px;padding:5px 12px;"
+            onclick="_cancelRptSetFilter('type','${v}');this.closest('.crpt-filter-bar').querySelectorAll('[data-crpt-type]').forEach(b=>b.classList.toggle('active',b.dataset.crptType==='${v}'));"
+            data-crpt-type="${v}">${l}</button>`).join('')}
+      </div>
+    </div>
+    <div>
+      <div class="form-label" style="margin-bottom:3px;font-size:11px;">From</div>
+      <input type="date" class="form-input" style="font-size:12px;padding:5px 8px;height:32px;" value="${_cancelRpt.dateFrom}"
+        onchange="_cancelRptSetFilter('dateFrom',this.value)">
+    </div>
+    <div>
+      <div class="form-label" style="margin-bottom:3px;font-size:11px;">To</div>
+      <input type="date" class="form-input" style="font-size:12px;padding:5px 8px;height:32px;" value="${_cancelRpt.dateTo}"
+        onchange="_cancelRptSetFilter('dateTo',this.value)">
+    </div>
+    <div>
+      <div class="form-label" style="margin-bottom:3px;font-size:11px;">Responsible Party</div>
+      <select class="form-input" style="font-size:12px;padding:5px 8px;height:32px;min-width:120px;"
+        onchange="_cancelRptSetFilter('party',this.value)">
+        <option value="">All parties</option>
+        ${parties.map(p => `<option value="${escapeHtml(p)}" ${_cancelRpt.party===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
+      </select>
+    </div>
+    <div>
+      <div class="form-label" style="margin-bottom:3px;font-size:11px;">Location</div>
+      <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;height:32px;width:130px;"
+        placeholder="Filter…" value="${escapeHtml(_cancelRpt.location)}"
+        oninput="_cancelRptSetFilter('location',this.value)">
+    </div>
+    <div>
+      <div class="form-label" style="margin-bottom:3px;font-size:11px;">Subsystem</div>
+      <select class="form-input" style="font-size:12px;padding:5px 8px;height:32px;min-width:110px;"
+        onchange="_cancelRptSetFilter('subsystem',this.value)">
+        <option value="">All</option>
+        ${subsystems.map(s => `<option value="${escapeHtml(s)}" ${_cancelRpt.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+      </select>
+    </div>
+    <button class="form-secondary" style="font-size:11px;padding:5px 12px;height:32px;margin-left:auto;"
+      onclick="_cancelRpt={dateFrom:'',dateTo:'',type:'all',party:'',location:'',subsystem:''};_cancelRptSel.clear();document.getElementById('lookahead-tab-body').innerHTML=_laCancellationsTabHTML();">
+      ✕ Clear
+    </button>
+    <button id="crpt-export-btn" class="admin-action-btn" style="font-size:11px;padding:5px 14px;height:32px;"
+      onclick="_cancelRptExportPDF()">📄 Export All as PDF</button>
+  </div>
+
+  <div class="data-card" style="padding:0;overflow:hidden;">
+    <table class="data-table" style="table-layout:auto;">
+      <thead>
+        <tr>
+          <th style="width:32px;padding:8px 6px;">
+            <input type="checkbox" id="crpt-sel-all" onchange="_cancelRptToggleAll(this.checked)"
+              style="width:14px;height:14px;cursor:pointer;">
+          </th>
+          <th>Date</th>
+          <th>Type</th>
+          <th>Activity / Category</th>
+          <th>Location</th>
+          <th>Subsystem</th>
+          <th>Reason / Notes</th>
+          <th>Responsible Party</th>
+          <th>Source · Logged By</th>
+        </tr>
+      </thead>
+      <tbody id="cancel-rpt-body">${_cancelRptTableBody()}</tbody>
+    </table>
+  </div>`;
+}
+
+function _cancelRptExportPDF() {
+  const allRows    = _cancelRptBuildRows();
+  const filtered   = _cancelRptApplyFilters(allRows);
+  const exportRows = _cancelRptSel.size
+    ? filtered.filter(r => _cancelRptSel.has(r._id))
+    : filtered;
+
+  if (!exportRows.length) { toast('No rows to export', 'warn'); return; }
+
+  const title    = 'Delays & Cancellations Report';
+  const project  = 'BART CBTC Testing & Commissioning';
+  const genDate  = new Date().toLocaleString();
+  const cancels  = exportRows.filter(r => r._type === 'cancellation').length;
+  const delays   = exportRows.filter(r => r._type === 'delay').length;
+
+  const rowsHTML = exportRows.map(r => {
+    const isCxl = r._type === 'cancellation';
+    const borderColor = isCxl ? '#b91c1c' : '#b45309';
+    const typeLabel   = isCxl ? '✕ Cancellation' : '⚠ Delay';
+    const typeStyle   = isCxl
+      ? 'background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;'
+      : 'background:#fffbeb;color:#b45309;border:1px solid #fde68a;';
+    return `
+      <tr style="border-left:4px solid ${borderColor};">
+        <td style="white-space:nowrap;font-weight:600;font-size:11px;">${r.date || '—'}</td>
+        <td><span style="padding:2px 7px;border-radius:8px;font-size:10px;font-weight:700;${typeStyle}">${typeLabel}</span></td>
+        <td style="font-size:11px;max-width:180px;">${r.title}</td>
+        <td style="font-size:11px;">${r.location || '—'}</td>
+        <td style="font-size:11px;">${r.subsystem || '—'}</td>
+        <td style="font-size:11px;max-width:200px;">${r.reason || '—'}${r.duration ? ` (${r.duration})` : ''}</td>
+        <td style="font-size:11px;font-weight:700;color:${borderColor};">${r.party || '—'}</td>
+        <td style="font-size:10px;color:#6b7280;">${r.source}<br>${r.loggedBy}${r.loggedAt ? ' · '+r.loggedAt : ''}</td>
+      </tr>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+  <title>${title}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; font-size: 12px; color: #111; padding: 24px; }
+    .report-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; border-bottom: 3px solid #e60012; padding-bottom: 12px; }
+    .report-title { font-size: 20px; font-weight: 800; color: #e60012; }
+    .report-sub { font-size: 12px; color: #6b7280; margin-top: 3px; }
+    .report-meta { font-size: 11px; color: #9ca3af; text-align: right; }
+    .kpi-row { display: flex; gap: 16px; margin-bottom: 16px; }
+    .kpi-box { padding: 10px 16px; border-radius: 6px; border: 1px solid #e5e7eb; flex: 1; }
+    .kpi-box .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: #9ca3af; }
+    .kpi-box .val { font-size: 24px; font-weight: 800; margin-top: 2px; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th { background: #1f2937; color: #fff; padding: 7px 8px; text-align: left; font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; }
+    td { padding: 7px 8px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+    tr:nth-child(even) td { background: #f9fafb; }
+    tr:nth-child(even) td:first-child { background: inherit; }
+    .filter-summary { font-size: 10px; color: #6b7280; margin-bottom: 10px; }
+    @media print { body { padding: 12px; } }
+  </style>
+  </head><body>
+  <div class="report-header">
+    <div>
+      <div class="report-title">${title}</div>
+      <div class="report-sub">${project}</div>
+    </div>
+    <div class="report-meta">Generated: ${genDate}<br>${exportRows.length} record${exportRows.length!==1?'s':''}</div>
+  </div>
+  <div class="kpi-row">
+    <div class="kpi-box"><div class="lbl">Total</div><div class="val">${exportRows.length}</div></div>
+    <div class="kpi-box" style="border-left:4px solid #b91c1c;"><div class="lbl">Cancellations</div><div class="val" style="color:#b91c1c;">${cancels}</div></div>
+    <div class="kpi-box" style="border-left:4px solid #b45309;"><div class="lbl">Delays Logged</div><div class="val" style="color:#b45309;">${delays}</div></div>
+  </div>
+  ${Object.entries(_cancelRpt).some(([,v])=>v&&v!=='all') ? `<div class="filter-summary">Filters: ${
+    [_cancelRpt.type!=='all'?'Type: '+_cancelRpt.type:'',
+     _cancelRpt.dateFrom?'From: '+_cancelRpt.dateFrom:'',
+     _cancelRpt.dateTo?'To: '+_cancelRpt.dateTo:'',
+     _cancelRpt.party?'Party: '+_cancelRpt.party:'',
+     _cancelRpt.location?'Location: '+_cancelRpt.location:'',
+     _cancelRpt.subsystem?'Subsystem: '+_cancelRpt.subsystem:''
+    ].filter(Boolean).join(' · ')
+  }</div>` : ''}
+  <table>
+    <thead><tr>
+      <th>Date</th><th>Type</th><th>Activity / Category</th><th>Location</th>
+      <th>Subsystem</th><th>Reason / Notes</th><th>Responsible Party</th><th>Source · Logged By</th>
+    </tr></thead>
+    <tbody>${rowsHTML}</tbody>
+  </table>
+  <script>window.onload=function(){window.print();};<\/script>
+  </body></html>`;
+
+  const w = window.open('', '_blank', 'width=1100,height=800');
+  if (!w) { toast('Pop-up blocked — allow pop-ups to export PDF', 'warn'); return; }
+  w.document.write(html);
+  w.document.close();
 }
 
 // ── PTO conflict detection utility (used by Batch 4 calendar) ─
