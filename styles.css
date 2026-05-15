@@ -5726,3 +5726,226 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   font-size: 13px;
   color: var(--gray-400);
 }
+
+/* ══════════════════════════════════════════════════════════════
+   RESOURCE ASSIGNMENT — Drag-and-drop panel + drop zones
+   ══════════════════════════════════════════════════════════════ */
+
+/* Assign mode banner */
+.la-assign-banner {
+  background: linear-gradient(90deg, #fff5f5 0%, #fef2f2 100%);
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #991b1b;
+  font-weight: 500;
+}
+
+/* Active state for the Assign Resources button */
+.la-assign-btn-active {
+  background: var(--hitachi-red) !important;
+  color: #fff !important;
+  border-color: var(--hitachi-red) !important;
+}
+.la-assign-btn-active:hover {
+  background: #c4000f !important;
+}
+
+/* ── Resource panel (left sidebar) ────────────────────────── */
+.la-res-panel {
+  width: 210px;
+  flex-shrink: 0;
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  max-height: 600px;
+  display: flex;
+  flex-direction: column;
+}
+
+.la-res-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 12px 4px;
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.la-res-search {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--gray-200);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  outline: none;
+  transition: border-color .15s;
+}
+.la-res-search:focus { border-color: var(--hitachi-red); }
+
+.la-res-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 4px 8px 12px;
+}
+.la-res-list::-webkit-scrollbar { width: 4px; }
+.la-res-list::-webkit-scrollbar-thumb { background: var(--gray-300); border-radius: 2px; }
+
+.la-res-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--gray-400);
+  padding: 10px 4px 4px;
+}
+
+/* ── Draggable resource card ───────────────────────────────── */
+.la-res-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--gray-200);
+  margin-bottom: 5px;
+  cursor: grab;
+  background: #fff;
+  transition: box-shadow .15s, border-color .15s, transform .12s;
+  user-select: none;
+}
+.la-res-card:hover {
+  border-color: var(--hitachi-red);
+  box-shadow: 0 2px 8px rgba(230,0,18,.12);
+}
+.la-res-card:active,
+.la-res-card-dragging {
+  cursor: grabbing;
+  opacity: .6;
+  transform: scale(.97);
+  box-shadow: 0 4px 16px rgba(0,0,0,.18);
+}
+
+.la-res-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+  letter-spacing: .03em;
+}
+
+.la-res-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--charcoal);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.la-drag-handle {
+  font-size: 14px;
+  color: var(--gray-400);
+  cursor: grab;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+/* ── Drop zone row styling ─────────────────────────────────── */
+.la-drop-label {
+  position: relative;
+  cursor: copy;
+}
+.la-drop-label::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px dashed rgba(255,255,255,.35);
+  border-radius: 3px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .15s;
+}
+.la-row-droppable.la-drop-over .la-drop-label::after {
+  opacity: 1;
+}
+.la-row-droppable.la-drop-over {
+  outline: 2px solid rgba(230,0,18,.5);
+  outline-offset: -2px;
+  background: rgba(230,0,18,.03);
+}
+
+/* ── Row label layout when assign mode ────────────────────── */
+.la-drop-label {
+  flex-direction: row !important;
+  align-items: center !important;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 52px;
+}
+
+.tlg-label-inner {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Assigned resource chips ───────────────────────────────── */
+.la-assigned-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.la-assigned-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(255,255,255,.22);
+  border: 1px solid rgba(255,255,255,.4);
+  border-radius: 20px;
+  padding: 1px 6px 1px 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  backdrop-filter: blur(2px);
+}
+
+.la-chip-remove {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,.7);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+  margin-left: 1px;
+  transition: color .12s;
+}
+.la-chip-remove:hover { color: #fff; }
+
+/* ── Drop hint ghost text ──────────────────────────────────── */
+.la-drop-hint-text {
+  font-size: 10px;
+  font-style: italic;
+  color: rgba(255,255,255,.55);
+  white-space: nowrap;
+}
+.la-row-droppable.la-drop-over .la-drop-hint-text {
+  color: rgba(255,255,255,.9);
+}

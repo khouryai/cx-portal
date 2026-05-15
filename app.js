@@ -13314,13 +13314,14 @@ async function deleteMtgTemplate(id) {
 //   Red    = cancelled (admin must add cancellation_reason)
 
 // ── Global state ─────────────────────────────────────────────
-let PLANNING_RESOURCES   = [];   // planning_resources rows
-let PLANNING_EVENTS      = [];   // planning_events rows (current/active batch + manual + pto)
-let PLANNING_ACTIVITIES  = [];   // planning_activities rows
-let PLANNING_BATCHES     = [];   // planning_import_batches rows
-let PLANNING_EVENT_RES   = [];   // planning_event_resources join rows
-let PLANNING_CONFLICTS   = [];   // planning_conflicts rows
-let PTO_REQUESTS         = [];   // pto_requests rows
+let PLANNING_RESOURCES        = [];   // planning_resources rows
+let PLANNING_EVENTS           = [];   // planning_events rows
+let PLANNING_ACTIVITIES       = [];   // planning_activities rows
+let PLANNING_BATCHES          = [];   // planning_import_batches rows
+let PLANNING_EVENT_RES        = [];   // planning_event_resources join rows
+let PLANNING_ACTIVITY_RES     = [];   // planning_activity_resources join rows (activity-level assignments)
+let PLANNING_CONFLICTS        = [];   // planning_conflicts rows
+let PTO_REQUESTS              = [];   // pto_requests rows
 
 let _lookaheadTab        = 'calendar';                 // calendar | lookahead | resources | pto
 let _adminPlanningTab    = 'upload';                   // upload | review | conflicts | resources | history
@@ -13332,10 +13333,12 @@ let _planningCalDate     = new Date();                 // anchor date for curren
 let _planningCalInstance = null;                       // legacy — no longer used (kept for cleanup safety)
 let _planningTLInstance  = null;                       // vis-timeline instance for lookahead/gantt/resources
 let _planningCalNowTimer = null;                       // setInterval handle for the "now" line
-let _laTimelineGroupBy   = 'resource';                 // resource | location | subsystem
+let _laTimelineGroupBy   = 'resource';                 // resource | location | subsystem | activity
 let _laTimelineWindow    = 14;                         // 14 / 21 / 28 days
 let _planningShowP6      = false;                      // Calendar/Timeline P6 overlay toggle
 let _conflictFilter      = 'all';                      // all | pto | double | p6 | hours | unmatched
+let _laAssignMode        = false;                      // Assign Resources drag-and-drop mode
+let _laCurrentDragRes    = null;                       // resourceId being dragged
 
 // Shift visual styles — used across calendar, timeline, badges
 const _SHIFT_VISUAL = {
@@ -13352,22 +13355,24 @@ async function loadPlanningData(force = false) {
   // Cache for 30s to avoid hammering on tab switches
   if (!force && Date.now() - _planningLoadedAt < 30_000) return;
   try {
-    const [resources, events, activities, batches, eventRes, conflicts, pto] = await Promise.all([
+    const [resources, events, activities, batches, eventRes, activityRes, conflicts, pto] = await Promise.all([
       _fetchAnon('planning_resources?select=*&order=display_name.asc'),
       _fetchAnon('planning_events?select=*&order=event_date.asc'),
       _fetchAnon('planning_activities?select=*&order=created_at.desc'),
       _fetchAnon('planning_import_batches?select=*&order=uploaded_at.desc'),
       _fetchAnon('planning_event_resources?select=*'),
+      _fetchAnon('planning_activity_resources?select=*'),
       _fetchAnon('planning_conflicts?select=*&order=created_at.desc'),
       _fetchAnon('pto_requests?select=*&order=start_date.desc'),
     ]);
-    PLANNING_RESOURCES  = resources  || [];
-    PLANNING_EVENTS     = events     || [];
-    PLANNING_ACTIVITIES = activities || [];
-    PLANNING_BATCHES    = batches    || [];
-    PLANNING_EVENT_RES  = eventRes   || [];
-    PLANNING_CONFLICTS  = conflicts  || [];
-    PTO_REQUESTS        = pto        || [];
+    PLANNING_RESOURCES    = resources    || [];
+    PLANNING_EVENTS       = events       || [];
+    PLANNING_ACTIVITIES   = activities   || [];
+    PLANNING_BATCHES      = batches      || [];
+    PLANNING_EVENT_RES    = eventRes     || [];
+    PLANNING_ACTIVITY_RES = activityRes  || [];
+    PLANNING_CONFLICTS    = conflicts    || [];
+    PTO_REQUESTS          = pto          || [];
     _planningLoadedAt   = Date.now();
     // First-time bootstrap: seed planning_resources from portal users
     if (PLANNING_RESOURCES.length === 0) await _planningBootstrapResources();
@@ -14253,10 +14258,30 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     html += `<div style="padding:48px;text-align:center;color:var(--gray-400);font-size:13px;">No activities in this window yet. Import a lookahead or adjust the date range.</div>`;
   }
   groups.forEach(g => {
-    html += `<div class="tlg-row tlg-data-row">`;
-    html += `<div class="tlg-label tlg-row-label" style="background:${g.color||'#6b7280'};">
-      <span class="tlg-label-main">${escapeHtml(g.label)}</span>
-      ${g.sublabel ? `<span class="tlg-label-sub">${escapeHtml(g.sublabel)}</span>` : ''}
+    const actId = g.activityId || '';
+    html += `<div class="tlg-row tlg-data-row${_laAssignMode && actId ? ' la-row-droppable' : ''}"${actId ? ` data-activity-id="${actId}"` : ''}>`;
+
+    // Resource chips — shown when assign mode is active
+    const assignedChips = (_laAssignMode && g.assignedResources?.length)
+      ? `<div class="la-assigned-chips">${g.assignedResources.map(r => {
+          const initials = r.initials || r.display_name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+          return `<span class="la-assigned-chip" title="${escapeHtml(r.display_name)}">
+            ${escapeHtml(initials)}
+            <button class="la-chip-remove" title="Remove ${escapeHtml(r.display_name)}"
+              onclick="event.stopPropagation();_laRemoveActivityResource('${actId}','${r.id}')">×</button>
+          </span>`;
+        }).join('')}</div>`
+      : '';
+    const dropHintHTML = (_laAssignMode && actId && !g.assignedResources?.length)
+      ? `<span class="la-drop-hint-text">drop here</span>`
+      : '';
+
+    html += `<div class="tlg-label tlg-row-label${_laAssignMode && actId ? ' la-drop-label' : ''}" style="background:${g.color||'#6b7280'};">
+      <div class="tlg-label-inner">
+        <span class="tlg-label-main">${escapeHtml(g.label)}</span>
+        ${g.sublabel ? `<span class="tlg-label-sub">${escapeHtml(g.sublabel)}</span>` : ''}
+      </div>
+      ${assignedChips}${dropHintHTML}
     </div>`;
     html += `<div class="tlg-cells">`;
     days.forEach((iso, idx) => {
@@ -14380,7 +14405,7 @@ function _laLookaheadHTML() {
     <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
       <div>
         <label style="font-size:11px;color:var(--gray-500);margin-right:4px;">Group by:</label>
-        <select class="filter-select" onchange="_laSetTimelineGroup(this.value)">
+        <select class="filter-select" onchange="_laSetTimelineGroup(this.value)" ${_laAssignMode ? 'disabled' : ''}>
           <option value="resource"  ${_laTimelineGroupBy === 'resource'  ? 'selected' : ''}>Resource</option>
           <option value="subsystem" ${_laTimelineGroupBy === 'subsystem' ? 'selected' : ''}>Subsystem</option>
           <option value="location"  ${_laTimelineGroupBy === 'location'  ? 'selected' : ''}>Location</option>
@@ -14390,22 +14415,220 @@ function _laLookaheadHTML() {
       <div>
         <label style="font-size:11px;color:var(--gray-500);margin-right:4px;">Window:</label>
         ${[['14','2 wks'],['21','3 wks'],['28','4 wks']].map(([v,l]) => `
-          <button class="admin-tab${_laTimelineWindow === parseInt(v) ? ' active' : ''}" data-tl-window="${v}" style="font-size:12px;padding:6px 14px;" onclick="_laSetTimelineWindow(${v})">${l}</button>
+          <button class="admin-tab${_laTimelineWindow === parseInt(v) ? ' active' : ''}" style="font-size:12px;padding:6px 14px;" onclick="_laSetTimelineWindow(${v})">${l}</button>
         `).join('')}
       </div>
-      <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);cursor:pointer;">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);cursor:pointer;">
         <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
         P6 baseline
       </label>
+      <button onclick="_laToggleAssignMode()" style="margin-left:auto;" class="admin-action-btn${_laAssignMode ? ' la-assign-btn-active' : ''}">
+        ${_laAssignMode ? '✓ Done Assigning' : '👤 Assign Resources'}
+      </button>
     </div>
 
-    <div class="data-card" style="padding:0;overflow:hidden;">
-      <div id="lookahead-timeline"></div>
+    ${_laAssignMode ? `
+    <div class="la-assign-banner">
+      <span>🎯 Drag a resource from the panel and drop it onto an activity row to assign them.</span>
+    </div>` : ''}
+
+    <div style="display:flex;gap:12px;align-items:flex-start;">
+      ${_laAssignMode ? _laResourcePanelHTML() : ''}
+      <div style="flex:1;min-width:0;">
+        <div class="data-card" style="padding:0;overflow:hidden;">
+          <div id="lookahead-timeline"></div>
+        </div>
+      </div>
     </div>`;
+}
+
+function _laToggleAssignMode() {
+  _laAssignMode = !_laAssignMode;
+  if (_laAssignMode) {
+    // Force activity group-by when entering assign mode
+    _laTimelineGroupBy = 'activity';
+  }
+  _renderLookaheadTabBody();
+}
+
+function _laResourcePanelHTML() {
+  const active = PLANNING_RESOURCES.filter(r => r.is_active).sort((a, b) => a.display_name.localeCompare(b.display_name));
+  const byType = {};
+  active.forEach(r => {
+    const t = r.resource_type || 'other';
+    if (!byType[t]) byType[t] = [];
+    byType[t].push(r);
+  });
+  const TYPE_LABELS = { admin: 'Admin', field_engineer: 'Field Engineers', manual: 'Team Members', other: 'Other' };
+  const colors = ['#e60012','#1e40af','#00875a','#b45309','#5b21b6','#065f46','#9a3412','#1f2937'];
+
+  let html = `<div class="la-res-panel" id="la-res-panel">
+    <div class="la-res-panel-head">
+      <div style="font-size:12px;font-weight:700;color:var(--charcoal);">Resources</div>
+      <div style="font-size:11px;color:var(--gray-400);">${active.length} active</div>
+    </div>
+    <div style="padding:8px;">
+      <input type="text" class="la-res-search" placeholder="🔍 Search…" oninput="_laFilterResPanel(this.value)">
+    </div>
+    <div class="la-res-list" id="la-res-list">`;
+
+  Object.entries(byType).forEach(([type, members]) => {
+    html += `<div class="la-res-group-label">${TYPE_LABELS[type] || type}</div>`;
+    members.forEach((r, i) => {
+      const color = colors[i % colors.length];
+      const initials = r.initials || r.display_name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+      html += `<div class="la-res-card" draggable="true"
+        data-res-id="${r.id}"
+        data-res-name="${escapeHtml(r.display_name)}"
+        ondragstart="_laStartResourceDrag('${r.id}',this)"
+        ondragend="_laEndResourceDrag(this)">
+        <div class="la-res-avatar" style="background:${color};">${escapeHtml(initials)}</div>
+        <div class="la-res-name">${escapeHtml(r.display_name)}</div>
+        <div class="la-drag-handle" title="Drag to assign">⠿</div>
+      </div>`;
+    });
+  });
+
+  html += `</div></div>`;
+  return html;
 }
 
 function _laSetTimelineGroup(g) { _laTimelineGroupBy = g; _renderLookaheadTabBody(); }
 function _laSetTimelineWindow(d) { _laTimelineWindow = d; _renderLookaheadTabBody(); }
+
+// ─── Resource panel search filter ────────────────────────────
+function _laFilterResPanel(query) {
+  const q = query.trim().toLowerCase();
+  document.querySelectorAll('#la-res-list .la-res-card').forEach(card => {
+    const name = (card.dataset.resName || '').toLowerCase();
+    card.style.display = (!q || name.includes(q)) ? '' : 'none';
+  });
+  document.querySelectorAll('#la-res-list .la-res-group-label').forEach(lbl => {
+    // Hide group label if all its sibling cards are hidden
+    let next = lbl.nextElementSibling;
+    let hasVisible = false;
+    while (next && !next.classList.contains('la-res-group-label')) {
+      if (next.style.display !== 'none') hasVisible = true;
+      next = next.nextElementSibling;
+    }
+    lbl.style.display = hasVisible ? '' : 'none';
+  });
+}
+
+// ─── HTML5 Drag-and-Drop ─────────────────────────────────────
+function _laStartResourceDrag(resourceId, el) {
+  _laCurrentDragRes = resourceId;
+  if (el) el.classList.add('la-res-card-dragging');
+}
+
+function _laEndResourceDrag(el) {
+  _laCurrentDragRes = null;
+  if (el) el.classList.remove('la-res-card-dragging');
+  // Clear any leftover highlights
+  document.querySelectorAll('.la-row-droppable').forEach(r => r.classList.remove('la-drop-over'));
+}
+
+function _laInitAssignDnD(gridEl) {
+  gridEl.addEventListener('dragover', e => {
+    const row = e.target.closest('.la-row-droppable');
+    if (!row || !_laCurrentDragRes) return;
+    e.preventDefault();
+    // Highlight only the hovered row
+    gridEl.querySelectorAll('.la-row-droppable').forEach(r => r.classList.remove('la-drop-over'));
+    row.classList.add('la-drop-over');
+  });
+
+  gridEl.addEventListener('dragleave', e => {
+    const row = e.target.closest('.la-row-droppable');
+    if (row && !row.contains(e.relatedTarget)) {
+      row.classList.remove('la-drop-over');
+    }
+  });
+
+  gridEl.addEventListener('drop', e => {
+    e.preventDefault();
+    const row = e.target.closest('.la-row-droppable');
+    if (!row) return;
+    row.classList.remove('la-drop-over');
+    const activityId = row.dataset.activityId;
+    const resourceId = _laCurrentDragRes;
+    _laCurrentDragRes = null;
+    if (activityId && resourceId) _laAssignResourceToActivity(activityId, resourceId);
+  });
+}
+
+// ─── Assign / Remove ─────────────────────────────────────────
+async function _laAssignResourceToActivity(activityId, resourceId) {
+  // Duplicate check
+  if (PLANNING_ACTIVITY_RES.some(r => r.planning_activity_id === activityId && r.resource_id === resourceId)) {
+    const res = PLANNING_RESOURCES.find(r => r.id === resourceId);
+    toast(`${res?.display_name || 'Resource'} is already assigned to this activity`, 'warn');
+    return;
+  }
+
+  const res = PLANNING_RESOURCES.find(r => r.id === resourceId);
+
+  // Optimistic update
+  const temp = { id: '_tmp_' + Date.now(), planning_activity_id: activityId, resource_id: resourceId, role: 'crew' };
+  PLANNING_ACTIVITY_RES.push(temp);
+  _laMountLookaheadTL();
+
+  try {
+    await _dbInsert('planning_activity_resources', {
+      planning_activity_id: activityId,
+      resource_id:          resourceId,
+      role:                 'crew',
+    });
+
+    // Also propagate to all existing events of this activity for conflict detection
+    const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === activityId);
+    for (const ev of evs) {
+      if (PLANNING_EVENT_RES.some(er => er.event_id === ev.id && er.resource_id === resourceId)) continue;
+      try {
+        await _dbInsert('planning_event_resources', {
+          event_id:          ev.id,
+          resource_id:       resourceId,
+          role:              'crew',
+          assignment_source: 'manual',
+        });
+      } catch (e2) {
+        if (!e2.message?.includes('duplicate') && !e2.message?.includes('23505')) throw e2;
+      }
+    }
+
+    toast(`${res?.display_name || 'Resource'} assigned ✓`, 'success');
+    await loadPlanningData(true);
+    _laMountLookaheadTL();
+  } catch (err) {
+    // Rollback optimistic update
+    const idx = PLANNING_ACTIVITY_RES.indexOf(temp);
+    if (idx > -1) PLANNING_ACTIVITY_RES.splice(idx, 1);
+    _laMountLookaheadTL();
+    toast('Assignment failed: ' + err.message, 'error');
+  }
+}
+
+async function _laRemoveActivityResource(activityId, resourceId) {
+  const record = PLANNING_ACTIVITY_RES.find(r => r.planning_activity_id === activityId && r.resource_id === resourceId);
+  if (!record) return;
+  const res = PLANNING_RESOURCES.find(r => r.id === resourceId);
+
+  // Optimistic remove
+  const idx = PLANNING_ACTIVITY_RES.indexOf(record);
+  PLANNING_ACTIVITY_RES.splice(idx, 1);
+  _laMountLookaheadTL();
+
+  try {
+    await _dbDelete('planning_activity_resources', { planning_activity_id: activityId, resource_id: resourceId });
+    toast(`${res?.display_name || 'Resource'} removed`, 'success');
+    await loadPlanningData(true);
+    _laMountLookaheadTL();
+  } catch (err) {
+    PLANNING_ACTIVITY_RES.splice(idx, 0, record); // rollback
+    _laMountLookaheadTL();
+    toast('Remove failed: ' + err.message, 'error');
+  }
+}
 
 function _laMountLookaheadTL() {
   const target = document.getElementById('lookahead-timeline');
@@ -14492,17 +14715,27 @@ function _laMountLookaheadTL() {
         const sub = a.subsystem || null;
         const c   = _planningSubsystemColor(sub);
         const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === a.id);
+        // Assigned resources for this activity
+        const assignedResources = PLANNING_ACTIVITY_RES
+          .filter(ar => ar.planning_activity_id === a.id)
+          .map(ar => PLANNING_RESOURCES.find(r => r.id === ar.resource_id))
+          .filter(Boolean);
         groups.push({
-          id: 'act-' + a.id,
-          label: (a.description || a.activity_id_text || '—').slice(0, 30),
-          sublabel: sub || '',
-          color: c.bg,
-          byDate: _laBuildByDate(evs, days),
+          id:               'act-' + a.id,
+          activityId:       a.id,
+          assignedResources,
+          label:            (a.description || a.activity_id_text || '—').slice(0, 30),
+          sublabel:         sub || '',
+          color:            c.bg,
+          byDate:           _laBuildByDate(evs, days),
         });
       });
   }
 
   _laRenderGrid(target, { groups, days, milestones });
+
+  // Wire up drag-and-drop if assign mode is active
+  if (_laAssignMode) _laInitAssignDnD(target);
 }
 
 // ── GANTT TAB ────────────────────────────────────────────────
@@ -16383,6 +16616,10 @@ function _planningOpenP6Detail(p6) {
   wrap('_planningLinkActivity');
   wrap('_planningConfirmLink');
   wrap('_planningMarkNoLink');
+  wrap('_laToggleAssignMode');
+  wrap('_laAssignResourceToActivity');
+  wrap('_laRemoveActivityResource');
+  wrap('_laFilterResPanel');
 })();
 
 function _apConflictsStub() {
