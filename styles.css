@@ -5020,13 +5020,13 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   box-shadow: 0 1px 4px rgba(0,0,0,.08);
 }
 .cal-btn-primary {
-  background: #0078D4;
+  background: #e60012;
   color: #fff;
-  border-color: #0078D4;
+  border-color: #e60012;
 }
 .cal-btn-primary:hover {
-  background: #106ebe;
-  border-color: #106ebe;
+  background: #c5000f;
+  border-color: #c5000f;
 }
 .cal-btn-icon {
   padding: 5px 10px;
@@ -5067,7 +5067,7 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
 .cal-view-btn:last-child { border-right: none; }
 .cal-view-btn:hover { background: var(--gray-100); color: var(--gray-800); }
 .cal-view-btn.active {
-  background: #0078D4;
+  background: #e60012;
   color: #fff;
 }
 
@@ -5131,8 +5131,8 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
 }
 .cal-month-cell:hover { background: var(--gray-50); }
 .cal-today {
-  background: #f0f7ff !important;
-  box-shadow: inset 0 0 0 2px #0078D4;
+  background: #fff5f5 !important;
+  box-shadow: inset 0 0 0 2px #e60012;
 }
 .cal-other-month { background: var(--gray-50); opacity: .7; }
 .cal-day-num {
@@ -5150,7 +5150,7 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: #0078D4;
+  background: #e60012;
   color: #fff !important;
   font-weight: 700;
   float: right;
@@ -5254,8 +5254,8 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   color: var(--gray-700);
   line-height: 1.2;
 }
-.cal-today-col { background: #f0f7ff; }
-.cal-today-col .cal-col-dow { color: #0078D4; }
+.cal-today-col { background: #fff5f5; }
+.cal-today-col .cal-col-dow { color: #e60012; }
 .cal-today-date {
   display: inline-flex;
   align-items: center;
@@ -5263,7 +5263,7 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: #0078D4;
+  background: #e60012;
   color: #fff !important;
   font-weight: 700;
 }
@@ -5497,8 +5497,10 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   box-sizing: border-box;
 }
 .tlg-cell:last-child { border-right: none; }
-.tlg-today-col { background: rgba(0,120,212,.05) !important; }
+.tlg-today-col { background: rgba(230,0,18,.04) !important; }
 .tlg-weekend   { background: rgba(0,0,0,.025) !important; }
+/* Bridge right border for run-start/mid cells so shift blocks visually merge */
+.tlg-run-bridge { border-right-color: transparent !important; padding-right: 0 !important; }
 
 /* ── Milestone strip ─────────────────────────────────────────── */
 .tlg-ms-row { border-bottom: none; }
@@ -5595,7 +5597,7 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: #0078D4;
+  background: #e60012;
   color: #fff !important;
   font-weight: 700;
   font-size: 11px;
@@ -5669,12 +5671,17 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   box-shadow: 0 1px 3px rgba(0,0,0,.10);
 }
 .tlg-shift-block:hover {
-  filter: brightness(.92);
-  transform: scale(1.04);
-  z-index: 1;
+  filter: brightness(.88);
+  z-index: 2;
   position: relative;
 }
-.tlg-shift-icon { font-size: 10px; line-height: 1; }
+/* ── Consecutive-run shape classes ──────────── */
+.tlg-run-solo   { border-radius: 4px; }
+.tlg-run-start  { border-radius: 4px 0 0 4px; margin-right: -1px; }
+.tlg-run-mid    { border-radius: 0; margin-right: -1px; margin-left: 0; }
+.tlg-run-end    { border-radius: 0 4px 4px 0; margin-left: 0; }
+
+.tlg-shift-icon { font-size: 13px; line-height: 1; }
 .tlg-shift-time {
   font-size: 9px;
   font-weight: 600;
@@ -5685,6 +5692,7 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   width: 100%;
   text-align: center;
 }
+.tlg-shift-cancelled { opacity: .6; text-decoration: line-through; }
 .tlg-shift-pto {
   background: #fef3c7 !important;
   color: #92400e !important;

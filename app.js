@@ -13322,7 +13322,7 @@ let PLANNING_EVENT_RES   = [];   // planning_event_resources join rows
 let PLANNING_CONFLICTS   = [];   // planning_conflicts rows
 let PTO_REQUESTS         = [];   // pto_requests rows
 
-let _lookaheadTab        = 'calendar';                 // calendar | lookahead | gantt | resources | pto
+let _lookaheadTab        = 'calendar';                 // calendar | lookahead | resources | pto
 let _adminPlanningTab    = 'upload';                   // upload | review | conflicts | resources | history
 let _planningLoadedAt    = 0;                          // cache flag
 
@@ -13420,10 +13420,11 @@ function renderLookahead() {
       Operational planning view — weekly lookahead, resource availability, PTO, and P6 overlay.
     </p>`;
 
+  // Redirect legacy 'gantt' tab to 'lookahead'
+  if (_lookaheadTab === 'gantt') _lookaheadTab = 'lookahead';
   const tabs = [
     ['calendar',  'Calendar'],
-    ['lookahead', 'Lookahead Timeline'],
-    ['gantt',     'Gantt'],
+    ['lookahead', 'Lookahead'],
     ['resources', 'Resources'],
     ['pto',       'PTO'],
   ];
@@ -13468,10 +13469,9 @@ function _renderLookaheadTabBody() {
   if (!el) return;
   _planningCleanupInstances();
   const tab = _lookaheadTab;
-  if (tab === 'calendar')  { el.innerHTML = _laCalendarHTML();      setTimeout(_laMountCalendar, 30); }
-  if (tab === 'lookahead') { el.innerHTML = _laLookaheadHTML();     setTimeout(_laMountLookaheadTL, 30); }
-  if (tab === 'gantt')     { el.innerHTML = _laGanttHTML();         setTimeout(_laMountGanttTL,    30); }
-  if (tab === 'resources') { el.innerHTML = _laResourcesBoardHTML();setTimeout(_laMountResourcesTL,30); }
+  if (tab === 'calendar')  { el.innerHTML = _laCalendarHTML();       setTimeout(_laMountCalendar,    30); }
+  if (tab === 'lookahead') { el.innerHTML = _laLookaheadHTML();      setTimeout(_laMountLookaheadTL, 30); }
+  if (tab === 'resources') { el.innerHTML = _laResourcesBoardHTML(); setTimeout(_laMountResourcesTL, 30); }
   if (tab === 'pto')       { el.innerHTML = _laPTOStub(); }
 }
 
@@ -14128,12 +14128,65 @@ function _laRenderDayView(body) {
 }
 
 // ── LOOKAHEAD TIMELINE TAB ───────────────────────────────────
-// ── Month colour palette for timeline headers ─────────────────
+// ── Month colour palette — Hitachi Rail brand tones ───────────
 const _TL_MONTH_COLORS = [
-  '#f97316','#3b82f6','#ef4444','#8b5cf6',
-  '#10b981','#f59e0b','#0ea5e9','#ec4899',
-  '#14b8a6','#84cc16','#f43f5e','#6366f1',
+  '#e60012', // Hitachi red
+  '#2a2a2a', // Hitachi charcoal
+  '#1e3a8a', // transport deep-blue
+  '#00875a', // good green
+  '#b45309', // warm amber
+  '#5b21b6', // purple
+  '#b50010', // dark red
+  '#065f46', // dark green
+  '#1e40af', // info blue
+  '#7c3aed', // violet
+  '#9a3412', // burnt orange
+  '#1f2937', // near-black slate
 ];
+
+// ── Derive shift visual from time range (fixes colour mismatches) ──
+function _tlgShiftVisual(s) {
+  if (s.isCancel) return _CANCEL_VISUAL;
+  if (s.all_day)  return _SHIFT_VISUAL.blanket_shift;
+  if (s.start_time) {
+    const h = parseInt(s.start_time.slice(0, 2), 10);
+    // 04:00 – 13:59 → day shift (yellow)   14:00 – 03:59 → night shift (blue)
+    return (h >= 4 && h < 14) ? _SHIFT_VISUAL.day_shift : _SHIFT_VISUAL.night_shift;
+  }
+  return _SHIFT_VISUAL[s.shift_type] || _SHIFT_VISUAL.custom;
+}
+
+// ── Annotate consecutive same-shift runs ─────────────────────────
+function _tlgAnnotateRuns(groups, days) {
+  groups.forEach(g => {
+    days.forEach((iso, idx) => {
+      const shifts = g.byDate[iso] || [];
+      // Only merge single-shift days (not split cells)
+      if (shifts.length !== 1) { shifts.forEach(s => { s.run = 'solo'; }); return; }
+      const s = shifts[0];
+      if (s.isCancel || s.is_p6) { s.run = 'solo'; return; }
+      const prev = idx > 0 ? (g.byDate[days[idx - 1]] || []) : [];
+      const next = idx < days.length - 1 ? (g.byDate[days[idx + 1]] || []) : [];
+      const prevSame = prev.length === 1 && !prev[0].isCancel &&
+        _tlgShiftVisual(prev[0]).bg === _tlgShiftVisual(s).bg;
+      const nextSame = next.length === 1 && !next[0].isCancel &&
+        _tlgShiftVisual(next[0]).bg === _tlgShiftVisual(s).bg;
+      s.run = prevSame && nextSame ? 'mid' : prevSame ? 'end' : nextSame ? 'start' : 'solo';
+    });
+  });
+}
+
+// ── Tippy tooltip for grid shift blocks ───────────────────────────
+function _tlgShiftTip(s, v) {
+  const ts = s.all_day ? 'All day'
+    : `${(s.start_time||'').slice(0,5)} – ${(s.end_time||'').slice(0,5)}`;
+  return (`<div class="cal-tip">
+    <div class="cal-tip-title">${escapeHtml(s.title||'(no title)')}</div>
+    <div class="cal-tip-row"><span>⏰</span> ${escapeHtml(ts)}</div>
+    <div class="cal-tip-row"><span>🔄</span> ${escapeHtml(v.label)}</div>
+    ${s.isCancel ? '<div class="cal-tip-row" style="color:#ef4444;"><span>✕</span> Cancelled</div>' : ''}
+  </div>`).replace(/"/g, '&quot;');
+}
 
 // ── Shared grid renderer (Lookahead, Gantt, Resources) ────────
 function _laRenderGrid(target, { groups, days, milestones }) {
@@ -14192,6 +14245,9 @@ function _laRenderGrid(target, { groups, days, milestones }) {
   });
   html += `</div></div>`;
 
+  // ── Annotate consecutive runs BEFORE rendering ───────────────
+  _tlgAnnotateRuns(groups, days);
+
   // ── Body rows ────────────────────────────────────────────────
   if (!groups.length) {
     html += `<div style="padding:48px;text-align:center;color:var(--gray-400);font-size:13px;">No activities in this window yet. Import a lookahead or adjust the date range.</div>`;
@@ -14203,35 +14259,42 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       ${g.sublabel ? `<span class="tlg-label-sub">${escapeHtml(g.sublabel)}</span>` : ''}
     </div>`;
     html += `<div class="tlg-cells">`;
-    days.forEach(iso => {
+    days.forEach((iso, idx) => {
       const isToday = iso === todayISO;
       const dow = dayjs(iso).day();
       const isWknd = dow === 0 || dow === 6;
-      const shifts  = g.byDate[iso] || [];
+      const shifts   = g.byDate[iso] || [];
       const ptoEntry = g.ptoByDate && g.ptoByDate[iso];
-      const inP6    = g.p6Range && g.p6Range.has(iso);
+      const inP6     = g.p6Range && g.p6Range.has(iso);
 
-      html += `<div class="tlg-cell tlg-data-cell${isToday ? ' tlg-today-col' : ''}${isWknd ? ' tlg-weekend' : ''}${inP6 && !shifts.length ? ' tlg-p6-bg' : ''}">`;
+      // Run-aware cell classes (hide right border for start/mid runs)
+      const singleShift = shifts.length === 1 && !ptoEntry;
+      const run = singleShift ? (shifts[0].run || 'solo') : 'solo';
+      let cellClass = `tlg-cell tlg-data-cell`;
+      if (isToday) cellClass += ' tlg-today-col';
+      if (isWknd)  cellClass += ' tlg-weekend';
+      if (inP6 && !shifts.length && !ptoEntry) cellClass += ' tlg-p6-bg';
+      if (run === 'start' || run === 'mid') cellClass += ' tlg-run-bridge';
+
+      html += `<div class="${cellClass}">`;
 
       if (ptoEntry) {
-        html += `<div class="tlg-shift-block tlg-shift-pto"
+        html += `<div class="tlg-shift-block tlg-shift-pto tlg-run-solo"
           onclick="(function(){const p=PTO_REQUESTS.find(x=>x.id==='${ptoEntry.id}');if(p)_planningOpenPTODetail(p);})()"
-        >🌴<span class="tlg-shift-time">PTO</span></div>`;
+          title="PTO"
+        >🌴<span class="tlg-shift-time"> PTO</span></div>`;
       } else {
         shifts.forEach(s => {
-          const v  = s.isCancel ? _CANCEL_VISUAL : (_SHIFT_VISUAL[s.shift_type] || _SHIFT_VISUAL.custom);
-          const ts = s.all_day ? 'All day' :
-            `${(s.start_time||'').slice(0,5)}${s.end_time ? '–'+s.end_time.slice(0,5) : ''}`;
-          html += `<div class="tlg-shift-block"
-            style="background:${v.bg};color:${v.text};${s.isCancel ? 'opacity:.65;text-decoration:line-through;' : ''}"
+          const v   = _tlgShiftVisual(s);
+          const tip = _tlgShiftTip(s, v);
+          const runClass = `tlg-run-${s.run || 'solo'}`;
+          html += `<div class="tlg-shift-block ${runClass}${s.isCancel ? ' tlg-shift-cancelled' : ''}"
+            style="background:${v.bg};color:${v.text};"
             onclick="_planningOpenEventDetail('${s.event_id}')"
-            title="${escapeHtml(s.title||'')}"
-          ><span class="tlg-shift-icon">${v.icon}</span><span class="tlg-shift-time">${escapeHtml(ts)}</span></div>`;
+            data-tlg-tip="${tip}"
+          >${v.icon}</div>`;
         });
-        // P6 background hint when no actual shift (faint bar)
-        if (inP6 && shifts.length === 0) {
-          html += `<div class="tlg-p6-hint">P6</div>`;
-        }
+        if (inP6 && !shifts.length) html += `<div class="tlg-p6-hint">P6</div>`;
       }
       html += `</div>`;
     });
@@ -14274,6 +14337,16 @@ function _laRenderGrid(target, { groups, days, milestones }) {
 
   html += `</div>`;  // tlg-shell
   target.innerHTML = html;
+
+  // Activate Tippy on shift blocks
+  setTimeout(() => {
+    if (!window.tippy) return;
+    tippy('[data-tlg-tip]', {
+      content(ref) { return ref.getAttribute('data-tlg-tip').replace(/&quot;/g, '"'); },
+      allowHTML: true, delay: [150, 0], placement: 'top',
+      theme: 'light-border', maxWidth: 260, interactive: false,
+    });
+  }, 60);
 }
 
 // ── Helper: build shift entries for a date map ─────────────────
@@ -14309,8 +14382,9 @@ function _laLookaheadHTML() {
         <label style="font-size:11px;color:var(--gray-500);margin-right:4px;">Group by:</label>
         <select class="filter-select" onchange="_laSetTimelineGroup(this.value)">
           <option value="resource"  ${_laTimelineGroupBy === 'resource'  ? 'selected' : ''}>Resource</option>
-          <option value="location"  ${_laTimelineGroupBy === 'location'  ? 'selected' : ''}>Location</option>
           <option value="subsystem" ${_laTimelineGroupBy === 'subsystem' ? 'selected' : ''}>Subsystem</option>
+          <option value="location"  ${_laTimelineGroupBy === 'location'  ? 'selected' : ''}>Location</option>
+          <option value="activity"  ${_laTimelineGroupBy === 'activity'  ? 'selected' : ''}>Activity</option>
         </select>
       </div>
       <div>
@@ -14398,7 +14472,7 @@ function _laMountLookaheadTL() {
       groups.push({ id: 'sub-' + sub, label: sub, color: c.bg, byDate: _laBuildByDate(subMap[sub], days) });
     });
 
-  } else { // location
+  } else if (_laTimelineGroupBy === 'location') {
     const locMap = {};
     PLANNING_EVENTS.filter(e => days.includes(e.event_date)).forEach(e => {
       const loc = e.location || 'No location';
@@ -14409,6 +14483,23 @@ function _laMountLookaheadTL() {
       const c = _planningSubsystemColor(loc === 'No location' ? null : loc);
       groups.push({ id: 'loc-' + loc, label: loc, color: c.bg, byDate: _laBuildByDate(locMap[loc], days) });
     });
+
+  } else { // activity — one row per planning activity, label = description
+    PLANNING_ACTIVITIES
+      .filter(a => PLANNING_EVENTS.some(e => e.planning_activity_id === a.id && days.includes(e.event_date)))
+      .sort((a, b) => (a.description || a.activity_id_text || '').localeCompare(b.description || b.activity_id_text || ''))
+      .forEach(a => {
+        const sub = a.subsystem || null;
+        const c   = _planningSubsystemColor(sub);
+        const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === a.id);
+        groups.push({
+          id: 'act-' + a.id,
+          label: (a.description || a.activity_id_text || '—').slice(0, 30),
+          sublabel: sub || '',
+          color: c.bg,
+          byDate: _laBuildByDate(evs, days),
+        });
+      });
   }
 
   _laRenderGrid(target, { groups, days, milestones });
