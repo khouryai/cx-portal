@@ -14395,7 +14395,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
 }
 
 // ── Helper: build shift entries for a date map ─────────────────
-function _laBuildByDate(events, days) {
+function _laBuildByDate(events, days, cellLabelFn) {
   const byDate = {};
   events.forEach(e => {
     if (!days.includes(e.event_date)) return;
@@ -14403,9 +14403,23 @@ function _laBuildByDate(events, days) {
     (byDate[e.event_date] = byDate[e.event_date] || []).push({
       event_id: e.id, shift_type: e.shift_type, start_time: e.start_time,
       end_time: e.end_time, all_day: !!e.all_day, isCancel, title: e.title || '',
+      cellLabel: cellLabelFn ? (cellLabelFn(e) || '') : '',
     });
   });
   return byDate;
+}
+
+// Returns space-joined initials for all resources on a single event
+function _planningEventResourceInitials(eventId) {
+  return PLANNING_EVENT_RES
+    .filter(er => er.event_id === eventId)
+    .map(er => {
+      const r = PLANNING_RESOURCES.find(x => x.id === er.resource_id);
+      return r?.initials ||
+        r?.display_name?.split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase() || '';
+    })
+    .filter(Boolean)
+    .join(' ');
 }
 
 // ── Helper: build PTO coverage map for a resource ──────────────
@@ -14761,7 +14775,8 @@ function _laMountLookaheadTL() {
           label: r.display_name,
           sublabel: r.initials || '',
           color: c.bg,
-          byDate: _laBuildByDate(evs, days),
+          // Resource view → show location in each cell
+          byDate: _laBuildByDate(evs, days, e => e.location || ''),
           ptoByDate: _laBuildPtoByDate(r.id, days),
         });
       });
@@ -14770,7 +14785,8 @@ function _laMountLookaheadTL() {
       days.includes(e.event_date) && !PLANNING_EVENT_RES.some(er => er.event_id === e.id)
     );
     if (unassigned.length) {
-      groups.push({ id: 'res-unassigned', label: 'Unassigned', sublabel: '', color: '#9ca3af', byDate: _laBuildByDate(unassigned, days) });
+      groups.push({ id: 'res-unassigned', label: 'Unassigned', sublabel: '', color: '#9ca3af',
+        byDate: _laBuildByDate(unassigned, days, e => e.location || '') });
     }
 
   } else if (_laTimelineGroupBy === 'subsystem') {
@@ -14782,7 +14798,9 @@ function _laMountLookaheadTL() {
     });
     Object.keys(subMap).sort().forEach(sub => {
       const c = _planningSubsystemColor(sub === 'Other' ? null : sub);
-      groups.push({ id: 'sub-' + sub, label: sub, color: c.bg, byDate: _laBuildByDate(subMap[sub], days) });
+      // Subsystem view → show location in each cell
+      groups.push({ id: 'sub-' + sub, label: sub, color: c.bg,
+        byDate: _laBuildByDate(subMap[sub], days, e => e.location || '') });
     });
 
   } else if (_laTimelineGroupBy === 'location') {
@@ -14794,7 +14812,9 @@ function _laMountLookaheadTL() {
     });
     Object.keys(locMap).sort().forEach(loc => {
       const c = _planningSubsystemColor(loc === 'No location' ? null : loc);
-      groups.push({ id: 'loc-' + loc, label: loc, color: c.bg, byDate: _laBuildByDate(locMap[loc], days) });
+      // Location view → show resource initials in each cell
+      groups.push({ id: 'loc-' + loc, label: loc, color: c.bg,
+        byDate: _laBuildByDate(locMap[loc], days, e => _planningEventResourceInitials(e.id)) });
     });
 
   } else { // activity — grouped by location, then activity description within each
@@ -14835,7 +14855,7 @@ function _laMountLookaheadTL() {
             label:            (a.description || a.activity_id_text || '—').slice(0, 32),
             sublabel:         sub || '',
             color:            c.bg,
-            byDate:           _laBuildByDate(evs, days),
+            byDate:           _laBuildByDate(evs, days, e => _planningEventResourceInitials(e.id)),
           });
         });
     });
