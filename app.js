@@ -14467,12 +14467,7 @@ function _laLookaheadHTML() {
     ${_laAssignMode ? `
     <div class="la-assign-banner" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
       <span>🟥 Drop on the <strong>activity label</strong> to assign for the full activity &nbsp;·&nbsp; 🟩 Drop on a <strong>coloured shift cell</strong> to assign to that specific day only &nbsp;·&nbsp; <strong>Click a colored cell</strong> to select it for bulk remove</span>
-      ${_laSelectedCellKeys.size > 0 ? `
-        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-          <span style="font-size:12px;font-weight:600;color:#fff;">${_laSelectedCellKeys.size} cell${_laSelectedCellKeys.size>1?'s':''} selected</span>
-          <button class="form-secondary" style="font-size:11px;padding:4px 10px;background:#fff;color:var(--hitachi-red);border-color:#fff;" onclick="_laClearCellSelection()">✕ Clear</button>
-          <button class="admin-action-btn" style="font-size:11px;padding:4px 10px;background:#fff;color:var(--hitachi-red);border-color:#fff;" onclick="_laBulkRemoveCellResources()">🗑 Remove all users</button>
-        </div>` : ''}
+      <div id="la-cell-sel-actions">${_laCellSelActionsHTML()}</div>
     </div>` : ''}
 
     <div style="display:flex;gap:12px;align-items:flex-start;">
@@ -14590,21 +14585,48 @@ function _laClearResSelection() {
 }
 
 // ─── Cell multi-select (assign mode, for bulk remove) ─────────
+
+// Renders just the action strip inside the assign banner — called in-place
+// so toggling a cell doesn't re-render the whole timeline grid.
+function _laCellSelActionsHTML() {
+  const n = _laSelectedCellKeys.size;
+  if (!n) return '';
+  return `<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+    <span style="font-size:12px;font-weight:700;color:#7f0000;">${n} cell${n>1?'s':''} selected</span>
+    <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearCellSelection()">✕ Clear</button>
+    <button class="admin-action-btn" style="font-size:11px;padding:4px 10px;" onclick="_laBulkRemoveCellResources()">🗑 Remove all users</button>
+  </div>`;
+}
+
 function _laToggleCellSelect(eventId, el) {
   if (_laSelectedCellKeys.has(eventId)) {
     _laSelectedCellKeys.delete(eventId);
     el?.classList.remove('la-cell-selected');
+    const mark = el?.querySelector('.la-cell-sel-mark');
+    if (mark) mark.remove();
   } else {
     _laSelectedCellKeys.add(eventId);
     el?.classList.add('la-cell-selected');
+    if (el && !el.querySelector('.la-cell-sel-mark')) {
+      const mark = document.createElement('span');
+      mark.className = 'la-cell-sel-mark';
+      mark.textContent = '✓';
+      el.appendChild(mark);
+    }
   }
-  // Re-render the assign banner to update the selected-count / action buttons
-  _laMountLookaheadTL();
+  // Update ONLY the banner action strip — no full grid re-render
+  const actEl = document.getElementById('la-cell-sel-actions');
+  if (actEl) actEl.innerHTML = _laCellSelActionsHTML();
 }
 
 function _laClearCellSelection() {
   _laSelectedCellKeys.clear();
-  _laMountLookaheadTL();
+  document.querySelectorAll('.la-cell-selected').forEach(el => {
+    el.classList.remove('la-cell-selected');
+    el.querySelector('.la-cell-sel-mark')?.remove();
+  });
+  const actEl = document.getElementById('la-cell-sel-actions');
+  if (actEl) actEl.innerHTML = '';
 }
 
 async function _laBulkRemoveCellResources() {
