@@ -15230,14 +15230,16 @@ function _apReviewStub() {
   const isAdmin = currentRoleUser?.role === 'admin';
   if (!isAdmin) return `<div class="docs-empty"><h3>Admin only</h3></div>`;
 
-  const unmatched = PLANNING_ACTIVITIES.filter(a => a.match_status === 'unmatched');
-  const suggested = PLANNING_ACTIVITIES.filter(a => a.match_status === 'suggested');
+  const unmatched  = PLANNING_ACTIVITIES.filter(a => a.match_status === 'unmatched');
+  const noLink     = PLANNING_ACTIVITIES.filter(a => a.match_status === 'no_link');
+  const suggested  = PLANNING_ACTIVITIES.filter(a => a.match_status === 'suggested');
   const unknownInitials = PLANNING_CONFLICTS.filter(c => c.conflict_type === 'unmatched_resource' && !c.is_acknowledged);
   const cancellationsNeedingReason = PLANNING_EVENTS.filter(e => e.status === 'cancelled' && !e.cancellation_reason);
 
   return `
     <div class="kpi-grid kpi-grid-mini" style="margin-bottom:16px;">
       <div class="kpi-card kpi-mini"><div class="kpi-label">Unmatched</div><div class="kpi-value" style="color:var(--warn);">${unmatched.length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">No Schedule Link</div><div class="kpi-value" style="color:var(--gray-500);">${noLink.length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Suggested</div><div class="kpi-value" style="color:#2563eb;">${suggested.length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Unknown Initials</div><div class="kpi-value" style="color:var(--warn);">${unknownInitials.length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Cancellations Pending Reason</div><div class="kpi-value" style="color:var(--bad);">${cancellationsNeedingReason.length}</div></div>
@@ -15292,10 +15294,10 @@ function _apReviewStub() {
     <div class="data-card" style="padding:0;overflow:hidden;">
       <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);">
         <strong style="font-size:13px;">Unmatched activities (${unmatched.length})</strong>
-        <span style="font-size:11px;color:var(--gray-500);margin-left:8px;">No portal activity could be linked automatically. Admin can link manually.</span>
+        <span style="font-size:11px;color:var(--gray-500);margin-left:8px;">No portal activity could be linked automatically. Admin can link or dismiss below.</span>
       </div>
       <table class="data-table">
-        <thead><tr><th>Activity ID</th><th>Description</th><th>Location</th><th>Resource</th><th>Action</th></tr></thead>
+        <thead><tr><th>Activity ID</th><th>Description</th><th>Location</th><th>Resource</th><th>Actions</th></tr></thead>
         <tbody>
           ${unmatched.length === 0
             ? `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--gray-400);">No unmatched activities. 🎉</td></tr>`
@@ -15305,11 +15307,34 @@ function _apReviewStub() {
                   <td>${escapeHtml(a.description || '—')}</td>
                   <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.location || '—')}</td>
                   <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.resource_raw || '—')}</td>
-                  <td><button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_planningLinkActivity('${a.id}')">🔗 Link</button></td>
+                  <td style="white-space:nowrap;">
+                    <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_planningLinkActivity('${a.id}')">🔗 Link</button>
+                    <button class="form-secondary" style="font-size:11px;padding:4px 10px;margin-left:4px;color:var(--gray-500);" onclick="_planningMarkNoLink('${a.id}')">⊘ No link</button>
+                  </td>
                 </tr>`).join('')}
         </tbody>
       </table>
-    </div>`;
+    </div>
+    ${noLink.length ? `
+    <div class="data-card" style="padding:0;overflow:hidden;margin-top:16px;">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);display:flex;align-items:center;gap:8px;">
+        <strong style="font-size:13px;color:var(--gray-500);">No schedule link (${noLink.length})</strong>
+        <span style="font-size:11px;color:var(--gray-400);">Dismissed — no direct schedule or test activity association.</span>
+      </div>
+      <table class="data-table">
+        <thead><tr><th>Activity ID</th><th>Description</th><th>Location</th><th>Resource</th><th>Action</th></tr></thead>
+        <tbody>
+          ${noLink.slice(0, 50).map(a => `
+            <tr style="opacity:0.65;">
+              <td style="font-family:monospace;font-size:11px;">${escapeHtml(a.activity_id_text || '—')}</td>
+              <td>${escapeHtml(a.description || '—')}</td>
+              <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.location || '—')}</td>
+              <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.resource_raw || '—')}</td>
+              <td><button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_planningLinkActivity('${a.id}')">🔗 Link</button></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : ''}`;
 }
 
 // ============================================================
@@ -15388,8 +15413,29 @@ function _normDesc(s) {
 // ── Matching engine ─────────────────────────────────────────
 function _matchPlanningActivity(row) {
   const idText = (row.activity_id_text || '').trim();
+  const loc    = (row.location || '').trim().toLowerCase();
 
-  // 1. Exact Activity ID against TI (test_items)
+  // Helper: get TI items for this location (or all if no location)
+  const tiInLoc = () => loc
+    ? TI.filter(t => (t.Location || '').trim().toLowerCase() === loc)
+    : TI;
+
+  // 1. PRIMARY: match description → TI.Activity field (the user's lookahead
+  //    description IS the Activity name, not the test-case code)
+  const descNorm = _normDesc(row.description);
+  if (descNorm.length > 3) {
+    const pool = tiInLoc();
+    const exactAct = pool.find(t => _normDesc(t.Activity || '') === descNorm);
+    if (exactAct) return { status: 'matched', test_item_id: exactAct.TestID, p6_activity_id: null, confidence: 1.0 };
+
+    // Also try without location restriction if no match
+    if (loc) {
+      const globalAct = TI.find(t => _normDesc(t.Activity || '') === descNorm);
+      if (globalAct) return { status: 'matched', test_item_id: globalAct.TestID, p6_activity_id: null, confidence: 0.9 };
+    }
+  }
+
+  // 2. Exact Activity ID against TI TestCaseCode / TestID
   if (idText) {
     const tiByCode = TI.find(t => String(t.TestCaseCode || '').toLowerCase() === idText.toLowerCase());
     if (tiByCode) return { status: 'matched', test_item_id: tiByCode.TestID, p6_activity_id: null, confidence: 1.0 };
@@ -15397,7 +15443,7 @@ function _matchPlanningActivity(row) {
     if (tiById) return { status: 'matched', test_item_id: tiById.TestID, p6_activity_id: null, confidence: 1.0 };
   }
 
-  // 2. P6 activity map — match by p6_id then walk through p6_activity_map → test_item via portal_test_case_code
+  // 3. P6 activity map
   if (idText && Array.isArray(P6_ACTS)) {
     const p6 = P6_ACTS.find(a => String(a.p6_id || '').toLowerCase() === idText.toLowerCase());
     if (p6) {
@@ -15410,30 +15456,18 @@ function _matchPlanningActivity(row) {
     }
   }
 
-  // 3. Normalized description match against TI.TestName
-  const target = _normDesc(row.description);
-  if (target.length > 4) {
-    const exact = TI.find(t => _normDesc(t.TestName) === target);
-    if (exact) return { status: 'matched', test_item_id: exact.TestID, p6_activity_id: null, confidence: 0.85 };
-  }
-
-  // 4. Fuse fuzzy on TI.TestName + TestCaseCode
-  if (window.Fuse && TI.length && (row.description || idText)) {
-    const fuse = new Fuse(TI, {
-      keys: [{ name: 'TestName', weight: 0.7 }, { name: 'TestCaseCode', weight: 0.3 }],
-      threshold: 0.45,
+  // 4. Fuzzy match on TI.Activity (location-filtered first)
+  if (window.Fuse && descNorm.length > 3) {
+    const pool = tiInLoc().length ? tiInLoc() : TI;
+    const fuse = new Fuse(pool, {
+      keys: [{ name: 'Activity', weight: 0.8 }, { name: 'TestName', weight: 0.2 }],
+      threshold: 0.4,
       includeScore: true,
       ignoreLocation: true,
     });
-    const q = (row.description || '') + ' ' + (row.location || '');
-    const results = fuse.search(q.trim());
-    if (results.length && results[0].score < 0.45) {
-      return {
-        status: 'suggested',
-        test_item_id: results[0].item.TestID,
-        p6_activity_id: null,
-        confidence: +(1 - results[0].score).toFixed(2),
-      };
+    const results = fuse.search(descNorm);
+    if (results.length && results[0].score < 0.4) {
+      return { status: 'suggested', test_item_id: results[0].item.TestID, p6_activity_id: null, confidence: +(1 - results[0].score).toFixed(2) };
     }
   }
 
@@ -15965,14 +15999,68 @@ async function _planningResolveInitials(conflictId, action, token) {
 async function _planningLinkActivity(activityId) {
   const a = PLANNING_ACTIVITIES.find(x => x.id === activityId);
   if (!a) return;
-  // Minimal flow: prompt for a TestCaseCode or TestID
-  const q = prompt(`Link to test item by code or ID.\n\nActivity: ${a.description || a.activity_id_text}\n\nEnter Test Case Code or Test ID:`);
-  if (!q || !q.trim()) return;
+
+  const loc  = (a.location || '').trim().toLowerCase();
+  const pool = loc ? TI.filter(t => (t.Location || '').trim().toLowerCase() === loc) : TI;
+
+  // Unique Activity names from this location's pool, sorted
+  const acts = [...new Set(
+    pool.map(t => (t.Activity || '').trim()).filter(Boolean)
+  )].sort();
+
+  modal({
+    title: '🔗 Link Activity to Schedule',
+    sub:   escapeHtml(a.description || a.activity_id_text || '—'),
+    size:  'large',
+    body: `
+      <div style="margin-bottom:10px;font-size:12px;color:var(--gray-500);">
+        Location: <strong>${escapeHtml(a.location || '—')}</strong>
+        &nbsp;·&nbsp; ${acts.length} activit${acts.length === 1 ? 'y' : 'ies'} available for this location
+      </div>
+      <div>
+        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px;">Select Activity</label>
+        <select id="plan-link-select" class="filter-select" style="width:100%;">
+          <option value="">— choose an activity —</option>
+          ${acts.map(act => `<option value="${escapeHtml(act)}">${escapeHtml(act)}</option>`).join('')}
+        </select>
+      </div>`,
+    footer: `
+      <button class="form-secondary" style="margin-right:auto;color:var(--gray-500);" onclick="_planningMarkNoLink('${activityId}')">⊘ No direct link</button>
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn" onclick="_planningConfirmLink('${activityId}')">🔗 Link</button>`,
+  });
+
+  // TomSelect the fresh <select> (auto-init doesn't run inside modal)
+  setTimeout(() => {
+    const el = document.getElementById('plan-link-select');
+    if (el && typeof TomSelect !== 'undefined' && !el.tomselect) {
+      new TomSelect(el, {
+        create: false,
+        allowEmptyOption: true,
+        maxOptions: 500,
+        placeholder: 'Search activities…',
+      });
+      el.tomselect.focus();
+    }
+  }, 80);
+}
+
+async function _planningConfirmLink(activityId) {
+  const el = document.getElementById('plan-link-select');
+  const actName = el?.tomselect ? el.tomselect.getValue() : (el?.value || '');
+  if (!actName) { toast('Please select an activity first', 'warn'); return; }
+
+  const a   = PLANNING_ACTIVITIES.find(x => x.id === activityId);
+  const loc = (a?.location || '').trim().toLowerCase();
+
+  // Find matching TI record — prefer location match, fall back to global
   const ti = TI.find(t =>
-    String(t.TestCaseCode || '').toLowerCase() === q.trim().toLowerCase() ||
-    String(t.TestID || '').toLowerCase() === q.trim().toLowerCase()
-  );
-  if (!ti) { toast(`No test item found for "${q}"`, 'error'); return; }
+    (t.Activity || '').trim() === actName &&
+    (loc ? (t.Location || '').trim().toLowerCase() === loc : true)
+  ) || TI.find(t => (t.Activity || '').trim() === actName);
+
+  if (!ti) { toast('Could not find a matching test item for this activity', 'error'); return; }
+
   try {
     await _dbUpdate('planning_activities', {
       linked_test_item_id: ti.TestID,
@@ -15980,16 +16068,34 @@ async function _planningLinkActivity(activityId) {
       match_confidence:    1.0,
       is_manual_override:  true,
     }, { id: activityId });
-    // Propagate to associated events
+    // Propagate TestID to all associated events
     const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === activityId);
     for (const ev of evs) {
       await _dbUpdate('planning_events', { test_item_id: ti.TestID }, { id: ev.id });
     }
-    toast(`Linked to ${ti.TestCaseCode || ti.TestID}`, 'success');
+    closeModal();
+    toast(`Linked to "${actName}"`, 'success');
     await loadPlanningData(true);
     renderAdminPlanning();
-  } catch(err) {
+  } catch (err) {
     toast('Link failed: ' + err.message, 'error');
+  }
+}
+
+async function _planningMarkNoLink(activityId) {
+  try {
+    await _dbUpdate('planning_activities', {
+      linked_test_item_id: null,
+      match_status:        'no_link',
+      match_confidence:    null,
+      is_manual_override:  true,
+    }, { id: activityId });
+    closeModal();
+    toast('Marked as no direct schedule link', 'success');
+    await loadPlanningData(true);
+    renderAdminPlanning();
+  } catch (err) {
+    toast('Update failed: ' + err.message, 'error');
   }
 }
 
@@ -16275,6 +16381,8 @@ function _planningOpenP6Detail(p6) {
   wrap('_planningCancelEvent');
   wrap('_planningToggleLock');
   wrap('_planningLinkActivity');
+  wrap('_planningConfirmLink');
+  wrap('_planningMarkNoLink');
 })();
 
 function _apConflictsStub() {
