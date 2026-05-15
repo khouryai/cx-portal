@@ -13523,12 +13523,12 @@ function _planningKPIStrip() {
   const upcoming = PLANNING_EVENTS.filter(e => e.event_date >= today && e.status !== 'cancelled').length;
   const cancelled= PLANNING_EVENTS.filter(e => e.event_date >= today && e.status === 'cancelled').length;
   return `
-    <div class="kpi-grid kpi-grid-mini" style="margin-bottom:16px;">
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Upcoming Events</div><div class="kpi-value">${upcoming}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Resources</div><div class="kpi-value">${PLANNING_RESOURCES.filter(r => r.is_active).length}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Out Today</div><div class="kpi-value" style="color:${outToday.length ? '#92400e' : 'var(--gray-700)'};">${outToday.length}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">PTO Pending</div><div class="kpi-value" style="color:${pending ? 'var(--warn)' : 'var(--gray-700)'};">${pending}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Cancelled (upcoming)</div><div class="kpi-value" style="color:${cancelled ? 'var(--bad)' : 'var(--gray-700)'};">${cancelled}</div></div>
+    <div class="kpi-strip-row">
+      <div class="kpi-chip"><div class="kpi-chip-label">Upcoming Events</div><div class="kpi-chip-value">${upcoming}</div></div>
+      <div class="kpi-chip"><div class="kpi-chip-label">Resources</div><div class="kpi-chip-value">${PLANNING_RESOURCES.filter(r => r.is_active).length}</div></div>
+      <div class="kpi-chip"><div class="kpi-chip-label">Out Today</div><div class="kpi-chip-value" style="color:${outToday.length ? '#92400e' : 'inherit'};">${outToday.length}</div></div>
+      <div class="kpi-chip"><div class="kpi-chip-label">PTO Pending</div><div class="kpi-chip-value" style="color:${pending ? 'var(--warn)' : 'inherit'};">${pending}</div></div>
+      <div class="kpi-chip"><div class="kpi-chip-label">Cancelled</div><div class="kpi-chip-value" style="color:${cancelled ? 'var(--bad)' : 'inherit'};">${cancelled}</div></div>
     </div>`;
 }
 
@@ -15544,7 +15544,10 @@ function renderAdminPlanning() {
           <button class="admin-tab${_adminPlanningTab === id ? ' active' : ''}" data-ap-tab="${id}" onclick="_adminPlanningSetTab('${id}')">${label}</button>
         `).join('')}
       </div>
-      <button class="form-secondary" onclick="loadPlanningData(true).then(renderAdminPlanning);">↻ Refresh</button>
+      <div style="display:flex;gap:8px;">
+        <button class="form-secondary" onclick="showPage('lookahead')">📅 Lookahead</button>
+        <button class="form-secondary" onclick="loadPlanningData(true).then(renderAdminPlanning);">↻ Refresh</button>
+      </div>
     </div>
     <div id="admin-planning-tab-body"></div>
   `;

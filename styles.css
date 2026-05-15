@@ -450,6 +450,39 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .kpi-mini { padding: 16px 20px; }
 .kpi-mini .kpi-value { font-size: 28px; }
 
+/* ── Lookahead KPI strip — compact single-row chips ─────────── */
+.kpi-strip-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.kpi-chip {
+  flex: 1;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  padding: 10px 14px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.05);
+  min-width: 0;
+}
+.kpi-chip-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--gray-500);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kpi-chip-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--charcoal);
+  line-height: 1.2;
+  margin-top: 2px;
+}
+
 .kpi-label {
   font-size: 11px;
   font-weight: 600;
