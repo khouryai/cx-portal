@@ -13327,9 +13327,11 @@ let _adminPlanningTab    = 'upload';                   // upload | review | conf
 let _planningLoadedAt    = 0;                          // cache flag
 
 // Calendar / timeline state
-let _planningCalView     = 'dayGridMonth';             // dayGridMonth | timeGridWeek | timeGridDay | listWeek
-let _planningCalInstance = null;
+let _planningCalView     = 'week';                     // day | week | month
+let _planningCalDate     = new Date();                 // anchor date for current view
+let _planningCalInstance = null;                       // legacy — no longer used (kept for cleanup safety)
 let _planningTLInstance  = null;                       // vis-timeline instance for lookahead/gantt/resources
+let _planningCalNowTimer = null;                       // setInterval handle for the "now" line
 let _laTimelineGroupBy   = 'resource';                 // resource | location | subsystem
 let _laTimelineWindow    = 14;                         // 14 / 21 / 28 days
 let _planningShowP6      = false;                      // Calendar/Timeline P6 overlay toggle
@@ -13458,6 +13460,7 @@ function _planningCleanupInstances() {
   try { if (_planningTLInstance  && typeof _planningTLInstance.destroy  === 'function') _planningTLInstance.destroy();  } catch(_) {}
   _planningCalInstance = null;
   _planningTLInstance  = null;
+  if (_planningCalNowTimer) { clearInterval(_planningCalNowTimer); _planningCalNowTimer = null; }
 }
 
 function _renderLookaheadTabBody() {
@@ -13538,7 +13541,7 @@ function _planningShiftLegend() {
     </div>`;
 }
 
-// ── CALENDAR TAB ─────────────────────────────────────────────
+// ── CALENDAR TAB (Teams-style, custom built) ─────────────────
 function _laCalendarHTML() {
   const today    = new Date().toISOString().slice(0, 10);
   const outToday = _ptoActiveOnDate(today);
@@ -13549,33 +13552,94 @@ function _laCalendarHTML() {
       <div style="margin-bottom:14px;padding:10px 14px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
         🌴 <strong>Out today:</strong> ${outToday.map(x => escapeHtml(x.resource?.display_name || '—')).join(', ')}
       </div>` : ''}
-    ${_planningShiftLegend()}
 
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
-      ${[['dayGridMonth','Month'],['timeGridWeek','Week'],['timeGridDay','Day'],['listWeek','List']].map(([v,l]) => `
-        <button class="admin-tab${_planningCalView === v ? ' active' : ''}" data-cal-view="${v}" style="font-size:12px;padding:6px 14px;" onclick="_planningSetCalView('${v}')">${l}</button>
-      `).join('')}
-      <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);cursor:pointer;">
-        <input type="checkbox" id="cal-p6-toggle" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
-        Show P6 schedule
-      </label>
-    </div>
+    ${_planningSubsystemLegend()}
 
-    <div class="data-card" style="padding:14px;">
-      <div id="planning-calendar" style="min-height:640px;"></div>
+    <div class="cal-shell">
+      <div class="cal-toolbar">
+        <div class="cal-nav">
+          <button class="cal-btn cal-btn-primary" onclick="_laNavToday()">Today</button>
+          <button class="cal-btn cal-btn-icon" onclick="_laNavPrev()" aria-label="Previous">‹</button>
+          <button class="cal-btn cal-btn-icon" onclick="_laNavNext()" aria-label="Next">›</button>
+        </div>
+        <h2 class="cal-title" id="cal-title">${escapeHtml(_laGetTitle())}</h2>
+        <div class="cal-toolbar-right">
+          <label class="cal-toggle">
+            <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
+            <span>P6 schedule</span>
+          </label>
+          <div class="cal-view-switch">
+            ${[['day','Day'],['week','Week'],['month','Month']].map(([id,label]) => `
+              <button class="cal-view-btn${_planningCalView === id ? ' active' : ''}" data-cal-view="${id}" onclick="_planningSetCalView('${id}')">${label}</button>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+      <div id="cal-body" class="cal-body cal-body-${_planningCalView}"></div>
     </div>`;
 }
 
 function _planningSetCalView(v) {
   _planningCalView = v;
-  // Move the dark active pill to the clicked view button
+  // Move the active pill instantly to the clicked view button
   document.querySelectorAll('#lookahead-tab-body [data-cal-view]').forEach(b => {
     b.classList.toggle('active', b.getAttribute('data-cal-view') === v);
   });
-  if (_planningCalInstance) {
-    try { _planningCalInstance.setOption('view', v); return; } catch(_) {}
-  }
   _renderLookaheadTabBody();
+}
+
+// ── Calendar navigation ──────────────────────────────────────
+function _laNavToday() {
+  _planningCalDate = new Date();
+  _laRefreshCalendarBody();
+}
+function _laNavPrev() {
+  const d = _planningCalDate;
+  if (_planningCalView === 'month')      _planningCalDate = dayjs(d).subtract(1, 'month').toDate();
+  else if (_planningCalView === 'week')  _planningCalDate = dayjs(d).subtract(1, 'week').toDate();
+  else                                   _planningCalDate = dayjs(d).subtract(1, 'day').toDate();
+  _laRefreshCalendarBody();
+}
+function _laNavNext() {
+  const d = _planningCalDate;
+  if (_planningCalView === 'month')      _planningCalDate = dayjs(d).add(1, 'month').toDate();
+  else if (_planningCalView === 'week')  _planningCalDate = dayjs(d).add(1, 'week').toDate();
+  else                                   _planningCalDate = dayjs(d).add(1, 'day').toDate();
+  _laRefreshCalendarBody();
+}
+
+// Lighter than re-rendering the whole tab — just refreshes the body grid + title
+function _laRefreshCalendarBody() {
+  if (_planningCalView !== 'day' && _planningCalView !== 'week' && _planningCalView !== 'month') {
+    return _renderLookaheadTabBody();
+  }
+  const titleEl = document.getElementById('cal-title');
+  if (titleEl) titleEl.textContent = _laGetTitle();
+  const body = document.getElementById('cal-body');
+  if (!body) return _renderLookaheadTabBody();
+  body.className = `cal-body cal-body-${_planningCalView}`;
+  if (_planningCalNowTimer) { clearInterval(_planningCalNowTimer); _planningCalNowTimer = null; }
+  _laMountCalendar();
+}
+
+// Returns dayjs for the Monday of the week containing `d` (Mon-first weeks).
+function _laMondayOf(d) {
+  const dj  = dayjs(d);
+  const dow = dj.day();              // 0 = Sun, 1 = Mon, ... 6 = Sat
+  const offset = dow === 0 ? -6 : 1 - dow;
+  return dj.add(offset, 'day').startOf('day');
+}
+
+function _laGetTitle() {
+  const d = dayjs(_planningCalDate);
+  if (_planningCalView === 'month') return d.format('MMMM YYYY');
+  if (_planningCalView === 'day')   return d.format('dddd, MMMM D, YYYY');
+  // week — "Mon DD – Sun DD, YYYY"
+  const monday = _laMondayOf(_planningCalDate);
+  const sunday = monday.add(6, 'day');
+  if (monday.month() === sunday.month()) return `${monday.format('MMM D')} – ${sunday.format('D, YYYY')}`;
+  if (monday.year()  === sunday.year())  return `${monday.format('MMM D')} – ${sunday.format('MMM D, YYYY')}`;
+  return `${monday.format('MMM D, YYYY')} – ${sunday.format('MMM D, YYYY')}`;
 }
 
 function _planningTogglePO6Overlay(on) {
@@ -13584,115 +13648,483 @@ function _planningTogglePO6Overlay(on) {
   if (_lookaheadTab === 'calendar') _renderLookaheadTabBody();
 }
 
-function _laMountCalendar() {
-  const target = document.getElementById('planning-calendar');
-  if (!target) return;
-  if (typeof EventCalendar === 'undefined') {
-    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">Calendar library not loaded — refresh the page.</div>`;
-    return;
-  }
+// ── Subsystem colour palette ─────────────────────────────────
+const _SUBSYSTEM_COLORS = {
+  ATS:  { bg: '#0078D4', fg: '#fff', soft: '#deecf9', border: '#005a9e' },
+  CBTC: { bg: '#107C10', fg: '#fff', soft: '#dff6dd', border: '#0b5c0b' },
+  DCS:  { bg: '#D83B01', fg: '#fff', soft: '#fed9cc', border: '#a62d00' },
+  IXL:  { bg: '#5C2D91', fg: '#fff', soft: '#e8d6f5', border: '#432070' },
+  RTU:  { bg: '#008272', fg: '#fff', soft: '#cef2eb', border: '#005f54' },
+  TWC:  { bg: '#B4009E', fg: '#fff', soft: '#f4d4ee', border: '#870076' },
+  SIG:  { bg: '#CA5010', fg: '#fff', soft: '#fde8d8', border: '#9e3d0c' },
+  COM:  { bg: '#004B50', fg: '#fff', soft: '#d0e8ea', border: '#003236' },
+};
 
+function _planningSubsystemColor(name) {
+  if (!name) return { bg: '#6b7280', fg: '#fff', soft: '#f3f4f6', border: '#4b5563' };
+  const key = name.toUpperCase().trim().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+  if (_SUBSYSTEM_COLORS[key]) return _SUBSYSTEM_COLORS[key];
+  // Derive a stable hue from the string so unknown subsystems get a consistent colour
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  const hue = hash % 360;
+  return { bg: `hsl(${hue},52%,38%)`, fg: '#fff', soft: `hsl(${hue},60%,95%)`, border: `hsl(${hue},52%,28%)` };
+}
+
+function _planningGetSubsystem(ev) {
+  // ev = raw planning_event row
+  if (ev.subsystem) return ev.subsystem;
+  const act = PLANNING_ACTIVITIES.find(a => a.id === ev.planning_activity_id);
+  return act?.subsystem || null;
+}
+
+function _planningSubsystemLegend() {
+  const seen = new Set();
+  PLANNING_EVENTS.forEach(e => {
+    const s = _planningGetSubsystem(e);
+    if (s) seen.add(s);
+  });
+  if (seen.size === 0) return '';
+  const chips = [...seen].sort().map(s => {
+    const c = _planningSubsystemColor(s);
+    return `<span class="cal-legend-chip"><span class="cal-legend-dot" style="background:${c.bg};"></span>${escapeHtml(s)}</span>`;
+  }).join('');
+  return `<div class="cal-subsystem-legend">${chips}</div>`;
+}
+
+// ── Tooltip HTML builder ─────────────────────────────────────
+function _laEventTippy(e, v, assignments) {
+  const timeStr = e.all_day
+    ? 'All day'
+    : `${(e.start_time||'00:00').slice(0,5)} – ${(e.end_time||'23:59').slice(0,5)}`;
+  const sub = _planningGetSubsystem(e);
+  const res = assignments.map(a => a.resource?.display_name || '—').join(', ') || '—';
+  return `
+    <div class="cal-tip">
+      <div class="cal-tip-title">${escapeHtml(e.title || '(no title)')}</div>
+      <div class="cal-tip-row"><span>📅</span> ${escapeHtml(e.event_date)}</div>
+      <div class="cal-tip-row"><span>⏰</span> ${escapeHtml(timeStr)}</div>
+      ${sub ? `<div class="cal-tip-row"><span>🏷</span> ${escapeHtml(sub)}</div>` : ''}
+      ${e.location ? `<div class="cal-tip-row"><span>📍</span> ${escapeHtml(e.location)}</div>` : ''}
+      <div class="cal-tip-row"><span>👤</span> ${escapeHtml(res)}</div>
+      <div class="cal-tip-row"><span>🔄</span> ${escapeHtml(v.label)}</div>
+      ${e.status === 'cancelled' && e.cancellation_reason ? `<div class="cal-tip-row" style="color:#ef4444;"><span>✕</span> ${escapeHtml(e.cancellation_reason)}</div>` : ''}
+    </div>`.replace(/"/g, '&quot;');
+}
+
+// ── _laMountCalendar: dispatches to month / week / day ───────
+function _laMountCalendar() {
+  const body = document.getElementById('cal-body');
+  if (!body) return;
+  if (_planningCalView === 'month')     _laRenderMonthView(body);
+  else if (_planningCalView === 'week') _laRenderWeekView(body);
+  else                                  _laRenderDayView(body);
+  // Activate Tippy on newly rendered event chips
+  setTimeout(() => {
+    if (window.tippy) {
+      tippy('[data-cal-tippy]', {
+        content(ref) { return ref.getAttribute('data-cal-tippy').replace(/&quot;/g, '"'); },
+        allowHTML:   true,
+        delay:       [180, 0],
+        placement:   'top',
+        theme:       'light-border',
+        maxWidth:    320,
+        interactive: false,
+      });
+    }
+  }, 60);
+}
+
+// ── MONTH VIEW ───────────────────────────────────────────────
+function _laRenderMonthView(body) {
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const anchor   = dayjs(_planningCalDate);
+  const year     = anchor.year();
+  const month    = anchor.month();             // 0-based
+  // First cell = Monday on or before the 1st of this month
+  const firstDay = dayjs(new Date(year, month, 1));
+  const startCell = _laMondayOf(firstDay.toDate());
+  // Always 6 rows × 7 cols
+  const ROWS = 6, COLS = 7;
+
+  // Gather events for this grid window
+  const windowStart = startCell.format('YYYY-MM-DD');
+  const windowEnd   = startCell.add(ROWS * COLS - 1, 'day').format('YYYY-MM-DD');
   const { events, pto } = _planningEventsForRender();
 
-  const ecEvents = [];
+  // Group events by date
+  const byDate = {};
   events.forEach(({ source: e, visual: v, isCancel }) => {
-    const dt = e.event_date;
-    const startISO = e.all_day || !e.start_time
-      ? dt
-      : `${dt}T${(e.start_time || '00:00').slice(0,5)}:00`;
-    let endISO;
-    if (e.all_day) {
-      // event-calendar end is exclusive for all-day; add a day
-      endISO = dayjs(dt).add(1, 'day').format('YYYY-MM-DD');
-    } else if (e.end_time) {
-      const overnight = (e.end_time <= e.start_time);
-      const endDate = overnight ? dayjs(dt).add(1, 'day').format('YYYY-MM-DD') : dt;
-      endISO = `${endDate}T${e.end_time.slice(0,5)}:00`;
-    } else {
-      endISO = `${dt}T${(e.start_time || '00:00').slice(0,5)}:00`;
+    if (e.event_date < windowStart || e.event_date > windowEnd) return;
+    (byDate[e.event_date] = byDate[e.event_date] || []).push({ kind: 'event', e, v, isCancel });
+  });
+  pto.forEach(({ source: p }) => {
+    // Span across all days of PTO in the window
+    let d = dayjs(p.start_date);
+    const endD = dayjs(p.end_date);
+    while (!d.isAfter(endD)) {
+      const iso = d.format('YYYY-MM-DD');
+      if (iso >= windowStart && iso <= windowEnd) {
+        (byDate[iso] = byDate[iso] || []).push({ kind: 'pto', p });
+      }
+      d = d.add(1, 'day');
     }
-    ecEvents.push({
-      id: e.id,
-      title: (isCancel ? '✕ ' : (v.icon ? v.icon + ' ' : '')) + (e.title || '(no title)'),
-      start: startISO,
-      end:   endISO,
-      allDay: !!e.all_day,
-      backgroundColor: v.bg,
-      borderColor:     isCancel ? '#7f1d1d' : v.bg,
-      textColor:       v.text,
-      extendedProps: { type: 'event', data: e, isCancel },
-    });
   });
-  pto.forEach(({ source: p, visual: v }) => {
-    ecEvents.push({
-      id: 'pto-' + p.id,
-      title: `🌴 ${_ptoResourceName(p.resource_id)}`,
-      start: p.start_date,
-      end:   dayjs(p.end_date).add(1, 'day').format('YYYY-MM-DD'),
-      allDay: true,
-      backgroundColor: v.bg,
-      borderColor:     '#fde68a',
-      textColor:       v.text,
-      display:         'background',
-      extendedProps: { type: 'pto', data: p },
-    });
-    // Also add a foreground chip so user sees who's out
-    ecEvents.push({
-      id: 'pto-fg-' + p.id,
-      title: `🌴 ${_ptoResourceName(p.resource_id)}`,
-      start: p.start_date,
-      end:   dayjs(p.end_date).add(1, 'day').format('YYYY-MM-DD'),
-      allDay: true,
-      backgroundColor: '#fde68a',
-      borderColor:     '#fbbf24',
-      textColor:       '#92400e',
-      extendedProps: { type: 'pto', data: p },
-    });
-  });
-
-  // P6 overlay events (when toggle is on)
   if (_planningShowP6 && Array.isArray(P6_ACTS)) {
     P6_ACTS.forEach(p6 => {
       if (!p6.start_date || !p6.finish_date) return;
-      ecEvents.push({
-        id: 'p6-' + p6.id,
-        title: `📋 ${p6.p6_id || ''} ${(p6.p6_name || '').slice(0,40)}`,
-        start: p6.start_date,
-        end:   dayjs(p6.finish_date).add(1, 'day').format('YYYY-MM-DD'),
-        allDay: true,
-        backgroundColor: 'rgba(99,102,241,0.15)',
-        borderColor:     '#6366f1',
-        textColor:       '#3730a3',
-        extendedProps: { type: 'p6', data: p6 },
-      });
+      let d = dayjs(p6.start_date);
+      const endD = dayjs(p6.finish_date);
+      while (!d.isAfter(endD)) {
+        const iso = d.format('YYYY-MM-DD');
+        if (iso >= windowStart && iso <= windowEnd) {
+          (byDate[iso] = byDate[iso] || []).push({ kind: 'p6', p6 });
+        }
+        d = d.add(1, 'day');
+      }
     });
   }
 
-  try {
-    _planningCalInstance = new EventCalendar(target, {
-      view: _planningCalView,
-      firstDay: 1, // Monday
-      height: 720,
-      events: ecEvents,
-      slotMinTime: '06:00:00',
-      slotMaxTime: '24:00:00',
-      headerToolbar: {
-        start: 'title',
-        center: '',
-        end: 'today prev,next',
-      },
-      eventClick(info) {
-        const props = info.event.extendedProps || {};
-        if (props.type === 'pto')        _planningOpenPTODetail(props.data);
-        else if (props.type === 'p6')    _planningOpenP6Detail(props.data);
-        else if (props.type === 'event') _planningOpenEventDetail(props.data.id);
-      },
-      eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
-    });
-  } catch(err) {
-    console.error('Calendar mount failed:', err);
-    target.innerHTML = `<div style="padding:32px;text-align:center;color:var(--bad);">Failed to mount calendar: ${escapeHtml(err.message)}</div>`;
+  const DOW_HEADERS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  let html = `<div class="cal-month-grid">`;
+  // Header row
+  DOW_HEADERS.forEach(h => {
+    html += `<div class="cal-month-day-header">${h}</div>`;
+  });
+  // Day cells
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      const cellDay = startCell.add(row * COLS + col, 'day');
+      const iso     = cellDay.format('YYYY-MM-DD');
+      const isToday = iso === todayISO;
+      const isOther = cellDay.month() !== month;
+      const items   = byDate[iso] || [];
+      const MAX_SHOW = 3;
+      const visible  = items.slice(0, MAX_SHOW);
+      const overflow = items.length - MAX_SHOW;
+
+      html += `<div class="cal-month-cell${isToday ? ' cal-today' : ''}${isOther ? ' cal-other-month' : ''}">`;
+      html += `<div class="cal-day-num${isToday ? ' cal-today-num' : ''}">${cellDay.date()}</div>`;
+      html += `<div class="cal-events-stack">`;
+      visible.forEach(item => {
+        if (item.kind === 'event') {
+          const { e, v, isCancel } = item;
+          const sub   = _planningGetSubsystem(e);
+          const sc    = sub ? _planningSubsystemColor(sub) : null;
+          const bg    = sc ? sc.bg  : v.bg;
+          const fg    = sc ? sc.fg  : v.text;
+          const asgns = _planningResourceAssignmentsForEvent(e.id);
+          const tip   = _laEventTippy(e, v, asgns);
+          html += `<div class="cal-event${isCancel ? ' cal-event-cancelled' : ''}"
+            style="background:${bg};color:${fg};border-left:3px solid ${sc ? sc.border : (isCancel ? '#7f1d1d' : bg)};"
+            data-cal-tippy="${tip}"
+            onclick="_planningOpenEventDetail('${e.id}')"
+          >${v.icon ? `<span class="cal-event-icon">${v.icon}</span>` : ''}<span class="cal-event-label">${escapeHtml((e.title||'').slice(0,28))}</span></div>`;
+        } else if (item.kind === 'pto') {
+          html += `<div class="cal-event cal-event-pto"
+            onclick="_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))"
+          >🌴 <span class="cal-event-label">${escapeHtml(_ptoResourceName(item.p.resource_id))}</span></div>`;
+        } else if (item.kind === 'p6') {
+          html += `<div class="cal-event cal-event-p6"
+            onclick="_planningOpenP6Detail(P6_ACTS.find(x=>x.id==='${item.p6.id}'))"
+          >📋 <span class="cal-event-label">${escapeHtml((item.p6.p6_id||'') + ' ' + (item.p6.p6_name||'').slice(0,20))}</span></div>`;
+        }
+      });
+      if (overflow > 0) {
+        html += `<div class="cal-event cal-event-more">+${overflow} more</div>`;
+      }
+      html += `</div></div>`;
+    }
   }
+  html += `</div>`;
+  body.innerHTML = html;
+}
+
+// ── WEEK VIEW ────────────────────────────────────────────────
+function _laRenderWeekView(body) {
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const monday   = _laMondayOf(_planningCalDate);
+  const days     = Array.from({length:7}, (_, i) => monday.add(i, 'day'));
+  const isoList  = days.map(d => d.format('YYYY-MM-DD'));
+
+  const { events, pto } = _planningEventsForRender();
+
+  // Separate all-day vs timed events
+  const allDayByDate   = {};
+  const timedByDate    = {};
+  isoList.forEach(iso => { allDayByDate[iso] = []; timedByDate[iso] = []; });
+
+  events.forEach(({ source: e, visual: v, isCancel }) => {
+    if (!isoList.includes(e.event_date)) return;
+    if (e.all_day || !e.start_time) {
+      allDayByDate[e.event_date].push({ kind: 'event', e, v, isCancel });
+    } else {
+      timedByDate[e.event_date].push({ kind: 'event', e, v, isCancel });
+    }
+  });
+  pto.forEach(({ source: p }) => {
+    let d = dayjs(p.start_date);
+    const endD = dayjs(p.end_date);
+    while (!d.isAfter(endD)) {
+      const iso = d.format('YYYY-MM-DD');
+      if (allDayByDate[iso]) allDayByDate[iso].push({ kind: 'pto', p });
+      d = d.add(1, 'day');
+    }
+  });
+
+  // ── Build HTML ──
+  const HOUR_START = 6, HOUR_END = 24;
+  const TOTAL_MINS = (HOUR_END - HOUR_START) * 60;
+  const PX_PER_MIN = 1.5;           // 90px per hour
+  const GRID_H     = TOTAL_MINS * PX_PER_MIN;
+
+  // Column headers
+  let html = `<div class="cal-week-wrap">`;
+  html += `<div class="cal-week-header">`;
+  html += `<div class="cal-time-gutter"></div>`;
+  days.forEach((d, i) => {
+    const iso = isoList[i];
+    const isToday = iso === todayISO;
+    html += `<div class="cal-col-header${isToday ? ' cal-today-col' : ''}">
+      <div class="cal-col-dow">${d.format('ddd')}</div>
+      <div class="cal-col-date${isToday ? ' cal-today-date' : ''}">${d.date()}</div>
+    </div>`;
+  });
+  html += `</div>`;
+
+  // All-day strip
+  const hasAllDay = isoList.some(iso => allDayByDate[iso].length > 0);
+  if (hasAllDay) {
+    html += `<div class="cal-allday-row">`;
+    html += `<div class="cal-time-gutter cal-time-gutter-label">All day</div>`;
+    days.forEach((_, i) => {
+      const iso = isoList[i];
+      html += `<div class="cal-allday-cell">`;
+      allDayByDate[iso].forEach(item => {
+        if (item.kind === 'event') {
+          const { e, v, isCancel } = item;
+          const sub = _planningGetSubsystem(e);
+          const sc  = sub ? _planningSubsystemColor(sub) : null;
+          const bg  = sc ? sc.bg : v.bg;
+          const fg  = sc ? sc.fg : v.text;
+          const asgns = _planningResourceAssignmentsForEvent(e.id);
+          const tip = _laEventTippy(e, v, asgns);
+          html += `<div class="cal-allday-event" style="background:${bg};color:${fg};"
+            data-cal-tippy="${tip}" onclick="_planningOpenEventDetail('${e.id}')"
+          >${v.icon||''} ${escapeHtml((e.title||'').slice(0,22))}</div>`;
+        } else if (item.kind === 'pto') {
+          html += `<div class="cal-allday-event cal-event-pto"
+            onclick="_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))"
+          >🌴 ${escapeHtml(_ptoResourceName(item.p.resource_id))}</div>`;
+        }
+      });
+      html += `</div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Time grid — outer div scrolls, inner div is the positioning context
+  html += `<div class="cal-time-grid" id="cal-time-grid">`;
+  html += `<div style="position:relative;height:${GRID_H}px;">`;
+  // Hour lines
+  for (let h = HOUR_START; h <= HOUR_END; h++) {
+    const top = (h - HOUR_START) * 60 * PX_PER_MIN;
+    html += `<div class="cal-hour-line" style="top:${top}px;">
+      <span class="cal-hour-label">${h < 24 ? String(h).padStart(2,'0')+':00' : ''}</span>
+    </div>`;
+  }
+  // Day column backgrounds + events
+  days.forEach((_, i) => {
+    const iso     = isoList[i];
+    const isToday = iso === todayISO;
+    const colLeft = `calc(${(i/7)*100}% + 52px)`;  // 52px = gutter width
+    const colW    = `calc(${(1/7)*100}% - 2px)`;
+    html += `<div class="cal-day-col-bg${isToday ? ' cal-today-bg' : ''}" style="left:${colLeft};width:${colW};height:${GRID_H}px;"></div>`;
+    timedByDate[iso].forEach(item => {
+      if (item.kind !== 'event') return;
+      const { e, v, isCancel } = item;
+      const [sh,sm] = (e.start_time||'06:00').split(':').map(Number);
+      const [eh,em] = (e.end_time  ||'07:00').split(':').map(Number);
+      const startMin = Math.max(0, (sh * 60 + (sm||0)) - HOUR_START * 60);
+      let   endMin   = (eh * 60 + (em||0)) - HOUR_START * 60;
+      if (endMin <= startMin) endMin = startMin + 60;  // overnight or same-time → 1h block
+      endMin = Math.min(endMin, TOTAL_MINS);
+      const top    = startMin * PX_PER_MIN;
+      const height = Math.max((endMin - startMin) * PX_PER_MIN, 22);
+      const sub    = _planningGetSubsystem(e);
+      const sc     = sub ? _planningSubsystemColor(sub) : null;
+      const bg     = sc ? sc.soft : (isCancel ? '#fecaca' : v.bg);
+      const fg     = sc ? sc.border : v.text;
+      const borderL = sc ? sc.bg : (isCancel ? '#7f1d1d' : v.bg);
+      const asgns  = _planningResourceAssignmentsForEvent(e.id);
+      const tip    = _laEventTippy(e, v, asgns);
+      html += `<div class="cal-time-event${isCancel ? ' cal-time-event-cancelled' : ''}"
+        style="left:${colLeft};width:${colW};top:${top}px;height:${height}px;background:${bg};color:${fg};border-left:3px solid ${borderL};"
+        data-cal-tippy="${tip}"
+        onclick="_planningOpenEventDetail('${e.id}')"
+      >
+        <div class="cal-time-event-title">${escapeHtml(e.title || '(no title)')}</div>
+        <div class="cal-time-event-meta">${(e.start_time||'').slice(0,5)}${e.end_time ? ' – '+e.end_time.slice(0,5) : ''}</div>
+      </div>`;
+    });
+  });
+  // Now-line (only if today is visible)
+  if (isoList.includes(todayISO)) {
+    const now    = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes() - HOUR_START * 60;
+    if (nowMin >= 0 && nowMin <= TOTAL_MINS) {
+      const top    = nowMin * PX_PER_MIN;
+      const colIdx = isoList.indexOf(todayISO);
+      const left   = `calc(${(colIdx/7)*100}% + 52px)`;
+      const width  = `calc(${(1/7)*100}% - 2px)`;
+      html += `<div class="cal-now-line" style="top:${top}px;left:${left};width:${width};"></div>`;
+      html += `<div class="cal-now-tick" style="top:${top}px;"></div>`;
+    }
+  }
+  html += `</div></div></div>`;  // close inner, time-grid, week-wrap
+  body.innerHTML = html;
+
+  // Scroll to now (or 08:00 fallback) after render
+  requestAnimationFrame(() => {
+    const grid = document.getElementById('cal-time-grid');
+    if (!grid) return;
+    const now     = new Date();
+    const nowMin  = now.getHours() * 60 + now.getMinutes() - HOUR_START * 60;
+    const scrollTo= Math.max(0, (nowMin > 0 ? nowMin : (8-HOUR_START)*60) - 60) * PX_PER_MIN;
+    grid.scrollTop = scrollTo;
+  });
+
+  // Live now-line timer
+  _planningCalNowTimer = setInterval(() => {
+    const nowLine = body.querySelector('.cal-now-line');
+    const nowTick = body.querySelector('.cal-now-tick');
+    if (!nowLine) return;
+    const nowMin = new Date().getHours()*60 + new Date().getMinutes() - HOUR_START*60;
+    const top    = Math.max(0, nowMin) * PX_PER_MIN;
+    nowLine.style.top = top + 'px';
+    if (nowTick) nowTick.style.top = top + 'px';
+  }, 30_000);
+}
+
+// ── DAY VIEW ─────────────────────────────────────────────────
+function _laRenderDayView(body) {
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const iso      = dayjs(_planningCalDate).format('YYYY-MM-DD');
+  const isToday  = iso === todayISO;
+
+  const { events, pto } = _planningEventsForRender();
+  const allDay  = [];
+  const timed   = [];
+
+  events.forEach(({ source: e, visual: v, isCancel }) => {
+    if (e.event_date !== iso) return;
+    if (e.all_day || !e.start_time) allDay.push({ e, v, isCancel });
+    else                             timed.push({ e, v, isCancel });
+  });
+  pto.forEach(({ source: p }) => {
+    if (iso >= p.start_date && iso <= p.end_date) allDay.push({ kind: 'pto', p });
+  });
+
+  const HOUR_START = 6, HOUR_END = 24;
+  const TOTAL_MINS = (HOUR_END - HOUR_START) * 60;
+  const PX_PER_MIN = 2;
+  const GRID_H     = TOTAL_MINS * PX_PER_MIN;
+
+  let html = `<div class="cal-day-wrap">`;
+
+  // All-day strip
+  if (allDay.length > 0) {
+    html += `<div class="cal-day-allday">`;
+    allDay.forEach(item => {
+      if (item.kind === 'pto') {
+        html += `<div class="cal-allday-event cal-event-pto"
+          onclick="_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))"
+        >🌴 ${escapeHtml(_ptoResourceName(item.p.resource_id))}</div>`;
+        return;
+      }
+      const { e, v, isCancel } = item;
+      const sub  = _planningGetSubsystem(e);
+      const sc   = sub ? _planningSubsystemColor(sub) : null;
+      const bg   = sc ? sc.bg : v.bg;
+      const fg   = sc ? sc.fg : v.text;
+      const asgns = _planningResourceAssignmentsForEvent(e.id);
+      const tip  = _laEventTippy(e, v, asgns);
+      html += `<div class="cal-allday-event" style="background:${bg};color:${fg};"
+        data-cal-tippy="${tip}" onclick="_planningOpenEventDetail('${e.id}')"
+      >${v.icon||''} ${escapeHtml(e.title||'(no title)')}</div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Time column — outer scrolls, inner positions
+  html += `<div class="cal-time-grid cal-time-grid-day" id="cal-time-grid">`;
+  html += `<div style="position:relative;height:${GRID_H}px;">`;
+  for (let h = HOUR_START; h <= HOUR_END; h++) {
+    const top = (h - HOUR_START) * 60 * PX_PER_MIN;
+    html += `<div class="cal-hour-line" style="top:${top}px;">
+      <span class="cal-hour-label">${h < 24 ? String(h).padStart(2,'0')+':00' : ''}</span>
+    </div>`;
+  }
+  html += `<div class="cal-day-col-bg${isToday ? ' cal-today-bg' : ''}" style="left:52px;right:0;height:${GRID_H}px;position:absolute;"></div>`;
+
+  timed.forEach(({ e, v, isCancel }) => {
+    const [sh,sm] = (e.start_time||'06:00').split(':').map(Number);
+    const [eh,em] = (e.end_time  ||'07:00').split(':').map(Number);
+    const startMin = Math.max(0, sh*60+(sm||0) - HOUR_START*60);
+    let   endMin   = eh*60+(em||0) - HOUR_START*60;
+    if (endMin <= startMin) endMin = startMin + 60;
+    endMin = Math.min(endMin, TOTAL_MINS);
+    const top    = startMin * PX_PER_MIN;
+    const height = Math.max((endMin - startMin) * PX_PER_MIN, 28);
+    const sub    = _planningGetSubsystem(e);
+    const sc     = sub ? _planningSubsystemColor(sub) : null;
+    const bg     = sc ? sc.soft : (isCancel ? '#fecaca' : v.bg);
+    const fg     = sc ? sc.border : v.text;
+    const borderL = sc ? sc.bg : (isCancel ? '#7f1d1d' : v.bg);
+    const asgns  = _planningResourceAssignmentsForEvent(e.id);
+    const tip    = _laEventTippy(e, v, asgns);
+    html += `<div class="cal-time-event cal-time-event-day${isCancel ? ' cal-time-event-cancelled' : ''}"
+      style="left:56px;right:12px;top:${top}px;height:${height}px;background:${bg};color:${fg};border-left:4px solid ${borderL};"
+      data-cal-tippy="${tip}"
+      onclick="_planningOpenEventDetail('${e.id}')"
+    >
+      <div class="cal-time-event-title">${escapeHtml(e.title || '(no title)')}</div>
+      <div class="cal-time-event-meta">${(e.start_time||'').slice(0,5)}${e.end_time ? ' – '+e.end_time.slice(0,5) : ''}${e.location ? ' · '+escapeHtml(e.location) : ''}</div>
+    </div>`;
+  });
+
+  // Now-line
+  if (isToday) {
+    const now    = new Date();
+    const nowMin = now.getHours()*60 + now.getMinutes() - HOUR_START*60;
+    if (nowMin >= 0 && nowMin <= TOTAL_MINS) {
+      const top = nowMin * PX_PER_MIN;
+      html += `<div class="cal-now-line" style="top:${top}px;left:52px;right:0;"></div>`;
+      html += `<div class="cal-now-tick" style="top:${top}px;"></div>`;
+    }
+  }
+  html += `</div></div></div>`;  // inner, time-grid, day-wrap
+  body.innerHTML = html;
+
+  // Scroll to working hours
+  requestAnimationFrame(() => {
+    const grid = document.getElementById('cal-time-grid');
+    if (!grid) return;
+    const now     = new Date();
+    const nowMin  = now.getHours()*60 + now.getMinutes() - HOUR_START*60;
+    const scrollTo= Math.max(0, (nowMin > 0 ? nowMin : (8-HOUR_START)*60) - 60) * PX_PER_MIN;
+    grid.scrollTop = scrollTo;
+  });
+
+  _planningCalNowTimer = setInterval(() => {
+    const nl = body.querySelector('.cal-now-line');
+    const nt = body.querySelector('.cal-now-tick');
+    if (!nl) return;
+    const nowMin = new Date().getHours()*60 + new Date().getMinutes() - HOUR_START*60;
+    const top    = Math.max(0, nowMin) * PX_PER_MIN;
+    nl.style.top = top + 'px';
+    if (nt) nt.style.top = top + 'px';
+  }, 30_000);
 }
 
 // ── LOOKAHEAD TIMELINE TAB ───────────────────────────────────
