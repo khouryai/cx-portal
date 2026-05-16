@@ -14332,10 +14332,12 @@ function _laRenderGrid(target, { groups, days, milestones }) {
           html += `<div class="tlg-shift-block ${runClass}${s.isCancel ? ' tlg-shift-cancelled' : ''}${isCellSel ? ' la-cell-selected' : ''}${clipClass}${cutClass}"
             style="background:${v.bg};color:${v.text};"
             data-cell-event-id="${s.event_id}"
+            data-activity-id="${actId||''}"
+            data-event-date="${iso}"
             onclick="_laCellClick(event,'${s.event_id}','${actId||''}','${iso}',this)"
             oncontextmenu="event.preventDefault();_laCellContextMenu(event,'${s.event_id}','${actId||''}','${iso}',this);return false;"
             data-tlg-tip="${tip}"
-          >${s.cellLabel ? `<span class="tlg-cell-location">${escapeHtml(s.cellLabel)}</span>` : ''}${isCellSel ? `<span class="la-cell-sel-mark">✓</span>` : ''}</div>`;
+          >${s.cellLabel ? `<span class="tlg-cell-location">${escapeHtml(s.cellLabel)}</span>` : ''}${isCellSel ? `<span class="la-cell-sel-mark">✓</span>` : ''}<span class="tlg-fill-handle" onmousedown="_laFillStart(event,'${s.event_id}','${actId||''}','${iso}',this.parentElement)" title="Drag to fill across days"></span></div>`;
         });
         if (inP6 && !shifts.length) html += `<div class="tlg-p6-hint">P6</div>`;
       }
@@ -14454,7 +14456,10 @@ function _laLookaheadHTML() {
         <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
         P6 baseline
       </label>
-      <button onclick="_laToggleAssignMode()" style="margin-left:auto;" class="admin-action-btn${_laAssignMode ? ' la-assign-btn-active' : ''}">
+      <button onclick="_laOpenNewActivityModal()" style="margin-left:auto;" class="admin-action-btn" title="Add a new activity row to the lookahead">
+        + Add Activity
+      </button>
+      <button onclick="_laToggleAssignMode()" class="admin-action-btn${_laAssignMode ? ' la-assign-btn-active' : ''}">
         ${_laAssignMode ? '✓ Done Assigning' : '👤 Assign Resources'}
       </button>
     </div>
@@ -14467,13 +14472,14 @@ function _laLookaheadHTML() {
     <!-- Excel-style edit tips bar (always visible) -->
     <div class="la-edit-tips-bar" style="display:flex;align-items:center;gap:14px;padding:6px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#475569;margin:8px 0;flex-wrap:wrap;">
       <strong style="color:#1e40af;">📋 Excel-style editing:</strong>
-      <span><kbd>Ctrl</kbd>+click cells to select</span>
+      <span><kbd>Ctrl</kbd>+click select</span>
       <span><kbd>Ctrl</kbd>+<kbd>C</kbd> copy</span>
       <span><kbd>Ctrl</kbd>+<kbd>X</kbd> cut</span>
       <span><kbd>Ctrl</kbd>+<kbd>V</kbd> paste</span>
       <span><kbd>Del</kbd> delete</span>
       <span><kbd>Esc</kbd> clear</span>
-      <span style="margin-left:auto;color:#64748b;">Right-click any cell for menu</span>
+      <span style="color:#0891b2;">↔ drag cell handle to fill days</span>
+      <span style="margin-left:auto;color:#64748b;">Right-click for menu</span>
     </div>
 
     <!-- Floating action banner — populated when cells are selected or clipboard has content -->
@@ -14666,9 +14672,9 @@ function _laClearCellSelection() {
 }
 
 // ─── Cell click router (single entry point for all click types) ───
-// Plain click = open detail (or toggle in assign mode)
-// Ctrl/Cmd+click = toggle multi-select
-// Shift+click = range-select (not implemented yet)
+// Plain click  = open detail (or toggle in assign mode, or set paste target if clipboard active)
+// Ctrl+click   = toggle multi-select
+// Shift+click  = range-select (not implemented yet)
 function _laCellClick(ev, eventId, actId, iso, el) {
   if (ev.ctrlKey || ev.metaKey) {
     ev.preventDefault();
@@ -14678,6 +14684,13 @@ function _laCellClick(ev, eventId, actId, iso, el) {
   }
   if (_laAssignMode) {
     _laToggleCellSelect(eventId, el);
+    return;
+  }
+  // Clipboard active → clicking ANY cell (including colored) sets the paste target.
+  // To still open details with clipboard active: right-click → Open details, or press Esc first.
+  if (_laClipboard && actId) {
+    ev.stopPropagation();
+    _laSetPasteTarget(actId, iso, el);
     return;
   }
   _planningOpenEventDetail(eventId);
@@ -14995,6 +15008,295 @@ function _laKeyboardHandler(ev) {
 }
 // Attach the listener once on script load (gated to lookahead tab inside the handler)
 document.addEventListener('keydown', _laKeyboardHandler);
+
+// ─── Drag-to-fill (Excel fill-handle) ──────────────────────────
+// Grab the small handle on the right edge of a colored cell, drag horizontally,
+// and on release the source event is duplicated onto every empty cell in range.
+let _laFillState = null;   // { srcEventId, srcActId, srcDate, currentTargets: [{actId,date,el}] }
+
+function _laFillStart(ev, eventId, actId, iso, sourceCellEl) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  if (!actId) return;
+  _laFillState = {
+    srcEventId: eventId,
+    srcActId: actId,
+    srcDate: iso,
+    sourceCellEl,
+    currentTargets: [],
+  };
+  document.body.classList.add('la-fill-active');
+  sourceCellEl?.classList.add('la-fill-source');
+  document.addEventListener('mousemove', _laFillMove);
+  document.addEventListener('mouseup', _laFillEnd);
+}
+
+function _laFillMove(ev) {
+  if (!_laFillState) return;
+  // Use elementFromPoint to find the cell under cursor
+  const target = document.elementFromPoint(ev.clientX, ev.clientY);
+  if (!target) return;
+  // Walk up to the tlg-data-cell (or shift-block which lives inside)
+  const cellEl = target.closest('.tlg-data-cell');
+  if (!cellEl) return;
+  const actId = cellEl.dataset.activityId;
+  const date = cellEl.dataset.eventDate;
+  if (!actId || !date) return;
+  // Only allow filling within the source row (same activity)
+  if (actId !== _laFillState.srcActId) return;
+
+  // Compute the range from source to current target (inclusive, by date)
+  const start = _laFillState.srcDate < date ? _laFillState.srcDate : date;
+  const end   = _laFillState.srcDate < date ? date : _laFillState.srcDate;
+
+  // Clear old highlights
+  _laFillState.currentTargets.forEach(t => t.el?.classList.remove('la-fill-target'));
+  _laFillState.currentTargets = [];
+
+  // Find every tlg-data-cell in this row whose date falls in [start, end]
+  document.querySelectorAll(`.tlg-data-cell[data-activity-id="${_laFillState.srcActId}"]`).forEach(c => {
+    const d = c.dataset.eventDate;
+    if (d >= start && d <= end && d !== _laFillState.srcDate) {
+      c.classList.add('la-fill-target');
+      _laFillState.currentTargets.push({ actId: _laFillState.srcActId, date: d, el: c });
+    }
+  });
+
+  // Update the preview count badge on the source cell
+  const badge = _laFillState.sourceCellEl?.querySelector('.tlg-fill-count');
+  const n = _laFillState.currentTargets.length;
+  if (badge) badge.textContent = n > 0 ? `+${n}` : '';
+  else if (n > 0 && _laFillState.sourceCellEl) {
+    const b = document.createElement('span');
+    b.className = 'tlg-fill-count';
+    b.textContent = `+${n}`;
+    _laFillState.sourceCellEl.appendChild(b);
+  }
+}
+
+async function _laFillEnd(ev) {
+  document.removeEventListener('mousemove', _laFillMove);
+  document.removeEventListener('mouseup', _laFillEnd);
+  document.body.classList.remove('la-fill-active');
+  if (!_laFillState) return;
+
+  const { srcEventId, currentTargets, sourceCellEl } = _laFillState;
+  sourceCellEl?.classList.remove('la-fill-source');
+  sourceCellEl?.querySelector('.tlg-fill-count')?.remove();
+  currentTargets.forEach(t => t.el?.classList.remove('la-fill-target'));
+
+  if (currentTargets.length === 0) { _laFillState = null; return; }
+
+  const src = PLANNING_EVENTS.find(e => e.id === srcEventId);
+  if (!src) { _laFillState = null; toast('Source event not found', 'error'); return; }
+
+  // Detect any locked cells in the range — those are skipped silently
+  // Detect collisions (existing events on target dates) — confirm once
+  const collisions = [];
+  const lockedSkips = [];
+  const ptoConflicts = [];
+  const srcResources = PLANNING_EVENT_RES.filter(er => er.event_id === srcEventId);
+
+  currentTargets.forEach(t => {
+    const existing = PLANNING_EVENTS.find(e =>
+      e.planning_activity_id === t.actId &&
+      e.event_date === t.date &&
+      e.status !== 'cancelled'
+    );
+    if (existing) {
+      if (existing.is_locked) lockedSkips.push(t);
+      else collisions.push({ target: t, existing });
+    }
+    srcResources.forEach(er => {
+      const onPTO = PTO_REQUESTS.some(p =>
+        p.status === 'approved' &&
+        p.resource_id === er.resource_id &&
+        t.date >= p.start_date && t.date <= p.end_date
+      );
+      if (onPTO) {
+        const r = PLANNING_RESOURCES.find(x => x.id === er.resource_id);
+        ptoConflicts.push({ name: r?.display_name || '?', date: t.date });
+      }
+    });
+  });
+
+  let collisionAction = 'overwrite';
+  if (collisions.length > 0 || lockedSkips.length > 0 || ptoConflicts.length > 0) {
+    const decision = await _laFillConfirmModal({
+      total: currentTargets.length, collisions, lockedSkips, ptoConflicts,
+    });
+    if (!decision) { _laFillState = null; return; }
+    collisionAction = decision.collisionAction;
+  }
+
+  let inserted = 0, overwritten = 0, skipped = 0;
+  for (const t of currentTargets) {
+    try {
+      const existing = PLANNING_EVENTS.find(e =>
+        e.planning_activity_id === t.actId &&
+        e.event_date === t.date &&
+        e.status !== 'cancelled'
+      );
+      if (existing && existing.is_locked) { skipped++; continue; }
+      if (existing) {
+        if (collisionAction === 'skip') { skipped++; continue; }
+        await _dbDelete('planning_event_resources', { event_id: existing.id });
+        await _dbDelete('planning_events', { id: existing.id });
+        overwritten++;
+      }
+      const payload = {
+        planning_activity_id: t.actId,
+        title: src.title,
+        event_date: t.date,
+        start_time: src.start_time,
+        end_time: src.end_time,
+        all_day: src.all_day,
+        location: src.location,
+        work_hours_raw: src.work_hours_raw,
+        shift_type: src.shift_type,
+        cell_color_hex: src.cell_color_hex,
+        source: 'manual',
+        status: 'scheduled',
+        is_locked: false,
+        notes: src.notes,
+        created_by: currentProfile?.id || null,
+        updated_by: currentProfile?.id || null,
+      };
+      const newRows = await _dbInsert('planning_events', [payload]);
+      inserted++;
+      const newId = newRows?.[0]?.id;
+      if (newId && srcResources.length > 0) {
+        await _dbInsert('planning_event_resources', srcResources.map(er => ({
+          event_id: newId, resource_id: er.resource_id, assigned_by: currentProfile?.id || null,
+        })));
+      }
+    } catch (err) {
+      console.error('[fill] target failed:', err);
+    }
+  }
+
+  toast(`✓ Filled: ${inserted} created${overwritten?`, ${overwritten} overwritten`:''}${skipped?`, ${skipped} skipped`:''}`, 'success');
+  _laFillState = null;
+  await loadPlanningData(true);
+  _renderLookaheadTabBody();
+}
+
+function _laFillConfirmModal({ total, collisions, lockedSkips, ptoConflicts }) {
+  return new Promise(resolve => {
+    let html = '<div style="font-size:13px;max-height:60vh;overflow-y:auto;">';
+    html += `<p style="margin:0 0 10px;">Fill <strong>${total}</strong> cell${total>1?'s':''} from this event.</p>`;
+    if (lockedSkips.length > 0) {
+      html += `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px;margin:10px 0;">
+        <strong>🔒 ${lockedSkips.length} locked</strong> — will be skipped silently.
+      </div>`;
+    }
+    if (collisions.length > 0) {
+      html += `<div style="background:#fee2e2;border:1px solid #ef4444;border-radius:6px;padding:10px;margin:10px 0;">
+        <strong>⚠ ${collisions.length} existing event${collisions.length>1?'s':''}</strong> in the fill range.<br>
+        <label style="display:block;margin-top:8px;"><input type="radio" name="fillcol" value="overwrite" checked> Overwrite existing</label>
+        <label style="display:block;"><input type="radio" name="fillcol" value="skip"> Skip these (keep existing)</label>
+      </div>`;
+    }
+    if (ptoConflicts.length > 0) {
+      html += `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px;margin:10px 0;">
+        <strong>🌴 ${ptoConflicts.length} PTO conflict${ptoConflicts.length>1?'s':''}:</strong>
+        <ul style="margin:4px 0 0 18px;padding:0;font-size:12px;">
+          ${ptoConflicts.slice(0,8).map(c => `<li>${escapeHtml(c.name)} on ${c.date}</li>`).join('')}
+          ${ptoConflicts.length>8?`<li>…and ${ptoConflicts.length-8} more</li>`:''}
+        </ul>
+      </div>`;
+    }
+    html += '</div>';
+    modal({
+      title: 'Confirm Fill',
+      body: html,
+      footer: `
+        <button class="form-secondary" onclick="window._laFillResolve(null)">Cancel</button>
+        <button class="form-submit" onclick="window._laFillResolve('go')">Continue Fill</button>
+      `,
+    });
+    window._laFillResolve = (result) => {
+      if (!result) { closeModal(); resolve(null); return; }
+      const radio = document.querySelector('input[name="fillcol"]:checked');
+      const collisionAction = radio ? radio.value : 'overwrite';
+      closeModal();
+      delete window._laFillResolve;
+      resolve({ collisionAction });
+    };
+  });
+}
+
+// ─── Add Activity Row (build schedule from scratch) ────────────
+function _laOpenNewActivityModal() {
+  modal({
+    title: '+ Add Activity',
+    sub: 'Create a new row for the lookahead grid',
+    size: 'medium',
+    body: `
+      <div class="form-grid">
+        <div class="form-field">
+          <label>Activity ID <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
+          <input type="text" id="new-act-id" class="form-input" placeholder="DCS-101">
+        </div>
+        <div class="form-field">
+          <label>Location</label>
+          <input type="text" id="new-act-loc" class="form-input" placeholder="W40, Cab, Hayward, etc.">
+        </div>
+        <div class="form-field form-field-full">
+          <label>Description <span style="color:#dc2626;">*</span></label>
+          <input type="text" id="new-act-desc" class="form-input" placeholder="What is this activity?" required>
+        </div>
+        <div class="form-field">
+          <label>SSWP <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
+          <input type="text" id="new-act-sswp" class="form-input" placeholder="SSWP reference">
+        </div>
+        <div class="form-field">
+          <label>Work hours <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
+          <input type="text" id="new-act-hours" class="form-input" placeholder="e.g. 8h, 12h">
+        </div>
+        <div class="form-field form-field-full">
+          <label>Notes <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
+          <textarea id="new-act-notes" class="form-input" rows="2"></textarea>
+        </div>
+      </div>
+      <p style="font-size:12px;color:var(--gray-500);margin-top:14px;line-height:1.5;">
+        After creating, the new row will appear in the lookahead. Add shift cells by copy/pasting an existing event,
+        using the drag-to-fill handle, or clicking the cell to open the detail editor.
+      </p>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="_laSaveNewActivity()">Create Activity</button>
+    `,
+  });
+  setTimeout(() => document.getElementById('new-act-desc')?.focus(), 50);
+}
+
+async function _laSaveNewActivity() {
+  const desc = document.getElementById('new-act-desc').value.trim();
+  if (!desc) { toast('Description is required', 'error'); return; }
+  const payload = {
+    activity_id_text: document.getElementById('new-act-id').value.trim() || null,
+    description: desc,
+    location: document.getElementById('new-act-loc').value.trim() || null,
+    sswp: document.getElementById('new-act-sswp').value.trim() || null,
+    work_hours_raw: document.getElementById('new-act-hours').value.trim() || null,
+    notes: document.getElementById('new-act-notes').value.trim() || null,
+    match_status: 'manual',
+    is_manual_override: true,
+    override_reason: 'Manually added via lookahead grid',
+    batch_id: null,
+  };
+  try {
+    await _dbInsert('planning_activities', [payload]);
+    closeModal();
+    toast('✓ Activity created', 'success');
+    await loadPlanningData(true);
+    _renderLookaheadTabBody();
+  } catch (err) {
+    toast('Create failed: ' + err.message, 'error');
+  }
+}
 
 // ─── Right-click context menu on cells ─────────────────────────
 function _laCellContextMenu(ev, eventId, actId, iso, el) {

@@ -6305,6 +6305,73 @@ body.la-clipboard-active .tlg-data-cell:not(.la-paste-target):hover {
   margin: 0 1px;
 }
 
+/* ── Drag-to-fill (Excel fill handle) ──────────────────────── */
+/* Tiny grabber on the right edge of each colored cell */
+.tlg-shift-block {
+  position: relative;
+}
+.tlg-fill-handle {
+  position: absolute;
+  top: 50%;
+  right: -2px;
+  width: 8px;
+  height: 14px;
+  margin-top: -7px;
+  background: rgba(255,255,255,0.55);
+  border: 1.5px solid rgba(0,0,0,0.35);
+  border-radius: 2px;
+  cursor: ew-resize;
+  opacity: 0;
+  transition: opacity 80ms ease;
+  z-index: 6;
+}
+.tlg-shift-block:hover .tlg-fill-handle {
+  opacity: 0.95;
+}
+.tlg-fill-handle:hover {
+  background: #fff;
+  border-color: #000;
+  transform: scale(1.15);
+}
+/* While the user is dragging, dim everything except source + targets */
+body.la-fill-active {
+  cursor: ew-resize;
+  user-select: none;
+}
+.la-fill-source {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+  z-index: 8;
+}
+.la-fill-target {
+  background: #dbeafe !important;
+  outline: 2px dashed #2563eb;
+  outline-offset: -2px;
+  position: relative;
+}
+.la-fill-target::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(37,99,235,0.08);
+  pointer-events: none;
+}
+/* Floating count badge shown on the source cell during drag */
+.tlg-fill-count {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 10px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+  pointer-events: none;
+  z-index: 9;
+}
+
 /* ── Location divider rows (Activity group-by) ──────────────── */
 .tlg-loc-hdr-row {
   display: flex;

@@ -316,6 +316,89 @@ function resetFixtures() {
   ok('Clone still made',              r8.inserted === 1);
   ok('Locked source preserved',       !!PLANNING_EVENTS.find(e => e.id === 'ev-1'));
 
+  // ─── Drag-to-fill scenarios (uses the same execute path) ───
+  // Fill is essentially a multi-target paste with a fixed source event,
+  // so we exercise it by building a single-item clipboard repeatedly.
+  async function fillRange(srcEventId, dates, opts = {}) {
+    const src = PLANNING_EVENTS.find(e => e.id === srcEventId);
+    if (!src) throw new Error('source not found');
+    const srcResources = PLANNING_EVENT_RES.filter(er => er.event_id === srcEventId);
+    let inserted = 0, overwritten = 0, skipped = 0;
+    const lockedSkips = [];
+    for (const date of dates) {
+      const existing = PLANNING_EVENTS.find(e =>
+        e.planning_activity_id === src.planning_activity_id &&
+        e.event_date === date &&
+        e.status !== 'cancelled'
+      );
+      if (existing && existing.is_locked) { skipped++; lockedSkips.push(date); continue; }
+      if (existing) {
+        if (opts.collisionAction === 'skip') { skipped++; continue; }
+        await _dbDelete('planning_event_resources', { event_id: existing.id });
+        await _dbDelete('planning_events', { id: existing.id });
+        overwritten++;
+      }
+      const newRows = await _dbInsert('planning_events', [{
+        planning_activity_id: src.planning_activity_id,
+        title: src.title,
+        event_date: date,
+        start_time: src.start_time,
+        end_time: src.end_time,
+        all_day: src.all_day,
+        location: src.location,
+        shift_type: src.shift_type,
+        source: 'manual',
+        status: 'scheduled',
+        is_locked: false,
+      }]);
+      inserted++;
+      const newId = newRows[0].id;
+      PLANNING_EVENTS.push({ ...newRows[0], id: newId });
+      if (srcResources.length) {
+        const resRows = srcResources.map(er => ({
+          event_id: newId, resource_id: er.resource_id,
+        }));
+        await _dbInsert('planning_event_resources', resRows);
+        resRows.forEach(r => PLANNING_EVENT_RES.push(r));
+      }
+    }
+    return { inserted, overwritten, skipped, lockedSkips };
+  }
+
+  console.log('\n=== Test 10: Drag-fill onto empty cells (5 days from source) ===');
+  resetFixtures();
+  // Drag ev-1 (act-A, 6/1, day_shift+John+Jane) → fill 6/15 through 6/19
+  const r10 = await fillRange('ev-1', ['2026-06-15','2026-06-16','2026-06-17','2026-06-18','2026-06-19']);
+  ok('5 events filled',                 r10.inserted === 5);
+  ok('No skips',                        r10.skipped === 0);
+  const filled = PLANNING_EVENTS.filter(e =>
+    e.planning_activity_id === 'act-A' &&
+    e.event_date >= '2026-06-15' &&
+    e.event_date <= '2026-06-19'
+  );
+  ok('All 5 on act-A',                  filled.length === 5);
+  ok('All preserve shift_type',         filled.every(e => e.shift_type === 'day_shift'));
+  ok('All preserve title',              filled.every(e => e.title === 'Test 1'));
+  ok('All flagged manual',              filled.every(e => e.source === 'manual'));
+  const resCounts = filled.map(e => PLANNING_EVENT_RES.filter(er => er.event_id === e.id).length);
+  ok('Resources cloned to each',        resCounts.every(n => n === 2));
+
+  console.log('\n=== Test 11: Drag-fill across a locked cell (locked is skipped) ===');
+  resetFixtures();
+  // ev-4 is locked on 6/10. Drag ev-1 across 6/8 → 6/12 (5 days, 1 locked)
+  const r11 = await fillRange('ev-1', ['2026-06-08','2026-06-09','2026-06-10','2026-06-11','2026-06-12']);
+  ok('4 inserted, 1 skipped',          r11.inserted === 4 && r11.skipped === 1);
+  ok('Locked ev-4 preserved',          !!PLANNING_EVENTS.find(e => e.id === 'ev-4' && e.is_locked));
+  ok('Adjacent cells filled',          !!PLANNING_EVENTS.find(e => e.planning_activity_id === 'act-A' && e.event_date === '2026-06-09'));
+
+  console.log('\n=== Test 12: Drag-fill in skip mode preserves existing events ===');
+  resetFixtures();
+  // ev-2 sits on 6/2. Drag from ev-1 across 6/1-6/5 (1 collision at 6/2, ev-1 source on 6/1)
+  // The "source" cell wouldn't normally be in targets, so we fill 6/2 to 6/5.
+  const r12 = await fillRange('ev-1', ['2026-06-02','2026-06-03','2026-06-04','2026-06-05'], { collisionAction: 'skip' });
+  ok('3 inserted, 1 skipped',          r12.inserted === 3 && r12.skipped === 1);
+  ok('ev-2 still present',             !!PLANNING_EVENTS.find(e => e.id === 'ev-2'));
+
   console.log('\n=== Test 9: Cancelled events become scheduled on paste ===');
   resetFixtures();
   PLANNING_EVENTS.find(e => e.id === 'ev-1').status = 'cancelled';
