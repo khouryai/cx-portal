@@ -6306,32 +6306,44 @@ body.la-clipboard-active .tlg-data-cell:not(.la-paste-target):hover {
 }
 
 /* ── Drag-to-fill (Excel fill handle) ──────────────────────── */
-/* Tiny grabber on the right edge of each colored cell */
+/* Grabber on the right edge of each colored cell — always visible
+   so users discover it, more obvious on hover. */
 .tlg-shift-block {
   position: relative;
+  overflow: visible;
 }
 .tlg-fill-handle {
   position: absolute;
-  top: 50%;
-  right: -2px;
-  width: 8px;
-  height: 14px;
-  margin-top: -7px;
-  background: rgba(255,255,255,0.55);
-  border: 1.5px solid rgba(0,0,0,0.35);
-  border-radius: 2px;
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 100%;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.18) 60%, rgba(0,0,0,0.32) 100%);
   cursor: ew-resize;
-  opacity: 0;
-  transition: opacity 80ms ease;
+  opacity: 0.6;
+  transition: opacity 80ms ease, background 80ms ease;
   z-index: 6;
 }
 .tlg-shift-block:hover .tlg-fill-handle {
-  opacity: 0.95;
+  opacity: 1;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.35) 50%, #000 100%);
+  box-shadow: inset -2px 0 0 #fff;
 }
 .tlg-fill-handle:hover {
+  cursor: ew-resize;
+}
+.tlg-fill-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
   background: #fff;
-  border-color: #000;
-  transform: scale(1.15);
+  border: 1px solid rgba(0,0,0,0.6);
+  border-radius: 1px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.2);
 }
 /* While the user is dragging, dim everything except source + targets */
 body.la-fill-active {
@@ -6371,6 +6383,36 @@ body.la-fill-active {
   pointer-events: none;
   z-index: 9;
 }
+
+/* ── Manual activity rows (added via + Add Activity) ───────── */
+.tlg-row-manual {
+  position: relative;
+  border-left: 3px solid #06b6d4 !important;
+}
+.tlg-row-manual .tlg-label-sub {
+  color: #06b6d4 !important;
+  font-weight: 600;
+}
+.tlg-row-del {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: rgba(255,255,255,0.85);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  color: #dc2626;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  z-index: 5;
+}
+.tlg-row-manual:hover .tlg-row-del { display: flex; }
+.tlg-row-del:hover { background: #fee2e2; }
 
 /* ── Location divider rows (Activity group-by) ──────────────── */
 .tlg-loc-hdr-row {

@@ -14273,7 +14273,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       ? `<span class="la-drop-hint-text">drop here</span>`
       : '';
 
-    html += `<div class="tlg-label tlg-row-label${_laAssignMode && actId ? ' la-drop-label' : ''}"
+    html += `<div class="tlg-label tlg-row-label${_laAssignMode && actId ? ' la-drop-label' : ''}${g.isManual ? ' tlg-row-manual' : ''}"
       style="background:${g.color||'#6b7280'};"
       ${_laAssignMode && actId ? `data-activity-id="${actId}" title="Drop here to assign for the full activity"` : ''}>
       <div class="tlg-label-inner">
@@ -14281,6 +14281,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
         ${g.sublabel ? `<span class="tlg-label-sub">${escapeHtml(g.sublabel)}</span>` : ''}
       </div>
       ${assignedChips}${dropHintHTML}
+      ${g.isManual ? `<button class="tlg-row-del" onclick="event.stopPropagation();_laDeleteManualActivity('${actId}',event)" title="Delete manual activity">🗑</button>` : ''}
     </div>`;
     html += `<div class="tlg-cells">`;
     days.forEach((iso, idx) => {
@@ -15017,22 +15018,37 @@ let _laFillState = null;   // { srcEventId, srcActId, srcDate, currentTargets: [
 function _laFillStart(ev, eventId, actId, iso, sourceCellEl) {
   ev.preventDefault();
   ev.stopPropagation();
-  if (!actId) return;
+  if (!actId) {
+    console.warn('[_laFillStart] No activity id — drag fill requires Activity group-by view.');
+    toast('Drag-fill works in Activity group-by view only.', 'warn');
+    return;
+  }
+  console.log(`[_laFillStart] dragging from event=${eventId} activity=${actId} date=${iso}`);
   _laFillState = {
     srcEventId: eventId,
     srcActId: actId,
     srcDate: iso,
     sourceCellEl,
     currentTargets: [],
+    didDrag: false,
   };
   document.body.classList.add('la-fill-active');
   sourceCellEl?.classList.add('la-fill-source');
   document.addEventListener('mousemove', _laFillMove);
   document.addEventListener('mouseup', _laFillEnd);
+  // Swallow the next click event so the cell's onclick (open detail) doesn't fire
+  // after the user releases the drag.
+  const swallowClick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    document.removeEventListener('click', swallowClick, true);
+  };
+  document.addEventListener('click', swallowClick, true);
 }
 
 function _laFillMove(ev) {
   if (!_laFillState) return;
+  _laFillState.didDrag = true;
   // Use elementFromPoint to find the cell under cursor
   const target = document.elementFromPoint(ev.clientX, ev.clientY);
   if (!target) return;
@@ -15080,12 +15096,18 @@ async function _laFillEnd(ev) {
   document.body.classList.remove('la-fill-active');
   if (!_laFillState) return;
 
-  const { srcEventId, currentTargets, sourceCellEl } = _laFillState;
+  const { srcEventId, currentTargets, sourceCellEl, didDrag } = _laFillState;
   sourceCellEl?.classList.remove('la-fill-source');
   sourceCellEl?.querySelector('.tlg-fill-count')?.remove();
   currentTargets.forEach(t => t.el?.classList.remove('la-fill-target'));
 
-  if (currentTargets.length === 0) { _laFillState = null; return; }
+  if (currentTargets.length === 0) {
+    if (didDrag) toast('Drag further across cells in the same row to fill.', 'warn');
+    console.log(`[_laFillEnd] no targets (didDrag=${didDrag}) — release happened on source cell.`);
+    _laFillState = null;
+    return;
+  }
+  console.log(`[_laFillEnd] filling ${currentTargets.length} cells`);
 
   const src = PLANNING_EVENTS.find(e => e.id === srcEventId);
   if (!src) { _laFillState = null; toast('Source event not found', 'error'); return; }
@@ -15270,6 +15292,41 @@ function _laOpenNewActivityModal() {
     `,
   });
   setTimeout(() => document.getElementById('new-act-desc')?.focus(), 50);
+}
+
+async function _laDeleteManualActivity(activityId, ev) {
+  ev?.stopPropagation();
+  const a = PLANNING_ACTIVITIES.find(x => x.id === activityId);
+  if (!a) return;
+  const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === activityId);
+  const locked = evs.filter(e => e.is_locked).length;
+  let msg = `Delete activity "${a.description || a.activity_id_text || '—'}"?`;
+  if (evs.length > 0) msg += `\n\nThis will also delete ${evs.length} event${evs.length>1?'s':''} on this row.`;
+  if (locked > 0)   msg += `\n(${locked} locked event${locked>1?'s':''} will be preserved.)`;
+  msg += '\n\nThis cannot be undone.';
+  if (!confirm(msg)) return;
+  try {
+    // Delete unlocked events + their resources
+    for (const e of evs.filter(e => !e.is_locked)) {
+      await _dbDelete('planning_event_resources', { event_id: e.id });
+      await _dbDelete('planning_events', { id: e.id });
+    }
+    // Delete activity-level resource assignments
+    const activityRes = PLANNING_ACTIVITY_RES.filter(ar => ar.planning_activity_id === activityId);
+    for (const ar of activityRes) await _dbDelete('planning_activity_resources', { id: ar.id });
+    // Finally delete the activity (only if no locked events still reference it)
+    const remaining = PLANNING_EVENTS.filter(e => e.planning_activity_id === activityId && e.is_locked).length;
+    if (remaining === 0) {
+      await _dbDelete('planning_activities', { id: activityId });
+      toast('Activity deleted', 'success');
+    } else {
+      toast(`Row kept (${remaining} locked event${remaining>1?'s':''} still reference it)`, 'warn');
+    }
+    await loadPlanningData(true);
+    _renderLookaheadTabBody();
+  } catch (err) {
+    toast('Delete failed: ' + err.message, 'error');
+  }
 }
 
 async function _laSaveNewActivity() {
@@ -15699,8 +15756,13 @@ function _laMountLookaheadTL() {
     });
 
   } else { // activity — grouped by location, then activity description within each
+    // Always include manual activities (is_manual_override=true) even when empty,
+    // so newly added rows show up immediately for the user to populate.
     const actsInWindow = PLANNING_ACTIVITIES
-      .filter(a => PLANNING_EVENTS.some(e => e.planning_activity_id === a.id && days.includes(e.event_date)));
+      .filter(a =>
+        a.is_manual_override ||
+        PLANNING_EVENTS.some(e => e.planning_activity_id === a.id && days.includes(e.event_date))
+      );
 
     // Bucket by location, sorted alphabetically
     const locBuckets = {};
@@ -15734,8 +15796,9 @@ function _laMountLookaheadTL() {
             activityId:       a.id,
             assignedResources,
             label:            a.description || a.activity_id_text || '—',
-            sublabel:         sub || '',
+            sublabel:         sub || (a.is_manual_override ? '✋ Manual' : ''),
             color:            c.bg,
+            isManual:         !!a.is_manual_override,
             byDate:           _laBuildByDate(evs, days, e => _planningEventResourceInitials(e.id)),
           });
         });
