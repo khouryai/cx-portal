@@ -6222,7 +6222,7 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   text-align: center;
 }
 
-/* Selected colored shift cells in assign mode */
+/* Selected colored shift cells (works in any mode) */
 .la-cell-selected {
   outline: 3px solid #fff;
   outline-offset: -3px;
@@ -6237,6 +6237,72 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   color: #fff;
   text-shadow: 0 0 2px rgba(0,0,0,.6);
   pointer-events: none;
+}
+
+/* ── Copy/Paste visual states ──────────────────────────────── */
+/* Marching-ants border on copied/cut cells (Excel style) */
+@keyframes la-march-ants {
+  to { background-position: 12px 0, -12px 100%, 0 -12px, 100% 12px; }
+}
+.la-cell-clipboard {
+  position: relative;
+}
+.la-cell-clipboard::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, #000 50%, transparent 50%) repeat-x 0 0    / 6px 1.5px,
+    linear-gradient(90deg, #000 50%, transparent 50%) repeat-x 0 100% / 6px 1.5px,
+    linear-gradient(0deg,  #000 50%, transparent 50%) repeat-y 0 0    / 1.5px 6px,
+    linear-gradient(0deg,  #000 50%, transparent 50%) repeat-y 100% 0 / 1.5px 6px;
+  animation: la-march-ants 0.6s linear infinite;
+  z-index: 4;
+}
+/* Cut cells fade slightly to signal they'll be removed on paste */
+.la-cell-cut {
+  opacity: 0.55;
+}
+
+/* Paste target highlight on empty cells */
+.la-paste-target {
+  background: #dbeafe !important;
+  outline: 2px dashed #2563eb;
+  outline-offset: -2px;
+  position: relative;
+}
+.la-paste-target::after {
+  content: '📥';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 14px;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* When clipboard is active, hover over empty cells suggests "click to set target" */
+body.la-clipboard-active .tlg-data-cell:not(.la-paste-target):empty:hover,
+body.la-clipboard-active .tlg-data-cell:not(.la-paste-target):hover {
+  background: #f0f9ff;
+  cursor: copy;
+}
+
+/* Keyboard shortcut hint pills */
+.la-edit-tips-bar kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  font-family: 'Inter', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  color: #334155;
+  margin: 0 1px;
 }
 
 /* ── Location divider rows (Activity group-by) ──────────────── */

@@ -13270,7 +13270,9 @@ let _conflictFilter      = 'all';                      // all | pto | double | p
 let _laAssignMode        = false;                      // Assign Resources drag-and-drop mode
 let _laCurrentDragRes    = null;                       // resourceId(s) being dragged — now an array
 let _laSelectedResIds    = new Set();                  // multi-selected resource card IDs
-let _laSelectedCellKeys  = new Set();                  // multi-selected event IDs for bulk remove
+let _laSelectedCellKeys  = new Set();                  // multi-selected event IDs for bulk remove / copy
+let _laClipboard         = null;                       // { mode:'copy'|'cut', items:[{event,resources,dayOffset,sameActivityAsAnchor}], anchorActId, anchorDate }
+let _laPasteTarget       = null;                       // { activityId, date } — anchor for paste
 
 // Shift visual styles — used across calendar, timeline, badges
 const _SHIFT_VISUAL = {
@@ -14301,11 +14303,17 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       // Assign mode: cells with shifts become individual drop targets
       const isCellDroppable = _laAssignMode && actId && shifts.length > 0 && !ptoEntry;
       if (isCellDroppable) cellClass += ' la-cell-droppable';
-      const cellDropAttrs = isCellDroppable
-        ? ` data-activity-id="${actId}" data-event-date="${iso}"`
+      // Always carry activity_id + date so copy/paste can target any cell
+      const cellTargetAttrs = actId ? ` data-activity-id="${actId}" data-event-date="${iso}"` : '';
+      const isEmptyTarget = actId && !shifts.length && !ptoEntry;
+      const emptyClickAttr = isEmptyTarget
+        ? ` onclick="_laEmptyCellClick(event,'${actId}','${iso}',this)"`
         : '';
+      const isThisPasteTarget = isEmptyTarget && _laPasteTarget &&
+        _laPasteTarget.activityId === actId && _laPasteTarget.date === iso;
+      if (isThisPasteTarget) cellClass += ' la-paste-target';
 
-      html += `<div class="${cellClass}"${cellDropAttrs}>`;
+      html += `<div class="${cellClass}"${cellTargetAttrs}${emptyClickAttr}>`;
 
       if (ptoEntry) {
         html += `<div class="tlg-shift-block tlg-shift-pto tlg-run-solo"
@@ -14317,13 +14325,15 @@ function _laRenderGrid(target, { groups, days, milestones }) {
           const v   = _tlgShiftVisual(s);
           const tip = _tlgShiftTip(s, v);
           const runClass  = `tlg-run-${s.run || 'solo'}`;
-          const isCellSel = _laAssignMode && _laSelectedCellKeys.has(s.event_id);
-          const clickFn   = _laAssignMode
-            ? `_laToggleCellSelect('${s.event_id}',this)`
-            : `_planningOpenEventDetail('${s.event_id}')`;
-          html += `<div class="tlg-shift-block ${runClass}${s.isCancel ? ' tlg-shift-cancelled' : ''}${isCellSel ? ' la-cell-selected' : ''}"
+          const isCellSel = _laSelectedCellKeys.has(s.event_id);
+          const inClip = _laClipboard?.items.some(it => it.event.id === s.event_id);
+          const cutClass = (_laClipboard?.mode === 'cut' && inClip) ? ' la-cell-cut' : '';
+          const clipClass = inClip ? ' la-cell-clipboard' : '';
+          html += `<div class="tlg-shift-block ${runClass}${s.isCancel ? ' tlg-shift-cancelled' : ''}${isCellSel ? ' la-cell-selected' : ''}${clipClass}${cutClass}"
             style="background:${v.bg};color:${v.text};"
-            onclick="${clickFn}"
+            data-cell-event-id="${s.event_id}"
+            onclick="_laCellClick(event,'${s.event_id}','${actId||''}','${iso}',this)"
+            oncontextmenu="event.preventDefault();_laCellContextMenu(event,'${s.event_id}','${actId||''}','${iso}',this);return false;"
             data-tlg-tip="${tip}"
           >${s.cellLabel ? `<span class="tlg-cell-location">${escapeHtml(s.cellLabel)}</span>` : ''}${isCellSel ? `<span class="la-cell-sel-mark">✓</span>` : ''}</div>`;
         });
@@ -14452,8 +14462,22 @@ function _laLookaheadHTML() {
     ${_laAssignMode ? `
     <div class="la-assign-banner" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
       <span>🟥 Drop on the <strong>activity label</strong> to assign for the full activity &nbsp;·&nbsp; 🟩 Drop on a <strong>coloured shift cell</strong> to assign to that specific day only &nbsp;·&nbsp; <strong>Click a colored cell</strong> to select it for bulk remove</span>
-      <div id="la-cell-sel-actions">${_laCellSelActionsHTML()}</div>
     </div>` : ''}
+
+    <!-- Excel-style edit tips bar (always visible) -->
+    <div class="la-edit-tips-bar" style="display:flex;align-items:center;gap:14px;padding:6px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#475569;margin:8px 0;flex-wrap:wrap;">
+      <strong style="color:#1e40af;">📋 Excel-style editing:</strong>
+      <span><kbd>Ctrl</kbd>+click cells to select</span>
+      <span><kbd>Ctrl</kbd>+<kbd>C</kbd> copy</span>
+      <span><kbd>Ctrl</kbd>+<kbd>X</kbd> cut</span>
+      <span><kbd>Ctrl</kbd>+<kbd>V</kbd> paste</span>
+      <span><kbd>Del</kbd> delete</span>
+      <span><kbd>Esc</kbd> clear</span>
+      <span style="margin-left:auto;color:#64748b;">Right-click any cell for menu</span>
+    </div>
+
+    <!-- Floating action banner — populated when cells are selected or clipboard has content -->
+    <div id="la-cell-sel-actions" style="margin:6px 0;">${_laCellSelActionsHTML()}</div>
 
     <div style="display:flex;gap:12px;align-items:flex-start;">
       ${_laAssignMode ? _laResourcePanelHTML() : ''}
@@ -14569,26 +14593,51 @@ function _laClearResSelection() {
   if (panel) panel.outerHTML = _laResourcePanelHTML();
 }
 
-// ─── Cell multi-select (assign mode, for bulk remove) ─────────
+// ─── Cell multi-select + Copy/Paste (Excel-style editing) ─────
 
-// Renders just the action strip inside the assign banner — called in-place
-// so toggling a cell doesn't re-render the whole timeline grid.
+// Floating action banner — shown whenever cells are selected or clipboard has content
 function _laCellSelActionsHTML() {
   const n = _laSelectedCellKeys.size;
-  if (!n) return '';
-  return `<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-    <span style="font-size:12px;font-weight:700;color:#7f0000;">${n} cell${n>1?'s':''} selected</span>
-    <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearCellSelection()">✕ Clear</button>
-    <button class="admin-action-btn" style="font-size:11px;padding:4px 10px;" onclick="_laBulkRemoveCellResources()">🗑 Remove all users</button>
-  </div>`;
+  const hasClipboard = !!_laClipboard;
+  const hasTarget = !!_laPasteTarget;
+  if (!n && !hasClipboard) return '';
+
+  const parts = [];
+  if (n > 0) {
+    parts.push(`<span style="font-size:12px;font-weight:700;color:#7f0000;">${n} cell${n>1?'s':''} selected</span>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearCellSelection()">✕ Clear</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laCopySelection('copy')" title="Ctrl+C">📋 Copy</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laCopySelection('cut')" title="Ctrl+X">✂ Cut</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#7f1d1d;border-color:#fca5a5;" onclick="_laDeleteSelection()" title="Del">🗑 Delete</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laBulkRemoveCellResources()">Remove users only</button>`);
+  }
+  if (hasClipboard) {
+    if (n > 0) parts.push('<span style="width:1px;background:#e5e7eb;align-self:stretch;margin:0 4px;"></span>');
+    const mode = _laClipboard.mode === 'cut' ? 'Cut' : 'Copied';
+    parts.push(`<span style="font-size:12px;color:#1e40af;font-weight:600;">📋 ${mode} ${_laClipboard.items.length}</span>`);
+    if (hasTarget) {
+      parts.push(`<span style="font-size:11px;color:#059669;">Target: ${_laPasteTarget.date}</span>`);
+      parts.push(`<button class="admin-action-btn" style="font-size:11px;padding:4px 10px;" onclick="_laPasteAtTarget()" title="Ctrl+V">📥 Paste</button>`);
+    } else {
+      parts.push(`<span style="font-size:11px;color:#6b7280;">click an empty cell, then Ctrl+V</span>`);
+    }
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearClipboard()">✕ Cancel</button>`);
+  }
+  return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0;">${parts.join('')}</div>`;
 }
 
+// Find the live DOM element for a given event id (data attribute set on render)
+function _laFindCellEl(eventId) {
+  return document.querySelector(`[data-cell-event-id="${eventId}"]`);
+}
+
+// Toggle one cell's selection state (works in any mode)
 function _laToggleCellSelect(eventId, el) {
+  if (!el) el = _laFindCellEl(eventId);
   if (_laSelectedCellKeys.has(eventId)) {
     _laSelectedCellKeys.delete(eventId);
     el?.classList.remove('la-cell-selected');
-    const mark = el?.querySelector('.la-cell-sel-mark');
-    if (mark) mark.remove();
+    el?.querySelector('.la-cell-sel-mark')?.remove();
   } else {
     _laSelectedCellKeys.add(eventId);
     el?.classList.add('la-cell-selected');
@@ -14599,7 +14648,10 @@ function _laToggleCellSelect(eventId, el) {
       el.appendChild(mark);
     }
   }
-  // Update ONLY the banner action strip — no full grid re-render
+  _laRefreshActionBanner();
+}
+
+function _laRefreshActionBanner() {
   const actEl = document.getElementById('la-cell-sel-actions');
   if (actEl) actEl.innerHTML = _laCellSelActionsHTML();
 }
@@ -14610,8 +14662,415 @@ function _laClearCellSelection() {
     el.classList.remove('la-cell-selected');
     el.querySelector('.la-cell-sel-mark')?.remove();
   });
-  const actEl = document.getElementById('la-cell-sel-actions');
-  if (actEl) actEl.innerHTML = '';
+  _laRefreshActionBanner();
+}
+
+// ─── Cell click router (single entry point for all click types) ───
+// Plain click = open detail (or toggle in assign mode)
+// Ctrl/Cmd+click = toggle multi-select
+// Shift+click = range-select (not implemented yet)
+function _laCellClick(ev, eventId, actId, iso, el) {
+  if (ev.ctrlKey || ev.metaKey) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    _laToggleCellSelect(eventId, el);
+    return;
+  }
+  if (_laAssignMode) {
+    _laToggleCellSelect(eventId, el);
+    return;
+  }
+  _planningOpenEventDetail(eventId);
+}
+
+// Click on an empty cell — used to set the paste target
+function _laEmptyCellClick(ev, actId, iso, el) {
+  if (!_laClipboard || !actId) return;
+  ev.stopPropagation();
+  _laSetPasteTarget(actId, iso, el);
+}
+
+function _laSetPasteTarget(actId, iso, el) {
+  document.querySelectorAll('.la-paste-target').forEach(x => x.classList.remove('la-paste-target'));
+  _laPasteTarget = { activityId: actId, date: iso };
+  if (el) el.classList.add('la-paste-target');
+  _laRefreshActionBanner();
+}
+
+// ─── Copy / Cut ────────────────────────────────────────────────
+function _laCopySelection(mode = 'copy') {
+  if (_laSelectedCellKeys.size === 0) {
+    toast('Ctrl+click colored cells to select them first.', 'warn');
+    return;
+  }
+  const selectedEvents = PLANNING_EVENTS.filter(e => _laSelectedCellKeys.has(e.id));
+  if (selectedEvents.length === 0) return;
+
+  // Anchor = earliest date in the selection (top-left)
+  const sorted = [...selectedEvents].sort((a, b) =>
+    a.event_date.localeCompare(b.event_date) ||
+    String(a.planning_activity_id || '').localeCompare(String(b.planning_activity_id || ''))
+  );
+  const anchorActId = sorted[0].planning_activity_id;
+  const anchorDate = sorted[0].event_date;
+
+  const items = selectedEvents.map(e => {
+    const resources = PLANNING_EVENT_RES.filter(er => er.event_id === e.id);
+    const dayOffset = dayjs(e.event_date).diff(dayjs(anchorDate), 'day');
+    return {
+      event: e,
+      resources,
+      dayOffset,
+      sameActivityAsAnchor: e.planning_activity_id === anchorActId,
+    };
+  });
+
+  _laClipboard = { mode, items, anchorActId, anchorDate };
+
+  // Marching-ants visual on copied cells
+  document.querySelectorAll('.la-cell-clipboard, .la-cell-cut').forEach(x => {
+    x.classList.remove('la-cell-clipboard', 'la-cell-cut');
+  });
+  selectedEvents.forEach(e => {
+    const el = _laFindCellEl(e.id);
+    if (el) {
+      el.classList.add('la-cell-clipboard');
+      if (mode === 'cut') el.classList.add('la-cell-cut');
+    }
+  });
+
+  document.body.classList.add('la-clipboard-active');
+  _laRefreshActionBanner();
+  toast(`${mode === 'copy' ? '📋 Copied' : '✂ Cut'} ${items.length} cell${items.length>1?'s':''}. Click an empty cell, then Ctrl+V.`, 'success');
+}
+
+function _laClearClipboard() {
+  _laClipboard = null;
+  _laPasteTarget = null;
+  document.querySelectorAll('.la-cell-clipboard, .la-cell-cut').forEach(x => {
+    x.classList.remove('la-cell-clipboard', 'la-cell-cut');
+  });
+  document.querySelectorAll('.la-paste-target').forEach(x => x.classList.remove('la-paste-target'));
+  document.body.classList.remove('la-clipboard-active');
+  _laRefreshActionBanner();
+}
+
+// ─── Paste ─────────────────────────────────────────────────────
+async function _laPasteAtTarget() {
+  if (!_laClipboard) { toast('Nothing to paste. Copy some cells first (Ctrl+C).', 'warn'); return; }
+  if (!_laPasteTarget) { toast('Click an empty cell to set the paste target.', 'warn'); return; }
+
+  const { activityId: targetActId, date: targetDate } = _laPasteTarget;
+  const { items, anchorDate } = _laClipboard;
+
+  // Compute new positions for each clipboard item
+  const dayShift = dayjs(targetDate).diff(dayjs(anchorDate), 'day');
+  const ops = items.map(it => {
+    const newDate = dayjs(it.event.event_date).add(dayShift, 'day').format('YYYY-MM-DD');
+    const newActId = it.sameActivityAsAnchor ? targetActId : it.event.planning_activity_id;
+    return { src: it, newDate, newActId };
+  });
+
+  // Detect collisions, locked targets, and PTO conflicts
+  const collisions = [], lockedSkips = [], ptoConflicts = [];
+  ops.forEach(op => {
+    const existing = PLANNING_EVENTS.find(e =>
+      e.planning_activity_id === op.newActId &&
+      e.event_date === op.newDate &&
+      e.status !== 'cancelled'
+    );
+    if (existing) {
+      if (existing.is_locked) lockedSkips.push({ op, existing });
+      else collisions.push({ op, existing });
+    }
+    op.src.resources.forEach(er => {
+      const onPTO = PTO_REQUESTS.some(p =>
+        p.status === 'approved' &&
+        p.resource_id === er.resource_id &&
+        op.newDate >= p.start_date &&
+        op.newDate <= p.end_date
+      );
+      if (onPTO) {
+        const r = PLANNING_RESOURCES.find(x => x.id === er.resource_id);
+        ptoConflicts.push({ name: r?.display_name || '?', date: op.newDate });
+      }
+    });
+  });
+
+  // If anything to ask about, show the summary modal
+  if (collisions.length > 0 || lockedSkips.length > 0 || ptoConflicts.length > 0) {
+    const decision = await _laPasteConfirmModal({ ops, collisions, lockedSkips, ptoConflicts });
+    if (!decision) return;
+    return _laExecutePaste(ops, decision);
+  }
+  return _laExecutePaste(ops, { collisionAction: 'overwrite' });
+}
+
+function _laPasteConfirmModal({ ops, collisions, lockedSkips, ptoConflicts }) {
+  return new Promise(resolve => {
+    let html = '<div style="font-size:13px;max-height:60vh;overflow-y:auto;">';
+    html += `<p style="margin:0 0 10px;">Paste <strong>${ops.length}</strong> event${ops.length>1?'s':''}.</p>`;
+
+    if (lockedSkips.length > 0) {
+      html += `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px;margin:10px 0;">
+        <strong>🔒 ${lockedSkips.length} target${lockedSkips.length>1?'s':''} locked</strong> — will be skipped silently.
+      </div>`;
+    }
+
+    if (collisions.length > 0) {
+      html += `<div style="background:#fee2e2;border:1px solid #ef4444;border-radius:6px;padding:10px;margin:10px 0;">
+        <strong>⚠ ${collisions.length} collision${collisions.length>1?'s':''}</strong> — existing event${collisions.length>1?'s':''} on these cells:
+        <ul style="margin:6px 0 8px 18px;padding:0;font-size:12px;">
+          ${collisions.slice(0,8).map(c => `<li>${escapeHtml(c.existing.title||'(untitled)')} · ${c.op.newDate}</li>`).join('')}
+          ${collisions.length>8?`<li>…and ${collisions.length-8} more</li>`:''}
+        </ul>
+        <label style="display:block;margin-top:4px;"><input type="radio" name="collision" value="overwrite" checked> Overwrite existing events</label>
+        <label style="display:block;"><input type="radio" name="collision" value="skip"> Skip these (keep existing)</label>
+      </div>`;
+    }
+
+    if (ptoConflicts.length > 0) {
+      html += `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px;margin:10px 0;">
+        <strong>🌴 ${ptoConflicts.length} PTO conflict${ptoConflicts.length>1?'s':''}:</strong>
+        <ul style="margin:4px 0 0 18px;padding:0;font-size:12px;">
+          ${ptoConflicts.slice(0,10).map(c => `<li>${escapeHtml(c.name)} on ${c.date}</li>`).join('')}
+          ${ptoConflicts.length>10?`<li>…and ${ptoConflicts.length-10} more</li>`:''}
+        </ul>
+        <p style="margin:6px 0 0;font-size:12px;color:#92400e;">Resources will still be assigned — review and unassign manually if needed.</p>
+      </div>`;
+    }
+
+    html += '</div>';
+
+    modal({
+      title: 'Confirm Paste',
+      body: html,
+      footer: `
+        <button class="form-secondary" onclick="window._laPasteResolve(null)">Cancel</button>
+        <button class="form-submit" onclick="window._laPasteResolve('go')">Continue Paste</button>
+      `,
+    });
+
+    window._laPasteResolve = (result) => {
+      if (!result) { closeModal(); resolve(null); return; }
+      const radio = document.querySelector('input[name="collision"]:checked');
+      const collisionAction = radio ? radio.value : 'overwrite';
+      closeModal();
+      delete window._laPasteResolve;
+      resolve({ collisionAction });
+    };
+  });
+}
+
+async function _laExecutePaste(ops, { collisionAction }) {
+  let inserted = 0, overwritten = 0, skipped = 0;
+  const wasCut = _laClipboard?.mode === 'cut';
+  const cutSourceIds = wasCut ? _laClipboard.items.map(it => it.event.id) : [];
+
+  for (const op of ops) {
+    try {
+      const existing = PLANNING_EVENTS.find(e =>
+        e.planning_activity_id === op.newActId &&
+        e.event_date === op.newDate &&
+        e.status !== 'cancelled'
+      );
+
+      // Locked → always skip
+      if (existing && existing.is_locked) { skipped++; continue; }
+
+      if (existing) {
+        if (collisionAction === 'skip') { skipped++; continue; }
+        // Overwrite: delete existing first (and its resources)
+        await _dbDelete('planning_event_resources', { event_id: existing.id });
+        await _dbDelete('planning_events', { id: existing.id });
+        overwritten++;
+      }
+
+      // Build payload for new event (clone of source with new date / activity)
+      const src = op.src.event;
+      const payload = {
+        planning_activity_id: op.newActId,
+        title: src.title,
+        event_date: op.newDate,
+        start_time: src.start_time,
+        end_time: src.end_time,
+        all_day: src.all_day,
+        location: src.location,
+        work_hours_raw: src.work_hours_raw,
+        shift_type: src.shift_type,
+        cell_color_hex: src.cell_color_hex,
+        source: 'manual',
+        status: src.status === 'cancelled' ? 'scheduled' : (src.status || 'scheduled'),
+        is_locked: false,
+        notes: src.notes,
+        created_by: currentProfile?.id || null,
+        updated_by: currentProfile?.id || null,
+      };
+
+      const newRows = await _dbInsert('planning_events', [payload]);
+      inserted++;
+      const newEventId = newRows?.[0]?.id;
+
+      // Clone resources (unless source row is being cut and is the same row — avoid double assign)
+      if (newEventId && op.src.resources.length > 0) {
+        const resPayload = op.src.resources.map(er => ({
+          event_id: newEventId,
+          resource_id: er.resource_id,
+          assigned_by: currentProfile?.id || null,
+        }));
+        await _dbInsert('planning_event_resources', resPayload);
+      }
+    } catch (err) {
+      console.error('[paste] op failed:', err);
+      toast('One paste op failed: ' + err.message, 'error');
+    }
+  }
+
+  // Cut mode → delete sources (skip locked)
+  if (wasCut) {
+    for (const eid of cutSourceIds) {
+      const ev = PLANNING_EVENTS.find(e => e.id === eid);
+      if (!ev || ev.is_locked) continue;
+      try {
+        await _dbDelete('planning_event_resources', { event_id: eid });
+        await _dbDelete('planning_events', { id: eid });
+      } catch (err) {
+        console.error('[paste/cut] source delete failed:', err);
+      }
+    }
+  }
+
+  toast(`✓ Pasted: ${inserted} inserted${overwritten?`, ${overwritten} overwritten`:''}${skipped?`, ${skipped} skipped`:''}`, 'success');
+  _laSelectedCellKeys.clear();
+  _laClearClipboard();
+  await loadPlanningData(true);
+  _renderLookaheadTabBody();
+}
+
+// ─── Bulk delete selected cells ───────────────────────────────
+async function _laDeleteSelection() {
+  if (_laSelectedCellKeys.size === 0) { toast('No cells selected.', 'warn'); return; }
+  const eventIds = [..._laSelectedCellKeys];
+  const events = PLANNING_EVENTS.filter(e => eventIds.includes(e.id));
+  const lockedCount = events.filter(e => e.is_locked).length;
+  const deletable = events.filter(e => !e.is_locked);
+  if (deletable.length === 0) {
+    toast('All selected cells are locked. Nothing to delete.', 'warn');
+    return;
+  }
+  const msg = `Delete ${deletable.length} event${deletable.length>1?'s':''}?${lockedCount > 0 ? `\n(${lockedCount} locked event${lockedCount>1?'s':''} will be skipped)` : ''}\n\nThis cannot be undone.`;
+  if (!confirm(msg)) return;
+
+  let count = 0;
+  for (const e of deletable) {
+    try {
+      await _dbDelete('planning_event_resources', { event_id: e.id });
+      await _dbDelete('planning_events', { id: e.id });
+      count++;
+    } catch (err) {
+      console.error('[bulk-delete] failed for', e.id, err);
+    }
+  }
+  _laSelectedCellKeys.clear();
+  toast(`✓ Deleted ${count} event${count>1?'s':''}`, 'success');
+  await loadPlanningData(true);
+  _renderLookaheadTabBody();
+}
+
+// ─── Keyboard shortcuts (Ctrl+C / X / V / Del / Esc) ──────────
+function _laKeyboardHandler(ev) {
+  // Only when lookahead page is active
+  if (!document.getElementById('page-lookahead')?.classList.contains('active')) return;
+  // Don't intercept when typing
+  const tag = ev.target.tagName;
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || ev.target.isContentEditable) return;
+  const ctrl = ev.ctrlKey || ev.metaKey;
+  const k = ev.key.toLowerCase();
+
+  if (ctrl && k === 'c')        { ev.preventDefault(); _laCopySelection('copy'); }
+  else if (ctrl && k === 'x')   { ev.preventDefault(); _laCopySelection('cut'); }
+  else if (ctrl && k === 'v')   { ev.preventDefault(); _laPasteAtTarget(); }
+  else if (k === 'delete')      { ev.preventDefault(); _laDeleteSelection(); }
+  else if (k === 'escape')      { ev.preventDefault(); _laClearCellSelection(); _laClearClipboard(); }
+}
+// Attach the listener once on script load (gated to lookahead tab inside the handler)
+document.addEventListener('keydown', _laKeyboardHandler);
+
+// ─── Right-click context menu on cells ─────────────────────────
+function _laCellContextMenu(ev, eventId, actId, iso, el) {
+  ev.preventDefault();
+  // Remove any existing menu
+  document.querySelectorAll('.la-context-menu').forEach(x => x.remove());
+
+  const onColored = !!eventId;
+  const ev_obj    = onColored ? PLANNING_EVENTS.find(e => e.id === eventId) : null;
+  const isLocked  = !!ev_obj?.is_locked;
+  const hasClip   = !!_laClipboard;
+
+  // If clicking a colored cell that's not already in the selection, select just it
+  if (onColored && !_laSelectedCellKeys.has(eventId)) {
+    _laClearCellSelection();
+    _laToggleCellSelect(eventId, el);
+  }
+
+  const items = [];
+  if (onColored) {
+    items.push({ label: '🔍 Open details',  fn: () => _planningOpenEventDetail(eventId) });
+    items.push({ label: '📋 Copy',          fn: () => _laCopySelection('copy'), title: 'Ctrl+C' });
+    items.push({ label: '✂ Cut',            fn: () => _laCopySelection('cut'),  disabled: isLocked, title: 'Ctrl+X' });
+    items.push({ label: isLocked ? '🔒 Locked — can\'t delete' : '🗑 Delete', fn: () => _laDeleteSelection(), disabled: isLocked, title: 'Del' });
+  } else {
+    if (hasClip) {
+      items.push({
+        label: `📥 Paste here (${_laClipboard.items.length})`,
+        fn: () => {
+          _laSetPasteTarget(actId, iso, el);
+          _laPasteAtTarget();
+        },
+        title: 'Ctrl+V',
+      });
+      items.push({ label: '📍 Set as paste target', fn: () => _laSetPasteTarget(actId, iso, el) });
+    } else {
+      items.push({ label: 'Copy a cell first (Ctrl+C)', disabled: true });
+    }
+  }
+
+  const menu = document.createElement('div');
+  menu.className = 'la-context-menu';
+  menu.style.cssText = `position:fixed;left:${ev.clientX}px;top:${ev.clientY}px;z-index:99999;
+    background:#fff;border:1px solid #d1d5db;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);
+    padding:6px 0;min-width:200px;font-size:13px;`;
+  menu.innerHTML = items.map(it => {
+    if (it.disabled) {
+      return `<div style="padding:6px 14px;color:#9ca3af;cursor:not-allowed;">${escapeHtml(it.label)}</div>`;
+    }
+    return `<div class="la-context-menu-item"
+      style="padding:6px 14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;"
+      onmouseover="this.style.background='#f3f4f6';"
+      onmouseout="this.style.background='';">
+      <span>${escapeHtml(it.label)}</span>
+      ${it.title ? `<span style="color:#9ca3af;font-size:11px;margin-left:14px;">${it.title}</span>` : ''}
+    </div>`;
+  }).join('');
+
+  document.body.appendChild(menu);
+
+  // Wire up the click handlers (avoid inline since fn references are closures)
+  [...menu.querySelectorAll('.la-context-menu-item')].forEach((node, i) => {
+    const enabledItems = items.filter(x => !x.disabled);
+    const fn = enabledItems[i]?.fn;
+    if (fn) node.addEventListener('click', () => { menu.remove(); fn(); });
+  });
+
+  // Click outside to dismiss
+  setTimeout(() => {
+    const dismiss = (e) => {
+      if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', dismiss); }
+    };
+    document.addEventListener('mousedown', dismiss);
+  }, 0);
+
+  return false;
 }
 
 async function _laBulkRemoveCellResources() {
