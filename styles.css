@@ -6298,6 +6298,58 @@ body.la-range-painting .tlg-data-cell {
   user-select: none;
 }
 
+/* ── Row drag-reorder (drag activity row label up/down) ────── */
+body.la-row-dragging,
+body.la-row-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+.tlg-row-label {
+  cursor: grab;
+}
+.tlg-row-label:active { cursor: grabbing; }
+.tlg-data-row.la-row-dragging-src {
+  opacity: 0.40;
+}
+.la-row-ghost {
+  position: fixed;
+  z-index: 99999;
+  pointer-events: none;
+  background: rgba(31, 41, 55, 0.95);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.la-row-drop-indicator {
+  position: fixed;
+  z-index: 99998;
+  pointer-events: none;
+  height: 3px;
+  background: #2563eb;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.6), 0 2px 8px rgba(37,99,235,0.5);
+  border-radius: 2px;
+  display: none;
+}
+.la-row-drop-indicator::before,
+.la-row-drop-indicator::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  width: 9px;
+  height: 9px;
+  background: #2563eb;
+  border-radius: 50%;
+}
+.la-row-drop-indicator::before { left: -4px; }
+.la-row-drop-indicator::after  { right: -4px; }
+
 /* ── Drag-to-move (drag a colored cell to another row/date) ── */
 /* Always block text-selection and native HTML5 drag on shift blocks so our
    custom drag-to-move gesture wins — otherwise the browser starts text

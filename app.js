@@ -14369,6 +14369,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     if (g.isGroupHeader) {
       const caret = g.collapsed ? '▶' : '▼';
       html += `<div class="tlg-row tlg-grp-hdr-row"
+          data-group-key="${g.groupKey}"
           style="background:${g.bg};color:${g.fg};border-left:4px solid ${g.accent};"
           onclick="_laToggleGroupCollapse('${g.groupKey}')"
           title="${g.collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(g.label)}">
@@ -15714,6 +15715,7 @@ document.addEventListener('keydown', _laKeyboardHandler);
 const _LA_DRAG_THRESHOLD_PX = 5;
 let _laRangeSelState = null;   // { anchor row/col, baseKeys snapshot, didMove, ... }
 let _laMoveDragState = null;   // { sourceIds, ghost el, current drop cell, ... }
+let _laRowDragState  = null;   // Phase 2E: { activityId, originRowEl, ghost, dropIndicator, dropTarget }
 let _laSuppressNextClick = false;
 
 // Walk up from a target element to the underlying `.tlg-data-cell` and
@@ -15769,6 +15771,33 @@ function _laTimelineMouseDown(ev) {
   if (!document.getElementById('page-lookahead')?.classList.contains('active')) return;
   // Bail on interactive children (buttons, fill handle, inputs)
   if (ev.target.closest('.tlg-fill-handle, button, a, input, select, textarea, .la-context-menu')) return;
+
+  // ── Mode C: drag a ROW LABEL to reorder (Phase 2E) ───────────
+  // Only in activity-mode (where group bands + sort_order are meaningful)
+  // and not in assign mode (which already has a row-drop semantic).
+  const rowLabel = ev.target.closest('.tlg-row-label');
+  if (rowLabel && _laTimelineGroupBy === 'activity' && !_laAssignMode) {
+    const row = rowLabel.closest('.tlg-data-row[data-activity-id]');
+    if (row) {
+      const actId = row.dataset.activityId;
+      const a = PLANNING_ACTIVITIES.find(x => x.id === actId);
+      if (a) {
+        ev.preventDefault();
+        _laRowDragState = {
+          activityId:    actId,
+          activity:      a,
+          originRowEl:   row,
+          startX:        ev.clientX,
+          startY:        ev.clientY,
+          didMove:       false,
+          ghost:         null,
+          dropIndicator: null,
+          dropTarget:    null,   // { insertBefore: rowEl|null, group: 'tc'|... }
+        };
+        return;
+      }
+    }
+  }
 
   const coord = _laCellCoord(ev.target);
   if (!coord || !coord.actId) return;
@@ -15886,6 +15915,82 @@ function _laTimelineMouseMove(ev) {
       newDrop?.classList.add('la-move-target');
     }
   }
+
+  // ── Row drag-reorder (Phase 2E) ──────────────────────────────
+  if (_laRowDragState) {
+    const st = _laRowDragState;
+    const dx = ev.clientX - st.startX;
+    const dy = ev.clientY - st.startY;
+    if (!st.didMove) {
+      if (Math.abs(dx) + Math.abs(dy) < _LA_DRAG_THRESHOLD_PX) return;
+      st.didMove = true;
+      // Ghost
+      const ghost = document.createElement('div');
+      ghost.className = 'la-row-ghost';
+      ghost.textContent = `↕ ${st.activity.description || st.activity.activity_id_text || 'row'}`;
+      document.body.appendChild(ghost);
+      st.ghost = ghost;
+      // Drop indicator (horizontal line)
+      const ind = document.createElement('div');
+      ind.className = 'la-row-drop-indicator';
+      document.body.appendChild(ind);
+      st.dropIndicator = ind;
+      document.body.classList.add('la-row-dragging');
+      st.originRowEl.classList.add('la-row-dragging-src');
+    }
+    if (st.ghost) {
+      st.ghost.style.left = (ev.clientX + 12) + 'px';
+      st.ghost.style.top  = (ev.clientY + 12) + 'px';
+    }
+
+    // Find the row OR group header under the cursor (within .tlg-shell)
+    const hit = document.elementFromPoint(ev.clientX, ev.clientY);
+    const targetRow  = hit?.closest('.tlg-data-row[data-activity-id]');
+    const targetGrpHdr = hit?.closest('.tlg-grp-hdr-row');
+
+    if (targetRow && targetRow !== st.originRowEl) {
+      // Drop into a row: above or below based on cursor vertical position
+      const r = targetRow.getBoundingClientRect();
+      const above = ev.clientY < r.top + r.height / 2;
+      const insertBefore = above ? targetRow : targetRow.nextElementSibling;
+      // Resolve the group from the nearest preceding band header
+      const group = _laFindRowGroup(targetRow);
+      st.dropTarget = { insertBefore, group };
+      st.dropIndicator.style.display = 'block';
+      st.dropIndicator.style.left  = r.left + 'px';
+      st.dropIndicator.style.width = r.width + 'px';
+      st.dropIndicator.style.top   = (above ? r.top : r.bottom) - 1 + 'px';
+    } else if (targetGrpHdr) {
+      // Drop onto a group band — append to that group (sort_order = max+10)
+      const groupKey = targetGrpHdr.dataset.groupKey || _laFindGroupKeyFromHeader(targetGrpHdr);
+      st.dropTarget = { insertBefore: targetGrpHdr.nextElementSibling, group: groupKey };
+      const r = targetGrpHdr.getBoundingClientRect();
+      st.dropIndicator.style.display = 'block';
+      st.dropIndicator.style.left  = r.left + 'px';
+      st.dropIndicator.style.width = r.width + 'px';
+      st.dropIndicator.style.top   = (r.bottom - 1) + 'px';
+    } else {
+      st.dropTarget = null;
+      st.dropIndicator.style.display = 'none';
+    }
+  }
+}
+
+// Walk back from a data-row to find which activity_group band precedes it
+function _laFindRowGroup(rowEl) {
+  let n = rowEl.previousElementSibling;
+  while (n) {
+    if (n.classList.contains('tlg-grp-hdr-row')) {
+      return n.dataset.groupKey || _laFindGroupKeyFromHeader(n);
+    }
+    n = n.previousElementSibling;
+  }
+  return 'tc';
+}
+function _laFindGroupKeyFromHeader(hdrEl) {
+  // Parse from the onclick attr we set on the band header
+  const m = hdrEl.getAttribute('onclick')?.match(/_laToggleGroupCollapse\('([^']+)'\)/);
+  return m ? m[1] : 'other';
 }
 
 async function _laTimelineMouseUp(ev) {
@@ -15932,6 +16037,69 @@ async function _laTimelineMouseUp(ev) {
     _laSetPasteTarget(targetActId, targetIso, dropCell);
     await _laPasteAtTarget();
   }
+
+  // ── Row-drag finish (Phase 2E) ──────────────────────────────
+  if (_laRowDragState) {
+    const st = _laRowDragState;
+    _laRowDragState = null;
+    st.ghost?.remove();
+    st.dropIndicator?.remove();
+    document.body.classList.remove('la-row-dragging');
+    st.originRowEl?.classList.remove('la-row-dragging-src');
+    if (!st.didMove) return;                  // not a drag, let click pass through
+    _laSuppressNextClick = true;
+    setTimeout(() => { _laSuppressNextClick = false; }, 60);
+
+    if (!st.dropTarget) return;
+    const { insertBefore, group } = st.dropTarget;
+
+    // Compute new sort_order from neighbors in the destination band:
+    //   - find the rendered activity rows currently between this group's
+    //     band header and the next band header
+    //   - find the rows that flank the drop position (prev, next)
+    //   - new sort_order = midpoint, or max+10 if at end, or min-10 if at top
+    const newOrder = _laComputeDropSortOrder(group, insertBefore, st.activityId);
+    if (newOrder == null) return;
+
+    try {
+      await _dbUpdate('planning_activities', {
+        activity_group: group,
+        sort_order:     newOrder,
+      }, { id: st.activityId });
+      toast(`✓ Row moved to ${_groupMeta(group).label}`, 'success');
+      await loadPlanningData(true);
+      _renderLookaheadTabBody();
+    } catch (err) {
+      toast('Move failed: ' + err.message, 'error');
+    }
+  }
+}
+
+// Compute the new sort_order for a row being dropped before `insertBefore`
+// (or at end of group if insertBefore is null/outside the group). The
+// resulting integer is midway between flanking neighbors, or max+10 at the
+// tail / min-10 at the head, to preserve drag gaps.
+function _laComputeDropSortOrder(targetGroup, insertBefore, draggedId) {
+  // Build the list of activities currently in the target group, by sort_order
+  const peers = (PLANNING_ACTIVITIES || [])
+    .filter(a => !a.deleted_at && (a.activity_group || 'other') === targetGroup && a.id !== draggedId)
+    .sort((a, b) => (a.sort_order ?? 999999) - (b.sort_order ?? 999999));
+
+  // Identify the activity that the cursor was hovering "just above"
+  const beforeActId = insertBefore?.dataset?.activityId || null;
+  const idx = beforeActId ? peers.findIndex(p => p.id === beforeActId) : -1;
+
+  if (peers.length === 0)          return 10;                           // empty group
+  if (idx === -1)                  return (peers[peers.length - 1].sort_order ?? 0) + 10;  // append
+  if (idx === 0)                   return Math.max(1, (peers[0].sort_order ?? 10) - 10);   // prepend
+  const prev = peers[idx - 1].sort_order ?? 0;
+  const next = peers[idx].sort_order ?? (prev + 20);
+  if (next - prev <= 1) {
+    // gaps exhausted — return prev+1 and trigger background renumber later
+    console.warn('[reorder] sort_order gap exhausted between', prev, 'and', next);
+    return prev + 1;
+  }
+  return Math.round((prev + next) / 2);
 }
 
 document.addEventListener('mousedown', _laTimelineMouseDown);
