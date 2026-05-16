@@ -6384,6 +6384,72 @@ body.la-fill-active {
   z-index: 9;
 }
 
+/* ── Per-cell test execution badge (✓ N/M etc.) ────────────── */
+.tlg-cell-badge {
+  position: absolute;
+  bottom: 1px;
+  right: 1px;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 3;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+}
+.tlg-cell-badge-ok   { background: #15803d; color: #fff; }
+.tlg-cell-badge-warn { background: #b45309; color: #fff; }
+.tlg-cell-badge-none { background: rgba(127,29,29,0.85); color: #fff; }
+
+/* ── Row-level progress chip on activity labels ────────────── */
+.tlg-row-prog {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.02em;
+  margin-left: 6px;
+  align-self: center;
+  white-space: nowrap;
+}
+
+/* ── 🔗 Link chip on activity labels ───────────────────────── */
+.tlg-row-link-btn {
+  display: inline-block;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin-top: 3px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.tlg-row-link {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 80ms ease;
+}
+.tlg-row-link-set {
+  background: rgba(8,145,178,0.18);
+  color: #0e7490;
+  border: 1px solid rgba(8,145,178,0.35);
+}
+.tlg-row-link-set:hover { background: rgba(8,145,178,0.30); }
+.tlg-row-link-none {
+  background: rgba(0,0,0,0.08);
+  color: rgba(0,0,0,0.55);
+  border: 1px dashed rgba(0,0,0,0.30);
+}
+.tlg-row-link-none:hover { background: rgba(0,0,0,0.15); color: rgba(0,0,0,0.75); }
+
 /* ── Manual activity rows (added via + Add Activity) ───────── */
 .tlg-row-manual {
   position: relative;

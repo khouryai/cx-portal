@@ -13252,6 +13252,7 @@ let PLANNING_ACTIVITY_RES     = [];   // planning_activity_resources join rows (
 let PLANNING_CONFLICTS        = [];   // planning_conflicts rows
 let PTO_REQUESTS              = [];   // pto_requests rows
 let DELAY_LOG                 = [];   // delay_log rows (for Delays & Cancellations report)
+let PLANNING_TEST_RESULTS     = [];   // test_results in lookahead window (for per-cell badges)
 
 let _lookaheadTab        = 'calendar';                 // calendar | lookahead | resources | pto
 let _adminPlanningTab    = 'upload';                   // upload | review | conflicts | resources | history
@@ -13289,7 +13290,11 @@ async function loadPlanningData(force = false) {
   // Cache for 30s to avoid hammering on tab switches
   if (!force && Date.now() - _planningLoadedAt < 30_000) return;
   try {
-    const [resources, events, activities, batches, eventRes, activityRes, conflicts, pto, delayLog] = await Promise.all([
+    // Pull test_results from ~60 days back to today+60 — covers the lookahead window
+    // plus recent history needed for "did this get executed" badges.
+    const tResultsFrom = dayjs().subtract(60, 'day').format('YYYY-MM-DD');
+    const tResultsTo   = dayjs().add(60, 'day').format('YYYY-MM-DD');
+    const [resources, events, activities, batches, eventRes, activityRes, conflicts, pto, delayLog, testResults] = await Promise.all([
       _fetchAnon('planning_resources?select=*&order=display_name.asc'),
       _fetchAnon('planning_events?select=*&order=event_date.asc'),
       _fetchAnon('planning_activities?select=*&order=created_at.desc'),
@@ -13299,6 +13304,7 @@ async function loadPlanningData(force = false) {
       _fetchAnon('planning_conflicts?select=*&order=created_at.desc'),
       _fetchAnon('pto_requests?select=*&order=start_date.desc'),
       _fetchAnon('delay_log?select=*&delay_occurred=eq.Yes&order=log_date.desc'),
+      _fetchAnon(`test_results?select=test_id,activity,date_tested,result&date_tested=gte.${tResultsFrom}&date_tested=lte.${tResultsTo}`),
     ]);
     PLANNING_RESOURCES    = resources    || [];
     PLANNING_EVENTS       = events       || [];
@@ -13309,6 +13315,7 @@ async function loadPlanningData(force = false) {
     PLANNING_CONFLICTS    = conflicts    || [];
     PTO_REQUESTS          = pto          || [];
     DELAY_LOG             = delayLog     || [];
+    PLANNING_TEST_RESULTS = testResults  || [];
     _planningLoadedAt   = Date.now();
     // First-time bootstrap: seed planning_resources from portal users
     if (PLANNING_RESOURCES.length === 0) await _planningBootstrapResources();
@@ -13316,6 +13323,62 @@ async function loadPlanningData(force = false) {
     console.warn('Planning data load failed:', err.message);
     toast('Planning data load failed: ' + err.message, 'error');
   }
+}
+
+// ── Test Register Activity stats (for per-cell badges) ─────────
+// Returns the execution stats for a given Test Register Activity name,
+// either for a specific date (per-cell) or over the entire activity (row totals).
+function _planningTestActivityStats(activityName, date = null) {
+  if (!activityName) return null;
+  const tiInActivity = TI.filter(t => (t.Activity || '').trim() === activityName.trim());
+  const totalInActivity = tiInActivity.length;
+  const completeInActivity = tiInActivity.filter(t => t.Status === 'Complete' || t.Status === 'Pass' || t.Status === 'Passed').length;
+
+  if (!date) {
+    // Row-level totals (overall progress on the linked Activity)
+    return { totalInActivity, completeInActivity, executedToday: 0, passed: 0, failed: 0, blocked: 0 };
+  }
+
+  // Per-cell: results for this activity on this date
+  const dayResults = (PLANNING_TEST_RESULTS || []).filter(r =>
+    (r.activity || '').trim() === activityName.trim() &&
+    r.date_tested === date
+  );
+  const uniqueTests = new Set(dayResults.map(r => r.test_id));
+  const passed  = dayResults.filter(r => r.result === 'Pass').length;
+  const failed  = dayResults.filter(r => r.result === 'Fail').length;
+  const blocked = dayResults.filter(r => r.result === 'Blocked').length;
+  return {
+    totalInActivity,
+    completeInActivity,
+    executedToday: uniqueTests.size,
+    passed, failed, blocked,
+  };
+}
+
+// Cell badge HTML — returns a small chip with execution status, or '' if no link.
+function _planningCellBadge(linkedActivity, date) {
+  if (!linkedActivity) return '';
+  const s = _planningTestActivityStats(linkedActivity, date);
+  if (!s || s.totalInActivity === 0) return '';
+  if (s.executedToday === 0) {
+    return `<span class="tlg-cell-badge tlg-cell-badge-none" title="${escapeHtml(linkedActivity)} — planned but no test results recorded yet">✗ 0/${s.totalInActivity}</span>`;
+  }
+  const hasIssue = s.failed > 0 || s.blocked > 0;
+  const cls = hasIssue ? 'tlg-cell-badge-warn' : 'tlg-cell-badge-ok';
+  const icon = hasIssue ? '⚠' : '✓';
+  const issueText = hasIssue ? ` · ${s.failed ? s.failed+' fail' : ''}${s.failed && s.blocked ? ', ' : ''}${s.blocked ? s.blocked+' blk' : ''}` : '';
+  return `<span class="tlg-cell-badge ${cls}" title="${escapeHtml(linkedActivity)} on ${date}: ${s.executedToday} of ${s.totalInActivity} tests executed${issueText}">${icon} ${s.executedToday}/${s.totalInActivity}</span>`;
+}
+
+// Row-level summary chip (shown on the activity label)
+function _planningRowProgressChip(linkedActivity) {
+  if (!linkedActivity) return '';
+  const s = _planningTestActivityStats(linkedActivity);
+  if (!s || s.totalInActivity === 0) return '';
+  const pct = Math.round((s.completeInActivity / s.totalInActivity) * 100);
+  const color = pct >= 100 ? '#16a34a' : pct >= 50 ? '#0891b2' : '#6b7280';
+  return `<span class="tlg-row-prog" style="background:${color};" title="${s.completeInActivity} of ${s.totalInActivity} tests Complete in ${escapeHtml(linkedActivity)}">${s.completeInActivity}/${s.totalInActivity}</span>`;
 }
 
 function _planningDeriveInitials(name) {
@@ -14273,13 +14336,19 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       ? `<span class="la-drop-hint-text">drop here</span>`
       : '';
 
+    const linkChip = actId ? (g.linkedTestRegActivity
+      ? `<span class="tlg-row-link tlg-row-link-set" title="Linked to Test Register Activity: ${escapeHtml(g.linkedTestRegActivity)}">🔗 ${escapeHtml(g.linkedTestRegActivity.slice(0, 22))}${g.linkedTestRegActivity.length > 22 ? '…' : ''}</span>`
+      : `<span class="tlg-row-link tlg-row-link-none" title="No Test Register Activity linked — click to link">🔗 unlinked</span>`) : '';
+    const progChip = _planningRowProgressChip(g.linkedTestRegActivity);
     html += `<div class="tlg-label tlg-row-label${_laAssignMode && actId ? ' la-drop-label' : ''}${g.isManual ? ' tlg-row-manual' : ''}"
       style="background:${g.color||'#6b7280'};"
       ${_laAssignMode && actId ? `data-activity-id="${actId}" title="Drop here to assign for the full activity"` : ''}>
       <div class="tlg-label-inner">
         <span class="tlg-label-main" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>
         ${g.sublabel ? `<span class="tlg-label-sub">${escapeHtml(g.sublabel)}</span>` : ''}
+        ${linkChip ? `<button class="tlg-row-link-btn" onclick="event.stopPropagation();_laOpenLinkActivityModal('${actId}')">${linkChip}</button>` : ''}
       </div>
+      ${progChip}
       ${assignedChips}${dropHintHTML}
       ${g.isManual ? `<button class="tlg-row-del" onclick="event.stopPropagation();_laDeleteManualActivity('${actId}',event)" title="Delete manual activity">🗑</button>` : ''}
     </div>`;
@@ -14330,6 +14399,8 @@ function _laRenderGrid(target, { groups, days, milestones }) {
           const inClip = _laClipboard?.items.some(it => it.event.id === s.event_id);
           const cutClass = (_laClipboard?.mode === 'cut' && inClip) ? ' la-cell-cut' : '';
           const clipClass = inClip ? ' la-cell-clipboard' : '';
+          // Per-cell badge: show test execution status from the linked Test Register Activity
+          const badgeHtml = _planningCellBadge(g.linkedTestRegActivity, iso);
           html += `<div class="tlg-shift-block ${runClass}${s.isCancel ? ' tlg-shift-cancelled' : ''}${isCellSel ? ' la-cell-selected' : ''}${clipClass}${cutClass}"
             style="background:${v.bg};color:${v.text};"
             data-cell-event-id="${s.event_id}"
@@ -14338,7 +14409,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
             onclick="_laCellClick(event,'${s.event_id}','${actId||''}','${iso}',this)"
             oncontextmenu="event.preventDefault();_laCellContextMenu(event,'${s.event_id}','${actId||''}','${iso}',this);return false;"
             data-tlg-tip="${tip}"
-          >${s.cellLabel ? `<span class="tlg-cell-location">${escapeHtml(s.cellLabel)}</span>` : ''}${isCellSel ? `<span class="la-cell-sel-mark">✓</span>` : ''}<span class="tlg-fill-handle" onmousedown="_laFillStart(event,'${s.event_id}','${actId||''}','${iso}',this.parentElement)" title="Drag to fill across days"></span></div>`;
+          >${s.cellLabel ? `<span class="tlg-cell-location">${escapeHtml(s.cellLabel)}</span>` : ''}${badgeHtml}${isCellSel ? `<span class="la-cell-sel-mark">✓</span>` : ''}<span class="tlg-fill-handle" onmousedown="_laFillStart(event,'${s.event_id}','${actId||''}','${iso}',this.parentElement)" title="Drag to fill across days"></span></div>`;
         });
         if (inP6 && !shifts.length) html += `<div class="tlg-p6-hint">P6</div>`;
       }
@@ -15277,6 +15348,18 @@ function _laOpenNewActivityModal() {
           <input type="text" id="new-act-hours" class="form-input" placeholder="e.g. 8h, 12h">
         </div>
         <div class="form-field form-field-full">
+          <label>🔗 Linked Test Register Activity <span style="font-weight:400;color:var(--gray-500);">(optional — leave blank for overhead activities)</span></label>
+          <select id="new-act-linked-tra" class="form-input">
+            <option value="">— Not linked —</option>
+            ${(() => {
+              const counts = {};
+              TI.forEach(t => { const k = (t.Activity||'').trim(); if (k) counts[k] = (counts[k]||0)+1; });
+              return Object.entries(counts).sort((a,b)=>a[0].localeCompare(b[0]))
+                .map(([n,c]) => `<option value="${escapeHtml(n)}">${escapeHtml(n)} (${c})</option>`).join('');
+            })()}
+          </select>
+        </div>
+        <div class="form-field form-field-full">
           <label>Notes <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
           <textarea id="new-act-notes" class="form-input" rows="2"></textarea>
         </div>
@@ -15284,6 +15367,7 @@ function _laOpenNewActivityModal() {
       <p style="font-size:12px;color:var(--gray-500);margin-top:14px;line-height:1.5;">
         After creating, the new row will appear in the lookahead. Add shift cells by copy/pasting an existing event,
         using the drag-to-fill handle, or clicking the cell to open the detail editor.
+        Linking to a Test Register Activity unlocks per-cell execution badges.
       </p>
     `,
     footer: `
@@ -15292,6 +15376,88 @@ function _laOpenNewActivityModal() {
     `,
   });
   setTimeout(() => document.getElementById('new-act-desc')?.focus(), 50);
+}
+
+// ── Link Activity → Test Register Activity ─────────────────────
+function _laOpenLinkActivityModal(activityId) {
+  const a = PLANNING_ACTIVITIES.find(x => x.id === activityId);
+  if (!a) return;
+  const currentLink = a.linked_test_register_activity || '';
+
+  // Build the list of distinct Test Register Activities from TI.
+  // Sort by name. Each option shows the activity + how many test items it contains.
+  const activityCounts = {};
+  TI.forEach(t => {
+    const k = (t.Activity || '').trim();
+    if (!k) return;
+    activityCounts[k] = (activityCounts[k] || 0) + 1;
+  });
+  const sortedActivities = Object.entries(activityCounts).sort((a,b) => a[0].localeCompare(b[0]));
+
+  // Auto-suggest the closest match by description if no link yet (Fuse.js fuzzy match)
+  let suggestion = null;
+  if (!currentLink && window.Fuse && (a.description || '').length > 3) {
+    const fuse = new Fuse(sortedActivities.map(([name]) => ({ name })), {
+      keys: ['name'], threshold: 0.45, includeScore: true, ignoreLocation: true,
+    });
+    const res = fuse.search(a.description);
+    if (res.length && res[0].score < 0.45) suggestion = res[0].item.name;
+  }
+
+  modal({
+    title: '🔗 Link to Test Register Activity',
+    sub:   a.description || a.activity_id_text || 'Unnamed activity',
+    size:  'medium',
+    body: `
+      <div class="form-field form-field-full">
+        <label>Test Register Activity</label>
+        <select id="link-tra-select" class="form-input" style="width:100%;">
+          <option value="">— Not linked (overhead / no test mapping) —</option>
+          ${sortedActivities.map(([name, count]) => `
+            <option value="${escapeHtml(name)}" ${name === currentLink ? 'selected' : ''}>
+              ${escapeHtml(name)} (${count} test${count>1?'s':''})
+            </option>`).join('')}
+        </select>
+      </div>
+      ${suggestion ? `
+        <div style="margin-top:10px;padding:8px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:12px;color:#1e40af;">
+          💡 <strong>Suggested:</strong> ${escapeHtml(suggestion)}
+          <button type="button" class="form-secondary" style="font-size:11px;padding:3px 8px;margin-left:8px;"
+            onclick="document.getElementById('link-tra-select').value=${JSON.stringify(suggestion)};">Use suggestion</button>
+        </div>` : ''}
+      <p style="font-size:12px;color:var(--gray-500);margin-top:14px;line-height:1.5;">
+        Linking this lookahead row to a Test Register Activity unlocks per-cell badges showing
+        test execution status (e.g. <code>✓ 5/8</code>), plus row-level progress (<code>14/22</code>),
+        and feeds the Lookahead Health KPIs.
+        Leave blank for overhead activities (mobilization, training, doc prep, etc.).
+      </p>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="_laSaveLinkActivity('${activityId}')">Save Link</button>
+    `,
+  });
+
+  // Upgrade to Tom Select for searchable dropdown
+  setTimeout(() => {
+    if (!window.TomSelect) return;
+    try { new TomSelect('#link-tra-select', { create: false, allowEmptyOption: true }); } catch {}
+  }, 50);
+}
+
+async function _laSaveLinkActivity(activityId) {
+  const val = document.getElementById('link-tra-select')?.value || null;
+  try {
+    await _dbUpdate('planning_activities',
+      { linked_test_register_activity: val || null, is_manual_override: true },
+      { id: activityId });
+    closeModal();
+    toast(val ? `✓ Linked to "${val}"` : '✓ Link cleared', 'success');
+    await loadPlanningData(true);
+    _renderLookaheadTabBody();
+  } catch (err) {
+    toast('Save failed: ' + err.message, 'error');
+  }
 }
 
 async function _laDeleteManualActivity(activityId, ev) {
@@ -15339,6 +15505,7 @@ async function _laSaveNewActivity() {
     sswp: document.getElementById('new-act-sswp').value.trim() || null,
     work_hours_raw: document.getElementById('new-act-hours').value.trim() || null,
     notes: document.getElementById('new-act-notes').value.trim() || null,
+    linked_test_register_activity: document.getElementById('new-act-linked-tra')?.value || null,
     match_status: 'manual',
     is_manual_override: true,
     override_reason: 'Manually added via lookahead grid',
@@ -15792,14 +15959,15 @@ function _laMountLookaheadTL() {
             .map(ar => PLANNING_RESOURCES.find(r => r.id === ar.resource_id))
             .filter(Boolean);
           groups.push({
-            id:               'act-' + a.id,
-            activityId:       a.id,
+            id:                     'act-' + a.id,
+            activityId:             a.id,
             assignedResources,
-            label:            a.description || a.activity_id_text || '—',
-            sublabel:         sub || (a.is_manual_override ? '✋ Manual' : ''),
-            color:            c.bg,
-            isManual:         !!a.is_manual_override,
-            byDate:           _laBuildByDate(evs, days, e => _planningEventResourceInitials(e.id)),
+            label:                  a.description || a.activity_id_text || '—',
+            sublabel:               sub || (a.is_manual_override ? '✋ Manual' : ''),
+            color:                  c.bg,
+            isManual:               !!a.is_manual_override,
+            linkedTestRegActivity:  a.linked_test_register_activity || null,
+            byDate:                 _laBuildByDate(evs, days, e => _planningEventResourceInitials(e.id)),
           });
         });
     });
@@ -17611,20 +17779,31 @@ async function _lookaheadConfirmImport() {
     if (!batchId) throw new Error('Batch insert returned no id');
 
     // 2. Insert activities (chunks of 100)
-    const activityPayload = f.rows.map(r => ({
-      batch_id:              batchId,
-      source_row_number:     r.source_row_number,
-      activity_id_text:      r.activity_id_text,
-      description:           r.description,
-      location:              r.location,
-      sswp:                  r.sswp,
-      resource_raw:          r.resource_raw,
-      work_hours_raw:        r.work_hours_raw,
-      linked_test_item_id:   r.match.test_item_id,
-      linked_p6_activity_id: r.match.p6_activity_id,
-      match_status:          r.match.status,
-      match_confidence:      r.match.confidence,
-    }));
+    const activityPayload = f.rows.map(r => {
+      // Resolve the Test Register Activity name from the matched test item (the correct grain).
+      // The match function returns a test_item_id (one row), but the row really represents the
+      // entire Activity group — pull TI.Activity for the matched test_id and store that.
+      let linkedTRA = null;
+      if (r.match?.test_item_id) {
+        const ti = TI.find(t => t.TestID === r.match.test_item_id);
+        if (ti?.Activity) linkedTRA = ti.Activity;
+      }
+      return {
+        batch_id:                       batchId,
+        source_row_number:              r.source_row_number,
+        activity_id_text:               r.activity_id_text,
+        description:                    r.description,
+        location:                       r.location,
+        sswp:                           r.sswp,
+        resource_raw:                   r.resource_raw,
+        work_hours_raw:                 r.work_hours_raw,
+        linked_test_item_id:            r.match.test_item_id,
+        linked_p6_activity_id:          r.match.p6_activity_id,
+        linked_test_register_activity:  linkedTRA,
+        match_status:                   r.match.status,
+        match_confidence:               r.match.confidence,
+      };
+    });
     const insertedActivities = [];
     for (let i = 0; i < activityPayload.length; i += 100) {
       const slice = activityPayload.slice(i, i + 100);
