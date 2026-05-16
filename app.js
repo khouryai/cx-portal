@@ -14715,6 +14715,7 @@ function _laCellSelActionsHTML() {
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laCopySelection('copy')" title="Ctrl+C">📋 Copy</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laCopySelection('cut')" title="Ctrl+X">✂ Cut</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#7f1d1d;border-color:#fca5a5;" onclick="_laDeleteSelection()" title="Del">🗑 Delete</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#7f1d1d;border-color:#fca5a5;" onclick="_laBulkCancelCells()">🚫 Cancel</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laBulkRemoveCellResources()">Remove users only</button>`);
   }
   if (hasClipboard) {
@@ -15088,6 +15089,56 @@ async function _laDeleteSelection() {
   toast(`✓ Deleted ${count} event${count>1?'s':''}`, 'success');
   await loadPlanningData(true);
   _renderLookaheadTabBody();
+}
+
+// ─── Bulk cancel selected cells ───────────────────────────────
+// Asks user for a cancellation reason + responsible party, then marks all
+// selected (non-locked, non-already-cancelled) events as cancelled.
+function _laBulkCancelCells() {
+  if (_laSelectedCellKeys.size === 0) { toast('No cells selected.', 'warn'); return; }
+
+  const eventIds = [..._laSelectedCellKeys];
+  const events   = PLANNING_EVENTS.filter(e => eventIds.includes(e.id));
+  const locked   = events.filter(e => e.is_locked);
+  const already  = events.filter(e => !e.is_locked && e.status === 'cancelled');
+  const toCancel = events.filter(e => !e.is_locked && e.status !== 'cancelled');
+
+  if (toCancel.length === 0) {
+    const reasons = [];
+    if (locked.length)  reasons.push(`${locked.length} locked`);
+    if (already.length) reasons.push(`${already.length} already cancelled`);
+    toast(`Nothing to cancel — ${reasons.join(', ')}.`, 'warn');
+    return;
+  }
+
+  const skipNote = [];
+  if (locked.length)  skipNote.push(`${locked.length} locked`);
+  if (already.length) skipNote.push(`${already.length} already cancelled`);
+  const sub = `Cancelling ${toCancel.length} event${toCancel.length > 1 ? 's' : ''}${skipNote.length ? ` (skipping: ${skipNote.join(', ')})` : ''}`;
+
+  _cancelReasonModalOpen(sub, async ({ reason, party }) => {
+    const now = new Date().toISOString();
+    let saved = 0;
+    for (const ev of toCancel) {
+      try {
+        await _dbUpdate('planning_events', {
+          status:                         'cancelled',
+          cancellation_reason:            reason,
+          cancellation_responsible_party: party || null,
+          cancellation_by:                currentProfile?.id || null,
+          cancellation_at:                now,
+          updated_by:                     currentProfile?.id || null,
+        }, { id: ev.id });
+        saved++;
+      } catch (err) {
+        console.error('[bulk-cancel] failed for', ev.id, err);
+      }
+    }
+    _laSelectedCellKeys.clear();
+    toast(`✓ Cancelled ${saved} event${saved > 1 ? 's' : ''}`, 'success');
+    await loadPlanningData(true);
+    _renderLookaheadTabBody();
+  });
 }
 
 // ─── Keyboard shortcuts (Ctrl+C / X / V / Del / Esc) ──────────
@@ -15810,6 +15861,7 @@ function _laCellContextMenu(ev, eventId, actId, iso, el) {
     items.push({ label: '📋 Copy',          fn: () => _laCopySelection('copy'), title: 'Ctrl+C' });
     items.push({ label: '✂ Cut',            fn: () => _laCopySelection('cut'),  disabled: isLocked, title: 'Ctrl+X' });
     items.push({ label: isLocked ? '🔒 Locked — can\'t delete' : '🗑 Delete', fn: () => _laDeleteSelection(), disabled: isLocked, title: 'Del' });
+    items.push({ label: isLocked ? '🔒 Locked — can\'t cancel' : '🚫 Cancel event(s)', fn: () => _laBulkCancelCells(), disabled: isLocked });
   } else {
     if (hasClip) {
       items.push({
