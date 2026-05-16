@@ -14573,12 +14573,14 @@ function _laLookaheadHTML() {
     <div class="la-edit-tips-bar" style="display:flex;align-items:center;gap:14px;padding:6px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#475569;margin:8px 0;flex-wrap:wrap;">
       <strong style="color:#1e40af;">📋 Excel-style editing:</strong>
       <span><kbd>Ctrl</kbd>+click select</span>
+      <span><kbd>Ctrl</kbd>+drag range-select</span>
       <span><kbd>Ctrl</kbd>+<kbd>C</kbd> copy</span>
       <span><kbd>Ctrl</kbd>+<kbd>X</kbd> cut</span>
       <span><kbd>Ctrl</kbd>+<kbd>V</kbd> paste</span>
       <span><kbd>Del</kbd> delete</span>
       <span><kbd>Esc</kbd> clear</span>
-      <span style="color:#0891b2;">↔ drag cell handle to fill days</span>
+      <span style="color:#1e40af;">↔ drag a cell to move it</span>
+      <span style="color:#0891b2;">↗ fill-handle to extend days</span>
       <span style="margin-left:auto;color:#64748b;">Right-click for menu</span>
     </div>
 
@@ -14812,9 +14814,9 @@ function _laSetPasteTarget(actId, iso, el) {
 }
 
 // ─── Copy / Cut ────────────────────────────────────────────────
-function _laCopySelection(mode = 'copy') {
+function _laCopySelection(mode = 'copy', opts) {
   if (_laSelectedCellKeys.size === 0) {
-    toast('Ctrl+click colored cells to select them first.', 'warn');
+    if (!opts?.silent) toast('Ctrl+click colored cells to select them first.', 'warn');
     return;
   }
   const selectedEvents = PLANNING_EVENTS.filter(e => _laSelectedCellKeys.has(e.id));
@@ -14855,7 +14857,7 @@ function _laCopySelection(mode = 'copy') {
 
   document.body.classList.add('la-clipboard-active');
   _laRefreshActionBanner();
-  toast(`${mode === 'copy' ? '📋 Copied' : '✂ Cut'} ${items.length} cell${items.length>1?'s':''}. Click an empty cell, then Ctrl+V.`, 'success');
+  if (!opts?.silent) toast(`${mode === 'copy' ? '📋 Copied' : '✂ Cut'} ${items.length} cell${items.length>1?'s':''}. Click an empty cell, then Ctrl+V.`, 'success');
 }
 
 function _laClearClipboard() {
@@ -15159,6 +15161,247 @@ function _laKeyboardHandler(ev) {
 }
 // Attach the listener once on script load (gated to lookahead tab inside the handler)
 document.addEventListener('keydown', _laKeyboardHandler);
+
+// ─── Range-paint selection (Ctrl+drag) and drag-to-move ─────────
+// Ctrl + mousedown + drag across cells → adds every colored cell in the
+// rectangle to the multi-selection (anchor cell ↔ current cell).
+// Plain mousedown + drag on a colored cell → moves it (and any other
+// selected cells) to wherever you drop them. Reuses the cut+paste pipeline
+// so collision/lock/PTO handling all works the same.
+
+const _LA_DRAG_THRESHOLD_PX = 5;
+let _laRangeSelState = null;   // { anchor row/col, baseKeys snapshot, didMove, ... }
+let _laMoveDragState = null;   // { sourceIds, ghost el, current drop cell, ... }
+let _laSuppressNextClick = false;
+
+// Walk up from a target element to the underlying `.tlg-data-cell` and
+// return its row/column coordinates within the rendered grid.
+function _laCellCoord(el) {
+  if (!el || !el.closest) return null;
+  const cell = el.closest('.tlg-data-cell');
+  if (!cell) return null;
+  return {
+    cell,
+    actId: cell.dataset.activityId || '',
+    iso:   cell.dataset.eventDate || '',
+  };
+}
+
+// Snapshot of the grid's row/column index. Rebuilt at the start of each drag.
+function _laBuildGridIndex() {
+  const rowEls = [...document.querySelectorAll('.tlg-shell .tlg-data-row[data-activity-id]')];
+  const rowByActId = new Map(rowEls.map((el, i) => [el.dataset.activityId, i]));
+  const dateSet = new Set();
+  rowEls.forEach(row => {
+    row.querySelectorAll('.tlg-data-cell[data-event-date]').forEach(c => dateSet.add(c.dataset.eventDate));
+  });
+  const dateOrder = [...dateSet].sort();
+  const colByDate = new Map(dateOrder.map((d, i) => [d, i]));
+  return { rowEls, rowByActId, colByDate, dateOrder };
+}
+
+// Re-paint selection visuals + sync `_laSelectedCellKeys` to match `newKeys`.
+function _laApplySelectionSet(newKeys) {
+  document.querySelectorAll('.la-cell-selected').forEach(el => {
+    el.classList.remove('la-cell-selected');
+    el.querySelector('.la-cell-sel-mark')?.remove();
+  });
+  _laSelectedCellKeys.clear();
+  newKeys.forEach(k => {
+    _laSelectedCellKeys.add(k);
+    const cellEl = _laFindCellEl(k);
+    if (!cellEl) return;
+    cellEl.classList.add('la-cell-selected');
+    if (!cellEl.querySelector('.la-cell-sel-mark')) {
+      const mark = document.createElement('span');
+      mark.className = 'la-cell-sel-mark';
+      mark.textContent = '✓';
+      cellEl.appendChild(mark);
+    }
+  });
+  _laRefreshActionBanner();
+}
+
+function _laTimelineMouseDown(ev) {
+  if (ev.button !== 0) return;                                    // left button only
+  if (!document.getElementById('page-lookahead')?.classList.contains('active')) return;
+  // Bail on interactive children (buttons, fill handle, inputs)
+  if (ev.target.closest('.tlg-fill-handle, button, a, input, select, textarea, .la-context-menu')) return;
+
+  const coord = _laCellCoord(ev.target);
+  if (!coord || !coord.actId) return;
+
+  const isCtrl = ev.ctrlKey || ev.metaKey;
+  const shiftBlock = ev.target.closest('.tlg-shift-block');
+
+  // ── Mode A: Ctrl+drag → range-paint ──────────────────────────
+  if (isCtrl) {
+    ev.preventDefault();
+    const idx = _laBuildGridIndex();
+    _laRangeSelState = {
+      idx,
+      anchorRow: idx.rowByActId.get(coord.actId),
+      anchorCol: idx.colByDate.get(coord.iso),
+      startX:   ev.clientX,
+      startY:   ev.clientY,
+      didMove:  false,
+      baseKeys: new Set(_laSelectedCellKeys),   // additive — preserve prior picks
+    };
+    return;
+  }
+
+  // ── Mode B: plain drag on a colored cell → move ──────────────
+  if (shiftBlock) {
+    const eventId = shiftBlock.dataset.cellEventId;
+    if (!eventId) return;
+    // Skip drag on locked or cancelled events — they shouldn't move
+    const evObj = PLANNING_EVENTS.find(e => e.id === eventId);
+    if (!evObj || evObj.is_locked || evObj.status === 'cancelled') return;
+    // If already selected → drag the whole selection; else drag just this one
+    const sourceIds = _laSelectedCellKeys.has(eventId)
+      ? [..._laSelectedCellKeys]
+      : [eventId];
+    _laMoveDragState = {
+      anchorEventId: eventId,
+      sourceIds,
+      startX:  ev.clientX,
+      startY:  ev.clientY,
+      didMove: false,
+      ghost:   null,
+      dropCellEl: null,
+    };
+  }
+}
+
+function _laTimelineMouseMove(ev) {
+  // ── Range-paint ──────────────────────────────────────────────
+  if (_laRangeSelState) {
+    const st = _laRangeSelState;
+    if (!st.didMove) {
+      const dx = Math.abs(ev.clientX - st.startX);
+      const dy = Math.abs(ev.clientY - st.startY);
+      if (dx + dy < _LA_DRAG_THRESHOLD_PX) return;
+      st.didMove = true;
+      document.body.classList.add('la-range-painting');
+    }
+    const hit = document.elementFromPoint(ev.clientX, ev.clientY);
+    const coord = hit ? _laCellCoord(hit) : null;
+    if (!coord || !coord.actId) return;
+    const curRow = st.idx.rowByActId.get(coord.actId);
+    const curCol = st.idx.colByDate.get(coord.iso);
+    if (curRow == null || curCol == null) return;
+
+    const r0 = Math.min(st.anchorRow, curRow), r1 = Math.max(st.anchorRow, curRow);
+    const c0 = Math.min(st.anchorCol, curCol), c1 = Math.max(st.anchorCol, curCol);
+
+    const newKeys = new Set(st.baseKeys);
+    for (let r = r0; r <= r1; r++) {
+      const rowEl = st.idx.rowEls[r];
+      if (!rowEl) continue;
+      rowEl.querySelectorAll('.tlg-data-cell[data-event-date]').forEach(c => {
+        const col = st.idx.colByDate.get(c.dataset.eventDate);
+        if (col == null || col < c0 || col > c1) return;
+        c.querySelectorAll('.tlg-shift-block[data-cell-event-id]').forEach(sb => {
+          newKeys.add(sb.dataset.cellEventId);
+        });
+      });
+    }
+    _laApplySelectionSet(newKeys);
+    return;
+  }
+
+  // ── Move-drag ────────────────────────────────────────────────
+  if (_laMoveDragState) {
+    const st = _laMoveDragState;
+    const dx = ev.clientX - st.startX;
+    const dy = ev.clientY - st.startY;
+    if (!st.didMove) {
+      if (Math.abs(dx) + Math.abs(dy) < _LA_DRAG_THRESHOLD_PX) return;
+      st.didMove = true;
+      const ghost = document.createElement('div');
+      ghost.className = 'la-move-ghost';
+      ghost.textContent = st.sourceIds.length === 1
+        ? '↔ Move 1 cell'
+        : `↔ Move ${st.sourceIds.length} cells`;
+      document.body.appendChild(ghost);
+      st.ghost = ghost;
+      document.body.classList.add('la-move-dragging');
+    }
+    if (st.ghost) {
+      st.ghost.style.left = (ev.clientX + 12) + 'px';
+      st.ghost.style.top  = (ev.clientY + 12) + 'px';
+    }
+    const hit = document.elementFromPoint(ev.clientX, ev.clientY);
+    const coord = hit ? _laCellCoord(hit) : null;
+    const newDrop = (coord && coord.actId) ? coord.cell : null;
+    if (st.dropCellEl !== newDrop) {
+      st.dropCellEl?.classList.remove('la-move-target');
+      st.dropCellEl = newDrop;
+      newDrop?.classList.add('la-move-target');
+    }
+  }
+}
+
+async function _laTimelineMouseUp(ev) {
+  // ── Range-paint finish ──────────────────────────────────────
+  if (_laRangeSelState) {
+    const didMove = _laRangeSelState.didMove;
+    _laRangeSelState = null;
+    document.body.classList.remove('la-range-painting');
+    if (didMove) {
+      _laSuppressNextClick = true;
+      setTimeout(() => { _laSuppressNextClick = false; }, 60);
+    }
+    return;
+  }
+
+  // ── Move-drag finish ────────────────────────────────────────
+  if (_laMoveDragState) {
+    const st = _laMoveDragState;
+    _laMoveDragState = null;
+    st.ghost?.remove();
+    document.body.classList.remove('la-move-dragging');
+    st.dropCellEl?.classList.remove('la-move-target');
+    if (!st.didMove) return;                       // never crossed threshold → treat as click
+    _laSuppressNextClick = true;
+    setTimeout(() => { _laSuppressNextClick = false; }, 60);
+
+    const dropCell = st.dropCellEl;
+    if (!dropCell) { toast('Drop on a cell to move.', 'warn'); return; }
+    const targetActId = dropCell.dataset.activityId;
+    const targetIso   = dropCell.dataset.eventDate;
+    if (!targetActId || !targetIso) return;
+
+    // Same-cell drop with single source → noop
+    if (st.sourceIds.length === 1) {
+      const src = PLANNING_EVENTS.find(e => e.id === st.sourceIds[0]);
+      if (src && src.planning_activity_id === targetActId && src.event_date === targetIso) return;
+    }
+
+    // Reuse the cut+paste pipeline so collisions/lock/PTO are handled identically.
+    _laSelectedCellKeys.clear();
+    st.sourceIds.forEach(id => _laSelectedCellKeys.add(id));
+    _laCopySelection('cut', { silent: true });
+    _laSetPasteTarget(targetActId, targetIso, dropCell);
+    await _laPasteAtTarget();
+  }
+}
+
+document.addEventListener('mousedown', _laTimelineMouseDown);
+document.addEventListener('mousemove', _laTimelineMouseMove);
+document.addEventListener('mouseup',   _laTimelineMouseUp);
+
+// Swallow the click that follows a drag so we don't open the detail modal
+// (or toggle selection) on mouseup. Capture-phase so it runs before onclick.
+// Clear the flag on first click so we don't keep suppressing future clicks.
+document.addEventListener('click', function(ev) {
+  if (_laSuppressNextClick) {
+    _laSuppressNextClick = false;
+    ev.preventDefault();
+    ev.stopPropagation();
+    ev.stopImmediatePropagation();
+  }
+}, true);
 
 // ─── Drag-to-fill (Excel fill-handle) ──────────────────────────
 // Grab the small handle on the right edge of a colored cell, drag horizontally,

@@ -6290,6 +6290,58 @@ body.la-clipboard-active .tlg-data-cell:not(.la-paste-target):hover {
   cursor: copy;
 }
 
+/* ── Range-paint (Ctrl + drag to select multiple cells) ─────── */
+body.la-range-painting,
+body.la-range-painting .tlg-shift-block,
+body.la-range-painting .tlg-data-cell {
+  cursor: crosshair !important;
+  user-select: none;
+}
+
+/* ── Drag-to-move (drag a colored cell to another row/date) ── */
+.tlg-shift-block {
+  cursor: grab;
+}
+body.la-move-dragging,
+body.la-move-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+.la-move-ghost {
+  position: fixed;
+  z-index: 99999;
+  pointer-events: none;
+  background: rgba(30, 64, 175, 0.95);
+  color: #fff;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+}
+.tlg-data-cell.la-move-target {
+  outline: 2px dashed #1e40af;
+  outline-offset: -2px;
+  background: rgba(59, 130, 246, 0.10) !important;
+  position: relative;
+}
+.tlg-data-cell.la-move-target::after {
+  content: '↓ drop here';
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 700;
+  color: #1e40af;
+  background: #fff;
+  padding: 1px 6px;
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 5;
+}
+
 /* Keyboard shortcut hint pills */
 .la-edit-tips-bar kbd {
   display: inline-block;
