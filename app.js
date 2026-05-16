@@ -18646,11 +18646,13 @@ function renderAdminPlanning() {
       Upload weekly lookahead, resolve unmatched rows, manage resources, and review conflicts.
     </p>`;
 
+  const deletedCount = (PLANNING_ACTIVITIES || []).filter(a => a.deleted_at).length;
   const tabs = [
     ['upload',    'Upload Lookahead'],
     ['review',    'Review Queue'],
     ['conflicts', 'Conflicts'],
     ['resources', 'Resources'],
+    ['deleted',   `Recently Deleted${deletedCount ? ` (${deletedCount})` : ''}`],
     ['history',   'Import History'],
   ];
 
@@ -18687,7 +18689,107 @@ function _renderAdminPlanningTabBody() {
   if (tab === 'review')    el.innerHTML = _apReviewStub();
   if (tab === 'conflicts') el.innerHTML = _apConflictsStub();
   if (tab === 'resources') el.innerHTML = _apResourcesStub();
+  if (tab === 'deleted')   el.innerHTML = _apDeletedActivitiesHTML();
   if (tab === 'history')   el.innerHTML = _apHistoryStub();
+}
+
+// ─── Recently Deleted activities tab (Phase 3A) ──────────────
+function _apDeletedActivitiesHTML() {
+  const deleted = (PLANNING_ACTIVITIES || [])
+    .filter(a => a.deleted_at)
+    .sort((a, b) => (b.deleted_at || '').localeCompare(a.deleted_at || ''));
+
+  if (deleted.length === 0) {
+    return `
+      <div class="data-card" style="padding:48px;text-align:center;">
+        <div style="font-size:48px;margin-bottom:12px;">🗑</div>
+        <h3 style="margin:0 0 6px;font-weight:600;color:var(--gray-600);">No deleted activities</h3>
+        <p style="margin:0;color:var(--gray-500);font-size:13px;">
+          Activities soft-deleted from the master grid will appear here for review and restore.
+        </p>
+      </div>`;
+  }
+
+  return `
+    <div class="data-card" style="padding:0;">
+      <div style="padding:12px 16px;background:#fef3c7;border-bottom:1px solid var(--gray-200);font-size:12px;color:#78350f;">
+        🗂 Soft-deleted activities stay in the database for audit purposes. Restore brings them back to the grid but does <strong>not</strong> auto-uncancel events that were cancelled when the row was deleted.
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+          <tr style="background:#f8fafc;border-bottom:1px solid var(--gray-200);">
+            <th style="text-align:left;padding:8px 12px;font-weight:600;color:var(--gray-600);">Description</th>
+            <th style="text-align:left;padding:8px 12px;font-weight:600;color:var(--gray-600);">Group</th>
+            <th style="text-align:left;padding:8px 12px;font-weight:600;color:var(--gray-600);">Location</th>
+            <th style="text-align:left;padding:8px 12px;font-weight:600;color:var(--gray-600);">Deleted</th>
+            <th style="text-align:left;padding:8px 12px;font-weight:600;color:var(--gray-600);">By</th>
+            <th style="text-align:left;padding:8px 12px;font-weight:600;color:var(--gray-600);">Reason</th>
+            <th style="text-align:left;padding:8px 12px;font-weight:600;color:var(--gray-600);">Events</th>
+            <th style="text-align:right;padding:8px 12px;font-weight:600;color:var(--gray-600);">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${deleted.map(a => {
+            const meta = _groupMeta(a.activity_group || 'other');
+            const evCount = (PLANNING_EVENTS || []).filter(e => e.planning_activity_id === a.id).length;
+            const delByName = (window.PROFILES || []).find(p => p.id === a.deleted_by)?.display_name
+                          || (window.PROFILES || []).find(p => p.id === a.deleted_by)?.email
+                          || (a.deleted_by ? a.deleted_by.slice(0, 8) : '—');
+            return `<tr style="border-bottom:1px solid var(--gray-100);">
+              <td style="padding:8px 12px;max-width:280px;">${escapeHtml(a.description || a.activity_id_text || '—')}</td>
+              <td style="padding:8px 12px;"><span style="background:${meta.bg};color:${meta.fg};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">${meta.label}</span></td>
+              <td style="padding:8px 12px;color:var(--gray-600);">${escapeHtml(a.location || '—')}</td>
+              <td style="padding:8px 12px;color:var(--gray-500);font-size:11px;white-space:nowrap;">${a.deleted_at ? dayjs(a.deleted_at).format('YYYY-MM-DD HH:mm') : '—'}</td>
+              <td style="padding:8px 12px;color:var(--gray-500);font-size:11px;">${escapeHtml(delByName)}</td>
+              <td style="padding:8px 12px;color:var(--gray-600);font-style:italic;max-width:200px;">${escapeHtml(a.deletion_reason || '—')}</td>
+              <td style="padding:8px 12px;color:var(--gray-500);font-size:11px;">${evCount}</td>
+              <td style="padding:8px 12px;text-align:right;white-space:nowrap;">
+                <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_apRestoreActivity('${a.id}')">↩ Restore</button>
+                <button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#dc2626;border-color:#fca5a5;" onclick="_apHardDeleteActivity('${a.id}')">✕ Purge</button>
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function _apRestoreActivity(activityId) {
+  const a = (PLANNING_ACTIVITIES || []).find(x => x.id === activityId);
+  if (!a) return;
+  if (!confirm(`Restore "${a.description || a.activity_id_text || '—'}"?\n\nThis brings the activity row back. Events that were cancelled when the row was deleted stay cancelled (you can uncancel them individually).`)) return;
+  try {
+    await _dbUpdate('planning_activities', {
+      deleted_at:      null,
+      deleted_by:      null,
+      deletion_reason: null,
+    }, { id: activityId });
+    toast('✓ Activity restored', 'success');
+    await loadPlanningData(true);
+    renderAdminPlanning();
+  } catch (err) {
+    toast('Restore failed: ' + err.message, 'error');
+  }
+}
+
+async function _apHardDeleteActivity(activityId) {
+  const a = (PLANNING_ACTIVITIES || []).find(x => x.id === activityId);
+  if (!a) return;
+  if (!confirm(`PERMANENTLY DELETE "${a.description || a.activity_id_text || '—'}"?\n\nThis cascades to all events on this row. This cannot be undone.\n\nType "delete" in the next prompt to confirm.`)) return;
+  const t = prompt('Type "delete" to confirm:');
+  if (t !== 'delete') { toast('Cancelled', 'warn'); return; }
+  try {
+    // Cascade in code (FK is ON DELETE CASCADE for events but not for activity_resources)
+    const arRows = (PLANNING_ACTIVITY_RES || []).filter(ar => ar.planning_activity_id === activityId);
+    for (const ar of arRows) await _dbDelete('planning_activity_resources', { id: ar.id });
+    await _dbDelete('planning_activities', { id: activityId });
+    toast('✓ Purged permanently', 'success');
+    await loadPlanningData(true);
+    renderAdminPlanning();
+  } catch (err) {
+    toast('Purge failed: ' + err.message, 'error');
+  }
 }
 
 function _apUploadStub() {
@@ -20162,24 +20264,88 @@ function _planningSetConflictFilter(f) {
   _renderAdminPlanningTabBody();
 }
 
+// ─── Resource admin: People / Roles tabs + company filter (Phase 3B) ─
+let _apResSubTab        = 'people';   // people | roles
+let _apResCompanyFilter = '';
+let _apResNameFilter    = '';
+
+function _apSetResSubTab(t) { _apResSubTab = t; _renderAdminPlanningTabBody(); }
+function _apSetResCompanyFilter(v) { _apResCompanyFilter = v; _renderAdminPlanningTabBody(); }
+function _apSetResNameFilter(v) { _apResNameFilter = v; _renderAdminPlanningTabBody(); }
+
 function _apResourcesStub() {
   const all = PLANNING_RESOURCES;
-  const SUBSYSTEMS = ['IXL','ATS','DCS','POWER','SCADA','TCH','IAMS','CYBER','P.SEC','OCC','SYS','Other'];
+  // People = anything that isn't a BART role slot (i.e., not kind='role')
+  // Roles  = kind='role' rows (BART-requestable slots like EIC)
+  const peopleAll = all.filter(r => r.kind !== 'role');
+  const rolesAll  = all.filter(r => r.kind === 'role');
+
+  const list      = _apResSubTab === 'roles' ? rolesAll : peopleAll;
+  const companies = [...new Set(all.map(r => r.company).filter(Boolean))].sort();
+
+  const filtered = list.filter(r => {
+    if (_apResCompanyFilter && r.company !== _apResCompanyFilter) return false;
+    if (_apResNameFilter) {
+      const q = _apResNameFilter.toLowerCase();
+      const hay = ((r.display_name||'') + ' ' + (r.initials||'') + ' ' + (r.email||'') + ' ' + (r.category||'')).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const isRoles = _apResSubTab === 'roles';
+
   return `
     <div class="data-card" style="padding:0;overflow:hidden;">
-      <div style="padding:14px 16px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;align-items:center;">
-        <strong style="font-size:14px;">All Resources (${all.length})</strong>
-        <button class="admin-action-btn" onclick="_apAddResourceModal()">+ Add Resource</button>
+      <!-- Tab bar -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--gray-200);">
+        <div style="display:flex;gap:0;">
+          <button class="admin-tab${!isRoles ? ' active' : ''}" onclick="_apSetResSubTab('people')">
+            👤 People <span style="opacity:.6;font-weight:400;">(${peopleAll.length})</span>
+          </button>
+          <button class="admin-tab${isRoles ? ' active' : ''}" onclick="_apSetResSubTab('roles')">
+            🪪 Roles <span style="opacity:.6;font-weight:400;">(${rolesAll.length})</span>
+          </button>
+        </div>
+        <button class="admin-action-btn" onclick="_apAddResourceModal()">+ Add ${isRoles ? 'Role' : 'Person'}</button>
       </div>
+
+      <!-- Filter bar -->
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;background:#f8fafc;border-bottom:1px solid var(--gray-200);font-size:12px;">
+        <input class="form-input" style="flex:1;max-width:280px;font-size:12px;padding:5px 9px;"
+               placeholder="🔍 Filter by name, initials, email, category…"
+               value="${escapeHtml(_apResNameFilter)}"
+               oninput="_apSetResNameFilter(this.value)">
+        <select class="form-input" style="width:auto;font-size:12px;padding:5px 9px;" onchange="_apSetResCompanyFilter(this.value)">
+          <option value="">All companies</option>
+          ${companies.map(c => `<option value="${escapeHtml(c)}" ${c === _apResCompanyFilter ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
+        </select>
+        ${(_apResNameFilter || _apResCompanyFilter)
+          ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_apSetResNameFilter('');_apSetResCompanyFilter('');">✕ Reset</button>`
+          : ''}
+        <span style="margin-left:auto;color:var(--gray-500);">${filtered.length} of ${list.length}</span>
+      </div>
+
       <table class="data-table">
-        <thead><tr><th>Name</th><th>Initials</th><th>Subsystem</th><th>Type</th><th>Email</th><th>Active</th><th style="width:110px;"></th></tr></thead>
+        <thead><tr>
+          <th>${isRoles ? 'Role' : 'Name'}</th>
+          ${isRoles ? '<th>Category</th>' : '<th>Initials</th>'}
+          <th>Company</th>
+          ${isRoles ? '<th>Requestable</th>' : '<th>Subsystem</th>'}
+          ${isRoles ? '' : '<th>Email</th>'}
+          <th>Active</th>
+          <th style="width:110px;"></th>
+        </tr></thead>
         <tbody>
-          ${all.length === 0
-            ? `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--gray-400);">No resources. First admin visit auto-seeds from portal users.</td></tr>`
-            : all.map(r => {
-                const linkedProfile = r.user_id ? true : false;
+          ${filtered.length === 0
+            ? `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--gray-400);">No ${isRoles ? 'roles' : 'people'} match the current filter.</td></tr>`
+            : filtered.map(r => {
+                const linkedProfile = !!r.user_id;
                 const subsysDisplay = r.subsystem
                   ? `<span class="badge badge-passed" style="font-size:11px;">${escapeHtml(r.subsystem)}</span>`
+                  : `<span style="color:var(--gray-400);font-size:12px;">—</span>`;
+                const companyBadge = r.company
+                  ? `<span style="background:${r.company === 'BART' ? '#dbeafe' : '#fef3c7'};color:${r.company === 'BART' ? '#1e3a8a' : '#78350f'};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">${escapeHtml(r.company)}</span>`
                   : `<span style="color:var(--gray-400);font-size:12px;">—</span>`;
                 return `
                 <tr>
@@ -20188,14 +20354,22 @@ function _apResourcesStub() {
                       <div class="user-avatar-sm" style="flex-shrink:0;">${escapeHtml(r.initials || (r.display_name||'?')[0])}</div>
                       <div>
                         <div style="font-weight:600;font-size:13px;">${escapeHtml(r.display_name)}</div>
-                        ${linkedProfile ? `<div style="font-size:10px;color:var(--gray-400);">Portal user</div>` : `<div style="font-size:10px;color:var(--gray-400);">Manual</div>`}
+                        ${linkedProfile
+                          ? `<div style="font-size:10px;color:var(--gray-400);">Portal user</div>`
+                          : `<div style="font-size:10px;color:var(--gray-400);">${escapeHtml(r.kind || 'manual')}</div>`}
                       </div>
                     </div>
                   </td>
-                  <td style="font-family:monospace;font-size:13px;">${escapeHtml(r.initials || '')}</td>
-                  <td>${subsysDisplay}</td>
-                  <td><span style="font-size:12px;">${escapeHtml(r.resource_type || '—')}</span></td>
-                  <td style="font-size:12px;color:var(--gray-500);">${escapeHtml(r.email || '—')}</td>
+                  ${isRoles
+                    ? `<td style="font-size:12px;">${escapeHtml(r.category || '—')}</td>`
+                    : `<td style="font-family:monospace;font-size:13px;">${escapeHtml(r.initials || '')}</td>`}
+                  <td>${companyBadge}</td>
+                  ${isRoles
+                    ? `<td>${r.is_requestable
+                          ? '<span style="color:var(--good);font-size:12px;">✓ Yes</span>'
+                          : '<span style="color:var(--gray-400);font-size:12px;">No</span>'}</td>`
+                    : `<td>${subsysDisplay}</td>`}
+                  ${isRoles ? '' : `<td style="font-size:12px;color:var(--gray-500);">${escapeHtml(r.email || '—')}</td>`}
                   <td>
                     <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
                       <input type="checkbox" ${r.is_active ? 'checked' : ''} onchange="_apToggleResourceActive('${r.id}',this.checked)">
@@ -20247,6 +20421,31 @@ function _apEditResourceModal(resourceId) {
           </div>
           <input type="hidden" id="ares-subsys-val" value="${escapeHtml(r.subsystem||'')}">
         </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div>
+            <label class="form-label">Kind</label>
+            <select id="ares-kind" class="form-input">
+              ${['person','role','crew'].map(k => `<option value="${k}" ${r.kind===k?'selected':''}>${k}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Company</label>
+            <input id="ares-company" class="form-input" value="${escapeHtml(r.company||'')}" placeholder="e.g. Hitachi Rail / BART">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div>
+            <label class="form-label">Category</label>
+            <input id="ares-category" class="form-input" value="${escapeHtml(r.category||'')}" placeholder="optional">
+          </div>
+          <div>
+            <label class="form-label">Requestable</label>
+            <select id="ares-requestable" class="form-input">
+              <option value="false" ${r.is_requestable ? '' : 'selected'}>No</option>
+              <option value="true"  ${r.is_requestable ? 'selected' : ''}>Yes (BART request)</option>
+            </select>
+          </div>
+        </div>
         <div>
           <label class="form-label">Resource Type</label>
           <select id="ares-type" class="form-input">
@@ -20277,17 +20476,25 @@ function _apResSubsysPick(val) {
 }
 
 async function _apSaveResourceEdit(resourceId) {
-  const name     = (document.getElementById('ares-name')?.value || '').trim();
-  const initials = (document.getElementById('ares-initials')?.value || '').trim().toUpperCase();
-  const subsys   = (document.getElementById('ares-subsys-val')?.value || '').trim() || null;
-  const type     = document.getElementById('ares-type')?.value;
+  const name        = (document.getElementById('ares-name')?.value || '').trim();
+  const initials    = (document.getElementById('ares-initials')?.value || '').trim().toUpperCase();
+  const subsys      = (document.getElementById('ares-subsys-val')?.value || '').trim() || null;
+  const type        = document.getElementById('ares-type')?.value;
+  const kind        = document.getElementById('ares-kind')?.value || null;
+  const company     = (document.getElementById('ares-company')?.value || '').trim() || null;
+  const category    = (document.getElementById('ares-category')?.value || '').trim() || null;
+  const requestable = document.getElementById('ares-requestable')?.value === 'true';
   if (!name) { toast('Name is required', 'error'); return; }
   try {
     await _dbUpdate('planning_resources', {
-      display_name:  name,
-      initials:      initials || null,
-      subsystem:     subsys,
-      resource_type: type,
+      display_name:   name,
+      initials:       initials || null,
+      subsystem:      subsys,
+      resource_type:  type,
+      kind,
+      company,
+      category,
+      is_requestable: requestable,
     }, { id: resourceId });
     closeModal();
     await loadPlanningData(true);
@@ -20300,19 +20507,63 @@ async function _apSaveResourceEdit(resourceId) {
 
 function _apAddResourceModal() {
   const SUBSYSTEMS = ['IXL','ATS','DCS','POWER','SCADA','TCH','IAMS','CYBER','P.SEC','OCC','SYS','Other'];
+  const knownCompanies = [...new Set((PLANNING_RESOURCES||[]).map(r => r.company).filter(Boolean))];
+  const defaultKind = _apResSubTab === 'roles' ? 'role' : 'person';
   modal({
     title: '+ Add Resource',
     size:  'medium',
     body: `
       <div style="display:flex;flex-direction:column;gap:14px;">
-        <div>
-          <label class="form-label">Display Name *</label>
-          <input id="ares-name" class="form-input" placeholder="Full name">
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:10px;">
+          <div>
+            <label class="form-label">Display Name *</label>
+            <input id="ares-name" class="form-input" placeholder="${defaultKind === 'role' ? 'e.g. EIC, Train Control Support' : 'Full name'}">
+          </div>
+          <div>
+            <label class="form-label">Initials</label>
+            <input id="ares-initials" class="form-input" maxlength="4" placeholder="e.g. JS">
+          </div>
         </div>
-        <div>
-          <label class="form-label">Initials</label>
-          <input id="ares-initials" class="form-input" style="width:80px;" maxlength="4" placeholder="e.g. JS">
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div>
+            <label class="form-label">Kind *</label>
+            <select id="ares-kind" class="form-input">
+              <option value="person" ${defaultKind==='person'?'selected':''}>Person (named individual)</option>
+              <option value="role"   ${defaultKind==='role'  ?'selected':''}>Role (request slot)</option>
+              <option value="crew">Crew</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Company</label>
+            <input id="ares-company" class="form-input" list="ares-company-options" placeholder="${defaultKind === 'role' ? 'BART' : 'Hitachi Rail'}" value="${defaultKind === 'role' ? 'BART' : 'Hitachi Rail'}">
+            <datalist id="ares-company-options">
+              ${knownCompanies.map(c => `<option value="${escapeHtml(c)}">`).join('')}
+            </datalist>
+          </div>
         </div>
+
+        <div>
+          <label class="form-label">Category <span style="font-weight:400;color:var(--gray-400);font-size:11px;">(role only — e.g. EIC, Train Control, Electrician)</span></label>
+          <input id="ares-category" class="form-input" placeholder="optional">
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div>
+            <label class="form-label">Resource Type</label>
+            <select id="ares-type" class="form-input">
+              ${['manual','field_engineer','admin','crew','client_witness'].map(t => `<option value="${t}">${t}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Requestable</label>
+            <select id="ares-requestable" class="form-input">
+              <option value="false" ${defaultKind==='role'?'':'selected'}>No</option>
+              <option value="true"  ${defaultKind==='role'?'selected':''}>Yes (BART request)</option>
+            </select>
+          </div>
+        </div>
+
         <div>
           <label class="form-label">Subsystem</label>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;" id="ares-subsys-pills">
@@ -20321,12 +20572,7 @@ function _apAddResourceModal() {
           </div>
           <input type="hidden" id="ares-subsys-val" value="">
         </div>
-        <div>
-          <label class="form-label">Resource Type</label>
-          <select id="ares-type" class="form-input">
-            ${['manual','field_engineer','admin','crew','client_witness'].map(t => `<option value="${t}">${t}</option>`).join('')}
-          </select>
-        </div>
+
         <div>
           <label class="form-label">Email</label>
           <input id="ares-email" class="form-input" type="email" placeholder="optional">
@@ -20350,21 +20596,33 @@ function _apAddResourceModalWithInitials(token) {
 }
 
 async function _apCreateResource() {
-  const name     = (document.getElementById('ares-name')?.value || '').trim();
-  const initials = (document.getElementById('ares-initials')?.value || '').trim().toUpperCase();
-  const subsys   = (document.getElementById('ares-subsys-val')?.value || '').trim() || null;
-  const type     = document.getElementById('ares-type')?.value || 'manual';
-  const email    = (document.getElementById('ares-email')?.value || '').trim() || null;
+  const name        = (document.getElementById('ares-name')?.value || '').trim();
+  const initials    = (document.getElementById('ares-initials')?.value || '').trim().toUpperCase();
+  const subsys      = (document.getElementById('ares-subsys-val')?.value || '').trim() || null;
+  const type        = document.getElementById('ares-type')?.value || 'manual';
+  const email       = (document.getElementById('ares-email')?.value || '').trim() || null;
+  const kind        = document.getElementById('ares-kind')?.value || 'person';
+  const company     = (document.getElementById('ares-company')?.value || '').trim() || null;
+  const category    = (document.getElementById('ares-category')?.value || '').trim() || null;
+  const requestable = document.getElementById('ares-requestable')?.value === 'true';
   if (!name) { toast('Name is required', 'error'); return; }
   const derived = initials || name.split(/\s+/).filter(Boolean).slice(0,2).map(w => w[0]).join('').toUpperCase();
+  // Compute sort_order = max in this kind+company bucket + 10
+  const sameBucket = (PLANNING_RESOURCES||[]).filter(r => r.kind === kind && r.company === company);
+  const maxSort    = sameBucket.reduce((m, r) => Math.max(m, r.sort_order || 0), 0);
   try {
     await _dbInsert('planning_resources', [{
-      display_name:  name,
-      initials:      derived || null,
-      subsystem:     subsys,
-      resource_type: type,
+      display_name:   name,
+      initials:       derived || null,
+      subsystem:      subsys,
+      resource_type:  type,
       email,
-      is_active:     true,
+      kind,
+      company,
+      category,
+      is_requestable: requestable,
+      sort_order:     maxSort + 10,
+      is_active:      true,
     }]);
     closeModal();
     await loadPlanningData(true);
@@ -20377,7 +20635,9 @@ async function _apCreateResource() {
 
 async function _apToggleResourceActive(resourceId, isActive) {
   try {
-    await _dbUpdate('planning_resources', resourceId, { is_active: isActive });
+    // _dbUpdate signature is (table, patch, match) — the previous call had the
+    // arg order swapped which sent the id as the PATCH body. Fixed.
+    await _dbUpdate('planning_resources', { is_active: isActive }, { id: resourceId });
     const r = PLANNING_RESOURCES.find(x => x.id === resourceId);
     if (r) r.is_active = isActive;
     toast(`${r?.display_name || 'Resource'} ${isActive ? 'activated' : 'deactivated'}`, 'success');
