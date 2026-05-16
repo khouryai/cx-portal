@@ -5104,30 +5104,92 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   color: #fff;
 }
 
-/* ── Subsystem legend ───────────────────────────────────── */
-.cal-subsystem-legend {
+/* ── Calendar Legend Bar (Shift + Subsystem) ────────────── */
+.cal-legend-bar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   margin-bottom: 12px;
-  padding: 8px 12px;
+  padding: 10px 14px;
   background: var(--gray-50);
   border: 1px solid var(--gray-200);
   border-radius: 8px;
 }
-.cal-legend-chip {
+.cal-legend-row {
   display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.cal-legend-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  color: var(--gray-600);
+  text-transform: uppercase;
+  min-width: 70px;
+  padding-top: 3px;
+}
+.cal-legend-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  flex: 1;
+}
+.cal-leg-item {
+  display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 11px;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--gray-700);
   font-weight: 500;
+}
+.cal-leg-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid;
+  flex-shrink: 0;
+}
+.cal-legend-subs { gap: 6px 8px; }
+.cal-sub-leg-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 2px 0;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  font-size: 11px;
   color: var(--gray-700);
 }
-.cal-legend-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
+.cal-sub-leg-stripe {
+  width: 4px;
+  align-self: stretch;
+  border-radius: 12px 0 0 12px;
+}
+.cal-sub-leg-name { padding-right: 2px; }
+
+/* ── Subsystem badge inside event chips ──────────────────── */
+.cal-sub-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin-right: 4px;
   flex-shrink: 0;
+  line-height: 1;
+  vertical-align: middle;
+}
+.cal-sub-badge-inline {
+  height: 16px;
+  font-size: 10px;
 }
 
 /* ── Shared cal-body wrapper ───────────────────────────── */

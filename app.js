@@ -13493,7 +13493,7 @@ function _laCalendarHTML() {
         🌴 <strong>Out today:</strong> ${outToday.map(x => escapeHtml(x.resource?.display_name || '—')).join(', ')}
       </div>` : ''}
 
-    ${_planningSubsystemLegend()}
+    ${_planningCalendarLegend()}
 
     <div class="cal-shell">
       <div class="cal-toolbar">
@@ -13627,18 +13627,57 @@ function _planningGetSubsystem(ev) {
   return null;
 }
 
-function _planningSubsystemLegend() {
-  const seen = new Set();
+// Subsystem display helpers — initials badge that doesn't conflict with shift bg colors
+function _planningSubsystemInitials(name) {
+  if (!name) return '';
+  return name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+}
+
+function _planningSubsystemBadge(sub) {
+  if (!sub) return '';
+  const sc = _planningSubsystemColor(sub);
+  const init = _planningSubsystemInitials(sub);
+  return `<span class="cal-sub-badge" style="background:${sc.bg};color:${sc.fg};border-color:${sc.border};" title="${escapeHtml(sub)}">${escapeHtml(init)}</span>`;
+}
+
+// Unified calendar legend — shift colors are the primary visual; subsystems are secondary tags.
+function _planningCalendarLegend() {
+  const seenSubs = new Set();
   PLANNING_EVENTS.forEach(e => {
     const s = _planningGetSubsystem(e);
-    if (s) seen.add(s);
+    if (s) seenSubs.add(s);
   });
-  if (seen.size === 0) return '';
-  const chips = [...seen].sort().map(s => {
+
+  const shiftItems = `
+    <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#FFEB3B;border-color:#a98e00;"></span>Day shift</span>
+    <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#2196F3;border-color:#0d47a1;"></span>Night shift</span>
+    <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#1f2937;border-color:#000;"></span>Blanket</span>
+    <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#b91c1c;border-color:#7f1d1d;"></span>Cancelled</span>
+    <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#fef3c7;border-color:#92400e;"></span>🌴 PTO</span>
+  `;
+
+  const subChips = [...seenSubs].sort().map(s => {
     const c = _planningSubsystemColor(s);
-    return `<span class="cal-legend-chip"><span class="cal-legend-dot" style="background:${c.bg};"></span>${escapeHtml(s)}</span>`;
+    const init = _planningSubsystemInitials(s);
+    return `<span class="cal-sub-leg-chip">
+      <span class="cal-sub-leg-stripe" style="background:${c.bg};"></span>
+      <span class="cal-sub-badge cal-sub-badge-inline" style="background:${c.bg};color:${c.fg};border-color:${c.border};">${escapeHtml(init)}</span>
+      <span class="cal-sub-leg-name">${escapeHtml(s)}</span>
+    </span>`;
   }).join('');
-  return `<div class="cal-subsystem-legend">${chips}</div>`;
+
+  return `
+    <div class="cal-legend-bar">
+      <div class="cal-legend-row">
+        <span class="cal-legend-label">Shift</span>
+        <div class="cal-legend-items">${shiftItems}</div>
+      </div>
+      ${seenSubs.size ? `
+        <div class="cal-legend-row">
+          <span class="cal-legend-label">Subsystem</span>
+          <div class="cal-legend-items cal-legend-subs">${subChips}</div>
+        </div>` : ''}
+    </div>`;
 }
 
 // ── Tooltip HTML builder ─────────────────────────────────────
@@ -13760,15 +13799,18 @@ function _laRenderMonthView(body) {
           const { e, v, isCancel } = item;
           const sub   = _planningGetSubsystem(e);
           const sc    = sub ? _planningSubsystemColor(sub) : null;
-          const bg    = sc ? sc.bg  : v.bg;
-          const fg    = sc ? sc.fg  : v.text;
+          // Shift color is the event background (operational meaning).
+          // Subsystem shows as a thin left stripe + small initials badge.
+          const bg    = v.bg;
+          const fg    = v.text;
+          const stripe = sc ? sc.bg : (isCancel ? '#7f1d1d' : '#999');
           const asgns = _planningResourceAssignmentsForEvent(e.id);
           const tip   = _laEventTippy(e, v, asgns);
           html += `<div class="cal-event${isCancel ? ' cal-event-cancelled' : ''}"
-            style="background:${bg};color:${fg};border-left:3px solid ${sc ? sc.border : (isCancel ? '#7f1d1d' : bg)};"
+            style="background:${bg};color:${fg};border-left:4px solid ${stripe};"
             data-cal-tippy="${tip}"
             onclick="_planningOpenEventDetail('${e.id}')"
-          ><span class="cal-event-label">${escapeHtml((e.title||'').slice(0,28))}</span></div>`;
+          >${_planningSubsystemBadge(sub)}<span class="cal-event-label">${escapeHtml((e.title||'').slice(0,28))}</span></div>`;
         } else if (item.kind === 'pto') {
           html += `<div class="cal-event cal-event-pto"
             onclick="_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))"
@@ -13813,15 +13855,18 @@ function _laShowDayOverflow(iso) {
       const { e, v, isCancel } = item;
       const sub  = _planningGetSubsystem(e);
       const sc   = sub ? _planningSubsystemColor(sub) : null;
-      const bg   = sc ? sc.bg  : v.bg;
-      const fg   = sc ? sc.fg  : v.text;
-      const bdr  = sc ? sc.border : (isCancel ? '#7f1d1d' : bg);
+      const bg   = v.bg;
+      const fg   = v.text;
+      const bdr  = sc ? sc.bg : (isCancel ? '#7f1d1d' : bg);
       const meta = [e.start_time ? e.start_time.slice(0,5) + (e.end_time ? ' – '+e.end_time.slice(0,5) : '') : '',
                     e.location || ''].filter(Boolean).join(' · ');
-      bodyHtml += `<div style="background:${bg};color:${fg};border-left:4px solid ${bdr};padding:7px 10px;border-radius:5px;cursor:pointer;font-size:13px;"
+      bodyHtml += `<div style="background:${bg};color:${fg};border-left:5px solid ${bdr};padding:7px 10px;border-radius:5px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;"
         onclick="closeModal();_planningOpenEventDetail('${e.id}')">
+        ${_planningSubsystemBadge(sub)}
+        <div style="flex:1;">
         <div style="font-weight:600;margin-bottom:2px;">${escapeHtml(e.title||'(no title)')}</div>
         ${meta ? `<div style="font-size:11px;opacity:.8;">${escapeHtml(meta)}</div>` : ''}
+        </div>
       </div>`;
     } else if (item.kind === 'pto') {
       bodyHtml += `<div style="background:#fef3c7;color:#92400e;border-left:4px solid #f59e0b;padding:7px 10px;border-radius:5px;cursor:pointer;font-size:13px;"
@@ -13910,9 +13955,9 @@ function _laRenderWeekView(body) {
           const { e, v, isCancel } = item;
           const sub   = _planningGetSubsystem(e);
           const sc    = sub ? _planningSubsystemColor(sub) : null;
-          const bg    = sc ? sc.bg   : v.bg;
-          const fg    = sc ? sc.fg   : v.text;
-          const bdr   = sc ? sc.border : (isCancel ? '#7f1d1d' : bg);
+          const bg    = v.bg;
+          const fg    = v.text;
+          const bdr   = sc ? sc.bg : (isCancel ? '#7f1d1d' : bg);
           const asgns = _planningResourceAssignmentsForEvent(e.id);
           const tip   = _laEventTippy(e, v, asgns);
           const meta  = [
@@ -13920,11 +13965,11 @@ function _laRenderWeekView(body) {
             e.location || '',
           ].filter(Boolean).join(' · ');
           html += `<div class="cal-wl-chip${isCancel ? ' cal-wl-chip-cancelled' : ''}"
-            style="background:${bg};color:${fg};border-left:3px solid ${bdr};"
+            style="background:${bg};color:${fg};border-left:4px solid ${bdr};"
             data-cal-tippy="${tip}"
             onclick="_planningOpenEventDetail('${e.id}')"
           >
-            <div class="cal-wl-chip-title">${escapeHtml(e.title || '(no title)')}</div>
+            <div class="cal-wl-chip-title">${_planningSubsystemBadge(sub)}${escapeHtml(e.title || '(no title)')}</div>
             ${meta ? `<div class="cal-wl-chip-meta">${escapeHtml(meta)}</div>` : ''}
           </div>`;
         } else if (item.kind === 'pto') {
@@ -14004,9 +14049,10 @@ function _laRenderDayView(body) {
         const { e, v, isCancel } = item;
         const sub    = _planningGetSubsystem(e);
         const sc     = sub ? _planningSubsystemColor(sub) : null;
-        const bg     = sc ? sc.bg   : v.bg;
-        const fg     = sc ? sc.fg   : v.text;
-        const bdr    = sc ? sc.border : (isCancel ? '#7f1d1d' : bg);
+        // Shift color = background; subsystem = left stripe + initials badge
+        const bg     = v.bg;
+        const fg     = v.text;
+        const bdr    = sc ? sc.bg : (isCancel ? '#7f1d1d' : bg);
         const asgns  = _planningResourceAssignmentsForEvent(e.id);
         const tip    = _laEventTippy(e, v, asgns);
 
@@ -14022,17 +14068,16 @@ function _laRenderDayView(body) {
         const metaParts = [
           timeStr,
           e.location ? `📍 ${e.location}` : '',
-          sub ? `${sub}` : '',
         ].filter(Boolean);
 
         html += `<div class="cal-dl-chip${isCancel ? ' cal-dl-chip-cancelled' : ''}"
-          style="border-left:4px solid ${bdr};background:${bg};color:${fg};"
+          style="border-left:5px solid ${bdr};background:${bg};color:${fg};"
           data-cal-tippy="${tip}"
           onclick="_planningOpenEventDetail('${e.id}')"
         >
           <div class="cal-dl-chip-header">
-            <span class="cal-dl-chip-title">${escapeHtml(e.title || '(no title)')}</span>
-            <span class="cal-dl-chip-badge" style="background:${bdr};color:${fg};opacity:.85;">${v.icon} ${v.label}</span>
+            <span class="cal-dl-chip-title">${_planningSubsystemBadge(sub)}${escapeHtml(e.title || '(no title)')}</span>
+            <span class="cal-dl-chip-badge" style="background:rgba(0,0,0,.25);color:${fg};">${v.icon} ${v.label}</span>
           </div>
           <div class="cal-dl-chip-meta">${metaParts.map(escapeHtml).join(' · ')}</div>
           ${resHtml}
