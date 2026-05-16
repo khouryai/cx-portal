@@ -14612,6 +14612,16 @@ function _laLookaheadHTML() {
       <button onclick="_laOpenNewActivityModal()" style="margin-left:auto;" class="admin-action-btn" title="Add a new activity row to the lookahead">
         + Add Activity
       </button>
+      <div style="position:relative;display:inline-block;">
+        <button onclick="document.getElementById('la-export-menu').classList.toggle('open');event.stopPropagation();" class="admin-action-btn">
+          📤 Export ▾
+        </button>
+        <div id="la-export-menu" class="la-export-menu">
+          <button onclick="_laExportLookahead();document.getElementById('la-export-menu').classList.remove('open');">📅 4-Week Lookahead (.xlsx)</button>
+          <button onclick="_laExportBARTResourceMap('xlsx');document.getElementById('la-export-menu').classList.remove('open');">🚧 BART Resource Map (.xlsx)</button>
+          <button onclick="_laExportBARTResourceMap('csv');document.getElementById('la-export-menu').classList.remove('open');">📊 BART Resource Map (.csv)</button>
+        </div>
+      </div>
       <button onclick="_laToggleAssignMode()" class="admin-action-btn${_laAssignMode ? ' la-assign-btn-active' : ''}">
         ${_laAssignMode ? '✓ Done Assigning' : '👤 Assign Resources'}
       </button>
@@ -15092,6 +15102,165 @@ async function _laDrawerRemoveEventResource(eventResId) {
   } catch (err) {
     toast('Remove failed: ' + err.message, 'error');
   }
+}
+
+// ============================================================
+// EXPORTS — Phase 4B & 4C
+// ============================================================
+
+// 4-Week Lookahead: activity-row × day-cell visual export.
+// Frozen first 2 columns (Group, Activity), one column per day, color-fill
+// matches the shift color, cancelled cells get a 🚫 prefix.
+function _laExportLookahead() {
+  if (typeof XLSX === 'undefined') { toast('Excel library not loaded', 'error'); return; }
+  const winStart = dayjs().startOf('day');
+  const days = Array.from({ length: _laTimelineWindow }, (_, i) => winStart.add(i, 'day').format('YYYY-MM-DD'));
+
+  // Header: 1 row month strip + 1 row day strip
+  const monthRow = ['Group', 'Activity'];
+  const dayRow   = ['', ''];
+  days.forEach(iso => {
+    const d = dayjs(iso);
+    monthRow.push(d.format('MMM'));
+    dayRow.push(d.format('dd') + ' ' + d.format('D'));
+  });
+  monthRow.push('Hitachi', 'BART', 'Linked Test Reg', 'Notes');
+  dayRow.push('', '', '', '');
+
+  const rows = [monthRow, dayRow];
+
+  // Body: ordered by group + sort_order
+  const acts = (PLANNING_ACTIVITIES || []).filter(a => !a.deleted_at);
+  const ordered = [];
+  [..._GROUP_ORDER, ...new Set(acts.map(a => a.activity_group).filter(g => g && !_GROUP_ORDER.includes(g)))].forEach(gk => {
+    acts
+      .filter(a => (a.activity_group || 'other') === gk)
+      .sort((a, b) => (a.sort_order ?? 999999) - (b.sort_order ?? 999999))
+      .forEach(a => ordered.push({ a, gk }));
+  });
+
+  ordered.forEach(({ a, gk }) => {
+    const meta = _groupMeta(gk);
+    const evs = (PLANNING_EVENTS || []).filter(e => e.planning_activity_id === a.id && days.includes(e.event_date));
+    const row = [meta.label, a.description || a.activity_id_text || ''];
+
+    days.forEach(iso => {
+      const ev = evs.find(e => e.event_date === iso);
+      if (!ev) { row.push(''); return; }
+      const shift = ev.shift_type === 'day_shift' ? 'D'
+                  : ev.shift_type === 'night_shift' ? 'N'
+                  : ev.shift_type === 'blanket_shift' ? 'B' : '·';
+      const txt = (ev.status === 'cancelled' ? '🚫 ' : '') + shift +
+                  (ev.start_time ? ' ' + ev.start_time.slice(0, 5) : '') +
+                  (ev.end_time   ? '-' + ev.end_time.slice(0, 5) : '');
+      row.push(txt);
+    });
+
+    // Trailing crew + BART + linked TRA + notes
+    const evIds = evs.map(e => e.id);
+    const hitachiNames = [...new Set((PLANNING_EVENT_RES || [])
+      .filter(er => evIds.includes(er.event_id))
+      .map(er => (PLANNING_RESOURCES || []).find(r => r.id === er.resource_id))
+      .filter(r => r && r.company !== 'BART')
+      .map(r => r.display_name))].join(', ');
+    const bartReqs = [...new Set((PLANNING_EVENT_RES || [])
+      .filter(er => evIds.includes(er.event_id))
+      .map(er => {
+        const r = (PLANNING_RESOURCES || []).find(x => x.id === er.resource_id);
+        if (!r || r.company !== 'BART') return null;
+        return `${r.display_name}×${er.quantity || 1}` + (er.denied_at ? ' (DENIED)' : '');
+      })
+      .filter(Boolean))].join(', ');
+    row.push(hitachiNames, bartReqs, a.linked_test_register_activity || '', a.notes || '');
+    rows.push(row);
+  });
+
+  // Build sheet
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{ wch: 22 }, { wch: 42 }, ...days.map(() => ({ wch: 12 })), { wch: 28 }, { wch: 22 }, { wch: 22 }, { wch: 30 }];
+  ws['!freeze'] = { xSplit: 2, ySplit: 2 };
+
+  // Color-code group label cells (column A) on each activity row
+  ordered.forEach(({ gk }, i) => {
+    const cellRef = XLSX.utils.encode_cell({ r: 2 + i, c: 0 });
+    const meta = _groupMeta(gk);
+    if (!ws[cellRef]) return;
+    ws[cellRef].s = {
+      fill: { fgColor: { rgb: meta.bg.replace('#', '').toUpperCase() } },
+      font: { color: { rgb: meta.fg.replace('#', '').toUpperCase() }, bold: true },
+    };
+  });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, `${_laTimelineWindow}-Day Lookahead`);
+  const fn = `Lookahead_${dayjs().format('YYYY-MM-DD')}_${_laTimelineWindow}d.xlsx`;
+  XLSX.writeFile(wb, fn);
+  toast(`✓ Exported ${ordered.length} activities × ${days.length} days`, 'success');
+}
+
+// BART Resource Map: flat, one row per (event × BART resource).
+// Either .xlsx (with a header style) or .csv (raw, BART analysts can pivot).
+function _laExportBARTResourceMap(format = 'xlsx') {
+  if (format === 'xlsx' && typeof XLSX === 'undefined') { toast('Excel library not loaded', 'error'); return; }
+  const header = [
+    'Date', 'Day', 'Shift', 'Start', 'End',
+    'Activity', 'Group', 'Location',
+    'BART Role', 'Quantity', 'Status',
+    'Cancellation Category', 'Cancellation Reason', 'Responsible Party',
+    'Last Updated',
+  ];
+  const rows = [header];
+  const acts = (PLANNING_ACTIVITIES || []).filter(a => !a.deleted_at);
+
+  (PLANNING_EVENT_RES || []).forEach(er => {
+    const r = (PLANNING_RESOURCES || []).find(x => x.id === er.resource_id);
+    if (!r || r.company !== 'BART') return;   // BART only
+    const ev = (PLANNING_EVENTS || []).find(e => e.id === er.event_id);
+    if (!ev) return;
+    const act = acts.find(a => a.id === ev.planning_activity_id);
+    if (!act) return;
+    const meta = _groupMeta(act.activity_group || 'other');
+    const status = er.denied_at ? 'denied' : ev.status;
+    rows.push([
+      ev.event_date,
+      dayjs(ev.event_date).format('ddd'),
+      ev.shift_type || '',
+      ev.start_time || '',
+      ev.end_time   || '',
+      act.description || act.activity_id_text || '',
+      meta.label,
+      act.location || '',
+      r.display_name,
+      er.quantity || 1,
+      status,
+      ev.cancellation_category || '',
+      ev.cancellation_reason   || '',
+      ev.cancellation_responsible_party || '',
+      ev.updated_at ? dayjs(ev.updated_at).format('YYYY-MM-DD HH:mm') : '',
+    ]);
+  });
+
+  const stamp = dayjs().format('YYYY-MM-DD');
+  if (format === 'csv') {
+    const csv = rows.map(r => r.map(v => {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `BART_Resource_Map_${stamp}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } else {
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = header.map(h => ({ wch: Math.max(10, h.length + 2) }));
+    ws['!freeze'] = { ySplit: 1 };
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'BART Resource Map');
+    XLSX.writeFile(wb, `BART_Resource_Map_${stamp}.xlsx`);
+  }
+  toast(`✓ Exported ${rows.length - 1} BART resource rows`, 'success');
 }
 
 // ─── Soft delete from drawer (Phase 3A) ─────────────────────
@@ -15657,13 +15826,14 @@ function _laBulkCancelCells() {
   if (already.length) skipNote.push(`${already.length} already cancelled`);
   const sub = `Cancelling ${toCancel.length} event${toCancel.length > 1 ? 's' : ''}${skipNote.length ? ` (skipping: ${skipNote.join(', ')})` : ''}`;
 
-  _cancelReasonModalOpen(sub, async ({ reason, party }) => {
+  _cancelReasonModalOpen(sub, async ({ category, reason, party }) => {
     const now = new Date().toISOString();
     let saved = 0;
     for (const ev of toCancel) {
       try {
         await _dbUpdate('planning_events', {
           status:                         'cancelled',
+          cancellation_category:          category,
           cancellation_reason:            reason,
           cancellation_responsible_party: party || null,
           cancellation_by:                currentProfile?.id || null,
@@ -17681,24 +17851,32 @@ async function _planningToggleLock(eventId) {
 }
 
 async function _planningCancelEvent(eventId) {
-  const reason = prompt('Cancellation reason (required):');
-  if (reason === null) return;
-  if (!reason.trim()) { toast('Reason cannot be blank', 'error'); return; }
-  try {
-    await _dbUpdate('planning_events', {
-      status:              'cancelled',
-      cancellation_reason: reason.trim(),
-      cancellation_by:     currentProfile?.id || null,
-      cancellation_at:     new Date().toISOString(),
-      updated_by:          currentProfile?.id || null,
-    }, { id: eventId });
-    toast('Event cancelled', 'success');
-    closeModal();
-    await loadPlanningData(true);
-    _renderLookaheadTabBody();
-  } catch(err) {
-    toast('Cancel failed: ' + err.message, 'error');
-  }
+  const ev = PLANNING_EVENTS.find(e => e.id === eventId);
+  if (!ev) return;
+  _cancelReasonModalOpen(
+    `"${escapeHtml(ev.title || '')}" · ${ev.event_date}`,
+    async ({ category, reason, party }) => {
+      try {
+        await _dbUpdate('planning_events', {
+          status:                         'cancelled',
+          cancellation_category:          category,
+          cancellation_reason:            reason,
+          cancellation_responsible_party: party || null,
+          cancellation_by:                currentProfile?.id || null,
+          cancellation_at:                new Date().toISOString(),
+          updated_by:                     currentProfile?.id || null,
+        }, { id: eventId });
+        toast('Event cancelled', 'success');
+        // Close detail modal if it was open; close drawer too
+        if (typeof closeModal === 'function') closeModal();
+        if (_laDrawer.mode === 'cell' && _laDrawer.targetId === eventId) _laDrawer.dirty = false;
+        await loadPlanningData(true);
+        _renderLookaheadTabBody();
+      } catch (err) {
+        toast('Cancel failed: ' + err.message, 'error');
+      }
+    }
+  );
 }
 
 // ── PTO Tab ──────────────────────────────────────────────────
@@ -18306,6 +18484,9 @@ function _laHealthTabHTML() {
       </div>
     </div>
 
+    <!-- ── Phase 4D: per-group progress rollups ─────────────────────── -->
+    ${_laHealthGroupRollupHTML()}
+
     <!-- ── Two-column row: velocity + remaining ─────────────────────── -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
       <div class="data-card" style="padding:14px;">
@@ -18409,6 +18590,43 @@ function _laCancellationsTabHTML() {
   const subsystems = [...new Set(allRows.map(r => r.subsystem).filter(Boolean))].sort();
   const parties    = [...new Set(allRows.map(r => r.party).filter(Boolean))].sort();
 
+  // Phase 4D — category + party rollups for this week's meeting
+  const allCancelEvents = (PLANNING_EVENTS || []).filter(e => e.status === 'cancelled');
+  const weekStart = dayjs().startOf('week').format('YYYY-MM-DD');
+  const weekEnd   = dayjs().endOf('week').format('YYYY-MM-DD');
+  const thisWeek = allCancelEvents.filter(e =>
+    (e.cancellation_at || e.event_date) >= weekStart && (e.cancellation_at || e.event_date) <= weekEnd + 'T23:59'
+  );
+
+  // Group by category
+  const catCounts = {};
+  thisWeek.forEach(e => {
+    const k = e.cancellation_category || 'UNCATEGORIZED';
+    catCounts[k] = (catCounts[k] || 0) + 1;
+  });
+  const catRow = _CANCEL_CATEGORIES.map(([code, label]) => {
+    const n = catCounts[code] || 0;
+    const colors = {
+      BART_DENIED:      '#dc2626',
+      WEATHER:          '#0891b2',
+      EQUIPMENT:        '#ea580c',
+      RESOURCE_UNAVAIL: '#7c3aed',
+      LOGISTICS:        '#0f766e',
+      OTHER:            '#6b7280',
+    };
+    return `<div style="flex:1;min-width:140px;background:#fff;border:1px solid var(--gray-200);border-left:4px solid ${colors[code]||'#999'};border-radius:6px;padding:10px;">
+      <div style="font-size:10px;font-weight:700;color:var(--gray-500);text-transform:uppercase;">${escapeHtml(label)}</div>
+      <div style="font-size:24px;font-weight:700;color:${colors[code]||'#111'};margin-top:4px;">${n}</div>
+    </div>`;
+  }).join('');
+
+  // Group by responsible party
+  const partyCounts = {};
+  thisWeek.forEach(e => {
+    const k = e.cancellation_responsible_party || 'Unknown';
+    partyCounts[k] = (partyCounts[k] || 0) + 1;
+  });
+
   return `
   <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;align-items:center;">
     <div class="kpi-card kpi-mini" style="flex:none;min-width:130px;">
@@ -18423,7 +18641,34 @@ function _laCancellationsTabHTML() {
       <div class="kpi-label">Delays Logged</div>
       <div class="kpi-value" style="font-size:28px;color:#b45309;">${delays}</div>
     </div>
+    <div class="kpi-card kpi-mini" style="flex:none;min-width:130px;border-left:4px solid #1e40af;">
+      <div class="kpi-label">This Week</div>
+      <div class="kpi-value" style="font-size:28px;color:#1e40af;">${thisWeek.length}</div>
+    </div>
   </div>
+
+  <!-- Phase 4D: Cancellation breakdown for the weekly meeting -->
+  <div style="margin-bottom:18px;">
+    <div style="font-size:12px;font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;">
+      📊 This week — by category
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">${catRow}</div>
+  </div>
+
+  ${Object.keys(partyCounts).length ? `
+  <div style="margin-bottom:18px;">
+    <div style="font-size:12px;font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;">
+      🏢 This week — by responsible party
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      ${Object.entries(partyCounts).sort((a,b) => b[1]-a[1]).map(([party, n]) =>
+        `<div style="background:${party==='BART'?'#dbeafe':party==='HITACHI'?'#fef3c7':'#f3f4f6'};color:${party==='BART'?'#1e3a8a':party==='HITACHI'?'#78350f':'#374151'};padding:8px 14px;border-radius:8px;display:flex;align-items:center;gap:8px;">
+          <strong style="font-size:13px;">${escapeHtml(party)}</strong>
+          <span style="font-size:18px;font-weight:700;">${n}</span>
+        </div>`
+      ).join('')}
+    </div>
+  </div>` : ''}
 
   <div class="crpt-filter-bar" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;padding:12px 14px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;">
     <div>
@@ -19598,6 +19843,77 @@ async function _lookaheadSupersedePriorBatches(newBatchId) {
 // ── Review Queue handlers ────────────────────────────────────
 
 // Shared modal for entering a cancellation reason + responsible party
+// ─── Phase 4D — Group-level progress rollup (Health tab widget) ───
+// For each activity_group, aggregate planned vs executed test counts (excludes
+// cancelled events from the denominator so we don't punish ourselves for
+// schedule decisions). Shows a per-group progress bar with counts.
+function _laHealthGroupRollupHTML() {
+  const acts = (PLANNING_ACTIVITIES || []).filter(a => !a.deleted_at);
+  const groupStats = {};
+  _GROUP_ORDER.forEach(g => { groupStats[g] = { planned: 0, executed: 0, cancelled: 0, activityCount: 0, linkedActs: 0 }; });
+
+  acts.forEach(a => {
+    const gk = a.activity_group || 'other';
+    if (!groupStats[gk]) groupStats[gk] = { planned: 0, executed: 0, cancelled: 0, activityCount: 0, linkedActs: 0 };
+    const s = groupStats[gk];
+    s.activityCount++;
+    const tra = a.linked_test_register_activity;
+    if (!tra) return;
+    s.linkedActs++;
+    const evs = (PLANNING_EVENTS || []).filter(e => e.planning_activity_id === a.id);
+    s.planned   += evs.filter(e => e.status !== 'cancelled').length;
+    s.cancelled += evs.filter(e => e.status === 'cancelled').length;
+    const tests = (TI || []).filter(t => (t.Activity||'').trim() === tra.trim());
+    s.executed += tests.filter(t => t.Status === 'Complete' || t.Status === 'Pass' || t.Status === 'Passed').length;
+  });
+
+  const items = _GROUP_ORDER.filter(g => (groupStats[g]?.activityCount || 0) > 0).map(g => {
+    const s = groupStats[g];
+    const meta = _groupMeta(g);
+    const totalTests = (PLANNING_ACTIVITIES || [])
+      .filter(a => !a.deleted_at && (a.activity_group||'other')===g && a.linked_test_register_activity)
+      .reduce((sum, a) => sum + (TI || []).filter(t => (t.Activity||'').trim() === (a.linked_test_register_activity||'').trim()).length, 0);
+    const pct = totalTests > 0 ? Math.round((s.executed / totalTests) * 100) : 0;
+    return `
+      <div class="data-card" style="padding:12px;border-left:4px solid ${meta.accent};">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;">
+          <div style="font-size:12px;font-weight:700;color:${meta.fg};background:${meta.bg};padding:2px 10px;border-radius:10px;">${meta.label}</div>
+          <div style="font-size:11px;color:var(--gray-500);">${s.activityCount} act · ${s.linkedActs} linked</div>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;">
+          <div style="font-size:22px;font-weight:700;color:${meta.accent};">${pct}%</div>
+          <div style="font-size:11px;color:var(--gray-500);">${s.executed} / ${totalTests} tests done</div>
+        </div>
+        <div style="height:6px;background:var(--gray-200);border-radius:3px;overflow:hidden;">
+          <div style="height:100%;width:${pct}%;background:${meta.accent};"></div>
+        </div>
+        <div style="font-size:10px;color:var(--gray-400);margin-top:6px;">
+          ${s.planned} planned event${s.planned!==1?'s':''}${s.cancelled?` · ${s.cancelled} cancelled`:''}
+        </div>
+      </div>`;
+  }).join('');
+
+  if (!items) return '';
+  return `
+    <div style="margin-bottom:18px;">
+      <div style="font-size:12px;font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;">
+        📊 Progress by activity group
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;">${items}</div>
+    </div>`;
+}
+
+// Category taxonomy — mirrors the DB CHECK constraint on
+// planning_events.cancellation_category. Drives the new dashboard rollups.
+const _CANCEL_CATEGORIES = [
+  ['BART_DENIED',      '🚫 BART denied a requested resource'],
+  ['WEATHER',          '🌧 Weather'],
+  ['EQUIPMENT',        '🔧 Equipment / asset unavailable'],
+  ['RESOURCE_UNAVAIL', '👤 Internal resource unavailable'],
+  ['LOGISTICS',        '🚚 Logistics / access / staging'],
+  ['OTHER',            '❓ Other (use reason field)'],
+];
+
 function _cancelReasonModalOpen(subTitle, onSave) {
   modal({
     title: '🚫 Cancellation Reason',
@@ -19606,9 +19922,23 @@ function _cancelReasonModalOpen(subTitle, onSave) {
     body: `
       <div style="display:flex;flex-direction:column;gap:14px;">
         <div>
+          <label class="form-label">Category *</label>
+          <select id="cr-category" class="form-input"
+            onchange="
+              // Auto-select responsible party hint from the category
+              const v=this.value;
+              const partyEl=document.getElementById('cr-party');
+              if(v==='BART_DENIED' && partyEl && !partyEl.value){partyEl.value='BART';}
+              if((v==='RESOURCE_UNAVAIL'||v==='EQUIPMENT') && partyEl && !partyEl.value){partyEl.value='HITACHI';}
+            ">
+            <option value="">Select category…</option>
+            ${_CANCEL_CATEGORIES.map(([v,l]) => `<option value="${v}">${l}</option>`).join('')}
+          </select>
+        </div>
+        <div>
           <label class="form-label">Reason *</label>
           <textarea id="cr-reason" class="form-input" rows="3"
-            placeholder="Describe why this activity was cancelled…"
+            placeholder="Describe the specific reason…"
             style="resize:vertical;width:100%;box-sizing:border-box;"></textarea>
         </div>
         <div>
@@ -19633,23 +19963,26 @@ function _cancelReasonModalOpen(subTitle, onSave) {
 }
 
 function _cancelReasonSubmit() {
-  const reason = (document.getElementById('cr-reason')?.value || '').trim();
-  if (!reason) { toast('Reason cannot be blank', 'error'); return; }
+  const category = document.getElementById('cr-category')?.value || null;
+  const reason   = (document.getElementById('cr-reason')?.value || '').trim();
+  if (!category) { toast('Category is required', 'error'); return; }
+  if (!reason)   { toast('Reason cannot be blank', 'error'); return; }
   const partyEl = document.getElementById('cr-party');
   const party = partyEl?.value === 'Other'
     ? (document.getElementById('cr-party-other')?.value?.trim() || 'Other')
     : (partyEl?.value || null);
   closeModal();
-  window._cancelReasonOnSave?.({ reason, party });
+  window._cancelReasonOnSave?.({ category, reason, party });
   window._cancelReasonOnSave = null;
 }
 
 function _planningAddCancellationReason(eventId) {
   const ev = PLANNING_EVENTS.find(e => e.id === eventId);
   if (!ev) return;
-  _cancelReasonModalOpen(`"${escapeHtml(ev.title)}" · ${ev.event_date}`, async ({ reason, party }) => {
+  _cancelReasonModalOpen(`"${escapeHtml(ev.title)}" · ${ev.event_date}`, async ({ category, reason, party }) => {
     try {
       await _dbUpdate('planning_events', {
+        cancellation_category:          category,
         cancellation_reason:            reason,
         cancellation_responsible_party: party || null,
         cancellation_by:                currentProfile?.id || null,
@@ -19694,12 +20027,13 @@ function _cancelToggleAll(checked) {
 function _cancelBulkReason() {
   if (!_cancelSelIds.size) return;
   const n = _cancelSelIds.size;
-  _cancelReasonModalOpen(`Applying to ${n} selected event${n > 1 ? 's' : ''}`, async ({ reason, party }) => {
+  _cancelReasonModalOpen(`Applying to ${n} selected event${n > 1 ? 's' : ''}`, async ({ category, reason, party }) => {
     const ids = [..._cancelSelIds];
     let saved = 0;
     for (const id of ids) {
       try {
         await _dbUpdate('planning_events', {
+          cancellation_category:          category,
           cancellation_reason:            reason,
           cancellation_responsible_party: party || null,
           cancellation_by:                currentProfile?.id || null,

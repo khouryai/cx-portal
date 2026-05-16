@@ -6612,6 +6612,36 @@ body.la-fill-active {
 .tlg-row-label:hover .tlg-row-del { display: flex; }
 .tlg-row-del:hover { background: #fee2e2; }
 
+/* ── Export menu (lookahead toolbar dropdown) ─────────────── */
+.la-export-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: #fff;
+  border: 1px solid var(--gray-300);
+  border-radius: 6px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+  z-index: 999;
+  min-width: 240px;
+  overflow: hidden;
+}
+.la-export-menu.open { display: block; }
+.la-export-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 9px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--gray-700);
+}
+.la-export-menu button:hover { background: #f3f4f6; }
+
 /* ── Edit Drawer (Master Schedule, right side) ─────────────── */
 .la-drawer {
   width: 380px;
