@@ -149,7 +149,7 @@ async function paste(clipboard, target, opts = {}) {
       location: src.location,
       shift_type: src.shift_type,
       source: 'manual',
-      status: src.status === 'cancelled' ? 'scheduled' : (src.status || 'scheduled'),
+      status: src.status === 'cancelled' ? 'planned' : (src.status || 'planned'),
       is_locked: false,
       created_by: CURRENT_USER_ID,
     }]);
@@ -210,10 +210,10 @@ function resetFixtures() {
     { id: 'pto-1', resource_id: 'res-john', status: 'approved', start_date: '2026-06-05', end_date: '2026-06-07' },
   ];
   PLANNING_EVENTS = [
-    { id: 'ev-1', planning_activity_id: 'act-A', title: 'Test 1', event_date: '2026-06-01', shift_type: 'day_shift', start_time: '07:00', end_time: '15:00', all_day: false, status: 'scheduled', is_locked: false, source: 'lookahead' },
-    { id: 'ev-2', planning_activity_id: 'act-A', title: 'Test 1', event_date: '2026-06-02', shift_type: 'night_shift', start_time: '20:00', end_time: '07:00', all_day: false, status: 'scheduled', is_locked: false, source: 'lookahead' },
-    { id: 'ev-3', planning_activity_id: 'act-B', title: 'Test 2', event_date: '2026-06-03', shift_type: 'blanket_shift', all_day: true, status: 'scheduled', is_locked: false, source: 'lookahead' },
-    { id: 'ev-4', planning_activity_id: 'act-A', title: 'Test 1', event_date: '2026-06-10', shift_type: 'day_shift', start_time: '07:00', end_time: '15:00', all_day: false, status: 'scheduled', is_locked: true, source: 'manual' },
+    { id: 'ev-1', planning_activity_id: 'act-A', title: 'Test 1', event_date: '2026-06-01', shift_type: 'day_shift', start_time: '07:00', end_time: '15:00', all_day: false, status: 'planned', is_locked: false, source: 'lookahead' },
+    { id: 'ev-2', planning_activity_id: 'act-A', title: 'Test 1', event_date: '2026-06-02', shift_type: 'night_shift', start_time: '20:00', end_time: '07:00', all_day: false, status: 'planned', is_locked: false, source: 'lookahead' },
+    { id: 'ev-3', planning_activity_id: 'act-B', title: 'Test 2', event_date: '2026-06-03', shift_type: 'blanket_shift', all_day: true, status: 'planned', is_locked: false, source: 'lookahead' },
+    { id: 'ev-4', planning_activity_id: 'act-A', title: 'Test 1', event_date: '2026-06-10', shift_type: 'day_shift', start_time: '07:00', end_time: '15:00', all_day: false, status: 'planned', is_locked: true, source: 'manual' },
   ];
   PLANNING_EVENT_RES = [
     { event_id: 'ev-1', resource_id: 'res-john' },
@@ -246,7 +246,7 @@ function resetFixtures() {
   console.log('\n=== Test 2: Multi-cell sequential paste (3 days → shift to new week) ===');
   resetFixtures();
   // Add a 3rd day for the multi-day pattern
-  PLANNING_EVENTS.push({ id: 'ev-2b', planning_activity_id: 'act-A', title: 'Test 1', event_date: '2026-06-03', shift_type: 'day_shift', start_time: '07:00', end_time: '15:00', all_day: false, status: 'scheduled', is_locked: false, source: 'lookahead' });
+  PLANNING_EVENTS.push({ id: 'ev-2b', planning_activity_id: 'act-A', title: 'Test 1', event_date: '2026-06-03', shift_type: 'day_shift', start_time: '07:00', end_time: '15:00', all_day: false, status: 'planned', is_locked: false, source: 'lookahead' });
   const clip2 = buildClipboard(['ev-1', 'ev-2', 'ev-2b']);
   ok('3 items in clipboard',          clip2.items.length === 3);
   ok('All from anchor activity',      clip2.items.every(i => i.sameActivityAsAnchor));
@@ -348,7 +348,7 @@ function resetFixtures() {
         location: src.location,
         shift_type: src.shift_type,
         source: 'manual',
-        status: 'scheduled',
+        status: 'planned',
         is_locked: false,
       }]);
       inserted++;
@@ -399,14 +399,14 @@ function resetFixtures() {
   ok('3 inserted, 1 skipped',          r12.inserted === 3 && r12.skipped === 1);
   ok('ev-2 still present',             !!PLANNING_EVENTS.find(e => e.id === 'ev-2'));
 
-  console.log('\n=== Test 9: Cancelled events become scheduled on paste ===');
+  console.log('\n=== Test 9: Cancelled events become planned on paste ===');
   resetFixtures();
   PLANNING_EVENTS.find(e => e.id === 'ev-1').status = 'cancelled';
   const clip9 = buildClipboard(['ev-1']);
   const r9 = await paste(clip9, { activityId: 'act-A', date: '2026-06-15' });
   ok('Cloned',                        r9.inserted === 1);
   const newEv9 = PLANNING_EVENTS.find(e => e.event_date === '2026-06-15' && e.planning_activity_id === 'act-A');
-  ok('Status reset to scheduled',     newEv9.status === 'scheduled', `got: ${newEv9.status}`);
+  ok('Status reset to planned',       newEv9.status === 'planned', `got: ${newEv9.status}`);
 
   console.log(`\n${passed} passed, ${failed} failed.\n`);
   process.exit(failed === 0 ? 0 : 1);
