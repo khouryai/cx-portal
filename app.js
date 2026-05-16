@@ -13356,19 +13356,45 @@ function _planningTestActivityStats(activityName, date = null) {
   };
 }
 
-// Cell badge HTML — returns a small chip with execution status, or '' if no link.
+// Cell badge HTML — context-aware:
+//   FUTURE date: show "N left" (remaining = total − complete) — useful for planning
+//   TODAY:       show "X done · N left" — live status
+//   PAST date:   show ✓ executed result, or ✗ if planned but nothing recorded
+// Returns '' for unlinked rows (no Test Register link = pure overhead, no signal).
 function _planningCellBadge(linkedActivity, date) {
   if (!linkedActivity) return '';
   const s = _planningTestActivityStats(linkedActivity, date);
   if (!s || s.totalInActivity === 0) return '';
-  if (s.executedToday === 0) {
-    return `<span class="tlg-cell-badge tlg-cell-badge-none" title="${escapeHtml(linkedActivity)} — planned but no test results recorded yet">✗ 0/${s.totalInActivity}</span>`;
+  const today = new Date().toISOString().slice(0, 10);
+  const remaining = Math.max(0, s.totalInActivity - s.completeInActivity);
+
+  // PAST date — accountability view
+  if (date < today) {
+    if (s.executedToday === 0) {
+      return `<span class="tlg-cell-badge tlg-cell-badge-none" title="${escapeHtml(linkedActivity)} on ${date} — planned but no test results recorded">✗ 0 done</span>`;
+    }
+    const hasIssue = s.failed > 0 || s.blocked > 0;
+    const cls = hasIssue ? 'tlg-cell-badge-warn' : 'tlg-cell-badge-ok';
+    const icon = hasIssue ? '⚠' : '✓';
+    const issueText = hasIssue ? ` · ${s.failed ? s.failed+' fail' : ''}${s.failed && s.blocked ? ', ' : ''}${s.blocked ? s.blocked+' blk' : ''}` : '';
+    return `<span class="tlg-cell-badge ${cls}" title="${escapeHtml(linkedActivity)} on ${date}: ${s.executedToday} test${s.executedToday>1?'s':''} executed${issueText}">${icon} ${s.executedToday} done</span>`;
   }
-  const hasIssue = s.failed > 0 || s.blocked > 0;
-  const cls = hasIssue ? 'tlg-cell-badge-warn' : 'tlg-cell-badge-ok';
-  const icon = hasIssue ? '⚠' : '✓';
-  const issueText = hasIssue ? ` · ${s.failed ? s.failed+' fail' : ''}${s.failed && s.blocked ? ', ' : ''}${s.blocked ? s.blocked+' blk' : ''}` : '';
-  return `<span class="tlg-cell-badge ${cls}" title="${escapeHtml(linkedActivity)} on ${date}: ${s.executedToday} of ${s.totalInActivity} tests executed${issueText}">${icon} ${s.executedToday}/${s.totalInActivity}</span>`;
+
+  // TODAY — live mix of done so far + remaining
+  if (date === today) {
+    if (s.executedToday > 0) {
+      const hasIssue = s.failed > 0 || s.blocked > 0;
+      const cls = hasIssue ? 'tlg-cell-badge-warn' : 'tlg-cell-badge-today';
+      return `<span class="tlg-cell-badge ${cls}" title="Today: ${s.executedToday} executed · ${remaining} remaining in ${escapeHtml(linkedActivity)}">${s.executedToday}✓ · ${remaining}↻</span>`;
+    }
+    return `<span class="tlg-cell-badge tlg-cell-badge-today" title="${remaining} tests remaining in ${escapeHtml(linkedActivity)}">${remaining}↻</span>`;
+  }
+
+  // FUTURE — workload preview
+  if (remaining === 0) {
+    return `<span class="tlg-cell-badge tlg-cell-badge-ok" title="All ${s.totalInActivity} tests in ${escapeHtml(linkedActivity)} already complete">✓ done</span>`;
+  }
+  return `<span class="tlg-cell-badge tlg-cell-badge-future" title="${remaining} of ${s.totalInActivity} tests remaining in ${escapeHtml(linkedActivity)}">${remaining} left</span>`;
 }
 
 // Row-level summary chip (shown on the activity label)
@@ -13432,6 +13458,7 @@ function renderLookahead() {
     ['lookahead',     'Lookahead'],
     ['pto',           'PTO'],
     ['cancellations', 'Delays & Cancellations'],
+    ['health',        'Lookahead Health'],
   ];
 
   body.innerHTML = `
@@ -13478,6 +13505,7 @@ function _renderLookaheadTabBody() {
   if (tab === 'lookahead')     { el.innerHTML = _laLookaheadHTML();         setTimeout(_laMountLookaheadTL, 30); }
   if (tab === 'pto')           { el.innerHTML = _laPTOStub(); }
   if (tab === 'cancellations') { el.innerHTML = _laCancellationsTabHTML(); }
+  if (tab === 'health')        { el.innerHTML = _laHealthTabHTML(); }
 }
 
 // ── Stub renderers (replaced in Batch 2+) ────────────────────
@@ -15378,81 +15406,318 @@ function _laOpenNewActivityModal() {
   setTimeout(() => document.getElementById('new-act-desc')?.focus(), 50);
 }
 
-// ── Link Activity → Test Register Activity ─────────────────────
+// ── Link Activity → Test Register Activity + P6 Activity ───────
+// One modal with cascade-filtered pickers. Some lookahead rows link to
+// a Test Register Activity, some only to a P6 activity, some to both,
+// some to neither (pure overhead). All four states are supported.
+
+// Infer the activity's subsystem when planning_activities.subsystem doesn't exist as a column.
+// Order: assigned resources' subsystem → existing TI link's subsystem → null.
+function _planningInferActivitySubsystem(a) {
+  if (a.subsystem) return a.subsystem;
+  if (a.linked_test_register_activity) {
+    const ti = TI.find(t => (t.Activity || '').trim() === (a.linked_test_register_activity || '').trim());
+    if (ti?.Subsystem) return ti.Subsystem;
+  }
+  const actRes = PLANNING_ACTIVITY_RES.filter(ar => ar.planning_activity_id === a.id);
+  for (const ar of actRes) {
+    const r = PLANNING_RESOURCES.find(x => x.id === ar.resource_id);
+    if (r?.subsystem) return r.subsystem;
+  }
+  // Fallback: check any event-level resource for this activity
+  const ev = PLANNING_EVENTS.find(e => e.planning_activity_id === a.id);
+  if (ev) {
+    const er = PLANNING_EVENT_RES.find(x => x.event_id === ev.id);
+    if (er) {
+      const r = PLANNING_RESOURCES.find(x => x.id === er.resource_id);
+      if (r?.subsystem) return r.subsystem;
+    }
+  }
+  return null;
+}
+
 function _laOpenLinkActivityModal(activityId) {
   const a = PLANNING_ACTIVITIES.find(x => x.id === activityId);
   if (!a) return;
-  const currentLink = a.linked_test_register_activity || '';
 
-  // Build the list of distinct Test Register Activities from TI.
-  // Sort by name. Each option shows the activity + how many test items it contains.
+  // Snapshot current links
+  const curTRA   = a.linked_test_register_activity || '';
+  const curP6Id  = a.linked_p6_activity_id || '';
+
+  // Cascade filter defaults — from the activity's known location + inferred subsystem
+  const defaultLocation  = (a.location || '').trim();
+  const defaultSubsystem = _planningInferActivitySubsystem(a) || '';
+
+  // Build pools of all distinct subsystems + locations from TI for the filter dropdowns
+  const allSubsystems = [...new Set(TI.map(t => (t.Subsystem||'').trim()).filter(Boolean))].sort();
+  const allLocations  = [...new Set(TI.map(t => (t.Location||'').trim()).filter(Boolean))].sort();
+
+  modal({
+    title: '🔗 Link Activity',
+    sub:   a.description || a.activity_id_text || 'Unnamed activity',
+    size:  'large',
+    body: `
+      <div id="link-modal-tabs" style="display:flex;gap:0;border-bottom:2px solid var(--gray-200);margin-bottom:14px;">
+        <button class="admin-tab active" data-link-tab="links" onclick="_laLinkSwitchTab('links')">🔗 Links</button>
+        <button class="admin-tab" data-link-tab="progress" onclick="_laLinkSwitchTab('progress')">📊 Progress</button>
+      </div>
+
+      <div id="link-tab-links">
+        <!-- ── Cascade filters (auto-populated, user can adjust) ── -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;padding:10px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;">
+          <div class="form-field">
+            <label style="font-size:11px;">Filter — Subsystem</label>
+            <select id="link-filter-sub" class="form-input" onchange="_laLinkRebuildOptions()">
+              <option value="">All subsystems</option>
+              ${allSubsystems.map(s => `<option value="${escapeHtml(s)}" ${s === defaultSubsystem ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-field">
+            <label style="font-size:11px;">Filter — Location</label>
+            <select id="link-filter-loc" class="form-input" onchange="_laLinkRebuildOptions()">
+              <option value="">All locations</option>
+              ${allLocations.map(l => `<option value="${escapeHtml(l)}" ${l.toLowerCase() === defaultLocation.toLowerCase() ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+
+        <!-- ── Test Register Activity picker ── -->
+        <div class="form-field form-field-full">
+          <label>Test Register Activity <span style="font-weight:400;color:var(--gray-500);">(maps to TI.Activity group)</span></label>
+          <select id="link-tra-select" class="form-input" style="width:100%;">
+            <option value="">— Not linked —</option>
+          </select>
+          <div id="link-tra-suggest" style="margin-top:6px;font-size:11px;color:#1e40af;"></div>
+        </div>
+
+        <!-- ── P6 Activity picker ── -->
+        <div class="form-field form-field-full" style="margin-top:14px;">
+          <label>P6 Activity <span style="font-weight:400;color:var(--gray-500);">(from imported P6 schedule)</span></label>
+          <select id="link-p6-select" class="form-input" style="width:100%;">
+            <option value="">— Not linked —</option>
+          </select>
+          <div id="link-p6-suggest" style="margin-top:6px;font-size:11px;color:#1e40af;"></div>
+        </div>
+
+        <p style="font-size:12px;color:var(--gray-500);margin-top:14px;line-height:1.5;">
+          Filters cascade — adjust Subsystem/Location above to narrow the options.
+          <strong>Test Register Activity</strong> drives test-execution badges and progress chips.
+          <strong>P6 Activity</strong> drives schedule-drift KPIs.
+          Leave both blank for pure overhead rows (mobilization, training, etc.).
+        </p>
+      </div>
+
+      <div id="link-tab-progress" style="display:none;"></div>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="_laSaveLinkActivity('${activityId}')">Save Links</button>
+    `,
+  });
+
+  // Initial population (and re-population on filter change)
+  _laLinkActivityId = activityId;
+  _laLinkRebuildOptions();
+}
+
+let _laLinkActivityId = null;
+
+function _laLinkSwitchTab(name) {
+  document.querySelectorAll('[data-link-tab]').forEach(b => b.classList.toggle('active', b.dataset.linkTab === name));
+  document.getElementById('link-tab-links').style.display    = name === 'links'    ? '' : 'none';
+  document.getElementById('link-tab-progress').style.display = name === 'progress' ? '' : 'none';
+  if (name === 'progress') _laLinkRenderProgress();
+}
+
+function _laLinkRebuildOptions() {
+  const a = PLANNING_ACTIVITIES.find(x => x.id === _laLinkActivityId);
+  if (!a) return;
+  const sub = document.getElementById('link-filter-sub').value;
+  const loc = document.getElementById('link-filter-loc').value;
+  const curTRA   = a.linked_test_register_activity || '';
+  const curP6Id  = a.linked_p6_activity_id || '';
+
+  // ── Test Register Activity options (filtered) ──
+  const pool = TI.filter(t =>
+    (!sub || (t.Subsystem || '').trim() === sub) &&
+    (!loc || (t.Location  || '').trim().toLowerCase() === loc.toLowerCase())
+  );
   const activityCounts = {};
-  TI.forEach(t => {
+  pool.forEach(t => {
     const k = (t.Activity || '').trim();
     if (!k) return;
     activityCounts[k] = (activityCounts[k] || 0) + 1;
   });
-  const sortedActivities = Object.entries(activityCounts).sort((a,b) => a[0].localeCompare(b[0]));
+  const sortedActs = Object.entries(activityCounts).sort((a,b) => a[0].localeCompare(b[0]));
+  // Always include the current link (even if filter would hide it) so users can see what's set
+  if (curTRA && !activityCounts[curTRA]) {
+    sortedActs.unshift([curTRA + ' (outside filter)', 0]);
+  }
+  const traSelect = document.getElementById('link-tra-select');
+  traSelect.innerHTML = '<option value="">— Not linked —</option>' +
+    sortedActs.map(([name, count]) => `
+      <option value="${escapeHtml(name.replace(' (outside filter)', ''))}" ${name.replace(' (outside filter)', '') === curTRA ? 'selected' : ''}>
+        ${escapeHtml(name)}${count > 0 ? ` (${count} test${count>1?'s':''})` : ''}
+      </option>`).join('');
 
-  // Auto-suggest the closest match by description if no link yet (Fuse.js fuzzy match)
-  let suggestion = null;
-  if (!currentLink && window.Fuse && (a.description || '').length > 3) {
-    const fuse = new Fuse(sortedActivities.map(([name]) => ({ name })), {
-      keys: ['name'], threshold: 0.45, includeScore: true, ignoreLocation: true,
+  // Fuse suggestion against the (filtered) pool
+  const suggestEl = document.getElementById('link-tra-suggest');
+  if (!curTRA && window.Fuse && (a.description || '').length > 3 && sortedActs.length > 0) {
+    const fuse = new Fuse(sortedActs.map(([n]) => ({ n })), {
+      keys: ['n'], threshold: 0.45, includeScore: true, ignoreLocation: true,
     });
     const res = fuse.search(a.description);
-    if (res.length && res[0].score < 0.45) suggestion = res[0].item.name;
+    if (res.length && res[0].score < 0.45) {
+      const name = res[0].item.n;
+      suggestEl.innerHTML = `💡 Suggested: <strong>${escapeHtml(name)}</strong>
+        <button type="button" class="form-secondary" style="font-size:10px;padding:2px 6px;margin-left:6px;"
+          onclick="document.getElementById('link-tra-select').value=${JSON.stringify(name)};this.parentElement.style.display='none';">Use</button>`;
+    } else suggestEl.innerHTML = '';
+  } else suggestEl.innerHTML = '';
+
+  // ── P6 Activity options (filtered by location only — P6 doesn't carry subsystem) ──
+  const p6Pool = (P6_ACTS || []).filter(p =>
+    !loc || (p.p6_location_code || '').trim().toLowerCase() === loc.toLowerCase()
+  );
+  // Sort by p6_id
+  p6Pool.sort((a,b) => (a.p6_id || '').localeCompare(b.p6_id || ''));
+  // Always include current link
+  if (curP6Id && !p6Pool.find(p => p.id === curP6Id)) {
+    const cur = (P6_ACTS || []).find(p => p.id === curP6Id);
+    if (cur) p6Pool.unshift(cur);
+  }
+  const p6Select = document.getElementById('link-p6-select');
+  p6Select.innerHTML = '<option value="">— Not linked —</option>' +
+    p6Pool.map(p => `
+      <option value="${p.id}" ${p.id === curP6Id ? 'selected' : ''}>
+        ${escapeHtml(p.p6_id || '?')} · ${escapeHtml((p.p6_name || '').slice(0, 60))}${(p.p6_name||'').length > 60 ? '…' : ''} · ${escapeHtml(p.p6_location_code || '—')}
+      </option>`).join('');
+
+  // P6 suggestion: match activity_id_text exactly
+  const p6SugEl = document.getElementById('link-p6-suggest');
+  if (!curP6Id && a.activity_id_text) {
+    const hit = (P6_ACTS || []).find(p => (p.p6_id || '').toLowerCase() === a.activity_id_text.toLowerCase());
+    if (hit) {
+      p6SugEl.innerHTML = `💡 Suggested: <strong>${escapeHtml(hit.p6_id)}</strong> (exact ID match)
+        <button type="button" class="form-secondary" style="font-size:10px;padding:2px 6px;margin-left:6px;"
+          onclick="document.getElementById('link-p6-select').value='${hit.id}';this.parentElement.style.display='none';">Use</button>`;
+    } else p6SugEl.innerHTML = '';
+  } else p6SugEl.innerHTML = '';
+
+  // Upgrade to Tom Select for searchable typeahead
+  ['link-tra-select', 'link-p6-select'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && el.tomselect) { try { el.tomselect.destroy(); } catch {} }
+    if (window.TomSelect) {
+      try { new TomSelect('#' + id, { create: false, allowEmptyOption: true }); } catch {}
+    }
+  });
+}
+
+function _laLinkRenderProgress() {
+  const a = PLANNING_ACTIVITIES.find(x => x.id === _laLinkActivityId);
+  if (!a) return;
+  const root = document.getElementById('link-tab-progress');
+  if (!root) return;
+
+  const linkedTRA = a.linked_test_register_activity;
+  const linkedP6Id = a.linked_p6_activity_id;
+  const p6 = linkedP6Id ? (P6_ACTS || []).find(p => p.id === linkedP6Id) : null;
+
+  let html = '<div style="font-size:13px;">';
+
+  // Test Register progress
+  if (linkedTRA) {
+    const stats = _planningTestActivityStats(linkedTRA);
+    const tis = TI.filter(t => (t.Activity || '').trim() === linkedTRA.trim());
+    const pct = stats.totalInActivity ? Math.round((stats.completeInActivity / stats.totalInActivity) * 100) : 0;
+    html += `
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px;margin-bottom:14px;">
+        <div style="font-weight:600;margin-bottom:6px;">📋 Test Register: ${escapeHtml(linkedTRA)}</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+          <div style="font-size:22px;font-weight:700;color:#15803d;">${stats.completeInActivity}/${stats.totalInActivity}</div>
+          <div style="flex:1;background:#dcfce7;border-radius:10px;height:10px;overflow:hidden;">
+            <div style="background:#16a34a;height:100%;width:${pct}%;"></div>
+          </div>
+          <div style="font-weight:600;color:#15803d;">${pct}%</div>
+        </div>
+        <div style="max-height:180px;overflow-y:auto;font-size:11px;border:1px solid #bbf7d0;border-radius:4px;background:#fff;">
+          <table style="width:100%;border-collapse:collapse;">
+            <thead><tr style="background:#f8fafc;position:sticky;top:0;">
+              <th style="text-align:left;padding:4px 8px;">Test ID</th>
+              <th style="text-align:left;padding:4px 8px;">Name</th>
+              <th style="text-align:left;padding:4px 8px;">Status</th>
+            </tr></thead>
+            <tbody>
+              ${tis.slice(0, 30).map(t => `
+                <tr style="border-top:1px solid #f1f5f9;">
+                  <td style="padding:3px 8px;font-family:monospace;font-size:10px;">${escapeHtml(t.TestCaseCode || t.TestID || '—')}</td>
+                  <td style="padding:3px 8px;">${escapeHtml((t.TestName||'').slice(0,50))}</td>
+                  <td style="padding:3px 8px;">
+                    <span style="font-size:10px;font-weight:600;color:${t.Status==='Complete'||t.Status==='Pass'?'#15803d':t.Status==='Failed'||t.Status==='Fail'?'#b91c1c':'#6b7280'}">${escapeHtml(t.Status || 'Not Started')}</span>
+                  </td>
+                </tr>`).join('')}
+              ${tis.length > 30 ? `<tr><td colspan="3" style="text-align:center;padding:4px;color:#6b7280;font-style:italic;">…${tis.length - 30} more not shown</td></tr>` : ''}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  } else {
+    html += `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:10px;margin-bottom:14px;font-size:12px;">
+      No Test Register Activity linked. Use the Links tab to set one.
+    </div>`;
   }
 
-  modal({
-    title: '🔗 Link to Test Register Activity',
-    sub:   a.description || a.activity_id_text || 'Unnamed activity',
-    size:  'medium',
-    body: `
-      <div class="form-field form-field-full">
-        <label>Test Register Activity</label>
-        <select id="link-tra-select" class="form-input" style="width:100%;">
-          <option value="">— Not linked (overhead / no test mapping) —</option>
-          ${sortedActivities.map(([name, count]) => `
-            <option value="${escapeHtml(name)}" ${name === currentLink ? 'selected' : ''}>
-              ${escapeHtml(name)} (${count} test${count>1?'s':''})
-            </option>`).join('')}
-        </select>
-      </div>
-      ${suggestion ? `
-        <div style="margin-top:10px;padding:8px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:12px;color:#1e40af;">
-          💡 <strong>Suggested:</strong> ${escapeHtml(suggestion)}
-          <button type="button" class="form-secondary" style="font-size:11px;padding:3px 8px;margin-left:8px;"
-            onclick="document.getElementById('link-tra-select').value=${JSON.stringify(suggestion)};">Use suggestion</button>
-        </div>` : ''}
-      <p style="font-size:12px;color:var(--gray-500);margin-top:14px;line-height:1.5;">
-        Linking this lookahead row to a Test Register Activity unlocks per-cell badges showing
-        test execution status (e.g. <code>✓ 5/8</code>), plus row-level progress (<code>14/22</code>),
-        and feeds the Lookahead Health KPIs.
-        Leave blank for overhead activities (mobilization, training, doc prep, etc.).
-      </p>
-    `,
-    footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-submit" onclick="_laSaveLinkActivity('${activityId}')">Save Link</button>
-    `,
-  });
+  // P6 progress
+  if (p6) {
+    html += `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px;margin-bottom:14px;">
+        <div style="font-weight:600;margin-bottom:6px;">📅 P6: ${escapeHtml(p6.p6_id || '?')} — ${escapeHtml(p6.p6_name || '')}</div>
+        <div style="font-size:12px;line-height:1.7;">
+          <div><strong>Start:</strong> ${escapeHtml(p6.start_date || '—')} &nbsp;·&nbsp; <strong>Finish:</strong> ${escapeHtml(p6.finish_date || '—')}</div>
+          <div><strong>Location:</strong> ${escapeHtml(p6.p6_location_code || '—')} &nbsp;·&nbsp; <strong>Remaining:</strong> ${p6.remaining_duration_days ?? '—'} day(s)</div>
+        </div>
+      </div>`;
+  } else {
+    html += `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:10px;font-size:12px;">
+      No P6 Activity linked. Use the Links tab to set one.
+    </div>`;
+  }
 
-  // Upgrade to Tom Select for searchable dropdown
-  setTimeout(() => {
-    if (!window.TomSelect) return;
-    try { new TomSelect('#link-tra-select', { create: false, allowEmptyOption: true }); } catch {}
-  }, 50);
+  // Lookahead cells for this activity
+  const events = PLANNING_EVENTS.filter(e => e.planning_activity_id === a.id).sort((x,y) => x.event_date.localeCompare(y.event_date));
+  if (events.length > 0) {
+    html += `
+      <div style="margin-top:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;">
+        <div style="font-weight:600;margin-bottom:6px;">📆 Scheduled cells (${events.length})</div>
+        <div style="max-height:140px;overflow-y:auto;font-size:11px;">
+          ${events.map(e => {
+            const shift = e.shift_type || 'custom';
+            const c = { day_shift:'#FFEB3B', night_shift:'#2196F3', blanket_shift:'#000', custom:'#6b7280' }[shift];
+            return `<span style="display:inline-block;margin:2px;padding:2px 7px;background:${c};color:${shift==='day_shift'?'#000':'#fff'};border-radius:3px;font-size:10px;">${escapeHtml(e.event_date)}${e.status==='cancelled'?' ✕':''}</span>`;
+          }).join('')}
+        </div>
+      </div>`;
+  }
+
+  html += '</div>';
+  root.innerHTML = html;
 }
 
 async function _laSaveLinkActivity(activityId) {
-  const val = document.getElementById('link-tra-select')?.value || null;
+  const tra = document.getElementById('link-tra-select')?.value || null;
+  const p6  = document.getElementById('link-p6-select')?.value || null;
   try {
-    await _dbUpdate('planning_activities',
-      { linked_test_register_activity: val || null, is_manual_override: true },
-      { id: activityId });
+    await _dbUpdate('planning_activities', {
+      linked_test_register_activity: tra,
+      linked_p6_activity_id:         p6,
+      is_manual_override:            true,
+    }, { id: activityId });
     closeModal();
-    toast(val ? `✓ Linked to "${val}"` : '✓ Link cleared', 'success');
+    const parts = [];
+    if (tra) parts.push(`Test Reg: "${tra}"`);
+    if (p6)  parts.push(`P6 set`);
+    toast(parts.length ? `✓ Linked — ${parts.join(' · ')}` : '✓ Links cleared', 'success');
     await loadPlanningData(true);
     _renderLookaheadTabBody();
   } catch (err) {
@@ -16864,6 +17129,245 @@ function _cancelRptTableBody() {
       </td>
     </tr>`;
   }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LOOKAHEAD HEALTH — KPI dashboard tab
+// ═══════════════════════════════════════════════════════════════
+function _laHealthTabHTML() {
+  const today = new Date().toISOString().slice(0, 10);
+  const winStart = dayjs().format('YYYY-MM-DD');
+  const winEnd   = dayjs().add(28, 'day').format('YYYY-MM-DD');
+  const lookbackStart = dayjs().subtract(28, 'day').format('YYYY-MM-DD');
+
+  // ── Forecast Accuracy ──
+  // For events in the past 28 days that were planned, what % had test_results recorded?
+  const pastEvents = PLANNING_EVENTS.filter(e =>
+    e.event_date >= lookbackStart && e.event_date < today &&
+    e.status !== 'cancelled'
+  );
+  const pastLinked = pastEvents.filter(e => {
+    const act = PLANNING_ACTIVITIES.find(a => a.id === e.planning_activity_id);
+    return act?.linked_test_register_activity;
+  });
+  const pastWithResults = pastLinked.filter(e => {
+    const act = PLANNING_ACTIVITIES.find(a => a.id === e.planning_activity_id);
+    return (PLANNING_TEST_RESULTS || []).some(r =>
+      (r.activity || '').trim() === (act.linked_test_register_activity || '').trim() &&
+      r.date_tested === e.event_date
+    );
+  });
+  const forecastPct = pastLinked.length ? Math.round((pastWithResults.length / pastLinked.length) * 100) : null;
+
+  // ── Unmapped % ──
+  // What % of planning_activities have NO link (neither TR nor P6)?
+  const totalActs = PLANNING_ACTIVITIES.length;
+  const unmapped = PLANNING_ACTIVITIES.filter(a =>
+    !a.linked_test_register_activity && !a.linked_p6_activity_id
+  ).length;
+  const unmappedPct = totalActs ? Math.round((unmapped / totalActs) * 100) : 0;
+
+  // ── Activity Completion velocity (last 4 weeks) ──
+  // Tests completed per week, based on test_items with completed_date
+  const weekly = [];
+  for (let i = 3; i >= 0; i--) {
+    const wStart = dayjs().startOf('week').subtract(i, 'week').format('YYYY-MM-DD');
+    const wEnd   = dayjs().startOf('week').subtract(i, 'week').add(6, 'day').format('YYYY-MM-DD');
+    const count = (PLANNING_TEST_RESULTS || []).filter(r =>
+      r.result === 'Pass' && r.date_tested >= wStart && r.date_tested <= wEnd
+    ).length;
+    weekly.push({ label: dayjs(wStart).format('MMM D'), count });
+  }
+  const maxWeekly = Math.max(1, ...weekly.map(w => w.count));
+
+  // ── Coverage Gap ──
+  // Distinct TI.Activity values that have NO planning_activities link in the future window
+  const linkedActivities = new Set(PLANNING_ACTIVITIES
+    .filter(a => a.linked_test_register_activity)
+    .map(a => (a.linked_test_register_activity || '').trim()));
+  const allTRA = [...new Set(TI.map(t => (t.Activity || '').trim()).filter(Boolean))];
+  const uncovered = allTRA
+    .filter(name => !linkedActivities.has(name))
+    .map(name => ({
+      name,
+      total:    TI.filter(t => (t.Activity || '').trim() === name).length,
+      complete: TI.filter(t => (t.Activity || '').trim() === name && (t.Status === 'Complete' || t.Status === 'Pass' || t.Status === 'Passed')).length,
+    }))
+    .filter(x => x.complete < x.total)  // hide fully complete (no need to schedule)
+    .sort((a, b) => (b.total - b.complete) - (a.total - a.complete))
+    .slice(0, 8);
+
+  // ── Schedule Drift vs P6 ──
+  // For each linked-P6 activity, compute the day delta between the latest planning_event
+  // and the p6_activity.finish_date.
+  const drift = PLANNING_ACTIVITIES
+    .filter(a => a.linked_p6_activity_id)
+    .map(a => {
+      const p6 = (P6_ACTS || []).find(p => p.id === a.linked_p6_activity_id);
+      if (!p6 || !p6.finish_date) return null;
+      const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === a.id && e.status !== 'cancelled');
+      if (!evs.length) return null;
+      const latestPlanned = evs.map(e => e.event_date).sort().slice(-1)[0];
+      const delta = dayjs(latestPlanned).diff(dayjs(p6.finish_date), 'day');
+      return { activity: a, p6, delta, latestPlanned };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 8);
+
+  // ── Top activities by remaining workload ──
+  const remainingByActivity = PLANNING_ACTIVITIES
+    .filter(a => a.linked_test_register_activity)
+    .map(a => {
+      const stats = _planningTestActivityStats(a.linked_test_register_activity);
+      return {
+        activity: a,
+        ...stats,
+        remaining: stats ? Math.max(0, stats.totalInActivity - stats.completeInActivity) : 0,
+      };
+    })
+    .filter(x => x.remaining > 0)
+    .sort((a, b) => b.remaining - a.remaining)
+    .slice(0, 6);
+
+  return `
+    <div style="margin-bottom:14px;">
+      <h2 style="margin:0 0 4px;font-size:18px;font-weight:700;">Lookahead Health</h2>
+      <p style="margin:0;font-size:12px;color:var(--gray-500);">
+        KPIs derived from the link between lookahead activities and the Test Register / P6 schedule.
+        Window: ${lookbackStart} → ${winEnd} (28 days back, 28 ahead).
+      </p>
+    </div>
+
+    <!-- ── Top metric row ─────────────────────────────────────────────── -->
+    <div class="kpi-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:18px;">
+      <div class="kpi-card">
+        <div class="kpi-label">Forecast Accuracy</div>
+        <div class="kpi-value" style="color:${forecastPct === null ? '#9ca3af' : forecastPct >= 70 ? '#16a34a' : forecastPct >= 40 ? '#d97706' : '#dc2626'};">
+          ${forecastPct === null ? '—' : forecastPct + '%'}
+        </div>
+        <div style="font-size:10px;color:#6b7280;">
+          ${forecastPct === null ? 'No linked past cells' : `${pastWithResults.length} / ${pastLinked.length} planned cells had results`}
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Unmapped Activities</div>
+        <div class="kpi-value" style="color:${unmappedPct <= 30 ? '#16a34a' : unmappedPct <= 60 ? '#d97706' : '#dc2626'};">
+          ${unmappedPct}%
+        </div>
+        <div style="font-size:10px;color:#6b7280;">
+          ${unmapped} of ${totalActs} have no link (overhead)
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Total Activities</div>
+        <div class="kpi-value">${totalActs}</div>
+        <div style="font-size:10px;color:#6b7280;">
+          ${PLANNING_ACTIVITIES.filter(a => a.linked_test_register_activity).length} linked to TR ·
+          ${PLANNING_ACTIVITIES.filter(a => a.linked_p6_activity_id).length} linked to P6
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Tests Passed (4 wks)</div>
+        <div class="kpi-value">${weekly.reduce((s, w) => s + w.count, 0)}</div>
+        <div style="font-size:10px;color:#6b7280;">
+          ${weekly[weekly.length-1].count} this week
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Two-column row: velocity + remaining ─────────────────────── -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
+      <div class="data-card" style="padding:14px;">
+        <div style="font-weight:600;font-size:13px;margin-bottom:10px;">Test Completion Velocity (last 4 weeks)</div>
+        <div style="display:flex;align-items:flex-end;gap:8px;height:100px;padding-bottom:24px;border-bottom:1px solid #e5e7eb;">
+          ${weekly.map(w => {
+            const h = Math.max(4, Math.round((w.count / maxWeekly) * 80));
+            return `
+              <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;">
+                <div style="font-size:11px;font-weight:600;color:#374151;">${w.count}</div>
+                <div style="width:100%;background:#0891b2;height:${h}px;border-radius:3px 3px 0 0;"></div>
+                <div style="font-size:10px;color:#6b7280;position:absolute;margin-top:${h + 6}px;">${w.label}</div>
+              </div>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <div class="data-card" style="padding:14px;">
+        <div style="font-weight:600;font-size:13px;margin-bottom:10px;">Top remaining workload</div>
+        ${remainingByActivity.length === 0 ? '<div style="font-size:12px;color:#6b7280;">No linked activities with remaining tests.</div>' :
+          remainingByActivity.map(x => {
+            const pct = Math.round((x.completeInActivity / x.totalInActivity) * 100);
+            return `
+              <div style="margin-bottom:10px;">
+                <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;">
+                  <span style="font-weight:500;">${escapeHtml(x.activity.linked_test_register_activity)}</span>
+                  <span style="color:#6b7280;font-family:monospace;">${x.completeInActivity}/${x.totalInActivity}</span>
+                </div>
+                <div style="background:#f3f4f6;height:6px;border-radius:3px;overflow:hidden;">
+                  <div style="background:${pct>=80?'#16a34a':pct>=50?'#0891b2':'#9ca3af'};height:100%;width:${pct}%;"></div>
+                </div>
+              </div>`;
+          }).join('')
+        }
+      </div>
+    </div>
+
+    <!-- ── Two-column row: coverage gap + schedule drift ────────────── -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
+      <div class="data-card" style="padding:14px;">
+        <div style="font-weight:600;font-size:13px;margin-bottom:10px;">⚠ Coverage gap — Activities not in any lookahead</div>
+        ${uncovered.length === 0 ? '<div style="font-size:12px;color:#16a34a;">✓ Every Test Register Activity is linked to a lookahead row.</div>' :
+          `<div style="font-size:11px;color:#6b7280;margin-bottom:8px;">These Test Register Activities have remaining tests but no lookahead row pointing at them — they need to be scheduled or linked.</div>
+          <table style="width:100%;border-collapse:collapse;font-size:11px;">
+            <thead><tr style="background:#f8fafc;">
+              <th style="text-align:left;padding:4px 8px;">Activity</th>
+              <th style="text-align:right;padding:4px 8px;">Remaining</th>
+            </tr></thead>
+            <tbody>
+              ${uncovered.map(u => `
+                <tr style="border-top:1px solid #f1f5f9;">
+                  <td style="padding:3px 8px;">${escapeHtml(u.name)}</td>
+                  <td style="padding:3px 8px;text-align:right;font-weight:600;color:#dc2626;">${u.total - u.complete}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>`
+        }
+      </div>
+
+      <div class="data-card" style="padding:14px;">
+        <div style="font-weight:600;font-size:13px;margin-bottom:10px;">📅 Schedule Drift vs P6</div>
+        ${drift.length === 0 ? '<div style="font-size:12px;color:#6b7280;">No P6-linked activities with scheduled cells.</div>' :
+          `<table style="width:100%;border-collapse:collapse;font-size:11px;">
+            <thead><tr style="background:#f8fafc;">
+              <th style="text-align:left;padding:4px 8px;">Activity</th>
+              <th style="text-align:left;padding:4px 8px;">P6 finish</th>
+              <th style="text-align:left;padding:4px 8px;">Latest planned</th>
+              <th style="text-align:right;padding:4px 8px;">Δ</th>
+            </tr></thead>
+            <tbody>
+              ${drift.map(d => {
+                const sign = d.delta > 0 ? '+' : '';
+                const color = d.delta > 5 ? '#dc2626' : d.delta < -5 ? '#16a34a' : '#6b7280';
+                return `
+                  <tr style="border-top:1px solid #f1f5f9;">
+                    <td style="padding:3px 8px;">${escapeHtml((d.activity.description || d.activity.activity_id_text || '').slice(0, 30))}${(d.activity.description||'').length > 30 ? '…' : ''}</td>
+                    <td style="padding:3px 8px;">${escapeHtml(d.p6.finish_date || '—')}</td>
+                    <td style="padding:3px 8px;">${escapeHtml(d.latestPlanned || '—')}</td>
+                    <td style="padding:3px 8px;text-align:right;font-weight:600;color:${color};">${sign}${d.delta}d</td>
+                  </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+          <div style="font-size:10px;color:#6b7280;margin-top:8px;">Δ = days the latest planned cell is past the P6 finish date. Positive = late, negative = early.</div>`
+        }
+      </div>
+    </div>
+
+    <div style="font-size:11px;color:#9ca3af;text-align:center;margin-top:24px;">
+      Data refreshes when planning data is re-loaded. Forecast accuracy needs at least one linked past cell with results.
+    </div>
+  `;
 }
 
 function _laCancellationsTabHTML() {
