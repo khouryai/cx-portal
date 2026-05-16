@@ -7,17 +7,30 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<!-- SRI-pinned CDN dependencies — hashes verified 2026-05-15 -->
 <script src="chart.umd.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"
+  integrity="sha384-2zrRDgDHSYB/GN3nFW3fsZXoxEhKIr3N2h63Tc6DEOB9JJdFIu8xMJT2Cph/gBil"
+  crossorigin="anonymous"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
+  integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"
+  crossorigin="anonymous"></script>
 <link rel="stylesheet" href="styles.css" />
-<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet" />
+<link href="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.snow.css" rel="stylesheet"
+  integrity="sha384-ecIckRi4QlKYya/FQUbBUjS4qp65jF/J87Guw5uzTbO1C1Jfa/6kYmd6dXUF6D7i"
+  crossorigin="anonymous" />
 <!-- Flatpickr – date picker -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css"
+  integrity="sha384-RkASv+6KfBMW9eknReJIJ6b3UnjKOKC5bOUaNgIY778NFbQ8MtWq9Lr/khUgqtTt"
+  crossorigin="anonymous">
 <!-- Tom Select – enhanced dropdowns -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select/dist/css/tom-select.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.4.3/dist/css/tom-select.min.css"
+  integrity="sha384-EIA8J01pb+PXiVYnDYseaCki0ke5k3Z/QNbhj0nU+Uso0kvSYdFnQB3G6ia7lU+Y"
+  crossorigin="anonymous">
 <!-- Tippy.js – tooltips -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tippy.js@6/dist/tippy.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tippy.js@6.3.7/dist/tippy.css"
+  integrity="sha384-IBgYl+I5X6ZDZXI5zv1vsSE3VopDomz4BxSu/GlxaPHfFtcrJ3uj70z1w6srO9zU"
+  crossorigin="anonymous">
 </head>
 <body>
 
@@ -1110,33 +1123,48 @@
   </div>
 </footer>
 
-<!-- ── Modern UI Library Stack ──────────────────────────────── -->
-<!-- Alpine.js – reactive components (defer = loads after DOM) -->
-<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
-<!-- Flatpickr – beautiful date/time picker -->
-<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<!-- ── Modern UI Library Stack — all pinned + SRI verified ──── -->
+<!-- Alpine.js – reactive components -->
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"
+  integrity="sha384-9Ax3MmS9AClxJyd5/zafcXXjxmwFhZCdsT6HJoJjarvCaAkJlk5QDzjLJm+Wdx5F"
+  crossorigin="anonymous"></script>
+<!-- Flatpickr – date/time picker -->
+<script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"
+  integrity="sha384-5JqMv4L/Xa0hfvtF06qboNdhvuYXUku9ZrhZh3bSk8VXF0A/RuSLHpLsSV9Zqhl6"
+  crossorigin="anonymous"></script>
 <!-- Tom Select – searchable, taggable selects -->
-<script src="https://cdn.jsdelivr.net/npm/tom-select/dist/js/tom-select.complete.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.4.3/dist/js/tom-select.complete.min.js"
+  integrity="sha384-A4TlP4zHVPP9oVIQ8pTVaV6MhvBkDx1sRpmEUfAlO5e7xpodrdr6uNmUV7alXAWW"
+  crossorigin="anonymous"></script>
 <!-- Fuse.js – fuzzy search -->
-<script src="https://cdn.jsdelivr.net/npm/fuse.js/dist/fuse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fuse.js@7.1.0/dist/fuse.min.js"
+  integrity="sha384-P/y/5cwqUn6MDvJ9lCHJSaAi2EoH3JSeEdyaORsQMPgbpvA+NvvUqik7XH2YGBjb"
+  crossorigin="anonymous"></script>
 <!-- Day.js – lightweight date formatting -->
-<script src="https://cdn.jsdelivr.net/npm/dayjs/dayjs.min.js"></script>
-<!-- AutoAnimate – zero-config list animations -->
-<script src="https://cdn.jsdelivr.net/npm/@formkit/auto-animate/index.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/dayjs.min.js"
+  integrity="sha384-DpVxUeeBWjUvUV1czyIHJAjh+jYUZFu2lLakbdua5vbwOrBGi1UgaKCHjTC+x3Ky"
+  crossorigin="anonymous"></script>
 <!-- Tippy.js – tooltips and popovers -->
-<script src="https://cdn.jsdelivr.net/npm/tippy.js@6/dist/tippy-bundle.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tippy.js@6.3.7/dist/tippy-bundle.umd.min.js"
+  integrity="sha384-AiTRpehQ7zqeua0Ypfa6Q4ki/ddhczZxrKtiQbTQUlJIhBkTeyoZP9/W/5ulFt29"
+  crossorigin="anonymous"></script>
 <!-- Quill rich text editor -->
-<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js"
+  integrity="sha384-utBUCeG4SYaCm4m7GQZYr8Hy8Fpy3V4KGjBZaf4WTKOcwhCYpt/0PfeEe3HNlwx8"
+  crossorigin="anonymous"></script>
 
 <!-- ── Planning Module Libraries ─────────────────────────── -->
 <!-- ExcelJS – reads cell fill colors (for Lookahead import) -->
-<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
-<!-- @event-calendar/core – MIT calendar with resource timeline -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@event-calendar/build@4/dist/event-calendar.min.css">
-<script src="https://cdn.jsdelivr.net/npm/@event-calendar/build@4/dist/event-calendar.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"
+  integrity="sha384-Pqp51FUN2/qzfxZxBCtF0stpc9ONI6MYZpVqmo8m20SoaQCzf+arZvACkLkirlPz"
+  crossorigin="anonymous"></script>
 <!-- vis-timeline – Apache-2.0 timeline/Gantt -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vis-timeline@7/styles/vis-timeline-graph2d.min.css">
-<script src="https://cdn.jsdelivr.net/npm/vis-timeline@7/standalone/umd/vis-timeline-graph2d.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vis-timeline@7.7.3/styles/vis-timeline-graph2d.min.css"
+  integrity="sha384-N/4l0y8PNlO5uZuzP9PK3bAgJQ8ZChybZFXB2mpkZRUil/bui++mvYXPzPAHpbr6"
+  crossorigin="anonymous">
+<script src="https://cdn.jsdelivr.net/npm/vis-timeline@7.7.3/standalone/umd/vis-timeline-graph2d.min.js"
+  integrity="sha384-MLX+7yEEPNEznaIWwQi2pBMODSBP6Qo6BOVpzjFWB0UkfEzEYsvHOo7ISLfcQeiI"
+  crossorigin="anonymous"></script>
 
 <script src="data.js"></script>
 <script src="app.js"></script>
