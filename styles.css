@@ -6299,8 +6299,21 @@ body.la-range-painting .tlg-data-cell {
 }
 
 /* ── Drag-to-move (drag a colored cell to another row/date) ── */
+/* Always block text-selection and native HTML5 drag on shift blocks so our
+   custom drag-to-move gesture wins — otherwise the browser starts text
+   selection / image drag the moment the mouse moves. */
 .tlg-shift-block {
   cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+.tlg-shift-block * {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tlg-shift-block:active {
+  cursor: grabbing;
 }
 body.la-move-dragging,
 body.la-move-dragging * {

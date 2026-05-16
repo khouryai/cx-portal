@@ -15257,6 +15257,8 @@ function _laTimelineMouseDown(ev) {
     // Skip drag on locked or cancelled events — they shouldn't move
     const evObj = PLANNING_EVENTS.find(e => e.id === eventId);
     if (!evObj || evObj.is_locked || evObj.status === 'cancelled') return;
+    // Suppress native text-selection / HTML5 drag so our gesture wins
+    ev.preventDefault();
     // If already selected → drag the whole selection; else drag just this one
     const sourceIds = _laSelectedCellKeys.has(eventId)
       ? [..._laSelectedCellKeys]
@@ -15270,6 +15272,7 @@ function _laTimelineMouseDown(ev) {
       ghost:   null,
       dropCellEl: null,
     };
+    console.log('[la-move] start drag', { eventId, sourceCount: sourceIds.length });
   }
 }
 
@@ -15326,6 +15329,7 @@ function _laTimelineMouseMove(ev) {
       document.body.appendChild(ghost);
       st.ghost = ghost;
       document.body.classList.add('la-move-dragging');
+      console.log('[la-move] crossed threshold — ghost spawned');
     }
     if (st.ghost) {
       st.ghost.style.left = (ev.clientX + 12) + 'px';
@@ -15362,11 +15366,12 @@ async function _laTimelineMouseUp(ev) {
     st.ghost?.remove();
     document.body.classList.remove('la-move-dragging');
     st.dropCellEl?.classList.remove('la-move-target');
-    if (!st.didMove) return;                       // never crossed threshold → treat as click
+    if (!st.didMove) { console.log('[la-move] no drag — treating as click'); return; }
     _laSuppressNextClick = true;
     setTimeout(() => { _laSuppressNextClick = false; }, 60);
 
     const dropCell = st.dropCellEl;
+    console.log('[la-move] drop', { dropCell, targetActId: dropCell?.dataset.activityId, targetIso: dropCell?.dataset.eventDate });
     if (!dropCell) { toast('Drop on a cell to move.', 'warn'); return; }
     const targetActId = dropCell.dataset.activityId;
     const targetIso   = dropCell.dataset.eventDate;
