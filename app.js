@@ -13266,6 +13266,22 @@ let _planningTLInstance  = null;                       // vis-timeline instance 
 let _planningCalNowTimer = null;                       // setInterval handle for the "now" line
 let _laTimelineGroupBy   = 'activity';                 // activity | resource | subsystem | location
 let _laTimelineWindow    = 14;                         // 14 / 21 / 28 days
+let _laCollapsedGroups   = {};                         // { tc: true, ... } — collapsed activity_group bands
+
+// ── Edit drawer state (Phase 2 — Master Schedule revamp) ─────
+// The right-side persistent drawer replaces modal-per-action for cell &
+// activity editing. One of three modes is active at a time:
+//   closed    — nothing open
+//   cell      — single event_id loaded; targetId = event_id
+//   activity  — single planning_activity_id loaded; targetId = activity_id
+//   multi     — N selected cells; targetId = null, reads _laSelectedCellKeys
+let _laDrawer = {
+  mode:        'closed',
+  targetId:    null,
+  snapshot:    null,
+  dirty:       false,
+  baseVersion: null,   // for optimistic-concurrency check on save
+};
 let _planningShowP6      = false;                      // Calendar/Timeline P6 overlay toggle
 let _conflictFilter      = 'all';                      // all | pto | double | p6 | hours | unmatched
 let _laAssignMode        = false;                      // Assign Resources drag-and-drop mode
@@ -13294,7 +13310,7 @@ async function loadPlanningData(force = false) {
     // plus recent history needed for "did this get executed" badges.
     const tResultsFrom = dayjs().subtract(60, 'day').format('YYYY-MM-DD');
     const tResultsTo   = dayjs().add(60, 'day').format('YYYY-MM-DD');
-    const [resources, events, activities, batches, eventRes, activityRes, conflicts, pto, delayLog, testResults] = await Promise.all([
+    const [resources, events, activities, batches, eventRes, activityRes, conflicts, pto, delayLog, testResults, shiftTpls] = await Promise.all([
       _fetchAnon('planning_resources?select=*&order=display_name.asc'),
       _fetchAnon('planning_events?select=*&order=event_date.asc'),
       _fetchAnon('planning_activities?select=*&order=created_at.desc'),
@@ -13305,6 +13321,7 @@ async function loadPlanningData(force = false) {
       _fetchAnon('pto_requests?select=*&order=start_date.desc'),
       _fetchAnon('delay_log?select=*&delay_occurred=eq.Yes&order=log_date.desc'),
       _fetchAnon(`test_results?select=test_id,activity,date_tested,result&date_tested=gte.${tResultsFrom}&date_tested=lte.${tResultsTo}`),
+      _fetchAnon('shift_templates?select=*&order=sort_order.asc').catch(() => []),
     ]);
     PLANNING_RESOURCES    = resources    || [];
     PLANNING_EVENTS       = events       || [];
@@ -13316,6 +13333,7 @@ async function loadPlanningData(force = false) {
     PTO_REQUESTS          = pto          || [];
     DELAY_LOG             = delayLog     || [];
     PLANNING_TEST_RESULTS = testResults  || [];
+    window.SHIFT_TEMPLATES = shiftTpls   || [];   // Phase 2: data-driven shift definitions
     _planningLoadedAt   = Date.now();
     // First-time bootstrap: seed planning_resources from portal users
     if (PLANNING_RESOURCES.length === 0) await _planningBootstrapResources();
@@ -13703,6 +13721,19 @@ function _planningSubsystemColor(name) {
   const hue = hash % 360;
   return { bg: `hsl(${hue},52%,38%)`, fg: '#fff', soft: `hsl(${hue},60%,95%)`, border: `hsl(${hue},52%,28%)` };
 }
+
+// ── Activity-group taxonomy (Phase 2 — Master Schedule revamp) ───
+// These mirror the activity_group enum on planning_activities.
+const _ACTIVITY_GROUPS = {
+  tc:           { label: 'Test & Commissioning', bg: '#fecaca', fg: '#7f1d1d', accent: '#dc2626' },
+  construction: { label: 'Construction',         bg: '#fed7aa', fg: '#7c2d12', accent: '#ea580c' },
+  design:       { label: 'Design',               bg: '#bfdbfe', fg: '#1e3a8a', accent: '#2563eb' },
+  training:     { label: 'Training',             bg: '#bbf7d0', fg: '#14532d', accent: '#16a34a' },
+  other:        { label: 'Other',                bg: '#e5e7eb', fg: '#1f2937', accent: '#6b7280' },
+};
+// Fixed render order — drives the band order in the master grid.
+const _GROUP_ORDER = ['tc','construction','design','training','other'];
+function _groupMeta(key) { return _ACTIVITY_GROUPS[key] || _ACTIVITY_GROUPS.other; }
 
 function _planningGetSubsystem(ev) {
   // ev = raw planning_event row
@@ -14334,7 +14365,27 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     html += `<div style="padding:48px;text-align:center;color:var(--gray-400);font-size:13px;">No activities in this window yet. Import a lookahead or adjust the date range.</div>`;
   }
   groups.forEach(g => {
-    // ── Location divider row ──────────────────────────────────
+    // ── Activity-group band header (Phase 2 — Master Schedule) ──
+    if (g.isGroupHeader) {
+      const caret = g.collapsed ? '▶' : '▼';
+      html += `<div class="tlg-row tlg-grp-hdr-row"
+          style="background:${g.bg};color:${g.fg};border-left:4px solid ${g.accent};"
+          onclick="_laToggleGroupCollapse('${g.groupKey}')"
+          title="${g.collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(g.label)}">
+        <div class="tlg-label tlg-grp-hdr-label">
+          <span class="tlg-grp-caret">${caret}</span>
+          <span class="tlg-grp-name">${escapeHtml(g.label)}</span>
+          <span class="tlg-grp-count">${g.activityCount}</span>
+        </div>
+        <div class="tlg-cells">${days.map(iso => {
+          const isToday = iso === todayISO;
+          return `<div class="tlg-cell tlg-grp-hdr-cell${isToday ? ' tlg-today-col' : ''}"></div>`;
+        }).join('')}</div>
+      </div>`;
+      return;
+    }
+
+    // ── Location divider row (kept for Location sort mode) ──────
     if (g.isLocHeader) {
       html += `<div class="tlg-row tlg-loc-hdr-row">
         <div class="tlg-label tlg-loc-hdr-label">📍 ${escapeHtml(g.label)}</div>
@@ -14370,6 +14421,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     const progChip = _planningRowProgressChip(g.linkedTestRegActivity);
     html += `<div class="tlg-label tlg-row-label${_laAssignMode && actId ? ' la-drop-label' : ''}"
       style="background:${g.color||'#6b7280'};"
+      ${actId && !_laAssignMode ? `onclick="if(event.target.closest('.tlg-row-del,.tlg-row-link-btn'))return;_laDrawerOpen('activity','${actId}')" title="Click to edit activity"` : ''}
       ${_laAssignMode && actId ? `data-activity-id="${actId}" title="Drop here to assign for the full activity"` : ''}>
       <div class="tlg-label-inner">
         <span class="tlg-label-main" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>
@@ -14587,13 +14639,16 @@ function _laLookaheadHTML() {
     <!-- Floating action banner — populated when cells are selected or clipboard has content -->
     <div id="la-cell-sel-actions" style="margin:6px 0;">${_laCellSelActionsHTML()}</div>
 
-    <div style="display:flex;gap:12px;align-items:flex-start;">
+    <div class="la-grid-shell${_laDrawer.mode !== 'closed' ? ' la-drawer-open' : ''}" style="display:flex;gap:12px;align-items:flex-start;">
       ${_laAssignMode ? _laResourcePanelHTML() : ''}
-      <div style="flex:1;min-width:0;">
+      <div class="la-grid-col" style="flex:1;min-width:0;">
         <div class="data-card" style="padding:0;overflow:hidden;">
           <div id="lookahead-timeline"></div>
         </div>
       </div>
+      <aside id="la-drawer" class="la-drawer${_laDrawer.mode === 'closed' ? ' la-drawer-closed' : ''}">
+        ${_laDrawerHTML()}
+      </aside>
     </div>`;
 }
 
@@ -14608,6 +14663,479 @@ function _laToggleAssignMode() {
     _laSelectedCellKeys.clear();
   }
   _renderLookaheadTabBody();
+}
+
+// ============================================================
+// EDIT DRAWER — Phase 2/3/4 master-schedule editing surface
+// ============================================================
+
+function _laDrawerOpen(mode, targetId) {
+  if (_laDrawer.dirty && !confirm('Discard unsaved changes?')) return;
+  _laDrawer.mode        = mode;
+  _laDrawer.targetId    = targetId || null;
+  _laDrawer.dirty       = false;
+  _laDrawer.snapshot    = null;
+  _laDrawer.baseVersion = null;
+
+  // Snapshot the target so save/diff/revert works
+  if (mode === 'cell') {
+    const ev = PLANNING_EVENTS.find(e => e.id === targetId);
+    if (ev) {
+      _laDrawer.snapshot    = { ...ev };
+      _laDrawer.baseVersion = ev.version || 1;
+    }
+  } else if (mode === 'activity') {
+    const a = PLANNING_ACTIVITIES.find(x => x.id === targetId);
+    if (a) _laDrawer.snapshot = { ...a };
+  }
+  _renderLookaheadTabBody();
+}
+
+function _laDrawerClose() {
+  if (_laDrawer.dirty && !confirm('Discard unsaved changes?')) return;
+  _laDrawer.mode        = 'closed';
+  _laDrawer.targetId    = null;
+  _laDrawer.snapshot    = null;
+  _laDrawer.dirty       = false;
+  _laDrawer.baseVersion = null;
+  _renderLookaheadTabBody();
+}
+
+function _laDrawerMarkDirty() {
+  if (!_laDrawer.dirty) {
+    _laDrawer.dirty = true;
+    // Just toggle the save button enabled state — don't re-render the whole drawer
+    const btn = document.getElementById('la-drawer-save');
+    if (btn) { btn.disabled = false; btn.classList.add('la-drawer-save-dirty'); }
+    const ind = document.getElementById('la-drawer-dirty-ind');
+    if (ind) ind.style.display = 'inline';
+  }
+}
+
+function _laDrawerHTML() {
+  // Routes to the mode-specific renderer. Always wraps in a consistent shell
+  // (header bar + close button + footer with save).
+  if (_laDrawer.mode === 'closed') return '';
+  let title = '', body = '', footer = '';
+  if (_laDrawer.mode === 'cell') {
+    const ev = PLANNING_EVENTS.find(e => e.id === _laDrawer.targetId);
+    if (!ev) { _laDrawer.mode = 'closed'; return ''; }
+    title  = '📅 Event details';
+    body   = _laDrawerCellHTML(ev);
+    footer = _laDrawerCellFooterHTML(ev);
+  } else if (_laDrawer.mode === 'activity') {
+    const a = PLANNING_ACTIVITIES.find(x => x.id === _laDrawer.targetId);
+    if (!a) { _laDrawer.mode = 'closed'; return ''; }
+    title  = '📋 Activity details';
+    body   = _laDrawerActivityHTML(a);
+    footer = _laDrawerActivityFooterHTML(a);
+  } else if (_laDrawer.mode === 'multi') {
+    const n = _laSelectedCellKeys.size;
+    title  = `✏️ Bulk edit (${n} cell${n>1?'s':''})`;
+    body   = _laDrawerMultiHTML([..._laSelectedCellKeys]);
+    footer = `<button class="form-secondary" onclick="_laDrawerClose()">Close</button>`;
+  }
+
+  return `
+    <div class="la-drawer-head">
+      <div class="la-drawer-title">${title}
+        <span id="la-drawer-dirty-ind" style="display:none;color:#dc2626;font-size:11px;font-weight:700;margin-left:8px;">● unsaved</span>
+      </div>
+      <button class="la-drawer-close" onclick="_laDrawerClose()" title="Close (Esc)">✕</button>
+    </div>
+    <div class="la-drawer-body">${body}</div>
+    <div class="la-drawer-foot">${footer}</div>
+  `;
+}
+
+// ─── CELL MODE: edit a single event ─────────────────────────
+function _laDrawerCellHTML(ev) {
+  const act    = PLANNING_ACTIVITIES.find(a => a.id === ev.planning_activity_id);
+  const shifts = (window.SHIFT_TEMPLATES || []).filter(s => s.active !== false);
+  const isCancel = ev.status === 'cancelled';
+
+  // Resource pickers — split by company
+  const allRes      = (PLANNING_RESOURCES || []).filter(r => r.is_active);
+  const hitachiRes  = allRes.filter(r => (r.kind === 'person' || !r.kind) && r.company !== 'BART');
+  const bartRoles   = allRes.filter(r => r.kind === 'role'   && r.is_requestable);
+  const eventResRows = (PLANNING_EVENT_RES || []).filter(er => er.event_id === ev.id);
+  const assignedHitachi = eventResRows.filter(er => {
+    const r = allRes.find(x => x.id === er.resource_id);
+    return r && r.company !== 'BART';
+  });
+  const requestedBart = eventResRows.filter(er => {
+    const r = allRes.find(x => x.id === er.resource_id);
+    return r && r.company === 'BART';
+  });
+
+  return `
+    <div class="la-drawer-section">
+      <div class="la-drawer-row">
+        <span style="font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;">Activity</span>
+        <div style="font-size:13px;font-weight:600;color:#111;">${escapeHtml(act?.description || act?.activity_id_text || '—')}</div>
+      </div>
+    </div>
+
+    <div class="la-drawer-section">
+      <label class="la-drawer-label">Title</label>
+      <input class="la-drawer-input" id="dw-cell-title" value="${escapeHtml(ev.title || '')}" oninput="_laDrawerMarkDirty()">
+    </div>
+
+    <div class="la-drawer-section la-drawer-row-2">
+      <div>
+        <label class="la-drawer-label">Date</label>
+        <input class="la-drawer-input" type="date" id="dw-cell-date" value="${ev.event_date}" onchange="_laDrawerMarkDirty()">
+      </div>
+      <div>
+        <label class="la-drawer-label">Shift</label>
+        <select class="la-drawer-input" id="dw-cell-shift" onchange="_laDrawerMarkDirty()">
+          <option value="">—</option>
+          ${shifts.map(s => `<option value="${s.code}" ${ev.shift_type === (s.code === 'day' ? 'day_shift' : s.code === 'night' ? 'night_shift' : s.code === 'blanket' ? 'blanket_shift' : s.code) ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+
+    <div class="la-drawer-section la-drawer-row-2">
+      <div>
+        <label class="la-drawer-label">Start time</label>
+        <input class="la-drawer-input" type="time" id="dw-cell-start" value="${ev.start_time || ''}" onchange="_laDrawerMarkDirty()">
+      </div>
+      <div>
+        <label class="la-drawer-label">End time</label>
+        <input class="la-drawer-input" type="time" id="dw-cell-end" value="${ev.end_time || ''}" onchange="_laDrawerMarkDirty()">
+      </div>
+    </div>
+
+    <div class="la-drawer-section">
+      <label class="la-drawer-label">Location</label>
+      <input class="la-drawer-input" id="dw-cell-loc" value="${escapeHtml(ev.location || '')}" oninput="_laDrawerMarkDirty()">
+    </div>
+
+    <div class="la-drawer-section">
+      <label class="la-drawer-label">Notes</label>
+      <textarea class="la-drawer-input" id="dw-cell-notes" rows="3" oninput="_laDrawerMarkDirty()">${escapeHtml(ev.notes || '')}</textarea>
+    </div>
+
+    <div class="la-drawer-section">
+      <label class="la-drawer-label">Hitachi resources <span style="font-weight:400;color:var(--gray-400);">(${assignedHitachi.length})</span></label>
+      <div class="la-drawer-pills">
+        ${assignedHitachi.map(er => {
+          const r = allRes.find(x => x.id === er.resource_id);
+          return `<span class="la-drawer-pill">${escapeHtml(r?.display_name||'?')}
+            <button onclick="_laDrawerRemoveEventResource('${er.id}')" title="Remove">×</button></span>`;
+        }).join('') || '<span style="color:var(--gray-400);font-size:12px;">None assigned</span>'}
+      </div>
+      <select class="la-drawer-input" onchange="if(this.value){_laDrawerAddEventResource('${ev.id}',this.value,1);this.value='';}" style="margin-top:6px;">
+        <option value="">+ Add Hitachi person…</option>
+        ${hitachiRes
+          .filter(r => !assignedHitachi.some(er => er.resource_id === r.id))
+          .map(r => `<option value="${r.id}">${escapeHtml(r.display_name)}</option>`).join('')}
+      </select>
+    </div>
+
+    <div class="la-drawer-section">
+      <label class="la-drawer-label">BART requests <span style="font-weight:400;color:var(--gray-400);">(${requestedBart.length})</span></label>
+      <div class="la-drawer-pills">
+        ${requestedBart.map(er => {
+          const r = allRes.find(x => x.id === er.resource_id);
+          const denied = !!er.denied_at;
+          return `<span class="la-drawer-pill ${denied?'la-drawer-pill-denied':''}">${escapeHtml(r?.display_name||'?')} ×${er.quantity||1}
+            ${denied ? `<span title="Denied" style="color:#dc2626;">⚠</span>` : ''}
+            <button onclick="_laDrawerRemoveEventResource('${er.id}')" title="Remove">×</button></span>`;
+        }).join('') || '<span style="color:var(--gray-400);font-size:12px;">None requested</span>'}
+      </div>
+      <div style="display:flex;gap:6px;margin-top:6px;">
+        <select class="la-drawer-input" id="dw-bart-pick" style="flex:1;">
+          <option value="">+ Request BART role…</option>
+          ${bartRoles.map(r => `<option value="${r.id}">${escapeHtml(r.display_name)}</option>`).join('')}
+        </select>
+        <input class="la-drawer-input" type="number" id="dw-bart-qty" value="1" min="1" max="50" style="width:60px;" title="Quantity">
+        <button class="form-secondary" style="font-size:11px;" onclick="
+          const id=document.getElementById('dw-bart-pick').value;
+          const q=parseInt(document.getElementById('dw-bart-qty').value)||1;
+          if(id){_laDrawerAddEventResource('${ev.id}',id,q);document.getElementById('dw-bart-pick').value='';}
+        ">Add</button>
+      </div>
+    </div>
+
+    ${isCancel ? `
+    <div class="la-drawer-section" style="background:#fef2f2;border-left:3px solid #dc2626;padding:8px 10px;border-radius:4px;">
+      <div style="font-size:11px;font-weight:700;color:#7f1d1d;">🚫 CANCELLED</div>
+      ${ev.cancellation_category ? `<div style="font-size:12px;margin-top:3px;"><strong>Category:</strong> ${escapeHtml(ev.cancellation_category)}</div>` : ''}
+      ${ev.cancellation_reason ? `<div style="font-size:12px;margin-top:3px;"><strong>Reason:</strong> ${escapeHtml(ev.cancellation_reason)}</div>` : ''}
+      ${ev.cancellation_responsible_party ? `<div style="font-size:12px;margin-top:3px;"><strong>Responsible:</strong> ${escapeHtml(ev.cancellation_responsible_party)}</div>` : ''}
+    </div>` : ''}
+
+    <div style="font-size:10px;color:var(--gray-400);margin-top:14px;padding-top:8px;border-top:1px dashed var(--gray-200);">
+      Event v${ev.version || 1} · updated ${ev.updated_at ? dayjs(ev.updated_at).format('YYYY-MM-DD HH:mm') : '—'}
+    </div>
+  `;
+}
+
+function _laDrawerCellFooterHTML(ev) {
+  const isCancel = ev.status === 'cancelled';
+  return `
+    <button class="form-secondary" onclick="_laDrawerClose()">Close</button>
+    ${ev.is_locked
+      ? `<button class="form-secondary" onclick="_planningToggleLock('${ev.id}')">🔓 Unlock</button>`
+      : `<button class="form-secondary" onclick="_planningToggleLock('${ev.id}')">🔒 Lock</button>`}
+    ${!isCancel
+      ? `<button class="form-secondary" style="color:#dc2626;" onclick="_planningCancelEvent('${ev.id}')">🚫 Cancel</button>`
+      : ''}
+    <button class="form-submit la-drawer-save" id="la-drawer-save" disabled onclick="_laDrawerSave()">💾 Save</button>
+  `;
+}
+
+// ─── ACTIVITY MODE: edit a whole activity row ───────────────
+function _laDrawerActivityHTML(a) {
+  const grp     = a.activity_group || 'other';
+  const evs     = (PLANNING_EVENTS || []).filter(e => e.planning_activity_id === a.id);
+  const eventCount = evs.length;
+  const cancelledCount = evs.filter(e => e.status === 'cancelled').length;
+
+  return `
+    <div class="la-drawer-section">
+      <label class="la-drawer-label">Description</label>
+      <textarea class="la-drawer-input" id="dw-act-desc" rows="2" oninput="_laDrawerMarkDirty()">${escapeHtml(a.description || '')}</textarea>
+    </div>
+
+    <div class="la-drawer-section la-drawer-row-2">
+      <div>
+        <label class="la-drawer-label">Activity ID / Ref</label>
+        <input class="la-drawer-input" id="dw-act-idtext" value="${escapeHtml(a.activity_id_text || '')}" oninput="_laDrawerMarkDirty()">
+      </div>
+      <div>
+        <label class="la-drawer-label">Group</label>
+        <select class="la-drawer-input" id="dw-act-group" onchange="_laDrawerMarkDirty()">
+          ${_GROUP_ORDER.map(g => `<option value="${g}" ${grp === g ? 'selected' : ''}>${_groupMeta(g).label}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+
+    <div class="la-drawer-section la-drawer-row-2">
+      <div>
+        <label class="la-drawer-label">Location</label>
+        <input class="la-drawer-input" id="dw-act-loc" value="${escapeHtml(a.location || '')}" oninput="_laDrawerMarkDirty()">
+      </div>
+      <div>
+        <label class="la-drawer-label">SSWP</label>
+        <input class="la-drawer-input" id="dw-act-sswp" value="${escapeHtml(a.sswp || '')}" oninput="_laDrawerMarkDirty()">
+      </div>
+    </div>
+
+    <div class="la-drawer-section">
+      <label class="la-drawer-label">Work hours / window</label>
+      <input class="la-drawer-input" id="dw-act-hours" value="${escapeHtml(a.work_hours_raw || '')}" oninput="_laDrawerMarkDirty()">
+    </div>
+
+    <div class="la-drawer-section">
+      <label class="la-drawer-label">Notes</label>
+      <textarea class="la-drawer-input" id="dw-act-notes" rows="3" oninput="_laDrawerMarkDirty()">${escapeHtml(a.notes || '')}</textarea>
+    </div>
+
+    <div class="la-drawer-section">
+      <label class="la-drawer-label">Linked Test Register activity</label>
+      <input class="la-drawer-input" id="dw-act-linked-tra" value="${escapeHtml(a.linked_test_register_activity || '')}" oninput="_laDrawerMarkDirty()" list="dw-act-tra-options">
+      <datalist id="dw-act-tra-options">
+        ${[...new Set((window.TI || []).map(t => t.Activity).filter(Boolean))].sort().slice(0, 200).map(t => `<option value="${escapeHtml(t)}">`).join('')}
+      </datalist>
+    </div>
+
+    <div class="la-drawer-section" style="background:#f8fafc;padding:8px 10px;border-radius:4px;">
+      <div style="font-size:11px;color:var(--gray-500);">
+        ${eventCount} event${eventCount !== 1 ? 's' : ''}${cancelledCount ? ` · ${cancelledCount} cancelled` : ''}
+      </div>
+    </div>
+
+    <div style="font-size:10px;color:var(--gray-400);margin-top:14px;padding-top:8px;border-top:1px dashed var(--gray-200);">
+      Activity · sort_order=${a.sort_order ?? '—'} · created ${a.created_at ? dayjs(a.created_at).format('YYYY-MM-DD') : '—'}
+    </div>
+  `;
+}
+
+function _laDrawerActivityFooterHTML(a) {
+  return `
+    <button class="form-secondary" onclick="_laDrawerClose()">Close</button>
+    <button class="form-secondary" style="color:#dc2626;border-color:#fca5a5;" onclick="_laDrawerSoftDeleteActivity('${a.id}')" title="Soft-delete: hidden from grid but restorable">🗑 Delete</button>
+    <button class="form-submit la-drawer-save" id="la-drawer-save" disabled onclick="_laDrawerSave()">💾 Save</button>
+  `;
+}
+
+// ─── MULTI MODE: bulk-edit the current selection ─────────────
+function _laDrawerMultiHTML(eventIds) {
+  const events = (PLANNING_EVENTS || []).filter(e => eventIds.includes(e.id));
+  const locked = events.filter(e => e.is_locked).length;
+  const cancelled = events.filter(e => e.status === 'cancelled').length;
+  const editable = events.length - locked - cancelled;
+  return `
+    <div class="la-drawer-section" style="background:#f8fafc;padding:10px;border-radius:4px;">
+      <div style="font-size:13px;font-weight:600;">${events.length} cell${events.length>1?'s':''} selected</div>
+      <div style="font-size:11px;color:var(--gray-500);margin-top:3px;">
+        ${editable} editable${locked ? ` · ${locked} locked` : ''}${cancelled ? ` · ${cancelled} already cancelled` : ''}
+      </div>
+    </div>
+    <div class="la-drawer-section">
+      <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Bulk actions</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <button class="form-secondary" onclick="_laBulkCancelCells()">🚫 Cancel all (with reason)</button>
+        <button class="form-secondary" onclick="_laDeleteSelection()" style="color:#dc2626;">🗑 Delete all</button>
+        <button class="form-secondary" onclick="_laBulkRemoveCellResources()">👥 Remove users only</button>
+        <button class="form-secondary" onclick="_laCopySelection('copy')">📋 Copy</button>
+        <button class="form-secondary" onclick="_laCopySelection('cut')">✂ Cut</button>
+        <button class="form-secondary" onclick="_laClearCellSelection();_laDrawerClose();">✕ Clear selection</button>
+      </div>
+    </div>
+    <div class="la-drawer-section" style="font-size:11px;color:var(--gray-400);">
+      Tip: Ctrl+drag to range-select · drag a cell to move it · right-click for more.
+    </div>
+  `;
+}
+
+// ─── Drawer save with optimistic concurrency ────────────────
+// Phase 2D: read every editable field from the drawer, build a payload,
+// then UPDATE WHERE id=? AND version=? — if 0 rows affected, somebody else
+// beat us and we surface a clear "stale" warning instead of silently
+// overwriting their change.
+async function _laDrawerSave() {
+  if (_laDrawer.mode === 'cell') {
+    const ev = PLANNING_EVENTS.find(e => e.id === _laDrawer.targetId);
+    if (!ev) return;
+    const shiftCode = document.getElementById('dw-cell-shift')?.value;
+    const shiftTypeFromCode = {
+      day: 'day_shift', night: 'night_shift', blanket: 'blanket_shift',
+    }[shiftCode] || (shiftCode ? 'custom' : null);
+
+    const payload = {
+      title:       document.getElementById('dw-cell-title')?.value?.trim() || '(untitled)',
+      event_date:  document.getElementById('dw-cell-date')?.value,
+      start_time:  document.getElementById('dw-cell-start')?.value || null,
+      end_time:    document.getElementById('dw-cell-end')?.value   || null,
+      shift_type:  shiftTypeFromCode,
+      location:    document.getElementById('dw-cell-loc')?.value?.trim() || null,
+      notes:       document.getElementById('dw-cell-notes')?.value || null,
+      version:     (_laDrawer.baseVersion || 1) + 1,
+      updated_by:  currentProfile?.id || null,
+    };
+
+    try {
+      // Optimistic concurrency: WHERE id=? AND version=? — if 0 rows updated,
+      // someone else beat us to it. _dbUpdate returns the updated rows.
+      const result = await _dbUpdate('planning_events', payload, {
+        id:      ev.id,
+        version: _laDrawer.baseVersion || 1,
+      });
+      if (!result || result.length === 0) {
+        toast('⚠ Someone else edited this cell. Reloading…', 'error');
+        await loadPlanningData(true);
+        _laDrawerOpen('cell', ev.id);   // re-open with fresh data
+        return;
+      }
+      _laDrawer.dirty       = false;
+      _laDrawer.baseVersion = payload.version;
+      toast('✓ Saved', 'success');
+      await loadPlanningData(true);
+      _renderLookaheadTabBody();
+    } catch (err) {
+      toast('Save failed: ' + err.message, 'error');
+    }
+    return;
+  }
+
+  if (_laDrawer.mode === 'activity') {
+    const a = PLANNING_ACTIVITIES.find(x => x.id === _laDrawer.targetId);
+    if (!a) return;
+    const payload = {
+      description:                  document.getElementById('dw-act-desc')?.value?.trim() || null,
+      activity_id_text:             document.getElementById('dw-act-idtext')?.value?.trim() || null,
+      activity_group:               document.getElementById('dw-act-group')?.value || 'other',
+      location:                     document.getElementById('dw-act-loc')?.value?.trim() || null,
+      sswp:                         document.getElementById('dw-act-sswp')?.value?.trim() || null,
+      work_hours_raw:               document.getElementById('dw-act-hours')?.value?.trim() || null,
+      notes:                        document.getElementById('dw-act-notes')?.value || null,
+      linked_test_register_activity: document.getElementById('dw-act-linked-tra')?.value?.trim() || null,
+    };
+    try {
+      await _dbUpdate('planning_activities', payload, { id: a.id });
+      _laDrawer.dirty = false;
+      toast('✓ Activity saved', 'success');
+      await loadPlanningData(true);
+      _renderLookaheadTabBody();
+    } catch (err) {
+      toast('Save failed: ' + err.message, 'error');
+    }
+  }
+}
+
+// ─── Drawer resource pickers ────────────────────────────────
+async function _laDrawerAddEventResource(eventId, resourceId, quantity = 1) {
+  try {
+    await _dbInsert('planning_event_resources', [{
+      event_id:    eventId,
+      resource_id: resourceId,
+      role:        'owner',
+      quantity:    quantity,
+      assignment_source: 'manual',
+    }]);
+    await loadPlanningData(true);
+    _renderLookaheadTabBody();
+  } catch (err) {
+    toast('Add failed: ' + err.message, 'error');
+  }
+}
+
+async function _laDrawerRemoveEventResource(eventResId) {
+  try {
+    await _dbDelete('planning_event_resources', { id: eventResId });
+    await loadPlanningData(true);
+    _renderLookaheadTabBody();
+  } catch (err) {
+    toast('Remove failed: ' + err.message, 'error');
+  }
+}
+
+// ─── Soft delete from drawer (Phase 3A) ─────────────────────
+async function _laDrawerSoftDeleteActivity(activityId) {
+  const a = PLANNING_ACTIVITIES.find(x => x.id === activityId);
+  if (!a) return;
+  const evs = (PLANNING_EVENTS || []).filter(e => e.planning_activity_id === activityId);
+  const liveEvs = evs.filter(e => e.status !== 'cancelled');
+  const reason = prompt(
+    `Soft-delete "${a.description || a.activity_id_text || '—'}"?\n\n` +
+    `This row will be hidden from the grid but can be restored from\n` +
+    `Admin → Planning → Recently Deleted.\n\n` +
+    (liveEvs.length
+      ? `${liveEvs.length} non-cancelled event${liveEvs.length>1?'s':''} on this row will be cancelled automatically.\n\n`
+      : '') +
+    `Reason (optional):`
+  );
+  if (reason === null) return;   // cancelled the prompt
+  try {
+    // 1. Soft-delete the activity
+    await _dbUpdate('planning_activities', {
+      deleted_at:      new Date().toISOString(),
+      deleted_by:      currentProfile?.id || null,
+      deletion_reason: reason?.trim() || null,
+    }, { id: activityId });
+
+    // 2. Auto-cancel live events under it (audit-friendly: keep history)
+    for (const e of liveEvs) {
+      await _dbUpdate('planning_events', {
+        status:                         'cancelled',
+        cancellation_category:          'OTHER',
+        cancellation_reason:            'Activity row deleted' + (reason ? ` — ${reason.trim()}` : ''),
+        cancellation_responsible_party: 'HITACHI',
+        cancellation_by:                currentProfile?.id || null,
+        cancellation_at:                new Date().toISOString(),
+      }, { id: e.id });
+    }
+
+    toast(`✓ Activity deleted${liveEvs.length ? ` (${liveEvs.length} event${liveEvs.length>1?'s':''} auto-cancelled)` : ''}`, 'success');
+    _laDrawerClose();
+    await loadPlanningData(true);
+    _renderLookaheadTabBody();
+  } catch (err) {
+    toast('Delete failed: ' + err.message, 'error');
+  }
 }
 
 function _laResourcePanelHTML() {
@@ -14662,6 +15190,10 @@ function _laResourcePanelHTML() {
 }
 
 function _laSetTimelineGroup(g) { _laTimelineGroupBy = g; _renderLookaheadTabBody(); }
+function _laToggleGroupCollapse(groupKey) {
+  _laCollapsedGroups[groupKey] = !_laCollapsedGroups[groupKey];
+  _renderLookaheadTabBody();
+}
 function _laSetTimelineWindow(d) { _laTimelineWindow = d; _renderLookaheadTabBody(); }
 
 // ─── Resource panel search filter ────────────────────────────
@@ -14796,7 +15328,13 @@ function _laCellClick(ev, eventId, actId, iso, el) {
     _laSetPasteTarget(actId, iso, el);
     return;
   }
-  _planningOpenEventDetail(eventId);
+  // Phase 2C: click opens the right drawer (replaces the detail modal).
+  // Multi-select bulk view auto-shows when 2+ cells are selected.
+  if (_laSelectedCellKeys.size >= 2) {
+    _laDrawerOpen('multi', null);
+  } else {
+    _laDrawerOpen('cell', eventId);
+  }
 }
 
 // Click on an empty cell — used to set the paste target
@@ -15157,7 +15695,11 @@ function _laKeyboardHandler(ev) {
   else if (ctrl && k === 'x')   { ev.preventDefault(); _laCopySelection('cut'); }
   else if (ctrl && k === 'v')   { ev.preventDefault(); _laPasteAtTarget(); }
   else if (k === 'delete')      { ev.preventDefault(); _laDeleteSelection(); }
-  else if (k === 'escape')      { ev.preventDefault(); _laClearCellSelection(); _laClearClipboard(); }
+  else if (k === 'escape')      {
+    ev.preventDefault();
+    if (_laDrawer.mode !== 'closed') { _laDrawerClose(); return; }
+    _laClearCellSelection(); _laClearClipboard();
+  }
 }
 // Attach the listener once on script load (gated to lookahead tab inside the handler)
 document.addEventListener('keydown', _laKeyboardHandler);
@@ -16494,32 +17036,49 @@ function _laMountLookaheadTL() {
         byDate: _laBuildByDate(locMap[loc], days, e => _planningEventResourceInitials(e.id)) });
     });
 
-  } else { // activity — grouped by location, then activity description within each
-    // Phase 1: master grid is source of truth — show every non-deleted activity
-    // so newly created rows are visible immediately even before they have events.
+  } else { // activity — grouped by activity_group (T&C, Construction, Design…)
+    // Phase 2: bucket by activity_group in the fixed enum order, then sort by
+    // sort_order within each group. Drag-reorder updates sort_order; switching
+    // groups is a drag across the band boundary (wired in Phase 2E).
     const actsInWindow = PLANNING_ACTIVITIES.filter(a => !a.deleted_at);
 
-    // Bucket by location, sorted alphabetically
-    const locBuckets = {};
+    const grpBuckets = {};
     actsInWindow.forEach(a => {
-      const loc = (a.location || '(No Location)').trim();
-      if (!locBuckets[loc]) locBuckets[loc] = [];
-      locBuckets[loc].push(a);
+      const g = a.activity_group || 'other';
+      if (!grpBuckets[g]) grpBuckets[g] = [];
+      grpBuckets[g].push(a);
     });
 
-    Object.keys(locBuckets).sort().forEach(loc => {
-      // ── Location divider row ──────────────────────────────────
-      groups.push({
-        id:              'loc-hdr-' + loc,
-        isLocHeader:     true,
-        label:           loc,
-      });
+    // Render in fixed enum order; surface any unknown-group rows under 'other'
+    const orderedKeys = [..._GROUP_ORDER, ...Object.keys(grpBuckets).filter(k => !_GROUP_ORDER.includes(k))];
+    orderedKeys.forEach(gk => {
+      const acts = grpBuckets[gk];
+      if (!acts || acts.length === 0) return;
+      const meta = _groupMeta(gk);
+      const collapsed = !!_laCollapsedGroups[gk];
 
-      // ── Activity rows within this location ────────────────────
-      locBuckets[loc]
-        .sort((a, b) => (a.description || a.activity_id_text || '').localeCompare(b.description || b.activity_id_text || ''))
+      // ── Group band header ────────────────────────────────────
+      groups.push({
+        id:            'grp-hdr-' + gk,
+        isGroupHeader: true,
+        groupKey:      gk,
+        label:         meta.label,
+        activityCount: acts.length,
+        bg:            meta.bg,
+        fg:            meta.fg,
+        accent:        meta.accent,
+        collapsed,
+      });
+      if (collapsed) return;   // skip rendering rows under a collapsed band
+
+      // ── Activity rows within this group, sorted by sort_order ──
+      acts
+        .sort((a, b) =>
+          (a.sort_order ?? 999999) - (b.sort_order ?? 999999) ||
+          (a.description || a.activity_id_text || '').localeCompare(b.description || b.activity_id_text || '')
+        )
         .forEach(a => {
-          const sub = a.subsystem || null;
+          const sub = a.subsystem || a.location || null;
           const c   = _planningSubsystemColor(sub);
           const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === a.id);
           const assignedResources = PLANNING_ACTIVITY_RES
@@ -16529,6 +17088,7 @@ function _laMountLookaheadTL() {
           groups.push({
             id:                     'act-' + a.id,
             activityId:             a.id,
+            activityGroup:          gk,
             assignedResources,
             label:                  a.description || a.activity_id_text || '—',
             sublabel:               sub,

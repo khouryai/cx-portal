@@ -6560,6 +6560,192 @@ body.la-fill-active {
 .tlg-row-label:hover .tlg-row-del { display: flex; }
 .tlg-row-del:hover { background: #fee2e2; }
 
+/* ── Edit Drawer (Master Schedule, right side) ─────────────── */
+.la-drawer {
+  width: 380px;
+  flex-shrink: 0;
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+  max-height: calc(100vh - 200px);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 12px;
+  transition: width 0.2s ease, opacity 0.2s ease;
+  overflow: hidden;
+}
+.la-drawer.la-drawer-closed {
+  width: 0;
+  padding: 0;
+  border-width: 0;
+  opacity: 0;
+}
+.la-drawer-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #1f2937;
+  color: #fff;
+  border-radius: 8px 8px 0 0;
+}
+.la-drawer-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.la-drawer-close {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.la-drawer-close:hover { color: #fca5a5; }
+.la-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+}
+.la-drawer-foot {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--gray-200);
+  background: #f8fafc;
+  border-radius: 0 0 8px 8px;
+  justify-content: flex-end;
+}
+.la-drawer-section {
+  margin-bottom: 12px;
+}
+.la-drawer-section.la-drawer-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.la-drawer-row { display: flex; flex-direction: column; gap: 2px; }
+.la-drawer-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--gray-500);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 3px;
+}
+.la-drawer-input {
+  width: 100%;
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--gray-300);
+  border-radius: 4px;
+  background: #fff;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.la-drawer-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37,99,235,0.18);
+}
+textarea.la-drawer-input { resize: vertical; min-height: 50px; }
+.la-drawer-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.la-drawer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: #e0e7ff;
+  color: #1e3a8a;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 11px;
+  white-space: nowrap;
+}
+.la-drawer-pill button {
+  background: transparent;
+  border: none;
+  color: #6366f1;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  margin-left: 2px;
+}
+.la-drawer-pill button:hover { color: #dc2626; }
+.la-drawer-pill.la-drawer-pill-denied {
+  background: #fee2e2;
+  color: #7f1d1d;
+  text-decoration: line-through;
+}
+.la-drawer-save.la-drawer-save-dirty {
+  background: #2563eb;
+  animation: drawer-pulse 1.4s ease-in-out infinite;
+}
+@keyframes drawer-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(37,99,235,0.5); }
+  50%      { box-shadow: 0 0 0 4px rgba(37,99,235,0); }
+}
+
+/* ── Activity-group band header (Master Schedule) ──────────── */
+.tlg-grp-hdr-row {
+  display: flex;
+  min-height: 34px;
+  border-bottom: 1px solid var(--gray-300);
+  cursor: pointer;
+  user-select: none;
+  transition: filter .12s;
+}
+.tlg-grp-hdr-row:hover { filter: brightness(0.95); }
+.tlg-grp-hdr-label {
+  width: 160px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: inherit;
+  color: inherit;
+}
+.tlg-grp-caret {
+  font-size: 9px;
+  opacity: .75;
+  width: 10px;
+  text-align: center;
+}
+.tlg-grp-name { flex: 1; }
+.tlg-grp-count {
+  background: rgba(255,255,255,0.55);
+  color: inherit;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+}
+.tlg-grp-hdr-cell {
+  background: rgba(255,255,255,0.18);
+  border-right: 1px solid rgba(0,0,0,0.06);
+  min-height: 34px;
+}
+
 /* ── Location divider rows (Activity group-by) ──────────────── */
 .tlg-loc-hdr-row {
   display: flex;
