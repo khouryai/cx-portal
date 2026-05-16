@@ -6534,14 +6534,10 @@ body.la-fill-active {
   border-bottom-color: #e60012;
 }
 
-/* ── Manual activity rows (added via + Add Activity) ───────── */
-.tlg-row-manual {
+/* ── Activity row delete button (visible on hover of any row label) ─ */
+/* Phase 1: every activity is now equal — row-del shows on hover for all. */
+.tlg-row-label {
   position: relative;
-  border-left: 3px solid #06b6d4 !important;
-}
-.tlg-row-manual .tlg-label-sub {
-  color: #06b6d4 !important;
-  font-weight: 600;
 }
 .tlg-row-del {
   position: absolute;
@@ -6561,7 +6557,7 @@ body.la-fill-active {
   box-shadow: 0 1px 3px rgba(0,0,0,0.15);
   z-index: 5;
 }
-.tlg-row-manual:hover .tlg-row-del { display: flex; }
+.tlg-row-label:hover .tlg-row-del { display: flex; }
 .tlg-row-del:hover { background: #fee2e2; }
 
 /* ── Location divider rows (Activity group-by) ──────────────── */

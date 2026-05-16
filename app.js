@@ -14368,7 +14368,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       ? `<span class="tlg-row-link tlg-row-link-set" title="Linked to Test Register Activity: ${escapeHtml(g.linkedTestRegActivity)}">🔗 ${escapeHtml(g.linkedTestRegActivity.slice(0, 22))}${g.linkedTestRegActivity.length > 22 ? '…' : ''}</span>`
       : `<span class="tlg-row-link tlg-row-link-none" title="No Test Register Activity linked — click to link">🔗 unlinked</span>`) : '';
     const progChip = _planningRowProgressChip(g.linkedTestRegActivity);
-    html += `<div class="tlg-label tlg-row-label${_laAssignMode && actId ? ' la-drop-label' : ''}${g.isManual ? ' tlg-row-manual' : ''}"
+    html += `<div class="tlg-label tlg-row-label${_laAssignMode && actId ? ' la-drop-label' : ''}"
       style="background:${g.color||'#6b7280'};"
       ${_laAssignMode && actId ? `data-activity-id="${actId}" title="Drop here to assign for the full activity"` : ''}>
       <div class="tlg-label-inner">
@@ -14378,7 +14378,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       </div>
       ${progChip}
       ${assignedChips}${dropHintHTML}
-      ${g.isManual ? `<button class="tlg-row-del" onclick="event.stopPropagation();_laDeleteManualActivity('${actId}',event)" title="Delete manual activity">🗑</button>` : ''}
+      ${actId ? `<button class="tlg-row-del" onclick="event.stopPropagation();_laDeleteManualActivity('${actId}',event)" title="Delete activity (soft-delete coming in Phase 3)">🗑</button>` : ''}
     </div>`;
     html += `<div class="tlg-cells">`;
     days.forEach((iso, idx) => {
@@ -16010,7 +16010,6 @@ async function _laSaveLinkActivity(activityId) {
     await _dbUpdate('planning_activities', {
       linked_test_register_activity: tra,
       linked_p6_activity_id:         p6,
-      is_manual_override:            true,
     }, { id: activityId });
     closeModal();
     const parts = [];
@@ -16062,6 +16061,14 @@ async function _laDeleteManualActivity(activityId, ev) {
 async function _laSaveNewActivity() {
   const desc = document.getElementById('new-act-desc').value.trim();
   if (!desc) { toast('Description is required', 'error'); return; }
+  // Default new activities to Test & Commissioning (the dominant group);
+  // user can re-group later from the row label drawer (Phase 2).
+  const defaultGroup = 'tc';
+  // Find next sort_order in that group (max + 10) so it sorts to the bottom
+  const groupMaxSort = (PLANNING_ACTIVITIES || [])
+    .filter(a => a.activity_group === defaultGroup)
+    .reduce((m, a) => Math.max(m, a.sort_order || 0), 0);
+
   const payload = {
     activity_id_text: document.getElementById('new-act-id').value.trim() || null,
     description: desc,
@@ -16071,8 +16078,8 @@ async function _laSaveNewActivity() {
     notes: document.getElementById('new-act-notes').value.trim() || null,
     linked_test_register_activity: document.getElementById('new-act-linked-tra')?.value || null,
     match_status: 'manual',
-    is_manual_override: true,
-    override_reason: 'Manually added via lookahead grid',
+    activity_group: defaultGroup,
+    sort_order:    groupMaxSort + 10,
     batch_id: null,
   };
   try {
@@ -16488,13 +16495,9 @@ function _laMountLookaheadTL() {
     });
 
   } else { // activity — grouped by location, then activity description within each
-    // Always include manual activities (is_manual_override=true) even when empty,
-    // so newly added rows show up immediately for the user to populate.
-    const actsInWindow = PLANNING_ACTIVITIES
-      .filter(a =>
-        a.is_manual_override ||
-        PLANNING_EVENTS.some(e => e.planning_activity_id === a.id && days.includes(e.event_date))
-      );
+    // Phase 1: master grid is source of truth — show every non-deleted activity
+    // so newly created rows are visible immediately even before they have events.
+    const actsInWindow = PLANNING_ACTIVITIES.filter(a => !a.deleted_at);
 
     // Bucket by location, sorted alphabetically
     const locBuckets = {};
@@ -16528,9 +16531,8 @@ function _laMountLookaheadTL() {
             activityId:             a.id,
             assignedResources,
             label:                  a.description || a.activity_id_text || '—',
-            sublabel:               sub || (a.is_manual_override ? '✋ Manual' : ''),
+            sublabel:               sub,
             color:                  c.bg,
-            isManual:               !!a.is_manual_override,
             linkedTestRegActivity:  a.linked_test_register_activity || null,
             byDate:                 _laBuildByDate(evs, days, e => _planningEventResourceInitials(e.id)),
           });
@@ -19022,7 +19024,6 @@ async function _planningConfirmLink(activityId) {
       linked_test_item_id: ti.TestID,
       match_status:        'manual',
       match_confidence:    1.0,
-      is_manual_override:  true,
     }, { id: activityId });
     // Propagate TestID to all associated events
     const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === activityId);
@@ -19044,7 +19045,6 @@ async function _planningMarkNoLink(activityId) {
       linked_test_item_id: null,
       match_status:        'no_link',
       match_confidence:    null,
-      is_manual_override:  true,
     }, { id: activityId });
     closeModal();
     toast('Marked as no direct schedule link', 'success');
