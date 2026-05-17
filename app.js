@@ -14358,15 +14358,16 @@ function _laRenderGrid(target, { groups, days, milestones }) {
   }
   const todayISO = new Date().toISOString().slice(0, 10);
 
-  // Build month spans
+  // Build month spans — compare 'YYYY-MM' prefix directly to avoid
+  // timezone-induced dayjs mis-classification near month boundaries.
   const monthSpans = [];
   let mi = 0;
   while (mi < days.length) {
-    const d = dayjs(days[mi]);
-    const m = d.month(), y = d.year();
+    const ym = days[mi].slice(0, 7); // 'YYYY-MM', unambiguous
+    const d  = dayjs(days[mi]);
     let j = mi;
-    while (j < days.length && dayjs(days[j]).month() === m && dayjs(days[j]).year() === y) j++;
-    monthSpans.push({ label: d.format('MMM YYYY'), count: j - mi });
+    while (j < days.length && days[j].slice(0, 7) === ym) j++;
+    monthSpans.push({ label: d.format('MMMM YYYY'), count: j - mi });
     mi = j;
   }
 
