@@ -13265,7 +13265,7 @@ let _planningCalInstance = null;                       // legacy — no longer u
 let _planningTLInstance  = null;                       // vis-timeline instance for lookahead/gantt/resources
 let _planningCalNowTimer = null;                       // setInterval handle for the "now" line
 let _laTimelineGroupBy   = 'activity';                 // activity | resource | subsystem | location
-let _laTimelineWindow    = 14;                         // 14 / 21 / 28 days
+let _laTimelineWindow    = 28;                         // 14 / 21 / 28 / 60 / 90 days
 let _laCollapsedGroups   = {};                         // { tc: true, ... } — collapsed activity_group bands
 let _laActivitySubGroup  = 'none';                     // 'none' | 'phase' | 'location' | 'phase_location'
 
@@ -14707,7 +14707,7 @@ function _laLookaheadHTML() {
       </div>
       <div style="display:flex;align-items:center;gap:0;">
         <span style="font-size:11px;color:var(--gray-500);margin-right:8px;white-space:nowrap;">Window:</span>
-        ${[['14','2 wks'],['21','3 wks'],['28','4 wks']].map(([v,l]) => `
+        ${[['14','2 wks'],['21','3 wks'],['28','4 wks'],['60','2 mo'],['90','3 mo']].map(([v,l]) => `
           <button class="admin-tab${_laTimelineWindow === parseInt(v) ? ' active' : ''}" style="font-size:12px;padding:6px 14px;" onclick="_laSetTimelineWindow(${v})">${l}</button>
         `).join('')}
       </div>
@@ -15765,8 +15765,6 @@ function _laOpenCreateEventModal(cells) {
   const hitOpts   = hitRes.map(r  => '<option value="' + r.id + '" data-name="' + escapeHtml(r.display_name) + '">' + escapeHtml(r.display_name) + '</option>').join('');
   const bartOpts  = bartRoles.map(r => '<option value="' + r.id + '" data-name="' + escapeHtml(r.display_name) + '">' + escapeHtml(r.display_name) + '</option>').join('');
 
-  const saveFn = '_laSaveCreateEvents(' + JSON.stringify(cells.map(c => ({ actId: c.actId, iso: c.iso }))) + ')';
-
   modal({
     title: cells.length > 1 ? '➕ Create ' + cells.length + ' Events' : '➕ Create Event',
     sub:   actLabel,
@@ -15820,7 +15818,7 @@ function _laOpenCreateEventModal(cells) {
     ),
     footer: (
       '<button class="form-secondary" onclick="closeModal()">Cancel</button>' +
-      '<button class="form-submit" id="ce-save-btn" onclick="' + saveFn + '">➕ Create ' + cells.length + ' event' + (cells.length > 1 ? 's' : '') + '</button>'
+      '<button class="form-submit" id="ce-save-btn" onclick="_laSaveCreateEvents(window._laCECells)">➕ Create ' + cells.length + ' event' + (cells.length > 1 ? 's' : '') + '</button>'
     ),
   });
   window._laCECells = cells;
