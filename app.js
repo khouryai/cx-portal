@@ -13267,6 +13267,7 @@ let _planningCalNowTimer = null;                       // setInterval handle for
 let _laTimelineGroupBy   = 'activity';                 // activity | resource | subsystem | location
 let _laTimelineWindow    = 14;                         // 14 / 21 / 28 days
 let _laCollapsedGroups   = {};                         // { tc: true, ... } — collapsed activity_group bands
+let _laActivitySubGroup  = 'none';                     // 'none' | 'phase' | 'location' | 'phase_location'
 
 // ── Edit drawer state (Phase 2 — Master Schedule revamp) ─────
 // The right-side persistent drawer replaces modal-per-action for cell &
@@ -13734,6 +13735,38 @@ const _ACTIVITY_GROUPS = {
 // Fixed render order — drives the band order in the master grid.
 const _GROUP_ORDER = ['tc','construction','design','training','other'];
 function _groupMeta(key) { return _ACTIVITY_GROUPS[key] || _ACTIVITY_GROUPS.other; }
+
+// ── Location prefix matching ──────────────────────────────────
+// Activity locations can be ad-hoc codes ("W40") that match master
+// locations by prefix ("W40 Millbrae Station"). Matching is bidirectional:
+// filter="W40" matches item="W40 Millbrae Station" and vice-versa.
+function _laMatchesLocation(filterLoc, itemLoc) {
+  if (!filterLoc) return true;        // empty filter passes all
+  if (!itemLoc)   return false;
+  const f = filterLoc.trim().toLowerCase();
+  const i = itemLoc.trim().toLowerCase();
+  if (f === i) return true;
+  // one is a prefix of the other (must be followed by space or dash)
+  if (i.startsWith(f + ' ') || i.startsWith(f + '-')) return true;
+  if (f.startsWith(i + ' ') || f.startsWith(i + '-')) return true;
+  return false;
+}
+
+// Resolve an ad-hoc activity location ("W40") to its master name
+// ("W40 Millbrae Station") using prefix matching against LOCS.
+function _laResolveLocationPrefix(adHocLoc) {
+  if (!adHocLoc) return adHocLoc;
+  const loc   = adHocLoc.trim();
+  const lower = loc.toLowerCase();
+  const master = LOCS || [];
+  const exact  = master.find(l => l.name.trim().toLowerCase() === lower);
+  if (exact) return exact.name;
+  const prefix = master.find(l => {
+    const n = l.name.trim().toLowerCase();
+    return n.startsWith(lower + ' ') || n.startsWith(lower + '-');
+  });
+  return prefix ? prefix.name : loc;
+}
 
 function _planningGetSubsystem(ev) {
   // ev = raw planning_event row
@@ -14386,6 +14419,29 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       return;
     }
 
+    // ── Phase / Location sub-group header (Activity sub-grouping) ──
+    if (g.isSubGroupHeader) {
+      const caret = g.collapsed ? '▶' : '▼';
+      const indent = g.indent ? 'padding-left:26px;' : 'padding-left:10px;';
+      html += `<div class="tlg-row tlg-subgrp-hdr-row"
+          data-subgroup-key="${escapeHtml(g.subGroupKey)}"
+          style="background:${g.bg}bb;color:${g.fg};border-left:3px solid ${g.accent}99;${indent}"
+          onclick="_laToggleGroupCollapse(${JSON.stringify(g.subGroupKey)})"
+          title="${g.collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(g.label)}">
+        <div class="tlg-label tlg-subgrp-hdr-label">
+          <span class="tlg-grp-caret">${caret}</span>
+          <span class="tlg-subgrp-icon">${g.icon || ''}</span>
+          <span class="tlg-grp-name" style="font-size:11px;">${escapeHtml(g.label)}</span>
+          <span class="tlg-grp-count">${g.activityCount}</span>
+        </div>
+        <div class="tlg-cells">${days.map(iso => {
+          const isToday = iso === todayISO;
+          return `<div class="tlg-cell tlg-grp-hdr-cell${isToday ? ' tlg-today-col' : ''}"></div>`;
+        }).join('')}</div>
+      </div>`;
+      return;
+    }
+
     // ── Location divider row (kept for Location sort mode) ──────
     if (g.isLocHeader) {
       html += `<div class="tlg-row tlg-loc-hdr-row">
@@ -14605,6 +14661,16 @@ function _laLookaheadHTML() {
           <button class="admin-tab${_laTimelineWindow === parseInt(v) ? ' active' : ''}" style="font-size:12px;padding:6px 14px;" onclick="_laSetTimelineWindow(${v})">${l}</button>
         `).join('')}
       </div>
+      ${_laTimelineGroupBy === 'activity' ? `
+      <div style="display:flex;align-items:center;gap:0;">
+        <span style="font-size:11px;color:var(--gray-500);margin-right:8px;white-space:nowrap;">Sub-group:</span>
+        ${[['none','None'],['phase','Phase'],['location','Location'],['phase_location','Phase + Loc']].map(([v,l]) => `
+          <button class="admin-tab${_laActivitySubGroup === v ? ' active' : ''}"
+            style="font-size:12px;padding:6px 14px;"
+            onclick="_laSetActivitySubGroup('${v}')">${l}</button>
+        `).join('')}
+      </div>
+      ` : ''}
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);cursor:pointer;">
         <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
         P6 baseline
@@ -14925,13 +14991,18 @@ function _laDrawerActivityHTML(a) {
 
     <div class="la-drawer-section la-drawer-row-2">
       <div>
-        <label class="la-drawer-label">Location</label>
-        <input class="la-drawer-input" id="dw-act-loc" value="${escapeHtml(a.location || '')}" oninput="_laDrawerMarkDirty()">
+        <label class="la-drawer-label">Phase</label>
+        <input class="la-drawer-input" id="dw-act-phase" value="${escapeHtml(a.phase || '')}" placeholder="e.g. Phase 1" oninput="_laDrawerMarkDirty()">
       </div>
       <div>
         <label class="la-drawer-label">SSWP</label>
         <input class="la-drawer-input" id="dw-act-sswp" value="${escapeHtml(a.sswp || '')}" oninput="_laDrawerMarkDirty()">
       </div>
+    </div>
+
+    <div class="la-drawer-section">
+      <label class="la-drawer-label">Location${(() => { const resolved = _laResolveLocationPrefix(a.location); return resolved && resolved !== (a.location||'').trim() ? ` <span style="font-size:10px;color:var(--gray-400);font-weight:400;">→ ${escapeHtml(resolved)}</span>` : ''; })()}</label>
+      <input class="la-drawer-input" id="dw-act-loc" value="${escapeHtml(a.location || '')}" placeholder="e.g. W40" oninput="_laDrawerMarkDirty()">
     </div>
 
     <div class="la-drawer-section">
@@ -15059,6 +15130,7 @@ async function _laDrawerSave() {
       description:                  document.getElementById('dw-act-desc')?.value?.trim() || null,
       activity_id_text:             document.getElementById('dw-act-idtext')?.value?.trim() || null,
       activity_group:               document.getElementById('dw-act-group')?.value || 'other',
+      phase:                        document.getElementById('dw-act-phase')?.value?.trim() || null,
       location:                     document.getElementById('dw-act-loc')?.value?.trim() || null,
       sswp:                         document.getElementById('dw-act-sswp')?.value?.trim() || null,
       work_hours_raw:               document.getElementById('dw-act-hours')?.value?.trim() || null,
@@ -15117,8 +15189,8 @@ function _laExportLookahead() {
   const days = Array.from({ length: _laTimelineWindow }, (_, i) => winStart.add(i, 'day').format('YYYY-MM-DD'));
 
   // Header: 1 row month strip + 1 row day strip
-  const monthRow = ['Group', 'Activity'];
-  const dayRow   = ['', ''];
+  const monthRow = ['Group', 'Phase', 'Activity', 'Location'];
+  const dayRow   = ['', '', '', ''];
   days.forEach(iso => {
     const d = dayjs(iso);
     monthRow.push(d.format('MMM'));
@@ -15142,7 +15214,7 @@ function _laExportLookahead() {
   ordered.forEach(({ a, gk }) => {
     const meta = _groupMeta(gk);
     const evs = (PLANNING_EVENTS || []).filter(e => e.planning_activity_id === a.id && days.includes(e.event_date));
-    const row = [meta.label, a.description || a.activity_id_text || ''];
+    const row = [meta.label, a.phase || '', a.description || a.activity_id_text || '', _laResolveLocationPrefix(a.location) || ''];
 
     days.forEach(iso => {
       const ev = evs.find(e => e.event_date === iso);
@@ -15360,6 +15432,7 @@ function _laResourcePanelHTML() {
 }
 
 function _laSetTimelineGroup(g) { _laTimelineGroupBy = g; _renderLookaheadTabBody(); }
+function _laSetActivitySubGroup(sg) { _laActivitySubGroup = sg; _renderLookaheadTabBody(); }
 function _laToggleGroupCollapse(groupKey) {
   _laCollapsedGroups[groupKey] = !_laCollapsedGroups[groupKey];
   _renderLookaheadTabBody();
@@ -16542,6 +16615,10 @@ function _laOpenNewActivityModal() {
           <label>Location</label>
           <input type="text" id="new-act-loc" class="form-input" placeholder="W40, Cab, Hayward, etc.">
         </div>
+        <div class="form-field">
+          <label>Phase <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
+          <input type="text" id="new-act-phase" class="form-input" placeholder="e.g. Phase 1">
+        </div>
         <div class="form-field form-field-full">
           <label>Description <span style="color:#dc2626;">*</span></label>
           <input type="text" id="new-act-desc" class="form-input" placeholder="What is this activity?" required>
@@ -16623,13 +16700,17 @@ function _laOpenLinkActivityModal(activityId) {
   const curTRA   = a.linked_test_register_activity || '';
   const curP6Id  = a.linked_p6_activity_id || '';
 
-  // Cascade filter defaults — from the activity's known location + inferred subsystem
-  const defaultLocation  = (a.location || '').trim();
+  // Cascade filter defaults — from the activity's known location + inferred subsystem.
+  // Resolve ad-hoc location codes ("W40") to master names ("W40 Millbrae Station").
+  const defaultLocation  = _laResolveLocationPrefix((a.location || '').trim());
   const defaultSubsystem = _planningInferActivitySubsystem(a) || '';
 
-  // Build pools of all distinct subsystems + locations from TI for the filter dropdowns
+  // Build pools: subsystems from TI; locations from master LOCS (fallback: TI locations)
   const allSubsystems = [...new Set(TI.map(t => (t.Subsystem||'').trim()).filter(Boolean))].sort();
-  const allLocations  = [...new Set(TI.map(t => (t.Location||'').trim()).filter(Boolean))].sort();
+  const tiLocations   = [...new Set(TI.map(t => (t.Location||'').trim()).filter(Boolean))];
+  const masterLocations = (LOCS || []).map(l => l.name).filter(Boolean);
+  // Union of master + TI locations, deduped
+  const allLocations  = [...new Set([...masterLocations, ...tiLocations])].sort();
 
   modal({
     title: '🔗 Link Activity',
@@ -16655,7 +16736,7 @@ function _laOpenLinkActivityModal(activityId) {
             <label style="font-size:11px;">Filter — Location</label>
             <select id="link-filter-loc" class="form-input" onchange="_laLinkRebuildOptions()">
               <option value="">All locations</option>
-              ${allLocations.map(l => `<option value="${escapeHtml(l)}" ${l.toLowerCase() === defaultLocation.toLowerCase() ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
+              ${allLocations.map(l => `<option value="${escapeHtml(l)}" ${_laMatchesLocation(defaultLocation, l) ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
             </select>
           </div>
         </div>
@@ -16717,9 +16798,10 @@ function _laLinkRebuildOptions() {
   const curP6Id  = a.linked_p6_activity_id || '';
 
   // ── Test Register Activity options (filtered) ──
+  // Use prefix matching for location: "W40" matches "W40 Millbrae Station" and vice-versa
   const pool = TI.filter(t =>
     (!sub || (t.Subsystem || '').trim() === sub) &&
-    (!loc || (t.Location  || '').trim().toLowerCase() === loc.toLowerCase())
+    (!loc || _laMatchesLocation(loc, (t.Location || '').trim()))
   );
   const activityCounts = {};
   pool.forEach(t => {
@@ -16754,9 +16836,10 @@ function _laLinkRebuildOptions() {
     } else suggestEl.innerHTML = '';
   } else suggestEl.innerHTML = '';
 
-  // ── P6 Activity options (filtered by location only — P6 doesn't carry subsystem) ──
+  // ── P6 Activity options (filtered by location — prefix match bidirectional) ──
+  // p6_location_code may be a short code ("W40"); filter loc may be full name ("W40 Millbrae Station")
   const p6Pool = (P6_ACTS || []).filter(p =>
-    !loc || (p.p6_location_code || '').trim().toLowerCase() === loc.toLowerCase()
+    !loc || _laMatchesLocation(loc, (p.p6_location_code || '').trim())
   );
   // Sort by p6_id
   p6Pool.sort((a,b) => (a.p6_id || '').localeCompare(b.p6_id || ''));
@@ -16950,7 +17033,8 @@ async function _laSaveNewActivity() {
     .reduce((m, a) => Math.max(m, a.sort_order || 0), 0);
 
   const payload = {
-    activity_id_text: document.getElementById('new-act-id').value.trim() || null,
+    activity_id_text: document.getElementById('new-act-id').value.trim()    || null,
+    phase:            document.getElementById('new-act-phase')?.value.trim() || null,
     description: desc,
     location: document.getElementById('new-act-loc').value.trim() || null,
     sswp: document.getElementById('new-act-sswp').value.trim() || null,
@@ -17375,9 +17459,8 @@ function _laMountLookaheadTL() {
     });
 
   } else { // activity — grouped by activity_group (T&C, Construction, Design…)
-    // Phase 2: bucket by activity_group in the fixed enum order, then sort by
-    // sort_order within each group. Drag-reorder updates sort_order; switching
-    // groups is a drag across the band boundary (wired in Phase 2E).
+    // Bucket by activity_group in the fixed enum order, then sort by sort_order.
+    // Optional sub-grouping by Phase and/or Location (_laActivitySubGroup).
     const actsInWindow = PLANNING_ACTIVITIES.filter(a => !a.deleted_at);
 
     const grpBuckets = {};
@@ -17387,12 +17470,13 @@ function _laMountLookaheadTL() {
       grpBuckets[g].push(a);
     });
 
-    // Render in fixed enum order; surface any unknown-group rows under 'other'
+    // Render in fixed enum order; surface unknown-group rows under 'other'
     const orderedKeys = [..._GROUP_ORDER, ...Object.keys(grpBuckets).filter(k => !_GROUP_ORDER.includes(k))];
+
     orderedKeys.forEach(gk => {
       const acts = grpBuckets[gk];
       if (!acts || acts.length === 0) return;
-      const meta = _groupMeta(gk);
+      const meta      = _groupMeta(gk);
       const collapsed = !!_laCollapsedGroups[gk];
 
       // ── Group band header ────────────────────────────────────
@@ -17407,34 +17491,122 @@ function _laMountLookaheadTL() {
         accent:        meta.accent,
         collapsed,
       });
-      if (collapsed) return;   // skip rendering rows under a collapsed band
+      if (collapsed) return;
 
-      // ── Activity rows within this group, sorted by sort_order ──
-      acts
-        .sort((a, b) =>
-          (a.sort_order ?? 999999) - (b.sort_order ?? 999999) ||
-          (a.description || a.activity_id_text || '').localeCompare(b.description || b.activity_id_text || '')
-        )
-        .forEach(a => {
-          const sub = a.subsystem || a.location || null;
-          const c   = _planningSubsystemColor(sub);
-          const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === a.id);
-          const assignedResources = PLANNING_ACTIVITY_RES
-            .filter(ar => ar.planning_activity_id === a.id)
-            .map(ar => PLANNING_RESOURCES.find(r => r.id === ar.resource_id))
-            .filter(Boolean);
-          groups.push({
-            id:                     'act-' + a.id,
-            activityId:             a.id,
-            activityGroup:          gk,
-            assignedResources,
-            label:                  a.description || a.activity_id_text || '—',
-            sublabel:               sub,
-            color:                  c.bg,
-            linkedTestRegActivity:  a.linked_test_register_activity || null,
-            byDate:                 _laBuildByDate(evs, days, e => _planningEventResourceInitials(e.id)),
+      // Sort activities by sort_order within the group
+      const sortedActs = acts.slice().sort((a, b) =>
+        (a.sort_order ?? 999999) - (b.sort_order ?? 999999) ||
+        (a.description || a.activity_id_text || '').localeCompare(b.description || b.activity_id_text || '')
+      );
+
+      // ── Helper: push one activity row ───────────────────────
+      const pushActRow = a => {
+        const sub = a.subsystem || a.location || null;
+        const c   = _planningSubsystemColor(sub);
+        const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === a.id);
+        const assignedResources = PLANNING_ACTIVITY_RES
+          .filter(ar => ar.planning_activity_id === a.id)
+          .map(ar => PLANNING_RESOURCES.find(r => r.id === ar.resource_id))
+          .filter(Boolean);
+        groups.push({
+          id:                    'act-' + a.id,
+          activityId:            a.id,
+          activityGroup:         gk,
+          assignedResources,
+          label:                 a.description || a.activity_id_text || '—',
+          sublabel:              sub,
+          color:                 c.bg,
+          linkedTestRegActivity: a.linked_test_register_activity || null,
+          byDate:                _laBuildByDate(evs, days, e => _planningEventResourceInitials(e.id)),
+        });
+      };
+
+      // ── No sub-grouping ──────────────────────────────────────
+      if (_laActivitySubGroup === 'none') {
+        sortedActs.forEach(pushActRow);
+        return;
+      }
+
+      // ── Helper: build a sub-group header entry ───────────────
+      const pushSubHdr = (subKey, label, icon, count, indent = false) => {
+        const subColl = !!_laCollapsedGroups[subKey];
+        groups.push({
+          id:              'subgrp-' + subKey,
+          isSubGroupHeader: true,
+          subGroupKey:     subKey,
+          groupKey:        gk,
+          label,
+          icon,
+          activityCount:   count,
+          bg:              meta.bg,
+          fg:              meta.fg,
+          accent:          meta.accent,
+          collapsed:       subColl,
+          indent,
+        });
+        return subColl; // returns true if collapsed — caller skips rows
+      };
+
+      // ── Phase sub-grouping ───────────────────────────────────
+      if (_laActivitySubGroup === 'phase') {
+        const phaseBuckets = {};
+        sortedActs.forEach(a => {
+          const p = (a.phase || '').trim() || '(No Phase)';
+          (phaseBuckets[p] = phaseBuckets[p] || []).push(a);
+        });
+        const phaseKeys = Object.keys(phaseBuckets).sort((a, b) =>
+          a === '(No Phase)' ? 1 : b === '(No Phase)' ? -1 :
+          a.localeCompare(b, undefined, { numeric: true })
+        );
+        phaseKeys.forEach(pk => {
+          const subColl = pushSubHdr('phase::' + gk + '::' + pk, pk, '🏷', phaseBuckets[pk].length);
+          if (!subColl) phaseBuckets[pk].forEach(pushActRow);
+        });
+
+      // ── Location sub-grouping ────────────────────────────────
+      } else if (_laActivitySubGroup === 'location') {
+        const locBuckets = {};
+        sortedActs.forEach(a => {
+          const l = _laResolveLocationPrefix(a.location) || '(No Location)';
+          (locBuckets[l] = locBuckets[l] || []).push(a);
+        });
+        const locKeys = Object.keys(locBuckets).sort((a, b) =>
+          a === '(No Location)' ? 1 : b === '(No Location)' ? -1 : a.localeCompare(b)
+        );
+        locKeys.forEach(lk => {
+          const subColl = pushSubHdr('loc::' + gk + '::' + lk, lk, '📍', locBuckets[lk].length);
+          if (!subColl) locBuckets[lk].forEach(pushActRow);
+        });
+
+      // ── Phase + Location sub-grouping (nested) ───────────────
+      } else if (_laActivitySubGroup === 'phase_location') {
+        const phaseBuckets = {};
+        sortedActs.forEach(a => {
+          const p = (a.phase || '').trim() || '(No Phase)';
+          (phaseBuckets[p] = phaseBuckets[p] || []).push(a);
+        });
+        const phaseKeys = Object.keys(phaseBuckets).sort((a, b) =>
+          a === '(No Phase)' ? 1 : b === '(No Phase)' ? -1 :
+          a.localeCompare(b, undefined, { numeric: true })
+        );
+        phaseKeys.forEach(pk => {
+          const phColl = pushSubHdr('phase::' + gk + '::' + pk, pk, '🏷', phaseBuckets[pk].length);
+          if (phColl) return;
+          // Inner: location buckets within this phase
+          const locBuckets = {};
+          phaseBuckets[pk].forEach(a => {
+            const l = _laResolveLocationPrefix(a.location) || '(No Location)';
+            (locBuckets[l] = locBuckets[l] || []).push(a);
+          });
+          const locKeys = Object.keys(locBuckets).sort((a, b) =>
+            a === '(No Location)' ? 1 : b === '(No Location)' ? -1 : a.localeCompare(b)
+          );
+          locKeys.forEach(lk => {
+            const lColl = pushSubHdr('loc::' + gk + '::' + pk + '::' + lk, lk, '📍', locBuckets[lk].length, true);
+            if (!lColl) locBuckets[lk].forEach(pushActRow);
           });
         });
+      }
     });
   }
 

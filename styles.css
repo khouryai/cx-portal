@@ -6828,6 +6828,30 @@ textarea.la-drawer-input { resize: vertical; min-height: 50px; }
   min-height: 34px;
 }
 
+/* ── Phase / Location sub-group headers ─────────────────────── */
+.tlg-subgrp-hdr-row {
+  display: flex;
+  min-height: 26px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  opacity: .88;
+  transition: filter .12s;
+}
+.tlg-subgrp-hdr-row:hover { filter: brightness(0.93); }
+.tlg-subgrp-hdr-label {
+  width: 160px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  font-weight: 600;
+  font-size: 11px;
+  overflow: hidden;
+}
+.tlg-subgrp-icon { font-size: 11px; flex-shrink: 0; }
+
 /* ── Location divider rows (Activity group-by) ──────────────── */
 .tlg-loc-hdr-row {
   display: flex;
