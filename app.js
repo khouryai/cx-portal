@@ -13768,6 +13768,18 @@ function _laResolveLocationPrefix(adHocLoc) {
   return prefix ? prefix.name : loc;
 }
 
+// Auto-infer phase from location hierarchy.
+// Level-2 locations have a parent_id pointing to their Level-1 Phase entry.
+// Returns the phase name (e.g. "Phase 2") or null if no master match.
+function _laInferPhaseFromLocation(adHocLoc) {
+  if (!adHocLoc) return null;
+  const resolved = _laResolveLocationPrefix(adHocLoc);
+  const master = (LOCS || []).find(l => l.name.trim().toLowerCase() === resolved.trim().toLowerCase() && l.level === 2);
+  if (!master || !master.parent_id) return null;
+  const parent = (LOCS || []).find(l => l.id === master.parent_id);
+  return parent?.name || null;
+}
+
 function _planningGetSubsystem(ev) {
   // ev = raw planning_event row
   // 1. Direct on event
@@ -14546,7 +14558,10 @@ function _laRenderGrid(target, { groups, days, milestones }) {
             onclick="_laCellClick(event,'${s.event_id}','${actId||''}','${iso}',this)"
             oncontextmenu="event.preventDefault();_laCellContextMenu(event,'${s.event_id}','${actId||''}','${iso}',this);return false;"
             data-tlg-tip="${tip}"
-          >${s.cellLabel ? `<span class="tlg-cell-location">${escapeHtml(s.cellLabel)}</span>` : ''}${badgeHtml}${isCellSel ? `<span class="la-cell-sel-mark">✓</span>` : ''}<span class="tlg-fill-handle" onmousedown="_laFillStart(event,'${s.event_id}','${actId||''}','${iso}',this.parentElement)" title="Drag to fill across days"></span></div>`;
+          >${s.bartChips && s.bartChips.length
+              ? `<div class="tlg-bart-chips">${s.bartChips.map(c => `<span class="tlg-bart-chip${c.denied?' tlg-bart-chip-denied':''}">${escapeHtml(c.label)}</span>`).join('')}</div>`
+              : s.cellLabel ? `<span class="tlg-cell-location">${escapeHtml(s.cellLabel)}</span>` : ''
+            }${badgeHtml}${isCellSel ? `<span class="la-cell-sel-mark">✓</span>` : ''}<span class="tlg-fill-handle" onmousedown="_laFillStart(event,'${s.event_id}','${actId||''}','${iso}',this.parentElement)" title="Drag to fill across days"></span></div>`;
         });
         if (inP6 && !shifts.length) html += `<div class="tlg-p6-hint">P6</div>`;
       }
@@ -14629,6 +14644,38 @@ function _planningEventResourceInitials(eventId) {
     })
     .filter(Boolean)
     .join(' ');
+}
+
+// Returns compact chip objects for BART roles only on a single event.
+// Each chip: { label: "TTO×2", denied: bool }
+function _planningEventBartChips(eventId) {
+  return PLANNING_EVENT_RES
+    .filter(er => er.event_id === eventId)
+    .map(er => {
+      const r = PLANNING_RESOURCES.find(x => x.id === er.resource_id);
+      if (!r || r.company !== 'BART') return null;
+      const initials = r.initials ||
+        r.display_name?.split(/\s+/).map(w => w[0]).join('').slice(0, 3).toUpperCase() || '?';
+      const qty = (er.quantity || 1) > 1 ? `×${er.quantity}` : '';
+      return { label: initials + qty, denied: !!er.denied_at };
+    })
+    .filter(Boolean);
+}
+
+// Like _laBuildByDate but attaches BART chips for Activity view cells.
+function _laBuildByDateActivity(events, days) {
+  const byDate = {};
+  events.forEach(e => {
+    if (!days.includes(e.event_date)) return;
+    const isCancel = e.status === 'cancelled';
+    (byDate[e.event_date] = byDate[e.event_date] || []).push({
+      event_id: e.id, shift_type: e.shift_type, start_time: e.start_time,
+      end_time: e.end_time, all_day: !!e.all_day, isCancel, title: e.title || '',
+      cellLabel: '',
+      bartChips: isCancel ? [] : _planningEventBartChips(e.id),
+    });
+  });
+  return byDate;
 }
 
 // ── Helper: build PTO coverage map for a resource ──────────────
@@ -14776,6 +14823,38 @@ function _laDrawerClose() {
   _laDrawer.dirty       = false;
   _laDrawer.baseVersion = null;
   _renderLookaheadTabBody();
+}
+
+// Called on location input change: auto-infer phase from master LOCS hierarchy
+// and show a hint (or auto-fill if phase field is empty).
+function _laDrawerLocationChanged() {
+  _laDrawerMarkDirty();
+  const locVal   = document.getElementById('dw-act-loc')?.value?.trim() || '';
+  const phaseEl  = document.getElementById('dw-act-phase');
+  const hintEl   = document.getElementById('dw-loc-phase-hint');
+  if (!phaseEl || !hintEl) return;
+
+  const inferred = _laInferPhaseFromLocation(locVal);
+  const current  = phaseEl.value.trim();
+
+  if (!inferred) {
+    hintEl.innerHTML = locVal
+      ? `<span style="color:var(--gray-400);">Ad-hoc location — set phase manually</span>`
+      : '';
+    return;
+  }
+
+  if (!current) {
+    // Phase is empty → auto-fill silently
+    phaseEl.value = inferred;
+    hintEl.innerHTML = `<span style="color:var(--good);">✓ Phase set from master: <strong>${escapeHtml(inferred)}</strong></span>`;
+  } else if (current === inferred) {
+    hintEl.innerHTML = `<span style="color:var(--good);">✓ Matches master location</span>`;
+  } else {
+    hintEl.innerHTML = `<span>Master suggests: <strong>${escapeHtml(inferred)}</strong></span>
+      <button type="button" class="form-secondary" style="font-size:10px;padding:1px 6px;margin-left:6px;"
+        onclick="document.getElementById('dw-act-phase').value=${JSON.stringify(inferred)};_laDrawerMarkDirty();document.getElementById('dw-loc-phase-hint').innerHTML='<span style=\\'color:var(--good);\\'>✓ Accepted<\\/span>';">Use</button>`;
+  }
 }
 
 function _laDrawerMarkDirty() {
@@ -15002,7 +15081,18 @@ function _laDrawerActivityHTML(a) {
 
     <div class="la-drawer-section">
       <label class="la-drawer-label">Location${(() => { const resolved = _laResolveLocationPrefix(a.location); return resolved && resolved !== (a.location||'').trim() ? ` <span style="font-size:10px;color:var(--gray-400);font-weight:400;">→ ${escapeHtml(resolved)}</span>` : ''; })()}</label>
-      <input class="la-drawer-input" id="dw-act-loc" value="${escapeHtml(a.location || '')}" placeholder="e.g. W40" oninput="_laDrawerMarkDirty()">
+      <input class="la-drawer-input" id="dw-act-loc" value="${escapeHtml(a.location || '')}" placeholder="e.g. W40" oninput="_laDrawerLocationChanged()">
+      <div id="dw-loc-phase-hint" style="font-size:10px;margin-top:3px;">${(() => {
+        const inferred = _laInferPhaseFromLocation(a.location);
+        const current  = (a.phase || '').trim();
+        if (!inferred && a.location) return `<span style="color:var(--gray-400);">Ad-hoc location — set phase manually</span>`;
+        if (!inferred) return '';
+        if (!current)  return `<span style="color:var(--good);">✓ Phase: <strong>${escapeHtml(inferred)}</strong> (auto-filled)</span>`;
+        if (current === inferred) return `<span style="color:var(--good);">✓ Matches master location</span>`;
+        return `<span>Master suggests: <strong>${escapeHtml(inferred)}</strong></span>
+          <button type="button" class="form-secondary" style="font-size:10px;padding:1px 6px;margin-left:6px;"
+            onclick="document.getElementById('dw-act-phase').value=${JSON.stringify(inferred)};_laDrawerMarkDirty();document.getElementById('dw-loc-phase-hint').innerHTML='<span style=\\'color:var(--good);\\'>✓ Accepted<\\/span>';">Use</button>`;
+      })()}</div>
     </div>
 
     <div class="la-drawer-section">
@@ -17517,7 +17607,8 @@ function _laMountLookaheadTL() {
           sublabel:              sub,
           color:                 c.bg,
           linkedTestRegActivity: a.linked_test_register_activity || null,
-          byDate:                _laBuildByDate(evs, days, e => _planningEventResourceInitials(e.id)),
+          // Activity view shows BART-only chips always visible in each cell
+          byDate:                _laBuildByDateActivity(evs, days),
         });
       };
 

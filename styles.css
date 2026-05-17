@@ -5947,8 +5947,8 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
 }
 .tlg-weekend .tlg-date-num { color: var(--gray-400); }
 
-/* ── Body rows ───────────────────────────────────────────────── */
-.tlg-data-row { min-height: 52px; }
+/* ── Body rows — compact Excel-like height, auto-expands with BART chips ── */
+.tlg-data-row { min-height: 28px; }
 .tlg-data-row:nth-child(even) .tlg-cells { background: rgba(0,0,0,.012); }
 .tlg-data-row:hover { background: #f0f7ff; }
 .tlg-data-row:hover .tlg-label { filter: brightness(1.06); }
@@ -5958,23 +5958,23 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 8px 10px;
+  padding: 3px 8px;
   color: #fff;
-  min-height: 52px;
+  min-height: 28px;
   background: #6b7280;
   border-right: 2px solid var(--gray-300);
 }
 .tlg-label-main {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  line-height: 1.3;
+  line-height: 1.25;
   word-break: break-word;
   text-shadow: 0 1px 2px rgba(0,0,0,.2);
 }
 .tlg-label-sub {
-  font-size: 10px;
+  font-size: 9px;
   opacity: .85;
-  margin-top: 2px;
+  margin-top: 1px;
   font-weight: 500;
 }
 
@@ -5983,8 +5983,8 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding: 2px;
-  min-height: 52px;
+  padding: 1px;
+  min-height: 28px;
 }
 .tlg-p6-bg { background: rgba(99,102,241,.06) !important; }
 .tlg-p6-hint {
@@ -6003,15 +6003,15 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  padding: 3px 2px;
+  justify-content: flex-start;
+  border-radius: 3px;
+  padding: 1px 2px;
   cursor: pointer;
-  min-height: 22px;
+  min-height: 18px;
   text-align: center;
-  overflow: hidden;
+  overflow: visible;        /* allow BART chips to push row height */
   transition: filter .1s, transform .08s;
-  box-shadow: 0 1px 3px rgba(0,0,0,.10);
+  box-shadow: 0 1px 2px rgba(0,0,0,.10);
 }
 .tlg-shift-block:hover {
   filter: brightness(.88);
@@ -6893,6 +6893,35 @@ textarea.la-drawer-input { resize: vertical; min-height: 50px; }
   text-align: center;
   padding: 0 2px;
   text-shadow: 0 1px 2px rgba(0,0,0,.2);
+}
+
+/* ── BART resource chips in Activity-view cells ─────────────── */
+/* Always visible — no hover/click needed. Wrap within cell width. */
+.tlg-bart-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 1px 1px;
+  width: 100%;
+}
+.tlg-bart-chip {
+  background: rgba(255,255,255,0.82);
+  color: #1e3a8a;
+  font-size: 8px;
+  font-weight: 800;
+  padding: 0px 3px;
+  border-radius: 2px;
+  line-height: 1.4;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  text-shadow: none;
+}
+.tlg-bart-chip-denied {
+  background: rgba(220,38,38,0.22);
+  color: #991b1b;
+  text-decoration: line-through;
 }
 
 /* ── Drop zone — activity label (full-row assign) ──────────── */
