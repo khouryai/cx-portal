@@ -13283,6 +13283,8 @@ let _laDrawer = {
   dirty:       false,
   baseVersion: null,   // for optimistic-concurrency check on save
 };
+let _laCreateSel = [];      // [{actId, iso, el}] empty cells staged for bulk create
+let _laCreateResState = []; // [{resourceId, qty, isBart, label}] temp for create modal
 let _planningShowP6      = false;                      // Calendar/Timeline P6 overlay toggle
 let _conflictFilter      = 'all';                      // all | pto | double | p6 | hours | unmatched
 let _laAssignMode        = false;                      // Assign Resources drag-and-drop mode
@@ -13297,6 +13299,7 @@ const _SHIFT_VISUAL = {
   day_shift:     { bg: '#FFEB3B', text: '#1f2937', label: 'Day',     icon: '☀' },
   night_shift:   { bg: '#2196F3', text: '#ffffff', label: 'Night',   icon: '☾' },
   blanket_shift: { bg: '#1f2937', text: '#ffffff', label: 'Blanket', icon: '■' },
+  swing_shift:   { bg: '#FF9800', text: '#1f2937', label: 'Swing',   icon: '↔' },
   custom:        { bg: '#6b7280', text: '#ffffff', label: 'Custom',  icon: '◆' },
 };
 const _CANCEL_VISUAL   = { bg: '#b91c1c', text: '#ffffff', label: 'Cancelled', icon: '✕' };
@@ -14303,15 +14306,16 @@ const _TL_MONTH_COLORS = [
 // ── Derive shift visual from time range (fixes colour mismatches) ──
 function _tlgShiftVisual(s) {
   if (s.isCancel) return _CANCEL_VISUAL;
-  if (s.all_day)  return _SHIFT_VISUAL.blanket_shift;
+  if (s.all_day || s.shift_type === 'blanket_shift') return _SHIFT_VISUAL.blanket_shift;
+  if (s.shift_type && _SHIFT_VISUAL[s.shift_type]) return _SHIFT_VISUAL[s.shift_type];
   if (s.start_time) {
     const h = parseInt(s.start_time.slice(0, 2), 10);
-    // 04:00 – 13:59 → day shift (yellow)   14:00 – 03:59 → night shift (blue)
-    return (h >= 4 && h < 14) ? _SHIFT_VISUAL.day_shift : _SHIFT_VISUAL.night_shift;
+    if (h >= 4  && h < 12) return _SHIFT_VISUAL.day_shift;
+    if (h >= 12 && h < 18) return _SHIFT_VISUAL.swing_shift;
+    return _SHIFT_VISUAL.night_shift;
   }
-  return _SHIFT_VISUAL[s.shift_type] || _SHIFT_VISUAL.custom;
+  return _SHIFT_VISUAL.custom;
 }
-
 // ── Annotate consecutive same-shift runs ─────────────────────────
 function _tlgAnnotateRuns(groups, days) {
   groups.forEach(g => {
@@ -14558,8 +14562,8 @@ function _laRenderGrid(target, { groups, days, milestones }) {
             onclick="_laCellClick(event,'${s.event_id}','${actId||''}','${iso}',this)"
             oncontextmenu="event.preventDefault();_laCellContextMenu(event,'${s.event_id}','${actId||''}','${iso}',this);return false;"
             data-tlg-tip="${tip}"
-          >${s.bartChips && s.bartChips.length
-              ? `<div class="tlg-bart-chips">${s.bartChips.map(c => `<span class="tlg-bart-chip${c.denied?' tlg-bart-chip-denied':''}">${escapeHtml(c.label)}</span>`).join('')}</div>`
+          >${s.resChips && s.resChips.length
+              ? `<div class="tlg-res-chips">${s.resChips.map(ch => `<span class="tlg-res-chip ${ch.isBart?'tlg-res-bart':'tlg-res-hit'}${ch.denied?' tlg-res-denied':''}">${escapeHtml(ch.label)}</span>`).join('')}</div>`
               : s.cellLabel ? `<span class="tlg-cell-location">${escapeHtml(s.cellLabel)}</span>` : ''
             }${badgeHtml}${isCellSel ? `<span class="la-cell-sel-mark">✓</span>` : ''}<span class="tlg-fill-handle" onmousedown="_laFillStart(event,'${s.event_id}','${actId||''}','${iso}',this.parentElement)" title="Drag to fill across days"></span></div>`;
         });
@@ -14648,20 +14652,19 @@ function _planningEventResourceInitials(eventId) {
 
 // Returns compact chip objects for BART roles only on a single event.
 // Each chip: { label: "TTO×2", denied: bool }
-function _planningEventBartChips(eventId) {
-  return PLANNING_EVENT_RES
+function _planningEventResChips(eventId) {
+  return (PLANNING_EVENT_RES || [])
     .filter(er => er.event_id === eventId)
     .map(er => {
-      const r = PLANNING_RESOURCES.find(x => x.id === er.resource_id);
-      if (!r || r.company !== 'BART') return null;
-      const initials = r.initials ||
-        r.display_name?.split(/\s+/).map(w => w[0]).join('').slice(0, 3).toUpperCase() || '?';
-      const qty = (er.quantity || 1) > 1 ? `×${er.quantity}` : '';
-      return { label: initials + qty, denied: !!er.denied_at };
+      const r = (PLANNING_RESOURCES || []).find(x => x.id === er.resource_id);
+      if (!r) return null;
+      const initials = r.initials || (r.display_name || '?').split(/\s+/).map(w => w[0]).join('').slice(0, 3).toUpperCase();
+      const qty = (er.quantity || 1) > 1 ? '\u00d7' + er.quantity : '';
+      return { label: initials + qty, denied: !!er.denied_at, isBart: r.company === 'BART' };
     })
     .filter(Boolean);
 }
-
+function _planningEventBartChips(eventId) { return _planningEventResChips(eventId).filter(c => c.isBart); }
 // Like _laBuildByDate but attaches BART chips for Activity view cells.
 function _laBuildByDateActivity(events, days) {
   const byDate = {};
@@ -14672,7 +14675,7 @@ function _laBuildByDateActivity(events, days) {
       event_id: e.id, shift_type: e.shift_type, start_time: e.start_time,
       end_time: e.end_time, all_day: !!e.all_day, isCancel, title: e.title || '',
       cellLabel: '',
-      bartChips: isCancel ? [] : _planningEventBartChips(e.id),
+      resChips: isCancel ? [] : _planningEventResChips(e.id),
     });
   });
   return byDate;
@@ -14947,11 +14950,20 @@ function _laDrawerCellHTML(ev) {
         <label class="la-drawer-label">Shift</label>
         <select class="la-drawer-input" id="dw-cell-shift" onchange="_laDrawerMarkDirty()">
           <option value="">—</option>
-          ${shifts.map(s => `<option value="${s.code}" ${ev.shift_type === (s.code === 'day' ? 'day_shift' : s.code === 'night' ? 'night_shift' : s.code === 'blanket' ? 'blanket_shift' : s.code) ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}
+          <option value="day_shift"     ${ev.shift_type==='day_shift'?'selected':''}>\u2600 Day</option>
+          <option value="swing_shift"   ${ev.shift_type==='swing_shift'?'selected':''}>\u2194 Swing</option>
+          <option value="night_shift"   ${ev.shift_type==='night_shift'?'selected':''}>\u263e Night</option>
+          <option value="blanket_shift" ${ev.shift_type==='blanket_shift'?'selected':''}>\u25a0 Blanket</option>
         </select>
       </div>
     </div>
 
+    <div class="la-drawer-section">
+      <label class="la-drawer-label">Work hours <span style="font-size:9px;font-weight:400;color:var(--gray-400);">0700-1500 · auto-sets shift</span></label>
+      <input class="la-drawer-input" id="dw-cell-hours"
+        value="${ev.start_time && ev.end_time ? ev.start_time.replace(':','').slice(0,4)+'-'+ev.end_time.replace(':','').slice(0,4) : ev.start_time ? ev.start_time.replace(':','').slice(0,4) : ''}"
+        placeholder="0700-1500" oninput="_laDrawerCellHoursChanged()">
+    </div>
     <div class="la-drawer-section la-drawer-row-2">
       <div>
         <label class="la-drawer-label">Start time</label>
@@ -15176,10 +15188,9 @@ async function _laDrawerSave() {
   if (_laDrawer.mode === 'cell') {
     const ev = PLANNING_EVENTS.find(e => e.id === _laDrawer.targetId);
     if (!ev) return;
-    const shiftCode = document.getElementById('dw-cell-shift')?.value;
-    const shiftTypeFromCode = {
-      day: 'day_shift', night: 'night_shift', blanket: 'blanket_shift',
-    }[shiftCode] || (shiftCode ? 'custom' : null);
+    const shiftCode = document.getElementById('dw-cell-shift')?.value || '';
+    // shift_type is stored directly (day_shift, swing_shift, night_shift, blanket_shift)
+    const shiftTypeFromCode = shiftCode || null;
 
     const payload = {
       title:       document.getElementById('dw-cell-title')?.value?.trim() || '(untitled)',
@@ -15575,11 +15586,18 @@ function _laClearResSelection() {
 // Floating action banner — shown whenever cells are selected or clipboard has content
 function _laCellSelActionsHTML() {
   const n = _laSelectedCellKeys.size;
+  const nc = _laCreateSel.length;
   const hasClipboard = !!_laClipboard;
   const hasTarget = !!_laPasteTarget;
-  if (!n && !hasClipboard) return '';
+  if (!n && !hasClipboard && !nc) return '';
 
   const parts = [];
+  if (nc > 0) {
+    parts.push(`<span style="font-size:12px;font-weight:700;color:#065f46;">\u271a ${nc} date${nc>1?'s':''} staged</span>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;background:#d1fae5;border-color:#6ee7b7;color:#065f46;" onclick="_laOpenCreateEventModal(_laCreateSel.slice())">\u2795 Create ${nc} event${nc>1?'s':''}</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearCreateSel()">\u2715 Clear</button>`);
+    if (n > 0 || hasClipboard) parts.push('<span style="width:1px;background:#e5e7eb;align-self:stretch;margin:0 4px;"></span>');
+  }
   if (n > 0) {
     parts.push(`<span style="font-size:12px;font-weight:700;color:#7f0000;">${n} cell${n>1?'s':''} selected</span>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearCellSelection()">✕ Clear</button>`);
@@ -15674,12 +15692,218 @@ function _laCellClick(ev, eventId, actId, iso, el) {
   }
 }
 
-// Click on an empty cell — used to set the paste target
+// Click on an empty cell
 function _laEmptyCellClick(ev, actId, iso, el) {
-  if (!_laClipboard || !actId) return;
+  if (!actId) return;
   ev.stopPropagation();
-  _laSetPasteTarget(actId, iso, el);
+  if (_laClipboard) { _laSetPasteTarget(actId, iso, el); return; }
+  if (ev.ctrlKey || ev.metaKey) { ev.preventDefault(); _laToggleCreateSel(actId, iso, el); return; }
+  if (!_laCreateSel.some(s => s.actId === actId && s.iso === iso)) _laCreateSel.push({ actId, iso, el });
+  const cells = _laCreateSel.slice();
+  _laClearCreateSel(false);
+  _laOpenCreateEventModal(cells);
 }
+
+function _laToggleCreateSel(actId, iso, el) {
+  const idx = _laCreateSel.findIndex(s => s.actId === actId && s.iso === iso);
+  if (idx >= 0) { _laCreateSel.splice(idx, 1); el?.classList.remove('la-create-sel'); }
+  else          { _laCreateSel.push({ actId, iso, el }); el?.classList.add('la-create-sel'); }
+  _laRefreshActionBanner();
+}
+
+function _laClearCreateSel(refresh = true) {
+  _laCreateSel.forEach(s => s.el?.classList.remove('la-create-sel'));
+  _laCreateSel = [];
+  if (refresh) _laRefreshActionBanner();
+}
+// ─── Shift inference from military time "0700-1500" ─────────────────────
+function _laInferShiftFromHours(hoursRaw) {
+  if (!hoursRaw || !hoursRaw.trim()) return { start: null, end: null, shift_type: null };
+  const raw = hoursRaw.trim().replace(/\s+/g, '');
+  const m = raw.match(/^(\d{3,4})(?:[-\u2013](\d{3,4}))?$/);
+  if (!m) return { start: null, end: null, shift_type: null };
+  const pad = s => s.length === 3 ? '0' + s : s;
+  const toTime = s => s ? pad(s).slice(0,2) + ':' + pad(s).slice(2) : null;
+  const start = toTime(m[1]), end = toTime(m[2] || null);
+  const h = start ? parseInt(start.slice(0,2), 10) : -1;
+  const shift_type = h < 0       ? 'blanket_shift'
+    : (h >= 4 && h < 12)  ? 'day_shift'
+    : (h >= 12 && h < 18) ? 'swing_shift'
+    : 'night_shift';
+  return { start, end, shift_type };
+}
+
+// Called by the Work Hours input in the existing cell drawer
+function _laDrawerCellHoursChanged() {
+  _laDrawerMarkDirty();
+  const { start, end, shift_type } = _laInferShiftFromHours(document.getElementById('dw-cell-hours')?.value || '');
+  if (start) { const el = document.getElementById('dw-cell-start'); if (el) el.value = start; }
+  if (end)   { const el = document.getElementById('dw-cell-end');   if (el) el.value = end;   }
+  const sel = document.getElementById('dw-cell-shift');
+  if (shift_type && sel && !sel.dataset.manualOverride) sel.value = shift_type;
+}
+
+// ─── Create Event modal (single or multi-date) ───────────────────────────
+function _laOpenCreateEventModal(cells) {
+  if (!cells || !cells.length) return;
+  _laCreateResState = [];
+  const actIds   = [...new Set(cells.map(c => c.actId))];
+  const actLabel = actIds.length === 1
+    ? (() => { const a = (PLANNING_ACTIVITIES||[]).find(x => x.id === actIds[0]); return a?.description || a?.activity_id_text || '—'; })()
+    : actIds.length + ' activities';
+
+  const dateChips = cells.map(c => {
+    const d = (typeof dayjs !== 'undefined') ? dayjs(c.iso) : null;
+    const isWknd = d ? (d.day() === 0 || d.day() === 6) : false;
+    const bg = isWknd ? '#fef3c7' : '#d1fae5', col = isWknd ? '#92400e' : '#065f46', brd = isWknd ? '#fcd34d' : '#6ee7b7';
+    return '<span style="display:inline-block;background:' + bg + ';color:' + col + ';font-size:11px;font-weight:600;padding:2px 8px;border-radius:12px;border:1px solid ' + brd + ';">' + escapeHtml(d ? d.format('ddd MMM D') : c.iso) + '</span>';
+  }).join(' ');
+
+  const allRes    = (PLANNING_RESOURCES || []).filter(r => r.is_active);
+  const hitRes    = allRes.filter(r => (r.kind === 'person' || !r.kind) && r.company !== 'BART');
+  const bartRoles = allRes.filter(r => r.kind === 'role' && r.is_requestable);
+  const hitOpts   = hitRes.map(r  => '<option value="' + r.id + '" data-name="' + escapeHtml(r.display_name) + '">' + escapeHtml(r.display_name) + '</option>').join('');
+  const bartOpts  = bartRoles.map(r => '<option value="' + r.id + '" data-name="' + escapeHtml(r.display_name) + '">' + escapeHtml(r.display_name) + '</option>').join('');
+
+  const saveFn = '_laSaveCreateEvents(' + JSON.stringify(cells.map(c => ({ actId: c.actId, iso: c.iso }))) + ')';
+
+  modal({
+    title: cells.length > 1 ? '➕ Create ' + cells.length + ' Events' : '➕ Create Event',
+    sub:   actLabel,
+    size:  'medium',
+    body: (
+      '<div style="margin-bottom:14px;">' +
+        '<div style="font-size:11px;color:var(--gray-500);margin-bottom:6px;">Date' + (cells.length > 1 ? 's' : '') + ' (' + cells.length + '):</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + dateChips + '</div>' +
+      '</div>' +
+      '<div class="form-grid">' +
+        '<div class="form-field">' +
+          '<label>Work hours <span style="font-size:10px;font-weight:400;color:var(--gray-500);">e.g. 0700-1500</span></label>' +
+          '<input type="text" id="ce-hours" class="form-input" placeholder="0700-1500" oninput="_laCEHoursChanged()">' +
+        '</div>' +
+        '<div class="form-field">' +
+          '<label>Shift type <span style="font-size:10px;font-weight:400;color:var(--gray-500);">auto-detected</span></label>' +
+          '<select id="ce-shift" class="form-input" onchange="this.dataset.manual=1;">' +
+            '<option value="">— select —</option>' +
+            '<option value="day_shift">☀ Day (0600–1800)</option>' +
+            '<option value="swing_shift">↔ Swing (1200–2200)</option>' +
+            '<option value="night_shift">☾ Night (1800–0600)</option>' +
+            '<option value="blanket_shift">■ Blanket (all day)</option>' +
+          '</select>' +
+        '</div>' +
+        '<div class="form-field form-field-full">' +
+          '<label>Title <span style="font-size:10px;font-weight:400;color:var(--gray-500);">optional</span></label>' +
+          '<input type="text" id="ce-title" class="form-input" placeholder="Defaults to activity description">' +
+        '</div>' +
+        '<div class="form-field form-field-full">' +
+          '<label>Notes</label>' +
+          '<textarea id="ce-notes" class="form-input" rows="2" placeholder="Any notes for this shift…"></textarea>' +
+        '</div>' +
+      '</div>' +
+      '<div style="margin-top:12px;padding:10px;background:#f8fafc;border-radius:6px;">' +
+        '<div style="font-size:11px;font-weight:600;margin-bottom:6px;">Hitachi resources</div>' +
+        '<div id="ce-hit-pills" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;min-height:22px;"><span style="color:var(--gray-400);font-size:12px;">None</span></div>' +
+        '<div style="display:flex;gap:6px;">' +
+          '<select id="ce-hit-pick" class="form-input" style="flex:1;"><option value="">+ Add Hitachi person…</option>' + hitOpts + '</select>' +
+          '<button class="form-secondary" style="font-size:11px;white-space:nowrap;" onclick="_laCEAddResource('hit')">Add</button>' +
+        '</div>' +
+      '</div>' +
+      '<div style="margin-top:8px;padding:10px;background:#f8fafc;border-radius:6px;">' +
+        '<div style="font-size:11px;font-weight:600;margin-bottom:6px;">BART requests</div>' +
+        '<div id="ce-bart-pills" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;min-height:22px;"><span style="color:var(--gray-400);font-size:12px;">None</span></div>' +
+        '<div style="display:flex;gap:6px;">' +
+          '<select id="ce-bart-pick" class="form-input" style="flex:1;"><option value="">+ Request BART role…</option>' + bartOpts + '</select>' +
+          '<input type="number" id="ce-bart-qty" class="form-input" value="1" min="1" max="50" style="width:60px;" title="Qty">' +
+          '<button class="form-secondary" style="font-size:11px;white-space:nowrap;" onclick="_laCEAddResource('bart')">Add</button>' +
+        '</div>' +
+      '</div>'
+    ),
+    footer: (
+      '<button class="form-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="form-submit" id="ce-save-btn" onclick="' + saveFn + '">➕ Create ' + cells.length + ' event' + (cells.length > 1 ? 's' : '') + '</button>'
+    ),
+  });
+  window._laCECells = cells;
+}
+
+function _laCEHoursChanged() {
+  const { shift_type } = _laInferShiftFromHours(document.getElementById('ce-hours')?.value || '');
+  const sel = document.getElementById('ce-shift');
+  if (sel && !sel.dataset.manual && shift_type) sel.value = shift_type;
+}
+
+function _laCEAddResource(company) {
+  const isBart = company === 'bart';
+  const pick   = document.getElementById(isBart ? 'ce-bart-pick' : 'ce-hit-pick');
+  if (!pick || !pick.value) return;
+  const qty  = isBart ? (parseInt(document.getElementById('ce-bart-qty')?.value) || 1) : 1;
+  const name = pick.options[pick.selectedIndex]?.dataset?.name || pick.value;
+  _laCreateResState.push({ resourceId: pick.value, qty, isBart, label: name });
+  pick.value = '';
+  _laCERefreshPills();
+}
+
+function _laCERemoveResource(idx) {
+  _laCreateResState.splice(idx, 1);
+  _laCERefreshPills();
+}
+
+function _laCERefreshPills() {
+  const pill = (r) => '<span class="la-drawer-pill">' + escapeHtml(r.label) + (r.qty > 1 ? ' ×' + r.qty : '') +
+    ' <button onclick="_laCERemoveResource(' + _laCreateResState.indexOf(r) + ')" title="Remove">×</button></span>';
+  const none = '<span style="color:var(--gray-400);font-size:12px;">None</span>';
+  const hp = document.getElementById('ce-hit-pills');
+  const bp = document.getElementById('ce-bart-pills');
+  if (hp) hp.innerHTML = _laCreateResState.filter(r => !r.isBart).map(pill).join('') || none;
+  if (bp) bp.innerHTML = _laCreateResState.filter(r =>  r.isBart).map(pill).join('') || none;
+}
+
+async function _laSaveCreateEvents(cells) {
+  if (!cells || !cells.length) return;
+  const btn = document.getElementById('ce-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  const hoursRaw  = (document.getElementById('ce-hours')?.value || '').trim();
+  const { start, end } = _laInferShiftFromHours(hoursRaw);
+  const shiftType = document.getElementById('ce-shift')?.value || null;
+  const title     = (document.getElementById('ce-title')?.value || '').trim() || null;
+  const notes     = (document.getElementById('ce-notes')?.value || '').trim() || null;
+  const allDay    = shiftType === 'blanket_shift' && !start;
+
+  const eventRows = cells.map(({ actId, iso }) => ({
+    planning_activity_id: actId,
+    event_date:  iso,
+    title:       title     || null,
+    start_time:  start     || null,
+    end_time:    end       || null,
+    shift_type:  shiftType || null,
+    all_day:     allDay,
+    notes:       notes     || null,
+    status:      'planned',
+    version:     1,
+    created_by:  (typeof currentProfile !== 'undefined') ? (currentProfile?.id || null) : null,
+  }));
+
+  try {
+    const created = await _dbInsert('planning_events', eventRows);
+    if (_laCreateResState.length && created?.length) {
+      const resRows = [];
+      created.forEach(ev => _laCreateResState.forEach(r => resRows.push({
+        event_id: ev.id, resource_id: r.resourceId,
+        role: 'owner', quantity: r.qty, assignment_source: 'manual',
+      })));
+      if (resRows.length) await _dbInsert('planning_event_resources', resRows);
+    }
+    closeModal();
+    toast('✓ ' + (created?.length || cells.length) + ' event' + (cells.length > 1 ? 's' : '') + ' created', 'success');
+    await loadPlanningData(true);
+    _renderLookaheadTabBody();
+  } catch (err) {
+    toast('Create failed: ' + err.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '➕ Create'; }
+  }
+}
+
 
 function _laSetPasteTarget(actId, iso, el) {
   document.querySelectorAll('.la-paste-target').forEach(x => x.classList.remove('la-paste-target'));
@@ -16702,15 +16926,16 @@ function _laOpenNewActivityModal() {
     body: `
       <div class="form-grid">
         <div class="form-field">
-          <label>Activity ID <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
+          <label>Activity ID <span style="font-size:11px;font-weight:400;color:var(--gray-500);">— auto-filled if P6 linked</span></label>
           <input type="text" id="new-act-id" class="form-input" placeholder="DCS-101">
         </div>
         <div class="form-field">
-          <label>Location</label>
-          <input type="text" id="new-act-loc" class="form-input" placeholder="W40, Cab, Hayward, etc.">
+          <label>Location <span style="color:#dc2626;">*</span></label>
+          <input type="text" id="new-act-loc" class="form-input" placeholder="W40, Cab, Hayward, etc." oninput="_laNewActivityLocChanged()">
+          <div id="new-act-loc-phase-hint" style="font-size:11px;margin-top:3px;min-height:16px;"></div>
         </div>
         <div class="form-field">
-          <label>Phase <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
+          <label>Phase</label>
           <input type="text" id="new-act-phase" class="form-input" placeholder="e.g. Phase 1">
         </div>
         <div class="form-field form-field-full">
@@ -16718,34 +16943,29 @@ function _laOpenNewActivityModal() {
           <input type="text" id="new-act-desc" class="form-input" placeholder="What is this activity?" required>
         </div>
         <div class="form-field">
-          <label>SSWP <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
+          <label>SSWP</label>
           <input type="text" id="new-act-sswp" class="form-input" placeholder="SSWP reference">
         </div>
-        <div class="form-field">
-          <label>Work hours <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
-          <input type="text" id="new-act-hours" class="form-input" placeholder="e.g. 8h, 12h">
-        </div>
         <div class="form-field form-field-full">
-          <label>🔗 Linked Test Register Activity <span style="font-weight:400;color:var(--gray-500);">(optional — leave blank for overhead activities)</span></label>
-          <select id="new-act-linked-tra" class="form-input">
+          <label>🔗 P6 Activity <span style="font-size:11px;font-weight:400;color:var(--gray-500);">— filtered by location · auto-fills Activity ID</span></label>
+          <select id="new-act-p6" class="form-input" onchange="_laNewActivityP6Changed()">
             <option value="">— Not linked —</option>
-            ${(() => {
-              const counts = {};
-              TI.forEach(t => { const k = (t.Activity||'').trim(); if (k) counts[k] = (counts[k]||0)+1; });
-              return Object.entries(counts).sort((a,b)=>a[0].localeCompare(b[0]))
-                .map(([n,c]) => `<option value="${escapeHtml(n)}">${escapeHtml(n)} (${c})</option>`).join('');
-            })()}
           </select>
         </div>
         <div class="form-field form-field-full">
-          <label>Notes <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
+          <label>🔗 Test Register Activity <span style="font-size:11px;font-weight:400;color:var(--gray-500);">— filtered by location</span></label>
+          <select id="new-act-linked-tra" class="form-input">
+            <option value="">— Not linked —</option>
+          </select>
+        </div>
+        <div class="form-field form-field-full">
+          <label>Notes</label>
           <textarea id="new-act-notes" class="form-input" rows="2"></textarea>
         </div>
       </div>
       <p style="font-size:12px;color:var(--gray-500);margin-top:14px;line-height:1.5;">
-        After creating, the new row will appear in the lookahead. Add shift cells by copy/pasting an existing event,
-        using the drag-to-fill handle, or clicking the cell to open the detail editor.
-        Linking to a Test Register Activity unlocks per-cell execution badges.
+        After creating, the new row appears in the lookahead. Add shift cells by clicking a cell or using copy/paste.
+        Work hours (e.g. 0700–1500) are set per day-cell in the cell details drawer.
       </p>
     `,
     footer: `
@@ -16753,388 +16973,112 @@ function _laOpenNewActivityModal() {
       <button class="form-submit" onclick="_laSaveNewActivity()">Create Activity</button>
     `,
   });
+  // Populate cascade pickers (unfiltered on open)
+  _laNewActivityRebuildLinks();
   setTimeout(() => document.getElementById('new-act-desc')?.focus(), 50);
 }
 
-// ── Link Activity → Test Register Activity + P6 Activity ───────
-// One modal with cascade-filtered pickers. Some lookahead rows link to
-// a Test Register Activity, some only to a P6 activity, some to both,
-// some to neither (pure overhead). All four states are supported.
-
-// Infer the activity's subsystem when planning_activities.subsystem doesn't exist as a column.
-// Order: assigned resources' subsystem → existing TI link's subsystem → null.
-function _planningInferActivitySubsystem(a) {
-  if (a.subsystem) return a.subsystem;
-  if (a.linked_test_register_activity) {
-    const ti = TI.find(t => (t.Activity || '').trim() === (a.linked_test_register_activity || '').trim());
-    if (ti?.Subsystem) return ti.Subsystem;
+// Called on every keystroke in the Location field — auto-fills phase + rebuilds pickers
+function _laNewActivityLocChanged() {
+  _laNewActivityRebuildLinks();
+  const locVal  = (document.getElementById('new-act-loc')?.value || '').trim();
+  const phaseEl = document.getElementById('new-act-phase');
+  const hintEl  = document.getElementById('new-act-loc-phase-hint');
+  if (!phaseEl || !hintEl) return;
+  const inferred = _laInferPhaseFromLocation(locVal);
+  const current  = phaseEl.value.trim();
+  if (!inferred) {
+    hintEl.innerHTML = locVal ? `<span style="color:var(--gray-400);">Ad-hoc location — set phase manually if needed</span>` : '';
+    return;
   }
-  const actRes = PLANNING_ACTIVITY_RES.filter(ar => ar.planning_activity_id === a.id);
-  for (const ar of actRes) {
-    const r = PLANNING_RESOURCES.find(x => x.id === ar.resource_id);
-    if (r?.subsystem) return r.subsystem;
+  if (!current || current === inferred) {
+    phaseEl.value = inferred;
+    hintEl.innerHTML = `<span style="color:var(--good);">✓ Phase auto-set: ${escapeHtml(inferred)}</span>`;
+  } else {
+    const safe = JSON.stringify(inferred);
+    hintEl.innerHTML = `<span>Master suggests: <strong>${escapeHtml(inferred)}</strong></span>
+      <button type="button" class="form-secondary" style="font-size:10px;padding:1px 6px;margin-left:6px;"
+        onclick="document.getElementById('new-act-phase').value=${safe};document.getElementById('new-act-loc-phase-hint').innerHTML='<span style=\'color:var(--good);\'>✓ Phase auto-set: ${escapeHtml(inferred)}</span>';">Use</button>`;
   }
-  // Fallback: check any event-level resource for this activity
-  const ev = PLANNING_EVENTS.find(e => e.planning_activity_id === a.id);
-  if (ev) {
-    const er = PLANNING_EVENT_RES.find(x => x.event_id === ev.id);
-    if (er) {
-      const r = PLANNING_RESOURCES.find(x => x.id === er.resource_id);
-      if (r?.subsystem) return r.subsystem;
-    }
-  }
-  return null;
 }
 
-function _laOpenLinkActivityModal(activityId) {
-  const a = PLANNING_ACTIVITIES.find(x => x.id === activityId);
-  if (!a) return;
-
-  // Snapshot current links
-  const curTRA   = a.linked_test_register_activity || '';
-  const curP6Id  = a.linked_p6_activity_id || '';
-
-  // Cascade filter defaults — from the activity's known location + inferred subsystem.
-  // Resolve ad-hoc location codes ("W40") to master names ("W40 Millbrae Station").
-  const defaultLocation  = _laResolveLocationPrefix((a.location || '').trim());
-  const defaultSubsystem = _planningInferActivitySubsystem(a) || '';
-
-  // Build pools: subsystems from TI; locations from master LOCS (fallback: TI locations)
-  const allSubsystems = [...new Set(TI.map(t => (t.Subsystem||'').trim()).filter(Boolean))].sort();
-  const tiLocations   = [...new Set(TI.map(t => (t.Location||'').trim()).filter(Boolean))];
-  const masterLocations = (LOCS || []).map(l => l.name).filter(Boolean);
-  // Union of master + TI locations, deduped
-  const allLocations  = [...new Set([...masterLocations, ...tiLocations])].sort();
-
-  modal({
-    title: '🔗 Link Activity',
-    sub:   a.description || a.activity_id_text || 'Unnamed activity',
-    size:  'large',
-    body: `
-      <div id="link-modal-tabs" style="display:flex;gap:0;border-bottom:2px solid var(--gray-200);margin-bottom:14px;">
-        <button class="admin-tab active" data-link-tab="links" onclick="_laLinkSwitchTab('links')">🔗 Links</button>
-        <button class="admin-tab" data-link-tab="progress" onclick="_laLinkSwitchTab('progress')">📊 Progress</button>
-      </div>
-
-      <div id="link-tab-links">
-        <!-- ── Cascade filters (auto-populated, user can adjust) ── -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;padding:10px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;">
-          <div class="form-field">
-            <label style="font-size:11px;">Filter — Subsystem</label>
-            <select id="link-filter-sub" class="form-input" onchange="_laLinkRebuildOptions()">
-              <option value="">All subsystems</option>
-              ${allSubsystems.map(s => `<option value="${escapeHtml(s)}" ${s === defaultSubsystem ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="form-field">
-            <label style="font-size:11px;">Filter — Location</label>
-            <select id="link-filter-loc" class="form-input" onchange="_laLinkRebuildOptions()">
-              <option value="">All locations</option>
-              ${allLocations.map(l => `<option value="${escapeHtml(l)}" ${_laMatchesLocation(defaultLocation, l) ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
-            </select>
-          </div>
-        </div>
-
-        <!-- ── Test Register Activity picker ── -->
-        <div class="form-field form-field-full">
-          <label>Test Register Activity <span style="font-weight:400;color:var(--gray-500);">(maps to TI.Activity group)</span></label>
-          <select id="link-tra-select" class="form-input" style="width:100%;">
-            <option value="">— Not linked —</option>
-          </select>
-          <div id="link-tra-suggest" style="margin-top:6px;font-size:11px;color:#1e40af;"></div>
-        </div>
-
-        <!-- ── P6 Activity picker ── -->
-        <div class="form-field form-field-full" style="margin-top:14px;">
-          <label>P6 Activity <span style="font-weight:400;color:var(--gray-500);">(from imported P6 schedule)</span></label>
-          <select id="link-p6-select" class="form-input" style="width:100%;">
-            <option value="">— Not linked —</option>
-          </select>
-          <div id="link-p6-suggest" style="margin-top:6px;font-size:11px;color:#1e40af;"></div>
-        </div>
-
-        <p style="font-size:12px;color:var(--gray-500);margin-top:14px;line-height:1.5;">
-          Filters cascade — adjust Subsystem/Location above to narrow the options.
-          <strong>Test Register Activity</strong> drives test-execution badges and progress chips.
-          <strong>P6 Activity</strong> drives schedule-drift KPIs.
-          Leave both blank for pure overhead rows (mobilization, training, etc.).
-        </p>
-      </div>
-
-      <div id="link-tab-progress" style="display:none;"></div>
-    `,
-    footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-submit" onclick="_laSaveLinkActivity('${activityId}')">Save Links</button>
-    `,
-  });
-
-  // Initial population (and re-population on filter change)
-  _laLinkActivityId = activityId;
-  _laLinkRebuildOptions();
-}
-
-let _laLinkActivityId = null;
-
-function _laLinkSwitchTab(name) {
-  document.querySelectorAll('[data-link-tab]').forEach(b => b.classList.toggle('active', b.dataset.linkTab === name));
-  document.getElementById('link-tab-links').style.display    = name === 'links'    ? '' : 'none';
-  document.getElementById('link-tab-progress').style.display = name === 'progress' ? '' : 'none';
-  if (name === 'progress') _laLinkRenderProgress();
-}
-
-function _laLinkRebuildOptions() {
-  const a = PLANNING_ACTIVITIES.find(x => x.id === _laLinkActivityId);
-  if (!a) return;
-  const sub = document.getElementById('link-filter-sub').value;
-  const loc = document.getElementById('link-filter-loc').value;
-  const curTRA   = a.linked_test_register_activity || '';
-  const curP6Id  = a.linked_p6_activity_id || '';
-
-  // ── Test Register Activity options (filtered) ──
-  // Use prefix matching for location: "W40" matches "W40 Millbrae Station" and vice-versa
-  const pool = TI.filter(t =>
-    (!sub || (t.Subsystem || '').trim() === sub) &&
-    (!loc || _laMatchesLocation(loc, (t.Location || '').trim()))
-  );
-  const activityCounts = {};
-  pool.forEach(t => {
-    const k = (t.Activity || '').trim();
-    if (!k) return;
-    activityCounts[k] = (activityCounts[k] || 0) + 1;
-  });
-  const sortedActs = Object.entries(activityCounts).sort((a,b) => a[0].localeCompare(b[0]));
-  // Always include the current link (even if filter would hide it) so users can see what's set
-  if (curTRA && !activityCounts[curTRA]) {
-    sortedActs.unshift([curTRA + ' (outside filter)', 0]);
+// Called when P6 picker changes — auto-fills Activity ID from p6_id
+function _laNewActivityP6Changed() {
+  const p6El  = document.getElementById('new-act-p6');
+  const idEl  = document.getElementById('new-act-id');
+  if (!p6El || !idEl) return;
+  const p6Id = p6El.tomselect ? p6El.tomselect.getValue() : p6El.value;
+  if (!p6Id) {
+    idEl.style.color = '';
+    return;
   }
-  const traSelect = document.getElementById('link-tra-select');
-  traSelect.innerHTML = '<option value="">— Not linked —</option>' +
-    sortedActs.map(([name, count]) => `
-      <option value="${escapeHtml(name.replace(' (outside filter)', ''))}" ${name.replace(' (outside filter)', '') === curTRA ? 'selected' : ''}>
-        ${escapeHtml(name)}${count > 0 ? ` (${count} test${count>1?'s':''})` : ''}
-      </option>`).join('');
+  const p6 = (P6_ACTS || []).find(p => p.id === p6Id);
+  if (p6) {
+    idEl.value = p6.p6_id || p6.p6_name || '';
+    idEl.style.color = 'var(--blue)';
+  }
+}
 
-  // Fuse suggestion against the (filtered) pool
-  const suggestEl = document.getElementById('link-tra-suggest');
-  if (!curTRA && window.Fuse && (a.description || '').length > 3 && sortedActs.length > 0) {
-    const fuse = new Fuse(sortedActs.map(([n]) => ({ n })), {
-      keys: ['n'], threshold: 0.45, includeScore: true, ignoreLocation: true,
-    });
-    const res = fuse.search(a.description);
-    if (res.length && res[0].score < 0.45) {
-      const name = res[0].item.n;
-      suggestEl.innerHTML = `💡 Suggested: <strong>${escapeHtml(name)}</strong>
-        <button type="button" class="form-secondary" style="font-size:10px;padding:2px 6px;margin-left:6px;"
-          onclick="document.getElementById('link-tra-select').value=${JSON.stringify(name)};this.parentElement.style.display='none';">Use</button>`;
-    } else suggestEl.innerHTML = '';
-  } else suggestEl.innerHTML = '';
+// Rebuilds both P6 and TRA dropdowns, cascade-filtered by current Location value
+function _laNewActivityRebuildLinks() {
+  const loc = (document.getElementById('new-act-loc')?.value || '').trim();
 
-  // ── P6 Activity options (filtered by location — prefix match bidirectional) ──
-  // p6_location_code may be a short code ("W40"); filter loc may be full name ("W40 Millbrae Station")
+  // ── P6 options ──
   const p6Pool = (P6_ACTS || []).filter(p =>
     !loc || _laMatchesLocation(loc, (p.p6_location_code || '').trim())
   );
-  // Sort by p6_id
-  p6Pool.sort((a,b) => (a.p6_id || '').localeCompare(b.p6_id || ''));
-  // Always include current link
-  if (curP6Id && !p6Pool.find(p => p.id === curP6Id)) {
-    const cur = (P6_ACTS || []).find(p => p.id === curP6Id);
-    if (cur) p6Pool.unshift(cur);
-  }
-  const p6Select = document.getElementById('link-p6-select');
-  p6Select.innerHTML = '<option value="">— Not linked —</option>' +
-    p6Pool.map(p => `
-      <option value="${p.id}" ${p.id === curP6Id ? 'selected' : ''}>
-        ${escapeHtml(p.p6_id || '?')} · ${escapeHtml((p.p6_name || '').slice(0, 60))}${(p.p6_name||'').length > 60 ? '…' : ''} · ${escapeHtml(p.p6_location_code || '—')}
-      </option>`).join('');
-
-  // P6 suggestion: match activity_id_text exactly
-  const p6SugEl = document.getElementById('link-p6-suggest');
-  if (!curP6Id && a.activity_id_text) {
-    const hit = (P6_ACTS || []).find(p => (p.p6_id || '').toLowerCase() === a.activity_id_text.toLowerCase());
-    if (hit) {
-      p6SugEl.innerHTML = `💡 Suggested: <strong>${escapeHtml(hit.p6_id)}</strong> (exact ID match)
-        <button type="button" class="form-secondary" style="font-size:10px;padding:2px 6px;margin-left:6px;"
-          onclick="document.getElementById('link-p6-select').value='${hit.id}';this.parentElement.style.display='none';">Use</button>`;
-    } else p6SugEl.innerHTML = '';
-  } else p6SugEl.innerHTML = '';
-
-  // Upgrade to Tom Select for searchable typeahead
-  ['link-tra-select', 'link-p6-select'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el && el.tomselect) { try { el.tomselect.destroy(); } catch {} }
-    if (window.TomSelect) {
-      try { new TomSelect('#' + id, { create: false, allowEmptyOption: true }); } catch {}
-    }
-  });
-}
-
-function _laLinkRenderProgress() {
-  const a = PLANNING_ACTIVITIES.find(x => x.id === _laLinkActivityId);
-  if (!a) return;
-  const root = document.getElementById('link-tab-progress');
-  if (!root) return;
-
-  const linkedTRA = a.linked_test_register_activity;
-  const linkedP6Id = a.linked_p6_activity_id;
-  const p6 = linkedP6Id ? (P6_ACTS || []).find(p => p.id === linkedP6Id) : null;
-
-  let html = '<div style="font-size:13px;">';
-
-  // Test Register progress
-  if (linkedTRA) {
-    const stats = _planningTestActivityStats(linkedTRA);
-    const tis = TI.filter(t => (t.Activity || '').trim() === linkedTRA.trim());
-    const pct = stats.totalInActivity ? Math.round((stats.completeInActivity / stats.totalInActivity) * 100) : 0;
-    html += `
-      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px;margin-bottom:14px;">
-        <div style="font-weight:600;margin-bottom:6px;">📋 Test Register: ${escapeHtml(linkedTRA)}</div>
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
-          <div style="font-size:22px;font-weight:700;color:#15803d;">${stats.completeInActivity}/${stats.totalInActivity}</div>
-          <div style="flex:1;background:#dcfce7;border-radius:10px;height:10px;overflow:hidden;">
-            <div style="background:#16a34a;height:100%;width:${pct}%;"></div>
-          </div>
-          <div style="font-weight:600;color:#15803d;">${pct}%</div>
-        </div>
-        <div style="max-height:180px;overflow-y:auto;font-size:11px;border:1px solid #bbf7d0;border-radius:4px;background:#fff;">
-          <table style="width:100%;border-collapse:collapse;">
-            <thead><tr style="background:#f8fafc;position:sticky;top:0;">
-              <th style="text-align:left;padding:4px 8px;">Test ID</th>
-              <th style="text-align:left;padding:4px 8px;">Name</th>
-              <th style="text-align:left;padding:4px 8px;">Status</th>
-            </tr></thead>
-            <tbody>
-              ${tis.slice(0, 30).map(t => `
-                <tr style="border-top:1px solid #f1f5f9;">
-                  <td style="padding:3px 8px;font-family:monospace;font-size:10px;">${escapeHtml(t.TestCaseCode || t.TestID || '—')}</td>
-                  <td style="padding:3px 8px;">${escapeHtml((t.TestName||'').slice(0,50))}</td>
-                  <td style="padding:3px 8px;">
-                    <span style="font-size:10px;font-weight:600;color:${t.Status==='Complete'||t.Status==='Pass'?'#15803d':t.Status==='Failed'||t.Status==='Fail'?'#b91c1c':'#6b7280'}">${escapeHtml(t.Status || 'Not Started')}</span>
-                  </td>
-                </tr>`).join('')}
-              ${tis.length > 30 ? `<tr><td colspan="3" style="text-align:center;padding:4px;color:#6b7280;font-style:italic;">…${tis.length - 30} more not shown</td></tr>` : ''}
-            </tbody>
-          </table>
-        </div>
-      </div>`;
-  } else {
-    html += `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:10px;margin-bottom:14px;font-size:12px;">
-      No Test Register Activity linked. Use the Links tab to set one.
-    </div>`;
+  p6Pool.sort((a, b) => (a.p6_id || '').localeCompare(b.p6_id || ''));
+  const p6El = document.getElementById('new-act-p6');
+  if (p6El) {
+    const curP6 = p6El.tomselect ? p6El.tomselect.getValue() : p6El.value;
+    if (p6El.tomselect) { try { p6El.tomselect.destroy(); } catch {} }
+    p6El.innerHTML = '<option value="">— Not linked —</option>' +
+      p6Pool.map(p => `<option value="${p.id}" ${p.id === curP6 ? 'selected' : ''}>${escapeHtml(p.p6_id || '?')} · ${escapeHtml((p.p6_name || '').slice(0, 55))}${(p.p6_name || '').length > 55 ? '…' : ''}</option>`).join('');
+    if (window.TomSelect) { try { new TomSelect('#new-act-p6', { create: false, allowEmptyOption: true }); } catch {} }
   }
 
-  // P6 progress
-  if (p6) {
-    html += `
-      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px;margin-bottom:14px;">
-        <div style="font-weight:600;margin-bottom:6px;">📅 P6: ${escapeHtml(p6.p6_id || '?')} — ${escapeHtml(p6.p6_name || '')}</div>
-        <div style="font-size:12px;line-height:1.7;">
-          <div><strong>Start:</strong> ${escapeHtml(p6.start_date || '—')} &nbsp;·&nbsp; <strong>Finish:</strong> ${escapeHtml(p6.finish_date || '—')}</div>
-          <div><strong>Location:</strong> ${escapeHtml(p6.p6_location_code || '—')} &nbsp;·&nbsp; <strong>Remaining:</strong> ${p6.remaining_duration_days ?? '—'} day(s)</div>
-        </div>
-      </div>`;
-  } else {
-    html += `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:10px;font-size:12px;">
-      No P6 Activity linked. Use the Links tab to set one.
-    </div>`;
-  }
-
-  // Lookahead cells for this activity
-  const events = PLANNING_EVENTS.filter(e => e.planning_activity_id === a.id).sort((x,y) => x.event_date.localeCompare(y.event_date));
-  if (events.length > 0) {
-    html += `
-      <div style="margin-top:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;">
-        <div style="font-weight:600;margin-bottom:6px;">📆 Scheduled cells (${events.length})</div>
-        <div style="max-height:140px;overflow-y:auto;font-size:11px;">
-          ${events.map(e => {
-            const shift = e.shift_type || 'custom';
-            const c = { day_shift:'#FFEB3B', night_shift:'#2196F3', blanket_shift:'#000', custom:'#6b7280' }[shift];
-            return `<span style="display:inline-block;margin:2px;padding:2px 7px;background:${c};color:${shift==='day_shift'?'#000':'#fff'};border-radius:3px;font-size:10px;">${escapeHtml(e.event_date)}${e.status==='cancelled'?' ✕':''}</span>`;
-          }).join('')}
-        </div>
-      </div>`;
-  }
-
-  html += '</div>';
-  root.innerHTML = html;
-}
-
-async function _laSaveLinkActivity(activityId) {
-  const tra = document.getElementById('link-tra-select')?.value || null;
-  const p6  = document.getElementById('link-p6-select')?.value || null;
-  try {
-    await _dbUpdate('planning_activities', {
-      linked_test_register_activity: tra,
-      linked_p6_activity_id:         p6,
-    }, { id: activityId });
-    closeModal();
-    const parts = [];
-    if (tra) parts.push(`Test Reg: "${tra}"`);
-    if (p6)  parts.push(`P6 set`);
-    toast(parts.length ? `✓ Linked — ${parts.join(' · ')}` : '✓ Links cleared', 'success');
-    await loadPlanningData(true);
-    _renderLookaheadTabBody();
-  } catch (err) {
-    toast('Save failed: ' + err.message, 'error');
-  }
-}
-
-async function _laDeleteManualActivity(activityId, ev) {
-  ev?.stopPropagation();
-  const a = PLANNING_ACTIVITIES.find(x => x.id === activityId);
-  if (!a) return;
-  const evs = PLANNING_EVENTS.filter(e => e.planning_activity_id === activityId);
-  const locked = evs.filter(e => e.is_locked).length;
-  let msg = `Delete activity "${a.description || a.activity_id_text || '—'}"?`;
-  if (evs.length > 0) msg += `\n\nThis will also delete ${evs.length} event${evs.length>1?'s':''} on this row.`;
-  if (locked > 0)   msg += `\n(${locked} locked event${locked>1?'s':''} will be preserved.)`;
-  msg += '\n\nThis cannot be undone.';
-  if (!confirm(msg)) return;
-  try {
-    // Delete unlocked events + their resources
-    for (const e of evs.filter(e => !e.is_locked)) {
-      await _dbDelete('planning_event_resources', { event_id: e.id });
-      await _dbDelete('planning_events', { id: e.id });
-    }
-    // Delete activity-level resource assignments
-    const activityRes = PLANNING_ACTIVITY_RES.filter(ar => ar.planning_activity_id === activityId);
-    for (const ar of activityRes) await _dbDelete('planning_activity_resources', { id: ar.id });
-    // Finally delete the activity (only if no locked events still reference it)
-    const remaining = PLANNING_EVENTS.filter(e => e.planning_activity_id === activityId && e.is_locked).length;
-    if (remaining === 0) {
-      await _dbDelete('planning_activities', { id: activityId });
-      toast('Activity deleted', 'success');
-    } else {
-      toast(`Row kept (${remaining} locked event${remaining>1?'s':''} still reference it)`, 'warn');
-    }
-    await loadPlanningData(true);
-    _renderLookaheadTabBody();
-  } catch (err) {
-    toast('Delete failed: ' + err.message, 'error');
+  // ── TRA options ──
+  const pool = TI.filter(t =>
+    !loc || _laMatchesLocation(loc, (t.Location || '').trim())
+  );
+  const activityCounts = {};
+  pool.forEach(t => { const k = (t.Activity || '').trim(); if (k) activityCounts[k] = (activityCounts[k] || 0) + 1; });
+  const sortedActs = Object.entries(activityCounts).sort((a, b) => a[0].localeCompare(b[0]));
+  const traEl = document.getElementById('new-act-linked-tra');
+  if (traEl) {
+    const curTRA = traEl.tomselect ? traEl.tomselect.getValue() : traEl.value;
+    if (traEl.tomselect) { try { traEl.tomselect.destroy(); } catch {} }
+    traEl.innerHTML = '<option value="">— Not linked —</option>' +
+      sortedActs.map(([name, count]) => `<option value="${escapeHtml(name)}" ${name === curTRA ? 'selected' : ''}>${escapeHtml(name)} (${count} test${count > 1 ? 's' : ''})</option>`).join('');
+    if (window.TomSelect) { try { new TomSelect('#new-act-linked-tra', { create: false, allowEmptyOption: true }); } catch {} }
   }
 }
 
 async function _laSaveNewActivity() {
   const desc = document.getElementById('new-act-desc').value.trim();
+  const loc  = document.getElementById('new-act-loc').value.trim();
   if (!desc) { toast('Description is required', 'error'); return; }
-  // Default new activities to Test & Commissioning (the dominant group);
-  // user can re-group later from the row label drawer (Phase 2).
+  if (!loc)  { toast('Location is required', 'error'); return; }
   const defaultGroup = 'tc';
-  // Find next sort_order in that group (max + 10) so it sorts to the bottom
   const groupMaxSort = (PLANNING_ACTIVITIES || [])
     .filter(a => a.activity_group === defaultGroup)
     .reduce((m, a) => Math.max(m, a.sort_order || 0), 0);
+
+  // Read TomSelect-aware values
+  const p6El  = document.getElementById('new-act-p6');
+  const traEl = document.getElementById('new-act-linked-tra');
+  const p6Id  = p6El?.tomselect  ? p6El.tomselect.getValue()  : (p6El?.value  || '');
+  const tra   = traEl?.tomselect ? traEl.tomselect.getValue() : (traEl?.value || '');
 
   const payload = {
     activity_id_text: document.getElementById('new-act-id').value.trim()    || null,
     phase:            document.getElementById('new-act-phase')?.value.trim() || null,
     description: desc,
-    location: document.getElementById('new-act-loc').value.trim() || null,
+    location: loc,
     sswp: document.getElementById('new-act-sswp').value.trim() || null,
-    work_hours_raw: document.getElementById('new-act-hours').value.trim() || null,
     notes: document.getElementById('new-act-notes').value.trim() || null,
-    linked_test_register_activity: document.getElementById('new-act-linked-tra')?.value || null,
+    linked_test_register_activity: tra   || null,
+    linked_p6_activity_id:         p6Id  || null,
     match_status: 'manual',
     activity_group: defaultGroup,
     sort_order:    groupMaxSort + 10,
@@ -17150,7 +17094,6 @@ async function _laSaveNewActivity() {
     toast('Create failed: ' + err.message, 'error');
   }
 }
-
 // ─── Right-click context menu on cells ─────────────────────────
 function _laCellContextMenu(ev, eventId, actId, iso, el) {
   ev.preventDefault();

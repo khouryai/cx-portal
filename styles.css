@@ -5948,7 +5948,9 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
 .tlg-weekend .tlg-date-num { color: var(--gray-400); }
 
 /* ── Body rows — compact Excel-like height, auto-expands with BART chips ── */
-.tlg-data-row { min-height: 22px; }
+/* Row height is fully content-driven — no min-height so a row with 1 resource
+   is as compact as possible and expands automatically with more resources. */
+.tlg-data-row { min-height: 0; }
 .tlg-data-row:nth-child(even) .tlg-cells { background: rgba(0,0,0,.012); }
 .tlg-data-row:hover { background: #f0f7ff; }
 .tlg-data-row:hover .tlg-label { filter: brightness(1.06); }
@@ -6897,18 +6899,17 @@ textarea.la-drawer-input { resize: vertical; min-height: 50px; }
 
 /* ── BART resource chips in Activity-view cells ─────────────── */
 /* Always visible — no hover/click needed. Wrap within cell width. */
-.tlg-bart-chips {
+/* ── Resource chips in lookahead cells (BART + Hitachi) ─────── */
+.tlg-res-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 1px;
   justify-content: center;
   align-items: flex-start;
-  padding: 1px 1px;
+  padding: 1px;
   width: 100%;
 }
-.tlg-bart-chip {
-  background: rgba(255,255,255,0.82);
-  color: #1e3a8a;
+.tlg-res-chip {
   font-size: 8px;
   font-weight: 800;
   padding: 0px 3px;
@@ -6916,12 +6917,34 @@ textarea.la-drawer-input { resize: vertical; min-height: 50px; }
   line-height: 1.4;
   white-space: nowrap;
   letter-spacing: 0.02em;
-  text-shadow: none;
 }
-.tlg-bart-chip-denied {
+/* BART roles — blue badge */
+.tlg-res-bart {
+  background: rgba(255,255,255,0.85);
+  color: #1e3a8a;
+}
+/* Hitachi staff — neutral badge */
+.tlg-res-hit {
+  background: rgba(255,255,255,0.55);
+  color: #374151;
+  border: 1px solid rgba(255,255,255,0.4);
+}
+.tlg-res-denied {
   background: rgba(220,38,38,0.22);
   color: #991b1b;
   text-decoration: line-through;
+}
+/* Legacy aliases — kept for any older references */
+.tlg-bart-chips  { display:flex;flex-wrap:wrap;gap:1px;justify-content:center;padding:1px;width:100%; }
+.tlg-bart-chip   { background:rgba(255,255,255,0.82);color:#1e3a8a;font-size:8px;font-weight:800;padding:0px 3px;border-radius:2px;line-height:1.4;white-space:nowrap; }
+.tlg-bart-chip-denied { background:rgba(220,38,38,0.22);color:#991b1b;text-decoration:line-through; }
+
+/* ── Empty cell staged for bulk creation (Ctrl+click) ──────── */
+.la-create-sel {
+  outline: 2px solid #10b981 !important;
+  outline-offset: -2px;
+  background: rgba(16,185,129,0.08) !important;
+  cursor: copy;
 }
 
 /* ── Drop zone — activity label (full-row assign) ──────────── */
