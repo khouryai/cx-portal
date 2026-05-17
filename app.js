@@ -14287,20 +14287,10 @@ function _laRenderDayView(body) {
 }
 
 // ── LOOKAHEAD TIMELINE TAB ───────────────────────────────────
-// ── Month colour palette — Hitachi Rail brand tones ───────────
+// ── Month colour palette — alternating red / black only ───────
 const _TL_MONTH_COLORS = [
   '#e60012', // Hitachi red
-  '#2a2a2a', // Hitachi charcoal
-  '#1e3a8a', // transport deep-blue
-  '#00875a', // good green
-  '#b45309', // warm amber
-  '#5b21b6', // purple
-  '#b50010', // dark red
-  '#065f46', // dark green
-  '#1e40af', // info blue
-  '#7c3aed', // violet
-  '#9a3412', // burnt orange
-  '#1f2937', // near-black slate
+  '#2a2a2a', // Hitachi charcoal/black
 ];
 
 // ── Derive shift visual from time range (fixes colour mismatches) ──
@@ -14389,7 +14379,9 @@ function _laRenderGrid(target, { groups, days, milestones }) {
   html += `<div class="tlg-row tlg-month-row"><div class="tlg-label tlg-month-gutter"></div><div class="tlg-cells">`;
   monthSpans.forEach((span, si) => {
     const color = _TL_MONTH_COLORS[si % _TL_MONTH_COLORS.length];
-    html += `<div class="tlg-month-pill" style="flex:${span.count};background:${color};">${span.label}</div>`;
+    // Lock pill width to exactly span.count day-cells (cell min 46 / max 80px)
+    // so the month bar and day header stay aligned even when the grid scrolls.
+    html += `<div class="tlg-month-pill" style="flex:${span.count};min-width:${span.count * 46}px;max-width:${span.count * 80}px;background:${color};">${span.label}</div>`;
   });
   html += `</div></div>`;
 
@@ -14676,7 +14668,8 @@ function _laBuildByDateActivity(events, days) {
       event_id: e.id, shift_type: e.shift_type, start_time: e.start_time,
       end_time: e.end_time, all_day: !!e.all_day, isCancel, title: e.title || '',
       cellLabel: '',
-      resChips: isCancel ? [] : _planningEventResChips(e.id),
+      // Activity view: show BART resources only (no Hitachi chips)
+      resChips: isCancel ? [] : _planningEventBartChips(e.id),
     });
   });
   return byDate;
@@ -14708,7 +14701,7 @@ function _laLookaheadHTML() {
       </div>
       <div style="display:flex;align-items:center;gap:0;">
         <span style="font-size:11px;color:var(--gray-500);margin-right:8px;white-space:nowrap;">Window:</span>
-        ${[['14','2 wks'],['21','3 wks'],['28','4 wks'],['60','2 mo'],['90','3 mo']].map(([v,l]) => `
+        ${[['14','2 wks'],['21','3 wks'],['28','4 wks'],['35','5 wks']].map(([v,l]) => `
           <button class="admin-tab${_laTimelineWindow === parseInt(v) ? ' active' : ''}" style="font-size:12px;padding:6px 14px;" onclick="_laSetTimelineWindow(${v})">${l}</button>
         `).join('')}
       </div>
