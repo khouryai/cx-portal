@@ -15805,7 +15805,7 @@ function _laOpenCreateEventModal(cells) {
         '<div id="ce-hit-pills" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;min-height:22px;"><span style="color:var(--gray-400);font-size:12px;">None</span></div>' +
         '<div style="display:flex;gap:6px;">' +
           '<select id="ce-hit-pick" class="form-input" style="flex:1;"><option value="">+ Add Hitachi person…</option>' + hitOpts + '</select>' +
-          '<button class="form-secondary" style="font-size:11px;white-space:nowrap;" onclick="_laCEAddResource('hit')">Add</button>' +
+          '<button class="form-secondary" style="font-size:11px;white-space:nowrap;" onclick="_laCEAddResource(\'hit\')">Add</button>' +
         '</div>' +
       '</div>' +
       '<div style="margin-top:8px;padding:10px;background:#f8fafc;border-radius:6px;">' +
@@ -15814,7 +15814,7 @@ function _laOpenCreateEventModal(cells) {
         '<div style="display:flex;gap:6px;">' +
           '<select id="ce-bart-pick" class="form-input" style="flex:1;"><option value="">+ Request BART role…</option>' + bartOpts + '</select>' +
           '<input type="number" id="ce-bart-qty" class="form-input" value="1" min="1" max="50" style="width:60px;" title="Qty">' +
-          '<button class="form-secondary" style="font-size:11px;white-space:nowrap;" onclick="_laCEAddResource('bart')">Add</button>' +
+          '<button class="form-secondary" style="font-size:11px;white-space:nowrap;" onclick="_laCEAddResource(\'bart\')">Add</button>' +
         '</div>' +
       '</div>'
     ),
