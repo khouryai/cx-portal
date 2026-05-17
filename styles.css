@@ -5948,7 +5948,7 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
 .tlg-weekend .tlg-date-num { color: var(--gray-400); }
 
 /* ── Body rows — compact Excel-like height, auto-expands with BART chips ── */
-.tlg-data-row { min-height: 28px; }
+.tlg-data-row { min-height: 22px; }
 .tlg-data-row:nth-child(even) .tlg-cells { background: rgba(0,0,0,.012); }
 .tlg-data-row:hover { background: #f0f7ff; }
 .tlg-data-row:hover .tlg-label { filter: brightness(1.06); }
@@ -5958,23 +5958,23 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 3px 8px;
+  padding: 2px 6px;
   color: #fff;
-  min-height: 28px;
+  min-height: 22px;
   background: #6b7280;
   border-right: 2px solid var(--gray-300);
 }
 .tlg-label-main {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
-  line-height: 1.25;
+  line-height: 1.2;
   word-break: break-word;
   text-shadow: 0 1px 2px rgba(0,0,0,.2);
 }
 .tlg-label-sub {
-  font-size: 9px;
+  font-size: 8.5px;
   opacity: .85;
-  margin-top: 1px;
+  margin-top: 0;
   font-weight: 500;
 }
 
@@ -5984,7 +5984,7 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   flex-direction: column;
   gap: 1px;
   padding: 1px;
-  min-height: 28px;
+  min-height: 22px;
 }
 .tlg-p6-bg { background: rgba(99,102,241,.06) !important; }
 .tlg-p6-hint {
@@ -6005,9 +6005,9 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   align-items: center;
   justify-content: flex-start;
   border-radius: 3px;
-  padding: 1px 2px;
+  padding: 0px 1px;
   cursor: pointer;
-  min-height: 18px;
+  min-height: 14px;
   text-align: center;
   overflow: visible;        /* allow BART chips to push row height */
   transition: filter .1s, transform .08s;
@@ -6784,7 +6784,7 @@ textarea.la-drawer-input { resize: vertical; min-height: 50px; }
 /* ── Activity-group band header (Master Schedule) ──────────── */
 .tlg-grp-hdr-row {
   display: flex;
-  min-height: 34px;
+  min-height: 26px;
   border-bottom: 1px solid var(--gray-300);
   cursor: pointer;
   user-select: none;
@@ -6831,7 +6831,7 @@ textarea.la-drawer-input { resize: vertical; min-height: 50px; }
 /* ── Phase / Location sub-group headers ─────────────────────── */
 .tlg-subgrp-hdr-row {
   display: flex;
-  min-height: 26px;
+  min-height: 20px;
   cursor: pointer;
   user-select: none;
   border-bottom: 1px solid rgba(0,0,0,0.06);

@@ -14845,9 +14845,10 @@ function _laDrawerLocationChanged() {
   }
 
   if (!current) {
-    // Phase is empty → auto-fill silently
+    // Phase empty → auto-fill silently
     phaseEl.value = inferred;
-    hintEl.innerHTML = `<span style="color:var(--good);">✓ Phase set from master: <strong>${escapeHtml(inferred)}</strong></span>`;
+    _laDrawerMarkDirty();
+    hintEl.innerHTML = `<span style="color:var(--good);">✓ Phase auto-set from master location</span>`;
   } else if (current === inferred) {
     hintEl.innerHTML = `<span style="color:var(--good);">✓ Matches master location</span>`;
   } else {
@@ -15049,6 +15050,11 @@ function _laDrawerActivityHTML(a) {
   const eventCount = evs.length;
   const cancelledCount = evs.filter(e => e.status === 'cancelled').length;
 
+  // Auto-derive phase from master location hierarchy if phase not yet set
+  const inferredPhase  = _laInferPhaseFromLocation(a.location);
+  const storedPhase    = (a.phase || '').trim();
+  const effectivePhase = storedPhase || inferredPhase || '';
+
   return `
     <div class="la-drawer-section">
       <label class="la-drawer-label">Description</label>
@@ -15070,8 +15076,8 @@ function _laDrawerActivityHTML(a) {
 
     <div class="la-drawer-section la-drawer-row-2">
       <div>
-        <label class="la-drawer-label">Phase</label>
-        <input class="la-drawer-input" id="dw-act-phase" value="${escapeHtml(a.phase || '')}" placeholder="e.g. Phase 1" oninput="_laDrawerMarkDirty()">
+        <label class="la-drawer-label">Phase${!storedPhase && inferredPhase ? ' <span style="font-size:9px;color:var(--good);font-weight:400;">(from location)</span>' : ''}</label>
+        <input class="la-drawer-input" id="dw-act-phase" value="${escapeHtml(effectivePhase)}" placeholder="e.g. Phase 1" oninput="_laDrawerMarkDirty()">
       </div>
       <div>
         <label class="la-drawer-label">SSWP</label>
@@ -15083,15 +15089,13 @@ function _laDrawerActivityHTML(a) {
       <label class="la-drawer-label">Location${(() => { const resolved = _laResolveLocationPrefix(a.location); return resolved && resolved !== (a.location||'').trim() ? ` <span style="font-size:10px;color:var(--gray-400);font-weight:400;">→ ${escapeHtml(resolved)}</span>` : ''; })()}</label>
       <input class="la-drawer-input" id="dw-act-loc" value="${escapeHtml(a.location || '')}" placeholder="e.g. W40" oninput="_laDrawerLocationChanged()">
       <div id="dw-loc-phase-hint" style="font-size:10px;margin-top:3px;">${(() => {
-        const inferred = _laInferPhaseFromLocation(a.location);
-        const current  = (a.phase || '').trim();
-        if (!inferred && a.location) return `<span style="color:var(--gray-400);">Ad-hoc location — set phase manually</span>`;
-        if (!inferred) return '';
-        if (!current)  return `<span style="color:var(--good);">✓ Phase: <strong>${escapeHtml(inferred)}</strong> (auto-filled)</span>`;
-        if (current === inferred) return `<span style="color:var(--good);">✓ Matches master location</span>`;
-        return `<span>Master suggests: <strong>${escapeHtml(inferred)}</strong></span>
+        if (!inferredPhase && a.location) return `<span style="color:var(--gray-400);">Ad-hoc location — set phase manually</span>`;
+        if (!inferredPhase) return '';
+        if (!storedPhase)   return `<span style="color:var(--good);">✓ Phase auto-set from master location</span>`;
+        if (storedPhase === inferredPhase) return `<span style="color:var(--good);">✓ Matches master location</span>`;
+        return `<span>Master suggests: <strong>${escapeHtml(inferredPhase)}</strong></span>
           <button type="button" class="form-secondary" style="font-size:10px;padding:1px 6px;margin-left:6px;"
-            onclick="document.getElementById('dw-act-phase').value=${JSON.stringify(inferred)};_laDrawerMarkDirty();document.getElementById('dw-loc-phase-hint').innerHTML='<span style=\\'color:var(--good);\\'>✓ Accepted<\\/span>';">Use</button>`;
+            onclick="document.getElementById('dw-act-phase').value=${JSON.stringify(inferredPhase)};_laDrawerMarkDirty();document.getElementById('dw-loc-phase-hint').innerHTML='<span style=\\'color:var(--good);\\'>✓ Accepted<\\/span>';">Use</button>`;
       })()}</div>
     </div>
 
