@@ -15864,23 +15864,27 @@ async function _laSaveCreateEvents(cells) {
   const hoursRaw  = (document.getElementById('ce-hours')?.value || '').trim();
   const { start, end } = _laInferShiftFromHours(hoursRaw);
   const shiftType = document.getElementById('ce-shift')?.value || null;
-  const title     = (document.getElementById('ce-title')?.value || '').trim() || null;
+  const titleInput = (document.getElementById('ce-title')?.value || '').trim();
   const notes     = (document.getElementById('ce-notes')?.value || '').trim() || null;
   const allDay    = shiftType === 'blanket_shift' && !start;
 
-  const eventRows = cells.map(({ actId, iso }) => ({
-    planning_activity_id: actId,
-    event_date:  iso,
-    title:       title     || null,
-    start_time:  start     || null,
-    end_time:    end       || null,
-    shift_type:  shiftType || null,
-    all_day:     allDay,
-    notes:       notes     || null,
-    status:      'planned',
-    version:     1,
-    created_by:  (typeof currentProfile !== 'undefined') ? (currentProfile?.id || null) : null,
-  }));
+  const eventRows = cells.map(({ actId, iso }) => {
+    const act = (PLANNING_ACTIVITIES || []).find(x => x.id === actId);
+    const titleFallback = act?.description || act?.activity_id_text || 'Scheduled work';
+    return {
+      planning_activity_id: actId,
+      event_date:  iso,
+      title:       titleInput || titleFallback,
+      start_time:  start     || null,
+      end_time:    end       || null,
+      shift_type:  shiftType || null,
+      all_day:     allDay,
+      notes:       notes     || null,
+      status:      'planned',
+      version:     1,
+      created_by:  (typeof currentProfile !== 'undefined') ? (currentProfile?.id || null) : null,
+    };
+  });
 
   try {
     const created = await _dbInsert('planning_events', eventRows);
