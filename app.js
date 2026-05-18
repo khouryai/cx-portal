@@ -14386,6 +14386,9 @@ function _laRenderGrid(target, { groups, days, milestones }) {
   }
 
   let html = `<div class="tlg-shell">`;
+  // Sticky header block — milestone strip + month bar + day header
+  // stay frozen at the top while the body scrolls vertically.
+  html += `<div class="tlg-head">`;
 
   // ── Milestone strip ──────────────────────────────────────────
   html += `<div class="tlg-row tlg-ms-row"><div class="tlg-label tlg-ms-gutter"></div><div class="tlg-cells">`;
@@ -14422,6 +14425,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     </div>`;
   });
   html += `</div></div>`;
+  html += `</div>`; // close .tlg-head (sticky header block)
 
   // ── Annotate consecutive runs BEFORE rendering ───────────────
   _tlgAnnotateRuns(groups, days);
@@ -14514,16 +14518,18 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       ${actId && !_laAssignMode ? `onclick="if(event.target.closest('.tlg-row-del,.tlg-row-link-btn'))return;_laDrawerOpen('activity','${actId}')" title="Click to edit activity"` : ''}
       ${_laAssignMode && actId ? `data-activity-id="${actId}" title="Drop here to assign for the full activity"` : ''}>
       <div class="tlg-label-inner">
-        <span class="tlg-label-main" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>
+        <div class="tlg-lbl-r1">
+          <span class="tlg-label-main" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>
+          ${_partyBadgesHTML(g.actParty)}
+        </div>
         ${(() => {
           const segs = [];
           if (g.actLocation)  segs.push(`<span class="tlg-meta-seg" title="Location: ${escapeHtml(g.actLocation)}">📍 ${escapeHtml(g.actLocation)}</span>`);
           if (g.actWorkHours) segs.push(`<span class="tlg-meta-seg" title="Work hours: ${escapeHtml(g.actWorkHours)}">🕒 ${escapeHtml(g.actWorkHours)}</span>`);
           if (g.actSswp)      segs.push(`<span class="tlg-meta-seg" title="SSWP: ${escapeHtml(g.actSswp)}">SSWP ${escapeHtml(g.actSswp)}</span>`);
-          if (segs.length) return segs.join('');
-          return g.sublabel ? `<span class="tlg-meta-seg">${escapeHtml(g.sublabel)}</span>` : '';
+          if (!segs.length && g.sublabel) segs.push(`<span class="tlg-meta-seg">${escapeHtml(g.sublabel)}</span>`);
+          return segs.length ? `<div class="tlg-lbl-r2">${segs.join('')}</div>` : '';
         })()}
-        ${_partyBadgesHTML(g.actParty)}
       </div>
       ${linkChip ? `<div class="tlg-label-foot">
         <button class="tlg-row-link-btn" onclick="event.stopPropagation();_laOpenLinkActivityModal('${actId}')">${linkChip}</button>

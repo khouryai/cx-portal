@@ -5814,16 +5814,24 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   background: #fff;
   border: 1px solid var(--gray-200);
   border-radius: 12px;
-  overflow-x: auto;
-  overflow-y: visible;
+  overflow: auto;
+  max-height: calc(100vh - 150px);
   box-shadow: 0 2px 12px rgba(0,0,0,.07);
   scrollbar-width: thin;
   scrollbar-color: var(--gray-300) transparent;
   font-family: inherit;
 }
-.tlg-shell::-webkit-scrollbar { height: 6px; }
+.tlg-shell::-webkit-scrollbar { width: 10px; height: 10px; }
 .tlg-shell::-webkit-scrollbar-track { background: transparent; }
-.tlg-shell::-webkit-scrollbar-thumb { background: var(--gray-300); border-radius: 3px; }
+.tlg-shell::-webkit-scrollbar-thumb { background: var(--gray-300); border-radius: 5px; }
+
+/* Frozen header block — milestone + month bar + day header */
+.tlg-head {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: #fff;
+}
 
 /* ── Row (flex, shared across all header + body rows) ─────────── */
 .tlg-row {
@@ -5835,15 +5843,17 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
 
 /* ── Sticky left label column ────────────────────────────────── */
 .tlg-label {
-  width: 260px;
-  min-width: 260px;
+  width: 300px;
+  min-width: 300px;
   flex-shrink: 0;
   border-right: 2px solid var(--gray-300);
   position: sticky;
   left: 0;
-  z-index: 3;
+  z-index: 5;
   background: #fff;
 }
+/* Header gutter (top-left corner) must sit above everything */
+.tlg-head .tlg-label { z-index: 22; }
 
 /* ── Day cells container ─────────────────────────────────────── */
 .tlg-cells {
@@ -5987,12 +5997,24 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   background: #6b7280;
   border-right: 2px solid var(--gray-300);
 }
-/* Horizontal, compact: name + meta segments + badges flow inline */
+/* 3-row stack: (1) name + party, (2) loc/hours/sswp, (3) link+count */
 .tlg-label-inner {
-  flex-direction: row !important;
+  flex-direction: column !important;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+}
+.tlg-lbl-r1 {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 8px;
+  gap: 4px 7px;
+}
+.tlg-lbl-r2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 6px;
 }
 .tlg-label-main {
   font-size: 13px;
