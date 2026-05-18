@@ -1497,6 +1497,7 @@ async function loadTestItems() {
         TestCaseCode:  r.test_case_code,
         TestName:      r.test_name,
         TestProcedure: r.test_procedure,
+        TestSection:   r.test_section   || '',
         TestPhase:     r.test_phase,
         Status:        r.status,
         ActivityID:    r.activity_id,
@@ -2800,7 +2801,7 @@ async function executeLocationImport() {
 let _importPendingRows = [];
 
 function downloadImportTemplate() {
-  const headers = ['TestID','Phase','Location','Subsystem','Activity','TestCategory','TestCaseCode','TestName','TestProcedure','TestPhase','Status','ActivityID','PlannedDate','Weight','Notes','TestReport'];
+  const headers = ['TestID','Phase','Location','Subsystem','Activity','TestCategory','TestCaseCode','TestName','TestSection','TestProcedure','TestPhase','Status','ActivityID','PlannedDate','Weight','Notes','TestReport'];
   const example = ['P2-W40-ATS-EXAMPLE','Phase 2','W40','ATS','ATS SAT','Hardware SAT','HW-SAT-XX','Example Test Name','1. Do step one. 2. Verify result.','SAT','Future','ACT-001','2025-06-01','1','Optional notes','https://docs.example.com/report'];
   const csv = headers.join(',') + '\n' + example.map(v => `"${v}"`).join(',');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -3208,6 +3209,7 @@ async function confirmDeploy(templateId) {
           test_case_code: tcCode,
           test_name:      tc?.name || tcCode,
           test_procedure: tc?.procedure || '',
+          test_section:   tc?.section   || '',
           status:         'Not Started',
           weight:         1,
           synced_at:      now,
@@ -8204,12 +8206,15 @@ function _amDrilldownHTML(key) {
   const legacyMap = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
   const viewItems = _trEditMode && _trDraftItems ? _trDraftItems : act.items;
   const selectedCount = _trSelected.size;
+  // Build tpMap keyed by "section~~procedure" so same procedure in different sections stays separate
   const tpMap = {};
   viewItems.forEach(r => {
     if (r.ParentTestId) return; // child rows render nested under their parent
-    const tp = r.TestProcedure || '(No Procedure)';
-    if (!tpMap[tp]) tpMap[tp] = [];
-    tpMap[tp].push(r);
+    const sec  = r.TestSection  || '';
+    const proc = r.TestProcedure || '';
+    const key  = sec ? `${sec}~~${proc}` : (proc || '(No Procedure)');
+    if (!tpMap[key]) tpMap[key] = [];
+    tpMap[key].push(r);
   });
   if (_trEditMode) _trEmptySections.forEach(tp => { if (!tpMap[tp]) tpMap[tp] = []; });
 
@@ -8240,12 +8245,24 @@ function _amDrilldownHTML(key) {
         </div>
       </div>
 
-      ${Object.entries(tpMap).map(([tp, tpItems]) => `
-        <div class="tr-procedure-card" ${_trEditMode && isAdmin ? `ondragover="event.preventDefault()" ondrop="_trDropCase('${escapeHtml(tp)}',null)"` : ''}>
+      ${Object.entries(tpMap).map(([tp, tpItems]) => {
+        // Decode composite key "Section~~Procedure" or plain procedure
+        const tpHasSec  = tp.indexOf('~~') >= 0;
+        const tpSecName = tpHasSec ? tp.slice(0, tp.indexOf('~~')) : '';
+        const tpProc    = tpHasSec ? tp.slice(tp.indexOf('~~') + 2) : (tp === '(No Procedure)' ? '' : tp);
+        const tpDispProc = tpProc || '(No Procedure)';
+        const dropKey   = escapeHtml(tp); // keep composite key for drag/drop so rename keeps section context
+        return `
+        <div class="tr-procedure-card" ${_trEditMode && isAdmin ? `ondragover="event.preventDefault()" ondrop="_trDropCase('${dropKey}',null)"` : ''}>
           <div class="tr-procedure-head">
-            <div style="display:flex;align-items:center;gap:10px;">
-              ${_trBulkMode ? `<input type="checkbox" ${tpItems.length && tpItems.every(r => _trSelected.has(String(r.TestID))) ? 'checked' : ''} onchange="_trSelectSection('${escapeHtml(tp)}',this.checked)" title="Select All in Section">` : ''}
-              <div class="tr-procedure-title">${_trEditMode && isAdmin ? `<input class="form-input" style="font-weight:700;min-width:320px;" value="${escapeHtml(tp)}" onchange="_trRenameProcedure('${escapeHtml(tp)}',this.value)">` : escapeHtml(tp)}</div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              ${_trBulkMode ? `<input type="checkbox" ${tpItems.length && tpItems.every(r => _trSelected.has(String(r.TestID))) ? 'checked' : ''} onchange="_trSelectSection('${dropKey}',this.checked)" title="Select All in Section">` : ''}
+              <div class="tr-procedure-title">
+                ${tpSecName ? `<span style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);display:block;margin-bottom:2px;">${escapeHtml(tpSecName)}</span>` : ''}
+                ${_trEditMode && isAdmin
+                  ? `<input class="form-input" style="font-weight:700;min-width:320px;" value="${escapeHtml(tpProc)}" onchange="_trRenameProcedure('${dropKey}',this.value)">`
+                  : escapeHtml(tpDispProc)}
+              </div>
             </div>
             <div class="section-sub">${tpItems.length} test case${tpItems.length===1?'':'s'}</div>
           </div>
@@ -8264,19 +8281,17 @@ function _amDrilldownHTML(key) {
               </thead>
               <tbody>
                 ${tpItems.map(r => {
-                  // Parent row (has linked assets) — render header + child rows
                   if (r.IsParent) {
                     const children = viewItems.filter(c => c.ParentTestId === r.TestID);
                     return _trParentGroupRows(r, children, statuses, legacyMap, isAdmin);
                   }
-                  // Standalone row (no asset link) — render as before
                   const cur = legacyMap[r.Status] || r.Status || 'Not Started';
                   const showReason = cur === 'Fail' || cur === 'Blocked';
                   const reasonVal = cur === 'Fail' ? (r.FailedReason||'') : (r.BlockedReason||'');
                   const tid = escapeHtml(String(r.TestID));
                   const domId = encodeURIComponent(String(r.TestID));
                   return `
-                    <tr ${_trEditMode && isAdmin ? `draggable="true" ondragstart="_trDragStart('${tid}')" ondragover="event.preventDefault()" ondrop="_trDropCase('${escapeHtml(tp)}','${tid}')"` : ''}>
+                    <tr ${_trEditMode && isAdmin ? `draggable="true" ondragstart="_trDragStart('${tid}')" ondragover="event.preventDefault()" ondrop="_trDropCase('${dropKey}','${tid}')"` : ''}>
                       ${_trBulkMode ? `<td><input type="checkbox" ${_trSelected.has(String(r.TestID))?'checked':''} onchange="_trToggleSelect('${tid}',this.checked)"></td>` : ''}
                       ${_trEditMode && isAdmin ? `<td style="cursor:grab;color:var(--gray-400);font-size:14px;">☰</td>` : ''}
                       <td style="font-size:11px;font-family:monospace;min-width:140px;">${_trEditMode && isAdmin ? `<input class="form-input" style="font-size:11px;font-family:monospace;min-width:120px;" value="${escapeHtml(r.TestCaseCode||'')}" onchange="_trDraftChange('${tid}','TestCaseCode',this.value)">` : escapeHtml(r.TestCaseCode||r.TestID||'—')}</td>
@@ -8305,9 +8320,9 @@ function _amDrilldownHTML(key) {
               </tbody>
             </table>
           </div>
-          ${_trEditMode && isAdmin ? `<div style="padding:12px 16px;border-top:1px solid var(--gray-100);"><button class="form-secondary" onclick="_trAddCase('${escapeHtml(tp)}')">+ Add Test Case</button></div>` : ''}
+          ${_trEditMode && isAdmin ? `<div style="padding:12px 16px;border-top:1px solid var(--gray-100);"><button class="form-secondary" onclick="_trAddCase('${dropKey}')">+ Add Test Case</button></div>` : ''}
         </div>
-      `).join('')}
+      `; }).join('')}
       ${_trBulkMode ? _trBulkBarHTML(selectedCount) : ''}
     </div>
   `;
@@ -8344,15 +8359,23 @@ function _trDraftChange(testId, field, value) {
   r._dirty = true;
 }
 
-function _trRenameProcedure(oldTp, newTp) {
-  if (!_trDraftItems || !newTp.trim()) return;
+function _trRenameProcedure(oldKey, newProc) {
+  if (!_trDraftItems || !newProc.trim()) return;
+  // oldKey may be composite "Section~~Procedure" or plain procedure
+  const hasSec  = oldKey.indexOf('~~') >= 0;
+  const oldSec  = hasSec ? oldKey.slice(0, oldKey.indexOf('~~'))  : '';
+  const oldProc = hasSec ? oldKey.slice(oldKey.indexOf('~~') + 2) : (oldKey === '(No Procedure)' ? '' : oldKey);
   _trDraftItems.forEach(r => {
-    if ((r.TestProcedure || '(No Procedure)') === oldTp) {
-      r.TestProcedure = newTp.trim();
+    const rSec  = r.TestSection  || '';
+    const rProc = r.TestProcedure || '';
+    if (rSec === oldSec && rProc === oldProc) {
+      r.TestProcedure = newProc.trim();
       r._dirty = true;
     }
   });
-  _trEmptySections = _trEmptySections.map(s => s === oldTp ? newTp.trim() : s);
+  // Update empty-section registry (keys are stored as composite)
+  const newKey = oldSec ? `${oldSec}~~${newProc.trim()}` : newProc.trim();
+  _trEmptySections = _trEmptySections.map(s => s === oldKey ? newKey : s);
   _reRenderTR();
 }
 
@@ -8370,6 +8393,10 @@ function _trAddSection() {
 function _trAddCase(tp) {
   const act = _amGetActivities().find(a => a.key === _amDrilldownKey);
   if (!act || !_trDraftItems) return;
+  // tp may be composite "Section~~Procedure" or plain procedure
+  const hasSec  = tp.indexOf('~~') >= 0;
+  const newSec  = hasSec ? tp.slice(0, tp.indexOf('~~'))  : '';
+  const newProc = hasSec ? tp.slice(tp.indexOf('~~') + 2) : (tp === '(No Procedure)' ? '' : tp);
   _trDraftItems.push({
     TestID: _trNewId(),
     TestCaseCode: '',
@@ -8377,7 +8404,8 @@ function _trAddCase(tp) {
     Status: 'Not Started',
     Notes: '',
     Activity: act.activity,
-    TestProcedure: tp === '(No Procedure)' ? '' : tp,
+    TestSection:   newSec,
+    TestProcedure: newProc,
     Phase: act.phase,
     Location: act.location,
     Subsystem: act.subsystem,
@@ -8413,17 +8441,20 @@ function _trDragStart(testId) {
   _trDragId = String(testId);
 }
 
-function _trDropCase(targetProcedure, beforeTestId) {
+function _trDropCase(targetKey, beforeTestId) {
   if (!_trEditMode || !_trDraftItems || !_trDragId) return;
   const fromIdx = _trDraftItems.findIndex(r => String(r.TestID) === String(_trDragId));
   if (fromIdx < 0) return;
   const [item] = _trDraftItems.splice(fromIdx, 1);
-  item.TestProcedure = targetProcedure === '(No Procedure)' ? '' : targetProcedure;
+  // targetKey may be composite "Section~~Procedure" or plain
+  const hasSec  = targetKey.indexOf('~~') >= 0;
+  item.TestSection   = hasSec ? targetKey.slice(0, targetKey.indexOf('~~'))  : '';
+  item.TestProcedure = hasSec ? targetKey.slice(targetKey.indexOf('~~') + 2) : (targetKey === '(No Procedure)' ? '' : targetKey);
   item._dirty = true;
   let toIdx = beforeTestId ? _trDraftItems.findIndex(r => String(r.TestID) === String(beforeTestId)) : -1;
   if (toIdx < 0) toIdx = _trDraftItems.length;
   _trDraftItems.splice(toIdx, 0, item);
-  _trEmptySections = _trEmptySections.filter(s => s !== targetProcedure);
+  _trEmptySections = _trEmptySections.filter(s => s !== targetKey);
   _trDragId = null;
   _reRenderTR();
 }
@@ -8441,6 +8472,7 @@ async function _trSaveEdit(key) {
       notes: r.Notes || null,
       activity: r.Activity || null,
       test_procedure: r.TestProcedure || null,
+      test_section:   r.TestSection   || null,
       phase: r.Phase || null,
       location: r.Location || null,
       subsystem: r.Subsystem || null,
@@ -8578,7 +8610,16 @@ function _trToggleSelect(testId, checked) {
 function _trSelectSection(tp, checked) {
   const act = _amGetActivities().find(a => a.key === _amDrilldownKey);
   if (!act) return;
-  const rows = (_trEditMode && _trDraftItems ? _trDraftItems : act.items).filter(r => (r.TestProcedure || '(No Procedure)') === tp);
+  // tp may be composite "Section~~Procedure"
+  const hasSec  = tp.indexOf('~~') >= 0;
+  const secName = hasSec ? tp.slice(0, tp.indexOf('~~'))  : null;
+  const procName = hasSec ? tp.slice(tp.indexOf('~~') + 2) : (tp === '(No Procedure)' ? '' : tp);
+  const all = (_trEditMode && _trDraftItems ? _trDraftItems : act.items);
+  const rows = all.filter(r => {
+    const rProc = r.TestProcedure || '';
+    const rSec  = r.TestSection  || '';
+    return hasSec ? (rSec === secName && rProc === procName) : (rProc === procName);
+  });
   rows.forEach(r => checked ? _trSelected.add(String(r.TestID)) : _trSelected.delete(String(r.TestID)));
   _reRenderTR();
 }
