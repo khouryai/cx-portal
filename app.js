@@ -15880,42 +15880,128 @@ async function _laDeleteManualActivity(activityId, ev) {
 }
 
 // Link / unlink an activity to a Test Register activity (the 🔗 chip).
+// ── Link-activity modal — searchable dropdown pre-filtered by activity location ──
+
 function _laOpenLinkActivityModal(activityId) {
   const a = (PLANNING_ACTIVITIES || []).find(x => x.id === activityId);
   if (!a) { toast('Activity not found', 'error'); return; }
+  _laRenderLinkModal(activityId, false);
+}
+
+function _laRenderLinkModal(activityId, showAll) {
+  const a       = (PLANNING_ACTIVITIES || []).find(x => x.id === activityId);
+  if (!a) return;
   const current = a.linked_test_register_activity || '';
-  const opts = [...new Set((window.TI || []).map(t => t.Activity).filter(Boolean))]
-    .sort().map(t => `<option value="${escapeHtml(t)}">`).join('');
+  const actLoc  = (a.location || '').trim();
+
+  // Collect all unique (Activity, Location) pairs from TI
+  const tiMap = {}; // activity name → Set of locations
+  (window.TI || []).forEach(t => {
+    const act = (t.Activity || '').trim();
+    const loc = (t.Location || '').trim();
+    if (!act) return;
+    if (!tiMap[act]) tiMap[act] = new Set();
+    if (loc) tiMap[act].add(loc);
+  });
+
+  const allNames = Object.keys(tiMap).sort((a, b) => a.localeCompare(b));
+
+  // Filter to activities that have at least one TI row whose location prefix-matches
+  const locNames = actLoc
+    ? allNames.filter(name =>
+        [...tiMap[name]].some(tiLoc => _laMatchesLocation(actLoc, tiLoc))
+      )
+    : allNames;
+
+  const hasLocMatch = locNames.length > 0;
+  const displayNames = (showAll || !hasLocMatch) ? allNames : locNames;
+
+  const resolvedLoc = actLoc ? (_laResolveLocationPrefix(actLoc) || actLoc) : null;
+
+  // Build select options — group: location-matched first (when showing all)
+  let optsHTML = `<option value="">— Select a Test Register activity —</option>`;
+  if (showAll && hasLocMatch) {
+    // Group: matched at top, rest below
+    const matched   = allNames.filter(n => locNames.includes(n));
+    const unmatched = allNames.filter(n => !locNames.includes(n));
+    optsHTML += `<optgroup label="📍 ${escapeHtml(resolvedLoc || actLoc)} — ${matched.length} match${matched.length !== 1 ? 'es' : ''}">`;
+    matched.forEach(n => {
+      optsHTML += `<option value="${escapeHtml(n)}" ${current === n ? 'selected' : ''}>${escapeHtml(n)}</option>`;
+    });
+    optsHTML += `</optgroup><optgroup label="All other locations — ${unmatched.length}">`;
+    unmatched.forEach(n => {
+      optsHTML += `<option value="${escapeHtml(n)}" ${current === n ? 'selected' : ''}>${escapeHtml(n)}</option>`;
+    });
+    optsHTML += `</optgroup>`;
+  } else {
+    displayNames.forEach(n => {
+      optsHTML += `<option value="${escapeHtml(n)}" ${current === n ? 'selected' : ''}>${escapeHtml(n)}</option>`;
+    });
+  }
+
+  // Location filter status bar
+  const filterBar = actLoc ? `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:7px;margin-bottom:12px;
+                background:${hasLocMatch ? 'var(--info-light)' : 'var(--warn-light)'};
+                border:1px solid ${hasLocMatch ? '#bfdbfe' : '#fde68a'};">
+      <span style="font-size:14px;">${hasLocMatch ? '📍' : '⚠️'}</span>
+      <div style="flex:1;font-size:12px;color:var(--gray-700);">
+        ${hasLocMatch
+          ? `Showing <strong>${locNames.length}</strong> activit${locNames.length !== 1 ? 'ies' : 'y'} matching location <strong>${escapeHtml(resolvedLoc || actLoc)}</strong>`
+          : `No Test Register activities found for <strong>${escapeHtml(resolvedLoc || actLoc)}</strong> — showing all locations`}
+      </div>
+      ${hasLocMatch
+        ? `<button onclick="_laRenderLinkModal('${activityId}',${!showAll})" class="form-secondary" style="font-size:11px;padding:3px 10px;white-space:nowrap;">
+             ${showAll ? '📍 Filter by location' : '🌐 Show all'}
+           </button>`
+        : ''}
+    </div>` : '';
+
   modal({
     title: '🔗 Link Test Register Activity',
     sub:   escapeHtml(a.description || a.activity_id_text || '—'),
     size:  'medium',
     body: `
-      <div class="form-field form-field-full">
-        <label>Test Register activity</label>
-        <input type="text" id="la-link-tra" class="form-input" list="la-link-tra-opts"
-          value="${escapeHtml(current)}" placeholder="Start typing an activity name…" autocomplete="off">
-        <datalist id="la-link-tra-opts">${opts}</datalist>
-        <div style="font-size:11px;color:var(--gray-500);margin-top:6px;">
-          Pick an activity to pull live test-completion counts onto this row.
-          Leave blank (or click Unlink) to remove the link.
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        ${filterBar}
+        <label style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;">Test Register Activity</label>
+        <select id="la-link-tra" class="form-input" style="font-size:13px;">
+          ${optsHTML}
+        </select>
+        <div style="font-size:11px;color:var(--gray-500);margin-top:4px;">
+          Linking pulls live test-completion counts onto this lookahead row.
+          ${current ? `Currently linked: <strong>${escapeHtml(current)}</strong>` : 'No link set.'}
         </div>
       </div>`,
     footer:
       '<button class="form-secondary" onclick="closeModal()">Cancel</button>' +
-      (current ? `<button class="form-secondary" style="color:#b91c1c;border-color:#fca5a5;" onclick="_laSaveActivityLink('${activityId}',true)">Unlink</button>` : '') +
-      `<button class="form-submit" onclick="_laSaveActivityLink('${activityId}',false)">Save link</button>`,
+      (current ? `<button class="form-secondary" style="color:#b91c1c;border-color:#fca5a5;" onclick="_laSaveActivityLink('${activityId}',true)">🔗 Unlink</button>` : '') +
+      `<button class="form-submit" onclick="_laSaveActivityLink('${activityId}',false)">Save Link</button>`,
   });
-  setTimeout(() => document.getElementById('la-link-tra')?.focus(), 60);
+
+  // Wire TomSelect for searchability after modal renders
+  setTimeout(() => {
+    const el = document.getElementById('la-link-tra');
+    if (el && typeof TomSelect !== 'undefined' && !el.tomselect) {
+      new TomSelect(el, { create: false, allowEmptyOption: true, maxOptions: 500 });
+      // Restore current selection in TomSelect
+      if (current && el.tomselect) el.tomselect.setValue(current, true);
+    }
+  }, 80);
 }
 
 async function _laSaveActivityLink(activityId, unlink) {
-  const val = unlink ? null : ((document.getElementById('la-link-tra')?.value || '').trim() || null);
+  let val = null;
+  if (!unlink) {
+    const el = document.getElementById('la-link-tra');
+    // Read from TomSelect if initialised, otherwise native select
+    val = (el?.tomselect ? el.tomselect.getValue() : el?.value || '').trim() || null;
+  }
   try {
     await _dbUpdate('planning_activities',
       { linked_test_register_activity: val }, { id: activityId });
     closeModal();
-    toast(val ? '✓ Linked to "' + val + '"' : '✓ Activity unlinked', 'success');
+    toast(val ? `✓ Linked to "${val}"` : '✓ Activity unlinked', 'success');
     await loadPlanningData(true);
     _renderLookaheadTabBody();
   } catch (err) {
