@@ -14516,12 +14516,12 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       <div class="tlg-label-inner">
         <span class="tlg-label-main" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>
         ${(() => {
-          const metaRows = [];
-          if (g.actLocation)  metaRows.push(`<span class="tlg-meta-row"><span class="tlg-meta-k">📍</span><span class="tlg-meta-v" title="${escapeHtml(g.actLocation)}">${escapeHtml(g.actLocation)}</span></span>`);
-          if (g.actWorkHours) metaRows.push(`<span class="tlg-meta-row"><span class="tlg-meta-k">🕒</span><span class="tlg-meta-v">${escapeHtml(g.actWorkHours)}</span></span>`);
-          if (g.actSswp)      metaRows.push(`<span class="tlg-meta-row"><span class="tlg-meta-k">SSWP</span><span class="tlg-meta-v">${escapeHtml(g.actSswp)}</span></span>`);
-          if (metaRows.length) return `<div class="tlg-label-meta">${metaRows.join('')}</div>`;
-          return g.sublabel ? `<span class="tlg-label-sub">${escapeHtml(g.sublabel)}</span>` : '';
+          const segs = [];
+          if (g.actLocation)  segs.push(`<span class="tlg-meta-seg" title="Location: ${escapeHtml(g.actLocation)}">📍 ${escapeHtml(g.actLocation)}</span>`);
+          if (g.actWorkHours) segs.push(`<span class="tlg-meta-seg" title="Work hours: ${escapeHtml(g.actWorkHours)}">🕒 ${escapeHtml(g.actWorkHours)}</span>`);
+          if (g.actSswp)      segs.push(`<span class="tlg-meta-seg" title="SSWP: ${escapeHtml(g.actSswp)}">SSWP ${escapeHtml(g.actSswp)}</span>`);
+          if (segs.length) return segs.join('');
+          return g.sublabel ? `<span class="tlg-meta-seg">${escapeHtml(g.sublabel)}</span>` : '';
         })()}
         ${_partyBadgesHTML(g.actParty)}
         ${linkChip ? `<button class="tlg-row-link-btn" onclick="event.stopPropagation();_laOpenLinkActivityModal('${actId}')">${linkChip}</button>` : ''}
