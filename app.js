@@ -15531,7 +15531,7 @@ function _laDrawerActivityHTML(a) {
       <label class="la-drawer-label">Linked Test Register activity</label>
       <input class="la-drawer-input" id="dw-act-linked-tra" value="${escapeHtml(a.linked_test_register_activity || '')}" oninput="_laDrawerMarkDirty()" list="dw-act-tra-options">
       <datalist id="dw-act-tra-options">
-        ${[...new Set((window.TI || []).map(t => t.Activity).filter(Boolean))].sort().slice(0, 200).map(t => `<option value="${escapeHtml(t)}">`).join('')}
+        ${[...new Set((TI || []).map(t => t.Activity).filter(Boolean))].sort().slice(0, 200).map(t => `<option value="${escapeHtml(t)}">`).join('')}
       </datalist>
     </div>
 
@@ -15926,7 +15926,7 @@ function _laRenderLinkModal(activityId, showAll) {
 
   // Collect all unique (Activity, Location) pairs from TI
   const tiMap = {}; // activity name → Set of locations
-  (window.TI || []).forEach(t => {
+  (TI || []).forEach(t => {
     const act = (t.Activity || '').trim();
     const loc = (t.Location || '').trim();
     if (!act) return;
