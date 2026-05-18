@@ -34,7 +34,26 @@
 </head>
 <body>
 
-<div id="login-overlay" class="login-overlay">
+<div id="login-overlay" class="login-overlay live">
+
+  <!-- Cinematic background stage -->
+  <div class="login-stage">
+    <div class="login-px" id="login-px">
+      <div class="login-shot login-kb" data-src="assets/hsts-1.avif"></div>
+      <div class="login-shot login-kb" data-src="assets/hsts-2.png"></div>
+      <div class="login-cssscene" id="login-cssscene">
+        <div class="login-glowline a"></div><div class="login-glowline b"></div>
+      </div>
+      <div class="login-grade"></div>
+      <div class="login-leak"></div>
+    </div>
+    <div class="login-ambient"></div>
+    <div class="login-rush"></div>
+    <div class="login-speedlines"></div>
+    <div class="login-grain"></div>
+    <div class="login-vignette"></div>
+    <div class="login-flash"></div>
+  </div>
 
   <!-- Top bar -->
   <div class="login-topbar">
@@ -47,36 +66,35 @@
 
   <!-- Center card -->
   <div class="login-card">
-    <!-- Hitachi wordmark badge -->
-    <div class="login-hitachi-badge">HITACHI</div>
+    <span class="login-kicker login-stagger ls1"><span class="login-pulse"></span> CX Commissioning Portal</span>
 
     <div class="login-brand">
-      <div class="login-brand-name">Hitachi Rail</div>
-      <div class="login-brand-sub">BART CBTC Testing &amp; Commissioning</div>
+      <div class="login-brand-name login-stagger ls2">Welcome Aboard.</div>
+      <div class="login-brand-sub login-stagger ls2">Test execution, look-ahead planning, and field coordination — unified.</div>
     </div>
 
-    <div class="form-field" style="width:100%;">
+    <div class="form-field login-stagger ls3" style="width:100%;">
       <label class="login-label">EMAIL</label>
       <input type="email" id="auth-email" class="form-input" placeholder="you@example.com"
         autocomplete="username" onkeydown="if(event.key==='Enter')signIn()">
     </div>
-    <div class="form-field" style="margin-top:14px;width:100%;">
+    <div class="form-field login-stagger ls3" style="margin-top:14px;width:100%;">
       <label class="login-label">PASSWORD</label>
       <input type="password" id="auth-password" class="form-input" placeholder="••••••••"
         autocomplete="current-password" onkeydown="if(event.key==='Enter')signIn()">
     </div>
 
-    <div id="auth-error" style="color:#dc2626;font-size:12px;margin-top:8px;min-height:18px;width:100%;"></div>
+    <div id="auth-error" style="font-size:12px;margin-top:8px;min-height:18px;width:100%;"></div>
 
-    <button id="auth-btn" class="login-btn" onclick="signIn()">Sign In</button>
+    <button id="auth-btn" class="login-btn login-stagger ls4" onclick="signIn()">Access Portal</button>
 
-    <div class="login-links">
+    <div class="login-links login-stagger ls5">
       <a href="#" class="login-link" onclick="openForgotPassword();return false;">FORGOT PASSWORD?</a>
       <span class="login-link-sep">•</span>
       <a href="#" class="login-link" onclick="openRequestAccess();return false;">REQUEST ACCESS</a>
     </div>
 
-    <div class="login-encrypted-badge">
+    <div class="login-encrypted-badge login-stagger ls5">
       <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor" style="flex-shrink:0;opacity:0.6;">
         <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/>
       </svg>
@@ -85,6 +103,42 @@
   </div>
 
 </div>
+
+<script>
+// Cinematic login — photo loading, parallax, rush intro
+(function(){
+  var overlay = document.getElementById('login-overlay');
+  var px = document.getElementById('login-px');
+  var shots = Array.prototype.slice.call(document.querySelectorAll('.login-shot'));
+  var loaded = 0, idx = 0;
+  shots.forEach(function(s){
+    var img = new Image();
+    img.onload = function(){
+      s.style.backgroundImage = "url('" + s.dataset.src + "')";
+      s.dataset.ok = '1'; loaded++;
+      if(loaded === 1){ document.getElementById('login-cssscene').style.display = 'none'; cycle(); }
+    };
+    img.onerror = function(){};
+    img.src = s.dataset.src;
+  });
+  function cycle(){
+    var ok = shots.filter(function(s){ return s.dataset.ok; });
+    if(!ok.length) return;
+    ok.forEach(function(s,i){ s.classList.toggle('show', i === idx % ok.length); });
+    idx++; setTimeout(cycle, 8000);
+  }
+  var tx=0,ty=0,mcx=0,mcy=0;
+  window.addEventListener('pointermove',function(e){
+    tx=(e.clientX/innerWidth-.5)*-22; ty=(e.clientY/innerHeight-.5)*-15;
+  });
+  (function loop(){
+    mcx+=(tx-mcx)*0.06; mcy+=(ty-mcy)*0.06;
+    if(px) px.style.transform='translate('+mcx.toFixed(2)+'px,'+mcy.toFixed(2)+'px) scale(1.03)';
+    requestAnimationFrame(loop);
+  })();
+  requestAnimationFrame(function(){ requestAnimationFrame(function(){ overlay.classList.add('run'); }); });
+})();
+</script>
 
 <!-- Request Access Modal -->
 <div id="request-access-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:3000;align-items:center;justify-content:center;">
