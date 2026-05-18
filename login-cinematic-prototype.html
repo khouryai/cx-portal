@@ -56,6 +56,12 @@
     animation:grain 1.1s steps(3) infinite}
   @keyframes grain{to{transform:translate(-12px,8px)}}
   .vignette{position:absolute;inset:0;box-shadow:inset 0 0 240px 60px rgba(0,0,0,.8);pointer-events:none}
+  /* dark color-grade applied on top of the real photo */
+  .grade{position:absolute;inset:0;pointer-events:none;
+    background:
+      linear-gradient(180deg,rgba(4,7,14,.55) 0%,rgba(4,7,14,.25) 35%,rgba(4,7,14,.7) 100%),
+      radial-gradient(120% 90% at 60% 30%,rgba(10,30,60,.25),rgba(2,4,8,.78) 80%);
+    mix-blend-mode:multiply}
   .leak{position:absolute;inset:0;pointer-events:none;
     background:radial-gradient(40% 60% at 85% 15%,rgba(255,90,90,.18),transparent 60%),
                radial-gradient(45% 55% at 10% 85%,rgba(70,130,255,.16),transparent 60%);
@@ -145,25 +151,26 @@
 <body class="run live mood-night">
 
   <div class="ui">
-    <button data-mood="night" class="on">Cinematic night</button>
-    <button data-mood="dawn">Daybreak</button>
+    <button class="on" style="pointer-events:none">Cinematic night</button>
     <span class="sep"></span>
     <button id="replay">↻ Replay intro</button>
-    <small>drop real photos in <code style="color:#cbd5e1">assets/</code></small>
+    <small>add <code style="color:#cbd5e1">assets/bart-1.jpg</code> &amp; <code style="color:#cbd5e1">assets/bart-2.jpg</code></small>
   </div>
 
   <div class="stage" id="stage">
     <div class="px" id="px">
-      <!-- Real photos go here. Add assets/hero-1.jpg ... hero-3.jpg and they
-           auto-replace the CSS scene with a Ken-Burns crossfade slideshow. -->
-      <div class="shot kb" data-src="assets/hero-1.jpg"></div>
-      <div class="shot kb" data-src="assets/hero-2.jpg"></div>
-      <div class="shot kb" data-src="assets/hero-3.jpg"></div>
+      <!-- Real BART photos. Drop these two files into an assets/ folder and
+           they auto-replace the CSS scene with a Ken-Burns crossfade. -->
+      <div class="shot kb" data-src="assets/bart-1.jpg"></div>
+      <div class="shot kb" data-src="assets/bart-2.jpg"></div>
 
       <div class="cssscene" id="cssscene">
         <div class="glowline a"></div><div class="glowline b"></div>
       </div>
 
+      <!-- Dark cinematic grade over the photo: keeps the night mood and
+           guarantees the glass card text stays readable. -->
+      <div class="grade"></div>
       <div class="leak"></div>
     </div>
 
@@ -215,34 +222,11 @@
     px.style.transform=`translate(${x*-26}px,${y*-18}px) scale(1.06)`;
   });
 
-  // 3) Mood + replay controls.
-  document.querySelectorAll('.ui [data-mood]').forEach(b=>b.onclick=()=>{
-    document.body.classList.remove('mood-night','mood-dawn');
-    document.body.classList.add('mood-'+b.dataset.mood);
-    document.querySelectorAll('.ui [data-mood]').forEach(x=>x.classList.toggle('on',x===b));
-  });
+  // 3) Replay the dramatic intro.
   document.getElementById('replay').onclick=()=>{
     document.body.classList.remove('run'); void document.body.offsetWidth;
     document.body.classList.add('run');
   };
 </script>
-<style>
-  /* Daybreak palette — bright, airy, glassy */
-  body.mood-dawn .cssscene{
-    background:radial-gradient(120% 80% at 70% 10%,#bfe0ff 0%,transparent 55%),
-              radial-gradient(90% 70% at 20% 90%,#ffd9c2 0%,transparent 55%),
-              linear-gradient(180deg,#eaf3ff 0%,#cfe3f7 50%,#e9f1fb 100%)}
-  body.mood-dawn .leak{background:radial-gradient(40% 60% at 85% 15%,rgba(255,160,90,.25),transparent 60%),
-              radial-gradient(45% 55% at 10% 85%,rgba(120,180,255,.22),transparent 60%)}
-  body.mood-dawn .vignette{box-shadow:inset 0 0 220px 50px rgba(40,60,90,.35)}
-  body.mood-dawn .card{background:rgba(255,255,255,.6);border-color:rgba(255,255,255,.7)}
-  body.mood-dawn .card h1{background:linear-gradient(180deg,#0b1626,#3a516f);-webkit-background-clip:text;background-clip:text;color:transparent}
-  body.mood-dawn .card .sub{color:#46566f}
-  body.mood-dawn .kicker{color:#3f6aa0}
-  body.mood-dawn .field input{color:#0b1626;background:rgba(0,0,0,.04);border-color:rgba(0,0,0,.14)}
-  body.mood-dawn .field input::placeholder{color:#6b7689}
-  body.mood-dawn .row{color:#5a6a83}
-  body.mood-dawn .row a{color:#274b78}
-</style>
 </body>
 </html>
