@@ -4360,6 +4360,10 @@ function _mxApplyStatusChange(testId, status, reason = '', el = null) {
     }
   }
 
+  // Show/hide punch action buttons when status changes to/from Fail
+  const punchActionsEl = document.getElementById(`punch-actions-${domId}`);
+  if (punchActionsEl) punchActionsEl.style.display = (status === 'Fail') ? 'flex' : 'none';
+
   _mxRefreshCounts();
   _mxSaveStatus(status, r, reason);
 }
@@ -6008,6 +6012,118 @@ function openPunchFromTestCase(testId) {
     _taInitSingle('np-pim',      currentRoleUser?.name || '');
     _taInitSingle('np-approver', '');
   }, 30);
+}
+
+// ── Punch ↔ Test Case linking ─────────────────────────────────────────────────
+
+// Returns HTML chips for all punch items linked to a given testId
+function _punchLinksForTestHTML(testId) {
+  const linked = PUNCH_DB.filter(p => !p.is_deleted && (p.linked_test_ids || []).includes(String(testId)));
+  if (!linked.length) return '';
+  return linked.map(p => {
+    const title = (p.title || '').substring(0, 28);
+    const ellipsis = (p.title || '').length > 28 ? '…' : '';
+    return `<span onclick="openPunchDetail('${p.id}')" style="display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:2px 7px;background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;border-radius:4px;cursor:pointer;margin:1px 2px 1px 0;" title="${escapeHtml(p.title||'')}">
+      🔗 #${p.number} <span style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(title)}${ellipsis}</span>
+    </span>`;
+  }).join('');
+}
+
+// Rebuild chips in the DOM without a full re-render
+function _refreshPunchChips(testId) {
+  const domId = encodeURIComponent(String(testId));
+  const el = document.getElementById(`punch-chips-${domId}`);
+  if (el) el.innerHTML = _punchLinksForTestHTML(String(testId));
+}
+
+// Open a searchable modal of open punch items to link to a test case
+function openLinkPunchModal(testId) {
+  const ti = TI.find(t => String(t.TestID) === String(testId));
+  const openPunches = PUNCH_DB
+    .filter(p => !p.is_deleted && p.status !== 'closed')
+    .sort((a, b) => b.number - a.number);
+
+  modal({
+    title: '🔗 Link to Punch Item',
+    sub: ti ? `Failed test case: ${ti.TestCaseCode}${ti.TestName ? ' — ' + ti.TestName : ''}` : '',
+    size: 'medium',
+    body: `
+      <input type="text" class="form-input" id="link-punch-search"
+        placeholder="Search by punch # or title…" style="margin-bottom:12px;"
+        oninput="_filterLinkPunchList('${escapeHtml(String(testId))}')">
+      <div id="link-punch-list" style="max-height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;">
+        ${_linkPunchListHTML(openPunches, testId)}
+      </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
+}
+
+// Renders the selectable punch item list inside the link modal
+function _linkPunchListHTML(punches, testId) {
+  if (!punches.length) return `<div style="text-align:center;color:var(--gray-400);padding:24px 0;">No open punch items</div>`;
+  return punches.map(p => {
+    const isLinked = (p.linked_test_ids || []).includes(String(testId));
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid ${isLinked ? '#6ee7b7' : 'var(--gray-200)'};border-radius:7px;background:${isLinked ? '#f0fdf4' : 'var(--white)'};">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;">
+            <span style="color:var(--gray-400);font-weight:400;margin-right:4px;">#${p.number}</span>${escapeHtml(p.title || '—')}
+          </div>
+          <div style="font-size:11px;color:var(--gray-500);margin-top:3px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            ${_plStatusBadge(p.status || 'draft')}
+            ${p.location ? `<span>${escapeHtml(_plLocName(p.location))}</span>` : ''}
+          </div>
+        </div>
+        ${isLinked
+          ? `<button onclick="_unlinkPunchFromTest('${escapeHtml(String(testId))}','${p.id}')"
+               style="flex-shrink:0;font-size:11px;padding:4px 10px;border:1px solid #6ee7b7;background:#dcfce7;color:#15803d;border-radius:5px;cursor:pointer;font-weight:600;white-space:nowrap;">
+               ✓ Linked · Remove
+             </button>`
+          : `<button onclick="_linkPunchToTest('${escapeHtml(String(testId))}','${p.id}')"
+               style="flex-shrink:0;font-size:11px;padding:4px 10px;border:1px solid var(--gray-300);background:var(--gray-50);color:var(--gray-700);border-radius:5px;cursor:pointer;font-weight:600;white-space:nowrap;">
+               Link
+             </button>`}
+      </div>`;
+  }).join('');
+}
+
+// Filter punch list as user types in the search box
+function _filterLinkPunchList(testId) {
+  const q = (document.getElementById('link-punch-search')?.value || '').toLowerCase();
+  const punches = PUNCH_DB.filter(p =>
+    !p.is_deleted && p.status !== 'closed' &&
+    (!q || String(p.number).includes(q) || (p.title || '').toLowerCase().includes(q))
+  ).sort((a, b) => b.number - a.number);
+  const el = document.getElementById('link-punch-list');
+  if (el) el.innerHTML = _linkPunchListHTML(punches, testId);
+}
+
+// Link a punch item to a test case (appends testId to punch.linked_test_ids)
+async function _linkPunchToTest(testId, punchId) {
+  const punch = PUNCH_DB.find(p => p.id === punchId);
+  if (!punch) return;
+  const existing = punch.linked_test_ids || [];
+  if (existing.includes(String(testId))) return;
+  const updated = [...existing, String(testId)];
+  const { error } = await _sb.from('punch_items').update({ linked_test_ids: updated }).eq('id', punchId);
+  if (error) { toast('Link failed: ' + error.message, 'error'); return; }
+  punch.linked_test_ids = updated;
+  toast(`Linked to Punch #${punch.number}`, 'success');
+  _filterLinkPunchList(testId);   // refresh modal list
+  _refreshPunchChips(testId);     // refresh chips in TR row
+}
+
+// Remove a punch ↔ test case link
+async function _unlinkPunchFromTest(testId, punchId) {
+  const punch = PUNCH_DB.find(p => p.id === punchId);
+  if (!punch) return;
+  const updated = (punch.linked_test_ids || []).filter(id => id !== String(testId));
+  const { error } = await _sb.from('punch_items').update({ linked_test_ids: updated }).eq('id', punchId);
+  if (error) { toast('Unlink failed: ' + error.message, 'error'); return; }
+  punch.linked_test_ids = updated;
+  toast(`Removed link from Punch #${punch.number}`, 'success');
+  _filterLinkPunchList(testId);
+  _refreshPunchChips(testId);
 }
 
 function openEditPunchModal(id) {
@@ -8366,11 +8482,14 @@ function _amDrilldownHTML(key) {
                           <div id="mx-reason-${domId}" class="mx-reason-wrap" style="${showReason?'':'display:none;'}">
                             <input type="text" id="mx-ri-${domId}" class="form-input mx-reason-input" style="font-size:11px;padding:3px 6px;margin-top:4px;" placeholder="${cur==='Fail'?'Failure reason...':'Blocked reason...'}" value="${escapeHtml(reasonVal)}" oninput="_mxSaveReason('${tid}',this.value)">
                           </div>
-                          ${cur === 'Fail' ? `<button onclick="openPunchFromTestCase('${tid}')" style="margin-top:6px;width:100%;font-size:11px;padding:4px 8px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:5px;cursor:pointer;font-weight:600;display:flex;align-items:center;justify-content:center;gap:4px;">📋 Create Punch Item</button>` : ''}
-                        ` : `
-                          <span class="badge ${({'Pass':'badge-passed','Fail':'badge-failed','Blocked':'badge-warn','Not Applicable':'badge-notstarted','In Progress':'badge-inprog','Future Test':'badge-futuretest'}[cur]||'badge-notstarted')}">${escapeHtml(cur)}</span>
-                          ${cur === 'Fail' ? `<button onclick="openPunchFromTestCase('${tid}')" style="margin-top:6px;width:100%;font-size:11px;padding:4px 8px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:5px;cursor:pointer;font-weight:600;display:flex;align-items:center;justify-content:center;gap:4px;">📋 Create Punch Item</button>` : ''}
-                        `}
+                        ` : `<span class="badge ${({'Pass':'badge-passed','Fail':'badge-failed','Blocked':'badge-warn','Not Applicable':'badge-notstarted','In Progress':'badge-inprog','Future Test':'badge-futuretest'}[cur]||'badge-notstarted')}">${escapeHtml(cur)}</span>`}
+                        <div id="punch-actions-${domId}" style="margin-top:6px;display:${cur==='Fail'?'flex':'none'};flex-direction:column;gap:4px;">
+                          <div style="display:flex;gap:4px;">
+                            <button onclick="openPunchFromTestCase('${tid}')" style="flex:1;font-size:11px;padding:4px 6px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:5px;cursor:pointer;font-weight:600;">📋 Create Punch</button>
+                            <button onclick="openLinkPunchModal('${tid}')" style="flex:1;font-size:11px;padding:4px 6px;background:var(--white);border:1px solid var(--gray-300);color:var(--gray-700);border-radius:5px;cursor:pointer;font-weight:600;">🔗 Link Existing</button>
+                          </div>
+                          <div id="punch-chips-${domId}">${_punchLinksForTestHTML(String(r.TestID))}</div>
+                        </div>
                       </td>
                       <td>
                         <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
@@ -11472,11 +11591,14 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
                 placeholder="${cur === 'Fail' ? 'Failure reason...' : 'Blocked reason...'}"
                 value="${escapeHtml(reasonVal)}" oninput="_mxSaveReason('${ctid}',this.value)">
             </div>
-            ${cur === 'Fail' ? `<button onclick="openPunchFromTestCase('${ctid}')" style="margin-top:6px;width:100%;font-size:11px;padding:4px 8px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:5px;cursor:pointer;font-weight:600;display:flex;align-items:center;justify-content:center;gap:4px;">📋 Create Punch Item</button>` : ''}
-          ` : `
-            <span class="badge" style="background:${sc}20;color:${sc};border:1px solid ${sc}40;">${escapeHtml(cur)}</span>
-            ${cur === 'Fail' ? `<button onclick="openPunchFromTestCase('${ctid}')" style="margin-top:6px;width:100%;font-size:11px;padding:4px 8px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:5px;cursor:pointer;font-weight:600;display:flex;align-items:center;justify-content:center;gap:4px;">📋 Create Punch Item</button>` : ''}
-          `}
+          ` : `<span class="badge" style="background:${sc}20;color:${sc};border:1px solid ${sc}40;">${escapeHtml(cur)}</span>`}
+          <div id="punch-actions-${domId}" style="margin-top:6px;display:${cur==='Fail'?'flex':'none'};flex-direction:column;gap:4px;">
+            <div style="display:flex;gap:4px;">
+              <button onclick="openPunchFromTestCase('${ctid}')" style="flex:1;font-size:11px;padding:4px 6px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:5px;cursor:pointer;font-weight:600;">📋 Create Punch</button>
+              <button onclick="openLinkPunchModal('${ctid}')" style="flex:1;font-size:11px;padding:4px 6px;background:var(--white);border:1px solid var(--gray-300);color:var(--gray-700);border-radius:5px;cursor:pointer;font-weight:600;">🔗 Link Existing</button>
+            </div>
+            <div id="punch-chips-${domId}">${_punchLinksForTestHTML(String(c.TestID))}</div>
+          </div>
         </td>
         <td>
           <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…"
