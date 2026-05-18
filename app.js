@@ -3559,6 +3559,24 @@ const FIELDCONFIG_MODULES = [
       { key: 'rma_status', label: 'RMA Status', defaults: ['Open','Pending Replacement','Shipped','Awaiting Return','Closed','Cancelled'] },
     ],
   },
+  {
+    id: 'lookahead', label: 'Lookahead / Planning', icon: '📆',
+    fields: [
+      {
+        key:      'cancel_category',
+        label:    'Cancellation Category',
+        defaults: [
+          'BART_DENIED: 🚫 BART denied a requested resource',
+          'WEATHER: 🌧 Weather',
+          'EQUIPMENT: 🔧 Equipment / asset unavailable',
+          'RESOURCE_UNAVAIL: 👤 Internal resource unavailable',
+          'LOGISTICS: 🚚 Logistics / access / staging',
+          'OTHER: ❓ Other (use reason field)',
+        ],
+        hint: 'Format each entry as "CODE: Label" — e.g. "WEATHER: 🌧 Weather". The CODE is stored in the database and drives the KPI cards; changing an existing code will not reclassify historical records.',
+      },
+    ],
+  },
 ];
 
 // Flattened list for backward-compat lookups (e.g. _fscDef(key))
@@ -3643,6 +3661,7 @@ function _fscFieldRowHTML(f, isLast) {
       ${isOpen ? `
       <div style="padding:4px 20px 16px;border-top:1px solid var(--gray-100);background:var(--white);">
         ${isConfigured ? '' : `<div style="font-size:11px;color:var(--gray-400);padding:6px 0 8px;font-style:italic;">Showing default values — add or remove an option to save a custom list.</div>`}
+        ${f.hint ? `<div style="font-size:11px;color:var(--info);background:var(--info-light);border-radius:6px;padding:7px 10px;margin-bottom:8px;">💡 ${escapeHtml(f.hint)}</div>` : ''}
         <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px;">
           ${opts.length ? opts.map((opt, i) => `
             <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:6px;font-size:13px;">
@@ -19560,19 +19579,12 @@ function _laCancellationsTabHTML() {
     const k = e.cancellation_category || 'UNCATEGORIZED';
     catCounts[k] = (catCounts[k] || 0) + 1;
   });
-  const catRow = _CANCEL_CATEGORIES.map(([code, label]) => {
-    const n = catCounts[code] || 0;
-    const colors = {
-      BART_DENIED:      '#dc2626',
-      WEATHER:          '#0891b2',
-      EQUIPMENT:        '#ea580c',
-      RESOURCE_UNAVAIL: '#7c3aed',
-      LOGISTICS:        '#0f766e',
-      OTHER:            '#6b7280',
-    };
-    return `<div style="flex:1;min-width:140px;background:#fff;border:1px solid var(--gray-200);border-left:4px solid ${colors[code]||'#999'};border-radius:6px;padding:10px;">
-      <div style="font-size:10px;font-weight:700;color:var(--gray-500);text-transform:uppercase;">${escapeHtml(label)}</div>
-      <div style="font-size:24px;font-weight:700;color:${colors[code]||'#111'};margin-top:4px;">${n}</div>
+  const catRow = _cancelCats().map(([code, label], ci) => {
+    const n     = catCounts[code] || 0;
+    const color = _cancelCatColor(code, ci);
+    return `<div style="flex:1;min-width:140px;background:#fff;border:1px solid var(--gray-200);border-left:4px solid ${color};border-radius:6px;padding:10px;">
+      <div style="font-size:10px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.03em;">${escapeHtml(label)}</div>
+      <div style="font-size:24px;font-weight:700;color:${color};margin-top:4px;">${n}</div>
     </div>`;
   }).join('');
 
@@ -20859,8 +20871,7 @@ function _laHealthGroupRollupHTML() {
     </div>`;
 }
 
-// Category taxonomy — mirrors the DB CHECK constraint on
-// planning_events.cancellation_category. Drives the new dashboard rollups.
+// Category taxonomy — fallback when Field Config has no custom list.
 const _CANCEL_CATEGORIES = [
   ['BART_DENIED',      '🚫 BART denied a requested resource'],
   ['WEATHER',          '🌧 Weather'],
@@ -20869,6 +20880,29 @@ const _CANCEL_CATEGORIES = [
   ['LOGISTICS',        '🚚 Logistics / access / staging'],
   ['OTHER',            '❓ Other (use reason field)'],
 ];
+
+// Runtime accessor — reads Field Config first, falls back to hardcoded list.
+// Stored format: "CODE: label" (e.g. "BART_DENIED: 🚫 BART denied a requested resource").
+function _cancelCats() {
+  const raw = _fsCfg('cancel_category');
+  const source = raw.length ? raw : _CANCEL_CATEGORIES.map(([c, l]) => `${c}: ${l}`);
+  return source.map(s => {
+    const idx = s.indexOf(': ');
+    if (idx > 0) return [s.slice(0, idx).trim().toUpperCase(), s.slice(idx + 2).trim()];
+    // No colon separator — use the whole string as both code and label
+    return [s.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_'), s.trim()];
+  });
+}
+
+// Per-code brand colors; extras cycle through an auto-palette.
+const _CANCEL_CAT_COLORS = {
+  BART_DENIED: '#dc2626', WEATHER: '#0891b2', EQUIPMENT: '#ea580c',
+  RESOURCE_UNAVAIL: '#7c3aed', LOGISTICS: '#0f766e', OTHER: '#6b7280',
+};
+const _CANCEL_AUTO_PALETTE = ['#1d4ed8','#b45309','#0d9488','#be185d','#7c2d12','#4d7c0f','#1e3a5f'];
+function _cancelCatColor(code, idx) {
+  return _CANCEL_CAT_COLORS[code] || _CANCEL_AUTO_PALETTE[idx % _CANCEL_AUTO_PALETTE.length];
+}
 
 function _cancelReasonModalOpen(subTitle, onSave) {
   modal({
@@ -20888,7 +20922,7 @@ function _cancelReasonModalOpen(subTitle, onSave) {
               if((v==='RESOURCE_UNAVAIL'||v==='EQUIPMENT') && partyEl && !partyEl.value){partyEl.value='HITACHI';}
             ">
             <option value="">Select category…</option>
-            ${_CANCEL_CATEGORIES.map(([v,l]) => `<option value="${v}">${l}</option>`).join('')}
+            ${_cancelCats().map(([v,l]) => `<option value="${v}">${l}</option>`).join('')}
           </select>
         </div>
         <div>
