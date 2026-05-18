@@ -14460,13 +14460,15 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     // ── Phase / Location sub-group header (Activity sub-grouping) ──
     if (g.isSubGroupHeader) {
       const caret = g.collapsed ? '▶' : '▼';
-      const indent = g.indent ? 'padding-left:26px;' : 'padding-left:10px;';
+      // Indent the LABEL only — never the row — or the day-cell container
+      // shifts and weekend columns stop lining up with the other rows.
+      const labelPad = g.indent ? 'padding-left:26px;' : 'padding-left:10px;';
       html += `<div class="tlg-row tlg-subgrp-hdr-row"
           data-subgroup-key="${escapeHtml(g.subGroupKey)}"
-          style="background:${g.bg}bb;color:${g.fg};border-left:3px solid ${g.accent}99;${indent}"
+          style="background:${g.bg}bb;color:${g.fg};border-left:3px solid ${g.accent}99;"
           onclick="_laToggleGroupCollapse(${JSON.stringify(g.subGroupKey)})"
           title="${g.collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(g.label)}">
-        <div class="tlg-label tlg-subgrp-hdr-label">
+        <div class="tlg-label tlg-subgrp-hdr-label" style="${labelPad}">
           <span class="tlg-grp-caret">${caret}</span>
           <span class="tlg-subgrp-icon">${g.icon || ''}</span>
           <span class="tlg-grp-name" style="font-size:11px;">${escapeHtml(g.label)}</span>
@@ -15513,6 +15515,8 @@ async function _laDrawerAddEventResource(eventId, resourceId, quantity = 1) {
       quantity:    quantity,
       assignment_source: 'manual',
     }]);
+    const _ev = (PLANNING_EVENTS || []).find(e => e.id === eventId);
+    if (_ev) await _laFlagPtoConflicts(resourceId, [_ev]);
     await loadPlanningData(true);
     _renderLookaheadTabBody();
   } catch (err) {
@@ -15731,6 +15735,59 @@ async function _laDrawerSoftDeleteActivity(activityId) {
     _renderLookaheadTabBody();
   } catch (err) {
     toast('Delete failed: ' + err.message, 'error');
+  }
+}
+
+// Inline 🗑 button on an activity row — quick soft-delete.
+// (Re-uses the proven soft-delete path so behaviour stays consistent
+//  across imported and manually-created activities.)
+async function _laDeleteManualActivity(activityId, ev) {
+  try { ev?.stopPropagation?.(); } catch (_) {}
+  if (!activityId) return;
+  await _laDrawerSoftDeleteActivity(activityId);
+}
+
+// Link / unlink an activity to a Test Register activity (the 🔗 chip).
+function _laOpenLinkActivityModal(activityId) {
+  const a = (PLANNING_ACTIVITIES || []).find(x => x.id === activityId);
+  if (!a) { toast('Activity not found', 'error'); return; }
+  const current = a.linked_test_register_activity || '';
+  const opts = [...new Set((window.TI || []).map(t => t.Activity).filter(Boolean))]
+    .sort().map(t => `<option value="${escapeHtml(t)}">`).join('');
+  modal({
+    title: '🔗 Link Test Register Activity',
+    sub:   escapeHtml(a.description || a.activity_id_text || '—'),
+    size:  'medium',
+    body: `
+      <div class="form-field form-field-full">
+        <label>Test Register activity</label>
+        <input type="text" id="la-link-tra" class="form-input" list="la-link-tra-opts"
+          value="${escapeHtml(current)}" placeholder="Start typing an activity name…" autocomplete="off">
+        <datalist id="la-link-tra-opts">${opts}</datalist>
+        <div style="font-size:11px;color:var(--gray-500);margin-top:6px;">
+          Pick an activity to pull live test-completion counts onto this row.
+          Leave blank (or click Unlink) to remove the link.
+        </div>
+      </div>`,
+    footer:
+      '<button class="form-secondary" onclick="closeModal()">Cancel</button>' +
+      (current ? `<button class="form-secondary" style="color:#b91c1c;border-color:#fca5a5;" onclick="_laSaveActivityLink('${activityId}',true)">Unlink</button>` : '') +
+      `<button class="form-submit" onclick="_laSaveActivityLink('${activityId}',false)">Save link</button>`,
+  });
+  setTimeout(() => document.getElementById('la-link-tra')?.focus(), 60);
+}
+
+async function _laSaveActivityLink(activityId, unlink) {
+  const val = unlink ? null : ((document.getElementById('la-link-tra')?.value || '').trim() || null);
+  try {
+    await _dbUpdate('planning_activities',
+      { linked_test_register_activity: val }, { id: activityId });
+    closeModal();
+    toast(val ? '✓ Linked to "' + val + '"' : '✓ Activity unlinked', 'success');
+    await loadPlanningData(true);
+    _renderLookaheadTabBody();
+  } catch (err) {
+    toast('Link failed: ' + err.message, 'error');
   }
 }
 
@@ -17574,6 +17631,36 @@ function _laInitAssignDnD(gridEl) {
 }
 
 // ─── Assign / Remove ─────────────────────────────────────────
+// Detect approved-PTO overlaps for a freshly-assigned resource and log
+// them into planning_conflicts so they surface in the Conflicts module.
+async function _laFlagPtoConflicts(resourceId, events) {
+  const r = (PLANNING_RESOURCES || []).find(x => x.id === resourceId);
+  const rows = [];
+  for (const ev of (events || [])) {
+    if (!ev || ev.status === 'cancelled') continue;
+    const pto = _ptoOverlapsRange(resourceId, ev.event_date, ev.start_time, ev.end_time);
+    if (!pto) continue;
+    const dup = (PLANNING_CONFLICTS || []).some(c =>
+      c.conflict_type === 'pto_overlap' && !c.is_acknowledged &&
+      c.event_id === ev.id && c.resource_id === resourceId);
+    if (dup) continue;
+    rows.push({
+      event_id:      ev.id,
+      resource_id:   resourceId,
+      conflict_type: 'pto_overlap',
+      severity:      'critical',
+      message:       `${r?.display_name || 'Resource'} is on approved PTO during "${ev.title || 'shift'}" on ${ev.event_date}`,
+      payload_json:  { pto_id: pto.id, event_id: ev.id, resource_id: resourceId },
+    });
+  }
+  if (rows.length) {
+    try { await _dbInsert('planning_conflicts', rows); }
+    catch (e) { console.warn('PTO conflict log failed:', e.message); }
+    toast(`⚠ ${rows.length} PTO conflict${rows.length > 1 ? 's' : ''} flagged for ${r?.display_name || 'resource'} — see Conflicts`, 'warn');
+  }
+  return rows.length;
+}
+
 async function _laAssignResourceToActivity(activityId, resourceId) {
   // Duplicate check
   if (PLANNING_ACTIVITY_RES.some(r => r.planning_activity_id === activityId && r.resource_id === resourceId)) {
@@ -17613,6 +17700,7 @@ async function _laAssignResourceToActivity(activityId, resourceId) {
     }
 
     toast(`${res?.display_name || 'Resource'} assigned ✓`, 'success');
+    await _laFlagPtoConflicts(resourceId, evs);
     await loadPlanningData(true);
     _laMountLookaheadTL();
   } catch (err) {
@@ -17652,6 +17740,7 @@ async function _laAssignResourceToEvent(activityId, eventDate, resourceId) {
       assignment_source: 'manual',
     });
     toast(`${res?.display_name || 'Resource'} → ${dateLabel} shift ✓`, 'success');
+    await _laFlagPtoConflicts(resourceId, [ev]);
     await loadPlanningData(true);
     _laMountLookaheadTL();
   } catch (err) {
