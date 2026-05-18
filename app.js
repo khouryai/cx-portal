@@ -16403,9 +16403,12 @@ async function _laExecutePaste(ops, { collisionAction }) {
       // Clone resources (unless source row is being cut and is the same row — avoid double assign)
       if (newEventId && op.src.resources.length > 0) {
         const resPayload = op.src.resources.map(er => ({
-          event_id: newEventId,
-          resource_id: er.resource_id,
-          assigned_by: currentProfile?.id || null,
+          event_id:          newEventId,
+          resource_id:       er.resource_id,
+          role:              er.role || 'owner',
+          quantity:          er.quantity || 1,
+          assignment_source: er.assignment_source || 'manual',
+          notes:             er.notes || null,
         }));
         await _dbInsert('planning_event_resources', resPayload);
       }
@@ -17140,7 +17143,12 @@ async function _laFillEnd(ev) {
       const newId = newRows?.[0]?.id;
       if (newId && srcResources.length > 0) {
         await _dbInsert('planning_event_resources', srcResources.map(er => ({
-          event_id: newId, resource_id: er.resource_id, assigned_by: currentProfile?.id || null,
+          event_id:          newId,
+          resource_id:       er.resource_id,
+          role:              er.role || 'owner',
+          quantity:          er.quantity || 1,
+          assignment_source: er.assignment_source || 'manual',
+          notes:             er.notes || null,
         })));
       }
     } catch (err) {
