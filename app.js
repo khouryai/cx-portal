@@ -5951,6 +5951,65 @@ function openNewPunchModal() {
   }, 30);
 }
 
+// ── Create punch item pre-filled from a failed test case ─────────────────────
+function openPunchFromTestCase(testId) {
+  const ti = TI.find(t => String(t.TestID) === String(testId));
+  if (!ti) { toast('Test case not found', 'error'); return; }
+
+  const titlePrefill = `Failed: ${ti.TestCaseCode}${ti.TestName ? ' — ' + ti.TestName : ''}`;
+  const descParts = [
+    `Test Case : ${ti.TestCaseCode}${ti.TestName ? ' — ' + ti.TestName : ''}`,
+    `Activity  : ${ti.Activity || '—'}`,
+    `Location  : ${ti.Location || '—'} · ${ti.Phase || '—'}`,
+    ti.TestProcedure ? `Procedure : ${ti.TestProcedure}` : '',
+    ti.FailedReason  ? `\nFailure Reason:\n${ti.FailedReason}` : '',
+    '\n[Add additional details below]',
+  ].filter(Boolean).join('\n');
+
+  modal({
+    title: '📋 Create Punch List Item',
+    sub: `Linked to failed test case ${ti.TestCaseCode}`,
+    size: 'large',
+    body: _punchFormHTML(null),
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="saveNewPunchItem(false)">Create Punch Item</button>
+    `,
+  });
+
+  setTimeout(() => {
+    // Pre-fill text fields
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    set('np-title', titlePrefill);
+    set('np-desc',  descParts);
+    set('np-rtc',   ti.TestCaseCode || '');
+
+    // Type → Defect, Priority → High
+    set('np-type',     'Defect');
+    set('np-priority', 'High');
+
+    // Subsystem — match by text value
+    set('np-subsystem', ti.Subsystem || '');
+
+    // Phase → resolve name to ID, then trigger location filter
+    const phaseObj = LOCS.find(l => l.level === 1 && l.name === ti.Phase);
+    if (phaseObj) {
+      set('np-phase', phaseObj.id);
+      npFilterLoc(); // rebuild location select for chosen phase
+      setTimeout(() => {
+        const locObj = LOCS.find(l => l.level === 2 && l.name === ti.Location);
+        if (locObj) set('np-location', locObj.id);
+      }, 60);
+    }
+
+    // People fields
+    _taInitField('np-assignees', [], false);
+    _taInitField('np-distlist',  [], false);
+    _taInitSingle('np-pim',      currentRoleUser?.name || '');
+    _taInitSingle('np-approver', '');
+  }, 30);
+}
+
 function openEditPunchModal(id) {
   const p = PUNCH_DB.find(x => x.id === id);
   if (!p) return;
@@ -8307,7 +8366,11 @@ function _amDrilldownHTML(key) {
                           <div id="mx-reason-${domId}" class="mx-reason-wrap" style="${showReason?'':'display:none;'}">
                             <input type="text" id="mx-ri-${domId}" class="form-input mx-reason-input" style="font-size:11px;padding:3px 6px;margin-top:4px;" placeholder="${cur==='Fail'?'Failure reason...':'Blocked reason...'}" value="${escapeHtml(reasonVal)}" oninput="_mxSaveReason('${tid}',this.value)">
                           </div>
-                        ` : `<span class="badge ${({'Pass':'badge-passed','Fail':'badge-failed','Blocked':'badge-warn','Not Applicable':'badge-notstarted','In Progress':'badge-inprog','Future Test':'badge-futuretest'}[cur]||'badge-notstarted')}">${escapeHtml(cur)}</span>`}
+                          ${cur === 'Fail' ? `<button onclick="openPunchFromTestCase('${tid}')" style="margin-top:6px;width:100%;font-size:11px;padding:4px 8px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:5px;cursor:pointer;font-weight:600;display:flex;align-items:center;justify-content:center;gap:4px;">📋 Create Punch Item</button>` : ''}
+                        ` : `
+                          <span class="badge ${({'Pass':'badge-passed','Fail':'badge-failed','Blocked':'badge-warn','Not Applicable':'badge-notstarted','In Progress':'badge-inprog','Future Test':'badge-futuretest'}[cur]||'badge-notstarted')}">${escapeHtml(cur)}</span>
+                          ${cur === 'Fail' ? `<button onclick="openPunchFromTestCase('${tid}')" style="margin-top:6px;width:100%;font-size:11px;padding:4px 8px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:5px;cursor:pointer;font-weight:600;display:flex;align-items:center;justify-content:center;gap:4px;">📋 Create Punch Item</button>` : ''}
+                        `}
                       </td>
                       <td>
                         <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
@@ -11409,7 +11472,11 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
                 placeholder="${cur === 'Fail' ? 'Failure reason...' : 'Blocked reason...'}"
                 value="${escapeHtml(reasonVal)}" oninput="_mxSaveReason('${ctid}',this.value)">
             </div>
-          ` : `<span class="badge" style="background:${sc}20;color:${sc};border:1px solid ${sc}40;">${escapeHtml(cur)}</span>`}
+            ${cur === 'Fail' ? `<button onclick="openPunchFromTestCase('${ctid}')" style="margin-top:6px;width:100%;font-size:11px;padding:4px 8px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:5px;cursor:pointer;font-weight:600;display:flex;align-items:center;justify-content:center;gap:4px;">📋 Create Punch Item</button>` : ''}
+          ` : `
+            <span class="badge" style="background:${sc}20;color:${sc};border:1px solid ${sc}40;">${escapeHtml(cur)}</span>
+            ${cur === 'Fail' ? `<button onclick="openPunchFromTestCase('${ctid}')" style="margin-top:6px;width:100%;font-size:11px;padding:4px 8px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:5px;cursor:pointer;font-weight:600;display:flex;align-items:center;justify-content:center;gap:4px;">📋 Create Punch Item</button>` : ''}
+          `}
         </td>
         <td>
           <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…"
