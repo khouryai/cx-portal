@@ -1514,6 +1514,8 @@ async function loadTestItems() {
         IsParent:      r.is_parent    || false,
         ParentTestId:  r.parent_test_id || null,
         AssetId:       r.asset_id     || null,
+        SwSnapshot:    r.sw_snapshot || null,
+        SwSnapshotAt:  r.sw_snapshot_at || null,
       }));
       console.log(`Loaded ${TI.length} test items from Supabase`);
     }
@@ -4294,6 +4296,28 @@ async function _updateTestItemStatus(testId, status, opts = {}) {
   patch.failed_reason = status === 'Fail' ? reason : null;
   patch.blocked_reason = status === 'Blocked' ? reason : null;
   if (Object.prototype.hasOwnProperty.call(opts, 'notes')) patch.notes = opts.notes || null;
+
+  // ── Phase 2: snapshot the active software config at the moment of a
+  // terminal result (Pass/Fail). Frozen onto the test result so later
+  // software installs never alter what a completed test was run against.
+  if (status === 'Pass' || status === 'Fail') {
+    try {
+      const now = new Date().toISOString();
+      const active = _activeSwConfigsFor(r.Subsystem, r.Location, now);
+      const snap = active.map(c => ({
+        config_id:     c.id,
+        software_name: c.software_name,
+        version:       c.version,
+        install_date:  c.install_date,
+        device_label:  c.device_label || null,
+        baseline:      c.baseline || null,
+      }));
+      patch.sw_snapshot = snap;
+      patch.sw_snapshot_at = now;
+      r.SwSnapshot = snap;
+      r.SwSnapshotAt = now;
+    } catch (e) { console.warn('[swSnapshot] capture skipped:', e.message); }
+  }
 
   r.Status = status;
   r.FailedReason = patch.failed_reason;
@@ -8512,6 +8536,7 @@ function _amDrilldownHTML(key) {
                       <td>
                         <div style="font-weight:500;font-size:13px;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestName||'')}" onchange="_trDraftChange('${tid}','TestName',this.value)">` : escapeHtml(r.TestName||'—')}</div>
                         ${r.CompletedBy ? `<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(r.CompletedBy)}</div>` : ''}
+                        ${_swSnapshotChipHTML(r)}
                       </td>
                       <td>
                         ${['admin','field_engineer'].includes(currentRoleUser?.role) ? `
@@ -11619,6 +11644,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
         </td>
         <td>
           ${c.CompletedBy ? `<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(c.CompletedBy)}</div>` : ''}
+          ${_swSnapshotChipHTML(c)}
         </td>
         <td>
           ${['admin','field_engineer'].includes(currentRoleUser?.role) ? `
@@ -12241,6 +12267,29 @@ function _activeSwConfigsFor(subsystem, location, asOf) {
     if (!prev || new Date(c.install_date).getTime() > new Date(prev.install_date).getTime()) byItem.set(k, c);
   }
   return [...byItem.values()];
+}
+
+// Renders the frozen software-config snapshot chip for a test row (Phase 2),
+// plus a "newer SW available" retest hint (Phase 4) when applicable.
+function _swSnapshotChipHTML(r) {
+  const snap = Array.isArray(r.SwSnapshot) ? r.SwSnapshot : null;
+  if (!snap || !snap.length) return '';
+  const label = snap.map(s => `${s.software_name} ${s.version}`).join(' · ');
+  const tip = `Tested against (captured ${r.SwSnapshotAt ? new Date(r.SwSnapshotAt).toLocaleDateString() : '—'}):\n` +
+    snap.map(s => `• ${s.software_name} ${s.version} (installed ${s.install_date})`).join('\n');
+  // Phase 4 hint: is there a newer active config than what was snapshotted?
+  let staleBadge = '';
+  try {
+    const current = _activeSwConfigsFor(r.Subsystem, r.Location, new Date().toISOString());
+    const snapIds = new Set(snap.map(s => s.config_id));
+    const newer = current.some(c => !snapIds.has(c.id));
+    if (newer && (r.Status === 'Pass')) {
+      staleBadge = `<span title="Newer software installed since this test passed — retest recommended" style="display:inline-block;font-size:9px;font-weight:700;background:#fef3c7;color:#b45309;border:1px solid #fcd34d;border-radius:3px;padding:1px 5px;margin-left:4px;">⟳ RETEST?</span>`;
+    }
+  } catch {}
+  return `<div style="font-size:10px;color:#3730a3;margin-top:3px;display:flex;align-items:center;gap:3px;flex-wrap:wrap;" title="${escapeHtml(tip)}">
+    <span style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:3px;padding:1px 6px;">🧩 ${escapeHtml(label.length > 46 ? label.slice(0,46)+'…' : label)}</span>${staleBadge}
+  </div>`;
 }
 
 function _cmCanManage() { return currentRoleUser?.role === 'admin'; }
