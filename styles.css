@@ -7058,3 +7058,54 @@ textarea.la-drawer-input { resize: vertical; min-height: 50px; }
 .la-row-droppable.la-drop-over .la-drop-hint-text {
   color: rgba(255,255,255,.9);
 }
+
+/* ===================================
+   COMPACT MODULE HEADINGS
+   Smaller, quieter in-module titles so headings stop
+   eating vertical space. Appended last to win the cascade.
+   =================================== */
+.page-title {
+  font-size: 26px;
+  margin-bottom: 2px;
+}
+.page-sub {
+  font-size: 13px;
+}
+
+.section-head {
+  margin-bottom: 14px;
+  align-items: baseline;
+}
+/* Inline the subtitle next to the title (CSS-only, no HTML change) */
+.section-head > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.section-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em !important;
+  color: var(--text-muted);
+  margin-bottom: 0;
+}
+.section-sub {
+  font-size: 12px;
+  color: var(--text-subtle);
+  display: inline;
+}
+
+.chart-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em !important;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+@media (max-width: 820px) {
+  .page-title { font-size: 22px; }
+}
