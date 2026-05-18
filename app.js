@@ -13884,20 +13884,50 @@ function _laMatchesLocation(filterLoc, itemLoc) {
   return false;
 }
 
-// Resolve an ad-hoc activity location ("W40") to its master name
-// ("W40 Millbrae Station") using prefix matching against LOCS.
+// Resolve an ad-hoc activity location to its master LOCS name.
+// Handles four cases in priority order:
+//   1. Exact match                          "W40 - Millbrae Station" → itself
+//   2. Input is a prefix of a master name  "W40"      → "W40 - Millbrae Station"
+//   3. Master name is a prefix of input    "W40 - Millbrae Station X" → "W40 - Millbrae Station"
+//   4. Shared station-code (leading 2–4    "W40 TCR"  → "W40 - Millbrae Station"
+//      alphanumeric chars before space/-)
 function _laResolveLocationPrefix(adHocLoc) {
   if (!adHocLoc) return adHocLoc;
-  const loc   = adHocLoc.trim();
-  const lower = loc.toLowerCase();
+  const loc    = adHocLoc.trim();
+  const lower  = loc.toLowerCase();
   const master = LOCS || [];
-  const exact  = master.find(l => l.name.trim().toLowerCase() === lower);
+
+  // 1. Exact
+  const exact = master.find(l => l.name.trim().toLowerCase() === lower);
   if (exact) return exact.name;
-  const prefix = master.find(l => {
+
+  // 2. Master name starts with input (input is prefix of master)
+  const fwdPrefix = master.find(l => {
     const n = l.name.trim().toLowerCase();
     return n.startsWith(lower + ' ') || n.startsWith(lower + '-');
   });
-  return prefix ? prefix.name : loc;
+  if (fwdPrefix) return fwdPrefix.name;
+
+  // 3. Input starts with master name (master is prefix of input)
+  const revPrefix = master.find(l => {
+    const n = l.name.trim().toLowerCase();
+    return lower.startsWith(n + ' ') || lower.startsWith(n + '-');
+  });
+  if (revPrefix) return revPrefix.name;
+
+  // 4. Station-code match: leading 2–4 alphanumeric chars before a space or dash.
+  //    e.g. "W40 TCR" → code "W40" → matches "W40 - Millbrae Station"
+  const codeMatch = loc.match(/^([A-Z0-9]{2,4})(?:\s|-)/i);
+  if (codeMatch) {
+    const code  = codeMatch[1].toUpperCase();
+    const stMaster = master.find(l => {
+      const n = l.name.trim().toUpperCase();
+      return n.startsWith(code + ' ') || n.startsWith(code + '-') || n === code;
+    });
+    if (stMaster) return stMaster.name;
+  }
+
+  return loc; // no match — return as-is
 }
 
 // Auto-infer phase from location hierarchy.
@@ -15906,17 +15936,23 @@ function _laRenderLinkModal(activityId, showAll) {
 
   const allNames = Object.keys(tiMap).sort((a, b) => a.localeCompare(b));
 
-  // Filter to activities that have at least one TI row whose location prefix-matches
+  // Resolve the activity location to its canonical master name so that
+  // "W40 TCR" → "W40 - Millbrae Station" and matching against TI rows works.
+  const resolvedLoc = actLoc ? (_laResolveLocationPrefix(actLoc) || actLoc) : null;
+
+  // Match using the resolved canonical name (covers "W40 TCR" → "W40 - Millbrae Station")
+  // and fall back to also checking the raw actLoc string.
   const locNames = actLoc
     ? allNames.filter(name =>
-        [...tiMap[name]].some(tiLoc => _laMatchesLocation(actLoc, tiLoc))
+        [...tiMap[name]].some(tiLoc =>
+          _laMatchesLocation(resolvedLoc || actLoc, tiLoc) ||
+          _laMatchesLocation(actLoc, tiLoc)
+        )
       )
     : allNames;
 
   const hasLocMatch = locNames.length > 0;
   const displayNames = (showAll || !hasLocMatch) ? allNames : locNames;
-
-  const resolvedLoc = actLoc ? (_laResolveLocationPrefix(actLoc) || actLoc) : null;
 
   // Build select options — group: location-matched first (when showing all)
   let optsHTML = `<option value="">— Select a Test Register activity —</option>`;
