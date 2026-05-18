@@ -5695,6 +5695,34 @@ function openPunchDetail(id) {
           <div style="font-size:13px;color:var(--gray-800);line-height:1.6;white-space:pre-wrap;padding:10px 14px;background:var(--gray-50);border-radius:8px;">${escapeHtml(p.description)}</div>
         </div>` : ''}
 
+      <!-- Linked Test Cases -->
+      ${(() => {
+        const ids = p.linked_test_ids || [];
+        const linkedTI = ids.map(id => TI.find(t => String(t.TestID) === String(id))).filter(Boolean);
+        if (!linkedTI.length) return '';
+        const statusCls = { Pass:'#16a34a', Fail:'#dc2626', Blocked:'#d97706', 'Not Started':'#6b7280', 'In Progress':'#1d4ed8', 'Not Applicable':'#6b7280', 'Future Test':'#7c3aed' };
+        return `
+          <div style="margin-bottom:18px;">
+            <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;">
+              🔗 Linked Test Cases <span style="font-weight:400;font-size:10px;">(${linkedTI.length})</span>
+            </div>
+            <div style="border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
+              ${linkedTI.map((t, i) => {
+                const col = statusCls[t.Status] || '#6b7280';
+                return `
+                  <div style="display:grid;grid-template-columns:110px 1fr auto;align-items:center;gap:10px;padding:9px 14px;${i > 0 ? 'border-top:1px solid var(--gray-100);' : ''}background:var(--white);">
+                    <div style="font-family:monospace;font-size:11px;color:var(--gray-700);font-weight:600;">${escapeHtml(t.TestCaseCode || '—')}</div>
+                    <div>
+                      <div style="font-size:13px;font-weight:500;">${escapeHtml(t.TestName || '—')}</div>
+                      <div style="font-size:11px;color:var(--gray-500);margin-top:1px;">${escapeHtml(t.Activity || '')}${t.Location ? ' · ' + escapeHtml(t.Location) : ''}</div>
+                    </div>
+                    <span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;white-space:nowrap;background:${col}20;color:${col};border:1px solid ${col}40;">${escapeHtml(t.Status || 'Unknown')}</span>
+                  </div>`;
+              }).join('')}
+            </div>
+          </div>`;
+      })()}
+
       <!-- Combined Activity & Comments Timeline -->
       <div>
         <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:14px;">
@@ -6017,14 +6045,22 @@ function openPunchFromTestCase(testId) {
 // ── Punch ↔ Test Case linking ─────────────────────────────────────────────────
 
 // Returns HTML chips for all punch items linked to a given testId
+// Green chip = punch closed (tester can retest), Red chip = punch still open
 function _punchLinksForTestHTML(testId) {
   const linked = PUNCH_DB.filter(p => !p.is_deleted && (p.linked_test_ids || []).includes(String(testId)));
   if (!linked.length) return '';
   return linked.map(p => {
-    const title = (p.title || '').substring(0, 28);
-    const ellipsis = (p.title || '').length > 28 ? '…' : '';
-    return `<span onclick="openPunchDetail('${p.id}')" style="display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:2px 7px;background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;border-radius:4px;cursor:pointer;margin:1px 2px 1px 0;" title="${escapeHtml(p.title||'')}">
-      🔗 #${p.number} <span style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(title)}${ellipsis}</span>
+    const isClosed = p.status === 'closed';
+    const bg      = isClosed ? '#dcfce7' : '#fee2e2';
+    const border  = isClosed ? '#86efac' : '#fca5a5';
+    const color   = isClosed ? '#15803d' : '#dc2626';
+    const icon    = isClosed ? '✅' : '🔴';
+    const tip     = isClosed ? `Punch #${p.number} closed — ready to retest` : `Punch #${p.number} open — ${PL_STATUS_LABELS[p.status] || p.status}`;
+    const title   = (p.title || '').substring(0, 26);
+    const ellipsis = (p.title || '').length > 26 ? '…' : '';
+    return `<span onclick="openPunchDetail('${p.id}')" title="${escapeHtml(tip)}"
+      style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;padding:3px 8px;background:${bg};color:${color};border:1px solid ${border};border-radius:4px;cursor:pointer;margin:1px 2px 1px 0;white-space:nowrap;">
+      ${icon} #${p.number} <span style="font-weight:400;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(title)}${ellipsis}</span>
     </span>`;
   }).join('');
 }
