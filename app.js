@@ -14951,6 +14951,32 @@ async function _laBulkSetLocation() {
   _renderLookaheadTabBody();
 }
 
+async function _laBulkSetHours() {
+  if (_laSelectedCellKeys.size === 0) { toast('No cells selected.', 'warn'); return; }
+  const inp = document.getElementById('la-bulk-hours');
+  const raw = (inp?.value || '').trim();
+  if (!raw) { toast('Enter work hours first, e.g. 0700-1500.', 'warn'); return; }
+  const { start, end, shift_type } = _laInferShiftFromHours(raw);
+  if (!start) { toast('Could not parse hours. Use military format like 0700-1500.', 'warn'); return; }
+  const ids = [..._laSelectedCellKeys];
+  const events = PLANNING_EVENTS.filter(e => ids.includes(e.id) && !e.is_locked);
+  if (!events.length) { toast('All selected cells are locked.', 'warn'); return; }
+  if (!confirm(`Set work hours to "${raw}" for ${events.length} cell${events.length > 1 ? 's' : ''}?`)) return;
+  let n = 0;
+  for (const e of events) {
+    try {
+      await _dbUpdate('planning_events',
+        { start_time: start, end_time: end || null, shift_type,
+          all_day: false, version: (e.version || 1) + 1, updated_by: currentProfile?.id || null },
+        { id: e.id });
+      n++;
+    } catch (err) { console.error('[bulk-hours] failed for', e.id, err); }
+  }
+  toast(`✓ Updated work hours on ${n} cell${n > 1 ? 's' : ''}`, 'success');
+  await loadPlanningData(true);
+  _renderLookaheadTabBody();
+}
+
 // ============================================================
 // EDIT DRAWER — Phase 2/3/4 master-schedule editing surface
 // ============================================================
@@ -15775,6 +15801,8 @@ function _laCellSelActionsHTML() {
     </select>`);
     parts.push(`<input id="la-bulk-loc" placeholder="Set location…" style="font-size:11px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;width:120px;">`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laBulkSetLocation()">Apply loc</button>`);
+    parts.push(`<input id="la-bulk-hours" placeholder="Set hours 0700-1500" title="Bulk set work hours (military). Auto-sets shift type." style="font-size:11px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;width:130px;">`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laBulkSetHours()">Apply hrs</button>`);
   }
   if (hasClipboard) {
     if (n > 0) parts.push('<span style="width:1px;background:#e5e7eb;align-self:stretch;margin:0 4px;"></span>');
@@ -16045,6 +16073,9 @@ async function _laSaveCreateEvents(cells) {
       planning_activity_id: actId,
       event_date:  iso,
       title:       titleInput || titleFallback,
+      // Inherit location from the parent activity row; still editable per-cell
+      // in the drawer afterwards.
+      location:    act?.location || null,
       start_time:  start     || null,
       end_time:    end       || null,
       shift_type:  shiftType || null,
