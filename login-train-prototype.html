@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BART Sign-In — Animated Background Prototype</title>
+<style>
+  :root{
+    --hitachi-red:#e60012; --black:#0b0b0d; --ink:#111827;
+    --bart-silver:#d7dbe0; --bart-silver-2:#aeb4bd; --bart-blue:#0b5fa5;
+    --bart-blue-lt:#2f8fd6; --sky-1:#1a2740; --sky-2:#33405e; --rail:#5b6473;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#000;color:#fff;overflow:hidden}
+
+  /* ---- variant switcher ---- */
+  .switcher{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:50;
+    display:flex;gap:6px;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);
+    padding:6px;border-radius:999px;border:1px solid rgba(255,255,255,.12)}
+  .switcher button{font:600 12px/1 inherit;color:#cbd5e1;background:transparent;border:0;
+    padding:9px 16px;border-radius:999px;cursor:pointer;letter-spacing:.02em;white-space:nowrap}
+  .switcher button.active{background:var(--hitachi-red);color:#fff}
+  .switcher .hint{color:#94a3b8;font-size:11px;align-self:center;padding:0 10px;border-left:1px solid rgba(255,255,255,.12)}
+
+  /* ---- scene ---- */
+  .scene{position:fixed;inset:0;overflow:hidden}
+  .scene{background:linear-gradient(180deg,var(--sky-1) 0%,var(--sky-2) 62%,#202a3d 62%,#202a3d 100%)}
+  .stars{position:absolute;inset:0;background-image:
+    radial-gradient(1.5px 1.5px at 20% 30%,#fff,transparent),
+    radial-gradient(1.5px 1.5px at 70% 18%,#fff,transparent),
+    radial-gradient(1px 1px at 45% 40%,#cbd5e1,transparent),
+    radial-gradient(1px 1px at 85% 35%,#fff,transparent),
+    radial-gradient(1.5px 1.5px at 60% 55%,#e2e8f0,transparent);
+    opacity:.5}
+  .hills{position:absolute;bottom:38%;left:0;width:200%;height:160px;
+    background:radial-gradient(120px 80px at 10% 100%,#26324a 60%,transparent 61%),
+               radial-gradient(170px 110px at 32% 100%,#222d44 60%,transparent 61%),
+               radial-gradient(140px 90px at 60% 100%,#26324a 60%,transparent 61%),
+               radial-gradient(190px 120px at 85% 100%,#222d44 60%,transparent 61%);
+    animation:drift 60s linear infinite}
+  .ground{position:absolute;left:0;bottom:0;width:100%;height:38%;
+    background:linear-gradient(180deg,#202a3d,#161d2c)}
+
+  /* track */
+  .track{position:absolute;left:0;bottom:24%;width:100%;height:14px;
+    background:var(--rail);box-shadow:0 -2px 0 #3a4150,0 5px 0 #2a3140}
+  .ties{position:absolute;left:0;bottom:calc(24% - 10px);width:200%;height:10px;
+    background:repeating-linear-gradient(90deg,#3a3127 0 14px,transparent 14px 46px);
+    animation:slide 1.6s linear infinite}
+  .poles{position:absolute;left:0;bottom:24%;width:200%;height:220px;animation:slide 5.5s linear infinite}
+  .pole{position:absolute;bottom:0;width:6px;height:200px;background:#39414f}
+  .pole::after{content:"";position:absolute;top:6px;left:-22px;width:50px;height:6px;background:#39414f}
+  .pole:nth-child(1){left:8%}.pole:nth-child(2){left:30%}.pole:nth-child(3){left:52%}
+  .pole:nth-child(4){left:74%}.pole:nth-child(5){left:96%}
+
+  /* ---- train ---- */
+  .train{position:absolute;bottom:calc(24% + 2px);left:0;display:flex;align-items:flex-end;
+    will-change:transform}
+  .v-loop .train{animation:cross 11s linear infinite}
+  .v-once .train{animation:cross 7s linear 1 forwards}
+  .train svg{display:block;height:150px;width:auto;filter:drop-shadow(0 14px 14px rgba(0,0,0,.45))}
+
+  /* wheels spin only in the "detailed" variant */
+  .v-detail .wheel{transform-box:fill-box;transform-origin:center;animation:spin .5s linear infinite}
+  .v-detail .headlight{animation:glow 1.6s ease-in-out infinite alternate}
+  .v-detail .train{animation:cross 12s linear infinite, bob .9s ease-in-out infinite}
+
+  /* minimal silhouette variant */
+  .v-min .scene{background:linear-gradient(180deg,#0a0d14,#11151f 70%,#0c0f17 70%)}
+  .v-min .train svg .body,.v-min .train svg .nose{fill:#05070b!important;stroke:#1c2330!important}
+  .v-min .train svg .win,.v-min .train svg .stripe{fill:#161d2c!important}
+  .v-min .headlight{fill:#fde68a!important}
+  .v-min .stars{opacity:.25}.v-min .poles,.v-min .hills{opacity:.4}
+
+  /* ---- sign-in card (STATIC, always on top) ---- */
+  .signin-wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:20;pointer-events:none}
+  .signin{pointer-events:auto;width:380px;max-width:90vw;background:rgba(255,255,255,.97);
+    color:var(--ink);border-radius:16px;padding:34px 32px;
+    box-shadow:0 30px 70px rgba(0,0,0,.5),0 2px 0 rgba(255,255,255,.4) inset}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:22px}
+  .brand .dot{width:30px;height:30px;border-radius:7px;background:var(--hitachi-red);
+    display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:15px}
+  .brand b{font-size:15px;letter-spacing:.01em}
+  .signin h1{font-size:21px;font-weight:700;margin-bottom:4px}
+  .signin p.sub{font-size:13px;color:#667085;margin-bottom:22px}
+  .signin label{display:block;font-size:11px;font-weight:600;text-transform:uppercase;
+    letter-spacing:.06em;color:#667085;margin:0 0 6px}
+  .signin input{width:100%;font-size:14px;padding:11px 13px;border:1px solid #d8dde4;
+    border-radius:9px;margin-bottom:16px;outline:none}
+  .signin input:focus{border-color:var(--hitachi-red);box-shadow:0 0 0 3px rgba(230,0,18,.12)}
+  .signin .btn{width:100%;font-size:14px;font-weight:700;color:#fff;background:var(--hitachi-red);
+    border:0;border-radius:9px;padding:12px;cursor:pointer;letter-spacing:.02em}
+  .signin .btn:hover{background:#c5000f}
+  .signin .foot{margin-top:16px;text-align:center;font-size:12px;color:#98a2b3}
+
+  /* ---- keyframes ---- */
+  @keyframes cross{from{transform:translateX(-46vw)}to{transform:translateX(115vw)}}
+  @keyframes slide{from{transform:translateX(0)}to{transform:translateX(-32px)}}
+  @keyframes drift{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes bob{0%,100%{margin-bottom:0}50%{margin-bottom:3px}}
+  @keyframes glow{from{opacity:.55}to{opacity:1}}
+
+  @media (prefers-reduced-motion: reduce){
+    .train,.ties,.poles,.hills,.wheel,.headlight{animation:none!important}
+    .train{transform:translateX(60vw)}
+  }
+</style>
+</head>
+<body class="v-loop v-sleek">
+
+  <div class="switcher">
+    <button data-v="sleek" class="active">Sleek transit</button>
+    <button data-v="detail">Detailed + motion</button>
+    <button data-v="min">Minimal silhouette</button>
+    <span class="hint">loop:</span>
+    <button data-loop="loop" class="active" style="padding:9px 12px">↻ Loop</button>
+    <button data-loop="once" style="padding:9px 12px">▶ Once</button>
+  </div>
+
+  <div class="scene">
+    <div class="stars"></div>
+    <div class="hills"></div>
+    <div class="ground"></div>
+    <div class="poles"><i class="pole"></i><i class="pole"></i><i class="pole"></i><i class="pole"></i><i class="pole"></i></div>
+    <div class="track"></div>
+    <div class="ties"></div>
+
+    <div class="train" id="train"></div>
+  </div>
+
+  <div class="signin-wrap">
+    <form class="signin" onsubmit="event.preventDefault();alert('Prototype only — this is the static sign-in card.');">
+      <div class="brand"><span class="dot">CX</span><b>CX Portal</b></div>
+      <h1>Welcome back</h1>
+      <p class="sub">Sign in to continue to the commissioning portal.</p>
+      <label>Email</label>
+      <input type="email" placeholder="you@company.com" autocomplete="username">
+      <label>Password</label>
+      <input type="password" placeholder="••••••••" autocomplete="current-password">
+      <button class="btn" type="submit">Sign In</button>
+      <div class="foot">The train animates behind this card — the form stays static &amp; clickable.</div>
+    </form>
+  </div>
+
+<script>
+  // A BART-style train: nose car + middle car + nose car (reversed).
+  function carSVG(reverse){
+    const f = reverse ? 'transform="scale(-1,1) translate(-560,0)"' : '';
+    return `<svg viewBox="0 0 560 220" aria-hidden="true"><g ${f}>
+      <!-- body -->
+      <path class="body" d="M30 40 Q30 18 70 14 L520 14 Q556 18 556 60 L556 168 Q556 178 546 178 L20 178 Q10 178 10 168 L10 70 Q10 50 30 40 Z"
+            fill="#dde1e6" stroke="#9aa1ac" stroke-width="2"/>
+      <!-- nose accent -->
+      <path class="nose" d="M10 70 Q10 50 30 40 L60 40 L60 178 L20 178 Q10 178 10 168 Z" fill="#c7ccd4"/>
+      <!-- blue livery stripe (BART-ish) -->
+      <rect class="stripe" x="10" y="120" width="546" height="16" fill="#0b5fa5"/>
+      <rect class="stripe" x="10" y="136" width="546" height="6" fill="#2f8fd6"/>
+      <!-- windows -->
+      <rect class="win" x="70"  y="52" width="92" height="46" rx="7" fill="#1d2a3d"/>
+      <rect class="win" x="178" y="52" width="92" height="46" rx="7" fill="#1d2a3d"/>
+      <rect class="win" x="286" y="52" width="92" height="46" rx="7" fill="#1d2a3d"/>
+      <rect class="win" x="394" y="52" width="92" height="46" rx="7" fill="#1d2a3d"/>
+      <!-- door seam -->
+      <rect x="246" y="40" width="3" height="138" fill="#9aa1ac"/>
+      <!-- headlight -->
+      <circle class="headlight" cx="34" cy="150" r="9" fill="#fff3c4"/>
+      <!-- skirt -->
+      <rect x="20" y="178" width="520" height="14" fill="#5b6473"/>
+      <!-- bogies + wheels -->
+      <g>
+        <rect x="70"  y="186" width="120" height="14" rx="4" fill="#33384400"/>
+        <circle class="wheel" cx="100" cy="198" r="16" fill="#2a2f3a" stroke="#11151f" stroke-width="4"/>
+        <circle class="wheel" cx="158" cy="198" r="16" fill="#2a2f3a" stroke="#11151f" stroke-width="4"/>
+        <circle class="wheel" cx="404" cy="198" r="16" fill="#2a2f3a" stroke="#11151f" stroke-width="4"/>
+        <circle class="wheel" cx="462" cy="198" r="16" fill="#2a2f3a" stroke="#11151f" stroke-width="4"/>
+      </g>
+      <!-- roof unit -->
+      <rect x="180" y="6" width="210" height="12" rx="5" fill="#aeb4bd"/>
+    </g></svg>`;
+  }
+  document.getElementById('train').innerHTML = carSVG(false) + carSVG(true).replace('<svg','<svg style="margin-left:-2px"');
+
+  const body = document.body;
+  document.querySelectorAll('.switcher [data-v]').forEach(b=>{
+    b.onclick = ()=>{
+      body.classList.remove('v-sleek','v-detail','v-min');
+      body.classList.add('v-'+b.dataset.v);
+      document.querySelectorAll('.switcher [data-v]').forEach(x=>x.classList.toggle('active',x===b));
+    };
+  });
+  document.querySelectorAll('.switcher [data-loop]').forEach(b=>{
+    b.onclick = ()=>{
+      body.classList.remove('v-loop','v-once');
+      body.classList.add('v-'+b.dataset.loop);
+      document.querySelectorAll('.switcher [data-loop]').forEach(x=>x.classList.toggle('active',x===b));
+      // restart animation
+      const t=document.getElementById('train'); t.style.animation='none'; void t.offsetWidth; t.style.animation='';
+    };
+  });
+</script>
+</body>
+</html>
