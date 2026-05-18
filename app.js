@@ -1429,6 +1429,7 @@ async function loadTemplates() {
   try {
     const data = await _fetchAnon('templates?select=*&order=created_at.asc');
     if (data && data.length > 0) {
+      const sbIds = new Set(data.map(r => r.id));
       TEMPLATES.length = 0;
       data.forEach(r => TEMPLATES.push({
         id:          r.id,
@@ -1439,7 +1440,12 @@ async function loadTemplates() {
         createdAt:   r.created_at,
         testCases:   r.test_cases || [],
       }));
-      console.log(`Loaded ${TEMPLATES.length} templates from Supabase`);
+      // Merge any data.js baseline templates whose IDs aren't already in Supabase
+      // (prevents data.js templates from disappearing once Supabase has any row)
+      (DATA.templates || []).forEach(t => {
+        if (!sbIds.has(t.id)) TEMPLATES.push(t);
+      });
+      console.log(`Loaded ${TEMPLATES.length} templates (${data.length} from Supabase, ${TEMPLATES.length - data.length} from baseline)`);
     }
   } catch (err) {
     console.warn('Supabase templates load failed, using data.js fallback:', err.message);
@@ -3129,7 +3135,7 @@ function _renderDeploySelections(tpl) {
           <label style="display:flex;align-items:center;gap:5px;font-size:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:4px;padding:4px 8px;cursor:pointer;">
             <input type="checkbox" data-si="${si}" data-tc="${tc.code}" ${s.tcCodes.includes(tc.code) ? 'checked' : ''}
               onchange="_deployToggleTc(${si},'${tc.code}',this.checked)">
-            <span>${escapeHtml(tc.code)}</span>
+            <span style="font-weight:600;">${escapeHtml(tc.code)}</span>${tc.name ? `<span style="color:var(--gray-500);margin-left:3px;">— ${escapeHtml(tc.name)}</span>` : ''}
           </label>
         `).join('')}
       </div>
@@ -7640,21 +7646,21 @@ function _testRegisterHTML() {
             oninput="clearTimeout(window._trSearchTimer);window._trSearchTimer=setTimeout(()=>_amSetFilter('search',this.value),260)">
         </div>
         <!-- Tom Select filter dropdowns (IDs required for _trInitTomSelect) -->
-        <select class="filter-select" id="tr-filter-phase">
+        <select class="filter-select" id="tr-filter-phase" onchange="_amSetFilter('phase',this.value)">
           <option value="">All Phases</option>
           ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_amFilters.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
         </select>
-        <select class="filter-select" id="tr-filter-location">
+        <select class="filter-select" id="tr-filter-location" onchange="_amSetFilter('location',this.value)">
           <option value="">All Locations</option>
           ${locations.map(l=>`<option value="${escapeHtml(l)}" ${_amFilters.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
         </select>
         ${userSub
           ? `<span class="filter-locked-tag" data-tippy-content="Auto-filtered to your assigned subsystem">📌 ${escapeHtml(userSub)}</span>`
-          : `<select class="filter-select" id="tr-filter-subsystem">
+          : `<select class="filter-select" id="tr-filter-subsystem" onchange="_amSetFilter('subsystem',this.value)">
               <option value="">All Subsystems</option>
               ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_amFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
             </select>`}
-        <select class="filter-select" id="tr-filter-status">
+        <select class="filter-select" id="tr-filter-status" onchange="_amSetFilter('status',this.value)">
           <option value="">All Statuses</option>
           ${actStatuses.map(s=>`<option value="${s}" ${_amFilters.status===s?'selected':''}>${s}</option>`).join('')}
         </select>
