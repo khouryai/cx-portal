@@ -14295,6 +14295,28 @@ const _TL_MONTH_COLORS = [
   '#2a2a2a', // Hitachi charcoal/black
 ];
 
+// ── Party to Action — multiselect options + badge colours ─────
+// STS = Hitachi Rail (per BART/Hitachi convention).
+const _PARTY_TO_ACTION_OPTS = [
+  ['STS',  'STS — Hitachi Rail'],
+  ['BART', 'BART'],
+  ['REI',  'REI'],
+];
+const _PARTY_BADGE = {
+  STS:  { bg: '#e60012', fg: '#fff' }, // Hitachi red
+  BART: { bg: '#0072ce', fg: '#fff' }, // BART blue
+  REI:  { bg: '#00875a', fg: '#fff' }, // green
+};
+function _partyBadgesHTML(arr) {
+  if (!Array.isArray(arr) || !arr.length) return '';
+  return `<span class="tlg-party-wrap">${arr
+    .filter(p => _PARTY_BADGE[p])
+    .map(p => {
+      const c = _PARTY_BADGE[p];
+      return `<span class="tlg-party-badge" style="background:${c.bg};color:${c.fg};">${escapeHtml(p)}</span>`;
+    }).join('')}</span>`;
+}
+
 // ── Derive shift visual from time range (fixes colour mismatches) ──
 function _tlgShiftVisual(s) {
   if (s.isCancel) return _CANCEL_VISUAL;
@@ -14493,7 +14515,15 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       ${_laAssignMode && actId ? `data-activity-id="${actId}" title="Drop here to assign for the full activity"` : ''}>
       <div class="tlg-label-inner">
         <span class="tlg-label-main" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>
-        ${g.sublabel ? `<span class="tlg-label-sub">${escapeHtml(g.sublabel)}</span>` : ''}
+        ${(() => {
+          const metaRows = [];
+          if (g.actLocation)  metaRows.push(`<span class="tlg-meta-row"><span class="tlg-meta-k">📍</span><span class="tlg-meta-v" title="${escapeHtml(g.actLocation)}">${escapeHtml(g.actLocation)}</span></span>`);
+          if (g.actWorkHours) metaRows.push(`<span class="tlg-meta-row"><span class="tlg-meta-k">🕒</span><span class="tlg-meta-v">${escapeHtml(g.actWorkHours)}</span></span>`);
+          if (g.actSswp)      metaRows.push(`<span class="tlg-meta-row"><span class="tlg-meta-k">SSWP</span><span class="tlg-meta-v">${escapeHtml(g.actSswp)}</span></span>`);
+          if (metaRows.length) return `<div class="tlg-label-meta">${metaRows.join('')}</div>`;
+          return g.sublabel ? `<span class="tlg-label-sub">${escapeHtml(g.sublabel)}</span>` : '';
+        })()}
+        ${_partyBadgesHTML(g.actParty)}
         ${linkChip ? `<button class="tlg-row-link-btn" onclick="event.stopPropagation();_laOpenLinkActivityModal('${actId}')">${linkChip}</button>` : ''}
       </div>
       ${progChip}
@@ -15302,6 +15332,20 @@ function _laDrawerActivityHTML(a) {
     </div>
 
     <div class="la-drawer-section">
+      <label class="la-drawer-label">Party to Action <span style="font-size:9px;color:var(--gray-400);font-weight:400;">(select all that apply)</span></label>
+      <div class="dw-party-grid">
+        ${_PARTY_TO_ACTION_OPTS.map(([val, lbl]) => {
+          const on = Array.isArray(a.party_to_action) && a.party_to_action.includes(val);
+          return `<label class="dw-party-chip${on ? ' on' : ''}">
+            <input type="checkbox" class="dw-act-party" value="${val}" ${on ? 'checked' : ''}
+              onchange="this.closest('.dw-party-chip').classList.toggle('on',this.checked);_laDrawerMarkDirty();">
+            <span>${escapeHtml(lbl)}</span>
+          </label>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <div class="la-drawer-section">
       <label class="la-drawer-label">Notes</label>
       <textarea class="la-drawer-input" id="dw-act-notes" rows="3" oninput="_laDrawerMarkDirty()">${escapeHtml(a.notes || '')}</textarea>
     </div>
@@ -15424,6 +15468,7 @@ async function _laDrawerSave() {
       location:                     document.getElementById('dw-act-loc')?.value?.trim() || null,
       sswp:                         document.getElementById('dw-act-sswp')?.value?.trim() || null,
       work_hours_raw:               document.getElementById('dw-act-hours')?.value?.trim() || null,
+      party_to_action:              [...document.querySelectorAll('.dw-act-party:checked')].map(c => c.value),
       notes:                        document.getElementById('dw-act-notes')?.value || null,
       linked_test_register_activity: document.getElementById('dw-act-linked-tra')?.value?.trim() || null,
     };
@@ -17764,6 +17809,10 @@ function _laMountLookaheadTL() {
           label:                 a.description || a.activity_id_text || '—',
           sublabel:              sub,
           color:                 c.bg,
+          actLocation:           a.location || '',
+          actWorkHours:          a.work_hours_raw || '',
+          actSswp:               a.sswp || '',
+          actParty:              Array.isArray(a.party_to_action) ? a.party_to_action : [],
           linkedTestRegActivity: a.linked_test_register_activity || null,
           // Activity view shows BART-only chips always visible in each cell
           byDate:                _laBuildByDateActivity(evs, days),
