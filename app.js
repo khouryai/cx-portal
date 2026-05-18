@@ -3528,79 +3528,199 @@ async function deleteTemplate(id) {
 }
 
 // ==========================================================================
-// ADMIN FIELD CONFIG — Configurable dropdown options for Punch List
+// ADMIN FIELD CONFIG — Configurable dropdown options, grouped by module
 // ==========================================================================
 const SUBSYSTEMS_LIST = ['DCS','ATS','IXL','CORE CBTC','PS&TP','IAMS','SCADA','CYBER','TCH'];
 
-const FIELDCONFIG_DEFS = [
-  { key: 'punch_type',          label: 'Punch Item Type' },
-  { key: 'priority',            label: 'Priority' },
-  { key: 'category_of_failure', label: 'Category of Failure' },
-  { key: 'type_of_failure',     label: 'Type of Failure' },
-  { key: 'schedule_impact',     label: 'Schedule Impact' },
-  { key: 'punch_subsystem',     label: 'Subsystem' },
-  { key: 'delay_category',      label: 'Delay Category' },
-  { key: 'rma_status',          label: 'RMA Status' },
+// Module-grouped fieldset definitions.
+// Add new fieldsets here to expose them in Field Config automatically.
+const FIELDCONFIG_MODULES = [
+  {
+    id: 'punch_list', label: 'Punch List', icon: '📋',
+    fields: [
+      { key: 'punch_type',          label: 'Punch Item Type',     defaults: ['Defect','Issue','NCR','Observation','RFI'] },
+      { key: 'priority',            label: 'Priority',            defaults: ['Low','Medium','High','Critical'] },
+      { key: 'category_of_failure', label: 'Category of Failure', defaults: ['Hardware Failure','Software Defect','Procedure Issue','Documentation Error','Integration Issue','Environmental','Design Issue','Other'] },
+      { key: 'type_of_failure',     label: 'Type of Failure',     defaults: ['First Occurrence','Repeat Failure','Systematic Issue'] },
+      { key: 'schedule_impact',     label: 'Schedule Impact',     defaults: ['Minor','Moderate','Major','Critical'] },
+      { key: 'punch_subsystem',     label: 'Subsystem',           defaults: SUBSYSTEMS_LIST },
+    ],
+  },
+  {
+    id: 'daily_log', label: 'Daily Log', icon: '📅',
+    fields: [
+      { key: 'delay_category',   label: 'Delay Category',   defaults: ['BART Access Denied','Weather','Equipment Failure','Resource Unavailable','Scope Change','Design Issue','Third Party','Other'] },
+      { key: 'test_case_status', label: 'Test Case Status', defaults: ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable'] },
+    ],
+  },
+  {
+    id: 'rma', label: 'RMA', icon: '🔄',
+    fields: [
+      { key: 'rma_status', label: 'RMA Status', defaults: ['Open','Pending Replacement','Shipped','Awaiting Return','Closed','Cancelled'] },
+    ],
+  },
 ];
 
-function _fsCfg(key) { return FIELDSET_CONFIG[key] || []; }
+// Flattened list for backward-compat lookups (e.g. _fscDef(key))
+const FIELDCONFIG_DEFS = FIELDCONFIG_MODULES.flatMap(m =>
+  m.fields.map(f => ({ ...f, module: m.label }))
+);
+
+// key → [module labels] — drives the "Shared" badge when length > 1
+const _fscKeyModules = {};
+FIELDCONFIG_MODULES.forEach(m =>
+  m.fields.forEach(f => { (_fscKeyModules[f.key] = _fscKeyModules[f.key] || []).push(m.label); })
+);
+
+function _fsCfg(key)  { return FIELDSET_CONFIG[key] || []; }
+function _fscDef(key) { return FIELDCONFIG_DEFS.find(d => d.key === key); }
+
+// Which fieldset editors are currently open (persists across re-renders)
+let _fscOpenKeys = new Set();
+
+function fscToggle(key) {
+  if (_fscOpenKeys.has(key)) _fscOpenKeys.delete(key); else _fscOpenKeys.add(key);
+  renderAdminFieldConfig();
+  renderAdminTabBody();
+}
+
+// ── HTML generators ───────────────────────────────────────────────────────────
 
 function _adminFieldConfigHTML() {
+  const totalFields = FIELDCONFIG_MODULES.reduce((s, m) => s + m.fields.length, 0);
   return `
     <div class="admin-section">
-      <div class="admin-section-head">
+      <div class="admin-section-head" style="margin-bottom:20px;">
         <div>
-          <div class="admin-section-title">Configurable Field Options</div>
-          <p class="section-sub">Manage the dropdown options available in the Punch List form</p>
+          <div class="admin-section-title">Field Config</div>
+          <p class="section-sub">Manage dropdown options for each module. Click any fieldset to expand and edit its options.</p>
         </div>
+        <span style="font-size:12px;color:var(--gray-400);">${totalFields} fieldsets · ${FIELDCONFIG_MODULES.length} modules</span>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px;">
-        ${FIELDCONFIG_DEFS.map(def => `
-          <div class="data-card" style="padding:20px;">
-            <div style="font-weight:600;font-size:14px;margin-bottom:12px;color:var(--gray-800);">${def.label}</div>
-            <div id="fsc-list-${def.key}" style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px;">
-              ${_fsCfg(def.key).map((opt,i) => `
-                <div style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:var(--gray-50);border-radius:6px;font-size:13px;">
-                  <span style="flex:1;">${escapeHtml(opt)}</span>
-                  <button class="form-secondary" style="padding:2px 8px;font-size:11px;color:var(--bad);"
-                    onclick="fscRemoveOption('${def.key}',${i})">Remove</button>
-                </div>`).join('') || '<div style="font-size:12px;color:var(--gray-400);">No options yet</div>'}
-            </div>
-            <div style="display:flex;gap:6px;">
-              <input type="text" id="fsc-new-${def.key}" class="form-input" style="font-size:13px;"
-                placeholder="Add new option…" onkeydown="if(event.key==='Enter')fscAddOption('${def.key}')">
-              <button class="admin-action-btn" style="white-space:nowrap;" onclick="fscAddOption('${def.key}')">Add</button>
-            </div>
-          </div>`).join('')}
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        ${FIELDCONFIG_MODULES.map(mod => _fscModuleHTML(mod)).join('')}
       </div>
     </div>
   `;
 }
 
+function _fscModuleHTML(mod) {
+  const openCount = mod.fields.filter(f => _fscOpenKeys.has(f.key)).length;
+  return `
+    <div class="data-card" style="padding:0;overflow:hidden;">
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 20px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);">
+        <span style="font-size:18px;line-height:1;">${mod.icon}</span>
+        <div style="font-weight:700;font-size:14px;color:var(--gray-800);">${mod.label}</div>
+        <div style="font-size:11px;color:var(--gray-500);background:var(--gray-200);padding:2px 9px;border-radius:10px;">${mod.fields.length} fieldset${mod.fields.length !== 1 ? 's' : ''}</div>
+        ${openCount ? `<div style="font-size:11px;color:var(--info);margin-left:auto;">${openCount} open</div>` : ''}
+      </div>
+      <div>
+        ${mod.fields.map((f, fi) => _fscFieldRowHTML(f, fi === mod.fields.length - 1)).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function _fscFieldRowHTML(f, isLast) {
+  const configured  = _fsCfg(f.key);
+  const opts        = configured.length ? configured : (f.defaults || []);
+  const isConfigured= configured.length > 0;
+  const sharedMods  = _fscKeyModules[f.key] || [];
+  const isShared    = sharedMods.length > 1;
+  const isOpen      = _fscOpenKeys.has(f.key);
+
+  return `
+    <div style="${isLast ? '' : 'border-bottom:1px solid var(--gray-100);'}">
+      <div onclick="fscToggle('${f.key}')"
+        style="display:flex;align-items:center;gap:10px;padding:12px 20px;cursor:pointer;"
+        onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
+        <div style="font-size:13px;font-weight:500;color:var(--gray-700);flex:1;">${f.label}</div>
+        ${isShared ? `<span style="font-size:10px;font-weight:600;background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:10px;border:1px solid #fde68a;white-space:nowrap;" title="Used in: ${sharedMods.join(', ')}">⚡ Shared</span>` : ''}
+        ${!isConfigured ? `<span style="font-size:10px;color:var(--gray-400);font-style:italic;white-space:nowrap;">using defaults</span>` : ''}
+        <span style="font-size:11px;color:var(--gray-400);white-space:nowrap;">${opts.length} option${opts.length !== 1 ? 's' : ''}</span>
+        <span style="font-size:18px;color:var(--gray-300);line-height:1;display:inline-block;transition:transform .15s;transform:${isOpen ? 'rotate(90deg)' : 'rotate(0deg)'};user-select:none;">›</span>
+      </div>
+      ${isOpen ? `
+      <div style="padding:4px 20px 16px;border-top:1px solid var(--gray-100);background:var(--white);">
+        ${isConfigured ? '' : `<div style="font-size:11px;color:var(--gray-400);padding:6px 0 8px;font-style:italic;">Showing default values — add or remove an option to save a custom list.</div>`}
+        <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px;">
+          ${opts.length ? opts.map((opt, i) => `
+            <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:6px;font-size:13px;">
+              <span style="flex:1;color:var(--gray-800);">${escapeHtml(opt)}</span>
+              <button onclick="fscMoveOption('${f.key}',${i},-1)" title="Move up"
+                style="font-size:13px;background:none;border:none;cursor:${i===0?'default':'pointer'};color:${i===0?'var(--gray-200)':'var(--gray-500)'};padding:1px 4px;"
+                ${i===0?'disabled':''}>↑</button>
+              <button onclick="fscMoveOption('${f.key}',${i},1)" title="Move down"
+                style="font-size:13px;background:none;border:none;cursor:${i===opts.length-1?'default':'pointer'};color:${i===opts.length-1?'var(--gray-200)':'var(--gray-500)'};padding:1px 4px;"
+                ${i===opts.length-1?'disabled':''}>↓</button>
+              <button onclick="fscRemoveOption('${f.key}',${i})"
+                style="font-size:11px;border:1px solid var(--red-300);color:var(--red-600);background:none;border-radius:4px;cursor:pointer;padding:2px 8px;white-space:nowrap;">Remove</button>
+            </div>`).join('') : `<div style="font-size:12px;color:var(--gray-400);padding:8px 0;font-style:italic;">No options yet — add one below</div>`}
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" id="fsc-new-${f.key}" class="form-input" style="font-size:13px;flex:1;"
+            placeholder="New option…" onkeydown="if(event.key==='Enter')fscAddOption('${f.key}')">
+          <button class="admin-action-btn" style="white-space:nowrap;" onclick="fscAddOption('${f.key}')">+ Add</button>
+          ${f.defaults?.length ? `<button class="form-secondary" style="white-space:nowrap;font-size:12px;" onclick="fscLoadDefaults('${f.key}')" title="Reset to built-in defaults">↩ Defaults</button>` : ''}
+        </div>
+      </div>` : ''}
+    </div>
+  `;
+}
+
+// ── CRUD actions ──────────────────────────────────────────────────────────────
+
 async function fscAddOption(key) {
   const input = document.getElementById(`fsc-new-${key}`);
-  const val = input?.value.trim();
+  const val   = input?.value.trim();
   if (!val) return;
   const cur = [..._fsCfg(key)];
+  if (!cur.length) {
+    // First custom entry: seed from defaults so we don't lose them
+    const def = _fscDef(key);
+    if (def?.defaults?.length) cur.push(...def.defaults);
+  }
   if (cur.includes(val)) { toast('Option already exists', 'error'); return; }
   cur.push(val);
   await _fscSave(key, cur);
-  input.value = '';
+  if (input) input.value = '';
 }
 
 async function fscRemoveOption(key, idx) {
-  const cur = [..._fsCfg(key)];
+  // If currently showing defaults, save a copy of defaults minus this one
+  let cur = [..._fsCfg(key)];
+  if (!cur.length) {
+    const def = _fscDef(key);
+    cur = [...(def?.defaults || [])];
+  }
   cur.splice(idx, 1);
   await _fscSave(key, cur);
 }
 
+async function fscMoveOption(key, idx, dir) {
+  let cur = [..._fsCfg(key)];
+  if (!cur.length) { const def = _fscDef(key); cur = [...(def?.defaults || [])]; }
+  const to = idx + dir;
+  if (to < 0 || to >= cur.length) return;
+  [cur[idx], cur[to]] = [cur[to], cur[idx]];
+  await _fscSave(key, cur);
+}
+
+async function fscLoadDefaults(key) {
+  const def = _fscDef(key);
+  if (!def?.defaults?.length) return;
+  if (!confirm(`Reset "${def.label}" to ${def.defaults.length} built-in default options?\nThis will replace any custom options.`)) return;
+  await _fscSave(key, [...def.defaults]);
+}
+
 async function _fscSave(key, options) {
-  const def = FIELDCONFIG_DEFS.find(d => d.key === key);
+  const def = _fscDef(key);
   const { error } = await _sb.from('fieldset_config')
     .upsert({ field_key: key, label: def?.label || key, options, updated_at: new Date().toISOString() }, { onConflict: 'field_key' });
   if (error) { toast('Save failed: ' + error.message, 'error'); return; }
   FIELDSET_CONFIG[key] = options;
   toast('Saved', 'success');
+  renderAdminFieldConfig();
   renderAdminTabBody();
 }
 
@@ -4439,7 +4559,7 @@ function renderIntakeStep2() {
           <label>Status</label>
           <select id="ai-status" class="filter-select" onchange="ai_toggleReasonFields()">
             <option value="">Select status…</option>
-            ${['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable'].map(s=>`<option>${s}</option>`).join('')}
+            ${(_fsCfg('test_case_status').length ? _fsCfg('test_case_status') : ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable']).map(s=>`<option>${s}</option>`).join('')}
           </select>
         </div>
         <div class="form-field">
