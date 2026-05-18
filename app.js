@@ -13254,7 +13254,7 @@ let PTO_REQUESTS              = [];   // pto_requests rows
 let DELAY_LOG                 = [];   // delay_log rows (for Delays & Cancellations report)
 let PLANNING_TEST_RESULTS     = [];   // test_results in lookahead window (for per-cell badges)
 
-let _lookaheadTab        = 'calendar';                 // calendar | lookahead | resources | pto
+let _lookaheadTab        = 'lookahead';                 // calendar | lookahead | resources | pto
 let _adminPlanningTab    = 'upload';                   // upload | review | conflicts | resources | history
 let _planningLoadedAt    = 0;                          // cache flag
 
@@ -13268,6 +13268,7 @@ let _laTimelineGroupBy   = 'activity';                 // activity | resource | 
 let _laTimelineWindow    = 28;                         // 14 / 21 / 28 / 60 / 90 days
 let _laCollapsedGroups   = {};                         // { tc: true, ... } — collapsed activity_group bands
 let _laActivitySubGroup  = 'none';                     // 'none' | 'phase' | 'location' | 'phase_location'
+let _laResCompanyFilter  = 'all';                      // 'all' | 'BART' | 'Hitachi' (Resource view)
 
 // ── Edit drawer state (Phase 2 — Master Schedule revamp) ─────
 // The right-side persistent drawer replaces modal-per-action for cell &
@@ -14759,6 +14760,16 @@ function _laLookaheadHTML() {
         `).join('')}
       </div>
       ` : ''}
+      ${_laTimelineGroupBy === 'resource' ? `
+      <div style="display:flex;align-items:center;gap:0;">
+        <span style="font-size:11px;color:var(--gray-500);margin-right:8px;white-space:nowrap;">Resources:</span>
+        ${[['all','All'],['Hitachi','Hitachi'],['BART','BART']].map(([v,l]) => `
+          <button class="admin-tab${_laResCompanyFilter === v ? ' active' : ''}"
+            style="font-size:12px;padding:6px 14px;"
+            onclick="_laSetResCompanyFilter('${v}')">${l}</button>
+        `).join('')}
+      </div>
+      ` : ''}
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);cursor:pointer;">
         <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
         P6 baseline
@@ -15776,6 +15787,13 @@ function _laResourcePanelHTML() {
 
 function _laSetTimelineGroup(g) { _laTimelineGroupBy = g; _renderLookaheadTabBody(); }
 function _laSetActivitySubGroup(sg) { _laActivitySubGroup = sg; _renderLookaheadTabBody(); }
+function _laSetResCompanyFilter(f) { _laResCompanyFilter = f; _renderLookaheadTabBody(); }
+// True if a resource passes the current Hitachi/BART filter
+function _laResCompanyMatch(r) {
+  if (_laResCompanyFilter === 'all') return true;
+  if (_laResCompanyFilter === 'BART') return r.company === 'BART';
+  return r.company !== 'BART'; // 'Hitachi' = everything not BART
+}
 function _laToggleGroupCollapse(groupKey) {
   _laCollapsedGroups[groupKey] = !_laCollapsedGroups[groupKey];
   _renderLookaheadTabBody();
@@ -17687,7 +17705,7 @@ function _laMountLookaheadTL() {
 
   if (_laTimelineGroupBy === 'resource') {
     PLANNING_RESOURCES
-      .filter(r => r.is_active)
+      .filter(r => r.is_active && _laResCompanyMatch(r))
       .sort((a, b) => a.display_name.localeCompare(b.display_name))
       .forEach(r => {
         const evs = PLANNING_EVENTS.filter(e => {
@@ -17695,10 +17713,12 @@ function _laMountLookaheadTL() {
         });
         if (!evs.length && !PTO_REQUESTS.some(p => p.resource_id === r.id && p.status === 'approved')) return;
         const c = _planningSubsystemColor(r.display_name);
+        const ini = r.initials || _planningDeriveInitials(r.display_name);
         groups.push({
           id: 'res-' + r.id,
-          label: r.display_name,
-          sublabel: r.initials || '',
+          // Single thin line: "AK - Alex Khoury"
+          label: (ini ? ini + ' - ' : '') + r.display_name,
+          sublabel: '',
           color: c.bg,
           // Resource view → show location in each cell
           byDate: _laBuildByDate(evs, days, e => e.location || ''),
@@ -18061,10 +18081,11 @@ function _laMountResourcesTL() {
       });
     });
 
+    const ini = r.initials || _planningDeriveInitials(r.display_name);
     return {
       id: 'res-' + r.id,
-      label: r.display_name,
-      sublabel: r.initials || '',
+      label: (ini ? ini + ' - ' : '') + r.display_name,
+      sublabel: '',
       color: c.bg,
       byDate,
       ptoByDate: _laBuildPtoByDate(r.id, days),
