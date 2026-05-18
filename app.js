@@ -299,7 +299,7 @@ Chart.defaults.borderColor = '#ebebeb';
 // ==========================================
 // ROUTING
 // ==========================================
-const _adminPages = new Set(['admin-templates','admin-locations','admin-fieldconfig','admin-directory','audit','admin-p6','admin-assets','admin-planning']);
+const _adminPages = new Set(['admin-templates','admin-locations','admin-fieldconfig','admin-directory','audit','admin-p6','admin-assets','admin-planning','admin-config']);
 let _adminModeOn = false;
 
 function showPage(name) {
@@ -322,6 +322,7 @@ function showPage(name) {
   if (name === 'admin-directory')  renderAdminDirectory();
   if (name === 'admin-p6')         renderAdminP6();
   if (name === 'admin-assets')     renderAdminAssets();
+  if (name === 'admin-config')     renderConfigMgmt();
   if (name === 'rma')              renderRMA();
   if (name === 'schedule')         renderSchedulePage();
   if (name === 'meetings')         { loadMeetings().then(() => { loadMtgTemplates(); renderMeetings(); }); }
@@ -387,6 +388,7 @@ async function refreshApp() {
   try { await loadP6Data(); }  catch(e) { console.warn('[refreshApp] P6 reload failed:',  e.message); }
   try { await loadAssetData(); } catch(e) { console.warn('[refreshApp] asset reload failed:', e.message); }
   try { await loadRMAs(); }     catch(e) { console.warn('[refreshApp] RMA reload failed:',   e.message); }
+  try { await loadSoftwareConfigs(); } catch(e) { console.warn('[refreshApp] SW config reload failed:', e.message); }
 
   // 3. Reload test items only when no status save is in flight
   if (!_mxSavePending) {
@@ -2259,6 +2261,7 @@ function onLoggedIn() {
     loadP6Data(),
     loadAssetData(),
     loadRMAs(),
+    loadSoftwareConfigs(),
   ]).then(() => {
     // Re-init views with freshly loaded data
     initLineItems();
@@ -12179,6 +12182,420 @@ async function _assetLinkFromPanel(assetId) {
 }
 
 
+
+// ==========================================================================
+// CONFIGURATION MANAGEMENT — field software/firmware, versioned by
+// subsystem · location · device. Append-only install log → free history.
+// ==========================================================================
+let SW_CONFIGS = [];
+let _cmFilter  = { subsystem: '', phase: '', location: '', search: '' };
+let _cmEditId  = null;
+let _cmExpanded = new Set(); // expanded config-item history keys
+
+async function loadSoftwareConfigs() {
+  try {
+    const data = await _fetchAnon('software_configs?select=*&order=install_date.desc');
+    SW_CONFIGS = data || [];
+    console.log(`Loaded ${SW_CONFIGS.length} software configs`);
+  } catch (err) { console.warn('Software configs load failed:', err.message); SW_CONFIGS = []; }
+}
+
+// Identity of a logical "configuration item" (the thing that gets versioned)
+function _swItemKey(c) {
+  return [
+    (c.subsystem    || '').trim().toLowerCase(),
+    (c.location     || '').trim().toLowerCase(),
+    (c.device_id    || c.device_label || '').toString().trim().toLowerCase(),
+    (c.software_name|| '').trim().toLowerCase(),
+  ].join('||');
+}
+
+// Resolve a test-case location string to the master location node name
+function _resolveSwLocation(loc) {
+  if (typeof _laResolveLocationPrefix === 'function') {
+    try { return _laResolveLocationPrefix(loc) || loc; } catch { return loc; }
+  }
+  return loc;
+}
+
+// Return the active software config(s) for a subsystem+location as of a date.
+// Used by Phase 2 snapshotting. asOf = ISO date string or Date.
+function _activeSwConfigsFor(subsystem, location, asOf) {
+  const sub = (subsystem || '').trim().toLowerCase();
+  const resolvedLoc = _resolveSwLocation(location || '');
+  const locL = resolvedLoc.trim().toLowerCase();
+  const asOfTime = asOf ? new Date(asOf).getTime() : Date.now();
+
+  // Candidate rows: same subsystem + location, installed on/before asOf, not rolled back
+  const cand = SW_CONFIGS.filter(c =>
+    (c.subsystem || '').trim().toLowerCase() === sub &&
+    (c.location  || '').trim().toLowerCase() === locL &&
+    c.status !== 'rolled_back' && c.status !== 'planned' &&
+    new Date(c.install_date).getTime() <= asOfTime
+  );
+  // For each config item, keep only the newest install ≤ asOf
+  const byItem = new Map();
+  for (const c of cand) {
+    const k = _swItemKey(c);
+    const prev = byItem.get(k);
+    if (!prev || new Date(c.install_date).getTime() > new Date(prev.install_date).getTime()) byItem.set(k, c);
+  }
+  return [...byItem.values()];
+}
+
+function _cmCanManage() { return currentRoleUser?.role === 'admin'; }
+
+function renderConfigMgmt() {
+  const root = document.getElementById('admin-config-content');
+  if (!root || !currentRoleUser) return;
+  _htmlPreserveFocus(root, _cmPageHTML());
+}
+
+function _cmPhases() { return LOCS.filter(l => l.level === 1).sort((a,b)=>a.sort_order-b.sort_order); }
+function _cmLocs(phaseId) { return phaseId ? LOCS.filter(l => l.level === 2 && l.parent_id === phaseId).sort((a,b)=>a.sort_order-b.sort_order) : []; }
+
+function _cmPageHTML() {
+  if (!_cmCanManage()) return `<div class="docs-empty"><h3>Admin access required</h3><p>Configuration Management is restricted to administrators.</p></div>`;
+
+  const subs = (_fsCfg('punch_subsystem').length ? _fsCfg('punch_subsystem') : SUBSYSTEMS_LIST);
+  const f = _cmFilter;
+
+  // Apply filters
+  let rows = SW_CONFIGS.slice();
+  if (f.subsystem) rows = rows.filter(c => c.subsystem === f.subsystem);
+  if (f.location)  rows = rows.filter(c => c.location === f.location);
+  if (f.search) {
+    const q = f.search.toLowerCase();
+    rows = rows.filter(c =>
+      (c.software_name||'').toLowerCase().includes(q) ||
+      (c.version||'').toLowerCase().includes(q) ||
+      (c.device_label||'').toLowerCase().includes(q) ||
+      (c.baseline||'').toLowerCase().includes(q));
+  }
+
+  // Group: subsystem → location → config-item (device + software). Each item shows latest + history.
+  const tree = {};
+  for (const c of rows) {
+    const sub = c.subsystem || '—';
+    const loc = c.location || '—';
+    const itemKey = _swItemKey(c);
+    tree[sub] = tree[sub] || {};
+    tree[sub][loc] = tree[sub][loc] || {};
+    (tree[sub][loc][itemKey] = tree[sub][loc][itemKey] || []).push(c);
+  }
+
+  const totalItems = new Set(SW_CONFIGS.map(_swItemKey)).size;
+  const activeCount = SW_CONFIGS.filter(c => c.status === 'active').length;
+
+  const phaseOpts = _cmPhases();
+  const locOpts   = f.phase ? _cmLocs(f.phase) : [];
+
+  let body = '';
+  const subKeys = Object.keys(tree).sort();
+  if (!subKeys.length) {
+    body = `<div style="text-align:center;padding:48px 0;color:var(--gray-400);">No software configurations match your filters. Click <strong>+ Add Software Config</strong> to create the first one.</div>`;
+  } else {
+    for (const sub of subKeys) {
+      body += `<div style="margin-bottom:22px;">
+        <div style="font-size:14px;font-weight:700;color:var(--gray-800);padding:8px 0;border-bottom:2px solid var(--hitachi-red);margin-bottom:10px;">⚙️ ${escapeHtml(sub)}</div>`;
+      const locKeys = Object.keys(tree[sub]).sort();
+      for (const loc of locKeys) {
+        body += `<div style="margin:0 0 14px 4px;">
+          <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:6px;">📍 ${escapeHtml(loc)}</div>`;
+        const items = tree[sub][loc];
+        for (const ik of Object.keys(items)) {
+          const versions = items[ik].slice().sort((a,b) => new Date(b.install_date) - new Date(a.install_date));
+          const latest = versions[0];
+          const expanded = _cmExpanded.has(ik);
+          const histCount = versions.length - 1;
+          const statusColor = { active:'#16a34a', superseded:'#6b7280', rolled_back:'#dc2626', planned:'#7c3aed' }[latest.status] || '#6b7280';
+          body += `
+            <div style="border:1px solid var(--gray-200);border-radius:8px;margin-bottom:8px;overflow:hidden;">
+              <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 14px;background:var(--white);">
+                <div>
+                  <div style="font-size:13px;font-weight:600;">${escapeHtml(latest.software_name)}
+                    <span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">${escapeHtml(latest.version)}</span>
+                    <span style="font-size:11px;font-weight:600;color:${statusColor};margin-left:6px;">● ${escapeHtml(latest.status)}</span>
+                  </div>
+                  <div style="font-size:11px;color:var(--gray-500);margin-top:3px;">
+                    🖥 ${escapeHtml(latest.device_label || '— general —')} · Installed ${latest.install_date}${latest.installed_by ? ' by '+escapeHtml(latest.installed_by) : ''}${latest.baseline ? ' · Baseline: '+escapeHtml(latest.baseline) : ''}
+                  </div>
+                </div>
+                <div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">
+                  ${histCount > 0 ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_cmToggleHistory('${ik.replace(/'/g,"\\'")}')">${expanded?'▼':'▶'} ${histCount} prior</button>` : ''}
+                  <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(null,'${latest.id}')">↑ New Version</button>
+                  <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal('${latest.id}')">Edit</button>
+                </div>
+              </div>
+              ${expanded && histCount > 0 ? `<div style="border-top:1px solid var(--gray-100);background:var(--gray-50);padding:6px 14px;">
+                ${versions.slice(1).map(v => `
+                  <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--gray-600);padding:5px 0;border-bottom:1px solid var(--gray-100);">
+                    <span><span style="font-family:monospace;background:var(--gray-200);padding:1px 6px;border-radius:3px;">${escapeHtml(v.version)}</span> · ${v.install_date}${v.installed_by?' · '+escapeHtml(v.installed_by):''} · <span style="color:#6b7280;">${escapeHtml(v.status)}</span></span>
+                    <button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="openSwConfigModal('${v.id}')">View / Edit</button>
+                  </div>`).join('')}
+              </div>` : ''}
+            </div>`;
+        }
+        body += `</div>`;
+      }
+      body += `</div>`;
+    }
+  }
+
+  return `
+    <div class="admin-section" style="margin-bottom:18px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+        <div style="display:flex;gap:24px;flex-wrap:wrap;">
+          <div><div style="font-size:22px;font-weight:700;">${totalItems}</div><div style="font-size:11px;color:var(--gray-500);">Config Items</div></div>
+          <div><div style="font-size:22px;font-weight:700;color:#16a34a;">${activeCount}</div><div style="font-size:11px;color:var(--gray-500);">Active Versions</div></div>
+          <div><div style="font-size:22px;font-weight:700;">${SW_CONFIGS.length}</div><div style="font-size:11px;color:var(--gray-500);">Total Records</div></div>
+        </div>
+        <button class="admin-action-btn" onclick="openSwConfigModal(null)">+ Add Software Config</button>
+      </div>
+    </div>
+
+    <div class="admin-section" style="margin-bottom:18px;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <select class="filter-select" onchange="_cmSetFilter('subsystem',this.value)">
+          <option value="">All Subsystems</option>
+          ${subs.map(s=>`<option ${f.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+        </select>
+        <select class="filter-select" onchange="_cmPhaseFilterChange(this.value)">
+          <option value="">All Phases</option>
+          ${phaseOpts.map(p=>`<option value="${p.id}" ${f.phase===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
+        </select>
+        <select class="filter-select" onchange="_cmSetFilter('location',this.value)" ${f.phase?'':'disabled'}>
+          <option value="">${f.phase?'All Locations':'Select phase first'}</option>
+          ${locOpts.map(l=>`<option value="${escapeHtml(l.name)}" ${f.location===l.name?'selected':''}>${escapeHtml(l.name)}</option>`).join('')}
+        </select>
+        <input type="text" class="form-input" style="max-width:240px;" placeholder="Search software / version / device…" value="${escapeHtml(f.search)}" oninput="_cmSetFilter('search',this.value)">
+        ${(f.subsystem||f.phase||f.location||f.search)?`<button class="form-secondary" style="font-size:12px;" onclick="_cmClearFilters()">Clear</button>`:''}
+      </div>
+    </div>
+
+    <div class="admin-section">${body}</div>
+  `;
+}
+
+function _cmSetFilter(k, v) { _cmFilter[k] = v; renderConfigMgmt(); }
+function _cmPhaseFilterChange(phaseId) { _cmFilter.phase = phaseId; _cmFilter.location = ''; renderConfigMgmt(); }
+function _cmClearFilters() { _cmFilter = { subsystem:'', phase:'', location:'', search:'' }; renderConfigMgmt(); }
+function _cmToggleHistory(k) { if (_cmExpanded.has(k)) _cmExpanded.delete(k); else _cmExpanded.add(k); renderConfigMgmt(); }
+
+// Modal — create new, edit existing, or "new version" (cloneFromId pre-fills item identity)
+function openSwConfigModal(editId, cloneFromId) {
+  _cmEditId = editId || null;
+  const existing = editId ? SW_CONFIGS.find(c => c.id === editId) : null;
+  const clone    = cloneFromId ? SW_CONFIGS.find(c => c.id === cloneFromId) : null;
+  const base     = existing || clone || null;
+  const subs = (_fsCfg('punch_subsystem').length ? _fsCfg('punch_subsystem') : SUBSYSTEMS_LIST);
+  const phases = _cmPhases();
+
+  // Determine phase id from base location
+  let basePhaseId = '';
+  if (base?.location) {
+    const locNode = LOCS.find(l => l.level === 2 && l.name === base.location);
+    if (locNode) basePhaseId = locNode.parent_id || '';
+  }
+  const locOpts = basePhaseId ? _cmLocs(basePhaseId) : [];
+
+  const today = new Date().toISOString().slice(0,10);
+  const v = (field, def='') => base ? (base[field] ?? def) : def;
+  const isNewVersion = !!clone && !existing;
+
+  modal({
+    title: existing ? 'Edit Software Config' : isNewVersion ? '↑ Install New Version' : '+ Add Software Config',
+    sub: isNewVersion ? `${escapeHtml(clone.software_name)} — current ${escapeHtml(clone.version)}` : '',
+    size: 'large',
+    body: `
+      <div class="form-grid">
+        <div class="form-field">
+          <label>Subsystem *</label>
+          <select id="sw-subsystem" class="form-input" ${isNewVersion?'disabled':''}>
+            <option value="">Select…</option>
+            ${subs.map(s=>`<option ${v('subsystem')===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Phase *</label>
+          <select id="sw-phase" class="form-input" onchange="_swPhaseChange()" ${isNewVersion?'disabled':''}>
+            <option value="">Select phase…</option>
+            ${phases.map(p=>`<option value="${p.id}" ${basePhaseId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Location *</label>
+          <select id="sw-location" class="form-input" ${isNewVersion?'disabled':''}>
+            ${locOpts.length?'<option value="">Select location…</option>'+locOpts.map(l=>`<option ${v('location')===l.name?'selected':''}>${escapeHtml(l.name)}</option>`).join(''):'<option value="">Select phase first…</option>'}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Device / Asset</label>
+          <select id="sw-device" class="form-input" onchange="_swDeviceChange()" ${isNewVersion?'disabled':''}>
+            <option value="">— General / non-asset component —</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Software Name *</label>
+          <input type="text" id="sw-name" class="form-input" placeholder="e.g. IXL Vital Application" value="${escapeHtml(v('software_name'))}" ${isNewVersion?'readonly':''}>
+        </div>
+        <div class="form-field">
+          <label>Version *</label>
+          <input type="text" id="sw-version" class="form-input" placeholder="e.g. v2.4.1" value="${escapeHtml(existing?v('version'):'')}">
+        </div>
+        <div class="form-field">
+          <label>Install Date *</label>
+          <input type="date" id="sw-install-date" class="form-input" value="${existing?v('install_date'):today}">
+        </div>
+        <div class="form-field">
+          <label>Installed By</label>
+          ${_taHTMLSingle('sw-installed-by','admin_field')}
+        </div>
+        <div class="form-field">
+          <label>Status</label>
+          <select id="sw-status" class="form-input">
+            ${['active','superseded','rolled_back','planned'].map(s=>`<option ${ (existing? v('status'):'active')===s?'selected':''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Baseline Tag</label>
+          <input type="text" id="sw-baseline" class="form-input" placeholder="e.g. Revenue Service Baseline 3" value="${escapeHtml(v('baseline'))}">
+        </div>
+        <div class="form-field">
+          <label>CDRL / Document Ref</label>
+          <input type="text" id="sw-cdrl" class="form-input" placeholder="e.g. CDRL 9.04.53" value="${escapeHtml(v('cdrl_ref'))}">
+        </div>
+        <div class="form-field form-field-full">
+          <label>Release Notes</label>
+          <textarea id="sw-notes" class="form-input" rows="3" placeholder="What changed in this version…">${escapeHtml(v('notes'))}</textarea>
+        </div>
+      </div>
+      ${isNewVersion ? `<div style="font-size:12px;color:var(--gray-500);margin-top:10px;padding:8px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;">Installing a new version will automatically mark the current <strong>${escapeHtml(clone.version)}</strong> as <em>superseded</em>. Completed test cases keep their old snapshot.</div>` : ''}
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      ${existing ? `<button class="form-secondary" style="color:var(--bad);" onclick="deleteSwConfig('${existing.id}')">Delete</button>` : ''}
+      <button class="form-submit" onclick="saveSwConfig()">${existing?'Save Changes':'Save'}</button>
+    `,
+  });
+
+  setTimeout(() => {
+    _taInitSingle('sw-installed-by', existing ? (base?.installed_by||'') : (currentRoleUser?.name||''));
+    _swPopulateDevices(base?.device_id || '');
+  }, 30);
+}
+
+function _swPhaseChange() {
+  const phaseId = document.getElementById('sw-phase')?.value;
+  const locSel  = document.getElementById('sw-location');
+  if (locSel) {
+    const kids = _cmLocs(phaseId);
+    locSel.innerHTML = kids.length ? '<option value="">Select location…</option>'+kids.map(l=>`<option>${escapeHtml(l.name)}</option>`).join('') : '<option value="">Select phase first…</option>';
+  }
+  _swPopulateDevices('');
+}
+
+function _swPopulateDevices(selectId) {
+  const sub = document.getElementById('sw-subsystem')?.value || '';
+  const sel = document.getElementById('sw-device');
+  if (!sel) return;
+  const pool = ASSETS.filter(a => !sub || (a.subsystem||'').toLowerCase() === sub.toLowerCase())
+    .sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  sel.innerHTML = '<option value="">— General / non-asset component —</option>' +
+    pool.map(a => `<option value="${a.id}" ${a.id===selectId?'selected':''}>${escapeHtml(a.name)}${a.device_type?' ('+escapeHtml(a.device_type)+')':''}</option>`).join('');
+}
+
+function _swDeviceChange() {
+  const sel = document.getElementById('sw-device');
+  const a = ASSETS.find(x => x.id === sel?.value);
+  // (device_label is derived on save from the selected asset; nothing to do live)
+  return a;
+}
+
+async function saveSwConfig() {
+  const editing = _cmEditId ? SW_CONFIGS.find(c => c.id === _cmEditId) : null;
+  const subsystem = document.getElementById('sw-subsystem')?.value.trim();
+  const phaseId   = document.getElementById('sw-phase')?.value;
+  const location  = document.getElementById('sw-location')?.value.trim();
+  const deviceId  = document.getElementById('sw-device')?.value || null;
+  const swName    = document.getElementById('sw-name')?.value.trim();
+  const version   = document.getElementById('sw-version')?.value.trim();
+  const instDate  = document.getElementById('sw-install-date')?.value;
+  const instBy    = document.getElementById('sw-installed-by')?.value.trim() || null;
+  const status    = document.getElementById('sw-status')?.value || 'active';
+  const baseline  = document.getElementById('sw-baseline')?.value.trim() || null;
+  const cdrl      = document.getElementById('sw-cdrl')?.value.trim() || null;
+  const notes     = document.getElementById('sw-notes')?.value.trim() || null;
+
+  // For new version (fields disabled), pull identity from editing-disabled selects' current values
+  const resolvedSub = subsystem || editing?.subsystem;
+  const resolvedLoc = location  || editing?.location;
+  if (!resolvedSub) { toast('Subsystem is required', 'error'); return; }
+  if (!resolvedLoc) { toast('Location is required', 'error'); return; }
+  if (!swName)      { toast('Software Name is required', 'error'); return; }
+  if (!version)     { toast('Version is required', 'error'); return; }
+  if (!instDate)    { toast('Install Date is required', 'error'); return; }
+
+  const deviceLabel = deviceId ? (ASSETS.find(a => a.id === deviceId)?.name || null) : null;
+
+  if (editing) {
+    const patch = {
+      subsystem: resolvedSub, location: resolvedLoc, device_id: deviceId, device_label: deviceLabel,
+      software_name: swName, version, install_date: instDate, installed_by: instBy,
+      status, baseline, cdrl_ref: cdrl, notes,
+    };
+    try {
+      const [row] = await _dbUpdate('software_configs', patch, { id: editing.id });
+      Object.assign(editing, row || patch);
+      logAudit('Software Config Updated', `${resolvedSub} · ${swName} ${version}`, resolvedLoc);
+      toast('Software config updated', 'success');
+      closeModal(); renderConfigMgmt();
+    } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+    return;
+  }
+
+  // New record. Auto-supersede prior active versions of the same config item.
+  const newRow = {
+    subsystem: resolvedSub, location: resolvedLoc, device_id: deviceId, device_label: deviceLabel,
+    software_name: swName, version, install_date: instDate, installed_by: instBy,
+    status, baseline, cdrl_ref: cdrl, notes, created_by: currentRoleUser?.name || null,
+  };
+  const itemKey = _swItemKey(newRow);
+  const priorActive = SW_CONFIGS.filter(c => _swItemKey(c) === itemKey && c.status === 'active');
+
+  try {
+    const [inserted] = await _dbInsert('software_configs', [newRow]);
+    if (inserted) SW_CONFIGS.unshift(inserted);
+    // Supersede prior active versions (only if the new one is itself active)
+    if (status === 'active' && priorActive.length) {
+      for (const pa of priorActive) {
+        await _dbUpdate('software_configs', { status: 'superseded' }, { id: pa.id });
+        pa.status = 'superseded';
+        if (inserted) await _dbUpdate('software_configs', { supersedes_id: pa.id }, { id: inserted.id }).catch(()=>{});
+      }
+      if (inserted) inserted.supersedes_id = priorActive[0].id;
+    }
+    logAudit('Software Config Added', `${resolvedSub} · ${swName} ${version}`, resolvedLoc);
+    toast(priorActive.length ? `Saved — ${priorActive.length} prior version superseded` : 'Software config saved', 'success');
+    closeModal(); renderConfigMgmt();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function deleteSwConfig(id) {
+  const c = SW_CONFIGS.find(x => x.id === id);
+  if (!c) return;
+  if (!confirm(`Delete software config "${c.software_name} ${c.version}"?\n\nThis cannot be undone. Test cases already snapshotted keep their frozen copy.`)) return;
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/software_configs?id=eq.${id}`, {
+      method: 'DELETE',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() },
+    });
+    SW_CONFIGS = SW_CONFIGS.filter(x => x.id !== id);
+    logAudit('Software Config Deleted', `${c.software_name} ${c.version}`, c.location);
+    toast('Software config deleted', 'success');
+    closeModal(); renderConfigMgmt();
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
 
 // ==========================================================================
 // RMA — Return Merchandise Authorization
