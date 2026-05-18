@@ -1516,6 +1516,9 @@ async function loadTestItems() {
         AssetId:       r.asset_id     || null,
         SwSnapshot:    r.sw_snapshot || null,
         SwSnapshotAt:  r.sw_snapshot_at || null,
+        RegressionGroupId: r.regression_group_id || r.test_id,
+        AttemptNumber:     r.attempt_number || 1,
+        IsLatestAttempt:   r.is_latest_attempt !== false,
       }));
       console.log(`Loaded ${TI.length} test items from Supabase`);
     }
@@ -8442,7 +8445,11 @@ function _amDrilldownHTML(key) {
   const pct = total > 0 ? Math.round((done/total)*100) : 0;
   const statuses = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'];
   const legacyMap = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
-  const viewItems = _trEditMode && _trDraftItems ? _trDraftItems : act.items;
+  // Only the latest attempt renders as a row; prior attempts appear in the
+  // per-row regression history panel (Phase 3).
+  const viewItems = _trEditMode && _trDraftItems
+    ? _trDraftItems
+    : act.items.filter(r => r.IsLatestAttempt !== false);
   const selectedCount = _trSelected.size;
   // Build tpMap keyed by "section~~procedure" so same procedure in different sections stays separate
   const tpMap = {};
@@ -8558,6 +8565,7 @@ function _amDrilldownHTML(key) {
                       <td>
                         <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
                         ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<button class="form-secondary" style="font-size:11px;padding:2px 6px;margin-top:4px;" onclick="_trAddGenericChild('${tid}')">＋ Asset</button>` : ''}
+                        ${_regressionCellHTML(r)}
                       </td>
                       ${_trEditMode && isAdmin ? `<td style="white-space:nowrap;"><button class="form-secondary" style="font-size:13px;padding:4px 7px;" onclick="_trCopyCase('${tid}')">⧉</button> <button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteCase('${tid}')" data-tippy-content="Delete test case">🗑</button></td>` : ''}
                     </tr>
@@ -11668,6 +11676,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
         <td>
           <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…"
             value="${escapeHtml(c.Notes || '')}" onblur="_mxSaveNotes('${ctid}',this.value)">
+          ${_regressionCellHTML(c)}
         </td>
         ${_trEditMode && isAdmin ? `<td><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteAssetRow('${ctid}')" data-tippy-content="Remove asset from test case">🗑</button></td>` : ''}
       </tr>`;
@@ -12290,6 +12299,179 @@ function _swSnapshotChipHTML(r) {
   return `<div style="font-size:10px;color:#3730a3;margin-top:3px;display:flex;align-items:center;gap:3px;flex-wrap:wrap;" title="${escapeHtml(tip)}">
     <span style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:3px;padding:1px 6px;">🧩 ${escapeHtml(label.length > 46 ? label.slice(0,46)+'…' : label)}</span>${staleBadge}
   </div>`;
+}
+
+// ==========================================================================
+// REGRESSION TESTING — clone a completed test case into a fresh attempt.
+// Prior attempts freeze read-only; only the latest attempt counts in KPIs.
+// ==========================================================================
+const _REGRESSION_TERMINAL = new Set(['Pass','Fail','Blocked','Passed','Failed','Complete']);
+
+// All attempts of one logical test case (oldest → newest)
+function _attemptsInGroup(groupId) {
+  return TI.filter(t => (t.RegressionGroupId || t.TestID) === groupId)
+           .sort((a,b) => (a.AttemptNumber||1) - (b.AttemptNumber||1));
+}
+
+// Right-side regression control rendered in the Notes cell of each test row
+function _regressionCellHTML(r) {
+  if (!r || r.IsParent) return '';
+  const groupId  = r.RegressionGroupId || r.TestID;
+  const attempts = _attemptsInGroup(groupId);
+  const attemptNo = r.AttemptNumber || 1;
+  const isTerminal = _REGRESSION_TERMINAL.has(r.Status);
+  const canManage = ['admin','field_engineer'].includes(currentRoleUser?.role);
+  const histCount = attempts.length - 1;
+  const safeG = encodeURIComponent(groupId);
+
+  let bits = '';
+  if (attempts.length > 1) {
+    bits += `<span style="font-size:10px;font-weight:700;background:#ede9fe;color:#6d28d9;border:1px solid #ddd6fe;border-radius:3px;padding:1px 6px;">Attempt ${attemptNo}/${attempts.length}</span>`;
+  }
+  if (canManage && isTerminal && r.IsLatestAttempt) {
+    bits += `<button onclick="regressionTestCase('${escapeHtml(String(r.TestID))}')" title="Create a new regression attempt — preserves this result as history"
+      style="font-size:10px;font-weight:600;padding:3px 8px;background:#f5f3ff;border:1px solid #c4b5fd;color:#6d28d9;border-radius:5px;cursor:pointer;">⟳ Regression</button>`;
+  }
+  // Undo: only when the latest attempt is uncompleted (no real data to lose)
+  if (canManage && r.IsLatestAttempt && attempts.length > 1 &&
+      (r.Status === 'Not Started' || r.Status === 'In Progress')) {
+    bits += `<button onclick="undoRegression('${escapeHtml(String(r.TestID))}')" title="Undo regression — delete this empty attempt and restore the previous one"
+      style="font-size:10px;font-weight:600;padding:3px 8px;background:#fff;border:1px solid var(--gray-300);color:var(--gray-600);border-radius:5px;cursor:pointer;">↶ Undo</button>`;
+  }
+  if (histCount > 0) {
+    bits += `<button onclick="_trToggleAttemptHist('${safeG}')" title="Show previous attempts"
+      style="font-size:10px;padding:3px 7px;background:#fff;border:1px solid var(--gray-300);color:var(--gray-600);border-radius:5px;cursor:pointer;">🕓 ${histCount} prior</button>`;
+  }
+  if (!bits) return '';
+
+  const expanded = _trAttemptHistOpen.has(groupId);
+  let histPanel = '';
+  if (expanded && histCount > 0) {
+    const prior = attempts.filter(a => String(a.TestID) !== String(r.TestID) || !r.IsLatestAttempt)
+                          .filter(a => !a.IsLatestAttempt)
+                          .sort((a,b)=>(b.AttemptNumber||1)-(a.AttemptNumber||1));
+    histPanel = `<div style="margin-top:5px;border:1px solid var(--gray-200);border-radius:6px;background:var(--gray-50);padding:6px 8px;">
+      ${prior.map(a => {
+        const col = {Pass:'#16a34a',Fail:'#dc2626',Blocked:'#d97706'}[a.Status] || '#6b7280';
+        const sw  = Array.isArray(a.SwSnapshot) && a.SwSnapshot.length ? a.SwSnapshot.map(s=>`${s.software_name} ${s.version}`).join(', ') : '—';
+        return `<div style="font-size:10px;color:var(--gray-600);padding:3px 0;border-bottom:1px solid var(--gray-100);display:flex;justify-content:space-between;gap:8px;">
+          <span>🔒 <strong>Attempt ${a.AttemptNumber||1}</strong> · <span style="color:${col};font-weight:600;">${escapeHtml(a.Status||'—')}</span>${a.CompletedBy?' · by '+escapeHtml(a.CompletedBy):''}${a.CompletedDate?' · '+new Date(a.CompletedDate).toLocaleDateString():''}</span>
+          <span style="color:#3730a3;">🧩 ${escapeHtml(sw)}</span>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+  return `<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">${bits}</div>${histPanel}`;
+}
+
+let _trAttemptHistOpen = new Set();
+function _trToggleAttemptHist(safeG) {
+  const g = decodeURIComponent(safeG);
+  if (_trAttemptHistOpen.has(g)) _trAttemptHistOpen.delete(g); else _trAttemptHistOpen.add(g);
+  _reRenderTR();
+}
+
+async function regressionTestCase(testId) {
+  const r = TI.find(t => String(t.TestID) === String(testId));
+  if (!r) { toast('Test case not found', 'error'); return; }
+  if (!_REGRESSION_TERMINAL.has(r.Status)) {
+    toast('Regression is only available on completed tests (Pass / Fail / Blocked)', 'warn'); return;
+  }
+  if (!r.IsLatestAttempt) { toast('Only the latest attempt can be regressed', 'warn'); return; }
+  const groupId = r.RegressionGroupId || r.TestID;
+  const attempts = _attemptsInGroup(groupId);
+  const nextNum  = Math.max(...attempts.map(a => a.AttemptNumber || 1)) + 1;
+  const newId    = `${groupId}::r${nextNum}-${Date.now().toString(36)}`;
+
+  if (!confirm(`Create regression attempt #${nextNum} for "${r.TestCaseCode || r.TestName}"?\n\nThe current result (${r.Status}) is preserved as a locked historical attempt. KPIs will track the new attempt.`)) return;
+
+  const dbRow = {
+    test_id:        newId,
+    phase:          r.Phase || null,
+    location:       r.Location || null,
+    subsystem:      r.Subsystem || null,
+    activity:       r.Activity || null,
+    test_category:  r.TestCategory || null,
+    test_case_code: r.TestCaseCode || null,
+    test_name:      r.TestName || null,
+    test_procedure: r.TestProcedure || null,
+    test_section:   r.TestSection || null,
+    test_phase:     r.TestPhase || null,
+    status:         'Not Started',
+    activity_id:    r.ActivityID || null,
+    weight:         r.Weight ?? 1,
+    test_report:    r.TestReport || null,
+    test_report_id: r.TestReportID || null,
+    is_parent:      r.IsParent || false,
+    parent_test_id: r.ParentTestId || null,
+    asset_id:       r.AssetId || null,
+    regression_group_id: groupId,
+    attempt_number: nextNum,
+    is_latest_attempt: true,
+  };
+
+  try {
+    // Demote every existing attempt in the group
+    await _dbUpdate('test_items', { is_latest_attempt: false }, { regression_group_id: groupId });
+    // Also persist regression_group_id on legacy rows that may still be null
+    for (const a of attempts) {
+      if (!a.RegressionGroupId || a.RegressionGroupId === a.TestID && a.RegressionGroupId !== groupId) {
+        await _dbUpdate('test_items', { regression_group_id: groupId }, { test_id: a.TestID }).catch(()=>{});
+      }
+      a.IsLatestAttempt = false;
+      a.RegressionGroupId = groupId;
+    }
+    const [ins] = await _dbInsert('test_items', [dbRow]);
+    const newTI = {
+      TestID:newId, Phase:r.Phase, Location:r.Location, Subsystem:r.Subsystem, Activity:r.Activity,
+      TestCategory:r.TestCategory, TestCaseCode:r.TestCaseCode, TestName:r.TestName,
+      TestProcedure:r.TestProcedure, TestSection:r.TestSection||'', TestPhase:r.TestPhase,
+      Status:'Not Started', ActivityID:r.ActivityID, Weight:r.Weight??1,
+      CompletedBy:null, CompletedDate:null, BlockedReason:null, FailedReason:null, Notes:null,
+      TestReport:r.TestReport||null, TestReportID:r.TestReportID||null,
+      IsParent:r.IsParent||false, ParentTestId:r.ParentTestId||null, AssetId:r.AssetId||null,
+      SwSnapshot:null, SwSnapshotAt:null,
+      RegressionGroupId:groupId, AttemptNumber:nextNum, IsLatestAttempt:true,
+    };
+    TI.push(newTI);
+    logAudit('Regression Created', `${r.TestCaseCode || r.TestName}`, `Attempt #${nextNum} @ ${r.Location}`);
+    toast(`Regression attempt #${nextNum} created`, 'success');
+    _reRenderTR();
+  } catch (e) {
+    toast('Regression failed: ' + e.message, 'error');
+    console.error('[regression] failed:', e);
+  }
+}
+
+async function undoRegression(testId) {
+  const r = TI.find(t => String(t.TestID) === String(testId));
+  if (!r) return;
+  const groupId = r.RegressionGroupId || r.TestID;
+  const attempts = _attemptsInGroup(groupId);
+  if (attempts.length < 2) { toast('Nothing to undo', 'warn'); return; }
+  const latest = attempts[attempts.length - 1];
+  if (String(latest.TestID) !== String(r.TestID)) { toast('Only the newest attempt can be undone', 'warn'); return; }
+  if (!(latest.Status === 'Not Started' || latest.Status === 'In Progress')) {
+    toast('Undo blocked — this attempt already has a logged result', 'warn'); return;
+  }
+  const prev = attempts[attempts.length - 2];
+  if (!confirm(`Undo regression?\n\nThis deletes the empty attempt #${latest.AttemptNumber} and restores attempt #${prev.AttemptNumber} (${prev.Status}) as the active one.`)) return;
+
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/test_items?test_id=eq.${encodeURIComponent(latest.TestID)}`, {
+      method: 'DELETE',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() },
+    });
+    await _dbUpdate('test_items', { is_latest_attempt: true }, { test_id: prev.TestID });
+    const idx = TI.findIndex(t => String(t.TestID) === String(latest.TestID));
+    if (idx >= 0) TI.splice(idx, 1);
+    prev.IsLatestAttempt = true;
+    logAudit('Regression Undone', `${r.TestCaseCode || r.TestName}`, `Restored attempt #${prev.AttemptNumber}`);
+    toast(`Regression undone — attempt #${prev.AttemptNumber} restored`, 'success');
+    _reRenderTR();
+  } catch (e) {
+    toast('Undo failed: ' + e.message, 'error');
+  }
 }
 
 function _cmCanManage() { return currentRoleUser?.role === 'admin'; }
