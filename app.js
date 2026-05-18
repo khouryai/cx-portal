@@ -3121,6 +3121,27 @@ function _renderDeploySelections(tpl) {
     el.innerHTML = '<div style="text-align:center;color:var(--gray-400);font-size:13px;padding:20px 0;">No locations added yet</div>';
     return;
   }
+
+  // Group test cases by section (for multi-section templates)
+  const sectionMap = new Map();
+  for (const tc of tpl.testCases) {
+    const sec = tc.section ?? '';
+    if (!sectionMap.has(sec)) sectionMap.set(sec, []);
+    sectionMap.get(sec).push(tc);
+  }
+  const sections = [...sectionMap.entries()]; // [[sectionTitle, [tc,...]], ...]
+  const isMultiSection = sections.length > 1 || (sections.length === 1 && sections[0][0] !== '');
+
+  function _tcCheckboxes(si, s, cases) {
+    return cases.map(tc => `
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:4px;padding:4px 8px;cursor:pointer;">
+        <input type="checkbox" data-si="${si}" data-tc="${escapeHtml(tc.code)}" ${s.tcCodes.includes(tc.code) ? 'checked' : ''}
+          onchange="_deployToggleTc(${si},'${tc.code}',this.checked)">
+        <span style="font-weight:600;">${escapeHtml(tc.code)}</span>${tc.name ? `<span style="color:var(--gray-500);margin-left:3px;">— ${escapeHtml(tc.name)}</span>` : ''}
+      </label>
+    `).join('');
+  }
+
   el.innerHTML = _deploySelections.map((s, si) => `
     <div style="border:1px solid var(--gray-200);border-radius:8px;margin-bottom:10px;overflow:hidden;">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);">
@@ -3130,15 +3151,19 @@ function _renderDeploySelections(tpl) {
         </div>
         <button onclick="deployRemoveLocation('${s.locId}')" style="font-size:11px;color:var(--red-600);background:none;border:none;cursor:pointer;padding:2px 6px;">✕ Remove</button>
       </div>
-      <div style="padding:10px 14px;display:flex;flex-wrap:wrap;gap:6px;">
-        ${tpl.testCases.map(tc => `
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:4px;padding:4px 8px;cursor:pointer;">
-            <input type="checkbox" data-si="${si}" data-tc="${tc.code}" ${s.tcCodes.includes(tc.code) ? 'checked' : ''}
-              onchange="_deployToggleTc(${si},'${tc.code}',this.checked)">
-            <span style="font-weight:600;">${escapeHtml(tc.code)}</span>${tc.name ? `<span style="color:var(--gray-500);margin-left:3px;">— ${escapeHtml(tc.name)}</span>` : ''}
-          </label>
-        `).join('')}
-      </div>
+      ${isMultiSection
+        ? sections.map(([secTitle, cases]) => `
+            <div style="border-bottom:1px solid var(--gray-100);">
+              <div style="padding:7px 14px 4px;font-size:11px;font-weight:700;color:var(--gray-500);letter-spacing:.05em;text-transform:uppercase;background:var(--gray-50);">
+                ${secTitle ? escapeHtml(secTitle) : 'General'}
+              </div>
+              <div style="padding:8px 14px 10px;display:flex;flex-wrap:wrap;gap:6px;">
+                ${_tcCheckboxes(si, s, cases)}
+              </div>
+            </div>
+          `).join('')
+        : `<div style="padding:10px 14px;display:flex;flex-wrap:wrap;gap:6px;">${_tcCheckboxes(si, s, sections[0]?.[1] || [])}</div>`
+      }
     </div>
   `).join('');
 }
@@ -3259,47 +3284,151 @@ async function confirmDeploy(templateId) {
 }
 
 // ==========================================================================
-// TEMPLATE CREATION — Activity-based with inline test case builder
+// TEMPLATE CREATION — Activity-based with multi-section / multi-procedure builder
 // ==========================================================================
-let _templateCases  = [];
-let _editTemplateId = null; // store current template id to avoid embedding in onclick
+// Each section: { title:string, procedure:string, cases:[{code,name,category,assets}] }
+let _templateSections = [];
+let _editTemplateId   = null;
 
-function _tcRowsHTML() {
-  return _templateCases.map((tc, i) => `
-    <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 32px 32px;gap:6px;align-items:center;margin-bottom:6px;">
-      <input type="text" class="form-input" style="font-size:12px;padding:6px 8px;" placeholder="Code e.g. DCS-01"
-        value="${escapeHtml(tc.code)}" oninput="_templateCases[${i}].code=this.value">
-      <input type="text" class="form-input" style="font-size:12px;padding:6px 8px;" placeholder="Test Case Name"
-        value="${escapeHtml(tc.name)}" oninput="_templateCases[${i}].name=this.value">
-      <input type="text" class="form-input" style="font-size:12px;padding:6px 8px;" placeholder="Category"
-        value="${escapeHtml(tc.category)}" oninput="_templateCases[${i}].category=this.value">
-      <input type="text" class="form-input" style="font-size:12px;padding:6px 8px;" placeholder="Assets e.g. MLK A, MLK B"
-        value="${escapeHtml(tc.assets||'')}" oninput="_templateCases[${i}].assets=this.value"
-        title="Comma-separated generic asset names auto-linked as children on deploy">
-      <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;" title="Duplicate" onclick="duplicateTemplateCase(${i})">⧉</button>
-      <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;color:var(--bad);" title="Remove" onclick="removeTemplateCase(${i})" ${_templateCases.length === 1 ? 'disabled' : ''}>×</button>
+// ── Conversion helpers ────────────────────────────────────────────────────────
+
+// Flat testCases array (from Supabase) → sections array for editing.
+// Old templates (no 'section' field) land in one unnamed section.
+function _tplCasesToSections(testCases) {
+  if (!testCases?.length) {
+    return [{ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'' }] }];
+  }
+  const map = new Map();
+  for (const tc of testCases) {
+    const key = tc.section ?? '';
+    if (!map.has(key)) map.set(key, { title: key, procedure: tc.procedure || '', cases: [] });
+    map.get(key).cases.push({ code: tc.code||'', name: tc.name||'', category: tc.category||'', assets: tc.assets||'' });
+  }
+  return [...map.values()];
+}
+
+// Sections → flat testCases array stored in Supabase.
+function _tplSectionsToTestCases(sections) {
+  const out = [];
+  for (const sec of sections) {
+    for (const tc of sec.cases) {
+      if (!tc.code.trim() && !tc.name.trim()) continue;
+      out.push({
+        code:      tc.code.trim(),
+        name:      tc.name.trim(),
+        category:  tc.category.trim(),
+        assets:    (tc.assets || '').trim(),
+        procedure: sec.procedure.trim(),
+        section:   sec.title.trim(),
+        duration:  1,
+      });
+    }
+  }
+  return out;
+}
+
+// ── Section/case HTML ─────────────────────────────────────────────────────────
+
+function _tplSectionsHTML() {
+  return _templateSections.map((sec, si) => `
+    <div style="border:1px solid var(--gray-200);border-radius:8px;margin-bottom:14px;overflow:hidden;">
+      <!-- Section header bar -->
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--gray-100);border-bottom:1px solid var(--gray-200);">
+        <span style="font-size:10px;font-weight:700;color:var(--gray-500);text-transform:uppercase;white-space:nowrap;">Section ${si + 1}</span>
+        <input type="text" class="form-input" style="flex:1;font-size:13px;font-weight:600;padding:5px 10px;"
+          placeholder="Section title e.g. Hardware Verification"
+          value="${escapeHtml(sec.title)}"
+          oninput="_templateSections[${si}].title=this.value">
+        ${_templateSections.length > 1
+          ? `<button onclick="removeTplSection(${si})" title="Remove section"
+               style="background:none;border:none;cursor:pointer;color:var(--red-600);font-size:20px;line-height:1;padding:2px 6px;">×</button>`
+          : ''}
+      </div>
+      <!-- Procedure for this section -->
+      <div style="padding:8px 14px 10px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);">
+        <label style="font-size:10px;font-weight:700;color:var(--gray-500);text-transform:uppercase;display:block;margin-bottom:4px;">Test Procedure</label>
+        <textarea class="form-input" rows="2" style="font-size:12px;resize:vertical;"
+          placeholder="e.g. Refer to CDRL 9.04.53 Section 4. Power on system, verify comms…"
+          oninput="_templateSections[${si}].procedure=this.value">${escapeHtml(sec.procedure)}</textarea>
+      </div>
+      <!-- Column headers -->
+      <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 32px 32px;gap:6px;padding:5px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-100);">
+        <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Code</div>
+        <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Test Case Name</div>
+        <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Category</div>
+        <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Assets (Generic)</div>
+        <div></div><div></div>
+      </div>
+      <!-- Test case rows -->
+      <div style="padding:8px 14px;" id="tpl-cases-${si}">${_tplCaseRowsHTML(si)}</div>
+      <button class="form-secondary" style="width:calc(100% - 28px);margin:0 14px 12px;font-size:12px;"
+        onclick="addTplCase(${si})">+ Add Test Case</button>
     </div>
   `).join('');
 }
 
-function addTemplateCase() {
-  _templateCases.push({ code:'', name:'', category:'' });
-  document.getElementById('tc-rows').innerHTML = _tcRowsHTML();
+function _tplCaseRowsHTML(si) {
+  const cases = _templateSections[si]?.cases || [];
+  return cases.map((tc, ci) => `
+    <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 32px 32px;gap:6px;align-items:center;margin-bottom:5px;">
+      <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Code e.g. DCS-01"
+        value="${escapeHtml(tc.code)}" oninput="_templateSections[${si}].cases[${ci}].code=this.value">
+      <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Test Case Name"
+        value="${escapeHtml(tc.name)}" oninput="_templateSections[${si}].cases[${ci}].name=this.value">
+      <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Category"
+        value="${escapeHtml(tc.category)}" oninput="_templateSections[${si}].cases[${ci}].category=this.value">
+      <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Assets e.g. MLK A, MLK B"
+        value="${escapeHtml(tc.assets||'')}" oninput="_templateSections[${si}].cases[${ci}].assets=this.value"
+        title="Comma-separated generic asset names auto-linked as children on deploy">
+      <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;" title="Duplicate"
+        onclick="dupTplCase(${si},${ci})">⧉</button>
+      <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;color:var(--bad);" title="Remove"
+        onclick="removeTplCase(${si},${ci})" ${cases.length === 1 ? 'disabled' : ''}>×</button>
+    </div>
+  `).join('');
 }
 
-function duplicateTemplateCase(i) {
-  _templateCases.splice(i + 1, 0, { ..._templateCases[i] });
-  document.getElementById('tc-rows').innerHTML = _tcRowsHTML();
+// ── Section / case actions ────────────────────────────────────────────────────
+
+function addTplSection() {
+  _templateSections.push({ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'' }] });
+  document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
 }
 
-function removeTemplateCase(i) {
-  if (_templateCases.length === 1) return;
-  _templateCases.splice(i, 1);
-  document.getElementById('tc-rows').innerHTML = _tcRowsHTML();
+function removeTplSection(si) {
+  if (_templateSections.length <= 1) return;
+  if (!confirm(`Remove Section ${si + 1} and all its test cases?`)) return;
+  _templateSections.splice(si, 1);
+  document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
 }
+
+function addTplCase(si) {
+  _templateSections[si].cases.push({ code:'', name:'', category:'', assets:'' });
+  document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
+}
+
+function dupTplCase(si, ci) {
+  _templateSections[si].cases.splice(ci + 1, 0, { ..._templateSections[si].cases[ci] });
+  document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
+}
+
+function removeTplCase(si, ci) {
+  if (_templateSections[si].cases.length <= 1) return;
+  _templateSections[si].cases.splice(ci, 1);
+  document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
+}
+
+// ── CSV ───────────────────────────────────────────────────────────────────────
 
 function downloadTemplateCaseCSV() {
-  const csv = 'Code,Name,Category\n"DCS-SAT-01","Network Connectivity Test","Hardware SAT"';
+  const rows = [
+    ['Section','Code','Name','Category','Assets','Procedure'],
+    ['Hardware Verification','DCS-HW-01','Network Connectivity Test','Hardware SAT','','Refer to CDRL 9.04.53 Section 4'],
+    ['Hardware Verification','DCS-HW-02','Server Failover Test','Hardware SAT','Server A,Server B','Refer to CDRL 9.04.53 Section 4'],
+    ['Software Testing','DCS-SW-01','Comms Latency Test','Software SAT','','Refer to CDRL 9.04.53 Section 5'],
+    ['Software Testing','DCS-SW-02','Interface Validation','Software SAT','','Refer to CDRL 9.04.53 Section 5'],
+  ];
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
   a.download = 'TestCases_Template.csv';
@@ -3311,96 +3440,90 @@ function handleTemplateCaseImport(input) {
   const file = input.files[0]; if (!file) return; input.value = '';
   file.text().then(text => {
     const rows = parseCSVGeneric(text);
-    const imported = rows.map(r => ({
-      code:     r.Code     || r.TestCaseCode || r['Test Case Code'] || '',
-      name:     r.Name     || r.TestName     || r['Test Case Name'] || '',
-      category: r.Category || r.TestCategory || r['Test Category']  || '',
-    })).filter(r => r.code || r.name);
-    if (!imported.length) { toast('Could not find Code/Name/Category columns', 'warn'); return; }
-    _templateCases = imported;
-    document.getElementById('tc-rows').innerHTML = _tcRowsHTML();
-    toast(`Loaded ${imported.length} test cases from CSV`, 'success');
+    if (!rows.length) { toast('No data rows found in CSV', 'warn'); return; }
+    const sectionMap = new Map();
+    for (const r of rows) {
+      const sTitle = (r.Section      || r.section      || '').trim();
+      const proc   = (r.Procedure    || r.procedure    || r['Test Procedure'] || '').trim();
+      const code   = (r.Code         || r.TestCaseCode || r['Test Case Code'] || '').trim();
+      const name   = (r.Name         || r.TestName     || r['Test Case Name'] || '').trim();
+      const cat    = (r.Category     || r.TestCategory || r['Test Category']  || '').trim();
+      const assets = (r.Assets       || r.assets       || '').trim();
+      if (!code && !name) continue;
+      const key = sTitle || '__default__';
+      if (!sectionMap.has(key)) sectionMap.set(key, { title: sTitle, procedure: proc, cases: [] });
+      const sec = sectionMap.get(key);
+      if (!sec.procedure && proc) sec.procedure = proc;
+      sec.cases.push({ code, name, category: cat, assets });
+    }
+    if (!sectionMap.size) { toast('Could not parse any test cases from CSV', 'warn'); return; }
+    _templateSections = [...sectionMap.values()];
+    const total = _templateSections.reduce((s, sec) => s + sec.cases.length, 0);
+    document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
+    toast(`Imported ${total} test case${total !== 1 ? 's' : ''} across ${_templateSections.length} section${_templateSections.length !== 1 ? 's' : ''}`, 'success');
   });
 }
 
+// ── Shared modal body ─────────────────────────────────────────────────────────
+
+function _tplModalBody() {
+  return `
+    <div class="form-grid" style="margin-bottom:20px;">
+      <div class="form-field form-field-full">
+        <label>Activity Name</label>
+        <input type="text" id="tpl-name" class="form-input" placeholder="e.g. ATS LATS Hardware SAT">
+      </div>
+      <div class="form-field">
+        <label>Subsystem</label>
+        <select id="tpl-subsystem" class="form-input">
+          ${SUBSYSTEMS_LIST.map(s => `<option>${escapeHtml(s)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-field form-field-full">
+        <label>Description</label>
+        <textarea id="tpl-desc" class="form-input" rows="2" placeholder="What does this activity cover?"></textarea>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <div style="font-weight:600;font-size:13px;">Sections &amp; Test Cases</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="form-secondary" style="font-size:12px;padding:5px 10px;" onclick="downloadTemplateCaseCSV()">↓ CSV Template</button>
+        <label style="cursor:pointer;">
+          <input type="file" accept=".csv" onchange="handleTemplateCaseImport(this)" style="display:none">
+          <div class="form-secondary" style="font-size:12px;padding:5px 10px;cursor:pointer;display:inline-block;">📂 Import CSV</div>
+        </label>
+      </div>
+    </div>
+    <div id="tpl-sections">${_tplSectionsHTML()}</div>
+    <button class="form-secondary" style="width:100%;font-size:13px;border-style:dashed;margin-top:2px;"
+      onclick="addTplSection()">+ Add Section</button>
+  `;
+}
+
+// ── Open modals ───────────────────────────────────────────────────────────────
+
 function openNewTemplateModal() {
-  _templateCases = [{ code:'', name:'', category:'' }];
+  _templateSections = [{ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'' }] }];
   modal({
-    title: 'Create Activity Template',
-    sub: 'Define a reusable set of test cases for an activity',
-    size: 'large',
-    body: `
-      <div class="form-grid" style="margin-bottom:20px;">
-        <div class="form-field form-field-full">
-          <label>Activity Name</label>
-          <input type="text" id="ntpl-name" class="form-input" placeholder="e.g. ATS LATS Hardware SAT">
-        </div>
-        <div class="form-field">
-          <label>Subsystem</label>
-          <select id="ntpl-subsystem" class="form-input">
-            <option>DCS</option><option>ATS</option><option>IXL</option>
-            <option>CORE CBTC</option><option>PS&TP</option><option>IAMS</option>
-            <option>SCADA</option><option>CYBER</option><option>TCH</option>
-          </select>
-        </div>
-        <div class="form-field form-field-full">
-          <label>Description</label>
-          <textarea id="ntpl-desc" class="form-input" rows="2" placeholder="What does this activity cover?"></textarea>
-        </div>
-        <div class="form-field form-field-full">
-          <label>Test Procedure <span style="font-weight:400;color:var(--gray-500);">(applies to all test cases in this template)</span></label>
-          <textarea id="ntpl-procedure" class="form-input" rows="3" placeholder="e.g. Refer to CDRL 9.04.53 Section 4. Power on system, verify comms, run test sequence..."></textarea>
-        </div>
-      </div>
-
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <div style="font-weight:600;font-size:13px;">Test Cases</div>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <button class="form-secondary" style="font-size:12px;padding:5px 10px;" onclick="downloadTemplateCaseCSV()">↓ CSV Template</button>
-          <label style="cursor:pointer;">
-            <input type="file" accept=".csv" onchange="handleTemplateCaseImport(this)" style="display:none">
-            <div class="form-secondary" style="font-size:12px;padding:5px 10px;cursor:pointer;display:inline-block;">📂 Import CSV</div>
-          </label>
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 32px 32px;gap:6px;margin-bottom:6px;padding:0 2px;">
-        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">CODE</div>
-        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">TEST CASE NAME</div>
-        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">CATEGORY</div>
-        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">ASSETS (GENERIC)</div>
-        <div></div><div></div>
-      </div>
-      <div id="tc-rows">${_tcRowsHTML()}</div>
-      <button class="form-secondary" style="width:100%;margin-top:8px;font-size:13px;" onclick="addTemplateCase()">+ Add Test Case</button>
-    `,
-    footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-submit" onclick="saveNewTemplate()">Create Activity Template</button>
-    `,
+    title:  'Create Activity Template',
+    sub:    'Define reusable test sections and procedures for an activity',
+    size:   'large',
+    body:   _tplModalBody(),
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+             <button class="form-submit" onclick="saveNewTemplate()">Create Activity Template</button>`,
   });
 }
 
 async function saveNewTemplate() {
-  const name      = document.getElementById('ntpl-name').value.trim();
-  const subsystem = document.getElementById('ntpl-subsystem').value;
-  const desc      = document.getElementById('ntpl-desc').value.trim();
-  const procedure = document.getElementById('ntpl-procedure').value.trim();
-
+  const name      = document.getElementById('tpl-name')?.value.trim();
+  const subsystem = document.getElementById('tpl-subsystem')?.value;
+  const desc      = document.getElementById('tpl-desc')?.value.trim();
   if (!name) { toast('Activity Name is required', 'error'); return; }
-
-  const testCases = _templateCases
-    .filter(tc => tc.code.trim() || tc.name.trim())
-    .map(tc => ({ code: tc.code.trim(), name: tc.name.trim(), category: tc.category.trim(), assets: (tc.assets||'').trim(), procedure, duration: 1 }));
-
+  const testCases = _tplSectionsToTestCases(_templateSections);
   if (!testCases.length) { toast('Add at least one test case', 'error'); return; }
-
   const newTpl = {
-    id: 'tpl-' + Date.now(),
-    name, subsystem, description: desc,
-    createdBy: currentRoleUser.name,
-    createdAt: new Date().toISOString(),
-    testCases,
+    id: 'tpl-' + Date.now(), name, subsystem, description: desc,
+    createdBy: currentRoleUser.name, createdAt: new Date().toISOString(), testCases,
   };
   const { error } = await _sb.from('templates').insert({
     id: newTpl.id, name: newTpl.name, subsystem: newTpl.subsystem,
@@ -3411,7 +3534,7 @@ async function saveNewTemplate() {
   TEMPLATES.push(newTpl);
   logAudit('Created Activity Template', name, `${testCases.length} test cases`);
   closeModal();
-  toast(`Created activity: ${name}`, 'success');
+  toast(`Created: ${name}`, 'success');
   renderAdminPortal();
   renderAdminTemplates();
 }
@@ -3419,86 +3542,38 @@ async function saveNewTemplate() {
 function editTemplate(id) {
   const tpl = TEMPLATES.find(t => t.id === id);
   if (!tpl) return;
-  _editTemplateId = id; // store so save button doesn't need to embed it in onclick
-  _templateCases = tpl.testCases.map(tc => ({ code: tc.code, name: tc.name, category: tc.category, assets: tc.assets||'' }));
+  _editTemplateId   = id;
+  _templateSections = _tplCasesToSections(tpl.testCases);
   modal({
-    title: 'Edit Activity Template',
-    sub: tpl.name,
-    size: 'large',
-    body: `
-      <div class="form-grid" style="margin-bottom:20px;">
-        <div class="form-field form-field-full">
-          <label>Activity Name</label>
-          <input type="text" id="etpl-name" class="form-input" value="${escapeHtml(tpl.name)}">
-        </div>
-        <div class="form-field">
-          <label>Subsystem</label>
-          <select id="etpl-subsystem" class="form-input">
-            ${['DCS','ATS','IXL','CORE CBTC','PS&TP','IAMS','SCADA','CYBER','TCH'].map(s =>
-              `<option${s === tpl.subsystem ? ' selected' : ''}>${s}</option>`).join('')}
-          </select>
-        </div>
-        <div class="form-field form-field-full">
-          <label>Description</label>
-          <textarea id="etpl-desc" class="form-input" rows="2">${escapeHtml(tpl.description || '')}</textarea>
-        </div>
-        <div class="form-field form-field-full">
-          <label>Test Procedure <span style="font-weight:400;color:var(--gray-500);">(applies to all test cases)</span></label>
-          <textarea id="etpl-procedure" class="form-input" rows="3">${escapeHtml(tpl.testCases[0]?.procedure || '')}</textarea>
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <div style="font-weight:600;font-size:13px;">Test Cases</div>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <button class="form-secondary" style="font-size:12px;padding:5px 10px;" onclick="downloadTemplateCaseCSV()">↓ CSV Template</button>
-          <label style="cursor:pointer;">
-            <input type="file" accept=".csv" onchange="handleTemplateCaseImport(this)" style="display:none">
-            <div class="form-secondary" style="font-size:12px;padding:5px 10px;cursor:pointer;display:inline-block;">📂 Import CSV</div>
-          </label>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 32px 32px;gap:6px;margin-bottom:6px;padding:0 2px;">
-        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">CODE</div>
-        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">TEST CASE NAME</div>
-        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">CATEGORY</div>
-        <div style="font-size:11px;color:var(--gray-500);font-weight:600;">ASSETS (GENERIC)</div>
-        <div></div><div></div>
-      </div>
-      <div id="tc-rows">${_tcRowsHTML()}</div>
-      <button class="form-secondary" style="width:100%;margin-top:8px;font-size:13px;" onclick="addTemplateCase()">+ Add Test Case</button>
-    `,
-    footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-submit" onclick="saveEditTemplate()">Save Changes</button>
-    `,
+    title:  'Edit Activity Template',
+    sub:    tpl.name,
+    size:   'large',
+    body:   _tplModalBody(),
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+             <button class="form-submit" onclick="saveEditTemplate()">Save Changes</button>`,
   });
+  setTimeout(() => {
+    const el = (id) => document.getElementById(id);
+    if (el('tpl-name'))      el('tpl-name').value      = tpl.name;
+    if (el('tpl-subsystem')) el('tpl-subsystem').value  = tpl.subsystem || '';
+    if (el('tpl-desc'))      el('tpl-desc').value       = tpl.description || '';
+  }, 0);
 }
 
 async function saveEditTemplate() {
   const id  = _editTemplateId;
   const tpl = id ? TEMPLATES.find(t => t.id === id) : null;
   if (!tpl) { toast('Template not found', 'error'); return; }
-
-  const name      = document.getElementById('etpl-name')?.value.trim();
-  const subsystem = document.getElementById('etpl-subsystem')?.value;
-  const desc      = document.getElementById('etpl-desc')?.value.trim();
-  const procedure = document.getElementById('etpl-procedure')?.value.trim();
+  const name      = document.getElementById('tpl-name')?.value.trim();
+  const subsystem = document.getElementById('tpl-subsystem')?.value;
+  const desc      = document.getElementById('tpl-desc')?.value.trim();
   if (!name) { toast('Activity Name is required', 'error'); return; }
-
-  const testCases = _templateCases
-    .filter(tc => tc.code.trim() || tc.name.trim())
-    .map(tc => ({ code: tc.code.trim(), name: tc.name.trim(), category: tc.category.trim(), assets: (tc.assets||'').trim(), procedure, duration: 1 }));
+  const testCases = _tplSectionsToTestCases(_templateSections);
   if (!testCases.length) { toast('Add at least one test case', 'error'); return; }
-
   const btn = document.querySelector('.modal-footer .form-submit');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-
   try {
-    // Use _dbUpdate (native fetch) — avoids supabase-js JWT caching silent failures
-    await _dbUpdate('templates', {
-      name, subsystem, description: desc, test_cases: testCases,
-    }, { id });
-
+    await _dbUpdate('templates', { name, subsystem, description: desc, test_cases: testCases }, { id });
     tpl.name = name; tpl.subsystem = subsystem; tpl.description = desc; tpl.testCases = testCases;
     logAudit('Edited Activity Template', name, `${testCases.length} test cases`);
     closeModal();
