@@ -15507,6 +15507,10 @@ async function _laDrawerSave() {
 
 // ─── Drawer resource pickers ────────────────────────────────
 async function _laDrawerAddEventResource(eventId, resourceId, quantity = 1) {
+  const _ev = (PLANNING_EVENTS || []).find(e => e.id === eventId);
+  // Real-time conflict gate (PTO + double-booking) before committing
+  const _gate = _ev ? await _laConflictGate(resourceId, [_ev]) : { proceed: true, conflicts: [] };
+  if (!_gate.proceed) { toast('Assignment cancelled — adjust the allocation.', 'warn'); return; }
   try {
     await _dbInsert('planning_event_resources', [{
       event_id:    eventId,
@@ -15515,8 +15519,10 @@ async function _laDrawerAddEventResource(eventId, resourceId, quantity = 1) {
       quantity:    quantity,
       assignment_source: 'manual',
     }]);
-    const _ev = (PLANNING_EVENTS || []).find(e => e.id === eventId);
-    if (_ev) await _laFlagPtoConflicts(resourceId, [_ev]);
+    if (_gate.conflicts.length) {
+      await _laLogConflicts(_gate.conflicts);
+      toast(`⚠ ${_gate.conflicts.length} conflict${_gate.conflicts.length>1?'s':''} flagged — see Planning Admin → Conflicts`, 'warn');
+    }
     await loadPlanningData(true);
     _renderLookaheadTabBody();
   } catch (err) {
@@ -17631,34 +17637,124 @@ function _laInitAssignDnD(gridEl) {
 }
 
 // ─── Assign / Remove ─────────────────────────────────────────
-// Detect approved-PTO overlaps for a freshly-assigned resource and log
-// them into planning_conflicts so they surface in the Conflicts module.
-async function _laFlagPtoConflicts(resourceId, events) {
+// Detect conflicts a resource assignment would create:
+//  • PTO overlap   — resource has approved PTO on the event date
+//  • Double-booked  — resource already on another event the same day
+//                     whose shift time overlaps
+// Returns an array of conflict descriptors (empty if clean).
+function _laDetectAssignmentConflicts(resourceId, events) {
   const r = (PLANNING_RESOURCES || []).find(x => x.id === resourceId);
-  const rows = [];
+  const name = r?.display_name || 'Resource';
+  const found = [];
   for (const ev of (events || [])) {
     if (!ev || ev.status === 'cancelled') continue;
+
+    // PTO overlap
     const pto = _ptoOverlapsRange(resourceId, ev.event_date, ev.start_time, ev.end_time);
-    if (!pto) continue;
-    const dup = (PLANNING_CONFLICTS || []).some(c =>
-      c.conflict_type === 'pto_overlap' && !c.is_acknowledged &&
-      c.event_id === ev.id && c.resource_id === resourceId);
-    if (dup) continue;
-    rows.push({
-      event_id:      ev.id,
-      resource_id:   resourceId,
-      conflict_type: 'pto_overlap',
-      severity:      'critical',
-      message:       `${r?.display_name || 'Resource'} is on approved PTO during "${ev.title || 'shift'}" on ${ev.event_date}`,
-      payload_json:  { pto_id: pto.id, event_id: ev.id, resource_id: resourceId },
+    if (pto) {
+      found.push({
+        kind: 'pto', ev, pto,
+        text: `${name} is on approved PTO (${pto.start_date} → ${pto.end_date}) during "${ev.title || 'shift'}" on ${ev.event_date}`,
+        row: {
+          event_id: ev.id, resource_id: resourceId,
+          conflict_type: 'pto_overlap', severity: 'critical',
+          message: `${name} is on approved PTO during "${ev.title || 'shift'}" on ${ev.event_date}`,
+          payload_json: { pto_id: pto.id, event_id: ev.id, resource_id: resourceId },
+        },
+      });
+    }
+
+    // Double-booked — resource already on a different overlapping event
+    (PLANNING_EVENT_RES || [])
+      .filter(er => er.resource_id === resourceId && er.event_id !== ev.id)
+      .forEach(er => {
+        const other = (PLANNING_EVENTS || []).find(e => e.id === er.event_id);
+        if (!other || other.status === 'cancelled') return;
+        if (!_planningEventsOverlap(ev, other)) return;
+        if (found.some(f => f.kind === 'double' && f.ev.id === ev.id && f.otherEv?.id === other.id)) return;
+        const oAct = (PLANNING_ACTIVITIES || []).find(a => a.id === other.planning_activity_id);
+        const tAct = (PLANNING_ACTIVITIES || []).find(a => a.id === ev.planning_activity_id);
+        const oLoc = oAct?.location || other.location || other.title || 'another shift';
+        const tLoc = tAct?.location || ev.location || ev.title || 'this shift';
+        found.push({
+          kind: 'double', ev, otherEv: other,
+          text: `${name} is already booked on ${ev.event_date} for "${oLoc}" — double-booking with "${tLoc}" (overlapping shift time)`,
+          row: {
+            event_id: ev.id, resource_id: resourceId,
+            conflict_type: 'double_booked', severity: 'critical',
+            message: `${name} is double-booked on ${ev.event_date}: "${ev.title || tLoc}" + "${other.title || oLoc}"`,
+            payload_json: { other_event_id: other.id, resource_id: resourceId },
+          },
+        });
+      });
+  }
+  return found;
+}
+
+// Real-time popup: confirm (assign anyway & flag for later) or cancel/adjust.
+// Resolves true = proceed, false = cancel.
+function _laConflictConfirmModal(resourceName, conflicts) {
+  return new Promise(resolve => {
+    const items = conflicts.slice(0, 12).map(c => {
+      const tag = c.kind === 'pto'
+        ? '<span style="background:#fef3c7;color:#92400e;font-weight:700;font-size:10px;padding:1px 6px;border-radius:8px;">🌴 PTO</span>'
+        : '<span style="background:#fee2e2;color:#b91c1c;font-weight:700;font-size:10px;padding:1px 6px;border-radius:8px;">⚡ DOUBLE-BOOKED</span>';
+      return `<li style="margin:6px 0;list-style:none;display:flex;gap:8px;align-items:flex-start;">
+        ${tag}<span style="font-size:12px;">${escapeHtml(c.text)}</span></li>`;
+    }).join('');
+    const more = conflicts.length > 12 ? `<li style="font-size:12px;color:var(--gray-500);">…and ${conflicts.length - 12} more</li>` : '';
+    modal({
+      title: '⚠ Scheduling conflict detected',
+      sub: escapeHtml(resourceName),
+      size: 'medium',
+      body: `
+        <div style="font-size:13px;margin-bottom:10px;">
+          This assignment creates <strong>${conflicts.length} conflict${conflicts.length > 1 ? 's' : ''}</strong>:
+        </div>
+        <ul style="margin:0;padding:0;max-height:46vh;overflow-y:auto;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:10px 12px;">
+          ${items}${more}
+        </ul>
+        <div style="font-size:12px;color:var(--gray-500);margin-top:12px;">
+          <strong>Assign anyway</strong> proceeds and logs this to the Conflicts module
+          (Planning Admin) to resolve later. <strong>Cancel</strong> lets you adjust the
+          allocation now.
+        </div>`,
+      footer:
+        '<button class="form-secondary" onclick="window._laConflictResolve(false)">Cancel / adjust</button>' +
+        '<button class="form-submit" style="background:#b45309;border-color:#b45309;" onclick="window._laConflictResolve(true)">Assign anyway &amp; flag</button>',
     });
+    window._laConflictResolve = (proceed) => {
+      closeModal();
+      delete window._laConflictResolve;
+      resolve(!!proceed);
+    };
+  });
+}
+
+// Insert detected conflicts into planning_conflicts (dedup vs open ones).
+async function _laLogConflicts(conflicts) {
+  const rows = [];
+  for (const c of conflicts) {
+    const dup = (PLANNING_CONFLICTS || []).some(x =>
+      x.conflict_type === c.row.conflict_type && !x.is_acknowledged &&
+      x.event_id === c.row.event_id && x.resource_id === c.row.resource_id);
+    if (!dup) rows.push(c.row);
   }
   if (rows.length) {
     try { await _dbInsert('planning_conflicts', rows); }
-    catch (e) { console.warn('PTO conflict log failed:', e.message); }
-    toast(`⚠ ${rows.length} PTO conflict${rows.length > 1 ? 's' : ''} flagged for ${r?.display_name || 'resource'} — see Conflicts`, 'warn');
+    catch (e) { console.warn('Conflict log failed:', e.message); }
   }
   return rows.length;
+}
+
+// Gate an assignment behind the real-time conflict popup.
+// Returns true to proceed, false to abort. Logs conflicts if user proceeds.
+async function _laConflictGate(resourceId, events) {
+  const conflicts = _laDetectAssignmentConflicts(resourceId, events);
+  if (!conflicts.length) return { proceed: true, conflicts: [] };
+  const r = (PLANNING_RESOURCES || []).find(x => x.id === resourceId);
+  const ok = await _laConflictConfirmModal(r?.display_name || 'Resource', conflicts);
+  return { proceed: ok, conflicts };
 }
 
 async function _laAssignResourceToActivity(activityId, resourceId) {
@@ -17670,6 +17766,12 @@ async function _laAssignResourceToActivity(activityId, resourceId) {
   }
 
   const res = PLANNING_RESOURCES.find(r => r.id === resourceId);
+
+  // Real-time conflict gate (PTO + double-booking) before committing
+  const _evsForCheck = PLANNING_EVENTS.filter(e =>
+    e.planning_activity_id === activityId && e.status !== 'cancelled');
+  const _gate = await _laConflictGate(resourceId, _evsForCheck);
+  if (!_gate.proceed) { toast('Assignment cancelled — adjust the allocation.', 'warn'); return; }
 
   // Optimistic update
   const temp = { id: '_tmp_' + Date.now(), planning_activity_id: activityId, resource_id: resourceId, role: 'crew' };
@@ -17700,7 +17802,10 @@ async function _laAssignResourceToActivity(activityId, resourceId) {
     }
 
     toast(`${res?.display_name || 'Resource'} assigned ✓`, 'success');
-    await _laFlagPtoConflicts(resourceId, evs);
+    if (_gate.conflicts.length) {
+      await _laLogConflicts(_gate.conflicts);
+      toast(`⚠ ${_gate.conflicts.length} conflict${_gate.conflicts.length>1?'s':''} flagged — see Planning Admin → Conflicts`, 'warn');
+    }
     await loadPlanningData(true);
     _laMountLookaheadTL();
   } catch (err) {
@@ -17732,6 +17837,10 @@ async function _laAssignResourceToEvent(activityId, eventDate, resourceId) {
   const res  = PLANNING_RESOURCES.find(r => r.id === resourceId);
   const dateLabel = dayjs(eventDate).format('ddd MMM D');
 
+  // Real-time conflict gate (PTO + double-booking) before committing
+  const _gate = await _laConflictGate(resourceId, [ev]);
+  if (!_gate.proceed) { toast('Assignment cancelled — adjust the allocation.', 'warn'); return; }
+
   try {
     await _dbInsert('planning_event_resources', {
       event_id:          ev.id,
@@ -17740,7 +17849,10 @@ async function _laAssignResourceToEvent(activityId, eventDate, resourceId) {
       assignment_source: 'manual',
     });
     toast(`${res?.display_name || 'Resource'} → ${dateLabel} shift ✓`, 'success');
-    await _laFlagPtoConflicts(resourceId, [ev]);
+    if (_gate.conflicts.length) {
+      await _laLogConflicts(_gate.conflicts);
+      toast(`⚠ ${_gate.conflicts.length} conflict${_gate.conflicts.length>1?'s':''} flagged — see Planning Admin → Conflicts`, 'warn');
+    }
     await loadPlanningData(true);
     _laMountLookaheadTL();
   } catch (err) {
