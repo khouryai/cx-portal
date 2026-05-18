@@ -13293,6 +13293,8 @@ let _laSelectedResIds    = new Set();                  // multi-selected resourc
 let _laSelectedCellKeys  = new Set();                  // multi-selected event IDs for bulk remove / copy
 let _laClipboard         = null;                       // { mode:'copy'|'cut', items:[{event,resources,dayOffset,sameActivityAsAnchor}], anchorActId, anchorDate }
 let _laPasteTarget       = null;                       // { activityId, date } — anchor for paste
+let _laRowSearch         = '';                         // live filter for the lookahead grid (activity name/id)
+let _laPendingUndo       = null;                        // { fn } — most recent undoable destructive action
 
 // Shift visual styles — used across calendar, timeline, badges
 const _SHIFT_VISUAL = {
@@ -14604,6 +14606,10 @@ function _laRenderGrid(target, { groups, days, milestones }) {
   html += `</div>`;  // tlg-shell
   target.innerHTML = html;
 
+  // Re-apply persistent UI state after a fresh render
+  _laUpdateSelectionChrome();
+  if (_laRowSearch) _laApplyRowSearch();
+
   // Activate Tippy on shift blocks
   setTimeout(() => {
     if (!window.tippy) return;
@@ -14719,7 +14725,15 @@ function _laLookaheadHTML() {
         <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
         P6 baseline
       </label>
-      <button onclick="_laOpenNewActivityModal()" style="margin-left:auto;" class="admin-action-btn" title="Add a new activity row to the lookahead">
+      <div class="la-row-search-wrap" style="display:flex;align-items:center;gap:6px;margin-left:auto;">
+        <input id="la-row-search" type="text" placeholder="🔍 Filter activities…"
+          value="${escapeHtml(_laRowSearch)}" oninput="_laSetRowSearch(this.value)"
+          style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-300);border-radius:6px;width:210px;">
+        <button id="la-row-search-clear" onclick="_laSetRowSearch('')" title="Clear filter"
+          style="display:${_laRowSearch ? 'inline-flex' : 'none'};font-size:12px;padding:6px 9px;border:1px solid var(--gray-300);background:#fff;border-radius:6px;cursor:pointer;">✕</button>
+        <span id="la-row-search-count" style="font-size:11px;color:var(--gray-500);white-space:nowrap;"></span>
+      </div>
+      <button onclick="_laOpenNewActivityModal()" class="admin-action-btn" title="Add a new activity row to the lookahead">
         + Add Activity
       </button>
       <div style="position:relative;display:inline-block;">
@@ -14783,6 +14797,157 @@ function _laToggleAssignMode() {
     _laSelectedResIds.clear();
     _laSelectedCellKeys.clear();
   }
+  _renderLookaheadTabBody();
+}
+
+// ============================================================
+// GRID SEARCH — live filter of lookahead activity rows
+// ============================================================
+function _laSetRowSearch(v) {
+  _laRowSearch = (v || '').trim();
+  const inp = document.getElementById('la-row-search');
+  if (inp && inp.value !== _laRowSearch) inp.value = _laRowSearch;
+  const clr = document.getElementById('la-row-search-clear');
+  if (clr) clr.style.display = _laRowSearch ? 'inline-flex' : 'none';
+  _laApplyRowSearch();
+}
+
+// Filters mounted grid rows by activity label/sublabel. Hides non-matching
+// data rows and any section header that ends up with no visible rows.
+function _laApplyRowSearch() {
+  const root = document.getElementById('lookahead-timeline');
+  if (!root) return;
+  const q = _laRowSearch.toLowerCase();
+  const HDR = 'tlg-grp-hdr-row tlg-subgrp-hdr-row tlg-loc-hdr-row tlg-p6-hdr-row'.split(' ');
+  const isHdr = el => HDR.some(c => el.classList.contains(c));
+  const dataRows = [...root.querySelectorAll('.tlg-row.tlg-data-row')];
+  let shown = 0, total = 0;
+
+  dataRows.forEach(row => {
+    const lbl = row.querySelector('.tlg-row-label');
+    const txt = (lbl ? lbl.textContent : '').toLowerCase();
+    total++;
+    const match = !q || txt.indexOf(q) !== -1;
+    row.style.display = match ? '' : 'none';
+    if (match) shown++;
+  });
+
+  // Header visibility: a header is shown if any data row before the next
+  // header (of equal-or-broader scope) is visible. Two passes keeps the
+  // group → sub-group → row hierarchy sane without rebuilding the grid.
+  const allRows = [...root.querySelectorAll('.tlg-row')];
+  const headerVisible = hdr => {
+    const cls = HDR.find(c => hdr.classList.contains(c));
+    const broad = cls === 'tlg-grp-hdr-row';
+    let i = allRows.indexOf(hdr) + 1;
+    for (; i < allRows.length; i++) {
+      const r = allRows[i];
+      if (isHdr(r)) {
+        // Stop at next group header; for sub/loc headers stop at any header
+        if (broad ? r.classList.contains('tlg-grp-hdr-row') : true) {
+          if (broad && (r.classList.contains('tlg-subgrp-hdr-row') || r.classList.contains('tlg-loc-hdr-row'))) {
+            if (r.style.display !== 'none') return true; // group keeps a visible sub-header
+            continue;
+          }
+          break;
+        }
+      }
+      if (r.classList.contains('tlg-data-row') && r.style.display !== 'none') return true;
+    }
+    return false;
+  };
+  // Pass 1: sub-group / location / p6 headers
+  allRows.filter(r => r.classList.contains('tlg-subgrp-hdr-row') || r.classList.contains('tlg-loc-hdr-row') || r.classList.contains('tlg-p6-hdr-row'))
+    .forEach(h => { h.style.display = (!q || headerVisible(h)) ? '' : 'none'; });
+  // Pass 2: top-level group headers (after sub-headers resolved)
+  allRows.filter(r => r.classList.contains('tlg-grp-hdr-row'))
+    .forEach(h => { h.style.display = (!q || headerVisible(h)) ? '' : 'none'; });
+
+  const cnt = document.getElementById('la-row-search-count');
+  if (cnt) cnt.textContent = q ? `${shown} of ${total}` : '';
+}
+
+// ============================================================
+// SELECTION CHROME — dim unselected cells when a selection is active
+// ============================================================
+function _laUpdateSelectionChrome() {
+  const root = document.getElementById('lookahead-timeline');
+  if (root) root.classList.toggle('la-has-selection', _laSelectedCellKeys.size > 0);
+}
+
+// ============================================================
+// UNDO TOAST — actionable toast with an Undo button
+// ============================================================
+function _laToastUndo(msg, undoFn) {
+  _laPendingUndo = { fn: undoFn };
+  const el = document.createElement('div');
+  el.className = 'toast success la-toast-undo';
+  el.innerHTML = `<div class="icon">✓</div><div>${escapeHtml(msg)}</div>` +
+    `<button class="la-toast-undo-btn">↩ Undo</button>`;
+  el.querySelector('.la-toast-undo-btn').onclick = async () => {
+    el.remove();
+    const u = _laPendingUndo; _laPendingUndo = null;
+    if (u && u.fn) { try { await u.fn(); } catch (e) { toast('Undo failed: ' + e.message, 'error'); } }
+  };
+  document.body.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateY(20px)'; el.style.transition = 'all 0.3s'; }, 7500);
+  setTimeout(() => el.remove(), 8000);
+}
+
+async function _laUndoDelete(snap) {
+  if (!snap || !snap.events?.length) return;
+  await _dbInsert('planning_events', snap.events);
+  if (snap.resources?.length) await _dbInsert('planning_event_resources', snap.resources);
+  toast(`↩ Restored ${snap.events.length} event${snap.events.length > 1 ? 's' : ''}`, 'success');
+  await loadPlanningData(true);
+  _renderLookaheadTabBody();
+}
+
+// ============================================================
+// BULK EDIT — apply shift / location to all selected cells
+// ============================================================
+async function _laBulkSetShift(code) {
+  if (!code) return;
+  if (_laSelectedCellKeys.size === 0) { toast('No cells selected.', 'warn'); return; }
+  const ids = [..._laSelectedCellKeys];
+  const events = PLANNING_EVENTS.filter(e => ids.includes(e.id) && !e.is_locked);
+  if (!events.length) { toast('All selected cells are locked.', 'warn'); return; }
+  const labels = { day_shift: 'Day', swing_shift: 'Swing', night_shift: 'Night', blanket_shift: 'Blanket' };
+  if (!confirm(`Set shift to "${labels[code] || code}" for ${events.length} cell${events.length > 1 ? 's' : ''}?`)) return;
+  let n = 0;
+  for (const e of events) {
+    try {
+      await _dbUpdate('planning_events',
+        { shift_type: code, version: (e.version || 1) + 1, updated_by: currentProfile?.id || null },
+        { id: e.id });
+      n++;
+    } catch (err) { console.error('[bulk-shift] failed for', e.id, err); }
+  }
+  toast(`✓ Updated shift on ${n} cell${n > 1 ? 's' : ''}`, 'success');
+  await loadPlanningData(true);
+  _renderLookaheadTabBody();
+}
+
+async function _laBulkSetLocation() {
+  if (_laSelectedCellKeys.size === 0) { toast('No cells selected.', 'warn'); return; }
+  const inp = document.getElementById('la-bulk-loc');
+  const loc = (inp?.value || '').trim();
+  if (!loc) { toast('Enter a location first.', 'warn'); return; }
+  const ids = [..._laSelectedCellKeys];
+  const events = PLANNING_EVENTS.filter(e => ids.includes(e.id) && !e.is_locked);
+  if (!events.length) { toast('All selected cells are locked.', 'warn'); return; }
+  if (!confirm(`Set location to "${loc}" for ${events.length} cell${events.length > 1 ? 's' : ''}?`)) return;
+  let n = 0;
+  for (const e of events) {
+    try {
+      await _dbUpdate('planning_events',
+        { location: loc, version: (e.version || 1) + 1, updated_by: currentProfile?.id || null },
+        { id: e.id });
+      n++;
+    } catch (err) { console.error('[bulk-loc] failed for', e.id, err); }
+  }
+  toast(`✓ Updated location on ${n} cell${n > 1 ? 's' : ''}`, 'success');
+  await loadPlanningData(true);
   _renderLookaheadTabBody();
 }
 
@@ -15600,6 +15765,16 @@ function _laCellSelActionsHTML() {
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#7f1d1d;border-color:#fca5a5;" onclick="_laDeleteSelection()" title="Del">🗑 Delete</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#7f1d1d;border-color:#fca5a5;" onclick="_laBulkCancelCells()">🚫 Cancel</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laBulkRemoveCellResources()">Remove users only</button>`);
+    parts.push('<span style="width:1px;background:#e5e7eb;align-self:stretch;margin:0 4px;"></span>');
+    parts.push(`<select onchange="_laBulkSetShift(this.value);this.selectedIndex=0;" title="Set shift for all selected cells" style="font-size:11px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;">
+      <option value="">Set shift…</option>
+      <option value="day_shift">☀ Day</option>
+      <option value="swing_shift">↔ Swing</option>
+      <option value="night_shift">☾ Night</option>
+      <option value="blanket_shift">■ Blanket</option>
+    </select>`);
+    parts.push(`<input id="la-bulk-loc" placeholder="Set location…" style="font-size:11px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;width:120px;">`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laBulkSetLocation()">Apply loc</button>`);
   }
   if (hasClipboard) {
     if (n > 0) parts.push('<span style="width:1px;background:#e5e7eb;align-self:stretch;margin:0 4px;"></span>');
@@ -15644,6 +15819,7 @@ function _laToggleCellSelect(eventId, el) {
 function _laRefreshActionBanner() {
   const actEl = document.getElementById('la-cell-sel-actions');
   if (actEl) actEl.innerHTML = _laCellSelActionsHTML();
+  _laUpdateSelectionChrome();
 }
 
 function _laClearCellSelection() {
@@ -16169,8 +16345,15 @@ async function _laDeleteSelection() {
     toast('All selected cells are locked. Nothing to delete.', 'warn');
     return;
   }
-  const msg = `Delete ${deletable.length} event${deletable.length>1?'s':''}?${lockedCount > 0 ? `\n(${lockedCount} locked event${lockedCount>1?'s':''} will be skipped)` : ''}\n\nThis cannot be undone.`;
+  const msg = `Delete ${deletable.length} event${deletable.length>1?'s':''}?${lockedCount > 0 ? `\n(${lockedCount} locked event${lockedCount>1?'s':''} will be skipped)` : ''}\n\nYou can undo this right after.`;
   if (!confirm(msg)) return;
+
+  // Snapshot rows so the action is reversible (Undo re-inserts them).
+  const delIds = deletable.map(e => e.id);
+  const snap = {
+    events: deletable.map(e => ({ ...e })),
+    resources: PLANNING_EVENT_RES.filter(er => delIds.includes(er.event_id)).map(er => ({ ...er })),
+  };
 
   let count = 0;
   for (const e of deletable) {
@@ -16183,7 +16366,8 @@ async function _laDeleteSelection() {
     }
   }
   _laSelectedCellKeys.clear();
-  toast(`✓ Deleted ${count} event${count>1?'s':''}`, 'success');
+  if (count > 0) _laToastUndo(`✓ Deleted ${count} event${count>1?'s':''}`, () => _laUndoDelete(snap));
+  else toast('Nothing deleted.', 'warn');
   await loadPlanningData(true);
   _renderLookaheadTabBody();
 }
