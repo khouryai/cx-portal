@@ -1046,6 +1046,7 @@ function renderLITable() {
   const statusF = document.getElementById('li-status-filter').value;
 
   let data = TI.filter(r =>
+    _isLatestAttempt(r) &&
     (!search  || (r.TestName     && r.TestName.toLowerCase().includes(search))
               || (r.TestCaseCode && r.TestCaseCode.toLowerCase().includes(search))
               || (r.Activity     && r.Activity.toLowerCase().includes(search))) &&
@@ -4099,6 +4100,7 @@ function renderTestMatrix() {
 
   // Apply all filters
   let filtered = TI.filter(r =>
+    _isLatestAttempt(r) &&
     (!matrixFilter.subsystem || r.Subsystem === matrixFilter.subsystem) &&
     (!matrixFilter.phase     || r.Phase === matrixFilter.phase) &&
     (!matrixFilter.location  || r.Location === matrixFilter.location) &&
@@ -4406,6 +4408,7 @@ function _mxRefreshCounts() {
 
   // Determine which rows are currently in the visible filter
   const filtered = TI.filter(r =>
+    _isLatestAttempt(r) &&
     (!matrixFilter.subsystem || r.Subsystem === matrixFilter.subsystem) &&
     (!matrixFilter.phase     || r.Phase === matrixFilter.phase) &&
     (!matrixFilter.location  || r.Location === matrixFilter.location) &&
@@ -4855,7 +4858,7 @@ function filterAddTestcases() {
   const loc = document.getElementById('ai-location').value;
   const sel = document.getElementById('ai-testid');
   if (!loc) { sel.innerHTML = '<option value="">Select test case...</option>'; return; }
-  const items = TI.filter(t => t.Location === loc);
+  const items = TI.filter(t => t.Location === loc && _isLatestAttempt(t));
   sel.innerHTML = '<option value="">Select test case...</option>' +
     items.map(t => `<option value="${t.TestID}">${escapeHtml(t.TestCaseCode)} · ${escapeHtml(t.TestName)}</option>`).join('');
 }
@@ -6900,7 +6903,7 @@ function _trpStatusCounts(items) {
 
 function _trpBuildLinkMap() {
   const map = new Map();
-  TI.forEach(r => {
+  _latestTI().forEach(r => {
     const byId = r.TestReportID ? _testReports.find(rep => String(rep.id) === String(r.TestReportID)) : null;
     const raw = _trpCleanReportValue(r.TestReport || byId?.cdrl_number || byId?.title);
     const key = byId ? `id:${byId.id}` : _trpReportKey(raw);
@@ -7741,7 +7744,7 @@ function _trpLinkedItemsForRow(row, reportIds = []) {
   });
   const idSet = new Set(reportIds.map(String));
   if (idSet.size) {
-    TI.filter(t => t.TestReportID && idSet.has(String(t.TestReportID))).forEach(t => {
+    TI.filter(t => _isLatestAttempt(t) && t.TestReportID && idSet.has(String(t.TestReportID))).forEach(t => {
       if (t?.TestID) items.set(String(t.TestID), t);
     });
   }
@@ -8077,7 +8080,8 @@ function _testRegisterHTML() {
   const closedCount = filtered.filter(a => _amComputeStatus(a) === 'Closed').length;
   const openCount = filtered.filter(a => _amComputeStatus(a) === 'Open').length;
   const futureCount = filtered.filter(a => _amComputeStatus(a) === 'Future Test').length;
-  const overallPct = TI.length ? Math.round((TI.filter(r => ['Pass','Passed','Complete','Not Applicable'].includes(r.Status)).length / TI.length) * 100) : 0;
+  const _ltAll = _latestTI();
+  const overallPct = _ltAll.length ? Math.round((_ltAll.filter(r => ['Pass','Passed','Complete','Not Applicable'].includes(r.Status)).length / _ltAll.length) * 100) : 0;
 
   // column count: [cb](admin) | Actions | Activity | Subsystem | Location | Phase | Status | Completion
   const colCount = isAdmin ? 8 : 7;
@@ -8212,9 +8216,10 @@ function _testRegisterHTML() {
 }
 
 function _amGetActivities() {
-  // Derive unique activities from TI
+  // Derive unique activities from TI — latest attempt only (Phase 4).
+  // Prior regression attempts never inflate activity item lists or %.
   const map = new Map();
-  TI.forEach(r => {
+  _latestTI().forEach(r => {
     const key = `${r.Phase||''}||${r.Location||''}||${r.Subsystem||''}||${r.Activity||''}`;
     if (!map.has(key)) {
       map.set(key, {
@@ -12306,6 +12311,14 @@ function _swSnapshotChipHTML(r) {
 // Prior attempts freeze read-only; only the latest attempt counts in KPIs.
 // ==========================================================================
 const _REGRESSION_TERMINAL = new Set(['Pass','Fail','Blocked','Passed','Failed','Complete']);
+
+// Phase 4: a row counts toward KPIs only if it is the latest attempt.
+// Legacy/null is_latest_attempt is treated as latest (true).
+function _isLatestAttempt(r) { return !r || r.IsLatestAttempt !== false; }
+// Latest-attempt-only view of the global TI array — use for ALL counting,
+// progress %, dashboards, matrix, reports. Prior attempts stay in TI for
+// the regression history panel but never inflate metrics.
+function _latestTI() { return TI.filter(_isLatestAttempt); }
 
 // All attempts of one logical test case (oldest → newest)
 function _attemptsInGroup(groupId) {
