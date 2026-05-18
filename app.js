@@ -21080,11 +21080,12 @@ async function _planningRecomputeConflicts(silentSuccess = false) {
     try { await _dbDelete('planning_conflicts', { id: c.id }); } catch(_) {}
   }
 
-  // Insert new conflicts in chunks
-  if (newConflicts.length) {
-    for (let i = 0; i < newConflicts.length; i += 100) {
-      try { await _dbInsert('planning_conflicts', newConflicts.slice(i, i + 100)); } catch(err) { console.warn('Conflict insert chunk failed:', err.message); }
-    }
+  // Insert new conflicts one-by-one — a single invalid row must NOT
+  // abort the whole batch (PostgREST bulk insert is atomic), or every
+  // conflict silently disappears after the delete above.
+  for (const nc of newConflicts) {
+    try { await _dbInsert('planning_conflicts', [nc]); }
+    catch (err) { console.warn('Conflict insert failed:', err.message, nc); }
   }
 
   await loadPlanningData(true);
@@ -21213,8 +21214,12 @@ function _planningOpenP6Detail(p6) {
   wrap('_planningConfirmLink');
   wrap('_planningMarkNoLink');
   wrap('_laToggleAssignMode');
-  wrap('_laAssignResourceToActivity');
-  wrap('_laAssignResourceToEvent');
+  // NOTE: _laAssignResourceToActivity / _laAssignResourceToEvent are
+  // intentionally NOT wrapped. They run their own real-time conflict
+  // gate (_laConflictGate) which detects + logs PTO/double-booking
+  // deterministically. The blanket recompute here would delete those
+  // freshly-flagged rows and (if any detected row is invalid) fail the
+  // atomic bulk re-insert, wiping the Conflicts module.
   wrap('_laRemoveActivityResource');
   wrap('_laFilterResPanel');
 })();
