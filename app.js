@@ -14506,7 +14506,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       : '';
 
     const linkChip = actId ? (g.linkedTestRegActivity
-      ? `<span class="tlg-row-link tlg-row-link-set" title="Linked to Test Register Activity: ${escapeHtml(g.linkedTestRegActivity)}">🔗 ${escapeHtml(g.linkedTestRegActivity.slice(0, 22))}${g.linkedTestRegActivity.length > 22 ? '…' : ''}</span>`
+      ? `<span class="tlg-row-link tlg-row-link-set" title="Linked to Test Register Activity: ${escapeHtml(g.linkedTestRegActivity)}">🔗 ${escapeHtml(g.linkedTestRegActivity)}</span>`
       : `<span class="tlg-row-link tlg-row-link-none" title="No Test Register Activity linked — click to link">🔗 unlinked</span>`) : '';
     const progChip = _planningRowProgressChip(g.linkedTestRegActivity);
     html += `<div class="tlg-label tlg-row-label${_laAssignMode && actId ? ' la-drop-label' : ''}"
@@ -14524,9 +14524,11 @@ function _laRenderGrid(target, { groups, days, milestones }) {
           return g.sublabel ? `<span class="tlg-meta-seg">${escapeHtml(g.sublabel)}</span>` : '';
         })()}
         ${_partyBadgesHTML(g.actParty)}
-        ${linkChip ? `<button class="tlg-row-link-btn" onclick="event.stopPropagation();_laOpenLinkActivityModal('${actId}')">${linkChip}</button>` : ''}
       </div>
-      ${progChip}
+      ${linkChip ? `<div class="tlg-label-foot">
+        <button class="tlg-row-link-btn" onclick="event.stopPropagation();_laOpenLinkActivityModal('${actId}')">${linkChip}</button>
+        ${progChip}
+      </div>` : ''}
       ${assignedChips}${dropHintHTML}
       ${actId ? `<button class="tlg-row-del" onclick="event.stopPropagation();_laDeleteManualActivity('${actId}',event)" title="Delete activity (soft-delete coming in Phase 3)">🗑</button>` : ''}
     </div>`;
@@ -14588,7 +14590,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
             oncontextmenu="event.preventDefault();_laCellContextMenu(event,'${s.event_id}','${actId||''}','${iso}',this);return false;"
             data-tlg-tip="${tip}"
           >${s.resChips && s.resChips.length
-              ? `<div class="tlg-res-chips">${s.resChips.map(ch => `<span class="tlg-res-chip ${ch.isBart?'tlg-res-bart':'tlg-res-hit'}${ch.denied?' tlg-res-denied':''}">${escapeHtml(ch.label)}</span>`).join('')}</div>`
+              ? `<div class="tlg-res-chips" style="--res-fs:${Math.max(8, 15 - s.resChips.length)}px;">${s.resChips.map(ch => `<span class="tlg-res-chip ${ch.isBart?'tlg-res-bart':'tlg-res-hit'}${ch.denied?' tlg-res-denied':''}">${escapeHtml(ch.label)}</span>`).join('')}</div>`
               : s.cellLabel ? `<span class="tlg-cell-location">${escapeHtml(s.cellLabel)}</span>` : ''
             }${badgeHtml}${isCellSel ? `<span class="la-cell-sel-mark">✓</span>` : ''}<span class="tlg-fill-handle" onmousedown="_laFillStart(event,'${s.event_id}','${actId||''}','${iso}',this.parentElement)" title="Drag to fill across days"></span></div>`;
         });
