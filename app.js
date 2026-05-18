@@ -3664,8 +3664,14 @@ function _fscFieldRowHTML(f, isLast) {
         ${f.hint ? `<div style="font-size:11px;color:var(--info);background:var(--info-light);border-radius:6px;padding:7px 10px;margin-bottom:8px;">💡 ${escapeHtml(f.hint)}</div>` : ''}
         <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px;">
           ${opts.length ? opts.map((opt, i) => `
-            <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:6px;font-size:13px;">
-              <span style="flex:1;color:var(--gray-800);">${escapeHtml(opt)}</span>
+            <div style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:6px;font-size:13px;" id="fsc-row-${f.key}-${i}">
+              <input id="fsc-edit-${f.key}-${i}" type="text" value="${escapeHtml(opt)}"
+                style="flex:1;border:none;background:transparent;font-size:13px;color:var(--gray-800);padding:1px 4px;border-radius:4px;outline:none;"
+                onkeydown="if(event.key==='Enter')fscSaveEdit('${f.key}',${i});if(event.key==='Escape')fscCancelEdit('${f.key}',${i},'${escapeHtml(opt).replace(/'/g,'&#39;')}')"
+                onfocus="fscFocusEdit('${f.key}',${i})"
+                onblur="fscBlurEdit('${f.key}',${i})">
+              <button id="fsc-save-${f.key}-${i}" onclick="fscSaveEdit('${f.key}',${i})"
+                style="display:none;font-size:11px;border:1px solid var(--good);color:var(--good);background:none;border-radius:4px;cursor:pointer;padding:2px 8px;white-space:nowrap;">Save</button>
               <button onclick="fscMoveOption('${f.key}',${i},-1)" title="Move up"
                 style="font-size:13px;background:none;border:none;cursor:${i===0?'default':'pointer'};color:${i===0?'var(--gray-200)':'var(--gray-500)'};padding:1px 4px;"
                 ${i===0?'disabled':''}>↑</button>
@@ -3741,6 +3747,50 @@ async function _fscSave(key, options) {
   toast('Saved', 'success');
   renderAdminFieldConfig();
   renderAdminTabBody();
+}
+
+// ── Inline edit helpers ───────────────────────────────────────────────────────
+
+function fscFocusEdit(key, idx) {
+  const saveBtn = document.getElementById(`fsc-save-${key}-${idx}`);
+  if (saveBtn) saveBtn.style.display = '';
+  const input = document.getElementById(`fsc-edit-${key}-${idx}`);
+  if (input) {
+    input.style.background = 'var(--white)';
+    input.style.border     = '1px solid var(--info)';
+    input.style.padding    = '1px 6px';
+  }
+}
+
+function fscBlurEdit(key, idx) {
+  // Slight delay so Save button click fires before blur hides it
+  setTimeout(() => {
+    const saveBtn = document.getElementById(`fsc-save-${key}-${idx}`);
+    if (saveBtn) saveBtn.style.display = 'none';
+    const input = document.getElementById(`fsc-edit-${key}-${idx}`);
+    if (input) {
+      input.style.background = 'transparent';
+      input.style.border     = 'none';
+      input.style.padding    = '1px 4px';
+    }
+  }, 180);
+}
+
+async function fscSaveEdit(key, idx) {
+  const input = document.getElementById(`fsc-edit-${key}-${idx}`);
+  const val   = input?.value.trim();
+  if (!val) { toast('Option cannot be blank', 'error'); return; }
+  let cur = [..._fsCfg(key)];
+  if (!cur.length) { const def = _fscDef(key); cur = [...(def?.defaults || [])]; }
+  if (cur[idx] === val) return; // no change
+  if (cur.some((o, i) => i !== idx && o === val)) { toast('Option already exists', 'error'); return; }
+  cur[idx] = val;
+  await _fscSave(key, cur);
+}
+
+function fscCancelEdit(key, idx, orig) {
+  const input = document.getElementById(`fsc-edit-${key}-${idx}`);
+  if (input) { input.value = orig; input.blur(); }
 }
 
 // ==========================================================================
