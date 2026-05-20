@@ -5360,7 +5360,11 @@ function _plRenderCell(colId, p) {
       const ids = p.linked_test_ids || [];
       const codes = ids.map(id => TI.find(t => String(t.TestID) === String(id))?.TestCaseCode).filter(Boolean);
       if (!codes.length) return `<td style="font-size:11px;color:var(--gray-400);">—</td>`;
-      return `<td style="font-size:11px;max-width:180px;">${codes.map(c => `<span style="display:inline-block;padding:2px 6px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:4px;margin:1px 2px 1px 0;white-space:nowrap;">${escapeHtml(c)}</span>`).join('')}</td>`;
+      return `<td onclick="event.stopPropagation()" style="font-size:11px;max-width:180px;">${ids.map((id, idx) => {
+        const code = TI.find(t => String(t.TestID) === String(id))?.TestCaseCode;
+        if (!code) return '';
+        return `<span onclick="navigateToTestCase('${escapeHtml(String(id))}')" title="Open in Test Register" style="display:inline-block;padding:2px 6px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:4px;margin:1px 2px 1px 0;white-space:nowrap;cursor:pointer;">${escapeHtml(code)}</span>`;
+      }).join('')}</td>`;
     }
     case 'type':
       return `<td style="font-size:12px;">${escapeHtml(p.type||'—')}</td>`;
@@ -5863,13 +5867,19 @@ function openPunchDetail(id) {
               ${linkedTI.map((t, i) => {
                 const col = statusCls[t.Status] || '#6b7280';
                 return `
-                  <div style="display:grid;grid-template-columns:110px 1fr auto;align-items:center;gap:10px;padding:9px 14px;${i > 0 ? 'border-top:1px solid var(--gray-100);' : ''}background:var(--white);">
+                  <div onclick="navigateToTestCase('${escapeHtml(String(t.TestID))}')"
+                    title="Open in Test Register"
+                    style="display:grid;grid-template-columns:110px 1fr auto;align-items:center;gap:10px;padding:9px 14px;${i > 0 ? 'border-top:1px solid var(--gray-100);' : ''}background:var(--white);cursor:pointer;transition:background 0.15s;"
+                    onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='var(--white)'">
                     <div style="font-family:monospace;font-size:11px;color:var(--gray-700);font-weight:600;">${escapeHtml(t.TestCaseCode || '—')}</div>
                     <div>
                       <div style="font-size:13px;font-weight:500;">${escapeHtml(t.TestName || '—')}</div>
                       <div style="font-size:11px;color:var(--gray-500);margin-top:1px;">${escapeHtml(t.Activity || '')}${t.Location ? ' · ' + escapeHtml(t.Location) : ''}</div>
                     </div>
-                    <span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;white-space:nowrap;background:${col}20;color:${col};border:1px solid ${col}40;">${escapeHtml(t.Status || 'Unknown')}</span>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                      <span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;white-space:nowrap;background:${col}20;color:${col};border:1px solid ${col}40;">${escapeHtml(t.Status || 'Unknown')}</span>
+                      <span style="font-size:12px;color:var(--gray-400);" title="Open in Test Register">↗</span>
+                    </div>
                   </div>`;
               }).join('')}
             </div>
@@ -9135,6 +9145,30 @@ async function _trBulkDelete() {
 function _amOpenDrilldown(key) {
   _amDrilldownKey = key;
   _reRenderTR();
+}
+
+// Navigate from any module to a specific test case in the Test Register,
+// open its activity drilldown, and scroll+highlight the row.
+function navigateToTestCase(testId) {
+  const ti = TI.find(t => String(t.TestID) === String(testId));
+  if (!ti) { toast('Test case not found', 'error'); return; }
+  const key = `${ti.Phase||''}||${ti.Location||''}||${ti.Subsystem||''}||${ti.Activity||''}`;
+  closeModal();
+  showPage('test-register');
+  _amOpenDrilldown(key);
+  // After the drilldown renders, scroll to and briefly highlight the row
+  const domId = encodeURIComponent(String(testId));
+  setTimeout(() => {
+    const anchor = document.getElementById(`punch-actions-${domId}`) ||
+                   document.getElementById(`punch-chips-${domId}`);
+    const row = anchor?.closest('tr');
+    if (row) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row.style.transition = 'background-color 0.3s ease';
+      row.style.backgroundColor = '#fef9c3';
+      setTimeout(() => { row.style.backgroundColor = ''; }, 2500);
+    }
+  }, 350);
 }
 
 function _amCloseDrilldown() {
