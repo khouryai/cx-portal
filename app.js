@@ -6229,8 +6229,9 @@ function _refreshPunchChips(testId) {
 // Open a searchable modal of open punch items to link to a test case
 function openLinkPunchModal(testId) {
   const ti = TI.find(t => String(t.TestID) === String(testId));
+  // Include closed items only if already linked (so they can be unlinked)
   const openPunches = PUNCH_DB
-    .filter(p => !p.is_deleted && p.status !== 'closed')
+    .filter(p => !p.is_deleted && (p.status !== 'closed' || (p.linked_test_ids || []).includes(String(testId))))
     .sort((a, b) => b.number - a.number);
 
   modal({
@@ -6253,8 +6254,12 @@ function _linkPunchListHTML(punches, testId) {
   if (!punches.length) return `<div style="text-align:center;color:var(--gray-400);padding:24px 0;">No open punch items</div>`;
   return punches.map(p => {
     const isLinked = (p.linked_test_ids || []).includes(String(testId));
+    const isClosed = p.status === 'closed';
+    // Closed+linked: green border (same as linked), but label notes it's closed
+    const borderColor = isLinked ? '#6ee7b7' : 'var(--gray-200)';
+    const bgColor     = isLinked ? '#f0fdf4' : 'var(--white)';
     return `
-      <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid ${isLinked ? '#6ee7b7' : 'var(--gray-200)'};border-radius:7px;background:${isLinked ? '#f0fdf4' : 'var(--white)'};">
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid ${borderColor};border-radius:7px;background:${bgColor};">
         <div style="flex:1;min-width:0;">
           <div style="font-size:13px;font-weight:600;">
             <span style="color:var(--gray-400);font-weight:400;margin-right:4px;">#${p.number}</span>${escapeHtml(p.title || '—')}
@@ -6280,10 +6285,12 @@ function _linkPunchListHTML(punches, testId) {
 // Filter punch list as user types in the search box
 function _filterLinkPunchList(testId) {
   const q = (document.getElementById('link-punch-search')?.value || '').toLowerCase();
-  const punches = PUNCH_DB.filter(p =>
-    !p.is_deleted && p.status !== 'closed' &&
-    (!q || String(p.number).includes(q) || (p.title || '').toLowerCase().includes(q))
-  ).sort((a, b) => b.number - a.number);
+  const punches = PUNCH_DB.filter(p => {
+    if (p.is_deleted) return false;
+    // Closed items: only show if already linked (unlink-only)
+    if (p.status === 'closed' && !(p.linked_test_ids || []).includes(String(testId))) return false;
+    return !q || String(p.number).includes(q) || (p.title || '').toLowerCase().includes(q);
+  }).sort((a, b) => b.number - a.number);
   const el = document.getElementById('link-punch-list');
   if (el) el.innerHTML = _linkPunchListHTML(punches, testId);
 }
