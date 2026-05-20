@@ -6301,6 +6301,7 @@ async function _linkPunchToTest(testId, punchId) {
   toast(`Linked to Punch #${punch.number}`, 'success');
   _filterLinkPunchList(testId);   // refresh modal list
   _refreshPunchChips(testId);     // refresh chips in TR row
+  renderPunchWorkflow();          // update Linked Tests column in PL table immediately
 }
 
 // Remove a punch ↔ test case link
@@ -6314,6 +6315,7 @@ async function _unlinkPunchFromTest(testId, punchId) {
   toast(`Removed link from Punch #${punch.number}`, 'success');
   _filterLinkPunchList(testId);
   _refreshPunchChips(testId);
+  renderPunchWorkflow();          // update Linked Tests column in PL table immediately
 }
 
 function openEditPunchModal(id) {
