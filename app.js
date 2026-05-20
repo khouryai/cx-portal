@@ -5233,6 +5233,144 @@ let _plTab = 'all', _plPage = 1, _plSearch = '';
 let _plStatusFilter = '', _plPhaseFilter = '', _plLocFilter = '';
 let _plSubFilter = '', _plPriorityFilter = '', _plActivityFilter = '';
 let _plSelected = new Set(); // IDs of punch items checked for PDF export
+let _punchFromTestId = null; // set by openPunchFromTestCase; cleared after save
+let _plDragCol = null;       // column id being dragged in the column editor
+
+// ── Punch List column definitions ────────────────────────────────────────────
+const PL_COL_DEFS = [
+  { id: 'number',       label: '#'               , default: true  },
+  { id: 'title',        label: 'Title'            , default: true  },
+  { id: 'status',       label: 'Status'           , default: true  },
+  { id: 'bic',          label: 'Ball In Court'    , default: true  },
+  { id: 'subsystem',    label: 'Subsystem'        , default: true  },
+  { id: 'location',     label: 'Phase / Location' , default: true  },
+  { id: 'priority',     label: 'Priority'         , default: true  },
+  { id: 'due_date',     label: 'Due Date'         , default: true  },
+  { id: 'pim',          label: 'PIM'              , default: true  },
+  { id: 'linked_tests', label: 'Linked Tests'     , default: true  },
+  { id: 'type',         label: 'Type'             , default: false },
+  { id: 'created_by',   label: 'Created By'       , default: false },
+  { id: 'rtc',          label: 'Test Code'        , default: false },
+];
+
+function _plLoadCols() {
+  try {
+    const raw = localStorage.getItem('cx-pl-cols');
+    if (raw) {
+      const saved = JSON.parse(raw);
+      const known = new Set(saved.map(c => c.id));
+      return [
+        ...saved.filter(c => PL_COL_DEFS.some(d => d.id === c.id)),
+        ...PL_COL_DEFS.filter(d => !known.has(d.id)).map(d => ({ id: d.id, visible: d.default })),
+      ];
+    }
+  } catch {}
+  return PL_COL_DEFS.map(d => ({ id: d.id, visible: d.default }));
+}
+let _plCols = _plLoadCols();
+
+function _plSaveCols()    { localStorage.setItem('cx-pl-cols', JSON.stringify(_plCols)); }
+function _plActiveCols()  { return _plCols.filter(c => c.visible); }
+
+function _plColToggle(id, visible) {
+  const c = _plCols.find(c => c.id === id); if (c) c.visible = visible;
+  _plSaveCols(); _plRefreshColEditor();
+}
+function _plColMove(id, dir) {
+  const i = _plCols.findIndex(c => c.id === id), j = i + dir;
+  if (j < 0 || j >= _plCols.length) return;
+  [_plCols[i], _plCols[j]] = [_plCols[j], _plCols[i]];
+  _plSaveCols(); _plRefreshColEditor();
+}
+function _plColDragStart(e, id) { _plDragCol = id; e.dataTransfer.effectAllowed = 'move'; }
+function _plColDragOver(e)      { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
+function _plColDrop(e, targetId) {
+  e.preventDefault();
+  if (!_plDragCol || _plDragCol === targetId) return;
+  const from = _plCols.findIndex(c => c.id === _plDragCol);
+  const to   = _plCols.findIndex(c => c.id === targetId);
+  if (from < 0 || to < 0) { _plDragCol = null; return; }
+  const [moved] = _plCols.splice(from, 1);
+  _plCols.splice(to, 0, moved);
+  _plDragCol = null;
+  _plSaveCols(); _plRefreshColEditor();
+}
+function _plRefreshColEditor() {
+  const el = document.getElementById('pl-col-list');
+  if (el) el.innerHTML = _plColListHTML();
+  renderPunchWorkflow();
+}
+function _plColListHTML() {
+  return _plCols.map((c, i) => {
+    const def = PL_COL_DEFS.find(d => d.id === c.id); if (!def) return '';
+    return `<div draggable="true"
+      ondragstart="_plColDragStart(event,'${c.id}')"
+      ondragover="_plColDragOver(event)"
+      ondrop="_plColDrop(event,'${c.id}')"
+      style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--white);border:1px solid var(--gray-200);border-radius:7px;margin-bottom:6px;cursor:grab;user-select:none;">
+      <span style="color:var(--gray-400);font-size:18px;line-height:1;cursor:grab;">⠿</span>
+      <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer;font-size:14px;font-weight:500;">
+        <input type="checkbox" ${c.visible?'checked':''} onchange="_plColToggle('${c.id}',this.checked)" style="width:15px;height:15px;cursor:pointer;">
+        ${escapeHtml(def.label)}
+      </label>
+      <div style="display:flex;gap:4px;">
+        <button onclick="_plColMove('${c.id}',-1)" ${i===0?'disabled':''} style="font-size:13px;padding:2px 8px;border:1px solid var(--gray-200);border-radius:4px;background:var(--gray-50);cursor:pointer;">↑</button>
+        <button onclick="_plColMove('${c.id}',1)"  ${i===_plCols.length-1?'disabled':''} style="font-size:13px;padding:2px 8px;border:1px solid var(--gray-200);border-radius:4px;background:var(--gray-50);cursor:pointer;">↓</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function openPlColEditor() {
+  modal({
+    title: '⚙ Configure Columns',
+    sub: 'Drag rows or use arrows to reorder · check to show / hide',
+    size: 'small',
+    body: `<div id="pl-col-list" style="padding:4px 0;">${_plColListHTML()}</div>`,
+    footer: `
+      <button class="form-secondary" onclick="localStorage.removeItem('cx-pl-cols');_plCols=_plLoadCols();_plSaveCols();_plRefreshColEditor();">Reset Defaults</button>
+      <button class="form-submit" onclick="closeModal()">Done</button>`,
+  });
+}
+
+// Render a single <td> for a given column + punch item
+function _plRenderCell(colId, p) {
+  const isOverdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== 'closed' && p.status !== 'voided';
+  switch (colId) {
+    case 'number':
+      return `<td style="font-weight:600;color:var(--gray-600);">${p.number||'—'}</td>`;
+    case 'title':
+      return `<td style="max-width:220px;"><div style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(p.title)}</div><div style="font-size:11px;color:var(--gray-500);">${escapeHtml(p.type||'')}</div></td>`;
+    case 'status':
+      return `<td>${_plStatusBadge(p.status)}</td>`;
+    case 'bic':
+      return `<td style="font-size:12px;color:var(--gray-700);">${escapeHtml(_plBallInCourt(p))}</td>`;
+    case 'subsystem':
+      return `<td style="font-size:12px;">${escapeHtml(p.subsystem||'—')}</td>`;
+    case 'location':
+      return `<td style="font-size:12px;color:var(--gray-700);">${escapeHtml(_plLocName(p.phase))} / ${escapeHtml(_plLocName(p.location))}</td>`;
+    case 'priority':
+      return `<td>${_plPriorityBadge(p.priority)}</td>`;
+    case 'due_date': {
+      const dueStr = p.due_date ? new Date(p.due_date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+      return `<td style="font-size:12px;${isOverdue?'color:#dc2626;font-weight:600;':''}">${dueStr}${isOverdue?' ⚠':''}</td>`;
+    }
+    case 'pim':
+      return `<td style="font-size:12px;white-space:nowrap;">${escapeHtml(p.punch_item_manager||'—')}</td>`;
+    case 'linked_tests': {
+      const ids = p.linked_test_ids || [];
+      const codes = ids.map(id => TI.find(t => String(t.TestID) === String(id))?.TestCaseCode).filter(Boolean);
+      if (!codes.length) return `<td style="font-size:11px;color:var(--gray-400);">—</td>`;
+      return `<td style="font-size:11px;max-width:180px;">${codes.map(c => `<span style="display:inline-block;padding:2px 6px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:4px;margin:1px 2px 1px 0;white-space:nowrap;">${escapeHtml(c)}</span>`).join('')}</td>`;
+    }
+    case 'type':
+      return `<td style="font-size:12px;">${escapeHtml(p.type||'—')}</td>`;
+    case 'created_by':
+      return `<td style="font-size:12px;">${escapeHtml(p.created_by||'—')}</td>`;
+    case 'rtc':
+      return `<td style="font-size:12px;">${escapeHtml(p.test_case_code||'—')}</td>`;
+    default: return '<td>—</td>';
+  }
+}
 
 function _punchDeriveActivity(code) {
   if (!code) return null;
@@ -5414,43 +5552,25 @@ function renderPunchWorkflow() {
         <thead>
           <tr>
             <th style="width:36px;text-align:center;"></th>
-            <th style="width:50px;">#</th>
-            <th>Title</th>
-            <th>Status</th>
-            <th>Ball In Court</th>
-            <th>Subsystem</th>
-            <th>Phase / Location</th>
-            <th>Priority</th>
-            <th>Due Date</th>
-            <th style="min-width:110px;">PIM</th>
-            <th style="width:60px;"></th>
+            ${_plActiveCols().map(c => { const def = PL_COL_DEFS.find(d => d.id === c.id); return `<th>${def ? escapeHtml(def.label) : c.id}</th>`; }).join('')}
+            <th style="width:68px;text-align:right;padding-right:8px;">
+              <button onclick="openPlColEditor()" title="Configure columns"
+                style="font-size:11px;padding:3px 8px;border:1px solid var(--gray-300);border-radius:5px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;font-weight:600;white-space:nowrap;">⚙ Cols</button>
+            </th>
           </tr>
         </thead>
         <tbody>
           ${paged.length ? paged.map(p => {
-            const isOverdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== 'closed' && p.status !== 'voided';
-            const dueStr = p.due_date ? new Date(p.due_date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
             return `<tr onclick="openPunchDetail('${p.id}')" style="cursor:pointer;">
               <td onclick="event.stopPropagation()" style="text-align:center;">
                 <input type="checkbox" ${_plSelected.has(p.id)?'checked':''} onchange="_plToggleSelect('${p.id}',this.checked)" style="width:15px;height:15px;cursor:pointer;">
               </td>
-              <td style="font-weight:600;color:var(--gray-600);">${p.number||'—'}</td>
-              <td style="max-width:220px;">
-                <div style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(p.title)}</div>
-                <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(p.type||'')}</div>
-              </td>
-              <td>${_plStatusBadge(p.status)}</td>
-              <td style="font-size:12px;color:var(--gray-700);">${escapeHtml(_plBallInCourt(p))}</td>
-              <td style="font-size:12px;">${escapeHtml(p.subsystem||'—')}</td>
-              <td style="font-size:12px;color:var(--gray-700);">${escapeHtml(_plLocName(p.phase))} / ${escapeHtml(_plLocName(p.location))}</td>
-              <td>${_plPriorityBadge(p.priority)}</td>
-              <td style="font-size:12px;${isOverdue?'color:#dc2626;font-weight:600;':''}">${dueStr}${isOverdue?' ⚠':''}</td>
-              <td style="font-size:12px;white-space:nowrap;">${escapeHtml(p.punch_item_manager||'—')}</td>
-              <td onclick="event.stopPropagation()">
+              ${_plActiveCols().map(c => _plRenderCell(c.id, p)).join('')}
+              <td onclick="event.stopPropagation()" style="text-align:right;padding-right:8px;">
                 <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openPunchDetail('${p.id}')">View</button>
               </td>
             </tr>`;
-          }).join('') : `<tr><td colspan="11" style="text-align:center;padding:32px;color:var(--gray-400);">${_plTab==='bin'?'Recycle bin is empty':'No punch items match your filters'}</td></tr>`}
+          }).join('') : `<tr><td colspan="${_plActiveCols().length + 2}" style="text-align:center;padding:32px;color:var(--gray-400);">${_plTab==='bin'?'Recycle bin is empty':'No punch items match your filters'}</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -6020,6 +6140,7 @@ function openNewPunchModal() {
 function openPunchFromTestCase(testId) {
   const ti = TI.find(t => String(t.TestID) === String(testId));
   if (!ti) { toast('Test case not found', 'error'); return; }
+  _punchFromTestId = String(testId); // remember origin so saveNewPunchItem can auto-link
 
   const titlePrefill = `Failed: ${ti.TestCaseCode}${ti.TestName ? ' — ' + ti.TestName : ''}`;
   const descParts = [
@@ -6262,6 +6383,23 @@ async function saveNewPunchItem(createAnother) {
     PUNCH_DB.unshift(data);
     logAudit('Punch Created', `#${nextNum} ${form.title}`);
     toast(`Punch #${nextNum} created`, 'success');
+
+    // If this punch was created from the test register, auto-link it and refresh chips in-place
+    if (_punchFromTestId) {
+      const originTestId = _punchFromTestId;
+      _punchFromTestId = null;
+      try {
+        const updatedIds = [...(data.linked_test_ids || []), String(originTestId)];
+        await _sb.from('punch_items').update({ linked_test_ids: updatedIds }).eq('id', data.id);
+        data.linked_test_ids = updatedIds; // patch in-memory record
+        _refreshPunchChips(originTestId);  // update chips in TR DOM immediately
+      } catch (e) {
+        console.warn('[autoLink] Failed to auto-link punch to test:', e.message);
+      }
+    } else {
+      _punchFromTestId = null;
+    }
+
     if (createAnother) { closeModal(); openNewPunchModal(); }
     else { closeModal(); renderPunchWorkflow(); }
   } catch (err) {
