@@ -312,6 +312,7 @@ function showPage(name) {
   // Auto-switch to admin mode when navigating to an admin page
   if (_adminPages.has(name) && !_adminModeOn) _sidenavAdminOpen();
   // Re-render pages that need fresh state on each visit
+  if (name === 'dashboard')        refreshDashboard();
   if (name === 'field-intake')     renderFieldIntake();
   if (name === 'test-register')    renderTestRegister();
   if (name === 'tcv')              renderTCV();
@@ -496,7 +497,20 @@ function getLocationCode(loc) {
 // ==========================================
 // DASHBOARD
 // ==========================================
-function initDashboard() {
+// Registry of live Chart.js instances — destroyed before each refresh to prevent canvas reuse errors
+const _dashCharts = {};
+
+function initDashboard() { refreshDashboard(); }
+
+// Debounced trigger — call this from any mutation point to auto-refresh the dashboard
+function _tryRefreshDashboard() {
+  clearTimeout(window._dashRefreshTimer);
+  window._dashRefreshTimer = setTimeout(refreshDashboard, 500);
+}
+
+function refreshDashboard() {
+  if (!document.getElementById('page-dashboard')?.classList.contains('active')) return;
+
   document.getElementById('hero-update').textContent = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
   const ti    = _latestTI();
@@ -620,7 +634,8 @@ function renderLIStatusChart() {
   const future    = ti.filter(r => r.Status === 'Future Test').length;
   const notStart  = ti.filter(r => !r.Status || ['Not Started','Future'].includes(r.Status)).length;
   const na        = ti.filter(r => r.Status === 'Not Applicable').length;
-  new Chart(ctx, {
+  if (_dashCharts.liStatus) _dashCharts.liStatus.destroy();
+  _dashCharts.liStatus = new Chart(ctx, {
     type: 'doughnut',
     data: {
       labels: ['Passed','Failed','Blocked','In Progress','Not Started','Future Test','N/A'],
@@ -655,7 +670,8 @@ function renderSubsysRateChart() {
     groups[sub].total++;
   });
   const sorted = Object.entries(groups).filter(([_,v])=>v.total>=1).sort((a,b)=>b[1].total-a[1].total).slice(0,12);
-  new Chart(ctx, {
+  if (_dashCharts.subsys) _dashCharts.subsys.destroy();
+  _dashCharts.subsys = new Chart(ctx, {
     type: 'bar',
     data: {
       labels: sorted.map(s=>s[0]),
@@ -688,8 +704,10 @@ function renderFutureTestChart() {
   });
   const sorted = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
   if (!sorted.length) { const wrap = ctx.closest('.chart-card'); if (wrap) wrap.style.display='none'; return; }
+  const wrap2 = ctx.closest('.chart-card'); if (wrap2) wrap2.style.display='';
   const palette = ['#7c3aed','#6d28d9','#a78bfa','#4c1d95','#8b5cf6','#c4b5fd'];
-  new Chart(ctx, {
+  if (_dashCharts.futureReason) _dashCharts.futureReason.destroy();
+  _dashCharts.futureReason = new Chart(ctx, {
     type: 'bar',
     data: {
       labels: sorted.map(x=>x[0]),
@@ -709,7 +727,8 @@ function renderPunchTradeChart() {
   const counts = {};
   punch.forEach(p => { const key = p.subsystem || p.phase || 'Unassigned'; counts[key] = (counts[key]||0)+1; });
   const sorted = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,10);
-  new Chart(ctx, {
+  if (_dashCharts.punch) _dashCharts.punch.destroy();
+  _dashCharts.punch = new Chart(ctx, {
     type: 'bar',
     data: {
       labels: sorted.map(x=>x[0]),
@@ -729,7 +748,8 @@ function renderLocationChart() {
   const counts = {};
   acts.forEach(a => { const l = a.location; if (!l) return; counts[l]=(counts[l]||0)+1; });
   const sorted = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,15);
-  new Chart(ctx, {
+  if (_dashCharts.loc) _dashCharts.loc.destroy();
+  _dashCharts.loc = new Chart(ctx, {
     type: 'bar',
     data: {
       labels: sorted.map(x=>x[0]),
@@ -4244,6 +4264,8 @@ async function _updateTestItemStatus(testId, status, opts = {}) {
   await _logTestItemStatusHistory(r, oldStatus, status, opts);
   // If this is an asset child row, check whether the parent should auto-pass
   if (r.ParentTestId) await _assetAutoPassCheck(r.ParentTestId).catch(() => {});
+  // Refresh dashboard KPIs if it is the active page
+  _tryRefreshDashboard();
   return rows;
 }
 
@@ -8389,8 +8411,8 @@ function _amComputeStatus(act) {
 }
 
 function _amComputeCompletion(act) {
-  // Exclude parent rows (derived) and Future Test from denominator
-  const eligible = act.items.filter(r => !r.IsParent && r.Status !== 'Future Test');
+  // Include Future Test in the denominator so activities show e.g. "0/4" not "0/0"
+  const eligible = act.items.filter(r => !r.IsParent);
   const done = eligible.filter(r => r.Status === 'Pass' || r.Status === 'Not Applicable' ||
     r.Status === 'Complete' || r.Status === 'Passed').length;
   return { done, total: eligible.length };
@@ -9304,6 +9326,11 @@ async function _amSaveEdit(deployToField = false) {
         _activityRecords.push(...inserted);
       }
       act.futureTestReason = newFTReason || '';
+      // Propagate reason down to every test case in this activity
+      await Promise.all(act.items.map(r => {
+        r.FutureTestReason = newFTReason;
+        return _dbUpdate('test_items', { future_test_reason: newFTReason }, { test_id: r.TestID });
+      }));
     }
 
     if (deployToField) {
@@ -9586,7 +9613,7 @@ async function _amConfirmFutureTest() {
 
   try {
     // 1. Cascade status to all test items in parallel
-    const updates = allItems.map(r => _updateTestItemStatus(r.TestID, 'Future Test', { row: r, source: 'Mark Future Test', reason }));
+    const updates = allItems.map(r => _updateTestItemStatus(r.TestID, 'Future Test', { row: r, source: 'Mark Future Test', reason, futureTestReason: reason }));
     await Promise.all(updates);
 
     // 2. Store future_test_reason in activity_records
