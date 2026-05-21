@@ -102,6 +102,38 @@
     </div>
   </div>
 
+  <!-- Change-password card — shown on first sign-in (must_change_password = true) -->
+  <div id="cp-card" class="login-card" style="display:none;">
+    <span class="login-kicker login-stagger ls1"><span class="login-pulse"></span> CX Commissioning Portal</span>
+
+    <div class="login-brand">
+      <div class="login-brand-name login-stagger ls2" style="font-size:22px;">Set Your Password</div>
+      <div class="login-brand-sub login-stagger ls2">Your account was created with a temporary password.<br>Choose a new password to continue.</div>
+    </div>
+
+    <div class="form-field login-stagger ls3" style="width:100%;margin-top:4px;">
+      <label class="login-label">NEW PASSWORD</label>
+      <input type="password" id="cp-new-password" class="form-input" placeholder="Min. 8 characters"
+        autocomplete="new-password" onkeydown="if(event.key==='Enter')document.getElementById('cp-confirm-password').focus()">
+    </div>
+    <div class="form-field login-stagger ls3" style="margin-top:14px;width:100%;">
+      <label class="login-label">CONFIRM PASSWORD</label>
+      <input type="password" id="cp-confirm-password" class="form-input" placeholder="Re-enter new password"
+        autocomplete="new-password" onkeydown="if(event.key==='Enter')submitChangePassword()">
+    </div>
+
+    <div id="cp-error" style="font-size:12px;margin-top:8px;min-height:18px;width:100%;color:#e60012;"></div>
+
+    <button id="cp-btn" class="login-btn login-stagger ls4" onclick="submitChangePassword()">Set Password &amp; Continue</button>
+
+    <div class="login-encrypted-badge login-stagger ls5">
+      <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor" style="flex-shrink:0;opacity:0.6;">
+        <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/>
+      </svg>
+      ENTERPRISE ENCRYPTED
+    </div>
+  </div>
+
 </div>
 
 <script>

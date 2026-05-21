@@ -2011,6 +2011,13 @@ async function _loadCurrentProfile(user, accessToken) {
       if (btn) { btn.textContent = 'Sign In'; btn.disabled = false; }
       return;
     }
+
+    // First-login: admin set a temp password — user must create their own before entering
+    if (data.must_change_password) {
+      _showChangePasswordPanel(data);
+      return;
+    }
+
     currentProfile  = data;
     currentRoleUser = {
       name:      data.full_name,
@@ -2121,6 +2128,75 @@ async function submitPasswordReset() {
 function showAuthError(msg) {
   const el = document.getElementById('auth-error');
   if (el) el.textContent = msg;
+}
+
+// ── First-login change-password flow ─────────────────────────────────────
+let _pendingProfile = null; // holds profile row while awaiting password change
+
+function _showChangePasswordPanel(profileData) {
+  _pendingProfile = profileData;
+  // Swap login card → change-password card (cinematic background stays)
+  const loginCard = document.querySelector('#login-overlay .login-card:not(#cp-card)');
+  const cpCard    = document.getElementById('cp-card');
+  if (loginCard) loginCard.style.display = 'none';
+  if (cpCard)    cpCard.style.display    = '';
+  const btn = document.getElementById('auth-btn');
+  if (btn) { btn.textContent = 'Sign In'; btn.disabled = false; }
+  setTimeout(() => document.getElementById('cp-new-password')?.focus(), 80);
+}
+
+async function submitChangePassword() {
+  const pw1 = document.getElementById('cp-new-password')?.value  || '';
+  const pw2 = document.getElementById('cp-confirm-password')?.value || '';
+  const err = document.getElementById('cp-error');
+  const btn = document.getElementById('cp-btn');
+  if (err) err.textContent = '';
+
+  if (!pw1)        { if (err) err.textContent = 'Enter a new password.'; return; }
+  if (pw1.length < 8) { if (err) err.textContent = 'Password must be at least 8 characters.'; return; }
+  if (pw1 !== pw2) { if (err) err.textContent = 'Passwords do not match.'; return; }
+
+  if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
+
+  const { error: updErr } = await _sb.auth.updateUser({ password: pw1 });
+  if (updErr) {
+    if (err) err.textContent = updErr.message;
+    if (btn) { btn.textContent = 'Set Password & Continue'; btn.disabled = false; }
+    return;
+  }
+
+  // Clear the flag in profiles
+  await _sb.from('profiles').update({ must_change_password: false }).eq('id', _pendingProfile.id);
+
+  // Build session objects from pending profile
+  const data = { ..._pendingProfile, must_change_password: false };
+  _pendingProfile = null;
+
+  currentProfile  = data;
+  currentRoleUser = {
+    name:      data.full_name,
+    role:      data.role,
+    title:     { admin:'Administrator', field_engineer:'Field Engineer', readonly:'Read Only', client:'Client' }[data.role] || data.role,
+    subsystem: data.subsystem || null,
+  };
+  if (currentRoleUser.subsystem) {
+    TI = TI.filter(t => (t.Subsystem || '').toLowerCase() === currentRoleUser.subsystem.toLowerCase());
+  }
+
+  // Reset change-password card for next session
+  if (btn) { btn.textContent = 'Set Password & Continue'; btn.disabled = false; }
+  document.getElementById('cp-new-password').value     = '';
+  document.getElementById('cp-confirm-password').value = '';
+
+  // Restore login card visibility for any future sign-out
+  const loginCard = document.querySelector('#login-overlay .login-card:not(#cp-card)');
+  const cpCard    = document.getElementById('cp-card');
+  if (cpCard)    cpCard.style.display    = 'none';
+  if (loginCard) loginCard.style.display = '';
+
+  document.getElementById('login-overlay').classList.add('hidden');
+  toast('Password updated — welcome to the portal!', 'success');
+  onLoggedIn();
 }
 
 // ── DB connectivity indicator on sign-in page ─────────────────────────────
@@ -3146,7 +3222,7 @@ async function confirmDeploy(templateId) {
           test_procedure: tc?.procedure || '',
           test_section:   tc?.section   || '',
           status:         'Not Started',
-          weight:         1,
+          weight:         tc?.weight || 1,
           synced_at:      now,
         });
       }
@@ -3239,7 +3315,7 @@ function _tplCasesToSections(testCases) {
   for (const tc of testCases) {
     const key = tc.section ?? '';
     if (!map.has(key)) map.set(key, { title: key, procedure: tc.procedure || '', cases: [] });
-    map.get(key).cases.push({ code: tc.code||'', name: tc.name||'', category: tc.category||'', assets: tc.assets||'' });
+    map.get(key).cases.push({ code: tc.code||'', name: tc.name||'', category: tc.category||'', assets: tc.assets||'', weight: tc.weight ?? 1 });
   }
   return [...map.values()];
 }
@@ -3258,6 +3334,7 @@ function _tplSectionsToTestCases(sections) {
         procedure: sec.procedure.trim(),
         section:   sec.title.trim(),
         duration:  1,
+        weight:    parseFloat(tc.weight) || 1,
       });
     }
   }
@@ -3289,11 +3366,12 @@ function _tplSectionsHTML() {
           oninput="_templateSections[${si}].procedure=this.value">${escapeHtml(sec.procedure)}</textarea>
       </div>
       <!-- Column headers -->
-      <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 32px 32px;gap:6px;padding:5px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-100);">
+      <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 70px 32px 32px;gap:6px;padding:5px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-100);">
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Code</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Test Case Name</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Category</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Assets (Generic)</div>
+        <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Weight</div>
         <div></div><div></div>
       </div>
       <!-- Test case rows -->
@@ -3307,7 +3385,7 @@ function _tplSectionsHTML() {
 function _tplCaseRowsHTML(si) {
   const cases = _templateSections[si]?.cases || [];
   return cases.map((tc, ci) => `
-    <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 32px 32px;gap:6px;align-items:center;margin-bottom:5px;">
+    <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 70px 32px 32px;gap:6px;align-items:center;margin-bottom:5px;">
       <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Code e.g. DCS-01"
         value="${escapeHtml(tc.code)}" oninput="_templateSections[${si}].cases[${ci}].code=this.value">
       <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Test Case Name"
@@ -3317,6 +3395,9 @@ function _tplCaseRowsHTML(si) {
       <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Assets e.g. MLK A, MLK B"
         value="${escapeHtml(tc.assets||'')}" oninput="_templateSections[${si}].cases[${ci}].assets=this.value"
         title="Comma-separated generic asset names auto-linked as children on deploy">
+      <input type="number" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="1" min="0" step="0.01"
+        value="${escapeHtml(String(tc.weight ?? 1))}" oninput="_templateSections[${si}].cases[${ci}].weight=parseFloat(this.value)||1"
+        title="Weight used when deploying this test case">
       <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;" title="Duplicate"
         onclick="dupTplCase(${si},${ci})">⧉</button>
       <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;color:var(--bad);" title="Remove"
@@ -3328,7 +3409,7 @@ function _tplCaseRowsHTML(si) {
 // ── Section / case actions ────────────────────────────────────────────────────
 
 function addTplSection() {
-  _templateSections.push({ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'' }] });
+  _templateSections.push({ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'', weight:1 }] });
   document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
 }
 
@@ -3340,7 +3421,7 @@ function removeTplSection(si) {
 }
 
 function addTplCase(si) {
-  _templateSections[si].cases.push({ code:'', name:'', category:'', assets:'' });
+  _templateSections[si].cases.push({ code:'', name:'', category:'', assets:'', weight:1 });
   document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
 }
 
@@ -3359,11 +3440,11 @@ function removeTplCase(si, ci) {
 
 function downloadTemplateCaseCSV() {
   const rows = [
-    ['Section','Code','Name','Category','Assets','Procedure'],
-    ['Hardware Verification','DCS-HW-01','Network Connectivity Test','Hardware SAT','','Refer to CDRL 9.04.53 Section 4'],
-    ['Hardware Verification','DCS-HW-02','Server Failover Test','Hardware SAT','Server A,Server B','Refer to CDRL 9.04.53 Section 4'],
-    ['Software Testing','DCS-SW-01','Comms Latency Test','Software SAT','','Refer to CDRL 9.04.53 Section 5'],
-    ['Software Testing','DCS-SW-02','Interface Validation','Software SAT','','Refer to CDRL 9.04.53 Section 5'],
+    ['Section','Code','Name','Category','Assets','Procedure','Weight'],
+    ['Hardware Verification','DCS-HW-01','Network Connectivity Test','Hardware SAT','','Refer to CDRL 9.04.53 Section 4','1'],
+    ['Hardware Verification','DCS-HW-02','Server Failover Test','Hardware SAT','Server A,Server B','Refer to CDRL 9.04.53 Section 4','1'],
+    ['Software Testing','DCS-SW-01','Comms Latency Test','Software SAT','','Refer to CDRL 9.04.53 Section 5','1'],
+    ['Software Testing','DCS-SW-02','Interface Validation','Software SAT','','Refer to CDRL 9.04.53 Section 5','1'],
   ];
   const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const a = document.createElement('a');
@@ -3385,13 +3466,14 @@ function handleTemplateCaseImport(input) {
       const code   = (r.Code         || r.TestCaseCode || r['Test Case Code'] || '').trim();
       const name   = (r.Name         || r.TestName     || r['Test Case Name'] || '').trim();
       const cat    = (r.Category     || r.TestCategory || r['Test Category']  || '').trim();
-      const assets = (r.Assets       || r.assets       || '').trim();
+      const assets  = (r.Assets       || r.assets       || '').trim();
+      const weight  = parseFloat(r.Weight || r.weight || '1') || 1;
       if (!code && !name) continue;
       const key = sTitle || '__default__';
       if (!sectionMap.has(key)) sectionMap.set(key, { title: sTitle, procedure: proc, cases: [] });
       const sec = sectionMap.get(key);
       if (!sec.procedure && proc) sec.procedure = proc;
-      sec.cases.push({ code, name, category: cat, assets });
+      sec.cases.push({ code, name, category: cat, assets, weight });
     }
     if (!sectionMap.size) { toast('Could not parse any test cases from CSV', 'warn'); return; }
     _templateSections = [...sectionMap.values()];
@@ -3440,7 +3522,7 @@ function _tplModalBody() {
 // ── Open modals ───────────────────────────────────────────────────────────────
 
 function openNewTemplateModal() {
-  _templateSections = [{ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'' }] }];
+  _templateSections = [{ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'', weight:1 }] }];
   modal({
     title:  'Create Activity Template',
     sub:    'Define reusable test sections and procedures for an activity',
@@ -3854,9 +3936,12 @@ async function _loadDirectoryUsers() {
         ${data.map(u => {
           const name = u.full_name || u.email || '?';
           const initials = name.split(' ').filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase() || '?';
+          const tempBadge = u.must_change_password
+            ? `<span title="User hasn't set their own password yet" style="margin-left:6px;font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fde68a;border-radius:4px;padding:1px 5px;vertical-align:middle;">TEMP PW</span>`
+            : '';
           return `<tr>
             <td><div class="user-avatar-sm">${escapeHtml(initials)}</div></td>
-            <td style="font-weight:500;">${escapeHtml(name)}</td>
+            <td style="font-weight:500;">${escapeHtml(name)}${tempBadge}</td>
             <td style="color:var(--gray-600);font-size:12px;">${escapeHtml(u.email||'')}</td>
             <td>
               <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:140px;"
@@ -3937,7 +4022,7 @@ function openInviteUserModal() {
           <input type="email" id="inv-email" class="form-input" placeholder="jane@example.com">
         </div>
         <div class="form-field form-field-full">
-          <label>Temporary Password <span style="font-weight:400;color:var(--gray-500);">(share this securely — user can change later)</span></label>
+          <label>Temporary Password <span style="font-weight:400;color:var(--gray-500);">(share this securely with the user)</span></label>
           <input type="text" id="inv-password" class="form-input" placeholder="At least 6 characters">
         </div>
         <div class="form-field">
@@ -3958,8 +4043,8 @@ function openInviteUserModal() {
         </div>
       </div>
       <p style="font-size:12px;color:var(--gray-500);margin-top:14px;line-height:1.5;">
-        The user will receive a confirmation email from Supabase. Once confirmed, they log in with the temporary password above.
-        If email confirmation is disabled in Supabase Auth settings, they can log in immediately.
+        Share the temporary password securely. On first sign-in, the user will be prompted to set their own password before accessing the portal.
+        If email confirmation is enabled in Supabase Auth settings, they must confirm their email first.
       </p>
     `,
     footer: `
@@ -3992,11 +4077,12 @@ async function inviteUser() {
   const { error: profErr } = await _sb.from('profiles').insert({
     id: data.user.id, email, full_name: name,
     role, subsystem: subsystem || null, is_active: true,
+    must_change_password: true,
   });
   if (profErr) { toast('Profile save failed: ' + profErr.message, 'error'); return; }
 
   closeModal();
-  toast(`Account created for ${name}. Share the temp password securely.`, 'success');
+  toast(`Account created for ${name}. They'll be prompted to set a new password on first sign-in.`, 'success');
   _loadDirectoryUsers();
 }
 
