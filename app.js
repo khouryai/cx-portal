@@ -8140,6 +8140,12 @@ let _trBulkMode = false;
 let _trEmptySections = [];
 let _trDragId = null;
 let _trExpandedParents = new Set(); // TestIDs of expanded parent/asset groups (collapsed by default)
+// Sort state — activity list view
+let _amSortCol = 'pls';   // 'pls' = Phase/Location/Subsystem compound | 'activity' | 'subsystem' | 'location' | 'phase' | 'status' | 'completion'
+let _amSortDir = 'asc';
+// Sort state — drilldown test case view
+let _trCaseSortCol = 'code'; // 'code' | 'name'
+let _trCaseSortDir = 'asc';
 
 // ==========================================================================
 // TEST REGISTER — unified Activity + Test Case view
@@ -8198,6 +8204,34 @@ function _testRegisterHTML() {
     if (_trFuse) filtered = _trFuse.search(searchQ).map(r => r.item);
   }
 
+  // Apply column sort
+  const _sd = _amSortDir === 'asc' ? 1 : -1;
+  if (_amSortCol === 'pls') {
+    filtered.sort((a, b) => {
+      const p = (a.phase||'').localeCompare(b.phase||'', undefined, {numeric:true});
+      if (p) return p;
+      const l = (a.location||'').localeCompare(b.location||'');
+      if (l) return l;
+      return (a.subsystem||'').localeCompare(b.subsystem||'');
+    });
+  } else if (_amSortCol === 'activity') {
+    filtered.sort((a, b) => _sd * (a.activity||'').localeCompare(b.activity||''));
+  } else if (_amSortCol === 'subsystem') {
+    filtered.sort((a, b) => _sd * (a.subsystem||'').localeCompare(b.subsystem||''));
+  } else if (_amSortCol === 'location') {
+    filtered.sort((a, b) => _sd * (a.location||'').localeCompare(b.location||''));
+  } else if (_amSortCol === 'phase') {
+    filtered.sort((a, b) => _sd * (a.phase||'').localeCompare(b.phase||'', undefined, {numeric:true}));
+  } else if (_amSortCol === 'status') {
+    const ord = {'Closed':0,'Open':1,'Future Test':2};
+    filtered.sort((a, b) => _sd * ((ord[_amComputeStatus(a)]??3) - (ord[_amComputeStatus(b)]??3)));
+  } else if (_amSortCol === 'completion') {
+    filtered.sort((a, b) => {
+      const ap = _amComputeCompletion(a), bp = _amComputeCompletion(b);
+      return _sd * ((ap.total ? ap.done/ap.total : 0) - (bp.total ? bp.done/bp.total : 0));
+    });
+  }
+
   const hasFilters = _amFilters.phase || _amFilters.location || _amFilters.subsystem || _amFilters.status || _amFilters.search;
   const selCount   = _amSelected.size;
 
@@ -8212,6 +8246,16 @@ function _testRegisterHTML() {
 
   // column count: [cb](admin) | Actions | Activity | Subsystem | Location | Phase | Status | Completion
   const colCount = isAdmin ? 8 : 7;
+
+  // Sort header helper for activity view
+  const plsCols = new Set(['phase','location','subsystem']);
+  const sortTh = (label, col, style='') => {
+    const isPls   = _amSortCol === 'pls';
+    const isActive = _amSortCol === col || (isPls && plsCols.has(col));
+    const arrow   = (isPls && plsCols.has(col)) ? '↕' : (isActive ? (_amSortDir === 'asc' ? '↑' : '↓') : '↕');
+    const color   = isActive ? 'var(--info)' : 'var(--gray-300)';
+    return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" onclick="_amSetSort('${col}')" title="Sort by ${label}">${label}<span style="font-size:10px;color:${color};margin-left:3px;">${arrow}</span></th>`;
+  };
 
   const actRows = filtered.map(a => {
     const st = _amComputeStatus(a);
@@ -8324,12 +8368,12 @@ function _testRegisterHTML() {
               <tr>
                 ${isAdmin ? `<th class="am-cb-col"><input type="checkbox" id="am-cb-all" onchange="_amToggleAll(this.checked)" title="Select all"></th>` : ''}
                 <th style="min-width:90px;white-space:nowrap;">Actions</th>
-                <th>Activity Name</th>
-                <th>Subsystem</th>
-                <th>Location</th>
-                <th>Phase</th>
-                <th>Status</th>
-                <th style="min-width:160px;">Completion</th>
+                ${sortTh('Activity Name','activity')}
+                ${sortTh('Subsystem','subsystem')}
+                ${sortTh('Location','location')}
+                ${sortTh('Phase','phase')}
+                ${sortTh('Status','status')}
+                ${sortTh('Completion','completion','min-width:160px;')}
               </tr>
             </thead>
             <tbody id="tr-activities-tbody">
@@ -8583,9 +8627,30 @@ function _amDrilldownHTML(key) {
     ? _trDraftItems
     : act.items.filter(r => r.IsLatestAttempt !== false);
   const selectedCount = _trSelected.size;
+
+  // Sort test cases within sections (default: Test Case Code ASC)
+  const _csd = _trCaseSortDir === 'asc' ? 1 : -1;
+  const sortedViewItems = viewItems.slice().sort((a, b) => {
+    if (_trCaseSortCol === 'code') {
+      return _csd * (a.TestCaseCode||a.TestID||'').localeCompare(b.TestCaseCode||b.TestID||'', undefined, {numeric:true});
+    }
+    if (_trCaseSortCol === 'name') {
+      return _csd * (a.TestName||'').localeCompare(b.TestName||'');
+    }
+    return 0;
+  });
+
+  // Case sort header helper
+  const caseSortTh = (label, col, style='') => {
+    const isActive = _trCaseSortCol === col;
+    const arrow = isActive ? (_trCaseSortDir === 'asc' ? '↑' : '↓') : '↕';
+    const color = isActive ? 'var(--info)' : 'var(--gray-300)';
+    return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" onclick="_trSetCaseSort('${col}')" title="Sort by ${label}">${label}<span style="font-size:10px;color:${color};margin-left:3px;">${arrow}</span></th>`;
+  };
+
   // Build tpMap keyed by "section~~procedure" so same procedure in different sections stays separate
   const tpMap = {};
-  viewItems.forEach(r => {
+  sortedViewItems.forEach(r => {
     if (r.ParentTestId) return; // child rows render nested under their parent
     const sec  = r.TestSection  || '';
     const proc = r.TestProcedure || '';
@@ -8594,6 +8659,8 @@ function _amDrilldownHTML(key) {
     tpMap[key].push(r);
   });
   if (_trEditMode) _trEmptySections.forEach(tp => { if (!tpMap[tp]) tpMap[tp] = []; });
+  // Use sortedViewItems for child lookups so child order is also consistent
+  const _sortedViewItemsRef = sortedViewItems;
 
   return `
     <div class="admin-section tr-drilldown-shell">
@@ -8649,8 +8716,8 @@ function _amDrilldownHTML(key) {
                 <tr>
                   ${_trBulkMode ? `<th style="width:34px;"></th>` : ''}
                   ${_trEditMode && isAdmin ? `<th style="width:34px;"></th>` : ''}
-                  <th style="min-width:140px;">Test Case Code</th>
-                  <th>Test Name</th>
+                  ${caseSortTh('Test Case Code','code','min-width:140px;')}
+                  ${caseSortTh('Test Name','name')}
                   <th style="min-width:170px;">Status</th>
                   <th style="min-width:240px;">Notes</th>
                   ${_trEditMode && isAdmin ? `<th style="width:86px;">Actions</th>` : ''}
@@ -8659,7 +8726,7 @@ function _amDrilldownHTML(key) {
               <tbody>
                 ${tpItems.map(r => {
                   if (r.IsParent) {
-                    const children = viewItems.filter(c => c.ParentTestId === r.TestID);
+                    const children = _sortedViewItemsRef.filter(c => c.ParentTestId === r.TestID);
                     return _trParentGroupRows(r, children, statuses, legacyMap, isAdmin);
                   }
                   const cur = legacyMap[r.Status] || r.Status || 'Not Started';
@@ -9438,6 +9505,18 @@ function _amClearFilters() {
   const userSub = currentRoleUser?.subsystem || '';
   _amFilters = { phase:'', location:'', subsystem: userSub, status:'', search:'' };
   _amSelected.clear();
+  _reRenderTR();
+}
+
+function _amSetSort(col) {
+  if (_amSortCol === col) _amSortDir = _amSortDir === 'asc' ? 'desc' : 'asc';
+  else { _amSortCol = col; _amSortDir = 'asc'; }
+  _reRenderTR();
+}
+
+function _trSetCaseSort(col) {
+  if (_trCaseSortCol === col) _trCaseSortDir = _trCaseSortDir === 'asc' ? 'desc' : 'asc';
+  else { _trCaseSortCol = col; _trCaseSortDir = 'asc'; }
   _reRenderTR();
 }
 
