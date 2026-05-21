@@ -497,184 +497,146 @@ function getLocationCode(loc) {
 // DASHBOARD
 // ==========================================
 function initDashboard() {
-  // Hero update timestamp
-  const dt = new Date(DATA.meta.generated);
-  document.getElementById('hero-update').textContent = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  document.getElementById('hero-update').textContent = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-  // Compute key KPIs
-  const liPassed = LI.filter(r => r.Status === 'Passed').length;
-  const liFailed = LI.filter(r => r.Status === 'Failed').length;
-  const liInProg = LI.filter(r => r.Status === 'In Progress').length;
-  const liOpen = LI.filter(r => r.Status === 'Open').length;
-  const liTotal = LI.length;
-  const liComplete = liPassed + liFailed;
-  const overallPct = Math.round((liPassed / liTotal) * 100);
-  const passRate = liComplete > 0 ? Math.round((liPassed / liComplete) * 100) : 0;
+  const ti    = _latestTI();
+  const acts  = _amGetActivities();
+  const punch = PUNCH_DB.filter(p => !p.is_deleted);
 
-  const apClosed = AP.filter(r => r.Status === 'Closed').length;
-  const apInProg = AP.filter(r => r.Status === 'In Progress').length;
-  const apNotStarted = AP.filter(r => r.Status === 'Activity Not Started').length;
+  const isPass = s => ['Pass','Passed','Complete'].includes(s);
+  const isFail = s => ['Fail','Failed'].includes(s);
 
-  const plOpen = PL.filter(r => r.Status && !['Closed','Ready To Close'].includes(r.Status)).length;
-  const plClosed = PL.filter(r => r.Status === 'Closed').length;
-  const plReady = PL.filter(r => r.Status === 'Ready To Close').length;
-  const plHigh = PL.filter(r => r.Priority === 'high').length;
-  const plMed = PL.filter(r => r.Priority === 'medium').length;
-  const plLow = PL.filter(r => r.Priority === 'low').length;
-  const plOverdue = PL.filter(r => r.Overdue === 'Yes').length;
-  const plWork = PL.filter(r => r.Status === 'Work Required').length;
+  const tiPass     = ti.filter(r => isPass(r.Status)).length;
+  const tiFail     = ti.filter(r => isFail(r.Status)).length;
+  const tiBlocked  = ti.filter(r => r.Status === 'Blocked').length;
+  const tiInProg   = ti.filter(r => r.Status === 'In Progress').length;
+  const tiNa       = ti.filter(r => r.Status === 'Not Applicable').length;
+  const tiFuture   = ti.filter(r => r.Status === 'Future Test').length;
+  const tiTotal    = ti.length;
 
-  // Top KPIs
+  const complete   = tiPass + tiNa;
+  const overallPct = tiTotal > 0 ? Math.round((complete / tiTotal) * 100) : 0;
+  const tested     = tiPass + tiFail + tiBlocked;
+  const passRate   = tested > 0 ? Math.round((tiPass / tested) * 100) : 0;
+
+  const actClosed  = acts.filter(a => _amComputeStatus(a) === 'Closed').length;
+  const actOpen    = acts.filter(a => _amComputeStatus(a) === 'Open').length;
+
+  const punchOpen    = punch.filter(p => p.status !== 'closed').length;
+  const punchHigh    = punch.filter(p => p.priority === 'high' && p.status !== 'closed').length;
+  const punchOverdue = punch.filter(p => p.due_date && new Date(p.due_date) < new Date() && p.status !== 'closed').length;
+
   document.getElementById('kpi-progress').textContent = overallPct + '%';
-  document.getElementById('kpi-progress-meta').innerHTML = `<b>${liPassed.toLocaleString()}</b> of ${liTotal.toLocaleString()} line items passed`;
+  document.getElementById('kpi-progress-meta').innerHTML = `<b>${complete.toLocaleString()}</b> of ${tiTotal.toLocaleString()} test cases passed or N/A`;
   setTimeout(() => { document.getElementById('kpi-progress-bar').style.width = overallPct + '%'; }, 100);
 
   document.getElementById('kpi-passrate').textContent = passRate + '%';
-  document.getElementById('kpi-passrate-meta').innerHTML = `<b>${liPassed}</b> passed / <b>${liFailed}</b> failed`;
+  document.getElementById('kpi-passrate-meta').innerHTML = `<b>${tiPass}</b> passed / <b>${tiFail + tiBlocked}</b> failed or blocked`;
 
-  document.getElementById('kpi-activities').textContent = AP.length;
-  document.getElementById('kpi-activities-meta').innerHTML = `<b class="good-text">${apClosed}</b> closed · <b>${apInProg}</b> in progress`;
+  document.getElementById('kpi-activities').textContent = acts.length;
+  document.getElementById('kpi-activities-meta').innerHTML = `<b class="good-text">${actClosed}</b> closed · <b>${actOpen}</b> open`;
 
-  document.getElementById('kpi-punch').textContent = plOpen;
-  document.getElementById('kpi-punch-meta').innerHTML = `<b>${plHigh}</b> high priority · ${plOverdue} overdue`;
+  document.getElementById('kpi-punch').textContent = punchOpen;
+  document.getElementById('kpi-punch-meta').innerHTML = `<b>${punchHigh}</b> high priority · ${punchOverdue} overdue`;
 
-  // Secondary metric tiles
-  const metricRow = document.getElementById('metric-row');
-  metricRow.innerHTML = `
+  document.getElementById('metric-row').innerHTML = `
     <div class="metric-tile">
       <div class="metric-tile-label"><span class="metric-tile-icon" style="background:${COLORS.good}"></span>Tests Passed</div>
-      <div class="metric-tile-value good">${liPassed.toLocaleString()}</div>
+      <div class="metric-tile-value good">${tiPass.toLocaleString()}</div>
     </div>
     <div class="metric-tile">
       <div class="metric-tile-label"><span class="metric-tile-icon" style="background:${COLORS.bad}"></span>Tests Failed</div>
-      <div class="metric-tile-value bad">${liFailed}</div>
+      <div class="metric-tile-value bad">${tiFail}</div>
+    </div>
+    <div class="metric-tile">
+      <div class="metric-tile-label"><span class="metric-tile-icon" style="background:${COLORS.warn}"></span>Blocked</div>
+      <div class="metric-tile-value warn">${tiBlocked}</div>
     </div>
     <div class="metric-tile">
       <div class="metric-tile-label"><span class="metric-tile-icon" style="background:${COLORS.info}"></span>In Progress</div>
-      <div class="metric-tile-value">${liInProg}</div>
+      <div class="metric-tile-value">${tiInProg}</div>
     </div>
     <div class="metric-tile">
-      <div class="metric-tile-label"><span class="metric-tile-icon" style="background:${COLORS.gray}"></span>Open</div>
-      <div class="metric-tile-value">${liOpen}</div>
-    </div>
-    <div class="metric-tile">
-      <div class="metric-tile-label"><span class="metric-tile-icon" style="background:${COLORS.warn}"></span>Punch Open</div>
-      <div class="metric-tile-value warn">${plWork}</div>
+      <div class="metric-tile-label"><span class="metric-tile-icon" style="background:#7c3aed"></span>Future Test</div>
+      <div class="metric-tile-value" style="color:#7c3aed;">${tiFuture}</div>
     </div>
     <div class="metric-tile">
       <div class="metric-tile-label"><span class="metric-tile-icon" style="background:${COLORS.bad}"></span>Punch Overdue</div>
-      <div class="metric-tile-value bad">${plOverdue}</div>
+      <div class="metric-tile-value bad">${punchOverdue}</div>
     </div>
   `;
 
-  // Phase Grid
   renderPhaseGrid();
-
-  // Charts
   renderLIStatusChart();
   renderSubsysRateChart();
+  renderFutureTestChart();
   renderPunchTradeChart();
   renderLocationChart();
-
-  // Attention lists
   renderFailedList();
   renderHighPunchList();
 }
 
 function renderPhaseGrid() {
-  const phaseTitles = {
-    '0': 'Test Track',
-    '1': 'Pilot Section',
-    '2': 'Mainline Deployment',
-  };
-
-  const phases = ['0', '1', '2'];
-  const grid = document.getElementById('phase-grid');
+  const acts   = _amGetActivities();
+  const phases = [...new Set(acts.map(a => a.phase).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const grid   = document.getElementById('phase-grid');
   let html = '';
-
   phases.forEach(phase => {
-    const items = AP.filter(r => String(r.Phase).trim() === phase);
-    const closed = items.filter(r => r.Status === 'Closed').length;
-    const inProg = items.filter(r => r.Status === 'In Progress').length;
-    const notStarted = items.filter(r => r.Status === 'Activity Not Started').length;
-    const total = items.length;
-    const pct = total > 0 ? Math.round((closed / total) * 100) : 0;
-
+    const items   = acts.filter(a => a.phase === phase);
+    const closed  = items.filter(a => _amComputeStatus(a) === 'Closed').length;
+    const future  = items.filter(a => _amComputeStatus(a) === 'Future Test').length;
+    const open    = items.length - closed - future;
+    const total   = items.length;
+    const pct     = total > 0 ? Math.round((closed / total) * 100) : 0;
     html += `
       <div class="phase-card">
-        <div class="phase-card-num">Phase ${phase}</div>
-        <div class="phase-card-title">${phaseTitles[phase]}</div>
+        <div class="phase-card-num">${escapeHtml(phase)}</div>
         <div class="phase-progress-display">
           <div class="phase-progress-pct">${pct}%</div>
           <div class="phase-progress-meta"><b>${closed}</b> of ${total} activities closed</div>
         </div>
         <div class="phase-bar"><div class="phase-bar-fill" style="width:0%" data-target="${pct}%"></div></div>
         <div class="phase-stats">
-          <div class="phase-stat-item">
-            <div class="phase-stat-label">Closed</div>
-            <div class="phase-stat-value good">${closed}</div>
-          </div>
-          <div class="phase-stat-item">
-            <div class="phase-stat-label">Active</div>
-            <div class="phase-stat-value">${inProg}</div>
-          </div>
-          <div class="phase-stat-item">
-            <div class="phase-stat-label">Pending</div>
-            <div class="phase-stat-value">${notStarted}</div>
-          </div>
+          <div class="phase-stat-item"><div class="phase-stat-label">Closed</div><div class="phase-stat-value good">${closed}</div></div>
+          <div class="phase-stat-item"><div class="phase-stat-label">Open</div><div class="phase-stat-value">${open}</div></div>
+          <div class="phase-stat-item"><div class="phase-stat-label">Future</div><div class="phase-stat-value" style="color:#7c3aed;">${future}</div></div>
         </div>
       </div>
     `;
   });
-
-  grid.innerHTML = html;
-  // Animate bars after render
+  grid.innerHTML = html || '<p style="color:var(--gray-500);padding:24px;">No activity data yet.</p>';
   setTimeout(() => {
-    document.querySelectorAll('.phase-bar-fill[data-target]').forEach(el => {
-      el.style.width = el.dataset.target;
-    });
+    document.querySelectorAll('.phase-bar-fill[data-target]').forEach(el => { el.style.width = el.dataset.target; });
   }, 200);
 }
 
 function renderLIStatusChart() {
   const ctx = document.getElementById('chart-li-status');
-  const passed = LI.filter(r => r.Status === 'Passed').length;
-  const failed = LI.filter(r => r.Status === 'Failed').length;
-  const inprog = LI.filter(r => r.Status === 'In Progress').length;
-  const open = LI.filter(r => r.Status === 'Open').length;
-
+  const ti = _latestTI();
+  const passed    = ti.filter(r => ['Pass','Passed','Complete'].includes(r.Status)).length;
+  const failed    = ti.filter(r => ['Fail','Failed'].includes(r.Status)).length;
+  const blocked   = ti.filter(r => r.Status === 'Blocked').length;
+  const inprog    = ti.filter(r => r.Status === 'In Progress').length;
+  const future    = ti.filter(r => r.Status === 'Future Test').length;
+  const notStart  = ti.filter(r => !r.Status || ['Not Started','Future'].includes(r.Status)).length;
+  const na        = ti.filter(r => r.Status === 'Not Applicable').length;
   new Chart(ctx, {
     type: 'doughnut',
     data: {
-      labels: ['Passed', 'In Progress', 'Open', 'Failed'],
+      labels: ['Passed','Failed','Blocked','In Progress','Not Started','Future Test','N/A'],
       datasets: [{
-        data: [passed, inprog, open, failed],
-        backgroundColor: [COLORS.good, COLORS.info, COLORS.gray, COLORS.bad],
-        borderWidth: 0,
-        hoverOffset: 8,
+        data: [passed, failed, blocked, inprog, notStart, future, na],
+        backgroundColor: [COLORS.good, COLORS.bad, COLORS.warn, COLORS.info, COLORS.gray, '#7c3aed', '#9ca3af'],
+        borderWidth: 0, hoverOffset: 8,
       }]
     },
     options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      cutout: '65%',
+      responsive: true, maintainAspectRatio: false, cutout: '65%',
       plugins: {
-        legend: {
-          position: 'right',
-          labels: { boxWidth: 10, boxHeight: 10, padding: 16, font: { size: 12 }, usePointStyle: true, pointStyle: 'circle' }
-        },
+        legend: { position: 'right', labels: { boxWidth: 10, boxHeight: 10, padding: 12, font: { size: 11 }, usePointStyle: true, pointStyle: 'circle' } },
         tooltip: {
-          backgroundColor: COLORS.black,
-          padding: 12,
-          titleFont: { size: 12, weight: '600' },
-          bodyFont: { size: 12 },
-          callbacks: {
-            label: ctx => {
-              const tot = ctx.dataset.data.reduce((a,b)=>a+b,0);
-              const pct = ((ctx.parsed/tot)*100).toFixed(1);
-              return ` ${ctx.parsed.toLocaleString()} (${pct}%)`;
-            }
-          }
+          backgroundColor: COLORS.black, padding: 12,
+          callbacks: { label: ctx => { const tot = ctx.dataset.data.reduce((a,b)=>a+b,0); return ` ${ctx.parsed.toLocaleString()} (${tot ? ((ctx.parsed/tot)*100).toFixed(1) : 0}%)`; } }
         }
       }
     }
@@ -683,153 +645,131 @@ function renderLIStatusChart() {
 
 function renderSubsysRateChart() {
   const ctx = document.getElementById('chart-subsys-rate');
-  const subsysGroups = {};
-  LI.forEach(r => {
-    const sub = r['Plan Commissioning: SubSystem-'];
-    if (!sub) return;
-    if (!subsysGroups[sub]) subsysGroups[sub] = { passed: 0, failed: 0, total: 0 };
-    if (r.Status === 'Passed') subsysGroups[sub].passed++;
-    if (r.Status === 'Failed') subsysGroups[sub].failed++;
-    subsysGroups[sub].total++;
+  const ti  = _latestTI();
+  const groups = {};
+  ti.forEach(r => {
+    const sub = r.Subsystem; if (!sub) return;
+    if (!groups[sub]) groups[sub] = { passed: 0, failed: 0, total: 0 };
+    if (['Pass','Passed','Complete'].includes(r.Status)) groups[sub].passed++;
+    if (['Fail','Failed'].includes(r.Status)) groups[sub].failed++;
+    groups[sub].total++;
   });
-
-  const sorted = Object.entries(subsysGroups)
-    .filter(([_, v]) => v.total >= 5)
-    .sort((a,b) => b[1].total - a[1].total);
-
-  const labels = sorted.map(s => s[0]);
-  const passedData = sorted.map(s => s[1].passed);
-  const failedData = sorted.map(s => s[1].failed);
-  const otherData = sorted.map(s => s[1].total - s[1].passed - s[1].failed);
-
+  const sorted = Object.entries(groups).filter(([_,v])=>v.total>=1).sort((a,b)=>b[1].total-a[1].total).slice(0,12);
   new Chart(ctx, {
     type: 'bar',
     data: {
-      labels,
+      labels: sorted.map(s=>s[0]),
       datasets: [
-        { label: 'Passed', data: passedData, backgroundColor: COLORS.good, stack: 'st' },
-        { label: 'Failed', data: failedData, backgroundColor: COLORS.bad, stack: 'st' },
-        { label: 'Pending', data: otherData, backgroundColor: COLORS.grayLight, stack: 'st' },
+        { label:'Passed', data:sorted.map(s=>s[1].passed), backgroundColor:COLORS.good, stack:'st' },
+        { label:'Failed', data:sorted.map(s=>s[1].failed), backgroundColor:COLORS.bad,  stack:'st' },
+        { label:'Other',  data:sorted.map(s=>s[1].total-s[1].passed-s[1].failed), backgroundColor:COLORS.grayLight, stack:'st' },
       ]
     },
     options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      indexAxis: 'y',
-      scales: {
-        x: { stacked: true, grid: { color: '#f4f4f4' } },
-        y: { stacked: true, grid: { display: false } }
-      },
+      responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+      scales: { x:{stacked:true,grid:{color:'#f4f4f4'}}, y:{stacked:true,grid:{display:false}} },
       plugins: {
-        legend: { position: 'top', align: 'end', labels: { boxWidth: 10, boxHeight: 10, padding: 12, usePointStyle: true, pointStyle: 'rect' } },
+        legend: { position:'top', align:'end', labels:{ boxWidth:10, boxHeight:10, padding:12, usePointStyle:true, pointStyle:'rect' } },
         tooltip: { backgroundColor: COLORS.black, padding: 12 }
       }
+    }
+  });
+}
+
+function renderFutureTestChart() {
+  const ctx = document.getElementById('chart-future-reason');
+  if (!ctx) return;
+  const futureTI = _latestTI().filter(r => r.Status === 'Future Test');
+  const counts = {};
+  futureTI.forEach(r => {
+    const raw = r.FutureTestReason || '';
+    const cat = (raw.split('|')[0].trim()) || 'Unspecified';
+    counts[cat] = (counts[cat] || 0) + 1;
+  });
+  const sorted = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+  if (!sorted.length) { const wrap = ctx.closest('.chart-card'); if (wrap) wrap.style.display='none'; return; }
+  const palette = ['#7c3aed','#6d28d9','#a78bfa','#4c1d95','#8b5cf6','#c4b5fd'];
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: sorted.map(x=>x[0]),
+      datasets: [{ label:'Test Cases', data:sorted.map(x=>x[1]), backgroundColor:sorted.map((_,i)=>palette[i%palette.length]), borderRadius:4 }]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      scales: { x:{grid:{display:false}}, y:{grid:{color:'#f4f4f4'},beginAtZero:true,ticks:{precision:0}} },
+      plugins: { legend:{display:false}, tooltip:{backgroundColor:COLORS.black,padding:12} }
     }
   });
 }
 
 function renderPunchTradeChart() {
-  const ctx = document.getElementById('chart-punch-trade');
+  const ctx   = document.getElementById('chart-punch-trade');
+  const punch = PUNCH_DB.filter(p => !p.is_deleted && p.status !== 'closed');
   const counts = {};
-  PL.forEach(r => {
-    let t = r.Trade;
-    if (!t) return;
-    t = t.toString().trim();
-    counts[t] = (counts[t] || 0) + 1;
-  });
-  const sorted = Object.entries(counts).sort((a,b) => b[1] - a[1]).slice(0, 10);
+  punch.forEach(p => { const key = p.subsystem || p.phase || 'Unassigned'; counts[key] = (counts[key]||0)+1; });
+  const sorted = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,10);
   new Chart(ctx, {
     type: 'bar',
     data: {
-      labels: sorted.map(x => x[0]),
-      datasets: [{
-        label: 'Items',
-        data: sorted.map(x => x[1]),
-        backgroundColor: COLORS.red,
-        borderRadius: 4,
-      }]
+      labels: sorted.map(x=>x[0]),
+      datasets: [{ label:'Open Items', data:sorted.map(x=>x[1]), backgroundColor:COLORS.red, borderRadius:4 }]
     },
     options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        x: { grid: { display: false } },
-        y: { grid: { color: '#f4f4f4' }, beginAtZero: true }
-      },
-      plugins: {
-        legend: { display: false },
-        tooltip: { backgroundColor: COLORS.black, padding: 12 }
-      }
+      responsive:true, maintainAspectRatio:false,
+      scales: { x:{grid:{display:false}}, y:{grid:{color:'#f4f4f4'},beginAtZero:true,ticks:{precision:0}} },
+      plugins: { legend:{display:false}, tooltip:{backgroundColor:COLORS.black,padding:12} }
     }
   });
 }
 
 function renderLocationChart() {
-  const ctx = document.getElementById('chart-loc');
+  const ctx  = document.getElementById('chart-loc');
+  const acts = _amGetActivities();
   const counts = {};
-  AP.forEach(r => {
-    let l = r.Location;
-    if (!l || l === 'Entire Phase>2') return;
-    counts[l] = (counts[l] || 0) + 1;
-  });
-  const sorted = Object.entries(counts).sort((a,b) => b[1] - a[1]);
+  acts.forEach(a => { const l = a.location; if (!l) return; counts[l]=(counts[l]||0)+1; });
+  const sorted = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,15);
   new Chart(ctx, {
     type: 'bar',
     data: {
-      labels: sorted.map(x => x[0].split(' ').slice(0, 2).join(' ')),
-      datasets: [{
-        label: 'SAT Activities',
-        data: sorted.map(x => x[1]),
-        backgroundColor: COLORS.black,
-        borderRadius: 4,
-      }]
+      labels: sorted.map(x=>x[0]),
+      datasets: [{ label:'Activities', data:sorted.map(x=>x[1]), backgroundColor:COLORS.black, borderRadius:4 }]
     },
     options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      indexAxis: 'y',
-      scales: {
-        x: { grid: { color: '#f4f4f4' }, beginAtZero: true },
-        y: { grid: { display: false } }
-      },
-      plugins: {
-        legend: { display: false },
-        tooltip: { backgroundColor: COLORS.black, padding: 12 }
-      }
+      responsive:true, maintainAspectRatio:false, indexAxis:'y',
+      scales: { x:{grid:{color:'#f4f4f4'},beginAtZero:true,ticks:{precision:0}}, y:{grid:{display:false}} },
+      plugins: { legend:{display:false}, tooltip:{backgroundColor:COLORS.black,padding:12} }
     }
   });
 }
 
 function renderFailedList() {
-  const failed = LI.filter(r => r.Status === 'Failed').slice(0, 5);
-  const list = document.getElementById('failed-list');
-  list.innerHTML = failed.map(r => `
+  const failed = _latestTI().filter(r => ['Fail','Failed'].includes(r.Status)).slice(0,5);
+  const list   = document.getElementById('failed-list');
+  list.innerHTML = failed.length ? failed.map(r => `
     <div class="mini-list-item">
       <div class="mini-list-dot dot-bad"></div>
       <div class="mini-list-content">
-        <div class="mini-list-title">${escapeHtml(r.Title)}</div>
-        <div class="mini-list-meta"><b>${escapeHtml(r['Plan Commissioning: SubSystem-'] || '—')}</b> · ${escapeHtml(r.Location)} · ${escapeHtml(r['Plan Name'])}</div>
+        <div class="mini-list-title">${escapeHtml(r.TestName || r.TestCaseCode || '—')}</div>
+        <div class="mini-list-meta"><b>${escapeHtml(r.Subsystem||'—')}</b> · ${escapeHtml(r.Location||'—')} · ${escapeHtml(r.Activity||'—')}</div>
+        ${r.FailedReason ? `<div style="font-size:11px;color:#dc2626;margin-top:2px;">${escapeHtml(r.FailedReason)}</div>` : ''}
       </div>
-    </div>
-  `).join('');
+    </div>`).join('')
+  : `<div style="color:var(--gray-500);font-size:12px;padding:8px 0;">No failed tests 🎉</div>`;
 }
 
 function renderHighPunchList() {
-  const high = PL.filter(r =>
-    r.Priority === 'high' &&
-    r.Status &&
-    !['Closed', 'Ready To Close'].includes(r.Status)
-  ).slice(0, 5);
+  const high = PUNCH_DB.filter(p => !p.is_deleted && p.priority === 'high' && p.status !== 'closed').slice(0,5);
   const list = document.getElementById('high-punch-list');
-  list.innerHTML = high.map(r => `
+  list.innerHTML = high.length ? high.map(p => `
     <div class="mini-list-item">
       <div class="mini-list-dot dot-bad"></div>
       <div class="mini-list-content">
-        <div class="mini-list-title">${escapeHtml(r.Title)}</div>
-        <div class="mini-list-meta"><b>${escapeHtml(r.Trade || '—')}</b> · ${escapeHtml(r.Type || '—')} · ${escapeHtml(r.Location)}${r.Overdue === 'Yes' ? ' · <span style="color:var(--bad);font-weight:600">overdue</span>' : ''}</div>
+        <div class="mini-list-title">${escapeHtml(p.title || '—')}</div>
+        <div class="mini-list-meta"><b>${escapeHtml(p.subsystem || p.phase || '—')}</b> · ${escapeHtml(p.location || '—')}</div>
       </div>
-    </div>
-  `).join('');
+    </div>`).join('')
+  : `<div style="color:var(--gray-500);font-size:12px;padding:8px 0;">No high-priority items</div>`;
 }
 
 // ==========================================
@@ -1509,6 +1449,7 @@ async function loadTestItems() {
         CompletedDate: r.completed_date,
         BlockedReason: r.blocked_reason,
         FailedReason:  r.failed_reason || null,
+        FutureTestReason: r.future_test_reason || null,
         Notes:         r.notes,
         TestReport:    r.test_report || null,
         TestReportID:  r.test_report_id || null,
@@ -4265,6 +4206,7 @@ async function _updateTestItemStatus(testId, status, opts = {}) {
   }
   patch.failed_reason = status === 'Fail' ? reason : null;
   patch.blocked_reason = status === 'Blocked' ? reason : null;
+  patch.future_test_reason = status === 'Future Test' ? (opts.futureTestReason !== undefined ? opts.futureTestReason : (r.FutureTestReason || null)) : null;
   if (Object.prototype.hasOwnProperty.call(opts, 'notes')) patch.notes = opts.notes || null;
 
   // ── Phase 2: snapshot the active software config at the moment of a
@@ -4292,6 +4234,7 @@ async function _updateTestItemStatus(testId, status, opts = {}) {
   r.Status = status;
   r.FailedReason = patch.failed_reason;
   r.BlockedReason = patch.blocked_reason;
+  r.FutureTestReason = patch.future_test_reason;
   if (Object.prototype.hasOwnProperty.call(patch, 'completed_by')) r.CompletedBy = patch.completed_by;
   if (Object.prototype.hasOwnProperty.call(patch, 'completed_date')) r.CompletedDate = patch.completed_date;
   if (Object.prototype.hasOwnProperty.call(patch, 'notes')) r.Notes = patch.notes;
@@ -4356,6 +4299,9 @@ function _mxApplyStatusChange(testId, status, reason = '', el = null) {
       if (needReason) setTimeout(() => reasonInput.focus(), 0);
     }
   }
+
+  const ftReasonEl = document.getElementById(`mx-ft-reason-${domId}`);
+  if (ftReasonEl) ftReasonEl.style.display = status === 'Future Test' ? '' : 'none';
 
   // Show/hide punch action buttons when status changes to/from Fail
   const punchActionsEl = document.getElementById(`punch-actions-${domId}`);
@@ -4437,6 +4383,19 @@ function _mxSaveReason(testId, reason) {
     console.error('[mxSaveReason] failed:', err.message);
     toast('Reason save failed: ' + err.message, 'error');
   });
+}
+
+async function _mxSaveFtReason(testId) {
+  const domId = encodeURIComponent(String(testId));
+  const cat  = document.getElementById(`mx-ft-cat-${domId}`)?.value  || '';
+  const note = (document.getElementById(`mx-ft-note-${domId}`)?.value || '').trim();
+  const reason = cat && note ? `${cat} | ${note}` : (cat || note || null);
+  const r = TI.find(t => String(t.TestID) === String(testId));
+  if (!r) return;
+  r.FutureTestReason = reason;
+  try {
+    await _dbUpdate('test_items', { future_test_reason: reason }, { test_id: r.TestID });
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
 }
 
 function _mxSaveNotes(testId, notes) {
@@ -8751,6 +8710,13 @@ function _amDrilldownHTML(key) {
                           </select>
                           <div id="mx-reason-${domId}" class="mx-reason-wrap" style="${showReason?'':'display:none;'}">
                             <input type="text" id="mx-ri-${domId}" class="form-input mx-reason-input" style="font-size:11px;padding:3px 6px;margin-top:4px;" placeholder="${cur==='Fail'?'Failure reason...':'Blocked reason...'}" value="${escapeHtml(reasonVal)}" oninput="_mxSaveReason('${tid}',this.value)">
+                          </div>
+                          <div id="mx-ft-reason-${domId}" class="mx-reason-wrap" style="${cur==='Future Test'?'':'display:none;'}">
+                            <select id="mx-ft-cat-${domId}" class="form-input" style="font-size:11px;padding:3px 6px;margin-top:4px;" onchange="_mxSaveFtReason('${tid}')">
+                              <option value="">— Hold reason —</option>
+                              ${['Vehicle Availability','Wayside Installation','Future Phase'].map(o=>`<option value="${o}" ${(r.FutureTestReason||'').startsWith(o)?'selected':''}>${o}</option>`).join('')}
+                            </select>
+                            <input type="text" id="mx-ft-note-${domId}" class="form-input" style="font-size:11px;padding:3px 6px;margin-top:4px;" placeholder="Additional details…" value="${escapeHtml((r.FutureTestReason||'').includes('|') ? (r.FutureTestReason||'').split('|').slice(1).join('|').trim() : '')}" onblur="_mxSaveFtReason('${tid}')">
                           </div>
                         ` : `<span class="badge ${({'Pass':'badge-passed','Fail':'badge-failed','Blocked':'badge-warn','Not Applicable':'badge-notstarted','In Progress':'badge-inprog','Future Test':'badge-futuretest'}[cur]||'badge-notstarted')}">${escapeHtml(cur)}</span>`}
                         <div id="punch-actions-${domId}" style="margin-top:6px;display:${cur==='Fail'?'flex':'none'};flex-direction:column;gap:4px;">

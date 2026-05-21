@@ -427,12 +427,12 @@
       <div class="section-head">
         <div>
           <h2 class="section-title">Subsystem Performance</h2>
-          <p class="section-sub">Pass / fail rates by subsystem from line item testing</p>
+          <p class="section-sub">Pass / fail / other by subsystem from live test items</p>
         </div>
       </div>
       <div class="charts-grid">
         <div class="chart-card">
-          <div class="chart-title">Line Items by Status</div>
+          <div class="chart-title">Test Cases by Status</div>
           <div class="chart-wrap chart-wrap-pie"><canvas id="chart-li-status" role="img" aria-label="Line item status breakdown"></canvas></div>
         </div>
         <div class="chart-card">
@@ -442,10 +442,26 @@
       </div>
     </div>
 
+    <!-- FUTURE TEST BREAKDOWN -->
+    <div class="section-block" id="future-test-section">
+      <div class="section-head">
+        <div>
+          <h2 class="section-title">Future Test Breakdown</h2>
+          <p class="section-sub">Test cases on hold and the reason blocking progress</p>
+        </div>
+      </div>
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div class="chart-title">Holds by Reason</div>
+          <div class="chart-wrap"><canvas id="chart-future-reason" role="img" aria-label="Future test holds by reason"></canvas></div>
+        </div>
+      </div>
+    </div>
+
     <!-- PUNCH LIST + LOCATIONS -->
     <div class="charts-grid">
       <div class="chart-card">
-        <div class="chart-title">Punch Items by Trade</div>
+        <div class="chart-title">Open Punch Items by Subsystem</div>
         <div class="chart-wrap chart-wrap-tall"><canvas id="chart-punch-trade" role="img" aria-label="Punch items by trade"></canvas></div>
       </div>
       <div class="chart-card">
