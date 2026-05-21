@@ -3198,6 +3198,104 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
   font-weight: 650;
 }
 
+/* ── Test Reporting — card-list layout (replaces fixed table) ── */
+.trp-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+.trp-report-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+  transition: box-shadow 0.15s;
+}
+.trp-report-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+}
+.trp-report-card.is-expanded {
+  box-shadow: 0 3px 12px rgba(0,0,0,0.10);
+  border-color: var(--info);
+}
+.trp-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+}
+.trp-card-title-block {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.trp-card-actions {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.trp-meta-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  padding: 2px 16px 12px;
+  border-top: 1px solid var(--gray-100);
+}
+.trp-meta-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 20px 8px 0;
+  min-width: 130px;
+  flex: 1 1 130px;
+  max-width: 260px;
+}
+.trp-meta-cell-wide {
+  flex: 2 1 260px;
+  max-width: 100%;
+}
+.trp-meta-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gray-400);
+}
+.trp-meta-val {
+  font-size: 12px;
+  color: var(--gray-700);
+  line-height: 1.4;
+}
+.trp-empty-val {
+  color: var(--gray-300);
+}
+.trp-details-panel {
+  border-top: 1px solid var(--line-soft);
+}
+/* Link activity modal */
+.trp-link-act-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--gray-100);
+  cursor: pointer;
+  border-radius: 6px;
+}
+.trp-link-act-row:hover {
+  background: var(--gray-50);
+}
+.trp-link-act-info {
+  flex: 1;
+  min-width: 0;
+}
+.trp-link-act-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
 .tr-bulk-bar {
   position: fixed;
   left: 50%;

@@ -6803,6 +6803,42 @@ async function loadP6Data() {
 
 const TR_STATUSES = ['Not Started','In Review','Accepted','Accepted as Noted','Accepted as Noted Resubmit','Resubmit','Rejected'];
 
+const TRP_COL_DEFS = [
+  { key: 'cdrl',          label: 'CDRL'           },
+  { key: 'status',        label: 'Status'         },
+  { key: 'phase',         label: 'Phase'          },
+  { key: 'location',      label: 'Location'       },
+  { key: 'subsystem',     label: 'Subsystem'      },
+  { key: 'dateSubmitted', label: 'Date Submitted' },
+  { key: 'dateReceived',  label: 'Date Received'  },
+  { key: 'notes',         label: 'Notes'          },
+];
+let _trpColVisible = {};
+TRP_COL_DEFS.forEach(c => _trpColVisible[c.key] = true);
+
+function _trpToggleCol(key, visible) {
+  _trpColVisible[key] = visible;
+  renderTestReporting();
+}
+
+function _trpOpenColConfig() {
+  modal({
+    title: 'Configure Columns',
+    size: 'small',
+    body: `
+      <div style="display:flex;flex-direction:column;gap:2px;">
+        ${TRP_COL_DEFS.map(c => `
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:8px 4px;border-bottom:1px solid var(--gray-100);">
+            <input type="checkbox" ${_trpColVisible[c.key]?'checked':''} onchange="_trpToggleCol('${c.key}',this.checked)" style="width:15px;height:15px;">
+            <span style="font-size:13px;color:var(--text-main);">${escapeHtml(c.label)}</span>
+          </label>
+        `).join('')}
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Done</button>`
+  });
+}
+
 const TRP_SOURCE_LABELS = {
   'master-linked': 'Master + TI',
   'master-only': 'Master Only',
@@ -7159,6 +7195,9 @@ function _trpRowFromRecord(r, link) {
     subsystem: r.subsystem || '',
     subsystems,
     notes: r.notes || '',
+    date_submitted:   r.date_submitted   || null,
+    date_received:    r.date_received    || null,
+    revision_history: Array.isArray(r.revision_history) ? r.revision_history : [],
     parent_id: r.parent_id || null,
     created_by: r.created_by || '',
     created_at: r.created_at || '',
@@ -7455,25 +7494,13 @@ function _trpReportTableHTML(rows, canManage) {
     <div class="data-card trp-table-card">
       <div class="data-card-head">
         <span class="data-count">${rows.length} report${rows.length===1?'':'s'}</span>
-        <span class="data-count">Expand Linked Activities to view test case status totals</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:11px;color:var(--gray-500);">Expand rows to view linked test cases</span>
+          <button class="form-secondary tr-mini-btn" style="font-size:11px;" onclick="_trpOpenColConfig()" title="Configure visible columns">⚙ Columns</button>
+        </div>
       </div>
-      <div class="table-wrap">
-        <table class="data-table trp-report-table">
-          <thead>
-            <tr>
-              <th>Report</th>
-              <th>Status</th>
-              <th>Phase</th>
-              <th>Location</th>
-              <th>Subsystem</th>
-              <th>Notes</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows.length ? rows.map(r => _trpReportRowHTML(r, canManage)).join('') : `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--gray-500);">No reports match the current filters</td></tr>`}
-          </tbody>
-        </table>
+      <div class="trp-card-list">
+        ${rows.length ? rows.map(r => _trpReportRowHTML(r, canManage)).join('') : `<div style="text-align:center;padding:40px;color:var(--gray-500);">No reports match the current filters</div>`}
       </div>
     </div>
   `;
@@ -7482,50 +7509,69 @@ function _trpReportTableHTML(rows, canManage) {
 function _trpReportRowHTML(row, canManage) {
   const uid = encodeURIComponent(row.uid);
   const expanded = _trpExpanded.has(row.uid);
-  const subsystemText = row.subsystems.length ? row.subsystems.map(s => `<span class="tag">${escapeHtml(s)}</span>`).join(' ') : '-';
-  const phaseText = row.phases.length ? row.phases.map(s => `<span class="tag" title="${escapeHtml(s)}">${escapeHtml(s)}</span>`).join(' ') : '-';
-  const locationText = row.locations.length ? row.locations.map(s => `<span class="tag" title="${escapeHtml(s)}">${escapeHtml(s)}</span>`).join(' ') : '-';
+  const cv = _trpColVisible;
+  const empty = `<span class="trp-empty-val">—</span>`;
+  const tags = arr => arr.length ? arr.map(s => `<span class="tag">${escapeHtml(s)}</span>`).join(' ') : empty;
+  const histCount = (row.revision_history || []).length;
+
   const actions = [
-    `<button class="form-secondary tr-mini-btn" onclick="_trpToggleLinks('${uid}')">${expanded?'Hide':'View'} Links</button>`,
+    `<button class="form-secondary tr-mini-btn" onclick="_trpToggleLinks('${uid}')" title="${expanded?'Collapse':'Expand'} linked activities">${expanded?'▲ Hide':'▼ Links'}</button>`,
+    canManage ? `<button class="form-secondary tr-mini-btn" onclick="openLinkActivityModal('${uid}')" title="Link activities to this report">＋ Link</button>` : '',
     canManage ? `<button class="form-secondary tr-mini-btn" onclick="openEditTestReportModal('${uid}')">${row.isDerived?'Create/Edit':'Edit'}</button>` : '',
     canManage && row.isDerived ? `<button class="admin-action-btn tr-mini-btn" onclick="_trpCreateDerivedReport('${uid}')">Sync</button>` : '',
     canManage && !row.isDerived ? `<button class="form-secondary tr-mini-btn" onclick="openAddRevisionModal('${escapeHtml(row.id)}')">+ Rev</button>` : '',
+    canManage && !row.isDerived && histCount ? `<button class="form-secondary tr-mini-btn" onclick="openRevisionHistoryModal('${uid}')" title="${histCount} prior revision${histCount===1?'':'s'}">History (${histCount})</button>` : '',
     canManage && !row.isDerived ? `<button class="form-secondary tr-mini-btn tr-danger-btn" onclick="_trpDeleteReport('${uid}')">Delete</button>` : '',
   ].filter(Boolean).join('');
-  const linkSummary = `${row.activityCount} Activit${row.activityCount===1?'y':'ies'} · ${row.testCaseCount} Test Case${row.testCaseCount===1?'':'s'} Linked`;
+
+  const metaCells = [
+    cv.cdrl          ? `<div class="trp-meta-cell"><span class="trp-meta-label">CDRL</span><span class="trp-meta-val">${escapeHtml(row.cdrl_number||'') || empty}</span></div>` : '',
+    cv.status        ? `<div class="trp-meta-cell"><span class="trp-meta-label">Status</span><span class="trp-meta-val">${_trpStatusControlHTML(row, canManage)}</span></div>` : '',
+    cv.phase         ? `<div class="trp-meta-cell"><span class="trp-meta-label">Phase</span><span class="trp-meta-val trp-tag-stack">${tags(row.phases)}</span></div>` : '',
+    cv.location      ? `<div class="trp-meta-cell"><span class="trp-meta-label">Location</span><span class="trp-meta-val trp-tag-stack">${tags(row.locations)}</span></div>` : '',
+    cv.subsystem     ? `<div class="trp-meta-cell"><span class="trp-meta-label">Subsystem</span><span class="trp-meta-val trp-tag-stack">${tags(row.subsystems)}</span></div>` : '',
+    cv.dateSubmitted ? `<div class="trp-meta-cell"><span class="trp-meta-label">Submitted</span><span class="trp-meta-val">${row.date_submitted ? _dayFmt(row.date_submitted) : empty}</span></div>` : '',
+    cv.dateReceived  ? `<div class="trp-meta-cell"><span class="trp-meta-label">Received</span><span class="trp-meta-val">${row.date_received  ? _dayFmt(row.date_received)  : empty}</span></div>` : '',
+    cv.notes         ? `<div class="trp-meta-cell trp-meta-cell-wide"><span class="trp-meta-label">Notes</span><span class="trp-meta-val">${escapeHtml(row.notes||'') || empty}</span></div>` : '',
+  ].filter(Boolean).join('');
 
   return `
-    <tr class="trp-main-row ${expanded ? 'is-expanded' : ''}">
-      <td>
-        <div class="tr-report-title trp-report-name" title="${escapeHtml(row.title)}">${escapeHtml(row.title)}</div>
-        <div class="trp-report-meta-line">
-          <span class="tag">Rev ${escapeHtml(row.revision || 'A')}</span>
-          <span>${escapeHtml(linkSummary)}</span>
+    <div class="trp-report-card ${expanded ? 'is-expanded' : ''}">
+      <div class="trp-card-header">
+        <div class="trp-card-title-block">
+          <div class="tr-report-title trp-report-name" title="${escapeHtml(row.title)}">${escapeHtml(row.title)}</div>
+          <div class="trp-report-meta-line">
+            <span class="tag">Rev ${escapeHtml(row.revision || 'A')}</span>
+            <span style="color:var(--gray-500);font-size:12px;">${row.activityCount} activit${row.activityCount===1?'y':'ies'} · ${row.testCaseCount} test case${row.testCaseCount===1?'':'s'}</span>
+            ${row.isDerived ? `<span class="tag" style="background:var(--warning-bg,#fffaeb);color:var(--warning,#b54708);border:1px solid #fedf89;">From TI</span>` : ''}
+          </div>
         </div>
-        <div class="trp-report-meta-line trp-report-meta-muted">${escapeHtml(row.sourceLabel || '')}</div>
-      </td>
-      <td>${_trpStatusControlHTML(row, canManage)}</td>
-      <td><div class="trp-tag-stack trp-phase-stack">${phaseText}</div></td>
-      <td><div class="trp-tag-stack trp-location-stack">${locationText}</div></td>
-      <td><div class="trp-tag-stack">${subsystemText}</div></td>
-      <td><div class="trp-notes-cell">${escapeHtml(row.notes || '-')}</div></td>
-      <td><div class="tr-report-actions">${actions}</div></td>
-    </tr>
-    ${expanded ? `<tr class="trp-details-row"><td colspan="7">${_trpLinkedActivitiesHTML(row)}</td></tr>` : ''}
+        <div class="tr-report-actions trp-card-actions">${actions}</div>
+      </div>
+      ${metaCells ? `<div class="trp-meta-grid">${metaCells}</div>` : ''}
+      ${expanded ? `<div class="trp-details-panel">${_trpLinkedActivitiesHTML(row, canManage)}</div>` : ''}
+    </div>
   `;
 }
 
-function _trpLinkedActivitiesHTML(row) {
+function _trpLinkedActivitiesHTML(row, canManage) {
+  const uid = encodeURIComponent(row.uid);
+  if (!canManage) canManage = _trpCanManage();
   if (!row.activities.length) {
-    return `<div class="trp-linked-panel trp-linked-empty">No linked activities or test cases were found for this report.</div>`;
+    return `
+      <div class="trp-linked-panel trp-linked-empty" style="display:flex;align-items:center;gap:12px;">
+        <span>No linked activities found for this report.</span>
+        ${canManage && !row.isDerived ? `<button class="admin-action-btn tr-mini-btn" onclick="openLinkActivityModal('${uid}')">＋ Link Activity</button>` : ''}
+      </div>`;
   }
   return `
     <div class="trp-linked-panel">
       <div class="trp-linked-head">
         <div>
           <div class="trp-linked-title">Linked Activities</div>
-          <div class="section-sub">${row.activityCount} Activities · ${row.testCaseCount} Test Cases Linked</div>
+          <div class="section-sub">${row.activityCount} Activit${row.activityCount===1?'y':'ies'} · ${row.testCaseCount} Test Case${row.testCaseCount===1?'':'s'} Linked</div>
         </div>
+        ${canManage && !row.isDerived ? `<button class="admin-action-btn tr-mini-btn" onclick="openLinkActivityModal('${uid}')">＋ Link Activity</button>` : ''}
       </div>
       <div class="trp-linked-list">
         ${row.activities.map(act => {
@@ -7546,7 +7592,7 @@ function _trpLinkedActivitiesHTML(row) {
                 </div>
                 <span class="cell-sub">${act.items.length} test case${act.items.length===1?'':'s'}</span>
                 ${_trpStatusSummaryFullHTML(act.counts)}
-                ${_trpCanManage() ? `<button class="form-secondary tr-mini-btn tr-danger-btn" onclick="_trpUnlinkActivity('${encodeURIComponent(row.uid)}','${encodeURIComponent(act.key)}')">Unlink</button>` : ''}
+                ${canManage ? `<button class="form-secondary tr-mini-btn tr-danger-btn" onclick="_trpUnlinkActivity('${uid}','${encodeURIComponent(act.key)}')">Unlink</button>` : ''}
               </div>
             </div>
           `;
@@ -7579,6 +7625,8 @@ function openNewTestReportModal() {
         <div class="form-field"><label>Location</label><select id="tr-location" class="form-input"><option value="">— Select —</option>${locations.map(s=>`<option>${escapeHtml(s)}</option>`).join('')}</select></div>
         <div class="form-field"><label>Subsystem</label><select id="tr-subsystem" class="form-input"><option value="">— Select —</option>${subsystems.map(s=>`<option>${escapeHtml(s)}</option>`).join('')}</select></div>
         <div class="form-field"><label>Status</label>${_trStatusSelectHTML('Not Started','tr-status')}</div>
+        <div class="form-field"><label>Date Submitted</label><input type="date" id="tr-date-submitted" class="form-input"></div>
+        <div class="form-field"><label>Date Received</label><input type="date" id="tr-date-received" class="form-input"></div>
         <div class="form-field form-field-full"><label>Notes</label><textarea id="tr-notes" class="form-input" rows="2" placeholder="Optional notes..."></textarea></div>
       </div>
     `,
@@ -7592,15 +7640,17 @@ async function saveNewTestReport() {
   if (!title) { toast('Title is required','error'); return; }
   const row = {
     title,
-    cdrl_number: document.getElementById('tr-cdrl')?.value.trim() || null,
-    revision:    document.getElementById('tr-rev')?.value.trim()  || 'A',
-    phase:       document.getElementById('tr-phase')?.value       || null,
-    location:    document.getElementById('tr-location')?.value    || null,
-    status:      document.getElementById('tr-status')?.value      || 'Not Started',
-    subsystem:   document.getElementById('tr-subsystem')?.value   || null,
-    notes:       document.getElementById('tr-notes')?.value.trim() || null,
-    created_by:  currentRoleUser?.name,
-    updated_by:  currentRoleUser?.name,
+    cdrl_number:    document.getElementById('tr-cdrl')?.value.trim()  || null,
+    revision:       document.getElementById('tr-rev')?.value.trim()   || 'A',
+    phase:          document.getElementById('tr-phase')?.value        || null,
+    location:       document.getElementById('tr-location')?.value     || null,
+    status:         document.getElementById('tr-status')?.value       || 'Not Started',
+    subsystem:      document.getElementById('tr-subsystem')?.value    || null,
+    notes:          document.getElementById('tr-notes')?.value.trim() || null,
+    date_submitted: document.getElementById('tr-date-submitted')?.value || null,
+    date_received:  document.getElementById('tr-date-received')?.value  || null,
+    created_by:     currentRoleUser?.name,
+    updated_by:     currentRoleUser?.name,
   };
   const btn = document.querySelector('.modal-footer .admin-action-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -7638,6 +7688,8 @@ function openEditTestReportModal(uid) {
         <div class="form-field"><label>Location</label><select id="tr-location" class="form-input"><option value="">- Select -</option>${locations.map(s=>`<option ${row.location===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select></div>
         <div class="form-field"><label>Subsystem</label><select id="tr-subsystem" class="form-input"><option value="">- Select -</option>${subsystems.map(s=>`<option ${row.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select></div>
         <div class="form-field"><label>Status</label>${_trStatusSelectHTML(row.status,'tr-status')}</div>
+        <div class="form-field"><label>Date Submitted</label><input type="date" id="tr-date-submitted" class="form-input" value="${row.date_submitted ? row.date_submitted.substring(0,10) : ''}"></div>
+        <div class="form-field"><label>Date Received</label><input type="date" id="tr-date-received" class="form-input" value="${row.date_received  ? row.date_received.substring(0,10)  : ''}"></div>
         <div class="form-field form-field-full"><label>Notes</label><textarea id="tr-notes" class="form-input" rows="2">${escapeHtml(row.notes||'')}</textarea></div>
       </div>
     `,
@@ -7653,15 +7705,17 @@ async function saveTestReportEdit(uid) {
   if (!title) { toast('Title is required', 'error'); return; }
   const patch = {
     title,
-    cdrl_number: document.getElementById('tr-cdrl')?.value.trim() || null,
-    revision:    document.getElementById('tr-rev')?.value.trim() || 'A',
-    phase:       document.getElementById('tr-phase')?.value || null,
-    location:    document.getElementById('tr-location')?.value || null,
-    subsystem:   document.getElementById('tr-subsystem')?.value || null,
-    status:     document.getElementById('tr-status')?.value || row.status,
-    notes:      document.getElementById('tr-notes')?.value.trim() || null,
-    updated_by: currentRoleUser?.name,
-    updated_at: new Date().toISOString(),
+    cdrl_number:    document.getElementById('tr-cdrl')?.value.trim()  || null,
+    revision:       document.getElementById('tr-rev')?.value.trim()   || 'A',
+    phase:          document.getElementById('tr-phase')?.value        || null,
+    location:       document.getElementById('tr-location')?.value     || null,
+    subsystem:      document.getElementById('tr-subsystem')?.value    || null,
+    status:         document.getElementById('tr-status')?.value       || row.status,
+    notes:          document.getElementById('tr-notes')?.value.trim() || null,
+    date_submitted: document.getElementById('tr-date-submitted')?.value || null,
+    date_received:  document.getElementById('tr-date-received')?.value  || null,
+    updated_by:     currentRoleUser?.name,
+    updated_at:     new Date().toISOString(),
   };
   const btn = document.querySelector('.modal-footer .admin-action-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -7684,59 +7738,190 @@ async function saveTestReportEdit(uid) {
   }
 }
 
-function openAddRevisionModal(parentId) {
+function openAddRevisionModal(reportId) {
   if (!_trpCanManage()) { toast('You do not have permission to add revisions', 'error'); return; }
-  const parent = _testReports.find(r => r.id === parentId);
-  if (!parent) return;
-  // Suggest next revision letter
-  const siblings = _testReports.filter(r => r.parent_id === parentId);
-  const lastRev  = siblings.length ? siblings[siblings.length-1].revision : parent.revision;
-  const nextRev  = lastRev ? String.fromCharCode(lastRev.charCodeAt(0)+1) : 'B';
+  const r = _testReports.find(x => x.id === reportId);
+  if (!r) { toast('Report not found', 'error'); return; }
+  // Suggest next revision letter (A→B, B→C, …, Z→AA)
+  const lastRev = (r.revision || 'A').trim();
+  const nextRev = lastRev.length === 1
+    ? String.fromCharCode(lastRev.charCodeAt(0) + 1)
+    : lastRev + '1';
   modal({
-    title: `Add Revision — ${escapeHtml(parent.title)}`,
+    title: `Add Revision — ${escapeHtml(r.title)}`,
     size: 'medium',
     body: `
-      <p style="font-size:13px;color:var(--gray-600);margin-bottom:16px;">A new revision will be created with fresh status (Not Started), linked to the original report.</p>
+      <div style="padding:10px 14px;background:#f8fafc;border:1px solid var(--line-soft);border-radius:8px;margin-bottom:16px;font-size:12px;color:var(--gray-600);">
+        <b style="color:var(--text-main);">Current:</b> Rev ${escapeHtml(r.revision||'A')} · ${escapeHtml(r.status||'Not Started')}
+        <br><span style="margin-top:4px;display:block;">The current revision will be archived to history. The report record will be updated in place.</span>
+      </div>
       <div class="form-grid">
-        <div class="form-field"><label>Revision</label><input type="text" id="tr-rev" class="form-input" value="${escapeHtml(nextRev)}"></div>
-        <div class="form-field"><label>Status</label>${_trStatusSelectHTML('Not Started','tr-status')}</div>
-        <div class="form-field form-field-full"><label>Notes</label><textarea id="tr-notes" class="form-input" rows="2" placeholder="Notes for this revision..."></textarea></div>
+        <div class="form-field"><label>New Revision</label><input type="text" id="tr-rev" class="form-input" value="${escapeHtml(nextRev)}"></div>
+        <div class="form-field"><label>New Status</label>${_trStatusSelectHTML('Not Started','tr-status')}</div>
+        <div class="form-field"><label>Date Submitted</label><input type="date" id="tr-date-submitted" class="form-input"></div>
+        <div class="form-field"><label>Date Received</label><input type="date" id="tr-date-received" class="form-input"></div>
+        <div class="form-field form-field-full"><label>Notes for this revision</label><textarea id="tr-notes" class="form-input" rows="2" placeholder="Optional notes..."></textarea></div>
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" onclick="saveNewRevision('${parentId}')">Add Revision</button>`
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" onclick="saveNewRevision('${reportId}')">Save New Revision</button>`
   });
 }
 
-async function saveNewRevision(parentId) {
+async function saveNewRevision(reportId) {
   if (!_trpCanManage()) { toast('You do not have permission to add revisions', 'error'); return; }
-  const parent = _testReports.find(r => r.id === parentId);
-  if (!parent) return;
-  const row = {
-    title:       parent.title,
-    cdrl_number: parent.cdrl_number,
-    revision:    document.getElementById('tr-rev')?.value.trim() || 'B',
-    status:      document.getElementById('tr-status')?.value || 'Not Started',
-    phase:       parent.phase || null,
-    location:    parent.location || null,
-    subsystem:   parent.subsystem,
-    notes:       document.getElementById('tr-notes')?.value.trim() || null,
-    parent_id:   parentId,
-    created_by:  currentRoleUser?.name,
-    updated_by:  currentRoleUser?.name,
+  const parent = _testReports.find(r => r.id === reportId);
+  if (!parent) { toast('Report not found', 'error'); return; }
+
+  const newRev           = document.getElementById('tr-rev')?.value.trim()   || 'B';
+  const newStatus        = document.getElementById('tr-status')?.value        || 'Not Started';
+  const newNotes         = document.getElementById('tr-notes')?.value.trim()  || null;
+  const newDateSubmitted = document.getElementById('tr-date-submitted')?.value || null;
+  const newDateReceived  = document.getElementById('tr-date-received')?.value  || null;
+
+  // Snapshot the current revision into history
+  const snapshot = {
+    revision:       parent.revision       || 'A',
+    status:         parent.status         || 'Not Started',
+    notes:          parent.notes          || null,
+    date_submitted: parent.date_submitted || null,
+    date_received:  parent.date_received  || null,
+    updated_by:     parent.updated_by     || null,
+    updated_at:     parent.updated_at     || null,
+    archived_at:    new Date().toISOString(),
+  };
+  const newHistory = [...(Array.isArray(parent.revision_history) ? parent.revision_history : []), snapshot];
+
+  const patch = {
+    revision:         newRev,
+    status:           newStatus,
+    notes:            newNotes,
+    date_submitted:   newDateSubmitted,
+    date_received:    newDateReceived,
+    revision_history: newHistory,
+    updated_by:       currentRoleUser?.name,
+    updated_at:       new Date().toISOString(),
   };
   const btn = document.querySelector('.modal-footer .admin-action-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
-    const inserted = await _dbInsert('test_reports', [row]);
-    _testReports.push(...inserted);
-    logAudit('Test Report Revision Added', parent.title, `Rev ${row.revision}`);
-    toast(`Revision ${row.revision} added`, 'success');
+    const updated = await _dbUpdate('test_reports', patch, { id: parent.id });
+    if (!updated?.length) throw new Error('No report row was updated. Check test_reports RLS policies.');
+    Object.assign(parent, updated[0] || patch);
+    logAudit('Test Report Revision Added', parent.title, `Updated to Rev ${newRev}`);
+    toast(`Updated to revision ${newRev}`, 'success');
     closeModal();
     await _trpRefreshData();
   } catch(e) {
     toast('Save failed: ' + e.message, 'error');
-    if (btn) { btn.disabled = false; btn.textContent = 'Add Revision'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Save New Revision'; }
   }
+}
+
+// ── Link Activity to Report ───────────────────────────────────────────────────
+function openLinkActivityModal(uid) {
+  if (!_trpCanManage()) { toast('You do not have permission to link activities', 'error'); return; }
+  const row = _trpFindReportRow(uid);
+  if (!row) { toast('Report not found', 'error'); return; }
+  if (row.isDerived) { toast('Sync this report to the master table before linking activities.', 'warn'); return; }
+
+  const allActs = _amGetActivities();
+  const linkedKeys = new Set(row.activities.map(a => a.key));
+  const available  = allActs.filter(a => !linkedKeys.has(a.key));
+
+  const listHTML = available.length ? available.map(a => {
+    const st = _amComputeStatus(a);
+    const { done, total } = _amComputeCompletion(a);
+    return `
+      <label class="trp-link-act-row">
+        <input type="checkbox" name="trp-link-act" value="${escapeHtml(a.key)}" style="width:15px;height:15px;flex-shrink:0;">
+        <div class="trp-link-act-info">
+          <div class="trp-link-act-name">${escapeHtml(a.activity)}</div>
+          <div class="tr-report-meta">${escapeHtml(a.phase)} · ${escapeHtml(a.location)} · ${escapeHtml(a.subsystem)} · ${done}/${total} complete</div>
+        </div>
+        ${_amStatusBadge(st)}
+      </label>
+    `;
+  }).join('') : `<div style="text-align:center;padding:24px;color:var(--gray-500);">All activities are already linked to this report.</div>`;
+
+  const safeUid = encodeURIComponent(uid);
+  modal({
+    title: `Link Activities — ${escapeHtml(row.title)}`,
+    size: 'large',
+    body: `
+      <p style="font-size:13px;color:var(--gray-500);margin-bottom:12px;">Select activities to link. All test cases in each selected activity will be associated with this report.</p>
+      <input type="text" class="filter-input" placeholder="Search activities…" oninput="_trpFilterLinkList(this.value)" style="width:100%;margin-bottom:10px;">
+      <div id="trp-link-act-list" style="max-height:420px;overflow-y:auto;border:1px solid var(--line-soft);border-radius:8px;">
+        ${listHTML}
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>${available.length ? `<button class="admin-action-btn" onclick="_trpConfirmLinkActivities('${safeUid}')">Link Selected</button>` : ''}`
+  });
+}
+
+function _trpFilterLinkList(search) {
+  const s = search.toLowerCase();
+  document.querySelectorAll('#trp-link-act-list .trp-link-act-row').forEach(el => {
+    el.style.display = (!s || el.textContent.toLowerCase().includes(s)) ? '' : 'none';
+  });
+}
+
+async function _trpConfirmLinkActivities(encodedUid) {
+  const uid = _trpDecodeUid(encodedUid);
+  const row = _trpFindReportRow(uid);
+  if (!row || !row.id) { toast('Report not found', 'error'); return; }
+  const checked = [...document.querySelectorAll('input[name="trp-link-act"]:checked')];
+  if (!checked.length) { toast('Select at least one activity', 'warn'); return; }
+  const selectedKeys = new Set(checked.map(cb => cb.value));
+  const allActs = _amGetActivities();
+  const toLink  = allActs.filter(a => selectedKeys.has(a.key));
+  const testIds = [...new Set(toLink.flatMap(a => (a.items||[]).map(t => t.TestID)).filter(Boolean))];
+  if (!testIds.length) { toast('No test cases found in the selected activities', 'warn'); return; }
+  const btn = document.querySelector('.modal-footer .admin-action-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Linking…'; }
+  try {
+    const report = row.record || _testReports.find(r => r.id === row.id);
+    const link = { report: report.cdrl_number || report.title || null, reportId: report.id, record: report, mode: 'record', label: _trpReportLabel(report) };
+    await Promise.all(testIds.map(testId => _dbUpdate('test_items', _trpReportLinkPatch(link), { test_id: testId })));
+    _trpApplyReportLinkToItems(TI.filter(t => testIds.some(id => String(id) === String(t.TestID))), link);
+    logAudit('Test Report Activities Linked', row.title, `${toLink.length} activit${toLink.length===1?'y':'ies'} · ${testIds.length} test case${testIds.length===1?'':'s'}`);
+    toast(`Linked ${testIds.length} test case${testIds.length===1?'':'s'} from ${toLink.length} activit${toLink.length===1?'y':'ies'}`, 'success');
+    closeModal();
+    await _trpRefreshData();
+  } catch(e) {
+    toast('Link failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Link Selected'; }
+  }
+}
+
+// ── Revision History Viewer ───────────────────────────────────────────────────
+function openRevisionHistoryModal(uid) {
+  const row = _trpFindReportRow(uid);
+  if (!row) { toast('Report not found', 'error'); return; }
+  const history = (row.revision_history || []).slice().reverse(); // newest first
+  const histHTML = history.length ? history.map(h => `
+    <div style="border:1px solid var(--line-soft);border-radius:8px;padding:12px 16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <span class="tag" style="font-size:12px;">Rev ${escapeHtml(h.revision||'?')}</span>
+        <span style="font-size:11px;color:var(--gray-400);">Archived ${_dayFmt(h.archived_at)}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px 12px;font-size:12px;">
+        <div><span style="color:var(--gray-400);font-size:10px;text-transform:uppercase;font-weight:700;">Status</span><br>${escapeHtml(h.status||'—')}</div>
+        <div><span style="color:var(--gray-400);font-size:10px;text-transform:uppercase;font-weight:700;">Submitted</span><br>${h.date_submitted ? _dayFmt(h.date_submitted) : '—'}</div>
+        <div><span style="color:var(--gray-400);font-size:10px;text-transform:uppercase;font-weight:700;">Received</span><br>${h.date_received ? _dayFmt(h.date_received) : '—'}</div>
+      </div>
+      ${h.notes ? `<div style="font-size:12px;color:var(--gray-600);margin-top:8px;padding-top:8px;border-top:1px solid var(--gray-100);">${escapeHtml(h.notes)}</div>` : ''}
+    </div>
+  `).join('') : `<div style="text-align:center;padding:24px;color:var(--gray-500);">No revision history found.</div>`;
+
+  modal({
+    title: `Revision History — ${escapeHtml(row.title)}`,
+    size: 'medium',
+    body: `
+      <p style="font-size:12px;color:var(--gray-500);margin-bottom:14px;">Current: <b>Rev ${escapeHtml(row.revision||'A')}</b> · ${escapeHtml(row.status||'Not Started')}</p>
+      <div style="display:flex;flex-direction:column;gap:10px;">${histHTML}</div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`
+  });
 }
 
 async function _trpCreateReportRecord(row, overrides = {}) {
