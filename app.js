@@ -536,6 +536,7 @@ function refreshDashboard() {
   const passRate   = ws.testedW > 0  ? Math.round((ws.passW    / ws.testedW) * 100) : 0;
 
   const actClosed  = acts.filter(a => _amComputeStatus(a) === 'Closed').length;
+  const actPartial = acts.filter(a => _amComputeStatus(a) === 'Partial Completion').length;
   const actOpen    = acts.filter(a => _amComputeStatus(a) === 'Open').length;
 
   const punchOpen    = punch.filter(p => p.status !== 'closed').length;
@@ -553,7 +554,7 @@ function refreshDashboard() {
   document.getElementById('kpi-passrate-meta').innerHTML = `<b>${tiPass}</b> passed / <b>${tiFail + tiBlocked}</b> failed or blocked${_wNote}`;
 
   document.getElementById('kpi-activities').textContent = acts.length;
-  document.getElementById('kpi-activities-meta').innerHTML = `<b class="good-text">${actClosed}</b> closed · <b>${actOpen}</b> open`;
+  document.getElementById('kpi-activities-meta').innerHTML = `<b class="good-text">${actClosed}</b> closed · <b>${actOpen}</b> open${actPartial ? ` · <b style="color:#d97706;">${actPartial}</b> partial` : ''}`;
 
   document.getElementById('kpi-punch').textContent = punchOpen;
   document.getElementById('kpi-punch-meta').innerHTML = `<b>${punchHigh}</b> high priority · ${punchOverdue} overdue`;
@@ -8566,7 +8567,7 @@ function _testRegisterHTML() {
     ).map(a => a.subsystem).filter(Boolean)
   )].sort();
 
-  const actStatuses = ['Open','Closed','Future Test'];
+  const actStatuses = ['Open','Partial Completion','Closed','Future Test'];
 
   let filtered = all.filter(a => {
     const st = _amComputeStatus(a);
@@ -8602,8 +8603,8 @@ function _testRegisterHTML() {
   } else if (_amSortCol === 'phase') {
     filtered.sort((a, b) => _sd * (a.phase||'').localeCompare(b.phase||'', undefined, {numeric:true}));
   } else if (_amSortCol === 'status') {
-    const ord = {'Closed':0,'Open':1,'Future Test':2};
-    filtered.sort((a, b) => _sd * ((ord[_amComputeStatus(a)]??3) - (ord[_amComputeStatus(b)]??3)));
+    const ord = {'Closed':0,'Partial Completion':1,'Open':2,'Future Test':3};
+    filtered.sort((a, b) => _sd * ((ord[_amComputeStatus(a)]??4) - (ord[_amComputeStatus(b)]??4)));
   } else if (_amSortCol === 'completion') {
     filtered.sort((a, b) => {
       return _sd * (_amComputeCompletion(a).pct - _amComputeCompletion(b).pct);
@@ -8616,9 +8617,10 @@ function _testRegisterHTML() {
   const selectedActivities = all.filter(a => _amSelected.has(a.key));
   const hasFutureTest = selectedActivities.some(a => _amComputeStatus(a) === 'Future Test');
   const hasNonFuture  = selectedActivities.some(a => _amComputeStatus(a) !== 'Future Test');
-  const closedCount = filtered.filter(a => _amComputeStatus(a) === 'Closed').length;
-  const openCount = filtered.filter(a => _amComputeStatus(a) === 'Open').length;
-  const futureCount = filtered.filter(a => _amComputeStatus(a) === 'Future Test').length;
+  const closedCount  = filtered.filter(a => _amComputeStatus(a) === 'Closed').length;
+  const partialCount = filtered.filter(a => _amComputeStatus(a) === 'Partial Completion').length;
+  const openCount    = filtered.filter(a => _amComputeStatus(a) === 'Open').length;
+  const futureCount  = filtered.filter(a => _amComputeStatus(a) === 'Future Test').length;
   const _ltAll = _latestTI();
   const _ltWs  = _wgtStat(_ltAll);
   const overallPct = _ltWs.totalW > 0 ? Math.round((_ltWs.completeW / _ltWs.totalW) * 100) : 0;
@@ -8680,6 +8682,7 @@ function _testRegisterHTML() {
           <div class="tr-header-stats">
             <span><b>${filtered.length}</b> shown</span>
             <span><b>${openCount}</b> open</span>
+            ${partialCount ? `<span style="color:#d97706;"><b>${partialCount}</b> partial</span>` : ''}
             <span><b>${closedCount}</b> closed</span>
             ${futureCount ? `<span><b>${futureCount}</b> future</span>` : ''}
             <span><b>${overallPct}%</b> complete</span>
@@ -8802,11 +8805,18 @@ function _amComputeStatus(act) {
   // Exclude parent rows (their status is derived) and child rows count instead
   const items = act.items.filter(r => !r.IsParent);
   if (!items.length) return 'Open';
-  const allFuture = items.every(r => r.Status === 'Future Test');
-  if (allFuture) return 'Future Test';
-  const allDone = items.every(r => r.Status === 'Pass' || r.Status === 'Not Applicable' ||
-    r.Status === 'Complete' || r.Status === 'Passed');
-  if (allDone) return 'Closed';
+
+  const isDone   = r => ['Pass','Passed','Complete','Not Applicable'].includes(r.Status);
+  const isFuture = r => r.Status === 'Future Test';
+
+  if (items.every(isFuture)) return 'Future Test';
+  if (items.every(isDone))   return 'Closed';
+
+  // Some done + the rest are all Future Test (none Open/In Progress/Failed/Blocked)
+  if (items.every(r => isDone(r) || isFuture(r)) && items.some(isDone) && items.some(isFuture)) {
+    return 'Partial Completion';
+  }
+
   return 'Open';
 }
 
@@ -8838,8 +8848,9 @@ function _p6WeightedCompletion(act) {
 }
 
 function _amStatusBadge(s) {
-  if (s === 'Closed')      return `<span class="badge badge-passed">Closed</span>`;
-  if (s === 'Future Test') return `<span class="badge badge-futuretest">Future Test</span>`;
+  if (s === 'Closed')             return `<span class="badge badge-passed">Closed</span>`;
+  if (s === 'Future Test')        return `<span class="badge badge-futuretest">Future Test</span>`;
+  if (s === 'Partial Completion') return `<span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;">Partial — Future Tests Remain</span>`;
   return `<span class="badge badge-open">Open</span>`;
 }
 
@@ -8870,7 +8881,7 @@ function _adminActivityManagerHTML() {
     ).map(a => a.subsystem).filter(Boolean)
   )].sort();
 
-  const statuses = ['Open','Closed','Future Test'];
+  const statuses = ['Open','Partial Completion','Closed','Future Test'];
 
   let filtered = all.filter(a => {
     const st = _amComputeStatus(a);
