@@ -596,9 +596,10 @@ function refreshDashboard() {
 }
 
 function renderPhaseGrid() {
-  const acts   = _amGetActivities();
-  const phases = [...new Set(acts.map(a => a.phase).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
-  const grid   = document.getElementById('phase-grid');
+  const acts    = _amGetActivities();
+  const phases  = [...new Set(acts.map(a => a.phase).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const grid    = document.getElementById('phase-grid');
+  const allTI   = _latestTI();
   let html = '';
   phases.forEach(phase => {
     const items   = acts.filter(a => a.phase === phase);
@@ -606,13 +607,16 @@ function renderPhaseGrid() {
     const future  = items.filter(a => _amComputeStatus(a) === 'Future Test').length;
     const open    = items.length - closed - future;
     const total   = items.length;
-    const pct     = total > 0 ? Math.round((closed / total) * 100) : 0;
+    // Weighted test-case completion for this phase (Layer 1 × Layer 2)
+    const phaseTI = allTI.filter(r => r.Phase === phase);
+    const ws      = _wgtStat(phaseTI);
+    const pct     = ws.totalW > 0 ? Math.round((ws.completeW / ws.totalW) * 100) : 0;
     html += `
       <div class="phase-card">
         <div class="phase-card-num">${escapeHtml(phase)}</div>
         <div class="phase-progress-display">
           <div class="phase-progress-pct">${pct}%</div>
-          <div class="phase-progress-meta"><b>${closed}</b> of ${total} activities closed</div>
+          <div class="phase-progress-meta">weighted complete · <b>${closed}</b>/${total} activities closed</div>
         </div>
         <div class="phase-bar"><div class="phase-bar-fill" style="width:0%" data-target="${pct}%"></div></div>
         <div class="phase-stats">
@@ -681,23 +685,32 @@ function renderSubsysRateChart() {
     groups[sub].total += wgt;
   });
   const sorted = Object.entries(groups).filter(([_,v])=>v.total>=1).sort((a,b)=>b[1].total-a[1].total).slice(0,12);
+  // Normalise to 0–100% per subsystem so high activity weights don't blow up the axis.
+  // Each bar segment shows the weighted share of that status within the subsystem.
+  const pct = (v, tot) => tot > 0 ? Math.round(v / tot * 100) : 0;
   if (_dashCharts.subsys) _dashCharts.subsys.destroy();
   _dashCharts.subsys = new Chart(ctx, {
     type: 'bar',
     data: {
       labels: sorted.map(s=>s[0]),
       datasets: [
-        { label:'Passed', data:sorted.map(s=>s[1].passed), backgroundColor:COLORS.good, stack:'st' },
-        { label:'Failed', data:sorted.map(s=>s[1].failed), backgroundColor:COLORS.bad,  stack:'st' },
-        { label:'Other',  data:sorted.map(s=>s[1].total-s[1].passed-s[1].failed), backgroundColor:COLORS.grayLight, stack:'st' },
+        { label:'Passed', data:sorted.map(s=>pct(s[1].passed, s[1].total)), backgroundColor:COLORS.good, stack:'st' },
+        { label:'Failed', data:sorted.map(s=>pct(s[1].failed, s[1].total)), backgroundColor:COLORS.bad,  stack:'st' },
+        { label:'Other',  data:sorted.map(s=>pct(s[1].total-s[1].passed-s[1].failed, s[1].total)), backgroundColor:COLORS.grayLight, stack:'st' },
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false, indexAxis: 'y',
-      scales: { x:{stacked:true,grid:{color:'#f4f4f4'}}, y:{stacked:true,grid:{display:false}} },
+      scales: {
+        x: { stacked:true, min:0, max:100, grid:{color:'#f4f4f4'}, ticks:{ callback: v => v+'%' } },
+        y: { stacked:true, grid:{display:false} },
+      },
       plugins: {
         legend: { position:'top', align:'end', labels:{ boxWidth:10, boxHeight:10, padding:12, usePointStyle:true, pointStyle:'rect' } },
-        tooltip: { backgroundColor: COLORS.black, padding: 12 }
+        tooltip: {
+          backgroundColor: COLORS.black, padding: 12,
+          callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.x}%` }
+        }
       }
     }
   });
