@@ -2810,8 +2810,8 @@ async function executeLocationImport() {
 let _importPendingRows = [];
 
 function downloadImportTemplate() {
-  const headers = ['TestID','Phase','Location','Subsystem','Activity','TestCategory','TestCaseCode','TestName','TestSection','TestProcedure','TestPhase','Status','ActivityID','PlannedDate','Weight','Notes','TestReport'];
-  const example = ['P2-W40-ATS-EXAMPLE','Phase 2','W40','ATS','ATS SAT','Hardware SAT','HW-SAT-XX','Example Test Name','1. Do step one. 2. Verify result.','SAT','Future','ACT-001','2025-06-01','1','Optional notes','https://docs.example.com/report'];
+  const headers = ['Phase','Location','Subsystem','Activity','TestCategory','TestCaseCode','TestName','TestSection','TestProcedure','TestPhase','Status','ActivityID','PlannedDate','Weight','Notes','TestReport'];
+  const example = ['Phase 2','W40','ATS','ATS SAT','Hardware SAT','HW-SAT-XX','Example Test Name','Section 1','1. Do step one. 2. Verify result.','SAT','Future','ACT-001','2025-06-01','1','Optional notes','https://docs.example.com/report'];
   const csv = headers.join(',') + '\n' + example.map(v => `"${v}"`).join(',');
   const blob = new Blob([csv], { type: 'text/csv' });
   const a = document.createElement('a');
@@ -2846,7 +2846,7 @@ function parseCSVGeneric(text) {
 }
 
 function parseCSV(text) {
-  return parseCSVGeneric(text).filter(r => r.TestID && r.TestID.trim() !== '');
+  return parseCSVGeneric(text).filter(r => (r.TestCaseCode && r.TestCaseCode.trim()) || (r.TestName && r.TestName.trim()));
 }
 
 function parseImportDate(val) {
@@ -2886,43 +2886,39 @@ async function handleImportFile(input) {
 
   const rows = parseCSV(text);
   if (rows.length === 0) {
-    toast('No valid rows found — make sure the TestID column is filled in.', 'warn');
+    toast('No valid rows found — make sure the TestCaseCode or TestName column is filled in.', 'warn');
     return;
   }
 
-  const existingMap = {};
-  TI.forEach(t => { existingMap[t.TestID] = t; });
+  _importPendingRows = rows;
 
   // Location validation (only if master list is loaded)
   const locWarnings = [];
   if (LOCS.length > 0) {
     rows.forEach(r => {
+      const label = r.TestCaseCode || r.TestName || '';
       const phaseMatch = _matchLoc(r.Phase || '', 1, null);
       const locMatch   = phaseMatch ? _matchLoc(r.Location || '', 2, phaseMatch.id) : null;
 
       if (r.Phase && !phaseMatch) {
-        locWarnings.push({ id: r.TestID, field: 'Phase', value: r.Phase, suggestion: null });
+        locWarnings.push({ id: label, field: 'Phase', value: r.Phase, suggestion: null });
       } else if (r.Phase && phaseMatch && !phaseMatch.exact) {
-        locWarnings.push({ id: r.TestID, field: 'Phase', value: r.Phase, suggestion: phaseMatch.name });
+        locWarnings.push({ id: label, field: 'Phase', value: r.Phase, suggestion: phaseMatch.name });
       }
       if (r.Location && phaseMatch && !locMatch) {
-        locWarnings.push({ id: r.TestID, field: 'Location', value: r.Location, suggestion: null });
+        locWarnings.push({ id: label, field: 'Location', value: r.Location, suggestion: null });
       } else if (r.Location && locMatch && !locMatch.exact) {
-        locWarnings.push({ id: r.TestID, field: 'Location', value: r.Location, suggestion: locMatch.name });
+        locWarnings.push({ id: label, field: 'Location', value: r.Location, suggestion: locMatch.name });
       }
     });
   }
-
-  const conflicts = rows.filter(r => existingMap[r.TestID]);
-  const newItems  = rows.filter(r => !existingMap[r.TestID]);
-  _importPendingRows = rows;
 
   const warnHTML = locWarnings.length > 0 ? `
     <div style="margin-bottom:16px;padding:14px;border:1px solid #d97706;border-radius:8px;background:rgba(217,119,6,0.05);">
       <div style="font-weight:600;font-size:13px;color:#d97706;margin-bottom:10px;">⚠ ${locWarnings.length} location name${locWarnings.length > 1 ? 's' : ''} don't match the master list</div>
       <div style="max-height:140px;overflow-y:auto;">
         <table class="data-table">
-          <thead><tr><th>Test ID</th><th>Field</th><th>In CSV</th><th>Master List Says</th></tr></thead>
+          <thead><tr><th>Test Case</th><th>Field</th><th>In CSV</th><th>Master List Says</th></tr></thead>
           <tbody>
             ${locWarnings.map(w => `<tr>
               <td style="font-size:11px;font-weight:600;">${escapeHtml(w.id)}</td>
@@ -2936,47 +2932,17 @@ async function handleImportFile(input) {
       <p style="font-size:11px;color:var(--gray-600);margin-top:8px;">You can still import — mismatched names will be stored as-is. Fix the CSV or update the master locations list.</p>
     </div>` : '';
 
-  const conflictHTML = conflicts.length > 0 ? `
-    <div style="margin-bottom:16px;padding:16px;border:1px solid var(--warn);border-radius:8px;background:rgba(217,119,6,0.05);">
-      <div style="font-weight:600;font-size:14px;color:var(--warn);margin-bottom:12px;">
-        ⚠ ${conflicts.length} existing test case${conflicts.length > 1 ? 's' : ''} will be overwritten
-      </div>
-      <div style="max-height:200px;overflow-y:auto;margin-bottom:14px;">
-        <table class="data-table">
-          <thead><tr><th>Test ID</th><th>Test Name</th><th>Current Status</th><th></th><th>New Status</th></tr></thead>
-          <tbody>
-            ${conflicts.map(r => {
-              const old = existingMap[r.TestID];
-              const oldSt = old?.Status || '—';
-              const newSt = r.Status || 'Future';
-              return `<tr>
-                <td style="font-size:12px;font-weight:600;">${escapeHtml(r.TestID)}</td>
-                <td style="font-size:12px;">${escapeHtml(r.TestName || '')}</td>
-                <td><span class="badge badge-${importStatusBadge(oldSt)}">${escapeHtml(oldSt)}</span></td>
-                <td style="color:var(--gray-500);font-size:11px;text-align:center;">→</td>
-                <td><span class="badge badge-${importStatusBadge(newSt)}" style="${oldSt !== newSt ? 'font-weight:700;' : ''}">${escapeHtml(newSt)}</span></td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-      </div>
-      <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;user-select:none;">
-        <input type="checkbox" id="import-cb" style="width:16px;height:16px;" onchange="document.getElementById('do-import-btn').disabled=!this.checked">
-        I confirm I want to overwrite these ${conflicts.length} existing test case${conflicts.length > 1 ? 's' : ''}
-      </label>
-    </div>` : '';
-
-  const newHTML = newItems.length > 0 ? `
+  const newHTML = `
     <div style="padding:16px;border:1px solid var(--good);border-radius:8px;background:rgba(0,135,90,0.05);">
       <div style="font-weight:600;font-size:14px;color:var(--good);margin-bottom:12px;">
-        ✓ ${newItems.length} new test case${newItems.length > 1 ? 's' : ''} to add
+        ✓ ${rows.length} new test case${rows.length > 1 ? 's' : ''} to add
       </div>
       <div style="max-height:200px;overflow-y:auto;">
         <table class="data-table">
-          <thead><tr><th>Test ID</th><th>Test Name</th><th>Phase</th><th>Location</th><th>Status</th></tr></thead>
+          <thead><tr><th>Test Case Code</th><th>Test Name</th><th>Phase</th><th>Location</th><th>Status</th></tr></thead>
           <tbody>
-            ${newItems.map(r => `<tr>
-              <td style="font-size:12px;font-weight:600;">${escapeHtml(r.TestID)}</td>
+            ${rows.map(r => `<tr>
+              <td style="font-size:12px;font-weight:600;">${escapeHtml(r.TestCaseCode || '')}</td>
               <td style="font-size:12px;">${escapeHtml(r.TestName || '')}</td>
               <td style="font-size:12px;">${escapeHtml(r.Phase || '')}</td>
               <td style="font-size:12px;">${escapeHtml(r.Location || '')}</td>
@@ -2985,16 +2951,16 @@ async function handleImportFile(input) {
           </tbody>
         </table>
       </div>
-    </div>` : '';
+    </div>`;
 
   modal({
     title: 'Review Import',
-    sub: `${rows.length} rows — ${newItems.length} new · ${conflicts.length} will overwrite existing`,
+    sub: `${rows.length} row${rows.length !== 1 ? 's' : ''} — all new`,
     size: 'large',
-    body: warnHTML + conflictHTML + newHTML,
+    body: warnHTML + newHTML,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-submit" id="do-import-btn" ${conflicts.length > 0 ? 'disabled' : ''} onclick="executeImport()">
+      <button class="form-submit" id="do-import-btn" onclick="executeImport()">
         Import ${rows.length} test case${rows.length !== 1 ? 's' : ''}
       </button>`,
   });
@@ -3006,7 +2972,6 @@ async function executeImport() {
   if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
 
   const dbRows = _importPendingRows.map(r => ({
-    test_id:        r.TestID.trim(),
     phase:          r.Phase         || null,
     location:       r.Location      || null,
     subsystem:      r.Subsystem     || null,
@@ -3018,14 +2983,14 @@ async function executeImport() {
     test_phase:     r.TestPhase     || null,
     status:         r.Status        || 'Future',
     activity_id:    r.ActivityID    || null,
-    planned_date:   parseImportDate(r.PlannedDate),
+    completed_date: parseImportDate(r.PlannedDate),
     weight:         r.Weight ? parseFloat(r.Weight) : null,
     notes:          r.Notes         || null,
     synced_at:      new Date().toISOString(),
   }));
 
   try {
-    const { error } = await _sb.from('test_items').upsert(dbRows, { onConflict: 'test_id' });
+    const { error } = await _sb.from('test_items').insert(dbRows);
     if (error) throw error;
     await loadTestItems();
     closeModal();
@@ -4395,6 +4360,11 @@ function _mxApplyStatusChange(testId, status, reason = '', el = null) {
   // Show/hide punch action buttons when status changes to/from Fail
   const punchActionsEl = document.getElementById(`punch-actions-${domId}`);
   if (punchActionsEl) punchActionsEl.style.display = (status === 'Fail') ? 'flex' : 'none';
+
+  // Immediately refresh the regression button — it should vanish when status
+  // leaves a terminal state (Pass/Fail/Blocked) and appear when it enters one.
+  const regCellEl = document.getElementById(`regcell-${domId}`);
+  if (regCellEl) regCellEl.innerHTML = _regressionCellHTML(r);
 
   _mxRefreshCounts();
   _mxSaveStatus(status, r, reason);
@@ -8727,7 +8697,7 @@ function _amDrilldownHTML(key) {
                       <td>
                         <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
                         ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<button class="form-secondary" style="font-size:11px;padding:2px 6px;margin-top:4px;" onclick="_trAddGenericChild('${tid}')">＋ Asset</button>` : ''}
-                        ${_regressionCellHTML(r)}
+                        <span id="regcell-${domId}">${_regressionCellHTML(r)}</span>
                       </td>
                       ${_trEditMode && isAdmin ? `<td style="white-space:nowrap;"><button class="form-secondary" style="font-size:13px;padding:4px 7px;" onclick="_trCopyCase('${tid}')">⧉</button> <button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteCase('${tid}')" data-tippy-content="Delete test case">🗑</button></td>` : ''}
                     </tr>
@@ -11862,7 +11832,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
         <td>
           <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…"
             value="${escapeHtml(c.Notes || '')}" onblur="_mxSaveNotes('${ctid}',this.value)">
-          ${_regressionCellHTML(c)}
+          <span id="regcell-${domId}">${_regressionCellHTML(c)}</span>
         </td>
         ${_trEditMode && isAdmin ? `<td><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteAssetRow('${ctid}')" data-tippy-content="Remove asset from test case">🗑</button></td>` : ''}
       </tr>`;
