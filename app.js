@@ -9198,7 +9198,10 @@ function _amOpenEditModal(key) {
         ${st === 'Future Test' ? `
         <div class="form-field form-field-full">
           <label>Future Test Reason</label>
-          <textarea id="am-edit-ft-reason" class="form-input" rows="2">${escapeHtml(act.futureTestReason||'')}</textarea>
+          <select id="am-edit-ft-reason" class="form-input">
+            <option value="">— Select a reason —</option>
+            ${['Vehicle Availability','Wayside Installation','Future Phase'].map(o=>`<option value="${o}" ${act.futureTestReason===o?'selected':''}>${o}</option>`).join('')}
+          </select>
         </div>` : ''}
       </div>
       <p style="font-size:12px;color:var(--gray-500);margin-top:12px;">
@@ -9220,7 +9223,7 @@ async function _amSaveEdit(deployToField = false) {
   const newSubsystem = document.getElementById('am-edit-subsystem')?.value;
   const beforeLink = _trpCurrentActivityReportLink(act);
   let afterLink = _trpReportLinkFromModal();
-  const newFTReason  = document.getElementById('am-edit-ft-reason')?.value.trim() || null;
+  const newFTReason  = document.getElementById('am-edit-ft-reason')?.value || null;
 
   if (!newName) { toast('Activity name is required', 'error'); return; }
 
@@ -9251,8 +9254,8 @@ async function _amSaveEdit(deployToField = false) {
     });
     _trpApplyReportLinkToItems(act.items, afterLink);
 
-    // Update future_test_reason if applicable
-    if (newFTReason !== null) {
+    // Update future_test_reason if activity is Future Test (dropdown is only rendered in that case)
+    if (document.getElementById('am-edit-ft-reason')) {
       const existing = _activityRecords.find(ar =>
         ar.phase === act.phase && ar.location === act.location &&
         ar.subsystem === act.subsystem && ar.activity_name === act.activity
@@ -9260,7 +9263,14 @@ async function _amSaveEdit(deployToField = false) {
       if (existing) {
         await _dbUpdate('activity_records', { future_test_reason: newFTReason, updated_at: new Date().toISOString() }, { id: existing.id });
         existing.future_test_reason = newFTReason;
+      } else {
+        const inserted = await _dbInsert('activity_records', [{
+          phase: act.phase, location: act.location, subsystem: act.subsystem,
+          activity_name: act.activity, future_test_reason: newFTReason
+        }]);
+        _activityRecords.push(...inserted);
       }
+      act.futureTestReason = newFTReason || '';
     }
 
     if (deployToField) {
@@ -9506,7 +9516,12 @@ function _amOpenFutureTestModal() {
       </div>
       <div class="form-field">
         <label>Future Test Reason <span style="color:var(--bad);">*</span></label>
-        <textarea id="am-ft-reason" class="form-input" rows="3" placeholder="e.g. DCS SAT Testing - Future Test - Pending Wayside Installation"></textarea>
+        <select id="am-ft-reason" class="form-input">
+          <option value="">— Select a reason —</option>
+          <option value="Vehicle Availability">Vehicle Availability</option>
+          <option value="Wayside Installation">Wayside Installation</option>
+          <option value="Future Phase">Future Phase</option>
+        </select>
       </div>
     `,
     footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" style="background:#5b21b6;" onclick="_amConfirmFutureTest()">Confirm & Update All</button>`
