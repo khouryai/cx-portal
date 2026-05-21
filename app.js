@@ -9115,22 +9115,22 @@ async function _trSaveEdit(key) {
   const btn = document.querySelector('.tr-page-header .admin-action-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
-    const rowPatch = r => ({
-      test_id: r.TestID,
+    // Base fields shared by inserts and updates (no test_id — let Supabase generate it for new rows)
+    const rowFields = r => ({
       test_case_code: r.TestCaseCode || null,
-      test_name: r.TestName || null,
-      status: r.Status || 'Not Started',
-      notes: r.Notes || null,
-      activity: r.Activity || null,
+      test_name:      r.TestName     || null,
+      status:         r.Status       || 'Not Started',
+      notes:          r.Notes        || null,
+      activity:       r.Activity     || null,
       test_procedure: r.TestProcedure || null,
       test_section:   r.TestSection   || null,
-      phase: r.Phase || null,
-      location: r.Location || null,
-      subsystem: r.Subsystem || null,
-      test_report: r.TestReport || null,
+      phase:          r.Phase        || null,
+      location:       r.Location     || null,
+      subsystem:      r.Subsystem    || null,
+      test_report:    r.TestReport   || null,
     });
-    const inserts = _trDraftItems.filter(r => r._isNew).map(r => _dbInsert('test_items', [rowPatch(r)]));
-    const updates = _trDraftItems.filter(r => !r._isNew && r._dirty).map(r => _dbUpdate('test_items', rowPatch(r), { test_id: r.TestID }));
+    const inserts = _trDraftItems.filter(r => r._isNew).map(r => _dbInsert('test_items', [rowFields(r)]));
+    const updates = _trDraftItems.filter(r => !r._isNew && r._dirty).map(r => _dbUpdate('test_items', rowFields(r), { test_id: r.TestID }));
     await Promise.all([...inserts, ...updates]);
     await loadTestItems();
     if (currentRoleUser.subsystem) TI = TI.filter(t => (t.Subsystem||'').toLowerCase() === currentRoleUser.subsystem.toLowerCase());
