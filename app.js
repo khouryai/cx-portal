@@ -528,10 +528,12 @@ function refreshDashboard() {
   const tiFuture   = ti.filter(r => r.Status === 'Future Test').length;
   const tiTotal    = ti.length;
 
-  const complete   = tiPass + tiNa;
-  const overallPct = tiTotal > 0 ? Math.round((complete / tiTotal) * 100) : 0;
+  // Weighted percentages — honours test case weights set in the P6 Weights tab
+  const ws         = _wgtStat(ti);
+  const complete   = tiPass + tiNa; // raw count for meta text
+  const overallPct = ws.totalW > 0   ? Math.round((ws.completeW / ws.totalW) * 100) : 0;
   const tested     = tiPass + tiFail + tiBlocked;
-  const passRate   = tested > 0 ? Math.round((tiPass / tested) * 100) : 0;
+  const passRate   = ws.testedW > 0  ? Math.round((ws.passW    / ws.testedW) * 100) : 0;
 
   const actClosed  = acts.filter(a => _amComputeStatus(a) === 'Closed').length;
   const actOpen    = acts.filter(a => _amComputeStatus(a) === 'Open').length;
@@ -540,12 +542,15 @@ function refreshDashboard() {
   const punchHigh    = punch.filter(p => p.priority === 'high' && p.status !== 'closed').length;
   const punchOverdue = punch.filter(p => p.due_date && new Date(p.due_date) < new Date() && p.status !== 'closed').length;
 
+  const _hasCustomWeights = ti.some(r => (parseFloat(r.Weight) || 1) !== 1);
+  const _wNote = _hasCustomWeights ? ` <span style="font-size:10px;font-weight:600;color:var(--gray-400);letter-spacing:.03em;">WEIGHTED</span>` : '';
+
   document.getElementById('kpi-progress').textContent = overallPct + '%';
-  document.getElementById('kpi-progress-meta').innerHTML = `<b>${complete.toLocaleString()}</b> of ${tiTotal.toLocaleString()} test cases passed or N/A`;
+  document.getElementById('kpi-progress-meta').innerHTML = `<b>${complete.toLocaleString()}</b> of ${tiTotal.toLocaleString()} test cases passed or N/A${_wNote}`;
   setTimeout(() => { document.getElementById('kpi-progress-bar').style.width = overallPct + '%'; }, 100);
 
   document.getElementById('kpi-passrate').textContent = passRate + '%';
-  document.getElementById('kpi-passrate-meta').innerHTML = `<b>${tiPass}</b> passed / <b>${tiFail + tiBlocked}</b> failed or blocked`;
+  document.getElementById('kpi-passrate-meta').innerHTML = `<b>${tiPass}</b> passed / <b>${tiFail + tiBlocked}</b> failed or blocked${_wNote}`;
 
   document.getElementById('kpi-activities').textContent = acts.length;
   document.getElementById('kpi-activities-meta').innerHTML = `<b class="good-text">${actClosed}</b> closed · <b>${actOpen}</b> open`;
@@ -627,13 +632,15 @@ function renderPhaseGrid() {
 function renderLIStatusChart() {
   const ctx = document.getElementById('chart-li-status');
   const ti = _latestTI();
-  const passed    = ti.filter(r => ['Pass','Passed','Complete'].includes(r.Status)).length;
-  const failed    = ti.filter(r => ['Fail','Failed'].includes(r.Status)).length;
-  const blocked   = ti.filter(r => r.Status === 'Blocked').length;
-  const inprog    = ti.filter(r => r.Status === 'In Progress').length;
-  const future    = ti.filter(r => r.Status === 'Future Test').length;
-  const notStart  = ti.filter(r => !r.Status || ['Not Started','Future'].includes(r.Status)).length;
-  const na        = ti.filter(r => r.Status === 'Not Applicable').length;
+  // Use weighted values so the doughnut reflects the same basis as the KPI %
+  const ws       = _wgtStat(ti);
+  const passed   = ws.passW;
+  const failed   = ws.failW;
+  const blocked  = ws.blockedW;
+  const inprog   = ws.inprogW;
+  const future   = ws.futureW;
+  const notStart = ws.notStartW;
+  const na       = ws.naW;
   if (_dashCharts.liStatus) _dashCharts.liStatus.destroy();
   _dashCharts.liStatus = new Chart(ctx, {
     type: 'doughnut',
@@ -664,10 +671,11 @@ function renderSubsysRateChart() {
   const groups = {};
   ti.forEach(r => {
     const sub = r.Subsystem; if (!sub) return;
+    const wgt = parseFloat(r.Weight) || 1;
     if (!groups[sub]) groups[sub] = { passed: 0, failed: 0, total: 0 };
-    if (['Pass','Passed','Complete'].includes(r.Status)) groups[sub].passed++;
-    if (['Fail','Failed'].includes(r.Status)) groups[sub].failed++;
-    groups[sub].total++;
+    if (['Pass','Passed','Complete'].includes(r.Status)) groups[sub].passed += wgt;
+    if (['Fail','Failed'].includes(r.Status)) groups[sub].failed += wgt;
+    groups[sub].total += wgt;
   });
   const sorted = Object.entries(groups).filter(([_,v])=>v.total>=1).sort((a,b)=>b[1].total-a[1].total).slice(0,12);
   if (_dashCharts.subsys) _dashCharts.subsys.destroy();
@@ -4447,10 +4455,19 @@ function _mxRefreshCounts() {
   set('mx-stat-notstarted', filtered.filter(r => isNotStarted(r.Status)).length);
   set('mx-stat-futuretest', filtered.filter(r => r.Status === 'Future Test').length);
 
-  // Update each per-activity tally
+  // Update each per-activity tally (weighted)
   (window._mxGroups || []).forEach((g, idx) => {
-    const done = g.items.filter(r => isPass(r.Status)).length;
-    set(`mx-grp-count-${idx}`, `${done} / ${g.items.length} passed`);
+    const w      = r => parseFloat(r.Weight) || 1;
+    const doneW  = g.items.filter(r => isPass(r.Status)).reduce((s,r)=>s+w(r), 0);
+    const totalW = g.items.reduce((s,r)=>s+w(r), 0);
+    const pct    = totalW > 0 ? Math.round((doneW / totalW) * 100) : 0;
+    const anyWt  = g.items.some(r => (parseFloat(r.Weight)||1) !== 1);
+    if (anyWt) {
+      set(`mx-grp-count-${idx}`, `${pct}% complete`);
+    } else {
+      const doneN = g.items.filter(r => isPass(r.Status)).length;
+      set(`mx-grp-count-${idx}`, `${doneN} / ${g.items.length} passed`);
+    }
   });
 }
 
@@ -7662,8 +7679,7 @@ function _trpLinkedActivitiesHTML(row, canManage) {
       <div class="trp-linked-list">
         ${row.activities.map(act => {
           const st = _amComputeStatus(act);
-          const { done, total } = _amComputeCompletion(act);
-          const pct = total ? Math.round((done / total) * 100) : 0;
+          const { done, total, pct } = _amComputeCompletion(act);
           return `
             <div class="trp-linked-item">
               <div class="trp-linked-main">
@@ -7916,13 +7932,13 @@ function openLinkActivityModal(uid) {
 
   const listHTML = available.length ? available.map(a => {
     const st = _amComputeStatus(a);
-    const { done, total } = _amComputeCompletion(a);
+    const { done, total, pct } = _amComputeCompletion(a);
     return `
       <label class="trp-link-act-row">
         <input type="checkbox" name="trp-link-act" value="${escapeHtml(a.key)}" style="width:15px;height:15px;flex-shrink:0;">
         <div class="trp-link-act-info">
           <div class="trp-link-act-name">${escapeHtml(a.activity)}</div>
-          <div class="tr-report-meta">${escapeHtml(a.phase)} · ${escapeHtml(a.location)} · ${escapeHtml(a.subsystem)} · ${done}/${total} complete</div>
+          <div class="tr-report-meta">${escapeHtml(a.phase)} · ${escapeHtml(a.location)} · ${escapeHtml(a.subsystem)} · ${done}/${total} complete (${pct}%)</div>
         </div>
         ${_amStatusBadge(st)}
       </label>
@@ -8485,8 +8501,7 @@ function _testRegisterHTML() {
     filtered.sort((a, b) => _sd * ((ord[_amComputeStatus(a)]??3) - (ord[_amComputeStatus(b)]??3)));
   } else if (_amSortCol === 'completion') {
     filtered.sort((a, b) => {
-      const ap = _amComputeCompletion(a), bp = _amComputeCompletion(b);
-      return _sd * ((ap.total ? ap.done/ap.total : 0) - (bp.total ? bp.done/bp.total : 0));
+      return _sd * (_amComputeCompletion(a).pct - _amComputeCompletion(b).pct);
     });
   }
 
@@ -8500,7 +8515,8 @@ function _testRegisterHTML() {
   const openCount = filtered.filter(a => _amComputeStatus(a) === 'Open').length;
   const futureCount = filtered.filter(a => _amComputeStatus(a) === 'Future Test').length;
   const _ltAll = _latestTI();
-  const overallPct = _ltAll.length ? Math.round((_ltAll.filter(r => ['Pass','Passed','Complete','Not Applicable'].includes(r.Status)).length / _ltAll.length) * 100) : 0;
+  const _ltWs  = _wgtStat(_ltAll);
+  const overallPct = _ltWs.totalW > 0 ? Math.round((_ltWs.completeW / _ltWs.totalW) * 100) : 0;
 
   // column count: [cb](admin) | Actions | Activity | Subsystem | Location | Phase | Status | Completion
   const colCount = isAdmin ? 8 : 7;
@@ -8517,8 +8533,7 @@ function _testRegisterHTML() {
 
   const actRows = filtered.map(a => {
     const st = _amComputeStatus(a);
-    const { done, total } = _amComputeCompletion(a);
-    const pct = total > 0 ? Math.round((done/total)*100) : 0;
+    const { done, total, pct } = _amComputeCompletion(a);
     const isSel = _amSelected.has(a.key);
     const safeKey = escapeHtml(a.key);
 
@@ -8693,9 +8708,15 @@ function _amComputeStatus(act) {
 function _amComputeCompletion(act) {
   // Include Future Test in the denominator so activities show e.g. "0/4" not "0/0"
   const eligible = act.items.filter(r => !r.IsParent);
-  const done = eligible.filter(r => r.Status === 'Pass' || r.Status === 'Not Applicable' ||
-    r.Status === 'Complete' || r.Status === 'Passed').length;
-  return { done, total: eligible.length };
+  const doneStatuses = new Set(['Pass','Not Applicable','Complete','Passed']);
+  const done  = eligible.filter(r => doneStatuses.has(r.Status)).length;
+  const total = eligible.length;
+  // Weighted completion — used for progress bar % and KPI projections
+  const w      = r => parseFloat(r.Weight) || 1;
+  const doneW  = eligible.filter(r => doneStatuses.has(r.Status)).reduce((s,r)=>s+w(r), 0);
+  const totalW = eligible.reduce((s,r)=>s+w(r), 0);
+  const pct    = totalW > 0 ? Math.round((doneW / totalW) * 100) : 0;
+  return { done, total, doneW, totalW, pct };
 }
 
 // Weighted completion using test_items.weight (Layer 2) — used for P6 progress display
@@ -8831,8 +8852,7 @@ function _adminActivityManagerHTML() {
             <tbody>
               ${filtered.length ? filtered.map(a => {
                 const st = _amComputeStatus(a);
-                const { done, total } = _amComputeCompletion(a);
-                const pct = total > 0 ? Math.round((done/total)*100) : 0;
+                const { done, total, pct } = _amComputeCompletion(a);
                 const isSel = _amSelected.has(a.key);
                 const procFull = a.testProcedure || '';
                 const procShort = procFull.length > 40 ? procFull.slice(0,40)+'…' : (procFull || '—');
@@ -8878,8 +8898,7 @@ function _amDrilldownHTML(key) {
   if (!act) return `<div class="docs-empty"><h3>Activity not found</h3></div>`;
   const isAdmin = currentRoleUser?.role === 'admin';
   const st = _amComputeStatus(act);
-  const { done, total } = _amComputeCompletion(act);
-  const pct = total > 0 ? Math.round((done/total)*100) : 0;
+  const { done, total, pct } = _amComputeCompletion(act); // pct is weight-aware
   const statuses = ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'];
   const legacyMap = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
   // Only the latest attempt renders as a row; prior attempts appear in the
@@ -13143,6 +13162,27 @@ function _isLatestAttempt(r) { return !r || r.IsLatestAttempt !== false; }
 // progress %, dashboards, matrix, reports. Prior attempts stay in TI for
 // the regression history panel but never inflate metrics.
 function _latestTI() { return TI.filter(_isLatestAttempt); }
+
+// Compute weighted status totals for an array of test items.
+// All percentage KPIs must use this instead of raw .length counts so that
+// weights set in the P6 Weights tab flow through to the dashboard projections.
+function _wgtStat(items) {
+  const w = r => parseFloat(r.Weight) || 1;
+  const sum = (arr) => arr.reduce((s, r) => s + w(r), 0);
+  const totalW    = sum(items);
+  const passW     = sum(items.filter(r => ['Pass','Passed','Complete'].includes(r.Status)));
+  const naW       = sum(items.filter(r => r.Status === 'Not Applicable'));
+  const failW     = sum(items.filter(r => ['Fail','Failed'].includes(r.Status)));
+  const blockedW  = sum(items.filter(r => r.Status === 'Blocked'));
+  const inprogW   = sum(items.filter(r => r.Status === 'In Progress'));
+  const futureW   = sum(items.filter(r => r.Status === 'Future Test'));
+  const notStartW = sum(items.filter(r => !r.Status || ['Not Started','Future'].includes(r.Status)));
+  return {
+    totalW, passW, naW, failW, blockedW, inprogW, futureW, notStartW,
+    completeW: passW + naW,
+    testedW:   passW + failW + blockedW,
+  };
+}
 
 // All attempts of one logical test case (oldest → newest)
 function _attemptsInGroup(groupId) {
