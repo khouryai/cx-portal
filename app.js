@@ -8158,7 +8158,8 @@ function _dayFmt(d, fmt = 'MMM D, YYYY') {
 
 // ─── Fuse.js search instance for Test Register ───────────────────────────
 let _trFuse = null;
-let _trDrillSearch = '';  // search within drilldown view
+let _trDrillSearch = '';        // search within drilldown view
+let _trDrillStatusFilter = '';  // status filter within drilldown view
 
 function _trBuildFuse(activities) {
   if (typeof Fuse === 'undefined') return;
@@ -8288,6 +8289,11 @@ function _trInitModernUI() { _initPageLibraries(); }
 let _trDrillFuse = null;
 function _trDrillSearchInput(val) {
   _trDrillSearch = val;
+  _reRenderTR();
+}
+
+function _trSetDrillStatusFilter(val) {
+  _trDrillStatusFilter = val;
   _reRenderTR();
 }
 
@@ -8792,11 +8798,20 @@ function _amDrilldownHTML(key) {
   const viewItems = _trEditMode && _trDraftItems
     ? _trDraftItems
     : act.items.filter(r => r.IsLatestAttempt !== false);
+
+  // Status filter (drilldown-level)
+  const drillFiltered = _trDrillStatusFilter
+    ? viewItems.filter(r => (legacyMap[r.Status] || r.Status || 'Not Started') === _trDrillStatusFilter)
+    : viewItems;
+
+  // Unique statuses present in this activity (for dropdown options)
+  const drillStatusOptions = [...new Set(viewItems.map(r => legacyMap[r.Status] || r.Status || 'Not Started'))].sort();
+
   const selectedCount = _trSelected.size;
 
   // Sort test cases within sections (default: Test Case Code ASC)
   const _csd = _trCaseSortDir === 'asc' ? 1 : -1;
-  const sortedViewItems = viewItems.slice().sort((a, b) => {
+  const sortedViewItems = drillFiltered.slice().sort((a, b) => {
     if (_trCaseSortCol === 'code') {
       return _csd * (a.TestCaseCode||a.TestID||'').localeCompare(b.TestCaseCode||b.TestID||'', undefined, {numeric:true});
     }
@@ -8855,7 +8870,17 @@ function _amDrilldownHTML(key) {
         </div>
       </div>
 
+      <div class="am-filter-bar" style="padding:6px 0 2px;gap:8px;">
+        <select class="filter-select" onchange="_trSetDrillStatusFilter(this.value)" title="Filter by status">
+          <option value="">All Statuses</option>
+          ${drillStatusOptions.map(s => `<option value="${escapeHtml(s)}" ${_trDrillStatusFilter===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+        </select>
+        ${_trDrillStatusFilter ? `<button class="filter-clear" onclick="_trSetDrillStatusFilter('')">Reset</button>` : ''}
+        <span style="font-size:12px;color:var(--gray-500);margin-left:auto;">${drillFiltered.length} of ${viewItems.length} test case${viewItems.length===1?'':'s'}</span>
+      </div>
+
       ${Object.entries(tpMap).map(([tp, tpItems]) => {
+        if (!tpItems.length && _trDrillStatusFilter) return ''; // hide empty sections when filtering
         // Decode composite key "Section~~Procedure" or plain procedure
         const tpHasSec  = tp.indexOf('~~') >= 0;
         const tpSecName = tpHasSec ? tp.slice(0, tp.indexOf('~~')) : '';
@@ -9391,6 +9416,7 @@ function _amCloseDrilldown() {
   _trEmptySections = [];
   _trDragId = null;
   _trExpandedParents.clear(); // reset collapsed state when leaving drilldown
+  _trDrillStatusFilter = '';  // clear status filter when leaving drilldown
   _reRenderTR();
 }
 
