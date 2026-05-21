@@ -669,9 +669,12 @@ function renderSubsysRateChart() {
   const ctx = document.getElementById('chart-subsys-rate');
   const ti  = _latestTI();
   const groups = {};
+  const _subActMap = _buildActWeightMap();
   ti.forEach(r => {
     const sub = r.Subsystem; if (!sub) return;
-    const wgt = parseFloat(r.Weight) || 1;
+    const tcW  = parseFloat(r.Weight) || 1;
+    const aKey = `${r.Phase||''}||${r.Location||''}||${r.Subsystem||''}||${r.Activity||''}`;
+    const wgt  = tcW * (_subActMap.get(aKey) ?? 1);
     if (!groups[sub]) groups[sub] = { passed: 0, failed: 0, total: 0 };
     if (['Pass','Passed','Complete'].includes(r.Status)) groups[sub].passed += wgt;
     if (['Fail','Failed'].includes(r.Status)) groups[sub].failed += wgt;
@@ -11801,6 +11804,7 @@ async function _p6SaveActivityWeight(actKey, phase, location, subsystem, activit
       await _dbInsert('activity_records', [{ phase, location, subsystem, activity_name: activity, activity_weight: wVal, planned_date: pDate || null }]);
     }
     await loadActivityRecords();
+    _tryRefreshDashboard();
     toast('Saved', 'success');
   } catch(e) { toast('Save failed: ' + e.message, 'error'); }
 }
@@ -11828,6 +11832,7 @@ async function _p6SaveAllWeights() {
     } catch(e) { console.warn('[saveAllWeights]', e.message); }
   }
   await loadActivityRecords();
+  _tryRefreshDashboard();
   toast(`Saved ${saved} activities`, 'success');
 }
 
@@ -11937,6 +11942,7 @@ async function _p6SaveTCWeights(actKey) {
     } catch(e) { console.warn('[tcWeight]', e.message); }
   }
   await loadTestItems();
+  _tryRefreshDashboard();
   closeModal();
   toast(`Saved ${saved} test case weights`, 'success');
 }
@@ -13252,11 +13258,29 @@ function _isLatestAttempt(r) { return !r || r.IsLatestAttempt !== false; }
 // the regression history panel but never inflate metrics.
 function _latestTI() { return TI.filter(_isLatestAttempt); }
 
+// Build a Map from activity key → activity_weight (Layer 1) from _activityRecords.
+// Key format: "phase||location||subsystem||activity_name"
+function _buildActWeightMap() {
+  const map = new Map();
+  (_activityRecords || []).forEach(r => {
+    const key = `${r.phase||''}||${r.location||''}||${r.subsystem||''}||${r.activity_name||''}`;
+    map.set(key, parseFloat(r.activity_weight) || 1);
+  });
+  return map;
+}
+
 // Compute weighted status totals for an array of test items.
-// All percentage KPIs must use this instead of raw .length counts so that
-// weights set in the P6 Weights tab flow through to the dashboard projections.
+// Effective weight = Layer1 (activity_weight) × Layer2 (test_items.weight).
+// All percentage KPIs must use this so weights set in the P6 Weights tab
+// (both activity-level and test-case-level) flow through to dashboard projections.
 function _wgtStat(items) {
-  const w = r => parseFloat(r.Weight) || 1;
+  const actMap = _buildActWeightMap();
+  const w = r => {
+    const tcW  = parseFloat(r.Weight) || 1;
+    const aKey = `${r.Phase||''}||${r.Location||''}||${r.Subsystem||''}||${r.Activity||''}`;
+    const actW = actMap.get(aKey) ?? 1;
+    return tcW * actW;
+  };
   const sum = (arr) => arr.reduce((s, r) => s + w(r), 0);
   const totalW    = sum(items);
   const passW     = sum(items.filter(r => ['Pass','Passed','Complete'].includes(r.Status)));
