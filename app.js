@@ -1959,6 +1959,16 @@ function initAuth() {
       console.log('[auth] token refreshed silently — no profile reload needed');
       return;
     }
+    // User arrived via a "Reset Password" email link — show the reset form.
+    // This takes priority over any stored session restore.
+    if (event === 'PASSWORD_RECOVERY') {
+      console.log('[auth] PASSWORD_RECOVERY — showing reset form');
+      currentRoleUser = null;
+      currentProfile  = null;
+      document.getElementById('login-overlay')?.classList.remove('hidden');
+      _showChangePasswordPanel(null); // null = recovery mode (not first-login)
+      return;
+    }
     if (event === 'SIGNED_IN' && session?.user) {
       if (currentRoleUser) {
         // Already authenticated — this is the supabase-js GoTrueClient finishing its
@@ -2142,15 +2152,56 @@ function showAuthError(msg) {
 let _pendingProfile = null; // holds profile row while awaiting password change
 
 function _showChangePasswordPanel(profileData) {
+  // profileData = profile row  →  first-login mode (must_change_password)
+  // profileData = null          →  password recovery mode (reset link from email)
   _pendingProfile = profileData;
-  // Swap login card → change-password card (cinematic background stays)
-  const loginCard = document.querySelector('#login-overlay .login-card:not(#cp-card)');
-  const cpCard    = document.getElementById('cp-card');
+
+  const isRecovery = profileData === null;
+  const loginCard  = document.querySelector('#login-overlay .login-card:not(#cp-card)');
+  const cpCard     = document.getElementById('cp-card');
+
+  // Swap cards — keep cinematic background visible
   if (loginCard) loginCard.style.display = 'none';
   if (cpCard)    cpCard.style.display    = '';
-  const btn = document.getElementById('auth-btn');
-  if (btn) { btn.textContent = 'Sign In'; btn.disabled = false; }
+
+  // Update copy to match the mode
+  const titleEl = document.getElementById('cp-title');
+  const subEl   = document.getElementById('cp-sub');
+  const btnEl   = document.getElementById('cp-btn');
+  if (isRecovery) {
+    if (titleEl) titleEl.textContent = 'Reset Your Password';
+    if (subEl)   subEl.innerHTML    = 'Enter and confirm your new password below.';
+    if (btnEl)   btnEl.textContent  = 'Save New Password';
+  } else {
+    if (titleEl) titleEl.textContent = 'Set Your Password';
+    if (subEl)   subEl.innerHTML    = 'Your account was created with a temporary password.<br>Choose a new password to continue.';
+    if (btnEl)   btnEl.textContent  = 'Set Password & Continue';
+  }
+
+  // Reset any previous error/state
+  const errEl = document.getElementById('cp-error');
+  if (errEl) errEl.textContent = '';
+  if (btnEl) btnEl.disabled = false;
+  const authBtn = document.getElementById('auth-btn');
+  if (authBtn) { authBtn.textContent = 'Sign In'; authBtn.disabled = false; }
+
   setTimeout(() => document.getElementById('cp-new-password')?.focus(), 80);
+}
+
+function _resetCpCard() {
+  // Clear inputs and restore card to initial hidden state
+  const cpCard    = document.getElementById('cp-card');
+  const loginCard = document.querySelector('#login-overlay .login-card:not(#cp-card)');
+  if (cpCard)    cpCard.style.display    = 'none';
+  if (loginCard) loginCard.style.display = '';
+  const pw1 = document.getElementById('cp-new-password');
+  const pw2 = document.getElementById('cp-confirm-password');
+  const err = document.getElementById('cp-error');
+  const btn = document.getElementById('cp-btn');
+  if (pw1) pw1.value = '';
+  if (pw2) pw2.value = '';
+  if (err) err.textContent = '';
+  if (btn) { btn.textContent = 'Set Password & Continue'; btn.disabled = false; }
 }
 
 async function submitChangePassword() {
@@ -2160,51 +2211,89 @@ async function submitChangePassword() {
   const btn = document.getElementById('cp-btn');
   if (err) err.textContent = '';
 
-  if (!pw1)        { if (err) err.textContent = 'Enter a new password.'; return; }
+  if (!pw1)           { if (err) err.textContent = 'Enter a new password.'; return; }
   if (pw1.length < 8) { if (err) err.textContent = 'Password must be at least 8 characters.'; return; }
-  if (pw1 !== pw2) { if (err) err.textContent = 'Passwords do not match.'; return; }
+  if (pw1 !== pw2)    { if (err) err.textContent = 'Passwords do not match.'; return; }
 
   if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
 
   const { error: updErr } = await _sb.auth.updateUser({ password: pw1 });
   if (updErr) {
     if (err) err.textContent = updErr.message;
-    if (btn) { btn.textContent = 'Set Password & Continue'; btn.disabled = false; }
+    if (btn) { btn.textContent = _pendingProfile ? 'Set Password & Continue' : 'Save New Password'; btn.disabled = false; }
     return;
   }
 
-  // Clear the flag in profiles
-  await _sb.from('profiles').update({ must_change_password: false }).eq('id', _pendingProfile.id);
+  // ── Branch A: first-login (temp password set by admin) ───────────────────
+  if (_pendingProfile) {
+    await _sb.from('profiles').update({ must_change_password: false }).eq('id', _pendingProfile.id);
+    const data = { ..._pendingProfile, must_change_password: false };
+    _pendingProfile = null;
 
-  // Build session objects from pending profile
-  const data = { ..._pendingProfile, must_change_password: false };
-  _pendingProfile = null;
-
-  currentProfile  = data;
-  currentRoleUser = {
-    name:      data.full_name,
-    role:      data.role,
-    title:     { admin:'Administrator', field_engineer:'Field Engineer', readonly:'Read Only', client:'Client' }[data.role] || data.role,
-    subsystem: data.subsystem || null,
-  };
-  if (currentRoleUser.subsystem) {
-    TI = TI.filter(t => (t.Subsystem || '').toLowerCase() === currentRoleUser.subsystem.toLowerCase());
+    currentProfile  = data;
+    currentRoleUser = {
+      name:      data.full_name,
+      role:      data.role,
+      title:     { admin:'Administrator', field_engineer:'Field Engineer', readonly:'Read Only', client:'Client' }[data.role] || data.role,
+      subsystem: data.subsystem || null,
+    };
+    if (currentRoleUser.subsystem) {
+      TI = TI.filter(t => (t.Subsystem || '').toLowerCase() === currentRoleUser.subsystem.toLowerCase());
+    }
+    _resetCpCard();
+    document.getElementById('login-overlay').classList.add('hidden');
+    toast('Password updated — welcome to the portal!', 'success');
+    onLoggedIn();
+    return;
   }
 
-  // Reset change-password card for next session
-  if (btn) { btn.textContent = 'Set Password & Continue'; btn.disabled = false; }
-  document.getElementById('cp-new-password').value     = '';
-  document.getElementById('cp-confirm-password').value = '';
+  // ── Branch B: password recovery (reset link from email) ──────────────────
+  // The user is signed in via the recovery token. Fetch their profile directly
+  // (bypassing _loadCurrentProfile's must_change_password intercept) and load the app.
+  try {
+    const { data: { session } } = await _sb.auth.getSession();
+    if (!session?.user) throw new Error('No session after password update.');
 
-  // Restore login card visibility for any future sign-out
-  const loginCard = document.querySelector('#login-overlay .login-card:not(#cp-card)');
-  const cpCard    = document.getElementById('cp-card');
-  if (cpCard)    cpCard.style.display    = 'none';
-  if (loginCard) loginCard.style.display = '';
+    const ctrl  = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    const res   = await fetch(
+      `${SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(session.user.id)}&select=*`,
+      { signal: ctrl.signal, headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${session.access_token}`, Accept: 'application/json' } }
+    );
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`Profile fetch failed (${res.status})`);
+    const rows = await res.json();
+    const data = rows?.[0];
+    if (!data) throw new Error('Profile not found.');
 
-  document.getElementById('login-overlay').classList.add('hidden');
-  toast('Password updated — welcome to the portal!', 'success');
-  onLoggedIn();
+    // If the account also had must_change_password set, clear it while we're here
+    if (data.must_change_password) {
+      await _sb.from('profiles').update({ must_change_password: false }).eq('id', data.id);
+      data.must_change_password = false;
+    }
+    if (!data.is_active) throw new Error('Account is deactivated — contact your admin.');
+
+    currentProfile  = data;
+    currentRoleUser = {
+      name:      data.full_name,
+      role:      data.role,
+      title:     { admin:'Administrator', field_engineer:'Field Engineer', readonly:'Read Only', client:'Client' }[data.role] || data.role,
+      subsystem: data.subsystem || null,
+    };
+    if (currentRoleUser.subsystem) {
+      TI = TI.filter(t => (t.Subsystem || '').toLowerCase() === currentRoleUser.subsystem.toLowerCase());
+    }
+    _resetCpCard();
+    document.getElementById('login-overlay').classList.add('hidden');
+    toast('Password reset — welcome back!', 'success');
+    onLoggedIn();
+  } catch (e) {
+    console.error('[submitChangePassword] recovery profile load failed:', e);
+    // Fallback: reset card and ask them to sign in with the new password
+    _resetCpCard();
+    document.getElementById('login-overlay')?.classList.remove('hidden');
+    showAuthError('Password saved. Please sign in with your new password.');
+  }
 }
 
 // ── DB connectivity indicator on sign-in page ─────────────────────────────
