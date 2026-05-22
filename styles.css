@@ -472,6 +472,43 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .kpi-mini { padding: 16px 20px; }
 .kpi-mini .kpi-value { font-size: 28px; }
 
+/* ── Admin > Weights tab strip + weight inputs ────────────────── */
+.aw-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--gray-200);
+  margin-top: 4px;
+}
+.aw-tab {
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-500);
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.aw-tab:hover { color: var(--black); }
+.aw-tab.is-active {
+  color: var(--hitachi-red);
+  border-bottom-color: var(--hitachi-red);
+}
+.aw-weight-input {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.aw-weight-input.aw-weight-custom {
+  background: #fff5f5;
+  border-color: var(--hitachi-red);
+  color: var(--hitachi-red);
+}
+.aw-weight-input:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 /* ── Clickable KPI cards (Test Case view) ─────────────────────── */
 .kpi-clickable {
   cursor: pointer;

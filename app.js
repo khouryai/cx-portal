@@ -299,7 +299,7 @@ Chart.defaults.borderColor = '#ebebeb';
 // ==========================================
 // ROUTING
 // ==========================================
-const _adminPages = new Set(['admin-templates','admin-locations','admin-fieldconfig','admin-directory','audit','admin-p6','admin-assets','admin-planning','admin-config']);
+const _adminPages = new Set(['admin-templates','admin-weights','admin-locations','admin-fieldconfig','admin-directory','audit','admin-p6','admin-assets','admin-planning','admin-config']);
 let _adminModeOn = false;
 
 function showPage(name) {
@@ -318,6 +318,7 @@ function showPage(name) {
   if (name === 'tcv')              renderTCV();
   if (name === 'test-reporting')   renderTestReporting();
   if (name === 'admin-templates')  renderAdminTemplates();
+  if (name === 'admin-weights')    renderAdminWeights();
   if (name === 'admin-locations')  renderAdminLocations();
   if (name === 'admin-fieldconfig') renderAdminFieldConfig();
   if (name === 'admin-directory')  renderAdminDirectory();
@@ -543,7 +544,7 @@ function refreshDashboard() {
   const punchHigh    = punch.filter(p => p.priority === 'high' && p.status !== 'closed').length;
   const punchOverdue = punch.filter(p => p.due_date && new Date(p.due_date) < new Date() && p.status !== 'closed').length;
 
-  const _hasCustomWeights = ti.some(r => (parseFloat(r.Weight) || 1) !== 1);
+  const _hasCustomWeights = _anyCustomWeights(ti);
   const _wNote = _hasCustomWeights ? ` <span style="font-size:10px;font-weight:600;color:var(--gray-400);letter-spacing:.03em;">WEIGHTED</span>` : '';
 
   document.getElementById('kpi-progress').textContent = overallPct + '%';
@@ -674,13 +675,14 @@ function renderLIStatusChart() {
 function renderSubsysRateChart() {
   const ctx = document.getElementById('chart-subsys-rate');
   const ti  = _latestTI();
-  const groups = {};
-  const _subActMap = _buildActWeightMap();
+  const groups  = {};
+  const awMap   = _buildActivityWeightLookup();
+  const tcwMap  = _buildTestCaseWeightLookup();
   ti.forEach(r => {
     const sub = r.Subsystem; if (!sub) return;
-    const tcW  = parseFloat(r.Weight) || 1;
-    const aKey = `${r.Phase||''}||${r.Location||''}||${r.Subsystem||''}||${r.Activity||''}`;
-    const wgt  = tcW * (_subActMap.get(aKey) ?? 1);
+    const tcW  = _tcWeightFor(r, tcwMap);
+    const actW = _actWeightFor(r, awMap);
+    const wgt  = tcW * actW;
     if (!groups[sub]) groups[sub] = { passed: 0, failed: 0, total: 0 };
     if (['Pass','Passed','Complete'].includes(r.Status)) groups[sub].passed += wgt;
     if (['Fail','Failed'].includes(r.Status)) groups[sub].failed += wgt;
@@ -1443,7 +1445,7 @@ function exportPL() {
 // INIT
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
-  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadP6Data(), loadAssetData(), loadRMAs()]);
+  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs()]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -2507,6 +2509,7 @@ function onLoggedIn() {
     _loadProfileUsers(),
     loadTestReports(),
     loadActivityRecords(),
+    loadWeights(),
     loadP6Data(),
     loadAssetData(),
     loadRMAs(),
@@ -2580,6 +2583,291 @@ function renderAdminAM() {
   if (!root || !currentRoleUser) return;
   if (currentRoleUser.role !== 'admin') { root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`; return; }
   root.innerHTML = _adminActivityManagerHTML();
+}
+
+// ==========================================================================
+// ADMIN: WEIGHTS — manage shared activity weights (Subsystem + Activity)
+// and shared test-case weights (Test Code + Test Name).
+// ==========================================================================
+let _awTab          = 'activity';   // 'activity' | 'testcase'
+let _awSearch       = '';
+let _awSubFilter    = '';           // for activity tab
+let _awTcSubFilter  = '';           // for test-case tab (subsystem of any matching row in TI)
+
+function renderAdminWeights() {
+  const root = document.getElementById('admin-weights-content');
+  if (!root || !currentRoleUser) return;
+  if (currentRoleUser.role !== 'admin') {
+    root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`;
+    return;
+  }
+  root.innerHTML = _adminWeightsHTML();
+}
+
+// Build a list of distinct (subsystem, activity_name) keys from current TI rows.
+// We want EVERY activity that has at least one test item, whether or not it
+// already has a row in activity_weights. Missing rows fall back to weight=1.
+function _awGetActivityRows() {
+  const lookup = _buildActivityWeightLookup();
+  const seen   = new Map(); // key → { subsystem, activity_name, weight, instances }
+  for (const r of TI) {
+    const sub = r.Subsystem || '';
+    const act = r.Activity  || '';
+    if (!sub || !act) continue;
+    const key = `${sub}||${act}`;
+    if (!seen.has(key)) {
+      seen.set(key, { subsystem: sub, activity_name: act, weight: lookup.get(key) ?? 1, instances: 0 });
+    }
+    seen.get(key).instances++;
+  }
+  return [...seen.values()];
+}
+
+// Build a list of distinct (test_case_code, test_name) keys from current TI rows.
+function _awGetTestCaseRows() {
+  const lookup = _buildTestCaseWeightLookup();
+  const seen   = new Map();
+  for (const r of TI) {
+    if (r.IsParent) continue; // parent rows inherit child status
+    const code = r.TestCaseCode || '';
+    const name = r.TestName     || '';
+    if (!code && !name) continue;
+    const key = `${code}||${name}`;
+    if (!seen.has(key)) {
+      seen.set(key, {
+        test_case_code: code,
+        test_name:      name,
+        weight:         lookup.get(key) ?? 1,
+        instances:      0,
+        subsystems:     new Set(),
+      });
+    }
+    const row = seen.get(key);
+    row.instances++;
+    if (r.Subsystem) row.subsystems.add(r.Subsystem);
+  }
+  return [...seen.values()].map(r => ({ ...r, subsystems: [...r.subsystems].sort() }));
+}
+
+function _awSetTab(tab) {
+  _awTab = tab;
+  _awSearch = '';
+  renderAdminWeights();
+}
+
+function _awSetSearch(v) {
+  _awSearch = v;
+  // Only re-render the table body to preserve input focus
+  const body = document.getElementById('aw-table-body');
+  if (body) body.innerHTML = _awTab === 'activity' ? _awActivityRowsHTML() : _awTestCaseRowsHTML();
+  const count = document.getElementById('aw-count');
+  if (count) count.textContent = _awTab === 'activity'
+    ? `${_awFilteredActivityRows().length} activities`
+    : `${_awFilteredTestCaseRows().length} test cases`;
+}
+
+function _awSetSubFilter(v) {
+  if (_awTab === 'activity') _awSubFilter = v;
+  else                       _awTcSubFilter = v;
+  renderAdminWeights();
+}
+
+function _awFilteredActivityRows() {
+  const q = (_awSearch || '').toLowerCase().trim();
+  return _awGetActivityRows()
+    .filter(r => !_awSubFilter || r.subsystem === _awSubFilter)
+    .filter(r => !q || r.activity_name.toLowerCase().includes(q) || r.subsystem.toLowerCase().includes(q))
+    .sort((a, b) => a.subsystem.localeCompare(b.subsystem) || a.activity_name.localeCompare(b.activity_name));
+}
+
+function _awFilteredTestCaseRows() {
+  const q = (_awSearch || '').toLowerCase().trim();
+  return _awGetTestCaseRows()
+    .filter(r => !_awTcSubFilter || r.subsystems.includes(_awTcSubFilter))
+    .filter(r => !q
+      || r.test_case_code.toLowerCase().includes(q)
+      || r.test_name.toLowerCase().includes(q)
+    )
+    .sort((a, b) =>
+      a.test_case_code.localeCompare(b.test_case_code, undefined, { numeric: true })
+      || a.test_name.localeCompare(b.test_name)
+    );
+}
+
+function _adminWeightsHTML() {
+  const subs = [...new Set(TI.map(r => r.Subsystem).filter(Boolean))].sort();
+  const isActTab = _awTab === 'activity';
+  const subFilterVal = isActTab ? _awSubFilter : _awTcSubFilter;
+
+  const totals = isActTab
+    ? { rows: _awFilteredActivityRows().length, label: 'activities' }
+    : { rows: _awFilteredTestCaseRows().length, label: 'test cases' };
+
+  return `
+    <div class="admin-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+        <div>
+          <div class="admin-section-title">Shared Weights</div>
+          <p class="section-sub">
+            One weight per <b>Subsystem + Activity</b> and one weight per <b>Test Code + Test Name</b>.
+            Changes apply instantly across every location and instance.
+          </p>
+        </div>
+      </div>
+
+      <div class="aw-tabs">
+        <button class="aw-tab ${isActTab ? 'is-active' : ''}" onclick="_awSetTab('activity')">Activity Weights</button>
+        <button class="aw-tab ${!isActTab ? 'is-active' : ''}" onclick="_awSetTab('testcase')">Test Case Weights</button>
+      </div>
+
+      <div class="filter-bar" style="margin-top:14px;">
+        <input id="aw-search" class="filter-input" type="text"
+          placeholder="${isActTab ? 'Search activity or subsystem…' : 'Search test code or name…'}"
+          value="${escapeHtml(_awSearch)}" oninput="_awSetSearch(this.value)">
+        <select class="filter-select" onchange="_awSetSubFilter(this.value)">
+          <option value="">All subsystems</option>
+          ${subs.map(s => `<option value="${escapeHtml(s)}" ${subFilterVal === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+        </select>
+        <span style="margin-left:auto;font-size:12px;color:var(--gray-500);">
+          <span id="aw-count"><b>${totals.rows}</b></span> ${totals.label}
+        </span>
+      </div>
+
+      <div class="data-card">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              ${isActTab ? `
+                <tr>
+                  <th style="width:200px;">Subsystem</th>
+                  <th>Activity Name</th>
+                  <th style="width:100px;text-align:right;">Instances</th>
+                  <th style="width:140px;">Weight</th>
+                </tr>
+              ` : `
+                <tr>
+                  <th style="width:160px;">Code</th>
+                  <th>Test Name</th>
+                  <th style="width:180px;">Subsystem(s)</th>
+                  <th style="width:100px;text-align:right;">Instances</th>
+                  <th style="width:140px;">Weight</th>
+                </tr>
+              `}
+            </thead>
+            <tbody id="aw-table-body">
+              ${isActTab ? _awActivityRowsHTML() : _awTestCaseRowsHTML()}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function _awActivityRowsHTML() {
+  const rows = _awFilteredActivityRows();
+  if (!rows.length) {
+    return `<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--gray-500);">No activities match the current filter.</td></tr>`;
+  }
+  return rows.map(r => {
+    const safeSub = escapeHtml(r.subsystem);
+    const safeAct = escapeHtml(r.activity_name);
+    const dataAttr = `data-sub="${safeSub}" data-act="${safeAct}"`;
+    const wClass = r.weight !== 1 ? 'aw-weight-custom' : '';
+    return `
+      <tr>
+        <td><span class="tag">${safeSub}</span></td>
+        <td><span style="font-weight:600;font-size:13px;">${safeAct}</span></td>
+        <td style="text-align:right;color:var(--gray-500);font-size:12px;">${r.instances}</td>
+        <td>
+          <input type="number" min="0" step="0.5" ${dataAttr}
+            class="form-input aw-weight-input ${wClass}"
+            style="width:110px;text-align:right;"
+            value="${r.weight}"
+            onchange="_awSaveActivityWeight(this)"
+            title="Weight applied at every location for ${safeSub} · ${safeAct}">
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function _awTestCaseRowsHTML() {
+  const rows = _awFilteredTestCaseRows();
+  if (!rows.length) {
+    return `<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--gray-500);">No test cases match the current filter.</td></tr>`;
+  }
+  return rows.map(r => {
+    const safeCode = escapeHtml(r.test_case_code);
+    const safeName = escapeHtml(r.test_name);
+    const dataAttr = `data-code="${safeCode}" data-name="${safeName}"`;
+    const wClass = r.weight !== 1 ? 'aw-weight-custom' : '';
+    return `
+      <tr>
+        <td><span class="cell-mono">${safeCode || '—'}</span></td>
+        <td><span style="font-weight:600;font-size:13px;">${safeName || '—'}</span></td>
+        <td style="font-size:11px;color:var(--gray-500);">${r.subsystems.map(s => escapeHtml(s)).join(', ') || '—'}</td>
+        <td style="text-align:right;color:var(--gray-500);font-size:12px;">${r.instances}</td>
+        <td>
+          <input type="number" min="0" step="0.5" ${dataAttr}
+            class="form-input aw-weight-input ${wClass}"
+            style="width:110px;text-align:right;"
+            value="${r.weight}"
+            onchange="_awSaveTestCaseWeight(this)"
+            title="Weight applied to every instance of ${safeCode} · ${safeName}">
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+async function _awSaveActivityWeight(el) {
+  const sub = el.getAttribute('data-sub')  || '';
+  const act = el.getAttribute('data-act')  || '';
+  const w   = parseFloat(el.value);
+  if (!isFinite(w) || w < 0) { toast('Weight must be a positive number', 'error'); return; }
+  el.disabled = true;
+  try {
+    // Upsert into activity_weights, then refresh in-memory cache
+    const [row] = await _dbUpsert('activity_weights',
+      [{ subsystem: sub, activity_name: act, weight: w, updated_at: new Date().toISOString() }],
+      'subsystem,activity_name');
+    if (row) {
+      const idx = _activityWeights.findIndex(r => r.subsystem === sub && r.activity_name === act);
+      if (idx >= 0) _activityWeights[idx] = row;
+      else _activityWeights.push(row);
+    }
+    el.classList.toggle('aw-weight-custom', w !== 1);
+    toast(`Saved · ${sub} · ${act} → ${w}`, 'success');
+    _tryRefreshDashboard?.();
+  } catch (e) {
+    toast(`Save failed: ${e.message}`, 'error');
+  } finally {
+    el.disabled = false;
+  }
+}
+
+async function _awSaveTestCaseWeight(el) {
+  const code = el.getAttribute('data-code') || '';
+  const name = el.getAttribute('data-name') || '';
+  const w    = parseFloat(el.value);
+  if (!isFinite(w) || w < 0) { toast('Weight must be a positive number', 'error'); return; }
+  el.disabled = true;
+  try {
+    const [row] = await _dbUpsert('test_case_weights',
+      [{ test_case_code: code, test_name: name, weight: w, updated_at: new Date().toISOString() }],
+      'test_case_code,test_name');
+    if (row) {
+      const idx = _testCaseWeights.findIndex(r => r.test_case_code === code && r.test_name === name);
+      if (idx >= 0) _testCaseWeights[idx] = row;
+      else _testCaseWeights.push(row);
+    }
+    el.classList.toggle('aw-weight-custom', w !== 1);
+    toast(`Saved · ${code} → ${w}`, 'success');
+    _tryRefreshDashboard?.();
+  } catch (e) {
+    toast(`Save failed: ${e.message}`, 'error');
+  } finally {
+    el.disabled = false;
+  }
 }
 
 function renderAdminTemplates() {
@@ -3428,7 +3716,7 @@ async function confirmDeploy(templateId) {
           test_procedure: tc?.procedure || '',
           test_section:   tc?.section   || '',
           status:         'Not Started',
-          weight:         tc?.weight || 1,
+          weight:         1, // legacy per-row column; real weight lives in test_case_weights
           synced_at:      now,
         });
       }
@@ -3521,7 +3809,7 @@ function _tplCasesToSections(testCases) {
   for (const tc of testCases) {
     const key = tc.section ?? '';
     if (!map.has(key)) map.set(key, { title: key, procedure: tc.procedure || '', cases: [] });
-    map.get(key).cases.push({ code: tc.code||'', name: tc.name||'', category: tc.category||'', assets: tc.assets||'', weight: tc.weight ?? 1 });
+    map.get(key).cases.push({ code: tc.code||'', name: tc.name||'', category: tc.category||'', assets: tc.assets||'' });
   }
   return [...map.values()];
 }
@@ -3540,7 +3828,6 @@ function _tplSectionsToTestCases(sections) {
         procedure: sec.procedure.trim(),
         section:   sec.title.trim(),
         duration:  1,
-        weight:    parseFloat(tc.weight) || 1,
       });
     }
   }
@@ -3572,12 +3859,11 @@ function _tplSectionsHTML() {
           oninput="_templateSections[${si}].procedure=this.value">${escapeHtml(sec.procedure)}</textarea>
       </div>
       <!-- Column headers -->
-      <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 70px 32px 32px;gap:6px;padding:5px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-100);">
+      <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 32px 32px;gap:6px;padding:5px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-100);">
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Code</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Test Case Name</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Category</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Assets (Generic)</div>
-        <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Weight</div>
         <div></div><div></div>
       </div>
       <!-- Test case rows -->
@@ -3591,7 +3877,7 @@ function _tplSectionsHTML() {
 function _tplCaseRowsHTML(si) {
   const cases = _templateSections[si]?.cases || [];
   return cases.map((tc, ci) => `
-    <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 70px 32px 32px;gap:6px;align-items:center;margin-bottom:5px;">
+    <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 32px 32px;gap:6px;align-items:center;margin-bottom:5px;">
       <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Code e.g. DCS-01"
         value="${escapeHtml(tc.code)}" oninput="_templateSections[${si}].cases[${ci}].code=this.value">
       <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Test Case Name"
@@ -3601,9 +3887,6 @@ function _tplCaseRowsHTML(si) {
       <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Assets e.g. MLK A, MLK B"
         value="${escapeHtml(tc.assets||'')}" oninput="_templateSections[${si}].cases[${ci}].assets=this.value"
         title="Comma-separated generic asset names auto-linked as children on deploy">
-      <input type="number" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="1" min="0" step="0.01"
-        value="${escapeHtml(String(tc.weight ?? 1))}" oninput="_templateSections[${si}].cases[${ci}].weight=parseFloat(this.value)||1"
-        title="Weight used when deploying this test case">
       <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;" title="Duplicate"
         onclick="dupTplCase(${si},${ci})">⧉</button>
       <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;color:var(--bad);" title="Remove"
@@ -3615,7 +3898,7 @@ function _tplCaseRowsHTML(si) {
 // ── Section / case actions ────────────────────────────────────────────────────
 
 function addTplSection() {
-  _templateSections.push({ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'', weight:1 }] });
+  _templateSections.push({ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'' }] });
   document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
 }
 
@@ -3627,7 +3910,7 @@ function removeTplSection(si) {
 }
 
 function addTplCase(si) {
-  _templateSections[si].cases.push({ code:'', name:'', category:'', assets:'', weight:1 });
+  _templateSections[si].cases.push({ code:'', name:'', category:'', assets:'' });
   document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
 }
 
@@ -3646,11 +3929,11 @@ function removeTplCase(si, ci) {
 
 function downloadTemplateCaseCSV() {
   const rows = [
-    ['Section','Code','Name','Category','Assets','Procedure','Weight'],
-    ['Hardware Verification','DCS-HW-01','Network Connectivity Test','Hardware SAT','','Refer to CDRL 9.04.53 Section 4','1'],
-    ['Hardware Verification','DCS-HW-02','Server Failover Test','Hardware SAT','Server A,Server B','Refer to CDRL 9.04.53 Section 4','1'],
-    ['Software Testing','DCS-SW-01','Comms Latency Test','Software SAT','','Refer to CDRL 9.04.53 Section 5','1'],
-    ['Software Testing','DCS-SW-02','Interface Validation','Software SAT','','Refer to CDRL 9.04.53 Section 5','1'],
+    ['Section','Code','Name','Category','Assets','Procedure'],
+    ['Hardware Verification','DCS-HW-01','Network Connectivity Test','Hardware SAT','','Refer to CDRL 9.04.53 Section 4'],
+    ['Hardware Verification','DCS-HW-02','Server Failover Test','Hardware SAT','Server A,Server B','Refer to CDRL 9.04.53 Section 4'],
+    ['Software Testing','DCS-SW-01','Comms Latency Test','Software SAT','','Refer to CDRL 9.04.53 Section 5'],
+    ['Software Testing','DCS-SW-02','Interface Validation','Software SAT','','Refer to CDRL 9.04.53 Section 5'],
   ];
   const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const a = document.createElement('a');
@@ -3673,13 +3956,12 @@ function handleTemplateCaseImport(input) {
       const name   = (r.Name         || r.TestName     || r['Test Case Name'] || '').trim();
       const cat    = (r.Category     || r.TestCategory || r['Test Category']  || '').trim();
       const assets  = (r.Assets       || r.assets       || '').trim();
-      const weight  = parseFloat(r.Weight || r.weight || '1') || 1;
       if (!code && !name) continue;
       const key = sTitle || '__default__';
       if (!sectionMap.has(key)) sectionMap.set(key, { title: sTitle, procedure: proc, cases: [] });
       const sec = sectionMap.get(key);
       if (!sec.procedure && proc) sec.procedure = proc;
-      sec.cases.push({ code, name, category: cat, assets, weight });
+      sec.cases.push({ code, name, category: cat, assets });
     }
     if (!sectionMap.size) { toast('Could not parse any test cases from CSV', 'warn'); return; }
     _templateSections = [...sectionMap.values()];
@@ -3728,7 +4010,7 @@ function _tplModalBody() {
 // ── Open modals ───────────────────────────────────────────────────────────────
 
 function openNewTemplateModal() {
-  _templateSections = [{ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'', weight:1 }] }];
+  _templateSections = [{ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'' }] }];
   modal({
     title:  'Create Activity Template',
     sub:    'Define reusable test sections and procedures for an activity',
@@ -4653,13 +4935,14 @@ function _mxRefreshCounts() {
   set('mx-stat-notstarted', filtered.filter(r => isNotStarted(r.Status)).length);
   set('mx-stat-futuretest', filtered.filter(r => r.Status === 'Future Test').length);
 
-  // Update each per-activity tally (weighted)
+  // Update each per-activity tally (weighted) using shared test-case weights
+  const _mxTcw = _buildTestCaseWeightLookup();
   (window._mxGroups || []).forEach((g, idx) => {
-    const w      = r => parseFloat(r.Weight) || 1;
+    const w      = r => _tcWeightFor(r, _mxTcw);
     const doneW  = g.items.filter(r => isPass(r.Status)).reduce((s,r)=>s+w(r), 0);
     const totalW = g.items.reduce((s,r)=>s+w(r), 0);
     const pct    = totalW > 0 ? Math.round((doneW / totalW) * 100) : 0;
-    const anyWt  = g.items.some(r => (parseFloat(r.Weight)||1) !== 1);
+    const anyWt  = g.items.some(r => w(r) !== 1);
     if (anyWt) {
       set(`mx-grp-count-${idx}`, `${pct}% complete`);
     } else {
@@ -7084,6 +7367,62 @@ async function loadActivityRecords() {
   } catch(e) { console.warn('[loadActivityRecords] failed:', e.message); }
 }
 
+// ── Shared weights (Subsystem+Activity, TestCode+TestName) ────────────────────
+// One row per logical activity / test-case identity. Drives every weighted KPI.
+let _activityWeights = [];   // [{ id, subsystem, activity_name, weight }]
+let _testCaseWeights = [];   // [{ id, test_case_code, test_name, weight }]
+
+async function loadWeights() {
+  try {
+    const [aw, tcw] = await Promise.all([
+      _fetchAnon('activity_weights?select=*'),
+      _fetchAnon('test_case_weights?select=*'),
+    ]);
+    _activityWeights = aw  || [];
+    _testCaseWeights = tcw || [];
+  } catch(e) { console.warn('[loadWeights] failed:', e.message); }
+}
+
+// Map<"subsystem||activity_name", weight>  — used by every weighted KPI.
+function _buildActivityWeightLookup() {
+  const m = new Map();
+  for (const r of _activityWeights) {
+    m.set(`${r.subsystem || ''}||${r.activity_name || ''}`, parseFloat(r.weight) || 1);
+  }
+  return m;
+}
+
+// Map<"test_case_code||test_name", weight>
+function _buildTestCaseWeightLookup() {
+  const m = new Map();
+  for (const r of _testCaseWeights) {
+    m.set(`${r.test_case_code || ''}||${r.test_name || ''}`, parseFloat(r.weight) || 1);
+  }
+  return m;
+}
+
+// Resolve weight for a single TI row using shared lookups (TestCaseCode+TestName).
+// Returns 1 if not yet weighted.
+function _tcWeightFor(r, tcLookup) {
+  const m = tcLookup || _buildTestCaseWeightLookup();
+  return m.get(`${r.TestCaseCode || ''}||${r.TestName || ''}`) ?? 1;
+}
+
+// Resolve activity weight for a TI row using shared lookups (Subsystem+Activity).
+function _actWeightFor(r, actLookup) {
+  const m = actLookup || _buildActivityWeightLookup();
+  return m.get(`${r.Subsystem || ''}||${r.Activity || ''}`) ?? 1;
+}
+
+// True if ANY row in the array has a non-default (≠1) shared weight applied.
+function _anyCustomWeights(items) {
+  const tcw = _buildTestCaseWeightLookup();
+  const aw  = _buildActivityWeightLookup();
+  return (items || []).some(r =>
+    (_tcWeightFor(r, tcw) !== 1) || (_actWeightFor(r, aw) !== 1)
+  );
+}
+
 // ── P6 data loader ────────────────────────────────────────────────────────────
 async function loadP6Data() {
   try {
@@ -8918,23 +9257,25 @@ function _amComputeCompletion(act) {
   const doneStatuses = new Set(['Pass','Not Applicable','Complete','Passed']);
   const done  = eligible.filter(r => doneStatuses.has(r.Status)).length;
   const total = eligible.length;
-  // Weighted completion — used for progress bar % and KPI projections
-  const w      = r => parseFloat(r.Weight) || 1;
+  // Weighted completion via shared test_case_weights (Layer 2 only here — activity
+  // weight is constant across this activity so it cancels in the percentage).
+  const tcw    = _buildTestCaseWeightLookup();
+  const w      = r => _tcWeightFor(r, tcw);
   const doneW  = eligible.filter(r => doneStatuses.has(r.Status)).reduce((s,r)=>s+w(r), 0);
   const totalW = eligible.reduce((s,r)=>s+w(r), 0);
   const pct    = totalW > 0 ? Math.round((doneW / totalW) * 100) : 0;
   return { done, total, doneW, totalW, pct };
 }
 
-// Weighted completion using test_items.weight (Layer 2) — used for P6 progress display
+// Weighted completion (Layer 2 only) — used for P6 progress display.
+// Activity weight cancels in a per-activity percentage, so we only need TC weights.
 const _P6_DONE_STATUSES = new Set(['Pass','Passed','Complete','Not Applicable']);
 function _p6WeightedCompletion(act) {
-  // Exclude parent rows (their weight is distributed to children) and Future Test
   const eligible = act.items.filter(r => !r.IsParent && r.Status !== 'Future Test');
-  const totalW   = eligible.reduce((s, r) => s + (parseFloat(r.Weight) || 1), 0);
-  const doneW    = eligible
-    .filter(r => _P6_DONE_STATUSES.has(r.Status))
-    .reduce((s, r) => s + (parseFloat(r.Weight) || 1), 0);
+  const tcw      = _buildTestCaseWeightLookup();
+  const w        = r => _tcWeightFor(r, tcw);
+  const totalW   = eligible.reduce((s, r) => s + w(r), 0);
+  const doneW    = eligible.filter(r => _P6_DONE_STATUSES.has(r.Status)).reduce((s, r) => s + w(r), 0);
   const pct = totalW > 0 ? Math.round((doneW / totalW) * 100) : 0;
   return { doneW, totalW, pct };
 }
@@ -10458,18 +10799,20 @@ function renderAdminP6() {
     <div class="page-hero-inner">
       <div class="role-badge role-admin-badge">Admin Tool</div>
       <h1 class="page-hero-title">P6 Schedule</h1>
-      <p class="page-hero-sub">Import P6 exports, map activities, manage weights and track schedule changes.</p>
+      <p class="page-hero-sub">Import P6 exports, map activities and track schedule changes. Weights now live in <b>Admin → Weights</b>.</p>
     </div>`;
   cont.innerHTML = _p6AdminHTML();
 }
 
 function _p6AdminHTML() {
+  // Weights tab moved to its own admin module — see renderAdminWeights().
   const tabs = [
     { id:'import',  label:'📥 Import' },
     { id:'mapping', label:'🔗 Mapping' },
     { id:'health',  label:'🩺 Health' },
-    { id:'weights', label:'⚖️ Weights' },
   ];
+  // Bounce away from any stale weights tab selection
+  if (_p6Tab === 'weights') _p6Tab = 'import';
   return `
     <div class="admin-section p6-shell">
       <div class="admin-tabs" style="margin-bottom:24px;">
@@ -10478,7 +10821,6 @@ function _p6AdminHTML() {
       ${_p6Tab === 'import'  ? _p6ImportTabHTML()  : ''}
       ${_p6Tab === 'mapping' ? _p6MappingTabHTML() : ''}
       ${_p6Tab === 'health'  ? _p6HealthTabHTML()  : ''}
-      ${_p6Tab === 'weights' ? _p6WeightsTabHTML() : ''}
     </div>`;
 }
 
@@ -12354,17 +12696,15 @@ function _assetUpdateParentDOMBadge(parentTestId, newStatus) {
 }
 
 // ── Weight redistribution ─────────────────────────────────────────────────────
-async function _assetRedistributeWeights(parentTestId) {
-  const parent   = TI.find(r => String(r.TestID) === String(parentTestId));
-  if (!parent) return;
-  const children = TI.filter(r => String(r.ParentTestId) === String(parentTestId));
-  if (!children.length) return;
-  const pW = parseFloat(parent.Weight) || 1;
-  const cW = Math.round((pW / children.length) * 10000) / 10000;
-  for (const c of children) {
-    c.Weight = cW;
-    await _dbUpdate('test_items', { weight: cW }, { test_id: String(c.TestID) });
-  }
+// Legacy: this used to split a parent's per-row weight evenly across its N children
+// so the activity total stayed constant when assets were added.
+//
+// New shared-weight model: weights are looked up by (TestCaseCode, TestName) — every
+// child of a parent shares those two fields, so each child resolves to the SAME
+// shared weight. No per-row redistribution is needed; this function is now a no-op
+// kept so existing call sites compile.
+async function _assetRedistributeWeights(_parentTestId) {
+  return; // intentionally empty under shared-weight model
 }
 
 // ── Link an asset to a parent test_items row ──────────────────────────────────
@@ -13388,27 +13728,34 @@ function _isLatestAttempt(r) { return !r || r.IsLatestAttempt !== false; }
 // the regression history panel but never inflate metrics.
 function _latestTI() { return TI.filter(_isLatestAttempt); }
 
-// Build a Map from activity key → activity_weight (Layer 1) from _activityRecords.
-// Key format: "phase||location||subsystem||activity_name"
+// LEGACY shim — kept so any old caller still gets a sensible shape, but now reads
+// from the shared `activity_weights` table (keyed by subsystem||activity_name).
+// Same activity at every location now resolves to one shared weight.
 function _buildActWeightMap() {
-  const map = new Map();
+  const shared = _buildActivityWeightLookup(); // Map<"subsystem||activity_name", weight>
+  const map    = new Map();
+  // Project the shared keys onto the legacy 4-tuple keyspace for older code paths
+  // that still index by phase||location||subsystem||activity. Phase+location are
+  // wildcarded — same (sub, activity) returns the same weight regardless.
   (_activityRecords || []).forEach(r => {
-    const key = `${r.phase||''}||${r.location||''}||${r.subsystem||''}||${r.activity_name||''}`;
-    map.set(key, parseFloat(r.activity_weight) || 1);
+    const sharedKey = `${r.subsystem || ''}||${r.activity_name || ''}`;
+    const legacyKey = `${r.phase || ''}||${r.location || ''}||${r.subsystem || ''}||${r.activity_name || ''}`;
+    map.set(legacyKey, shared.get(sharedKey) ?? 1);
   });
   return map;
 }
 
 // Compute weighted status totals for an array of test items.
-// Effective weight = Layer1 (activity_weight) × Layer2 (test_items.weight).
-// All percentage KPIs must use this so weights set in the P6 Weights tab
-// (both activity-level and test-case-level) flow through to dashboard projections.
+// Effective weight = activity_weight (Subsystem+ActivityName) × test_case_weight (Code+TestName).
+// Both weights are now SHARED — one row in the weights tables drives every instance.
 function _wgtStat(items) {
-  const actMap = _buildActWeightMap();
+  const aw  = _buildActivityWeightLookup();
+  const tcw = _buildTestCaseWeightLookup();
   const w = r => {
-    const tcW  = parseFloat(r.Weight) || 1;
-    const aKey = `${r.Phase||''}||${r.Location||''}||${r.Subsystem||''}||${r.Activity||''}`;
-    const actW = actMap.get(aKey) ?? 1;
+    const tcKey = `${r.TestCaseCode || ''}||${r.TestName || ''}`;
+    const aKey  = `${r.Subsystem    || ''}||${r.Activity || ''}`;
+    const tcW   = tcw.get(tcKey) ?? 1;
+    const actW  = aw.get(aKey)   ?? 1;
     return tcW * actW;
   };
   const sum = (arr) => arr.reduce((s, r) => s + w(r), 0);
