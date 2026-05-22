@@ -930,6 +930,21 @@ function renderAPTable() {
 // TEST CASES PAGE  (sourced from TI / test_items)
 // ==========================================
 let liSort = { col: null, asc: false };
+let _liKpiFilter = ''; // 'pass' | 'inprog' | 'blocked' | 'notstarted' | ''
+
+function _liSetKpiFilter(key) {
+  _liKpiFilter = (_liKpiFilter === key) ? '' : key; // toggle off if already active
+  renderLITable();
+}
+
+function _liMatchKpiStatus(r) {
+  if (!_liKpiFilter) return true;
+  if (_liKpiFilter === 'pass')       return ['Pass','Passed','Complete','Not Applicable'].includes(r.Status);
+  if (_liKpiFilter === 'inprog')     return r.Status === 'In Progress';
+  if (_liKpiFilter === 'blocked')    return r.Status === 'Fail' || r.Status === 'Failed' || r.Status === 'Blocked';
+  if (_liKpiFilter === 'notstarted') return !r.Status || r.Status === 'Not Started';
+  return true;
+}
 
 function initLineItems() {
   // TI is already subsystem-filtered at login for non-admin users
@@ -962,9 +977,9 @@ function initLineItems() {
     subsysEl.style.display = '';
   }
 
-  document.getElementById('li-subsys-filter')?.addEventListener('input', () => { _liCascade(0); renderLITable(); });
-  document.getElementById('li-phase-filter')?.addEventListener('input',  () => { _liCascade(1); renderLITable(); });
-  document.getElementById('li-location-filter')?.addEventListener('input',() => { _liCascade(2); renderLITable(); });
+  document.getElementById('li-subsys-filter')?.addEventListener('input', () => { _liCascade('subsystem'); renderLITable(); });
+  document.getElementById('li-phase-filter')?.addEventListener('input',  () => { _liCascade('phase');    renderLITable(); });
+  document.getElementById('li-location-filter')?.addEventListener('input',() => { _liCascade('location'); renderLITable(); });
   document.getElementById('li-activity-filter')?.addEventListener('input', renderLITable);
   document.getElementById('li-status-filter')?.addEventListener('input',   renderLITable);
   document.getElementById('li-search')?.addEventListener('input',           renderLITable);
@@ -981,44 +996,85 @@ function initLineItems() {
   renderLITable();
 }
 
-function _liCascade(level) {
-  const subsysF = document.getElementById('li-subsys-filter').value;
-  const phaseF  = document.getElementById('li-phase-filter').value;
-  const locF    = document.getElementById('li-location-filter').value;
+// changedKey: 'subsystem' | 'phase' | 'location' — the filter the user just changed.
+// Every other dependent dropdown is re-populated based on the current combined selection.
+function _liCascade(changedKey) {
+  const isAdmin    = currentRoleUser?.role === 'admin';
+  const userSubsys = currentRoleUser?.subsystem || null;
 
-  if (level <= 0) {
-    const phases = [...new Set(TI.filter(r => !subsysF || r.Subsystem === subsysF).map(r => r.Phase).filter(Boolean))].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
-    const cur = document.getElementById('li-phase-filter').value;
-    populateSelect('li-phase-filter', 'All phases', phases);
-    if (!phases.includes(cur)) document.getElementById('li-phase-filter').value = '';
-  }
-
-  if (level <= 1) {
-    const ph = document.getElementById('li-phase-filter').value;
-    const locs = [...new Set(TI.filter(r => (!subsysF || r.Subsystem === subsysF) && (!ph || r.Phase === ph)).map(r => r.Location).filter(Boolean))].sort();
-    const cur = document.getElementById('li-location-filter').value;
-    populateSelect('li-location-filter', 'All locations', locs);
-    if (!locs.includes(cur)) document.getElementById('li-location-filter').value = '';
-  }
-
-  const ph2 = document.getElementById('li-phase-filter').value;
-  const loc2 = document.getElementById('li-location-filter').value;
-  const acts = [...new Set(TI.filter(r => (!subsysF || r.Subsystem === subsysF) && (!ph2 || r.Phase === ph2) && (!loc2 || r.Location === loc2)).map(r => r.Activity).filter(Boolean))].sort();
+  const curSub = document.getElementById('li-subsys-filter').value;
+  const curPh  = document.getElementById('li-phase-filter').value;
+  const curLoc = document.getElementById('li-location-filter').value;
   const curAct = document.getElementById('li-activity-filter').value;
+
+  // Re-populate subsystem options (skip if it was the changed key, or if locked for non-admin)
+  if (changedKey !== 'subsystem' && (isAdmin || !userSubsys)) {
+    const subs = [...new Set(TI.filter(r =>
+      (!curPh  || r.Phase    === curPh) &&
+      (!curLoc || r.Location === curLoc)
+    ).map(r => r.Subsystem).filter(Boolean))].sort();
+    populateSelect('li-subsys-filter', 'All subsystems', subs);
+    document.getElementById('li-subsys-filter').value = subs.includes(curSub) ? curSub : '';
+  }
+
+  // Re-populate phase options (skip if it was the changed key)
+  if (changedKey !== 'phase') {
+    const fSub = document.getElementById('li-subsys-filter').value;
+    const phases = [...new Set(TI.filter(r =>
+      (!fSub   || r.Subsystem === fSub) &&
+      (!curLoc || r.Location  === curLoc)
+    ).map(r => r.Phase).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    populateSelect('li-phase-filter', 'All phases', phases);
+    document.getElementById('li-phase-filter').value = phases.includes(curPh) ? curPh : '';
+  }
+
+  // Re-populate location options (skip if it was the changed key)
+  if (changedKey !== 'location') {
+    const fSub   = document.getElementById('li-subsys-filter').value;
+    const fPhase = document.getElementById('li-phase-filter').value;
+    const locs = [...new Set(TI.filter(r =>
+      (!fSub   || r.Subsystem === fSub) &&
+      (!fPhase || r.Phase     === fPhase)
+    ).map(r => r.Location).filter(Boolean))].sort();
+    populateSelect('li-location-filter', 'All locations', locs);
+    document.getElementById('li-location-filter').value = locs.includes(curLoc) ? curLoc : '';
+  }
+
+  // Always re-populate activity options from all active filters
+  const fSub   = document.getElementById('li-subsys-filter').value;
+  const fPhase = document.getElementById('li-phase-filter').value;
+  const fLoc   = document.getElementById('li-location-filter').value;
+  const acts = [...new Set(TI.filter(r =>
+    (!fSub   || r.Subsystem === fSub) &&
+    (!fPhase || r.Phase     === fPhase) &&
+    (!fLoc   || r.Location  === fLoc)
+  ).map(r => r.Activity).filter(Boolean))].sort();
   populateSelect('li-activity-filter', 'All activities', acts);
   if (!acts.includes(curAct)) document.getElementById('li-activity-filter').value = '';
 }
 
 function clearLIFilters() {
+  _liKpiFilter = '';
   ['li-search','li-phase-filter','li-location-filter','li-activity-filter','li-status-filter'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
-  // Only reset subsystem filter for admins (non-admin has it locked)
-  if (currentRoleUser?.role === 'admin') {
+  const isAdmin    = currentRoleUser?.role === 'admin';
+  const userSubsys = currentRoleUser?.subsystem || null;
+  if (isAdmin) {
     const el = document.getElementById('li-subsys-filter');
     if (el) el.value = '';
   }
+  // Repopulate all dropdowns from full TI dataset so cascaded options are restored
+  const fSub = isAdmin ? '' : (userSubsys || '');
+  const subsystems = [...new Set(TI.map(r => r.Subsystem).filter(Boolean))].sort();
+  const phases     = [...new Set(TI.filter(r => !fSub || r.Subsystem === fSub).map(r => String(r.Phase || '')).filter(Boolean))].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
+  const locs       = [...new Set(TI.filter(r => !fSub || r.Subsystem === fSub).map(r => r.Location).filter(Boolean))].sort();
+  const acts       = [...new Set(TI.filter(r => !fSub || r.Subsystem === fSub).map(r => r.Activity).filter(Boolean))].sort();
+  if (isAdmin) populateSelect('li-subsys-filter', 'All subsystems', subsystems);
+  populateSelect('li-phase-filter',    'All phases',     phases);
+  populateSelect('li-location-filter', 'All locations',  locs);
+  populateSelect('li-activity-filter', 'All activities', acts);
   renderLITable();
 }
 
@@ -1030,7 +1086,8 @@ function renderLITable() {
   const actF    = document.getElementById('li-activity-filter').value;
   const statusF = document.getElementById('li-status-filter').value;
 
-  let data = TI.filter(r =>
+  // Base data matching all user-selected filters (but NOT the KPI card filter)
+  const baseData = TI.filter(r =>
     _isLatestAttempt(r) &&
     (!search  || (r.TestName     && r.TestName.toLowerCase().includes(search))
               || (r.TestCaseCode && r.TestCaseCode.toLowerCase().includes(search))
@@ -1042,11 +1099,26 @@ function renderLITable() {
     (!statusF || r.Status === statusF)
   );
 
-  // Update KPI mini cards with filtered counts
-  document.getElementById('li-passed').textContent = data.filter(r => r.Status === 'Pass').length.toLocaleString();
-  document.getElementById('li-inprog').textContent = data.filter(r => r.Status === 'In Progress').length.toLocaleString();
-  document.getElementById('li-failed').textContent = data.filter(r => r.Status === 'Fail' || r.Status === 'Blocked').length.toLocaleString();
-  document.getElementById('li-open').textContent   = data.filter(r => !r.Status || r.Status === 'Not Started').length.toLocaleString();
+  // Update KPI mini cards from baseData (unaffected by KPI card click)
+  const kpiCounts = {
+    pass:       baseData.filter(r => ['Pass','Passed','Complete','Not Applicable'].includes(r.Status)).length,
+    inprog:     baseData.filter(r => r.Status === 'In Progress').length,
+    blocked:    baseData.filter(r => ['Fail','Failed','Blocked'].includes(r.Status)).length,
+    notstarted: baseData.filter(r => !r.Status || r.Status === 'Not Started').length,
+  };
+  document.getElementById('li-passed').textContent = kpiCounts.pass.toLocaleString();
+  document.getElementById('li-inprog').textContent = kpiCounts.inprog.toLocaleString();
+  document.getElementById('li-failed').textContent = kpiCounts.blocked.toLocaleString();
+  document.getElementById('li-open').textContent   = kpiCounts.notstarted.toLocaleString();
+
+  // Highlight active KPI card
+  const kpiMap = { pass: 'li-kpi-pass', inprog: 'li-kpi-inprog', blocked: 'li-kpi-blocked', notstarted: 'li-kpi-notstarted' };
+  Object.entries(kpiMap).forEach(([key, id]) => {
+    document.getElementById(id)?.classList.toggle('kpi-active', _liKpiFilter === key);
+  });
+
+  // Apply KPI card filter to table data
+  let data = _liKpiFilter ? baseData.filter(r => _liMatchKpiStatus(r)) : baseData;
 
   if (liSort.col) {
     data = [...data].sort((a, b) => {
@@ -1060,14 +1132,17 @@ function renderLITable() {
   const renderRows = data.slice(0, 500);
   const truncated  = data.length > 500 ? ` (showing first 500 — refine filters for more)` : '';
 
+  // Column order: Activity | Test Name (Code + Name) | Subsystem | Phase | Location | Status
   document.getElementById('li-body').innerHTML = renderRows.map(r => `
     <tr>
-      <td class="cell-mono">${escapeHtml(r.TestCaseCode || '—')}</td>
-      <td><span class="cell-name">${escapeHtml(r.TestName || '—')}</span></td>
+      <td><span class="cell-sub" style="font-size:12px">${escapeHtml(r.Activity || '—')}</span></td>
+      <td>
+        ${r.TestCaseCode ? `<span class="cell-mono" style="font-size:11px;color:var(--gray-500);margin-right:6px;">${escapeHtml(r.TestCaseCode)}</span>` : ''}
+        <span class="cell-name">${escapeHtml(r.TestName || '—')}</span>
+      </td>
       <td><span class="tag">${escapeHtml(r.Subsystem || '—')}</span></td>
       <td class="cell-mono">${escapeHtml(String(r.Phase || '—').trim())}</td>
       <td>${escapeHtml(r.Location || '—')}</td>
-      <td><span class="cell-sub" style="font-size:12px">${escapeHtml(r.Activity || '—')}</span></td>
       <td>${getStatusBadge(r.Status)}</td>
     </tr>
   `).join('');
@@ -1190,59 +1265,75 @@ function renderPLTable() {
 // LOCATIONS PAGE
 // ==========================================
 function initLocations() {
-  // Group all locations
-  const locs = {};
-  AP.forEach(r => {
-    if (!r.Location || r.Location === 'Entire Phase>2') return;
-    if (!locs[r.Location]) locs[r.Location] = { activities: 0, closed: 0, inprog: 0, notstarted: 0 };
-    locs[r.Location].activities++;
-    if (r.Status === 'Closed') locs[r.Location].closed++;
-    else if (r.Status === 'In Progress') locs[r.Location].inprog++;
-    else locs[r.Location].notstarted++;
-  });
+  const ti = _latestTI();
 
-  // Add line item & punch counts per location
-  Object.keys(locs).forEach(loc => {
-    locs[loc].liTotal = LI.filter(r => r.Location === loc).length;
-    locs[loc].liPassed = LI.filter(r => r.Location === loc && r.Status === 'Passed').length;
-    locs[loc].liFailed = LI.filter(r => r.Location === loc && r.Status === 'Failed').length;
-    locs[loc].punchOpen = PL.filter(r => r.Location === loc && !['Closed','Ready To Close'].includes(r.Status)).length;
-  });
+  // Get phases sorted ascending
+  const phases = [...new Set(ti.map(r => String(r.Phase || '')).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
   const grid = document.getElementById('locations-grid');
-  grid.innerHTML = Object.entries(locs)
-    .sort((a,b) => b[1].activities - a[1].activities)
-    .map(([loc, s]) => {
+  let html = '';
+
+  phases.forEach(phase => {
+    const phaseTI = ti.filter(r => r.Phase === phase);
+    const locs    = [...new Set(phaseTI.map(r => r.Location).filter(Boolean))].sort();
+    if (!locs.length) return;
+
+    // Phase-level weighted summary for the heading badge
+    const phaseWs  = _wgtStat(phaseTI);
+    const phasePct = phaseWs.totalW > 0 ? Math.round((phaseWs.completeW / phaseWs.totalW) * 100) : 0;
+
+    html += `
+      <div class="loc-phase-group">
+        <div class="loc-phase-heading">
+          <span class="loc-phase-label">${escapeHtml(phase)}</span>
+          <span class="loc-phase-badge">${phasePct}% complete · ${locs.length} location${locs.length !== 1 ? 's' : ''}</span>
+        </div>
+        <div class="loc-phase-cards">`;
+
+    locs.forEach(loc => {
+      const locTI  = phaseTI.filter(r => r.Location === loc);
+      const ws     = _wgtStat(locTI);
+      const pct    = ws.totalW > 0 ? Math.round((ws.completeW / ws.totalW) * 100) : 0;
+      const passed = locTI.filter(r => ['Pass','Passed','Complete','Not Applicable'].includes(r.Status)).length;
+      const total  = locTI.length;
+      const punchOpen = (PUNCH_DB || []).filter(p =>
+        p.location === loc && !p.is_deleted && !['Closed','Ready To Close'].includes(p.status)
+      ).length;
       const code = getLocationCode(loc);
-      const pct = s.liTotal > 0 ? Math.round((s.liPassed / s.liTotal) * 100) : 0;
-      return `
+
+      html += `
         <div class="location-card">
           <div class="location-code">${escapeHtml(code)}</div>
           <div class="location-name">${escapeHtml(loc)}</div>
           <div class="location-progress">
             <div class="location-progress-meta">
-              <span>Test progress</span>
+              <span>Weighted progress</span>
               <span><b>${pct}%</b></span>
             </div>
             <div class="location-progress-bar"><div class="location-progress-fill" style="width:${pct}%"></div></div>
           </div>
           <div class="location-stats">
             <div class="location-stat">
-              <div class="location-stat-value">${s.activities}</div>
-              <div class="location-stat-label">SAT Activities</div>
+              <div class="location-stat-value">${total.toLocaleString()}</div>
+              <div class="location-stat-label">Test Cases</div>
             </div>
             <div class="location-stat">
-              <div class="location-stat-value good">${s.liPassed}</div>
-              <div class="location-stat-label">Tests Passed</div>
+              <div class="location-stat-value good">${passed.toLocaleString()}</div>
+              <div class="location-stat-label">Passed</div>
             </div>
             <div class="location-stat">
-              <div class="location-stat-value ${s.punchOpen > 0 ? 'bad' : ''}">${s.punchOpen}</div>
+              <div class="location-stat-value ${punchOpen > 0 ? 'bad' : ''}">${punchOpen}</div>
               <div class="location-stat-label">Open Punch</div>
             </div>
           </div>
-        </div>
-      `;
-    }).join('');
+        </div>`;
+    });
+
+    html += `</div></div>`;
+  });
+
+  grid.innerHTML = html || '<div class="docs-empty"><p>No test data available.</p></div>';
 }
 
 // ==========================================

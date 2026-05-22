@@ -585,10 +585,10 @@
   </div>
   <div class="container">
     <div class="kpi-grid kpi-grid-mini">
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Complete</div><div class="kpi-value good" id="li-passed">—</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">In Progress</div><div class="kpi-value info" id="li-inprog">—</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Blocked</div><div class="kpi-value bad" id="li-failed">—</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Not Started</div><div class="kpi-value" id="li-open">—</div></div>
+      <div class="kpi-card kpi-mini kpi-clickable" id="li-kpi-pass" onclick="_liSetKpiFilter('pass')" title="Click to filter by Complete"><div class="kpi-label">Complete</div><div class="kpi-value good" id="li-passed">—</div></div>
+      <div class="kpi-card kpi-mini kpi-clickable" id="li-kpi-inprog" onclick="_liSetKpiFilter('inprog')" title="Click to filter by In Progress"><div class="kpi-label">In Progress</div><div class="kpi-value info" id="li-inprog">—</div></div>
+      <div class="kpi-card kpi-mini kpi-clickable" id="li-kpi-blocked" onclick="_liSetKpiFilter('blocked')" title="Click to filter by Fail / Blocked"><div class="kpi-label">Fail / Blocked</div><div class="kpi-value bad" id="li-failed">—</div></div>
+      <div class="kpi-card kpi-mini kpi-clickable" id="li-kpi-notstarted" onclick="_liSetKpiFilter('notstarted')" title="Click to filter by Not Started"><div class="kpi-label">Not Started</div><div class="kpi-value" id="li-open">—</div></div>
     </div>
     <div class="filter-bar">
       <input type="text" id="li-search" placeholder="Search test cases..." class="filter-input">
@@ -608,12 +608,11 @@
         <table class="data-table" id="li-table">
           <thead>
             <tr>
-              <th data-sort="TestCaseCode">Code</th>
+              <th data-sort="Activity">Activity</th>
               <th data-sort="TestName">Test Name</th>
               <th data-sort="Subsystem">Subsystem</th>
               <th data-sort="Phase">Phase</th>
               <th data-sort="Location">Location</th>
-              <th data-sort="Activity">Activity</th>
               <th data-sort="Status">Status</th>
             </tr>
           </thead>

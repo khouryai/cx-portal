@@ -472,6 +472,61 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .kpi-mini { padding: 16px 20px; }
 .kpi-mini .kpi-value { font-size: 28px; }
 
+/* ── Clickable KPI cards (Test Case view) ─────────────────────── */
+.kpi-clickable {
+  cursor: pointer;
+  transition: box-shadow 0.15s, border-color 0.15s, transform 0.15s;
+  user-select: none;
+}
+.kpi-clickable:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+}
+.kpi-clickable.kpi-active {
+  border: 2px solid var(--hitachi-red);
+  background: #fff5f5;
+  box-shadow: 0 0 0 3px rgba(230,0,18,0.12);
+}
+.kpi-clickable.kpi-active::after {
+  content: '✕ clear';
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--hitachi-red);
+  margin-top: 4px;
+  letter-spacing: 0.03em;
+}
+
+/* ── Locations page: phase group layout ──────────────────────── */
+.loc-phase-group {
+  margin-bottom: 32px;
+}
+.loc-phase-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--gray-200);
+}
+.loc-phase-label {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--black);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.loc-phase-badge {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gray-500);
+}
+.loc-phase-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
 /* ── Lookahead KPI strip — compact single-row chips ─────────── */
 .kpi-strip-row {
   display: flex;
@@ -1061,9 +1116,9 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
    LOCATIONS
    =================================== */
 .locations-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 .location-card {
   background: var(--white);
@@ -4217,8 +4272,7 @@ textarea:focus-visible {
   margin-bottom: 28px;
 }
 
-.template-grid,
-.locations-grid {
+.template-grid {
   gap: 16px;
 }
 
