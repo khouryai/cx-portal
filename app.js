@@ -4841,7 +4841,7 @@ function renderIntakeStep2() {
   const childAssetOptions = childAssets.map(c => {
     const a = ASSETS.find(x=>x.id===c.AssetId);
     return { tiRow: c, asset: a, label: a ? a.name : `Asset ${c.TestID}` };
-  });
+  }).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
 
   return `
     <div class="form-card">
@@ -9141,7 +9141,12 @@ function _amDrilldownHTML(key) {
               <tbody>
                 ${tpItems.map(r => {
                   if (r.IsParent) {
-                    const children = _sortedViewItemsRef.filter(c => c.ParentTestId === r.TestID);
+                    const children = _sortedViewItemsRef.filter(c => c.ParentTestId === r.TestID)
+                      .sort((a, b) => {
+                        const an = (ASSETS.find(x => x.id === a.AssetId)?.name || '').toLowerCase();
+                        const bn = (ASSETS.find(x => x.id === b.AssetId)?.name || '').toLowerCase();
+                        return an.localeCompare(bn, undefined, { numeric: true });
+                      });
                     return _trParentGroupRows(r, children, statuses, legacyMap, isAdmin);
                   }
                   const cur = legacyMap[r.Status] || r.Status || 'Not Started';
@@ -12496,7 +12501,16 @@ async function _trSaveGenericChild(testId) {
     const aIdx = ASSETS.findIndex(a => a.id === assetRow.id);
     if (aIdx >= 0) ASSETS[aIdx] = assetRow; else ASSETS.push(assetRow);
 
+    // Snapshot existing child IDs before linking so we can find the new row
+    const existingChildIds = new Set(
+      (_trDraftItems || []).filter(r => String(r.ParentTestId) === String(testId)).map(r => String(r.TestID))
+    );
     await _assetLinkToParent(assetRow, parentRow);
+    // Optimistically push the new child row into _trDraftItems so it shows immediately in edit mode
+    if (_trDraftItems) {
+      TI.filter(r => String(r.ParentTestId) === String(testId) && !existingChildIds.has(String(r.TestID)))
+        .forEach(r => _trDraftItems.push({ ...r, _isNew: false, _dirty: false }));
+    }
     toast(`Asset "${assetName}" linked`, 'success');
     _reRenderTR();
     if (document.getElementById('admin-assets-content')) renderAdminAssets();
