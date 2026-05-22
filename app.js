@@ -9482,8 +9482,8 @@ function _adminActivityManagerHTML() {
                 <th>Test Report CDRL</th>
                 <th>Location</th>
                 <th>Phase</th>
-                <th>Status</th>
-                <th style="min-width:160px;">Completion</th>
+                <th class="col-status">Status</th>
+                <th class="col-completion">Completion</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -9507,8 +9507,8 @@ function _adminActivityManagerHTML() {
                     <td style="font-size:12px;">${escapeHtml(a.testReport||'—')}</td>
                     <td style="font-size:12px;">${escapeHtml(a.location)}</td>
                     <td style="font-size:12px;">${escapeHtml(a.phase)}</td>
-                    <td>${_amStatusBadge(st)}</td>
-                    <td>
+                    <td class="col-status">${_amStatusBadge(st)}</td>
+                    <td class="col-completion">
                       <div class="am-progress-wrap">
                         <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;${pct===100?'background:var(--good);':pct>0?'background:var(--info);':'background:var(--gray-300);'}"></div></div>
                         <span class="am-progress-label">${done}/${total}</span>

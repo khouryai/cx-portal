@@ -257,6 +257,10 @@ body::-webkit-scrollbar-thumb:hover { background: #54575f; }
 /* Make .page reflect new sidebar width */
 .page { margin-left: 232px !important; }
 
+/* Sidebar collapse — override the !important above when collapsed */
+body.sb-collapsed .page,
+body.sb-collapsed #footer { margin-left: 0 !important; }
+
 /* ============================================================================
    5. Container
    ============================================================================ */
@@ -1979,6 +1983,24 @@ a:focus-visible {
   min-width: 48px;
   text-align: right;
   font-feature-settings: 'tnum';
+}
+
+/* Constrain Status + Completion columns so they don't stretch apart.
+   These two cols sit at the end of a wide table; without a cap the Status
+   badge forces column expansion and creates a large visual gap. */
+#test-register-content .data-table .col-status,
+#test-register-content .data-table td:has(> .badge) {
+  width: 160px;
+  max-width: 160px;
+}
+#test-register-content .data-table .col-completion,
+#test-register-content .data-table td:has(> .am-progress-wrap) {
+  width: 200px;
+  max-width: 200px;
+}
+/* Cap progress bar width so it doesn't fill an oversized cell */
+#test-register-content .am-progress-bar {
+  max-width: 110px;
 }
 
 /* -- 1. default (already styled by base) -- */
