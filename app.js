@@ -313,6 +313,7 @@ function showPage(name) {
   if (_adminPages.has(name) && !_adminModeOn) _sidenavAdminOpen();
   // Re-render pages that need fresh state on each visit
   if (name === 'dashboard')        refreshDashboard();
+  if (name === 'locations')        initLocations();
   if (name === 'field-intake')     renderFieldIntake();
   if (name === 'test-register')    renderTestRegister();
   if (name === 'tcv')              renderTCV();
@@ -503,10 +504,17 @@ const _dashCharts = {};
 
 function initDashboard() { refreshDashboard(); }
 
-// Debounced trigger — call this from any mutation point to auto-refresh the dashboard
+// Debounced trigger — call this from any mutation point to auto-refresh whichever
+// weight-dependent view is currently visible. (Dashboard, Locations, Test Register
+// all read weights through the shared lookups, so they need to re-render.)
 function _tryRefreshDashboard() {
   clearTimeout(window._dashRefreshTimer);
-  window._dashRefreshTimer = setTimeout(refreshDashboard, 500);
+  window._dashRefreshTimer = setTimeout(() => {
+    if (document.getElementById('page-dashboard')?.classList.contains('active')) refreshDashboard();
+    if (document.getElementById('page-locations')?.classList.contains('active')) initLocations();
+    if (document.getElementById('page-test-register')?.classList.contains('active')
+        && typeof renderTestRegister === 'function') renderTestRegister();
+  }, 500);
 }
 
 function refreshDashboard() {
@@ -2586,13 +2594,13 @@ function renderAdminAM() {
 }
 
 // ==========================================================================
-// ADMIN: WEIGHTS — manage shared activity weights (Subsystem + Activity)
-// and shared test-case weights (Test Code + Test Name).
+// ADMIN: WEIGHTS — manage shared activity weights (Subsystem + Activity).
+// Each activity row has a "View Test Cases" button that opens a modal with
+// the deduplicated test cases that live inside that activity, each with its
+// own editable weight (shared on Code+Name across every instance).
 // ==========================================================================
-let _awTab          = 'activity';   // 'activity' | 'testcase'
-let _awSearch       = '';
-let _awSubFilter    = '';           // for activity tab
-let _awTcSubFilter  = '';           // for test-case tab (subsystem of any matching row in TI)
+let _awSearch    = '';
+let _awSubFilter = '';
 
 function renderAdminWeights() {
   const root = document.getElementById('admin-weights-content');
@@ -2604,71 +2612,52 @@ function renderAdminWeights() {
   root.innerHTML = _adminWeightsHTML();
 }
 
-// Build a list of distinct (subsystem, activity_name) keys from current TI rows.
-// We want EVERY activity that has at least one test item, whether or not it
-// already has a row in activity_weights. Missing rows fall back to weight=1.
+// Build the activity list with a per-activity count of distinct test cases
+// (deduplicated by Code+TestName across all locations).
 function _awGetActivityRows() {
-  const lookup = _buildActivityWeightLookup();
-  const seen   = new Map(); // key → { subsystem, activity_name, weight, instances }
+  const actLookup = _buildActivityWeightLookup();
+  const tcLookup  = _buildTestCaseWeightLookup();
+  const seen = new Map(); // sub||act → row aggregator
   for (const r of TI) {
+    if (r.IsParent) continue;
     const sub = r.Subsystem || '';
     const act = r.Activity  || '';
     if (!sub || !act) continue;
     const key = `${sub}||${act}`;
     if (!seen.has(key)) {
-      seen.set(key, { subsystem: sub, activity_name: act, weight: lookup.get(key) ?? 1, instances: 0 });
-    }
-    seen.get(key).instances++;
-  }
-  return [...seen.values()];
-}
-
-// Build a list of distinct (test_case_code, test_name) keys from current TI rows.
-function _awGetTestCaseRows() {
-  const lookup = _buildTestCaseWeightLookup();
-  const seen   = new Map();
-  for (const r of TI) {
-    if (r.IsParent) continue; // parent rows inherit child status
-    const code = r.TestCaseCode || '';
-    const name = r.TestName     || '';
-    if (!code && !name) continue;
-    const key = `${code}||${name}`;
-    if (!seen.has(key)) {
       seen.set(key, {
-        test_case_code: code,
-        test_name:      name,
-        weight:         lookup.get(key) ?? 1,
+        subsystem:      sub,
+        activity_name:  act,
+        weight:         actLookup.get(key) ?? 1,
         instances:      0,
-        subsystems:     new Set(),
+        tcKeys:         new Set(), // distinct test case identities
+        weightedTcs:    0,         // count of distinct test cases with weight ≠ 1
       });
     }
     const row = seen.get(key);
     row.instances++;
-    if (r.Subsystem) row.subsystems.add(r.Subsystem);
+    const tcKey = `${r.TestCaseCode || ''}||${r.TestName || ''}`;
+    if (!row.tcKeys.has(tcKey)) {
+      row.tcKeys.add(tcKey);
+      if ((tcLookup.get(tcKey) ?? 1) !== 1) row.weightedTcs++;
+    }
   }
-  return [...seen.values()].map(r => ({ ...r, subsystems: [...r.subsystems].sort() }));
-}
-
-function _awSetTab(tab) {
-  _awTab = tab;
-  _awSearch = '';
-  renderAdminWeights();
+  return [...seen.values()].map(r => ({
+    ...r,
+    distinctTcCount: r.tcKeys.size,
+  }));
 }
 
 function _awSetSearch(v) {
   _awSearch = v;
-  // Only re-render the table body to preserve input focus
   const body = document.getElementById('aw-table-body');
-  if (body) body.innerHTML = _awTab === 'activity' ? _awActivityRowsHTML() : _awTestCaseRowsHTML();
-  const count = document.getElementById('aw-count');
-  if (count) count.textContent = _awTab === 'activity'
-    ? `${_awFilteredActivityRows().length} activities`
-    : `${_awFilteredTestCaseRows().length} test cases`;
+  if (body) body.innerHTML = _awActivityRowsHTML();
+  const countEl = document.getElementById('aw-count');
+  if (countEl) countEl.textContent = `${_awFilteredActivityRows().length}`;
 }
 
 function _awSetSubFilter(v) {
-  if (_awTab === 'activity') _awSubFilter = v;
-  else                       _awTcSubFilter = v;
+  _awSubFilter = v;
   renderAdminWeights();
 }
 
@@ -2680,56 +2669,32 @@ function _awFilteredActivityRows() {
     .sort((a, b) => a.subsystem.localeCompare(b.subsystem) || a.activity_name.localeCompare(b.activity_name));
 }
 
-function _awFilteredTestCaseRows() {
-  const q = (_awSearch || '').toLowerCase().trim();
-  return _awGetTestCaseRows()
-    .filter(r => !_awTcSubFilter || r.subsystems.includes(_awTcSubFilter))
-    .filter(r => !q
-      || r.test_case_code.toLowerCase().includes(q)
-      || r.test_name.toLowerCase().includes(q)
-    )
-    .sort((a, b) =>
-      a.test_case_code.localeCompare(b.test_case_code, undefined, { numeric: true })
-      || a.test_name.localeCompare(b.test_name)
-    );
-}
-
 function _adminWeightsHTML() {
   const subs = [...new Set(TI.map(r => r.Subsystem).filter(Boolean))].sort();
-  const isActTab = _awTab === 'activity';
-  const subFilterVal = isActTab ? _awSubFilter : _awTcSubFilter;
-
-  const totals = isActTab
-    ? { rows: _awFilteredActivityRows().length, label: 'activities' }
-    : { rows: _awFilteredTestCaseRows().length, label: 'test cases' };
+  const rows = _awFilteredActivityRows();
 
   return `
     <div class="admin-section">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
         <div>
-          <div class="admin-section-title">Shared Weights</div>
+          <div class="admin-section-title">Activity & Test Case Weights</div>
           <p class="section-sub">
-            One weight per <b>Subsystem + Activity</b> and one weight per <b>Test Code + Test Name</b>.
-            Changes apply instantly across every location and instance.
+            Set a shared weight on each activity (<b>Subsystem + Activity Name</b>).
+            Open an activity to weight its test cases — the same Test Code + Name applies everywhere it lives.
           </p>
         </div>
       </div>
 
-      <div class="aw-tabs">
-        <button class="aw-tab ${isActTab ? 'is-active' : ''}" onclick="_awSetTab('activity')">Activity Weights</button>
-        <button class="aw-tab ${!isActTab ? 'is-active' : ''}" onclick="_awSetTab('testcase')">Test Case Weights</button>
-      </div>
-
-      <div class="filter-bar" style="margin-top:14px;">
+      <div class="filter-bar" style="margin-top:6px;">
         <input id="aw-search" class="filter-input" type="text"
-          placeholder="${isActTab ? 'Search activity or subsystem…' : 'Search test code or name…'}"
+          placeholder="Search activity or subsystem…"
           value="${escapeHtml(_awSearch)}" oninput="_awSetSearch(this.value)">
         <select class="filter-select" onchange="_awSetSubFilter(this.value)">
           <option value="">All subsystems</option>
-          ${subs.map(s => `<option value="${escapeHtml(s)}" ${subFilterVal === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+          ${subs.map(s => `<option value="${escapeHtml(s)}" ${_awSubFilter === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
         </select>
         <span style="margin-left:auto;font-size:12px;color:var(--gray-500);">
-          <span id="aw-count"><b>${totals.rows}</b></span> ${totals.label}
+          <span id="aw-count"><b>${rows.length}</b></span> activities
         </span>
       </div>
 
@@ -2737,25 +2702,17 @@ function _adminWeightsHTML() {
         <div class="table-wrap">
           <table class="data-table">
             <thead>
-              ${isActTab ? `
-                <tr>
-                  <th style="width:200px;">Subsystem</th>
-                  <th>Activity Name</th>
-                  <th style="width:100px;text-align:right;">Instances</th>
-                  <th style="width:140px;">Weight</th>
-                </tr>
-              ` : `
-                <tr>
-                  <th style="width:160px;">Code</th>
-                  <th>Test Name</th>
-                  <th style="width:180px;">Subsystem(s)</th>
-                  <th style="width:100px;text-align:right;">Instances</th>
-                  <th style="width:140px;">Weight</th>
-                </tr>
-              `}
+              <tr>
+                <th style="width:200px;">Subsystem</th>
+                <th>Activity Name</th>
+                <th style="width:120px;text-align:right;">Test Cases</th>
+                <th style="width:120px;text-align:right;">Instances</th>
+                <th style="width:130px;">Activity Weight</th>
+                <th style="width:180px;"></th>
+              </tr>
             </thead>
             <tbody id="aw-table-body">
-              ${isActTab ? _awActivityRowsHTML() : _awTestCaseRowsHTML()}
+              ${_awActivityRowsHTML()}
             </tbody>
           </table>
         </div>
@@ -2767,56 +2724,139 @@ function _adminWeightsHTML() {
 function _awActivityRowsHTML() {
   const rows = _awFilteredActivityRows();
   if (!rows.length) {
-    return `<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--gray-500);">No activities match the current filter.</td></tr>`;
+    return `<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--gray-500);">No activities match the current filter.</td></tr>`;
   }
   return rows.map(r => {
     const safeSub = escapeHtml(r.subsystem);
     const safeAct = escapeHtml(r.activity_name);
     const dataAttr = `data-sub="${safeSub}" data-act="${safeAct}"`;
     const wClass = r.weight !== 1 ? 'aw-weight-custom' : '';
+    const tcBadge = r.weightedTcs
+      ? `<span class="aw-weighted-pill" title="${r.weightedTcs} test case${r.weightedTcs!==1?'s':''} weighted ≠ 1">⚖️ ${r.weightedTcs} weighted</span>`
+      : '';
     return `
       <tr>
         <td><span class="tag">${safeSub}</span></td>
         <td><span style="font-weight:600;font-size:13px;">${safeAct}</span></td>
+        <td style="text-align:right;font-size:12px;color:var(--gray-700);"><b>${r.distinctTcCount}</b></td>
         <td style="text-align:right;color:var(--gray-500);font-size:12px;">${r.instances}</td>
         <td>
           <input type="number" min="0" step="0.5" ${dataAttr}
             class="form-input aw-weight-input ${wClass}"
-            style="width:110px;text-align:right;"
+            style="width:100px;text-align:right;"
             value="${r.weight}"
             onchange="_awSaveActivityWeight(this)"
             title="Weight applied at every location for ${safeSub} · ${safeAct}">
+        </td>
+        <td>
+          <button class="admin-action-btn tr-mini-btn" style="display:inline-flex;align-items:center;gap:6px;"
+            onclick="_awOpenTestCasesModal('${safeSub}','${safeAct}')">
+            ${r.distinctTcCount} cases ${tcBadge ? `· ${tcBadge}` : ''} →
+          </button>
         </td>
       </tr>`;
   }).join('');
 }
 
-function _awTestCaseRowsHTML() {
-  const rows = _awFilteredTestCaseRows();
-  if (!rows.length) {
-    return `<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--gray-500);">No test cases match the current filter.</td></tr>`;
+// ── Test Cases modal — one row per distinct (code, name) inside the activity ──
+function _awGetTestCasesInActivity(sub, act) {
+  const tcLookup = _buildTestCaseWeightLookup();
+  const seen = new Map();
+  for (const r of TI) {
+    if (r.IsParent) continue;
+    if ((r.Subsystem || '') !== sub || (r.Activity || '') !== act) continue;
+    const code = r.TestCaseCode || '';
+    const name = r.TestName     || '';
+    if (!code && !name) continue;
+    const key = `${code}||${name}`;
+    if (!seen.has(key)) {
+      seen.set(key, {
+        test_case_code: code,
+        test_name:      name,
+        weight:         tcLookup.get(key) ?? 1,
+        instances:      0,
+        locations:      new Set(),
+      });
+    }
+    const row = seen.get(key);
+    row.instances++;
+    if (r.Location) row.locations.add(r.Location);
   }
-  return rows.map(r => {
-    const safeCode = escapeHtml(r.test_case_code);
-    const safeName = escapeHtml(r.test_name);
-    const dataAttr = `data-code="${safeCode}" data-name="${safeName}"`;
-    const wClass = r.weight !== 1 ? 'aw-weight-custom' : '';
-    return `
-      <tr>
-        <td><span class="cell-mono">${safeCode || '—'}</span></td>
-        <td><span style="font-weight:600;font-size:13px;">${safeName || '—'}</span></td>
-        <td style="font-size:11px;color:var(--gray-500);">${r.subsystems.map(s => escapeHtml(s)).join(', ') || '—'}</td>
-        <td style="text-align:right;color:var(--gray-500);font-size:12px;">${r.instances}</td>
-        <td>
-          <input type="number" min="0" step="0.5" ${dataAttr}
-            class="form-input aw-weight-input ${wClass}"
-            style="width:110px;text-align:right;"
-            value="${r.weight}"
-            onchange="_awSaveTestCaseWeight(this)"
-            title="Weight applied to every instance of ${safeCode} · ${safeName}">
-        </td>
-      </tr>`;
-  }).join('');
+  return [...seen.values()]
+    .map(r => ({ ...r, locations: [...r.locations].sort() }))
+    .sort((a, b) =>
+      a.test_case_code.localeCompare(b.test_case_code, undefined, { numeric: true })
+      || a.test_name.localeCompare(b.test_name)
+    );
+}
+
+function _awOpenTestCasesModal(sub, act) {
+  const cases = _awGetTestCasesInActivity(sub, act);
+  const bulkBar = `
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);">
+      <span style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;">Bulk apply:</span>
+      <input type="number" id="aw-bulk-val" class="form-input" min="0" step="0.5" placeholder="weight"
+        style="width:90px;font-size:12px;padding:5px 8px;text-align:right;">
+      <button class="admin-action-btn tr-mini-btn" onclick="_awApplyBulkWeight()">Apply to all ${cases.length} test cases</button>
+      <span style="margin-left:auto;font-size:11px;color:var(--gray-500);">All changes save instantly</span>
+    </div>`;
+
+  const rowsHTML = cases.length
+    ? cases.map(c => {
+        const safeCode = escapeHtml(c.test_case_code);
+        const safeName = escapeHtml(c.test_name);
+        const wClass = c.weight !== 1 ? 'aw-weight-custom' : '';
+        return `
+          <tr>
+            <td><span class="cell-mono">${safeCode || '—'}</span></td>
+            <td><span style="font-weight:600;font-size:13px;">${safeName || '—'}</span></td>
+            <td style="text-align:right;color:var(--gray-500);font-size:12px;">${c.instances}</td>
+            <td>
+              <input type="number" min="0" step="0.5"
+                data-code="${safeCode}" data-name="${safeName}"
+                class="form-input aw-weight-input aw-tc-input ${wClass}"
+                style="width:100px;text-align:right;"
+                value="${c.weight}"
+                onchange="_awSaveTestCaseWeight(this)"
+                title="Weight for every instance of ${safeCode || '—'} · ${safeName || '—'}">
+            </td>
+          </tr>`;
+      }).join('')
+    : `<tr><td colspan="4" style="padding:24px;text-align:center;color:var(--gray-500);">No test cases under this activity.</td></tr>`;
+
+  modal({
+    title: `⚖️ Test Cases in ${act}`,
+    sub:   `${sub} · ${cases.length} distinct test case${cases.length !== 1 ? 's' : ''} (deduplicated across all locations)`,
+    size:  'large',
+    body: `
+      <div class="data-card" style="margin-bottom:0;overflow:hidden;">
+        ${bulkBar}
+        <div class="table-wrap" style="max-height:60vh;overflow:auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:160px;">Code</th>
+                <th>Test Name</th>
+                <th style="width:100px;text-align:right;">Instances</th>
+                <th style="width:130px;">Weight</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHTML}</tbody>
+          </table>
+        </div>
+      </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Done</button>`,
+  });
+}
+
+function _awApplyBulkWeight() {
+  const val = parseFloat(document.getElementById('aw-bulk-val')?.value);
+  if (!isFinite(val) || val < 0) { toast('Enter a valid weight ≥ 0', 'error'); return; }
+  document.querySelectorAll('.aw-tc-input').forEach(el => {
+    el.value = val;
+    // Reuse the per-row save handler so each weight persists individually
+    _awSaveTestCaseWeight(el);
+  });
 }
 
 async function _awSaveActivityWeight(el) {
@@ -2862,6 +2902,9 @@ async function _awSaveTestCaseWeight(el) {
     }
     el.classList.toggle('aw-weight-custom', w !== 1);
     toast(`Saved · ${code} → ${w}`, 'success');
+    // Refresh the underlying activity table so its "X weighted" pill updates
+    const body = document.getElementById('aw-table-body');
+    if (body) body.innerHTML = _awActivityRowsHTML();
     _tryRefreshDashboard?.();
   } catch (e) {
     toast(`Save failed: ${e.message}`, 'error');
