@@ -12917,6 +12917,7 @@ function _assetPageHTML() {
   const prefixes = [...new Set(ASSETS.map(a => a.location_prefix).filter(Boolean))].sort();
   const subs     = [...new Set(ASSETS.map(a => a.subsystem).filter(Boolean))].sort();
   const allSubs  = [...new Set(TI.map(r => r.Subsystem).filter(Boolean))].sort();
+  const allLocs  = [...new Set(TI.map(r => r.Location).filter(Boolean))].sort();
 
   const filtered = ASSETS.filter(a => {
     const s = _assetFilter.search.toLowerCase();
@@ -13008,10 +13009,25 @@ function _assetPageHTML() {
 
     <!-- Bulk action bar -->
     ${_assetSelected.size > 0 ? `
-      <div style="display:flex;align-items:center;gap:12px;background:#1e293b;color:#fff;padding:10px 18px;border-radius:8px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#1e293b;color:#fff;padding:10px 18px;border-radius:8px;margin-bottom:12px;">
         <span style="font-size:13px;font-weight:600;">${_assetSelected.size} asset${_assetSelected.size!==1?'s':''} selected</span>
-        <button class="admin-action-btn" style="background:#dc2626;" onclick="_assetBulkDelete()">🗑 Delete Selected</button>
-        <button class="form-secondary" style="font-size:12px;color:#fff;border-color:#fff4;" onclick="_assetClearSelection()">Clear</button>
+        <span style="height:24px;border-left:1px solid #ffffff33;align-self:center;"></span>
+        <span style="font-size:12px;color:#94a3b8;white-space:nowrap;">Set Device Type:</span>
+        <select id="am-bulk-type" class="form-input" style="font-size:12px;max-width:180px;background:#334155;color:#fff;border-color:#475569;">
+          <option value="">— choose —</option>
+          ${types.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}
+        </select>
+        <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_assetBulkEditField('device_type','am-bulk-type')">Apply</button>
+        <span style="height:24px;border-left:1px solid #ffffff33;align-self:center;"></span>
+        <span style="font-size:12px;color:#94a3b8;white-space:nowrap;">Set Location:</span>
+        <select id="am-bulk-loc" class="form-input" style="font-size:12px;max-width:160px;background:#334155;color:#fff;border-color:#475569;">
+          <option value="">— choose —</option>
+          ${allLocs.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('')}
+        </select>
+        <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_assetBulkEditField('location','am-bulk-loc')">Apply</button>
+        <span style="height:24px;border-left:1px solid #ffffff33;align-self:center;"></span>
+        <button class="admin-action-btn" style="background:#dc2626;font-size:12px;" onclick="_assetBulkDelete()">🗑 Delete</button>
+        <button class="form-secondary" style="font-size:12px;color:#fff;border-color:#ffffff33;" onclick="_assetClearSelection()">Clear</button>
       </div>` : ''}
 
     <!-- Asset Table -->
@@ -13213,7 +13229,11 @@ function _assetPopulateTcSelect(assetId) {
   );
   tcSel.innerHTML = options.length
     ? `<option value="">— Select Test Case —</option>` +
-      options.map(r => `<option value="${escapeHtml(String(r.TestID))}">${escapeHtml(r.TestName||r.TestCaseCode||r.TestID)} [${escapeHtml(r.Subsystem||'?')}]${r.Location ? ` (${escapeHtml(r.Location)})` : ''}</option>`).join('')
+      options.map(r => {
+        const label = [r.TestCaseCode, r.TestName].filter(Boolean).join(' · ') || String(r.TestID);
+        const suffix = `[${escapeHtml(r.Subsystem||'?')}]${r.Location ? ` (${escapeHtml(r.Location)})` : ''}`;
+        return `<option value="${escapeHtml(String(r.TestID))}">${escapeHtml(label)} ${suffix}</option>`;
+      }).join('')
     : `<option value="">No unlinked test cases in this activity</option>`;
 }
 
@@ -13412,6 +13432,27 @@ async function _assetBulkDelete() {
   renderAdminAssets();
   _reRenderTR();
   toast(`${ids.length} asset${ids.length!==1?'s':''} deleted`, 'success');
+}
+
+async function _assetBulkEditField(field, selectId) {
+  const val = document.getElementById(selectId)?.value;
+  if (!val) { toast('Please choose a value first', 'error'); return; }
+  const ids = [..._assetSelected];
+  if (!ids.length) return;
+  const label = field === 'device_type' ? 'Device Type' : 'Location';
+  if (!confirm(`Set ${label} to "${val}" for ${ids.length} asset${ids.length!==1?'s':''}?`)) return;
+  try {
+    // Batch update via individual upserts (assets table has no bulk endpoint, keep it simple)
+    for (const id of ids) {
+      await _dbUpdate('assets', { [field]: val }, { id });
+      const a = ASSETS.find(x => x.id === id);
+      if (a) a[field] = val;
+    }
+    renderAdminAssets();
+    toast(`${label} updated for ${ids.length} asset${ids.length!==1?'s':''}`, 'success');
+  } catch(e) {
+    toast('Bulk update failed: ' + e.message, 'error');
+  }
 }
 
 async function _assetUnlinkConfirm(assetId, parentTestId) {
