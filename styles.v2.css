@@ -1708,8 +1708,8 @@ a:focus-visible {
    Triggered by data-tr-subsys / data-tr-status on <html>.
    ============================================================================ */
 
-/* === SUBSYSTEM BADGE STYLES (.tag inside test-register-content) === */
-#test-register-content .tag {
+/* === TAG PILL — global across all modules (.tag) === */
+.tag {
   font-family: var(--f-ui);
   font-weight: 600;
   letter-spacing: -0.005em;
@@ -1727,7 +1727,15 @@ a:focus-visible {
   white-space: nowrap;
 }
 
-/* -- 1. default (already styled above) -- */
+/* Phase badge — soft blue tint, distinct from subsystem gray */
+.tag-phase {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: rgba(29,78,175,0.15);
+}
+
+/* === SUBSYSTEM BADGE THEMES — test-register tweaks panel only === */
+/* -- 1. default (base .tag above) -- */
 
 /* -- 2. COLORED — auto-hashed color per subsystem name -- */
 :root[data-tr-subsys="colored"] #test-register-content .tag[data-tr-color="0"] { background:#e8f4ee; color:#0d7a4f; border-color:rgba(13,122,79,0.18); }

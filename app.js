@@ -922,7 +922,7 @@ function renderAPTable() {
         ${r['Test Report CDRL'] ? `<span class="cell-sub">CDRL ${escapeHtml(r['Test Report CDRL'])}</span>` : ''}
       </td>
       <td><span class="tag">${escapeHtml(r['SubSystem-'] || '—')}</span></td>
-      <td class="cell-mono">Phase ${escapeHtml(String(r.Phase || '—').trim())}</td>
+      <td><span class="tag tag-phase">${escapeHtml(String(r.Phase || '—').trim())}</span></td>
       <td>${escapeHtml(r['Test Level'] || '—')}</td>
       <td>${escapeHtml(r.Location || '—')}</td>
       <td class="cell-mono">${escapeHtml(r.Progress || '—')}</td>
@@ -1155,7 +1155,7 @@ function renderLITable() {
         <span class="cell-name">${escapeHtml(r.TestName || '—')}</span>
       </td>
       <td><span class="tag">${escapeHtml(r.Subsystem || '—')}</span></td>
-      <td class="cell-mono">${escapeHtml(String(r.Phase || '—').trim())}</td>
+      <td><span class="tag tag-phase">${escapeHtml(String(r.Phase || '—').trim())}</span></td>
       <td>${escapeHtml(r.Location || '—')}</td>
       <td>${getStatusBadge(r.Status)}</td>
     </tr>
@@ -3554,7 +3554,7 @@ async function handleImportFile(input) {
             ${rows.map(r => `<tr>
               <td style="font-size:12px;font-weight:600;">${escapeHtml(r.TestCaseCode || '')}</td>
               <td style="font-size:12px;">${escapeHtml(r.TestName || '')}</td>
-              <td style="font-size:12px;">${escapeHtml(r.Phase || '')}</td>
+              <td><span class="tag tag-phase">${escapeHtml(r.Phase || '')}</span></td>
               <td style="font-size:12px;">${escapeHtml(r.Location || '')}</td>
               <td><span class="badge badge-${importStatusBadge(r.Status||'Future')}">${escapeHtml(r.Status||'Future')}</span></td>
             </tr>`).join('')}
@@ -9177,7 +9177,7 @@ function _testRegisterHTML() {
         </td>
         <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
         <td style="font-size:12px;">${escapeHtml(a.location)}</td>
-        <td style="font-size:12px;">${escapeHtml(a.phase)}</td>
+        <td><span class="tag tag-phase">${escapeHtml(a.phase)}</span></td>
         <td>${_amStatusBadge(st)}</td>
         <td>
           <div class="am-progress-wrap"
@@ -9372,7 +9372,7 @@ function _p6WeightedCompletion(act, tcw) {
 function _amStatusBadge(s) {
   if (s === 'Closed')             return `<span class="badge badge-passed">Closed</span>`;
   if (s === 'Future Test')        return `<span class="badge badge-futuretest">Future Test</span>`;
-  if (s === 'Partial Completion') return `<span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;">Partial — Future Tests Remain</span>`;
+  if (s === 'Partial Completion') return `<span class="badge badge-warn">Partial Completion</span>`;
   return `<span class="badge badge-open">Open</span>`;
 }
 
@@ -9506,7 +9506,7 @@ function _adminActivityManagerHTML() {
                     <td style="font-size:12px;max-width:160px;" title="${escapeHtml(procFull)}">${escapeHtml(procShort)}</td>
                     <td style="font-size:12px;">${escapeHtml(a.testReport||'—')}</td>
                     <td style="font-size:12px;">${escapeHtml(a.location)}</td>
-                    <td style="font-size:12px;">${escapeHtml(a.phase)}</td>
+                    <td><span class="tag tag-phase">${escapeHtml(a.phase)}</span></td>
                     <td class="col-status">${_amStatusBadge(st)}</td>
                     <td class="col-completion">
                       <div class="am-progress-wrap">
@@ -12344,7 +12344,7 @@ function renderSchedulePage() {
                   <td style="font-size:12px;font-weight:500;">${escapeHtml(a.activity)}</td>
                   <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
                   <td style="font-size:12px;">${escapeHtml(a.location)}</td>
-                  <td style="font-size:12px;">${escapeHtml(a.phase)}</td>
+                  <td><span class="tag tag-phase">${escapeHtml(a.phase)}</span></td>
                   <td style="font-size:12px;">${rec?.planned_date ? _fmtDate(rec.planned_date) : '<span style="color:var(--gray-400);">—</span>'}</td>
                   <td style="font-size:12px;">
                     ${p6Show?.start_date ? `${_fmtDate(p6Show.start_date)}<span style="font-size:10px;color:var(--gray-400);margin-left:4px;">${p6Label}</span>` : '<span style="color:var(--gray-400);">Not linked</span>'}
