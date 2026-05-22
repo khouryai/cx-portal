@@ -637,15 +637,16 @@ function renderPhaseGrid() {
 function renderLIStatusChart() {
   const ctx = document.getElementById('chart-li-status');
   const ti = _latestTI();
-  // Use weighted values so the doughnut reflects the same basis as the KPI %
-  const ws       = _wgtStat(ti);
-  const passed   = ws.passW;
-  const failed   = ws.failW;
-  const blocked  = ws.blockedW;
-  const inprog   = ws.inprogW;
-  const future   = ws.futureW;
-  const notStart = ws.notStartW;
-  const na       = ws.naW;
+  // Use raw test-case counts for chart segments — weights only drive the % KPIs,
+  // not the slice sizes. Showing weighted sums here would produce values like "2775.5
+  // Passed" when an activity weight is set to 1000, which is misleading.
+  const passed   = ti.filter(r => ['Pass','Passed','Complete'].includes(r.Status)).length;
+  const failed   = ti.filter(r => ['Fail','Failed'].includes(r.Status)).length;
+  const blocked  = ti.filter(r => r.Status === 'Blocked').length;
+  const inprog   = ti.filter(r => r.Status === 'In Progress').length;
+  const future   = ti.filter(r => r.Status === 'Future Test').length;
+  const na       = ti.filter(r => r.Status === 'Not Applicable').length;
+  const notStart = ti.filter(r => !r.Status || r.Status === 'Not Started').length;
   if (_dashCharts.liStatus) _dashCharts.liStatus.destroy();
   _dashCharts.liStatus = new Chart(ctx, {
     type: 'doughnut',
