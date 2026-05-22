@@ -6162,7 +6162,7 @@ function renderPunchWorkflow() {
       <div style="display:flex;align-items:center;gap:12px;padding:10px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:12px;">
         <span style="font-size:13px;font-weight:600;color:#1d4ed8;">${_plSelected.size} item${_plSelected.size===1?'':'s'} selected</span>
         <button class="form-submit" style="font-size:12px;padding:5px 14px;" onclick="exportPunchPDF([..._plSelected])">⬇ Export ${_plSelected.size} as PDF</button>
-        <button class="form-secondary" style="font-size:12px;padding:5px 12px;" onclick="_plClearSelection()">✕ Clear</button>
+        <button class="btn-ghost-light" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_plClearSelection()">✕ Clear</button>
       </div>` : ''}
 
     <div class="data-card" style="padding:0;overflow:hidden;">
@@ -9259,7 +9259,7 @@ function _testRegisterHTML() {
           ${hasNonFuture  ? `<button class="admin-action-btn" style="background:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
           ${hasFutureTest ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
           <button class="admin-action-btn" style="background:#dc2626;" onclick="_amBulkDeleteActivities()">🗑 Delete Selected</button>
-          <button class="form-secondary" style="font-size:12px;" onclick="_amClearSelection()">Clear selection</button>
+          <button class="btn-ghost-light" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_amClearSelection()">Clear selection</button>
         </div>` : ''}
 
       <!-- Main table -->
@@ -9465,7 +9465,7 @@ function _adminActivityManagerHTML() {
           ${hasNonFuture ? `<button class="admin-action-btn" style="background:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
           ${hasFutureTest ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
           <button class="admin-action-btn" style="background:#dc2626;" onclick="_amBulkDeleteActivities()">🗑 Delete Selected</button>
-          <button class="form-secondary" style="font-size:12px;" onclick="_amClearSelection()">Clear selection</button>
+          <button class="btn-ghost-light" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_amClearSelection()">Clear selection</button>
         </div>
       ` : ''}
 
@@ -9999,7 +9999,7 @@ function _trBulkBarHTML(count) {
       <div style="width:1px;background:rgba(255,255,255,.2);align-self:stretch;"></div>
       ${isAdmin ? `<button class="admin-action-btn" style="background:#dc2626;" onclick="_trBulkDelete()"
         data-tippy-content="Permanently delete selected test cases">🗑 Delete (${count})</button>` : ''}
-      <button class="form-secondary" style="font-size:12px;" onclick="_trClearSelection()">Clear</button>
+      <button class="btn-ghost-dark" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_trClearSelection()">Clear</button>
     </div>
   `;
 }
@@ -13013,10 +13013,12 @@ function _assetPageHTML() {
         <span style="font-size:13px;font-weight:600;">${_assetSelected.size} asset${_assetSelected.size!==1?'s':''} selected</span>
         <span style="height:24px;border-left:1px solid #ffffff33;align-self:center;"></span>
         <span style="font-size:12px;color:#94a3b8;white-space:nowrap;">Set Device Type:</span>
-        <select id="am-bulk-type" class="form-input" style="font-size:12px;max-width:180px;background:#334155;color:#fff;border-color:#475569;">
-          <option value="">— choose —</option>
-          ${types.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}
-        </select>
+        <input id="am-bulk-type" list="am-bulk-type-list" class="form-input"
+          placeholder="Type or choose…"
+          style="font-size:12px;max-width:190px;background:#334155;color:#fff;border-color:#475569;caret-color:#fff;">
+        <datalist id="am-bulk-type-list">
+          ${types.map(t => `<option value="${escapeHtml(t)}"></option>`).join('')}
+        </datalist>
         <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_assetBulkEditField('device_type','am-bulk-type')">Apply</button>
         <span style="height:24px;border-left:1px solid #ffffff33;align-self:center;"></span>
         <span style="font-size:12px;color:#94a3b8;white-space:nowrap;">Set Location:</span>
@@ -13027,7 +13029,7 @@ function _assetPageHTML() {
         <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_assetBulkEditField('location','am-bulk-loc')">Apply</button>
         <span style="height:24px;border-left:1px solid #ffffff33;align-self:center;"></span>
         <button class="admin-action-btn" style="background:#dc2626;font-size:12px;" onclick="_assetBulkDelete()">🗑 Delete</button>
-        <button class="form-secondary" style="font-size:12px;color:#fff;border-color:#ffffff33;" onclick="_assetClearSelection()">Clear</button>
+        <button class="btn-ghost-dark" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_assetClearSelection()">Clear</button>
       </div>` : ''}
 
     <!-- Asset Table -->

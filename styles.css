@@ -4294,6 +4294,28 @@ textarea:focus-visible {
   border-color: rgba(255,255,255,0.16);
 }
 
+/* Ghost clear button for dark toolbars (dark navy, dark slate, etc.) */
+.btn-ghost-dark {
+  background: rgba(255,255,255,0.10) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255,255,255,0.22) !important;
+  box-shadow: none !important;
+}
+.btn-ghost-dark:hover {
+  background: rgba(255,255,255,0.18) !important;
+}
+
+/* Ghost clear button for light-coloured toolbars (lavender, sky-blue, etc.) */
+.btn-ghost-light {
+  background: rgba(0,0,0,0.04) !important;
+  color: inherit !important;
+  border: 1px solid rgba(0,0,0,0.18) !important;
+  box-shadow: none !important;
+}
+.btn-ghost-light:hover {
+  background: rgba(0,0,0,0.09) !important;
+}
+
 /* Admin and reporting */
 .admin-section {
   margin-bottom: 28px;
