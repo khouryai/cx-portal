@@ -537,7 +537,7 @@ function refreshDashboard() {
   const tiFuture   = ti.filter(r => r.Status === 'Future Test').length;
   const tiTotal    = ti.length;
 
-  // Weighted percentages — honours test case weights set in the P6 Weights tab
+  // Weighted percentages — honours weights set in Admin → Weights
   const ws         = _wgtStat(ti);
   const complete   = tiPass + tiNa; // raw count for meta text
   const overallPct = ws.totalW > 0   ? Math.round((ws.completeW / ws.totalW) * 100) : 0;
@@ -610,6 +610,9 @@ function renderPhaseGrid() {
   const phases  = [...new Set(acts.map(a => a.phase).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   const grid    = document.getElementById('phase-grid');
   const allTI   = _latestTI();
+  // Build weight lookups once for the whole loop instead of per phase.
+  const _aw  = _buildActivityWeightLookup();
+  const _tcw = _buildTestCaseWeightLookup();
   let html = '';
   phases.forEach(phase => {
     const items   = acts.filter(a => a.phase === phase);
@@ -617,9 +620,9 @@ function renderPhaseGrid() {
     const future  = items.filter(a => _amComputeStatus(a) === 'Future Test').length;
     const open    = items.length - closed - future;
     const total   = items.length;
-    // Weighted test-case completion for this phase (Layer 1 × Layer 2)
+    // Weighted test-case completion for this phase (activity × test-case)
     const phaseTI = allTI.filter(r => r.Phase === phase);
-    const ws      = _wgtStat(phaseTI);
+    const ws      = _wgtStat(phaseTI, _aw, _tcw);
     const pct     = ws.totalW > 0 ? Math.round((ws.completeW / ws.totalW) * 100) : 0;
     html += `
       <div class="phase-card">
@@ -1282,6 +1285,11 @@ function initLocations() {
   const phases = [...new Set(ti.map(r => String(r.Phase || '')).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
+  // Build weight lookups ONCE per render — _wgtStat is called per phase + per
+  // location which would otherwise rebuild these maps ~120× per page load.
+  const _aw  = _buildActivityWeightLookup();
+  const _tcw = _buildTestCaseWeightLookup();
+
   const grid = document.getElementById('locations-grid');
   let html = '';
 
@@ -1291,7 +1299,7 @@ function initLocations() {
     if (!locs.length) return;
 
     // Phase-level weighted summary for the heading badge
-    const phaseWs  = _wgtStat(phaseTI);
+    const phaseWs  = _wgtStat(phaseTI, _aw, _tcw);
     const phasePct = phaseWs.totalW > 0 ? Math.round((phaseWs.completeW / phaseWs.totalW) * 100) : 0;
 
     html += `
@@ -1304,7 +1312,7 @@ function initLocations() {
 
     locs.forEach(loc => {
       const locTI  = phaseTI.filter(r => r.Location === loc);
-      const ws     = _wgtStat(locTI);
+      const ws     = _wgtStat(locTI, _aw, _tcw);
       const pct    = ws.totalW > 0 ? Math.round((ws.completeW / ws.totalW) * 100) : 0;
       const passed = locTI.filter(r => ['Pass','Passed','Complete','Not Applicable'].includes(r.Status)).length;
       const total  = locTI.length;
@@ -2741,7 +2749,7 @@ function _awActivityRowsHTML() {
         <td style="text-align:right;font-size:12px;color:var(--gray-700);"><b>${r.distinctTcCount}</b></td>
         <td style="text-align:right;color:var(--gray-500);font-size:12px;">${r.instances}</td>
         <td>
-          <input type="number" min="0" step="0.5" ${dataAttr}
+          <input type="number" min="0.1" step="0.5" ${dataAttr}
             class="form-input aw-weight-input ${wClass}"
             style="width:100px;text-align:right;"
             value="${r.weight}"
@@ -2812,7 +2820,7 @@ function _awOpenTestCasesModal(sub, act) {
             <td><span style="font-weight:600;font-size:13px;">${safeName || '—'}</span></td>
             <td style="text-align:right;color:var(--gray-500);font-size:12px;">${c.instances}</td>
             <td>
-              <input type="number" min="0" step="0.5"
+              <input type="number" min="0.1" step="0.5"
                 data-code="${safeCode}" data-name="${safeName}"
                 class="form-input aw-weight-input aw-tc-input ${wClass}"
                 style="width:100px;text-align:right;"
@@ -2849,21 +2857,49 @@ function _awOpenTestCasesModal(sub, act) {
   });
 }
 
-function _awApplyBulkWeight() {
+async function _awApplyBulkWeight() {
   const val = parseFloat(document.getElementById('aw-bulk-val')?.value);
-  if (!isFinite(val) || val < 0) { toast('Enter a valid weight ≥ 0', 'error'); return; }
-  document.querySelectorAll('.aw-tc-input').forEach(el => {
-    el.value = val;
-    // Reuse the per-row save handler so each weight persists individually
-    _awSaveTestCaseWeight(el);
-  });
+  if (!isFinite(val) || val <= 0) { toast('Weight must be greater than 0', 'error'); return; }
+  const inputs = [...document.querySelectorAll('.aw-tc-input')];
+  if (!inputs.length) return;
+
+  // Build the rows to upsert in ONE request — no N-fan-out
+  const now = new Date().toISOString();
+  const rows = inputs.map(el => ({
+    test_case_code: el.getAttribute('data-code') || '',
+    test_name:      el.getAttribute('data-name') || '',
+    weight:         val,
+    updated_at:     now,
+  }));
+
+  inputs.forEach(el => { el.value = val; el.disabled = true; });
+  try {
+    const saved = await _dbUpsert('test_case_weights', rows, 'test_case_code,test_name');
+    // Merge results into the in-memory cache
+    (saved || []).forEach(row => {
+      const idx = _testCaseWeights.findIndex(r =>
+        r.test_case_code === row.test_case_code && r.test_name === row.test_name
+      );
+      if (idx >= 0) _testCaseWeights[idx] = row;
+      else _testCaseWeights.push(row);
+    });
+    inputs.forEach(el => el.classList.toggle('aw-weight-custom', val !== 1));
+    toast(`Applied weight ${val} to ${rows.length} test case${rows.length !== 1 ? 's' : ''}`, 'success');
+    const body = document.getElementById('aw-table-body');
+    if (body) body.innerHTML = _awActivityRowsHTML();
+    _tryRefreshDashboard?.();
+  } catch (e) {
+    toast(`Bulk apply failed: ${e.message}`, 'error');
+  } finally {
+    inputs.forEach(el => { el.disabled = false; });
+  }
 }
 
 async function _awSaveActivityWeight(el) {
   const sub = el.getAttribute('data-sub')  || '';
   const act = el.getAttribute('data-act')  || '';
   const w   = parseFloat(el.value);
-  if (!isFinite(w) || w < 0) { toast('Weight must be a positive number', 'error'); return; }
+  if (!isFinite(w) || w <= 0) { toast('Weight must be greater than 0', 'error'); return; }
   el.disabled = true;
   try {
     // Upsert into activity_weights, then refresh in-memory cache
@@ -2889,7 +2925,7 @@ async function _awSaveTestCaseWeight(el) {
   const code = el.getAttribute('data-code') || '';
   const name = el.getAttribute('data-name') || '';
   const w    = parseFloat(el.value);
-  if (!isFinite(w) || w < 0) { toast('Weight must be a positive number', 'error'); return; }
+  if (!isFinite(w) || w <= 0) { toast('Weight must be greater than 0', 'error'); return; }
   el.disabled = true;
   try {
     const [row] = await _dbUpsert('test_case_weights',
@@ -3558,7 +3594,7 @@ async function executeImport() {
     status:         r.Status        || 'Future',
     activity_id:    r.ActivityID    || null,
     completed_date: parseImportDate(r.PlannedDate),
-    weight:         r.Weight ? parseFloat(r.Weight) : null,
+    weight:         1, // legacy column — real weight lives in test_case_weights
     notes:          r.Notes         || null,
     synced_at:      new Date().toISOString(),
   }));
@@ -8257,9 +8293,9 @@ function _trpLinkedActivitiesHTML(row, canManage) {
         ${canManage && !row.isDerived ? `<button class="admin-action-btn tr-mini-btn" onclick="openLinkActivityModal('${uid}')">＋ Link Activity</button>` : ''}
       </div>
       <div class="trp-linked-list">
-        ${row.activities.map(act => {
+        ${(() => { const _tcw = _buildTestCaseWeightLookup(); return row.activities.map(act => {
           const st = _amComputeStatus(act);
-          const { done, total, pct } = _amComputeCompletion(act);
+          const { done, total, pct } = _amComputeCompletion(act, _tcw);
           return `
             <div class="trp-linked-item">
               <div class="trp-linked-main">
@@ -8278,7 +8314,7 @@ function _trpLinkedActivitiesHTML(row, canManage) {
               </div>
             </div>
           `;
-        }).join('')}
+        }).join(''); })()}
       </div>
     </div>
   `;
@@ -8510,9 +8546,10 @@ function openLinkActivityModal(uid) {
   const linkedKeys = new Set(row.activities.map(a => a.key));
   const available  = allActs.filter(a => !linkedKeys.has(a.key));
 
+  const _tcw = _buildTestCaseWeightLookup();
   const listHTML = available.length ? available.map(a => {
     const st = _amComputeStatus(a);
-    const { done, total, pct } = _amComputeCompletion(a);
+    const { done, total, pct } = _amComputeCompletion(a, _tcw);
     return `
       <label class="trp-link-act-row">
         <input type="checkbox" name="trp-link-act" value="${escapeHtml(a.key)}" style="width:15px;height:15px;flex-shrink:0;">
@@ -9080,9 +9117,15 @@ function _testRegisterHTML() {
     const ord = {'Closed':0,'Partial Completion':1,'Open':2,'Future Test':3};
     filtered.sort((a, b) => _sd * ((ord[_amComputeStatus(a)]??4) - (ord[_amComputeStatus(b)]??4)));
   } else if (_amSortCol === 'completion') {
-    filtered.sort((a, b) => {
-      return _sd * (_amComputeCompletion(a).pct - _amComputeCompletion(b).pct);
-    });
+    // Pre-compute weighted pct once per activity using a shared TC weight lookup,
+    // so the sort doesn't rebuild the map and re-walk items O(n log n) times.
+    const _sortTcw = _buildTestCaseWeightLookup();
+    const _pctCache = new Map();
+    const pctOf = a => {
+      if (!_pctCache.has(a.key)) _pctCache.set(a.key, _amComputeCompletion(a, _sortTcw).pct);
+      return _pctCache.get(a.key);
+    };
+    filtered.sort((a, b) => _sd * (pctOf(a) - pctOf(b)));
   }
 
   const hasFilters = _amFilters.phase || _amFilters.location || _amFilters.subsystem || _amFilters.status || _amFilters.search;
@@ -9112,9 +9155,10 @@ function _testRegisterHTML() {
     return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" onclick="_amSetSort('${col}')" title="Sort by ${label}">${label}<span style="font-size:10px;color:${color};margin-left:3px;">${arrow}</span></th>`;
   };
 
+  const _tcwActRows = _buildTestCaseWeightLookup();
   const actRows = filtered.map(a => {
     const st = _amComputeStatus(a);
-    const { done, total, pct } = _amComputeCompletion(a);
+    const { done, total, pct } = _amComputeCompletion(a, _tcwActRows);
     const isSel = _amSelected.has(a.key);
     const safeKey = escapeHtml(a.key);
 
@@ -9294,7 +9338,8 @@ function _amComputeStatus(act) {
   return 'Open';
 }
 
-function _amComputeCompletion(act) {
+// Pass a shared `tcw` map when calling in a loop to avoid rebuilding it per activity.
+function _amComputeCompletion(act, tcw) {
   // Include Future Test in the denominator so activities show e.g. "0/4" not "0/0"
   const eligible = act.items.filter(r => !r.IsParent);
   const doneStatuses = new Set(['Pass','Not Applicable','Complete','Passed']);
@@ -9302,8 +9347,8 @@ function _amComputeCompletion(act) {
   const total = eligible.length;
   // Weighted completion via shared test_case_weights (Layer 2 only here — activity
   // weight is constant across this activity so it cancels in the percentage).
-  const tcw    = _buildTestCaseWeightLookup();
-  const w      = r => _tcWeightFor(r, tcw);
+  const _tcw   = tcw || _buildTestCaseWeightLookup();
+  const w      = r => _tcWeightFor(r, _tcw);
   const doneW  = eligible.filter(r => doneStatuses.has(r.Status)).reduce((s,r)=>s+w(r), 0);
   const totalW = eligible.reduce((s,r)=>s+w(r), 0);
   const pct    = totalW > 0 ? Math.round((doneW / totalW) * 100) : 0;
@@ -9311,12 +9356,13 @@ function _amComputeCompletion(act) {
 }
 
 // Weighted completion (Layer 2 only) — used for P6 progress display.
-// Activity weight cancels in a per-activity percentage, so we only need TC weights.
+// Pass a shared `tcw` map when calling in a loop. Activity weight cancels in a
+// per-activity percentage, so we only need TC weights.
 const _P6_DONE_STATUSES = new Set(['Pass','Passed','Complete','Not Applicable']);
-function _p6WeightedCompletion(act) {
+function _p6WeightedCompletion(act, tcw) {
   const eligible = act.items.filter(r => !r.IsParent && r.Status !== 'Future Test');
-  const tcw      = _buildTestCaseWeightLookup();
-  const w        = r => _tcWeightFor(r, tcw);
+  const _tcw     = tcw || _buildTestCaseWeightLookup();
+  const w        = r => _tcWeightFor(r, _tcw);
   const totalW   = eligible.reduce((s, r) => s + w(r), 0);
   const doneW    = eligible.filter(r => _P6_DONE_STATUSES.has(r.Status)).reduce((s, r) => s + w(r), 0);
   const pct = totalW > 0 ? Math.round((doneW / totalW) * 100) : 0;
@@ -9442,9 +9488,9 @@ function _adminActivityManagerHTML() {
               </tr>
             </thead>
             <tbody>
-              ${filtered.length ? filtered.map(a => {
+              ${(() => { const _tcw = _buildTestCaseWeightLookup(); return filtered.length ? filtered.map(a => {
                 const st = _amComputeStatus(a);
-                const { done, total, pct } = _amComputeCompletion(a);
+                const { done, total, pct } = _amComputeCompletion(a, _tcw);
                 const isSel = _amSelected.has(a.key);
                 const procFull = a.testProcedure || '';
                 const procShort = procFull.length > 40 ? procFull.slice(0,40)+'…' : (procFull || '—');
@@ -9476,7 +9522,7 @@ function _adminActivityManagerHTML() {
                     </td>
                   </tr>
                 `;
-              }).join('') : `<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--gray-500);">No activities match the current filters</td></tr>`}
+              }).join('') : `<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--gray-500);">No activities match the current filters</td></tr>`; })()}
             </tbody>
           </table>
         </div>
@@ -10831,7 +10877,6 @@ function closeModal() {
 let _p6Tab      = 'import';   // 'import' | 'mapping' | 'health' | 'weights'
 let _p6MapTab   = 'activity'; // 'activity' | 'testcase'
 let _p6MappingFilters = { phase:'', location:'', subsystem:'', linked:'' };
-let _p6WeightFilter   = { phase:'', location:'', subsystem:'' };
 let _p6ImportType     = 'baseline'; // 'baseline' | 'current'
 
 function renderAdminP6() {
@@ -12187,271 +12232,7 @@ function _p6HUpdateSelCount() {
   if (selAll) selAll.checked = all.length > 0 && chkd.length === all.length;
 }
 
-// ─── WEIGHTS TAB ──────────────────────────────────────────────────────────────
-function _p6WeightsTabHTML() {
-  const allPortal = _amGetActivities();
-  const phases    = [...new Set(allPortal.map(a=>a.phase).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
-  const locations = [...new Set(allPortal
-    .filter(a => !_p6WeightFilter.phase || a.phase === _p6WeightFilter.phase)
-    .map(a=>a.location).filter(Boolean))].sort();
-  const subsystems= [...new Set(allPortal
-    .filter(a =>
-      (!_p6WeightFilter.phase    || a.phase    === _p6WeightFilter.phase) &&
-      (!_p6WeightFilter.location || a.location === _p6WeightFilter.location))
-    .map(a=>a.subsystem).filter(Boolean))].sort();
-
-  const visible = allPortal.filter(a =>
-    (!_p6WeightFilter.phase     || a.phase     === _p6WeightFilter.phase)     &&
-    (!_p6WeightFilter.location  || a.location  === _p6WeightFilter.location)  &&
-    (!_p6WeightFilter.subsystem || a.subsystem === _p6WeightFilter.subsystem)
-  );
-
-  return `
-    <div class="admin-section">
-      <div class="admin-section-head" style="flex-wrap:wrap;gap:10px;margin-bottom:18px;">
-        <div>
-          <div class="admin-section-title">Activity & Test Case Weights</div>
-          <p class="section-sub">Layer 1: activity weight (project importance) · Layer 2: test case weight within activity (default 1)</p>
-        </div>
-        <button class="form-secondary" onclick="_p6SaveAllWeights()">Save All Weights</button>
-      </div>
-
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">
-        <select class="filter-select" onchange="_p6WeightFilterChange('phase',this.value)">
-          <option value="">All Phases</option>
-          ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_p6WeightFilter.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
-        </select>
-        <select class="filter-select" onchange="_p6WeightFilterChange('location',this.value)">
-          <option value="">All Locations</option>
-          ${locations.map(l=>`<option value="${escapeHtml(l)}" ${_p6WeightFilter.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
-        </select>
-        <select class="filter-select" onchange="_p6WeightFilterChange('subsystem',this.value)">
-          <option value="">All Subsystems</option>
-          ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_p6WeightFilter.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
-        </select>
-      </div>
-
-      <div class="data-card" style="padding:0;overflow:hidden;">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Activity</th>
-              <th>Subsystem</th>
-              <th>Location</th>
-              <th>Phase</th>
-              <th style="min-width:100px;text-align:center;">Activity Weight</th>
-              <th style="min-width:80px;text-align:center;">Test Cases</th>
-              <th style="text-align:center;">Planned Date</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            ${visible.map(a => {
-              const rec = _activityRecords.find(r =>
-                r.phase === a.phase && r.location === a.location &&
-                r.subsystem === a.subsystem && r.activity_name === a.activity);
-              const actWeight   = rec?.activity_weight ?? 1;
-              const plannedDate = rec?.planned_date || '';
-              // Get current P6 start as suggestion
-              const link = P6_MAP.find(m =>
-                m.portal_phase === a.phase && m.portal_location === a.location &&
-                m.portal_subsystem === a.subsystem && m.portal_activity === a.activity && !m.portal_test_case_code);
-              const p6Act = link ? P6_ACTS.find(x => x.id === link.p6_activity_id) : null;
-              const p6Start = p6Act?.start_date || '';
-              const safeKey = escapeHtml(a.key);
-              return `
-                <tr>
-                  <td style="font-size:12px;font-weight:500;">${escapeHtml(a.activity)}</td>
-                  <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
-                  <td style="font-size:12px;">${escapeHtml(a.location)}</td>
-                  <td style="font-size:12px;">${escapeHtml(a.phase)}</td>
-                  <td style="text-align:center;">
-                    <input type="number" min="0" step="0.5" class="form-input" style="width:70px;text-align:center;font-size:12px;padding:4px;"
-                      id="w-act-${safeKey}" value="${actWeight}">
-                  </td>
-                  <td style="text-align:center;">
-                    <button class="form-secondary tr-mini-btn" onclick="_p6OpenTCWeights('${safeKey}')">
-                      ${a.items.length} cases
-                    </button>
-                  </td>
-                  <td style="text-align:center;">
-                    <input type="date" class="form-input" style="font-size:12px;padding:4px;"
-                      id="w-plan-${safeKey}" value="${plannedDate || p6Start}"
-                      title="${p6Start ? 'Auto-filled from P6 current start: ' + p6Start : 'No P6 date linked'}">
-                  </td>
-                  <td>
-                    <button class="admin-action-btn tr-mini-btn" onclick="_p6SaveActivityWeight('${safeKey}','${escapeHtml(a.phase)}','${escapeHtml(a.location)}','${escapeHtml(a.subsystem)}','${escapeHtml(a.activity)}')">Save</button>
-                  </td>
-                </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>`;
-}
-
-function _p6WeightFilterChange(k, v) {
-  _p6WeightFilter[k] = v;
-  if (k === 'phase')    { _p6WeightFilter.location = ''; _p6WeightFilter.subsystem = ''; }
-  if (k === 'location') { _p6WeightFilter.subsystem = ''; }
-  renderAdminP6();
-}
-
-async function _p6SaveActivityWeight(actKey, phase, location, subsystem, activity) {
-  const wVal   = parseFloat(document.getElementById(`w-act-${actKey}`)?.value) || 1;
-  const pDate  = document.getElementById(`w-plan-${actKey}`)?.value || null;
-  try {
-    const rec = _activityRecords.find(r =>
-      r.phase === phase && r.location === location &&
-      r.subsystem === subsystem && r.activity_name === activity);
-    if (rec) {
-      await _dbUpdate('activity_records', { activity_weight: wVal, planned_date: pDate || null }, { id: rec.id });
-    } else {
-      await _dbInsert('activity_records', [{ phase, location, subsystem, activity_name: activity, activity_weight: wVal, planned_date: pDate || null }]);
-    }
-    await loadActivityRecords();
-    _tryRefreshDashboard();
-    toast('Saved', 'success');
-  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
-}
-
-async function _p6SaveAllWeights() {
-  const all = _amGetActivities();
-  let saved = 0;
-  for (const a of all) {
-    const safeKey = a.key.replace(/[^a-zA-Z0-9]/g, '_');
-    const wEl = document.getElementById(`w-act-${a.key}`) || document.getElementById(`w-act-${safeKey}`);
-    const pEl = document.getElementById(`w-plan-${a.key}`) || document.getElementById(`w-plan-${safeKey}`);
-    if (!wEl && !pEl) continue;
-    const wVal  = parseFloat(wEl?.value) || 1;
-    const pDate = pEl?.value || null;
-    try {
-      const rec = _activityRecords.find(r =>
-        r.phase === a.phase && r.location === a.location &&
-        r.subsystem === a.subsystem && r.activity_name === a.activity);
-      if (rec) {
-        await _dbUpdate('activity_records', { activity_weight: wVal, planned_date: pDate || null }, { id: rec.id });
-      } else {
-        await _dbInsert('activity_records', [{ phase: a.phase, location: a.location, subsystem: a.subsystem, activity_name: a.activity, activity_weight: wVal, planned_date: pDate || null }]);
-      }
-      saved++;
-    } catch(e) { console.warn('[saveAllWeights]', e.message); }
-  }
-  await loadActivityRecords();
-  _tryRefreshDashboard();
-  toast(`Saved ${saved} activities`, 'success');
-}
-
-function _p6OpenTCWeights(actKey) {
-  const all = _amGetActivities();
-  const act = all.find(a => a.key === actKey);
-  if (!act) return;
-
-  const safeKey = escapeHtml(actKey);
-
-  const rows = act.items.map(item => {
-    const tid = escapeHtml(item.TestID || item.test_id || '');
-    return `
-      <tr>
-        <td style="text-align:center;padding:6px 8px;">
-          <input type="checkbox" class="tcw-chk" data-tid="${tid}" checked
-            style="width:15px;height:15px;cursor:pointer;"
-            onchange="_p6TCWUpdateSelCount()">
-        </td>
-        <td style="font-size:12px;font-weight:600;white-space:nowrap;">${escapeHtml(item.TestCaseCode||'')}</td>
-        <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(item.TestName||'')}</td>
-        <td style="text-align:center;white-space:nowrap;">
-          <input type="number" min="0" step="0.5" class="form-input"
-            style="width:70px;text-align:center;font-size:12px;padding:5px 4px;"
-            id="tcw-${tid}" value="${item.Weight ?? 1}">
-        </td>
-      </tr>`;
-  }).join('');
-
-  modal({
-    title: `Test Case Weights — ${act.activity}`,
-    size: 'large',
-    body: `
-      <!-- Bulk apply bar -->
-      <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;margin-bottom:14px;flex-wrap:wrap;">
-        <span style="font-size:12px;font-weight:600;color:var(--gray-600);white-space:nowrap;">Set weight to:</span>
-        <input type="number" id="tcw-bulk-val" min="0" step="0.5" value="1"
-          class="form-input" style="width:76px;font-size:13px;padding:5px 8px;text-align:center;">
-        <button class="admin-action-btn tr-mini-btn" onclick="_p6ApplyBulkWeight()">
-          Apply to <span id="tcw-sel-count">${act.items.length}</span> selected
-        </button>
-        <div style="display:flex;gap:8px;margin-left:auto;align-items:center;">
-          <button class="form-secondary tr-mini-btn" onclick="_p6TCWSelectAll(true)">Select all</button>
-          <button class="form-secondary tr-mini-btn" onclick="_p6TCWSelectAll(false)">Deselect all</button>
-          <span style="font-size:11px;color:var(--gray-400);">Default = 1 · Higher = more important</span>
-        </div>
-      </div>
-      <!-- Table -->
-      <div class="table-wrap" style="max-height:55vh;overflow-y:auto;">
-        <table class="data-table" style="min-width:540px;">
-          <thead><tr>
-            <th style="width:36px;text-align:center;">
-              <input type="checkbox" checked style="cursor:pointer;"
-                onchange="_p6TCWSelectAll(this.checked)">
-            </th>
-            <th style="white-space:nowrap;">Test Case Code</th>
-            <th>Test Name</th>
-            <th style="text-align:center;white-space:nowrap;">Weight</th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`,
-    footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="admin-action-btn" onclick="_p6SaveTCWeights('${safeKey}')">Save All Weights</button>`,
-  });
-}
-
-function _p6TCWUpdateSelCount() {
-  const checked = document.querySelectorAll('.tcw-chk:checked').length;
-  const el = document.getElementById('tcw-sel-count');
-  if (el) el.textContent = checked;
-}
-
-function _p6TCWSelectAll(checked) {
-  document.querySelectorAll('.tcw-chk').forEach(cb => { cb.checked = checked; });
-  // sync header checkbox
-  const hdr = document.querySelector('thead input[type="checkbox"]');
-  if (hdr) hdr.checked = checked;
-  _p6TCWUpdateSelCount();
-}
-
-// Apply bulk weight only to checked rows
-function _p6ApplyBulkWeight() {
-  const bulkVal = parseFloat(document.getElementById('tcw-bulk-val')?.value);
-  if (isNaN(bulkVal) || bulkVal < 0) { toast('Enter a valid weight ≥ 0', 'error'); return; }
-  document.querySelectorAll('.tcw-chk:checked').forEach(cb => {
-    const tid = cb.dataset.tid;
-    const el  = document.getElementById(`tcw-${tid}`);
-    if (el) el.value = bulkVal;
-  });
-}
-
-async function _p6SaveTCWeights(actKey) {
-  const all = _amGetActivities();
-  const act = all.find(a => a.key === actKey);
-  if (!act) return;
-  let saved = 0;
-  for (const item of act.items) {
-    const id  = item.TestID || item.test_id;
-    const el  = document.getElementById(`tcw-${escapeHtml(id||'')}`);
-    if (!el) continue;
-    const wVal = parseFloat(el.value) || 1;
-    try {
-      await _dbUpdate('test_items', { weight: wVal }, { test_id: id });
-      saved++;
-    } catch(e) { console.warn('[tcWeight]', e.message); }
-  }
-  await loadTestItems();
-  _tryRefreshDashboard();
-  closeModal();
-  toast(`Saved ${saved} test case weights`, 'success');
-}
+// ─── (P6 Weights tab removed — see renderAdminWeights in Admin > Weights) ────
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function _fmtDate(d) {
@@ -12738,19 +12519,10 @@ function _assetUpdateParentDOMBadge(parentTestId, newStatus) {
   }
 }
 
-// ── Weight redistribution ─────────────────────────────────────────────────────
-// Legacy: this used to split a parent's per-row weight evenly across its N children
-// so the activity total stayed constant when assets were added.
-//
-// New shared-weight model: weights are looked up by (TestCaseCode, TestName) — every
-// child of a parent shares those two fields, so each child resolves to the SAME
-// shared weight. No per-row redistribution is needed; this function is now a no-op
-// kept so existing call sites compile.
-async function _assetRedistributeWeights(_parentTestId) {
-  return; // intentionally empty under shared-weight model
-}
-
 // ── Link an asset to a parent test_items row ──────────────────────────────────
+// Note: under the shared-weight model (keyed by TestCaseCode + TestName) every
+// child of a parent shares the same weight automatically — no per-row weight
+// redistribution is needed when adding/removing children.
 async function _assetLinkToParent(asset, parentRow) {
   // Check if link already exists
   const existing = ASSET_LINKS.find(l => l.asset_id === asset.id && l.parent_test_id === parentRow.TestID);
@@ -12777,7 +12549,7 @@ async function _assetLinkToParent(asset, parentRow) {
     test_name:      parentRow.TestName     || null,
     test_procedure: parentRow.TestProcedure|| null,
     status:         'Not Started',
-    weight:         parseFloat(parentRow.Weight) || 1,
+    weight:         1, // legacy column — real weight lives in test_case_weights
     asset_id:       asset.id,
     parent_test_id: String(parentRow.TestID),
     is_parent:      false,
@@ -12790,7 +12562,7 @@ async function _assetLinkToParent(asset, parentRow) {
     Subsystem: parentRow.Subsystem, Activity: parentRow.Activity,
     TestCategory: parentRow.TestCategory || '', TestCaseCode: parentRow.TestCaseCode,
     TestName: parentRow.TestName, TestProcedure: parentRow.TestProcedure || '',
-    Status: 'Not Started', Weight: parseFloat(parentRow.Weight) || 1,
+    Status: 'Not Started', Weight: 1, // legacy field; real weight comes from test_case_weights
     AssetId: asset.id, ParentTestId: String(parentRow.TestID), IsParent: false,
     CompletedBy: null, CompletedDate: null, FailedReason: null, BlockedReason: null, Notes: null,
   });
@@ -12798,9 +12570,6 @@ async function _assetLinkToParent(asset, parentRow) {
   // Create link record
   const linkRows = await _dbInsert('asset_test_links', [{ asset_id: asset.id, parent_test_id: String(parentRow.TestID) }]);
   if (linkRows?.[0]) ASSET_LINKS.push(linkRows[0]);
-
-  // Redistribute weights
-  await _assetRedistributeWeights(String(parentRow.TestID));
 }
 
 // ── Unlink an asset from a parent row ────────────────────────────────────────
@@ -12828,9 +12597,8 @@ async function _assetUnlink(assetId, parentTestId) {
       parent.IsParent = false;
       await _dbUpdate('test_items', { is_parent: false }, { test_id: String(parentTestId) });
     }
-  } else {
-    await _assetRedistributeWeights(String(parentTestId));
   }
+  // (No weight redistribution needed — children share weight via shared lookup.)
 }
 
 // ── CSV import ────────────────────────────────────────────────────────────────
@@ -13771,29 +13539,13 @@ function _isLatestAttempt(r) { return !r || r.IsLatestAttempt !== false; }
 // the regression history panel but never inflate metrics.
 function _latestTI() { return TI.filter(_isLatestAttempt); }
 
-// LEGACY shim — kept so any old caller still gets a sensible shape, but now reads
-// from the shared `activity_weights` table (keyed by subsystem||activity_name).
-// Same activity at every location now resolves to one shared weight.
-function _buildActWeightMap() {
-  const shared = _buildActivityWeightLookup(); // Map<"subsystem||activity_name", weight>
-  const map    = new Map();
-  // Project the shared keys onto the legacy 4-tuple keyspace for older code paths
-  // that still index by phase||location||subsystem||activity. Phase+location are
-  // wildcarded — same (sub, activity) returns the same weight regardless.
-  (_activityRecords || []).forEach(r => {
-    const sharedKey = `${r.subsystem || ''}||${r.activity_name || ''}`;
-    const legacyKey = `${r.phase || ''}||${r.location || ''}||${r.subsystem || ''}||${r.activity_name || ''}`;
-    map.set(legacyKey, shared.get(sharedKey) ?? 1);
-  });
-  return map;
-}
-
 // Compute weighted status totals for an array of test items.
 // Effective weight = activity_weight (Subsystem+ActivityName) × test_case_weight (Code+TestName).
 // Both weights are now SHARED — one row in the weights tables drives every instance.
-function _wgtStat(items) {
-  const aw  = _buildActivityWeightLookup();
-  const tcw = _buildTestCaseWeightLookup();
+// Pass pre-built `aw` and/or `tcw` maps to avoid rebuilding them in hot loops.
+function _wgtStat(items, awLookup, tcwLookup) {
+  const aw  = awLookup  || _buildActivityWeightLookup();
+  const tcw = tcwLookup || _buildTestCaseWeightLookup();
   const w = r => {
     const tcKey = `${r.TestCaseCode || ''}||${r.TestName || ''}`;
     const aKey  = `${r.Subsystem    || ''}||${r.Activity || ''}`;
