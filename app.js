@@ -24793,6 +24793,10 @@ function _formsViewerScale(baseViewport, pagesEl) {
   return Math.max(1.05, Math.min(1.45, fitWidthScale));
 }
 
+function _clonePdfBytes(bytes) {
+  return bytes instanceof Uint8Array ? bytes.slice() : new Uint8Array(bytes).slice();
+}
+
 async function openFormViewer(formId) {
   const form = FORMS.find(f => f.id === formId);
   if (!form) { toast('Form not found', 'error'); return; }
@@ -24821,8 +24825,8 @@ async function openFormViewer(formId) {
   });
   try {
     const bytes  = await _formsStorage.downloadBytes(form.storage_path);
-    const pdfDoc = await pdfjsLib.getDocument({ data: bytes }).promise;
-    _pdfViewerState = { formId, pdfBytes: bytes, pdfDoc, signatures: {} };
+    const pdfDoc = await pdfjsLib.getDocument({ data: _clonePdfBytes(bytes) }).promise;
+    _pdfViewerState = { formId, pdfBytes: _clonePdfBytes(bytes), pdfDoc, signatures: {} };
     const pagesEl = document.getElementById('form-viewer-pages');
     pagesEl.innerHTML = '';
     for (let p = 1; p <= pdfDoc.numPages; p++) {
@@ -25017,6 +25021,17 @@ function closeSignaturePad() {
   document.getElementById('form-signature-overlay')?.remove();
 }
 
+function _setSignatureFieldPreview(target, dataUrl) {
+  if (!target) return;
+  target.classList.add('signed');
+  target.style.backgroundImage = '';
+  target.innerHTML = '';
+  const img = document.createElement('img');
+  img.alt = 'Signed';
+  img.src = dataUrl;
+  target.appendChild(img);
+}
+
 function applySignaturePad() {
   const overlay = document.getElementById('form-signature-overlay');
   const s = overlay?._signatureContext;
@@ -25028,11 +25043,7 @@ function applySignaturePad() {
     rect: s.rect,
     dataUrl,
   };
-  if (s.target) {
-    s.target.classList.add('signed');
-    s.target.style.backgroundImage = `url("${dataUrl}")`;
-    s.target.innerHTML = '<span>Signed</span>';
-  }
+  _setSignatureFieldPreview(s.target, dataUrl);
   closeSignaturePad();
 }
 
@@ -25095,7 +25106,7 @@ async function saveFormPDF(formId) {
     const bytes = await doc.save({ updateFieldAppearances: true });
     const blob  = new Blob([bytes], { type: 'application/pdf' });
     await _formsReuploadFile(formId, blob);
-    _pdfViewerState.pdfBytes = bytes;
+    _pdfViewerState.pdfBytes = _clonePdfBytes(bytes);
     logAudit('Saved Form', FORMS.find(f => f.id === formId)?.name || formId, `${Object.keys(values).length} field(s)`);
     toast('✓ Form saved', 'success');
     if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
