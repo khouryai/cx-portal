@@ -24623,6 +24623,9 @@ const _formsStorage = {
   bucket: 'forms',
   async upload(formId, file) {
     const path = `${formId}.pdf`;
+    return this.uploadPath(path, file);
+  },
+  async uploadPath(path, file) {
     const { error } = await _sb.storage.from(this.bucket).upload(path, file, {
       contentType: 'application/pdf', upsert: true,
     });
@@ -24713,8 +24716,10 @@ async function _formsUpdateMetadata(formId, patch) {
 }
 
 async function _formsReuploadFile(formId, fileOrBlob) {
-  await _formsStorage.upload(formId, fileOrBlob);
-  return _formsUpdateMetadata(formId, { file_size: fileOrBlob.size });
+  const form = FORMS.find(f => f.id === formId);
+  const storagePath = form?.storage_path || `${formId}.pdf`;
+  await _formsStorage.uploadPath(storagePath, fileOrBlob);
+  return _formsUpdateMetadata(formId, { file_size: fileOrBlob.size, storage_path: storagePath });
 }
 
 async function _formsDelete(formId) {
