@@ -7886,6 +7886,12 @@ textarea.la-drawer-input { resize: vertical; min-height: 50px; }
   --f-display: 'Archivo', system-ui, -apple-system, sans-serif;
   --f-ui:      'Archivo', system-ui, -apple-system, sans-serif;
   --f-mono:    'Archivo', system-ui, -apple-system, sans-serif;
+  --f-input:   var(--f-ui);
+  --f-number:  var(--f-ui);
+  --input-size: 14px;
+  --input-weight: 500;
+  --number-size: 28px;
+  --number-weight: 600;
 
   /* brand (kept) */
   --hitachi-red:       #e60012;

@@ -1663,9 +1663,85 @@ function exportPL() {
 }
 
 // ==========================================
+// PRODUCTION VISUAL LAYER
+// ==========================================
+const _productionVisualDefaults = {
+  inputFont: "'Archivo', system-ui, sans-serif",
+  numberFont: "'Archivo', system-ui, sans-serif",
+  inputSize: '14px',
+  inputWeight: '500',
+  numberSize: '28px',
+  numberWeight: '600',
+  trSubsys: 'mono',
+  trStatus: 'mono-dot',
+  trBar: 'thin',
+};
+
+function _trHashText(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h) + s.charCodeAt(i) | 0;
+  return Math.abs(h);
+}
+
+function _trInitials(s) {
+  if (!s) return '.';
+  const cleaned = s.replace(/[^a-z0-9 ]/gi, ' ').trim();
+  if (!cleaned) return s.slice(0, 2).toUpperCase();
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function _stampTestRegisterVisuals() {
+  const root = document.getElementById('test-register-content');
+  if (!root) return;
+  root.querySelectorAll('.tag').forEach(el => {
+    const text = (el.textContent || '').trim();
+    el.dataset.trColor = String(_trHashText(text) % 8);
+    el.dataset.trInitials = _trInitials(text);
+  });
+  root.querySelectorAll('.am-progress-wrap').forEach(wrap => {
+    const fill = wrap.querySelector('.am-progress-fill');
+    const bar = wrap.querySelector('.am-progress-bar');
+    if (!fill || !bar) return;
+    const pct = parseFloat((fill.style.width || '').trim()) || 0;
+    bar.style.setProperty('--ring-pct', pct);
+    const inline = fill.getAttribute('style') || '';
+    let color = 'var(--info-dot)';
+    if (inline.includes('var(--good)')) color = 'var(--good-dot)';
+    else if (inline.includes('var(--info)')) color = 'var(--info-dot)';
+    else if (inline.includes('var(--gray-300)') || pct === 0) color = 'var(--gray-400)';
+    bar.style.setProperty('--ring-color', color);
+  });
+}
+
+function _initProductionVisualLayer() {
+  const doc = document.documentElement;
+  const style = doc.style;
+  style.setProperty('--f-input', _productionVisualDefaults.inputFont);
+  style.setProperty('--f-number', _productionVisualDefaults.numberFont);
+  style.setProperty('--input-size', _productionVisualDefaults.inputSize);
+  style.setProperty('--input-weight', _productionVisualDefaults.inputWeight);
+  style.setProperty('--number-size', _productionVisualDefaults.numberSize);
+  style.setProperty('--number-weight', _productionVisualDefaults.numberWeight);
+  doc.dataset.trSubsys = _productionVisualDefaults.trSubsys;
+  doc.dataset.trStatus = _productionVisualDefaults.trStatus;
+  doc.dataset.trBar = _productionVisualDefaults.trBar;
+  try { localStorage.removeItem('tc-tweaks-v1'); } catch (_) {}
+
+  const root = document.getElementById('test-register-content');
+  if (root && !root._productionVisualObserver) {
+    root._productionVisualObserver = new MutationObserver(_stampTestRegisterVisuals);
+    root._productionVisualObserver.observe(root, { childList: true, subtree: true });
+  }
+  _stampTestRegisterVisuals();
+}
+
+// ==========================================
 // INIT
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
+  _initProductionVisualLayer();
   await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs(), loadForms()]);
   initDashboard();
   initActivities();
@@ -9067,6 +9143,8 @@ function _trInitAutoAnimate() {
 // data-tippy-content="..." to any element, or type="date" to any input.
 function _initPageLibraries() {
   setTimeout(() => {
+    _initProductionVisualLayer();
+
     // ── Tom Select: upgrade every .filter-select not yet initialised ──
     if (typeof TomSelect !== 'undefined') {
       document.querySelectorAll('select.filter-select').forEach(el => {
