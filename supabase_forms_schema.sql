@@ -100,6 +100,14 @@ drop policy if exists ftpl_auth_all on form_template_links;
 create policy ftpl_auth_all on form_template_links
   for all to authenticated using (true) with check (true);
 
+-- Data API exposure grants.
+-- Supabase is moving away from automatically exposing new public tables,
+-- so keep the REST endpoints used by app.js available to signed-in users.
+grant usage on schema public to authenticated, service_role;
+grant select, insert, update, delete
+  on table forms, form_test_item_links, form_template_links
+  to authenticated, service_role;
+
 
 -- ============================================================
 -- STORAGE BUCKET — "forms" (private)
