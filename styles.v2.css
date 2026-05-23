@@ -255,11 +255,15 @@ body::-webkit-scrollbar-thumb:hover { background: #54575f; }
 }
 
 /* Make .page reflect new sidebar width */
-.page { margin-left: 232px !important; }
+.page { margin-left: 232px !important; overflow-x: hidden; }
 
 /* Sidebar collapse — override the !important above when collapsed */
 body.sb-collapsed .page,
 body.sb-collapsed #footer { margin-left: 0 !important; }
+
+/* Let table-wrap scroll horizontally inside data-card.
+   Split overflow so border-radius clipping still works on the Y axis. */
+.data-card { overflow-x: auto; overflow-y: hidden; }
 
 /* ============================================================================
    5. Container
