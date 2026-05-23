@@ -1,0 +1,67 @@
+%% CX Portal — Target Architecture for SharePoint Integration (Azure)
+%% Render at https://mermaid.live or with the Mermaid CLI.
+
+flowchart LR
+    subgraph User["End User (Hitachi Rail / BART)"]
+        Browser["Browser<br/>(Edge / Chrome)<br/>Corporate SSO session"]
+    end
+
+    subgraph Edge["Public Edge"]
+        CDN["Azure Front Door / CDN<br/>TLS 1.2+, WAF, HSTS"]
+    end
+
+    subgraph FE["Frontend (Static SPA)"]
+        SPA["index.html + app.js + styles.css<br/>NO secrets · NO service keys<br/>Only public endpoints + short-lived JWT"]
+    end
+
+    subgraph AzureTenant["Hitachi Azure Tenant (Corporate Subscription)"]
+        AAD["Microsoft Entra ID<br/>(Azure AD)<br/>SSO + MFA + Conditional Access"]
+        APIM["Azure API Management<br/>JWT validation · rate limit · audit"]
+        subgraph BackendApp["Backend API (App Service / Container App)"]
+            API["Node/TS API<br/>Validates JWT · enforces RBAC<br/>Owns ALL secrets in env"]
+            Graph["MS Graph SDK client<br/>(SharePoint / OneDrive)"]
+        end
+        KV["Azure Key Vault<br/>SharePoint app secret<br/>Supabase service key<br/>SMTP / signing keys"]
+        MI["Managed Identity<br/>(App Service → Key Vault, Graph)"]
+        LOG["Azure Monitor + Log Analytics<br/>Defender for Cloud · Sentinel"]
+    end
+
+    subgraph M365["Microsoft 365 (Corporate Tenant)"]
+        SP["SharePoint Online<br/>Document Libraries<br/>(punch photos, daily logs,<br/>test reports, lookahead xlsx)"]
+        OneDrive["OneDrive / Teams<br/>(optional report delivery)"]
+    end
+
+    subgraph Data["Application Data Tier"]
+        Supabase[("Supabase PostgreSQL<br/>(US-East)<br/>RLS on all tables<br/>test_items / results /<br/>punch_items / audit_log")]
+        Edge_Fn["Supabase Edge Functions<br/>send-daily-log-email<br/>send-rma-email"]
+    end
+
+    Browser -- "HTTPS" --> CDN
+    CDN -- "Static assets" --> SPA
+    Browser -- "Interactive SSO" --> AAD
+    AAD -- "ID + access token (JWT)" --> Browser
+
+    Browser -- "HTTPS + Bearer JWT<br/>/api/*" --> CDN
+    CDN -- "Reverse proxy" --> APIM
+    APIM -- "Validated JWT" --> API
+
+    API -- "Reads secrets via MI" --> KV
+    API -- "App-only / OBO token" --> Graph
+    Graph -- "Graph REST<br/>(files, sites, drives)" --> SP
+    Graph -- "Graph REST" --> OneDrive
+
+    API -- "SQL over HTTPS<br/>(service role, server-side only)" --> Supabase
+    API -- "Invoke" --> Edge_Fn
+    Edge_Fn -- "SMTP / Resend" --> SP
+
+    API -- "Structured logs / metrics" --> LOG
+    APIM -- "Access logs" --> LOG
+    AAD -- "Sign-in + audit logs" --> LOG
+
+    classDef secret fill:#fde2e2,stroke:#c53030,stroke-width:1px,color:#742a2a;
+    classDef public fill:#e6f4ff,stroke:#1d4ed8,stroke-width:1px,color:#1e3a8a;
+    classDef trusted fill:#e6ffed,stroke:#15803d,stroke-width:1px,color:#14532d;
+
+    class SPA public;
+    class KV,MI,API,Graph,Edge_Fn secret;
+    class AAD,APIM,SP,OneDrive,Supabase,LOG trusted;
