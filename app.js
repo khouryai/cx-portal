@@ -24822,7 +24822,7 @@ async function openFormViewer(formId) {
   try {
     const bytes  = await _formsStorage.downloadBytes(form.storage_path);
     const pdfDoc = await pdfjsLib.getDocument({ data: bytes }).promise;
-    _pdfViewerState = { formId, pdfBytes: bytes, pdfDoc };
+    _pdfViewerState = { formId, pdfBytes: bytes, pdfDoc, signatures: {} };
     const pagesEl = document.getElementById('form-viewer-pages');
     pagesEl.innerHTML = '';
     for (let p = 1; p <= pdfDoc.numPages; p++) {
@@ -24848,7 +24848,7 @@ async function openFormViewer(formId) {
       if (pixelRatio !== 1) renderContext.transform = [pixelRatio, 0, 0, pixelRatio, 0, 0];
       await page.render(renderContext).promise;
       const annots = await page.getAnnotations();
-      _renderFormFieldOverlay(overlay, annots, viewport);
+      _renderFormFieldOverlay(overlay, annots, viewport, p - 1);
     }
     const stat = document.getElementById('form-viewer-status');
     if (stat) stat.textContent = `${pdfDoc.numPages} page${pdfDoc.numPages !== 1 ? 's' : ''} loaded — fill any blue-bordered fields, then Save.`;
@@ -24859,15 +24859,39 @@ async function openFormViewer(formId) {
   }
 }
 
-function _renderFormFieldOverlay(overlay, annotations, viewport) {
-  annotations.filter(a => a.subtype === 'Widget' && a.fieldName).forEach(a => {
+function _pdfIsSignatureWidget(a) {
+  const label = [
+    a.fieldName,
+    a.alternativeText,
+    a.title,
+    a.contents,
+    a.id,
+  ].filter(Boolean).join(' ');
+  return a.fieldType === 'Sig' || /signature/i.test(label) || /(^|[\s_-])sig(n)?($|[\s_-])/i.test(label);
+}
+
+function _renderFormFieldOverlay(overlay, annotations, viewport, pageIndex) {
+  annotations.filter(a => a.subtype === 'Widget' && (a.fieldName || _pdfIsSignatureWidget(a))).forEach((a, index) => {
     const [x1, y1, x2, y2] = a.rect;
     const tl = viewport.convertToViewportPoint(x1, y2);
     const br = viewport.convertToViewportPoint(x2, y1);
     const left = Math.min(tl[0], br[0]), top = Math.min(tl[1], br[1]);
     const width = Math.abs(br[0] - tl[0]), height = Math.abs(br[1] - tl[1]);
+    const fieldName = a.fieldName || a.id || `Signature ${pageIndex + 1}-${index + 1}`;
     let el;
-    if (a.fieldType === 'Tx') {
+    if (_pdfIsSignatureWidget(a)) {
+      el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'pdf-signature-field';
+      el.innerHTML = '<span>Click to sign</span>';
+      el.dataset.pdfSignatureField = fieldName;
+      el.addEventListener('click', () => openSignaturePad({
+        fieldName,
+        pageIndex,
+        rect: a.rect,
+        target: el,
+      }));
+    } else if (a.fieldType === 'Tx') {
       el = a.multiLine ? document.createElement('textarea') : document.createElement('input');
       if (!a.multiLine) el.type = 'text';
       el.value = a.fieldValue || '';
@@ -24886,11 +24910,130 @@ function _renderFormFieldOverlay(overlay, annotations, viewport) {
         el.appendChild(o);
       });
     } else { return; }
-    el.dataset.pdfFieldName = a.fieldName;
+    if (!el.dataset.pdfSignatureField) el.dataset.pdfFieldName = fieldName;
     el.style.cssText = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;box-sizing:border-box;border:1px solid #2563eb;background:rgba(219,234,254,0.4);font-size:${Math.max(10, Math.min(16, height * 0.65))}px;padding:1px 3px;`;
-    if (a.readOnly) { el.disabled = true; el.style.background = 'rgba(0,0,0,0.05)'; }
+    if (el.dataset.pdfSignatureField) el.style.cssText += 'cursor:pointer;text-align:center;color:#1d4ed8;font-weight:600;';
+    if (a.readOnly && !el.dataset.pdfSignatureField) { el.disabled = true; el.style.background = 'rgba(0,0,0,0.05)'; }
     overlay.appendChild(el);
   });
+}
+
+function openSignaturePad({ fieldName, pageIndex, rect, target }) {
+  if (!_pdfViewerState) return;
+  document.getElementById('form-signature-overlay')?.remove();
+  const existing = _pdfViewerState.signatures?.[fieldName]?.dataUrl || '';
+  const overlay = document.createElement('div');
+  overlay.id = 'form-signature-overlay';
+  overlay.className = 'signature-pad-overlay';
+  overlay.innerHTML = `
+    <div class="signature-pad-modal">
+      <div class="signature-pad-head">
+        <div>
+          <div class="signature-pad-title">Signature</div>
+          <div class="signature-pad-sub">${escapeHtml(fieldName)}</div>
+        </div>
+        <button class="modal-close" type="button" onclick="closeSignaturePad()">&times;</button>
+      </div>
+      <div class="signature-pad-body">
+        <canvas id="signature-pad-canvas" class="signature-pad-canvas"></canvas>
+      </div>
+      <div class="signature-pad-footer">
+        <button class="form-secondary" type="button" onclick="clearSignaturePad()">Clear</button>
+        <button class="form-secondary" type="button" onclick="closeSignaturePad()">Cancel</button>
+        <button class="form-submit" type="button" id="signature-pad-apply">Apply Signature</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const canvas = document.getElementById('signature-pad-canvas');
+  const ctx = canvas.getContext('2d');
+  const ratio = Math.max(1, window.devicePixelRatio || 1);
+  const cssWidth = Math.min(720, Math.max(420, window.innerWidth - 80));
+  const cssHeight = Math.max(180, Math.min(260, cssWidth * 0.32));
+  canvas.style.width = `${cssWidth}px`;
+  canvas.style.height = `${cssHeight}px`;
+  canvas.width = Math.floor(cssWidth * ratio);
+  canvas.height = Math.floor(cssHeight * ratio);
+  ctx.scale(ratio, ratio);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#111827';
+  ctx.lineWidth = 2.6;
+
+  if (existing) {
+    const img = new Image();
+    img.onload = () => ctx.drawImage(img, 0, 0, cssWidth, cssHeight);
+    img.src = existing;
+  }
+
+  let drawing = false;
+  let hasInk = !!existing;
+  const point = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+  canvas.addEventListener('pointerdown', e => {
+    drawing = true;
+    hasInk = true;
+    canvas.setPointerCapture(e.pointerId);
+    const p = point(e);
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!drawing) return;
+    const p = point(e);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+  });
+  const stop = () => { drawing = false; };
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+
+  overlay._signatureContext = {
+    ctx, canvas, cssWidth, cssHeight, fieldName, pageIndex, rect, target,
+    hasInk: () => hasInk,
+    setInk: value => { hasInk = value; },
+  };
+  document.getElementById('signature-pad-apply').onclick = applySignaturePad;
+}
+
+function clearSignaturePad() {
+  const overlay = document.getElementById('form-signature-overlay');
+  const s = overlay?._signatureContext;
+  if (!s) return;
+  s.ctx.clearRect(0, 0, s.cssWidth, s.cssHeight);
+  s.setInk?.(false);
+  delete _pdfViewerState.signatures[s.fieldName];
+  if (s.target) {
+    s.target.classList.remove('signed');
+    s.target.style.backgroundImage = '';
+    s.target.innerHTML = '<span>Click to sign</span>';
+  }
+}
+
+function closeSignaturePad() {
+  document.getElementById('form-signature-overlay')?.remove();
+}
+
+function applySignaturePad() {
+  const overlay = document.getElementById('form-signature-overlay');
+  const s = overlay?._signatureContext;
+  if (!s || !s.hasInk()) { toast('Draw a signature first', 'warn'); return; }
+  const dataUrl = s.canvas.toDataURL('image/png');
+  _pdfViewerState.signatures[s.fieldName] = {
+    name: s.fieldName,
+    pageIndex: s.pageIndex,
+    rect: s.rect,
+    dataUrl,
+  };
+  if (s.target) {
+    s.target.classList.add('signed');
+    s.target.style.backgroundImage = `url("${dataUrl}")`;
+    s.target.innerHTML = '<span>Signed</span>';
+  }
+  closeSignaturePad();
 }
 
 function _collectFormFieldValues() {
@@ -24923,6 +25066,32 @@ async function saveFormPDF(formId) {
         else if (ctor === 'PDFDropdown' || ctor === 'PDFOptionList') f.select(String(val));
       } catch (e) { /* field missing / type mismatch — skip */ }
     });
+    for (const sig of Object.values(_pdfViewerState.signatures || {})) {
+      if (!sig?.dataUrl || !Array.isArray(sig.rect)) continue;
+      try {
+        const png = await doc.embedPng(sig.dataUrl);
+        const page = doc.getPages()[sig.pageIndex];
+        if (!page) continue;
+        const [x1, y1, x2, y2] = sig.rect;
+        const boxW = Math.abs(x2 - x1);
+        const boxH = Math.abs(y2 - y1);
+        const pad = Math.min(6, boxH * 0.14, boxW * 0.04);
+        const maxW = Math.max(1, boxW - pad * 2);
+        const maxH = Math.max(1, boxH - pad * 2);
+        const imgRatio = png.width / png.height;
+        let drawW = maxW;
+        let drawH = drawW / imgRatio;
+        if (drawH > maxH) { drawH = maxH; drawW = drawH * imgRatio; }
+        page.drawImage(png, {
+          x: Math.min(x1, x2) + (boxW - drawW) / 2,
+          y: Math.min(y1, y2) + (boxH - drawH) / 2,
+          width: drawW,
+          height: drawH,
+        });
+      } catch (e) {
+        console.warn('[saveFormPDF] signature skipped:', sig.name, e.message);
+      }
+    }
     const bytes = await doc.save({ updateFieldAppearances: true });
     const blob  = new Blob([bytes], { type: 'application/pdf' });
     await _formsReuploadFile(formId, blob);
@@ -24950,7 +25119,11 @@ async function downloadFormPDF(formId) {
   } catch (e) { toast('Download failed: ' + e.message, 'error'); }
 }
 
-function closeFormViewer() { _pdfViewerState = null; closeModal(); }
+function closeFormViewer() {
+  closeSignaturePad();
+  _pdfViewerState = null;
+  closeModal();
+}
 
 // ── FORM PICKER (per test case) ─────────────────────────────────────────
 function openFormPickerForTest(testId) {

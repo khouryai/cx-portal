@@ -2222,6 +2222,86 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
   background: #fff;
   box-shadow: 0 2px 12px rgba(15,23,42,0.18);
 }
+.pdf-signature-field {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(219,234,254,0.28) !important;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  border-style: dashed !important;
+}
+.pdf-signature-field span {
+  pointer-events: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.82);
+}
+.pdf-signature-field.signed span {
+  opacity: 0;
+}
+.signature-pad-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15,23,42,0.52);
+  backdrop-filter: blur(3px);
+}
+.signature-pad-modal {
+  width: min(780px, calc(100vw - 48px));
+  background: var(--white);
+  border-radius: 10px;
+  box-shadow: 0 28px 70px rgba(15,23,42,0.36);
+  overflow: hidden;
+}
+.signature-pad-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--gray-200);
+  background: #fbfcfe;
+}
+.signature-pad-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--black);
+}
+.signature-pad-sub {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--gray-600);
+}
+.signature-pad-body {
+  padding: 18px 20px;
+  background: var(--gray-50);
+}
+.signature-pad-canvas {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--gray-300);
+  border-radius: 8px;
+  background:
+    linear-gradient(transparent calc(100% - 35px), rgba(31,41,55,0.18) calc(100% - 34px), transparent calc(100% - 33px)),
+    #fff;
+  touch-action: none;
+  cursor: crosshair;
+}
+.signature-pad-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--gray-200);
+  background: #fbfcfe;
+}
 @media (max-width: 720px) {
   .modal-pdf {
     width: calc(100vw - 16px);
