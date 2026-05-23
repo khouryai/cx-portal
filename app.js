@@ -25171,6 +25171,15 @@ async function saveFormPDF(formId) {
         appliedFields += 1;
       } catch (e) { /* field missing / type mismatch — skip */ }
     });
+    const signatureCount = Object.values(_pdfViewerState.signatures || {}).filter(sig => sig?.dataUrl).length;
+    if (appliedFields > 0 || signatureCount > 0) {
+      try {
+        form.updateFieldAppearances();
+        form.flatten({ updateFieldAppearances: true });
+      } catch (e) {
+        console.warn('[saveFormPDF] field flatten skipped:', e.message);
+      }
+    }
     let appliedSignatures = 0;
     for (const sig of Object.values(_pdfViewerState.signatures || {})) {
       if (!sig?.dataUrl || !Array.isArray(sig.rect)) continue;
