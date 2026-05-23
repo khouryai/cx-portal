@@ -483,6 +483,188 @@ function getPriorityPill(priority) {
   return `<span class="priority-pill priority-${p}">${p}</span>`;
 }
 
+// ==========================================================================
+// GENERIC COLUMN CONFIGURATION SYSTEM
+// Per-user drag-and-drop column ordering + show/hide, Supabase-persisted
+// ==========================================================================
+const _colRegistry = {};   // tableId → { defs, render, prefs }
+let _colPrefs = {};        // tableId → [{ id, visible }]  (loaded from Supabase)
+let _colDragId = null;     // column id being dragged in any editor
+let _colSaveTimer = null;  // debounce timer for Supabase writes
+
+function _colRegister(tableId, defs, renderFn) {
+  _colRegistry[tableId] = { defs, render: renderFn };
+}
+
+// Load all column prefs for the signed-in user (call once after login)
+async function _colLoadAll() {
+  try {
+    const uid = currentProfile?.id;
+    if (!uid) return;
+    const rows = await _fetchAnon(`user_column_prefs?user_id=eq.${uid}&select=table_id,columns`);
+    _colPrefs = {};
+    (rows || []).forEach(r => { _colPrefs[r.table_id] = r.columns; });
+    // Migrate punch list localStorage prefs into Supabase (one-time)
+    const localPl = localStorage.getItem('cx-pl-cols');
+    if (localPl && !_colPrefs['pl']) {
+      try {
+        _colPrefs['pl'] = JSON.parse(localPl);
+        _colSave('pl');
+        localStorage.removeItem('cx-pl-cols');
+      } catch {}
+    }
+  } catch(e) { console.warn('[_colLoadAll] failed:', e.message); }
+}
+
+// Get resolved column list: saved order merged with any new defs
+function _colGetActive(tableId) {
+  const reg = _colRegistry[tableId];
+  if (!reg) return [];
+  const defs = reg.defs;
+  const saved = _colPrefs[tableId];
+  let cols;
+  if (saved && saved.length) {
+    const known = new Set(saved.map(c => c.id));
+    cols = [
+      ...saved.filter(c => defs.some(d => d.id === c.id)),
+      ...defs.filter(d => !known.has(d.id)).map(d => ({ id: d.id, visible: d.default !== false })),
+    ];
+  } else {
+    cols = defs.map(d => ({ id: d.id, visible: d.default !== false }));
+  }
+  return cols;
+}
+
+function _colGetVisible(tableId) {
+  return _colGetActive(tableId).filter(c => c.visible);
+}
+
+// Debounced save to Supabase
+function _colSave(tableId) {
+  const uid = currentProfile?.id;
+  if (!uid) return;
+  clearTimeout(_colSaveTimer);
+  _colSaveTimer = setTimeout(async () => {
+    try {
+      await _dbUpsert('user_column_prefs',
+        [{ user_id: uid, table_id: tableId, columns: _colGetActive(tableId), updated_at: new Date().toISOString() }],
+        'user_id,table_id');
+    } catch(e) { console.warn('[_colSave]', e.message); }
+  }, 600);
+}
+
+function _colToggle(tableId, colId, visible, refreshFn) {
+  const cols = _colGetActive(tableId);
+  const c = cols.find(x => x.id === colId);
+  if (c) c.visible = visible;
+  _colPrefs[tableId] = cols;
+  _colSave(tableId);
+  _colRefreshEditor(tableId, refreshFn);
+}
+
+function _colMove(tableId, colId, dir, refreshFn) {
+  const cols = _colGetActive(tableId);
+  const i = cols.findIndex(x => x.id === colId);
+  const j = i + dir;
+  if (j < 0 || j >= cols.length) return;
+  [cols[i], cols[j]] = [cols[j], cols[i]];
+  _colPrefs[tableId] = cols;
+  _colSave(tableId);
+  _colRefreshEditor(tableId, refreshFn);
+}
+
+function _colDragStart(e, colId) { _colDragId = colId; e.dataTransfer.effectAllowed = 'move'; }
+function _colDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
+
+function _colDrop(e, tableId, targetId, refreshFn) {
+  e.preventDefault();
+  if (!_colDragId || _colDragId === targetId) return;
+  const cols = _colGetActive(tableId);
+  const from = cols.findIndex(x => x.id === _colDragId);
+  const to   = cols.findIndex(x => x.id === targetId);
+  if (from < 0 || to < 0) { _colDragId = null; return; }
+  const [moved] = cols.splice(from, 1);
+  cols.splice(to, 0, moved);
+  _colDragId = null;
+  _colPrefs[tableId] = cols;
+  _colSave(tableId);
+  _colRefreshEditor(tableId, refreshFn);
+}
+
+function _colRefreshEditor(tableId, refreshFn) {
+  const el = document.getElementById(`col-editor-${tableId}`);
+  if (el) el.innerHTML = _colEditorListHTML(tableId, refreshFn);
+  if (refreshFn) refreshFn();
+}
+
+function _colEditorListHTML(tableId, refreshFn) {
+  const cols = _colGetActive(tableId);
+  const reg = _colRegistry[tableId];
+  if (!reg) return '';
+  const fnName = refreshFn?.name || '';
+  return cols.map((c, i) => {
+    const def = reg.defs.find(d => d.id === c.id);
+    if (!def) return '';
+    return `<div draggable="true"
+      ondragstart="_colDragStart(event,'${c.id}')"
+      ondragover="_colDragOver(event)"
+      ondrop="_colDrop(event,'${tableId}','${c.id}',${fnName || 'null'})"
+      style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--white);border:1px solid var(--gray-200);border-radius:7px;margin-bottom:6px;cursor:grab;user-select:none;">
+      <span style="color:var(--gray-400);font-size:18px;line-height:1;cursor:grab;">⠿</span>
+      <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer;font-size:14px;font-weight:500;">
+        <input type="checkbox" ${c.visible?'checked':''} onchange="_colToggle('${tableId}','${c.id}',this.checked,${fnName || 'null'})" style="width:15px;height:15px;cursor:pointer;">
+        ${def.label}
+      </label>
+      <div style="display:flex;gap:4px;">
+        <button onclick="_colMove('${tableId}','${c.id}',-1,${fnName || 'null'})" ${i===0?'disabled':''} style="font-size:13px;padding:2px 8px;border:1px solid var(--gray-200);border-radius:4px;background:var(--gray-50);cursor:pointer;">↑</button>
+        <button onclick="_colMove('${tableId}','${c.id}',1,${fnName || 'null'})"  ${i===cols.length-1?'disabled':''} style="font-size:13px;padding:2px 8px;border:1px solid var(--gray-200);border-radius:4px;background:var(--gray-50);cursor:pointer;">↓</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _colOpenEditor(tableId, refreshFn) {
+  const reg = _colRegistry[tableId];
+  if (!reg) return;
+  const fnName = refreshFn?.name || 'null';
+  modal({
+    title: '⚙ Configure Columns',
+    sub: 'Drag rows or use arrows to reorder · check to show / hide',
+    size: 'small',
+    body: `<div id="col-editor-${tableId}" style="padding:4px 0;">${_colEditorListHTML(tableId, refreshFn)}</div>`,
+    footer: `
+      <button class="form-secondary" onclick="_colReset('${tableId}',${fnName})">Reset Defaults</button>
+      <button class="form-submit" onclick="closeModal()">Done</button>`,
+  });
+}
+
+function _colReset(tableId, refreshFn) {
+  const reg = _colRegistry[tableId];
+  if (!reg) return;
+  _colPrefs[tableId] = reg.defs.map(d => ({ id: d.id, visible: d.default !== false }));
+  _colSave(tableId);
+  _colRefreshEditor(tableId, refreshFn);
+}
+
+// Generate <th> cells for visible columns
+function _colHeaders(tableId) {
+  const vis = _colGetVisible(tableId);
+  const reg = _colRegistry[tableId];
+  if (!reg) return '';
+  return vis.map(c => {
+    const def = reg.defs.find(d => d.id === c.id);
+    return `<th>${def ? def.label : c.id}</th>`;
+  }).join('');
+}
+
+// Generate <td> cells for a row using the registered render function
+function _colCells(tableId, row) {
+  const vis = _colGetVisible(tableId);
+  const reg = _colRegistry[tableId];
+  if (!reg || !reg.render) return '';
+  return vis.map(c => reg.render(c.id, row)).join('');
+}
+
 function escapeHtml(s) {
   if (s === null || s === undefined) return '';
   return String(s).replace(/[&<>"']/g, c => ({
@@ -946,6 +1128,30 @@ function renderAPTable() {
 let liSort = { col: null, asc: false };
 let _liKpiFilter = ''; // 'pass' | 'inprog' | 'blocked' | 'notstarted' | ''
 
+// ── LI column definitions ──
+_colRegister('li', [
+  { id: 'activity',  label: 'Activity',  sortKey: 'Activity',  default: true },
+  { id: 'testname',  label: 'Test Name', sortKey: 'TestName',  default: true },
+  { id: 'subsystem', label: 'Subsystem', sortKey: 'Subsystem', default: true },
+  { id: 'phase',     label: 'Phase',     sortKey: 'Phase',     default: true },
+  { id: 'location',  label: 'Location',  sortKey: 'Location',  default: true },
+  { id: 'status',    label: 'Status',    sortKey: 'Status',    default: true },
+  { id: 'testcode',  label: 'Test Code', sortKey: 'TestCaseCode', default: false },
+  { id: 'weight',    label: 'Weight',    sortKey: 'Weight',    default: false },
+], function _liRenderCell(colId, r) {
+  switch (colId) {
+    case 'activity':  return `<td><span class="cell-sub" style="font-size:12px">${escapeHtml(r.Activity || '—')}</span></td>`;
+    case 'testname':  return `<td>${r.TestCaseCode ? `<span class="cell-mono" style="font-size:11px;color:var(--gray-500);margin-right:6px;">${escapeHtml(r.TestCaseCode)}</span>` : ''}<span class="cell-name">${escapeHtml(r.TestName || '—')}</span></td>`;
+    case 'subsystem': return `<td><span class="tag">${escapeHtml(r.Subsystem || '—')}</span></td>`;
+    case 'phase':     return `<td><span class="tag tag-phase">${escapeHtml(String(r.Phase || '—').trim())}</span></td>`;
+    case 'location':  return `<td>${escapeHtml(r.Location || '—')}</td>`;
+    case 'status':    return `<td>${getStatusBadge(r.Status)}</td>`;
+    case 'testcode':  return `<td style="font-family:var(--font-mono,monospace);font-size:12px;">${escapeHtml(r.TestCaseCode || '—')}</td>`;
+    case 'weight':    return `<td style="font-size:12px;text-align:center;">${r.Weight ?? '—'}</td>`;
+    default: return '<td>—</td>';
+  }
+});
+
 function _liSetKpiFilter(key) {
   _liKpiFilter = (_liKpiFilter === key) ? '' : key; // toggle off if already active
   renderLITable();
@@ -997,15 +1203,6 @@ function initLineItems() {
   document.getElementById('li-activity-filter')?.addEventListener('input', renderLITable);
   document.getElementById('li-status-filter')?.addEventListener('input',   renderLITable);
   document.getElementById('li-search')?.addEventListener('input',           renderLITable);
-
-  document.querySelectorAll('#li-table th[data-sort]').forEach(th => {
-    th.addEventListener('click', () => {
-      const col = th.dataset.sort;
-      if (liSort.col === col) liSort.asc = !liSort.asc;
-      else { liSort.col = col; liSort.asc = true; }
-      renderLITable();
-    });
-  });
 
   renderLITable();
 }
@@ -1092,6 +1289,12 @@ function clearLIFilters() {
   renderLITable();
 }
 
+function _liSortBy(col) {
+  if (liSort.col === col) liSort.asc = !liSort.asc;
+  else { liSort.col = col; liSort.asc = true; }
+  renderLITable();
+}
+
 function renderLITable() {
   const search  = document.getElementById('li-search').value.toLowerCase();
   const subsysF = document.getElementById('li-subsys-filter').value;
@@ -1146,19 +1349,20 @@ function renderLITable() {
   const renderRows = data.slice(0, 500);
   const truncated  = data.length > 500 ? ` (showing first 500 — refine filters for more)` : '';
 
-  // Column order: Activity | Test Name (Code + Name) | Subsystem | Phase | Location | Status
+  // Dynamic column headers + body via generic column config
+  const liVisCols = _colGetVisible('li');
+  const liDefs = _colRegistry['li']?.defs || [];
+  document.getElementById('li-thead').innerHTML = `<tr>${liVisCols.map(c => {
+    const def = liDefs.find(d => d.id === c.id);
+    const sk = def?.sortKey || '';
+    return sk ? `<th data-sort="${sk}" onclick="_liSortBy('${sk}')">${def.label}</th>` : `<th>${def?.label || c.id}</th>`;
+  }).join('')}<th style="width:48px;text-align:right;padding-right:8px;">
+    <button onclick="_colOpenEditor('li',renderLITable)" title="Configure columns"
+      style="font-size:11px;padding:3px 8px;border:1px solid var(--gray-300);border-radius:5px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;font-weight:600;white-space:nowrap;">⚙</button>
+  </th></tr>`;
+
   document.getElementById('li-body').innerHTML = renderRows.map(r => `
-    <tr>
-      <td><span class="cell-sub" style="font-size:12px">${escapeHtml(r.Activity || '—')}</span></td>
-      <td>
-        ${r.TestCaseCode ? `<span class="cell-mono" style="font-size:11px;color:var(--gray-500);margin-right:6px;">${escapeHtml(r.TestCaseCode)}</span>` : ''}
-        <span class="cell-name">${escapeHtml(r.TestName || '—')}</span>
-      </td>
-      <td><span class="tag">${escapeHtml(r.Subsystem || '—')}</span></td>
-      <td><span class="tag tag-phase">${escapeHtml(String(r.Phase || '—').trim())}</span></td>
-      <td>${escapeHtml(r.Location || '—')}</td>
-      <td>${getStatusBadge(r.Status)}</td>
-    </tr>
+    <tr>${_colCells('li', r)}<td></td></tr>
   `).join('');
 
   document.getElementById('li-count').textContent =
@@ -2530,6 +2734,7 @@ function onLoggedIn() {
     loadAssetData(),
     loadRMAs(),
     loadSoftwareConfigs(),
+    _colLoadAll(),
   ]).then(() => {
     // Re-init views with freshly loaded data
     initLineItems();
@@ -5848,103 +6053,26 @@ let _plStatusFilter = '', _plPhaseFilter = '', _plLocFilter = '';
 let _plSubFilter = '', _plPriorityFilter = '', _plActivityFilter = '';
 let _plSelected = new Set(); // IDs of punch items checked for PDF export
 let _punchFromTestId = null; // set by openPunchFromTestCase; cleared after save
-let _plDragCol = null;       // column id being dragged in the column editor
+// ── Punch List column definitions (generic system) ──────────────────────────
+_colRegister('pl', [
+  { id: 'number',       label: '#',               default: true  },
+  { id: 'title',        label: 'Title',            default: true  },
+  { id: 'status',       label: 'Status',           default: true  },
+  { id: 'bic',          label: 'Ball In Court',    default: true  },
+  { id: 'subsystem',    label: 'Subsystem',        default: true  },
+  { id: 'location',     label: 'Phase / Location', default: true  },
+  { id: 'priority',     label: 'Priority',         default: true  },
+  { id: 'due_date',     label: 'Due Date',         default: true  },
+  { id: 'pim',          label: 'PIM',              default: true  },
+  { id: 'linked_tests', label: 'Linked Tests',     default: true  },
+  { id: 'type',         label: 'Type',             default: false },
+  { id: 'created_by',   label: 'Created By',       default: false },
+  { id: 'rtc',          label: 'Test Code',        default: false },
+], _plRenderCell);
 
-// ── Punch List column definitions ────────────────────────────────────────────
-const PL_COL_DEFS = [
-  { id: 'number',       label: '#'               , default: true  },
-  { id: 'title',        label: 'Title'            , default: true  },
-  { id: 'status',       label: 'Status'           , default: true  },
-  { id: 'bic',          label: 'Ball In Court'    , default: true  },
-  { id: 'subsystem',    label: 'Subsystem'        , default: true  },
-  { id: 'location',     label: 'Phase / Location' , default: true  },
-  { id: 'priority',     label: 'Priority'         , default: true  },
-  { id: 'due_date',     label: 'Due Date'         , default: true  },
-  { id: 'pim',          label: 'PIM'              , default: true  },
-  { id: 'linked_tests', label: 'Linked Tests'     , default: true  },
-  { id: 'type',         label: 'Type'             , default: false },
-  { id: 'created_by',   label: 'Created By'       , default: false },
-  { id: 'rtc',          label: 'Test Code'        , default: false },
-];
-
-function _plLoadCols() {
-  try {
-    const raw = localStorage.getItem('cx-pl-cols');
-    if (raw) {
-      const saved = JSON.parse(raw);
-      const known = new Set(saved.map(c => c.id));
-      return [
-        ...saved.filter(c => PL_COL_DEFS.some(d => d.id === c.id)),
-        ...PL_COL_DEFS.filter(d => !known.has(d.id)).map(d => ({ id: d.id, visible: d.default })),
-      ];
-    }
-  } catch {}
-  return PL_COL_DEFS.map(d => ({ id: d.id, visible: d.default }));
-}
-let _plCols = _plLoadCols();
-
-function _plSaveCols()    { localStorage.setItem('cx-pl-cols', JSON.stringify(_plCols)); }
-function _plActiveCols()  { return _plCols.filter(c => c.visible); }
-
-function _plColToggle(id, visible) {
-  const c = _plCols.find(c => c.id === id); if (c) c.visible = visible;
-  _plSaveCols(); _plRefreshColEditor();
-}
-function _plColMove(id, dir) {
-  const i = _plCols.findIndex(c => c.id === id), j = i + dir;
-  if (j < 0 || j >= _plCols.length) return;
-  [_plCols[i], _plCols[j]] = [_plCols[j], _plCols[i]];
-  _plSaveCols(); _plRefreshColEditor();
-}
-function _plColDragStart(e, id) { _plDragCol = id; e.dataTransfer.effectAllowed = 'move'; }
-function _plColDragOver(e)      { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
-function _plColDrop(e, targetId) {
-  e.preventDefault();
-  if (!_plDragCol || _plDragCol === targetId) return;
-  const from = _plCols.findIndex(c => c.id === _plDragCol);
-  const to   = _plCols.findIndex(c => c.id === targetId);
-  if (from < 0 || to < 0) { _plDragCol = null; return; }
-  const [moved] = _plCols.splice(from, 1);
-  _plCols.splice(to, 0, moved);
-  _plDragCol = null;
-  _plSaveCols(); _plRefreshColEditor();
-}
-function _plRefreshColEditor() {
-  const el = document.getElementById('pl-col-list');
-  if (el) el.innerHTML = _plColListHTML();
-  renderPunchWorkflow();
-}
-function _plColListHTML() {
-  return _plCols.map((c, i) => {
-    const def = PL_COL_DEFS.find(d => d.id === c.id); if (!def) return '';
-    return `<div draggable="true"
-      ondragstart="_plColDragStart(event,'${c.id}')"
-      ondragover="_plColDragOver(event)"
-      ondrop="_plColDrop(event,'${c.id}')"
-      style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--white);border:1px solid var(--gray-200);border-radius:7px;margin-bottom:6px;cursor:grab;user-select:none;">
-      <span style="color:var(--gray-400);font-size:18px;line-height:1;cursor:grab;">⠿</span>
-      <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer;font-size:14px;font-weight:500;">
-        <input type="checkbox" ${c.visible?'checked':''} onchange="_plColToggle('${c.id}',this.checked)" style="width:15px;height:15px;cursor:pointer;">
-        ${escapeHtml(def.label)}
-      </label>
-      <div style="display:flex;gap:4px;">
-        <button onclick="_plColMove('${c.id}',-1)" ${i===0?'disabled':''} style="font-size:13px;padding:2px 8px;border:1px solid var(--gray-200);border-radius:4px;background:var(--gray-50);cursor:pointer;">↑</button>
-        <button onclick="_plColMove('${c.id}',1)"  ${i===_plCols.length-1?'disabled':''} style="font-size:13px;padding:2px 8px;border:1px solid var(--gray-200);border-radius:4px;background:var(--gray-50);cursor:pointer;">↓</button>
-      </div>
-    </div>`;
-  }).join('');
-}
-function openPlColEditor() {
-  modal({
-    title: '⚙ Configure Columns',
-    sub: 'Drag rows or use arrows to reorder · check to show / hide',
-    size: 'small',
-    body: `<div id="pl-col-list" style="padding:4px 0;">${_plColListHTML()}</div>`,
-    footer: `
-      <button class="form-secondary" onclick="localStorage.removeItem('cx-pl-cols');_plCols=_plLoadCols();_plSaveCols();_plRefreshColEditor();">Reset Defaults</button>
-      <button class="form-submit" onclick="closeModal()">Done</button>`,
-  });
-}
+// Backward-compat aliases used by renderPunchWorkflow
+function _plActiveCols() { return _colGetVisible('pl'); }
+function openPlColEditor() { _colOpenEditor('pl', renderPunchWorkflow); }
 
 // Render a single <td> for a given column + punch item
 function _plRenderCell(colId, p) {
@@ -6170,7 +6298,7 @@ function renderPunchWorkflow() {
         <thead>
           <tr>
             <th style="width:36px;text-align:center;"></th>
-            ${_plActiveCols().map(c => { const def = PL_COL_DEFS.find(d => d.id === c.id); return `<th>${def ? escapeHtml(def.label) : c.id}</th>`; }).join('')}
+            ${_colHeaders('pl')}
             <th style="width:68px;text-align:right;padding-right:8px;">
               <button onclick="openPlColEditor()" title="Configure columns"
                 style="font-size:11px;padding:3px 8px;border:1px solid var(--gray-300);border-radius:5px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;font-weight:600;white-space:nowrap;">⚙ Cols</button>
@@ -6183,7 +6311,7 @@ function renderPunchWorkflow() {
               <td onclick="event.stopPropagation()" style="text-align:center;">
                 <input type="checkbox" ${_plSelected.has(p.id)?'checked':''} onchange="_plToggleSelect('${p.id}',this.checked)" style="width:15px;height:15px;cursor:pointer;">
               </td>
-              ${_plActiveCols().map(c => _plRenderCell(c.id, p)).join('')}
+              ${_colCells('pl', p)}
               <td onclick="event.stopPropagation()" style="text-align:right;padding-right:8px;">
                 <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openPunchDetail('${p.id}')">View</button>
               </td>
@@ -7522,41 +7650,26 @@ async function loadP6Data() {
 
 const TR_STATUSES = ['Not Started','In Review','Accepted','Accepted as Noted','Accepted as Noted Resubmit','Resubmit','Rejected'];
 
-const TRP_COL_DEFS = [
-  { key: 'cdrl',          label: 'CDRL'           },
-  { key: 'status',        label: 'Status'         },
-  { key: 'phase',         label: 'Phase'          },
-  { key: 'location',      label: 'Location'       },
-  { key: 'subsystem',     label: 'Subsystem'      },
-  { key: 'dateSubmitted', label: 'Date Submitted' },
-  { key: 'dateReceived',  label: 'Date Received'  },
-  { key: 'notes',         label: 'Notes'          },
-];
-let _trpColVisible = {};
-TRP_COL_DEFS.forEach(c => _trpColVisible[c.key] = true);
+// ── TRP column definitions (generic system) ──
+_colRegister('trp', [
+  { id: 'cdrl',          label: 'CDRL',           default: true },
+  { id: 'status',        label: 'Status',         default: true },
+  { id: 'phase',         label: 'Phase',          default: true },
+  { id: 'location',      label: 'Location',       default: true },
+  { id: 'subsystem',     label: 'Subsystem',      default: true },
+  { id: 'dateSubmitted', label: 'Date Submitted', default: true },
+  { id: 'dateReceived',  label: 'Date Received',  default: true },
+  { id: 'notes',         label: 'Notes',          default: true },
+], null);
 
-function _trpToggleCol(key, visible) {
-  _trpColVisible[key] = visible;
-  renderTestReporting();
-}
+// Backward-compat: _trpColVisible is a Proxy-like getter for the card-layout meta cells
+Object.defineProperty(window, '_trpColVisible', { get() {
+  const vis = {};
+  _colGetActive('trp').forEach(c => { vis[c.id] = c.visible; });
+  return vis;
+}});
 
-function _trpOpenColConfig() {
-  modal({
-    title: 'Configure Columns',
-    size: 'small',
-    body: `
-      <div style="display:flex;flex-direction:column;gap:2px;">
-        ${TRP_COL_DEFS.map(c => `
-          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:8px 4px;border-bottom:1px solid var(--gray-100);">
-            <input type="checkbox" ${_trpColVisible[c.key]?'checked':''} onchange="_trpToggleCol('${c.key}',this.checked)" style="width:15px;height:15px;">
-            <span style="font-size:13px;color:var(--text-main);">${escapeHtml(c.label)}</span>
-          </label>
-        `).join('')}
-      </div>
-    `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Done</button>`
-  });
-}
+function _trpOpenColConfig() { _colOpenEditor('trp', renderTestReporting); }
 
 const TRP_SOURCE_LABELS = {
   'master-linked': 'Master + TI',
@@ -9041,6 +9154,28 @@ let _trCaseSortDir = 'asc';
 // ==========================================================================
 // TEST REGISTER — unified Activity + Test Case view
 // ==========================================================================
+
+// ── TR column definitions ──
+_colRegister('tr', [
+  { id: 'activity',   label: 'Activity Name', sortCol: 'activity',   default: true },
+  { id: 'subsystem',  label: 'Subsystem',     sortCol: 'subsystem',  default: true },
+  { id: 'location',   label: 'Location',      sortCol: 'location',   default: true },
+  { id: 'phase',      label: 'Phase',         sortCol: 'phase',      default: true },
+  { id: 'status',     label: 'Status',        sortCol: 'status',     default: true },
+  { id: 'completion', label: 'Completion',     sortCol: 'completion', default: true },
+], function _trRenderCell(colId, ctx) {
+  const { a, st, done, total, pct, isSel } = ctx;
+  switch (colId) {
+    case 'activity': return `<td><div class="tr-activity-title">${escapeHtml(a.activity)}</div>${a.futureTestReason ? `<div style="font-size:11px;color:#5b21b6;margin-top:2px;">↳ ${escapeHtml(a.futureTestReason)}</div>` : ''}</td>`;
+    case 'subsystem': return `<td><span class="tag">${escapeHtml(a.subsystem)}</span></td>`;
+    case 'location':  return `<td style="font-size:12px;">${escapeHtml(a.location)}</td>`;
+    case 'phase':     return `<td><span class="tag tag-phase">${escapeHtml(a.phase)}</span></td>`;
+    case 'status':    return `<td>${_amStatusBadge(st)}</td>`;
+    case 'completion': return `<td><div class="am-progress-wrap" data-tippy-content="${done} of ${total} test cases complete (${pct}%)"><div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;${pct===100?'background:var(--good);':pct>0?'background:var(--info);':'background:var(--gray-300);'}"></div></div><span class="am-progress-label">${done}/${total}</span></div></td>`;
+    default: return '<td>—</td>';
+  }
+});
+
 function renderTestRegister() {
   const root = document.getElementById('test-register-content');
   if (!root || !currentRoleUser) return;
@@ -9142,8 +9277,7 @@ function _testRegisterHTML() {
   const _ltWs  = _wgtStat(_ltAll);
   const overallPct = _ltWs.totalW > 0 ? Math.round((_ltWs.completeW / _ltWs.totalW) * 100) : 0;
 
-  // column count: [cb](admin) | Actions | Activity | Subsystem | Location | Phase | Status | Completion
-  const colCount = isAdmin ? 8 : 7;
+  const colCount = _colGetVisible('tr').length + (isAdmin ? 3 : 2); // +checkbox +actions +gear
 
   // Sort header helper for activity view
   const plsCols = new Set(['phase','location','subsystem']);
@@ -9162,6 +9296,7 @@ function _testRegisterHTML() {
     const isSel = _amSelected.has(a.key);
     const safeKey = escapeHtml(a.key);
 
+    const trCtx = { a, st, done, total, pct, isSel };
     const actRow = `
       <tr style="${isSel?'background:#f5f3ff;':''}" class="tr-activity-row">
         ${isAdmin ? `<td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} onchange="_amToggleRow('${safeKey}',this.checked)"></td>` : ''}
@@ -9171,21 +9306,8 @@ function _testRegisterHTML() {
             <button class="admin-action-btn tr-mini-btn" onclick="_amOpenDrilldown('${safeKey}')">Open</button>
           </div>
         </td>
-        <td>
-          <div class="tr-activity-title">${escapeHtml(a.activity)}</div>
-          ${a.futureTestReason ? `<div style="font-size:11px;color:#5b21b6;margin-top:2px;">↳ ${escapeHtml(a.futureTestReason)}</div>` : ''}
-        </td>
-        <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
-        <td style="font-size:12px;">${escapeHtml(a.location)}</td>
-        <td><span class="tag tag-phase">${escapeHtml(a.phase)}</span></td>
-        <td>${_amStatusBadge(st)}</td>
-        <td>
-          <div class="am-progress-wrap"
-            data-tippy-content="${done} of ${total} test cases complete (${pct}%)">
-            <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;${pct===100?'background:var(--good);':pct>0?'background:var(--info);':'background:var(--gray-300);'}"></div></div>
-            <span class="am-progress-label">${done}/${total}</span>
-          </div>
-        </td>
+        ${_colCells('tr', trCtx)}
+        <td></td>
       </tr>`;
     return actRow;
   }).join('');
@@ -9270,16 +9392,18 @@ function _testRegisterHTML() {
               <tr>
                 ${isAdmin ? `<th class="am-cb-col"><input type="checkbox" id="am-cb-all" onchange="_amToggleAll(this.checked)" title="Select all"></th>` : ''}
                 <th style="min-width:90px;white-space:nowrap;">Actions</th>
-                ${sortTh('Activity Name','activity')}
-                ${sortTh('Subsystem','subsystem')}
-                ${sortTh('Location','location')}
-                ${sortTh('Phase','phase')}
-                ${sortTh('Status','status')}
-                ${sortTh('Completion','completion','min-width:160px;')}
+                ${_colGetVisible('tr').map(c => {
+                  const def = _colRegistry['tr']?.defs.find(d => d.id === c.id);
+                  return def?.sortCol ? sortTh(def.label, def.sortCol, c.id==='completion'?'min-width:160px;':'') : `<th>${def?.label||c.id}</th>`;
+                }).join('')}
+                <th style="width:48px;text-align:right;padding-right:8px;">
+                  <button onclick="_colOpenEditor('tr',renderTestRegister)" title="Configure columns"
+                    style="font-size:11px;padding:3px 8px;border:1px solid var(--gray-300);border-radius:5px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;font-weight:600;">⚙</button>
+                </th>
               </tr>
             </thead>
             <tbody id="tr-activities-tbody">
-              ${filtered.length ? actRows : `<tr><td colspan="${colCount}" style="text-align:center;padding:40px;color:var(--gray-500);">No activities match the current filters</td></tr>`}
+              ${filtered.length ? actRows : `<tr><td colspan="${_colGetVisible('tr').length + (isAdmin?3:2)}" style="text-align:center;padding:40px;color:var(--gray-500);">No activities match the current filters</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -9377,6 +9501,45 @@ function _amStatusBadge(s) {
 }
 
 let _amDrilldownKey = null; // currently open drill-down activity key
+
+// ── AM column definitions ──
+_colRegister('am', [
+  { id: 'activity',   label: 'Activity Name',    default: true  },
+  { id: 'subsystem',  label: 'Subsystem',         default: true  },
+  { id: 'procedure',  label: 'Test Procedure',    default: true  },
+  { id: 'cdrl',       label: 'Test Report CDRL',  default: true  },
+  { id: 'location',   label: 'Location',          default: true  },
+  { id: 'phase',      label: 'Phase',             default: true  },
+  { id: 'status',     label: 'Status',            default: true  },
+  { id: 'completion', label: 'Completion',         default: true  },
+], function _amRenderCell(colId, ctx) {
+  const { a, st, done, total, pct, isSel } = ctx;
+  switch (colId) {
+    case 'activity': {
+      return `<td>
+        <div style="font-weight:600;font-size:13px;cursor:pointer;color:var(--info);" onclick="_amOpenDrilldown('${escapeHtml(a.key)}')" title="Click to view test items">${escapeHtml(a.activity)}</div>
+        ${a.futureTestReason ? `<div style="font-size:11px;color:#5b21b6;margin-top:2px;">↳ ${escapeHtml(a.futureTestReason)}</div>` : ''}
+      </td>`;
+    }
+    case 'subsystem':  return `<td><span class="tag">${escapeHtml(a.subsystem)}</span></td>`;
+    case 'procedure': {
+      const procFull = a.testProcedure || '';
+      const procShort = procFull.length > 40 ? procFull.slice(0,40)+'…' : (procFull || '—');
+      return `<td style="font-size:12px;max-width:160px;" title="${escapeHtml(procFull)}">${escapeHtml(procShort)}</td>`;
+    }
+    case 'cdrl':       return `<td style="font-size:12px;">${escapeHtml(a.testReport||'—')}</td>`;
+    case 'location':   return `<td style="font-size:12px;">${escapeHtml(a.location)}</td>`;
+    case 'phase':      return `<td><span class="tag tag-phase">${escapeHtml(a.phase)}</span></td>`;
+    case 'status':     return `<td class="col-status">${_amStatusBadge(st)}</td>`;
+    case 'completion': return `<td class="col-completion">
+      <div class="am-progress-wrap">
+        <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;${pct===100?'background:var(--good);':pct>0?'background:var(--info);':'background:var(--gray-300);'}"></div></div>
+        <span class="am-progress-label">${done}/${total}</span>
+      </div>
+    </td>`;
+    default: return '<td>—</td>';
+  }
+});
 
 function _adminActivityManagerHTML() {
   if (_amDrilldownKey) return _amDrilldownHTML(_amDrilldownKey);
@@ -9476,15 +9639,11 @@ function _adminActivityManagerHTML() {
             <thead>
               <tr>
                 <th class="am-cb-col"><input type="checkbox" id="am-cb-all" onchange="_amToggleAll(this.checked)" title="Select all"></th>
-                <th>Activity Name</th>
-                <th>Subsystem</th>
-                <th>Test Procedure</th>
-                <th>Test Report CDRL</th>
-                <th>Location</th>
-                <th>Phase</th>
-                <th class="col-status">Status</th>
-                <th class="col-completion">Completion</th>
-                <th>Actions</th>
+                ${_colHeaders('am')}
+                <th style="width:120px;">Actions
+                  <button onclick="_colOpenEditor('am',renderAdminPortal)" title="Configure columns"
+                    style="font-size:11px;padding:2px 6px;margin-left:6px;border:1px solid var(--gray-300);border-radius:4px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;">⚙</button>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -9492,28 +9651,11 @@ function _adminActivityManagerHTML() {
                 const st = _amComputeStatus(a);
                 const { done, total, pct } = _amComputeCompletion(a, _tcw);
                 const isSel = _amSelected.has(a.key);
-                const procFull = a.testProcedure || '';
-                const procShort = procFull.length > 40 ? procFull.slice(0,40)+'…' : (procFull || '—');
-                const safeKey = encodeURIComponent(a.key);
+                const ctx = { a, st, done, total, pct, isSel };
                 return `
                   <tr style="${isSel?'background:#f5f3ff;':''}">
                     <td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} onchange="_amToggleRow('${escapeHtml(a.key)}',this.checked)"></td>
-                    <td>
-                      <div style="font-weight:600;font-size:13px;cursor:pointer;color:var(--info);" onclick="_amOpenDrilldown('${escapeHtml(a.key)}')" title="Click to view test items">${escapeHtml(a.activity)}</div>
-                      ${a.futureTestReason ? `<div style="font-size:11px;color:#5b21b6;margin-top:2px;">↳ ${escapeHtml(a.futureTestReason)}</div>` : ''}
-                    </td>
-                    <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
-                    <td style="font-size:12px;max-width:160px;" title="${escapeHtml(procFull)}">${escapeHtml(procShort)}</td>
-                    <td style="font-size:12px;">${escapeHtml(a.testReport||'—')}</td>
-                    <td style="font-size:12px;">${escapeHtml(a.location)}</td>
-                    <td><span class="tag tag-phase">${escapeHtml(a.phase)}</span></td>
-                    <td class="col-status">${_amStatusBadge(st)}</td>
-                    <td class="col-completion">
-                      <div class="am-progress-wrap">
-                        <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;${pct===100?'background:var(--good);':pct>0?'background:var(--info);':'background:var(--gray-300);'}"></div></div>
-                        <span class="am-progress-label">${done}/${total}</span>
-                      </div>
-                    </td>
+                    ${_colCells('am', ctx)}
                     <td>
                       <div style="display:flex;gap:4px;">
                         <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_amOpenDrilldown('${escapeHtml(a.key)}')">View</button>
@@ -9522,7 +9664,7 @@ function _adminActivityManagerHTML() {
                     </td>
                   </tr>
                 `;
-              }).join('') : `<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--gray-500);">No activities match the current filters</td></tr>`; })()}
+              }).join('') : `<tr><td colspan="${_colGetVisible('am').length + 2}" style="text-align:center;padding:32px;color:var(--gray-500);">No activities match the current filters</td></tr>`; })()}
             </tbody>
           </table>
         </div>
@@ -12246,6 +12388,35 @@ function _fmtDate(d) {
 // =============================================================================
 // SCHEDULE VIEW PAGE (all roles)
 // =============================================================================
+// ── P6 Schedule column definitions ──
+_colRegister('p6', [
+  { id: 'activity',  label: 'Activity',              default: true },
+  { id: 'subsystem', label: 'Subsystem',             default: true },
+  { id: 'location',  label: 'Location',              default: true },
+  { id: 'phase',     label: 'Phase',                 default: true },
+  { id: 'planned',   label: 'Planned Date',          default: true },
+  { id: 'p6start',   label: 'P6 Start',              default: true },
+  { id: 'p6finish',  label: 'P6 Finish',             default: true },
+  { id: 'variance',  label: 'Variance vs Baseline',  default: true },
+  { id: 'progress',  label: 'Progress',              default: true },
+  { id: 'status',    label: 'Status',                default: true },
+], function _p6RenderCell(colId, ctx) {
+  const { a, rec, p6Show, p6Label, finDiff, pct, doneW, totalW, status } = ctx;
+  switch (colId) {
+    case 'activity':  return `<td style="font-size:12px;font-weight:500;">${escapeHtml(a.activity)}</td>`;
+    case 'subsystem': return `<td><span class="tag">${escapeHtml(a.subsystem)}</span></td>`;
+    case 'location':  return `<td style="font-size:12px;">${escapeHtml(a.location)}</td>`;
+    case 'phase':     return `<td><span class="tag tag-phase">${escapeHtml(a.phase)}</span></td>`;
+    case 'planned':   return `<td style="font-size:12px;">${rec?.planned_date ? _fmtDate(rec.planned_date) : '<span style="color:var(--gray-400);">—</span>'}</td>`;
+    case 'p6start':   return `<td style="font-size:12px;">${p6Show?.start_date ? `${_fmtDate(p6Show.start_date)}<span style="font-size:10px;color:var(--gray-400);margin-left:4px;">${p6Label}</span>` : '<span style="color:var(--gray-400);">Not linked</span>'}</td>`;
+    case 'p6finish':  return `<td style="font-size:12px;">${p6Show?.finish_date ? `${_fmtDate(p6Show.finish_date)}<span style="font-size:10px;color:var(--gray-400);margin-left:4px;">${p6Label}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>`;
+    case 'variance':  return `<td style="font-size:12px;font-weight:600;${finDiff===null?'':finDiff>0?'color:#dc2626;':finDiff<0?'color:#059669;':''}">${finDiff === null ? '<span style="color:var(--gray-400);">—</span>' : finDiff === 0 ? 'On time' : `${finDiff>0?'+':''}${finDiff}d`}</td>`;
+    case 'progress':  return `<td title="Weighted by test case weight: ${doneW.toFixed(1)} / ${totalW.toFixed(1)} pts"><div class="am-progress-wrap"><div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;background:${pct===100?'var(--good)':pct>0?'var(--info)':'var(--gray-300)'};"></div></div><span class="am-progress-label">${pct}%</span></div></td>`;
+    case 'status':    return `<td>${_amStatusBadge(status)}</td>`;
+    default: return '<td>—</td>';
+  }
+});
+
 function renderSchedulePage() {
   const hero = document.getElementById('schedule-hero-content');
   const cont = document.getElementById('schedule-content');
@@ -12326,43 +12497,16 @@ function renderSchedulePage() {
           <table class="data-table">
             <thead>
               <tr>
-                <th>Activity</th>
-                <th>Subsystem</th>
-                <th>Location</th>
-                <th>Phase</th>
-                <th>Planned Date</th>
-                <th>P6 Start</th>
-                <th>P6 Finish</th>
-                <th>Variance vs Baseline</th>
-                <th>Progress</th>
-                <th>Status</th>
+                ${_colHeaders('p6')}
+                <th style="width:48px;text-align:right;padding-right:8px;">
+                  <button onclick="_colOpenEditor('p6',renderSchedulePage)" title="Configure columns"
+                    style="font-size:11px;padding:3px 8px;border:1px solid var(--gray-300);border-radius:5px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;font-weight:600;">⚙</button>
+                </th>
               </tr>
             </thead>
             <tbody>
-              ${rows.map(({a, rec, p6Show, p6Label, finDiff, pct, doneW, totalW, status}) => `
-                <tr>
-                  <td style="font-size:12px;font-weight:500;">${escapeHtml(a.activity)}</td>
-                  <td><span class="tag">${escapeHtml(a.subsystem)}</span></td>
-                  <td style="font-size:12px;">${escapeHtml(a.location)}</td>
-                  <td><span class="tag tag-phase">${escapeHtml(a.phase)}</span></td>
-                  <td style="font-size:12px;">${rec?.planned_date ? _fmtDate(rec.planned_date) : '<span style="color:var(--gray-400);">—</span>'}</td>
-                  <td style="font-size:12px;">
-                    ${p6Show?.start_date ? `${_fmtDate(p6Show.start_date)}<span style="font-size:10px;color:var(--gray-400);margin-left:4px;">${p6Label}</span>` : '<span style="color:var(--gray-400);">Not linked</span>'}
-                  </td>
-                  <td style="font-size:12px;">
-                    ${p6Show?.finish_date ? `${_fmtDate(p6Show.finish_date)}<span style="font-size:10px;color:var(--gray-400);margin-left:4px;">${p6Label}</span>` : '<span style="color:var(--gray-400);">—</span>'}
-                  </td>
-                  <td style="font-size:12px;font-weight:600;${finDiff===null?'':finDiff>0?'color:#dc2626;':finDiff<0?'color:#059669;':''}">
-                    ${finDiff === null ? '<span style="color:var(--gray-400);">—</span>' : finDiff === 0 ? 'On time' : `${finDiff>0?'+':''}${finDiff}d`}
-                  </td>
-                  <td title="Weighted by test case weight: ${doneW.toFixed(1)} / ${totalW.toFixed(1)} pts">
-                    <div class="am-progress-wrap">
-                      <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;background:${pct===100?'var(--good)':pct>0?'var(--info)':'var(--gray-300)'};"></div></div>
-                      <span class="am-progress-label">${pct}%</span>
-                    </div>
-                  </td>
-                  <td>${_amStatusBadge(status)}</td>
-                </tr>`).join('')}
+              ${rows.map(ctx => `
+                <tr>${_colCells('p6', ctx)}<td></td></tr>`).join('')}
             </tbody>
           </table>
         </div>
@@ -12373,6 +12517,27 @@ function renderSchedulePage() {
 // ==========================================================================
 // ASSET MANAGEMENT
 // ==========================================================================
+
+// ── Asset column definitions ──
+_colRegister('assets', [
+  { id: 'name',      label: 'Device Name', default: true },
+  { id: 'type',      label: 'Type',        default: true },
+  { id: 'location',  label: 'Location',    default: true },
+  { id: 'subsystem', label: 'Subsystem',   default: true },
+  { id: 'linked',    label: 'Linked',      default: true },
+  { id: 'progress',  label: 'Progress',    default: true },
+], function _assetRenderCell(colId, ctx) {
+  const { a, links, subDisplay, passCount, total, pct } = ctx;
+  switch (colId) {
+    case 'name':     return `<td style="font-weight:600;font-family:monospace;font-size:13px;">${escapeHtml(a.name)}</td>`;
+    case 'type':     return `<td style="font-size:13px;">${escapeHtml(a.device_type || '—')}</td>`;
+    case 'location': return `<td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.location || a.location_prefix || '—')}</td>`;
+    case 'subsystem':return `<td style="font-size:12px;color:var(--gray-600);">${subDisplay}</td>`;
+    case 'linked':   return `<td style="font-size:13px;">${links.length} link${links.length!==1?'s':''}</td>`;
+    case 'progress': return `<td>${total > 0 ? `<div style="display:flex;align-items:center;gap:8px;"><div style="flex:1;background:#e5e7eb;border-radius:4px;height:6px;min-width:60px;"><div style="width:${pct}%;background:${pct===100?'#16a34a':'#3b82f6'};height:6px;border-radius:4px;"></div></div><span style="font-size:11px;color:var(--gray-600);">${passCount}/${total}</span></div>` : `<span style="color:var(--gray-400);font-size:12px;">—</span>`}</td>`;
+    default: return '<td>—</td>';
+  }
+});
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 async function _dbUpsert(table, rows, onConflict) {
@@ -13038,17 +13203,15 @@ function _assetPageHTML() {
         <table class="data-table">
           <thead><tr>
             <th style="width:36px;"><input type="checkbox" title="Select all" onchange="_assetSelectAll(this.checked)"></th>
-            <th>Device Name</th>
-            <th>Type</th>
-            <th>Location</th>
-            <th>Subsystem</th>
-            <th>Linked</th>
-            <th>Progress</th>
-            <th style="width:160px;">Actions</th>
+            ${_colHeaders('assets')}
+            <th style="width:160px;">Actions
+              <button onclick="_colOpenEditor('assets',renderAdminAssets)" title="Configure columns"
+                style="font-size:11px;padding:2px 6px;margin-left:4px;border:1px solid var(--gray-300);border-radius:4px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;">⚙</button>
+            </th>
           </tr></thead>
           <tbody>
             ${filtered.length ? filtered.map(a => _assetRowHTML(a)).join('') : `
-              <tr><td colspan="8" style="text-align:center;color:var(--gray-400);padding:32px;">
+              <tr><td colspan="${_colGetVisible('assets').length + 2}" style="text-align:center;color:var(--gray-400);padding:32px;">
                 No assets found. Import a CSV or add one manually.
               </td></tr>`}
           </tbody>
@@ -13076,23 +13239,11 @@ function _assetRowHTML(a) {
     ? `<span title="${escapeHtml(linkedSubs.join(', '))}" style="cursor:help;">${linkedSubs.length} subsystems ⓘ</span>`
     : escapeHtml(linkedSubs[0] || a.subsystem || '—');
 
+  const ctx = { a, links, subDisplay, passCount, total, pct };
   const mainRow = `
     <tr style="${isOpen ? 'background:#eff6ff;' : ''}">
       <td><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="_assetToggleSelect('${a.id}',this.checked)"></td>
-      <td style="font-weight:600;font-family:monospace;font-size:13px;">${escapeHtml(a.name)}</td>
-      <td style="font-size:13px;">${escapeHtml(a.device_type || '—')}</td>
-      <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.location || a.location_prefix || '—')}</td>
-      <td style="font-size:12px;color:var(--gray-600);">${subDisplay}</td>
-      <td style="font-size:13px;">${links.length} link${links.length!==1?'s':''}</td>
-      <td>
-        ${total > 0 ? `
-          <div style="display:flex;align-items:center;gap:8px;">
-            <div style="flex:1;background:#e5e7eb;border-radius:4px;height:6px;min-width:60px;">
-              <div style="width:${pct}%;background:${pct===100?'#16a34a':'#3b82f6'};height:6px;border-radius:4px;"></div>
-            </div>
-            <span style="font-size:11px;color:var(--gray-600);">${passCount}/${total}</span>
-          </div>` : `<span style="color:var(--gray-400);font-size:12px;">—</span>`}
-      </td>
+      ${_colCells('assets', ctx)}
       <td>
         <button class="form-secondary tr-mini-btn${isOpen?' admin-action-btn':''}" onclick="_assetOpenManageLinks('${a.id}')">${isOpen?'🔗 Close':'🔗 Links'}</button>
         <button class="form-secondary tr-mini-btn" onclick="_assetOpenEdit('${a.id}')">✏️</button>
@@ -13101,9 +13252,10 @@ function _assetRowHTML(a) {
     </tr>`;
 
   // Inline expanded links panel — sits immediately below the asset row
+  const colSpan = _colGetVisible('assets').length + 2;
   const panelRow = isOpen ? `
     <tr>
-      <td colspan="8" style="padding:0;border-bottom:2px solid var(--primary);">
+      <td colspan="${colSpan}" style="padding:0;border-bottom:2px solid var(--primary);">
         <div style="padding:4px 0 12px 0;">${_assetManagePanelHTML(a.id)}</div>
       </td>
     </tr>` : '';
