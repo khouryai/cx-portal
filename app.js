@@ -1727,7 +1727,6 @@ function _initProductionVisualLayer() {
   doc.dataset.trSubsys = _productionVisualDefaults.trSubsys;
   doc.dataset.trStatus = _productionVisualDefaults.trStatus;
   doc.dataset.trBar = _productionVisualDefaults.trBar;
-  try { localStorage.removeItem('tc-tweaks-v1'); } catch (_) {}
 
   const root = document.getElementById('test-register-content');
   if (root && !root._productionVisualObserver) {
