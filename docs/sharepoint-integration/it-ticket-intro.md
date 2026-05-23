@@ -1,71 +1,93 @@
-# IT Ticket — Azure Hosting + Secure Backend for CX Portal SharePoint Integration
+# IT Ticket — Azure Hosting and Secure Backend Integration for the CX Portal
 
 **Requester:** Alex Khoury — Hitachi Rail STS USA, T&C Manager (BART CBTC)
-**Application:** CX Commissioning Portal (a.k.a. HITACHI Rail T&C Portal)
+**Application:** CX Commissioning Portal
 **Repository:** `khouryai/cx-portal`
-**Current hosting:** GitHub Pages (static SPA) + Supabase (Postgres, Auth, Edge Functions)
-**Target hosting:** Hitachi Azure tenant
 **Date:** 2026-05-23
 
 ---
 
 ## Introduction
 
-The CX Portal is the T&C team's day-to-day system for the BART CBTC project — it covers
-test execution, look-ahead planning, punch-list workflow, field intake, RMAs, and
-audit logging for five role types (Admin, Field Engineer, Punch Manager, Technician,
-Client). It is currently a static single-page application running on GitHub Pages,
-backed by Supabase (PostgreSQL with Row-Level Security on every table, plus two
-Edge Functions for transactional email). The frontend ships **no privileged
-credentials** — only Supabase's public `anon` key, which is gated by RLS and
-returns nothing to an unauthenticated caller. All write paths are JWT-authenticated
-and audited at the database layer via triggers into `db_change_log`.
+The CX Portal is the day-to-day system the T&C team uses on the BART CBTC project.
+It covers test execution, look-ahead planning, the punch-list workflow, field
+intake, RMAs, and audit logging across five role types: Admin, Field Engineer,
+Punch Manager, Technician, and Client (BART inspector). Today it runs as a
+prototype — a static single-page application hosted on GitHub Pages, with all
+structured data in a Supabase PostgreSQL project. The current stack has served
+us well for build-out, but it was always intended as a demonstration tier.
+We're now ready to move the portal onto Hitachi's corporate infrastructure
+ahead of broader rollout.
 
-We are now ready to move the portal off prototype hosting and integrate it with
-Hitachi's corporate infrastructure. The driver is **document storage**: punch
-photos (before/after), daily logs, CDRL test reports, and look-ahead xlsx files
-need to live in **SharePoint Online**, governed by existing corporate ACLs,
-retention, and DLP policies, rather than in ad-hoc storage. To do that securely,
-we need a first-party backend inside Hitachi's Azure tenant that owns the
-Microsoft Graph credential — the SharePoint client secret / certificate must
-never touch the browser.
+The primary driver is **document storage**. Punch photos (before and after),
+daily field logs, CDRL test reports, and look-ahead workbooks need to live in
+SharePoint Online, under the **`Commissioning` subsite of the BART CBTC
+Project site**, so they inherit the corporate access model, retention rules,
+and DLP policies that the team already relies on elsewhere. Both **Hitachi
+and BART personnel** will need access to the portal, so we'd like to align
+early on the right identity pattern (single Entra tenant with B2B guest
+access, a dedicated tenant, or whatever the platform team prefers).
 
-I'm opening this ticket to request, in one package:
+We've designed the portal with a clean separation between what the browser
+sees and what stays server-side. The frontend ships no privileged credentials
+of any kind — only the public Supabase `anon` API key, which on its own
+returns no data because Row-Level Security gates every table. All write paths
+require an authenticated JWT, and every change is captured by database
+triggers into a tamper-resistant audit log. When we move to Azure, the
+intent is to preserve that posture and tighten it further: the new backend
+will be the only component that holds the SharePoint / Microsoft Graph
+credential, any database service-role keys, and any mail-delivery secrets,
+pulled at runtime from Azure Key Vault via Managed Identity. Sensitive
+operations — document uploads, permission changes, administrative database
+writes — will happen exclusively on the server side, behind the user's
+Entra token.
 
-1. **Azure cloud hosting setup** in the appropriate Hitachi subscription —
-   Static Web App (or App Service) for the SPA, App Service or Container Apps
-   for the API, Azure API Management in front, Azure Key Vault for secrets,
-   Managed Identity wiring, and Log Analytics / Defender for Cloud for
-   observability and threat detection.
-2. **Secure backend integration** between the portal and SharePoint via
-   Microsoft Graph, fronted by Microsoft Entra ID SSO (with MFA and Conditional
-   Access). The backend is the **only** component that holds the Graph
-   credential, the Supabase service-role key, and any SMTP credentials —
-   pulled at runtime from Key Vault via Managed Identity, never logged, never
-   returned to the client. Sensitive operations (document upload, ACL changes,
-   admin DB writes) happen exclusively server-side and are validated against
-   the user's Entra token before reaching SharePoint or the database.
-3. **A security review and corporate compliance check** against Hitachi's data
-   protection policies prior to go-live — covering secrets handling, data
-   residency (today's Supabase project is US-East; confirm acceptable or plan
-   migration to Azure Database for PostgreSQL), least-privilege Graph scopes
-   (preference: `Sites.Selected` on a specific BART CBTC site), Conditional
-   Access posture, audit log retention, and any ISO 27001 / SOC 2 / NIST 800-171
-   obligations that apply to the BART contract. A pen test before broad rollout
-   would also be appreciated.
+With that in mind, we'd like to open a conversation with the IT team around
+three areas:
 
-A full architecture analysis (current state, target state, secret-handling
-posture, and the open questions I have for the platform team) is attached as
-`architecture-analysis.md`, and a visual diagram of the target architecture
-is attached as `architecture-diagram.mmd` (renders at https://mermaid.live).
+1. **Azure hosting setup.** We'd appreciate guidance on the right shape
+   inside Hitachi's Azure tenant — frontend hosting (Static Web Apps,
+   App Service, or whatever is standard), a backend tier for the Graph
+   integration, an API gateway in front, Key Vault for secrets, Managed
+   Identity wiring, and centralized logging through Azure Monitor /
+   Defender for Cloud. We're flexible on the specifics and would rather
+   follow the platform team's preferred patterns than propose our own.
 
-I'm happy to walk through any of this on a call — I'd especially like to align
-early on the SharePoint site target, the Graph permission model, and the
-hosting/network shape before we start provisioning. Thanks for the help.
+2. **Secure backend integration with SharePoint.** A first-party backend
+   inside the Hitachi tenant brokering every call into the
+   `Commissioning` subsite via Microsoft Graph, with Entra ID handling
+   SSO, MFA, and Conditional Access for both Hitachi staff and BART
+   guests. We'd lean toward the **least-privilege Graph scope** that
+   still gets the job done — `Sites.Selected` on just the
+   `Commissioning` subsite is our default preference, but we're open to
+   whatever scope IT considers appropriate.
+
+3. **A security review and corporate compliance check.** Before broad
+   rollout, we'd like the portal reviewed against Hitachi's data
+   protection policies — covering secrets handling, audit log retention,
+   Conditional Access posture, and any contract-specific obligations
+   tied to BART (ISO 27001, SOC 2, NIST 800-171, ITAR, or others as
+   applicable). We're also planning to **migrate the database off
+   Supabase and onto Azure Database for PostgreSQL** as part of this
+   work — Supabase has been valuable as the demo tier, but if the
+   functional equivalent lives natively in Azure we'd prefer to land
+   there to simplify the compliance review.
+
+We have a working application end-to-end and are happy to demo any part
+of it. The intent of this ticket is to start the conversation and align
+on direction — we can flex on hosting shape, identity model, network
+posture, and rollout sequencing to match whatever the platform and
+security teams need to see. We've put together a short architecture
+write-up and a target-state diagram (attached) as background, but
+those are starting points rather than a fixed proposal. Whatever
+materials, demos, or additional detail would be most useful to the
+review, please let us know and we'll get them over quickly.
+
+Thanks very much — looking forward to working with you on this.
 
 ---
 
 ## Attachments
 
-- `architecture-analysis.md` — current vs. target architecture, API flow, secrets posture, open questions.
-- `architecture-diagram.mmd` — Mermaid source for the target architecture diagram.
+- `architecture-analysis.md` — high-level summary of the current architecture, the proposed Azure target state, and how sensitive operations are kept server-side.
+- `architecture-diagram.mmd` — Mermaid source for the target-state architecture diagram (renders at https://mermaid.live).
