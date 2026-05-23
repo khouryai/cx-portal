@@ -24621,25 +24621,80 @@ function _apHistoryStub() {
 
 const _formsStorage = {
   bucket: 'forms',
+  _objectUrl(path, cacheBust = false) {
+    const cleanPath = String(path || '').split('/').map(encodeURIComponent).join('/');
+    const url = `${SUPABASE_URL}/storage/v1/object/${this.bucket}/${cleanPath}`;
+    return cacheBust ? `${url}?t=${Date.now()}` : url;
+  },
+  _headers(extra = {}) {
+    return {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: _getAuthHeader(),
+      ...extra,
+    };
+  },
   async upload(formId, file) {
     const path = `${formId}.pdf`;
     return this.uploadPath(path, file);
   },
   async uploadPath(path, file) {
-    const { error } = await _sb.storage.from(this.bucket).upload(path, file, {
-      contentType: 'application/pdf', upsert: true,
-    });
-    if (error) throw new Error('Storage upload failed: ' + error.message);
-    return path;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    try {
+      const res = await fetch(this._objectUrl(path), {
+        method: 'POST',
+        signal: ctrl.signal,
+        cache: 'no-store',
+        headers: this._headers({
+          'Content-Type': 'application/pdf',
+          'x-upsert': 'true',
+        }),
+        body: file,
+      });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`Storage upload failed (${res.status}): ${await res.text()}`);
+      return path;
+    } catch (e) {
+      clearTimeout(timer);
+      if (e.name === 'AbortError') throw new Error('Storage upload timed out after 30s');
+      throw e;
+    }
   },
   async downloadBlob(path) {
-    const { data, error } = await _sb.storage.from(this.bucket).download(path);
-    if (error) throw new Error('Storage download failed: ' + error.message);
-    return data;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    try {
+      const res = await fetch(this._objectUrl(path, true), {
+        method: 'GET',
+        signal: ctrl.signal,
+        cache: 'no-store',
+        headers: this._headers({
+          Accept: 'application/pdf',
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        }),
+      });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`Storage download failed (${res.status}): ${await res.text()}`);
+      return await res.blob();
+    } catch (e) {
+      clearTimeout(timer);
+      if (e.name === 'AbortError') throw new Error('Storage download timed out after 30s');
+      throw e;
+    }
   },
   async downloadBytes(path) {
     const blob = await this.downloadBlob(path);
     return new Uint8Array(await blob.arrayBuffer());
+  },
+  async verifyBytes(path, expectedBytes) {
+    const actual = await this.downloadBytes(path);
+    const expectedHash = await _sha256Hex(expectedBytes);
+    const actualHash = await _sha256Hex(actual);
+    if (expectedHash !== actualHash) {
+      throw new Error('Storage verification failed: uploaded PDF did not match the saved PDF');
+    }
+    return actual;
   },
   async copy(sourcePath, destPath) {
     const { error } = await _sb.storage.from(this.bucket).copy(sourcePath, destPath);
@@ -24650,6 +24705,32 @@ const _formsStorage = {
     if (error) throw new Error('Storage delete failed: ' + error.message);
   },
 };
+
+async function _sha256Hex(bytes) {
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(await bytes.arrayBuffer());
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function _inspectPdfBytes(bytes) {
+  const doc = await PDFLib.PDFDocument.load(bytes);
+  const form = doc.getForm();
+  return {
+    bytes: bytes.length,
+    fields: form.getFields().map(f => {
+      const name = f.getName();
+      const type = f.constructor.name;
+      let value = null;
+      try {
+        if (type === 'PDFTextField') value = f.getText();
+        else if (type === 'PDFCheckBox') value = f.isChecked();
+        else if (type === 'PDFRadioGroup') value = f.getSelected();
+        else if (type === 'PDFDropdown' || type === 'PDFOptionList') value = f.getSelected();
+      } catch { /* inspection only */ }
+      return { name, type, value };
+    }),
+  };
+}
 
 let FORMS           = [];
 let FORM_TEST_LINKS = [];
@@ -24710,15 +24791,20 @@ async function _formsUpdateMetadata(formId, patch) {
   patch.updated_by = currentProfile?.full_name || currentRoleUser?.name || null;
   patch.updated_at = new Date().toISOString();
   const [updated] = await _dbUpdate('forms', patch, { id: formId });
+  if (!updated) throw new Error('Form metadata update returned no rows');
   const i = FORMS.findIndex(f => f.id === formId);
   if (i >= 0) FORMS[i] = updated;
   return updated;
 }
 
-async function _formsReuploadFile(formId, fileOrBlob) {
+async function _formsReuploadFile(formId, fileOrBlob, expectedBytes = null) {
   const form = FORMS.find(f => f.id === formId);
   const storagePath = form?.storage_path || `${formId}.pdf`;
+  const bytesToVerify = expectedBytes
+    ? _clonePdfBytes(expectedBytes)
+    : new Uint8Array(await fileOrBlob.arrayBuffer());
   await _formsStorage.uploadPath(storagePath, fileOrBlob);
+  await _formsStorage.verifyBytes(storagePath, bytesToVerify);
   return _formsUpdateMetadata(formId, { file_size: fileOrBlob.size, storage_path: storagePath });
 }
 
@@ -25072,6 +25158,7 @@ async function saveFormPDF(formId) {
     const values = _collectFormFieldValues();
     const doc = await PDFLib.PDFDocument.load(_pdfViewerState.pdfBytes);
     const form = doc.getForm();
+    let appliedFields = 0;
     Object.entries(values).forEach(([name, val]) => {
       try {
         const f = form.getField(name);
@@ -25080,8 +25167,11 @@ async function saveFormPDF(formId) {
         else if (ctor === 'PDFCheckBox')   { val ? f.check() : f.uncheck(); }
         else if (ctor === 'PDFRadioGroup') f.select(String(val));
         else if (ctor === 'PDFDropdown' || ctor === 'PDFOptionList') f.select(String(val));
+        else return;
+        appliedFields += 1;
       } catch (e) { /* field missing / type mismatch — skip */ }
     });
+    let appliedSignatures = 0;
     for (const sig of Object.values(_pdfViewerState.signatures || {})) {
       if (!sig?.dataUrl || !Array.isArray(sig.rect)) continue;
       try {
@@ -25104,13 +25194,17 @@ async function saveFormPDF(formId) {
           width: drawW,
           height: drawH,
         });
+        appliedSignatures += 1;
       } catch (e) {
         console.warn('[saveFormPDF] signature skipped:', sig.name, e.message);
       }
     }
+    if (Object.keys(values).length && appliedFields === 0 && appliedSignatures === 0) {
+      throw new Error('No editable PDF fields could be written. The visible form fields did not match the saved PDF field names.');
+    }
     const bytes = await doc.save({ updateFieldAppearances: true });
     const blob  = new Blob([bytes], { type: 'application/pdf' });
-    await _formsReuploadFile(formId, blob);
+    await _formsReuploadFile(formId, blob, bytes);
     _pdfViewerState.pdfBytes = _clonePdfBytes(bytes);
     logAudit('Saved Form', FORMS.find(f => f.id === formId)?.name || formId, `${Object.keys(values).length} field(s)`);
     toast('✓ Form saved', 'success');
