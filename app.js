@@ -11004,8 +11004,9 @@ function modal({ title, sub, body, footer, size }) {
     // Clicking outside does NOT close — user must use Cancel button
     document.body.appendChild(overlay);
   }
+  const sizeClass = size === 'pdf' ? 'modal-pdf' : size === 'large' ? 'modal-large' : '';
   overlay.innerHTML = `
-    <div class="modal ${size === 'large' ? 'modal-large' : ''}">
+    <div class="modal ${sizeClass}">
       <div class="modal-head">
         <div>
           <div class="modal-title">${title}</div>
@@ -24709,6 +24710,12 @@ async function _formsCloneTemplateForDeployment(templateId, depId, selections, t
 // ── PDF VIEWER (pdf.js render + HTML overlay + pdf-lib save) ────────────
 let _pdfViewerState = null;
 
+function _formsViewerScale(baseViewport, pagesEl) {
+  const availableWidth = Math.max(360, (pagesEl?.clientWidth || window.innerWidth) - 48);
+  const fitWidthScale = availableWidth / baseViewport.width;
+  return Math.max(1.05, Math.min(1.45, fitWidthScale));
+}
+
 async function openFormViewer(formId) {
   const form = FORMS.find(f => f.id === formId);
   if (!form) { toast('Form not found', 'error'); return; }
@@ -24720,7 +24727,7 @@ async function openFormViewer(formId) {
   modal({
     title: form.name,
     sub: [form.phase, form.location, form.subsystem].filter(Boolean).join(' · '),
-    size: 'large',
+    size: 'pdf',
     body: `
       <div style="font-size:12px;color:var(--gray-600);margin-bottom:8px;">
         ${form.description ? `<div style="color:var(--gray-700);margin-bottom:4px;">${escapeHtml(form.description)}</div>` : ''}
@@ -24743,18 +24750,26 @@ async function openFormViewer(formId) {
     pagesEl.innerHTML = '';
     for (let p = 1; p <= pdfDoc.numPages; p++) {
       const page = await pdfDoc.getPage(p);
-      const viewport = page.getViewport({ scale: 1.5 });
+      const baseViewport = page.getViewport({ scale: 1 });
+      const scale = _formsViewerScale(baseViewport, pagesEl);
+      const viewport = page.getViewport({ scale });
+      const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
       const pageWrap = document.createElement('div');
-      pageWrap.style.cssText = `position:relative;margin:0 auto 12px;width:${viewport.width}px;height:${viewport.height}px;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,0.15);`;
+      pageWrap.className = 'form-viewer-page';
+      pageWrap.style.width = `${viewport.width}px`;
+      pageWrap.style.height = `${viewport.height}px`;
       const canvas = document.createElement('canvas');
-      canvas.width = viewport.width; canvas.height = viewport.height;
-      canvas.style.cssText = 'display:block;position:absolute;top:0;left:0;';
+      canvas.width = Math.floor(viewport.width * pixelRatio);
+      canvas.height = Math.floor(viewport.height * pixelRatio);
+      canvas.style.cssText = `display:block;position:absolute;top:0;left:0;width:${viewport.width}px;height:${viewport.height}px;`;
       pageWrap.appendChild(canvas);
       const overlay = document.createElement('div');
       overlay.style.cssText = `position:absolute;top:0;left:0;width:${viewport.width}px;height:${viewport.height}px;`;
       pageWrap.appendChild(overlay);
       pagesEl.appendChild(pageWrap);
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      const renderContext = { canvasContext: canvas.getContext('2d'), viewport };
+      if (pixelRatio !== 1) renderContext.transform = [pixelRatio, 0, 0, pixelRatio, 0, 0];
+      await page.render(renderContext).promise;
       const annots = await page.getAnnotations();
       _renderFormFieldOverlay(overlay, annots, viewport);
     }

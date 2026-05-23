@@ -2183,6 +2183,62 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
   bottom: 0;
 }
 
+.modal-pdf {
+  width: calc(100vw - 48px);
+  max-width: 1680px;
+  height: calc(100vh - 48px);
+  max-height: none;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.modal-pdf .modal-head {
+  padding: 16px 24px 14px;
+  flex-shrink: 0;
+}
+.modal-pdf .modal-body {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-pdf .modal-footer {
+  flex-shrink: 0;
+  padding: 12px 24px;
+}
+.modal-pdf #form-viewer-pages {
+  flex: 1;
+  min-height: 0;
+  max-height: none !important;
+  overflow: auto !important;
+  padding: 16px !important;
+}
+.form-viewer-page {
+  position: relative;
+  margin: 0 auto 16px;
+  background: #fff;
+  box-shadow: 0 2px 12px rgba(15,23,42,0.18);
+}
+@media (max-width: 720px) {
+  .modal-pdf {
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+  }
+  .modal-pdf .modal-head,
+  .modal-pdf .modal-footer {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .modal-pdf .modal-body {
+    padding: 8px;
+  }
+  .modal-pdf #form-viewer-pages {
+    padding: 8px !important;
+  }
+}
+
 /* Deployment matrix */
 .deploy-loc-row {
   border: 1px solid var(--gray-200);
