@@ -326,6 +326,7 @@ function showPage(name) {
   if (name === 'admin-p6')         renderAdminP6();
   if (name === 'admin-assets')     renderAdminAssets();
   if (name === 'admin-config')     renderConfigMgmt();
+  if (name === 'forms')            renderFormsPage();
   if (name === 'rma')              renderRMA();
   if (name === 'schedule')         renderSchedulePage();
   if (name === 'meetings')         { loadMeetings().then(() => { loadMtgTemplates(); renderMeetings(); }); }
@@ -1665,7 +1666,7 @@ function exportPL() {
 // INIT
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
-  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs()]);
+  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs(), loadForms()]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -4014,6 +4015,12 @@ async function confirmDeploy(templateId) {
       await _dbInsert('test_items', rows.slice(i, i + BATCH));
     }
 
+    // ── 2b. Clone any template-attached PDFs once per deployed test case ──
+    try {
+      const clonedCount = await _formsCloneTemplateForDeployment(templateId, depId, _deploySelections, tpl);
+      if (clonedCount) console.log(`[confirmDeploy] cloned ${clonedCount} form copies for deployment ${depId}`);
+    } catch (e) { console.warn('[confirmDeploy] form clone failed:', e.message); }
+
     // ── 3. Update in-memory DEPLOYMENTS so the overview reflects the new entry
     const enabledLocs = _deploySelections.map(s => ({
       code: s.locId, name: s.locName, phase: s.phaseName, applicable: s.tcCodes,
@@ -4288,12 +4295,14 @@ function _tplModalBody() {
     <div id="tpl-sections">${_tplSectionsHTML()}</div>
     <button class="form-secondary" style="width:100%;font-size:13px;border-style:dashed;margin-top:2px;"
       onclick="addTplSection()">+ Add Section</button>
+    ${typeof _tplFormsBlockHTML === 'function' ? _tplFormsBlockHTML(_editTemplateId) : ''}
   `;
 }
 
 // ── Open modals ───────────────────────────────────────────────────────────────
 
 function openNewTemplateModal() {
+  _editTemplateId   = null;
   _templateSections = [{ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'' }] }];
   modal({
     title:  'Create Activity Template',
@@ -9824,7 +9833,10 @@ function _amDrilldownHTML(key) {
                       ${_trEditMode && isAdmin ? `<td style="cursor:grab;color:var(--gray-400);font-size:14px;">☰</td>` : ''}
                       <td style="font-size:11px;font-family:monospace;min-width:140px;">${_trEditMode && isAdmin ? `<input class="form-input" style="font-size:11px;font-family:monospace;min-width:120px;" value="${escapeHtml(r.TestCaseCode||'')}" onchange="_trDraftChange('${tid}','TestCaseCode',this.value)">` : escapeHtml(r.TestCaseCode||r.TestID||'—')}</td>
                       <td>
-                        <div style="font-weight:500;font-size:13px;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestName||'')}" onchange="_trDraftChange('${tid}','TestName',this.value)">` : escapeHtml(r.TestName||'—')}</div>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                          <div style="font-weight:500;font-size:13px;flex:1;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestName||'')}" onchange="_trDraftChange('${tid}','TestName',this.value)">` : escapeHtml(r.TestName||'—')}</div>
+                          ${_trEditMode && isAdmin ? '' : _formsBadgeHTML(r.TestID)}
+                        </div>
                         ${r.CompletedBy ? `<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(r.CompletedBy)}</div>` : ''}
                         ${_swSnapshotChipHTML(r)}
                       </td>
@@ -24516,4 +24528,714 @@ function _apHistoryStub() {
         </tbody>
       </table>
     </div>`;
+}
+
+// ╔════════════════════════════════════════════════════════════════════════╗
+// ║  FORMS — Test Data Sheets module                                       ║
+// ║                                                                        ║
+// ║  Storage today: Supabase Storage bucket "forms"                        ║
+// ║  Migration:     Swap _formsStorage adapter to MS Graph at SharePoint   ║
+// ║                 cutover — nothing above the adapter changes.           ║
+// ║                                                                        ║
+// ║  Tables: forms, form_test_item_links, form_template_links              ║
+// ║  Schema: see supabase_forms_schema.sql                                 ║
+// ╚════════════════════════════════════════════════════════════════════════╝
+
+const _formsStorage = {
+  bucket: 'forms',
+  async upload(formId, file) {
+    const path = `${formId}.pdf`;
+    const { error } = await _sb.storage.from(this.bucket).upload(path, file, {
+      contentType: 'application/pdf', upsert: true,
+    });
+    if (error) throw new Error('Storage upload failed: ' + error.message);
+    return path;
+  },
+  async downloadBlob(path) {
+    const { data, error } = await _sb.storage.from(this.bucket).download(path);
+    if (error) throw new Error('Storage download failed: ' + error.message);
+    return data;
+  },
+  async downloadBytes(path) {
+    const blob = await this.downloadBlob(path);
+    return new Uint8Array(await blob.arrayBuffer());
+  },
+  async copy(sourcePath, destPath) {
+    const { error } = await _sb.storage.from(this.bucket).copy(sourcePath, destPath);
+    if (error) throw new Error('Storage copy failed: ' + error.message);
+  },
+  async remove(path) {
+    const { error } = await _sb.storage.from(this.bucket).remove([path]);
+    if (error) throw new Error('Storage delete failed: ' + error.message);
+  },
+};
+
+let FORMS           = [];
+let FORM_TEST_LINKS = [];
+let FORM_TPL_LINKS  = [];
+
+async function loadForms() {
+  try {
+    const [forms, testLinks, tplLinks] = await Promise.all([
+      _dbSelect('forms'),
+      _dbSelect('form_test_item_links'),
+      _dbSelect('form_template_links'),
+    ]);
+    FORMS           = forms     || [];
+    FORM_TEST_LINKS = testLinks || [];
+    FORM_TPL_LINKS  = tplLinks  || [];
+  } catch (e) {
+    console.warn('[loadForms]', e.message);
+    FORMS = []; FORM_TEST_LINKS = []; FORM_TPL_LINKS = [];
+  }
+}
+
+function _formsForTest(testId) {
+  const ids = FORM_TEST_LINKS.filter(l => l.test_id === testId).map(l => l.form_id);
+  return FORMS.filter(f => ids.includes(f.id));
+}
+function _formsForTemplate(templateId) {
+  const ids = FORM_TPL_LINKS.filter(l => l.template_id === templateId).map(l => l.form_id);
+  return FORMS.filter(f => ids.includes(f.id));
+}
+function _formsCountForTest(testId) {
+  return FORM_TEST_LINKS.filter(l => l.test_id === testId).length;
+}
+
+function _formsNewId() {
+  return (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : 'frm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+}
+
+async function _formsCreate({ name, description, subsystem, phase, location, isTemplate, sourceFormId, originalFilename, fileSize, file }) {
+  const id = _formsNewId();
+  await _formsStorage.upload(id, file);
+  const actor = currentProfile?.full_name || currentRoleUser?.name || null;
+  const row = {
+    id, name, description: description || null,
+    subsystem: subsystem || null, phase: phase || null, location: location || null,
+    storage_path: `${id}.pdf`,
+    original_filename: originalFilename || null, file_size: fileSize || null,
+    is_template: !!isTemplate, source_form_id: sourceFormId || null,
+    created_by: actor, updated_by: actor,
+  };
+  const [inserted] = await _dbInsert('forms', [row]);
+  FORMS.push(inserted);
+  return inserted;
+}
+
+async function _formsUpdateMetadata(formId, patch) {
+  patch.updated_by = currentProfile?.full_name || currentRoleUser?.name || null;
+  patch.updated_at = new Date().toISOString();
+  const [updated] = await _dbUpdate('forms', patch, { id: formId });
+  const i = FORMS.findIndex(f => f.id === formId);
+  if (i >= 0) FORMS[i] = updated;
+  return updated;
+}
+
+async function _formsReuploadFile(formId, fileOrBlob) {
+  await _formsStorage.upload(formId, fileOrBlob);
+  return _formsUpdateMetadata(formId, { file_size: fileOrBlob.size });
+}
+
+async function _formsDelete(formId) {
+  const form = FORMS.find(f => f.id === formId);
+  if (!form) return;
+  try { await _formsStorage.remove(form.storage_path); }
+  catch (e) { console.warn('[_formsDelete] storage remove:', e.message); }
+  await _dbDelete('forms', { id: formId });
+  FORMS           = FORMS          .filter(f => f.id !== formId);
+  FORM_TEST_LINKS = FORM_TEST_LINKS.filter(l => l.form_id !== formId);
+  FORM_TPL_LINKS  = FORM_TPL_LINKS .filter(l => l.form_id !== formId);
+}
+
+async function _formsLinkToTest(formId, testId) {
+  if (FORM_TEST_LINKS.find(l => l.form_id === formId && l.test_id === testId)) return;
+  const linkedBy = currentProfile?.full_name || currentRoleUser?.name || null;
+  const [link] = await _dbInsert('form_test_item_links', [{ form_id: formId, test_id: testId, linked_by: linkedBy }]);
+  FORM_TEST_LINKS.push(link);
+}
+async function _formsUnlinkFromTest(formId, testId) {
+  await _dbDelete('form_test_item_links', { form_id: formId, test_id: testId });
+  FORM_TEST_LINKS = FORM_TEST_LINKS.filter(l => !(l.form_id === formId && l.test_id === testId));
+}
+async function _formsLinkToTemplate(formId, templateId) {
+  if (FORM_TPL_LINKS.find(l => l.form_id === formId && l.template_id === templateId)) return;
+  const linkedBy = currentProfile?.full_name || currentRoleUser?.name || null;
+  const [link] = await _dbInsert('form_template_links', [{ form_id: formId, template_id: templateId, linked_by: linkedBy }]);
+  FORM_TPL_LINKS.push(link);
+}
+async function _formsUnlinkFromTemplate(formId, templateId) {
+  await _dbDelete('form_template_links', { form_id: formId, template_id: templateId });
+  FORM_TPL_LINKS = FORM_TPL_LINKS.filter(l => !(l.form_id === formId && l.template_id === templateId));
+}
+
+// Deployment clone — called from confirmDeploy after test_items are inserted.
+async function _formsCloneTemplateForDeployment(templateId, depId, selections, tpl) {
+  const templateForms = _formsForTemplate(templateId);
+  if (!templateForms.length) return 0;
+  let cloned = 0;
+  for (const s of selections) {
+    for (const tcCode of s.tcCodes) {
+      const newTestId = `${depId}-${s.locId}-${tcCode}`;
+      for (const src of templateForms) {
+        try {
+          const newId   = _formsNewId();
+          const newPath = `${newId}.pdf`;
+          await _formsStorage.copy(src.storage_path, newPath);
+          const actor = currentProfile?.full_name || currentRoleUser?.name || null;
+          const row = {
+            id: newId, name: src.name, description: src.description,
+            subsystem: tpl.subsystem || src.subsystem,
+            phase:     s.phaseName  || src.phase,
+            location:  s.locName    || src.location,
+            storage_path: newPath,
+            original_filename: src.original_filename, file_size: src.file_size,
+            is_template: false, source_form_id: src.id,
+            created_by: actor, updated_by: actor,
+          };
+          const [inserted] = await _dbInsert('forms', [row]);
+          FORMS.push(inserted);
+          await _formsLinkToTest(inserted.id, newTestId);
+          cloned += 1;
+        } catch (e) { console.warn('[_formsCloneTemplateForDeployment]', e.message); }
+      }
+    }
+  }
+  return cloned;
+}
+
+// ── PDF VIEWER (pdf.js render + HTML overlay + pdf-lib save) ────────────
+let _pdfViewerState = null;
+
+async function openFormViewer(formId) {
+  const form = FORMS.find(f => f.id === formId);
+  if (!form) { toast('Form not found', 'error'); return; }
+  if (typeof pdfjsLib === 'undefined') { toast('PDF viewer library not loaded', 'error'); return; }
+  if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js';
+  }
+  modal({
+    title: form.name,
+    sub: [form.phase, form.location, form.subsystem].filter(Boolean).join(' · '),
+    size: 'large',
+    body: `
+      <div style="font-size:12px;color:var(--gray-600);margin-bottom:8px;">
+        ${form.description ? `<div style="color:var(--gray-700);margin-bottom:4px;">${escapeHtml(form.description)}</div>` : ''}
+        ${form.original_filename ? `<div>File: ${escapeHtml(form.original_filename)}</div>` : ''}
+      </div>
+      <div id="form-viewer-status" style="font-size:12px;color:var(--gray-500);margin-bottom:8px;">Loading PDF…</div>
+      <div id="form-viewer-pages" style="max-height:65vh;overflow:auto;background:var(--gray-100);padding:12px;border-radius:6px;"></div>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeFormViewer()">Close</button>
+      <button class="form-secondary" onclick="downloadFormPDF('${form.id}')">↓ Download</button>
+      <button class="form-submit" id="form-viewer-save" onclick="saveFormPDF('${form.id}')">Save</button>
+    `,
+  });
+  try {
+    const bytes  = await _formsStorage.downloadBytes(form.storage_path);
+    const pdfDoc = await pdfjsLib.getDocument({ data: bytes }).promise;
+    _pdfViewerState = { formId, pdfBytes: bytes, pdfDoc };
+    const pagesEl = document.getElementById('form-viewer-pages');
+    pagesEl.innerHTML = '';
+    for (let p = 1; p <= pdfDoc.numPages; p++) {
+      const page = await pdfDoc.getPage(p);
+      const viewport = page.getViewport({ scale: 1.5 });
+      const pageWrap = document.createElement('div');
+      pageWrap.style.cssText = `position:relative;margin:0 auto 12px;width:${viewport.width}px;height:${viewport.height}px;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,0.15);`;
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width; canvas.height = viewport.height;
+      canvas.style.cssText = 'display:block;position:absolute;top:0;left:0;';
+      pageWrap.appendChild(canvas);
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `position:absolute;top:0;left:0;width:${viewport.width}px;height:${viewport.height}px;`;
+      pageWrap.appendChild(overlay);
+      pagesEl.appendChild(pageWrap);
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      const annots = await page.getAnnotations();
+      _renderFormFieldOverlay(overlay, annots, viewport);
+    }
+    const stat = document.getElementById('form-viewer-status');
+    if (stat) stat.textContent = `${pdfDoc.numPages} page${pdfDoc.numPages !== 1 ? 's' : ''} loaded — fill any blue-bordered fields, then Save.`;
+  } catch (e) {
+    console.error('[openFormViewer]', e);
+    const stat = document.getElementById('form-viewer-status');
+    if (stat) { stat.textContent = '✗ Failed to load PDF: ' + e.message; stat.style.color = 'var(--bad)'; }
+  }
+}
+
+function _renderFormFieldOverlay(overlay, annotations, viewport) {
+  annotations.filter(a => a.subtype === 'Widget' && a.fieldName).forEach(a => {
+    const [x1, y1, x2, y2] = a.rect;
+    const tl = viewport.convertToViewportPoint(x1, y2);
+    const br = viewport.convertToViewportPoint(x2, y1);
+    const left = Math.min(tl[0], br[0]), top = Math.min(tl[1], br[1]);
+    const width = Math.abs(br[0] - tl[0]), height = Math.abs(br[1] - tl[1]);
+    let el;
+    if (a.fieldType === 'Tx') {
+      el = a.multiLine ? document.createElement('textarea') : document.createElement('input');
+      if (!a.multiLine) el.type = 'text';
+      el.value = a.fieldValue || '';
+    } else if (a.fieldType === 'Btn' && (a.checkBox || a.radioButton)) {
+      el = document.createElement('input');
+      el.type = a.radioButton ? 'radio' : 'checkbox';
+      if (a.radioButton) el.name = a.fieldName;
+      el.checked = a.fieldValue !== 'Off' && !!a.fieldValue;
+    } else if (a.fieldType === 'Ch') {
+      el = document.createElement('select');
+      (a.options || []).forEach(opt => {
+        const o = document.createElement('option');
+        o.value = opt.exportValue ?? opt.displayValue ?? opt;
+        o.textContent = opt.displayValue ?? opt.exportValue ?? opt;
+        if (o.value === a.fieldValue) o.selected = true;
+        el.appendChild(o);
+      });
+    } else { return; }
+    el.dataset.pdfFieldName = a.fieldName;
+    el.style.cssText = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;box-sizing:border-box;border:1px solid #2563eb;background:rgba(219,234,254,0.4);font-size:${Math.max(10, Math.min(16, height * 0.65))}px;padding:1px 3px;`;
+    if (a.readOnly) { el.disabled = true; el.style.background = 'rgba(0,0,0,0.05)'; }
+    overlay.appendChild(el);
+  });
+}
+
+function _collectFormFieldValues() {
+  const values = {};
+  document.querySelectorAll('#form-viewer-pages [data-pdf-field-name]').forEach(el => {
+    const name = el.dataset.pdfFieldName;
+    if (el.type === 'checkbox') values[name] = el.checked;
+    else if (el.type === 'radio') { if (el.checked) values[name] = el.value; }
+    else values[name] = el.value;
+  });
+  return values;
+}
+
+async function saveFormPDF(formId) {
+  if (!_pdfViewerState || _pdfViewerState.formId !== formId) { toast('Viewer state lost — reopen the form', 'error'); return; }
+  if (typeof PDFLib === 'undefined') { toast('pdf-lib not loaded', 'error'); return; }
+  const btn = document.getElementById('form-viewer-save');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const values = _collectFormFieldValues();
+    const doc = await PDFLib.PDFDocument.load(_pdfViewerState.pdfBytes);
+    const form = doc.getForm();
+    Object.entries(values).forEach(([name, val]) => {
+      try {
+        const f = form.getField(name);
+        const ctor = f.constructor.name;
+        if      (ctor === 'PDFTextField')  f.setText(String(val ?? ''));
+        else if (ctor === 'PDFCheckBox')   { val ? f.check() : f.uncheck(); }
+        else if (ctor === 'PDFRadioGroup') f.select(String(val));
+        else if (ctor === 'PDFDropdown' || ctor === 'PDFOptionList') f.select(String(val));
+      } catch (e) { /* field missing / type mismatch — skip */ }
+    });
+    const bytes = await doc.save({ updateFieldAppearances: true });
+    const blob  = new Blob([bytes], { type: 'application/pdf' });
+    await _formsReuploadFile(formId, blob);
+    _pdfViewerState.pdfBytes = bytes;
+    logAudit('Saved Form', FORMS.find(f => f.id === formId)?.name || formId, `${Object.keys(values).length} field(s)`);
+    toast('✓ Form saved', 'success');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+  } catch (e) {
+    console.error('[saveFormPDF]', e);
+    toast('Save failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+  }
+}
+
+async function downloadFormPDF(formId) {
+  const form = FORMS.find(f => f.id === formId);
+  if (!form) return;
+  try {
+    const blob = await _formsStorage.downloadBlob(form.storage_path);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = form.original_filename || `${form.name || 'form'}.pdf`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (e) { toast('Download failed: ' + e.message, 'error'); }
+}
+
+function closeFormViewer() { _pdfViewerState = null; closeModal(); }
+
+// ── FORM PICKER (per test case) ─────────────────────────────────────────
+function openFormPickerForTest(testId) {
+  const row = TI.find(r => String(r.TestID) === testId);
+  const sub = row ? `${row.TestCaseCode || row.TestID} · ${row.Activity || ''}`.trim() : testId;
+  modal({
+    title: 'Linked Forms', sub, size: 'large',
+    body: _formPickerBody(testId),
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
+}
+
+function _formPickerBody(testId) {
+  const linked = _formsForTest(testId);
+  return `
+    <div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="form-submit" onclick="openAttachNewForm('${testId}')">+ Attach New PDF</button>
+      <button class="form-secondary" onclick="openLinkExistingForm('${testId}')">Link Existing Form</button>
+    </div>
+    ${linked.length === 0
+      ? `<div style="padding:24px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:6px;">No forms linked to this test case yet.</div>`
+      : `<table class="data-table">
+           <thead><tr><th>Name</th><th>Phase</th><th>Location</th><th>Subsystem</th><th>Description</th><th style="width:180px;">Actions</th></tr></thead>
+           <tbody>${linked.map(f => `
+             <tr>
+               <td style="font-weight:600;">${escapeHtml(f.name)}</td>
+               <td style="font-size:12px;">${escapeHtml(f.phase || '—')}</td>
+               <td style="font-size:12px;">${escapeHtml(f.location || '—')}</td>
+               <td><span class="tag">${escapeHtml(f.subsystem || '—')}</span></td>
+               <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(f.description || '')}</td>
+               <td style="white-space:nowrap;">
+                 <button class="admin-action-btn tr-mini-btn" onclick="openFormViewer('${f.id}')">Open</button>
+                 <button class="form-secondary tr-mini-btn" onclick="unlinkFormFromTest('${f.id}','${testId}')">Unlink</button>
+               </td>
+             </tr>`).join('')}
+           </tbody>
+         </table>`}
+  `;
+}
+
+function openAttachNewForm(testId) {
+  const row = TI.find(r => String(r.TestID) === testId);
+  modal({
+    title: 'Attach New PDF',
+    sub: row ? `${row.TestCaseCode || row.TestID}` : '',
+    body: `
+      <div class="form-grid">
+        <div class="form-field form-field-full"><label>PDF File</label><input type="file" id="frm-file" accept="application/pdf" class="form-input"></div>
+        <div class="form-field form-field-full"><label>Form Name</label><input type="text" id="frm-name" class="form-input" placeholder="e.g. PWR-001 Data Sheet"></div>
+        <div class="form-field"><label>Subsystem</label><input type="text" id="frm-sub" class="form-input" value="${escapeHtml(row?.SubSystem || row?.Subsystem || '')}"></div>
+        <div class="form-field"><label>Phase</label><input type="text" id="frm-phase" class="form-input" value="${escapeHtml(row?.Phase || '')}"></div>
+        <div class="form-field form-field-full"><label>Location</label><input type="text" id="frm-loc" class="form-input" value="${escapeHtml(row?.Location || '')}"></div>
+        <div class="form-field form-field-full"><label>Notes / Description</label><textarea id="frm-desc" class="form-input" rows="2" placeholder="Optional high-level description"></textarea></div>
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="openFormPickerForTest('${testId}')">Cancel</button>
+             <button class="form-submit" onclick="submitAttachNewForm('${testId}')">Upload &amp; Link</button>`,
+  });
+}
+
+async function submitAttachNewForm(testId) {
+  const file = document.getElementById('frm-file')?.files?.[0];
+  if (!file) { toast('Select a PDF', 'error'); return; }
+  if (file.type !== 'application/pdf') { toast('File must be a PDF', 'error'); return; }
+  const name = document.getElementById('frm-name')?.value.trim();
+  if (!name) { toast('Name is required', 'error'); return; }
+  const btn = document.querySelector('.modal-footer .form-submit');
+  if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
+  try {
+    const created = await _formsCreate({
+      name,
+      description: document.getElementById('frm-desc')?.value.trim(),
+      subsystem:   document.getElementById('frm-sub')?.value.trim(),
+      phase:       document.getElementById('frm-phase')?.value.trim(),
+      location:    document.getElementById('frm-loc')?.value.trim(),
+      isTemplate: false, originalFilename: file.name, fileSize: file.size, file,
+    });
+    await _formsLinkToTest(created.id, testId);
+    logAudit('Attached Form to Test Case', name, testId);
+    toast('✓ Form attached', 'success');
+    openFormPickerForTest(testId);
+    if (typeof _reRenderTR === 'function') _reRenderTR();
+  } catch (e) {
+    toast('Upload failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Upload & Link'; }
+  }
+}
+
+function openLinkExistingForm(testId) {
+  const linkedIds = new Set(_formsForTest(testId).map(f => f.id));
+  const candidates = FORMS.filter(f => !linkedIds.has(f.id) && !f.is_template);
+  window._lefAll = candidates;
+  window._lefTestId = testId;
+  modal({
+    title: 'Link Existing Form', size: 'large',
+    body: `
+      <input type="text" class="form-input" placeholder="Search by name, subsystem, location…" style="margin-bottom:12px;"
+             oninput="document.getElementById('lef-list').innerHTML = window._lefFilter(this.value)">
+      <div id="lef-list" style="max-height:50vh;overflow:auto;">${_lefRenderList(candidates)}</div>
+    `,
+    footer: `<button class="form-secondary" onclick="openFormPickerForTest('${testId}')">Cancel</button>`,
+  });
+  window._lefFilter = (q) => {
+    q = (q || '').trim().toLowerCase();
+    const m = !q ? window._lefAll :
+      window._lefAll.filter(f =>
+        (f.name||'').toLowerCase().includes(q) ||
+        (f.subsystem||'').toLowerCase().includes(q) ||
+        (f.location||'').toLowerCase().includes(q) ||
+        (f.phase||'').toLowerCase().includes(q));
+    return _lefRenderList(m);
+  };
+}
+
+function _lefRenderList(list) {
+  if (!list.length) return `<div style="padding:24px;text-align:center;color:var(--gray-500);">No matching forms.</div>`;
+  return `<table class="data-table"><thead><tr><th>Name</th><th>Phase</th><th>Location</th><th>Subsystem</th><th style="width:90px;"></th></tr></thead>
+    <tbody>${list.map(f => `
+      <tr>
+        <td style="font-weight:600;">${escapeHtml(f.name)}</td>
+        <td style="font-size:12px;">${escapeHtml(f.phase || '—')}</td>
+        <td style="font-size:12px;">${escapeHtml(f.location || '—')}</td>
+        <td><span class="tag">${escapeHtml(f.subsystem || '—')}</span></td>
+        <td><button class="admin-action-btn tr-mini-btn" onclick="linkExistingFormToTest('${f.id}', window._lefTestId)">Link</button></td>
+      </tr>`).join('')}</tbody></table>`;
+}
+
+async function linkExistingFormToTest(formId, testId) {
+  try {
+    await _formsLinkToTest(formId, testId);
+    logAudit('Linked Existing Form to Test Case', FORMS.find(f => f.id === formId)?.name || formId, testId);
+    toast('✓ Linked', 'success');
+    openFormPickerForTest(testId);
+    if (typeof _reRenderTR === 'function') _reRenderTR();
+  } catch (e) { toast('Link failed: ' + e.message, 'error'); }
+}
+
+async function unlinkFormFromTest(formId, testId) {
+  if (!confirm('Unlink this form from the test case? The file itself is not deleted.')) return;
+  try {
+    await _formsUnlinkFromTest(formId, testId);
+    logAudit('Unlinked Form from Test Case', FORMS.find(f => f.id === formId)?.name || formId, testId);
+    openFormPickerForTest(testId);
+    if (typeof _reRenderTR === 'function') _reRenderTR();
+  } catch (e) { toast('Unlink failed: ' + e.message, 'error'); }
+}
+
+function _formsBadgeHTML(testId) {
+  const count = _formsCountForTest(testId);
+  const tid = escapeHtml(String(testId));
+  if (count === 0) {
+    return `<button class="form-secondary tr-mini-btn" title="Attach form" onclick="openFormPickerForTest('${tid}')" style="font-size:13px;padding:2px 6px;color:var(--gray-500);">📎</button>`;
+  }
+  return `<button class="admin-action-btn tr-mini-btn" title="${count} form${count===1?'':'s'} linked" onclick="openFormPickerForTest('${tid}')" style="font-size:11px;padding:2px 7px;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;">📎 ${count}</button>`;
+}
+
+// ── TEMPLATE EDITOR INTEGRATION ─────────────────────────────────────────
+function _tplFormsBlockHTML(templateId) {
+  if (!templateId) return '';
+  const attached = _formsForTemplate(templateId);
+  return `
+    <div style="margin-top:18px;padding:14px;border:1px solid var(--gray-200);border-radius:6px;background:var(--gray-50);">
+      <div style="font-weight:600;font-size:13px;margin-bottom:6px;">Attached Form Template (optional)</div>
+      <div style="font-size:11px;color:var(--gray-600);margin-bottom:10px;">When this template is deployed, every test case at every location gets its own unique copy of each attached PDF.</div>
+      ${attached.length === 0
+        ? `<button class="form-secondary" onclick="openAttachTemplateForm('${templateId}')">+ Attach Template PDF</button>`
+        : `<div style="display:flex;flex-direction:column;gap:6px;">
+             ${attached.map(f => `
+               <div style="display:flex;align-items:center;gap:10px;padding:6px 10px;background:var(--white);border:1px solid var(--gray-200);border-radius:5px;">
+                 <span style="flex:1;font-size:13px;font-weight:600;">${escapeHtml(f.name)}</span>
+                 <span class="tag">${escapeHtml(f.subsystem || '—')}</span>
+                 <button class="admin-action-btn tr-mini-btn" onclick="openFormViewer('${f.id}')">View</button>
+                 <button class="form-secondary tr-mini-btn" onclick="detachTemplateForm('${f.id}','${templateId}')">Remove</button>
+               </div>`).join('')}
+             <button class="form-secondary" style="align-self:flex-start;margin-top:6px;" onclick="openAttachTemplateForm('${templateId}')">+ Attach Another PDF</button>
+           </div>`}
+    </div>
+  `;
+}
+
+function openAttachTemplateForm(templateId) {
+  const tpl = TEMPLATES.find(t => t.id === templateId);
+  if (!tpl) { toast('Template not found', 'error'); return; }
+  modal({
+    title: 'Attach Template PDF', sub: tpl.name,
+    body: `
+      <div class="form-grid">
+        <div class="form-field form-field-full"><label>PDF File</label><input type="file" id="tplfrm-file" accept="application/pdf" class="form-input"></div>
+        <div class="form-field form-field-full"><label>Form Name</label><input type="text" id="tplfrm-name" class="form-input" placeholder="e.g. SAT Data Sheet — Power"></div>
+        <div class="form-field form-field-full"><label>Notes / Description</label><textarea id="tplfrm-desc" class="form-input" rows="2"></textarea></div>
+      </div>
+      <div style="font-size:11px;color:var(--gray-500);margin-top:10px;">Phase and location are filled in automatically on each deployed copy.</div>
+    `,
+    footer: `<button class="form-secondary" onclick="_reopenTemplateEditor('${templateId}')">Cancel</button>
+             <button class="form-submit" onclick="submitAttachTemplateForm('${templateId}')">Upload &amp; Attach</button>`,
+  });
+}
+
+async function submitAttachTemplateForm(templateId) {
+  const tpl = TEMPLATES.find(t => t.id === templateId);
+  if (!tpl) return;
+  const file = document.getElementById('tplfrm-file')?.files?.[0];
+  if (!file) { toast('Select a PDF', 'error'); return; }
+  if (file.type !== 'application/pdf') { toast('File must be a PDF', 'error'); return; }
+  const name = document.getElementById('tplfrm-name')?.value.trim();
+  if (!name) { toast('Name is required', 'error'); return; }
+  const btn = document.querySelector('.modal-footer .form-submit');
+  if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
+  try {
+    const created = await _formsCreate({
+      name,
+      description: document.getElementById('tplfrm-desc')?.value.trim(),
+      subsystem: tpl.subsystem || null, phase: null, location: null,
+      isTemplate: true, originalFilename: file.name, fileSize: file.size, file,
+    });
+    await _formsLinkToTemplate(created.id, templateId);
+    logAudit('Attached Template Form', `${tpl.name} ← ${name}`, '');
+    toast('✓ Template PDF attached', 'success');
+    _reopenTemplateEditor(templateId);
+  } catch (e) {
+    toast('Upload failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Upload & Attach'; }
+  }
+}
+
+async function detachTemplateForm(formId, templateId) {
+  if (!confirm('Remove this template PDF? It will no longer be cloned on future deployments. Already-deployed copies are untouched.')) return;
+  try {
+    await _formsUnlinkFromTemplate(formId, templateId);
+    logAudit('Detached Template Form', FORMS.find(f => f.id === formId)?.name || formId, templateId);
+    _reopenTemplateEditor(templateId);
+  } catch (e) { toast('Remove failed: ' + e.message, 'error'); }
+}
+
+function _reopenTemplateEditor(templateId) {
+  closeModal();
+  setTimeout(() => { if (typeof editTemplate === 'function') editTemplate(templateId); }, 30);
+}
+
+// ── FORMS MODULE PAGE ───────────────────────────────────────────────────
+let _formsPageFilters = { phase: '', location: '', subsystem: '', search: '', showTemplates: false };
+
+async function renderFormsPage() {
+  const root = document.getElementById('forms-page-content');
+  if (!root) return;
+  await loadForms();
+  root.innerHTML = _formsPageHTML();
+}
+
+function _formsPageHTML() {
+  const f = _formsPageFilters;
+  const all = FORMS.filter(x => f.showTemplates ? x.is_template : !x.is_template);
+  const phases    = [...new Set(all.map(x => x.phase    ).filter(Boolean))].sort();
+  const locations = [...new Set(all.map(x => x.location ).filter(Boolean))].sort();
+  const subs      = [...new Set(all.map(x => x.subsystem).filter(Boolean))].sort();
+  let filtered = all.filter(x =>
+    (!f.phase     || x.phase     === f.phase) &&
+    (!f.location  || x.location  === f.location) &&
+    (!f.subsystem || x.subsystem === f.subsystem));
+  if (f.search) {
+    const q = f.search.toLowerCase();
+    filtered = filtered.filter(x =>
+      (x.name||'').toLowerCase().includes(q) ||
+      (x.description||'').toLowerCase().includes(q) ||
+      (x.original_filename||'').toLowerCase().includes(q));
+  }
+  const rows = filtered.map(x => {
+    const linkedTests = FORM_TEST_LINKS.filter(l => l.form_id === x.id).length;
+    const linkedTpls  = FORM_TPL_LINKS .filter(l => l.form_id === x.id).length;
+    const summary = x.is_template
+      ? `${linkedTpls} template${linkedTpls === 1 ? '' : 's'}`
+      : `${linkedTests} test case${linkedTests === 1 ? '' : 's'}`;
+    return `
+      <tr>
+        <td style="font-weight:600;">${escapeHtml(x.name)}</td>
+        <td><span class="tag">${escapeHtml(x.subsystem || '—')}</span></td>
+        <td style="font-size:12px;">${escapeHtml(x.phase || '—')}</td>
+        <td style="font-size:12px;">${escapeHtml(x.location || '—')}</td>
+        <td style="font-size:12px;color:var(--gray-600);max-width:280px;">${escapeHtml(x.description || '')}</td>
+        <td style="font-size:12px;">${summary}</td>
+        <td style="font-size:11px;color:var(--gray-500);">${x.updated_at ? new Date(x.updated_at).toLocaleDateString() : '—'}</td>
+        <td style="white-space:nowrap;">
+          <button class="admin-action-btn tr-mini-btn" onclick="openFormViewer('${x.id}')">Open</button>
+          <button class="form-secondary tr-mini-btn"   onclick="openEditFormMetadata('${x.id}')">Edit</button>
+          <button class="form-secondary tr-mini-btn"   style="color:var(--bad);" onclick="deleteFormFromPage('${x.id}')">🗑</button>
+        </td>
+      </tr>`;
+  }).join('');
+  return `
+    <div class="admin-section">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
+        <input type="text" class="form-input" placeholder="Search name, description, filename…" style="flex:1;min-width:240px;"
+               value="${escapeHtml(f.search)}" oninput="_formsSetFilter('search', this.value)">
+        <select class="form-input" onchange="_formsSetFilter('phase', this.value)">
+          <option value="">All Phases</option>
+          ${phases.map(p => `<option value="${escapeHtml(p)}" ${f.phase === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
+        </select>
+        <select class="form-input" onchange="_formsSetFilter('location', this.value)">
+          <option value="">All Locations</option>
+          ${locations.map(p => `<option value="${escapeHtml(p)}" ${f.location === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
+        </select>
+        <select class="form-input" onchange="_formsSetFilter('subsystem', this.value)">
+          <option value="">All Subsystems</option>
+          ${subs.map(p => `<option value="${escapeHtml(p)}" ${f.subsystem === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-700);">
+          <input type="checkbox" ${f.showTemplates ? 'checked' : ''} onchange="_formsSetFilter('showTemplates', this.checked)">
+          Show template blanks
+        </label>
+      </div>
+      <div class="data-card" style="padding:0;overflow:hidden;">
+        <table class="data-table">
+          <thead><tr><th>Name</th><th>Subsystem</th><th>Phase</th><th>Location</th><th>Description</th><th>Linked</th><th>Updated</th><th style="width:160px;">Actions</th></tr></thead>
+          <tbody>
+            ${filtered.length === 0
+              ? `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--gray-400);">No forms match the current filters.</td></tr>`
+              : rows}
+          </tbody>
+        </table>
+      </div>
+      <div style="font-size:11px;color:var(--gray-500);margin-top:10px;">
+        ${filtered.length} of ${all.length} ${f.showTemplates ? 'template blanks' : 'forms'} shown. Attach new forms from the 📎 icon on a test case row, or as a template-level PDF in the Activity Templates editor.
+      </div>
+    </div>
+  `;
+}
+
+function _formsSetFilter(key, value) { _formsPageFilters[key] = value; renderFormsPage(); }
+
+function openEditFormMetadata(formId) {
+  const f = FORMS.find(x => x.id === formId);
+  if (!f) return;
+  modal({
+    title: 'Edit Form Details', sub: f.name,
+    body: `
+      <div class="form-grid">
+        <div class="form-field form-field-full"><label>Form Name</label><input type="text" id="ef-name" class="form-input" value="${escapeHtml(f.name)}"></div>
+        <div class="form-field"><label>Subsystem</label><input type="text" id="ef-sub" class="form-input" value="${escapeHtml(f.subsystem || '')}"></div>
+        <div class="form-field"><label>Phase</label><input type="text" id="ef-phase" class="form-input" value="${escapeHtml(f.phase || '')}"></div>
+        <div class="form-field form-field-full"><label>Location</label><input type="text" id="ef-loc" class="form-input" value="${escapeHtml(f.location || '')}"></div>
+        <div class="form-field form-field-full"><label>Notes / Description</label><textarea id="ef-desc" class="form-input" rows="2">${escapeHtml(f.description || '')}</textarea></div>
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+             <button class="form-submit" onclick="submitEditFormMetadata('${formId}')">Save</button>`,
+  });
+}
+
+async function submitEditFormMetadata(formId) {
+  const patch = {
+    name:        document.getElementById('ef-name')?.value.trim(),
+    subsystem:   document.getElementById('ef-sub')?.value.trim()   || null,
+    phase:       document.getElementById('ef-phase')?.value.trim() || null,
+    location:    document.getElementById('ef-loc')?.value.trim()   || null,
+    description: document.getElementById('ef-desc')?.value.trim()  || null,
+  };
+  if (!patch.name) { toast('Name is required', 'error'); return; }
+  try {
+    await _formsUpdateMetadata(formId, patch);
+    logAudit('Edited Form Metadata', patch.name, formId);
+    toast('✓ Saved', 'success');
+    closeModal();
+    if (document.getElementById('page-forms')?.classList.contains('active')) renderFormsPage();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function deleteFormFromPage(formId) {
+  const f = FORMS.find(x => x.id === formId);
+  if (!f) return;
+  const lt = FORM_TEST_LINKS.filter(l => l.form_id === formId).length;
+  const lp = FORM_TPL_LINKS .filter(l => l.form_id === formId).length;
+  const warn = (lt + lp) > 0 ? `\n\nThis will also remove ${lt} test-case link(s) and ${lp} template link(s).` : '';
+  if (!confirm(`Delete form "${f.name}"? The PDF file will be removed from storage.${warn}\n\nThis cannot be undone.`)) return;
+  try {
+    await _formsDelete(formId);
+    logAudit('Deleted Form', f.name, formId);
+    toast('✓ Deleted', 'success');
+    renderFormsPage();
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
 }
