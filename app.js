@@ -24637,7 +24637,7 @@ const _formsStorage = {
     const path = `${formId}.pdf`;
     return this.uploadPath(path, file);
   },
-  async uploadPath(path, file) {
+  async uploadPath(path, file, contentType = 'application/pdf') {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 30000);
     try {
@@ -24646,7 +24646,7 @@ const _formsStorage = {
         signal: ctrl.signal,
         cache: 'no-store',
         headers: this._headers({
-          'Content-Type': 'application/pdf',
+          'Content-Type': contentType,
           'x-upsert': 'true',
         }),
         body: file,
@@ -24686,6 +24686,38 @@ const _formsStorage = {
   async downloadBytes(path) {
     const blob = await this.downloadBlob(path);
     return new Uint8Array(await blob.arrayBuffer());
+  },
+  async uploadJson(path, data) {
+    const text = JSON.stringify(data);
+    const blob = new Blob([text], { type: 'application/json' });
+    await this.uploadPath(path, blob, 'application/json');
+    const saved = await this.downloadJson(path);
+    if (JSON.stringify(saved) !== text) throw new Error('Storage verification failed: saved form state did not match');
+    return saved;
+  },
+  async downloadJson(path) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    try {
+      const res = await fetch(this._objectUrl(path, true), {
+        method: 'GET',
+        signal: ctrl.signal,
+        cache: 'no-store',
+        headers: this._headers({
+          Accept: 'application/json',
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        }),
+      });
+      clearTimeout(timer);
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`Storage state download failed (${res.status}): ${await res.text()}`);
+      return await res.json();
+    } catch (e) {
+      clearTimeout(timer);
+      if (e.name === 'AbortError') throw new Error('Storage state download timed out after 30s');
+      throw e;
+    }
   },
   async verifyBytes(path, expectedBytes) {
     const actual = await this.downloadBytes(path);
@@ -24730,6 +24762,45 @@ async function _inspectPdfBytes(bytes) {
       return { name, type, value };
     }),
   };
+}
+
+function _formsEditStatePath(form) {
+  const path = form?.storage_path || `${form?.id || 'form'}.pdf`;
+  return `${path}.edit-state.json`;
+}
+
+function _emptyFormEditState() {
+  return { version: 2, fields: {}, signatures: {}, layouts: [], updatedAt: null };
+}
+
+function _normalizeFormEditState(state) {
+  const base = _emptyFormEditState();
+  if (!state || typeof state !== 'object') return base;
+  return {
+    version: 2,
+    fields: state.fields && typeof state.fields === 'object' ? state.fields : {},
+    signatures: state.signatures && typeof state.signatures === 'object' ? state.signatures : {},
+    layouts: Array.isArray(state.layouts) ? state.layouts : [],
+    updatedAt: state.updatedAt || null,
+  };
+}
+
+async function _formsLoadEditState(form) {
+  try {
+    return _normalizeFormEditState(await _formsStorage.downloadJson(_formsEditStatePath(form)));
+  } catch (e) {
+    console.warn('[_formsLoadEditState]', e.message);
+    return _emptyFormEditState();
+  }
+}
+
+async function _formsSaveEditState(formId, state) {
+  const form = FORMS.find(f => f.id === formId);
+  if (!form) throw new Error('Form not found while saving edit state');
+  const normalized = _normalizeFormEditState({ ...state, updatedAt: new Date().toISOString() });
+  await _formsStorage.uploadJson(_formsEditStatePath(form), normalized);
+  await _formsUpdateMetadata(formId, { storage_path: form.storage_path });
+  return normalized;
 }
 
 let FORMS           = [];
@@ -24916,8 +24987,18 @@ async function openFormViewer(formId) {
   });
   try {
     const bytes  = await _formsStorage.downloadBytes(form.storage_path);
+    const editState = await _formsLoadEditState(form);
     const pdfDoc = await pdfjsLib.getDocument({ data: _clonePdfBytes(bytes) }).promise;
-    _pdfViewerState = { formId, pdfBytes: _clonePdfBytes(bytes), pdfDoc, signatures: {} };
+    _pdfViewerState = {
+      formId,
+      pdfBytes: _clonePdfBytes(bytes),
+      pdfDoc,
+      editState,
+      signatures: { ...(editState.signatures || {}) },
+      fieldLayouts: [],
+      renderedLayoutIds: new Set(),
+      pageOverlays: [],
+    };
     const pagesEl = document.getElementById('form-viewer-pages');
     pagesEl.innerHTML = '';
     for (let p = 1; p <= pdfDoc.numPages; p++) {
@@ -24939,12 +25020,14 @@ async function openFormViewer(formId) {
       overlay.style.cssText = `position:absolute;top:0;left:0;width:${viewport.width}px;height:${viewport.height}px;`;
       pageWrap.appendChild(overlay);
       pagesEl.appendChild(pageWrap);
+      _pdfViewerState.pageOverlays[p - 1] = { overlay, viewport };
       const renderContext = { canvasContext: canvas.getContext('2d'), viewport };
       if (pixelRatio !== 1) renderContext.transform = [pixelRatio, 0, 0, pixelRatio, 0, 0];
       await page.render(renderContext).promise;
       const annots = await page.getAnnotations();
       _renderFormFieldOverlay(overlay, annots, viewport, p - 1);
     }
+    _renderSavedFieldLayouts();
     const stat = document.getElementById('form-viewer-status');
     if (stat) stat.textContent = `${pdfDoc.numPages} page${pdfDoc.numPages !== 1 ? 's' : ''} loaded — fill any blue-bordered fields, then Save.`;
   } catch (e) {
@@ -24965,16 +25048,57 @@ function _pdfIsSignatureWidget(a) {
   return a.fieldType === 'Sig' || /signature/i.test(label) || /(^|[\s_-])sig(n)?($|[\s_-])/i.test(label);
 }
 
+function _pdfLayoutId(layout) {
+  const rect = (layout.rect || []).map(n => Math.round(Number(n) || 0)).join(',');
+  return `${layout.pageIndex}:${layout.fieldName}:${layout.kind}:${rect}`;
+}
+
+function _pdfAnnotationLayout(a, pageIndex, index) {
+  const fieldName = a.fieldName || a.id || `Signature ${pageIndex + 1}-${index + 1}`;
+  let kind = null;
+  if (_pdfIsSignatureWidget(a)) kind = 'signature';
+  else if (a.fieldType === 'Tx') kind = a.multiLine ? 'textarea' : 'text';
+  else if (a.fieldType === 'Btn' && a.radioButton) kind = 'radio';
+  else if (a.fieldType === 'Btn' && a.checkBox) kind = 'checkbox';
+  else if (a.fieldType === 'Ch') kind = 'select';
+  if (!kind) return null;
+  return {
+    fieldName,
+    kind,
+    pageIndex,
+    rect: a.rect,
+    readOnly: !!a.readOnly,
+    radioName: a.radioButton ? a.fieldName : null,
+    value: a.buttonValue || a.exportValue || a.fieldValue || 'On',
+    fieldValue: a.fieldValue,
+    options: (a.options || []).map(opt => ({
+      value: opt.exportValue ?? opt.displayValue ?? opt,
+      label: opt.displayValue ?? opt.exportValue ?? opt,
+    })),
+  };
+}
+
 function _renderFormFieldOverlay(overlay, annotations, viewport, pageIndex) {
   annotations.filter(a => a.subtype === 'Widget' && (a.fieldName || _pdfIsSignatureWidget(a))).forEach((a, index) => {
-    const [x1, y1, x2, y2] = a.rect;
+    const layout = _pdfAnnotationLayout(a, pageIndex, index);
+    if (!layout) return;
+    _pdfViewerState?.fieldLayouts?.push(layout);
+    _renderPdfFieldControl(overlay, layout, viewport);
+  });
+}
+
+function _renderPdfFieldControl(overlay, layout, viewport) {
+    const [x1, y1, x2, y2] = layout.rect;
     const tl = viewport.convertToViewportPoint(x1, y2);
     const br = viewport.convertToViewportPoint(x2, y1);
     const left = Math.min(tl[0], br[0]), top = Math.min(tl[1], br[1]);
     const width = Math.abs(br[0] - tl[0]), height = Math.abs(br[1] - tl[1]);
-    const fieldName = a.fieldName || a.id || `Signature ${pageIndex + 1}-${index + 1}`;
+    const fieldName = layout.fieldName;
+    const editState = _pdfViewerState?.editState || _emptyFormEditState();
+    const savedFields = editState.fields || {};
+    const hasSavedValue = Object.prototype.hasOwnProperty.call(savedFields, fieldName);
     let el;
-    if (_pdfIsSignatureWidget(a)) {
+    if (layout.kind === 'signature') {
       el = document.createElement('button');
       el.type = 'button';
       el.className = 'pdf-signature-field';
@@ -24982,34 +25106,49 @@ function _renderFormFieldOverlay(overlay, annotations, viewport, pageIndex) {
       el.dataset.pdfSignatureField = fieldName;
       el.addEventListener('click', () => openSignaturePad({
         fieldName,
-        pageIndex,
-        rect: a.rect,
+        pageIndex: layout.pageIndex,
+        rect: layout.rect,
         target: el,
       }));
-    } else if (a.fieldType === 'Tx') {
-      el = a.multiLine ? document.createElement('textarea') : document.createElement('input');
-      if (!a.multiLine) el.type = 'text';
-      el.value = a.fieldValue || '';
-    } else if (a.fieldType === 'Btn' && (a.checkBox || a.radioButton)) {
+    } else if (layout.kind === 'text' || layout.kind === 'textarea') {
+      el = layout.kind === 'textarea' ? document.createElement('textarea') : document.createElement('input');
+      if (layout.kind === 'text') el.type = 'text';
+      el.value = hasSavedValue ? savedFields[fieldName] : (layout.fieldValue || '');
+    } else if (layout.kind === 'checkbox' || layout.kind === 'radio') {
       el = document.createElement('input');
-      el.type = a.radioButton ? 'radio' : 'checkbox';
-      if (a.radioButton) el.name = a.fieldName;
-      el.checked = a.fieldValue !== 'Off' && !!a.fieldValue;
-    } else if (a.fieldType === 'Ch') {
+      el.type = layout.kind;
+      el.value = layout.value || 'On';
+      if (layout.kind === 'radio') el.name = layout.radioName || fieldName;
+      el.checked = hasSavedValue ? !!savedFields[fieldName] : (layout.fieldValue !== 'Off' && !!layout.fieldValue);
+    } else if (layout.kind === 'select') {
       el = document.createElement('select');
-      (a.options || []).forEach(opt => {
+      (layout.options || []).forEach(opt => {
         const o = document.createElement('option');
-        o.value = opt.exportValue ?? opt.displayValue ?? opt;
-        o.textContent = opt.displayValue ?? opt.exportValue ?? opt;
-        if (o.value === a.fieldValue) o.selected = true;
+        o.value = opt.value;
+        o.textContent = opt.label;
+        if (o.value === (hasSavedValue ? savedFields[fieldName] : layout.fieldValue)) o.selected = true;
         el.appendChild(o);
       });
     } else { return; }
     if (!el.dataset.pdfSignatureField) el.dataset.pdfFieldName = fieldName;
     el.style.cssText = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;box-sizing:border-box;border:1px solid #2563eb;background:rgba(219,234,254,0.4);font-size:${Math.max(10, Math.min(16, height * 0.65))}px;padding:1px 3px;`;
     if (el.dataset.pdfSignatureField) el.style.cssText += 'cursor:pointer;text-align:center;color:#1d4ed8;font-weight:600;';
-    if (a.readOnly && !el.dataset.pdfSignatureField) { el.disabled = true; el.style.background = 'rgba(0,0,0,0.05)'; }
+    if (layout.readOnly && !el.dataset.pdfSignatureField) { el.disabled = true; el.style.background = 'rgba(0,0,0,0.05)'; }
+    const savedSig = editState.signatures?.[fieldName]?.dataUrl;
+    if (savedSig && el.dataset.pdfSignatureField) _setSignatureFieldPreview(el, savedSig);
     overlay.appendChild(el);
+    _pdfViewerState?.renderedLayoutIds?.add(_pdfLayoutId(layout));
+}
+
+function _renderSavedFieldLayouts() {
+  const state = _pdfViewerState?.editState;
+  if (!state?.layouts?.length) return;
+  state.layouts.forEach(layout => {
+    const id = _pdfLayoutId(layout);
+    if (_pdfViewerState.renderedLayoutIds?.has(id)) return;
+    const page = _pdfViewerState.pageOverlays?.[layout.pageIndex];
+    if (!page) return;
+    _renderPdfFieldControl(page.overlay, layout, page.viewport);
   });
 }
 
@@ -25151,71 +25290,18 @@ function _collectFormFieldValues() {
 
 async function saveFormPDF(formId) {
   if (!_pdfViewerState || _pdfViewerState.formId !== formId) { toast('Viewer state lost — reopen the form', 'error'); return; }
-  if (typeof PDFLib === 'undefined') { toast('pdf-lib not loaded', 'error'); return; }
   const btn = document.getElementById('form-viewer-save');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
     const values = _collectFormFieldValues();
-    const doc = await PDFLib.PDFDocument.load(_pdfViewerState.pdfBytes);
-    const form = doc.getForm();
-    let appliedFields = 0;
-    Object.entries(values).forEach(([name, val]) => {
-      try {
-        const f = form.getField(name);
-        const ctor = f.constructor.name;
-        if      (ctor === 'PDFTextField')  f.setText(String(val ?? ''));
-        else if (ctor === 'PDFCheckBox')   { val ? f.check() : f.uncheck(); }
-        else if (ctor === 'PDFRadioGroup') f.select(String(val));
-        else if (ctor === 'PDFDropdown' || ctor === 'PDFOptionList') f.select(String(val));
-        else return;
-        appliedFields += 1;
-      } catch (e) { /* field missing / type mismatch — skip */ }
+    const nextState = await _formsSaveEditState(formId, {
+      version: 2,
+      fields: values,
+      signatures: _pdfViewerState.signatures || {},
+      layouts: _pdfViewerState.fieldLayouts || [],
     });
-    const signatureCount = Object.values(_pdfViewerState.signatures || {}).filter(sig => sig?.dataUrl).length;
-    if (appliedFields > 0 || signatureCount > 0) {
-      try {
-        form.updateFieldAppearances();
-        form.flatten({ updateFieldAppearances: true });
-      } catch (e) {
-        console.warn('[saveFormPDF] field flatten skipped:', e.message);
-      }
-    }
-    let appliedSignatures = 0;
-    for (const sig of Object.values(_pdfViewerState.signatures || {})) {
-      if (!sig?.dataUrl || !Array.isArray(sig.rect)) continue;
-      try {
-        const png = await doc.embedPng(sig.dataUrl);
-        const page = doc.getPages()[sig.pageIndex];
-        if (!page) continue;
-        const [x1, y1, x2, y2] = sig.rect;
-        const boxW = Math.abs(x2 - x1);
-        const boxH = Math.abs(y2 - y1);
-        const pad = Math.min(6, boxH * 0.14, boxW * 0.04);
-        const maxW = Math.max(1, boxW - pad * 2);
-        const maxH = Math.max(1, boxH - pad * 2);
-        const imgRatio = png.width / png.height;
-        let drawW = maxW;
-        let drawH = drawW / imgRatio;
-        if (drawH > maxH) { drawH = maxH; drawW = drawH * imgRatio; }
-        page.drawImage(png, {
-          x: Math.min(x1, x2) + (boxW - drawW) / 2,
-          y: Math.min(y1, y2) + (boxH - drawH) / 2,
-          width: drawW,
-          height: drawH,
-        });
-        appliedSignatures += 1;
-      } catch (e) {
-        console.warn('[saveFormPDF] signature skipped:', sig.name, e.message);
-      }
-    }
-    if (Object.keys(values).length && appliedFields === 0 && appliedSignatures === 0) {
-      throw new Error('No editable PDF fields could be written. The visible form fields did not match the saved PDF field names.');
-    }
-    const bytes = await doc.save({ updateFieldAppearances: true });
-    const blob  = new Blob([bytes], { type: 'application/pdf' });
-    await _formsReuploadFile(formId, blob, bytes);
-    _pdfViewerState.pdfBytes = _clonePdfBytes(bytes);
-    logAudit('Saved Form', FORMS.find(f => f.id === formId)?.name || formId, `${Object.keys(values).length} field(s)`);
+    _pdfViewerState.editState = nextState;
+    logAudit('Saved Form', FORMS.find(f => f.id === formId)?.name || formId, `${Object.keys(values).length} field(s), ${Object.keys(nextState.signatures || {}).length} signature(s)`);
     toast('✓ Form saved', 'success');
     if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   } catch (e) {
@@ -25225,11 +25311,61 @@ async function saveFormPDF(formId) {
   }
 }
 
+async function _buildEditedFormPdfBlob(formRow) {
+  if (typeof PDFLib === 'undefined') throw new Error('pdf-lib not loaded');
+  const state = _normalizeFormEditState(await _formsLoadEditState(formRow));
+  const bytes = await _formsStorage.downloadBytes(formRow.storage_path);
+  const doc = await PDFLib.PDFDocument.load(bytes);
+  try {
+    const acroForm = doc.getForm();
+    Object.entries(state.fields || {}).forEach(([name, val]) => {
+      try {
+        const f = acroForm.getField(name);
+        const ctor = f.constructor.name;
+        if      (ctor === 'PDFTextField')  f.setText(String(val ?? ''));
+        else if (ctor === 'PDFCheckBox')   { val ? f.check() : f.uncheck(); }
+        else if (ctor === 'PDFRadioGroup') f.select(String(val));
+        else if (ctor === 'PDFDropdown' || ctor === 'PDFOptionList') f.select(String(val));
+      } catch { /* export best-effort */ }
+    });
+    acroForm.updateFieldAppearances();
+  } catch (e) {
+    console.warn('[_buildEditedFormPdfBlob] AcroForm values skipped:', e.message);
+  }
+  for (const sig of Object.values(state.signatures || {})) {
+    if (!sig?.dataUrl || !Array.isArray(sig.rect)) continue;
+    try {
+      const png = await doc.embedPng(sig.dataUrl);
+      const page = doc.getPages()[sig.pageIndex];
+      if (!page) continue;
+      const [x1, y1, x2, y2] = sig.rect;
+      const boxW = Math.abs(x2 - x1);
+      const boxH = Math.abs(y2 - y1);
+      const pad = Math.min(6, boxH * 0.14, boxW * 0.04);
+      const maxW = Math.max(1, boxW - pad * 2);
+      const maxH = Math.max(1, boxH - pad * 2);
+      const imgRatio = png.width / png.height;
+      let drawW = maxW;
+      let drawH = drawW / imgRatio;
+      if (drawH > maxH) { drawH = maxH; drawW = drawH * imgRatio; }
+      page.drawImage(png, {
+        x: Math.min(x1, x2) + (boxW - drawW) / 2,
+        y: Math.min(y1, y2) + (boxH - drawH) / 2,
+        width: drawW,
+        height: drawH,
+      });
+    } catch (e) {
+      console.warn('[_buildEditedFormPdfBlob] signature skipped:', sig.name, e.message);
+    }
+  }
+  return new Blob([await doc.save({ updateFieldAppearances: true })], { type: 'application/pdf' });
+}
+
 async function downloadFormPDF(formId) {
   const form = FORMS.find(f => f.id === formId);
   if (!form) return;
   try {
-    const blob = await _formsStorage.downloadBlob(form.storage_path);
+    const blob = await _buildEditedFormPdfBlob(form);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = form.original_filename || `${form.name || 'form'}.pdf`;
