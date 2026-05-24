@@ -25318,10 +25318,10 @@ function _pdfIsLayoutChecked(state, layout) {
   return !!val;
 }
 
-function _addDownloadStateFields(doc, acroForm, state) {
+async function _addDownloadStateFields(doc, acroForm, state) {
   const layouts = Array.isArray(state.layouts) ? state.layouts : [];
   const fontColor = PDFLib.rgb(0.05, 0.09, 0.16);
-  const transparent = PDFLib.rgb(1, 1, 1);
+  const exportFont = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
   layouts.forEach((layout, index) => {
     if (!layout?.rect || layout.kind === 'signature') return;
     const page = doc.getPages()[layout.pageIndex];
@@ -25341,10 +25341,11 @@ function _addDownloadStateFields(doc, acroForm, state) {
           width: box.width,
           height: box.height,
           textColor: fontColor,
-          borderColor: transparent,
-          backgroundColor: transparent,
-          borderWidth: 0,
+          borderColor: PDFLib.rgb(0.75, 0.79, 0.86),
+          backgroundColor: PDFLib.rgb(1, 1, 1),
+          borderWidth: 0.5,
         });
+        field.updateAppearances(exportFont);
       } else if (layout.kind === 'checkbox' || layout.kind === 'radio') {
         const field = acroForm.createCheckBox(fieldName);
         if (_pdfIsLayoutChecked(state, layout)) field.check();
@@ -25354,7 +25355,7 @@ function _addDownloadStateFields(doc, acroForm, state) {
           width: box.width,
           height: box.height,
           borderColor: PDFLib.rgb(0.15, 0.2, 0.28),
-          backgroundColor: transparent,
+          backgroundColor: PDFLib.rgb(1, 1, 1),
           borderWidth: 0.5,
         });
       } else if (layout.kind === 'select') {
@@ -25368,10 +25369,11 @@ function _addDownloadStateFields(doc, acroForm, state) {
           width: box.width,
           height: box.height,
           textColor: fontColor,
-          borderColor: transparent,
-          backgroundColor: transparent,
-          borderWidth: 0,
+          borderColor: PDFLib.rgb(0.75, 0.79, 0.86),
+          backgroundColor: PDFLib.rgb(1, 1, 1),
+          borderWidth: 0.5,
         });
+        field.updateAppearances(exportFont);
       }
     } catch (e) {
       console.warn('[_addDownloadStateFields] skipped:', layout.fieldName, e.message);
@@ -25411,17 +25413,10 @@ async function _buildEditedFormPdfBlob(formRow, stateOverride = null) {
   const doc = await PDFLib.PDFDocument.load(bytes);
   try {
     const acroForm = doc.getForm();
-    Object.entries(state.fields || {}).forEach(([name, val]) => {
-      try {
-        const f = acroForm.getField(name);
-        const ctor = f.constructor.name;
-        if      (ctor === 'PDFTextField')  f.setText(String(val ?? ''));
-        else if (ctor === 'PDFCheckBox')   { val ? f.check() : f.uncheck(); }
-        else if (ctor === 'PDFRadioGroup') f.select(String(val));
-        else if (ctor === 'PDFDropdown' || ctor === 'PDFOptionList') f.select(String(val));
-      } catch { /* export best-effort */ }
-    });
-    _addDownloadStateFields(doc, acroForm, state);
+    for (const field of acroForm.getFields()) {
+      try { acroForm.removeField(field); } catch { /* keep going */ }
+    }
+    await _addDownloadStateFields(doc, acroForm, state);
     acroForm.updateFieldAppearances();
   } catch (e) {
     console.warn('[_buildEditedFormPdfBlob] AcroForm values skipped:', e.message);
