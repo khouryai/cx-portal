@@ -25288,6 +25288,97 @@ function _collectFormFieldValues() {
   return values;
 }
 
+function _pdfExportFieldName(layout, index) {
+  const base = String(layout.fieldName || `field_${index + 1}`)
+    .replace(/[^a-z0-9_.-]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || `field_${index + 1}`;
+  return `cx_${index + 1}_${base}`;
+}
+
+function _pdfRectBox(rect) {
+  const [x1, y1, x2, y2] = rect || [0, 0, 0, 0];
+  return {
+    x: Math.min(x1, x2),
+    y: Math.min(y1, y2),
+    width: Math.max(1, Math.abs(x2 - x1)),
+    height: Math.max(1, Math.abs(y2 - y1)),
+  };
+}
+
+function _pdfSavedValueForLayout(state, layout) {
+  const fields = state.fields || {};
+  if (Object.prototype.hasOwnProperty.call(fields, layout.fieldName)) return fields[layout.fieldName];
+  return layout.fieldValue ?? '';
+}
+
+function _pdfIsLayoutChecked(state, layout) {
+  const val = _pdfSavedValueForLayout(state, layout);
+  if (layout.kind === 'radio') return String(val) === String(layout.value);
+  return !!val;
+}
+
+function _addDownloadStateFields(doc, acroForm, state) {
+  const layouts = Array.isArray(state.layouts) ? state.layouts : [];
+  const fontColor = PDFLib.rgb(0.05, 0.09, 0.16);
+  const transparent = PDFLib.rgb(1, 1, 1);
+  layouts.forEach((layout, index) => {
+    if (!layout?.rect || layout.kind === 'signature') return;
+    const page = doc.getPages()[layout.pageIndex];
+    if (!page) return;
+    const box = _pdfRectBox(layout.rect);
+    const fieldName = _pdfExportFieldName(layout, index);
+    const value = _pdfSavedValueForLayout(state, layout);
+    try {
+      if (layout.kind === 'text' || layout.kind === 'textarea') {
+        const field = acroForm.createTextField(fieldName);
+        if (layout.kind === 'textarea') field.enableMultiline();
+        field.setText(String(value ?? ''));
+        field.setFontSize(Math.max(8, Math.min(12, box.height * 0.55)));
+        field.addToPage(page, {
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+          textColor: fontColor,
+          borderColor: transparent,
+          backgroundColor: transparent,
+          borderWidth: 0,
+        });
+      } else if (layout.kind === 'checkbox' || layout.kind === 'radio') {
+        const field = acroForm.createCheckBox(fieldName);
+        if (_pdfIsLayoutChecked(state, layout)) field.check();
+        field.addToPage(page, {
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+          borderColor: PDFLib.rgb(0.15, 0.2, 0.28),
+          backgroundColor: transparent,
+          borderWidth: 0.5,
+        });
+      } else if (layout.kind === 'select') {
+        const field = acroForm.createDropdown(fieldName);
+        const options = (layout.options || []).map(o => String(o.value ?? o.label ?? '')).filter(Boolean);
+        if (options.length) field.addOptions(options);
+        if (value != null && String(value)) field.select(String(value));
+        field.addToPage(page, {
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+          textColor: fontColor,
+          borderColor: transparent,
+          backgroundColor: transparent,
+          borderWidth: 0,
+        });
+      }
+    } catch (e) {
+      console.warn('[_addDownloadStateFields] skipped:', layout.fieldName, e.message);
+    }
+  });
+}
+
 async function saveFormPDF(formId) {
   if (!_pdfViewerState || _pdfViewerState.formId !== formId) { toast('Viewer state lost — reopen the form', 'error'); return; }
   const btn = document.getElementById('form-viewer-save');
@@ -25311,9 +25402,11 @@ async function saveFormPDF(formId) {
   }
 }
 
-async function _buildEditedFormPdfBlob(formRow) {
+async function _buildEditedFormPdfBlob(formRow, stateOverride = null) {
   if (typeof PDFLib === 'undefined') throw new Error('pdf-lib not loaded');
-  const state = _normalizeFormEditState(await _formsLoadEditState(formRow));
+  const state = stateOverride
+    ? _normalizeFormEditState(stateOverride)
+    : _normalizeFormEditState(await _formsLoadEditState(formRow));
   const bytes = await _formsStorage.downloadBytes(formRow.storage_path);
   const doc = await PDFLib.PDFDocument.load(bytes);
   try {
@@ -25328,6 +25421,7 @@ async function _buildEditedFormPdfBlob(formRow) {
         else if (ctor === 'PDFDropdown' || ctor === 'PDFOptionList') f.select(String(val));
       } catch { /* export best-effort */ }
     });
+    _addDownloadStateFields(doc, acroForm, state);
     acroForm.updateFieldAppearances();
   } catch (e) {
     console.warn('[_buildEditedFormPdfBlob] AcroForm values skipped:', e.message);
@@ -25365,7 +25459,12 @@ async function downloadFormPDF(formId) {
   const form = FORMS.find(f => f.id === formId);
   if (!form) return;
   try {
-    const blob = await _buildEditedFormPdfBlob(form);
+    const liveState = _pdfViewerState?.formId === formId ? {
+      fields: _collectFormFieldValues(),
+      signatures: _pdfViewerState.signatures || {},
+      layouts: _pdfViewerState.fieldLayouts || [],
+    } : null;
+    const blob = await _buildEditedFormPdfBlob(form, liveState);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = form.original_filename || `${form.name || 'form'}.pdf`;
