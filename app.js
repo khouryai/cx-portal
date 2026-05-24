@@ -2355,6 +2355,29 @@ let currentProfile  = null;
 // SUPABASE AUTH — email + password, session persisted by Supabase
 // ==========================================================================
 function initAuth() {
+  // Detect a Supabase password-recovery redirect *before* any session-restore
+  // logic runs. Supabase email links return as `…/#access_token=…&type=recovery&…`
+  // (or, for the newer PKCE flow, `?code=…&type=recovery`). If we don't spot
+  // this up-front, our synchronous localStorage session restore wins the race
+  // and `onLoggedIn()` fires before `PASSWORD_RECOVERY` arrives — so the user
+  // ends up inside the app instead of the reset-password card.
+  const _hash   = window.location.hash   || '';
+  const _search = window.location.search || '';
+  // Recovery is detected via any of:
+  //  • our own `?reset=1` sentinel (set by submitPasswordReset's redirectTo)
+  //  • the implicit-flow `type=recovery` marker in the URL hash
+  //  • a PKCE `?code=…` query param when no normal session exists yet
+  //    (PKCE recovery URLs carry no `type=recovery` marker; the sentinel above
+  //    covers our own flow, and this catches links that bypassed it)
+  const _hasResetSentinel  = /[?&]reset=1(?:&|$)/.test(_search);
+  const _hasRecoveryMarker = /[#&?]type=recovery(?:&|$)/.test(_hash) ||
+                             /[?&]type=recovery(?:&|$)/.test(_search);
+  const _hasPkceCode       = /[?&]code=[^&]+/.test(_search);
+  const _storedSessionPeek = _getSessionFromStorage();
+  const _isRecoveryUrl = _hasResetSentinel
+                      || _hasRecoveryMarker
+                      || (_hasPkceCode && !_storedSessionPeek?.access_token);
+
   // onAuthStateChange handles SIGN_IN and SIGNED_OUT events.
   // We skip INITIAL_SESSION here — it's handled manually below via localStorage
   // because supabase-js GoTrueClient can hang during its internal init, which
@@ -2377,6 +2400,14 @@ function initAuth() {
       return;
     }
     if (event === 'SIGNED_IN' && session?.user) {
+      // If we're in the middle of a recovery redirect, supabase-js fires
+      // SIGNED_IN for the recovery session right alongside (or just before)
+      // PASSWORD_RECOVERY. We must NOT load the profile here, otherwise the
+      // overlay gets hidden and the reset card is never seen.
+      if (_isRecoveryUrl) {
+        console.log('[auth] SIGNED_IN suppressed — recovery URL in flight');
+        return;
+      }
       if (currentRoleUser) {
         // Already authenticated — this is the supabase-js GoTrueClient finishing its
         // delayed internal init. Ignore: we already restored from localStorage and
@@ -2389,6 +2420,22 @@ function initAuth() {
       _onSignedOut();
     }
   });
+
+  // Recovery flow: skip the localStorage restore entirely and show the reset
+  // card immediately. supabase-js will parse the URL hash, authenticate the
+  // recovery session, and emit PASSWORD_RECOVERY (which re-asserts the card,
+  // idempotent). We also strip the recovery params from the URL so a refresh
+  // doesn't re-trigger the flow.
+  if (_isRecoveryUrl) {
+    console.log('[auth] recovery URL detected — showing reset card');
+    document.getElementById('login-overlay')?.classList.remove('hidden');
+    _showChangePasswordPanel(null);
+    try {
+      const cleanUrl = window.location.origin + window.location.pathname;
+      window.history.replaceState({}, document.title, cleanUrl);
+    } catch { /* noop */ }
+    return;
+  }
 
   // Restore existing session directly from localStorage — no supabase-js call needed.
   // This covers hard refresh and returning users without waiting for GoTrueClient init.
@@ -2539,7 +2586,13 @@ async function submitPasswordReset() {
   }
   if (btn) { btn.textContent = 'Sending…'; btn.disabled = true; }
   if (msg) { msg.textContent = ''; }
-  const { error } = await _sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.href });
+  // Use a clean origin+pathname URL with our own `?reset=1` sentinel so the
+  // initAuth recovery-URL detection works regardless of whether Supabase uses
+  // implicit (`#type=recovery`) or PKCE (`?code=…`) flow. Avoid sending
+  // `window.location.href` since it may include unrelated hash/query state
+  // that can collide with the auth params Supabase appends.
+  const _redirectTo = `${window.location.origin}${window.location.pathname}?reset=1`;
+  const { error } = await _sb.auth.resetPasswordForEmail(email, { redirectTo: _redirectTo });
   if (error) {
     if (msg) { msg.textContent = error.message; msg.style.color = '#dc2626'; }
     if (btn) { btn.textContent = 'Send Reset Link'; btn.disabled = false; }
@@ -24888,6 +24941,10 @@ async function _formsDelete(formId) {
   FORMS           = FORMS          .filter(f => f.id !== formId);
   FORM_TEST_LINKS = FORM_TEST_LINKS.filter(l => l.form_id !== formId);
   FORM_TPL_LINKS  = FORM_TPL_LINKS .filter(l => l.form_id !== formId);
+  // Invalidate local caches so stale bytes never resurface.
+  _idbRecentDelete(formId).catch(() => {});
+  _idbDraftDelete(formId).catch(() => {});
+  _idbPinDelete(formId).catch(() => {});
 }
 
 async function _formsLinkToTest(formId, testId) {
@@ -24947,18 +25004,257 @@ async function _formsCloneTemplateForDeployment(templateId, depId, selections, t
 }
 
 // ── PDF VIEWER (pdf.js render + HTML overlay + pdf-lib save) ────────────
+// Desktop-first, touch-safe. Offline-capable via IndexedDB drafts + SW cache.
+// Public API kept stable: openFormViewer, saveFormPDF, downloadFormPDF, closeFormViewer.
+
 let _pdfViewerState = null;
+let _pdfBeforeUnloadBound = false;
+const _PDF_AUTOSAVE_DELAY_MS = 1500;
+const _PDF_ZOOM_MIN = 0.5;
+const _PDF_ZOOM_MAX = 3.0;
+
+// ── IndexedDB tiny wrapper for offline drafts + pinned PDFs + recents ──
+const _IDB_DB      = 'cxportal-forms';
+const _IDB_VER     = 2;
+const _IDB_DRAFTS  = 'drafts';
+const _IDB_PINS    = 'pins';
+const _IDB_RECENTS = 'recents';
+const _RECENTS_MAX = 20;
+let   _idbPromise = null;
+
+function _idbOpen() {
+  if (_idbPromise) return _idbPromise;
+  _idbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(_IDB_DB, _IDB_VER);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(_IDB_DRAFTS))  db.createObjectStore(_IDB_DRAFTS,  { keyPath: 'formId' });
+      if (!db.objectStoreNames.contains(_IDB_PINS))    db.createObjectStore(_IDB_PINS,    { keyPath: 'formId' });
+      if (!db.objectStoreNames.contains(_IDB_RECENTS)) db.createObjectStore(_IDB_RECENTS, { keyPath: 'formId' });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+  return _idbPromise;
+}
+async function _idbTx(store, mode, fn) {
+  const db = await _idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, mode);
+    const os = tx.objectStore(store);
+    const out = fn(os);
+    tx.oncomplete = () => resolve(out?.result !== undefined ? out.result : out);
+    tx.onerror    = () => reject(tx.error);
+    tx.onabort    = () => reject(tx.error);
+  });
+}
+async function _idbDraftGet(formId)            { return _idbTx(_IDB_DRAFTS, 'readonly',  os => os.get(formId)); }
+async function _idbDraftPut(record)            { return _idbTx(_IDB_DRAFTS, 'readwrite', os => os.put(record)); }
+async function _idbDraftDelete(formId)         { return _idbTx(_IDB_DRAFTS, 'readwrite', os => os.delete(formId)); }
+async function _idbDraftAll()                  { return _idbTx(_IDB_DRAFTS, 'readonly',  os => os.getAll()); }
+async function _idbPinGet(formId)              { return _idbTx(_IDB_PINS,   'readonly',  os => os.get(formId)); }
+async function _idbPinPut(record)              { return _idbTx(_IDB_PINS,   'readwrite', os => os.put(record)); }
+async function _idbPinDelete(formId)           { return _idbTx(_IDB_PINS,   'readwrite', os => os.delete(formId)); }
+async function _idbPinAll()                    { return _idbTx(_IDB_PINS,   'readonly',  os => os.getAll()); }
+async function _idbRecentGet(formId)           { return _idbTx(_IDB_RECENTS,'readonly',  os => os.get(formId)); }
+async function _idbRecentPut(record)           { return _idbTx(_IDB_RECENTS,'readwrite', os => os.put(record)); }
+async function _idbRecentAll()                 { return _idbTx(_IDB_RECENTS,'readonly',  os => os.getAll()); }
+async function _idbRecentDelete(formId)        { return _idbTx(_IDB_RECENTS,'readwrite', os => os.delete(formId)); }
+async function _idbRecentTouch(formId, name, updatedAt, bytes, thumb) {
+  // Upsert with LRU eviction. `bytes`/`thumb` optional — pass when we have fresh data.
+  try {
+    const all = (await _idbRecentAll()) || [];
+    const now = new Date().toISOString();
+    const existing = all.find(r => r.formId === formId);
+    const next = {
+      formId,
+      name: name || existing?.name || '',
+      updatedAt: updatedAt || existing?.updatedAt || null,
+      openedAt: now,
+      bytes: bytes ? (bytes.buffer ? bytes.buffer.slice(0) : new Uint8Array(bytes).buffer) : (existing?.bytes || null),
+      thumb: thumb || existing?.thumb || null,
+    };
+    await _idbRecentPut(next);
+    // Evict beyond cap, sorted by openedAt desc.
+    const after = (await _idbRecentAll()) || [];
+    after.sort((a, b) => (b.openedAt || '').localeCompare(a.openedAt || ''));
+    for (let i = _RECENTS_MAX; i < after.length; i++) {
+      await _idbRecentDelete(after[i].formId).catch(() => {});
+    }
+  } catch (e) { console.warn('[_idbRecentTouch]', e.message); }
+}
+
+// Render page 1 of an open PDF document to a small JPEG dataURL for use as
+// a recents-row thumbnail. Returns null on failure (callers should treat
+// this as best-effort decoration).
+async function _formsGeneratePageThumb(pdfDoc, maxWidth = 240) {
+  try {
+    const page = await pdfDoc.getPage(1);
+    const baseVp = page.getViewport({ scale: 1 });
+    const scale = Math.min(maxWidth / baseVp.width, 1.5);
+    const vp = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width  = Math.round(vp.width);
+    canvas.height = Math.round(vp.height);
+    const ctx = canvas.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    return canvas.toDataURL('image/jpeg', 0.7);
+  } catch (e) {
+    console.warn('[_formsGeneratePageThumb]', e.message);
+    return null;
+  }
+}
+
+// Request persistent storage so IDB caches (drafts, pins, recents) are not
+// evicted under storage pressure. Best-effort, no-op if unsupported / denied.
+let _formsStoragePersistRequested = false;
+async function _formsRequestPersistentStorage() {
+  if (_formsStoragePersistRequested) return;
+  _formsStoragePersistRequested = true;
+  try {
+    if (navigator.storage?.persist) {
+      const already = await navigator.storage.persisted?.();
+      if (!already) await navigator.storage.persist();
+    }
+  } catch (e) { console.warn('[_formsRequestPersistentStorage]', e.message); }
+}
+
+// ── Forms-page "Recently opened" row ────────────────────────────────────
+// Reads from the `recents` IDB store and renders a horizontal strip of
+// quick-open tiles above the main forms table. Re-rendered after every
+// successful viewer open (see `openFormViewer`).
+const _FORMS_RECENTS_ROW_MAX = 8;
+
+function _formsRelativeTime(iso) {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (!t) return '';
+  const diff = Date.now() - t;
+  const m = Math.round(diff / 60000);
+  if (m < 1)    return 'just now';
+  if (m < 60)   return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24)   return `${h}h ago`;
+  const d = Math.round(h / 24);
+  if (d < 7)    return `${d}d ago`;
+  return new Date(t).toLocaleDateString();
+}
+
+async function _formsRenderRecentsRow() {
+  const host = document.getElementById('forms-recents-row');
+  if (!host) return;
+  let entries = [];
+  let pinned = new Set();
+  try {
+    const [recents, pins] = await Promise.all([_idbRecentAll(), _idbPinAll()]);
+    entries = recents || [];
+    pinned = new Set((pins || []).map(p => p.formId));
+  } catch (e) { console.warn('[_formsRenderRecentsRow]', e.message); host.hidden = true; return; }
+  // Filter to forms that still exist locally (FORMS), then sort by openedAt desc.
+  const known = new Map(FORMS.map(f => [f.id, f]));
+  entries = entries.filter(r => known.has(r.formId));
+  entries.sort((a, b) => (b.openedAt || '').localeCompare(a.openedAt || ''));
+  entries = entries.slice(0, _FORMS_RECENTS_ROW_MAX);
+  if (entries.length === 0) { host.hidden = true; host.innerHTML = ''; return; }
+  host.hidden = false;
+  const tiles = entries.map(r => {
+    const f = known.get(r.formId);
+    const sub = [f.phase, f.subsystem].filter(Boolean).join(' · ');
+    const isPinned = pinned.has(f.id);
+    const visual = r.thumb
+      ? `<span class="forms-recent-thumb" style="background-image:url('${r.thumb}');" aria-hidden="true"></span>`
+      : `<span class="forms-recent-icon" aria-hidden="true">📄</span>`;
+    return `
+      <button type="button" class="forms-recent-tile" data-form-id="${escapeHtml(f.id)}"
+              title="${escapeHtml(f.name)}${sub ? ' — ' + escapeHtml(sub) : ''}${isPinned ? ' (offline)' : ''}">
+        ${visual}
+        <span class="forms-recent-body">
+          <span class="forms-recent-name">${escapeHtml(f.name)}${isPinned ? ' <span class="forms-recent-pin" title="Available offline">📌</span>' : ''}</span>
+          <span class="forms-recent-meta">${escapeHtml(sub || '—')}</span>
+          <span class="forms-recent-time">${escapeHtml(_formsRelativeTime(r.openedAt))}</span>
+        </span>
+        <span class="forms-recent-close" title="Remove from recents"
+              data-recent-remove="${escapeHtml(f.id)}">×</span>
+      </button>`;
+  }).join('');
+  host.innerHTML = `
+    <div class="forms-recents-head">
+      <span class="forms-recents-title">Recently opened</span>
+      <button type="button" class="forms-recents-clear" id="forms-recents-clear">Clear</button>
+    </div>
+    <div class="forms-recents-strip">${tiles}</div>
+  `;
+  // Delegate clicks: open form, or remove from recents on the × button.
+  host.querySelector('.forms-recents-strip').addEventListener('click', (e) => {
+    const removeBtn = e.target.closest('[data-recent-remove]');
+    if (removeBtn) {
+      e.stopPropagation();
+      const id = removeBtn.getAttribute('data-recent-remove');
+      _idbRecentDelete(id).catch(() => {}).finally(() => _formsRenderRecentsRow());
+      return;
+    }
+    const tile = e.target.closest('.forms-recent-tile');
+    if (tile) {
+      const id = tile.getAttribute('data-form-id');
+      if (id) openFormViewer(id);
+    }
+  });
+  document.getElementById('forms-recents-clear')?.addEventListener('click', async () => {
+    try {
+      const all = (await _idbRecentAll()) || [];
+      await Promise.all(all.map(r => _idbRecentDelete(r.formId).catch(() => {})));
+    } finally { _formsRenderRecentsRow(); }
+  });
+}
+
+// ── Telemetry shim (no-op for now; ready for AppInsights) ───────────────
+function formViewerEvent(name, props = {}) {
+  if (window.__cxFormsTelemetry) { try { window.__cxFormsTelemetry(name, props); } catch { /* noop */ } }
+}
+
+// ── Storage adapter contract (formalized for Azure/SharePoint cutover) ──
+// Required methods: upload(formId,file), uploadPath(path,file,contentType?),
+// downloadBlob(path), downloadBytes(path), uploadJson(path,data),
+// downloadJson(path), verifyBytes(path,expected), copy(src,dst), remove(path).
+// Optional: list(prefix), signedUrl(path).
+// _formsStorageAzure and _formsStorageGraph are stubs used at cutover.
+// eslint-disable-next-line no-unused-vars
+const _formsStorageAzure = {
+  bucket: 'forms',
+  async upload()        { throw new Error('Azure adapter not wired yet'); },
+  async uploadPath()    { throw new Error('Azure adapter not wired yet'); },
+  async downloadBlob()  { throw new Error('Azure adapter not wired yet'); },
+  async downloadBytes() { throw new Error('Azure adapter not wired yet'); },
+  async uploadJson()    { throw new Error('Azure adapter not wired yet'); },
+  async downloadJson()  { throw new Error('Azure adapter not wired yet'); },
+  async verifyBytes()   { throw new Error('Azure adapter not wired yet'); },
+  async copy()          { throw new Error('Azure adapter not wired yet'); },
+  async remove()        { throw new Error('Azure adapter not wired yet'); },
+};
+// eslint-disable-next-line no-unused-vars
+const _formsStorageGraph = {
+  bucket: 'forms',
+  async upload()        { throw new Error('SharePoint Graph adapter not wired yet'); },
+  async uploadPath()    { throw new Error('SharePoint Graph adapter not wired yet'); },
+  async downloadBlob()  { throw new Error('SharePoint Graph adapter not wired yet'); },
+  async downloadBytes() { throw new Error('SharePoint Graph adapter not wired yet'); },
+  async uploadJson()    { throw new Error('SharePoint Graph adapter not wired yet'); },
+  async downloadJson()  { throw new Error('SharePoint Graph adapter not wired yet'); },
+  async verifyBytes()   { throw new Error('SharePoint Graph adapter not wired yet'); },
+  async copy()          { throw new Error('SharePoint Graph adapter not wired yet'); },
+  async remove()        { throw new Error('SharePoint Graph adapter not wired yet'); },
+};
 
 function _formsViewerScale(baseViewport, pagesEl) {
   const availableWidth = Math.max(360, (pagesEl?.clientWidth || window.innerWidth) - 48);
-  const fitWidthScale = availableWidth / baseViewport.width;
-  return Math.max(1.05, Math.min(1.45, fitWidthScale));
+  return Math.max(_PDF_ZOOM_MIN, Math.min(_PDF_ZOOM_MAX, availableWidth / baseViewport.width));
 }
 
 function _clonePdfBytes(bytes) {
   return bytes instanceof Uint8Array ? bytes.slice() : new Uint8Array(bytes).slice();
 }
 
+// ── Open viewer (entry point) ───────────────────────────────────────────
 async function openFormViewer(formId) {
   const form = FORMS.find(f => f.id === formId);
   if (!form) { toast('Form not found', 'error'); return; }
@@ -24967,17 +25263,52 @@ async function openFormViewer(formId) {
     pdfjsLib.GlobalWorkerOptions.workerSrc =
       'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js';
   }
+  // Kick off pin + recents lookups in parallel — both are needed before render but
+  // can run concurrently with the modal mount.
+  const pinP    = _idbPinGet(formId).catch(() => null);
+  const recentP = _idbRecentGet(formId).catch(() => null);
+  const pin     = await pinP;
   modal({
     title: form.name,
     sub: [form.phase, form.location, form.subsystem].filter(Boolean).join(' · '),
     size: 'pdf',
     body: `
-      <div style="font-size:12px;color:var(--gray-600);margin-bottom:8px;">
-        ${form.description ? `<div style="color:var(--gray-700);margin-bottom:4px;">${escapeHtml(form.description)}</div>` : ''}
-        ${form.original_filename ? `<div>File: ${escapeHtml(form.original_filename)}</div>` : ''}
+      <div class="pdf-viewer-shell">
+        <div class="pdf-viewer-toolbar" id="pdf-viewer-toolbar">
+          <div class="pdf-tb-group">
+            <button type="button" class="pdf-tb-btn" id="pdf-tb-thumbs"   title="Toggle thumbnails (Alt+T)">☰</button>
+            <button type="button" class="pdf-tb-btn" id="pdf-tb-prev"     title="Previous field (Shift+Tab)">◀</button>
+            <button type="button" class="pdf-tb-btn" id="pdf-tb-next"     title="Next field (Tab)">▶</button>
+            <span class="pdf-tb-divider"></span>
+            <button type="button" class="pdf-tb-btn" id="pdf-tb-zoom-out" title="Zoom out (-)">−</button>
+            <span id="pdf-tb-zoom-label" class="pdf-tb-label">100%</span>
+            <button type="button" class="pdf-tb-btn" id="pdf-tb-zoom-in"  title="Zoom in (+)">+</button>
+            <button type="button" class="pdf-tb-btn" id="pdf-tb-fit-w"    title="Fit width">↔</button>
+            <button type="button" class="pdf-tb-btn" id="pdf-tb-fit-p"    title="Fit page">⤢</button>
+            <span class="pdf-tb-divider"></span>
+            <span class="pdf-tb-label">Page</span>
+            <input type="number" min="1" id="pdf-tb-page" class="pdf-tb-input" value="1" />
+            <span id="pdf-tb-page-total" class="pdf-tb-label">/ 1</span>
+          </div>
+          <div class="pdf-tb-group pdf-tb-right">
+            <label class="pdf-tb-pin" title="Cache PDF locally for offline use">
+              <input type="checkbox" id="pdf-tb-pin" ${pin ? 'checked' : ''}/> Available offline
+            </label>
+            <span id="pdf-tb-status" class="pdf-tb-status pdf-tb-status-saved">Loaded</span>
+          </div>
+        </div>
+        <div class="pdf-viewer-main">
+          <aside id="pdf-thumbs" class="pdf-thumbs" hidden></aside>
+          <div id="form-viewer-pages" class="pdf-pages"></div>
+        </div>
+        ${form.description ? `<div class="pdf-viewer-desc">${escapeHtml(form.description)}</div>` : ''}
+        <div id="form-viewer-skeleton" class="pdf-viewer-skeleton">
+          <div class="pdf-skel-shimmer"></div>
+          <div class="pdf-skel-shimmer"></div>
+          <div class="pdf-skel-shimmer"></div>
+        </div>
+        <div id="form-viewer-status" class="pdf-viewer-substatus" style="display:none;"></div>
       </div>
-      <div id="form-viewer-status" style="font-size:12px;color:var(--gray-500);margin-bottom:8px;">Loading PDF…</div>
-      <div id="form-viewer-pages" style="max-height:65vh;overflow:auto;background:var(--gray-100);padding:12px;border-radius:6px;"></div>
     `,
     footer: `
       <button class="form-secondary" onclick="closeFormViewer()">Close</button>
@@ -24985,9 +25316,36 @@ async function openFormViewer(formId) {
       <button class="form-submit" id="form-viewer-save" onclick="saveFormPDF('${form.id}')">Save</button>
     `,
   });
+
   try {
-    const bytes  = await _formsStorage.downloadBytes(form.storage_path);
-    const editState = await _formsLoadEditState(form);
+    // Resolve PDF bytes: prefer pin, then valid recents cache, else storage.
+    // In all "miss" paths we kick the network request off in parallel with
+    // edit-state + local-draft loads so we don't pay for two sequential RTTs.
+    const recent = await recentP;
+    const recentValid = recent?.bytes && recent.updatedAt && recent.updatedAt === (form.updated_at || null);
+    let bytesPromise;
+    if (pin?.bytes) {
+      bytesPromise = Promise.resolve(new Uint8Array(pin.bytes));
+    } else if (recentValid) {
+      bytesPromise = Promise.resolve(new Uint8Array(recent.bytes));
+    } else {
+      bytesPromise = _formsStorage.downloadBytes(form.storage_path);
+    }
+    const remoteStateP = _formsLoadEditState(form);
+    const localDraftP  = _idbDraftGet(formId).catch(() => null);
+    const [bytes, remoteState, localDraft] = await Promise.all([bytesPromise, remoteStateP, localDraftP]);
+    let editState = remoteState;
+    if (localDraft && localDraft.state) {
+      const localTs  = Date.parse(localDraft.state.updatedAt || localDraft.savedAt || 0) || 0;
+      const remoteTs = Date.parse(remoteState.updatedAt || 0) || 0;
+      const localNewer = localTs > remoteTs;
+      if (localNewer) {
+        const restore = await _pdfRestorePrompt(localDraft, remoteState);
+        if (restore) editState = _normalizeFormEditState(localDraft.state);
+        else await _idbDraftDelete(formId);
+      }
+    }
+
     const pdfDoc = await pdfjsLib.getDocument({ data: _clonePdfBytes(bytes) }).promise;
     _pdfViewerState = {
       formId,
@@ -24998,53 +25356,421 @@ async function openFormViewer(formId) {
       fieldLayouts: [],
       renderedLayoutIds: new Set(),
       pageOverlays: [],
+      pageRecords: [],   // {wrap, canvas, overlay, page, baseViewport, rendered, observer}
+      zoom: null,        // null => fit width
+      zoomMode: 'fit-w', // 'fit-w' | 'fit-p' | 'pct'
+      dirty: false,
+      saving: false,
+      lastSavedAt: editState.updatedAt ? new Date(editState.updatedAt) : null,
+      autosaveTimer: null,
+      online: navigator.onLine !== false,
+      currentField: -1,
     };
-    const pagesEl = document.getElementById('form-viewer-pages');
-    pagesEl.innerHTML = '';
-    for (let p = 1; p <= pdfDoc.numPages; p++) {
-      const page = await pdfDoc.getPage(p);
-      const baseViewport = page.getViewport({ scale: 1 });
-      const scale = _formsViewerScale(baseViewport, pagesEl);
-      const viewport = page.getViewport({ scale });
-      const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
-      const pageWrap = document.createElement('div');
-      pageWrap.className = 'form-viewer-page';
-      pageWrap.style.width = `${viewport.width}px`;
-      pageWrap.style.height = `${viewport.height}px`;
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.floor(viewport.width * pixelRatio);
-      canvas.height = Math.floor(viewport.height * pixelRatio);
-      canvas.style.cssText = `display:block;position:absolute;top:0;left:0;width:${viewport.width}px;height:${viewport.height}px;`;
-      pageWrap.appendChild(canvas);
-      const overlay = document.createElement('div');
-      overlay.style.cssText = `position:absolute;top:0;left:0;width:${viewport.width}px;height:${viewport.height}px;`;
-      pageWrap.appendChild(overlay);
-      pagesEl.appendChild(pageWrap);
-      _pdfViewerState.pageOverlays[p - 1] = { overlay, viewport };
-      const renderContext = { canvasContext: canvas.getContext('2d'), viewport };
-      if (pixelRatio !== 1) renderContext.transform = [pixelRatio, 0, 0, pixelRatio, 0, 0];
-      await page.render(renderContext).promise;
-      const annots = await page.getAnnotations();
-      _renderFormFieldOverlay(overlay, annots, viewport, p - 1);
-    }
-    _renderSavedFieldLayouts();
-    const stat = document.getElementById('form-viewer-status');
-    if (stat) stat.textContent = `${pdfDoc.numPages} page${pdfDoc.numPages !== 1 ? 's' : ''} loaded — fill any blue-bordered fields, then Save.`;
+    formViewerEvent('viewer_open', { formId, pages: pdfDoc.numPages });
+
+    await _pdfBuildPages(form);
+    _pdfBindToolbar(form);
+    _pdfBindOnlineEvents();
+    _pdfBindBeforeUnload();
+    const skel = document.getElementById('form-viewer-skeleton');
+    if (skel) skel.remove();
+    const statusEl = document.getElementById('form-viewer-status');
+    if (statusEl) { statusEl.textContent = ''; statusEl.style.display = 'none'; }
+    _pdfUpdateStatus('saved', `Loaded · ${pdfDoc.numPages} page${pdfDoc.numPages !== 1 ? 's' : ''}`);
+    // Best-effort: ask the browser for persistent storage so caches survive
+    // pressure-eviction. Fired once per session, non-blocking.
+    _formsRequestPersistentStorage().catch(() => {});
+    // Touch recents (LRU cache for instant re-open) — fire an immediate
+    // touch so the row entry exists, then update with the page-1 thumbnail
+    // once it finishes rendering. The Forms page row re-renders after each
+    // successful touch so the user sees the tile appear, then upgrade with
+    // the thumb when ready.
+    const _refreshRecentsRow = () => {
+      if (typeof _formsRenderRecentsRow === 'function'
+          && document.getElementById('page-forms')?.classList.contains('active')) {
+        try { _formsRenderRecentsRow(); } catch { /* noop */ }
+      }
+    };
+    _idbRecentTouch(formId, form.name, form.updated_at || null, bytes)
+      .then(_refreshRecentsRow)
+      .catch(() => {});
+    _formsGeneratePageThumb(pdfDoc).then(thumb => {
+      if (!thumb) return;
+      _idbRecentTouch(formId, form.name, form.updated_at || null, null, thumb)
+        .then(_refreshRecentsRow)
+        .catch(() => {});
+    });
   } catch (e) {
     console.error('[openFormViewer]', e);
+    const skel = document.getElementById('form-viewer-skeleton');
+    if (skel) skel.remove();
     const stat = document.getElementById('form-viewer-status');
-    if (stat) { stat.textContent = '✗ Failed to load PDF: ' + e.message; stat.style.color = 'var(--bad)'; }
+    if (stat) { stat.style.display = ''; stat.textContent = '✗ Failed to load PDF: ' + e.message; stat.style.color = 'var(--bad)'; }
   }
 }
 
+async function _pdfRestorePrompt(localDraft, _remoteState) {
+  return new Promise((resolve) => {
+    const ts = localDraft?.savedAt ? new Date(localDraft.savedAt).toLocaleString() : 'recently';
+    const ov = document.createElement('div');
+    ov.className = 'pdf-restore-overlay';
+    ov.innerHTML = `
+      <div class="pdf-restore-modal">
+        <div class="pdf-restore-title">Unsaved changes found</div>
+        <div class="pdf-restore-body">A local draft saved <b>${escapeHtml(ts)}</b> is newer than the version on the server. Restore it?</div>
+        <div class="pdf-restore-foot">
+          <button class="form-secondary" id="pdf-restore-discard">Discard local</button>
+          <button class="form-submit" id="pdf-restore-keep">Restore</button>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    document.getElementById('pdf-restore-keep').onclick    = () => { ov.remove(); resolve(true); };
+    document.getElementById('pdf-restore-discard').onclick = () => { ov.remove(); resolve(false); };
+  });
+}
+
+// ── Page build / lazy render ────────────────────────────────────────────
+async function _pdfBuildPages(form) {
+  const pagesEl = document.getElementById('form-viewer-pages');
+  const thumbsEl = document.getElementById('pdf-thumbs');
+  // Cancel any in-flight renders + disconnect old observer before tearing down.
+  if (_pdfViewerState.pageObserver) { try { _pdfViewerState.pageObserver.disconnect(); } catch { /* noop */ } }
+  for (const rec of (_pdfViewerState.pageRecords || [])) {
+    if (rec?.renderTask) { try { rec.renderTask.cancel(); } catch { /* noop */ } }
+  }
+  pagesEl.innerHTML = '';
+  if (thumbsEl) thumbsEl.innerHTML = '';
+  _pdfViewerState.pageOverlays = [];
+  _pdfViewerState.pageRecords  = [];
+  _pdfViewerState.renderedLayoutIds = new Set();
+  _pdfViewerState.fieldLayouts = [];
+
+  const pdfDoc = _pdfViewerState.pdfDoc;
+  const numPages = pdfDoc.numPages;
+  document.getElementById('pdf-tb-page-total').textContent = `/ ${numPages}`;
+  document.getElementById('pdf-tb-page').max = numPages;
+
+  // Compute zoom from current zoomMode using page 1 as reference.
+  const firstPage = await pdfDoc.getPage(1);
+  const baseVp1 = firstPage.getViewport({ scale: 1 });
+  const fitWidthScale = _formsViewerScale(baseVp1, pagesEl);
+  const fitPageScale  = Math.max(_PDF_ZOOM_MIN, Math.min(_PDF_ZOOM_MAX,
+    (pagesEl.clientHeight - 32) / baseVp1.height));
+  const zoom = _pdfViewerState.zoomMode === 'fit-w' ? fitWidthScale
+             : _pdfViewerState.zoomMode === 'fit-p' ? fitPageScale
+             : (_pdfViewerState.zoom || fitWidthScale);
+  _pdfViewerState.zoom = zoom;
+  _pdfUpdateZoomLabel();
+
+  const io = ('IntersectionObserver' in window) ? new IntersectionObserver((entries) => {
+    entries.forEach(en => {
+      if (en.isIntersecting) {
+        const idx = Number(en.target.dataset.pageIndex);
+        const rec = _pdfViewerState?.pageRecords?.[idx];
+        if (rec && !rec.rendered && !rec.renderPromise) _pdfRenderPage(idx);
+        if (rec) document.getElementById('pdf-tb-page').value = String(idx + 1);
+      }
+    });
+  }, { root: pagesEl, rootMargin: '200px' }) : null;
+  _pdfViewerState.pageObserver = io;
+
+  for (let p = 1; p <= numPages; p++) {
+    const page = await pdfDoc.getPage(p);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: zoom });
+    const wrap = document.createElement('div');
+    wrap.className = 'form-viewer-page';
+    wrap.dataset.pageIndex = String(p - 1);
+    wrap.style.width  = `${viewport.width}px`;
+    wrap.style.height = `${viewport.height}px`;
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = `display:block;position:absolute;top:0;left:0;width:${viewport.width}px;height:${viewport.height}px;`;
+    wrap.appendChild(canvas);
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `position:absolute;top:0;left:0;width:${viewport.width}px;height:${viewport.height}px;`;
+    wrap.appendChild(overlay);
+    pagesEl.appendChild(wrap);
+    _pdfViewerState.pageOverlays[p - 1] = { overlay, viewport };
+    _pdfViewerState.pageRecords[p - 1]  = { wrap, canvas, overlay, page, baseViewport, viewport, rendered: false };
+    if (io) io.observe(wrap);
+
+    if (thumbsEl) {
+      const tb = document.createElement('button');
+      tb.type = 'button';
+      tb.className = 'pdf-thumb';
+      tb.dataset.pageIndex = String(p - 1);
+      tb.innerHTML = `<canvas></canvas><span class="pdf-thumb-num">${p}</span>`;
+      tb.onclick = () => _pdfScrollToPage(p - 1);
+      thumbsEl.appendChild(tb);
+    }
+  }
+
+  // Render first page immediately + thumbnails for visible ones.
+  await _pdfRenderPage(0);
+  if (numPages > 1 && thumbsEl) _pdfRenderThumb(0);
+  // Pre-render thumbnails + remaining pages opportunistically so field
+  // navigation (prev/next) can see every field in the document.
+  setTimeout(async () => {
+    for (let i = 0; i < numPages; i++) {
+      try { if (thumbsEl) await _pdfRenderThumb(i); } catch { /* noop */ }
+    }
+    for (let i = 1; i < numPages; i++) {
+      if (!_pdfViewerState || _pdfViewerState.formId !== form.id) return;
+      try { await _pdfRenderPage(i); } catch { /* noop */ }
+    }
+  }, 50);
+}
+
+async function _pdfRenderPage(idx) {
+  const rec = _pdfViewerState?.pageRecords?.[idx];
+  if (!rec || rec.rendered) return;
+  // Guard against concurrent renders on the same page (IntersectionObserver +
+  // explicit awaited call would otherwise both call page.render() and corrupt
+  // the canvas — pdf.js does not allow two render tasks on one page).
+  if (rec.renderPromise) { await rec.renderPromise.catch(() => {}); return; }
+  const pixelRatio = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+  const viewport = rec.viewport;
+  rec.canvas.width  = Math.floor(viewport.width  * pixelRatio);
+  rec.canvas.height = Math.floor(viewport.height * pixelRatio);
+  const ctx = rec.canvas.getContext('2d');
+  const renderContext = { canvasContext: ctx, viewport };
+  if (pixelRatio !== 1) renderContext.transform = [pixelRatio, 0, 0, pixelRatio, 0, 0];
+  rec.renderTask = rec.page.render(renderContext);
+  rec.renderPromise = rec.renderTask.promise;
+  try {
+    await rec.renderPromise;
+    const annots = await rec.page.getAnnotations();
+    // Bail if the viewer was torn down or this record was replaced mid-render.
+    if (!_pdfViewerState || _pdfViewerState.pageRecords?.[idx] !== rec) return;
+    rec.overlay.innerHTML = '';
+    _renderFormFieldOverlay(rec.overlay, annots, viewport, idx);
+    _renderSavedFieldLayouts();
+    rec.rendered = true;
+  } catch (e) {
+    if (e?.name !== 'RenderingCancelledException') console.warn('[_pdfRenderPage]', idx, e.message || e);
+  } finally {
+    rec.renderTask = null;
+    rec.renderPromise = null;
+  }
+}
+
+async function _pdfRenderThumb(idx) {
+  const thumbsEl = document.getElementById('pdf-thumbs');
+  if (!thumbsEl) return;
+  const tb = thumbsEl.querySelector(`.pdf-thumb[data-page-index="${idx}"]`);
+  if (!tb || tb.dataset.rendered === '1') return;
+  const canvas = tb.querySelector('canvas');
+  const rec = _pdfViewerState?.pageRecords?.[idx];
+  if (!rec) return;
+  const baseVp = rec.page.getViewport({ scale: 1 });
+  const targetW = 120;
+  const scale = targetW / baseVp.width;
+  const vp = rec.page.getViewport({ scale });
+  canvas.width = Math.floor(vp.width);
+  canvas.height = Math.floor(vp.height);
+  await rec.page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+  tb.dataset.rendered = '1';
+}
+
+function _pdfScrollToPage(idx) {
+  const rec = _pdfViewerState?.pageRecords?.[idx];
+  if (!rec) return;
+  rec.wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById('pdf-tb-page').value = String(idx + 1);
+  document.querySelectorAll('.pdf-thumb.active').forEach(el => el.classList.remove('active'));
+  document.querySelector(`.pdf-thumb[data-page-index="${idx}"]`)?.classList.add('active');
+}
+
+// ── Toolbar wiring ──────────────────────────────────────────────────────
+function _pdfBindToolbar(form) {
+  const $ = id => document.getElementById(id);
+  $('pdf-tb-thumbs').onclick = () => {
+    const el = $('pdf-thumbs');
+    if (!el) return;
+    el.hidden = !el.hidden;
+  };
+  $('pdf-tb-prev').onclick = () => _pdfFocusField(-1);
+  $('pdf-tb-next').onclick = () => _pdfFocusField(+1);
+  $('pdf-tb-zoom-in').onclick  = () => _pdfApplyZoom((_pdfViewerState.zoom || 1) * 1.15, 'pct');
+  $('pdf-tb-zoom-out').onclick = () => _pdfApplyZoom((_pdfViewerState.zoom || 1) / 1.15, 'pct');
+  $('pdf-tb-fit-w').onclick    = () => { _pdfViewerState.zoomMode = 'fit-w'; _pdfRebuildAtZoom(); };
+  $('pdf-tb-fit-p').onclick    = () => { _pdfViewerState.zoomMode = 'fit-p'; _pdfRebuildAtZoom(); };
+  $('pdf-tb-page').addEventListener('change', (e) => {
+    const n = Math.max(1, Math.min(_pdfViewerState.pdfDoc.numPages, parseInt(e.target.value, 10) || 1));
+    _pdfScrollToPage(n - 1);
+  });
+  $('pdf-tb-pin').addEventListener('change', async (e) => {
+    try {
+      if (e.target.checked) {
+        const bytes = _pdfViewerState.pdfBytes || await _formsStorage.downloadBytes(form.storage_path);
+        await _idbPinPut({ formId: form.id, bytes: bytes.buffer ? bytes.buffer.slice(0) : new Uint8Array(bytes).buffer, pinnedAt: new Date().toISOString(), name: form.name });
+        toast('✓ Cached for offline use', 'success');
+        formViewerEvent('offline_pin', { formId: form.id });
+      } else {
+        await _idbPinDelete(form.id);
+        toast('Removed offline cache', 'info');
+        formViewerEvent('offline_unpin', { formId: form.id });
+      }
+    } catch (err) { toast('Pin failed: ' + err.message, 'error'); e.target.checked = !e.target.checked; }
+  });
+
+  // Keyboard shortcuts within viewer.
+  document.getElementById('pdf-viewer-toolbar').closest('.modal')?.addEventListener('keydown', (e) => {
+    if (e.altKey && (e.key === 't' || e.key === 'T')) { e.preventDefault(); $('pdf-tb-thumbs').click(); }
+    if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) { e.preventDefault(); $('pdf-tb-zoom-in').click(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === '-') { e.preventDefault(); $('pdf-tb-zoom-out').click(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === '0') { e.preventDefault(); $('pdf-tb-fit-w').click(); }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); saveFormPDF(form.id); }
+  });
+}
+
+function _pdfApplyZoom(zoom, mode = 'pct') {
+  const next = Math.max(_PDF_ZOOM_MIN, Math.min(_PDF_ZOOM_MAX, zoom));
+  _pdfViewerState.zoom = next;
+  _pdfViewerState.zoomMode = mode;
+  _pdfRebuildAtZoom();
+}
+
+async function _pdfRebuildAtZoom() {
+  // Persist current values from DOM before re-render
+  const captured = _collectFormFieldValues();
+  Object.assign(_pdfViewerState.editState.fields, captured);
+  await _pdfBuildPages(FORMS.find(f => f.id === _pdfViewerState.formId));
+  _pdfUpdateZoomLabel();
+}
+
+function _pdfUpdateZoomLabel() {
+  const lbl = document.getElementById('pdf-tb-zoom-label');
+  if (!lbl) return;
+  lbl.textContent = `${Math.round((_pdfViewerState.zoom || 1) * 100)}%`;
+}
+
+// ── Status pill / dirty / autosave ──────────────────────────────────────
+function _pdfUpdateStatus(kind, text) {
+  const el = document.getElementById('pdf-tb-status');
+  if (!el) return;
+  el.classList.remove('pdf-tb-status-saved','pdf-tb-status-saving','pdf-tb-status-dirty','pdf-tb-status-offline','pdf-tb-status-error');
+  el.classList.add(`pdf-tb-status-${kind}`);
+  el.textContent = text;
+}
+
+function _pdfMarkDirty() {
+  if (!_pdfViewerState) return;
+  _pdfViewerState.dirty = true;
+  const ts = _pdfViewerState.lastSavedAt;
+  _pdfUpdateStatus('dirty', ts ? `Unsaved · last saved ${_pdfRelTime(ts)}` : 'Unsaved');
+  // Save local draft immediately (cheap), debounce remote save.
+  _pdfSaveLocalDraft().catch(err => console.warn('[localDraft]', err.message));
+  if (_pdfViewerState.autosaveTimer) clearTimeout(_pdfViewerState.autosaveTimer);
+  _pdfViewerState.autosaveTimer = setTimeout(() => {
+    _pdfAutosaveRemote().catch(err => console.warn('[autosave]', err.message));
+  }, _PDF_AUTOSAVE_DELAY_MS);
+}
+
+function _pdfRelTime(d) {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 1000));
+  if (s < 5)   return 'just now';
+  if (s < 60)  return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  return new Date(d).toLocaleTimeString();
+}
+
+async function _pdfSaveLocalDraft() {
+  if (!_pdfViewerState) return;
+  const values = _collectFormFieldValues();
+  const state = {
+    version: 2,
+    fields: values,
+    signatures: _pdfViewerState.signatures || {},
+    layouts: _pdfViewerState.fieldLayouts || [],
+    updatedAt: new Date().toISOString(),
+  };
+  await _idbDraftPut({ formId: _pdfViewerState.formId, state, savedAt: new Date().toISOString() });
+}
+
+async function _pdfAutosaveRemote() {
+  if (!_pdfViewerState || _pdfViewerState.saving) return;
+  if (!_pdfViewerState.dirty) return;
+  if (!navigator.onLine) {
+    _pdfUpdateStatus('offline', 'Offline · saved locally');
+    return;
+  }
+  _pdfViewerState.saving = true;
+  _pdfUpdateStatus('saving', 'Saving…');
+  try {
+    const values = _collectFormFieldValues();
+    const next = await _formsSaveEditState(_pdfViewerState.formId, {
+      version: 2,
+      fields: values,
+      signatures: _pdfViewerState.signatures || {},
+      layouts: _pdfViewerState.fieldLayouts || [],
+    });
+    _pdfViewerState.editState = next;
+    _pdfViewerState.dirty = false;
+    _pdfViewerState.lastSavedAt = new Date(next.updatedAt || Date.now());
+    _pdfUpdateStatus('saved', `Saved · ${_pdfRelTime(_pdfViewerState.lastSavedAt)}`);
+    await _idbDraftDelete(_pdfViewerState.formId).catch(() => {});
+    formViewerEvent('autosave_ok', { formId: _pdfViewerState.formId, fields: Object.keys(values).length });
+  } catch (e) {
+    console.warn('[autosave]', e.message);
+    _pdfUpdateStatus('error', 'Sync failed · retry');
+    document.getElementById('pdf-tb-status').onclick = () => { _pdfAutosaveRemote().catch(() => {}); };
+  } finally {
+    _pdfViewerState.saving = false;
+  }
+}
+
+function _pdfBindOnlineEvents() {
+  if (window.__cxFormsOnlineBound) return;
+  window.__cxFormsOnlineBound = true;
+  window.addEventListener('online',  () => { if (_pdfViewerState?.dirty) _pdfAutosaveRemote().catch(() => {}); _pdfFlushQueuedDrafts().catch(() => {}); });
+  window.addEventListener('offline', () => { if (_pdfViewerState) _pdfUpdateStatus('offline', 'Offline · saved locally'); });
+}
+async function _pdfFlushQueuedDrafts() {
+  // On reconnect, flush any other forms' drafts (best-effort).
+  try {
+    const all = await _idbDraftAll();
+    for (const d of all) {
+      if (_pdfViewerState && d.formId === _pdfViewerState.formId) continue;
+      try {
+        await _formsSaveEditState(d.formId, d.state);
+        await _idbDraftDelete(d.formId);
+      } catch (e) { console.warn('[draft flush]', d.formId, e.message); }
+    }
+  } catch { /* noop */ }
+}
+
+function _pdfBindBeforeUnload() {
+  if (_pdfBeforeUnloadBound) return;
+  _pdfBeforeUnloadBound = true;
+  window.addEventListener('beforeunload', (e) => {
+    if (_pdfViewerState?.dirty) {
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    }
+  });
+}
+
+// ── Field navigation ────────────────────────────────────────────────────
+function _pdfAllInputEls() {
+  return Array.from(document.querySelectorAll('#form-viewer-pages [data-pdf-field-name], #form-viewer-pages [data-pdf-signature-field]'));
+}
+function _pdfFocusField(delta) {
+  const els = _pdfAllInputEls();
+  if (!els.length) return;
+  const cur = document.activeElement;
+  let idx = els.indexOf(cur);
+  if (idx === -1) idx = (delta > 0) ? -1 : 0;
+  idx = (idx + delta + els.length) % els.length;
+  const el = els[idx];
+  el.focus({ preventScroll: false });
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// ── Annotations / overlay rendering ─────────────────────────────────────
 function _pdfIsSignatureWidget(a) {
-  const label = [
-    a.fieldName,
-    a.alternativeText,
-    a.title,
-    a.contents,
-    a.id,
-  ].filter(Boolean).join(' ');
+  const label = [a.fieldName, a.alternativeText, a.title, a.contents, a.id].filter(Boolean).join(' ');
   return a.fieldType === 'Sig' || /signature/i.test(label) || /(^|[\s_-])sig(n)?($|[\s_-])/i.test(label);
 }
 
@@ -25082,62 +25808,77 @@ function _renderFormFieldOverlay(overlay, annotations, viewport, pageIndex) {
   annotations.filter(a => a.subtype === 'Widget' && (a.fieldName || _pdfIsSignatureWidget(a))).forEach((a, index) => {
     const layout = _pdfAnnotationLayout(a, pageIndex, index);
     if (!layout) return;
-    _pdfViewerState?.fieldLayouts?.push(layout);
+    const dup = (_pdfViewerState.fieldLayouts || []).find(l => _pdfLayoutId(l) === _pdfLayoutId(layout));
+    if (!dup) _pdfViewerState?.fieldLayouts?.push(layout);
     _renderPdfFieldControl(overlay, layout, viewport);
   });
 }
 
+function _pdfInferInputMode(name) {
+  const n = String(name || '').toLowerCase();
+  if (/(amount|qty|quantity|count|number|hrs|hours|min|max|psi|temp|volt|amp|ohm)/.test(n)) return 'decimal';
+  if (/(phone|tel)/.test(n)) return 'tel';
+  if (/(email)/.test(n))     return 'email';
+  return null;
+}
+
 function _renderPdfFieldControl(overlay, layout, viewport) {
-    const [x1, y1, x2, y2] = layout.rect;
-    const tl = viewport.convertToViewportPoint(x1, y2);
-    const br = viewport.convertToViewportPoint(x2, y1);
-    const left = Math.min(tl[0], br[0]), top = Math.min(tl[1], br[1]);
-    const width = Math.abs(br[0] - tl[0]), height = Math.abs(br[1] - tl[1]);
-    const fieldName = layout.fieldName;
-    const editState = _pdfViewerState?.editState || _emptyFormEditState();
-    const savedFields = editState.fields || {};
-    const hasSavedValue = Object.prototype.hasOwnProperty.call(savedFields, fieldName);
-    let el;
-    if (layout.kind === 'signature') {
-      el = document.createElement('button');
-      el.type = 'button';
-      el.className = 'pdf-signature-field';
-      el.innerHTML = '<span>Click to sign</span>';
-      el.dataset.pdfSignatureField = fieldName;
-      el.addEventListener('click', () => openSignaturePad({
-        fieldName,
-        pageIndex: layout.pageIndex,
-        rect: layout.rect,
-        target: el,
-      }));
-    } else if (layout.kind === 'text' || layout.kind === 'textarea') {
-      el = layout.kind === 'textarea' ? document.createElement('textarea') : document.createElement('input');
-      if (layout.kind === 'text') el.type = 'text';
-      el.value = hasSavedValue ? savedFields[fieldName] : (layout.fieldValue || '');
-    } else if (layout.kind === 'checkbox' || layout.kind === 'radio') {
-      el = document.createElement('input');
-      el.type = layout.kind;
-      el.value = layout.value || 'On';
-      if (layout.kind === 'radio') el.name = layout.radioName || fieldName;
-      el.checked = hasSavedValue ? !!savedFields[fieldName] : (layout.fieldValue !== 'Off' && !!layout.fieldValue);
-    } else if (layout.kind === 'select') {
-      el = document.createElement('select');
-      (layout.options || []).forEach(opt => {
-        const o = document.createElement('option');
-        o.value = opt.value;
-        o.textContent = opt.label;
-        if (o.value === (hasSavedValue ? savedFields[fieldName] : layout.fieldValue)) o.selected = true;
-        el.appendChild(o);
-      });
-    } else { return; }
-    if (!el.dataset.pdfSignatureField) el.dataset.pdfFieldName = fieldName;
-    el.style.cssText = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;box-sizing:border-box;border:1px solid #2563eb;background:rgba(219,234,254,0.4);font-size:${Math.max(10, Math.min(16, height * 0.65))}px;padding:1px 3px;`;
-    if (el.dataset.pdfSignatureField) el.style.cssText += 'cursor:pointer;text-align:center;color:#1d4ed8;font-weight:600;';
-    if (layout.readOnly && !el.dataset.pdfSignatureField) { el.disabled = true; el.style.background = 'rgba(0,0,0,0.05)'; }
-    const savedSig = editState.signatures?.[fieldName]?.dataUrl;
-    if (savedSig && el.dataset.pdfSignatureField) _setSignatureFieldPreview(el, savedSig);
-    overlay.appendChild(el);
-    _pdfViewerState?.renderedLayoutIds?.add(_pdfLayoutId(layout));
+  const [x1, y1, x2, y2] = layout.rect;
+  const tl = viewport.convertToViewportPoint(x1, y2);
+  const br = viewport.convertToViewportPoint(x2, y1);
+  const left = Math.min(tl[0], br[0]), top = Math.min(tl[1], br[1]);
+  const width = Math.abs(br[0] - tl[0]), height = Math.abs(br[1] - tl[1]);
+  const fieldName = layout.fieldName;
+  const editState = _pdfViewerState?.editState || _emptyFormEditState();
+  const savedFields = editState.fields || {};
+  const hasSavedValue = Object.prototype.hasOwnProperty.call(savedFields, fieldName);
+  let el;
+  if (layout.kind === 'signature') {
+    el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'pdf-signature-field';
+    el.innerHTML = '<span>Click to sign</span>';
+    el.dataset.pdfSignatureField = fieldName;
+    el.addEventListener('click', () => openSignaturePad({
+      fieldName,
+      pageIndex: layout.pageIndex,
+      rect: layout.rect,
+      target: el,
+    }));
+  } else if (layout.kind === 'text' || layout.kind === 'textarea') {
+    el = layout.kind === 'textarea' ? document.createElement('textarea') : document.createElement('input');
+    if (layout.kind === 'text') el.type = 'text';
+    el.value = hasSavedValue ? savedFields[fieldName] : (layout.fieldValue || '');
+    const im = _pdfInferInputMode(fieldName);
+    if (im) el.inputMode = im;
+    el.addEventListener('input', _pdfMarkDirty);
+  } else if (layout.kind === 'checkbox' || layout.kind === 'radio') {
+    el = document.createElement('input');
+    el.type = layout.kind;
+    el.value = layout.value || 'On';
+    if (layout.kind === 'radio') el.name = layout.radioName || fieldName;
+    el.checked = hasSavedValue ? !!savedFields[fieldName] : (layout.fieldValue !== 'Off' && !!layout.fieldValue);
+    el.addEventListener('change', _pdfMarkDirty);
+  } else if (layout.kind === 'select') {
+    el = document.createElement('select');
+    (layout.options || []).forEach(opt => {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label;
+      if (o.value === (hasSavedValue ? savedFields[fieldName] : layout.fieldValue)) o.selected = true;
+      el.appendChild(o);
+    });
+    el.addEventListener('change', _pdfMarkDirty);
+  } else { return; }
+  if (!el.dataset.pdfSignatureField) el.dataset.pdfFieldName = fieldName;
+  const fontPx = Math.max(11, Math.min(16, height * 0.65));
+  el.className = (el.className ? el.className + ' ' : '') + 'pdf-field-input';
+  el.style.cssText = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;font-size:${fontPx}px;`;
+  if (layout.readOnly && !el.dataset.pdfSignatureField) { el.disabled = true; el.classList.add('readonly'); }
+  const savedSig = editState.signatures?.[fieldName]?.dataUrl;
+  if (savedSig && el.dataset.pdfSignatureField) _setSignatureFieldPreview(el, savedSig);
+  overlay.appendChild(el);
+  _pdfViewerState?.renderedLayoutIds?.add(_pdfLayoutId(layout));
 }
 
 function _renderSavedFieldLayouts() {
@@ -25152,10 +25893,12 @@ function _renderSavedFieldLayouts() {
   });
 }
 
+// ── Signature pad (Draw + Type modes) ───────────────────────────────────
 function openSignaturePad({ fieldName, pageIndex, rect, target }) {
   if (!_pdfViewerState) return;
   document.getElementById('form-signature-overlay')?.remove();
   const existing = _pdfViewerState.signatures?.[fieldName]?.dataUrl || '';
+  const profileName = (currentProfile?.full_name || currentRoleUser?.name || '').trim();
   const overlay = document.createElement('div');
   overlay.id = 'form-signature-overlay';
   overlay.className = 'signature-pad-overlay';
@@ -25168,11 +25911,27 @@ function openSignaturePad({ fieldName, pageIndex, rect, target }) {
         </div>
         <button class="modal-close" type="button" onclick="closeSignaturePad()">&times;</button>
       </div>
+      <div class="signature-pad-tabs">
+        <button type="button" class="sig-tab active"  data-mode="draw">Draw</button>
+        <button type="button" class="sig-tab"         data-mode="type">Type</button>
+      </div>
       <div class="signature-pad-body">
-        <canvas id="signature-pad-canvas" class="signature-pad-canvas"></canvas>
+        <div class="sig-pane sig-pane-draw">
+          <canvas id="signature-pad-canvas" class="signature-pad-canvas"></canvas>
+          <div class="sig-tools">
+            <button type="button" class="form-secondary" id="sig-undo">Undo</button>
+            <button type="button" class="form-secondary" id="sig-clear">Clear</button>
+          </div>
+        </div>
+        <div class="sig-pane sig-pane-type" hidden>
+          <input type="text" id="sig-type-input" class="sig-type-input" placeholder="Type your name" value="${escapeHtml(profileName)}" />
+          <div id="sig-type-preview" class="sig-type-preview">${escapeHtml(profileName)}</div>
+        </div>
+        <label class="sig-stamp">
+          <input type="checkbox" id="sig-stamp-check" /> Add date &amp; name stamp on the PDF
+        </label>
       </div>
       <div class="signature-pad-footer">
-        <button class="form-secondary" type="button" onclick="clearSignaturePad()">Clear</button>
         <button class="form-secondary" type="button" onclick="closeSignaturePad()">Cancel</button>
         <button class="form-submit" type="button" id="signature-pad-apply">Apply Signature</button>
       </div>
@@ -25183,52 +25942,103 @@ function openSignaturePad({ fieldName, pageIndex, rect, target }) {
   const canvas = document.getElementById('signature-pad-canvas');
   const ctx = canvas.getContext('2d');
   const ratio = Math.max(1, window.devicePixelRatio || 1);
-  const cssWidth = Math.min(720, Math.max(420, window.innerWidth - 80));
+  const cssWidth  = Math.min(720, Math.max(420, window.innerWidth - 80));
   const cssHeight = Math.max(180, Math.min(260, cssWidth * 0.32));
-  canvas.style.width = `${cssWidth}px`;
+  canvas.style.width  = `${cssWidth}px`;
   canvas.style.height = `${cssHeight}px`;
-  canvas.width = Math.floor(cssWidth * ratio);
+  canvas.width  = Math.floor(cssWidth  * ratio);
   canvas.height = Math.floor(cssHeight * ratio);
   ctx.scale(ratio, ratio);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.strokeStyle = '#111827';
-  ctx.lineWidth = 2.6;
+
+  const strokes = []; // [{points:[{x,y,p}], width}]
+  let drawing = false;
+  let curStroke = null;
+  let hasInk = false;
+
+  const redraw = () => {
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+    for (const s of strokes) {
+      const pts = s.points;
+      if (pts.length < 2) continue;
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], b = pts[i];
+        ctx.lineWidth = (a.w + b.w) / 2;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+        ctx.quadraticCurveTo(a.x, a.y, cx, cy);
+        ctx.stroke();
+      }
+    }
+  };
 
   if (existing) {
     const img = new Image();
     img.onload = () => ctx.drawImage(img, 0, 0, cssWidth, cssHeight);
     img.src = existing;
+    hasInk = true;
   }
 
-  let drawing = false;
-  let hasInk = !!existing;
   const point = (e) => {
     const r = canvas.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+    const pressure = (e.pressure && e.pressure > 0 && e.pressure < 1) ? e.pressure : 0.5;
+    const w = 1.4 + pressure * 2.8;
+    return { x: e.clientX - r.left, y: e.clientY - r.top, w };
   };
-  canvas.addEventListener('pointerdown', e => {
+  canvas.addEventListener('pointerdown', (e) => {
     drawing = true;
     hasInk = true;
     canvas.setPointerCapture(e.pointerId);
-    const p = point(e);
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
+    curStroke = { points: [point(e)] };
+    strokes.push(curStroke);
   });
-  canvas.addEventListener('pointermove', e => {
+  canvas.addEventListener('pointermove', (e) => {
     if (!drawing) return;
-    const p = point(e);
-    ctx.lineTo(p.x, p.y);
-    ctx.stroke();
+    curStroke.points.push(point(e));
+    redraw();
   });
-  const stop = () => { drawing = false; };
+  const stop = () => { drawing = false; curStroke = null; };
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', stop);
+  canvas.addEventListener('pointerleave', stop);
+
+  document.getElementById('sig-undo').onclick = () => {
+    strokes.pop();
+    if (strokes.length === 0) hasInk = !!existing;
+    redraw();
+  };
+  document.getElementById('sig-clear').onclick = () => {
+    strokes.length = 0;
+    hasInk = false;
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+  };
+
+  // Tabs
+  let mode = 'draw';
+  overlay.querySelectorAll('.sig-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      overlay.querySelectorAll('.sig-tab').forEach(t => t.classList.toggle('active', t === tab));
+      mode = tab.dataset.mode;
+      overlay.querySelector('.sig-pane-draw').hidden = mode !== 'draw';
+      overlay.querySelector('.sig-pane-type').hidden = mode !== 'type';
+    });
+  });
+
+  // Type mode preview
+  const typeInput = document.getElementById('sig-type-input');
+  const typePrev  = document.getElementById('sig-type-preview');
+  typeInput.addEventListener('input', () => { typePrev.textContent = typeInput.value || ''; });
 
   overlay._signatureContext = {
     ctx, canvas, cssWidth, cssHeight, fieldName, pageIndex, rect, target,
+    getMode: () => mode,
+    getTypeText: () => typeInput.value || '',
     hasInk: () => hasInk,
-    setInk: value => { hasInk = value; },
+    setInk: v => { hasInk = v; },
+    getStamp: () => document.getElementById('sig-stamp-check')?.checked,
   };
   document.getElementById('signature-pad-apply').onclick = applySignaturePad;
 }
@@ -25262,21 +26072,51 @@ function _setSignatureFieldPreview(target, dataUrl) {
   target.appendChild(img);
 }
 
+function _typedSignatureToDataUrl(text, cssWidth = 600, cssHeight = 180) {
+  const c = document.createElement('canvas');
+  c.width = cssWidth; c.height = cssHeight;
+  const cx = c.getContext('2d');
+  cx.fillStyle = '#fff';
+  cx.fillRect(0, 0, cssWidth, cssHeight);
+  cx.fillStyle = '#111827';
+  cx.textBaseline = 'middle';
+  cx.textAlign = 'center';
+  // Try Brush Script / cursive fallbacks; browser will sub if missing.
+  cx.font = `italic 64px "Brush Script MT","Lucida Handwriting","Segoe Script",cursive`;
+  cx.fillText(text || '', cssWidth / 2, cssHeight / 2);
+  return c.toDataURL('image/png');
+}
+
 function applySignaturePad() {
   const overlay = document.getElementById('form-signature-overlay');
   const s = overlay?._signatureContext;
-  if (!s || !s.hasInk()) { toast('Draw a signature first', 'warn'); return; }
-  const dataUrl = s.canvas.toDataURL('image/png');
+  if (!s) return;
+  let dataUrl = '';
+  if (s.getMode() === 'type') {
+    const txt = s.getTypeText().trim();
+    if (!txt) { toast('Type your name first', 'warn'); return; }
+    dataUrl = _typedSignatureToDataUrl(txt);
+  } else {
+    if (!s.hasInk()) { toast('Draw a signature first', 'warn'); return; }
+    dataUrl = s.canvas.toDataURL('image/png');
+  }
+  const stamp = s.getStamp() ? {
+    name: (currentProfile?.full_name || currentRoleUser?.name || '').trim(),
+    at:   new Date().toISOString(),
+  } : null;
   _pdfViewerState.signatures[s.fieldName] = {
     name: s.fieldName,
     pageIndex: s.pageIndex,
     rect: s.rect,
     dataUrl,
+    stamp,
   };
   _setSignatureFieldPreview(s.target, dataUrl);
   closeSignaturePad();
+  _pdfMarkDirty();
 }
 
+// ── Field collection / download builder ─────────────────────────────────
 function _collectFormFieldValues() {
   const values = {};
   document.querySelectorAll('#form-viewer-pages [data-pdf-field-name]').forEach(el => {
@@ -25285,6 +26125,11 @@ function _collectFormFieldValues() {
     else if (el.type === 'radio') { if (el.checked) values[name] = el.value; }
     else values[name] = el.value;
   });
+  // Merge with previously-known editState values for fields not in DOM (lazy unrendered pages).
+  const prior = _pdfViewerState?.editState?.fields || {};
+  for (const k of Object.keys(prior)) {
+    if (!Object.prototype.hasOwnProperty.call(values, k)) values[k] = prior[k];
+  }
   return values;
 }
 
@@ -25318,6 +26163,36 @@ function _pdfIsLayoutChecked(state, layout) {
   return !!val;
 }
 
+function _setExistingPdfFieldValue(acroForm, layout, value) {
+  if (!layout?.fieldName) return false;
+  let field;
+  try { field = acroForm.getField(layout.fieldName); }
+  catch { return false; }
+  try {
+    if (layout.kind === 'text' || layout.kind === 'textarea') {
+      field.setText(String(value ?? ''));
+      return true;
+    }
+    if (layout.kind === 'checkbox') {
+      if (value) field.check();
+      else field.uncheck();
+      return true;
+    }
+    if (layout.kind === 'radio') {
+      if (value != null && String(value)) field.select(String(value));
+      return true;
+    }
+    if (layout.kind === 'select') {
+      if (value != null && String(value)) field.select(String(value));
+      else field.clear();
+      return true;
+    }
+  } catch (e) {
+    console.warn('[_setExistingPdfFieldValue] skipped:', layout.fieldName, e.message);
+  }
+  return false;
+}
+
 async function _addDownloadStateFields(doc, acroForm, state) {
   const layouts = Array.isArray(state.layouts) ? state.layouts : [];
   const fontColor = PDFLib.rgb(0.05, 0.09, 0.16);
@@ -25330,16 +26205,14 @@ async function _addDownloadStateFields(doc, acroForm, state) {
     const fieldName = _pdfExportFieldName(layout, index);
     const value = _pdfSavedValueForLayout(state, layout);
     try {
+      if (_setExistingPdfFieldValue(acroForm, layout, value)) return;
       if (layout.kind === 'text' || layout.kind === 'textarea') {
         const field = acroForm.createTextField(fieldName);
         if (layout.kind === 'textarea') field.enableMultiline();
         field.setText(String(value ?? ''));
         field.setFontSize(Math.max(8, Math.min(12, box.height * 0.55)));
         field.addToPage(page, {
-          x: box.x,
-          y: box.y,
-          width: box.width,
-          height: box.height,
+          x: box.x, y: box.y, width: box.width, height: box.height,
           textColor: fontColor,
           borderColor: PDFLib.rgb(0.75, 0.79, 0.86),
           backgroundColor: PDFLib.rgb(1, 1, 1),
@@ -25350,10 +26223,7 @@ async function _addDownloadStateFields(doc, acroForm, state) {
         const field = acroForm.createCheckBox(fieldName);
         if (_pdfIsLayoutChecked(state, layout)) field.check();
         field.addToPage(page, {
-          x: box.x,
-          y: box.y,
-          width: box.width,
-          height: box.height,
+          x: box.x, y: box.y, width: box.width, height: box.height,
           borderColor: PDFLib.rgb(0.15, 0.2, 0.28),
           backgroundColor: PDFLib.rgb(1, 1, 1),
           borderWidth: 0.5,
@@ -25364,10 +26234,7 @@ async function _addDownloadStateFields(doc, acroForm, state) {
         if (options.length) field.addOptions(options);
         if (value != null && String(value)) field.select(String(value));
         field.addToPage(page, {
-          x: box.x,
-          y: box.y,
-          width: box.width,
-          height: box.height,
+          x: box.x, y: box.y, width: box.width, height: box.height,
           textColor: fontColor,
           borderColor: PDFLib.rgb(0.75, 0.79, 0.86),
           backgroundColor: PDFLib.rgb(1, 1, 1),
@@ -25394,12 +26261,19 @@ async function saveFormPDF(formId) {
       layouts: _pdfViewerState.fieldLayouts || [],
     });
     _pdfViewerState.editState = nextState;
-    logAudit('Saved Form', FORMS.find(f => f.id === formId)?.name || formId, `${Object.keys(values).length} field(s), ${Object.keys(nextState.signatures || {}).length} signature(s)`);
+    _pdfViewerState.dirty = false;
+    _pdfViewerState.lastSavedAt = new Date(nextState.updatedAt || Date.now());
+    _pdfUpdateStatus('saved', `Saved · ${_pdfRelTime(_pdfViewerState.lastSavedAt)}`);
+    await _idbDraftDelete(formId).catch(() => {});
+    logAudit('Saved Form', FORMS.find(f => f.id === formId)?.name || formId,
+      `${Object.keys(values).length} field(s), ${Object.keys(nextState.signatures || {}).length} signature(s) · ${navigator.onLine ? 'online' : 'offline'}`);
+    formViewerEvent('save_ok', { formId, fields: Object.keys(values).length, online: navigator.onLine });
     toast('✓ Form saved', 'success');
     if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   } catch (e) {
     console.error('[saveFormPDF]', e);
     toast('Save failed: ' + e.message, 'error');
+    _pdfUpdateStatus('error', 'Save failed');
     if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   }
 }
@@ -25413,14 +26287,13 @@ async function _buildEditedFormPdfBlob(formRow, stateOverride = null) {
   const doc = await PDFLib.PDFDocument.load(bytes);
   try {
     const acroForm = doc.getForm();
-    for (const field of acroForm.getFields()) {
-      try { acroForm.removeField(field); } catch { /* keep going */ }
-    }
     await _addDownloadStateFields(doc, acroForm, state);
     acroForm.updateFieldAppearances();
   } catch (e) {
     console.warn('[_buildEditedFormPdfBlob] AcroForm values skipped:', e.message);
   }
+  // Optional helper font for stamps.
+  let stampFont = null;
   for (const sig of Object.values(state.signatures || {})) {
     if (!sig?.dataUrl || !Array.isArray(sig.rect)) continue;
     try {
@@ -25443,6 +26316,18 @@ async function _buildEditedFormPdfBlob(formRow, stateOverride = null) {
         width: drawW,
         height: drawH,
       });
+      if (sig.stamp?.name || sig.stamp?.at) {
+        if (!stampFont) stampFont = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+        const stampText = `${sig.stamp.name || ''}${sig.stamp.at ? '  ' + new Date(sig.stamp.at).toLocaleString() : ''}`.trim();
+        const fontSize = Math.max(6, Math.min(9, boxH * 0.18));
+        page.drawText(stampText, {
+          x: Math.min(x1, x2) + pad,
+          y: Math.min(y1, y2) + 1,
+          size: fontSize,
+          font: stampFont,
+          color: PDFLib.rgb(0.25, 0.3, 0.4),
+        });
+      }
     } catch (e) {
       console.warn('[_buildEditedFormPdfBlob] signature skipped:', sig.name, e.message);
     }
@@ -25465,11 +26350,17 @@ async function downloadFormPDF(formId) {
     a.download = form.original_filename || `${form.name || 'form'}.pdf`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    formViewerEvent('download_ok', { formId, online: navigator.onLine });
   } catch (e) { toast('Download failed: ' + e.message, 'error'); }
 }
 
 function closeFormViewer() {
   closeSignaturePad();
+  if (_pdfViewerState?.dirty) {
+    // Best-effort flush: local draft is already saved; try remote async.
+    _pdfAutosaveRemote().catch(() => {});
+  }
+  if (_pdfViewerState?.autosaveTimer) clearTimeout(_pdfViewerState.autosaveTimer);
   _pdfViewerState = null;
   closeModal();
 }
@@ -25714,15 +26605,36 @@ function _reopenTemplateEditor(templateId) {
 
 // ── FORMS MODULE PAGE ───────────────────────────────────────────────────
 let _formsPageFilters = { phase: '', location: '', subsystem: '', search: '', showTemplates: false };
+let _formsSearchDebounce = null;
 
 async function renderFormsPage() {
   const root = document.getElementById('forms-page-content');
   if (!root) return;
   await loadForms();
   root.innerHTML = _formsPageHTML();
+  _formsRenderRecentsRow();
+  _formsRenderList();
+}
+
+// Re-render only the list (filters + table). Keeps the recents row intact
+// so it doesn't flicker on every filter change. Does NOT re-fetch from DB —
+// callers that need fresh data should use `renderFormsPage()`.
+function _formsRenderList() {
+  const host = document.getElementById('forms-page-list');
+  if (!host) return;
+  host.innerHTML = _formsPageListHTML();
 }
 
 function _formsPageHTML() {
+  return `
+    <div class="admin-section">
+      <div id="forms-recents-row" class="forms-recents-row" hidden></div>
+      <div id="forms-page-list">${_formsPageListHTML()}</div>
+    </div>
+  `;
+}
+
+function _formsPageListHTML() {
   const f = _formsPageFilters;
   const all = FORMS.filter(x => f.showTemplates ? x.is_template : !x.is_template);
   const phases    = [...new Set(all.map(x => x.phase    ).filter(Boolean))].sort();
@@ -25762,10 +26674,9 @@ function _formsPageHTML() {
       </tr>`;
   }).join('');
   return `
-    <div class="admin-section">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
-        <input type="text" class="form-input" placeholder="Search name, description, filename…" style="flex:1;min-width:240px;"
-               value="${escapeHtml(f.search)}" oninput="_formsSetFilter('search', this.value)">
+        <input type="text" class="form-input" id="forms-page-search" placeholder="Search name, description, filename…" style="flex:1;min-width:240px;"
+               value="${escapeHtml(f.search)}" oninput="_formsSetSearch(this.value)">
         <select class="form-input" onchange="_formsSetFilter('phase', this.value)">
           <option value="">All Phases</option>
           ${phases.map(p => `<option value="${escapeHtml(p)}" ${f.phase === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
@@ -25796,11 +26707,31 @@ function _formsPageHTML() {
       <div style="font-size:11px;color:var(--gray-500);margin-top:10px;">
         ${filtered.length} of ${all.length} ${f.showTemplates ? 'template blanks' : 'forms'} shown. Attach new forms from the 📎 icon on a test case row, or as a template-level PDF in the Activity Templates editor.
       </div>
-    </div>
   `;
 }
 
-function _formsSetFilter(key, value) { _formsPageFilters[key] = value; renderFormsPage(); }
+// Filter setter — re-renders only the list region (no DB hit, no flicker).
+function _formsSetFilter(key, value) {
+  _formsPageFilters[key] = value;
+  _formsRenderList();
+}
+
+// Debounced search to avoid re-rendering the list on every keystroke.
+function _formsSetSearch(value) {
+  _formsPageFilters.search = value;
+  if (_formsSearchDebounce) clearTimeout(_formsSearchDebounce);
+  _formsSearchDebounce = setTimeout(() => {
+    _formsSearchDebounce = null;
+    _formsRenderList();
+    // Re-focus the search input + restore caret since innerHTML replaced it.
+    const el = document.getElementById('forms-page-search');
+    if (el) {
+      el.focus();
+      const len = el.value.length;
+      try { el.setSelectionRange(len, len); } catch { /* noop */ }
+    }
+  }, 180);
+}
 
 function openEditFormMetadata(formId) {
   const f = FORMS.find(x => x.id === formId);

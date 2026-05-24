@@ -1327,5 +1327,13 @@
 
 <script src="data.js"></script>
 <script src="app.js"></script>
+<link rel="manifest" href="./manifest.webmanifest">
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(err => console.warn('[sw] register failed:', err));
+    });
+  }
+</script>
 </body>
 </html>
