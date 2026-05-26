@@ -4535,6 +4535,20 @@ async function deleteTemplate(id) {
 // ADMIN FIELD CONFIG — Configurable dropdown options, grouped by module
 // ==========================================================================
 const SUBSYSTEMS_LIST = ['DCS','ATS','IXL','CORE CBTC','PS&TP','IAMS','SCADA','CYBER','TCH'];
+const DRAWING_DISCIPLINE_DEFAULTS = [
+  'Architectural',
+  'Civil',
+  'Electrical',
+  'Fire & Safety',
+  'Fire Protection',
+  'General',
+  'Index',
+  'Landscape',
+  'Mechanical',
+  'Plumbing',
+  'Structural',
+  'Train Control',
+];
 
 // Module-grouped fieldset definitions.
 // Add new fieldsets here to expose them in Field Config automatically.
@@ -4581,6 +4595,17 @@ const FIELDCONFIG_MODULES = [
       },
     ],
   },
+  {
+    id: 'drawings', label: 'Drawings', icon: 'DRW',
+    fields: [
+      {
+        key: 'drawing_discipline',
+        label: 'Drawing Discipline',
+        defaults: DRAWING_DISCIPLINE_DEFAULTS,
+        hint: 'Used by drawing import review. New free-text disciplines are added here after the import is confirmed.',
+      },
+    ],
+  },
 ];
 
 // Flattened list for backward-compat lookups (e.g. _fscDef(key))
@@ -4596,6 +4621,32 @@ FIELDCONFIG_MODULES.forEach(m =>
 
 function _fsCfg(key)  { return FIELDSET_CONFIG[key] || []; }
 function _fscDef(key) { return FIELDCONFIG_DEFS.find(d => d.key === key); }
+function _fsOptions(key) {
+  const configured = _fsCfg(key);
+  if (configured.length) return configured;
+  return _fscDef(key)?.defaults || [];
+}
+
+async function _fscEnsureOptions(key, values) {
+  const cleaned = (values || []).map(v => String(v || '').trim()).filter(Boolean);
+  if (!cleaned.length) return [];
+  const def = _fscDef(key);
+  const cur = [..._fsOptions(key)];
+  const seen = new Set(cur.map(v => v.toLowerCase()));
+  const added = [];
+  for (const value of cleaned) {
+    if (seen.has(value.toLowerCase())) continue;
+    cur.push(value);
+    seen.add(value.toLowerCase());
+    added.push(value);
+  }
+  if (!added.length) return [];
+  const { error } = await _sb.from('fieldset_config')
+    .upsert({ field_key: key, label: def?.label || key, options: cur, updated_at: new Date().toISOString() }, { onConflict: 'field_key' });
+  if (error) throw error;
+  FIELDSET_CONFIG[key] = cur;
+  return added;
+}
 
 // Which fieldset editors are currently open (persists across re-renders)
 let _fscOpenKeys = new Set();
@@ -28729,6 +28780,30 @@ function _drwDiscipline(sheetNum) {
   return map[prefix] || prefix || 'General';
 }
 
+function _drwDisciplineOptions() {
+  const opts = [
+    ..._fsOptions('drawing_discipline'),
+    ...DRAWING_SHEETS.map(s => s.discipline).filter(Boolean),
+  ];
+  const seen = new Set();
+  return opts
+    .map(v => String(v || '').trim())
+    .filter(v => {
+      if (!v) return false;
+      const key = v.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+function _drwDisciplineListHTML() {
+  return `<datalist id="drw-discipline-options">
+    ${_drwDisciplineOptions().map(d => `<option value="${escapeHtml(d)}"></option>`).join('')}
+  </datalist>`;
+}
+
 // ── PDF text parsing ───────────────────────────────────────────────────────
 // Title-block field labels we must NOT confuse for values.
 const _DRW_LABELS = [
@@ -29467,6 +29542,7 @@ function _drwShowReview(numPages) {
       <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(false)" style="font-size:12px;padding:5px 10px;">Select none</button>
       ${allNeedReview ? `<button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()" style="font-size:12px;padding:5px 10px;margin-left:auto;">↩ Recalibrate region</button>` : ''}
     </div>
+    ${_drwDisciplineListHTML()}
     <div style="max-height:480px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;">
       <table class="data-table">
         <thead><tr>
@@ -29495,7 +29571,9 @@ function _drwShowReview(numPages) {
         </tbody>
       </table>
     </div>
-    <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">Edit any field directly. Unchecked rows will be skipped on import.</p>`;
+    <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">Edit any field directly. Discipline suggestions come from Field Config; new free-text disciplines are added there after Confirm &amp; Import succeeds.</p>`;
+
+  _drwHydrateDisciplineReviewInputs();
 
   document.querySelector('#modal-overlay .modal-footer').innerHTML = `
     <button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()">← Recalibrate</button>
@@ -29503,10 +29581,26 @@ function _drwShowReview(numPages) {
     <button class="admin-action-btn" onclick="_drwConfirmImport()">Confirm &amp; Import</button>`;
 }
 
+function _drwHydrateDisciplineReviewInputs() {
+  _drwParsedSheets.forEach((s, i) => {
+    const row = document.getElementById(`drw-rev-row-${i}`);
+    const cell = row?.lastElementChild;
+    if (!cell) return;
+    cell.innerHTML = `
+      <input id="drw-discipline-${i}" class="form-input" list="drw-discipline-options" value="${escapeHtml(s.discipline || '')}"
+        style="width:160px;font-size:12px;padding:3px 6px;"
+        placeholder="Discipline..." onchange="_drwReviewEdit(${i},'discipline',this.value)" />`;
+  });
+}
+
 function _drwReviewEdit(idx, field, value) {
   if (_drwParsedSheets[idx]) {
     _drwParsedSheets[idx][field] = value;
-    if (field === 'sheetNumber') _drwParsedSheets[idx].discipline = _drwDiscipline(value);
+    if (field === 'sheetNumber') {
+      _drwParsedSheets[idx].discipline = _drwDiscipline(value);
+      const disciplineInput = document.getElementById(`drw-discipline-${idx}`);
+      if (disciplineInput) disciplineInput.value = _drwParsedSheets[idx].discipline || '';
+    }
   }
 }
 
@@ -29549,6 +29643,32 @@ function _drwReviewUpdateCounts() {
   if (toggle) toggle.checked = included === total && total > 0;
 }
 
+function _drwSheetInsertRows(setId, meta, sheets, includePageNumber = true) {
+  return sheets.map(s => {
+    const row = {
+      set_id: setId, location: meta.location, page_index: s.pageIndex,
+      sheet_number: s.sheetNumber || null, sheet_title: s.sheetTitle || null,
+      discipline: s.discipline || null, revision: s.revision || null,
+      is_current: true, confirmed: true, needs_review: s.needsReview || false,
+    };
+    if (includePageNumber) row.page_number = s.pageNumber || null;
+    return row;
+  });
+}
+
+async function _drwInsertSheetRows(setId, meta, sheets) {
+  try {
+    await _dbInsert('drawing_sheets', _drwSheetInsertRows(setId, meta, sheets, true));
+    return { pageNumberSkipped: false };
+  } catch (e) {
+    const msg = String(e?.message || '');
+    if (!msg.includes("'page_number' column") && !msg.includes('page_number')) throw e;
+    console.warn('[drawings import] page_number column missing; retrying without page_number. Run supabase_drawings_add_page_number.sql to preserve PAGE NO.');
+    await _dbInsert('drawing_sheets', _drwSheetInsertRows(setId, meta, sheets, false));
+    return { pageNumberSkipped: true };
+  }
+}
+
 async function _drwConfirmImport() {
   const meta = _drwUploadMeta;
   if (!meta) return;
@@ -29584,20 +29704,22 @@ async function _drwConfirmImport() {
     if (toSupersede.length) await Promise.all(toSupersede.map(s => _dbUpdate('drawing_sheets', { is_current: false }, { id: s.id })));
 
     document.getElementById('drw-confirm-status').textContent = 'Saving sheet records…';
-    await _dbInsert('drawing_sheets', toImport.map(s => ({
-      set_id: setId, location: meta.location, page_index: s.pageIndex,
-      sheet_number: s.sheetNumber || null, sheet_title: s.sheetTitle || null,
-      page_number: s.pageNumber || null,
-      discipline: s.discipline || null, revision: s.revision || null,
-      is_current: true, confirmed: true, needs_review: s.needsReview || false,
-    })));
+    const insertResult = await _drwInsertSheetRows(setId, meta, toImport);
+
+    const confirmedDisciplines = toImport.map(s => s.discipline).filter(Boolean);
+    let addedDisciplines = [];
+    try {
+      addedDisciplines = await _fscEnsureOptions('drawing_discipline', confirmedDisciplines);
+    } catch (cfgErr) {
+      console.warn('[drawings import] discipline config update failed:', cfgErr.message);
+    }
     await _dbUpdate('drawing_sets', { status: 'ready' }, { id: setId });
 
     await loadDrawingsData();
     _drwCloseUpload();
     renderDrawingsPage();
     const skipped = _drwParsedSheets.length - toImport.length;
-    toast(`Drawing set imported: ${toImport.length} sheets${skipped ? `, ${skipped} skipped` : ''}${toSupersede.length ? `, ${toSupersede.length} auto-upreved` : ''}`, 'success');
+    toast(`Drawing set imported: ${toImport.length} sheets${skipped ? `, ${skipped} skipped` : ''}${toSupersede.length ? `, ${toSupersede.length} auto-upreved` : ''}${addedDisciplines.length ? `, ${addedDisciplines.length} discipline${addedDisciplines.length===1?'':'s'} added` : ''}${insertResult.pageNumberSkipped ? ', page numbers skipped until DB migration is run' : ''}`, 'success');
   } catch(e) {
     document.querySelector('#modal-overlay .modal-body').innerHTML = `<p style="color:var(--bad);padding:20px;">Import failed: ${escapeHtml(e.message)}</p>`;
     document.querySelector('#modal-overlay .modal-footer').innerHTML = `<button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Close</button>`;
