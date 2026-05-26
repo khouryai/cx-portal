@@ -28734,6 +28734,8 @@ function _drwDiscipline(sheetNum) {
 const _DRW_LABELS = [
   /^contract\s*sheet\s*no\.?$/i,
   /^sheet\s*no\.?(\s*of\s*\d+)?$/i,
+  /^page\s*no\.?$/i,
+  /^pg\.?\s*no\.?$/i,
   /^dwg\.?\s*no\.?$/i,
   /^drawing\s*no\.?$/i,
   /^drawing\s*number$/i,
@@ -28741,6 +28743,7 @@ const _DRW_LABELS = [
   /^rev\.?(ision)?$/i,
   /^revisions?$/i,
   /^scale$/i,
+  /^size$/i,
   /^date$/i,
   /^drawn\s*by$/i,
   /^designed\s*by$/i,
@@ -28760,23 +28763,39 @@ const _DRW_LABELS = [
   /^contract$/i,
 ];
 
+// Project-banner text that appears on every sheet — should NEVER be picked as a title.
+// Match by characteristic keywords so spelling variants ("COMMUNICATIONS" vs
+// "COMMINICATIONS") and line splits don't matter.
+const _DRW_BANNER_PATTERNS = [
+  /design[\s-]+build/i,
+  /\bCBTC\b/,
+  /communications?\s+based\s+train\s+control/i,
+  /train\s+control\s+\(?CBTC/i,
+  /\bBART\b.*(contract|project)/i,
+];
+
 // Sheet-number formats — checked in order from most specific to least.
-// Examples we want to recognize:
-//   E11001-W30-001     (BART/Hitachi long form)
-//   496H-110           (mixed alpha/digit prefix)
-//   E-1001  /  E101    (legacy short form)
+//   E11004-W30-001     long form with page suffix
+//   E11004-W30         2-segment contract sheet no.
+//   496H-110           mixed alpha/digit prefix
+//   E-1001 / E101      legacy short form
 const _DRW_SHEET_PATTERNS = [
-  /^[A-Z]{1,4}\d{2,}-[A-Z0-9]+-\d+[A-Z]?$/i,   // E11001-W30-001
+  /^[A-Z]{1,4}\d{2,}-[A-Z0-9]+-\d+[A-Z]?$/i,   // E11004-W30-001
+  /^[A-Z]{1,4}\d{2,}-[A-Z0-9]+$/i,             // E11004-W30
   /^\d+[A-Z]+-\d+[A-Z]?$/i,                      // 496H-110
   /^[A-Z]{1,4}-\d+[A-Z]?$/i,                     // E-1001
   /^[A-Z]{1,3}\d{1,4}[A-Z]?$/i,                  // E101, M22A
 ];
 
-const _DRW_FILENAME_RE = /([A-Z]{1,4}\d{2,}-[A-Z0-9]+-\d+[A-Z]?)/i;
+const _DRW_FILENAME_RE = /([A-Z]{1,4}\d{2,}-[A-Z0-9]+(?:-\d+[A-Z]?)?)/i;
 
 function _drwIsLabel(s) {
   const t = s.replace(/\s+/g, ' ').trim();
   return _DRW_LABELS.some(re => re.test(t));
+}
+
+function _drwIsBanner(s) {
+  return _DRW_BANNER_PATTERNS.some(re => re.test(s));
 }
 
 function _drwMatchSheetNum(s) {
@@ -28792,24 +28811,72 @@ function _drwBuildCells(items, W, H, region) {
     pdfXMin = W * region.fx;
     pdfXMax = W * (region.fx + region.fw);
   }
+  // Small tolerance so text items on the exact region boundary aren't excluded
+  // due to float rounding (the difference between (1-fy-fh)*H and the original
+  // boundary can be ~1e-13 even when they're conceptually identical).
+  const EPS = 1;
   return items
     .map(it => {
       const x = it.transform[4], y = it.transform[5];
       return { x, y, w: it.width || 0, h: it.height || 10, str: (it.str || '').trim() };
     })
-    .filter(c => c.str && c.x >= pdfXMin && c.x <= pdfXMax && c.y >= pdfYMin && c.y <= pdfYMax);
+    .filter(c => c.str
+      && c.x >= pdfXMin - EPS && c.x <= pdfXMax + EPS
+      && c.y >= pdfYMin - EPS && c.y <= pdfYMax + EPS);
+}
+
+// Label-anchored value extraction: find the cell matching labelRe, then return the
+// closest non-label cell that satisfies valueOk, preferring cells directly below
+// or directly to the right of the label (the two standard title-block layouts).
+function _drwFindNearLabel(cells, labelRe, valueOk = (() => true), opts = {}) {
+  const { maxDist = 120 } = opts;
+  const label = cells.find(c => labelRe.test(c.str));
+  if (!label) return null;
+  const cands = cells
+    .filter(c => c !== label && !_drwIsLabel(c.str) && c.str !== label.str)
+    .filter(c => valueOk(c.str))
+    .map(c => {
+      // PDF coords: y increases upward, so "below the label" means c.y < label.y.
+      const below = label.y - c.y;     // positive when c is below
+      const right = c.x - label.x;     // positive when c is to the right
+      const vertical   = below > 0 && below < 40 && Math.abs(right) < 120;
+      const horizontal = Math.abs(below) < 14 && right > 0 && right < 140;
+      if (vertical)   return { c, dist: below + Math.abs(right) * 0.4 };
+      if (horizontal) return { c, dist: right + Math.abs(below) * 0.4 };
+      return { c, dist: Math.hypot(below, right) * 3 };
+    })
+    .filter(o => o.dist < maxDist)
+    .sort((a, b) => a.dist - b.dist);
+  return cands.length ? cands[0].c.str.trim() : null;
 }
 
 function _drwParseSheetInfo(items, W, H, region) {
   const cells = _drwBuildCells(items, W, H, region);
-  if (!cells.length) return { sheetNumber: null, sheetTitle: null, revision: null, discipline: 'General' };
-
-  // ── Sheet number ─────────────────────────────────────────────────────────
-  let sheetNumber = null;
-  for (const c of cells) {
-    if (_drwMatchSheetNum(c.str)) { sheetNumber = c.str.toUpperCase(); break; }
+  if (!cells.length) {
+    return { sheetNumber: null, sheetTitle: null, revision: null, pageNumber: null, discipline: 'General' };
   }
-  // Fallback: pull sheet number out of a CADD FILENAME / file-path text item.
+
+  // ── Sheet number (label-anchored first, pattern fallback) ────────────────
+  let sheetNumber = _drwFindNearLabel(cells,
+    /^contract\s*sheet\s*no\.?$/i,
+    s => _drwMatchSheetNum(s),
+  );
+  if (!sheetNumber) {
+    sheetNumber = _drwFindNearLabel(cells,
+      /^(sheet|dwg|drawing)\s*no\.?$/i,
+      s => _drwMatchSheetNum(s),
+    );
+  }
+  // Pure pattern match — but exclude the cell adjacent to "CONTRACT NO." (which is
+  // a project-level contract number, not a sheet number).
+  if (!sheetNumber) {
+    const contractNoVal = _drwFindNearLabel(cells, /^contract\s*no\.?$/i, () => true);
+    for (const c of cells) {
+      if (c.str === contractNoVal) continue;
+      if (_drwMatchSheetNum(c.str) && !_drwIsLabel(c.str)) { sheetNumber = c.str.toUpperCase(); break; }
+    }
+  }
+  // Fallback: pull from CADD FILENAME.
   if (!sheetNumber) {
     for (const c of cells) {
       if (/\.(dgn|dwg|pdf)\b/i.test(c.str)) {
@@ -28818,46 +28885,44 @@ function _drwParseSheetInfo(items, W, H, region) {
       }
     }
   }
-  // Last resort: scan any cell text for an embedded sheet-number pattern.
-  if (!sheetNumber) {
-    for (const c of cells) {
-      const m = c.str.match(_DRW_FILENAME_RE);
-      if (m && !_drwIsLabel(c.str)) { sheetNumber = m[1].toUpperCase(); break; }
-    }
-  }
+  if (sheetNumber) sheetNumber = sheetNumber.toUpperCase();
+
+  // ── Page number ──────────────────────────────────────────────────────────
+  // Always label-anchored — page numbers are bare digits that would match
+  // anything if we pattern-matched alone.
+  const pageNumber = _drwFindNearLabel(cells,
+    /^(page|pg)\s*no\.?$/i,
+    s => /^\d{1,4}[A-Z]?$/i.test(s) && s !== sheetNumber,
+  );
 
   // ── Revision ─────────────────────────────────────────────────────────────
-  // Strategy: find a REV label cell, then take the closest 1-3 char alphanumeric
-  // value nearby (typical title-block layout: REV. → value to its right or below).
-  let revision = null;
-  const revLabel = cells.find(c => /^rev\.?(ision)?$/i.test(c.str));
-  if (revLabel) {
-    const candidates = cells
-      .filter(c => c !== revLabel)
-      .filter(c => /^[A-Z0-9]{1,3}$/.test(c.str) && !/^(OF|NO|TO)$/i.test(c.str))
-      .filter(c => c.str !== (sheetNumber || '').slice(-1))
-      .map(c => ({ c, dist: Math.hypot(c.x - revLabel.x, c.y - revLabel.y) }))
-      .sort((a, b) => a.dist - b.dist);
-    if (candidates.length && candidates[0].dist < 200) revision = candidates[0].c.str.toUpperCase();
-  }
+  let revision = _drwFindNearLabel(cells,
+    /^rev\.?(ision)?$/i,
+    s => /^[A-Z0-9]{1,3}$/i.test(s)
+      && !/^(OF|NO|TO|NTS)$/i.test(s)
+      && s !== (sheetNumber || '').slice(-1)
+      && s !== pageNumber,
+  );
   // Inline form: "REV. A" or "REV: 2" all in one text item.
   if (!revision) {
     for (const c of cells) {
       const m = c.str.match(/^rev\.?(?:ision)?[:.\s]+([A-Z0-9]{1,3})$/i);
-      if (m) { revision = m[1].toUpperCase(); break; }
+      if (m) { revision = m[1]; break; }
     }
   }
+  if (revision) revision = revision.toUpperCase();
 
   // ── Title ────────────────────────────────────────────────────────────────
-  // Longest plain-text candidate that is not a label, sheet number, filename,
-  // pure number, or date.
+  // Strip project banner, labels, sheet/rev/page/contract values, dates, filenames.
+  const contractNo = _drwFindNearLabel(cells, /^contract\s*no\.?$/i, () => true);
+  const knownValues = new Set([sheetNumber, revision, pageNumber, contractNo].filter(Boolean).map(s => s.toString().toUpperCase()));
   const titleCandidates = cells.filter(c => {
     const s = c.str;
     if (s.length < 4) return false;
     if (_drwIsLabel(s)) return false;
-    if (s === sheetNumber) return false;
-    if (s === revision)   return false;
-    if (/^\d+$/.test(s))  return false;
+    if (_drwIsBanner(s)) return false;
+    if (knownValues.has(s.toUpperCase())) return false;
+    if (/^\d+$/.test(s)) return false;
     if (/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(s)) return false;   // dates
     if (/\.(dgn|dwg|pdf)\b/i.test(s)) return false;
     if (_drwMatchSheetNum(s)) return false;
@@ -28865,15 +28930,15 @@ function _drwParseSheetInfo(items, W, H, region) {
   });
   let sheetTitle = null;
   if (titleCandidates.length) {
-    // Prefer cells in the upper half of the calibrated region (title is usually
+    // Prefer cells in the upper portion of the region (drawing titles sit
     // above the sheet-number / rev block in a typical title block).
-    const ySorted = [...titleCandidates].sort((a, b) => b.y - a.y); // higher y = upper in PDF coords
+    const ySorted = [...titleCandidates].sort((a, b) => b.y - a.y); // higher y = upper
     const upper   = ySorted.slice(0, Math.max(3, Math.ceil(ySorted.length / 2)));
     const pool    = upper.length ? upper : titleCandidates;
     sheetTitle    = pool.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
   }
 
-  return { sheetNumber, sheetTitle, revision, discipline: _drwDiscipline(sheetNumber) };
+  return { sheetNumber, sheetTitle, revision, pageNumber, discipline: _drwDiscipline(sheetNumber) };
 }
 
 // ── Page render ────────────────────────────────────────────────────────────
@@ -29371,7 +29436,7 @@ async function _drwRunExtract() {
         pageIndex: i-1, ...parsed,
         needsReview: !parsed.sheetNumber || !parsed.sheetTitle,
         // Pre-uncheck pages with no sheet number AND no title — usually covers/index pages.
-        included: !!(parsed.sheetNumber || parsed.sheetTitle),
+        included: !!(parsed.sheetNumber || parsed.sheetTitle || parsed.pageNumber),
       });
     }
     _drwParsedSheets = sheets;
@@ -29406,7 +29471,7 @@ function _drwShowReview(numPages) {
       <table class="data-table">
         <thead><tr>
           <th style="width:48px;"><input type="checkbox" id="drw-rev-toggle-all" ${includedCount === _drwParsedSheets.length ? 'checked' : ''} onchange="_drwReviewSelectAll(this.checked)" title="Toggle all" /></th>
-          <th style="width:42px;">Pg</th><th>Sheet #</th><th>Title</th><th>Rev</th><th>Discipline</th>
+          <th style="width:42px;">Pg</th><th>Sheet #</th><th>Page #</th><th>Title</th><th>Rev</th><th>Discipline</th>
         </tr></thead>
         <tbody>
           ${_drwParsedSheets.map((s, i) => `
@@ -29416,6 +29481,9 @@ function _drwShowReview(numPages) {
               <td><input class="form-input" value="${escapeHtml(s.sheetNumber||'')}"
                 style="width:140px;font-family:monospace;font-size:12px;padding:3px 6px;border-color:${s.sheetNumber?'var(--gray-200)':'var(--warn)'};"
                 onchange="_drwReviewEdit(${i},'sheetNumber',this.value)" /></td>
+              <td><input class="form-input" value="${escapeHtml(s.pageNumber||'')}"
+                style="width:62px;font-family:monospace;font-size:12px;padding:3px 6px;text-align:center;"
+                onchange="_drwReviewEdit(${i},'pageNumber',this.value)" /></td>
               <td><input class="form-input" value="${escapeHtml(s.sheetTitle||'')}"
                 style="width:240px;font-size:12px;padding:3px 6px;border-color:${s.sheetTitle?'var(--gray-200)':'var(--warn)'};"
                 onchange="_drwReviewEdit(${i},'sheetTitle',this.value)" /></td>
@@ -29519,6 +29587,7 @@ async function _drwConfirmImport() {
     await _dbInsert('drawing_sheets', toImport.map(s => ({
       set_id: setId, location: meta.location, page_index: s.pageIndex,
       sheet_number: s.sheetNumber || null, sheet_title: s.sheetTitle || null,
+      page_number: s.pageNumber || null,
       discipline: s.discipline || null, revision: s.revision || null,
       is_current: true, confirmed: true, needs_review: s.needsReview || false,
     })));

@@ -28,8 +28,9 @@ CREATE TABLE IF NOT EXISTS drawing_sheets (
   id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   set_id       UUID        NOT NULL REFERENCES drawing_sets(id) ON DELETE CASCADE,
   location     TEXT        NOT NULL,
-  page_index   INT         NOT NULL,
-  sheet_number TEXT,
+  page_index   INT         NOT NULL,            -- physical PDF page (0-based)
+  sheet_number TEXT,                              -- e.g. E11004-W30
+  page_number  TEXT,                              -- title-block PAGE NO. (e.g. 004)
   sheet_title  TEXT,
   discipline   TEXT,
   revision     TEXT,
