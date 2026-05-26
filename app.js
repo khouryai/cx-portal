@@ -28730,64 +28730,148 @@ function _drwDiscipline(sheetNum) {
 }
 
 // ── PDF text parsing ───────────────────────────────────────────────────────
-async function _drwParsePdf(arrayBuffer) {
-  if (typeof pdfjsLib === 'undefined') throw new Error('PDF.js not loaded');
-  if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js';
+// Title-block field labels we must NOT confuse for values.
+const _DRW_LABELS = [
+  /^contract\s*sheet\s*no\.?$/i,
+  /^sheet\s*no\.?(\s*of\s*\d+)?$/i,
+  /^dwg\.?\s*no\.?$/i,
+  /^drawing\s*no\.?$/i,
+  /^drawing\s*number$/i,
+  /^drawing\s*title$/i,
+  /^rev\.?(ision)?$/i,
+  /^revisions?$/i,
+  /^scale$/i,
+  /^date$/i,
+  /^drawn\s*by$/i,
+  /^designed\s*by$/i,
+  /^approved\s*by$/i,
+  /^checked\s*by$/i,
+  /^title$/i,
+  /^sheet$/i,
+  /^of$/i,
+  /^cadd\s*filename:?$/i,
+  /^filename:?$/i,
+  /^nts$/i,
+  /^n\.t\.s\.?$/i,
+  /^project$/i,
+  /^description$/i,
+  /^bart$/i,
+  /^contract\s*no\.?$/i,
+  /^contract$/i,
+];
+
+// Sheet-number formats — checked in order from most specific to least.
+// Examples we want to recognize:
+//   E11001-W30-001     (BART/Hitachi long form)
+//   496H-110           (mixed alpha/digit prefix)
+//   E-1001  /  E101    (legacy short form)
+const _DRW_SHEET_PATTERNS = [
+  /^[A-Z]{1,4}\d{2,}-[A-Z0-9]+-\d+[A-Z]?$/i,   // E11001-W30-001
+  /^\d+[A-Z]+-\d+[A-Z]?$/i,                      // 496H-110
+  /^[A-Z]{1,4}-\d+[A-Z]?$/i,                     // E-1001
+  /^[A-Z]{1,3}\d{1,4}[A-Z]?$/i,                  // E101, M22A
+];
+
+const _DRW_FILENAME_RE = /([A-Z]{1,4}\d{2,}-[A-Z0-9]+-\d+[A-Z]?)/i;
+
+function _drwIsLabel(s) {
+  const t = s.replace(/\s+/g, ' ').trim();
+  return _DRW_LABELS.some(re => re.test(t));
+}
+
+function _drwMatchSheetNum(s) {
+  const t = s.trim();
+  return _DRW_SHEET_PATTERNS.some(re => re.test(t));
+}
+
+function _drwBuildCells(items, W, H, region) {
+  let pdfXMin = 0, pdfXMax = W, pdfYMin = 0, pdfYMax = H * 0.3;
+  if (region && region.fw > 0.01 && region.fh > 0.01) {
+    pdfYMax = H * (1 - region.fy);
+    pdfYMin = H * (1 - region.fy - region.fh);
+    pdfXMin = W * region.fx;
+    pdfXMax = W * (region.fx + region.fw);
   }
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const results = [];
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page     = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale: 1 });
-    const content  = await page.getTextContent();
-    const W = viewport.width, H = viewport.height;
-    const parsed   = _drwParseSheetInfo(content.items, W, H);
-    results.push({ pageIndex: i - 1, ...parsed, needsReview: !parsed.sheetNumber || !parsed.sheetTitle });
-  }
-  return { numPages: pdf.numPages, sheets: results };
+  return items
+    .map(it => {
+      const x = it.transform[4], y = it.transform[5];
+      return { x, y, w: it.width || 0, h: it.height || 10, str: (it.str || '').trim() };
+    })
+    .filter(c => c.str && c.x >= pdfXMin && c.x <= pdfXMax && c.y >= pdfYMin && c.y <= pdfYMax);
 }
 
 function _drwParseSheetInfo(items, W, H, region) {
-  const SHEET_RE = /^([A-Z]{1,3})-(\d+[A-Z]?)$/i;
-  let sheetNumber = null, sheetTitle = null, revision = null;
+  const cells = _drwBuildCells(items, W, H, region);
+  if (!cells.length) return { sheetNumber: null, sheetTitle: null, revision: null, discipline: 'General' };
 
-  // Filter to calibrated region, or fall back to bottom 30% of page
-  let filtered;
-  if (region && region.fw > 0.01 && region.fh > 0.01) {
-    // PDF coords are bottom-left origin; region fractions are from top-left
-    const pdfYMax = H * (1 - region.fy);
-    const pdfYMin = H * (1 - region.fy - region.fh);
-    const pdfXMin = W * region.fx;
-    const pdfXMax = W * (region.fx + region.fw);
-    filtered = items.filter(it => {
-      const x = it.transform[4], y = it.transform[5];
-      return x >= pdfXMin && x <= pdfXMax && y >= pdfYMin && y <= pdfYMax && it.str.trim();
-    });
-  } else {
-    filtered = items.filter(it => it.transform[5] < H * 0.3 && it.str.trim());
+  // ── Sheet number ─────────────────────────────────────────────────────────
+  let sheetNumber = null;
+  for (const c of cells) {
+    if (_drwMatchSheetNum(c.str)) { sheetNumber = c.str.toUpperCase(); break; }
   }
-
-  for (const it of filtered) {
-    const s = it.str.trim();
-    if (SHEET_RE.test(s)) { sheetNumber = s.toUpperCase(); break; }
-  }
-  for (const it of filtered) {
-    const s = it.str.trim();
-    if (/^rev[.:\s]/i.test(s)) { const m = s.match(/^rev[.:\s]*(.+)$/i); if (m) { revision = m[1].trim(); break; } }
-  }
-  if (!revision) {
-    for (const it of filtered) {
-      const s = it.str.trim();
-      if (/^[A-Z0-9]$/.test(s) && s !== (sheetNumber||'').slice(-1)) { revision = s; break; }
+  // Fallback: pull sheet number out of a CADD FILENAME / file-path text item.
+  if (!sheetNumber) {
+    for (const c of cells) {
+      if (/\.(dgn|dwg|pdf)\b/i.test(c.str)) {
+        const m = c.str.match(_DRW_FILENAME_RE);
+        if (m) { sheetNumber = m[1].toUpperCase(); break; }
+      }
     }
   }
-  const candidates = filtered.map(it => it.str.trim()).filter(s =>
-    s.length > 4 && !SHEET_RE.test(s) && s !== revision
-    && !/^(rev|sheet|dwg|date|scale|drawn|checked|approved|by|no\.)/i.test(s)
-    && !/^\d+$/.test(s) && !/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/.test(s));
-  if (candidates.length) sheetTitle = candidates.reduce((a, b) => b.length > a.length ? b : a, '');
+  // Last resort: scan any cell text for an embedded sheet-number pattern.
+  if (!sheetNumber) {
+    for (const c of cells) {
+      const m = c.str.match(_DRW_FILENAME_RE);
+      if (m && !_drwIsLabel(c.str)) { sheetNumber = m[1].toUpperCase(); break; }
+    }
+  }
+
+  // ── Revision ─────────────────────────────────────────────────────────────
+  // Strategy: find a REV label cell, then take the closest 1-3 char alphanumeric
+  // value nearby (typical title-block layout: REV. → value to its right or below).
+  let revision = null;
+  const revLabel = cells.find(c => /^rev\.?(ision)?$/i.test(c.str));
+  if (revLabel) {
+    const candidates = cells
+      .filter(c => c !== revLabel)
+      .filter(c => /^[A-Z0-9]{1,3}$/.test(c.str) && !/^(OF|NO|TO)$/i.test(c.str))
+      .filter(c => c.str !== (sheetNumber || '').slice(-1))
+      .map(c => ({ c, dist: Math.hypot(c.x - revLabel.x, c.y - revLabel.y) }))
+      .sort((a, b) => a.dist - b.dist);
+    if (candidates.length && candidates[0].dist < 200) revision = candidates[0].c.str.toUpperCase();
+  }
+  // Inline form: "REV. A" or "REV: 2" all in one text item.
+  if (!revision) {
+    for (const c of cells) {
+      const m = c.str.match(/^rev\.?(?:ision)?[:.\s]+([A-Z0-9]{1,3})$/i);
+      if (m) { revision = m[1].toUpperCase(); break; }
+    }
+  }
+
+  // ── Title ────────────────────────────────────────────────────────────────
+  // Longest plain-text candidate that is not a label, sheet number, filename,
+  // pure number, or date.
+  const titleCandidates = cells.filter(c => {
+    const s = c.str;
+    if (s.length < 4) return false;
+    if (_drwIsLabel(s)) return false;
+    if (s === sheetNumber) return false;
+    if (s === revision)   return false;
+    if (/^\d+$/.test(s))  return false;
+    if (/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(s)) return false;   // dates
+    if (/\.(dgn|dwg|pdf)\b/i.test(s)) return false;
+    if (_drwMatchSheetNum(s)) return false;
+    return true;
+  });
+  let sheetTitle = null;
+  if (titleCandidates.length) {
+    // Prefer cells in the upper half of the calibrated region (title is usually
+    // above the sheet-number / rev block in a typical title block).
+    const ySorted = [...titleCandidates].sort((a, b) => b.y - a.y); // higher y = upper in PDF coords
+    const upper   = ySorted.slice(0, Math.max(3, Math.ceil(ySorted.length / 2)));
+    const pool    = upper.length ? upper : titleCandidates;
+    sheetTitle    = pool.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
+  }
 
   return { sheetNumber, sheetTitle, revision, discipline: _drwDiscipline(sheetNumber) };
 }
@@ -29283,7 +29367,12 @@ async function _drwRunExtract() {
       const viewport = page.getViewport({ scale: 1 });
       const content  = await page.getTextContent();
       const parsed   = _drwParseSheetInfo(content.items, viewport.width, viewport.height, _drwTitleRegion);
-      sheets.push({ pageIndex: i-1, ...parsed, needsReview: !parsed.sheetNumber || !parsed.sheetTitle });
+      sheets.push({
+        pageIndex: i-1, ...parsed,
+        needsReview: !parsed.sheetNumber || !parsed.sheetTitle,
+        // Pre-uncheck pages with no sheet number AND no title — usually covers/index pages.
+        included: !!(parsed.sheetNumber || parsed.sheetTitle),
+      });
     }
     _drwParsedSheets = sheets;
     _drwShowReview(numPages);
@@ -29294,33 +29383,41 @@ async function _drwRunExtract() {
 }
 
 function _drwShowReview(numPages) {
-  const needsReview  = _drwParsedSheets.filter(s => s.needsReview).length;
+  const needsReview   = _drwParsedSheets.filter(s => s.needsReview).length;
+  const includedCount = _drwParsedSheets.filter(s => s.included).length;
   const allNeedReview = needsReview === _drwParsedSheets.length;
 
   document.querySelector('#modal-overlay .modal-head .modal-title').textContent = 'Review Sheets';
   const subEl = document.querySelector('#modal-overlay .modal-head .modal-sub');
-  if (subEl) subEl.textContent = 'Verify extracted data and correct any fields before importing.';
+  if (subEl) subEl.textContent = 'Verify extracted data, uncheck pages to omit them, then Confirm to import.';
 
   document.querySelector('#modal-overlay .modal-body').innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
       <span style="font-size:13px;color:var(--gray-600);">${numPages} pages parsed.</span>
+      <span id="drw-included-pill" style="background:#e0e7ff;color:#3730a3;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">${includedCount} of ${numPages} to import</span>
       ${needsReview
         ? `<span style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">⚠ ${needsReview} need manual entry</span>`
         : `<span style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">✓ All sheets parsed</span>`}
+      <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(true)" style="font-size:12px;padding:5px 10px;">Select all</button>
+      <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(false)" style="font-size:12px;padding:5px 10px;">Select none</button>
       ${allNeedReview ? `<button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()" style="font-size:12px;padding:5px 10px;margin-left:auto;">↩ Recalibrate region</button>` : ''}
     </div>
-    <div style="max-height:420px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;">
+    <div style="max-height:480px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;">
       <table class="data-table">
-        <thead><tr><th>Pg</th><th>Sheet #</th><th>Title</th><th>Rev</th><th>Discipline</th></tr></thead>
+        <thead><tr>
+          <th style="width:48px;"><input type="checkbox" id="drw-rev-toggle-all" ${includedCount === _drwParsedSheets.length ? 'checked' : ''} onchange="_drwReviewSelectAll(this.checked)" title="Toggle all" /></th>
+          <th style="width:42px;">Pg</th><th>Sheet #</th><th>Title</th><th>Rev</th><th>Discipline</th>
+        </tr></thead>
         <tbody>
           ${_drwParsedSheets.map((s, i) => `
-            <tr style="${s.needsReview ? 'background:#fffbeb;' : ''}">
-              <td style="color:var(--gray-400);font-size:12px;width:36px;">${s.pageIndex+1}</td>
+            <tr id="drw-rev-row-${i}" style="${!s.included ? 'opacity:0.45;background:var(--gray-50);' : s.needsReview ? 'background:#fffbeb;' : ''}">
+              <td style="text-align:center;"><input type="checkbox" ${s.included ? 'checked' : ''} onchange="_drwReviewToggle(${i}, this.checked)" /></td>
+              <td style="color:var(--gray-400);font-size:12px;">${s.pageIndex+1}</td>
               <td><input class="form-input" value="${escapeHtml(s.sheetNumber||'')}"
-                style="width:86px;font-family:monospace;font-size:12px;padding:3px 6px;border-color:${s.sheetNumber?'var(--gray-200)':'var(--warn)'};"
+                style="width:140px;font-family:monospace;font-size:12px;padding:3px 6px;border-color:${s.sheetNumber?'var(--gray-200)':'var(--warn)'};"
                 onchange="_drwReviewEdit(${i},'sheetNumber',this.value)" /></td>
               <td><input class="form-input" value="${escapeHtml(s.sheetTitle||'')}"
-                style="width:210px;font-size:12px;padding:3px 6px;border-color:${s.sheetTitle?'var(--gray-200)':'var(--warn)'};"
+                style="width:240px;font-size:12px;padding:3px 6px;border-color:${s.sheetTitle?'var(--gray-200)':'var(--warn)'};"
                 onchange="_drwReviewEdit(${i},'sheetTitle',this.value)" /></td>
               <td><input class="form-input" value="${escapeHtml(s.revision||'')}"
                 style="width:52px;font-size:12px;padding:3px 6px;"
@@ -29330,7 +29427,7 @@ function _drwShowReview(numPages) {
         </tbody>
       </table>
     </div>
-    <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">Edit any field directly — changes apply on Confirm.</p>`;
+    <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">Edit any field directly. Unchecked rows will be skipped on import.</p>`;
 
   document.querySelector('#modal-overlay .modal-footer').innerHTML = `
     <button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()">← Recalibrate</button>
@@ -29345,9 +29442,51 @@ function _drwReviewEdit(idx, field, value) {
   }
 }
 
+function _drwReviewToggle(idx, included) {
+  if (!_drwParsedSheets[idx]) return;
+  _drwParsedSheets[idx].included = !!included;
+  const row = document.getElementById(`drw-rev-row-${idx}`);
+  if (row) {
+    const s = _drwParsedSheets[idx];
+    row.style.cssText = !s.included
+      ? 'opacity:0.45;background:var(--gray-50);'
+      : s.needsReview ? 'background:#fffbeb;' : '';
+  }
+  _drwReviewUpdateCounts();
+}
+
+function _drwReviewSelectAll(checked) {
+  _drwParsedSheets.forEach((s, i) => {
+    s.included = !!checked;
+    const row = document.getElementById(`drw-rev-row-${i}`);
+    const cb  = row?.querySelector('td:first-child input[type="checkbox"]');
+    if (cb) cb.checked = !!checked;
+    if (row) {
+      row.style.cssText = !s.included
+        ? 'opacity:0.45;background:var(--gray-50);'
+        : s.needsReview ? 'background:#fffbeb;' : '';
+    }
+  });
+  const toggle = document.getElementById('drw-rev-toggle-all');
+  if (toggle) toggle.checked = !!checked;
+  _drwReviewUpdateCounts();
+}
+
+function _drwReviewUpdateCounts() {
+  const total    = _drwParsedSheets.length;
+  const included = _drwParsedSheets.filter(s => s.included).length;
+  const pill = document.getElementById('drw-included-pill');
+  if (pill) pill.textContent = `${included} of ${total} to import`;
+  const toggle = document.getElementById('drw-rev-toggle-all');
+  if (toggle) toggle.checked = included === total && total > 0;
+}
+
 async function _drwConfirmImport() {
   const meta = _drwUploadMeta;
   if (!meta) return;
+  const toImport = _drwParsedSheets.filter(s => s.included);
+  if (!toImport.length) { toast('Select at least one sheet to import.', 'error'); return; }
+
   document.querySelector('#modal-overlay .modal-body').innerHTML = `
     <div style="text-align:center;padding:40px 20px;">
       <div class="spinner" style="margin:0 auto 16px;"></div>
@@ -29361,7 +29500,7 @@ async function _drwConfirmImport() {
       import_date: meta.import_date || null, revision_date: meta.revision_date || null,
       release_date: meta.release_date || null,
       uploaded_by: currentRoleUser?.name || 'Admin',
-      status: 'processing', total_sheets: _drwParsedSheets.length,
+      status: 'processing', total_sheets: toImport.length,
     });
     const setId = inserted[0]?.id;
     if (!setId) throw new Error('Failed to create drawing set record.');
@@ -29372,12 +29511,12 @@ async function _drwConfirmImport() {
     await _dbUpdate('drawing_sets', { storage_path: storagePath }, { id: setId });
 
     document.getElementById('drw-confirm-status').textContent = 'Checking for existing revisions…';
-    const newNums = _drwParsedSheets.map(s => s.sheetNumber).filter(Boolean);
+    const newNums = toImport.map(s => s.sheetNumber).filter(Boolean);
     const toSupersede = DRAWING_SHEETS.filter(s => s.location === meta.location && s.is_current && newNums.includes(s.sheet_number));
     if (toSupersede.length) await Promise.all(toSupersede.map(s => _dbUpdate('drawing_sheets', { is_current: false }, { id: s.id })));
 
     document.getElementById('drw-confirm-status').textContent = 'Saving sheet records…';
-    await _dbInsert('drawing_sheets', _drwParsedSheets.map(s => ({
+    await _dbInsert('drawing_sheets', toImport.map(s => ({
       set_id: setId, location: meta.location, page_index: s.pageIndex,
       sheet_number: s.sheetNumber || null, sheet_title: s.sheetTitle || null,
       discipline: s.discipline || null, revision: s.revision || null,
@@ -29388,7 +29527,8 @@ async function _drwConfirmImport() {
     await loadDrawingsData();
     _drwCloseUpload();
     renderDrawingsPage();
-    toast(`Drawing set imported: ${_drwParsedSheets.length} sheets${toSupersede.length ? `, ${toSupersede.length} auto-upreved` : ''}`, 'success');
+    const skipped = _drwParsedSheets.length - toImport.length;
+    toast(`Drawing set imported: ${toImport.length} sheets${skipped ? `, ${skipped} skipped` : ''}${toSupersede.length ? `, ${toSupersede.length} auto-upreved` : ''}`, 'success');
   } catch(e) {
     document.querySelector('#modal-overlay .modal-body').innerHTML = `<p style="color:var(--bad);padding:20px;">Import failed: ${escapeHtml(e.message)}</p>`;
     document.querySelector('#modal-overlay .modal-footer').innerHTML = `<button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Close</button>`;
