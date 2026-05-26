@@ -8483,8 +8483,15 @@ function _trpReportRowHTML(row, canManage) {
   const tags = arr => arr.length ? arr.map(s => `<span class="tag">${escapeHtml(s)}</span>`).join(' ') : empty;
   const histCount = (row.revision_history || []).length;
 
+  const canExtract = !row.isDerived && row.activityCount > 0;
+  const extractTip = row.isDerived
+    ? 'Sync this report to the master table before extracting'
+    : !row.activityCount
+      ? 'Link at least one activity to extract'
+      : 'Extract a compiled PDF (or ZIP) of all linked forms with summaries';
   const actions = [
     `<button class="form-secondary tr-mini-btn" onclick="_trpToggleLinks('${uid}')" title="${expanded?'Collapse':'Expand'} linked activities">${expanded?'▲ Hide':'▼ Links'}</button>`,
+    `<button class="form-secondary tr-mini-btn tr-extract-btn" onclick="openExtractReportModal('${uid}')" ${canExtract?'':'disabled'} title="${escapeHtml(extractTip)}">📄 Extract</button>`,
     canManage ? `<button class="form-secondary tr-mini-btn" onclick="openLinkActivityModal('${uid}')" title="Link activities to this report">＋ Link</button>` : '',
     canManage ? `<button class="form-secondary tr-mini-btn" onclick="openEditTestReportModal('${uid}')">${row.isDerived?'Create/Edit':'Edit'}</button>` : '',
     canManage && row.isDerived ? `<button class="admin-action-btn tr-mini-btn" onclick="_trpCreateDerivedReport('${uid}')">Sync</button>` : '',
@@ -9965,7 +9972,7 @@ function _amDrilldownHTML(key) {
                       <td>
                         <div style="display:flex;align-items:center;gap:8px;">
                           <div style="font-weight:500;font-size:13px;flex:1;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestName||'')}" onchange="_trDraftChange('${tid}','TestName',this.value)">` : escapeHtml(r.TestName||'—')}</div>
-                          ${_trEditMode && isAdmin ? '' : _formsBadgeHTML(r.TestID)}
+                          ${_trEditMode && isAdmin ? '' : _formsBadgeHTML(r)}
                         </div>
                         ${r.CompletedBy ? `<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(r.CompletedBy)}</div>` : ''}
                         ${_swSnapshotChipHTML(r)}
@@ -11159,10 +11166,18 @@ function closeModal() {
 // P6 SCHEDULE — ADMIN TOOL
 // =============================================================================
 
-let _p6Tab      = 'import';   // 'import' | 'mapping' | 'health' | 'weights'
+let _p6Tab      = 'import';   // 'import' | 'mapping' | 'learn' | 'health'
 let _p6MapTab   = 'activity'; // 'activity' | 'testcase'
 let _p6MappingFilters = { phase:'', location:'', subsystem:'', linked:'' };
 let _p6ImportType     = 'baseline'; // 'baseline' | 'current'
+// Bulk Learn wizard state ──────────────────────────────────────────────────
+let _p6LearnFilters   = { phase:'', subsystem:'', search:'' };
+let _p6LearnMode      = 'activity'; // 'activity' | 'tc'
+let _p6LearnPage      = 1;
+let _p6LearnPerPage   = 50;
+let _p6LearnSearchTimer = null;
+// rowKey → { p6Id, locSid }   (locSid drives the "show all locations" toggle)
+window._p6LearnPicks  = window._p6LearnPicks || new Map();
 
 function renderAdminP6() {
   const root = document.getElementById('p6-hero-content');
@@ -11182,6 +11197,7 @@ function _p6AdminHTML() {
   const tabs = [
     { id:'import',  label:'📥 Import' },
     { id:'mapping', label:'🔗 Mapping' },
+    { id:'learn',   label:'🪄 Bulk Learn' },
     { id:'health',  label:'🩺 Health' },
   ];
   // Bounce away from any stale weights tab selection
@@ -11193,6 +11209,7 @@ function _p6AdminHTML() {
       </div>
       ${_p6Tab === 'import'  ? _p6ImportTabHTML()  : ''}
       ${_p6Tab === 'mapping' ? _p6MappingTabHTML() : ''}
+      ${_p6Tab === 'learn'   ? _p6LearnTabHTML()   : ''}
       ${_p6Tab === 'health'  ? _p6HealthTabHTML()  : ''}
     </div>`;
 }
@@ -11635,16 +11652,20 @@ function _p6Sid(key) {
 
 // ── Merged search-dropdown component ─────────────────────────────────────────
 // Renders a single combined search+list control; value stored in hidden input.
-function _p6SS(sid, p6List, placeholder) {
+// `initialId`  optional P6 activity id to pre-fill (input text + hidden value).
+function _p6SS(sid, p6List, placeholder, initialId = '') {
   const opts = p6List.map(p =>
     `<div class="p6-ss-opt" data-id="${escapeHtml(p.id)}" onmousedown="_p6SSPick('${sid}',this)">
        <span class="p6-ss-loc">[${escapeHtml(p.p6_location_code||'?')}]</span> ${escapeHtml(p.p6_name)}
      </div>`
   ).join('');
+  const initial = initialId ? p6List.find(p => p.id === initialId) : null;
+  const initialText = initial ? `[${initial.p6_location_code||'?'}] ${initial.p6_name}` : '';
   return `
     <div class="p6-ss" id="p6-ss-${sid}">
       <input class="p6-ss-inp form-input" type="text" autocomplete="off"
         placeholder="${escapeHtml(placeholder||'Search P6 activities…')}"
+        value="${escapeHtml(initialText)}"
         oninput="_p6SSFilter('${sid}')"
         onfocus="_p6SSOpen('${sid}')"
         onblur="_p6SSClose('${sid}')">
@@ -11652,16 +11673,30 @@ function _p6SS(sid, p6List, placeholder) {
         <div class="p6-ss-opts">${opts}</div>
         <div class="p6-ss-none" style="display:none;padding:8px 12px;font-size:12px;color:var(--gray-400);">No matches</div>
       </div>
-      <input type="hidden" id="p6-ss-val-${sid}">
+      <input type="hidden" id="p6-ss-val-${sid}" value="${escapeHtml(initialId || '')}">
     </div>`;
 }
 
 function _p6SSFilter(sid) {
   const wrap = document.getElementById(`p6-ss-${sid}`);
   if (!wrap) return;
-  const q    = wrap.querySelector('.p6-ss-inp').value.toLowerCase().trim();
+  const input = wrap.querySelector('.p6-ss-inp');
+  const q    = input.value.toLowerCase().trim();
   const drop = document.getElementById(`p6-ss-drop-${sid}`);
   drop.style.display = 'block';
+  const hidden = document.getElementById(`p6-ss-val-${sid}`);
+  if (hidden?.value) {
+    const selected = Array.from(drop.querySelectorAll('.p6-ss-opt')).find(o => o.dataset.id === hidden.value);
+    if (selected && input.value.trim() !== selected.textContent.trim()) {
+      hidden.value = '';
+      selected.classList.remove('selected');
+      if (sid.endsWith('_pick')) {
+        const learnSid = sid.replace(/_pick$/, '');
+        const row = window._p6LearnRowData?.[learnSid];
+        if (row) window._p6LearnPicks?.delete(row.rowKey);
+      }
+    }
+  }
   let any = false;
   drop.querySelectorAll('.p6-ss-opt').forEach(o => {
     const show = !q || o.textContent.toLowerCase().includes(q);
@@ -11684,6 +11719,13 @@ function _p6SSClose(sid) {
   }, 200);
 }
 
+// Toggle: per-activity "show all locations" / "filter to location" in the dropdowns.
+function _p6ToggleShowAllLocs(sid) {
+  if (!window._p6ShowAllLocs) window._p6ShowAllLocs = new Set();
+  window._p6ShowAllLocs.has(sid) ? window._p6ShowAllLocs.delete(sid) : window._p6ShowAllLocs.add(sid);
+  renderAdminP6();
+}
+
 function _p6SSPick(sid, el) {
   const wrap = document.getElementById(`p6-ss-${sid}`);
   if (!wrap) return;
@@ -11694,10 +11736,31 @@ function _p6SSPick(sid, el) {
   wrap.querySelectorAll('.p6-ss-opt').forEach(o => o.classList.remove('selected'));
   el.classList.add('selected');
   document.getElementById(`p6-ss-drop-${sid}`).style.display = 'none';
+  if (sid.endsWith('_pick')) {
+    const learnSid = sid.replace(/_pick$/, '');
+    const row = window._p6LearnRowData?.[learnSid];
+    if (row) {
+      if (!window._p6LearnPicks) window._p6LearnPicks = new Map();
+      window._p6LearnPicks.set(row.rowKey, id);
+    }
+  }
 }
 
 function _p6SSVal(sid) {
   return document.getElementById(`p6-ss-val-${sid}`)?.value || '';
+}
+
+function _p6SSTypedMatch(sid, p6List = P6_ACTS) {
+  const input = document.querySelector(`#p6-ss-${sid} .p6-ss-inp`);
+  const q = (input?.value || '').trim().toLowerCase();
+  if (!q) return '';
+  const match = (p6List || []).find(p => {
+    const name = String(p.p6_name || '').trim().toLowerCase();
+    const id = String(p.p6_id || '').trim().toLowerCase();
+    const label = `[${String(p.p6_location_code || '?').toLowerCase()}] ${name}`;
+    return q === name || q === id || q === label;
+  });
+  return match?.id || '';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -11726,6 +11789,21 @@ function _p6ActivityLinkDetail(act, p6List, sid) {
   // Auto-suggest from learn patterns
   const suggestion = _p6AutoSuggest(act, p6List);
 
+  // Scope P6 list shown in dropdowns to this activity's location code,
+  // unless the user has toggled "Show all locations" for this activity.
+  if (!window._p6ShowAllLocs) window._p6ShowAllLocs = new Set();
+  const showAll  = window._p6ShowAllLocs.has(sid);
+  const locCode  = _p6LocCode(act.location);
+  const scopedP6 = (!showAll && locCode)
+    ? p6List.filter(p => p.p6_location_code === locCode)
+    : p6List;
+  const locToggleHTML = locCode ? `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;font-size:11px;color:var(--gray-500);">
+      <span>${showAll ? 'Showing <b>all locations</b>' : `Filtered to location <b>${escapeHtml(locCode)}</b> (${scopedP6.length} of ${p6List.length})`}</span>
+      <button class="form-secondary tr-mini-btn" style="font-size:10px;padding:2px 6px;"
+        onclick="_p6ToggleShowAllLocs('${sid}')">${showAll ? 'Filter to ' + escapeHtml(locCode) : 'Show all locations'}</button>
+    </div>` : '';
+
   return `
     <div class="p6-link-detail">
       <!-- ── ACTIVITY-LEVEL LINK ───────────────────────────── -->
@@ -11747,7 +11825,8 @@ function _p6ActivityLinkDetail(act, p6List, sid) {
                 <button class="form-secondary tr-mini-btn" onclick="_p6DismissSuggestion('${sid}')">Dismiss</button>
               </div>
             </div>` : ''}
-          ${_p6SS(sid + '_act', p6List, 'Search P6 activities…')}
+          ${locToggleHTML}
+          ${_p6SS(sid + '_act', scopedP6, 'Search P6 activities…', suggestion ? suggestion.id : '')}
           <button class="admin-action-btn tr-mini-btn" style="margin-top:6px;width:100%;"
             onclick="_p6LinkActivity(_p6SSVal('${sid}_act'),'${sid}')">
             Link Activity
@@ -11775,7 +11854,7 @@ function _p6ActivityLinkDetail(act, p6List, sid) {
                 <!-- Bulk link row -->
                 <div style="display:flex;gap:6px;align-items:center;padding:6px 0 8px;border-bottom:1px solid var(--gray-200);margin-bottom:6px;flex-wrap:wrap;">
                   <span style="font-size:11px;color:var(--gray-600);white-space:nowrap;font-weight:600;">Bulk link all to:</span>
-                  <div style="flex:1;min-width:180px;">${_p6SS(sid + '_bulk', p6List, 'Search…')}</div>
+                  <div style="flex:1;min-width:180px;">${_p6SS(sid + '_bulk', scopedP6, 'Search…', actLink ? actLink.p6_activity_id : (suggestion ? suggestion.id : ''))}</div>
                   <button class="admin-action-btn tr-mini-btn"
                     onclick="_p6BulkLinkTCs(_p6SSVal('${sid}_bulk'),'${sid}')">Apply All</button>
                 </div>
@@ -11792,11 +11871,15 @@ function _p6ActivityLinkDetail(act, p6List, sid) {
                       ${tcLink ? `
                         <span style="font-size:10px;color:var(--good);font-weight:600;white-space:nowrap;flex-shrink:0;">↔ ${escapeHtml(_p6ActName(tcLink.p6_activity_id))}</span>
                         <button class="form-secondary tr-mini-btn" onclick="_p6UnlinkActivity('${escapeHtml(tcLink.id)}')">✕</button>
-                      ` : `
-                        <div style="flex:2;min-width:120px;">${_p6SS(tcSid, p6List, '—')}</div>
+                      ` : (() => {
+                        // Prefer a TC-level learned pattern over the activity-level fallback.
+                        const tcSug = _p6AutoSuggest(act, scopedP6, { testCaseCode: item.TestCaseCode });
+                        const initId = tcSug ? tcSug.id : (actLink ? actLink.p6_activity_id : (suggestion ? suggestion.id : ''));
+                        return `
+                        <div style="flex:2;min-width:120px;">${_p6SS(tcSid, scopedP6, '—', initId)}</div>
                         <button class="admin-action-btn tr-mini-btn"
                           onclick="_p6LinkTestCase(_p6SSVal('${tcSid}'),'${tcCode}','${sid}')">Link</button>
-                      `}
+                      `;})()}
                     </div>`;
                 }).join('')}
               </div>
@@ -11848,6 +11931,12 @@ async function _p6BulkLinkTCs(p6Id, sid) {
         portal_subsystem: subsystem, portal_activity: activity,
         portal_test_case_code: item.TestCaseCode || null,
       }]);
+      // Learn each TC's pattern. Identical p6Name + same stem just bumps
+      // confidence on a single shared pattern row, so this is cheap.
+      if (item.TestCaseCode) {
+        const p6ActBulk = P6_ACTS.find(x => x.id === p6Id);
+        if (p6ActBulk) await _p6StorePattern(p6ActBulk.p6_name, activity, subsystem, { testCaseCode: item.TestCaseCode });
+      }
       done++;
     } catch(e) { console.warn('[bulkLinkTC]', e.message); }
   }
@@ -11866,19 +11955,44 @@ function _p6ActDates(p6ActivityId) {
   return `${a.start_date ? _fmtDate(a.start_date) : '—'} → ${a.finish_date ? _fmtDate(a.finish_date) : '—'}`;
 }
 
-function _p6AutoSuggest(act, p6List) {
+// Strip the location/phase prefix off a P6 name, leaving the descriptive
+// stem (e.g. "[T&C] W40 (Ph2) - IXL Sim Test" → "IXL Sim Test"). Centralized
+// here so the wizard, store, and auto-suggest all agree on the same key.
+function _p6PatternStem(p6Name) {
+  return String(p6Name || '').replace(/^\[T&C\]\s+\w+\s+\(Ph\d+\)\s+-\s+/, '').trim();
+}
+
+// Auto-suggest with optional test-case scope.
+//   • testCaseCode set  → prefer a TC-level pattern; fall back to activity-level.
+//   • testCaseCode null → only consider activity-level (portal_test_case_code IS NULL) patterns.
+// Tie-break: source='manual' before 'bulk_wizard' before others, then by
+// confidence desc — so a single human-confirmed pattern always beats a stack
+// of bulk seeds.
+function _p6AutoSuggest(act, p6List, opts = {}) {
   if (window._p6Dismissed?.has(act.key)) return null;
-  // Check learn patterns first
-  const pattern = P6_PATTERNS.find(p =>
-    p.portal_activity_name === act.activity &&
-    (!p.portal_subsystem || p.portal_subsystem === act.subsystem)
-  );
-  if (pattern) {
-    // Find matching P6 activity at this location
+  const testCaseCode = opts.testCaseCode || null;
+  const sourceRank = (s) => s === 'manual' ? 0 : (s === 'bulk_wizard' ? 1 : 2);
+  const candidates = P6_PATTERNS
+    .filter(p =>
+      p.portal_activity_name === act.activity &&
+      (!p.portal_subsystem || p.portal_subsystem === act.subsystem) &&
+      (testCaseCode
+        ? (p.portal_test_case_code === testCaseCode || !p.portal_test_case_code)
+        : !p.portal_test_case_code))
+    .sort((a, b) => {
+      // TC-specific rows beat activity-level rows when in TC mode
+      const at = (testCaseCode && a.portal_test_case_code === testCaseCode) ? 0 : 1;
+      const bt = (testCaseCode && b.portal_test_case_code === testCaseCode) ? 0 : 1;
+      if (at !== bt) return at - bt;
+      const ar = sourceRank(a.source);
+      const br = sourceRank(b.source);
+      if (ar !== br) return ar - br;
+      return (b.confidence || 0) - (a.confidence || 0);
+    });
+  for (const pattern of candidates) {
     const match = p6List.find(p =>
       p.p6_name.includes(pattern.p6_name_pattern) &&
-      p.p6_location_code === _p6LocCode(act.location)
-    );
+      p.p6_location_code === _p6LocCode(act.location));
     if (match) return match;
   }
   return null;
@@ -11949,13 +12063,32 @@ async function _p6LinkTestCase(p6Id, testCaseCode, sid) {
   if (!a) { toast('Activity data not found — please refresh', 'error'); return; }
   const { phase, location, subsystem, activity } = a;
   try {
-    await _dbInsert('p6_activity_map', [{
-      p6_activity_id: p6Id,
-      portal_phase: phase, portal_location: location,
-      portal_subsystem: subsystem, portal_activity: activity,
-      portal_test_case_code: testCaseCode || null,
-      linked_by: currentRoleUser?.name || 'Admin',
-    }]);
+    const existing = P6_MAP.find(m =>
+      m.portal_phase === phase && m.portal_location === location &&
+      m.portal_subsystem === subsystem && m.portal_activity === activity &&
+      m.portal_test_case_code === testCaseCode);
+    if (existing) {
+      await _dbUpdate('p6_activity_map', {
+        p6_activity_id: p6Id,
+        linked_by: currentRoleUser?.name || 'Admin',
+        was_confirmed: true,
+      }, { id: existing.id });
+    } else {
+      await _dbInsert('p6_activity_map', [{
+        p6_activity_id: p6Id,
+        portal_phase: phase, portal_location: location,
+        portal_subsystem: subsystem, portal_activity: activity,
+        portal_test_case_code: testCaseCode || null,
+        linked_by: currentRoleUser?.name || 'Admin',
+        was_confirmed: true,
+      }]);
+    }
+    // Learn the TC-level pattern so future imports auto-suggest the same
+    // mapping for this (activity, test_case_code) pair across all locations.
+    const p6Act = P6_ACTS.find(x => x.id === p6Id);
+    if (p6Act && testCaseCode) {
+      await _p6StorePattern(p6Act.p6_name, activity, subsystem, { testCaseCode });
+    }
     await _p6PropagateActivityId(phase, location, subsystem, activity, p6Id, testCaseCode);
     await loadP6Data();
     renderAdminP6();
@@ -11989,22 +12122,37 @@ async function _p6PropagateActivityId(phase, location, subsystem, activity, p6Id
   } catch(e) { console.warn('[p6Propagate]', e.message); }
 }
 
-async function _p6StorePattern(p6Name, portalActivity, subsystem) {
-  // Extract the descriptive part from P6 name: "[T&C] W40 (Ph2) - IXL Sim Test" → "IXL Sim Test"
-  const pattern = p6Name.replace(/^\[T&C\]\s+\w+\s+\(Ph\d+\)\s+-\s+/, '').trim();
+// Store/upsert a learn pattern.
+//   opts.testCaseCode → if set, the pattern is keyed to that test case under
+//                       the given activity (TC-level learning).
+//   opts.source       → 'manual' (default) | 'bulk_wizard' | 'promote'.
+//                       'manual' upgrades a row that was previously seeded by
+//                       the wizard; bulk-wizard rows do not downgrade manual.
+async function _p6StorePattern(p6Name, portalActivity, subsystem, opts = {}) {
+  const pattern      = _p6PatternStem(p6Name);
+  const testCaseCode = opts.testCaseCode || null;
+  const source       = opts.source || 'manual';
+  if (!pattern || !portalActivity) return;
   try {
-    // Upsert: increment confidence if already exists
-    const existing = P6_PATTERNS.find(p => p.p6_name_pattern === pattern && p.portal_activity_name === portalActivity);
+    const existing = P6_PATTERNS.find(p =>
+      p.p6_name_pattern === pattern &&
+      p.portal_activity_name === portalActivity &&
+      (p.portal_test_case_code || null) === testCaseCode);
     if (existing) {
-      await _dbUpdate('p6_learn_patterns', {
-        confidence: existing.confidence + 1,
+      const patch = {
+        confidence: (existing.confidence || 0) + 1,
         last_confirmed_at: new Date().toISOString(),
-      }, { id: existing.id });
+      };
+      // Promote source upward only ('manual' wins over 'bulk_wizard'/'promote').
+      if (source === 'manual' && existing.source !== 'manual') patch.source = 'manual';
+      await _dbUpdate('p6_learn_patterns', patch, { id: existing.id });
     } else {
       await _dbInsert('p6_learn_patterns', [{
         p6_name_pattern: pattern,
         portal_activity_name: portalActivity,
         portal_subsystem: subsystem || null,
+        portal_test_case_code: testCaseCode,
+        source,
         confidence: 1,
         last_confirmed_at: new Date().toISOString(),
       }]);
@@ -12049,6 +12197,13 @@ async function _p6CheckBatchSuggestions(activityName, subsystem, p6Act) {
       </div>
     </div>`).join('');
 
+  // Stash on window so onclick can call without an inline-JSON-in-attribute
+  // payload (whose embedded double-quotes would silently break the handler).
+  window._p6BatchSuggestions = suggestions.map(s => ({
+    actKey: s.portalAct.key, p6Id: s.p6Match.id,
+    phase: s.portalAct.phase, location: s.portalAct.location,
+    subsystem: s.portalAct.subsystem, activity: s.portalAct.activity,
+  }));
   modal({
     title: `💡 ${suggestions.length} Similar Match${suggestions.length>1?'es':''} Found`,
     size: 'medium',
@@ -12059,18 +12214,24 @@ async function _p6CheckBatchSuggestions(activityName, subsystem, p6Act) {
       <div>${rows}</div>`,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Skip</button>
-      <button class="admin-action-btn" onclick="_p6AcceptBatchSuggestions(${JSON.stringify(suggestions.map(s=>({actKey:s.portalAct.key,p6Id:s.p6Match.id,phase:s.portalAct.phase,location:s.portalAct.location,subsystem:s.portalAct.subsystem,activity:s.portalAct.activity})))})">
+      <button class="admin-action-btn" onclick="_p6AcceptBatchSuggestions()">
         Accept Selected
       </button>`,
   });
 }
 
 async function _p6AcceptBatchSuggestions(suggestions) {
+  // Pull from window if no arg passed (HTML attribute path).
+  suggestions = suggestions || window._p6BatchSuggestions || [];
+  // Read checkbox state BEFORE closing the modal (closeModal removes the DOM).
+  const decisions = suggestions.map(s => {
+    const cb = document.getElementById(`p6bs-${s.actKey}`);
+    return { s, accepted: !cb || cb.checked };
+  });
   closeModal();
   let count = 0;
-  for (const s of suggestions) {
-    const cb = document.getElementById(`p6bs-${s.actKey}`);
-    if (cb && !cb.checked) continue;
+  for (const { s, accepted } of decisions) {
+    if (!accepted) continue;
     try {
       const row = {
         p6_activity_id: s.p6Id, portal_phase: s.phase,
@@ -12084,11 +12245,540 @@ async function _p6AcceptBatchSuggestions(suggestions) {
       count++;
     } catch(e) { console.warn('[batch suggest]', e.message); }
   }
+  window._p6BatchSuggestions = null;
   if (count) {
     await loadP6Data();
     renderAdminP6();
     toast(`✓ ${count} activities auto-linked`, 'success');
+  } else {
+    toast('No activities linked', 'info');
   }
+}
+
+// ─── BULK LEARN TAB ───────────────────────────────────────────────────────────
+// Pick-one-apply-everywhere wizard: shows distinct portal activity names (or
+// activity+test-case pairs) that lack a link in any location, lets the admin
+// pick a single P6 activity from one location's list, then previews and
+// applies that pattern across every other matching location at once.
+//
+// Why this lives outside the Mapping tab: the Mapping tab renders one row per
+// (phase × location × subsystem × activity) — for a 30-location program that's
+// thousands of rows. The Learn tab collapses that to ~N distinct names so a
+// fresh schedule can be linked end-to-end in minutes instead of days.
+
+function _p6LearnGetCandidates() {
+  // Use the latest current batch (or baseline if no current yet) as the
+  // reference set the dropdowns search against — same source as Mapping tab.
+  const curBatch  = P6_BATCHES.find(b => b.schedule_type === 'current'  && b.is_current);
+  const baseBatch = P6_BATCHES.find(b => b.schedule_type === 'baseline' && b.is_current);
+  const useBatch  = curBatch || baseBatch;
+  const p6List    = useBatch ? P6_ACTS.filter(a => a.batch_id === useBatch.id) : [];
+
+  // Apply phase/subsystem filter. Locations are intentionally absent — the
+  // whole point of Learn is a location-agnostic pattern.
+  const portalActs = _amGetActivities().filter(a =>
+    (!_p6LearnFilters.phase     || a.phase     === _p6LearnFilters.phase) &&
+    (!_p6LearnFilters.subsystem || a.subsystem === _p6LearnFilters.subsystem));
+
+  // Group portal activities by (activity, subsystem) for activity mode, or
+  // (activity, subsystem, testCaseCode) for TC mode.
+  const groups = new Map();
+  for (const act of portalActs) {
+    if (_p6LearnMode === 'tc') {
+      for (const item of act.items || []) {
+        const tcCode = item.TestCaseCode || '';
+        if (!tcCode) continue;
+        const key = `${act.activity}||${act.subsystem}||${tcCode}`;
+        if (!groups.has(key)) groups.set(key, {
+          rowKey: key, activity: act.activity, subsystem: act.subsystem,
+          testCaseCode: tcCode, testName: item.TestName || '',
+          allActs: [], items: [],
+        });
+        const g = groups.get(key);
+        if (!g.allActs.find(a => a.key === act.key)) g.allActs.push(act);
+        g.items.push(item);
+      }
+    } else {
+      const key = `${act.activity}||${act.subsystem}`;
+      if (!groups.has(key)) groups.set(key, {
+        rowKey: key, activity: act.activity, subsystem: act.subsystem,
+        testCaseCode: null, allActs: [], items: [],
+      });
+      groups.get(key).allActs.push(act);
+    }
+  }
+
+  // For each group, count how many of its constituent (act, [tcCode]) pairs
+  // are unlinked. Only groups with at least one unlinked target are shown.
+  let candidates = [];
+  for (const g of groups.values()) {
+    let unlinkedCount = 0;
+    let exampleAct = null;
+    for (const act of g.allActs) {
+      const linked = _p6GetActivityLinks(act);
+      if (g.testCaseCode) {
+        if (!linked.find(l => l.portal_test_case_code === g.testCaseCode)) {
+          unlinkedCount++;
+          if (!exampleAct) exampleAct = act;
+        }
+      } else {
+        if (!linked.find(l => !l.portal_test_case_code)) {
+          unlinkedCount++;
+          if (!exampleAct) exampleAct = act;
+        }
+      }
+    }
+    if (unlinkedCount === 0) continue;
+    candidates.push({ ...g, unlinkedCount, totalCount: g.allActs.length, exampleAct });
+  }
+  if (_p6LearnMode === 'tc') {
+    candidates.sort((a, b) =>
+      _p6LearnSortText(b.activity).localeCompare(_p6LearnSortText(a.activity), undefined, { numeric: true, sensitivity: 'base' }) ||
+      _p6LearnSortText(_p6LearnTcLabel(b)).localeCompare(_p6LearnSortText(_p6LearnTcLabel(a)), undefined, { numeric: true, sensitivity: 'base' })
+    );
+  } else {
+    candidates.sort((a, b) => (b.unlinkedCount - a.unlinkedCount) || a.activity.localeCompare(b.activity));
+  }
+
+  // Text search on activity name / test case code / test name
+  const q = (_p6LearnFilters.search || '').trim().toLowerCase();
+  if (q) {
+    candidates = candidates.filter(c =>
+      (c.activity || '').toLowerCase().includes(q) ||
+      (c.testCaseCode || '').toLowerCase().includes(q) ||
+      (c.testName || '').toLowerCase().includes(q));
+  }
+
+  const totalCandidates = candidates.length;
+  const start = (_p6LearnPage - 1) * _p6LearnPerPage;
+  candidates = candidates.slice(start, start + _p6LearnPerPage);
+
+  return { candidates, p6List, useBatch, totalCandidates };
+}
+
+function _p6LearnSortText(v) {
+  return String(v || '').trim();
+}
+
+function _p6LearnTcLabel(c) {
+  return `${c.testCaseCode || ''} ${c.testName || ''}`.trim();
+}
+
+function _p6LearnTabHTML() {
+  const { candidates, p6List, useBatch, totalCandidates } = _p6LearnGetCandidates();
+
+  if (!useBatch || !p6List.length) return `
+    <div class="docs-empty">
+      <h3>No P6 schedule loaded</h3>
+      <p>Import a P6 schedule on the Import tab first.</p>
+    </div>`;
+
+  // Filter dropdown options
+  const allActs = _amGetActivities();
+  const phases     = [...new Set(allActs.map(a=>a.phase).filter(Boolean))].sort();
+  const subsystems = [...new Set(allActs
+    .filter(a => !_p6LearnFilters.phase || a.phase === _p6LearnFilters.phase)
+    .map(a=>a.subsystem).filter(Boolean))].sort();
+
+  return `
+    <div style="max-width:1100px;">
+      <div class="data-card" style="padding:16px 20px;margin-bottom:16px;background:#eff6ff;border:1px solid #bfdbfe;">
+        <div style="font-size:13px;font-weight:700;margin-bottom:6px;">🪄 Bulk Learn — pick once, apply everywhere</div>
+        <p style="font-size:12px;color:var(--gray-600);margin:0;line-height:1.45;">
+          Each row is a distinct ${_p6LearnMode==='tc'?'<b>activity + test case</b>':'<b>activity</b>'} that's unlinked in at least one location.
+          Pick one matching P6 activity, click <b>Preview</b>, choose which locations to link, and the pattern is saved
+          so future imports auto-suggest the same mapping.
+        </p>
+      </div>
+
+      <!-- Mode + filters -->
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+        <div style="display:inline-flex;background:var(--gray-100);border-radius:6px;padding:3px;">
+          <button class="${_p6LearnMode==='activity'?'admin-action-btn':'form-secondary'}" style="font-size:12px;padding:6px 12px;border:none;"
+            onclick="_p6LearnSetMode('activity')">Activities</button>
+          <button class="${_p6LearnMode==='tc'?'admin-action-btn':'form-secondary'}" style="font-size:12px;padding:6px 12px;border:none;"
+            onclick="_p6LearnSetMode('tc')">Activities + Test Cases</button>
+        </div>
+        <select class="filter-select" style="font-size:12px;" onchange="_p6LearnFilter('phase',this.value)">
+          <option value="">All Phases</option>
+          ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_p6LearnFilters.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
+        </select>
+        <select class="filter-select" style="font-size:12px;" onchange="_p6LearnFilter('subsystem',this.value)">
+          <option value="">All Subsystems</option>
+          ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_p6LearnFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+        </select>
+        <input type="text" id="p6-learn-search" class="filter-input" style="font-size:12px;max-width:220px;" placeholder="Search test activity…"
+          value="${escapeHtml(_p6LearnFilters.search||'')}" oninput="_p6LearnSearch(this.value)">
+        <span style="font-size:12px;color:var(--gray-500);margin-left:auto;">
+          <b>${candidates.length}</b> of ${totalCandidates} shown \u00b7
+          <b>${candidates.reduce((s,c)=>s+c.unlinkedCount,0)}</b> unlinked target${candidates.reduce((s,c)=>s+c.unlinkedCount,0)===1?'':'s'} across all locations
+        </span>
+      </div>
+
+      ${candidates.length === 0 ? `
+        <div class="data-card" style="padding:32px;text-align:center;color:var(--gray-500);">
+          <div style="font-size:32px;">✓</div>
+          <div style="font-weight:700;margin-top:8px;">Nothing to learn</div>
+          <div style="font-size:12px;margin-top:4px;">
+            ${(_p6LearnFilters.search||'').trim()
+              ? 'No matches for "'+escapeHtml(_p6LearnFilters.search)+'"'
+              : 'Every '+(_p6LearnMode==='tc'?'test case':'activity')+' matching the current filter is already linked.'}
+          </div>
+        </div>` : `
+        <div class="p6-learn-list">
+          ${candidates.map(c => _p6LearnRowHTML(c, p6List)).join('')}
+        </div>
+        ${_p6LearnPaginationHTML(totalCandidates)}`}
+    </div>`;
+}
+
+function _p6LearnRowHTML(c, p6List) {
+  const sid = 'lr_' + c.rowKey.replace(/[^a-zA-Z0-9]/g, '_');
+  // Stash so handlers can resolve back without re-deriving from rowKey.
+  if (!window._p6LearnRowData) window._p6LearnRowData = {};
+  window._p6LearnRowData[sid] = c;
+
+  // Scope the dropdown to the example activity's location code (or show all).
+  if (!window._p6LearnShowAll) window._p6LearnShowAll = new Set();
+  const showAll = window._p6LearnShowAll.has(sid);
+  const locCode = c.exampleAct ? _p6LocCode(c.exampleAct.location) : '';
+  const scopedP6 = (!showAll && locCode)
+    ? p6List.filter(p => p.p6_location_code === locCode)
+    : p6List;
+
+  // Pre-fill: existing pick > existing pattern's match in scopedP6.
+  const existing = window._p6LearnPicks?.get(c.rowKey);
+  let initialId = existing || '';
+  if (!initialId && c.exampleAct) {
+    const sug = _p6AutoSuggest(c.exampleAct, scopedP6, { testCaseCode: c.testCaseCode });
+    if (sug) initialId = sug.id;
+  }
+
+  const tcLine = c.testCaseCode
+    ? `<span style="font-size:11px;color:var(--gray-500);">\u00b7 TC: <b>${escapeHtml(c.testCaseCode)}</b>${c.testName?` \u2014 ${escapeHtml(c.testName)}`:''}</span>`
+    : '';
+
+  return `
+    <div class="data-card p6-learn-card" style="padding:14px 16px;margin-bottom:10px;" id="p6-learn-row-${sid}">
+      <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:240px;">
+          <div style="font-size:13px;font-weight:700;">${escapeHtml(c.activity)}</div>
+          <div style="font-size:11px;color:var(--gray-500);margin-top:2px;">
+            ${escapeHtml(c.subsystem || '\u2014')} ${tcLine}
+          </div>
+          <div style="font-size:11px;margin-top:4px;">
+            <span class="badge badge-notstarted" style="font-size:10px;">\ud83d\udd34 ${c.unlinkedCount} of ${c.totalCount} location${c.totalCount===1?'':'s'} unlinked</span>
+          </div>
+        </div>
+        <div style="flex:2;min-width:280px;">
+          ${locCode ? `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;font-size:11px;color:var(--gray-500);">
+              <span>${showAll ? 'Showing <b>all locations</b>' : `Search filtered to <b>${escapeHtml(locCode)}</b> (${scopedP6.length} of ${p6List.length})`}</span>
+              <button class="form-secondary tr-mini-btn" style="font-size:10px;padding:2px 6px;"
+                onclick="_p6LearnToggleShowAll('${sid}')">${showAll ? 'Filter to '+escapeHtml(locCode) : 'Show all locations'}</button>
+            </div>` : ''}
+          ${_p6SS(sid + '_pick', scopedP6, 'Search P6 activities…', initialId)}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+          <button class="admin-action-btn tr-mini-btn" onclick="_p6LearnPreview('${sid}')">Preview…</button>
+          <button class="form-secondary tr-mini-btn" onclick="_p6LearnSkip('${sid}')">Skip</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function _p6LearnSetMode(m) {
+  _p6LearnMode = m;
+  _p6LearnPage = 1;
+  _p6LearnFilters.search = '';
+  window._p6LearnPicks = new Map();
+  renderAdminP6();
+}
+function _p6LearnFilter(k, v) {
+  _p6LearnFilters[k] = v;
+  if (k === 'phase') _p6LearnFilters.subsystem = '';
+  _p6LearnPage = 1;
+  renderAdminP6();
+}
+function _p6LearnSearch(v) {
+  _p6LearnFilters.search = v;
+  _p6LearnPage = 1;
+  clearTimeout(_p6LearnSearchTimer);
+  _p6LearnSearchTimer = setTimeout(() => {
+    renderAdminP6();
+    const input = document.getElementById('p6-learn-search');
+    if (input) {
+      input.focus();
+      const end = input.value.length;
+      input.setSelectionRange?.(end, end);
+    }
+  }, 250);
+}
+function _p6LearnSetPage(p) {
+  _p6LearnPage = Math.max(1, p);
+  renderAdminP6();
+}
+function _p6LearnPaginationHTML(total) {
+  const totalPages = Math.max(1, Math.ceil(total / _p6LearnPerPage));
+  if (totalPages <= 1) return '';
+  const prev = _p6LearnPage > 1 ? `<button class="form-secondary tr-mini-btn" onclick="_p6LearnSetPage(${_p6LearnPage - 1})">← Prev</button>` : `<button class="form-secondary tr-mini-btn" disabled>← Prev</button>`;
+  const next = _p6LearnPage < totalPages ? `<button class="form-secondary tr-mini-btn" onclick="_p6LearnSetPage(${_p6LearnPage + 1})">Next →</button>` : `<button class="form-secondary tr-mini-btn" disabled>Next →</button>`;
+  return `
+    <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-top:16px;font-size:12px;">
+      ${prev}
+      <span style="color:var(--gray-600);">Page <b>${_p6LearnPage}</b> of <b>${totalPages}</b></span>
+      ${next}
+    </div>`;
+}
+function _p6LearnToggleShowAll(sid) {
+  if (!window._p6LearnShowAll) window._p6LearnShowAll = new Set();
+  window._p6LearnShowAll.has(sid) ? window._p6LearnShowAll.delete(sid) : window._p6LearnShowAll.add(sid);
+  renderAdminP6();
+}
+function _p6LearnSkip(sid) {
+  const row = document.getElementById(`p6-learn-row-${sid}`);
+  if (row) row.style.display = 'none';
+}
+
+function _p6LearnExistingLinks(act, testCaseCode) {
+  const links = _p6GetActivityLinks(act);
+  return {
+    activityLink: links.find(l => !l.portal_test_case_code) || null,
+    tcLink: testCaseCode ? (links.find(l => l.portal_test_case_code === testCaseCode) || null) : null,
+  };
+}
+
+function _p6LearnP6(id) {
+  return id ? (P6_ACTS.find(p => p.id === id) || null) : null;
+}
+
+function _p6LearnChangeLabel(t) {
+  if (t.changeType === 'replace-tc') return 'Replace TC link';
+  if (t.changeType === 'override-parent') return 'Override parent link';
+  if (t.changeType === 'replace-activity') return 'Replace activity link';
+  return 'New link';
+}
+
+// Build the cascade preview: for the picked P6 activity's stem, find every
+// (portal location) where there's an unlinked portal activity matching the
+// row's name (and TC code, in TC mode) AND a P6 activity with the same stem
+// at that location's code.
+function _p6LearnComputeTargets(c, p6Pick) {
+  const stem    = _p6PatternStem(p6Pick.p6_name);
+  const allActs = _amGetActivities();
+  const targets = [];
+  for (const act of allActs) {
+    if (act.activity !== c.activity) continue;
+    if (c.subsystem && act.subsystem !== c.subsystem) continue;
+    const linked = _p6GetActivityLinks(act);
+
+    // Find a P6 activity at this location with the same stem
+    const actLocCode = _p6LocCode(act.location);
+    const p6Match = P6_ACTS.find(p =>
+      p.batch_id === p6Pick.batch_id &&
+      p.p6_location_code === actLocCode &&
+      _p6PatternStem(p.p6_name) === stem);
+    if (!p6Match) continue;
+
+    if (c.testCaseCode) {
+      // Only target if THIS act actually has the test case.
+      const item = (act.items || []).find(i => i.TestCaseCode === c.testCaseCode);
+      if (!item) continue;
+      const { activityLink, tcLink } = _p6LearnExistingLinks(act, c.testCaseCode);
+      if (tcLink?.p6_activity_id === p6Match.id) continue;
+      if (!tcLink && activityLink?.p6_activity_id === p6Match.id) continue;
+      const existingLink = tcLink || null;
+      const inheritedLink = existingLink ? null : (activityLink || null);
+      targets.push({
+        act, p6Match, testCaseCode: c.testCaseCode, item,
+        scope: 'tc',
+        existingLink,
+        inheritedLink,
+        oldP6: _p6LearnP6(existingLink?.p6_activity_id || inheritedLink?.p6_activity_id),
+        changeType: existingLink ? 'replace-tc' : (inheritedLink ? 'override-parent' : 'new'),
+      });
+    } else {
+      const activityLink = linked.find(l => !l.portal_test_case_code) || null;
+      if (activityLink?.p6_activity_id === p6Match.id) continue;
+      targets.push({
+        act, p6Match, testCaseCode: null, scope: 'activity',
+        existingLink: activityLink,
+        inheritedLink: null,
+        oldP6: _p6LearnP6(activityLink?.p6_activity_id),
+        changeType: activityLink ? 'replace-activity' : 'new',
+      });
+    }
+  }
+  return targets;
+}
+
+function _p6LearnPreview(sid) {
+  const c = window._p6LearnRowData?.[sid];
+  if (!c) { toast('Row data missing — refresh the tab', 'error'); return; }
+  const p6Id = _p6SSVal(sid + '_pick') || _p6SSTypedMatch(sid + '_pick');
+  if (!p6Id) { toast('Pick a P6 activity first', 'error'); return; }
+  const p6Pick = P6_ACTS.find(p => p.id === p6Id);
+  if (!p6Pick) { toast('P6 activity not found', 'error'); return; }
+
+  // Persist the pick so re-renders preserve it.
+  if (!window._p6LearnPicks) window._p6LearnPicks = new Map();
+  window._p6LearnPicks.set(c.rowKey, p6Id);
+
+  const targets = _p6LearnComputeTargets(c, p6Pick);
+  if (!targets.length) {
+    const sameRows = _amGetActivities().filter(a =>
+      a.activity === c.activity &&
+      (!c.subsystem || a.subsystem === c.subsystem) &&
+      (!c.testCaseCode || (a.items || []).some(i => i.TestCaseCode === c.testCaseCode))
+    );
+    const sample = sameRows.slice(0, 12).map(a => `
+      <div style="padding:8px 10px;border-bottom:1px solid var(--gray-100);font-size:12px;">
+        <div style="font-weight:600;">${escapeHtml(a.location || '—')}</div>
+        <div style="color:var(--gray-500);font-size:11px;">${escapeHtml(a.phase || '—')} · ${escapeHtml(a.subsystem || '—')}</div>
+      </div>`).join('');
+    modal({
+      title: 'Preview: no cascade targets',
+      sub: `${c.activity}${c.testCaseCode ? ` · TC ${c.testCaseCode}` : ''}`,
+      size: 'medium',
+      body: `
+        <p style="font-size:12px;color:var(--gray-600);margin-bottom:12px;line-height:1.45;">
+          The selected P6 activity was found, but the wizard could not find any new or changed target links using the pattern stem
+          <b>${escapeHtml(_p6PatternStem(p6Pick.p6_name))}</b>. Matching rows may already use this P6 activity, or there may not be same-stem P6 activities at the other locations.
+        </p>
+        <div style="font-size:12px;margin-bottom:8px;">
+          <b>Selected P6:</b> ${escapeHtml(p6Pick.p6_name)}<br>
+          <span style="color:var(--gray-500);">${escapeHtml(p6Pick.p6_id || '')} · ${escapeHtml(p6Pick.p6_location_code || '—')}</span>
+        </div>
+        ${sameRows.length ? `
+          <div style="font-size:11px;font-weight:700;color:var(--gray-500);letter-spacing:.04em;margin:12px 0 6px;">PORTAL ACTIVITIES CHECKED</div>
+          <div style="max-height:240px;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">${sample}</div>
+          ${sameRows.length > 12 ? `<div style="font-size:11px;color:var(--gray-500);margin-top:6px;">${sameRows.length - 12} more activity rows not shown.</div>` : ''}
+        ` : ''}`,
+      footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    });
+    return;
+  }
+
+  // Stash on window so the Apply handler can read without inline-JSON-in-attr
+  // (the bug class fixed earlier in the Similar Matches modal).
+  window._p6LearnPreview = { sid, c, p6Pick, targets };
+
+  const stem = _p6PatternStem(p6Pick.p6_name);
+  const changing = targets.filter(t => t.changeType !== 'new');
+  const rows = targets.map((t, i) => `
+    <label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--gray-100);font-size:12px;">
+      <input type="checkbox" id="p6lp-${i}" checked>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;">${escapeHtml(t.act.location)}${t.testCaseCode?` \u00b7 ${escapeHtml(t.testCaseCode)}`:''}</div>
+        <div style="color:var(--gray-500);font-size:11px;">${escapeHtml(t.act.phase)} \u00b7 ${escapeHtml(t.act.subsystem||'\u2014')}</div>
+        <div style="margin-top:4px;">
+          <span class="badge ${t.changeType === 'new' ? 'badge-notstarted' : 'badge-warn'}" style="font-size:10px;">${escapeHtml(_p6LearnChangeLabel(t))}</span>
+        </div>
+        ${t.oldP6 ? `
+          <div style="color:#92400e;font-size:11px;margin-top:4px;">
+            Current: ${escapeHtml(t.oldP6.p6_name || _p6ActName(t.oldP6.id))}
+          </div>
+        ` : ''}
+        ${t.changeType === 'override-parent' ? `
+          <div style="color:#92400e;font-size:11px;margin-top:2px;">
+            The parent activity link will stay in place; this test case will use the new TC override.
+          </div>
+        ` : ''}
+      </div>
+      <div style="font-size:11px;color:var(--gray-500);text-align:right;min-width:0;">
+        New: ${escapeHtml(t.p6Match.p6_name)}<br>
+        ${t.p6Match.start_date?_fmtDate(t.p6Match.start_date):'\u2014'} \u2192 ${t.p6Match.finish_date?_fmtDate(t.p6Match.finish_date):'\u2014'}
+      </div>
+    </label>`).join('');
+
+  modal({
+    title: `\ud83e\ude84 Apply pattern: "${stem}"`,
+    sub: `${c.activity}${c.testCaseCode?` \u00b7 TC ${c.testCaseCode}`:''} \u2014 ${targets.length} location${targets.length===1?'':'s'} match`,
+    size: 'medium',
+    body: `
+      <p style="font-size:12px;color:var(--gray-600);margin-bottom:12px;">
+        Confirm the locations to link. The pattern <b>"${escapeHtml(stem)}"</b> will be saved so future P6 imports auto-suggest the same mapping.
+      </p>
+      ${changing.length ? `
+        <div style="padding:10px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;color:#92400e;font-size:12px;margin-bottom:12px;line-height:1.45;">
+          This will change ${changing.length} existing link${changing.length===1?'':'s'}. Review the Current and New values below before applying.
+        </div>
+      ` : ''}
+      <div style="max-height:380px;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">${rows}</div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn" onclick="_p6LearnApply()">Apply Selected</button>`,
+  });
+}
+
+async function _p6LearnApply() {
+  const ctx = window._p6LearnPreview;
+  if (!ctx) { closeModal(); return; }
+  // Read checkbox state BEFORE closeModal removes the DOM.
+  const decisions = ctx.targets.map((t, i) => {
+    const cb = document.getElementById(`p6lp-${i}`);
+    return { t, accepted: !cb || cb.checked };
+  });
+  closeModal();
+
+  const accepted = decisions.filter(d => d.accepted).map(d => d.t);
+  if (!accepted.length) { toast('No locations linked', 'info'); return; }
+
+  let inserted = 0;
+  let updated = 0;
+  for (const t of accepted) {
+    const row = {
+      p6_activity_id: t.p6Match.id,
+      portal_phase: t.act.phase, portal_location: t.act.location,
+      portal_subsystem: t.act.subsystem, portal_activity: t.act.activity,
+      portal_test_case_code: t.testCaseCode || null,
+      linked_by: currentRoleUser?.name || 'Admin',
+      is_auto_suggested: true, was_confirmed: true,
+    };
+    try {
+      if (t.existingLink?.id) {
+        await _dbUpdate('p6_activity_map', {
+          p6_activity_id: t.p6Match.id,
+          linked_by: currentRoleUser?.name || 'Admin',
+          is_auto_suggested: true,
+          was_confirmed: true,
+        }, { id: t.existingLink.id });
+        updated++;
+      } else {
+        await _dbInsert('p6_activity_map', [row]);
+        inserted++;
+      }
+    } catch (e) {
+      console.warn('[learn apply] row failed:', e.message);
+    }
+  }
+  const count = inserted + updated;
+  if (!count) {
+    window._p6LearnPreview = null;
+    toast('No links were applied', 'error');
+    return;
+  }
+
+  // One pattern row per Apply (not per target) — confidence stays sane.
+  await _p6StorePattern(ctx.p6Pick.p6_name, ctx.c.activity, ctx.c.subsystem, {
+    testCaseCode: ctx.c.testCaseCode || null,
+    source: 'bulk_wizard',
+  });
+
+  // Propagate activity_id into test_items for each applied target.
+  for (const t of accepted) {
+    try {
+      await _p6PropagateActivityId(t.act.phase, t.act.location, t.act.subsystem, t.act.activity, t.p6Match.id, t.testCaseCode || null);
+    } catch (e) { console.warn('[learn apply] propagate failed:', e.message); }
+  }
+
+  // Clear the pick so the row disappears or shrinks on re-render.
+  window._p6LearnPicks?.delete(ctx.c.rowKey);
+  window._p6LearnPreview = null;
+
+  await loadP6Data();
+  renderAdminP6();
+  toast(`\u2713 ${count} link${count===1?'':'s'} applied \u00b7 ${inserted} new, ${updated} updated \u00b7 pattern saved`, 'success');
 }
 
 // ─── HEALTH TAB ───────────────────────────────────────────────────────────────
@@ -13092,9 +13782,12 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
           : escapeHtml(parent.TestCaseCode || parent.TestID || '—')}
       </td>
       <td>
-        ${_trEditMode && isAdmin
-          ? `<input class="form-input" style="font-weight:600;font-size:13px;" value="${escapeHtml(parent.TestName||'')}" onclick="event.stopPropagation()" onchange="_trDraftChange('${ptid}','TestName',this.value)">`
-          : `<div style="font-weight:600;font-size:13px;">${escapeHtml(parent.TestName || '—')}</div>`}
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div style="flex:1;min-width:0;">${_trEditMode && isAdmin
+            ? `<input class="form-input" style="font-weight:600;font-size:13px;" value="${escapeHtml(parent.TestName||'')}" onclick="event.stopPropagation()" onchange="_trDraftChange('${ptid}','TestName',this.value)">`
+            : `<div style="font-weight:600;font-size:13px;">${escapeHtml(parent.TestName || '—')}</div>`}</div>
+          ${_trEditMode && isAdmin ? '' : `<span onclick="event.stopPropagation()">${_formsBadgeHTML(parent)}</span>`}
+        </div>
         <div id="aps-${safeId}" style="font-size:11px;color:var(--gray-500);margin-top:2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <span>📦 ${totalCount} asset${totalCount !== 1 ? 's' : ''} &nbsp;·&nbsp;
           <span style="color:#16a34a;">${passCount} Pass</span>${totalCount - passCount > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${totalCount - passCount} pending</span>` : ''}</span>
@@ -13125,8 +13818,13 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
         ${_trBulkMode ? `<td style="padding-left:20px;"><input type="checkbox" ${_trSelected.has(String(c.TestID)) ? 'checked' : ''} onchange="_trToggleSelect('${ctid}',this.checked)"></td>` : ''}
         ${_trEditMode && isAdmin ? `<td></td>` : ''}
         <td style="padding-left:24px;font-size:11px;font-family:monospace;color:var(--gray-500);">
-          <span style="color:var(--gray-300);">└</span> ${escapeHtml(assetName)}
-          ${deviceType ? `<div style="font-size:10px;color:var(--gray-400);margin-top:1px;">${escapeHtml(deviceType)}</div>` : ''}
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div style="flex:1;min-width:0;">
+              <span style="color:var(--gray-300);">└</span> ${escapeHtml(assetName)}
+              ${deviceType ? `<div style="font-size:10px;color:var(--gray-400);margin-top:1px;padding-left:14px;">${escapeHtml(deviceType)}</div>` : ''}
+            </div>
+            ${_trEditMode && isAdmin ? '' : `<span onclick="event.stopPropagation()">${_formsBadgeHTML(c)}</span>`}
+          </div>
         </td>
         <td>
           ${c.CompletedBy ? `<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(c.CompletedBy)}</div>` : ''}
@@ -24947,15 +25645,105 @@ async function _formsDelete(formId) {
   _idbPinDelete(formId).catch(() => {});
 }
 
-async function _formsLinkToTest(formId, testId) {
-  if (FORM_TEST_LINKS.find(l => l.form_id === formId && l.test_id === testId)) return;
+// ── Scope-aware form ↔ test linking ──────────────────────────────────────
+// A link row is keyed by (form_id, test_id, asset_id). The asset_id column
+// is nullable:
+//   • asset_id = NULL  → "parent-scope": link applies to the parent test case
+//                        as a whole. For a parent test case with N child
+//                        assets, the single PDF covers all of them. Statuses
+//                        remain per-asset; only the form is shared.
+//   • asset_id = <uuid> → "per-asset": link applies only to that specific
+//                        child asset row. Each asset can carry its own form.
+// For a standalone (non-parent) test case, asset_id is always NULL and
+// behaves exactly like before the migration.
+async function _formsLinkToTest(formId, testId, assetId = null) {
+  const norm = assetId || null;
+  if (FORM_TEST_LINKS.find(l => l.form_id === formId && l.test_id === testId && (l.asset_id || null) === norm)) return;
   const linkedBy = currentProfile?.full_name || currentRoleUser?.name || null;
-  const [link] = await _dbInsert('form_test_item_links', [{ form_id: formId, test_id: testId, linked_by: linkedBy }]);
+  const [link] = await _dbInsert('form_test_item_links', [{
+    form_id: formId, test_id: testId, asset_id: norm, linked_by: linkedBy,
+  }]);
   FORM_TEST_LINKS.push(link);
 }
-async function _formsUnlinkFromTest(formId, testId) {
-  await _dbDelete('form_test_item_links', { form_id: formId, test_id: testId });
-  FORM_TEST_LINKS = FORM_TEST_LINKS.filter(l => !(l.form_id === formId && l.test_id === testId));
+async function _formsUnlinkFromTest(formId, testId, assetId = undefined) {
+  // assetId === undefined → unlink ALL scopes for this (form, test) pair (legacy behavior).
+  // assetId === null      → unlink the parent-scope row only (asset_id IS NULL).
+  // assetId === <uuid>    → unlink that specific per-asset row only.
+  // Delete by primary key id so PostgREST's eq.null limitation never bites us.
+  const norm = assetId === undefined ? undefined : (assetId || null);
+  const targets = FORM_TEST_LINKS.filter(l => {
+    if (l.form_id !== formId || l.test_id !== testId) return false;
+    if (norm === undefined) return true;
+    return (l.asset_id || null) === norm;
+  });
+  for (const link of targets) {
+    if (!link.id) continue;
+    try { await _dbDelete('form_test_item_links', { id: link.id }); }
+    catch (e) { console.warn('[_formsUnlinkFromTest] delete by id failed:', e.message); }
+  }
+  FORM_TEST_LINKS = FORM_TEST_LINKS.filter(l => !targets.includes(l));
+}
+
+// Returns the forms relevant to a single TI row, taking parent/child scope
+// into account. Used by the test-register forms button and per-row counts.
+function _formsForTestRow(row) {
+  if (!row) return [];
+  const isChild = row.ParentTestId && row.AssetId;
+  if (!isChild) {
+    // Parent or standalone test case: include every link for this test_id
+    // regardless of scope.
+    const ids = FORM_TEST_LINKS.filter(l => l.test_id === row.TestID).map(l => l.form_id);
+    return FORMS.filter(f => ids.includes(f.id));
+  }
+  // Child asset row: parent-scoped links + this asset's own per-asset links.
+  const ids = FORM_TEST_LINKS
+    .filter(l => l.test_id === row.ParentTestId &&
+      (l.asset_id == null || String(l.asset_id) === String(row.AssetId)))
+    .map(l => l.form_id);
+  return FORMS.filter(f => ids.includes(f.id));
+}
+function _formsCountForTestRow(row) {
+  return _formsForTestRow(row).length;
+}
+
+// Returns a deduped attachment plan for a parent (or standalone) test case,
+// used by the Test Report Extract to decide what to bundle and how to label
+// each attachment. Children are NOT processed here — they share their
+// parent's plan.
+//   Each entry: { form, scope: 'parent'|'asset', assetId, assetName, scopeLabel, sortKey }
+function _formsAttachmentPlanForTestCase(parentOrStandaloneRow) {
+  if (!parentOrStandaloneRow) return [];
+  const links = FORM_TEST_LINKS.filter(l => l.test_id === parentOrStandaloneRow.TestID);
+  const plan = links.map(l => {
+    const form = FORMS.find(f => f.id === l.form_id);
+    if (!form) return null;
+    if (l.asset_id == null) {
+      return { form, scope: 'parent', assetId: null, assetName: null,
+        scopeLabel: parentOrStandaloneRow.IsParent ? 'Covers all assets' : '',
+        sortKey: `0_${form.name || ''}` };
+    }
+    const asset = (typeof ASSETS !== 'undefined' ? ASSETS : []).find(a => a.id === l.asset_id);
+    const assetName = asset?.name || `(asset ${String(l.asset_id).slice(0, 8)})`;
+    return { form, scope: 'asset', assetId: l.asset_id, assetName,
+      scopeLabel: `Asset: ${assetName}`,
+      sortKey: `1_${assetName}_${form.name || ''}` };
+  }).filter(Boolean);
+  plan.sort((a, b) => a.sortKey.localeCompare(b.sortKey, undefined, { numeric: true, sensitivity: 'base' }));
+  return plan;
+}
+
+// Convenience: list all link rows for a test case with their resolved scope.
+// Used by the parent's form-picker UI to render the scope column + unlink
+// buttons that target the exact (form, asset) row.
+function _formsLinkRowsForTestCase(testId) {
+  return FORM_TEST_LINKS
+    .filter(l => l.test_id === testId)
+    .map(l => {
+      const form = FORMS.find(f => f.id === l.form_id);
+      const asset = l.asset_id ? (typeof ASSETS !== 'undefined' ? ASSETS : []).find(a => a.id === l.asset_id) : null;
+      return { link: l, form, asset, scope: l.asset_id ? 'asset' : 'parent' };
+    })
+    .filter(r => r.form);
 }
 async function _formsLinkToTemplate(formId, templateId) {
   if (FORM_TPL_LINKS.find(l => l.form_id === formId && l.template_id === templateId)) return;
@@ -26365,47 +27153,144 @@ function closeFormViewer() {
   closeModal();
 }
 
-// ── FORM PICKER (per test case) ─────────────────────────────────────────
-function openFormPickerForTest(testId) {
-  const row = TI.find(r => String(r.TestID) === testId);
-  const sub = row ? `${row.TestCaseCode || row.TestID} · ${row.Activity || ''}`.trim() : testId;
+// ── FORM PICKER (per test case, scope-aware) ────────────────────────────
+// `testId`  → the *parent* (or standalone) test case id. For child asset
+//             rows we always use the parent's TestID and pass assetId
+//             separately, because all link rows live keyed to the parent.
+// `assetId` → '' (empty) means "open from parent context": list every link
+//             on this test case (parent-scope + every per-asset link) and
+//             allow scope to be chosen on attach/link.
+//             A uuid means "open from one child asset row": list parent-
+//             scope (read-only/inherited) + this asset's per-asset links;
+//             new attach/link calls auto-target this asset's scope.
+function _fpResolveContext(testIdOrChildId, assetIdArg) {
+  // Accept either a parent TestID + assetId, or a child TestID alone — and
+  // normalize to { parentRow, assetId, originalArg } so callers can hand us
+  // whichever they have.
+  let parentRow = TI.find(r => String(r.TestID) === String(testIdOrChildId));
+  let assetId = (assetIdArg || '') === '' ? '' : String(assetIdArg);
+  if (parentRow && parentRow.ParentTestId && parentRow.AssetId && !assetId) {
+    // A child row id was passed directly — promote to its parent + asset.
+    assetId = String(parentRow.AssetId);
+    parentRow = TI.find(r => String(r.TestID) === String(parentRow.ParentTestId)) || parentRow;
+  }
+  return { parentRow, assetId, parentTestId: parentRow ? String(parentRow.TestID) : String(testIdOrChildId) };
+}
+function openFormPickerForTest(testId, assetId = '') {
+  const ctx = _fpResolveContext(testId, assetId);
+  const row = ctx.parentRow;
+  const asset = ctx.assetId ? (typeof ASSETS !== 'undefined' ? ASSETS : []).find(a => a.id === ctx.assetId) : null;
+  const baseSub = row ? `${row.TestCaseCode || row.TestID} · ${row.Activity || ''}`.trim() : ctx.parentTestId;
+  const sub = asset ? `${baseSub}  ·  Asset: ${asset.name}` : baseSub;
   modal({
     title: 'Linked Forms', sub, size: 'large',
-    body: _formPickerBody(testId),
+    body: _formPickerBody(ctx.parentTestId, ctx.assetId),
     footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
   });
 }
 
-function _formPickerBody(testId) {
-  const linked = _formsForTest(testId);
-  return `
-    <div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;">
-      <button class="form-submit" onclick="openAttachNewForm('${testId}')">+ Attach New PDF</button>
-      <button class="form-secondary" onclick="openLinkExistingForm('${testId}')">Link Existing Form</button>
-    </div>
-    ${linked.length === 0
-      ? `<div style="padding:24px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:6px;">No forms linked to this test case yet.</div>`
-      : `<table class="data-table">
-           <thead><tr><th>Name</th><th>Phase</th><th>Location</th><th>Subsystem</th><th>Description</th><th style="width:180px;">Actions</th></tr></thead>
-           <tbody>${linked.map(f => `
-             <tr>
-               <td style="font-weight:600;">${escapeHtml(f.name)}</td>
-               <td style="font-size:12px;">${escapeHtml(f.phase || '—')}</td>
-               <td style="font-size:12px;">${escapeHtml(f.location || '—')}</td>
-               <td><span class="tag">${escapeHtml(f.subsystem || '—')}</span></td>
-               <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(f.description || '')}</td>
+function _formPickerBody(testId, assetId = '') {
+  const parentRow = TI.find(r => String(r.TestID) === String(testId));
+  const isParentCase = !!(parentRow && parentRow.IsParent);
+  const childRows = isParentCase ? TI.filter(r => String(r.ParentTestId) === String(testId)) : [];
+  const allLinks = _formsLinkRowsForTestCase(testId);
+  // Filter for the current scope view
+  const visible = assetId
+    ? allLinks.filter(r => r.scope === 'parent' || String(r.link.asset_id) === String(assetId))
+    : allLinks;
+
+  const targetAsset = assetId ? (typeof ASSETS !== 'undefined' ? ASSETS : []).find(a => a.id === assetId) : null;
+  const tid = escapeHtml(String(testId));
+  const aid = escapeHtml(String(assetId || ''));
+
+  const scopeBanner = (() => {
+    if (assetId) {
+      return `<div style="margin-bottom:12px;padding:10px 12px;border-radius:6px;background:#eff6ff;border:1px solid #bfdbfe;font-size:12px;color:#1e3a8a;">
+        Showing forms for <strong>${escapeHtml(targetAsset?.name || 'this asset')}</strong>. Forms with scope <em>“Covers all assets”</em> are inherited from the parent test case and managed there.
+      </div>`;
+    }
+    if (isParentCase) {
+      return `<div style="margin-bottom:12px;padding:10px 12px;border-radius:6px;background:#f5f3ff;border:1px solid #ddd6fe;font-size:12px;color:#4c1d95;">
+        This test case has <strong>${childRows.length} child asset${childRows.length===1?'':'s'}</strong>. Forms can either <strong>cover all assets</strong> (one PDF for the whole test case) or be linked to a <strong>specific asset</strong>.
+      </div>`;
+    }
+    return '';
+  })();
+
+  const rowsHtml = visible.length === 0
+    ? `<div style="padding:24px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:6px;">No forms linked${assetId ? ' to this asset' : ' to this test case'} yet.</div>`
+    : `<table class="data-table">
+         <thead><tr><th>Name</th>${isParentCase ? '<th>Scope</th>' : ''}<th>Phase</th><th>Subsystem</th><th>Description</th><th style="width:200px;">Actions</th></tr></thead>
+         <tbody>${visible.map(({ form, scope, asset }) => {
+            const inherited = !!(assetId && scope === 'parent');
+            const scopeCell = isParentCase
+              ? (scope === 'parent'
+                  ? `<span class="tag" style="background:#ede9fe;color:#5b21b6;border:1px solid #ddd6fe;">All assets</span>`
+                  : `<span class="tag" style="background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe;">${escapeHtml(asset?.name || 'asset')}</span>`)
+              : '';
+            const unlinkBtn = inherited
+              ? `<span style="font-size:11px;color:var(--gray-500);font-style:italic;">inherited</span>`
+              : `<button class="form-secondary tr-mini-btn" onclick="unlinkFormFromTest('${form.id}','${tid}','${scope === 'asset' ? escapeHtml(String(asset?.id || '')) : ''}')">Unlink</button>`;
+            return `
+             <tr${inherited ? ' style="background:#fafafa;"' : ''}>
+               <td style="font-weight:600;">${escapeHtml(form.name)}</td>
+               ${isParentCase ? `<td>${scopeCell}</td>` : ''}
+               <td style="font-size:12px;">${escapeHtml(form.phase || '—')}</td>
+               <td><span class="tag">${escapeHtml(form.subsystem || '—')}</span></td>
+               <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(form.description || '')}</td>
                <td style="white-space:nowrap;">
-                 <button class="admin-action-btn tr-mini-btn" onclick="openFormViewer('${f.id}')">Open</button>
-                 <button class="form-secondary tr-mini-btn" onclick="unlinkFormFromTest('${f.id}','${testId}')">Unlink</button>
+                 <button class="admin-action-btn tr-mini-btn" onclick="openFormViewer('${form.id}')">Open</button>
+                 ${unlinkBtn}
                </td>
-             </tr>`).join('')}
-           </tbody>
-         </table>`}
+             </tr>`;
+           }).join('')}
+         </tbody>
+       </table>`;
+
+  return `
+    ${scopeBanner}
+    <div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="form-submit" onclick="openAttachNewForm('${tid}','${aid}')">+ Attach New PDF</button>
+      <button class="form-secondary" onclick="openLinkExistingForm('${tid}','${aid}')">Link Existing Form</button>
+    </div>
+    ${rowsHtml}
   `;
 }
 
-function openAttachNewForm(testId) {
-  const row = TI.find(r => String(r.TestID) === testId);
+// Renders the scope picker shown when attaching/linking from a parent
+// test case that has child assets. Defaults to "Covers all assets" so the
+// historical behavior (one form on the parent) keeps working unchanged.
+function _fpScopeFieldHTML(testId, assetId, fieldId = 'frm-scope') {
+  const parentRow = TI.find(r => String(r.TestID) === String(testId));
+  const isParentCase = !!(parentRow && parentRow.IsParent);
+  const childRows = isParentCase ? TI.filter(r => String(r.ParentTestId) === String(testId)) : [];
+  if (!isParentCase) return ''; // standalone — scope is always implicit (NULL)
+  // If we already know which asset (called from a child row), force-select it.
+  const forced = assetId ? String(assetId) : '';
+  const opts = [
+    `<option value="" ${!forced ? 'selected' : ''}>Covers all assets (parent-scope)</option>`,
+    ...childRows.map(c => {
+      const a = (typeof ASSETS !== 'undefined' ? ASSETS : []).find(x => x.id === c.AssetId);
+      const name = a?.name || c.TestID;
+      return `<option value="${escapeHtml(String(c.AssetId))}" ${forced && forced === String(c.AssetId) ? 'selected' : ''}>Asset: ${escapeHtml(name)}</option>`;
+    }),
+  ].join('');
+  return `
+    <div class="form-field form-field-full">
+      <label>Form Scope</label>
+      <select id="${fieldId}" class="form-input">${opts}</select>
+      <div style="font-size:11px;color:var(--gray-500);margin-top:4px;">
+        <strong>Covers all assets</strong>: one PDF used for the whole test case; per-asset statuses still tracked separately.<br>
+        <strong>Asset:&nbsp;…</strong>: this form is linked only to that child asset row.
+      </div>
+    </div>`;
+}
+
+function openAttachNewForm(testId, assetId = '') {
+  const ctx = _fpResolveContext(testId, assetId);
+  const row = ctx.parentRow;
+  const tid = escapeHtml(ctx.parentTestId);
+  const aid = escapeHtml(ctx.assetId || '');
   modal({
     title: 'Attach New PDF',
     sub: row ? `${row.TestCaseCode || row.TestID}` : '',
@@ -26413,23 +27298,27 @@ function openAttachNewForm(testId) {
       <div class="form-grid">
         <div class="form-field form-field-full"><label>PDF File</label><input type="file" id="frm-file" accept="application/pdf" class="form-input"></div>
         <div class="form-field form-field-full"><label>Form Name</label><input type="text" id="frm-name" class="form-input" placeholder="e.g. PWR-001 Data Sheet"></div>
+        ${_fpScopeFieldHTML(ctx.parentTestId, ctx.assetId, 'frm-scope')}
         <div class="form-field"><label>Subsystem</label><input type="text" id="frm-sub" class="form-input" value="${escapeHtml(row?.SubSystem || row?.Subsystem || '')}"></div>
         <div class="form-field"><label>Phase</label><input type="text" id="frm-phase" class="form-input" value="${escapeHtml(row?.Phase || '')}"></div>
         <div class="form-field form-field-full"><label>Location</label><input type="text" id="frm-loc" class="form-input" value="${escapeHtml(row?.Location || '')}"></div>
         <div class="form-field form-field-full"><label>Notes / Description</label><textarea id="frm-desc" class="form-input" rows="2" placeholder="Optional high-level description"></textarea></div>
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="openFormPickerForTest('${testId}')">Cancel</button>
-             <button class="form-submit" onclick="submitAttachNewForm('${testId}')">Upload &amp; Link</button>`,
+    footer: `<button class="form-secondary" onclick="openFormPickerForTest('${tid}','${aid}')">Cancel</button>
+             <button class="form-submit" onclick="submitAttachNewForm('${tid}','${aid}')">Upload &amp; Link</button>`,
   });
 }
 
-async function submitAttachNewForm(testId) {
+async function submitAttachNewForm(testId, assetId = '') {
   const file = document.getElementById('frm-file')?.files?.[0];
   if (!file) { toast('Select a PDF', 'error'); return; }
   if (file.type !== 'application/pdf') { toast('File must be a PDF', 'error'); return; }
   const name = document.getElementById('frm-name')?.value.trim();
   if (!name) { toast('Name is required', 'error'); return; }
+  // Read scope: use form field if present (parent context), else use prefilled asset.
+  const scopeField = document.getElementById('frm-scope');
+  const scopeAssetId = scopeField ? (scopeField.value || '') : (assetId || '');
   const btn = document.querySelector('.modal-footer .form-submit');
   if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
   try {
@@ -26441,10 +27330,13 @@ async function submitAttachNewForm(testId) {
       location:    document.getElementById('frm-loc')?.value.trim(),
       isTemplate: false, originalFilename: file.name, fileSize: file.size, file,
     });
-    await _formsLinkToTest(created.id, testId);
-    logAudit('Attached Form to Test Case', name, testId);
+    await _formsLinkToTest(created.id, testId, scopeAssetId || null);
+    const scopeNote = scopeAssetId
+      ? `asset:${(typeof ASSETS!=='undefined'?ASSETS:[]).find(a=>a.id===scopeAssetId)?.name || scopeAssetId}`
+      : 'all assets';
+    logAudit('Attached Form to Test Case', name, `${testId} · ${scopeNote}`);
     toast('✓ Form attached', 'success');
-    openFormPickerForTest(testId);
+    openFormPickerForTest(testId, scopeAssetId);
     if (typeof _reRenderTR === 'function') _reRenderTR();
   } catch (e) {
     toast('Upload failed: ' + e.message, 'error');
@@ -26452,19 +27344,30 @@ async function submitAttachNewForm(testId) {
   }
 }
 
-function openLinkExistingForm(testId) {
-  const linkedIds = new Set(_formsForTest(testId).map(f => f.id));
-  const candidates = FORMS.filter(f => !linkedIds.has(f.id) && !f.is_template);
+function openLinkExistingForm(testId, assetId = '') {
+  const ctx = _fpResolveContext(testId, assetId);
+  const tid = escapeHtml(ctx.parentTestId);
+  const aid = escapeHtml(ctx.assetId || '');
+  // For per-asset context: hide forms already linked to *this asset* or as parent-scope.
+  // For parent context: hide forms with any link to this test case.
+  const scopeAssetId = ctx.assetId || '';
+  const linksHere = FORM_TEST_LINKS.filter(l => l.test_id === ctx.parentTestId);
+  const blocked = scopeAssetId
+    ? new Set(linksHere.filter(l => l.asset_id == null || String(l.asset_id) === String(scopeAssetId)).map(l => l.form_id))
+    : new Set(linksHere.map(l => l.form_id));
+  const candidates = FORMS.filter(f => !blocked.has(f.id) && !f.is_template);
   window._lefAll = candidates;
-  window._lefTestId = testId;
+  window._lefTestId = ctx.parentTestId;
+  window._lefAssetId = scopeAssetId;
   modal({
     title: 'Link Existing Form', size: 'large',
     body: `
+      ${_fpScopeFieldHTML(ctx.parentTestId, ctx.assetId, 'lef-scope')}
       <input type="text" class="form-input" placeholder="Search by name, subsystem, location…" style="margin-bottom:12px;"
              oninput="document.getElementById('lef-list').innerHTML = window._lefFilter(this.value)">
-      <div id="lef-list" style="max-height:50vh;overflow:auto;">${_lefRenderList(candidates)}</div>
+      <div id="lef-list" style="max-height:45vh;overflow:auto;">${_lefRenderList(candidates)}</div>
     `,
-    footer: `<button class="form-secondary" onclick="openFormPickerForTest('${testId}')">Cancel</button>`,
+    footer: `<button class="form-secondary" onclick="openFormPickerForTest('${tid}','${aid}')">Cancel</button>`,
   });
   window._lefFilter = (q) => {
     q = (q || '').trim().toLowerCase();
@@ -26493,31 +27396,61 @@ function _lefRenderList(list) {
 
 async function linkExistingFormToTest(formId, testId) {
   try {
-    await _formsLinkToTest(formId, testId);
-    logAudit('Linked Existing Form to Test Case', FORMS.find(f => f.id === formId)?.name || formId, testId);
+    // Pick scope from the picker UI; fall back to whatever the picker was opened with.
+    const scopeField = document.getElementById('lef-scope');
+    const scopeAssetId = scopeField ? (scopeField.value || '') : (window._lefAssetId || '');
+    await _formsLinkToTest(formId, testId, scopeAssetId || null);
+    const scopeNote = scopeAssetId
+      ? `asset:${(typeof ASSETS!=='undefined'?ASSETS:[]).find(a=>a.id===scopeAssetId)?.name || scopeAssetId}`
+      : 'all assets';
+    logAudit('Linked Existing Form to Test Case', FORMS.find(f => f.id === formId)?.name || formId, `${testId} · ${scopeNote}`);
     toast('✓ Linked', 'success');
-    openFormPickerForTest(testId);
+    openFormPickerForTest(testId, scopeAssetId);
     if (typeof _reRenderTR === 'function') _reRenderTR();
   } catch (e) { toast('Link failed: ' + e.message, 'error'); }
 }
 
-async function unlinkFormFromTest(formId, testId) {
+async function unlinkFormFromTest(formId, testId, assetId = '') {
   if (!confirm('Unlink this form from the test case? The file itself is not deleted.')) return;
   try {
-    await _formsUnlinkFromTest(formId, testId);
+    // assetId === '' from a non-parent (standalone) case → unlink the
+    // single (form, test) row. From a parent case the caller always sends
+    // the explicit scope (asset uuid or '' for parent-scope), and we pass
+    // that through. Note: '' here means parent-scope (NULL), not "any".
+    const scope = assetId === '' && (() => {
+      const r = TI.find(t => String(t.TestID) === String(testId));
+      return !!(r && r.IsParent);
+    })() ? null : (assetId || null);
+    await _formsUnlinkFromTest(formId, testId, scope);
     logAudit('Unlinked Form from Test Case', FORMS.find(f => f.id === formId)?.name || formId, testId);
-    openFormPickerForTest(testId);
+    openFormPickerForTest(testId, assetId);
     if (typeof _reRenderTR === 'function') _reRenderTR();
   } catch (e) { toast('Unlink failed: ' + e.message, 'error'); }
 }
 
-function _formsBadgeHTML(testId) {
-  const count = _formsCountForTest(testId);
-  const tid = escapeHtml(String(testId));
-  if (count === 0) {
+function _formsBadgeHTML(testIdOrRow, assetId = '') {
+  // Back-compat: callers that pass a raw test_id string still work — we
+  // resolve it to its TI row. New callers pass the row directly.
+  const row = (typeof testIdOrRow === 'string')
+    ? TI.find(r => String(r.TestID) === String(testIdOrRow))
+    : testIdOrRow;
+  if (!row) {
+    const tid = escapeHtml(String(testIdOrRow || ''));
     return `<button class="form-secondary tr-mini-btn" title="Attach form" onclick="openFormPickerForTest('${tid}')" style="font-size:13px;padding:2px 6px;color:var(--gray-500);">📎</button>`;
   }
-  return `<button class="admin-action-btn tr-mini-btn" title="${count} form${count===1?'':'s'} linked" onclick="openFormPickerForTest('${tid}')" style="font-size:11px;padding:2px 7px;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;">📎 ${count}</button>`;
+  const count = _formsCountForTestRow(row);
+  // Child asset row → open picker focused on this asset's scope.
+  const isChild = row.ParentTestId && row.AssetId;
+  const targetTestId = isChild ? String(row.ParentTestId) : String(row.TestID);
+  const targetAsset  = isChild ? String(row.AssetId) : (assetId || '');
+  const tid = escapeHtml(targetTestId);
+  const aid = escapeHtml(targetAsset);
+  if (count === 0) {
+    return `<button class="form-secondary tr-mini-btn" title="Attach form" onclick="openFormPickerForTest('${tid}','${aid}')" style="font-size:13px;padding:2px 6px;color:var(--gray-500);">📎</button>`;
+  }
+  const titleBits = [`${count} form${count===1?'':'s'} linked`];
+  if (isChild) titleBits.push('(includes any covering all assets)');
+  return `<button class="admin-action-btn tr-mini-btn" title="${titleBits.join(' ')}" onclick="openFormPickerForTest('${tid}','${aid}')" style="font-size:11px;padding:2px 7px;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;">📎 ${count}</button>`;
 }
 
 // ── TEMPLATE EDITOR INTEGRATION ─────────────────────────────────────────
@@ -26783,4 +27716,887 @@ async function deleteFormFromPage(formId) {
     toast('✓ Deleted', 'success');
     renderFormsPage();
   } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TEST REPORT EXTRACT — compiled PDF (or ZIP) builder
+// ───────────────────────────────────────────────────────────────────────────
+// Produces a client-ready bundle for a Test Report row:
+//   • Cover/overall summary page
+//   • Per-activity index page
+//   • Per-section summary tables
+//   • Filled form PDFs grouped under each section
+//   • PDF outline (bookmarks) for navigation
+//   • Page-number footers
+// Two output modes: single combined PDF, or numbered ZIP for very large reports.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const _EXTRACT_PAGE_W = 612;   // US Letter portrait, in PDF points (72 dpi)
+const _EXTRACT_PAGE_H = 792;
+const _EXTRACT_MARGIN = 48;
+const _EXTRACT_STATUS_KEYS = ['passed','failed','blocked','inProgress','notStarted','future'];
+const _EXTRACT_STATUS_LABELS = {
+  passed: 'Pass', failed: 'Fail', blocked: 'Blocked',
+  inProgress: 'In Progress', notStarted: 'Not Started', future: 'Future',
+};
+const _EXTRACT_STATUS_COLORS = {
+  passed:     [0.13, 0.55, 0.27],
+  failed:     [0.78, 0.16, 0.16],
+  blocked:    [0.83, 0.49, 0.04],
+  inProgress: [0.13, 0.36, 0.78],
+  notStarted: [0.42, 0.45, 0.50],
+  future:     [0.45, 0.27, 0.65],
+};
+
+let _extractRunState = null;  // { cancelled, totalForms, doneForms }
+
+// ── Status mapping (mirrors _trpStatusCounts buckets) ─────────────────────
+function _extractStatusKey(status) {
+  const s = String(status || '').toLowerCase();
+  if (['pass', 'passed', 'complete', 'completed'].includes(s)) return 'passed';
+  if (['fail', 'failed'].includes(s)) return 'failed';
+  if (s === 'blocked') return 'blocked';
+  if (s === 'in progress') return 'inProgress';
+  if (s === 'future test' || s === 'future') return 'future';
+  return 'notStarted';
+}
+
+function _extractSlug(s, max = 40) {
+  return String(s || 'untitled')
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/_+/g, '_').replace(/^_+|_+$/g, '')
+    .slice(0, max) || 'untitled';
+}
+
+// ── Group an activity's items by TestSection (with stable section order) ──
+function _extractGroupBySection(activity) {
+  const map = new Map();
+  (activity.items || []).forEach(t => {
+    const key = String(t.TestSection || '').trim() || '(Unsectioned)';
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(t);
+  });
+  const sections = [...map.entries()].map(([name, items]) => ({
+    name,
+    items: items.slice().sort((a, b) =>
+      String(a.TestCaseCode || '').localeCompare(String(b.TestCaseCode || ''), undefined, { numeric: true, sensitivity: 'base' })
+    ),
+    counts: _trpStatusCounts(items),
+  }));
+  // Numbered sections first, "(Unsectioned)" last
+  sections.sort((a, b) => {
+    const aU = a.name === '(Unsectioned)';
+    const bU = b.name === '(Unsectioned)';
+    if (aU && !bU) return 1;
+    if (!aU && bU) return -1;
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  });
+  return sections;
+}
+
+function _extractBuildPayload(row, opts) {
+  const selectedActKeys = new Set(opts.activityKeys || []);
+  const statusFilter = new Set(opts.statusFilter || _EXTRACT_STATUS_KEYS);
+  const punchMode = opts.punchMode || 'open';   // 'open' | 'all' | 'none'
+
+  const activities = (row.activities || [])
+    .filter(act => selectedActKeys.has(act.key))
+    .map(act => {
+      const sections = _extractGroupBySection(act);
+      let formCount = 0;
+      sections.forEach(sec => {
+        sec.items.forEach(item => {
+          const include = statusFilter.has(_extractStatusKey(item.Status));
+          item._extractInclude = include;
+          // Scope-aware attachments: child asset rows don't carry forms
+          // directly — they are listed under their parent. Parent (or
+          // standalone) rows enumerate parent-scope + every per-asset link
+          // once, each with its own scope label so the bundle stays deduped.
+          const isChild = item.ParentTestId && item.AssetId;
+          item._extractForms = isChild ? [] : _formsAttachmentPlanForTestCase(item);
+          if (include) formCount += item._extractForms.length;
+        });
+      });
+      return { ...act, sections, formCount };
+    });
+
+  const overallCounts = _trpStatusCounts(activities.flatMap(a => a.items || []));
+
+  const allTestIds = new Set(activities.flatMap(a => (a.items||[]).map(t => String(t.TestID))));
+  let punchItems = [];
+  if (punchMode !== 'none' && Array.isArray(window.PUNCH_DB)) {
+    punchItems = PUNCH_DB.filter(p => {
+      if (p.is_deleted) return false;
+      const linked = (p.linked_test_ids || []).some(id => allTestIds.has(String(id)));
+      if (!linked) return false;
+      if (punchMode === 'open' && p.status === 'closed') return false;
+      return true;
+    }).sort((a, b) => (a.number || 0) - (b.number || 0));
+  }
+
+  return {
+    row,
+    activities,
+    overallCounts,
+    punchItems,
+    totalForms: activities.reduce((sum, a) => sum + a.formCount, 0),
+    generatedAt: new Date(),
+    generatedBy: (currentRoleUser?.name || currentProfile?.full_name || 'Unknown'),
+    opts,
+  };
+}
+
+// ── Modal UI ───────────────────────────────────────────────────────────────
+function openExtractReportModal(uid) {
+  const row = _trpFindReportRow(uid);
+  if (!row) { toast('Report not found', 'error'); return; }
+  if (row.isDerived) { toast('Sync this report to the master table before extracting.', 'warn'); return; }
+  if (!row.activityCount) { toast('No activities linked — link activities first.', 'warn'); return; }
+
+  const safeUid = encodeURIComponent(uid);
+  const actListHTML = row.activities.map(act => {
+    const sections = _extractGroupBySection(act);
+    return `
+      <label class="ext-act-row">
+        <input type="checkbox" name="ext-act" value="${escapeHtml(act.key)}" checked
+               onchange="_extractRecalcEstimate('${safeUid}')">
+        <div class="ext-act-info">
+          <div class="ext-act-name">${escapeHtml(act.activity)}</div>
+          <div class="ext-act-meta">${escapeHtml(act.phase)} · ${escapeHtml(act.location)} · ${escapeHtml(act.subsystem)} · ${sections.length} section${sections.length===1?'':'s'} · ${act.items.length} test case${act.items.length===1?'':'s'}</div>
+        </div>
+        ${_trpStatusSummaryHTML(act.counts)}
+      </label>`;
+  }).join('');
+
+  const statusBoxes = _EXTRACT_STATUS_KEYS.map(k => `
+    <label class="ext-status-chip">
+      <input type="checkbox" name="ext-status" value="${k}" checked
+             onchange="_extractRecalcEstimate('${safeUid}')">
+      <span>${_EXTRACT_STATUS_LABELS[k]}</span>
+    </label>
+  `).join('');
+
+  modal({
+    title: `Extract Test Report — ${escapeHtml(row.title)}`,
+    sub: `Rev ${escapeHtml(row.revision || 'A')} · ${row.activityCount} activit${row.activityCount===1?'y':'ies'} · ${row.testCaseCount} test case${row.testCaseCount===1?'':'s'}`,
+    size: 'large',
+    body: `
+      <div class="ext-modal-shell">
+        <section class="ext-section">
+          <h4 class="ext-section-title">1. Activities to include</h4>
+          <p class="ext-section-hint">All test cases inside each selected activity will be summarized. Form PDFs are appended grouped by section.</p>
+          <div class="ext-act-list">${actListHTML}</div>
+        </section>
+
+        <section class="ext-section">
+          <h4 class="ext-section-title">2. Status filter — controls which form PDFs are appended</h4>
+          <p class="ext-section-hint">Summary tables always show every test case. These checkboxes only affect which test cases' form PDFs get attached.</p>
+          <div class="ext-status-row">${statusBoxes}</div>
+        </section>
+
+        <section class="ext-section">
+          <h4 class="ext-section-title">3. Punch list</h4>
+          <div class="ext-radio-row">
+            <label><input type="radio" name="ext-punch" value="open"  checked onchange="_extractRecalcEstimate('${safeUid}')"> Open only</label>
+            <label><input type="radio" name="ext-punch" value="all"   onchange="_extractRecalcEstimate('${safeUid}')"> Open + Closed</label>
+            <label><input type="radio" name="ext-punch" value="none"  onchange="_extractRecalcEstimate('${safeUid}')"> None</label>
+          </div>
+        </section>
+
+        <section class="ext-section">
+          <h4 class="ext-section-title">4. Output mode</h4>
+          <div class="ext-radio-row">
+            <label><input type="radio" name="ext-mode" value="single" checked> Single combined PDF</label>
+            <label><input type="radio" name="ext-mode" value="zip"> ZIP (numbered files, easy to staple in Acrobat)</label>
+          </div>
+        </section>
+
+        <div class="ext-estimate" id="ext-estimate-line">Calculating estimate…</div>
+        <div class="ext-progress" id="ext-progress" style="display:none;">
+          <div class="ext-progress-label" id="ext-progress-label">Preparing…</div>
+          <div class="ext-progress-bar"><div class="ext-progress-fill" id="ext-progress-fill" style="width:0%"></div></div>
+        </div>
+      </div>
+    `,
+    footer: `
+      <button class="form-secondary" id="ext-cancel-btn" onclick="_extractCancel(); closeModal();">Cancel</button>
+      <button class="admin-action-btn" id="ext-go-btn" onclick="_extractRun('${safeUid}')">Generate</button>
+    `,
+  });
+  setTimeout(() => _extractRecalcEstimate(safeUid), 30);
+}
+
+function _extractReadOpts() {
+  return {
+    activityKeys: [...document.querySelectorAll('input[name="ext-act"]:checked')].map(el => el.value),
+    statusFilter: [...document.querySelectorAll('input[name="ext-status"]:checked')].map(el => el.value),
+    punchMode: document.querySelector('input[name="ext-punch"]:checked')?.value || 'open',
+    mode: document.querySelector('input[name="ext-mode"]:checked')?.value || 'single',
+  };
+}
+
+function _extractRecalcEstimate(safeUid) {
+  const row = _trpFindReportRow(_trpDecodeUid(safeUid));
+  if (!row) return;
+  const opts = _extractReadOpts();
+  const lineEl = document.getElementById('ext-estimate-line');
+  const goBtn = document.getElementById('ext-go-btn');
+  if (!opts.activityKeys.length) {
+    if (lineEl) lineEl.textContent = 'Select at least one activity.';
+    goBtn?.setAttribute('disabled', '');
+    return;
+  }
+  goBtn?.removeAttribute('disabled');
+  const payload = _extractBuildPayload(row, opts);
+  const sectionCount = payload.activities.reduce((s, a) => s + a.sections.length, 0);
+  const summaryPages = 1 + payload.activities.length + sectionCount;
+  const estTotal = summaryPages + payload.totalForms * 4;
+  const sizeNote = estTotal > 250 ? ' — ZIP mode recommended for this size' : '';
+  if (lineEl) lineEl.innerHTML =
+    `<b>${payload.activities.length}</b> activit${payload.activities.length===1?'y':'ies'} · ` +
+    `<b>${sectionCount}</b> section${sectionCount===1?'':'s'} · ` +
+    `<b>${payload.totalForms}</b> form${payload.totalForms===1?'':'s'} to attach · ` +
+    `est. <b>~${estTotal}</b> page${estTotal===1?'':'s'}${sizeNote}`;
+}
+
+function _extractCancel() {
+  if (_extractRunState) _extractRunState.cancelled = true;
+}
+
+function _extractSetProgress(label, pct) {
+  const wrap = document.getElementById('ext-progress');
+  if (wrap) wrap.style.display = '';
+  const labelEl = document.getElementById('ext-progress-label');
+  const fillEl = document.getElementById('ext-progress-fill');
+  if (labelEl) labelEl.textContent = label;
+  if (fillEl) fillEl.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+}
+
+async function _extractRun(safeUid) {
+  if (typeof PDFLib === 'undefined') { toast('pdf-lib not loaded — refresh the page', 'error'); return; }
+  const row = _trpFindReportRow(_trpDecodeUid(safeUid));
+  if (!row) { toast('Report not found', 'error'); return; }
+  const opts = _extractReadOpts();
+  if (!opts.activityKeys.length) { toast('Select at least one activity', 'warn'); return; }
+
+  const goBtn = document.getElementById('ext-go-btn');
+  if (goBtn) { goBtn.disabled = true; goBtn.textContent = 'Generating…'; }
+
+  _extractRunState = { cancelled: false, doneForms: 0, totalForms: 0 };
+  try {
+    const payload = _extractBuildPayload(row, opts);
+    _extractRunState.totalForms = payload.totalForms;
+    let blob, filename;
+    if (opts.mode === 'zip') {
+      const JSZipCtor = await window._extractEnsureJSZip();
+      if (!JSZipCtor) throw new Error('JSZip unavailable');
+      ({ blob, filename } = await _extractBuildZip(payload, JSZipCtor));
+    } else {
+      ({ blob, filename } = await _extractBuildSinglePdf(payload));
+    }
+    if (_extractRunState.cancelled) { toast('Extract cancelled', 'warn'); return; }
+    _extractDownloadBlob(blob, filename);
+    try {
+      logAudit('Test Report Extract', row.title,
+        `${payload.activities.length} activities · ${payload.totalForms} forms · ${opts.mode === 'zip' ? 'ZIP' : 'PDF'}`);
+    } catch { /* noop */ }
+    toast('✓ Report extracted', 'success');
+    closeModal();
+  } catch (e) {
+    console.error('[extract]', e);
+    toast('Extract failed: ' + (e.message || e), 'error');
+    if (goBtn) { goBtn.disabled = false; goBtn.textContent = 'Generate'; }
+  } finally {
+    _extractRunState = null;
+  }
+}
+
+function _extractDownloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function _extractFilenameBase(row) {
+  return [
+    row.cdrl_number || '',
+    row.title || 'Test_Report',
+    row.revision ? `Rev${row.revision}` : '',
+    new Date().toISOString().slice(0, 10),
+  ].filter(Boolean).map(p => _extractSlug(p, 60)).join('_');
+}
+
+// ── Drawing primitives ─────────────────────────────────────────────────────
+function _extractRgb(arr) { return PDFLib.rgb(arr[0], arr[1], arr[2]); }
+
+function _extractWrapText(text, font, size, maxWidth) {
+  const safe = String(text == null ? '' : text);
+  const words = safe.replace(/\s+/g, ' ').trim().split(' ');
+  if (!words.length) return [''];
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    const candidate = cur ? cur + ' ' + w : w;
+    if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
+      cur = candidate;
+    } else {
+      if (cur) lines.push(cur);
+      if (font.widthOfTextAtSize(w, size) > maxWidth) {
+        let chunk = '';
+        for (const ch of w) {
+          if (font.widthOfTextAtSize(chunk + ch, size) <= maxWidth) chunk += ch;
+          else { lines.push(chunk); chunk = ch; }
+        }
+        cur = chunk;
+      } else {
+        cur = w;
+      }
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+function _extractDrawText(page, text, opts) {
+  const { x, y, font, size = 10, color = [0.07, 0.09, 0.16], maxWidth, lineHeight = 1.25 } = opts;
+  const lines = maxWidth ? _extractWrapText(text, font, size, maxWidth) : [String(text)];
+  const lh = size * lineHeight;
+  lines.forEach((line, i) => {
+    page.drawText(line, { x, y: y - i * lh, size, font, color: _extractRgb(color) });
+  });
+  return lines.length * lh;
+}
+
+function _extractDrawHr(page, x, y, w, color = [0.85, 0.87, 0.91]) {
+  page.drawRectangle({ x, y, width: w, height: 0.6, color: _extractRgb(color) });
+}
+
+function _extractDrawStatusBadge(page, x, y, key, count, font) {
+  const label = `${_EXTRACT_STATUS_LABELS[key]}: ${count}`;
+  const size = 9, padX = 6, padY = 3;
+  const w = font.widthOfTextAtSize(label, size) + padX * 2;
+  const h = size + padY * 2;
+  page.drawRectangle({ x, y, width: w, height: h, color: _extractRgb(_EXTRACT_STATUS_COLORS[key]), opacity: 0.12 });
+  page.drawText(label, { x: x + padX, y: y + padY, size, font, color: _extractRgb(_EXTRACT_STATUS_COLORS[key]) });
+  return w + 6;
+}
+
+function _extractDrawTable(page, opts) {
+  const { x, y, cols, rows, font, boldFont, fontSize = 9, rowHeight = 18, headerHeight = 22 } = opts;
+  const totalW = cols.reduce((s, c) => s + c.width, 0);
+  let cy = y;
+
+  page.drawRectangle({ x, y: cy - headerHeight, width: totalW, height: headerHeight, color: _extractRgb([0.93, 0.95, 0.98]) });
+  let cx = x;
+  cols.forEach(col => {
+    page.drawText(String(col.header || ''), {
+      x: cx + 5, y: cy - headerHeight + 7, size: fontSize, font: boldFont, color: _extractRgb([0.20, 0.24, 0.32]),
+    });
+    cx += col.width;
+  });
+  cy -= headerHeight;
+  _extractDrawHr(page, x, cy, totalW, [0.78, 0.82, 0.88]);
+
+  rows.forEach((rowData, idx) => {
+    const cellHeights = cols.map(col => {
+      const lines = _extractWrapText(String(col.get(rowData) ?? ''), font, fontSize, col.width - 10);
+      return lines.length * fontSize * 1.25;
+    });
+    const thisRowH = Math.max(rowHeight, Math.max(...cellHeights) + 8);
+    if (idx % 2 === 1) {
+      page.drawRectangle({ x, y: cy - thisRowH, width: totalW, height: thisRowH, color: _extractRgb([0.97, 0.98, 0.99]) });
+    }
+    let rowCx = x;
+    cols.forEach(col => {
+      const val = String(col.get(rowData) ?? '');
+      const color = col.color ? col.color(rowData) : [0.20, 0.24, 0.32];
+      _extractDrawText(page, val, { x: rowCx + 5, y: cy - 13, font, size: fontSize, color, maxWidth: col.width - 10 });
+      rowCx += col.width;
+    });
+    cy -= thisRowH;
+    _extractDrawHr(page, x, cy, totalW, [0.92, 0.94, 0.97]);
+  });
+  return y - cy;
+}
+
+function _extractAddPage(doc) {
+  return doc.addPage([_EXTRACT_PAGE_W, _EXTRACT_PAGE_H]);
+}
+
+// ── Summary / cover / activity / section pages ─────────────────────────────
+async function _extractDrawCover(doc, font, boldFont, payload) {
+  const { row, overallCounts, activities, punchItems, opts } = payload;
+  const page = _extractAddPage(doc);
+  const W = _EXTRACT_PAGE_W, M = _EXTRACT_MARGIN;
+  let y = _EXTRACT_PAGE_H - M;
+
+  page.drawRectangle({ x: 0, y: y - 4, width: W, height: 4, color: _extractRgb([0.90, 0.10, 0.12]) });
+  y -= 30;
+  page.drawText('TEST REPORT — EXTRACT', { x: M, y, size: 11, font: boldFont, color: _extractRgb([0.55, 0.58, 0.65]) });
+  y -= 28;
+  _extractDrawText(page, row.title || 'Untitled Report', { x: M, y, font: boldFont, size: 22, maxWidth: W - M*2 });
+  y -= 36;
+
+  const metaPairs = [
+    ['CDRL', row.cdrl_number || '—'],
+    ['Revision', row.revision || 'A'],
+    ['Status', row.status || 'Not Started'],
+    ['Subsystem', row.subsystem || (row.subsystems?.join(', ') || '—')],
+    ['Phase', row.phase || (row.phases?.join(', ') || '—')],
+    ['Location', row.location || (row.locations?.join(', ') || '—')],
+  ];
+  const mw = (W - M*2) / 3;
+  metaPairs.forEach((pair, i) => {
+    const col = i % 3, rowI = Math.floor(i / 3);
+    const px = M + col * mw;
+    const py = y - rowI * 32;
+    page.drawText(pair[0].toUpperCase(), { x: px, y: py, size: 8, font: boldFont, color: _extractRgb([0.55, 0.58, 0.65]) });
+    _extractDrawText(page, pair[1], { x: px, y: py - 12, font, size: 11, maxWidth: mw - 8 });
+  });
+  y -= 80;
+  _extractDrawHr(page, M, y, W - M*2);
+  y -= 22;
+
+  page.drawText('OVERALL STATUS SUMMARY', { x: M, y, size: 10, font: boldFont, color: _extractRgb([0.20, 0.24, 0.32]) });
+  y -= 18;
+  let bx = M;
+  _EXTRACT_STATUS_KEYS.forEach(k => {
+    bx += _extractDrawStatusBadge(page, bx, y - 4, k, overallCounts[k] || 0, font);
+  });
+  page.drawText(`Total: ${overallCounts.total}`, { x: bx + 4, y, size: 10, font: boldFont, color: _extractRgb([0.20, 0.24, 0.32]) });
+  y -= 32;
+
+  page.drawText('ACTIVITIES IN THIS REPORT', { x: M, y, size: 10, font: boldFont, color: _extractRgb([0.20, 0.24, 0.32]) });
+  y -= 8;
+  const actRows = activities.map((a, i) => ({
+    n: `${i + 1}.`,
+    activity: a.activity,
+    meta: `${a.phase} · ${a.location} · ${a.subsystem}`,
+    cases: `${a.items.length}`,
+    sections: `${a.sections.length}`,
+    forms: `${a.formCount}`,
+  }));
+  _extractDrawTable(page, {
+    x: M, y, font, boldFont, fontSize: 9,
+    cols: [
+      { header: '#',          width: 22,  get: r => r.n },
+      { header: 'Activity',   width: 200, get: r => r.activity },
+      { header: 'Phase / Location / Subsystem', width: 170, get: r => r.meta },
+      { header: 'Sec.',       width: 36,  get: r => r.sections },
+      { header: 'Cases',      width: 44,  get: r => r.cases },
+      { header: 'Forms',      width: 44,  get: r => r.forms },
+    ],
+    rows: actRows,
+  });
+
+  if (punchItems.length) {
+    const pp = _extractAddPage(doc);
+    let py = _EXTRACT_PAGE_H - M;
+    pp.drawRectangle({ x: 0, y: py - 3, width: W, height: 3, color: _extractRgb([0.90, 0.10, 0.12]) });
+    py -= 28;
+    pp.drawText('LINKED PUNCH LIST ITEMS', { x: M, y: py, size: 14, font: boldFont, color: _extractRgb([0.07, 0.09, 0.16]) });
+    py -= 6;
+    pp.drawText(`${punchItems.length} item${punchItems.length===1?'':'s'} — filter: ${opts.punchMode === 'open' ? 'open only' : 'open + closed'}`,
+      { x: M, y: py, size: 9, font, color: _extractRgb([0.55, 0.58, 0.65]) });
+    py -= 18;
+    _extractDrawTable(pp, {
+      x: M, y: py, font, boldFont, fontSize: 9,
+      cols: [
+        { header: '#',        width: 32,  get: p => `#${p.number || ''}` },
+        { header: 'Title',    width: 220, get: p => p.title || '—' },
+        { header: 'Status',   width: 80,  get: p => (typeof PL_STATUS_LABELS !== 'undefined' && PL_STATUS_LABELS[p.status]) || p.status || '—' },
+        { header: 'Priority', width: 60,  get: p => p.priority || '—' },
+        { header: 'Linked Tests', width: 124, get: p => {
+          const ids = p.linked_test_ids || [];
+          const codes = ids.map(id => TI.find(t => String(t.TestID) === String(id))?.TestCaseCode).filter(Boolean);
+          return codes.join(', ') || '—';
+        } },
+      ],
+      rows: punchItems,
+    });
+  }
+
+  page.drawText(`Generated ${payload.generatedAt.toLocaleString()} by ${payload.generatedBy}`,
+    { x: M, y: M - 18, size: 8, font, color: _extractRgb([0.55, 0.58, 0.65]) });
+}
+
+function _extractDrawActivityPage(doc, font, boldFont, activity, idx) {
+  const page = _extractAddPage(doc);
+  const W = _EXTRACT_PAGE_W, M = _EXTRACT_MARGIN;
+  let y = _EXTRACT_PAGE_H - M;
+  page.drawRectangle({ x: 0, y: y - 3, width: W, height: 3, color: _extractRgb([0.13, 0.36, 0.78]) });
+  y -= 32;
+  page.drawText(`ACTIVITY ${idx + 1}`, { x: M, y, size: 10, font: boldFont, color: _extractRgb([0.55, 0.58, 0.65]) });
+  y -= 24;
+  _extractDrawText(page, activity.activity, { x: M, y, font: boldFont, size: 20, maxWidth: W - M*2 });
+  y -= 30;
+  _extractDrawText(page, `${activity.phase} · ${activity.location} · ${activity.subsystem}`,
+    { x: M, y, font, size: 11, color: [0.42, 0.45, 0.50], maxWidth: W - M*2 });
+  y -= 28;
+
+  page.drawText('ACTIVITY STATUS SUMMARY', { x: M, y, size: 10, font: boldFont, color: _extractRgb([0.20, 0.24, 0.32]) });
+  y -= 18;
+  let bx = M;
+  _EXTRACT_STATUS_KEYS.forEach(k => {
+    bx += _extractDrawStatusBadge(page, bx, y - 4, k, activity.counts[k] || 0, font);
+  });
+  y -= 30;
+
+  page.drawText('SECTIONS', { x: M, y, size: 10, font: boldFont, color: _extractRgb([0.20, 0.24, 0.32]) });
+  y -= 8;
+  _extractDrawTable(page, {
+    x: M, y, font, boldFont, fontSize: 10,
+    cols: [
+      { header: 'Section',   width: 250, get: s => s.name },
+      { header: 'Cases',     width: 60,  get: s => `${s.items.length}` },
+      { header: 'P / F / B / IP', width: 110, get: s => `${s.counts.passed} / ${s.counts.failed} / ${s.counts.blocked} / ${s.counts.inProgress}` },
+      { header: 'Forms',     width: 96,  get: s => `${s.items.reduce((sum, i) => sum + (i._extractForms?.length || 0), 0)}` },
+    ],
+    rows: activity.sections,
+  });
+}
+
+function _extractDrawSectionPage(doc, font, boldFont, activity, section) {
+  const page = _extractAddPage(doc);
+  const W = _EXTRACT_PAGE_W, M = _EXTRACT_MARGIN;
+  let y = _EXTRACT_PAGE_H - M;
+  page.drawRectangle({ x: 0, y: y - 3, width: W, height: 3, color: _extractRgb([0.13, 0.55, 0.27]) });
+  y -= 28;
+  _extractDrawText(page, activity.activity, { x: M, y, font, size: 9, color: [0.55, 0.58, 0.65], maxWidth: W - M*2 });
+  y -= 14;
+  _extractDrawText(page, section.name, { x: M, y, font: boldFont, size: 18, maxWidth: W - M*2 });
+  y -= 28;
+  let bx = M;
+  _EXTRACT_STATUS_KEYS.forEach(k => {
+    bx += _extractDrawStatusBadge(page, bx, y - 4, k, section.counts[k] || 0, font);
+  });
+  y -= 28;
+
+  _extractDrawTable(page, {
+    x: M, y, font, boldFont, fontSize: 9,
+    cols: [
+      { header: 'Code',         width: 80,  get: r => r.TestCaseCode || '' },
+      { header: 'Test Case',    width: 200, get: r => r.TestName || '' },
+      { header: 'Status',       width: 70,  get: r => r.Status || '—',
+        color: r => _EXTRACT_STATUS_COLORS[_extractStatusKey(r.Status)] || [0.20, 0.24, 0.32] },
+      { header: 'Completed By', width: 90,  get: r => r.CompletedBy || '—' },
+      { header: 'Date',         width: 60,  get: r => r.CompletedDate ? String(r.CompletedDate).slice(0,10) : '—' },
+      { header: 'Forms',        width: 16,  get: r => `${(r._extractForms?.length || 0)}` },
+    ],
+    rows: section.items,
+  });
+}
+
+function _extractDrawFormDivider(doc, font, boldFont, formName, parentCode, scopeLabel = '') {
+  const page = _extractAddPage(doc);
+  const W = _EXTRACT_PAGE_W, M = _EXTRACT_MARGIN;
+  let y = _EXTRACT_PAGE_H - M;
+  page.drawRectangle({ x: 0, y: y - 2, width: W, height: 2, color: _extractRgb([0.20, 0.24, 0.32]) });
+  y -= 32;
+  page.drawText('ATTACHED FORM', { x: M, y, size: 9, font: boldFont, color: _extractRgb([0.55, 0.58, 0.65]) });
+  y -= 22;
+  _extractDrawText(page, formName, { x: M, y, font: boldFont, size: 18, maxWidth: W - M*2 });
+  y -= 24;
+  if (parentCode) {
+    page.drawText(`Linked to test case ${parentCode}`, { x: M, y, size: 11, font, color: _extractRgb([0.42, 0.45, 0.50]) });
+    y -= 16;
+  }
+  if (scopeLabel) {
+    page.drawText(`Scope: ${scopeLabel}`, { x: M, y, size: 11, font, color: _extractRgb([0.30, 0.35, 0.50]) });
+  }
+}
+
+// ── Form bytes (filled when possible, else original) ───────────────────────
+async function _extractGetFormBytes(formRow) {
+  try {
+    const blob = await _buildEditedFormPdfBlob(formRow);
+    return new Uint8Array(await blob.arrayBuffer());
+  } catch (e) {
+    console.warn('[extract] filled build failed, fallback to original:', formRow.name, e.message);
+  }
+  return await _formsStorage.downloadBytes(formRow.storage_path);
+}
+
+async function _extractAppendForm(mainDoc, formRow) {
+  const bytes = await _extractGetFormBytes(formRow);
+  const srcDoc = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+  const indices = srcDoc.getPageIndices();
+  const copied = await mainDoc.copyPages(srcDoc, indices);
+  copied.forEach(p => mainDoc.addPage(p));
+  return copied.length;
+}
+
+// ── Page-number footers ────────────────────────────────────────────────────
+function _extractDrawFooters(doc, font, reportTitle) {
+  const pages = doc.getPages();
+  const total = pages.length;
+  const titleClip = String(reportTitle || '').slice(0, 80);
+  pages.forEach((page, i) => {
+    const w = page.getWidth();
+    page.drawText(titleClip, { x: _EXTRACT_MARGIN, y: 18, size: 8, font, color: _extractRgb([0.55, 0.58, 0.65]) });
+    const label = `Page ${i + 1} of ${total}`;
+    const labelW = font.widthOfTextAtSize(label, 8);
+    page.drawText(label, { x: w - _EXTRACT_MARGIN - labelW, y: 18, size: 8, font, color: _extractRgb([0.55, 0.58, 0.65]) });
+  });
+}
+
+// ── PDF outline / bookmarks (low-level pdf-lib dict) ───────────────────────
+// outlineTree: [{ title, pageIndex, children:[...] }]
+function _extractAddOutline(doc, outlineTree) {
+  if (!outlineTree?.length) return;
+  const { context } = doc;
+  const pages = doc.getPages();
+  const { PDFName, PDFArray, PDFHexString, PDFNumber } = PDFLib;
+
+  // Allocate refs for each node so we can wire siblings before assigning content
+  function allocate(items) {
+    return items.map(item => ({
+      item,
+      ref: context.register(context.obj({})),
+      children: allocate(item.children || []),
+    }));
+  }
+  const tree = allocate(outlineTree);
+  const countDescendants = nodes => nodes.reduce((n, node) => n + 1 + countDescendants(node.children), 0);
+
+  const rootRef = context.register(context.obj({}));
+
+  function build(nodes, parentRef) {
+    nodes.forEach((node, i) => {
+      const dict = {};
+      dict.Title = PDFHexString.fromText(node.item.title || '');
+      dict.Parent = parentRef;
+      const pageIdx = Math.max(0, Math.min(pages.length - 1, node.item.pageIndex || 0));
+      const page = pages[pageIdx];
+      if (page) {
+        const dest = PDFArray.withContext(context);
+        dest.push(page.ref);
+        dest.push(PDFName.of('Fit'));
+        dict.Dest = dest;
+      }
+      if (i > 0) dict.Prev = nodes[i - 1].ref;
+      if (i < nodes.length - 1) dict.Next = nodes[i + 1].ref;
+      if (node.children.length) {
+        dict.First = node.children[0].ref;
+        dict.Last  = node.children[node.children.length - 1].ref;
+        dict.Count = PDFNumber.of(node.children.length);
+      }
+      context.assign(node.ref, context.obj(dict));
+      build(node.children, node.ref);
+    });
+  }
+  build(tree, rootRef);
+
+  context.assign(rootRef, context.obj({
+    Type: PDFName.of('Outlines'),
+    First: tree[0].ref,
+    Last:  tree[tree.length - 1].ref,
+    Count: PDFNumber.of(countDescendants(tree)),
+  }));
+
+  doc.catalog.set(PDFName.of('Outlines'), rootRef);
+  doc.catalog.set(PDFName.of('PageMode'), PDFName.of('UseOutlines'));
+}
+
+// ── Single-PDF mode ────────────────────────────────────────────────────────
+async function _extractBuildSinglePdf(payload) {
+  const doc = await PDFLib.PDFDocument.create();
+  const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+  const boldFont = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+
+  doc.setTitle(`${payload.row.title || 'Test Report'} — Extract`);
+  doc.setAuthor(payload.generatedBy);
+  doc.setSubject(`Test Report Extract · ${payload.row.cdrl_number || ''}`);
+  doc.setProducer('CX Portal');
+  doc.setCreator('CX Portal Test Report Extract');
+
+  const outline = [];
+  const coverNode = { title: 'Overall Summary', pageIndex: 0, children: [] };
+  outline.push(coverNode);
+
+  _extractSetProgress('Building summary…', 2);
+  await _extractDrawCover(doc, font, boldFont, payload);
+  if (payload.punchItems.length) {
+    coverNode.children.push({ title: 'Linked Punch Items', pageIndex: doc.getPages().length - 1, children: [] });
+  }
+
+  let formsDone = 0;
+  for (let ai = 0; ai < payload.activities.length; ai++) {
+    if (_extractRunState?.cancelled) throw new Error('Cancelled');
+    const act = payload.activities[ai];
+    const actPageIdx = doc.getPages().length;
+    _extractDrawActivityPage(doc, font, boldFont, act, ai);
+    const actNode = { title: `Activity ${ai + 1}: ${act.activity}`, pageIndex: actPageIdx, children: [] };
+    outline.push(actNode);
+
+    for (const section of act.sections) {
+      if (_extractRunState?.cancelled) throw new Error('Cancelled');
+      const secPageIdx = doc.getPages().length;
+      _extractDrawSectionPage(doc, font, boldFont, act, section);
+      const secNode = { title: section.name, pageIndex: secPageIdx, children: [] };
+      actNode.children.push(secNode);
+
+      for (const item of section.items) {
+        if (!item._extractInclude) continue;
+        for (const entry of (item._extractForms || [])) {
+          if (_extractRunState?.cancelled) throw new Error('Cancelled');
+          const formRow = entry.form || entry; // tolerate legacy shape
+          const scopeLabel = entry.scopeLabel || '';
+          formsDone++;
+          const pct = 5 + Math.round(85 * (formsDone / Math.max(1, payload.totalForms)));
+          _extractSetProgress(`Form ${formsDone} of ${payload.totalForms} — ${formRow.name}`, pct);
+          const dividerIdx = doc.getPages().length;
+          _extractDrawFormDivider(doc, font, boldFont, formRow.name, item.TestCaseCode, scopeLabel);
+          try {
+            await _extractAppendForm(doc, formRow);
+            secNode.children.push({
+              title: `${item.TestCaseCode || ''} — ${formRow.name}${scopeLabel ? '  ('+scopeLabel+')' : ''}`.trim(),
+              pageIndex: dividerIdx, children: [],
+            });
+          } catch (e) {
+            console.warn('[extract] form append failed:', formRow.name, e.message);
+            secNode.children.push({
+              title: `[FAILED] ${formRow.name}`.slice(0, 120),
+              pageIndex: dividerIdx, children: [],
+            });
+          }
+        }
+      }
+    }
+  }
+
+  _extractSetProgress('Adding bookmarks + page numbers…', 95);
+  _extractDrawFooters(doc, font, payload.row.title);
+  try { _extractAddOutline(doc, outline); }
+  catch (e) { console.warn('[extract] outline add failed:', e.message); }
+
+  _extractSetProgress('Saving…', 99);
+  const bytes = await doc.save({ useObjectStreams: true });
+  return {
+    blob: new Blob([bytes], { type: 'application/pdf' }),
+    filename: `${_extractFilenameBase(payload.row)}.pdf`,
+  };
+}
+
+// ── ZIP mode ───────────────────────────────────────────────────────────────
+async function _extractBuildSummaryOnlyDoc(payload) {
+  const doc = await PDFLib.PDFDocument.create();
+  const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+  const boldFont = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+  doc.setTitle(`${payload.row.title || 'Test Report'} — Summary`);
+
+  const outline = [{ title: 'Overall Summary', pageIndex: 0, children: [] }];
+  await _extractDrawCover(doc, font, boldFont, payload);
+  payload.activities.forEach((act, ai) => {
+    const actIdx = doc.getPages().length;
+    _extractDrawActivityPage(doc, font, boldFont, act, ai);
+    const actNode = { title: `Activity ${ai + 1}: ${act.activity}`, pageIndex: actIdx, children: [] };
+    outline.push(actNode);
+    act.sections.forEach(sec => {
+      const secIdx = doc.getPages().length;
+      _extractDrawSectionPage(doc, font, boldFont, act, sec);
+      actNode.children.push({ title: sec.name, pageIndex: secIdx, children: [] });
+    });
+  });
+  _extractDrawFooters(doc, font, `${payload.row.title} — Summary`);
+  try { _extractAddOutline(doc, outline); } catch { /* noop */ }
+  return new Uint8Array(await doc.save({ useObjectStreams: true }));
+}
+
+async function _extractBuildActivityDoc(payload, activity, idx) {
+  const doc = await PDFLib.PDFDocument.create();
+  const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+  const boldFont = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+  doc.setTitle(`${activity.activity} — Forms`);
+
+  const outline = [];
+  _extractDrawActivityPage(doc, font, boldFont, activity, idx);
+  const actNode = { title: `Activity ${idx + 1}: ${activity.activity}`, pageIndex: 0, children: [] };
+  outline.push(actNode);
+
+  for (const section of activity.sections) {
+    if (_extractRunState?.cancelled) throw new Error('Cancelled');
+    const secIdx = doc.getPages().length;
+    _extractDrawSectionPage(doc, font, boldFont, activity, section);
+    const secNode = { title: section.name, pageIndex: secIdx, children: [] };
+    actNode.children.push(secNode);
+
+    for (const item of section.items) {
+      if (!item._extractInclude) continue;
+      for (const entry of (item._extractForms || [])) {
+        if (_extractRunState?.cancelled) throw new Error('Cancelled');
+        const formRow = entry.form || entry; // tolerate legacy shape
+        const scopeLabel = entry.scopeLabel || '';
+        if (_extractRunState) _extractRunState.doneForms++;
+        const pct = 5 + Math.round(85 * ((_extractRunState?.doneForms || 0) / Math.max(1, payload.totalForms)));
+        _extractSetProgress(`Form ${_extractRunState?.doneForms} of ${payload.totalForms} — ${formRow.name}`, pct);
+        const divIdx = doc.getPages().length;
+        _extractDrawFormDivider(doc, font, boldFont, formRow.name, item.TestCaseCode, scopeLabel);
+        try {
+          await _extractAppendForm(doc, formRow);
+          secNode.children.push({
+            title: `${item.TestCaseCode || ''} — ${formRow.name}${scopeLabel ? '  ('+scopeLabel+')' : ''}`.trim(),
+            pageIndex: divIdx, children: [],
+          });
+        } catch (e) {
+          secNode.children.push({
+            title: `[FAILED] ${formRow.name}`.slice(0, 120),
+            pageIndex: divIdx, children: [],
+          });
+        }
+      }
+    }
+  }
+  _extractDrawFooters(doc, font, `${payload.row.title} — ${activity.activity}`);
+  try { _extractAddOutline(doc, outline); } catch { /* noop */ }
+  return new Uint8Array(await doc.save({ useObjectStreams: true }));
+}
+
+async function _extractBuildZip(payload, JSZipCtor) {
+  const zip = new JSZipCtor();
+  const baseName = _extractFilenameBase(payload.row);
+
+  _extractSetProgress('Building summary…', 3);
+  zip.file('00_Summary.pdf', await _extractBuildSummaryOnlyDoc(payload));
+
+  if (_extractRunState) _extractRunState.doneForms = 0;
+  for (let ai = 0; ai < payload.activities.length; ai++) {
+    if (_extractRunState?.cancelled) throw new Error('Cancelled');
+    const act = payload.activities[ai];
+    const num = String(ai + 1).padStart(2, '0');
+    const slug = _extractSlug(act.activity, 50);
+    zip.file(`${num}_${slug}.pdf`, await _extractBuildActivityDoc(payload, act, ai));
+  }
+
+  zip.file('README.txt',
+`TEST REPORT EXTRACT — ZIP BUNDLE
+==================================
+
+Report:    ${payload.row.title}
+CDRL:      ${payload.row.cdrl_number || '—'}
+Revision:  ${payload.row.revision || 'A'}
+Generated: ${payload.generatedAt.toLocaleString()} by ${payload.generatedBy}
+
+CONTENTS
+--------
+00_Summary.pdf       Overall summary, activity index, and section summaries.
+01_<Activity>.pdf    Activity 1 — full content (sections + form attachments).
+02_<Activity>.pdf    Activity 2 — and so on.
+
+The numeric prefixes preserve order. To produce a single stapled PDF for
+client submission:
+
+  Adobe Acrobat:   File → Combine Files → drag the PDFs in numeric order.
+  PDFsam (free):   Open PDFsam → Merge → add files → start.
+  macOS Preview:   Drag thumbnails of all files into one window in order, then File → Export as PDF.
+
+Each PDF in this bundle has its own bookmark outline for fast navigation.
+`);
+
+  _extractSetProgress('Compressing ZIP…', 95);
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 5 } });
+  return { blob, filename: `${baseName}.zip` };
 }

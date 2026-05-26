@@ -25,6 +25,26 @@
 <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"
   integrity="sha384-weMABwrltA6jWR8DDe9Jp5blk+tZQh7ugpCsF3JwSA53WZM9/14PjS5LAJNHNjAI"
   crossorigin="anonymous"></script>
+<!-- JSZip — used by Test Reporting "Extract Report" feature for ZIP-mode output.
+     Loaded lazily by _extractEnsureJSZip() the first time a user picks ZIP mode,
+     so it never adds to first-paint cost. SRI hash is verified at load time
+     against a pinned version. -->
+<script>
+  window._extractJSZipPromise = null;
+  window._extractEnsureJSZip = function () {
+    if (typeof JSZip !== 'undefined') return Promise.resolve(JSZip);
+    if (window._extractJSZipPromise) return window._extractJSZipPromise;
+    window._extractJSZipPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
+      s.crossOrigin = 'anonymous';
+      s.onload  = () => resolve(typeof JSZip !== 'undefined' ? JSZip : null);
+      s.onerror = () => reject(new Error('JSZip failed to load — check network and try Single PDF mode.'));
+      document.head.appendChild(s);
+    });
+    return window._extractJSZipPromise;
+  };
+</script>
 <link rel="stylesheet" href="styles.css" />
 <link href="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.snow.css" rel="stylesheet"
   integrity="sha384-ecIckRi4QlKYya/FQUbBUjS4qp65jF/J87Guw5uzTbO1C1Jfa/6kYmd6dXUF6D7i"
