@@ -12623,6 +12623,56 @@ function renderSchedulePage() {
     return { a, rec, p6Show, p6Label, p6Cur, p6Base, pct, doneW, totalW, status, finDiff };
   });
 
+  // ── Schedule KPIs ─────────────────────────────────────────────────────────
+  const _today = new Date(); _today.setHours(0,0,0,0);
+  const _in14  = new Date(_today); _in14.setDate(_today.getDate() + 14);
+
+  const rowsWithCur = rows.filter(r => r.p6Cur?.finish_date);
+
+  const pastDeadline   = rowsWithCur.filter(r => { const d = new Date(r.p6Cur.finish_date); d.setHours(0,0,0,0); return d < _today; });
+  const completedOnTime = pastDeadline.filter(r => r.pct >= 100).length;
+  const onTimeRate      = pastDeadline.length > 0 ? Math.round(completedOnTime / pastDeadline.length * 100) : null;
+  const onTimeColor     = onTimeRate === null ? '' : onTimeRate >= 80 ? 'good' : onTimeRate >= 50 ? 'warn' : 'bad';
+
+  const overdueRows = rowsWithCur.filter(r => { const d = new Date(r.p6Cur.finish_date); d.setHours(0,0,0,0); return d < _today && r.pct < 100; });
+  const atRiskRows  = rowsWithCur.filter(r => { const d = new Date(r.p6Cur.finish_date); d.setHours(0,0,0,0); return d >= _today && d <= _in14 && r.pct < 100; });
+  const slipRows    = rows.filter(r => r.finDiff !== null && r.finDiff > 0);
+
+  const _schedKpiCard = (label, value, colorClass, meta) => `
+    <div class="kpi-card kpi-mini">
+      <div class="kpi-label">${label}</div>
+      <div class="kpi-value ${colorClass}">${value}</div>
+      ${meta ? `<div class="kpi-meta">${meta}</div>` : ''}
+    </div>`;
+
+  const schedKpisHtml = `
+    <div class="kpi-grid-mini" style="margin-bottom:20px;">
+      ${_schedKpiCard(
+        'On-Time Rate',
+        onTimeRate !== null ? `${onTimeRate}%` : '—',
+        onTimeColor,
+        onTimeRate !== null ? `${completedOnTime} of ${pastDeadline.length} past-due activities complete` : 'No past-deadline activities'
+      )}
+      ${_schedKpiCard(
+        'Overdue',
+        overdueRows.length,
+        overdueRows.length > 0 ? 'bad' : 'good',
+        overdueRows.length > 0 ? 'Past P6 finish date, not complete' : 'None past deadline'
+      )}
+      ${_schedKpiCard(
+        'At Risk (14d)',
+        atRiskRows.length,
+        atRiskRows.length > 0 ? 'warn' : 'good',
+        atRiskRows.length > 0 ? 'P6 finish within 14 days, not complete' : 'No upcoming deadlines at risk'
+      )}
+      ${_schedKpiCard(
+        'Schedule Slip',
+        slipRows.length,
+        slipRows.length > 0 ? 'warn' : 'good',
+        slipRows.length > 0 ? `Current finish past baseline on ${slipRows.length} activit${slipRows.length === 1 ? 'y' : 'ies'}` : 'No drift from baseline'
+      )}
+    </div>`;
+
   cont.innerHTML = `
     <div class="admin-section">
       <div class="admin-section-head" style="margin-bottom:20px;">
@@ -12634,6 +12684,8 @@ function renderSchedulePage() {
           </p>
         </div>
       </div>
+
+      ${schedKpisHtml}
 
       <div class="data-card" style="padding:0;overflow:hidden;">
         <div class="table-wrap">
