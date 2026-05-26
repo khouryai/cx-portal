@@ -10707,3 +10707,166 @@ a:focus-visible {
   color: var(--gray-700);
   cursor: pointer;
 }
+
+/* ── DRAWINGS MODULE ─────────────────────────────────────────── */
+.drw-loc-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.drw-loc-tab {
+  padding: 6px 14px;
+  border: 1px solid var(--gray-200);
+  border-radius: 20px;
+  background: var(--white);
+  color: var(--gray-600);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all .15s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.drw-loc-tab:hover { border-color: #6366f1; color: #6366f1; }
+.drw-loc-tab.active { background: #6366f1; color: #fff; border-color: #6366f1; }
+.drw-loc-badge {
+  background: rgba(255,255,255,0.25);
+  color: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  min-width: 20px;
+  text-align: center;
+}
+.drw-loc-tab:not(.active) .drw-loc-badge {
+  background: var(--gray-100);
+  color: var(--gray-500);
+}
+.drw-subtabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--gray-100);
+  margin-bottom: 4px;
+}
+.drw-subtab {
+  padding: 8px 20px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  color: var(--gray-500);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all .15s;
+}
+.drw-subtab:hover { color: #6366f1; }
+.drw-subtab.active { color: #6366f1; border-bottom-color: #6366f1; font-weight: 600; }
+.drw-disc-section { margin-bottom: 20px; }
+.drw-disc-header {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--gray-400);
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--gray-100);
+}
+.drw-sheet-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.drw-sheet-card {
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+  transition: all .15s;
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.drw-sheet-card:hover {
+  border-color: #6366f1;
+  box-shadow: 0 2px 8px rgba(99,102,241,.15);
+  transform: translateY(-1px);
+}
+.drw-sheet-num {
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: #6366f1;
+}
+.drw-sheet-title {
+  font-size: 11px;
+  color: var(--gray-600);
+  line-height: 1.3;
+  flex: 1;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.drw-sheet-meta {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.drw-rev-badge {
+  font-size: 10px;
+  font-weight: 600;
+  background: #ede9fe;
+  color: #7c3aed;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+.drw-markup-badge {
+  font-size: 10px;
+  font-weight: 600;
+  background: #fef3c7;
+  color: #b45309;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+.drw-drop-zone {
+  border: 2px dashed var(--gray-300);
+  border-radius: 10px;
+  padding: 24px;
+  text-align: center;
+  transition: border-color .15s;
+  cursor: default;
+}
+.drw-drop-zone:hover { border-color: #6366f1; }
+.drw-tool-btn {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all .15s;
+}
+.drw-tool-btn:hover { background: rgba(255,255,255,0.15); }
+.drw-tool-btn.active { background: #6366f1; border-color: #6366f1; }
+.drw-color-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.3);
+  cursor: pointer;
+  transition: outline .1s;
+}
+.drw-color-btn:hover { outline: 2px solid rgba(255,255,255,0.6); }
+.drw-review-inp:focus {
+  outline: none;
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 0 2px rgba(99,102,241,0.15);
+}

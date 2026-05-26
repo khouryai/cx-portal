@@ -28653,3 +28653,891 @@ Each PDF in this bundle has its own bookmark outline for fast navigation.
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 5 } });
   return { blob, filename: `${baseName}.zip` };
 }
+
+// ╔════════════════════════════════════════════════════════════════════════╗
+// ║  DRAWINGS MODULE                                                        ║
+// ║  Tables: drawing_sets, drawing_sheets, drawing_markups                  ║
+// ║  Schema: see supabase_drawings_schema.sql                               ║
+// ╚════════════════════════════════════════════════════════════════════════╝
+
+// ── Globals ───────────────────────────────────────────────────────────────
+let DRAWING_SETS    = [];
+let DRAWING_SHEETS  = [];
+let DRAWING_MARKUPS = [];
+
+// ── Storage helper ────────────────────────────────────────────────────────
+const _drawStorage = {
+  bucket: 'drawings',
+  _url(path) {
+    const clean = String(path || '').split('/').map(encodeURIComponent).join('/');
+    return `${SUPABASE_URL}/storage/v1/object/${this.bucket}/${clean}`;
+  },
+  _hdrs(extra = {}) {
+    return { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), ...extra };
+  },
+  async upload(path, file) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 120000);
+    try {
+      const res = await fetch(this._url(path), {
+        method: 'POST', signal: ctrl.signal,
+        headers: this._hdrs({ 'Content-Type': 'application/pdf', 'x-upsert': 'true' }),
+        body: file,
+      });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`Upload failed (${res.status}): ${await res.text()}`);
+      return path;
+    } catch(e) { clearTimeout(timer); throw e; }
+  },
+  async downloadBytes(path) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 60000);
+    try {
+      const res = await fetch(this._url(path) + `?t=${Date.now()}`, {
+        method: 'GET', signal: ctrl.signal,
+        headers: this._hdrs({ Accept: 'application/pdf', 'Cache-Control': 'no-cache' }),
+      });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      return new Uint8Array(await res.arrayBuffer());
+    } catch(e) { clearTimeout(timer); throw e; }
+  },
+};
+
+// ── Data loader ────────────────────────────────────────────────────────────
+async function loadDrawingsData() {
+  try {
+    const [sets, sheets, markups] = await Promise.all([
+      _fetchAnon('drawing_sets?select=*&order=created_at.desc'),
+      _fetchAnon('drawing_sheets?select=*&order=sheet_number.asc'),
+      _fetchAnon('drawing_markups?select=*&order=created_at.desc'),
+    ]);
+    DRAWING_SETS    = sets    || [];
+    DRAWING_SHEETS  = sheets  || [];
+    DRAWING_MARKUPS = markups || [];
+  } catch(e) { console.warn('[loadDrawingsData]', e.message); }
+}
+
+// ── Discipline detection ───────────────────────────────────────────────────
+function _drwDiscipline(sheetNum) {
+  if (!sheetNum) return 'General';
+  const prefix = (sheetNum.match(/^([A-Z]+)/i) || [])[1]?.toUpperCase() || '';
+  const map = { C:'Civil', E:'Electrical', G:'General', IN:'Index', I:'Index',
+                TC:'Train Control', T:'Train Control', M:'Mechanical',
+                P:'Plumbing', S:'Structural', A:'Architectural', L:'Landscape',
+                FP:'Fire Protection', FS:'Fire & Safety' };
+  return map[prefix] || prefix || 'General';
+}
+
+// ── PDF text parsing ───────────────────────────────────────────────────────
+async function _drwParsePdf(arrayBuffer) {
+  if (typeof pdfjsLib === 'undefined') throw new Error('PDF.js not loaded');
+  if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js';
+  }
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const results = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page     = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 1 });
+    const content  = await page.getTextContent();
+    const W = viewport.width, H = viewport.height;
+    const parsed   = _drwParseSheetInfo(content.items, W, H);
+    results.push({ pageIndex: i - 1, ...parsed, needsReview: !parsed.sheetNumber || !parsed.sheetTitle });
+  }
+  return { numPages: pdf.numPages, sheets: results };
+}
+
+function _drwParseSheetInfo(items, W, H) {
+  const SHEET_RE  = /^([A-Z]{1,3})-(\d+[A-Z]?)$/i;
+  let sheetNumber = null, sheetTitle = null, revision = null;
+
+  // Sort by y descending (higher y = higher on page in PDF space) then x
+  const sorted = [...items].sort((a, b) => {
+    const ay = a.transform[5], by_ = b.transform[5];
+    return ay !== by_ ? ay - by_ : a.transform[4] - b.transform[4];
+  });
+
+  // Bottom 30% of page = title block area
+  const titleBlockItems = sorted.filter(it => it.transform[5] < H * 0.3 && it.str.trim());
+
+  // Find sheet number (e.g. E-101)
+  for (const it of titleBlockItems) {
+    const s = it.str.trim();
+    if (SHEET_RE.test(s)) { sheetNumber = s.toUpperCase(); break; }
+  }
+
+  // Find revision — look for "REV" keyword near title block
+  for (const it of titleBlockItems) {
+    const s = it.str.trim().toUpperCase();
+    if (s.startsWith('REV') && s.length < 10) {
+      const m = it.str.trim().match(/^rev[.:\s]*(.+)$/i);
+      if (m) { revision = m[1].trim(); break; }
+    }
+  }
+  // Also look for standalone revision letters near sheet number
+  if (!revision) {
+    for (const it of titleBlockItems) {
+      const s = it.str.trim();
+      if (/^[A-Z\d]$/.test(s) && s !== (sheetNumber || '').slice(-1)) {
+        revision = s; break;
+      }
+    }
+  }
+
+  // Find title — longest meaningful text in title block that isn't sheet#/rev
+  const candidates = titleBlockItems
+    .map(it => it.str.trim())
+    .filter(s => s.length > 4 && !SHEET_RE.test(s) && s !== revision
+      && !/^(rev|sheet|dwg|date|scale|drawn|checked|approved)/i.test(s)
+      && !/^\d+$/.test(s) && !/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/.test(s));
+  if (candidates.length) {
+    sheetTitle = candidates.reduce((a, b) => b.length > a.length ? b : a, '');
+  }
+
+  return { sheetNumber, sheetTitle, revision, discipline: _drwDiscipline(sheetNumber) };
+}
+
+// ── Page render ────────────────────────────────────────────────────────────
+function renderDrawingsPage() {
+  const hero = document.getElementById('drawings-hero-content');
+  const cont = document.getElementById('drawings-content');
+  if (!hero || !cont) return;
+
+  const isAdmin = currentRoleUser?.role === 'admin';
+
+  hero.innerHTML = `
+    <div class="page-hero-inner">
+      <div class="role-badge" style="background:rgba(99,102,241,0.15);color:#6366f1;border:1px solid rgba(99,102,241,0.3);">Drawings</div>
+      <h1 class="page-hero-title">Drawing Sets</h1>
+      <p class="page-hero-sub">Site plan books, drawing sets, and markup tools by location.</p>
+    </div>`;
+
+  // Get unique locations that have drawings, plus any project locations
+  const drwLocs = [...new Set(DRAWING_SETS.map(s => s.location).filter(Boolean))].sort();
+  const projLocs = [...new Set(TI.map(r => r.Location).filter(Boolean))].sort();
+  const allLocs  = [...new Set([...drwLocs, ...projLocs])].sort();
+
+  if (!allLocs.length && !isAdmin) {
+    cont.innerHTML = `<div class="docs-empty"><h3>No drawings yet</h3><p>An admin needs to upload drawing sets first.</p></div>`;
+    return;
+  }
+
+  const uploadBtn = isAdmin ? `
+    <button class="admin-action-btn" onclick="_drwOpenUpload()" style="background:#6366f1;color:#fff;border:none;padding:8px 18px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;">
+      + Upload Drawing Set
+    </button>` : '';
+
+  const locTabs = allLocs.map((loc, i) => `
+    <button class="drw-loc-tab ${i === 0 ? 'active' : ''}" onclick="_drwSelectLocation('${escapeHtml(loc)}')" id="drw-loc-tab-${CSS.escape(loc)}">
+      ${escapeHtml(loc)}
+      <span class="drw-loc-badge">${DRAWING_SHEETS.filter(s => s.location === loc && s.is_current).length}</span>
+    </button>`).join('');
+
+  cont.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div class="drw-loc-tabs" id="drw-loc-tabs">${locTabs}</div>
+      ${uploadBtn}
+    </div>
+    <div id="drw-location-view"></div>`;
+
+  if (allLocs.length) _drwSelectLocation(allLocs[0]);
+}
+
+function _drwSelectLocation(loc) {
+  document.querySelectorAll('.drw-loc-tab').forEach(el => el.classList.remove('active'));
+  const tab = document.getElementById(`drw-loc-tab-${CSS.escape(loc)}`);
+  if (tab) tab.classList.add('active');
+  _drwRenderLocationView(loc, 'current');
+}
+
+function _drwRenderLocationView(loc, activeSubtab = 'current') {
+  const el = document.getElementById('drw-location-view');
+  if (!el) return;
+  const tabs = [
+    { id: 'current', label: 'Current Drawings' },
+    { id: 'sets',    label: 'Drawing Sets' },
+    { id: 'history', label: 'Revision History' },
+  ];
+  el.innerHTML = `
+    <div class="drw-subtabs" id="drw-subtabs">
+      ${tabs.map(t => `
+        <button class="drw-subtab ${t.id === activeSubtab ? 'active' : ''}"
+          onclick="_drwRenderLocationView('${escapeHtml(loc)}','${t.id}')">
+          ${t.label}
+        </button>`).join('')}
+    </div>
+    <div id="drw-subtab-content" style="margin-top:16px;"></div>`;
+
+  const content = document.getElementById('drw-subtab-content');
+  if (activeSubtab === 'current') _drwTabCurrent(loc, content);
+  if (activeSubtab === 'sets')    _drwTabSets(loc, content);
+  if (activeSubtab === 'history') _drwTabHistory(loc, content);
+}
+
+// ── Tab 1: Current Drawings ────────────────────────────────────────────────
+function _drwTabCurrent(loc, el) {
+  const sheets = DRAWING_SHEETS.filter(s => s.location === loc && s.is_current && s.confirmed);
+  if (!sheets.length) {
+    el.innerHTML = `<div class="docs-empty"><p>No confirmed drawings for this location yet.</p></div>`;
+    return;
+  }
+  const byDisc = {};
+  sheets.forEach(s => {
+    const d = s.discipline || 'General';
+    if (!byDisc[d]) byDisc[d] = [];
+    byDisc[d].push(s);
+  });
+  el.innerHTML = Object.entries(byDisc).sort(([a],[b]) => a.localeCompare(b)).map(([disc, list]) => `
+    <div class="drw-disc-section">
+      <div class="drw-disc-header">${escapeHtml(disc)}</div>
+      <div class="drw-sheet-grid">
+        ${list.sort((a,b) => (a.sheet_number||'').localeCompare(b.sheet_number||'')).map(s => _drwSheetCard(s)).join('')}
+      </div>
+    </div>`).join('');
+}
+
+// ── Tab 2: Drawing Sets ────────────────────────────────────────────────────
+function _drwTabSets(loc, el) {
+  const sets = DRAWING_SETS.filter(s => s.location === loc && s.status === 'ready');
+  if (!sets.length) {
+    el.innerHTML = `<div class="docs-empty"><p>No drawing sets uploaded for this location yet.</p></div>`;
+    return;
+  }
+  el.innerHTML = sets.map(set => {
+    const sheets = DRAWING_SHEETS.filter(s => s.set_id === set.id && s.confirmed);
+    const byDisc = {};
+    sheets.forEach(s => {
+      const d = s.discipline || 'General';
+      if (!byDisc[d]) byDisc[d] = [];
+      byDisc[d].push(s);
+    });
+    const discHtml = Object.entries(byDisc).sort(([a],[b])=>a.localeCompare(b)).map(([disc, list]) => `
+      <div class="drw-disc-section" style="margin-top:12px;">
+        <div class="drw-disc-header" style="font-size:12px;">${escapeHtml(disc)} (${list.length})</div>
+        <div class="drw-sheet-grid">
+          ${list.sort((a,b) => (a.sheet_number||'').localeCompare(b.sheet_number||'')).map(s => _drwSheetCard(s)).join('')}
+        </div>
+      </div>`).join('');
+    return `
+      <div class="data-card" style="margin-bottom:16px;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+          <div>
+            <div style="font-weight:700;font-size:14px;">${escapeHtml(set.title)}</div>
+            <div style="font-size:12px;color:var(--gray-500);">
+              ${set.revision_date ? `Rev date: ${set.revision_date}` : ''}
+              ${set.release_date  ? ` · Released: ${set.release_date}` : ''}
+              · ${sheets.length} sheets
+            </div>
+          </div>
+        </div>
+        ${discHtml || '<p style="color:var(--gray-400);font-size:12px;">No confirmed sheets yet.</p>'}
+      </div>`;
+  }).join('');
+}
+
+// ── Tab 3: Revision History ────────────────────────────────────────────────
+function _drwTabHistory(loc, el) {
+  const sets = DRAWING_SETS.filter(s => s.location === loc).sort((a,b) => b.created_at.localeCompare(a.created_at));
+  if (!sets.length) {
+    el.innerHTML = `<div class="docs-empty"><p>No upload history for this location.</p></div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="data-card" style="padding:0;overflow:hidden;">
+      <table class="data-table">
+        <thead><tr>
+          <th>Title</th><th>Sheets</th><th>Import Date</th><th>Rev Date</th><th>Release Date</th><th>Uploaded By</th><th>Status</th>
+        </tr></thead>
+        <tbody>${sets.map(set => {
+          const sheetCount = DRAWING_SHEETS.filter(s => s.set_id === set.id).length;
+          const statusColor = set.status === 'ready' ? 'var(--good)' : set.status === 'error' ? 'var(--bad)' : 'var(--warn)';
+          return `<tr>
+            <td style="font-weight:600;">${escapeHtml(set.title)}</td>
+            <td>${sheetCount}</td>
+            <td style="font-size:12px;">${set.import_date || '—'}</td>
+            <td style="font-size:12px;">${set.revision_date || '—'}</td>
+            <td style="font-size:12px;">${set.release_date || '—'}</td>
+            <td style="font-size:12px;">${escapeHtml(set.uploaded_by || '—')}</td>
+            <td><span style="color:${statusColor};font-weight:600;font-size:12px;text-transform:capitalize;">${set.status}</span></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function _drwSheetCard(sheet) {
+  const markups = DRAWING_MARKUPS.filter(m => m.sheet_id === sheet.id);
+  const pubCount = markups.filter(m => m.is_published).length;
+  return `
+    <div class="drw-sheet-card" onclick="_drwOpenSheet('${sheet.id}','${sheet.set_id}',${sheet.page_index})" title="Open ${escapeHtml(sheet.sheet_number||'Sheet')}">
+      <div class="drw-sheet-num">${escapeHtml(sheet.sheet_number || '—')}</div>
+      <div class="drw-sheet-title">${escapeHtml(sheet.sheet_title || 'Untitled')}</div>
+      <div class="drw-sheet-meta">
+        ${sheet.revision ? `<span class="drw-rev-badge">Rev ${escapeHtml(sheet.revision)}</span>` : ''}
+        ${pubCount ? `<span class="drw-markup-badge">${pubCount} markup${pubCount>1?'s':''}</span>` : ''}
+      </div>
+    </div>`;
+}
+
+// ── Upload Flow ────────────────────────────────────────────────────────────
+let _drwUploadMeta = null;
+let _drwParsedSheets = [];
+
+function _drwOpenUpload() {
+  const locs = [...new Set([...DRAWING_SETS.map(s=>s.location), ...TI.map(r=>r.Location)].filter(Boolean))].sort();
+  const locOpts = locs.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+
+  const html = `
+    <div id="drw-upload-modal" class="modal-overlay" onclick="if(event.target===this)_drwCloseUpload()">
+      <div class="modal-box" style="max-width:560px;width:95%;">
+        <div class="modal-header">
+          <h3 class="modal-title">Upload Drawing Set</h3>
+          <button class="modal-close" onclick="_drwCloseUpload()">✕</button>
+        </div>
+        <div class="modal-body" id="drw-upload-body">
+          <div class="form-group">
+            <label class="form-label">Document Title *</label>
+            <input id="drw-title" class="form-input" placeholder="e.g. W40 Electrical Plans Rev B" />
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="form-group">
+              <label class="form-label">Location *</label>
+              <select id="drw-location" class="form-input">
+                <option value="">Select location…</option>${locOpts}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Discipline / System</label>
+              <input id="drw-discipline" class="form-input" placeholder="e.g. Electrical, Civil…" />
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+            <div class="form-group">
+              <label class="form-label">Import Date</label>
+              <input id="drw-import-date" class="form-input" type="date" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Revision Date</label>
+              <input id="drw-rev-date" class="form-input" type="date" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Release Date</label>
+              <input id="drw-rel-date" class="form-input" type="date" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">PDF File *</label>
+            <div id="drw-drop-zone" class="drw-drop-zone">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:36px;height:36px;color:var(--gray-400);margin-bottom:8px;"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m6.75 12l-3-3m0 0l-3 3m3-3v6m-1.5-15H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
+              <p style="color:var(--gray-500);font-size:13px;margin:0;">Drop PDF here or <label for="drw-file-input" style="color:#6366f1;cursor:pointer;font-weight:600;">browse</label></p>
+              <p id="drw-file-name" style="color:var(--gray-600);font-size:12px;margin-top:4px;"></p>
+              <input id="drw-file-input" type="file" accept="application/pdf" style="display:none;" onchange="_drwFileChosen(this)" />
+            </div>
+          </div>
+          <div id="drw-upload-err" style="color:var(--bad);font-size:13px;display:none;"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="_drwCloseUpload()">Cancel</button>
+          <button class="btn-primary" onclick="_drwStartParse()" style="background:#6366f1;">Parse &amp; Review →</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+
+  const zone = document.getElementById('drw-drop-zone');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor='#6366f1'; });
+  zone.addEventListener('dragleave', () => { zone.style.borderColor=''; });
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.style.borderColor='';
+    const f = e.dataTransfer.files[0];
+    if (f && f.type === 'application/pdf') {
+      document.getElementById('drw-file-name').textContent = f.name;
+      zone._file = f;
+    }
+  });
+
+  // Set default import date to today
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('drw-import-date').value = today;
+}
+
+function _drwFileChosen(inp) {
+  const f = inp.files[0];
+  if (f) {
+    document.getElementById('drw-file-name').textContent = f.name;
+    document.getElementById('drw-drop-zone')._file = f;
+  }
+}
+
+function _drwCloseUpload() {
+  document.getElementById('drw-upload-modal')?.remove();
+  _drwUploadMeta = null;
+  _drwParsedSheets = [];
+}
+
+async function _drwStartParse() {
+  const title   = document.getElementById('drw-title')?.value.trim();
+  const loc     = document.getElementById('drw-location')?.value;
+  const disc    = document.getElementById('drw-discipline')?.value.trim();
+  const impDate = document.getElementById('drw-import-date')?.value;
+  const revDate = document.getElementById('drw-rev-date')?.value;
+  const relDate = document.getElementById('drw-rel-date')?.value;
+  const file    = document.getElementById('drw-drop-zone')?._file
+                || document.getElementById('drw-file-input')?.files[0];
+  const errEl   = document.getElementById('drw-upload-err');
+
+  if (!title) { errEl.textContent = 'Document title is required.'; errEl.style.display='block'; return; }
+  if (!loc)   { errEl.textContent = 'Location is required.'; errEl.style.display='block'; return; }
+  if (!file)  { errEl.textContent = 'Please select a PDF file.'; errEl.style.display='block'; return; }
+
+  errEl.style.display = 'none';
+  _drwUploadMeta = { title, location: loc, discipline: disc, import_date: impDate, revision_date: revDate, release_date: relDate, file };
+
+  // Show parsing progress
+  const body = document.getElementById('drw-upload-body');
+  body.innerHTML = `
+    <div style="text-align:center;padding:40px 20px;">
+      <div class="spinner" style="margin:0 auto 16px;"></div>
+      <p style="color:var(--gray-600);" id="drw-parse-status">Reading PDF pages…</p>
+    </div>`;
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    document.getElementById('drw-parse-status').textContent = 'Extracting title block info…';
+    const { numPages, sheets } = await _drwParsePdf(arrayBuffer);
+    _drwParsedSheets = sheets;
+    _drwShowReview(numPages);
+  } catch(e) {
+    body.innerHTML = `<div style="color:var(--bad);padding:20px;">${escapeHtml(e.message)}</div>
+      <button class="btn-secondary" onclick="_drwCloseUpload()">Close</button>`;
+  }
+}
+
+function _drwShowReview(numPages) {
+  const body   = document.getElementById('drw-upload-body');
+  const footer = document.querySelector('#drw-upload-modal .modal-footer');
+  const needsReview = _drwParsedSheets.filter(s => s.needsReview).length;
+
+  body.innerHTML = `
+    <div style="margin-bottom:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+      <div style="font-size:13px;color:var(--gray-600);">${numPages} pages parsed from PDF.</div>
+      ${needsReview ? `<span style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">⚠ ${needsReview} pages need review</span>` : ''}
+    </div>
+    <div style="max-height:380px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead style="position:sticky;top:0;background:var(--gray-50);">
+          <tr>
+            <th style="padding:8px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:700;border-bottom:1px solid var(--gray-200);">Pg</th>
+            <th style="padding:8px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:700;border-bottom:1px solid var(--gray-200);">Sheet #</th>
+            <th style="padding:8px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:700;border-bottom:1px solid var(--gray-200);">Title</th>
+            <th style="padding:8px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:700;border-bottom:1px solid var(--gray-200);">Rev</th>
+            <th style="padding:8px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:700;border-bottom:1px solid var(--gray-200);">Discipline</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${_drwParsedSheets.map((s, i) => `
+            <tr style="border-bottom:1px solid var(--gray-100);${s.needsReview ? 'background:#fffbeb;' : ''}">
+              <td style="padding:6px 8px;color:var(--gray-500);">${s.pageIndex + 1}</td>
+              <td style="padding:6px 8px;">
+                <input class="drw-review-inp" data-idx="${i}" data-field="sheetNumber"
+                  value="${escapeHtml(s.sheetNumber || '')}"
+                  style="width:80px;font-family:monospace;font-size:12px;border:1px solid ${s.sheetNumber ? 'var(--gray-200)' : 'var(--warn)'};border-radius:4px;padding:2px 6px;"
+                  onchange="_drwReviewEdit(${i},'sheetNumber',this.value)" />
+              </td>
+              <td style="padding:6px 8px;">
+                <input class="drw-review-inp" data-idx="${i}" data-field="sheetTitle"
+                  value="${escapeHtml(s.sheetTitle || '')}"
+                  style="width:180px;font-size:12px;border:1px solid ${s.sheetTitle ? 'var(--gray-200)' : 'var(--warn)'};border-radius:4px;padding:2px 6px;"
+                  onchange="_drwReviewEdit(${i},'sheetTitle',this.value)" />
+              </td>
+              <td style="padding:6px 8px;">
+                <input class="drw-review-inp" data-idx="${i}" data-field="revision"
+                  value="${escapeHtml(s.revision || '')}"
+                  style="width:50px;font-size:12px;border:1px solid var(--gray-200);border-radius:4px;padding:2px 6px;"
+                  onchange="_drwReviewEdit(${i},'revision',this.value)" />
+              </td>
+              <td style="padding:6px 8px;color:var(--gray-500);">${escapeHtml(s.discipline || '—')}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:12px;color:var(--gray-500);margin-top:8px;">Edit any cells to correct parsed values before confirming.</p>`;
+
+  footer.innerHTML = `
+    <button class="btn-secondary" onclick="_drwCloseUpload()">Cancel</button>
+    <button class="btn-secondary" onclick="_drwOpenUpload()">← Back</button>
+    <button class="btn-primary" onclick="_drwConfirmImport()" style="background:#6366f1;">Confirm &amp; Import</button>`;
+}
+
+function _drwReviewEdit(idx, field, value) {
+  if (_drwParsedSheets[idx]) {
+    _drwParsedSheets[idx][field] = value;
+    if (field === 'sheetNumber') _drwParsedSheets[idx].discipline = _drwDiscipline(value);
+  }
+}
+
+async function _drwConfirmImport() {
+  const meta = _drwUploadMeta;
+  if (!meta) return;
+  const body   = document.getElementById('drw-upload-body');
+  const footer = document.querySelector('#drw-upload-modal .modal-footer');
+  body.innerHTML = `
+    <div style="text-align:center;padding:40px 20px;">
+      <div class="spinner" style="margin:0 auto 16px;"></div>
+      <p id="drw-confirm-status" style="color:var(--gray-600);">Uploading PDF to storage…</p>
+    </div>`;
+  footer.innerHTML = '';
+
+  try {
+    // 1. Insert drawing_set row
+    const setRow = {
+      title: meta.title, location: meta.location,
+      discipline: meta.discipline || null,
+      import_date: meta.import_date || null,
+      revision_date: meta.revision_date || null,
+      release_date: meta.release_date || null,
+      uploaded_by: currentRoleUser?.name || 'Admin',
+      status: 'processing', total_sheets: _drwParsedSheets.length,
+    };
+    const inserted = await _dbInsert('drawing_sets', setRow);
+    const setId = inserted[0]?.id;
+    if (!setId) throw new Error('Failed to create drawing set record.');
+
+    // 2. Upload PDF
+    document.getElementById('drw-confirm-status').textContent = 'Uploading PDF…';
+    const storagePath = `${setId}/full.pdf`;
+    await _drawStorage.upload(storagePath, meta.file);
+    await _dbUpdate('drawing_sets', { storage_path: storagePath }, { id: setId });
+
+    // 3. Auto-uprev: mark existing sheets with same sheet_number+location as not current
+    document.getElementById('drw-confirm-status').textContent = 'Checking for existing revisions…';
+    const newSheetNums = _drwParsedSheets.map(s => s.sheetNumber).filter(Boolean);
+    const existingCurrent = DRAWING_SHEETS.filter(s =>
+      s.location === meta.location && s.is_current && newSheetNums.includes(s.sheet_number));
+    if (existingCurrent.length) {
+      await Promise.all(existingCurrent.map(s =>
+        _dbUpdate('drawing_sheets', { is_current: false }, { id: s.id })));
+    }
+
+    // 4. Insert sheet rows
+    document.getElementById('drw-confirm-status').textContent = 'Saving sheet records…';
+    const sheetRows = _drwParsedSheets.map(s => ({
+      set_id: setId, location: meta.location,
+      page_index: s.pageIndex,
+      sheet_number: s.sheetNumber || null,
+      sheet_title: s.sheetTitle || null,
+      discipline: s.discipline || null,
+      revision: s.revision || null,
+      is_current: true, confirmed: true,
+      needs_review: s.needsReview || false,
+    }));
+    await _dbInsert('drawing_sheets', sheetRows);
+
+    // 5. Mark set as ready
+    await _dbUpdate('drawing_sets', { status: 'ready' }, { id: setId });
+
+    // 6. Reload and re-render
+    document.getElementById('drw-confirm-status').textContent = 'Done!';
+    await loadDrawingsData();
+    _drwCloseUpload();
+    renderDrawingsPage();
+    const upreved = existingCurrent.length;
+    toast(`Drawing set imported: ${_drwParsedSheets.length} sheets${upreved ? `, ${upreved} auto-upreved` : ''}`, 'success');
+  } catch(e) {
+    body.innerHTML = `<div style="color:var(--bad);padding:20px;">Import failed: ${escapeHtml(e.message)}</div>`;
+    footer.innerHTML = `<button class="btn-secondary" onclick="_drwCloseUpload()">Close</button>`;
+  }
+}
+
+// ── Sheet Viewer ───────────────────────────────────────────────────────────
+let _drwPdfDoc    = null;
+let _drwCurSheet  = null;
+let _drwMarkupShapes = [];
+let _drwSavedMarkupId = null;
+let _drwMarkupDirty   = false;
+let _drwTool      = { name: 'pen', color: '#dc2626', width: 3 };
+let _drwIsDrawing = false;
+let _drwStartX    = 0;
+let _drwStartY    = 0;
+let _drwCurPath   = [];
+
+async function _drwOpenSheet(sheetId, setId, pageIndex) {
+  const sheet = DRAWING_SHEETS.find(s => s.id === sheetId);
+  const set   = DRAWING_SETS.find(s => s.id === setId);
+  if (!sheet || !set) return;
+
+  _drwCurSheet     = sheet;
+  _drwMarkupShapes = [];
+  _drwSavedMarkupId = null;
+  _drwMarkupDirty   = false;
+
+  const ov = document.getElementById('drw-viewer-overlay');
+  ov.style.display = 'flex';
+
+  document.getElementById('drw-viewer-sheet-num').textContent = sheet.sheet_number || '—';
+  document.getElementById('drw-viewer-title').textContent     = sheet.sheet_title || '';
+  document.getElementById('drw-viewer-rev').textContent       = sheet.revision ? `Rev ${sheet.revision}` : '';
+  document.getElementById('drw-viewer-loading').style.display = 'flex';
+  document.getElementById('drw-pdf-canvas').style.display     = 'none';
+  document.getElementById('drw-markup-canvas').style.display  = 'none';
+  document.getElementById('drw-markup-status').textContent    = '';
+
+  // Load existing markup for this user
+  const myMarkup = DRAWING_MARKUPS.find(m => m.sheet_id === sheetId
+    && m.created_by === currentRoleUser?.id && !m.is_published);
+  if (myMarkup) {
+    _drwSavedMarkupId = myMarkup.id;
+    _drwMarkupShapes  = Array.isArray(myMarkup.markup_data) ? myMarkup.markup_data : [];
+  }
+  const pubMarkups = DRAWING_MARKUPS.filter(m => m.sheet_id === sheetId && m.is_published);
+  document.getElementById('drw-published-markups').textContent =
+    pubMarkups.length ? `${pubMarkups.length} published markup${pubMarkups.length>1?'s':''}` : '';
+
+  // Load PDF and render page
+  try {
+    if (typeof pdfjsLib === 'undefined') throw new Error('PDF.js not loaded');
+    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js';
+    }
+    const bytes   = await _drawStorage.downloadBytes(set.storage_path);
+    _drwPdfDoc    = await pdfjsLib.getDocument({ data: bytes }).promise;
+    await _drwRenderPage(pageIndex);
+  } catch(e) {
+    document.getElementById('drw-viewer-loading').textContent = `Failed to load: ${e.message}`;
+  }
+
+  _drwSetTool('pen');
+}
+
+async function _drwRenderPage(pageIndex) {
+  const pdfCanvas    = document.getElementById('drw-pdf-canvas');
+  const markupCanvas = document.getElementById('drw-markup-canvas');
+  const loading      = document.getElementById('drw-viewer-loading');
+
+  const page     = await _drwPdfDoc.getPage(pageIndex + 1);
+  const viewport = page.getViewport({ scale: 1.5 });
+
+  pdfCanvas.width  = viewport.width;
+  pdfCanvas.height = viewport.height;
+  markupCanvas.width  = viewport.width;
+  markupCanvas.height = viewport.height;
+
+  const ctx = pdfCanvas.getContext('2d');
+  await page.render({ canvasContext: ctx, viewport }).promise;
+
+  loading.style.display        = 'none';
+  pdfCanvas.style.display      = 'block';
+  markupCanvas.style.display   = 'block';
+
+  _drwInitMarkupCanvas(markupCanvas);
+  _drwRedraw();
+}
+
+function _drwCloseViewer() {
+  if (_drwMarkupDirty) {
+    if (!confirm('You have unsaved markup changes. Close anyway?')) return;
+  }
+  document.getElementById('drw-viewer-overlay').style.display = 'none';
+  _drwPdfDoc    = null;
+  _drwCurSheet  = null;
+  _drwMarkupShapes = [];
+}
+
+// ── Markup canvas ──────────────────────────────────────────────────────────
+function _drwInitMarkupCanvas(canvas) {
+  // Remove old listeners by cloning
+  const fresh = canvas.cloneNode(true);
+  canvas.parentNode.replaceChild(fresh, canvas);
+
+  fresh.addEventListener('pointerdown', _drwPointerDown);
+  fresh.addEventListener('pointermove', _drwPointerMove);
+  fresh.addEventListener('pointerup',   _drwPointerUp);
+  fresh.addEventListener('pointerleave',_drwPointerUp);
+  fresh.style.cursor = 'crosshair';
+}
+
+function _drwCanvasXY(e) {
+  const canvas = document.getElementById('drw-markup-canvas');
+  const rect = canvas.getBoundingClientRect();
+  return {
+    fx: (e.clientX - rect.left) / rect.width,
+    fy: (e.clientY - rect.top)  / rect.height,
+  };
+}
+
+function _drwPointerDown(e) {
+  if (_drwTool.name === 'text') { _drwPlaceText(e); return; }
+  _drwIsDrawing = true;
+  const { fx, fy } = _drwCanvasXY(e);
+  _drwStartX = fx; _drwStartY = fy;
+  _drwCurPath = [[fx, fy]];
+  document.getElementById('drw-markup-canvas').setPointerCapture(e.pointerId);
+}
+
+function _drwPointerMove(e) {
+  if (!_drwIsDrawing) return;
+  const { fx, fy } = _drwCanvasXY(e);
+  if (_drwTool.name === 'pen') _drwCurPath.push([fx, fy]);
+  _drwRedraw({ preview: { type: _drwTool.name, startX: _drwStartX, startY: _drwStartY, endX: fx, endY: fy, path: _drwCurPath } });
+}
+
+function _drwPointerUp(e) {
+  if (!_drwIsDrawing) return;
+  _drwIsDrawing = false;
+  const { fx, fy } = _drwCanvasXY(e);
+  let shape = null;
+  if (_drwTool.name === 'pen' && _drwCurPath.length > 1) {
+    shape = { type: 'pen', points: [..._drwCurPath], color: _drwTool.color, width: _drwTool.width };
+  } else if (_drwTool.name === 'rect') {
+    shape = { type: 'rect', x: _drwStartX, y: _drwStartY, w: fx - _drwStartX, h: fy - _drwStartY, color: _drwTool.color, width: _drwTool.width };
+  } else if (_drwTool.name === 'arrow') {
+    shape = { type: 'arrow', x1: _drwStartX, y1: _drwStartY, x2: fx, y2: fy, color: _drwTool.color, width: _drwTool.width };
+  }
+  if (shape) { _drwMarkupShapes.push(shape); _drwMarkupDirty = true; }
+  _drwCurPath = [];
+  _drwRedraw();
+}
+
+function _drwPlaceText(e) {
+  const { fx, fy } = _drwCanvasXY(e);
+  const text = prompt('Enter annotation text:');
+  if (text && text.trim()) {
+    _drwMarkupShapes.push({ type: 'text', x: fx, y: fy, text: text.trim(), color: _drwTool.color, size: 14 });
+    _drwMarkupDirty = true;
+    _drwRedraw();
+  }
+}
+
+function _drwRedraw(opts = {}) {
+  const canvas = document.getElementById('drw-markup-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Draw published markups (semi-transparent)
+  const pubMarkups = DRAWING_MARKUPS.filter(m => _drwCurSheet && m.sheet_id === _drwCurSheet.id && m.is_published);
+  pubMarkups.forEach(m => {
+    const shapes = Array.isArray(m.markup_data) ? m.markup_data : [];
+    ctx.globalAlpha = 0.5;
+    shapes.forEach(s => _drwDrawShape(ctx, s, W, H));
+    ctx.globalAlpha = 1;
+  });
+
+  // Draw current user's shapes
+  _drwMarkupShapes.forEach(s => _drwDrawShape(ctx, s, W, H));
+
+  // Draw preview
+  if (opts.preview) {
+    const p = opts.preview;
+    ctx.strokeStyle = _drwTool.color;
+    ctx.lineWidth   = _drwTool.width;
+    ctx.setLineDash([4, 4]);
+    if (p.type === 'pen' && p.path.length > 1) {
+      ctx.beginPath(); ctx.moveTo(p.path[0][0]*W, p.path[0][1]*H);
+      p.path.slice(1).forEach(pt => ctx.lineTo(pt[0]*W, pt[1]*H));
+      ctx.stroke();
+    } else if (p.type === 'rect') {
+      ctx.strokeRect(p.startX*W, p.startY*H, (p.endX-p.startX)*W, (p.endY-p.startY)*H);
+    } else if (p.type === 'arrow') {
+      _drwArrow(ctx, p.startX*W, p.startY*H, p.endX*W, p.endY*H);
+    }
+    ctx.setLineDash([]);
+  }
+}
+
+function _drwDrawShape(ctx, s, W, H) {
+  ctx.strokeStyle = s.color || '#dc2626';
+  ctx.fillStyle   = s.color || '#dc2626';
+  ctx.lineWidth   = s.width || 2;
+  ctx.lineCap     = 'round';
+  ctx.lineJoin    = 'round';
+  if (s.type === 'pen' && s.points?.length > 1) {
+    ctx.beginPath(); ctx.moveTo(s.points[0][0]*W, s.points[0][1]*H);
+    s.points.slice(1).forEach(pt => ctx.lineTo(pt[0]*W, pt[1]*H));
+    ctx.stroke();
+  } else if (s.type === 'rect') {
+    ctx.strokeRect(s.x*W, s.y*H, s.w*W, s.h*H);
+  } else if (s.type === 'arrow') {
+    _drwArrow(ctx, s.x1*W, s.y1*H, s.x2*W, s.y2*H);
+  } else if (s.type === 'text') {
+    ctx.font = `bold ${s.size||14}px sans-serif`;
+    ctx.fillText(s.text, s.x*W, s.y*H);
+  }
+}
+
+function _drwArrow(ctx, x1, y1, x2, y2) {
+  const angle = Math.atan2(y2-y1, x2-x1);
+  const len = 12;
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 - len*Math.cos(angle-Math.PI/6), y2 - len*Math.sin(angle-Math.PI/6));
+  ctx.lineTo(x2 - len*Math.cos(angle+Math.PI/6), y2 - len*Math.sin(angle+Math.PI/6));
+  ctx.closePath(); ctx.fill();
+}
+
+function _drwSetTool(name) {
+  _drwTool.name = name;
+  document.querySelectorAll('.drw-tool-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`drw-tool-${name}`)?.classList.add('active');
+}
+
+function _drwSetColor(color) {
+  _drwTool.color = color;
+  document.querySelectorAll('.drw-color-btn').forEach(b => b.style.outline='none');
+  document.querySelector(`.drw-color-btn[data-color="${color}"]`)?.style.setProperty('outline','2px solid white');
+}
+
+function _drwClearMarkup() {
+  if (!_drwMarkupShapes.length) return;
+  if (!confirm('Clear all your markup on this sheet?')) return;
+  _drwMarkupShapes = [];
+  _drwMarkupDirty  = true;
+  _drwRedraw();
+}
+
+async function _drwSaveMarkup() {
+  if (!_drwCurSheet) return;
+  const sheetId = _drwCurSheet.id;
+  try {
+    const data = { markup_data: _drwMarkupShapes, updated_at: new Date().toISOString() };
+    if (_drwSavedMarkupId) {
+      await _dbUpdate('drawing_markups', data, { id: _drwSavedMarkupId });
+    } else {
+      const rows = await _dbInsert('drawing_markups', {
+        sheet_id: sheetId, created_by: currentRoleUser?.id,
+        creator_name: currentRoleUser?.name, markup_data: _drwMarkupShapes,
+      });
+      _drwSavedMarkupId = rows[0]?.id;
+    }
+    _drwMarkupDirty = false;
+    await loadDrawingsData();
+    document.getElementById('drw-markup-status').textContent = 'Draft saved';
+    setTimeout(() => { const el=document.getElementById('drw-markup-status'); if(el)el.textContent=''; }, 3000);
+  } catch(e) { toast(`Save failed: ${e.message}`, 'error'); }
+}
+
+async function _drwPublishMarkup() {
+  if (!_drwCurSheet) return;
+  if (!confirm('Publish your markup? It will be visible to all team members.')) return;
+  try {
+    await _drwSaveMarkup();
+    if (!_drwSavedMarkupId) return;
+    await _dbUpdate('drawing_markups', {
+      is_published: true,
+      published_at: new Date().toISOString(),
+      published_by: currentRoleUser?.id,
+    }, { id: _drwSavedMarkupId });
+    await loadDrawingsData();
+    _drwRedraw();
+    document.getElementById('drw-markup-status').textContent = 'Published!';
+    const pubCount = DRAWING_MARKUPS.filter(m => m.sheet_id === _drwCurSheet.id && m.is_published).length;
+    document.getElementById('drw-published-markups').textContent =
+      `${pubCount} published markup${pubCount>1?'s':''}`;
+    toast('Markup published to team', 'success');
+  } catch(e) { toast(`Publish failed: ${e.message}`, 'error'); }
+}
