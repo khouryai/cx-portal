@@ -28749,52 +28749,45 @@ async function _drwParsePdf(arrayBuffer) {
   return { numPages: pdf.numPages, sheets: results };
 }
 
-function _drwParseSheetInfo(items, W, H) {
-  const SHEET_RE  = /^([A-Z]{1,3})-(\d+[A-Z]?)$/i;
+function _drwParseSheetInfo(items, W, H, region) {
+  const SHEET_RE = /^([A-Z]{1,3})-(\d+[A-Z]?)$/i;
   let sheetNumber = null, sheetTitle = null, revision = null;
 
-  // Sort by y descending (higher y = higher on page in PDF space) then x
-  const sorted = [...items].sort((a, b) => {
-    const ay = a.transform[5], by_ = b.transform[5];
-    return ay !== by_ ? ay - by_ : a.transform[4] - b.transform[4];
-  });
+  // Filter to calibrated region, or fall back to bottom 30% of page
+  let filtered;
+  if (region && region.fw > 0.01 && region.fh > 0.01) {
+    // PDF coords are bottom-left origin; region fractions are from top-left
+    const pdfYMax = H * (1 - region.fy);
+    const pdfYMin = H * (1 - region.fy - region.fh);
+    const pdfXMin = W * region.fx;
+    const pdfXMax = W * (region.fx + region.fw);
+    filtered = items.filter(it => {
+      const x = it.transform[4], y = it.transform[5];
+      return x >= pdfXMin && x <= pdfXMax && y >= pdfYMin && y <= pdfYMax && it.str.trim();
+    });
+  } else {
+    filtered = items.filter(it => it.transform[5] < H * 0.3 && it.str.trim());
+  }
 
-  // Bottom 30% of page = title block area
-  const titleBlockItems = sorted.filter(it => it.transform[5] < H * 0.3 && it.str.trim());
-
-  // Find sheet number (e.g. E-101)
-  for (const it of titleBlockItems) {
+  for (const it of filtered) {
     const s = it.str.trim();
     if (SHEET_RE.test(s)) { sheetNumber = s.toUpperCase(); break; }
   }
-
-  // Find revision — look for "REV" keyword near title block
-  for (const it of titleBlockItems) {
-    const s = it.str.trim().toUpperCase();
-    if (s.startsWith('REV') && s.length < 10) {
-      const m = it.str.trim().match(/^rev[.:\s]*(.+)$/i);
-      if (m) { revision = m[1].trim(); break; }
-    }
+  for (const it of filtered) {
+    const s = it.str.trim();
+    if (/^rev[.:\s]/i.test(s)) { const m = s.match(/^rev[.:\s]*(.+)$/i); if (m) { revision = m[1].trim(); break; } }
   }
-  // Also look for standalone revision letters near sheet number
   if (!revision) {
-    for (const it of titleBlockItems) {
+    for (const it of filtered) {
       const s = it.str.trim();
-      if (/^[A-Z\d]$/.test(s) && s !== (sheetNumber || '').slice(-1)) {
-        revision = s; break;
-      }
+      if (/^[A-Z0-9]$/.test(s) && s !== (sheetNumber||'').slice(-1)) { revision = s; break; }
     }
   }
-
-  // Find title — longest meaningful text in title block that isn't sheet#/rev
-  const candidates = titleBlockItems
-    .map(it => it.str.trim())
-    .filter(s => s.length > 4 && !SHEET_RE.test(s) && s !== revision
-      && !/^(rev|sheet|dwg|date|scale|drawn|checked|approved)/i.test(s)
-      && !/^\d+$/.test(s) && !/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/.test(s));
-  if (candidates.length) {
-    sheetTitle = candidates.reduce((a, b) => b.length > a.length ? b : a, '');
-  }
+  const candidates = filtered.map(it => it.str.trim()).filter(s =>
+    s.length > 4 && !SHEET_RE.test(s) && s !== revision
+    && !/^(rev|sheet|dwg|date|scale|drawn|checked|approved|by|no\.)/i.test(s)
+    && !/^\d+$/.test(s) && !/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/.test(s));
+  if (candidates.length) sheetTitle = candidates.reduce((a, b) => b.length > a.length ? b : a, '');
 
   return { sheetNumber, sheetTitle, revision, discipline: _drwDiscipline(sheetNumber) };
 }
@@ -28982,193 +28975,312 @@ function _drwSheetCard(sheet) {
 }
 
 // ── Upload Flow ────────────────────────────────────────────────────────────
-let _drwUploadMeta = null;
-let _drwParsedSheets = [];
+let _drwUploadMeta    = null;
+let _drwParsedSheets  = [];
+let _drwUploadPdfDoc  = null;
+let _drwTitleRegion   = null;
+let _drwCalSel        = { active: false, x0:0, y0:0, x1:0, y1:0 };
+
+function _drwRegionKey(loc) { return `drw_tb_${loc}`; }
+function _drwLoadRegion(loc) { try { return JSON.parse(localStorage.getItem(_drwRegionKey(loc))); } catch { return null; } }
+function _drwSaveRegion(loc, r) { localStorage.setItem(_drwRegionKey(loc), JSON.stringify(r)); }
+
+function _drwCloseUpload() {
+  closeModal();
+  _drwUploadMeta = null; _drwParsedSheets = []; _drwUploadPdfDoc = null; _drwTitleRegion = null;
+}
 
 function _drwOpenUpload() {
-  const locs = [...new Set([...DRAWING_SETS.map(s=>s.location), ...TI.map(r=>r.Location)].filter(Boolean))].sort();
+  const locs    = [...new Set([...DRAWING_SETS.map(s=>s.location), ...TI.map(r=>r.Location)].filter(Boolean))].sort();
   const locOpts = locs.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+  const today   = new Date().toISOString().slice(0,10);
 
-  const html = `
-    <div id="drw-upload-modal" class="modal-overlay active" onclick="if(event.target===this)_drwCloseUpload()">
-      <div class="modal-box" style="max-width:560px;width:95%;">
-        <div class="modal-header">
-          <h3 class="modal-title">Upload Drawing Set</h3>
-          <button class="modal-close" onclick="_drwCloseUpload()">✕</button>
+  modal({
+    title: 'Upload Drawing Set',
+    sub:   'Import a multi-page PDF book of plans',
+    body: `
+      <div class="form-group">
+        <label class="form-label">Document Title *</label>
+        <input id="drw-title" class="form-input" placeholder="e.g. W40 Electrical Plans Rev B" />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="form-group">
+          <label class="form-label">Location *</label>
+          <select id="drw-location" class="form-input">
+            <option value="">Select location…</option>${locOpts}
+          </select>
         </div>
-        <div class="modal-body" id="drw-upload-body">
-          <div class="form-group">
-            <label class="form-label">Document Title *</label>
-            <input id="drw-title" class="form-input" placeholder="e.g. W40 Electrical Plans Rev B" />
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div class="form-group">
-              <label class="form-label">Location *</label>
-              <select id="drw-location" class="form-input">
-                <option value="">Select location…</option>${locOpts}
-              </select>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Discipline / System</label>
-              <input id="drw-discipline" class="form-input" placeholder="e.g. Electrical, Civil…" />
-            </div>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
-            <div class="form-group">
-              <label class="form-label">Import Date</label>
-              <input id="drw-import-date" class="form-input" type="date" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Revision Date</label>
-              <input id="drw-rev-date" class="form-input" type="date" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Release Date</label>
-              <input id="drw-rel-date" class="form-input" type="date" />
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">PDF File *</label>
-            <div id="drw-drop-zone" class="drw-drop-zone">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:36px;height:36px;color:var(--gray-400);margin-bottom:8px;"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m6.75 12l-3-3m0 0l-3 3m3-3v6m-1.5-15H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
-              <p style="color:var(--gray-500);font-size:13px;margin:0;">Drop PDF here or <label for="drw-file-input" style="color:#6366f1;cursor:pointer;font-weight:600;">browse</label></p>
-              <p id="drw-file-name" style="color:var(--gray-600);font-size:12px;margin-top:4px;"></p>
-              <input id="drw-file-input" type="file" accept="application/pdf" style="display:none;" onchange="_drwFileChosen(this)" />
-            </div>
-          </div>
-          <div id="drw-upload-err" style="color:var(--bad);font-size:13px;display:none;"></div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn-secondary" onclick="_drwCloseUpload()">Cancel</button>
-          <button class="btn-primary" onclick="_drwStartParse()" style="background:#6366f1;">Parse &amp; Review →</button>
+        <div class="form-group">
+          <label class="form-label">Discipline / System</label>
+          <input id="drw-discipline" class="form-input" placeholder="e.g. Electrical, Civil…" />
         </div>
       </div>
-    </div>`;
-  document.body.insertAdjacentHTML('beforeend', html);
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+        <div class="form-group">
+          <label class="form-label">Import Date</label>
+          <input id="drw-import-date" class="form-input" type="date" value="${today}" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Revision Date</label>
+          <input id="drw-rev-date" class="form-input" type="date" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Release Date</label>
+          <input id="drw-rel-date" class="form-input" type="date" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">PDF File *</label>
+        <div id="drw-drop-zone" class="drw-drop-zone">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:36px;height:36px;color:var(--gray-400);margin-bottom:8px;"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m6.75 12l-3-3m0 0l-3 3m3-3v6m-1.5-15H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
+          <p style="color:var(--gray-500);font-size:13px;margin:0;">Drop PDF here or <label for="drw-file-input" style="color:var(--hitachi-red);cursor:pointer;font-weight:600;">browse</label></p>
+          <p id="drw-file-name" style="color:var(--gray-600);font-size:12px;margin-top:4px;font-weight:600;"></p>
+          <input id="drw-file-input" type="file" accept="application/pdf" style="display:none;" onchange="_drwFileChosen(this)" />
+        </div>
+      </div>
+      <div id="drw-upload-err" style="color:var(--bad);font-size:12px;margin-top:4px;display:none;"></div>`,
+    footer: `
+      <button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Cancel</button>
+      <button class="admin-action-btn" onclick="_drwStep1Next()">Next: Calibrate →</button>`,
+  });
 
   const zone = document.getElementById('drw-drop-zone');
-  zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor='#6366f1'; });
+  zone.addEventListener('dragover',  e => { e.preventDefault(); zone.style.borderColor='var(--hitachi-red)'; });
   zone.addEventListener('dragleave', () => { zone.style.borderColor=''; });
   zone.addEventListener('drop', e => {
     e.preventDefault(); zone.style.borderColor='';
     const f = e.dataTransfer.files[0];
-    if (f && f.type === 'application/pdf') {
-      document.getElementById('drw-file-name').textContent = f.name;
-      zone._file = f;
-    }
+    if (f && f.type === 'application/pdf') { document.getElementById('drw-file-name').textContent = f.name; zone._file = f; }
   });
-
-  // Set default import date to today
-  const today = new Date().toISOString().slice(0,10);
-  document.getElementById('drw-import-date').value = today;
 }
 
 function _drwFileChosen(inp) {
   const f = inp.files[0];
-  if (f) {
-    document.getElementById('drw-file-name').textContent = f.name;
-    document.getElementById('drw-drop-zone')._file = f;
-  }
+  if (f) { document.getElementById('drw-file-name').textContent = f.name; document.getElementById('drw-drop-zone')._file = f; }
 }
 
-function _drwCloseUpload() {
-  document.getElementById('drw-upload-modal')?.remove();
-  _drwUploadMeta = null;
-  _drwParsedSheets = [];
-}
-
-async function _drwStartParse() {
+async function _drwStep1Next() {
   const title   = document.getElementById('drw-title')?.value.trim();
   const loc     = document.getElementById('drw-location')?.value;
   const disc    = document.getElementById('drw-discipline')?.value.trim();
   const impDate = document.getElementById('drw-import-date')?.value;
   const revDate = document.getElementById('drw-rev-date')?.value;
   const relDate = document.getElementById('drw-rel-date')?.value;
-  const file    = document.getElementById('drw-drop-zone')?._file
-                || document.getElementById('drw-file-input')?.files[0];
+  const file    = document.getElementById('drw-drop-zone')?._file || document.getElementById('drw-file-input')?.files[0];
   const errEl   = document.getElementById('drw-upload-err');
 
   if (!title) { errEl.textContent = 'Document title is required.'; errEl.style.display='block'; return; }
-  if (!loc)   { errEl.textContent = 'Location is required.'; errEl.style.display='block'; return; }
-  if (!file)  { errEl.textContent = 'Please select a PDF file.'; errEl.style.display='block'; return; }
+  if (!loc)   { errEl.textContent = 'Location is required.';       errEl.style.display='block'; return; }
+  if (!file)  { errEl.textContent = 'Please select a PDF file.';   errEl.style.display='block'; return; }
 
-  errEl.style.display = 'none';
   _drwUploadMeta = { title, location: loc, discipline: disc, import_date: impDate, revision_date: revDate, release_date: relDate, file };
 
-  // Show parsing progress
-  const body = document.getElementById('drw-upload-body');
-  body.innerHTML = `
+  document.querySelector('#modal-overlay .modal-body').innerHTML = `
     <div style="text-align:center;padding:40px 20px;">
       <div class="spinner" style="margin:0 auto 16px;"></div>
-      <p style="color:var(--gray-600);" id="drw-parse-status">Reading PDF pages…</p>
+      <p style="color:var(--gray-500);">Loading PDF…</p>
     </div>`;
+  document.querySelector('#modal-overlay .modal-footer').innerHTML = '';
 
   try {
-    const arrayBuffer = await file.arrayBuffer();
-    document.getElementById('drw-parse-status').textContent = 'Extracting title block info…';
-    const { numPages, sheets } = await _drwParsePdf(arrayBuffer);
+    if (typeof pdfjsLib === 'undefined') throw new Error('PDF.js not loaded');
+    if (!pdfjsLib.GlobalWorkerOptions.workerSrc)
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js';
+    _drwUploadPdfDoc = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    await _drwShowCalibrate();
+  } catch(e) {
+    document.querySelector('#modal-overlay .modal-body').innerHTML = `<p style="color:var(--bad);padding:20px;">${escapeHtml(e.message)}</p>`;
+    document.querySelector('#modal-overlay .modal-footer').innerHTML = `<button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Close</button>`;
+  }
+}
+
+async function _drwShowCalibrate() {
+  const loc        = _drwUploadMeta.location;
+  const savedRegion = _drwLoadRegion(loc);
+  const numPages   = _drwUploadPdfDoc.numPages;
+
+  // Switch to large modal
+  document.querySelector('#modal-overlay .modal').className = 'modal modal-large';
+  document.querySelector('#modal-overlay .modal-head .modal-title').textContent = 'Calibrate Title Block';
+  const subEl = document.querySelector('#modal-overlay .modal-head .modal-sub');
+  if (subEl) subEl.textContent = 'Drag on the page to mark where the title block is. This teaches the parser where to find sheet numbers and titles.';
+
+  document.querySelector('#modal-overlay .modal-body').innerHTML = `
+    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
+      <div style="flex:1;min-width:280px;">
+        <p style="font-size:13px;color:var(--gray-600);margin-bottom:10px;">
+          ${savedRegion
+            ? `<span style="color:var(--good);font-weight:600;">✓ Saved region found for ${escapeHtml(loc)}</span> — shown in green below. Redraw to change it, or click <strong>Extract</strong> to use as-is.`
+            : `Click and drag to draw a box over the <strong>title block</strong> — the box in the bottom-right corner showing the sheet number, title, and revision.`}
+        </p>
+        <div style="position:relative;display:inline-block;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;">
+          <canvas id="drw-cal-pdf" style="display:block;max-width:100%;"></canvas>
+          <canvas id="drw-cal-sel" style="position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;"></canvas>
+        </div>
+        <p style="font-size:11px;color:var(--gray-400);margin-top:6px;">Page 1 of ${numPages} — drag to select title block region</p>
+      </div>
+      <div style="width:190px;flex-shrink:0;">
+        <div style="font-size:12px;font-weight:700;color:var(--gray-700);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">How it works</div>
+        <ol style="font-size:12px;color:var(--gray-600);padding-left:16px;line-height:1.8;margin:0;">
+          <li>Drag a box over the title block on page 1</li>
+          <li>The region is saved per location and reused for future imports</li>
+          <li>Click <strong>Extract →</strong> to scan all pages using that region</li>
+          <li>Review &amp; correct any misses in the next step</li>
+        </ol>
+        <div id="drw-cal-info" style="margin-top:16px;padding:10px;background:var(--gray-50);border-radius:6px;font-size:11px;color:var(--gray-500);line-height:1.6;">
+          ${savedRegion ? `<span style="color:var(--good);">✓ Saved region loaded</span>` : 'No region selected yet'}
+        </div>
+        <button class="admin-action-btn-secondary" onclick="_drwCalClear()" style="margin-top:8px;font-size:12px;padding:6px 12px;width:100%;">Clear Selection</button>
+      </div>
+    </div>`;
+
+  document.querySelector('#modal-overlay .modal-footer').innerHTML = `
+    <button class="admin-action-btn-secondary" onclick="_drwOpenUpload()">← Back</button>
+    <button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Cancel</button>
+    <button class="admin-action-btn" onclick="_drwRunExtract()">Extract with Region →</button>`;
+
+  // Render page 1
+  const page     = await _drwUploadPdfDoc.getPage(1);
+  const vp0      = page.getViewport({ scale: 1 });
+  const scale    = Math.min(620 / vp0.width, 440 / vp0.height);
+  const viewport = page.getViewport({ scale });
+  const pdfCv    = document.getElementById('drw-cal-pdf');
+  const selCv    = document.getElementById('drw-cal-sel');
+  pdfCv.width = viewport.width; pdfCv.height = viewport.height;
+  selCv.width = viewport.width; selCv.height = viewport.height;
+  await page.render({ canvasContext: pdfCv.getContext('2d'), viewport }).promise;
+
+  if (savedRegion) {
+    _drwTitleRegion = savedRegion;
+    _drwDrawCalSel(selCv, savedRegion, true);
+  }
+
+  _drwCalSel = { active: false, x0:0, y0:0, x1:0, y1:0 };
+  selCv.addEventListener('pointerdown', _drwCalDown);
+  selCv.addEventListener('pointermove', _drwCalMove);
+  selCv.addEventListener('pointerup',   _drwCalUp);
+}
+
+function _drwDrawCalSel(canvas, r, saved) {
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!r) return;
+  const x = r.fx*canvas.width, y = r.fy*canvas.height, w = r.fw*canvas.width, h = r.fh*canvas.height;
+  ctx.strokeStyle = saved ? '#16a34a' : 'var(--hitachi-red)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash(saved ? [] : [6,4]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = saved ? 'rgba(22,163,74,0.08)' : 'rgba(230,0,18,0.08)';
+  ctx.fillRect(x, y, w, h);
+  ctx.setLineDash([]);
+}
+
+function _drwCalDown(e) {
+  const c = document.getElementById('drw-cal-sel'), r = c.getBoundingClientRect();
+  _drwCalSel = { active:true, x0:e.clientX-r.left, y0:e.clientY-r.top, x1:e.clientX-r.left, y1:e.clientY-r.top };
+  c.setPointerCapture(e.pointerId);
+}
+function _drwCalMove(e) {
+  if (!_drwCalSel.active) return;
+  const c = document.getElementById('drw-cal-sel'), r = c.getBoundingClientRect();
+  _drwCalSel.x1 = e.clientX-r.left; _drwCalSel.y1 = e.clientY-r.top;
+  _drwDrawCalSel(c, { fx:Math.min(_drwCalSel.x0,_drwCalSel.x1)/c.width, fy:Math.min(_drwCalSel.y0,_drwCalSel.y1)/c.height, fw:Math.abs(_drwCalSel.x1-_drwCalSel.x0)/c.width, fh:Math.abs(_drwCalSel.y1-_drwCalSel.y0)/c.height }, false);
+}
+function _drwCalUp(e) {
+  if (!_drwCalSel.active) return;
+  _drwCalSel.active = false;
+  const c = document.getElementById('drw-cal-sel');
+  const reg = { fx:Math.min(_drwCalSel.x0,_drwCalSel.x1)/c.width, fy:Math.min(_drwCalSel.y0,_drwCalSel.y1)/c.height, fw:Math.abs(_drwCalSel.x1-_drwCalSel.x0)/c.width, fh:Math.abs(_drwCalSel.y1-_drwCalSel.y0)/c.height };
+  if (reg.fw < 0.02 || reg.fh < 0.02) return;
+  _drwTitleRegion = reg;
+  _drwDrawCalSel(c, reg, false);
+  const info = document.getElementById('drw-cal-info');
+  if (info) info.innerHTML = `Region selected<br>x=${Math.round(reg.fx*100)}% y=${Math.round(reg.fy*100)}%<br>w=${Math.round(reg.fw*100)}% h=${Math.round(reg.fh*100)}%<br><span style="color:var(--hitachi-red);font-weight:600;">Will be saved for ${escapeHtml(_drwUploadMeta?.location||'')}</span>`;
+}
+function _drwCalClear() {
+  _drwTitleRegion = null;
+  const c = document.getElementById('drw-cal-sel');
+  if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
+  const info = document.getElementById('drw-cal-info');
+  if (info) info.textContent = 'No region selected yet';
+}
+
+async function _drwRunExtract() {
+  if (_drwTitleRegion && _drwUploadMeta?.location) _drwSaveRegion(_drwUploadMeta.location, _drwTitleRegion);
+  const numPages = _drwUploadPdfDoc.numPages;
+
+  document.querySelector('#modal-overlay .modal-body').innerHTML = `
+    <div style="text-align:center;padding:40px 20px;">
+      <div class="spinner" style="margin:0 auto 16px;"></div>
+      <p id="drw-parse-status" style="color:var(--gray-500);">Extracting page 1 of ${numPages}…</p>
+      <div style="margin-top:12px;background:var(--gray-100);border-radius:6px;height:6px;width:260px;margin-left:auto;margin-right:auto;">
+        <div id="drw-parse-bar" style="background:var(--hitachi-red);height:6px;border-radius:6px;width:0%;transition:width .2s;"></div>
+      </div>
+    </div>`;
+  document.querySelector('#modal-overlay .modal-footer').innerHTML = '';
+
+  try {
+    const sheets = [];
+    for (let i = 1; i <= numPages; i++) {
+      document.getElementById('drw-parse-status').textContent = `Extracting page ${i} of ${numPages}…`;
+      document.getElementById('drw-parse-bar').style.width = `${Math.round(i/numPages*100)}%`;
+      const page     = await _drwUploadPdfDoc.getPage(i);
+      const viewport = page.getViewport({ scale: 1 });
+      const content  = await page.getTextContent();
+      const parsed   = _drwParseSheetInfo(content.items, viewport.width, viewport.height, _drwTitleRegion);
+      sheets.push({ pageIndex: i-1, ...parsed, needsReview: !parsed.sheetNumber || !parsed.sheetTitle });
+    }
     _drwParsedSheets = sheets;
     _drwShowReview(numPages);
   } catch(e) {
-    body.innerHTML = `<div style="color:var(--bad);padding:20px;">${escapeHtml(e.message)}</div>
-      <button class="btn-secondary" onclick="_drwCloseUpload()">Close</button>`;
+    document.querySelector('#modal-overlay .modal-body').innerHTML = `<p style="color:var(--bad);padding:20px;">${escapeHtml(e.message)}</p>`;
+    document.querySelector('#modal-overlay .modal-footer').innerHTML = `<button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Close</button>`;
   }
 }
 
 function _drwShowReview(numPages) {
-  const body   = document.getElementById('drw-upload-body');
-  const footer = document.querySelector('#drw-upload-modal .modal-footer');
-  const needsReview = _drwParsedSheets.filter(s => s.needsReview).length;
+  const needsReview  = _drwParsedSheets.filter(s => s.needsReview).length;
+  const allNeedReview = needsReview === _drwParsedSheets.length;
 
-  body.innerHTML = `
-    <div style="margin-bottom:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-      <div style="font-size:13px;color:var(--gray-600);">${numPages} pages parsed from PDF.</div>
-      ${needsReview ? `<span style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">⚠ ${needsReview} pages need review</span>` : ''}
+  document.querySelector('#modal-overlay .modal-head .modal-title').textContent = 'Review Sheets';
+  const subEl = document.querySelector('#modal-overlay .modal-head .modal-sub');
+  if (subEl) subEl.textContent = 'Verify extracted data and correct any fields before importing.';
+
+  document.querySelector('#modal-overlay .modal-body').innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+      <span style="font-size:13px;color:var(--gray-600);">${numPages} pages parsed.</span>
+      ${needsReview
+        ? `<span style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">⚠ ${needsReview} need manual entry</span>`
+        : `<span style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">✓ All sheets parsed</span>`}
+      ${allNeedReview ? `<button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()" style="font-size:12px;padding:5px 10px;margin-left:auto;">↩ Recalibrate region</button>` : ''}
     </div>
-    <div style="max-height:380px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;">
-      <table style="width:100%;border-collapse:collapse;font-size:12px;">
-        <thead style="position:sticky;top:0;background:var(--gray-50);">
-          <tr>
-            <th style="padding:8px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:700;border-bottom:1px solid var(--gray-200);">Pg</th>
-            <th style="padding:8px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:700;border-bottom:1px solid var(--gray-200);">Sheet #</th>
-            <th style="padding:8px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:700;border-bottom:1px solid var(--gray-200);">Title</th>
-            <th style="padding:8px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:700;border-bottom:1px solid var(--gray-200);">Rev</th>
-            <th style="padding:8px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:700;border-bottom:1px solid var(--gray-200);">Discipline</th>
-          </tr>
-        </thead>
+    <div style="max-height:420px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;">
+      <table class="data-table">
+        <thead><tr><th>Pg</th><th>Sheet #</th><th>Title</th><th>Rev</th><th>Discipline</th></tr></thead>
         <tbody>
           ${_drwParsedSheets.map((s, i) => `
-            <tr style="border-bottom:1px solid var(--gray-100);${s.needsReview ? 'background:#fffbeb;' : ''}">
-              <td style="padding:6px 8px;color:var(--gray-500);">${s.pageIndex + 1}</td>
-              <td style="padding:6px 8px;">
-                <input class="drw-review-inp" data-idx="${i}" data-field="sheetNumber"
-                  value="${escapeHtml(s.sheetNumber || '')}"
-                  style="width:80px;font-family:monospace;font-size:12px;border:1px solid ${s.sheetNumber ? 'var(--gray-200)' : 'var(--warn)'};border-radius:4px;padding:2px 6px;"
-                  onchange="_drwReviewEdit(${i},'sheetNumber',this.value)" />
-              </td>
-              <td style="padding:6px 8px;">
-                <input class="drw-review-inp" data-idx="${i}" data-field="sheetTitle"
-                  value="${escapeHtml(s.sheetTitle || '')}"
-                  style="width:180px;font-size:12px;border:1px solid ${s.sheetTitle ? 'var(--gray-200)' : 'var(--warn)'};border-radius:4px;padding:2px 6px;"
-                  onchange="_drwReviewEdit(${i},'sheetTitle',this.value)" />
-              </td>
-              <td style="padding:6px 8px;">
-                <input class="drw-review-inp" data-idx="${i}" data-field="revision"
-                  value="${escapeHtml(s.revision || '')}"
-                  style="width:50px;font-size:12px;border:1px solid var(--gray-200);border-radius:4px;padding:2px 6px;"
-                  onchange="_drwReviewEdit(${i},'revision',this.value)" />
-              </td>
-              <td style="padding:6px 8px;color:var(--gray-500);">${escapeHtml(s.discipline || '—')}</td>
+            <tr style="${s.needsReview ? 'background:#fffbeb;' : ''}">
+              <td style="color:var(--gray-400);font-size:12px;width:36px;">${s.pageIndex+1}</td>
+              <td><input class="form-input" value="${escapeHtml(s.sheetNumber||'')}"
+                style="width:86px;font-family:monospace;font-size:12px;padding:3px 6px;border-color:${s.sheetNumber?'var(--gray-200)':'var(--warn)'};"
+                onchange="_drwReviewEdit(${i},'sheetNumber',this.value)" /></td>
+              <td><input class="form-input" value="${escapeHtml(s.sheetTitle||'')}"
+                style="width:210px;font-size:12px;padding:3px 6px;border-color:${s.sheetTitle?'var(--gray-200)':'var(--warn)'};"
+                onchange="_drwReviewEdit(${i},'sheetTitle',this.value)" /></td>
+              <td><input class="form-input" value="${escapeHtml(s.revision||'')}"
+                style="width:52px;font-size:12px;padding:3px 6px;"
+                onchange="_drwReviewEdit(${i},'revision',this.value)" /></td>
+              <td style="font-size:12px;color:var(--gray-500);">${escapeHtml(s.discipline||'—')}</td>
             </tr>`).join('')}
         </tbody>
       </table>
     </div>
-    <p style="font-size:12px;color:var(--gray-500);margin-top:8px;">Edit any cells to correct parsed values before confirming.</p>`;
+    <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">Edit any field directly — changes apply on Confirm.</p>`;
 
-  footer.innerHTML = `
-    <button class="btn-secondary" onclick="_drwCloseUpload()">Cancel</button>
-    <button class="btn-secondary" onclick="_drwOpenUpload()">← Back</button>
-    <button class="btn-primary" onclick="_drwConfirmImport()" style="background:#6366f1;">Confirm &amp; Import</button>`;
+  document.querySelector('#modal-overlay .modal-footer').innerHTML = `
+    <button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()">← Recalibrate</button>
+    <button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Cancel</button>
+    <button class="admin-action-btn" onclick="_drwConfirmImport()">Confirm &amp; Import</button>`;
 }
 
 function _drwReviewEdit(idx, field, value) {
@@ -29181,73 +29293,50 @@ function _drwReviewEdit(idx, field, value) {
 async function _drwConfirmImport() {
   const meta = _drwUploadMeta;
   if (!meta) return;
-  const body   = document.getElementById('drw-upload-body');
-  const footer = document.querySelector('#drw-upload-modal .modal-footer');
-  body.innerHTML = `
+  document.querySelector('#modal-overlay .modal-body').innerHTML = `
     <div style="text-align:center;padding:40px 20px;">
       <div class="spinner" style="margin:0 auto 16px;"></div>
-      <p id="drw-confirm-status" style="color:var(--gray-600);">Uploading PDF to storage…</p>
+      <p id="drw-confirm-status" style="color:var(--gray-500);">Creating drawing set record…</p>
     </div>`;
-  footer.innerHTML = '';
+  document.querySelector('#modal-overlay .modal-footer').innerHTML = '';
 
   try {
-    // 1. Insert drawing_set row
-    const setRow = {
-      title: meta.title, location: meta.location,
-      discipline: meta.discipline || null,
-      import_date: meta.import_date || null,
-      revision_date: meta.revision_date || null,
+    const inserted = await _dbInsert('drawing_sets', {
+      title: meta.title, location: meta.location, discipline: meta.discipline || null,
+      import_date: meta.import_date || null, revision_date: meta.revision_date || null,
       release_date: meta.release_date || null,
       uploaded_by: currentRoleUser?.name || 'Admin',
       status: 'processing', total_sheets: _drwParsedSheets.length,
-    };
-    const inserted = await _dbInsert('drawing_sets', setRow);
+    });
     const setId = inserted[0]?.id;
     if (!setId) throw new Error('Failed to create drawing set record.');
 
-    // 2. Upload PDF
-    document.getElementById('drw-confirm-status').textContent = 'Uploading PDF…';
+    document.getElementById('drw-confirm-status').textContent = 'Uploading PDF to storage…';
     const storagePath = `${setId}/full.pdf`;
     await _drawStorage.upload(storagePath, meta.file);
     await _dbUpdate('drawing_sets', { storage_path: storagePath }, { id: setId });
 
-    // 3. Auto-uprev: mark existing sheets with same sheet_number+location as not current
     document.getElementById('drw-confirm-status').textContent = 'Checking for existing revisions…';
-    const newSheetNums = _drwParsedSheets.map(s => s.sheetNumber).filter(Boolean);
-    const existingCurrent = DRAWING_SHEETS.filter(s =>
-      s.location === meta.location && s.is_current && newSheetNums.includes(s.sheet_number));
-    if (existingCurrent.length) {
-      await Promise.all(existingCurrent.map(s =>
-        _dbUpdate('drawing_sheets', { is_current: false }, { id: s.id })));
-    }
+    const newNums = _drwParsedSheets.map(s => s.sheetNumber).filter(Boolean);
+    const toSupersede = DRAWING_SHEETS.filter(s => s.location === meta.location && s.is_current && newNums.includes(s.sheet_number));
+    if (toSupersede.length) await Promise.all(toSupersede.map(s => _dbUpdate('drawing_sheets', { is_current: false }, { id: s.id })));
 
-    // 4. Insert sheet rows
     document.getElementById('drw-confirm-status').textContent = 'Saving sheet records…';
-    const sheetRows = _drwParsedSheets.map(s => ({
-      set_id: setId, location: meta.location,
-      page_index: s.pageIndex,
-      sheet_number: s.sheetNumber || null,
-      sheet_title: s.sheetTitle || null,
-      discipline: s.discipline || null,
-      revision: s.revision || null,
-      is_current: true, confirmed: true,
-      needs_review: s.needsReview || false,
-    }));
-    await _dbInsert('drawing_sheets', sheetRows);
-
-    // 5. Mark set as ready
+    await _dbInsert('drawing_sheets', _drwParsedSheets.map(s => ({
+      set_id: setId, location: meta.location, page_index: s.pageIndex,
+      sheet_number: s.sheetNumber || null, sheet_title: s.sheetTitle || null,
+      discipline: s.discipline || null, revision: s.revision || null,
+      is_current: true, confirmed: true, needs_review: s.needsReview || false,
+    })));
     await _dbUpdate('drawing_sets', { status: 'ready' }, { id: setId });
 
-    // 6. Reload and re-render
-    document.getElementById('drw-confirm-status').textContent = 'Done!';
     await loadDrawingsData();
     _drwCloseUpload();
     renderDrawingsPage();
-    const upreved = existingCurrent.length;
-    toast(`Drawing set imported: ${_drwParsedSheets.length} sheets${upreved ? `, ${upreved} auto-upreved` : ''}`, 'success');
+    toast(`Drawing set imported: ${_drwParsedSheets.length} sheets${toSupersede.length ? `, ${toSupersede.length} auto-upreved` : ''}`, 'success');
   } catch(e) {
-    body.innerHTML = `<div style="color:var(--bad);padding:20px;">Import failed: ${escapeHtml(e.message)}</div>`;
-    footer.innerHTML = `<button class="btn-secondary" onclick="_drwCloseUpload()">Close</button>`;
+    document.querySelector('#modal-overlay .modal-body').innerHTML = `<p style="color:var(--bad);padding:20px;">Import failed: ${escapeHtml(e.message)}</p>`;
+    document.querySelector('#modal-overlay .modal-footer').innerHTML = `<button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Close</button>`;
   }
 }
 
