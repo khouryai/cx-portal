@@ -329,6 +329,7 @@ function showPage(name) {
   if (name === 'forms')            renderFormsPage();
   if (name === 'rma')              renderRMA();
   if (name === 'schedule')         renderSchedulePage();
+  if (name === 'drawings')         { loadDrawingsData().then(renderDrawingsPage); }
   if (name === 'meetings')         { loadMeetings().then(() => { loadMtgTemplates(); renderMeetings(); }); }
   if (name === 'lookahead')        { loadPlanningData().then(renderLookahead); }
   if (name === 'admin-planning')   { loadPlanningData().then(renderAdminPlanning); }
@@ -1741,7 +1742,7 @@ function _initProductionVisualLayer() {
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
   _initProductionVisualLayer();
-  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs(), loadForms()]);
+  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs(), loadForms(), loadDrawingsData()]);
   initDashboard();
   initActivities();
   initLineItems();
