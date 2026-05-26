@@ -29737,6 +29737,12 @@ let _drwIsDrawing = false;
 let _drwStartX    = 0;
 let _drwStartY    = 0;
 let _drwCurPath   = [];
+let _drwPageIndex = 0;
+let _drwZoomMode  = 'fit';
+let _drwZoomScale = 1;
+let _drwSelectedShape = -1;
+let _drwDragState = null;
+let _drwTextEditor = null;
 
 async function _drwOpenSheet(sheetId, setId, pageIndex) {
   const sheet = DRAWING_SHEETS.find(s => s.id === sheetId);
@@ -29747,9 +29753,14 @@ async function _drwOpenSheet(sheetId, setId, pageIndex) {
   _drwMarkupShapes = [];
   _drwSavedMarkupId = null;
   _drwMarkupDirty   = false;
+  _drwSelectedShape = -1;
+  _drwDragState = null;
+  _drwPageIndex = pageIndex;
+  _drwZoomMode = 'fit';
 
   const ov = document.getElementById('drw-viewer-overlay');
   ov.style.display = 'flex';
+  _drwEnsureEditorChrome();
 
   document.getElementById('drw-viewer-sheet-num').textContent = sheet.sheet_number || '—';
   document.getElementById('drw-viewer-title').textContent     = sheet.sheet_title || '';
@@ -29784,21 +29795,87 @@ async function _drwOpenSheet(sheetId, setId, pageIndex) {
     document.getElementById('drw-viewer-loading').textContent = `Failed to load: ${e.message}`;
   }
 
-  _drwSetTool('pen');
+  _drwSetTool('select');
+  _drwSetColor(_drwTool.color);
 }
 
-async function _drwRenderPage(pageIndex) {
+function _drwEnsureEditorChrome() {
+  const ov = document.getElementById('drw-viewer-overlay');
+  const head = document.getElementById('drw-viewer-header');
+  const body = document.getElementById('drw-viewer-body');
+  const wrap = document.getElementById('drw-canvas-wrap');
+  const footer = document.getElementById('drw-viewer-footer');
+  const toolbar = document.getElementById('drw-markup-toolbar');
+  if (ov) ov.classList.add('drw-editor-overlay');
+  if (head) head.classList.add('drw-editor-header');
+  if (body) body.classList.add('drw-editor-body');
+  if (wrap) wrap.classList.add('drw-canvas-wrap');
+  if (footer) footer.classList.add('drw-editor-footer');
+  if (toolbar && !toolbar.dataset.modernized) {
+    toolbar.dataset.modernized = 'true';
+    toolbar.className = 'drw-markup-toolbar';
+    toolbar.innerHTML = `
+      <button class="drw-tool-btn" id="drw-tool-select" onclick="_drwSetTool('select')" title="Select, move, resize, edit">Select</button>
+      <button class="drw-tool-btn" id="drw-tool-pen" onclick="_drwSetTool('pen')" title="Freehand pen">Pen</button>
+      <button class="drw-tool-btn" id="drw-tool-rect" onclick="_drwSetTool('rect')" title="Rectangle">Rect</button>
+      <button class="drw-tool-btn" id="drw-tool-arrow" onclick="_drwSetTool('arrow')" title="Arrow">Arrow</button>
+      <button class="drw-tool-btn" id="drw-tool-text" onclick="_drwSetTool('text')" title="Inline text box">Text</button>
+      <select id="drw-width-select" class="drw-editor-select" onchange="_drwSetWidth(this.value)" title="Line width">
+        <option value="2">2px</option><option value="3" selected>3px</option><option value="5">5px</option><option value="8">8px</option>
+      </select>
+      <button class="drw-color-btn" data-color="#dc2626" onclick="_drwSetColor('#dc2626')" title="Red" style="background:#dc2626;"></button>
+      <button class="drw-color-btn" data-color="#f59e0b" onclick="_drwSetColor('#f59e0b')" title="Amber" style="background:#f59e0b;"></button>
+      <button class="drw-color-btn" data-color="#10b981" onclick="_drwSetColor('#10b981')" title="Green" style="background:#10b981;"></button>
+      <button class="drw-color-btn" data-color="#2563eb" onclick="_drwSetColor('#2563eb')" title="Blue" style="background:#2563eb;"></button>
+      <span class="drw-toolbar-divider"></span>
+      <button class="drw-tool-btn" onclick="_drwZoomOut()" title="Zoom out">-</button>
+      <button class="drw-tool-btn" onclick="_drwFitPage()" title="Fit whole page">Fit</button>
+      <button class="drw-tool-btn" onclick="_drwZoomIn()" title="Zoom in">+</button>
+      <span id="drw-zoom-label" class="drw-zoom-label">Fit</span>
+      <span class="drw-toolbar-divider"></span>
+      <button class="drw-tool-btn drw-danger-btn" onclick="_drwDeleteSelected()" title="Delete selected markup">Delete</button>
+      <button class="drw-tool-btn drw-danger-btn" onclick="_drwClearMarkup()" title="Clear all your draft markups">Clear</button>
+      <button class="drw-save-btn" onclick="_drwSaveMarkup()">Save Draft</button>
+      <button class="drw-publish-btn" onclick="_drwPublishMarkup()">Publish</button>`;
+  }
+  const hint = footer?.querySelector('.drw-editor-hint');
+  if (footer && !hint) {
+    const span = document.createElement('span');
+    span.className = 'drw-editor-hint';
+    span.textContent = 'Select markups to move, resize, edit, or delete. Double-click text to edit.';
+    footer.insertBefore(span, document.getElementById('drw-published-markups'));
+  }
+}
+
+function _drwComputeFitScale(page) {
+  const body = document.getElementById('drw-viewer-body');
+  const vp = page.getViewport({ scale: 1 });
+  const maxW = Math.max(320, (body?.clientWidth || window.innerWidth) - 56);
+  const maxH = Math.max(320, (body?.clientHeight || window.innerHeight) - 56);
+  return Math.min(maxW / vp.width, maxH / vp.height);
+}
+
+async function _drwRenderPage(pageIndex, opts = {}) {
   const pdfCanvas    = document.getElementById('drw-pdf-canvas');
   const markupCanvas = document.getElementById('drw-markup-canvas');
   const loading      = document.getElementById('drw-viewer-loading');
 
   const page     = await _drwPdfDoc.getPage(pageIndex + 1);
-  const viewport = page.getViewport({ scale: 1.5 });
+  _drwPageIndex = pageIndex;
+  if (_drwZoomMode === 'fit' || opts.fit) {
+    _drwZoomMode = 'fit';
+    _drwZoomScale = _drwComputeFitScale(page);
+  }
+  const viewport = page.getViewport({ scale: _drwZoomScale });
 
   pdfCanvas.width  = viewport.width;
   pdfCanvas.height = viewport.height;
   markupCanvas.width  = viewport.width;
   markupCanvas.height = viewport.height;
+  pdfCanvas.style.width = viewport.width + 'px';
+  pdfCanvas.style.height = viewport.height + 'px';
+  markupCanvas.style.width = viewport.width + 'px';
+  markupCanvas.style.height = viewport.height + 'px';
 
   const ctx = pdfCanvas.getContext('2d');
   await page.render({ canvasContext: ctx, viewport }).promise;
@@ -29808,6 +29885,7 @@ async function _drwRenderPage(pageIndex) {
   markupCanvas.style.display   = 'block';
 
   _drwInitMarkupCanvas(markupCanvas);
+  _drwUpdateZoomLabel();
   _drwRedraw();
 }
 
@@ -29819,7 +29897,29 @@ function _drwCloseViewer() {
   _drwPdfDoc    = null;
   _drwCurSheet  = null;
   _drwMarkupShapes = [];
+  _drwSelectedShape = -1;
+  _drwRemoveTextEditor(false);
 }
+
+function _drwUpdateZoomLabel() {
+  const el = document.getElementById('drw-zoom-label');
+  if (el) el.textContent = _drwZoomMode === 'fit' ? 'Fit' : `${Math.round(_drwZoomScale * 100)}%`;
+}
+
+async function _drwFitPage() {
+  if (!_drwPdfDoc) return;
+  await _drwRenderPage(_drwPageIndex, { fit: true });
+}
+
+async function _drwZoomBy(mult) {
+  if (!_drwPdfDoc) return;
+  _drwZoomMode = 'manual';
+  _drwZoomScale = Math.max(0.25, Math.min(4, _drwZoomScale * mult));
+  await _drwRenderPage(_drwPageIndex);
+}
+
+function _drwZoomIn() { _drwZoomBy(1.2); }
+function _drwZoomOut() { _drwZoomBy(1 / 1.2); }
 
 // ── Markup canvas ──────────────────────────────────────────────────────────
 function _drwInitMarkupCanvas(canvas) {
@@ -29831,7 +29931,10 @@ function _drwInitMarkupCanvas(canvas) {
   fresh.addEventListener('pointermove', _drwPointerMove);
   fresh.addEventListener('pointerup',   _drwPointerUp);
   fresh.addEventListener('pointerleave',_drwPointerUp);
-  fresh.style.cursor = 'crosshair';
+  fresh.addEventListener('dblclick', _drwCanvasDblClick);
+  fresh.addEventListener('keydown', _drwCanvasKeyDown);
+  fresh.tabIndex = 0;
+  _drwUpdateCursor();
 }
 
 function _drwCanvasXY(e) {
@@ -29844,22 +29947,51 @@ function _drwCanvasXY(e) {
 }
 
 function _drwPointerDown(e) {
-  if (_drwTool.name === 'text') { _drwPlaceText(e); return; }
-  _drwIsDrawing = true;
+  _drwRemoveTextEditor(true);
+  const canvas = document.getElementById('drw-markup-canvas');
+  canvas?.focus();
   const { fx, fy } = _drwCanvasXY(e);
+  if (_drwTool.name === 'select') {
+    const handle = _drwSelectedShape >= 0 ? _drwHitHandle(_drwMarkupShapes[_drwSelectedShape], fx, fy) : null;
+    if (handle) {
+      _drwDragState = { mode: 'resize', idx: _drwSelectedShape, handle, startX: fx, startY: fy, before: _drwCloneShape(_drwMarkupShapes[_drwSelectedShape]) };
+      canvas?.setPointerCapture(e.pointerId);
+      return;
+    }
+    const hit = _drwHitShape(fx, fy);
+    _drwSelectedShape = hit;
+    if (hit >= 0) {
+      _drwDragState = { mode: 'move', idx: hit, startX: fx, startY: fy, before: _drwCloneShape(_drwMarkupShapes[hit]) };
+      canvas?.setPointerCapture(e.pointerId);
+    }
+    _drwRedraw();
+    return;
+  }
+  _drwIsDrawing = true;
   _drwStartX = fx; _drwStartY = fy;
   _drwCurPath = [[fx, fy]];
   document.getElementById('drw-markup-canvas').setPointerCapture(e.pointerId);
 }
 
 function _drwPointerMove(e) {
-  if (!_drwIsDrawing) return;
   const { fx, fy } = _drwCanvasXY(e);
+  if (_drwDragState) {
+    _drwApplyDrag(fx, fy, e.shiftKey);
+    _drwMarkupDirty = true;
+    _drwRedraw();
+    return;
+  }
+  if (!_drwIsDrawing) return;
   if (_drwTool.name === 'pen') _drwCurPath.push([fx, fy]);
   _drwRedraw({ preview: { type: _drwTool.name, startX: _drwStartX, startY: _drwStartY, endX: fx, endY: fy, path: _drwCurPath } });
 }
 
 function _drwPointerUp(e) {
+  if (_drwDragState) {
+    _drwDragState = null;
+    _drwRedraw();
+    return;
+  }
   if (!_drwIsDrawing) return;
   _drwIsDrawing = false;
   const { fx, fy } = _drwCanvasXY(e);
@@ -29870,20 +30002,37 @@ function _drwPointerUp(e) {
     shape = { type: 'rect', x: _drwStartX, y: _drwStartY, w: fx - _drwStartX, h: fy - _drwStartY, color: _drwTool.color, width: _drwTool.width };
   } else if (_drwTool.name === 'arrow') {
     shape = { type: 'arrow', x1: _drwStartX, y1: _drwStartY, x2: fx, y2: fy, color: _drwTool.color, width: _drwTool.width };
+  } else if (_drwTool.name === 'text') {
+    const r = _drwNormRect(_drwStartX, _drwStartY, fx - _drwStartX, fy - _drwStartY);
+    shape = {
+      type: 'text',
+      x: r.x,
+      y: r.y,
+      w: Math.max(0.14, r.w),
+      h: Math.max(0.045, r.h),
+      text: '',
+      color: _drwTool.color,
+      size: 15,
+    };
   }
-  if (shape) { _drwMarkupShapes.push(shape); _drwMarkupDirty = true; }
+  if (shape) {
+    _drwMarkupShapes.push(shape);
+    _drwSelectedShape = _drwMarkupShapes.length - 1;
+    _drwMarkupDirty = true;
+  }
   _drwCurPath = [];
   _drwRedraw();
+  if (shape?.type === 'text') _drwOpenTextEditor(_drwSelectedShape);
 }
 
 function _drwPlaceText(e) {
   const { fx, fy } = _drwCanvasXY(e);
-  const text = prompt('Enter annotation text:');
-  if (text && text.trim()) {
-    _drwMarkupShapes.push({ type: 'text', x: fx, y: fy, text: text.trim(), color: _drwTool.color, size: 14 });
-    _drwMarkupDirty = true;
-    _drwRedraw();
-  }
+  const shape = { type: 'text', x: fx, y: fy, w: 0.22, h: 0.055, text: '', color: _drwTool.color, size: 15 };
+  _drwMarkupShapes.push(shape);
+  _drwSelectedShape = _drwMarkupShapes.length - 1;
+  _drwMarkupDirty = true;
+  _drwRedraw();
+  _drwOpenTextEditor(_drwSelectedShape);
 }
 
 function _drwRedraw(opts = {}) {
@@ -29903,7 +30052,7 @@ function _drwRedraw(opts = {}) {
   });
 
   // Draw current user's shapes
-  _drwMarkupShapes.forEach(s => _drwDrawShape(ctx, s, W, H));
+  _drwMarkupShapes.forEach((s, i) => _drwDrawShape(ctx, s, W, H, i === _drwSelectedShape));
 
   // Draw preview
   if (opts.preview) {
@@ -29915,7 +30064,7 @@ function _drwRedraw(opts = {}) {
       ctx.beginPath(); ctx.moveTo(p.path[0][0]*W, p.path[0][1]*H);
       p.path.slice(1).forEach(pt => ctx.lineTo(pt[0]*W, pt[1]*H));
       ctx.stroke();
-    } else if (p.type === 'rect') {
+    } else if (p.type === 'rect' || p.type === 'text') {
       ctx.strokeRect(p.startX*W, p.startY*H, (p.endX-p.startX)*W, (p.endY-p.startY)*H);
     } else if (p.type === 'arrow') {
       _drwArrow(ctx, p.startX*W, p.startY*H, p.endX*W, p.endY*H);
@@ -29924,7 +30073,7 @@ function _drwRedraw(opts = {}) {
   }
 }
 
-function _drwDrawShape(ctx, s, W, H) {
+function _drwDrawShape(ctx, s, W, H, selected = false) {
   ctx.strokeStyle = s.color || '#dc2626';
   ctx.fillStyle   = s.color || '#dc2626';
   ctx.lineWidth   = s.width || 2;
@@ -29939,9 +30088,19 @@ function _drwDrawShape(ctx, s, W, H) {
   } else if (s.type === 'arrow') {
     _drwArrow(ctx, s.x1*W, s.y1*H, s.x2*W, s.y2*H);
   } else if (s.type === 'text') {
-    ctx.font = `bold ${s.size||14}px sans-serif`;
-    ctx.fillText(s.text, s.x*W, s.y*H);
+    const b = _drwShapeBounds(s);
+    const px = b.x * W, py = b.y * H, pw = b.w * W, ph = b.h * H;
+    ctx.font = `600 ${Math.max(10, (s.size || 15) * _drwZoomScale)}px sans-serif`;
+    ctx.textBaseline = 'top';
+    _drwDrawTextLines(ctx, s.text || '', px + 4, py + 4, Math.max(10, pw - 8), Math.max(12, (s.size || 15) * _drwZoomScale * 1.25));
+    if (!s.text) {
+      ctx.globalAlpha = 0.35;
+      ctx.strokeStyle = s.color || '#dc2626';
+      ctx.strokeRect(px, py, pw, ph);
+      ctx.globalAlpha = 1;
+    }
   }
+  if (selected) _drwDrawSelection(ctx, s, W, H);
 }
 
 function _drwArrow(ctx, x1, y1, x2, y2) {
@@ -29955,23 +30114,276 @@ function _drwArrow(ctx, x1, y1, x2, y2) {
   ctx.closePath(); ctx.fill();
 }
 
+function _drwDrawTextLines(ctx, text, x, y, maxWidth, lineHeight) {
+  const lines = String(text || '').split(/\n/);
+  let yy = y;
+  for (const line of lines) {
+    const words = line.split(/\s+/);
+    let cur = '';
+    for (const word of words) {
+      const test = cur ? `${cur} ${word}` : word;
+      if (ctx.measureText(test).width > maxWidth && cur) {
+        ctx.fillText(cur, x, yy);
+        yy += lineHeight;
+        cur = word;
+      } else {
+        cur = test;
+      }
+    }
+    if (cur) ctx.fillText(cur, x, yy);
+    yy += lineHeight;
+  }
+}
+
+function _drwCloneShape(s) {
+  return JSON.parse(JSON.stringify(s || {}));
+}
+
+function _drwNormRect(x, y, w, h) {
+  const nx = w < 0 ? x + w : x;
+  const ny = h < 0 ? y + h : y;
+  return { x: nx, y: ny, w: Math.abs(w), h: Math.abs(h) };
+}
+
+function _drwShapeBounds(s) {
+  if (!s) return { x: 0, y: 0, w: 0, h: 0 };
+  if (s.type === 'rect') return _drwNormRect(s.x || 0, s.y || 0, s.w || 0, s.h || 0);
+  if (s.type === 'text') return { x: s.x || 0, y: s.y || 0, w: s.w || 0.22, h: s.h || 0.055 };
+  if (s.type === 'arrow') {
+    const x = Math.min(s.x1 || 0, s.x2 || 0), y = Math.min(s.y1 || 0, s.y2 || 0);
+    return { x, y, w: Math.abs((s.x2 || 0) - (s.x1 || 0)), h: Math.abs((s.y2 || 0) - (s.y1 || 0)) };
+  }
+  if (s.type === 'pen' && s.points?.length) {
+    const xs = s.points.map(p => p[0]), ys = s.points.map(p => p[1]);
+    const x = Math.min(...xs), y = Math.min(...ys);
+    return { x, y, w: Math.max(0.006, Math.max(...xs) - x), h: Math.max(0.006, Math.max(...ys) - y) };
+  }
+  return { x: 0, y: 0, w: 0, h: 0 };
+}
+
+function _drwDrawSelection(ctx, s, W, H) {
+  const b = _drwShapeBounds(s);
+  const x = b.x * W, y = b.y * H, w = b.w * W, h = b.h * H;
+  ctx.save();
+  ctx.strokeStyle = '#2563eb';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 4]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.setLineDash([]);
+  for (const hnd of _drwSelectionHandles(s)) {
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#2563eb';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.rect(hnd.x * W - 4, hnd.y * H - 4, 8, 8);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function _drwSelectionHandles(s) {
+  if (s?.type === 'arrow') return [{ id: 'start', x: s.x1, y: s.y1 }, { id: 'end', x: s.x2, y: s.y2 }];
+  const b = _drwShapeBounds(s);
+  return [
+    { id: 'nw', x: b.x, y: b.y },
+    { id: 'ne', x: b.x + b.w, y: b.y },
+    { id: 'sw', x: b.x, y: b.y + b.h },
+    { id: 'se', x: b.x + b.w, y: b.y + b.h },
+  ];
+}
+
+function _drwDistToSegment(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  if (!dx && !dy) return Math.hypot(px - x1, py - y1);
+  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+function _drwHitHandle(s, fx, fy) {
+  const tol = 9 / Math.max(1, document.getElementById('drw-markup-canvas')?.width || 1);
+  return _drwSelectionHandles(s).find(h => Math.hypot(fx - h.x, fy - h.y) < tol)?.id || null;
+}
+
+function _drwHitShape(fx, fy) {
+  const tol = 8 / Math.max(1, document.getElementById('drw-markup-canvas')?.width || 1);
+  for (let i = _drwMarkupShapes.length - 1; i >= 0; i--) {
+    const s = _drwMarkupShapes[i];
+    const b = _drwShapeBounds(s);
+    if (s.type === 'rect' || s.type === 'text') {
+      const inside = fx >= b.x - tol && fx <= b.x + b.w + tol && fy >= b.y - tol && fy <= b.y + b.h + tol;
+      if (inside) return i;
+    } else if (s.type === 'arrow') {
+      if (_drwDistToSegment(fx, fy, s.x1, s.y1, s.x2, s.y2) < tol) return i;
+    } else if (s.type === 'pen' && s.points?.length > 1) {
+      for (let p = 1; p < s.points.length; p++) {
+        if (_drwDistToSegment(fx, fy, s.points[p-1][0], s.points[p-1][1], s.points[p][0], s.points[p][1]) < tol) return i;
+      }
+    }
+  }
+  return -1;
+}
+
+function _drwMoveShape(s, dx, dy) {
+  if (s.type === 'rect' || s.type === 'text') { s.x += dx; s.y += dy; }
+  else if (s.type === 'arrow') { s.x1 += dx; s.y1 += dy; s.x2 += dx; s.y2 += dy; }
+  else if (s.type === 'pen') s.points = (s.points || []).map(p => [p[0] + dx, p[1] + dy]);
+}
+
+function _drwResizeShape(s, before, handle, dx, dy, lockRatio) {
+  if (s.type === 'arrow') {
+    if (handle === 'start') { s.x1 = before.x1 + dx; s.y1 = before.y1 + dy; }
+    if (handle === 'end') { s.x2 = before.x2 + dx; s.y2 = before.y2 + dy; }
+    return;
+  }
+  const b = _drwShapeBounds(before);
+  let left = b.x, top = b.y, right = b.x + b.w, bottom = b.y + b.h;
+  if (handle.includes('w')) left += dx;
+  if (handle.includes('e')) right += dx;
+  if (handle.includes('n')) top += dy;
+  if (handle.includes('s')) bottom += dy;
+  if (lockRatio && b.w > 0 && b.h > 0) {
+    const ratio = b.w / b.h;
+    const nw = Math.max(0.01, Math.abs(right - left));
+    const nh = nw / ratio;
+    if (handle.includes('n')) top = bottom - nh; else bottom = top + nh;
+  }
+  const nb = { x: Math.min(left, right), y: Math.min(top, bottom), w: Math.max(0.008, Math.abs(right - left)), h: Math.max(0.008, Math.abs(bottom - top)) };
+  if (s.type === 'rect' || s.type === 'text') {
+    s.x = nb.x; s.y = nb.y; s.w = nb.w; s.h = nb.h;
+  } else if (s.type === 'pen') {
+    const sx = nb.w / Math.max(0.0001, b.w), sy = nb.h / Math.max(0.0001, b.h);
+    s.points = (before.points || []).map(p => [nb.x + (p[0] - b.x) * sx, nb.y + (p[1] - b.y) * sy]);
+  }
+}
+
+function _drwApplyDrag(fx, fy, lockRatio) {
+  const d = _drwDragState;
+  if (!d) return;
+  const s = _drwMarkupShapes[d.idx];
+  Object.assign(s, _drwCloneShape(d.before));
+  const dx = fx - d.startX, dy = fy - d.startY;
+  if (d.mode === 'move') _drwMoveShape(s, dx, dy);
+  else _drwResizeShape(s, d.before, d.handle, dx, dy, lockRatio);
+}
+
+function _drwOpenTextEditor(idx) {
+  _drwRemoveTextEditor(true);
+  const s = _drwMarkupShapes[idx];
+  if (!s || s.type !== 'text') return;
+  const wrap = document.getElementById('drw-canvas-wrap');
+  const canvas = document.getElementById('drw-markup-canvas');
+  if (!wrap || !canvas) return;
+  const b = _drwShapeBounds(s);
+  const editor = document.createElement('textarea');
+  editor.className = 'drw-inline-text-editor';
+  editor.value = s.text || '';
+  editor.style.left = `${b.x * canvas.width}px`;
+  editor.style.top = `${b.y * canvas.height}px`;
+  editor.style.width = `${Math.max(80, b.w * canvas.width)}px`;
+  editor.style.height = `${Math.max(34, b.h * canvas.height)}px`;
+  editor.style.color = s.color || _drwTool.color;
+  editor.style.fontSize = `${Math.max(12, (s.size || 15) * _drwZoomScale)}px`;
+  editor.oninput = () => {
+    s.text = editor.value;
+    _drwMarkupDirty = true;
+    _drwRedraw();
+  };
+  editor.onkeydown = (ev) => {
+    if (ev.key === 'Escape') _drwRemoveTextEditor(false);
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') _drwRemoveTextEditor(true);
+  };
+  editor.onblur = () => _drwRemoveTextEditor(true);
+  wrap.appendChild(editor);
+  _drwTextEditor = { el: editor, idx };
+  setTimeout(() => { editor.focus(); editor.select(); }, 0);
+}
+
+function _drwRemoveTextEditor(commit = true) {
+  if (!_drwTextEditor) return;
+  const { el, idx } = _drwTextEditor;
+  if (commit && _drwMarkupShapes[idx]?.type === 'text') {
+    _drwMarkupShapes[idx].text = el.value.trim();
+    if (!_drwMarkupShapes[idx].text) _drwMarkupShapes.splice(idx, 1);
+  }
+  el.remove();
+  _drwTextEditor = null;
+  _drwRedraw();
+}
+
+function _drwCanvasDblClick(e) {
+  const { fx, fy } = _drwCanvasXY(e);
+  const hit = _drwHitShape(fx, fy);
+  if (hit >= 0) {
+    _drwSelectedShape = hit;
+    _drwRedraw();
+    if (_drwMarkupShapes[hit].type === 'text') _drwOpenTextEditor(hit);
+  }
+}
+
+function _drwCanvasKeyDown(e) {
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault();
+    _drwDeleteSelected();
+  }
+  if (e.key === 'Escape') {
+    _drwSelectedShape = -1;
+    _drwRemoveTextEditor(false);
+    _drwRedraw();
+  }
+}
+
+function _drwDeleteSelected() {
+  if (_drwSelectedShape < 0) return;
+  _drwMarkupShapes.splice(_drwSelectedShape, 1);
+  _drwSelectedShape = -1;
+  _drwMarkupDirty = true;
+  _drwRemoveTextEditor(false);
+  _drwRedraw();
+}
+
 function _drwSetTool(name) {
   _drwTool.name = name;
   document.querySelectorAll('.drw-tool-btn').forEach(b => b.classList.remove('active'));
   document.getElementById(`drw-tool-${name}`)?.classList.add('active');
+  _drwUpdateCursor();
 }
 
 function _drwSetColor(color) {
   _drwTool.color = color;
+  if (_drwSelectedShape >= 0 && _drwMarkupShapes[_drwSelectedShape]) {
+    _drwMarkupShapes[_drwSelectedShape].color = color;
+    _drwMarkupDirty = true;
+    _drwRedraw();
+  }
   document.querySelectorAll('.drw-color-btn').forEach(b => b.style.outline='none');
   document.querySelector(`.drw-color-btn[data-color="${color}"]`)?.style.setProperty('outline','2px solid white');
+}
+
+function _drwSetWidth(width) {
+  _drwTool.width = Number(width) || 3;
+  if (_drwSelectedShape >= 0 && _drwMarkupShapes[_drwSelectedShape]) {
+    const s = _drwMarkupShapes[_drwSelectedShape];
+    if (s.type === 'text') s.size = Math.max(10, _drwTool.width * 5);
+    else s.width = _drwTool.width;
+    _drwMarkupDirty = true;
+    _drwRedraw();
+  }
+}
+
+function _drwUpdateCursor() {
+  const canvas = document.getElementById('drw-markup-canvas');
+  if (!canvas) return;
+  canvas.style.cursor = _drwTool.name === 'select' ? 'default' : _drwTool.name === 'text' ? 'text' : 'crosshair';
 }
 
 function _drwClearMarkup() {
   if (!_drwMarkupShapes.length) return;
   if (!confirm('Clear all your markup on this sheet?')) return;
   _drwMarkupShapes = [];
+  _drwSelectedShape = -1;
   _drwMarkupDirty  = true;
+  _drwRemoveTextEditor(false);
   _drwRedraw();
 }
 
@@ -29979,6 +30391,7 @@ async function _drwSaveMarkup() {
   if (!_drwCurSheet) return;
   const sheetId = _drwCurSheet.id;
   try {
+    _drwRemoveTextEditor(true);
     const data = { markup_data: _drwMarkupShapes, updated_at: new Date().toISOString() };
     if (_drwSavedMarkupId) {
       await _dbUpdate('drawing_markups', data, { id: _drwSavedMarkupId });

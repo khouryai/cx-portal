@@ -10870,3 +10870,183 @@ a:focus-visible {
   border-color: #6366f1 !important;
   box-shadow: 0 0 0 2px rgba(99,102,241,0.15);
 }
+
+.drw-editor-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: #0f172a;
+  flex-direction: column;
+}
+.drw-editor-header {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 10px 16px !important;
+  background: #ffffff !important;
+  color: var(--gray-900) !important;
+  border-bottom: 1px solid var(--gray-200);
+  box-shadow: 0 1px 8px rgba(15, 23, 42, 0.08);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.drw-editor-close {
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--gray-700);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.drw-editor-title {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.drw-editor-title #drw-viewer-sheet-num {
+  font-weight: 800;
+  font-size: 14px;
+  font-family: monospace;
+  color: var(--hitachi-red);
+}
+.drw-editor-title #drw-viewer-title {
+  font-size: 13px;
+  color: var(--gray-800);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.drw-editor-title #drw-viewer-rev {
+  font-size: 11px;
+  color: var(--gray-500);
+}
+.drw-markup-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  flex-wrap: wrap !important;
+}
+.drw-tool-btn,
+.drw-save-btn,
+.drw-publish-btn,
+.drw-editor-select {
+  min-height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--gray-800);
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.drw-tool-btn:hover,
+.drw-editor-close:hover {
+  background: var(--gray-50);
+  border-color: var(--gray-400);
+}
+.drw-tool-btn.active {
+  background: var(--hitachi-red) !important;
+  border-color: var(--hitachi-red) !important;
+  color: #fff !important;
+}
+.drw-save-btn {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+.drw-publish-btn {
+  background: #059669;
+  border-color: #059669;
+  color: #fff;
+}
+.drw-danger-btn {
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+.drw-toolbar-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--gray-200);
+  margin: 0 2px;
+}
+.drw-zoom-label {
+  min-width: 42px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--gray-600);
+  font-weight: 700;
+}
+.drw-editor-body {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 18px;
+  position: relative;
+  background:
+    linear-gradient(45deg, rgba(255,255,255,.04) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255,255,255,.04) 25%, transparent 25%),
+    #111827;
+  background-size: 28px 28px;
+}
+.drw-canvas-wrap {
+  position: relative;
+  display: inline-block;
+  background: #fff;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+}
+.drw-markup-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+.drw-viewer-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #cbd5e1;
+  font-size: 15px;
+  background: rgba(15, 23, 42, 0.82);
+}
+.drw-editor-footer {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 8px 16px !important;
+  background: #ffffff !important;
+  color: var(--gray-600) !important;
+  border-top: 1px solid var(--gray-200);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.drw-editor-hint {
+  margin-left: auto;
+  color: var(--gray-500);
+}
+#drw-published-markups {
+  margin-left: 0 !important;
+  color: var(--gray-600);
+  font-weight: 700;
+}
+.drw-inline-text-editor {
+  position: absolute;
+  z-index: 5;
+  border: 2px solid #2563eb;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.92);
+  padding: 4px;
+  font-weight: 600;
+  line-height: 1.25;
+  resize: none;
+  outline: none;
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.18);
+}
