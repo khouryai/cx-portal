@@ -28990,7 +28990,7 @@ function _drwOpenUpload() {
   const locOpts = locs.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
 
   const html = `
-    <div id="drw-upload-modal" class="modal-overlay" onclick="if(event.target===this)_drwCloseUpload()">
+    <div id="drw-upload-modal" class="modal-overlay active" onclick="if(event.target===this)_drwCloseUpload()">
       <div class="modal-box" style="max-width:560px;width:95%;">
         <div class="modal-header">
           <h3 class="modal-title">Upload Drawing Set</h3>
