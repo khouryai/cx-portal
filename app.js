@@ -28980,6 +28980,8 @@ let _drwParsedSheets  = [];
 let _drwUploadPdfDoc  = null;
 let _drwTitleRegion   = null;
 let _drwCalSel        = { active: false, x0:0, y0:0, x1:0, y1:0 };
+let _drwCalPage       = 1;
+let _drwCalRendering  = false;
 
 function _drwRegionKey(loc) { return `drw_tb_${loc}`; }
 function _drwLoadRegion(loc) { try { return JSON.parse(localStorage.getItem(_drwRegionKey(loc))); } catch { return null; } }
@@ -28988,6 +28990,7 @@ function _drwSaveRegion(loc, r) { localStorage.setItem(_drwRegionKey(loc), JSON.
 function _drwCloseUpload() {
   closeModal();
   _drwUploadMeta = null; _drwParsedSheets = []; _drwUploadPdfDoc = null; _drwTitleRegion = null;
+  _drwCalPage = 1; _drwCalRendering = false;
 }
 
 function _drwOpenUpload() {
@@ -29003,17 +29006,14 @@ function _drwOpenUpload() {
         <label class="form-label">Document Title *</label>
         <input id="drw-title" class="form-input" placeholder="e.g. W40 Electrical Plans Rev B" />
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <div class="form-group">
-          <label class="form-label">Location *</label>
-          <select id="drw-location" class="form-input">
-            <option value="">Select location…</option>${locOpts}
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Discipline / System</label>
-          <input id="drw-discipline" class="form-input" placeholder="e.g. Electrical, Civil…" />
-        </div>
+      <div class="form-group">
+        <label class="form-label">Location *</label>
+        <select id="drw-location" class="form-input">
+          <option value="">Select location…</option>${locOpts}
+        </select>
+        <p style="font-size:11px;color:var(--gray-500);margin:4px 0 0;">
+          Discipline is auto-detected per sheet from the sheet-number prefix (e.g. <strong>E</strong>→Electrical, <strong>C</strong>→Civil, <strong>S</strong>→Structural).
+        </p>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
         <div class="form-group">
@@ -29062,7 +29062,6 @@ function _drwFileChosen(inp) {
 async function _drwStep1Next() {
   const title   = document.getElementById('drw-title')?.value.trim();
   const loc     = document.getElementById('drw-location')?.value;
-  const disc    = document.getElementById('drw-discipline')?.value.trim();
   const impDate = document.getElementById('drw-import-date')?.value;
   const revDate = document.getElementById('drw-rev-date')?.value;
   const relDate = document.getElementById('drw-rel-date')?.value;
@@ -29073,7 +29072,7 @@ async function _drwStep1Next() {
   if (!loc)   { errEl.textContent = 'Location is required.';       errEl.style.display='block'; return; }
   if (!file)  { errEl.textContent = 'Please select a PDF file.';   errEl.style.display='block'; return; }
 
-  _drwUploadMeta = { title, location: loc, discipline: disc, import_date: impDate, revision_date: revDate, release_date: relDate, file };
+  _drwUploadMeta = { title, location: loc, import_date: impDate, revision_date: revDate, release_date: relDate, file };
 
   document.querySelector('#modal-overlay .modal-body').innerHTML = `
     <div style="text-align:center;padding:40px 20px;">
@@ -29098,36 +29097,49 @@ async function _drwShowCalibrate() {
   const loc        = _drwUploadMeta.location;
   const savedRegion = _drwLoadRegion(loc);
   const numPages   = _drwUploadPdfDoc.numPages;
+  _drwCalPage = Math.min(Math.max(1, _drwCalPage || 1), numPages);
 
-  // Switch to large modal
-  document.querySelector('#modal-overlay .modal').className = 'modal modal-large';
+  // Switch to extra-large modal — fills most of the viewport so the PDF is readable
+  const modalEl = document.querySelector('#modal-overlay .modal');
+  modalEl.className = 'modal modal-large';
+  modalEl.style.maxWidth  = '98vw';
+  modalEl.style.width     = '98vw';
+  modalEl.style.maxHeight = '95vh';
   document.querySelector('#modal-overlay .modal-head .modal-title').textContent = 'Calibrate Title Block';
   const subEl = document.querySelector('#modal-overlay .modal-head .modal-sub');
-  if (subEl) subEl.textContent = 'Drag on the page to mark where the title block is. This teaches the parser where to find sheet numbers and titles.';
+  if (subEl) subEl.textContent = 'Navigate to a sheet with a normal title block, then drag a box over the title block. The region applies to every page.';
 
   document.querySelector('#modal-overlay .modal-body').innerHTML = `
-    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
-      <div style="flex:1;min-width:280px;">
-        <p style="font-size:13px;color:var(--gray-600);margin-bottom:10px;">
-          ${savedRegion
-            ? `<span style="color:var(--good);font-weight:600;">✓ Saved region found for ${escapeHtml(loc)}</span> — shown in green below. Redraw to change it, or click <strong>Extract</strong> to use as-is.`
-            : `Click and drag to draw a box over the <strong>title block</strong> — the box in the bottom-right corner showing the sheet number, title, and revision.`}
-        </p>
-        <div style="position:relative;display:inline-block;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;">
-          <canvas id="drw-cal-pdf" style="display:block;max-width:100%;"></canvas>
-          <canvas id="drw-cal-sel" style="position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;"></canvas>
+    <div style="display:flex;gap:16px;align-items:flex-start;">
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+          <button class="admin-action-btn-secondary" id="drw-cal-prev" style="padding:6px 12px;font-size:13px;">◀ Prev</button>
+          <span style="font-size:13px;color:var(--gray-700);">Page</span>
+          <input id="drw-cal-page-input" type="number" min="1" max="${numPages}" value="${_drwCalPage}"
+                 style="width:64px;padding:5px 8px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px;text-align:center;" />
+          <span style="font-size:13px;color:var(--gray-500);">of ${numPages}</span>
+          <button class="admin-action-btn-secondary" id="drw-cal-next" style="padding:6px 12px;font-size:13px;">Next ▶</button>
+          <span style="flex:1;"></span>
+          <span style="font-size:12px;color:var(--gray-500);">
+            ${savedRegion
+              ? `<span style="color:var(--good);font-weight:600;">✓ Saved region for ${escapeHtml(loc)}</span> — redraw to change, or Extract to use as-is.`
+              : `Skip past cover pages — pick a sheet with a real title block.`}
+          </span>
         </div>
-        <p style="font-size:11px;color:var(--gray-400);margin-top:6px;">Page 1 of ${numPages} — drag to select title block region</p>
+        <div id="drw-cal-stage" style="position:relative;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:300px;">
+          <canvas id="drw-cal-pdf" style="display:block;"></canvas>
+          <canvas id="drw-cal-sel" style="position:absolute;cursor:crosshair;"></canvas>
+        </div>
       </div>
-      <div style="width:190px;flex-shrink:0;">
+      <div style="width:210px;flex-shrink:0;">
         <div style="font-size:12px;font-weight:700;color:var(--gray-700);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">How it works</div>
-        <ol style="font-size:12px;color:var(--gray-600);padding-left:16px;line-height:1.8;margin:0;">
-          <li>Drag a box over the title block on page 1</li>
+        <ol style="font-size:12px;color:var(--gray-600);padding-left:16px;line-height:1.7;margin:0;">
+          <li>Use Prev / Next to find a sheet with a normal title block (cover pages often have none)</li>
+          <li>Drag a box over the title block on that page</li>
           <li>The region is saved per location and reused for future imports</li>
-          <li>Click <strong>Extract →</strong> to scan all pages using that region</li>
-          <li>Review &amp; correct any misses in the next step</li>
+          <li>Click <strong>Extract →</strong> to scan every page using that region</li>
         </ol>
-        <div id="drw-cal-info" style="margin-top:16px;padding:10px;background:var(--gray-50);border-radius:6px;font-size:11px;color:var(--gray-500);line-height:1.6;">
+        <div id="drw-cal-info" style="margin-top:14px;padding:10px;background:var(--gray-50);border-radius:6px;font-size:11px;color:var(--gray-500);line-height:1.6;">
           ${savedRegion ? `<span style="color:var(--good);">✓ Saved region loaded</span>` : 'No region selected yet'}
         </div>
         <button class="admin-action-btn-secondary" onclick="_drwCalClear()" style="margin-top:8px;font-size:12px;padding:6px 12px;width:100%;">Clear Selection</button>
@@ -29139,26 +29151,69 @@ async function _drwShowCalibrate() {
     <button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Cancel</button>
     <button class="admin-action-btn" onclick="_drwRunExtract()">Extract with Region →</button>`;
 
-  // Render page 1
-  const page     = await _drwUploadPdfDoc.getPage(1);
-  const vp0      = page.getViewport({ scale: 1 });
-  const scale    = Math.min(620 / vp0.width, 440 / vp0.height);
-  const viewport = page.getViewport({ scale });
-  const pdfCv    = document.getElementById('drw-cal-pdf');
-  const selCv    = document.getElementById('drw-cal-sel');
-  pdfCv.width = viewport.width; pdfCv.height = viewport.height;
-  selCv.width = viewport.width; selCv.height = viewport.height;
-  await page.render({ canvasContext: pdfCv.getContext('2d'), viewport }).promise;
+  if (savedRegion) _drwTitleRegion = savedRegion;
 
-  if (savedRegion) {
-    _drwTitleRegion = savedRegion;
-    _drwDrawCalSel(selCv, savedRegion, true);
+  // Wire navigation
+  const prevBtn = document.getElementById('drw-cal-prev');
+  const nextBtn = document.getElementById('drw-cal-next');
+  const pageInp = document.getElementById('drw-cal-page-input');
+  prevBtn.onclick = () => _drwCalGoToPage(_drwCalPage - 1);
+  nextBtn.onclick = () => _drwCalGoToPage(_drwCalPage + 1);
+  pageInp.onchange = () => _drwCalGoToPage(parseInt(pageInp.value, 10) || 1);
+
+  await _drwCalRenderPage(_drwCalPage);
+}
+
+async function _drwCalGoToPage(n) {
+  if (!_drwUploadPdfDoc) return;
+  const target = Math.min(Math.max(1, n|0), _drwUploadPdfDoc.numPages);
+  const inp = document.getElementById('drw-cal-page-input');
+  if (inp) inp.value = String(target);
+  if (target === _drwCalPage) return;
+  _drwCalPage = target;
+  await _drwCalRenderPage(target);
+}
+
+async function _drwCalRenderPage(pageNum) {
+  if (_drwCalRendering) return;
+  _drwCalRendering = true;
+  try {
+    const page  = await _drwUploadPdfDoc.getPage(pageNum);
+    const vp0   = page.getViewport({ scale: 1 });
+    // Size to fill the available stage area (modal is 98vw, sidebar ~210px + gap/padding)
+    const stage = document.getElementById('drw-cal-stage');
+    const maxW  = Math.max(400, (stage?.clientWidth  || window.innerWidth  * 0.7) - 4);
+    const maxH  = Math.max(300, Math.min(window.innerHeight * 0.72, 900));
+    const scale = Math.min(maxW / vp0.width, maxH / vp0.height);
+    const viewport = page.getViewport({ scale });
+    const pdfCv = document.getElementById('drw-cal-pdf');
+    const selCv = document.getElementById('drw-cal-sel');
+    if (!pdfCv || !selCv) return;
+    pdfCv.width = viewport.width; pdfCv.height = viewport.height;
+    selCv.width = viewport.width; selCv.height = viewport.height;
+    selCv.style.width  = viewport.width + 'px';
+    selCv.style.height = viewport.height + 'px';
+    selCv.style.left = pdfCv.offsetLeft + 'px';
+    selCv.style.top  = pdfCv.offsetTop + 'px';
+    await page.render({ canvasContext: pdfCv.getContext('2d'), viewport }).promise;
+    // Keep selection canvas aligned after render
+    selCv.style.left = pdfCv.offsetLeft + 'px';
+    selCv.style.top  = pdfCv.offsetTop + 'px';
+
+    if (_drwTitleRegion) {
+      const saved = _drwLoadRegion(_drwUploadMeta?.location);
+      const isSaved = saved && saved.fx === _drwTitleRegion.fx && saved.fy === _drwTitleRegion.fy
+                            && saved.fw === _drwTitleRegion.fw && saved.fh === _drwTitleRegion.fh;
+      _drwDrawCalSel(selCv, _drwTitleRegion, !!isSaved);
+    }
+
+    _drwCalSel = { active: false, x0:0, y0:0, x1:0, y1:0 };
+    selCv.onpointerdown = _drwCalDown;
+    selCv.onpointermove = _drwCalMove;
+    selCv.onpointerup   = _drwCalUp;
+  } finally {
+    _drwCalRendering = false;
   }
-
-  _drwCalSel = { active: false, x0:0, y0:0, x1:0, y1:0 };
-  selCv.addEventListener('pointerdown', _drwCalDown);
-  selCv.addEventListener('pointermove', _drwCalMove);
-  selCv.addEventListener('pointerup',   _drwCalUp);
 }
 
 function _drwDrawCalSel(canvas, r, saved) {
@@ -29302,7 +29357,7 @@ async function _drwConfirmImport() {
 
   try {
     const inserted = await _dbInsert('drawing_sets', {
-      title: meta.title, location: meta.location, discipline: meta.discipline || null,
+      title: meta.title, location: meta.location,
       import_date: meta.import_date || null, revision_date: meta.revision_date || null,
       release_date: meta.release_date || null,
       uploaded_by: currentRoleUser?.name || 'Admin',

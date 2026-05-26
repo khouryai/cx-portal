@@ -7,12 +7,13 @@
 -- Set it to private (not public).
 -- ============================================================
 
+-- Note: discipline is derived per sheet from the sheet-number prefix,
+-- so it lives on drawing_sheets only — not on the set.
 CREATE TABLE IF NOT EXISTS drawing_sets (
   id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   title         TEXT        NOT NULL,
   location      TEXT        NOT NULL,
   subsystem     TEXT,
-  discipline    TEXT,
   import_date   DATE,
   revision_date DATE,
   release_date  DATE,
