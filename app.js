@@ -333,6 +333,7 @@ function showPage(name) {
   if (name === 'meetings')         { loadMeetings().then(() => { loadMtgTemplates(); renderMeetings(); }); }
   if (name === 'lookahead')        { loadPlanningData().then(renderLookahead); }
   if (name === 'admin-planning')   { loadPlanningData().then(renderAdminPlanning); }
+  if (name === 'dynamic-testing')  renderDynamicTestingPage();
   window.scrollTo(0, 0);
   // Init libraries for any page — auto-detects selects, tooltips, date inputs
   setTimeout(_initPageLibraries, 150);
@@ -31107,6 +31108,7 @@ async function openTestCaseScopeModal(testId) {
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
       <button class="form-secondary" onclick="_dtPreviewMatches()">Preview matches</button>
+      <button class="form-secondary" onclick="_dtGenerateInstancesFromModal()" title="Materialize one dynamic_instance per matched device">Generate instances</button>
       <button class="form-submit" onclick="_dtSaveScope()">Save</button>
     `,
     size: 'large',
@@ -31302,4 +31304,892 @@ async function _dtSaveScope() {
   } catch (e) {
     alert(`Save failed: ${e.message}`);
   }
+}
+
+// Called from the scope-edit modal's "Generate instances" button.
+// Reads the current criteria, saves it as a filter, then materializes
+// one dynamic_instance per matched device.
+async function _dtGenerateInstancesFromModal() {
+  const testId = _dtScopeState.currentTestId;
+  if (!testId) return;
+  const scope = document.querySelector('input[name="dt-scope"]:checked')?.value;
+  if (scope !== 'dynamic') { alert('Switch scope to Dynamic first.'); return; }
+  const criteria = _dtReadCriteria();
+  // Persist the filter so the generated instances trace back to it.
+  let filterId = null;
+  try {
+    await _dbUpdate('test_items', { scope_type: 'dynamic' }, { test_id: testId });
+    const existing = await _dbSelect('dynamic_test_filters', { test_id: testId }, 'id');
+    if (existing[0]) {
+      filterId = existing[0].id;
+      await _dbUpdate('dynamic_test_filters', { criteria, updated_at: new Date().toISOString() }, { id: filterId });
+    } else {
+      const ins = await _dbInsert('dynamic_test_filters', [{
+        test_id: testId, name: 'default', criteria,
+        created_by: currentRoleUser?.email || currentRoleUser?.id || null,
+      }]);
+      filterId = ins[0]?.id || null;
+    }
+  } catch (e) { alert(`Filter save failed: ${e.message}`); return; }
+  await _dynGenerateInstancesForFilter({ testId, filterId, criteria });
+}
+
+
+// ==========================================================================
+// DYNAMIC TESTING — INSTANCES PAGE
+//   · Tab 1: Instances list (manual create, CSV/Excel import, generate
+//            candidates from a saved filter)
+//   · Tab 2: Conceptual planning board (6-month grid of instances by
+//            phase × track section × status)
+// Mounted by showPage('dynamic-testing') → renderDynamicTestingPage().
+// ==========================================================================
+
+const _dynPage = {
+  tab: 'instances',                      // 'instances' | 'board'
+  instances: [],                         // dynamic_instances rows
+  filters: [],                           // dynamic_test_filters rows
+  testItemsById: new Map(),              // test_id → { name, code, subsystem, phase, scope_type }
+  loaded: false,
+  loading: false,
+  search: '',
+  statusFilter: '',
+  testFilter: '',
+  // Board state
+  boardAxis: 'section',                  // 'section' | 'phase'
+  boardStart: null,                      // first day of first month (Date)
+  boardMonths: 6,
+};
+
+const _DYN_STATUSES = [
+  'Not Started','In Progress','Pass','Fail',
+  'Blocked','Not Applicable','Future Test',
+];
+
+function _dynStatusBadge(s) {
+  if (typeof getStatusBadge === 'function') return getStatusBadge(s);
+  return `<span class="badge">${escapeHtml(s || '—')}</span>`;
+}
+
+function _dynFmtDate(d) {
+  if (!d) return '';
+  const dt = (d instanceof Date) ? d : new Date(d);
+  if (isNaN(dt.getTime())) return String(d);
+  return dt.toISOString().slice(0, 10);
+}
+
+function _dynMonthKey(d) {
+  const dt = (d instanceof Date) ? d : new Date(d);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function _dynMonthLabel(d) {
+  const dt = (d instanceof Date) ? d : new Date(d);
+  return dt.toLocaleString('en-US', { month: 'short', year: '2-digit' });
+}
+
+function _dynFirstOfMonth(d) {
+  const dt = (d instanceof Date) ? d : new Date(d);
+  return new Date(dt.getFullYear(), dt.getMonth(), 1);
+}
+
+function _dynAddMonths(d, n) {
+  const dt = new Date(d);
+  return new Date(dt.getFullYear(), dt.getMonth() + n, 1);
+}
+
+async function renderDynamicTestingPage() {
+  const hero = document.getElementById('dyn-hero-content');
+  const cont = document.getElementById('dyn-content');
+  if (!hero || !cont) return;
+
+  hero.innerHTML = `
+    <h1 class="page-title">Dynamic Testing</h1>
+    <p class="page-subtitle">Manage executable test instances against the imported track plan.</p>
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <button class="hero-tab ${_dynPage.tab==='instances'?'active':''}" onclick="_dynTabSwitch('instances')">Instances</button>
+      <button class="hero-tab ${_dynPage.tab==='board'?'active':''}" onclick="_dynTabSwitch('board')">Planning Board</button>
+    </div>
+    <style>
+      .hero-tab{padding:8px 16px;border:1px solid var(--gray-300);background:white;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--gray-700);}
+      .hero-tab.active{background:#e60012;color:white;border-color:#e60012;}
+      .dyn-kpi{display:inline-block;margin-right:16px;padding:8px 14px;background:white;border:1px solid var(--gray-200);border-radius:6px;}
+      .dyn-kpi b{display:block;font-size:18px;color:var(--gray-900);line-height:1.1;}
+      .dyn-kpi span{font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.4px;}
+      .dyn-toolbar{display:flex;gap:8px;align-items:center;margin:14px 0;flex-wrap:wrap;}
+      .dyn-toolbar input,.dyn-toolbar select{padding:6px 10px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;}
+      .dyn-btn{padding:7px 14px;border:1px solid var(--gray-300);background:white;border-radius:5px;cursor:pointer;font-size:13px;color:var(--gray-700);}
+      .dyn-btn.primary{background:#e60012;color:white;border-color:#e60012;}
+      .dyn-btn:hover{background:var(--gray-50);}
+      .dyn-btn.primary:hover{background:#c20010;}
+      .dyn-table{width:100%;border-collapse:collapse;background:white;}
+      .dyn-table th{background:var(--gray-50);text-align:left;padding:8px 10px;font-size:12px;color:var(--gray-600);border-bottom:1px solid var(--gray-200);}
+      .dyn-table td{padding:8px 10px;font-size:13px;border-bottom:1px solid var(--gray-100);vertical-align:top;}
+      .dyn-table tr:hover{background:var(--gray-50);}
+      .dyn-board{width:100%;border-collapse:collapse;}
+      .dyn-board th{background:var(--gray-50);padding:8px 6px;font-size:11px;border:1px solid var(--gray-200);text-align:center;}
+      .dyn-board td{padding:0;border:1px solid var(--gray-200);min-width:60px;height:48px;text-align:center;vertical-align:middle;}
+      .dyn-board td.cell{cursor:pointer;}
+      .dyn-board td.cell:hover{background:#fff7ed;}
+      .dyn-board td.row-label{background:var(--gray-50);font-size:12px;padding:6px 10px;text-align:left;font-weight:500;color:var(--gray-700);min-width:120px;}
+      .dyn-cell-pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;}
+      .dyn-cell-pill.zero{color:var(--gray-400);}
+      .dyn-cell-pill.some{background:#dbeafe;color:#1d4ed8;}
+      .dyn-cell-pill.lots{background:#fde68a;color:#92400e;}
+    </style>
+  `;
+
+  if (!_dynPage.loaded || _dynPage.tab === 'instances') {
+    cont.innerHTML = `<div style="padding:40px;text-align:center;color:var(--gray-500);">Loading dynamic instances…</div>`;
+  }
+
+  await _dynLoadAll();
+
+  if (_dynPage.tab === 'instances') _dynRenderInstances();
+  else _dynRenderBoard();
+}
+
+function _dynTabSwitch(tab) {
+  _dynPage.tab = tab;
+  renderDynamicTestingPage();
+}
+
+async function _dynLoadAll() {
+  if (_dynPage.loading) return;
+  _dynPage.loading = true;
+  try {
+    const [insts, filters] = await Promise.all([
+      _dbSelect('dynamic_instances', {}, '*').catch(e => { console.warn('[dyn] instances load:', e.message); return []; }),
+      _dbSelect('dynamic_test_filters', {}, '*').catch(e => { console.warn('[dyn] filters load:', e.message); return []; }),
+    ]);
+    _dynPage.instances = insts;
+    _dynPage.filters = filters;
+    _dynBuildTestItemsIndex();
+    _dynPage.loaded = true;
+  } finally {
+    _dynPage.loading = false;
+  }
+}
+
+function _dynBuildTestItemsIndex() {
+  _dynPage.testItemsById.clear();
+  for (const ti of (typeof TI !== 'undefined' ? TI : [])) {
+    const id = ti.TestID || ti.test_id;
+    if (!id) continue;
+    _dynPage.testItemsById.set(id, {
+      name: ti.TestName || '',
+      code: ti.TestCaseCode || '',
+      subsystem: ti.Subsystem || '',
+      phase: ti.Phase || '',
+      scope_type: String(ti.ScopeType || 'static').toLowerCase(),
+    });
+  }
+}
+
+function _dynKpis() {
+  const total = _dynPage.instances.length;
+  const counts = {};
+  for (const s of _DYN_STATUSES) counts[s] = 0;
+  for (const r of _dynPage.instances) counts[r.status] = (counts[r.status] || 0) + 1;
+  const scheduled = _dynPage.instances.filter(r => r.scheduled_for_date || r.linked_activity_id).length;
+  return { total, counts, scheduled };
+}
+
+function _dynRenderInstances() {
+  const cont = document.getElementById('dyn-content');
+  if (!cont) return;
+  const k = _dynKpis();
+
+  // Build the test-case dropdown only from dynamic-scope test items that
+  // exist in TI plus any test_ids referenced by existing instances.
+  const dynTcIds = new Set();
+  for (const [id, info] of _dynPage.testItemsById) {
+    if (info.scope_type === 'dynamic') dynTcIds.add(id);
+  }
+  for (const i of _dynPage.instances) if (i.test_id) dynTcIds.add(i.test_id);
+  const tcOpts = [...dynTcIds]
+    .map(id => ({ id, info: _dynPage.testItemsById.get(id) }))
+    .sort((a, b) => String(a.info?.code || a.id).localeCompare(String(b.info?.code || b.id)));
+
+  // Apply filters
+  const q = (_dynPage.search || '').toLowerCase();
+  const sf = _dynPage.statusFilter;
+  const tf = _dynPage.testFilter;
+  const rows = _dynPage.instances.filter(r => {
+    if (sf && r.status !== sf) return false;
+    if (tf && r.test_id !== tf) return false;
+    if (q) {
+      const hay = [r.code, r.title, r.description, r.target_phase, (r.target_track_sections || []).join(','), r.notes].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  }).sort((a, b) => {
+    const ka = (a.target_window_start || a.created_at || '');
+    const kb = (b.target_window_start || b.created_at || '');
+    return String(kb).localeCompare(String(ka));
+  });
+
+  const kpiHtml = `
+    <div style="margin-bottom:14px;">
+      <div class="dyn-kpi"><b>${k.total}</b><span>Total</span></div>
+      ${_DYN_STATUSES.map(s => `<div class="dyn-kpi"><b>${k.counts[s] || 0}</b><span>${escapeHtml(s)}</span></div>`).join('')}
+      <div class="dyn-kpi"><b>${k.scheduled}</b><span>Scheduled</span></div>
+    </div>
+  `;
+
+  const toolbar = `
+    <div class="dyn-toolbar">
+      <button class="dyn-btn primary" onclick="_dynOpenInstanceModal(null)">+ New instance</button>
+      <button class="dyn-btn" onclick="_dynOpenCSVModal()">Import CSV / Excel</button>
+      <button class="dyn-btn" onclick="_dynOpenGenerateFromFilterModal()">Generate from filter</button>
+      <span style="flex:1"></span>
+      <input id="dyn-search" placeholder="Search code / title / phase…" value="${escapeHtml(_dynPage.search)}" oninput="_dynPage.search=this.value;_dynRenderInstances();" />
+      <select id="dyn-status-filter" onchange="_dynPage.statusFilter=this.value;_dynRenderInstances();">
+        <option value="">All statuses</option>
+        ${_DYN_STATUSES.map(s => `<option value="${escapeHtml(s)}" ${_dynPage.statusFilter===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+      </select>
+      <select id="dyn-test-filter" onchange="_dynPage.testFilter=this.value;_dynRenderInstances();">
+        <option value="">All test cases</option>
+        ${tcOpts.map(t => `<option value="${escapeHtml(t.id)}" ${_dynPage.testFilter===t.id?'selected':''}>${escapeHtml(t.info?.code || t.id)} — ${escapeHtml((t.info?.name||'').slice(0,40))}</option>`).join('')}
+      </select>
+    </div>
+  `;
+
+  const tableHtml = `
+    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
+      <table class="dyn-table">
+        <thead><tr>
+          <th>Code</th>
+          <th>Test Case</th>
+          <th>Title</th>
+          <th>Target Phase</th>
+          <th>Target Window</th>
+          <th>Sections</th>
+          <th>Mode</th>
+          <th>Status</th>
+          <th style="width:90px;">Actions</th>
+        </tr></thead>
+        <tbody>${rows.length
+          ? rows.map(r => _dynRowHtml(r)).join('')
+          : `<tr><td colspan="9" style="padding:40px;text-align:center;color:var(--gray-500);">No instances yet — click "+ New instance" or "Import CSV/Excel" to add some.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  cont.innerHTML = kpiHtml + toolbar + tableHtml;
+}
+
+function _dynRowHtml(r) {
+  const tc = _dynPage.testItemsById.get(r.test_id);
+  const win = (r.target_window_start || r.target_window_end)
+    ? `${_dynFmtDate(r.target_window_start) || '…'} → ${_dynFmtDate(r.target_window_end) || '…'}`
+    : '<span style="color:var(--gray-400);">—</span>';
+  const sections = (r.target_track_sections || []).length
+    ? `<span style="font-family:var(--font-mono,monospace);font-size:11px;">${(r.target_track_sections || []).slice(0,3).map(escapeHtml).join(', ')}${(r.target_track_sections||[]).length>3?` +${r.target_track_sections.length-3}`:''}</span>`
+    : '<span style="color:var(--gray-400);">—</span>';
+  return `
+    <tr>
+      <td style="font-family:var(--font-mono,monospace);font-size:12px;">${escapeHtml(r.code || '—')}</td>
+      <td>${tc ? `<span style="font-family:var(--font-mono,monospace);font-size:11px;color:var(--gray-500);">${escapeHtml(tc.code || r.test_id || '')}</span><br/><span style="font-size:12px;">${escapeHtml((tc.name || '').slice(0,40))}</span>` : `<span style="color:var(--gray-400);">${escapeHtml(r.test_id || '—')}</span>`}</td>
+      <td>${escapeHtml(r.title || '')}</td>
+      <td>${r.target_phase ? `<span class="tag tag-phase">${escapeHtml(r.target_phase)}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>
+      <td style="font-size:12px;">${win}</td>
+      <td>${sections}</td>
+      <td>${r.required_mode ? `<span class="badge">${escapeHtml(r.required_mode)}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>
+      <td>${_dynStatusBadge(r.status)}</td>
+      <td style="white-space:nowrap;">
+        <button class="dyn-btn" style="padding:3px 8px;font-size:11px;" onclick="_dynOpenInstanceModal('${escapeHtml(r.id)}')">Edit</button>
+        <button class="dyn-btn" style="padding:3px 8px;font-size:11px;color:#dc2626;" onclick="_dynDeleteInstance('${escapeHtml(r.id)}')">Del</button>
+      </td>
+    </tr>
+  `;
+}
+
+// ── Instance create / edit modal ────────────────────────────────────────
+function _dynOpenInstanceModal(id) {
+  const inst = id ? _dynPage.instances.find(r => r.id === id) : null;
+  const isNew = !inst;
+  const dynTcOpts = [..._dynPage.testItemsById.entries()]
+    .filter(([, info]) => info.scope_type === 'dynamic')
+    .map(([tid, info]) => ({ tid, info }));
+  // Allow current test_id even if it isn't currently flagged dynamic, so editing legacy rows works.
+  if (inst?.test_id && !dynTcOpts.some(o => o.tid === inst.test_id)) {
+    dynTcOpts.unshift({ tid: inst.test_id, info: _dynPage.testItemsById.get(inst.test_id) || { code: inst.test_id, name: '' } });
+  }
+
+  modal({
+    title: isNew ? 'New dynamic instance' : 'Edit dynamic instance',
+    sub: inst ? `${escapeHtml(inst.code || '')} ${escapeHtml(inst.title || '')}` : '',
+    body: _dynBuildInstanceForm(inst, dynTcOpts),
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      ${!isNew ? `<button class="form-secondary" style="color:#dc2626;" onclick="_dynDeleteInstance('${escapeHtml(inst.id)}', true)">Delete</button>` : ''}
+      <button class="form-submit" onclick="_dynSaveInstance('${escapeHtml(inst?.id || '')}')">${isNew ? 'Create' : 'Save'}</button>
+    `,
+    size: 'large',
+  });
+}
+
+function _dynBuildInstanceForm(inst, tcOpts) {
+  const v = inst || {};
+  const sections = (v.target_track_sections || []).join(', ');
+  return `
+    <div style="padding:8px 24px 16px;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="form-field" style="grid-column:1/-1;">
+        <label>Test case <span style="color:var(--gray-500);font-weight:400;">(dynamic-scope only)</span></label>
+        <select id="dyn-f-test-id" required>
+          <option value="">— select —</option>
+          ${tcOpts.map(o => `<option value="${escapeHtml(o.tid)}" ${o.tid===v.test_id?'selected':''}>${escapeHtml(o.info?.code || o.tid)} — ${escapeHtml((o.info?.name||'').slice(0,60))}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="form-field">
+        <label>Code <span style="color:var(--gray-500);font-weight:400;">(short identifier)</span></label>
+        <input id="dyn-f-code" value="${escapeHtml(v.code || '')}" placeholder="e.g. SW-W34-001" />
+      </div>
+      <div class="form-field">
+        <label>Title</label>
+        <input id="dyn-f-title" value="${escapeHtml(v.title || '')}" placeholder="Brief instance name" />
+      </div>
+
+      <div class="form-field" style="grid-column:1/-1;">
+        <label>Description</label>
+        <textarea id="dyn-f-description" rows="2" style="width:100%;font-size:13px;">${escapeHtml(v.description || '')}</textarea>
+      </div>
+
+      <div class="form-field">
+        <label>Required mode</label>
+        <select id="dyn-f-mode">
+          <option value="" ${!v.required_mode?'selected':''}>—</option>
+          <option value="CBTC" ${v.required_mode==='CBTC'?'selected':''}>CBTC</option>
+          <option value="VATC" ${v.required_mode==='VATC'?'selected':''}>VATC</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Status</label>
+        <select id="dyn-f-status">
+          ${_DYN_STATUSES.map(s => `<option value="${escapeHtml(s)}" ${(v.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="form-field">
+        <label>Target phase</label>
+        <input id="dyn-f-phase" value="${escapeHtml(v.target_phase || '')}" placeholder="e.g. Phase 2" />
+      </div>
+      <div class="form-field">
+        <label>Target track sections <span style="color:var(--gray-500);font-weight:400;">(comma-separated codes)</span></label>
+        <input id="dyn-f-sections" value="${escapeHtml(sections)}" placeholder="e.g. W10-R10, R10-W12" />
+      </div>
+
+      <div class="form-field">
+        <label>Target window start</label>
+        <input id="dyn-f-win-start" type="date" value="${_dynFmtDate(v.target_window_start)}" />
+      </div>
+      <div class="form-field">
+        <label>Target window end</label>
+        <input id="dyn-f-win-end" type="date" value="${_dynFmtDate(v.target_window_end)}" />
+      </div>
+
+      <div class="form-field">
+        <label>Scheduled for</label>
+        <input id="dyn-f-sched" type="date" value="${_dynFmtDate(v.scheduled_for_date)}" />
+      </div>
+      <div class="form-field">
+        <label>Blocked reason <span style="color:var(--gray-500);font-weight:400;">(if blocked)</span></label>
+        <input id="dyn-f-blocked" value="${escapeHtml(v.blocked_reason || '')}" placeholder="" />
+      </div>
+
+      <div class="form-field" style="grid-column:1/-1;">
+        <label>Notes</label>
+        <textarea id="dyn-f-notes" rows="2" style="width:100%;font-size:13px;">${escapeHtml(v.notes || '')}</textarea>
+      </div>
+    </div>
+  `;
+}
+
+async function _dynSaveInstance(id) {
+  const get = i => document.getElementById(i)?.value?.trim() || null;
+  const sectionsRaw = get('dyn-f-sections') || '';
+  const payload = {
+    test_id: get('dyn-f-test-id'),
+    code: get('dyn-f-code'),
+    title: get('dyn-f-title'),
+    description: get('dyn-f-description'),
+    required_mode: get('dyn-f-mode'),
+    status: get('dyn-f-status') || 'Not Started',
+    target_phase: get('dyn-f-phase'),
+    target_track_sections: sectionsRaw ? sectionsRaw.split(',').map(s => s.trim()).filter(Boolean) : [],
+    target_window_start: get('dyn-f-win-start'),
+    target_window_end: get('dyn-f-win-end'),
+    scheduled_for_date: get('dyn-f-sched'),
+    blocked_reason: get('dyn-f-blocked'),
+    notes: get('dyn-f-notes'),
+    updated_at: new Date().toISOString(),
+  };
+  if (!payload.test_id) { alert('Test case is required.'); return; }
+  try {
+    if (id) {
+      await _dbUpdate('dynamic_instances', payload, { id });
+    } else {
+      payload.created_by = currentRoleUser?.email || currentRoleUser?.id || null;
+      await _dbInsert('dynamic_instances', [payload]);
+    }
+    closeModal();
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    if (_dynPage.tab === 'instances') _dynRenderInstances(); else _dynRenderBoard();
+    if (typeof toast === 'function') toast(id ? 'Instance updated.' : 'Instance created.', 'success');
+  } catch (e) {
+    alert(`Save failed: ${e.message}`);
+  }
+}
+
+async function _dynDeleteInstance(id, fromModal) {
+  if (!confirm('Delete this dynamic instance? This cannot be undone.')) return;
+  try {
+    await _dbDelete('dynamic_instances', { id });
+    if (fromModal) closeModal();
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    if (_dynPage.tab === 'instances') _dynRenderInstances(); else _dynRenderBoard();
+    if (typeof toast === 'function') toast('Instance deleted.', 'success');
+  } catch (e) {
+    alert(`Delete failed: ${e.message}`);
+  }
+}
+
+// ── CSV / Excel import ─────────────────────────────────────────────────
+function _dynOpenCSVModal() {
+  modal({
+    title: 'Import dynamic instances',
+    sub: 'Paste CSV, drop a .csv / .xlsx file, or click Browse',
+    body: `
+      <div style="padding:8px 24px 16px;">
+        <p style="font-size:13px;color:var(--gray-600);margin:0 0 10px;">
+          Columns: <code>test_id, code, title, target_phase, target_window_start, target_window_end,
+          target_track_sections, required_mode, status, notes, description, scheduled_for_date,
+          blocked_reason</code>. Only <code>test_id</code> is required.
+          <code>target_track_sections</code> is a semicolon- or comma-separated list.
+        </p>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+          <input id="dyn-csv-file" type="file" accept=".csv,.xlsx,.xls" style="font-size:12px;" />
+          <button class="dyn-btn" onclick="_dynCSVPasteSample()" style="font-size:12px;">Insert sample</button>
+        </div>
+        <textarea id="dyn-csv-text" rows="14" style="width:100%;font-family:var(--font-mono,monospace);font-size:12px;border:1px solid var(--gray-300);border-radius:5px;padding:8px;" placeholder="Paste CSV here or pick a file above…"></textarea>
+        <div id="dyn-csv-status" style="margin-top:10px;font-size:13px;color:var(--gray-600);min-height:20px;"></div>
+      </div>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" onclick="_dynCSVValidate()">Validate</button>
+      <button class="form-submit" onclick="_dynImportCSVRows()">Import</button>
+    `,
+    size: 'large',
+  });
+  // File picker wires straight into the textarea.
+  setTimeout(() => {
+    const fileEl = document.getElementById('dyn-csv-file');
+    fileEl?.addEventListener('change', async (e) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      try {
+        const txt = await _dynReadFileAsCSV(f);
+        document.getElementById('dyn-csv-text').value = txt;
+        _dynCSVValidate();
+      } catch (err) {
+        document.getElementById('dyn-csv-status').innerHTML = `<span style="color:#dc2626;">${escapeHtml(err.message)}</span>`;
+      }
+    });
+  }, 50);
+}
+
+function _dynCSVPasteSample() {
+  const sample =
+    `test_id,code,title,target_phase,target_window_start,target_window_end,target_track_sections,required_mode,status,notes\n` +
+    `TC-DYN-001,SW-W10-001,Switch W10 CBTC normal,Phase 2,2026-06-01,2026-06-30,"W10-R10;R10-W12",CBTC,Not Started,sample\n` +
+    `TC-DYN-001,SW-W12-001,Switch W12 CBTC reverse,Phase 2,2026-06-01,2026-06-30,W12-R12,CBTC,Not Started,sample\n`;
+  document.getElementById('dyn-csv-text').value = sample;
+  _dynCSVValidate();
+}
+
+async function _dynReadFileAsCSV(file) {
+  const name = (file.name || '').toLowerCase();
+  if (name.endsWith('.csv') || file.type === 'text/csv') {
+    return await file.text();
+  }
+  // Excel — convert first sheet to CSV via SheetJS (already loaded globally).
+  if (typeof XLSX === 'undefined') throw new Error('Excel support requires SheetJS — refresh and try again.');
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' });
+  const sn = wb.SheetNames[0];
+  if (!sn) throw new Error('Workbook has no sheets.');
+  return XLSX.utils.sheet_to_csv(wb.Sheets[sn]);
+}
+
+function _dynParseCSV(text) {
+  // Minimal RFC-4180 parser: handles quoted fields, escaped quotes, embedded
+  // commas and newlines. Returns array of rows (each row = array of strings).
+  const rows = [];
+  let row = [];
+  let cur = '';
+  let inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { cur += '"'; i++; }
+        else inQ = false;
+      } else cur += c;
+    } else {
+      if (c === '"') inQ = true;
+      else if (c === ',') { row.push(cur); cur = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(cur); rows.push(row); row = []; cur = '';
+      } else cur += c;
+    }
+  }
+  if (cur.length || row.length) { row.push(cur); rows.push(row); }
+  return rows.filter(r => r.length > 1 || (r[0] && r[0].trim() !== ''));
+}
+
+function _dynCSVRowsToInstances(parsed) {
+  if (!parsed.length) return { rows: [], errors: ['Empty CSV.'] };
+  const headers = parsed[0].map(h => String(h || '').trim().toLowerCase());
+  const required = ['test_id'];
+  const missing = required.filter(c => !headers.includes(c));
+  if (missing.length) return { rows: [], errors: [`Missing required column(s): ${missing.join(', ')}`] };
+  const idx = (name) => headers.indexOf(name);
+  const splitList = (s) => String(s || '').split(/[;,]/).map(x => x.trim()).filter(Boolean);
+  const dateOrNull = (s) => {
+    if (!s) return null;
+    const t = String(s).trim();
+    if (!t) return null;
+    // Accept ISO yyyy-mm-dd directly; otherwise let Date parse it.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+    const d = new Date(t);
+    if (isNaN(d.getTime())) return null;
+    return d.toISOString().slice(0, 10);
+  };
+  const errors = [];
+  const out = [];
+  for (let r = 1; r < parsed.length; r++) {
+    const row = parsed[r];
+    if (!row.length) continue;
+    const get = (col) => { const i = idx(col); return i >= 0 ? String(row[i] ?? '').trim() : ''; };
+    const test_id = get('test_id');
+    if (!test_id) { errors.push(`Row ${r + 1}: missing test_id`); continue; }
+    const status = get('status') || 'Not Started';
+    if (!_DYN_STATUSES.includes(status)) { errors.push(`Row ${r + 1}: invalid status "${status}"`); continue; }
+    const mode = get('required_mode') || null;
+    if (mode && !['CBTC','VATC'].includes(mode)) { errors.push(`Row ${r + 1}: invalid required_mode "${mode}"`); continue; }
+    out.push({
+      test_id,
+      code: get('code') || null,
+      title: get('title') || null,
+      description: get('description') || null,
+      required_mode: mode,
+      status,
+      target_phase: get('target_phase') || null,
+      target_track_sections: splitList(get('target_track_sections')),
+      target_window_start: dateOrNull(get('target_window_start')),
+      target_window_end: dateOrNull(get('target_window_end')),
+      scheduled_for_date: dateOrNull(get('scheduled_for_date')),
+      blocked_reason: get('blocked_reason') || null,
+      notes: get('notes') || null,
+    });
+  }
+  return { rows: out, errors };
+}
+
+function _dynCSVValidate() {
+  const txt = document.getElementById('dyn-csv-text')?.value || '';
+  const out = document.getElementById('dyn-csv-status');
+  if (!out) return null;
+  if (!txt.trim()) { out.innerHTML = '<span style="color:var(--gray-500);">Paste CSV or pick a file above.</span>'; return null; }
+  const parsed = _dynParseCSV(txt);
+  const { rows, errors } = _dynCSVRowsToInstances(parsed);
+  // Cross-check test_ids against TI cache; warn (not fail) on unknown ids.
+  const unknown = [...new Set(rows.map(r => r.test_id).filter(id => !_dynPage.testItemsById.has(id)))];
+  out.innerHTML = `
+    <strong>${rows.length}</strong> valid row(s) parsed${errors.length ? `, <span style="color:#dc2626;">${errors.length} error(s)</span>` : ''}.
+    ${unknown.length ? `<br/><span style="color:#b45309;">Note: ${unknown.length} test_id(s) not found in local cache (${unknown.slice(0,3).map(escapeHtml).join(', ')}${unknown.length>3?', …':''}). They'll fail FK check at insert.</span>` : ''}
+    ${errors.length ? `<details style="margin-top:6px;"><summary style="cursor:pointer;color:#dc2626;font-size:12px;">View errors</summary><pre style="font-size:11px;background:var(--gray-50);padding:8px;margin-top:6px;max-height:180px;overflow:auto;">${errors.map(escapeHtml).join('\n')}</pre></details>` : ''}
+  `;
+  return { rows, errors };
+}
+
+async function _dynImportCSVRows() {
+  const v = _dynCSVValidate();
+  if (!v || !v.rows.length) { alert('Nothing to import. Validate first.'); return; }
+  if (v.errors.length && !confirm(`${v.errors.length} row(s) had errors and will be skipped. Insert the remaining ${v.rows.length}?`)) return;
+  try {
+    const payload = v.rows.map(r => ({ ...r, created_by: currentRoleUser?.email || currentRoleUser?.id || null }));
+    // Insert in chunks of 200 to keep payload size sane.
+    for (let i = 0; i < payload.length; i += 200) {
+      await _dbInsert('dynamic_instances', payload.slice(i, i + 200));
+    }
+    closeModal();
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    _dynRenderInstances();
+    if (typeof toast === 'function') toast(`Imported ${payload.length} instance(s).`, 'success');
+  } catch (e) {
+    alert(`Import failed: ${e.message}`);
+  }
+}
+
+// ── Generate from filter ───────────────────────────────────────────────
+function _dynOpenGenerateFromFilterModal() {
+  const filters = _dynPage.filters || [];
+  modal({
+    title: 'Generate instances from a saved filter',
+    sub: 'Each matched device becomes one dynamic_instance.',
+    body: `
+      <div style="padding:8px 24px 16px;">
+        ${filters.length === 0
+          ? `<p style="color:var(--gray-600);">No saved filters yet. Open a dynamic test case from the Test Cases page and configure a filter first.</p>`
+          : `<table class="dyn-table" style="border:1px solid var(--gray-200);">
+              <thead><tr>
+                <th>Test Case</th>
+                <th>Filter</th>
+                <th>Criteria</th>
+                <th style="width:80px;">Action</th>
+              </tr></thead>
+              <tbody>${filters.map(f => {
+                const tc = _dynPage.testItemsById.get(f.test_id);
+                const crit = f.criteria || {};
+                const summary = [
+                  crit.device_types?.length ? `type:${crit.device_types.join('|')}` : '',
+                  crit.zone_codes?.length   ? `zone:${crit.zone_codes.join('|')}` : '',
+                  crit.modes?.length        ? `mode:${crit.modes.join('|')}` : '',
+                  crit.track_types?.length  ? `track:${crit.track_types.join('|')}` : '',
+                  crit.mp_min != null       ? `mp≥${crit.mp_min}` : '',
+                  crit.mp_max != null       ? `mp≤${crit.mp_max}` : '',
+                ].filter(Boolean).join(' · ') || '<span style="color:var(--gray-400);">(any device)</span>';
+                return `<tr>
+                  <td>${tc ? `${escapeHtml(tc.code || f.test_id)}<br/><span style="font-size:11px;color:var(--gray-500);">${escapeHtml((tc.name||'').slice(0,50))}</span>` : escapeHtml(f.test_id)}</td>
+                  <td>${escapeHtml(f.name || '—')}</td>
+                  <td style="font-family:var(--font-mono,monospace);font-size:11px;">${summary}</td>
+                  <td><button class="dyn-btn" style="padding:3px 8px;font-size:11px;" onclick="_dynGenerateFromRow('${escapeHtml(f.id)}')">Generate</button></td>
+                </tr>`;
+              }).join('')}</tbody>
+            </table>`}
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    size: 'large',
+  });
+}
+
+async function _dynGenerateFromRow(filterId) {
+  const f = _dynPage.filters.find(x => x.id === filterId);
+  if (!f) return;
+  closeModal();
+  await _dynGenerateInstancesForFilter({ testId: f.test_id, filterId: f.id, criteria: f.criteria || {} });
+}
+
+async function _dynGenerateInstancesForFilter({ testId, filterId, criteria }) {
+  // Query track_devices with the same PostgREST shape as the modal preview.
+  const qs = [];
+  const inList = vs => `(${vs.map(s => encodeURIComponent(String(s))).join(',')})`;
+  const c = criteria || {};
+  if (c.device_types?.length) qs.push(`device_type=in.${inList(c.device_types)}`);
+  if (c.zone_codes?.length)   qs.push(`zone_code=in.${inList(c.zone_codes)}`);
+  if (c.track_types?.length)  qs.push(`track_type=in.${inList(c.track_types)}`);
+  if (c.mp_min != null)       qs.push(`milepost=gte.${c.mp_min}`);
+  if (c.mp_max != null)       qs.push(`milepost=lte.${c.mp_max}`);
+  qs.push('select=id,device_type,code,milepost,zone_code,track_type');
+  qs.push('limit=5000');
+  let matched;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/track_devices?${qs.join('&')}`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() }
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    matched = await res.json();
+  } catch (e) { alert(`Device query failed: ${e.message}`); return; }
+  if (!matched.length) { alert('No matching devices. Adjust criteria and try again.'); return; }
+
+  // Skip devices that already have an instance for this filter to keep
+  // the action idempotent. (Generated-instance code is "GEN-<deviceCode>".)
+  const existing = new Set(
+    _dynPage.instances
+      .filter(i => i.source_filter_id === filterId)
+      .map(i => i.code)
+  );
+  const mode = (c.modes && c.modes.length === 1) ? c.modes[0] : null;
+  const tc = _dynPage.testItemsById.get(testId);
+  const planned = matched
+    .map(d => {
+      const baseCode = d.code || `dev-${String(d.id).slice(0,8)}`;
+      return {
+        device: d,
+        instance: {
+          test_id: testId,
+          source_filter_id: filterId,
+          code: `GEN-${baseCode}`,
+          title: `${tc?.code || testId} @ ${baseCode}`,
+          description: `Auto-generated from filter (${d.device_type}${d.zone_code ? `, zone ${d.zone_code}` : ''}${d.milepost != null ? `, mp ${d.milepost}` : ''}).`,
+          device_ids: [d.id],
+          required_mode: mode,
+          status: 'Not Started',
+          created_by: currentRoleUser?.email || currentRoleUser?.id || null,
+        }
+      };
+    })
+    .filter(p => !existing.has(p.instance.code));
+
+  if (!planned.length) {
+    alert(`All ${matched.length} matched device(s) already have a generated instance. Nothing to do.`);
+    return;
+  }
+  if (!confirm(`Generate ${planned.length} new instance(s) from ${matched.length} matched device(s)? (Skipping ${matched.length - planned.length} duplicates.)`)) return;
+
+  try {
+    const payload = planned.map(p => p.instance);
+    for (let i = 0; i < payload.length; i += 200) {
+      await _dbInsert('dynamic_instances', payload.slice(i, i + 200));
+    }
+    if (typeof toast === 'function') toast(`Created ${planned.length} instance(s).`, 'success');
+    _dynPage.loaded = false;
+    if (document.getElementById('page-dynamic-testing')?.classList.contains('active')) {
+      await _dynLoadAll();
+      _dynRenderInstances();
+    }
+  } catch (e) {
+    alert(`Generate failed: ${e.message}`);
+  }
+}
+
+// ── Planning board ─────────────────────────────────────────────────────
+function _dynRenderBoard() {
+  const cont = document.getElementById('dyn-content');
+  if (!cont) return;
+
+  if (!_dynPage.boardStart) _dynPage.boardStart = _dynFirstOfMonth(new Date());
+  const months = [];
+  for (let i = 0; i < _dynPage.boardMonths; i++) {
+    months.push(_dynAddMonths(_dynPage.boardStart, i));
+  }
+
+  // Bucket instances by row key × month key.
+  const buckets = new Map(); // rowKey → monthKey → count
+  const rowSet = new Set();
+  const monthKeys = months.map(_dynMonthKey);
+  for (const r of _dynPage.instances) {
+    const rowKeys = _dynPage.boardAxis === 'phase'
+      ? [r.target_phase || '— No phase —']
+      : (r.target_track_sections && r.target_track_sections.length
+          ? r.target_track_sections
+          : ['— No section —']);
+    // Date to bucket on: scheduled_for_date else target_window_start else target_window_end.
+    const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
+    if (!when) continue;
+    const mk = _dynMonthKey(when);
+    if (!monthKeys.includes(mk)) continue;
+    for (const rk of rowKeys) {
+      rowSet.add(rk);
+      if (!buckets.has(rk)) buckets.set(rk, new Map());
+      const m = buckets.get(rk);
+      m.set(mk, (m.get(mk) || 0) + 1);
+    }
+  }
+  const rowKeysSorted = [...rowSet].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+
+  const navHtml = `
+    <div class="dyn-toolbar">
+      <button class="dyn-btn" onclick="_dynBoardShift(-1)">‹ Prev</button>
+      <span style="font-weight:600;color:var(--gray-700);">${_dynMonthLabel(months[0])} — ${_dynMonthLabel(months[months.length - 1])}</span>
+      <button class="dyn-btn" onclick="_dynBoardShift(1)">Next ›</button>
+      <button class="dyn-btn" onclick="_dynBoardToday()">Today</button>
+      <span style="flex:1"></span>
+      <label style="font-size:13px;color:var(--gray-600);">Rows:</label>
+      <select onchange="_dynPage.boardAxis=this.value;_dynRenderBoard();">
+        <option value="section" ${_dynPage.boardAxis==='section'?'selected':''}>Track section</option>
+        <option value="phase" ${_dynPage.boardAxis==='phase'?'selected':''}>Phase</option>
+      </select>
+    </div>
+  `;
+
+  const headHtml = `<tr><th></th>${months.map(m => `<th>${_dynMonthLabel(m)}</th>`).join('')}<th>Total</th></tr>`;
+
+  let bodyHtml;
+  if (rowKeysSorted.length === 0) {
+    bodyHtml = `<tr><td colspan="${months.length + 2}" style="padding:32px;text-align:center;color:var(--gray-500);">No instances have a date (target window or scheduled date) inside this range.</td></tr>`;
+  } else {
+    bodyHtml = rowKeysSorted.map(rk => {
+      const m = buckets.get(rk) || new Map();
+      let total = 0;
+      const cells = months.map(mDate => {
+        const mk = _dynMonthKey(mDate);
+        const n = m.get(mk) || 0;
+        total += n;
+        const cls = n === 0 ? 'zero' : (n >= 5 ? 'lots' : 'some');
+        const onClick = n > 0 ? `onclick="_dynBoardOpenCell('${escapeHtml(rk)}','${mk}')"` : '';
+        return `<td class="cell" ${onClick}><span class="dyn-cell-pill ${cls}">${n || '·'}</span></td>`;
+      }).join('');
+      return `<tr><td class="row-label">${escapeHtml(rk)}</td>${cells}<td style="text-align:center;font-weight:600;color:var(--gray-700);">${total}</td></tr>`;
+    }).join('');
+  }
+
+  cont.innerHTML = navHtml + `
+    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow-x:auto;">
+      <table class="dyn-board"><thead>${headHtml}</thead><tbody>${bodyHtml}</tbody></table>
+    </div>
+    <p style="margin-top:12px;font-size:12px;color:var(--gray-500);">
+      Counts include instances with a scheduled date, falling back to target window start/end.
+      Click a cell to drill in.
+    </p>
+  `;
+}
+
+function _dynBoardShift(n) {
+  _dynPage.boardStart = _dynAddMonths(_dynPage.boardStart || _dynFirstOfMonth(new Date()), n);
+  _dynRenderBoard();
+}
+function _dynBoardToday() {
+  _dynPage.boardStart = _dynFirstOfMonth(new Date());
+  _dynRenderBoard();
+}
+
+function _dynBoardOpenCell(rowKey, monthKey) {
+  const matches = _dynPage.instances.filter(r => {
+    const rowKeys = _dynPage.boardAxis === 'phase'
+      ? [r.target_phase || '— No phase —']
+      : (r.target_track_sections && r.target_track_sections.length
+          ? r.target_track_sections
+          : ['— No section —']);
+    if (!rowKeys.includes(rowKey)) return false;
+    const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
+    if (!when) return false;
+    return _dynMonthKey(when) === monthKey;
+  });
+  modal({
+    title: `${escapeHtml(rowKey)} — ${monthKey}`,
+    sub: `${matches.length} instance(s)`,
+    body: `
+      <div style="padding:8px 24px 16px;">
+        <table class="dyn-table" style="border:1px solid var(--gray-200);">
+          <thead><tr>
+            <th>Code</th><th>Test Case</th><th>Title</th><th>Status</th><th>Date</th><th></th>
+          </tr></thead>
+          <tbody>${matches.map(r => {
+            const tc = _dynPage.testItemsById.get(r.test_id);
+            const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
+            return `<tr>
+              <td style="font-family:var(--font-mono,monospace);font-size:12px;">${escapeHtml(r.code || '—')}</td>
+              <td>${tc ? escapeHtml(tc.code || r.test_id) : escapeHtml(r.test_id || '—')}</td>
+              <td>${escapeHtml(r.title || '')}</td>
+              <td>${_dynStatusBadge(r.status)}</td>
+              <td style="font-size:12px;">${_dynFmtDate(when) || '—'}</td>
+              <td><button class="dyn-btn" style="padding:3px 8px;font-size:11px;" onclick="closeModal();_dynOpenInstanceModal('${escapeHtml(r.id)}')">Open</button></td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    size: 'large',
+  });
 }
