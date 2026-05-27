@@ -680,6 +680,49 @@ function getLocationCode(loc) {
   return m ? m[1] : loc;
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// PAGE HERO HELPER — compact strip with optional inline KPI stats
+// ──────────────────────────────────────────────────────────────────────────────
+// Drop the returned HTML into a .page-hero's .container element. Pass `stats: []`
+// (or omit) for pages without inline numbers — they still get the compact strip.
+// stat tones: 'red' | 'amber' | 'blue' | 'good' | 'muted'
+// role tones: 'admin' | 'field' | 'drawings'
+// ──────────────────────────────────────────────────────────────────────────────
+function renderPageHero(opts) {
+  opts = opts || {};
+  const { eyebrow, title, sub, role, stats } = opts;
+
+  const roleChip = role
+    ? `<span class="ph-role ${role.tone ? 'role-' + role.tone : ''}">${escapeHtml(role.label || '')}</span>`
+    : '';
+  const eyebrowText = eyebrow ? escapeHtml(eyebrow) : '';
+  const eyebrowHtml = (roleChip || eyebrowText)
+    ? `<span class="ph-eyebrow">${roleChip}${roleChip && eyebrowText ? ' ' : ''}${eyebrowText}</span>`
+    : '';
+
+  const subHtml = sub ? `<span class="ph-sub">${sub}</span>` : '';
+
+  const statsHtml = (stats && stats.length) ? `
+    <div class="ph-stats">
+      ${stats.map(s => `
+        <div class="ph-stat ${s.tone ? 'tone-' + s.tone : ''}">
+          <span class="ph-stat-lbl">${escapeHtml(s.label || '')}</span>
+          <span class="ph-stat-val">${s.value === null || s.value === undefined ? '—' : s.value}</span>
+        </div>
+      `).join('')}
+    </div>` : '';
+
+  return `
+    <div class="page-hero-v3">
+      <div class="ph-left">
+        ${eyebrowHtml}
+        <h1 class="ph-title">${escapeHtml(title || '')}</h1>
+        ${subHtml}
+      </div>
+      ${statsHtml}
+    </div>`;
+}
+
 // ==========================================
 // DASHBOARD
 // ==========================================
@@ -11276,12 +11319,20 @@ function renderAdminP6() {
   const root = document.getElementById('p6-hero-content');
   const cont = document.getElementById('p6-admin-content');
   if (!root || !cont) return;
-  root.innerHTML = `
-    <div class="page-hero-inner">
-      <div class="role-badge role-admin-badge">Admin Tool</div>
-      <h1 class="page-hero-title">P6 Schedule</h1>
-      <p class="page-hero-sub">Import P6 exports, map activities and track schedule changes. Weights now live in <b>Admin → Weights</b>.</p>
-    </div>`;
+  const _p6TotalActs = P6_ACTS.length;
+  const _p6Mapped    = P6_MAP.length;
+  const _p6Unmapped  = Math.max(0, _amGetActivities().length - new Set(P6_MAP.filter(m => !m.portal_test_case_code).map(m => `${m.portal_phase}|${m.portal_location}|${m.portal_subsystem}|${m.portal_activity}`)).size);
+  root.innerHTML = renderPageHero({
+    role:  { label: 'Admin', tone: 'admin' },
+    title: 'P6 Schedule',
+    sub:   'Import P6 exports, map activities and track schedule changes',
+    stats: [
+      { label: 'Batches',  value: P6_BATCHES.length, tone: 'muted' },
+      { label: 'P6 Acts',  value: _p6TotalActs,      tone: 'blue'  },
+      { label: 'Mapped',   value: _p6Mapped,         tone: 'good'  },
+      { label: 'Unmapped', value: _p6Unmapped,       tone: _p6Unmapped ? 'amber' : 'muted' },
+    ],
+  });
   cont.innerHTML = _p6AdminHTML();
 }
 
@@ -13348,15 +13399,15 @@ function renderSchedulePage() {
   const cont = document.getElementById('schedule-content');
   if (!hero || !cont) return;
 
-  hero.innerHTML = `
-    <div class="page-hero-inner">
-      <div class="role-badge role-field-badge">Schedule</div>
-      <h1 class="page-hero-title">Project Schedule</h1>
-      <p class="page-hero-sub">P6-linked activity schedule, planned dates and progress tracking.</p>
-    </div>`;
+  // Hero is rendered AFTER KPI computation below (so we can inline the stats).
 
   const hasData = P6_BATCHES.length > 0;
   if (!hasData) {
+    hero.innerHTML = renderPageHero({
+      role:  { label: 'Schedule', tone: 'field' },
+      title: 'Project Schedule',
+      sub:   'P6-linked activity schedule, planned dates and progress tracking',
+    });
     cont.innerHTML = `
       <div class="docs-empty">
         <h3>No schedule data yet</h3>
@@ -13420,6 +13471,20 @@ function renderSchedulePage() {
   const overdueRows = rowsWithCur.filter(r => { const d = new Date(r.p6Cur.finish_date); d.setHours(0,0,0,0); return d < _today && r.pct < 100; });
   const atRiskRows  = rowsWithCur.filter(r => { const d = new Date(r.p6Cur.finish_date); d.setHours(0,0,0,0); return d >= _today && d <= _in14 && r.pct < 100; });
   const slipRows    = rows.filter(r => r.finDiff !== null && r.finDiff > 0);
+
+  // ── Compact hero with inline KPIs ───────────────────────────────────────
+  hero.innerHTML = renderPageHero({
+    role:  { label: 'Schedule', tone: 'field' },
+    title: 'Project Schedule',
+    sub:   'P6-linked activity schedule, planned dates and progress tracking',
+    stats: [
+      { label: 'On-Time', value: onTimeRate !== null ? onTimeRate + '%' : '—',
+        tone: onTimeColor === 'good' ? 'good' : onTimeColor === 'warn' ? 'amber' : onTimeColor === 'bad' ? 'red' : 'muted' },
+      { label: 'Overdue', value: overdueRows.length, tone: overdueRows.length ? 'red'   : 'good'  },
+      { label: 'At Risk', value: atRiskRows.length,  tone: atRiskRows.length  ? 'amber' : 'muted' },
+      { label: 'Slip',    value: slipRows.length,    tone: slipRows.length    ? 'amber' : 'muted' },
+    ],
+  });
 
   const _schedKpiCard = (label, value, colorClass, meta) => `
     <div class="kpi-card kpi-mini">
@@ -17099,11 +17164,24 @@ function renderLookahead() {
   if (!body || !currentRoleUser) return;
   const isAdmin = currentRoleUser?.role === 'admin';
 
-  if (hero) hero.innerHTML = `
-    <h1 style="margin:0;font-size:28px;font-weight:700;">Lookahead</h1>
-    <p style="margin:6px 0 0;color:var(--gray-500);font-size:14px;">
-      Operational planning view — weekly lookahead, resource availability, PTO, and P6 overlay.
-    </p>`;
+  if (hero) {
+    const _today_la    = new Date().toISOString().slice(0, 10);
+    const _upcomingLA  = PLANNING_EVENTS.filter(e => e.event_date >= _today_la && e.status !== 'cancelled').length;
+    const _cancelledLA = PLANNING_EVENTS.filter(e => e.event_date >= _today_la && e.status === 'cancelled').length;
+    const _pendingLA   = PTO_REQUESTS.filter(p => p.status === 'pending').length;
+    const _outTodayLA  = _ptoActiveOnDate(_today_la).length;
+    hero.innerHTML = renderPageHero({
+      eyebrow: 'Work · Planning',
+      title:   'Lookahead',
+      sub:     'Weekly lookahead, resource availability, PTO & P6 overlay',
+      stats: [
+        { label: 'Upcoming',    value: _upcomingLA },
+        { label: 'Cancelled',   value: _cancelledLA, tone: _cancelledLA ? 'red'   : 'muted' },
+        { label: 'PTO Pending', value: _pendingLA,   tone: _pendingLA   ? 'amber' : 'muted' },
+        { label: 'Out Today',   value: _outTodayLA,  tone: _outTodayLA  ? 'amber' : 'muted' },
+      ],
+    });
+  }
 
   // Redirect legacy tabs
   if (_lookaheadTab === 'gantt' || _lookaheadTab === 'resources') _lookaheadTab = 'lookahead';
@@ -23464,11 +23542,23 @@ function renderAdminPlanning() {
     return;
   }
 
-  if (hero) hero.innerHTML = `
-    <h1 style="margin:0;font-size:28px;font-weight:700;">Planning Admin</h1>
-    <p style="margin:6px 0 0;color:var(--gray-500);font-size:14px;">
-      Upload weekly lookahead, resolve unmatched rows, manage resources, and review conflicts.
-    </p>`;
+  if (hero) {
+    const _ap_deleted       = (PLANNING_ACTIVITIES || []).filter(a => a.deleted_at).length;
+    const _ap_conflictsOpen = (PLANNING_CONFLICTS  || []).filter(c => !c.acknowledged_at).length;
+    const _ap_resources     = (PLANNING_RESOURCES  || []).filter(r => r.is_active).length;
+    const _ap_ptoPending    = (PTO_REQUESTS        || []).filter(p => p.status === 'pending').length;
+    hero.innerHTML = renderPageHero({
+      role:  { label: 'Admin', tone: 'admin' },
+      title: 'Planning Admin',
+      sub:   'Upload lookahead, resolve unmatched rows, manage resources & conflicts',
+      stats: [
+        { label: 'Conflicts',   value: _ap_conflictsOpen, tone: _ap_conflictsOpen ? 'red'   : 'good'  },
+        { label: 'PTO Pending', value: _ap_ptoPending,    tone: _ap_ptoPending    ? 'amber' : 'muted' },
+        { label: 'Resources',   value: _ap_resources,     tone: 'blue' },
+        { label: 'Deleted',     value: _ap_deleted,       tone: _ap_deleted       ? 'amber' : 'muted' },
+      ],
+    });
+  }
 
   const deletedCount = (PLANNING_ACTIVITIES || []).filter(a => a.deleted_at).length;
   const tabs = [
@@ -29246,12 +29336,19 @@ function renderDrawingsPage() {
 
   const isAdmin = currentRoleUser?.role === 'admin';
 
-  hero.innerHTML = `
-    <div class="page-hero-inner">
-      <div class="role-badge" style="background:rgba(99,102,241,0.15);color:#6366f1;border:1px solid rgba(99,102,241,0.3);">Drawings</div>
-      <h1 class="page-hero-title">Drawing Sets</h1>
-      <p class="page-hero-sub">Site plan books, drawing sets, and markup tools by location.</p>
-    </div>`;
+  const _drwLocs    = [...new Set(DRAWING_SETS.map(s => s.location).filter(Boolean))];
+  const _drwCurrent = DRAWING_SHEETS.filter(s => s.is_current).length;
+  hero.innerHTML = renderPageHero({
+    role:  { label: 'Drawings', tone: 'drawings' },
+    title: 'Drawing Sets',
+    sub:   'Site plan books, drawing sets, and markup tools by location',
+    stats: [
+      { label: 'Locations', value: _drwLocs.length,      tone: 'blue'  },
+      { label: 'Sets',      value: DRAWING_SETS.length },
+      { label: 'Current',   value: _drwCurrent,          tone: 'good'  },
+      { label: 'Sheets',    value: DRAWING_SHEETS.length, tone: 'muted' },
+    ],
+  });
 
   // Get unique locations that have drawings, plus any project locations
   const drwLocs = [...new Set(DRAWING_SETS.map(s => s.location).filter(Boolean))].sort();
