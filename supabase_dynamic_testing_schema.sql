@@ -107,9 +107,11 @@ create table if not exists track_mileposts (
 
 create index if not exists track_mileposts_value_idx
   on track_mileposts (mp_value);
+-- Full (non-partial) unique index — PostgREST upserts can't infer a
+-- partial unique index. NULLs are distinct in PG, so any number of
+-- shape-less rows still coexist (same behavior as a WHERE-clause index).
 create unique index if not exists track_mileposts_shape_idx
-  on track_mileposts (source_shape_id)
-  where source_shape_id is not null;
+  on track_mileposts (source_shape_id);
 
 
 -- ============================================================
@@ -126,8 +128,7 @@ create table if not exists track_equations (
 );
 
 create unique index if not exists track_equations_shape_idx
-  on track_equations (source_shape_id)
-  where source_shape_id is not null;
+  on track_equations (source_shape_id);
 
 
 -- ============================================================
@@ -149,8 +150,7 @@ create table if not exists train_control_locations (
 );
 
 create unique index if not exists train_control_locations_shape_idx
-  on train_control_locations (source_shape_id)
-  where source_shape_id is not null;
+  on train_control_locations (source_shape_id);
 
 
 -- ============================================================
@@ -204,8 +204,7 @@ create table if not exists track_devices (
 );
 
 create unique index if not exists track_devices_shape_idx
-  on track_devices (source_shape_id)
-  where source_shape_id is not null;
+  on track_devices (source_shape_id);
 create index if not exists track_devices_type_idx       on track_devices (device_type);
 create index if not exists track_devices_code_idx       on track_devices (code);
 create index if not exists track_devices_zone_idx       on track_devices (zone_id);
@@ -236,8 +235,7 @@ create table if not exists track_sections (
 );
 
 create unique index if not exists track_sections_shape_idx
-  on track_sections (source_shape_id)
-  where source_shape_id is not null;
+  on track_sections (source_shape_id);
 
 
 -- ============================================================
