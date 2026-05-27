@@ -29500,19 +29500,7 @@ function _drwTabCurrent(loc, el) {
     el.innerHTML = `<div class="docs-empty"><p>No confirmed drawings for this location yet.</p></div>`;
     return;
   }
-  const byDisc = {};
-  sheets.forEach(s => {
-    const d = s.discipline || 'General';
-    if (!byDisc[d]) byDisc[d] = [];
-    byDisc[d].push(s);
-  });
-  el.innerHTML = Object.entries(byDisc).sort(([a],[b]) => a.localeCompare(b)).map(([disc, list]) => `
-    <div class="drw-disc-section">
-      <div class="drw-disc-header">${escapeHtml(disc)}</div>
-      <div class="drw-sheet-grid">
-        ${list.sort((a,b) => (a.sheet_number||'').localeCompare(b.sheet_number||'')).map(s => _drwSheetCard(s)).join('')}
-      </div>
-    </div>`).join('');
+  el.innerHTML = _drwSheetTableHTML(sheets);
 }
 
 // ── Tab 2: Drawing Sets ────────────────────────────────────────────────────
@@ -29524,19 +29512,6 @@ function _drwTabSets(loc, el) {
   }
   el.innerHTML = sets.map(set => {
     const sheets = DRAWING_SHEETS.filter(s => s.set_id === set.id && s.confirmed);
-    const byDisc = {};
-    sheets.forEach(s => {
-      const d = s.discipline || 'General';
-      if (!byDisc[d]) byDisc[d] = [];
-      byDisc[d].push(s);
-    });
-    const discHtml = Object.entries(byDisc).sort(([a],[b])=>a.localeCompare(b)).map(([disc, list]) => `
-      <div class="drw-disc-section" style="margin-top:12px;">
-        <div class="drw-disc-header" style="font-size:12px;">${escapeHtml(disc)} (${list.length})</div>
-        <div class="drw-sheet-grid">
-          ${list.sort((a,b) => (a.sheet_number||'').localeCompare(b.sheet_number||'')).map(s => _drwSheetCard(s)).join('')}
-        </div>
-      </div>`).join('');
     return `
       <div class="data-card" style="margin-bottom:16px;">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
@@ -29549,7 +29524,7 @@ function _drwTabSets(loc, el) {
             </div>
           </div>
         </div>
-        ${discHtml || '<p style="color:var(--gray-400);font-size:12px;">No confirmed sheets yet.</p>'}
+        ${sheets.length ? _drwSheetTableHTML(sheets, { compact: true }) : '<p style="color:var(--gray-400);font-size:12px;">No confirmed sheets yet.</p>'}
       </div>`;
   }).join('');
 }
@@ -30858,6 +30833,63 @@ function _dtRenderScopeCell(r) {
       title="Edit scope and filter"
       style="margin-left:6px;font-size:11px;padding:2px 7px;border:1px solid var(--gray-300);border-radius:4px;background:var(--gray-50);color:var(--gray-700);cursor:pointer;">
       Edit</button></td>`;
+}
+
+function _drwSheetTableHTML(sheets, opts = {}) {
+  const sorted = sheets.slice().sort((a, b) => {
+    const d = (a.discipline || 'General').localeCompare(b.discipline || 'General');
+    if (d) return d;
+    return (a.sheet_number || '').localeCompare(b.sheet_number || '', undefined, { numeric: true, sensitivity: 'base' });
+  });
+  const setTitle = sheet => DRAWING_SETS.find(x => x.id === sheet.set_id)?.title || '';
+  const cols = opts.compact ? 7 : 8;
+  let lastDisc = '';
+  const rows = sorted.map(sheet => {
+    const disc = sheet.discipline || 'General';
+    const markups = DRAWING_MARKUPS.filter(m => m.sheet_id === sheet.id);
+    const pubCount = markups.filter(m => m.is_published).length;
+    const isNewDisc = disc !== lastDisc;
+    lastDisc = disc;
+    return `
+      ${isNewDisc ? `
+        <tr class="drw-sheet-group-row">
+          <td colspan="${cols}">
+            <span class="drw-sheet-group-caret">▾</span>
+            <span>${escapeHtml(disc)}</span>
+            <span class="drw-sheet-group-count">${sorted.filter(s => (s.discipline || 'General') === disc).length}</span>
+          </td>
+        </tr>` : ''}
+      <tr class="drw-sheet-row" onclick="_drwOpenSheet('${sheet.id}','${sheet.set_id}',${sheet.page_index})" title="Open ${escapeHtml(sheet.sheet_number || 'Sheet')}">
+        <td class="drw-sheet-open-cell"><span class="drw-row-open-dot">i</span></td>
+        <td><a href="javascript:void(0)" class="drw-sheet-link" onclick="event.stopPropagation();_drwOpenSheet('${sheet.id}','${sheet.set_id}',${sheet.page_index})">${escapeHtml(sheet.sheet_number || '—')}</a></td>
+        <td class="drw-sheet-title-cell">${escapeHtml(sheet.sheet_title || 'Untitled')}</td>
+        <td class="drw-sheet-rev-cell">${sheet.revision ? `<span class="drw-rev-badge">Rev ${escapeHtml(sheet.revision)}</span>` : '<span class="drw-muted">—</span>'}</td>
+        <td class="drw-sheet-page-cell">${escapeHtml(sheet.page_number || String((sheet.page_index ?? 0) + 1))}</td>
+        ${opts.compact ? '' : `<td class="drw-sheet-set-cell">${escapeHtml(setTitle(sheet) || '—')}</td>`}
+        <td>${pubCount ? `<span class="drw-markup-badge">${pubCount} markup${pubCount > 1 ? 's' : ''}</span>` : '<span class="drw-muted">No markups</span>'}</td>
+        <td><span class="drw-status-pill ${sheet.is_current ? 'is-current' : 'is-old'}">${sheet.is_current ? 'Current' : 'Superseded'}</span></td>
+      </tr>
+    `;
+  }).join('');
+  return `
+    <div class="drw-sheet-table-card">
+      <table class="data-table drw-sheet-table">
+        <thead>
+          <tr>
+            <th style="width:42px;"></th>
+            <th>Drawing Number</th>
+            <th>Drawing Title</th>
+            <th>Revision</th>
+            <th>Page</th>
+            ${opts.compact ? '' : '<th>Set</th>'}
+            <th>Markup</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 async function _dtLoadCatalog() {

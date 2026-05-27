@@ -10819,6 +10819,129 @@ a:focus-visible {
   flex-wrap: wrap;
   margin-top: 4px;
 }
+.drw-sheet-table-card {
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(15, 23, 42, .06));
+}
+.drw-sheet-table {
+  table-layout: fixed;
+}
+.drw-sheet-table th {
+  background: var(--gray-50);
+  color: var(--gray-700);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.drw-sheet-table td {
+  vertical-align: middle;
+}
+.drw-sheet-group-row td {
+  background: #f8fafc;
+  border-top: 1px solid var(--gray-200);
+  border-bottom: 1px solid var(--gray-200);
+  color: var(--gray-800);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  padding: 10px 14px;
+}
+.drw-sheet-group-caret {
+  color: var(--gray-400);
+  font-size: 11px;
+  margin-right: 8px;
+}
+.drw-sheet-group-count {
+  background: var(--gray-200);
+  border-radius: 999px;
+  color: var(--gray-600);
+  display: inline-flex;
+  font-size: 10px;
+  line-height: 1;
+  margin-left: 8px;
+  padding: 3px 7px;
+}
+.drw-sheet-row {
+  cursor: pointer;
+  transition: background .14s ease;
+}
+.drw-sheet-row:hover {
+  background: #f9fafb;
+}
+.drw-sheet-open-cell {
+  text-align: center;
+}
+.drw-row-open-dot {
+  align-items: center;
+  background: var(--gray-800);
+  border-radius: 999px;
+  color: var(--white);
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 700;
+  height: 16px;
+  justify-content: center;
+  line-height: 1;
+  width: 16px;
+}
+.drw-sheet-link {
+  color: #2563eb;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.drw-sheet-title-cell {
+  color: var(--gray-800);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.drw-sheet-rev-cell,
+.drw-sheet-page-cell,
+.drw-sheet-set-cell {
+  color: var(--gray-600);
+  font-size: 12px;
+}
+.drw-sheet-page-cell {
+  font-family: var(--font-mono, monospace);
+}
+.drw-sheet-set-cell {
+  line-height: 1.3;
+}
+.drw-muted {
+  color: var(--gray-400);
+  font-size: 12px;
+}
+.drw-status-pill {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
+.drw-status-pill.is-current {
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  color: #166534;
+}
+.drw-status-pill.is-old {
+  background: var(--gray-100);
+  border: 1px solid var(--gray-200);
+  color: var(--gray-500);
+}
 .drw-rev-badge {
   font-size: 10px;
   font-weight: 600;
