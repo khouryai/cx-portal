@@ -1937,6 +1937,7 @@ async function loadTestItems() {
         IsParent:      r.is_parent    || false,
         ParentTestId:  r.parent_test_id || null,
         AssetId:       r.asset_id     || null,
+        ScopeType:     r.scope_type   || 'static',
         SwSnapshot:    r.sw_snapshot || null,
         SwSnapshotAt:  r.sw_snapshot_at || null,
         RegressionGroupId: r.regression_group_id || r.test_id,
@@ -9612,6 +9613,7 @@ _colRegister('tr', [
   { id: 'location',   label: 'Location',      sortCol: 'location',   default: true },
   { id: 'phase',      label: 'Phase',         sortCol: 'phase',      default: true },
   { id: 'status',     label: 'Status',        sortCol: 'status',     default: true },
+  { id: 'scope',      label: 'Scope',         sortCol: 'scope',      default: true },
   { id: 'completion', label: 'Completion',     sortCol: 'completion', default: true },
 ], function _trRenderCell(colId, ctx) {
   const { a, st, done, total, pct, isSel } = ctx;
@@ -9621,6 +9623,7 @@ _colRegister('tr', [
     case 'location':  return `<td style="font-size:12px;">${escapeHtml(a.location)}</td>`;
     case 'phase':     return `<td><span class="tag tag-phase">${escapeHtml(a.phase)}</span></td>`;
     case 'status':    return `<td>${_amStatusBadge(st)}</td>`;
+    case 'scope':     return `<td>${_trActivityScopeSummaryHTML(a)}</td>`;
     case 'completion': return `<td><div class="am-progress-wrap" data-tippy-content="${done} of ${total} test cases complete (${pct}%)"><div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;${pct===100?'background:var(--good);':pct>0?'background:var(--info);':'background:var(--gray-300);'}"></div></div><span class="am-progress-label">${done}/${total}</span></div></td>`;
     default: return '<td>—</td>';
   }
@@ -9738,6 +9741,9 @@ function _testRegisterHTML() {
   } else if (_amSortCol === 'status') {
     const ord = {'Closed':0,'Partial Completion':1,'Open':2,'Future Test':3};
     filtered.sort((a, b) => _sd * ((ord[_amComputeStatus(a)]??4) - (ord[_amComputeStatus(b)]??4)));
+  } else if (_amSortCol === 'scope') {
+    const dynCount = a => a.items.filter(r => !r.ParentTestId && String(r.ScopeType || 'static').toLowerCase() === 'dynamic').length;
+    filtered.sort((a, b) => _sd * (dynCount(a) - dynCount(b)));
   } else if (_amSortCol === 'completion') {
     // Pre-compute weighted pct once per activity using a shared TC weight lookup,
     // so the sort doesn't rebuild the map and re-walk items O(n log n) times.
@@ -9975,6 +9981,17 @@ function _amStatusBadge(s) {
   if (s === 'Future Test')        return `<span class="badge badge-futuretest">Future Test</span>`;
   if (s === 'Partial Completion') return `<span class="badge badge-warn">Partial Completion</span>`;
   return `<span class="badge badge-open">Open</span>`;
+}
+
+function _trActivityScopeSummaryHTML(a) {
+  const rows = (a.items || []).filter(r => !r.ParentTestId);
+  const dynamic = rows.filter(r => String(r.ScopeType || 'static').toLowerCase() === 'dynamic').length;
+  const total = rows.length || 0;
+  if (!dynamic) return `<span class="badge badge-notstarted" style="font-size:10.5px;">Static</span>`;
+  return `
+    <span class="badge badge-inprog" style="font-size:10.5px;">${dynamic} Dynamic</span>
+    <span style="font-size:11px;color:var(--gray-500);margin-left:4px;">of ${total}</span>
+  `;
 }
 
 let _amDrilldownKey = null; // currently open drill-down activity key
@@ -10303,6 +10320,7 @@ function _amDrilldownHTML(key) {
                   ${caseSortTh('Test Case Code','code','min-width:140px;')}
                   ${caseSortTh('Test Name','name')}
                   <th style="min-width:170px;">Status</th>
+                  <th style="min-width:150px;">Scope</th>
                   <th style="min-width:240px;">Notes</th>
                   ${_trEditMode && isAdmin ? `<th style="width:86px;">Actions</th>` : ''}
                 </tr>
@@ -10364,6 +10382,7 @@ function _amDrilldownHTML(key) {
                           <div id="punch-chips-${domId}">${_punchLinksForTestHTML(String(r.TestID))}</div>
                         </div>
                       </td>
+                      ${_dtRenderScopeCell(r)}
                       <td>
                         <textarea class="form-input notes-input" rows="2" placeholder="Notes…" onblur="_mxSaveNotes('${tid}',this.value)">${escapeHtml(r.Notes||'')}</textarea>
                         ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<button class="v2-btn-mini" style="margin-top:4px;" onclick="_trAddGenericChild('${tid}')">＋ Asset</button>` : ''}
@@ -14004,6 +14023,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
         <span class="badge ${badgeCls}" id="apb-${safeId}">${escapeHtml(parentCur)}</span>
         <span style="font-size:10px;color:var(--gray-400);">auto</span>
       </td>
+      ${_dtRenderScopeCell(parent)}
       <td style="font-size:11px;color:var(--gray-400);font-style:italic;">${expanded ? 'Click to collapse' : 'Click to expand'}</td>
       ${_trEditMode && isAdmin ? `<td onclick="event.stopPropagation();"><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="event.stopPropagation();_trDeleteParentCase('${ptid}')" data-tippy-content="Delete parent + all assets">🗑</button></td>` : ''}
     </tr>`;
@@ -14055,6 +14075,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
             <div id="punch-chips-${domId}">${_punchLinksForTestHTML(String(c.TestID))}</div>
           </div>
         </td>
+        <td><span style="font-size:11px;color:var(--gray-500);">Uses parent scope</span></td>
         <td>
           <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…"
             value="${escapeHtml(c.Notes || '')}" onblur="_mxSaveNotes('${ctid}',this.value)">
@@ -30833,7 +30854,7 @@ function _dtRenderScopeCell(r) {
     : `<span class="badge badge-notstarted" style="font-size:10.5px;">Static</span>`;
   const safeId = String(r.TestID || r.test_id || '').replace(/'/g, "\\'");
   return `<td style="white-space:nowrap;">${badge}
-    <button onclick="openTestCaseScopeModal('${safeId}')"
+    <button onclick="event.stopPropagation();openTestCaseScopeModal('${safeId}')"
       title="Edit scope and filter"
       style="margin-left:6px;font-size:11px;padding:2px 7px;border:1px solid var(--gray-300);border-radius:4px;background:var(--gray-50);color:var(--gray-700);cursor:pointer;">
       Edit</button></td>`;
@@ -31059,6 +31080,9 @@ async function _dtSaveScope() {
   const newScope = document.querySelector('input[name="dt-scope"]:checked')?.value || 'static';
   try {
     await _dbUpdate('test_items', { scope_type: newScope }, { test_id: testId });
+    if (newScope !== 'dynamic') {
+      await _dbDelete('dynamic_test_filters', { test_id: testId });
+    }
     if (newScope === 'dynamic') {
       const criteria = _dtReadCriteria();
       const existing = await _dbSelect('dynamic_test_filters', { test_id: testId }, 'id');
@@ -31079,6 +31103,7 @@ async function _dtSaveScope() {
     const tc = TI.find(r => (r.TestID || r.test_id) === testId);
     if (tc) tc.ScopeType = newScope;
     if (typeof renderLITable === 'function') renderLITable();
+    if (typeof _reRenderTR === 'function') _reRenderTR();
     closeModal();
     if (typeof toast === 'function') toast(`Scope set to ${newScope}.`, 'success');
   } catch (e) {
