@@ -15464,7 +15464,8 @@ async function saveRMA(editId) {
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(await res.text());
-      const [updated] = await res.json();
+      const rows = await res.json();
+      const updated = (Array.isArray(rows) ? rows[0] : rows) ?? { ...existing, ...payload };
       const idx = RMAS.findIndex(r => r.id === editId);
       if (idx >= 0) RMAS[idx] = updated;
       toast('RMA updated', 'success');
