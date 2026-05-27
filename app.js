@@ -29420,6 +29420,17 @@ function _drwPhaseForLocation(locName) {
   return LOCS.find(l => l.id === loc.parent_id)?.name || '';
 }
 
+function _drwIsAlwaysLocation(locName) {
+  const s = String(locName || '').trim().toUpperCase();
+  return s === 'HTT' || s === 'OCC' || s === 'W30' ||
+         s.startsWith('HTT ') || s.startsWith('OCC ') || s.startsWith('W30 ');
+}
+
+function _drwHasDrawings(locName) {
+  return DRAWING_SETS.some(s => s.location === locName) ||
+         DRAWING_SHEETS.some(s => s.location === locName);
+}
+
 function _drwLocationsForPhase(allLocs, phaseName) {
   if (!phaseName) return allLocs;
   return allLocs.filter(loc => _drwPhaseForLocation(loc) === phaseName);
@@ -29446,10 +29457,13 @@ function renderDrawingsPage() {
     ],
   });
 
-  // Get unique locations that have drawings, plus any project locations
+  // Keep the Drawings location picker focused: locations with drawings plus
+  // the project exceptions that should remain visible even before upload.
   const drwLocs = [...new Set(DRAWING_SETS.map(s => s.location).filter(Boolean))].sort();
   const projLocs = [...new Set(TI.map(r => r.Location).filter(Boolean))].sort();
-  const allLocs  = [...new Set([...drwLocs, ...projLocs])].sort();
+  const allLocs  = [...new Set([...drwLocs, ...projLocs])]
+    .filter(loc => _drwHasDrawings(loc) || _drwIsAlwaysLocation(loc))
+    .sort();
 
   if (!allLocs.length && !isAdmin) {
     cont.innerHTML = `<div class="docs-empty"><h3>No drawings yet</h3><p>An admin needs to upload drawing sets first.</p></div>`;
@@ -29461,10 +29475,10 @@ function renderDrawingsPage() {
       + Upload Drawing Set
     </button>` : '';
 
-  const phases = LOCS.filter(l => l.level === 1)
-    .map(l => l.name)
+  const phases = [...new Set(allLocs.map(loc => _drwPhaseForLocation(loc)).filter(Boolean))]
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  if (_drwPhaseFilter && !phases.includes(_drwPhaseFilter)) _drwPhaseFilter = '';
   if (!_drwPhaseFilter && phases.length) _drwPhaseFilter = phases[0];
   let visibleLocs = _drwLocationsForPhase(allLocs, _drwPhaseFilter);
   if (!visibleLocs.length && allLocs.length) {
@@ -29478,7 +29492,7 @@ function renderDrawingsPage() {
   const phaseFilter = phases.length ? `
     <div class="drw-phase-filter">
       <label>Phase</label>
-      <select class="form-input" onchange="_drwSetPhaseFilter(this.value)">
+      <select class="filter-select" onchange="_drwSetPhaseFilter(this.value)">
         <option value="">All Phases</option>
         ${phases.map(p => `<option value="${escapeHtml(p)}" ${_drwPhaseFilter === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
       </select>
@@ -29500,6 +29514,7 @@ function renderDrawingsPage() {
     </div>
     <div id="drw-location-view"></div>`;
 
+  if (typeof _initPageLibraries === 'function') _initPageLibraries();
   if (_drwActiveLocation) _drwSelectLocation(_drwActiveLocation);
 }
 

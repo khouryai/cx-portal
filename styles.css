@@ -10732,7 +10732,11 @@ a:focus-visible {
   align-items: center;
   display: flex;
   gap: 8px;
-  max-width: 300px;
+  max-width: 340px;
+}
+.drw-phase-filter .ts-wrapper,
+.drw-phase-filter .filter-select {
+  min-width: 220px;
 }
 .drw-phase-filter label {
   color: var(--gray-500);
