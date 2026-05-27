@@ -57,13 +57,17 @@ create table if not exists form_template_links (
   id          uuid primary key default gen_random_uuid(),
   form_id     uuid not null references forms(id) on delete cascade,
   template_id text not null references templates(id) on delete cascade,
+  test_case_code text,
   linked_by   text,
-  linked_at   timestamptz default now(),
-  unique (form_id, template_id)
+  linked_at   timestamptz default now()
 );
 
 create index if not exists ftpl_form_idx     on form_template_links (form_id);
 create index if not exists ftpl_template_idx on form_template_links (template_id);
+create unique index if not exists ftpl_unique_form_template_test_case
+  on form_template_links (form_id, template_id, coalesce(test_case_code, ''));
+create index if not exists ftpl_template_test_case_idx
+  on form_template_links (template_id, test_case_code);
 
 
 -- ── Audit triggers (use existing audit_db_change function) ──

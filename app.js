@@ -4279,11 +4279,12 @@ function _tplSectionsHTML() {
           oninput="_templateSections[${si}].procedure=this.value">${escapeHtml(sec.procedure)}</textarea>
       </div>
       <!-- Column headers -->
-      <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 32px 32px;gap:6px;padding:5px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-100);">
+      <div style="display:grid;grid-template-columns:130px minmax(210px,1fr) 120px 150px 92px 32px 32px;gap:6px;padding:5px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-100);">
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Code</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Test Case Name</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Category</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Assets (Generic)</div>
+        <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Form PDF</div>
         <div></div><div></div>
       </div>
       <!-- Test case rows -->
@@ -4297,7 +4298,7 @@ function _tplSectionsHTML() {
 function _tplCaseRowsHTML(si) {
   const cases = _templateSections[si]?.cases || [];
   return cases.map((tc, ci) => `
-    <div style="display:grid;grid-template-columns:130px 1fr 120px 160px 32px 32px;gap:6px;align-items:center;margin-bottom:5px;">
+    <div style="display:grid;grid-template-columns:130px minmax(210px,1fr) 120px 150px 92px 32px 32px;gap:6px;align-items:center;margin-bottom:5px;">
       <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Code e.g. DCS-01"
         value="${escapeHtml(tc.code)}" oninput="_templateSections[${si}].cases[${ci}].code=this.value">
       <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Test Case Name"
@@ -4307,6 +4308,7 @@ function _tplCaseRowsHTML(si) {
       <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Assets e.g. MLK A, MLK B"
         value="${escapeHtml(tc.assets||'')}" oninput="_templateSections[${si}].cases[${ci}].assets=this.value"
         title="Comma-separated generic asset names auto-linked as children on deploy">
+      ${_tplCaseFormCellHTML(_editTemplateId, tc, si, ci)}
       <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;" title="Duplicate"
         onclick="dupTplCase(${si},${ci})">⧉</button>
       <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;color:var(--bad);" title="Remove"
@@ -4316,6 +4318,27 @@ function _tplCaseRowsHTML(si) {
 }
 
 // ── Section / case actions ────────────────────────────────────────────────────
+
+function _tplCaseFormCellHTML(templateId, tc, si, ci) {
+  if (!templateId) {
+    return `<button class="form-secondary tr-mini-btn" disabled title="Save the activity template before attaching PDFs" style="font-size:11px;padding:4px 6px;">Save first</button>`;
+  }
+  const code = String(tc?.code || '').trim();
+  if (!code) {
+    return `<button class="form-secondary tr-mini-btn" disabled title="Enter a test case code before attaching a PDF" style="font-size:11px;padding:4px 6px;">Code first</button>`;
+  }
+  const attached = _formsForTemplateTestCase(templateId, code);
+  if (!attached.length) {
+    return `<button class="form-secondary tr-mini-btn" title="Attach PDF template to this test case line" onclick="openAttachTemplateFormForCase('${templateId}',${si},${ci})" style="font-size:11px;padding:4px 6px;">+ PDF</button>`;
+  }
+  const names = attached.map(f => f.name).join(', ');
+  return `
+    <div style="display:flex;align-items:center;gap:4px;min-width:0;">
+      <button class="admin-action-btn tr-mini-btn" title="${escapeHtml(names)}" onclick="openFormViewer('${attached[0].id}')" style="font-size:11px;padding:4px 6px;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;">PDF ${attached.length}</button>
+      <button class="form-secondary tr-mini-btn" title="Remove PDF from this test case line" onclick="detachTemplateFormForCase('${attached[0].id}','${templateId}',${si},${ci})" style="font-size:11px;padding:4px 6px;color:var(--bad);">x</button>
+    </div>
+  `;
+}
 
 function addTplSection() {
   _templateSections.push({ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'' }] });
@@ -25686,6 +25709,20 @@ function _formsForTemplate(templateId) {
   const ids = FORM_TPL_LINKS.filter(l => l.template_id === templateId).map(l => l.form_id);
   return FORMS.filter(f => ids.includes(f.id));
 }
+function _formsForTemplateTestCase(templateId, testCaseCode) {
+  const code = String(testCaseCode || '').trim();
+  if (!templateId || !code) return [];
+  const ids = FORM_TPL_LINKS
+    .filter(l => l.template_id === templateId && String(l.test_case_code || '').trim() === code)
+    .map(l => l.form_id);
+  return FORMS.filter(f => ids.includes(f.id));
+}
+function _formsLegacyForTemplate(templateId) {
+  const ids = FORM_TPL_LINKS
+    .filter(l => l.template_id === templateId && !String(l.test_case_code || '').trim())
+    .map(l => l.form_id);
+  return FORMS.filter(f => ids.includes(f.id));
+}
 function _formsCountForTest(testId) {
   return FORM_TEST_LINKS.filter(l => l.test_id === testId).length;
 }
@@ -25849,25 +25886,40 @@ function _formsLinkRowsForTestCase(testId) {
     })
     .filter(r => r.form);
 }
-async function _formsLinkToTemplate(formId, templateId) {
-  if (FORM_TPL_LINKS.find(l => l.form_id === formId && l.template_id === templateId)) return;
+async function _formsLinkToTemplate(formId, templateId, testCaseCode = '') {
+  const scopeCode = String(testCaseCode || '').trim();
+  if (FORM_TPL_LINKS.find(l => l.form_id === formId && l.template_id === templateId && String(l.test_case_code || '').trim() === scopeCode)) return;
   const linkedBy = currentProfile?.full_name || currentRoleUser?.name || null;
-  const [link] = await _dbInsert('form_template_links', [{ form_id: formId, template_id: templateId, linked_by: linkedBy }]);
+  const [link] = await _dbInsert('form_template_links', [{
+    form_id: formId,
+    template_id: templateId,
+    test_case_code: scopeCode || null,
+    linked_by: linkedBy,
+  }]);
   FORM_TPL_LINKS.push(link);
 }
-async function _formsUnlinkFromTemplate(formId, templateId) {
-  await _dbDelete('form_template_links', { form_id: formId, template_id: templateId });
-  FORM_TPL_LINKS = FORM_TPL_LINKS.filter(l => !(l.form_id === formId && l.template_id === templateId));
+async function _formsUnlinkFromTemplate(formId, templateId, testCaseCode) {
+  const matches = FORM_TPL_LINKS.filter(l => {
+    if (l.form_id !== formId || l.template_id !== templateId) return false;
+    if (testCaseCode === undefined) return true;
+    return String(l.test_case_code || '').trim() === String(testCaseCode || '').trim();
+  });
+  for (const link of matches) {
+    await _dbDelete('form_template_links', { id: link.id });
+  }
+  const removed = new Set(matches.map(l => l.id));
+  FORM_TPL_LINKS = FORM_TPL_LINKS.filter(l => !removed.has(l.id));
 }
 
 // Deployment clone — called from confirmDeploy after test_items are inserted.
 async function _formsCloneTemplateForDeployment(templateId, depId, selections, tpl) {
-  const templateForms = _formsForTemplate(templateId);
-  if (!templateForms.length) return 0;
+  const scopedLinks = FORM_TPL_LINKS.filter(l => l.template_id === templateId && String(l.test_case_code || '').trim());
+  if (!scopedLinks.length) return 0;
   let cloned = 0;
   for (const s of selections) {
     for (const tcCode of s.tcCodes) {
       const newTestId = `${depId}-${s.locId}-${tcCode}`;
+      const templateForms = _formsForTemplateTestCase(templateId, tcCode);
       for (const src of templateForms) {
         try {
           const newId   = _formsNewId();
@@ -27560,14 +27612,13 @@ function _formsBadgeHTML(testIdOrRow, assetId = '') {
 // ── TEMPLATE EDITOR INTEGRATION ─────────────────────────────────────────
 function _tplFormsBlockHTML(templateId) {
   if (!templateId) return '';
-  const attached = _formsForTemplate(templateId);
+  const attached = _formsLegacyForTemplate(templateId);
+  if (!attached.length) return '';
   return `
     <div style="margin-top:18px;padding:14px;border:1px solid var(--gray-200);border-radius:6px;background:var(--gray-50);">
-      <div style="font-weight:600;font-size:13px;margin-bottom:6px;">Attached Form Template (optional)</div>
-      <div style="font-size:11px;color:var(--gray-600);margin-bottom:10px;">When this template is deployed, every test case at every location gets its own unique copy of each attached PDF.</div>
-      ${attached.length === 0
-        ? `<button class="form-secondary" onclick="openAttachTemplateForm('${templateId}')">+ Attach Template PDF</button>`
-        : `<div style="display:flex;flex-direction:column;gap:6px;">
+      <div style="font-weight:600;font-size:13px;margin-bottom:6px;">Legacy Activity-Level Form Templates</div>
+      <div style="font-size:11px;color:var(--gray-600);margin-bottom:10px;">These older links are no longer cloned on deployment. Attach PDFs from the Form PDF column on each test case line.</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
              ${attached.map(f => `
                <div style="display:flex;align-items:center;gap:10px;padding:6px 10px;background:var(--white);border:1px solid var(--gray-200);border-radius:5px;">
                  <span style="flex:1;font-size:13px;font-weight:600;">${escapeHtml(f.name)}</span>
@@ -27575,24 +27626,46 @@ function _tplFormsBlockHTML(templateId) {
                  <button class="admin-action-btn tr-mini-btn" onclick="openFormViewer('${f.id}')">View</button>
                  <button class="form-secondary tr-mini-btn" onclick="detachTemplateForm('${f.id}','${templateId}')">Remove</button>
                </div>`).join('')}
-             <button class="form-secondary" style="align-self:flex-start;margin-top:6px;" onclick="openAttachTemplateForm('${templateId}')">+ Attach Another PDF</button>
-           </div>`}
+           </div>
     </div>
   `;
 }
 
-function openAttachTemplateForm(templateId) {
+function _tplCaseCodeByIndex(si, ci) {
+  return String(_templateSections?.[si]?.cases?.[ci]?.code || '').trim();
+}
+
+function _tplCaseNameByIndex(si, ci) {
+  return String(_templateSections?.[si]?.cases?.[ci]?.name || '').trim();
+}
+
+function openAttachTemplateFormForCase(templateId, si, ci) {
+  const code = _tplCaseCodeByIndex(si, ci);
+  if (!code) { toast('Enter a test case code first', 'warn'); return; }
+  openAttachTemplateForm(templateId, code, _tplCaseNameByIndex(si, ci));
+}
+
+function detachTemplateFormForCase(formId, templateId, si, ci) {
+  const code = _tplCaseCodeByIndex(si, ci);
+  if (!code) { toast('Test case code is missing', 'warn'); return; }
+  detachTemplateForm(formId, templateId, code);
+}
+
+function openAttachTemplateForm(templateId, testCaseCode = '', testCaseName = '') {
   const tpl = TEMPLATES.find(t => t.id === templateId);
   if (!tpl) { toast('Template not found', 'error'); return; }
+  const scopeCode = String(testCaseCode || '').trim();
+  const scopeLabel = scopeCode ? `${scopeCode}${testCaseName ? ` - ${testCaseName}` : ''}` : tpl.name;
   modal({
-    title: 'Attach Template PDF', sub: tpl.name,
+    title: 'Attach Test Case PDF', sub: scopeLabel,
     body: `
+      <input type="hidden" id="tplfrm-code" value="${escapeHtml(scopeCode)}">
       <div class="form-grid">
         <div class="form-field form-field-full"><label>PDF File</label><input type="file" id="tplfrm-file" accept="application/pdf" class="form-input"></div>
         <div class="form-field form-field-full"><label>Form Name</label><input type="text" id="tplfrm-name" class="form-input" placeholder="e.g. SAT Data Sheet — Power"></div>
         <div class="form-field form-field-full"><label>Notes / Description</label><textarea id="tplfrm-desc" class="form-input" rows="2"></textarea></div>
       </div>
-      <div style="font-size:11px;color:var(--gray-500);margin-top:10px;">Phase and location are filled in automatically on each deployed copy.</div>
+      <div style="font-size:11px;color:var(--gray-500);margin-top:10px;">On deployment, this PDF is copied for this test case at each selected location and linked to that location's test item.</div>
     `,
     footer: `<button class="form-secondary" onclick="_reopenTemplateEditor('${templateId}')">Cancel</button>
              <button class="form-submit" onclick="submitAttachTemplateForm('${templateId}')">Upload &amp; Attach</button>`,
@@ -27602,6 +27675,8 @@ function openAttachTemplateForm(templateId) {
 async function submitAttachTemplateForm(templateId) {
   const tpl = TEMPLATES.find(t => t.id === templateId);
   if (!tpl) return;
+  const scopeCode = document.getElementById('tplfrm-code')?.value.trim();
+  if (!scopeCode) { toast('Test case code is required for template PDFs', 'error'); return; }
   const file = document.getElementById('tplfrm-file')?.files?.[0];
   if (!file) { toast('Select a PDF', 'error'); return; }
   if (file.type !== 'application/pdf') { toast('File must be a PDF', 'error'); return; }
@@ -27616,7 +27691,7 @@ async function submitAttachTemplateForm(templateId) {
       subsystem: tpl.subsystem || null, phase: null, location: null,
       isTemplate: true, originalFilename: file.name, fileSize: file.size, file,
     });
-    await _formsLinkToTemplate(created.id, templateId);
+    await _formsLinkToTemplate(created.id, templateId, scopeCode);
     logAudit('Attached Template Form', `${tpl.name} ← ${name}`, '');
     toast('✓ Template PDF attached', 'success');
     _reopenTemplateEditor(templateId);
@@ -27626,10 +27701,10 @@ async function submitAttachTemplateForm(templateId) {
   }
 }
 
-async function detachTemplateForm(formId, templateId) {
+async function detachTemplateForm(formId, templateId, testCaseCode) {
   if (!confirm('Remove this template PDF? It will no longer be cloned on future deployments. Already-deployed copies are untouched.')) return;
   try {
-    await _formsUnlinkFromTemplate(formId, templateId);
+    await _formsUnlinkFromTemplate(formId, templateId, testCaseCode);
     logAudit('Detached Template Form', FORMS.find(f => f.id === formId)?.name || formId, templateId);
     _reopenTemplateEditor(templateId);
   } catch (e) { toast('Remove failed: ' + e.message, 'error'); }
