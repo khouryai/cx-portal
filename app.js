@@ -5453,6 +5453,18 @@ function _mxApplyStatusChange(testId, status, reason = '', el = null) {
     }
   }
 
+  // Swap the V2 status-select tone class so the dropdown tints by current value
+  if (el && el.classList && el.classList.contains('status-select')) {
+    el.classList.remove('is-pass','is-fail','is-block','is-inprog','is-na','is-future');
+    const tone = ({Pass:'is-pass', Fail:'is-fail', Blocked:'is-block',
+                   'In Progress':'is-inprog', 'Not Applicable':'is-na',
+                   'Future Test':'is-future'})[status];
+    if (tone) el.classList.add(tone);
+    // Highlight the row red if it's now Fail
+    const tr = el.closest && el.closest('tr');
+    if (tr) tr.classList.toggle('is-fail', status === 'Fail');
+  }
+
   const ftReasonEl = document.getElementById(`mx-ft-reason-${domId}`);
   if (ftReasonEl) ftReasonEl.style.display = status === 'Future Test' ? '' : 'none';
 
@@ -6463,20 +6475,60 @@ function _plBallInCourt(p) {
 
 function _plLocName(id) { return id ? (LOCS.find(l => l.id === id)?.name || id) : '—'; }
 
+// V2 Punch List status chips — collapse 9 internal statuses into 5 chips + 1 overdue
+const PL_STATUS_CHIPS = [
+  ['work_required',   'Work Required',  'is-warn',   ['work_required','work_not_accepted','draft','initiated']],
+  ['in_dispute',      'In Dispute',     'is-purple', ['in_dispute','not_accepted']],
+  ['ready_to_close',  'Ready to Close', 'is-info',   ['ready_to_close','ready_for_review']],
+  ['closed',          'Closed',         'is-good',   ['closed']],
+  ['__overdue',       'Overdue',        'is-bad',    null],
+];
+
+function _plPillTone(status) {
+  return ({
+    closed: 'is-good',
+    work_required: 'is-warn', work_not_accepted: 'is-warn',
+    ready_to_close: 'is-info', ready_for_review: 'is-info',
+    in_dispute: 'is-purple', not_accepted: 'is-bad',
+    draft: 'is-muted', initiated: 'is-muted',
+  })[status] || 'is-muted';
+}
+
+function _plFilterByChip(items, chipVal) {
+  if (!chipVal) return items;
+  if (chipVal === '__overdue') {
+    return items.filter(p => p.due_date && new Date(p.due_date) < new Date() && p.status !== 'closed');
+  }
+  const chip = PL_STATUS_CHIPS.find(c => c[0] === chipVal);
+  if (!chip) return items;
+  return items.filter(p => chip[3].includes(p.status));
+}
+
+function _plCountChip(items, chipVal) {
+  if (chipVal === '__overdue') {
+    return items.filter(p => p.due_date && new Date(p.due_date) < new Date() && p.status !== 'closed').length;
+  }
+  const chip = PL_STATUS_CHIPS.find(c => c[0] === chipVal);
+  if (!chip) return 0;
+  return items.filter(p => chip[3].includes(p.status)).length;
+}
+
 function renderPunchWorkflow() {
   const root = document.getElementById('punch-workflow-content');
+  const heroEl = document.getElementById('punch-hero-content');
   if (!root || !currentRoleUser) return;
 
   const all  = PUNCH_DB.filter(p => !p.is_deleted);
   const bin  = PUNCH_DB.filter(p => p.is_deleted);
   const my   = all.filter(p => _isMyPunchItem(p));
+  const baseItems = _plTab === 'bin' ? bin : _plTab === 'my' ? my : all;
 
-  let items = _plTab === 'bin' ? bin : _plTab === 'my' ? my : all;
-  if (_plSearch)       items = items.filter(p => (p.title||'').toLowerCase().includes(_plSearch.toLowerCase()) || String(p.number).includes(_plSearch));
-  if (_plStatusFilter) items = items.filter(p => p.status === _plStatusFilter);
-  if (_plPhaseFilter)  items = items.filter(p => p.phase === _plPhaseFilter);
-  if (_plLocFilter)    items = items.filter(p => p.location === _plLocFilter);
-  if (_plSubFilter)    items = items.filter(p => p.subsystem === _plSubFilter);
+  let items = baseItems;
+  if (_plSearch)         items = items.filter(p => (p.title||'').toLowerCase().includes(_plSearch.toLowerCase()) || String(p.number).includes(_plSearch));
+  if (_plStatusFilter)   items = _plFilterByChip(items, _plStatusFilter);
+  if (_plPhaseFilter)    items = items.filter(p => p.phase === _plPhaseFilter);
+  if (_plLocFilter)      items = items.filter(p => p.location === _plLocFilter);
+  if (_plSubFilter)      items = items.filter(p => p.subsystem === _plSubFilter);
   if (_plPriorityFilter) items = items.filter(p => p.priority === _plPriorityFilter);
   if (_plActivityFilter) {
     const actCodes = new Set(TI.filter(r => r.Activity === _plActivityFilter).map(r => r.TestCaseCode));
@@ -6495,7 +6547,6 @@ function renderPunchWorkflow() {
   const overdue   = openItems.filter(p => p.due_date && new Date(p.due_date) < new Date());
 
   // Dynamic cascade Phase → Location → Subsystem from current tab's base items
-  const baseItems   = _plTab === 'bin' ? bin : _plTab === 'my' ? my : all;
   const phaseIds    = new Set(baseItems.map(p => p.phase).filter(Boolean));
   const phases      = LOCS.filter(l => l.level === 1 && phaseIds.has(l.id)).sort((a,b) => a.sort_order - b.sort_order);
   const afterPhase  = _plPhaseFilter ? baseItems.filter(p => p.phase === _plPhaseFilter) : baseItems;
@@ -6504,107 +6555,160 @@ function renderPunchWorkflow() {
   const afterLoc    = _plLocFilter ? afterPhase.filter(p => p.location === _plLocFilter) : afterPhase;
   const subPool     = [...new Set(afterLoc.map(p => p.subsystem).filter(Boolean))].sort();
 
-  const hasFilter = _plSearch || _plStatusFilter || _plPhaseFilter || _plLocFilter || _plSubFilter || _plPriorityFilter || _plActivityFilter;
+  // Wire hero stats
+  if (heroEl) heroEl.innerHTML = renderPageHero({
+    eyebrow: 'Field · Punch List',
+    title: 'Punch List',
+    sub: 'Create, track, and resolve punch items across all locations',
+    role: { label: 'Field', tone: 'field' },
+    stats: [
+      { label: 'Open',     value: openItems.length },
+      { label: 'Work Req', value: all.filter(p=>p.status==='work_required'||p.status==='work_not_accepted').length, tone: 'amber' },
+      { label: 'Ready',    value: all.filter(p=>p.status==='ready_to_close'||p.status==='ready_for_review').length, tone: 'blue' },
+      { label: 'Overdue',  value: overdue.length, tone: overdue.length ? 'red' : 'muted' },
+      { label: 'Closed',   value: all.filter(p=>p.status==='closed').length, tone: 'good' },
+    ],
+  });
 
   _htmlPreserveFocus(root, `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:2px solid var(--gray-200);padding-bottom:0;">
-      <div style="display:flex;gap:0;">
-        ${[['my',`My Items (${my.length})`],['all',`All Items (${all.length})`],['bin',`Recycle Bin (${bin.length})`]].map(([id,label])=>`
-          <button class="admin-tab${_plTab===id?' active':''}" onclick="_plSetTab('${id}')">${label}</button>`).join('')}
+    <!-- Tabs row -->
+    <div class="v2-tabs-row">
+      <div class="v2-tabs">
+        <button class="v2-tab ${_plTab==='my'?'active':''}" onclick="_plSetTab('my')">
+          My Items <span class="tab-count">${my.length}</span>
+        </button>
+        <button class="v2-tab ${_plTab==='all'?'active':''}" onclick="_plSetTab('all')">
+          All Items <span class="tab-count">${all.length}</span>
+        </button>
+        <button class="v2-tab ${_plTab==='bin'?'active':''}" onclick="_plSetTab('bin')">
+          Recycle Bin <span class="tab-count">${bin.length}</span>
+        </button>
       </div>
       <div style="display:flex;gap:8px;">
-        <button class="form-secondary" onclick="openPunchImportModal()" style="font-size:13px;">⬆ Import CSV</button>
-        <button class="admin-action-btn" onclick="openNewPunchModal()">+ Create New</button>
+        <button class="v2-btn-ghost" onclick="openPunchImportModal()">⬆ Import CSV</button>
+        <button class="v2-btn-primary" onclick="openNewPunchModal()">＋ Create New</button>
       </div>
     </div>
 
-    <div class="kpi-grid kpi-grid-mini" style="margin-bottom:20px;">
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Total Open</div><div class="kpi-value">${openItems.length}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Work Required</div><div class="kpi-value" style="color:var(--warn);">${all.filter(p=>p.status==='work_required'||p.status==='work_not_accepted').length}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Ready to Close</div><div class="kpi-value" style="color:#0369a1;">${all.filter(p=>p.status==='ready_to_close').length}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Overdue</div><div class="kpi-value" style="color:var(--bad);">${overdue.length}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Closed</div><div class="kpi-value good">${all.filter(p=>p.status==='closed').length}</div></div>
+    <!-- Status chips -->
+    <div class="v2-chips-row">
+      <span class="v2-chip ${!_plStatusFilter ? 'active' : ''}"
+            onclick="_plSetFilter('status','')">All <span class="n">${baseItems.length}</span></span>
+      ${PL_STATUS_CHIPS.map(([val, label, tone]) => {
+        const count = _plCountChip(baseItems, val);
+        if (!count && _plStatusFilter !== val) return '';
+        return `<span class="v2-chip ${tone} ${_plStatusFilter === val ? 'active' : ''}"
+                      onclick="_plSetFilter('status','${val}')">
+          <span class="dot"></span>${escapeHtml(label)} <span class="n">${count}</span>
+        </span>`;
+      }).join('')}
+      <span class="right">
+        <button class="v2-btn-ghost" onclick="openPlColEditor()" title="Configure columns (legacy table)">⚙ Cols</button>
+      </span>
     </div>
 
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
-      <div style="position:relative;flex:1;min-width:200px;">
-        <input type="text" id="pl-search-input" class="form-input pl-search" placeholder="Search title or #…" value="${escapeHtml(_plSearch)}"
-          oninput="_plSetSearch(this.value)" style="padding-left:32px;font-size:13px;">
-        <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--gray-400);font-size:16px;">⌕</span>
+    <!-- Search + cascading filters -->
+    <div class="v2-filter-row">
+      <div class="v2-search-wrap">
+        <span class="icon">🔍</span>
+        <input type="text" id="pl-search-input" value="${escapeHtml(_plSearch)}"
+               placeholder="Search title or #…"
+               oninput="_plSetSearch(this.value)">
       </div>
-      <select class="filter-select" onchange="_plSetFilter('status',this.value)">
-        <option value="">All Statuses</option>
-        ${Object.entries(PL_STATUS_LABELS).map(([v,l])=>`<option value="${v}" ${_plStatusFilter===v?'selected':''}>${l}</option>`).join('')}
-      </select>
-      <select class="filter-select" onchange="_plPhaseChange(this.value)">
+      <select onchange="_plPhaseChange(this.value)">
         <option value="">All Phases</option>
         ${phases.map(p=>`<option value="${p.id}" ${_plPhaseFilter===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
       </select>
-      <select class="filter-select" onchange="_plSetFilter('loc',this.value)">
+      <select onchange="_plSetFilter('loc',this.value)">
         <option value="">All Locations</option>
         ${locPool.map(l=>`<option value="${l.id}" ${_plLocFilter===l.id?'selected':''}>${escapeHtml(l.name)}</option>`).join('')}
       </select>
-      <select class="filter-select" onchange="_plSetFilter('sub',this.value)">
+      <select onchange="_plSetFilter('sub',this.value)">
         <option value="">All Subsystems</option>
         ${subPool.map(s=>`<option value="${escapeHtml(s)}" ${_plSubFilter===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
       </select>
-      <select class="filter-select" onchange="_plSetFilter('priority',this.value)">
+      <select onchange="_plSetFilter('priority',this.value)">
         <option value="">All Priorities</option>
         ${['Low','Medium','High','Critical'].map(p=>`<option value="${p}" ${_plPriorityFilter===p?'selected':''}>${p}</option>`).join('')}
       </select>
-      ${plActivities.length ? `<select class="filter-select" onchange="_plSetFilter('activity',this.value)">
+      ${plActivities.length ? `<select onchange="_plSetFilter('activity',this.value)">
         <option value="">All Activities</option>
         ${plActivities.map(a=>`<option value="${escapeHtml(a)}" ${_plActivityFilter===a?'selected':''}>${escapeHtml(a)}</option>`).join('')}
       </select>` : ''}
-      ${hasFilter ? `<button class="form-secondary" style="white-space:nowrap;font-size:12px;" onclick="_plClearFilters()">✕ Clear All</button>` : ''}
+      <span class="count"><b>${total}</b> of ${baseItems.length}</span>
     </div>
 
     ${_plSelected.size > 0 ? `
-      <div style="display:flex;align-items:center;gap:12px;padding:10px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:12px;">
-        <span style="font-size:13px;font-weight:600;color:#1d4ed8;">${_plSelected.size} item${_plSelected.size===1?'':'s'} selected</span>
-        <button class="form-submit" style="font-size:12px;padding:5px 14px;" onclick="exportPunchPDF([..._plSelected])">⬇ Export ${_plSelected.size} as PDF</button>
-        <button class="btn-ghost-light" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_plClearSelection()">✕ Clear</button>
+      <div class="v2-bulk-bar">
+        <span class="count">${_plSelected.size} item${_plSelected.size===1?'':'s'} selected</span>
+        <button class="v2-btn-mini primary" onclick="exportPunchPDF([..._plSelected])">⬇ Export ${_plSelected.size} as PDF</button>
+        <button class="clear" onclick="_plClearSelection()">✕ Clear selection</button>
       </div>` : ''}
 
-    <div class="data-card" style="padding:0;overflow:hidden;">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th style="width:36px;text-align:center;"></th>
-            ${_colHeaders('pl')}
-            <th style="width:68px;text-align:right;padding-right:8px;">
-              <button onclick="openPlColEditor()" title="Configure columns"
-                style="font-size:11px;padding:3px 8px;border:1px solid var(--gray-300);border-radius:5px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;font-weight:600;white-space:nowrap;">⚙ Cols</button>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          ${paged.length ? paged.map(p => {
-            return `<tr onclick="openPunchDetail('${p.id}')" style="cursor:pointer;">
-              <td onclick="event.stopPropagation()" style="text-align:center;">
-                <input type="checkbox" ${_plSelected.has(p.id)?'checked':''} onchange="_plToggleSelect('${p.id}',this.checked)" style="width:15px;height:15px;cursor:pointer;">
-              </td>
-              ${_colCells('pl', p)}
-              <td onclick="event.stopPropagation()" style="text-align:right;padding-right:8px;">
-                <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openPunchDetail('${p.id}')">View</button>
-              </td>
-            </tr>`;
-          }).join('') : `<tr><td colspan="${_plActiveCols().length + 2}" style="text-align:center;padding:32px;color:var(--gray-400);">${_plTab==='bin'?'Recycle bin is empty':'No punch items match your filters'}</td></tr>`}
-        </tbody>
-      </table>
+    <div class="v2-list">
+      ${paged.length ? paged.map(p => _plRowHTML(p)).join('') : `
+        <div style="padding:48px;text-align:center;color:var(--gray-500);font-size:14px;">
+          ${_plTab==='bin'?'Recycle bin is empty':'No punch items match your filters'}
+        </div>
+      `}
     </div>
 
     ${pages > 1 ? `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;font-size:13px;color:var(--gray-600);">
+      <div class="v2-list-foot">
         <span>Showing ${(_plPage-1)*PL_PAGE_SIZE+1}–${Math.min(_plPage*PL_PAGE_SIZE,total)} of ${total}</span>
-        <div style="display:flex;gap:6px;">
-          <button class="form-secondary" ${_plPage<=1?'disabled':''} onclick="_plSetPage(${_plPage-1})">← Prev</button>
-          <span style="padding:6px 12px;font-weight:600;">${_plPage} / ${pages}</span>
-          <button class="form-secondary" ${_plPage>=pages?'disabled':''} onclick="_plSetPage(${_plPage+1})">Next →</button>
+        <div class="pages">
+          <button class="page-btn" ${_plPage<=1?'disabled':''} onclick="_plSetPage(${_plPage-1})">← Prev</button>
+          <span class="page-btn active">${_plPage} / ${pages}</span>
+          <button class="page-btn" ${_plPage>=pages?'disabled':''} onclick="_plSetPage(${_plPage+1})">Next →</button>
         </div>
       </div>` : ''}
   `);
   setTimeout(_initPageLibraries, 80);
+}
+
+function _plRowHTML(p) {
+  const isOverdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== 'closed';
+  const isCritical = p.priority === 'Critical';
+  const pillTone = _plPillTone(p.status);
+  const linkedTC = p.test_case_code ? `<span class="linked">↔ ${escapeHtml(p.test_case_code)}</span>` : '';
+  const phaseName = p.phase ? _plLocName(p.phase) : '';
+  const locName = p.location ? _plLocName(p.location) : '';
+  const bic = _plBallInCourt(p);
+
+  return `
+    <div class="v2-list-row ${isOverdue ? 'is-overdue' : (isCritical ? 'is-critical' : '')}"
+         onclick="openPunchDetail('${p.id}')">
+      <div class="punch-row">
+        <div onclick="event.stopPropagation()" style="padding-top:4px;">
+          <input type="checkbox" ${_plSelected.has(p.id)?'checked':''}
+                 onchange="_plToggleSelect('${p.id}',this.checked)"
+                 style="width:16px;height:16px;cursor:pointer;accent-color:#1d4eaf;">
+        </div>
+        <span class="v2-id-chip ${(isCritical || isOverdue) ? 'is-critical' : ''}">#${p.number}</span>
+        <div class="punch-main">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+            <h3>${escapeHtml(p.title||'')}</h3>
+            ${p.priority ? `<span class="v2-priority is-${(p.priority||'').toLowerCase()}">${escapeHtml(p.priority)}</span>` : ''}
+            <span class="v2-pill ${pillTone}">${escapeHtml(PL_STATUS_LABELS[p.status] || p.status || '—')}</span>
+          </div>
+          ${p.description ? `<p class="punch-desc">${escapeHtml(p.description)}</p>` : ''}
+          <div class="v2-meta-line">
+            ${phaseName && phaseName !== '—' ? `<span class="kv"><span class="k">Phase</span><span class="v">${escapeHtml(phaseName)}</span></span>` : ''}
+            ${locName && locName !== '—' ? `<span class="sep">·</span><span class="kv"><span class="k">Loc</span><span class="v">${escapeHtml(locName)}</span></span>` : ''}
+            ${p.subsystem ? `<span class="sep">·</span><span class="kv"><span class="k">Sub</span><span class="v">${escapeHtml(p.subsystem)}</span></span>` : ''}
+            ${linkedTC ? `<span class="sep">·</span>${linkedTC}` : ''}
+          </div>
+        </div>
+        <div class="punch-due">
+          ${p.due_date ? `<span class="due-line ${isOverdue?'is-bad':''}">${isOverdue?'⚠ ':''}Due ${_fmtDate(p.due_date)}</span>` : ''}
+          ${bic && bic !== '—' ? `<span class="bic">BIC: <b>${escapeHtml(bic)}</b></span>` : ''}
+        </div>
+        <div onclick="event.stopPropagation()">
+          <button class="v2-btn-mini primary" onclick="openPunchDetail('${p.id}')">View →</button>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function _plSetTab(t)    { _plTab=t; _plPage=1; renderPunchWorkflow(); }
@@ -8514,12 +8618,38 @@ function _trpStatusControlHTML(row, canManage) {
   </select>`;
 }
 
+// V2 status chip set for Test Reporting (matches actual TR_STATUSES values)
+const TRP_STATUS_CHIPS = [
+  ['Not Started',                  'Not Started', 'is-muted'],
+  ['In Review',                    'In Review',   'is-warn'],
+  ['Accepted',                     'Accepted',    'is-good'],
+  ['Accepted as Noted',            'As Noted',    'is-good'],
+  ['Accepted as Noted Resubmit',   'Resubmit',    'is-warn'],
+  ['Resubmit',                     'Resubmit',    'is-warn'],
+  ['Rejected',                     'Rejected',    'is-bad'],
+];
+
+function _trpPillTone(status) {
+  const map = {
+    'Not Started': 'is-muted',
+    'In Review': 'is-warn',
+    'Accepted': 'is-good',
+    'Accepted as Noted': 'is-good',
+    'Accepted as Noted Resubmit': 'is-warn',
+    'Resubmit': 'is-warn',
+    'Rejected': 'is-bad',
+  };
+  return map[status] || 'is-muted';
+}
+
 function renderTestReporting() {
   const root = document.getElementById('test-reporting-content');
+  const heroEl = document.getElementById('test-reporting-hero-content');
   if (!root) return;
-  if (!currentRoleUser) { root.innerHTML = ''; return; }
+  if (!currentRoleUser) { root.innerHTML = ''; if (heroEl) heroEl.innerHTML = ''; return; }
   if (!_trpCanView()) {
     root.innerHTML = `<div class="docs-empty"><h3>Not available</h3><p>Your role does not have access to Test Reporting.</p></div>`;
+    if (heroEl) heroEl.innerHTML = '';
     return;
   }
   setTimeout(_initPageLibraries, 80);
@@ -8535,58 +8665,76 @@ function renderTestReporting() {
   const linkedCount = rows.filter(r => r.testCaseCount > 0).length;
   const activityCount = rows.reduce((sum, r) => sum + r.activityCount, 0);
   const testCaseCount = rows.reduce((sum, r) => sum + r.testCaseCount, 0);
-  const hasFilters = Object.values(_trpFilters).some(Boolean);
-  const statusOptions = _trpFilterOptions(rows, 'status');
   const subsystemOptions = _trpFilterOptions(rows, 'subsystem');
   const phaseOptions = _trpFilterOptions(rows, 'phase');
   const locationOptions = _trpFilterOptions(rows, 'location');
 
+  if (heroEl) heroEl.innerHTML = renderPageHero({
+    eyebrow: 'Tools · Reporting',
+    title: 'Test Reporting',
+    sub: 'Manage test report CDRLs, revisions, and acceptance status',
+    role: { label: 'Tools', tone: 'field' },
+    stats: [
+      { label: 'Reports',    value: rows.length },
+      { label: 'Linked',     value: linkedCount,   tone: linkedCount ? 'blue' : 'muted' },
+      { label: 'Activities', value: activityCount, tone: 'muted' },
+      { label: 'Test Cases', value: testCaseCount, tone: 'muted' },
+    ],
+  });
+
   _htmlPreserveFocus(root, `
     <div class="admin-section trp-shell">
-      <div class="tr-modern-header">
-        <div class="tr-modern-header-main">
-          <div class="role-badge role-field-badge">Reporting Register</div>
-          <div class="admin-section-title">Test Reports</div>
-          <div class="tr-header-stats">
-            <span><b>${filtered.length}</b> shown</span>
-            <span><b>${rows.length}</b> reports</span>
-            <span><b>${linkedCount}</b> linked</span>
-            <span><b>${activityCount}</b> activities</span>
-            <span><b>${testCaseCount}</b> test cases</span>
-            ${derivedCount ? `<span><b>${derivedCount}</b> from TI</span>` : ''}
-          </div>
-        </div>
-        <div class="tr-modern-toolbar">
-          ${canManage && derivedCount ? `<button class="form-secondary" onclick="_trpSyncMissingReports()" ${_trpSyncInFlight?'disabled':''}>${_trpSyncInFlight?'Syncing...':`Sync Missing (${derivedCount})`}</button>` : ''}
-          ${canManage ? `<button class="admin-action-btn" onclick="openNewTestReportModal()">+ New Report</button>` : ''}
-        </div>
+
+      <!-- Status chips -->
+      <div class="v2-chips-row">
+        <span class="v2-chip ${!_trpFilters.status ? 'active' : ''}"
+              onclick="_trpSetFilter('status','')">All <span class="n">${rows.length}</span></span>
+        ${TRP_STATUS_CHIPS.map(([val, label, tone]) => {
+          const count = rows.filter(r => r.status === val).length;
+          if (!count && _trpFilters.status !== val) return '';
+          return `<span class="v2-chip ${tone} ${_trpFilters.status === val ? 'active' : ''}"
+                        onclick="_trpSetFilter('status', '${escapeHtml(val)}')">
+            <span class="dot"></span>${escapeHtml(label)} <span class="n">${count}</span>
+          </span>`;
+        }).join('')}
+        <span class="right">
+          ${canManage && derivedCount
+            ? `<button class="v2-btn-ghost" onclick="_trpSyncMissingReports()" ${_trpSyncInFlight ? 'disabled' : ''}>
+                 ${_trpSyncInFlight ? 'Syncing…' : `↻ Sync Missing (${derivedCount})`}
+               </button>`
+            : ''}
+          ${canManage
+            ? `<button class="v2-btn-primary" onclick="openNewTestReportModal()">＋ New Report</button>`
+            : ''}
+        </span>
       </div>
 
-      <div class="am-filter-bar tr-filter-toolbar">
-        <input class="filter-input" value="${escapeHtml(_trpFilters.search)}" placeholder="Search reports, CDRLs, activities, test cases..." oninput="_trpSetSearch(this.value)">
-        <select class="filter-select" onchange="_trpSetFilter('status',this.value)">
-          <option value="">All Report Statuses</option>
-          ${statusOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.status===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
-        </select>
-        <select class="filter-select" onchange="_trpSetFilter('phase',this.value)">
+      <!-- Search + filters -->
+      <div class="v2-filter-row">
+        <div class="v2-search-wrap">
+          <span class="icon">🔍</span>
+          <input type="text" value="${escapeHtml(_trpFilters.search)}"
+                 placeholder="Search reports, CDRLs, activities, test cases…"
+                 oninput="_trpSetSearch(this.value)">
+        </div>
+        <select onchange="_trpSetFilter('phase',this.value)">
           <option value="">All Phases</option>
           ${phaseOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.phase===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
         </select>
-        <select class="filter-select" onchange="_trpSetFilter('location',this.value)">
+        <select onchange="_trpSetFilter('location',this.value)">
           <option value="">All Locations</option>
           ${locationOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.location===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
         </select>
         ${trpUserSub
           ? `<span class="filter-locked-tag" title="Auto-filtered to your assigned subsystem">📌 ${escapeHtml(trpUserSub)}</span>`
-          : `<select class="filter-select" onchange="_trpSetFilter('subsystem',this.value)">
+          : `<select onchange="_trpSetFilter('subsystem',this.value)">
               <option value="">All Subsystems</option>
               ${subsystemOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
             </select>`}
-        ${hasFilters ? `<button class="filter-clear" onclick="_trpClearFilters()">Reset</button>` : ''}
-        <span style="margin-left:auto;font-size:12px;color:var(--gray-500);">${filtered.length} of ${rows.length} shown</span>
+        <span class="count"><b>${filtered.length}</b> of ${rows.length}</span>
       </div>
 
-      ${rows.length ? _trpReportTableHTML(filtered, canManage) : `
+      ${rows.length ? _trpReportListHTML(filtered, canManage) : `
         <div class="docs-empty"><h3>No reports found</h3><p>No Test Report values exist in Test Items and no master report records have been created.</p></div>
       `}
     </div>
@@ -8594,30 +8742,34 @@ function renderTestReporting() {
   _trpQueueAutoSync(rows);
 }
 
-function _trpReportTableHTML(rows, canManage) {
-  return `
-    <div class="data-card trp-table-card">
-      <div class="data-card-head">
-        <span class="data-count">${rows.length} report${rows.length===1?'':'s'}</span>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-size:11px;color:var(--gray-500);">Expand rows to view linked test cases</span>
-          <button class="form-secondary tr-mini-btn" style="font-size:11px;" onclick="_trpOpenColConfig()" title="Configure visible columns">⚙ Columns</button>
-        </div>
-      </div>
-      <div class="trp-card-list">
-        ${rows.length ? rows.map(r => _trpReportRowHTML(r, canManage)).join('') : `<div style="text-align:center;padding:40px;color:var(--gray-500);">No reports match the current filters</div>`}
-      </div>
-    </div>
-  `;
+function _trpReportListHTML(rows, canManage) {
+  if (!rows.length) return `<div style="text-align:center;padding:40px;color:var(--gray-500);">No reports match the current filters</div>`;
+  return `<div class="v2-list">
+    ${rows.map(r => _trpReportRowHTML(r, canManage)).join('')}
+  </div>`;
 }
+
+// Kept for backward-compat in case any caller references the old name
+function _trpReportTableHTML(rows, canManage) { return _trpReportListHTML(rows, canManage); }
 
 function _trpReportRowHTML(row, canManage) {
   const uid = encodeURIComponent(row.uid);
   const expanded = _trpExpanded.has(row.uid);
-  const cv = _trpColVisible;
-  const empty = `<span class="trp-empty-val">—</span>`;
-  const tags = arr => arr.length ? arr.map(s => `<span class="tag">${escapeHtml(s)}</span>`).join(' ') : empty;
   const histCount = (row.revision_history || []).length;
+  const pillTone = _trpPillTone(row.status);
+  const barTone = row.status === 'Accepted' || row.status === 'Accepted as Noted' ? '' :
+                  row.status === 'Rejected' ? 'is-bad' :
+                  row.status === 'In Review' || row.status === 'Resubmit' ? 'is-warn' :
+                  row.status === 'Not Started' ? 'is-muted' : 'is-info';
+
+  // Progress: closed-test count vs total test cases
+  let closedTestCount = 0;
+  const _tcw = _buildTestCaseWeightLookup();
+  (row.activities || []).forEach(act => {
+    const { done } = _amComputeCompletion(act, _tcw);
+    closedTestCount += done;
+  });
+  const pct = row.testCaseCount > 0 ? Math.round((closedTestCount / row.testCaseCount) * 100) : 0;
 
   const canExtract = !row.isDerived && row.activityCount > 0;
   const extractTip = row.isDerived
@@ -8625,43 +8777,57 @@ function _trpReportRowHTML(row, canManage) {
     : !row.activityCount
       ? 'Link at least one activity to extract'
       : 'Extract a compiled PDF (or ZIP) of all linked forms with summaries';
-  const actions = [
-    `<button class="form-secondary tr-mini-btn" onclick="_trpToggleLinks('${uid}')" title="${expanded?'Collapse':'Expand'} linked activities">${expanded?'▲ Hide':'▼ Links'}</button>`,
-    `<button class="form-secondary tr-mini-btn tr-extract-btn" onclick="openExtractReportModal('${uid}')" ${canExtract?'':'disabled'} title="${escapeHtml(extractTip)}">📄 Extract</button>`,
-    canManage ? `<button class="form-secondary tr-mini-btn" onclick="openLinkActivityModal('${uid}')" title="Link activities to this report">＋ Link</button>` : '',
-    canManage ? `<button class="form-secondary tr-mini-btn" onclick="openEditTestReportModal('${uid}')">${row.isDerived?'Create/Edit':'Edit'}</button>` : '',
-    canManage && row.isDerived ? `<button class="admin-action-btn tr-mini-btn" onclick="_trpCreateDerivedReport('${uid}')">Sync</button>` : '',
-    canManage && !row.isDerived ? `<button class="form-secondary tr-mini-btn" onclick="openAddRevisionModal('${escapeHtml(row.id)}')">+ Rev</button>` : '',
-    canManage && !row.isDerived && histCount ? `<button class="form-secondary tr-mini-btn" onclick="openRevisionHistoryModal('${uid}')" title="${histCount} prior revision${histCount===1?'':'s'}">History (${histCount})</button>` : '',
-    canManage && !row.isDerived ? `<button class="form-secondary tr-mini-btn tr-danger-btn" onclick="_trpDeleteReport('${uid}')">Delete</button>` : '',
-  ].filter(Boolean).join('');
-
-  const metaCells = [
-    cv.cdrl          ? `<div class="trp-meta-cell"><span class="trp-meta-label">CDRL</span><span class="trp-meta-val">${escapeHtml(row.cdrl_number||'') || empty}</span></div>` : '',
-    cv.status        ? `<div class="trp-meta-cell"><span class="trp-meta-label">Status</span><span class="trp-meta-val">${_trpStatusControlHTML(row, canManage)}</span></div>` : '',
-    cv.phase         ? `<div class="trp-meta-cell"><span class="trp-meta-label">Phase</span><span class="trp-meta-val trp-tag-stack">${tags(row.phases)}</span></div>` : '',
-    cv.location      ? `<div class="trp-meta-cell"><span class="trp-meta-label">Location</span><span class="trp-meta-val trp-tag-stack">${tags(row.locations)}</span></div>` : '',
-    cv.subsystem     ? `<div class="trp-meta-cell"><span class="trp-meta-label">Subsystem</span><span class="trp-meta-val trp-tag-stack">${tags(row.subsystems)}</span></div>` : '',
-    cv.dateSubmitted ? `<div class="trp-meta-cell"><span class="trp-meta-label">Submitted</span><span class="trp-meta-val">${row.date_submitted ? _dayFmt(row.date_submitted) : empty}</span></div>` : '',
-    cv.dateReceived  ? `<div class="trp-meta-cell"><span class="trp-meta-label">Received</span><span class="trp-meta-val">${row.date_received  ? _dayFmt(row.date_received)  : empty}</span></div>` : '',
-    cv.notes         ? `<div class="trp-meta-cell trp-meta-cell-wide"><span class="trp-meta-label">Notes</span><span class="trp-meta-val">${escapeHtml(row.notes||'') || empty}</span></div>` : '',
-  ].filter(Boolean).join('');
 
   return `
-    <div class="trp-report-card ${expanded ? 'is-expanded' : ''}">
-      <div class="trp-card-header">
-        <div class="trp-card-title-block">
-          <div class="tr-report-title trp-report-name" title="${escapeHtml(row.title)}">${escapeHtml(row.title)}</div>
-          <div class="trp-report-meta-line">
-            <span class="tag">Rev ${escapeHtml(row.revision || 'A')}</span>
-            <span style="color:var(--gray-500);font-size:12px;">${row.activityCount} activit${row.activityCount===1?'y':'ies'} · ${row.testCaseCount} test case${row.testCaseCount===1?'':'s'}</span>
-            ${row.isDerived ? `<span class="tag" style="background:var(--warning-bg,#fffaeb);color:var(--warning,#b54708);border:1px solid #fedf89;">From TI</span>` : ''}
+    <div class="v2-list-row ${expanded ? 'is-expanded' : ''}" onclick="_trpToggleLinks('${uid}')">
+      <div class="trp-report">
+        <div class="report-title-block">
+          <h3 class="report-title">
+            ${escapeHtml(row.title)}
+            ${row.isDerived ? `<span class="v2-id-chip" style="background:#fff7ed;color:#c8741a;border-color:rgba(200,116,26,0.22);font-size:9.5px;">From TI</span>` : ''}
+          </h3>
+          <div class="v2-meta-line">
+            ${row.cdrl_number ? `<span class="v2-cdrl-chip">${escapeHtml(row.cdrl_number)}</span>` : ''}
+            <span class="v2-id-chip">Rev ${escapeHtml(row.revision || 'A')}</span>
+            <span class="sep">·</span>
+            <span>${row.activityCount} activit${row.activityCount===1?'y':'ies'} · ${row.testCaseCount} test case${row.testCaseCount===1?'':'s'}</span>
+            ${row.date_submitted ? `<span class="sep">·</span><span>Submitted ${_dayFmt(row.date_submitted)}</span>` : ''}
+            ${row.subsystem ? `<span class="sep">·</span><span class="kv"><span class="k">Sub</span><span class="v">${escapeHtml(row.subsystem)}</span></span>` : ''}
           </div>
         </div>
-        <div class="tr-report-actions trp-card-actions">${actions}</div>
+
+        <div class="trp-status-block">
+          <div class="status-top">
+            <span class="v2-pill ${pillTone}">${escapeHtml(row.status || '—')}</span>
+            <span class="status-count">${closedTestCount} / ${row.testCaseCount}</span>
+          </div>
+          <div class="v2-bar-track"><div class="v2-bar-fill ${barTone}" style="width:${pct}%;"></div></div>
+          <div class="status-sub">${pct}% closed</div>
+        </div>
+
+        <div class="trp-actions" onclick="event.stopPropagation()">
+          <div class="action-primary-row">
+            ${row.isDerived && canManage
+              ? `<button class="v2-btn-mini primary" onclick="_trpCreateDerivedReport('${uid}')">↻ Sync</button>`
+              : `<button class="v2-btn-mini primary" onclick="openExtractReportModal('${uid}')" ${canExtract?'':'disabled'} title="${escapeHtml(extractTip)}">📄 Extract</button>`}
+            <button class="v2-btn-mini" onclick="_trpToggleLinks('${uid}')" style="width:34px;justify-content:center;" title="${expanded?'Collapse':'Expand'} links">${expanded?'▲':'▼'}</button>
+          </div>
+          ${canManage ? `
+            <div class="action-row">
+              <button class="v2-btn-mini" onclick="openLinkActivityModal('${uid}')">＋ Link</button>
+              <button class="v2-btn-mini" onclick="openEditTestReportModal('${uid}')">${row.isDerived?'Create':'Edit'}</button>
+              ${!row.isDerived ? `<button class="v2-btn-mini" onclick="openAddRevisionModal('${escapeHtml(row.id)}')">＋ Rev</button>` : ''}
+            </div>
+            ${(histCount || !row.isDerived) ? `
+              <div class="action-row">
+                ${histCount ? `<button class="v2-btn-mini" onclick="openRevisionHistoryModal('${uid}')" title="${histCount} prior revision${histCount===1?'':'s'}">History (${histCount})</button>` : ''}
+                ${!row.isDerived ? `<button class="v2-btn-mini danger" onclick="_trpDeleteReport('${uid}')" title="Delete report">🗑</button>` : ''}
+              </div>` : ''}
+          ` : ''}
+        </div>
       </div>
-      ${metaCells ? `<div class="trp-meta-grid">${metaCells}</div>` : ''}
-      ${expanded ? `<div class="trp-details-panel">${_trpLinkedActivitiesHTML(row, canManage)}</div>` : ''}
+
+      ${expanded ? `<div class="trp-expanded-panel">${_trpLinkedActivitiesHTML(row, canManage)}</div>` : ''}
     </div>
   `;
 }
@@ -9460,7 +9626,44 @@ _colRegister('tr', [
 
 function renderTestRegister() {
   const root = document.getElementById('test-register-content');
+  const heroEl = document.getElementById('test-register-hero-content');
   if (!root || !currentRoleUser) return;
+
+  // Pre-compute hero stats from the full activity set (independent of filters)
+  const _allActs = _amGetActivities();
+  const _filteredCount = (function() {
+    // Mirror the filter logic in _testRegisterHTML for "Shown" count
+    const userSub = currentRoleUser?.subsystem || '';
+    let arr = _allActs.filter(a => {
+      const st = _amComputeStatus(a);
+      return (!_amFilters.phase     || a.phase     === _amFilters.phase)     &&
+             (!_amFilters.location  || a.location  === _amFilters.location)  &&
+             (!_amFilters.subsystem || a.subsystem === _amFilters.subsystem || (userSub && a.subsystem === userSub)) &&
+             (!_amFilters.status    || st          === _amFilters.status);
+    });
+    return arr.length;
+  })();
+  const _open    = _allActs.filter(a => _amComputeStatus(a) === 'Open').length;
+  const _partial = _allActs.filter(a => _amComputeStatus(a) === 'Partial Completion').length;
+  const _closed  = _allActs.filter(a => _amComputeStatus(a) === 'Closed').length;
+  const _ltAll = _latestTI();
+  const _ltWs  = _wgtStat(_ltAll);
+  const _overallPct = _ltWs.totalW > 0 ? Math.round((_ltWs.completeW / _ltWs.totalW) * 100) : 0;
+
+  if (heroEl && !_amDrilldownKey) heroEl.innerHTML = renderPageHero({
+    eyebrow: 'Field · Operations',
+    title: 'Test Register',
+    sub: `${_allActs.length} activities · ${TI.length} test cases across all phases and locations`,
+    role: { label: 'Field', tone: 'field' },
+    stats: [
+      { label: 'Shown',   value: _filteredCount },
+      { label: 'Open',    value: _open,    tone: _open ? 'red' : 'muted' },
+      { label: 'Partial', value: _partial, tone: _partial ? 'amber' : 'muted' },
+      { label: 'Closed',  value: _closed,  tone: 'good' },
+      { label: '% Done',  value: _overallPct + '%', tone: 'blue' },
+    ],
+  });
+
   root.innerHTML = _testRegisterHTML();
   _trInitModernUI();
 }
@@ -9596,76 +9799,68 @@ function _testRegisterHTML() {
 
   return `
     <div class="admin-section tr-register-shell">
-      <!-- Header + toolbar -->
-      <div class="tr-modern-header">
-        <div class="tr-modern-header-main">
-          <div class="role-badge role-field-badge">Operations Register</div>
-          <div class="admin-section-title">Test Register</div>
-          <div class="tr-header-stats">
-            <span><b>${filtered.length}</b> shown</span>
-            <span><b>${openCount}</b> open</span>
-            ${partialCount ? `<span style="color:#d97706;"><b>${partialCount}</b> partial</span>` : ''}
-            <span><b>${closedCount}</b> closed</span>
-            ${futureCount ? `<span><b>${futureCount}</b> future</span>` : ''}
-            <span><b>${overallPct}%</b> complete</span>
-          </div>
-          <p class="section-sub">${all.length} activities · ${TI.length} test cases across all phases and locations</p>
-        </div>
-        ${isAdmin ? `
-        <div class="tr-modern-toolbar">
-          <label style="cursor:pointer;">
-            <input type="file" accept=".csv" onchange="handleImportFile(this)" style="display:none">
-            <div class="admin-action-btn" style="display:inline-block;cursor:pointer;background:var(--gray-700);">📂 Import Test Items</div>
-          </label>
-          <button class="form-secondary" onclick="downloadImportTemplate()">↓ CSV Template</button>
 
-        </div>` : ''}
+      <!-- Status chips -->
+      <div class="v2-chips-row">
+        <span class="v2-chip ${!_amFilters.status ? 'active' : ''}"
+              onclick="_amSetFilter('status','')">All <span class="n">${all.length}</span></span>
+        ${[['Open','is-bad','Open'],['Partial Completion','is-warn','Partial'],['Closed','is-good','Closed'],['Future Test','is-muted','Future']].map(([s,tone,label]) => {
+          const count = all.filter(a => _amComputeStatus(a) === s).length;
+          if (!count && _amFilters.status !== s) return '';
+          return `<span class="v2-chip ${tone} ${_amFilters.status === s ? 'active' : ''}"
+                        onclick="_amSetFilter('status','${s}')">
+            <span class="dot"></span>${label} <span class="n">${count}</span>
+          </span>`;
+        }).join('')}
+        <span class="right">
+          ${isAdmin ? `
+            <label style="cursor:pointer;display:inline-flex;">
+              <input type="file" accept=".csv" onchange="handleImportFile(this)" style="display:none">
+              <span class="v2-btn-ghost">📂 Import Test Items</span>
+            </label>
+            <button class="v2-btn-ghost" onclick="downloadImportTemplate()">↓ CSV Template</button>
+          ` : ''}
+        </span>
       </div>
 
-      <!-- Filters + Fuse.js search -->
-      <div class="am-filter-bar tr-filter-toolbar">
-        <!-- Fuse.js fuzzy search -->
-        <div class="tr-search-wrap">
-          <span class="tr-search-icon">🔍</span>
-          <input class="tr-search-input" type="text" placeholder="Search activities…"
+      <!-- Search + filters -->
+      <div class="v2-filter-row">
+        <div class="v2-search-wrap">
+          <span class="icon">🔍</span>
+          <input type="text" placeholder="Search activities…"
             value="${escapeHtml(_amFilters.search||'')}"
             oninput="clearTimeout(window._trSearchTimer);window._trSearchTimer=setTimeout(()=>_amSetFilter('search',this.value),260)">
         </div>
-        <!-- Tom Select filter dropdowns (IDs required for _trInitTomSelect) -->
-        <select class="filter-select" id="tr-filter-phase" onchange="_amSetFilter('phase',this.value)">
+        <select id="tr-filter-phase" onchange="_amSetFilter('phase',this.value)">
           <option value="">All Phases</option>
           ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_amFilters.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
         </select>
-        <select class="filter-select" id="tr-filter-location" onchange="_amSetFilter('location',this.value)">
+        <select id="tr-filter-location" onchange="_amSetFilter('location',this.value)">
           <option value="">All Locations</option>
           ${locations.map(l=>`<option value="${escapeHtml(l)}" ${_amFilters.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
         </select>
         ${userSub
           ? `<span class="filter-locked-tag" data-tippy-content="Auto-filtered to your assigned subsystem">📌 ${escapeHtml(userSub)}</span>`
-          : `<select class="filter-select" id="tr-filter-subsystem" onchange="_amSetFilter('subsystem',this.value)">
+          : `<select id="tr-filter-subsystem" onchange="_amSetFilter('subsystem',this.value)">
               <option value="">All Subsystems</option>
               ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_amFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
             </select>`}
-        <select class="filter-select" id="tr-filter-status" onchange="_amSetFilter('status',this.value)">
-          <option value="">All Statuses</option>
-          ${actStatuses.map(s=>`<option value="${s}" ${_amFilters.status===s?'selected':''}>${s}</option>`).join('')}
-        </select>
-        ${hasFilters ? `<button class="filter-clear" onclick="_amClearFilters()">✕ Reset</button>` : ''}
-        <span style="margin-left:auto;font-size:12px;color:var(--gray-500);">${filtered.length} of ${all.length} shown</span>
+        ${hasFilters ? `<button class="v2-btn-mini" onclick="_amClearFilters()">✕ Reset</button>` : ''}
+        <span class="count"><b>${filtered.length}</b> of ${all.length}</span>
       </div>
 
       <!-- Bulk action bar (admin only) -->
       ${isAdmin && selCount > 0 ? `
-        <div class="am-bulk-bar">
-          <span><b>${selCount}</b> activit${selCount===1?'y':'ies'} selected</span>
-          ${hasNonFuture  ? `<button class="admin-action-btn" style="background:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
-          ${hasFutureTest ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
-          <button class="admin-action-btn" style="background:#dc2626;" onclick="_amBulkDeleteActivities()">🗑 Delete Selected</button>
-          <button class="btn-ghost-light" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_amClearSelection()">Clear selection</button>
+        <div class="v2-bulk-bar">
+          <span class="count">${selCount} activit${selCount===1?'y':'ies'} selected</span>
+          ${hasNonFuture  ? `<button class="v2-btn-mini primary" style="background:#5b21b6;border-color:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
+          ${hasFutureTest ? `<button class="v2-btn-mini primary" style="background:#15803d;border-color:#15803d;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
+          <button class="v2-btn-mini danger" onclick="_amBulkDeleteActivities()">🗑 Delete</button>
+          <button class="clear" onclick="_amClearSelection()">✕ Clear selection</button>
         </div>` : ''}
 
       <!-- Main table -->
-      <div class="data-card tr-register-table-card">
+      <div class="data-card tr-register-table-card" style="border-radius:0;border-left:0;border-right:0;">
         <div class="table-wrap">
           <table class="data-table">
             <thead>
@@ -10011,40 +10206,65 @@ function _amDrilldownHTML(key) {
   // Use sortedViewItems for child lookups so child order is also consistent
   const _sortedViewItemsRef = sortedViewItems;
 
+  const pillTone = ({Closed:'is-good','Partial Completion':'is-warn',Open:'is-bad','Future Test':'is-muted'})[st]||'is-muted';
+  const barTone = pct === 100 ? '' : pct > 0 ? 'is-info' : 'is-muted';
+
   return `
     <div class="admin-section tr-drilldown-shell">
       ${_trEditMode ? `<div class="tr-edit-banner">Edit Mode Active</div>` : ''}
-      <div class="tr-page-header">
-        <div class="tr-page-header-grid">
-          <div class="tr-page-header-main">
-            <button class="form-secondary" style="font-size:12px;margin-bottom:12px;" onclick="_amCloseDrilldown()">← Back to Test Register</button>
-            <div class="tr-drilldown-title">${escapeHtml(act.activity)}</div>
-            <div style="font-size:13px;color:var(--gray-600);margin-top:6px;">
-              ${escapeHtml(act.subsystem)} · ${escapeHtml(act.location)} · ${escapeHtml(act.phase)}
-              ${act.testReport ? ` · Test Report CDRL: ${escapeHtml(act.testReport)}` : ''}
+
+      <!-- Compact activity strip -->
+      <div class="act-strip">
+        <button class="back-btn" onclick="_amCloseDrilldown()">← Back to Test Register</button>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:32px;flex-wrap:wrap;">
+          <div style="min-width:0;flex:1;">
+            <div class="v2-meta-line" style="margin-bottom:6px;">
+              <span>${escapeHtml(act.subsystem)}</span>
+              <span class="sep">·</span>
+              <span>${escapeHtml(act.location)}</span>
+              <span class="sep">·</span>
+              <span>${escapeHtml(act.phase)}</span>
+              ${act.testReport ? `<span class="v2-cdrl-chip" style="margin-left:4px;">CDRL ${escapeHtml(act.testReport)}</span>` : ''}
             </div>
-            ${act.testReport ? `<div style="font-size:12px;color:var(--gray-600);margin-top:4px;">📄 Test Report CDRL: ${escapeHtml(act.testReport)}</div>` : ''}
-            ${act.futureTestReason ? `<div style="font-size:12px;color:#5b21b6;margin-top:4px;">Future Test Reason: ${escapeHtml(act.futureTestReason)}</div>` : ''}
+            <h1 class="act-title">${escapeHtml(act.activity)}</h1>
+            ${act.futureTestReason ? `<div class="future-reason">Future Test Reason: ${escapeHtml(act.futureTestReason)}</div>` : ''}
           </div>
-          <div class="tr-page-actions">
-            ${_amStatusBadge(st)}
-            <div class="am-progress-wrap" style="min-width:180px;">
-              <div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;background:${pct===100?'var(--good)':'var(--info)'}"></div></div>
-              <span class="am-progress-label">${done}/${total}</span>
+          <div style="display:flex;align-items:center;gap:16px;flex-shrink:0;flex-wrap:wrap;">
+            <div style="display:flex;flex-direction:column;gap:6px;min-width:200px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                <span class="v2-pill ${pillTone}">${escapeHtml(st)}</span>
+                <span style="font-family:var(--f-mono);font-size:12px;font-weight:600;color:var(--near-black);">${done} / ${total}</span>
+              </div>
+              <div class="v2-bar-track"><div class="v2-bar-fill ${barTone}" style="width:${pct}%;"></div></div>
             </div>
-            <button class="${_trBulkMode?'admin-action-btn':'form-secondary'}" style="font-size:12px;" onclick="_trToggleBulkEdit()">${_trBulkMode?'Bulk Edit On':'Bulk Edit'}</button>
-            ${isAdmin ? (_trEditMode ? `<button class="form-secondary" style="font-size:12px;" onclick="_trAddSection()">+ Add Test Section</button><button class="form-secondary" style="font-size:12px;" onclick="_trCancelEdit()">Cancel</button><button class="admin-action-btn" style="font-size:12px;" onclick="_trSaveEdit('${escapeHtml(key)}')">Save</button>` : `<button class="admin-action-btn" style="font-size:12px;" onclick="_trStartEdit('${escapeHtml(key)}')">Edit</button>`) : ''}
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="v2-btn-ghost" onclick="_trToggleBulkEdit()">${_trBulkMode?'Bulk Edit On':'Bulk Edit'}</button>
+              ${isAdmin ? (_trEditMode
+                ? `<button class="v2-btn-ghost" onclick="_trAddSection()">＋ Section</button>
+                   <button class="v2-btn-ghost" onclick="_trCancelEdit()">Cancel</button>
+                   <button class="v2-btn-primary" onclick="_trSaveEdit('${escapeHtml(key)}')">Save</button>`
+                : `<button class="v2-btn-primary" onclick="_trStartEdit('${escapeHtml(key)}')">Edit</button>`) : ''}
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="am-filter-bar" style="padding:6px 0 2px;gap:8px;">
-        <select class="filter-select" onchange="_trSetDrillStatusFilter(this.value)" title="Filter by status">
-          <option value="">All Statuses</option>
-          ${drillStatusOptions.map(s => `<option value="${escapeHtml(s)}" ${_trDrillStatusFilter===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
-        </select>
-        ${_trDrillStatusFilter ? `<button class="filter-clear" onclick="_trSetDrillStatusFilter('')">Reset</button>` : ''}
-        <span style="font-size:12px;color:var(--gray-500);margin-left:auto;">${drillFiltered.length} of ${viewItems.length} test case${viewItems.length===1?'':'s'}</span>
+      <!-- Status chips (drilldown-level filter) -->
+      <div class="v2-chips-row">
+        <span class="v2-chip ${!_trDrillStatusFilter ? 'active' : ''}"
+              onclick="_trSetDrillStatusFilter('')">All <span class="n">${viewItems.length}</span></span>
+        ${[['Pass','is-good'],['Fail','is-bad'],['Blocked','is-warn'],['In Progress','is-info'],['Not Started','is-muted'],['Not Applicable','is-muted'],['Future Test','is-muted']]
+          .map(([s, tone]) => {
+            const count = viewItems.filter(r => (legacyMap[r.Status]||r.Status||'Not Started') === s).length;
+            if (!count && _trDrillStatusFilter !== s) return '';
+            return `<span class="v2-chip ${tone} ${_trDrillStatusFilter === s ? 'active' : ''}"
+                          onclick="_trSetDrillStatusFilter('${s}')">
+              <span class="dot"></span>${s} <span class="n">${count}</span>
+            </span>`;
+          }).join('')}
+        <span class="right" style="font-family:var(--f-mono);font-size:11px;color:var(--gray-600);letter-spacing:0.06em;text-transform:uppercase;">
+          <b>${drillFiltered.length} of ${viewItems.length}</b> test cases
+        </span>
       </div>
 
       ${Object.entries(tpMap).map(([tp, tpItems]) => {
@@ -10056,18 +10276,21 @@ function _amDrilldownHTML(key) {
         const tpDispProc = tpProc || '(No Procedure)';
         const dropKey   = escapeHtml(tp); // keep composite key for drag/drop so rename keeps section context
         return `
-        <div class="tr-procedure-card" ${_trEditMode && isAdmin ? `ondragover="event.preventDefault()" ondrop="_trDropCase('${dropKey}',null)"` : ''}>
-          <div class="tr-procedure-head">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-              ${_trBulkMode ? `<input type="checkbox" ${tpItems.length && tpItems.every(r => _trSelected.has(String(r.TestID))) ? 'checked' : ''} onchange="_trSelectSection('${dropKey}',this.checked)" title="Select All in Section">` : ''}
-              <div class="tr-procedure-title">
-                ${tpSecName ? `<span style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);display:block;margin-bottom:2px;">${escapeHtml(tpSecName)}</span>` : ''}
-                ${_trEditMode && isAdmin
-                  ? `<input class="form-input" style="font-weight:700;min-width:320px;" value="${escapeHtml(tpProc)}" onchange="_trRenameProcedure('${dropKey}',this.value)">`
-                  : escapeHtml(tpDispProc)}
+        <div class="proc-section tr-procedure-card" ${_trEditMode && isAdmin ? `ondragover="event.preventDefault()" ondrop="_trDropCase('${dropKey}',null)"` : ''}>
+          <div class="proc-head">
+            <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1;">
+              ${_trBulkMode ? `<input type="checkbox" ${tpItems.length && tpItems.every(r => _trSelected.has(String(r.TestID))) ? 'checked' : ''} onchange="_trSelectSection('${dropKey}',this.checked)" title="Select All in Section" style="margin-top:14px;">` : ''}
+              <div style="display:flex;flex-direction:column;min-width:0;">
+                <span class="proc-label">Procedure</span>
+                <h3>
+                  ${tpSecName ? `<span class="proc-subhead">${escapeHtml(tpSecName)}</span>` : ''}
+                  ${_trEditMode && isAdmin
+                    ? `<input class="form-input" style="font-weight:600;min-width:320px;font-size:16px;" value="${escapeHtml(tpProc)}" onchange="_trRenameProcedure('${dropKey}',this.value)">`
+                    : escapeHtml(tpDispProc)}
+                </h3>
               </div>
             </div>
-            <div class="section-sub">${tpItems.length} test case${tpItems.length===1?'':'s'}</div>
+            <div class="proc-meta"><b>${tpItems.length}</b> test case${tpItems.length===1?'':'s'}</div>
           </div>
           <div class="table-wrap" style="max-height:none;">
             <table class="data-table tr-case-table">
@@ -10098,11 +10321,15 @@ function _amDrilldownHTML(key) {
                   const reasonVal = cur === 'Fail' ? (r.FailedReason||'') : (r.BlockedReason||'');
                   const tid = escapeHtml(String(r.TestID));
                   const domId = encodeURIComponent(String(r.TestID));
+                  const selToneClass = ({Pass:'is-pass', Fail:'is-fail', Blocked:'is-block',
+                                          'In Progress':'is-inprog', 'Not Applicable':'is-na',
+                                          'Future Test':'is-future'})[cur] || '';
+                  const isFailRow = cur === 'Fail';
                   return `
-                    <tr ${_trEditMode && isAdmin ? `draggable="true" ondragstart="_trDragStart('${tid}')" ondragover="event.preventDefault()" ondrop="_trDropCase('${dropKey}','${tid}')"` : ''}>
+                    <tr ${isFailRow ? 'class="is-fail"' : ''} ${_trEditMode && isAdmin ? `draggable="true" ondragstart="_trDragStart('${tid}')" ondragover="event.preventDefault()" ondrop="_trDropCase('${dropKey}','${tid}')"` : ''}>
                       ${_trBulkMode ? `<td><input type="checkbox" ${_trSelected.has(String(r.TestID))?'checked':''} onchange="_trToggleSelect('${tid}',this.checked)"></td>` : ''}
                       ${_trEditMode && isAdmin ? `<td style="cursor:grab;color:var(--gray-400);font-size:14px;">☰</td>` : ''}
-                      <td style="font-size:11px;font-family:monospace;min-width:140px;">${_trEditMode && isAdmin ? `<input class="form-input" style="font-size:11px;font-family:monospace;min-width:120px;" value="${escapeHtml(r.TestCaseCode||'')}" onchange="_trDraftChange('${tid}','TestCaseCode',this.value)">` : escapeHtml(r.TestCaseCode||r.TestID||'—')}</td>
+                      <td style="min-width:140px;">${_trEditMode && isAdmin ? `<input class="form-input" style="font-size:11px;font-family:var(--f-mono);min-width:120px;" value="${escapeHtml(r.TestCaseCode||'')}" onchange="_trDraftChange('${tid}','TestCaseCode',this.value)">` : `<span class="v2-id-chip">${escapeHtml(r.TestCaseCode||r.TestID||'—')}</span>`}</td>
                       <td>
                         <div style="display:flex;align-items:center;gap:8px;">
                           <div style="font-weight:500;font-size:13px;flex:1;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestName||'')}" onchange="_trDraftChange('${tid}','TestName',this.value)">` : escapeHtml(r.TestName||'—')}</div>
@@ -10113,11 +10340,11 @@ function _amDrilldownHTML(key) {
                       </td>
                       <td>
                         ${['admin','field_engineer'].includes(currentRoleUser?.role) ? `
-                          <select class="form-input mx-status-select" style="font-size:12px;padding:4px 6px;" onchange="_mxStatusChange('${tid}',this.value,this)">
+                          <select class="form-input mx-status-select status-select ${selToneClass}" style="font-size:12px;padding:4px 6px;" onchange="_mxStatusChange('${tid}',this.value,this)">
                             ${statuses.map(s=>`<option value="${s}" ${cur===s?'selected':''}>${s}</option>`).join('')}
                           </select>
                           <div id="mx-reason-${domId}" class="mx-reason-wrap" style="${showReason?'':'display:none;'}">
-                            <input type="text" id="mx-ri-${domId}" class="form-input mx-reason-input" style="font-size:11px;padding:3px 6px;margin-top:4px;" placeholder="${cur==='Fail'?'Failure reason...':'Blocked reason...'}" value="${escapeHtml(reasonVal)}" oninput="_mxSaveReason('${tid}',this.value)">
+                            <textarea id="mx-ri-${domId}" class="form-input reason-input mx-reason-input" rows="2" placeholder="${cur==='Fail'?'Failure reason...':'Blocked reason...'}" oninput="_mxSaveReason('${tid}',this.value)">${escapeHtml(reasonVal)}</textarea>
                           </div>
                           <div id="mx-ft-reason-${domId}" class="mx-reason-wrap" style="${cur==='Future Test'?'':'display:none;'}">
                             <select id="mx-ft-cat-${domId}" class="form-input" style="font-size:11px;padding:3px 6px;margin-top:4px;" onchange="_mxSaveFtReason('${tid}')">
@@ -10126,21 +10353,21 @@ function _amDrilldownHTML(key) {
                             </select>
                             <input type="text" id="mx-ft-note-${domId}" class="form-input" style="font-size:11px;padding:3px 6px;margin-top:4px;" placeholder="Additional details…" value="${escapeHtml((r.FutureTestReason||'').includes('|') ? (r.FutureTestReason||'').split('|').slice(1).join('|').trim() : '')}" onblur="_mxSaveFtReason('${tid}')">
                           </div>
-                        ` : `<span class="badge ${({'Pass':'badge-passed','Fail':'badge-failed','Blocked':'badge-warn','Not Applicable':'badge-notstarted','In Progress':'badge-inprog','Future Test':'badge-futuretest'}[cur]||'badge-notstarted')}">${escapeHtml(cur)}</span>`}
+                        ` : `<span class="v2-pill ${({'Pass':'is-good','Fail':'is-bad','Blocked':'is-warn','Not Applicable':'is-muted','In Progress':'is-info','Future Test':'is-purple'}[cur]||'is-muted')}">${escapeHtml(cur)}</span>`}
                         <div id="punch-actions-${domId}" style="margin-top:6px;display:${cur==='Fail'?'flex':'none'};flex-direction:column;gap:4px;">
                           <div style="display:flex;gap:4px;">
-                            <button onclick="openPunchFromTestCase('${tid}')" style="flex:1;font-size:11px;padding:4px 6px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:5px;cursor:pointer;font-weight:600;">📋 Create Punch</button>
-                            <button onclick="openLinkPunchModal('${tid}')" style="flex:1;font-size:11px;padding:4px 6px;background:var(--white);border:1px solid var(--gray-300);color:var(--gray-700);border-radius:5px;cursor:pointer;font-weight:600;">🔗 Link Existing</button>
+                            <button class="v2-btn-mini" style="background:#fef2f2;border-color:rgba(230,0,18,0.22);color:var(--hitachi-red);flex:1;justify-content:center;" onclick="openPunchFromTestCase('${tid}')">📋 Create Punch</button>
+                            <button class="v2-btn-mini" style="flex:1;justify-content:center;" onclick="openLinkPunchModal('${tid}')">🔗 Link Existing</button>
                           </div>
                           <div id="punch-chips-${domId}">${_punchLinksForTestHTML(String(r.TestID))}</div>
                         </div>
                       </td>
                       <td>
-                        <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…" value="${escapeHtml(r.Notes||'')}" onblur="_mxSaveNotes('${tid}',this.value)">
-                        ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<button class="form-secondary" style="font-size:11px;padding:2px 6px;margin-top:4px;" onclick="_trAddGenericChild('${tid}')">＋ Asset</button>` : ''}
+                        <textarea class="form-input notes-input" rows="2" placeholder="Notes…" onblur="_mxSaveNotes('${tid}',this.value)">${escapeHtml(r.Notes||'')}</textarea>
+                        ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<button class="v2-btn-mini" style="margin-top:4px;" onclick="_trAddGenericChild('${tid}')">＋ Asset</button>` : ''}
                         <span id="regcell-${domId}">${_regressionCellHTML(r)}</span>
                       </td>
-                      ${_trEditMode && isAdmin ? `<td style="white-space:nowrap;"><button class="form-secondary" style="font-size:13px;padding:4px 7px;" onclick="_trCopyCase('${tid}')">⧉</button> <button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteCase('${tid}')" data-tippy-content="Delete test case">🗑</button></td>` : ''}
+                      ${_trEditMode && isAdmin ? `<td style="white-space:nowrap;"><button class="v2-btn-mini" onclick="_trCopyCase('${tid}')" title="Copy">⧉</button> <button class="v2-btn-mini danger" onclick="_trDeleteCase('${tid}')" data-tippy-content="Delete test case">🗑</button></td>` : ''}
                     </tr>
                   `;
                 }).join('')}
@@ -15107,115 +15334,179 @@ async function deleteSwConfig(id) {
 // RMA — Return Merchandise Authorization
 // ==========================================================================
 
+// V2 status chips for RMA Tracker
+const RMA_STATUS_CHIPS = [
+  ['Open',                'Open',                'is-info'],
+  ['Pending Replacement', 'Pending',             'is-warn'],
+  ['Shipped',             'Shipped',             'is-purple'],
+  ['Awaiting Return',     'Awaiting',            'is-pink'],
+  ['Closed',              'Closed',              'is-good'],
+  ['Cancelled',           'Cancelled',           'is-muted'],
+];
+
+function _rmaPillTone(s) {
+  return ({
+    'Open': 'is-info',
+    'Pending Replacement': 'is-warn',
+    'Shipped': 'is-purple',
+    'Awaiting Return': 'is-pink',
+    'Closed': 'is-good',
+    'Cancelled': 'is-muted',
+  })[s] || 'is-muted';
+}
+
 function renderRMA() {
   const root = document.getElementById('rma-content');
+  const heroEl = document.getElementById('rma-hero-content');
   if (!root || !currentRoleUser) return;
+
+  // Compute hero stats
+  const openRMAs = RMAS.filter(r => r.status !== 'Closed' && r.status !== 'Cancelled');
+  const closedRMAs = RMAS.filter(r => r.status === 'Closed');
+  const now = Date.now();
+  const avgDays = openRMAs.length
+    ? Math.round(openRMAs.reduce((sum, r) => sum + (now - new Date(r.created_at).getTime()) / 86400000, 0) / openRMAs.length)
+    : 0;
+  const openLocs = new Set(openRMAs.map(r => r.location).filter(Boolean)).size;
+
+  if (heroEl) heroEl.innerHTML = renderPageHero({
+    eyebrow: 'Field · RMA',
+    title: 'RMA Tracker',
+    sub: 'Return Merchandise Authorization — field defect & replacement tracking',
+    role: { label: 'Field', tone: 'field' },
+    stats: [
+      { label: 'Total',     value: RMAS.length },
+      { label: 'Open',      value: openRMAs.length, tone: openRMAs.length ? 'blue' : 'muted' },
+      { label: 'Avg Days',  value: avgDays + 'd', tone: avgDays > 30 ? 'amber' : 'muted' },
+      { label: 'Locations', value: openLocs, tone: openLocs ? 'blue' : 'muted' },
+      { label: 'Closed',    value: closedRMAs.length, tone: 'good' },
+    ],
+  });
+
   _htmlPreserveFocus(root, _rmaPageHTML());
   setTimeout(_initPageLibraries, 80);
 }
 
+// Legacy badge kept for any callers outside the V2 page (audit/CSV preview, etc.)
 function _rmaStatusColor(s) {
-  return ({ 'Open':'#2563eb','Pending Replacement':'#d97706','Shipped':'#7c3aed',
-            'Awaiting Return':'#db2777','Closed':'#16a34a','Cancelled':'#6b7280' })[s] || '#374151';
+  return ({ 'Open':'#1d4eaf','Pending Replacement':'#c8741a','Shipped':'#6d28d9',
+            'Awaiting Return':'#db2777','Closed':'#15803d','Cancelled':'#777777' })[s] || '#374151';
 }
-
 function _rmaStatusBadge(s) {
-  const c = _rmaStatusColor(s);
-  return `<span style="display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700;background:${c}18;color:${c};border:1px solid ${c}40;">${escapeHtml(s||'—')}</span>`;
+  const tone = _rmaPillTone(s);
+  return `<span class="v2-pill ${tone}">${escapeHtml(s||'—')}</span>`;
 }
 
 function _rmaPageHTML() {
   const canEdit  = ['admin','field_engineer'].includes(currentRoleUser?.role);
-  const statuses = _fsCfg('rma_status').length ? _fsCfg('rma_status') : ['Open','Pending Replacement','Shipped','Awaiting Return','Closed','Cancelled'];
   const locOpts  = [...new Set(LOCS.filter(l => l.level === 2).map(l => l.name))].sort();
 
   const srch = (_rmaFilter.search || '').toLowerCase();
   const filtered = RMAS.filter(r => {
     if (_rmaFilter.status   && r.status   !== _rmaFilter.status)   return false;
-    if (_rmaFilter.location && r.location !== _rmaFilter.location)  return false;
-    if (srch && !`${r.rma_number} ${r.serial_number||''} ${r.manufacturer||''} ${r.location||''}`.toLowerCase().includes(srch)) return false;
+    if (_rmaFilter.location && r.location !== _rmaFilter.location) return false;
+    if (srch && !`${r.rma_number} ${r.serial_number||''} ${r.manufacturer||''} ${r.manufacturer_pn||''} ${r.material_description||''} ${r.location||''}`
+                  .toLowerCase().includes(srch)) return false;
     return true;
   });
 
-  const openRMAs = RMAS.filter(r => r.status !== 'Closed' && r.status !== 'Cancelled');
-  const now      = Date.now();
-  const avgDays  = openRMAs.length
-    ? Math.round(openRMAs.reduce((sum,r) => sum + (now - new Date(r.created_at).getTime()) / 86400000, 0) / openRMAs.length)
-    : 0;
-  const openLocs = new Set(openRMAs.map(r => r.location).filter(Boolean)).size;
+  return `
+    <!-- Status chips -->
+    <div class="v2-chips-row">
+      <span class="v2-chip ${!_rmaFilter.status ? 'active' : ''}"
+            onclick="_rmaFilter.status=''; renderRMA()">All <span class="n">${RMAS.length}</span></span>
+      ${RMA_STATUS_CHIPS.map(([val, label, tone]) => {
+        const count = RMAS.filter(r => r.status === val).length;
+        if (!count && _rmaFilter.status !== val) return '';
+        return `<span class="v2-chip ${tone} ${_rmaFilter.status === val ? 'active' : ''}"
+                      onclick="_rmaFilter.status='${escapeHtml(val)}'; renderRMA()">
+          <span class="dot"></span>${escapeHtml(label)} <span class="n">${count}</span>
+        </span>`;
+      }).join('')}
+      <span class="right">
+        <button class="v2-btn-ghost" onclick="_rmaCSVExport()">⬇ Export CSV</button>
+        ${canEdit ? `<button class="v2-btn-primary" onclick="openRMAModal(null)">＋ New RMA</button>` : ''}
+      </span>
+    </div>
 
-  const metCard = (val, label, sub, color) =>
-    `<div class="data-card" style="padding:20px;flex:1;min-width:140px;">` +
-    `<div style="font-size:28px;font-weight:700;color:${color};">${val}</div>` +
-    `<div style="font-size:13px;font-weight:600;color:var(--gray-700);margin-top:2px;">${label}</div>` +
-    (sub ? `<div style="font-size:11px;color:var(--gray-400);margin-top:3px;">${sub}</div>` : '') +
-    `</div>`;
+    <!-- Search + filters -->
+    <div class="v2-filter-row">
+      <div class="v2-search-wrap">
+        <span class="icon">🔍</span>
+        <input id="rma-search-input" type="text" value="${escapeHtml(_rmaFilter.search)}"
+               placeholder="Search RMA #, serial, manufacturer, P/N…"
+               oninput="_rmaFilter.search=this.value; renderRMA()">
+      </div>
+      <select onchange="_rmaFilter.location=this.value; renderRMA()">
+        <option value="">All Locations</option>
+        ${locOpts.map(l => `<option value="${escapeHtml(l)}" ${_rmaFilter.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
+      </select>
+      <span class="count"><b>${filtered.length}</b> of ${RMAS.length}</span>
+    </div>
 
-  const hasFilter = _rmaFilter.status || _rmaFilter.location || _rmaFilter.search;
+    <!-- RMA rows -->
+    <div class="v2-list">
+      ${filtered.length ? filtered.map(r => _rmaRowHTML(r, canEdit)).join('') : `
+        <div style="padding:48px;text-align:center;color:var(--gray-500);">
+          <div style="font-size:32px;margin-bottom:8px;">📋</div>
+          <div style="font-size:14px;">${RMAS.length ? 'No RMAs match your filters' : 'No RMAs yet — click ＋ New RMA to get started'}</div>
+        </div>
+      `}
+    </div>
+  `;
+}
 
-  let tableHTML = '';
-  if (filtered.length === 0) {
-    tableHTML = `<div style="padding:48px;text-align:center;color:var(--gray-400);">` +
-      `<div style="font-size:32px;margin-bottom:8px;">📋</div>` +
-      `<div style="font-size:14px;">${RMAS.length ? 'No RMAs match your filters' : 'No RMAs yet — click + New RMA to get started'}</div></div>`;
-  } else {
-    const rows = filtered.map(r => {
-      const actions = canEdit
-        ? `<button class="form-secondary" style="font-size:12px;padding:4px 10px;margin-left:4px;" onclick="openRMAModal('${r.id}')">✏ Edit</button>` +
-          `<button class="form-secondary" style="font-size:12px;padding:4px 10px;margin-left:4px;color:var(--bad);" onclick="deleteRMA('${r.id}')">🗑</button>`
-        : '';
-      return `<tr style="border-bottom:1px solid var(--gray-100);" onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">` +
-        `<td style="padding:12px 16px;"><div style="font-size:13px;font-weight:600;color:var(--gray-900);">${escapeHtml(r.rma_number)}</div>` +
-        (r.due_date ? `<div style="font-size:11px;color:var(--gray-400);margin-top:2px;">Due ${_fmtDate(r.due_date)}</div>` : '') + `</td>` +
-        `<td style="padding:12px 16px;">${_rmaStatusBadge(r.status)}</td>` +
-        `<td style="padding:12px 16px;font-size:13px;color:var(--gray-700);">${escapeHtml(r.location||'—')}</td>` +
-        `<td style="padding:12px 16px;"><div style="font-size:13px;color:var(--gray-800);">${escapeHtml(r.manufacturer||'—')}</div>` +
-        (r.serial_number ? `<div style="font-size:11px;font-family:monospace;color:var(--gray-400);margin-top:2px;">S/N: ${escapeHtml(r.serial_number)}</div>` : '') + `</td>` +
-        `<td style="padding:12px 16px;font-size:13px;color:var(--gray-600);">${escapeHtml(r.created_by||'—')}</td>` +
-        `<td style="padding:12px 16px;font-size:12px;color:var(--gray-500);white-space:nowrap;">${_fmtDate(r.created_at)}</td>` +
-        `<td style="padding:12px 16px;text-align:right;white-space:nowrap;">` +
-        `<button class="form-secondary" style="font-size:12px;padding:4px 10px;" onclick="_rmaViewModal('${r.id}')">👁 View</button>${actions}</td></tr>`;
-    }).join('');
-    tableHTML = `<table style="width:100%;border-collapse:collapse;">` +
-      `<thead><tr style="background:var(--gray-50);border-bottom:1px solid var(--gray-200);">` +
-      `<th style="padding:10px 16px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:600;text-transform:uppercase;white-space:nowrap;">RMA Number</th>` +
-      `<th style="padding:10px 16px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:600;text-transform:uppercase;">Status</th>` +
-      `<th style="padding:10px 16px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:600;text-transform:uppercase;">Location</th>` +
-      `<th style="padding:10px 16px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:600;text-transform:uppercase;">Manufacturer / S/N</th>` +
-      `<th style="padding:10px 16px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:600;text-transform:uppercase;">Created By</th>` +
-      `<th style="padding:10px 16px;text-align:left;font-size:11px;color:var(--gray-500);font-weight:600;text-transform:uppercase;white-space:nowrap;">Date</th>` +
-      `<th style="padding:10px 16px;text-align:right;font-size:11px;color:var(--gray-500);font-weight:600;text-transform:uppercase;">Actions</th>` +
-      `</tr></thead><tbody>${rows}</tbody></table>`;
-  }
+function _rmaRowHTML(r, canEdit) {
+  const now = Date.now();
+  const ageDays = r.created_at ? Math.floor((now - new Date(r.created_at).getTime()) / 86400000) : 0;
+  const isOverdue = r.due_date && new Date(r.due_date) < new Date() && r.status !== 'Closed' && r.status !== 'Cancelled';
+  const ageClass = ageDays > 30 ? 'is-hot' : ageDays > 14 ? 'is-warm' : '';
+  const pillTone = _rmaPillTone(r.status);
+  const idChipClass = isOverdue ? 'v2-id-chip is-critical' : 'v2-id-chip';
+  const dueClass = isOverdue ? 'is-bad' : (r.due_date && (new Date(r.due_date) - now) < 7*86400000) ? 'is-warm' : '';
 
-  return `<div style="padding:0;">` +
-    `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;">` +
-    `<div><h2 style="margin:0;font-size:20px;font-weight:700;">Return Merchandise Authorization</h2>` +
-    `<p style="margin:4px 0 0;font-size:13px;color:var(--gray-500);">Track equipment defects and field replacements</p></div>` +
-    `<div style="display:flex;gap:8px;flex-wrap:wrap;">` +
-    `<button class="form-secondary" style="font-size:12px;" onclick="_rmaCSVExport()">⬇ Export CSV</button>` +
-    (canEdit ? `<button class="admin-action-btn" onclick="openRMAModal(null)">+ New RMA</button>` : '') +
-    `</div></div>` +
-    `<div style="display:flex;gap:16px;margin-bottom:24px;flex-wrap:wrap;">` +
-    metCard(RMAS.length, 'Total RMAs', '', 'var(--gray-800)') +
-    metCard(openRMAs.length, 'Open', 'not closed or cancelled', '#2563eb') +
-    metCard(avgDays + 'd', 'Avg Days Open', 'for open RMAs', openRMAs.length ? '#d97706' : 'var(--gray-400)') +
-    metCard(openLocs, 'Locations', 'with open RMAs', openLocs ? '#7c3aed' : 'var(--gray-400)') +
-    `</div>` +
-    `<div class="data-card" style="padding:14px 16px;margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">` +
-    `<input id="rma-search-input" class="form-input" style="font-size:13px;min-width:200px;flex:1;" placeholder="🔍 Search RMA #, serial, manufacturer…" ` +
-    `value="${escapeHtml(_rmaFilter.search)}" oninput="_rmaFilter.search=this.value;renderRMA()">` +
-    `<select class="form-input" style="font-size:13px;" onchange="_rmaFilter.status=this.value;renderRMA()">` +
-    `<option value="">All Statuses</option>` +
-    statuses.map(st => `<option value="${escapeHtml(st)}" ${_rmaFilter.status===st?'selected':''}>${escapeHtml(st)}</option>`).join('') +
-    `</select>` +
-    `<select class="form-input" style="font-size:13px;" onchange="_rmaFilter.location=this.value;renderRMA()">` +
-    `<option value="">All Locations</option>` +
-    locOpts.map(l => `<option value="${escapeHtml(l)}" ${_rmaFilter.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('') +
-    `</select>` +
-    (hasFilter ? `<button class="form-secondary" style="font-size:12px;" onclick="_rmaFilter={status:'',location:'',search:''};renderRMA()">✕ Clear</button>` : '') +
-    `</div>` +
-    `<div class="data-card" style="padding:0;overflow:hidden;">${tableHTML}</div></div>`;
+  return `
+    <div class="v2-list-row ${isOverdue ? 'is-overdue' : ''}" onclick="_rmaViewModal('${r.id}')">
+      <div class="rma-row">
+        <div class="rma-id-block">
+          <span class="${idChipClass}">${escapeHtml(r.rma_number || '—')}</span>
+          <h3 class="rma-material" title="${escapeHtml(r.material_description || r.manufacturer || '')}">${escapeHtml(r.material_description || r.manufacturer || '—')}</h3>
+        </div>
+
+        <div class="rma-parts">
+          <span class="k">Mfr</span><span class="v">${escapeHtml(r.manufacturer || '—')}</span>
+          <span class="k">S/N</span><span class="v mono">${escapeHtml(r.serial_number || '—')}</span>
+          ${r.replacement_serial_number
+            ? `<span class="k">Repl</span><span class="v repl">→ ${escapeHtml(r.replacement_serial_number)}</span>`
+            : `<span class="k">Repl</span><span class="v" style="color:var(--gray-400);">—</span>`}
+          <span class="k">P/N</span><span class="v mono">${escapeHtml(r.manufacturer_pn || '—')}</span>
+        </div>
+
+        <div class="rma-status-block">
+          <span class="v2-pill ${pillTone}">${escapeHtml(r.status || '—')}</span>
+          <div class="v2-meta-line">
+            <span>${escapeHtml(r.location || '—')}</span>
+            <span class="sep">·</span>
+            <span>Qty <b>${r.quantity || 1}</b></span>
+          </div>
+          <div class="v2-meta-line">
+            ${r.due_date ? `<span class="${dueClass}">${isOverdue?'⚠ ':''}Due ${_fmtDate(r.due_date)}</span>` : ''}
+            <span class="v2-age-pill ${ageClass}">${ageDays}d ${r.status === 'Closed' ? 'cycle' : 'open'}</span>
+          </div>
+        </div>
+
+        <div class="rma-actions" onclick="event.stopPropagation()">
+          <button class="v2-btn-mini" onclick="_rmaViewModal('${r.id}')">👁 View</button>
+          ${canEdit ? `
+            <div style="display:flex;gap:4px;">
+              <button class="v2-btn-mini" onclick="openRMAModal('${r.id}')">✏ Edit</button>
+              <button class="v2-btn-mini danger" onclick="deleteRMA('${r.id}')" title="Delete">🗑</button>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function openRMAModal(rmaId) {
