@@ -165,7 +165,7 @@ create table if not exists track_devices (
   device_type                 text        not null
                               check (device_type in (
                                 'signal','virtual_signal',
-                                'switch','crossover',
+                                'switch',
                                 'axle_counter','wab',
                                 'derailer','end_of_track','pushbutton',
                                 'ivb_limit','transition_point','clearance','overlap',
