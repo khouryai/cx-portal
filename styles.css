@@ -10714,6 +10714,33 @@ a:focus-visible {
   gap: 6px;
   flex-wrap: wrap;
 }
+.drw-location-toolbar {
+  align-items: flex-start;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.drw-location-filter-wrap {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.drw-phase-filter {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  max-width: 300px;
+}
+.drw-phase-filter label {
+  color: var(--gray-500);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
 .drw-loc-tab {
   padding: 6px 14px;
   border: 1px solid var(--gray-200);
@@ -10941,6 +10968,36 @@ a:focus-visible {
   background: var(--gray-100);
   border: 1px solid var(--gray-200);
   color: var(--gray-500);
+}
+.drw-set-table .drw-set-row:hover {
+  background: #f9fafb;
+}
+.drw-set-title {
+  color: var(--gray-900);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.drw-set-sub {
+  color: var(--gray-500);
+  font-size: 11px;
+  margin-top: 2px;
+}
+.drw-set-detail-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.drw-set-detail-title {
+  color: var(--gray-900);
+  font-size: 15px;
+  font-weight: 800;
+}
+.drw-set-detail-meta {
+  color: var(--gray-500);
+  font-size: 12px;
+  margin-top: 2px;
 }
 .drw-rev-badge {
   font-size: 10px;

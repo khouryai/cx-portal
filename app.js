@@ -29410,6 +29410,21 @@ function _drwParseSheetInfo(items, W, H, region) {
 }
 
 // ── Page render ────────────────────────────────────────────────────────────
+let _drwPhaseFilter = '';
+let _drwActiveLocation = '';
+let _drwActiveSetId = '';
+
+function _drwPhaseForLocation(locName) {
+  const loc = LOCS.find(l => l.level === 2 && l.name === locName);
+  if (!loc) return '';
+  return LOCS.find(l => l.id === loc.parent_id)?.name || '';
+}
+
+function _drwLocationsForPhase(allLocs, phaseName) {
+  if (!phaseName) return allLocs;
+  return allLocs.filter(loc => _drwPhaseForLocation(loc) === phaseName);
+}
+
 function renderDrawingsPage() {
   const hero = document.getElementById('drawings-hero-content');
   const cont = document.getElementById('drawings-content');
@@ -29446,23 +29461,58 @@ function renderDrawingsPage() {
       + Upload Drawing Set
     </button>` : '';
 
-  const locTabs = allLocs.map((loc, i) => `
-    <button class="drw-loc-tab ${i === 0 ? 'active' : ''}" onclick="_drwSelectLocation('${escapeHtml(loc)}')" id="drw-loc-tab-${CSS.escape(loc)}">
+  const phases = LOCS.filter(l => l.level === 1)
+    .map(l => l.name)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  if (!_drwPhaseFilter && phases.length) _drwPhaseFilter = phases[0];
+  let visibleLocs = _drwLocationsForPhase(allLocs, _drwPhaseFilter);
+  if (!visibleLocs.length && allLocs.length) {
+    _drwPhaseFilter = '';
+    visibleLocs = allLocs;
+  }
+  if (!_drwActiveLocation || !visibleLocs.includes(_drwActiveLocation)) {
+    _drwActiveLocation = visibleLocs[0] || '';
+  }
+
+  const phaseFilter = phases.length ? `
+    <div class="drw-phase-filter">
+      <label>Phase</label>
+      <select class="form-input" onchange="_drwSetPhaseFilter(this.value)">
+        <option value="">All Phases</option>
+        ${phases.map(p => `<option value="${escapeHtml(p)}" ${_drwPhaseFilter === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
+      </select>
+    </div>` : '';
+
+  const locTabs = visibleLocs.map(loc => `
+    <button class="drw-loc-tab ${loc === _drwActiveLocation ? 'active' : ''}" onclick="_drwSelectLocation('${escapeHtml(loc)}')" id="drw-loc-tab-${CSS.escape(loc)}">
       ${escapeHtml(loc)}
       <span class="drw-loc-badge">${DRAWING_SHEETS.filter(s => s.location === loc && s.is_current).length}</span>
     </button>`).join('');
 
   cont.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-      <div class="drw-loc-tabs" id="drw-loc-tabs">${locTabs}</div>
+    <div class="drw-location-toolbar">
+      <div class="drw-location-filter-wrap">
+        ${phaseFilter}
+        <div class="drw-loc-tabs" id="drw-loc-tabs">${locTabs}</div>
+      </div>
       ${uploadBtn}
     </div>
     <div id="drw-location-view"></div>`;
 
-  if (allLocs.length) _drwSelectLocation(allLocs[0]);
+  if (_drwActiveLocation) _drwSelectLocation(_drwActiveLocation);
+}
+
+function _drwSetPhaseFilter(phase) {
+  _drwPhaseFilter = phase || '';
+  _drwActiveLocation = '';
+  _drwActiveSetId = '';
+  renderDrawingsPage();
 }
 
 function _drwSelectLocation(loc) {
+  _drwActiveLocation = loc;
+  _drwActiveSetId = '';
   document.querySelectorAll('.drw-loc-tab').forEach(el => el.classList.remove('active'));
   const tab = document.getElementById(`drw-loc-tab-${CSS.escape(loc)}`);
   if (tab) tab.classList.add('active');
@@ -29472,6 +29522,7 @@ function _drwSelectLocation(loc) {
 function _drwRenderLocationView(loc, activeSubtab = 'current') {
   const el = document.getElementById('drw-location-view');
   if (!el) return;
+  if (activeSubtab !== 'sets') _drwActiveSetId = '';
   const tabs = [
     { id: 'current', label: 'Current Drawings' },
     { id: 'sets',    label: 'Drawing Sets' },
@@ -29510,6 +29561,66 @@ function _drwTabSets(loc, el) {
     el.innerHTML = `<div class="docs-empty"><p>No drawing sets uploaded for this location yet.</p></div>`;
     return;
   }
+  const activeSet = sets.find(s => s.id === _drwActiveSetId);
+  if (activeSet) {
+    const sheets = DRAWING_SHEETS.filter(s => s.set_id === activeSet.id && s.confirmed);
+    el.innerHTML = `
+      <div class="drw-set-detail-head">
+        <button class="form-secondary tr-mini-btn" onclick="_drwBackToSets('${escapeHtml(loc)}')">← Drawing Sets</button>
+        <div>
+          <div class="drw-set-detail-title">${escapeHtml(activeSet.title)}</div>
+          <div class="drw-set-detail-meta">
+            ${activeSet.revision_date ? `Rev date: ${escapeHtml(activeSet.revision_date)}` : ''}
+            ${activeSet.release_date ? ` · Released: ${escapeHtml(activeSet.release_date)}` : ''}
+            · ${sheets.length} sheet${sheets.length === 1 ? '' : 's'}
+          </div>
+        </div>
+      </div>
+      ${sheets.length ? _drwSheetTableHTML(sheets, { compact: true }) : '<p style="color:var(--gray-400);font-size:12px;">No confirmed sheets yet.</p>'}
+    `;
+    return;
+  }
+
+  const sorted = sets.slice().sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  el.innerHTML = `
+    <div class="drw-sheet-table-card">
+      <table class="data-table drw-set-table">
+        <thead>
+          <tr>
+            <th>Drawing Set</th>
+            <th>Sheets</th>
+            <th>Import Date</th>
+            <th>Rev Date</th>
+            <th>Release Date</th>
+            <th>Uploaded By</th>
+            <th>Status</th>
+            <th style="width:110px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${sorted.map(set => {
+            const sheetCount = DRAWING_SHEETS.filter(s => s.set_id === set.id && s.confirmed).length;
+            return `
+              <tr class="drw-set-row">
+                <td>
+                  <div class="drw-set-title">${escapeHtml(set.title)}</div>
+                  <div class="drw-set-sub">${escapeHtml(set.location || '')}</div>
+                </td>
+                <td style="font-weight:700;">${sheetCount}</td>
+                <td style="font-size:12px;">${escapeHtml(set.import_date || '—')}</td>
+                <td style="font-size:12px;">${escapeHtml(set.revision_date || '—')}</td>
+                <td style="font-size:12px;">${escapeHtml(set.release_date || '—')}</td>
+                <td style="font-size:12px;">${escapeHtml(set.uploaded_by || '—')}</td>
+                <td><span class="drw-status-pill is-current">Ready</span></td>
+                <td><button class="admin-action-btn tr-mini-btn" onclick="_drwOpenSet('${escapeHtml(loc)}','${set.id}')">View</button></td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+  return;
   el.innerHTML = sets.map(set => {
     const sheets = DRAWING_SHEETS.filter(s => s.set_id === set.id && s.confirmed);
     return `
@@ -29530,6 +29641,16 @@ function _drwTabSets(loc, el) {
 }
 
 // ── Tab 3: Revision History ────────────────────────────────────────────────
+function _drwOpenSet(loc, setId) {
+  _drwActiveSetId = setId;
+  _drwRenderLocationView(loc, 'sets');
+}
+
+function _drwBackToSets(loc) {
+  _drwActiveSetId = '';
+  _drwRenderLocationView(loc, 'sets');
+}
+
 function _drwTabHistory(loc, el) {
   const sets = DRAWING_SETS.filter(s => s.location === loc).sort((a,b) => b.created_at.localeCompare(a.created_at));
   if (!sets.length) {
