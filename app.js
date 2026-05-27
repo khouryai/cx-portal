@@ -4616,6 +4616,24 @@ const FIELDCONFIG_MODULES = [
         ],
         hint: 'Format each entry as "CODE: Label" — e.g. "WEATHER: 🌧 Weather". The CODE is stored in the database and drives the KPI cards; changing an existing code will not reclassify historical records.',
       },
+      {
+        key:      'lookahead_discipline',
+        label:    'Discipline',
+        defaults: ['T&C', 'CONS', 'DESIGN'],
+        hint: 'Top-level grouping in the Lookahead swimlane. Each activity is tagged with one discipline; rows are grouped Discipline → Phase → Location.',
+      },
+      {
+        key:      'lookahead_phase',
+        label:    'Phase',
+        defaults: ['Phase 1', 'Phase 2', 'Phase 3', 'All Phases'],
+        hint: 'Project phase. Activities inherit phase from their location when one is set there; this list is the master vocabulary used when the activity has no explicit phase and the location is silent.',
+      },
+      {
+        key:      'lookahead_trade',
+        label:    'Trade',
+        defaults: ['CBTC', 'SIG', 'COMMS', 'POWER', 'CIVIL', 'QA'],
+        hint: 'Trade chip shown on each swimlane row label. Free-text values are appended to this list after confirmation, matching the drawing-discipline pattern.',
+      },
     ],
   },
   {
@@ -18003,6 +18021,62 @@ function _tlgShiftTip(s, v) {
   </div>`).replace(/"/g, '&quot;');
 }
 
+// ── Discipline / Trade / Status helpers for the v-combo swimlane ──
+// Discipline + trade come from explicit columns on planning_activities; the
+// fallbacks make legacy rows still group correctly until they are tagged.
+const _LA_DISCIPLINE_PALETTE = {
+  'T&C':    { color: 'var(--disc-tc)',     bg: 'var(--disc-tc-bg)',     label: 'Testing & Commissioning' },
+  'CONS':   { color: 'var(--disc-cons)',   bg: 'var(--disc-cons-bg)',   label: 'Construction' },
+  'DESIGN': { color: 'var(--disc-design)', bg: 'var(--disc-design-bg)', label: 'Design' },
+};
+function _laDisciplinePalette(disc) {
+  return _LA_DISCIPLINE_PALETTE[disc] || { color: 'var(--disc-default)', bg: 'var(--disc-default-bg)', label: disc || '—' };
+}
+function _laActDiscipline(a) {
+  const explicit = (a?.discipline || '').trim();
+  if (explicit) return explicit;
+  // Heuristic: activity_group "tc" → T&C, otherwise pick a sensible default
+  const grp = (a?.activity_group || '').toLowerCase();
+  if (grp === 'tc' || grp === 't&c') return 'T&C';
+  if (grp === 'cons' || grp === 'construction') return 'CONS';
+  if (grp === 'design') return 'DESIGN';
+  return 'T&C';
+}
+function _laActTrade(a) {
+  const explicit = (a?.trade || '').trim();
+  if (explicit) return explicit;
+  const sub = (a?.subsystem || '').toUpperCase().trim();
+  if (['CBTC','SIG','COMMS','POWER','CIVIL','QA'].includes(sub)) return sub;
+  return '';
+}
+const _LA_STATUS_META = {
+  ontrack: { label: 'On track', color: 'var(--good)', bg: 'var(--good-light)', bar: 'var(--good)' },
+  atrisk:  { label: 'At risk',  color: 'var(--warn)', bg: 'var(--warn-light)', bar: 'var(--warn)' },
+  blocked: { label: 'Blocked',  color: 'var(--bad)',  bg: 'var(--bad-light)',  bar: 'var(--bad)'  },
+  done:    { label: 'Complete', color: 'var(--info)', bg: 'var(--info-light)', bar: 'var(--info)' },
+  plan:    { label: 'Planned',  color: 'var(--gray-700)', bg: 'var(--gray-100)', bar: 'var(--gray-500)' },
+};
+function _laStatusMeta(s) { return _LA_STATUS_META[s] || _LA_STATUS_META.plan; }
+function _laActStatus(a, evs) {
+  if (!Array.isArray(evs) || !evs.length) return 'plan';
+  if (evs.some(e => e.status === 'cancelled')) return 'blocked';
+  const today = new Date().toISOString().slice(0, 10);
+  const past  = evs.filter(e => e.event_date < today && e.status !== 'cancelled');
+  if (past.length && past.length === evs.length) return 'done';
+  return 'ontrack';
+}
+
+// Inline icon helper used inside v-combo row labels
+function _laIconHTML(name) {
+  const paths = {
+    pin:   'M12 22s-7-6.5-7-12a7 7 0 0114 0c0 5.5-7 12-7 12zM12 11a2 2 0 100-4 2 2 0 000 4z',
+    user:  'M16 7a4 4 0 11-8 0 4 4 0 018 0zM4 21a8 8 0 0116 0',
+    clock: 'M12 7v5l3 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+    alert: 'M12 9v4m0 4h.01M10.3 3.86l-8.1 14a2 2 0 001.7 3h16.2a2 2 0 001.7-3l-8.1-14a2 2 0 00-3.4 0z',
+  };
+  return `<svg class="icon-sm" viewBox="0 0 24 24"><path d="${paths[name] || ''}"/></svg>`;
+}
+
 // ── Shared grid renderer (Lookahead, Gantt, Resources) ────────
 function _laRenderGrid(target, { groups, days, milestones }) {
   if (!target) return;
@@ -18025,7 +18099,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     mi = j;
   }
 
-  let html = `<div class="tlg-shell">`;
+  let html = `<div class="tlg-shell v-combo">`;
   // Sticky header block — milestone strip + month bar + day header
   // stay frozen at the top while the body scrolls vertically.
   html += `<div class="tlg-head">`;
@@ -18155,30 +18229,38 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       ? `<span class="tlg-row-link tlg-row-link-set" title="Linked to Test Register Activity: ${escapeHtml(g.linkedTestRegActivity)}">🔗 ${escapeHtml(g.linkedTestRegActivity)}</span>`
       : `<span class="tlg-row-link tlg-row-link-none" title="No Test Register Activity linked — click to link">🔗 unlinked</span>`) : '';
     const progChip = _planningRowProgressChip(g.linkedTestRegActivity);
-    html += `<div class="tlg-label tlg-row-label${_laAssignMode && actId ? ' la-drop-label' : ''}"
-      style="background:${g.color||'#6b7280'};"
-      ${actId && !_laAssignMode ? `onclick="if(event.target.closest('.tlg-row-del,.tlg-row-link-btn'))return;_laDrawerOpen('activity','${actId}')" title="Click to edit activity"` : ''}
+    // v-combo: discipline color drives the 3px spine; status pill + trade chip
+    // sit inline; activity name and meta wrap as needed.
+    const discPal  = _laDisciplinePalette(g.actDiscipline);
+    const statMeta = _laStatusMeta(g.actStatus || 'plan');
+    const tradeCls = g.actTrade ? `trade-${g.actTrade}` : 'trade-default';
+    const tradeChip = g.actTrade ? `<span class="la-trade-chip ${tradeCls}">${escapeHtml(g.actTrade)}</span>` : '';
+    const codeChip  = g.actCode  ? `<span class="la-combo-code">${escapeHtml(g.actCode)}</span>` : '';
+    const statusChip = `<span class="la-combo-status status-${g.actStatus || 'plan'}">
+        <span class="la-dot status-${g.actStatus || 'plan'}"></span>${escapeHtml(statMeta.label)}
+      </span>`;
+    const metaSegs = [];
+    if (g.actWorkHours) metaSegs.push(`<span class="la-combo-meta">${_laIconHTML('clock')}${escapeHtml(g.actWorkHours)}</span>`);
+    if (g.actSswp)      metaSegs.push(`<span class="la-combo-meta">SSWP ${escapeHtml(g.actSswp)}</span>`);
+    html += `<div class="tlg-label tlg-row-label la-combo-label${_laAssignMode && actId ? ' la-drop-label' : ''}"
+      ${actId && !_laAssignMode ? `onclick="if(event.target.closest('.tlg-row-del,.tlg-row-link-btn,.dw-party-chip'))return;_laDrawerOpen('activity','${actId}')" title="Click to edit activity"` : ''}
       ${_laAssignMode && actId ? `data-activity-id="${actId}" title="Drop here to assign for the full activity"` : ''}>
-      <div class="tlg-label-inner">
-        <div class="tlg-lbl-r1">
-          <span class="tlg-label-main" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</span>
+      <span class="la-combo-spine" style="background:${discPal.color};"></span>
+      <div class="la-combo-content">
+        <div class="la-combo-line1">
+          <span class="la-combo-loc-icon">${_laIconHTML('pin')}</span>
+          <span class="la-combo-location">${escapeHtml(g.actLocation || '—')}</span>
           ${_partyBadgesHTML(g.actParty)}
         </div>
-        ${(() => {
-          const segs = [];
-          if (g.actLocation)  segs.push(`<span class="tlg-meta-seg" title="Location: ${escapeHtml(g.actLocation)}">📍 ${escapeHtml(g.actLocation)}</span>`);
-          if (g.actWorkHours) segs.push(`<span class="tlg-meta-seg" title="Work hours: ${escapeHtml(g.actWorkHours)}">🕒 ${escapeHtml(g.actWorkHours)}</span>`);
-          if (g.actSswp)      segs.push(`<span class="tlg-meta-seg" title="SSWP: ${escapeHtml(g.actSswp)}">SSWP ${escapeHtml(g.actSswp)}</span>`);
-          if (!segs.length && g.sublabel) segs.push(`<span class="tlg-meta-seg">${escapeHtml(g.sublabel)}</span>`);
-          return segs.length ? `<div class="tlg-lbl-r2">${segs.join('')}</div>` : '';
-        })()}
+        ${(codeChip || tradeChip) ? `<div class="la-combo-line2">${codeChip}${tradeChip}${statusChip}</div>` : `<div class="la-combo-line2">${statusChip}</div>`}
+        <div class="la-combo-line3" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</div>
+        ${metaSegs.length || linkChip ? `<div class="la-combo-line4">
+          ${metaSegs.join('')}
+          ${linkChip ? `<button class="tlg-row-link-btn" onclick="event.stopPropagation();_laOpenLinkActivityModal('${actId}')">${linkChip}</button>${progChip}` : ''}
+        </div>` : ''}
       </div>
-      ${linkChip ? `<div class="tlg-label-foot">
-        <button class="tlg-row-link-btn" onclick="event.stopPropagation();_laOpenLinkActivityModal('${actId}')">${linkChip}</button>
-        ${progChip}
-      </div>` : ''}
       ${assignedChips}${dropHintHTML}
-      ${actId ? `<button class="tlg-row-del" onclick="event.stopPropagation();_laDeleteManualActivity('${actId}',event)" title="Delete activity (soft-delete coming in Phase 3)">🗑</button>` : ''}
+      ${actId ? `<button class="tlg-row-del" onclick="event.stopPropagation();_laDeleteManualActivity('${actId}',event)" title="Delete activity (soft-delete coming in Phase 3)" style="position:absolute;top:6px;right:8px;">🗑</button>` : ''}
     </div>`;
     html += `<div class="tlg-cells">`;
     days.forEach((iso, idx) => {
@@ -18964,11 +19046,31 @@ function _laDrawerActivityHTML(a) {
     <div class="la-drawer-section la-drawer-row-2">
       <div>
         <label class="la-drawer-label">Phase${!storedPhase && inferredPhase ? ' <span style="font-size:9px;color:var(--good);font-weight:400;">(from location)</span>' : ''}</label>
-        <input class="la-drawer-input" id="dw-act-phase" value="${escapeHtml(effectivePhase)}" placeholder="e.g. Phase 1" oninput="_laDrawerMarkDirty()">
+        <input class="la-drawer-input" id="dw-act-phase" value="${escapeHtml(effectivePhase)}" placeholder="e.g. Phase 1" oninput="_laDrawerMarkDirty()" list="dw-act-phase-options">
+        <datalist id="dw-act-phase-options">
+          ${_fsOptions('lookahead_phase').map(o => `<option value="${escapeHtml(o)}">`).join('')}
+        </datalist>
       </div>
       <div>
         <label class="la-drawer-label">SSWP</label>
         <input class="la-drawer-input" id="dw-act-sswp" value="${escapeHtml(a.sswp || '')}" oninput="_laDrawerMarkDirty()">
+      </div>
+    </div>
+
+    <div class="la-drawer-section la-drawer-row-2">
+      <div>
+        <label class="la-drawer-label">Discipline <span style="font-size:9px;color:var(--gray-400);font-weight:400;">(grouping)</span></label>
+        <input class="la-drawer-input" id="dw-act-discipline" value="${escapeHtml(a.discipline || '')}" placeholder="T&amp;C" oninput="_laDrawerMarkDirty()" list="dw-act-disc-options">
+        <datalist id="dw-act-disc-options">
+          ${_fsOptions('lookahead_discipline').map(o => `<option value="${escapeHtml(o)}">`).join('')}
+        </datalist>
+      </div>
+      <div>
+        <label class="la-drawer-label">Trade <span style="font-size:9px;color:var(--gray-400);font-weight:400;">(chip)</span></label>
+        <input class="la-drawer-input" id="dw-act-trade" value="${escapeHtml(a.trade || '')}" placeholder="CBTC" oninput="_laDrawerMarkDirty()" list="dw-act-trade-options">
+        <datalist id="dw-act-trade-options">
+          ${_fsOptions('lookahead_trade').map(o => `<option value="${escapeHtml(o)}">`).join('')}
+        </datalist>
       </div>
     </div>
 
@@ -19120,6 +19222,8 @@ async function _laDrawerSave() {
   if (_laDrawer.mode === 'activity') {
     const a = PLANNING_ACTIVITIES.find(x => x.id === _laDrawer.targetId);
     if (!a) return;
+    const discInput  = document.getElementById('dw-act-discipline')?.value?.trim() || null;
+    const tradeInput = document.getElementById('dw-act-trade')?.value?.trim() || null;
     const payload = {
       description:                  document.getElementById('dw-act-desc')?.value?.trim() || null,
       activity_id_text:             document.getElementById('dw-act-idtext')?.value?.trim() || null,
@@ -19131,9 +19235,20 @@ async function _laDrawerSave() {
       party_to_action:              [...document.querySelectorAll('.dw-act-party:checked')].map(c => c.value),
       notes:                        document.getElementById('dw-act-notes')?.value || null,
       linked_test_register_activity: document.getElementById('dw-act-linked-tra')?.value?.trim() || null,
+      discipline:                   discInput,
+      trade:                        tradeInput,
     };
     try {
       await _dbUpdate('planning_activities', payload, { id: a.id });
+      // Auto-grow Field Config vocabularies for newly typed values
+      try {
+        const promises = [];
+        if (discInput)  promises.push(_fscEnsureOptions('lookahead_discipline', [discInput]));
+        if (tradeInput) promises.push(_fscEnsureOptions('lookahead_trade',      [tradeInput]));
+        const phaseVal = document.getElementById('dw-act-phase')?.value?.trim();
+        if (phaseVal)   promises.push(_fscEnsureOptions('lookahead_phase',      [phaseVal]));
+        await Promise.all(promises);
+      } catch (e) { /* best-effort — don't block the save */ }
       _laDrawer.dirty = false;
       toast('✓ Activity saved', 'success');
       await loadPlanningData(true);
@@ -21769,6 +21884,10 @@ function _laMountLookaheadTL() {
           .filter(ar => ar.planning_activity_id === a.id)
           .map(ar => PLANNING_RESOURCES.find(r => r.id === ar.resource_id))
           .filter(Boolean);
+        const disc  = _laActDiscipline(a);
+        const trade = _laActTrade(a);
+        const phase = (a.phase || '').trim() || _laInferPhaseFromLocation(a.location) || '';
+        const status = _laActStatus(a, evs);
         groups.push({
           id:                    'act-' + a.id,
           activityId:            a.id,
@@ -21781,6 +21900,11 @@ function _laMountLookaheadTL() {
           actWorkHours:          a.work_hours_raw || '',
           actSswp:               a.sswp || '',
           actParty:              Array.isArray(a.party_to_action) ? a.party_to_action : [],
+          actCode:               a.activity_id_text || '',
+          actDiscipline:         disc,
+          actTrade:              trade,
+          actPhase:              phase,
+          actStatus:             status,
           linkedTestRegActivity: a.linked_test_register_activity || null,
           // Activity view shows BART-only chips always visible in each cell
           byDate:                _laBuildByDateActivity(evs, days),
