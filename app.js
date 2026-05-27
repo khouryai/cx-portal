@@ -29413,6 +29413,28 @@ function _drwParseSheetInfo(items, W, H, region) {
 let _drwPhaseFilter = '';
 let _drwActiveLocation = '';
 let _drwActiveSetId = '';
+const _DRW_VIEW_PREF_KEY = 'cx-drawings-view';
+
+function _drwLoadViewPrefs() {
+  if (_drwPhaseFilter || _drwActiveLocation) return;
+  try {
+    const pref = JSON.parse(localStorage.getItem(_DRW_VIEW_PREF_KEY) || '{}');
+    _drwPhaseFilter = pref.phase || '';
+    _drwActiveLocation = pref.location || '';
+  } catch {
+    _drwPhaseFilter = '';
+    _drwActiveLocation = '';
+  }
+}
+
+function _drwSaveViewPrefs() {
+  try {
+    localStorage.setItem(_DRW_VIEW_PREF_KEY, JSON.stringify({
+      phase: _drwPhaseFilter || '',
+      location: _drwActiveLocation || '',
+    }));
+  } catch { /* noop */ }
+}
 
 function _drwPhaseForLocation(locName) {
   const loc = LOCS.find(l => l.level === 2 && l.name === locName);
@@ -29440,6 +29462,7 @@ function renderDrawingsPage() {
   const hero = document.getElementById('drawings-hero-content');
   const cont = document.getElementById('drawings-content');
   if (!hero || !cont) return;
+  _drwLoadViewPrefs();
 
   const isAdmin = currentRoleUser?.role === 'admin';
 
@@ -29479,7 +29502,6 @@ function renderDrawingsPage() {
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   if (_drwPhaseFilter && !phases.includes(_drwPhaseFilter)) _drwPhaseFilter = '';
-  if (!_drwPhaseFilter && phases.length) _drwPhaseFilter = phases[0];
   let visibleLocs = _drwLocationsForPhase(allLocs, _drwPhaseFilter);
   if (!visibleLocs.length && allLocs.length) {
     _drwPhaseFilter = '';
@@ -29488,6 +29510,7 @@ function renderDrawingsPage() {
   if (!_drwActiveLocation || !visibleLocs.includes(_drwActiveLocation)) {
     _drwActiveLocation = visibleLocs[0] || '';
   }
+  _drwSaveViewPrefs();
 
   const phaseFilter = phases.length ? `
     <div class="drw-phase-filter">
@@ -29522,12 +29545,14 @@ function _drwSetPhaseFilter(phase) {
   _drwPhaseFilter = phase || '';
   _drwActiveLocation = '';
   _drwActiveSetId = '';
+  _drwSaveViewPrefs();
   renderDrawingsPage();
 }
 
 function _drwSelectLocation(loc) {
   _drwActiveLocation = loc;
   _drwActiveSetId = '';
+  _drwSaveViewPrefs();
   document.querySelectorAll('.drw-loc-tab').forEach(el => el.classList.remove('active'));
   const tab = document.getElementById(`drw-loc-tab-${CSS.escape(loc)}`);
   if (tab) tab.classList.add('active');
