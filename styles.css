@@ -11339,3 +11339,81 @@ a:focus-visible {
 .la-dot.status-blocked { background: var(--bad); }
 .la-dot.status-done    { background: var(--info); }
 .la-dot.status-plan    { background: var(--gray-500); }
+
+/* ── Lookahead full-height expansion ─────────────────────────
+   Flex chain: #page-lookahead → .container → #lookahead-content
+   → #lookahead-tab-body → .cal-shell / .tlg-shell
+   → .cal-body → month/week/day grids
+   Eliminates dead space for client-presentation mode.
+   ─────────────────────────────────────────────────────────── */
+#page-lookahead.active {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+#page-lookahead.active .page-hero { flex-shrink: 0; }
+#page-lookahead.active > .container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 16px !important;
+  min-height: 0;
+  overflow: hidden;
+}
+#lookahead-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#lookahead-tab-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Calendar shell fills tab body */
+#lookahead-tab-body .cal-shell {
+  flex: 1;
+  min-height: 0;
+}
+
+/* cal-body fills shell (overrides base min-height + overflow: hidden) */
+.cal-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+/* Month: enable flex column so the grid can use 1fr rows */
+.cal-body-month {
+  display: flex;
+  flex-direction: column;
+}
+.cal-body-month .cal-month-grid {
+  flex: 1;
+  min-height: 0;
+  grid-template-rows: auto repeat(6, 1fr);
+}
+
+/* Week grid: flex-grow instead of fixed height: 100% */
+.cal-week-list-grid {
+  flex: 1;
+  height: auto;
+}
+
+/* Day list: fills body, no viewport cap */
+.cal-day-list-wrap {
+  flex: 1;
+  max-height: none;
+}
+
+/* Swimlane: grows to fill, scroll within */
+#lookahead-tab-body .tlg-shell {
+  flex: 1;
+  max-height: none;
+  min-height: 400px;
+}
