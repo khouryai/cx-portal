@@ -16888,6 +16888,7 @@ let _planningLoadedAt    = 0;                          // cache flag
 // Calendar / timeline state
 let _planningCalView     = 'week';                     // day | week | month
 let _planningCalDate     = new Date();                 // anchor date for current view
+let _calZoom             = 1.0;                        // 0.6 – 1.4 zoom multiplier for calendar shell
 let _planningCalInstance = null;                       // legacy — no longer used (kept for cleanup safety)
 let _planningTLInstance  = null;                       // vis-timeline instance for lookahead/gantt/resources
 let _planningCalNowTimer = null;                       // setInterval handle for the "now" line
@@ -17240,7 +17241,7 @@ function _laCalendarHTML() {
 
     ${_planningCalendarLegend()}
 
-    <div class="cal-shell">
+    <div class="cal-shell" id="cal-shell" style="zoom:${_calZoom}">
       <div class="cal-toolbar">
         <div class="cal-nav">
           <button class="cal-btn cal-btn-primary" onclick="_laNavToday()">Today</button>
@@ -17253,6 +17254,11 @@ function _laCalendarHTML() {
             <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
             <span>P6 schedule</span>
           </label>
+          <div class="cal-zoom-ctrl" style="display:flex;align-items:center;gap:4px;">
+            <button class="cal-btn cal-btn-icon" onclick="_laCalZoomOut()" title="Zoom out" aria-label="Zoom out">−</button>
+            <span id="cal-zoom-label" style="font-size:11px;color:var(--gray-500);min-width:32px;text-align:center;">${Math.round(_calZoom*100)}%</span>
+            <button class="cal-btn cal-btn-icon" onclick="_laCalZoomIn()"  title="Zoom in"  aria-label="Zoom in">+</button>
+          </div>
           <div class="cal-view-switch">
             ${[['day','Day'],['week','Week'],['month','Month']].map(([id,label]) => `
               <button class="cal-view-btn${_planningCalView === id ? ' active' : ''}" data-cal-view="${id}" onclick="_planningSetCalView('${id}')">${label}</button>
@@ -17271,6 +17277,22 @@ function _planningSetCalView(v) {
     b.classList.toggle('active', b.getAttribute('data-cal-view') === v);
   });
   _renderLookaheadTabBody();
+}
+
+// ── Calendar zoom ────────────────────────────────────────────
+function _laCalZoomIn() {
+  _calZoom = Math.min(1.5, Math.round((_calZoom + 0.1) * 10) / 10);
+  _laApplyCalZoom();
+}
+function _laCalZoomOut() {
+  _calZoom = Math.max(0.5, Math.round((_calZoom - 0.1) * 10) / 10);
+  _laApplyCalZoom();
+}
+function _laApplyCalZoom() {
+  const shell = document.getElementById('cal-shell');
+  const label = document.getElementById('cal-zoom-label');
+  if (shell) shell.style.zoom = _calZoom;
+  if (label) label.textContent = Math.round(_calZoom * 100) + '%';
 }
 
 // ── Calendar navigation ──────────────────────────────────────

@@ -11340,80 +11340,36 @@ a:focus-visible {
 .la-dot.status-done    { background: var(--info); }
 .la-dot.status-plan    { background: var(--gray-500); }
 
-/* ── Lookahead full-height expansion ─────────────────────────
-   Flex chain: #page-lookahead → .container → #lookahead-content
-   → #lookahead-tab-body → .cal-shell / .tlg-shell
-   → .cal-body → month/week/day grids
-   Eliminates dead space for client-presentation mode.
+/* ── Lookahead: fill viewport, no dead space ──────────────────
+   Simple calc() approach — shells stretch to fill the window.
+   Container bottom padding reduced to 32px in index.html.
    ─────────────────────────────────────────────────────────── */
-#page-lookahead.active {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  overflow: hidden;
-}
-#page-lookahead.active .page-hero { flex-shrink: 0; }
-#page-lookahead.active > .container {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  padding-bottom: 16px !important;
-  min-height: 0;
-  overflow: hidden;
-}
-#lookahead-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-#lookahead-tab-body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow-y: auto;
-}
 
-/* Calendar shell fills tab body */
+/* Calendar shell: fill viewport minus page chrome */
 #lookahead-tab-body .cal-shell {
-  flex: 1;
-  min-height: 0;
+  min-height: calc(100vh - 320px);
 }
 
-/* cal-body fills shell (overrides base min-height + overflow: hidden) */
-.cal-body {
-  flex: 1;
-  overflow: auto;
-  min-height: 0;
-}
+/* Month cells: comfortable row height */
+.cal-month-cell { min-height: 120px; }
 
-/* Month: enable flex column so the grid can use 1fr rows */
-.cal-body-month {
-  display: flex;
-  flex-direction: column;
-}
-.cal-body-month .cal-month-grid {
-  flex: 1;
-  min-height: 0;
-  grid-template-rows: auto repeat(6, 1fr);
-}
+/* Week columns: grow to window */
+.cal-wl-col { min-height: calc((100vh - 380px) / 1); }
 
-/* Week grid: flex-grow instead of fixed height: 100% */
-.cal-week-list-grid {
-  flex: 1;
-  height: auto;
-}
-
-/* Day list: fills body, no viewport cap */
-.cal-day-list-wrap {
-  flex: 1;
-  max-height: none;
-}
-
-/* Swimlane: grows to fill, scroll within */
+/* Swimlane: taller cap and reasonable minimum */
 #lookahead-tab-body .tlg-shell {
-  flex: 1;
-  max-height: none;
+  max-height: calc(100vh - 210px);
   min-height: 400px;
 }
+
+/* ── Swimlane hover: fix black-on-black in v-combo rows ───────
+   The base rule  .tlg-data-row:hover .tlg-label { filter: brightness(1.06) }
+   creates a new stacking context that can make near-black text
+   unreadable. Override with a clean light-blue highlight. */
+.v-combo .tlg-data-row:hover .tlg-label { filter: none; }
+.v-combo .tlg-data-row:hover .la-combo-label {
+  background: #eef3ff !important;
+}
+.v-combo .tlg-data-row:hover .la-combo-line1 { color: #344054; }
+.v-combo .tlg-data-row:hover .la-combo-line3 { color: #111827; }
+.v-combo .tlg-data-row:hover .la-combo-meta  { color: #475467; }
