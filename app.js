@@ -31528,7 +31528,7 @@ const _dynPage = {
   boardStart: null,                      // first day of first month (Date)
   boardMonths: 6,
   // Planning state
-  planZone: '',                          // selected control zone code
+  planZones: [],                         // array of selected zone codes (matches locations table prefix)
   planStart: '',                         // window start (datetime-local string)
   planEnd: '',                           // window end
   planModes: ['CBTC','VATC'],            // allowed modes filter
@@ -31777,13 +31777,63 @@ function _dynRowHtml(r) {
       <td style="font-size:12px;">${win}</td>
       <td>${sections}</td>
       <td>${r.required_mode ? `<span class="badge">${escapeHtml(r.required_mode)}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>
-      <td>${_dynStatusBadge(r.status)}</td>
+      <td>
+        <select onchange="_dynInstanceUpdateStatus('${escapeHtml(r.id)}', this.value, this)"
+                title="Update status inline"
+                style="font-size:11.5px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;background:white;">
+          ${_DYN_STATUSES.map(s => `<option value="${escapeHtml(s)}" ${s===r.status?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+        </select>
+      </td>
       <td style="white-space:nowrap;">
         <button class="dyn-btn" style="padding:3px 8px;font-size:11px;" onclick="_dynOpenInstanceModal('${escapeHtml(r.id)}')">Edit</button>
         <button class="dyn-btn" style="padding:3px 8px;font-size:11px;color:#dc2626;" onclick="_dynDeleteInstance('${escapeHtml(r.id)}')">Del</button>
       </td>
     </tr>
   `;
+}
+
+async function _dynInstanceUpdateStatus(id, newStatus, selEl) {
+  if (!_DYN_STATUSES.includes(newStatus)) return;
+  const inst = _dynPage.instances.find(x => x.id === id);
+  const prev = inst?.status;
+  if (prev === newStatus) return;
+
+  // If transitioning into a terminal state and no actual duration is recorded,
+  // prompt for one so the variance report stays meaningful. Skip prompt when
+  // moving back out of a terminal state.
+  let actualDur = inst?.actual_duration_minutes ?? null;
+  const isTerminal = newStatus === 'Pass' || newStatus === 'Fail' || newStatus === 'Not Applicable';
+  if (isTerminal && actualDur == null) {
+    const exp = inst?.expected_duration_minutes;
+    const ans = prompt(
+      `Mark "${inst?.code || inst?.title || 'instance'}" as ${newStatus}.\n\n` +
+      `Actual duration in minutes${exp ? ` (expected ${exp})` : ''} — leave blank to skip:`,
+      exp != null ? String(exp) : ''
+    );
+    if (ans === null) {
+      if (selEl) selEl.value = prev || 'Not Started';
+      return;
+    }
+    const n = parseInt(ans, 10);
+    if (Number.isFinite(n) && n >= 0) actualDur = n;
+  }
+
+  try {
+    const payload = { status: newStatus, updated_at: new Date().toISOString() };
+    if (actualDur != null && actualDur !== inst?.actual_duration_minutes) {
+      payload.actual_duration_minutes = actualDur;
+    }
+    await _dbUpdate('dynamic_instances', payload, { id });
+    if (inst) {
+      inst.status = newStatus;
+      if (payload.actual_duration_minutes != null) inst.actual_duration_minutes = payload.actual_duration_minutes;
+    }
+    if (typeof toast === 'function') toast(`Status → ${newStatus}`, 'success');
+    _dynRenderInstances();
+  } catch (e) {
+    if (selEl) selEl.value = prev || 'Not Started';
+    toast(`Update failed: ${e.message}`, 'error');
+  }
 }
 
 // ── Instance create / edit modal ────────────────────────────────────────
@@ -32308,14 +32358,6 @@ function _dynRenderPlanning() {
   const cont = document.getElementById('dyn-content');
   if (!cont) return;
 
-  if (!_dynPage._zonesLoaded) {
-    _dynPage._zonesLoaded = true;
-    _dbSelect('track_zones', { zone_type: 'control_zone' }, 'code')
-      .then(rows => { _dynPage._allZones = (rows || []).map(r => r.code).sort(); _dynRenderPlanning(); })
-      .catch(() => { _dynPage._allZones = []; });
-  }
-  const allZones = _dynPage._allZones || [];
-
   if (!_dynPage.planStart) {
     const today = new Date();
     today.setHours(8, 0, 0, 0);
@@ -32332,15 +32374,62 @@ function _dynRenderPlanning() {
   const selTrains  = selected.reduce((s, r) => s + (r.trains_needed || 1), 0);
   const slack      = winMinutes - selMinutes;
 
+  // Build phase → [{code, label}] from the locations table.
+  // Level 1 rows are phases; level 2 rows are zones with name "<code> <description>".
+  const phases = (LOCS || []).filter(l => l.level === 1).sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const zonesByPhase = new Map();
+  (LOCS || []).filter(l => l.level === 2).forEach(z => {
+    const code = (z.name || '').split(/\s+/)[0]; // "W40 Millbrae Station" → "W40"
+    if (!code) return;
+    const arr = zonesByPhase.get(z.parent_id) || [];
+    if (!arr.some(x => x.code === code)) arr.push({ code, label: z.name });
+    zonesByPhase.set(z.parent_id, arr);
+  });
+  phases.forEach(p => {
+    const arr = zonesByPhase.get(p.id) || [];
+    arr.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+    zonesByPhase.set(p.id, arr);
+  });
+
   cont.innerHTML = `
+    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;padding:14px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+        <b style="font-size:12px;text-transform:uppercase;color:var(--gray-600);letter-spacing:.05em;">Zones</b>
+        <span style="font-size:11px;color:var(--gray-500);">Hold ⌘/Ctrl to select multiple. "Whole phase" buttons toggle all zones under a phase.</span>
+        <span style="flex:1;"></span>
+        ${_dynPage.planZones.length
+          ? `<button class="dyn-btn" style="font-size:11px;padding:4px 10px;" onclick="_dynPlanClearZones()">Clear (${_dynPage.planZones.length})</button>`
+          : ''}
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+        ${phases.filter(p => (zonesByPhase.get(p.id) || []).length > 0).map(p => {
+          const zoneCodes = (zonesByPhase.get(p.id) || []).map(z => z.code);
+          const allSelected = zoneCodes.length > 0 && zoneCodes.every(c => _dynPage.planZones.includes(c));
+          return `<button class="dyn-btn" style="font-size:11px;padding:4px 10px;${allSelected ? 'background:#e60012;color:white;border-color:#e60012;' : ''}"
+                          onclick="_dynPlanTogglePhase('${escapeHtml(p.id)}')">
+            ${escapeHtml(p.name)} <span style="opacity:.7;">(${zoneCodes.length})</span>
+          </button>`;
+        }).join('')}
+      </div>
+      <select id="plan-zones" multiple size="8" style="width:100%;font-size:12px;padding:6px;border:1px solid var(--gray-300);border-radius:5px;font-family:inherit;"
+              onchange="_dynPlanSyncZones(this)">
+        ${phases.map(p => {
+          const zs = zonesByPhase.get(p.id) || [];
+          if (!zs.length) return '';
+          return `<optgroup label="${escapeHtml(p.name)}">
+            ${zs.map(z => `<option value="${escapeHtml(z.code)}" ${_dynPage.planZones.includes(z.code) ? 'selected' : ''}>${escapeHtml(z.label)}</option>`).join('')}
+          </optgroup>`;
+        }).join('')}
+      </select>
+      ${_dynPage.planZones.length
+        ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+            ${_dynPage.planZones.map(c => `<span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-size:11px;">${escapeHtml(c)} <a href="javascript:void(0)" onclick="_dynPlanRemoveZone('${escapeHtml(c)}')" style="margin-left:4px;color:#92400e;text-decoration:none;">×</a></span>`).join('')}
+           </div>`
+        : ''}
+    </div>
+
     <div class="dyn-toolbar">
-      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
-        Zone
-        <select id="plan-zone" onchange="_dynPage.planZone=this.value;_dynPage.planFeasible=[];_dynPage.planSelected.clear();_dynRenderPlanning();">
-          <option value="">— pick a zone —</option>
-          ${allZones.map(z => `<option value="${escapeHtml(z)}" ${_dynPage.planZone===z?'selected':''}>${escapeHtml(z)}</option>`).join('')}
-        </select>
-      </label>
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
         Window start
         <input id="plan-start" type="datetime-local" value="${escapeHtml(_dynPage.planStart)}"
@@ -32383,7 +32472,7 @@ function _dynRenderPlanning() {
       ? `<div style="padding:40px;text-align:center;color:var(--gray-500);">Computing…</div>`
       : _dynPage.planFeasible.length === 0
         ? `<div style="padding:40px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:8px;">
-             ${_dynPage.planZone ? 'No matching feasible instances. Try a longer window or different mode filter.' : 'Pick a zone and window, then click <b>Compute feasible</b>.'}
+             ${_dynPage.planZones.length ? 'No matching feasible instances. Try a longer window, more zones, or different mode filter.' : 'Pick one or more zones (or a whole phase), set the window, then click <b>Compute feasible</b>.'}
            </div>`
         : _dynRenderPlanningTable()}
 
@@ -32395,6 +32484,44 @@ function _dynRenderPlanning() {
         <button class="dyn-btn primary" onclick="_dynPlanCommit()">📅 Schedule ${selected.length}</button>
       </div>` : ''}
   `;
+}
+
+function _dynPlanSyncZones(sel) {
+  _dynPage.planZones = Array.from(sel.selectedOptions).map(o => o.value);
+  _dynPage.planFeasible = [];
+  _dynPage.planSelected.clear();
+  _dynRenderPlanning();
+}
+
+function _dynPlanRemoveZone(code) {
+  _dynPage.planZones = _dynPage.planZones.filter(c => c !== code);
+  _dynPage.planFeasible = [];
+  _dynPage.planSelected.clear();
+  _dynRenderPlanning();
+}
+
+function _dynPlanClearZones() {
+  _dynPage.planZones = [];
+  _dynPage.planFeasible = [];
+  _dynPage.planSelected.clear();
+  _dynRenderPlanning();
+}
+
+function _dynPlanTogglePhase(phaseId) {
+  const zones = (LOCS || []).filter(l => l.level === 2 && l.parent_id === phaseId);
+  const codes = zones.map(z => (z.name || '').split(/\s+/)[0]).filter(Boolean);
+  if (!codes.length) return;
+  const allSelected = codes.every(c => _dynPage.planZones.includes(c));
+  if (allSelected) {
+    _dynPage.planZones = _dynPage.planZones.filter(c => !codes.includes(c));
+  } else {
+    const next = new Set(_dynPage.planZones);
+    codes.forEach(c => next.add(c));
+    _dynPage.planZones = [...next];
+  }
+  _dynPage.planFeasible = [];
+  _dynPage.planSelected.clear();
+  _dynRenderPlanning();
 }
 
 function _dynLocalDateTime(d) {
@@ -32416,7 +32543,7 @@ function _dynPlanToggleMode(m, on) {
 }
 
 async function _dynPlanRun() {
-  if (!_dynPage.planZone) { toast('Pick a zone first', 'error'); return; }
+  if (!_dynPage.planZones.length) { toast('Pick at least one zone', 'error'); return; }
   if (_dynWindowMinutes(_dynPage.planStart, _dynPage.planEnd) <= 0) { toast('Window end must be after start', 'error'); return; }
   _dynPage.planLoading = true;
   _dynPage.planFeasible = [];
@@ -32424,7 +32551,7 @@ async function _dynPlanRun() {
   _dynRenderPlanning();
 
   const params = {
-    p_zone_code:     _dynPage.planZone,
+    p_zone_codes:    _dynPage.planZones,
     p_window_start:  new Date(_dynPage.planStart).toISOString(),
     p_window_end:    new Date(_dynPage.planEnd).toISOString(),
     p_allowed_modes: _dynPage.planModes.length ? _dynPage.planModes : null,
@@ -32513,7 +32640,7 @@ function _dynPlanSelectAll(on) {
 async function _dynPlanCommit() {
   const ids = [..._dynPage.planSelected];
   if (!ids.length) return;
-  if (!confirm(`Schedule ${ids.length} instance(s) into the ${_dynPage.planZone} window starting ${_dynPage.planStart}?`)) return;
+  if (!confirm(`Schedule ${ids.length} instance(s) into the ${_dynPage.planZones.join(', ') || 'selected'} window starting ${_dynPage.planStart}?`)) return;
   const startISO = new Date(_dynPage.planStart).toISOString();
   const endISO   = new Date(_dynPage.planEnd).toISOString();
   const datePart = startISO.slice(0, 10);
@@ -32651,7 +32778,7 @@ async function _dynPlanUseWindow(id) {
     const rows = await _dbSelect('zone_access_windows', { id }, '*');
     const w = rows[0];
     if (!w) return;
-    _dynPage.planZone  = w.control_zone_code;
+    _dynPage.planZones = w.control_zone_code ? [w.control_zone_code] : [];
     _dynPage.planStart = _dynLocalDateTime(new Date(w.start_at));
     _dynPage.planEnd   = _dynLocalDateTime(new Date(w.end_at));
     _dynPage.planModes = (w.allowed_modes || ['CBTC','VATC']).slice();
