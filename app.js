@@ -30706,6 +30706,14 @@ async function _drwRenderPage(pageIndex, opts = {}) {
   _drwUpdateZoomLabel();
   _drwRedraw();
   _drwSyncNavPage();
+  // Draw search highlights for this page if a Super Find query is active.
+  if (_drwFindState && _drwFindState.matches.length) {
+    _drwDrawHighlights(pageIndex).catch(() => {});
+  } else {
+    // Clear any stale overlay.
+    const hl = document.getElementById('drw-highlight-canvas');
+    if (hl) hl.getContext('2d').clearRect(0, 0, hl.width, hl.height);
+  }
 }
 
 function _drwCloseViewer() {
@@ -30715,9 +30723,12 @@ function _drwCloseViewer() {
   document.getElementById('drw-viewer-overlay').style.display = 'none';
   _drwPdfDoc    = null;
   _drwCurSheet  = null;
+  _drwCurSet    = null;
   _drwMarkupShapes = [];
   _drwSelectedShape = -1;
   _drwRemoveTextEditor(false);
+  // Reset Super Find state so re-opening a viewer starts fresh.
+  if (typeof _drwFindClear === 'function') _drwFindClear();
 }
 
 function _drwUpdateZoomLabel() {
@@ -33280,18 +33291,117 @@ function _drwWireFindInput() {
   const inp = document.getElementById('drw-find-input');
   const results = document.getElementById('drw-find-results');
   if (!inp || !results) return;
+  // Inject cycle controls next to the search input if not already there.
+  if (!document.getElementById('drw-find-cycle')) {
+    const wrap = document.querySelector('.drw-find-wrap');
+    if (wrap && wrap.parentNode) {
+      const cycle = document.createElement('div');
+      cycle.id = 'drw-find-cycle';
+      cycle.style.cssText = 'display:none;align-items:center;gap:4px;font-size:11px;color:var(--gray-700);';
+      cycle.innerHTML = `
+        <button class="drw-nav-btn" onclick="_drwFindCycle(-1)" title="Previous match (Shift+Enter)">◀</button>
+        <span id="drw-find-counter" style="min-width:54px;text-align:center;font-family:monospace;">0 of 0</span>
+        <button class="drw-nav-btn" onclick="_drwFindCycle(1)" title="Next match (Enter)">▶</button>
+        <button class="drw-nav-btn" onclick="_drwFindClear()" title="Clear search (Esc)">×</button>
+      `;
+      wrap.parentNode.insertBefore(cycle, wrap.nextSibling);
+    }
+  }
   inp.value = '';
   results.style.display = 'none';
-  inp.oninput = () => _drwRenderFindResults(inp.value);
-  inp.onfocus = () => _drwRenderFindResults(inp.value);
-  // Close results when clicking outside
+  inp.oninput = () => _drwOnFindInput(inp.value);
+  inp.onfocus = () => {
+    if (_drwFindState.query) _drwRenderFindResults();
+  };
+  inp.onkeydown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); _drwFindCycle(1); }
+    else if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); _drwFindCycle(-1); }
+    else if (e.key === 'Escape') { e.preventDefault(); _drwFindClear(); }
+  };
+  // The results panel must stay open even when clicking individual rows; the
+  // close-on-outside-click handler now ignores clicks inside the dropdown and
+  // on the cycle controls.
   if (!document._drwFindClickHooked) {
     document.addEventListener('mousedown', (e) => {
       const wrap = e.target.closest('.drw-find-wrap');
+      const inResults = e.target.closest('#drw-find-results');
+      const inCycle = e.target.closest('#drw-find-cycle');
       const r = document.getElementById('drw-find-results');
-      if (!wrap && r) r.style.display = 'none';
+      if (!wrap && !inResults && !inCycle && r) r.style.display = 'none';
     });
     document._drwFindClickHooked = true;
+  }
+}
+
+// Find-feature shared state. Re-built whenever the user types a new query.
+const _drwFindState = {
+  query: '',
+  matches: [],         // flat list, ordered by (pageIndex, matchStart)
+  currentIndex: -1,    // index into matches; -1 = none active
+  byPage: new Map(),   // pageIndex → matches[] (denormalized for fast highlight)
+};
+
+function _drwOnFindInput(raw) {
+  const q = String(raw || '').trim();
+  if (q === _drwFindState.query) {
+    if (q) _drwRenderFindResults();
+    return;
+  }
+  _drwFindState.query = q;
+  _drwSearchAllMatches(q.toLowerCase());
+  _drwFindState.currentIndex = _drwFindState.matches.length ? 0 : -1;
+  _drwUpdateFindCycleUI();
+  _drwRenderFindResults();
+  // Refresh the page highlight overlay (might be empty after a clear).
+  _drwDrawHighlights(_drwPageIndex).catch(() => {});
+  // If we have matches, immediately jump to the first one so the user sees it.
+  if (_drwFindState.matches.length > 0) {
+    _drwFindGotoMatch(0, { skipRedrawIfSamePage: true });
+  }
+}
+
+function _drwSearchAllMatches(lowerQuery) {
+  _drwFindState.matches = [];
+  _drwFindState.byPage = new Map();
+  if (!lowerQuery) return;
+  const idx = _drwFindIndex.get(_drwCurSet?.id);
+  if (!idx?.pages?.length) return;
+
+  for (const p of idx.pages) {
+    const text  = (p.text || '').toLowerCase();
+    const items = p.items || [];
+    if (!text) continue;
+    // Reconstruct per-item char ranges using the same separator ("") we
+    // used when joining (unlikely to occur naturally in PDF text).
+    const itemRanges = [];
+    let cursor = 0;
+    for (let i = 0; i < items.length; i++) {
+      const s = items[i].str || '';
+      itemRanges.push([cursor, cursor + s.length, i]);
+      cursor += s.length + 1; // +1 for separator
+    }
+    let from = 0;
+    while (true) {
+      const pos = text.indexOf(lowerQuery, from);
+      if (pos < 0) break;
+      const ms = pos;
+      const me = pos + lowerQuery.length;
+      const itemIndices = [];
+      for (const [a, b, i] of itemRanges) {
+        if (a < me && b > ms) itemIndices.push(i);
+      }
+      const sStart = Math.max(0, pos - 30);
+      const sEnd   = Math.min(p.text.length, me + 60);
+      const snippet = (sStart > 0 ? '…' : '') + p.text.slice(sStart, sEnd) + (sEnd < p.text.length ? '…' : '');
+      const match = { pageIndex: p.pageIndex, matchStart: ms, matchEnd: me, itemIndices, snippet };
+      _drwFindState.matches.push(match);
+      const arr = _drwFindState.byPage.get(p.pageIndex) || [];
+      arr.push(match);
+      _drwFindState.byPage.set(p.pageIndex, arr);
+      from = pos + lowerQuery.length;
+      if (_drwFindState.matches.length >= 2000) break;
+    }
+    if (_drwFindState.matches.length >= 2000) break;
   }
 }
 
@@ -33308,13 +33418,31 @@ async function _drwBuildFindIndex(setId) {
     for (let i = 1; i <= total; i++) {
       const page = await _drwPdfDoc.getPage(i);
       const tc = await page.getTextContent();
-      const text = (tc.items || []).map(it => it.str || '').join(' ');
-      pages.push({ pageIndex: i - 1, text });
+      const items = tc.items || [];
+      // Join with a separator that never appears naturally so item char ranges
+      // map cleanly back to positions in the joined string.
+      const text = items.map(it => it.str || '').join('');
+      // Store a slim per-item record — keep only what _drwDrawHighlights needs.
+      const slim = items.map(it => ({
+        str: it.str || '',
+        transform: it.transform,
+        width: it.width || 0,
+        height: it.height || Math.abs(it.transform?.[3] || 12),
+      }));
+      pages.push({ pageIndex: i - 1, text, items: slim });
       if (i % 10 === 0) _drwFindStatus(`Indexed ${i}/${total}`);
     }
     _drwFindIndex.set(setId, { pages, status: 'ready' });
     _drwFindStatus('Indexed');
     setTimeout(() => _drwFindStatus(''), 1200);
+    // If the user already typed a query before indexing finished, re-search now.
+    if (_drwFindState.query) {
+      _drwSearchAllMatches(_drwFindState.query.toLowerCase());
+      _drwFindState.currentIndex = _drwFindState.matches.length ? 0 : -1;
+      _drwUpdateFindCycleUI();
+      _drwRenderFindResults();
+      _drwDrawHighlights(_drwPageIndex).catch(() => {});
+    }
   } catch (e) {
     _drwFindIndex.set(setId, { pages, status: 'error' });
     _drwFindStatus(`Index error: ${e.message}`);
@@ -33326,39 +33454,36 @@ function _drwFindStatus(txt) {
   if (el) el.textContent = txt || '';
 }
 
-function _drwRenderFindResults(q) {
+function _drwUpdateFindCycleUI() {
+  const cycle = document.getElementById('drw-find-cycle');
+  const counter = document.getElementById('drw-find-counter');
+  if (!cycle || !counter) return;
+  if (_drwFindState.matches.length === 0) {
+    cycle.style.display = 'none';
+    return;
+  }
+  cycle.style.display = 'inline-flex';
+  counter.textContent = `${_drwFindState.currentIndex + 1} of ${_drwFindState.matches.length}`;
+}
+
+function _drwRenderFindResults() {
   const results = document.getElementById('drw-find-results');
   if (!results) return;
-  const query = String(q || '').trim().toLowerCase();
+  const query = _drwFindState.query;
   if (!query) { results.style.display = 'none'; results.innerHTML = ''; return; }
 
-  // Sheet metadata matches (instant) — scoped to current set.
+  // Sheet metadata matches — instant, scoped to current set.
+  const lower = query.toLowerCase();
   const sheets = DRAWING_SHEETS
     .filter(s => s.set_id === _drwCurSet?.id)
     .filter(s =>
-      (s.sheet_number || '').toLowerCase().includes(query) ||
-      (s.sheet_title  || '').toLowerCase().includes(query))
+      (s.sheet_number || '').toLowerCase().includes(lower) ||
+      (s.sheet_title  || '').toLowerCase().includes(lower))
     .sort((a, b) => (a.page_index || 0) - (b.page_index || 0))
     .slice(0, 25);
 
-  // Page-text matches from the search index.
+  const textMatches = _drwFindState.matches;
   const idx = _drwFindIndex.get(_drwCurSet?.id);
-  const textMatches = [];
-  if (idx?.pages?.length) {
-    for (const p of idx.pages) {
-      const t = (p.text || '').toLowerCase();
-      const pos = t.indexOf(query);
-      if (pos >= 0) {
-        const start = Math.max(0, pos - 30);
-        const end   = Math.min(p.text.length, pos + query.length + 60);
-        textMatches.push({
-          pageIndex: p.pageIndex,
-          snippet: (start > 0 ? '…' : '') + p.text.slice(start, end) + (end < p.text.length ? '…' : ''),
-        });
-        if (textMatches.length >= 40) break;
-      }
-    }
-  }
 
   if (!sheets.length && !textMatches.length) {
     const note = idx?.status === 'loading'
@@ -33374,37 +33499,154 @@ function _drwRenderFindResults(q) {
   if (sheets.length) {
     html += `<div class="drw-find-result-section">Sheets (${sheets.length})</div>`;
     html += sheets.map(s => `
-      <div class="drw-find-result" onclick="_drwFindPick(${s.page_index},'${escapeHtml(s.id)}')">
+      <div class="drw-find-result" onclick="_drwFindPickSheet('${escapeHtml(s.id)}')">
         <div><b>${hlEscape(s.sheet_number || '—')}</b> · ${hlEscape((s.sheet_title || '').slice(0,80))}</div>
         <div class="drw-find-meta">Page ${(s.page_index || 0) + 1}${s.revision ? ` · Rev ${escapeHtml(s.revision)}` : ''}</div>
       </div>`).join('');
   }
   if (textMatches.length) {
     html += `<div class="drw-find-result-section">Inside PDF (${textMatches.length})</div>`;
-    html += textMatches.map(m => `
-      <div class="drw-find-result" onclick="_drwFindPick(${m.pageIndex},'')">
-        <div>${hlEscape(m.snippet)}</div>
-        <div class="drw-find-meta">Page ${m.pageIndex + 1}</div>
-      </div>`).join('');
+    html += textMatches.slice(0, 200).map((m, i) => {
+      const active = i === _drwFindState.currentIndex;
+      return `
+        <div class="drw-find-result ${active ? 'is-active' : ''}" style="${active ? 'background:#fef3c7;' : ''}"
+             onclick="_drwFindGotoMatch(${i})">
+          <div>${hlEscape(m.snippet)}</div>
+          <div class="drw-find-meta">Match ${i + 1} of ${textMatches.length} · Page ${m.pageIndex + 1}</div>
+        </div>`;
+    }).join('');
+    if (textMatches.length > 200) {
+      html += `<div class="drw-find-result" style="color:var(--gray-500);font-size:11px;">Showing first 200 of ${textMatches.length} matches — use ◀ ▶ to cycle through all.</div>`;
+    }
   }
   results.innerHTML = html;
   results.style.display = 'block';
+
+  // Scroll active row into view if rendered.
+  const activeEl = results.querySelector('.drw-find-result.is-active');
+  if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
 }
 
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-async function _drwFindPick(pageIndex, sheetId) {
-  document.getElementById('drw-find-results').style.display = 'none';
-  document.getElementById('drw-find-input').value = '';
-  if (sheetId) {
-    const s = DRAWING_SHEETS.find(x => x.id === sheetId);
-    if (s && s.set_id !== _drwCurSet?.id) {
-      await _drwOpenSheet(s.id, s.set_id, s.page_index || 0);
-      return;
+async function _drwFindGotoMatch(i, opts = {}) {
+  if (i < 0 || i >= _drwFindState.matches.length) return;
+  _drwFindState.currentIndex = i;
+  const m = _drwFindState.matches[i];
+  if (m.pageIndex !== _drwPageIndex) {
+    await _drwGotoPage(m.pageIndex);
+    // _drwGotoPage triggers a render which redraws highlights with the new active.
+  } else {
+    await _drwDrawHighlights(m.pageIndex);
+  }
+  _drwUpdateFindCycleUI();
+  _drwRenderFindResults();
+}
+
+async function _drwFindCycle(delta) {
+  if (!_drwFindState.matches.length) return;
+  const n = _drwFindState.matches.length;
+  const next = ((_drwFindState.currentIndex + delta) % n + n) % n;
+  await _drwFindGotoMatch(next);
+}
+
+function _drwFindClear() {
+  const inp = document.getElementById('drw-find-input');
+  if (inp) inp.value = '';
+  _drwFindState.query = '';
+  _drwFindState.matches = [];
+  _drwFindState.byPage = new Map();
+  _drwFindState.currentIndex = -1;
+  _drwUpdateFindCycleUI();
+  const r = document.getElementById('drw-find-results');
+  if (r) { r.style.display = 'none'; r.innerHTML = ''; }
+  _drwDrawHighlights(_drwPageIndex).catch(() => {});
+}
+
+async function _drwFindPickSheet(sheetId) {
+  const s = DRAWING_SHEETS.find(x => x.id === sheetId);
+  if (!s) return;
+  if (s.set_id !== _drwCurSet?.id) {
+    await _drwOpenSheet(s.id, s.set_id, s.page_index || 0);
+    return;
+  }
+  await _drwGotoPage(s.page_index || 0);
+}
+
+// ── Canvas highlight overlay ────────────────────────────────────────────────
+// Sits between the PDF canvas and the markup canvas — yellow rectangles for
+// every match on the current page, with the active match boxed in orange.
+function _drwEnsureHighlightCanvas() {
+  let c = document.getElementById('drw-highlight-canvas');
+  if (c) return c;
+  const wrap = document.getElementById('drw-canvas-wrap');
+  const markup = document.getElementById('drw-markup-canvas');
+  if (!wrap || !markup) return null;
+  c = document.createElement('canvas');
+  c.id = 'drw-highlight-canvas';
+  c.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;';
+  wrap.insertBefore(c, markup);
+  return c;
+}
+
+async function _drwDrawHighlights(pageIndex) {
+  const hl = _drwEnsureHighlightCanvas();
+  if (!hl || !_drwPdfDoc) return;
+  const pdf = document.getElementById('drw-pdf-canvas');
+  if (!pdf) return;
+  hl.width  = pdf.width;
+  hl.height = pdf.height;
+  hl.style.width  = pdf.style.width;
+  hl.style.height = pdf.style.height;
+  const ctx = hl.getContext('2d');
+  ctx.clearRect(0, 0, hl.width, hl.height);
+
+  const matches = _drwFindState.byPage.get(pageIndex);
+  if (!matches || !matches.length) return;
+
+  const idx = _drwFindIndex.get(_drwCurSet?.id);
+  const pageRec = idx?.pages?.find(p => p.pageIndex === pageIndex);
+  if (!pageRec || !pageRec.items) return;
+
+  const page = await _drwPdfDoc.getPage(pageIndex + 1);
+  const viewport = page.getViewport({ scale: _drwZoomScale });
+
+  const activeMatch = _drwFindState.matches[_drwFindState.currentIndex];
+  for (const m of matches) {
+    const isActive = activeMatch
+                  && activeMatch.pageIndex  === m.pageIndex
+                  && activeMatch.matchStart === m.matchStart;
+    for (const itemIdx of m.itemIndices) {
+      const it = pageRec.items[itemIdx];
+      if (!it || !it.transform) continue;
+      const tr = it.transform;
+      const x  = tr[4];
+      const y  = tr[5];
+      const w  = it.width  || 0;
+      const h  = it.height || Math.abs(tr[3]) || 12;
+      // Bottom-left and top-right in PDF user space (PDF Y is bottom-up).
+      const [vx1, vy1] = viewport.convertToViewportPoint(x, y);
+      const [vx2, vy2] = viewport.convertToViewportPoint(x + w, y + h);
+      const rx = Math.min(vx1, vx2);
+      const ry = Math.min(vy1, vy2);
+      const rw = Math.max(2, Math.abs(vx2 - vx1));
+      const rh = Math.max(8, Math.abs(vy2 - vy1));
+      ctx.fillStyle = isActive ? 'rgba(249,115,22,0.50)' : 'rgba(253,224,71,0.55)';
+      ctx.fillRect(rx, ry, rw, rh);
+      if (isActive) {
+        ctx.strokeStyle = '#c2410c';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(rx, ry, rw, rh);
+      }
     }
   }
+}
+
+async function _drwFindPick(pageIndex, sheetId) {
+  // Legacy entry point — kept for any external callers.
+  if (sheetId) return _drwFindPickSheet(sheetId);
   await _drwGotoPage(parseInt(pageIndex, 10) || 0);
 }
 

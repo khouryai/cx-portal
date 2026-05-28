@@ -11175,6 +11175,7 @@ a:focus-visible {
 }
 .drw-find-result:last-child { border-bottom: none; }
 .drw-find-result:hover { background: var(--gray-50); }
+.drw-find-result.is-active { background: #fef3c7 !important; border-left: 3px solid #f59e0b; padding-left: 9px; }
 .drw-find-result mark { background: #fde68a; padding: 0 1px; border-radius: 2px; }
 .drw-find-result .drw-find-meta {
   font-size: 11px;
