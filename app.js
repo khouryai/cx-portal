@@ -783,9 +783,9 @@ function refreshDashboard() {
   const _hasCustomWeights = _anyCustomWeights(ti);
   const _wNote = _hasCustomWeights ? ` <span style="font-size:10px;font-weight:600;color:var(--gray-400);letter-spacing:.03em;">WEIGHTED</span>` : '';
 
-  document.getElementById('kpi-progress').textContent = overallPct + '%';
-  document.getElementById('kpi-progress-meta').innerHTML = `<b>${complete.toLocaleString()}</b> of ${tiTotal.toLocaleString()} test cases passed or N/A${_wNote}`;
-  setTimeout(() => { document.getElementById('kpi-progress-bar').style.width = overallPct + '%'; }, 100);
+  // Overall progress KPI: by default shows static-register progress. Admin
+  // toggle on the card flips it to combined (static + dynamic instances).
+  _dashRenderOverallProgress({ overallPct, complete, tiTotal, _wNote });
 
   document.getElementById('kpi-passrate').textContent = passRate + '%';
   document.getElementById('kpi-passrate-meta').innerHTML = `<b>${tiPass}</b> passed / <b>${tiFail + tiBlocked}</b> failed or blocked${_wNote}`;
@@ -9590,6 +9590,9 @@ let _amSelected = new Set(); // selected activity keys for bulk action
 let _amCurrentEditKey = null; // key of the activity currently open in Edit modal
 let _trEditMode = false;
 let _trDraftItems = null;
+// Static Test Register hides dynamic-scope items by default. Admins can flip
+// this on to recover/edit a misclassified row that would otherwise be invisible.
+let _trShowDynamic = false;
 let _trSelected = new Set();
 let _trBulkMsg = '';
 let _trBulkMode = false;
@@ -10195,9 +10198,13 @@ function _amDrilldownHTML(key) {
   const legacyMap = { 'Future':'Not Started', 'Passed':'Pass', 'Failed':'Fail', 'Complete':'Pass' };
   // Only the latest attempt renders as a row; prior attempts appear in the
   // per-row regression history panel (Phase 3).
+  // Dynamic-scope test cases are now homed in the Dynamic Testing module —
+  // hide them from the static Test Register unless _trShowDynamic is on.
   const viewItems = _trEditMode && _trDraftItems
-    ? _trDraftItems
-    : act.items.filter(r => r.IsLatestAttempt !== false);
+    ? _trDraftItems.filter(r => _trShowDynamic || String(r.ScopeType || 'static').toLowerCase() !== 'dynamic')
+    : act.items.filter(r =>
+        r.IsLatestAttempt !== false
+        && (_trShowDynamic || String(r.ScopeType || 'static').toLowerCase() !== 'dynamic'));
 
   // Status filter (drilldown-level)
   const drillFiltered = _trDrillStatusFilter
@@ -10275,6 +10282,7 @@ function _amDrilldownHTML(key) {
               <div class="v2-bar-track"><div class="v2-bar-fill ${barTone}" style="width:${pct}%;"></div></div>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              ${isAdmin ? `<button class="v2-btn-ghost" onclick="_trToggleShowDynamic()" title="Show or hide dynamic-scope test cases in this register">${_trShowDynamic?'Hide Dynamic':'Show Dynamic'}</button>` : ''}
               <button class="v2-btn-ghost" onclick="_trToggleBulkEdit()">${_trBulkMode?'Bulk Edit On':'Bulk Edit'}</button>
               ${isAdmin ? (_trEditMode
                 ? `<button class="v2-btn-ghost" onclick="_trAddSection()">＋ Section</button>
@@ -10734,6 +10742,11 @@ function _trToggleBulkEdit() {
   _trBulkMode = !_trBulkMode;
   _trSelected.clear();
   _trBulkMsg = '';
+  _reRenderTR();
+}
+
+function _trToggleShowDynamic() {
+  _trShowDynamic = !_trShowDynamic;
   _reRenderTR();
 }
 
@@ -31572,9 +31585,11 @@ async function renderDynamicTestingPage() {
     <h1 class="page-title">Dynamic Testing</h1>
     <p class="page-subtitle">Manage executable test instances against the imported track plan.</p>
     <div style="display:flex;gap:8px;margin-top:14px;">
+      <button class="hero-tab ${_dynPage.tab==='cases'?'active':''}" onclick="_dynTabSwitch('cases')">Test Cases</button>
       <button class="hero-tab ${_dynPage.tab==='instances'?'active':''}" onclick="_dynTabSwitch('instances')">Instances</button>
       <button class="hero-tab ${_dynPage.tab==='board'?'active':''}" onclick="_dynTabSwitch('board')">Planning Board</button>
       <button class="hero-tab ${_dynPage.tab==='planning'?'active':''}" onclick="_dynTabSwitch('planning')">Capacity Planning</button>
+      <button class="hero-tab ${_dynPage.tab==='variance'?'active':''}" onclick="_dynTabSwitch('variance')">Duration Variance</button>
     </div>
     <style>
       .hero-tab{padding:8px 16px;border:1px solid var(--gray-300);background:white;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--gray-700);}
@@ -31611,9 +31626,11 @@ async function renderDynamicTestingPage() {
 
   await _dynLoadAll();
 
-  if (_dynPage.tab === 'instances')      _dynRenderInstances();
+  if (_dynPage.tab === 'cases')          _dynRenderCases();
+  else if (_dynPage.tab === 'instances') _dynRenderInstances();
   else if (_dynPage.tab === 'board')     _dynRenderBoard();
   else if (_dynPage.tab === 'planning')  _dynRenderPlanning();
+  else if (_dynPage.tab === 'variance')  _dynRenderVariance();
 }
 
 function _dynTabSwitch(tab) {
@@ -31863,6 +31880,29 @@ function _dynBuildInstanceForm(inst, tcOpts) {
         <input id="dyn-f-blocked" value="${escapeHtml(v.blocked_reason || '')}" placeholder="" />
       </div>
 
+      <div class="form-field">
+        <label>Control zone</label>
+        <input id="dyn-f-zone" value="${escapeHtml(v.control_zone_code || '')}" placeholder="e.g. W40" />
+      </div>
+      <div class="form-field">
+        <label>Consist size <span style="color:var(--gray-500);font-weight:400;">(cars)</span></label>
+        <input id="dyn-f-consist" type="number" min="1" value="${v.consist_size ?? ''}" placeholder="e.g. 4" />
+      </div>
+
+      <div class="form-field">
+        <label>Trains needed</label>
+        <input id="dyn-f-trains" type="number" min="1" value="${v.trains_needed ?? ''}" placeholder="1" />
+      </div>
+      <div class="form-field">
+        <label>Expected duration <span style="color:var(--gray-500);font-weight:400;">(minutes)</span></label>
+        <input id="dyn-f-exp-dur" type="number" min="1" value="${v.expected_duration_minutes ?? ''}" placeholder="e.g. 120" />
+      </div>
+
+      <div class="form-field" style="grid-column:1/-1;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:10px;">
+        <label style="color:#9a3412;">Actual duration <span style="color:#9a3412;font-weight:400;">(minutes — fill in when the test is run, drives the duration-variance report)</span></label>
+        <input id="dyn-f-act-dur" type="number" min="0" value="${v.actual_duration_minutes ?? ''}" placeholder="e.g. 135" style="background:white;" />
+      </div>
+
       <div class="form-field" style="grid-column:1/-1;">
         <label>Notes</label>
         <textarea id="dyn-f-notes" rows="2" style="width:100%;font-size:13px;">${escapeHtml(v.notes || '')}</textarea>
@@ -31874,6 +31914,7 @@ function _dynBuildInstanceForm(inst, tcOpts) {
 async function _dynSaveInstance(id) {
   const get = i => document.getElementById(i)?.value?.trim() || null;
   const sectionsRaw = get('dyn-f-sections') || '';
+  const intOrNull = (s) => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : null; };
   const payload = {
     test_id: get('dyn-f-test-id'),
     code: get('dyn-f-code'),
@@ -31888,6 +31929,11 @@ async function _dynSaveInstance(id) {
     scheduled_for_date: get('dyn-f-sched'),
     blocked_reason: get('dyn-f-blocked'),
     notes: get('dyn-f-notes'),
+    control_zone_code: get('dyn-f-zone'),
+    consist_size: intOrNull(get('dyn-f-consist')),
+    trains_needed: intOrNull(get('dyn-f-trains')),
+    expected_duration_minutes: intOrNull(get('dyn-f-exp-dur')),
+    actual_duration_minutes: intOrNull(get('dyn-f-act-dur')),
     updated_at: new Date().toISOString(),
   };
   if (!payload.test_id) { alert('Test case is required.'); return; }
@@ -31932,7 +31978,8 @@ function _dynOpenCSVModal() {
         <p style="font-size:13px;color:var(--gray-600);margin:0 0 10px;">
           Columns: <code>test_id, code, title, target_phase, target_window_start, target_window_end,
           target_track_sections, required_mode, status, notes, description, scheduled_for_date,
-          blocked_reason</code>. Only <code>test_id</code> is required.
+          blocked_reason, control_zone_code, consist_size, trains_needed,
+          expected_duration_minutes</code>. Only <code>test_id</code> is required.
           <code>target_track_sections</code> is a semicolon- or comma-separated list.
         </p>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
@@ -31969,9 +32016,9 @@ function _dynOpenCSVModal() {
 
 function _dynCSVPasteSample() {
   const sample =
-    `test_id,code,title,target_phase,target_window_start,target_window_end,target_track_sections,required_mode,status,notes\n` +
-    `TC-DYN-001,SW-W10-001,Switch W10 CBTC normal,Phase 2,2026-06-01,2026-06-30,"W10-R10;R10-W12",CBTC,Not Started,sample\n` +
-    `TC-DYN-001,SW-W12-001,Switch W12 CBTC reverse,Phase 2,2026-06-01,2026-06-30,W12-R12,CBTC,Not Started,sample\n`;
+    `test_id,code,title,target_phase,target_window_start,target_window_end,target_track_sections,required_mode,status,notes,control_zone_code,consist_size,trains_needed,expected_duration_minutes\n` +
+    `TC-DYN-001,SW-W10-001,Switch W10 CBTC normal,Phase 2,2026-06-01,2026-06-30,"W10-R10;R10-W12",CBTC,Not Started,sample,W10,4,1,60\n` +
+    `TC-DYN-001,SW-W12-001,Switch W12 CBTC reverse,Phase 2,2026-06-01,2026-06-30,W12-R12,CBTC,Not Started,sample,W10,4,1,60\n`;
   document.getElementById('dyn-csv-text').value = sample;
   _dynCSVValidate();
 }
@@ -32047,6 +32094,7 @@ function _dynCSVRowsToInstances(parsed) {
     if (!_DYN_STATUSES.includes(status)) { errors.push(`Row ${r + 1}: invalid status "${status}"`); continue; }
     const mode = get('required_mode') || null;
     if (mode && !['CBTC','VATC'].includes(mode)) { errors.push(`Row ${r + 1}: invalid required_mode "${mode}"`); continue; }
+    const intOrNull = (s) => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : null; };
     out.push({
       test_id,
       code: get('code') || null,
@@ -32061,6 +32109,10 @@ function _dynCSVRowsToInstances(parsed) {
       scheduled_for_date: dateOrNull(get('scheduled_for_date')),
       blocked_reason: get('blocked_reason') || null,
       notes: get('notes') || null,
+      control_zone_code: get('control_zone_code') || null,
+      consist_size: intOrNull(get('consist_size')),
+      trains_needed: intOrNull(get('trains_needed')),
+      expected_duration_minutes: intOrNull(get('expected_duration_minutes')),
     });
   }
   return { rows: out, errors };
@@ -32719,4 +32771,224 @@ async function _dtSavePrereqs(testId) {
   } catch (e) {
     alert(`Save failed: ${e.message}`);
   }
+}
+
+
+
+// ==========================================================================
+// DYNAMIC TESTING — TEST CASES TAB (procedure-level)
+//
+//   Lists the dynamic-scope test_items rows that the Test Register no
+//   longer shows. Each row shows: code · name · rollup status · prereq
+//   count · instance count. Click a row to open its instance list filtered.
+// ==========================================================================
+
+async function _dynRenderCases() {
+  const cont = document.getElementById('dyn-content');
+  if (!cont) return;
+  cont.innerHTML = `<div style="padding:40px;text-align:center;color:var(--gray-500);">Loading dynamic test cases…</div>`;
+
+  let rollup = [], prereqCounts = new Map();
+  try {
+    rollup = await _dbSelect('vw_dynamic_test_case_status', {}, '*');
+    const prereqs = await _dbSelect('test_item_prerequisites', {}, 'test_id');
+    (prereqs || []).forEach(p => {
+      prereqCounts.set(p.test_id, (prereqCounts.get(p.test_id) || 0) + 1);
+    });
+  } catch (e) {
+    cont.innerHTML = `<div style="padding:40px;color:var(--bad);">Load failed: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+
+  rollup.sort((a, b) => (a.test_case_code || a.test_id || '').localeCompare(b.test_case_code || b.test_id || ''));
+
+  cont.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:10px;margin:0 0 18px;">
+      <div class="dyn-kpi"><span>Test cases</span><b>${rollup.length}</b></div>
+      <div class="dyn-kpi"><span>With instances</span><b>${rollup.filter(r => r.instance_count > 0).length}</b></div>
+      <div class="dyn-kpi"><span>Pass</span><b>${rollup.filter(r => r.rollup_status === 'Pass').length}</b></div>
+      <div class="dyn-kpi"><span>Fail / Blocked</span><b>${rollup.filter(r => r.rollup_status === 'Fail' || r.rollup_status === 'Blocked').length}</b></div>
+    </div>
+
+    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
+      <table class="dyn-table">
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Name</th>
+            <th>Rollup status</th>
+            <th style="text-align:right;">Instances</th>
+            <th style="text-align:right;">Complete</th>
+            <th style="text-align:right;">Prereqs</th>
+            <th style="text-align:right;width:200px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rollup.length === 0
+            ? `<tr><td colspan="7" style="padding:30px;text-align:center;color:var(--gray-500);">No dynamic test cases yet. Open the Test Register and toggle a test case's scope to Dynamic.</td></tr>`
+            : rollup.map(r => `
+              <tr style="border-top:1px solid var(--gray-100);">
+                <td style="font-family:monospace;font-size:11.5px;">${escapeHtml(r.test_case_code || r.test_id)}</td>
+                <td>${escapeHtml((r.test_name || '').slice(0,80))}</td>
+                <td>${_dynStatusBadge(r.rollup_status)}</td>
+                <td style="text-align:right;font-family:monospace;">${r.instance_count}</td>
+                <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.complete_count}</td>
+                <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${prereqCounts.get(r.test_id) || 0}</td>
+                <td style="text-align:right;white-space:nowrap;">
+                  <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynCaseFilterInstances('${escapeHtml(r.test_id)}')">Instances</button>
+                  <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dtOpenPrereqEditor('${escapeHtml(r.test_id)}')">Prereqs</button>
+                  <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openTestCaseScopeModal('${escapeHtml(r.test_id)}')">Scope</button>
+                </td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function _dynCaseFilterInstances(testId) {
+  _dynPage.testFilter = testId;
+  _dynPage.tab = 'instances';
+  renderDynamicTestingPage();
+}
+
+
+// ==========================================================================
+// DYNAMIC TESTING — DURATION VARIANCE TAB
+//
+//   Lessons-learned surface. Reads vw_dynamic_duration_variance which
+//   groups completed instances by procedure × control zone and computes
+//   avg actual − avg expected.
+// ==========================================================================
+
+async function _dynRenderVariance() {
+  const cont = document.getElementById('dyn-content');
+  if (!cont) return;
+  cont.innerHTML = `<div style="padding:40px;text-align:center;color:var(--gray-500);">Loading duration variance…</div>`;
+
+  let rows = [];
+  try {
+    rows = await _dbSelect('vw_dynamic_duration_variance', {}, '*');
+  } catch (e) {
+    cont.innerHTML = `<div style="padding:40px;color:var(--bad);">Load failed: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+
+  const totalN  = rows.reduce((s, r) => s + (r.n_completed || 0), 0);
+  const totalOver = rows.filter(r => (r.avg_delta_min ?? 0) > 0).length;
+
+  cont.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(3,minmax(140px,1fr));gap:10px;margin:0 0 18px;">
+      <div class="dyn-kpi"><span>Completed runs</span><b>${totalN}</b></div>
+      <div class="dyn-kpi"><span>Procedure × zone buckets</span><b>${rows.length}</b></div>
+      <div class="dyn-kpi"><span>Running long (avg)</span><b>${totalOver}</b></div>
+    </div>
+
+    ${rows.length === 0
+      ? `<div style="padding:40px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:8px;">
+           No completed dynamic instances with actual duration recorded yet. Mark instances Pass/Fail/NA with an <b>Actual duration</b> value to populate this view.
+         </div>`
+      : `<div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
+          <table class="dyn-table">
+            <thead><tr>
+              <th>Procedure</th>
+              <th>Zone</th>
+              <th style="text-align:right;">N</th>
+              <th style="text-align:right;">Avg expected</th>
+              <th style="text-align:right;">Avg actual</th>
+              <th style="text-align:right;">Δ (min)</th>
+              <th style="text-align:right;">Max overrun</th>
+              <th style="text-align:right;">Max underrun</th>
+            </tr></thead>
+            <tbody>${rows.map(r => {
+              const delta = r.avg_delta_min ?? 0;
+              const tone = delta > 15 ? 'var(--bad)' : delta < -15 ? 'var(--info)' : 'var(--gray-700)';
+              return `<tr style="border-top:1px solid var(--gray-100);">
+                <td>${escapeHtml(r.procedure_name || '—')}</td>
+                <td style="font-family:monospace;font-size:11.5px;">${escapeHtml(r.control_zone_code || '—')}</td>
+                <td style="text-align:right;font-family:monospace;">${r.n_completed}</td>
+                <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.avg_expected_min}</td>
+                <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.avg_actual_min}</td>
+                <td style="text-align:right;font-family:monospace;color:${tone};font-weight:600;">${delta > 0 ? '+' : ''}${delta}</td>
+                <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.max_overrun_min ?? '—'}</td>
+                <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.max_underrun_min ?? '—'}</td>
+              </tr>`;
+            }).join('')}</tbody>
+          </table>
+        </div>`}
+  `;
+}
+
+
+
+// ==========================================================================
+// DASHBOARD — Overall Progress card with scope toggle
+//
+//   Default view: static-register completion (existing behavior).
+//   Toggle: combined (static + dynamic-instance completion). Pulls from
+//   the vw_procedure_completion view so the math stays in SQL and we
+//   don't have to load all dynamic instances client-side just for KPIs.
+// ==========================================================================
+
+let _dashScope = 'static';     // 'static' | 'combined'
+let _dashCombined = null;      // { complete, total, pct } cached from view
+
+function _dashRenderOverallProgress({ overallPct, complete, tiTotal, _wNote }) {
+  const valEl  = document.getElementById('kpi-progress');
+  const metaEl = document.getElementById('kpi-progress-meta');
+  const barEl  = document.getElementById('kpi-progress-bar');
+  if (!valEl || !metaEl || !barEl) return;
+
+  const renderStatic = () => {
+    valEl.textContent  = overallPct + '%';
+    metaEl.innerHTML   =
+      `<b>${complete.toLocaleString()}</b> of ${tiTotal.toLocaleString()} test cases passed or N/A${_wNote}`
+      + `<div style="margin-top:6px;font-size:11px;">`
+      + `<a href="javascript:void(0)" onclick="_dashToggleScope()" style="color:rgba(255,255,255,0.6);text-decoration:underline;">View combined (static + dynamic)</a>`
+      + `</div>`;
+    setTimeout(() => { barEl.style.width = overallPct + '%'; }, 100);
+  };
+
+  const renderCombined = (c) => {
+    valEl.textContent = c.pct + '%';
+    metaEl.innerHTML =
+      `<b>${c.complete.toLocaleString()}</b> of ${c.total.toLocaleString()} combined (static + dynamic)`
+      + `<div style="margin-top:6px;font-size:11px;">`
+      + `<a href="javascript:void(0)" onclick="_dashToggleScope()" style="color:rgba(255,255,255,0.6);text-decoration:underline;">Static only</a>`
+      + `</div>`;
+    setTimeout(() => { barEl.style.width = c.pct + '%'; }, 100);
+  };
+
+  if (_dashScope === 'static') {
+    renderStatic();
+    return;
+  }
+
+  // Combined mode — fetch (or use cached) totals from vw_procedure_completion.
+  if (_dashCombined) {
+    renderCombined(_dashCombined);
+    return;
+  }
+
+  valEl.textContent = '…';
+  metaEl.innerHTML = `<span style="color:rgba(255,255,255,0.6);">Loading combined totals…</span>`;
+  _dbSelect('vw_procedure_completion', {}, 'combined_total,combined_complete')
+    .then(rows => {
+      const total    = (rows || []).reduce((s, r) => s + (r.combined_total    || 0), 0);
+      const complete = (rows || []).reduce((s, r) => s + (r.combined_complete || 0), 0);
+      const pct = total > 0 ? Math.round((complete * 100) / total) : 0;
+      _dashCombined = { complete, total, pct };
+      renderCombined(_dashCombined);
+    })
+    .catch(e => {
+      console.warn('[dash] combined fetch failed:', e.message);
+      _dashScope = 'static';
+      renderStatic();
+    });
+}
+
+function _dashToggleScope() {
+  _dashScope = _dashScope === 'static' ? 'combined' : 'static';
+  _dashCombined = null;  // refetch on next combined view (data may have changed)
+  if (typeof refreshDashboard === 'function') refreshDashboard();
 }
