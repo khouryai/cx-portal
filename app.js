@@ -31548,7 +31548,7 @@ const _dynPage = {
   statusFilter: '',
   testFilter: '',
   // Board state
-  boardAxis: 'section',                  // 'section' | 'phase'
+  boardAxis: 'phase',                    // 'phase' | 'zone'
   boardStart: null,                      // first day of first month (Date)
   boardMonths: 6,
   // Planning state
@@ -31724,7 +31724,7 @@ function _dynRenderInstances() {
     if (sf && r.status !== sf) return false;
     if (tf && r.test_id !== tf) return false;
     if (q) {
-      const hay = [r.code, r.title, r.description, r.target_phase, (r.target_track_sections || []).join(','), r.notes].join(' ').toLowerCase();
+      const hay = [r.code, r.title, r.description, r.target_phase, r.control_zone_code, r.notes].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -31768,7 +31768,7 @@ function _dynRenderInstances() {
           <th>Title</th>
           <th>Target Phase</th>
           <th>Target Window</th>
-          <th>Sections</th>
+          <th>Zone</th>
           <th>Mode</th>
           <th>Status</th>
           <th style="width:90px;">Actions</th>
@@ -31789,8 +31789,8 @@ function _dynRowHtml(r) {
   const win = (r.target_window_start || r.target_window_end)
     ? `${_dynFmtDate(r.target_window_start) || '…'} → ${_dynFmtDate(r.target_window_end) || '…'}`
     : '<span style="color:var(--gray-400);">—</span>';
-  const sections = (r.target_track_sections || []).length
-    ? `<span style="font-family:var(--font-mono,monospace);font-size:11px;">${(r.target_track_sections || []).slice(0,3).map(escapeHtml).join(', ')}${(r.target_track_sections||[]).length>3?` +${r.target_track_sections.length-3}`:''}</span>`
+  const zoneCell = r.control_zone_code
+    ? `<span style="font-family:var(--font-mono,monospace);font-size:11px;">${escapeHtml(r.control_zone_code)}</span>`
     : '<span style="color:var(--gray-400);">—</span>';
   return `
     <tr>
@@ -31799,7 +31799,7 @@ function _dynRowHtml(r) {
       <td>${escapeHtml(r.title || '')}</td>
       <td>${r.target_phase ? `<span class="tag tag-phase">${escapeHtml(r.target_phase)}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>
       <td style="font-size:12px;">${win}</td>
-      <td>${sections}</td>
+      <td>${zoneCell}</td>
       <td>${r.required_mode ? `<span class="badge">${escapeHtml(r.required_mode)}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>
       <td>
         <select onchange="_dynInstanceUpdateStatus('${escapeHtml(r.id)}', this.value, this)"
@@ -31887,7 +31887,8 @@ function _dynOpenInstanceModal(id) {
 
 function _dynBuildInstanceForm(inst, tcOpts) {
   const v = inst || {};
-  const sections = (v.target_track_sections || []).join(', ');
+  const consistOpts = [1, 2, 3, 4, 5, 6, 7, 8];
+  const consistIsKnown = v.consist_size != null && consistOpts.includes(v.consist_size);
   return `
     <div style="padding:8px 24px 16px;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
       <div class="form-field" style="grid-column:1/-1;">
@@ -31932,11 +31933,6 @@ function _dynBuildInstanceForm(inst, tcOpts) {
         <input id="dyn-f-phase" value="${escapeHtml(v.target_phase || '')}" placeholder="e.g. Phase 2" />
       </div>
       <div class="form-field">
-        <label>Target track sections <span style="color:var(--gray-500);font-weight:400;">(comma-separated codes)</span></label>
-        <input id="dyn-f-sections" value="${escapeHtml(sections)}" placeholder="e.g. W10-R10, R10-W12" />
-      </div>
-
-      <div class="form-field">
         <label>Target window start</label>
         <input id="dyn-f-win-start" type="date" value="${_dynFmtDate(v.target_window_start)}" />
       </div>
@@ -31959,8 +31955,12 @@ function _dynBuildInstanceForm(inst, tcOpts) {
         <input id="dyn-f-zone" value="${escapeHtml(v.control_zone_code || '')}" placeholder="e.g. W40" />
       </div>
       <div class="form-field">
-        <label>Consist size <span style="color:var(--gray-500);font-weight:400;">(cars)</span></label>
-        <input id="dyn-f-consist" type="number" min="1" value="${v.consist_size ?? ''}" placeholder="e.g. 4" />
+        <label>Consist size <span style="color:var(--gray-500);font-weight:400;">(cars — "Any" means consist-agnostic)</span></label>
+        <select id="dyn-f-consist">
+          <option value="" ${v.consist_size == null ? 'selected' : ''}>Any</option>
+          ${consistOpts.map(n => `<option value="${n}" ${v.consist_size === n ? 'selected' : ''}>${n}</option>`).join('')}
+          ${!consistIsKnown && v.consist_size != null ? `<option value="${v.consist_size}" selected>${v.consist_size}</option>` : ''}
+        </select>
       </div>
 
       <div class="form-field">
@@ -31987,7 +31987,6 @@ function _dynBuildInstanceForm(inst, tcOpts) {
 
 async function _dynSaveInstance(id) {
   const get = i => document.getElementById(i)?.value?.trim() || null;
-  const sectionsRaw = get('dyn-f-sections') || '';
   const intOrNull = (s) => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : null; };
   const payload = {
     test_id: get('dyn-f-test-id'),
@@ -31997,7 +31996,6 @@ async function _dynSaveInstance(id) {
     required_mode: get('dyn-f-mode'),
     status: get('dyn-f-status') || 'Not Started',
     target_phase: get('dyn-f-phase'),
-    target_track_sections: sectionsRaw ? sectionsRaw.split(',').map(s => s.trim()).filter(Boolean) : [],
     target_window_start: get('dyn-f-win-start'),
     target_window_end: get('dyn-f-win-end'),
     scheduled_for_date: get('dyn-f-sched'),
@@ -32051,10 +32049,10 @@ function _dynOpenCSVModal() {
       <div style="padding:8px 24px 16px;">
         <p style="font-size:13px;color:var(--gray-600);margin:0 0 10px;">
           Columns: <code>test_id, code, title, target_phase, target_window_start, target_window_end,
-          target_track_sections, required_mode, status, notes, description, scheduled_for_date,
+          required_mode, status, notes, description, scheduled_for_date,
           blocked_reason, control_zone_code, consist_size, trains_needed,
           expected_duration_minutes</code>. Only <code>test_id</code> is required.
-          <code>target_track_sections</code> is a semicolon- or comma-separated list.
+          Leave <code>consist_size</code> blank (or write <code>any</code>) for consist-agnostic tests.
         </p>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
           <input id="dyn-csv-file" type="file" accept=".csv,.xlsx,.xls" style="font-size:12px;" />
@@ -32091,20 +32089,20 @@ function _dynOpenCSVModal() {
 
 function _dynCSVPasteSample() {
   const sample =
-    `test_id,code,title,target_phase,target_window_start,target_window_end,target_track_sections,required_mode,status,notes,control_zone_code,consist_size,trains_needed,expected_duration_minutes\n` +
-    `TC-DYN-001,SW-W10-001,Switch W10 CBTC normal,Phase 2,2026-06-01,2026-06-30,"W10-R10;R10-W12",CBTC,Not Started,sample,W10,4,1,60\n` +
-    `TC-DYN-001,SW-W12-001,Switch W12 CBTC reverse,Phase 2,2026-06-01,2026-06-30,W12-R12,CBTC,Not Started,sample,W10,4,1,60\n`;
+    `test_id,code,title,target_phase,target_window_start,target_window_end,required_mode,status,notes,control_zone_code,consist_size,trains_needed,expected_duration_minutes\n` +
+    `TC-DYN-001,SW-W10-001,Switch W10 CBTC normal,Phase 2,2026-06-01,2026-06-30,CBTC,Not Started,sample,W10,4,1,60\n` +
+    `TC-DYN-001,SW-W12-001,Switch W12 CBTC reverse,Phase 2,2026-06-01,2026-06-30,CBTC,Not Started,sample,W10,any,1,60\n`;
   document.getElementById('dyn-csv-text').value = sample;
   _dynCSVValidate();
 }
 
 function _dynDownloadCSVTemplate() {
-  const headers = 'test_id,code,title,target_phase,target_window_start,target_window_end,target_track_sections,required_mode,status,notes,description,scheduled_for_date,blocked_reason,control_zone_code,consist_size,trains_needed,expected_duration_minutes';
-  const instructions = '# REQUIRED: test_id only. Dates: YYYY-MM-DD. target_track_sections: semicolon-separated list. consist_size/trains_needed/expected_duration_minutes: integers.';
+  const headers = 'test_id,code,title,target_phase,target_window_start,target_window_end,required_mode,status,notes,description,scheduled_for_date,blocked_reason,control_zone_code,consist_size,trains_needed,expected_duration_minutes';
+  const instructions = '# REQUIRED: test_id only. Dates: YYYY-MM-DD. consist_size: integer or "any" (blank = any). trains_needed/expected_duration_minutes: integers.';
   const examples = [
-    'TC-DYN-001,SW-W10-001,Switch W10 CBTC normal,Phase 2,2026-06-01,2026-06-30,"W10-R10;R10-W12",CBTC,Not Started,First pass with 4-car consist,,2026-06-05,,W10,4,1,60',
-    'TC-DYN-001,SW-W12-001,Switch W12 CBTC reverse,Phase 2,2026-06-01,2026-06-30,W12-R12,CBTC,Not Started,,,,,W10,4,1,60',
-    'TC-DYN-002,AX-W40-001,Axle Counter W40 full zone,Phase 3,2026-07-01,2026-07-31,"W40-R20;R20-W42;W42-R22",RM,Not Started,Requires track access all zones,,,,W40,6,2,120',
+    'TC-DYN-001,SW-W10-001,Switch W10 CBTC normal,Phase 2,2026-06-01,2026-06-30,CBTC,Not Started,First pass with 4-car consist,,2026-06-05,,W10,4,1,60',
+    'TC-DYN-001,SW-W12-001,Switch W12 CBTC reverse,Phase 2,2026-06-01,2026-06-30,CBTC,Not Started,,,,,W10,any,1,60',
+    'TC-DYN-002,AX-W40-001,Axle Counter W40 full zone,Phase 3,2026-07-01,2026-07-31,RM,Not Started,Requires track access all zones,,,,W40,6,2,120',
   ];
   const csv = [headers, instructions, ...examples].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -32186,6 +32184,11 @@ function _dynCSVRowsToInstances(parsed) {
     const mode = get('required_mode') || null;
     if (mode && !['CBTC','VATC'].includes(mode)) { errors.push(`Row ${r + 1}: invalid required_mode "${mode}"`); continue; }
     const intOrNull = (s) => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : null; };
+    const consistOrNull = (s) => {
+      const t = String(s || '').trim().toLowerCase();
+      if (!t || t === 'any' || t === '*') return null;
+      return intOrNull(t);
+    };
     out.push({
       test_id,
       code: get('code') || null,
@@ -32194,14 +32197,13 @@ function _dynCSVRowsToInstances(parsed) {
       required_mode: mode,
       status,
       target_phase: get('target_phase') || null,
-      target_track_sections: splitList(get('target_track_sections')),
       target_window_start: dateOrNull(get('target_window_start')),
       target_window_end: dateOrNull(get('target_window_end')),
       scheduled_for_date: dateOrNull(get('scheduled_for_date')),
       blocked_reason: get('blocked_reason') || null,
       notes: get('notes') || null,
       control_zone_code: get('control_zone_code') || null,
-      consist_size: intOrNull(get('consist_size')),
+      consist_size: consistOrNull(get('consist_size')),
       trains_needed: intOrNull(get('trains_needed')),
       expected_duration_minutes: intOrNull(get('expected_duration_minutes')),
     });
@@ -32262,11 +32264,9 @@ function _dynRenderBoard() {
   const rowSet = new Set();
   const monthKeys = months.map(_dynMonthKey);
   for (const r of _dynPage.instances) {
-    const rowKeys = _dynPage.boardAxis === 'phase'
-      ? [r.target_phase || '— No phase —']
-      : (r.target_track_sections && r.target_track_sections.length
-          ? r.target_track_sections
-          : ['— No section —']);
+    const rowKeys = _dynPage.boardAxis === 'zone'
+      ? [r.control_zone_code || '— No zone —']
+      : [r.target_phase || '— No phase —'];
     // Date to bucket on: scheduled_for_date else target_window_start else target_window_end.
     const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
     if (!when) continue;
@@ -32290,8 +32290,8 @@ function _dynRenderBoard() {
       <span style="flex:1"></span>
       <label style="font-size:13px;color:var(--gray-600);">Rows:</label>
       <select onchange="_dynPage.boardAxis=this.value;_dynRenderBoard();">
-        <option value="section" ${_dynPage.boardAxis==='section'?'selected':''}>Track section</option>
         <option value="phase" ${_dynPage.boardAxis==='phase'?'selected':''}>Phase</option>
+        <option value="zone" ${_dynPage.boardAxis==='zone'?'selected':''}>Control zone</option>
       </select>
     </div>
   `;
@@ -32339,11 +32339,9 @@ function _dynBoardToday() {
 
 function _dynBoardOpenCell(rowKey, monthKey) {
   const matches = _dynPage.instances.filter(r => {
-    const rowKeys = _dynPage.boardAxis === 'phase'
-      ? [r.target_phase || '— No phase —']
-      : (r.target_track_sections && r.target_track_sections.length
-          ? r.target_track_sections
-          : ['— No section —']);
+    const rowKeys = _dynPage.boardAxis === 'zone'
+      ? [r.control_zone_code || '— No zone —']
+      : [r.target_phase || '— No phase —'];
     if (!rowKeys.includes(rowKey)) return false;
     const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
     if (!when) return false;
