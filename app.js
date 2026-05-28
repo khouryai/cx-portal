@@ -30627,6 +30627,7 @@ function _drwEnsureEditorChrome() {
       <span class="drw-toolbar-divider"></span>
       <button class="drw-tool-btn drw-danger-btn" onclick="_drwDeleteSelected()" title="Delete selected markup">Delete</button>
       <button class="drw-tool-btn drw-danger-btn" onclick="_drwClearMarkup()" title="Clear all your draft markups">Clear</button>
+      <button class="drw-tool-btn" id="drw-tool-manage" onclick="_drwManageMarkupsOpen()" title="Manage all markups on this sheet (admin only)" style="display:${currentRoleUser?.role === 'admin' ? 'inline-flex' : 'none'};background:#fef3c7;color:#92400e;border-color:#fcd34d;">Manage</button>
       <button class="drw-save-btn" onclick="_drwSaveMarkup()">Save Draft</button>
       <button class="drw-publish-btn" onclick="_drwPublishMarkup()">Publish</button>`;
   }
@@ -31220,6 +31221,133 @@ async function _drwPublishMarkup() {
       `${pubCount} published markup${pubCount>1?'s':''}`;
     toast('Markup published to team', 'success');
   } catch(e) { toast(`Publish failed: ${e.message}`, 'error'); }
+}
+
+// ── Admin markup management ─────────────────────────────────────────────────
+// Admins can load any markup (their own draft, someone else's draft, or any
+// published markup) into the editor for modification, or delete it outright.
+// Non-admin role is enforced at the function entry — RLS still applies on the
+// DB side. Loading a markup populates the canvas; Save Draft / Publish in the
+// toolbar then act on the loaded markup's row via _drwSavedMarkupId.
+function _drwManageMarkupsOpen() {
+  if (currentRoleUser?.role !== 'admin') {
+    toast('Admin access required', 'error');
+    return;
+  }
+  if (!_drwCurSheet) return;
+  const sheetId = _drwCurSheet.id;
+  const markups = DRAWING_MARKUPS
+    .filter(m => m.sheet_id === sheetId)
+    .sort((a, b) => {
+      if (!!b.is_published - !!a.is_published) return (b.is_published ? 1 : 0) - (a.is_published ? 1 : 0);
+      return (b.updated_at || '').localeCompare(a.updated_at || '');
+    });
+
+  modal({
+    title: 'Manage markups (admin)',
+    sub: _drwCurSheet.sheet_number || _drwCurSheet.sheet_title || '',
+    body: `
+      <div style="padding:8px 24px 16px;">
+        ${markups.length === 0
+          ? `<p style="color:var(--gray-600);">No markups on this sheet.</p>`
+          : `<p style="font-size:13px;color:var(--gray-600);margin:0 0 12px;">
+              Load any markup into the editor to modify it, or delete it permanently.
+              Loading a markup replaces whatever's currently on the canvas.
+            </p>
+            <table style="width:100%;font-size:12px;border-collapse:collapse;">
+              <thead><tr style="background:var(--gray-50);">
+                <th style="text-align:left;padding:6px 10px;">Author</th>
+                <th style="text-align:left;padding:6px 10px;">Status</th>
+                <th style="text-align:left;padding:6px 10px;">Last updated</th>
+                <th style="text-align:right;padding:6px 10px;">Shapes</th>
+                <th style="text-align:right;padding:6px 10px;width:200px;">Actions</th>
+              </tr></thead>
+              <tbody>${markups.map(m => {
+                const author = m.creator_name || m.created_by || '—';
+                const isPub = !!m.is_published;
+                const shapeCount = Array.isArray(m.markup_data) ? m.markup_data.length : 0;
+                const updated = m.updated_at
+                  ? new Date(m.updated_at).toLocaleString()
+                  : (m.published_at ? new Date(m.published_at).toLocaleString() : '—');
+                const loaded = _drwSavedMarkupId === m.id;
+                return `<tr style="border-top:1px solid var(--gray-100);${loaded ? 'background:#fff7ed;' : ''}">
+                  <td style="padding:6px 10px;">${escapeHtml(author)}${loaded ? ' <span style="font-size:10px;color:#9a3412;">(loaded)</span>' : ''}</td>
+                  <td style="padding:6px 10px;">${isPub
+                    ? `<span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #bbf7d0;font-size:11px;">Published</span>`
+                    : `<span class="badge" style="background:var(--gray-100);color:var(--gray-700);font-size:11px;">Draft</span>`}</td>
+                  <td style="padding:6px 10px;color:var(--gray-700);">${escapeHtml(updated)}</td>
+                  <td style="padding:6px 10px;text-align:right;font-family:monospace;color:var(--gray-700);">${shapeCount}</td>
+                  <td style="padding:6px 10px;text-align:right;white-space:nowrap;">
+                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_drwAdminEditMarkup('${escapeHtml(m.id)}')">${loaded ? 'Reload' : 'Load to edit'}</button>
+                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--bad);border-color:#fca5a5;" onclick="_drwAdminDeleteMarkup('${escapeHtml(m.id)}')">Delete</button>
+                  </td>
+                </tr>`;
+              }).join('')}</tbody>
+            </table>`}
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    size: 'large',
+  });
+}
+
+function _drwAdminEditMarkup(markupId) {
+  if (currentRoleUser?.role !== 'admin') return;
+  const m = DRAWING_MARKUPS.find(x => x.id === markupId);
+  if (!m) { toast('Markup not found', 'error'); return; }
+
+  if (_drwMarkupDirty) {
+    if (!confirm('You have unsaved changes on the canvas. Discard them and load this markup?')) return;
+  }
+
+  _drwSavedMarkupId = m.id;
+  _drwMarkupShapes = Array.isArray(m.markup_data)
+    ? JSON.parse(JSON.stringify(m.markup_data))
+    : [];
+  _drwSelectedShape = -1;
+  _drwMarkupDirty = false;
+  _drwRemoveTextEditor(false);
+  _drwSetTool('select');
+  _drwRedraw();
+  closeModal();
+
+  const author = m.creator_name || m.created_by || '—';
+  const which = m.is_published ? `${author}'s published markup` : `${author}'s draft`;
+  const statusEl = document.getElementById('drw-markup-status');
+  if (statusEl) {
+    statusEl.textContent = `Admin: editing ${which}. Save Draft to update in place.`;
+    statusEl.style.color = '#92400e';
+  }
+}
+
+async function _drwAdminDeleteMarkup(markupId) {
+  if (currentRoleUser?.role !== 'admin') return;
+  const m = DRAWING_MARKUPS.find(x => x.id === markupId);
+  if (!m) return;
+  const author = m.creator_name || m.created_by || '—';
+  const state = m.is_published ? 'published' : 'draft';
+  if (!confirm(`Delete ${author}'s ${state} markup? This cannot be undone.`)) return;
+
+  try {
+    await _dbDelete('drawing_markups', { id: markupId });
+    DRAWING_MARKUPS = DRAWING_MARKUPS.filter(x => x.id !== markupId);
+    if (_drwSavedMarkupId === markupId) {
+      _drwSavedMarkupId = null;
+      _drwMarkupShapes = [];
+      _drwMarkupDirty = false;
+      _drwSelectedShape = -1;
+    }
+    _drwRedraw();
+    if (_drwCurSheet) {
+      const pubCount = DRAWING_MARKUPS.filter(x => x.sheet_id === _drwCurSheet.id && x.is_published).length;
+      const el = document.getElementById('drw-published-markups');
+      if (el) el.textContent = pubCount ? `${pubCount} published markup${pubCount>1?'s':''}` : '';
+    }
+    toast('Markup deleted', 'success');
+    _drwManageMarkupsOpen();
+  } catch(e) {
+    toast(`Delete failed: ${e.message}`, 'error');
+  }
 }
 
 // ==========================================================================
