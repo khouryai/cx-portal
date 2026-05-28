@@ -8460,6 +8460,9 @@ body.sb-collapsed #footer { margin-left: 0 !important; }
   height: 2px;
   background: linear-gradient(90deg, var(--hitachi-red), #ff5260);
 }
+.kpi-card.kpi-primary .kpi-label { color: var(--gray-600); }
+.kpi-card.kpi-primary .kpi-value { color: var(--near-black); }
+.kpi-card.kpi-primary .kpi-meta  { color: var(--gray-600); }
 .kpi-label {
   font-family: var(--f-mono);
   font-size: 10.5px;
