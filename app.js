@@ -9596,6 +9596,23 @@ let _trBulkMode = false;
 let _trEmptySections = [];
 let _trDragId = null;
 let _trExpandedParents = new Set(); // TestIDs of expanded parent/asset groups (collapsed by default)
+// Per-parent filter state for child asset rows (search + status). Persists across re-renders
+// so a tester can keep their narrowing while updating statuses. Keyed by parent TestID.
+const _trChildFilter = new Map();
+function _trChildFilterGet(testId) {
+  const k = String(testId);
+  if (!_trChildFilter.has(k)) _trChildFilter.set(k, { search: '', status: '' });
+  return _trChildFilter.get(k);
+}
+function _trChildFilterSet(testId, key, value) {
+  const f = _trChildFilterGet(testId);
+  f[key] = value;
+  _reRenderTR();
+}
+function _trChildFilterClear(testId) {
+  _trChildFilter.set(String(testId), { search: '', status: '' });
+  _reRenderTR();
+}
 // Sort state — activity list view
 let _amSortCol = 'pls';   // 'pls' = Phase/Location/Subsystem compound | 'activity' | 'subsystem' | 'location' | 'phase' | 'status' | 'completion'
 let _amSortDir = 'asc';
@@ -10386,7 +10403,7 @@ function _amDrilldownHTML(key) {
                       ${_dtRenderScopeCell(r)}
                       <td>
                         <textarea class="form-input notes-input" rows="2" placeholder="Notes…" onblur="_mxSaveNotes('${tid}',this.value)">${escapeHtml(r.Notes||'')}</textarea>
-                        ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<button class="v2-btn-mini" style="margin-top:4px;" onclick="_trAddGenericChild('${tid}')">＋ Asset</button>` : ''}
+                        ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;"><button class="v2-btn-mini" onclick="_trAddGenericChild('${tid}')">＋ Asset</button><button class="v2-btn-mini" onclick="_trOpenAssetPickerModal('${tid}')">🔗 Link Assets</button></div>` : ''}
                         <span id="regcell-${domId}">${_regressionCellHTML(r)}</span>
                       </td>
                       ${_trEditMode && isAdmin ? `<td style="white-space:nowrap;"><button class="v2-btn-mini" onclick="_trCopyCase('${tid}')" title="Copy">⧉</button> <button class="v2-btn-mini danger" onclick="_trDeleteCase('${tid}')" data-tippy-content="Delete test case">🗑</button></td>` : ''}
@@ -13739,7 +13756,10 @@ function _assetUpdateParentDOMBadge(parentTestId, newStatus) {
       + `<span style="color:#16a34a;">${passCount} Pass</span>`
       + (pending > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${pending} pending</span>` : '')
       + `</span>`
-      + (_trEditMode && isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trAddGenericChild('${safePtid}')">＋ Asset</button>` : '');
+      + (_trEditMode && isAdmin && !_trBulkMode
+          ? ` <button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trAddGenericChild('${safePtid}')">＋ Asset</button>`
+            + ` <button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trOpenAssetPickerModal('${safePtid}')">🔗 Link Assets</button>`
+          : '');
   }
 }
 
@@ -13823,6 +13843,207 @@ async function _assetUnlink(assetId, parentTestId) {
     }
   }
   // (No weight redistribution needed — children share weight via shared lookup.)
+}
+
+// ── Bulk-link existing assets to a parent test case ───────────────────────────
+// "+ Asset" creates ONE generic asset on the fly. This is the picker for the
+// real workflow: a tester maintains the asset list separately (Admin → Assets,
+// or CSV import) and now wants to attach many of them to a test case at once.
+// Each pick still creates one child test_items row via _assetLinkToParent, so
+// per-asset status / completed_date / completed_by flows through unchanged.
+const _trAssetPicker = {
+  search: '', type: '', loc: '', sub: '',
+  selected: new Set(),
+  testId: null,
+};
+
+function _trOpenAssetPickerModal(testId) {
+  const parent = (_trDraftItems || []).find(r => String(r.TestID) === String(testId))
+              || TI.find(r => String(r.TestID) === String(testId));
+  if (!parent) { toast('Test case not found', 'error'); return; }
+
+  _trAssetPicker.search = '';
+  _trAssetPicker.type = '';
+  _trAssetPicker.loc = '';
+  _trAssetPicker.sub = '';
+  _trAssetPicker.selected = new Set();
+  _trAssetPicker.testId = String(testId);
+
+  modal({
+    title: '🔗 Link Assets',
+    sub: parent.TestName || parent.TestCaseCode || parent.TestID,
+    body: `<div id="tr-asset-picker-body" style="padding:0 24px 16px;"></div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" id="tr-asset-picker-submit" onclick="_trBulkLinkAssets()">Link 0 assets</button>
+    `,
+    size: 'large',
+  });
+  _trRenderAssetPickerBody();
+}
+
+function _trAssetPickerFiltered() {
+  const testId = _trAssetPicker.testId;
+  const linkedIds = new Set(
+    ASSET_LINKS.filter(l => String(l.parent_test_id) === testId).map(l => l.asset_id)
+  );
+  const all = ASSETS.filter(a => !linkedIds.has(a.id));
+  const s = _trAssetPicker.search.toLowerCase();
+  return all.filter(a => {
+    if (s
+        && !(a.name||'').toLowerCase().includes(s)
+        && !(a.device_type||'').toLowerCase().includes(s)) return false;
+    if (_trAssetPicker.type && a.device_type !== _trAssetPicker.type) return false;
+    if (_trAssetPicker.loc  && (a.location || a.location_prefix) !== _trAssetPicker.loc) return false;
+    if (_trAssetPicker.sub  && a.subsystem !== _trAssetPicker.sub) return false;
+    return true;
+  });
+}
+
+function _trRenderAssetPickerBody() {
+  const body = document.getElementById('tr-asset-picker-body');
+  if (!body) return;
+
+  const testId = _trAssetPicker.testId;
+  const linkedIds = new Set(
+    ASSET_LINKS.filter(l => String(l.parent_test_id) === testId).map(l => l.asset_id)
+  );
+  const all = ASSETS.filter(a => !linkedIds.has(a.id));
+  const types = [...new Set(all.map(a => a.device_type).filter(Boolean))].sort();
+  const locs  = [...new Set(all.map(a => a.location || a.location_prefix).filter(Boolean))].sort();
+  const subs  = [...new Set(all.map(a => a.subsystem).filter(Boolean))].sort();
+
+  const filtered = _trAssetPickerFiltered();
+
+  body.innerHTML = `
+    <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px;">
+      Pick assets from the asset list. To add or import new assets, go to <b>Admin → Assets</b>.
+      ${all.length === 0
+        ? `<br><b style="color:var(--bad);">No unlinked assets available.</b>`
+        : ''}
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      <input id="tr-ap-search"
+             placeholder="Search by name or type…"
+             value="${escapeHtml(_trAssetPicker.search)}"
+             style="flex:1;min-width:180px;padding:6px 10px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;"
+             oninput="_trAssetPicker.search=this.value;_trRenderAssetPickerBody()">
+      <select onchange="_trAssetPicker.type=this.value;_trRenderAssetPickerBody()"
+              style="padding:6px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
+        <option value="">All types</option>
+        ${types.map(t => `<option value="${escapeHtml(t)}" ${_trAssetPicker.type===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}
+      </select>
+      <select onchange="_trAssetPicker.loc=this.value;_trRenderAssetPickerBody()"
+              style="padding:6px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
+        <option value="">All locations</option>
+        ${locs.map(l => `<option value="${escapeHtml(l)}" ${_trAssetPicker.loc===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
+      </select>
+      <select onchange="_trAssetPicker.sub=this.value;_trRenderAssetPickerBody()"
+              style="padding:6px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
+        <option value="">All subsystems</option>
+        ${subs.map(sb => `<option value="${escapeHtml(sb)}" ${_trAssetPicker.sub===sb?'selected':''}>${escapeHtml(sb)}</option>`).join('')}
+      </select>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:12px;color:var(--gray-600);">
+      <span><b>${filtered.length}</b> shown · <b>${_trAssetPicker.selected.size}</b> selected</span>
+      <span style="display:flex;gap:6px;">
+        <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_trAssetPickerSelectAll(true)">Select all shown</button>
+        <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_trAssetPickerSelectAll(false)">Clear</button>
+      </span>
+    </div>
+    <div style="max-height:380px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;">
+      <table style="width:100%;font-size:12px;border-collapse:collapse;">
+        <thead style="background:var(--gray-50);position:sticky;top:0;z-index:1;">
+          <tr>
+            <th style="padding:6px 10px;text-align:left;width:32px;"></th>
+            <th style="padding:6px 10px;text-align:left;">Name</th>
+            <th style="padding:6px 10px;text-align:left;">Type</th>
+            <th style="padding:6px 10px;text-align:left;">Location</th>
+            <th style="padding:6px 10px;text-align:left;">Subsystem</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filtered.length === 0
+            ? `<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--gray-500);">No matching assets.</td></tr>`
+            : filtered.map(a => `
+              <tr style="border-top:1px solid var(--gray-100);cursor:pointer;"
+                  onclick="_trAssetPickerToggle('${a.id}')">
+                <td style="padding:6px 10px;">
+                  <input type="checkbox" ${_trAssetPicker.selected.has(a.id)?'checked':''}
+                         onclick="event.stopPropagation();_trAssetPickerToggle('${a.id}')">
+                </td>
+                <td style="padding:6px 10px;font-weight:500;">${escapeHtml(a.name)}</td>
+                <td style="padding:6px 10px;color:var(--gray-700);">${escapeHtml(a.device_type||'')}</td>
+                <td style="padding:6px 10px;color:var(--gray-700);">${escapeHtml(a.location||a.location_prefix||'')}</td>
+                <td style="padding:6px 10px;color:var(--gray-700);">${escapeHtml(a.subsystem||'')}</td>
+              </tr>
+            `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+  const btn = document.getElementById('tr-asset-picker-submit');
+  if (btn) {
+    const n = _trAssetPicker.selected.size;
+    btn.textContent = `Link ${n} asset${n===1?'':'s'}`;
+    btn.disabled = n === 0;
+  }
+}
+
+function _trAssetPickerToggle(assetId) {
+  if (_trAssetPicker.selected.has(assetId)) _trAssetPicker.selected.delete(assetId);
+  else _trAssetPicker.selected.add(assetId);
+  _trRenderAssetPickerBody();
+}
+
+function _trAssetPickerSelectAll(yes) {
+  if (!yes) { _trAssetPicker.selected.clear(); _trRenderAssetPickerBody(); return; }
+  const filtered = _trAssetPickerFiltered();
+  filtered.forEach(a => _trAssetPicker.selected.add(a.id));
+  _trRenderAssetPickerBody();
+}
+
+async function _trBulkLinkAssets() {
+  const testId = _trAssetPicker.testId;
+  const ids = [..._trAssetPicker.selected];
+  if (!ids.length) { toast('Select at least one asset', 'error'); return; }
+  const parent = (_trDraftItems || []).find(r => String(r.TestID) === String(testId))
+              || TI.find(r => String(r.TestID) === String(testId));
+  if (!parent) { toast('Test case not found', 'error'); return; }
+
+  closeModal();
+
+  // Snapshot existing child IDs so we can identify newly created rows for draft mode.
+  const existingChildIds = new Set(
+    TI.filter(r => String(r.ParentTestId) === String(testId)).map(r => String(r.TestID))
+  );
+
+  let linked = 0, failed = 0;
+  for (const id of ids) {
+    const asset = ASSETS.find(a => a.id === id);
+    if (!asset) { failed++; continue; }
+    try {
+      await _assetLinkToParent(asset, parent);
+      linked++;
+    } catch (e) {
+      console.warn(`[link] ${asset.name}:`, e.message);
+      failed++;
+    }
+  }
+
+  // Push newly created child rows into the draft list so they show immediately in edit mode.
+  if (_trDraftItems) {
+    TI.filter(r => String(r.ParentTestId) === String(testId) && !existingChildIds.has(String(r.TestID)))
+      .forEach(r => _trDraftItems.push({ ...r, _isNew: false, _dirty: false }));
+  }
+
+  // Auto-expand the parent so the new children are visible right away.
+  _trExpandedParents.add(String(testId));
+
+  if (failed === 0) toast(`Linked ${linked} asset${linked===1?'':'s'}`, 'success');
+  else toast(`Linked ${linked}, ${failed} failed`, 'warn');
+  _reRenderTR();
+  if (document.getElementById('admin-assets-content')) renderAdminAssets();
 }
 
 // ── CSV import ────────────────────────────────────────────────────────────────
@@ -14018,6 +14239,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
           <span>📦 ${totalCount} asset${totalCount !== 1 ? 's' : ''} &nbsp;·&nbsp;
           <span style="color:#16a34a;">${passCount} Pass</span>${totalCount - passCount > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${totalCount - passCount} pending</span>` : ''}</span>
           ${_trEditMode && isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trAddGenericChild('${ptid}')">＋ Asset</button>` : ''}
+          ${_trEditMode && isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trOpenAssetPickerModal('${ptid}')">🔗 Link Assets</button>` : ''}
         </div>
       </td>
       <td>
@@ -14029,8 +14251,41 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
       ${_trEditMode && isAdmin ? `<td onclick="event.stopPropagation();"><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="event.stopPropagation();_trDeleteParentCase('${ptid}')" data-tippy-content="Delete parent + all assets">🗑</button></td>` : ''}
     </tr>`;
 
+  // Per-parent search/status filter on children. Shown when >5 assets to keep
+  // the test register tight, but still available for any expanded parent.
+  const childFilter = _trChildFilterGet(parent.TestID);
+  const filteredChildren = expanded ? children.filter(c => {
+    if (childFilter.status && (legacyMap[c.Status] || c.Status || 'Not Started') !== childFilter.status) return false;
+    if (childFilter.search) {
+      const asset = ASSETS.find(a => a.id === c.AssetId);
+      const s = childFilter.search.toLowerCase();
+      const hit = (asset?.name || '').toLowerCase().includes(s)
+               || (asset?.device_type || '').toLowerCase().includes(s);
+      if (!hit) return false;
+    }
+    return true;
+  }) : [];
+
+  const filterToolbarHtml = (expanded && children.length > 5) ? `
+    <tr style="background:#fafbfc;border-top:1px solid var(--gray-100);">
+      <td colspan="100" style="padding:6px 12px 6px 32px;">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;">
+          <input placeholder="Search assets…" value="${escapeHtml(childFilter.search)}"
+                 style="padding:4px 8px;border:1px solid var(--gray-300);border-radius:4px;font-size:12px;flex:1;min-width:160px;max-width:260px;"
+                 oninput="_trChildFilterSet('${ptid}','search',this.value)">
+          <select style="padding:4px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:12px;"
+                  onchange="_trChildFilterSet('${ptid}','status',this.value)">
+            <option value="">All statuses</option>
+            ${statuses.map(s => `<option value="${s}" ${childFilter.status===s?'selected':''}>${s}</option>`).join('')}
+          </select>
+          <span style="color:var(--gray-500);">${filteredChildren.length} of ${children.length}</span>
+          ${(childFilter.search || childFilter.status) ? `<button class="form-secondary" style="font-size:11px;padding:2px 8px;" onclick="_trChildFilterClear('${ptid}')">Clear</button>` : ''}
+        </div>
+      </td>
+    </tr>` : '';
+
   // Child rows only rendered when expanded
-  const childRowsHtml = expanded ? children.map(c => {
+  const childRowsHtml = expanded ? filteredChildren.map(c => {
     const asset      = ASSETS.find(a => a.id === c.AssetId);
     const assetName  = asset ? asset.name : '—';
     const deviceType = asset ? (asset.device_type || '') : '';
@@ -14086,7 +14341,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
       </tr>`;
   }).join('') : '';
 
-  return parentRowHtml + childRowsHtml;
+  return parentRowHtml + filterToolbarHtml + childRowsHtml;
 }
 
 // ── Admin Asset page state ────────────────────────────────────────────────────
