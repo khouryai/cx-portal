@@ -32059,6 +32059,7 @@ function _dynOpenCSVModal() {
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
           <input id="dyn-csv-file" type="file" accept=".csv,.xlsx,.xls" style="font-size:12px;" />
           <button class="dyn-btn" onclick="_dynCSVPasteSample()" style="font-size:12px;">Insert sample</button>
+          <button class="form-secondary" onclick="_dynDownloadCSVTemplate()" style="font-size:12px;">⬇ Template</button>
         </div>
         <textarea id="dyn-csv-text" rows="14" style="width:100%;font-family:var(--font-mono,monospace);font-size:12px;border:1px solid var(--gray-300);border-radius:5px;padding:8px;" placeholder="Paste CSV here or pick a file above…"></textarea>
         <div id="dyn-csv-status" style="margin-top:10px;font-size:13px;color:var(--gray-600);min-height:20px;"></div>
@@ -32095,6 +32096,22 @@ function _dynCSVPasteSample() {
     `TC-DYN-001,SW-W12-001,Switch W12 CBTC reverse,Phase 2,2026-06-01,2026-06-30,W12-R12,CBTC,Not Started,sample,W10,4,1,60\n`;
   document.getElementById('dyn-csv-text').value = sample;
   _dynCSVValidate();
+}
+
+function _dynDownloadCSVTemplate() {
+  const headers = 'test_id,code,title,target_phase,target_window_start,target_window_end,target_track_sections,required_mode,status,notes,description,scheduled_for_date,blocked_reason,control_zone_code,consist_size,trains_needed,expected_duration_minutes';
+  const instructions = '# REQUIRED: test_id only. Dates: YYYY-MM-DD. target_track_sections: semicolon-separated list. consist_size/trains_needed/expected_duration_minutes: integers.';
+  const examples = [
+    'TC-DYN-001,SW-W10-001,Switch W10 CBTC normal,Phase 2,2026-06-01,2026-06-30,"W10-R10;R10-W12",CBTC,Not Started,First pass with 4-car consist,,2026-06-05,,W10,4,1,60',
+    'TC-DYN-001,SW-W12-001,Switch W12 CBTC reverse,Phase 2,2026-06-01,2026-06-30,W12-R12,CBTC,Not Started,,,,,W10,4,1,60',
+    'TC-DYN-002,AX-W40-001,Axle Counter W40 full zone,Phase 3,2026-07-01,2026-07-31,"W40-R20;R20-W42;W42-R22",RM,Not Started,Requires track access all zones,,,,W40,6,2,120',
+  ];
+  const csv = [headers, instructions, ...examples].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'dynamic_instances_template.csv';
+  a.click();
 }
 
 async function _dynReadFileAsCSV(file) {
