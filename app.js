@@ -4171,11 +4171,12 @@ async function confirmDeploy(templateId) {
           location:       s.locName,
           subsystem:      tpl.subsystem,
           activity:       tpl.name,
-          test_category:  tc?.category || '',
+          test_category:  null,
           test_case_code: tcCode,
           test_name:      tc?.name || tcCode,
           test_procedure: tc?.procedure || '',
           test_section:   tc?.section   || '',
+          scope_type:     (tc?.scopeType || tc?.scope_type || 'static') === 'dynamic' ? 'dynamic' : 'static',
           status:         'Not Started',
           weight:         1, // legacy per-row column; real weight lives in test_case_weights
           synced_at:      now,
@@ -4260,7 +4261,7 @@ async function confirmDeploy(templateId) {
 // ==========================================================================
 // TEMPLATE CREATION — Activity-based with multi-section / multi-procedure builder
 // ==========================================================================
-// Each section: { title:string, procedure:string, cases:[{code,name,category,assets}] }
+// Each section: { title:string, procedure:string, cases:[{code,name,scopeType,assets}] }
 let _templateSections = [];
 let _editTemplateId   = null;
 
@@ -4270,13 +4271,18 @@ let _editTemplateId   = null;
 // Old templates (no 'section' field) land in one unnamed section.
 function _tplCasesToSections(testCases) {
   if (!testCases?.length) {
-    return [{ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'' }] }];
+    return [{ title:'', procedure:'', cases:[{ code:'', name:'', scopeType:'static', assets:'' }] }];
   }
   const map = new Map();
   for (const tc of testCases) {
     const key = tc.section ?? '';
     if (!map.has(key)) map.set(key, { title: key, procedure: tc.procedure || '', cases: [] });
-    map.get(key).cases.push({ code: tc.code||'', name: tc.name||'', category: tc.category||'', assets: tc.assets||'' });
+    map.get(key).cases.push({
+      code: tc.code || '',
+      name: tc.name || '',
+      scopeType: (tc.scopeType || tc.scope_type || 'static') === 'dynamic' ? 'dynamic' : 'static',
+      assets: tc.assets || '',
+    });
   }
   return [...map.values()];
 }
@@ -4290,7 +4296,7 @@ function _tplSectionsToTestCases(sections) {
       out.push({
         code:      tc.code.trim(),
         name:      tc.name.trim(),
-        category:  tc.category.trim(),
+        scopeType: (tc.scopeType || 'static') === 'dynamic' ? 'dynamic' : 'static',
         assets:    (tc.assets || '').trim(),
         procedure: sec.procedure.trim(),
         section:   sec.title.trim(),
@@ -4326,10 +4332,10 @@ function _tplSectionsHTML() {
           oninput="_templateSections[${si}].procedure=this.value">${escapeHtml(sec.procedure)}</textarea>
       </div>
       <!-- Column headers -->
-      <div style="display:grid;grid-template-columns:130px minmax(210px,1fr) 120px 150px 92px 32px 32px;gap:6px;padding:5px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-100);">
+      <div style="display:grid;grid-template-columns:130px minmax(210px,1fr) 112px 150px 92px 32px 32px;gap:6px;padding:5px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-100);">
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Code</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Test Case Name</div>
-        <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Category</div>
+        <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Scope</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Assets (Generic)</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Form PDF</div>
         <div></div><div></div>
@@ -4345,13 +4351,16 @@ function _tplSectionsHTML() {
 function _tplCaseRowsHTML(si) {
   const cases = _templateSections[si]?.cases || [];
   return cases.map((tc, ci) => `
-    <div style="display:grid;grid-template-columns:130px minmax(210px,1fr) 120px 150px 92px 32px 32px;gap:6px;align-items:center;margin-bottom:5px;">
+    <div style="display:grid;grid-template-columns:130px minmax(210px,1fr) 112px 150px 92px 32px 32px;gap:6px;align-items:center;margin-bottom:5px;">
       <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Code e.g. DCS-01"
         value="${escapeHtml(tc.code)}" oninput="_templateSections[${si}].cases[${ci}].code=this.value">
       <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Test Case Name"
         value="${escapeHtml(tc.name)}" oninput="_templateSections[${si}].cases[${ci}].name=this.value">
-      <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Category"
-        value="${escapeHtml(tc.category)}" oninput="_templateSections[${si}].cases[${ci}].category=this.value">
+      <select class="form-input" style="font-size:12px;padding:5px 8px;" title="Static test case or dynamic track-plan scoped test"
+        onchange="_templateSections[${si}].cases[${ci}].scopeType=this.value">
+        <option value="static" ${(tc.scopeType || 'static') !== 'dynamic' ? 'selected' : ''}>Static</option>
+        <option value="dynamic" ${(tc.scopeType || 'static') === 'dynamic' ? 'selected' : ''}>Dynamic</option>
+      </select>
       <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Assets e.g. MLK A, MLK B"
         value="${escapeHtml(tc.assets||'')}" oninput="_templateSections[${si}].cases[${ci}].assets=this.value"
         title="Comma-separated generic asset names auto-linked as children on deploy">
@@ -4388,7 +4397,7 @@ function _tplCaseFormCellHTML(templateId, tc, si, ci) {
 }
 
 function addTplSection() {
-  _templateSections.push({ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'' }] });
+  _templateSections.push({ title:'', procedure:'', cases:[{ code:'', name:'', scopeType:'static', assets:'' }] });
   document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
 }
 
@@ -4400,7 +4409,7 @@ function removeTplSection(si) {
 }
 
 function addTplCase(si) {
-  _templateSections[si].cases.push({ code:'', name:'', category:'', assets:'' });
+  _templateSections[si].cases.push({ code:'', name:'', scopeType:'static', assets:'' });
   document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
 }
 
@@ -4419,11 +4428,11 @@ function removeTplCase(si, ci) {
 
 function downloadTemplateCaseCSV() {
   const rows = [
-    ['Section','Code','Name','Category','Assets','Procedure'],
-    ['Hardware Verification','DCS-HW-01','Network Connectivity Test','Hardware SAT','','Refer to CDRL 9.04.53 Section 4'],
-    ['Hardware Verification','DCS-HW-02','Server Failover Test','Hardware SAT','Server A,Server B','Refer to CDRL 9.04.53 Section 4'],
-    ['Software Testing','DCS-SW-01','Comms Latency Test','Software SAT','','Refer to CDRL 9.04.53 Section 5'],
-    ['Software Testing','DCS-SW-02','Interface Validation','Software SAT','','Refer to CDRL 9.04.53 Section 5'],
+    ['Section','Code','Name','Scope','Assets','Procedure'],
+    ['Hardware Verification','DCS-HW-01','Network Connectivity Test','Static','','Refer to CDRL 9.04.53 Section 4'],
+    ['Hardware Verification','DCS-HW-02','Server Failover Test','Dynamic','Server A,Server B','Refer to CDRL 9.04.53 Section 4'],
+    ['Software Testing','DCS-SW-01','Comms Latency Test','Static','','Refer to CDRL 9.04.53 Section 5'],
+    ['Software Testing','DCS-SW-02','Interface Validation','Static','','Refer to CDRL 9.04.53 Section 5'],
   ];
   const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const a = document.createElement('a');
@@ -4444,14 +4453,15 @@ function handleTemplateCaseImport(input) {
       const proc   = (r.Procedure    || r.procedure    || r['Test Procedure'] || '').trim();
       const code   = (r.Code         || r.TestCaseCode || r['Test Case Code'] || '').trim();
       const name   = (r.Name         || r.TestName     || r['Test Case Name'] || '').trim();
-      const cat    = (r.Category     || r.TestCategory || r['Test Category']  || '').trim();
+      const scopeRaw = (r.Scope || r.scope || r.ScopeType || r['Scope Type'] || '').trim().toLowerCase();
+      const scopeType = scopeRaw === 'dynamic' ? 'dynamic' : 'static';
       const assets  = (r.Assets       || r.assets       || '').trim();
       if (!code && !name) continue;
       const key = sTitle || '__default__';
       if (!sectionMap.has(key)) sectionMap.set(key, { title: sTitle, procedure: proc, cases: [] });
       const sec = sectionMap.get(key);
       if (!sec.procedure && proc) sec.procedure = proc;
-      sec.cases.push({ code, name, category: cat, assets });
+      sec.cases.push({ code, name, scopeType, assets });
     }
     if (!sectionMap.size) { toast('Could not parse any test cases from CSV', 'warn'); return; }
     _templateSections = [...sectionMap.values()];
@@ -4502,7 +4512,7 @@ function _tplModalBody() {
 
 function openNewTemplateModal() {
   _editTemplateId   = null;
-  _templateSections = [{ title:'', procedure:'', cases:[{ code:'', name:'', category:'', assets:'' }] }];
+  _templateSections = [{ title:'', procedure:'', cases:[{ code:'', name:'', scopeType:'static', assets:'' }] }];
   modal({
     title:  'Create Activity Template',
     sub:    'Define reusable test sections and procedures for an activity',
