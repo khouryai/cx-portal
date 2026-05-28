@@ -31469,6 +31469,7 @@ async function openTestCaseScopeModal(testId) {
     `,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" onclick="_dtOpenPrereqEditor('${escapeHtml(testId)}')">Prerequisites…</button>
       <button class="form-submit" onclick="_dtSaveScope()">Save</button>
     `,
   });
@@ -31501,7 +31502,7 @@ async function _dtSaveScope() {
 // ==========================================================================
 
 const _dynPage = {
-  tab: 'instances',                      // 'instances' | 'board'
+  tab: 'instances',                      // 'instances' | 'board' | 'planning'
   instances: [],                         // dynamic_instances rows
   testItemsById: new Map(),              // test_id → { name, code, subsystem, phase, scope_type }
   loaded: false,
@@ -31513,6 +31514,16 @@ const _dynPage = {
   boardAxis: 'section',                  // 'section' | 'phase'
   boardStart: null,                      // first day of first month (Date)
   boardMonths: 6,
+  // Planning state
+  planZone: '',                          // selected control zone code
+  planStart: '',                         // window start (datetime-local string)
+  planEnd: '',                           // window end
+  planModes: ['CBTC','VATC'],            // allowed modes filter
+  planMaxTrains: '',                     // optional train budget cap
+  planFeasible: [],                      // last fn_feasible_instances result
+  planSelected: new Set(),               // instance ids the planner has picked
+  planLoading: false,
+  planWindows: [],                       // zone_access_windows rows (cached)
 };
 
 const _DYN_STATUSES = [
@@ -31563,6 +31574,7 @@ async function renderDynamicTestingPage() {
     <div style="display:flex;gap:8px;margin-top:14px;">
       <button class="hero-tab ${_dynPage.tab==='instances'?'active':''}" onclick="_dynTabSwitch('instances')">Instances</button>
       <button class="hero-tab ${_dynPage.tab==='board'?'active':''}" onclick="_dynTabSwitch('board')">Planning Board</button>
+      <button class="hero-tab ${_dynPage.tab==='planning'?'active':''}" onclick="_dynTabSwitch('planning')">Capacity Planning</button>
     </div>
     <style>
       .hero-tab{padding:8px 16px;border:1px solid var(--gray-300);background:white;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--gray-700);}
@@ -31599,8 +31611,9 @@ async function renderDynamicTestingPage() {
 
   await _dynLoadAll();
 
-  if (_dynPage.tab === 'instances') _dynRenderInstances();
-  else _dynRenderBoard();
+  if (_dynPage.tab === 'instances')      _dynRenderInstances();
+  else if (_dynPage.tab === 'board')     _dynRenderBoard();
+  else if (_dynPage.tab === 'planning')  _dynRenderPlanning();
 }
 
 function _dynTabSwitch(tab) {
@@ -32220,4 +32233,490 @@ function _dynBoardOpenCell(rowKey, monthKey) {
     footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
     size: 'large',
   });
+}
+
+
+
+// ==========================================================================
+// DYNAMIC TESTING — CAPACITY PLANNING TAB
+//
+//   · Operator picks (zone, time window, allowed modes, optional train budget)
+//   · We call fn_feasible_instances and render the ranked list
+//   · Operator ticks the instances they intend to run; we sum duration + trains
+//   · "Commit" writes scheduled_window / scheduled_for_date on each picked
+//     instance so they show up on the look-ahead.
+//   · "Manage Windows" opens the zone_access_windows CRUD.
+//
+// Boundary logic is intentionally zone-only — "if you book a zone, you own it"
+// — so two feasible instances in the same window can co-run subject only to
+// the optional train budget (Σ trains_needed ≤ p_max_trains).
+// ==========================================================================
+
+function _dynRenderPlanning() {
+  const cont = document.getElementById('dyn-content');
+  if (!cont) return;
+
+  if (!_dynPage._zonesLoaded) {
+    _dynPage._zonesLoaded = true;
+    _dbSelect('track_zones', { zone_type: 'control_zone' }, 'code')
+      .then(rows => { _dynPage._allZones = (rows || []).map(r => r.code).sort(); _dynRenderPlanning(); })
+      .catch(() => { _dynPage._allZones = []; });
+  }
+  const allZones = _dynPage._allZones || [];
+
+  if (!_dynPage.planStart) {
+    const today = new Date();
+    today.setHours(8, 0, 0, 0);
+    _dynPage.planStart = _dynLocalDateTime(today);
+    const end = new Date(today); end.setHours(17, 0, 0, 0);
+    _dynPage.planEnd = _dynLocalDateTime(end);
+  }
+
+  const winMinutes = _dynWindowMinutes(_dynPage.planStart, _dynPage.planEnd);
+  const winHours = (winMinutes / 60).toFixed(1);
+
+  const selected = _dynPage.planFeasible.filter(r => _dynPage.planSelected.has(r.instance_id));
+  const selMinutes = selected.reduce((s, r) => s + (r.expected_duration_minutes || 0), 0);
+  const selTrains  = selected.reduce((s, r) => s + (r.trains_needed || 1), 0);
+  const slack      = winMinutes - selMinutes;
+
+  cont.innerHTML = `
+    <div class="dyn-toolbar">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
+        Zone
+        <select id="plan-zone" onchange="_dynPage.planZone=this.value;_dynPage.planFeasible=[];_dynPage.planSelected.clear();_dynRenderPlanning();">
+          <option value="">— pick a zone —</option>
+          ${allZones.map(z => `<option value="${escapeHtml(z)}" ${_dynPage.planZone===z?'selected':''}>${escapeHtml(z)}</option>`).join('')}
+        </select>
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
+        Window start
+        <input id="plan-start" type="datetime-local" value="${escapeHtml(_dynPage.planStart)}"
+               onchange="_dynPage.planStart=this.value;_dynRenderPlanning();">
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
+        Window end
+        <input id="plan-end" type="datetime-local" value="${escapeHtml(_dynPage.planEnd)}"
+               onchange="_dynPage.planEnd=this.value;_dynRenderPlanning();">
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
+        Modes
+        <label style="display:flex;align-items:center;gap:3px;font-size:12px;">
+          <input type="checkbox" ${_dynPage.planModes.includes('CBTC')?'checked':''}
+                 onchange="_dynPlanToggleMode('CBTC',this.checked)">CBTC
+        </label>
+        <label style="display:flex;align-items:center;gap:3px;font-size:12px;">
+          <input type="checkbox" ${_dynPage.planModes.includes('VATC')?'checked':''}
+                 onchange="_dynPlanToggleMode('VATC',this.checked)">VATC
+        </label>
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
+        Max trains
+        <input type="number" min="1" style="width:70px;" placeholder="any" value="${escapeHtml(_dynPage.planMaxTrains)}"
+               oninput="_dynPage.planMaxTrains=this.value;">
+      </label>
+      <button class="dyn-btn primary" onclick="_dynPlanRun()">Compute feasible</button>
+      <span style="flex:1;"></span>
+      <button class="dyn-btn" onclick="_dynPlanOpenWindowsAdmin()">⚙ Manage Windows</button>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:10px;margin:14px 0 18px;">
+      <div class="dyn-kpi"><span>Window length</span><b>${winHours} h</b></div>
+      <div class="dyn-kpi"><span>Feasible</span><b>${_dynPage.planFeasible.length}</b></div>
+      <div class="dyn-kpi"><span>Selected duration</span><b>${(selMinutes/60).toFixed(1)} h</b></div>
+      <div class="dyn-kpi"><span>${slack < 0 ? 'Over by' : 'Slack'}</span><b style="color:${slack < 0 ? 'var(--bad)' : 'var(--good)'};">${Math.abs(slack/60).toFixed(1)} h</b></div>
+    </div>
+
+    ${_dynPage.planLoading
+      ? `<div style="padding:40px;text-align:center;color:var(--gray-500);">Computing…</div>`
+      : _dynPage.planFeasible.length === 0
+        ? `<div style="padding:40px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:8px;">
+             ${_dynPage.planZone ? 'No matching feasible instances. Try a longer window or different mode filter.' : 'Pick a zone and window, then click <b>Compute feasible</b>.'}
+           </div>`
+        : _dynRenderPlanningTable()}
+
+    ${selected.length > 0 ? `
+      <div style="position:sticky;bottom:0;background:white;border-top:2px solid var(--gray-200);padding:12px 16px;margin-top:20px;display:flex;align-items:center;gap:14px;">
+        <span><b>${selected.length}</b> selected · <b>${(selMinutes/60).toFixed(1)} h</b> · <b>${selTrains}</b> trains</span>
+        <span style="flex:1;"></span>
+        <button class="dyn-btn" onclick="_dynPage.planSelected.clear();_dynRenderPlanning();">Clear selection</button>
+        <button class="dyn-btn primary" onclick="_dynPlanCommit()">📅 Schedule ${selected.length}</button>
+      </div>` : ''}
+  `;
+}
+
+function _dynLocalDateTime(d) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function _dynWindowMinutes(startStr, endStr) {
+  if (!startStr || !endStr) return 0;
+  const s = new Date(startStr), e = new Date(endStr);
+  if (isNaN(s) || isNaN(e) || e <= s) return 0;
+  return Math.round((e - s) / 60000);
+}
+
+function _dynPlanToggleMode(m, on) {
+  const set = new Set(_dynPage.planModes);
+  if (on) set.add(m); else set.delete(m);
+  _dynPage.planModes = [...set];
+}
+
+async function _dynPlanRun() {
+  if (!_dynPage.planZone) { toast('Pick a zone first', 'error'); return; }
+  if (_dynWindowMinutes(_dynPage.planStart, _dynPage.planEnd) <= 0) { toast('Window end must be after start', 'error'); return; }
+  _dynPage.planLoading = true;
+  _dynPage.planFeasible = [];
+  _dynPage.planSelected.clear();
+  _dynRenderPlanning();
+
+  const params = {
+    p_zone_code:     _dynPage.planZone,
+    p_window_start:  new Date(_dynPage.planStart).toISOString(),
+    p_window_end:    new Date(_dynPage.planEnd).toISOString(),
+    p_allowed_modes: _dynPage.planModes.length ? _dynPage.planModes : null,
+    p_max_trains:    _dynPage.planMaxTrains ? parseInt(_dynPage.planMaxTrains, 10) : null,
+  };
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/fn_feasible_instances`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: _getAuthHeader(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    _dynPage.planFeasible = await res.json();
+  } catch (e) {
+    toast(`Compute failed: ${e.message}`, 'error');
+    _dynPage.planFeasible = [];
+  } finally {
+    _dynPage.planLoading = false;
+    _dynRenderPlanning();
+  }
+}
+
+function _dynRenderPlanningTable() {
+  const rows = _dynPage.planFeasible;
+  return `
+    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
+      <table class="dyn-table">
+        <thead>
+          <tr>
+            <th style="width:36px;">
+              <input type="checkbox" ${rows.length && rows.every(r => _dynPage.planSelected.has(r.instance_id))?'checked':''}
+                onchange="_dynPlanSelectAll(this.checked)">
+            </th>
+            <th>Code</th>
+            <th>Test Case</th>
+            <th>Title</th>
+            <th>Mode</th>
+            <th style="text-align:right;">Duration</th>
+            <th style="text-align:right;">Trains</th>
+            <th>Status</th>
+            <th>Prereqs</th>
+            <th style="text-align:right;">Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => {
+            const checked = _dynPage.planSelected.has(r.instance_id);
+            const block = !r.prerequisites_met;
+            return `<tr style="${block ? 'background:#fef9c3;' : ''}border-top:1px solid var(--gray-100);">
+              <td><input type="checkbox" ${checked?'checked':''} ${block?'disabled':''}
+                   onchange="_dynPlanToggleSelect('${r.instance_id}',this.checked)"></td>
+              <td style="font-family:monospace;font-size:11.5px;">${escapeHtml(r.code || '—')}</td>
+              <td style="font-size:12px;">${escapeHtml(r.test_case_code || r.test_id || '—')}</td>
+              <td>${escapeHtml(r.title || '—')}</td>
+              <td>${r.required_mode ? `<span class="badge" style="font-size:11px;">${escapeHtml(r.required_mode)}</span>` : '—'}</td>
+              <td style="text-align:right;font-family:monospace;">${r.expected_duration_minutes ?? '—'} min</td>
+              <td style="text-align:right;font-family:monospace;">${r.trains_needed ?? 1}</td>
+              <td>${_dynStatusBadge(r.status)}</td>
+              <td>${block ? `<span style="color:var(--bad);font-size:11.5px;" title="${escapeHtml((r.unmet_prereqs||[]).join(', '))}">⚠ ${(r.unmet_prereqs||[]).length} unmet</span>` : '<span style="color:var(--good);font-size:11.5px;">✓</span>'}</td>
+              <td style="text-align:right;font-family:monospace;color:var(--gray-600);">${r.score ?? 0}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function _dynPlanToggleSelect(id, on) {
+  if (on) _dynPage.planSelected.add(id); else _dynPage.planSelected.delete(id);
+  _dynRenderPlanning();
+}
+
+function _dynPlanSelectAll(on) {
+  _dynPage.planSelected.clear();
+  if (on) {
+    _dynPage.planFeasible.filter(r => r.prerequisites_met).forEach(r => _dynPage.planSelected.add(r.instance_id));
+  }
+  _dynRenderPlanning();
+}
+
+async function _dynPlanCommit() {
+  const ids = [..._dynPage.planSelected];
+  if (!ids.length) return;
+  if (!confirm(`Schedule ${ids.length} instance(s) into the ${_dynPage.planZone} window starting ${_dynPage.planStart}?`)) return;
+  const startISO = new Date(_dynPage.planStart).toISOString();
+  const endISO   = new Date(_dynPage.planEnd).toISOString();
+  const datePart = startISO.slice(0, 10);
+  try {
+    for (const id of ids) {
+      await _dbUpdate('dynamic_instances', {
+        scheduled_for_date: datePart,
+        scheduled_window: `[${startISO},${endISO})`,
+        updated_at: new Date().toISOString(),
+      }, { id });
+    }
+    toast(`Scheduled ${ids.length} instance(s)`, 'success');
+    _dynPage.planSelected.clear();
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    _dynRenderPlanning();
+  } catch (e) {
+    toast(`Commit failed: ${e.message}`, 'error');
+  }
+}
+
+// ── Zone access windows admin (lightweight CRUD inside the planning tab) ────
+async function _dynPlanOpenWindowsAdmin() {
+  let windows = [];
+  try {
+    windows = await _dbSelect('zone_access_windows', {}, '*');
+  } catch (e) {
+    toast(`Load failed: ${e.message}`, 'error');
+    return;
+  }
+  windows.sort((a, b) => (a.start_at || '').localeCompare(b.start_at || ''));
+
+  modal({
+    title: '⚙ Zone access windows',
+    sub: 'Operations-defined windows the planning algorithm can use',
+    body: `
+      <div style="padding:8px 24px 16px;">
+        <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px;">
+          Add an access window for any control zone. Click <b>Use</b> on a saved
+          window to populate the planning tab and auto-run the search.
+        </p>
+        <div id="zaw-list">${_dynRenderWindowsTable(windows)}</div>
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--gray-200);">
+          <h4 style="margin:0 0 10px;font-size:13px;">Add window</h4>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
+            <input id="zaw-zone"  placeholder="Zone code (e.g. W40)"   style="padding:6px 10px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
+            <input id="zaw-start" type="datetime-local"                 style="padding:6px 10px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
+            <input id="zaw-end"   type="datetime-local"                 style="padding:6px 10px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
+            <select id="zaw-modes" style="padding:6px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
+              <option value="CBTC,VATC">CBTC + VATC</option>
+              <option value="CBTC">CBTC only</option>
+              <option value="VATC">VATC only</option>
+            </select>
+            <input id="zaw-trains" type="number" min="1" placeholder="Max trains (blank = any)" style="padding:6px 10px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
+            <input id="zaw-notes" placeholder="Notes" style="padding:6px 10px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
+          </div>
+          <button class="dyn-btn primary" style="margin-top:10px;" onclick="_dynPlanSaveWindow()">+ Add window</button>
+        </div>
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    size: 'large',
+  });
+}
+
+function _dynRenderWindowsTable(windows) {
+  if (!windows.length) return `<div style="padding:20px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:6px;">No windows defined yet.</div>`;
+  const fmt = s => s ? new Date(s).toLocaleString() : '—';
+  return `
+    <table style="width:100%;font-size:12px;border-collapse:collapse;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;">
+      <thead><tr style="background:var(--gray-50);">
+        <th style="text-align:left;padding:6px 10px;">Zone</th>
+        <th style="text-align:left;padding:6px 10px;">Start</th>
+        <th style="text-align:left;padding:6px 10px;">End</th>
+        <th style="text-align:left;padding:6px 10px;">Modes</th>
+        <th style="text-align:right;padding:6px 10px;">Max trains</th>
+        <th style="text-align:left;padding:6px 10px;">Notes</th>
+        <th style="text-align:right;padding:6px 10px;width:160px;">Actions</th>
+      </tr></thead>
+      <tbody>${windows.map(w => `
+        <tr style="border-top:1px solid var(--gray-100);">
+          <td style="padding:6px 10px;font-family:monospace;">${escapeHtml(w.control_zone_code)}</td>
+          <td style="padding:6px 10px;">${escapeHtml(fmt(w.start_at))}</td>
+          <td style="padding:6px 10px;">${escapeHtml(fmt(w.end_at))}</td>
+          <td style="padding:6px 10px;">${escapeHtml((w.allowed_modes||[]).join('+') || 'any')}</td>
+          <td style="padding:6px 10px;text-align:right;">${w.max_trains ?? '—'}</td>
+          <td style="padding:6px 10px;color:var(--gray-700);">${escapeHtml(w.notes||'')}</td>
+          <td style="padding:6px 10px;text-align:right;white-space:nowrap;">
+            <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynPlanUseWindow('${w.id}')">Use</button>
+            <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--bad);border-color:#fca5a5;" onclick="_dynPlanDeleteWindow('${w.id}')">Delete</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+async function _dynPlanSaveWindow() {
+  const zone   = document.getElementById('zaw-zone')?.value.trim();
+  const start  = document.getElementById('zaw-start')?.value;
+  const end    = document.getElementById('zaw-end')?.value;
+  const modes  = (document.getElementById('zaw-modes')?.value || '').split(',').filter(Boolean);
+  const trains = document.getElementById('zaw-trains')?.value;
+  const notes  = document.getElementById('zaw-notes')?.value.trim();
+  if (!zone || !start || !end) { toast('Zone, start, end are required', 'error'); return; }
+  try {
+    await _dbInsert('zone_access_windows', [{
+      control_zone_code: zone,
+      start_at:          new Date(start).toISOString(),
+      end_at:            new Date(end).toISOString(),
+      allowed_modes:     modes.length ? modes : ['CBTC','VATC'],
+      max_trains:        trains ? parseInt(trains, 10) : null,
+      notes:             notes || null,
+      created_by:        currentRoleUser?.email || currentRoleUser?.id || null,
+    }]);
+    toast('Window added', 'success');
+    _dynPlanOpenWindowsAdmin();
+  } catch (e) {
+    toast(`Save failed: ${e.message}`, 'error');
+  }
+}
+
+async function _dynPlanDeleteWindow(id) {
+  if (!confirm('Delete this access window?')) return;
+  try {
+    await _dbDelete('zone_access_windows', { id });
+    toast('Window deleted', 'success');
+    _dynPlanOpenWindowsAdmin();
+  } catch (e) {
+    toast(`Delete failed: ${e.message}`, 'error');
+  }
+}
+
+async function _dynPlanUseWindow(id) {
+  try {
+    const rows = await _dbSelect('zone_access_windows', { id }, '*');
+    const w = rows[0];
+    if (!w) return;
+    _dynPage.planZone  = w.control_zone_code;
+    _dynPage.planStart = _dynLocalDateTime(new Date(w.start_at));
+    _dynPage.planEnd   = _dynLocalDateTime(new Date(w.end_at));
+    _dynPage.planModes = (w.allowed_modes || ['CBTC','VATC']).slice();
+    _dynPage.planMaxTrains = w.max_trains != null ? String(w.max_trains) : '';
+    _dynPage.planFeasible = [];
+    _dynPage.planSelected.clear();
+    closeModal();
+    _dynRenderPlanning();
+    _dynPlanRun();
+  } catch (e) {
+    toast(`Load failed: ${e.message}`, 'error');
+  }
+}
+
+
+// ==========================================================================
+// PREREQUISITES UI — chip editor on the test case scope modal
+// (Procedure-level prereqs, not per-instance.)
+// ==========================================================================
+
+async function _dtOpenPrereqEditor(testId) {
+  if (!testId) return;
+  try {
+    const [prereqs, allItems] = await Promise.all([
+      _dbSelect('test_item_prerequisites', { test_id: testId }, '*'),
+      _dbSelect('test_items', {}, 'test_id,test_case_code,test_name,scope_type'),
+    ]);
+    const current = new Set((prereqs || []).map(p => p.prerequisite_test_id));
+    const me = (allItems || []).find(i => i.test_id === testId);
+    const others = (allItems || []).filter(i => i.test_id !== testId);
+
+    modal({
+      title: 'Prerequisites',
+      sub: `${escapeHtml(me?.test_case_code || '')} ${escapeHtml(me?.test_name || testId)}`,
+      body: `
+        <div style="padding:8px 24px 16px;">
+          <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px;">
+            Mark other test cases that must reach Pass before this test case can run.
+            Applied to the procedure — affects every instance of this test case.
+          </p>
+          <input id="dt-prereq-search" placeholder="Search test cases…"
+                 style="width:100%;padding:6px 10px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;margin-bottom:10px;"
+                 oninput="_dtPrereqFilter(this.value,'${escapeHtml(testId)}')">
+          <div id="dt-prereq-list" style="max-height:360px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;">
+            ${_dtRenderPrereqList(others, current, '')}
+          </div>
+          <div id="dt-prereq-summary" style="margin-top:10px;font-size:12px;color:var(--gray-600);">
+            <b>${current.size}</b> prerequisite${current.size===1?'':'s'} selected.
+          </div>
+        </div>
+      `,
+      footer: `
+        <button class="form-secondary" onclick="closeModal()">Cancel</button>
+        <button class="form-submit" onclick="_dtSavePrereqs('${escapeHtml(testId)}')">Save</button>
+      `,
+      size: 'large',
+    });
+    window._dtPrereqState = { testId, current, others };
+  } catch (e) {
+    alert(`Load failed: ${e.message}`);
+  }
+}
+
+function _dtRenderPrereqList(items, current, q) {
+  const filtered = q
+    ? items.filter(i =>
+        (i.test_case_code || '').toLowerCase().includes(q.toLowerCase()) ||
+        (i.test_name || '').toLowerCase().includes(q.toLowerCase()))
+    : items.slice(0, 200);
+  if (!filtered.length) return `<div style="padding:20px;text-align:center;color:var(--gray-500);">No matches.</div>`;
+  return `<table style="width:100%;font-size:12px;border-collapse:collapse;">
+    <tbody>${filtered.map(i => `
+      <tr style="border-bottom:1px solid var(--gray-100);">
+        <td style="padding:6px 10px;width:32px;">
+          <input type="checkbox" ${current.has(i.test_id)?'checked':''}
+                 onchange="_dtPrereqToggle('${escapeHtml(i.test_id)}',this.checked)">
+        </td>
+        <td style="padding:6px 10px;font-family:monospace;font-size:11.5px;">${escapeHtml(i.test_case_code || i.test_id)}</td>
+        <td style="padding:6px 10px;">${escapeHtml((i.test_name || '').slice(0,80))}</td>
+        <td style="padding:6px 10px;color:var(--gray-500);font-size:11px;">${escapeHtml(i.scope_type || 'static')}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+function _dtPrereqFilter(q, testId) {
+  const st = window._dtPrereqState;
+  if (!st || st.testId !== testId) return;
+  const el = document.getElementById('dt-prereq-list');
+  if (el) el.innerHTML = _dtRenderPrereqList(st.others, st.current, q);
+}
+
+function _dtPrereqToggle(prereqId, on) {
+  const st = window._dtPrereqState;
+  if (!st) return;
+  if (on) st.current.add(prereqId); else st.current.delete(prereqId);
+  const sum = document.getElementById('dt-prereq-summary');
+  if (sum) sum.innerHTML = `<b>${st.current.size}</b> prerequisite${st.current.size===1?'':'s'} selected.`;
+}
+
+async function _dtSavePrereqs(testId) {
+  const st = window._dtPrereqState;
+  if (!st || st.testId !== testId) return;
+  try {
+    await _dbDelete('test_item_prerequisites', { test_id: testId });
+    if (st.current.size > 0) {
+      const rows = [...st.current].map(p => ({
+        test_id:              testId,
+        prerequisite_test_id: p,
+        created_by:           currentRoleUser?.email || currentRoleUser?.id || null,
+      }));
+      await _dbInsert('test_item_prerequisites', rows);
+    }
+    closeModal();
+    toast(`Saved ${st.current.size} prerequisite${st.current.size===1?'':'s'}.`, 'success');
+    window._dtPrereqState = null;
+  } catch (e) {
+    alert(`Save failed: ${e.message}`);
+  }
 }
