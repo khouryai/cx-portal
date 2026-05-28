@@ -31234,8 +31234,6 @@ async function _drwPublishMarkup() {
 // ==========================================================================
 
 const _dtScopeState = {
-  catalog: null,        // { zones[], deviceTypes[] }
-  catalogLoaded: false,
   currentTestId: null,
 };
 
@@ -31247,7 +31245,7 @@ function _dtRenderScopeCell(r) {
   const safeId = String(r.TestID || r.test_id || '').replace(/'/g, "\\'");
   return `<td style="white-space:nowrap;">${badge}
     <button onclick="event.stopPropagation();openTestCaseScopeModal('${safeId}')"
-      title="Edit scope and filter"
+      title="Toggle Static / Dynamic"
       style="margin-left:6px;font-size:11px;padding:2px 7px;border:1px solid var(--gray-300);border-radius:4px;background:var(--gray-50);color:var(--gray-700);cursor:pointer;">
       Edit</button></td>`;
 }
@@ -31309,219 +31307,43 @@ function _drwSheetTableHTML(sheets, opts = {}) {
   `;
 }
 
-async function _dtLoadCatalog() {
-  if (_dtScopeState.catalogLoaded) return _dtScopeState.catalog;
-  const out = { zones: [], deviceTypes: [] };
-  try {
-    out.zones = await _dbSelect('track_zones', {}, 'id,code,zone_type');
-  } catch (e) {
-    console.warn('[dt-scope] zones load failed:', e.message);
-  }
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/track_devices?select=device_type`, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() }
-    });
-    if (res.ok) {
-      const rows = await res.json();
-      out.deviceTypes = [...new Set(rows.map(r => r.device_type).filter(Boolean))].sort();
-    }
-  } catch (e) {
-    console.warn('[dt-scope] device-types load failed:', e.message);
-  }
-  _dtScopeState.catalog = out;
-  _dtScopeState.catalogLoaded = true;
-  return out;
-}
-
 async function openTestCaseScopeModal(testId) {
   const tc = TI.find(r => (r.TestID || r.test_id) === testId);
   if (!tc) { alert('Test case not found in local cache.'); return; }
   _dtScopeState.currentTestId = testId;
 
-  // Fetch live scope_type + existing filter row.
   let scopeType = String(tc.ScopeType || 'static').toLowerCase();
-  let filter = null;
   try {
     const rows = await _dbSelect('test_items', { test_id: testId }, 'scope_type');
     if (rows[0]?.scope_type) scopeType = rows[0].scope_type;
-    const fRows = await _dbSelect('dynamic_test_filters', { test_id: testId }, '*');
-    filter = fRows[0] || null;
   } catch (e) {
     console.warn('[dt-scope] read failed (continuing with local state):', e.message);
   }
 
-  const cat = await _dtLoadCatalog();
-  const zoneOpts = (cat.zones || [])
-    .filter(z => z.zone_type === 'control_zone' || z.zone_type === 'interlocking')
-    .sort((a, b) => String(a.code).localeCompare(String(b.code)));
-  const crit = filter?.criteria || {};
-
   modal({
-    title: 'Dynamic Testing Scope',
+    title: 'Test Case Scope',
     sub: `${escapeHtml(tc.TestCaseCode || '')} ${escapeHtml(tc.TestName || '')}`,
-    body: _dtBuildScopeBody({ scopeType, crit, deviceTypes: cat.deviceTypes || [], zoneOpts }),
+    body: `
+      <div style="padding:8px 24px 16px;">
+        <p style="font-size:13px;color:var(--gray-600);margin:0 0 14px;">
+          Static test cases are executed once. Dynamic test cases are executed against
+          multiple scopes — author each scope as a row in the Dynamic Testing module
+          (manual entry or CSV/Excel import).
+        </p>
+        <div class="form-field" style="margin-bottom:8px;">
+          <label>Scope type</label>
+          <div style="display:flex;gap:16px;align-items:center;">
+            <label style="cursor:pointer;"><input type="radio" name="dt-scope" value="static"  ${scopeType==='static' ?'checked':''}> Static</label>
+            <label style="cursor:pointer;"><input type="radio" name="dt-scope" value="dynamic" ${scopeType==='dynamic'?'checked':''}> Dynamic</label>
+          </div>
+        </div>
+      </div>
+    `,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-secondary" onclick="_dtPreviewMatches()">Preview matches</button>
-      <button class="form-secondary" onclick="_dtGenerateInstancesFromModal()" title="Materialize one dynamic_instance per matched device">Generate instances</button>
       <button class="form-submit" onclick="_dtSaveScope()">Save</button>
     `,
-    size: 'large',
   });
-
-  // Wire the radio toggle to show/hide the dynamic section.
-  document.querySelectorAll('input[name="dt-scope"]').forEach(el => {
-    el.addEventListener('change', _dtToggleScopeSection);
-  });
-  _dtToggleScopeSection();
-}
-
-function _dtToggleScopeSection() {
-  const v = document.querySelector('input[name="dt-scope"]:checked')?.value;
-  const section = document.getElementById('dt-dynamic-section');
-  if (section) section.style.display = (v === 'dynamic') ? 'block' : 'none';
-}
-
-function _dtBuildScopeBody({ scopeType, crit, deviceTypes, zoneOpts }) {
-  const dtypes    = crit.device_types || [];
-  const zoneCodes = crit.zone_codes   || [];
-  const modes     = crit.modes        || [];
-  const ttypes    = crit.track_types  || [];
-  return `
-    <div style="padding:8px 24px 16px;">
-      <p style="font-size:13px;color:var(--gray-600);margin:0 0 14px;">
-        A dynamic test case scopes its executions against the imported track plan.
-        Saving a filter does <em>not</em> auto-create instances — the planner materializes them.
-      </p>
-
-      <div class="form-field" style="margin-bottom:18px;">
-        <label>Scope type</label>
-        <div style="display:flex;gap:16px;align-items:center;">
-          <label style="cursor:pointer;"><input type="radio" name="dt-scope" value="static"  ${scopeType==='static' ?'checked':''}> Static</label>
-          <label style="cursor:pointer;"><input type="radio" name="dt-scope" value="dynamic" ${scopeType==='dynamic'?'checked':''}> Dynamic</label>
-        </div>
-      </div>
-
-      <div id="dt-dynamic-section" style="display:none;border-top:1px solid var(--gray-200);padding-top:14px;">
-        <h4 style="margin:0 0 10px;font-size:13px;color:var(--gray-700);font-weight:600;">Filter criteria</h4>
-
-        <div class="form-field" style="margin-bottom:12px;">
-          <label>Device types <span style="font-weight:400;color:var(--gray-500);">(Ctrl/Cmd-click for multi; empty = any)</span></label>
-          <select id="dt-device-types" multiple size="6" style="width:100%;font-family:var(--font-mono,monospace);font-size:12px;">
-            ${deviceTypes.length
-              ? deviceTypes.map(dt => `<option value="${escapeHtml(dt)}" ${dtypes.includes(dt)?'selected':''}>${escapeHtml(dt)}</option>`).join('')
-              : `<option disabled>— no devices imported yet —</option>`}
-          </select>
-        </div>
-
-        <div class="form-field" style="margin-bottom:12px;">
-          <label>Zones / interlockings <span style="font-weight:400;color:var(--gray-500);">(empty = any)</span></label>
-          <select id="dt-zones" multiple size="6" style="width:100%;font-size:12px;">
-            ${zoneOpts.length
-              ? zoneOpts.map(z => `<option value="${escapeHtml(z.code)}" ${zoneCodes.includes(z.code)?'selected':''}>${escapeHtml(z.code)} (${z.zone_type})</option>`).join('')
-              : `<option disabled>— no zones imported yet —</option>`}
-          </select>
-        </div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-          <div class="form-field">
-            <label>Mode</label>
-            <select id="dt-modes" multiple size="3" style="width:100%;font-size:12px;">
-              ${['CBTC','VATC'].map(m => `<option value="${m}" ${modes.includes(m)?'selected':''}>${m}</option>`).join('')}
-            </select>
-          </div>
-          <div class="form-field">
-            <label>Track type</label>
-            <select id="dt-ttypes" multiple size="3" style="width:100%;font-size:12px;">
-              ${['Subway','At grade','Aerial'].map(t => `<option value="${t}" ${ttypes.includes(t)?'selected':''}>${t}</option>`).join('')}
-            </select>
-          </div>
-        </div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
-          <div class="form-field">
-            <label>Milepost ≥</label>
-            <input id="dt-mp-min" type="number" step="0.01" placeholder="e.g. 100.0" value="${crit.mp_min ?? ''}" />
-          </div>
-          <div class="form-field">
-            <label>Milepost ≤</label>
-            <input id="dt-mp-max" type="number" step="0.01" placeholder="e.g. 540.0" value="${crit.mp_max ?? ''}" />
-          </div>
-        </div>
-
-        <div id="dt-preview-out" style="margin-top:14px;font-size:13px;color:var(--gray-700);min-height:20px;"></div>
-      </div>
-    </div>
-  `;
-}
-
-function _dtReadCriteria() {
-  const multi = id => Array.from(document.getElementById(id)?.selectedOptions || []).map(o => o.value);
-  const num = id => {
-    const v = document.getElementById(id)?.value;
-    if (v === '' || v == null) return null;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
-  };
-  return {
-    device_types: multi('dt-device-types'),
-    zone_codes:   multi('dt-zones'),
-    modes:        multi('dt-modes'),
-    track_types:  multi('dt-ttypes'),
-    mp_min:       num('dt-mp-min'),
-    mp_max:       num('dt-mp-max'),
-  };
-}
-
-async function _dtPreviewMatches() {
-  const out = document.getElementById('dt-preview-out');
-  if (!out) return;
-  out.innerHTML = '<span style="color:var(--gray-500);">Loading…</span>';
-  const c = _dtReadCriteria();
-  const qs = [];
-  const inList = vs => `(${vs.map(s => encodeURIComponent(String(s))).join(',')})`;
-  if (c.device_types.length) qs.push(`device_type=in.${inList(c.device_types)}`);
-  if (c.zone_codes.length)   qs.push(`zone_code=in.${inList(c.zone_codes)}`);
-  if (c.track_types.length)  qs.push(`track_type=in.${inList(c.track_types)}`);
-  if (c.mp_min != null)      qs.push(`milepost=gte.${c.mp_min}`);
-  if (c.mp_max != null)      qs.push(`milepost=lte.${c.mp_max}`);
-  qs.push('select=device_type,code,milepost,zone_code,track_type');
-  qs.push('limit=25');
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/track_devices?${qs.join('&')}`, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), Prefer: 'count=exact' }
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const cr = res.headers.get('content-range') || '';
-    const total = cr.split('/')[1] || '?';
-    const sample = await res.json();
-    if (!sample.length) {
-      out.innerHTML = `<strong>0</strong> matching devices.`;
-      return;
-    }
-    out.innerHTML = `<strong>${total}</strong> matching devices.
-      <details open style="margin-top:8px;">
-        <summary style="cursor:pointer;color:var(--gray-600);font-size:12px;">First ${sample.length} sample</summary>
-        <table style="width:100%;font-size:11.5px;margin-top:8px;border-collapse:collapse;">
-          <thead><tr style="background:var(--gray-50);">
-            <th style="text-align:left;padding:4px 6px;">type</th>
-            <th style="text-align:left;padding:4px 6px;">code</th>
-            <th style="text-align:right;padding:4px 6px;">mp</th>
-            <th style="text-align:left;padding:4px 6px;">zone</th>
-            <th style="text-align:left;padding:4px 6px;">track</th>
-          </tr></thead>
-          <tbody>${sample.map(s => `<tr style="border-top:1px solid var(--gray-100);">
-            <td style="padding:3px 6px;">${escapeHtml(s.device_type || '')}</td>
-            <td style="padding:3px 6px;font-family:var(--font-mono,monospace);">${escapeHtml(s.code || '—')}</td>
-            <td style="padding:3px 6px;text-align:right;">${s.milepost ?? '—'}</td>
-            <td style="padding:3px 6px;">${escapeHtml(s.zone_code || '—')}</td>
-            <td style="padding:3px 6px;">${escapeHtml(s.track_type || '—')}</td>
-          </tr>`).join('')}</tbody>
-        </table>
-      </details>`;
-  } catch (e) {
-    out.innerHTML = `<span style="color:#dc2626;">Preview failed: ${escapeHtml(e.message)}</span>`;
-  }
 }
 
 async function _dtSaveScope() {
@@ -31530,26 +31352,6 @@ async function _dtSaveScope() {
   const newScope = document.querySelector('input[name="dt-scope"]:checked')?.value || 'static';
   try {
     await _dbUpdate('test_items', { scope_type: newScope }, { test_id: testId });
-    if (newScope !== 'dynamic') {
-      await _dbDelete('dynamic_test_filters', { test_id: testId });
-    }
-    if (newScope === 'dynamic') {
-      const criteria = _dtReadCriteria();
-      const existing = await _dbSelect('dynamic_test_filters', { test_id: testId }, 'id');
-      if (existing[0]) {
-        await _dbUpdate('dynamic_test_filters',
-          { criteria, updated_at: new Date().toISOString() },
-          { id: existing[0].id });
-      } else {
-        await _dbInsert('dynamic_test_filters', [{
-          test_id: testId,
-          name: 'default',
-          criteria,
-          created_by: currentRoleUser?.email || currentRoleUser?.id || null,
-        }]);
-      }
-    }
-    // Reflect in local TI cache so the badge updates without reload.
     const tc = TI.find(r => (r.TestID || r.test_id) === testId);
     if (tc) tc.ScopeType = newScope;
     if (typeof renderLITable === 'function') renderLITable();
@@ -31561,39 +31363,10 @@ async function _dtSaveScope() {
   }
 }
 
-// Called from the scope-edit modal's "Generate instances" button.
-// Reads the current criteria, saves it as a filter, then materializes
-// one dynamic_instance per matched device.
-async function _dtGenerateInstancesFromModal() {
-  const testId = _dtScopeState.currentTestId;
-  if (!testId) return;
-  const scope = document.querySelector('input[name="dt-scope"]:checked')?.value;
-  if (scope !== 'dynamic') { alert('Switch scope to Dynamic first.'); return; }
-  const criteria = _dtReadCriteria();
-  // Persist the filter so the generated instances trace back to it.
-  let filterId = null;
-  try {
-    await _dbUpdate('test_items', { scope_type: 'dynamic' }, { test_id: testId });
-    const existing = await _dbSelect('dynamic_test_filters', { test_id: testId }, 'id');
-    if (existing[0]) {
-      filterId = existing[0].id;
-      await _dbUpdate('dynamic_test_filters', { criteria, updated_at: new Date().toISOString() }, { id: filterId });
-    } else {
-      const ins = await _dbInsert('dynamic_test_filters', [{
-        test_id: testId, name: 'default', criteria,
-        created_by: currentRoleUser?.email || currentRoleUser?.id || null,
-      }]);
-      filterId = ins[0]?.id || null;
-    }
-  } catch (e) { alert(`Filter save failed: ${e.message}`); return; }
-  await _dynGenerateInstancesForFilter({ testId, filterId, criteria });
-}
-
 
 // ==========================================================================
 // DYNAMIC TESTING — INSTANCES PAGE
-//   · Tab 1: Instances list (manual create, CSV/Excel import, generate
-//            candidates from a saved filter)
+//   · Tab 1: Instances list (manual create, CSV/Excel import)
 //   · Tab 2: Conceptual planning board (6-month grid of instances by
 //            phase × track section × status)
 // Mounted by showPage('dynamic-testing') → renderDynamicTestingPage().
@@ -31602,7 +31375,6 @@ async function _dtGenerateInstancesFromModal() {
 const _dynPage = {
   tab: 'instances',                      // 'instances' | 'board'
   instances: [],                         // dynamic_instances rows
-  filters: [],                           // dynamic_test_filters rows
   testItemsById: new Map(),              // test_id → { name, code, subsystem, phase, scope_type }
   loaded: false,
   loading: false,
@@ -31712,12 +31484,9 @@ async function _dynLoadAll() {
   if (_dynPage.loading) return;
   _dynPage.loading = true;
   try {
-    const [insts, filters] = await Promise.all([
-      _dbSelect('dynamic_instances', {}, '*').catch(e => { console.warn('[dyn] instances load:', e.message); return []; }),
-      _dbSelect('dynamic_test_filters', {}, '*').catch(e => { console.warn('[dyn] filters load:', e.message); return []; }),
-    ]);
+    const insts = await _dbSelect('dynamic_instances', {}, '*')
+      .catch(e => { console.warn('[dyn] instances load:', e.message); return []; });
     _dynPage.instances = insts;
-    _dynPage.filters = filters;
     _dynBuildTestItemsIndex();
     _dynPage.loaded = true;
   } finally {
@@ -31795,7 +31564,6 @@ function _dynRenderInstances() {
     <div class="dyn-toolbar">
       <button class="dyn-btn primary" onclick="_dynOpenInstanceModal(null)">+ New instance</button>
       <button class="dyn-btn" onclick="_dynOpenCSVModal()">Import CSV / Excel</button>
-      <button class="dyn-btn" onclick="_dynOpenGenerateFromFilterModal()">Generate from filter</button>
       <span style="flex:1"></span>
       <input id="dyn-search" placeholder="Search code / title / phase…" value="${escapeHtml(_dynPage.search)}" oninput="_dynPage.search=this.value;_dynRenderInstances();" />
       <select id="dyn-status-filter" onchange="_dynPage.statusFilter=this.value;_dynRenderInstances();">
@@ -32191,129 +31959,6 @@ async function _dynImportCSVRows() {
     if (typeof toast === 'function') toast(`Imported ${payload.length} instance(s).`, 'success');
   } catch (e) {
     alert(`Import failed: ${e.message}`);
-  }
-}
-
-// ── Generate from filter ───────────────────────────────────────────────
-function _dynOpenGenerateFromFilterModal() {
-  const filters = _dynPage.filters || [];
-  modal({
-    title: 'Generate instances from a saved filter',
-    sub: 'Each matched device becomes one dynamic_instance.',
-    body: `
-      <div style="padding:8px 24px 16px;">
-        ${filters.length === 0
-          ? `<p style="color:var(--gray-600);">No saved filters yet. Open a dynamic test case from the Test Cases page and configure a filter first.</p>`
-          : `<table class="dyn-table" style="border:1px solid var(--gray-200);">
-              <thead><tr>
-                <th>Test Case</th>
-                <th>Filter</th>
-                <th>Criteria</th>
-                <th style="width:80px;">Action</th>
-              </tr></thead>
-              <tbody>${filters.map(f => {
-                const tc = _dynPage.testItemsById.get(f.test_id);
-                const crit = f.criteria || {};
-                const summary = [
-                  crit.device_types?.length ? `type:${crit.device_types.join('|')}` : '',
-                  crit.zone_codes?.length   ? `zone:${crit.zone_codes.join('|')}` : '',
-                  crit.modes?.length        ? `mode:${crit.modes.join('|')}` : '',
-                  crit.track_types?.length  ? `track:${crit.track_types.join('|')}` : '',
-                  crit.mp_min != null       ? `mp≥${crit.mp_min}` : '',
-                  crit.mp_max != null       ? `mp≤${crit.mp_max}` : '',
-                ].filter(Boolean).join(' · ') || '<span style="color:var(--gray-400);">(any device)</span>';
-                return `<tr>
-                  <td>${tc ? `${escapeHtml(tc.code || f.test_id)}<br/><span style="font-size:11px;color:var(--gray-500);">${escapeHtml((tc.name||'').slice(0,50))}</span>` : escapeHtml(f.test_id)}</td>
-                  <td>${escapeHtml(f.name || '—')}</td>
-                  <td style="font-family:var(--font-mono,monospace);font-size:11px;">${summary}</td>
-                  <td><button class="dyn-btn" style="padding:3px 8px;font-size:11px;" onclick="_dynGenerateFromRow('${escapeHtml(f.id)}')">Generate</button></td>
-                </tr>`;
-              }).join('')}</tbody>
-            </table>`}
-      </div>
-    `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
-    size: 'large',
-  });
-}
-
-async function _dynGenerateFromRow(filterId) {
-  const f = _dynPage.filters.find(x => x.id === filterId);
-  if (!f) return;
-  closeModal();
-  await _dynGenerateInstancesForFilter({ testId: f.test_id, filterId: f.id, criteria: f.criteria || {} });
-}
-
-async function _dynGenerateInstancesForFilter({ testId, filterId, criteria }) {
-  // Query track_devices with the same PostgREST shape as the modal preview.
-  const qs = [];
-  const inList = vs => `(${vs.map(s => encodeURIComponent(String(s))).join(',')})`;
-  const c = criteria || {};
-  if (c.device_types?.length) qs.push(`device_type=in.${inList(c.device_types)}`);
-  if (c.zone_codes?.length)   qs.push(`zone_code=in.${inList(c.zone_codes)}`);
-  if (c.track_types?.length)  qs.push(`track_type=in.${inList(c.track_types)}`);
-  if (c.mp_min != null)       qs.push(`milepost=gte.${c.mp_min}`);
-  if (c.mp_max != null)       qs.push(`milepost=lte.${c.mp_max}`);
-  qs.push('select=id,device_type,code,milepost,zone_code,track_type');
-  qs.push('limit=5000');
-  let matched;
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/track_devices?${qs.join('&')}`, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() }
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-    matched = await res.json();
-  } catch (e) { alert(`Device query failed: ${e.message}`); return; }
-  if (!matched.length) { alert('No matching devices. Adjust criteria and try again.'); return; }
-
-  // Skip devices that already have an instance for this filter to keep
-  // the action idempotent. (Generated-instance code is "GEN-<deviceCode>".)
-  const existing = new Set(
-    _dynPage.instances
-      .filter(i => i.source_filter_id === filterId)
-      .map(i => i.code)
-  );
-  const mode = (c.modes && c.modes.length === 1) ? c.modes[0] : null;
-  const tc = _dynPage.testItemsById.get(testId);
-  const planned = matched
-    .map(d => {
-      const baseCode = d.code || `dev-${String(d.id).slice(0,8)}`;
-      return {
-        device: d,
-        instance: {
-          test_id: testId,
-          source_filter_id: filterId,
-          code: `GEN-${baseCode}`,
-          title: `${tc?.code || testId} @ ${baseCode}`,
-          description: `Auto-generated from filter (${d.device_type}${d.zone_code ? `, zone ${d.zone_code}` : ''}${d.milepost != null ? `, mp ${d.milepost}` : ''}).`,
-          device_ids: [d.id],
-          required_mode: mode,
-          status: 'Not Started',
-          created_by: currentRoleUser?.email || currentRoleUser?.id || null,
-        }
-      };
-    })
-    .filter(p => !existing.has(p.instance.code));
-
-  if (!planned.length) {
-    alert(`All ${matched.length} matched device(s) already have a generated instance. Nothing to do.`);
-    return;
-  }
-  if (!confirm(`Generate ${planned.length} new instance(s) from ${matched.length} matched device(s)? (Skipping ${matched.length - planned.length} duplicates.)`)) return;
-
-  try {
-    const payload = planned.map(p => p.instance);
-    for (let i = 0; i < payload.length; i += 200) {
-      await _dbInsert('dynamic_instances', payload.slice(i, i + 200));
-    }
-    if (typeof toast === 'function') toast(`Created ${planned.length} instance(s).`, 'success');
-    _dynPage.loaded = false;
-    if (document.getElementById('page-dynamic-testing')?.classList.contains('active')) {
-      await _dynLoadAll();
-      _dynRenderInstances();
-    }
-  } catch (e) {
-    alert(`Generate failed: ${e.message}`);
   }
 }
 
