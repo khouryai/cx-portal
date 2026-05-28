@@ -441,10 +441,10 @@ async function resolveReferences(sb, importId) {
     if (parent) await sb.from('track_zones').update({ parent_zone_id: parent.id }).eq('id', z.id);
   }
   // Wire devices → zone / interlocking
-  const { data: devices } = await sb.from('track_devices').select('id,code').eq('source_import_id', importId);
+  const { data: devices } = await sb.from('track_devices').select('id,code,device_type,source_sheet').eq('source_import_id', importId);
   let resolved = 0, unresolved = [];
   for (const d of devices || []) {
-    if (!d.code) { unresolved.push({ id: d.id, code: '(null)' }); continue; }
+    if (!d.code) { unresolved.push({ id: d.id, code: null, device_type: d.device_type, source_sheet: d.source_sheet }); continue; }
     const prefix = d.code.split('-')[0].trim();
     const ixl = ixlByPrefix.get(prefix);
     const ctrl = ctrlByCode.get(prefix);
@@ -458,17 +458,17 @@ async function resolveReferences(sb, importId) {
       patch = { zone_id: ctrl.id, zone_code: ctrl.code };
     }
     if (patch) { await sb.from('track_devices').update(patch).eq('id', d.id); resolved++; }
-    else unresolved.push({ id: d.id, code: d.code });
+    else unresolved.push({ id: d.id, code: d.code, device_type: d.device_type, source_sheet: d.source_sheet });
   }
   // Wire sections → zone
-  const { data: sections } = await sb.from('track_sections').select('id,code').eq('source_import_id', importId);
+  const { data: sections } = await sb.from('track_sections').select('id,code,source_shape_id').eq('source_import_id', importId);
   let secResolved = 0, secUnresolved = [];
   for (const s of sections || []) {
     const prefix = s.code.split('-')[0].trim();
     const ixl = ixlByPrefix.get(prefix); const ctrl = ctrlByCode.get(prefix);
     const zone = ixl ? (ixl.parent_zone_code ? ctrlByCode.get(ixl.parent_zone_code) : null) : ctrl;
     if (zone) { await sb.from('track_sections').update({ zone_id: zone.id, zone_code: zone.code }).eq('id', s.id); secResolved++; }
-    else secUnresolved.push({ id: s.id, code: s.code });
+    else secUnresolved.push({ id: s.id, code: s.code, source_shape_id: s.source_shape_id });
   }
   return { resolved, unresolved, secResolved, secUnresolved };
 }
@@ -575,10 +575,34 @@ async function run() {
   log(`  devices resolved:    ${r.resolved}`, 'ok');
   log(`  devices unresolved:  ${r.unresolved.length}`, r.unresolved.length ? 'warn' : 'ok');
   if (r.unresolved.length) {
-    log('  unresolved sample: ' + r.unresolved.slice(0, 10).map(u => u.code).join(', '), 'dim');
+    // Bucket by (prefix, device_type) to mirror vw_track_devices_unresolved.
+    const buckets = new Map();
+    for (const u of r.unresolved) {
+      const prefix = u.code == null
+        ? '(no code)'
+        : (u.code.includes('-') ? u.code.split('-')[0].trim() : u.code);
+      const key = prefix + '|' + (u.device_type || '');
+      let b = buckets.get(key);
+      if (!b) { b = { prefix, device_type: u.device_type || '', n: 0, samples: [], sheets: new Set() }; buckets.set(key, b); }
+      b.n++;
+      if (b.samples.length < 3) b.samples.push(u.code == null ? '(null)' : u.code);
+      if (u.source_sheet) b.sheets.add(u.source_sheet);
+    }
+    const sorted = [...buckets.values()].sort((a,b) => b.n - a.n || a.prefix.localeCompare(b.prefix));
+    log('  unresolved breakdown (prefix · device_type · count · samples):', 'dim');
+    for (const b of sorted) {
+      log(`    ${b.prefix.padEnd(22)} ${b.device_type.padEnd(18)} ${String(b.n).padStart(3)}   ${b.samples.join(', ')}`, 'dim');
+    }
+    log('  → also queryable as:  select * from vw_track_devices_unresolved;', 'dim');
   }
   log(`  sections resolved:   ${r.secResolved}`, 'ok');
   log(`  sections unresolved: ${r.secUnresolved.length}`, r.secUnresolved.length ? 'warn' : 'ok');
+  if (r.secUnresolved.length) {
+    for (const s of r.secUnresolved) {
+      log(`    section ${s.code || '(no code)'}  (shape ${s.source_shape_id ?? '—'})`, 'dim');
+    }
+    log('  → also queryable as:  select * from vw_track_sections_unresolved;', 'dim');
+  }
 
   await sb.from('track_plan_imports').update({
     status: 'complete',
