@@ -29876,7 +29876,7 @@ function _drwTabSets(loc, el) {
     el.innerHTML = `
       <div class="drw-set-detail-head">
         <button class="form-secondary tr-mini-btn" onclick="_drwBackToSets('${escapeHtml(loc)}')">← Drawing Sets</button>
-        <div>
+        <div style="flex:1;">
           <div class="drw-set-detail-title">${escapeHtml(activeSet.title)}</div>
           <div class="drw-set-detail-meta">
             ${activeSet.revision_date ? `Rev date: ${escapeHtml(activeSet.revision_date)}` : ''}
@@ -29884,6 +29884,11 @@ function _drwTabSets(loc, el) {
             · ${sheets.length} sheet${sheets.length === 1 ? '' : 's'}
           </div>
         </div>
+        <button class="admin-action-btn" style="background:#6366f1;color:#fff;border:none;padding:7px 14px;border-radius:6px;cursor:pointer;font-size:12.5px;font-weight:600;"
+                onclick="_drwUploadRevision('${activeSet.id}')"
+                title="Upload a new revision — matching Drawing Numbers will be superseded automatically">
+          + Upload Revision
+        </button>
       </div>
       ${sheets.length ? _drwSheetTableHTML(sheets, { compact: true }) : '<p style="color:var(--gray-400);font-size:12px;">No confirmed sheets yet.</p>'}
     `;
@@ -29921,7 +29926,10 @@ function _drwTabSets(loc, el) {
                 <td style="font-size:12px;">${escapeHtml(set.release_date || '—')}</td>
                 <td style="font-size:12px;">${escapeHtml(set.uploaded_by || '—')}</td>
                 <td><span class="drw-status-pill is-current">Ready</span></td>
-                <td><button class="admin-action-btn tr-mini-btn" onclick="_drwOpenSet('${escapeHtml(loc)}','${set.id}')">View</button></td>
+                <td style="white-space:nowrap;">
+                  <button class="admin-action-btn tr-mini-btn" onclick="_drwOpenSet('${escapeHtml(loc)}','${set.id}')">View</button>
+                  <button class="form-secondary tr-mini-btn" style="margin-left:4px;" onclick="event.stopPropagation();_drwUploadRevision('${set.id}')" title="Upload a new revision — matching Drawing Numbers will be superseded automatically">+ Revision</button>
+                </td>
               </tr>
             `;
           }).join('')}
@@ -30555,6 +30563,7 @@ async function _drwOpenSheet(sheetId, setId, pageIndex) {
   if (!sheet || !set) return;
 
   _drwCurSheet     = sheet;
+  _drwCurSet       = set;
   _drwMarkupShapes = [];
   _drwSavedMarkupId = null;
   _drwMarkupDirty   = false;
@@ -30602,6 +30611,9 @@ async function _drwOpenSheet(sheetId, setId, pageIndex) {
 
   _drwSetTool('select');
   _drwSetColor(_drwTool.color);
+
+  // Populate the nav bar (page count, revision picker, build search index).
+  _drwUpdateNavBar();
 }
 
 function _drwEnsureEditorChrome() {
@@ -30693,6 +30705,7 @@ async function _drwRenderPage(pageIndex, opts = {}) {
   _drwInitMarkupCanvas(markupCanvas);
   _drwUpdateZoomLabel();
   _drwRedraw();
+  _drwSyncNavPage();
 }
 
 function _drwCloseViewer() {
@@ -33118,4 +33131,323 @@ function _dashToggleScope() {
   _dashScope = _dashScope === 'static' ? 'combined' : 'static';
   _dashCombined = null;  // refetch on next combined view (data may have changed)
   if (typeof refreshDashboard === 'function') refreshDashboard();
+}
+
+
+
+// ==========================================================================
+// DRAWINGS — viewer navigation, Super Find, revision switching,
+//            and per-set "Upload Revision" flow.
+// ==========================================================================
+
+// Cache the active set on the viewer state so navigation/search can read it.
+let _drwCurSet = null;
+
+// Per-set extracted-text index for the Super Find feature. Keyed by set id;
+// value is { pages: [{ pageIndex, text }], status: 'idle'|'loading'|'ready'|'error' }.
+const _drwFindIndex = new Map();
+
+// Keyboard shortcuts (← / →) for page nav while the viewer is open.
+document.addEventListener('keydown', (e) => {
+  const ov = document.getElementById('drw-viewer-overlay');
+  if (!ov || ov.style.display === 'none') return;
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
+  if (e.key === 'ArrowLeft')  { _drwGotoRel(-1); e.preventDefault(); }
+  if (e.key === 'ArrowRight') { _drwGotoRel(+1); e.preventDefault(); }
+  if (e.key === 'Escape')     { _drwCloseViewer(); }
+});
+
+function _drwUpdateNavBar() {
+  if (!_drwPdfDoc || !_drwCurSet) return;
+  document.getElementById('drw-nav-page-count').textContent = _drwPdfDoc.numPages;
+  _drwSyncNavPage();
+  _drwUpdateRevisionPicker();
+  _drwWireFindInput();
+  // Page jump input
+  const inp = document.getElementById('drw-nav-page-input');
+  if (inp) {
+    inp.max = _drwPdfDoc.numPages;
+    inp.onchange = (e) => {
+      const n = parseInt(e.target.value, 10);
+      if (!Number.isFinite(n)) return;
+      _drwGotoPage(Math.max(0, Math.min(_drwPdfDoc.numPages - 1, n - 1)));
+    };
+  }
+  // Kick off background text extraction for Super Find.
+  _drwBuildFindIndex(_drwCurSet.id).catch(e => console.warn('[drw-find] index build:', e.message));
+}
+
+function _drwSyncNavPage() {
+  const inp = document.getElementById('drw-nav-page-input');
+  if (inp && _drwPdfDoc) inp.value = String(_drwPageIndex + 1);
+  const prev = document.getElementById('drw-nav-prev');
+  const next = document.getElementById('drw-nav-next');
+  if (prev) prev.disabled = _drwPageIndex <= 0;
+  if (next) next.disabled = !_drwPdfDoc || _drwPageIndex >= (_drwPdfDoc.numPages - 1);
+}
+
+async function _drwGotoPage(pageIndex) {
+  if (!_drwPdfDoc) return;
+  if (pageIndex < 0 || pageIndex >= _drwPdfDoc.numPages) return;
+  if (_drwMarkupDirty) {
+    if (!confirm('You have unsaved markup changes. Switch page anyway?')) {
+      _drwSyncNavPage();
+      return;
+    }
+    _drwMarkupDirty = false;
+  }
+  // Find the sheet record for this page in the active set so the title chrome
+  // tracks the new page (sheet_number / sheet_title come from drawing_sheets).
+  const newSheet = DRAWING_SHEETS.find(s => s.set_id === _drwCurSet?.id && s.page_index === pageIndex);
+  if (newSheet) {
+    _drwCurSheet = newSheet;
+    document.getElementById('drw-viewer-sheet-num').textContent = newSheet.sheet_number || '—';
+    document.getElementById('drw-viewer-title').textContent     = newSheet.sheet_title || '';
+    document.getElementById('drw-viewer-rev').textContent       = newSheet.revision ? `Rev ${newSheet.revision}` : '';
+    _drwSavedMarkupId = null;
+    _drwMarkupShapes = [];
+    _drwSelectedShape = -1;
+    const myMarkup = DRAWING_MARKUPS.find(m => m.sheet_id === newSheet.id
+      && m.created_by === currentRoleUser?.id && !m.is_published);
+    if (myMarkup) {
+      _drwSavedMarkupId = myMarkup.id;
+      _drwMarkupShapes  = Array.isArray(myMarkup.markup_data) ? myMarkup.markup_data : [];
+    }
+    const pubMarkups = DRAWING_MARKUPS.filter(m => m.sheet_id === newSheet.id && m.is_published);
+    const pubEl = document.getElementById('drw-published-markups');
+    if (pubEl) pubEl.textContent = pubMarkups.length ? `${pubMarkups.length} published markup${pubMarkups.length>1?'s':''}` : '';
+  }
+  await _drwRenderPage(pageIndex, { fit: true });
+  _drwUpdateRevisionPicker();
+}
+
+function _drwGotoRel(delta) {
+  if (!_drwPdfDoc) return;
+  _drwGotoPage(_drwPageIndex + delta);
+}
+
+// ── Revision picker ────────────────────────────────────────────────────────
+function _drwUpdateRevisionPicker() {
+  const sel = document.getElementById('drw-rev-select');
+  if (!sel || !_drwCurSheet) return;
+  const num = _drwCurSheet.sheet_number;
+  const loc = _drwCurSheet.location;
+  if (!num) {
+    sel.innerHTML = `<option value="">(no drawing number)</option>`;
+    sel.disabled = true;
+    return;
+  }
+  // All sheets that share this drawing number + location, across every set.
+  const family = DRAWING_SHEETS
+    .filter(s => s.location === loc && s.sheet_number === num)
+    .sort((a, b) => {
+      // Current first, then by revision desc, then by created_at desc.
+      if (!!b.is_current - !!a.is_current) return (b.is_current ? 1 : 0) - (a.is_current ? 1 : 0);
+      const r = String(b.revision || '').localeCompare(String(a.revision || ''), undefined, { numeric: true });
+      if (r) return r;
+      return (b.created_at || '').localeCompare(a.created_at || '');
+    });
+  if (family.length <= 1) {
+    sel.innerHTML = `<option value="${_drwCurSheet.id}">Rev ${escapeHtml(_drwCurSheet.revision || '—')} (only revision)</option>`;
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
+  sel.innerHTML = family.map(s => {
+    const set = DRAWING_SETS.find(x => x.id === s.set_id);
+    const dateBit = set?.revision_date || set?.release_date || set?.import_date || '';
+    const tag = s.is_current ? ' ★ current' : '';
+    return `<option value="${s.id}" ${s.id === _drwCurSheet.id ? 'selected' : ''}>Rev ${escapeHtml(s.revision || '—')}${tag}${dateBit ? ` · ${escapeHtml(dateBit)}` : ''}</option>`;
+  }).join('');
+}
+
+async function _drwSwitchToRevision(sheetId) {
+  const s = DRAWING_SHEETS.find(x => x.id === sheetId);
+  if (!s) return;
+  if (s.id === _drwCurSheet?.id) return;
+  if (_drwMarkupDirty) {
+    if (!confirm('You have unsaved markup changes. Switch revision anyway?')) {
+      _drwUpdateRevisionPicker();
+      return;
+    }
+    _drwMarkupDirty = false;
+  }
+  await _drwOpenSheet(s.id, s.set_id, s.page_index || 0);
+}
+
+// ── Super Find ─────────────────────────────────────────────────────────────
+function _drwWireFindInput() {
+  const inp = document.getElementById('drw-find-input');
+  const results = document.getElementById('drw-find-results');
+  if (!inp || !results) return;
+  inp.value = '';
+  results.style.display = 'none';
+  inp.oninput = () => _drwRenderFindResults(inp.value);
+  inp.onfocus = () => _drwRenderFindResults(inp.value);
+  // Close results when clicking outside
+  if (!document._drwFindClickHooked) {
+    document.addEventListener('mousedown', (e) => {
+      const wrap = e.target.closest('.drw-find-wrap');
+      const r = document.getElementById('drw-find-results');
+      if (!wrap && r) r.style.display = 'none';
+    });
+    document._drwFindClickHooked = true;
+  }
+}
+
+async function _drwBuildFindIndex(setId) {
+  if (!_drwPdfDoc || !setId) return;
+  const cached = _drwFindIndex.get(setId);
+  if (cached && (cached.status === 'ready' || cached.status === 'loading')) return;
+  _drwFindIndex.set(setId, { pages: [], status: 'loading' });
+  _drwFindStatus(`Indexing ${_drwPdfDoc.numPages} pages…`);
+
+  const pages = [];
+  const total = _drwPdfDoc.numPages;
+  try {
+    for (let i = 1; i <= total; i++) {
+      const page = await _drwPdfDoc.getPage(i);
+      const tc = await page.getTextContent();
+      const text = (tc.items || []).map(it => it.str || '').join(' ');
+      pages.push({ pageIndex: i - 1, text });
+      if (i % 10 === 0) _drwFindStatus(`Indexed ${i}/${total}`);
+    }
+    _drwFindIndex.set(setId, { pages, status: 'ready' });
+    _drwFindStatus('Indexed');
+    setTimeout(() => _drwFindStatus(''), 1200);
+  } catch (e) {
+    _drwFindIndex.set(setId, { pages, status: 'error' });
+    _drwFindStatus(`Index error: ${e.message}`);
+  }
+}
+
+function _drwFindStatus(txt) {
+  const el = document.getElementById('drw-find-status');
+  if (el) el.textContent = txt || '';
+}
+
+function _drwRenderFindResults(q) {
+  const results = document.getElementById('drw-find-results');
+  if (!results) return;
+  const query = String(q || '').trim().toLowerCase();
+  if (!query) { results.style.display = 'none'; results.innerHTML = ''; return; }
+
+  // Sheet metadata matches (instant) — scoped to current set.
+  const sheets = DRAWING_SHEETS
+    .filter(s => s.set_id === _drwCurSet?.id)
+    .filter(s =>
+      (s.sheet_number || '').toLowerCase().includes(query) ||
+      (s.sheet_title  || '').toLowerCase().includes(query))
+    .sort((a, b) => (a.page_index || 0) - (b.page_index || 0))
+    .slice(0, 25);
+
+  // Page-text matches from the search index.
+  const idx = _drwFindIndex.get(_drwCurSet?.id);
+  const textMatches = [];
+  if (idx?.pages?.length) {
+    for (const p of idx.pages) {
+      const t = (p.text || '').toLowerCase();
+      const pos = t.indexOf(query);
+      if (pos >= 0) {
+        const start = Math.max(0, pos - 30);
+        const end   = Math.min(p.text.length, pos + query.length + 60);
+        textMatches.push({
+          pageIndex: p.pageIndex,
+          snippet: (start > 0 ? '…' : '') + p.text.slice(start, end) + (end < p.text.length ? '…' : ''),
+        });
+        if (textMatches.length >= 40) break;
+      }
+    }
+  }
+
+  if (!sheets.length && !textMatches.length) {
+    const note = idx?.status === 'loading'
+      ? '<div class="drw-find-result" style="color:var(--gray-500);">Indexing PDF text — try again in a moment.</div>'
+      : '<div class="drw-find-result" style="color:var(--gray-500);">No matches.</div>';
+    results.innerHTML = note;
+    results.style.display = 'block';
+    return;
+  }
+
+  const hlEscape = (s) => escapeHtml(s).replace(new RegExp(escapeRegex(query), 'gi'), m => `<mark>${m}</mark>`);
+  let html = '';
+  if (sheets.length) {
+    html += `<div class="drw-find-result-section">Sheets (${sheets.length})</div>`;
+    html += sheets.map(s => `
+      <div class="drw-find-result" onclick="_drwFindPick(${s.page_index},'${escapeHtml(s.id)}')">
+        <div><b>${hlEscape(s.sheet_number || '—')}</b> · ${hlEscape((s.sheet_title || '').slice(0,80))}</div>
+        <div class="drw-find-meta">Page ${(s.page_index || 0) + 1}${s.revision ? ` · Rev ${escapeHtml(s.revision)}` : ''}</div>
+      </div>`).join('');
+  }
+  if (textMatches.length) {
+    html += `<div class="drw-find-result-section">Inside PDF (${textMatches.length})</div>`;
+    html += textMatches.map(m => `
+      <div class="drw-find-result" onclick="_drwFindPick(${m.pageIndex},'')">
+        <div>${hlEscape(m.snippet)}</div>
+        <div class="drw-find-meta">Page ${m.pageIndex + 1}</div>
+      </div>`).join('');
+  }
+  results.innerHTML = html;
+  results.style.display = 'block';
+}
+
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+async function _drwFindPick(pageIndex, sheetId) {
+  document.getElementById('drw-find-results').style.display = 'none';
+  document.getElementById('drw-find-input').value = '';
+  if (sheetId) {
+    const s = DRAWING_SHEETS.find(x => x.id === sheetId);
+    if (s && s.set_id !== _drwCurSet?.id) {
+      await _drwOpenSheet(s.id, s.set_id, s.page_index || 0);
+      return;
+    }
+  }
+  await _drwGotoPage(parseInt(pageIndex, 10) || 0);
+}
+
+// ── Upload Revision (per-set entry point) ─────────────────────────────────
+// Re-uses the existing upload modal but pre-fills location + title so the
+// supersede pass (drw-confirm-status "Checking for existing revisions…")
+// matches sheets by drawing number against the same drawing family.
+function _drwUploadRevision(setId) {
+  const set = DRAWING_SETS.find(s => s.id === setId);
+  if (!set) { toast('Drawing set not found', 'error'); return; }
+  // Drop into the existing flow then patch the modal title + pre-fill.
+  _drwOpenUpload();
+  // Defer so the modal DOM exists, then patch.
+  setTimeout(() => {
+    const titleEl = document.querySelector('#modal-overlay .modal-head .modal-title');
+    const subEl   = document.querySelector('#modal-overlay .modal-head .modal-sub');
+    if (titleEl) titleEl.textContent = 'Upload Drawing Revision';
+    if (subEl)   subEl.textContent   = `Revising "${set.title}" — sheets with matching Drawing Numbers will be superseded automatically.`;
+    const t = document.getElementById('drw-title');
+    if (t) t.value = set.title;
+    const l = document.getElementById('drw-location');
+    if (l) {
+      // Make sure the option exists, then select.
+      const has = Array.from(l.options).some(o => o.value === set.location);
+      if (!has) {
+        const opt = document.createElement('option');
+        opt.value = set.location;
+        opt.textContent = set.location;
+        l.appendChild(opt);
+      }
+      l.value = set.location;
+    }
+    const today = new Date().toISOString().slice(0,10);
+    const rd = document.getElementById('drw-rev-date');
+    if (rd && !rd.value) rd.value = today;
+    // Banner.
+    const body = document.querySelector('#modal-overlay .modal-body');
+    if (body && !document.getElementById('drw-rev-banner')) {
+      const banner = document.createElement('div');
+      banner.id = 'drw-rev-banner';
+      banner.style.cssText = 'background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:6px;padding:10px 12px;margin:0 0 12px;font-size:12.5px;line-height:1.5;';
+      banner.innerHTML = `<b>Revision upload</b> · Sheets you import here will replace the current revision of any matching Drawing Number in this set's location (<b>${escapeHtml(set.location)}</b>). The old sheets stay queryable as prior revisions in the viewer.`;
+      body.insertBefore(banner, body.firstChild);
+    }
+  }, 50);
 }

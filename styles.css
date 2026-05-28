@@ -11078,6 +11078,135 @@ a:focus-visible {
   flex-shrink: 0;
   flex-wrap: wrap;
 }
+/* Close button works on both dark and light header themes — adapts via aria. */
+.drw-viewer-close-btn {
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  color: var(--gray-800);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+}
+.drw-viewer-close-btn:hover {
+  background: var(--gray-50);
+  border-color: var(--gray-400);
+}
+
+/* Navigation strip beneath the header — paging, sheet jump (Super Find), revision picker. */
+.drw-viewer-navbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 16px;
+  background: #f3f4f6;
+  border-bottom: 1px solid var(--gray-200);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--gray-700);
+}
+.drw-nav-btn {
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  color: var(--gray-800);
+  padding: 4px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  min-width: 32px;
+  line-height: 1;
+}
+.drw-nav-btn:hover { background: var(--gray-50); }
+.drw-nav-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+.drw-nav-page {
+  font-size: 12px;
+  color: var(--gray-700);
+}
+.drw-nav-page input {
+  padding: 3px 6px;
+  border: 1px solid var(--gray-300);
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: center;
+}
+.drw-nav-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--gray-300);
+  margin: 0 4px;
+}
+.drw-find-wrap {
+  position: relative;
+  flex: 1 1 280px;
+  min-width: 220px;
+  max-width: 520px;
+}
+.drw-find-wrap input {
+  width: 100%;
+  padding: 5px 10px;
+  border: 1px solid var(--gray-300);
+  border-radius: 5px;
+  font-size: 12px;
+  background: var(--white);
+}
+.drw-find-wrap input:focus { outline: 2px solid rgba(230,0,18,0.15); border-color: var(--hitachi-red); }
+.drw-find-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+  max-height: 360px;
+  overflow-y: auto;
+  z-index: 10001;
+}
+.drw-find-result {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--gray-100);
+  font-size: 12px;
+}
+.drw-find-result:last-child { border-bottom: none; }
+.drw-find-result:hover { background: var(--gray-50); }
+.drw-find-result mark { background: #fde68a; padding: 0 1px; border-radius: 2px; }
+.drw-find-result .drw-find-meta {
+  font-size: 11px;
+  color: var(--gray-500);
+  margin-top: 2px;
+}
+.drw-find-result-section {
+  padding: 4px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gray-500);
+  background: var(--gray-50);
+  border-bottom: 1px solid var(--gray-100);
+}
+.drw-find-status {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: var(--gray-500);
+  pointer-events: none;
+}
+#drw-rev-select {
+  padding: 4px 8px;
+  border: 1px solid var(--gray-300);
+  border-radius: 5px;
+  font-size: 12px;
+  background: var(--white);
+}
 .drw-editor-close {
   border: 1px solid var(--gray-300);
   background: var(--white);

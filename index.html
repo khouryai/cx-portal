@@ -1375,7 +1375,7 @@
 <!-- ── DRAWINGS SHEET VIEWER ──────────────────────────────── -->
 <div id="drw-viewer-overlay" style="display:none;position:fixed;inset:0;z-index:9000;background:#111;flex-direction:column;">
   <div id="drw-viewer-header" style="display:flex;align-items:center;gap:12px;padding:8px 16px;background:#1f2937;color:#fff;flex-shrink:0;flex-wrap:wrap;">
-    <button onclick="_drwCloseViewer()" style="background:transparent;border:1px solid rgba(255,255,255,0.3);color:#fff;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:13px;">✕ Close</button>
+    <button class="drw-viewer-close-btn" onclick="_drwCloseViewer()" title="Back to the drawings list">✕ Close</button>
     <div style="flex:1;min-width:0;">
       <span id="drw-viewer-sheet-num" style="font-weight:700;font-size:14px;font-family:monospace;color:#93c5fd;"></span>
       <span id="drw-viewer-title" style="font-size:13px;color:#e5e7eb;margin-left:10px;"></span>
@@ -1397,6 +1397,21 @@
       <button onclick="_drwSaveMarkup()"    style="background:#3b82f6;border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">Save Draft</button>
       <button onclick="_drwPublishMarkup()" style="background:#10b981;border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">Publish</button>
     </div>
+  </div>
+  <div id="drw-viewer-navbar" class="drw-viewer-navbar">
+    <button class="drw-nav-btn" id="drw-nav-prev" onclick="_drwGotoRel(-1)" title="Previous page (←)">◀</button>
+    <span class="drw-nav-page">Page <input id="drw-nav-page-input" type="number" min="1" value="1" style="width:54px;"> of <span id="drw-nav-page-count">—</span></span>
+    <button class="drw-nav-btn" id="drw-nav-next" onclick="_drwGotoRel(1)" title="Next page (→)">▶</button>
+    <span class="drw-nav-divider"></span>
+    <span style="font-size:11px;color:var(--gray-500);">Jump:</span>
+    <div class="drw-find-wrap">
+      <input id="drw-find-input" type="search" placeholder="Drawing #, name, or any text in the PDF…" autocomplete="off">
+      <div id="drw-find-results" class="drw-find-results" style="display:none;"></div>
+      <span id="drw-find-status" class="drw-find-status"></span>
+    </div>
+    <span class="drw-nav-divider"></span>
+    <span style="font-size:11px;color:var(--gray-500);">Revision:</span>
+    <select id="drw-rev-select" onchange="_drwSwitchToRevision(this.value)" title="Switch to another revision of this drawing"></select>
   </div>
   <div id="drw-viewer-body" style="flex:1;overflow:auto;display:flex;justify-content:center;align-items:flex-start;padding:20px;position:relative;">
     <div id="drw-canvas-wrap" style="position:relative;display:inline-block;box-shadow:0 4px 24px rgba(0,0,0,0.6);">
