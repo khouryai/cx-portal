@@ -98,6 +98,20 @@
   <h1>Track Plan Importer</h1>
   <p class="sub">Reads a Visio→Excel track plan extract and writes it to the cx-portal track-plan tables. Dry-run by default — toggle "Run import" only when you're ready to write.</p>
 
+  <div id="auth-banner" class="panel" style="display:none;border-left:4px solid #f59e0b;background:#fffbeb;">
+    <strong>Sign in required to write to Supabase.</strong>
+    <div style="margin-top:6px;font-size:13px;color:#92400e;">
+      The track-plan tables have row-level security and only accept writes from authenticated users.
+      Open the <a href="./index.html" target="_blank" style="color:#92400e;text-decoration:underline;">main portal</a>
+      in another tab, sign in, then come back and reload this page.
+    </div>
+  </div>
+
+  <div id="auth-ok" class="panel" style="display:none;border-left:4px solid #10b981;background:#ecfdf5;font-size:13px;">
+    Signed in as <strong id="auth-email">—</strong>
+    <span id="auth-expiry" style="color:#065f46;margin-left:8px;"></span>
+  </div>
+
   <div class="panel">
     <div class="row" style="margin-bottom: 14px;">
       <label class="file">
@@ -148,6 +162,45 @@ const DEFAULT_SB_URL = 'https://uqtwiucxktljhukmgmxg.supabase.co';
 const DEFAULT_SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxdHdpdWN4a3Rsamh1a21nbXhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NDMxMDcsImV4cCI6MjA5MzUxOTEwN30.nJuQOOyvGpGphSqiNxrO2_p1oYroev8mVdNn9unxmdI';
 const BATCH_SIZE = 200;
 
+// Read the portal's session from localStorage — same origin (GitHub Pages
+// serves both index.html and this importer at the same host) so the JWT
+// stored by supabase-js v2 is visible. Without it we hit RLS as anon.
+function readPortalSession() {
+  try {
+    const ref = DEFAULT_SB_URL.replace('https://', '').split('.')[0];
+    const raw = localStorage.getItem(`sb-${ref}-auth-token`);
+    if (!raw) return null;
+    const session = JSON.parse(raw);
+    if (!session?.access_token) return null;
+    const expiresMs = (session.expires_at || 0) * 1000;
+    if (Date.now() > expiresMs) return { expired: true, email: session.user?.email };
+    return {
+      access_token: session.access_token,
+      email: session.user?.email || '(unknown)',
+      expiresMs,
+    };
+  } catch { return null; }
+}
+
+function renderAuthBanner() {
+  const banner   = document.getElementById('auth-banner');
+  const ok       = document.getElementById('auth-ok');
+  const emailEl  = document.getElementById('auth-email');
+  const expiryEl = document.getElementById('auth-expiry');
+  const s = readPortalSession();
+  if (s && !s.expired && s.access_token) {
+    banner.style.display = 'none';
+    ok.style.display = '';
+    emailEl.textContent = s.email;
+    const minsLeft = Math.max(0, Math.round((s.expiresMs - Date.now()) / 60000));
+    expiryEl.textContent = `(session valid for ${minsLeft} more minute${minsLeft === 1 ? '' : 's'})`;
+    return s;
+  }
+  banner.style.display = '';
+  ok.style.display = 'none';
+  return null;
+}
+
 // ── DOM helpers ─────────────────────────────────────────────
 const $log     = document.getElementById('log');
 const $status  = document.getElementById('status');
@@ -158,6 +211,9 @@ const $file    = document.getElementById('file');
 const $name    = document.getElementById('filename');
 
 let pickedFile = null;
+
+// Initial auth-status check on page load.
+renderAuthBanner();
 
 $file.addEventListener('change', e => {
   pickedFile = e.target.files[0] || null;
@@ -545,7 +601,19 @@ async function run() {
   setStatus('writing to Supabase', 'warn');
   const sbUrl = document.getElementById('sb_url').value.trim() || DEFAULT_SB_URL;
   const sbKey = document.getElementById('sb_key').value.trim() || DEFAULT_SB_KEY;
-  const sb = window.supabase.createClient(sbUrl, sbKey);
+
+  // Pick up the portal's session JWT so RLS sees us as `authenticated`.
+  // Without it we hit the anon role and every track_* policy denies us.
+  const session = readPortalSession();
+  const clientOpts = {};
+  if (session && !session.expired && session.access_token) {
+    clientOpts.global = { headers: { Authorization: `Bearer ${session.access_token}` } };
+    log(`Authenticated as ${session.email}`, 'ok');
+  } else {
+    log('No portal session found — falling back to anon key. RLS will likely block writes.', 'warn');
+    log('  → Sign in at the main portal first, then reload this page.', 'dim');
+  }
+  const sb = window.supabase.createClient(sbUrl, sbKey, clientOpts);
 
   log(`\nConnecting to ${sbUrl} …`);
   let importRow;
