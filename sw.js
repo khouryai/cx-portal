@@ -5,7 +5,7 @@
 //    of PDFs and edit-state JSON; bypass everything else (auth, REST mutations, etc).
 //  - Bump CACHE_VERSION to force clients to upgrade.
 
-const CACHE_VERSION = 'cxp-v16';
+const CACHE_VERSION = 'cxp-v17';
 const SHELL_CACHE   = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -13,8 +13,10 @@ const SHELL_ASSETS = [
   './',
   './index.html',
   './app.js',
+  './photos.js',
   './data.js',
   './styles.css',
+  './photos.css',
   './chart.umd.js',
   './manifest.webmanifest',
 ];
