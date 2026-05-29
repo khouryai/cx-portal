@@ -31635,9 +31635,11 @@ const _dynPage = {
   statusFilter: '',
   testFilter: '',
   // Board state
+  boardView: 'month',                    // 'month' | 'week'
   boardAxis: 'phase',                    // 'phase' | 'zone'
   boardStart: null,                      // first day of first month (Date)
   boardMonths: 6,
+  boardWeekStart: null,                  // Monday of the visible week (Date), week view
   // Planning state
   planZones: [],                         // array of selected zone codes (matches locations table prefix)
   planStart: '',                         // window start (datetime-local string)
@@ -31655,9 +31657,26 @@ const _DYN_STATUSES = [
   'Blocked','Not Applicable','Future Test',
 ];
 
+// Locations that are static-only and must never be offered as Ph2 dynamic
+// testing zones (they appear in the locations table but cannot host dynamic
+// runs). Matched case-insensitively against the zone code (first token of the
+// level-2 location name).
+const _DYN_STATIC_ONLY_ZONES = new Set(['A10', 'C156']);
+function _dynIsStaticOnlyZone(code) {
+  return _DYN_STATIC_ONLY_ZONES.has(String(code || '').trim().toUpperCase());
+}
+
 function _dynStatusBadge(s) {
   if (typeof getStatusBadge === 'function') return getStatusBadge(s);
   return `<span class="badge">${escapeHtml(s || '—')}</span>`;
+}
+
+// Subsystem badge — identifies which team owns/runs a dynamic test. Renders a
+// clear "no subsystem" warning when unset so coverage gaps are visible.
+function _dynSubsystemBadge(subsystem) {
+  const s = (subsystem || '').trim();
+  if (!s) return `<span class="badge" style="background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;font-size:10.5px;" title="No subsystem set — assign the team that runs this test">⚠ No subsystem</span>`;
+  return `<span class="badge" style="background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;font-size:10.5px;" title="Subsystem / team running this test">${escapeHtml(s)}</span>`;
 }
 
 function _dynFmtDate(d) {
@@ -31685,6 +31704,30 @@ function _dynFirstOfMonth(d) {
 function _dynAddMonths(d, n) {
   const dt = new Date(d);
   return new Date(dt.getFullYear(), dt.getMonth() + n, 1);
+}
+
+// Day-level helpers for the week view.
+function _dynDayKey(d) {
+  const dt = (d instanceof Date) ? d : new Date(d);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
+
+function _dynAddDays(d, n) {
+  const dt = new Date(d);
+  return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate() + n);
+}
+
+// Monday of the week containing d (weeks run Mon–Sun).
+function _dynStartOfWeek(d) {
+  const dt = (d instanceof Date) ? new Date(d) : new Date(d);
+  dt.setHours(0, 0, 0, 0);
+  const dow = (dt.getDay() + 6) % 7; // 0 = Monday
+  return _dynAddDays(dt, -dow);
+}
+
+function _dynDayLabel(d) {
+  const dt = (d instanceof Date) ? d : new Date(d);
+  return dt.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 async function renderDynamicTestingPage() {
@@ -31910,6 +31953,7 @@ function _dynRenderInstances() {
         <thead><tr>
           <th>Code</th>
           <th>Test Case</th>
+          <th>Subsystem</th>
           <th>Run (start → finish)</th>
           <th>Phase</th>
           <th>Under test / Access</th>
@@ -31951,6 +31995,7 @@ function _dynRowHtml(r) {
     <tr>
       <td style="font-family:var(--font-mono,monospace);font-size:12px;">${escapeHtml(r.code || '—')}</td>
       <td>${tc ? `<span style="font-family:var(--font-mono,monospace);font-size:11px;color:var(--gray-500);">${escapeHtml(tc.code || r.test_id || '')}</span><br/><span style="font-size:12px;">${escapeHtml((tc.name || '').slice(0,40))}</span>` : `<span style="color:var(--gray-400);">${escapeHtml(r.test_id || '—')}</span>`}</td>
+      <td>${_dynSubsystemBadge(tc && tc.subsystem)}</td>
       <td>${escapeHtml(r.title || '')}${prereq}${subBadge}</td>
       <td>${r.target_phase ? `<span class="tag tag-phase">${escapeHtml(r.target_phase)}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>
       <td style="font-size:12px;">${sectionsCell}</td>
@@ -32733,44 +32778,76 @@ async function _dynImportCSVRows() {
 }
 
 // ── Planning board ─────────────────────────────────────────────────────
+// Supports two zoom levels:
+//   · Month view — 6-month grid (each column = a calendar month)
+//   · Week view  — single week grid (each column = a day, Mon–Sun)
+// Rows are either phase or section-under-test; cells count instances whose
+// scheduled date (falling back to target window) falls in that period.
+function _dynBoardRowKeys(r) {
+  return _dynPage.boardAxis === 'zone'
+    ? [r.track_section_under_test || '— No section —']
+    : [r.target_phase || '— No phase —'];
+}
+
+// Period model for the active view: the visible columns plus the key/label
+// functions used to bucket and drill into instances.
+function _dynBoardPeriods() {
+  if (_dynPage.boardView === 'week') {
+    if (!_dynPage.boardWeekStart) _dynPage.boardWeekStart = _dynStartOfWeek(new Date());
+    const days = [];
+    for (let i = 0; i < 7; i++) days.push(_dynAddDays(_dynPage.boardWeekStart, i));
+    return {
+      cols:   days.map(d => ({ key: _dynDayKey(d), label: _dynDayLabel(d), date: d })),
+      keyOf:  when => _dynDayKey(when),
+      title:  `${_dynDayLabel(days[0])} — ${_dynDayLabel(days[6])}`,
+    };
+  }
+  // Month view (default)
+  if (!_dynPage.boardStart) _dynPage.boardStart = _dynFirstOfMonth(new Date());
+  const months = [];
+  for (let i = 0; i < _dynPage.boardMonths; i++) months.push(_dynAddMonths(_dynPage.boardStart, i));
+  return {
+    cols:   months.map(m => ({ key: _dynMonthKey(m), label: _dynMonthLabel(m), date: m })),
+    keyOf:  when => _dynMonthKey(when),
+    title:  `${_dynMonthLabel(months[0])} — ${_dynMonthLabel(months[months.length - 1])}`,
+  };
+}
+
 function _dynRenderBoard() {
   const cont = document.getElementById('dyn-content');
   if (!cont) return;
 
-  if (!_dynPage.boardStart) _dynPage.boardStart = _dynFirstOfMonth(new Date());
-  const months = [];
-  for (let i = 0; i < _dynPage.boardMonths; i++) {
-    months.push(_dynAddMonths(_dynPage.boardStart, i));
-  }
+  const { cols, keyOf, title } = _dynBoardPeriods();
+  const colKeys = new Set(cols.map(c => c.key));
 
-  // Bucket instances by row key × month key.
-  const buckets = new Map(); // rowKey → monthKey → count
+  // Bucket instances by row key × column key.
+  const buckets = new Map(); // rowKey → colKey → count
   const rowSet = new Set();
-  const monthKeys = months.map(_dynMonthKey);
   for (const r of _dynPage.instances) {
-    const rowKeys = _dynPage.boardAxis === 'zone'
-      ? [r.track_section_under_test || '— No section —']
-      : [r.target_phase || '— No phase —'];
     // Date to bucket on: scheduled_for_date else target_window_start else target_window_end.
     const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
     if (!when) continue;
-    const mk = _dynMonthKey(when);
-    if (!monthKeys.includes(mk)) continue;
-    for (const rk of rowKeys) {
+    const ck = keyOf(when);
+    if (!colKeys.has(ck)) continue;
+    for (const rk of _dynBoardRowKeys(r)) {
       rowSet.add(rk);
       if (!buckets.has(rk)) buckets.set(rk, new Map());
       const m = buckets.get(rk);
-      m.set(mk, (m.get(mk) || 0) + 1);
+      m.set(ck, (m.get(ck) || 0) + 1);
     }
   }
   const rowKeysSorted = [...rowSet].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
 
+  const viewBtn = (v, label) =>
+    `<button class="dyn-btn ${_dynPage.boardView===v?'primary':''}" onclick="_dynBoardSetView('${v}')">${label}</button>`;
+
   const navHtml = `
     <div class="dyn-toolbar">
       <button class="dyn-btn" onclick="_dynBoardShift(-1)">‹ Prev</button>
-      <span style="font-weight:600;color:var(--gray-700);">${_dynMonthLabel(months[0])} — ${_dynMonthLabel(months[months.length - 1])}</span>
+      <span style="font-weight:600;color:var(--gray-700);">${escapeHtml(title)}</span>
       <button class="dyn-btn" onclick="_dynBoardShift(1)">Next ›</button>
       <button class="dyn-btn" onclick="_dynBoardToday()">Today</button>
+      <span style="display:inline-flex;gap:4px;margin-left:8px;">${viewBtn('month','Month')}${viewBtn('week','Week (day)')}</span>
       <span style="flex:1"></span>
       <label style="font-size:13px;color:var(--gray-600);">Rows:</label>
       <select onchange="_dynPage.boardAxis=this.value;_dynRenderBoard();">
@@ -32780,21 +32857,20 @@ function _dynRenderBoard() {
     </div>
   `;
 
-  const headHtml = `<tr><th></th>${months.map(m => `<th>${_dynMonthLabel(m)}</th>`).join('')}<th>Total</th></tr>`;
+  const headHtml = `<tr><th></th>${cols.map(c => `<th>${escapeHtml(c.label)}</th>`).join('')}<th>Total</th></tr>`;
 
   let bodyHtml;
   if (rowKeysSorted.length === 0) {
-    bodyHtml = `<tr><td colspan="${months.length + 2}" style="padding:32px;text-align:center;color:var(--gray-500);">No instances have a date (target window or scheduled date) inside this range.</td></tr>`;
+    bodyHtml = `<tr><td colspan="${cols.length + 2}" style="padding:32px;text-align:center;color:var(--gray-500);">No instances have a date (target window or scheduled date) inside this range.</td></tr>`;
   } else {
     bodyHtml = rowKeysSorted.map(rk => {
       const m = buckets.get(rk) || new Map();
       let total = 0;
-      const cells = months.map(mDate => {
-        const mk = _dynMonthKey(mDate);
-        const n = m.get(mk) || 0;
+      const cells = cols.map(c => {
+        const n = m.get(c.key) || 0;
         total += n;
         const cls = n === 0 ? 'zero' : (n >= 5 ? 'lots' : 'some');
-        const onClick = n > 0 ? `onclick="_dynBoardOpenCell('${escapeHtml(rk)}','${mk}')"` : '';
+        const onClick = n > 0 ? `onclick="_dynBoardOpenCell('${escapeHtml(rk)}','${escapeHtml(c.key)}')"` : '';
         return `<td class="cell" ${onClick}><span class="dyn-cell-pill ${cls}">${n || '·'}</span></td>`;
       }).join('');
       return `<tr><td class="row-label">${escapeHtml(rk)}</td>${cells}<td style="text-align:center;font-weight:600;color:var(--gray-700);">${total}</td></tr>`;
@@ -32812,27 +32888,39 @@ function _dynRenderBoard() {
   `;
 }
 
-function _dynBoardShift(n) {
-  _dynPage.boardStart = _dynAddMonths(_dynPage.boardStart || _dynFirstOfMonth(new Date()), n);
-  _dynRenderBoard();
-}
-function _dynBoardToday() {
-  _dynPage.boardStart = _dynFirstOfMonth(new Date());
+function _dynBoardSetView(v) {
+  if (v !== 'month' && v !== 'week') return;
+  _dynPage.boardView = v;
   _dynRenderBoard();
 }
 
-function _dynBoardOpenCell(rowKey, monthKey) {
+function _dynBoardShift(n) {
+  if (_dynPage.boardView === 'week') {
+    _dynPage.boardWeekStart = _dynAddDays(_dynPage.boardWeekStart || _dynStartOfWeek(new Date()), 7 * n);
+  } else {
+    _dynPage.boardStart = _dynAddMonths(_dynPage.boardStart || _dynFirstOfMonth(new Date()), n);
+  }
+  _dynRenderBoard();
+}
+function _dynBoardToday() {
+  if (_dynPage.boardView === 'week') {
+    _dynPage.boardWeekStart = _dynStartOfWeek(new Date());
+  } else {
+    _dynPage.boardStart = _dynFirstOfMonth(new Date());
+  }
+  _dynRenderBoard();
+}
+
+function _dynBoardOpenCell(rowKey, periodKey) {
+  const keyOf = _dynPage.boardView === 'week' ? _dynDayKey : _dynMonthKey;
   const matches = _dynPage.instances.filter(r => {
-    const rowKeys = _dynPage.boardAxis === 'zone'
-      ? [r.track_section_under_test || '— No section —']
-      : [r.target_phase || '— No phase —'];
-    if (!rowKeys.includes(rowKey)) return false;
+    if (!_dynBoardRowKeys(r).includes(rowKey)) return false;
     const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
     if (!when) return false;
-    return _dynMonthKey(when) === monthKey;
+    return keyOf(when) === periodKey;
   });
   modal({
-    title: `${escapeHtml(rowKey)} — ${monthKey}`,
+    title: `${escapeHtml(rowKey)} — ${escapeHtml(periodKey)}`,
     sub: `${matches.length} instance(s)`,
     body: `
       <div style="padding:8px 24px 16px;">
@@ -32905,6 +32993,7 @@ function _dynRenderPlanning() {
   (LOCS || []).filter(l => l.level === 2).forEach(z => {
     const code = (z.name || '').split(/\s+/)[0]; // "W40 Millbrae Station" → "W40"
     if (!code) return;
+    if (_dynIsStaticOnlyZone(code)) return; // static-only — never a Ph2 dynamic zone
     const arr = zonesByPhase.get(z.parent_id) || [];
     if (!arr.some(x => x.code === code)) arr.push({ code, label: z.name });
     zonesByPhase.set(z.parent_id, arr);
@@ -33032,7 +33121,8 @@ function _dynPlanClearZones() {
 
 function _dynPlanTogglePhase(phaseId) {
   const zones = (LOCS || []).filter(l => l.level === 2 && l.parent_id === phaseId);
-  const codes = zones.map(z => (z.name || '').split(/\s+/)[0]).filter(Boolean);
+  const codes = zones.map(z => (z.name || '').split(/\s+/)[0])
+    .filter(c => c && !_dynIsStaticOnlyZone(c));
   if (!codes.length) return;
   const allSelected = codes.every(c => _dynPage.planZones.includes(c));
   if (allSelected) {
@@ -33450,7 +33540,6 @@ function _dynCaseActions(testId, isPerLoc) {
   return `
     <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynCaseFilterInstances('${escapeHtml(testId)}')">Instances</button>
     <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynOpenCadenceModal('${escapeHtml(testId)}')">Cadence</button>
-    ${isPerLoc ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynAddLocation('${escapeHtml(testId)}')">+ Location</button>` : ''}
     <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dtOpenPrereqEditor('${escapeHtml(testId)}')">Prereqs</button>
     <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openTestCaseScopeModal('${escapeHtml(testId)}')">Scope</button>`;
 }
@@ -33510,6 +33599,7 @@ async function _dynRenderCases() {
       <tr style="border-top:1px solid var(--gray-100);${indented ? 'background:#fbfdff;' : ''}">
         <td style="font-family:monospace;font-size:11.5px;${indented ? 'padding-left:26px;' : ''}">${escapeHtml(r.test_case_code || r.test_id)}</td>
         <td>${indented ? locLabel : ''}${escapeHtml((indented ? (info.location ? '' : r.test_name) : r.test_name) || '').slice(0,80)}</td>
+        <td>${indented ? '' : _dynSubsystemBadge(info.subsystem)}</td>
         <td>${indented ? '' : _dynCadenceBadge(r.test_id)}</td>
         <td>${_dynStatusBadge(r.rollup_status)}</td>
         <td style="text-align:right;font-family:monospace;">${r.instance_count}</td>
@@ -33523,18 +33613,17 @@ async function _dynRenderCases() {
     <tr style="border-top:2px solid var(--gray-200);background:#f8fafc;">
       <td style="font-family:monospace;font-size:11.5px;font-weight:700;">${escapeHtml(g.key)}</td>
       <td style="font-weight:600;">${escapeHtml((g.name || '').slice(0,80))}</td>
+      <td>${_dynSubsystemBadge((g.members[0] && g.members[0].info && g.members[0].info.subsystem) || '')}</td>
       <td><span class="badge" style="background:#eef2ff;color:#3730a3;font-size:10.5px;">Per location</span></td>
       <td>${_dynStatusBadge(g.status)} <span style="font-size:10.5px;color:var(--gray-600);">${g.passed}/${g.members.length} locations</span></td>
       <td style="text-align:right;font-family:monospace;">${g.instances}</td>
       <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${g.complete}</td>
       <td></td>
-      <td style="text-align:right;white-space:nowrap;">
-        <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynAddLocation('${escapeHtml(g.members[0].r.test_id)}')">+ Location</button>
-      </td>
+      <td style="text-align:right;white-space:nowrap;"></td>
     </tr>`;
 
   const bodyRows = groupArr.length === 0
-    ? `<tr><td colspan="8" style="padding:30px;text-align:center;color:var(--gray-500);">No dynamic test cases yet. Open the Test Register and toggle a test case's scope to Dynamic.</td></tr>`
+    ? `<tr><td colspan="9" style="padding:30px;text-align:center;color:var(--gray-500);">No dynamic test cases yet. Open the Test Register and toggle a test case's scope to Dynamic.</td></tr>`
     : groupArr.map(g => {
         // Single-activity procedures render as one plain row (no group header).
         if (g.members.length === 1) return memberRow(g.members[0], false);
@@ -33555,6 +33644,7 @@ async function _dynRenderCases() {
           <tr>
             <th>Code</th>
             <th>Name</th>
+            <th>Subsystem</th>
             <th>Cadence</th>
             <th>Rollup status</th>
             <th style="text-align:right;">Instances</th>
@@ -33679,13 +33769,26 @@ function _dynOpenCadenceModal(testId) {
   const info = _dynPage.testItemsById.get(testId) || {};
   const scope = info.test_scope || '';
   const curPhase = info.phase || '';
+  const curSubsys = info.subsystem || '';
   const derivedLocs = info.location ? [info.location] : _dynCaseLocations(testId);
   const phaseOpts = (LOCS || []).filter(l => l.level === 1).sort((a,b) => a.sort_order - b.sort_order);
+  // Known subsystems (teams) seeded from existing test items, so the picker
+  // stays consistent with the rest of the register.
+  const subsysOpts = [...new Set((typeof TI !== 'undefined' ? TI : [])
+    .map(t => t.Subsystem).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  if (curSubsys && !subsysOpts.includes(curSubsys)) subsysOpts.unshift(curSubsys);
   modal({
     title: 'Test cadence',
     sub: `${escapeHtml(info.code || testId)} — ${escapeHtml((info.name || '').slice(0,60))}`,
     body: `
       <div style="padding:8px 24px 16px;">
+        <div class="form-field" style="margin-bottom:14px;">
+          <label>Subsystem <span style="color:var(--gray-500);font-weight:400;">(team running this test)</span></label>
+          <select id="dyn-cad-subsys">
+            <option value="" ${!curSubsys?'selected':''}>— not set —</option>
+            ${subsysOpts.map(s => `<option value="${escapeHtml(s)}" ${s===curSubsys?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+          </select>
+        </div>
         <div class="form-field" style="margin-bottom:14px;">
           <label>Cadence <span style="color:var(--gray-500);font-weight:400;">(how this procedure is repeated)</span></label>
           <select id="dyn-cad-scope" onchange="document.getElementById('dyn-cad-locs-wrap').style.display=this.value==='per_location'?'block':'none';document.getElementById('dyn-cad-phase-wrap').style.display=this.value==='per_phase'?'block':'none';">
@@ -33733,19 +33836,22 @@ function _dynCaseLocations(testId) {
 async function _dynSaveCadence(testId) {
   const scope = document.getElementById('dyn-cad-scope')?.value || null;
   const phase = String(document.getElementById('dyn-cad-phase')?.value || '').trim();
-  const payload = { test_scope: scope || null };
+  const subsystem = String(document.getElementById('dyn-cad-subsys')?.value || '').trim();
+  const payload = { test_scope: scope || null, subsystem: subsystem || null };
   if (scope === 'per_phase') payload.phase = phase || null;
   try {
     await _dbUpdate('test_items', payload, { test_id: testId });
     const info = _dynPage.testItemsById.get(testId);
     if (info) {
       info.test_scope = payload.test_scope || '';
+      info.subsystem = payload.subsystem || '';
       if (scope === 'per_phase') info.phase = payload.phase || '';
     }
     if (typeof TI !== 'undefined') {
       const ti = TI.find(t => (t.TestID || t.test_id) === testId);
       if (ti) {
         ti.TestScope = payload.test_scope || '';
+        ti.Subsystem = payload.subsystem || '';
         if (scope === 'per_phase') ti.Phase = payload.phase || '';
       }
     }
