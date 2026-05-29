@@ -547,4 +547,39 @@ create index if not exists idx_test_items_procedure_code
 comment on column test_items.procedure_code is
   'Base procedure key shared by per-location activities (e.g. DCS-SIT for W40-DCS-SIT, Y10-DCS-SIT) so coverage rolls up across locations.';
 
+-- Procedure-level coverage rollup (migration dynamic_procedure_coverage_view):
+-- per-location activities sharing procedure_code collapse to one procedure so
+-- KPIs read "passed at N of M locations". Standalone dynamic cases (null
+-- procedure_code) are a one-location procedure keyed on their test_id.
+create or replace view vw_dynamic_procedure_coverage as
+with act as (
+  select
+    coalesce(ti.procedure_code, ti.test_id)       as procedure_key,
+    coalesce(ti.procedure_name, ti.test_name)     as procedure_name,
+    ti.test_id,
+    ti.test_scope,
+    coalesce(s.rollup_status, 'No Instances')     as rollup_status,
+    coalesce(s.instance_count, 0)                 as instance_count,
+    coalesce(s.complete_count, 0)                 as complete_count
+  from test_items ti
+  left join vw_dynamic_test_case_status s on s.test_id = ti.test_id
+  where ti.scope_type = 'dynamic'
+)
+select
+  procedure_key,
+  max(procedure_name)                                                   as procedure_name,
+  bool_or(test_scope = 'per_location')                                  as is_per_location,
+  count(*)                                                              as location_count,
+  count(*) filter (where rollup_status = 'Pass')                        as passed_count,
+  count(*) filter (where rollup_status in ('Fail','Blocked'))           as fail_blocked_count,
+  count(*) filter (where rollup_status = 'No Instances')                as empty_count,
+  sum(instance_count)                                                   as instance_count,
+  sum(complete_count)                                                   as complete_count,
+  round(100.0 * count(*) filter (where rollup_status = 'Pass')
+        / nullif(count(*), 0), 1)                                       as pct_locations_passed
+from act
+group by procedure_key;
+
+grant select on vw_dynamic_procedure_coverage to authenticated, service_role;
+
 notify pgrst, 'reload schema';

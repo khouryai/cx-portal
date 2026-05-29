@@ -31706,6 +31706,12 @@ async function _dynLoadAll() {
     const insts = await _dbSelect('dynamic_instances', {}, '*')
       .catch(e => { console.warn('[dyn] instances load:', e.message); return []; });
     _dynPage.instances = insts;
+    // The global TI cache is role/scope-filtered and excludes dynamic cases, so
+    // load the dynamic test_items directly — they are the source of truth for
+    // cadence, location and procedure grouping in this module.
+    _dynPage.dynItems = await _dbSelect('test_items', { scope_type: 'dynamic' },
+      'test_id,test_case_code,test_name,subsystem,phase,location,scope_type,test_scope,procedure_code,procedure_name,applicable_locations')
+      .catch(e => { console.warn('[dyn] test_items load:', e.message); return []; });
     _dynBuildTestItemsIndex();
     _dynPage.loaded = true;
   } finally {
@@ -31715,6 +31721,7 @@ async function _dynLoadAll() {
 
 function _dynBuildTestItemsIndex() {
   _dynPage.testItemsById.clear();
+  // Seed from the global TI cache (covers any role-visible items)…
   for (const ti of (typeof TI !== 'undefined' ? TI : [])) {
     const id = ti.TestID || ti.test_id;
     if (!id) continue;
@@ -31729,6 +31736,22 @@ function _dynBuildTestItemsIndex() {
       procedure_code: ti.ProcedureCode || '',
       procedure_name: ti.ProcedureName || '',
       applicable_locations: ti.ApplicableLocations || [],
+    });
+  }
+  // …then overlay the authoritative dynamic test_items loaded from the DB.
+  for (const r of (_dynPage.dynItems || [])) {
+    if (!r.test_id) continue;
+    _dynPage.testItemsById.set(r.test_id, {
+      name: r.test_name || '',
+      code: r.test_case_code || r.test_id,
+      subsystem: r.subsystem || '',
+      phase: r.phase || '',
+      location: r.location || '',
+      scope_type: String(r.scope_type || 'dynamic').toLowerCase(),
+      test_scope: r.test_scope || '',
+      procedure_code: r.procedure_code || '',
+      procedure_name: r.procedure_name || '',
+      applicable_locations: r.applicable_locations || [],
     });
   }
 }
@@ -33362,6 +33385,26 @@ async function _dtSavePrereqs(testId) {
 //   count · instance count. Click a row to open its instance list filtered.
 // ==========================================================================
 
+// Roll a procedure's per-location activity statuses into one status.
+// Pass only when EVERY location passed; partial progress reads as In Progress.
+function _dynProcStatus(sts) {
+  if (sts.some(s => s === 'Fail')) return 'Fail';
+  if (sts.some(s => s === 'Blocked')) return 'Blocked';
+  if (sts.length && sts.every(s => s === 'Pass')) return 'Pass';
+  if (sts.some(s => s === 'In Progress') || sts.some(s => s === 'Pass')) return 'In Progress';
+  if (sts.length && sts.every(s => s === 'No Instances')) return 'No Instances';
+  return 'Not Started';
+}
+
+function _dynCaseActions(testId, isPerLoc) {
+  return `
+    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynCaseFilterInstances('${escapeHtml(testId)}')">Instances</button>
+    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynOpenCadenceModal('${escapeHtml(testId)}')">Cadence</button>
+    ${isPerLoc ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynAddLocation('${escapeHtml(testId)}')">+ Location</button>` : ''}
+    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dtOpenPrereqEditor('${escapeHtml(testId)}')">Prereqs</button>
+    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openTestCaseScopeModal('${escapeHtml(testId)}')">Scope</button>`;
+}
+
 async function _dynRenderCases() {
   const cont = document.getElementById('dyn-content');
   if (!cont) return;
@@ -33379,14 +33422,81 @@ async function _dynRenderCases() {
     return;
   }
 
-  rollup.sort((a, b) => (a.test_case_code || a.test_id || '').localeCompare(b.test_case_code || b.test_id || ''));
+  if (typeof _dynBuildTestItemsIndex === 'function' && !_dynPage.testItemsById.size) _dynBuildTestItemsIndex();
+
+  // Group per-location activities under their procedure (procedure_code, else test_id).
+  const groups = new Map();
+  for (const r of rollup) {
+    const info = _dynPage.testItemsById.get(r.test_id) || {};
+    const key = info.procedure_code || r.test_id;
+    if (!groups.has(key)) {
+      groups.set(key, { key, name: info.procedure_name || r.test_name || r.test_id, perLoc: false, members: [] });
+    }
+    const g = groups.get(key);
+    if (info.test_scope === 'per_location') g.perLoc = true;
+    g.members.push({ r, info });
+  }
+  const groupArr = [...groups.values()].sort((a, b) => (a.name || a.key).localeCompare(b.name || b.key, undefined, { numeric: true }));
+  for (const g of groupArr) {
+    g.members.sort((a, b) => String(a.info.location || a.r.test_case_code || a.r.test_id)
+      .localeCompare(String(b.info.location || b.r.test_case_code || b.r.test_id), undefined, { numeric: true }));
+    g.status = _dynProcStatus(g.members.map(m => m.r.rollup_status));
+    g.passed = g.members.filter(m => m.r.rollup_status === 'Pass').length;
+    g.instances = g.members.reduce((s, m) => s + (m.r.instance_count || 0), 0);
+    g.complete = g.members.reduce((s, m) => s + (m.r.complete_count || 0), 0);
+  }
+
+  // KPIs roll up to the procedure, not the per-location activity.
+  const procCount = groupArr.length;
+  const actCount = rollup.length;
+  const procPassed = groupArr.filter(g => g.status === 'Pass').length;
+  const procFailBlocked = groupArr.filter(g => g.status === 'Fail' || g.status === 'Blocked').length;
+
+  const memberRow = (m, indented) => {
+    const r = m.r, info = m.info;
+    const isPerLoc = info.test_scope === 'per_location';
+    const locLabel = info.location ? `<span class="badge" style="background:#f1f5f9;color:#0f172a;font-family:monospace;font-size:10px;margin-right:6px;">${escapeHtml(info.location)}</span>` : '';
+    return `
+      <tr style="border-top:1px solid var(--gray-100);${indented ? 'background:#fbfdff;' : ''}">
+        <td style="font-family:monospace;font-size:11.5px;${indented ? 'padding-left:26px;' : ''}">${escapeHtml(r.test_case_code || r.test_id)}</td>
+        <td>${indented ? locLabel : ''}${escapeHtml((indented ? (info.location ? '' : r.test_name) : r.test_name) || '').slice(0,80)}</td>
+        <td>${indented ? '' : _dynCadenceBadge(r.test_id)}</td>
+        <td>${_dynStatusBadge(r.rollup_status)}</td>
+        <td style="text-align:right;font-family:monospace;">${r.instance_count}</td>
+        <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.complete_count}</td>
+        <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${prereqCounts.get(r.test_id) || 0}</td>
+        <td style="text-align:right;white-space:nowrap;">${_dynCaseActions(r.test_id, isPerLoc)}</td>
+      </tr>`;
+  };
+
+  const groupHeaderRow = (g) => `
+    <tr style="border-top:2px solid var(--gray-200);background:#f8fafc;">
+      <td style="font-family:monospace;font-size:11.5px;font-weight:700;">${escapeHtml(g.key)}</td>
+      <td style="font-weight:600;">${escapeHtml((g.name || '').slice(0,80))}</td>
+      <td><span class="badge" style="background:#eef2ff;color:#3730a3;font-size:10.5px;">Per location</span></td>
+      <td>${_dynStatusBadge(g.status)} <span style="font-size:10.5px;color:var(--gray-600);">${g.passed}/${g.members.length} locations</span></td>
+      <td style="text-align:right;font-family:monospace;">${g.instances}</td>
+      <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${g.complete}</td>
+      <td></td>
+      <td style="text-align:right;white-space:nowrap;">
+        <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynAddLocation('${escapeHtml(g.members[0].r.test_id)}')">+ Location</button>
+      </td>
+    </tr>`;
+
+  const bodyRows = groupArr.length === 0
+    ? `<tr><td colspan="8" style="padding:30px;text-align:center;color:var(--gray-500);">No dynamic test cases yet. Open the Test Register and toggle a test case's scope to Dynamic.</td></tr>`
+    : groupArr.map(g => {
+        // Single-activity procedures render as one plain row (no group header).
+        if (g.members.length === 1) return memberRow(g.members[0], false);
+        return groupHeaderRow(g) + g.members.map(m => memberRow(m, true)).join('');
+      }).join('');
 
   cont.innerHTML = `
     <div style="display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:10px;margin:0 0 18px;">
-      <div class="dyn-kpi"><span>Test cases</span><b>${rollup.length}</b></div>
-      <div class="dyn-kpi"><span>With instances</span><b>${rollup.filter(r => r.instance_count > 0).length}</b></div>
-      <div class="dyn-kpi"><span>Pass</span><b>${rollup.filter(r => r.rollup_status === 'Pass').length}</b></div>
-      <div class="dyn-kpi"><span>Fail / Blocked</span><b>${rollup.filter(r => r.rollup_status === 'Fail' || r.rollup_status === 'Blocked').length}</b></div>
+      <div class="dyn-kpi"><span>Procedures</span><b>${procCount}</b></div>
+      <div class="dyn-kpi"><span>Location activities</span><b>${actCount}</b></div>
+      <div class="dyn-kpi"><span>Procedures passed</span><b>${procPassed}</b></div>
+      <div class="dyn-kpi"><span>Fail / Blocked</span><b>${procFailBlocked}</b></div>
     </div>
 
     <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
@@ -33403,29 +33513,7 @@ async function _dynRenderCases() {
             <th style="text-align:right;width:340px;">Actions</th>
           </tr>
         </thead>
-        <tbody>
-          ${rollup.length === 0
-            ? `<tr><td colspan="8" style="padding:30px;text-align:center;color:var(--gray-500);">No dynamic test cases yet. Open the Test Register and toggle a test case's scope to Dynamic.</td></tr>`
-            : rollup.map(r => `
-              <tr style="border-top:1px solid var(--gray-100);">
-                <td style="font-family:monospace;font-size:11.5px;">${escapeHtml(r.test_case_code || r.test_id)}</td>
-                <td>${escapeHtml((r.test_name || '').slice(0,80))}</td>
-                <td>${_dynCadenceBadge(r.test_id)}</td>
-                <td>${_dynStatusBadge(r.rollup_status)}</td>
-                <td style="text-align:right;font-family:monospace;">${r.instance_count}</td>
-                <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.complete_count}</td>
-                <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${prereqCounts.get(r.test_id) || 0}</td>
-                <td style="text-align:right;white-space:nowrap;">
-                  <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynCaseFilterInstances('${escapeHtml(r.test_id)}')">Instances</button>
-                  <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynOpenCadenceModal('${escapeHtml(r.test_id)}')">Cadence</button>
-                  ${_dynPage.testItemsById.get(r.test_id)?.test_scope === 'per_location'
-                    ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynAddLocation('${escapeHtml(r.test_id)}')">+ Location</button>`
-                    : ''}
-                  <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dtOpenPrereqEditor('${escapeHtml(r.test_id)}')">Prereqs</button>
-                  <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openTestCaseScopeModal('${escapeHtml(r.test_id)}')">Scope</button>
-                </td>
-              </tr>`).join('')}
-        </tbody>
+        <tbody>${bodyRows}</tbody>
       </table>
     </div>
   `;
