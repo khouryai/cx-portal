@@ -6152,14 +6152,14 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
 .cal-tip-title {
   font-size: 13px;
   font-weight: 700;
-  color: #111;
+  color: #f9fafb;
   margin-bottom: 5px;
   word-break: break-word;
 }
 .cal-tip-row {
   display: flex;
   gap: 6px;
-  color: #374151;
+  color: #d1d5db;
   align-items: flex-start;
 }
 .cal-tip-row > span:first-child {
