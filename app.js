@@ -337,7 +337,29 @@ function showPage(name) {
   window.scrollTo(0, 0);
   // Init libraries for any page — auto-detects selects, tooltips, date inputs
   setTimeout(_initPageLibraries, 150);
+  // Browser-history integration: each page visit becomes a history entry so the
+  // browser Back/Forward buttons move between in-app views instead of leaving the site.
+  if (!_suppressHistoryPush) {
+    try {
+      if (history.state && history.state.appPage) {
+        history.pushState({ appPage: name }, '', '#' + name);
+      } else {
+        // First navigation of the session — seed the entry rather than stacking a dupe.
+        history.replaceState({ appPage: name }, '', '#' + name);
+      }
+    } catch (e) { /* history API unavailable — non-fatal */ }
+  }
 }
+
+// Restore the in-app view when the user presses the browser Back/Forward button.
+let _suppressHistoryPush = false;
+window.addEventListener('popstate', (e) => {
+  const name = (e.state && e.state.appPage)
+    || (location.hash ? location.hash.slice(1) : null);
+  if (!name || !document.getElementById('page-' + name)) return;
+  _suppressHistoryPush = true;
+  try { showPage(name); } finally { _suppressHistoryPush = false; }
+});
 
 // ── Sidebar collapse ─────────────────────────────────────────────────────────
 function _sidenavCollapse() {
@@ -9868,7 +9890,7 @@ function _testRegisterHTML() {
       <div class="v2-filter-row">
         <div class="v2-search-wrap">
           <span class="icon">🔍</span>
-          <input type="text" placeholder="Search activities…"
+          <input type="text" id="tr-search-input" class="tr-search" placeholder="Search activities…"
             value="${escapeHtml(_amFilters.search||'')}"
             oninput="clearTimeout(window._trSearchTimer);window._trSearchTimer=setTimeout(()=>_amSetFilter('search',this.value),260)">
         </div>
@@ -31518,6 +31540,7 @@ async function openTestCaseScopeModal(testId) {
     `,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" onclick="_dynOpenCadenceModal('${escapeHtml(testId)}')">Cadence…</button>
       <button class="form-secondary" onclick="_dtOpenPrereqEditor('${escapeHtml(testId)}')">Prerequisites…</button>
       <button class="form-submit" onclick="_dtSaveScope()">Save</button>
     `,
@@ -33154,7 +33177,9 @@ async function _dtOpenPrereqEditor(testId) {
     ]);
     const current = new Set((prereqs || []).map(p => p.prerequisite_test_id));
     const me = (allItems || []).find(i => i.test_id === testId);
-    const others = (allItems || []).filter(i => i.test_id !== testId);
+    // Only dynamic-scope test cases are eligible as prerequisites.
+    const others = (allItems || []).filter(i =>
+      i.test_id !== testId && String(i.scope_type || '').toLowerCase() === 'dynamic');
 
     modal({
       title: 'Prerequisites',
@@ -33162,7 +33187,7 @@ async function _dtOpenPrereqEditor(testId) {
       body: `
         <div style="padding:8px 24px 16px;">
           <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px;">
-            Mark other test cases that must reach Pass before this test case can run.
+            Mark dynamic test cases that must reach Pass before this test case can run.
             Applied to the procedure — affects every instance of this test case.
           </p>
           <input id="dt-prereq-search" placeholder="Search test cases…"
@@ -33338,17 +33363,31 @@ function _dynCadenceBadge(testId) {
   const info = _dynPage.testItemsById.get(testId);
   const scope = info?.test_scope;
   if (!scope) return '<span style="color:var(--gray-400);font-size:11px;">— not set —</span>';
-  const locs = info?.applicable_locations || [];
-  const sub = scope === 'per_location' && locs.length
-    ? `<br/><span style="font-size:10px;color:var(--gray-500);">${escapeHtml(locs.join(', '))}</span>` : '';
+  let sub = '';
+  if (scope === 'per_location') {
+    const locs = info?.applicable_locations || [];
+    sub = locs.length
+      ? `<br/><span style="font-size:10px;color:var(--gray-500);">${escapeHtml(locs.join(', '))}</span>`
+      : `<br/><span style="font-size:10px;color:#b45309;">no locations assigned</span>`;
+  } else if (scope === 'per_phase') {
+    sub = info?.phase
+      ? `<br/><span style="font-size:10px;color:var(--gray-500);">${escapeHtml(info.phase)}</span>`
+      : `<br/><span style="font-size:10px;color:#b45309;">no phase set</span>`;
+  }
   return `<span class="badge" style="background:#eef2ff;color:#3730a3;font-size:10.5px;">${escapeHtml(_DYN_SCOPE_LABELS[scope] || scope)}</span>${sub}`;
 }
 
 function _dynOpenCadenceModal(testId) {
+  // May be opened from the Test Register before the Dynamic module has built its index.
+  if (!_dynPage.testItemsById.has(testId) && typeof _dynBuildTestItemsIndex === 'function') {
+    _dynBuildTestItemsIndex();
+  }
   const info = _dynPage.testItemsById.get(testId) || {};
   const scope = info.test_scope || '';
   const locs  = (info.applicable_locations || []).join(', ');
+  const curPhase = info.phase || '';
   const sectionOpts = _dynSectionOptions();
+  const phaseOpts = (LOCS || []).filter(l => l.level === 1).sort((a,b) => a.sort_order - b.sort_order);
   modal({
     title: 'Test cadence',
     sub: `${escapeHtml(info.code || testId)} — ${escapeHtml((info.name || '').slice(0,60))}`,
@@ -33357,7 +33396,7 @@ function _dynOpenCadenceModal(testId) {
       <div style="padding:8px 24px 16px;">
         <div class="form-field" style="margin-bottom:14px;">
           <label>Cadence <span style="color:var(--gray-500);font-weight:400;">(how this procedure is repeated)</span></label>
-          <select id="dyn-cad-scope" onchange="document.getElementById('dyn-cad-locs-wrap').style.display=this.value==='per_location'?'block':'none';">
+          <select id="dyn-cad-scope" onchange="document.getElementById('dyn-cad-locs-wrap').style.display=this.value==='per_location'?'block':'none';document.getElementById('dyn-cad-phase-wrap').style.display=this.value==='per_phase'?'block':'none';">
             <option value="" ${!scope?'selected':''}>— not set —</option>
             <option value="per_location" ${scope==='per_location'?'selected':''}>Per location (repeat at each applicable location)</option>
             <option value="per_phase" ${scope==='per_phase'?'selected':''}>Per phase (once per phase)</option>
@@ -33367,6 +33406,13 @@ function _dynOpenCadenceModal(testId) {
         <div class="form-field" id="dyn-cad-locs-wrap" style="display:${scope==='per_location'?'block':'none'};">
           <label>Applicable locations <span style="color:var(--gray-500);font-weight:400;">(comma-separated section codes you assign)</span></label>
           <input id="dyn-cad-locs" list="dyn-cadence-sections" value="${escapeHtml(locs)}" placeholder="e.g. W40, W41, W45" />
+        </div>
+        <div class="form-field" id="dyn-cad-phase-wrap" style="display:${scope==='per_phase'?'block':'none'};">
+          <label>Phase <span style="color:var(--gray-500);font-weight:400;">(which phase this procedure is tied to)</span></label>
+          <select id="dyn-cad-phase">
+            <option value="">— select phase —</option>
+            ${phaseOpts.map(p => `<option value="${escapeHtml(p.name)}" ${p.name===curPhase?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
+          </select>
         </div>
       </div>`,
     footer: `
@@ -33379,21 +33425,33 @@ async function _dynSaveCadence(testId) {
   const scope = document.getElementById('dyn-cad-scope')?.value || null;
   const locs  = String(document.getElementById('dyn-cad-locs')?.value || '')
     .split(/[;,]/).map(x => x.trim()).filter(Boolean);
+  const phase = String(document.getElementById('dyn-cad-phase')?.value || '').trim();
   const payload = {
     test_scope: scope || null,
     applicable_locations: scope === 'per_location' ? locs : [],
   };
+  if (scope === 'per_phase') payload.phase = phase || null;
   try {
     await _dbUpdate('test_items', payload, { test_id: testId });
     const info = _dynPage.testItemsById.get(testId);
-    if (info) { info.test_scope = payload.test_scope || ''; info.applicable_locations = payload.applicable_locations; }
+    if (info) {
+      info.test_scope = payload.test_scope || '';
+      info.applicable_locations = payload.applicable_locations;
+      if (scope === 'per_phase') info.phase = payload.phase || '';
+    }
     if (typeof TI !== 'undefined') {
       const ti = TI.find(t => (t.TestID || t.test_id) === testId);
-      if (ti) { ti.TestScope = payload.test_scope || ''; ti.ApplicableLocations = payload.applicable_locations; }
+      if (ti) {
+        ti.TestScope = payload.test_scope || '';
+        ti.ApplicableLocations = payload.applicable_locations;
+        if (scope === 'per_phase') ti.Phase = payload.phase || '';
+      }
     }
     closeModal();
     if (typeof toast === 'function') toast('Cadence saved', 'success');
-    _dynRenderCases();
+    // Refresh whichever module is currently showing this case.
+    if (document.getElementById('dyn-content')) _dynRenderCases();
+    if (typeof _reRenderTR === 'function') _reRenderTR();
   } catch (e) {
     alert(`Save failed: ${e.message}`);
   }
