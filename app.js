@@ -15921,12 +15921,15 @@ async function saveRMA(editId) {
       const oldStatus = existing?.status;
       const res = await fetch(`${SUPABASE_URL}/rest/v1/rmas?id=eq.${editId}`, {
         method: 'PATCH',
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': _getAuthHeader(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(await res.text());
       const rows = await res.json();
-      const updated = (Array.isArray(rows) ? rows[0] : rows) ?? { ...existing, ...payload };
+      const updated = Array.isArray(rows) ? rows[0] : rows;
+      // An empty array with HTTP 200 means the row was filtered out by RLS
+      // (i.e. nothing was actually written) — surface it instead of faking success.
+      if (!updated) throw new Error('No row was updated — you may not have permission to edit this RMA.');
       const idx = RMAS.findIndex(r => r.id === editId);
       if (idx >= 0) RMAS[idx] = updated;
       toast('RMA updated', 'success');
@@ -15936,11 +15939,12 @@ async function saveRMA(editId) {
       payload.created_by_email = currentProfile?.email  || '';
       const res = await fetch(`${SUPABASE_URL}/rest/v1/rmas`, {
         method: 'POST',
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': _getAuthHeader(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(await res.text());
       const [created] = await res.json();
+      if (!created) throw new Error('RMA was not created — you may not have permission.');
       RMAS.unshift(created);
       toast('RMA created', 'success');
       _rmaSendEmail(created, 'created', null).catch(()=>{});
@@ -15955,7 +15959,7 @@ async function deleteRMA(id) {
   if (!rma) return;
   if (!confirm(`Delete RMA "${rma.rma_number}"?\n\nThis cannot be undone.`)) return;
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rmas?id=eq.${id}`, {
-    method: 'DELETE', headers: { 'apikey': SUPABASE_ANON_KEY },
+    method: 'DELETE', headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': _getAuthHeader() },
   });
   if (!res.ok) { toast('Delete failed', 'error'); return; }
   RMAS.splice(RMAS.findIndex(r => r.id === id), 1);
