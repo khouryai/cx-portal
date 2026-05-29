@@ -98,6 +98,39 @@
   }
   function dayKey(iso) { var d = new Date(iso); return isNaN(d) ? '0000-00-00' : d.toISOString().slice(0, 10); }
 
+  // ── project metadata (shared with the rest of the app) ──────────────────────
+  // LOCS (global) is the hierarchical location tree: level 1 = phases,
+  // level 2 = locations (parent_id -> phase). Subsystems come from the field-
+  // settings config (_fsCfg) with SUBSYSTEMS_LIST as fallback.
+  function projPhases() {
+    try { return (typeof LOCS !== 'undefined' ? LOCS : []).filter(function (l) { return l.level === 1; })
+      .sort(function (a, b) { return (a.sort_order || 0) - (b.sort_order || 0); }); } catch (e) { return []; }
+  }
+  function projLocations(phaseName) {
+    try {
+      var all = (typeof LOCS !== 'undefined' ? LOCS : []).filter(function (l) { return l.level === 2; });
+      if (phaseName) {
+        var ph = projPhases().filter(function (p) { return p.name === phaseName; })[0];
+        all = ph ? all.filter(function (l) { return l.parent_id === ph.id; }) : all;
+      }
+      return all.sort(function (a, b) { return (a.sort_order || 0) - (b.sort_order || 0); });
+    } catch (e) { return []; }
+  }
+  function projSubsystems() {
+    try { if (typeof _fsCfg === 'function') { var c = _fsCfg('punch_subsystem'); if (c && c.length) return c; } } catch (e) {}
+    try { if (typeof SUBSYSTEMS_LIST !== 'undefined' && SUBSYSTEMS_LIST.length) return SUBSYSTEMS_LIST; } catch (e) {}
+    return [];
+  }
+  // Build <option>s; keeps a current value even if it's no longer in the list.
+  function optionList(values, selected, placeholder) {
+    var vals = (values || []).slice();
+    if (selected && vals.indexOf(selected) === -1) vals.unshift(selected);
+    return '<option value="">' + esc(placeholder || '— select —') + '</option>' +
+      vals.map(function (v) { return '<option value="' + esc(v) + '"' + (v === selected ? ' selected' : '') + '>' + esc(v) + '</option>'; }).join('');
+  }
+  function phaseNames() { return projPhases().map(function (p) { return p.name; }); }
+  function locationNames(phaseName) { return projLocations(phaseName).map(function (l) { return l.name; }); }
+
   // ── storage (native fetch — mirrors _formsStorage for tab-resume safety) ────
   function withTimeout(ms) { var c = new AbortController(); var t = setTimeout(function () { c.abort(); }, ms); return { signal: c.signal, done: function () { clearTimeout(t); } }; }
 
@@ -713,9 +746,9 @@
       '</select></div>' +
       '<div class="pm-field"><label>Reference / label</label><input id="pm-ref" value="' + esc(preset.source_label || '') + '" placeholder="e.g. punch # or log date" /></div>' +
       '<div class="pm-field"><label>Caption</label><input id="pm-cap" placeholder="Optional description" /></div>' +
-      '<div class="pm-field"><label>Location</label><input id="pm-loc" value="' + esc(preset.location || '') + '" /></div>' +
-      '<div class="pm-field"><label>Subsystem</label><input id="pm-sub" value="' + esc(preset.subsystem || '') + '" /></div>' +
-      '<div class="pm-field"><label>Phase</label><input id="pm-pha" value="' + esc(preset.phase || '') + '" /></div>' +
+      '<div class="pm-field"><label>Phase</label><select id="pm-pha">' + optionList(phaseNames(), preset.phase || '', 'Select phase…') + '</select></div>' +
+      '<div class="pm-field"><label>Location</label><select id="pm-loc">' + optionList(locationNames(preset.phase || ''), preset.location || '', 'Select location…') + '</select></div>' +
+      '<div class="pm-field"><label>Subsystem</label><select id="pm-sub">' + optionList(projSubsystems(), preset.subsystem || '', 'Select subsystem…') + '</select></div>' +
       (albumOpts ? '<div class="pm-field"><label>Also add to album (optional)</label><select id="pm-alb"><option value="">— none —</option>' + albumOpts + '</select></div>' : '') +
       '<div id="pm-up-status" style="font-size:12px;color:#71717a"></div>';
     var footer = '<button class="pm-btn" onclick="closeModal()">Cancel</button><button class="pm-btn pm-btn-primary" id="pm-do-upload">Upload</button>';
@@ -727,6 +760,12 @@
     var previews = document.getElementById('pm-previews');
     var srcSel = document.getElementById('pm-src');
     srcSel.addEventListener('change', function () { document.getElementById('pm-kind-wrap').style.display = srcSel.value === 'punch' ? '' : 'none'; });
+    // Phase drives the Location list (matches the punch form behaviour).
+    var phaSel = document.getElementById('pm-pha'), locSel = document.getElementById('pm-loc');
+    if (phaSel && locSel) phaSel.addEventListener('change', function () {
+      var cur = locSel.value;
+      locSel.innerHTML = optionList(locationNames(phaSel.value), locationNames(phaSel.value).indexOf(cur) !== -1 ? cur : '', 'Select location…');
+    });
     function addFiles(files) {
       Array.prototype.forEach.call(files, function (f) { if (f.type.indexOf('image/') === 0) chosen.push(f); });
       previews.innerHTML = chosen.map(function (f) { return '<img class="pm-preview" src="' + URL.createObjectURL(f) + '" />'; }).join('');
@@ -768,11 +807,16 @@
     var body =
       '<div class="pm-field"><label>Caption</label><input id="pe-cap" value="' + esc(p.caption || '') + '" /></div>' +
       kindWrap +
-      '<div class="pm-field"><label>Location</label><input id="pe-loc" value="' + esc(p.location || '') + '" /></div>' +
-      '<div class="pm-field"><label>Subsystem</label><input id="pe-sub" value="' + esc(p.subsystem || '') + '" /></div>' +
-      '<div class="pm-field"><label>Phase</label><input id="pe-pha" value="' + esc(p.phase || '') + '" /></div>' +
+      '<div class="pm-field"><label>Phase</label><select id="pe-pha">' + optionList(phaseNames(), p.phase || '', 'Select phase…') + '</select></div>' +
+      '<div class="pm-field"><label>Location</label><select id="pe-loc">' + optionList(locationNames(p.phase || ''), p.location || '', 'Select location…') + '</select></div>' +
+      '<div class="pm-field"><label>Subsystem</label><select id="pe-sub">' + optionList(projSubsystems(), p.subsystem || '', 'Select subsystem…') + '</select></div>' +
       '<div class="pm-field"><label>Tags (comma-separated)</label><input id="pe-tags" value="' + esc((p.tags || []).join(', ')) + '" /></div>';
     modal({ title: 'Edit photo', body: body, footer: '<button class="pm-btn" onclick="closeModal()">Cancel</button><button class="pm-btn pm-btn-primary" id="pe-save">Save</button>' });
+    var pePha = document.getElementById('pe-pha'), peLoc = document.getElementById('pe-loc');
+    if (pePha && peLoc) pePha.addEventListener('change', function () {
+      var cur = peLoc.value;
+      peLoc.innerHTML = optionList(locationNames(pePha.value), locationNames(pePha.value).indexOf(cur) !== -1 ? cur : '', 'Select location…');
+    });
     bind('pe-save', async function () {
       var patch = {
         caption: document.getElementById('pe-cap').value.trim() || null,

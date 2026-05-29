@@ -2118,7 +2118,7 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
   inset: 0;
   background: rgba(0,0,0,0.55);
   display: none;
-  z-index: 1000;
+  z-index: 4500; /* above the photos lightbox (4000) so edit/add dialogs sit in front */
   align-items: flex-start;
   justify-content: center;
   padding: 60px 20px;
