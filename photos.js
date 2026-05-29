@@ -69,8 +69,8 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
   function elFrom(html) { var t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; }
-  function role() { try { return (window.currentRoleUser && currentRoleUser.role) || null; } catch (e) { return null; } }
-  function userName() { try { return (window.currentRoleUser && currentRoleUser.name) || 'unknown'; } catch (e) { return 'unknown'; } }
+  function role() { try { return (typeof currentRoleUser !== 'undefined' && currentRoleUser && currentRoleUser.role) || null; } catch (e) { return null; } }
+  function userName() { try { return (typeof currentRoleUser !== 'undefined' && currentRoleUser && currentRoleUser.name) || 'unknown'; } catch (e) { return 'unknown'; } }
   function canUpload() { return UPLOAD_ROLES.indexOf(role()) !== -1; }
   function canDeletePhoto(p) { return role() === 'admin' || (p && p.uploaded_by === userName()); }
   function slugify(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40); }
