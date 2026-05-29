@@ -5923,7 +5923,10 @@ function renderIntakeStep3(items) {
 
   return `
     <div class="form-card">
-      <h3 class="form-card-title">Step 3: Submit Daily Log</h3>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <h3 class="form-card-title" style="margin:0;">Step 3: Submit Daily Log</h3>
+        <button type="button" class="form-secondary" style="margin-left:auto;" onclick="if(window.PhotosModule)PhotosModule.captureFor({source_type:'daily_log', source_label:(document.getElementById('i3-date')?.value||''), location:(document.getElementById('i3-loc')?.value||''), subsystem:(document.getElementById('i3-sub')?.value||'')})">+ Add photos</button>
+      </div>
       <p class="form-card-sub">Review and submit the day's testing record.</p>
 
       <div class="form-grid">
@@ -7178,6 +7181,8 @@ function _punchFormHTML(p) {
   const v   = (id) => p ? escapeHtml(p[id]||'') : '';
   const sel = (id, val) => p?.[id] === val ? 'selected' : '';
   const fOpts = (key, selVal) => (_fsCfg(key).length ? _fsCfg(key) : []).map(o => `<option ${o===selVal?'selected':''}>${escapeHtml(o)}</option>`).join('');
+  // Photos Module link context — only meaningful for an existing (saved) punch item.
+  if (p) { try { window._pmPunchCtx = { source_type:'punch', source_id: p.id, source_label: 'Punch #' + (p.number || p.id), location: (LOCS.find(l => l.id === p.location)||{}).name || '', subsystem: p.subsystem || '', phase: (LOCS.find(l => l.id === p.phase)||{}).name || p.phase || '' }; } catch(e) {} }
   return `
     <div class="form-grid">
       <div class="form-field form-field-full">
@@ -7272,6 +7277,11 @@ function _punchFormHTML(p) {
         <input type="checkbox" id="np-private" style="width:16px;height:16px;" ${p?.is_private?'checked':''}>
         <label for="np-private" style="cursor:pointer;font-size:13px;">Private — visible to assignees and managers only</label>
       </div>
+      ${p ? `<div class="form-field form-field-full">
+        <label>Photos</label>
+        <button type="button" class="form-secondary" onclick="if(window.PhotosModule)PhotosModule.captureFor(window._pmPunchCtx)">+ Add / view photos</button>
+        <div style="font-size:11px;color:var(--gray-500);margin-top:4px;">Opens the Photos uploader pre-linked to this punch item — uploads appear in the Punch List album.</div>
+      </div>` : ''}
     </div>
   `;
 }
