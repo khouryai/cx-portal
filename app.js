@@ -18084,7 +18084,7 @@ function _laMountCalendar() {
         allowHTML:   true,
         delay:       [180, 0],
         placement:   'top',
-        theme:       'light-border',
+        theme:       'portal',
         maxWidth:    320,
         interactive: false,
       });
@@ -18915,7 +18915,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     tippy('[data-tlg-tip]', {
       content(ref) { return ref.getAttribute('data-tlg-tip').replace(/&quot;/g, '"'); },
       allowHTML: true, delay: [150, 0], placement: 'top',
-      theme: 'light-border', maxWidth: 260, interactive: false,
+      theme: 'portal', maxWidth: 260, interactive: false,
     });
   }, 60);
 }
