@@ -1,56 +1,89 @@
 /* ============================================================================
    Photos Module — self-contained, self-bootstrapping.
 
-   Loaded as a classic <script> right after app.js, so it shares the global
-   scope and reuses the app's existing helpers rather than reinventing them:
-     • _sb.storage.from('photos')      — upload / signed URLs (as Forms module does)
-     • _dbInsert / _dbUpdate           — native-fetch DB writes (reliable on resume)
-     • _fetchAnon(path)                — REST reads (returns parsed JSON)
-     • modal({...}) / closeModal()     — shared dialog chrome
-     • currentRoleUser                 — { name, role }
-     • showPage(name)                  — page chrome switch
+   Loaded as a classic <script> right after app.js so it shares the global
+   lexical scope and reuses the app's existing primitives:
+     • SUPABASE_URL / SUPABASE_ANON_KEY / _sb   (globals from app.js)
+     • _getAuthHeader()        — fresh JWT from localStorage (tab-resume safe)
+     • _dbInsert / _dbUpdate   — native-fetch DB writes
+     • _fetchAnon(path)        — REST reads (parsed JSON)
+     • modal({...}) / closeModal()
+     • currentRoleUser         — { name, role }
+     • showPage(name)
 
-   It injects its own nav link and #page-photos section so no deep edits to the
-   1.7 MB app.js are required. Public surface: window.PhotosModule.
+   Injects its own nav link + #page-photos section (no deep app.js edits).
+
+   Capabilities:
+     • Reliability  — native-fetch uploads, client-side compression to a
+       display image + thumbnail, lazy IntersectionObserver signed-URL
+       hydration (batched), storage cleanup on delete.
+     • Scale        — server-side filtered, paginated (infinite-scroll) reads;
+       album counts/covers fetched on demand.
+     • Offline      — uploads are queued in IndexedDB first, then processed;
+       survives reload and flushes automatically on reconnect. Direct mobile
+       camera capture.
+     • Management   — edit metadata, before/after tagging, manual albums
+       (create/rename/delete/cover), add-to-album, bulk select (delete /
+       add-to-album / download).
+
+   Public surface: window.PhotosModule.
    ============================================================================ */
 (function () {
   'use strict';
 
-  var BUCKET = 'photos';
-  var SIGN_TTL = 3600; // seconds
+  // ── config ──────────────────────────────────────────────────────────────
+  var BUCKET       = 'photos';
+  var SIGN_TTL     = 3600;            // signed-URL lifetime (s)
+  var PAGE_SIZE    = 60;              // photos per page
+  var MAX_DISPLAY  = 1600;           // px, longest edge of stored display image
+  var MAX_THUMB    = 400;            // px, longest edge of stored thumbnail
+  var JPEG_Q       = 0.82;
   var UPLOAD_ROLES = ['admin', 'field_engineer', 'technician', 'punch_manager'];
   var SOURCE_LABELS = { punch: 'Punch List', daily_log: 'Daily Logs', standalone: 'General' };
+  var KIND_LABELS   = { before: 'Before', after: 'After', general: '' };
 
   var S = {
-    view: 'timeline',          // 'timeline' | 'albums' | 'album'
-    loaded: false,
-    loading: false,
-    photos: [],
-    albums: [],
-    albumItems: [],            // { album_id, photo_id }
+    view: 'timeline',                // 'timeline' | 'albums' | 'album'
+    photos: [],                      // accumulated page rows for current scope
+    offset: 0,
+    hasMore: true,
+    loadingPage: false,
+    booted: false,
+    albums: [],                      // album rows (with async count/cover filled in)
     activeAlbum: null,
-    filters: { source: 'all', location: 'all', subsystem: 'all', q: '' },
-    signed: new Map(),         // storage_path -> { url, exp }
+    activeAlbumIds: null,            // for manual albums: member photo ids
+    filters: { source: 'all', location: 'all', subsystem: 'all', kind: 'all', q: '' },
+    distinct: { location: [], subsystem: [], loaded: false },
+    signed: new Map(),               // path -> { url, exp }
+    selecting: false,
+    selected: new Set(),
+    queueCount: 0,
+    processing: false,
     lb: { list: [], i: 0 },
   };
 
-  // ── small utils ─────────────────────────────────────────────────────────
+  // ── tiny utils ────────────────────────────────────────────────────────────
   function esc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
-  function el(html) { var t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; }
+  function elFrom(html) { var t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; }
   function role() { try { return (window.currentRoleUser && currentRoleUser.role) || null; } catch (e) { return null; } }
   function userName() { try { return (window.currentRoleUser && currentRoleUser.name) || 'unknown'; } catch (e) { return 'unknown'; } }
   function canUpload() { return UPLOAD_ROLES.indexOf(role()) !== -1; }
   function canDeletePhoto(p) { return role() === 'admin' || (p && p.uploaded_by === userName()); }
   function slugify(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40); }
+  function uuid() { return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)); }
+  function encPath(p) { return String(p).split('/').map(encodeURIComponent).join('/'); }
+  function authHeader() { try { return (typeof _getAuthHeader === 'function') ? _getAuthHeader() : ('Bearer ' + SUPABASE_ANON_KEY); } catch (e) { return 'Bearer ' + SUPABASE_ANON_KEY; } }
+  function restHeaders(extra) {
+    var h = { apikey: SUPABASE_ANON_KEY, Authorization: authHeader() };
+    if (extra) for (var k in extra) h[k] = extra[k];
+    return h;
+  }
   function toast(msg) {
-    try {
-      if (typeof window.showToast === 'function') return window.showToast(msg);
-      if (typeof window.toast === 'function' && window.toast.length) return window.toast(msg);
-    } catch (e) {}
+    try { if (typeof window.toast === 'function') return window.toast(msg); } catch (e) {}
     console.log('[photos]', msg);
   }
 
@@ -65,127 +98,560 @@
   }
   function dayKey(iso) { var d = new Date(iso); return isNaN(d) ? '0000-00-00' : d.toISOString().slice(0, 10); }
 
-  // ── data access ───────────────────────────────────────────────────────────
-  async function loadData(force) {
-    if (S.loading) return;
-    if (S.loaded && !force) return;
-    S.loading = true;
+  // ── storage (native fetch — mirrors _formsStorage for tab-resume safety) ────
+  function withTimeout(ms) { var c = new AbortController(); var t = setTimeout(function () { c.abort(); }, ms); return { signal: c.signal, done: function () { clearTimeout(t); } }; }
+
+  async function storageUpload(path, blob, contentType) {
+    var to = withTimeout(60000);
     try {
-      var photos = await _fetchAnon('photos?is_deleted=eq.false&order=taken_at.desc');
-      var albums = await _fetchAnon('photo_albums?is_deleted=eq.false&order=kind.asc,name.asc');
-      var items = await _fetchAnon('photo_album_items?select=album_id,photo_id');
-      S.photos = Array.isArray(photos) ? photos : [];
-      S.albums = Array.isArray(albums) ? albums : [];
-      S.albumItems = Array.isArray(items) ? items : [];
-      S.loaded = true;
+      var res = await fetch(SUPABASE_URL + '/storage/v1/object/' + BUCKET + '/' + encPath(path), {
+        method: 'POST', signal: to.signal, cache: 'no-store',
+        headers: restHeaders({ 'Content-Type': contentType || 'application/octet-stream', 'x-upsert': 'true' }),
+        body: blob,
+      });
+      to.done();
+      if (!res.ok) throw new Error('storage upload ' + res.status + ': ' + (await res.text()));
+      return path;
+    } catch (e) { to.done(); throw e; }
+  }
+
+  async function storageRemove(paths) {
+    if (!paths || !paths.length) return;
+    try {
+      await fetch(SUPABASE_URL + '/storage/v1/object/' + BUCKET, {
+        method: 'DELETE', headers: restHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ prefixes: paths }),
+      });
+    } catch (e) { console.warn('[photos] storage remove failed (non-fatal):', e && e.message); }
+  }
+
+  // Batch sign — caches, only signs what's missing/expired.
+  async function signPaths(paths) {
+    var out = {}; var need = [];
+    paths.forEach(function (p) {
+      if (!p) return;
+      var h = S.signed.get(p);
+      if (h && h.exp > Date.now() + 30000) out[p] = h.url;
+      else need.push(p);
+    });
+    if (!need.length) return out;
+    try {
+      var res = await fetch(SUPABASE_URL + '/storage/v1/object/sign/' + BUCKET, {
+        method: 'POST', headers: restHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ expiresIn: SIGN_TTL, paths: need }),
+      });
+      if (res.ok) {
+        var arr = await res.json();
+        arr.forEach(function (it) {
+          if (it && it.signedURL) {
+            var url = SUPABASE_URL + '/storage/v1' + it.signedURL;
+            S.signed.set(it.path, { url: url, exp: Date.now() + SIGN_TTL * 1000 });
+            out[it.path] = url;
+          }
+        });
+      }
+    } catch (e) { console.warn('[photos] sign failed:', e && e.message); }
+    return out;
+  }
+
+  async function signOne(path) { var m = await signPaths([path]); return m[path] || ''; }
+
+  // PostgREST exact-count without pulling rows.
+  async function countRows(table, qs) {
+    try {
+      var res = await fetch(SUPABASE_URL + '/rest/v1/' + table + '?' + qs, {
+        method: 'GET', headers: restHeaders({ Prefer: 'count=exact', Range: '0-0', 'Range-Unit': 'items' }),
+      });
+      var cr = res.headers.get('content-range') || '';
+      return parseInt(cr.split('/')[1], 10) || 0;
+    } catch (e) { return 0; }
+  }
+
+  // ── IndexedDB upload queue (offline-first) ─────────────────────────────────
+  function idb() {
+    return new Promise(function (res, rej) {
+      var r = indexedDB.open('pm-photos', 1);
+      r.onupgradeneeded = function () { r.result.createObjectStore('queue', { keyPath: 'id', autoIncrement: true }); };
+      r.onsuccess = function () { res(r.result); };
+      r.onerror = function () { rej(r.error); };
+    });
+  }
+  async function idbAdd(item) { var db = await idb(); return new Promise(function (res, rej) { var tx = db.transaction('queue', 'readwrite'); tx.objectStore('queue').add(item); tx.oncomplete = function () { res(); }; tx.onerror = function () { rej(tx.error); }; }); }
+  async function idbAll() { var db = await idb(); return new Promise(function (res, rej) { var tx = db.transaction('queue', 'readonly'); var q = tx.objectStore('queue').getAll(); q.onsuccess = function () { res(q.result || []); }; q.onerror = function () { rej(q.error); }; }); }
+  async function idbDel(id) { var db = await idb(); return new Promise(function (res, rej) { var tx = db.transaction('queue', 'readwrite'); tx.objectStore('queue').delete(id); tx.oncomplete = function () { res(); }; tx.onerror = function () { rej(tx.error); }; }); }
+
+  async function refreshQueueCount() {
+    try { S.queueCount = (await idbAll()).length; } catch (e) { S.queueCount = 0; }
+    var b = document.getElementById('pm-queue-badge');
+    if (b) { b.textContent = S.queueCount ? (S.queueCount + ' queued') : ''; b.style.display = S.queueCount ? '' : 'none'; }
+  }
+
+  // ── image processing (compress + thumbnail) ────────────────────────────────
+  function loadImage(file) {
+    return new Promise(function (res, rej) {
+      var url = URL.createObjectURL(file);
+      var im = new Image();
+      im.onload = function () { im._url = url; res(im); };
+      im.onerror = function () { URL.revokeObjectURL(url); rej(new Error('decode failed')); };
+      im.src = url;
+    });
+  }
+  function scaleBlob(img, max, q) {
+    return new Promise(function (res) {
+      var w = img.naturalWidth, h = img.naturalHeight;
+      var r = Math.min(1, max / Math.max(w, h));
+      var cw = Math.max(1, Math.round(w * r)), ch = Math.max(1, Math.round(h * r));
+      var c = document.createElement('canvas'); c.width = cw; c.height = ch;
+      c.getContext('2d').drawImage(img, 0, 0, cw, ch);
+      c.toBlob(function (b) { res(b); }, 'image/jpeg', q);
+    });
+  }
+  async function processImage(file) {
+    try {
+      var img = await loadImage(file);
+      var display = await scaleBlob(img, MAX_DISPLAY, JPEG_Q);
+      var thumb = await scaleBlob(img, MAX_THUMB, JPEG_Q);
+      var dims = { w: img.naturalWidth, h: img.naturalHeight };
+      if (img._url) URL.revokeObjectURL(img._url);
+      return { display: display || file, thumb: thumb || display || file, dims: dims };
     } catch (e) {
-      console.error('[photos] load failed:', e && e.message);
-      toast('Could not load photos: ' + (e && e.message ? e.message : 'unknown error'));
-    } finally {
-      S.loading = false;
+      // Non-decodable (e.g. some HEIC): fall back to the original bytes.
+      return { display: file, thumb: file, dims: { w: null, h: null } };
     }
   }
 
-  async function signedUrl(path) {
-    if (!path) return '';
-    var now = Date.now();
-    var hit = S.signed.get(path);
-    if (hit && hit.exp > now + 30000) return hit.url;
+  // ── enqueue + process uploads ──────────────────────────────────────────────
+  async function enqueueFiles(files, meta) {
+    var n = 0;
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      if (!f || (f.type && f.type.indexOf('image/') !== 0)) continue;
+      var proc = await processImage(f);
+      await idbAdd({
+        display: proc.display, thumb: proc.thumb, dims: proc.dims,
+        file_name: f.name || ('photo-' + Date.now() + '.jpg'),
+        last_modified: f.lastModified || Date.now(),
+        meta: meta, created_at: Date.now(),
+      });
+      n++;
+    }
+    await refreshQueueCount();
+    return n;
+  }
+
+  async function processQueue() {
+    if (S.processing) return;
+    if (typeof _dbInsert !== 'function') return;
+    S.processing = true;
+    var uploaded = 0;
     try {
-      var res = await _sb.storage.from(BUCKET).createSignedUrl(path, SIGN_TTL);
-      if (res && res.data && res.data.signedUrl) {
-        S.signed.set(path, { url: res.data.signedUrl, exp: now + SIGN_TTL * 1000 });
-        return res.data.signedUrl;
+      var items = await idbAll();
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        try {
+          var m = it.meta || {};
+          var id = uuid();
+          var displayPath = m.source_type + '/' + id + '.jpg';
+          var thumbPath   = m.source_type + '/thumb/' + id + '.jpg';
+          await storageUpload(displayPath, it.display, 'image/jpeg');
+          try { await storageUpload(thumbPath, it.thumb, 'image/jpeg'); } catch (te) { thumbPath = null; }
+          var row = {
+            storage_path: displayPath, thumb_path: thumbPath,
+            file_name: it.file_name, mime_type: 'image/jpeg',
+            file_size: (it.display && it.display.size) || null,
+            width: it.dims && it.dims.w, height: it.dims && it.dims.h,
+            caption: m.caption || null,
+            source_type: m.source_type || 'standalone',
+            source_id: m.source_id || null,
+            source_label: m.source_label || null,
+            capture_kind: m.capture_kind || 'general',
+            location: m.location || null, subsystem: m.subsystem || null, phase: m.phase || null,
+            taken_at: new Date(it.last_modified || it.created_at || Date.now()).toISOString(),
+            uploaded_by: m.uploaded_by || userName(),
+          };
+          var inserted = await _dbInsert('photos', [row]);
+          var newId = inserted && inserted[0] && inserted[0].id;
+          if (newId && m.album_id) {
+            try { await _dbInsert('photo_album_items', [{ album_id: m.album_id, photo_id: newId, added_by: userName() }]); } catch (e) {}
+          }
+          await idbDel(it.id);
+          uploaded++;
+        } catch (e) {
+          // Likely offline / network — stop and leave the rest queued for retry.
+          console.warn('[photos] queued upload deferred:', e && e.message);
+          break;
+        }
       }
-    } catch (e) { console.warn('[photos] sign failed for', path, e && e.message); }
-    return '';
-  }
-
-  // Resolve signed URLs for a set of <img data-path> nodes lazily.
-  async function hydrateImages(container) {
-    var imgs = Array.prototype.slice.call(container.querySelectorAll('img[data-path]:not([data-done])'));
-    for (var i = 0; i < imgs.length; i++) {
-      var node = imgs[i];
-      node.setAttribute('data-done', '1');
-      // eslint-disable-next-line no-loop-func
-      (function (n) { signedUrl(n.getAttribute('data-path')).then(function (u) { if (u) n.src = u; }); })(node);
+    } finally {
+      S.processing = false;
+      await refreshQueueCount();
+      if (uploaded) {
+        S.distinct.loaded = false;
+        await loadPage(true);
+        paint();
+        toast(uploaded + ' photo' + (uploaded === 1 ? '' : 's') + ' uploaded');
+      }
     }
   }
 
-  // ── filtering ───────────────────────────────────────────────────────────
-  function distinct(field) {
-    var set = {};
-    S.photos.forEach(function (p) { if (p[field]) set[p[field]] = true; });
-    return Object.keys(set).sort();
+  // ── distinct filter values (cheap two-column scan, cached) ──────────────────
+  async function loadDistinct() {
+    if (S.distinct.loaded) return;
+    try {
+      var rows = await _fetchAnon('photos?select=location,subsystem&is_deleted=eq.false');
+      var L = {}, Sub = {};
+      (rows || []).forEach(function (r) { if (r.location) L[r.location] = 1; if (r.subsystem) Sub[r.subsystem] = 1; });
+      S.distinct.location = Object.keys(L).sort();
+      S.distinct.subsystem = Object.keys(Sub).sort();
+      S.distinct.loaded = true;
+    } catch (e) { /* non-fatal */ }
   }
-  function applyFilters(list) {
-    var f = S.filters;
-    var q = (f.q || '').trim().toLowerCase();
-    return list.filter(function (p) {
-      if (f.source !== 'all' && p.source_type !== f.source) return false;
-      if (f.location !== 'all' && p.location !== f.location) return false;
-      if (f.subsystem !== 'all' && p.subsystem !== f.subsystem) return false;
-      if (q) {
-        var hay = [p.caption, p.source_label, p.uploaded_by, p.location, p.subsystem].join(' ').toLowerCase();
-        if (hay.indexOf(q) === -1) return false;
-      }
-      return true;
+
+  // ── paginated reads ────────────────────────────────────────────────────────
+  function currentFilterQS() {
+    var f = S.filters, parts = ['is_deleted=eq.false'];
+    var forcedSource = (S.view === 'album' && S.activeAlbum && S.activeAlbum.kind === 'auto') ? S.activeAlbum.auto_source_type : null;
+    if (forcedSource) parts.push('source_type=eq.' + forcedSource);
+    else if (f.source !== 'all') parts.push('source_type=eq.' + f.source);
+    if (f.location !== 'all') parts.push('location=eq.' + encodeURIComponent(f.location));
+    if (f.subsystem !== 'all') parts.push('subsystem=eq.' + encodeURIComponent(f.subsystem));
+    if (f.kind !== 'all') parts.push('capture_kind=eq.' + f.kind);
+    if (S.view === 'album' && S.activeAlbum && S.activeAlbum.kind === 'manual') {
+      var ids = S.activeAlbumIds || [];
+      parts.push('id=in.(' + (ids.length ? ids.join(',') : '00000000-0000-0000-0000-000000000000') + ')');
+    }
+    var q = (f.q || '').trim().replace(/[(),]/g, ' ');
+    if (q) {
+      var term = '*' + encodeURIComponent(q) + '*';
+      parts.push('or=(caption.ilike.' + term + ',source_label.ilike.' + term + ',uploaded_by.ilike.' + term + ',location.ilike.' + term + ',subsystem.ilike.' + term + ')');
+    }
+    return parts.join('&');
+  }
+
+  async function loadPage(reset) {
+    if (reset) { S.photos = []; S.offset = 0; S.hasMore = true; }
+    if (!S.hasMore || S.loadingPage) return;
+    S.loadingPage = true;
+    try {
+      var qs = currentFilterQS() + '&order=taken_at.desc&limit=' + PAGE_SIZE + '&offset=' + S.offset;
+      var rows = await _fetchAnon('photos?' + qs);
+      rows = Array.isArray(rows) ? rows : [];
+      S.photos = S.photos.concat(rows);
+      S.offset += rows.length;
+      S.hasMore = rows.length === PAGE_SIZE;
+    } catch (e) {
+      console.error('[photos] page load failed:', e && e.message);
+      S.hasMore = false;
+    } finally { S.loadingPage = false; }
+  }
+
+  async function loadAlbums() {
+    try {
+      var rows = await _fetchAnon('photo_albums?is_deleted=eq.false&order=kind.asc,name.asc');
+      S.albums = Array.isArray(rows) ? rows : [];
+    } catch (e) { S.albums = []; }
+  }
+
+  // ── DOM bootstrap ───────────────────────────────────────────────────────────
+  function navIcon() {
+    return '<svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><path d="M21 15l-5-5L5 21"></path></svg>';
+  }
+  function injectNav() {
+    if (document.querySelector('.nav-link[data-page="photos"]')) return true;
+    var after = document.querySelector('.nav-link[data-page="drawings"]')
+      || document.querySelector('.nav-link[data-page="punch-workflow"]')
+      || document.querySelector('.nav-link[data-page]');
+    if (!after) return false;
+    var link = elFrom('<a class="nav-link" data-page="photos" href="#" onclick="return false;">' + navIcon() + '<span>Photos</span></a>');
+    after.parentNode.insertBefore(link, after.nextSibling);
+    link.addEventListener('click', function (e) { e.preventDefault(); gotoPage(); });
+    return true;
+  }
+  function injectPage() {
+    if (document.getElementById('page-photos')) return true;
+    var anchor = document.getElementById('page-punch-workflow') || document.querySelector('.page');
+    if (!anchor) return false;
+    anchor.parentNode.appendChild(elFrom('<section class="page" id="page-photos"><div class="container"><div id="pm-root" class="pm-wrap"></div></div></section>'));
+    return true;
+  }
+
+  // ── lazy image hydration via IntersectionObserver (batched signing) ─────────
+  var imgObserver = null, pendingNodes = [], signTimer = null;
+  function ensureObserver() {
+    if (imgObserver || !('IntersectionObserver' in window)) return;
+    imgObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { if (e.isIntersecting) { imgObserver.unobserve(e.target); pendingNodes.push(e.target); } });
+      clearTimeout(signTimer); signTimer = setTimeout(flushSign, 80);
+    }, { rootMargin: '300px' });
+  }
+  async function flushSign() {
+    var nodes = pendingNodes.splice(0);
+    if (!nodes.length) return;
+    var paths = [];
+    nodes.forEach(function (n) { var p = n.getAttribute('data-thumb'); if (p && paths.indexOf(p) === -1) paths.push(p); });
+    var map = await signPaths(paths);
+    nodes.forEach(function (n) { var u = map[n.getAttribute('data-thumb')]; if (u) n.src = u; });
+  }
+  function observeImages(container) {
+    ensureObserver();
+    var imgs = container.querySelectorAll('img[data-thumb]:not([data-obs])');
+    Array.prototype.forEach.call(imgs, function (n) {
+      n.setAttribute('data-obs', '1');
+      if (imgObserver) imgObserver.observe(n);
+      else signOne(n.getAttribute('data-thumb')).then(function (u) { if (u) n.src = u; });
     });
   }
 
-  // ── DOM bootstrap ─────────────────────────────────────────────────────────
-  function navIcon() {
-    return '<svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-      '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>' +
-      '<circle cx="8.5" cy="8.5" r="1.5"></circle>' +
-      '<path d="M21 15l-5-5L5 21"></path></svg>';
+  // infinite-scroll sentinel
+  var sentinelObserver = null;
+  function observeSentinel() {
+    var s = document.getElementById('pm-sentinel');
+    if (!s || !('IntersectionObserver' in window)) return;
+    if (sentinelObserver) sentinelObserver.disconnect();
+    sentinelObserver = new IntersectionObserver(function (entries) {
+      if (entries[0] && entries[0].isIntersecting && S.hasMore && !S.loadingPage) {
+        loadPage(false).then(function () { paint(); });
+      }
+    }, { rootMargin: '400px' });
+    sentinelObserver.observe(s);
   }
 
-  function injectNav() {
-    if (document.querySelector('.nav-link[data-page="photos"]')) return;
-    // Insert next to an existing nav link so it lands in the same container.
-    var anchorAfter = document.querySelector('.nav-link[data-page="drawings"]')
-      || document.querySelector('.nav-link[data-page="punch-workflow"]')
-      || document.querySelector('.nav-link[data-page]');
-    if (!anchorAfter) return false;
-    var link = el('<a class="nav-link" data-page="photos" href="#" onclick="return false;">' + navIcon() + '<span>Photos</span></a>');
-    anchorAfter.parentNode.insertBefore(link, anchorAfter.nextSibling);
-    link.addEventListener('click', function (e) { e.preventDefault(); goto(); });
-    return true;
+  // ── navigation ──────────────────────────────────────────────────────────────
+  function gotoPage() { try { showPage('photos'); } catch (e) {} enter(); }
+  async function enter() {
+    var r = root(); if (!r) { injectPage(); r = root(); if (!r) return; }
+    r.innerHTML = emptyState('Loading photos…', '');
+    await loadDistinct();
+    await loadPage(true);
+    paint();
+  }
+  function root() { return document.getElementById('pm-root'); }
+
+  // ── rendering ───────────────────────────────────────────────────────────────
+  function toolbarHTML() {
+    var up = canUpload() ? '<button class="pm-btn pm-btn-primary" id="pm-upload-btn">+ Add photos</button>' : '';
+    var cam = canUpload() ? '<button class="pm-btn" id="pm-camera-btn" title="Capture from camera">📷 Camera</button>' : '';
+    var newAlbum = canUpload() ? '<button class="pm-btn" id="pm-newalbum-btn">+ New album</button>' : '';
+    var sel = '<button class="pm-btn ' + (S.selecting ? 'pm-btn-primary' : '') + '" id="pm-select-btn">' + (S.selecting ? 'Done' : 'Select') + '</button>';
+    var sp = '<button class="pm-btn" disabled title="Configured after IT provisions SharePoint access">⇅ Sync to SharePoint</button>';
+    var queue = '<span id="pm-queue-badge" class="pm-queue-badge" style="display:' + (S.queueCount ? '' : 'none') + '">' + (S.queueCount ? S.queueCount + ' queued' : '') + '</span>';
+    return '<div class="pm-toolbar">' +
+      '<div class="pm-toggle">' +
+        '<button data-view="timeline" class="' + (S.view !== 'albums' && S.view !== 'album' ? 'active' : '') + '">Timeline</button>' +
+        '<button data-view="albums" class="' + (S.view === 'albums' || S.view === 'album' ? 'active' : '') + '">Albums</button>' +
+      '</div>' + queue + '<div class="pm-spacer"></div>' +
+      sel + newAlbum + cam + sp + up +
+    '</div>';
   }
 
-  function injectPage() {
-    if (document.getElementById('page-photos')) return;
-    var anchor = document.getElementById('page-punch-workflow')
-      || document.querySelector('.page');
-    if (!anchor) return false;
-    var page = el(
-      '<section class="page" id="page-photos">' +
-        '<div class="container"><div id="pm-root" class="pm-wrap"></div></div>' +
-      '</section>'
-    );
-    anchor.parentNode.appendChild(page);
-    return true;
+  function filtersHTML() {
+    var f = S.filters;
+    var srcChip = function (val, label) { return '<button class="pm-chip ' + (f.source === val ? 'active' : '') + '" data-src="' + val + '">' + esc(label) + '</button>'; };
+    var opts = function (vals, cur) { return vals.map(function (v) { return '<option value="' + esc(v) + '"' + (cur === v ? ' selected' : '') + '>' + esc(v) + '</option>'; }).join(''); };
+    return '<div class="pm-filters">' +
+      srcChip('all', 'All') + srcChip('punch', 'Punch List') + srcChip('daily_log', 'Daily Logs') + srcChip('standalone', 'General') +
+      '<select class="pm-select" id="pm-f-kind">' +
+        '<option value="all"' + (f.kind === 'all' ? ' selected' : '') + '>Any kind</option>' +
+        '<option value="before"' + (f.kind === 'before' ? ' selected' : '') + '>Before</option>' +
+        '<option value="after"' + (f.kind === 'after' ? ' selected' : '') + '>After</option>' +
+        '<option value="general"' + (f.kind === 'general' ? ' selected' : '') + '>General</option>' +
+      '</select>' +
+      '<select class="pm-select" id="pm-f-loc"><option value="all">All locations</option>' + opts(S.distinct.location, f.location) + '</select>' +
+      '<select class="pm-select" id="pm-f-sub"><option value="all">All subsystems</option>' + opts(S.distinct.subsystem, f.subsystem) + '</select>' +
+      '<input class="pm-input" id="pm-f-q" type="search" placeholder="Search caption, person…" value="' + esc(f.q) + '" />' +
+    '</div>';
   }
 
+  function tileHTML(p) {
+    var label = p.caption || p.source_label || '';
+    var thumb = p.thumb_path || p.storage_path;
+    var kindBadge = (p.capture_kind && p.capture_kind !== 'general') ? '<span class="pm-tile-kind ' + esc(p.capture_kind) + '">' + esc(KIND_LABELS[p.capture_kind]) + '</span>' : '';
+    var checked = S.selected.has(p.id);
+    var check = S.selecting ? '<span class="pm-check ' + (checked ? 'on' : '') + '">' + (checked ? '✓' : '') + '</span>' : '';
+    return '<div class="pm-tile ' + (checked ? 'sel' : '') + '" data-id="' + esc(p.id) + '">' +
+      '<span class="pm-tile-badge ' + esc(p.source_type) + '">' + esc(SOURCE_LABELS[p.source_type] || p.source_type) + '</span>' +
+      kindBadge + check +
+      '<img data-thumb="' + esc(thumb) + '" alt="' + esc(label) + '" loading="lazy" />' +
+      (label ? '<div class="pm-tile-meta">' + esc(label) + '</div>' : '') +
+    '</div>';
+  }
+
+  function selectionBarHTML() {
+    if (!S.selecting) return '';
+    var n = S.selected.size;
+    return '<div class="pm-selbar">' +
+      '<span>' + n + ' selected</span>' +
+      '<button class="pm-btn" id="pm-sel-album" ' + (n ? '' : 'disabled') + '>Add to album…</button>' +
+      '<button class="pm-btn" id="pm-sel-dl" ' + (n ? '' : 'disabled') + '>Download</button>' +
+      '<button class="pm-btn pm-btn-danger" id="pm-sel-del" ' + (n ? '' : 'disabled') + '>Delete</button>' +
+    '</div>';
+  }
+
+  function paint() {
+    var r = root(); if (!r) return;
+    if (S.view === 'album' && S.activeAlbum) return paintList(true);
+    if (S.view === 'albums') return paintAlbums();
+    return paintList(false);
+  }
+
+  function gridSection(list) {
+    if (!list.length && !S.loadingPage) return emptyState('No photos', canUpload() ? 'Use “Add photos” to capture one.' : 'Photos will appear here once captured.');
+    // group by day
+    var groups = {}, order = [];
+    list.forEach(function (p) { var k = dayKey(p.taken_at || p.uploaded_at); if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(p); });
+    order.sort().reverse();
+    return order.map(function (k) {
+      var ps = groups[k];
+      return '<div class="pm-day"><div class="pm-day-head"><span>' + esc(fmtDayHeader(ps[0].taken_at || ps[0].uploaded_at)) + '</span><span class="pm-day-count">' + ps.length + '</span></div>' +
+        '<div class="pm-grid">' + ps.map(tileHTML).join('') + '</div></div>';
+    }).join('') + '<div id="pm-sentinel"></div>';
+  }
+
+  function paintList(isAlbum) {
+    var r = root();
+    var head = toolbarHTML();
+    if (isAlbum) {
+      var a = S.activeAlbum;
+      var manageBtns = (a.kind === 'manual' && canUpload())
+        ? '<button class="pm-btn" id="pm-album-rename">Rename</button><button class="pm-btn pm-btn-danger" id="pm-album-del">Delete album</button>'
+        : '';
+      head += '<div class="pm-toolbar"><button class="pm-btn" id="pm-album-back">‹ All albums</button><div class="pm-spacer"></div><strong style="font-size:16px">' + esc(a.name) + '</strong>' +
+        (a.kind === 'auto' ? ' <span class="pm-album-kind">Auto</span>' : '') + ' ' + manageBtns + '</div>';
+    }
+    head += filtersHTML() + selectionBarHTML();
+    r.innerHTML = head + '<div id="pm-body">' + gridSection(S.photos) + '</div>';
+    wireChrome();
+    if (isAlbum) {
+      bind('pm-album-back', function () { S.view = 'albums'; S.activeAlbum = null; S.activeAlbumIds = null; clearSelection(); paint(); });
+      bind('pm-album-rename', renameActiveAlbum);
+      bind('pm-album-del', deleteActiveAlbum);
+    }
+    bindTiles();
+    observeImages(r);
+    observeSentinel();
+  }
+
+  async function paintAlbums() {
+    var r = root();
+    if (!S.albums.length) await loadAlbums();
+    var cards = S.albums.map(function (a) {
+      return '<div class="pm-album" data-album="' + esc(a.id) + '">' +
+        '<div class="pm-album-cover" id="pm-cover-' + esc(a.id) + '">📷</div>' +
+        '<div class="pm-album-body"><div class="pm-album-name">' + esc(a.name) + '</div>' +
+          '<div class="pm-album-sub" id="pm-count-' + esc(a.id) + '">…</div>' +
+          '<span class="pm-album-kind">' + (a.kind === 'auto' ? 'Auto' : 'Album') + '</span></div></div>';
+    }).join('');
+    r.innerHTML = toolbarHTML() + '<div class="pm-albums">' + (cards || emptyState('No albums', '')) + '</div>';
+    wireChrome();
+    Array.prototype.forEach.call(r.querySelectorAll('.pm-album'), function (node) {
+      node.addEventListener('click', function () { openAlbum(node.getAttribute('data-album')); });
+    });
+    S.albums.forEach(hydrateAlbumCard);
+  }
+
+  async function hydrateAlbumCard(a) {
+    // count
+    var cnt, coverPath;
+    if (a.kind === 'auto') {
+      cnt = await countRows('photos', 'is_deleted=eq.false&source_type=eq.' + a.auto_source_type);
+      var cov = await _fetchAnon('photos?select=thumb_path,storage_path&is_deleted=eq.false&source_type=eq.' + a.auto_source_type + '&order=taken_at.desc&limit=1');
+      if (cov && cov[0]) coverPath = cov[0].thumb_path || cov[0].storage_path;
+    } else {
+      cnt = await countRows('photo_album_items', 'album_id=eq.' + a.id);
+      if (a.cover_photo_id) {
+        var cp = await _fetchAnon('photos?select=thumb_path,storage_path&id=eq.' + a.cover_photo_id + '&limit=1');
+        if (cp && cp[0]) coverPath = cp[0].thumb_path || cp[0].storage_path;
+      }
+      if (!coverPath) {
+        var item = await _fetchAnon('photo_album_items?select=photo_id&album_id=eq.' + a.id + '&limit=1');
+        if (item && item[0]) {
+          var ph = await _fetchAnon('photos?select=thumb_path,storage_path&id=eq.' + item[0].photo_id + '&limit=1');
+          if (ph && ph[0]) coverPath = ph[0].thumb_path || ph[0].storage_path;
+        }
+      }
+    }
+    var cEl = document.getElementById('pm-count-' + a.id);
+    if (cEl) cEl.textContent = cnt + ' photo' + (cnt === 1 ? '' : 's');
+    if (coverPath) {
+      var url = await signOne(coverPath);
+      var coverEl = document.getElementById('pm-cover-' + a.id);
+      if (coverEl && url) coverEl.innerHTML = '<img src="' + esc(url) + '" alt="" />';
+    }
+  }
+
+  function emptyState(title, sub) {
+    return '<div class="pm-empty"><div class="pm-empty-icon">📷</div><div class="pm-empty-title">' + esc(title) + '</div>' + (sub ? '<div>' + esc(sub) + '</div>' : '') + '</div>';
+  }
+
+  async function openAlbum(id) {
+    var a = S.albums.find(function (x) { return x.id === id; });
+    if (!a) return;
+    S.activeAlbum = a; S.view = 'album'; clearSelection();
+    if (a.kind === 'manual') {
+      var items = await _fetchAnon('photo_album_items?select=photo_id&album_id=eq.' + a.id + '&limit=500');
+      S.activeAlbumIds = (items || []).map(function (x) { return x.photo_id; });
+    } else { S.activeAlbumIds = null; }
+    await loadPage(true);
+    paint();
+  }
+
+  // ── chrome wiring ───────────────────────────────────────────────────────────
+  function bind(id, fn) { var e = document.getElementById(id); if (e) e.addEventListener('click', fn); }
+  function wireChrome() {
+    var r = root();
+    Array.prototype.forEach.call(r.querySelectorAll('.pm-toggle button'), function (b) {
+      b.addEventListener('click', function () { S.view = b.getAttribute('data-view'); S.activeAlbum = null; S.activeAlbumIds = null; clearSelection(); if (S.view === 'albums') paintAlbums(); else loadPage(true).then(paint); });
+    });
+    bind('pm-upload-btn', function () { openUpload(); });
+    bind('pm-camera-btn', function () { openUpload({ camera: true }); });
+    bind('pm-newalbum-btn', openNewAlbum);
+    bind('pm-select-btn', function () { S.selecting = !S.selecting; clearSelection(); paint(); });
+    bind('pm-sel-album', bulkAddToAlbum);
+    bind('pm-sel-dl', bulkDownload);
+    bind('pm-sel-del', bulkDelete);
+    // filters
+    Array.prototype.forEach.call(r.querySelectorAll('.pm-chip[data-src]'), function (c) {
+      c.addEventListener('click', function () { S.filters.source = c.getAttribute('data-src'); loadPage(true).then(paint); });
+    });
+    var kind = document.getElementById('pm-f-kind'); if (kind) kind.addEventListener('change', function () { S.filters.kind = kind.value; loadPage(true).then(paint); });
+    var loc = document.getElementById('pm-f-loc'); if (loc) loc.addEventListener('change', function () { S.filters.location = loc.value; loadPage(true).then(paint); });
+    var sub = document.getElementById('pm-f-sub'); if (sub) sub.addEventListener('change', function () { S.filters.subsystem = sub.value; loadPage(true).then(paint); });
+    var q = document.getElementById('pm-f-q');
+    if (q) { var t; q.addEventListener('input', function () { clearTimeout(t); t = setTimeout(function () { S.filters.q = q.value; loadPage(true).then(function () { paint(); var nq = document.getElementById('pm-f-q'); if (nq) { nq.focus(); try { nq.setSelectionRange(nq.value.length, nq.value.length); } catch (e) {} } }); }, 300); }); }
+  }
+
+  function bindTiles() {
+    var r = root();
+    Array.prototype.forEach.call(r.querySelectorAll('.pm-tile'), function (node) {
+      node.addEventListener('click', function () {
+        var id = node.getAttribute('data-id');
+        if (S.selecting) {
+          if (S.selected.has(id)) S.selected.delete(id); else S.selected.add(id);
+          node.classList.toggle('sel');
+          var chk = node.querySelector('.pm-check'); if (chk) { chk.classList.toggle('on'); chk.textContent = S.selected.has(id) ? '✓' : ''; }
+          var bar = document.querySelector('.pm-selbar span'); if (bar) bar.textContent = S.selected.size + ' selected';
+          ['pm-sel-album', 'pm-sel-dl', 'pm-sel-del'].forEach(function (bid) { var b = document.getElementById(bid); if (b) b.disabled = !S.selected.size; });
+          return;
+        }
+        var idx = S.photos.findIndex(function (p) { return p.id === id; });
+        openLightbox(S.photos, idx < 0 ? 0 : idx);
+      });
+    });
+  }
+  function clearSelection() { S.selected.clear(); }
+
+  // ── lightbox ────────────────────────────────────────────────────────────────
   function ensureLightbox() {
     if (document.getElementById('pm-lightbox')) return;
-    var lb = el(
-      '<div class="pm-lightbox" id="pm-lightbox">' +
-        '<div class="pm-lb-top"><div class="pm-lb-title" id="pm-lb-title"></div>' +
-          '<button class="pm-lb-close" id="pm-lb-close" aria-label="Close">&times;</button></div>' +
-        '<div class="pm-lb-stage">' +
-          '<button class="pm-lb-nav pm-lb-prev" id="pm-lb-prev" aria-label="Previous">&#8249;</button>' +
-          '<img id="pm-lb-img" alt="" />' +
-          '<button class="pm-lb-nav pm-lb-next" id="pm-lb-next" aria-label="Next">&#8250;</button>' +
-        '</div>' +
-        '<div class="pm-lb-info" id="pm-lb-info"></div>' +
-      '</div>'
-    );
+    var lb = elFrom('<div class="pm-lightbox" id="pm-lightbox">' +
+      '<div class="pm-lb-top"><div class="pm-lb-title" id="pm-lb-title"></div><button class="pm-lb-close" id="pm-lb-close" aria-label="Close">&times;</button></div>' +
+      '<div class="pm-lb-stage"><button class="pm-lb-nav pm-lb-prev" id="pm-lb-prev">‹</button><img id="pm-lb-img" alt="" /><button class="pm-lb-nav pm-lb-next" id="pm-lb-next">›</button></div>' +
+      '<div class="pm-lb-info" id="pm-lb-info"></div></div>');
     document.body.appendChild(lb);
-    lb.querySelector('#pm-lb-close').addEventListener('click', closeLightbox);
-    lb.querySelector('#pm-lb-prev').addEventListener('click', function () { stepLightbox(-1); });
-    lb.querySelector('#pm-lb-next').addEventListener('click', function () { stepLightbox(1); });
+    bind('pm-lb-close', closeLightbox);
+    bind('pm-lb-prev', function () { stepLightbox(-1); });
+    bind('pm-lb-next', function () { stepLightbox(1); });
     lb.addEventListener('click', function (e) { if (e.target === lb) closeLightbox(); });
     document.addEventListener('keydown', function (e) {
       if (!lb.classList.contains('open')) return;
@@ -194,251 +660,19 @@
       else if (e.key === 'ArrowRight') stepLightbox(1);
     });
   }
-
-  // ── navigation into the module ─────────────────────────────────────────────
-  function goto() {
-    try { showPage('photos'); } catch (e) { /* showPage may not be global yet */ }
-    render();
-  }
-
-  // ── rendering ───────────────────────────────────────────────────────────
-  function root() { return document.getElementById('pm-root'); }
-
-  function render() {
-    var r = root();
-    if (!r) { injectPage(); r = root(); if (!r) return; }
-    if (!S.loaded) {
-      r.innerHTML = '<div class="pm-empty"><div class="pm-empty-icon">&#128247;</div><div class="pm-empty-title">Loading photos…</div></div>';
-      loadData().then(paint);
-    } else {
-      paint();
-    }
-  }
-
-  function toolbarHTML() {
-    var up = canUpload()
-      ? '<button class="pm-btn pm-btn-primary" id="pm-upload-btn">&#43; Add photos</button>'
-      : '';
-    var newAlbum = canUpload()
-      ? '<button class="pm-btn" id="pm-newalbum-btn">&#43; New album</button>'
-      : '';
-    var sp = '<button class="pm-btn" disabled title="Configured after IT provisions SharePoint access">&#8645; Sync to SharePoint</button>';
-    return '' +
-      '<div class="pm-toolbar">' +
-        '<div class="pm-toggle">' +
-          '<button data-view="timeline" class="' + (S.view !== 'albums' && S.view !== 'album' ? 'active' : '') + '">Timeline</button>' +
-          '<button data-view="albums" class="' + (S.view === 'albums' || S.view === 'album' ? 'active' : '') + '">Albums</button>' +
-        '</div>' +
-        '<div class="pm-spacer"></div>' +
-        newAlbum + sp + up +
-      '</div>';
-  }
-
-  function filtersHTML() {
-    var f = S.filters;
-    var srcChip = function (val, label) {
-      return '<button class="pm-chip ' + (f.source === val ? 'active' : '') + '" data-src="' + val + '">' + esc(label) + '</button>';
-    };
-    var opts = function (vals, cur) {
-      return vals.map(function (v) { return '<option value="' + esc(v) + '"' + (cur === v ? ' selected' : '') + '>' + esc(v) + '</option>'; }).join('');
-    };
-    return '' +
-      '<div class="pm-filters">' +
-        srcChip('all', 'All') + srcChip('punch', 'Punch List') + srcChip('daily_log', 'Daily Logs') + srcChip('standalone', 'General') +
-        '<select class="pm-select" id="pm-f-loc"><option value="all">All locations</option>' + opts(distinct('location'), f.location) + '</select>' +
-        '<select class="pm-select" id="pm-f-sub"><option value="all">All subsystems</option>' + opts(distinct('subsystem'), f.subsystem) + '</select>' +
-        '<input class="pm-input" id="pm-f-q" type="search" placeholder="Search caption, person…" value="' + esc(f.q) + '" />' +
-      '</div>';
-  }
-
-  function tileHTML(p) {
-    var label = p.caption || p.source_label || '';
-    return '' +
-      '<div class="pm-tile" data-id="' + esc(p.id) + '">' +
-        '<span class="pm-tile-badge ' + esc(p.source_type) + '">' + esc(SOURCE_LABELS[p.source_type] || p.source_type) + '</span>' +
-        '<img data-path="' + esc(p.storage_path) + '" alt="' + esc(label) + '" loading="lazy" />' +
-        (label ? '<div class="pm-tile-meta">' + esc(label) + '</div>' : '') +
-      '</div>';
-  }
-
-  function paint() {
-    var r = root();
-    if (!r) return;
-    if (S.view === 'album' && S.activeAlbum) return paintAlbumDetail();
-    if (S.view === 'albums') return paintAlbums();
-    return paintTimeline();
-  }
-
-  function paintTimeline() {
-    var r = root();
-    var list = applyFilters(S.photos);
-    var body;
-    if (!list.length) {
-      body = emptyState('No photos yet', canUpload() ? 'Use “Add photos” to capture your first one.' : 'Photos will appear here once captured.');
-    } else {
-      // group by day
-      var groups = {}; var order = [];
-      list.forEach(function (p) {
-        var k = dayKey(p.taken_at || p.uploaded_at);
-        if (!groups[k]) { groups[k] = []; order.push(k); }
-        groups[k].push(p);
-      });
-      order.sort().reverse();
-      body = order.map(function (k) {
-        var ps = groups[k];
-        return '<div class="pm-day">' +
-          '<div class="pm-day-head"><span>' + esc(fmtDayHeader(ps[0].taken_at || ps[0].uploaded_at)) + '</span><span class="pm-day-count">' + ps.length + ' photo' + (ps.length > 1 ? 's' : '') + '</span></div>' +
-          '<div class="pm-grid">' + ps.map(tileHTML).join('') + '</div></div>';
-      }).join('');
-    }
-    r.innerHTML = toolbarHTML() + filtersHTML() + '<div id="pm-body">' + body + '</div>';
-    wireChrome();
-    bindTiles(list);
-    hydrateImages(r);
-  }
-
-  function paintAlbums() {
-    var r = root();
-    var cards = S.albums.map(function (a) {
-      var count = albumCount(a);
-      var cover = albumCover(a);
-      var coverHTML = cover
-        ? '<img data-path="' + esc(cover) + '" alt="" />'
-        : '&#128247;';
-      return '<div class="pm-album" data-album="' + esc(a.id) + '">' +
-        '<div class="pm-album-cover">' + coverHTML + '</div>' +
-        '<div class="pm-album-body">' +
-          '<div class="pm-album-name">' + esc(a.name) + '</div>' +
-          '<div class="pm-album-sub">' + count + ' photo' + (count === 1 ? '' : 's') + '</div>' +
-          '<span class="pm-album-kind">' + (a.kind === 'auto' ? 'Auto' : 'Album') + '</span>' +
-        '</div></div>';
-    }).join('');
-    r.innerHTML = toolbarHTML() + '<div class="pm-albums">' + (cards || emptyState('No albums', '')) + '</div>';
-    wireChrome();
-    Array.prototype.forEach.call(r.querySelectorAll('.pm-album'), function (node) {
-      node.addEventListener('click', function () { openAlbum(node.getAttribute('data-album')); });
-    });
-    hydrateImages(r);
-  }
-
-  function paintAlbumDetail() {
-    var r = root();
-    var a = S.activeAlbum;
-    var list = photosInAlbum(a);
-    var grid = list.length ? '<div class="pm-grid">' + list.map(tileHTML).join('') + '</div>'
-      : emptyState('This album is empty', '');
-    r.innerHTML = toolbarHTML() +
-      '<div class="pm-toolbar"><button class="pm-btn" id="pm-album-back">&#8249; All albums</button>' +
-        '<div class="pm-spacer"></div>' +
-        '<strong style="font-size:16px">' + esc(a.name) + '</strong></div>' +
-      grid;
-    wireChrome();
-    var back = document.getElementById('pm-album-back');
-    if (back) back.addEventListener('click', function () { S.view = 'albums'; S.activeAlbum = null; paint(); });
-    bindTiles(list);
-    hydrateImages(r);
-  }
-
-  function emptyState(title, sub) {
-    return '<div class="pm-empty"><div class="pm-empty-icon">&#128247;</div>' +
-      '<div class="pm-empty-title">' + esc(title) + '</div>' +
-      (sub ? '<div>' + esc(sub) + '</div>' : '') + '</div>';
-  }
-
-  // ── album helpers ─────────────────────────────────────────────────────────
-  function albumCount(a) {
-    if (a.kind === 'auto') return S.photos.filter(function (p) { return p.source_type === a.auto_source_type; }).length;
-    var ids = {}; S.albumItems.forEach(function (it) { if (it.album_id === a.id) ids[it.photo_id] = true; });
-    return S.photos.filter(function (p) { return ids[p.id]; }).length;
-  }
-  function albumCover(a) {
-    if (a.cover_photo_id) {
-      var c = S.photos.find(function (p) { return p.id === a.cover_photo_id; });
-      if (c) return c.storage_path;
-    }
-    var list = photosInAlbum(a);
-    return list.length ? list[0].storage_path : '';
-  }
-  function photosInAlbum(a) {
-    if (a.kind === 'auto') return S.photos.filter(function (p) { return p.source_type === a.auto_source_type; });
-    var ids = {}; S.albumItems.forEach(function (it) { if (it.album_id === a.id) ids[it.photo_id] = true; });
-    return S.photos.filter(function (p) { return ids[p.id]; });
-  }
-  function openAlbum(id) {
-    var a = S.albums.find(function (x) { return x.id === id; });
-    if (!a) return;
-    S.activeAlbum = a; S.view = 'album'; paint();
-  }
-
-  // ── chrome wiring ─────────────────────────────────────────────────────────
-  function wireChrome() {
-    var r = root();
-    Array.prototype.forEach.call(r.querySelectorAll('.pm-toggle button'), function (b) {
-      b.addEventListener('click', function () {
-        var v = b.getAttribute('data-view');
-        S.view = v; S.activeAlbum = null; paint();
-      });
-    });
-    var up = document.getElementById('pm-upload-btn');
-    if (up) up.addEventListener('click', function () { openUpload(); });
-    var na = document.getElementById('pm-newalbum-btn');
-    if (na) na.addEventListener('click', function () { openNewAlbum(); });
-    // filters
-    Array.prototype.forEach.call(r.querySelectorAll('.pm-chip[data-src]'), function (c) {
-      c.addEventListener('click', function () { S.filters.source = c.getAttribute('data-src'); paint(); });
-    });
-    var loc = document.getElementById('pm-f-loc');
-    if (loc) loc.addEventListener('change', function () { S.filters.location = loc.value; paint(); });
-    var sub = document.getElementById('pm-f-sub');
-    if (sub) sub.addEventListener('change', function () { S.filters.subsystem = sub.value; paint(); });
-    var q = document.getElementById('pm-f-q');
-    if (q) {
-      var t;
-      q.addEventListener('input', function () { clearTimeout(t); t = setTimeout(function () { S.filters.q = q.value; var pos = q.value.length; paint(); var nq = document.getElementById('pm-f-q'); if (nq) { nq.focus(); try { nq.setSelectionRange(pos, pos); } catch (e) {} } }, 250); });
-    }
-  }
-
-  function bindTiles(list) {
-    var r = root();
-    Array.prototype.forEach.call(r.querySelectorAll('.pm-tile'), function (node) {
-      node.addEventListener('click', function () {
-        var id = node.getAttribute('data-id');
-        var idx = list.findIndex(function (p) { return p.id === id; });
-        openLightbox(list, idx < 0 ? 0 : idx);
-      });
-    });
-  }
-
-  // ── lightbox ───────────────────────────────────────────────────────────
-  function openLightbox(list, i) {
-    ensureLightbox();
-    S.lb.list = list; S.lb.i = i;
-    var lb = document.getElementById('pm-lightbox');
-    lb.classList.add('open');
-    showLightbox();
-  }
-  function closeLightbox() {
-    var lb = document.getElementById('pm-lightbox');
-    if (lb) lb.classList.remove('open');
-  }
-  function stepLightbox(d) {
-    if (!S.lb.list.length) return;
-    S.lb.i = (S.lb.i + d + S.lb.list.length) % S.lb.list.length;
-    showLightbox();
-  }
+  function openLightbox(list, i) { ensureLightbox(); S.lb.list = list; S.lb.i = i; document.getElementById('pm-lightbox').classList.add('open'); showLightbox(); }
+  function closeLightbox() { var lb = document.getElementById('pm-lightbox'); if (lb) lb.classList.remove('open'); }
+  function stepLightbox(d) { if (!S.lb.list.length) return; S.lb.i = (S.lb.i + d + S.lb.list.length) % S.lb.list.length; showLightbox(); }
   function showLightbox() {
-    var p = S.lb.list[S.lb.i];
-    if (!p) return;
-    var img = document.getElementById('pm-lb-img');
-    var title = document.getElementById('pm-lb-title');
-    var info = document.getElementById('pm-lb-info');
-    img.src = '';
-    signedUrl(p.storage_path).then(function (u) { if (u) img.src = u; });
-    title.textContent = (S.lb.i + 1) + ' / ' + S.lb.list.length;
+    var p = S.lb.list[S.lb.i]; if (!p) return;
+    var img = document.getElementById('pm-lb-img'); img.src = '';
+    signOne(p.storage_path).then(function (u) { if (u) img.src = u; });
+    document.getElementById('pm-lb-title').textContent = (S.lb.i + 1) + ' / ' + S.lb.list.length;
     var when = p.taken_at || p.uploaded_at;
     var rows = [
       ['Source', SOURCE_LABELS[p.source_type] || p.source_type],
       ['Reference', p.source_label || '—'],
+      ['Kind', KIND_LABELS[p.capture_kind] || 'General'],
       ['Caption', p.caption || '—'],
       ['Location', p.location || '—'],
       ['Subsystem', p.subsystem || '—'],
@@ -446,52 +680,53 @@
       ['Taken', when ? new Date(when).toLocaleString() : '—'],
       ['Uploaded by', p.uploaded_by || '—'],
     ];
-    var del = canDeletePhoto(p)
-      ? '<button class="pm-btn" id="pm-lb-del" style="margin-top:14px">Delete photo</button>'
-      : '';
-    var add = canUpload()
-      ? '<button class="pm-btn" id="pm-lb-add" style="margin-top:14px;margin-left:8px">Add to album…</button>'
-      : '';
-    info.innerHTML = '<dl>' + rows.map(function (kv) {
-      return '<dt>' + esc(kv[0]) + '</dt><dd>' + esc(kv[1]) + '</dd>';
-    }).join('') + '</dl>' + del + add;
-    var delBtn = document.getElementById('pm-lb-del');
-    if (delBtn) delBtn.addEventListener('click', function () { deletePhoto(p); });
-    var addBtn = document.getElementById('pm-lb-add');
-    if (addBtn) addBtn.addEventListener('click', function () { openAddToAlbum(p); });
+    var btns = '';
+    if (canUpload()) btns += '<button class="pm-btn" id="pm-lb-edit">Edit</button>';
+    if (canUpload()) btns += '<button class="pm-btn" id="pm-lb-add">Add to album…</button>';
+    if (S.view === 'album' && S.activeAlbum && S.activeAlbum.kind === 'manual' && canUpload()) btns += '<button class="pm-btn" id="pm-lb-cover">Set as cover</button>';
+    if (canDeletePhoto(p)) btns += '<button class="pm-btn pm-btn-danger" id="pm-lb-del">Delete</button>';
+    document.getElementById('pm-lb-info').innerHTML = '<dl>' + rows.map(function (kv) { return '<dt>' + esc(kv[0]) + '</dt><dd>' + esc(kv[1]) + '</dd>'; }).join('') + '</dl><div class="pm-lb-actions">' + btns + '</div>';
+    bind('pm-lb-edit', function () { openEditPhoto(p); });
+    bind('pm-lb-add', function () { openAddToAlbum([p.id]); });
+    bind('pm-lb-cover', function () { setAlbumCover(S.activeAlbum, p.id); });
+    bind('pm-lb-del', function () { deletePhoto(p); });
   }
 
-  // ── upload ───────────────────────────────────────────────────────────
+  // ── upload modal (with optional direct camera) ──────────────────────────────
   function openUpload(preset) {
     if (!canUpload()) { toast('Your role cannot upload photos.'); return; }
     preset = preset || {};
-    var manualAlbums = S.albums.filter(function (a) { return a.kind === 'manual'; });
-    var albumOpts = manualAlbums.map(function (a) { return '<option value="' + esc(a.id) + '">' + esc(a.name) + '</option>'; }).join('');
+    var manual = S.albums.filter(function (a) { return a.kind === 'manual'; });
+    var albumOpts = manual.map(function (a) { return '<option value="' + esc(a.id) + '">' + esc(a.name) + '</option>'; }).join('');
+    var captureAttr = preset.camera ? ' capture="environment"' : '';
     var body =
-      '<div class="pm-drop" id="pm-drop">Click to choose photos, or drop them here' +
-        '<input type="file" id="pm-file" accept="image/*" multiple style="display:none" /></div>' +
+      '<div class="pm-drop" id="pm-drop">' + (preset.camera ? 'Tap to open camera' : 'Click to choose photos, or drop them here') +
+        '<input type="file" id="pm-file" accept="image/*"' + captureAttr + ' multiple style="display:none" /></div>' +
       '<div class="pm-preview-row" id="pm-previews"></div>' +
-      '<div class="pm-field" style="margin-top:14px"><label>Source</label>' +
-        '<select id="pm-src">' +
-          '<option value="standalone"' + (preset.source_type === 'standalone' || !preset.source_type ? ' selected' : '') + '>General (standalone)</option>' +
-          '<option value="punch"' + (preset.source_type === 'punch' ? ' selected' : '') + '>Punch List item</option>' +
-          '<option value="daily_log"' + (preset.source_type === 'daily_log' ? ' selected' : '') + '>Daily Log</option>' +
-        '</select></div>' +
-      '<div class="pm-field"><label>Reference / label (e.g. punch # or log date)</label><input id="pm-ref" value="' + esc(preset.source_label || '') + '" /></div>' +
+      '<div class="pm-field" style="margin-top:14px"><label>Source</label><select id="pm-src">' +
+        '<option value="standalone"' + (!preset.source_type || preset.source_type === 'standalone' ? ' selected' : '') + '>General (standalone)</option>' +
+        '<option value="punch"' + (preset.source_type === 'punch' ? ' selected' : '') + '>Punch List item</option>' +
+        '<option value="daily_log"' + (preset.source_type === 'daily_log' ? ' selected' : '') + '>Daily Log</option>' +
+      '</select></div>' +
+      '<div class="pm-field" id="pm-kind-wrap" style="display:' + (preset.source_type === 'punch' ? '' : 'none') + '"><label>Before / after</label><select id="pm-kind">' +
+        '<option value="general">General</option><option value="before"' + (preset.capture_kind === 'before' ? ' selected' : '') + '>Before</option><option value="after"' + (preset.capture_kind === 'after' ? ' selected' : '') + '>After</option>' +
+      '</select></div>' +
+      '<div class="pm-field"><label>Reference / label</label><input id="pm-ref" value="' + esc(preset.source_label || '') + '" placeholder="e.g. punch # or log date" /></div>' +
       '<div class="pm-field"><label>Caption</label><input id="pm-cap" placeholder="Optional description" /></div>' +
       '<div class="pm-field"><label>Location</label><input id="pm-loc" value="' + esc(preset.location || '') + '" /></div>' +
       '<div class="pm-field"><label>Subsystem</label><input id="pm-sub" value="' + esc(preset.subsystem || '') + '" /></div>' +
       '<div class="pm-field"><label>Phase</label><input id="pm-pha" value="' + esc(preset.phase || '') + '" /></div>' +
       (albumOpts ? '<div class="pm-field"><label>Also add to album (optional)</label><select id="pm-alb"><option value="">— none —</option>' + albumOpts + '</select></div>' : '') +
       '<div id="pm-up-status" style="font-size:12px;color:#71717a"></div>';
-    var footer = '<button class="pm-btn" onclick="closeModal()">Cancel</button>' +
-      '<button class="pm-btn pm-btn-primary" id="pm-do-upload">Upload</button>';
-    modal({ title: 'Add photos', sub: 'Images are stored in Supabase Storage and appear in the timeline + matching album.', body: body, footer: footer, size: 'large' });
+    var footer = '<button class="pm-btn" onclick="closeModal()">Cancel</button><button class="pm-btn pm-btn-primary" id="pm-do-upload">Upload</button>';
+    modal({ title: preset.camera ? 'Capture photo' : 'Add photos', sub: 'Photos are compressed, queued offline-safe, and appear in the timeline + matching album.', body: body, footer: footer, size: 'large' });
 
     var chosen = [];
     var fileInput = document.getElementById('pm-file');
     var drop = document.getElementById('pm-drop');
     var previews = document.getElementById('pm-previews');
+    var srcSel = document.getElementById('pm-src');
+    srcSel.addEventListener('change', function () { document.getElementById('pm-kind-wrap').style.display = srcSel.value === 'punch' ? '' : 'none'; });
     function addFiles(files) {
       Array.prototype.forEach.call(files, function (f) { if (f.type.indexOf('image/') === 0) chosen.push(f); });
       previews.innerHTML = chosen.map(function (f) { return '<img class="pm-preview" src="' + URL.createObjectURL(f) + '" />'; }).join('');
@@ -502,177 +737,178 @@
     drop.addEventListener('dragleave', function () { drop.classList.remove('drag'); });
     drop.addEventListener('drop', function (e) { e.preventDefault(); drop.classList.remove('drag'); addFiles(e.dataTransfer.files); });
 
-    document.getElementById('pm-do-upload').addEventListener('click', function () {
+    bind('pm-do-upload', async function () {
       if (!chosen.length) { toast('Choose at least one photo.'); return; }
       var meta = {
-        source_type: document.getElementById('pm-src').value,
+        source_type: srcSel.value,
+        capture_kind: srcSel.value === 'punch' ? (document.getElementById('pm-kind').value || 'general') : 'general',
+        source_id: preset.source_id || null,
         source_label: document.getElementById('pm-ref').value.trim() || null,
         caption: document.getElementById('pm-cap').value.trim() || null,
         location: document.getElementById('pm-loc').value.trim() || null,
         subsystem: document.getElementById('pm-sub').value.trim() || null,
         phase: document.getElementById('pm-pha').value.trim() || null,
         album_id: (document.getElementById('pm-alb') || {}).value || null,
+        uploaded_by: userName(),
       };
-      uploadFiles(chosen, meta);
+      var btn = document.getElementById('pm-do-upload'); if (btn) btn.disabled = true;
+      var status = document.getElementById('pm-up-status'); if (status) status.textContent = 'Processing…';
+      var n = await enqueueFiles(chosen, meta);
+      closeModal();
+      toast(n + ' photo' + (n === 1 ? '' : 's') + (navigator.onLine ? ' uploading…' : ' queued (offline)'));
+      processQueue();
     });
   }
 
-  function imageDims(file) {
-    return new Promise(function (resolve) {
+  // ── edit photo metadata ─────────────────────────────────────────────────────
+  function openEditPhoto(p) {
+    var kindWrap = p.source_type === 'punch'
+      ? '<div class="pm-field"><label>Before / after</label><select id="pe-kind"><option value="general"' + (p.capture_kind === 'general' ? ' selected' : '') + '>General</option><option value="before"' + (p.capture_kind === 'before' ? ' selected' : '') + '>Before</option><option value="after"' + (p.capture_kind === 'after' ? ' selected' : '') + '>After</option></select></div>'
+      : '';
+    var body =
+      '<div class="pm-field"><label>Caption</label><input id="pe-cap" value="' + esc(p.caption || '') + '" /></div>' +
+      kindWrap +
+      '<div class="pm-field"><label>Location</label><input id="pe-loc" value="' + esc(p.location || '') + '" /></div>' +
+      '<div class="pm-field"><label>Subsystem</label><input id="pe-sub" value="' + esc(p.subsystem || '') + '" /></div>' +
+      '<div class="pm-field"><label>Phase</label><input id="pe-pha" value="' + esc(p.phase || '') + '" /></div>' +
+      '<div class="pm-field"><label>Tags (comma-separated)</label><input id="pe-tags" value="' + esc((p.tags || []).join(', ')) + '" /></div>';
+    modal({ title: 'Edit photo', body: body, footer: '<button class="pm-btn" onclick="closeModal()">Cancel</button><button class="pm-btn pm-btn-primary" id="pe-save">Save</button>' });
+    bind('pe-save', async function () {
+      var patch = {
+        caption: document.getElementById('pe-cap').value.trim() || null,
+        location: document.getElementById('pe-loc').value.trim() || null,
+        subsystem: document.getElementById('pe-sub').value.trim() || null,
+        phase: document.getElementById('pe-pha').value.trim() || null,
+        tags: document.getElementById('pe-tags').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean),
+      };
+      var kindEl = document.getElementById('pe-kind'); if (kindEl) patch.capture_kind = kindEl.value;
       try {
-        var url = URL.createObjectURL(file);
-        var im = new Image();
-        im.onload = function () { resolve({ w: im.naturalWidth, h: im.naturalHeight }); URL.revokeObjectURL(url); };
-        im.onerror = function () { resolve({ w: null, h: null }); };
-        im.src = url;
-      } catch (e) { resolve({ w: null, h: null }); }
+        await _dbUpdate('photos', patch, { id: p.id });
+        Object.assign(p, patch);
+        closeModal(); toast('Photo updated.'); S.distinct.loaded = false;
+        showLightbox(); paint();
+      } catch (e) { toast('Could not save: ' + (e && e.message)); }
     });
   }
 
-  async function uploadFiles(files, meta) {
-    var btn = document.getElementById('pm-do-upload');
-    var status = document.getElementById('pm-up-status');
-    if (btn) btn.disabled = true;
-    var ok = 0, fail = 0;
-    for (var i = 0; i < files.length; i++) {
-      var file = files[i];
-      if (status) status.textContent = 'Uploading ' + (i + 1) + ' of ' + files.length + '…';
-      try {
-        var dims = await imageDims(file);
-        var ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
-        var uid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2));
-        var path = meta.source_type + '/' + uid + '.' + ext;
-        var up = await _sb.storage.from(BUCKET).upload(path, file, { contentType: file.type || 'image/jpeg', upsert: false });
-        if (up && up.error) throw up.error;
-        var row = {
-          storage_path: path,
-          file_name: file.name,
-          mime_type: file.type || null,
-          file_size: file.size || null,
-          width: dims.w, height: dims.h,
-          caption: meta.caption,
-          source_type: meta.source_type,
-          source_id: meta.source_id || null,
-          source_label: meta.source_label,
-          location: meta.location, subsystem: meta.subsystem, phase: meta.phase,
-          taken_at: new Date(file.lastModified || Date.now()).toISOString(),
-          uploaded_by: userName(),
-        };
-        var inserted = await _dbInsert('photos', [row]);
-        var newId = inserted && inserted[0] && inserted[0].id;
-        if (newId && meta.album_id) {
-          try { await _dbInsert('photo_album_items', [{ album_id: meta.album_id, photo_id: newId, added_by: userName() }]); } catch (e) {}
-        }
-        ok++;
-      } catch (e) {
-        console.error('[photos] upload failed:', e && e.message);
-        fail++;
-      }
-    }
-    if (btn) btn.disabled = false;
-    closeModal();
-    toast(ok + ' photo' + (ok === 1 ? '' : 's') + ' uploaded' + (fail ? ', ' + fail + ' failed' : ''));
-    await loadData(true);
-    render();
-  }
-
-  // Public capture helper — let other flows (punch list, daily logs) open the
-  // uploader pre-scoped to their record so the photo lands in the right album.
-  function captureFor(opts) { openUpload(opts || {}); }
-
-  // ── manual albums ─────────────────────────────────────────────────────────
+  // ── manual albums ────────────────────────────────────────────────────────────
   function openNewAlbum() {
     if (!canUpload()) return;
-    var body =
+    modal({ title: 'New album', sub: 'A custom album you fill by adding photos.', body:
       '<div class="pm-field"><label>Album name</label><input id="pm-na-name" placeholder="e.g. Station A — Progress" /></div>' +
-      '<div class="pm-field"><label>Description</label><textarea id="pm-na-desc" rows="3"></textarea></div>';
-    var footer = '<button class="pm-btn" onclick="closeModal()">Cancel</button>' +
-      '<button class="pm-btn pm-btn-primary" id="pm-na-save">Create album</button>';
-    modal({ title: 'New album', sub: 'A custom album you fill by adding photos to it.', body: body, footer: footer });
-    document.getElementById('pm-na-save').addEventListener('click', async function () {
+      '<div class="pm-field"><label>Description</label><textarea id="pm-na-desc" rows="3"></textarea></div>',
+      footer: '<button class="pm-btn" onclick="closeModal()">Cancel</button><button class="pm-btn pm-btn-primary" id="pm-na-save">Create album</button>' });
+    bind('pm-na-save', async function () {
       var name = document.getElementById('pm-na-name').value.trim();
       if (!name) { toast('Album needs a name.'); return; }
-      var slug = slugify(name) + '-' + Math.random().toString(16).slice(2, 6);
       try {
-        await _dbInsert('photo_albums', [{
-          name: name,
-          slug: slug,
-          kind: 'manual',
-          description: document.getElementById('pm-na-desc').value.trim() || null,
-          created_by: userName(),
-        }]);
-        closeModal();
-        toast('Album created.');
-        await loadData(true);
-        S.view = 'albums'; paint();
+        await _dbInsert('photo_albums', [{ name: name, slug: slugify(name) + '-' + Math.random().toString(16).slice(2, 6), kind: 'manual', description: document.getElementById('pm-na-desc').value.trim() || null, created_by: userName() }]);
+        closeModal(); toast('Album created.'); await loadAlbums(); S.view = 'albums'; paintAlbums();
       } catch (e) { toast('Could not create album: ' + (e && e.message)); }
     });
   }
-
-  function openAddToAlbum(p) {
-    var manual = S.albums.filter(function (a) { return a.kind === 'manual'; });
-    if (!manual.length) {
-      modal({ title: 'No albums yet', body: '<p>Create an album first (Albums tab → “New album”).</p>', footer: '<button class="pm-btn pm-btn-primary" onclick="closeModal()">OK</button>' });
-      return;
-    }
-    var opts = manual.map(function (a) { return '<option value="' + esc(a.id) + '">' + esc(a.name) + '</option>'; }).join('');
-    modal({
-      title: 'Add to album',
-      body: '<div class="pm-field"><label>Album</label><select id="pm-ata">' + opts + '</select></div>',
-      footer: '<button class="pm-btn" onclick="closeModal()">Cancel</button><button class="pm-btn pm-btn-primary" id="pm-ata-save">Add</button>',
+  function renameActiveAlbum() {
+    var a = S.activeAlbum; if (!a || a.kind !== 'manual') return;
+    modal({ title: 'Rename album', body: '<div class="pm-field"><label>Name</label><input id="pm-rn" value="' + esc(a.name) + '" /></div>', footer: '<button class="pm-btn" onclick="closeModal()">Cancel</button><button class="pm-btn pm-btn-primary" id="pm-rn-save">Save</button>' });
+    bind('pm-rn-save', async function () {
+      var name = document.getElementById('pm-rn').value.trim(); if (!name) return;
+      try { await _dbUpdate('photo_albums', { name: name, updated_at: new Date().toISOString() }, { id: a.id }); a.name = name; closeModal(); toast('Renamed.'); paint(); } catch (e) { toast('Could not rename: ' + (e && e.message)); }
     });
-    document.getElementById('pm-ata-save').addEventListener('click', async function () {
+  }
+  async function deleteActiveAlbum() {
+    var a = S.activeAlbum; if (!a || a.kind !== 'manual') return;
+    if (!window.confirm('Delete album “' + a.name + '”? Photos are not deleted — only the album.')) return;
+    try {
+      await _dbUpdate('photo_albums', { is_deleted: true }, { id: a.id });
+      toast('Album deleted.'); S.view = 'albums'; S.activeAlbum = null; await loadAlbums(); paintAlbums();
+    } catch (e) { toast('Could not delete album: ' + (e && e.message)); }
+  }
+  async function setAlbumCover(a, photoId) {
+    if (!a || a.kind !== 'manual') return;
+    try { await _dbUpdate('photo_albums', { cover_photo_id: photoId, updated_at: new Date().toISOString() }, { id: a.id }); a.cover_photo_id = photoId; toast('Album cover set.'); } catch (e) { toast('Could not set cover: ' + (e && e.message)); }
+  }
+
+  function openAddToAlbum(photoIds) {
+    var manual = S.albums.filter(function (a) { return a.kind === 'manual'; });
+    if (!manual.length) { modal({ title: 'No albums yet', body: '<p>Create an album first (Albums tab → “New album”).</p>', footer: '<button class="pm-btn pm-btn-primary" onclick="closeModal()">OK</button>' }); return; }
+    var opts = manual.map(function (a) { return '<option value="' + esc(a.id) + '">' + esc(a.name) + '</option>'; }).join('');
+    modal({ title: 'Add to album', body: '<div class="pm-field"><label>Album</label><select id="pm-ata">' + opts + '</select></div>', footer: '<button class="pm-btn" onclick="closeModal()">Cancel</button><button class="pm-btn pm-btn-primary" id="pm-ata-save">Add ' + photoIds.length + '</button>' });
+    bind('pm-ata-save', async function () {
       var albumId = document.getElementById('pm-ata').value;
-      try {
-        await _dbInsert('photo_album_items', [{ album_id: albumId, photo_id: p.id, added_by: userName() }]);
-        closeModal();
-        toast('Added to album.');
-        await loadData(true);
-      } catch (e) {
-        if (String(e && e.message).indexOf('duplicate') !== -1) { closeModal(); toast('Already in that album.'); }
-        else toast('Could not add: ' + (e && e.message));
-      }
+      var rows = photoIds.map(function (pid) { return { album_id: albumId, photo_id: pid, added_by: userName() }; });
+      var ok = 0;
+      for (var i = 0; i < rows.length; i++) { try { await _dbInsert('photo_album_items', [rows[i]]); ok++; } catch (e) { /* dup ignored */ } }
+      closeModal(); toast(ok + ' added to album.');
     });
   }
 
-  // ── delete (soft) ─────────────────────────────────────────────────────────
+  // ── bulk actions ──────────────────────────────────────────────────────────────
+  function selectedPhotos() { return S.photos.filter(function (p) { return S.selected.has(p.id); }); }
+  function bulkAddToAlbum() { if (S.selected.size) openAddToAlbum(Array.from(S.selected)); }
+  async function bulkDownload() {
+    var list = selectedPhotos();
+    for (var i = 0; i < list.length; i++) {
+      var u = await signOne(list[i].storage_path);
+      if (!u) continue;
+      try {
+        var blob = await (await fetch(u)).blob();
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = list[i].file_name || (list[i].id + '.jpg');
+        document.body.appendChild(a); a.click(); a.remove();
+        await new Promise(function (r) { setTimeout(r, 300); });
+      } catch (e) { console.warn('[photos] download failed:', e && e.message); }
+    }
+    toast('Downloaded ' + list.length + ' photo' + (list.length === 1 ? '' : 's') + '.');
+  }
+  async function bulkDelete() {
+    var list = selectedPhotos();
+    if (!list.length) return;
+    var deletable = list.filter(canDeletePhoto);
+    if (deletable.length < list.length) toast('Some photos can only be deleted by their uploader or an admin.');
+    if (!deletable.length) return;
+    if (!window.confirm('Delete ' + deletable.length + ' photo' + (deletable.length === 1 ? '' : 's') + '?')) return;
+    var paths = [];
+    for (var i = 0; i < deletable.length; i++) {
+      try {
+        await _dbUpdate('photos', { is_deleted: true }, { id: deletable[i].id });
+        if (deletable[i].storage_path) paths.push(deletable[i].storage_path);
+        if (deletable[i].thumb_path) paths.push(deletable[i].thumb_path);
+      } catch (e) { /* keep going */ }
+    }
+    await storageRemove(paths);
+    toast('Deleted ' + deletable.length + '.'); clearSelection(); S.distinct.loaded = false;
+    await loadPage(true); paint();
+  }
+
   async function deletePhoto(p) {
     if (!canDeletePhoto(p)) return;
     if (!window.confirm('Delete this photo? It will be removed from the timeline and albums.')) return;
     try {
       await _dbUpdate('photos', { is_deleted: true }, { id: p.id });
-      closeLightbox();
-      toast('Photo deleted.');
-      await loadData(true);
-      render();
+      await storageRemove([p.storage_path, p.thumb_path].filter(Boolean));
+      closeLightbox(); toast('Photo deleted.'); S.distinct.loaded = false;
+      await loadPage(true); paint();
     } catch (e) { toast('Could not delete: ' + (e && e.message)); }
   }
 
-  // ── boot ───────────────────────────────────────────────────────────
+  // ── boot ────────────────────────────────────────────────────────────────────
   function boot() {
+    if (S.booted) return; S.booted = true;
     injectNav();
     injectPage();
     ensureLightbox();
-    // Re-render when navigating back/forward to the photos hash.
-    window.addEventListener('popstate', function () {
-      if ((location.hash || '').slice(1) === 'photos') render();
-    });
-    // If the app deep-links straight to #photos on load.
-    if ((location.hash || '').slice(1) === 'photos') setTimeout(goto, 300);
+    refreshQueueCount().then(function () { if (S.queueCount) processQueue(); });
+    window.addEventListener('online', processQueue);
+    window.addEventListener('popstate', function () { if ((location.hash || '').slice(1) === 'photos') enter(); });
+    if ((location.hash || '').slice(1) === 'photos') setTimeout(gotoPage, 300);
   }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', boot);
-  } else {
-    boot();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
 
   window.PhotosModule = {
-    render: render,
-    loadData: loadData,
-    goto: goto,
-    openUpload: openUpload,
-    captureFor: captureFor,   // captureFor({source_type:'punch', source_id, source_label, location, subsystem})
-    state: S,
+    enter: enter, goto: gotoPage, openUpload: openUpload,
+    captureFor: function (opts) { openUpload(opts || {}); },
+    processQueue: processQueue, state: S,
   };
 })();

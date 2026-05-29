@@ -37,6 +37,8 @@ create table if not exists photos (
                   check (source_type in ('punch','daily_log','standalone')),
   source_id     text,                          -- punch_items.id / delay_log.log_id / null
   source_label  text,                          -- human label e.g. "Punch #142" or "2026-05-29"
+  capture_kind  text not null default 'general'
+                  check (capture_kind in ('general','before','after')),
   phase         text,
   location      text,
   subsystem     text,
@@ -67,6 +69,7 @@ create index if not exists photos_uploaded_idx    on photos (uploaded_at desc);
 create index if not exists photos_location_idx    on photos (location);
 create index if not exists photos_subsystem_idx   on photos (subsystem);
 create index if not exists photos_uploadedby_idx  on photos (uploaded_by);
+create index if not exists photos_capture_kind_idx on photos (capture_kind);
 create index if not exists photos_notdeleted_idx  on photos (is_deleted) where is_deleted = false;
 
 -- ── photo_albums ─────────────────────────────────────────────────────────────
