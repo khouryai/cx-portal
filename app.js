@@ -15703,7 +15703,7 @@ function renderRMA() {
   const closedRMAs = RMAS.filter(r => r.status === 'Closed');
   const now = Date.now();
   const avgDays = openRMAs.length
-    ? Math.round(openRMAs.reduce((sum, r) => sum + (now - new Date(r.created_at).getTime()) / 86400000, 0) / openRMAs.length)
+    ? Math.round(openRMAs.reduce((sum, r) => sum + _rmaCycleInfo(r).days, 0) / openRMAs.length)
     : 0;
   const openLocs = new Set(openRMAs.map(r => r.location).filter(Boolean)).size;
 
@@ -15794,11 +15794,31 @@ function _rmaPageHTML() {
   `;
 }
 
+function _rmaIsTerminal(s) { return s === 'Closed' || s === 'Cancelled'; }
+
+// Cycle/age in days.
+//  • Terminal (Closed/Cancelled): closed_date − issued_date (falls back to
+//    updated_at / created_at). This FREEZES once the RMA is closed.
+//  • Otherwise: days open = today − issued_date (falls back to created_at).
+function _rmaCycleInfo(r) {
+  const startSrc = r.issued_date || r.created_at;
+  const start = startSrc ? new Date(startSrc) : null;
+  if (!start || isNaN(start)) return { days: 0, label: 'open', terminal: false };
+  const terminal = _rmaIsTerminal(r.status);
+  const end = terminal
+    ? new Date(r.closed_date || r.updated_at || Date.now())
+    : new Date();
+  const days = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 86400000));
+  return { days, label: terminal ? 'cycle' : 'open', terminal };
+}
+
 function _rmaRowHTML(r, canEdit) {
   const now = Date.now();
-  const ageDays = r.created_at ? Math.floor((now - new Date(r.created_at).getTime()) / 86400000) : 0;
+  const cyc = _rmaCycleInfo(r);
+  const ageDays = cyc.days;
   const isOverdue = r.due_date && new Date(r.due_date) < new Date() && r.status !== 'Closed' && r.status !== 'Cancelled';
-  const ageClass = ageDays > 30 ? 'is-hot' : ageDays > 14 ? 'is-warm' : '';
+  // Heat only applies to still-open items; a long historical cycle isn't "hot".
+  const ageClass = cyc.terminal ? '' : (ageDays > 30 ? 'is-hot' : ageDays > 14 ? 'is-warm' : '');
   const pillTone = _rmaPillTone(r.status);
   const idChipClass = isOverdue ? 'v2-id-chip is-critical' : 'v2-id-chip';
   const dueClass = isOverdue ? 'is-bad' : (r.due_date && (new Date(r.due_date) - now) < 7*86400000) ? 'is-warm' : '';
@@ -15829,7 +15849,7 @@ function _rmaRowHTML(r, canEdit) {
           </div>
           <div class="v2-meta-line">
             ${r.due_date ? `<span class="${dueClass}">${isOverdue?'⚠ ':''}Due ${_fmtDate(r.due_date)}</span>` : ''}
-            <span class="v2-age-pill ${ageClass}">${ageDays}d ${r.status === 'Closed' ? 'cycle' : 'open'}</span>
+            <span class="v2-age-pill ${ageClass}">${ageDays}d ${cyc.label}</span>
           </div>
         </div>
 
@@ -15847,6 +15867,16 @@ function _rmaRowHTML(r, canEdit) {
   `;
 }
 
+// When the status flips to a terminal state, prefill the Closed Date with today
+// — but only if it's empty, so a historical/imported date is never overwritten.
+function _rmaOnStatusChange(value) {
+  const closed = document.getElementById('rma-closed');
+  if (!closed) return;
+  if ((value === 'Closed' || value === 'Cancelled') && !closed.value) {
+    closed.value = new Date().toISOString().slice(0, 10);
+  }
+}
+
 function openRMAModal(rmaId) {
   const rma      = rmaId ? RMAS.find(r => r.id === rmaId) : null;
   const statuses = _fsCfg('rma_status').length ? _fsCfg('rma_status') : ['Open','Pending Replacement','Shipped','Awaiting Return','Closed','Cancelled'];
@@ -15862,7 +15892,7 @@ function openRMAModal(rmaId) {
       `<div class="form-field form-field-full"><label>RMA Number <span style="color:var(--bad)">*</span></label>` +
       `<input id="rma-number" class="form-input" placeholder="e.g. RMA-201075569-W30-D_NR3P Vital Relay" value="${v('rma_number')}"></div>` +
       `<div class="form-field"><label>Status <span style="color:var(--bad)">*</span></label>` +
-      `<select id="rma-status" class="form-input">` +
+      `<select id="rma-status" class="form-input" onchange="_rmaOnStatusChange(this.value)">` +
       statuses.map(s => `<option value="${escapeHtml(s)}" ${(rma?.status||'Open')===s?'selected':''}>${escapeHtml(s)}</option>`).join('') +
       `</select></div>` +
       `<div class="form-field"><label>Location <span style="color:var(--bad)">*</span></label>` +
@@ -15871,6 +15901,8 @@ function openRMAModal(rmaId) {
       `</select></div>` +
       `<div class="form-field"><label>Issued Date</label><input id="rma-issued" type="date" class="form-input" value="${rma?.issued_date||today}"></div>` +
       `<div class="form-field"><label>Due Date</label><input id="rma-due" type="date" class="form-input" value="${rma?.due_date||today}"></div>` +
+      `<div class="form-field"><label>Closed Date <span style="font-weight:400;color:var(--gray-500);font-size:11px;">(sets cycle time)</span></label>` +
+      `<input id="rma-closed" type="date" class="form-input" value="${rma?.closed_date||''}"></div>` +
       `<div class="form-field"><label>Quantity</label><input id="rma-qty" type="number" class="form-input" min="0.01" step="0.01" value="${rma?.quantity||1}"></div>` +
       `</div>` +
       `<div style="margin:20px 0 12px;font-size:12px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:0.05em;border-top:1px solid var(--gray-200);padding-top:16px;">Field Engineer Details</div>` +
@@ -15903,6 +15935,7 @@ async function saveRMA(editId) {
     rma_number: rmaNumber, status, location,
     issued_date:               document.getElementById('rma-issued')?.value || null,
     due_date:                  document.getElementById('rma-due')?.value    || null,
+    closed_date:               document.getElementById('rma-closed')?.value || null,
     quantity:                  parseFloat(document.getElementById('rma-qty')?.value || '1'),
     manufacturer:              g('rma-mfr'),
     serial_number:             g('rma-sn'),
@@ -15986,6 +16019,8 @@ function _rmaViewModal(id) {
       row('Quantity',    r.quantity ? `${r.quantity} ea` : null) +
       row('Issued Date', r.issued_date ? _fmtDate(r.issued_date) : null) +
       row('Due Date',    r.due_date   ? _fmtDate(r.due_date)    : null) +
+      row('Closed Date', r.closed_date ? _fmtDate(r.closed_date) : null) +
+      row(_rmaIsTerminal(r.status) ? 'Cycle Time' : 'Days Open', `${_rmaCycleInfo(r).days} days`) +
       `</table>` +
       `<div style="margin:16px 0 10px;font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:0.06em;border-top:1px solid #e5e7eb;padding-top:14px;">Field Engineer Details</div>` +
       `<table style="width:100%;border-collapse:collapse;margin-bottom:4px;">` +
@@ -16029,6 +16064,7 @@ function _rmaPrintPDF(id) {
     '<table>',
     '<tr>' + cell('Status', r.status) + cell('Created Date', _fmtDate(r.created_at)) + '</tr>',
     '<tr>' + cell('Issued Date', r.issued_date ? _fmtDate(r.issued_date) : '—') + cell('Due Date', r.due_date ? _fmtDate(r.due_date) : '—') + '</tr>',
+    '<tr>' + cell('Closed Date', r.closed_date ? _fmtDate(r.closed_date) : '—') + cell(_rmaIsTerminal(r.status) ? 'Cycle Time' : 'Days Open', _rmaCycleInfo(r).days + ' days') + '</tr>',
     '<tr>' + cell('Location', r.location) + cell('Quantity', (r.quantity||1) + ' ea') + '</tr>',
     '<tr>' + cell('Received From', r.created_by) + '<td colspan="2"></td></tr>',
     '</table>',
@@ -16053,11 +16089,11 @@ function _rmaPrintPDF(id) {
 
 function _rmaCSVExport() {
   const headers = ['RMA Number','Status','Location','Manufacturer','Serial Number','Replacement S/N',
-    'Manufacturer P/N','STS P/N','Quantity','Issued Date','Due Date','Created By','Created At','Notes'];
+    'Manufacturer P/N','STS P/N','Quantity','Issued Date','Due Date','Closed Date','Cycle/Open Days','Created By','Created At','Notes'];
   const rows = RMAS.map(r => [
     r.rma_number, r.status, r.location||'', r.manufacturer||'', r.serial_number||'',
     r.replacement_serial_number||'', r.manufacturer_pn||'', r.sts_pn||'',
-    r.quantity||1, r.issued_date||'', r.due_date||'',
+    r.quantity||1, r.issued_date||'', r.due_date||'', r.closed_date||'', _rmaCycleInfo(r).days,
     r.created_by||'', r.created_at ? _fmtDate(r.created_at) : '', r.notes||'',
   ].map(v => '"' + String(v).replace(/"/g,'""') + '"'));
   const csv = [headers.map(h => '"' + h + '"').join(','), ...rows.map(r => r.join(','))].join('\n');
