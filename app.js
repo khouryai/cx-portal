@@ -1962,6 +1962,8 @@ async function loadTestItems() {
         AssetId:       r.asset_id     || null,
         ScopeType:     r.scope_type   || 'static',
         TestScope:     r.test_scope   || '',
+        ProcedureCode: r.procedure_code || '',
+        ProcedureName: r.procedure_name || '',
         ApplicableLocations: r.applicable_locations || [],
         SwSnapshot:    r.sw_snapshot || null,
         SwSnapshotAt:  r.sw_snapshot_at || null,
@@ -31721,8 +31723,11 @@ function _dynBuildTestItemsIndex() {
       code: ti.TestCaseCode || '',
       subsystem: ti.Subsystem || '',
       phase: ti.Phase || '',
+      location: ti.Location || '',
       scope_type: String(ti.ScopeType || 'static').toLowerCase(),
       test_scope: ti.TestScope || '',
+      procedure_code: ti.ProcedureCode || '',
+      procedure_name: ti.ProcedureName || '',
       applicable_locations: ti.ApplicableLocations || [],
     });
   }
@@ -32473,7 +32478,73 @@ function _dynParseRuns(parsed) {
     members.forEach(i => { runs[i].equivalence_group_id = gid; });
   }
 
-  return { cases: [...casesByKey.values()], runs, errors, warnings, groupCount };
+  const result = { cases: [...casesByKey.values()], runs, errors, warnings, groupCount };
+  _dynSplitPerLocation(result, existingByCode);
+  return result;
+}
+
+// For per_location procedures, one CSV procedure becomes one test activity PER
+// location: "DCS-SIT" with runs at W40/Y10/W34 → activities W40-DCS-SIT,
+// Y10-DCS-SIT, W34-DCS-SIT, each holding only that location's runs and sharing
+// procedure_code = "DCS-SIT" for the rollup. The location is read off each run's
+// track_section_under_test. Runs with no section stay under the base code.
+function _dynSplitPerLocation(result, existingByCode) {
+  const perLocCodeKeys = new Set(
+    result.cases.filter(c => c.test_scope === 'per_location').map(c => c.code.toUpperCase())
+  );
+  if (!perLocCodeKeys.size) return;
+
+  const baseByKey = new Map(result.cases.map(c => [c.code.toUpperCase(), c]));
+  const sectionName = (code) => {
+    const o = _dynSectionOptions().find(s => s.code.toUpperCase() === String(code).toUpperCase());
+    return o ? o.name : code;
+  };
+
+  const newCasesByKey = new Map();   // locationCaseKey → case
+  // Keep non-per_location cases as-is.
+  for (const c of result.cases) {
+    if (!perLocCodeKeys.has(c.code.toUpperCase())) newCasesByKey.set(c.code.toUpperCase(), c);
+  }
+
+  for (const run of result.runs) {
+    const baseKey = run._codeKey;
+    if (!perLocCodeKeys.has(baseKey)) continue;            // untouched procedure
+    const base = baseByKey.get(baseKey);
+    const loc = String(run.track_section_under_test || '').trim();
+    const locCode = loc
+      ? `${loc}-${base.code}`                              // W40-DCS-SIT
+      : base.code;                                         // no section → base code
+    const locKey = locCode.toUpperCase();
+
+    if (!newCasesByKey.has(locKey)) {
+      const existingTestId = existingByCode.get(locKey) || null;
+      newCasesByKey.set(locKey, {
+        code: locCode,
+        name: loc ? `${loc} ${base.name}` : base.name,
+        procedure: base.procedure || '',
+        phase: base.phase || '',
+        test_scope: 'per_location',
+        location: loc || '',
+        procedure_code: base.code,
+        procedure_name: base.name,
+        applicable_locations: [],
+        existingTestId,
+        isNew: !existingTestId,
+        runCount: 0,
+      });
+      if (loc) {
+        const c = newCasesByKey.get(locKey);
+        c.name = `${loc} ${base.name}`;
+        // Prefer the friendly section name in the activity title when available.
+        c.locationLabel = sectionName(loc);
+      }
+    }
+    const lc = newCasesByKey.get(locKey);
+    lc.runCount++;
+    run._codeKey = locKey;                                 // re-point run to its location activity
+  }
+
+  result.cases = [...newCasesByKey.values()];
 }
 
 function _dynCSVValidate() {
@@ -32516,8 +32587,11 @@ async function _dynImportCSVRows() {
         test_name:      c.name,
         test_procedure: c.procedure || '',
         phase:          c.phase || null,
+        location:       c.location || null,
         scope_type:     'dynamic',
         test_scope:     c.test_scope || null,
+        procedure_code: c.procedure_code || null,
+        procedure_name: c.procedure_name || null,
         applicable_locations: c.applicable_locations || [],
         status:         'Not Started',
         weight:         1,
@@ -32530,8 +32604,9 @@ async function _dynImportCSVRows() {
         for (const c of newCases) {
           TI.push({ TestID: c.code, TestCaseCode: c.code, TestName: c.name,
                     TestProcedure: c.procedure || '', Phase: c.phase || '',
-                    Status: 'Not Started', ScopeType: 'dynamic',
-                    TestScope: c.test_scope || '', ApplicableLocations: c.applicable_locations || [] });
+                    Location: c.location || '', Status: 'Not Started', ScopeType: 'dynamic',
+                    TestScope: c.test_scope || '', ProcedureCode: c.procedure_code || '',
+                    ProcedureName: c.procedure_name || '', ApplicableLocations: c.applicable_locations || [] });
         }
       }
     }
@@ -32542,6 +32617,9 @@ async function _dynImportCSVRows() {
     for (const c of matchedCases) {
       const upd = { scope_type: 'dynamic' };
       if (c.test_scope) upd.test_scope = c.test_scope;
+      if (c.location) upd.location = c.location;
+      if (c.procedure_code) upd.procedure_code = c.procedure_code;
+      if (c.procedure_name) upd.procedure_name = c.procedure_name;
       if (c.applicable_locations && c.applicable_locations.length) upd.applicable_locations = c.applicable_locations;
       await _dbUpdate('test_items', upd, { test_id: c.existingTestId });
       if (typeof TI !== 'undefined') {
@@ -32549,6 +32627,9 @@ async function _dynImportCSVRows() {
         if (ti) {
           ti.ScopeType = 'dynamic';
           if (c.test_scope) ti.TestScope = c.test_scope;
+          if (c.location) ti.Location = c.location;
+          if (c.procedure_code) ti.ProcedureCode = c.procedure_code;
+          if (c.procedure_name) ti.ProcedureName = c.procedure_name;
           if (c.applicable_locations && c.applicable_locations.length) ti.ApplicableLocations = c.applicable_locations;
         }
       }
@@ -33319,7 +33400,7 @@ async function _dynRenderCases() {
             <th style="text-align:right;">Instances</th>
             <th style="text-align:right;">Complete</th>
             <th style="text-align:right;">Prereqs</th>
-            <th style="text-align:right;width:260px;">Actions</th>
+            <th style="text-align:right;width:340px;">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -33337,6 +33418,9 @@ async function _dynRenderCases() {
                 <td style="text-align:right;white-space:nowrap;">
                   <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynCaseFilterInstances('${escapeHtml(r.test_id)}')">Instances</button>
                   <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynOpenCadenceModal('${escapeHtml(r.test_id)}')">Cadence</button>
+                  ${_dynPage.testItemsById.get(r.test_id)?.test_scope === 'per_location'
+                    ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynAddLocation('${escapeHtml(r.test_id)}')">+ Location</button>`
+                    : ''}
                   <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dtOpenPrereqEditor('${escapeHtml(r.test_id)}')">Prereqs</button>
                   <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openTestCaseScopeModal('${escapeHtml(r.test_id)}')">Scope</button>
                 </td>
@@ -33353,6 +33437,78 @@ function _dynCaseFilterInstances(testId) {
   renderDynamicTestingPage();
 }
 
+// Branch a per_location procedure to another location: creates a sibling test
+// activity (same procedure_code) for the chosen section. The new activity starts
+// empty — its runs are added afterward, since routes differ per location.
+function _dynAddLocation(testId) {
+  const info = _dynPage.testItemsById.get(testId) || {};
+  const procCode = info.procedure_code || info.code || testId;
+  const procName = info.procedure_name || info.name || procCode;
+  // Locations already covered by this procedure's sibling activities.
+  const usedLocs = new Set();
+  for (const ti of (typeof TI !== 'undefined' ? TI : [])) {
+    const pc = ti.ProcedureCode || '';
+    if (pc && pc === procCode && ti.Location) usedLocs.add(String(ti.Location).toUpperCase());
+  }
+  const opts = _dynSectionOptions().filter(o => !usedLocs.has(o.code.toUpperCase()));
+  modal({
+    title: 'Add location',
+    sub: `${escapeHtml(procName)} — branch to a new location`,
+    body: `
+      <div style="padding:8px 24px 16px;">
+        <p style="font-size:12.5px;color:var(--gray-600);margin:0 0 12px;">
+          Creates a new per-location test activity for this procedure. Add its routes afterward.
+        </p>
+        <div class="form-field">
+          <label>Location</label>
+          <select id="dyn-addloc-sel">
+            <option value="">— select section —</option>
+            ${opts.map(o => `<option value="${escapeHtml(o.code)}">${escapeHtml(o.name)}</option>`).join('')}
+          </select>
+        </div>
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="_dynSaveAddLocation('${escapeHtml(testId)}')">Create activity</button>`,
+  });
+}
+
+async function _dynSaveAddLocation(testId) {
+  const info = _dynPage.testItemsById.get(testId) || {};
+  const procCode = info.procedure_code || info.code || testId;
+  const procName = info.procedure_name || info.name || procCode;
+  const loc = String(document.getElementById('dyn-addloc-sel')?.value || '').trim();
+  if (!loc) { alert('Pick a location.'); return; }
+  const newId = `${loc}-${procCode}`;
+  if ((typeof TI !== 'undefined' ? TI : []).some(t => (t.TestID || t.test_id) === newId)) {
+    alert(`An activity for ${loc} already exists (${newId}).`);
+    return;
+  }
+  const row = {
+    test_id: newId, test_case_code: newId, test_name: `${loc} ${procName}`,
+    location: loc, scope_type: 'dynamic', test_scope: 'per_location',
+    procedure_code: procCode, procedure_name: procName,
+    status: 'Not Started', weight: 1,
+  };
+  try {
+    await _dbInsert('test_items', [row]);
+    if (typeof TI !== 'undefined') {
+      TI.push({ TestID: newId, TestCaseCode: newId, TestName: row.test_name,
+                Location: loc, Status: 'Not Started', ScopeType: 'dynamic',
+                TestScope: 'per_location', ProcedureCode: procCode, ProcedureName: procName,
+                ApplicableLocations: [] });
+    }
+    if (typeof _dynBuildTestItemsIndex === 'function') _dynBuildTestItemsIndex();
+    closeModal();
+    if (typeof toast === 'function') toast(`Created ${row.test_name}`, 'success');
+    if (document.getElementById('dyn-content')) _dynRenderCases();
+    if (typeof renderLITable === 'function') renderLITable();
+    if (typeof _reRenderTR === 'function') _reRenderTR();
+  } catch (e) {
+    alert(`Create failed: ${e.message}`);
+  }
+}
+
 const _DYN_SCOPE_LABELS = {
   per_location: 'Per location',
   per_phase:    'Per phase',
@@ -33365,10 +33521,10 @@ function _dynCadenceBadge(testId) {
   if (!scope) return '<span style="color:var(--gray-400);font-size:11px;">— not set —</span>';
   let sub = '';
   if (scope === 'per_location') {
-    const locs = info?.applicable_locations || [];
+    const locs = info?.location ? [info.location] : _dynCaseLocations(testId);
     sub = locs.length
       ? `<br/><span style="font-size:10px;color:var(--gray-500);">${escapeHtml(locs.join(', '))}</span>`
-      : `<br/><span style="font-size:10px;color:#b45309;">no locations assigned</span>`;
+      : `<br/><span style="font-size:10px;color:#b45309;">no location yet</span>`;
   } else if (scope === 'per_phase') {
     sub = info?.phase
       ? `<br/><span style="font-size:10px;color:var(--gray-500);">${escapeHtml(info.phase)}</span>`
@@ -33384,28 +33540,30 @@ function _dynOpenCadenceModal(testId) {
   }
   const info = _dynPage.testItemsById.get(testId) || {};
   const scope = info.test_scope || '';
-  const locs  = (info.applicable_locations || []).join(', ');
   const curPhase = info.phase || '';
-  const sectionOpts = _dynSectionOptions();
+  const derivedLocs = info.location ? [info.location] : _dynCaseLocations(testId);
   const phaseOpts = (LOCS || []).filter(l => l.level === 1).sort((a,b) => a.sort_order - b.sort_order);
   modal({
     title: 'Test cadence',
     sub: `${escapeHtml(info.code || testId)} — ${escapeHtml((info.name || '').slice(0,60))}`,
     body: `
-      <datalist id="dyn-cadence-sections">${sectionOpts.map(o => `<option value="${escapeHtml(o.code)}">${escapeHtml(o.name)}</option>`).join('')}</datalist>
       <div style="padding:8px 24px 16px;">
         <div class="form-field" style="margin-bottom:14px;">
           <label>Cadence <span style="color:var(--gray-500);font-weight:400;">(how this procedure is repeated)</span></label>
           <select id="dyn-cad-scope" onchange="document.getElementById('dyn-cad-locs-wrap').style.display=this.value==='per_location'?'block':'none';document.getElementById('dyn-cad-phase-wrap').style.display=this.value==='per_phase'?'block':'none';">
             <option value="" ${!scope?'selected':''}>— not set —</option>
-            <option value="per_location" ${scope==='per_location'?'selected':''}>Per location (repeat at each applicable location)</option>
+            <option value="per_location" ${scope==='per_location'?'selected':''}>Per location (one activity per location)</option>
             <option value="per_phase" ${scope==='per_phase'?'selected':''}>Per phase (once per phase)</option>
             <option value="functional" ${scope==='functional'?'selected':''}>One-time functional</option>
           </select>
         </div>
         <div class="form-field" id="dyn-cad-locs-wrap" style="display:${scope==='per_location'?'block':'none'};">
-          <label>Applicable locations <span style="color:var(--gray-500);font-weight:400;">(comma-separated section codes you assign)</span></label>
-          <input id="dyn-cad-locs" list="dyn-cadence-sections" value="${escapeHtml(locs)}" placeholder="e.g. W40, W41, W45" />
+          <label>Location(s) under test <span style="color:var(--gray-500);font-weight:400;">(derived from this activity's instances)</span></label>
+          <div style="font-size:12.5px;color:var(--gray-700);padding:6px 0;">
+            ${derivedLocs.length
+              ? derivedLocs.map(c => `<span class="badge" style="background:#f1f5f9;color:#0f172a;font-family:monospace;margin-right:4px;">${escapeHtml(c)}</span>`).join('')
+              : `<span style="color:#b45309;">No instances yet — add runs to define the location, or use "Add location" to branch a new one.</span>`}
+          </div>
         </div>
         <div class="form-field" id="dyn-cad-phase-wrap" style="display:${scope==='per_phase'?'block':'none'};">
           <label>Phase <span style="color:var(--gray-500);font-weight:400;">(which phase this procedure is tied to)</span></label>
@@ -33421,29 +33579,35 @@ function _dynOpenCadenceModal(testId) {
   });
 }
 
+// Distinct location codes (track_section_under_test) across a test case's instances.
+// For per_location procedures this IS the set of locations the activity covers —
+// derived from the runs, never a hand-maintained list.
+function _dynCaseLocations(testId) {
+  const seen = new Set();
+  for (const r of (_dynPage.instances || [])) {
+    if (r.test_id !== testId) continue;
+    const code = String(r.track_section_under_test || '').trim();
+    if (code) seen.add(code);
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
 async function _dynSaveCadence(testId) {
   const scope = document.getElementById('dyn-cad-scope')?.value || null;
-  const locs  = String(document.getElementById('dyn-cad-locs')?.value || '')
-    .split(/[;,]/).map(x => x.trim()).filter(Boolean);
   const phase = String(document.getElementById('dyn-cad-phase')?.value || '').trim();
-  const payload = {
-    test_scope: scope || null,
-    applicable_locations: scope === 'per_location' ? locs : [],
-  };
+  const payload = { test_scope: scope || null };
   if (scope === 'per_phase') payload.phase = phase || null;
   try {
     await _dbUpdate('test_items', payload, { test_id: testId });
     const info = _dynPage.testItemsById.get(testId);
     if (info) {
       info.test_scope = payload.test_scope || '';
-      info.applicable_locations = payload.applicable_locations;
       if (scope === 'per_phase') info.phase = payload.phase || '';
     }
     if (typeof TI !== 'undefined') {
       const ti = TI.find(t => (t.TestID || t.test_id) === testId);
       if (ti) {
         ti.TestScope = payload.test_scope || '';
-        ti.ApplicableLocations = payload.applicable_locations;
         if (scope === 'per_phase') ti.Phase = payload.phase || '';
       }
     }

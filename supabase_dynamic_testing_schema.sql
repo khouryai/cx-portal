@@ -524,3 +524,27 @@ comment on column test_items.applicable_locations is
 -- (Full bodies in migration dynamic_drop_control_zone_add_scope.)
 
 notify pgrst, 'reload schema';
+
+
+-- ============================================================
+-- FOLLOW-ON 2: per-location activity branching
+-- (applied live as migration dynamic_add_procedure_grouping)
+--
+-- A per_location procedure becomes ONE test activity PER location: the
+-- procedure "DCS-SIT" run at W40/Y10/W34 splits into activities
+-- W40-DCS-SIT, Y10-DCS-SIT, W34-DCS-SIT. Each activity's location lives in
+-- the existing test_items.location column; applicable_locations is no longer
+-- hand-maintained (the location is read off the activity's instances).
+-- procedure_code is the shared base key so the per-location activities roll
+-- up to one procedure for coverage. Splitting happens at CSV import and via
+-- the "Add location" button in the Dynamic Test Cases tab.
+-- ============================================================
+alter table test_items
+  add column if not exists procedure_code text,
+  add column if not exists procedure_name text;
+create index if not exists idx_test_items_procedure_code
+  on test_items (procedure_code);
+comment on column test_items.procedure_code is
+  'Base procedure key shared by per-location activities (e.g. DCS-SIT for W40-DCS-SIT, Y10-DCS-SIT) so coverage rolls up across locations.';
+
+notify pgrst, 'reload schema';
