@@ -18594,13 +18594,25 @@ const _LA_STATUS_META = {
   plan:    { label: 'Planned',  color: 'var(--gray-700)', bg: 'var(--gray-100)', bar: 'var(--gray-500)' },
 };
 function _laStatusMeta(s) { return _LA_STATUS_META[s] || _LA_STATUS_META.plan; }
-function _laActStatus(a, evs) {
+// Schedule-derived status — works for ANY activity (no Test Register / P6 needed).
+//   • no shifts                  → Planned
+//   • all (non-cancelled) past   → Complete
+//   • has a cancelled shift      → At risk  (a cancellation is a risk, not a blocker)
+//   • otherwise                  → On track
+function _laAutoStatus(evs) {
   if (!Array.isArray(evs) || !evs.length) return 'plan';
-  if (evs.some(e => e.status === 'cancelled')) return 'blocked';
   const today = new Date().toISOString().slice(0, 10);
-  const past  = evs.filter(e => e.event_date < today && e.status !== 'cancelled');
-  if (past.length && past.length === evs.length) return 'done';
+  const active = evs.filter(e => e.status !== 'cancelled');
+  const hasCancel = evs.some(e => e.status === 'cancelled');
+  if (!active.length) return hasCancel ? 'atrisk' : 'plan';
+  if (active.every(e => e.event_date < today)) return 'done';
+  if (hasCancel) return 'atrisk';
   return 'ontrack';
+}
+function _laActStatus(a, evs) {
+  // A team-set status always wins; otherwise fall back to the schedule.
+  if (a && a.status_override && _LA_STATUS_META[a.status_override]) return a.status_override;
+  return _laAutoStatus(evs);
 }
 
 // Inline icon helper used inside v-combo row labels
@@ -18773,8 +18785,11 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     const tradeCls = g.actTrade ? `trade-${g.actTrade}` : 'trade-default';
     const tradeChip = g.actTrade ? `<span class="la-trade-chip ${tradeCls}">${escapeHtml(g.actTrade)}</span>` : '';
     const codeChip  = g.actCode  ? `<span class="la-combo-code">${escapeHtml(g.actCode)}</span>` : '';
-    const statusChip = `<span class="la-combo-status status-${g.actStatus || 'plan'}">
-        <span class="la-dot status-${g.actStatus || 'plan'}"></span>${escapeHtml(statMeta.label)}
+    const statusTitle = g.actStatusNote
+      ? `${statMeta.label}: ${g.actStatusNote}`
+      : (g.actStatusManual ? `${statMeta.label} (set manually)` : `${statMeta.label} (from schedule)`);
+    const statusChip = `<span class="la-combo-status status-${g.actStatus || 'plan'}" title="${escapeHtml(statusTitle)}">
+        <span class="la-dot status-${g.actStatus || 'plan'}"></span>${escapeHtml(statMeta.label)}${g.actStatusNote ? ' •' : ''}
       </span>`;
     const metaSegs = [];
     if (g.actWorkHours) metaSegs.push(`<span class="la-combo-meta">${_laIconHTML('clock')}${escapeHtml(g.actWorkHours)}</span>`);
@@ -19561,10 +19576,29 @@ function _laDrawerActivityHTML(a) {
   const storedPhase    = (a.phase || '').trim();
   const effectivePhase = storedPhase || inferredPhase || '';
 
+  const autoStatus  = _laAutoStatus(evs);
+  const autoLabel   = _laStatusMeta(autoStatus).label;
+  const curOverride = a.status_override || '';
+  const noteShown   = (curOverride === 'atrisk' || curOverride === 'blocked');
+  const STATUS_OPTS = [['ontrack','On track'],['atrisk','At risk'],['blocked','Blocked'],['done','Complete'],['plan','Planned']];
+
   return `
     <div class="la-drawer-section">
       <label class="la-drawer-label">Description</label>
       <textarea class="la-drawer-input" id="dw-act-desc" rows="2" oninput="_laDrawerMarkDirty()">${escapeHtml(a.description || '')}</textarea>
+    </div>
+
+    <div class="la-drawer-section">
+      <label class="la-drawer-label">Status</label>
+      <select class="la-drawer-input" id="dw-act-status" onchange="_laDrawerStatusChanged()">
+        <option value="">Auto — from schedule (${escapeHtml(autoLabel)})</option>
+        ${STATUS_OPTS.map(([v,l]) => `<option value="${v}" ${curOverride===v?'selected':''}>${l}</option>`).join('')}
+      </select>
+      <div id="dw-act-status-note-wrap" style="margin-top:6px;display:${noteShown ? '' : 'none'};">
+        <label class="la-drawer-label" id="dw-act-status-note-label">Reason ${curOverride==='blocked'?'(why blocked)':'(why at risk)'}</label>
+        <textarea class="la-drawer-input" id="dw-act-status-note" rows="2" placeholder="e.g. Waiting on BART track access" oninput="_laDrawerMarkDirty()">${escapeHtml(a.status_note || '')}</textarea>
+      </div>
+      ${(curOverride && a.status_set_by) ? `<div style="font-size:10px;color:var(--gray-400);margin-top:4px;">Set by ${escapeHtml(a.status_set_by)}${a.status_set_at?` · ${dayjs(a.status_set_at).format('YYYY-MM-DD')}`:''}</div>` : ''}
     </div>
 
     <div class="la-drawer-section la-drawer-row-2">
@@ -19677,6 +19711,16 @@ function _laDrawerActivityFooterHTML(a) {
   `;
 }
 
+// Show the reason box only for At risk / Blocked, and label it accordingly.
+function _laDrawerStatusChanged() {
+  const v    = document.getElementById('dw-act-status')?.value || '';
+  const wrap = document.getElementById('dw-act-status-note-wrap');
+  const lbl  = document.getElementById('dw-act-status-note-label');
+  if (wrap) wrap.style.display = (v === 'atrisk' || v === 'blocked') ? '' : 'none';
+  if (lbl)  lbl.textContent = v === 'blocked' ? 'Reason (why blocked)' : 'Reason (why at risk)';
+  _laDrawerMarkDirty();
+}
+
 // ─── MULTI MODE: bulk-edit the current selection ─────────────
 function _laDrawerMultiHTML(eventIds) {
   const events = (PLANNING_EVENTS || []).filter(e => eventIds.includes(e.id));
@@ -19761,6 +19805,10 @@ async function _laDrawerSave() {
     if (!a) return;
     const discInput  = document.getElementById('dw-act-discipline')?.value?.trim() || null;
     const tradeInput = document.getElementById('dw-act-trade')?.value?.trim() || null;
+    const statusOverride = document.getElementById('dw-act-status')?.value || null;
+    const statusNote     = (statusOverride === 'atrisk' || statusOverride === 'blocked')
+      ? (document.getElementById('dw-act-status-note')?.value?.trim() || null)
+      : null;
     const payload = {
       description:                  document.getElementById('dw-act-desc')?.value?.trim() || null,
       activity_id_text:             document.getElementById('dw-act-idtext')?.value?.trim() || null,
@@ -19774,7 +19822,14 @@ async function _laDrawerSave() {
       linked_test_register_activity: document.getElementById('dw-act-linked-tra')?.value?.trim() || null,
       discipline:                   discInput,
       trade:                        tradeInput,
+      status_override:              statusOverride,
+      status_note:                  statusNote,
     };
+    // Stamp who/when only when the override actually changes.
+    if (statusOverride !== (a.status_override || null)) {
+      payload.status_set_by = statusOverride ? (currentRoleUser?.name || currentProfile?.email || 'unknown') : null;
+      payload.status_set_at = statusOverride ? new Date().toISOString() : null;
+    }
     try {
       await _dbUpdate('planning_activities', payload, { id: a.id });
       // Auto-grow Field Config vocabularies for newly typed values
@@ -22442,6 +22497,8 @@ function _laMountLookaheadTL() {
           actTrade:              trade,
           actPhase:              phase,
           actStatus:             status,
+          actStatusNote:         a.status_note || '',
+          actStatusManual:       !!a.status_override,
           linkedTestRegActivity: a.linked_test_register_activity || null,
           // Activity view shows BART-only chips always visible in each cell
           byDate:                _laBuildByDateActivity(evs, days),
