@@ -31701,13 +31701,40 @@ function _dynBuildTestItemsIndex() {
   }
 }
 
+// Unit key: equivalence-group members collapse to one unit (substitute pairs).
+function _dynUnitKey(r) { return r.equivalence_group_id || r.id; }
+
+// Group members by equivalence group, so a substitute that's Passed can mark
+// its siblings as satisfied for display.
+function _dynGroupMap() {
+  const m = new Map();
+  for (const r of _dynPage.instances) {
+    if (!r.equivalence_group_id) continue;
+    if (!m.has(r.equivalence_group_id)) m.set(r.equivalence_group_id, []);
+    m.get(r.equivalence_group_id).push(r);
+  }
+  return m;
+}
+
+// Coverage counts equivalence groups once (the KPI rule for substitutes).
+function _dynCoverage() {
+  const units = new Map(); // unitKey → done?
+  for (const r of _dynPage.instances) {
+    const k = _dynUnitKey(r);
+    units.set(k, (units.get(k) || false) || r.status === 'Pass');
+  }
+  let total = 0, done = 0;
+  for (const v of units.values()) { total++; if (v) done++; }
+  return { total, done, pct: total ? Math.round(100 * done / total) : 0 };
+}
+
 function _dynKpis() {
   const total = _dynPage.instances.length;
   const counts = {};
   for (const s of _DYN_STATUSES) counts[s] = 0;
   for (const r of _dynPage.instances) counts[r.status] = (counts[r.status] || 0) + 1;
   const scheduled = _dynPage.instances.filter(r => r.scheduled_for_date || r.linked_activity_id).length;
-  return { total, counts, scheduled };
+  return { total, counts, scheduled, coverage: _dynCoverage() };
 }
 
 function _dynRenderInstances() {
@@ -31734,7 +31761,9 @@ function _dynRenderInstances() {
     if (sf && r.status !== sf) return false;
     if (tf && r.test_id !== tf) return false;
     if (q) {
-      const hay = [r.code, r.title, r.description, r.target_phase, r.control_zone_code, r.notes].join(' ').toLowerCase();
+      const hay = [r.code, r.title, r.description, r.target_phase, r.control_zone_code, r.notes,
+        r.start_point, r.finish_point, r.track_section_under_test,
+        (r.track_section_access_req || []).join(' '), r.prerequisites].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -31746,7 +31775,8 @@ function _dynRenderInstances() {
 
   const kpiHtml = `
     <div style="margin-bottom:14px;">
-      <div class="dyn-kpi"><b>${k.total}</b><span>Total</span></div>
+      <div class="dyn-kpi"><b>${k.total}</b><span>Runs</span></div>
+      <div class="dyn-kpi" title="Equivalence groups count once"><b>${k.coverage.done}/${k.coverage.total}</b><span>Coverage ${k.coverage.pct}%</span></div>
       ${_DYN_STATUSES.map(s => `<div class="dyn-kpi"><b>${k.counts[s] || 0}</b><span>${escapeHtml(s)}</span></div>`).join('')}
       <div class="dyn-kpi"><b>${k.scheduled}</b><span>Scheduled</span></div>
     </div>
@@ -31775,17 +31805,16 @@ function _dynRenderInstances() {
         <thead><tr>
           <th>Code</th>
           <th>Test Case</th>
-          <th>Title</th>
-          <th>Target Phase</th>
-          <th>Target Window</th>
+          <th>Run (start → finish)</th>
+          <th>Phase</th>
+          <th>Under test / Access</th>
           <th>Zone</th>
-          <th>Mode</th>
           <th>Status</th>
           <th style="width:90px;">Actions</th>
         </tr></thead>
         <tbody>${rows.length
           ? rows.map(r => _dynRowHtml(r)).join('')
-          : `<tr><td colspan="9" style="padding:40px;text-align:center;color:var(--gray-500);">No instances yet — click "+ New instance" or "Import CSV/Excel" to add some.</td></tr>`}
+          : `<tr><td colspan="8" style="padding:40px;text-align:center;color:var(--gray-500);">No runs yet — click "+ New instance" or "Import CSV/Excel" to add some.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -31796,21 +31825,35 @@ function _dynRenderInstances() {
 
 function _dynRowHtml(r) {
   const tc = _dynPage.testItemsById.get(r.test_id);
-  const win = (r.target_window_start || r.target_window_end)
-    ? `${_dynFmtDate(r.target_window_start) || '…'} → ${_dynFmtDate(r.target_window_end) || '…'}`
-    : '<span style="color:var(--gray-400);">—</span>';
   const zoneCell = r.control_zone_code
     ? `<span style="font-family:var(--font-mono,monospace);font-size:11px;">${escapeHtml(r.control_zone_code)}</span>`
     : '<span style="color:var(--gray-400);">—</span>';
+  const access = (r.track_section_access_req || []);
+  const sectionsCell = (r.track_section_under_test || access.length)
+    ? `${r.track_section_under_test ? `<span style="font-family:var(--font-mono,monospace);font-size:11px;font-weight:600;">${escapeHtml(r.track_section_under_test)}</span>` : ''}
+       ${access.length ? `<br/><span style="font-size:10.5px;color:var(--gray-500);">access: ${access.map(a => escapeHtml(a)).join(', ')}</span>` : ''}`
+    : '<span style="color:var(--gray-400);">—</span>';
+  // Substitute / equivalence badge: mark a run satisfied when a group sibling passed.
+  let subBadge = '';
+  if (r.equivalence_group_id) {
+    const sibs = _dynGroupMap().get(r.equivalence_group_id) || [];
+    const passer = sibs.find(s => s.id !== r.id && s.status === 'Pass');
+    if (passer && r.status !== 'Pass') {
+      subBadge = `<br/><span class="badge" style="background:#ccfbf1;color:#0f766e;font-size:10px;" title="An alternative run in this substitute group passed">↪ satisfied via ${escapeHtml(passer.code || passer.title || 'alt')}</span>`;
+    } else {
+      subBadge = `<br/><span class="badge" style="background:#f1f5f9;color:#475569;font-size:10px;" title="Part of a substitute group (${sibs.length} alternatives) — counted once for KPIs">⇄ substitute group</span>`;
+    }
+  }
+  const prereq = r.prerequisites
+    ? ` <span title="${escapeHtml(r.prerequisites)}" style="cursor:help;color:#b45309;font-size:11px;">⚑ prereq</span>` : '';
   return `
     <tr>
       <td style="font-family:var(--font-mono,monospace);font-size:12px;">${escapeHtml(r.code || '—')}</td>
       <td>${tc ? `<span style="font-family:var(--font-mono,monospace);font-size:11px;color:var(--gray-500);">${escapeHtml(tc.code || r.test_id || '')}</span><br/><span style="font-size:12px;">${escapeHtml((tc.name || '').slice(0,40))}</span>` : `<span style="color:var(--gray-400);">${escapeHtml(r.test_id || '—')}</span>`}</td>
-      <td>${escapeHtml(r.title || '')}</td>
+      <td>${escapeHtml(r.title || '')}${prereq}${subBadge}</td>
       <td>${r.target_phase ? `<span class="tag tag-phase">${escapeHtml(r.target_phase)}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>
-      <td style="font-size:12px;">${win}</td>
+      <td style="font-size:12px;">${sectionsCell}</td>
       <td>${zoneCell}</td>
-      <td>${r.required_mode ? `<span class="badge">${escapeHtml(r.required_mode)}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>
       <td>
         <select onchange="_dynInstanceUpdateStatus('${escapeHtml(r.id)}', this.value, this)"
                 title="Update status inline"
@@ -31924,6 +31967,32 @@ function _dynBuildInstanceForm(inst, tcOpts) {
       </div>
 
       <div class="form-field">
+        <label>Start point</label>
+        <input id="dyn-f-start" value="${escapeHtml(v.start_point || '')}" placeholder="e.g. Y10-PL-3" />
+      </div>
+      <div class="form-field">
+        <label>Finish point</label>
+        <input id="dyn-f-finish" value="${escapeHtml(v.finish_point || '')}" placeholder="e.g. W45-M" />
+      </div>
+      <div class="form-field" style="grid-column:1/-1;">
+        <label>Intermediate points <span style="color:var(--gray-500);font-weight:400;">(comma-separated)</span></label>
+        <input id="dyn-f-inter" value="${escapeHtml((v.intermediate_points || []).join(', '))}" placeholder="e.g. W42-B, W43-C" />
+      </div>
+
+      <div class="form-field">
+        <label>Track section under test</label>
+        <input id="dyn-f-tsut" value="${escapeHtml(v.track_section_under_test || '')}" placeholder="e.g. W40" />
+      </div>
+      <div class="form-field">
+        <label>Track section access req <span style="color:var(--gray-500);font-weight:400;">(comma-separated)</span></label>
+        <input id="dyn-f-access" value="${escapeHtml((v.track_section_access_req || []).join(', '))}" placeholder="e.g. W40, Y10" />
+      </div>
+      <div class="form-field" style="grid-column:1/-1;">
+        <label>Prerequisites</label>
+        <textarea id="dyn-f-prereq" rows="2" style="width:100%;font-size:13px;">${escapeHtml(v.prerequisites || '')}</textarea>
+      </div>
+
+      <div class="form-field">
         <label>Required mode</label>
         <select id="dyn-f-mode">
           <option value="" ${!v.required_mode?'selected':''}>—</option>
@@ -31998,11 +32067,18 @@ function _dynBuildInstanceForm(inst, tcOpts) {
 async function _dynSaveInstance(id) {
   const get = i => document.getElementById(i)?.value?.trim() || null;
   const intOrNull = (s) => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : null; };
+  const splitList = (s) => String(s || '').split(/[;,]/).map(x => x.trim()).filter(Boolean);
   const payload = {
     test_id: get('dyn-f-test-id'),
     code: get('dyn-f-code'),
     title: get('dyn-f-title'),
     description: get('dyn-f-description'),
+    start_point: get('dyn-f-start'),
+    finish_point: get('dyn-f-finish'),
+    intermediate_points: splitList(document.getElementById('dyn-f-inter')?.value),
+    track_section_under_test: get('dyn-f-tsut'),
+    track_section_access_req: splitList(document.getElementById('dyn-f-access')?.value),
+    prerequisites: get('dyn-f-prereq'),
     required_mode: get('dyn-f-mode'),
     status: get('dyn-f-status') || 'Not Started',
     target_phase: get('dyn-f-phase'),
@@ -32058,11 +32134,15 @@ function _dynOpenCSVModal() {
     body: `
       <div style="padding:8px 24px 16px;">
         <p style="font-size:13px;color:var(--gray-600);margin:0 0 10px;">
-          Columns: <code>test_id, code, title, target_phase, target_window_start, target_window_end,
-          required_mode, status, notes, description, scheduled_for_date,
-          blocked_reason, control_zone_code, consist_size, trains_needed,
-          expected_duration_minutes</code>. Only <code>test_id</code> is required.
-          Leave <code>consist_size</code> blank (or write <code>any</code>) for consist-agnostic tests.
+          Import a procedure's runs using its native headers:
+          <code>Test Case Code</code> (required), <code>Test Case Name</code>, <code>Test Procedure</code>,
+          <code>Prerequisites</code>, <code>Phase</code>, <code>Track Section Under Test</code>,
+          <code>Track Section Access Req</code>, <code>Number of Trains</code>, <code>Train 1 car #</code>,
+          <code>Estimated duration (m)</code>, <code>Starting Point</code>, <code>Intermediate Points</code>,
+          <code>Finish Point</code>, <code>Substitute</code>.
+          Each row is one executable run; rows sharing a <code>Test Case Code</code> roll up to that case.
+          Unknown case codes are created as dynamic test cases. A <code>Substitute</code> linking two runs
+          groups them so completing either satisfies both (counted once for KPIs).
         </p>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
           <input id="dyn-csv-file" type="file" accept=".csv,.xlsx,.xls" style="font-size:12px;" />
@@ -32097,28 +32177,38 @@ function _dynOpenCSVModal() {
   }, 50);
 }
 
+// Native procedure-template headers (what planners actually export).
+const _DYN_TEMPLATE_HEADERS = [
+  'Test Procedure', 'Test Case Code', 'Test Case Name', 'Prerequisites', 'Phase',
+  'Track Section Under Test', 'Track Section Access Req', 'Number of Trains',
+  'Train 1 car #', 'Train 2 car #', 'Substitute', 'Estimated duration (m)',
+  'Starting Point', 'Intermediate Points', 'Finish Point',
+];
+
 function _dynCSVPasteSample() {
-  const sample =
-    `test_id,code,title,target_phase,target_window_start,target_window_end,required_mode,status,notes,control_zone_code,consist_size,trains_needed,expected_duration_minutes\n` +
-    `TC-DYN-001,SW-W10-001,Switch W10 CBTC normal,Phase 2,2026-06-01,2026-06-30,CBTC,Not Started,sample,W10,4,1,60\n` +
-    `TC-DYN-001,SW-W12-001,Switch W12 CBTC reverse,Phase 2,2026-06-01,2026-06-30,CBTC,Not Started,sample,W10,any,1,60\n`;
+  const h = _DYN_TEMPLATE_HEADERS.join(',');
+  const sample = [
+    h,
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,W40,1,Any,,,20,W45-L,,W45-A',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,"W40, W34",1,Any,,SIT_016b,20,W37-G,,W33-N',
+  ].join('\n');
   document.getElementById('dyn-csv-text').value = sample;
   _dynCSVValidate();
 }
 
 function _dynDownloadCSVTemplate() {
-  const headers = 'test_id,code,title,target_phase,target_window_start,target_window_end,required_mode,status,notes,description,scheduled_for_date,blocked_reason,control_zone_code,consist_size,trains_needed,expected_duration_minutes';
-  const instructions = '# REQUIRED: test_id only. Dates: YYYY-MM-DD. consist_size: integer or "any" (blank = any). trains_needed/expected_duration_minutes: integers.';
+  const headers = _DYN_TEMPLATE_HEADERS.join(',');
+  const instructions = '# One row per run. REQUIRED: Test Case Code. Rows with the same code roll up to one test case. Track Section Access Req / Intermediate Points: comma- or semicolon-separated. Substitute: a Test Case Code or run code that is an alternative way to pass (groups the runs, counted once for KPIs).';
   const examples = [
-    'TC-DYN-001,SW-W10-001,Switch W10 CBTC normal,Phase 2,2026-06-01,2026-06-30,CBTC,Not Started,First pass with 4-car consist,,2026-06-05,,W10,4,1,60',
-    'TC-DYN-001,SW-W12-001,Switch W12 CBTC reverse,Phase 2,2026-06-01,2026-06-30,CBTC,Not Started,,,,,W10,any,1,60',
-    'TC-DYN-002,AX-W40-001,Axle Counter W40 full zone,Phase 3,2026-07-01,2026-07-31,RM,Not Started,Requires track access all zones,,,,W40,6,2,120',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,W40,1,Any,,,20,W45-A,,W45-L',
   ];
   const csv = [headers, instructions, ...examples].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'dynamic_instances_template.csv';
+  a.download = 'dynamic_runs_template.csv';
   a.click();
 }
 
@@ -32163,96 +32253,247 @@ function _dynParseCSV(text) {
   return rows.filter(r => r.length > 1 || (r[0] && r[0].trim() !== ''));
 }
 
-function _dynCSVRowsToInstances(parsed) {
-  if (!parsed.length) return { rows: [], errors: ['Empty CSV.'] };
-  const headers = parsed[0].map(h => String(h || '').trim().toLowerCase());
-  const required = ['test_id'];
-  const missing = required.filter(c => !headers.includes(c));
-  if (missing.length) return { rows: [], errors: [`Missing required column(s): ${missing.join(', ')}`] };
-  const idx = (name) => headers.indexOf(name);
-  const splitList = (s) => String(s || '').split(/[;,]/).map(x => x.trim()).filter(Boolean);
-  const dateOrNull = (s) => {
-    if (!s) return null;
-    const t = String(s).trim();
-    if (!t) return null;
-    // Accept ISO yyyy-mm-dd directly; otherwise let Date parse it.
-    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
-    const d = new Date(t);
-    if (isNaN(d.getTime())) return null;
-    return d.toISOString().slice(0, 10);
+// Last parsed import preview, set by _dynCSVValidate, consumed by _dynImportCSVRows.
+let _dynImportPreview = null;
+
+// Map a native procedure header to a canonical field key.
+function _dynHeaderKey(raw) {
+  const h = String(raw || '')
+    .trim().toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/\s*#\s*$/, '')        // "Train 1 car #" → "train 1 car"
+    .replace(/\s*\([^)]*\)\s*$/, '')// "Estimated duration (m)" → "estimated duration"
+    .trim();
+  const M = {
+    'test procedure': 'procedure',
+    'test case code': 'case_code',
+    'test case name': 'case_name',
+    'prerequisites': 'prerequisites',
+    'phase': 'phase',
+    'track section under test': 'tsut',
+    'track section access req': 'access_req',
+    'number of trains': 'num_trains',
+    'train 1 car': 'train1',
+    'estimated duration': 'duration',
+    'starting point': 'start_point',
+    'start point': 'start_point',
+    'intermediate points': 'intermediate',
+    'intermediate point': 'intermediate',
+    'finish point': 'finish_point',
+    'substitute': 'substitute',
+    'status': 'status',
+    'control zone': 'control_zone',
+    'control zone code': 'control_zone',
   };
+  return M[h] || null;
+}
+
+// Parse the native procedure CSV into test cases + runs. Each data row is one
+// run; rows sharing a Test Case Code roll up to one case. Substitute references
+// union runs into equivalence groups.
+function _dynParseRuns(parsed) {
+  if (!parsed.length) return { cases: [], runs: [], errors: ['Empty CSV.'], warnings: [], groupCount: 0 };
+  // Header row may carry hundreds of trailing empty columns — keep only mapped ones.
+  const headerRow = parsed[0];
+  const colKey = headerRow.map(_dynHeaderKey);
+  if (!colKey.includes('case_code')) {
+    return { cases: [], runs: [], errors: ['Missing required column: Test Case Code.'], warnings: [], groupCount: 0 };
+  }
+  const idxOf = (k) => colKey.indexOf(k);
+  const splitList = (s) => String(s || '').split(/[;,]/).map(x => x.trim()).filter(Boolean);
+  const intOrNull = (s) => { const n = parseInt(String(s).replace(/[^0-9-]/g, ''), 10); return Number.isFinite(n) ? n : null; };
+  const consistOrNull = (s) => {
+    const t = String(s || '').trim().toLowerCase();
+    if (!t || t === 'any' || t === '*' || t === 'n/a') return null;
+    return intOrNull(t);
+  };
+
   const errors = [];
-  const out = [];
+  const warnings = [];
+  const casesByKey = new Map();   // CODEKEY → { code, name, procedure, phase, existingTestId, isNew, runCount }
+  const runs = [];
+
+  // Existing test cases keyed by code (trim, case-insensitive) → test_id.
+  const existingByCode = new Map();
+  for (const ti of (typeof TI !== 'undefined' ? TI : [])) {
+    const c = String(ti.TestCaseCode || '').trim().toUpperCase();
+    if (c && !existingByCode.has(c)) existingByCode.set(c, ti.TestID);
+  }
+
   for (let r = 1; r < parsed.length; r++) {
     const row = parsed[r];
-    if (!row.length) continue;
-    const get = (col) => { const i = idx(col); return i >= 0 ? String(row[i] ?? '').trim() : ''; };
-    const test_id = get('test_id');
-    if (!test_id) { errors.push(`Row ${r + 1}: missing test_id`); continue; }
+    const get = (k) => { const i = idxOf(k); return i >= 0 ? String(row[i] ?? '').trim() : ''; };
+    const code = get('case_code');
+    // Skip fully blank rows (the template's trailing comma noise).
+    if (!code && !get('start_point') && !get('finish_point')) continue;
+    if (!code) { errors.push(`Row ${r + 1}: missing Test Case Code`); continue; }
+    const codeKey = code.toUpperCase();
+
     const status = get('status') || 'Not Started';
     if (!_DYN_STATUSES.includes(status)) { errors.push(`Row ${r + 1}: invalid status "${status}"`); continue; }
-    const mode = get('required_mode') || null;
-    if (mode && !['CBTC','VATC'].includes(mode)) { errors.push(`Row ${r + 1}: invalid required_mode "${mode}"`); continue; }
-    const intOrNull = (s) => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : null; };
-    const consistOrNull = (s) => {
-      const t = String(s || '').trim().toLowerCase();
-      if (!t || t === 'any' || t === '*') return null;
-      return intOrNull(t);
-    };
-    out.push({
-      test_id,
-      code: get('code') || null,
-      title: get('title') || null,
-      description: get('description') || null,
-      required_mode: mode,
+
+    if (!casesByKey.has(codeKey)) {
+      const existingTestId = existingByCode.get(codeKey) || null;
+      casesByKey.set(codeKey, {
+        code,
+        name: get('case_name') || code,
+        procedure: get('procedure') || '',
+        phase: get('phase') || '',
+        existingTestId,
+        isNew: !existingTestId,
+        runCount: 0,
+      });
+    }
+    const c = casesByKey.get(codeKey);
+    // Backfill case metadata from any row that carries it.
+    if (!c.name && get('case_name')) c.name = get('case_name');
+    if (!c.procedure && get('procedure')) c.procedure = get('procedure');
+    if (!c.phase && get('phase')) c.phase = get('phase');
+    c.runCount++;
+
+    const start = get('start_point');
+    const finish = get('finish_point');
+    const inter = splitList(get('intermediate'));
+    const runCode = `${code}-R${String(c.runCount).padStart(2, '0')}`;
+    const title = (start || finish)
+      ? [start, ...inter, finish].filter(Boolean).join(' → ')
+      : runCode;
+
+    runs.push({
+      _codeKey: codeKey,
+      _substitute: get('substitute'),
+      _runCode: runCode,
+      code: runCode,
+      title,
       status,
-      target_phase: get('target_phase') || null,
-      target_window_start: dateOrNull(get('target_window_start')),
-      target_window_end: dateOrNull(get('target_window_end')),
-      scheduled_for_date: dateOrNull(get('scheduled_for_date')),
-      blocked_reason: get('blocked_reason') || null,
-      notes: get('notes') || null,
-      control_zone_code: get('control_zone_code') || null,
-      consist_size: consistOrNull(get('consist_size')),
-      trains_needed: intOrNull(get('trains_needed')),
-      expected_duration_minutes: intOrNull(get('expected_duration_minutes')),
+      target_phase: get('phase') || null,
+      start_point: start || null,
+      intermediate_points: inter,
+      finish_point: finish || null,
+      track_section_under_test: get('tsut') || null,
+      track_section_access_req: splitList(get('access_req')),
+      control_zone_code: get('control_zone') || get('tsut') || null,
+      prerequisites: get('prerequisites') || null,
+      trains_needed: intOrNull(get('num_trains')),
+      consist_size: consistOrNull(get('train1')),
+      expected_duration_minutes: intOrNull(get('duration')),
+      notes: null,
+      equivalence_group_id: null,
     });
   }
-  return { rows: out, errors };
+
+  // ── Substitute → equivalence groups (union-find over runs) ──────────────
+  const parent = runs.map((_, i) => i);
+  const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+  const byRunCode = new Map(runs.map((r, i) => [r._runCode.toUpperCase(), i]));
+  const firstRunOfCase = new Map();
+  runs.forEach((r, i) => { if (!firstRunOfCase.has(r._codeKey)) firstRunOfCase.set(r._codeKey, i); });
+
+  runs.forEach((r, i) => {
+    const t = (r._substitute || '').trim();
+    if (!t) return;
+    const tU = t.toUpperCase();
+    if (byRunCode.has(tU)) { union(i, byRunCode.get(tU)); return; }
+    if (firstRunOfCase.has(tU)) { union(i, firstRunOfCase.get(tU)); return; }
+    // Substitute references a code we generate as <CASE>-R##; try a loose match
+    // on the case portion so "SIT_016b" style tokens still group sensibly.
+    const looseCase = [...firstRunOfCase.keys()].find(k => tU.includes(k) || k.includes(tU));
+    if (looseCase) { union(i, firstRunOfCase.get(looseCase)); return; }
+    r.notes = `Substitute (unresolved): ${t}`;
+    warnings.push(`Run ${r._runCode}: substitute "${t}" did not match any run or case code — left ungrouped.`);
+  });
+
+  // Assign a shared uuid to each component that has more than one member.
+  const comp = new Map();
+  runs.forEach((_, i) => { const root = find(i); if (!comp.has(root)) comp.set(root, []); comp.get(root).push(i); });
+  let groupCount = 0;
+  for (const members of comp.values()) {
+    if (members.length < 2) continue;
+    groupCount++;
+    const gid = (crypto?.randomUUID?.() || `g-${Date.now()}-${groupCount}`);
+    members.forEach(i => { runs[i].equivalence_group_id = gid; });
+  }
+
+  return { cases: [...casesByKey.values()], runs, errors, warnings, groupCount };
 }
 
 function _dynCSVValidate() {
   const txt = document.getElementById('dyn-csv-text')?.value || '';
   const out = document.getElementById('dyn-csv-status');
   if (!out) return null;
-  if (!txt.trim()) { out.innerHTML = '<span style="color:var(--gray-500);">Paste CSV or pick a file above.</span>'; return null; }
+  if (!txt.trim()) {
+    _dynImportPreview = null;
+    out.innerHTML = '<span style="color:var(--gray-500);">Paste CSV or pick a file above.</span>';
+    return null;
+  }
   const parsed = _dynParseCSV(txt);
-  const { rows, errors } = _dynCSVRowsToInstances(parsed);
-  // Cross-check test_ids against TI cache; warn (not fail) on unknown ids.
-  const unknown = [...new Set(rows.map(r => r.test_id).filter(id => !_dynPage.testItemsById.has(id)))];
+  const res = _dynParseRuns(parsed);
+  _dynImportPreview = res;
+  const { cases, runs, errors, warnings, groupCount } = res;
+  const newCases = cases.filter(c => c.isNew);
   out.innerHTML = `
-    <strong>${rows.length}</strong> valid row(s) parsed${errors.length ? `, <span style="color:#dc2626;">${errors.length} error(s)</span>` : ''}.
-    ${unknown.length ? `<br/><span style="color:#b45309;">Note: ${unknown.length} test_id(s) not found in local cache (${unknown.slice(0,3).map(escapeHtml).join(', ')}${unknown.length>3?', …':''}). They'll fail FK check at insert.</span>` : ''}
-    ${errors.length ? `<details style="margin-top:6px;"><summary style="cursor:pointer;color:#dc2626;font-size:12px;">View errors</summary><pre style="font-size:11px;background:var(--gray-50);padding:8px;margin-top:6px;max-height:180px;overflow:auto;">${errors.map(escapeHtml).join('\n')}</pre></details>` : ''}
+    <strong>${runs.length}</strong> run(s) across <strong>${cases.length}</strong> test case(s)
+    ${newCases.length ? `(<span style="color:#1d4ed8;">${newCases.length} new — will be created</span>)` : '(all existing)'}.
+    ${groupCount ? `<br/><span style="color:#0f766e;">${groupCount} substitute group(s) — each counted once for KPIs.</span>` : ''}
+    ${errors.length ? `<br/><span style="color:#dc2626;">${errors.length} row error(s) — will be skipped.</span>` : ''}
+    ${warnings.length ? `<details style="margin-top:6px;"><summary style="cursor:pointer;color:#b45309;font-size:12px;">${warnings.length} warning(s)</summary><pre style="font-size:11px;background:var(--gray-50);padding:8px;margin-top:6px;max-height:140px;overflow:auto;">${warnings.map(escapeHtml).join('\n')}</pre></details>` : ''}
+    ${errors.length ? `<details style="margin-top:6px;"><summary style="cursor:pointer;color:#dc2626;font-size:12px;">View errors</summary><pre style="font-size:11px;background:var(--gray-50);padding:8px;margin-top:6px;max-height:140px;overflow:auto;">${errors.map(escapeHtml).join('\n')}</pre></details>` : ''}
   `;
-  return { rows, errors };
+  return res;
 }
 
 async function _dynImportCSVRows() {
-  const v = _dynCSVValidate();
-  if (!v || !v.rows.length) { alert('Nothing to import. Validate first.'); return; }
-  if (v.errors.length && !confirm(`${v.errors.length} row(s) had errors and will be skipped. Insert the remaining ${v.rows.length}?`)) return;
+  const v = _dynImportPreview || _dynCSVValidate();
+  if (!v || !v.runs.length) { alert('Nothing to import. Validate first.'); return; }
+  if (v.errors.length && !confirm(`${v.errors.length} row(s) had errors and will be skipped. Continue importing ${v.runs.length} run(s)?`)) return;
+  const by = currentRoleUser?.email || currentRoleUser?.id || null;
   try {
-    const payload = v.rows.map(r => ({ ...r, created_by: currentRoleUser?.email || currentRoleUser?.id || null }));
-    // Insert in chunks of 200 to keep payload size sane.
+    // 1. Create any new dynamic test cases first, so run FKs resolve.
+    const newCases = v.cases.filter(c => c.isNew);
+    if (newCases.length) {
+      const tiRows = newCases.map(c => ({
+        test_id:        c.code,
+        test_case_code: c.code,
+        test_name:      c.name,
+        test_procedure: c.procedure || '',
+        phase:          c.phase || null,
+        scope_type:     'dynamic',
+        status:         'Not Started',
+        weight:         1,
+      }));
+      for (let i = 0; i < tiRows.length; i += 50) {
+        await _dbInsert('test_items', tiRows.slice(i, i + 50));
+      }
+      // Reflect new cases in the in-memory TI cache.
+      if (typeof TI !== 'undefined') {
+        for (const c of newCases) {
+          TI.push({ TestID: c.code, TestCaseCode: c.code, TestName: c.name,
+                    TestProcedure: c.procedure || '', Phase: c.phase || '',
+                    Status: 'Not Started', ScopeType: 'dynamic' });
+        }
+      }
+    }
+
+    // 2. Resolve each run's test_id (existing id or the newly-created code).
+    const testIdByKey = new Map(v.cases.map(c => [c.code.toUpperCase(), c.existingTestId || c.code]));
+    const payload = v.runs.map(r => {
+      const { _codeKey, _substitute, _runCode, ...rest } = r;
+      return { ...rest, test_id: testIdByKey.get(_codeKey), created_by: by };
+    });
+
+    // 3. Insert runs in chunks.
     for (let i = 0; i < payload.length; i += 200) {
       await _dbInsert('dynamic_instances', payload.slice(i, i + 200));
     }
+
     closeModal();
     _dynPage.loaded = false;
     await _dynLoadAll();
     _dynRenderInstances();
-    if (typeof toast === 'function') toast(`Imported ${payload.length} instance(s).`, 'success');
+    if (typeof toast === 'function') {
+      toast(`Imported ${payload.length} run(s)${newCases.length ? `, created ${newCases.length} case(s)` : ''}.`, 'success');
+    }
   } catch (e) {
     alert(`Import failed: ${e.message}`);
   }

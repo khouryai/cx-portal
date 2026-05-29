@@ -411,4 +411,82 @@ grant select, insert, update, delete on table
 grant select on vw_procedure_scope_rollup to authenticated, service_role;
 
 
+-- ============================================================
+-- RUNS + EQUIVALENCE (follow-on migration)
+--
+-- A dynamic_instances row is one executable "run": a movement
+-- from a start point, through optional intermediate points, to
+-- a finish point (points may be platforms, sidings, signals,
+-- etc.). Planning is driven mainly by control_zone_code,
+-- track_section_access_req[] and prerequisites.
+--
+-- equivalence_group_id models the "Substitute" concept: two or
+-- more runs that are alternative ways to satisfy the same
+-- coverage (different route/platform/method, possibly across
+-- test cases). Completing ANY member satisfies the whole group,
+-- and the group counts as ONE unit for KPIs. NULL group = the
+-- run is its own singleton unit.
+-- ============================================================
+alter table dynamic_instances
+  add column if not exists start_point               text,
+  add column if not exists intermediate_points       text[] not null default '{}',
+  add column if not exists finish_point              text,
+  add column if not exists track_section_under_test  text,
+  add column if not exists track_section_access_req  text[] not null default '{}',
+  add column if not exists prerequisites             text,
+  add column if not exists equivalence_group_id      uuid;
+
+create index if not exists dynamic_instances_eqgroup_idx
+  on dynamic_instances (equivalence_group_id);
+create index if not exists dynamic_instances_tsut_idx
+  on dynamic_instances (track_section_under_test);
+create index if not exists dynamic_instances_access_gin
+  on dynamic_instances using gin (track_section_access_req);
+
+-- Per-instance unit key (group members collapse to one unit).
+create or replace view vw_dynamic_units as
+select
+  coalesce(equivalence_group_id::text, id::text) as unit_key,
+  test_id,
+  status,
+  equivalence_group_id
+from dynamic_instances;
+
+-- Per-test-case coverage; a unit is done if ANY member passed.
+create or replace view vw_dynamic_case_coverage as
+with units as (
+  select
+    test_id,
+    coalesce(equivalence_group_id::text, id::text) as unit_key,
+    bool_or(status = 'Pass') as unit_done
+  from dynamic_instances
+  group by test_id, coalesce(equivalence_group_id::text, id::text)
+)
+select
+  test_id,
+  count(*)                          as total_units,
+  count(*) filter (where unit_done) as done_units,
+  round(100.0 * count(*) filter (where unit_done) / nullif(count(*), 0), 1) as pct_complete
+from units
+group by test_id;
+
+-- Global coverage; each equivalence group counts once even when
+-- it spans multiple test cases.
+create or replace view vw_dynamic_global_coverage as
+with gunits as (
+  select
+    coalesce(equivalence_group_id::text, id::text) as unit_key,
+    bool_or(status = 'Pass') as unit_done
+  from dynamic_instances
+  group by coalesce(equivalence_group_id::text, id::text)
+)
+select
+  count(*)                          as total_units,
+  count(*) filter (where unit_done) as done_units
+from gunits;
+
+grant select on vw_dynamic_units, vw_dynamic_case_coverage, vw_dynamic_global_coverage
+  to authenticated, service_role;
+
+
 notify pgrst, 'reload schema';
