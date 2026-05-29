@@ -1939,6 +1939,8 @@ async function loadTestItems() {
         ParentTestId:  r.parent_test_id || null,
         AssetId:       r.asset_id     || null,
         ScopeType:     r.scope_type   || 'static',
+        TestScope:     r.test_scope   || '',
+        ApplicableLocations: r.applicable_locations || [],
         SwSnapshot:    r.sw_snapshot || null,
         SwSnapshotAt:  r.sw_snapshot_at || null,
         RegressionGroupId: r.regression_group_id || r.test_id,
@@ -31697,6 +31699,8 @@ function _dynBuildTestItemsIndex() {
       subsystem: ti.Subsystem || '',
       phase: ti.Phase || '',
       scope_type: String(ti.ScopeType || 'static').toLowerCase(),
+      test_scope: ti.TestScope || '',
+      applicable_locations: ti.ApplicableLocations || [],
     });
   }
 }
@@ -31761,7 +31765,7 @@ function _dynRenderInstances() {
     if (sf && r.status !== sf) return false;
     if (tf && r.test_id !== tf) return false;
     if (q) {
-      const hay = [r.code, r.title, r.description, r.target_phase, r.control_zone_code, r.notes,
+      const hay = [r.code, r.title, r.description, r.target_phase, r.notes,
         r.start_point, r.finish_point, r.track_section_under_test,
         (r.track_section_access_req || []).join(' '), r.prerequisites].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
@@ -31808,7 +31812,6 @@ function _dynRenderInstances() {
           <th>Run (start → finish)</th>
           <th>Phase</th>
           <th>Under test / Access</th>
-          <th>Zone</th>
           <th>Status</th>
           <th style="width:90px;">Actions</th>
         </tr></thead>
@@ -31825,9 +31828,6 @@ function _dynRenderInstances() {
 
 function _dynRowHtml(r) {
   const tc = _dynPage.testItemsById.get(r.test_id);
-  const zoneCell = r.control_zone_code
-    ? `<span style="font-family:var(--font-mono,monospace);font-size:11px;">${escapeHtml(r.control_zone_code)}</span>`
-    : '<span style="color:var(--gray-400);">—</span>';
   const access = (r.track_section_access_req || []);
   const sectionsCell = (r.track_section_under_test || access.length)
     ? `${r.track_section_under_test ? `<span style="font-family:var(--font-mono,monospace);font-size:11px;font-weight:600;">${escapeHtml(r.track_section_under_test)}</span>` : ''}
@@ -31853,7 +31853,6 @@ function _dynRowHtml(r) {
       <td>${escapeHtml(r.title || '')}${prereq}${subBadge}</td>
       <td>${r.target_phase ? `<span class="tag tag-phase">${escapeHtml(r.target_phase)}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>
       <td style="font-size:12px;">${sectionsCell}</td>
-      <td>${zoneCell}</td>
       <td>
         <select onchange="_dynInstanceUpdateStatus('${escapeHtml(r.id)}', this.value, this)"
                 title="Update status inline"
@@ -31938,11 +31937,28 @@ function _dynOpenInstanceModal(id) {
   });
 }
 
+// Level-2 LOCS entries are the track sections / zones (name like "W40 Millbrae
+// Station"); the code is the first token. Used to populate section pickers.
+function _dynSectionOptions() {
+  return (typeof LOCS !== 'undefined' ? LOCS : [])
+    .filter(l => l.level === 2)
+    .map(l => {
+      const code = String(l.name || '').trim().split(/\s+/)[0] || '';
+      return { code, name: l.name || code };
+    })
+    .filter(o => o.code)
+    .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+}
+
 function _dynBuildInstanceForm(inst, tcOpts) {
   const v = inst || {};
   const consistOpts = [1, 2, 3, 4, 5, 6, 7, 8];
   const consistIsKnown = v.consist_size != null && consistOpts.includes(v.consist_size);
-  return `
+  const sectionOpts = _dynSectionOptions();
+  const tsut = v.track_section_under_test || '';
+  const tsutKnown = sectionOpts.some(o => o.code === tsut);
+  const sectionDatalist = `<datalist id="dyn-section-codes">${sectionOpts.map(o => `<option value="${escapeHtml(o.code)}">${escapeHtml(o.name)}</option>`).join('')}</datalist>`;
+  return `${sectionDatalist}`+`
     <div style="padding:8px 24px 16px;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
       <div class="form-field" style="grid-column:1/-1;">
         <label>Test case <span style="color:var(--gray-500);font-weight:400;">(dynamic-scope only)</span></label>
@@ -31980,12 +31996,16 @@ function _dynBuildInstanceForm(inst, tcOpts) {
       </div>
 
       <div class="form-field">
-        <label>Track section under test</label>
-        <input id="dyn-f-tsut" value="${escapeHtml(v.track_section_under_test || '')}" placeholder="e.g. W40" />
+        <label>Track section under test <span style="color:var(--gray-500);font-weight:400;">(core zone — the planning axis)</span></label>
+        <select id="dyn-f-tsut">
+          <option value="">—</option>
+          ${sectionOpts.map(o => `<option value="${escapeHtml(o.code)}" ${o.code===tsut?'selected':''}>${escapeHtml(o.code)} — ${escapeHtml((o.name||'').slice(0,40))}</option>`).join('')}
+          ${!tsutKnown && tsut ? `<option value="${escapeHtml(tsut)}" selected>${escapeHtml(tsut)}</option>` : ''}
+        </select>
       </div>
       <div class="form-field">
-        <label>Track section access req <span style="color:var(--gray-500);font-weight:400;">(comma-separated)</span></label>
-        <input id="dyn-f-access" value="${escapeHtml((v.track_section_access_req || []).join(', '))}" placeholder="e.g. W40, Y10" />
+        <label>Track section access req <span style="color:var(--gray-500);font-weight:400;">(comma-separated; from locations)</span></label>
+        <input id="dyn-f-access" list="dyn-section-codes" value="${escapeHtml((v.track_section_access_req || []).join(', '))}" placeholder="e.g. W40, Y10" />
       </div>
       <div class="form-field" style="grid-column:1/-1;">
         <label>Prerequisites</label>
@@ -32029,10 +32049,6 @@ function _dynBuildInstanceForm(inst, tcOpts) {
         <input id="dyn-f-blocked" value="${escapeHtml(v.blocked_reason || '')}" placeholder="" />
       </div>
 
-      <div class="form-field">
-        <label>Control zone</label>
-        <input id="dyn-f-zone" value="${escapeHtml(v.control_zone_code || '')}" placeholder="e.g. W40" />
-      </div>
       <div class="form-field">
         <label>Consist size <span style="color:var(--gray-500);font-weight:400;">(cars — "Any" means consist-agnostic)</span></label>
         <select id="dyn-f-consist">
@@ -32087,7 +32103,6 @@ async function _dynSaveInstance(id) {
     scheduled_for_date: get('dyn-f-sched'),
     blocked_reason: get('dyn-f-blocked'),
     notes: get('dyn-f-notes'),
-    control_zone_code: get('dyn-f-zone'),
     consist_size: intOrNull(get('dyn-f-consist')),
     trains_needed: intOrNull(get('dyn-f-trains')),
     expected_duration_minutes: intOrNull(get('dyn-f-exp-dur')),
@@ -32139,10 +32154,12 @@ function _dynOpenCSVModal() {
           <code>Prerequisites</code>, <code>Phase</code>, <code>Track Section Under Test</code>,
           <code>Track Section Access Req</code>, <code>Number of Trains</code>, <code>Train 1 car #</code>,
           <code>Estimated duration (m)</code>, <code>Starting Point</code>, <code>Intermediate Points</code>,
-          <code>Finish Point</code>, <code>Substitute</code>.
+          <code>Finish Point</code>, <code>Substitute</code>, <code>Test Scope</code>, <code>Applicable Locations</code>.
           Each row is one executable run; rows sharing a <code>Test Case Code</code> roll up to that case.
           Unknown case codes are created as dynamic test cases. A <code>Substitute</code> linking two runs
           groups them so completing either satisfies both (counted once for KPIs).
+          <code>Test Scope</code> = <code>per_location</code> / <code>per_phase</code> / <code>functional</code> (cadence of the case);
+          <code>Applicable Locations</code> lists the section codes a per-location case repeats at.
         </p>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
           <input id="dyn-csv-file" type="file" accept=".csv,.xlsx,.xls" style="font-size:12px;" />
@@ -32183,15 +32200,16 @@ const _DYN_TEMPLATE_HEADERS = [
   'Track Section Under Test', 'Track Section Access Req', 'Number of Trains',
   'Train 1 car #', 'Train 2 car #', 'Substitute', 'Estimated duration (m)',
   'Starting Point', 'Intermediate Points', 'Finish Point',
+  'Test Scope', 'Applicable Locations',
 ];
 
 function _dynCSVPasteSample() {
   const h = _DYN_TEMPLATE_HEADERS.join(',');
   const sample = [
     h,
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M',
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,W40,1,Any,,,20,W45-L,,W45-A',
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,"W40, W34",1,Any,,SIT_016b,20,W37-G,,W33-N',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M,per_location,"W40, W37, W45"',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,W40,1,Any,,,20,W45-L,,W45-A,per_location,"W40, W37, W45"',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,"W40, W34",1,Any,,SIT_016b,20,W37-G,,W33-N,per_location,"W40, W37, W45"',
   ].join('\n');
   document.getElementById('dyn-csv-text').value = sample;
   _dynCSVValidate();
@@ -32201,8 +32219,8 @@ function _dynDownloadCSVTemplate() {
   const headers = _DYN_TEMPLATE_HEADERS.join(',');
   const instructions = '# One row per run. REQUIRED: Test Case Code. Rows with the same code roll up to one test case. Track Section Access Req / Intermediate Points: comma- or semicolon-separated. Substitute: a Test Case Code or run code that is an alternative way to pass (groups the runs, counted once for KPIs).';
   const examples = [
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M',
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,W40,1,Any,,,20,W45-A,,W45-L',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M,per_location,"W40, W37, W45"',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,W40,1,Any,,,20,W45-A,,W45-L,per_location,"W40, W37, W45"',
   ];
   const csv = [headers, instructions, ...examples].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -32253,6 +32271,17 @@ function _dynParseCSV(text) {
   return rows.filter(r => r.length > 1 || (r[0] && r[0].trim() !== ''));
 }
 
+// Normalize a free-text scope/cadence value to one of the canonical codes.
+function _dynNormScope(raw) {
+  const t = String(raw || '').trim().toLowerCase();
+  if (!t) return null;
+  if (t.includes('loc')) return 'per_location';
+  if (t.includes('phase')) return 'per_phase';
+  if (t.includes('func') || t.includes('one')) return 'functional';
+  if (['per_location','per_phase','functional'].includes(t)) return t;
+  return null;
+}
+
 // Last parsed import preview, set by _dynCSVValidate, consumed by _dynImportCSVRows.
 let _dynImportPreview = null;
 
@@ -32282,8 +32311,9 @@ function _dynHeaderKey(raw) {
     'finish point': 'finish_point',
     'substitute': 'substitute',
     'status': 'status',
-    'control zone': 'control_zone',
-    'control zone code': 'control_zone',
+    'test scope': 'test_scope',
+    'cadence': 'test_scope',
+    'applicable locations': 'applicable_locations',
   };
   return M[h] || null;
 }
@@ -32339,6 +32369,8 @@ function _dynParseRuns(parsed) {
         name: get('case_name') || code,
         procedure: get('procedure') || '',
         phase: get('phase') || '',
+        test_scope: _dynNormScope(get('test_scope')),
+        applicable_locations: splitList(get('applicable_locations')),
         existingTestId,
         isNew: !existingTestId,
         runCount: 0,
@@ -32349,6 +32381,10 @@ function _dynParseRuns(parsed) {
     if (!c.name && get('case_name')) c.name = get('case_name');
     if (!c.procedure && get('procedure')) c.procedure = get('procedure');
     if (!c.phase && get('phase')) c.phase = get('phase');
+    if (!c.test_scope) c.test_scope = _dynNormScope(get('test_scope'));
+    if ((!c.applicable_locations || !c.applicable_locations.length) && get('applicable_locations')) {
+      c.applicable_locations = splitList(get('applicable_locations'));
+    }
     c.runCount++;
 
     const start = get('start_point');
@@ -32372,7 +32408,6 @@ function _dynParseRuns(parsed) {
       finish_point: finish || null,
       track_section_under_test: get('tsut') || null,
       track_section_access_req: splitList(get('access_req')),
-      control_zone_code: get('control_zone') || get('tsut') || null,
       prerequisites: get('prerequisites') || null,
       trains_needed: intOrNull(get('num_trains')),
       consist_size: consistOrNull(get('train1')),
@@ -32459,6 +32494,8 @@ async function _dynImportCSVRows() {
         test_procedure: c.procedure || '',
         phase:          c.phase || null,
         scope_type:     'dynamic',
+        test_scope:     c.test_scope || null,
+        applicable_locations: c.applicable_locations || [],
         status:         'Not Started',
         weight:         1,
       }));
@@ -32470,7 +32507,26 @@ async function _dynImportCSVRows() {
         for (const c of newCases) {
           TI.push({ TestID: c.code, TestCaseCode: c.code, TestName: c.name,
                     TestProcedure: c.procedure || '', Phase: c.phase || '',
-                    Status: 'Not Started', ScopeType: 'dynamic' });
+                    Status: 'Not Started', ScopeType: 'dynamic',
+                    TestScope: c.test_scope || '', ApplicableLocations: c.applicable_locations || [] });
+        }
+      }
+    }
+
+    // 1b. Existing matched cases: ensure they're flagged dynamic so they appear
+    //     in this module, and apply any scope/cadence supplied by the import.
+    const matchedCases = v.cases.filter(c => !c.isNew && c.existingTestId);
+    for (const c of matchedCases) {
+      const upd = { scope_type: 'dynamic' };
+      if (c.test_scope) upd.test_scope = c.test_scope;
+      if (c.applicable_locations && c.applicable_locations.length) upd.applicable_locations = c.applicable_locations;
+      await _dbUpdate('test_items', upd, { test_id: c.existingTestId });
+      if (typeof TI !== 'undefined') {
+        const ti = TI.find(t => t.TestID === c.existingTestId);
+        if (ti) {
+          ti.ScopeType = 'dynamic';
+          if (c.test_scope) ti.TestScope = c.test_scope;
+          if (c.applicable_locations && c.applicable_locations.length) ti.ApplicableLocations = c.applicable_locations;
         }
       }
     }
@@ -32516,7 +32572,7 @@ function _dynRenderBoard() {
   const monthKeys = months.map(_dynMonthKey);
   for (const r of _dynPage.instances) {
     const rowKeys = _dynPage.boardAxis === 'zone'
-      ? [r.control_zone_code || '— No zone —']
+      ? [r.track_section_under_test || '— No section —']
       : [r.target_phase || '— No phase —'];
     // Date to bucket on: scheduled_for_date else target_window_start else target_window_end.
     const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
@@ -32542,7 +32598,7 @@ function _dynRenderBoard() {
       <label style="font-size:13px;color:var(--gray-600);">Rows:</label>
       <select onchange="_dynPage.boardAxis=this.value;_dynRenderBoard();">
         <option value="phase" ${_dynPage.boardAxis==='phase'?'selected':''}>Phase</option>
-        <option value="zone" ${_dynPage.boardAxis==='zone'?'selected':''}>Control zone</option>
+        <option value="zone" ${_dynPage.boardAxis==='zone'?'selected':''}>Section under test</option>
       </select>
     </div>
   `;
@@ -32591,7 +32647,7 @@ function _dynBoardToday() {
 function _dynBoardOpenCell(rowKey, monthKey) {
   const matches = _dynPage.instances.filter(r => {
     const rowKeys = _dynPage.boardAxis === 'zone'
-      ? [r.control_zone_code || '— No zone —']
+      ? [r.track_section_under_test || '— No section —']
       : [r.target_phase || '— No phase —'];
     if (!rowKeys.includes(rowKey)) return false;
     const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
@@ -33233,26 +33289,29 @@ async function _dynRenderCases() {
           <tr>
             <th>Code</th>
             <th>Name</th>
+            <th>Cadence</th>
             <th>Rollup status</th>
             <th style="text-align:right;">Instances</th>
             <th style="text-align:right;">Complete</th>
             <th style="text-align:right;">Prereqs</th>
-            <th style="text-align:right;width:200px;">Actions</th>
+            <th style="text-align:right;width:260px;">Actions</th>
           </tr>
         </thead>
         <tbody>
           ${rollup.length === 0
-            ? `<tr><td colspan="7" style="padding:30px;text-align:center;color:var(--gray-500);">No dynamic test cases yet. Open the Test Register and toggle a test case's scope to Dynamic.</td></tr>`
+            ? `<tr><td colspan="8" style="padding:30px;text-align:center;color:var(--gray-500);">No dynamic test cases yet. Open the Test Register and toggle a test case's scope to Dynamic.</td></tr>`
             : rollup.map(r => `
               <tr style="border-top:1px solid var(--gray-100);">
                 <td style="font-family:monospace;font-size:11.5px;">${escapeHtml(r.test_case_code || r.test_id)}</td>
                 <td>${escapeHtml((r.test_name || '').slice(0,80))}</td>
+                <td>${_dynCadenceBadge(r.test_id)}</td>
                 <td>${_dynStatusBadge(r.rollup_status)}</td>
                 <td style="text-align:right;font-family:monospace;">${r.instance_count}</td>
                 <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.complete_count}</td>
                 <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${prereqCounts.get(r.test_id) || 0}</td>
                 <td style="text-align:right;white-space:nowrap;">
                   <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynCaseFilterInstances('${escapeHtml(r.test_id)}')">Instances</button>
+                  <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynOpenCadenceModal('${escapeHtml(r.test_id)}')">Cadence</button>
                   <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dtOpenPrereqEditor('${escapeHtml(r.test_id)}')">Prereqs</button>
                   <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openTestCaseScopeModal('${escapeHtml(r.test_id)}')">Scope</button>
                 </td>
@@ -33267,6 +33326,77 @@ function _dynCaseFilterInstances(testId) {
   _dynPage.testFilter = testId;
   _dynPage.tab = 'instances';
   renderDynamicTestingPage();
+}
+
+const _DYN_SCOPE_LABELS = {
+  per_location: 'Per location',
+  per_phase:    'Per phase',
+  functional:   'One-time functional',
+};
+
+function _dynCadenceBadge(testId) {
+  const info = _dynPage.testItemsById.get(testId);
+  const scope = info?.test_scope;
+  if (!scope) return '<span style="color:var(--gray-400);font-size:11px;">— not set —</span>';
+  const locs = info?.applicable_locations || [];
+  const sub = scope === 'per_location' && locs.length
+    ? `<br/><span style="font-size:10px;color:var(--gray-500);">${escapeHtml(locs.join(', '))}</span>` : '';
+  return `<span class="badge" style="background:#eef2ff;color:#3730a3;font-size:10.5px;">${escapeHtml(_DYN_SCOPE_LABELS[scope] || scope)}</span>${sub}`;
+}
+
+function _dynOpenCadenceModal(testId) {
+  const info = _dynPage.testItemsById.get(testId) || {};
+  const scope = info.test_scope || '';
+  const locs  = (info.applicable_locations || []).join(', ');
+  const sectionOpts = _dynSectionOptions();
+  modal({
+    title: 'Test cadence',
+    sub: `${escapeHtml(info.code || testId)} — ${escapeHtml((info.name || '').slice(0,60))}`,
+    body: `
+      <datalist id="dyn-cadence-sections">${sectionOpts.map(o => `<option value="${escapeHtml(o.code)}">${escapeHtml(o.name)}</option>`).join('')}</datalist>
+      <div style="padding:8px 24px 16px;">
+        <div class="form-field" style="margin-bottom:14px;">
+          <label>Cadence <span style="color:var(--gray-500);font-weight:400;">(how this procedure is repeated)</span></label>
+          <select id="dyn-cad-scope" onchange="document.getElementById('dyn-cad-locs-wrap').style.display=this.value==='per_location'?'block':'none';">
+            <option value="" ${!scope?'selected':''}>— not set —</option>
+            <option value="per_location" ${scope==='per_location'?'selected':''}>Per location (repeat at each applicable location)</option>
+            <option value="per_phase" ${scope==='per_phase'?'selected':''}>Per phase (once per phase)</option>
+            <option value="functional" ${scope==='functional'?'selected':''}>One-time functional</option>
+          </select>
+        </div>
+        <div class="form-field" id="dyn-cad-locs-wrap" style="display:${scope==='per_location'?'block':'none'};">
+          <label>Applicable locations <span style="color:var(--gray-500);font-weight:400;">(comma-separated section codes you assign)</span></label>
+          <input id="dyn-cad-locs" list="dyn-cadence-sections" value="${escapeHtml(locs)}" placeholder="e.g. W40, W41, W45" />
+        </div>
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="_dynSaveCadence('${escapeHtml(testId)}')">Save</button>`,
+  });
+}
+
+async function _dynSaveCadence(testId) {
+  const scope = document.getElementById('dyn-cad-scope')?.value || null;
+  const locs  = String(document.getElementById('dyn-cad-locs')?.value || '')
+    .split(/[;,]/).map(x => x.trim()).filter(Boolean);
+  const payload = {
+    test_scope: scope || null,
+    applicable_locations: scope === 'per_location' ? locs : [],
+  };
+  try {
+    await _dbUpdate('test_items', payload, { test_id: testId });
+    const info = _dynPage.testItemsById.get(testId);
+    if (info) { info.test_scope = payload.test_scope || ''; info.applicable_locations = payload.applicable_locations; }
+    if (typeof TI !== 'undefined') {
+      const ti = TI.find(t => (t.TestID || t.test_id) === testId);
+      if (ti) { ti.TestScope = payload.test_scope || ''; ti.ApplicableLocations = payload.applicable_locations; }
+    }
+    closeModal();
+    if (typeof toast === 'function') toast('Cadence saved', 'success');
+    _dynRenderCases();
+  } catch (e) {
+    alert(`Save failed: ${e.message}`);
+  }
 }
 
 
@@ -33309,7 +33439,7 @@ async function _dynRenderVariance() {
           <table class="dyn-table">
             <thead><tr>
               <th>Procedure</th>
-              <th>Zone</th>
+              <th>Section under test</th>
               <th style="text-align:right;">N</th>
               <th style="text-align:right;">Avg expected</th>
               <th style="text-align:right;">Avg actual</th>
@@ -33322,7 +33452,7 @@ async function _dynRenderVariance() {
               const tone = delta > 15 ? 'var(--bad)' : delta < -15 ? 'var(--info)' : 'var(--gray-700)';
               return `<tr style="border-top:1px solid var(--gray-100);">
                 <td>${escapeHtml(r.procedure_name || '—')}</td>
-                <td style="font-family:monospace;font-size:11.5px;">${escapeHtml(r.control_zone_code || '—')}</td>
+                <td style="font-family:monospace;font-size:11.5px;">${escapeHtml(r.track_section_under_test || '—')}</td>
                 <td style="text-align:right;font-family:monospace;">${r.n_completed}</td>
                 <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.avg_expected_min}</td>
                 <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.avg_actual_min}</td>

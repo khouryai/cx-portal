@@ -490,3 +490,37 @@ grant select on vw_dynamic_units, vw_dynamic_case_coverage, vw_dynamic_global_co
 
 
 notify pgrst, 'reload schema';
+
+
+-- ============================================================
+-- FOLLOW-ON: drop control_zone_code, add test-scope/cadence
+-- (applied live as migration dynamic_drop_control_zone_add_scope)
+--
+-- track_section_under_test is now the single core zone — the planning,
+-- booking, board and KPI axis. control_zone_code is removed; access zones
+-- live in track_section_access_req[]. test_items gains a cadence
+-- classification so one procedure can be per-location, per-phase, or
+-- one-time functional.
+-- ============================================================
+
+-- control_zone_code superseded by track_section_under_test.
+drop index if exists idx_dynamic_instances_control_zone;
+alter table dynamic_instances drop column if exists control_zone_code;
+create index if not exists idx_dynamic_instances_tsut
+  on dynamic_instances (track_section_under_test);
+
+-- Cadence classification on the test case.
+alter table test_items
+  add column if not exists test_scope text
+    check (test_scope is null or test_scope in ('per_location','per_phase','functional')),
+  add column if not exists applicable_locations text[] default '{}';
+comment on column test_items.test_scope is
+  'Dynamic-case cadence: per_location (repeat per applicable_locations), per_phase (once per phase), functional (one-time).';
+comment on column test_items.applicable_locations is
+  'For per_location scope: user-defined LOCS level-2 section codes (e.g. W40) the procedure repeats at.';
+
+-- vw_dynamic_duration_variance and fn_feasible_instances are recreated to
+-- group/filter on track_section_under_test instead of control_zone_code.
+-- (Full bodies in migration dynamic_drop_control_zone_add_scope.)
+
+notify pgrst, 'reload schema';
