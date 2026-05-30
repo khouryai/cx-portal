@@ -11093,7 +11093,10 @@ a:focus-visible {
   display: none;
   position: fixed;
   inset: 0;
-  z-index: 9000;
+  /* Below .modal-overlay (4500) so dialogs opened from the viewer — e.g. the
+     admin "Manage markups" modal — render in front of it, while still covering
+     page chrome (headers 3000, sidenav, mobile bars). */
+  z-index: 3800;
   background: #0f172a;
   flex-direction: column;
 }
