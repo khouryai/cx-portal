@@ -302,6 +302,14 @@ Chart.defaults.borderColor = '#ebebeb';
 const _adminPages = new Set(['admin-templates','admin-weights','admin-locations','admin-fieldconfig','admin-directory','audit','admin-p6','admin-assets','admin-planning','admin-config']);
 let _adminModeOn = false;
 
+// ── Mobile PWA tab bar ───────────────────────────────────────────────────────
+// The bottom tab bar exposes only the modules chosen for mobile field use.
+function _mobileGo(page) { showPage(page); window.scrollTo(0, 0); }
+function _syncMobileTabs(name) {
+  document.querySelectorAll('.m-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.mpage === name));
+}
+
 function showPage(name) {
   // Tear down planning calendar/timeline instances on any page change to avoid leaks
   if (typeof _planningCleanupInstances === 'function') _planningCleanupInstances();
@@ -309,6 +317,7 @@ function showPage(name) {
   document.getElementById('page-' + name)?.classList.add('active');
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
   document.querySelector(`.nav-link[data-page="${name}"]`)?.classList.add('active');
+  _syncMobileTabs(name);
   // Auto-switch to admin mode when navigating to an admin page
   if (_adminPages.has(name) && !_adminModeOn) _sidenavAdminOpen();
   // Re-render pages that need fresh state on each visit
