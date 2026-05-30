@@ -12779,3 +12779,9 @@ a:focus-visible {
   .m-tab:active { background: var(--gray-50); }
 }
 
+/* Drawing viewer: own all touch gestures so we can pinch-zoom (otherwise the
+   browser steals two-finger gestures for page zoom). One finger still draws
+   markup; two fingers pinch to zoom / drag to pan. */
+#drw-viewer-body,
+#drw-markup-canvas { touch-action: none; }
+
