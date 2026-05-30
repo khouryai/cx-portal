@@ -31245,6 +31245,110 @@ async function _drwZoomBy(mult) {
 function _drwZoomIn() { _drwZoomBy(1.2); }
 function _drwZoomOut() { _drwZoomBy(1 / 1.2); }
 
+// ── Pinch-to-zoom (touch) + ctrl/⌘-wheel zoom ───────────────────────────────
+// Strategy: during a 2-finger gesture we apply a cheap CSS transform to the
+// canvas wrapper for smooth live preview, then on release we re-rasterise the
+// page once at the new scale (crisp) and adjust scroll so the point under the
+// fingers stays put. Single-finger markup drawing is unaffected.
+let _drwGestureLock = false;        // suppress 1-finger markup mid-gesture
+let _drwPinchInited = false;        // listeners attached once (body persists)
+const _drwTouchPts  = new Map();    // pointerId -> {x,y}
+let _drwPinch       = null;         // active gesture state
+
+function _drwTwoPts() { const it = _drwTouchPts.values(); return [it.next().value, it.next().value]; }
+function _drwDist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function _drwMid(a, b)  { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+
+// Zoom to an absolute scale, keeping the screen point (cx,cy) fixed.
+async function _drwZoomToScale(target, cx, cy) {
+  const wrap = document.getElementById('drw-canvas-wrap');
+  const body = document.getElementById('drw-viewer-body');
+  if (!wrap || !body || !_drwPdfDoc) return;
+  target = Math.max(0.25, Math.min(4, target));
+  const r0 = wrap.getBoundingClientRect();
+  const ux = r0.width  ? (cx - r0.left) / r0.width  : 0.5;
+  const uy = r0.height ? (cy - r0.top)  / r0.height : 0.5;
+  _drwZoomMode  = 'manual';
+  _drwZoomScale = target;
+  await _drwRenderPage(_drwPageIndex);
+  const r1 = wrap.getBoundingClientRect();
+  body.scrollLeft += (r1.left + ux * r1.width)  - cx;
+  body.scrollTop  += (r1.top  + uy * r1.height) - cy;
+}
+
+function _drwInitPinchZoom() {
+  if (_drwPinchInited) return;
+  const body = document.getElementById('drw-viewer-body');
+  if (!body) return;
+  _drwPinchInited = true;
+
+  // Capture phase: react to the 2nd finger before the markup canvas does.
+  body.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch') return;
+    _drwTouchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (_drwTouchPts.size === 2) {
+      _drwGestureLock = true;
+      _drwIsDrawing = false; _drwCurPath = []; _drwDragState = null;
+      _drwRedraw();
+      const [a, b] = _drwTwoPts();
+      const mid  = _drwMid(a, b);
+      const wrap = document.getElementById('drw-canvas-wrap');
+      const r    = wrap ? wrap.getBoundingClientRect() : { left: 0, top: 0, width: 1, height: 1 };
+      _drwPinch = {
+        startDist: _drwDist(a, b) || 1,
+        scale0:   _drwZoomScale,
+        startMid: mid,
+        curMid:   mid,
+        ux: r.width  ? (mid.x - r.left) / r.width  : 0.5,
+        uy: r.height ? (mid.y - r.top)  / r.height : 0.5,
+        ratio: 1,
+      };
+    }
+  }, true);
+
+  body.addEventListener('pointermove', e => {
+    if (!_drwPinch || !_drwTouchPts.has(e.pointerId)) return;
+    _drwTouchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (_drwTouchPts.size < 2) return;
+    e.preventDefault();
+    const [a, b] = _drwTwoPts();
+    const mid = _drwMid(a, b);
+    let ratio = _drwDist(a, b) / _drwPinch.startDist;
+    ratio = Math.max(0.25 / _drwPinch.scale0, Math.min(4 / _drwPinch.scale0, ratio));
+    _drwPinch.ratio = ratio;
+    _drwPinch.curMid = mid;
+    const wrap = document.getElementById('drw-canvas-wrap');
+    if (wrap) {
+      const dx = mid.x - _drwPinch.startMid.x, dy = mid.y - _drwPinch.startMid.y;
+      wrap.style.transition = 'none';
+      wrap.style.transformOrigin = `${_drwPinch.ux * 100}% ${_drwPinch.uy * 100}%`;
+      wrap.style.transform = `translate(${dx}px, ${dy}px) scale(${ratio})`;
+    }
+  }, true);
+
+  const endTouch = e => {
+    if (!_drwTouchPts.has(e.pointerId)) return;
+    _drwTouchPts.delete(e.pointerId);
+    if (_drwPinch && _drwTouchPts.size < 2) {
+      const p = _drwPinch; _drwPinch = null;
+      const wrap = document.getElementById('drw-canvas-wrap');
+      if (wrap) { wrap.style.transform = ''; wrap.style.transformOrigin = ''; wrap.style.transition = ''; }
+      _drwZoomToScale(p.scale0 * p.ratio, p.curMid.x, p.curMid.y);
+    }
+    if (_drwTouchPts.size === 0) _drwGestureLock = false;
+  };
+  body.addEventListener('pointerup', endTouch, true);
+  body.addEventListener('pointercancel', endTouch, true);
+
+  // Trackpad / mouse: ctrl(⌘)+wheel = zoom about the cursor (trackpad pinch
+  // is reported by browsers as ctrl+wheel).
+  body.addEventListener('wheel', e => {
+    if (!e.ctrlKey || !_drwPdfDoc) return;
+    e.preventDefault();
+    _drwZoomToScale(_drwZoomScale * (e.deltaY < 0 ? 1.1 : 1 / 1.1), e.clientX, e.clientY);
+  }, { passive: false });
+}
+
 // ── Markup canvas ──────────────────────────────────────────────────────────
 function _drwInitMarkupCanvas(canvas) {
   // Remove old listeners by cloning
@@ -31259,6 +31363,7 @@ function _drwInitMarkupCanvas(canvas) {
   fresh.addEventListener('keydown', _drwCanvasKeyDown);
   fresh.tabIndex = 0;
   _drwUpdateCursor();
+  _drwInitPinchZoom();
 }
 
 function _drwCanvasXY(e) {
@@ -31271,6 +31376,7 @@ function _drwCanvasXY(e) {
 }
 
 function _drwPointerDown(e) {
+  if (_drwGestureLock) return;          // a 2-finger pinch is in progress
   _drwRemoveTextEditor(true);
   const canvas = document.getElementById('drw-markup-canvas');
   canvas?.focus();
@@ -31298,6 +31404,7 @@ function _drwPointerDown(e) {
 }
 
 function _drwPointerMove(e) {
+  if (_drwGestureLock) return;
   const { fx, fy } = _drwCanvasXY(e);
   if (_drwDragState) {
     _drwApplyDrag(fx, fy, e.shiftKey);
@@ -31311,6 +31418,7 @@ function _drwPointerMove(e) {
 }
 
 function _drwPointerUp(e) {
+  if (_drwGestureLock) return;
   if (_drwDragState) {
     _drwDragState = null;
     _drwRedraw();
