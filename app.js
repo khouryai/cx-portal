@@ -853,6 +853,7 @@ function refreshDashboard() {
   renderLocationChart();
   renderFailedList();
   renderHighPunchList();
+  _dashRenderActiveView();
 }
 
 function renderPhaseGrid() {
@@ -1079,6 +1080,308 @@ function renderHighPunchList() {
       </div>
     </div>`).join('')
   : `<div style="color:var(--gray-500);font-size:12px;padding:8px 0;">No high-priority items</div>`;
+}
+
+// ==========================================
+// DASHBOARD VIEW SELECTOR (Overview / Velocity / Productivity / Schedule / Quality)
+// ==========================================
+let _dashView    = 'overview';
+let _dashProgress = null;   // cached kpi_test_progress rows
+
+function _dashSet(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
+
+function setDashView(view) {
+  _dashView = view;
+  document.querySelectorAll('.dash-view').forEach(el => {
+    el.style.display = (el.id === 'dash-view-' + view) ? '' : 'none';
+  });
+  document.querySelectorAll('.dash-view-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.dview === view);
+  });
+  _dashRenderActiveView();
+}
+
+function _dashRenderActiveView() {
+  if      (_dashView === 'velocity')     _dashRenderVelocity();
+  else if (_dashView === 'productivity') _dashRenderProductivity();
+  else if (_dashView === 'schedule')     _dashRenderSchedule();
+  else if (_dashView === 'quality')      _dashRenderQuality();
+}
+
+// Per-test completion timing + rework counts, reconstructed server-side from
+// db_change_log (view: kpi_test_progress). Cached for the session; pass force
+// to refetch after edits.
+async function _dashGetProgress(force = false) {
+  if (_dashProgress && !force) return _dashProgress;
+  try { _dashProgress = await _fetchAnon('kpi_test_progress?select=*'); }
+  catch (e) { console.warn('[kpi] progress fetch failed:', e.message); _dashProgress = []; }
+  return _dashProgress;
+}
+
+const _DAY_MS = 86400000;
+function _dashWeekStart(d) { const t = new Date(d); const off = (t.getDay() + 6) % 7; t.setHours(0,0,0,0); t.setDate(t.getDate() - off); return t; }
+function _dashFmtDay(d)  { return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+
+// ── Velocity & Throughput ──────────────────────────────────────────────────
+async function _dashRenderVelocity() {
+  const rows  = await _dashGetProgress();
+  const now   = Date.now();
+  const scope = rows.filter(r => r.status !== 'Not Applicable').length;
+  const doneDates = rows.filter(r => r.effective_completed_at)
+                        .map(r => new Date(r.effective_completed_at).getTime())
+                        .sort((a, b) => a - b);
+  const doneN  = doneDates.length;
+  const within = days => doneDates.filter(t => (now - t) <= days * _DAY_MS).length;
+
+  let avgWk = 0;
+  if (doneN) { const spanDays = Math.max(1, (now - doneDates[0]) / _DAY_MS); avgWk = doneN / (spanDays / 7); }
+  const remaining = scope - doneN;
+  let eta = '—';
+  if (remaining <= 0)      eta = 'Complete';
+  else if (avgWk > 0)      eta = new Date(now + (remaining / avgWk) * 7 * _DAY_MS).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+  const tested  = rows.filter(r => r.pass_events > 0 || r.fail_events > 0);
+  const cleanFP = rows.filter(r => r.pass_events > 0 && r.fail_events === 0).length;
+  const fpy     = tested.length ? Math.round(cleanFP / tested.length * 100) : null;
+  const rework  = tested.length ? Math.round(rows.filter(r => r.fail_events > 0).length / tested.length * 100) : null;
+
+  _dashSet('vel-7d', within(7));
+  _dashSet('vel-30d', within(30));
+  _dashSet('vel-avgwk', Math.round(avgWk));
+  _dashSet('vel-eta', eta);
+  _dashSet('vel-fpy', fpy == null ? 'n/a' : fpy + '%');
+  _dashSet('vel-rework', rework == null ? 'n/a' : rework + '%');
+
+  // Burn-up: cumulative completed by day, with a flat total-scope reference line
+  const byDay = {};
+  doneDates.forEach(t => { const k = new Date(t).toISOString().slice(0, 10); byDay[k] = (byDay[k] || 0) + 1; });
+  const days = Object.keys(byDay).sort();
+  let cum = 0;
+  const cumData = days.map(k => (cum += byDay[k]));
+  const burnCtx = document.getElementById('chart-burnup');
+  if (burnCtx) {
+    if (_dashCharts.burnup) _dashCharts.burnup.destroy();
+    _dashCharts.burnup = new Chart(burnCtx, {
+      type: 'line',
+      data: {
+        labels: days.map(_dashFmtDay),
+        datasets: [
+          { label: 'Completed (cumulative)', data: cumData, borderColor: COLORS.good, backgroundColor: 'rgba(0,135,90,.12)', fill: true, tension: .25, pointRadius: 2 },
+          { label: 'Total scope', data: days.map(() => scope), borderColor: COLORS.grayLight, borderDash: [6, 4], pointRadius: 0, fill: false },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: { x: { grid: { display: false } }, y: { beginAtZero: true, grid: { color: '#f4f4f4' } } },
+        plugins: { legend: { position: 'top', align: 'end', labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'line' } }, tooltip: { backgroundColor: COLORS.black, padding: 12 } }
+      }
+    });
+  }
+
+  // Weekly throughput
+  const byWeek = {};
+  doneDates.forEach(t => { const k = _dashWeekStart(t).toISOString().slice(0, 10); byWeek[k] = (byWeek[k] || 0) + 1; });
+  const weeks = Object.keys(byWeek).sort();
+  const tpCtx = document.getElementById('chart-throughput');
+  if (tpCtx) {
+    if (_dashCharts.throughput) _dashCharts.throughput.destroy();
+    _dashCharts.throughput = new Chart(tpCtx, {
+      type: 'bar',
+      data: { labels: weeks.map(w => 'wk of ' + _dashFmtDay(w)), datasets: [{ label: 'Tests completed', data: weeks.map(w => byWeek[w]), backgroundColor: COLORS.info, borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { display: false } }, y: { beginAtZero: true, grid: { color: '#f4f4f4' }, ticks: { precision: 0 } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: COLORS.black, padding: 12 } } }
+    });
+  }
+}
+
+// ── Field Productivity (delay_log) ─────────────────────────────────────────
+async function _dashRenderProductivity() {
+  let logs = [];
+  try { logs = await _fetchAnon('delay_log?select=*&order=log_date.asc'); }
+  catch (e) { console.warn('[kpi] delay_log fetch failed:', e.message); }
+  const empty = document.getElementById('prod-empty');
+  const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+
+  if (!logs.length) {
+    if (empty) empty.style.display = '';
+    ['prod-days','prod-ttd','prod-idle','prod-delaydays','prod-passrate'].forEach(id => _dashSet(id, '—'));
+    ['delayCause','dailyTests'].forEach(k => { if (_dashCharts[k]) { _dashCharts[k].destroy(); _dashCharts[k] = null; } });
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  const fieldDays  = new Set(logs.map(l => l.log_date).filter(Boolean)).size;
+  const totLogged  = logs.reduce((s, l) => s + num(l.total_tests_logged), 0);
+  const totPassed  = logs.reduce((s, l) => s + num(l.total_passed), 0);
+  const testerDays = logs.reduce((s, l) => s + Math.max(1, num(l.number_of_testers)), 0);
+  const totIdle    = logs.reduce((s, l) => s + num(l.idle_hours), 0);
+  const delayDays  = new Set(logs.filter(l => l.delay_occurred === 'Yes').map(l => l.log_date)).size;
+
+  _dashSet('prod-days', fieldDays);
+  _dashSet('prod-ttd', testerDays ? (totLogged / testerDays).toFixed(1) : '—');
+  _dashSet('prod-idle', totIdle.toLocaleString());
+  _dashSet('prod-delaydays', delayDays);
+  _dashSet('prod-passrate', totLogged ? Math.round(totPassed / totLogged * 100) + '%' : '—');
+
+  // Idle hours by delay cause
+  const causes = {};
+  logs.filter(l => l.delay_occurred === 'Yes').forEach(l => {
+    const k = l.delay_category || 'Uncategorised';
+    causes[k] = (causes[k] || 0) + num(l.idle_hours);
+  });
+  const cSorted = Object.entries(causes).sort((a, b) => b[1] - a[1]);
+  const dcCtx = document.getElementById('chart-delay-cause');
+  if (dcCtx) {
+    if (_dashCharts.delayCause) _dashCharts.delayCause.destroy();
+    _dashCharts.delayCause = new Chart(dcCtx, {
+      type: 'bar',
+      data: { labels: cSorted.map(c => c[0]), datasets: [{ label: 'Idle hours', data: cSorted.map(c => c[1]), backgroundColor: COLORS.warn, borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', scales: { x: { beginAtZero: true, grid: { color: '#f4f4f4' } }, y: { grid: { display: false } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: COLORS.black, padding: 12 } } }
+    });
+  }
+
+  // Daily tests logged vs passed
+  const byDate = {};
+  logs.forEach(l => {
+    if (!l.log_date) return;
+    if (!byDate[l.log_date]) byDate[l.log_date] = { logged: 0, passed: 0 };
+    byDate[l.log_date].logged += num(l.total_tests_logged);
+    byDate[l.log_date].passed += num(l.total_passed);
+  });
+  const dates = Object.keys(byDate).sort();
+  const dtCtx = document.getElementById('chart-daily-tests');
+  if (dtCtx) {
+    if (_dashCharts.dailyTests) _dashCharts.dailyTests.destroy();
+    _dashCharts.dailyTests = new Chart(dtCtx, {
+      type: 'bar',
+      data: {
+        labels: dates.map(_dashFmtDay),
+        datasets: [
+          { label: 'Logged', data: dates.map(d => byDate[d].logged), backgroundColor: COLORS.grayLight, borderRadius: 4 },
+          { label: 'Passed', data: dates.map(d => byDate[d].passed), backgroundColor: COLORS.good, borderRadius: 4 },
+        ]
+      },
+      options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { display: false } }, y: { beginAtZero: true, grid: { color: '#f4f4f4' }, ticks: { precision: 0 } } }, plugins: { legend: { position: 'top', align: 'end', labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'rect' } }, tooltip: { backgroundColor: COLORS.black, padding: 12 } } }
+    });
+  }
+}
+
+// ── Schedule Adherence (planned_date vs actual) ─────────────────────────────
+async function _dashRenderSchedule() {
+  const rows    = await _dashGetProgress();
+  const planned = rows.filter(r => r.planned_date);
+  const empty   = document.getElementById('sch-empty');
+  if (empty) empty.style.display = planned.length ? 'none' : '';
+
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const endOf = d => { const t = new Date(d); t.setHours(23, 59, 59, 999); return t; };
+  const completedPlanned = planned.filter(r => r.effective_completed_at);
+  const onTime = completedPlanned.filter(r => new Date(r.effective_completed_at) <= endOf(r.planned_date)).length;
+  _dashSet('sch-ontime', completedPlanned.length ? Math.round(onTime / completedPlanned.length * 100) + '%' : 'n/a');
+  _dashSet('sch-behind', planned.filter(r => !r.effective_completed_at && new Date(r.planned_date) < now).length);
+  _dashSet('sch-due14', planned.filter(r => { if (r.effective_completed_at) return false; const p = new Date(r.planned_date); return p >= now && (p - now) <= 14 * _DAY_MS; }).length);
+  const lastPlanned = planned.length ? new Date(Math.max(...planned.map(r => +new Date(r.planned_date)))) : null;
+  _dashSet('sch-finish', lastPlanned ? lastPlanned.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—');
+
+  // S-curve: cumulative planned (by planned_date) vs actual (by effective completion)
+  const plannedDays = {}, actualDays = {};
+  planned.forEach(r => { const k = String(r.planned_date).slice(0, 10); plannedDays[k] = (plannedDays[k] || 0) + 1; });
+  rows.filter(r => r.effective_completed_at).forEach(r => { const k = new Date(r.effective_completed_at).toISOString().slice(0, 10); actualDays[k] = (actualDays[k] || 0) + 1; });
+  const allDays = [...new Set([...Object.keys(plannedDays), ...Object.keys(actualDays)])].sort();
+  let cp = 0, ca = 0;
+  const plannedCum = [], actualCum = [];
+  const todayKey = now.toISOString().slice(0, 10);
+  allDays.forEach(k => {
+    cp += plannedDays[k] || 0; ca += actualDays[k] || 0;
+    plannedCum.push(cp);
+    actualCum.push(k <= todayKey ? ca : null); // actual only up to today
+  });
+  const scCtx = document.getElementById('chart-scurve');
+  if (scCtx) {
+    if (_dashCharts.scurve) _dashCharts.scurve.destroy();
+    _dashCharts.scurve = new Chart(scCtx, {
+      type: 'line',
+      data: {
+        labels: allDays.map(_dashFmtDay),
+        datasets: [
+          { label: 'Planned (cumulative)', data: plannedCum, borderColor: COLORS.info, borderDash: [6, 4], pointRadius: 0, tension: .2, fill: false },
+          { label: 'Actual (cumulative)',  data: actualCum,  borderColor: COLORS.good, backgroundColor: 'rgba(0,135,90,.12)', pointRadius: 0, tension: .2, fill: true, spanGaps: false },
+        ]
+      },
+      options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 12 } }, y: { beginAtZero: true, grid: { color: '#f4f4f4' } } }, plugins: { legend: { position: 'top', align: 'end', labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'line' } }, tooltip: { backgroundColor: COLORS.black, padding: 12 } } }
+    });
+  }
+
+  // Upcoming planned (next 30d, not completed) by subsystem
+  const upcoming = {};
+  planned.forEach(r => {
+    if (r.effective_completed_at) return;
+    const p = new Date(r.planned_date);
+    if (p >= now && (p - now) <= 30 * _DAY_MS) { const k = r.subsystem || 'Unassigned'; upcoming[k] = (upcoming[k] || 0) + 1; }
+  });
+  const uSorted = Object.entries(upcoming).sort((a, b) => b[1] - a[1]).slice(0, 12);
+  const upCtx = document.getElementById('chart-upcoming');
+  if (upCtx) {
+    if (_dashCharts.upcoming) _dashCharts.upcoming.destroy();
+    _dashCharts.upcoming = new Chart(upCtx, {
+      type: 'bar',
+      data: { labels: uSorted.map(u => u[0]), datasets: [{ label: 'Tests due', data: uSorted.map(u => u[1]), backgroundColor: COLORS.info, borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { display: false } }, y: { beginAtZero: true, grid: { color: '#f4f4f4' }, ticks: { precision: 0 } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: COLORS.black, padding: 12 } } }
+    });
+  }
+}
+
+// ── Quality & Issues (punch / rma / fails) ──────────────────────────────────
+function _dashRenderQuality() {
+  const punch    = (typeof PUNCH_DB !== 'undefined' ? PUNCH_DB : []).filter(p => !p.is_deleted);
+  const openP    = punch.filter(p => p.status !== 'closed');
+  const now      = Date.now();
+  const overdueP = openP.filter(p => p.due_date && new Date(p.due_date).getTime() < now);
+  const ages     = openP.map(p => p.created_at ? (now - new Date(p.created_at).getTime()) / _DAY_MS : NaN).filter(n => !isNaN(n));
+  const avgAge   = ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : 0;
+
+  const rmas     = (typeof RMAS !== 'undefined' ? RMAS : []);
+  const openR    = rmas.filter(r => (r.status || '').toLowerCase() !== 'closed');
+  const overdueR = openR.filter(r => r.due_date && new Date(r.due_date).getTime() < now);
+
+  const fails    = _latestTI().filter(r => ['Fail', 'Failed'].includes(r.Status));
+
+  _dashSet('ql-punch-open', openP.length);
+  _dashSet('ql-punch-overdue', overdueP.length);
+  _dashSet('ql-punch-age', avgAge ? avgAge + 'd' : '—');
+  _dashSet('ql-rma-open', openR.length);
+  _dashSet('ql-rma-overdue', overdueR.length);
+  _dashSet('ql-fails', fails.length);
+
+  // Punch aging buckets
+  const buckets = { '0–7d': 0, '8–30d': 0, '31–90d': 0, '90d+': 0 };
+  openP.forEach(p => {
+    if (!p.created_at) return;
+    const d = (now - new Date(p.created_at).getTime()) / _DAY_MS;
+    if (d <= 7) buckets['0–7d']++; else if (d <= 30) buckets['8–30d']++; else if (d <= 90) buckets['31–90d']++; else buckets['90d+']++;
+  });
+  const paCtx = document.getElementById('chart-punch-age');
+  if (paCtx) {
+    if (_dashCharts.punchAge) _dashCharts.punchAge.destroy();
+    _dashCharts.punchAge = new Chart(paCtx, {
+      type: 'bar',
+      data: { labels: Object.keys(buckets), datasets: [{ label: 'Open items', data: Object.values(buckets), backgroundColor: [COLORS.good, COLORS.info, COLORS.warn, COLORS.bad], borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { display: false } }, y: { beginAtZero: true, grid: { color: '#f4f4f4' }, ticks: { precision: 0 } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: COLORS.black, padding: 12 } } }
+    });
+  }
+
+  // Failed tests by subsystem
+  const fSub = {};
+  fails.forEach(r => { const k = r.Subsystem || 'Unassigned'; fSub[k] = (fSub[k] || 0) + 1; });
+  const fSorted = Object.entries(fSub).sort((a, b) => b[1] - a[1]).slice(0, 12);
+  const fsCtx = document.getElementById('chart-fail-subsys');
+  if (fsCtx) {
+    if (_dashCharts.failSubsys) _dashCharts.failSubsys.destroy();
+    _dashCharts.failSubsys = new Chart(fsCtx, {
+      type: 'bar',
+      data: { labels: fSorted.map(f => f[0]), datasets: [{ label: 'Failed tests', data: fSorted.map(f => f[1]), backgroundColor: COLORS.bad, borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', scales: { x: { beginAtZero: true, grid: { color: '#f4f4f4' }, ticks: { precision: 0 } }, y: { grid: { display: false } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: COLORS.black, padding: 12 } } }
+    });
+  }
 }
 
 // ==========================================
@@ -5382,6 +5685,43 @@ async function _logTestItemStatusHistory(r, oldStatus, newStatus, opts = {}) {
   }
 }
 
+// Append a per-attempt row to test_results on every terminal result. This is
+// the durable, attempt-level log that powers first-pass-yield, rework-rate and
+// test-effort KPIs — the current-state `status` column on test_items only keeps
+// the latest outcome, so without this a retest overwrites its own history.
+async function _logTestResult(r, status, opts = {}) {
+  // result CHECK constraint only allows Pass | Fail | Partial | Blocked
+  if (!['Pass','Fail','Partial','Blocked'].includes(status)) return;
+  try {
+    const now = new Date().toISOString();
+    const who = opts.completedBy || currentRoleUser?.name || currentProfile?.full_name || null;
+    await _dbInsert('test_results', [{
+      result_id:         'TR-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+      test_id:           r.TestID,
+      test_name:         r.TestName || null,
+      attempt_number:    r.AttemptNumber || 1,
+      phase:             r.Phase || null,
+      location:          r.Location || null,
+      subsystem:         r.Subsystem || null,
+      activity:          r.Activity || null,
+      test_case_code:    r.TestCaseCode || null,
+      test_procedure:    r.TestProcedure || null,
+      result:            status,
+      completed_by:      who,
+      date_tested:       (opts.completedDate || now).slice(0, 10),
+      submitted_by:      who,
+      number_of_testers: opts.numberOfTesters ?? null,
+      test_hours:        opts.testHours ?? null,
+      failed_reason:     status === 'Fail'    ? (opts.reason || null) : null,
+      blocked_reason:    status === 'Blocked' ? (opts.reason || null) : null,
+      notes:             opts.notes || null,
+      new_status:        status,
+    }]);
+  } catch (err) {
+    console.warn('[testResult] insert skipped:', err.message);
+  }
+}
+
 async function _updateTestItemStatus(testId, status, opts = {}) {
   const r = opts.row || TI.find(t => String(t.TestID) === String(testId));
   if (!r) return null;
@@ -5433,6 +5773,8 @@ async function _updateTestItemStatus(testId, status, opts = {}) {
   const rows = await _dbUpdate('test_items', patch, { test_id: r.TestID });
   if (!rows || rows.length === 0) throw new Error(`No test_items row matched test_id "${r.TestID}"`);
   await _logTestItemStatusHistory(r, oldStatus, status, opts);
+  // Record the attempt outcome (fire-and-forget) for attempt-level KPIs.
+  if (oldStatus !== status) _logTestResult(r, status, opts).catch(() => {});
   // If this is an asset child row, check whether the parent should auto-pass
   if (r.ParentTestId) await _assetAutoPassCheck(r.ParentTestId).catch(() => {});
   // Refresh dashboard KPIs if it is the active page

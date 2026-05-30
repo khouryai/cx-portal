@@ -5489,6 +5489,37 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   color: #fff;
 }
 
+/* ── Dashboard view selector ─────────────────────────────── */
+.dash-view-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 20px;
+}
+.dash-view-btn {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-600);
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.dash-view-btn:hover { background: var(--gray-100); color: var(--gray-800); }
+.dash-view-btn.active {
+  background: #1a1a1a;
+  border-color: #1a1a1a;
+  color: #fff;
+}
+.dash-view-note {
+  font-size: 12px;
+  color: var(--gray-500);
+  margin: 14px 2px 0;
+  line-height: 1.5;
+}
+
 /* ── Calendar Legend Bar (Shift + Subsystem) ────────────── */
 .cal-legend-bar {
   display: flex;
