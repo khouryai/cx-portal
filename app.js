@@ -31259,18 +31259,33 @@ function _drwTwoPts() { const it = _drwTouchPts.values(); return [it.next().valu
 function _drwDist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 function _drwMid(a, b)  { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
 
-// Zoom to an absolute scale, keeping the screen point (cx,cy) fixed.
-async function _drwZoomToScale(target, cx, cy) {
+// Zoom to an absolute scale, then place a content point under the screen
+// point (cx,cy). `anchor` (a {ux,uy} content fraction) is supplied for pinch
+// so the point the fingers grabbed at gesture *start* follows to where they
+// end — handling pan + zoom together. Without it (wheel), the point under the
+// cursor is held fixed.
+async function _drwZoomToScale(target, cx, cy, anchor) {
   const wrap = document.getElementById('drw-canvas-wrap');
   const body = document.getElementById('drw-viewer-body');
-  if (!wrap || !body || !_drwPdfDoc) return;
+  if (!wrap || !body || !_drwPdfDoc) {
+    if (wrap) { wrap.style.transform = ''; wrap.style.transformOrigin = ''; wrap.style.transition = ''; }
+    return;
+  }
   target = Math.max(0.25, Math.min(4, target));
-  const r0 = wrap.getBoundingClientRect();
-  const ux = r0.width  ? (cx - r0.left) / r0.width  : 0.5;
-  const uy = r0.height ? (cy - r0.top)  / r0.height : 0.5;
+  let ux, uy;
+  if (anchor) {
+    ux = anchor.ux; uy = anchor.uy;
+  } else {
+    const r0 = wrap.getBoundingClientRect();
+    ux = r0.width  ? (cx - r0.left) / r0.width  : 0.5;
+    uy = r0.height ? (cy - r0.top)  / r0.height : 0.5;
+  }
   _drwZoomMode  = 'manual';
   _drwZoomScale = target;
   await _drwRenderPage(_drwPageIndex);
+  // Clear the live-preview transform now that the crisp page exists, then
+  // anchor the chosen point in the same frame — no visible snap-back.
+  wrap.style.transform = ''; wrap.style.transformOrigin = ''; wrap.style.transition = '';
   const r1 = wrap.getBoundingClientRect();
   body.scrollLeft += (r1.left + ux * r1.width)  - cx;
   body.scrollTop  += (r1.top  + uy * r1.height) - cy;
@@ -31331,9 +31346,9 @@ function _drwInitPinchZoom() {
     _drwTouchPts.delete(e.pointerId);
     if (_drwPinch && _drwTouchPts.size < 2) {
       const p = _drwPinch; _drwPinch = null;
-      const wrap = document.getElementById('drw-canvas-wrap');
-      if (wrap) { wrap.style.transform = ''; wrap.style.transformOrigin = ''; wrap.style.transition = ''; }
-      _drwZoomToScale(p.scale0 * p.ratio, p.curMid.x, p.curMid.y);
+      // Anchor the content point grabbed at the start (p.ux/uy) to the final
+      // finger midpoint, so panning while zoomed sticks instead of rebounding.
+      _drwZoomToScale(p.scale0 * p.ratio, p.curMid.x, p.curMid.y, { ux: p.ux, uy: p.uy });
     }
     if (_drwTouchPts.size === 0) _drwGestureLock = false;
   };
