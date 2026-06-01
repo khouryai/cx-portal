@@ -2823,6 +2823,84 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
 .photo-upload-btn .plus { font-size: 24px; font-weight: 300; }
 
 /* Audit log */
+/* Audit super search bar */
+.audit-search-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 280px;
+  flex: 1 1 320px;
+  max-width: 480px;
+}
+.audit-search-icon {
+  position: absolute;
+  left: 11px;
+  font-size: 13px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.audit-search-input {
+  width: 100%;
+  padding: 8px 32px 8px 32px;
+  border: 1px solid var(--gray-300);
+  border-radius: 8px;
+  font-size: 13px;
+  background: #fff;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.audit-search-input:focus {
+  outline: none;
+  border-color: var(--brand, #6366f1);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+.audit-search-clear {
+  position: absolute;
+  right: 8px;
+  border: none;
+  background: var(--gray-200);
+  color: var(--gray-600);
+  width: 18px;
+  height: 18px;
+  line-height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+.audit-search-clear:hover { background: var(--gray-300); }
+
+/* Audit pagination */
+.audit-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--gray-100);
+  flex-wrap: wrap;
+}
+.audit-pager-info { font-size: 12px; color: var(--gray-500); }
+.audit-pager-controls { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.audit-page-btn {
+  min-width: 32px;
+  padding: 5px 9px;
+  border: 1px solid var(--gray-300);
+  background: #fff;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--gray-700);
+  cursor: pointer;
+}
+.audit-page-btn:hover:not(:disabled):not(.active) { background: var(--gray-100); }
+.audit-page-btn.active {
+  background: var(--brand, #6366f1);
+  border-color: var(--brand, #6366f1);
+  color: #fff;
+  font-weight: 600;
+}
+.audit-page-btn:disabled { opacity: 0.4; cursor: default; }
+.audit-page-gap { padding: 0 4px; color: var(--gray-400); font-size: 12px; }
+
 .audit-row {
   display: grid;
   grid-template-columns: 128px minmax(210px, 260px) minmax(170px, 240px) minmax(0, 1fr);

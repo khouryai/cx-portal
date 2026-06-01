@@ -8265,6 +8265,47 @@ function _auditInitials(value) {
   return (parts.length ? parts.slice(0, 2).map(p => p[0]).join('') : 'S').toUpperCase();
 }
 
+const AUDIT_PAGE_SIZE = 100;
+let _auditSearch = '';
+let _auditPage   = 1;
+
+// Build a single lowercase haystack per event so the super search can match
+// any field — user, role, action, target, details, notes, source, table, time.
+function _auditHaystack(e) {
+  const roleLabel = ROLE_LABELS[e.role] || '';
+  const when = e.timestamp
+    ? new Date(e.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : '';
+  return [e.user, e.role, roleLabel, e.action, e.target, e.details,
+          e.notes, e.source, e.table, e.operation, e.record_id, when]
+    .filter(Boolean).join('  ').toLowerCase();
+}
+
+// Filter by the super search: every whitespace-separated term must appear
+// somewhere in the event (AND semantics), so "alex pass w40" narrows hard.
+function _auditFilter(entries) {
+  const q = _auditSearch.trim().toLowerCase();
+  if (!q) return entries;
+  const terms = q.split(/\s+/);
+  return entries.filter(e => {
+    const hay = _auditHaystack(e);
+    return terms.every(t => hay.includes(t));
+  });
+}
+
+function _auditOnSearch(value) {
+  _auditSearch = value || '';
+  _auditPage = 1;
+  _auditRenderList();
+}
+
+function _auditGoToPage(p) {
+  _auditPage = p;
+  _auditRenderList();
+  const root = document.getElementById('audit-content');
+  root?.querySelector('.data-card-head')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
 function renderAuditLog() {
   const root = document.getElementById('audit-content');
   if (!root || !currentRoleUser) return;
@@ -8272,52 +8313,111 @@ function renderAuditLog() {
     root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`;
     return;
   }
-  const entries = _auditEvents();
   setTimeout(_initPageLibraries, 80);
 
   root.innerHTML = `
     <div class="data-card">
       <div class="data-card-head">
-        <span class="data-count">${entries.length} entries</span>
-        <div style="display:flex;gap:8px;">
+        <span class="data-count" id="audit-count"></span>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <div class="audit-search-wrap">
+            <span class="audit-search-icon">🔍</span>
+            <input id="audit-search" class="audit-search-input" type="search"
+              placeholder="Search everything — user, action, target, location, role, table…"
+              value="${escapeHtml(_auditSearch)}" oninput="_auditOnSearch(this.value)" autocomplete="off" />
+            ${_auditSearch ? `<button class="audit-search-clear" onclick="_auditOnSearch('')" title="Clear">✕</button>` : ''}
+          </div>
           <button class="form-secondary" onclick="refreshAuditLog()">Refresh</button>
           <button class="export-btn" onclick="exportAudit()">Export CSV</button>
         </div>
       </div>
-      <div class="table-wrap">
-        ${entries.map(e => {
-          const roleLabel = ROLE_LABELS[e.role] || '';
-          const dbRole = roleLabel ? '' : e.role;
-          const sourceLabel = e.source || e.table || 'Audit';
-          return `
-            <div class="audit-row role-${_auditClassName(e.role)} source-${_auditClassName(sourceLabel)}">
-              <div class="audit-time">
-                <div>${new Date(e.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
-                <div class="audit-relative">${dateAgo(e.timestamp)}</div>
-              </div>
-              <div class="audit-user-card">
-                <div class="audit-avatar">${escapeHtml(_auditInitials(e.user))}</div>
-                <div class="audit-user-main">
-                  <div class="audit-user-name">${escapeHtml(e.user)}</div>
-                  <div class="audit-chip-row">
-                    ${roleLabel ? `<span class="role-mini">${escapeHtml(roleLabel)}</span>` : ''}
-                    ${dbRole ? `<span class="audit-db-role">${escapeHtml(dbRole)}</span>` : ''}
-                  </div>
-                </div>
-              </div>
-              <div class="audit-action-card">
-                <div class="audit-action">${escapeHtml(e.action)}</div>
-                <span class="audit-source-chip">${escapeHtml(sourceLabel)}</span>
-              </div>
-              <div class="audit-event-body">
-                <div class="audit-target">${escapeHtml(e.target)}</div>
-                <div class="audit-details">${escapeHtml(e.details)}${e.notes ? ` · "${escapeHtml(e.notes)}"` : ''}</div>
-                <div class="audit-details audit-table-line">${escapeHtml(e.table || '')}</div>
-              </div>
+      <div class="table-wrap" id="audit-list"></div>
+      <div id="audit-pager" class="audit-pager"></div>
+    </div>
+  `;
+  _auditRenderList();
+  // Keep focus in the search box across re-renders so typing isn't interrupted.
+  const si = document.getElementById('audit-search');
+  if (si && _auditSearch) { si.focus(); si.setSelectionRange(si.value.length, si.value.length); }
+}
+
+function _auditRenderList() {
+  const list = document.getElementById('audit-list');
+  if (!list) return;
+  const all      = _auditEvents();
+  const filtered = _auditFilter(all);
+  const total    = filtered.length;
+  const pages     = Math.max(1, Math.ceil(total / AUDIT_PAGE_SIZE));
+  if (_auditPage > pages) _auditPage = pages;
+  const start    = (_auditPage - 1) * AUDIT_PAGE_SIZE;
+  const pageRows = filtered.slice(start, start + AUDIT_PAGE_SIZE);
+
+  const countEl = document.getElementById('audit-count');
+  if (countEl) {
+    countEl.textContent = _auditSearch
+      ? `${total} of ${all.length} entries`
+      : `${all.length} entries`;
+  }
+
+  list.innerHTML = pageRows.map(e => {
+    const roleLabel = ROLE_LABELS[e.role] || '';
+    const dbRole = roleLabel ? '' : e.role;
+    const sourceLabel = e.source || e.table || 'Audit';
+    return `
+      <div class="audit-row role-${_auditClassName(e.role)} source-${_auditClassName(sourceLabel)}">
+        <div class="audit-time">
+          <div>${new Date(e.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+          <div class="audit-relative">${dateAgo(e.timestamp)}</div>
+        </div>
+        <div class="audit-user-card">
+          <div class="audit-avatar">${escapeHtml(_auditInitials(e.user))}</div>
+          <div class="audit-user-main">
+            <div class="audit-user-name">${escapeHtml(e.user)}</div>
+            <div class="audit-chip-row">
+              ${roleLabel ? `<span class="role-mini">${escapeHtml(roleLabel)}</span>` : ''}
+              ${dbRole ? `<span class="audit-db-role">${escapeHtml(dbRole)}</span>` : ''}
             </div>
-          `;
-        }).join('') || `<div class="docs-empty"><h3>No audit events found</h3></div>`}
+          </div>
+        </div>
+        <div class="audit-action-card">
+          <div class="audit-action">${escapeHtml(e.action)}</div>
+          <span class="audit-source-chip">${escapeHtml(sourceLabel)}</span>
+        </div>
+        <div class="audit-event-body">
+          <div class="audit-target">${escapeHtml(e.target)}</div>
+          <div class="audit-details">${escapeHtml(e.details)}${e.notes ? ` · "${escapeHtml(e.notes)}"` : ''}</div>
+          <div class="audit-details audit-table-line">${escapeHtml(e.table || '')}</div>
+        </div>
       </div>
+    `;
+  }).join('') || `<div class="docs-empty"><h3>${_auditSearch ? 'No entries match your search' : 'No audit events found'}</h3></div>`;
+
+  _auditRenderPager(total, pages, start, pageRows.length);
+}
+
+function _auditRenderPager(total, pages, start, shown) {
+  const pager = document.getElementById('audit-pager');
+  if (!pager) return;
+  if (total <= AUDIT_PAGE_SIZE) { pager.innerHTML = ''; return; }
+
+  // Compact page window: first, last, current ±2, with ellipses.
+  const cur = _auditPage;
+  const nums = new Set([1, pages, cur, cur - 1, cur + 1, cur - 2, cur + 2]);
+  const shownPages = [...nums].filter(n => n >= 1 && n <= pages).sort((a, b) => a - b);
+  let buttons = '';
+  let prev = 0;
+  for (const n of shownPages) {
+    if (n - prev > 1) buttons += `<span class="audit-page-gap">…</span>`;
+    buttons += `<button class="audit-page-btn ${n === cur ? 'active' : ''}" onclick="_auditGoToPage(${n})">${n}</button>`;
+    prev = n;
+  }
+
+  pager.innerHTML = `
+    <div class="audit-pager-info">Showing ${start + 1}–${start + shown} of ${total}</div>
+    <div class="audit-pager-controls">
+      <button class="audit-page-btn" ${cur === 1 ? 'disabled' : ''} onclick="_auditGoToPage(${cur - 1})">‹ Prev</button>
+      ${buttons}
+      <button class="audit-page-btn" ${cur === pages ? 'disabled' : ''} onclick="_auditGoToPage(${cur + 1})">Next ›</button>
     </div>
   `;
 }
@@ -8332,7 +8432,8 @@ function exportAudit() {
     { key: 'details', label: 'Details' },
     { key: 'notes', label: 'Notes' },
   ];
-  downloadCSV(toCSV(_auditEvents(), cols), 'audit_log.csv');
+  // Export the current search result (all of it, not just the visible page).
+  downloadCSV(toCSV(_auditFilter(_auditEvents()), cols), 'audit_log.csv');
 }
 
 // ==========================================================================
