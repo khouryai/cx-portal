@@ -30845,9 +30845,46 @@ async function _drwRunExtract() {
 let _drwReviewSelectedIdx = 0;
 let _drwReviewRendering   = false;
 
+function _drwBumpRev(rev) {
+  if (!rev) return '01';
+  const t = rev.trim();
+  if (/^\d+$/.test(t)) {
+    const n = parseInt(t, 10) + 1;
+    return String(n).padStart(Math.max(t.length, String(n).length), '0');
+  }
+  const up = t.toUpperCase();
+  if (/^[A-Z]+$/.test(up)) {
+    const chars = up.split('');
+    let i = chars.length - 1;
+    while (i >= 0 && chars[i] === 'Z') { chars[i] = 'A'; i--; }
+    if (i < 0) return 'A' + chars.join('');
+    chars[i] = String.fromCharCode(chars[i].charCodeAt(0) + 1);
+    return chars.join('');
+  }
+  const m = t.match(/^(.*?)(\d+)$/);
+  if (m) return m[1] + String(parseInt(m[2], 10) + 1).padStart(m[2].length, '0');
+  return t + '-R2';
+}
+
 function _drwShowReview(numPages) {
+  // Detect up-revs: existing current sheets at this location with matching drawing numbers.
+  const _normNumR = n => (n == null ? '' : String(n).trim().toUpperCase());
+  const reviewLoc = _drwUploadMeta?.location;
+  const existingByNum = {};
+  DRAWING_SHEETS.filter(s => s.location === reviewLoc && s.is_current)
+    .forEach(s => { if (s.sheet_number) existingByNum[_normNumR(s.sheet_number)] = s; });
+  // On first show, auto-bump revisions for up-rev sheets.
+  _drwParsedSheets.forEach(s => {
+    if (!s._upRevInit) {
+      const ex = existingByNum[_normNumR(s.sheetNumber || '')];
+      if (ex) { s._existingSheet = ex; if (!s.revision) s.revision = _drwBumpRev(ex.revision); }
+      s._upRevInit = true;
+    }
+  });
+
   const needsReview   = _drwParsedSheets.filter(s => s.needsReview).length;
   const includedCount = _drwParsedSheets.filter(s => s.included).length;
+  const upRevCount    = _drwParsedSheets.filter(s => s.included && s._existingSheet).length;
 
   // Keep the wide modal (from calibrate) so the PDF preview is readable.
   const modalEl = document.querySelector('#modal-overlay .modal');
@@ -30861,6 +30898,7 @@ function _drwShowReview(numPages) {
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
       <span style="font-size:13px;color:var(--gray-600);">${numPages} pages parsed.</span>
       <span id="drw-included-pill" style="background:#e0e7ff;color:#3730a3;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">${includedCount} of ${numPages} to import</span>
+      ${upRevCount ? `<span id="drw-uprev-pill" style="background:#fff7ed;color:#c2410c;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">↑ ${upRevCount} up-rev</span>` : `<span id="drw-uprev-pill" style="display:none;background:#fff7ed;color:#c2410c;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;"></span>`}
       ${needsReview
         ? `<span style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">⚠ ${needsReview} need manual entry</span>`
         : `<span style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">✓ All sheets parsed</span>`}
@@ -30888,11 +30926,20 @@ function _drwShowReview(numPages) {
           <table class="data-table">
             <thead><tr>
               <th style="width:40px;"><input type="checkbox" id="drw-rev-toggle-all" ${includedCount === _drwParsedSheets.length ? 'checked' : ''} onchange="_drwReviewSelectAll(this.checked)" title="Toggle all" /></th>
-              <th style="width:34px;">Pg</th><th>Sheet #</th><th>Page #</th><th>Title</th><th>Rev</th><th>Discipline</th>
+              <th style="width:34px;">Pg</th><th>Sheet #</th><th>Page #</th><th>Title</th><th>Rev</th><th>Discipline</th><th style="width:70px;">Status</th>
             </tr></thead>
             <tbody>
-              ${_drwParsedSheets.map((s, i) => `
-                <tr id="drw-rev-row-${i}" class="drw-rev-clickable" onclick="_drwReviewShowPage(${i})" style="${!s.included ? 'opacity:0.45;background:var(--gray-50);' : s.needsReview ? 'background:#fffbeb;' : ''}">
+              ${_drwParsedSheets.map((s, i) => {
+                const rowUpRev = !!s._existingSheet;
+                const rowStyle = !s.included
+                  ? `opacity:0.45;background:var(--gray-50);${rowUpRev ? 'border-left:3px solid #f59e0b;' : ''}`
+                  : rowUpRev ? 'background:#fff7ed;border-left:3px solid #f59e0b;'
+                  : s.needsReview ? 'background:#fffbeb;' : '';
+                const statusCell = rowUpRev
+                  ? `<span style="display:inline-flex;align-items:center;background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;">↑ Rev</span><br><span style="font-size:10px;color:var(--gray-400);">was: ${escapeHtml(s._existingSheet.revision || '—')}</span>`
+                  : `<span style="font-size:10px;color:var(--gray-400);">New</span>`;
+                return `
+                <tr id="drw-rev-row-${i}" class="drw-rev-clickable" onclick="_drwReviewShowPage(${i})" style="${rowStyle}">
                   <td style="text-align:center;"><input type="checkbox" ${s.included ? 'checked' : ''} onclick="event.stopPropagation()" onchange="_drwReviewToggle(${i}, this.checked)" /></td>
                   <td style="color:var(--gray-400);font-size:12px;">${s.pageIndex+1}</td>
                   <td><input class="form-input" value="${escapeHtml(s.sheetNumber||'')}"
@@ -30907,8 +30954,10 @@ function _drwShowReview(numPages) {
                   <td><input class="form-input" value="${escapeHtml(s.revision||'')}"
                     style="width:48px;font-size:12px;padding:3px 6px;"
                     onchange="_drwReviewEdit(${i},'revision',this.value)" /></td>
-                  <td style="font-size:12px;color:var(--gray-500);">${escapeHtml(s.discipline||'—')}</td>
-                </tr>`).join('')}
+                  <td id="drw-disc-cell-${i}" style="font-size:12px;color:var(--gray-500);">${escapeHtml(s.discipline||'—')}</td>
+                  <td style="text-align:center;padding:4px;">${statusCell}</td>
+                </tr>`;
+              }).join('')}
             </tbody>
           </table>
         </div>
@@ -30943,7 +30992,9 @@ function _drwReviewShowPage(idx) {
   const lbl  = document.getElementById('drw-rev-prev-label');
   const meta = document.getElementById('drw-rev-prev-meta');
   if (lbl)  lbl.textContent  = `Page ${s.pageIndex + 1} of ${_drwParsedSheets.length}`;
-  if (meta) meta.textContent = s.included ? '' : 'omitted from import';
+  if (meta) meta.textContent = s.included
+    ? (s._existingSheet ? `↑ up-rev — was Rev ${s._existingSheet.revision || '—'}` : '')
+    : 'omitted from import';
   _drwReviewRenderPage(s.pageIndex + 1);
 }
 
@@ -30976,8 +31027,7 @@ async function _drwReviewRenderPage(pageNum) {
 
 function _drwHydrateDisciplineReviewInputs() {
   _drwParsedSheets.forEach((s, i) => {
-    const row = document.getElementById(`drw-rev-row-${i}`);
-    const cell = row?.lastElementChild;
+    const cell = document.getElementById(`drw-disc-cell-${i}`);
     if (!cell) return;
     cell.innerHTML = `
       <input id="drw-discipline-${i}" class="form-input" list="drw-discipline-options" value="${escapeHtml(s.discipline || '')}"
@@ -31003,8 +31053,10 @@ function _drwReviewToggle(idx, included) {
   const row = document.getElementById(`drw-rev-row-${idx}`);
   if (row) {
     const s = _drwParsedSheets[idx];
+    const hasUpRev = !!s._existingSheet;
     row.style.cssText = !s.included
-      ? 'opacity:0.45;background:var(--gray-50);'
+      ? `opacity:0.45;background:var(--gray-50);${hasUpRev ? 'border-left:3px solid #f59e0b;' : ''}`
+      : hasUpRev ? 'background:#fff7ed;border-left:3px solid #f59e0b;'
       : s.needsReview ? 'background:#fffbeb;' : '';
   }
   _drwReviewUpdateCounts();
@@ -31017,8 +31069,10 @@ function _drwReviewSelectAll(checked) {
     const cb  = row?.querySelector('td:first-child input[type="checkbox"]');
     if (cb) cb.checked = !!checked;
     if (row) {
+      const hasUpRev = !!s._existingSheet;
       row.style.cssText = !s.included
-        ? 'opacity:0.45;background:var(--gray-50);'
+        ? `opacity:0.45;background:var(--gray-50);${hasUpRev ? 'border-left:3px solid #f59e0b;' : ''}`
+        : hasUpRev ? 'background:#fff7ed;border-left:3px solid #f59e0b;'
         : s.needsReview ? 'background:#fffbeb;' : '';
     }
   });
@@ -31030,8 +31084,14 @@ function _drwReviewSelectAll(checked) {
 function _drwReviewUpdateCounts() {
   const total    = _drwParsedSheets.length;
   const included = _drwParsedSheets.filter(s => s.included).length;
+  const upRevs   = _drwParsedSheets.filter(s => s.included && s._existingSheet).length;
   const pill = document.getElementById('drw-included-pill');
   if (pill) pill.textContent = `${included} of ${total} to import`;
+  const upRevPill = document.getElementById('drw-uprev-pill');
+  if (upRevPill) {
+    upRevPill.style.display = upRevs ? '' : 'none';
+    upRevPill.textContent = `↑ ${upRevs} up-rev`;
+  }
   const toggle = document.getElementById('drw-rev-toggle-all');
   if (toggle) toggle.checked = included === total && total > 0;
 }
@@ -32208,6 +32268,7 @@ async function _drwDeleteSheet(sheetId, loc, subtab) {
     logAudit?.('Drawing page deleted', label, `set ${sheet.set_id}`);
     toast('Page deleted', 'success');
     await loadDrawingsData();
+    renderDrawingsPage();
     _drwRenderLocationView(loc || _drwActiveLocation, subtab || 'current');
   } catch (e) { toast('Delete failed: ' + (e.message || 'unknown error'), 'error'); }
 }
@@ -32233,6 +32294,7 @@ async function _drwDeleteSet(setId, loc) {
     toast('Drawing set deleted', 'success');
     _drwActiveSetId = '';
     await loadDrawingsData();
+    renderDrawingsPage();
     _drwRenderLocationView(loc || _drwActiveLocation, 'sets');
   } catch (e) { toast('Delete failed: ' + (e.message || 'unknown error'), 'error'); }
 }
