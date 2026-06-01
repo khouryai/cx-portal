@@ -1,0 +1,87 @@
+%% CX Portal — Target Azure Architecture (Web + Mobile)
+%% Render at https://mermaid.live or with the Mermaid CLI.
+%% This is a starting point for discussion with Hitachi IT.
+
+flowchart LR
+    subgraph Users["End Users"]
+        Hitachi["Hitachi Rail Staff<br/>(Admin · Field · Punch Mgr · Tech)"]
+        BART["BART Personnel<br/>(Client / Inspector)"]
+        Mobile["Field Crews<br/>(future mobile app)"]
+    end
+
+    subgraph Edge["Public Edge"]
+        CDN["Azure Front Door + WAF<br/>TLS 1.2+ · HSTS · rate limit"]
+    end
+
+    subgraph FE["Frontend"]
+        SPA["Azure Static Web Apps<br/>(SPA — no secrets,<br/>only public Entra app ID)"]
+        MobApp["Mobile App<br/>iOS / Android<br/>MSAL auth"]
+    end
+
+    subgraph AzureTenant["Hitachi Azure Tenant"]
+        AAD["Microsoft Entra ID<br/>SSO + MFA + Conditional Access<br/>(Hitachi staff + BART B2B guests)"]
+        APIM["Azure API Management<br/>JWT validation · throttling · audit"]
+
+        subgraph BackendApp["Backend API (App Service / Container Apps)"]
+            API["Node/TS API<br/>validates JWT · enforces RBAC<br/>secrets in memory only"]
+            Graph["MS Graph client<br/>(Sites.Selected scope)"]
+        end
+
+        KV["Azure Key Vault<br/>· SharePoint app secret / cert<br/>· DB service-role credential<br/>· Mail-delivery keys"]
+        MI["Managed Identity<br/>App Service → Key Vault,<br/>Graph, PostgreSQL"]
+        AzPG[("Azure Database for PostgreSQL<br/>Flexible Server<br/>schema + RLS migrated from Supabase")]
+        Blob[("Azure Blob Storage<br/>app-internal binaries<br/>(in-flight uploads, lookahead xlsx)")]
+        LOG["Azure Monitor + Log Analytics<br/>App Insights · Defender · Sentinel"]
+        NH["Notification Hubs<br/>(future — mobile push)"]
+    end
+
+    subgraph M365["Microsoft 365 (Corporate Tenant)"]
+        SP["SharePoint Online<br/>BART CBTC Project ▸ Commissioning subsite<br/><br/>Document Libraries:<br/>· Forms / Test Data Sheets<br/>· Punch Photos<br/>· Test Reports (CDRL)<br/>· Book of Plans (drawings)<br/>· Documents (procedures, refs)"]
+    end
+
+    subgraph DevOps["Azure DevOps (corporate source control + CI/CD)"]
+        Repos["Repos<br/>(replaces personal GitHub)"]
+        Pipes["Pipelines<br/>· SPA build + deploy<br/>· API build + deploy<br/>· Mobile build (future)"]
+    end
+
+    Hitachi -- "HTTPS" --> CDN
+    BART -- "HTTPS" --> CDN
+    Mobile -- "HTTPS" --> CDN
+    CDN -- "static assets" --> SPA
+    CDN -- "reverse proxy /api" --> APIM
+
+    Hitachi -- "Interactive SSO" --> AAD
+    BART -- "Interactive SSO (guest)" --> AAD
+    Mobile -- "MSAL" --> AAD
+    AAD -- "ID + access token (JWT)" --> SPA
+    AAD -- "ID + access token (JWT)" --> MobApp
+
+    SPA -- "Bearer JWT" --> CDN
+    MobApp -- "Bearer JWT" --> CDN
+    APIM -- "validated JWT" --> API
+
+    API -- "reads secrets via MI" --> KV
+    API -- "OBO / app-only token" --> Graph
+    Graph -- "Graph REST (files, sites, drives)" --> SP
+    API -- "SQL over TLS" --> AzPG
+    API -- "Blob ops" --> Blob
+    API -- "metrics + traces" --> LOG
+    APIM -- "access logs" --> LOG
+    AAD -- "sign-in + audit logs" --> LOG
+    API -. "push (future)" .-> NH
+    NH -. "push" .-> MobApp
+
+    Repos -- "deploys" --> Pipes
+    Pipes -- "→" --> SPA
+    Pipes -- "→" --> API
+    Pipes -- "→" --> MobApp
+
+    classDef secret fill:#fde2e2,stroke:#c53030,stroke-width:1px,color:#742a2a;
+    classDef public fill:#e6f4ff,stroke:#1d4ed8,stroke-width:1px,color:#1e3a8a;
+    classDef trusted fill:#e6ffed,stroke:#15803d,stroke-width:1px,color:#14532d;
+    classDef future fill:#f3f4f6,stroke:#6b7280,stroke-width:1px,color:#374151,stroke-dasharray: 4 3;
+
+    class SPA,MobApp public;
+    class KV,MI,API,Graph secret;
+    class AAD,APIM,SP,AzPG,Blob,LOG,Repos,Pipes trusted;
+    class NH,Mobile future;
