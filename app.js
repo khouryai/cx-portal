@@ -19346,9 +19346,14 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     const statusTitle = g.actStatusNote
       ? `${statMeta.label}: ${g.actStatusNote}`
       : (g.actStatusManual ? `${statMeta.label} (set manually)` : `${statMeta.label} (from schedule)`);
-    const statusChip = `<span class="la-combo-status status-${g.actStatus || 'plan'}" title="${escapeHtml(statusTitle)}">
+    // The planned/on-track/at-risk status chip belongs to the Activity view only.
+    // In the Resource / Subsystem / Location group-by views the same activity
+    // row appears under a different lens, so the schedule-status pill is hidden.
+    const showStatusChip = _laTimelineGroupBy === 'activity';
+    const statusChip = showStatusChip ? `<span class="la-combo-status status-${g.actStatus || 'plan'}" title="${escapeHtml(statusTitle)}">
         <span class="la-dot status-${g.actStatus || 'plan'}"></span>${escapeHtml(statMeta.label)}${g.actStatusNote ? ' •' : ''}
-      </span>`;
+      </span>` : '';
+    const line2HTML = `${codeChip}${tradeChip}${statusChip}`;
     const metaSegs = [];
     if (g.actWorkHours) metaSegs.push(`<span class="la-combo-meta">${_laIconHTML('clock')}${escapeHtml(g.actWorkHours)}</span>`);
     if (g.actSswp)      metaSegs.push(`<span class="la-combo-meta">SSWP ${escapeHtml(g.actSswp)}</span>`);
@@ -19362,7 +19367,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
           <span class="la-combo-location">${escapeHtml(g.actLocation || '—')}</span>
           ${_partyBadgesHTML(g.actParty)}
         </div>
-        ${(codeChip || tradeChip) ? `<div class="la-combo-line2">${codeChip}${tradeChip}${statusChip}</div>` : `<div class="la-combo-line2">${statusChip}</div>`}
+        ${line2HTML ? `<div class="la-combo-line2">${line2HTML}</div>` : ''}
         <div class="la-combo-line3" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</div>
         ${metaSegs.length || linkChip ? `<div class="la-combo-line4">
           ${metaSegs.join('')}
