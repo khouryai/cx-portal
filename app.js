@@ -29909,6 +29909,15 @@ const _drawStorage = {
       return new Uint8Array(await res.arrayBuffer());
     } catch(e) { clearTimeout(timer); throw e; }
   },
+  async remove(path) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    try {
+      const res = await fetch(this._url(path), { method: 'DELETE', signal: ctrl.signal, headers: this._hdrs() });
+      clearTimeout(timer);
+      if (!res.ok && res.status !== 404) throw new Error(`Delete failed (${res.status}): ${await res.text()}`);
+    } catch(e) { clearTimeout(timer); throw e; }
+  },
 };
 
 // ── Data loader ────────────────────────────────────────────────────────────
@@ -30354,7 +30363,7 @@ function _drwTabCurrent(loc, el) {
     el.innerHTML = `<div class="docs-empty"><p>No confirmed drawings for this location yet.</p></div>`;
     return;
   }
-  el.innerHTML = _drwSheetTableHTML(sheets);
+  el.innerHTML = _drwSheetTableHTML(sheets, { loc, subtab: 'current' });
 }
 
 // ── Tab 2: Drawing Sets ────────────────────────────────────────────────────
@@ -30383,8 +30392,11 @@ function _drwTabSets(loc, el) {
                 title="Upload a new revision — matching Drawing Numbers will be superseded automatically">
           + Upload Revision
         </button>
+        <button class="form-secondary tr-mini-btn" style="margin-left:8px;color:var(--bad);border-color:#fca5a5;"
+                onclick="_drwDeleteSet('${activeSet.id}','${escapeHtml(loc)}')"
+                title="Delete this drawing set, all its pages and the uploaded PDF">Delete set</button>
       </div>
-      ${sheets.length ? _drwSheetTableHTML(sheets, { compact: true }) : '<p style="color:var(--gray-400);font-size:12px;">No confirmed sheets yet.</p>'}
+      ${sheets.length ? _drwSheetTableHTML(sheets, { compact: true, loc, subtab: 'sets' }) : '<p style="color:var(--gray-400);font-size:12px;">No confirmed sheets yet.</p>'}
     `;
     return;
   }
@@ -30423,6 +30435,7 @@ function _drwTabSets(loc, el) {
                 <td style="white-space:nowrap;">
                   <button class="admin-action-btn tr-mini-btn" onclick="_drwOpenSet('${escapeHtml(loc)}','${set.id}')">View</button>
                   <button class="form-secondary tr-mini-btn" style="margin-left:4px;" onclick="event.stopPropagation();_drwUploadRevision('${set.id}')" title="Upload a new revision — matching Drawing Numbers will be superseded automatically">+ Revision</button>
+                  <button class="form-secondary tr-mini-btn" style="margin-left:4px;color:var(--bad);border-color:#fca5a5;" onclick="event.stopPropagation();_drwDeleteSet('${set.id}','${escapeHtml(loc)}')" title="Delete this drawing set, all its pages and the uploaded PDF">Delete</button>
                 </td>
               </tr>
             `;
@@ -30829,14 +30842,20 @@ async function _drwRunExtract() {
   }
 }
 
+let _drwReviewSelectedIdx = 0;
+let _drwReviewRendering   = false;
+
 function _drwShowReview(numPages) {
   const needsReview   = _drwParsedSheets.filter(s => s.needsReview).length;
   const includedCount = _drwParsedSheets.filter(s => s.included).length;
-  const allNeedReview = needsReview === _drwParsedSheets.length;
+
+  // Keep the wide modal (from calibrate) so the PDF preview is readable.
+  const modalEl = document.querySelector('#modal-overlay .modal');
+  if (modalEl) { modalEl.className = 'modal modal-large'; modalEl.style.maxWidth = '98vw'; modalEl.style.width = '98vw'; modalEl.style.maxHeight = '95vh'; }
 
   document.querySelector('#modal-overlay .modal-head .modal-title').textContent = 'Review Sheets';
   const subEl = document.querySelector('#modal-overlay .modal-head .modal-sub');
-  if (subEl) subEl.textContent = 'Verify extracted data, uncheck pages to omit them, then Confirm to import.';
+  if (subEl) subEl.textContent = 'Click any row to preview that PDF page, fix anything the extract got wrong, uncheck pages to omit, then Confirm.';
 
   document.querySelector('#modal-overlay .modal-body').innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
@@ -30847,38 +30866,55 @@ function _drwShowReview(numPages) {
         : `<span style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">✓ All sheets parsed</span>`}
       <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(true)" style="font-size:12px;padding:5px 10px;">Select all</button>
       <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(false)" style="font-size:12px;padding:5px 10px;">Select none</button>
-      ${allNeedReview ? `<button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()" style="font-size:12px;padding:5px 10px;margin-left:auto;">↩ Recalibrate region</button>` : ''}
+      <button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()" style="font-size:12px;padding:5px 10px;margin-left:auto;">↩ Recalibrate region</button>
     </div>
     ${_drwDisciplineListHTML()}
-    <div style="max-height:480px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;">
-      <table class="data-table">
-        <thead><tr>
-          <th style="width:48px;"><input type="checkbox" id="drw-rev-toggle-all" ${includedCount === _drwParsedSheets.length ? 'checked' : ''} onchange="_drwReviewSelectAll(this.checked)" title="Toggle all" /></th>
-          <th style="width:42px;">Pg</th><th>Sheet #</th><th>Page #</th><th>Title</th><th>Rev</th><th>Discipline</th>
-        </tr></thead>
-        <tbody>
-          ${_drwParsedSheets.map((s, i) => `
-            <tr id="drw-rev-row-${i}" style="${!s.included ? 'opacity:0.45;background:var(--gray-50);' : s.needsReview ? 'background:#fffbeb;' : ''}">
-              <td style="text-align:center;"><input type="checkbox" ${s.included ? 'checked' : ''} onchange="_drwReviewToggle(${i}, this.checked)" /></td>
-              <td style="color:var(--gray-400);font-size:12px;">${s.pageIndex+1}</td>
-              <td><input class="form-input" value="${escapeHtml(s.sheetNumber||'')}"
-                style="width:140px;font-family:monospace;font-size:12px;padding:3px 6px;border-color:${s.sheetNumber?'var(--gray-200)':'var(--warn)'};"
-                onchange="_drwReviewEdit(${i},'sheetNumber',this.value)" /></td>
-              <td><input class="form-input" value="${escapeHtml(s.pageNumber||'')}"
-                style="width:62px;font-family:monospace;font-size:12px;padding:3px 6px;text-align:center;"
-                onchange="_drwReviewEdit(${i},'pageNumber',this.value)" /></td>
-              <td><input class="form-input" value="${escapeHtml(s.sheetTitle||'')}"
-                style="width:240px;font-size:12px;padding:3px 6px;border-color:${s.sheetTitle?'var(--gray-200)':'var(--warn)'};"
-                onchange="_drwReviewEdit(${i},'sheetTitle',this.value)" /></td>
-              <td><input class="form-input" value="${escapeHtml(s.revision||'')}"
-                style="width:52px;font-size:12px;padding:3px 6px;"
-                onchange="_drwReviewEdit(${i},'revision',this.value)" /></td>
-              <td style="font-size:12px;color:var(--gray-500);">${escapeHtml(s.discipline||'—')}</td>
-            </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>
-    <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">Edit any field directly. Discipline suggestions come from Field Config; new free-text disciplines are added there after Confirm &amp; Import succeeds.</p>`;
+    <div style="display:flex;gap:16px;align-items:flex-start;">
+      <!-- PDF preview -->
+      <div style="flex:1 1 52%;min-width:0;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <button class="admin-action-btn-secondary" id="drw-rev-prev" style="padding:5px 11px;font-size:13px;">◀</button>
+          <span id="drw-rev-prev-label" style="font-size:12.5px;font-weight:600;color:var(--gray-700);">Page —</span>
+          <button class="admin-action-btn-secondary" id="drw-rev-next" style="padding:5px 11px;font-size:13px;">▶</button>
+          <span id="drw-rev-prev-meta" style="font-size:12px;color:var(--warn);font-weight:600;"></span>
+        </div>
+        <div id="drw-rev-stage" style="position:relative;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:6px;overflow:auto;max-height:64vh;min-height:300px;display:flex;align-items:flex-start;justify-content:center;">
+          <canvas id="drw-rev-pdf" style="display:block;"></canvas>
+        </div>
+      </div>
+      <!-- Editable list -->
+      <div style="flex:1 1 48%;min-width:0;">
+        <div style="max-height:64vh;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;">
+          <table class="data-table">
+            <thead><tr>
+              <th style="width:40px;"><input type="checkbox" id="drw-rev-toggle-all" ${includedCount === _drwParsedSheets.length ? 'checked' : ''} onchange="_drwReviewSelectAll(this.checked)" title="Toggle all" /></th>
+              <th style="width:34px;">Pg</th><th>Sheet #</th><th>Page #</th><th>Title</th><th>Rev</th><th>Discipline</th>
+            </tr></thead>
+            <tbody>
+              ${_drwParsedSheets.map((s, i) => `
+                <tr id="drw-rev-row-${i}" class="drw-rev-clickable" onclick="_drwReviewShowPage(${i})" style="${!s.included ? 'opacity:0.45;background:var(--gray-50);' : s.needsReview ? 'background:#fffbeb;' : ''}">
+                  <td style="text-align:center;"><input type="checkbox" ${s.included ? 'checked' : ''} onclick="event.stopPropagation()" onchange="_drwReviewToggle(${i}, this.checked)" /></td>
+                  <td style="color:var(--gray-400);font-size:12px;">${s.pageIndex+1}</td>
+                  <td><input class="form-input" value="${escapeHtml(s.sheetNumber||'')}"
+                    style="width:110px;font-family:monospace;font-size:12px;padding:3px 6px;border-color:${s.sheetNumber?'var(--gray-200)':'var(--warn)'};"
+                    onchange="_drwReviewEdit(${i},'sheetNumber',this.value)" /></td>
+                  <td><input class="form-input" value="${escapeHtml(s.pageNumber||'')}"
+                    style="width:54px;font-family:monospace;font-size:12px;padding:3px 6px;text-align:center;"
+                    onchange="_drwReviewEdit(${i},'pageNumber',this.value)" /></td>
+                  <td><input class="form-input" value="${escapeHtml(s.sheetTitle||'')}"
+                    style="width:100%;min-width:130px;font-size:12px;padding:3px 6px;border-color:${s.sheetTitle?'var(--gray-200)':'var(--warn)'};"
+                    onchange="_drwReviewEdit(${i},'sheetTitle',this.value)" /></td>
+                  <td><input class="form-input" value="${escapeHtml(s.revision||'')}"
+                    style="width:48px;font-size:12px;padding:3px 6px;"
+                    onchange="_drwReviewEdit(${i},'revision',this.value)" /></td>
+                  <td style="font-size:12px;color:var(--gray-500);">${escapeHtml(s.discipline||'—')}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">Click a row to preview its page. Edit any field directly; discipline suggestions come from Field Config.</p>
+      </div>
+    </div>`;
 
   _drwHydrateDisciplineReviewInputs();
 
@@ -30886,6 +30922,56 @@ function _drwShowReview(numPages) {
     <button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()">← Recalibrate</button>
     <button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Cancel</button>
     <button class="admin-action-btn" onclick="_drwConfirmImport()">Confirm &amp; Import</button>`;
+
+  const prevBtn = document.getElementById('drw-rev-prev');
+  const nextBtn = document.getElementById('drw-rev-next');
+  if (prevBtn) prevBtn.onclick = () => _drwReviewStep(-1);
+  if (nextBtn) nextBtn.onclick = () => _drwReviewStep(1);
+  // Preview the first page that's set to import (fall back to page 1).
+  const firstIncluded = _drwParsedSheets.findIndex(s => s.included);
+  _drwReviewShowPage(firstIncluded >= 0 ? firstIncluded : 0);
+}
+
+function _drwReviewShowPage(idx) {
+  if (idx == null || idx < 0 || idx >= _drwParsedSheets.length) return;
+  _drwReviewSelectedIdx = idx;
+  _drwParsedSheets.forEach((_, i) => {
+    const row = document.getElementById(`drw-rev-row-${i}`);
+    if (row) row.classList.toggle('drw-rev-selected', i === idx);
+  });
+  const s = _drwParsedSheets[idx];
+  const lbl  = document.getElementById('drw-rev-prev-label');
+  const meta = document.getElementById('drw-rev-prev-meta');
+  if (lbl)  lbl.textContent  = `Page ${s.pageIndex + 1} of ${_drwParsedSheets.length}`;
+  if (meta) meta.textContent = s.included ? '' : 'omitted from import';
+  _drwReviewRenderPage(s.pageIndex + 1);
+}
+
+function _drwReviewStep(delta) {
+  _drwReviewShowPage(Math.max(0, Math.min(_drwParsedSheets.length - 1, _drwReviewSelectedIdx + delta)));
+}
+
+async function _drwReviewRenderPage(pageNum) {
+  if (!_drwUploadPdfDoc || _drwReviewRendering) return;
+  _drwReviewRendering = true;
+  try {
+    const page  = await _drwUploadPdfDoc.getPage(pageNum);
+    const vp0   = page.getViewport({ scale: 1 });
+    const stage = document.getElementById('drw-rev-stage');
+    const maxW  = Math.max(320, (stage?.clientWidth || 500) - 4);
+    // Fit to the column width; the stage scrolls vertically for tall pages.
+    const scale = maxW / vp0.width;
+    const viewport = page.getViewport({ scale });
+    const cv = document.getElementById('drw-rev-pdf');
+    if (!cv) return;
+    cv.width = viewport.width; cv.height = viewport.height;
+    cv.style.width = viewport.width + 'px'; cv.style.height = viewport.height + 'px';
+    await page.render({ canvasContext: cv.getContext('2d'), viewport }).promise;
+  } catch (e) {
+    console.warn('[drw-review] preview render failed:', e.message);
+  } finally {
+    _drwReviewRendering = false;
+  }
 }
 
 function _drwHydrateDisciplineReviewInputs() {
@@ -32055,6 +32141,9 @@ function _drwSheetTableHTML(sheets, opts = {}) {
   });
   const setTitle = sheet => DRAWING_SETS.find(x => x.id === sheet.set_id)?.title || '';
   const cols = opts.compact ? 7 : 8;
+  const isAdmin = currentRoleUser?.role === 'admin';
+  const loc     = opts.loc || _drwActiveLocation || '';
+  const subtab  = opts.subtab || 'current';
   let lastDisc = '';
   const rows = sorted.map(sheet => {
     const disc = sheet.discipline || 'General';
@@ -32079,7 +32168,7 @@ function _drwSheetTableHTML(sheets, opts = {}) {
         <td class="drw-sheet-page-cell">${escapeHtml(sheet.page_number || String((sheet.page_index ?? 0) + 1))}</td>
         ${opts.compact ? '' : `<td class="drw-sheet-set-cell">${escapeHtml(setTitle(sheet) || '—')}</td>`}
         <td>${pubCount ? `<span class="drw-markup-badge">${pubCount} markup${pubCount > 1 ? 's' : ''}</span>` : '<span class="drw-muted">No markups</span>'}</td>
-        <td><span class="drw-status-pill ${sheet.is_current ? 'is-current' : 'is-old'}">${sheet.is_current ? 'Current' : 'Superseded'}</span></td>
+        <td><span class="drw-status-pill ${sheet.is_current ? 'is-current' : 'is-old'}">${sheet.is_current ? 'Current' : 'Superseded'}</span>${isAdmin ? ` <button class="drw-del-btn" title="Delete this page (and its markups)" onclick="event.stopPropagation();_drwDeleteSheet('${sheet.id}','${escapeHtml(loc)}','${subtab}')">🗑</button>` : ''}</td>
       </tr>
     `;
   }).join('');
@@ -32102,6 +32191,50 @@ function _drwSheetTableHTML(sheets, opts = {}) {
       </table>
     </div>
   `;
+}
+
+// ── Delete a single page (sheet) — removes the sheet record + its markups.
+// The underlying PDF is untouched; the page just no longer appears in the tool.
+async function _drwDeleteSheet(sheetId, loc, subtab) {
+  if (currentRoleUser?.role !== 'admin') { toast('Admin access required', 'error'); return; }
+  const sheet = DRAWING_SHEETS.find(s => s.id === sheetId);
+  if (!sheet) { toast('Page not found', 'error'); return; }
+  const label = sheet.sheet_number || sheet.sheet_title || `page ${(sheet.page_index ?? 0) + 1}`;
+  if (!confirm(`Delete "${label}"?\n\nThis removes the page and any markups on it. The uploaded PDF file is not changed.`)) return;
+  try {
+    const mk = DRAWING_MARKUPS.filter(m => m.sheet_id === sheetId);
+    for (const m of mk) await _dbDelete('drawing_markups', { id: m.id });
+    await _dbDelete('drawing_sheets', { id: sheetId });
+    logAudit?.('Drawing page deleted', label, `set ${sheet.set_id}`);
+    toast('Page deleted', 'success');
+    await loadDrawingsData();
+    _drwRenderLocationView(loc || _drwActiveLocation, subtab || 'current');
+  } catch (e) { toast('Delete failed: ' + (e.message || 'unknown error'), 'error'); }
+}
+
+// ── Delete an entire drawing set — its pages, their markups, and the PDF.
+async function _drwDeleteSet(setId, loc) {
+  if (currentRoleUser?.role !== 'admin') { toast('Admin access required', 'error'); return; }
+  const set = DRAWING_SETS.find(s => s.id === setId);
+  if (!set) { toast('Drawing set not found', 'error'); return; }
+  const sheetsOfSet = DRAWING_SHEETS.filter(s => s.set_id === setId);
+  if (!confirm(`Delete drawing set "${set.title}"?\n\nThis permanently removes the set, all ${sheetsOfSet.length} of its page${sheetsOfSet.length === 1 ? '' : 's'}, their markups, and the uploaded PDF. This cannot be undone.`)) return;
+  try {
+    const sheetIds = new Set(sheetsOfSet.map(s => s.id));
+    const mk = DRAWING_MARKUPS.filter(m => sheetIds.has(m.sheet_id));
+    for (const m of mk) await _dbDelete('drawing_markups', { id: m.id });
+    if (sheetsOfSet.length) await _dbDelete('drawing_sheets', { set_id: setId });
+    await _dbDelete('drawing_sets', { id: setId });
+    if (set.storage_path) {
+      try { await _drawStorage.remove(set.storage_path); }
+      catch (e) { console.warn('[drw] storage remove failed:', e.message); }
+    }
+    logAudit?.('Drawing set deleted', set.title, `${sheetsOfSet.length} pages`);
+    toast('Drawing set deleted', 'success');
+    _drwActiveSetId = '';
+    await loadDrawingsData();
+    _drwRenderLocationView(loc || _drwActiveLocation, 'sets');
+  } catch (e) { toast('Delete failed: ' + (e.message || 'unknown error'), 'error'); }
 }
 
 async function openTestCaseScopeModal(testId) {

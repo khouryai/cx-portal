@@ -12788,3 +12788,12 @@ a:focus-visible {
 #drw-viewer-body,
 #drw-markup-canvas { touch-action: none; }
 
+/* Drawings: delete affordance + import-review row selection */
+.drw-del-btn {
+  background: none; border: none; cursor: pointer; font-size: 13px;
+  opacity: 0.45; padding: 2px 5px; border-radius: 4px; line-height: 1; vertical-align: middle;
+}
+.drw-del-btn:hover { opacity: 1; background: #fee2e2; }
+.drw-rev-clickable { cursor: pointer; }
+#modal-overlay tr.drw-rev-selected { background: #eef2ff !important; opacity: 1 !important; }
+
