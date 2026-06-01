@@ -12647,7 +12647,56 @@ function _p6ActDates(p6ActivityId) {
 // stem (e.g. "[T&C] W40 (Ph2) - IXL Sim Test" → "IXL Sim Test"). Centralized
 // here so the wizard, store, and auto-suggest all agree on the same key.
 function _p6PatternStem(p6Name) {
-  return String(p6Name || '').replace(/^\[T&C\]\s+\w+\s+\(Ph\d+\)\s+-\s+/, '').trim();
+  // The location-agnostic stem is everything after the first " - ". The prefix
+  // (`[T&C] <loc> (PhN)` or `[T&C] (PhN) (W34/W30/W10)`) never contains " - ",
+  // so this collapses every prefix variant to the same stem:
+  //   [T&C] A10 (Ph4) - ATS SAT (CTPs)              → "ATS SAT (CTPs)"
+  //   [T&C] (Ph2) (W34/W30/W10) - Axle Counter Test → "Axle Counter Test"
+  //   [T&C] A75/77 (Ph5) - D/N Wiring Prep (By BART)→ "D/N Wiring Prep (By BART)"
+  const s = String(p6Name || '').trim();
+  const i = s.indexOf(' - ');
+  return i >= 0 ? s.slice(i + 3).trim() : s.replace(/^\[T&C\]\s*/, '').trim();
+}
+
+// Location codes a P6 activity covers. Single-location items resolve to one
+// code; grouped items like "(W34/W30/W10)" expand to every station; bare
+// slash codes like "A75/77" inherit the letter prefix ("77" → "A77"). Falls
+// back to p6_location_code when the name carries no parseable codes.
+function _p6NameLocCodes(p6Name, fallbackCode) {
+  const s = String(p6Name || '');
+  const cut = s.indexOf(' - ');
+  let prefix = (cut >= 0 ? s.slice(0, cut) : s)
+    .replace(/^\[T&C\]/i, '')
+    .replace(/\(Ph\d+\)/gi, ' ');
+  const raw = [];
+  // Parenthetical groups first: (W34/W30/W10)
+  (prefix.match(/\(([^)]+)\)/g) || []).forEach(g => {
+    raw.push(g.replace(/[()]/g, ''));
+    prefix = prefix.replace(g, ' ');
+  });
+  // Then any bare tokens left over: A10, A75/77, HTT
+  prefix.split(/\s+/).forEach(t => { if (t.trim()) raw.push(t.trim()); });
+
+  const codes = [];
+  for (const tok of raw) {
+    let lastAlpha = '';
+    tok.split('/').map(x => x.trim()).filter(Boolean).forEach(part => {
+      let code = part.toUpperCase();
+      if (/^\d/.test(code) && lastAlpha) code = lastAlpha + code; // "77" → "A77"
+      const m = code.match(/^([A-Z]+)/);
+      if (m) lastAlpha = m[1];
+      if (/^[A-Z]+\d+[A-Z]?$/.test(code) || /^[A-Z]{2,}$/.test(code)) codes.push(code);
+    });
+  }
+  const uniq = [...new Set(codes)];
+  if (!uniq.length && fallbackCode) return [String(fallbackCode).toUpperCase()];
+  return uniq;
+}
+
+// True if a P6 activity covers the given portal location code (single or grouped).
+function _p6CoversLoc(p6, locCode) {
+  if (!locCode) return false;
+  return _p6NameLocCodes(p6.p6_name, p6.p6_location_code).includes(String(locCode).toUpperCase());
 }
 
 // Auto-suggest with optional test-case scope.
@@ -12680,7 +12729,7 @@ function _p6AutoSuggest(act, p6List, opts = {}) {
   for (const pattern of candidates) {
     const match = p6List.find(p =>
       p.p6_name.includes(pattern.p6_name_pattern) &&
-      p.p6_location_code === _p6LocCode(act.location));
+      _p6CoversLoc(p, _p6LocCode(act.location)));
     if (match) return match;
   }
   return null;
@@ -12859,12 +12908,12 @@ async function _p6CheckBatchSuggestions(activityName, subsystem, p6Act) {
   if (!unlinked.length) return;
 
   // Find matching P6 activities at those locations
+  const wantStem = _p6PatternStem(p6Act.p6_name);
   const suggestions = unlinked.map(a => {
     const locCode = _p6LocCode(a.location);
     const match   = P6_ACTS.find(p =>
-      p.p6_name.replace(/^\[T&C\]\s+\w+\s+\(Ph\d+\)\s+-\s+/, '').trim() ===
-      p6Act.p6_name.replace(/^\[T&C\]\s+\w+\s+\(Ph\d+\)\s+-\s+/, '').trim() &&
-      p.p6_location_code === locCode
+      _p6PatternStem(p.p6_name) === wantStem &&
+      _p6CoversLoc(p, locCode)
     );
     return match ? { portalAct: a, p6Match: match } : null;
   }).filter(Boolean);
@@ -13131,7 +13180,7 @@ function _p6LearnRowHTML(c, p6List) {
   const showAll = window._p6LearnShowAll.has(sid);
   const locCode = c.exampleAct ? _p6LocCode(c.exampleAct.location) : '';
   const scopedP6 = (!showAll && locCode)
-    ? p6List.filter(p => p.p6_location_code === locCode)
+    ? p6List.filter(p => _p6CoversLoc(p, locCode))
     : p6List;
 
   // Pre-fill: existing pick > existing pattern's match in scopedP6.
@@ -13247,31 +13296,58 @@ function _p6LearnChangeLabel(t) {
   return 'New link';
 }
 
-// Build the cascade preview: for the picked P6 activity's stem, find every
-// (portal location) where there's an unlinked portal activity matching the
-// row's name (and TC code, in TC mode) AND a P6 activity with the same stem
-// at that location's code.
+// Build the cascade preview. Starting from the picked P6 activity's stem, we
+// pool EVERY P6 activity (same batch) that shares that stem — so one pick fans
+// out across all locations even when the schedule splits the work into several
+// grouped activities (e.g. "(W34/W30/W10) - Axle Counter Test" plus
+// "(W40/Y10) - Axle Counter Test"). For each portal location of the activity
+// title we find the same-stem P6 item that COVERS that location (single code
+// or a grouped "(W34/W30/W10)" list). Locations with no clean one-to-one P6
+// coverage are returned in `flagged` so the admin can resolve them by hand.
 function _p6LearnComputeTargets(c, p6Pick) {
   const stem    = _p6PatternStem(p6Pick.p6_name);
   const allActs = _amGetActivities();
+  const stemPool = P6_ACTS.filter(p =>
+    p.batch_id === p6Pick.batch_id && _p6PatternStem(p.p6_name) === stem);
+
   const targets = [];
+  const flagged = [];
   for (const act of allActs) {
     if (act.activity !== c.activity) continue;
     if (c.subsystem && act.subsystem !== c.subsystem) continue;
-    const linked = _p6GetActivityLinks(act);
+    // TC-mode rows only concern locations that actually carry the test case.
+    if (c.testCaseCode && !(act.items || []).some(i => i.TestCaseCode === c.testCaseCode)) continue;
 
-    // Find a P6 activity at this location with the same stem
+    const linked     = _p6GetActivityLinks(act);
     const actLocCode = _p6LocCode(act.location);
-    const p6Match = P6_ACTS.find(p =>
-      p.batch_id === p6Pick.batch_id &&
-      p.p6_location_code === actLocCode &&
-      _p6PatternStem(p.p6_name) === stem);
-    if (!p6Match) continue;
+
+    // Same-stem P6 items covering this portal location.
+    const covering = actLocCode ? stemPool.filter(p => _p6CoversLoc(p, actLocCode)) : [];
+    let p6Match = null;
+    if (covering.length === 1) {
+      p6Match = covering[0];
+    } else if (covering.length > 1) {
+      // The P6 item you picked wins on a tie; otherwise the most specific
+      // (the one naming the fewest locations) is used.
+      p6Match = covering.includes(p6Pick)
+        ? p6Pick
+        : covering.slice().sort((a, b) =>
+            _p6NameLocCodes(a.p6_name, a.p6_location_code).length -
+            _p6NameLocCodes(b.p6_name, b.p6_location_code).length)[0];
+    }
+
+    if (!p6Match) {
+      flagged.push({
+        act, testCaseCode: c.testCaseCode || null,
+        reason: !actLocCode ? 'no-loc-code'
+              : covering.length === 0 ? 'no-p6'
+              : 'ambiguous',
+      });
+      continue;
+    }
 
     if (c.testCaseCode) {
-      // Only target if THIS act actually has the test case.
       const item = (act.items || []).find(i => i.TestCaseCode === c.testCaseCode);
-      if (!item) continue;
       const { activityLink, tcLink } = _p6LearnExistingLinks(act, c.testCaseCode);
       if (tcLink?.p6_activity_id === p6Match.id) continue;
       if (!tcLink && activityLink?.p6_activity_id === p6Match.id) continue;
@@ -13297,7 +13373,7 @@ function _p6LearnComputeTargets(c, p6Pick) {
       });
     }
   }
-  return targets;
+  return { targets, flagged };
 }
 
 function _p6LearnPreview(sid) {
@@ -13312,8 +13388,8 @@ function _p6LearnPreview(sid) {
   if (!window._p6LearnPicks) window._p6LearnPicks = new Map();
   window._p6LearnPicks.set(c.rowKey, p6Id);
 
-  const targets = _p6LearnComputeTargets(c, p6Pick);
-  if (!targets.length) {
+  const { targets, flagged } = _p6LearnComputeTargets(c, p6Pick);
+  if (!targets.length && !flagged.length) {
     const sameRows = _amGetActivities().filter(a =>
       a.activity === c.activity &&
       (!c.subsystem || a.subsystem === c.subsystem) &&
@@ -13353,6 +13429,23 @@ function _p6LearnPreview(sid) {
 
   const stem = _p6PatternStem(p6Pick.p6_name);
   const changing = targets.filter(t => t.changeType !== 'new');
+
+  // Locations that couldn't be matched one-to-one — surfaced for manual review.
+  const flagReason = {
+    'no-p6': 'No same-stem P6 activity covers this location',
+    'ambiguous': 'Multiple same-stem P6 activities could cover this location',
+    'no-loc-code': 'Portal location has no parseable location code',
+  };
+  const flaggedRows = flagged.map(f => `
+    <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-bottom:1px solid var(--gray-100);font-size:12px;">
+      <span style="font-size:13px;line-height:1;">⚠️</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;">${escapeHtml(f.act.location)}${f.testCaseCode?` · ${escapeHtml(f.testCaseCode)}`:''}</div>
+        <div style="color:var(--gray-500);font-size:11px;">${escapeHtml(f.act.phase||'—')} · ${escapeHtml(f.act.subsystem||'—')}</div>
+        <div style="color:#b45309;font-size:11px;margin-top:3px;">${escapeHtml(flagReason[f.reason] || 'Needs manual link')}</div>
+      </div>
+    </div>`).join('');
+
   const rows = targets.map((t, i) => `
     <label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--gray-100);font-size:12px;">
       <input type="checkbox" id="p6lp-${i}" checked>
@@ -13381,7 +13474,7 @@ function _p6LearnPreview(sid) {
 
   modal({
     title: `\ud83e\ude84 Apply pattern: "${stem}"`,
-    sub: `${c.activity}${c.testCaseCode?` \u00b7 TC ${c.testCaseCode}`:''} \u2014 ${targets.length} location${targets.length===1?'':'s'} match`,
+    sub: `${c.activity}${c.testCaseCode?` \u00b7 TC ${c.testCaseCode}`:''} \u2014 ${targets.length} location${targets.length===1?'':'s'} match${flagged.length?` \u00b7 ${flagged.length} flagged`:''}`,
     size: 'medium',
     body: `
       <p style="font-size:12px;color:var(--gray-600);margin-bottom:12px;">
@@ -13392,10 +13485,23 @@ function _p6LearnPreview(sid) {
           This will change ${changing.length} existing link${changing.length===1?'':'s'}. Review the Current and New values below before applying.
         </div>
       ` : ''}
-      <div style="max-height:380px;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">${rows}</div>`,
+      ${targets.length ? `
+        <div style="font-size:11px;font-weight:700;color:var(--gray-500);letter-spacing:.04em;margin:0 0 6px;">\u2713 ${targets.length} ONE-TO-ONE MATCH${targets.length===1?'':'ES'}</div>
+        <div style="max-height:${flagged.length?'260px':'380px'};overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">${rows}</div>
+      ` : `
+        <div style="padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;color:#1e40af;font-size:12px;margin-bottom:12px;">
+          No new one-to-one matches \u2014 every covered location is already linked. Flagged locations below still need attention.
+        </div>`}
+      ${flagged.length ? `
+        <div style="font-size:11px;font-weight:700;color:#b45309;letter-spacing:.04em;margin:14px 0 6px;">\u26a0\ufe0f ${flagged.length} FLAGGED \u2014 NEEDS MANUAL LINK</div>
+        <div style="padding:8px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;color:#92400e;font-size:11px;margin-bottom:8px;line-height:1.45;">
+          These locations have the activity but no clean one-to-one P6 match. Use the Mapping tab (or pick a different P6 item here) to link them by hand.
+        </div>
+        <div style="max-height:200px;overflow:auto;border:1px solid #fde68a;border-radius:6px;background:#fffdf7;">${flaggedRows}</div>
+      ` : ''}`,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="admin-action-btn" onclick="_p6LearnApply()">Apply Selected</button>`,
+      ${targets.length ? `<button class="admin-action-btn" onclick="_p6LearnApply()">Apply Selected</button>` : ''}`,
   });
 }
 
