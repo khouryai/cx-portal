@@ -30215,9 +30215,9 @@ function _drwPhaseForLocation(locName) {
 }
 
 function _drwIsAlwaysLocation(locName) {
-  const s = String(locName || '').trim().toUpperCase();
-  return s === 'HTT' || s === 'OCC' || s === 'W30' ||
-         s.startsWith('HTT ') || s.startsWith('OCC ') || s.startsWith('W30 ');
+  // No hard-coded default locations. Only locations that actually have an
+  // uploaded drawing set or sheet are shown (see _drwHasDrawings).
+  return false;
 }
 
 function _drwHasDrawings(locName) {
