@@ -30877,7 +30877,12 @@ function _drwShowReview(numPages) {
   _drwParsedSheets.forEach(s => {
     if (!s._upRevInit) {
       const ex = existingByNum[_normNumR(s.sheetNumber || '')];
-      if (ex) { s._existingSheet = ex; if (!s.revision) s.revision = _drwBumpRev(ex.revision); }
+      if (ex) {
+        s._existingSheet = ex;
+        // Up-rev: always advance past the existing sheet's revision. The extract
+        // usually reads the same number off the title block, so bump regardless.
+        s.revision = _drwBumpRev(ex.revision);
+      }
       s._upRevInit = true;
     }
   });
@@ -30910,11 +30915,17 @@ function _drwShowReview(numPages) {
     <div style="display:flex;gap:16px;align-items:flex-start;">
       <!-- PDF preview -->
       <div style="flex:1 1 52%;min-width:0;">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
           <button class="admin-action-btn-secondary" id="drw-rev-prev" style="padding:5px 11px;font-size:13px;">◀</button>
           <span id="drw-rev-prev-label" style="font-size:12.5px;font-weight:600;color:var(--gray-700);">Page —</span>
           <button class="admin-action-btn-secondary" id="drw-rev-next" style="padding:5px 11px;font-size:13px;">▶</button>
           <span id="drw-rev-prev-meta" style="font-size:12px;color:var(--warn);font-weight:600;"></span>
+          <span style="display:inline-flex;align-items:center;gap:4px;margin-left:auto;">
+            <button class="admin-action-btn-secondary" id="drw-rev-zoom-out" style="padding:5px 10px;font-size:14px;font-weight:700;" title="Zoom out">−</button>
+            <span id="drw-rev-zoom-label" style="font-size:12px;font-weight:600;color:var(--gray-600);min-width:42px;text-align:center;">Fit</span>
+            <button class="admin-action-btn-secondary" id="drw-rev-zoom-in" style="padding:5px 10px;font-size:14px;font-weight:700;" title="Zoom in">+</button>
+            <button class="admin-action-btn-secondary" id="drw-rev-zoom-reset" style="padding:5px 10px;font-size:12px;" title="Fit to width">Fit</button>
+          </span>
         </div>
         <div id="drw-rev-stage" style="position:relative;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:6px;overflow:auto;max-height:64vh;min-height:300px;display:flex;align-items:flex-start;justify-content:center;">
           <canvas id="drw-rev-pdf" style="display:block;"></canvas>
@@ -30976,9 +30987,31 @@ function _drwShowReview(numPages) {
   const nextBtn = document.getElementById('drw-rev-next');
   if (prevBtn) prevBtn.onclick = () => _drwReviewStep(-1);
   if (nextBtn) nextBtn.onclick = () => _drwReviewStep(1);
+  const zInBtn  = document.getElementById('drw-rev-zoom-in');
+  const zOutBtn = document.getElementById('drw-rev-zoom-out');
+  const zRstBtn = document.getElementById('drw-rev-zoom-reset');
+  if (zInBtn)  zInBtn.onclick  = () => _drwReviewZoom(1.25);
+  if (zOutBtn) zOutBtn.onclick = () => _drwReviewZoom(0.8);
+  if (zRstBtn) zRstBtn.onclick = () => _drwReviewZoom(0);
+  _drwReviewZoomScale = 0; // 0 = fit-to-width
   // Preview the first page that's set to import (fall back to page 1).
   const firstIncluded = _drwParsedSheets.findIndex(s => s.included);
   _drwReviewShowPage(firstIncluded >= 0 ? firstIncluded : 0);
+}
+
+// Zoom the review preview. factor 0 = fit-to-width; otherwise multiply current scale.
+function _drwReviewZoomScaleClamp(v) { return Math.max(0.25, Math.min(8, v)); }
+let _drwReviewZoomScale = 0;
+let _drwReviewFitScale  = 1;
+function _drwReviewZoom(factor) {
+  if (factor === 0) {
+    _drwReviewZoomScale = 0;
+  } else {
+    const base = _drwReviewZoomScale || _drwReviewFitScale;
+    _drwReviewZoomScale = _drwReviewZoomScaleClamp(base * factor);
+  }
+  const s = _drwParsedSheets[_drwReviewSelectedIdx];
+  if (s) _drwReviewRenderPage(s.pageIndex + 1);
 }
 
 function _drwReviewShowPage(idx) {
@@ -31010,14 +31043,19 @@ async function _drwReviewRenderPage(pageNum) {
     const vp0   = page.getViewport({ scale: 1 });
     const stage = document.getElementById('drw-rev-stage');
     const maxW  = Math.max(320, (stage?.clientWidth || 500) - 4);
-    // Fit to the column width; the stage scrolls vertically for tall pages.
-    const scale = maxW / vp0.width;
+    // Fit-to-width scale; the stage scrolls when the page is taller/wider.
+    _drwReviewFitScale = maxW / vp0.width;
+    const scale = _drwReviewZoomScale || _drwReviewFitScale;
     const viewport = page.getViewport({ scale });
     const cv = document.getElementById('drw-rev-pdf');
     if (!cv) return;
     cv.width = viewport.width; cv.height = viewport.height;
     cv.style.width = viewport.width + 'px'; cv.style.height = viewport.height + 'px';
+    // Center horizontally only when wider than the stage; otherwise left-align.
+    if (stage) stage.style.justifyContent = viewport.width > maxW ? 'flex-start' : 'center';
     await page.render({ canvasContext: cv.getContext('2d'), viewport }).promise;
+    const zl = document.getElementById('drw-rev-zoom-label');
+    if (zl) zl.textContent = _drwReviewZoomScale ? `${Math.round((_drwReviewZoomScale / _drwReviewFitScale) * 100)}%` : 'Fit';
   } catch (e) {
     console.warn('[drw-review] preview render failed:', e.message);
   } finally {
