@@ -34455,20 +34455,39 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape')     { _drwCloseViewer(); }
 });
 
+// Ordered PDF page indices that were actually imported for the open set.
+// Page navigation is confined to these so un-imported (unchecked-on-import)
+// pages never surface when cycling through the viewer.
+function _drwCurSetPageIndices() {
+  if (!_drwCurSet) return [];
+  return [...new Set(
+    DRAWING_SHEETS
+      .filter(s => s.set_id === _drwCurSet.id && s.page_index != null)
+      .map(s => s.page_index)
+  )].sort((a, b) => a - b);
+}
+
 function _drwUpdateNavBar() {
   if (!_drwPdfDoc || !_drwCurSet) return;
-  document.getElementById('drw-nav-page-count').textContent = _drwPdfDoc.numPages;
+  const pages = _drwCurSetPageIndices();
+  const total = pages.length || _drwPdfDoc.numPages;
+  document.getElementById('drw-nav-page-count').textContent = total;
   _drwSyncNavPage();
   _drwUpdateRevisionPicker();
   _drwWireFindInput();
-  // Page jump input
+  // Page jump input — numbers refer to the Nth imported sheet (1..total).
   const inp = document.getElementById('drw-nav-page-input');
   if (inp) {
-    inp.max = _drwPdfDoc.numPages;
+    inp.max = total;
     inp.onchange = (e) => {
       const n = parseInt(e.target.value, 10);
       if (!Number.isFinite(n)) return;
-      _drwGotoPage(Math.max(0, Math.min(_drwPdfDoc.numPages - 1, n - 1)));
+      const list = _drwCurSetPageIndices();
+      if (list.length) {
+        _drwGotoPage(list[Math.max(1, Math.min(list.length, n)) - 1]);
+      } else {
+        _drwGotoPage(Math.max(0, Math.min(_drwPdfDoc.numPages - 1, n - 1)));
+      }
     };
   }
   // Kick off background text extraction for Super Find.
@@ -34476,12 +34495,19 @@ function _drwUpdateNavBar() {
 }
 
 function _drwSyncNavPage() {
+  const pages = _drwCurSetPageIndices();
+  const pos   = pages.indexOf(_drwPageIndex); // position within imported sheets
   const inp = document.getElementById('drw-nav-page-input');
-  if (inp && _drwPdfDoc) inp.value = String(_drwPageIndex + 1);
+  if (inp && _drwPdfDoc) inp.value = String(pos >= 0 ? pos + 1 : _drwPageIndex + 1);
   const prev = document.getElementById('drw-nav-prev');
   const next = document.getElementById('drw-nav-next');
-  if (prev) prev.disabled = _drwPageIndex <= 0;
-  if (next) next.disabled = !_drwPdfDoc || _drwPageIndex >= (_drwPdfDoc.numPages - 1);
+  if (pages.length) {
+    if (prev) prev.disabled = pos === 0;
+    if (next) next.disabled = pos >= 0 && pos >= pages.length - 1;
+  } else {
+    if (prev) prev.disabled = _drwPageIndex <= 0;
+    if (next) next.disabled = !_drwPdfDoc || _drwPageIndex >= (_drwPdfDoc.numPages - 1);
+  }
 }
 
 async function _drwGotoPage(pageIndex) {
@@ -34521,7 +34547,22 @@ async function _drwGotoPage(pageIndex) {
 
 function _drwGotoRel(delta) {
   if (!_drwPdfDoc) return;
-  _drwGotoPage(_drwPageIndex + delta);
+  const pages = _drwCurSetPageIndices();
+  if (!pages.length) { _drwGotoPage(_drwPageIndex + delta); return; }
+  const pos = pages.indexOf(_drwPageIndex);
+  let target;
+  if (pos === -1) {
+    // Currently on a non-imported page — step to the nearest imported page
+    // in the direction of travel.
+    if (delta > 0) target = pages.find(p => p > _drwPageIndex);
+    else { const before = pages.filter(p => p < _drwPageIndex); target = before[before.length - 1]; }
+  } else {
+    const ni = pos + delta;
+    if (ni < 0 || ni >= pages.length) return;
+    target = pages[ni];
+  }
+  if (target == null) return;
+  _drwGotoPage(target);
 }
 
 // ── Revision picker ────────────────────────────────────────────────────────
