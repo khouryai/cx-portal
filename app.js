@@ -31006,9 +31006,24 @@ async function _drwConfirmImport() {
     await _dbUpdate('drawing_sets', { storage_path: storagePath }, { id: setId });
 
     document.getElementById('drw-confirm-status').textContent = 'Checking for existing revisions…';
-    const newNums = toImport.map(s => s.sheetNumber).filter(Boolean);
-    const toSupersede = DRAWING_SHEETS.filter(s => s.location === meta.location && s.is_current && newNums.includes(s.sheet_number));
-    if (toSupersede.length) await Promise.all(toSupersede.map(s => _dbUpdate('drawing_sheets', { is_current: false }, { id: s.id })));
+    // Up-rev: any current sheet in this location whose Drawing Number matches an
+    // incoming one is superseded (compared case/space-insensitively so the same
+    // number always matches). A prior set left with no current sheets is retired
+    // from the active list so re-uploading the same drawings doesn't pile up
+    // duplicate sets — it folds in as a new revision instead.
+    const _normNum = n => (n == null ? '' : String(n).trim().toUpperCase());
+    const newNums = new Set(toImport.map(s => _normNum(s.sheetNumber)).filter(Boolean));
+    const toSupersede = DRAWING_SHEETS.filter(s =>
+      s.location === meta.location && s.is_current && newNums.has(_normNum(s.sheet_number)));
+    if (toSupersede.length) {
+      await Promise.all(toSupersede.map(s => _dbUpdate('drawing_sheets', { is_current: false }, { id: s.id })));
+      const supersededIds = new Set(toSupersede.map(s => s.id));
+      const priorSetIds = new Set(toSupersede.map(s => s.set_id).filter(id => id && id !== setId));
+      for (const sid of priorSetIds) {
+        const stillCurrent = DRAWING_SHEETS.some(s => s.set_id === sid && s.is_current && !supersededIds.has(s.id));
+        if (!stillCurrent) await _dbUpdate('drawing_sets', { status: 'superseded' }, { id: sid }).catch(() => {});
+      }
+    }
 
     document.getElementById('drw-confirm-status').textContent = 'Saving sheet records…';
     const insertResult = await _drwInsertSheetRows(setId, meta, toImport);
