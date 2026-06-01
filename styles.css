@@ -5225,6 +5225,19 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   overflow: visible;
 }
 
+/* Clickable "X of Y locations unlinked" chip → opens the location→P6 mapping */
+.p6-learn-maplink {
+  transition: filter 0.12s, text-decoration-color 0.12s;
+  text-decoration: underline dotted transparent;
+  text-underline-offset: 2px;
+}
+.p6-learn-maplink:hover,
+.p6-learn-maplink:focus-visible {
+  filter: brightness(0.94);
+  text-decoration-color: currentColor;
+  outline: none;
+}
+
 .p6-learn-card {
   overflow: visible !important;
   position: relative;

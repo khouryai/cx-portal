@@ -13204,7 +13204,9 @@ function _p6LearnRowHTML(c, p6List) {
             ${escapeHtml(c.subsystem || '\u2014')} ${tcLine}
           </div>
           <div style="font-size:11px;margin-top:4px;">
-            <span class="badge badge-notstarted" style="font-size:10px;">\ud83d\udd34 ${c.unlinkedCount} of ${c.totalCount} location${c.totalCount===1?'':'s'} unlinked</span>
+            <span class="badge badge-notstarted p6-learn-maplink" style="font-size:10px;cursor:pointer;" role="button" tabindex="0"
+              onclick="_p6LearnShowMapping('${sid}')"
+              title="Click to see how each location currently maps to P6">\ud83d\udd34 ${c.unlinkedCount} of ${c.totalCount} location${c.totalCount===1?'':'s'} unlinked</span>
           </div>
         </div>
         <div style="flex:2;min-width:280px;">
@@ -13376,10 +13378,77 @@ function _p6LearnComputeTargets(c, p6Pick) {
   return { targets, flagged };
 }
 
-function _p6LearnPreview(sid) {
-  const c = window._p6LearnRowData?.[sid];
+// Show how each location of this activity currently maps to P6 — opened by
+// clicking the "X of Y locations unlinked" chip on a Bulk Learn row.
+function _p6LearnShowMapping(sid) {
+  const c = _p6LearnResolveRow(sid);
   if (!c) { toast('Row data missing — refresh the tab', 'error'); return; }
-  const p6Id = _p6SSVal(sid + '_pick') || _p6SSTypedMatch(sid + '_pick');
+
+  const acts = (c.allActs || []).slice().sort((a, b) =>
+    String(a.location || '').localeCompare(String(b.location || ''), undefined, { numeric: true }));
+
+  const rows = acts.map(act => {
+    const links = _p6GetActivityLinks(act);
+    const link  = c.testCaseCode
+      ? (links.find(l => l.portal_test_case_code === c.testCaseCode)
+         || links.find(l => !l.portal_test_case_code) || null)   // fall back to parent
+      : (links.find(l => !l.portal_test_case_code) || null);
+    const inherited = c.testCaseCode && link && !link.portal_test_case_code;
+    const p6 = link ? P6_ACTS.find(p => p.id === link.p6_activity_id) : null;
+    const linked = !!link;
+    return `
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 10px;border-bottom:1px solid var(--gray-100);font-size:12px;">
+        <span style="font-size:13px;line-height:1.1;">${linked ? '🟢' : '⚪'}</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:600;">${escapeHtml(act.location || '—')}</div>
+          <div style="color:var(--gray-500);font-size:11px;">${escapeHtml(act.phase || '—')} · ${escapeHtml(act.subsystem || '—')}</div>
+          ${linked ? `
+            <div style="color:var(--gray-700);font-size:11px;margin-top:3px;">→ ${escapeHtml(p6 ? p6.p6_name : _p6ActName(link.p6_activity_id))}</div>
+            <div style="color:var(--gray-400);font-size:10.5px;margin-top:1px;">
+              ${escapeHtml(p6?.p6_id || '')}${p6 ? ` · ${_p6ActDates(p6.id)}` : ''}${inherited ? ' · inherited from activity link' : ''}
+            </div>` : `
+            <div style="color:#b45309;font-size:11px;margin-top:3px;">Not linked to any P6 activity</div>`}
+        </div>
+      </div>`;
+  }).join('');
+
+  const linkedN = acts.length - c.unlinkedCount;
+  modal({
+    title: 'Location → P6 mapping',
+    sub: `${escapeHtml(c.activity)}${c.testCaseCode ? ` · TC ${escapeHtml(c.testCaseCode)}` : ''} — ${linkedN} of ${acts.length} linked`,
+    size: 'medium',
+    body: `
+      <p style="font-size:12px;color:var(--gray-600);margin-bottom:10px;line-height:1.45;">
+        Every location that carries this ${c.testCaseCode ? 'test case' : 'activity'} and its current P6 link. Unlinked locations are what Bulk Learn will fill in.
+      </p>
+      <div style="max-height:420px;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">${rows || '<div style="padding:16px;color:var(--gray-400);font-size:12px;">No locations found.</div>'}</div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
+}
+
+// Resolve a learn-row's candidate from the stash, rebuilding it from the live
+// candidate set if the stash was lost (e.g. tab re-render between previews).
+function _p6LearnResolveRow(sid) {
+  let c = window._p6LearnRowData?.[sid];
+  if (c) return c;
+  try {
+    const { candidates } = _p6LearnGetCandidates();
+    c = candidates.find(x => ('lr_' + x.rowKey.replace(/[^a-zA-Z0-9]/g, '_')) === sid) || null;
+    if (c) { (window._p6LearnRowData = window._p6LearnRowData || {})[sid] = c; }
+  } catch (_) {}
+  return c;
+}
+
+function _p6LearnPreview(sid) {
+  const c = _p6LearnResolveRow(sid);
+  if (!c) { toast('Row data missing — refresh the tab', 'error'); return; }
+  // Resolve the pick from the DOM, then the typed text, then the durable pick
+  // map. The DOM hidden value can be cleared by the search filter on re-render,
+  // so the picks map is the reliable fallback — without it Preview "worked once".
+  const p6Id = _p6SSVal(sid + '_pick')
+    || _p6SSTypedMatch(sid + '_pick')
+    || window._p6LearnPicks?.get(c.rowKey)
+    || '';
   if (!p6Id) { toast('Pick a P6 activity first', 'error'); return; }
   const p6Pick = P6_ACTS.find(p => p.id === p6Id);
   if (!p6Pick) { toast('P6 activity not found', 'error'); return; }
