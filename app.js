@@ -7272,8 +7272,8 @@ async function exportPunchPDF(ids) {
     .tl-meta{font-size:11px;color:#444;}
     .tl-body{font-size:12px;color:#222;white-space:pre-wrap;margin-top:2px;}
     .pgrid{display:flex;flex-direction:column;gap:14px;margin-bottom:20px;}
-    .pfig{break-inside:avoid;page-break-inside:avoid;margin:0;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;background:#fafafa;}
-    .pfig img{display:block;width:100%;max-height:560px;object-fit:contain;background:#fff;}
+    .pfig{break-inside:avoid;page-break-inside:avoid;margin:0 auto;max-width:80%;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;background:#fafafa;}
+    .pfig img{display:block;width:100%;max-height:448px;object-fit:contain;background:#fff;}
     .pfig figcaption{font-size:11px;color:#555;padding:6px 10px;border-top:1px solid #eee;text-transform:capitalize;}
     @media print{
       body{padding:0;}
@@ -7677,9 +7677,23 @@ async function advancePunchStatus(id, newStatus) {
     if (!((p.assignees || []).length)) missing.push('at least one assignee');
     if (!p.final_approver)             missing.push('a final approver');
     if (missing.length) {
-      toast('Add ' + missing.join(' and ') + ' before submitting. Opening the editor…', 'warn');
-      closeModal();
-      setTimeout(() => openEditPunchModal(id), 150);
+      modal({
+        title: 'Details required before submitting',
+        size: 'small',
+        body: `
+          <div style="text-align:center;padding:6px 4px 2px;">
+            <div style="width:56px;height:56px;border-radius:50%;background:#fef3e0;margin:0 auto 16px;display:flex;align-items:center;justify-content:center;">
+              <svg width="28" height="28" viewBox="0 0 20 20" fill="#d97706"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+            </div>
+            <div style="font-size:14px;color:var(--gray-700);line-height:1.6;">
+              Before sending Punch #${escapeHtml(String(p.number||''))} to the assignees, you need to set
+              <strong>${escapeHtml(missing.join(' and '))}</strong>.
+            </div>
+          </div>`,
+        footer: `
+          <button class="form-secondary" onclick="closeModal()">Cancel</button>
+          <button class="form-submit" onclick="closeModal();openEditPunchModal('${id}')">OK — Add details</button>`,
+      });
       return;
     }
   }
