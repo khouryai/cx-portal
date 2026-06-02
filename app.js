@@ -19933,6 +19933,15 @@ function _laLookaheadHTML() {
           <button class="admin-tab${_laTimelineWindow === parseInt(v) ? ' active' : ''}" style="font-size:12px;padding:6px 14px;" onclick="_laSetTimelineWindow(${v})">${l}</button>
         `).join('')}
       </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-size:11px;color:var(--gray-500);margin-right:2px;white-space:nowrap;">Period:</span>
+        <button class="admin-tab" style="font-size:12px;padding:6px 10px;" onclick="_laShiftWindow(-7)" title="Back one week">‹ Prev</button>
+        <button class="admin-tab${_laWindowStart ? '' : ' active'}" style="font-size:12px;padding:6px 10px;" onclick="_laResetWindow()" title="Jump to today">Today</button>
+        <button class="admin-tab" style="font-size:12px;padding:6px 10px;" onclick="_laShiftWindow(7)" title="Forward one week">Next ›</button>
+        <input type="date" value="${_laWinAnchor().format('YYYY-MM-DD')}" onchange="_laJumpWindow(this.value)" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-200);border-radius:6px;" title="Jump to a start date">
+        ${(_laWindowStart && dayjs(_laWindowStart).isBefore(dayjs().startOf('day'))) ? '<span style="font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#92400e;background:#fef3c7;padding:3px 8px;border-radius:99px;">Viewing history</span>' : ''}
+        <button class="admin-tab" style="font-size:12px;padding:6px 12px;" onclick="openPlanningHistory()" title="Browse frozen weekly snapshots">🗓 Past Weeks</button>
+      </div>
       ${_laTimelineGroupBy === 'activity' ? `
       <div style="display:flex;align-items:center;gap:0;">
         <span style="font-size:11px;color:var(--gray-500);margin-right:8px;white-space:nowrap;">Sub-group:</span>
@@ -20803,7 +20812,7 @@ async function _laDrawerRemoveEventResource(eventResId) {
 // matches the shift color, cancelled cells get a 🚫 prefix.
 function _laExportLookahead() {
   if (typeof XLSX === 'undefined') { toast('Excel library not loaded', 'error'); return; }
-  const winStart = dayjs().startOf('day');
+  const winStart = _laWinAnchor();
   const days = Array.from({ length: _laTimelineWindow }, (_, i) => winStart.add(i, 'day').format('YYYY-MM-DD'));
 
   // Header: 1 row month strip + 1 row day strip
@@ -21208,6 +21217,111 @@ function _laToggleGroupCollapse(groupKey) {
   _renderLookaheadTabBody();
 }
 function _laSetTimelineWindow(d) { _laTimelineWindow = d; _renderLookaheadTabBody(); }
+
+// ── Lookahead period navigation (scroll back/forward through weeks) ───────────
+let _laWindowStart = null;   // 'YYYY-MM-DD' anchor; null = today
+function _laWinAnchor() { return _laWindowStart ? dayjs(_laWindowStart) : dayjs().startOf('day'); }
+function _laShiftWindow(deltaDays) {
+  _laWindowStart = _laWinAnchor().add(deltaDays, 'day').format('YYYY-MM-DD');
+  _renderLookaheadTabBody();
+}
+function _laResetWindow() { _laWindowStart = null; _renderLookaheadTabBody(); }
+function _laJumpWindow(dateStr) { if (dateStr) { _laWindowStart = dayjs(dateStr).format('YYYY-MM-DD'); _renderLookaheadTabBody(); } }
+
+// ── Past Weeks — frozen weekly snapshots viewer ───────────────────────────────
+let PLANNING_SNAPSHOTS = [];
+function _laSnapDate(d) { return d ? dayjs(d).format('MMM D, YYYY') : '—'; }
+function _laSnapDateShort(d) { return d ? dayjs(d).format('MMM D') : '—'; }
+
+async function openPlanningHistory() {
+  modal({
+    title: 'Past Weeks — Frozen Lookahead',
+    sub: 'Immutable weekly record (Mon–Sun) of activities, shifts and assigned resources. Captured automatically each Monday.',
+    size: 'large',
+    body: '<div id="la-hist-body"><div style="padding:24px;text-align:center;color:var(--gray-400);">Loading…</div></div>',
+    footer: '<button class="form-secondary" onclick="closeModal()">Close</button>',
+  });
+  let rows = [];
+  try { rows = await _fetchAnon('planning_week_snapshots?select=week_start,week_end,captured_at,activity_count,event_count,cancelled_count&order=week_start.desc'); } catch (e) { /* */ }
+  PLANNING_SNAPSHOTS = rows || [];
+  _laRenderHistoryList();
+}
+
+function _laRenderHistoryList() {
+  const body = document.getElementById('la-hist-body');
+  if (!body) return;
+  if (!PLANNING_SNAPSHOTS.length) {
+    body.innerHTML = '<div style="padding:28px;text-align:center;color:var(--gray-400);font-size:13px;">No frozen weeks yet.<br>The first snapshot is captured automatically each Monday once a week has fully passed.</div>';
+    return;
+  }
+  body.innerHTML = '<div class="la-hist-list">' + PLANNING_SNAPSHOTS.map(s => `
+    <button class="la-hist-row" onclick="_laShowSnapshot('${s.week_start}')">
+      <div>
+        <div class="la-hist-wk">${escapeHtml(_laSnapDateShort(s.week_start))} – ${escapeHtml(_laSnapDate(s.week_end))}</div>
+        <div class="la-hist-sub">Frozen ${escapeHtml(_laSnapDate(s.captured_at))}</div>
+      </div>
+      <div class="la-hist-stats">
+        <span>${s.activity_count} ${s.activity_count === 1 ? 'activity' : 'activities'}</span>
+        <span>${s.event_count} shift${s.event_count === 1 ? '' : 's'}</span>
+        ${s.cancelled_count ? `<span style="color:#dc2626;font-weight:600;">${s.cancelled_count} cancelled</span>` : ''}
+        <span class="la-hist-arrow">›</span>
+      </div>
+    </button>`).join('') + '</div>';
+}
+
+async function _laShowSnapshot(weekStart) {
+  const body = document.getElementById('la-hist-body');
+  if (body) body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--gray-400);">Loading week…</div>';
+  let rows = [];
+  try { rows = await _fetchAnon('planning_week_snapshots?select=*&week_start=eq.' + weekStart + '&limit=1'); } catch (e) { /* */ }
+  const snap = rows && rows[0];
+  if (!snap) { if (body) body.innerHTML = '<div style="padding:24px;color:var(--bad);">Could not load that week.</div>'; return; }
+  const acts = Array.isArray(snap.payload) ? snap.payload : [];
+
+  const shiftLabel = { day_shift: 'Day', swing_shift: 'Swing', night_shift: 'Night', blanket_shift: 'All-day' };
+  const actsHtml = acts.length ? acts.map(a => {
+    const evs = Array.isArray(a.events) ? a.events : [];
+    const evHtml = evs.map(e => {
+      const cancelled = e.status === 'cancelled';
+      const statusChip = cancelled
+        ? '<span class="la-hist-badge cancel">Cancelled</span>'
+        : '<span class="la-hist-badge done">Completed</span>';
+      const when = dayjs(e.event_date).format('ddd MMM D');
+      const time = e.all_day ? 'All day' : [e.start_time, e.end_time].filter(Boolean).map(t => String(t).slice(0,5)).join('–');
+      const res = (e.resources || []).map(r => {
+        const q = r.quantity && r.quantity > 1 ? ' ×' + r.quantity : '';
+        const isBart = (r.kind || '').toLowerCase() === 'bart' || (r.company || '').toLowerCase().includes('bart');
+        return `<span class="la-hist-res ${isBart ? 'bart' : 'hit'}${r.denied ? ' denied' : ''}">${escapeHtml(r.name || r.initials || '?')}${q}${r.denied ? ' ⚠' : ''}</span>`;
+      }).join('') || '<span style="color:var(--gray-400);font-size:11px;">No resources</span>';
+      return `<div class="la-hist-ev${cancelled ? ' is-cancel' : ''}">
+        <div class="la-hist-ev-head">
+          <span class="la-hist-ev-when">${escapeHtml(when)}${time ? ' · ' + escapeHtml(time) : ''}</span>
+          <span class="la-hist-ev-shift">${escapeHtml(shiftLabel[e.shift_type] || e.shift_type || '')}</span>
+          ${statusChip}
+        </div>
+        ${e.title ? `<div class="la-hist-ev-title">${escapeHtml(e.title)}</div>` : ''}
+        ${cancelled && (e.cancellation_reason || e.cancellation_responsible_party || e.cancellation_category) ? `<div class="la-hist-ev-cancel">✕ ${escapeHtml([e.cancellation_category, e.cancellation_reason, e.cancellation_responsible_party].filter(Boolean).join(' · '))}</div>` : ''}
+        <div class="la-hist-res-row">${res}</div>
+      </div>`;
+    }).join('');
+    const meta = [a.location, a.phase, a.discipline, a.trade].filter(Boolean).map(escapeHtml).join(' · ');
+    return `<div class="la-hist-act">
+      <div class="la-hist-act-head">
+        <div class="la-hist-act-name">${escapeHtml(a.description || a.activity_id_text || '—')}</div>
+        ${meta ? `<div class="la-hist-act-meta">${meta}</div>` : ''}
+      </div>
+      <div class="la-hist-evs">${evHtml}</div>
+    </div>`;
+  }).join('') : '<div style="padding:20px;color:var(--gray-400);">No activities recorded that week.</div>';
+
+  if (body) body.innerHTML = `
+    <button class="form-secondary" style="font-size:12px;margin-bottom:12px;" onclick="_laRenderHistoryList()">‹ All weeks</button>
+    <div class="la-hist-wkhead">
+      <strong>${escapeHtml(_laSnapDate(snap.week_start))} – ${escapeHtml(_laSnapDate(snap.week_end))}</strong>
+      <span style="color:var(--gray-500);font-size:12px;">${snap.activity_count} activities · ${snap.event_count} shifts${snap.cancelled_count ? ' · ' + snap.cancelled_count + ' cancelled' : ''} · frozen ${escapeHtml(_laSnapDate(snap.captured_at))}</span>
+    </div>
+    <div class="la-hist-acts">${actsHtml}</div>`;
+}
 
 // ─── Resource panel search filter ────────────────────────────
 function _laFilterResPanel(query) {
@@ -23236,8 +23350,8 @@ function _laMountLookaheadTL() {
   const target = document.getElementById('lookahead-timeline');
   if (!target) return;
 
-  // Date window: today → today + N days
-  const winStart = dayjs().startOf('day');
+  // Date window: anchor → anchor + N days (anchor defaults to today; can scroll back/forward)
+  const winStart = _laWinAnchor();
   const days = Array.from({ length: _laTimelineWindow }, (_, i) =>
     winStart.add(i, 'day').format('YYYY-MM-DD')
   );

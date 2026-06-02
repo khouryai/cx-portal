@@ -13152,3 +13152,39 @@ a:focus-visible {
 }
 #login-overlay .signin-statuspill .login-db-dot.online { background: #34d399; box-shadow: 0 0 8px #34d399; }
 #login-overlay .signin-statuspill .login-db-dot.offline { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; animation: none; }
+
+/* ── Lookahead "Past Weeks" frozen-snapshot viewer ───────────────── */
+.la-hist-list { display: flex; flex-direction: column; gap: 8px; }
+.la-hist-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; text-align: left; padding: 12px 16px; cursor: pointer;
+  background: var(--white); border: 1px solid var(--gray-200); border-radius: 10px; transition: all .15s;
+}
+.la-hist-row:hover { border-color: var(--hitachi-red); background: var(--gray-50); }
+.la-hist-wk { font-size: 14px; font-weight: 700; color: var(--black); }
+.la-hist-sub { font-size: 11px; color: var(--gray-500); margin-top: 2px; }
+.la-hist-stats { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--gray-600); white-space: nowrap; }
+.la-hist-arrow { font-size: 18px; color: var(--gray-400); }
+.la-hist-wkhead { display: flex; flex-direction: column; gap: 3px; padding: 10px 14px; background: var(--gray-50); border-radius: 8px; margin-bottom: 14px; }
+.la-hist-acts { display: flex; flex-direction: column; gap: 14px; }
+.la-hist-act { border: 1px solid var(--gray-200); border-radius: 10px; overflow: hidden; }
+.la-hist-act-head { padding: 10px 14px; background: var(--gray-50); border-bottom: 1px solid var(--gray-100); }
+.la-hist-act-name { font-size: 14px; font-weight: 700; color: var(--black); }
+.la-hist-act-meta { font-size: 11px; color: var(--gray-500); margin-top: 2px; }
+.la-hist-evs { display: flex; flex-direction: column; }
+.la-hist-ev { padding: 10px 14px; border-bottom: 1px solid var(--gray-100); }
+.la-hist-ev:last-child { border-bottom: none; }
+.la-hist-ev.is-cancel { background: #fef2f2; }
+.la-hist-ev-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.la-hist-ev-when { font-size: 13px; font-weight: 600; color: var(--gray-800); }
+.la-hist-ev-shift { font-size: 11px; color: var(--gray-500); }
+.la-hist-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 99px; }
+.la-hist-badge.done { background: #dcfce7; color: #15803d; }
+.la-hist-badge.cancel { background: #fee2e2; color: #b91c1c; }
+.la-hist-ev-title { font-size: 12px; color: var(--gray-700); margin-top: 3px; }
+.la-hist-ev-cancel { font-size: 11px; color: #b91c1c; margin-top: 3px; }
+.la-hist-res-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.la-hist-res { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 99px; background: var(--gray-100); color: var(--gray-700); }
+.la-hist-res.hit { background: #e0f2fe; color: #075985; }
+.la-hist-res.bart { background: #fef3c7; color: #92400e; }
+.la-hist-res.denied { text-decoration: line-through; opacity: .7; }
