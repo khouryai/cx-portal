@@ -7142,9 +7142,27 @@ function _plToggleSelect(id, checked) {
 }
 function _plClearSelection() { _plSelected = new Set(); renderPunchWorkflow(); }
 
-function exportPunchPDF(ids) {
+async function exportPunchPDF(ids) {
   const items = ids.map(id => PUNCH_DB.find(x => x.id === id)).filter(Boolean);
   if (!items.length) { toast('No items found', 'warn'); return; }
+
+  toast(`Preparing PDF for ${items.length} item${items.length===1?'':'s'}…`, 'success');
+
+  // Gather + sign full-resolution photos for each item so they embed in the PDF.
+  const photosByItem = {};
+  if (window.PhotosModule && PhotosModule.listFor && PhotosModule.sign) {
+    for (const item of items) {
+      try {
+        const photos = await PhotosModule.listFor({ source_type: 'punch', source_id: item.id });
+        if (photos.length) {
+          const signed = await PhotosModule.sign(photos.map(p => p.storage_path));
+          photosByItem[item.id] = photos
+            .map(p => ({ url: signed[p.storage_path], caption: p.caption || '', kind: p.capture_kind || 'general' }))
+            .filter(x => x.url);
+        }
+      } catch (e) { console.warn('[PDF] photo fetch failed:', e && e.message); }
+    }
+  }
 
   // PL_STATUS_LABELS is a const in the same scope — do NOT use window.PL_STATUS_LABELS
   // (const/let top-level vars are NOT added to window in non-module scripts)
@@ -7214,6 +7232,15 @@ function exportPunchPDF(ids) {
       <h1 class="ptitle">${esc(item.title)}</h1>
       ${item.description ? `<div class="pdesc">${esc(item.description)}</div>` : ''}
       <div class="fgrid">${fields.map(([l,v])=>`<div class="fd"><div class="fl">${l}</div><div class="fv">${esc(v||'—')}</div></div>`).join('')}</div>
+      ${(() => {
+        const photos = photosByItem[item.id] || [];
+        if (!photos.length) return '';
+        return `<div class="stitle">Photos (${photos.length})</div>
+          <div class="pgrid">${photos.map(ph => {
+            const cap = [ph.caption, (ph.kind && ph.kind !== 'general') ? ph.kind : ''].filter(Boolean).map(esc).join(' · ');
+            return `<figure class="pfig"><img src="${ph.url}" alt="" />${cap ? `<figcaption>${cap}</figcaption>` : ''}</figure>`;
+          }).join('')}</div>`;
+      })()}
       <div class="stitle">Activity &amp; Comments</div>
       <div class="timeline">${timelineHtml}</div>
     </div>`;
@@ -7244,6 +7271,10 @@ function exportPunchPDF(ids) {
     .tl-badge-action{background:#e5e7eb;color:#555;}
     .tl-meta{font-size:11px;color:#444;}
     .tl-body{font-size:12px;color:#222;white-space:pre-wrap;margin-top:2px;}
+    .pgrid{display:flex;flex-direction:column;gap:14px;margin-bottom:20px;}
+    .pfig{break-inside:avoid;page-break-inside:avoid;margin:0;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;background:#fafafa;}
+    .pfig img{display:block;width:100%;max-height:560px;object-fit:contain;background:#fff;}
+    .pfig figcaption{font-size:11px;color:#555;padding:6px 10px;border-top:1px solid #eee;text-transform:capitalize;}
     @media print{
       body{padding:0;}
       @page{margin:16mm 14mm;size:A4;}
@@ -7251,7 +7282,9 @@ function exportPunchPDF(ids) {
     }
   `;
 
-  const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Punch Export</title><style>${css}</style></head><body>${pagesHtml}<script>window.onload=function(){window.print();}<\/script></body></html>`;
+  // No inner auto-print script: we trigger print from the iframe's load event,
+  // which fires only after all images (the embedded photos) have loaded.
+  const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Punch Export</title><style>${css}</style></head><body>${pagesHtml}</body></html>`;
 
   // ── Strategy: Blob URL → hidden iframe → contentWindow.print() ─────────────
   // This avoids popup blockers entirely (no window.open needed).
@@ -7283,7 +7316,6 @@ function exportPunchPDF(ids) {
     };
 
     frame.src = blobUrl;
-    toast(`Preparing PDF for ${items.length} item${items.length===1?'':'s'}…`, 'success');
   } catch(e) {
     console.error('[PDF] export failed:', e);
     toast('PDF export failed: ' + e.message, 'error');
@@ -7417,9 +7449,12 @@ function openPunchDetail(id) {
 
       <!-- Linked Photos -->
       <div style="margin-bottom:18px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;">
           <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;">📷 Photos</div>
-          ${canComment ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchAddPhotos('${id}')">+ Add photo</button>` : ''}
+          <div style="display:flex;gap:8px;">
+            <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchDownloadAll('${id}')">⬇ Save all</button>
+            ${canComment ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchAddPhotos('${id}')">+ Add photo</button>` : ''}
+          </div>
         </div>
         <div id="punch-photos-${id}" class="punch-photo-grid"><div style="font-size:12px;color:var(--gray-400);padding:8px 0;">Loading photos…</div></div>
         <input type="file" id="punch-gallery-file-${id}" accept="image/*" multiple style="display:none" onchange="_punchGalleryFilesChosen('${id}', this)">
@@ -7514,9 +7549,53 @@ async function _punchRenderGallery(id) {
       ? `<span class="punch-photo-kind ${escapeHtml(ph.capture_kind)}">${escapeHtml(ph.capture_kind)}</span>` : '';
     return `<div class="punch-photo-tile" title="${escapeHtml(ph.caption || ph.file_name || '')}">
       <img data-photo-thumb="${escapeHtml(thumb)}" data-photo-full="${escapeHtml(ph.storage_path)}" alt="${escapeHtml(ph.caption || '')}" loading="lazy">${kind}
+      <button class="punch-photo-dl" title="Save photo" onclick="_punchDownloadPhoto('${escapeHtml(ph.storage_path)}', ${JSON.stringify(ph.file_name || '').replace(/"/g,'&quot;')}, event)">⬇</button>
     </div>`;
   }).join('');
   await _punchSignImages(wrap);
+}
+
+// ── Staged photos for a NEW punch item (uploaded after the item is created) ───
+let _punchNewPhotos = [];
+function _punchNewPhotoChosen(input) {
+  const files = [...(input.files || [])];
+  files.forEach(f => { if (f.type && f.type.indexOf('image/') === 0) _punchNewPhotos.push(f); });
+  input.value = '';
+  _punchRenderNewPhotoRow();
+}
+function _punchRenderNewPhotoRow() {
+  const row = document.getElementById('punch-newphoto-row');
+  if (!row) return;
+  row.innerHTML = _punchNewPhotos.map((f, i) =>
+    `<div class="punch-newphoto-tile"><img src="${URL.createObjectURL(f)}" alt=""><button type="button" onclick="_punchNewPhotoRemove(${i})" title="Remove">×</button></div>`
+  ).join('');
+}
+function _punchNewPhotoRemove(i) { _punchNewPhotos.splice(i, 1); _punchRenderNewPhotoRow(); }
+
+// ── Download linked photos ────────────────────────────────────────────────────
+async function _punchDownloadPhoto(path, name, ev) {
+  if (ev) ev.stopPropagation();
+  if (!window.PhotosModule || !PhotosModule.signOne) { toast('Photos module not loaded', 'error'); return; }
+  try {
+    const url = await PhotosModule.signOne(path);
+    if (!url) { toast('Could not get photo URL', 'error'); return; }
+    const blob = await (await fetch(url)).blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name || path.split('/').pop() || 'photo.jpg';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  } catch (e) { toast('Download failed: ' + (e && e.message || e), 'error'); }
+}
+async function _punchDownloadAll(id) {
+  if (!window.PhotosModule || !PhotosModule.listFor) return;
+  const photos = await PhotosModule.listFor({ source_type: 'punch', source_id: id });
+  if (!photos.length) { toast('No photos to save', 'warn'); return; }
+  toast('Saving ' + photos.length + ' photo' + (photos.length > 1 ? 's' : '') + '…');
+  for (const ph of photos) {
+    await _punchDownloadPhoto(ph.storage_path, ph.file_name, null);
+    await new Promise(r => setTimeout(r, 350));
+  }
 }
 
 // Batch-sign every data-photo-thumb/full image inside a scope and wire click→open full.
@@ -7591,6 +7670,19 @@ function _punchCommentPhotoClear(id) {
 async function advancePunchStatus(id, newStatus) {
   const p = PUNCH_DB.find(x => x.id === id);
   if (!p) return;
+  // Punch Item Manager's official submit out of "Initiated" requires that the
+  // assignees and the final approver are set first.
+  if (p.status === 'initiated' && newStatus === 'work_required') {
+    const missing = [];
+    if (!((p.assignees || []).length)) missing.push('at least one assignee');
+    if (!p.final_approver)             missing.push('a final approver');
+    if (missing.length) {
+      toast('Add ' + missing.join(' and ') + ' before submitting. Opening the editor…', 'warn');
+      closeModal();
+      setTimeout(() => openEditPunchModal(id), 150);
+      return;
+    }
+  }
   const oldLabel = PL_STATUS_LABELS[p.status] || p.status;
   const newLabel = PL_STATUS_LABELS[newStatus] || newStatus;
   const histEntry = {
@@ -7782,7 +7874,13 @@ function _punchFormHTML(p) {
         <label>Photos</label>
         <button type="button" class="form-secondary" onclick="if(window.PhotosModule)PhotosModule.captureFor(window._pmPunchCtx)">+ Add / view photos</button>
         <div style="font-size:11px;color:var(--gray-500);margin-top:4px;">Opens the Photos uploader pre-linked to this punch item — uploads appear in the Punch List album.</div>
-      </div>` : ''}
+      </div>` : `<div class="form-field form-field-full">
+        <label>Photos</label>
+        <div class="punch-newphoto-row" id="punch-newphoto-row"></div>
+        <button type="button" class="form-secondary" onclick="document.getElementById('punch-newphoto-file').click()">📷 Add photo</button>
+        <input type="file" id="punch-newphoto-file" accept="image/*" multiple style="display:none" onchange="_punchNewPhotoChosen(this)">
+        <div style="font-size:11px;color:var(--gray-500);margin-top:4px;">Take a photo or choose from your device — they attach to this item once it's created.</div>
+      </div>`}
     </div>
   `;
 }
@@ -7798,6 +7896,7 @@ function npFilterLoc() {
 }
 
 function openNewPunchModal() {
+  _punchNewPhotos = [];
   modal({
     title: 'New Punch List Item',
     size: 'large',
@@ -7820,6 +7919,7 @@ function openNewPunchModal() {
 function openPunchFromTestCase(testId) {
   const ti = TI.find(t => String(t.TestID) === String(testId));
   if (!ti) { toast('Test case not found', 'error'); return; }
+  _punchNewPhotos = [];
   _punchFromTestId = String(testId); // remember origin so saveNewPunchItem can auto-link
 
   const titlePrefill = `Failed: ${ti.TestCaseCode}${ti.TestName ? ' — ' + ti.TestName : ''}`;
@@ -8072,6 +8172,18 @@ async function saveNewPunchItem(createAnother) {
     PUNCH_DB.unshift(data);
     logAudit('Punch Created', `#${nextNum} ${form.title}`);
     toast(`Punch #${nextNum} created`, 'success');
+
+    // Upload any photos staged in the create form, linked to the new punch.
+    if (_punchNewPhotos.length && window.PhotosModule && PhotosModule.uploadFile) {
+      const files = _punchNewPhotos.slice();
+      _punchNewPhotos = [];
+      const ctx = {
+        source_type: 'punch', source_id: data.id, source_label: 'Punch #' + nextNum,
+        location: _plLocName(data.location) || null, subsystem: data.subsystem || null, phase: _plLocName(data.phase) || null,
+      };
+      toast('Uploading ' + files.length + ' photo' + (files.length > 1 ? 's' : '') + '…');
+      for (const f of files) { try { await PhotosModule.uploadFile(f, ctx); } catch (e) { console.error('[punch new photo] upload failed:', e); } }
+    }
 
     // If this punch was created from the test register, auto-link it and refresh chips in-place
     if (_punchFromTestId) {
