@@ -7444,9 +7444,9 @@ function openPunchDetail(id) {
         </div>
 
         ${canComment ? `
-          <div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;">
-            <textarea id="punch-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…" style="flex:1;font-size:13px;resize:none;"></textarea>
-            <button class="form-submit" style="white-space:nowrap;height:fit-content;" onclick="addPunchComment('${id}')">Post</button>
+          <div class="punch-comment-composer">
+            <textarea id="punch-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…"></textarea>
+            <button class="form-submit" onclick="addPunchComment('${id}')">Post</button>
           </div>` : ''}
       </div>
     `,

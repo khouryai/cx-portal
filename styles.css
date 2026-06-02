@@ -1838,6 +1838,16 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
 }
 .form-submit:hover { background: var(--hitachi-red-hover); transform: translateY(-1px); }
 .form-submit:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+/* Punch comment composer — textarea takes the row, Post sizes to its content.
+   Overrides the global `.form-submit { flex:1 }` so the textarea isn't crushed. */
+.punch-comment-composer { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
+.punch-comment-composer textarea { flex: 1 1 auto; min-width: 0; font-size: 13px; resize: none; }
+.punch-comment-composer .form-submit { flex: 0 0 auto; white-space: nowrap; padding: 10px 20px; align-self: stretch; }
+@media (max-width: 640px) {
+  .punch-comment-composer { flex-direction: column; align-items: stretch; }
+  .punch-comment-composer .form-submit { width: 100%; }
+}
 .form-primary {
   background: var(--primary);
   color: white;
