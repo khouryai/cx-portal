@@ -12997,12 +12997,19 @@ a:focus-visible {
 #login-overlay .signin-wordmark { font-family: 'Archivo', system-ui, sans-serif; font-weight: 800; font-size: 34px; letter-spacing: 0.04em; color: #fff; line-height: 1; }
 #login-overlay .signin-form-inner { position: relative; flex: 1; display: flex; flex-direction: column; justify-content: center; max-width: 420px; width: 100%; }
 
-/* Reset the legacy white .login-card so the two cards sit flush in the dark panel */
+/* Reset the legacy white/cinematic .login-card so the two cards sit flush in
+   the dark panel. The cinematic CSS hides .login-card (opacity:0, blur,
+   transform) until a `.run` class is added — which the new design doesn't use —
+   so these must be forced visible with !important. */
 #login-overlay .login-card {
-  background: none; border: none; box-shadow: none; border-radius: 0;
-  padding: 0; margin: 0; max-width: none; width: 100%;
+  background: none !important; border: none !important; box-shadow: none !important;
+  -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+  border-radius: 0; padding: 0; margin: 0; max-width: none; width: 100%;
   display: flex; flex-direction: column; align-items: stretch;
+  opacity: 1 !important; transform: none !important; filter: none !important;
+  animation: none !important;
 }
+#login-overlay #cp-card[style*="display: none"], #login-overlay #cp-card[style*="display:none"] { display: none !important; }
 
 #login-overlay .signin-kicker {
   display: inline-flex; align-items: center; gap: 8px;
