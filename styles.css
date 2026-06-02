@@ -12965,3 +12965,164 @@ a:focus-visible {
 .drw-rev-clickable { cursor: pointer; }
 #modal-overlay tr.drw-rev-selected { background: #eef2ff !important; opacity: 1 !important; }
 
+
+/* ============================================================
+   SIGN IN — split-screen redesign (Claude Design handoff)
+   Scoped under #login-overlay so it overrides the legacy login CSS.
+   Preserves auth hooks: #auth-email/#auth-password/#auth-btn/#auth-error,
+   .login-card toggle target, #cp-card, #login-db-dot/#login-db-label.
+   ============================================================ */
+#login-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: #0a0c11 !important; overflow: hidden;
+  display: block; padding: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+#login-overlay .signin-root { display: flex; height: 100%; width: 100%; background: #0a0c11; }
+
+/* LEFT — form panel */
+#login-overlay .signin-form {
+  width: 660px; flex-shrink: 0; position: relative;
+  padding: 52px 80px; display: flex; flex-direction: column;
+  background: #0a0c11; border-right: 1px solid rgba(255,255,255,0.07);
+  overflow-y: auto;
+}
+#login-overlay .signin-form::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: #e60012; }
+#login-overlay .signin-grid {
+  position: absolute; inset: 0; pointer-events: none;
+  background-image: linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+#login-overlay .signin-brandrow { position: relative; display: flex; align-items: center; gap: 14px; }
+#login-overlay .signin-wordmark { font-family: 'Archivo', system-ui, sans-serif; font-weight: 800; font-size: 34px; letter-spacing: 0.04em; color: #fff; line-height: 1; }
+#login-overlay .signin-form-inner { position: relative; flex: 1; display: flex; flex-direction: column; justify-content: center; max-width: 420px; width: 100%; }
+
+/* Reset the legacy white .login-card so the two cards sit flush in the dark panel */
+#login-overlay .login-card {
+  background: none; border: none; box-shadow: none; border-radius: 0;
+  padding: 0; margin: 0; max-width: none; width: 100%;
+  display: flex; flex-direction: column; align-items: stretch;
+}
+
+#login-overlay .signin-kicker {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; font-weight: 500;
+  letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.6);
+}
+#login-overlay .signin-pulse { width: 7px; height: 7px; border-radius: 50%; background: #e60012; animation: sk-pulse 2s infinite; }
+@keyframes sk-pulse { 0% { box-shadow: 0 0 0 0 rgba(230,0,18,0.45); } 70% { box-shadow: 0 0 0 7px rgba(230,0,18,0); } 100% { box-shadow: 0 0 0 0 rgba(230,0,18,0); } }
+@keyframes sk-spin { to { transform: rotate(360deg); } }
+
+#login-overlay .signin-h1 {
+  font-family: 'Archivo', system-ui, sans-serif; font-size: 52px; font-weight: 800;
+  letter-spacing: -0.03em; color: #fff; margin: 22px 0 12px; line-height: 1.0;
+}
+#login-overlay .signin-sub { font-family: 'Inter', system-ui, sans-serif; font-size: 16.5px; color: #9aa6bd; margin: 0 0 34px; line-height: 1.55; }
+
+#login-overlay .signin-fields { display: flex; flex-direction: column; gap: 18px; }
+#login-overlay .signin-field { display: block; width: 100%; }
+#login-overlay .signin-label {
+  display: block; font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11.5px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase;
+  color: rgba(255,255,255,0.5); margin-bottom: 9px;
+}
+#login-overlay .signin-field input,
+#login-overlay #auth-email,
+#login-overlay #auth-password,
+#login-overlay #cp-new-password,
+#login-overlay #cp-confirm-password {
+  width: 100%; height: 54px; padding: 0 14px;
+  font-family: 'Inter', system-ui, sans-serif; font-size: 16px; font-weight: 450;
+  color: #fff; background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.16); border-radius: 9px; outline: none;
+  transition: border-color .15s, box-shadow .15s; box-sizing: border-box;
+}
+#login-overlay .signin-input-wrap input { padding-right: 46px; }
+#login-overlay .signin-field input::placeholder { color: #7c8597; opacity: 1; }
+#login-overlay .signin-field input:focus {
+  border-color: #e60012; box-shadow: 0 0 0 4px rgba(230,0,18,0.22);
+}
+#login-overlay .signin-input-wrap { position: relative; display: flex; align-items: center; }
+#login-overlay .signin-pwtoggle {
+  position: absolute; right: 6px; width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; cursor: pointer; border-radius: 7px;
+  color: rgba(255,255,255,0.5);
+}
+#login-overlay .signin-pwtoggle:hover { color: rgba(255,255,255,0.85); }
+
+#login-overlay .signin-row { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 2px; }
+#login-overlay .signin-remember { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-family: 'Inter', system-ui, sans-serif; font-size: 12.5px; color: rgba(255,255,255,0.6); }
+#login-overlay .signin-remember input { position: absolute; opacity: 0; width: 0; height: 0; }
+#login-overlay .signin-check {
+  width: 18px; height: 18px; border-radius: 5px; flex-shrink: 0;
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.22);
+  display: flex; align-items: center; justify-content: center; transition: all .15s;
+}
+#login-overlay .signin-remember input:checked + .signin-check { background: #e60012; border-color: #e60012; }
+#login-overlay .signin-remember input:checked + .signin-check::after {
+  content: ""; width: 5px; height: 9px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg) translateY(-1px);
+}
+#login-overlay .signin-forgot { font-family: 'Inter', system-ui, sans-serif; font-size: 12.5px; font-weight: 600; color: #ff5a64; text-decoration: none; }
+#login-overlay .signin-forgot:hover { text-decoration: underline; }
+
+#login-overlay .login-btn.signin-submit,
+#login-overlay #auth-btn,
+#login-overlay #cp-btn {
+  width: 100%; height: 60px; margin-top: 4px;
+  display: flex; align-items: center; justify-content: center; gap: 9px;
+  font-family: 'Archivo', system-ui, sans-serif; font-size: 17px; font-weight: 700; letter-spacing: 0.01em;
+  color: #fff; background: #e60012; border: none; border-radius: 10px; cursor: pointer;
+  box-shadow: 0 6px 18px rgba(230,0,18,0.22); transition: background .2s, filter .15s, box-shadow .2s;
+}
+#login-overlay #auth-btn:hover:not(:disabled),
+#login-overlay #cp-btn:hover:not(:disabled) { background: #e60012; filter: brightness(1.07); transform: none; }
+#login-overlay #auth-btn:disabled,
+#login-overlay #cp-btn:disabled { opacity: 0.7; cursor: default; background: #e60012; }
+
+#login-overlay .signin-error { font-family: 'Inter', system-ui, sans-serif; font-size: 12.5px; font-weight: 500; color: #ffb3b8; min-height: 18px; }
+#login-overlay .signin-error:not(:empty) {
+  padding: 8px 11px; border-radius: 8px; margin-top: 2px;
+  background: rgba(230,0,18,0.14); border: 1px solid rgba(255,90,90,0.3);
+}
+#login-overlay .signin-request { text-align: center; margin-top: 8px; font-family: 'Inter', system-ui, sans-serif; font-size: 14px; color: #9aa6bd; }
+#login-overlay .signin-request a { color: #ff5a64; font-weight: 600; text-decoration: none; }
+
+/* RIGHT — photo panel */
+#login-overlay .signin-photo { flex: 1; position: relative; overflow: hidden; background: #0a0c11; min-width: 0; }
+#login-overlay .signin-photo-img { position: absolute; inset: 0; background-image: url('assets/hsts-1.avif'); background-size: cover; background-position: 26% center; }
+#login-overlay .signin-photo-tint { position: absolute; inset: 0; background: linear-gradient(100deg, rgba(10,12,17,0.4) 0%, rgba(10,12,17,0) 26%, rgba(10,12,17,0) 52%, rgba(10,12,17,0.85) 100%); }
+#login-overlay .signin-photo-floor { position: absolute; inset: 0; background: linear-gradient(0deg, rgba(8,10,14,0.92) 0%, rgba(8,10,14,0.55) 26%, rgba(10,12,17,0) 52%); }
+#login-overlay .signin-statuspill {
+  position: absolute; top: 28px; right: 28px;
+  display: inline-flex; align-items: center; gap: 8px; padding: 7px 13px; border-radius: 99px;
+  background: rgba(0,0,0,0.4); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.16);
+}
+#login-overlay .signin-statuspill .login-db-dot { width: 7px; height: 7px; border-radius: 50%; background: #34d399; box-shadow: 0 0 8px #34d399; animation: sk-pulse 2s infinite; }
+#login-overlay .signin-statuspill .login-db-label {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace !important; font-size: 10px; font-weight: 500;
+  letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.85) !important;
+}
+#login-overlay .signin-photo-caption { position: absolute; left: 48px; right: 48px; bottom: 46px; }
+#login-overlay .signin-photo-kicker { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; font-weight: 500; letter-spacing: 0.18em; color: rgba(255,255,255,0.78); text-transform: uppercase; }
+#login-overlay .signin-photo-headline { font-family: 'Archivo', system-ui, sans-serif; font-size: 30px; font-weight: 800; color: #fff; letter-spacing: -0.02em; margin: 10px 0 22px; line-height: 1.1; max-width: 460px; text-shadow: 0 2px 18px rgba(0,0,0,0.5); }
+#login-overlay .signin-photo-stats { display: flex; gap: 36px; }
+#login-overlay .signin-stat-n { font-family: 'Archivo', system-ui, sans-serif; font-size: 24px; font-weight: 800; color: #fff; letter-spacing: -0.01em; }
+#login-overlay .signin-stat-l { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.62); margin-top: 3px; }
+
+@media (max-width: 920px) {
+  #login-overlay .signin-root { flex-direction: column; }
+  #login-overlay .signin-form { width: 100%; order: 2; flex: 1; padding: 38px 30px 30px; border-right: none; }
+  #login-overlay .signin-form-inner { margin: 0 auto; max-width: 380px; }
+  #login-overlay .signin-photo { order: 1; flex: none; height: 188px; }
+  #login-overlay .signin-photo-caption { left: 28px; right: 28px; bottom: 22px; }
+  #login-overlay .signin-photo-headline { display: none; }
+  #login-overlay .signin-photo-stats { display: none; }
+  #login-overlay .signin-h1 { font-size: 40px; }
+}
+@media (max-width: 460px) {
+  #login-overlay .signin-form { padding: 30px 22px 26px; }
+  #login-overlay .signin-h1 { font-size: 34px; }
+}
+#login-overlay .signin-statuspill .login-db-dot.online { background: #34d399; box-shadow: 0 0 8px #34d399; }
+#login-overlay .signin-statuspill .login-db-dot.offline { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; animation: none; }

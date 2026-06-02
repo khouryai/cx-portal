@@ -6,7 +6,7 @@
 <title>HITACHI Rail T&C Portal — BART CBTC Project</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Inter:wght@300;400;450;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <!-- SRI-pinned CDN dependencies — hashes verified 2026-05-15 -->
 <script src="chart.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"
@@ -65,142 +65,130 @@
 </head>
 <body>
 
-<div id="login-overlay" class="login-overlay live">
+<div id="login-overlay" class="login-overlay">
+  <div class="signin-root">
 
-  <!-- Cinematic background stage -->
-  <div class="login-stage">
-    <div class="login-px" id="login-px">
-      <div class="login-shot login-kb" data-src="assets/hsts-1.avif"></div>
-      <div class="login-shot login-kb" data-src="assets/hsts-2.png"></div>
-      <div class="login-cssscene" id="login-cssscene">
-        <div class="login-glowline a"></div><div class="login-glowline b"></div>
+    <!-- LEFT — sign-in panel -->
+    <div class="signin-form">
+      <div class="signin-grid"></div>
+
+      <div class="signin-brandrow">
+        <svg width="46" height="46" viewBox="0 0 38 38" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;flex-shrink:0;">
+          <rect width="38" height="38" rx="8" fill="#E01B1B"/>
+          <path d="M7 36 L16.5 9" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+          <path d="M26 36 L21.5 9" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+          <line x1="9" y1="32" x2="23.5" y2="32" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
+          <line x1="11" y1="26" x2="22.5" y2="26" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/>
+          <line x1="13" y1="20" x2="21.5" y2="20" stroke="#fff" stroke-width="1.3" stroke-linecap="round"/>
+          <line x1="15" y1="15" x2="20.5" y2="15" stroke="#fff" stroke-width="1.0" stroke-linecap="round"/>
+          <rect x="26" y="5" width="8" height="16" rx="2" fill="#fff"/>
+          <circle cx="30" cy="10" r="2.5" fill="#E01B1B"/>
+          <circle cx="30" cy="17" r="2.5" fill="#16a34a"/>
+        </svg>
+        <span class="signin-wordmark">HITACHI</span>
       </div>
-      <div class="login-grade"></div>
-      <div class="login-leak"></div>
+
+      <div class="signin-form-inner">
+
+        <!-- Sign-in card (toggle target: .login-card:not(#cp-card)) -->
+        <div class="login-card signin-card">
+          <span class="signin-kicker"><span class="signin-pulse"></span> Testing &amp; Commissioning Portal</span>
+          <h1 class="signin-h1">Welcome back.</h1>
+          <p class="signin-sub">Sign in to access test execution, look-ahead planning and field coordination.</p>
+
+          <form class="signin-fields" onsubmit="signIn();return false;">
+            <label class="signin-field">
+              <span class="signin-label">Email</span>
+              <input type="email" id="auth-email" placeholder="you@hitachirail.com" autocomplete="username">
+            </label>
+            <label class="signin-field">
+              <span class="signin-label">Password</span>
+              <span class="signin-input-wrap">
+                <input type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password"
+                  onkeydown="if(event.key==='Enter')signIn()">
+                <button type="button" class="signin-pwtoggle" id="signin-pwtoggle" aria-label="Show password" onclick="_signinTogglePw()">
+                  <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path d="M10 4C5.5 4 1.7 6.9 0 11c1.7 4.1 5.5 7 10 7s8.3-2.9 10-7c-1.7-4.1-5.5-7-10-7zm0 11.5A4.5 4.5 0 1110 6.5a4.5 4.5 0 010 9zm0-7A2.5 2.5 0 1010 13.5 2.5 2.5 0 0010 8.5z"/></svg>
+                </button>
+              </span>
+            </label>
+
+            <div class="signin-row">
+              <label class="signin-remember">
+                <input type="checkbox" id="auth-remember" checked>
+                <span class="signin-check"></span>
+                <span>Keep me signed in</span>
+              </label>
+              <a href="#" class="signin-forgot" onclick="openForgotPassword();return false;">Forgot password?</a>
+            </div>
+
+            <button type="submit" id="auth-btn" class="login-btn signin-submit">Sign In</button>
+            <div id="auth-error" class="signin-error"></div>
+
+            <div class="signin-request">Need access? <a href="#" onclick="openRequestAccess();return false;">Request an account</a></div>
+          </form>
+        </div>
+
+        <!-- Change-password card — shown on first sign-in (must_change_password = true) -->
+        <div id="cp-card" class="login-card signin-card" style="display:none;">
+          <span class="signin-kicker"><span class="signin-pulse"></span> Testing &amp; Commissioning Portal</span>
+          <h1 class="signin-h1" id="cp-title" style="font-size:34px;">Set your password.</h1>
+          <p class="signin-sub" id="cp-sub">Your account was created with a temporary password.<br>Choose a new password to continue.</p>
+
+          <form class="signin-fields" onsubmit="submitChangePassword();return false;">
+            <label class="signin-field">
+              <span class="signin-label">New password</span>
+              <input type="password" id="cp-new-password" placeholder="Min. 8 characters" autocomplete="new-password"
+                onkeydown="if(event.key==='Enter')document.getElementById('cp-confirm-password').focus()">
+            </label>
+            <label class="signin-field">
+              <span class="signin-label">Confirm password</span>
+              <input type="password" id="cp-confirm-password" placeholder="Re-enter new password" autocomplete="new-password"
+                onkeydown="if(event.key==='Enter')submitChangePassword()">
+            </label>
+            <div id="cp-error" class="signin-error" style="color:#ffb3b8;"></div>
+            <button type="submit" id="cp-btn" class="login-btn signin-submit">Set Password &amp; Continue</button>
+          </form>
+        </div>
+
+      </div>
     </div>
-    <div class="login-ambient"></div>
-    <div class="login-rush"></div>
-    <div class="login-speedlines"></div>
-    <div class="login-grain"></div>
-    <div class="login-vignette"></div>
-    <div class="login-flash"></div>
+
+    <!-- RIGHT — photo panel -->
+    <div class="signin-photo">
+      <div class="signin-photo-img"></div>
+      <div class="signin-photo-tint"></div>
+      <div class="signin-photo-floor"></div>
+      <div class="signin-statuspill">
+        <span class="login-db-dot" id="login-db-dot"></span>
+        <span class="login-db-label" id="login-db-label">CHECKING…</span>
+      </div>
+      <div class="signin-photo-caption">
+        <span class="signin-photo-kicker">BART CBTC Project</span>
+        <h2 class="signin-photo-headline">Communications-based train control, commissioned with confidence.</h2>
+        <div class="signin-photo-stats">
+          <div class="signin-stat"><div class="signin-stat-n">12,400</div><div class="signin-stat-l">Test cases</div></div>
+          <div class="signin-stat"><div class="signin-stat-n">38</div><div class="signin-stat-l">Locations</div></div>
+          <div class="signin-stat"><div class="signin-stat-n">94.2%</div><div class="signin-stat-l">Pass rate</div></div>
+        </div>
+      </div>
+    </div>
+
   </div>
-
-  <!-- Top bar -->
-  <div class="login-topbar">
-    <div class="login-topbar-brand">Hitachi Rail</div>
-    <div class="login-topbar-status">
-      <span class="login-db-dot" id="login-db-dot"></span>
-      <span class="login-db-label" id="login-db-label">CHECKING…</span>
-    </div>
-  </div>
-
-  <!-- Center card -->
-  <div class="login-card">
-    <span class="login-kicker login-stagger ls1"><span class="login-pulse"></span> CX Commissioning Portal</span>
-
-    <div class="login-brand">
-      <div class="login-brand-name login-stagger ls2">Welcome Aboard.</div>
-      <div class="login-brand-sub login-stagger ls2">Test execution, look-ahead planning, and field coordination — unified.</div>
-    </div>
-
-    <div class="form-field login-stagger ls3" style="width:100%;">
-      <label class="login-label">EMAIL</label>
-      <input type="email" id="auth-email" class="form-input" placeholder="you@example.com"
-        autocomplete="username" onkeydown="if(event.key==='Enter')signIn()">
-    </div>
-    <div class="form-field login-stagger ls3" style="margin-top:14px;width:100%;">
-      <label class="login-label">PASSWORD</label>
-      <input type="password" id="auth-password" class="form-input" placeholder="••••••••"
-        autocomplete="current-password" onkeydown="if(event.key==='Enter')signIn()">
-    </div>
-
-    <div id="auth-error" style="font-size:12px;margin-top:8px;min-height:18px;width:100%;"></div>
-
-    <button id="auth-btn" class="login-btn login-stagger ls4" onclick="signIn()">Access Portal</button>
-
-    <div class="login-links login-stagger ls5">
-      <a href="#" class="login-link" onclick="openForgotPassword();return false;">FORGOT PASSWORD?</a>
-      <span class="login-link-sep">•</span>
-      <a href="#" class="login-link" onclick="openRequestAccess();return false;">REQUEST ACCESS</a>
-    </div>
-
-    <div class="login-encrypted-badge login-stagger ls5">
-      <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor" style="flex-shrink:0;opacity:0.6;">
-        <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/>
-      </svg>
-      ENTERPRISE ENCRYPTED
-    </div>
-  </div>
-
-  <!-- Change-password card — shown on first sign-in (must_change_password = true) -->
-  <div id="cp-card" class="login-card" style="display:none;">
-    <span class="login-kicker login-stagger ls1"><span class="login-pulse"></span> CX Commissioning Portal</span>
-
-    <div class="login-brand">
-      <div class="login-brand-name login-stagger ls2" id="cp-title" style="font-size:22px;">Set Your Password</div>
-      <div class="login-brand-sub login-stagger ls2" id="cp-sub">Your account was created with a temporary password.<br>Choose a new password to continue.</div>
-    </div>
-
-    <div class="form-field login-stagger ls3" style="width:100%;margin-top:4px;">
-      <label class="login-label">NEW PASSWORD</label>
-      <input type="password" id="cp-new-password" class="form-input" placeholder="Min. 8 characters"
-        autocomplete="new-password" onkeydown="if(event.key==='Enter')document.getElementById('cp-confirm-password').focus()">
-    </div>
-    <div class="form-field login-stagger ls3" style="margin-top:14px;width:100%;">
-      <label class="login-label">CONFIRM PASSWORD</label>
-      <input type="password" id="cp-confirm-password" class="form-input" placeholder="Re-enter new password"
-        autocomplete="new-password" onkeydown="if(event.key==='Enter')submitChangePassword()">
-    </div>
-
-    <div id="cp-error" style="font-size:12px;margin-top:8px;min-height:18px;width:100%;color:#e60012;"></div>
-
-    <button id="cp-btn" class="login-btn login-stagger ls4" onclick="submitChangePassword()">Set Password &amp; Continue</button>
-
-    <div class="login-encrypted-badge login-stagger ls5">
-      <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor" style="flex-shrink:0;opacity:0.6;">
-        <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/>
-      </svg>
-      ENTERPRISE ENCRYPTED
-    </div>
-  </div>
-
 </div>
 
 <script>
-// Cinematic login — photo loading, parallax, rush intro
-(function(){
-  var overlay = document.getElementById('login-overlay');
-  var px = document.getElementById('login-px');
-  var shots = Array.prototype.slice.call(document.querySelectorAll('.login-shot'));
-  var loaded = 0, idx = 0;
-  shots.forEach(function(s){
-    var img = new Image();
-    img.onload = function(){
-      s.style.backgroundImage = "url('" + s.dataset.src + "')";
-      s.dataset.ok = '1'; loaded++;
-      if(loaded === 1){ document.getElementById('login-cssscene').style.display = 'none'; cycle(); }
-    };
-    img.onerror = function(){};
-    img.src = s.dataset.src;
-  });
-  function cycle(){
-    var ok = shots.filter(function(s){ return s.dataset.ok; });
-    if(!ok.length) return;
-    ok.forEach(function(s,i){ s.classList.toggle('show', i === idx % ok.length); });
-    idx++; setTimeout(cycle, 8000);
-  }
-  var tx=0,ty=0,mcx=0,mcy=0;
-  window.addEventListener('pointermove',function(e){
-    tx=(e.clientX/innerWidth-.5)*-22; ty=(e.clientY/innerHeight-.5)*-15;
-  });
-  (function loop(){
-    mcx+=(tx-mcx)*0.06; mcy+=(ty-mcy)*0.06;
-    if(px) px.style.transform='translate('+mcx.toFixed(2)+'px,'+mcy.toFixed(2)+'px) scale(1.03)';
-    requestAnimationFrame(loop);
-  })();
-  requestAnimationFrame(function(){ requestAnimationFrame(function(){ overlay.classList.add('run'); }); });
-})();
+// Sign-in — password show/hide toggle for the redesigned split-screen login.
+function _signinTogglePw(){
+  var inp = document.getElementById('auth-password');
+  var btn = document.getElementById('signin-pwtoggle');
+  if(!inp || !btn) return;
+  var show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  btn.innerHTML = show
+    ? '<svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path d="M3.3 2L2 3.3l3 3C3 7.5 1.2 9.1 0 11c1.7 4.1 5.5 7 10 7 1.9 0 3.7-.5 5.2-1.4L18.7 20 20 18.7 3.3 2zm6.7 13.5A4.5 4.5 0 016.5 8.7l1.5 1.5a2.5 2.5 0 003.3 3.3l1.5 1.5c-.8.3-1.7.5-2.8.5zm0-11.5c4.5 0 8.3 2.9 10 7a11.8 11.8 0 01-2.4 3.5l-2.1-2.1A4.5 4.5 0 009 6.1L7.3 4.4C8.2 4.1 9.1 4 10 4z"/></svg>'
+    : '<svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path d="M10 4C5.5 4 1.7 6.9 0 11c1.7 4.1 5.5 7 10 7s8.3-2.9 10-7c-1.7-4.1-5.5-7-10-7zm0 11.5A4.5 4.5 0 1110 6.5a4.5 4.5 0 010 9zm0-7A2.5 2.5 0 1010 13.5 2.5 2.5 0 0010 8.5z"/></svg>';
+}
 </script>
 
 <!-- Request Access Modal -->
