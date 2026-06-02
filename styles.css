@@ -1839,17 +1839,16 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
 .form-submit:hover { background: var(--hitachi-red-hover); transform: translateY(-1px); }
 .form-submit:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
-/* Punch comment composer — textarea takes the row, buttons size to content.
-   Overrides the global `.form-submit { flex:1 }` so the textarea isn't crushed. */
-.punch-comment-composer { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
-.punch-comment-composer textarea { flex: 1 1 auto; min-width: 0; font-size: 13px; resize: none; }
-.punch-comment-btns { display: flex; gap: 8px; flex: 0 0 auto; }
-.punch-comment-btns .form-submit { flex: 0 0 auto; white-space: nowrap; padding: 10px 20px; }
-.punch-comment-attach { flex: 0 0 auto; padding: 8px 12px; font-size: 16px; line-height: 1; }
+/* Punch comment composer — CSS grid so column tracks (not the global
+   `.form-submit { flex:1 }`) control sizing. Desktop: textarea | 📷 | Post.
+   Mobile: textarea spans the top row, 📷 + Post share the row below. */
+.punch-comment-composer { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: end; margin-top: 10px; }
+.punch-comment-composer textarea { min-width: 0; font-size: 13px; resize: none; }
+.punch-comment-attach { padding: 8px 12px; font-size: 16px; line-height: 1; justify-self: start; }
+.punch-comment-composer .form-submit { flex: none; white-space: nowrap; padding: 10px 18px; }
 @media (max-width: 640px) {
-  .punch-comment-composer { flex-direction: column; align-items: stretch; }
-  .punch-comment-btns { justify-content: flex-end; }
-  .punch-comment-btns .form-submit { flex: 1 1 auto; }
+  .punch-comment-composer { grid-template-columns: auto 1fr; }
+  .punch-comment-composer textarea { grid-column: 1 / -1; }
 }
 .punch-comment-preview { margin-top: 8px; }
 .punch-comment-preview-item { position: relative; display: inline-flex; align-items: center; gap: 8px; background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px; padding: 6px 10px 6px 6px; font-size: 12px; color: var(--gray-600); }

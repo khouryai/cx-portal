@@ -7457,10 +7457,8 @@ function openPunchDetail(id) {
         ${canComment ? `
           <div class="punch-comment-composer">
             <textarea id="punch-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…"></textarea>
-            <div class="punch-comment-btns">
-              <button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" onclick="document.getElementById('punch-comment-file-${id}').click()">📷</button>
-              <button class="form-submit" onclick="addPunchComment('${id}')">Post</button>
-            </div>
+            <button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" onclick="document.getElementById('punch-comment-file-${id}').click()">📷</button>
+            <button class="form-submit punch-comment-post" onclick="addPunchComment('${id}')">Post</button>
           </div>
           <input type="file" id="punch-comment-file-${id}" accept="image/*" style="display:none" onchange="_punchCommentPhotoChosen('${id}', this)">
           <div id="punch-comment-preview-${id}" class="punch-comment-preview" style="display:none;"></div>` : ''}
