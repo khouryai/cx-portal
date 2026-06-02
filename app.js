@@ -1877,24 +1877,20 @@ function initLocations() {
   const _tcw = _buildTestCaseWeightLookup();
 
   const grid = document.getElementById('locations-grid');
-  let html = '';
 
+  // Flatten every phase/location into one list so cards pack into a single
+  // dense grid (no wasted rows when a phase has only one location). Each card
+  // carries its phase as a chip; a summary strip keeps the per-phase rollup.
+  const cards = [];
+  const phaseSummary = [];
   phases.forEach(phase => {
     const phaseTI = ti.filter(r => r.Phase === phase);
     const locs    = [...new Set(phaseTI.map(r => r.Location).filter(Boolean))].sort();
     if (!locs.length) return;
 
-    // Phase-level weighted summary for the heading badge
     const phaseWs  = _wgtStat(phaseTI, _aw, _tcw);
     const phasePct = phaseWs.totalW > 0 ? Math.round((phaseWs.completeW / phaseWs.totalW) * 100) : 0;
-
-    html += `
-      <div class="loc-phase-group">
-        <div class="loc-phase-heading">
-          <span class="loc-phase-label">${escapeHtml(phase)}</span>
-          <span class="loc-phase-badge">${phasePct}% complete · ${locs.length} location${locs.length !== 1 ? 's' : ''}</span>
-        </div>
-        <div class="loc-phase-cards">`;
+    phaseSummary.push({ phase, pct: phasePct, n: locs.length });
 
     locs.forEach(loc => {
       const locTI  = phaseTI.filter(r => r.Location === loc);
@@ -1905,40 +1901,60 @@ function initLocations() {
       const punchOpen = (PUNCH_DB || []).filter(p =>
         p.location === loc && !p.is_deleted && !['Closed','Ready To Close'].includes(p.status)
       ).length;
-      const code = getLocationCode(loc);
-
-      html += `
-        <div class="location-card">
-          <div class="location-code">${escapeHtml(code)}</div>
-          <div class="location-name">${escapeHtml(loc)}</div>
-          <div class="location-progress">
-            <div class="location-progress-meta">
-              <span>Weighted progress</span>
-              <span><b>${pct}%</b></span>
-            </div>
-            <div class="location-progress-bar"><div class="location-progress-fill" style="width:${pct}%"></div></div>
-          </div>
-          <div class="location-stats">
-            <div class="location-stat">
-              <div class="location-stat-value">${total.toLocaleString()}</div>
-              <div class="location-stat-label">Test Cases</div>
-            </div>
-            <div class="location-stat">
-              <div class="location-stat-value good">${passed.toLocaleString()}</div>
-              <div class="location-stat-label">Passed</div>
-            </div>
-            <div class="location-stat">
-              <div class="location-stat-value ${punchOpen > 0 ? 'bad' : ''}">${punchOpen}</div>
-              <div class="location-stat-label">Open Punch</div>
-            </div>
-          </div>
-        </div>`;
+      cards.push({ phase, loc, code: getLocationCode(loc), pct, passed, total, punchOpen });
     });
-
-    html += `</div></div>`;
   });
 
-  grid.innerHTML = html || '<div class="docs-empty"><p>No test data available.</p></div>';
+  if (!cards.length) {
+    grid.innerHTML = '<div class="docs-empty"><p>No test data available.</p></div>';
+    return;
+  }
+
+  const summaryHTML = phaseSummary.length > 1 ? `
+    <div class="loc-phase-summary">
+      <button class="loc-phase-chip${_locPhaseFilter ? '' : ' active'}" data-phase="" onclick="_locFilterPhase('', this)">
+        <span class="loc-phase-chip-name">All</span>
+        <span class="loc-phase-chip-meta">${cards.length} location${cards.length !== 1 ? 's' : ''}</span>
+      </button>
+      ${phaseSummary.map(s => `
+        <button class="loc-phase-chip${_locPhaseFilter === s.phase ? ' active' : ''}" data-phase="${escapeHtml(s.phase)}" onclick="_locFilterPhase('${escapeHtml(s.phase)}', this)">
+          <span class="loc-phase-chip-name">${escapeHtml(s.phase)}</span>
+          <span class="loc-phase-chip-meta">${s.pct}% · ${s.n} loc${s.n !== 1 ? 's' : ''}</span>
+        </button>`).join('')}
+    </div>` : '';
+
+  const cardsHTML = `<div class="locations-cardgrid">${cards.map(c => {
+    const hidden = _locPhaseFilter && c.phase !== _locPhaseFilter ? ' style="display:none"' : '';
+    return `
+      <div class="location-card" data-phase="${escapeHtml(c.phase)}"${hidden}>
+        <div class="location-card-top">
+          <span class="location-code">${escapeHtml(c.code)}</span>
+          <span class="loc-card-phase">${escapeHtml(c.phase)}</span>
+        </div>
+        <div class="location-name">${escapeHtml(c.loc)}</div>
+        <div class="location-progress">
+          <div class="location-progress-meta"><span>Weighted progress</span><span><b>${c.pct}%</b></span></div>
+          <div class="location-progress-bar"><div class="location-progress-fill" style="width:${c.pct}%"></div></div>
+        </div>
+        <div class="location-stats">
+          <div class="location-stat"><div class="location-stat-value">${c.total.toLocaleString()}</div><div class="location-stat-label">Test Cases</div></div>
+          <div class="location-stat"><div class="location-stat-value good">${c.passed.toLocaleString()}</div><div class="location-stat-label">Passed</div></div>
+          <div class="location-stat"><div class="location-stat-value ${c.punchOpen > 0 ? 'bad' : ''}">${c.punchOpen}</div><div class="location-stat-label">Open Punch</div></div>
+        </div>
+      </div>`;
+  }).join('')}</div>`;
+
+  grid.innerHTML = summaryHTML + cardsHTML;
+}
+
+let _locPhaseFilter = '';
+function _locFilterPhase(phase) {
+  _locPhaseFilter = (_locPhaseFilter === phase) ? '' : phase;
+  document.querySelectorAll('.loc-phase-chip').forEach(c =>
+    c.classList.toggle('active', (c.getAttribute('data-phase') || '') === _locPhaseFilter));
+  document.querySelectorAll('.locations-cardgrid .location-card').forEach(card => {
+    card.style.display = (!_locPhaseFilter || card.getAttribute('data-phase') === _locPhaseFilter) ? '' : 'none';
+  });
 }
 
 // ==========================================
