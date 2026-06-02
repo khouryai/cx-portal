@@ -988,6 +988,45 @@
     } catch (e) { toast('Could not delete: ' + (e && e.message)); }
   }
 
+  // ── external API helpers (used by app.js, e.g. punch detail view) ───────────
+  // List photos for a given source (e.g. a punch item), newest first.
+  async function listFor(opts) {
+    opts = opts || {};
+    var parts = ['is_deleted=eq.false'];
+    if (opts.source_type) parts.push('source_type=eq.' + opts.source_type);
+    if (opts.source_id)   parts.push('source_id=eq.' + encodeURIComponent(opts.source_id));
+    parts.push('order=taken_at.desc');
+    try { return (await _fetchAnon('photos?' + parts.join('&'))) || []; }
+    catch (e) { console.warn('[photos] listFor failed:', e && e.message); return []; }
+  }
+  // Direct (non-queued) upload of one file; compresses, stores, inserts the row,
+  // and returns the inserted photo row. Used for inline/attached uploads where the
+  // caller needs the row back immediately.
+  async function uploadFile(file, meta) {
+    meta = meta || {};
+    var proc = await processImage(file);
+    var id = uuid();
+    var src = meta.source_type || 'standalone';
+    var displayPath = src + '/' + id + '.jpg';
+    var thumbPath   = src + '/thumb/' + id + '.jpg';
+    await storageUpload(displayPath, proc.display, 'image/jpeg');
+    try { await storageUpload(thumbPath, proc.thumb, 'image/jpeg'); } catch (e) { thumbPath = null; }
+    var row = {
+      storage_path: displayPath, thumb_path: thumbPath,
+      file_name: file.name || ('photo-' + Date.now() + '.jpg'),
+      mime_type: 'image/jpeg', file_size: (proc.display && proc.display.size) || null,
+      width: proc.dims && proc.dims.w, height: proc.dims && proc.dims.h,
+      caption: meta.caption || null,
+      source_type: src, source_id: meta.source_id || null, source_label: meta.source_label || null,
+      capture_kind: meta.capture_kind || 'general',
+      location: meta.location || null, subsystem: meta.subsystem || null, phase: meta.phase || null,
+      taken_at: new Date(file.lastModified || Date.now()).toISOString(),
+      uploaded_by: userName(),
+    };
+    var inserted = await _dbInsert('photos', [row]);
+    return (inserted && inserted[0]) || row;
+  }
+
   // ── boot ────────────────────────────────────────────────────────────────────
   function boot() {
     if (S.booted) return; S.booted = true;
@@ -1006,5 +1045,6 @@
     enter: enter, goto: gotoPage, openUpload: openUpload,
     captureFor: function (opts) { openUpload(opts || {}); },
     processQueue: processQueue, state: S,
+    sign: signPaths, signOne: signOne, listFor: listFor, uploadFile: uploadFile,
   };
 })();

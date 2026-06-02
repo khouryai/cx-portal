@@ -1839,15 +1839,34 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
 .form-submit:hover { background: var(--hitachi-red-hover); transform: translateY(-1px); }
 .form-submit:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
-/* Punch comment composer — textarea takes the row, Post sizes to its content.
+/* Punch comment composer — textarea takes the row, buttons size to content.
    Overrides the global `.form-submit { flex:1 }` so the textarea isn't crushed. */
 .punch-comment-composer { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
 .punch-comment-composer textarea { flex: 1 1 auto; min-width: 0; font-size: 13px; resize: none; }
-.punch-comment-composer .form-submit { flex: 0 0 auto; white-space: nowrap; padding: 10px 20px; align-self: stretch; }
+.punch-comment-btns { display: flex; gap: 8px; flex: 0 0 auto; }
+.punch-comment-btns .form-submit { flex: 0 0 auto; white-space: nowrap; padding: 10px 20px; }
+.punch-comment-attach { flex: 0 0 auto; padding: 8px 12px; font-size: 16px; line-height: 1; }
 @media (max-width: 640px) {
   .punch-comment-composer { flex-direction: column; align-items: stretch; }
-  .punch-comment-composer .form-submit { width: 100%; }
+  .punch-comment-btns { justify-content: flex-end; }
+  .punch-comment-btns .form-submit { flex: 1 1 auto; }
 }
+.punch-comment-preview { margin-top: 8px; }
+.punch-comment-preview-item { position: relative; display: inline-flex; align-items: center; gap: 8px; background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px; padding: 6px 10px 6px 6px; font-size: 12px; color: var(--gray-600); }
+.punch-comment-preview-item img { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; }
+.punch-comment-preview-item button { border: none; background: var(--gray-300); color: var(--gray-700); border-radius: 50%; width: 20px; height: 20px; cursor: pointer; font-size: 13px; line-height: 1; }
+
+/* Punch linked-photos gallery */
+.punch-photo-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.punch-photo-tile { position: relative; }
+.punch-photo-grid img { width: 84px; height: 84px; object-fit: cover; border-radius: 8px; border: 1px solid var(--gray-200); background: var(--gray-100); cursor: zoom-in; display: block; }
+.punch-photo-kind { position: absolute; left: 4px; bottom: 4px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: #fff; padding: 1px 5px; border-radius: 6px; background: rgba(17,17,17,.7); }
+.punch-photo-kind.before { background: rgba(217,119,6,.92); }
+.punch-photo-kind.after { background: rgba(21,128,61,.92); }
+
+/* Inline photo inside a comment */
+.punch-comment-photo { max-width: 220px; max-height: 220px; border-radius: 8px; margin-top: 6px; display: block; border: 1px solid var(--gray-200); background: var(--gray-100); cursor: zoom-in; }
+@media (max-width: 640px) { .punch-comment-photo { max-width: 100%; } }
 .form-primary {
   background: var(--primary);
   color: white;

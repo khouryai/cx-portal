@@ -7399,6 +7399,16 @@ function openPunchDetail(id) {
           </div>`;
       })()}
 
+      <!-- Linked Photos -->
+      <div style="margin-bottom:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;">📷 Photos</div>
+          ${canComment ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchAddPhotos('${id}')">+ Add photo</button>` : ''}
+        </div>
+        <div id="punch-photos-${id}" class="punch-photo-grid"><div style="font-size:12px;color:var(--gray-400);padding:8px 0;">Loading photos…</div></div>
+        <input type="file" id="punch-gallery-file-${id}" accept="image/*" multiple style="display:none" onchange="_punchGalleryFilesChosen('${id}', this)">
+      </div>
+
       <!-- Combined Activity & Comments Timeline -->
       <div>
         <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:14px;">
@@ -7422,7 +7432,8 @@ function openPunchDetail(id) {
                     <div style="width:30px;height:30px;border-radius:50%;background:var(--hitachi-red);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${initials}</div>
                     <div style="flex:1;min-width:0;">
                       <div style="font-size:12px;font-weight:600;color:var(--gray-800);">${escapeHtml(entry.by)} <span style="font-weight:400;color:var(--gray-500);">· ${roleLabel} · ${dateAgo(entry.at)}</span></div>
-                      <div style="font-size:13px;color:var(--gray-700);margin-top:3px;white-space:pre-wrap;">${escapeHtml(entry.text)}</div>
+                      ${entry.text ? `<div style="font-size:13px;color:var(--gray-700);margin-top:3px;white-space:pre-wrap;">${escapeHtml(entry.text)}</div>` : ''}
+                      ${entry.photo ? `<img class="punch-comment-photo" data-photo-thumb="${escapeHtml(entry.photo.thumb_path||entry.photo.storage_path)}" data-photo-full="${escapeHtml(entry.photo.storage_path)}" alt="attached photo" loading="lazy">` : ''}
                     </div>
                     <span style="font-size:10px;background:#fef3e0;color:var(--warn);padding:2px 6px;border-radius:8px;flex-shrink:0;font-weight:600;">Comment</span>
                   </div>`;
@@ -7446,8 +7457,13 @@ function openPunchDetail(id) {
         ${canComment ? `
           <div class="punch-comment-composer">
             <textarea id="punch-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…"></textarea>
-            <button class="form-submit" onclick="addPunchComment('${id}')">Post</button>
-          </div>` : ''}
+            <div class="punch-comment-btns">
+              <button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" onclick="document.getElementById('punch-comment-file-${id}').click()">📷</button>
+              <button class="form-submit" onclick="addPunchComment('${id}')">Post</button>
+            </div>
+          </div>
+          <input type="file" id="punch-comment-file-${id}" accept="image/*" style="display:none" onchange="_punchCommentPhotoChosen('${id}', this)">
+          <div id="punch-comment-preview-${id}" class="punch-comment-preview" style="display:none;"></div>` : ''}
       </div>
     `,
     footer: `
@@ -7459,6 +7475,103 @@ function openPunchDetail(id) {
       ${p.status !== 'closed' ? `<button class="form-submit" onclick="closeModal();openEditPunchModal('${p.id}')">Edit</button>` : ''}
     `,
   });
+  // Load + sign the linked photos (gallery + any inline comment photos).
+  _punchHydratePhotos(id);
+}
+
+// ── Punch photos: gallery in the detail view + inline comment attachments ──────
+let _punchCommentPhoto = {};   // id -> File chosen for the next comment
+
+async function _punchHydratePhotos(id) {
+  await _punchRenderGallery(id);
+  const body = document.querySelector('.modal-overlay .modal-body') || document.querySelector('.modal-body');
+  if (body) await _punchSignImages(body);
+}
+
+async function _punchRenderGallery(id) {
+  const wrap = document.getElementById('punch-photos-' + id);
+  if (!wrap) return;
+  if (!window.PhotosModule || !PhotosModule.listFor) { wrap.innerHTML = '<div style="font-size:12px;color:var(--gray-400);padding:8px 0;">Photos module not loaded.</div>'; return; }
+  const photos = await PhotosModule.listFor({ source_type: 'punch', source_id: id });
+  if (!photos.length) { wrap.innerHTML = '<div style="font-size:12px;color:var(--gray-400);padding:8px 0;">No photos linked yet.</div>'; return; }
+  wrap.innerHTML = photos.map(ph => {
+    const thumb = ph.thumb_path || ph.storage_path;
+    const kind = (ph.capture_kind && ph.capture_kind !== 'general')
+      ? `<span class="punch-photo-kind ${escapeHtml(ph.capture_kind)}">${escapeHtml(ph.capture_kind)}</span>` : '';
+    return `<div class="punch-photo-tile" title="${escapeHtml(ph.caption || ph.file_name || '')}">
+      <img data-photo-thumb="${escapeHtml(thumb)}" data-photo-full="${escapeHtml(ph.storage_path)}" alt="${escapeHtml(ph.caption || '')}" loading="lazy">${kind}
+    </div>`;
+  }).join('');
+  await _punchSignImages(wrap);
+}
+
+// Batch-sign every data-photo-thumb/full image inside a scope and wire click→open full.
+async function _punchSignImages(scopeEl) {
+  if (!scopeEl || !window.PhotosModule || !PhotosModule.sign) return;
+  const imgs  = [...scopeEl.querySelectorAll('img[data-photo-thumb]:not([data-signed])')];
+  const fulls = [...scopeEl.querySelectorAll('[data-photo-full]')];
+  const paths = [];
+  imgs.forEach(i => { const p = i.getAttribute('data-photo-thumb'); if (p && !paths.includes(p)) paths.push(p); });
+  fulls.forEach(e => { const p = e.getAttribute('data-photo-full'); if (p && !paths.includes(p)) paths.push(p); });
+  if (!paths.length) return;
+  let map = {};
+  try { map = await PhotosModule.sign(paths); } catch (e) { return; }
+  imgs.forEach(i => { i.setAttribute('data-signed', '1'); const u = map[i.getAttribute('data-photo-thumb')]; if (u) i.src = u; });
+  fulls.forEach(e => {
+    const fp = e.getAttribute('data-photo-full');
+    e.style.cursor = 'zoom-in';
+    e.onclick = () => { const u = map[fp]; if (u) window.open(u, '_blank'); };
+  });
+}
+
+function _punchAddPhotos(id) { const i = document.getElementById('punch-gallery-file-' + id); if (i) i.click(); }
+
+async function _punchGalleryFilesChosen(id, input) {
+  const files = [...(input.files || [])];
+  if (!files.length) return;
+  const p = PUNCH_DB.find(x => x.id === id);
+  if (!p) return;
+  if (!window.PhotosModule || !PhotosModule.uploadFile) { toast('Photos module not loaded', 'error'); return; }
+  const ctx = _punchPhotoCtx(p);
+  toast('Uploading ' + files.length + ' photo' + (files.length > 1 ? 's' : '') + '…');
+  let ok = 0;
+  for (const f of files) { try { await PhotosModule.uploadFile(f, ctx); ok++; } catch (e) { console.error('[punch photo] upload failed:', e); } }
+  input.value = '';
+  toast(ok + ' photo' + (ok !== 1 ? 's' : '') + ' added', ok ? 'success' : 'error');
+  await _punchRenderGallery(id);
+}
+
+function _punchPhotoCtx(p) {
+  return {
+    source_type: 'punch', source_id: p.id,
+    source_label: 'Punch #' + (p.number || p.id),
+    location: _plLocName(p.location) || null,
+    subsystem: p.subsystem || null,
+    phase: _plLocName(p.phase) || null,
+  };
+}
+
+function _punchCommentPhotoChosen(id, input) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  _punchCommentPhoto[id] = f;
+  const prev = document.getElementById('punch-comment-preview-' + id);
+  if (prev) {
+    prev.style.display = '';
+    prev.innerHTML = `<div class="punch-comment-preview-item">
+      <img src="${URL.createObjectURL(f)}" alt="">
+      <span>${escapeHtml(f.name || 'photo')}</span>
+      <button type="button" onclick="_punchCommentPhotoClear('${id}')" title="Remove">×</button>
+    </div>`;
+  }
+}
+
+function _punchCommentPhotoClear(id) {
+  delete _punchCommentPhoto[id];
+  const input = document.getElementById('punch-comment-file-' + id);
+  const prev  = document.getElementById('punch-comment-preview-' + id);
+  if (input) input.value = '';
+  if (prev) { prev.style.display = 'none'; prev.innerHTML = ''; }
 }
 
 async function advancePunchStatus(id, newStatus) {
@@ -7491,21 +7604,44 @@ async function advancePunchStatus(id, newStatus) {
 
 async function addPunchComment(id) {
   const input = document.getElementById(`punch-comment-input-${id}`);
-  const text = input?.value.trim();
-  if (!text) { toast('Comment cannot be empty', 'error'); return; }
+  const text = (input?.value || '').trim();
+  const file = _punchCommentPhoto[id];
+  if (!text && !file) { toast('Add a comment or a photo', 'error'); return; }
   const p = PUNCH_DB.find(x => x.id === id);
   if (!p) return;
+
+  // Upload the attached photo first (linked to this punch, so it also shows in the gallery).
+  let photoRef = null;
+  if (file) {
+    if (!window.PhotosModule || !PhotosModule.uploadFile) { toast('Photos module not loaded', 'error'); return; }
+    const postBtn = document.querySelector(`#punch-comment-input-${id}`)?.closest('.punch-comment-composer')?.querySelector('.form-submit');
+    if (postBtn) postBtn.disabled = true;
+    try {
+      toast('Uploading photo…');
+      const ctx = _punchPhotoCtx(p);
+      ctx.caption = text || null;
+      const row = await PhotosModule.uploadFile(file, ctx);
+      photoRef = { id: row.id || null, storage_path: row.storage_path, thumb_path: row.thumb_path || null, file_name: row.file_name || null };
+    } catch (e) {
+      if (postBtn) postBtn.disabled = false;
+      toast('Photo upload failed: ' + (e && e.message || e), 'error');
+      return;
+    }
+  }
+
   const comment = {
     id: crypto.randomUUID(),
-    text,
+    text: text || '',
     by: currentRoleUser.name,
     by_role: currentRoleUser.role,
     at: new Date().toISOString(),
   };
+  if (photoRef) comment.photo = photoRef;
   const comments = [...(p.comments||[]), comment];
   const { error } = await _sb.from('punch_items').update({ comments }).eq('id', id);
   if (error) { toast('Comment failed: ' + error.message, 'error'); return; }
   p.comments = comments;
+  _punchCommentPhotoClear(id);
   toast('Comment posted', 'success');
   closeModal();
   openPunchDetail(id);
