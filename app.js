@@ -33537,11 +33537,75 @@ function _dynProcStatus(sts) {
 }
 
 function _dynCaseActions(testId, isPerLoc) {
+  const isAdmin = currentRoleUser?.role === 'admin';
   return `
     <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynCaseFilterInstances('${escapeHtml(testId)}')">Instances</button>
     <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynOpenCadenceModal('${escapeHtml(testId)}')">Cadence</button>
     <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dtOpenPrereqEditor('${escapeHtml(testId)}')">Prereqs</button>
-    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openTestCaseScopeModal('${escapeHtml(testId)}')">Scope</button>`;
+    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openTestCaseScopeModal('${escapeHtml(testId)}')">Scope</button>
+    ${isAdmin ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;color:#dc2626;" onclick="_dynDeleteTestCase('${escapeHtml(testId)}')">Delete</button>` : ''}`;
+}
+
+// Permanently delete a dynamic test case (admin-only). Removes the test_items
+// row, which also removes it from the Test Register, and cascades its dynamic
+// instances, prerequisites, form/asset links. test_item_status_history and
+// test_results reference test_items with NO ACTION, so they must be cleared
+// first or the delete is rejected by the FK. Always behind a confirmation.
+function _dynDeleteTestCase(testId) {
+  if (currentRoleUser?.role !== 'admin') {
+    if (typeof toast === 'function') toast('Only admins can delete test cases.', 'error');
+    return;
+  }
+  const info = _dynPage.testItemsById.get(testId) || {};
+  const instCount = (_dynPage.instances || []).filter(r => r.test_id === testId).length;
+  modal({
+    title: 'Delete test case?',
+    sub: `${escapeHtml(info.code || testId)} — ${escapeHtml((info.name || '').slice(0,60))}`,
+    body: `
+      <div style="padding:8px 24px 16px;">
+        <p style="font-size:13px;color:var(--gray-700);margin:0 0 10px;">
+          This permanently removes the test case from <b>both</b> the Dynamic Testing area
+          and the Test Register. This cannot be undone.
+        </p>
+        <ul style="font-size:12.5px;color:var(--gray-600);margin:0 0 4px;padding-left:18px;">
+          <li><b>${instCount}</b> dynamic instance${instCount===1?'':'s'} will be deleted</li>
+          <li>Its prerequisites, form links and status history will also be removed</li>
+        </ul>
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" style="background:#dc2626;border-color:#dc2626;" onclick="_dynConfirmDeleteTestCase('${escapeHtml(testId)}')">Delete permanently</button>`,
+  });
+}
+
+async function _dynConfirmDeleteTestCase(testId) {
+  if (currentRoleUser?.role !== 'admin') return;
+  try {
+    // Clear NO ACTION references first so the test_items delete isn't rejected.
+    await _dbDelete('test_item_status_history', { test_id: testId }).catch(() => {});
+    await _dbDelete('test_results', { test_id: testId }).catch(() => {});
+    // Cascades dynamic_instances, test_item_prerequisites, form/asset links.
+    await _dbDelete('test_items', { test_id: testId });
+
+    // Purge from in-memory caches so both areas update without a reload.
+    if (typeof TI !== 'undefined') {
+      const i = TI.findIndex(t => (t.TestID || t.test_id) === testId);
+      if (i >= 0) TI.splice(i, 1);
+    }
+    _dynPage.dynItems = (_dynPage.dynItems || []).filter(r => r.test_id !== testId);
+    _dynPage.instances = (_dynPage.instances || []).filter(r => r.test_id !== testId);
+    _dynPage.testItemsById.delete(testId);
+    if (_dynPage.testFilter === testId) _dynPage.testFilter = '';
+
+    closeModal();
+    if (typeof toast === 'function') toast('Test case deleted.', 'success');
+    // Refresh whichever views are mounted.
+    if (document.getElementById('dyn-content')) _dynRenderCases();
+    if (typeof _reRenderTR === 'function') _reRenderTR();
+    if (typeof renderLITable === 'function') renderLITable();
+  } catch (e) {
+    alert(`Delete failed: ${e.message}`);
+  }
 }
 
 async function _dynRenderCases() {
