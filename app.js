@@ -19560,8 +19560,9 @@ function _laRenderGrid(target, { groups, days, milestones }) {
   html += `<div class="tlg-row tlg-ms-row"><div class="tlg-label tlg-ms-gutter"></div><div class="tlg-cells">`;
   days.forEach(iso => {
     const isToday = iso === todayISO;
+    const dwMs = dayjs(iso).day(); const isWkndMs = dwMs === 0 || dwMs === 6;
     const marks = milestones.filter(mk => mk.date === iso);
-    html += `<div class="tlg-cell tlg-ms-cell">`;
+    html += `<div class="tlg-cell tlg-ms-cell${isToday ? ' tlg-today-col' : ''}${isWkndMs ? ' tlg-weekend' : ''}">`;
     if (isToday) html += `<div class="tlg-today-marker"><span class="tlg-today-label">Today</span><span class="tlg-today-arr">▼</span></div>`;
     marks.forEach(mk => html += `<div class="tlg-ms-mark" title="${escapeHtml(mk.label)}">${escapeHtml(mk.icon||'◆')}</div>`);
     html += `</div>`;
@@ -19616,7 +19617,8 @@ function _laRenderGrid(target, { groups, days, milestones }) {
         </div>
         <div class="tlg-cells">${days.map(iso => {
           const isToday = iso === todayISO;
-          return `<div class="tlg-cell tlg-grp-hdr-cell${isToday ? ' tlg-today-col' : ''}"></div>`;
+          const dw = dayjs(iso).day(); const isWknd = dw === 0 || dw === 6;
+          return `<div class="tlg-cell tlg-grp-hdr-cell${isToday ? ' tlg-today-col' : ''}${isWknd ? ' tlg-weekend' : ''}"></div>`;
         }).join('')}</div>
       </div>`;
       return;
@@ -19641,7 +19643,8 @@ function _laRenderGrid(target, { groups, days, milestones }) {
         </div>
         <div class="tlg-cells">${days.map(iso => {
           const isToday = iso === todayISO;
-          return `<div class="tlg-cell tlg-grp-hdr-cell${isToday ? ' tlg-today-col' : ''}"></div>`;
+          const dw = dayjs(iso).day(); const isWknd = dw === 0 || dw === 6;
+          return `<div class="tlg-cell tlg-grp-hdr-cell${isToday ? ' tlg-today-col' : ''}${isWknd ? ' tlg-weekend' : ''}"></div>`;
         }).join('')}</div>
       </div>`;
       return;
@@ -19653,7 +19656,8 @@ function _laRenderGrid(target, { groups, days, milestones }) {
         <div class="tlg-label tlg-loc-hdr-label">📍 ${escapeHtml(g.label)}</div>
         <div class="tlg-cells">${days.map(iso => {
           const isToday = iso === todayISO;
-          return `<div class="tlg-cell tlg-loc-hdr-cell${isToday ? ' tlg-today-col' : ''}"></div>`;
+          const dw = dayjs(iso).day(); const isWknd = dw === 0 || dw === 6;
+          return `<div class="tlg-cell tlg-loc-hdr-cell${isToday ? ' tlg-today-col' : ''}${isWknd ? ' tlg-weekend' : ''}"></div>`;
         }).join('')}</div>
       </div>`;
       return;
@@ -19886,6 +19890,28 @@ function _planningEventResChips(eventId) {
     .filter(Boolean);
 }
 function _planningEventBartChips(eventId) { return _planningEventResChips(eventId).filter(c => c.isBart); }
+// Chips filtered by company: 'all' | 'Hitachi' | 'BART'.
+function _planningEventResChipsCompany(eventId, company) {
+  const chips = _planningEventResChips(eventId);
+  if (company === 'BART')    return chips.filter(c => c.isBart);
+  if (company === 'Hitachi') return chips.filter(c => !c.isBart);
+  return chips;
+}
+// Location view cells: resource chips filtered by the active company toggle.
+function _laBuildByDateLocation(events, days, company) {
+  const byDate = {};
+  events.forEach(e => {
+    if (!days.includes(e.event_date)) return;
+    const isCancel = e.status === 'cancelled';
+    (byDate[e.event_date] = byDate[e.event_date] || []).push({
+      event_id: e.id, shift_type: e.shift_type, start_time: e.start_time,
+      end_time: e.end_time, all_day: !!e.all_day, isCancel, title: e.title || '',
+      cellLabel: '',
+      resChips: isCancel ? [] : _planningEventResChipsCompany(e.id, company),
+    });
+  });
+  return byDate;
+}
 // Like _laBuildByDate but attaches BART chips for Activity view cells.
 function _laBuildByDateActivity(events, days) {
   const byDate = {};
@@ -19959,6 +19985,16 @@ function _laLookaheadHTML() {
           <button class="admin-tab${_laResCompanyFilter === v ? ' active' : ''}"
             style="font-size:12px;padding:6px 14px;"
             onclick="_laSetResCompanyFilter('${v}')">${l}</button>
+        `).join('')}
+      </div>
+      ` : ''}
+      ${_laTimelineGroupBy === 'location' ? `
+      <div style="display:flex;align-items:center;gap:0;">
+        <span style="font-size:11px;color:var(--gray-500);margin-right:8px;white-space:nowrap;">Resources:</span>
+        ${[['all','All'],['Hitachi','Hitachi'],['BART','BART']].map(([v,l]) => `
+          <button class="admin-tab${_laLocResFilter === v ? ' active' : ''}"
+            style="font-size:12px;padding:6px 14px;"
+            onclick="_laSetLocResFilter('${v}')">${l}</button>
         `).join('')}
       </div>
       ` : ''}
@@ -21206,6 +21242,8 @@ function _laResourcePanelHTML() {
 function _laSetTimelineGroup(g) { _laTimelineGroupBy = g; _renderLookaheadTabBody(); }
 function _laSetActivitySubGroup(sg) { _laActivitySubGroup = sg; _renderLookaheadTabBody(); }
 function _laSetResCompanyFilter(f) { _laResCompanyFilter = f; _renderLookaheadTabBody(); }
+let _laLocResFilter = 'all';   // 'all' | 'Hitachi' | 'BART' — chips shown in Location-view cells
+function _laSetLocResFilter(f) { _laLocResFilter = f; _renderLookaheadTabBody(); }
 // True if a resource passes the current Hitachi/BART filter
 function _laResCompanyMatch(r) {
   if (_laResCompanyFilter === 'all') return true;
@@ -23443,9 +23481,9 @@ function _laMountLookaheadTL() {
     });
     Object.keys(locMap).sort().forEach(loc => {
       const c = _planningSubsystemColor(loc === 'No location' ? null : loc);
-      // Location view → show resource initials in each cell
+      // Location view → show resource chips in each cell, filtered by company toggle.
       groups.push({ id: 'loc-' + loc, label: loc, color: c.bg,
-        byDate: _laBuildByDate(locMap[loc], days, e => _planningEventResourceInitials(e.id)) });
+        byDate: _laBuildByDateLocation(locMap[loc], days, _laLocResFilter) });
     });
 
   } else { // activity — grouped by activity_group (T&C, Construction, Design…)

@@ -6426,8 +6426,8 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
 
 /* ── Sticky left label column ────────────────────────────────── */
 .tlg-label {
-  width: 300px;
-  min-width: 300px;
+  width: 248px;
+  min-width: 248px;
   flex-shrink: 0;
   border-right: 2px solid var(--gray-300);
   position: sticky;
@@ -6453,8 +6453,8 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   box-sizing: border-box;
 }
 .tlg-cell:last-child { border-right: none; }
-.tlg-today-col { background: rgba(230,0,18,.04) !important; }
-.tlg-weekend   { background: rgba(0,0,0,.025) !important; }
+.tlg-today-col { background: rgba(230,0,18,.085) !important; }
+.tlg-weekend   { background: rgba(0,0,0,.06) !important; }
 /* Bridge right border for run-start/mid cells so shift blocks visually merge */
 .tlg-run-bridge { border-right-color: transparent !important; padding-right: 0 !important; }
 
@@ -11695,8 +11695,8 @@ a:focus-visible {
   position: sticky; left: 0; z-index: 4;
   background: #fff !important;
   padding: 0 !important;
-  width: 280px;
-  min-width: 280px;
+  width: 248px;
+  min-width: 248px;
   border-right: 1px solid var(--gray-200);
   flex-direction: row !important;
   color: var(--near-black) !important;
@@ -11707,9 +11707,9 @@ a:focus-visible {
   background: var(--disc-default);
 }
 .v-combo .la-combo-content {
-  padding: 10px 14px;
+  padding: 7px 12px;
   display: flex; flex-direction: column;
-  gap: 5px;
+  gap: 3px;
   min-width: 0; flex: 1;
   justify-content: center;
 }
