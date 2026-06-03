@@ -19573,9 +19573,10 @@ function _laRenderGrid(target, { groups, days, milestones }) {
   html += `<div class="tlg-row tlg-month-row"><div class="tlg-label tlg-month-gutter"></div><div class="tlg-cells">`;
   monthSpans.forEach((span, si) => {
     const color = _TL_MONTH_COLORS[si % _TL_MONTH_COLORS.length];
-    // Lock pill width to exactly span.count day-cells (cell min 46 / max 80px)
-    // so the month bar and day header stay aligned even when the grid scrolls.
-    html += `<div class="tlg-month-pill" style="flex:${span.count};min-width:${span.count * 46}px;max-width:${span.count * 80}px;background:${color};">${span.label}</div>`;
+    // Day cells are a fixed 60px each; lock the month pill to exactly
+    // span.count × 60px so the month bar and day columns always line up.
+    const w = span.count * 60;
+    html += `<div class="tlg-month-pill" style="flex:0 0 ${w}px;width:${w}px;min-width:${w}px;max-width:${w}px;background:${color};">${span.label}</div>`;
   });
   html += `</div></div>`;
 
@@ -20018,6 +20019,7 @@ function _laLookaheadHTML() {
           📤 Export ▾
         </button>
         <div id="la-export-menu" class="la-export-menu">
+          <button onclick="_laExportTimelinePDF();document.getElementById('la-export-menu').classList.remove('open');">🖼 Current View (PDF)</button>
           <button onclick="_laExportLookahead();document.getElementById('la-export-menu').classList.remove('open');">📅 4-Week Lookahead (.xlsx)</button>
           <button onclick="_laExportBARTResourceMap('xlsx');document.getElementById('la-export-menu').classList.remove('open');">🚧 BART Resource Map (.xlsx)</button>
           <button onclick="_laExportBARTResourceMap('csv');document.getElementById('la-export-menu').classList.remove('open');">📊 BART Resource Map (.csv)</button>
@@ -20843,13 +20845,80 @@ async function _laDrawerRemoveEventResource(eventResId) {
 // EXPORTS — Phase 4B & 4C
 // ============================================================
 
+// Export the CURRENT timeline view (with its filters/window) as a PDF —
+// a print-to-PDF of the live grid, scaled to fit a landscape page.
+function _laExportTimelinePDF() {
+  const shell = document.querySelector('#lookahead-timeline .tlg-shell');
+  if (!shell) { toast('Open the Lookahead timeline first.', 'warn'); return; }
+  const cloneHTML = shell.outerHTML;
+
+  const viewLabel = { activity: 'Activity', resource: 'Resource', subsystem: 'Subsystem', location: 'Location' }[_laTimelineGroupBy] || _laTimelineGroupBy;
+  const start = _laWinAnchor();
+  const end   = start.add(_laTimelineWindow - 1, 'day');
+  const range = start.format('MMM D, YYYY') + ' – ' + end.format('MMM D, YYYY');
+  const filters = ['View: ' + viewLabel, 'Window: ' + _laTimelineWindow + ' days'];
+  if (_laTimelineGroupBy === 'activity' && _laActivitySubGroup !== 'none') filters.push('Sub-group: ' + _laActivitySubGroup);
+  if (_laTimelineGroupBy === 'resource') filters.push('Resources: ' + _laResCompanyFilter);
+  if (_laTimelineGroupBy === 'location') filters.push('Resources: ' + _laLocResFilter);
+  if (_planningShowP6) filters.push('P6 baseline shown');
+  if (_laRowSearch) filters.push('Filter: "' + _laRowSearch + '"');
+
+  const gridW = 248 + (_laTimelineWindow * 60) + 8;
+  const zoom = Math.min(1, 1000 / gridW);
+  const baseHref = location.origin + location.pathname.replace(/[^/]*$/, '');
+  const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+    <base href="${baseHref}">
+    <title>Lookahead — ${esc(range)}</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+      @page { size: A4 landscape; margin: 8mm; }
+      html, body { margin: 0; padding: 0; background: #fff; }
+      .pdf-head { font-family: Arial, sans-serif; padding: 2px 2px 12px; }
+      .pdf-title { font-size: 17px; font-weight: 800; color: #111; }
+      .pdf-sub { font-size: 11px; color: #555; margin-top: 3px; }
+      .pdf-filters { margin-top: 6px; }
+      .pdf-filters span { display: inline-block; font-size: 10px; color: #334155; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 99px; padding: 2px 9px; margin: 0 6px 4px 0; }
+      .pdf-grid { zoom: ${zoom}; }
+      /* drop sticky/scroll so the full grid lays out for print */
+      .tlg-shell { overflow: visible !important; }
+      .tlg-label, .tlg-head, .tlg-head .tlg-label, .v-combo .tlg-row-label.la-combo-label { position: static !important; }
+      .tlg-fill-handle, .tlg-row-del { display: none !important; }
+    </style></head>
+    <body>
+      <div class="pdf-head">
+        <div class="pdf-title">Lookahead — ${esc(viewLabel)} view</div>
+        <div class="pdf-sub">${esc(range)} · Generated ${esc(new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))}</div>
+        <div class="pdf-filters">${filters.map(f => '<span>' + esc(f) + '</span>').join('')}</div>
+      </div>
+      <div class="pdf-grid">${cloneHTML}</div>
+    </body></html>`;
+
+  try {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+    const frame = document.createElement('iframe');
+    frame.style.cssText = 'position:fixed;top:-10000px;left:-10000px;width:1px;height:1px;border:none;opacity:0;';
+    document.body.appendChild(frame);
+    frame.onload = () => {
+      try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+      catch (e) { window.open(blobUrl, '_blank'); }
+      const cleanup = () => { if (document.body.contains(frame)) document.body.removeChild(frame); URL.revokeObjectURL(blobUrl); };
+      frame.contentWindow.onafterprint = cleanup;
+      setTimeout(cleanup, 60000);
+    };
+    frame.src = blobUrl;
+    toast('Preparing Lookahead PDF…', 'success');
+  } catch (e) { console.error('[la PDF]', e); toast('PDF export failed: ' + e.message, 'error'); }
+}
+
 // 4-Week Lookahead: activity-row × day-cell visual export.
 // Frozen first 2 columns (Group, Activity), one column per day, color-fill
 // matches the shift color, cancelled cells get a 🚫 prefix.
 function _laExportLookahead() {
   if (typeof XLSX === 'undefined') { toast('Excel library not loaded', 'error'); return; }
-  const winStart = _laWinAnchor();
-  const days = Array.from({ length: _laTimelineWindow }, (_, i) => winStart.add(i, 'day').format('YYYY-MM-DD'));
+  const winStart = _laWinAnchor();  const days = Array.from({ length: _laTimelineWindow }, (_, i) => winStart.add(i, 'day').format('YYYY-MM-DD'));
 
   // Header: 1 row month strip + 1 row day strip
   const monthRow = ['Group', 'Phase', 'Activity', 'Location'];
