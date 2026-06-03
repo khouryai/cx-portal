@@ -8648,10 +8648,10 @@ body.sb-collapsed #footer { margin-left: 0 !important; }
    ============================================================================ */
 .kpi-grid {
   gap: 16px;
-  margin-top: -36px;
+  margin-top: 0;
   margin-bottom: 32px;
   position: relative;
-  z-index: 5;
+  z-index: 1;
 }
 .kpi-grid-mini {
   margin-top: 0;
