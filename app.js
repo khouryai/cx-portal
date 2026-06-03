@@ -33209,6 +33209,11 @@ const _dynPage = {
   search: '',
   statusFilter: '',
   testFilter: '',
+  // Sort state (clickable column headers). dir: 'asc' | 'desc'.
+  instSortCol: null,                     // instances table; null = default (date desc)
+  instSortDir: 'asc',
+  caseSortCol: null,                     // test-cases table; null = default (name asc)
+  caseSortDir: 'asc',
   // Board state
   boardView: 'month',                    // 'month' | 'week'
   boardAxis: 'phase',                    // 'phase' | 'zone'
@@ -33490,11 +33495,20 @@ function _dynRenderInstances() {
       if (!hay.includes(q)) return false;
     }
     return true;
-  }).sort((a, b) => {
-    const ka = (a.target_window_start || a.created_at || '');
-    const kb = (b.target_window_start || b.created_at || '');
-    return String(kb).localeCompare(String(ka));
   });
+
+  // Sort: clickable column headers, else default to target window / created desc.
+  if (_dynPage.instSortCol) {
+    const dir = _dynPage.instSortDir === 'asc' ? 1 : -1;
+    const val = r => _dynInstSortValue(r, _dynPage.instSortCol);
+    rows.sort((a, b) => dir * String(val(a)).localeCompare(String(val(b)), undefined, { numeric: true }));
+  } else {
+    rows.sort((a, b) => {
+      const ka = (a.target_window_start || a.created_at || '');
+      const kb = (b.target_window_start || b.created_at || '');
+      return String(kb).localeCompare(String(ka));
+    });
+  }
 
   const kpiHtml = `
     <div style="margin-bottom:14px;">
@@ -33526,13 +33540,13 @@ function _dynRenderInstances() {
     <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
       <table class="dyn-table">
         <thead><tr>
-          <th>Code</th>
-          <th>Test Case</th>
-          <th>Subsystem</th>
-          <th>Run (start → finish)</th>
-          <th>Phase</th>
-          <th>Under test / Access</th>
-          <th>Status</th>
+          ${_dynInstSortTh('Code', 'code')}
+          ${_dynInstSortTh('Test Case', 'testcase')}
+          ${_dynInstSortTh('Subsystem', 'subsystem')}
+          ${_dynInstSortTh('Run (start → finish)', 'run')}
+          ${_dynInstSortTh('Phase', 'phase')}
+          ${_dynInstSortTh('Under test / Access', 'undertest')}
+          ${_dynInstSortTh('Status', 'status')}
           <th style="width:90px;">Actions</th>
         </tr></thead>
         <tbody>${rows.length
@@ -33544,6 +33558,44 @@ function _dynRenderInstances() {
   `;
 
   cont.innerHTML = kpiHtml + toolbar + tableHtml;
+}
+
+// Sort value for an instance row by column key (mirrors the visible cell).
+function _dynInstSortValue(r, col) {
+  const tc = _dynPage.testItemsById.get(r.test_id) || {};
+  switch (col) {
+    case 'code':      return r.code || '';
+    case 'testcase':  return tc.code || r.test_id || '';
+    case 'subsystem': return tc.subsystem || '';
+    case 'run':       return r.title || '';
+    case 'phase':     return r.target_phase || '';
+    case 'undertest': return r.track_section_under_test || '';
+    case 'status':    return r.status || '';
+    default:          return '';
+  }
+}
+
+// Clickable sortable header for the instances table.
+function _dynInstSortTh(label, col, style = '') {
+  const active = _dynPage.instSortCol === col;
+  const arrow  = active ? (_dynPage.instSortDir === 'asc' ? '↑' : '↓') : '↕';
+  const color  = active ? '#e60012' : 'var(--gray-300)';
+  return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" onclick="_dynInstSort('${col}')" title="Sort by ${escapeHtml(label)}">${escapeHtml(label)}<span style="font-size:10px;color:${color};margin-left:4px;">${arrow}</span></th>`;
+}
+
+// Toggle/cycle sort on the instances table: first click asc, second desc,
+// third clears back to the default ordering.
+function _dynInstSort(col) {
+  if (_dynPage.instSortCol !== col) {
+    _dynPage.instSortCol = col;
+    _dynPage.instSortDir = 'asc';
+  } else if (_dynPage.instSortDir === 'asc') {
+    _dynPage.instSortDir = 'desc';
+  } else {
+    _dynPage.instSortCol = null;
+    _dynPage.instSortDir = 'asc';
+  }
+  _dynRenderInstances();
 }
 
 function _dynRowHtml(r) {
@@ -35214,7 +35266,7 @@ async function _dynRenderCases() {
     if (info.test_scope === 'per_location') g.perLoc = true;
     g.members.push({ r, info });
   }
-  const groupArr = [...groups.values()].sort((a, b) => (a.name || a.key).localeCompare(b.name || b.key, undefined, { numeric: true }));
+  const groupArr = [...groups.values()];
   for (const g of groupArr) {
     g.members.sort((a, b) => String(a.info.location || a.r.test_case_code || a.r.test_id)
       .localeCompare(String(b.info.location || b.r.test_case_code || b.r.test_id), undefined, { numeric: true }));
@@ -35222,6 +35274,33 @@ async function _dynRenderCases() {
     g.passed = g.members.filter(m => m.r.rollup_status === 'Pass').length;
     g.instances = g.members.reduce((s, m) => s + (m.r.instance_count || 0), 0);
     g.complete = g.members.reduce((s, m) => s + (m.r.complete_count || 0), 0);
+    g.prereqs = g.members.reduce((s, m) => s + (prereqCounts.get(m.r.test_id) || 0), 0);
+    g.subsystem = (g.members[0] && g.members[0].info && g.members[0].info.subsystem) || '';
+    g.cadence = (g.members[0] && g.members[0].info && g.members[0].info.test_scope) || '';
+  }
+
+  // Sort groups by the active column (default: name asc). Numeric columns
+  // compare as numbers; the rest compare as text.
+  {
+    const col = _dynPage.caseSortCol || 'name';
+    const dir = _dynPage.caseSortDir === 'desc' ? -1 : 1;
+    const numeric = (col === 'instances' || col === 'complete' || col === 'prereqs');
+    const val = g => {
+      switch (col) {
+        case 'code':      return g.key || '';
+        case 'name':      return g.name || g.key || '';
+        case 'subsystem': return g.subsystem || '';
+        case 'cadence':   return g.cadence || '';
+        case 'status':    return g.status || '';
+        case 'instances': return g.instances || 0;
+        case 'complete':  return g.complete || 0;
+        case 'prereqs':   return g.prereqs || 0;
+        default:          return g.name || g.key || '';
+      }
+    };
+    groupArr.sort((a, b) => numeric
+      ? dir * ((val(a) - val(b)) || 0)
+      : dir * String(val(a)).localeCompare(String(val(b)), undefined, { numeric: true }));
   }
 
   // KPIs roll up to the procedure, not the per-location activity.
@@ -35281,14 +35360,14 @@ async function _dynRenderCases() {
       <table class="dyn-table">
         <thead>
           <tr>
-            <th>Code</th>
-            <th>Name</th>
-            <th>Subsystem</th>
-            <th>Cadence</th>
-            <th>Rollup status</th>
-            <th style="text-align:right;">Instances</th>
-            <th style="text-align:right;">Complete</th>
-            <th style="text-align:right;">Prereqs</th>
+            ${_dynCaseSortTh('Code', 'code')}
+            ${_dynCaseSortTh('Name', 'name')}
+            ${_dynCaseSortTh('Subsystem', 'subsystem')}
+            ${_dynCaseSortTh('Cadence', 'cadence')}
+            ${_dynCaseSortTh('Rollup status', 'status')}
+            ${_dynCaseSortTh('Instances', 'instances', 'text-align:right;')}
+            ${_dynCaseSortTh('Complete', 'complete', 'text-align:right;')}
+            ${_dynCaseSortTh('Prereqs', 'prereqs', 'text-align:right;')}
             <th style="text-align:right;width:340px;">Actions</th>
           </tr>
         </thead>
@@ -35296,6 +35375,29 @@ async function _dynRenderCases() {
       </table>
     </div>
   `;
+}
+
+// Clickable sortable header for the test-cases table.
+function _dynCaseSortTh(label, col, style = '') {
+  const active = (_dynPage.caseSortCol || 'name') === col;
+  const arrow  = active ? (_dynPage.caseSortDir === 'desc' ? '↓' : '↑') : '↕';
+  const color  = active ? '#e60012' : 'var(--gray-300)';
+  return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" onclick="_dynCaseSort('${col}')" title="Sort by ${escapeHtml(label)}">${escapeHtml(label)}<span style="font-size:10px;color:${color};margin-left:4px;">${arrow}</span></th>`;
+}
+
+// Toggle/cycle sort on the test-cases table: asc → desc → back to default (name asc).
+function _dynCaseSort(col) {
+  const cur = _dynPage.caseSortCol || 'name';
+  if (cur !== col) {
+    _dynPage.caseSortCol = col;
+    _dynPage.caseSortDir = 'asc';
+  } else if (_dynPage.caseSortDir === 'asc') {
+    _dynPage.caseSortDir = 'desc';
+  } else {
+    _dynPage.caseSortCol = null;   // back to default (name asc)
+    _dynPage.caseSortDir = 'asc';
+  }
+  _dynRenderCases();
 }
 
 function _dynCaseFilterInstances(testId) {
