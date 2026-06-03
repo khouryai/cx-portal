@@ -33735,15 +33735,15 @@ function _dynBuildInstanceForm(inst, tcOpts) {
     <div style="padding:8px 24px 16px;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
       <div class="form-field" style="grid-column:1/-1;">
         <label>Test case <span style="color:var(--gray-500);font-weight:400;">(dynamic-scope only)</span></label>
-        <select id="dyn-f-test-id" required>
+        <select id="dyn-f-test-id" required${!inst ? ' onchange="_dynAutoFillInstanceCode()"' : ''}>
           <option value="">— select —</option>
           ${tcOpts.map(o => `<option value="${escapeHtml(o.tid)}" ${o.tid===v.test_id?'selected':''}>${escapeHtml(o.info?.code || o.tid)} — ${escapeHtml((o.info?.name||'').slice(0,60))}</option>`).join('')}
         </select>
       </div>
 
       <div class="form-field">
-        <label>Code <span style="color:var(--gray-500);font-weight:400;">(short identifier)</span></label>
-        <input id="dyn-f-code" value="${escapeHtml(v.code || '')}" placeholder="e.g. SW-W34-001" />
+        <label>Code <span style="color:var(--gray-500);font-weight:400;">(auto-generated, editable)</span></label>
+        <input id="dyn-f-code" value="${escapeHtml(v.code || '')}" placeholder="auto-generated on test case select" />
       </div>
       <div class="form-field">
         <label>Title</label>
@@ -33853,6 +33853,25 @@ function _dynBuildInstanceForm(inst, tcOpts) {
   `;
 }
 
+function _dynNextInstanceCode(testId) {
+  const info = _dynPage.testItemsById.get(testId);
+  const tcCode = info?.code || testId;
+  const existing = (_dynPage.instances || []).filter(i => i.test_id === testId);
+  let maxN = existing.length;
+  for (const inst of existing) {
+    const m = /[-_]R(\d+)$/i.exec(inst.code || '');
+    if (m) { const n = parseInt(m[1], 10); if (n > maxN) maxN = n; }
+  }
+  return `${tcCode}-R${String(maxN + 1).padStart(2, '0')}`;
+}
+
+function _dynAutoFillInstanceCode() {
+  const testId = document.getElementById('dyn-f-test-id')?.value;
+  const codeEl = document.getElementById('dyn-f-code');
+  if (!testId || !codeEl || codeEl.value) return;
+  codeEl.value = _dynNextInstanceCode(testId);
+}
+
 async function _dynSaveInstance(id) {
   const get = i => document.getElementById(i)?.value?.trim() || null;
   const intOrNull = (s) => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : null; };
@@ -33883,6 +33902,7 @@ async function _dynSaveInstance(id) {
     updated_at: new Date().toISOString(),
   };
   if (!payload.test_id) { alert('Test case is required.'); return; }
+  if (!id && !payload.code) payload.code = _dynNextInstanceCode(payload.test_id);
   try {
     if (id) {
       await _dbUpdate('dynamic_instances', payload, { id });
