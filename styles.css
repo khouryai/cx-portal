@@ -1148,14 +1148,64 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   flex-direction: column;
   gap: 0;
 }
+/* Dense single grid: all location cards flow together regardless of phase, so
+   a phase with one location no longer leaves an empty row. */
+.locations-cardgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 14px;
+}
+/* Clickable per-phase rollup + filter strip above the cards. */
+.loc-phase-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.loc-phase-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 7px 14px;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s var(--easing);
+}
+.loc-phase-chip:hover { border-color: var(--gray-400); background: var(--gray-50); }
+.loc-phase-chip.active { border-color: var(--hitachi-red); background: var(--hitachi-red-light); }
+.loc-phase-chip-name { font-size: 12px; font-weight: 700; color: var(--black); text-transform: uppercase; letter-spacing: 0.03em; }
+.loc-phase-chip-meta { font-size: 11px; color: var(--gray-500); font-weight: 500; }
+.loc-phase-chip.active .loc-phase-chip-meta { color: var(--hitachi-red); }
+
 .location-card {
   background: var(--white);
   border: 1px solid var(--gray-200);
   border-radius: var(--radius-lg);
-  padding: 24px;
+  padding: 18px;
   transition: all 0.3s var(--easing);
   position: relative;
   overflow: hidden;
+}
+.location-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.loc-card-phase {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gray-600);
+  background: var(--gray-100);
+  padding: 2px 8px;
+  border-radius: 99px;
+  white-space: nowrap;
 }
 .location-card:hover {
   transform: translateY(-3px);
@@ -1183,18 +1233,17 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   background: var(--hitachi-red-light);
   padding: 3px 8px;
   border-radius: 4px;
-  margin-bottom: 12px;
 }
 .location-name {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--black);
   margin-bottom: 4px;
   line-height: 1.3;
 }
 .location-stats {
-  margin-top: 20px;
-  padding-top: 20px;
+  margin-top: 14px;
+  padding-top: 14px;
   border-top: 1px solid var(--gray-100);
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1838,6 +1887,53 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
 }
 .form-submit:hover { background: var(--hitachi-red-hover); transform: translateY(-1px); }
 .form-submit:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+/* Punch comment composer — CSS grid so column tracks (not the global
+   `.form-submit { flex:1 }`) control sizing. Desktop: textarea | 📷 | Post.
+   Mobile: textarea spans the top row, 📷 + Post share the row below. */
+.punch-comment-composer { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: end; margin-top: 10px; }
+.punch-comment-composer textarea { min-width: 0; font-size: 13px; resize: none; }
+.punch-comment-attach { padding: 8px 12px; font-size: 16px; line-height: 1; justify-self: start; }
+.punch-comment-composer .form-submit { flex: none; white-space: nowrap; padding: 10px 18px; }
+@media (max-width: 640px) {
+  .punch-comment-composer { grid-template-columns: auto 1fr; }
+  .punch-comment-composer textarea { grid-column: 1 / -1; }
+}
+.punch-comment-preview { margin-top: 8px; }
+.punch-comment-preview-item { position: relative; display: inline-flex; align-items: center; gap: 8px; background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px; padding: 6px 10px 6px 6px; font-size: 12px; color: var(--gray-600); }
+.punch-comment-preview-item img { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; }
+.punch-comment-preview-item button { border: none; background: var(--gray-300); color: var(--gray-700); border-radius: 50%; width: 20px; height: 20px; cursor: pointer; font-size: 13px; line-height: 1; }
+
+/* Punch linked-photos gallery */
+.punch-photo-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.punch-photo-tile { position: relative; }
+.punch-photo-grid img { width: 84px; height: 84px; object-fit: cover; border-radius: 8px; border: 1px solid var(--gray-200); background: var(--gray-100); cursor: zoom-in; display: block; }
+.punch-photo-dl {
+  position: absolute; top: 4px; right: 4px; width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 6px; cursor: pointer; font-size: 12px; line-height: 1;
+  background: rgba(17,17,17,0.6); color: #fff; opacity: 0; transition: opacity .15s;
+}
+.punch-photo-tile:hover .punch-photo-dl { opacity: 1; }
+.punch-photo-dl:hover { background: rgba(17,17,17,0.85); }
+
+/* Staged photos in the New Punch form */
+.punch-newphoto-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.punch-newphoto-row:empty { display: none; }
+.punch-newphoto-tile { position: relative; }
+.punch-newphoto-tile img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--gray-200); display: block; }
+.punch-newphoto-tile button {
+  position: absolute; top: -6px; right: -6px; width: 20px; height: 20px;
+  border: none; border-radius: 50%; background: var(--bad, #dc2626); color: #fff;
+  cursor: pointer; font-size: 13px; line-height: 1;
+}
+.punch-photo-kind { position: absolute; left: 4px; bottom: 4px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: #fff; padding: 1px 5px; border-radius: 6px; background: rgba(17,17,17,.7); }
+.punch-photo-kind.before { background: rgba(217,119,6,.92); }
+.punch-photo-kind.after { background: rgba(21,128,61,.92); }
+
+/* Inline photo inside a comment */
+.punch-comment-photo { max-width: 220px; max-height: 220px; border-radius: 8px; margin-top: 6px; display: block; border: 1px solid var(--gray-200); background: var(--gray-100); cursor: zoom-in; }
+@media (max-width: 640px) { .punch-comment-photo { max-width: 100%; } }
 .form-primary {
   background: var(--primary);
   color: white;
@@ -2823,6 +2919,84 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
 .photo-upload-btn .plus { font-size: 24px; font-weight: 300; }
 
 /* Audit log */
+/* Audit super search bar */
+.audit-search-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 280px;
+  flex: 1 1 320px;
+  max-width: 480px;
+}
+.audit-search-icon {
+  position: absolute;
+  left: 11px;
+  font-size: 13px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.audit-search-input {
+  width: 100%;
+  padding: 8px 32px 8px 32px;
+  border: 1px solid var(--gray-300);
+  border-radius: 8px;
+  font-size: 13px;
+  background: #fff;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.audit-search-input:focus {
+  outline: none;
+  border-color: var(--brand, #6366f1);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+.audit-search-clear {
+  position: absolute;
+  right: 8px;
+  border: none;
+  background: var(--gray-200);
+  color: var(--gray-600);
+  width: 18px;
+  height: 18px;
+  line-height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+.audit-search-clear:hover { background: var(--gray-300); }
+
+/* Audit pagination */
+.audit-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--gray-100);
+  flex-wrap: wrap;
+}
+.audit-pager-info { font-size: 12px; color: var(--gray-500); }
+.audit-pager-controls { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.audit-page-btn {
+  min-width: 32px;
+  padding: 5px 9px;
+  border: 1px solid var(--gray-300);
+  background: #fff;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--gray-700);
+  cursor: pointer;
+}
+.audit-page-btn:hover:not(:disabled):not(.active) { background: var(--gray-100); }
+.audit-page-btn.active {
+  background: var(--brand, #6366f1);
+  border-color: var(--brand, #6366f1);
+  color: #fff;
+  font-weight: 600;
+}
+.audit-page-btn:disabled { opacity: 0.4; cursor: default; }
+.audit-page-gap { padding: 0 4px; color: var(--gray-400); font-size: 12px; }
+
 .audit-row {
   display: grid;
   grid-template-columns: 128px minmax(210px, 260px) minmax(170px, 240px) minmax(0, 1fr);
@@ -5147,6 +5321,19 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   overflow: visible;
 }
 
+/* Clickable "X of Y locations unlinked" chip → opens the location→P6 mapping */
+.p6-learn-maplink {
+  transition: filter 0.12s, text-decoration-color 0.12s;
+  text-decoration: underline dotted transparent;
+  text-underline-offset: 2px;
+}
+.p6-learn-maplink:hover,
+.p6-learn-maplink:focus-visible {
+  filter: brightness(0.94);
+  text-decoration-color: currentColor;
+  outline: none;
+}
+
 .p6-learn-card {
   overflow: visible !important;
   position: relative;
@@ -5487,6 +5674,37 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
 .cal-view-btn.active {
   background: #e60012;
   color: #fff;
+}
+
+/* ── Dashboard view selector ─────────────────────────────── */
+.dash-view-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 20px;
+}
+.dash-view-btn {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-600);
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.dash-view-btn:hover { background: var(--gray-100); color: var(--gray-800); }
+.dash-view-btn.active {
+  background: #1a1a1a;
+  border-color: #1a1a1a;
+  color: #fff;
+}
+.dash-view-note {
+  font-size: 12px;
+  color: var(--gray-500);
+  margin: 14px 2px 0;
+  line-height: 1.5;
 }
 
 /* ── Calendar Legend Bar (Shift + Subsystem) ────────────── */
@@ -6152,14 +6370,14 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
 .cal-tip-title {
   font-size: 13px;
   font-weight: 700;
-  color: #111;
+  color: #f9fafb;
   margin-bottom: 5px;
   word-break: break-word;
 }
 .cal-tip-row {
   display: flex;
   gap: 6px;
-  color: #374151;
+  color: #d1d5db;
   align-items: flex-start;
 }
 .cal-tip-row > span:first-child {
@@ -6208,8 +6426,8 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
 
 /* ── Sticky left label column ────────────────────────────────── */
 .tlg-label {
-  width: 300px;
-  min-width: 300px;
+  width: 248px;
+  min-width: 248px;
   flex-shrink: 0;
   border-right: 2px solid var(--gray-300);
   position: sticky;
@@ -6228,15 +6446,16 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
 
 /* ── Individual day cell ─────────────────────────────────────── */
 .tlg-cell {
-  flex: 1;
-  min-width: 46px;
-  max-width: 80px;
+  flex: 0 0 60px;
+  width: 60px;
+  min-width: 60px;
+  max-width: 60px;
   border-right: 1px solid var(--gray-200);
   box-sizing: border-box;
 }
 .tlg-cell:last-child { border-right: none; }
-.tlg-today-col { background: rgba(230,0,18,.04) !important; }
-.tlg-weekend   { background: rgba(0,0,0,.025) !important; }
+.tlg-today-col { background: rgba(230,0,18,.085) !important; }
+.tlg-weekend   { background: rgba(0,0,0,.06) !important; }
 /* Bridge right border for run-start/mid cells so shift blocks visually merge */
 .tlg-run-bridge { border-right-color: transparent !important; padding-right: 0 !important; }
 
@@ -11062,7 +11281,10 @@ a:focus-visible {
   display: none;
   position: fixed;
   inset: 0;
-  z-index: 9000;
+  /* Below .modal-overlay (4500) so dialogs opened from the viewer — e.g. the
+     admin "Manage markups" modal — render in front of it, while still covering
+     page chrome (headers 3000, sidenav, mobile bars). */
+  z-index: 3800;
   background: #0f172a;
   flex-direction: column;
 }
@@ -11474,8 +11696,8 @@ a:focus-visible {
   position: sticky; left: 0; z-index: 4;
   background: #fff !important;
   padding: 0 !important;
-  width: 280px;
-  min-width: 280px;
+  width: 248px;
+  min-width: 248px;
   border-right: 1px solid var(--gray-200);
   flex-direction: row !important;
   color: var(--near-black) !important;
@@ -11486,9 +11708,9 @@ a:focus-visible {
   background: var(--disc-default);
 }
 .v-combo .la-combo-content {
-  padding: 10px 14px;
+  padding: 7px 12px;
   display: flex; flex-direction: column;
-  gap: 5px;
+  gap: 3px;
   min-width: 0; flex: 1;
   justify-content: center;
 }
@@ -12702,3 +12924,268 @@ a:focus-visible {
   letter-spacing: -0.01em;
 }
 
+/* =====================================================================
+   MOBILE PWA SHELL  — top bar + bottom tab bar, phone layout (≤720px)
+   Desktop is untouched: the bars are hidden and the sidebar stays put.
+   ===================================================================== */
+.m-topbar, .m-tabbar { display: none; }
+
+@media (max-width: 720px) {
+  /* Reclaim full width: the fixed desktop sidebar is replaced by the bars */
+  #sidenav { display: none !important; }
+  .sidenav-reopen-btn { display: none !important; }
+  .page,
+  body.sb-collapsed .page { margin-left: 0 !important; }
+  .page { padding-top: 52px; padding-bottom: 72px; }
+  #footer { margin-left: 0 !important; display: none; }
+
+  /* Top bar */
+  .m-topbar {
+    display: flex; position: fixed; top: 0; left: 0; right: 0; height: 52px;
+    z-index: 400; align-items: center; justify-content: space-between;
+    padding: 0 16px; background: #111827; color: #fff;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .m-topbar-brand { font-size: 13px; font-weight: 600; letter-spacing: 0.04em; }
+  .m-topbar-brand b { color: #e60012; font-weight: 800; }
+  .m-topbar-btn {
+    background: none; border: none; color: rgba(255,255,255,0.85);
+    padding: 8px; cursor: pointer; display: flex; align-items: center;
+  }
+
+  /* Bottom tab bar */
+  .m-tabbar {
+    display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 400;
+    background: #fff; border-top: 1px solid var(--gray-200);
+    box-shadow: 0 -2px 12px rgba(0,0,0,0.05);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .m-tab {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 8px 4px 6px; background: none; border: none; cursor: pointer;
+    color: var(--gray-500); font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+  }
+  .m-tab svg { width: 22px; height: 22px; }
+  .m-tab.active { color: #e60012; }
+  .m-tab:active { background: var(--gray-50); }
+}
+
+/* Drawing viewer: own all touch gestures so we can pinch-zoom (otherwise the
+   browser steals two-finger gestures for page zoom). One finger still draws
+   markup; two fingers pinch to zoom / drag to pan. */
+#drw-viewer-body,
+#drw-markup-canvas { touch-action: none; }
+
+/* Drawings: delete affordance + import-review row selection */
+.drw-del-btn {
+  background: none; border: none; cursor: pointer; font-size: 13px;
+  opacity: 0.45; padding: 2px 5px; border-radius: 4px; line-height: 1; vertical-align: middle;
+}
+.drw-del-btn:hover { opacity: 1; background: #fee2e2; }
+.drw-rev-clickable { cursor: pointer; }
+#modal-overlay tr.drw-rev-selected { background: #eef2ff !important; opacity: 1 !important; }
+
+
+/* ============================================================
+   SIGN IN — split-screen redesign (Claude Design handoff)
+   Scoped under #login-overlay so it overrides the legacy login CSS.
+   Preserves auth hooks: #auth-email/#auth-password/#auth-btn/#auth-error,
+   .login-card toggle target, #cp-card, #login-db-dot/#login-db-label.
+   ============================================================ */
+#login-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: #0a0c11 !important; overflow: hidden;
+  display: block; padding: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+#login-overlay .signin-root { display: flex; height: 100%; width: 100%; background: #0a0c11; }
+
+/* LEFT — form panel */
+#login-overlay .signin-form {
+  width: 660px; flex-shrink: 0; position: relative;
+  padding: 52px 80px; display: flex; flex-direction: column;
+  background: #0a0c11; border-right: 1px solid rgba(255,255,255,0.07);
+  overflow-y: auto;
+}
+#login-overlay .signin-form::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: #e60012; }
+#login-overlay .signin-grid {
+  position: absolute; inset: 0; pointer-events: none;
+  background-image: linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+#login-overlay .signin-brandrow { position: relative; display: flex; align-items: center; gap: 14px; }
+#login-overlay .signin-wordmark { font-family: 'Archivo', system-ui, sans-serif; font-weight: 800; font-size: 34px; letter-spacing: 0.04em; color: #fff; line-height: 1; }
+#login-overlay .signin-form-inner { position: relative; flex: 1; display: flex; flex-direction: column; justify-content: center; max-width: 420px; width: 100%; }
+
+/* Reset the legacy white/cinematic .login-card so the two cards sit flush in
+   the dark panel. The cinematic CSS hides .login-card (opacity:0, blur,
+   transform) until a `.run` class is added — which the new design doesn't use —
+   so these must be forced visible with !important. */
+#login-overlay .login-card {
+  background: none !important; border: none !important; box-shadow: none !important;
+  -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+  border-radius: 0; padding: 0; margin: 0; max-width: none; width: 100%;
+  display: flex; flex-direction: column; align-items: stretch;
+  opacity: 1 !important; transform: none !important; filter: none !important;
+  animation: none !important;
+}
+#login-overlay #cp-card[style*="display: none"], #login-overlay #cp-card[style*="display:none"] { display: none !important; }
+
+#login-overlay .signin-kicker {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; font-weight: 500;
+  letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.6);
+}
+#login-overlay .signin-pulse { width: 7px; height: 7px; border-radius: 50%; background: #e60012; animation: sk-pulse 2s infinite; }
+@keyframes sk-pulse { 0% { box-shadow: 0 0 0 0 rgba(230,0,18,0.45); } 70% { box-shadow: 0 0 0 7px rgba(230,0,18,0); } 100% { box-shadow: 0 0 0 0 rgba(230,0,18,0); } }
+@keyframes sk-spin { to { transform: rotate(360deg); } }
+
+#login-overlay .signin-h1 {
+  font-family: 'Archivo', system-ui, sans-serif; font-size: 52px; font-weight: 800;
+  letter-spacing: -0.03em; color: #fff; margin: 22px 0 12px; line-height: 1.0;
+}
+#login-overlay .signin-sub { font-family: 'Inter', system-ui, sans-serif; font-size: 16.5px; color: #9aa6bd; margin: 0 0 34px; line-height: 1.55; }
+
+#login-overlay .signin-fields { display: flex; flex-direction: column; gap: 18px; }
+#login-overlay .signin-field { display: block; width: 100%; }
+#login-overlay .signin-label {
+  display: block; font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11.5px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase;
+  color: rgba(255,255,255,0.5); margin-bottom: 9px;
+}
+#login-overlay .signin-field input,
+#login-overlay #auth-email,
+#login-overlay #auth-password,
+#login-overlay #cp-new-password,
+#login-overlay #cp-confirm-password {
+  width: 100%; height: 54px; padding: 0 14px;
+  font-family: 'Inter', system-ui, sans-serif; font-size: 16px; font-weight: 450;
+  color: #fff; background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.16); border-radius: 9px; outline: none;
+  transition: border-color .15s, box-shadow .15s; box-sizing: border-box;
+}
+#login-overlay .signin-input-wrap input { padding-right: 46px; }
+#login-overlay .signin-field input::placeholder { color: #7c8597; opacity: 1; }
+#login-overlay .signin-field input:focus {
+  border-color: #e60012; box-shadow: 0 0 0 4px rgba(230,0,18,0.22);
+}
+#login-overlay .signin-input-wrap { position: relative; display: flex; align-items: center; }
+#login-overlay .signin-pwtoggle {
+  position: absolute; right: 6px; width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; cursor: pointer; border-radius: 7px;
+  color: rgba(255,255,255,0.5);
+}
+#login-overlay .signin-pwtoggle:hover { color: rgba(255,255,255,0.85); }
+
+#login-overlay .signin-row { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 2px; }
+#login-overlay .signin-remember { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-family: 'Inter', system-ui, sans-serif; font-size: 12.5px; color: rgba(255,255,255,0.6); }
+#login-overlay .signin-remember input { position: absolute; opacity: 0; width: 0; height: 0; }
+#login-overlay .signin-check {
+  width: 18px; height: 18px; border-radius: 5px; flex-shrink: 0;
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.22);
+  display: flex; align-items: center; justify-content: center; transition: all .15s;
+}
+#login-overlay .signin-remember input:checked + .signin-check { background: #e60012; border-color: #e60012; }
+#login-overlay .signin-remember input:checked + .signin-check::after {
+  content: ""; width: 5px; height: 9px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg) translateY(-1px);
+}
+#login-overlay .signin-forgot { font-family: 'Inter', system-ui, sans-serif; font-size: 12.5px; font-weight: 600; color: #ff5a64; text-decoration: none; }
+#login-overlay .signin-forgot:hover { text-decoration: underline; }
+
+#login-overlay .login-btn.signin-submit,
+#login-overlay #auth-btn,
+#login-overlay #cp-btn {
+  width: 100%; height: 60px; margin-top: 4px;
+  display: flex; align-items: center; justify-content: center; gap: 9px;
+  font-family: 'Archivo', system-ui, sans-serif; font-size: 17px; font-weight: 700; letter-spacing: 0.01em;
+  color: #fff; background: #e60012; border: none; border-radius: 10px; cursor: pointer;
+  box-shadow: 0 6px 18px rgba(230,0,18,0.22); transition: background .2s, filter .15s, box-shadow .2s;
+}
+#login-overlay #auth-btn:hover:not(:disabled),
+#login-overlay #cp-btn:hover:not(:disabled) { background: #e60012; filter: brightness(1.07); transform: none; }
+#login-overlay #auth-btn:disabled,
+#login-overlay #cp-btn:disabled { opacity: 0.7; cursor: default; background: #e60012; }
+
+#login-overlay .signin-error { font-family: 'Inter', system-ui, sans-serif; font-size: 12.5px; font-weight: 500; color: #ffb3b8; min-height: 18px; }
+#login-overlay .signin-error:not(:empty) {
+  padding: 8px 11px; border-radius: 8px; margin-top: 2px;
+  background: rgba(230,0,18,0.14); border: 1px solid rgba(255,90,90,0.3);
+}
+#login-overlay .signin-request { text-align: center; margin-top: 8px; font-family: 'Inter', system-ui, sans-serif; font-size: 14px; color: #9aa6bd; }
+#login-overlay .signin-request a { color: #ff5a64; font-weight: 600; text-decoration: none; }
+
+/* RIGHT — photo panel */
+#login-overlay .signin-photo { flex: 1; position: relative; overflow: hidden; background: #0a0c11; min-width: 0; }
+#login-overlay .signin-photo-img { position: absolute; inset: 0; background-image: url('assets/hsts-1.avif'); background-size: cover; background-position: 26% center; }
+#login-overlay .signin-photo-tint { position: absolute; inset: 0; background: linear-gradient(100deg, rgba(10,12,17,0.4) 0%, rgba(10,12,17,0) 26%, rgba(10,12,17,0) 52%, rgba(10,12,17,0.85) 100%); }
+#login-overlay .signin-photo-floor { position: absolute; inset: 0; background: linear-gradient(0deg, rgba(8,10,14,0.92) 0%, rgba(8,10,14,0.55) 26%, rgba(10,12,17,0) 52%); }
+#login-overlay .signin-statuspill {
+  position: absolute; top: 28px; right: 28px;
+  display: inline-flex; align-items: center; gap: 8px; padding: 7px 13px; border-radius: 99px;
+  background: rgba(0,0,0,0.4); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.16);
+}
+#login-overlay .signin-statuspill .login-db-dot { width: 7px; height: 7px; border-radius: 50%; background: #34d399; box-shadow: 0 0 8px #34d399; animation: sk-pulse 2s infinite; }
+#login-overlay .signin-statuspill .login-db-label {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace !important; font-size: 10px; font-weight: 500;
+  letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.85) !important;
+}
+#login-overlay .signin-photo-caption { position: absolute; left: 48px; right: 48px; bottom: 46px; }
+#login-overlay .signin-photo-kicker { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; font-weight: 500; letter-spacing: 0.18em; color: rgba(255,255,255,0.78); text-transform: uppercase; }
+#login-overlay .signin-photo-headline { font-family: 'Archivo', system-ui, sans-serif; font-size: 30px; font-weight: 800; color: #fff; letter-spacing: -0.02em; margin: 10px 0 22px; line-height: 1.1; max-width: 460px; text-shadow: 0 2px 18px rgba(0,0,0,0.5); }
+#login-overlay .signin-photo-stats { display: flex; gap: 36px; }
+#login-overlay .signin-stat-n { font-family: 'Archivo', system-ui, sans-serif; font-size: 24px; font-weight: 800; color: #fff; letter-spacing: -0.01em; }
+#login-overlay .signin-stat-l { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.62); margin-top: 3px; }
+
+@media (max-width: 920px) {
+  #login-overlay .signin-root { flex-direction: column; }
+  #login-overlay .signin-form { width: 100%; order: 2; flex: 1; padding: 38px 30px 30px; border-right: none; }
+  #login-overlay .signin-form-inner { margin: 0 auto; max-width: 380px; }
+  #login-overlay .signin-photo { order: 1; flex: none; height: 188px; }
+  #login-overlay .signin-photo-caption { left: 28px; right: 28px; bottom: 22px; }
+  #login-overlay .signin-photo-headline { display: none; }
+  #login-overlay .signin-photo-stats { display: none; }
+  #login-overlay .signin-h1 { font-size: 40px; }
+}
+@media (max-width: 460px) {
+  #login-overlay .signin-form { padding: 30px 22px 26px; }
+  #login-overlay .signin-h1 { font-size: 34px; }
+}
+#login-overlay .signin-statuspill .login-db-dot.online { background: #34d399; box-shadow: 0 0 8px #34d399; }
+#login-overlay .signin-statuspill .login-db-dot.offline { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; animation: none; }
+
+/* ── Lookahead "Past Weeks" frozen-snapshot viewer ───────────────── */
+.la-hist-list { display: flex; flex-direction: column; gap: 8px; }
+.la-hist-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; text-align: left; padding: 12px 16px; cursor: pointer;
+  background: var(--white); border: 1px solid var(--gray-200); border-radius: 10px; transition: all .15s;
+}
+.la-hist-row:hover { border-color: var(--hitachi-red); background: var(--gray-50); }
+.la-hist-wk { font-size: 14px; font-weight: 700; color: var(--black); }
+.la-hist-sub { font-size: 11px; color: var(--gray-500); margin-top: 2px; }
+.la-hist-stats { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--gray-600); white-space: nowrap; }
+.la-hist-arrow { font-size: 18px; color: var(--gray-400); }
+.la-hist-wkhead { display: flex; flex-direction: column; gap: 3px; padding: 10px 14px; background: var(--gray-50); border-radius: 8px; margin-bottom: 14px; }
+.la-hist-acts { display: flex; flex-direction: column; gap: 14px; }
+.la-hist-act { border: 1px solid var(--gray-200); border-radius: 10px; overflow: hidden; }
+.la-hist-act-head { padding: 10px 14px; background: var(--gray-50); border-bottom: 1px solid var(--gray-100); }
+.la-hist-act-name { font-size: 14px; font-weight: 700; color: var(--black); }
+.la-hist-act-meta { font-size: 11px; color: var(--gray-500); margin-top: 2px; }
+.la-hist-evs { display: flex; flex-direction: column; }
+.la-hist-ev { padding: 10px 14px; border-bottom: 1px solid var(--gray-100); }
+.la-hist-ev:last-child { border-bottom: none; }
+.la-hist-ev.is-cancel { background: #fef2f2; }
+.la-hist-ev-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.la-hist-ev-when { font-size: 13px; font-weight: 600; color: var(--gray-800); }
+.la-hist-ev-shift { font-size: 11px; color: var(--gray-500); }
+.la-hist-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 99px; }
+.la-hist-badge.done { background: #dcfce7; color: #15803d; }
+.la-hist-badge.cancel { background: #fee2e2; color: #b91c1c; }
+.la-hist-ev-title { font-size: 12px; color: var(--gray-700); margin-top: 3px; }
+.la-hist-ev-cancel { font-size: 11px; color: #b91c1c; margin-top: 3px; }
+.la-hist-res-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.la-hist-res { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 99px; background: var(--gray-100); color: var(--gray-700); }
+.la-hist-res.hit { background: #e0f2fe; color: #075985; }
+.la-hist-res.bart { background: #fef3c7; color: #92400e; }
+.la-hist-res.denied { text-decoration: line-through; opacity: .7; }

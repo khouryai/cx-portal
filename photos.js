@@ -201,17 +201,44 @@
   }
 
   // ── IndexedDB upload queue (offline-first) ─────────────────────────────────
+  // Some mobile contexts block IndexedDB (iOS private browsing, locked storage).
+  // When that happens we fall back to an in-memory queue so an upload can still
+  // proceed instead of hanging forever.
+  var _memQueue = [];
+  var _memId = 1;
   function idb() {
     return new Promise(function (res, rej) {
-      var r = indexedDB.open('pm-photos', 1);
-      r.onupgradeneeded = function () { r.result.createObjectStore('queue', { keyPath: 'id', autoIncrement: true }); };
-      r.onsuccess = function () { res(r.result); };
-      r.onerror = function () { rej(r.error); };
+      var r;
+      try { r = indexedDB.open('pm-photos', 1); } catch (e) { return rej(e); }
+      var to = setTimeout(function () { rej(new Error('idb open timeout')); }, 5000);
+      r.onupgradeneeded = function () { try { r.result.createObjectStore('queue', { keyPath: 'id', autoIncrement: true }); } catch (e) {} };
+      r.onsuccess = function () { clearTimeout(to); res(r.result); };
+      r.onerror   = function () { clearTimeout(to); rej(r.error || new Error('idb open error')); };
+      r.onblocked = function () { clearTimeout(to); rej(new Error('idb blocked')); };
     });
   }
-  async function idbAdd(item) { var db = await idb(); return new Promise(function (res, rej) { var tx = db.transaction('queue', 'readwrite'); tx.objectStore('queue').add(item); tx.oncomplete = function () { res(); }; tx.onerror = function () { rej(tx.error); }; }); }
-  async function idbAll() { var db = await idb(); return new Promise(function (res, rej) { var tx = db.transaction('queue', 'readonly'); var q = tx.objectStore('queue').getAll(); q.onsuccess = function () { res(q.result || []); }; q.onerror = function () { rej(q.error); }; }); }
-  async function idbDel(id) { var db = await idb(); return new Promise(function (res, rej) { var tx = db.transaction('queue', 'readwrite'); tx.objectStore('queue').delete(id); tx.oncomplete = function () { res(); }; tx.onerror = function () { rej(tx.error); }; }); }
+  async function idbAdd(item) {
+    try {
+      var db = await idb();
+      return await new Promise(function (res, rej) { var tx = db.transaction('queue', 'readwrite'); tx.objectStore('queue').add(item); tx.oncomplete = function () { res(); }; tx.onerror = function () { rej(tx.error); }; });
+    } catch (e) {
+      item.id = 'mem-' + (_memId++); _memQueue.push(item);   // in-memory fallback
+    }
+  }
+  async function idbAll() {
+    try {
+      var db = await idb();
+      var rows = await new Promise(function (res, rej) { var tx = db.transaction('queue', 'readonly'); var q = tx.objectStore('queue').getAll(); q.onsuccess = function () { res(q.result || []); }; q.onerror = function () { rej(q.error); }; });
+      return rows.concat(_memQueue);
+    } catch (e) { return _memQueue.slice(); }
+  }
+  async function idbDel(id) {
+    if (typeof id === 'string' && id.indexOf('mem-') === 0) { _memQueue = _memQueue.filter(function (x) { return x.id !== id; }); return; }
+    try {
+      var db = await idb();
+      return await new Promise(function (res, rej) { var tx = db.transaction('queue', 'readwrite'); tx.objectStore('queue').delete(id); tx.oncomplete = function () { res(); }; tx.onerror = function () { rej(tx.error); }; });
+    } catch (e) { /* best-effort */ }
+  }
 
   async function refreshQueueCount() {
     try { S.queueCount = (await idbAll()).length; } catch (e) { S.queueCount = 0; }
@@ -224,19 +251,26 @@
     return new Promise(function (res, rej) {
       var url = URL.createObjectURL(file);
       var im = new Image();
-      im.onload = function () { im._url = url; res(im); };
-      im.onerror = function () { URL.revokeObjectURL(url); rej(new Error('decode failed')); };
+      var done = false;
+      var to = setTimeout(function () { if (!done) { done = true; try { URL.revokeObjectURL(url); } catch (e) {} rej(new Error('decode timeout')); } }, 20000);
+      im.onload = function () { if (done) return; done = true; clearTimeout(to); im._url = url; res(im); };
+      im.onerror = function () { if (done) return; done = true; clearTimeout(to); try { URL.revokeObjectURL(url); } catch (e) {} rej(new Error('decode failed')); };
       im.src = url;
     });
   }
+  // Resolves with a Blob, or null if encoding fails/stalls (caller falls back).
   function scaleBlob(img, max, q) {
     return new Promise(function (res) {
-      var w = img.naturalWidth, h = img.naturalHeight;
-      var r = Math.min(1, max / Math.max(w, h));
-      var cw = Math.max(1, Math.round(w * r)), ch = Math.max(1, Math.round(h * r));
-      var c = document.createElement('canvas'); c.width = cw; c.height = ch;
-      c.getContext('2d').drawImage(img, 0, 0, cw, ch);
-      c.toBlob(function (b) { res(b); }, 'image/jpeg', q);
+      try {
+        var w = img.naturalWidth, h = img.naturalHeight;
+        var r = Math.min(1, max / Math.max(w, h));
+        var cw = Math.max(1, Math.round(w * r)), ch = Math.max(1, Math.round(h * r));
+        var c = document.createElement('canvas'); c.width = cw; c.height = ch;
+        c.getContext('2d').drawImage(img, 0, 0, cw, ch);
+        var settled = false;
+        var to = setTimeout(function () { if (!settled) { settled = true; res(null); } }, 15000);
+        c.toBlob(function (b) { if (settled) return; settled = true; clearTimeout(to); res(b); }, 'image/jpeg', q);
+      } catch (e) { res(null); }
     });
   }
   async function processImage(file) {
@@ -258,15 +292,18 @@
     var n = 0;
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
+      // Allow empty type (mobile camera often omits it); skip clearly non-image files.
       if (!f || (f.type && f.type.indexOf('image/') !== 0)) continue;
-      var proc = await processImage(f);
-      await idbAdd({
-        display: proc.display, thumb: proc.thumb, dims: proc.dims,
-        file_name: f.name || ('photo-' + Date.now() + '.jpg'),
-        last_modified: f.lastModified || Date.now(),
-        meta: meta, created_at: Date.now(),
-      });
-      n++;
+      try {
+        var proc = await processImage(f);
+        await idbAdd({
+          display: proc.display, thumb: proc.thumb, dims: proc.dims,
+          file_name: f.name || ('photo-' + Date.now() + '.jpg'),
+          last_modified: f.lastModified || Date.now(),
+          meta: meta, created_at: Date.now(),
+        });
+        n++;
+      } catch (e) { console.error('[photos] file skipped:', e && e.message); }
     }
     await refreshQueueCount();
     return n;
@@ -792,7 +829,22 @@
       };
       var btn = document.getElementById('pm-do-upload'); if (btn) btn.disabled = true;
       var status = document.getElementById('pm-up-status'); if (status) status.textContent = 'Processing…';
-      var n = await enqueueFiles(chosen, meta);
+      var n = 0;
+      try {
+        n = await enqueueFiles(chosen, meta);
+      } catch (e) {
+        console.error('[photos] enqueue failed:', e && e.message);
+        if (status) status.textContent = '';
+        if (btn) btn.disabled = false;
+        toast('Could not process the photo: ' + ((e && e.message) || 'unknown error'));
+        return;
+      }
+      if (!n) {
+        if (status) status.textContent = '';
+        if (btn) btn.disabled = false;
+        toast('Could not read that photo — try again or pick from your library.');
+        return;
+      }
       closeModal();
       toast(n + ' photo' + (n === 1 ? '' : 's') + (navigator.onLine ? ' uploading…' : ' queued (offline)'));
       processQueue();
@@ -936,6 +988,45 @@
     } catch (e) { toast('Could not delete: ' + (e && e.message)); }
   }
 
+  // ── external API helpers (used by app.js, e.g. punch detail view) ───────────
+  // List photos for a given source (e.g. a punch item), newest first.
+  async function listFor(opts) {
+    opts = opts || {};
+    var parts = ['is_deleted=eq.false'];
+    if (opts.source_type) parts.push('source_type=eq.' + opts.source_type);
+    if (opts.source_id)   parts.push('source_id=eq.' + encodeURIComponent(opts.source_id));
+    parts.push('order=taken_at.desc');
+    try { return (await _fetchAnon('photos?' + parts.join('&'))) || []; }
+    catch (e) { console.warn('[photos] listFor failed:', e && e.message); return []; }
+  }
+  // Direct (non-queued) upload of one file; compresses, stores, inserts the row,
+  // and returns the inserted photo row. Used for inline/attached uploads where the
+  // caller needs the row back immediately.
+  async function uploadFile(file, meta) {
+    meta = meta || {};
+    var proc = await processImage(file);
+    var id = uuid();
+    var src = meta.source_type || 'standalone';
+    var displayPath = src + '/' + id + '.jpg';
+    var thumbPath   = src + '/thumb/' + id + '.jpg';
+    await storageUpload(displayPath, proc.display, 'image/jpeg');
+    try { await storageUpload(thumbPath, proc.thumb, 'image/jpeg'); } catch (e) { thumbPath = null; }
+    var row = {
+      storage_path: displayPath, thumb_path: thumbPath,
+      file_name: file.name || ('photo-' + Date.now() + '.jpg'),
+      mime_type: 'image/jpeg', file_size: (proc.display && proc.display.size) || null,
+      width: proc.dims && proc.dims.w, height: proc.dims && proc.dims.h,
+      caption: meta.caption || null,
+      source_type: src, source_id: meta.source_id || null, source_label: meta.source_label || null,
+      capture_kind: meta.capture_kind || 'general',
+      location: meta.location || null, subsystem: meta.subsystem || null, phase: meta.phase || null,
+      taken_at: new Date(file.lastModified || Date.now()).toISOString(),
+      uploaded_by: userName(),
+    };
+    var inserted = await _dbInsert('photos', [row]);
+    return (inserted && inserted[0]) || row;
+  }
+
   // ── boot ────────────────────────────────────────────────────────────────────
   function boot() {
     if (S.booted) return; S.booted = true;
@@ -954,5 +1045,6 @@
     enter: enter, goto: gotoPage, openUpload: openUpload,
     captureFor: function (opts) { openUpload(opts || {}); },
     processQueue: processQueue, state: S,
+    sign: signPaths, signOne: signOne, listFor: listFor, uploadFile: uploadFile,
   };
 })();

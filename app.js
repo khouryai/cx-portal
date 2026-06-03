@@ -302,6 +302,14 @@ Chart.defaults.borderColor = '#ebebeb';
 const _adminPages = new Set(['admin-templates','admin-weights','admin-locations','admin-fieldconfig','admin-directory','audit','admin-p6','admin-assets','admin-planning','admin-config']);
 let _adminModeOn = false;
 
+// ── Mobile PWA tab bar ───────────────────────────────────────────────────────
+// The bottom tab bar exposes only the modules chosen for mobile field use.
+function _mobileGo(page) { showPage(page); window.scrollTo(0, 0); }
+function _syncMobileTabs(name) {
+  document.querySelectorAll('.m-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.mpage === name));
+}
+
 function showPage(name) {
   // Tear down planning calendar/timeline instances on any page change to avoid leaks
   if (typeof _planningCleanupInstances === 'function') _planningCleanupInstances();
@@ -309,6 +317,7 @@ function showPage(name) {
   document.getElementById('page-' + name)?.classList.add('active');
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
   document.querySelector(`.nav-link[data-page="${name}"]`)?.classList.add('active');
+  _syncMobileTabs(name);
   // Auto-switch to admin mode when navigating to an admin page
   if (_adminPages.has(name) && !_adminModeOn) _sidenavAdminOpen();
   // Re-render pages that need fresh state on each visit
@@ -853,6 +862,7 @@ function refreshDashboard() {
   renderLocationChart();
   renderFailedList();
   renderHighPunchList();
+  _dashRenderActiveView();
 }
 
 function renderPhaseGrid() {
@@ -1079,6 +1089,308 @@ function renderHighPunchList() {
       </div>
     </div>`).join('')
   : `<div style="color:var(--gray-500);font-size:12px;padding:8px 0;">No high-priority items</div>`;
+}
+
+// ==========================================
+// DASHBOARD VIEW SELECTOR (Overview / Velocity / Productivity / Schedule / Quality)
+// ==========================================
+let _dashView    = 'overview';
+let _dashProgress = null;   // cached kpi_test_progress rows
+
+function _dashSet(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
+
+function setDashView(view) {
+  _dashView = view;
+  document.querySelectorAll('.dash-view').forEach(el => {
+    el.style.display = (el.id === 'dash-view-' + view) ? '' : 'none';
+  });
+  document.querySelectorAll('.dash-view-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.dview === view);
+  });
+  _dashRenderActiveView();
+}
+
+function _dashRenderActiveView() {
+  if      (_dashView === 'velocity')     _dashRenderVelocity();
+  else if (_dashView === 'productivity') _dashRenderProductivity();
+  else if (_dashView === 'schedule')     _dashRenderSchedule();
+  else if (_dashView === 'quality')      _dashRenderQuality();
+}
+
+// Per-test completion timing + rework counts, reconstructed server-side from
+// db_change_log (view: kpi_test_progress). Cached for the session; pass force
+// to refetch after edits.
+async function _dashGetProgress(force = false) {
+  if (_dashProgress && !force) return _dashProgress;
+  try { _dashProgress = await _fetchAnon('kpi_test_progress?select=*'); }
+  catch (e) { console.warn('[kpi] progress fetch failed:', e.message); _dashProgress = []; }
+  return _dashProgress;
+}
+
+const _DAY_MS = 86400000;
+function _dashWeekStart(d) { const t = new Date(d); const off = (t.getDay() + 6) % 7; t.setHours(0,0,0,0); t.setDate(t.getDate() - off); return t; }
+function _dashFmtDay(d)  { return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+
+// ── Velocity & Throughput ──────────────────────────────────────────────────
+async function _dashRenderVelocity() {
+  const rows  = await _dashGetProgress();
+  const now   = Date.now();
+  const scope = rows.filter(r => r.status !== 'Not Applicable').length;
+  const doneDates = rows.filter(r => r.effective_completed_at)
+                        .map(r => new Date(r.effective_completed_at).getTime())
+                        .sort((a, b) => a - b);
+  const doneN  = doneDates.length;
+  const within = days => doneDates.filter(t => (now - t) <= days * _DAY_MS).length;
+
+  let avgWk = 0;
+  if (doneN) { const spanDays = Math.max(1, (now - doneDates[0]) / _DAY_MS); avgWk = doneN / (spanDays / 7); }
+  const remaining = scope - doneN;
+  let eta = '—';
+  if (remaining <= 0)      eta = 'Complete';
+  else if (avgWk > 0)      eta = new Date(now + (remaining / avgWk) * 7 * _DAY_MS).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+  const tested  = rows.filter(r => r.pass_events > 0 || r.fail_events > 0);
+  const cleanFP = rows.filter(r => r.pass_events > 0 && r.fail_events === 0).length;
+  const fpy     = tested.length ? Math.round(cleanFP / tested.length * 100) : null;
+  const rework  = tested.length ? Math.round(rows.filter(r => r.fail_events > 0).length / tested.length * 100) : null;
+
+  _dashSet('vel-7d', within(7));
+  _dashSet('vel-30d', within(30));
+  _dashSet('vel-avgwk', Math.round(avgWk));
+  _dashSet('vel-eta', eta);
+  _dashSet('vel-fpy', fpy == null ? 'n/a' : fpy + '%');
+  _dashSet('vel-rework', rework == null ? 'n/a' : rework + '%');
+
+  // Burn-up: cumulative completed by day, with a flat total-scope reference line
+  const byDay = {};
+  doneDates.forEach(t => { const k = new Date(t).toISOString().slice(0, 10); byDay[k] = (byDay[k] || 0) + 1; });
+  const days = Object.keys(byDay).sort();
+  let cum = 0;
+  const cumData = days.map(k => (cum += byDay[k]));
+  const burnCtx = document.getElementById('chart-burnup');
+  if (burnCtx) {
+    if (_dashCharts.burnup) _dashCharts.burnup.destroy();
+    _dashCharts.burnup = new Chart(burnCtx, {
+      type: 'line',
+      data: {
+        labels: days.map(_dashFmtDay),
+        datasets: [
+          { label: 'Completed (cumulative)', data: cumData, borderColor: COLORS.good, backgroundColor: 'rgba(0,135,90,.12)', fill: true, tension: .25, pointRadius: 2 },
+          { label: 'Total scope', data: days.map(() => scope), borderColor: COLORS.grayLight, borderDash: [6, 4], pointRadius: 0, fill: false },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: { x: { grid: { display: false } }, y: { beginAtZero: true, grid: { color: '#f4f4f4' } } },
+        plugins: { legend: { position: 'top', align: 'end', labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'line' } }, tooltip: { backgroundColor: COLORS.black, padding: 12 } }
+      }
+    });
+  }
+
+  // Weekly throughput
+  const byWeek = {};
+  doneDates.forEach(t => { const k = _dashWeekStart(t).toISOString().slice(0, 10); byWeek[k] = (byWeek[k] || 0) + 1; });
+  const weeks = Object.keys(byWeek).sort();
+  const tpCtx = document.getElementById('chart-throughput');
+  if (tpCtx) {
+    if (_dashCharts.throughput) _dashCharts.throughput.destroy();
+    _dashCharts.throughput = new Chart(tpCtx, {
+      type: 'bar',
+      data: { labels: weeks.map(w => 'wk of ' + _dashFmtDay(w)), datasets: [{ label: 'Tests completed', data: weeks.map(w => byWeek[w]), backgroundColor: COLORS.info, borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { display: false } }, y: { beginAtZero: true, grid: { color: '#f4f4f4' }, ticks: { precision: 0 } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: COLORS.black, padding: 12 } } }
+    });
+  }
+}
+
+// ── Field Productivity (delay_log) ─────────────────────────────────────────
+async function _dashRenderProductivity() {
+  let logs = [];
+  try { logs = await _fetchAnon('delay_log?select=*&order=log_date.asc'); }
+  catch (e) { console.warn('[kpi] delay_log fetch failed:', e.message); }
+  const empty = document.getElementById('prod-empty');
+  const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+
+  if (!logs.length) {
+    if (empty) empty.style.display = '';
+    ['prod-days','prod-ttd','prod-idle','prod-delaydays','prod-passrate'].forEach(id => _dashSet(id, '—'));
+    ['delayCause','dailyTests'].forEach(k => { if (_dashCharts[k]) { _dashCharts[k].destroy(); _dashCharts[k] = null; } });
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  const fieldDays  = new Set(logs.map(l => l.log_date).filter(Boolean)).size;
+  const totLogged  = logs.reduce((s, l) => s + num(l.total_tests_logged), 0);
+  const totPassed  = logs.reduce((s, l) => s + num(l.total_passed), 0);
+  const testerDays = logs.reduce((s, l) => s + Math.max(1, num(l.number_of_testers)), 0);
+  const totIdle    = logs.reduce((s, l) => s + num(l.idle_hours), 0);
+  const delayDays  = new Set(logs.filter(l => l.delay_occurred === 'Yes').map(l => l.log_date)).size;
+
+  _dashSet('prod-days', fieldDays);
+  _dashSet('prod-ttd', testerDays ? (totLogged / testerDays).toFixed(1) : '—');
+  _dashSet('prod-idle', totIdle.toLocaleString());
+  _dashSet('prod-delaydays', delayDays);
+  _dashSet('prod-passrate', totLogged ? Math.round(totPassed / totLogged * 100) + '%' : '—');
+
+  // Idle hours by delay cause
+  const causes = {};
+  logs.filter(l => l.delay_occurred === 'Yes').forEach(l => {
+    const k = l.delay_category || 'Uncategorised';
+    causes[k] = (causes[k] || 0) + num(l.idle_hours);
+  });
+  const cSorted = Object.entries(causes).sort((a, b) => b[1] - a[1]);
+  const dcCtx = document.getElementById('chart-delay-cause');
+  if (dcCtx) {
+    if (_dashCharts.delayCause) _dashCharts.delayCause.destroy();
+    _dashCharts.delayCause = new Chart(dcCtx, {
+      type: 'bar',
+      data: { labels: cSorted.map(c => c[0]), datasets: [{ label: 'Idle hours', data: cSorted.map(c => c[1]), backgroundColor: COLORS.warn, borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', scales: { x: { beginAtZero: true, grid: { color: '#f4f4f4' } }, y: { grid: { display: false } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: COLORS.black, padding: 12 } } }
+    });
+  }
+
+  // Daily tests logged vs passed
+  const byDate = {};
+  logs.forEach(l => {
+    if (!l.log_date) return;
+    if (!byDate[l.log_date]) byDate[l.log_date] = { logged: 0, passed: 0 };
+    byDate[l.log_date].logged += num(l.total_tests_logged);
+    byDate[l.log_date].passed += num(l.total_passed);
+  });
+  const dates = Object.keys(byDate).sort();
+  const dtCtx = document.getElementById('chart-daily-tests');
+  if (dtCtx) {
+    if (_dashCharts.dailyTests) _dashCharts.dailyTests.destroy();
+    _dashCharts.dailyTests = new Chart(dtCtx, {
+      type: 'bar',
+      data: {
+        labels: dates.map(_dashFmtDay),
+        datasets: [
+          { label: 'Logged', data: dates.map(d => byDate[d].logged), backgroundColor: COLORS.grayLight, borderRadius: 4 },
+          { label: 'Passed', data: dates.map(d => byDate[d].passed), backgroundColor: COLORS.good, borderRadius: 4 },
+        ]
+      },
+      options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { display: false } }, y: { beginAtZero: true, grid: { color: '#f4f4f4' }, ticks: { precision: 0 } } }, plugins: { legend: { position: 'top', align: 'end', labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'rect' } }, tooltip: { backgroundColor: COLORS.black, padding: 12 } } }
+    });
+  }
+}
+
+// ── Schedule Adherence (planned_date vs actual) ─────────────────────────────
+async function _dashRenderSchedule() {
+  const rows    = await _dashGetProgress();
+  const planned = rows.filter(r => r.planned_date);
+  const empty   = document.getElementById('sch-empty');
+  if (empty) empty.style.display = planned.length ? 'none' : '';
+
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const endOf = d => { const t = new Date(d); t.setHours(23, 59, 59, 999); return t; };
+  const completedPlanned = planned.filter(r => r.effective_completed_at);
+  const onTime = completedPlanned.filter(r => new Date(r.effective_completed_at) <= endOf(r.planned_date)).length;
+  _dashSet('sch-ontime', completedPlanned.length ? Math.round(onTime / completedPlanned.length * 100) + '%' : 'n/a');
+  _dashSet('sch-behind', planned.filter(r => !r.effective_completed_at && new Date(r.planned_date) < now).length);
+  _dashSet('sch-due14', planned.filter(r => { if (r.effective_completed_at) return false; const p = new Date(r.planned_date); return p >= now && (p - now) <= 14 * _DAY_MS; }).length);
+  const lastPlanned = planned.length ? new Date(Math.max(...planned.map(r => +new Date(r.planned_date)))) : null;
+  _dashSet('sch-finish', lastPlanned ? lastPlanned.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—');
+
+  // S-curve: cumulative planned (by planned_date) vs actual (by effective completion)
+  const plannedDays = {}, actualDays = {};
+  planned.forEach(r => { const k = String(r.planned_date).slice(0, 10); plannedDays[k] = (plannedDays[k] || 0) + 1; });
+  rows.filter(r => r.effective_completed_at).forEach(r => { const k = new Date(r.effective_completed_at).toISOString().slice(0, 10); actualDays[k] = (actualDays[k] || 0) + 1; });
+  const allDays = [...new Set([...Object.keys(plannedDays), ...Object.keys(actualDays)])].sort();
+  let cp = 0, ca = 0;
+  const plannedCum = [], actualCum = [];
+  const todayKey = now.toISOString().slice(0, 10);
+  allDays.forEach(k => {
+    cp += plannedDays[k] || 0; ca += actualDays[k] || 0;
+    plannedCum.push(cp);
+    actualCum.push(k <= todayKey ? ca : null); // actual only up to today
+  });
+  const scCtx = document.getElementById('chart-scurve');
+  if (scCtx) {
+    if (_dashCharts.scurve) _dashCharts.scurve.destroy();
+    _dashCharts.scurve = new Chart(scCtx, {
+      type: 'line',
+      data: {
+        labels: allDays.map(_dashFmtDay),
+        datasets: [
+          { label: 'Planned (cumulative)', data: plannedCum, borderColor: COLORS.info, borderDash: [6, 4], pointRadius: 0, tension: .2, fill: false },
+          { label: 'Actual (cumulative)',  data: actualCum,  borderColor: COLORS.good, backgroundColor: 'rgba(0,135,90,.12)', pointRadius: 0, tension: .2, fill: true, spanGaps: false },
+        ]
+      },
+      options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 12 } }, y: { beginAtZero: true, grid: { color: '#f4f4f4' } } }, plugins: { legend: { position: 'top', align: 'end', labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'line' } }, tooltip: { backgroundColor: COLORS.black, padding: 12 } } }
+    });
+  }
+
+  // Upcoming planned (next 30d, not completed) by subsystem
+  const upcoming = {};
+  planned.forEach(r => {
+    if (r.effective_completed_at) return;
+    const p = new Date(r.planned_date);
+    if (p >= now && (p - now) <= 30 * _DAY_MS) { const k = r.subsystem || 'Unassigned'; upcoming[k] = (upcoming[k] || 0) + 1; }
+  });
+  const uSorted = Object.entries(upcoming).sort((a, b) => b[1] - a[1]).slice(0, 12);
+  const upCtx = document.getElementById('chart-upcoming');
+  if (upCtx) {
+    if (_dashCharts.upcoming) _dashCharts.upcoming.destroy();
+    _dashCharts.upcoming = new Chart(upCtx, {
+      type: 'bar',
+      data: { labels: uSorted.map(u => u[0]), datasets: [{ label: 'Tests due', data: uSorted.map(u => u[1]), backgroundColor: COLORS.info, borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { display: false } }, y: { beginAtZero: true, grid: { color: '#f4f4f4' }, ticks: { precision: 0 } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: COLORS.black, padding: 12 } } }
+    });
+  }
+}
+
+// ── Quality & Issues (punch / rma / fails) ──────────────────────────────────
+function _dashRenderQuality() {
+  const punch    = (typeof PUNCH_DB !== 'undefined' ? PUNCH_DB : []).filter(p => !p.is_deleted);
+  const openP    = punch.filter(p => p.status !== 'closed');
+  const now      = Date.now();
+  const overdueP = openP.filter(p => p.due_date && new Date(p.due_date).getTime() < now);
+  const ages     = openP.map(p => p.created_at ? (now - new Date(p.created_at).getTime()) / _DAY_MS : NaN).filter(n => !isNaN(n));
+  const avgAge   = ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : 0;
+
+  const rmas     = (typeof RMAS !== 'undefined' ? RMAS : []);
+  const openR    = rmas.filter(r => (r.status || '').toLowerCase() !== 'closed');
+  const overdueR = openR.filter(r => r.due_date && new Date(r.due_date).getTime() < now);
+
+  const fails    = _latestTI().filter(r => ['Fail', 'Failed'].includes(r.Status));
+
+  _dashSet('ql-punch-open', openP.length);
+  _dashSet('ql-punch-overdue', overdueP.length);
+  _dashSet('ql-punch-age', avgAge ? avgAge + 'd' : '—');
+  _dashSet('ql-rma-open', openR.length);
+  _dashSet('ql-rma-overdue', overdueR.length);
+  _dashSet('ql-fails', fails.length);
+
+  // Punch aging buckets
+  const buckets = { '0–7d': 0, '8–30d': 0, '31–90d': 0, '90d+': 0 };
+  openP.forEach(p => {
+    if (!p.created_at) return;
+    const d = (now - new Date(p.created_at).getTime()) / _DAY_MS;
+    if (d <= 7) buckets['0–7d']++; else if (d <= 30) buckets['8–30d']++; else if (d <= 90) buckets['31–90d']++; else buckets['90d+']++;
+  });
+  const paCtx = document.getElementById('chart-punch-age');
+  if (paCtx) {
+    if (_dashCharts.punchAge) _dashCharts.punchAge.destroy();
+    _dashCharts.punchAge = new Chart(paCtx, {
+      type: 'bar',
+      data: { labels: Object.keys(buckets), datasets: [{ label: 'Open items', data: Object.values(buckets), backgroundColor: [COLORS.good, COLORS.info, COLORS.warn, COLORS.bad], borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { display: false } }, y: { beginAtZero: true, grid: { color: '#f4f4f4' }, ticks: { precision: 0 } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: COLORS.black, padding: 12 } } }
+    });
+  }
+
+  // Failed tests by subsystem
+  const fSub = {};
+  fails.forEach(r => { const k = r.Subsystem || 'Unassigned'; fSub[k] = (fSub[k] || 0) + 1; });
+  const fSorted = Object.entries(fSub).sort((a, b) => b[1] - a[1]).slice(0, 12);
+  const fsCtx = document.getElementById('chart-fail-subsys');
+  if (fsCtx) {
+    if (_dashCharts.failSubsys) _dashCharts.failSubsys.destroy();
+    _dashCharts.failSubsys = new Chart(fsCtx, {
+      type: 'bar',
+      data: { labels: fSorted.map(f => f[0]), datasets: [{ label: 'Failed tests', data: fSorted.map(f => f[1]), backgroundColor: COLORS.bad, borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', scales: { x: { beginAtZero: true, grid: { color: '#f4f4f4' }, ticks: { precision: 0 } }, y: { grid: { display: false } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: COLORS.black, padding: 12 } } }
+    });
+  }
 }
 
 // ==========================================
@@ -1565,24 +1877,20 @@ function initLocations() {
   const _tcw = _buildTestCaseWeightLookup();
 
   const grid = document.getElementById('locations-grid');
-  let html = '';
 
+  // Flatten every phase/location into one list so cards pack into a single
+  // dense grid (no wasted rows when a phase has only one location). Each card
+  // carries its phase as a chip; a summary strip keeps the per-phase rollup.
+  const cards = [];
+  const phaseSummary = [];
   phases.forEach(phase => {
     const phaseTI = ti.filter(r => r.Phase === phase);
     const locs    = [...new Set(phaseTI.map(r => r.Location).filter(Boolean))].sort();
     if (!locs.length) return;
 
-    // Phase-level weighted summary for the heading badge
     const phaseWs  = _wgtStat(phaseTI, _aw, _tcw);
     const phasePct = phaseWs.totalW > 0 ? Math.round((phaseWs.completeW / phaseWs.totalW) * 100) : 0;
-
-    html += `
-      <div class="loc-phase-group">
-        <div class="loc-phase-heading">
-          <span class="loc-phase-label">${escapeHtml(phase)}</span>
-          <span class="loc-phase-badge">${phasePct}% complete · ${locs.length} location${locs.length !== 1 ? 's' : ''}</span>
-        </div>
-        <div class="loc-phase-cards">`;
+    phaseSummary.push({ phase, pct: phasePct, n: locs.length });
 
     locs.forEach(loc => {
       const locTI  = phaseTI.filter(r => r.Location === loc);
@@ -1593,40 +1901,60 @@ function initLocations() {
       const punchOpen = (PUNCH_DB || []).filter(p =>
         p.location === loc && !p.is_deleted && !['Closed','Ready To Close'].includes(p.status)
       ).length;
-      const code = getLocationCode(loc);
-
-      html += `
-        <div class="location-card">
-          <div class="location-code">${escapeHtml(code)}</div>
-          <div class="location-name">${escapeHtml(loc)}</div>
-          <div class="location-progress">
-            <div class="location-progress-meta">
-              <span>Weighted progress</span>
-              <span><b>${pct}%</b></span>
-            </div>
-            <div class="location-progress-bar"><div class="location-progress-fill" style="width:${pct}%"></div></div>
-          </div>
-          <div class="location-stats">
-            <div class="location-stat">
-              <div class="location-stat-value">${total.toLocaleString()}</div>
-              <div class="location-stat-label">Test Cases</div>
-            </div>
-            <div class="location-stat">
-              <div class="location-stat-value good">${passed.toLocaleString()}</div>
-              <div class="location-stat-label">Passed</div>
-            </div>
-            <div class="location-stat">
-              <div class="location-stat-value ${punchOpen > 0 ? 'bad' : ''}">${punchOpen}</div>
-              <div class="location-stat-label">Open Punch</div>
-            </div>
-          </div>
-        </div>`;
+      cards.push({ phase, loc, code: getLocationCode(loc), pct, passed, total, punchOpen });
     });
-
-    html += `</div></div>`;
   });
 
-  grid.innerHTML = html || '<div class="docs-empty"><p>No test data available.</p></div>';
+  if (!cards.length) {
+    grid.innerHTML = '<div class="docs-empty"><p>No test data available.</p></div>';
+    return;
+  }
+
+  const summaryHTML = phaseSummary.length > 1 ? `
+    <div class="loc-phase-summary">
+      <button class="loc-phase-chip${_locPhaseFilter ? '' : ' active'}" data-phase="" onclick="_locFilterPhase('', this)">
+        <span class="loc-phase-chip-name">All</span>
+        <span class="loc-phase-chip-meta">${cards.length} location${cards.length !== 1 ? 's' : ''}</span>
+      </button>
+      ${phaseSummary.map(s => `
+        <button class="loc-phase-chip${_locPhaseFilter === s.phase ? ' active' : ''}" data-phase="${escapeHtml(s.phase)}" onclick="_locFilterPhase('${escapeHtml(s.phase)}', this)">
+          <span class="loc-phase-chip-name">${escapeHtml(s.phase)}</span>
+          <span class="loc-phase-chip-meta">${s.pct}% · ${s.n} loc${s.n !== 1 ? 's' : ''}</span>
+        </button>`).join('')}
+    </div>` : '';
+
+  const cardsHTML = `<div class="locations-cardgrid">${cards.map(c => {
+    const hidden = _locPhaseFilter && c.phase !== _locPhaseFilter ? ' style="display:none"' : '';
+    return `
+      <div class="location-card" data-phase="${escapeHtml(c.phase)}"${hidden}>
+        <div class="location-card-top">
+          <span class="location-code">${escapeHtml(c.code)}</span>
+          <span class="loc-card-phase">${escapeHtml(c.phase)}</span>
+        </div>
+        <div class="location-name">${escapeHtml(c.loc)}</div>
+        <div class="location-progress">
+          <div class="location-progress-meta"><span>Weighted progress</span><span><b>${c.pct}%</b></span></div>
+          <div class="location-progress-bar"><div class="location-progress-fill" style="width:${c.pct}%"></div></div>
+        </div>
+        <div class="location-stats">
+          <div class="location-stat"><div class="location-stat-value">${c.total.toLocaleString()}</div><div class="location-stat-label">Test Cases</div></div>
+          <div class="location-stat"><div class="location-stat-value good">${c.passed.toLocaleString()}</div><div class="location-stat-label">Passed</div></div>
+          <div class="location-stat"><div class="location-stat-value ${c.punchOpen > 0 ? 'bad' : ''}">${c.punchOpen}</div><div class="location-stat-label">Open Punch</div></div>
+        </div>
+      </div>`;
+  }).join('')}</div>`;
+
+  grid.innerHTML = summaryHTML + cardsHTML;
+}
+
+let _locPhaseFilter = '';
+function _locFilterPhase(phase) {
+  _locPhaseFilter = (_locPhaseFilter === phase) ? '' : phase;
+  document.querySelectorAll('.loc-phase-chip').forEach(c =>
+    c.classList.toggle('active', (c.getAttribute('data-phase') || '') === _locPhaseFilter));
+  document.querySelectorAll('.locations-cardgrid .location-card').forEach(card => {
+    card.style.display = (!_locPhaseFilter || card.getAttribute('data-phase') === _locPhaseFilter) ? '' : 'none';
+  });
 }
 
 // ==========================================
@@ -5382,6 +5710,43 @@ async function _logTestItemStatusHistory(r, oldStatus, newStatus, opts = {}) {
   }
 }
 
+// Append a per-attempt row to test_results on every terminal result. This is
+// the durable, attempt-level log that powers first-pass-yield, rework-rate and
+// test-effort KPIs — the current-state `status` column on test_items only keeps
+// the latest outcome, so without this a retest overwrites its own history.
+async function _logTestResult(r, status, opts = {}) {
+  // result CHECK constraint only allows Pass | Fail | Partial | Blocked
+  if (!['Pass','Fail','Partial','Blocked'].includes(status)) return;
+  try {
+    const now = new Date().toISOString();
+    const who = opts.completedBy || currentRoleUser?.name || currentProfile?.full_name || null;
+    await _dbInsert('test_results', [{
+      result_id:         'TR-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+      test_id:           r.TestID,
+      test_name:         r.TestName || null,
+      attempt_number:    r.AttemptNumber || 1,
+      phase:             r.Phase || null,
+      location:          r.Location || null,
+      subsystem:         r.Subsystem || null,
+      activity:          r.Activity || null,
+      test_case_code:    r.TestCaseCode || null,
+      test_procedure:    r.TestProcedure || null,
+      result:            status,
+      completed_by:      who,
+      date_tested:       (opts.completedDate || now).slice(0, 10),
+      submitted_by:      who,
+      number_of_testers: opts.numberOfTesters ?? null,
+      test_hours:        opts.testHours ?? null,
+      failed_reason:     status === 'Fail'    ? (opts.reason || null) : null,
+      blocked_reason:    status === 'Blocked' ? (opts.reason || null) : null,
+      notes:             opts.notes || null,
+      new_status:        status,
+    }]);
+  } catch (err) {
+    console.warn('[testResult] insert skipped:', err.message);
+  }
+}
+
 async function _updateTestItemStatus(testId, status, opts = {}) {
   const r = opts.row || TI.find(t => String(t.TestID) === String(testId));
   if (!r) return null;
@@ -5433,6 +5798,8 @@ async function _updateTestItemStatus(testId, status, opts = {}) {
   const rows = await _dbUpdate('test_items', patch, { test_id: r.TestID });
   if (!rows || rows.length === 0) throw new Error(`No test_items row matched test_id "${r.TestID}"`);
   await _logTestItemStatusHistory(r, oldStatus, status, opts);
+  // Record the attempt outcome (fire-and-forget) for attempt-level KPIs.
+  if (oldStatus !== status) _logTestResult(r, status, opts).catch(() => {});
   // If this is an asset child row, check whether the parent should auto-pass
   if (r.ParentTestId) await _assetAutoPassCheck(r.ParentTestId).catch(() => {});
   // Refresh dashboard KPIs if it is the active page
@@ -6775,9 +7142,27 @@ function _plToggleSelect(id, checked) {
 }
 function _plClearSelection() { _plSelected = new Set(); renderPunchWorkflow(); }
 
-function exportPunchPDF(ids) {
+async function exportPunchPDF(ids) {
   const items = ids.map(id => PUNCH_DB.find(x => x.id === id)).filter(Boolean);
   if (!items.length) { toast('No items found', 'warn'); return; }
+
+  toast(`Preparing PDF for ${items.length} item${items.length===1?'':'s'}…`, 'success');
+
+  // Gather + sign full-resolution photos for each item so they embed in the PDF.
+  const photosByItem = {};
+  if (window.PhotosModule && PhotosModule.listFor && PhotosModule.sign) {
+    for (const item of items) {
+      try {
+        const photos = await PhotosModule.listFor({ source_type: 'punch', source_id: item.id });
+        if (photos.length) {
+          const signed = await PhotosModule.sign(photos.map(p => p.storage_path));
+          photosByItem[item.id] = photos
+            .map(p => ({ url: signed[p.storage_path], caption: p.caption || '', kind: p.capture_kind || 'general' }))
+            .filter(x => x.url);
+        }
+      } catch (e) { console.warn('[PDF] photo fetch failed:', e && e.message); }
+    }
+  }
 
   // PL_STATUS_LABELS is a const in the same scope — do NOT use window.PL_STATUS_LABELS
   // (const/let top-level vars are NOT added to window in non-module scripts)
@@ -6847,6 +7232,15 @@ function exportPunchPDF(ids) {
       <h1 class="ptitle">${esc(item.title)}</h1>
       ${item.description ? `<div class="pdesc">${esc(item.description)}</div>` : ''}
       <div class="fgrid">${fields.map(([l,v])=>`<div class="fd"><div class="fl">${l}</div><div class="fv">${esc(v||'—')}</div></div>`).join('')}</div>
+      ${(() => {
+        const photos = photosByItem[item.id] || [];
+        if (!photos.length) return '';
+        return `<div class="stitle">Photos (${photos.length})</div>
+          <div class="pgrid">${photos.map(ph => {
+            const cap = [ph.caption, (ph.kind && ph.kind !== 'general') ? ph.kind : ''].filter(Boolean).map(esc).join(' · ');
+            return `<figure class="pfig"><img src="${ph.url}" alt="" />${cap ? `<figcaption>${cap}</figcaption>` : ''}</figure>`;
+          }).join('')}</div>`;
+      })()}
       <div class="stitle">Activity &amp; Comments</div>
       <div class="timeline">${timelineHtml}</div>
     </div>`;
@@ -6877,6 +7271,10 @@ function exportPunchPDF(ids) {
     .tl-badge-action{background:#e5e7eb;color:#555;}
     .tl-meta{font-size:11px;color:#444;}
     .tl-body{font-size:12px;color:#222;white-space:pre-wrap;margin-top:2px;}
+    .pgrid{display:flex;flex-direction:column;gap:14px;margin-bottom:20px;}
+    .pfig{break-inside:avoid;page-break-inside:avoid;margin:0 auto;max-width:80%;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;background:#fafafa;}
+    .pfig img{display:block;width:100%;max-height:448px;object-fit:contain;background:#fff;}
+    .pfig figcaption{font-size:11px;color:#555;padding:6px 10px;border-top:1px solid #eee;text-transform:capitalize;}
     @media print{
       body{padding:0;}
       @page{margin:16mm 14mm;size:A4;}
@@ -6884,7 +7282,9 @@ function exportPunchPDF(ids) {
     }
   `;
 
-  const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Punch Export</title><style>${css}</style></head><body>${pagesHtml}<script>window.onload=function(){window.print();}<\/script></body></html>`;
+  // No inner auto-print script: we trigger print from the iframe's load event,
+  // which fires only after all images (the embedded photos) have loaded.
+  const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Punch Export</title><style>${css}</style></head><body>${pagesHtml}</body></html>`;
 
   // ── Strategy: Blob URL → hidden iframe → contentWindow.print() ─────────────
   // This avoids popup blockers entirely (no window.open needed).
@@ -6916,7 +7316,6 @@ function exportPunchPDF(ids) {
     };
 
     frame.src = blobUrl;
-    toast(`Preparing PDF for ${items.length} item${items.length===1?'':'s'}…`, 'success');
   } catch(e) {
     console.error('[PDF] export failed:', e);
     toast('PDF export failed: ' + e.message, 'error');
@@ -7048,6 +7447,19 @@ function openPunchDetail(id) {
           </div>`;
       })()}
 
+      <!-- Linked Photos -->
+      <div style="margin-bottom:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;">
+          <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;">📷 Photos</div>
+          <div style="display:flex;gap:8px;">
+            <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchDownloadAll('${id}')">⬇ Save all</button>
+            ${canComment ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchAddPhotos('${id}')">+ Add photo</button>` : ''}
+          </div>
+        </div>
+        <div id="punch-photos-${id}" class="punch-photo-grid"><div style="font-size:12px;color:var(--gray-400);padding:8px 0;">Loading photos…</div></div>
+        <input type="file" id="punch-gallery-file-${id}" accept="image/*" multiple style="display:none" onchange="_punchGalleryFilesChosen('${id}', this)">
+      </div>
+
       <!-- Combined Activity & Comments Timeline -->
       <div>
         <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:14px;">
@@ -7071,7 +7483,8 @@ function openPunchDetail(id) {
                     <div style="width:30px;height:30px;border-radius:50%;background:var(--hitachi-red);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${initials}</div>
                     <div style="flex:1;min-width:0;">
                       <div style="font-size:12px;font-weight:600;color:var(--gray-800);">${escapeHtml(entry.by)} <span style="font-weight:400;color:var(--gray-500);">· ${roleLabel} · ${dateAgo(entry.at)}</span></div>
-                      <div style="font-size:13px;color:var(--gray-700);margin-top:3px;white-space:pre-wrap;">${escapeHtml(entry.text)}</div>
+                      ${entry.text ? `<div style="font-size:13px;color:var(--gray-700);margin-top:3px;white-space:pre-wrap;">${escapeHtml(entry.text)}</div>` : ''}
+                      ${entry.photo ? `<img class="punch-comment-photo" data-photo-thumb="${escapeHtml(entry.photo.thumb_path||entry.photo.storage_path)}" data-photo-full="${escapeHtml(entry.photo.storage_path)}" alt="attached photo" loading="lazy">` : ''}
                     </div>
                     <span style="font-size:10px;background:#fef3e0;color:var(--warn);padding:2px 6px;border-radius:8px;flex-shrink:0;font-weight:600;">Comment</span>
                   </div>`;
@@ -7093,10 +7506,13 @@ function openPunchDetail(id) {
         </div>
 
         ${canComment ? `
-          <div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;">
-            <textarea id="punch-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…" style="flex:1;font-size:13px;resize:none;"></textarea>
-            <button class="form-submit" style="white-space:nowrap;height:fit-content;" onclick="addPunchComment('${id}')">Post</button>
-          </div>` : ''}
+          <div class="punch-comment-composer">
+            <textarea id="punch-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…"></textarea>
+            <button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" onclick="document.getElementById('punch-comment-file-${id}').click()">📷</button>
+            <button class="form-submit punch-comment-post" onclick="addPunchComment('${id}')">Post</button>
+          </div>
+          <input type="file" id="punch-comment-file-${id}" accept="image/*" style="display:none" onchange="_punchCommentPhotoChosen('${id}', this)">
+          <div id="punch-comment-preview-${id}" class="punch-comment-preview" style="display:none;"></div>` : ''}
       </div>
     `,
     footer: `
@@ -7108,11 +7524,179 @@ function openPunchDetail(id) {
       ${p.status !== 'closed' ? `<button class="form-submit" onclick="closeModal();openEditPunchModal('${p.id}')">Edit</button>` : ''}
     `,
   });
+  // Load + sign the linked photos (gallery + any inline comment photos).
+  _punchHydratePhotos(id);
+}
+
+// ── Punch photos: gallery in the detail view + inline comment attachments ──────
+let _punchCommentPhoto = {};   // id -> File chosen for the next comment
+
+async function _punchHydratePhotos(id) {
+  await _punchRenderGallery(id);
+  const body = document.querySelector('.modal-overlay .modal-body') || document.querySelector('.modal-body');
+  if (body) await _punchSignImages(body);
+}
+
+async function _punchRenderGallery(id) {
+  const wrap = document.getElementById('punch-photos-' + id);
+  if (!wrap) return;
+  if (!window.PhotosModule || !PhotosModule.listFor) { wrap.innerHTML = '<div style="font-size:12px;color:var(--gray-400);padding:8px 0;">Photos module not loaded.</div>'; return; }
+  const photos = await PhotosModule.listFor({ source_type: 'punch', source_id: id });
+  if (!photos.length) { wrap.innerHTML = '<div style="font-size:12px;color:var(--gray-400);padding:8px 0;">No photos linked yet.</div>'; return; }
+  wrap.innerHTML = photos.map(ph => {
+    const thumb = ph.thumb_path || ph.storage_path;
+    const kind = (ph.capture_kind && ph.capture_kind !== 'general')
+      ? `<span class="punch-photo-kind ${escapeHtml(ph.capture_kind)}">${escapeHtml(ph.capture_kind)}</span>` : '';
+    return `<div class="punch-photo-tile" title="${escapeHtml(ph.caption || ph.file_name || '')}">
+      <img data-photo-thumb="${escapeHtml(thumb)}" data-photo-full="${escapeHtml(ph.storage_path)}" alt="${escapeHtml(ph.caption || '')}" loading="lazy">${kind}
+      <button class="punch-photo-dl" title="Save photo" onclick="_punchDownloadPhoto('${escapeHtml(ph.storage_path)}', ${JSON.stringify(ph.file_name || '').replace(/"/g,'&quot;')}, event)">⬇</button>
+    </div>`;
+  }).join('');
+  await _punchSignImages(wrap);
+}
+
+// ── Staged photos for a NEW punch item (uploaded after the item is created) ───
+let _punchNewPhotos = [];
+function _punchNewPhotoChosen(input) {
+  const files = [...(input.files || [])];
+  files.forEach(f => { if (f.type && f.type.indexOf('image/') === 0) _punchNewPhotos.push(f); });
+  input.value = '';
+  _punchRenderNewPhotoRow();
+}
+function _punchRenderNewPhotoRow() {
+  const row = document.getElementById('punch-newphoto-row');
+  if (!row) return;
+  row.innerHTML = _punchNewPhotos.map((f, i) =>
+    `<div class="punch-newphoto-tile"><img src="${URL.createObjectURL(f)}" alt=""><button type="button" onclick="_punchNewPhotoRemove(${i})" title="Remove">×</button></div>`
+  ).join('');
+}
+function _punchNewPhotoRemove(i) { _punchNewPhotos.splice(i, 1); _punchRenderNewPhotoRow(); }
+
+// ── Download linked photos ────────────────────────────────────────────────────
+async function _punchDownloadPhoto(path, name, ev) {
+  if (ev) ev.stopPropagation();
+  if (!window.PhotosModule || !PhotosModule.signOne) { toast('Photos module not loaded', 'error'); return; }
+  try {
+    const url = await PhotosModule.signOne(path);
+    if (!url) { toast('Could not get photo URL', 'error'); return; }
+    const blob = await (await fetch(url)).blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name || path.split('/').pop() || 'photo.jpg';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  } catch (e) { toast('Download failed: ' + (e && e.message || e), 'error'); }
+}
+async function _punchDownloadAll(id) {
+  if (!window.PhotosModule || !PhotosModule.listFor) return;
+  const photos = await PhotosModule.listFor({ source_type: 'punch', source_id: id });
+  if (!photos.length) { toast('No photos to save', 'warn'); return; }
+  toast('Saving ' + photos.length + ' photo' + (photos.length > 1 ? 's' : '') + '…');
+  for (const ph of photos) {
+    await _punchDownloadPhoto(ph.storage_path, ph.file_name, null);
+    await new Promise(r => setTimeout(r, 350));
+  }
+}
+
+// Batch-sign every data-photo-thumb/full image inside a scope and wire click→open full.
+async function _punchSignImages(scopeEl) {
+  if (!scopeEl || !window.PhotosModule || !PhotosModule.sign) return;
+  const imgs  = [...scopeEl.querySelectorAll('img[data-photo-thumb]:not([data-signed])')];
+  const fulls = [...scopeEl.querySelectorAll('[data-photo-full]')];
+  const paths = [];
+  imgs.forEach(i => { const p = i.getAttribute('data-photo-thumb'); if (p && !paths.includes(p)) paths.push(p); });
+  fulls.forEach(e => { const p = e.getAttribute('data-photo-full'); if (p && !paths.includes(p)) paths.push(p); });
+  if (!paths.length) return;
+  let map = {};
+  try { map = await PhotosModule.sign(paths); } catch (e) { return; }
+  imgs.forEach(i => { i.setAttribute('data-signed', '1'); const u = map[i.getAttribute('data-photo-thumb')]; if (u) i.src = u; });
+  fulls.forEach(e => {
+    const fp = e.getAttribute('data-photo-full');
+    e.style.cursor = 'zoom-in';
+    e.onclick = () => { const u = map[fp]; if (u) window.open(u, '_blank'); };
+  });
+}
+
+function _punchAddPhotos(id) { const i = document.getElementById('punch-gallery-file-' + id); if (i) i.click(); }
+
+async function _punchGalleryFilesChosen(id, input) {
+  const files = [...(input.files || [])];
+  if (!files.length) return;
+  const p = PUNCH_DB.find(x => x.id === id);
+  if (!p) return;
+  if (!window.PhotosModule || !PhotosModule.uploadFile) { toast('Photos module not loaded', 'error'); return; }
+  const ctx = _punchPhotoCtx(p);
+  toast('Uploading ' + files.length + ' photo' + (files.length > 1 ? 's' : '') + '…');
+  let ok = 0;
+  for (const f of files) { try { await PhotosModule.uploadFile(f, ctx); ok++; } catch (e) { console.error('[punch photo] upload failed:', e); } }
+  input.value = '';
+  toast(ok + ' photo' + (ok !== 1 ? 's' : '') + ' added', ok ? 'success' : 'error');
+  await _punchRenderGallery(id);
+}
+
+function _punchPhotoCtx(p) {
+  return {
+    source_type: 'punch', source_id: p.id,
+    source_label: 'Punch #' + (p.number || p.id),
+    location: _plLocName(p.location) || null,
+    subsystem: p.subsystem || null,
+    phase: _plLocName(p.phase) || null,
+  };
+}
+
+function _punchCommentPhotoChosen(id, input) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  _punchCommentPhoto[id] = f;
+  const prev = document.getElementById('punch-comment-preview-' + id);
+  if (prev) {
+    prev.style.display = '';
+    prev.innerHTML = `<div class="punch-comment-preview-item">
+      <img src="${URL.createObjectURL(f)}" alt="">
+      <span>${escapeHtml(f.name || 'photo')}</span>
+      <button type="button" onclick="_punchCommentPhotoClear('${id}')" title="Remove">×</button>
+    </div>`;
+  }
+}
+
+function _punchCommentPhotoClear(id) {
+  delete _punchCommentPhoto[id];
+  const input = document.getElementById('punch-comment-file-' + id);
+  const prev  = document.getElementById('punch-comment-preview-' + id);
+  if (input) input.value = '';
+  if (prev) { prev.style.display = 'none'; prev.innerHTML = ''; }
 }
 
 async function advancePunchStatus(id, newStatus) {
   const p = PUNCH_DB.find(x => x.id === id);
   if (!p) return;
+  // Punch Item Manager's official submit out of "Initiated" requires that the
+  // assignees and the final approver are set first.
+  if (p.status === 'initiated' && newStatus === 'work_required') {
+    const missing = [];
+    if (!((p.assignees || []).length)) missing.push('at least one assignee');
+    if (!p.final_approver)             missing.push('a final approver');
+    if (missing.length) {
+      modal({
+        title: 'Details required before submitting',
+        size: 'small',
+        body: `
+          <div style="text-align:center;padding:6px 4px 2px;">
+            <div style="width:56px;height:56px;border-radius:50%;background:#fef3e0;margin:0 auto 16px;display:flex;align-items:center;justify-content:center;">
+              <svg width="28" height="28" viewBox="0 0 20 20" fill="#d97706"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+            </div>
+            <div style="font-size:14px;color:var(--gray-700);line-height:1.6;">
+              Before sending Punch #${escapeHtml(String(p.number||''))} to the assignees, you need to set
+              <strong>${escapeHtml(missing.join(' and '))}</strong>.
+            </div>
+          </div>`,
+        footer: `
+          <button class="form-secondary" onclick="closeModal()">Cancel</button>
+          <button class="form-submit" onclick="closeModal();openEditPunchModal('${id}')">OK — Add details</button>`,
+      });
+      return;
+    }
+  }
   const oldLabel = PL_STATUS_LABELS[p.status] || p.status;
   const newLabel = PL_STATUS_LABELS[newStatus] || newStatus;
   const histEntry = {
@@ -7140,21 +7724,44 @@ async function advancePunchStatus(id, newStatus) {
 
 async function addPunchComment(id) {
   const input = document.getElementById(`punch-comment-input-${id}`);
-  const text = input?.value.trim();
-  if (!text) { toast('Comment cannot be empty', 'error'); return; }
+  const text = (input?.value || '').trim();
+  const file = _punchCommentPhoto[id];
+  if (!text && !file) { toast('Add a comment or a photo', 'error'); return; }
   const p = PUNCH_DB.find(x => x.id === id);
   if (!p) return;
+
+  // Upload the attached photo first (linked to this punch, so it also shows in the gallery).
+  let photoRef = null;
+  if (file) {
+    if (!window.PhotosModule || !PhotosModule.uploadFile) { toast('Photos module not loaded', 'error'); return; }
+    const postBtn = document.querySelector(`#punch-comment-input-${id}`)?.closest('.punch-comment-composer')?.querySelector('.form-submit');
+    if (postBtn) postBtn.disabled = true;
+    try {
+      toast('Uploading photo…');
+      const ctx = _punchPhotoCtx(p);
+      ctx.caption = text || null;
+      const row = await PhotosModule.uploadFile(file, ctx);
+      photoRef = { id: row.id || null, storage_path: row.storage_path, thumb_path: row.thumb_path || null, file_name: row.file_name || null };
+    } catch (e) {
+      if (postBtn) postBtn.disabled = false;
+      toast('Photo upload failed: ' + (e && e.message || e), 'error');
+      return;
+    }
+  }
+
   const comment = {
     id: crypto.randomUUID(),
-    text,
+    text: text || '',
     by: currentRoleUser.name,
     by_role: currentRoleUser.role,
     at: new Date().toISOString(),
   };
+  if (photoRef) comment.photo = photoRef;
   const comments = [...(p.comments||[]), comment];
   const { error } = await _sb.from('punch_items').update({ comments }).eq('id', id);
   if (error) { toast('Comment failed: ' + error.message, 'error'); return; }
   p.comments = comments;
+  _punchCommentPhotoClear(id);
   toast('Comment posted', 'success');
   closeModal();
   openPunchDetail(id);
@@ -7281,7 +7888,13 @@ function _punchFormHTML(p) {
         <label>Photos</label>
         <button type="button" class="form-secondary" onclick="if(window.PhotosModule)PhotosModule.captureFor(window._pmPunchCtx)">+ Add / view photos</button>
         <div style="font-size:11px;color:var(--gray-500);margin-top:4px;">Opens the Photos uploader pre-linked to this punch item — uploads appear in the Punch List album.</div>
-      </div>` : ''}
+      </div>` : `<div class="form-field form-field-full">
+        <label>Photos</label>
+        <div class="punch-newphoto-row" id="punch-newphoto-row"></div>
+        <button type="button" class="form-secondary" onclick="document.getElementById('punch-newphoto-file').click()">📷 Add photo</button>
+        <input type="file" id="punch-newphoto-file" accept="image/*" multiple style="display:none" onchange="_punchNewPhotoChosen(this)">
+        <div style="font-size:11px;color:var(--gray-500);margin-top:4px;">Take a photo or choose from your device — they attach to this item once it's created.</div>
+      </div>`}
     </div>
   `;
 }
@@ -7297,6 +7910,7 @@ function npFilterLoc() {
 }
 
 function openNewPunchModal() {
+  _punchNewPhotos = [];
   modal({
     title: 'New Punch List Item',
     size: 'large',
@@ -7319,6 +7933,7 @@ function openNewPunchModal() {
 function openPunchFromTestCase(testId) {
   const ti = TI.find(t => String(t.TestID) === String(testId));
   if (!ti) { toast('Test case not found', 'error'); return; }
+  _punchNewPhotos = [];
   _punchFromTestId = String(testId); // remember origin so saveNewPunchItem can auto-link
 
   const titlePrefill = `Failed: ${ti.TestCaseCode}${ti.TestName ? ' — ' + ti.TestName : ''}`;
@@ -7571,6 +8186,18 @@ async function saveNewPunchItem(createAnother) {
     PUNCH_DB.unshift(data);
     logAudit('Punch Created', `#${nextNum} ${form.title}`);
     toast(`Punch #${nextNum} created`, 'success');
+
+    // Upload any photos staged in the create form, linked to the new punch.
+    if (_punchNewPhotos.length && window.PhotosModule && PhotosModule.uploadFile) {
+      const files = _punchNewPhotos.slice();
+      _punchNewPhotos = [];
+      const ctx = {
+        source_type: 'punch', source_id: data.id, source_label: 'Punch #' + nextNum,
+        location: _plLocName(data.location) || null, subsystem: data.subsystem || null, phase: _plLocName(data.phase) || null,
+      };
+      toast('Uploading ' + files.length + ' photo' + (files.length > 1 ? 's' : '') + '…');
+      for (const f of files) { try { await PhotosModule.uploadFile(f, ctx); } catch (e) { console.error('[punch new photo] upload failed:', e); } }
+    }
 
     // If this punch was created from the test register, auto-link it and refresh chips in-place
     if (_punchFromTestId) {
@@ -7914,6 +8541,47 @@ function _auditInitials(value) {
   return (parts.length ? parts.slice(0, 2).map(p => p[0]).join('') : 'S').toUpperCase();
 }
 
+const AUDIT_PAGE_SIZE = 100;
+let _auditSearch = '';
+let _auditPage   = 1;
+
+// Build a single lowercase haystack per event so the super search can match
+// any field — user, role, action, target, details, notes, source, table, time.
+function _auditHaystack(e) {
+  const roleLabel = ROLE_LABELS[e.role] || '';
+  const when = e.timestamp
+    ? new Date(e.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : '';
+  return [e.user, e.role, roleLabel, e.action, e.target, e.details,
+          e.notes, e.source, e.table, e.operation, e.record_id, when]
+    .filter(Boolean).join('  ').toLowerCase();
+}
+
+// Filter by the super search: every whitespace-separated term must appear
+// somewhere in the event (AND semantics), so "alex pass w40" narrows hard.
+function _auditFilter(entries) {
+  const q = _auditSearch.trim().toLowerCase();
+  if (!q) return entries;
+  const terms = q.split(/\s+/);
+  return entries.filter(e => {
+    const hay = _auditHaystack(e);
+    return terms.every(t => hay.includes(t));
+  });
+}
+
+function _auditOnSearch(value) {
+  _auditSearch = value || '';
+  _auditPage = 1;
+  _auditRenderList();
+}
+
+function _auditGoToPage(p) {
+  _auditPage = p;
+  _auditRenderList();
+  const root = document.getElementById('audit-content');
+  root?.querySelector('.data-card-head')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
 function renderAuditLog() {
   const root = document.getElementById('audit-content');
   if (!root || !currentRoleUser) return;
@@ -7921,52 +8589,111 @@ function renderAuditLog() {
     root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`;
     return;
   }
-  const entries = _auditEvents();
   setTimeout(_initPageLibraries, 80);
 
   root.innerHTML = `
     <div class="data-card">
       <div class="data-card-head">
-        <span class="data-count">${entries.length} entries</span>
-        <div style="display:flex;gap:8px;">
+        <span class="data-count" id="audit-count"></span>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <div class="audit-search-wrap">
+            <span class="audit-search-icon">🔍</span>
+            <input id="audit-search" class="audit-search-input" type="search"
+              placeholder="Search everything — user, action, target, location, role, table…"
+              value="${escapeHtml(_auditSearch)}" oninput="_auditOnSearch(this.value)" autocomplete="off" />
+            ${_auditSearch ? `<button class="audit-search-clear" onclick="_auditOnSearch('')" title="Clear">✕</button>` : ''}
+          </div>
           <button class="form-secondary" onclick="refreshAuditLog()">Refresh</button>
           <button class="export-btn" onclick="exportAudit()">Export CSV</button>
         </div>
       </div>
-      <div class="table-wrap">
-        ${entries.map(e => {
-          const roleLabel = ROLE_LABELS[e.role] || '';
-          const dbRole = roleLabel ? '' : e.role;
-          const sourceLabel = e.source || e.table || 'Audit';
-          return `
-            <div class="audit-row role-${_auditClassName(e.role)} source-${_auditClassName(sourceLabel)}">
-              <div class="audit-time">
-                <div>${new Date(e.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
-                <div class="audit-relative">${dateAgo(e.timestamp)}</div>
-              </div>
-              <div class="audit-user-card">
-                <div class="audit-avatar">${escapeHtml(_auditInitials(e.user))}</div>
-                <div class="audit-user-main">
-                  <div class="audit-user-name">${escapeHtml(e.user)}</div>
-                  <div class="audit-chip-row">
-                    ${roleLabel ? `<span class="role-mini">${escapeHtml(roleLabel)}</span>` : ''}
-                    ${dbRole ? `<span class="audit-db-role">${escapeHtml(dbRole)}</span>` : ''}
-                  </div>
-                </div>
-              </div>
-              <div class="audit-action-card">
-                <div class="audit-action">${escapeHtml(e.action)}</div>
-                <span class="audit-source-chip">${escapeHtml(sourceLabel)}</span>
-              </div>
-              <div class="audit-event-body">
-                <div class="audit-target">${escapeHtml(e.target)}</div>
-                <div class="audit-details">${escapeHtml(e.details)}${e.notes ? ` · "${escapeHtml(e.notes)}"` : ''}</div>
-                <div class="audit-details audit-table-line">${escapeHtml(e.table || '')}</div>
-              </div>
+      <div class="table-wrap" id="audit-list"></div>
+      <div id="audit-pager" class="audit-pager"></div>
+    </div>
+  `;
+  _auditRenderList();
+  // Keep focus in the search box across re-renders so typing isn't interrupted.
+  const si = document.getElementById('audit-search');
+  if (si && _auditSearch) { si.focus(); si.setSelectionRange(si.value.length, si.value.length); }
+}
+
+function _auditRenderList() {
+  const list = document.getElementById('audit-list');
+  if (!list) return;
+  const all      = _auditEvents();
+  const filtered = _auditFilter(all);
+  const total    = filtered.length;
+  const pages     = Math.max(1, Math.ceil(total / AUDIT_PAGE_SIZE));
+  if (_auditPage > pages) _auditPage = pages;
+  const start    = (_auditPage - 1) * AUDIT_PAGE_SIZE;
+  const pageRows = filtered.slice(start, start + AUDIT_PAGE_SIZE);
+
+  const countEl = document.getElementById('audit-count');
+  if (countEl) {
+    countEl.textContent = _auditSearch
+      ? `${total} of ${all.length} entries`
+      : `${all.length} entries`;
+  }
+
+  list.innerHTML = pageRows.map(e => {
+    const roleLabel = ROLE_LABELS[e.role] || '';
+    const dbRole = roleLabel ? '' : e.role;
+    const sourceLabel = e.source || e.table || 'Audit';
+    return `
+      <div class="audit-row role-${_auditClassName(e.role)} source-${_auditClassName(sourceLabel)}">
+        <div class="audit-time">
+          <div>${new Date(e.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+          <div class="audit-relative">${dateAgo(e.timestamp)}</div>
+        </div>
+        <div class="audit-user-card">
+          <div class="audit-avatar">${escapeHtml(_auditInitials(e.user))}</div>
+          <div class="audit-user-main">
+            <div class="audit-user-name">${escapeHtml(e.user)}</div>
+            <div class="audit-chip-row">
+              ${roleLabel ? `<span class="role-mini">${escapeHtml(roleLabel)}</span>` : ''}
+              ${dbRole ? `<span class="audit-db-role">${escapeHtml(dbRole)}</span>` : ''}
             </div>
-          `;
-        }).join('') || `<div class="docs-empty"><h3>No audit events found</h3></div>`}
+          </div>
+        </div>
+        <div class="audit-action-card">
+          <div class="audit-action">${escapeHtml(e.action)}</div>
+          <span class="audit-source-chip">${escapeHtml(sourceLabel)}</span>
+        </div>
+        <div class="audit-event-body">
+          <div class="audit-target">${escapeHtml(e.target)}</div>
+          <div class="audit-details">${escapeHtml(e.details)}${e.notes ? ` · "${escapeHtml(e.notes)}"` : ''}</div>
+          <div class="audit-details audit-table-line">${escapeHtml(e.table || '')}</div>
+        </div>
       </div>
+    `;
+  }).join('') || `<div class="docs-empty"><h3>${_auditSearch ? 'No entries match your search' : 'No audit events found'}</h3></div>`;
+
+  _auditRenderPager(total, pages, start, pageRows.length);
+}
+
+function _auditRenderPager(total, pages, start, shown) {
+  const pager = document.getElementById('audit-pager');
+  if (!pager) return;
+  if (total <= AUDIT_PAGE_SIZE) { pager.innerHTML = ''; return; }
+
+  // Compact page window: first, last, current ±2, with ellipses.
+  const cur = _auditPage;
+  const nums = new Set([1, pages, cur, cur - 1, cur + 1, cur - 2, cur + 2]);
+  const shownPages = [...nums].filter(n => n >= 1 && n <= pages).sort((a, b) => a - b);
+  let buttons = '';
+  let prev = 0;
+  for (const n of shownPages) {
+    if (n - prev > 1) buttons += `<span class="audit-page-gap">…</span>`;
+    buttons += `<button class="audit-page-btn ${n === cur ? 'active' : ''}" onclick="_auditGoToPage(${n})">${n}</button>`;
+    prev = n;
+  }
+
+  pager.innerHTML = `
+    <div class="audit-pager-info">Showing ${start + 1}–${start + shown} of ${total}</div>
+    <div class="audit-pager-controls">
+      <button class="audit-page-btn" ${cur === 1 ? 'disabled' : ''} onclick="_auditGoToPage(${cur - 1})">‹ Prev</button>
+      ${buttons}
+      <button class="audit-page-btn" ${cur === pages ? 'disabled' : ''} onclick="_auditGoToPage(${cur + 1})">Next ›</button>
     </div>
   `;
 }
@@ -7981,7 +8708,8 @@ function exportAudit() {
     { key: 'details', label: 'Details' },
     { key: 'notes', label: 'Notes' },
   ];
-  downloadCSV(toCSV(_auditEvents(), cols), 'audit_log.csv');
+  // Export the current search result (all of it, not just the visible page).
+  downloadCSV(toCSV(_auditFilter(_auditEvents()), cols), 'audit_log.csv');
 }
 
 // ==========================================================================
@@ -12195,7 +12923,56 @@ function _p6ActDates(p6ActivityId) {
 // stem (e.g. "[T&C] W40 (Ph2) - IXL Sim Test" → "IXL Sim Test"). Centralized
 // here so the wizard, store, and auto-suggest all agree on the same key.
 function _p6PatternStem(p6Name) {
-  return String(p6Name || '').replace(/^\[T&C\]\s+\w+\s+\(Ph\d+\)\s+-\s+/, '').trim();
+  // The location-agnostic stem is everything after the first " - ". The prefix
+  // (`[T&C] <loc> (PhN)` or `[T&C] (PhN) (W34/W30/W10)`) never contains " - ",
+  // so this collapses every prefix variant to the same stem:
+  //   [T&C] A10 (Ph4) - ATS SAT (CTPs)              → "ATS SAT (CTPs)"
+  //   [T&C] (Ph2) (W34/W30/W10) - Axle Counter Test → "Axle Counter Test"
+  //   [T&C] A75/77 (Ph5) - D/N Wiring Prep (By BART)→ "D/N Wiring Prep (By BART)"
+  const s = String(p6Name || '').trim();
+  const i = s.indexOf(' - ');
+  return i >= 0 ? s.slice(i + 3).trim() : s.replace(/^\[T&C\]\s*/, '').trim();
+}
+
+// Location codes a P6 activity covers. Single-location items resolve to one
+// code; grouped items like "(W34/W30/W10)" expand to every station; bare
+// slash codes like "A75/77" inherit the letter prefix ("77" → "A77"). Falls
+// back to p6_location_code when the name carries no parseable codes.
+function _p6NameLocCodes(p6Name, fallbackCode) {
+  const s = String(p6Name || '');
+  const cut = s.indexOf(' - ');
+  let prefix = (cut >= 0 ? s.slice(0, cut) : s)
+    .replace(/^\[T&C\]/i, '')
+    .replace(/\(Ph\d+\)/gi, ' ');
+  const raw = [];
+  // Parenthetical groups first: (W34/W30/W10)
+  (prefix.match(/\(([^)]+)\)/g) || []).forEach(g => {
+    raw.push(g.replace(/[()]/g, ''));
+    prefix = prefix.replace(g, ' ');
+  });
+  // Then any bare tokens left over: A10, A75/77, HTT
+  prefix.split(/\s+/).forEach(t => { if (t.trim()) raw.push(t.trim()); });
+
+  const codes = [];
+  for (const tok of raw) {
+    let lastAlpha = '';
+    tok.split('/').map(x => x.trim()).filter(Boolean).forEach(part => {
+      let code = part.toUpperCase();
+      if (/^\d/.test(code) && lastAlpha) code = lastAlpha + code; // "77" → "A77"
+      const m = code.match(/^([A-Z]+)/);
+      if (m) lastAlpha = m[1];
+      if (/^[A-Z]+\d+[A-Z]?$/.test(code) || /^[A-Z]{2,}$/.test(code)) codes.push(code);
+    });
+  }
+  const uniq = [...new Set(codes)];
+  if (!uniq.length && fallbackCode) return [String(fallbackCode).toUpperCase()];
+  return uniq;
+}
+
+// True if a P6 activity covers the given portal location code (single or grouped).
+function _p6CoversLoc(p6, locCode) {
+  if (!locCode) return false;
+  return _p6NameLocCodes(p6.p6_name, p6.p6_location_code).includes(String(locCode).toUpperCase());
 }
 
 // Auto-suggest with optional test-case scope.
@@ -12228,7 +13005,7 @@ function _p6AutoSuggest(act, p6List, opts = {}) {
   for (const pattern of candidates) {
     const match = p6List.find(p =>
       p.p6_name.includes(pattern.p6_name_pattern) &&
-      p.p6_location_code === _p6LocCode(act.location));
+      _p6CoversLoc(p, _p6LocCode(act.location)));
     if (match) return match;
   }
   return null;
@@ -12407,12 +13184,12 @@ async function _p6CheckBatchSuggestions(activityName, subsystem, p6Act) {
   if (!unlinked.length) return;
 
   // Find matching P6 activities at those locations
+  const wantStem = _p6PatternStem(p6Act.p6_name);
   const suggestions = unlinked.map(a => {
     const locCode = _p6LocCode(a.location);
     const match   = P6_ACTS.find(p =>
-      p.p6_name.replace(/^\[T&C\]\s+\w+\s+\(Ph\d+\)\s+-\s+/, '').trim() ===
-      p6Act.p6_name.replace(/^\[T&C\]\s+\w+\s+\(Ph\d+\)\s+-\s+/, '').trim() &&
-      p.p6_location_code === locCode
+      _p6PatternStem(p.p6_name) === wantStem &&
+      _p6CoversLoc(p, locCode)
     );
     return match ? { portalAct: a, p6Match: match } : null;
   }).filter(Boolean);
@@ -12679,7 +13456,7 @@ function _p6LearnRowHTML(c, p6List) {
   const showAll = window._p6LearnShowAll.has(sid);
   const locCode = c.exampleAct ? _p6LocCode(c.exampleAct.location) : '';
   const scopedP6 = (!showAll && locCode)
-    ? p6List.filter(p => p.p6_location_code === locCode)
+    ? p6List.filter(p => _p6CoversLoc(p, locCode))
     : p6List;
 
   // Pre-fill: existing pick > existing pattern's match in scopedP6.
@@ -12703,7 +13480,9 @@ function _p6LearnRowHTML(c, p6List) {
             ${escapeHtml(c.subsystem || '\u2014')} ${tcLine}
           </div>
           <div style="font-size:11px;margin-top:4px;">
-            <span class="badge badge-notstarted" style="font-size:10px;">\ud83d\udd34 ${c.unlinkedCount} of ${c.totalCount} location${c.totalCount===1?'':'s'} unlinked</span>
+            <span class="badge badge-notstarted p6-learn-maplink" style="font-size:10px;cursor:pointer;" role="button" tabindex="0"
+              onclick="_p6LearnShowMapping('${sid}')"
+              title="Click to see how each location currently maps to P6">\ud83d\udd34 ${c.unlinkedCount} of ${c.totalCount} location${c.totalCount===1?'':'s'} unlinked</span>
           </div>
         </div>
         <div style="flex:2;min-width:280px;">
@@ -12795,31 +13574,58 @@ function _p6LearnChangeLabel(t) {
   return 'New link';
 }
 
-// Build the cascade preview: for the picked P6 activity's stem, find every
-// (portal location) where there's an unlinked portal activity matching the
-// row's name (and TC code, in TC mode) AND a P6 activity with the same stem
-// at that location's code.
+// Build the cascade preview. Starting from the picked P6 activity's stem, we
+// pool EVERY P6 activity (same batch) that shares that stem — so one pick fans
+// out across all locations even when the schedule splits the work into several
+// grouped activities (e.g. "(W34/W30/W10) - Axle Counter Test" plus
+// "(W40/Y10) - Axle Counter Test"). For each portal location of the activity
+// title we find the same-stem P6 item that COVERS that location (single code
+// or a grouped "(W34/W30/W10)" list). Locations with no clean one-to-one P6
+// coverage are returned in `flagged` so the admin can resolve them by hand.
 function _p6LearnComputeTargets(c, p6Pick) {
   const stem    = _p6PatternStem(p6Pick.p6_name);
   const allActs = _amGetActivities();
+  const stemPool = P6_ACTS.filter(p =>
+    p.batch_id === p6Pick.batch_id && _p6PatternStem(p.p6_name) === stem);
+
   const targets = [];
+  const flagged = [];
   for (const act of allActs) {
     if (act.activity !== c.activity) continue;
     if (c.subsystem && act.subsystem !== c.subsystem) continue;
-    const linked = _p6GetActivityLinks(act);
+    // TC-mode rows only concern locations that actually carry the test case.
+    if (c.testCaseCode && !(act.items || []).some(i => i.TestCaseCode === c.testCaseCode)) continue;
 
-    // Find a P6 activity at this location with the same stem
+    const linked     = _p6GetActivityLinks(act);
     const actLocCode = _p6LocCode(act.location);
-    const p6Match = P6_ACTS.find(p =>
-      p.batch_id === p6Pick.batch_id &&
-      p.p6_location_code === actLocCode &&
-      _p6PatternStem(p.p6_name) === stem);
-    if (!p6Match) continue;
+
+    // Same-stem P6 items covering this portal location.
+    const covering = actLocCode ? stemPool.filter(p => _p6CoversLoc(p, actLocCode)) : [];
+    let p6Match = null;
+    if (covering.length === 1) {
+      p6Match = covering[0];
+    } else if (covering.length > 1) {
+      // The P6 item you picked wins on a tie; otherwise the most specific
+      // (the one naming the fewest locations) is used.
+      p6Match = covering.includes(p6Pick)
+        ? p6Pick
+        : covering.slice().sort((a, b) =>
+            _p6NameLocCodes(a.p6_name, a.p6_location_code).length -
+            _p6NameLocCodes(b.p6_name, b.p6_location_code).length)[0];
+    }
+
+    if (!p6Match) {
+      flagged.push({
+        act, testCaseCode: c.testCaseCode || null,
+        reason: !actLocCode ? 'no-loc-code'
+              : covering.length === 0 ? 'no-p6'
+              : 'ambiguous',
+      });
+      continue;
+    }
 
     if (c.testCaseCode) {
-      // Only target if THIS act actually has the test case.
       const item = (act.items || []).find(i => i.TestCaseCode === c.testCaseCode);
-      if (!item) continue;
       const { activityLink, tcLink } = _p6LearnExistingLinks(act, c.testCaseCode);
       if (tcLink?.p6_activity_id === p6Match.id) continue;
       if (!tcLink && activityLink?.p6_activity_id === p6Match.id) continue;
@@ -12845,13 +13651,80 @@ function _p6LearnComputeTargets(c, p6Pick) {
       });
     }
   }
-  return targets;
+  return { targets, flagged };
+}
+
+// Show how each location of this activity currently maps to P6 — opened by
+// clicking the "X of Y locations unlinked" chip on a Bulk Learn row.
+function _p6LearnShowMapping(sid) {
+  const c = _p6LearnResolveRow(sid);
+  if (!c) { toast('Row data missing — refresh the tab', 'error'); return; }
+
+  const acts = (c.allActs || []).slice().sort((a, b) =>
+    String(a.location || '').localeCompare(String(b.location || ''), undefined, { numeric: true }));
+
+  const rows = acts.map(act => {
+    const links = _p6GetActivityLinks(act);
+    const link  = c.testCaseCode
+      ? (links.find(l => l.portal_test_case_code === c.testCaseCode)
+         || links.find(l => !l.portal_test_case_code) || null)   // fall back to parent
+      : (links.find(l => !l.portal_test_case_code) || null);
+    const inherited = c.testCaseCode && link && !link.portal_test_case_code;
+    const p6 = link ? P6_ACTS.find(p => p.id === link.p6_activity_id) : null;
+    const linked = !!link;
+    return `
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 10px;border-bottom:1px solid var(--gray-100);font-size:12px;">
+        <span style="font-size:13px;line-height:1.1;">${linked ? '🟢' : '⚪'}</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:600;">${escapeHtml(act.location || '—')}</div>
+          <div style="color:var(--gray-500);font-size:11px;">${escapeHtml(act.phase || '—')} · ${escapeHtml(act.subsystem || '—')}</div>
+          ${linked ? `
+            <div style="color:var(--gray-700);font-size:11px;margin-top:3px;">→ ${escapeHtml(p6 ? p6.p6_name : _p6ActName(link.p6_activity_id))}</div>
+            <div style="color:var(--gray-400);font-size:10.5px;margin-top:1px;">
+              ${escapeHtml(p6?.p6_id || '')}${p6 ? ` · ${_p6ActDates(p6.id)}` : ''}${inherited ? ' · inherited from activity link' : ''}
+            </div>` : `
+            <div style="color:#b45309;font-size:11px;margin-top:3px;">Not linked to any P6 activity</div>`}
+        </div>
+      </div>`;
+  }).join('');
+
+  const linkedN = acts.length - c.unlinkedCount;
+  modal({
+    title: 'Location → P6 mapping',
+    sub: `${escapeHtml(c.activity)}${c.testCaseCode ? ` · TC ${escapeHtml(c.testCaseCode)}` : ''} — ${linkedN} of ${acts.length} linked`,
+    size: 'medium',
+    body: `
+      <p style="font-size:12px;color:var(--gray-600);margin-bottom:10px;line-height:1.45;">
+        Every location that carries this ${c.testCaseCode ? 'test case' : 'activity'} and its current P6 link. Unlinked locations are what Bulk Learn will fill in.
+      </p>
+      <div style="max-height:420px;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">${rows || '<div style="padding:16px;color:var(--gray-400);font-size:12px;">No locations found.</div>'}</div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
+}
+
+// Resolve a learn-row's candidate from the stash, rebuilding it from the live
+// candidate set if the stash was lost (e.g. tab re-render between previews).
+function _p6LearnResolveRow(sid) {
+  let c = window._p6LearnRowData?.[sid];
+  if (c) return c;
+  try {
+    const { candidates } = _p6LearnGetCandidates();
+    c = candidates.find(x => ('lr_' + x.rowKey.replace(/[^a-zA-Z0-9]/g, '_')) === sid) || null;
+    if (c) { (window._p6LearnRowData = window._p6LearnRowData || {})[sid] = c; }
+  } catch (_) {}
+  return c;
 }
 
 function _p6LearnPreview(sid) {
-  const c = window._p6LearnRowData?.[sid];
+  const c = _p6LearnResolveRow(sid);
   if (!c) { toast('Row data missing — refresh the tab', 'error'); return; }
-  const p6Id = _p6SSVal(sid + '_pick') || _p6SSTypedMatch(sid + '_pick');
+  // Resolve the pick from the DOM, then the typed text, then the durable pick
+  // map. The DOM hidden value can be cleared by the search filter on re-render,
+  // so the picks map is the reliable fallback — without it Preview "worked once".
+  const p6Id = _p6SSVal(sid + '_pick')
+    || _p6SSTypedMatch(sid + '_pick')
+    || window._p6LearnPicks?.get(c.rowKey)
+    || '';
   if (!p6Id) { toast('Pick a P6 activity first', 'error'); return; }
   const p6Pick = P6_ACTS.find(p => p.id === p6Id);
   if (!p6Pick) { toast('P6 activity not found', 'error'); return; }
@@ -12860,8 +13733,8 @@ function _p6LearnPreview(sid) {
   if (!window._p6LearnPicks) window._p6LearnPicks = new Map();
   window._p6LearnPicks.set(c.rowKey, p6Id);
 
-  const targets = _p6LearnComputeTargets(c, p6Pick);
-  if (!targets.length) {
+  const { targets, flagged } = _p6LearnComputeTargets(c, p6Pick);
+  if (!targets.length && !flagged.length) {
     const sameRows = _amGetActivities().filter(a =>
       a.activity === c.activity &&
       (!c.subsystem || a.subsystem === c.subsystem) &&
@@ -12901,6 +13774,23 @@ function _p6LearnPreview(sid) {
 
   const stem = _p6PatternStem(p6Pick.p6_name);
   const changing = targets.filter(t => t.changeType !== 'new');
+
+  // Locations that couldn't be matched one-to-one — surfaced for manual review.
+  const flagReason = {
+    'no-p6': 'No same-stem P6 activity covers this location',
+    'ambiguous': 'Multiple same-stem P6 activities could cover this location',
+    'no-loc-code': 'Portal location has no parseable location code',
+  };
+  const flaggedRows = flagged.map(f => `
+    <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-bottom:1px solid var(--gray-100);font-size:12px;">
+      <span style="font-size:13px;line-height:1;">⚠️</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;">${escapeHtml(f.act.location)}${f.testCaseCode?` · ${escapeHtml(f.testCaseCode)}`:''}</div>
+        <div style="color:var(--gray-500);font-size:11px;">${escapeHtml(f.act.phase||'—')} · ${escapeHtml(f.act.subsystem||'—')}</div>
+        <div style="color:#b45309;font-size:11px;margin-top:3px;">${escapeHtml(flagReason[f.reason] || 'Needs manual link')}</div>
+      </div>
+    </div>`).join('');
+
   const rows = targets.map((t, i) => `
     <label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--gray-100);font-size:12px;">
       <input type="checkbox" id="p6lp-${i}" checked>
@@ -12929,7 +13819,7 @@ function _p6LearnPreview(sid) {
 
   modal({
     title: `\ud83e\ude84 Apply pattern: "${stem}"`,
-    sub: `${c.activity}${c.testCaseCode?` \u00b7 TC ${c.testCaseCode}`:''} \u2014 ${targets.length} location${targets.length===1?'':'s'} match`,
+    sub: `${c.activity}${c.testCaseCode?` \u00b7 TC ${c.testCaseCode}`:''} \u2014 ${targets.length} location${targets.length===1?'':'s'} match${flagged.length?` \u00b7 ${flagged.length} flagged`:''}`,
     size: 'medium',
     body: `
       <p style="font-size:12px;color:var(--gray-600);margin-bottom:12px;">
@@ -12940,10 +13830,23 @@ function _p6LearnPreview(sid) {
           This will change ${changing.length} existing link${changing.length===1?'':'s'}. Review the Current and New values below before applying.
         </div>
       ` : ''}
-      <div style="max-height:380px;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">${rows}</div>`,
+      ${targets.length ? `
+        <div style="font-size:11px;font-weight:700;color:var(--gray-500);letter-spacing:.04em;margin:0 0 6px;">\u2713 ${targets.length} ONE-TO-ONE MATCH${targets.length===1?'':'ES'}</div>
+        <div style="max-height:${flagged.length?'260px':'380px'};overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">${rows}</div>
+      ` : `
+        <div style="padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;color:#1e40af;font-size:12px;margin-bottom:12px;">
+          No new one-to-one matches \u2014 every covered location is already linked. Flagged locations below still need attention.
+        </div>`}
+      ${flagged.length ? `
+        <div style="font-size:11px;font-weight:700;color:#b45309;letter-spacing:.04em;margin:14px 0 6px;">\u26a0\ufe0f ${flagged.length} FLAGGED \u2014 NEEDS MANUAL LINK</div>
+        <div style="padding:8px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;color:#92400e;font-size:11px;margin-bottom:8px;line-height:1.45;">
+          These locations have the activity but no clean one-to-one P6 match. Use the Mapping tab (or pick a different P6 item here) to link them by hand.
+        </div>
+        <div style="max-height:200px;overflow:auto;border:1px solid #fde68a;border-radius:6px;background:#fffdf7;">${flaggedRows}</div>
+      ` : ''}`,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="admin-action-btn" onclick="_p6LearnApply()">Apply Selected</button>`,
+      ${targets.length ? `<button class="admin-action-btn" onclick="_p6LearnApply()">Apply Selected</button>` : ''}`,
   });
 }
 
@@ -18084,7 +18987,7 @@ function _laMountCalendar() {
         allowHTML:   true,
         delay:       [180, 0],
         placement:   'top',
-        theme:       'light-border',
+        theme:       'portal',
         maxWidth:    320,
         interactive: false,
       });
@@ -18594,13 +19497,25 @@ const _LA_STATUS_META = {
   plan:    { label: 'Planned',  color: 'var(--gray-700)', bg: 'var(--gray-100)', bar: 'var(--gray-500)' },
 };
 function _laStatusMeta(s) { return _LA_STATUS_META[s] || _LA_STATUS_META.plan; }
-function _laActStatus(a, evs) {
+// Schedule-derived status — works for ANY activity (no Test Register / P6 needed).
+//   • no shifts                  → Planned
+//   • all (non-cancelled) past   → Complete
+//   • has a cancelled shift      → At risk  (a cancellation is a risk, not a blocker)
+//   • otherwise                  → On track
+function _laAutoStatus(evs) {
   if (!Array.isArray(evs) || !evs.length) return 'plan';
-  if (evs.some(e => e.status === 'cancelled')) return 'blocked';
   const today = new Date().toISOString().slice(0, 10);
-  const past  = evs.filter(e => e.event_date < today && e.status !== 'cancelled');
-  if (past.length && past.length === evs.length) return 'done';
+  const active = evs.filter(e => e.status !== 'cancelled');
+  const hasCancel = evs.some(e => e.status === 'cancelled');
+  if (!active.length) return hasCancel ? 'atrisk' : 'plan';
+  if (active.every(e => e.event_date < today)) return 'done';
+  if (hasCancel) return 'atrisk';
   return 'ontrack';
+}
+function _laActStatus(a, evs) {
+  // A team-set status always wins; otherwise fall back to the schedule.
+  if (a && a.status_override && _LA_STATUS_META[a.status_override]) return a.status_override;
+  return _laAutoStatus(evs);
 }
 
 // Inline icon helper used inside v-combo row labels
@@ -18645,8 +19560,9 @@ function _laRenderGrid(target, { groups, days, milestones }) {
   html += `<div class="tlg-row tlg-ms-row"><div class="tlg-label tlg-ms-gutter"></div><div class="tlg-cells">`;
   days.forEach(iso => {
     const isToday = iso === todayISO;
+    const dwMs = dayjs(iso).day(); const isWkndMs = dwMs === 0 || dwMs === 6;
     const marks = milestones.filter(mk => mk.date === iso);
-    html += `<div class="tlg-cell tlg-ms-cell">`;
+    html += `<div class="tlg-cell tlg-ms-cell${isToday ? ' tlg-today-col' : ''}${isWkndMs ? ' tlg-weekend' : ''}">`;
     if (isToday) html += `<div class="tlg-today-marker"><span class="tlg-today-label">Today</span><span class="tlg-today-arr">▼</span></div>`;
     marks.forEach(mk => html += `<div class="tlg-ms-mark" title="${escapeHtml(mk.label)}">${escapeHtml(mk.icon||'◆')}</div>`);
     html += `</div>`;
@@ -18657,9 +19573,10 @@ function _laRenderGrid(target, { groups, days, milestones }) {
   html += `<div class="tlg-row tlg-month-row"><div class="tlg-label tlg-month-gutter"></div><div class="tlg-cells">`;
   monthSpans.forEach((span, si) => {
     const color = _TL_MONTH_COLORS[si % _TL_MONTH_COLORS.length];
-    // Lock pill width to exactly span.count day-cells (cell min 46 / max 80px)
-    // so the month bar and day header stay aligned even when the grid scrolls.
-    html += `<div class="tlg-month-pill" style="flex:${span.count};min-width:${span.count * 46}px;max-width:${span.count * 80}px;background:${color};">${span.label}</div>`;
+    // Day cells are a fixed 60px each; lock the month pill to exactly
+    // span.count × 60px so the month bar and day columns always line up.
+    const w = span.count * 60;
+    html += `<div class="tlg-month-pill" style="flex:0 0 ${w}px;width:${w}px;min-width:${w}px;max-width:${w}px;background:${color};">${span.label}</div>`;
   });
   html += `</div></div>`;
 
@@ -18701,7 +19618,8 @@ function _laRenderGrid(target, { groups, days, milestones }) {
         </div>
         <div class="tlg-cells">${days.map(iso => {
           const isToday = iso === todayISO;
-          return `<div class="tlg-cell tlg-grp-hdr-cell${isToday ? ' tlg-today-col' : ''}"></div>`;
+          const dw = dayjs(iso).day(); const isWknd = dw === 0 || dw === 6;
+          return `<div class="tlg-cell tlg-grp-hdr-cell${isToday ? ' tlg-today-col' : ''}${isWknd ? ' tlg-weekend' : ''}"></div>`;
         }).join('')}</div>
       </div>`;
       return;
@@ -18726,7 +19644,8 @@ function _laRenderGrid(target, { groups, days, milestones }) {
         </div>
         <div class="tlg-cells">${days.map(iso => {
           const isToday = iso === todayISO;
-          return `<div class="tlg-cell tlg-grp-hdr-cell${isToday ? ' tlg-today-col' : ''}"></div>`;
+          const dw = dayjs(iso).day(); const isWknd = dw === 0 || dw === 6;
+          return `<div class="tlg-cell tlg-grp-hdr-cell${isToday ? ' tlg-today-col' : ''}${isWknd ? ' tlg-weekend' : ''}"></div>`;
         }).join('')}</div>
       </div>`;
       return;
@@ -18738,7 +19657,8 @@ function _laRenderGrid(target, { groups, days, milestones }) {
         <div class="tlg-label tlg-loc-hdr-label">📍 ${escapeHtml(g.label)}</div>
         <div class="tlg-cells">${days.map(iso => {
           const isToday = iso === todayISO;
-          return `<div class="tlg-cell tlg-loc-hdr-cell${isToday ? ' tlg-today-col' : ''}"></div>`;
+          const dw = dayjs(iso).day(); const isWknd = dw === 0 || dw === 6;
+          return `<div class="tlg-cell tlg-loc-hdr-cell${isToday ? ' tlg-today-col' : ''}${isWknd ? ' tlg-weekend' : ''}"></div>`;
         }).join('')}</div>
       </div>`;
       return;
@@ -18773,9 +19693,17 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     const tradeCls = g.actTrade ? `trade-${g.actTrade}` : 'trade-default';
     const tradeChip = g.actTrade ? `<span class="la-trade-chip ${tradeCls}">${escapeHtml(g.actTrade)}</span>` : '';
     const codeChip  = g.actCode  ? `<span class="la-combo-code">${escapeHtml(g.actCode)}</span>` : '';
-    const statusChip = `<span class="la-combo-status status-${g.actStatus || 'plan'}">
-        <span class="la-dot status-${g.actStatus || 'plan'}"></span>${escapeHtml(statMeta.label)}
-      </span>`;
+    const statusTitle = g.actStatusNote
+      ? `${statMeta.label}: ${g.actStatusNote}`
+      : (g.actStatusManual ? `${statMeta.label} (set manually)` : `${statMeta.label} (from schedule)`);
+    // The planned/on-track/at-risk status chip belongs to the Activity view only.
+    // In the Resource / Subsystem / Location group-by views the same activity
+    // row appears under a different lens, so the schedule-status pill is hidden.
+    const showStatusChip = _laTimelineGroupBy === 'activity';
+    const statusChip = showStatusChip ? `<span class="la-combo-status status-${g.actStatus || 'plan'}" title="${escapeHtml(statusTitle)}">
+        <span class="la-dot status-${g.actStatus || 'plan'}"></span>${escapeHtml(statMeta.label)}${g.actStatusNote ? ' •' : ''}
+      </span>` : '';
+    const line2HTML = `${codeChip}${tradeChip}${statusChip}`;
     const metaSegs = [];
     if (g.actWorkHours) metaSegs.push(`<span class="la-combo-meta">${_laIconHTML('clock')}${escapeHtml(g.actWorkHours)}</span>`);
     if (g.actSswp)      metaSegs.push(`<span class="la-combo-meta">SSWP ${escapeHtml(g.actSswp)}</span>`);
@@ -18789,7 +19717,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
           <span class="la-combo-location">${escapeHtml(g.actLocation || '—')}</span>
           ${_partyBadgesHTML(g.actParty)}
         </div>
-        ${(codeChip || tradeChip) ? `<div class="la-combo-line2">${codeChip}${tradeChip}${statusChip}</div>` : `<div class="la-combo-line2">${statusChip}</div>`}
+        ${line2HTML ? `<div class="la-combo-line2">${line2HTML}</div>` : ''}
         <div class="la-combo-line3" title="${escapeHtml(g.label)}">${escapeHtml(g.label)}</div>
         ${metaSegs.length || linkChip ? `<div class="la-combo-line4">
           ${metaSegs.join('')}
@@ -18915,7 +19843,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     tippy('[data-tlg-tip]', {
       content(ref) { return ref.getAttribute('data-tlg-tip').replace(/&quot;/g, '"'); },
       allowHTML: true, delay: [150, 0], placement: 'top',
-      theme: 'light-border', maxWidth: 260, interactive: false,
+      theme: 'portal', maxWidth: 260, interactive: false,
     });
   }, 60);
 }
@@ -18963,6 +19891,28 @@ function _planningEventResChips(eventId) {
     .filter(Boolean);
 }
 function _planningEventBartChips(eventId) { return _planningEventResChips(eventId).filter(c => c.isBart); }
+// Chips filtered by company: 'all' | 'Hitachi' | 'BART'.
+function _planningEventResChipsCompany(eventId, company) {
+  const chips = _planningEventResChips(eventId);
+  if (company === 'BART')    return chips.filter(c => c.isBart);
+  if (company === 'Hitachi') return chips.filter(c => !c.isBart);
+  return chips;
+}
+// Location view cells: resource chips filtered by the active company toggle.
+function _laBuildByDateLocation(events, days, company) {
+  const byDate = {};
+  events.forEach(e => {
+    if (!days.includes(e.event_date)) return;
+    const isCancel = e.status === 'cancelled';
+    (byDate[e.event_date] = byDate[e.event_date] || []).push({
+      event_id: e.id, shift_type: e.shift_type, start_time: e.start_time,
+      end_time: e.end_time, all_day: !!e.all_day, isCancel, title: e.title || '',
+      cellLabel: '',
+      resChips: isCancel ? [] : _planningEventResChipsCompany(e.id, company),
+    });
+  });
+  return byDate;
+}
 // Like _laBuildByDate but attaches BART chips for Activity view cells.
 function _laBuildByDateActivity(events, days) {
   const byDate = {};
@@ -19010,6 +19960,15 @@ function _laLookaheadHTML() {
           <button class="admin-tab${_laTimelineWindow === parseInt(v) ? ' active' : ''}" style="font-size:12px;padding:6px 14px;" onclick="_laSetTimelineWindow(${v})">${l}</button>
         `).join('')}
       </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-size:11px;color:var(--gray-500);margin-right:2px;white-space:nowrap;">Period:</span>
+        <button class="admin-tab" style="font-size:12px;padding:6px 10px;" onclick="_laShiftWindow(-7)" title="Back one week">‹ Prev</button>
+        <button class="admin-tab${_laWindowStart ? '' : ' active'}" style="font-size:12px;padding:6px 10px;" onclick="_laResetWindow()" title="Jump to today">Today</button>
+        <button class="admin-tab" style="font-size:12px;padding:6px 10px;" onclick="_laShiftWindow(7)" title="Forward one week">Next ›</button>
+        <input type="date" value="${_laWinAnchor().format('YYYY-MM-DD')}" onchange="_laJumpWindow(this.value)" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-200);border-radius:6px;" title="Jump to a start date">
+        ${(_laWindowStart && dayjs(_laWindowStart).isBefore(dayjs().startOf('day'))) ? '<span style="font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#92400e;background:#fef3c7;padding:3px 8px;border-radius:99px;">Viewing history</span>' : ''}
+        <button class="admin-tab" style="font-size:12px;padding:6px 12px;" onclick="openPlanningHistory()" title="Browse frozen weekly snapshots">🗓 Past Weeks</button>
+      </div>
       ${_laTimelineGroupBy === 'activity' ? `
       <div style="display:flex;align-items:center;gap:0;">
         <span style="font-size:11px;color:var(--gray-500);margin-right:8px;white-space:nowrap;">Sub-group:</span>
@@ -19027,6 +19986,16 @@ function _laLookaheadHTML() {
           <button class="admin-tab${_laResCompanyFilter === v ? ' active' : ''}"
             style="font-size:12px;padding:6px 14px;"
             onclick="_laSetResCompanyFilter('${v}')">${l}</button>
+        `).join('')}
+      </div>
+      ` : ''}
+      ${_laTimelineGroupBy === 'location' ? `
+      <div style="display:flex;align-items:center;gap:0;">
+        <span style="font-size:11px;color:var(--gray-500);margin-right:8px;white-space:nowrap;">Resources:</span>
+        ${[['all','All'],['Hitachi','Hitachi'],['BART','BART']].map(([v,l]) => `
+          <button class="admin-tab${_laLocResFilter === v ? ' active' : ''}"
+            style="font-size:12px;padding:6px 14px;"
+            onclick="_laSetLocResFilter('${v}')">${l}</button>
         `).join('')}
       </div>
       ` : ''}
@@ -19050,6 +20019,7 @@ function _laLookaheadHTML() {
           📤 Export ▾
         </button>
         <div id="la-export-menu" class="la-export-menu">
+          <button onclick="_laExportTimelinePDF();document.getElementById('la-export-menu').classList.remove('open');">🖼 Current View (PDF)</button>
           <button onclick="_laExportLookahead();document.getElementById('la-export-menu').classList.remove('open');">📅 4-Week Lookahead (.xlsx)</button>
           <button onclick="_laExportBARTResourceMap('xlsx');document.getElementById('la-export-menu').classList.remove('open');">🚧 BART Resource Map (.xlsx)</button>
           <button onclick="_laExportBARTResourceMap('csv');document.getElementById('la-export-menu').classList.remove('open');">📊 BART Resource Map (.csv)</button>
@@ -19561,10 +20531,29 @@ function _laDrawerActivityHTML(a) {
   const storedPhase    = (a.phase || '').trim();
   const effectivePhase = storedPhase || inferredPhase || '';
 
+  const autoStatus  = _laAutoStatus(evs);
+  const autoLabel   = _laStatusMeta(autoStatus).label;
+  const curOverride = a.status_override || '';
+  const noteShown   = (curOverride === 'atrisk' || curOverride === 'blocked');
+  const STATUS_OPTS = [['ontrack','On track'],['atrisk','At risk'],['blocked','Blocked'],['done','Complete'],['plan','Planned']];
+
   return `
     <div class="la-drawer-section">
       <label class="la-drawer-label">Description</label>
       <textarea class="la-drawer-input" id="dw-act-desc" rows="2" oninput="_laDrawerMarkDirty()">${escapeHtml(a.description || '')}</textarea>
+    </div>
+
+    <div class="la-drawer-section">
+      <label class="la-drawer-label">Status</label>
+      <select class="la-drawer-input" id="dw-act-status" onchange="_laDrawerStatusChanged()">
+        <option value="">Auto — from schedule (${escapeHtml(autoLabel)})</option>
+        ${STATUS_OPTS.map(([v,l]) => `<option value="${v}" ${curOverride===v?'selected':''}>${l}</option>`).join('')}
+      </select>
+      <div id="dw-act-status-note-wrap" style="margin-top:6px;display:${noteShown ? '' : 'none'};">
+        <label class="la-drawer-label" id="dw-act-status-note-label">Reason ${curOverride==='blocked'?'(why blocked)':'(why at risk)'}</label>
+        <textarea class="la-drawer-input" id="dw-act-status-note" rows="2" placeholder="e.g. Waiting on BART track access" oninput="_laDrawerMarkDirty()">${escapeHtml(a.status_note || '')}</textarea>
+      </div>
+      ${(curOverride && a.status_set_by) ? `<div style="font-size:10px;color:var(--gray-400);margin-top:4px;">Set by ${escapeHtml(a.status_set_by)}${a.status_set_at?` · ${dayjs(a.status_set_at).format('YYYY-MM-DD')}`:''}</div>` : ''}
     </div>
 
     <div class="la-drawer-section la-drawer-row-2">
@@ -19677,6 +20666,16 @@ function _laDrawerActivityFooterHTML(a) {
   `;
 }
 
+// Show the reason box only for At risk / Blocked, and label it accordingly.
+function _laDrawerStatusChanged() {
+  const v    = document.getElementById('dw-act-status')?.value || '';
+  const wrap = document.getElementById('dw-act-status-note-wrap');
+  const lbl  = document.getElementById('dw-act-status-note-label');
+  if (wrap) wrap.style.display = (v === 'atrisk' || v === 'blocked') ? '' : 'none';
+  if (lbl)  lbl.textContent = v === 'blocked' ? 'Reason (why blocked)' : 'Reason (why at risk)';
+  _laDrawerMarkDirty();
+}
+
 // ─── MULTI MODE: bulk-edit the current selection ─────────────
 function _laDrawerMultiHTML(eventIds) {
   const events = (PLANNING_EVENTS || []).filter(e => eventIds.includes(e.id));
@@ -19761,6 +20760,10 @@ async function _laDrawerSave() {
     if (!a) return;
     const discInput  = document.getElementById('dw-act-discipline')?.value?.trim() || null;
     const tradeInput = document.getElementById('dw-act-trade')?.value?.trim() || null;
+    const statusOverride = document.getElementById('dw-act-status')?.value || null;
+    const statusNote     = (statusOverride === 'atrisk' || statusOverride === 'blocked')
+      ? (document.getElementById('dw-act-status-note')?.value?.trim() || null)
+      : null;
     const payload = {
       description:                  document.getElementById('dw-act-desc')?.value?.trim() || null,
       activity_id_text:             document.getElementById('dw-act-idtext')?.value?.trim() || null,
@@ -19774,7 +20777,14 @@ async function _laDrawerSave() {
       linked_test_register_activity: document.getElementById('dw-act-linked-tra')?.value?.trim() || null,
       discipline:                   discInput,
       trade:                        tradeInput,
+      status_override:              statusOverride,
+      status_note:                  statusNote,
     };
+    // Stamp who/when only when the override actually changes.
+    if (statusOverride !== (a.status_override || null)) {
+      payload.status_set_by = statusOverride ? (currentRoleUser?.name || currentProfile?.email || 'unknown') : null;
+      payload.status_set_at = statusOverride ? new Date().toISOString() : null;
+    }
     try {
       await _dbUpdate('planning_activities', payload, { id: a.id });
       // Auto-grow Field Config vocabularies for newly typed values
@@ -19835,13 +20845,80 @@ async function _laDrawerRemoveEventResource(eventResId) {
 // EXPORTS — Phase 4B & 4C
 // ============================================================
 
+// Export the CURRENT timeline view (with its filters/window) as a PDF —
+// a print-to-PDF of the live grid, scaled to fit a landscape page.
+function _laExportTimelinePDF() {
+  const shell = document.querySelector('#lookahead-timeline .tlg-shell');
+  if (!shell) { toast('Open the Lookahead timeline first.', 'warn'); return; }
+  const cloneHTML = shell.outerHTML;
+
+  const viewLabel = { activity: 'Activity', resource: 'Resource', subsystem: 'Subsystem', location: 'Location' }[_laTimelineGroupBy] || _laTimelineGroupBy;
+  const start = _laWinAnchor();
+  const end   = start.add(_laTimelineWindow - 1, 'day');
+  const range = start.format('MMM D, YYYY') + ' – ' + end.format('MMM D, YYYY');
+  const filters = ['View: ' + viewLabel, 'Window: ' + _laTimelineWindow + ' days'];
+  if (_laTimelineGroupBy === 'activity' && _laActivitySubGroup !== 'none') filters.push('Sub-group: ' + _laActivitySubGroup);
+  if (_laTimelineGroupBy === 'resource') filters.push('Resources: ' + _laResCompanyFilter);
+  if (_laTimelineGroupBy === 'location') filters.push('Resources: ' + _laLocResFilter);
+  if (_planningShowP6) filters.push('P6 baseline shown');
+  if (_laRowSearch) filters.push('Filter: "' + _laRowSearch + '"');
+
+  const gridW = 248 + (_laTimelineWindow * 60) + 8;
+  const zoom = Math.min(1, 1000 / gridW);
+  const baseHref = location.origin + location.pathname.replace(/[^/]*$/, '');
+  const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+    <base href="${baseHref}">
+    <title>Lookahead — ${esc(range)}</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+      @page { size: A4 landscape; margin: 8mm; }
+      html, body { margin: 0; padding: 0; background: #fff; }
+      .pdf-head { font-family: Arial, sans-serif; padding: 2px 2px 12px; }
+      .pdf-title { font-size: 17px; font-weight: 800; color: #111; }
+      .pdf-sub { font-size: 11px; color: #555; margin-top: 3px; }
+      .pdf-filters { margin-top: 6px; }
+      .pdf-filters span { display: inline-block; font-size: 10px; color: #334155; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 99px; padding: 2px 9px; margin: 0 6px 4px 0; }
+      .pdf-grid { zoom: ${zoom}; }
+      /* drop sticky/scroll so the full grid lays out for print */
+      .tlg-shell { overflow: visible !important; }
+      .tlg-label, .tlg-head, .tlg-head .tlg-label, .v-combo .tlg-row-label.la-combo-label { position: static !important; }
+      .tlg-fill-handle, .tlg-row-del { display: none !important; }
+    </style></head>
+    <body>
+      <div class="pdf-head">
+        <div class="pdf-title">Lookahead — ${esc(viewLabel)} view</div>
+        <div class="pdf-sub">${esc(range)} · Generated ${esc(new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))}</div>
+        <div class="pdf-filters">${filters.map(f => '<span>' + esc(f) + '</span>').join('')}</div>
+      </div>
+      <div class="pdf-grid">${cloneHTML}</div>
+    </body></html>`;
+
+  try {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+    const frame = document.createElement('iframe');
+    frame.style.cssText = 'position:fixed;top:-10000px;left:-10000px;width:1px;height:1px;border:none;opacity:0;';
+    document.body.appendChild(frame);
+    frame.onload = () => {
+      try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+      catch (e) { window.open(blobUrl, '_blank'); }
+      const cleanup = () => { if (document.body.contains(frame)) document.body.removeChild(frame); URL.revokeObjectURL(blobUrl); };
+      frame.contentWindow.onafterprint = cleanup;
+      setTimeout(cleanup, 60000);
+    };
+    frame.src = blobUrl;
+    toast('Preparing Lookahead PDF…', 'success');
+  } catch (e) { console.error('[la PDF]', e); toast('PDF export failed: ' + e.message, 'error'); }
+}
+
 // 4-Week Lookahead: activity-row × day-cell visual export.
 // Frozen first 2 columns (Group, Activity), one column per day, color-fill
 // matches the shift color, cancelled cells get a 🚫 prefix.
 function _laExportLookahead() {
   if (typeof XLSX === 'undefined') { toast('Excel library not loaded', 'error'); return; }
-  const winStart = dayjs().startOf('day');
-  const days = Array.from({ length: _laTimelineWindow }, (_, i) => winStart.add(i, 'day').format('YYYY-MM-DD'));
+  const winStart = _laWinAnchor();  const days = Array.from({ length: _laTimelineWindow }, (_, i) => winStart.add(i, 'day').format('YYYY-MM-DD'));
 
   // Header: 1 row month strip + 1 row day strip
   const monthRow = ['Group', 'Phase', 'Activity', 'Location'];
@@ -20234,6 +21311,8 @@ function _laResourcePanelHTML() {
 function _laSetTimelineGroup(g) { _laTimelineGroupBy = g; _renderLookaheadTabBody(); }
 function _laSetActivitySubGroup(sg) { _laActivitySubGroup = sg; _renderLookaheadTabBody(); }
 function _laSetResCompanyFilter(f) { _laResCompanyFilter = f; _renderLookaheadTabBody(); }
+let _laLocResFilter = 'all';   // 'all' | 'Hitachi' | 'BART' — chips shown in Location-view cells
+function _laSetLocResFilter(f) { _laLocResFilter = f; _renderLookaheadTabBody(); }
 // True if a resource passes the current Hitachi/BART filter
 function _laResCompanyMatch(r) {
   if (_laResCompanyFilter === 'all') return true;
@@ -20245,6 +21324,111 @@ function _laToggleGroupCollapse(groupKey) {
   _renderLookaheadTabBody();
 }
 function _laSetTimelineWindow(d) { _laTimelineWindow = d; _renderLookaheadTabBody(); }
+
+// ── Lookahead period navigation (scroll back/forward through weeks) ───────────
+let _laWindowStart = null;   // 'YYYY-MM-DD' anchor; null = today
+function _laWinAnchor() { return _laWindowStart ? dayjs(_laWindowStart) : dayjs().startOf('day'); }
+function _laShiftWindow(deltaDays) {
+  _laWindowStart = _laWinAnchor().add(deltaDays, 'day').format('YYYY-MM-DD');
+  _renderLookaheadTabBody();
+}
+function _laResetWindow() { _laWindowStart = null; _renderLookaheadTabBody(); }
+function _laJumpWindow(dateStr) { if (dateStr) { _laWindowStart = dayjs(dateStr).format('YYYY-MM-DD'); _renderLookaheadTabBody(); } }
+
+// ── Past Weeks — frozen weekly snapshots viewer ───────────────────────────────
+let PLANNING_SNAPSHOTS = [];
+function _laSnapDate(d) { return d ? dayjs(d).format('MMM D, YYYY') : '—'; }
+function _laSnapDateShort(d) { return d ? dayjs(d).format('MMM D') : '—'; }
+
+async function openPlanningHistory() {
+  modal({
+    title: 'Past Weeks — Frozen Lookahead',
+    sub: 'Immutable weekly record (Mon–Sun) of activities, shifts and assigned resources. Captured automatically each Monday.',
+    size: 'large',
+    body: '<div id="la-hist-body"><div style="padding:24px;text-align:center;color:var(--gray-400);">Loading…</div></div>',
+    footer: '<button class="form-secondary" onclick="closeModal()">Close</button>',
+  });
+  let rows = [];
+  try { rows = await _fetchAnon('planning_week_snapshots?select=week_start,week_end,captured_at,activity_count,event_count,cancelled_count&order=week_start.desc'); } catch (e) { /* */ }
+  PLANNING_SNAPSHOTS = rows || [];
+  _laRenderHistoryList();
+}
+
+function _laRenderHistoryList() {
+  const body = document.getElementById('la-hist-body');
+  if (!body) return;
+  if (!PLANNING_SNAPSHOTS.length) {
+    body.innerHTML = '<div style="padding:28px;text-align:center;color:var(--gray-400);font-size:13px;">No frozen weeks yet.<br>The first snapshot is captured automatically each Monday once a week has fully passed.</div>';
+    return;
+  }
+  body.innerHTML = '<div class="la-hist-list">' + PLANNING_SNAPSHOTS.map(s => `
+    <button class="la-hist-row" onclick="_laShowSnapshot('${s.week_start}')">
+      <div>
+        <div class="la-hist-wk">${escapeHtml(_laSnapDateShort(s.week_start))} – ${escapeHtml(_laSnapDate(s.week_end))}</div>
+        <div class="la-hist-sub">Frozen ${escapeHtml(_laSnapDate(s.captured_at))}</div>
+      </div>
+      <div class="la-hist-stats">
+        <span>${s.activity_count} ${s.activity_count === 1 ? 'activity' : 'activities'}</span>
+        <span>${s.event_count} shift${s.event_count === 1 ? '' : 's'}</span>
+        ${s.cancelled_count ? `<span style="color:#dc2626;font-weight:600;">${s.cancelled_count} cancelled</span>` : ''}
+        <span class="la-hist-arrow">›</span>
+      </div>
+    </button>`).join('') + '</div>';
+}
+
+async function _laShowSnapshot(weekStart) {
+  const body = document.getElementById('la-hist-body');
+  if (body) body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--gray-400);">Loading week…</div>';
+  let rows = [];
+  try { rows = await _fetchAnon('planning_week_snapshots?select=*&week_start=eq.' + weekStart + '&limit=1'); } catch (e) { /* */ }
+  const snap = rows && rows[0];
+  if (!snap) { if (body) body.innerHTML = '<div style="padding:24px;color:var(--bad);">Could not load that week.</div>'; return; }
+  const acts = Array.isArray(snap.payload) ? snap.payload : [];
+
+  const shiftLabel = { day_shift: 'Day', swing_shift: 'Swing', night_shift: 'Night', blanket_shift: 'All-day' };
+  const actsHtml = acts.length ? acts.map(a => {
+    const evs = Array.isArray(a.events) ? a.events : [];
+    const evHtml = evs.map(e => {
+      const cancelled = e.status === 'cancelled';
+      const statusChip = cancelled
+        ? '<span class="la-hist-badge cancel">Cancelled</span>'
+        : '<span class="la-hist-badge done">Completed</span>';
+      const when = dayjs(e.event_date).format('ddd MMM D');
+      const time = e.all_day ? 'All day' : [e.start_time, e.end_time].filter(Boolean).map(t => String(t).slice(0,5)).join('–');
+      const res = (e.resources || []).map(r => {
+        const q = r.quantity && r.quantity > 1 ? ' ×' + r.quantity : '';
+        const isBart = (r.kind || '').toLowerCase() === 'bart' || (r.company || '').toLowerCase().includes('bart');
+        return `<span class="la-hist-res ${isBart ? 'bart' : 'hit'}${r.denied ? ' denied' : ''}">${escapeHtml(r.name || r.initials || '?')}${q}${r.denied ? ' ⚠' : ''}</span>`;
+      }).join('') || '<span style="color:var(--gray-400);font-size:11px;">No resources</span>';
+      return `<div class="la-hist-ev${cancelled ? ' is-cancel' : ''}">
+        <div class="la-hist-ev-head">
+          <span class="la-hist-ev-when">${escapeHtml(when)}${time ? ' · ' + escapeHtml(time) : ''}</span>
+          <span class="la-hist-ev-shift">${escapeHtml(shiftLabel[e.shift_type] || e.shift_type || '')}</span>
+          ${statusChip}
+        </div>
+        ${e.title ? `<div class="la-hist-ev-title">${escapeHtml(e.title)}</div>` : ''}
+        ${cancelled && (e.cancellation_reason || e.cancellation_responsible_party || e.cancellation_category) ? `<div class="la-hist-ev-cancel">✕ ${escapeHtml([e.cancellation_category, e.cancellation_reason, e.cancellation_responsible_party].filter(Boolean).join(' · '))}</div>` : ''}
+        <div class="la-hist-res-row">${res}</div>
+      </div>`;
+    }).join('');
+    const meta = [a.location, a.phase, a.discipline, a.trade].filter(Boolean).map(escapeHtml).join(' · ');
+    return `<div class="la-hist-act">
+      <div class="la-hist-act-head">
+        <div class="la-hist-act-name">${escapeHtml(a.description || a.activity_id_text || '—')}</div>
+        ${meta ? `<div class="la-hist-act-meta">${meta}</div>` : ''}
+      </div>
+      <div class="la-hist-evs">${evHtml}</div>
+    </div>`;
+  }).join('') : '<div style="padding:20px;color:var(--gray-400);">No activities recorded that week.</div>';
+
+  if (body) body.innerHTML = `
+    <button class="form-secondary" style="font-size:12px;margin-bottom:12px;" onclick="_laRenderHistoryList()">‹ All weeks</button>
+    <div class="la-hist-wkhead">
+      <strong>${escapeHtml(_laSnapDate(snap.week_start))} – ${escapeHtml(_laSnapDate(snap.week_end))}</strong>
+      <span style="color:var(--gray-500);font-size:12px;">${snap.activity_count} activities · ${snap.event_count} shifts${snap.cancelled_count ? ' · ' + snap.cancelled_count + ' cancelled' : ''} · frozen ${escapeHtml(_laSnapDate(snap.captured_at))}</span>
+    </div>
+    <div class="la-hist-acts">${actsHtml}</div>`;
+}
 
 // ─── Resource panel search filter ────────────────────────────
 function _laFilterResPanel(query) {
@@ -22273,8 +23457,8 @@ function _laMountLookaheadTL() {
   const target = document.getElementById('lookahead-timeline');
   if (!target) return;
 
-  // Date window: today → today + N days
-  const winStart = dayjs().startOf('day');
+  // Date window: anchor → anchor + N days (anchor defaults to today; can scroll back/forward)
+  const winStart = _laWinAnchor();
   const days = Array.from({ length: _laTimelineWindow }, (_, i) =>
     winStart.add(i, 'day').format('YYYY-MM-DD')
   );
@@ -22366,9 +23550,9 @@ function _laMountLookaheadTL() {
     });
     Object.keys(locMap).sort().forEach(loc => {
       const c = _planningSubsystemColor(loc === 'No location' ? null : loc);
-      // Location view → show resource initials in each cell
+      // Location view → show resource chips in each cell, filtered by company toggle.
       groups.push({ id: 'loc-' + loc, label: loc, color: c.bg,
-        byDate: _laBuildByDate(locMap[loc], days, e => _planningEventResourceInitials(e.id)) });
+        byDate: _laBuildByDateLocation(locMap[loc], days, _laLocResFilter) });
     });
 
   } else { // activity — grouped by activity_group (T&C, Construction, Design…)
@@ -22442,6 +23626,8 @@ function _laMountLookaheadTL() {
           actTrade:              trade,
           actPhase:              phase,
           actStatus:             status,
+          actStatusNote:         a.status_note || '',
+          actStatusManual:       !!a.status_override,
           linkedTestRegActivity: a.linked_test_register_activity || null,
           // Activity view shows BART-only chips always visible in each cell
           byDate:                _laBuildByDateActivity(evs, days),
@@ -29501,6 +30687,15 @@ const _drawStorage = {
       return new Uint8Array(await res.arrayBuffer());
     } catch(e) { clearTimeout(timer); throw e; }
   },
+  async remove(path) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    try {
+      const res = await fetch(this._url(path), { method: 'DELETE', signal: ctrl.signal, headers: this._hdrs() });
+      clearTimeout(timer);
+      if (!res.ok && res.status !== 404) throw new Error(`Delete failed (${res.status}): ${await res.text()}`);
+    } catch(e) { clearTimeout(timer); throw e; }
+  },
 };
 
 // ── Data loader ────────────────────────────────────────────────────────────
@@ -29798,9 +30993,9 @@ function _drwPhaseForLocation(locName) {
 }
 
 function _drwIsAlwaysLocation(locName) {
-  const s = String(locName || '').trim().toUpperCase();
-  return s === 'HTT' || s === 'OCC' || s === 'W30' ||
-         s.startsWith('HTT ') || s.startsWith('OCC ') || s.startsWith('W30 ');
+  // No hard-coded default locations. Only locations that actually have an
+  // uploaded drawing set or sheet are shown (see _drwHasDrawings).
+  return false;
 }
 
 function _drwHasDrawings(locName) {
@@ -29946,7 +31141,7 @@ function _drwTabCurrent(loc, el) {
     el.innerHTML = `<div class="docs-empty"><p>No confirmed drawings for this location yet.</p></div>`;
     return;
   }
-  el.innerHTML = _drwSheetTableHTML(sheets);
+  el.innerHTML = _drwSheetTableHTML(sheets, { loc, subtab: 'current' });
 }
 
 // ── Tab 2: Drawing Sets ────────────────────────────────────────────────────
@@ -29975,8 +31170,11 @@ function _drwTabSets(loc, el) {
                 title="Upload a new revision — matching Drawing Numbers will be superseded automatically">
           + Upload Revision
         </button>
+        <button class="form-secondary tr-mini-btn" style="margin-left:8px;color:var(--bad);border-color:#fca5a5;"
+                onclick="_drwDeleteSet('${activeSet.id}','${escapeHtml(loc)}')"
+                title="Delete this drawing set, all its pages and the uploaded PDF">Delete set</button>
       </div>
-      ${sheets.length ? _drwSheetTableHTML(sheets, { compact: true }) : '<p style="color:var(--gray-400);font-size:12px;">No confirmed sheets yet.</p>'}
+      ${sheets.length ? _drwSheetTableHTML(sheets, { compact: true, loc, subtab: 'sets' }) : '<p style="color:var(--gray-400);font-size:12px;">No confirmed sheets yet.</p>'}
     `;
     return;
   }
@@ -30015,6 +31213,7 @@ function _drwTabSets(loc, el) {
                 <td style="white-space:nowrap;">
                   <button class="admin-action-btn tr-mini-btn" onclick="_drwOpenSet('${escapeHtml(loc)}','${set.id}')">View</button>
                   <button class="form-secondary tr-mini-btn" style="margin-left:4px;" onclick="event.stopPropagation();_drwUploadRevision('${set.id}')" title="Upload a new revision — matching Drawing Numbers will be superseded automatically">+ Revision</button>
+                  <button class="form-secondary tr-mini-btn" style="margin-left:4px;color:var(--bad);border-color:#fca5a5;" onclick="event.stopPropagation();_drwDeleteSet('${set.id}','${escapeHtml(loc)}')" title="Delete this drawing set, all its pages and the uploaded PDF">Delete</button>
                 </td>
               </tr>
             `;
@@ -30421,56 +31620,139 @@ async function _drwRunExtract() {
   }
 }
 
+let _drwReviewSelectedIdx = 0;
+let _drwReviewRendering   = false;
+
+function _drwBumpRev(rev) {
+  if (!rev) return '01';
+  const t = rev.trim();
+  if (/^\d+$/.test(t)) {
+    const n = parseInt(t, 10) + 1;
+    return String(n).padStart(Math.max(t.length, String(n).length), '0');
+  }
+  const up = t.toUpperCase();
+  if (/^[A-Z]+$/.test(up)) {
+    const chars = up.split('');
+    let i = chars.length - 1;
+    while (i >= 0 && chars[i] === 'Z') { chars[i] = 'A'; i--; }
+    if (i < 0) return 'A' + chars.join('');
+    chars[i] = String.fromCharCode(chars[i].charCodeAt(0) + 1);
+    return chars.join('');
+  }
+  const m = t.match(/^(.*?)(\d+)$/);
+  if (m) return m[1] + String(parseInt(m[2], 10) + 1).padStart(m[2].length, '0');
+  return t + '-R2';
+}
+
 function _drwShowReview(numPages) {
+  // Detect up-revs: existing current sheets at this location with matching drawing numbers.
+  const _normNumR = n => (n == null ? '' : String(n).trim().toUpperCase());
+  const reviewLoc = _drwUploadMeta?.location;
+  const existingByNum = {};
+  DRAWING_SHEETS.filter(s => s.location === reviewLoc && s.is_current)
+    .forEach(s => { if (s.sheet_number) existingByNum[_normNumR(s.sheet_number)] = s; });
+  // On first show, auto-bump revisions for up-rev sheets.
+  _drwParsedSheets.forEach(s => {
+    if (!s._upRevInit) {
+      const ex = existingByNum[_normNumR(s.sheetNumber || '')];
+      if (ex) {
+        s._existingSheet = ex;
+        // Up-rev: always advance past the existing sheet's revision. The extract
+        // usually reads the same number off the title block, so bump regardless.
+        s.revision = _drwBumpRev(ex.revision);
+      }
+      s._upRevInit = true;
+    }
+  });
+
   const needsReview   = _drwParsedSheets.filter(s => s.needsReview).length;
   const includedCount = _drwParsedSheets.filter(s => s.included).length;
-  const allNeedReview = needsReview === _drwParsedSheets.length;
+  const upRevCount    = _drwParsedSheets.filter(s => s.included && s._existingSheet).length;
+
+  // Keep the wide modal (from calibrate) so the PDF preview is readable.
+  const modalEl = document.querySelector('#modal-overlay .modal');
+  if (modalEl) { modalEl.className = 'modal modal-large'; modalEl.style.maxWidth = '98vw'; modalEl.style.width = '98vw'; modalEl.style.maxHeight = '95vh'; }
 
   document.querySelector('#modal-overlay .modal-head .modal-title').textContent = 'Review Sheets';
   const subEl = document.querySelector('#modal-overlay .modal-head .modal-sub');
-  if (subEl) subEl.textContent = 'Verify extracted data, uncheck pages to omit them, then Confirm to import.';
+  if (subEl) subEl.textContent = 'Click any row to preview that PDF page, fix anything the extract got wrong, uncheck pages to omit, then Confirm.';
 
   document.querySelector('#modal-overlay .modal-body').innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
       <span style="font-size:13px;color:var(--gray-600);">${numPages} pages parsed.</span>
       <span id="drw-included-pill" style="background:#e0e7ff;color:#3730a3;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">${includedCount} of ${numPages} to import</span>
+      ${upRevCount ? `<span id="drw-uprev-pill" style="background:#fff7ed;color:#c2410c;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">↑ ${upRevCount} up-rev</span>` : `<span id="drw-uprev-pill" style="display:none;background:#fff7ed;color:#c2410c;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;"></span>`}
       ${needsReview
         ? `<span style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">⚠ ${needsReview} need manual entry</span>`
         : `<span style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">✓ All sheets parsed</span>`}
       <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(true)" style="font-size:12px;padding:5px 10px;">Select all</button>
       <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(false)" style="font-size:12px;padding:5px 10px;">Select none</button>
-      ${allNeedReview ? `<button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()" style="font-size:12px;padding:5px 10px;margin-left:auto;">↩ Recalibrate region</button>` : ''}
+      <button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()" style="font-size:12px;padding:5px 10px;margin-left:auto;">↩ Recalibrate region</button>
     </div>
     ${_drwDisciplineListHTML()}
-    <div style="max-height:480px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;">
-      <table class="data-table">
-        <thead><tr>
-          <th style="width:48px;"><input type="checkbox" id="drw-rev-toggle-all" ${includedCount === _drwParsedSheets.length ? 'checked' : ''} onchange="_drwReviewSelectAll(this.checked)" title="Toggle all" /></th>
-          <th style="width:42px;">Pg</th><th>Sheet #</th><th>Page #</th><th>Title</th><th>Rev</th><th>Discipline</th>
-        </tr></thead>
-        <tbody>
-          ${_drwParsedSheets.map((s, i) => `
-            <tr id="drw-rev-row-${i}" style="${!s.included ? 'opacity:0.45;background:var(--gray-50);' : s.needsReview ? 'background:#fffbeb;' : ''}">
-              <td style="text-align:center;"><input type="checkbox" ${s.included ? 'checked' : ''} onchange="_drwReviewToggle(${i}, this.checked)" /></td>
-              <td style="color:var(--gray-400);font-size:12px;">${s.pageIndex+1}</td>
-              <td><input class="form-input" value="${escapeHtml(s.sheetNumber||'')}"
-                style="width:140px;font-family:monospace;font-size:12px;padding:3px 6px;border-color:${s.sheetNumber?'var(--gray-200)':'var(--warn)'};"
-                onchange="_drwReviewEdit(${i},'sheetNumber',this.value)" /></td>
-              <td><input class="form-input" value="${escapeHtml(s.pageNumber||'')}"
-                style="width:62px;font-family:monospace;font-size:12px;padding:3px 6px;text-align:center;"
-                onchange="_drwReviewEdit(${i},'pageNumber',this.value)" /></td>
-              <td><input class="form-input" value="${escapeHtml(s.sheetTitle||'')}"
-                style="width:240px;font-size:12px;padding:3px 6px;border-color:${s.sheetTitle?'var(--gray-200)':'var(--warn)'};"
-                onchange="_drwReviewEdit(${i},'sheetTitle',this.value)" /></td>
-              <td><input class="form-input" value="${escapeHtml(s.revision||'')}"
-                style="width:52px;font-size:12px;padding:3px 6px;"
-                onchange="_drwReviewEdit(${i},'revision',this.value)" /></td>
-              <td style="font-size:12px;color:var(--gray-500);">${escapeHtml(s.discipline||'—')}</td>
-            </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>
-    <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">Edit any field directly. Discipline suggestions come from Field Config; new free-text disciplines are added there after Confirm &amp; Import succeeds.</p>`;
+    <div style="display:flex;gap:16px;align-items:flex-start;">
+      <!-- PDF preview -->
+      <div style="flex:1 1 52%;min-width:0;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+          <button class="admin-action-btn-secondary" id="drw-rev-prev" style="padding:5px 11px;font-size:13px;">◀</button>
+          <span id="drw-rev-prev-label" style="font-size:12.5px;font-weight:600;color:var(--gray-700);">Page —</span>
+          <button class="admin-action-btn-secondary" id="drw-rev-next" style="padding:5px 11px;font-size:13px;">▶</button>
+          <span id="drw-rev-prev-meta" style="font-size:12px;color:var(--warn);font-weight:600;"></span>
+          <span style="display:inline-flex;align-items:center;gap:4px;margin-left:auto;">
+            <button class="admin-action-btn-secondary" id="drw-rev-zoom-out" style="padding:5px 10px;font-size:14px;font-weight:700;" title="Zoom out">−</button>
+            <span id="drw-rev-zoom-label" style="font-size:12px;font-weight:600;color:var(--gray-600);min-width:42px;text-align:center;">Fit</span>
+            <button class="admin-action-btn-secondary" id="drw-rev-zoom-in" style="padding:5px 10px;font-size:14px;font-weight:700;" title="Zoom in">+</button>
+            <button class="admin-action-btn-secondary" id="drw-rev-zoom-reset" style="padding:5px 10px;font-size:12px;" title="Fit to width">Fit</button>
+          </span>
+        </div>
+        <div id="drw-rev-stage" style="position:relative;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:6px;overflow:auto;max-height:64vh;min-height:300px;display:flex;align-items:flex-start;justify-content:center;">
+          <canvas id="drw-rev-pdf" style="display:block;"></canvas>
+        </div>
+      </div>
+      <!-- Editable list -->
+      <div style="flex:1 1 48%;min-width:0;">
+        <div style="max-height:64vh;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;">
+          <table class="data-table">
+            <thead><tr>
+              <th style="width:40px;"><input type="checkbox" id="drw-rev-toggle-all" ${includedCount === _drwParsedSheets.length ? 'checked' : ''} onchange="_drwReviewSelectAll(this.checked)" title="Toggle all" /></th>
+              <th style="width:34px;">Pg</th><th>Sheet #</th><th>Page #</th><th>Title</th><th>Rev</th><th>Discipline</th><th style="width:70px;">Status</th>
+            </tr></thead>
+            <tbody>
+              ${_drwParsedSheets.map((s, i) => {
+                const rowUpRev = !!s._existingSheet;
+                const rowStyle = !s.included
+                  ? `opacity:0.45;background:var(--gray-50);${rowUpRev ? 'border-left:3px solid #f59e0b;' : ''}`
+                  : rowUpRev ? 'background:#fff7ed;border-left:3px solid #f59e0b;'
+                  : s.needsReview ? 'background:#fffbeb;' : '';
+                const statusCell = rowUpRev
+                  ? `<span style="display:inline-flex;align-items:center;background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;">↑ Rev</span><br><span style="font-size:10px;color:var(--gray-400);">was: ${escapeHtml(s._existingSheet.revision || '—')}</span>`
+                  : `<span style="font-size:10px;color:var(--gray-400);">New</span>`;
+                return `
+                <tr id="drw-rev-row-${i}" class="drw-rev-clickable" onclick="_drwReviewShowPage(${i})" style="${rowStyle}">
+                  <td style="text-align:center;"><input type="checkbox" ${s.included ? 'checked' : ''} onclick="event.stopPropagation()" onchange="_drwReviewToggle(${i}, this.checked)" /></td>
+                  <td style="color:var(--gray-400);font-size:12px;">${s.pageIndex+1}</td>
+                  <td><input class="form-input" value="${escapeHtml(s.sheetNumber||'')}"
+                    style="width:110px;font-family:monospace;font-size:12px;padding:3px 6px;border-color:${s.sheetNumber?'var(--gray-200)':'var(--warn)'};"
+                    onchange="_drwReviewEdit(${i},'sheetNumber',this.value)" /></td>
+                  <td><input class="form-input" value="${escapeHtml(s.pageNumber||'')}"
+                    style="width:54px;font-family:monospace;font-size:12px;padding:3px 6px;text-align:center;"
+                    onchange="_drwReviewEdit(${i},'pageNumber',this.value)" /></td>
+                  <td><input class="form-input" value="${escapeHtml(s.sheetTitle||'')}"
+                    style="width:100%;min-width:130px;font-size:12px;padding:3px 6px;border-color:${s.sheetTitle?'var(--gray-200)':'var(--warn)'};"
+                    onchange="_drwReviewEdit(${i},'sheetTitle',this.value)" /></td>
+                  <td><input class="form-input" value="${escapeHtml(s.revision||'')}"
+                    style="width:48px;font-size:12px;padding:3px 6px;"
+                    onchange="_drwReviewEdit(${i},'revision',this.value)" /></td>
+                  <td id="drw-disc-cell-${i}" style="font-size:12px;color:var(--gray-500);">${escapeHtml(s.discipline||'—')}</td>
+                  <td style="text-align:center;padding:4px;">${statusCell}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+        <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">Click a row to preview its page. Edit any field directly; discipline suggestions come from Field Config.</p>
+      </div>
+    </div>`;
 
   _drwHydrateDisciplineReviewInputs();
 
@@ -30478,12 +31760,90 @@ function _drwShowReview(numPages) {
     <button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()">← Recalibrate</button>
     <button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Cancel</button>
     <button class="admin-action-btn" onclick="_drwConfirmImport()">Confirm &amp; Import</button>`;
+
+  const prevBtn = document.getElementById('drw-rev-prev');
+  const nextBtn = document.getElementById('drw-rev-next');
+  if (prevBtn) prevBtn.onclick = () => _drwReviewStep(-1);
+  if (nextBtn) nextBtn.onclick = () => _drwReviewStep(1);
+  const zInBtn  = document.getElementById('drw-rev-zoom-in');
+  const zOutBtn = document.getElementById('drw-rev-zoom-out');
+  const zRstBtn = document.getElementById('drw-rev-zoom-reset');
+  if (zInBtn)  zInBtn.onclick  = () => _drwReviewZoom(1.25);
+  if (zOutBtn) zOutBtn.onclick = () => _drwReviewZoom(0.8);
+  if (zRstBtn) zRstBtn.onclick = () => _drwReviewZoom(0);
+  _drwReviewZoomScale = 0; // 0 = fit-to-width
+  // Preview the first page that's set to import (fall back to page 1).
+  const firstIncluded = _drwParsedSheets.findIndex(s => s.included);
+  _drwReviewShowPage(firstIncluded >= 0 ? firstIncluded : 0);
+}
+
+// Zoom the review preview. factor 0 = fit-to-width; otherwise multiply current scale.
+function _drwReviewZoomScaleClamp(v) { return Math.max(0.25, Math.min(8, v)); }
+let _drwReviewZoomScale = 0;
+let _drwReviewFitScale  = 1;
+function _drwReviewZoom(factor) {
+  if (factor === 0) {
+    _drwReviewZoomScale = 0;
+  } else {
+    const base = _drwReviewZoomScale || _drwReviewFitScale;
+    _drwReviewZoomScale = _drwReviewZoomScaleClamp(base * factor);
+  }
+  const s = _drwParsedSheets[_drwReviewSelectedIdx];
+  if (s) _drwReviewRenderPage(s.pageIndex + 1);
+}
+
+function _drwReviewShowPage(idx) {
+  if (idx == null || idx < 0 || idx >= _drwParsedSheets.length) return;
+  _drwReviewSelectedIdx = idx;
+  _drwParsedSheets.forEach((_, i) => {
+    const row = document.getElementById(`drw-rev-row-${i}`);
+    if (row) row.classList.toggle('drw-rev-selected', i === idx);
+  });
+  const s = _drwParsedSheets[idx];
+  const lbl  = document.getElementById('drw-rev-prev-label');
+  const meta = document.getElementById('drw-rev-prev-meta');
+  if (lbl)  lbl.textContent  = `Page ${s.pageIndex + 1} of ${_drwParsedSheets.length}`;
+  if (meta) meta.textContent = s.included
+    ? (s._existingSheet ? `↑ up-rev — was Rev ${s._existingSheet.revision || '—'}` : '')
+    : 'omitted from import';
+  _drwReviewRenderPage(s.pageIndex + 1);
+}
+
+function _drwReviewStep(delta) {
+  _drwReviewShowPage(Math.max(0, Math.min(_drwParsedSheets.length - 1, _drwReviewSelectedIdx + delta)));
+}
+
+async function _drwReviewRenderPage(pageNum) {
+  if (!_drwUploadPdfDoc || _drwReviewRendering) return;
+  _drwReviewRendering = true;
+  try {
+    const page  = await _drwUploadPdfDoc.getPage(pageNum);
+    const vp0   = page.getViewport({ scale: 1 });
+    const stage = document.getElementById('drw-rev-stage');
+    const maxW  = Math.max(320, (stage?.clientWidth || 500) - 4);
+    // Fit-to-width scale; the stage scrolls when the page is taller/wider.
+    _drwReviewFitScale = maxW / vp0.width;
+    const scale = _drwReviewZoomScale || _drwReviewFitScale;
+    const viewport = page.getViewport({ scale });
+    const cv = document.getElementById('drw-rev-pdf');
+    if (!cv) return;
+    cv.width = viewport.width; cv.height = viewport.height;
+    cv.style.width = viewport.width + 'px'; cv.style.height = viewport.height + 'px';
+    // Center horizontally only when wider than the stage; otherwise left-align.
+    if (stage) stage.style.justifyContent = viewport.width > maxW ? 'flex-start' : 'center';
+    await page.render({ canvasContext: cv.getContext('2d'), viewport }).promise;
+    const zl = document.getElementById('drw-rev-zoom-label');
+    if (zl) zl.textContent = _drwReviewZoomScale ? `${Math.round((_drwReviewZoomScale / _drwReviewFitScale) * 100)}%` : 'Fit';
+  } catch (e) {
+    console.warn('[drw-review] preview render failed:', e.message);
+  } finally {
+    _drwReviewRendering = false;
+  }
 }
 
 function _drwHydrateDisciplineReviewInputs() {
   _drwParsedSheets.forEach((s, i) => {
-    const row = document.getElementById(`drw-rev-row-${i}`);
-    const cell = row?.lastElementChild;
+    const cell = document.getElementById(`drw-disc-cell-${i}`);
     if (!cell) return;
     cell.innerHTML = `
       <input id="drw-discipline-${i}" class="form-input" list="drw-discipline-options" value="${escapeHtml(s.discipline || '')}"
@@ -30509,8 +31869,10 @@ function _drwReviewToggle(idx, included) {
   const row = document.getElementById(`drw-rev-row-${idx}`);
   if (row) {
     const s = _drwParsedSheets[idx];
+    const hasUpRev = !!s._existingSheet;
     row.style.cssText = !s.included
-      ? 'opacity:0.45;background:var(--gray-50);'
+      ? `opacity:0.45;background:var(--gray-50);${hasUpRev ? 'border-left:3px solid #f59e0b;' : ''}`
+      : hasUpRev ? 'background:#fff7ed;border-left:3px solid #f59e0b;'
       : s.needsReview ? 'background:#fffbeb;' : '';
   }
   _drwReviewUpdateCounts();
@@ -30523,8 +31885,10 @@ function _drwReviewSelectAll(checked) {
     const cb  = row?.querySelector('td:first-child input[type="checkbox"]');
     if (cb) cb.checked = !!checked;
     if (row) {
+      const hasUpRev = !!s._existingSheet;
       row.style.cssText = !s.included
-        ? 'opacity:0.45;background:var(--gray-50);'
+        ? `opacity:0.45;background:var(--gray-50);${hasUpRev ? 'border-left:3px solid #f59e0b;' : ''}`
+        : hasUpRev ? 'background:#fff7ed;border-left:3px solid #f59e0b;'
         : s.needsReview ? 'background:#fffbeb;' : '';
     }
   });
@@ -30536,8 +31900,14 @@ function _drwReviewSelectAll(checked) {
 function _drwReviewUpdateCounts() {
   const total    = _drwParsedSheets.length;
   const included = _drwParsedSheets.filter(s => s.included).length;
+  const upRevs   = _drwParsedSheets.filter(s => s.included && s._existingSheet).length;
   const pill = document.getElementById('drw-included-pill');
   if (pill) pill.textContent = `${included} of ${total} to import`;
+  const upRevPill = document.getElementById('drw-uprev-pill');
+  if (upRevPill) {
+    upRevPill.style.display = upRevs ? '' : 'none';
+    upRevPill.textContent = `↑ ${upRevs} up-rev`;
+  }
   const toggle = document.getElementById('drw-rev-toggle-all');
   if (toggle) toggle.checked = included === total && total > 0;
 }
@@ -30598,9 +31968,24 @@ async function _drwConfirmImport() {
     await _dbUpdate('drawing_sets', { storage_path: storagePath }, { id: setId });
 
     document.getElementById('drw-confirm-status').textContent = 'Checking for existing revisions…';
-    const newNums = toImport.map(s => s.sheetNumber).filter(Boolean);
-    const toSupersede = DRAWING_SHEETS.filter(s => s.location === meta.location && s.is_current && newNums.includes(s.sheet_number));
-    if (toSupersede.length) await Promise.all(toSupersede.map(s => _dbUpdate('drawing_sheets', { is_current: false }, { id: s.id })));
+    // Up-rev: any current sheet in this location whose Drawing Number matches an
+    // incoming one is superseded (compared case/space-insensitively so the same
+    // number always matches). A prior set left with no current sheets is retired
+    // from the active list so re-uploading the same drawings doesn't pile up
+    // duplicate sets — it folds in as a new revision instead.
+    const _normNum = n => (n == null ? '' : String(n).trim().toUpperCase());
+    const newNums = new Set(toImport.map(s => _normNum(s.sheetNumber)).filter(Boolean));
+    const toSupersede = DRAWING_SHEETS.filter(s =>
+      s.location === meta.location && s.is_current && newNums.has(_normNum(s.sheet_number)));
+    if (toSupersede.length) {
+      await Promise.all(toSupersede.map(s => _dbUpdate('drawing_sheets', { is_current: false }, { id: s.id })));
+      const supersededIds = new Set(toSupersede.map(s => s.id));
+      const priorSetIds = new Set(toSupersede.map(s => s.set_id).filter(id => id && id !== setId));
+      for (const sid of priorSetIds) {
+        const stillCurrent = DRAWING_SHEETS.some(s => s.set_id === sid && s.is_current && !supersededIds.has(s.id));
+        if (!stillCurrent) await _dbUpdate('drawing_sets', { status: 'superseded' }, { id: sid }).catch(() => {});
+      }
+    }
 
     document.getElementById('drw-confirm-status').textContent = 'Saving sheet records…';
     const insertResult = await _drwInsertSheetRows(setId, meta, toImport);
@@ -30837,6 +32222,125 @@ async function _drwZoomBy(mult) {
 function _drwZoomIn() { _drwZoomBy(1.2); }
 function _drwZoomOut() { _drwZoomBy(1 / 1.2); }
 
+// ── Pinch-to-zoom (touch) + ctrl/⌘-wheel zoom ───────────────────────────────
+// Strategy: during a 2-finger gesture we apply a cheap CSS transform to the
+// canvas wrapper for smooth live preview, then on release we re-rasterise the
+// page once at the new scale (crisp) and adjust scroll so the point under the
+// fingers stays put. Single-finger markup drawing is unaffected.
+let _drwGestureLock = false;        // suppress 1-finger markup mid-gesture
+let _drwPinchInited = false;        // listeners attached once (body persists)
+const _drwTouchPts  = new Map();    // pointerId -> {x,y}
+let _drwPinch       = null;         // active gesture state
+
+function _drwTwoPts() { const it = _drwTouchPts.values(); return [it.next().value, it.next().value]; }
+function _drwDist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function _drwMid(a, b)  { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+
+// Zoom to an absolute scale, then place a content point under the screen
+// point (cx,cy). `anchor` (a {ux,uy} content fraction) is supplied for pinch
+// so the point the fingers grabbed at gesture *start* follows to where they
+// end — handling pan + zoom together. Without it (wheel), the point under the
+// cursor is held fixed.
+async function _drwZoomToScale(target, cx, cy, anchor) {
+  const wrap = document.getElementById('drw-canvas-wrap');
+  const body = document.getElementById('drw-viewer-body');
+  if (!wrap || !body || !_drwPdfDoc) {
+    if (wrap) { wrap.style.transform = ''; wrap.style.transformOrigin = ''; wrap.style.transition = ''; }
+    return;
+  }
+  target = Math.max(0.25, Math.min(4, target));
+  let ux, uy;
+  if (anchor) {
+    ux = anchor.ux; uy = anchor.uy;
+  } else {
+    const r0 = wrap.getBoundingClientRect();
+    ux = r0.width  ? (cx - r0.left) / r0.width  : 0.5;
+    uy = r0.height ? (cy - r0.top)  / r0.height : 0.5;
+  }
+  _drwZoomMode  = 'manual';
+  _drwZoomScale = target;
+  await _drwRenderPage(_drwPageIndex);
+  // Clear the live-preview transform now that the crisp page exists, then
+  // anchor the chosen point in the same frame — no visible snap-back.
+  wrap.style.transform = ''; wrap.style.transformOrigin = ''; wrap.style.transition = '';
+  const r1 = wrap.getBoundingClientRect();
+  body.scrollLeft += (r1.left + ux * r1.width)  - cx;
+  body.scrollTop  += (r1.top  + uy * r1.height) - cy;
+}
+
+function _drwInitPinchZoom() {
+  if (_drwPinchInited) return;
+  const body = document.getElementById('drw-viewer-body');
+  if (!body) return;
+  _drwPinchInited = true;
+
+  // Capture phase: react to the 2nd finger before the markup canvas does.
+  body.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch') return;
+    _drwTouchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (_drwTouchPts.size === 2) {
+      _drwGestureLock = true;
+      _drwIsDrawing = false; _drwCurPath = []; _drwDragState = null;
+      _drwRedraw();
+      const [a, b] = _drwTwoPts();
+      const mid  = _drwMid(a, b);
+      const wrap = document.getElementById('drw-canvas-wrap');
+      const r    = wrap ? wrap.getBoundingClientRect() : { left: 0, top: 0, width: 1, height: 1 };
+      _drwPinch = {
+        startDist: _drwDist(a, b) || 1,
+        scale0:   _drwZoomScale,
+        startMid: mid,
+        curMid:   mid,
+        ux: r.width  ? (mid.x - r.left) / r.width  : 0.5,
+        uy: r.height ? (mid.y - r.top)  / r.height : 0.5,
+        ratio: 1,
+      };
+    }
+  }, true);
+
+  body.addEventListener('pointermove', e => {
+    if (!_drwPinch || !_drwTouchPts.has(e.pointerId)) return;
+    _drwTouchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (_drwTouchPts.size < 2) return;
+    e.preventDefault();
+    const [a, b] = _drwTwoPts();
+    const mid = _drwMid(a, b);
+    let ratio = _drwDist(a, b) / _drwPinch.startDist;
+    ratio = Math.max(0.25 / _drwPinch.scale0, Math.min(4 / _drwPinch.scale0, ratio));
+    _drwPinch.ratio = ratio;
+    _drwPinch.curMid = mid;
+    const wrap = document.getElementById('drw-canvas-wrap');
+    if (wrap) {
+      const dx = mid.x - _drwPinch.startMid.x, dy = mid.y - _drwPinch.startMid.y;
+      wrap.style.transition = 'none';
+      wrap.style.transformOrigin = `${_drwPinch.ux * 100}% ${_drwPinch.uy * 100}%`;
+      wrap.style.transform = `translate(${dx}px, ${dy}px) scale(${ratio})`;
+    }
+  }, true);
+
+  const endTouch = e => {
+    if (!_drwTouchPts.has(e.pointerId)) return;
+    _drwTouchPts.delete(e.pointerId);
+    if (_drwPinch && _drwTouchPts.size < 2) {
+      const p = _drwPinch; _drwPinch = null;
+      // Anchor the content point grabbed at the start (p.ux/uy) to the final
+      // finger midpoint, so panning while zoomed sticks instead of rebounding.
+      _drwZoomToScale(p.scale0 * p.ratio, p.curMid.x, p.curMid.y, { ux: p.ux, uy: p.uy });
+    }
+    if (_drwTouchPts.size === 0) _drwGestureLock = false;
+  };
+  body.addEventListener('pointerup', endTouch, true);
+  body.addEventListener('pointercancel', endTouch, true);
+
+  // Trackpad / mouse: ctrl(⌘)+wheel = zoom about the cursor (trackpad pinch
+  // is reported by browsers as ctrl+wheel).
+  body.addEventListener('wheel', e => {
+    if (!e.ctrlKey || !_drwPdfDoc) return;
+    e.preventDefault();
+    _drwZoomToScale(_drwZoomScale * (e.deltaY < 0 ? 1.1 : 1 / 1.1), e.clientX, e.clientY);
+  }, { passive: false });
+}
+
 // ── Markup canvas ──────────────────────────────────────────────────────────
 function _drwInitMarkupCanvas(canvas) {
   // Remove old listeners by cloning
@@ -30851,6 +32355,7 @@ function _drwInitMarkupCanvas(canvas) {
   fresh.addEventListener('keydown', _drwCanvasKeyDown);
   fresh.tabIndex = 0;
   _drwUpdateCursor();
+  _drwInitPinchZoom();
 }
 
 function _drwCanvasXY(e) {
@@ -30863,6 +32368,7 @@ function _drwCanvasXY(e) {
 }
 
 function _drwPointerDown(e) {
+  if (_drwGestureLock) return;          // a 2-finger pinch is in progress
   _drwRemoveTextEditor(true);
   const canvas = document.getElementById('drw-markup-canvas');
   canvas?.focus();
@@ -30890,6 +32396,7 @@ function _drwPointerDown(e) {
 }
 
 function _drwPointerMove(e) {
+  if (_drwGestureLock) return;
   const { fx, fy } = _drwCanvasXY(e);
   if (_drwDragState) {
     _drwApplyDrag(fx, fy, e.shiftKey);
@@ -30903,6 +32410,7 @@ function _drwPointerMove(e) {
 }
 
 function _drwPointerUp(e) {
+  if (_drwGestureLock) return;
   if (_drwDragState) {
     _drwDragState = null;
     _drwRedraw();
@@ -31509,6 +33017,9 @@ function _drwSheetTableHTML(sheets, opts = {}) {
   });
   const setTitle = sheet => DRAWING_SETS.find(x => x.id === sheet.set_id)?.title || '';
   const cols = opts.compact ? 7 : 8;
+  const isAdmin = currentRoleUser?.role === 'admin';
+  const loc     = opts.loc || _drwActiveLocation || '';
+  const subtab  = opts.subtab || 'current';
   let lastDisc = '';
   const rows = sorted.map(sheet => {
     const disc = sheet.discipline || 'General';
@@ -31533,7 +33044,7 @@ function _drwSheetTableHTML(sheets, opts = {}) {
         <td class="drw-sheet-page-cell">${escapeHtml(sheet.page_number || String((sheet.page_index ?? 0) + 1))}</td>
         ${opts.compact ? '' : `<td class="drw-sheet-set-cell">${escapeHtml(setTitle(sheet) || '—')}</td>`}
         <td>${pubCount ? `<span class="drw-markup-badge">${pubCount} markup${pubCount > 1 ? 's' : ''}</span>` : '<span class="drw-muted">No markups</span>'}</td>
-        <td><span class="drw-status-pill ${sheet.is_current ? 'is-current' : 'is-old'}">${sheet.is_current ? 'Current' : 'Superseded'}</span></td>
+        <td><span class="drw-status-pill ${sheet.is_current ? 'is-current' : 'is-old'}">${sheet.is_current ? 'Current' : 'Superseded'}</span>${isAdmin ? ` <button class="drw-del-btn" title="Delete this page (and its markups)" onclick="event.stopPropagation();_drwDeleteSheet('${sheet.id}','${escapeHtml(loc)}','${subtab}')">🗑</button>` : ''}</td>
       </tr>
     `;
   }).join('');
@@ -31556,6 +33067,52 @@ function _drwSheetTableHTML(sheets, opts = {}) {
       </table>
     </div>
   `;
+}
+
+// ── Delete a single page (sheet) — removes the sheet record + its markups.
+// The underlying PDF is untouched; the page just no longer appears in the tool.
+async function _drwDeleteSheet(sheetId, loc, subtab) {
+  if (currentRoleUser?.role !== 'admin') { toast('Admin access required', 'error'); return; }
+  const sheet = DRAWING_SHEETS.find(s => s.id === sheetId);
+  if (!sheet) { toast('Page not found', 'error'); return; }
+  const label = sheet.sheet_number || sheet.sheet_title || `page ${(sheet.page_index ?? 0) + 1}`;
+  if (!confirm(`Delete "${label}"?\n\nThis removes the page and any markups on it. The uploaded PDF file is not changed.`)) return;
+  try {
+    const mk = DRAWING_MARKUPS.filter(m => m.sheet_id === sheetId);
+    for (const m of mk) await _dbDelete('drawing_markups', { id: m.id });
+    await _dbDelete('drawing_sheets', { id: sheetId });
+    logAudit?.('Drawing page deleted', label, `set ${sheet.set_id}`);
+    toast('Page deleted', 'success');
+    await loadDrawingsData();
+    renderDrawingsPage();
+    _drwRenderLocationView(loc || _drwActiveLocation, subtab || 'current');
+  } catch (e) { toast('Delete failed: ' + (e.message || 'unknown error'), 'error'); }
+}
+
+// ── Delete an entire drawing set — its pages, their markups, and the PDF.
+async function _drwDeleteSet(setId, loc) {
+  if (currentRoleUser?.role !== 'admin') { toast('Admin access required', 'error'); return; }
+  const set = DRAWING_SETS.find(s => s.id === setId);
+  if (!set) { toast('Drawing set not found', 'error'); return; }
+  const sheetsOfSet = DRAWING_SHEETS.filter(s => s.set_id === setId);
+  if (!confirm(`Delete drawing set "${set.title}"?\n\nThis permanently removes the set, all ${sheetsOfSet.length} of its page${sheetsOfSet.length === 1 ? '' : 's'}, their markups, and the uploaded PDF. This cannot be undone.`)) return;
+  try {
+    const sheetIds = new Set(sheetsOfSet.map(s => s.id));
+    const mk = DRAWING_MARKUPS.filter(m => sheetIds.has(m.sheet_id));
+    for (const m of mk) await _dbDelete('drawing_markups', { id: m.id });
+    if (sheetsOfSet.length) await _dbDelete('drawing_sheets', { set_id: setId });
+    await _dbDelete('drawing_sets', { id: setId });
+    if (set.storage_path) {
+      try { await _drawStorage.remove(set.storage_path); }
+      catch (e) { console.warn('[drw] storage remove failed:', e.message); }
+    }
+    logAudit?.('Drawing set deleted', set.title, `${sheetsOfSet.length} pages`);
+    toast('Drawing set deleted', 'success');
+    _drwActiveSetId = '';
+    await loadDrawingsData();
+    renderDrawingsPage();
+    _drwRenderLocationView(loc || _drwActiveLocation, 'sets');
+  } catch (e) { toast('Delete failed: ' + (e.message || 'unknown error'), 'error'); }
 }
 
 async function openTestCaseScopeModal(testId) {
@@ -34094,20 +35651,39 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape')     { _drwCloseViewer(); }
 });
 
+// Ordered PDF page indices that were actually imported for the open set.
+// Page navigation is confined to these so un-imported (unchecked-on-import)
+// pages never surface when cycling through the viewer.
+function _drwCurSetPageIndices() {
+  if (!_drwCurSet) return [];
+  return [...new Set(
+    DRAWING_SHEETS
+      .filter(s => s.set_id === _drwCurSet.id && s.page_index != null)
+      .map(s => s.page_index)
+  )].sort((a, b) => a - b);
+}
+
 function _drwUpdateNavBar() {
   if (!_drwPdfDoc || !_drwCurSet) return;
-  document.getElementById('drw-nav-page-count').textContent = _drwPdfDoc.numPages;
+  const pages = _drwCurSetPageIndices();
+  const total = pages.length || _drwPdfDoc.numPages;
+  document.getElementById('drw-nav-page-count').textContent = total;
   _drwSyncNavPage();
   _drwUpdateRevisionPicker();
   _drwWireFindInput();
-  // Page jump input
+  // Page jump input — numbers refer to the Nth imported sheet (1..total).
   const inp = document.getElementById('drw-nav-page-input');
   if (inp) {
-    inp.max = _drwPdfDoc.numPages;
+    inp.max = total;
     inp.onchange = (e) => {
       const n = parseInt(e.target.value, 10);
       if (!Number.isFinite(n)) return;
-      _drwGotoPage(Math.max(0, Math.min(_drwPdfDoc.numPages - 1, n - 1)));
+      const list = _drwCurSetPageIndices();
+      if (list.length) {
+        _drwGotoPage(list[Math.max(1, Math.min(list.length, n)) - 1]);
+      } else {
+        _drwGotoPage(Math.max(0, Math.min(_drwPdfDoc.numPages - 1, n - 1)));
+      }
     };
   }
   // Kick off background text extraction for Super Find.
@@ -34115,12 +35691,19 @@ function _drwUpdateNavBar() {
 }
 
 function _drwSyncNavPage() {
+  const pages = _drwCurSetPageIndices();
+  const pos   = pages.indexOf(_drwPageIndex); // position within imported sheets
   const inp = document.getElementById('drw-nav-page-input');
-  if (inp && _drwPdfDoc) inp.value = String(_drwPageIndex + 1);
+  if (inp && _drwPdfDoc) inp.value = String(pos >= 0 ? pos + 1 : _drwPageIndex + 1);
   const prev = document.getElementById('drw-nav-prev');
   const next = document.getElementById('drw-nav-next');
-  if (prev) prev.disabled = _drwPageIndex <= 0;
-  if (next) next.disabled = !_drwPdfDoc || _drwPageIndex >= (_drwPdfDoc.numPages - 1);
+  if (pages.length) {
+    if (prev) prev.disabled = pos === 0;
+    if (next) next.disabled = pos >= 0 && pos >= pages.length - 1;
+  } else {
+    if (prev) prev.disabled = _drwPageIndex <= 0;
+    if (next) next.disabled = !_drwPdfDoc || _drwPageIndex >= (_drwPdfDoc.numPages - 1);
+  }
 }
 
 async function _drwGotoPage(pageIndex) {
@@ -34160,7 +35743,22 @@ async function _drwGotoPage(pageIndex) {
 
 function _drwGotoRel(delta) {
   if (!_drwPdfDoc) return;
-  _drwGotoPage(_drwPageIndex + delta);
+  const pages = _drwCurSetPageIndices();
+  if (!pages.length) { _drwGotoPage(_drwPageIndex + delta); return; }
+  const pos = pages.indexOf(_drwPageIndex);
+  let target;
+  if (pos === -1) {
+    // Currently on a non-imported page — step to the nearest imported page
+    // in the direction of travel.
+    if (delta > 0) target = pages.find(p => p > _drwPageIndex);
+    else { const before = pages.filter(p => p < _drwPageIndex); target = before[before.length - 1]; }
+  } else {
+    const ni = pos + delta;
+    if (ni < 0 || ni >= pages.length) return;
+    target = pages[ni];
+  }
+  if (target == null) return;
+  _drwGotoPage(target);
 }
 
 // ── Revision picker ────────────────────────────────────────────────────────
