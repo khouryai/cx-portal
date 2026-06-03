@@ -1320,12 +1320,30 @@ async function _dashRenderSchedule() {
     });
   }
 
-  // Upcoming planned (next 30d, not completed) by subsystem
+  // Upcoming planned tests (next 30d) by subsystem — sourced from the lookahead
+  // schedule (planning_events), not test-case planned_date. Each scheduled
+  // activity in the window is counted once and grouped by subsystem: the linked
+  // test item's subsystem when present, otherwise the activity's trade (lookahead
+  // trade codes — DCS, IXL, … — match the test register's subsystem codes).
+  await loadPlanningData();
+  const subsysByTestId = new Map();
+  (_latestTI() || []).forEach(t => { if (t.TestID != null) subsysByTestId.set(String(t.TestID), t.Subsystem || ''); });
+  const actById = new Map((PLANNING_ACTIVITIES || []).map(a => [a.id, a]));
   const upcoming = {};
-  planned.forEach(r => {
-    if (r.effective_completed_at) return;
-    const p = new Date(r.planned_date);
-    if (p >= now && (p - now) <= 30 * _DAY_MS) { const k = r.subsystem || 'Unassigned'; upcoming[k] = (upcoming[k] || 0) + 1; }
+  const seenActivities = new Set();
+  (PLANNING_EVENTS || []).forEach(e => {
+    if (!e.event_date || e.status === 'cancelled') return;
+    const d = new Date(e.event_date); d.setHours(0, 0, 0, 0);
+    if (d < now || (d - now) > 30 * _DAY_MS) return;
+    const act = e.planning_activity_id ? actById.get(e.planning_activity_id) : null;
+    if (act && act.deleted_at) return; // ignore soft-deleted activities
+    const testId = e.test_item_id || (act && act.linked_test_item_id) || null;
+    // Dedup so an activity scheduled across multiple days counts once.
+    const key = testId ? `t:${testId}` : (e.planning_activity_id ? `a:${e.planning_activity_id}` : `e:${e.id}`);
+    if (seenActivities.has(key)) return;
+    seenActivities.add(key);
+    const k = (testId && subsysByTestId.get(String(testId))) || (act && act.trade) || 'Unassigned';
+    upcoming[k] = (upcoming[k] || 0) + 1;
   });
   const uSorted = Object.entries(upcoming).sort((a, b) => b[1] - a[1]).slice(0, 12);
   const upCtx = document.getElementById('chart-upcoming');

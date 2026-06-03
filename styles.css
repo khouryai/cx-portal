@@ -428,7 +428,7 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 16px;
-  margin-top: -56px;
+  margin-top: 0;
   margin-bottom: 48px;
   position: relative;
   z-index: 2;
@@ -1499,7 +1499,8 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   .hero-sub { font-size: 16px; }
   .hero-meta { gap: 24px; }
   .page-title { font-size: 30px; }
-  .kpi-grid { grid-template-columns: 1fr; margin-top: -32px; }
+  .kpi-grid { grid-template-columns: 1fr; margin-top: 0; }
+  .dash-view-switch { margin-top: -32px; }
   .kpi-grid-mini { grid-template-columns: repeat(2,1fr); }
   .metric-row { grid-template-columns: repeat(2, 1fr); }
   .filter-bar { flex-direction: column; }
@@ -5681,7 +5682,11 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 4px 0 20px;
+  /* Owns the float-over-hero offset so it sits above the KPI cards instead of
+     being overlapped by them. Cards now flow normally below the tab bar. */
+  margin: -56px 0 20px;
+  position: relative;
+  z-index: 3;
 }
 .dash-view-btn {
   padding: 8px 16px;
