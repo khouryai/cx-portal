@@ -3382,8 +3382,8 @@ function onLoggedIn() {
 function toast(msg, type = 'success') {
   const el = document.createElement('div');
   el.className = 'toast ' + type;
-  const icon = type === 'success' ? '✓' : type === 'error' ? '!' : type === 'warn' ? '⚠' : 'ℹ';
-  el.innerHTML = `<div class="icon">${icon}</div><div>${escapeHtml(msg)}</div>`;
+  const statusIcon = type === 'success' ? '✓' : type === 'error' ? '!' : type === 'warn' ? '⚠' : 'ℹ';
+  el.innerHTML = `<div class="icon">${statusIcon}</div><div>${escapeHtml(msg)}</div>`;
   document.body.appendChild(el);
   setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateY(20px)'; el.style.transition = 'all 0.3s'; }, 3500);
   setTimeout(() => el.remove(), 4000);
@@ -6250,7 +6250,7 @@ function renderIntakeStep1() {
           return `
             <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;display:flex;gap:16px;align-items:center;">
               <div style="flex:1;min-width:0;">
-                <div style="font-weight:600;font-size:13px;margin-bottom:3px;">${escapeHtml(e.testCode)} · ${escapeHtml(e.testName)}${e.assetName ? ` <span style="background:#dbeafe;color:#1d4ed8;font-size:11px;padding:1px 7px;border-radius:10px;font-weight:500;margin-left:4px;">📦 ${escapeHtml(e.assetName)}</span>` : ''}</div>
+                <div style="font-weight:600;font-size:13px;margin-bottom:3px;">${escapeHtml(e.testCode)} · ${escapeHtml(e.testName)}${e.assetName ? ` <span style="background:#dbeafe;color:#1d4ed8;font-size:11px;padding:1px 7px;border-radius:10px;font-weight:500;margin-left:4px;">${icon('package')} ${escapeHtml(e.assetName)}</span>` : ''}</div>
                 <div style="font-size:11px;color:var(--gray-500);margin-bottom:5px;">${escapeHtml(e.phase||'—')} · ${escapeHtml(e.location||'—')} · ${escapeHtml(e.activity||'—')}</div>
                 <div style="font-size:12px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                   ${ps ? `<span style="background:#e5e7eb;color:#374151;padding:2px 8px;border-radius:10px;">${escapeHtml(ps)}</span><span style="color:var(--gray-400);">→</span>` : ''}
@@ -7650,7 +7650,7 @@ async function _punchRenderGallery(id) {
       ? `<span class="punch-photo-kind ${escapeHtml(ph.capture_kind)}">${escapeHtml(ph.capture_kind)}</span>` : '';
     return `<div class="punch-photo-tile" title="${escapeHtml(ph.caption || ph.file_name || '')}">
       <img data-photo-thumb="${escapeHtml(thumb)}" data-photo-full="${escapeHtml(ph.storage_path)}" alt="${escapeHtml(ph.caption || '')}" loading="lazy">${kind}
-      <button class="punch-photo-dl" title="Save photo" onclick="_punchDownloadPhoto('${escapeHtml(ph.storage_path)}', ${JSON.stringify(ph.file_name || '').replace(/"/g,'&quot;')}, event)">⬇</button>
+      <button class="punch-photo-dl" title="Save photo" onclick="_punchDownloadPhoto('${escapeHtml(ph.storage_path)}', ${JSON.stringify(ph.file_name || '').replace(/"/g,'&quot;')}, event)">${icon('download')}</button>
     </div>`;
   }).join('');
   await _punchSignImages(wrap);
@@ -7992,7 +7992,7 @@ function _punchFormHTML(p) {
       </div>` : `<div class="form-field form-field-full">
         <label>Photos</label>
         <div class="punch-newphoto-row" id="punch-newphoto-row"></div>
-        <button type="button" class="form-secondary" onclick="document.getElementById('punch-newphoto-file').click()">📷 Add photo</button>
+        <button type="button" class="form-secondary" onclick="document.getElementById('punch-newphoto-file').click()">${icon('camera')} Add photo</button>
         <input type="file" id="punch-newphoto-file" accept="image/*" multiple style="display:none" onchange="_punchNewPhotoChosen(this)">
         <div style="font-size:11px;color:var(--gray-500);margin-top:4px;">Take a photo or choose from your device — they attach to this item once it's created.</div>
       </div>`}
@@ -8048,7 +8048,7 @@ function openPunchFromTestCase(testId) {
   ].filter(Boolean).join('\n');
 
   modal({
-    title: '📋 Create Punch List Item',
+    title: 'Create Punch List Item',
     sub: `Linked to failed test case ${ti.TestCaseCode}`,
     size: 'large',
     body: _punchFormHTML(null),
@@ -8103,13 +8103,13 @@ function _punchLinksForTestHTML(testId) {
     const bg      = isClosed ? '#dcfce7' : '#fee2e2';
     const border  = isClosed ? '#86efac' : '#fca5a5';
     const color   = isClosed ? '#15803d' : '#dc2626';
-    const icon    = isClosed ? '✅' : '🔴';
+    const statusGlyph = isClosed ? icon('check-circle') : icon('dot');
     const tip     = isClosed ? `Punch #${p.number} closed — ready to retest` : `Punch #${p.number} open — ${PL_STATUS_LABELS[p.status] || p.status}`;
     const title   = (p.title || '').substring(0, 26);
     const ellipsis = (p.title || '').length > 26 ? '…' : '';
     return `<span onclick="openPunchDetail('${p.id}')" title="${escapeHtml(tip)}"
       style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;padding:3px 8px;background:${bg};color:${color};border:1px solid ${border};border-radius:4px;cursor:pointer;margin:1px 2px 1px 0;white-space:nowrap;">
-      ${icon} #${p.number} <span style="font-weight:400;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(title)}${ellipsis}</span>
+      ${statusGlyph} #${p.number} <span style="font-weight:400;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(title)}${ellipsis}</span>
     </span>`;
   }).join('');
 }
@@ -8130,7 +8130,7 @@ function openLinkPunchModal(testId) {
     .sort((a, b) => b.number - a.number);
 
   modal({
-    title: '🔗 Link to Punch Item',
+    title: 'Link to Punch Item',
     sub: ti ? `Failed test case: ${ti.TestCaseCode}${ti.TestName ? ' — ' + ti.TestName : ''}` : '',
     size: 'medium',
     body: `
@@ -8383,7 +8383,7 @@ function openPunchImportModal() {
         <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px;">
           Upload a CSV file to bulk-create punch items. Download the template to see required columns.
         </p>
-        <button class="form-secondary" style="font-size:12px;" onclick="downloadPunchTemplate()">⬇ Download CSV Template</button>
+        <button class="form-secondary" style="font-size:12px;" onclick="downloadPunchTemplate()">${icon('download')} Download CSV Template</button>
       </div>
       <div class="form-field">
         <label>Select CSV File</label>
@@ -8698,11 +8698,11 @@ function renderAuditLog() {
         <span class="data-count" id="audit-count"></span>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <div class="audit-search-wrap">
-            <span class="audit-search-icon">🔍</span>
+            <span class="audit-search-icon">${icon('search')}</span>
             <input id="audit-search" class="audit-search-input" type="search"
               placeholder="Search everything — user, action, target, location, role, table…"
               value="${escapeHtml(_auditSearch)}" oninput="_auditOnSearch(this.value)" autocomplete="off" />
-            ${_auditSearch ? `<button class="audit-search-clear" onclick="_auditOnSearch('')" title="Clear">✕</button>` : ''}
+            ${_auditSearch ? `<button class="audit-search-clear" onclick="_auditOnSearch('')" title="Clear">${icon('x')}</button>` : ''}
           </div>
           <button class="form-secondary" onclick="refreshAuditLog()">Refresh</button>
           <button class="export-btn" onclick="exportAudit()">Export CSV</button>
@@ -9591,7 +9591,7 @@ function renderTestReporting() {
       <!-- Search + filters -->
       <div class="v2-filter-row">
         <div class="v2-search-wrap">
-          <span class="icon">🔍</span>
+          <span class="icon">${icon('search')}</span>
           <input type="text" value="${escapeHtml(_trpFilters.search)}"
                  placeholder="Search reports, CDRLs, activities, test cases…"
                  oninput="_trpSetSearch(this.value)">
@@ -9605,7 +9605,7 @@ function renderTestReporting() {
           ${locationOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.location===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
         </select>
         ${trpUserSub
-          ? `<span class="filter-locked-tag" title="Auto-filtered to your assigned subsystem">📌 ${escapeHtml(trpUserSub)}</span>`
+          ? `<span class="filter-locked-tag" title="Auto-filtered to your assigned subsystem">${icon('pin')} ${escapeHtml(trpUserSub)}</span>`
           : `<select onchange="_trpSetFilter('subsystem',this.value)">
               <option value="">All Subsystems</option>
               ${subsystemOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
@@ -9688,7 +9688,7 @@ function _trpReportRowHTML(row, canManage) {
           <div class="action-primary-row">
             ${row.isDerived && canManage
               ? `<button class="v2-btn-mini primary" onclick="_trpCreateDerivedReport('${uid}')">↻ Sync</button>`
-              : `<button class="v2-btn-mini primary" onclick="openExtractReportModal('${uid}')" ${canExtract?'':'disabled'} title="${escapeHtml(extractTip)}">📄 Extract</button>`}
+              : `<button class="v2-btn-mini primary" onclick="openExtractReportModal('${uid}')" ${canExtract?'':'disabled'} title="${escapeHtml(extractTip)}">${icon('file')} Extract</button>`}
             <button class="v2-btn-mini" onclick="_trpToggleLinks('${uid}')" style="width:34px;justify-content:center;" title="${expanded?'Collapse':'Expand'} links">${expanded?'▲':'▼'}</button>
           </div>
           ${canManage ? `
@@ -9700,7 +9700,7 @@ function _trpReportRowHTML(row, canManage) {
             ${(histCount || !row.isDerived) ? `
               <div class="action-row">
                 ${histCount ? `<button class="v2-btn-mini" onclick="openRevisionHistoryModal('${uid}')" title="${histCount} prior revision${histCount===1?'':'s'}">History (${histCount})</button>` : ''}
-                ${!row.isDerived ? `<button class="v2-btn-mini danger" onclick="_trpDeleteReport('${uid}')" title="Delete report">🗑</button>` : ''}
+                ${!row.isDerived ? `<button class="v2-btn-mini danger" onclick="_trpDeleteReport('${uid}')" title="Delete report">${icon('trash')}</button>` : ''}
               </div>` : ''}
           ` : ''}
         </div>
@@ -10720,7 +10720,7 @@ function _testRegisterHTML() {
           ${isAdmin ? `
             <label style="cursor:pointer;display:inline-flex;">
               <input type="file" accept=".csv" onchange="handleImportFile(this)" style="display:none">
-              <span class="v2-btn-ghost">📂 Import Test Items</span>
+              <span class="v2-btn-ghost">${icon('folder')} Import Test Items</span>
             </label>
             <button class="v2-btn-ghost" onclick="downloadImportTemplate()">↓ CSV Template</button>
           ` : ''}
@@ -10730,7 +10730,7 @@ function _testRegisterHTML() {
       <!-- Search + filters -->
       <div class="v2-filter-row">
         <div class="v2-search-wrap">
-          <span class="icon">🔍</span>
+          <span class="icon">${icon('search')}</span>
           <input type="text" id="tr-search-input" class="tr-search" placeholder="Search activities…"
             value="${escapeHtml(_amFilters.search||'')}"
             oninput="clearTimeout(window._trSearchTimer);window._trSearchTimer=setTimeout(()=>_amSetFilter('search',this.value),260)">
@@ -10744,12 +10744,12 @@ function _testRegisterHTML() {
           ${locations.map(l=>`<option value="${escapeHtml(l)}" ${_amFilters.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
         </select>
         ${userSub
-          ? `<span class="filter-locked-tag" data-tippy-content="Auto-filtered to your assigned subsystem">📌 ${escapeHtml(userSub)}</span>`
+          ? `<span class="filter-locked-tag" data-tippy-content="Auto-filtered to your assigned subsystem">${icon('pin')} ${escapeHtml(userSub)}</span>`
           : `<select id="tr-filter-subsystem" onchange="_amSetFilter('subsystem',this.value)">
               <option value="">All Subsystems</option>
               ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_amFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
             </select>`}
-        ${hasFilters ? `<button class="v2-btn-mini" onclick="_amClearFilters()">✕ Reset</button>` : ''}
+        ${hasFilters ? `<button class="v2-btn-mini" onclick="_amClearFilters()">${icon('x')} Reset</button>` : ''}
         <span class="count"><b>${filtered.length}</b> of ${all.length}</span>
       </div>
 
@@ -10759,8 +10759,8 @@ function _testRegisterHTML() {
           <span class="count">${selCount} activit${selCount===1?'y':'ies'} selected</span>
           ${hasNonFuture  ? `<button class="v2-btn-mini primary" style="background:#5b21b6;border-color:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
           ${hasFutureTest ? `<button class="v2-btn-mini primary" style="background:#15803d;border-color:#15803d;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
-          <button class="v2-btn-mini danger" onclick="_amBulkDeleteActivities()">🗑 Delete</button>
-          <button class="clear" onclick="_amClearSelection()">✕ Clear selection</button>
+          <button class="v2-btn-mini danger" onclick="_amBulkDeleteActivities()">${icon('trash')} Delete</button>
+          <button class="clear" onclick="_amClearSelection()">${icon('x')} Clear selection</button>
         </div>` : ''}
 
       <!-- Main table -->
@@ -10777,7 +10777,7 @@ function _testRegisterHTML() {
                 }).join('')}
                 <th style="width:48px;text-align:right;padding-right:8px;">
                   <button onclick="_colOpenEditor('tr',renderTestRegister)" title="Configure columns"
-                    style="font-size:11px;padding:3px 8px;border:1px solid var(--gray-300);border-radius:5px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;font-weight:600;">⚙</button>
+                    style="font-size:11px;padding:3px 8px;border:1px solid var(--gray-300);border-radius:5px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;font-weight:600;">${icon('settings')}</button>
                 </th>
               </tr>
             </thead>
@@ -10983,7 +10983,7 @@ function _adminActivityManagerHTML() {
         <div style="display:flex;gap:8px;flex-shrink:0;">
           <label style="cursor:pointer;">
             <input type="file" accept=".csv" onchange="handleImportFile(this)" style="display:none">
-            <div class="admin-action-btn" style="display:inline-block;cursor:pointer;background:var(--gray-700);">📂 Import Test Items</div>
+            <div class="admin-action-btn" style="display:inline-block;cursor:pointer;background:var(--gray-700);">${icon('folder')} Import Test Items</div>
           </label>
           <button class="form-secondary" onclick="downloadImportTemplate()">↓ CSV Template</button>
         </div>
@@ -11032,7 +11032,7 @@ function _adminActivityManagerHTML() {
                 ${_colHeaders('am')}
                 <th style="width:120px;">Actions
                   <button onclick="_colOpenEditor('am',renderAdminPortal)" title="Configure columns"
-                    style="font-size:11px;padding:2px 6px;margin-left:6px;border:1px solid var(--gray-300);border-radius:4px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;">⚙</button>
+                    style="font-size:11px;padding:2px 6px;margin-left:6px;border:1px solid var(--gray-300);border-radius:4px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;">${icon('settings')}</button>
                 </th>
               </tr>
             </thead>
@@ -14639,7 +14639,7 @@ function renderSchedulePage() {
                 ${_colHeaders('p6')}
                 <th style="width:48px;text-align:right;padding-right:8px;">
                   <button onclick="_colOpenEditor('p6',renderSchedulePage)" title="Configure columns"
-                    style="font-size:11px;padding:3px 8px;border:1px solid var(--gray-300);border-radius:5px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;font-weight:600;">⚙</button>
+                    style="font-size:11px;padding:3px 8px;border:1px solid var(--gray-300);border-radius:5px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;font-weight:600;">${icon('settings')}</button>
                 </th>
               </tr>
             </thead>
@@ -15593,7 +15593,7 @@ function _assetPageHTML() {
             ${_colHeaders('assets')}
             <th style="width:160px;">Actions
               <button onclick="_colOpenEditor('assets',renderAdminAssets)" title="Configure columns"
-                style="font-size:11px;padding:2px 6px;margin-left:4px;border:1px solid var(--gray-300);border-radius:4px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;">⚙</button>
+                style="font-size:11px;padding:2px 6px;margin-left:4px;border:1px solid var(--gray-300);border-radius:4px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;">${icon('settings')}</button>
             </th>
           </tr></thead>
           <tbody>
@@ -16774,7 +16774,7 @@ function _rmaPageHTML() {
     <!-- Search + filters -->
     <div class="v2-filter-row">
       <div class="v2-search-wrap">
-        <span class="icon">🔍</span>
+        <span class="icon">${icon('search')}</span>
         <input id="rma-search-input" type="text" value="${escapeHtml(_rmaFilter.search)}"
                placeholder="Search RMA #, serial, manufacturer, P/N…"
                oninput="_rmaFilter.search=this.value; renderRMA()">
@@ -18534,9 +18534,9 @@ function _planningCellBadge(linkedActivity, date) {
     }
     const hasIssue = s.failed > 0 || s.blocked > 0;
     const cls = hasIssue ? 'tlg-cell-badge-warn' : 'tlg-cell-badge-ok';
-    const icon = hasIssue ? '⚠' : '✓';
+    const statusGlyph = hasIssue ? '⚠' : '✓';
     const issueText = hasIssue ? ` · ${s.failed ? s.failed+' fail' : ''}${s.failed && s.blocked ? ', ' : ''}${s.blocked ? s.blocked+' blk' : ''}` : '';
-    return `<span class="tlg-cell-badge ${cls}" title="${escapeHtml(linkedActivity)} on ${date}: ${s.executedToday} test${s.executedToday>1?'s':''} executed${issueText}">${icon} ${s.executedToday} done</span>`;
+    return `<span class="tlg-cell-badge ${cls}" title="${escapeHtml(linkedActivity)} on ${date}: ${s.executedToday} test${s.executedToday>1?'s':''} executed${issueText}">${statusGlyph} ${s.executedToday} done</span>`;
   }
 
   // TODAY — live mix of done so far + remaining
