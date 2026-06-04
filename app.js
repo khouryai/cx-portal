@@ -33313,6 +33313,9 @@ const _dynPage = {
   search: '',
   statusFilter: '',
   testFilter: '',
+  schedFilter: '',                       // '' | 'scheduled' | 'unscheduled'
+  selInstances: new Set(),               // instance ids picked for bulk edit
+  _lastInstIds: [],                       // ids of the currently-visible instance rows (for select-all)
   // Sort state (clickable column headers). dir: 'asc' | 'desc'.
   instSortCol: null,                     // instances table; null = default (date desc)
   instSortDir: 'asc',
@@ -33353,6 +33356,23 @@ function _dynIsStaticOnlyZone(code) {
 function _dynStatusBadge(s) {
   if (typeof getStatusBadge === 'function') return getStatusBadge(s);
   return `<span class="badge">${escapeHtml(s || '—')}</span>`;
+}
+
+// An instance counts as "scheduled" once it has a planned date, a committed
+// window, or a linked lookahead activity.
+function _dynIsScheduled(r) {
+  return !!(r && (r.scheduled_for_date || r.scheduled_window || r.linked_activity_id));
+}
+
+// Human-friendly planned date for the instances table.
+function _dynScheduledLabel(r) {
+  if (r.scheduled_for_date) return _dynFmtDate(r.scheduled_for_date);
+  if (r.scheduled_window) {
+    const m = /^[\[(]?\s*([0-9T:\-+.Z]+)/.exec(String(r.scheduled_window));
+    if (m) return _dynFmtDate(m[1]);
+  }
+  if (r.linked_activity_id) return 'linked';
+  return '';
 }
 
 // Subsystem badge — identifies which team owns/runs a dynamic test. Renders a
@@ -33592,9 +33612,12 @@ function _dynRenderInstances() {
   const q = (_dynPage.search || '').toLowerCase();
   const sf = _dynPage.statusFilter;
   const tf = _dynPage.testFilter;
+  const schf = _dynPage.schedFilter;
   const rows = _dynPage.instances.filter(r => {
     if (sf && r.status !== sf) return false;
     if (tf && r.test_id !== tf) return false;
+    if (schf === 'scheduled'   && !_dynIsScheduled(r)) return false;
+    if (schf === 'unscheduled' &&  _dynIsScheduled(r)) return false;
     if (q) {
       const hay = [r.code, r.title, r.description, r.target_phase, r.notes,
         r.start_point, r.finish_point, r.track_section_under_test,
@@ -33617,6 +33640,10 @@ function _dynRenderInstances() {
     });
   }
 
+  // Remember the visible row ids so the header "select all" box can target them.
+  _dynPage._lastInstIds = rows.map(r => r.id);
+  const allVisibleSelected = rows.length > 0 && rows.every(r => _dynPage.selInstances.has(r.id));
+
   const kpiHtml = `
     <div style="margin-bottom:14px;">
       <div class="dyn-kpi"><b>${k.total}</b><span>Runs</span></div>
@@ -33636,6 +33663,11 @@ function _dynRenderInstances() {
         <option value="">All statuses</option>
         ${_DYN_STATUSES.map(s => `<option value="${escapeHtml(s)}" ${_dynPage.statusFilter===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
       </select>
+      <select id="dyn-sched-filter" onchange="_dynPage.schedFilter=this.value;_dynRenderInstances();" title="Filter by scheduling state">
+        <option value="" ${_dynPage.schedFilter===''?'selected':''}>All scheduling</option>
+        <option value="scheduled" ${_dynPage.schedFilter==='scheduled'?'selected':''}>Scheduled</option>
+        <option value="unscheduled" ${_dynPage.schedFilter==='unscheduled'?'selected':''}>Not scheduled</option>
+      </select>
       <select id="dyn-test-filter" onchange="_dynPage.testFilter=this.value;_dynRenderInstances();">
         <option value="">All test cases</option>
         ${tcOpts.map(t => `<option value="${escapeHtml(t.id)}" ${_dynPage.testFilter===t.id?'selected':''}>${escapeHtml(t.info?.code || t.id)} — ${escapeHtml((t.info?.name||'').slice(0,40))}</option>`).join('')}
@@ -33647,24 +33679,156 @@ function _dynRenderInstances() {
     <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
       <table class="dyn-table">
         <thead><tr>
+          <th style="width:32px;text-align:center;"><input type="checkbox" ${allVisibleSelected?'checked':''} onchange="_dynInstSelectAllVisible(this.checked)" title="Select all visible"></th>
           ${_dynInstSortTh('Code', 'code')}
           ${_dynInstSortTh('Test Case', 'testcase')}
           ${_dynInstSortTh('Subsystem', 'subsystem')}
           ${_dynInstSortTh('Run (start → finish)', 'run')}
           ${_dynInstSortTh('Phase', 'phase')}
           ${_dynInstSortTh('Under test / Access', 'undertest')}
+          ${_dynInstSortTh('Scheduled', 'scheduled')}
           ${_dynInstSortTh('Status', 'status')}
           <th style="width:90px;">Actions</th>
         </tr></thead>
         <tbody>${rows.length
           ? rows.map(r => _dynRowHtml(r)).join('')
-          : `<tr><td colspan="8" style="padding:40px;text-align:center;color:var(--gray-500);">No runs yet — click "+ New instance" or "Import CSV/Excel" to add some.</td></tr>`}
+          : `<tr><td colspan="10" style="padding:40px;text-align:center;color:var(--gray-500);">No runs match the current filters.</td></tr>`}
         </tbody>
       </table>
     </div>
   `;
 
-  cont.innerHTML = kpiHtml + toolbar + tableHtml;
+  const selCount = _dynPage.selInstances.size;
+  const bulkBar = selCount > 0 ? `
+    <div style="position:sticky;bottom:0;background:white;border-top:2px solid var(--gray-200);padding:12px 16px;margin-top:16px;display:flex;align-items:center;gap:14px;z-index:5;">
+      <span><b>${selCount}</b> instance${selCount===1?'':'s'} selected</span>
+      <span style="flex:1;"></span>
+      <button class="dyn-btn" onclick="_dynInstClearSel()">Clear selection</button>
+      <button class="dyn-btn primary" onclick="_dynOpenBulkEdit()">Bulk edit ${selCount}</button>
+    </div>` : '';
+
+  cont.innerHTML = kpiHtml + toolbar + tableHtml + bulkBar;
+}
+
+// ── Instances bulk selection ────────────────────────────────────────────
+function _dynInstToggleSelect(id, on) {
+  if (on) _dynPage.selInstances.add(id); else _dynPage.selInstances.delete(id);
+  _dynRenderInstances();
+}
+function _dynInstSelectAllVisible(on) {
+  for (const id of (_dynPage._lastInstIds || [])) {
+    if (on) _dynPage.selInstances.add(id); else _dynPage.selInstances.delete(id);
+  }
+  _dynRenderInstances();
+}
+function _dynInstClearSel() {
+  _dynPage.selInstances.clear();
+  _dynRenderInstances();
+}
+
+// ── Instances bulk edit ─────────────────────────────────────────────────
+// Each field has its own "Apply" checkbox; only ticked fields are written, so
+// you can change one attribute across many instances without wiping the rest.
+// (Subsystem lives on the test case, so it updates the linked test_items.)
+function _dynOpenBulkEdit() {
+  const ids = [..._dynPage.selInstances];
+  if (!ids.length) return;
+  const sectionOpts = _dynSectionOptions();
+  const subsysOpts = [...new Set((typeof TI !== 'undefined' ? TI : [])
+    .map(t => t.Subsystem).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const sectionDatalist = `<datalist id="dyn-be-sections">${sectionOpts.map(o => `<option value="${escapeHtml(o.code)}">${escapeHtml(o.name)}</option>`).join('')}</datalist>`;
+  const row = (key, label, controlHtml, hint = '') => `
+    <div style="display:grid;grid-template-columns:26px 150px 1fr;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--gray-100);">
+      <input type="checkbox" id="dyn-be-en-${key}" onchange="document.getElementById('dyn-be-${key}').disabled=!this.checked;">
+      <label for="dyn-be-en-${key}" style="font-weight:600;font-size:13px;cursor:pointer;">${escapeHtml(label)}${hint?`<br/><span style="font-weight:400;font-size:11px;color:var(--gray-500);">${hint}</span>`:''}</label>
+      ${controlHtml}
+    </div>`;
+  const inputStyle = 'width:100%;font-size:13px;padding:6px 8px;border:1px solid var(--gray-300);border-radius:5px;';
+  modal({
+    title: `Bulk edit ${ids.length} instance${ids.length===1?'':'s'}`,
+    sub: 'Tick a field to change it across every selected instance. Unticked fields are left as-is.',
+    body: sectionDatalist + `
+      <div style="padding:8px 24px 16px;">
+        ${row('subsystem', 'Subsystem', `<select id="dyn-be-subsystem" disabled style="${inputStyle}"><option value="">— not set —</option>${subsysOpts.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}</select>`, 'updates the linked test case')}
+        ${row('start_point', 'Start point', `<input id="dyn-be-start_point" disabled style="${inputStyle}" placeholder="e.g. Y10-PL-3" />`)}
+        ${row('finish_point', 'Finish point', `<input id="dyn-be-finish_point" disabled style="${inputStyle}" placeholder="e.g. W45-M" />`)}
+        ${row('intermediate_points', 'Intermediate', `<input id="dyn-be-intermediate_points" disabled style="${inputStyle}" placeholder="comma-separated" />`, 'comma-separated points')}
+        ${row('target_phase', 'Phase', `<input id="dyn-be-target_phase" disabled style="${inputStyle}" placeholder="e.g. Phase 2" />`)}
+        ${row('track_section_under_test', 'Test location', `<select id="dyn-be-track_section_under_test" disabled style="${inputStyle}"><option value="">—</option>${sectionOpts.map(o => `<option value="${escapeHtml(o.code)}">${escapeHtml(o.code)} — ${escapeHtml((o.name||'').slice(0,40))}</option>`).join('')}</select>`, 'track section under test')}
+        ${row('track_section_access_req', 'Access locations', `<input id="dyn-be-track_section_access_req" list="dyn-be-sections" disabled style="${inputStyle}" placeholder="comma-separated, e.g. W40, Y10" />`)}
+        ${row('status', 'Status', `<select id="dyn-be-status" disabled style="${inputStyle}">${_DYN_STATUSES.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}</select>`)}
+      </div>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="_dynBulkEditApply()">Apply to ${ids.length}</button>
+    `,
+    size: 'large',
+  });
+}
+
+async function _dynBulkEditApply() {
+  const ids = [..._dynPage.selInstances];
+  if (!ids.length) { closeModal(); return; }
+  const on  = key => document.getElementById(`dyn-be-en-${key}`)?.checked;
+  const val = key => (document.getElementById(`dyn-be-${key}`)?.value ?? '').trim();
+  const splitList = s => String(s || '').split(/[;,]/).map(x => x.trim()).filter(Boolean);
+
+  // Instance-level fields → dynamic_instances payload.
+  const payload = {};
+  if (on('start_point'))               payload.start_point = val('start_point') || null;
+  if (on('finish_point'))              payload.finish_point = val('finish_point') || null;
+  if (on('intermediate_points'))       payload.intermediate_points = splitList(val('intermediate_points'));
+  if (on('target_phase'))              payload.target_phase = val('target_phase') || null;
+  if (on('track_section_under_test'))  payload.track_section_under_test = val('track_section_under_test') || null;
+  if (on('track_section_access_req'))  payload.track_section_access_req = splitList(val('track_section_access_req'));
+  if (on('status'))                    payload.status = val('status') || 'Not Started';
+
+  const changeSubsys = on('subsystem');
+  const subsysVal = changeSubsys ? (val('subsystem') || null) : undefined;
+
+  if (!Object.keys(payload).length && !changeSubsys) {
+    alert('Tick at least one field to change.');
+    return;
+  }
+  if (!confirm(`Apply the selected change(s) to ${ids.length} instance(s)?`)) return;
+
+  try {
+    // Subsystem is a test-case attribute: update each distinct linked test item.
+    if (changeSubsys) {
+      const testIds = [...new Set(ids
+        .map(id => _dynPage.instances.find(r => r.id === id)?.test_id)
+        .filter(Boolean))];
+      for (const tid of testIds) {
+        await _dbUpdate('test_items', { subsystem: subsysVal }, { test_id: tid });
+        const info = _dynPage.testItemsById.get(tid);
+        if (info) info.subsystem = subsysVal || '';
+        if (typeof TI !== 'undefined') {
+          const ti = TI.find(t => (t.TestID || t.test_id) === tid);
+          if (ti) ti.Subsystem = subsysVal || '';
+        }
+      }
+    }
+
+    // Instance fields.
+    if (Object.keys(payload).length) {
+      payload.updated_at = new Date().toISOString();
+      for (const id of ids) {
+        await _dbUpdate('dynamic_instances', payload, { id });
+        const inst = _dynPage.instances.find(r => r.id === id);
+        if (inst) Object.assign(inst, payload);
+      }
+    }
+
+    closeModal();
+    _dynPage.selInstances.clear();
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    _dynRenderInstances();
+    if (typeof toast === 'function') toast(`Updated ${ids.length} instance(s).`, 'success');
+  } catch (e) {
+    alert(`Bulk edit failed: ${e.message}`);
+  }
 }
 
 // Sort value for an instance row by column key (mirrors the visible cell).
@@ -33678,6 +33842,7 @@ function _dynInstSortValue(r, col) {
     case 'phase':     return r.target_phase || '';
     case 'undertest': return r.track_section_under_test || '';
     case 'status':    return r.status || '';
+    case 'scheduled': return r.scheduled_for_date || (r.linked_activity_id ? '0000' : '');
     default:          return '';
   }
 }
@@ -33725,14 +33890,21 @@ function _dynRowHtml(r) {
   }
   const prereq = r.prerequisites
     ? ` <span title="${escapeHtml(r.prerequisites)}" style="cursor:help;color:#b45309;font-size:11px;">⚑ prereq</span>` : '';
+  const selected = _dynPage.selInstances.has(r.id);
+  const schedLabel = _dynScheduledLabel(r);
+  const schedCell = schedLabel
+    ? `<span class="tag" style="background:#ecfdf5;color:#065f46;border-color:#a7f3d0;font-family:var(--font-mono,monospace);" title="Scheduled">${escapeHtml(schedLabel)}</span>`
+    : `<span style="color:var(--gray-400);font-size:11px;">Not scheduled</span>`;
   return `
-    <tr>
+    <tr${selected ? ' style="background:#eff6ff;"' : ''}>
+      <td style="text-align:center;"><input type="checkbox" ${selected?'checked':''} onchange="_dynInstToggleSelect('${escapeHtml(r.id)}',this.checked)"></td>
       <td style="font-family:var(--font-mono,monospace);font-size:12px;">${escapeHtml(r.code || '—')}</td>
       <td>${tc ? `<span style="font-family:var(--font-mono,monospace);font-size:11px;color:var(--gray-500);">${escapeHtml(tc.code || r.test_id || '')}</span><br/><span style="font-size:12px;">${escapeHtml((tc.name || '').slice(0,40))}</span>` : `<span style="color:var(--gray-400);">${escapeHtml(r.test_id || '—')}</span>`}</td>
       <td>${_dynSubsystemBadge(tc && tc.subsystem)}</td>
       <td>${escapeHtml(r.title || '')}${prereq}${subBadge}</td>
       <td>${r.target_phase ? `<span class="tag tag-phase">${escapeHtml(r.target_phase)}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>
       <td style="font-size:12px;">${sectionsCell}</td>
+      <td style="font-size:12px;white-space:nowrap;">${schedCell}</td>
       <td>
         <select onchange="_dynInstanceUpdateStatus('${escapeHtml(r.id)}', this.value, this)"
                 title="Update status inline"
