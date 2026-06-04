@@ -33335,6 +33335,7 @@ const _dynPage = {
   planMaxTrains: '',                     // optional train budget cap
   planFeasible: [],                      // last fn_feasible_instances result
   planSelected: new Set(),               // instance ids the planner has picked
+  planSchedFilter: '',                   // '' | 'scheduled' | 'unscheduled' (feasibility table)
   planLoading: false,
   planWindows: [],                       // zone_access_windows rows (cached)
 };
@@ -33700,14 +33701,14 @@ function _dynRenderInstances() {
 
   const selCount = _dynPage.selInstances.size;
   const bulkBar = selCount > 0 ? `
-    <div style="position:sticky;bottom:0;background:white;border-top:2px solid var(--gray-200);padding:12px 16px;margin-top:16px;display:flex;align-items:center;gap:14px;z-index:5;">
+    <div style="position:sticky;top:0;background:white;border:1px solid var(--gray-200);border-radius:8px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;gap:14px;z-index:5;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
       <span><b>${selCount}</b> instance${selCount===1?'':'s'} selected</span>
       <span style="flex:1;"></span>
       <button class="dyn-btn" onclick="_dynInstClearSel()">Clear selection</button>
       <button class="dyn-btn primary" onclick="_dynOpenBulkEdit()">Bulk edit ${selCount}</button>
     </div>` : '';
 
-  cont.innerHTML = kpiHtml + toolbar + tableHtml + bulkBar;
+  cont.innerHTML = kpiHtml + toolbar + bulkBar + tableHtml;
 }
 
 // ── Instances bulk selection ────────────────────────────────────────────
@@ -35012,15 +35013,24 @@ function _dynRenderPlanning() {
         ? `<div style="padding:40px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:8px;">
              ${_dynPage.planZones.length ? 'No matching feasible instances. Try a longer window, more zones, or different mode filter.' : 'Pick one or more zones (or a whole phase), set the window, then click <b>Compute feasible</b>.'}
            </div>`
-        : _dynRenderPlanningTable()}
-
-    ${selected.length > 0 ? `
-      <div style="position:sticky;bottom:0;background:white;border-top:2px solid var(--gray-200);padding:12px 16px;margin-top:20px;display:flex;align-items:center;gap:14px;">
-        <span><b>${selected.length}</b> selected · <b>${(selMinutes/60).toFixed(1)} h</b> · <b>${selTrains}</b> trains</span>
-        <span style="flex:1;"></span>
-        <button class="dyn-btn" onclick="_dynPage.planSelected.clear();_dynRenderPlanning();">Clear selection</button>
-        <button class="dyn-btn primary" onclick="_dynPlanCommit()">${icon('calendar')} Schedule ${selected.length}</button>
-      </div>` : ''}
+        : `
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:white;border:1px solid var(--gray-200);border-radius:8px;padding:10px 14px;margin-bottom:12px;position:sticky;top:0;z-index:5;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
+              Show
+              <select onchange="_dynPage.planSchedFilter=this.value;_dynRenderPlanning();" style="font-size:12px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;">
+                <option value="" ${_dynPage.planSchedFilter===''?'selected':''}>All</option>
+                <option value="scheduled" ${_dynPage.planSchedFilter==='scheduled'?'selected':''}>Scheduled</option>
+                <option value="unscheduled" ${_dynPage.planSchedFilter==='unscheduled'?'selected':''}>Not scheduled</option>
+              </select>
+            </label>
+            <span style="flex:1;"></span>
+            ${selected.length > 0
+              ? `<span style="font-size:13px;"><b>${selected.length}</b> selected · <b>${(selMinutes/60).toFixed(1)} h</b> · <b>${selTrains}</b> trains</span>
+                 <button class="dyn-btn" onclick="_dynPage.planSelected.clear();_dynRenderPlanning();">Clear</button>`
+              : `<span style="font-size:12px;color:var(--gray-500);">Select rows to schedule</span>`}
+            <button class="dyn-btn primary" ${selected.length===0?'disabled':''} onclick="_dynPlanCommit()">${icon('calendar')} Schedule${selected.length?` ${selected.length}`:''}</button>
+          </div>
+          ${_dynRenderPlanningTable()}`}
   `;
 }
 
@@ -35117,8 +35127,23 @@ async function _dynPlanRun() {
   }
 }
 
+// Feasibility rows narrowed by the scheduling-state filter. Scheduling state
+// is read from the loaded instance (the RPC doesn't carry it).
+function _dynPlanFilteredRows() {
+  const schf = _dynPage.planSchedFilter;
+  if (!schf) return _dynPage.planFeasible;
+  return _dynPage.planFeasible.filter(r => {
+    const inst = _dynPage.instances.find(x => x.id === r.instance_id);
+    const sch = _dynIsScheduled(inst);
+    return schf === 'scheduled' ? sch : !sch;
+  });
+}
+
 function _dynRenderPlanningTable() {
-  const rows = _dynPage.planFeasible;
+  const rows = _dynPlanFilteredRows();
+  if (!rows.length) {
+    return `<div style="padding:40px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:8px;">No ${_dynPage.planSchedFilter==='scheduled'?'scheduled':'unscheduled'} instances in the feasible set.</div>`;
+  }
   return `
     <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
       <table class="dyn-table">
@@ -35134,6 +35159,7 @@ function _dynRenderPlanningTable() {
             <th>Mode</th>
             <th style="text-align:right;">Duration</th>
             <th style="text-align:right;">Trains</th>
+            <th>Scheduled</th>
             <th>Status</th>
             <th>Prereqs</th>
             <th style="text-align:right;">Score</th>
@@ -35143,6 +35169,11 @@ function _dynRenderPlanningTable() {
           ${rows.map(r => {
             const checked = _dynPage.planSelected.has(r.instance_id);
             const block = !r.prerequisites_met;
+            const inst = _dynPage.instances.find(x => x.id === r.instance_id);
+            const schLabel = inst ? _dynScheduledLabel(inst) : '';
+            const schCell = schLabel
+              ? `<span class="tag" style="background:#ecfdf5;color:#065f46;border-color:#a7f3d0;font-family:var(--font-mono,monospace);" title="Scheduled">${escapeHtml(schLabel)}</span>`
+              : `<span style="color:var(--gray-400);font-size:11px;">Not scheduled</span>`;
             return `<tr style="${block ? 'background:#fef9c3;' : ''}border-top:1px solid var(--gray-100);">
               <td><input type="checkbox" ${checked?'checked':''} ${block?'disabled':''}
                    onchange="_dynPlanToggleSelect('${r.instance_id}',this.checked)"></td>
@@ -35152,6 +35183,7 @@ function _dynRenderPlanningTable() {
               <td>${r.required_mode ? `<span class="badge" style="font-size:11px;">${escapeHtml(r.required_mode)}</span>` : '—'}</td>
               <td style="text-align:right;font-family:monospace;">${r.expected_duration_minutes ?? '—'} min</td>
               <td style="text-align:right;font-family:monospace;">${r.trains_needed ?? 1}</td>
+              <td style="white-space:nowrap;">${schCell}</td>
               <td>${_dynStatusBadge(r.status)}</td>
               <td>${block ? `<span style="color:var(--bad);font-size:11.5px;" title="${escapeHtml((r.unmet_prereqs||[]).join(', '))}">⚠ ${(r.unmet_prereqs||[]).length} unmet</span>` : '<span style="color:var(--good);font-size:11.5px;">✓</span>'}</td>
               <td style="text-align:right;font-family:monospace;color:var(--gray-600);">${r.score ?? 0}</td>
@@ -35171,7 +35203,7 @@ function _dynPlanToggleSelect(id, on) {
 function _dynPlanSelectAll(on) {
   _dynPage.planSelected.clear();
   if (on) {
-    _dynPage.planFeasible.filter(r => r.prerequisites_met).forEach(r => _dynPage.planSelected.add(r.instance_id));
+    _dynPlanFilteredRows().filter(r => r.prerequisites_met).forEach(r => _dynPage.planSelected.add(r.instance_id));
   }
   _dynRenderPlanning();
 }
