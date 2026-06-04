@@ -33387,25 +33387,39 @@ function _dynSubsystemBadge(subsystem) {
   return `<span class="tag" title="Subsystem / team running this test">${escapeHtml(s)}</span>`;
 }
 
+// Parse a value into a Date in a timezone-stable way: a bare date string
+// ("YYYY-MM-DD") is read as LOCAL midnight, not UTC, so it never rolls back a
+// day when the browser is behind UTC. Everything else falls through to the
+// native parser.
+function _dynParseDate(d) {
+  if (d instanceof Date) return d;
+  if (typeof d === 'string') {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d.trim());
+    if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+  }
+  return new Date(d);
+}
+
 function _dynFmtDate(d) {
   if (!d) return '';
-  const dt = (d instanceof Date) ? d : new Date(d);
+  const dt = _dynParseDate(d);
   if (isNaN(dt.getTime())) return String(d);
-  return dt.toISOString().slice(0, 10);
+  const pad = n => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
 }
 
 function _dynMonthKey(d) {
-  const dt = (d instanceof Date) ? d : new Date(d);
+  const dt = _dynParseDate(d);
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function _dynMonthLabel(d) {
-  const dt = (d instanceof Date) ? d : new Date(d);
+  const dt = _dynParseDate(d);
   return dt.toLocaleString('en-US', { month: 'short', year: '2-digit' });
 }
 
 function _dynFirstOfMonth(d) {
-  const dt = (d instanceof Date) ? d : new Date(d);
+  const dt = _dynParseDate(d);
   return new Date(dt.getFullYear(), dt.getMonth(), 1);
 }
 
@@ -33416,7 +33430,7 @@ function _dynAddMonths(d, n) {
 
 // Day-level helpers for the week view.
 function _dynDayKey(d) {
-  const dt = (d instanceof Date) ? d : new Date(d);
+  const dt = _dynParseDate(d);
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 }
 
@@ -33434,7 +33448,7 @@ function _dynStartOfWeek(d) {
 }
 
 function _dynDayLabel(d) {
-  const dt = (d instanceof Date) ? d : new Date(d);
+  const dt = _dynParseDate(d);
   return dt.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
@@ -34812,7 +34826,151 @@ function _dynRenderBoard() {
       Counts include instances with a scheduled date, falling back to target window start/end.
       Click a cell to drill in.
     </p>
+    ${_dynPage.boardView === 'week' ? _dynRenderDaySummaries(cols) : ''}
   `;
+}
+
+// Date a board row buckets on: committed schedule date, else target window.
+function _dynBoardWhen(r) {
+  return r.scheduled_for_date || r.target_window_start || r.target_window_end;
+}
+
+// Parse a Postgres tstzrange string like [start,end) into {start,end} Dates.
+function _dynParseRange(s) {
+  if (!s) return null;
+  const m = /[\[(]\s*"?([^",\])]+)"?\s*,\s*"?([^"\])]+)"?\s*[\])]/.exec(String(s));
+  if (!m) return null;
+  const start = new Date(m[1]), end = new Date(m[2]);
+  if (isNaN(start) || isNaN(end)) return null;
+  return { start, end };
+}
+
+// Aggregate one day's instances into a planning "request summary".
+function _dynDayAggregate(instances) {
+  const access = new Set(), sections = new Set(), modes = new Set(),
+        phases = new Set(), teams = new Set();
+  let plannedMin = 0, peakTrains = 0;
+  let winStart = null, winEnd = null;
+  for (const r of instances) {
+    (r.track_section_access_req || []).forEach(a => a && access.add(a));
+    if (r.track_section_under_test) sections.add(r.track_section_under_test);
+    if (r.required_mode) modes.add(r.required_mode);
+    if (r.target_phase) phases.add(r.target_phase);
+    const tc = _dynPage.testItemsById.get(r.test_id);
+    if (tc && tc.subsystem) teams.add(tc.subsystem);
+    plannedMin += (r.expected_duration_minutes || 0);
+    peakTrains = Math.max(peakTrains, r.trains_needed || 1);
+    const rng = _dynParseRange(r.scheduled_window);
+    if (rng) {
+      if (!winStart || rng.start < winStart) winStart = rng.start;
+      if (!winEnd || rng.end > winEnd) winEnd = rng.end;
+    }
+  }
+  return {
+    count: instances.length,
+    access: [...access].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    sections: [...sections].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    modes: [...modes], phases: [...phases], teams: [...teams],
+    plannedMin, peakTrains, winStart, winEnd,
+  };
+}
+
+// Week-view footer: one request-summary card per day (Mon–Sun).
+function _dynRenderDaySummaries(cols) {
+  const fmtH = m => (m / 60).toFixed(1).replace(/\.0$/, '') + ' h';
+  const fmtT = d => d ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+  const chip = (txt, bg, fg) => `<span class="tag" style="background:${bg};color:${fg};border-color:transparent;font-size:10px;">${escapeHtml(txt)}</span>`;
+  const line = (icon, label, val) => val
+    ? `<div style="display:flex;gap:6px;font-size:11.5px;line-height:1.5;"><span style="width:16px;flex-shrink:0;">${icon}</span><span style="color:var(--gray-500);min-width:54px;flex-shrink:0;">${label}</span><span style="color:var(--gray-800);">${val}</span></div>`
+    : '';
+  const cards = cols.map(c => {
+    const insts = _dynPage.instances.filter(r => {
+      const w = _dynBoardWhen(r);
+      return w && _dynDayKey(w) === c.key;
+    });
+    if (!insts.length) {
+      return `<div style="border:1px dashed var(--gray-200);border-radius:8px;padding:10px;background:var(--gray-50);">
+        <div style="font-weight:600;font-size:12px;color:var(--gray-600);">${escapeHtml(c.label)}</div>
+        <div style="font-size:11px;color:var(--gray-400);margin-top:8px;">No tests planned</div>
+      </div>`;
+    }
+    const a = _dynDayAggregate(insts);
+    const windowVal = (a.winStart && a.winEnd)
+      ? `${fmtT(a.winStart)}–${fmtT(a.winEnd)} <span style="color:var(--gray-500);">(${fmtH((a.winEnd - a.winStart) / 60000)})</span>`
+      : '';
+    return `<div onclick="_dynBoardOpenDay('${escapeHtml(c.key)}')" style="border:1px solid var(--gray-200);border-radius:8px;padding:10px;background:white;cursor:pointer;transition:box-shadow .12s;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow='none'">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;">
+        <div style="font-weight:700;font-size:12px;color:var(--gray-800);">${escapeHtml(c.label)}</div>
+        <div style="font-size:11px;color:var(--gray-500);">${a.count} test${a.count===1?'':'s'}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:3px;">
+        ${line('🪟', 'Window', windowVal)}
+        ${line('⏱', 'Planned', fmtH(a.plannedMin))}
+        ${line('🚆', 'Max trains', String(a.peakTrains))}
+        ${line('🎯', 'Sections', a.sections.length ? a.sections.join(', ') : '')}
+        ${line('📍', 'Access', a.access.length ? a.access.join(', ') : '')}
+      </div>
+      ${(a.modes.length || a.teams.length || a.phases.length) ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;">
+        ${a.modes.map(m => chip(m, '#eef2ff', '#3730a3')).join('')}
+        ${a.teams.map(t => chip(t, '#ecfdf5', '#065f46')).join('')}
+        ${a.phases.map(p => chip(p, '#eff6ff', '#1d4ed8')).join('')}
+      </div>` : ''}
+    </div>`;
+  }).join('');
+  return `
+    <div style="margin-top:18px;">
+      <h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-600);margin:0 0 10px;">Daily request summary</h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;">${cards}</div>
+    </div>
+  `;
+}
+
+// All instances scheduled on a given day (across every board row).
+function _dynBoardOpenDay(dayKey) {
+  const matches = _dynPage.instances.filter(r => {
+    const w = _dynBoardWhen(r);
+    return w && _dynDayKey(w) === dayKey;
+  });
+  if (!matches.length) return;
+  const a = _dynDayAggregate(matches);
+  const fmtH = m => (m / 60).toFixed(1).replace(/\.0$/, '') + ' h';
+  const stat = (label, val) => `<div class="dyn-kpi"><span>${label}</span><b>${val}</b></div>`;
+  modal({
+    title: `Day plan — ${escapeHtml(dayKey)}`,
+    sub: `${matches.length} instance(s)`,
+    body: `
+      <div style="padding:8px 24px 16px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:14px;">
+          ${stat('Tests', a.count)}
+          ${stat('Planned', fmtH(a.plannedMin))}
+          ${stat('Max trains', a.peakTrains)}
+          ${stat('Teams', a.teams.length || '—')}
+        </div>
+        ${a.access.length ? `<p style="font-size:12px;margin:0 0 6px;"><b>Access locations needed:</b> ${a.access.map(escapeHtml).join(', ')}</p>` : ''}
+        ${a.sections.length ? `<p style="font-size:12px;margin:0 0 6px;"><b>Sections under test:</b> ${a.sections.map(escapeHtml).join(', ')}</p>` : ''}
+        ${(a.winStart && a.winEnd) ? `<p style="font-size:12px;margin:0 0 12px;"><b>Committed window:</b> ${a.winStart.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false})}–${a.winEnd.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false})}</p>` : ''}
+        <table class="dyn-table" style="border:1px solid var(--gray-200);">
+          <thead><tr>
+            <th>Code</th><th>Test Case</th><th>Title</th><th style="text-align:right;">Trains</th><th style="text-align:right;">Dur</th><th>Status</th><th></th>
+          </tr></thead>
+          <tbody>${matches.map(r => {
+            const tc = _dynPage.testItemsById.get(r.test_id);
+            return `<tr>
+              <td style="font-family:var(--font-mono,monospace);font-size:12px;">${escapeHtml(r.code || '—')}</td>
+              <td>${tc ? escapeHtml(tc.code || r.test_id) : escapeHtml(r.test_id || '—')}</td>
+              <td>${escapeHtml(r.title || '')}</td>
+              <td style="text-align:right;font-family:monospace;">${r.trains_needed ?? 1}</td>
+              <td style="text-align:right;font-family:monospace;">${r.expected_duration_minutes ?? '—'}</td>
+              <td>${_dynStatusBadge(r.status)}</td>
+              <td><button class="dyn-btn" style="padding:3px 8px;font-size:11px;" onclick="closeModal();_dynOpenInstanceModal('${escapeHtml(r.id)}')">Open</button></td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>
+    `,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    size: 'large',
+  });
 }
 
 function _dynBoardSetView(v) {
