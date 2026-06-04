@@ -2263,6 +2263,7 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
   to { opacity: 1; transform: translateY(0); }
 }
 .modal-large { max-width: 920px; }
+.modal-xl { max-width: min(1280px, 96vw); }
 .modal-head {
   padding: 20px 24px 16px;
   border-bottom: 1px solid var(--border);

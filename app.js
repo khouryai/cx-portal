@@ -12219,7 +12219,7 @@ function modal({ title, sub, body, footer, size }) {
     // Clicking outside does NOT close — user must use Cancel button
     document.body.appendChild(overlay);
   }
-  const sizeClass = size === 'pdf' ? 'modal-pdf' : size === 'large' ? 'modal-large' : '';
+  const sizeClass = size === 'pdf' ? 'modal-pdf' : size === 'xl' ? 'modal-xl' : size === 'large' ? 'modal-large' : '';
   overlay.innerHTML = `
     <div class="modal ${sizeClass}">
       <div class="modal-head">
@@ -33344,6 +33344,9 @@ const _dynPage = {
   varBand: '',                           // '' | 'over' | 'under' | 'ontime'
   varExpanded: new Set(),                // expanded activity groups
   _boardModal: null,                     // {type:'day',key} | {type:'cell',rowKey,periodKey}
+  daySel: new Set(),                     // selected instance ids in the Day Plan modal
+  _daySelKey: null,                      // dayKey the selection belongs to
+  _dayMatchIds: [],                      // ids visible in the open Day Plan modal
 };
 
 const _DYN_STATUSES = [
@@ -33978,7 +33981,11 @@ async function _dynInstanceUpdateStatus(id, newStatus, selEl) {
       if (payload.actual_duration_minutes != null) inst.actual_duration_minutes = payload.actual_duration_minutes;
     }
     if (typeof toast === 'function') toast(`Status → ${newStatus}`, 'success');
-    _dynRenderInstances();
+    // Re-render whichever surface is active. From the board, also refresh the
+    // open day/cell drilldown so the new status shows immediately.
+    if (_dynPage.tab === 'board') { _dynRenderBoard(); _dynReopenBoardModal(); }
+    else if (_dynPage.tab === 'variance') _dynRenderVariance();
+    else _dynRenderInstances();
   } catch (e) {
     if (selEl) selEl.value = prev || 'Not Started';
     toast(`Update failed: ${e.message}`, 'error');
@@ -35030,51 +35037,160 @@ function _dynReopenBoardModal() {
   }
 }
 
+// Inline status dropdown for the Day Plan rows — reuses the instances-tab
+// updater (keeps the "actual duration" prompt that feeds the variance view).
+function _dynDayStatusSelect(r) {
+  return `<select onchange="_dynInstanceUpdateStatus('${escapeHtml(r.id)}',this.value,this)" title="Update status" style="font-size:11.5px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;background:white;">
+    ${_DYN_STATUSES.map(s => `<option value="${escapeHtml(s)}" ${s===r.status?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+  </select>`;
+}
+
+function _dynDayToggleSel(id, on) {
+  if (on) _dynPage.daySel.add(id); else _dynPage.daySel.delete(id);
+  if (_dynPage._boardModal?.type === 'day') _dynBoardOpenDay(_dynPage._boardModal.key);
+}
+function _dynDaySelectAll(on) {
+  for (const id of (_dynPage._dayMatchIds || [])) {
+    if (on) _dynPage.daySel.add(id); else _dynPage.daySel.delete(id);
+  }
+  if (_dynPage._boardModal?.type === 'day') _dynBoardOpenDay(_dynPage._boardModal.key);
+}
+function _dynDayClearSel() {
+  _dynPage.daySel.clear();
+  if (_dynPage._boardModal?.type === 'day') _dynBoardOpenDay(_dynPage._boardModal.key);
+}
+
+async function _dynBulkMoveShift(shiftKey) {
+  const ids = [..._dynPage.daySel];
+  if (!ids.length || !shiftKey) return;
+  const i = shiftKey.indexOf('|');
+  const date = i >= 0 ? shiftKey.slice(0, i) : shiftKey;
+  const window = i >= 0 ? shiftKey.slice(i + 1) : '';
+  if (!confirm(`Move ${ids.length} instance(s) to ${_dynFmtDate(date)}?`)) return;
+  try {
+    for (const id of ids) {
+      await _dbUpdate('dynamic_instances', { scheduled_for_date: date, scheduled_window: window || null, updated_at: new Date().toISOString() }, { id });
+      const inst = _dynPage.instances.find(x => x.id === id);
+      if (inst) { inst.scheduled_for_date = date; inst.scheduled_window = window || null; }
+    }
+    _dynPage.daySel.clear();
+    if (typeof toast === 'function') toast(`Moved ${ids.length} to ${_dynFmtDate(date)}`, 'success');
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    _dynRenderBoard();
+    _dynReopenBoardModal();
+  } catch (e) { alert(`Move failed: ${e.message}`); }
+}
+
+async function _dynBulkUnschedule() {
+  const ids = [..._dynPage.daySel];
+  if (!ids.length) return;
+  if (!confirm(`Remove ${ids.length} instance(s) from their scheduled date?`)) return;
+  try {
+    for (const id of ids) {
+      await _dbUpdate('dynamic_instances', { scheduled_for_date: null, scheduled_window: null, updated_at: new Date().toISOString() }, { id });
+      const inst = _dynPage.instances.find(x => x.id === id);
+      if (inst) { inst.scheduled_for_date = null; inst.scheduled_window = null; }
+    }
+    _dynPage.daySel.clear();
+    if (typeof toast === 'function') toast(`Unscheduled ${ids.length}`, 'success');
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    _dynRenderBoard();
+    _dynReopenBoardModal();
+  } catch (e) { alert(`Unschedule failed: ${e.message}`); }
+}
+
 function _dynBoardOpenDay(dayKey) {
   _dynPage._boardModal = { type: 'day', key: dayKey };
+  // Reset the selection when opening a different day.
+  if (_dynPage._daySelKey !== dayKey) { _dynPage.daySel = new Set(); _dynPage._daySelKey = dayKey; }
+  if (!_dynPage.daySel) _dynPage.daySel = new Set();
+
   const matches = _dynPage.instances.filter(r => {
     const w = _dynBoardWhen(r);
     return w && _dynDayKey(w) === dayKey;
   });
   if (!matches.length) return;
+  _dynPage._dayMatchIds = matches.map(r => r.id);
+  // Drop any selected ids that are no longer on this day.
+  const matchIds = new Set(_dynPage._dayMatchIds);
+  for (const id of [..._dynPage.daySel]) if (!matchIds.has(id)) _dynPage.daySel.delete(id);
+
   const a = _dynDayAggregate(matches);
   const fmtH = m => (m / 60).toFixed(1).replace(/\.0$/, '') + ' h';
-  const stat = (label, val) => `<div class="dyn-kpi"><span>${label}</span><b>${val}</b></div>`;
+  const fmtT = d => d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const winMin = (a.winStart && a.winEnd) ? (a.winEnd - a.winStart) / 60000 : null;
+  const slack = winMin != null ? winMin - a.plannedMin : null;
+  const stat = (label, val, tone) => `<div class="dyn-kpi"><span>${label}</span><b${tone?` style="color:${tone};"`:''}>${val}</b></div>`;
+
+  const selCount = _dynPage.daySel.size;
+  const allSel = matches.length > 0 && matches.every(r => _dynPage.daySel.has(r.id));
+
+  // Bulk move targets: other scheduled shifts within ±14 days of this day.
+  const base = _dynParseDate(dayKey);
+  const bulkShifts = _dynScheduledShifts().filter(s =>
+    s.date !== dayKey && Math.abs((_dynParseDate(s.date) - base) / 86400000) <= 14);
+
+  const bulkBar = selCount > 0 ? `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin-bottom:12px;">
+      <b style="font-size:13px;">${selCount} selected</b>
+      ${bulkShifts.length
+        ? `<select onchange="if(this.value)_dynBulkMoveShift(this.value)" style="font-size:12px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;">
+            <option value="">Move selected to shift…</option>
+            ${bulkShifts.map(s => `<option value="${escapeHtml(s.key)}">${escapeHtml(_dynShiftLabel(s))}</option>`).join('')}
+          </select>`
+        : `<span style="font-size:11px;color:var(--gray-500);">No other shift ±14d</span>`}
+      <button class="dyn-btn" style="color:#dc2626;" onclick="_dynBulkUnschedule()">Unschedule selected</button>
+      <span style="flex:1;"></span>
+      <button class="dyn-btn" onclick="_dynDayClearSel()">Clear</button>
+    </div>` : '';
+
+  const rowsHtml = matches.map(r => {
+    const tc = _dynPage.testItemsById.get(r.test_id);
+    const checked = _dynPage.daySel.has(r.id);
+    return `<tr${checked ? ' style="background:#eff6ff;"' : ''}>
+      <td style="text-align:center;"><input type="checkbox" ${checked?'checked':''} onchange="_dynDayToggleSel('${escapeHtml(r.id)}',this.checked)"></td>
+      <td style="font-family:var(--font-mono,monospace);font-size:12px;white-space:nowrap;">${escapeHtml(r.code || '—')}</td>
+      <td style="white-space:nowrap;">${tc ? escapeHtml(tc.code || r.test_id) : escapeHtml(r.test_id || '—')}</td>
+      <td>${escapeHtml(r.title || '')}</td>
+      <td style="text-align:right;font-family:monospace;">${r.trains_needed ?? 1}</td>
+      <td style="text-align:right;font-family:monospace;">${r.expected_duration_minutes ?? '—'}</td>
+      <td>${_dynDayStatusSelect(r)}</td>
+      <td style="text-align:right;">${_dynScheduleRowActions(r)}</td>
+    </tr>`;
+  }).join('');
+
   modal({
     title: `Day plan — ${escapeHtml(dayKey)}`,
     sub: `${matches.length} instance(s)`,
     body: `
-      <div style="padding:8px 24px 16px;">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:14px;">
+      <div style="padding:8px 20px 16px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:8px;margin-bottom:14px;">
           ${stat('Tests', a.count)}
           ${stat('Planned', fmtH(a.plannedMin))}
+          ${winMin != null ? stat('Window', fmtH(winMin)) : ''}
+          ${slack != null ? stat(slack < 0 ? 'Over by' : 'Slack', fmtH(Math.abs(slack)), slack < 0 ? 'var(--bad)' : 'var(--good)') : ''}
           ${stat('Max trains', a.peakTrains)}
           ${stat('Teams', a.teams.length || '—')}
         </div>
         ${a.access.length ? `<p style="font-size:12px;margin:0 0 6px;"><b>Access locations needed:</b> ${a.access.map(escapeHtml).join(', ')}</p>` : ''}
         ${a.sections.length ? `<p style="font-size:12px;margin:0 0 6px;"><b>Sections under test:</b> ${a.sections.map(escapeHtml).join(', ')}</p>` : ''}
-        ${(a.winStart && a.winEnd) ? `<p style="font-size:12px;margin:0 0 12px;"><b>Committed window:</b> ${a.winStart.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false})}–${a.winEnd.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false})}</p>` : ''}
-        <table class="dyn-table" style="border:1px solid var(--gray-200);">
-          <thead><tr>
-            <th>Code</th><th>Test Case</th><th>Title</th><th style="text-align:right;">Trains</th><th style="text-align:right;">Dur</th><th>Status</th><th style="text-align:right;">Reschedule</th>
-          </tr></thead>
-          <tbody>${matches.map(r => {
-            const tc = _dynPage.testItemsById.get(r.test_id);
-            return `<tr>
-              <td style="font-family:var(--font-mono,monospace);font-size:12px;">${escapeHtml(r.code || '—')}</td>
-              <td>${tc ? escapeHtml(tc.code || r.test_id) : escapeHtml(r.test_id || '—')}</td>
-              <td>${escapeHtml(r.title || '')}</td>
-              <td style="text-align:right;font-family:monospace;">${r.trains_needed ?? 1}</td>
-              <td style="text-align:right;font-family:monospace;">${r.expected_duration_minutes ?? '—'}</td>
-              <td>${_dynStatusBadge(r.status)}</td>
-              <td style="text-align:right;">${_dynScheduleRowActions(r)}</td>
-            </tr>`;
-          }).join('')}</tbody>
-        </table>
+        ${(a.winStart && a.winEnd) ? `<p style="font-size:12px;margin:0 0 12px;"><b>Committed window:</b> ${fmtT(a.winStart)}–${fmtT(a.winEnd)}${slack != null ? ` · ${slack < 0 ? `<span style="color:var(--bad);">over by ${fmtH(Math.abs(slack))}</span>` : `<span style="color:var(--good);">${fmtH(slack)} slack</span>`}` : ''}</p>` : ''}
+        ${bulkBar}
+        <div style="overflow-x:auto;">
+          <table class="dyn-table" style="border:1px solid var(--gray-200);min-width:820px;">
+            <thead><tr>
+              <th style="width:30px;text-align:center;"><input type="checkbox" ${allSel?'checked':''} onchange="_dynDaySelectAll(this.checked)" title="Select all"></th>
+              <th>Code</th><th>Test Case</th><th>Title</th><th style="text-align:right;">Trains</th><th style="text-align:right;">Dur</th><th>Status</th><th style="text-align:right;">Reschedule</th>
+            </tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
       </div>
     `,
     footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
-    size: 'large',
+    size: 'xl',
   });
 }
 
