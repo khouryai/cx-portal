@@ -13370,3 +13370,25 @@ html[data-theme="dark"] .kpi-primary .kpi-label { color: #fff; }
 .cx-error-msg { font-size: 13px; max-width: 360px; }
 .cx-error-retry { margin-top: 4px; }
 @media (prefers-reduced-motion: reduce) { .cx-skel-line { animation: none; } }
+
+/* ===================================================================
+   Touch & tablet ergonomics (additive, non-breaking)
+   Standard breakpoint ladder for future work: 640 / 768 / 1024 / 1280.
+   (Existing ad-hoc breakpoints left intact pending a visual-QA pass.)
+   =================================================================== */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+/* On touch devices, give icon-only buttons a ≥40px hit area without
+   affecting dense desktop layouts. :has() degrades gracefully. */
+@media (pointer: coarse) {
+  button:has(> .icon-svg:only-child),
+  a:has(> .icon-svg:only-child),
+  [role="button"]:has(> .icon-svg:only-child) {
+    min-width: 40px; min-height: 40px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+}
+/* Avoid nested scroll regions fighting the main scroll on touch */
+@media (pointer: coarse) {
+  .table-scroll, .v2-table-wrap, .matrix-scroll { overscroll-behavior: contain; }
+}
