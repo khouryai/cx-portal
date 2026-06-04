@@ -33360,8 +33360,11 @@ function _dynStatusBadge(s) {
 // clear "no subsystem" warning when unset so coverage gaps are visible.
 function _dynSubsystemBadge(subsystem) {
   const s = (subsystem || '').trim();
-  if (!s) return `<span class="badge" style="background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;font-size:10.5px;" title="No subsystem set — assign the team that runs this test">⚠ No subsystem</span>`;
-  return `<span class="badge" style="background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;font-size:10.5px;" title="Subsystem / team running this test">${escapeHtml(s)}</span>`;
+  // Render as a standard .tag so it inherits the production subsystem theme
+  // (mono caps) shared with the Test Register and other tables. The empty
+  // state keeps a red tint so coverage gaps stay obvious.
+  if (!s) return `<span class="tag" style="background:#fef2f2;color:#b91c1c;border-color:#fecaca;" title="No subsystem set — assign the team that runs this test">⚠ No subsystem</span>`;
+  return `<span class="tag" title="Subsystem / team running this test">${escapeHtml(s)}</span>`;
 }
 
 function _dynFmtDate(d) {

@@ -9969,17 +9969,17 @@ a:focus-visible {
 /* -- 1. default (base .tag above) -- */
 
 /* -- 2. COLORED — auto-hashed color per subsystem name -- */
-:root[data-tr-subsys="colored"] #test-register-content .tag[data-tr-color="0"] { background:#e8f4ee; color:#0d7a4f; border-color:rgba(13,122,79,0.18); }
-:root[data-tr-subsys="colored"] #test-register-content .tag[data-tr-color="1"] { background:#e8efff; color:var(--brand-blue); border-color:rgba(29,78,175,0.18); }
-:root[data-tr-subsys="colored"] #test-register-content .tag[data-tr-color="2"] { background:#fbf0e1; color:#a8550a; border-color:rgba(168,85,10,0.18); }
-:root[data-tr-subsys="colored"] #test-register-content .tag[data-tr-color="3"] { background:#f1eaf9; color:#6b21a8; border-color:rgba(107,33,168,0.18); }
-:root[data-tr-subsys="colored"] #test-register-content .tag[data-tr-color="4"] { background:#fdeaeb; color:#c01017; border-color:rgba(192,16,23,0.18); }
-:root[data-tr-subsys="colored"] #test-register-content .tag[data-tr-color="5"] { background:#e0f2fe; color:#0369a1; border-color:rgba(3,105,161,0.18); }
-:root[data-tr-subsys="colored"] #test-register-content .tag[data-tr-color="6"] { background:#fef3c7; color:#92400e; border-color:rgba(146,64,14,0.18); }
-:root[data-tr-subsys="colored"] #test-register-content .tag[data-tr-color="7"] { background:#ecfccb; color:#3f6212; border-color:rgba(63,98,18,0.18); }
+:root[data-tr-subsys="colored"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="0"] { background:#e8f4ee; color:#0d7a4f; border-color:rgba(13,122,79,0.18); }
+:root[data-tr-subsys="colored"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="1"] { background:#e8efff; color:var(--brand-blue); border-color:rgba(29,78,175,0.18); }
+:root[data-tr-subsys="colored"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="2"] { background:#fbf0e1; color:#a8550a; border-color:rgba(168,85,10,0.18); }
+:root[data-tr-subsys="colored"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="3"] { background:#f1eaf9; color:#6b21a8; border-color:rgba(107,33,168,0.18); }
+:root[data-tr-subsys="colored"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="4"] { background:#fdeaeb; color:#c01017; border-color:rgba(192,16,23,0.18); }
+:root[data-tr-subsys="colored"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="5"] { background:#e0f2fe; color:#0369a1; border-color:rgba(3,105,161,0.18); }
+:root[data-tr-subsys="colored"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="6"] { background:#fef3c7; color:#92400e; border-color:rgba(146,64,14,0.18); }
+:root[data-tr-subsys="colored"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="7"] { background:#ecfccb; color:#3f6212; border-color:rgba(63,98,18,0.18); }
 
 /* -- 3. MONO — slim uppercase mono caps -- */
-:root[data-tr-subsys="mono"] #test-register-content .tag {
+:root[data-tr-subsys="mono"] :is(#test-register-content,.data-table,.dyn-table) .tag {
   font-family: var(--f-mono);
   font-size: 10.5px;
   font-weight: 600;
@@ -9993,7 +9993,7 @@ a:focus-visible {
 }
 
 /* -- 4. INITIALS — colored 2-letter avatar + name -- */
-:root[data-tr-subsys="initials"] #test-register-content .tag {
+:root[data-tr-subsys="initials"] :is(#test-register-content,.data-table,.dyn-table) .tag {
   background: transparent;
   border: none;
   padding: 0;
@@ -10003,7 +10003,7 @@ a:focus-visible {
   letter-spacing: -0.005em;
   gap: 7px;
 }
-:root[data-tr-subsys="initials"] #test-register-content .tag::before {
+:root[data-tr-subsys="initials"] :is(#test-register-content,.data-table,.dyn-table) .tag::before {
   content: attr(data-tr-initials);
   width: 22px; height: 22px;
   border-radius: 5px;
@@ -10017,17 +10017,17 @@ a:focus-visible {
   background: var(--gray-700);
   flex-shrink: 0;
 }
-:root[data-tr-subsys="initials"] #test-register-content .tag[data-tr-color="0"]::before { background:#0d7a4f; }
-:root[data-tr-subsys="initials"] #test-register-content .tag[data-tr-color="1"]::before { background:var(--brand-blue); }
-:root[data-tr-subsys="initials"] #test-register-content .tag[data-tr-color="2"]::before { background:#a8550a; }
-:root[data-tr-subsys="initials"] #test-register-content .tag[data-tr-color="3"]::before { background:#6b21a8; }
-:root[data-tr-subsys="initials"] #test-register-content .tag[data-tr-color="4"]::before { background:#c01017; }
-:root[data-tr-subsys="initials"] #test-register-content .tag[data-tr-color="5"]::before { background:#0369a1; }
-:root[data-tr-subsys="initials"] #test-register-content .tag[data-tr-color="6"]::before { background:#92400e; }
-:root[data-tr-subsys="initials"] #test-register-content .tag[data-tr-color="7"]::before { background:#3f6212; }
+:root[data-tr-subsys="initials"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="0"]::before { background:#0d7a4f; }
+:root[data-tr-subsys="initials"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="1"]::before { background:var(--brand-blue); }
+:root[data-tr-subsys="initials"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="2"]::before { background:#a8550a; }
+:root[data-tr-subsys="initials"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="3"]::before { background:#6b21a8; }
+:root[data-tr-subsys="initials"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="4"]::before { background:#c01017; }
+:root[data-tr-subsys="initials"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="5"]::before { background:#0369a1; }
+:root[data-tr-subsys="initials"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="6"]::before { background:#92400e; }
+:root[data-tr-subsys="initials"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="7"]::before { background:#3f6212; }
 
 /* -- 5. BAR — left vertical color accent, plain text -- */
-:root[data-tr-subsys="bar"] #test-register-content .tag {
+:root[data-tr-subsys="bar"] :is(#test-register-content,.data-table,.dyn-table) .tag {
   background: transparent;
   border: none;
   border-left: 3px solid var(--gray-500);
@@ -10038,14 +10038,14 @@ a:focus-visible {
   font-weight: 600;
   letter-spacing: -0.005em;
 }
-:root[data-tr-subsys="bar"] #test-register-content .tag[data-tr-color="0"] { border-left-color:#0d7a4f; }
-:root[data-tr-subsys="bar"] #test-register-content .tag[data-tr-color="1"] { border-left-color:var(--brand-blue); }
-:root[data-tr-subsys="bar"] #test-register-content .tag[data-tr-color="2"] { border-left-color:#a8550a; }
-:root[data-tr-subsys="bar"] #test-register-content .tag[data-tr-color="3"] { border-left-color:#6b21a8; }
-:root[data-tr-subsys="bar"] #test-register-content .tag[data-tr-color="4"] { border-left-color:#c01017; }
-:root[data-tr-subsys="bar"] #test-register-content .tag[data-tr-color="5"] { border-left-color:#0369a1; }
-:root[data-tr-subsys="bar"] #test-register-content .tag[data-tr-color="6"] { border-left-color:#92400e; }
-:root[data-tr-subsys="bar"] #test-register-content .tag[data-tr-color="7"] { border-left-color:#3f6212; }
+:root[data-tr-subsys="bar"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="0"] { border-left-color:#0d7a4f; }
+:root[data-tr-subsys="bar"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="1"] { border-left-color:var(--brand-blue); }
+:root[data-tr-subsys="bar"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="2"] { border-left-color:#a8550a; }
+:root[data-tr-subsys="bar"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="3"] { border-left-color:#6b21a8; }
+:root[data-tr-subsys="bar"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="4"] { border-left-color:#c01017; }
+:root[data-tr-subsys="bar"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="5"] { border-left-color:#0369a1; }
+:root[data-tr-subsys="bar"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="6"] { border-left-color:#92400e; }
+:root[data-tr-subsys="bar"] :is(#test-register-content,.data-table,.dyn-table) .tag[data-tr-color="7"] { border-left-color:#3f6212; }
 
 
 /* === STATUS BADGE STYLES (.badge inside test-register) === */
@@ -10054,7 +10054,7 @@ a:focus-visible {
 /* -- 1. default — already styled (dot + soft fill + rounded pill) -- */
 
 /* -- 2. MONO CAPS — matches the subsystem mono-caps style but tinted -- */
-:root[data-tr-status="mono"] #test-register-content .badge {
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge {
   font-family: var(--f-mono);
   font-size: 10.5px;
   font-weight: 600;
@@ -10069,41 +10069,41 @@ a:focus-visible {
   align-items: center;
   gap: 6px;
 }
-:root[data-tr-status="mono"] #test-register-content .badge::before { display: none; }
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge::before { display: none; }
 
-:root[data-tr-status="mono"] #test-register-content .badge-passed,
-:root[data-tr-status="mono"] #test-register-content .badge-closed,
-:root[data-tr-status="mono"] #test-register-content .badge-accepted {
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-passed,
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-closed,
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-accepted {
   background: var(--good-light); color: var(--good); border-color: rgba(13,122,79,0.22);
 }
-:root[data-tr-status="mono"] #test-register-content .badge-failed,
-:root[data-tr-status="mono"] #test-register-content .badge-rejected {
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-failed,
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-rejected {
   background: var(--bad-light);  color: var(--bad);  border-color: rgba(192,16,23,0.22);
 }
-:root[data-tr-status="mono"] #test-register-content .badge-warn,
-:root[data-tr-status="mono"] #test-register-content .badge-work,
-:root[data-tr-status="mono"] #test-register-content .badge-resubmit {
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-warn,
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-work,
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-resubmit {
   background: var(--warn-light); color: var(--warn); border-color: rgba(168,85,10,0.22);
 }
-:root[data-tr-status="mono"] #test-register-content .badge-inprog,
-:root[data-tr-status="mono"] #test-register-content .badge-progress,
-:root[data-tr-status="mono"] #test-register-content .badge-ready,
-:root[data-tr-status="mono"] #test-register-content .badge-review {
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-inprog,
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-progress,
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-ready,
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-review {
   background: var(--info-light); color: var(--info); border-color: rgba(29,78,175,0.22);
 }
-:root[data-tr-status="mono"] #test-register-content .badge-futuretest,
-:root[data-tr-status="mono"] #test-register-content .badge-pending,
-:root[data-tr-status="mono"] #test-register-content .badge-initiated {
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-futuretest,
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-pending,
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-initiated {
   background: var(--pending-light); color: var(--pending); border-color: rgba(107,33,168,0.22);
 }
-:root[data-tr-status="mono"] #test-register-content .badge-open,
-:root[data-tr-status="mono"] #test-register-content .badge-notstarted,
-:root[data-tr-status="mono"] #test-register-content .badge-draft {
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-open,
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-notstarted,
+:root[data-tr-status="mono"] :is(#test-register-content,.data-table,.dyn-table) .badge-draft {
   background: var(--surface-2); color: var(--text-muted); border-color: var(--border-strong);
 }
 
 /* -- 3. MONO CAPS + DOT — same as mono but with a colored dot à la default -- */
-:root[data-tr-status="mono-dot"] #test-register-content .badge {
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge {
   font-family: var(--f-mono);
   font-size: 10.5px;
   font-weight: 600;
@@ -10118,60 +10118,60 @@ a:focus-visible {
   align-items: center;
   gap: 6px;
 }
-:root[data-tr-status="mono-dot"] #test-register-content .badge::before {
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge::before {
   content: '';
   display: inline-block;
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--gray-500);
   flex-shrink: 0;
 }
-:root[data-tr-status="mono-dot"] #test-register-content .badge-passed,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-closed,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-accepted {
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-passed,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-closed,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-accepted {
   color: var(--good); border-color: rgba(13,122,79,0.22); background: var(--good-light);
 }
-:root[data-tr-status="mono-dot"] #test-register-content .badge-passed::before,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-closed::before,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-accepted::before { background: var(--good-dot); }
-:root[data-tr-status="mono-dot"] #test-register-content .badge-failed,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-rejected {
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-passed::before,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-closed::before,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-accepted::before { background: var(--good-dot); }
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-failed,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-rejected {
   color: var(--bad); border-color: rgba(192,16,23,0.22); background: var(--bad-light);
 }
-:root[data-tr-status="mono-dot"] #test-register-content .badge-failed::before,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-rejected::before { background: var(--bad-dot); }
-:root[data-tr-status="mono-dot"] #test-register-content .badge-warn,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-work,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-resubmit {
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-failed::before,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-rejected::before { background: var(--bad-dot); }
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-warn,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-work,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-resubmit {
   color: var(--warn); border-color: rgba(168,85,10,0.22); background: var(--warn-light);
 }
-:root[data-tr-status="mono-dot"] #test-register-content .badge-warn::before,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-work::before,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-resubmit::before { background: var(--warn-dot); }
-:root[data-tr-status="mono-dot"] #test-register-content .badge-inprog,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-progress,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-ready,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-review {
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-warn::before,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-work::before,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-resubmit::before { background: var(--warn-dot); }
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-inprog,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-progress,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-ready,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-review {
   color: var(--info); border-color: rgba(29,78,175,0.22); background: var(--info-light);
 }
-:root[data-tr-status="mono-dot"] #test-register-content .badge-inprog::before,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-progress::before,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-ready::before,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-review::before { background: var(--info-dot); }
-:root[data-tr-status="mono-dot"] #test-register-content .badge-futuretest,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-pending,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-initiated {
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-inprog::before,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-progress::before,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-ready::before,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-review::before { background: var(--info-dot); }
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-futuretest,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-pending,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-initiated {
   color: var(--pending); border-color: rgba(107,33,168,0.22); background: var(--pending-light);
 }
-:root[data-tr-status="mono-dot"] #test-register-content .badge-futuretest::before,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-pending::before,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-initiated::before { background: var(--pending-dot); }
-:root[data-tr-status="mono-dot"] #test-register-content .badge-open,
-:root[data-tr-status="mono-dot"] #test-register-content .badge-notstarted {
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-futuretest::before,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-pending::before,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-initiated::before { background: var(--pending-dot); }
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-open,
+:root[data-tr-status="mono-dot"] :is(#test-register-content,.data-table,.dyn-table) .badge-notstarted {
   color: var(--text-muted); border-color: var(--border-strong); background: var(--surface-2);
 }
 
 /* -- 4. BAR — small left bar + plain label -- */
-:root[data-tr-status="bar"] #test-register-content .badge {
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge {
   background: transparent;
   border: none;
   padding: 1px 0 1px 9px;
@@ -10183,23 +10183,23 @@ a:focus-visible {
   letter-spacing: -0.005em;
   text-transform: none;
 }
-:root[data-tr-status="bar"] #test-register-content .badge::before { display: none; }
-:root[data-tr-status="bar"] #test-register-content .badge-passed,
-:root[data-tr-status="bar"] #test-register-content .badge-closed,
-:root[data-tr-status="bar"] #test-register-content .badge-accepted { border-left-color: #16a571; }
-:root[data-tr-status="bar"] #test-register-content .badge-failed,
-:root[data-tr-status="bar"] #test-register-content .badge-rejected { border-left-color: #e51b22; }
-:root[data-tr-status="bar"] #test-register-content .badge-warn,
-:root[data-tr-status="bar"] #test-register-content .badge-work,
-:root[data-tr-status="bar"] #test-register-content .badge-resubmit { border-left-color: #e0900b; }
-:root[data-tr-status="bar"] #test-register-content .badge-inprog,
-:root[data-tr-status="bar"] #test-register-content .badge-progress,
-:root[data-tr-status="bar"] #test-register-content .badge-ready,
-:root[data-tr-status="bar"] #test-register-content .badge-review { border-left-color: #3a76e8; }
-:root[data-tr-status="bar"] #test-register-content .badge-open,
-:root[data-tr-status="bar"] #test-register-content .badge-notstarted { border-left-color: var(--text-muted); }
-:root[data-tr-status="bar"] #test-register-content .badge-futuretest,
-:root[data-tr-status="bar"] #test-register-content .badge-pending { border-left-color: #9333d9; }
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge::before { display: none; }
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-passed,
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-closed,
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-accepted { border-left-color: #16a571; }
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-failed,
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-rejected { border-left-color: #e51b22; }
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-warn,
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-work,
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-resubmit { border-left-color: #e0900b; }
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-inprog,
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-progress,
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-ready,
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-review { border-left-color: #3a76e8; }
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-open,
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-notstarted { border-left-color: var(--text-muted); }
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-futuretest,
+:root[data-tr-status="bar"] :is(#test-register-content,.data-table,.dyn-table) .badge-pending { border-left-color: #9333d9; }
 
 
 /* ============================================================================
