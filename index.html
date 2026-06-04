@@ -3,32 +3,6 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<script>
-/* Theme init — runs before paint to avoid a flash of the wrong theme */
-(function(){
-  try{
-    /* Opt-in: only apply dark if the user explicitly chose it (beta). */
-    var s = localStorage.getItem('cx-theme');
-    document.documentElement.setAttribute('data-theme', s === 'dark' ? 'dark' : 'light');
-  }catch(e){}
-})();
-window.toggleTheme = function(){
-  var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', next);
-  try{ localStorage.setItem('cx-theme', next); }catch(e){}
-  if (window._syncThemeToggle) window._syncThemeToggle();
-  try{ window.dispatchEvent(new Event('cx-themechange')); }catch(e){}
-};
-window._syncThemeToggle = function(){
-  var b = document.getElementById('theme-toggle'); if(!b) return;
-  var dark = document.documentElement.getAttribute('data-theme') === 'dark';
-  var lbl = b.querySelector('.theme-toggle-label'); if(lbl) lbl.textContent = dark ? 'Light mode' : 'Dark mode';
-  var ic = b.querySelector('.theme-toggle-icon'); if(ic && window.icon) ic.innerHTML = window.icon(dark ? 'sun' : 'moon');
-  var txt = dark ? 'Switch to light mode' : 'Switch to dark mode';
-  b.setAttribute('aria-label', txt); b.setAttribute('title', txt);
-};
-document.addEventListener('DOMContentLoaded', function(){ if(window._syncThemeToggle) window._syncThemeToggle(); });
-</script>
 <title>HITACHI Rail T&C Portal — BART CBTC Project</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -444,10 +418,6 @@ function _signinTogglePw(){
 
   <!-- Footer: project tag + user / sign-in -->
   <div class="sidenav-footer">
-    <button type="button" id="theme-toggle" class="sidenav-theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode">
-      <span class="theme-toggle-icon" aria-hidden="true"></span>
-      <span class="theme-toggle-label">Dark mode</span>
-    </button>
     <div class="sidenav-project-tag">BART CBTC Project</div>
     <a href="#" class="sidenav-signin-link" id="nav-login" data-page="login">Sign In</a>
     <div id="nav-user-pill" class="sidenav-user" style="display:none;"></div>

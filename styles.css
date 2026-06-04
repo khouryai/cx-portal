@@ -13281,50 +13281,6 @@ textarea:focus-visible,
   border-radius: 3px;
 }
 
-/* ===================================================================
-   Dark mode — overrides semantic tokens + neutral ramp. The sidenav
-   (slate-900) is intentionally dark in both themes, so the deep slate
-   shades are preserved. Activated by data-theme="dark" on <html>.
-   =================================================================== */
-:root { color-scheme: light; }
-html[data-theme="dark"] {
-  color-scheme: dark;
-  --bg: #0c0e12;
-  --surface: #16191f;
-  --surface-2: #1c2027;
-  --surface-3: #232831;
-  --text: #e7e9ee;
-  --text-muted: #aab2bf;
-  --text-subtle: #8b93a3;
-  --border: #2b313b;
-  --border-strong: #3a4150;
-  --hitachi-red-light: #2a0f12;
-  --good-light: #0e2a20;
-  --warn-light: #2e220e;
-  --bad-light: #2c1416;
-  --info-light: #122036;
-  --pending-light: #1e1830;
-}
-html[data-theme="dark"] body { background: var(--bg); }
-/* keep white ink on the brand-red and other solid color fills */
-html[data-theme="dark"] .kpi-primary .kpi-value,
-html[data-theme="dark"] .kpi-primary .kpi-label { color: #fff; }
-
-/* Sidenav theme toggle button */
-.sidenav-theme-toggle {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; margin-bottom: 10px;
-  padding: 8px 10px;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: var(--radius-md);
-  color: #e7e9ee; font-size: 12.5px; font-weight: 600;
-  cursor: pointer; font-family: var(--f-ui, inherit);
-  transition: background 160ms var(--easing), border-color 160ms var(--easing);
-}
-.sidenav-theme-toggle:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.22); }
-.sidenav-theme-toggle .theme-toggle-icon { display: inline-flex; }
-.sidenav-theme-toggle .icon-svg { width: 16px; height: 16px; }
 
 /* ===================================================================
    Global offline / sync status pill (bottom-center, non-intrusive)

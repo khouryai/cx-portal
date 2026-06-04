@@ -399,7 +399,6 @@ function _applyChartTheme() {
   } catch (e) {}
 }
 _applyChartTheme();
-window.addEventListener('cx-themechange', _applyChartTheme);
 
 // ==========================================
 // ROUTING
