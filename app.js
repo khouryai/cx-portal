@@ -16103,7 +16103,7 @@ function _swSnapshotChipHTML(r) {
     }
   } catch {}
   return `<div style="font-size:10px;color:#3730a3;margin-top:3px;display:flex;align-items:center;gap:3px;flex-wrap:wrap;" title="${escapeHtml(tip)}">
-    <span style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:3px;padding:1px 6px;">🧩 ${escapeHtml(label.length > 46 ? label.slice(0,46)+'…' : label)}</span>${staleBadge}
+    <span style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:3px;padding:1px 6px;">${icon('puzzle')} ${escapeHtml(label.length > 46 ? label.slice(0,46)+'…' : label)}</span>${staleBadge}
   </div>`;
 }
 
@@ -16184,7 +16184,7 @@ function _regressionCellHTML(r) {
   }
   if (histCount > 0) {
     bits += `<button onclick="_trToggleAttemptHist('${safeG}')" title="Show previous attempts"
-      style="font-size:10px;padding:3px 7px;background:#fff;border:1px solid var(--gray-300);color:var(--gray-600);border-radius:5px;cursor:pointer;">🕓 ${histCount} prior</button>`;
+      style="font-size:10px;padding:3px 7px;background:#fff;border:1px solid var(--gray-300);color:var(--gray-600);border-radius:5px;cursor:pointer;">${icon('clock')} ${histCount} prior</button>`;
   }
   if (!bits) return '';
 
@@ -16199,8 +16199,8 @@ function _regressionCellHTML(r) {
         const col = {Pass:'#16a34a',Fail:'#dc2626',Blocked:'#d97706'}[a.Status] || '#6b7280';
         const sw  = Array.isArray(a.SwSnapshot) && a.SwSnapshot.length ? a.SwSnapshot.map(s=>`${s.software_name} ${s.version}`).join(', ') : '—';
         return `<div style="font-size:10px;color:var(--gray-600);padding:3px 0;border-bottom:1px solid var(--gray-100);display:flex;justify-content:space-between;gap:8px;">
-          <span>🔒 <strong>Attempt ${a.AttemptNumber||1}</strong> · <span style="color:${col};font-weight:600;">${escapeHtml(a.Status||'—')}</span>${a.CompletedBy?' · by '+escapeHtml(a.CompletedBy):''}${a.CompletedDate?' · '+new Date(a.CompletedDate).toLocaleDateString():''}</span>
-          <span style="color:#3730a3;">🧩 ${escapeHtml(sw)}</span>
+          <span>${icon('lock')} <strong>Attempt ${a.AttemptNumber||1}</strong> · <span style="color:${col};font-weight:600;">${escapeHtml(a.Status||'—')}</span>${a.CompletedBy?' · by '+escapeHtml(a.CompletedBy):''}${a.CompletedDate?' · '+new Date(a.CompletedDate).toLocaleDateString():''}</span>
+          <span style="color:#3730a3;">${icon('puzzle')} ${escapeHtml(sw)}</span>
         </div>`;
       }).join('')}
     </div>`;
@@ -16372,11 +16372,11 @@ function _cmPageHTML() {
   } else {
     for (const sub of subKeys) {
       body += `<div style="margin-bottom:22px;">
-        <div style="font-size:14px;font-weight:700;color:var(--gray-800);padding:8px 0;border-bottom:2px solid var(--hitachi-red);margin-bottom:10px;">⚙️ ${escapeHtml(sub)}</div>`;
+        <div style="font-size:14px;font-weight:700;color:var(--gray-800);padding:8px 0;border-bottom:2px solid var(--hitachi-red);margin-bottom:10px;">${icon('settings')}️ ${escapeHtml(sub)}</div>`;
       const locKeys = Object.keys(tree[sub]).sort();
       for (const loc of locKeys) {
         body += `<div style="margin:0 0 14px 4px;">
-          <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:6px;">📍 ${escapeHtml(loc)}</div>`;
+          <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:6px;">${icon('pin')} ${escapeHtml(loc)}</div>`;
         const items = tree[sub][loc];
         for (const ik of Object.keys(items)) {
           const versions = items[ik].slice().sort((a,b) => new Date(b.install_date) - new Date(a.install_date));
@@ -16393,7 +16393,7 @@ function _cmPageHTML() {
                     <span style="font-size:11px;font-weight:600;color:${statusColor};margin-left:6px;">● ${escapeHtml(latest.status)}</span>
                   </div>
                   <div style="font-size:11px;color:var(--gray-500);margin-top:3px;">
-                    🖥 ${escapeHtml(latest.device_label || '— general —')} · Installed ${latest.install_date}${latest.installed_by ? ' by '+escapeHtml(latest.installed_by) : ''}${latest.baseline ? ' · Baseline: '+escapeHtml(latest.baseline) : ''}
+                    ${icon('monitor')} ${escapeHtml(latest.device_label || '— general —')} · Installed ${latest.install_date}${latest.installed_by ? ' by '+escapeHtml(latest.installed_by) : ''}${latest.baseline ? ' · Baseline: '+escapeHtml(latest.baseline) : ''}
                   </div>
                 </div>
                 <div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">
@@ -16766,7 +16766,7 @@ function _rmaPageHTML() {
         </span>`;
       }).join('')}
       <span class="right">
-        <button class="v2-btn-ghost" onclick="_rmaCSVExport()">⬇ Export CSV</button>
+        <button class="v2-btn-ghost" onclick="_rmaCSVExport()">${icon('download')} Export CSV</button>
         ${canEdit ? `<button class="v2-btn-primary" onclick="openRMAModal(null)">＋ New RMA</button>` : ''}
       </span>
     </div>
@@ -16790,7 +16790,7 @@ function _rmaPageHTML() {
     <div class="v2-list">
       ${filtered.length ? filtered.map(r => _rmaRowHTML(r, canEdit)).join('') : `
         <div style="padding:48px;text-align:center;color:var(--gray-500);">
-          <div style="font-size:32px;margin-bottom:8px;">📋</div>
+          <div style="font-size:32px;margin-bottom:8px;">${icon('clipboard')}</div>
           <div style="font-size:14px;">${RMAS.length ? 'No RMAs match your filters' : 'No RMAs yet — click ＋ New RMA to get started'}</div>
         </div>
       `}
@@ -16858,11 +16858,11 @@ function _rmaRowHTML(r, canEdit) {
         </div>
 
         <div class="rma-actions" onclick="event.stopPropagation()">
-          <button class="v2-btn-mini" onclick="_rmaViewModal('${r.id}')">👁 View</button>
+          <button class="v2-btn-mini" onclick="_rmaViewModal('${r.id}')">${icon('eye')} View</button>
           ${canEdit ? `
             <div style="display:flex;gap:4px;">
-              <button class="v2-btn-mini" onclick="openRMAModal('${r.id}')">✏ Edit</button>
-              <button class="v2-btn-mini danger" onclick="deleteRMA('${r.id}')" title="Delete">🗑</button>
+              <button class="v2-btn-mini" onclick="openRMAModal('${r.id}')">${icon('edit')} Edit</button>
+              <button class="v2-btn-mini danger" onclick="deleteRMA('${r.id}')" title="Delete">${icon('trash')}</button>
             </div>
           ` : ''}
         </div>
@@ -17038,7 +17038,7 @@ function _rmaViewModal(id) {
       (r.notes ? `<div style="margin-top:14px;padding:12px 14px;background:var(--gray-50);border-radius:6px;font-size:13px;color:var(--gray-700);"><strong>Notes:</strong> ${escapeHtml(r.notes)}</div>` : ''),
     footer:
       `<button class="form-secondary" onclick="closeModal()">Close</button>` +
-      `<button class="form-secondary" onclick="closeModal();_rmaPrintPDF('${id}')">🖨 Print / PDF</button>`,
+      `<button class="form-secondary" onclick="closeModal();_rmaPrintPDF('${id}')">${icon('printer')} Print / PDF</button>`,
   });
 }
 
@@ -17237,7 +17237,7 @@ function _mtgListPageHTML() {
   return `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;gap:12px;flex-wrap:wrap;">
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <input id="mtg-search-input" class="form-input" placeholder="🔍 Search meetings…" style="width:210px;"
+        <input id="mtg-search-input" class="form-input" placeholder="Search meetings…" style="width:210px;"
           value="${escapeHtml(_mtgSearch)}" oninput="_mtgSearch=this.value;renderMeetings()">
         <select class="filter-select" onchange="_mtgSeriesFilter=this.value;renderMeetings()">
           <option value="">All Series</option>
@@ -17250,7 +17250,7 @@ function _mtgListPageHTML() {
         </select>
       </div>
       <div style="display:flex;gap:8px;">
-        ${isAdmin ? `<button class="form-secondary" onclick="openMtgTemplatesModal()">⚙ Templates</button>` : ''}
+        ${isAdmin ? `<button class="form-secondary" onclick="openMtgTemplatesModal()">${icon('settings')} Templates</button>` : ''}
         ${isAdmin ? `<button class="form-primary" onclick="openMtgModal()">+ Create Meeting</button>` : ''}
       </div>
     </div>
@@ -17341,9 +17341,9 @@ function _mtgDetailPageHTML() {
         </h2>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           ${isAdmin ? `<button class="form-primary" onclick="createFollowUpMtg('${m.id}')">Follow-Up Meeting</button>` : ''}
-          <button class="form-secondary" onclick="_mtgPrintPDF('${m.id}')">⬇ Export PDF</button>
-          ${isAdmin && !inMinutes ? `<button class="form-secondary" onclick="convertToMinutesMode('${m.id}')">📝 Convert to Minutes</button>` : ''}
-          ${isAdmin ? `<button class="form-secondary" onclick="openMtgModal('${m.id}')">✏ Edit</button>` : ''}
+          <button class="form-secondary" onclick="_mtgPrintPDF('${m.id}')">${icon('download')} Export PDF</button>
+          ${isAdmin && !inMinutes ? `<button class="form-secondary" onclick="convertToMinutesMode('${m.id}')">${icon('edit')} Convert to Minutes</button>` : ''}
+          ${isAdmin ? `<button class="form-secondary" onclick="openMtgModal('${m.id}')">${icon('edit')} Edit</button>` : ''}
         </div>
       </div>
       ${_mtgInfoHTML(m, isAdmin)}
@@ -17362,7 +17362,7 @@ function _mtgInfoHTML(m, isAdmin) {
     <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;margin-bottom:14px;overflow:hidden;">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--gray-200);">
         <span style="font-weight:600;font-size:14px;">Meeting Information</span>
-        ${isAdmin ? `<button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgModal('${m.id}')">✏ Edit</button>` : ''}
+        ${isAdmin ? `<button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgModal('${m.id}')">${icon('edit')} Edit</button>` : ''}
       </div>
       <div style="padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:14px 32px;">
         ${f('Number', m.meeting_number ? String(m.meeting_number) : '—')}
@@ -17391,7 +17391,7 @@ function _mtgAttendeesHTML(attendees, meetingId, isAdmin) {
       <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--gray-200);">
         <span style="font-weight:600;font-size:14px;">Attendees (${attendees.length})</span>
         ${isAdmin ? `<div style="display:flex;gap:6px;">
-          <button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgImportAttendeesModal('${meetingId}')">📥 Import CSV</button>
+          <button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgImportAttendeesModal('${meetingId}')">${icon('inbox')} Import CSV</button>
           <button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgAddAttendeeModal('${meetingId}')">+ Add</button>
         </div>` : ''}
       </div>
@@ -17442,8 +17442,8 @@ function _mtgCategoryHTML(cat, catIdx, items, actionItems, meetingId, inMinutes,
         <span id="cat-chev-${cat.id}" style="font-size:11px;color:var(--primary);transition:transform .2s;display:inline-block;">▼</span>
         <span style="font-weight:700;font-size:14px;flex:1;">${escapeHtml(cat.title)}</span>
         ${isAdmin ? `<span onclick="event.stopPropagation()">
-          <button class="form-secondary" style="padding:2px 8px;font-size:12px;" onclick="openMtgCategoryModal('${cat.id}','${meetingId}')">✏</button>
-          <button class="form-secondary" style="padding:2px 8px;font-size:12px;color:var(--bad);" onclick="deleteMtgCategory('${cat.id}','${meetingId}')">🗑</button>
+          <button class="form-secondary" style="padding:2px 8px;font-size:12px;" onclick="openMtgCategoryModal('${cat.id}','${meetingId}')">${icon('edit')}</button>
+          <button class="form-secondary" style="padding:2px 8px;font-size:12px;color:var(--bad);" onclick="deleteMtgCategory('${cat.id}','${meetingId}')">${icon('trash')}</button>
         </span>` : ''}
       </div>
       <div id="cat-body-${cat.id}">
@@ -17476,8 +17476,8 @@ function _mtgItemHTML(item, catNum, itemNum, actionItems, meetingId, inMinutes, 
         <span style="flex:1;font-size:13px;font-weight:500;">${escapeHtml(item.title)}</span>
         <span style="background:${sc}18;color:${sc};border:1px solid ${sc}40;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">${escapeHtml(item.status||'Open')}</span>
         ${isAdmin ? `<span onclick="event.stopPropagation()">
-          <button class="form-secondary" style="padding:2px 8px;font-size:12px;" onclick="openMtgItemModal('${item.id}','${item.category_id}','${meetingId}')">✏</button>
-          <button class="form-secondary" style="padding:2px 8px;font-size:12px;color:var(--bad);" onclick="deleteMtgItem('${item.id}','${meetingId}')">🗑</button>
+          <button class="form-secondary" style="padding:2px 8px;font-size:12px;" onclick="openMtgItemModal('${item.id}','${item.category_id}','${meetingId}')">${icon('edit')}</button>
+          <button class="form-secondary" style="padding:2px 8px;font-size:12px;color:var(--bad);" onclick="deleteMtgItem('${item.id}','${meetingId}')">${icon('trash')}</button>
         </span>` : ''}
       </div>
       <div id="item-body-${item.id}" style="display:${expanded?'':'none'};border-top:1px solid var(--gray-100);">
@@ -17524,7 +17524,7 @@ function _mtgItemHTML(item, catNum, itemNum, actionItems, meetingId, inMinutes, 
               <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:8px;">Official Documented Meeting Minutes</div>
               ${isAdmin
                 ? `${_mtgRichEditorHTML('minutes-'+item.id, item.minutes_notes||'')}
-                   <button class="form-secondary" style="margin-top:8px;padding:4px 14px;font-size:12px;" onclick="saveMtgItemMinutes('${item.id}')">💾 Save Notes</button>`
+                   <button class="form-secondary" style="margin-top:8px;padding:4px 14px;font-size:12px;" onclick="saveMtgItemMinutes('${item.id}')">${icon('save')} Save Notes</button>`
                 : `<div class="mtg-prev-content" style="min-height:40px;">${item.minutes_notes || '<span style="color:var(--gray-400);">No minutes recorded.</span>'}</div>`}
             </div>
             ${_mtgItemPrevMinutesHTML(item)}
@@ -18433,14 +18433,14 @@ let _laPendingUndo       = null;                        // { fn } — most recen
 
 // Shift visual styles — used across calendar, timeline, badges
 const _SHIFT_VISUAL = {
-  day_shift:     { bg: '#FFEB3B', text: '#1f2937', label: 'Day',     icon: '☀' },
+  day_shift:     { bg: '#FFEB3B', text: '#1f2937', label: 'Day',     icon: icon('sun') },
   night_shift:   { bg: '#2196F3', text: '#ffffff', label: 'Night',   icon: '☾' },
   blanket_shift: { bg: '#1f2937', text: '#ffffff', label: 'Blanket', icon: '■' },
   swing_shift:   { bg: '#FF9800', text: '#1f2937', label: 'Swing',   icon: '↔' },
   custom:        { bg: '#6b7280', text: '#ffffff', label: 'Custom',  icon: '◆' },
 };
-const _CANCEL_VISUAL   = { bg: '#b91c1c', text: '#ffffff', label: 'Cancelled', icon: '✕' };
-const _PTO_VISUAL      = { bg: '#fef3c7', text: '#92400e', label: 'PTO',       icon: '🌴' };
+const _CANCEL_VISUAL   = { bg: '#b91c1c', text: '#ffffff', label: 'Cancelled', icon: icon('x') };
+const _PTO_VISUAL      = { bg: '#fef3c7', text: '#92400e', label: 'PTO',       icon: icon('palm') };
 
 // ── Data loaders ─────────────────────────────────────────────
 async function loadPlanningData(force = false) {
@@ -18641,7 +18641,7 @@ function renderLookahead() {
         `).join('')}
       </div>
       <div style="display:flex;gap:8px;">
-        ${isAdmin ? `<button class="form-secondary" onclick="showPage('admin-planning')">⚙ Admin Planning</button>` : ''}
+        ${isAdmin ? `<button class="form-secondary" onclick="showPage('admin-planning')">${icon('settings')} Admin Planning</button>` : ''}
         <button class="form-secondary" onclick="loadPlanningData(true).then(renderLookahead);">↻ Refresh</button>
       </div>
     </div>
@@ -18684,7 +18684,7 @@ function _renderLookaheadTabBody() {
 function _laStubCard(title, msg, batch) {
   return `
     <div class="data-card" style="padding:32px;text-align:center;">
-      <div style="font-size:48px;margin-bottom:12px;">📅</div>
+      <div style="font-size:48px;margin-bottom:12px;">${icon('calendar')}</div>
       <h3 style="margin:0 0 8px;font-size:18px;font-weight:600;">${title}</h3>
       <p style="margin:0;color:var(--gray-500);font-size:13px;max-width:520px;margin:0 auto;">${msg}</p>
       <div style="margin-top:14px;font-size:11px;color:var(--gray-400);">Coming in ${batch}</div>
@@ -18742,7 +18742,7 @@ function _planningShiftLegend() {
       <span><span style="display:inline-block;width:12px;height:12px;background:#2196F3;border:1px solid #999;vertical-align:middle;margin-right:4px;"></span> Night shift</span>
       <span><span style="display:inline-block;width:12px;height:12px;background:#1f2937;vertical-align:middle;margin-right:4px;"></span> Blanket</span>
       <span><span style="display:inline-block;width:12px;height:12px;background:#fecaca;border:1px solid #7f1d1d;vertical-align:middle;margin-right:4px;"></span> Cancelled</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#fef3c7;border:1px solid #92400e;vertical-align:middle;margin-right:4px;"></span> 🌴 PTO</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#fef3c7;border:1px solid #92400e;vertical-align:middle;margin-right:4px;"></span> ${icon('palm')} PTO</span>
     </div>`;
 }
 
@@ -18755,7 +18755,7 @@ function _laCalendarHTML() {
     ${_planningKPIStrip()}
     ${outToday.length ? `
       <div style="margin-bottom:14px;padding:10px 14px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
-        🌴 <strong>Out today:</strong> ${outToday.map(x => escapeHtml(x.resource?.display_name || '—')).join(', ')}
+        ${icon('palm')} <strong>Out today:</strong> ${outToday.map(x => escapeHtml(x.resource?.display_name || '—')).join(', ')}
       </div>` : ''}
 
     ${_planningCalendarLegend()}
@@ -19026,7 +19026,7 @@ function _planningCalendarLegend() {
     <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#2196F3;border-color:#0d47a1;"></span>Night shift</span>
     <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#1f2937;border-color:#000;"></span>Blanket</span>
     <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#b91c1c;border-color:#7f1d1d;"></span>Cancelled</span>
-    <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#fef3c7;border-color:#92400e;"></span>🌴 PTO</span>
+    <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#fef3c7;border-color:#92400e;"></span>${icon('palm')} PTO</span>
   `;
 
   const subChips = [...seenSubs].sort().map(s => {
@@ -19063,13 +19063,13 @@ function _laEventTippy(e, v, assignments) {
   return `
     <div class="cal-tip">
       <div class="cal-tip-title">${escapeHtml(e.title || '(no title)')}</div>
-      <div class="cal-tip-row"><span>📅</span> ${escapeHtml(e.event_date)}</div>
+      <div class="cal-tip-row"><span>${icon('calendar')}</span> ${escapeHtml(e.event_date)}</div>
       <div class="cal-tip-row"><span>⏰</span> ${escapeHtml(timeStr)}</div>
-      ${sub ? `<div class="cal-tip-row"><span>🏷</span> ${escapeHtml(sub)}</div>` : ''}
-      ${e.location ? `<div class="cal-tip-row"><span>📍</span> ${escapeHtml(e.location)}</div>` : ''}
-      <div class="cal-tip-row"><span>👤</span> ${escapeHtml(res)}</div>
-      <div class="cal-tip-row"><span>🔄</span> ${escapeHtml(v.label)}</div>
-      ${e.status === 'cancelled' && e.cancellation_reason ? `<div class="cal-tip-row" style="color:#ef4444;"><span>✕</span> ${escapeHtml(e.cancellation_reason)}${e.cancellation_responsible_party ? ` · <strong>${escapeHtml(e.cancellation_responsible_party)}</strong>` : ''}</div>` : ''}
+      ${sub ? `<div class="cal-tip-row"><span>${icon('tag')}</span> ${escapeHtml(sub)}</div>` : ''}
+      ${e.location ? `<div class="cal-tip-row"><span>${icon('pin')}</span> ${escapeHtml(e.location)}</div>` : ''}
+      <div class="cal-tip-row"><span>${icon('user')}</span> ${escapeHtml(res)}</div>
+      <div class="cal-tip-row"><span>${icon('refresh')}</span> ${escapeHtml(v.label)}</div>
+      ${e.status === 'cancelled' && e.cancellation_reason ? `<div class="cal-tip-row" style="color:#ef4444;"><span>${icon('x')}</span> ${escapeHtml(e.cancellation_reason)}${e.cancellation_responsible_party ? ` · <strong>${escapeHtml(e.cancellation_responsible_party)}</strong>` : ''}</div>` : ''}
     </div>`.replace(/"/g, '&quot;');
 }
 
@@ -19187,11 +19187,11 @@ function _laRenderMonthView(body) {
         } else if (item.kind === 'pto') {
           html += `<div class="cal-event cal-event-pto"
             onclick="_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))"
-          >🌴 <span class="cal-event-label">${escapeHtml(_ptoResourceName(item.p.resource_id))}</span></div>`;
+          >${icon('palm')} <span class="cal-event-label">${escapeHtml(_ptoResourceName(item.p.resource_id))}</span></div>`;
         } else if (item.kind === 'p6') {
           html += `<div class="cal-event cal-event-p6"
             onclick="_planningOpenP6Detail(P6_ACTS.find(x=>x.id==='${item.p6.id}'))"
-          >📋 <span class="cal-event-label">${escapeHtml((item.p6.p6_id||'') + ' ' + (item.p6.p6_name||'').slice(0,20))}</span></div>`;
+          >${icon('clipboard')} <span class="cal-event-label">${escapeHtml((item.p6.p6_id||'') + ' ' + (item.p6.p6_name||'').slice(0,20))}</span></div>`;
         }
       });
       if (overflow > 0) {
@@ -19244,11 +19244,11 @@ function _laShowDayOverflow(iso) {
     } else if (item.kind === 'pto') {
       bodyHtml += `<div style="background:#fef3c7;color:#92400e;border-left:4px solid #f59e0b;padding:7px 10px;border-radius:5px;cursor:pointer;font-size:13px;"
         onclick="closeModal();_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))">
-        🌴 ${escapeHtml(_ptoResourceName(item.p.resource_id))} — PTO
+        ${icon('palm')} ${escapeHtml(_ptoResourceName(item.p.resource_id))} — PTO
       </div>`;
     } else if (item.kind === 'p6') {
       bodyHtml += `<div style="background:#f0fdf4;color:#166534;border-left:4px solid #22c55e;padding:7px 10px;border-radius:5px;font-size:13px;">
-        📋 <strong>${escapeHtml(item.p6.p6_id||'')}</strong> ${escapeHtml((item.p6.p6_name||'').slice(0,60))}
+        ${icon('clipboard')} <strong>${escapeHtml(item.p6.p6_id||'')}</strong> ${escapeHtml((item.p6.p6_name||'').slice(0,60))}
       </div>`;
     }
   });
@@ -19349,14 +19349,14 @@ function _laRenderWeekView(body) {
           html += `<div class="cal-wl-chip cal-wl-chip-pto"
             onclick="_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))"
           >
-            <div class="cal-wl-chip-title">🌴 ${escapeHtml(_ptoResourceName(item.p.resource_id))}</div>
+            <div class="cal-wl-chip-title">${icon('palm')} ${escapeHtml(_ptoResourceName(item.p.resource_id))}</div>
             <div class="cal-wl-chip-meta">PTO</div>
           </div>`;
         } else if (item.kind === 'p6') {
           html += `<div class="cal-wl-chip cal-wl-chip-p6"
             onclick="_planningOpenP6Detail(P6_ACTS.find(x=>x.id==='${item.p6.id}'))"
           >
-            <div class="cal-wl-chip-title">📋 ${escapeHtml((item.p6.p6_name || item.p6.p6_id || '').slice(0, 50))}</div>
+            <div class="cal-wl-chip-title">${icon('clipboard')} ${escapeHtml((item.p6.p6_name || item.p6.p6_id || '').slice(0, 50))}</div>
             <div class="cal-wl-chip-meta">${escapeHtml(item.p6.p6_id || '')}</div>
           </div>`;
         }
@@ -19440,7 +19440,7 @@ function _laRenderDayView(body) {
 
         const metaParts = [
           timeStr,
-          e.location ? `📍 ${e.location}` : '',
+          e.location ? `${icon('pin')} ${e.location}` : '',
         ].filter(Boolean);
 
         html += `<div class="cal-dl-chip${isCancel ? ' cal-dl-chip-cancelled' : ''}"
@@ -19462,7 +19462,7 @@ function _laRenderDayView(body) {
           onclick="_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))"
         >
           <div class="cal-dl-chip-header">
-            <span class="cal-dl-chip-title">🌴 ${escapeHtml(_ptoResourceName(item.p.resource_id))}</span>
+            <span class="cal-dl-chip-title">${icon('palm')} ${escapeHtml(_ptoResourceName(item.p.resource_id))}</span>
             <span class="cal-dl-chip-badge" style="background:#d1fae5;color:#065f46;">PTO</span>
           </div>
           <div class="cal-dl-chip-meta">${escapeHtml(_ptoFmtRange(item.p))}</div>
@@ -19473,7 +19473,7 @@ function _laRenderDayView(body) {
           onclick="_planningOpenP6Detail(P6_ACTS.find(x=>x.id==='${item.p6.id}'))"
         >
           <div class="cal-dl-chip-header">
-            <span class="cal-dl-chip-title">📋 ${escapeHtml((item.p6.p6_name || item.p6.p6_id || '').slice(0, 80))}</span>
+            <span class="cal-dl-chip-title">${icon('clipboard')} ${escapeHtml((item.p6.p6_name || item.p6.p6_id || '').slice(0, 80))}</span>
             <span class="cal-dl-chip-badge" style="background:#e0e7ff;color:#3730a3;">P6</span>
           </div>
           <div class="cal-dl-chip-meta">${escapeHtml(item.p6.p6_id || '')} · ${escapeHtml(item.p6.start_date || '')} – ${escapeHtml(item.p6.finish_date || '')}</div>
@@ -19557,8 +19557,8 @@ function _tlgShiftTip(s, v) {
   return (`<div class="cal-tip">
     <div class="cal-tip-title">${escapeHtml(s.title||'(no title)')}</div>
     <div class="cal-tip-row"><span>⏰</span> ${escapeHtml(ts)}</div>
-    <div class="cal-tip-row"><span>🔄</span> ${escapeHtml(v.label)}</div>
-    ${s.isCancel ? '<div class="cal-tip-row" style="color:#ef4444;"><span>✕</span> Cancelled</div>' : ''}
+    <div class="cal-tip-row"><span>${icon('refresh')}</span> ${escapeHtml(v.label)}</div>
+    ${s.isCancel ? '<div class="cal-tip-row" style="color:#ef4444;"><span>' + icon('x') + '</span> Cancelled</div>' : ''}
   </div>`).replace(/"/g, '&quot;');
 }
 
@@ -19755,7 +19755,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     // ── Location divider row (kept for Location sort mode) ──────
     if (g.isLocHeader) {
       html += `<div class="tlg-row tlg-loc-hdr-row">
-        <div class="tlg-label tlg-loc-hdr-label">📍 ${escapeHtml(g.label)}</div>
+        <div class="tlg-label tlg-loc-hdr-label">${icon('pin')} ${escapeHtml(g.label)}</div>
         <div class="tlg-cells">${days.map(iso => {
           const isToday = iso === todayISO;
           const dw = dayjs(iso).day(); const isWknd = dw === 0 || dw === 6;
@@ -19784,8 +19784,8 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       : '';
 
     const linkChip = actId ? (g.linkedTestRegActivity
-      ? `<span class="tlg-row-link tlg-row-link-set" title="Linked to Test Register Activity: ${escapeHtml(g.linkedTestRegActivity)}">🔗 ${escapeHtml(g.linkedTestRegActivity)}</span>`
-      : `<span class="tlg-row-link tlg-row-link-none" title="No Test Register Activity linked — click to link">🔗 unlinked</span>`) : '';
+      ? `<span class="tlg-row-link tlg-row-link-set" title="Linked to Test Register Activity: ${escapeHtml(g.linkedTestRegActivity)}">${icon('link')} ${escapeHtml(g.linkedTestRegActivity)}</span>`
+      : `<span class="tlg-row-link tlg-row-link-none" title="No Test Register Activity linked — click to link">${icon('link')} unlinked</span>`) : '';
     const progChip = _planningRowProgressChip(g.linkedTestRegActivity);
     // v-combo: discipline color drives the 3px spine; status pill + trade chip
     // sit inline; activity name and meta wrap as needed.
@@ -19826,7 +19826,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
         </div>` : ''}
       </div>
       ${assignedChips}${dropHintHTML}
-      ${actId ? `<button class="tlg-row-del" onclick="event.stopPropagation();_laDeleteManualActivity('${actId}',event)" title="Delete activity (soft-delete coming in Phase 3)" style="position:absolute;top:6px;right:8px;">🗑</button>` : ''}
+      ${actId ? `<button class="tlg-row-del" onclick="event.stopPropagation();_laDeleteManualActivity('${actId}',event)" title="Delete activity (soft-delete coming in Phase 3)" style="position:absolute;top:6px;right:8px;">${icon('trash')}</button>` : ''}
     </div>`;
     html += `<div class="tlg-cells">`;
     days.forEach((iso, idx) => {
@@ -19865,7 +19865,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
         html += `<div class="tlg-shift-block tlg-shift-pto tlg-run-solo"
           onclick="(function(){const p=PTO_REQUESTS.find(x=>x.id==='${ptoEntry.id}');if(p)_planningOpenPTODetail(p);})()"
           title="PTO"
-        >🌴<span class="tlg-shift-time"> PTO</span></div>`;
+        >${icon('palm')}<span class="tlg-shift-time"> PTO</span></div>`;
       } else {
         shifts.forEach(s => {
           const v   = _tlgShiftVisual(s);
@@ -19905,7 +19905,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
     );
     if (p6inWindow.length) {
       html += `<div class="tlg-p6-section">`;
-      html += `<div class="tlg-row tlg-p6-hdr-row"><div class="tlg-label tlg-p6-section-label">📋 P6 Baseline</div><div class="tlg-cells">`;
+      html += `<div class="tlg-row tlg-p6-hdr-row"><div class="tlg-label tlg-p6-section-label">${icon('clipboard')} P6 Baseline</div><div class="tlg-cells">`;
       days.forEach(() => html += `<div class="tlg-cell"></div>`);
       html += `</div></div>`;
       p6inWindow.forEach(p6 => {
