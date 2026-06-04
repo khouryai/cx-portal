@@ -36440,3 +36440,62 @@ function _drwUploadRevision(setId) {
     }
   }, 50);
 }
+
+
+// ── Global offline / sync status pill ─────────────────────────────────────
+// Bottom-center, non-intrusive. Reads the existing field queue (loadQueue)
+// for a pending count and flushes known offline queues on reconnect.
+(function () {
+  function pendingCount() {
+    try { return (loadQueue() || []).filter(function (q) { return q && q.status !== 'sent'; }).length; }
+    catch (e) { return 0; }
+  }
+  function ensure() {
+    var b = document.getElementById('net-banner');
+    if (!b) {
+      b = document.createElement('div');
+      b.id = 'net-banner';
+      b.setAttribute('role', 'status');
+      b.setAttribute('aria-live', 'polite');
+      b.innerHTML = '<span class="net-banner-icon" aria-hidden="true"></span><span class="net-banner-text"></span>';
+      (document.body || document.documentElement).appendChild(b);
+    }
+    return b;
+  }
+  var _t = null;
+  function update(opts) {
+    var b = ensure();
+    var offline = navigator.onLine === false;
+    var pending = pendingCount();
+    var txt = b.querySelector('.net-banner-text');
+    var ic = b.querySelector('.net-banner-icon');
+    if (offline) {
+      b.className = 'net-banner show offline';
+      txt.textContent = pending > 0
+        ? "You're offline — " + pending + ' change' + (pending === 1 ? '' : 's') + ' saved locally, will sync when you reconnect.'
+        : "You're offline — changes are saved locally and will sync when you reconnect.";
+      if (ic && window.icon) ic.innerHTML = window.icon('cloud-rain');
+      clearTimeout(_t);
+    } else if (opts && opts.justReconnected) {
+      b.className = 'net-banner show syncing';
+      txt.textContent = pending > 0
+        ? 'Back online — syncing ' + pending + ' change' + (pending === 1 ? '' : 's') + '…'
+        : 'Back online';
+      if (ic && window.icon) ic.innerHTML = window.icon('refresh');
+      clearTimeout(_t);
+      _t = setTimeout(function () { b.className = 'net-banner'; }, 3500);
+    } else {
+      b.className = 'net-banner';
+    }
+  }
+  function onOnline() {
+    try { if (typeof _pdfFlushQueuedDrafts === 'function') _pdfFlushQueuedDrafts().catch(function () {}); } catch (e) {}
+    try { if (typeof renderQueue === 'function') renderQueue(); } catch (e) {}
+    update({ justReconnected: true });
+  }
+  window.addEventListener('online', onOnline);
+  window.addEventListener('offline', function () { update(); });
+  document.addEventListener('DOMContentLoaded', function () { update(); });
+  if (document.readyState !== 'loading') update();
+  window._netUpdate = update;
+})();
