@@ -33338,6 +33338,12 @@ const _dynPage = {
   planSchedFilter: '',                   // '' | 'scheduled' | 'unscheduled' (feasibility table)
   planLoading: false,
   planWindows: [],                       // zone_access_windows rows (cached)
+  // Duration-variance tab filters (client-side, recompute KPIs live)
+  varSubsys: '',
+  varPhase: '',
+  varBand: '',                           // '' | 'over' | 'under' | 'ontime'
+  varExpanded: new Set(),                // expanded activity groups
+  _boardModal: null,                     // {type:'day',key} | {type:'cell',rowKey,periodKey}
 };
 
 const _DYN_STATUSES = [
@@ -34926,7 +34932,106 @@ function _dynRenderDaySummaries(cols) {
 }
 
 // All instances scheduled on a given day (across every board row).
+// ── Reschedule / unschedule from the board drilldowns ──────────────────
+// A "scheduled shift" is a distinct (date, committed window) that already has
+// instances on it — moves target one of those, never an arbitrary new date.
+function _dynScheduledShifts() {
+  const map = new Map();
+  for (const r of _dynPage.instances) {
+    if (!r.scheduled_for_date) continue;
+    const key = `${r.scheduled_for_date}|${r.scheduled_window || ''}`;
+    if (!map.has(key)) map.set(key, { key, date: r.scheduled_for_date, window: r.scheduled_window || null, count: 0 });
+    map.get(key).count++;
+  }
+  return [...map.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
+function _dynShiftLabel(s) {
+  let lbl = _dynFmtDate(s.date);
+  const rng = _dynParseRange(s.window);
+  if (rng) {
+    const f = d => d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    lbl += ` · ${f(rng.start)}–${f(rng.end)}`;
+  }
+  return `${lbl} (${s.count})`;
+}
+
+// Dropdown of other scheduled shifts within ±14 days of this instance's date.
+function _dynMoveShiftOptions(r) {
+  const cur = `${r.scheduled_for_date || ''}|${r.scheduled_window || ''}`;
+  const baseStr = r.scheduled_for_date || r.target_window_start || r.target_window_end;
+  const base = baseStr ? _dynParseDate(baseStr) : new Date();
+  const shifts = _dynScheduledShifts().filter(s => {
+    if (s.key === cur) return false;
+    return Math.abs((_dynParseDate(s.date) - base) / 86400000) <= 14;
+  });
+  if (!shifts.length) {
+    return `<span style="font-size:10.5px;color:var(--gray-400);" title="No other scheduled shift within 14 days">no shift ±14d</span>`;
+  }
+  return `<select onchange="if(this.value)_dynMoveInstanceToShift('${escapeHtml(r.id)}',this.value)" title="Move to another scheduled shift (within 14 days)" style="font-size:11px;padding:2px 4px;border:1px solid var(--gray-300);border-radius:4px;max-width:210px;">
+    <option value="">Move to shift…</option>
+    ${shifts.map(s => `<option value="${escapeHtml(s.key)}">${escapeHtml(_dynShiftLabel(s))}</option>`).join('')}
+  </select>`;
+}
+
+function _dynScheduleRowActions(r) {
+  const scheduled = !!(r.scheduled_for_date || r.scheduled_window);
+  return `<div style="display:flex;gap:4px;align-items:center;justify-content:flex-end;white-space:nowrap;">
+    ${_dynMoveShiftOptions(r)}
+    ${scheduled ? `<button class="dyn-btn" style="padding:3px 8px;font-size:11px;color:#dc2626;" title="Remove from its scheduled date" onclick="_dynUnschedule('${escapeHtml(r.id)}')">Unschedule</button>` : ''}
+    <button class="dyn-btn" style="padding:3px 8px;font-size:11px;" onclick="closeModal();_dynOpenInstanceModal('${escapeHtml(r.id)}')">Open</button>
+  </div>`;
+}
+
+async function _dynMoveInstanceToShift(id, shiftKey) {
+  const i = shiftKey.indexOf('|');
+  const date = i >= 0 ? shiftKey.slice(0, i) : shiftKey;
+  const window = i >= 0 ? shiftKey.slice(i + 1) : '';
+  try {
+    await _dbUpdate('dynamic_instances', { scheduled_for_date: date, scheduled_window: window || null, updated_at: new Date().toISOString() }, { id });
+    const inst = _dynPage.instances.find(x => x.id === id);
+    if (inst) { inst.scheduled_for_date = date; inst.scheduled_window = window || null; }
+    if (typeof toast === 'function') toast(`Moved to ${_dynFmtDate(date)}`, 'success');
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    _dynRenderBoard();
+    _dynReopenBoardModal();
+  } catch (e) { alert(`Move failed: ${e.message}`); }
+}
+
+async function _dynUnschedule(id) {
+  if (!confirm('Remove this instance from its scheduled date?')) return;
+  try {
+    await _dbUpdate('dynamic_instances', { scheduled_for_date: null, scheduled_window: null, updated_at: new Date().toISOString() }, { id });
+    const inst = _dynPage.instances.find(x => x.id === id);
+    if (inst) { inst.scheduled_for_date = null; inst.scheduled_window = null; }
+    if (typeof toast === 'function') toast('Removed from schedule', 'success');
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    _dynRenderBoard();
+    _dynReopenBoardModal();
+  } catch (e) { alert(`Unschedule failed: ${e.message}`); }
+}
+
+// Re-open whichever board drilldown was active, if it still has rows.
+function _dynReopenBoardModal() {
+  const m = _dynPage._boardModal;
+  if (!m) { closeModal(); return; }
+  if (m.type === 'day') {
+    const has = _dynPage.instances.some(r => { const w = _dynBoardWhen(r); return w && _dynDayKey(w) === m.key; });
+    if (has) _dynBoardOpenDay(m.key); else closeModal();
+  } else {
+    const keyOf = _dynPage.boardView === 'week' ? _dynDayKey : _dynMonthKey;
+    const has = _dynPage.instances.some(r => {
+      if (!_dynBoardRowKeys(r).includes(m.rowKey)) return false;
+      const w = _dynBoardWhen(r); return w && keyOf(w) === m.periodKey;
+    });
+    if (has) _dynBoardOpenCell(m.rowKey, m.periodKey); else closeModal();
+  }
+}
+
 function _dynBoardOpenDay(dayKey) {
+  _dynPage._boardModal = { type: 'day', key: dayKey };
   const matches = _dynPage.instances.filter(r => {
     const w = _dynBoardWhen(r);
     return w && _dynDayKey(w) === dayKey;
@@ -34951,7 +35056,7 @@ function _dynBoardOpenDay(dayKey) {
         ${(a.winStart && a.winEnd) ? `<p style="font-size:12px;margin:0 0 12px;"><b>Committed window:</b> ${a.winStart.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false})}–${a.winEnd.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false})}</p>` : ''}
         <table class="dyn-table" style="border:1px solid var(--gray-200);">
           <thead><tr>
-            <th>Code</th><th>Test Case</th><th>Title</th><th style="text-align:right;">Trains</th><th style="text-align:right;">Dur</th><th>Status</th><th></th>
+            <th>Code</th><th>Test Case</th><th>Title</th><th style="text-align:right;">Trains</th><th style="text-align:right;">Dur</th><th>Status</th><th style="text-align:right;">Reschedule</th>
           </tr></thead>
           <tbody>${matches.map(r => {
             const tc = _dynPage.testItemsById.get(r.test_id);
@@ -34962,7 +35067,7 @@ function _dynBoardOpenDay(dayKey) {
               <td style="text-align:right;font-family:monospace;">${r.trains_needed ?? 1}</td>
               <td style="text-align:right;font-family:monospace;">${r.expected_duration_minutes ?? '—'}</td>
               <td>${_dynStatusBadge(r.status)}</td>
-              <td><button class="dyn-btn" style="padding:3px 8px;font-size:11px;" onclick="closeModal();_dynOpenInstanceModal('${escapeHtml(r.id)}')">Open</button></td>
+              <td style="text-align:right;">${_dynScheduleRowActions(r)}</td>
             </tr>`;
           }).join('')}</tbody>
         </table>
@@ -34997,6 +35102,7 @@ function _dynBoardToday() {
 }
 
 function _dynBoardOpenCell(rowKey, periodKey) {
+  _dynPage._boardModal = { type: 'cell', rowKey, periodKey };
   const keyOf = _dynPage.boardView === 'week' ? _dynDayKey : _dynMonthKey;
   const matches = _dynPage.instances.filter(r => {
     if (!_dynBoardRowKeys(r).includes(rowKey)) return false;
@@ -35011,7 +35117,7 @@ function _dynBoardOpenCell(rowKey, periodKey) {
       <div style="padding:8px 24px 16px;">
         <table class="dyn-table" style="border:1px solid var(--gray-200);">
           <thead><tr>
-            <th>Code</th><th>Test Case</th><th>Title</th><th>Status</th><th>Date</th><th></th>
+            <th>Code</th><th>Test Case</th><th>Title</th><th>Status</th><th>Date</th><th style="text-align:right;">Reschedule</th>
           </tr></thead>
           <tbody>${matches.map(r => {
             const tc = _dynPage.testItemsById.get(r.test_id);
@@ -35022,7 +35128,7 @@ function _dynBoardOpenCell(rowKey, periodKey) {
               <td>${escapeHtml(r.title || '')}</td>
               <td>${_dynStatusBadge(r.status)}</td>
               <td style="font-size:12px;">${_dynFmtDate(when) || '—'}</td>
-              <td><button class="dyn-btn" style="padding:3px 8px;font-size:11px;" onclick="closeModal();_dynOpenInstanceModal('${escapeHtml(r.id)}')">Open</button></td>
+              <td style="text-align:right;">${_dynScheduleRowActions(r)}</td>
             </tr>`;
           }).join('')}</tbody>
         </table>
@@ -36104,61 +36210,173 @@ async function _dynSaveCadence(testId) {
 //   avg actual − avg expected.
 // ==========================================================================
 
-async function _dynRenderVariance() {
+const _DYN_TERMINAL = new Set(['Pass', 'Fail', 'Not Applicable']);
+
+// Completed instances that recorded an actual duration — the variance universe.
+function _dynVarianceRows() {
+  return _dynPage.instances.filter(r =>
+    _DYN_TERMINAL.has(r.status) && r.actual_duration_minutes != null);
+}
+
+function _dynVarSubsysOf(r) {
+  return (_dynPage.testItemsById.get(r.test_id)?.subsystem) || '';
+}
+
+// Δ in minutes for a run, or null when there's no expected baseline.
+function _dynVarDelta(r) {
+  return (r.expected_duration_minutes != null)
+    ? (r.actual_duration_minutes - r.expected_duration_minutes) : null;
+}
+
+function _dynVarTone(d) {
+  return d == null ? 'var(--gray-500)' : d > 15 ? 'var(--bad)' : d < -15 ? 'var(--info)' : 'var(--gray-700)';
+}
+
+function _dynVarToggle(key) {
+  if (_dynPage.varExpanded.has(key)) _dynPage.varExpanded.delete(key);
+  else _dynPage.varExpanded.add(key);
+  _dynRenderVariance();
+}
+
+function _dynRenderVariance() {
   const cont = document.getElementById('dyn-content');
   if (!cont) return;
-  cont.innerHTML = `<div style="padding:40px;text-align:center;color:var(--gray-500);">Loading duration variance…</div>`;
+  if (!_dynPage.varExpanded) _dynPage.varExpanded = new Set();
 
-  let rows = [];
-  try {
-    rows = await _dbSelect('vw_dynamic_duration_variance', {}, '*');
-  } catch (e) {
-    cont.innerHTML = `<div style="padding:40px;color:var(--bad);">Load failed: ${escapeHtml(e.message)}</div>`;
+  const all = _dynVarianceRows();
+  const subsysList = [...new Set(all.map(_dynVarSubsysOf).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const phaseList = [...new Set(all.map(r => r.target_phase).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+  // Apply active filters.
+  const rows = all.filter(r => {
+    if (_dynPage.varSubsys && _dynVarSubsysOf(r) !== _dynPage.varSubsys) return false;
+    if (_dynPage.varPhase && r.target_phase !== _dynPage.varPhase) return false;
+    if (_dynPage.varBand) {
+      const d = _dynVarDelta(r);
+      if (d == null) return false;
+      if (_dynPage.varBand === 'over' && !(d > 15)) return false;
+      if (_dynPage.varBand === 'under' && !(d < -15)) return false;
+      if (_dynPage.varBand === 'ontime' && !(Math.abs(d) <= 15)) return false;
+    }
+    return true;
+  });
+
+  // KPIs over the filtered set (deltas only where an expected baseline exists).
+  const withDelta = rows.filter(r => _dynVarDelta(r) != null);
+  const deltas = withDelta.map(_dynVarDelta);
+  const n = rows.length;
+  const sum = arr => arr.reduce((s, x) => s + x, 0);
+  const avg = arr => arr.length ? Math.round(sum(arr) / arr.length) : 0;
+  const avgDelta = avg(deltas);
+  const overN = deltas.filter(d => d > 15).length;
+  const overPct = deltas.length ? Math.round(overN / deltas.length * 100) : 0;
+  const totalOverrunH = (sum(deltas.filter(d => d > 0)) / 60).toFixed(1).replace(/\.0$/, '');
+  const worst = deltas.length ? Math.max(...deltas) : 0;
+  const avgActual = avg(rows.map(r => r.actual_duration_minutes));
+  const avgExpected = avg(withDelta.map(r => r.expected_duration_minutes));
+
+  const kpi = (label, val, tone) => `<div class="dyn-kpi"><span>${label}</span><b${tone?` style="color:${tone};"`:''}>${val}</b></div>`;
+  const kpiHtml = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:0 0 16px;">
+      ${kpi('Completed runs', n)}
+      ${kpi('Avg Δ (min)', `${avgDelta > 0 ? '+' : ''}${avgDelta}`, _dynVarTone(avgDelta))}
+      ${kpi('Running long', `${overN} · ${overPct}%`, overN ? 'var(--bad)' : null)}
+      ${kpi('Total overrun', `${totalOverrunH} h`)}
+      ${kpi('Avg expected', avgExpected)}
+      ${kpi('Avg actual', avgActual)}
+      ${kpi('Worst overrun', `${worst > 0 ? '+' : ''}${worst}`, _dynVarTone(worst))}
+    </div>`;
+
+  const sel = (id, cur, opts, allLabel) => `
+    <select onchange="_dynPage.${id}=this.value;_dynRenderVariance();" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-300);border-radius:5px;">
+      <option value="">${allLabel}</option>
+      ${opts.map(o => `<option value="${escapeHtml(o.value)}" ${cur===o.value?'selected':''}>${escapeHtml(o.label)}</option>`).join('')}
+    </select>`;
+  const anyFilter = _dynPage.varSubsys || _dynPage.varPhase || _dynPage.varBand;
+  const filterHtml = `
+    <div class="dyn-toolbar" style="margin-bottom:14px;">
+      <label style="font-size:12px;color:var(--gray-600);">Subsystem</label>
+      ${sel('varSubsys', _dynPage.varSubsys, subsysList.map(s => ({ value: s, label: s })), 'All subsystems')}
+      <label style="font-size:12px;color:var(--gray-600);">Phase</label>
+      ${sel('varPhase', _dynPage.varPhase, phaseList.map(s => ({ value: s, label: s })), 'All phases')}
+      <label style="font-size:12px;color:var(--gray-600);">Variance</label>
+      ${sel('varBand', _dynPage.varBand, [
+        { value: 'over', label: 'Running long (>15m)' },
+        { value: 'under', label: 'Running short (<−15m)' },
+        { value: 'ontime', label: 'On time (±15m)' },
+      ], 'Any variance')}
+      ${anyFilter ? `<button class="dyn-btn" onclick="_dynPage.varSubsys='';_dynPage.varPhase='';_dynPage.varBand='';_dynRenderVariance();">Clear filters</button>` : ''}
+    </div>`;
+
+  if (n === 0) {
+    cont.innerHTML = kpiHtml + filterHtml + `<div style="padding:40px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:8px;">
+      ${all.length ? 'No completed runs match the current filters.' : 'No completed dynamic instances with actual duration recorded yet. Mark instances Pass/Fail/NA with an <b>Actual duration</b> to populate this view.'}
+    </div>`;
     return;
   }
 
-  const totalN  = rows.reduce((s, r) => s + (r.n_completed || 0), 0);
-  const totalOver = rows.filter(r => (r.avg_delta_min ?? 0) > 0).length;
+  // Group by activity (test case), worst average variance first.
+  const groups = new Map();
+  for (const r of rows) {
+    const key = r.test_id || '—';
+    if (!groups.has(key)) {
+      const tc = _dynPage.testItemsById.get(r.test_id) || {};
+      groups.set(key, { key, code: tc.code || r.test_id || '—', name: tc.name || '', subsystem: tc.subsystem || '', runs: [] });
+    }
+    groups.get(key).runs.push(r);
+  }
+  const groupArr = [...groups.values()].map(g => {
+    const wd = g.runs.filter(r => _dynVarDelta(r) != null);
+    const ds = wd.map(_dynVarDelta);
+    g.n = g.runs.length;
+    g.avgExpected = wd.length ? avg(wd.map(r => r.expected_duration_minutes)) : null;
+    g.avgActual = avg(g.runs.map(r => r.actual_duration_minutes));
+    g.avgDelta = ds.length ? avg(ds) : null;
+    return g;
+  }).sort((a, b) => Math.abs(b.avgDelta || 0) - Math.abs(a.avgDelta || 0));
 
-  cont.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(3,minmax(140px,1fr));gap:10px;margin:0 0 18px;">
-      <div class="dyn-kpi"><span>Completed runs</span><b>${totalN}</b></div>
-      <div class="dyn-kpi"><span>Procedure × zone buckets</span><b>${rows.length}</b></div>
-      <div class="dyn-kpi"><span>Running long (avg)</span><b>${totalOver}</b></div>
+  const groupRows = groupArr.map(g => {
+    const open = _dynPage.varExpanded.has(g.key);
+    const dTone = _dynVarTone(g.avgDelta);
+    const header = `<tr style="border-top:2px solid var(--gray-200);background:#f8fafc;cursor:pointer;" onclick="_dynVarToggle('${escapeHtml(g.key)}')">
+      <td style="font-family:var(--font-mono,monospace);font-size:12px;font-weight:700;">${open ? '▾' : '▸'} ${escapeHtml(g.code)}</td>
+      <td style="font-weight:600;">${escapeHtml((g.name || '').slice(0, 50))}</td>
+      <td>${_dynSubsystemBadge(g.subsystem)}</td>
+      <td style="text-align:right;font-family:monospace;">${g.n}</td>
+      <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${g.avgExpected ?? '—'}</td>
+      <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${g.avgActual ?? '—'}</td>
+      <td style="text-align:right;font-family:monospace;color:${dTone};font-weight:700;">${g.avgDelta == null ? '—' : (g.avgDelta > 0 ? '+' : '') + g.avgDelta}</td>
+    </tr>`;
+    if (!open) return header;
+    const runRows = g.runs
+      .slice()
+      .sort((a, b) => (_dynVarDelta(b) ?? -1e9) - (_dynVarDelta(a) ?? -1e9))
+      .map(r => {
+        const d = _dynVarDelta(r);
+        const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
+        return `<tr style="border-top:1px solid var(--gray-100);background:#fbfdff;">
+          <td style="padding-left:24px;font-family:var(--font-mono,monospace);font-size:11.5px;">${escapeHtml(r.code || '—')}</td>
+          <td style="font-size:12px;">${escapeHtml(r.title || '')}${r.track_section_under_test ? ` <span style="color:var(--gray-500);font-family:monospace;">· ${escapeHtml(r.track_section_under_test)}</span>` : ''}${when ? ` <span style="color:var(--gray-400);">· ${escapeHtml(_dynFmtDate(when))}</span>` : ''}</td>
+          <td>${_dynStatusBadge(r.status)}</td>
+          <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.expected_duration_minutes ?? '—'}</td>
+          <td style="text-align:right;font-family:monospace;">${r.actual_duration_minutes ?? '—'}</td>
+          <td style="text-align:right;font-family:monospace;color:${_dynVarTone(d)};font-weight:600;">${d == null ? '—' : (d > 0 ? '+' : '') + d}</td>
+        </tr>`;
+      }).join('');
+    return header + runRows;
+  }).join('');
+
+  cont.innerHTML = kpiHtml + filterHtml + `
+    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
+      <table class="dyn-table">
+        <thead><tr>
+          <th>Activity</th><th>Run / Test name</th><th>Subsystem / Status</th>
+          <th style="text-align:right;">Avg/Exp</th><th style="text-align:right;">Avg/Act</th><th style="text-align:right;">Δ (min)</th>
+        </tr></thead>
+        <tbody>${groupRows}</tbody>
+      </table>
     </div>
-
-    ${rows.length === 0
-      ? `<div style="padding:40px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:8px;">
-           No completed dynamic instances with actual duration recorded yet. Mark instances Pass/Fail/NA with an <b>Actual duration</b> value to populate this view.
-         </div>`
-      : `<div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
-          <table class="dyn-table">
-            <thead><tr>
-              <th>Procedure</th>
-              <th>Section under test</th>
-              <th style="text-align:right;">N</th>
-              <th style="text-align:right;">Avg expected</th>
-              <th style="text-align:right;">Avg actual</th>
-              <th style="text-align:right;">Δ (min)</th>
-              <th style="text-align:right;">Max overrun</th>
-              <th style="text-align:right;">Max underrun</th>
-            </tr></thead>
-            <tbody>${rows.map(r => {
-              const delta = r.avg_delta_min ?? 0;
-              const tone = delta > 15 ? 'var(--bad)' : delta < -15 ? 'var(--info)' : 'var(--gray-700)';
-              return `<tr style="border-top:1px solid var(--gray-100);">
-                <td>${escapeHtml(r.procedure_name || '—')}</td>
-                <td style="font-family:monospace;font-size:11.5px;">${escapeHtml(r.track_section_under_test || '—')}</td>
-                <td style="text-align:right;font-family:monospace;">${r.n_completed}</td>
-                <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.avg_expected_min}</td>
-                <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.avg_actual_min}</td>
-                <td style="text-align:right;font-family:monospace;color:${tone};font-weight:600;">${delta > 0 ? '+' : ''}${delta}</td>
-                <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.max_overrun_min ?? '—'}</td>
-                <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.max_underrun_min ?? '—'}</td>
-              </tr>`;
-            }).join('')}</tbody>
-          </table>
-        </div>`}
+    <p style="margin-top:12px;font-size:12px;color:var(--gray-500);">Grouped by activity, worst average variance first. Click an activity to see the individual runs. KPIs and rows reflect the active filters.</p>
   `;
 }
 
