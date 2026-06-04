@@ -13343,3 +13343,30 @@ html[data-theme="dark"] .kpi-primary .kpi-label { color: #fff; }
 #net-banner.syncing { background: var(--green-700); }
 #net-banner .icon-svg { width: 16px; height: 16px; flex-shrink: 0; }
 @media (prefers-reduced-motion: reduce) { #net-banner { transition: none; } }
+
+/* ===================================================================
+   Reusable loading / empty / error states (token-based, dark-aware)
+   =================================================================== */
+.cx-skeleton { display: flex; flex-direction: column; gap: 10px; padding: 8px 2px; }
+.cx-skel-line {
+  height: 14px; border-radius: 6px;
+  background: linear-gradient(90deg, var(--surface-2) 0%, var(--surface-3) 50%, var(--surface-2) 100%);
+  background-size: 200% 100%;
+  animation: cxSkel 1.2s ease-in-out infinite;
+}
+@keyframes cxSkel { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+
+.docs-empty-icon { display: flex; align-items: center; justify-content: center; }
+.docs-empty-icon .icon-svg { width: 28px; height: 28px; color: var(--text-subtle); }
+.docs-empty-title { font-size: 15px; font-weight: 700; color: var(--text); margin: 0 0 6px; }
+.cx-empty-action { margin-top: 16px; }
+
+.cx-error {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  text-align: center; padding: 40px 20px;
+  color: var(--text-muted);
+}
+.cx-error .icon-svg { width: 32px; height: 32px; color: var(--warn); }
+.cx-error-msg { font-size: 13px; max-width: 360px; }
+.cx-error-retry { margin-top: 4px; }
+@media (prefers-reduced-motion: reduce) { .cx-skel-line { animation: none; } }
