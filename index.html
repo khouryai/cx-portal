@@ -17,6 +17,7 @@ window.toggleTheme = function(){
   document.documentElement.setAttribute('data-theme', next);
   try{ localStorage.setItem('cx-theme', next); }catch(e){}
   if (window._syncThemeToggle) window._syncThemeToggle();
+  try{ window.dispatchEvent(new Event('cx-themechange')); }catch(e){}
 };
 window._syncThemeToggle = function(){
   var b = document.getElementById('theme-toggle'); if(!b) return;

@@ -373,11 +373,33 @@ const COLORS = {
   grayLight: '#d8d8d8',
 };
 
-// Hitachi-themed Chart.js defaults
+// Hitachi-themed Chart.js defaults — theme-aware (reads CSS tokens so
+// charts stay readable in both light and dark mode).
 Chart.defaults.font.family = "'Inter', sans-serif";
 Chart.defaults.font.size = 12;
-Chart.defaults.color = '#5e5e5e';
-Chart.defaults.borderColor = '#ebebeb';
+function _applyChartTheme() {
+  try {
+    var cs = getComputedStyle(document.documentElement);
+    var tick = (cs.getPropertyValue('--text-muted') || '#5e5e5e').trim();
+    var grid = (cs.getPropertyValue('--border') || '#ebebeb').trim();
+    Chart.defaults.color = tick;
+    Chart.defaults.borderColor = grid;
+    // Re-skin any live dashboard charts and repaint
+    var live = (typeof _dashCharts !== 'undefined' && _dashCharts) ? _dashCharts : {};
+    Object.keys(live).forEach(function (k) {
+      var ch = live[k]; if (!ch || !ch.options) return;
+      ch.options.color = tick;
+      var sc = ch.options.scales || {};
+      Object.keys(sc).forEach(function (ax) {
+        if (sc[ax] && sc[ax].grid) sc[ax].grid.color = grid;
+        if (sc[ax] && sc[ax].ticks) sc[ax].ticks.color = tick;
+      });
+      try { ch.update('none'); } catch (e) {}
+    });
+  } catch (e) {}
+}
+_applyChartTheme();
+window.addEventListener('cx-themechange', _applyChartTheme);
 
 // ==========================================
 // ROUTING
