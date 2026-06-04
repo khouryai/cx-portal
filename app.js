@@ -20068,7 +20068,7 @@ function _laLookaheadHTML() {
         <button class="admin-tab" style="font-size:12px;padding:6px 10px;" onclick="_laShiftWindow(7)" title="Forward one week">Next ›</button>
         <input type="date" value="${_laWinAnchor().format('YYYY-MM-DD')}" onchange="_laJumpWindow(this.value)" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-200);border-radius:6px;" title="Jump to a start date">
         ${(_laWindowStart && dayjs(_laWindowStart).isBefore(dayjs().startOf('day'))) ? '<span style="font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#92400e;background:#fef3c7;padding:3px 8px;border-radius:99px;">Viewing history</span>' : ''}
-        <button class="admin-tab" style="font-size:12px;padding:6px 12px;" onclick="openPlanningHistory()" title="Browse frozen weekly snapshots">🗓 Past Weeks</button>
+        <button class="admin-tab" style="font-size:12px;padding:6px 12px;" onclick="openPlanningHistory()" title="Browse frozen weekly snapshots">${icon('calendar')} Past Weeks</button>
       </div>
       ${_laTimelineGroupBy === 'activity' ? `
       <div style="display:flex;align-items:center;gap:0;">
@@ -20105,11 +20105,11 @@ function _laLookaheadHTML() {
         P6 baseline
       </label>
       <div class="la-row-search-wrap" style="display:flex;align-items:center;gap:6px;margin-left:auto;">
-        <input id="la-row-search" type="text" placeholder="🔍 Filter activities…"
+        <input id="la-row-search" type="text" placeholder="Filter activities…"
           value="${escapeHtml(_laRowSearch)}" oninput="_laSetRowSearch(this.value)"
           style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-300);border-radius:6px;width:210px;">
         <button id="la-row-search-clear" onclick="_laSetRowSearch('')" title="Clear filter"
-          style="display:${_laRowSearch ? 'inline-flex' : 'none'};font-size:12px;padding:6px 9px;border:1px solid var(--gray-300);background:#fff;border-radius:6px;cursor:pointer;">✕</button>
+          style="display:${_laRowSearch ? 'inline-flex' : 'none'};font-size:12px;padding:6px 9px;border:1px solid var(--gray-300);background:#fff;border-radius:6px;cursor:pointer;">${icon('x')}</button>
         <span id="la-row-search-count" style="font-size:11px;color:var(--gray-500);white-space:nowrap;"></span>
       </div>
       <button onclick="_laOpenNewActivityModal()" class="admin-action-btn" title="Add a new activity row to the lookahead">
@@ -20117,17 +20117,17 @@ function _laLookaheadHTML() {
       </button>
       <div style="position:relative;display:inline-block;">
         <button onclick="document.getElementById('la-export-menu').classList.toggle('open');event.stopPropagation();" class="admin-action-btn">
-          📤 Export ▾
+          ${icon('share')} Export ▾
         </button>
         <div id="la-export-menu" class="la-export-menu">
-          <button onclick="_laExportTimelinePDF();document.getElementById('la-export-menu').classList.remove('open');">🖼 Current View (PDF)</button>
-          <button onclick="_laExportLookahead();document.getElementById('la-export-menu').classList.remove('open');">📅 4-Week Lookahead (.xlsx)</button>
-          <button onclick="_laExportBARTResourceMap('xlsx');document.getElementById('la-export-menu').classList.remove('open');">🚧 BART Resource Map (.xlsx)</button>
-          <button onclick="_laExportBARTResourceMap('csv');document.getElementById('la-export-menu').classList.remove('open');">📊 BART Resource Map (.csv)</button>
+          <button onclick="_laExportTimelinePDF();document.getElementById('la-export-menu').classList.remove('open');">${icon('image')} Current View (PDF)</button>
+          <button onclick="_laExportLookahead();document.getElementById('la-export-menu').classList.remove('open');">${icon('calendar')} 4-Week Lookahead (.xlsx)</button>
+          <button onclick="_laExportBARTResourceMap('xlsx');document.getElementById('la-export-menu').classList.remove('open');">${icon('cone')} BART Resource Map (.xlsx)</button>
+          <button onclick="_laExportBARTResourceMap('csv');document.getElementById('la-export-menu').classList.remove('open');">${icon('chart')} BART Resource Map (.csv)</button>
         </div>
       </div>
       <button onclick="_laToggleAssignMode()" class="admin-action-btn${_laAssignMode ? ' la-assign-btn-active' : ''}">
-        ${_laAssignMode ? '✓ Done Assigning' : '👤 Assign Resources'}
+        ${_laAssignMode ? '✓ Done Assigning' : icon('user')+' Assign Resources'}
       </button>
     </div>
 
@@ -20138,7 +20138,7 @@ function _laLookaheadHTML() {
 
     <!-- Excel-style edit tips bar (always visible) -->
     <div class="la-edit-tips-bar" style="display:flex;align-items:center;gap:14px;padding:6px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#475569;margin:8px 0;flex-wrap:wrap;">
-      <strong style="color:#1e40af;">📋 Excel-style editing:</strong>
+      <strong style="color:#1e40af;">${icon('clipboard')} Excel-style editing:</strong>
       <span><kbd>Ctrl</kbd>+click select</span>
       <span><kbd>Ctrl</kbd>+drag range-select</span>
       <span><kbd>Ctrl</kbd>+<kbd>C</kbd> copy</span>
@@ -20445,18 +20445,18 @@ function _laDrawerHTML() {
   if (_laDrawer.mode === 'cell') {
     const ev = PLANNING_EVENTS.find(e => e.id === _laDrawer.targetId);
     if (!ev) { _laDrawer.mode = 'closed'; return ''; }
-    title  = '📅 Event details';
+    title  = 'Event details';
     body   = _laDrawerCellHTML(ev);
     footer = _laDrawerCellFooterHTML(ev);
   } else if (_laDrawer.mode === 'activity') {
     const a = PLANNING_ACTIVITIES.find(x => x.id === _laDrawer.targetId);
     if (!a) { _laDrawer.mode = 'closed'; return ''; }
-    title  = '📋 Activity details';
+    title  = 'Activity details';
     body   = _laDrawerActivityHTML(a);
     footer = _laDrawerActivityFooterHTML(a);
   } else if (_laDrawer.mode === 'multi') {
     const n = _laSelectedCellKeys.size;
-    title  = `✏️ Bulk edit (${n} cell${n>1?'s':''})`;
+    title  = `Bulk edit (${n} cell${n>1?'s':''})`;
     body   = _laDrawerMultiHTML([..._laSelectedCellKeys]);
     footer = `<button class="form-secondary" onclick="_laDrawerClose()">Close</button>`;
   }
@@ -20466,7 +20466,7 @@ function _laDrawerHTML() {
       <div class="la-drawer-title">${title}
         <span id="la-drawer-dirty-ind" style="display:none;color:#dc2626;font-size:11px;font-weight:700;margin-left:8px;">● unsaved</span>
       </div>
-      <button class="la-drawer-close" onclick="_laDrawerClose()" title="Close (Esc)">✕</button>
+      <button class="la-drawer-close" onclick="_laDrawerClose()" title="Close (Esc)">${icon('x')}</button>
     </div>
     <div class="la-drawer-body">${body}</div>
     <div class="la-drawer-foot">${footer}</div>
@@ -20594,7 +20594,7 @@ function _laDrawerCellHTML(ev) {
 
     ${isCancel ? `
     <div class="la-drawer-section" style="background:#fef2f2;border-left:3px solid #dc2626;padding:8px 10px;border-radius:4px;">
-      <div style="font-size:11px;font-weight:700;color:#7f1d1d;">🚫 CANCELLED</div>
+      <div style="font-size:11px;font-weight:700;color:#7f1d1d;">${icon('ban')} CANCELLED</div>
       ${ev.cancellation_category ? `<div style="font-size:12px;margin-top:3px;"><strong>Category:</strong> ${escapeHtml(ev.cancellation_category)}</div>` : ''}
       ${ev.cancellation_reason ? `<div style="font-size:12px;margin-top:3px;"><strong>Reason:</strong> ${escapeHtml(ev.cancellation_reason)}</div>` : ''}
       ${ev.cancellation_responsible_party ? `<div style="font-size:12px;margin-top:3px;"><strong>Responsible:</strong> ${escapeHtml(ev.cancellation_responsible_party)}</div>` : ''}
@@ -20611,12 +20611,12 @@ function _laDrawerCellFooterHTML(ev) {
   return `
     <button class="form-secondary" onclick="_laDrawerClose()">Close</button>
     ${ev.is_locked
-      ? `<button class="form-secondary" onclick="_planningToggleLock('${ev.id}')">🔓 Unlock</button>`
-      : `<button class="form-secondary" onclick="_planningToggleLock('${ev.id}')">🔒 Lock</button>`}
+      ? `<button class="form-secondary" onclick="_planningToggleLock('${ev.id}')">${icon('unlock')} Unlock</button>`
+      : `<button class="form-secondary" onclick="_planningToggleLock('${ev.id}')">${icon('lock')} Lock</button>`}
     ${!isCancel
-      ? `<button class="form-secondary" style="color:#dc2626;" onclick="_planningCancelEvent('${ev.id}')">🚫 Cancel</button>`
+      ? `<button class="form-secondary" style="color:#dc2626;" onclick="_planningCancelEvent('${ev.id}')">${icon('ban')} Cancel</button>`
       : ''}
-    <button class="form-submit la-drawer-save" id="la-drawer-save" disabled onclick="_laDrawerSave()">💾 Save</button>
+    <button class="form-submit la-drawer-save" id="la-drawer-save" disabled onclick="_laDrawerSave()">${icon('save')} Save</button>
   `;
 }
 
@@ -20762,8 +20762,8 @@ function _laDrawerActivityHTML(a) {
 function _laDrawerActivityFooterHTML(a) {
   return `
     <button class="form-secondary" onclick="_laDrawerClose()">Close</button>
-    <button class="form-secondary" style="color:#dc2626;border-color:#fca5a5;" onclick="_laDrawerSoftDeleteActivity('${a.id}')" title="Soft-delete: hidden from grid but restorable">🗑 Delete</button>
-    <button class="form-submit la-drawer-save" id="la-drawer-save" disabled onclick="_laDrawerSave()">💾 Save</button>
+    <button class="form-secondary" style="color:#dc2626;border-color:#fca5a5;" onclick="_laDrawerSoftDeleteActivity('${a.id}')" title="Soft-delete: hidden from grid but restorable">${icon('trash')} Delete</button>
+    <button class="form-submit la-drawer-save" id="la-drawer-save" disabled onclick="_laDrawerSave()">${icon('save')} Save</button>
   `;
 }
 
@@ -20793,12 +20793,12 @@ function _laDrawerMultiHTML(eventIds) {
     <div class="la-drawer-section">
       <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Bulk actions</div>
       <div style="display:flex;flex-direction:column;gap:6px;">
-        <button class="form-secondary" onclick="_laBulkCancelCells()">🚫 Cancel all (with reason)</button>
-        <button class="form-secondary" onclick="_laDeleteSelection()" style="color:#dc2626;">🗑 Delete all</button>
-        <button class="form-secondary" onclick="_laBulkRemoveCellResources()">👥 Remove users only</button>
-        <button class="form-secondary" onclick="_laCopySelection('copy')">📋 Copy</button>
-        <button class="form-secondary" onclick="_laCopySelection('cut')">✂ Cut</button>
-        <button class="form-secondary" onclick="_laClearCellSelection();_laDrawerClose();">✕ Clear selection</button>
+        <button class="form-secondary" onclick="_laBulkCancelCells()">${icon('ban')} Cancel all (with reason)</button>
+        <button class="form-secondary" onclick="_laDeleteSelection()" style="color:#dc2626;">${icon('trash')} Delete all</button>
+        <button class="form-secondary" onclick="_laBulkRemoveCellResources()">${icon('users')} Remove users only</button>
+        <button class="form-secondary" onclick="_laCopySelection('copy')">${icon('clipboard')} Copy</button>
+        <button class="form-secondary" onclick="_laCopySelection('cut')">${icon('scissors')} Cut</button>
+        <button class="form-secondary" onclick="_laClearCellSelection();_laDrawerClose();">${icon('x')} Clear selection</button>
       </div>
     </div>
     <div class="la-drawer-section" style="font-size:11px;color:var(--gray-400);">
@@ -21016,7 +21016,7 @@ function _laExportTimelinePDF() {
 
 // 4-Week Lookahead: activity-row × day-cell visual export.
 // Frozen first 2 columns (Group, Activity), one column per day, color-fill
-// matches the shift color, cancelled cells get a 🚫 prefix.
+// matches the shift color, cancelled cells get a prefix.
 function _laExportLookahead() {
   if (typeof XLSX === 'undefined') { toast('Excel library not loaded', 'error'); return; }
   const winStart = _laWinAnchor();  const days = Array.from({ length: _laTimelineWindow }, (_, i) => winStart.add(i, 'day').format('YYYY-MM-DD'));
@@ -21055,7 +21055,7 @@ function _laExportLookahead() {
       const shift = ev.shift_type === 'day_shift' ? 'D'
                   : ev.shift_type === 'night_shift' ? 'N'
                   : ev.shift_type === 'blanket_shift' ? 'B' : '·';
-      const txt = (ev.status === 'cancelled' ? '🚫 ' : '') + shift +
+      const txt = (ev.status === 'cancelled' ? '' : '') + shift +
                   (ev.start_time ? ' ' + ev.start_time.slice(0, 5) : '') +
                   (ev.end_time   ? '-' + ev.end_time.slice(0, 5) : '');
       row.push(txt);
@@ -21213,7 +21213,7 @@ async function _laDrawerSoftDeleteActivity(activityId) {
   }
 }
 
-// Inline 🗑 button on an activity row — quick soft-delete.
+// Inline delete button on an activity row — quick soft-delete.
 // (Re-uses the proven soft-delete path so behaviour stays consistent
 //  across imported and manually-created activities.)
 async function _laDeleteManualActivity(activityId, ev) {
@@ -21222,7 +21222,7 @@ async function _laDeleteManualActivity(activityId, ev) {
   await _laDrawerSoftDeleteActivity(activityId);
 }
 
-// Link / unlink an activity to a Test Register activity (the 🔗 chip).
+// Link / unlink an activity to a Test Register activity (the link chip).
 // ── Link-activity modal — searchable dropdown pre-filtered by activity location ──
 
 function _laOpenLinkActivityModal(activityId) {
@@ -21273,7 +21273,7 @@ function _laRenderLinkModal(activityId, showAll) {
     // Group: matched at top, rest below
     const matched   = allNames.filter(n => locNames.includes(n));
     const unmatched = allNames.filter(n => !locNames.includes(n));
-    optsHTML += `<optgroup label="📍 ${escapeHtml(resolvedLoc || actLoc)} — ${matched.length} match${matched.length !== 1 ? 'es' : ''}">`;
+    optsHTML += `<optgroup label="${escapeHtml(resolvedLoc || actLoc)} — ${matched.length} match${matched.length !== 1 ? 'es' : ''}">`;
     matched.forEach(n => {
       optsHTML += `<option value="${escapeHtml(n)}" ${current === n ? 'selected' : ''}>${escapeHtml(n)}</option>`;
     });
@@ -21293,7 +21293,7 @@ function _laRenderLinkModal(activityId, showAll) {
     <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:7px;margin-bottom:12px;
                 background:${hasLocMatch ? 'var(--info-light)' : 'var(--warn-light)'};
                 border:1px solid ${hasLocMatch ? '#bfdbfe' : '#fde68a'};">
-      <span style="font-size:14px;">${hasLocMatch ? '📍' : '⚠️'}</span>
+      <span style="font-size:14px;">${hasLocMatch ? icon('pin') : icon('alert')}</span>
       <div style="flex:1;font-size:12px;color:var(--gray-700);">
         ${hasLocMatch
           ? `Showing <strong>${locNames.length}</strong> activit${locNames.length !== 1 ? 'ies' : 'y'} matching location <strong>${escapeHtml(resolvedLoc || actLoc)}</strong>`
@@ -21301,13 +21301,13 @@ function _laRenderLinkModal(activityId, showAll) {
       </div>
       ${hasLocMatch
         ? `<button onclick="_laRenderLinkModal('${activityId}',${!showAll})" class="form-secondary" style="font-size:11px;padding:3px 10px;white-space:nowrap;">
-             ${showAll ? '📍 Filter by location' : '🌐 Show all'}
+             ${showAll ? icon('pin')+' Filter by location' : icon('globe')+' Show all'}
            </button>`
         : ''}
     </div>` : '';
 
   modal({
-    title: '🔗 Link Test Register Activity',
+    title: 'Link Test Register Activity',
     sub:   escapeHtml(a.description || a.activity_id_text || '—'),
     size:  'medium',
     body: `
@@ -21324,7 +21324,7 @@ function _laRenderLinkModal(activityId, showAll) {
       </div>`,
     footer:
       '<button class="form-secondary" onclick="closeModal()">Cancel</button>' +
-      (current ? `<button class="form-secondary" style="color:#b91c1c;border-color:#fca5a5;" onclick="_laSaveActivityLink('${activityId}',true)">🔗 Unlink</button>` : '') +
+      (current ? `<button class="form-secondary" style="color:#b91c1c;border-color:#fca5a5;" onclick="_laSaveActivityLink('${activityId}',true)">${icon('link')} Unlink</button>` : '') +
       `<button class="form-submit" onclick="_laSaveActivityLink('${activityId}',false)">Save Link</button>`,
   });
 
@@ -21377,10 +21377,10 @@ function _laResourcePanelHTML() {
       <div style="font-size:11px;color:var(--gray-400);">${active.length} active</div>
     </div>
     <div style="padding:6px 8px;display:flex;flex-direction:column;gap:5px;">
-      <input type="text" class="la-res-search" placeholder="🔍 Search…" oninput="_laFilterResPanel(this.value)">
+      <input type="text" class="la-res-search" placeholder="Search…" oninput="_laFilterResPanel(this.value)">
       <div id="la-sel-bar" style="display:${selCount?'flex':'none'};align-items:center;justify-content:space-between;background:var(--hitachi-red);color:#fff;border-radius:5px;padding:4px 8px;font-size:11px;font-weight:600;">
         <span>${selCount} selected</span>
-        <button onclick="_laClearResSelection()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:11px;padding:0;">✕ Clear</button>
+        <button onclick="_laClearResSelection()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:11px;padding:0;">${icon('x')} Clear</button>
       </div>
     </div>
     <div style="padding:4px 8px 4px;font-size:10px;color:var(--gray-400);">Click to select · drag to assign</div>
@@ -21508,7 +21508,7 @@ async function _laShowSnapshot(weekStart) {
           ${statusChip}
         </div>
         ${e.title ? `<div class="la-hist-ev-title">${escapeHtml(e.title)}</div>` : ''}
-        ${cancelled && (e.cancellation_reason || e.cancellation_responsible_party || e.cancellation_category) ? `<div class="la-hist-ev-cancel">✕ ${escapeHtml([e.cancellation_category, e.cancellation_reason, e.cancellation_responsible_party].filter(Boolean).join(' · '))}</div>` : ''}
+        ${cancelled && (e.cancellation_reason || e.cancellation_responsible_party || e.cancellation_category) ? `<div class="la-hist-ev-cancel">${icon('x')} ${escapeHtml([e.cancellation_category, e.cancellation_reason, e.cancellation_responsible_party].filter(Boolean).join(' · '))}</div>` : ''}
         <div class="la-hist-res-row">${res}</div>
       </div>`;
     }).join('');
@@ -21587,16 +21587,16 @@ function _laCellSelActionsHTML() {
   }
   if (n > 0) {
     parts.push(`<span style="font-size:12px;font-weight:700;color:#7f0000;">${n} cell${n>1?'s':''} selected</span>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearCellSelection()">✕ Clear</button>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laCopySelection('copy')" title="Ctrl+C">📋 Copy</button>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laCopySelection('cut')" title="Ctrl+X">✂ Cut</button>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#7f1d1d;border-color:#fca5a5;" onclick="_laDeleteSelection()" title="Del">🗑 Delete</button>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#7f1d1d;border-color:#fca5a5;" onclick="_laBulkCancelCells()">🚫 Cancel</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearCellSelection()">${icon('x')} Clear</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laCopySelection('copy')" title="Ctrl+C">${icon('clipboard')} Copy</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laCopySelection('cut')" title="Ctrl+X">${icon('scissors')} Cut</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#7f1d1d;border-color:#fca5a5;" onclick="_laDeleteSelection()" title="Del">${icon('trash')} Delete</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#7f1d1d;border-color:#fca5a5;" onclick="_laBulkCancelCells()">${icon('ban')} Cancel</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laBulkRemoveCellResources()">Remove users only</button>`);
     parts.push('<span style="width:1px;background:#e5e7eb;align-self:stretch;margin:0 4px;"></span>');
     parts.push(`<select onchange="_laBulkSetShift(this.value);this.selectedIndex=0;" title="Set shift for all selected cells" style="font-size:11px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;">
       <option value="">Set shift…</option>
-      <option value="day_shift">☀ Day</option>
+      <option value="day_shift">Day</option>
       <option value="swing_shift">↔ Swing</option>
       <option value="night_shift">☾ Night</option>
       <option value="blanket_shift">■ Blanket</option>
@@ -21609,14 +21609,14 @@ function _laCellSelActionsHTML() {
   if (hasClipboard) {
     if (n > 0) parts.push('<span style="width:1px;background:#e5e7eb;align-self:stretch;margin:0 4px;"></span>');
     const mode = _laClipboard.mode === 'cut' ? 'Cut' : 'Copied';
-    parts.push(`<span style="font-size:12px;color:#1e40af;font-weight:600;">📋 ${mode} ${_laClipboard.items.length}</span>`);
+    parts.push(`<span style="font-size:12px;color:#1e40af;font-weight:600;">${icon('clipboard')} ${mode} ${_laClipboard.items.length}</span>`);
     if (hasTarget) {
       parts.push(`<span style="font-size:11px;color:#059669;">Target: ${_laPasteTarget.date}</span>`);
-      parts.push(`<button class="admin-action-btn" style="font-size:11px;padding:4px 10px;" onclick="_laPasteAtTarget()" title="Ctrl+V">📥 Paste</button>`);
+      parts.push(`<button class="admin-action-btn" style="font-size:11px;padding:4px 10px;" onclick="_laPasteAtTarget()" title="Ctrl+V">${icon('inbox')} Paste</button>`);
     } else {
       parts.push(`<span style="font-size:11px;color:#6b7280;">click an empty cell, then Ctrl+V</span>`);
     }
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearClipboard()">✕ Cancel</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearClipboard()">${icon('x')} Cancel</button>`);
   }
   return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0;">${parts.join('')}</div>`;
 }
@@ -21766,7 +21766,7 @@ function _laOpenCreateEventModal(cells) {
   const bartOpts  = bartRoles.map(r => '<option value="' + r.id + '" data-name="' + escapeHtml(r.display_name) + '">' + escapeHtml(r.display_name) + '</option>').join('');
 
   modal({
-    title: cells.length > 1 ? '➕ Create ' + cells.length + ' Events' : '➕ Create Event',
+    title: cells.length > 1 ? 'Create ' + cells.length + ' Events' : 'Create Event',
     sub:   actLabel,
     size:  'medium',
     body: (
@@ -21783,7 +21783,7 @@ function _laOpenCreateEventModal(cells) {
           '<label>Shift type <span style="font-size:10px;font-weight:400;color:var(--gray-500);">auto-detected</span></label>' +
           '<select id="ce-shift" class="form-input" onchange="this.dataset.manual=1;">' +
             '<option value="">— select —</option>' +
-            '<option value="day_shift">☀ Day (0600–1800)</option>' +
+            '<option value="day_shift">Day (0600–1800)</option>' +
             '<option value="swing_shift">↔ Swing (1200–2200)</option>' +
             '<option value="night_shift">☾ Night (1800–0600)</option>' +
             '<option value="blanket_shift">■ Blanket (all day)</option>' +
@@ -21818,7 +21818,7 @@ function _laOpenCreateEventModal(cells) {
     ),
     footer: (
       '<button class="form-secondary" onclick="closeModal()">Cancel</button>' +
-      '<button class="form-submit" id="ce-save-btn" onclick="_laSaveCreateEvents(window._laCECells)">➕ Create ' + cells.length + ' event' + (cells.length > 1 ? 's' : '') + '</button>'
+      '<button class="form-submit" id="ce-save-btn" onclick="_laSaveCreateEvents(window._laCECells)">' + icon('plus') + ' Create ' + cells.length + ' event' + (cells.length > 1 ? 's' : '') + '</button>'
     ),
   });
   window._laCECells = cells;
@@ -21905,7 +21905,7 @@ async function _laSaveCreateEvents(cells) {
     _renderLookaheadTabBody();
   } catch (err) {
     toast('Create failed: ' + err.message, 'error');
-    if (btn) { btn.disabled = false; btn.textContent = '➕ Create'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = icon('plus') + ' Create'; }
   }
 }
 
@@ -21961,7 +21961,7 @@ function _laCopySelection(mode = 'copy', opts) {
 
   document.body.classList.add('la-clipboard-active');
   _laRefreshActionBanner();
-  if (!opts?.silent) toast(`${mode === 'copy' ? '📋 Copied' : '✂ Cut'} ${items.length} cell${items.length>1?'s':''}. Click an empty cell, then Ctrl+V.`, 'success');
+  if (!opts?.silent) toast(`${mode === 'copy' ? 'Copied' : 'Cut'} ${items.length} cell${items.length>1?'s':''}. Click an empty cell, then Ctrl+V.`, 'success');
 }
 
 function _laClearClipboard() {
@@ -22033,7 +22033,7 @@ function _laPasteConfirmModal({ ops, collisions, lockedSkips, ptoConflicts }) {
 
     if (lockedSkips.length > 0) {
       html += `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px;margin:10px 0;">
-        <strong>🔒 ${lockedSkips.length} target${lockedSkips.length>1?'s':''} locked</strong> — will be skipped silently.
+        <strong>${icon('lock')} ${lockedSkips.length} target${lockedSkips.length>1?'s':''} locked</strong> — will be skipped silently.
       </div>`;
     }
 
@@ -22051,7 +22051,7 @@ function _laPasteConfirmModal({ ops, collisions, lockedSkips, ptoConflicts }) {
 
     if (ptoConflicts.length > 0) {
       html += `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px;margin:10px 0;">
-        <strong>🌴 ${ptoConflicts.length} PTO conflict${ptoConflicts.length>1?'s':''}:</strong>
+        <strong>${icon('palm')} ${ptoConflicts.length} PTO conflict${ptoConflicts.length>1?'s':''}:</strong>
         <ul style="margin:4px 0 0 18px;padding:0;font-size:12px;">
           ${ptoConflicts.slice(0,10).map(c => `<li>${escapeHtml(c.name)} on ${c.date}</li>`).join('')}
           ${ptoConflicts.length>10?`<li>…and ${ptoConflicts.length-10} more</li>`:''}
@@ -22899,7 +22899,7 @@ function _laFillConfirmModal({ total, collisions, lockedSkips, ptoConflicts }) {
     html += `<p style="margin:0 0 10px;">Fill <strong>${total}</strong> cell${total>1?'s':''} from this event.</p>`;
     if (lockedSkips.length > 0) {
       html += `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px;margin:10px 0;">
-        <strong>🔒 ${lockedSkips.length} locked</strong> — will be skipped silently.
+        <strong>${icon('lock')} ${lockedSkips.length} locked</strong> — will be skipped silently.
       </div>`;
     }
     if (collisions.length > 0) {
@@ -22911,7 +22911,7 @@ function _laFillConfirmModal({ total, collisions, lockedSkips, ptoConflicts }) {
     }
     if (ptoConflicts.length > 0) {
       html += `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px;margin:10px 0;">
-        <strong>🌴 ${ptoConflicts.length} PTO conflict${ptoConflicts.length>1?'s':''}:</strong>
+        <strong>${icon('palm')} ${ptoConflicts.length} PTO conflict${ptoConflicts.length>1?'s':''}:</strong>
         <ul style="margin:4px 0 0 18px;padding:0;font-size:12px;">
           ${ptoConflicts.slice(0,8).map(c => `<li>${escapeHtml(c.name)} on ${c.date}</li>`).join('')}
           ${ptoConflicts.length>8?`<li>…and ${ptoConflicts.length-8} more</li>`:''}
@@ -22968,13 +22968,13 @@ function _laOpenNewActivityModal() {
           <input type="text" id="new-act-sswp" class="form-input" placeholder="SSWP reference">
         </div>
         <div class="form-field form-field-full">
-          <label>🔗 P6 Activity <span style="font-size:11px;font-weight:400;color:var(--gray-500);">— filtered by location · auto-fills Activity ID</span></label>
+          <label>${icon('link')} P6 Activity <span style="font-size:11px;font-weight:400;color:var(--gray-500);">— filtered by location · auto-fills Activity ID</span></label>
           <select id="new-act-p6" class="form-input" onchange="_laNewActivityP6Changed()">
             <option value="">— Not linked —</option>
           </select>
         </div>
         <div class="form-field form-field-full">
-          <label>🔗 Test Register Activity <span style="font-size:11px;font-weight:400;color:var(--gray-500);">— filtered by location</span></label>
+          <label>${icon('link')} Test Register Activity <span style="font-size:11px;font-weight:400;color:var(--gray-500);">— filtered by location</span></label>
           <select id="new-act-linked-tra" class="form-input">
             <option value="">— Not linked —</option>
           </select>
@@ -23134,22 +23134,22 @@ function _laCellContextMenu(ev, eventId, actId, iso, el) {
 
   const items = [];
   if (onColored) {
-    items.push({ label: '🔍 Open details',  fn: () => _planningOpenEventDetail(eventId) });
-    items.push({ label: '📋 Copy',          fn: () => _laCopySelection('copy'), title: 'Ctrl+C' });
-    items.push({ label: '✂ Cut',            fn: () => _laCopySelection('cut'),  disabled: isLocked, title: 'Ctrl+X' });
-    items.push({ label: isLocked ? '🔒 Locked — can\'t delete' : '🗑 Delete', fn: () => _laDeleteSelection(), disabled: isLocked, title: 'Del' });
-    items.push({ label: isLocked ? '🔒 Locked — can\'t cancel' : '🚫 Cancel event(s)', fn: () => _laBulkCancelCells(), disabled: isLocked });
+    items.push({ label: 'Open details',  fn: () => _planningOpenEventDetail(eventId) });
+    items.push({ label: 'Copy',          fn: () => _laCopySelection('copy'), title: 'Ctrl+C' });
+    items.push({ label: 'Cut',            fn: () => _laCopySelection('cut'),  disabled: isLocked, title: 'Ctrl+X' });
+    items.push({ label: isLocked ? 'Locked — can\'t delete' : 'Delete', fn: () => _laDeleteSelection(), disabled: isLocked, title: 'Del' });
+    items.push({ label: isLocked ? 'Locked — can\'t cancel' : 'Cancel event(s)', fn: () => _laBulkCancelCells(), disabled: isLocked });
   } else {
     if (hasClip) {
       items.push({
-        label: `📥 Paste here (${_laClipboard.items.length})`,
+        label: `Paste here (${_laClipboard.items.length})`,
         fn: () => {
           _laSetPasteTarget(actId, iso, el);
           _laPasteAtTarget();
         },
         title: 'Ctrl+V',
       });
-      items.push({ label: '📍 Set as paste target', fn: () => _laSetPasteTarget(actId, iso, el) });
+      items.push({ label: 'Set as paste target', fn: () => _laSetPasteTarget(actId, iso, el) });
     } else {
       items.push({ label: 'Copy a cell first (Ctrl+C)', disabled: true });
     }
@@ -23365,8 +23365,8 @@ function _laConflictConfirmModal(resourceName, conflicts) {
   return new Promise(resolve => {
     const items = conflicts.slice(0, 12).map(c => {
       const tag = c.kind === 'pto'
-        ? '<span style="background:#fef3c7;color:#92400e;font-weight:700;font-size:10px;padding:1px 6px;border-radius:8px;">🌴 PTO</span>'
-        : '<span style="background:#fee2e2;color:#b91c1c;font-weight:700;font-size:10px;padding:1px 6px;border-radius:8px;">⚡ DOUBLE-BOOKED</span>';
+        ? '<span style="background:#fef3c7;color:#92400e;font-weight:700;font-size:10px;padding:1px 6px;border-radius:8px;">' + icon('palm') + ' PTO</span>'
+        : '<span style="background:#fee2e2;color:#b91c1c;font-weight:700;font-size:10px;padding:1px 6px;border-radius:8px;">' + icon('zap') + ' DOUBLE-BOOKED</span>';
       return `<li style="margin:6px 0;list-style:none;display:flex;gap:8px;align-items:flex-start;">
         ${tag}<span style="font-size:12px;">${escapeHtml(c.text)}</span></li>`;
     }).join('');
@@ -23773,7 +23773,7 @@ function _laMountLookaheadTL() {
           a.localeCompare(b, undefined, { numeric: true })
         );
         phaseKeys.forEach(pk => {
-          const subColl = pushSubHdr('phase::' + gk + '::' + pk, pk, '🏷', phaseBuckets[pk].length);
+          const subColl = pushSubHdr('phase::' + gk + '::' + pk, pk, icon('tag'), phaseBuckets[pk].length);
           if (!subColl) phaseBuckets[pk].forEach(pushActRow);
         });
 
@@ -23788,7 +23788,7 @@ function _laMountLookaheadTL() {
           a === '(No Location)' ? 1 : b === '(No Location)' ? -1 : a.localeCompare(b)
         );
         locKeys.forEach(lk => {
-          const subColl = pushSubHdr('loc::' + gk + '::' + lk, lk, '📍', locBuckets[lk].length);
+          const subColl = pushSubHdr('loc::' + gk + '::' + lk, lk, icon('pin'), locBuckets[lk].length);
           if (!subColl) locBuckets[lk].forEach(pushActRow);
         });
 
@@ -23804,7 +23804,7 @@ function _laMountLookaheadTL() {
           a.localeCompare(b, undefined, { numeric: true })
         );
         phaseKeys.forEach(pk => {
-          const phColl = pushSubHdr('phase::' + gk + '::' + pk, pk, '🏷', phaseBuckets[pk].length);
+          const phColl = pushSubHdr('phase::' + gk + '::' + pk, pk, icon('tag'), phaseBuckets[pk].length);
           if (phColl) return;
           // Inner: location buckets within this phase
           const locBuckets = {};
@@ -23816,7 +23816,7 @@ function _laMountLookaheadTL() {
             a === '(No Location)' ? 1 : b === '(No Location)' ? -1 : a.localeCompare(b)
           );
           locKeys.forEach(lk => {
-            const lColl = pushSubHdr('loc::' + gk + '::' + pk + '::' + lk, lk, '📍', locBuckets[lk].length, true);
+            const lColl = pushSubHdr('loc::' + gk + '::' + pk + '::' + lk, lk, icon('pin'), locBuckets[lk].length, true);
             if (!lColl) locBuckets[lk].forEach(pushActRow);
           });
         });
@@ -23916,7 +23916,7 @@ function _laResourcesBoardHTML() {
   return `
     ${outToday.length ? `
       <div style="margin-bottom:14px;padding:10px 14px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
-        🌴 <strong>Out today:</strong> ${outToday.map(x => escapeHtml(x.resource?.display_name || '—')).join(', ')}
+        ${icon('palm')} <strong>Out today:</strong> ${outToday.map(x => escapeHtml(x.resource?.display_name || '—')).join(', ')}
       </div>` : ''}
     ${_planningShiftLegend()}
 
@@ -24023,7 +24023,7 @@ function _planningOpenEventDetail(eventId) {
 
   modal({
     title: e.title || '(no title)',
-    sub:   `${e.event_date} · ${v.label}${e.is_locked ? ' · 🔒 Locked' : ''}${e.source === 'lookahead' ? ' · From import' : ''}`,
+    sub:   `${e.event_date} · ${v.label}${e.is_locked ? ' · Locked' : ''}${e.source === 'lookahead' ? ' · From import' : ''}`,
     body: `
       <div style="display:grid;grid-template-columns:140px 1fr;gap:8px 14px;font-size:13px;">
         <div style="color:var(--gray-500);">Status:</div>
@@ -24087,7 +24087,7 @@ function _planningOpenEventDetail(eventId) {
             <textarea id="ped-notes" class="form-input" rows="3"
               style="font-size:12px;resize:vertical;width:100%;box-sizing:border-box;"
               placeholder="Add notes about this activity…">${escapeHtml(e.notes || '')}</textarea>
-            <button class="form-secondary" style="font-size:11px;padding:3px 10px;margin-top:4px;" onclick="_planningUpdateEventNotes('${e.id}')">💾 Save Notes</button>
+            <button class="form-secondary" style="font-size:11px;padding:3px 10px;margin-top:4px;" onclick="_planningUpdateEventNotes('${e.id}')">${icon('save')} Save Notes</button>
           ` : `<div style="font-size:12px;">${e.notes ? escapeHtml(e.notes) : '<em style="color:#9ca3af;">No notes</em>'}</div>`}
         </div>
       </div>
@@ -24100,10 +24100,10 @@ function _planningOpenEventDetail(eventId) {
     `,
     footer: isAdmin ? `
       <button class="form-secondary" onclick="closeModal()">Close</button>
-      <button class="form-secondary" onclick="_planningToggleLock('${e.id}')">${e.is_locked ? '🔓 Unlock' : '🔒 Lock'}</button>
-      ${!isCancel ? `<button class="form-secondary" style="color:var(--bad);" onclick="_planningCancelEvent('${e.id}')">✕ Cancel Event</button>` : ''}
+      <button class="form-secondary" onclick="_planningToggleLock('${e.id}')">${e.is_locked ? icon('unlock')+' Unlock' : icon('lock')+' Lock'}</button>
+      ${!isCancel ? `<button class="form-secondary" style="color:var(--bad);" onclick="_planningCancelEvent('${e.id}')">${icon('x')} Cancel Event</button>` : ''}
       ${isCancel && !e.cancellation_reason ? `<button class="form-submit" onclick="_planningAddCancellationReason('${e.id}')">+ Add Cancel Reason</button>` : ''}
-      ${!e.is_locked ? `<button class="form-secondary" style="color:#7f1d1d;border-color:#fca5a5;" onclick="_planningDeleteEvent('${e.id}')">🗑 Delete</button>` : ''}
+      ${!e.is_locked ? `<button class="form-secondary" style="color:#7f1d1d;border-color:#fca5a5;" onclick="_planningDeleteEvent('${e.id}')">${icon('trash')} Delete</button>` : ''}
     ` : `
       <button class="form-secondary" onclick="closeModal()">Close</button>
     `,
@@ -24202,7 +24202,7 @@ function _planningOpenPTODetail(p) {
   const isAdmin = currentRoleUser?.role === 'admin';
   const r = PLANNING_RESOURCES.find(x => x.id === p.resource_id);
   modal({
-    title: `🌴 PTO — ${r?.display_name || '—'}`,
+    title: `PTO — ${r?.display_name || '—'}`,
     sub:   _ptoFmtRange(p),
     body: `
       <div style="display:grid;grid-template-columns:140px 1fr;gap:8px 14px;font-size:13px;">
@@ -24388,7 +24388,7 @@ function _ptoRowHTML(p, isAdmin, myResource) {
   if (isAdmin && p.status === 'pending') {
     actions = `
       <button class="form-secondary" style="font-size:11px;padding:4px 8px;color:#16a34a;" onclick="_ptoReview('${p.id}','approve')">✓ Approve</button>
-      <button class="form-secondary" style="font-size:11px;padding:4px 8px;color:var(--bad);margin-left:4px;" onclick="_ptoReview('${p.id}','reject')">✕ Reject</button>`;
+      <button class="form-secondary" style="font-size:11px;padding:4px 8px;color:var(--bad);margin-left:4px;" onclick="_ptoReview('${p.id}','reject')">${icon('x')} Reject</button>`;
   } else if (isAdmin && p.status !== 'pending') {
     actions = `<button class="form-secondary" style="font-size:11px;padding:4px 8px;" onclick="_ptoReview('${p.id}','reopen')">↺ Reopen</button>`;
   } else if (isMine && p.status === 'pending') {
@@ -24677,7 +24677,7 @@ function _cancelRptUpdateBulkBtn() {
   const n = _cancelRptSel.size;
   const btn = document.getElementById('crpt-export-btn');
   const allCb = document.getElementById('crpt-sel-all');
-  if (btn) btn.textContent = n ? `📄 Export PDF (${n} selected)` : '📄 Export All as PDF';
+  if (btn) btn.textContent = n ? `Export PDF (${n} selected)` : 'Export All as PDF';
   const total = document.querySelectorAll('.crpt-cb').length;
   if (allCb) {
     allCb.indeterminate = n > 0 && n < total;
@@ -24698,7 +24698,7 @@ function _cancelRptTableBody() {
     const isCxl  = r._type === 'cancellation';
     const color  = isCxl ? '#b91c1c' : '#b45309';
     const badge  = isCxl
-      ? `<span class="badge" style="background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;font-size:10px;">✕ Cancellation</span>`
+      ? `<span class="badge" style="background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;font-size:10px;">${icon('x')} Cancellation</span>`
       : `<span class="badge" style="background:#fffbeb;color:#b45309;border:1px solid #fde68a;font-size:10px;">⚠ Delay</span>`;
     const checked = _cancelRptSel.has(r._id) ? 'checked' : '';
     return `<tr style="border-left:3px solid ${color};">
@@ -24934,7 +24934,7 @@ function _laHealthTabHTML() {
       </div>
 
       <div class="data-card" style="padding:14px;">
-        <div style="font-weight:600;font-size:13px;margin-bottom:10px;">📅 Schedule Drift vs P6</div>
+        <div style="font-weight:600;font-size:13px;margin-bottom:10px;">${icon('calendar')} Schedule Drift vs P6</div>
         ${drift.length === 0 ? '<div style="font-size:12px;color:#6b7280;">No P6-linked activities with scheduled cells.</div>' :
           `<table style="width:100%;border-collapse:collapse;font-size:11px;">
             <thead><tr style="background:#f8fafc;">
@@ -25030,7 +25030,7 @@ function _laCancellationsTabHTML() {
   <!-- Phase 4D: Cancellation breakdown for the weekly meeting -->
   <div style="margin-bottom:18px;">
     <div style="font-size:12px;font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;">
-      📊 This week — by category
+      ${icon('chart')} This week — by category
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">${catRow}</div>
   </div>
@@ -25038,7 +25038,7 @@ function _laCancellationsTabHTML() {
   ${Object.keys(partyCounts).length ? `
   <div style="margin-bottom:18px;">
     <div style="font-size:12px;font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;">
-      🏢 This week — by responsible party
+      ${icon('building')} This week — by responsible party
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       ${Object.entries(partyCounts).sort((a,b) => b[1]-a[1]).map(([party, n]) =>
@@ -25094,10 +25094,10 @@ function _laCancellationsTabHTML() {
     </div>
     <button class="form-secondary" style="font-size:11px;padding:5px 12px;height:32px;margin-left:auto;"
       onclick="_cancelRpt={dateFrom:'',dateTo:'',type:'all',party:'',location:'',subsystem:''};_cancelRptSel.clear();document.getElementById('lookahead-tab-body').innerHTML=_laCancellationsTabHTML();">
-      ✕ Clear
+      ${icon('x')} Clear
     </button>
     <button id="crpt-export-btn" class="admin-action-btn" style="font-size:11px;padding:5px 14px;height:32px;"
-      onclick="_cancelRptExportPDF()">📄 Export All as PDF</button>
+      onclick="_cancelRptExportPDF()">${icon('file')} Export All as PDF</button>
   </div>
 
   <div class="data-card" style="padding:0;overflow:hidden;">
@@ -25141,7 +25141,7 @@ function _cancelRptExportPDF() {
   const rowsHTML = exportRows.map(r => {
     const isCxl = r._type === 'cancellation';
     const borderColor = isCxl ? '#b91c1c' : '#b45309';
-    const typeLabel   = isCxl ? '✕ Cancellation' : '⚠ Delay';
+    const typeLabel   = isCxl ? 'Cancellation' : '⚠ Delay';
     const typeStyle   = isCxl
       ? 'background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;'
       : 'background:#fffbeb;color:#b45309;border:1px solid #fde68a;';
@@ -25301,7 +25301,7 @@ function renderAdminPlanning() {
         `).join('')}
       </div>
       <div style="display:flex;gap:8px;">
-        <button class="form-secondary" onclick="showPage('lookahead')">📅 Lookahead</button>
+        <button class="form-secondary" onclick="showPage('lookahead')">${icon('calendar')} Lookahead</button>
         <button class="form-secondary" onclick="loadPlanningData(true).then(renderAdminPlanning);">↻ Refresh</button>
       </div>
     </div>
@@ -25339,7 +25339,7 @@ function _apDeletedActivitiesHTML() {
   if (deleted.length === 0) {
     return `
       <div class="data-card" style="padding:48px;text-align:center;">
-        <div style="font-size:48px;margin-bottom:12px;">🗑</div>
+        <div style="font-size:48px;margin-bottom:12px;">${icon('trash')}</div>
         <h3 style="margin:0 0 6px;font-weight:600;color:var(--gray-600);">No deleted activities</h3>
         <p style="margin:0;color:var(--gray-500);font-size:13px;">
           Activities soft-deleted from the master grid will appear here for review and restore.
@@ -25350,7 +25350,7 @@ function _apDeletedActivitiesHTML() {
   return `
     <div class="data-card" style="padding:0;">
       <div style="padding:12px 16px;background:#fef3c7;border-bottom:1px solid var(--gray-200);font-size:12px;color:#78350f;">
-        🗂 Soft-deleted activities stay in the database for audit purposes. Restore brings them back to the grid but does <strong>not</strong> auto-uncancel events that were cancelled when the row was deleted.
+        ${icon('folder')} Soft-deleted activities stay in the database for audit purposes. Restore brings them back to the grid but does <strong>not</strong> auto-uncancel events that were cancelled when the row was deleted.
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:13px;">
         <thead>
@@ -25382,7 +25382,7 @@ function _apDeletedActivitiesHTML() {
               <td style="padding:8px 12px;color:var(--gray-500);font-size:11px;">${evCount}</td>
               <td style="padding:8px 12px;text-align:right;white-space:nowrap;">
                 <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_apRestoreActivity('${a.id}')">↩ Restore</button>
-                <button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#dc2626;border-color:#fca5a5;" onclick="_apHardDeleteActivity('${a.id}')">✕ Purge</button>
+                <button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#dc2626;border-color:#fca5a5;" onclick="_apHardDeleteActivity('${a.id}')">${icon('x')} Purge</button>
               </td>
             </tr>`;
           }).join('')}
@@ -25446,7 +25446,7 @@ function _apUploadStub() {
 
       <div style="margin-top:22px;padding:18px;background:#f9fafb;border:1px dashed var(--gray-300);border-radius:8px;text-align:center;">
         <input type="file" id="lookahead-file-input" accept=".xlsx" style="display:none;" onchange="_lookaheadParseFile(this.files[0])">
-        <button class="admin-action-btn" onclick="document.getElementById('lookahead-file-input').click()">⬆ Choose .xlsx File</button>
+        <button class="admin-action-btn" onclick="document.getElementById('lookahead-file-input').click()">${icon('upload')} Choose .xlsx File</button>
         <div style="margin-top:8px;font-size:11px;color:var(--gray-500);">
           New imports become the master plan. Future-dated events from the previous batch are replaced
           (admin overrides marked locked are preserved).
@@ -25483,9 +25483,9 @@ function _apReviewStub() {
             <input type="checkbox" id="cancel-sel-all" onchange="_cancelToggleAll(this.checked)" style="width:14px;height:14px;">
             All
           </label>
-          <strong style="font-size:13px;color:#b91c1c;">🚫 Cancellations needing reason (${cancellationsNeedingReason.length})</strong>
+          <strong style="font-size:13px;color:#b91c1c;">${icon('ban')} Cancellations needing reason (${cancellationsNeedingReason.length})</strong>
           <span style="font-size:11px;color:var(--gray-500);">Select items then apply a shared reason, or add individually.</span>
-          <button id="cancel-bulk-btn" class="admin-action-btn" style="font-size:11px;padding:4px 12px;margin-left:auto;display:none;" onclick="_cancelBulkReason()">➕ Add Reason to Selected</button>
+          <button id="cancel-bulk-btn" class="admin-action-btn" style="font-size:11px;padding:4px 12px;margin-left:auto;display:none;" onclick="_cancelBulkReason()">${icon('plus')} Add Reason to Selected</button>
         </div>
         <table class="data-table">
           <thead><tr><th style="width:30px;"></th><th>Date</th><th>Activity</th><th>Location</th><th>Action</th></tr></thead>
@@ -25505,7 +25505,7 @@ function _apReviewStub() {
     ${unknownInitials.length ? `
       <div class="data-card" style="padding:0;overflow:hidden;margin-bottom:18px;">
         <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:#fffbeb;">
-          <strong style="font-size:13px;color:#92400e;">👤 Unknown resource initials (${unknownInitials.length})</strong>
+          <strong style="font-size:13px;color:#92400e;">${icon('user')} Unknown resource initials (${unknownInitials.length})</strong>
           <span style="font-size:11px;color:var(--gray-500);margin-left:8px;">Map to existing or create as a manual resource.</span>
         </div>
         <table class="data-table">
@@ -25537,7 +25537,7 @@ function _apReviewStub() {
         <thead><tr><th>Activity ID</th><th>Description</th><th>Location</th><th>Resource</th><th>Actions</th></tr></thead>
         <tbody>
           ${unmatched.length === 0
-            ? `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--gray-400);">No unmatched activities. 🎉</td></tr>`
+            ? `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--gray-400);">No unmatched activities. ${icon('sparkles')}</td></tr>`
             : unmatched.slice(0, 100).map(a => `
                 <tr>
                   <td style="font-family:monospace;font-size:11px;">${escapeHtml(a.activity_id_text || '—')}</td>
@@ -25545,7 +25545,7 @@ function _apReviewStub() {
                   <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.location || '—')}</td>
                   <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.resource_raw || '—')}</td>
                   <td style="white-space:nowrap;">
-                    <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_planningLinkActivity('${a.id}')">🔗 Link</button>
+                    <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_planningLinkActivity('${a.id}')">${icon('link')} Link</button>
                     <button class="form-secondary" style="font-size:11px;padding:4px 10px;margin-left:4px;color:var(--gray-500);" onclick="_planningMarkNoLink('${a.id}')">⊘ No link</button>
                   </td>
                 </tr>`).join('')}
@@ -25567,7 +25567,7 @@ function _apReviewStub() {
               <td>${escapeHtml(a.description || '—')}</td>
               <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.location || '—')}</td>
               <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.resource_raw || '—')}</td>
-              <td><button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_planningLinkActivity('${a.id}')">🔗 Link</button></td>
+              <td><button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_planningLinkActivity('${a.id}')">${icon('link')} Link</button></td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -25929,7 +25929,7 @@ async function _lookaheadParseFile(file) {
     _lookaheadOpenPreviewModal();
   } catch (err) {
     console.error('Lookahead parse failed:', err);
-    if (statusEl) statusEl.innerHTML = `<div style="color:var(--bad);font-size:13px;">❌ Parse failed: ${escapeHtml(err.message)}</div>`;
+    if (statusEl) statusEl.innerHTML = `<div style="color:var(--bad);font-size:13px;">${icon('x')} Parse failed: ${escapeHtml(err.message)}</div>`;
     toast('Parse failed: ' + err.message, 'error');
   }
 }
@@ -25964,7 +25964,7 @@ function _lookaheadOpenPreviewModal() {
 
       ${s.cancellations > 0 ? `
         <div style="margin-bottom:14px;padding:10px 14px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;font-size:13px;color:#991b1b;">
-          🚫 <strong>${s.cancellations}</strong> red-cell cancellation${s.cancellations === 1 ? '' : 's'} detected — admin must enter a reason for each in the Review Queue after import.
+          ${icon('ban')} <strong>${s.cancellations}</strong> red-cell cancellation${s.cancellations === 1 ? '' : 's'} detected — admin must enter a reason for each in the Review Queue after import.
         </div>` : ''}
 
       <div style="font-size:13px;color:var(--gray-600);margin:14px 0 6px;">Sample (first 20 rows):</div>
@@ -25986,7 +25986,7 @@ function _lookaheadOpenPreviewModal() {
               const matchBadge = {
                 matched:   `<span class="badge badge-passed">✓ ${(r.match.confidence*100).toFixed(0)}%</span>`,
                 suggested: `<span class="badge" style="background:#dbeafe;color:#1e40af;">~ ${(r.match.confidence*100).toFixed(0)}%</span>`,
-                unmatched: `<span class="badge badge-warn">✕</span>`,
+                unmatched: `<span class="badge badge-warn">${icon('x')}</span>`,
               }[r.match.status] || '—';
               const evCount = r.rowEvents.length;
               const evIcons = r.rowEvents.map(ev => {
