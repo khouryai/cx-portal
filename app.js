@@ -26289,7 +26289,7 @@ function _laHealthGroupRollupHTML() {
   return `
     <div style="margin-bottom:18px;">
       <div style="font-size:12px;font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;">
-        📊 Progress by activity group
+        ${icon('chart')} Progress by activity group
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;">${items}</div>
     </div>`;
@@ -26297,16 +26297,16 @@ function _laHealthGroupRollupHTML() {
 
 // Category taxonomy — fallback when Field Config has no custom list.
 const _CANCEL_CATEGORIES = [
-  ['BART_DENIED',      '🚫 BART denied a requested resource'],
-  ['WEATHER',          '🌧 Weather'],
-  ['EQUIPMENT',        '🔧 Equipment / asset unavailable'],
-  ['RESOURCE_UNAVAIL', '👤 Internal resource unavailable'],
-  ['LOGISTICS',        '🚚 Logistics / access / staging'],
-  ['OTHER',            '❓ Other (use reason field)'],
+  ['BART_DENIED',      'BART denied a requested resource'],
+  ['WEATHER',          'Weather'],
+  ['EQUIPMENT',        'Equipment / asset unavailable'],
+  ['RESOURCE_UNAVAIL', 'Internal resource unavailable'],
+  ['LOGISTICS',        'Logistics / access / staging'],
+  ['OTHER',            'Other (use reason field)'],
 ];
 
 // Runtime accessor — reads Field Config first, falls back to hardcoded list.
-// Stored format: "CODE: label" (e.g. "BART_DENIED: 🚫 BART denied a requested resource").
+// Stored format: "CODE: label" (e.g. "BART_DENIED: BART denied a requested resource").
 function _cancelCats() {
   const raw = _fsCfg('cancel_category');
   const source = raw.length ? raw : _CANCEL_CATEGORIES.map(([c, l]) => `${c}: ${l}`);
@@ -26330,7 +26330,7 @@ function _cancelCatColor(code, idx) {
 
 function _cancelReasonModalOpen(subTitle, onSave) {
   modal({
-    title: '🚫 Cancellation Reason',
+    title: 'Cancellation Reason',
     sub:   subTitle,
     size:  'small',
     body: `
@@ -26421,7 +26421,7 @@ function _cancelToggleSel(eventId, checked) {
   if (btn) {
     const n = _cancelSelIds.size;
     btn.style.display = n ? 'inline-block' : 'none';
-    btn.textContent = `➕ Add Reason to ${n} Selected`;
+    btn.innerHTML = icon('plus') + ` Add Reason to ${n} Selected`;
   }
   const allCb = document.getElementById('cancel-sel-all');
   if (allCb) {
@@ -26545,7 +26545,7 @@ async function _planningLinkActivity(activityId) {
   )].sort();
 
   modal({
-    title: '🔗 Link Activity to Schedule',
+    title: 'Link Activity to Schedule',
     sub:   escapeHtml(a.description || a.activity_id_text || '—'),
     size:  'large',
     body: `
@@ -26563,7 +26563,7 @@ async function _planningLinkActivity(activityId) {
     footer: `
       <button class="form-secondary" style="margin-right:auto;color:var(--gray-500);" onclick="_planningMarkNoLink('${activityId}')">⊘ No direct link</button>
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="admin-action-btn" onclick="_planningConfirmLink('${activityId}')">🔗 Link</button>`,
+      <button class="admin-action-btn" onclick="_planningConfirmLink('${activityId}')">${icon('link')} Link</button>`,
   });
 
   // TomSelect the fresh <select> (auto-init doesn't run inside modal)
@@ -26854,7 +26854,7 @@ function _planningOpenP6Detail(p6) {
   });
 
   modal({
-    title: `📋 ${p6.p6_id || 'P6 Activity'}`,
+    title: `${p6.p6_id || 'P6 Activity'}`,
     sub:   p6.p6_name || '',
     body: `
       <div style="display:grid;grid-template-columns:140px 1fr;gap:8px 14px;font-size:13px;">
@@ -26936,22 +26936,22 @@ function _apConflictsStub() {
   open.forEach(c => { byType[c.conflict_type] = (byType[c.conflict_type] || 0) + 1; });
 
   const TYPE_META = {
-    pto_overlap:                { label: 'PTO Overlap',          icon: '🌴', color: '#92400e' },
-    double_booked:              { label: 'Double Booked',        icon: '⚡', color: '#b45309' },
-    outside_work_hours:         { label: 'Outside Work Hours',   icon: '🌙', color: '#3730a3' },
-    p6_date_variance:           { label: 'P6 Variance',          icon: '📋', color: '#6366f1' },
-    manual_override_difference: { label: 'Override Differs',     icon: '🔒', color: '#7c3aed' },
-    unmatched_resource:         { label: 'Unmatched Resource',   icon: '👤', color: '#dc2626' },
-    missing_activity_link:      { label: 'Unmatched Activity',   icon: '🔗', color: '#b91c1c' },
+    pto_overlap:                { label: 'PTO Overlap',          icon: icon('palm'), color: '#92400e' },
+    double_booked:              { label: 'Double Booked',        icon: icon('zap'), color: '#b45309' },
+    outside_work_hours:         { label: 'Outside Work Hours',   icon: icon('moon'), color: '#3730a3' },
+    p6_date_variance:           { label: 'P6 Variance',          icon: icon('clipboard'), color: '#6366f1' },
+    manual_override_difference: { label: 'Override Differs',     icon: icon('lock'), color: '#7c3aed' },
+    unmatched_resource:         { label: 'Unmatched Resource',   icon: icon('user'), color: '#dc2626' },
+    missing_activity_link:      { label: 'Unmatched Activity',   icon: icon('link'), color: '#b91c1c' },
   };
 
   const filterChips = [
     ['all',         `All (${open.length})`],
-    ['pto_overlap', `🌴 PTO (${byType.pto_overlap || 0})`],
-    ['double_booked', `⚡ Double (${byType.double_booked || 0})`],
-    ['p6_date_variance', `📋 P6 (${byType.p6_date_variance || 0})`],
-    ['outside_work_hours', `🌙 Hours (${byType.outside_work_hours || 0})`],
-    ['unmatched_resource', `👤 Resources (${byType.unmatched_resource || 0})`],
+    ['pto_overlap', `${icon('palm')} PTO (${byType.pto_overlap || 0})`],
+    ['double_booked', `${icon('zap')} Double (${byType.double_booked || 0})`],
+    ['p6_date_variance', `${icon('clipboard')} P6 (${byType.p6_date_variance || 0})`],
+    ['outside_work_hours', `${icon('moon')} Hours (${byType.outside_work_hours || 0})`],
+    ['unmatched_resource', `${icon('user')} Resources (${byType.unmatched_resource || 0})`],
   ];
 
   let rows = open;
@@ -26984,7 +26984,7 @@ function _apConflictsStub() {
         </thead>
         <tbody>
           ${rows.length === 0
-            ? `<tr><td colspan="5" style="text-align:center;padding:40px;color:var(--gray-400);">🎉 No conflicts${_conflictFilter !== 'all' ? ' in this filter' : ''}.</td></tr>`
+            ? `<tr><td colspan="5" style="text-align:center;padding:40px;color:var(--gray-400);">${icon('sparkles')} No conflicts${_conflictFilter !== 'all' ? ' in this filter' : ''}.</td></tr>`
             : rows.slice(0, 200).map(c => {
                 const meta = TYPE_META[c.conflict_type] || { label: c.conflict_type, icon: '!', color: 'var(--gray-700)' };
                 const sevBadge = c.severity === 'critical' ? `<span class="badge badge-failed">CRITICAL</span>`
@@ -27054,10 +27054,10 @@ function _apResourcesStub() {
       <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--gray-200);">
         <div style="display:flex;gap:0;">
           <button class="admin-tab${!isRoles ? ' active' : ''}" onclick="_apSetResSubTab('people')">
-            👤 People <span style="opacity:.6;font-weight:400;">(${peopleAll.length})</span>
+            ${icon('user')} People <span style="opacity:.6;font-weight:400;">(${peopleAll.length})</span>
           </button>
           <button class="admin-tab${isRoles ? ' active' : ''}" onclick="_apSetResSubTab('roles')">
-            🪪 Roles <span style="opacity:.6;font-weight:400;">(${rolesAll.length})</span>
+            ${icon('user')} Roles <span style="opacity:.6;font-weight:400;">(${rolesAll.length})</span>
           </button>
         </div>
         <button class="admin-action-btn" onclick="_apAddResourceModal()">+ Add ${isRoles ? 'Role' : 'Person'}</button>
@@ -27066,7 +27066,7 @@ function _apResourcesStub() {
       <!-- Filter bar -->
       <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;background:#f8fafc;border-bottom:1px solid var(--gray-200);font-size:12px;">
         <input class="form-input" style="flex:1;max-width:280px;font-size:12px;padding:5px 9px;"
-               placeholder="🔍 Filter by name, initials, email, category…"
+               placeholder="Filter by name, initials, email, category…"
                value="${escapeHtml(_apResNameFilter)}"
                oninput="_apSetResNameFilter(this.value)">
         <select class="form-input" style="width:auto;font-size:12px;padding:5px 9px;" onchange="_apSetResCompanyFilter(this.value)">
@@ -27074,7 +27074,7 @@ function _apResourcesStub() {
           ${companies.map(c => `<option value="${escapeHtml(c)}" ${c === _apResCompanyFilter ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
         </select>
         ${(_apResNameFilter || _apResCompanyFilter)
-          ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_apSetResNameFilter('');_apSetResCompanyFilter('');">✕ Reset</button>`
+          ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_apSetResNameFilter('');_apSetResCompanyFilter('');">${icon('x')} Reset</button>`
           : ''}
         <span style="margin-left:auto;color:var(--gray-500);">${filtered.length} of ${list.length}</span>
       </div>
@@ -27130,8 +27130,8 @@ function _apResourcesStub() {
                     </label>
                   </td>
                   <td style="white-space:nowrap;">
-                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_apEditResourceModal('${r.id}')">✏ Edit</button>
-                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px;color:#b91c1c;border-color:#fca5a5;" onclick="_apDeleteResource('${r.id}','${escapeHtml(r.display_name)}')">🗑</button>
+                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_apEditResourceModal('${r.id}')">${icon('edit')} Edit</button>
+                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px;color:#b91c1c;border-color:#fca5a5;" onclick="_apDeleteResource('${r.id}','${escapeHtml(r.display_name)}')">${icon('trash')}</button>
                   </td>
                 </tr>`;
               }).join('')}
@@ -27151,7 +27151,7 @@ function _apEditResourceModal(resourceId) {
     : null;
 
   modal({
-    title: '✏ Edit Resource',
+    title: 'Edit Resource',
     sub:   escapeHtml(r.display_name),
     size:  'medium',
     body: `
@@ -27209,7 +27209,7 @@ function _apEditResourceModal(resourceId) {
         </div>
         ${profileSubsys && profileSubsys !== r.subsystem ? `
           <div style="background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:10px 12px;font-size:12px;">
-            💡 Portal profile has subsystem <strong>${escapeHtml(profileSubsys)}</strong>.
+            ${icon('bulb')} Portal profile has subsystem <strong>${escapeHtml(profileSubsys)}</strong>.
             <button class="form-secondary" style="font-size:11px;padding:2px 8px;margin-left:8px;" onclick="_apResSubsysPick('${escapeHtml(profileSubsys)}')">Sync from profile</button>
           </div>
         ` : ''}
@@ -28067,13 +28067,13 @@ async function _formsRenderRecentsRow() {
     const isPinned = pinned.has(f.id);
     const visual = r.thumb
       ? `<span class="forms-recent-thumb" style="background-image:url('${r.thumb}');" aria-hidden="true"></span>`
-      : `<span class="forms-recent-icon" aria-hidden="true">📄</span>`;
+      : `<span class="forms-recent-icon" aria-hidden="true">${icon('file')}</span>`;
     return `
       <button type="button" class="forms-recent-tile" data-form-id="${escapeHtml(f.id)}"
               title="${escapeHtml(f.name)}${sub ? ' — ' + escapeHtml(sub) : ''}${isPinned ? ' (offline)' : ''}">
         ${visual}
         <span class="forms-recent-body">
-          <span class="forms-recent-name">${escapeHtml(f.name)}${isPinned ? ' <span class="forms-recent-pin" title="Available offline">📌</span>' : ''}</span>
+          <span class="forms-recent-name">${escapeHtml(f.name)}${isPinned ? ' <span class="forms-recent-pin" title="Available offline">' + icon('pin') + '</span>' : ''}</span>
           <span class="forms-recent-meta">${escapeHtml(sub || '—')}</span>
           <span class="forms-recent-time">${escapeHtml(_formsRelativeTime(r.openedAt))}</span>
         </span>
@@ -28180,7 +28180,7 @@ async function openFormViewer(formId) {
       <div class="pdf-viewer-shell">
         <div class="pdf-viewer-toolbar" id="pdf-viewer-toolbar">
           <div class="pdf-tb-group">
-            <button type="button" class="pdf-tb-btn" id="pdf-tb-thumbs"   title="Toggle thumbnails (Alt+T)">☰</button>
+            <button type="button" class="pdf-tb-btn" id="pdf-tb-thumbs"   title="Toggle thumbnails (Alt+T)">${icon('menu')}</button>
             <button type="button" class="pdf-tb-btn" id="pdf-tb-prev"     title="Previous field (Shift+Tab)">◀</button>
             <button type="button" class="pdf-tb-btn" id="pdf-tb-next"     title="Next field (Tab)">▶</button>
             <span class="pdf-tb-divider"></span>
@@ -29552,7 +29552,7 @@ function _formsBadgeHTML(testIdOrRow, assetId = '') {
     : testIdOrRow;
   if (!row) {
     const tid = escapeHtml(String(testIdOrRow || ''));
-    return `<button class="form-secondary tr-mini-btn" title="Attach form" onclick="openFormPickerForTest('${tid}')" style="font-size:13px;padding:2px 6px;color:var(--gray-500);">📎</button>`;
+    return `<button class="form-secondary tr-mini-btn" title="Attach form" onclick="openFormPickerForTest('${tid}')" style="font-size:13px;padding:2px 6px;color:var(--gray-500);">${icon('paperclip')}</button>`;
   }
   const count = _formsCountForTestRow(row);
   // Child asset row → open picker focused on this asset's scope.
@@ -29562,11 +29562,11 @@ function _formsBadgeHTML(testIdOrRow, assetId = '') {
   const tid = escapeHtml(targetTestId);
   const aid = escapeHtml(targetAsset);
   if (count === 0) {
-    return `<button class="form-secondary tr-mini-btn" title="Attach form" onclick="openFormPickerForTest('${tid}','${aid}')" style="font-size:13px;padding:2px 6px;color:var(--gray-500);">📎</button>`;
+    return `<button class="form-secondary tr-mini-btn" title="Attach form" onclick="openFormPickerForTest('${tid}','${aid}')" style="font-size:13px;padding:2px 6px;color:var(--gray-500);">${icon('paperclip')}</button>`;
   }
   const titleBits = [`${count} form${count===1?'':'s'} linked`];
   if (isChild) titleBits.push('(includes any covering all assets)');
-  return `<button class="admin-action-btn tr-mini-btn" title="${titleBits.join(' ')}" onclick="openFormPickerForTest('${tid}','${aid}')" style="font-size:11px;padding:2px 7px;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;">📎 ${count}</button>`;
+  return `<button class="admin-action-btn tr-mini-btn" title="${titleBits.join(' ')}" onclick="openFormPickerForTest('${tid}','${aid}')" style="font-size:11px;padding:2px 7px;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;">${icon('paperclip')} ${count}</button>`;
 }
 
 // ── TEMPLATE EDITOR INTEGRATION ─────────────────────────────────────────
@@ -29741,7 +29741,7 @@ function _formsPageListHTML() {
         <td style="white-space:nowrap;">
           <button class="admin-action-btn tr-mini-btn" onclick="openFormViewer('${x.id}')">Open</button>
           <button class="form-secondary tr-mini-btn"   onclick="openEditFormMetadata('${x.id}')">Edit</button>
-          <button class="form-secondary tr-mini-btn"   style="color:var(--bad);" onclick="deleteFormFromPage('${x.id}')">🗑</button>
+          <button class="form-secondary tr-mini-btn"   style="color:var(--bad);" onclick="deleteFormFromPage('${x.id}')">${icon('trash')}</button>
         </td>
       </tr>`;
   }).join('');
@@ -29777,7 +29777,7 @@ function _formsPageListHTML() {
         </table>
       </div>
       <div style="font-size:11px;color:var(--gray-500);margin-top:10px;">
-        ${filtered.length} of ${all.length} ${f.showTemplates ? 'template blanks' : 'forms'} shown. Attach new forms from the 📎 icon on a test case row, or as a template-level PDF in the Activity Templates editor.
+        ${filtered.length} of ${all.length} ${f.showTemplates ? 'template blanks' : 'forms'} shown. Attach new forms from the ${icon('paperclip')} icon on a test case row, or as a template-level PDF in the Activity Templates editor.
       </div>
   `;
 }
@@ -33145,7 +33145,7 @@ function _drwSheetTableHTML(sheets, opts = {}) {
         <td class="drw-sheet-page-cell">${escapeHtml(sheet.page_number || String((sheet.page_index ?? 0) + 1))}</td>
         ${opts.compact ? '' : `<td class="drw-sheet-set-cell">${escapeHtml(setTitle(sheet) || '—')}</td>`}
         <td>${pubCount ? `<span class="drw-markup-badge">${pubCount} markup${pubCount > 1 ? 's' : ''}</span>` : '<span class="drw-muted">No markups</span>'}</td>
-        <td><span class="drw-status-pill ${sheet.is_current ? 'is-current' : 'is-old'}">${sheet.is_current ? 'Current' : 'Superseded'}</span>${isAdmin ? ` <button class="drw-del-btn" title="Delete this page (and its markups)" onclick="event.stopPropagation();_drwDeleteSheet('${sheet.id}','${escapeHtml(loc)}','${subtab}')">🗑</button>` : ''}</td>
+        <td><span class="drw-status-pill ${sheet.is_current ? 'is-current' : 'is-old'}">${sheet.is_current ? 'Current' : 'Superseded'}</span>${isAdmin ? ` <button class="drw-del-btn" title="Delete this page (and its markups)" onclick="event.stopPropagation();_drwDeleteSheet('${sheet.id}','${escapeHtml(loc)}','${subtab}')">${icon('trash')}</button>` : ''}</td>
       </tr>
     `;
   }).join('');
@@ -34040,7 +34040,7 @@ function _dynOpenCSVModal() {
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
           <input id="dyn-csv-file" type="file" accept=".csv,.xlsx,.xls" style="font-size:12px;" />
           <button class="dyn-btn" onclick="_dynCSVPasteSample()" style="font-size:12px;">Insert sample</button>
-          <button class="form-secondary" onclick="_dynDownloadCSVTemplate()" style="font-size:12px;">⬇ Template</button>
+          <button class="form-secondary" onclick="_dynDownloadCSVTemplate()" style="font-size:12px;">${icon('download')} Template</button>
         </div>
         <textarea id="dyn-csv-text" rows="14" style="width:100%;font-family:var(--font-mono,monospace);font-size:12px;border:1px solid var(--gray-300);border-radius:5px;padding:8px;" placeholder="Paste CSV here or pick a file above…"></textarea>
         <div id="dyn-csv-status" style="margin-top:10px;font-size:13px;color:var(--gray-600);min-height:20px;"></div>
@@ -34800,7 +34800,7 @@ function _dynRenderPlanning() {
       </label>
       <button class="dyn-btn primary" onclick="_dynPlanRun()">Compute feasible</button>
       <span style="flex:1;"></span>
-      <button class="dyn-btn" onclick="_dynPlanOpenWindowsAdmin()">⚙ Manage Windows</button>
+      <button class="dyn-btn" onclick="_dynPlanOpenWindowsAdmin()">${icon('settings')} Manage Windows</button>
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:10px;margin:14px 0 18px;">
@@ -34823,7 +34823,7 @@ function _dynRenderPlanning() {
         <span><b>${selected.length}</b> selected · <b>${(selMinutes/60).toFixed(1)} h</b> · <b>${selTrains}</b> trains</span>
         <span style="flex:1;"></span>
         <button class="dyn-btn" onclick="_dynPage.planSelected.clear();_dynRenderPlanning();">Clear selection</button>
-        <button class="dyn-btn primary" onclick="_dynPlanCommit()">📅 Schedule ${selected.length}</button>
+        <button class="dyn-btn primary" onclick="_dynPlanCommit()">${icon('calendar')} Schedule ${selected.length}</button>
       </div>` : ''}
   `;
 }
@@ -35017,7 +35017,7 @@ async function _dynPlanOpenWindowsAdmin() {
   windows.sort((a, b) => (a.start_at || '').localeCompare(b.start_at || ''));
 
   modal({
-    title: '⚙ Zone access windows',
+    title: 'Zone access windows',
     sub: 'Operations-defined windows the planning algorithm can use',
     body: `
       <div style="padding:8px 24px 16px;">
