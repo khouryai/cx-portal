@@ -205,8 +205,8 @@ function _signinTogglePw(){
       <div style="font-size:13px;color:#e60012;margin-top:2px;">Alexander.Khoury@hitachirail.com</div>
     </div>
     <div style="display:flex;gap:10px;justify-content:center;">
-      <button onclick="_rayCopyEmail()" style="flex:1;padding:10px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#374151;">📋 Copy Email</button>
-      <button onclick="_rayOpenEmail()" style="flex:1;padding:10px;background:#e60012;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#fff;">✉ Send Email</button>
+      <button onclick="_rayCopyEmail()" style="flex:1;padding:10px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#374151;"><svg class="icon-svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg> Copy Email</button>
+      <button onclick="_rayOpenEmail()" style="flex:1;padding:10px;background:#e60012;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#fff;"><svg class="icon-svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg> Send Email</button>
     </div>
     <button onclick="closeRequestAccess()" style="margin-top:16px;font-size:12px;color:#999;background:none;border:none;cursor:pointer;">Dismiss</button>
   </div>
@@ -1484,7 +1484,7 @@ function _signinTogglePw(){
 <!-- ── DRAWINGS SHEET VIEWER ──────────────────────────────── -->
 <div id="drw-viewer-overlay" style="display:none;position:fixed;inset:0;z-index:3800;background:#111;flex-direction:column;">
   <div id="drw-viewer-header" style="display:flex;align-items:center;gap:12px;padding:8px 16px;background:#1f2937;color:#fff;flex-shrink:0;flex-wrap:wrap;">
-    <button class="drw-viewer-close-btn" onclick="_drwCloseViewer()" title="Back to the drawings list">✕ Close</button>
+    <button class="drw-viewer-close-btn" onclick="_drwCloseViewer()" title="Back to the drawings list"><svg class="icon-svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg> Close</button>
     <div style="flex:1;min-width:0;">
       <span id="drw-viewer-sheet-num" style="font-weight:700;font-size:14px;font-family:monospace;color:#93c5fd;"></span>
       <span id="drw-viewer-title" style="font-size:13px;color:#e5e7eb;margin-left:10px;"></span>
@@ -1492,7 +1492,7 @@ function _signinTogglePw(){
     </div>
     <div id="drw-markup-toolbar" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
       <span style="font-size:11px;color:#9ca3af;font-weight:600;text-transform:uppercase;letter-spacing:.05em;">Tools:</span>
-      <button class="drw-tool-btn" id="drw-tool-pen"    onclick="_drwSetTool('pen')"   title="Freehand">✏️</button>
+      <button class="drw-tool-btn" id="drw-tool-pen"    onclick="_drwSetTool('pen')"   title="Freehand" aria-label="Freehand"><svg class="icon-svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button>
       <button class="drw-tool-btn" id="drw-tool-rect"   onclick="_drwSetTool('rect')"  title="Rectangle">▭</button>
       <button class="drw-tool-btn" id="drw-tool-arrow"  onclick="_drwSetTool('arrow')" title="Arrow">↗</button>
       <button class="drw-tool-btn" id="drw-tool-text"   onclick="_drwSetTool('text')"  title="Text Note">T</button>

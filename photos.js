@@ -501,7 +501,7 @@
   // ── rendering ───────────────────────────────────────────────────────────────
   function toolbarHTML() {
     var up = canUpload() ? '<button class="pm-btn pm-btn-primary" id="pm-upload-btn">+ Add photos</button>' : '';
-    var cam = canUpload() ? '<button class="pm-btn" id="pm-camera-btn" title="Capture from camera">📷 Camera</button>' : '';
+    var cam = canUpload() ? '<button class="pm-btn" id="pm-camera-btn" title="Capture from camera">' + icon('camera') + ' Camera</button>' : '';
     var newAlbum = canUpload() ? '<button class="pm-btn" id="pm-newalbum-btn">+ New album</button>' : '';
     var sel = '<button class="pm-btn ' + (S.selecting ? 'pm-btn-primary' : '') + '" id="pm-select-btn">' + (S.selecting ? 'Done' : 'Select') + '</button>';
     var sp = '<button class="pm-btn" disabled title="Configured after IT provisions SharePoint access">⇅ Sync to SharePoint</button>';
@@ -607,7 +607,7 @@
     if (!S.albums.length) await loadAlbums();
     var cards = S.albums.map(function (a) {
       return '<div class="pm-album" data-album="' + esc(a.id) + '">' +
-        '<div class="pm-album-cover" id="pm-cover-' + esc(a.id) + '">📷</div>' +
+        '<div class="pm-album-cover" id="pm-cover-' + esc(a.id) + '">' + icon('camera') + '</div>' +
         '<div class="pm-album-body"><div class="pm-album-name">' + esc(a.name) + '</div>' +
           '<div class="pm-album-sub" id="pm-count-' + esc(a.id) + '">…</div>' +
           '<span class="pm-album-kind">' + (a.kind === 'auto' ? 'Auto' : 'Album') + '</span></div></div>';
@@ -651,7 +651,7 @@
   }
 
   function emptyState(title, sub) {
-    return '<div class="pm-empty"><div class="pm-empty-icon">📷</div><div class="pm-empty-title">' + esc(title) + '</div>' + (sub ? '<div>' + esc(sub) + '</div>' : '') + '</div>';
+    return '<div class="pm-empty"><div class="pm-empty-icon">' + icon('camera') + '</div><div class="pm-empty-title">' + esc(title) + '</div>' + (sub ? '<div>' + esc(sub) + '</div>' : '') + '</div>';
   }
 
   async function openAlbum(id) {
