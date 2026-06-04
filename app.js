@@ -8,6 +8,36 @@ const LI = DATA.lineItems;
 const PL = DATA.punchList;
 const ORG = DATA.org;
 
+// ── Inline SVG icon system (Lucide-style, themeable via currentColor) ──────
+// Replaces emoji-as-icons. Use in HTML template literals: ${icon('search')}
+// Icons inherit text color and font size, so they theme automatically.
+const ICONS = {
+  search:       '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>',
+  link:         '<path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/>',
+  camera:       '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
+  columns:      '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/>',
+  upload:       '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>',
+  download:     '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+  x:            '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  'chevron-left':  '<path d="m15 18-6-6 6-6"/>',
+  'chevron-right': '<path d="m9 18 6-6-6-6"/>',
+  external:     '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  'arrow-lr':   '<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
+  alert:        '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+};
+function icon(name, opts) {
+  opts = opts || {};
+  const body = ICONS[name];
+  if (!body) return '';
+  const size = opts.size || '1em';
+  const extra = opts.cls ? ' ' + opts.cls : '';
+  return '<svg class="icon-svg' + extra + '" width="' + size + '" height="' + size +
+    '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' +
+    body + '</svg>';
+}
+window.icon = icon;
+
 // ── Supabase config ─────────────────────────────────────────
 const SUPABASE_URL      = 'https://uqtwiucxktljhukmgmxg.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxdHdpdWN4a3Rsamh1a21nbXhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NDMxMDcsImV4cCI6MjA5MzUxOTEwN30.nJuQOOyvGpGphSqiNxrO2_p1oYroev8mVdNn9unxmdI';
@@ -7013,7 +7043,7 @@ function renderPunchWorkflow() {
         </button>
       </div>
       <div style="display:flex;gap:8px;">
-        <button class="v2-btn-ghost" onclick="openPunchImportModal()">⬆ Import CSV</button>
+        <button class="v2-btn-ghost" onclick="openPunchImportModal()">${icon('upload')}Import CSV</button>
         <button class="v2-btn-primary" onclick="openNewPunchModal()">＋ Create New</button>
       </div>
     </div>
@@ -7031,14 +7061,14 @@ function renderPunchWorkflow() {
         </span>`;
       }).join('')}
       <span class="right">
-        <button class="v2-btn-ghost" onclick="openPlColEditor()" title="Configure columns (legacy table)">⚙ Cols</button>
+        <button class="v2-btn-ghost" onclick="openPlColEditor()" title="Configure columns (legacy table)">${icon('columns')}Cols</button>
       </span>
     </div>
 
     <!-- Search + cascading filters -->
     <div class="v2-filter-row">
       <div class="v2-search-wrap">
-        <span class="icon">🔍</span>
+        <span class="icon">${icon('search')}</span>
         <input type="text" id="pl-search-input" value="${escapeHtml(_plSearch)}"
                placeholder="Search title or #…"
                oninput="_plSetSearch(this.value)">
@@ -7069,8 +7099,8 @@ function renderPunchWorkflow() {
     ${_plSelected.size > 0 ? `
       <div class="v2-bulk-bar">
         <span class="count">${_plSelected.size} item${_plSelected.size===1?'':'s'} selected</span>
-        <button class="v2-btn-mini primary" onclick="exportPunchPDF([..._plSelected])">⬇ Export ${_plSelected.size} as PDF</button>
-        <button class="clear" onclick="_plClearSelection()">✕ Clear selection</button>
+        <button class="v2-btn-mini primary" onclick="exportPunchPDF([..._plSelected])">${icon('download')}Export ${_plSelected.size} as PDF</button>
+        <button class="clear" onclick="_plClearSelection()">${icon('x')}Clear selection</button>
       </div>` : ''}
 
     <div class="v2-list">
@@ -7085,9 +7115,9 @@ function renderPunchWorkflow() {
       <div class="v2-list-foot">
         <span>Showing ${(_plPage-1)*PL_PAGE_SIZE+1}–${Math.min(_plPage*PL_PAGE_SIZE,total)} of ${total}</span>
         <div class="pages">
-          <button class="page-btn" ${_plPage<=1?'disabled':''} onclick="_plSetPage(${_plPage-1})">← Prev</button>
+          <button class="page-btn" ${_plPage<=1?'disabled':''} onclick="_plSetPage(${_plPage-1})">${icon('chevron-left')}Prev</button>
           <span class="page-btn active">${_plPage} / ${pages}</span>
-          <button class="page-btn" ${_plPage>=pages?'disabled':''} onclick="_plSetPage(${_plPage+1})">Next →</button>
+          <button class="page-btn" ${_plPage>=pages?'disabled':''} onclick="_plSetPage(${_plPage+1})">Next${icon('chevron-right', {cls:'icon-trail'})}</button>
         </div>
       </div>` : ''}
   `);
@@ -7098,7 +7128,7 @@ function _plRowHTML(p) {
   const isOverdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== 'closed';
   const isCritical = p.priority === 'Critical';
   const pillTone = _plPillTone(p.status);
-  const linkedTC = p.test_case_code ? `<span class="linked">↔ ${escapeHtml(p.test_case_code)}</span>` : '';
+  const linkedTC = p.test_case_code ? `<span class="linked">${icon('arrow-lr')}${escapeHtml(p.test_case_code)}</span>` : '';
   const phaseName = p.phase ? _plLocName(p.phase) : '';
   const locName = p.location ? _plLocName(p.location) : '';
   const bic = _plBallInCourt(p);
@@ -7128,11 +7158,11 @@ function _plRowHTML(p) {
           </div>
         </div>
         <div class="punch-due">
-          ${p.due_date ? `<span class="due-line ${isOverdue?'is-bad':''}">${isOverdue?'⚠ ':''}Due ${_fmtDate(p.due_date)}</span>` : ''}
+          ${p.due_date ? `<span class="due-line ${isOverdue?'is-bad':''}">${isOverdue?icon('alert'):''}Due ${_fmtDate(p.due_date)}</span>` : ''}
           ${bic && bic !== '—' ? `<span class="bic">BIC: <b>${escapeHtml(bic)}</b></span>` : ''}
         </div>
         <div onclick="event.stopPropagation()">
-          <button class="v2-btn-mini primary" onclick="openPunchDetail('${p.id}')">View →</button>
+          <button class="v2-btn-mini primary" onclick="openPunchDetail('${p.id}')">View${icon('chevron-right', {cls:'icon-trail'})}</button>
         </div>
       </div>
     </div>
@@ -7440,7 +7470,7 @@ function openPunchDetail(id) {
         return `
           <div style="margin-bottom:18px;">
             <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;">
-              🔗 Linked Test Cases <span style="font-weight:400;font-size:10px;">(${linkedTI.length})</span>
+              ${icon('link')}Linked Test Cases <span style="font-weight:400;font-size:10px;">(${linkedTI.length})</span>
             </div>
             <div style="border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
               ${linkedTI.map((t, i) => {
@@ -7457,7 +7487,7 @@ function openPunchDetail(id) {
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;">
                       <span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;white-space:nowrap;background:${col}20;color:${col};border:1px solid ${col}40;">${escapeHtml(t.Status || 'Unknown')}</span>
-                      <span style="font-size:12px;color:var(--gray-400);" title="Open in Test Register">↗</span>
+                      <span style="font-size:12px;color:var(--gray-400);" title="Open in Test Register">${icon('external')}</span>
                     </div>
                   </div>`;
               }).join('')}
@@ -7468,9 +7498,9 @@ function openPunchDetail(id) {
       <!-- Linked Photos -->
       <div style="margin-bottom:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;">
-          <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;">📷 Photos</div>
+          <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;">${icon('camera')}Photos</div>
           <div style="display:flex;gap:8px;">
-            <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchDownloadAll('${id}')">⬇ Save all</button>
+            <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchDownloadAll('${id}')">${icon('download')}Save all</button>
             ${canComment ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchAddPhotos('${id}')">+ Add photo</button>` : ''}
           </div>
         </div>
@@ -7526,7 +7556,7 @@ function openPunchDetail(id) {
         ${canComment ? `
           <div class="punch-comment-composer">
             <textarea id="punch-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…"></textarea>
-            <button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" onclick="document.getElementById('punch-comment-file-${id}').click()">📷</button>
+            <button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" aria-label="Attach a photo" onclick="document.getElementById('punch-comment-file-${id}').click()">${icon('camera')}</button>
             <button class="form-submit punch-comment-post" onclick="addPunchComment('${id}')">Post</button>
           </div>
           <input type="file" id="punch-comment-file-${id}" accept="image/*" style="display:none" onchange="_punchCommentPhotoChosen('${id}', this)">
@@ -7535,7 +7565,7 @@ function openPunchDetail(id) {
     `,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Close</button>
-      <button class="form-secondary" onclick="exportPunchPDF(['${p.id}'])">⬇ Export PDF</button>
+      <button class="form-secondary" onclick="exportPunchPDF(['${p.id}'])">${icon('download')}Export PDF</button>
       ${p.is_deleted
         ? `<button class="form-secondary" onclick="restorePunch('${p.id}')">Restore from Bin</button>`
         : `<button class="form-secondary" style="color:var(--bad);" onclick="softDeletePunch('${p.id}')">Move to Bin</button>`}

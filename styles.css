@@ -13232,3 +13232,24 @@ a:focus-visible {
     touch-action: manipulation;
   }
 }
+
+/* ===================================================================
+   Inline SVG icons (replaces emoji-as-icons) — themeable, currentColor
+   =================================================================== */
+.icon-svg {
+  display: inline-block;
+  vertical-align: -0.14em;
+  flex-shrink: 0;
+}
+/* Buttons that mix an icon + label: align and space consistently */
+button .icon-svg,
+.v2-btn-mini .icon-svg,
+.v2-btn-ghost .icon-svg,
+.form-secondary .icon-svg { margin-right: 5px; }
+.v2-search-wrap .icon .icon-svg { vertical-align: middle; }
+
+/* Trailing icons (label then icon, e.g. "Next ›", "View ›") */
+.icon-svg.icon-trail { margin-right: 0; margin-left: 5px; }
+/* Inline icons inside small status pills / meta lines */
+.linked .icon-svg,
+.due-line .icon-svg { margin-right: 3px; vertical-align: -0.12em; }

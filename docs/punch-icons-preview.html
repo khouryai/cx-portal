@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Punch List — Emoji → SVG icon conversion preview</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --hitachi-red:#e60012; --slate-900:#111827; --slate-500:#6b7280;
+    --slate-200:#e5e7eb; --slate-50:#f9fafb; --gray-400:#bbbbbb; --bad:#dc2626;
+  }
+  *{box-sizing:border-box}
+  body{font-family:Inter,system-ui,sans-serif;margin:0;background:var(--slate-50);color:var(--slate-900);padding:32px;line-height:1.5}
+  h1{font-size:20px;margin:0 0 4px} .sub{color:var(--slate-500);margin:0 0 28px;font-size:14px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:24px;max-width:980px}
+  .panel{background:#fff;border:1px solid var(--slate-200);border-radius:12px;padding:18px}
+  .panel h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--slate-500);margin:0 0 14px}
+  .panel.before{opacity:.92}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px}
+  button{font-family:inherit;font-size:13px;border-radius:8px;padding:7px 12px;cursor:pointer;
+    display:inline-flex;align-items:center;border:1px solid var(--slate-200);background:#fff;color:var(--slate-900)}
+  button.primary{background:var(--hitachi-red);color:#fff;border-color:var(--hitachi-red)}
+  .search{position:relative;display:inline-flex;align-items:center;background:#fff;border:1px solid var(--slate-200);border-radius:8px;padding:7px 12px 7px 34px;color:var(--slate-500);font-size:13px;min-width:220px}
+  .search .icon{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--slate-500);display:inline-flex}
+  .card{border:1px solid var(--slate-200);border-radius:10px;padding:12px 14px;font-size:13px}
+  .card .title{font-weight:600;margin-bottom:6px}
+  .linked,.due-line{display:inline-flex;align-items:center;font-size:12px;color:var(--slate-500);margin-right:12px}
+  .due-line.is-bad{color:var(--bad);font-weight:600}
+  .section-label{font-size:11px;font-weight:600;color:var(--slate-500);text-transform:uppercase;letter-spacing:.04em;display:flex;align-items:center;margin:14px 0 8px}
+  .icon-svg{display:inline-block;vertical-align:-0.14em;flex-shrink:0}
+  button .icon-svg{margin-right:5px}
+  .icon-svg.icon-trail{margin-right:0;margin-left:5px}
+  .linked .icon-svg,.due-line .icon-svg,.section-label .icon-svg{margin-right:4px;vertical-align:-0.12em}
+  .search .icon .icon-svg{vertical-align:middle}
+  .note{margin-top:28px;font-size:13px;color:var(--slate-500);max-width:980px}
+</style>
+</head>
+<body>
+<h1>Punch List — emoji → SVG icon conversion</h1>
+<p class="sub">Left = before (OS emoji). Right = after (the inline <code>icon()</code> system now in app.js). Same code, real rendering.</p>
+
+<div class="cols">
+  <div class="panel before">
+    <h2>Before</h2>
+    <div class="row">
+      <button>⬆ Import CSV</button>
+      <button>⚙ Cols</button>
+    </div>
+    <div class="row"><span class="search">🔍&nbsp;&nbsp;Search title or #…</span></div>
+    <div class="row">
+      <button class="primary">⬇ Export 3 as PDF</button>
+      <button>✕ Clear selection</button>
+    </div>
+    <div class="card">
+      <div class="title">Cable tray grounding bond missing</div>
+      <span class="linked">↔ TC-1042</span>
+      <span class="due-line is-bad">⚠ Due Jun 02</span>
+      <div class="row" style="margin:10px 0 0"><button class="primary">View →</button></div>
+    </div>
+    <div class="section-label">🔗 Linked Test Cases (2)</div>
+    <div class="section-label">📷 Photos</div>
+    <div class="row"><button>⬇ Save all</button><button>⬇ Export PDF</button><button title="Attach a photo">📷</button></div>
+    <div class="row"><button>← Prev</button><button>Next →</button></div>
+  </div>
+
+  <div class="panel after" id="after">
+    <h2>After</h2>
+    <div class="row">
+      <button data-i="upload">Import CSV</button>
+      <button data-i="columns">Cols</button>
+    </div>
+    <div class="row"><span class="search"><span class="icon" data-i="search"></span>Search title or #…</span></div>
+    <div class="row">
+      <button class="primary" data-i="download">Export 3 as PDF</button>
+      <button data-i="x">Clear selection</button>
+    </div>
+    <div class="card">
+      <div class="title">Cable tray grounding bond missing</div>
+      <span class="linked"><span data-i="arrow-lr"></span>TC-1042</span>
+      <span class="due-line is-bad"><span data-i="alert"></span>Due Jun 02</span>
+      <div class="row" style="margin:10px 0 0"><button class="primary">View<span data-i="chevron-right" class="trail"></span></button></div>
+    </div>
+    <div class="section-label"><span data-i="link"></span>Linked Test Cases (2)</div>
+    <div class="section-label"><span data-i="camera"></span>Photos</div>
+    <div class="row"><button data-i="download">Save all</button><button data-i="download">Export PDF</button><button title="Attach a photo" aria-label="Attach a photo" data-i="camera"></button></div>
+    <div class="row"><button data-i="chevron-left">Prev</button><button>Next<span data-i="chevron-right" class="trail"></span></button></div>
+  </div>
+</div>
+
+<p class="note">Icons are stroke-based (Lucide style), inherit text color via <code>currentColor</code>, and scale with font size — so they recolor automatically for dark mode and never vary by OS the way emoji do.</p>
+
+<script>
+// Exact copy of the icon system added to app.js
+const ICONS = {
+  search:'<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>',
+  link:'<path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/>',
+  camera:'<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
+  columns:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/>',
+  upload:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>',
+  download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+  x:'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  'chevron-left':'<path d="m15 18-6-6 6-6"/>','chevron-right':'<path d="m9 18 6-6-6-6"/>',
+  external:'<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  'arrow-lr':'<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
+  alert:'<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+};
+function icon(name,opts){opts=opts||{};const b=ICONS[name];if(!b)return '';const s=opts.size||'1em';const e=opts.cls?' '+opts.cls:'';
+  return '<svg class="icon-svg'+e+'" width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+b+'</svg>';}
+document.querySelectorAll('#after [data-i]').forEach(el=>{
+  const trail = el.classList.contains('trail');
+  el.insertAdjacentHTML(trail?'beforeend':'afterbegin', icon(el.dataset.i, trail?{cls:'icon-trail'}:{}));
+});
+</script>
+</body>
+</html>
