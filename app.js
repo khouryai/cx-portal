@@ -1840,7 +1840,7 @@ function renderLITable() {
     const sk = def?.sortKey || '';
     return sk ? `<th data-sort="${sk}" onclick="_liSortBy('${sk}')">${def.label}</th>` : `<th>${def?.label || c.id}</th>`;
   }).join('')}<th style="width:48px;text-align:right;padding-right:8px;">
-    <button onclick="_colOpenEditor('li',renderLITable)" title="Configure columns"
+    <button aria-label="Configure columns" onclick="_colOpenEditor('li',renderLITable)" title="Configure columns"
       style="font-size:11px;padding:3px 8px;border:1px solid var(--gray-300);border-radius:5px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;font-weight:600;white-space:nowrap;">${icon('settings')}</button>
   </th></tr>`;
 
@@ -7650,7 +7650,7 @@ async function _punchRenderGallery(id) {
       ? `<span class="punch-photo-kind ${escapeHtml(ph.capture_kind)}">${escapeHtml(ph.capture_kind)}</span>` : '';
     return `<div class="punch-photo-tile" title="${escapeHtml(ph.caption || ph.file_name || '')}">
       <img data-photo-thumb="${escapeHtml(thumb)}" data-photo-full="${escapeHtml(ph.storage_path)}" alt="${escapeHtml(ph.caption || '')}" loading="lazy">${kind}
-      <button class="punch-photo-dl" title="Save photo" onclick="_punchDownloadPhoto('${escapeHtml(ph.storage_path)}', ${JSON.stringify(ph.file_name || '').replace(/"/g,'&quot;')}, event)">${icon('download')}</button>
+      <button aria-label="Save photo" class="punch-photo-dl" title="Save photo" onclick="_punchDownloadPhoto('${escapeHtml(ph.storage_path)}', ${JSON.stringify(ph.file_name || '').replace(/"/g,'&quot;')}, event)">${icon('download')}</button>
     </div>`;
   }).join('');
   await _punchSignImages(wrap);
@@ -8702,7 +8702,7 @@ function renderAuditLog() {
             <input id="audit-search" class="audit-search-input" type="search"
               placeholder="Search everything — user, action, target, location, role, table…"
               value="${escapeHtml(_auditSearch)}" oninput="_auditOnSearch(this.value)" autocomplete="off" />
-            ${_auditSearch ? `<button class="audit-search-clear" onclick="_auditOnSearch('')" title="Clear">${icon('x')}</button>` : ''}
+            ${_auditSearch ? `<button aria-label="Clear" class="audit-search-clear" onclick="_auditOnSearch('')" title="Clear">${icon('x')}</button>` : ''}
           </div>
           <button class="form-secondary" onclick="refreshAuditLog()">Refresh</button>
           <button class="export-btn" onclick="exportAudit()">Export CSV</button>
@@ -9700,7 +9700,7 @@ function _trpReportRowHTML(row, canManage) {
             ${(histCount || !row.isDerived) ? `
               <div class="action-row">
                 ${histCount ? `<button class="v2-btn-mini" onclick="openRevisionHistoryModal('${uid}')" title="${histCount} prior revision${histCount===1?'':'s'}">History (${histCount})</button>` : ''}
-                ${!row.isDerived ? `<button class="v2-btn-mini danger" onclick="_trpDeleteReport('${uid}')" title="Delete report">${icon('trash')}</button>` : ''}
+                ${!row.isDerived ? `<button aria-label="Delete report" class="v2-btn-mini danger" onclick="_trpDeleteReport('${uid}')" title="Delete report">${icon('trash')}</button>` : ''}
               </div>` : ''}
           ` : ''}
         </div>
@@ -10776,7 +10776,7 @@ function _testRegisterHTML() {
                   return def?.sortCol ? sortTh(def.label, def.sortCol, c.id==='completion'?'min-width:160px;':'') : `<th>${def?.label||c.id}</th>`;
                 }).join('')}
                 <th style="width:48px;text-align:right;padding-right:8px;">
-                  <button onclick="_colOpenEditor('tr',renderTestRegister)" title="Configure columns"
+                  <button aria-label="Configure columns" onclick="_colOpenEditor('tr',renderTestRegister)" title="Configure columns"
                     style="font-size:11px;padding:3px 8px;border:1px solid var(--gray-300);border-radius:5px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;font-weight:600;">${icon('settings')}</button>
                 </th>
               </tr>
@@ -11031,7 +11031,7 @@ function _adminActivityManagerHTML() {
                 <th class="am-cb-col"><input type="checkbox" id="am-cb-all" onchange="_amToggleAll(this.checked)" title="Select all"></th>
                 ${_colHeaders('am')}
                 <th style="width:120px;">Actions
-                  <button onclick="_colOpenEditor('am',renderAdminPortal)" title="Configure columns"
+                  <button aria-label="Configure columns" onclick="_colOpenEditor('am',renderAdminPortal)" title="Configure columns"
                     style="font-size:11px;padding:2px 6px;margin-left:6px;border:1px solid var(--gray-300);border-radius:4px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;">${icon('settings')}</button>
                 </th>
               </tr>
@@ -11289,7 +11289,7 @@ function _amDrilldownHTML(key) {
                         ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;"><button class="v2-btn-mini" onclick="_trAddGenericChild('${tid}')">＋ Asset</button><button class="v2-btn-mini" onclick="_trOpenAssetPickerModal('${tid}')">${icon('link')} Link Assets</button></div>` : ''}
                         <span id="regcell-${domId}">${_regressionCellHTML(r)}</span>
                       </td>
-                      ${_trEditMode && isAdmin ? `<td style="white-space:nowrap;"><button class="v2-btn-mini" onclick="_trCopyCase('${tid}')" title="Copy">⧉</button> <button class="v2-btn-mini danger" onclick="_trDeleteCase('${tid}')" data-tippy-content="Delete test case">${icon('trash')}</button></td>` : ''}
+                      ${_trEditMode && isAdmin ? `<td style="white-space:nowrap;"><button class="v2-btn-mini" onclick="_trCopyCase('${tid}')" title="Copy">⧉</button> <button title="Delete" aria-label="Delete" class="v2-btn-mini danger" onclick="_trDeleteCase('${tid}')" data-tippy-content="Delete test case">${icon('trash')}</button></td>` : ''}
                     </tr>
                   `;
                 }).join('')}
@@ -12935,7 +12935,7 @@ function _p6ActivityLinkDetail(act, p6List, sid) {
                       </div>
                       ${tcLink ? `
                         <span style="font-size:10px;color:var(--good);font-weight:600;white-space:nowrap;flex-shrink:0;">↔ ${escapeHtml(_p6ActName(tcLink.p6_activity_id))}</span>
-                        <button class="form-secondary tr-mini-btn" onclick="_p6UnlinkActivity('${escapeHtml(tcLink.id)}')">${icon('x')}</button>
+                        <button title="Close" aria-label="Close" class="form-secondary tr-mini-btn" onclick="_p6UnlinkActivity('${escapeHtml(tcLink.id)}')">${icon('x')}</button>
                       ` : (() => {
                         // Prefer a TC-level learned pattern over the activity-level fallback.
                         const tcSug = _p6AutoSuggest(act, scopedP6, { testCaseCode: item.TestCaseCode });
@@ -14179,7 +14179,7 @@ function _p6HealthTabHTML() {
                       ${icon('link')} Link to Activity
                     </button>
                     <button class="form-secondary tr-mini-btn" title="Snooze — hide until restored" onclick="_p6HRemindLater('${escapedId}')">⏰</button>
-                    <button class="form-secondary tr-mini-btn" style="color:#dc2626;" title="Remove from schedule" onclick="_p6HRemove('${escapedId}','${escapeHtml(p.p6_name).replace(/'/g,"\\'")}')">${icon('trash')}</button>
+                    <button aria-label="Remove from schedule" class="form-secondary tr-mini-btn" style="color:#dc2626;" title="Remove from schedule" onclick="_p6HRemove('${escapedId}','${escapeHtml(p.p6_name).replace(/'/g,"\\'")}')">${icon('trash')}</button>
                   </td>
                 </tr>
                 ${linkOpen ? `
@@ -14638,7 +14638,7 @@ function renderSchedulePage() {
               <tr>
                 ${_colHeaders('p6')}
                 <th style="width:48px;text-align:right;padding-right:8px;">
-                  <button onclick="_colOpenEditor('p6',renderSchedulePage)" title="Configure columns"
+                  <button aria-label="Configure columns" onclick="_colOpenEditor('p6',renderSchedulePage)" title="Configure columns"
                     style="font-size:11px;padding:3px 8px;border:1px solid var(--gray-300);border-radius:5px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;font-weight:600;">${icon('settings')}</button>
                 </th>
               </tr>
@@ -15311,7 +15311,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
       </td>
       ${_dtRenderScopeCell(parent)}
       <td style="font-size:11px;color:var(--gray-400);font-style:italic;">${expanded ? 'Click to collapse' : 'Click to expand'}</td>
-      ${_trEditMode && isAdmin ? `<td onclick="event.stopPropagation();"><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="event.stopPropagation();_trDeleteParentCase('${ptid}')" data-tippy-content="Delete parent + all assets">${icon('trash')}</button></td>` : ''}
+      ${_trEditMode && isAdmin ? `<td onclick="event.stopPropagation();"><button title="Delete" aria-label="Delete" class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="event.stopPropagation();_trDeleteParentCase('${ptid}')" data-tippy-content="Delete parent + all assets">${icon('trash')}</button></td>` : ''}
     </tr>`;
 
   // Per-parent search/status filter on children. Shown when >5 assets to keep
@@ -15400,7 +15400,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
             value="${escapeHtml(c.Notes || '')}" onblur="_mxSaveNotes('${ctid}',this.value)">
           <span id="regcell-${domId}">${_regressionCellHTML(c)}</span>
         </td>
-        ${_trEditMode && isAdmin ? `<td><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteAssetRow('${ctid}')" data-tippy-content="Remove asset from test case">${icon('trash')}</button></td>` : ''}
+        ${_trEditMode && isAdmin ? `<td><button title="Delete" aria-label="Delete" class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteAssetRow('${ctid}')" data-tippy-content="Remove asset from test case">${icon('trash')}</button></td>` : ''}
       </tr>`;
   }).join('') : '';
 
@@ -15592,7 +15592,7 @@ function _assetPageHTML() {
             <th style="width:36px;"><input type="checkbox" title="Select all" onchange="_assetSelectAll(this.checked)"></th>
             ${_colHeaders('assets')}
             <th style="width:160px;">Actions
-              <button onclick="_colOpenEditor('assets',renderAdminAssets)" title="Configure columns"
+              <button aria-label="Configure columns" onclick="_colOpenEditor('assets',renderAdminAssets)" title="Configure columns"
                 style="font-size:11px;padding:2px 6px;margin-left:4px;border:1px solid var(--gray-300);border-radius:4px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;">${icon('settings')}</button>
             </th>
           </tr></thead>
@@ -15634,7 +15634,7 @@ function _assetRowHTML(a) {
       <td>
         <button class="form-secondary tr-mini-btn${isOpen?' admin-action-btn':''}" onclick="_assetOpenManageLinks('${a.id}')">${isOpen? icon('link')+' Close' : icon('link')+' Links'}</button>
         <button class="form-secondary tr-mini-btn" onclick="_assetOpenEdit('${a.id}')">${icon('edit')}️</button>
-        <button class="form-secondary tr-mini-btn" style="color:var(--bad);" onclick="_assetDelete('${a.id}')">${icon('trash')}</button>
+        <button title="Delete" aria-label="Delete" class="form-secondary tr-mini-btn" style="color:var(--bad);" onclick="_assetDelete('${a.id}')">${icon('trash')}</button>
       </td>
     </tr>`;
 
@@ -16862,7 +16862,7 @@ function _rmaRowHTML(r, canEdit) {
           ${canEdit ? `
             <div style="display:flex;gap:4px;">
               <button class="v2-btn-mini" onclick="openRMAModal('${r.id}')">${icon('edit')} Edit</button>
-              <button class="v2-btn-mini danger" onclick="deleteRMA('${r.id}')" title="Delete">${icon('trash')}</button>
+              <button aria-label="Delete" class="v2-btn-mini danger" onclick="deleteRMA('${r.id}')" title="Delete">${icon('trash')}</button>
             </div>
           ` : ''}
         </div>
@@ -17442,8 +17442,8 @@ function _mtgCategoryHTML(cat, catIdx, items, actionItems, meetingId, inMinutes,
         <span id="cat-chev-${cat.id}" style="font-size:11px;color:var(--primary);transition:transform .2s;display:inline-block;">▼</span>
         <span style="font-weight:700;font-size:14px;flex:1;">${escapeHtml(cat.title)}</span>
         ${isAdmin ? `<span onclick="event.stopPropagation()">
-          <button class="form-secondary" style="padding:2px 8px;font-size:12px;" onclick="openMtgCategoryModal('${cat.id}','${meetingId}')">${icon('edit')}</button>
-          <button class="form-secondary" style="padding:2px 8px;font-size:12px;color:var(--bad);" onclick="deleteMtgCategory('${cat.id}','${meetingId}')">${icon('trash')}</button>
+          <button title="Edit" aria-label="Edit" class="form-secondary" style="padding:2px 8px;font-size:12px;" onclick="openMtgCategoryModal('${cat.id}','${meetingId}')">${icon('edit')}</button>
+          <button title="Delete" aria-label="Delete" class="form-secondary" style="padding:2px 8px;font-size:12px;color:var(--bad);" onclick="deleteMtgCategory('${cat.id}','${meetingId}')">${icon('trash')}</button>
         </span>` : ''}
       </div>
       <div id="cat-body-${cat.id}">
@@ -17476,8 +17476,8 @@ function _mtgItemHTML(item, catNum, itemNum, actionItems, meetingId, inMinutes, 
         <span style="flex:1;font-size:13px;font-weight:500;">${escapeHtml(item.title)}</span>
         <span style="background:${sc}18;color:${sc};border:1px solid ${sc}40;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">${escapeHtml(item.status||'Open')}</span>
         ${isAdmin ? `<span onclick="event.stopPropagation()">
-          <button class="form-secondary" style="padding:2px 8px;font-size:12px;" onclick="openMtgItemModal('${item.id}','${item.category_id}','${meetingId}')">${icon('edit')}</button>
-          <button class="form-secondary" style="padding:2px 8px;font-size:12px;color:var(--bad);" onclick="deleteMtgItem('${item.id}','${meetingId}')">${icon('trash')}</button>
+          <button title="Edit" aria-label="Edit" class="form-secondary" style="padding:2px 8px;font-size:12px;" onclick="openMtgItemModal('${item.id}','${item.category_id}','${meetingId}')">${icon('edit')}</button>
+          <button title="Delete" aria-label="Delete" class="form-secondary" style="padding:2px 8px;font-size:12px;color:var(--bad);" onclick="deleteMtgItem('${item.id}','${meetingId}')">${icon('trash')}</button>
         </span>` : ''}
       </div>
       <div id="item-body-${item.id}" style="display:${expanded?'':'none'};border-top:1px solid var(--gray-100);">
@@ -19826,7 +19826,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
         </div>` : ''}
       </div>
       ${assignedChips}${dropHintHTML}
-      ${actId ? `<button class="tlg-row-del" onclick="event.stopPropagation();_laDeleteManualActivity('${actId}',event)" title="Delete activity (soft-delete coming in Phase 3)" style="position:absolute;top:6px;right:8px;">${icon('trash')}</button>` : ''}
+      ${actId ? `<button aria-label="Delete activity (soft-delete coming in Phase 3)" class="tlg-row-del" onclick="event.stopPropagation();_laDeleteManualActivity('${actId}',event)" title="Delete activity (soft-delete coming in Phase 3)" style="position:absolute;top:6px;right:8px;">${icon('trash')}</button>` : ''}
     </div>`;
     html += `<div class="tlg-cells">`;
     days.forEach((iso, idx) => {
@@ -20108,7 +20108,7 @@ function _laLookaheadHTML() {
         <input id="la-row-search" type="text" placeholder="Filter activities…"
           value="${escapeHtml(_laRowSearch)}" oninput="_laSetRowSearch(this.value)"
           style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-300);border-radius:6px;width:210px;">
-        <button id="la-row-search-clear" onclick="_laSetRowSearch('')" title="Clear filter"
+        <button aria-label="Clear filter" id="la-row-search-clear" onclick="_laSetRowSearch('')" title="Clear filter"
           style="display:${_laRowSearch ? 'inline-flex' : 'none'};font-size:12px;padding:6px 9px;border:1px solid var(--gray-300);background:#fff;border-radius:6px;cursor:pointer;">${icon('x')}</button>
         <span id="la-row-search-count" style="font-size:11px;color:var(--gray-500);white-space:nowrap;"></span>
       </div>
@@ -20466,7 +20466,7 @@ function _laDrawerHTML() {
       <div class="la-drawer-title">${title}
         <span id="la-drawer-dirty-ind" style="display:none;color:#dc2626;font-size:11px;font-weight:700;margin-left:8px;">● unsaved</span>
       </div>
-      <button class="la-drawer-close" onclick="_laDrawerClose()" title="Close (Esc)">${icon('x')}</button>
+      <button aria-label="Close (Esc)" class="la-drawer-close" onclick="_laDrawerClose()" title="Close (Esc)">${icon('x')}</button>
     </div>
     <div class="la-drawer-body">${body}</div>
     <div class="la-drawer-foot">${footer}</div>
@@ -27131,7 +27131,7 @@ function _apResourcesStub() {
                   </td>
                   <td style="white-space:nowrap;">
                     <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_apEditResourceModal('${r.id}')">${icon('edit')} Edit</button>
-                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px;color:#b91c1c;border-color:#fca5a5;" onclick="_apDeleteResource('${r.id}','${escapeHtml(r.display_name)}')">${icon('trash')}</button>
+                    <button title="Delete" aria-label="Delete" class="form-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px;color:#b91c1c;border-color:#fca5a5;" onclick="_apDeleteResource('${r.id}','${escapeHtml(r.display_name)}')">${icon('trash')}</button>
                   </td>
                 </tr>`;
               }).join('')}
@@ -28180,7 +28180,7 @@ async function openFormViewer(formId) {
       <div class="pdf-viewer-shell">
         <div class="pdf-viewer-toolbar" id="pdf-viewer-toolbar">
           <div class="pdf-tb-group">
-            <button type="button" class="pdf-tb-btn" id="pdf-tb-thumbs"   title="Toggle thumbnails (Alt+T)">${icon('menu')}</button>
+            <button aria-label="Toggle thumbnails (Alt+T)" type="button" class="pdf-tb-btn" id="pdf-tb-thumbs"   title="Toggle thumbnails (Alt+T)">${icon('menu')}</button>
             <button type="button" class="pdf-tb-btn" id="pdf-tb-prev"     title="Previous field (Shift+Tab)">◀</button>
             <button type="button" class="pdf-tb-btn" id="pdf-tb-next"     title="Next field (Tab)">▶</button>
             <span class="pdf-tb-divider"></span>
@@ -29552,7 +29552,7 @@ function _formsBadgeHTML(testIdOrRow, assetId = '') {
     : testIdOrRow;
   if (!row) {
     const tid = escapeHtml(String(testIdOrRow || ''));
-    return `<button class="form-secondary tr-mini-btn" title="Attach form" onclick="openFormPickerForTest('${tid}')" style="font-size:13px;padding:2px 6px;color:var(--gray-500);">${icon('paperclip')}</button>`;
+    return `<button aria-label="Attach form" class="form-secondary tr-mini-btn" title="Attach form" onclick="openFormPickerForTest('${tid}')" style="font-size:13px;padding:2px 6px;color:var(--gray-500);">${icon('paperclip')}</button>`;
   }
   const count = _formsCountForTestRow(row);
   // Child asset row → open picker focused on this asset's scope.
@@ -29562,7 +29562,7 @@ function _formsBadgeHTML(testIdOrRow, assetId = '') {
   const tid = escapeHtml(targetTestId);
   const aid = escapeHtml(targetAsset);
   if (count === 0) {
-    return `<button class="form-secondary tr-mini-btn" title="Attach form" onclick="openFormPickerForTest('${tid}','${aid}')" style="font-size:13px;padding:2px 6px;color:var(--gray-500);">${icon('paperclip')}</button>`;
+    return `<button aria-label="Attach form" class="form-secondary tr-mini-btn" title="Attach form" onclick="openFormPickerForTest('${tid}','${aid}')" style="font-size:13px;padding:2px 6px;color:var(--gray-500);">${icon('paperclip')}</button>`;
   }
   const titleBits = [`${count} form${count===1?'':'s'} linked`];
   if (isChild) titleBits.push('(includes any covering all assets)');
@@ -29741,7 +29741,7 @@ function _formsPageListHTML() {
         <td style="white-space:nowrap;">
           <button class="admin-action-btn tr-mini-btn" onclick="openFormViewer('${x.id}')">Open</button>
           <button class="form-secondary tr-mini-btn"   onclick="openEditFormMetadata('${x.id}')">Edit</button>
-          <button class="form-secondary tr-mini-btn"   style="color:var(--bad);" onclick="deleteFormFromPage('${x.id}')">${icon('trash')}</button>
+          <button title="Delete" aria-label="Delete" class="form-secondary tr-mini-btn"   style="color:var(--bad);" onclick="deleteFormFromPage('${x.id}')">${icon('trash')}</button>
         </td>
       </tr>`;
   }).join('');
@@ -33145,7 +33145,7 @@ function _drwSheetTableHTML(sheets, opts = {}) {
         <td class="drw-sheet-page-cell">${escapeHtml(sheet.page_number || String((sheet.page_index ?? 0) + 1))}</td>
         ${opts.compact ? '' : `<td class="drw-sheet-set-cell">${escapeHtml(setTitle(sheet) || '—')}</td>`}
         <td>${pubCount ? `<span class="drw-markup-badge">${pubCount} markup${pubCount > 1 ? 's' : ''}</span>` : '<span class="drw-muted">No markups</span>'}</td>
-        <td><span class="drw-status-pill ${sheet.is_current ? 'is-current' : 'is-old'}">${sheet.is_current ? 'Current' : 'Superseded'}</span>${isAdmin ? ` <button class="drw-del-btn" title="Delete this page (and its markups)" onclick="event.stopPropagation();_drwDeleteSheet('${sheet.id}','${escapeHtml(loc)}','${subtab}')">${icon('trash')}</button>` : ''}</td>
+        <td><span class="drw-status-pill ${sheet.is_current ? 'is-current' : 'is-old'}">${sheet.is_current ? 'Current' : 'Superseded'}</span>${isAdmin ? ` <button aria-label="Delete this page (and its markups)" class="drw-del-btn" title="Delete this page (and its markups)" onclick="event.stopPropagation();_drwDeleteSheet('${sheet.id}','${escapeHtml(loc)}','${subtab}')">${icon('trash')}</button>` : ''}</td>
       </tr>
     `;
   }).join('');

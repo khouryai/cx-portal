@@ -13253,3 +13253,20 @@ button .icon-svg,
 /* Inline icons inside small status pills / meta lines */
 .linked .icon-svg,
 .due-line .icon-svg { margin-right: 3px; vertical-align: -0.12em; }
+
+/* ===================================================================
+   Accessibility: baseline keyboard focus ring (:focus-visible only,
+   so mouse/touch users are unaffected). Component-specific focus
+   styles still override this.
+   =================================================================== */
+a:focus-visible,
+button:focus-visible,
+[role="button"]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--hitachi-red);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
