@@ -11017,7 +11017,7 @@ function _adminActivityManagerHTML() {
           <span><b>${selCount}</b> activit${selCount===1?'y':'ies'} selected</span>
           ${hasNonFuture ? `<button class="admin-action-btn" style="background:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
           ${hasFutureTest ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
-          <button class="admin-action-btn" style="background:#dc2626;" onclick="_amBulkDeleteActivities()">🗑 Delete Selected</button>
+          <button class="admin-action-btn" style="background:#dc2626;" onclick="_amBulkDeleteActivities()">${icon('trash')} Delete Selected</button>
           <button class="btn-ghost-light" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_amClearSelection()">Clear selection</button>
         </div>
       ` : ''}
@@ -11249,7 +11249,7 @@ function _amDrilldownHTML(key) {
                   return `
                     <tr ${isFailRow ? 'class="is-fail"' : ''} ${_trEditMode && isAdmin ? `draggable="true" ondragstart="_trDragStart('${tid}')" ondragover="event.preventDefault()" ondrop="_trDropCase('${dropKey}','${tid}')"` : ''}>
                       ${_trBulkMode ? `<td><input type="checkbox" ${_trSelected.has(String(r.TestID))?'checked':''} onchange="_trToggleSelect('${tid}',this.checked)"></td>` : ''}
-                      ${_trEditMode && isAdmin ? `<td style="cursor:grab;color:var(--gray-400);font-size:14px;">☰</td>` : ''}
+                      ${_trEditMode && isAdmin ? `<td style="cursor:grab;color:var(--gray-400);font-size:14px;">${icon('menu')}</td>` : ''}
                       <td style="min-width:140px;">${_trEditMode && isAdmin ? `<input class="form-input" style="font-size:11px;font-family:var(--f-mono);min-width:120px;" value="${escapeHtml(r.TestCaseCode||'')}" onchange="_trDraftChange('${tid}','TestCaseCode',this.value)">` : `<span class="v2-id-chip">${escapeHtml(r.TestCaseCode||r.TestID||'—')}</span>`}</td>
                       <td>
                         <div style="display:flex;align-items:center;gap:8px;">
@@ -11277,8 +11277,8 @@ function _amDrilldownHTML(key) {
                         ` : `<span class="v2-pill ${({'Pass':'is-good','Fail':'is-bad','Blocked':'is-warn','Not Applicable':'is-muted','In Progress':'is-info','Future Test':'is-purple'}[cur]||'is-muted')}">${escapeHtml(cur)}</span>`}
                         <div id="punch-actions-${domId}" style="margin-top:6px;display:${cur==='Fail'?'flex':'none'};flex-direction:column;gap:4px;">
                           <div style="display:flex;gap:4px;">
-                            <button class="v2-btn-mini" style="background:#fef2f2;border-color:rgba(230,0,18,0.22);color:var(--hitachi-red);flex:1;justify-content:center;" onclick="openPunchFromTestCase('${tid}')">📋 Create Punch</button>
-                            <button class="v2-btn-mini" style="flex:1;justify-content:center;" onclick="openLinkPunchModal('${tid}')">🔗 Link Existing</button>
+                            <button class="v2-btn-mini" style="background:#fef2f2;border-color:rgba(230,0,18,0.22);color:var(--hitachi-red);flex:1;justify-content:center;" onclick="openPunchFromTestCase('${tid}')">${icon('clipboard')} Create Punch</button>
+                            <button class="v2-btn-mini" style="flex:1;justify-content:center;" onclick="openLinkPunchModal('${tid}')">${icon('link')} Link Existing</button>
                           </div>
                           <div id="punch-chips-${domId}">${_punchLinksForTestHTML(String(r.TestID))}</div>
                         </div>
@@ -11286,10 +11286,10 @@ function _amDrilldownHTML(key) {
                       ${_dtRenderScopeCell(r)}
                       <td>
                         <textarea class="form-input notes-input" rows="2" placeholder="Notes…" onblur="_mxSaveNotes('${tid}',this.value)">${escapeHtml(r.Notes||'')}</textarea>
-                        ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;"><button class="v2-btn-mini" onclick="_trAddGenericChild('${tid}')">＋ Asset</button><button class="v2-btn-mini" onclick="_trOpenAssetPickerModal('${tid}')">🔗 Link Assets</button></div>` : ''}
+                        ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;"><button class="v2-btn-mini" onclick="_trAddGenericChild('${tid}')">＋ Asset</button><button class="v2-btn-mini" onclick="_trOpenAssetPickerModal('${tid}')">${icon('link')} Link Assets</button></div>` : ''}
                         <span id="regcell-${domId}">${_regressionCellHTML(r)}</span>
                       </td>
-                      ${_trEditMode && isAdmin ? `<td style="white-space:nowrap;"><button class="v2-btn-mini" onclick="_trCopyCase('${tid}')" title="Copy">⧉</button> <button class="v2-btn-mini danger" onclick="_trDeleteCase('${tid}')" data-tippy-content="Delete test case">🗑</button></td>` : ''}
+                      ${_trEditMode && isAdmin ? `<td style="white-space:nowrap;"><button class="v2-btn-mini" onclick="_trCopyCase('${tid}')" title="Copy">⧉</button> <button class="v2-btn-mini danger" onclick="_trDeleteCase('${tid}')" data-tippy-content="Delete test case">${icon('trash')}</button></td>` : ''}
                     </tr>
                   `;
                 }).join('')}
@@ -11572,7 +11572,7 @@ function _trBulkBarHTML(count) {
       <button class="admin-action-btn" onclick="_trApplyBulkField()">Apply</button>
       <div style="width:1px;background:rgba(255,255,255,.2);align-self:stretch;"></div>
       ${isAdmin ? `<button class="admin-action-btn" style="background:#dc2626;" onclick="_trBulkDelete()"
-        data-tippy-content="Permanently delete selected test cases">🗑 Delete (${count})</button>` : ''}
+        data-tippy-content="Permanently delete selected test cases">${icon('trash')} Delete (${count})</button>` : ''}
       <button class="btn-ghost-dark" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_trClearSelection()">Clear</button>
     </div>
   `;
@@ -11804,7 +11804,7 @@ function _amOpenEditModal(key) {
         Changes to Activity Name, Phase, Location, or Subsystem update all child test items. Activity Status is auto-calculated from test item statuses.
       </p>
     `,
-    footer: `<button class="admin-action-btn" style="background:#dc2626;margin-right:auto;" onclick="_amDeleteActivity()">🗑 Delete Activity</button><button class="form-secondary" onclick="closeModal()">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amSaveEdit(true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" onclick="_amSaveEdit()">Save Changes</button>`
+    footer: `<button class="admin-action-btn" style="background:#dc2626;margin-right:auto;" onclick="_amDeleteActivity()">${icon('trash')} Delete Activity</button><button class="form-secondary" onclick="closeModal()">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amSaveEdit(true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" onclick="_amSaveEdit()">Save Changes</button>`
   });
 }
 
@@ -12260,10 +12260,10 @@ function renderAdminP6() {
 function _p6AdminHTML() {
   // Weights tab moved to its own admin module — see renderAdminWeights().
   const tabs = [
-    { id:'import',  label:'📥 Import' },
-    { id:'mapping', label:'🔗 Mapping' },
-    { id:'learn',   label:'🪄 Bulk Learn' },
-    { id:'health',  label:'🩺 Health' },
+    { id:'import',  label: icon('inbox') + ' Import' },
+    { id:'mapping', label: icon('link') + ' Mapping' },
+    { id:'learn',   label: icon('wand') + ' Bulk Learn' },
+    { id:'health',  label: icon('activity') + ' Health' },
   ];
   // Bounce away from any stale weights tab selection
   if (_p6Tab === 'weights') _p6Tab = 'import';
@@ -12663,7 +12663,7 @@ function _p6MappingTabHTML() {
           Green = already linked to a portal activity.
           Filter the left panel by location to narrow this list.
         </p>
-        <input type="text" class="form-input" style="font-size:12px;margin-bottom:8px;" placeholder="🔍 Filter P6 list…"
+        <input type="text" class="form-input" style="font-size:12px;margin-bottom:8px;" placeholder="Filter P6 list…"
           oninput="document.querySelectorAll('.p6-p6-row').forEach(r=>{r.style.display=this.value&&!r.textContent.toLowerCase().includes(this.value.toLowerCase())?'none':''})">
         <div class="p6-p6-list">
           ${(()=>{
@@ -12884,7 +12884,7 @@ function _p6ActivityLinkDetail(act, p6List, sid) {
         <div style="margin-bottom:10px;">
           ${suggestion ? `
             <div style="padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;margin-bottom:8px;font-size:12px;">
-              💡 Suggested: <b>${escapeHtml(suggestion.p6_name)}</b>
+              ${icon('bulb')} Suggested: <b>${escapeHtml(suggestion.p6_name)}</b>
               <div style="display:flex;gap:6px;margin-top:6px;">
                 <button class="admin-action-btn tr-mini-btn" onclick="_p6AcceptSuggestion('${sid}','${escapeHtml(suggestion.id)}')">Accept</button>
                 <button class="form-secondary tr-mini-btn" onclick="_p6DismissSuggestion('${sid}')">Dismiss</button>
@@ -12935,7 +12935,7 @@ function _p6ActivityLinkDetail(act, p6List, sid) {
                       </div>
                       ${tcLink ? `
                         <span style="font-size:10px;color:var(--good);font-weight:600;white-space:nowrap;flex-shrink:0;">↔ ${escapeHtml(_p6ActName(tcLink.p6_activity_id))}</span>
-                        <button class="form-secondary tr-mini-btn" onclick="_p6UnlinkActivity('${escapeHtml(tcLink.id)}')">✕</button>
+                        <button class="form-secondary tr-mini-btn" onclick="_p6UnlinkActivity('${escapeHtml(tcLink.id)}')">${icon('x')}</button>
                       ` : (() => {
                         // Prefer a TC-level learned pattern over the activity-level fallback.
                         const tcSug = _p6AutoSuggest(act, scopedP6, { testCaseCode: item.TestCaseCode });
@@ -13319,7 +13319,7 @@ async function _p6CheckBatchSuggestions(activityName, subsystem, p6Act) {
     subsystem: s.portalAct.subsystem, activity: s.portalAct.activity,
   }));
   modal({
-    title: `💡 ${suggestions.length} Similar Match${suggestions.length>1?'es':''} Found`,
+    title: `${suggestions.length} Similar Match${suggestions.length>1?'es':''} Found`,
     size: 'medium',
     body: `
       <p style="font-size:13px;color:var(--gray-600);margin-bottom:16px;">
@@ -13497,7 +13497,7 @@ function _p6LearnTabHTML() {
   return `
     <div style="max-width:1100px;">
       <div class="data-card" style="padding:16px 20px;margin-bottom:16px;background:#eff6ff;border:1px solid #bfdbfe;">
-        <div style="font-size:13px;font-weight:700;margin-bottom:6px;">🪄 Bulk Learn — pick once, apply everywhere</div>
+        <div style="font-size:13px;font-weight:700;margin-bottom:6px;">${icon('wand')} Bulk Learn — pick once, apply everywhere</div>
         <p style="font-size:12px;color:var(--gray-600);margin:0;line-height:1.45;">
           Each row is a distinct ${_p6LearnMode==='tc'?'<b>activity + test case</b>':'<b>activity</b>'} that's unlinked in at least one location.
           Pick one matching P6 activity, click <b>Preview</b>, choose which locations to link, and the pattern is saved
@@ -14111,7 +14111,7 @@ function _p6HealthTabHTML() {
             <span class="badge badge-review" style="margin-left:8px;font-size:11px;">${unlinkedP6.length}</span>
             ${batchLabel ? `<span style="font-size:11px;color:var(--gray-500);margin-left:10px;">(${escapeHtml(batchLabel)})</span>` : ''}
             ${P6_DISMISSALS.length ? `<button class="form-secondary tr-mini-btn" style="margin-left:12px;${_p6HShowingSnoozed?'background:var(--hitachi-red);color:#fff;':''}" onclick="_p6HShowingSnoozed=!_p6HShowingSnoozed;renderAdminP6()">
-              ${_p6HShowingSnoozed ? '▲ Hide snoozed' : `👁 Show ${P6_DISMISSALS.length} snoozed`}
+              ${_p6HShowingSnoozed ? '▲ Hide snoozed' : `${icon('eye')} Show ${P6_DISMISSALS.length} snoozed`}
             </button>` : ''}
           </div>
           ${unlinkedP6.length ? `
@@ -14120,13 +14120,13 @@ function _p6HealthTabHTML() {
               <input type="checkbox" id="p6h-sel-all" onchange="_p6HSelectAll(this.checked)"> Select all
             </label>
             <button class="form-secondary tr-mini-btn" onclick="_p6HBulkRemindLater()">⏰ Snooze selected</button>
-            <button class="form-secondary tr-mini-btn" style="color:#dc2626;" onclick="_p6HBulkRemove()">🗑 Remove selected</button>
+            <button class="form-secondary tr-mini-btn" style="color:#dc2626;" onclick="_p6HBulkRemove()">${icon('trash')} Remove selected</button>
           </div>` : ''}
         </div>
 
         <!-- Filters row -->
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
-          <input class="form-input" type="text" placeholder="🔍 Search P6 activity name…" style="flex:1;min-width:180px;max-width:320px;font-size:12px;"
+          <input class="form-input" type="text" placeholder="Search P6 activity name…" style="flex:1;min-width:180px;max-width:320px;font-size:12px;"
             value="${escapeHtml(_p6HealthFilter.search)}"
             oninput="_p6HealthFilter.search=this.value;renderAdminP6()">
           <select class="filter-select" style="font-size:12px;" onchange="_p6HDateMode(this.value)">
@@ -14144,7 +14144,7 @@ function _p6HealthTabHTML() {
               onchange="_p6HealthFilter.dateTo=this.value;renderAdminP6()">
           ` : ''}
           ${srch || _p6HealthFilter.dateMode !== 'all' ? `
-            <button class="form-secondary tr-mini-btn" onclick="_p6HealthFilter={search:'',dateMode:'all',dateFrom:'',dateTo:''};renderAdminP6()">✕ Clear filters</button>
+            <button class="form-secondary tr-mini-btn" onclick="_p6HealthFilter={search:'',dateMode:'all',dateFrom:'',dateTo:''};renderAdminP6()">${icon('x')} Clear filters</button>
           ` : ''}
         </div>
 
@@ -14176,10 +14176,10 @@ function _p6HealthTabHTML() {
                   <td style="text-align:center;white-space:nowrap;">
                     <button class="form-secondary tr-mini-btn" onclick="_p6HToggleLink('${escapedId}')"
                       style="${linkOpen?'background:var(--hitachi-red);color:#fff;':''}" >
-                      🔗 Link to Activity
+                      ${icon('link')} Link to Activity
                     </button>
                     <button class="form-secondary tr-mini-btn" title="Snooze — hide until restored" onclick="_p6HRemindLater('${escapedId}')">⏰</button>
-                    <button class="form-secondary tr-mini-btn" style="color:#dc2626;" title="Remove from schedule" onclick="_p6HRemove('${escapedId}','${escapeHtml(p.p6_name).replace(/'/g,"\\'")}')">🗑</button>
+                    <button class="form-secondary tr-mini-btn" style="color:#dc2626;" title="Remove from schedule" onclick="_p6HRemove('${escapedId}','${escapeHtml(p.p6_name).replace(/'/g,"\\'")}')">${icon('trash')}</button>
                   </td>
                 </tr>
                 ${linkOpen ? `
@@ -14189,7 +14189,7 @@ function _p6HealthTabHTML() {
                       <div style="font-size:12px;font-weight:600;color:var(--gray-700);">
                         Link <em>${escapeHtml(p.p6_name)}</em> to portal activities:
                       </div>
-                      <input type="text" class="form-input" placeholder="🔍 Search activities…"
+                      <input type="text" class="form-input" placeholder="Search activities…"
                         style="font-size:12px;"
                         oninput="_p6HLinkFilter('${escapedId}',this.value)">
                       <div id="p6h-link-list-${escapedId}"
@@ -14276,7 +14276,7 @@ function _p6HealthTabHTML() {
 
         <div class="data-card" style="padding:20px;">
           <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;justify-content:space-between;">
-            📅 Schedule Changes (Current vs Baseline) <span>${dateChanges.length}</span>
+            ${icon('calendar')} Schedule Changes (Current vs Baseline) <span>${dateChanges.length}</span>
           </div>
           ${!baseBatch || !curBatch
             ? `<div style="font-size:12px;color:var(--gray-500);">Import both a Baseline and Current schedule to see changes.</div>`
@@ -14292,7 +14292,7 @@ function _p6HealthTabHTML() {
         </div>
 
         <div class="data-card" style="padding:20px;">
-          <div style="font-size:13px;font-weight:700;margin-bottom:12px;">🧠 Auto-Learn Patterns</div>
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px;">${icon('cpu')} Auto-Learn Patterns</div>
           ${P6_PATTERNS.length ? P6_PATTERNS.slice(0,10).map(p=>`
             <div style="padding:6px 0;border-bottom:1px solid var(--gray-100);font-size:12px;display:flex;gap:8px;align-items:center;">
               <div style="flex:1;">
@@ -14815,13 +14815,13 @@ function _assetUpdateParentDOMBadge(parentTestId, newStatus) {
     const pending   = total - passCount;
     const isAdmin   = currentRoleUser?.role === 'admin';
     const safePtid  = escapeHtml(String(parentTestId));
-    sumEl.innerHTML = `<span>📦 ${total} asset${total !== 1 ? 's' : ''} &nbsp;·&nbsp; `
+    sumEl.innerHTML = `<span>${icon('package')} ${total} asset${total !== 1 ? 's' : ''} &nbsp;·&nbsp; `
       + `<span style="color:#16a34a;">${passCount} Pass</span>`
       + (pending > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${pending} pending</span>` : '')
       + `</span>`
       + (_trEditMode && isAdmin && !_trBulkMode
           ? ` <button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trAddGenericChild('${safePtid}')">＋ Asset</button>`
-            + ` <button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trOpenAssetPickerModal('${safePtid}')">🔗 Link Assets</button>`
+            + ` <button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trOpenAssetPickerModal('${safePtid}')">${icon('link')} Link Assets</button>`
           : '');
   }
 }
@@ -14933,7 +14933,7 @@ function _trOpenAssetPickerModal(testId) {
   _trAssetPicker.testId = String(testId);
 
   modal({
-    title: '🔗 Link Assets',
+    title: 'Link Assets',
     sub: parent.TestName || parent.TestCaseCode || parent.TestID,
     body: `<div id="tr-asset-picker-body" style="padding:0 24px 16px;"></div>`,
     footer: `
@@ -15299,10 +15299,10 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
           ${_trEditMode && isAdmin ? '' : `<span onclick="event.stopPropagation()">${_formsBadgeHTML(parent)}</span>`}
         </div>
         <div id="aps-${safeId}" style="font-size:11px;color:var(--gray-500);margin-top:2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <span>📦 ${totalCount} asset${totalCount !== 1 ? 's' : ''} &nbsp;·&nbsp;
+          <span>${icon('package')} ${totalCount} asset${totalCount !== 1 ? 's' : ''} &nbsp;·&nbsp;
           <span style="color:#16a34a;">${passCount} Pass</span>${totalCount - passCount > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${totalCount - passCount} pending</span>` : ''}</span>
           ${_trEditMode && isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trAddGenericChild('${ptid}')">＋ Asset</button>` : ''}
-          ${_trEditMode && isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trOpenAssetPickerModal('${ptid}')">🔗 Link Assets</button>` : ''}
+          ${_trEditMode && isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trOpenAssetPickerModal('${ptid}')">${icon('link')} Link Assets</button>` : ''}
         </div>
       </td>
       <td>
@@ -15311,7 +15311,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
       </td>
       ${_dtRenderScopeCell(parent)}
       <td style="font-size:11px;color:var(--gray-400);font-style:italic;">${expanded ? 'Click to collapse' : 'Click to expand'}</td>
-      ${_trEditMode && isAdmin ? `<td onclick="event.stopPropagation();"><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="event.stopPropagation();_trDeleteParentCase('${ptid}')" data-tippy-content="Delete parent + all assets">🗑</button></td>` : ''}
+      ${_trEditMode && isAdmin ? `<td onclick="event.stopPropagation();"><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="event.stopPropagation();_trDeleteParentCase('${ptid}')" data-tippy-content="Delete parent + all assets">${icon('trash')}</button></td>` : ''}
     </tr>`;
 
   // Per-parent search/status filter on children. Shown when >5 assets to keep
@@ -15388,8 +15388,8 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
           ` : `<span class="badge" style="background:${sc}20;color:${sc};border:1px solid ${sc}40;">${escapeHtml(cur)}</span>`}
           <div id="punch-actions-${domId}" style="margin-top:6px;display:${cur==='Fail'?'flex':'none'};flex-direction:column;gap:4px;">
             <div style="display:flex;gap:4px;">
-              <button onclick="openPunchFromTestCase('${ctid}')" style="flex:1;font-size:11px;padding:4px 6px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:5px;cursor:pointer;font-weight:600;">📋 Create Punch</button>
-              <button onclick="openLinkPunchModal('${ctid}')" style="flex:1;font-size:11px;padding:4px 6px;background:var(--white);border:1px solid var(--gray-300);color:var(--gray-700);border-radius:5px;cursor:pointer;font-weight:600;">🔗 Link Existing</button>
+              <button onclick="openPunchFromTestCase('${ctid}')" style="flex:1;font-size:11px;padding:4px 6px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:5px;cursor:pointer;font-weight:600;">${icon('clipboard')} Create Punch</button>
+              <button onclick="openLinkPunchModal('${ctid}')" style="flex:1;font-size:11px;padding:4px 6px;background:var(--white);border:1px solid var(--gray-300);color:var(--gray-700);border-radius:5px;cursor:pointer;font-weight:600;">${icon('link')} Link Existing</button>
             </div>
             <div id="punch-chips-${domId}">${_punchLinksForTestHTML(String(c.TestID))}</div>
           </div>
@@ -15400,7 +15400,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
             value="${escapeHtml(c.Notes || '')}" onblur="_mxSaveNotes('${ctid}',this.value)">
           <span id="regcell-${domId}">${_regressionCellHTML(c)}</span>
         </td>
-        ${_trEditMode && isAdmin ? `<td><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteAssetRow('${ctid}')" data-tippy-content="Remove asset from test case">🗑</button></td>` : ''}
+        ${_trEditMode && isAdmin ? `<td><button class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteAssetRow('${ctid}')" data-tippy-content="Remove asset from test case">${icon('trash')}</button></td>` : ''}
       </tr>`;
   }).join('') : '';
 
@@ -15484,7 +15484,7 @@ function _assetPageHTML() {
     <div style="display:flex;gap:20px;margin-bottom:24px;flex-wrap:wrap;align-items:flex-start;">
       <!-- Import Card -->
       <div class="admin-section" style="flex:1;min-width:320px;">
-        <div class="admin-section-header"><h3 class="admin-section-title">📥 Import Assets (CSV)</h3></div>
+        <div class="admin-section-header"><h3 class="admin-section-title">${icon('inbox')} Import Assets (CSV)</h3></div>
         <div style="padding:16px;">
           <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px;">
             Columns: <code>Device Type, Device Name, Location, Subsystem, Test Case Name</code><br>
@@ -15493,9 +15493,9 @@ function _assetPageHTML() {
           </p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <input type="file" id="asset-csv-input" accept=".csv" style="display:none;" onchange="_assetHandleFile(this.files[0])">
-            <button class="admin-action-btn" onclick="document.getElementById('asset-csv-input').click()">📂 Choose CSV File</button>
-            <button class="form-secondary" onclick="_assetDownloadTemplate()">⬇ Template</button>
-            <button class="form-secondary" onclick="_assetExportCSV()" title="Export all assets and their linked test cases">⬆ Export CSV</button>
+            <button class="admin-action-btn" onclick="document.getElementById('asset-csv-input').click()">${icon('folder')} Choose CSV File</button>
+            <button class="form-secondary" onclick="_assetDownloadTemplate()">${icon('download')} Template</button>
+            <button class="form-secondary" onclick="_assetExportCSV()" title="Export all assets and their linked test cases">${icon('upload')} Export CSV</button>
           </div>
           <div id="asset-import-progress"></div>
           ${ASSET_BATCHES.length ? `
@@ -15508,7 +15508,7 @@ function _assetPageHTML() {
 
       <!-- Add Single Asset Card -->
       <div class="admin-section" style="flex:1;min-width:280px;">
-        <div class="admin-section-header"><h3 class="admin-section-title">➕ Add Asset Manually</h3></div>
+        <div class="admin-section-header"><h3 class="admin-section-title">${icon('plus')} Add Asset Manually</h3></div>
         <div style="padding:16px;display:flex;flex-direction:column;gap:8px;">
           <input id="asset-add-type" class="form-input" placeholder="Device Type (e.g. ATC Cabinet)">
           <input id="asset-add-name" class="form-input" placeholder="Device Name (e.g. W40-AC01)" oninput="_assetPreviewPrefix()">
@@ -15580,7 +15580,7 @@ function _assetPageHTML() {
         </select>
         <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_assetBulkEditField('location','am-bulk-loc')">Apply</button>
         <span style="height:24px;border-left:1px solid #ffffff33;align-self:center;"></span>
-        <button class="admin-action-btn" style="background:#dc2626;font-size:12px;" onclick="_assetBulkDelete()">🗑 Delete</button>
+        <button class="admin-action-btn" style="background:#dc2626;font-size:12px;" onclick="_assetBulkDelete()">${icon('trash')} Delete</button>
         <button class="btn-ghost-dark" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_assetClearSelection()">Clear</button>
       </div>` : ''}
 
@@ -15632,9 +15632,9 @@ function _assetRowHTML(a) {
       <td><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="_assetToggleSelect('${a.id}',this.checked)"></td>
       ${_colCells('assets', ctx)}
       <td>
-        <button class="form-secondary tr-mini-btn${isOpen?' admin-action-btn':''}" onclick="_assetOpenManageLinks('${a.id}')">${isOpen?'🔗 Close':'🔗 Links'}</button>
-        <button class="form-secondary tr-mini-btn" onclick="_assetOpenEdit('${a.id}')">✏️</button>
-        <button class="form-secondary tr-mini-btn" style="color:var(--bad);" onclick="_assetDelete('${a.id}')">🗑</button>
+        <button class="form-secondary tr-mini-btn${isOpen?' admin-action-btn':''}" onclick="_assetOpenManageLinks('${a.id}')">${isOpen? icon('link')+' Close' : icon('link')+' Links'}</button>
+        <button class="form-secondary tr-mini-btn" onclick="_assetOpenEdit('${a.id}')">${icon('edit')}️</button>
+        <button class="form-secondary tr-mini-btn" style="color:var(--bad);" onclick="_assetDelete('${a.id}')">${icon('trash')}</button>
       </td>
     </tr>`;
 
@@ -15676,11 +15676,11 @@ function _assetManagePanelHTML(assetId) {
   return `
     <div style="background:#eff6ff;border-top:1px solid #bfdbfe;padding-bottom:4px;">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px 0;">
-        <div style="font-size:13px;font-weight:700;color:var(--primary);">🔗 ${escapeHtml(asset.name)}
+        <div style="font-size:13px;font-weight:700;color:var(--primary);">${icon('link')} ${escapeHtml(asset.name)}
           ${asset.location ? `<span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:8px;">${escapeHtml(asset.location)}</span>` : ''}
           ${linkedSubs.length ? `<span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:4px;">· ${linkedSubs.map(s=>escapeHtml(s)).join(', ')}</span>` : ''}
         </div>
-        <button class="form-secondary" style="font-size:11px;" onclick="_assetCloseManageLinks()">Close ✕</button>
+        <button class="form-secondary" style="font-size:11px;" onclick="_assetCloseManageLinks()">Close ${icon('x')}</button>
       </div>
       <div style="padding:16px;">
 
