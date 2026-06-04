@@ -35226,32 +35226,54 @@ function _dynBoardOpenCell(rowKey, periodKey) {
     if (!when) return false;
     return keyOf(when) === periodKey;
   });
+  const a = _dynDayAggregate(matches);
+  const fmtH = m => (m / 60).toFixed(1).replace(/\.0$/, '') + ' h';
+  const fmtT = d => d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+  // Window/slack only make sense for a single day (week view).
+  const isDay = _dynPage.boardView === 'week';
+  const winMin = (isDay && a.winStart && a.winEnd) ? (a.winEnd - a.winStart) / 60000 : null;
+  const slack = winMin != null ? winMin - a.plannedMin : null;
+  const stat = (label, val, tone) => `<div class="dyn-kpi"><span>${label}</span><b${tone?` style="color:${tone};"`:''}>${val}</b></div>`;
   modal({
     title: `${escapeHtml(rowKey)} — ${escapeHtml(periodKey)}`,
     sub: `${matches.length} instance(s)`,
     body: `
-      <div style="padding:8px 24px 16px;">
-        <table class="dyn-table" style="border:1px solid var(--gray-200);">
-          <thead><tr>
-            <th>Code</th><th>Test Case</th><th>Title</th><th>Status</th><th>Date</th><th style="text-align:right;">Reschedule</th>
-          </tr></thead>
-          <tbody>${matches.map(r => {
-            const tc = _dynPage.testItemsById.get(r.test_id);
-            const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
-            return `<tr>
-              <td style="font-family:var(--font-mono,monospace);font-size:12px;">${escapeHtml(r.code || '—')}</td>
-              <td>${tc ? escapeHtml(tc.code || r.test_id) : escapeHtml(r.test_id || '—')}</td>
-              <td>${escapeHtml(r.title || '')}</td>
-              <td>${_dynStatusBadge(r.status)}</td>
-              <td style="font-size:12px;">${_dynFmtDate(when) || '—'}</td>
-              <td style="text-align:right;">${_dynScheduleRowActions(r)}</td>
-            </tr>`;
-          }).join('')}</tbody>
-        </table>
+      <div style="padding:8px 20px 16px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:8px;margin-bottom:14px;">
+          ${stat('Tests', a.count)}
+          ${stat('Planned', fmtH(a.plannedMin))}
+          ${winMin != null ? stat('Window', fmtH(winMin)) : ''}
+          ${slack != null ? stat(slack < 0 ? 'Over by' : 'Slack', fmtH(Math.abs(slack)), slack < 0 ? 'var(--bad)' : 'var(--good)') : ''}
+          ${stat('Max trains', a.peakTrains)}
+          ${stat('Teams', a.teams.length || '—')}
+        </div>
+        ${a.access.length ? `<p style="font-size:12px;margin:0 0 6px;"><b>Access locations needed:</b> ${a.access.map(escapeHtml).join(', ')}</p>` : ''}
+        ${a.sections.length ? `<p style="font-size:12px;margin:0 0 6px;"><b>Sections under test:</b> ${a.sections.map(escapeHtml).join(', ')}</p>` : ''}
+        ${(isDay && a.winStart && a.winEnd) ? `<p style="font-size:12px;margin:0 0 12px;"><b>Committed window:</b> ${fmtT(a.winStart)}–${fmtT(a.winEnd)}${slack != null ? ` · ${slack < 0 ? `<span style="color:var(--bad);">over by ${fmtH(Math.abs(slack))}</span>` : `<span style="color:var(--good);">${fmtH(slack)} slack</span>`}` : ''}</p>` : ''}
+        <div style="overflow-x:auto;">
+          <table class="dyn-table" style="border:1px solid var(--gray-200);min-width:820px;">
+            <thead><tr>
+              <th>Code</th><th>Test Case</th><th>Title</th><th style="text-align:right;">Dur</th><th>Status</th><th>Date</th><th style="text-align:right;">Reschedule</th>
+            </tr></thead>
+            <tbody>${matches.map(r => {
+              const tc = _dynPage.testItemsById.get(r.test_id);
+              const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
+              return `<tr>
+                <td style="font-family:var(--font-mono,monospace);font-size:12px;white-space:nowrap;">${escapeHtml(r.code || '—')}</td>
+                <td style="white-space:nowrap;">${tc ? escapeHtml(tc.code || r.test_id) : escapeHtml(r.test_id || '—')}</td>
+                <td>${escapeHtml(r.title || '')}</td>
+                <td style="text-align:right;font-family:monospace;">${r.expected_duration_minutes ?? '—'}</td>
+                <td>${_dynDayStatusSelect(r)}</td>
+                <td style="font-size:12px;white-space:nowrap;">${_dynFmtDate(when) || '—'}</td>
+                <td style="text-align:right;">${_dynScheduleRowActions(r)}</td>
+              </tr>`;
+            }).join('')}</tbody>
+          </table>
+        </div>
       </div>
     `,
     footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
-    size: 'large',
+    size: 'xl',
   });
 }
 
