@@ -77,6 +77,11 @@ const ICONS = {
   activity:     '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
   mail:         '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
   dot:          '<circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"/>',
+  window:       '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>',
+  timer:        '<line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/>',
+  train:        '<rect width="16" height="16" x="4" y="3" rx="2"/><path d="M4 11h16"/><path d="M12 3v8"/><path d="m8 19-2 3"/><path d="m18 22-2-3"/><path d="M8 15h.01"/><path d="M16 15h.01"/>',
+  target:       '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+  info:         '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
 };
 function icon(name, opts) {
   opts = opts || {};
@@ -1957,7 +1962,7 @@ function renderPLTable() {
       <td class="cell-mono">#${escapeHtml(String(r.Number || '—'))}</td>
       <td>
         <span class="cell-name">${escapeHtml(r.Title || '—')}</span>
-        ${r.Overdue === 'Yes' ? '<span class="cell-sub" style="color:var(--bad);font-weight:600">⚠ overdue</span>' : ''}
+        ${r.Overdue === 'Yes' ? '<span class="cell-sub" style="color:var(--bad);font-weight:600">' + icon('alert') + ' overdue</span>' : ''}
       </td>
       <td><span class="tag">${escapeHtml(r.Trade ? r.Trade.trim() : '—')}</span></td>
       <td>${getPriorityPill(r.Priority)}</td>
@@ -2707,7 +2712,7 @@ async function sendSubmission(payload, messageId, onSuccess) {
     queueEntry.status = 'failed';
     queueEntry.error = err.message;
     saveQueue(loadQueue().map(q => q.id === queueEntry.id ? queueEntry : q));
-    showMessage(messageId, 'queued', '⚠ Saved locally — will sync when connection is restored. View in My Submissions.');
+    showMessage(messageId, 'queued', 'Saved locally — will sync when connection is restored. View in My Submissions.');
     if (onSuccess) onSuccess();
   }
 }
@@ -2802,7 +2807,7 @@ function renderQueue() {
         <div class="queue-item-info">
           <div class="queue-item-title">${escapeHtml(title)}</div>
           <div class="queue-item-meta">${escapeHtml(meta)} · ${new Date(q.createdAt).toLocaleString()}</div>
-          ${q.error && q.status !== 'sent' ? `<div class="queue-item-meta" style="color:var(--bad);margin-top:4px">⚠ ${escapeHtml(q.error)}</div>` : ''}
+          ${q.error && q.status !== 'sent' ? `<div class="queue-item-meta" style="color:var(--bad);margin-top:4px">${icon('alert')} ${escapeHtml(q.error)}</div>` : ''}
         </div>
         <span class="queue-status ${q.status}">${status}</span>
       </div>
@@ -3404,7 +3409,7 @@ function onLoggedIn() {
 function toast(msg, type = 'success') {
   const el = document.createElement('div');
   el.className = 'toast ' + type;
-  const statusIcon = type === 'success' ? '✓' : type === 'error' ? '!' : type === 'warn' ? '⚠' : 'ℹ';
+  const statusIcon = type === 'success' ? icon('check-circle') : type === 'error' ? icon('ban') : type === 'warn' ? icon('alert') : icon('info');
   el.innerHTML = `<div class="icon">${statusIcon}</div><div>${escapeHtml(msg)}</div>`;
   document.body.appendChild(el);
   setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateY(20px)'; el.style.transition = 'all 0.3s'; }, 3500);
@@ -4384,7 +4389,7 @@ async function handleImportFile(input) {
 
   const warnHTML = locWarnings.length > 0 ? `
     <div style="margin-bottom:16px;padding:14px;border:1px solid #d97706;border-radius:8px;background:rgba(217,119,6,0.05);">
-      <div style="font-weight:600;font-size:13px;color:#d97706;margin-bottom:10px;">⚠ ${locWarnings.length} location name${locWarnings.length > 1 ? 's' : ''} don't match the master list</div>
+      <div style="font-weight:600;font-size:13px;color:#d97706;margin-bottom:10px;">${icon('alert')} ${locWarnings.length} location name${locWarnings.length > 1 ? 's' : ''} don't match the master list</div>
       <div style="max-height:140px;overflow-y:auto;">
         <table class="data-table">
           <thead><tr><th>Test Case</th><th>Field</th><th>In CSV</th><th>Master List Says</th></tr></thead>
@@ -6912,7 +6917,7 @@ function _plRenderCell(colId, p) {
       return `<td>${_plPriorityBadge(p.priority)}</td>`;
     case 'due_date': {
       const dueStr = p.due_date ? new Date(p.due_date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
-      return `<td style="font-size:12px;${isOverdue?'color:#dc2626;font-weight:600;':''}">${dueStr}${isOverdue?' ⚠':''}</td>`;
+      return `<td style="font-size:12px;${isOverdue?'color:#dc2626;font-weight:600;':''}">${dueStr}${isOverdue?' '+icon('alert'):''}</td>`;
     }
     case 'pim':
       return `<td style="font-size:12px;white-space:nowrap;">${escapeHtml(p.punch_item_manager||'—')}</td>`;
@@ -12330,7 +12335,7 @@ function _p6ImportTabHTML() {
           </div>
           ${isRebaseline ? `
             <div style="margin-top:10px;padding:10px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:12px;color:#9a3412;">
-              ⚠ A baseline already exists. Uploading again will mark this as a <strong>Re-baseline</strong>. You will be required to enter a reason.
+              ${icon('alert')} A baseline already exists. Uploading again will mark this as a <strong>Re-baseline</strong>. You will be required to enter a reason.
             </div>` : ''}
         </div>
 
@@ -12634,8 +12639,8 @@ function _p6MappingTabHTML() {
           </select>
           <select class="filter-select" style="font-size:12px;" onchange="_p6MapFilter('linked',this.value)">
             <option value="">All</option>
-            <option value="unlinked" ${_p6MappingFilters.linked==='unlinked'?'selected':''}>🔴 Unlinked</option>
-            <option value="linked"   ${_p6MappingFilters.linked==='linked'?'selected':''}>🟢 Linked</option>
+            <option value="unlinked" ${_p6MappingFilters.linked==='unlinked'?'selected':''}>Unlinked</option>
+            <option value="linked"   ${_p6MappingFilters.linked==='linked'?'selected':''}>Linked</option>
           </select>
         </div>
 
@@ -12659,8 +12664,8 @@ function _p6MappingTabHTML() {
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
                       ${isLinked
-                        ? `<span class="badge badge-passed" style="font-size:10px;">🟢 ${linked.length} link${linked.length>1?'s':''}</span>`
-                        : `<span class="badge badge-notstarted" style="font-size:10px;">🔴 Unlinked</span>`}
+                        ? `<span class="badge badge-passed" style="font-size:10px;">${icon('dot')} ${linked.length} link${linked.length>1?'s':''}</span>`
+                        : `<span class="badge badge-notstarted" style="font-size:10px;">${icon('dot')} Unlinked</span>`}
                       <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor" style="color:var(--gray-400);transform:rotate(${expanded?'90':'0'}deg);transition:transform 0.15s;">
                         <path fill-rule="evenodd" d="M7.293 4.707a1 1 0 011.414 0l5 5a1 1 0 010 1.414l-5 5a1 1 0 01-1.414-1.414L11.586 10 7.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
                       </svg>
@@ -13807,7 +13812,7 @@ function _p6LearnShowMapping(sid) {
 
     return `
       <div style="display:flex;align-items:flex-start;gap:10px;padding:10px;border-bottom:1px solid var(--gray-100);font-size:12px;">
-        <span style="font-size:13px;line-height:1.1;">${linked ? '🟢' : '⚪'}</span>
+        <span style="font-size:13px;line-height:1.1;">${linked ? '<span style="color:var(--good)">' + icon('dot') + '</span>' : '<span style="color:var(--gray-300)">' + icon('dot') + '</span>'}</span>
         <div style="flex:1;min-width:0;">
           <div style="font-weight:600;">${escapeHtml(act.location || '—')}</div>
           <div style="color:var(--gray-500);font-size:11px;">${escapeHtml(act.phase || '—')} · ${escapeHtml(act.subsystem || '—')}</div>
@@ -13931,7 +13936,7 @@ function _p6LearnPreview(sid) {
   };
   const flaggedRows = flagged.map(f => `
     <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-bottom:1px solid var(--gray-100);font-size:12px;">
-      <span style="font-size:13px;line-height:1;">⚠️</span>
+      <span style="font-size:13px;line-height:1;">${icon('alert')}</span>
       <div style="flex:1;min-width:0;">
         <div style="font-weight:600;">${escapeHtml(f.act.location)}${f.testCaseCode?` · ${escapeHtml(f.testCaseCode)}`:''}</div>
         <div style="color:var(--gray-500);font-size:11px;">${escapeHtml(f.act.phase||'—')} · ${escapeHtml(f.act.subsystem||'—')}</div>
@@ -14166,7 +14171,7 @@ function _p6HealthTabHTML() {
         <!-- Header row -->
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
           <div>
-            <span style="font-size:13px;font-weight:700;">🔴 Unlinked P6 Activities</span>
+            <span style="font-size:13px;font-weight:700;"><span style="color:var(--bad)">${icon('dot')}</span> Unlinked P6 Activities</span>
             <span class="badge badge-review" style="margin-left:8px;font-size:11px;">${unlinkedP6.length}</span>
             ${batchLabel ? `<span style="font-size:11px;color:var(--gray-500);margin-left:10px;">(${escapeHtml(batchLabel)})</span>` : ''}
             ${P6_DISMISSALS.length ? `<button class="form-secondary tr-mini-btn" style="margin-left:12px;${_p6HShowingSnoozed?'background:var(--hitachi-red);color:#fff;':''}" onclick="_p6HShowingSnoozed=!_p6HShowingSnoozed;renderAdminP6()">
@@ -14178,7 +14183,7 @@ function _p6HealthTabHTML() {
             <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;">
               <input type="checkbox" id="p6h-sel-all" onchange="_p6HSelectAll(this.checked)"> Select all
             </label>
-            <button class="form-secondary tr-mini-btn" onclick="_p6HBulkRemindLater()">⏰ Snooze selected</button>
+            <button class="form-secondary tr-mini-btn" onclick="_p6HBulkRemindLater()">${icon('clock')} Snooze selected</button>
             <button class="form-secondary tr-mini-btn" style="color:#dc2626;" onclick="_p6HBulkRemove()">${icon('trash')} Remove selected</button>
           </div>` : ''}
         </div>
@@ -14237,7 +14242,7 @@ function _p6HealthTabHTML() {
                       style="${linkOpen?'background:var(--hitachi-red);color:#fff;':''}" >
                       ${icon('link')} Link to Activity
                     </button>
-                    <button class="form-secondary tr-mini-btn" title="Snooze — hide until restored" onclick="_p6HRemindLater('${escapedId}')">⏰</button>
+                    <button class="form-secondary tr-mini-btn" title="Snooze — hide until restored" aria-label="Snooze" onclick="_p6HRemindLater('${escapedId}')">${icon('clock')}</button>
                     <button aria-label="Remove from schedule" class="form-secondary tr-mini-btn" style="color:#dc2626;" title="Remove from schedule" onclick="_p6HRemove('${escapedId}','${escapeHtml(p.p6_name).replace(/'/g,"\\'")}')">${icon('trash')}</button>
                   </td>
                 </tr>
@@ -14282,7 +14287,7 @@ function _p6HealthTabHTML() {
         return `
         <div class="data-card" style="padding:20px;border-left:3px solid var(--hitachi-red);">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
-            <span style="font-size:13px;font-weight:700;">⏰ Snoozed P6 Activities (${snoozed.length})</span>
+            <span style="font-size:13px;font-weight:700;">${icon('clock')} Snoozed P6 Activities (${snoozed.length})</span>
             ${snoozed.length ? `<button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_p6HRestoreAll()">Unsnooze All</button>` : ''}
           </div>
           ${snoozed.length ? `
@@ -14316,7 +14321,7 @@ function _p6HealthTabHTML() {
 
         <div class="data-card" style="padding:20px;">
           <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;justify-content:space-between;">
-            🟡 Unlinked Portal Activities <span>${unlinkedPortal.length}</span>
+            <span style="color:var(--warn)">${icon('dot')}</span> Unlinked Portal Activities <span>${unlinkedPortal.length}</span>
           </div>
           ${unlinkedPortal.length ? unlinkedPortal.map(a => {
             const sid = _p6Sid(a.key);
@@ -15741,7 +15746,7 @@ function _assetRowHTML(a) {
     return parent?.Subsystem || '';
   }).filter(Boolean))];
   const subDisplay = linkedSubs.length > 1
-    ? `<span title="${escapeHtml(linkedSubs.join(', '))}" style="cursor:help;">${linkedSubs.length} subsystems ⓘ</span>`
+    ? `<span title="${escapeHtml(linkedSubs.join(', '))}" style="cursor:help;">${linkedSubs.length} subsystems ${icon('info')}</span>`
     : escapeHtml(linkedSubs[0] || a.subsystem || '—');
 
   const ctx = { a, links, subDisplay, passCount, total, pct };
@@ -16970,7 +16975,7 @@ function _rmaRowHTML(r, canEdit) {
             <span>Qty <b>${r.quantity || 1}</b></span>
           </div>
           <div class="v2-meta-line">
-            ${r.due_date ? `<span class="${dueClass}">${isOverdue?'⚠ ':''}Due ${_fmtDate(r.due_date)}</span>` : ''}
+            ${r.due_date ? `<span class="${dueClass}">${isOverdue?icon('alert')+' ':''}Due ${_fmtDate(r.due_date)}</span>` : ''}
             <span class="v2-age-pill ${ageClass}">${ageDays}d ${cyc.label}</span>
           </div>
         </div>
@@ -18552,7 +18557,7 @@ let _laPendingUndo       = null;                        // { fn } — most recen
 // Shift visual styles — used across calendar, timeline, badges
 const _SHIFT_VISUAL = {
   day_shift:     { bg: '#FFEB3B', text: '#1f2937', label: 'Day',     icon: icon('sun') },
-  night_shift:   { bg: '#2196F3', text: '#ffffff', label: 'Night',   icon: '☾' },
+  night_shift:   { bg: '#2196F3', text: '#ffffff', label: 'Night',   icon: icon('moon') },
   blanket_shift: { bg: '#1f2937', text: '#ffffff', label: 'Blanket', icon: '■' },
   swing_shift:   { bg: '#FF9800', text: '#1f2937', label: 'Swing',   icon: '↔' },
   custom:        { bg: '#6b7280', text: '#ffffff', label: 'Custom',  icon: '◆' },
@@ -18652,7 +18657,7 @@ function _planningCellBadge(linkedActivity, date) {
     }
     const hasIssue = s.failed > 0 || s.blocked > 0;
     const cls = hasIssue ? 'tlg-cell-badge-warn' : 'tlg-cell-badge-ok';
-    const statusGlyph = hasIssue ? '⚠' : '✓';
+    const statusGlyph = hasIssue ? icon('alert') : icon('check');
     const issueText = hasIssue ? ` · ${s.failed ? s.failed+' fail' : ''}${s.failed && s.blocked ? ', ' : ''}${s.blocked ? s.blocked+' blk' : ''}` : '';
     return `<span class="tlg-cell-badge ${cls}" title="${escapeHtml(linkedActivity)} on ${date}: ${s.executedToday} test${s.executedToday>1?'s':''} executed${issueText}">${statusGlyph} ${s.executedToday} done</span>`;
   }
@@ -19182,7 +19187,7 @@ function _laEventTippy(e, v, assignments) {
     <div class="cal-tip">
       <div class="cal-tip-title">${escapeHtml(e.title || '(no title)')}</div>
       <div class="cal-tip-row"><span>${icon('calendar')}</span> ${escapeHtml(e.event_date)}</div>
-      <div class="cal-tip-row"><span>⏰</span> ${escapeHtml(timeStr)}</div>
+      <div class="cal-tip-row"><span>${icon('clock')}</span> ${escapeHtml(timeStr)}</div>
       ${sub ? `<div class="cal-tip-row"><span>${icon('tag')}</span> ${escapeHtml(sub)}</div>` : ''}
       ${e.location ? `<div class="cal-tip-row"><span>${icon('pin')}</span> ${escapeHtml(e.location)}</div>` : ''}
       <div class="cal-tip-row"><span>${icon('user')}</span> ${escapeHtml(res)}</div>
@@ -19674,7 +19679,7 @@ function _tlgShiftTip(s, v) {
     : `${(s.start_time||'').slice(0,5)} – ${(s.end_time||'').slice(0,5)}`;
   return (`<div class="cal-tip">
     <div class="cal-tip-title">${escapeHtml(s.title||'(no title)')}</div>
-    <div class="cal-tip-row"><span>⏰</span> ${escapeHtml(ts)}</div>
+    <div class="cal-tip-row"><span>${icon('clock')}</span> ${escapeHtml(ts)}</div>
     <div class="cal-tip-row"><span>${icon('refresh')}</span> ${escapeHtml(v.label)}</div>
     ${s.isCancel ? '<div class="cal-tip-row" style="color:#ef4444;"><span>' + icon('x') + '</span> Cancelled</div>' : ''}
   </div>`).replace(/"/g, '&quot;');
@@ -20251,7 +20256,7 @@ function _laLookaheadHTML() {
 
     ${_laAssignMode ? `
     <div class="la-assign-banner" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-      <span>🟥 Drop on the <strong>activity label</strong> to assign for the full activity &nbsp;·&nbsp; 🟩 Drop on a <strong>coloured shift cell</strong> to assign to that specific day only &nbsp;·&nbsp; <strong>Click a colored cell</strong> to select it for bulk remove</span>
+      <span><span style="color:var(--bad)">${icon('dot')}</span> Drop on the <strong>activity label</strong> to assign for the full activity &nbsp;·&nbsp; <span style="color:var(--good)">${icon('dot')}</span> Drop on a <strong>coloured shift cell</strong> to assign to that specific day only &nbsp;·&nbsp; <strong>Click a colored cell</strong> to select it for bulk remove</span>
     </div>` : ''}
 
     <!-- Excel-style edit tips bar (always visible) -->
@@ -20692,7 +20697,7 @@ function _laDrawerCellHTML(ev) {
           const r = allRes.find(x => x.id === er.resource_id);
           const denied = !!er.denied_at;
           return `<span class="la-drawer-pill ${denied?'la-drawer-pill-denied':''}">${escapeHtml(r?.display_name||'?')} ×${er.quantity||1}
-            ${denied ? `<span title="Denied" style="color:#dc2626;">⚠</span>` : ''}
+            ${denied ? `<span title="Denied" style="color:#dc2626;">${icon('alert')}</span>` : ''}
             <button onclick="_laDrawerRemoveEventResource('${er.id}')" title="Remove">×</button></span>`;
         }).join('') || '<span style="color:var(--gray-400);font-size:12px;">None requested</span>'}
       </div>
@@ -20958,7 +20963,7 @@ async function _laDrawerSave() {
         version: _laDrawer.baseVersion || 1,
       });
       if (!result || result.length === 0) {
-        toast('⚠ Someone else edited this cell. Reloading…', 'error');
+        toast('Someone else edited this cell. Reloading…', 'error');
         await loadPlanningData(true);
         _laDrawerOpen('cell', ev.id);   // re-open with fresh data
         return;
@@ -21041,7 +21046,7 @@ async function _laDrawerAddEventResource(eventId, resourceId, quantity = 1) {
     }]);
     if (_gate.conflicts.length) {
       await _laLogConflicts(_gate.conflicts);
-      toast(`⚠ ${_gate.conflicts.length} conflict${_gate.conflicts.length>1?'s':''} flagged — see Planning Admin → Conflicts`, 'warn');
+      toast(`${_gate.conflicts.length} conflict${_gate.conflicts.length>1?'s':''} flagged — see Planning Admin → Conflicts`, 'warn');
     }
     await loadPlanningData(true);
     _renderLookaheadTabBody();
@@ -21617,7 +21622,7 @@ async function _laShowSnapshot(weekStart) {
       const res = (e.resources || []).map(r => {
         const q = r.quantity && r.quantity > 1 ? ' ×' + r.quantity : '';
         const isBart = (r.kind || '').toLowerCase() === 'bart' || (r.company || '').toLowerCase().includes('bart');
-        return `<span class="la-hist-res ${isBart ? 'bart' : 'hit'}${r.denied ? ' denied' : ''}">${escapeHtml(r.name || r.initials || '?')}${q}${r.denied ? ' ⚠' : ''}</span>`;
+        return `<span class="la-hist-res ${isBart ? 'bart' : 'hit'}${r.denied ? ' denied' : ''}">${escapeHtml(r.name || r.initials || '?')}${q}${r.denied ? ' '+icon('alert') : ''}</span>`;
       }).join('') || '<span style="color:var(--gray-400);font-size:11px;">No resources</span>';
       return `<div class="la-hist-ev${cancelled ? ' is-cancel' : ''}">
         <div class="la-hist-ev-head">
@@ -21716,7 +21721,7 @@ function _laCellSelActionsHTML() {
       <option value="">Set shift…</option>
       <option value="day_shift">Day</option>
       <option value="swing_shift">↔ Swing</option>
-      <option value="night_shift">☾ Night</option>
+      <option value="night_shift">Night</option>
       <option value="blanket_shift">■ Blanket</option>
     </select>`);
     parts.push(`<input id="la-bulk-loc" placeholder="Set location…" style="font-size:11px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;width:120px;">`);
@@ -21903,7 +21908,7 @@ function _laOpenCreateEventModal(cells) {
             '<option value="">— select —</option>' +
             '<option value="day_shift">Day (0600–1800)</option>' +
             '<option value="swing_shift">↔ Swing (1200–2200)</option>' +
-            '<option value="night_shift">☾ Night (1800–0600)</option>' +
+            '<option value="night_shift">Night (1800–0600)</option>' +
             '<option value="blanket_shift">■ Blanket (all day)</option>' +
           '</select>' +
         '</div>' +
@@ -22157,7 +22162,7 @@ function _laPasteConfirmModal({ ops, collisions, lockedSkips, ptoConflicts }) {
 
     if (collisions.length > 0) {
       html += `<div style="background:#fee2e2;border:1px solid #ef4444;border-radius:6px;padding:10px;margin:10px 0;">
-        <strong>⚠ ${collisions.length} collision${collisions.length>1?'s':''}</strong> — existing event${collisions.length>1?'s':''} on these cells:
+        <strong>${icon('alert')} ${collisions.length} collision${collisions.length>1?'s':''}</strong> — existing event${collisions.length>1?'s':''} on these cells:
         <ul style="margin:6px 0 8px 18px;padding:0;font-size:12px;">
           ${collisions.slice(0,8).map(c => `<li>${escapeHtml(c.existing.title||'(untitled)')} · ${c.op.newDate}</li>`).join('')}
           ${collisions.length>8?`<li>…and ${collisions.length-8} more</li>`:''}
@@ -23022,7 +23027,7 @@ function _laFillConfirmModal({ total, collisions, lockedSkips, ptoConflicts }) {
     }
     if (collisions.length > 0) {
       html += `<div style="background:#fee2e2;border:1px solid #ef4444;border-radius:6px;padding:10px;margin:10px 0;">
-        <strong>⚠ ${collisions.length} existing event${collisions.length>1?'s':''}</strong> in the fill range.<br>
+        <strong>${icon('alert')} ${collisions.length} existing event${collisions.length>1?'s':''}</strong> in the fill range.<br>
         <label style="display:block;margin-top:8px;"><input type="radio" name="fillcol" value="overwrite" checked> Overwrite existing</label>
         <label style="display:block;"><input type="radio" name="fillcol" value="skip"> Skip these (keep existing)</label>
       </div>`;
@@ -23490,7 +23495,7 @@ function _laConflictConfirmModal(resourceName, conflicts) {
     }).join('');
     const more = conflicts.length > 12 ? `<li style="font-size:12px;color:var(--gray-500);">…and ${conflicts.length - 12} more</li>` : '';
     modal({
-      title: '⚠ Scheduling conflict detected',
+      title: 'Scheduling conflict detected',
       sub: escapeHtml(resourceName),
       size: 'medium',
       body: `
@@ -23590,7 +23595,7 @@ async function _laAssignResourceToActivity(activityId, resourceId) {
     toast(`${res?.display_name || 'Resource'} assigned ✓`, 'success');
     if (_gate.conflicts.length) {
       await _laLogConflicts(_gate.conflicts);
-      toast(`⚠ ${_gate.conflicts.length} conflict${_gate.conflicts.length>1?'s':''} flagged — see Planning Admin → Conflicts`, 'warn');
+      toast(`${_gate.conflicts.length} conflict${_gate.conflicts.length>1?'s':''} flagged — see Planning Admin → Conflicts`, 'warn');
     }
     await loadPlanningData(true);
     _laMountLookaheadTL();
@@ -23637,7 +23642,7 @@ async function _laAssignResourceToEvent(activityId, eventDate, resourceId) {
     toast(`${res?.display_name || 'Resource'} → ${dateLabel} shift ✓`, 'success');
     if (_gate.conflicts.length) {
       await _laLogConflicts(_gate.conflicts);
-      toast(`⚠ ${_gate.conflicts.length} conflict${_gate.conflicts.length>1?'s':''} flagged — see Planning Admin → Conflicts`, 'warn');
+      toast(`${_gate.conflicts.length} conflict${_gate.conflicts.length>1?'s':''} flagged — see Planning Admin → Conflicts`, 'warn');
     }
     await loadPlanningData(true);
     _laMountLookaheadTL();
@@ -24039,7 +24044,7 @@ function _laResourcesBoardHTML() {
     ${_planningShiftLegend()}
 
     <div style="margin-bottom:12px;font-size:13px;color:var(--gray-600);">
-      Resource availability — 2-week rolling window. PTO shown in amber. ⚠ = PTO conflict. Click any cell to view details.
+      Resource availability — 2-week rolling window. PTO shown in amber. ${icon('alert')} = PTO conflict. Click any cell to view details.
     </div>
 
     <div class="data-card" style="padding:0;overflow:hidden;">
@@ -24082,7 +24087,7 @@ function _laMountResourcesTL() {
       (byDate[e.event_date] = byDate[e.event_date] || []).push({
         event_id: e.id, shift_type: e.shift_type, start_time: e.start_time,
         end_time: e.end_time, all_day: !!e.all_day, isCancel,
-        title:     `${conflict ? '⚠ CONFLICT: ' : ''}${e.title || ''}`,
+        title:     `${conflict ? 'CONFLICT: ' : ''}${e.title || ''}`,
         cellLabel: e.location || '',   // shown inside the coloured cell
       });
     });
@@ -24149,7 +24154,7 @@ function _planningOpenEventDetail(eventId) {
           <span class="badge" style="background:${v.bg};color:${v.text};border:1px solid ${isCancel ? '#7f1d1d' : v.bg};">${v.icon} ${v.label}</span>
           ${isCancel && e.cancellation_reason ? `<div style="margin-top:6px;font-size:12px;color:#7f1d1d;background:#fef2f2;padding:6px 10px;border-radius:6px;line-height:1.6;">
             <span style="font-weight:600;">Reason:</span> ${escapeHtml(e.cancellation_reason)}
-            ${e.cancellation_responsible_party ? `<span style="margin-left:8px;padding:1px 8px;background:#fee2e2;border-radius:10px;font-weight:700;font-size:11px;">⚠ ${escapeHtml(e.cancellation_responsible_party)}</span>` : ''}
+            ${e.cancellation_responsible_party ? `<span style="margin-left:8px;padding:1px 8px;background:#fee2e2;border-radius:10px;font-weight:700;font-size:11px;">${icon('alert')} ${escapeHtml(e.cancellation_responsible_party)}</span>` : ''}
           </div>` : ''}
         </div>
 
@@ -24180,7 +24185,7 @@ function _planningOpenEventDetail(eventId) {
                     : '';
                   return `<span class="badge ${badgeClass}" style="display:inline-flex;align-items:center;gap:2px;">
                     ${a.resource ? escapeHtml(a.resource.display_name) : '—'}
-                    ${hasPTO ? ' ⚠ PTO' : ''}
+                    ${hasPTO ? ' '+icon('alert')+' PTO' : ''}
                     ${removeBtn}
                   </span>`;
                 }).join('')}
@@ -24212,7 +24217,7 @@ function _planningOpenEventDetail(eventId) {
 
       ${conflicts.length ? `
         <div style="margin-top:14px;padding:10px 14px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;font-size:13px;color:#7f1d1d;">
-          ⚠ <strong>PTO conflict${conflicts.length === 1 ? '' : 's'}:</strong>
+          ${icon('alert')} <strong>PTO conflict${conflicts.length === 1 ? '' : 's'}:</strong>
           ${conflicts.map(c => `${escapeHtml(c.resource.display_name)} (${escapeHtml(c.pto.start_date)} → ${escapeHtml(c.pto.end_date)})`).join('; ')}
         </div>` : ''}
     `,
@@ -24817,7 +24822,7 @@ function _cancelRptTableBody() {
     const color  = isCxl ? '#b91c1c' : '#b45309';
     const badge  = isCxl
       ? `<span class="badge" style="background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;font-size:10px;">${icon('x')} Cancellation</span>`
-      : `<span class="badge" style="background:#fffbeb;color:#b45309;border:1px solid #fde68a;font-size:10px;">⚠ Delay</span>`;
+      : `<span class="badge" style="background:#fffbeb;color:#b45309;border:1px solid #fde68a;font-size:10px;">${icon('alert')} Delay</span>`;
     const checked = _cancelRptSel.has(r._id) ? 'checked' : '';
     return `<tr style="border-left:3px solid ${color};">
       <td style="width:32px;padding:8px 6px;">
@@ -24831,7 +24836,7 @@ function _cancelRptTableBody() {
       <td style="font-size:12px;">${escapeHtml(r.subsystem || '—')}</td>
       <td style="font-size:12px;max-width:200px;">
         ${r.reason ? escapeHtml(r.reason) : '<em style="color:#9ca3af;">—</em>'}
-        ${r.duration ? `<div style="font-size:11px;color:#b45309;margin-top:2px;">⏱ ${escapeHtml(r.duration)}</div>` : ''}
+        ${r.duration ? `<div style="font-size:11px;color:#b45309;margin-top:2px;">${icon('timer')} ${escapeHtml(r.duration)}</div>` : ''}
       </td>
       <td style="font-size:12px;">
         ${r.party ? `<span class="badge" style="background:#fee2e2;color:#7f1d1d;font-size:11px;font-weight:700;">${escapeHtml(r.party)}</span>` : '<span style="color:#9ca3af;">—</span>'}
@@ -25032,7 +25037,7 @@ function _laHealthTabHTML() {
     <!-- ── Two-column row: coverage gap + schedule drift ────────────── -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
       <div class="data-card" style="padding:14px;">
-        <div style="font-weight:600;font-size:13px;margin-bottom:10px;">⚠ Coverage gap — Activities not in any lookahead</div>
+        <div style="font-weight:600;font-size:13px;margin-bottom:10px;">${icon('alert')} Coverage gap — Activities not in any lookahead</div>
         ${uncovered.length === 0 ? '<div style="font-size:12px;color:#16a34a;">✓ Every Test Register Activity is linked to a lookahead row.</div>' :
           `<div style="font-size:11px;color:#6b7280;margin-bottom:8px;">These Test Register Activities have remaining tests but no lookahead row pointing at them — they need to be scheduled or linked.</div>
           <table style="width:100%;border-collapse:collapse;font-size:11px;">
@@ -25259,7 +25264,7 @@ function _cancelRptExportPDF() {
   const rowsHTML = exportRows.map(r => {
     const isCxl = r._type === 'cancellation';
     const borderColor = isCxl ? '#b91c1c' : '#b45309';
-    const typeLabel   = isCxl ? 'Cancellation' : '⚠ Delay';
+    const typeLabel   = isCxl ? 'Cancellation' : 'Delay';
     const typeStyle   = isCxl
       ? 'background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;'
       : 'background:#fffbeb;color:#b45309;border:1px solid #fde68a;';
@@ -25895,7 +25900,7 @@ async function _lookaheadParseFile(file) {
   if (currentRoleUser?.role !== 'admin') { toast('Admin only', 'error'); return; }
 
   const statusEl = document.getElementById('lookahead-import-status');
-  if (statusEl) statusEl.innerHTML = `<div style="font-size:13px;color:var(--gray-500);">⏳ Parsing <strong>${escapeHtml(file.name)}</strong>…</div>`;
+  if (statusEl) statusEl.innerHTML = `<div style="font-size:13px;color:var(--gray-500);">${icon('refresh')} Parsing <strong>${escapeHtml(file.name)}</strong>…</div>`;
 
   try {
     const buf = await file.arrayBuffer();
@@ -26077,7 +26082,7 @@ function _lookaheadOpenPreviewModal() {
 
       ${f.unknownInitials.length ? `
         <div style="margin-bottom:14px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
-          ⚠ Unknown initials: <strong>${f.unknownInitials.map(escapeHtml).join(', ')}</strong> — they'll land in the Review Queue after import.
+          ${icon('alert')} Unknown initials: <strong>${f.unknownInitials.map(escapeHtml).join(', ')}</strong> — they'll land in the Review Queue after import.
         </div>` : ''}
 
       ${s.cancellations > 0 ? `
@@ -26998,7 +27003,7 @@ function _planningOpenP6Detail(p6) {
 
       ${varianceEvents.length ? `
         <div style="margin-top:14px;padding:10px 14px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:12px;color:#92400e;">
-          ⚠ <strong>${varianceEvents.length} event${varianceEvents.length === 1 ? '' : 's'} outside P6 window:</strong><br>
+          ${icon('alert')} <strong>${varianceEvents.length} event${varianceEvents.length === 1 ? '' : 's'} outside P6 window:</strong><br>
           ${varianceEvents.slice(0, 5).map(v => `• ${escapeHtml(v.ev.title || '')} on ${v.ev.event_date} (${v.variance} day${v.variance === 1 ? '' : 's'} off)`).join('<br>')}
           ${varianceEvents.length > 5 ? `<br>… and ${varianceEvents.length - 5} more` : ''}
         </div>` : ''}
@@ -31902,7 +31907,7 @@ function _drwShowReview(numPages) {
       <span id="drw-included-pill" style="background:#e0e7ff;color:#3730a3;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">${includedCount} of ${numPages} to import</span>
       ${upRevCount ? `<span id="drw-uprev-pill" style="background:#fff7ed;color:#c2410c;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">↑ ${upRevCount} up-rev</span>` : `<span id="drw-uprev-pill" style="display:none;background:#fff7ed;color:#c2410c;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;"></span>`}
       ${needsReview
-        ? `<span style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">⚠ ${needsReview} need manual entry</span>`
+        ? `<span style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">${icon('alert')} ${needsReview} need manual entry</span>`
         : `<span style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">✓ All sheets parsed</span>`}
       <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(true)" style="font-size:12px;padding:5px 10px;">Select all</button>
       <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(false)" style="font-size:12px;padding:5px 10px;">Select none</button>
@@ -33489,7 +33494,7 @@ function _dynSubsystemBadge(subsystem) {
   // Render as a standard .tag so it inherits the production subsystem theme
   // (mono caps) shared with the Test Register and other tables. The empty
   // state keeps a red tint so coverage gaps stay obvious.
-  if (!s) return `<span class="tag" style="background:#fef2f2;color:#b91c1c;border-color:#fecaca;" title="No subsystem set — assign the team that runs this test">⚠ No subsystem</span>`;
+  if (!s) return `<span class="tag" style="background:#fef2f2;color:#b91c1c;border-color:#fecaca;" title="No subsystem set — assign the team that runs this test">${icon('alert')} No subsystem</span>`;
   return `<span class="tag" title="Subsystem / team running this test">${escapeHtml(s)}</span>`;
 }
 
@@ -34010,7 +34015,7 @@ function _dynRowHtml(r) {
     }
   }
   const prereq = r.prerequisites
-    ? ` <span title="${escapeHtml(r.prerequisites)}" style="cursor:help;color:#b45309;font-size:11px;">⚑ prereq</span>` : '';
+    ? ` <span title="${escapeHtml(r.prerequisites)}" style="cursor:help;color:#b45309;font-size:11px;">${icon('flag')} prereq</span>` : '';
   const selected = _dynPage.selInstances.has(r.id);
   const schedLabel = _dynScheduledLabel(r);
   const schedCell = schedLabel
@@ -35014,11 +35019,11 @@ function _dynRenderDaySummaries(cols) {
         <div style="font-size:11px;color:var(--gray-500);">${a.count} test${a.count===1?'':'s'}</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:3px;">
-        ${line('🪟', 'Window', windowVal)}
-        ${line('⏱', 'Planned', fmtH(a.plannedMin))}
-        ${line('🚆', 'Max trains', String(a.peakTrains))}
-        ${line('🎯', 'Sections', a.sections.length ? a.sections.join(', ') : '')}
-        ${line('📍', 'Access', a.access.length ? a.access.join(', ') : '')}
+        ${line(icon('window'), 'Window', windowVal)}
+        ${line(icon('timer'), 'Planned', fmtH(a.plannedMin))}
+        ${line(icon('train'), 'Max trains', String(a.peakTrains))}
+        ${line(icon('target'), 'Sections', a.sections.length ? a.sections.join(', ') : '')}
+        ${line(icon('pin'), 'Access', a.access.length ? a.access.join(', ') : '')}
       </div>
       ${(a.modes.length || a.teams.length || a.phases.length) ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;">
         ${a.modes.map(m => chip(m, '#eef2ff', '#3730a3')).join('')}
@@ -35684,7 +35689,7 @@ function _dynRenderPlanningTable() {
               <td style="text-align:right;font-family:monospace;">${r.trains_needed ?? 1}</td>
               <td style="white-space:nowrap;">${schCell}</td>
               <td>${_dynStatusBadge(r.status)}</td>
-              <td>${block ? `<span style="color:var(--bad);font-size:11.5px;" title="${escapeHtml((r.unmet_prereqs||[]).join(', '))}">⚠ ${(r.unmet_prereqs||[]).length} unmet</span>` : '<span style="color:var(--good);font-size:11.5px;">✓</span>'}</td>
+              <td>${block ? `<span style="color:var(--bad);font-size:11.5px;" title="${escapeHtml((r.unmet_prereqs||[]).join(', '))}">${icon('alert')} ${(r.unmet_prereqs||[]).length} unmet</span>` : '<span style="color:var(--good);font-size:11.5px;">✓</span>'}</td>
               <td style="text-align:right;font-family:monospace;color:var(--gray-600);">${r.score ?? 0}</td>
             </tr>`;
           }).join('')}
