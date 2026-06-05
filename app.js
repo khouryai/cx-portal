@@ -2851,6 +2851,7 @@ let _rmaFilter = { status: '', location: '', search: '' };
 let _p6HealthFilter     = { search: '', dateMode: 'all', dateFrom: '', dateTo: '' };
 let _p6HealthLinkOpen   = new Set(); // p6 activity IDs with link-panel expanded
 let _p6HShowingSnoozed  = false;     // toggle snoozed section visibility
+let _p6HealthSearchTimer = null;     // debounce so re-render doesn't steal focus
 let _trpFilters = { search:'', status:'', subsystem:'', phase:'', location:'' };
 let _trpExpanded = new Set();
 let _trpSyncInFlight = false;
@@ -12300,7 +12301,7 @@ function _p6AdminHTML() {
     </div>`;
 }
 
-function _p6SetTab(t) { _p6Tab = t; renderAdminP6(); }
+function _p6SetTab(t) { _p6Tab = t; window._p6Linking = false; renderAdminP6(); }
 
 // ─── IMPORT TAB ───────────────────────────────────────────────────────────────
 function _p6ImportTabHTML() {
@@ -13785,7 +13786,8 @@ function _p6LearnShowMapping(sid) {
   const acts = (c.allActs || []).slice().sort((a, b) =>
     String(a.location || '').localeCompare(String(b.location || ''), undefined, { numeric: true }));
 
-  const rows = acts.map(act => {
+  if (!window._p6ActData) window._p6ActData = {};
+  const rows = acts.map((act, idx) => {
     const links = _p6GetActivityLinks(act);
     const link  = c.testCaseCode
       ? (links.find(l => l.portal_test_case_code === c.testCaseCode)
@@ -13794,8 +13796,17 @@ function _p6LearnShowMapping(sid) {
     const inherited = c.testCaseCode && link && !link.portal_test_case_code;
     const p6 = link ? P6_ACTS.find(p => p.id === link.p6_activity_id) : null;
     const linked = !!link;
+
+    // Per-location picker so the admin can link (or relink) right here.
+    const actSid = `lm_${sid}_${idx}`;
+    window._p6ActData[actSid] = { phase: act.phase, location: act.location, subsystem: act.subsystem, activity: act.activity };
+    const locCode = _p6LocCode(act.location);
+    let scoped = locCode ? P6_ACTS.filter(p => _p6CoversLoc(p, locCode)) : P6_ACTS;
+    if (!scoped.length) scoped = P6_ACTS;
+    const initId = (link && !inherited) ? link.p6_activity_id : '';
+
     return `
-      <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 10px;border-bottom:1px solid var(--gray-100);font-size:12px;">
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:10px;border-bottom:1px solid var(--gray-100);font-size:12px;">
         <span style="font-size:13px;line-height:1.1;">${linked ? '🟢' : '⚪'}</span>
         <div style="flex:1;min-width:0;">
           <div style="font-weight:600;">${escapeHtml(act.location || '—')}</div>
@@ -13806,6 +13817,10 @@ function _p6LearnShowMapping(sid) {
               ${escapeHtml(p6?.p6_id || '')}${p6 ? ` · ${_p6ActDates(p6.id)}` : ''}${inherited ? ' · inherited from activity link' : ''}
             </div>` : `
             <div style="color:#b45309;font-size:11px;margin-top:3px;">Not linked to any P6 activity</div>`}
+          <div style="display:flex;align-items:center;gap:6px;margin-top:6px;">
+            <div style="flex:1;min-width:160px;">${_p6SS(actSid, scoped, 'Search P6 activity…', initId)}</div>
+            <button class="admin-action-btn tr-mini-btn" style="flex-shrink:0;" onclick="_p6LearnLinkLocation('${actSid}','${sid}')">${linked ? 'Relink' : 'Link'}</button>
+          </div>
         </div>
       </div>`;
   }).join('');
@@ -13814,14 +13829,25 @@ function _p6LearnShowMapping(sid) {
   modal({
     title: 'Location → P6 mapping',
     sub: `${escapeHtml(c.activity)}${c.testCaseCode ? ` · TC ${escapeHtml(c.testCaseCode)}` : ''} — ${linkedN} of ${acts.length} linked`,
-    size: 'medium',
+    size: 'large',
     body: `
-      <p style="font-size:12px;color:var(--gray-600);margin-bottom:10px;line-height:1.45;">
-        Every location that carries this ${c.testCaseCode ? 'test case' : 'activity'} and its current P6 link. Unlinked locations are what Bulk Learn will fill in.
-      </p>
-      <div style="max-height:420px;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">${rows || '<div style="padding:16px;color:var(--gray-400);font-size:12px;">No locations found.</div>'}</div>`,
+      <div style="padding:4px 4px 8px;">
+        <p style="font-size:12px;color:var(--gray-600);margin-bottom:10px;line-height:1.45;">
+          Every location that carries this ${c.testCaseCode ? 'test case' : 'activity'} and its current P6 link. Pick a P6 activity and click <b>Link</b> to map any location directly.
+        </p>
+        <div style="border:1px solid var(--gray-200);border-radius:6px;">${rows || '<div style="padding:16px;color:var(--gray-400);font-size:12px;">No locations found.</div>'}</div>
+      </div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
   });
+}
+
+// Link one location from the "Location → P6 mapping" modal, then reopen it so
+// the new link shows. Reuses the mapping-tab link path (pattern + propagation).
+async function _p6LearnLinkLocation(actSid, learnSid) {
+  const p6Id = _p6SSVal(actSid) || _p6SSTypedMatch(actSid);
+  if (!p6Id) { toast('Pick a P6 activity first', 'error'); return; }
+  await _p6LinkActivity(p6Id, actSid);
+  _p6LearnShowMapping(learnSid);
 }
 
 // Resolve a learn-row's candidate from the stash, rebuilding it from the live
@@ -13885,7 +13911,7 @@ function _p6LearnPreview(sid) {
           <div style="max-height:240px;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">${sample}</div>
           ${sameRows.length > 12 ? `<div style="font-size:11px;color:var(--gray-500);margin-top:6px;">${sameRows.length - 12} more activity rows not shown.</div>` : ''}
         ` : ''}`,
-      footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+      footer: `<button class="form-secondary" onclick="closeModal();renderAdminP6()">Close</button>`,
     });
     return;
   }
@@ -13967,7 +13993,7 @@ function _p6LearnPreview(sid) {
         <div style="max-height:200px;overflow:auto;border:1px solid #fde68a;border-radius:6px;background:#fffdf7;">${flaggedRows}</div>
       ` : ''}`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" onclick="closeModal();renderAdminP6()">Cancel</button>
       ${targets.length ? `<button class="admin-action-btn" onclick="_p6LearnApply()">Apply Selected</button>` : ''}`,
   });
 }
@@ -14040,6 +14066,18 @@ async function _p6LearnApply() {
   await loadP6Data();
   renderAdminP6();
   toast(`\u2713 ${count} link${count===1?'':'s'} applied \u00b7 ${inserted} new, ${updated} updated \u00b7 pattern saved`, 'success');
+}
+
+// Debounced search so re-rendering the tab doesn't yank the cursor out of the
+// input on every keystroke (it refocuses + restores the caret after render).
+function _p6HealthSearch(v) {
+  _p6HealthFilter.search = v;
+  clearTimeout(_p6HealthSearchTimer);
+  _p6HealthSearchTimer = setTimeout(() => {
+    renderAdminP6();
+    const input = document.getElementById('p6-health-search');
+    if (input) { input.focus(); const end = input.value.length; input.setSelectionRange?.(end, end); }
+  }, 250);
 }
 
 // ─── HEALTH TAB ───────────────────────────────────────────────────────────────
@@ -14147,9 +14185,9 @@ function _p6HealthTabHTML() {
 
         <!-- Filters row -->
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
-          <input class="form-input" type="text" placeholder="Search P6 activity name…" style="flex:1;min-width:180px;max-width:320px;font-size:12px;"
+          <input id="p6-health-search" class="form-input" type="text" placeholder="Search P6 activity name…" style="flex:1;min-width:180px;max-width:320px;font-size:12px;"
             value="${escapeHtml(_p6HealthFilter.search)}"
-            oninput="_p6HealthFilter.search=this.value;renderAdminP6()">
+            oninput="_p6HealthSearch(this.value)">
           <select class="filter-select" style="font-size:12px;" onchange="_p6HDateMode(this.value)">
             <option value="all"   ${_p6HealthFilter.dateMode==='all'  ?'selected':''}>All start dates</option>
             <option value="30d"   ${_p6HealthFilter.dateMode==='30d'  ?'selected':''}>Starting within 30 days</option>
