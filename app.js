@@ -14526,24 +14526,40 @@ _colRegister('p6', [
   { id: 'subsystem', label: 'Subsystem',             default: true },
   { id: 'location',  label: 'Location',              default: true },
   { id: 'phase',     label: 'Phase',                 default: true },
-  { id: 'planned',   label: 'Planned Date',          default: true },
   { id: 'p6start',   label: 'P6 Start',              default: true },
   { id: 'p6finish',  label: 'P6 Finish',             default: true },
-  { id: 'variance',  label: 'Variance vs Baseline',  default: true },
   { id: 'progress',  label: 'Progress',              default: true },
+  { id: 'expected',  label: 'Expected %',            default: false },
+  { id: 'variance',  label: 'Schedule Variance',     default: true },
+  { id: 'forecast',  label: 'Forecast Finish',       default: true },
+  { id: 'baselinevar', label: 'Drift vs Baseline',   default: false },
   { id: 'status',    label: 'Status',                default: true },
 ], function _p6RenderCell(colId, ctx) {
-  const { a, rec, p6Show, p6Label, finDiff, pct, doneW, totalW, status } = ctx;
+  const { a, rec, p6Show, p6Label, finDiff, pct, doneW, totalW, status, expectedPct, schedVar, forecastFinish, forecastVar } = ctx;
   switch (colId) {
     case 'activity':  return `<td style="font-size:12px;font-weight:500;">${escapeHtml(a.activity)}</td>`;
     case 'subsystem': return `<td><span class="tag">${escapeHtml(a.subsystem)}</span></td>`;
     case 'location':  return `<td style="font-size:12px;">${escapeHtml(a.location)}</td>`;
     case 'phase':     return `<td><span class="tag tag-phase">${escapeHtml(a.phase)}</span></td>`;
-    case 'planned':   return `<td style="font-size:12px;">${rec?.planned_date ? _fmtDate(rec.planned_date) : '<span style="color:var(--gray-400);">—</span>'}</td>`;
     case 'p6start':   return `<td style="font-size:12px;">${p6Show?.start_date ? `${_fmtDate(p6Show.start_date)}<span style="font-size:10px;color:var(--gray-400);margin-left:4px;">${p6Label}</span>` : '<span style="color:var(--gray-400);">Not linked</span>'}</td>`;
     case 'p6finish':  return `<td style="font-size:12px;">${p6Show?.finish_date ? `${_fmtDate(p6Show.finish_date)}<span style="font-size:10px;color:var(--gray-400);margin-left:4px;">${p6Label}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>`;
-    case 'variance':  return `<td style="font-size:12px;font-weight:600;${finDiff===null?'':finDiff>0?'color:#dc2626;':finDiff<0?'color:#059669;':''}">${finDiff === null ? '<span style="color:var(--gray-400);">—</span>' : finDiff === 0 ? 'On time' : `${finDiff>0?'+':''}${finDiff}d`}</td>`;
     case 'progress':  return `<td title="Weighted by test case weight: ${doneW.toFixed(1)} / ${totalW.toFixed(1)} pts"><div class="am-progress-wrap"><div class="am-progress-bar"><div class="am-progress-fill" style="width:${pct}%;background:${pct===100?'var(--good)':pct>0?'var(--info)':'var(--gray-300)'};"></div></div><span class="am-progress-label">${pct}%</span></div></td>`;
+    case 'expected':  return `<td style="font-size:12px;color:var(--gray-600);">${expectedPct === null ? '<span style="color:var(--gray-400);">—</span>' : expectedPct + '%'}</td>`;
+    case 'variance': {
+      if (schedVar === null) return `<td style="font-size:12px;"><span style="color:var(--gray-400);">—</span></td>`;
+      const color = schedVar > 5 ? '#059669' : schedVar >= -5 ? 'var(--gray-600)' : schedVar >= -15 ? '#d97706' : '#dc2626';
+      const word  = schedVar > 5 ? 'ahead' : schedVar >= -5 ? 'on plan' : 'behind';
+      const label = schedVar === 0 ? 'On plan' : `${schedVar > 0 ? '+' : ''}${schedVar} pts ${word}`;
+      return `<td style="font-size:12px;font-weight:600;color:${color};" title="Actual ${pct}% vs ${expectedPct}% expected by P6 schedule">${label}</td>`;
+    }
+    case 'forecast': {
+      if (pct >= 100) return `<td style="font-size:12px;color:#059669;">Complete</td>`;
+      if (!forecastFinish) return `<td style="font-size:12px;"><span style="color:var(--gray-400);">—</span></td>`;
+      const vtxt = forecastVar === null ? ''
+        : `<span style="font-size:10px;margin-left:5px;color:${forecastVar > 0 ? '#dc2626' : forecastVar < 0 ? '#059669' : 'var(--gray-400)'};">${forecastVar > 0 ? '+' : ''}${forecastVar}d vs base</span>`;
+      return `<td style="font-size:12px;" title="Today + P6 remaining duration">${_fmtDate(forecastFinish)}${vtxt}</td>`;
+    }
+    case 'baselinevar': return `<td style="font-size:12px;font-weight:600;${finDiff===null?'':finDiff>0?'color:#dc2626;':finDiff<0?'color:#059669;':''}">${finDiff === null ? '<span style="color:var(--gray-400);">—</span>' : finDiff === 0 ? 'On time' : `${finDiff>0?'+':''}${finDiff}d`}</td>`;
     case 'status':    return `<td>${_amStatusBadge(status)}</td>`;
     default: return '<td>—</td>';
   }
@@ -14575,6 +14591,8 @@ function renderSchedulePage() {
   const allPortal = _amGetActivities();
   const curBatch  = P6_BATCHES.find(b => b.schedule_type === 'current'  && b.is_current);
   const baseBatch = P6_BATCHES.find(b => b.schedule_type === 'baseline' && b.is_current);
+
+  const _todayD = new Date(); _todayD.setHours(0, 0, 0, 0);
 
   // Build schedule rows
   const rows = allPortal.map(a => {
@@ -14609,7 +14627,39 @@ function renderSchedulePage() {
     const finDiff = p6Cur && p6Base && p6Cur.finish_date && p6Base.finish_date
       ? Math.round((new Date(p6Cur.finish_date) - new Date(p6Base.finish_date)) / 86400000) : null;
 
-    return { a, rec, p6Show, p6Label, p6Cur, p6Base, pct, doneW, totalW, status, finDiff };
+    // ── Option A: schedule variance = actual % − expected % (by P6 time window) ──
+    // expected% = how far through the planned start→finish window today sits.
+    const p6Plan = p6Cur || p6Base; // current schedule preferred, baseline fallback
+    let expectedPct = null;
+    if (p6Plan?.start_date && p6Plan?.finish_date) {
+      const s = new Date(p6Plan.start_date); s.setHours(0, 0, 0, 0);
+      const f = new Date(p6Plan.finish_date); f.setHours(0, 0, 0, 0);
+      const span = f - s;
+      expectedPct = span > 0
+        ? Math.round(Math.min(1, Math.max(0, (_todayD - s) / span)) * 100)
+        : (_todayD >= f ? 100 : 0);
+    }
+    const schedVar = expectedPct === null ? null : (pct - expectedPct);
+
+    // ── Option C: forecast finish = today + P6 remaining duration (current pref) ──
+    let forecastFinish = null;
+    if (pct >= 100) {
+      forecastFinish = p6Cur?.finish_date ? new Date(p6Cur.finish_date)
+                     : (p6Plan?.finish_date ? new Date(p6Plan.finish_date) : null);
+    } else {
+      const rem = (p6Cur?.remaining_duration_days != null) ? p6Cur.remaining_duration_days
+                : (p6Plan?.remaining_duration_days != null ? p6Plan.remaining_duration_days : null);
+      if (rem != null) { forecastFinish = new Date(_todayD); forecastFinish.setDate(forecastFinish.getDate() + rem); }
+      else if (p6Cur?.finish_date) forecastFinish = new Date(p6Cur.finish_date);
+    }
+    let forecastVar = null;
+    if (forecastFinish && p6Base?.finish_date) {
+      const bf = new Date(p6Base.finish_date); bf.setHours(0, 0, 0, 0);
+      forecastVar = Math.round((forecastFinish - bf) / 86400000);
+    }
+
+    return { a, rec, p6Show, p6Label, p6Cur, p6Base, pct, doneW, totalW, status, finDiff,
+             expectedPct, schedVar, forecastFinish, forecastVar };
   });
 
   // ── Schedule KPIs ─────────────────────────────────────────────────────────
@@ -14625,7 +14675,10 @@ function renderSchedulePage() {
 
   const overdueRows = rowsWithCur.filter(r => { const d = new Date(r.p6Cur.finish_date); d.setHours(0,0,0,0); return d < _today && r.pct < 100; });
   const atRiskRows  = rowsWithCur.filter(r => { const d = new Date(r.p6Cur.finish_date); d.setHours(0,0,0,0); return d >= _today && d <= _in14 && r.pct < 100; });
-  const slipRows    = rows.filter(r => r.finDiff !== null && r.finDiff > 0);
+  // Behind plan: progress trails the P6 time window by >10 pts (Option A).
+  const behindRows  = rows.filter(r => r.schedVar !== null && r.schedVar < -10 && r.pct < 100);
+  // Forecast slip: projected finish lands past the baseline finish (Option C).
+  const forecastSlipRows = rows.filter(r => r.forecastVar !== null && r.forecastVar > 0 && r.pct < 100);
 
   // ── Compact hero with inline KPIs ───────────────────────────────────────
   hero.innerHTML = renderPageHero({
@@ -14635,9 +14688,9 @@ function renderSchedulePage() {
     stats: [
       { label: 'On-Time', value: onTimeRate !== null ? onTimeRate + '%' : '—',
         tone: onTimeColor === 'good' ? 'good' : onTimeColor === 'warn' ? 'amber' : onTimeColor === 'bad' ? 'red' : 'muted' },
-      { label: 'Overdue', value: overdueRows.length, tone: overdueRows.length ? 'red'   : 'good'  },
-      { label: 'At Risk', value: atRiskRows.length,  tone: atRiskRows.length  ? 'amber' : 'muted' },
-      { label: 'Slip',    value: slipRows.length,    tone: slipRows.length    ? 'amber' : 'muted' },
+      { label: 'Overdue',     value: overdueRows.length,      tone: overdueRows.length ? 'red' : 'good' },
+      { label: 'Behind Plan', value: behindRows.length,       tone: behindRows.length  ? 'amber' : 'good' },
+      { label: 'Fcast Slip',  value: forecastSlipRows.length, tone: forecastSlipRows.length ? 'amber' : 'good' },
     ],
   });
 
@@ -14669,10 +14722,16 @@ function renderSchedulePage() {
         atRiskRows.length > 0 ? 'P6 finish within 14 days, not complete' : 'No upcoming deadlines at risk'
       )}
       ${_schedKpiCard(
-        'Schedule Slip',
-        slipRows.length,
-        slipRows.length > 0 ? 'warn' : 'good',
-        slipRows.length > 0 ? `Current finish past baseline on ${slipRows.length} activit${slipRows.length === 1 ? 'y' : 'ies'}` : 'No drift from baseline'
+        'Behind Plan',
+        behindRows.length,
+        behindRows.length > 0 ? 'warn' : 'good',
+        behindRows.length > 0 ? `Progress >10 pts behind the P6 time window on ${behindRows.length} activit${behindRows.length === 1 ? 'y' : 'ies'}` : 'Progress keeping pace with the plan'
+      )}
+      ${_schedKpiCard(
+        'Forecast Slip',
+        forecastSlipRows.length,
+        forecastSlipRows.length > 0 ? 'bad' : 'good',
+        forecastSlipRows.length > 0 ? `Projected finish past baseline on ${forecastSlipRows.length} activit${forecastSlipRows.length === 1 ? 'y' : 'ies'}` : 'On track to hit baseline'
       )}
     </div>`;
 
