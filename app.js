@@ -82,6 +82,18 @@ const ICONS = {
   train:        '<rect width="16" height="16" x="4" y="3" rx="2"/><path d="M4 11h16"/><path d="M12 3v8"/><path d="m8 19-2 3"/><path d="m18 22-2-3"/><path d="M8 15h.01"/><path d="M16 15h.01"/>',
   target:       '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
   info:         '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+  cursor:       '<path d="m4 4 7.07 17 2.51-7.39L21 11.07z"/>',
+  type:         '<path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/>',
+  highlighter:  '<path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>',
+  redline:      '<path d="M4 12h16"/><path d="M6 7h2"/><path d="M6 17h4"/>',
+  square:       '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+  circle:       '<circle cx="12" cy="12" r="9"/>',
+  'arrow-ur':   '<path d="M7 17 17 7"/><path d="M7 7h10v10"/>',
+  line:         '<path d="M5 19 19 5"/>',
+  stamp:        '<path d="M5 22h14"/><path d="M19.27 13.73A2.5 2.5 0 0 0 17.5 13h-11A2.5 2.5 0 0 0 4 15.5V17a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-1.5c0-.66-.26-1.3-.73-1.77Z"/><path d="M14 13V8.5C14 7 15 7 15 5a3 3 0 0 0-6 0c0 2 1 2 1 3.5V13"/>',
+  eraser:       '<path d="m7 21-4.3-4.3a1 1 0 0 1 0-1.4l9.6-9.6a1 1 0 0 1 1.4 0l5.6 5.6a1 1 0 0 1 0 1.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>',
+  undo:         '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-1"/>',
+  redo:         '<path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h1"/>',
 };
 function icon(name, opts) {
   opts = opts || {};
@@ -27731,7 +27743,7 @@ function _formsEditStatePath(form) {
 }
 
 function _emptyFormEditState() {
-  return { version: 2, fields: {}, signatures: {}, layouts: [], updatedAt: null };
+  return { version: 2, fields: {}, signatures: {}, layouts: [], markup: {}, updatedAt: null };
 }
 
 function _normalizeFormEditState(state) {
@@ -27742,6 +27754,7 @@ function _normalizeFormEditState(state) {
     fields: state.fields && typeof state.fields === 'object' ? state.fields : {},
     signatures: state.signatures && typeof state.signatures === 'object' ? state.signatures : {},
     layouts: Array.isArray(state.layouts) ? state.layouts : [],
+    markup: state.markup && typeof state.markup === 'object' ? state.markup : {},
     updatedAt: state.updatedAt || null,
   };
 }
@@ -28321,6 +28334,8 @@ async function openFormViewer(formId) {
             <label class="pdf-tb-pin" title="Cache PDF locally for offline use">
               <input type="checkbox" id="pdf-tb-pin" ${pin ? 'checked' : ''}/> Available offline
             </label>
+            <span class="pdf-tb-divider"></span>
+            <button type="button" class="pdf-tb-btn" id="pdf-tb-markup" aria-pressed="false" title="Markup / redline this page" onclick="_fmkToggle()">${icon('edit')} Markup</button>
             <span id="pdf-tb-status" class="pdf-tb-status pdf-tb-status-saved">Loaded</span>
           </div>
         </div>
@@ -28465,6 +28480,7 @@ async function _pdfBuildPages(form) {
   for (const rec of (_pdfViewerState.pageRecords || [])) {
     if (rec?.renderTask) { try { rec.renderTask.cancel(); } catch { /* noop */ } }
   }
+  if (_fmkActive) _fmkCapture(true);
   pagesEl.innerHTML = '';
   if (thumbsEl) thumbsEl.innerHTML = '';
   _pdfViewerState.pageOverlays = [];
@@ -28573,6 +28589,7 @@ async function _pdfRenderPage(idx) {
     _renderFormFieldOverlay(rec.overlay, annots, viewport, idx);
     _renderSavedFieldLayouts();
     rec.rendered = true;
+    if (_fmkActive) _fmkMountPage(idx);
   } catch (e) {
     if (e?.name !== 'RenderingCancelledException') console.warn('[_pdfRenderPage]', idx, e.message || e);
   } finally {
@@ -28666,6 +28683,156 @@ async function _pdfRebuildAtZoom() {
   _pdfUpdateZoomLabel();
 }
 
+/* ── Forms markup layer — shared CXMarkup engine over each PDF page ──────
+   Markup is a review layer ABOVE AcroForm filling. It persists inside the
+   form edit-state JSON (markup: {pageIndex: annotations[]}) so it reopens
+   fully editable and rides the existing autosave path, then flattens into
+   the filled PDF via pdf-lib (vector-crisp). Toggle via the toolbar. */
+let _fmkActive  = false;
+let _fmkFormId  = null;
+let _fmkEngines = {};   // pageIndex -> CXMarkup engine
+let _fmkModel   = {};   // pageIndex -> annotations[]  (authoritative store)
+let _fmkFocus   = -1;   // last page interacted with (for undo/redo target)
+let _fmkBar     = null; // handle from CXMarkup.buildToolbar
+let _fmkStyle   = { tool: 'select', color: '#dc2626', width: 3, stamp: 'PASS' };
+
+function _fmkEngineerName() {
+  return (typeof currentRoleUser !== 'undefined' && currentRoleUser && currentRoleUser.name)
+      || (typeof currentUser !== 'undefined' && currentUser && currentUser.email)
+      || 'Engineer';
+}
+function _fmkEach(fn) { Object.values(_fmkEngines).forEach(fn); }
+function _fmkFocusEngine() { return _fmkEngines[_fmkFocus] || Object.values(_fmkEngines)[0] || null; }
+function _fmkEnsureForm() {
+  const fid = (_pdfViewerState && _pdfViewerState.formId) || null;
+  if (fid !== _fmkFormId) {
+    Object.values(_fmkEngines).forEach(e => { try { e.destroy(); } catch (_) {} });
+    _fmkEngines = {}; _fmkModel = {}; _fmkFocus = -1; _fmkActive = false; _fmkFormId = fid;
+  }
+}
+function _fmkSeedModel() {
+  const saved = _pdfViewerState && _pdfViewerState.editState && _pdfViewerState.editState.markup;
+  if (saved && typeof saved === 'object' && !Object.keys(_fmkModel).length) {
+    for (const k of Object.keys(saved)) {
+      const m = saved[k];
+      _fmkModel[k] = Array.isArray(m) ? m : ((m && m.annotations) || []);
+    }
+  }
+}
+// Authoritative markup map for persistence: merge live engines + stored model,
+// dropping empty pages. Safe to call even when markup was never opened.
+function _fmkCollectModel() {
+  Object.keys(_fmkEngines).forEach(k => { _fmkModel[k] = _fmkEngines[k].getAnnotations(); });
+  const out = {};
+  Object.keys(_fmkModel).forEach(k => { if ((_fmkModel[k] || []).length) out[k] = _fmkModel[k]; });
+  return out;
+}
+function _fmkCapture(destroy) {
+  Object.keys(_fmkEngines).forEach(k => {
+    _fmkModel[k] = _fmkEngines[k].getAnnotations();
+    if (destroy) { try { _fmkEngines[k].destroy(); } catch (_) {} }
+  });
+  if (destroy) _fmkEngines = {};
+}
+function _fmkMountPage(idx) {
+  _fmkEnsureForm();
+  if (!_fmkActive || _fmkEngines[idx]) return;
+  if (typeof CXMarkup === 'undefined') return;
+  const rec = _pdfViewerState && _pdfViewerState.pageRecords && _pdfViewerState.pageRecords[idx];
+  if (!rec || !rec.rendered || !rec.canvas) return;
+  const eng = CXMarkup.attach(rec.canvas, {
+    pageW: rec.baseViewport.width,
+    pageH: rec.baseViewport.height,
+    engineer: _fmkEngineerName(),
+    onChange: () => { _fmkFocus = idx; _pdfMarkDirty(); if (_fmkBar) _fmkBar.refresh({ canUndo: eng.canUndo(), canRedo: eng.canRedo() }); }
+  });
+  eng.cv.addEventListener('pointerdown', () => { _fmkFocus = idx; });
+  if (_fmkModel[idx]) eng.loadAnnotations(_fmkModel[idx]);
+  eng.setTool(_fmkStyle.tool); eng.setColor(_fmkStyle.color); eng.setWidth(_fmkStyle.width); eng.setStampKind(_fmkStyle.stamp);
+  _fmkEngines[idx] = eng;
+}
+// One toolbar drives every page: broadcast tool/style to all engines,
+// route undo/redo to the page last touched.
+function _fmkBroadcastProxy() {
+  return {
+    get color() { return _fmkStyle.color; },
+    get width() { return _fmkStyle.width; },
+    setTool:  t => { _fmkStyle.tool  = t; _fmkEach(e => e.setTool(t)); },
+    setColor: c => { _fmkStyle.color = c; _fmkEach(e => e.setColor(c)); },
+    setWidth: w => { _fmkStyle.width = w; _fmkEach(e => e.setWidth(w)); },
+    setStampKind: k => { _fmkStyle.stamp = k; _fmkEach(e => e.setStampKind(k)); },
+    undo: () => { const e = _fmkFocusEngine(); if (e) e.undo(); },
+    redo: () => { const e = _fmkFocusEngine(); if (e) e.redo(); },
+    canUndo: () => { const e = _fmkFocusEngine(); return e ? e.canUndo() : false; },
+    canRedo: () => { const e = _fmkFocusEngine(); return e ? e.canRedo() : false; },
+    onChange: () => {}
+  };
+}
+function _fmkToggle() {
+  _fmkEnsureForm();
+  if (!_pdfViewerState) return;
+  if (typeof CXMarkup === 'undefined') { toast('Markup engine not loaded', 'error'); return; }
+  _fmkActive = !_fmkActive;
+  const btn = document.getElementById('pdf-tb-markup');
+  if (btn) { btn.setAttribute('aria-pressed', String(_fmkActive)); btn.style.color = _fmkActive ? 'var(--brand, #dc2626)' : ''; }
+  const tb = document.getElementById('pdf-viewer-toolbar');
+  if (_fmkActive) {
+    _fmkSeedModel();
+    if (tb && !document.getElementById('pdf-markup-row')) {
+      const row = document.createElement('div');
+      row.className = 'pdf-tb-group'; row.id = 'pdf-markup-row';
+      row.style.cssText = 'flex-basis:100%;margin-top:6px;';
+      tb.appendChild(row);
+      _fmkBar = CXMarkup.buildToolbar(row, _fmkBroadcastProxy(), {
+        extra: [
+          { icon: 'save',    label: 'Save',    fn: () => saveFormPDF(_pdfViewerState.formId) },
+          { icon: 'printer', label: 'Flatten', fn: () => _fmkFlatten() }
+        ]
+      });
+    }
+    (_pdfViewerState.pageRecords || []).forEach((rec, i) => { if (rec && rec.rendered) _fmkMountPage(i); });
+    toast('Markup on — Save keeps it editable, Flatten prints a record', 'info');
+  } else {
+    _fmkCapture(true);
+    const row = document.getElementById('pdf-markup-row');
+    if (row) row.remove();
+    _fmkBar = null;
+  }
+}
+async function _fmkFlatten() {
+  if (typeof PDFLib === 'undefined') { toast('pdf-lib not loaded', 'error'); return; }
+  const form = FORMS.find(f => f.id === _pdfViewerState.formId);
+  if (!form) return;
+  _fmkCapture(false);
+  const model = _fmkCollectModel();
+  if (!Object.keys(model).length) { toast('No markup to flatten yet', 'info'); return; }
+  try {
+    // Start from the filled PDF (AcroForm values baked in) then overlay markup.
+    const filled = await _buildEditedFormPdfBlob(form, _pdfViewerState.editState);
+    const doc = await PDFLib.PDFDocument.load(await filled.arrayBuffer());
+    const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+    const pages = doc.getPages();
+    Object.keys(model).forEach(k => {
+      const idx = +k, page = pages[idx];
+      if (!page) return;
+      const rec = _pdfViewerState.pageRecords && _pdfViewerState.pageRecords[idx];
+      const pw = rec ? rec.baseViewport.width  : page.getWidth();
+      const ph = rec ? rec.baseViewport.height : page.getHeight();
+      CXMarkup.flattenIntoPdfPage(model[k], page, { pageW: pw, pageH: ph, font });
+    });
+    const out = await doc.save();
+    const blob = new Blob([out], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank');
+    if (!w) { const a = document.createElement('a'); a.href = url; a.download = (form.name || 'form') + '_markup.pdf'; a.click(); }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    toast('Flattened record created', 'success');
+  } catch (e) {
+    console.error('[_fmkFlatten]', e);
+    toast('Flatten failed: ' + e.message, 'error');
+  }
+}
+
 function _pdfUpdateZoomLabel() {
   const lbl = document.getElementById('pdf-tb-zoom-label');
   if (!lbl) return;
@@ -28710,6 +28877,7 @@ async function _pdfSaveLocalDraft() {
     fields: values,
     signatures: _pdfViewerState.signatures || {},
     layouts: _pdfViewerState.fieldLayouts || [],
+    markup: _fmkCollectModel(),
     updatedAt: new Date().toISOString(),
   };
   await _idbDraftPut({ formId: _pdfViewerState.formId, state, savedAt: new Date().toISOString() });
@@ -28731,6 +28899,7 @@ async function _pdfAutosaveRemote() {
       fields: values,
       signatures: _pdfViewerState.signatures || {},
       layouts: _pdfViewerState.fieldLayouts || [],
+      markup: _fmkCollectModel(),
     });
     _pdfViewerState.editState = next;
     _pdfViewerState.dirty = false;
@@ -29286,6 +29455,7 @@ async function saveFormPDF(formId) {
       fields: values,
       signatures: _pdfViewerState.signatures || {},
       layouts: _pdfViewerState.fieldLayouts || [],
+      markup: _fmkCollectModel(),
     });
     _pdfViewerState.editState = nextState;
     _pdfViewerState.dirty = false;
