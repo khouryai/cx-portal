@@ -22,6 +22,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Cache-bust the service worker on every deploy so clients always pick
+      # up new app.js / styles.css / index.html instead of the SW's cached
+      # copies. The committed CACHE_VERSION is just a baseline; this rewrites
+      # it (in the deploy artifact only — no commit back) to a unique value
+      # derived from the commit SHA. Keeps the SW from ever serving stale code.
+      - name: Cache-bust service worker
+        run: |
+          ver="cxp-${GITHUB_SHA::8}"
+          sed -i -E "s/cxp-v?[0-9A-Fa-f]+/${ver}/g" sw.js
+          echo "Service worker cache version set to ${ver}"
+          grep -n "CACHE_VERSION =" sw.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

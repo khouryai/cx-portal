@@ -3,7 +3,10 @@
 //  - Precache the app shell so the page boots offline.
 //  - Runtime: stale-while-revalidate for same-origin static + Supabase Storage GETs
 //    of PDFs and edit-state JSON; bypass everything else (auth, REST mutations, etc).
-//  - Bump CACHE_VERSION to force clients to upgrade.
+//  - CACHE_VERSION below is a baseline; the GitHub Pages deploy workflow
+//    rewrites it to a unique per-commit value (cxp-<sha>) at deploy time,
+//    so every deploy forces clients to fetch fresh assets. Manual bumps
+//    here are no longer required.
 
 const CACHE_VERSION = 'cxp-v56';
 const SHELL_CACHE   = `${CACHE_VERSION}-shell`;
