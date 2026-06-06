@@ -11187,7 +11187,7 @@ function _amDrilldownHTML(key) {
             <h1 class="act-title">${escapeHtml(act.activity)}</h1>
             ${act.futureTestReason ? `<div class="future-reason">Future Test Reason: ${escapeHtml(act.futureTestReason)}</div>` : ''}
           </div>
-          <div style="display:flex;align-items:center;gap:16px;flex-shrink:0;flex-wrap:wrap;">
+          <div class="tr-drill-headeractions" style="display:flex;align-items:center;gap:16px;flex-shrink:0;flex-wrap:wrap;">
             <div style="display:flex;flex-direction:column;gap:6px;min-width:200px;">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
                 <span class="v2-pill ${pillTone}">${escapeHtml(st)}</span>
