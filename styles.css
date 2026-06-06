@@ -13349,3 +13349,69 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 @media (pointer: coarse) {
   .table-scroll, .v2-table-wrap, .matrix-scroll { overscroll-behavior: contain; }
 }
+
+/* ===================================================================
+   Mobile layout fixes (≤640px) — additive, scoped
+   - Test Register drilldown: header actions stack; the test-case table
+     collapses to a stacked card list so the Test Name fits the screen
+     and the Bulk Edit button stays on-screen.
+   - Punch List / generic V2 tab rows wrap so the Create button stays visible.
+   - Drawings location toolbar: phase filter, location tabs and the upload
+     button stack and scroll cleanly instead of overlapping.
+   =================================================================== */
+
+/* Drawings location tabs render as a horizontal pill row (previously
+   unstyled, which stacked each pill full-width and let the badge overlap). */
+.drw-loc-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+
+@media (max-width: 640px) {
+  /* Test Register drilldown header: stack progress + action buttons full width */
+  .tr-drill-headeractions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 12px !important;
+  }
+  .tr-drill-headeractions > div { min-width: 0 !important; width: 100%; }
+  .tr-drill-headeractions button { flex: 1 1 auto; }
+
+  /* Test-case table -> stacked cards so the Test Name fits without crushing */
+  .tr-drilldown-shell .table-wrap { overflow-x: visible; }
+  .tr-case-table { min-width: 0 !important; width: 100%; }
+  .tr-case-table thead { display: none; }
+  .tr-case-table tbody,
+  .tr-case-table tr,
+  .tr-case-table td { display: block; width: auto; }
+  .tr-case-table tr {
+    border-bottom: 8px solid var(--surface-2);
+    padding: 4px 2px 8px;
+  }
+  .tr-case-table td {
+    border-bottom: none !important;
+    min-width: 0 !important;
+    padding: 5px 14px !important;
+  }
+  .tr-case-table td:empty { display: none; }
+  .tr-case-table td .form-input,
+  .tr-case-table td textarea,
+  .tr-case-table td select,
+  .tr-case-table td .mx-status-select { width: 100%; max-width: 100%; box-sizing: border-box; }
+
+  /* V2 tab rows (Punch List, RMA, ...): wrap so action buttons stay on-screen */
+  .v2-tabs-row { flex-wrap: wrap; gap: 10px; }
+  .v2-tabs { flex: 1 1 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .v2-tabs-row > div:last-child { flex: 1 1 100%; }
+  .v2-tabs-row > div:last-child .v2-btn-primary,
+  .v2-tabs-row > div:last-child .v2-btn-ghost { flex: 1 1 auto; justify-content: center; }
+
+  /* Drawings location toolbar: stack filter / tabs / upload button */
+  .drw-location-toolbar { flex-direction: column; align-items: stretch; }
+  .drw-phase-filter { max-width: none; }
+  .drw-phase-filter .ts-wrapper,
+  .drw-phase-filter .filter-select { min-width: 0; width: 100%; flex: 1; }
+  .drw-location-toolbar > .admin-action-btn { width: 100%; }
+  .drw-loc-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+  .drw-loc-tab { flex: 0 0 auto; white-space: nowrap; }
+  .drw-subtabs { overflow-x: auto; }
+  .drw-subtab { flex: 0 0 auto; white-space: nowrap; }
+}
