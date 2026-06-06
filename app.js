@@ -32421,6 +32421,9 @@ let _drwZoomScale = 1;
 let _drwSelectedShape = -1;
 let _drwDragState = null;
 let _drwTextEditor = null;
+let _drwStampKind  = 'PASS';
+let _drwHistory    = [];
+let _drwHp         = -1;
 
 async function _drwOpenSheet(sheetId, setId, pageIndex) {
   const sheet = DRAWING_SHEETS.find(s => s.id === sheetId);
@@ -32474,6 +32477,7 @@ async function _drwOpenSheet(sheetId, setId, pageIndex) {
     document.getElementById('drw-viewer-loading').textContent = `Failed to load: ${e.message}`;
   }
 
+  _drwHistReset();
   _drwSetTool('select');
   _drwSetColor(_drwTool.color);
 
@@ -32502,6 +32506,8 @@ function _drwEnsureEditorChrome() {
       <button class="drw-tool-btn" id="drw-tool-rect" onclick="_drwSetTool('rect')" title="Rectangle">Rect</button>
       <button class="drw-tool-btn" id="drw-tool-arrow" onclick="_drwSetTool('arrow')" title="Arrow">Arrow</button>
       <button class="drw-tool-btn" id="drw-tool-text" onclick="_drwSetTool('text')" title="Inline text box">Text</button>
+      <button class="drw-tool-btn" id="drw-tool-stamp" onclick="_drwSetTool('stamp')" title="Stamp: PASS / FAIL / SUPERSEDED">Stamp</button>
+      <span id="drw-stamp-chips" style="display:none;align-items:center;gap:4px;"></span>
       <select id="drw-width-select" class="drw-editor-select" onchange="_drwSetWidth(this.value)" title="Line width">
         <option value="2">2px</option><option value="3" selected>3px</option><option value="5">5px</option><option value="8">8px</option>
       </select>
@@ -32515,11 +32521,19 @@ function _drwEnsureEditorChrome() {
       <button class="drw-tool-btn" onclick="_drwZoomIn()" title="Zoom in">+</button>
       <span id="drw-zoom-label" class="drw-zoom-label">Fit</span>
       <span class="drw-toolbar-divider"></span>
+      <button class="drw-tool-btn" id="drw-tool-undo" onclick="_drwUndo()" title="Undo (Ctrl/Cmd+Z)" disabled>Undo</button>
+      <button class="drw-tool-btn" id="drw-tool-redo" onclick="_drwRedo()" title="Redo (Ctrl/Cmd+Shift+Z)" disabled>Redo</button>
       <button class="drw-tool-btn drw-danger-btn" onclick="_drwDeleteSelected()" title="Delete selected markup">Delete</button>
       <button class="drw-tool-btn drw-danger-btn" onclick="_drwClearMarkup()" title="Clear all your draft markups">Clear</button>
       <button class="drw-tool-btn" id="drw-tool-manage" onclick="_drwManageMarkupsOpen()" title="Manage all markups on this sheet (admin only)" style="display:${currentRoleUser?.role === 'admin' ? 'inline-flex' : 'none'};background:#fef3c7;color:#92400e;border-color:#fcd34d;">Manage</button>
       <button class="drw-save-btn" onclick="_drwSaveMarkup()">Save Draft</button>
       <button class="drw-publish-btn" onclick="_drwPublishMarkup()">Publish</button>`;
+    const _chips = document.getElementById('drw-stamp-chips');
+    if (_chips && typeof CXMarkup !== 'undefined') {
+      _chips.innerHTML = CXMarkup.STAMPS.map(s =>
+        `<button type="button" class="drw-stamp-chip" data-kind="${s.k}" onclick="_drwSetStampKind('${s.k}')" style="background:${s.c};color:#fff;border:none;border-radius:6px;padding:5px 8px;font:700 11px/1 'IBM Plex Mono',monospace;letter-spacing:.04em;cursor:pointer;">${s.k}</button>`
+      ).join('');
+    }
   }
   const hint = footer?.querySelector('.drw-editor-hint');
   if (footer && !hint) {
@@ -32807,6 +32821,7 @@ function _drwPointerUp(e) {
   if (_drwGestureLock) return;
   if (_drwDragState) {
     _drwDragState = null;
+    _drwHistPush();
     _drwRedraw();
     return;
   }
@@ -32832,11 +32847,18 @@ function _drwPointerUp(e) {
       color: _drwTool.color,
       size: 15,
     };
+  } else if (_drwTool.name === 'stamp') {
+    const _def = (typeof CXMarkup !== 'undefined' ? CXMarkup.STAMPS.find(x => x.k === _drwStampKind) : null) || { c: '#c2410c' };
+    const _now = new Date();
+    shape = { type: 'stamp', x: _drwStartX - 0.09, y: _drwStartY - 0.03, w: 0.18, h: 0.06,
+      kind: _drwStampKind, color: _def.c, who: (currentRoleUser && currentRoleUser.name) || '',
+      ts: _now.toLocaleDateString() + ' ' + _now.toTimeString().slice(0, 5) };
   }
   if (shape) {
     _drwMarkupShapes.push(shape);
     _drwSelectedShape = _drwMarkupShapes.length - 1;
     _drwMarkupDirty = true;
+    if (shape.type !== 'text') _drwHistPush();
   }
   _drwCurPath = [];
   _drwRedraw();
@@ -32917,6 +32939,29 @@ function _drwDrawShape(ctx, s, W, H, selected = false) {
       ctx.strokeRect(px, py, pw, ph);
       ctx.globalAlpha = 1;
     }
+  } else if (s.type === 'stamp') {
+    const sb = _drwShapeBounds(s);
+    const px = sb.x * W, py = sb.y * H, pw = sb.w * W, ph = sb.h * H;
+    const def = (typeof CXMarkup !== 'undefined' ? CXMarkup.STAMPS.find(x => x.k === s.kind) : null) || { c: s.color || '#c2410c' };
+    ctx.save();
+    ctx.strokeStyle = def.c; ctx.fillStyle = def.c;
+    ctx.lineWidth = Math.max(2, 3 * _drwZoomScale); ctx.globalAlpha = 0.92;
+    const rr = Math.min(8, ph * 0.2);
+    ctx.beginPath();
+    ctx.moveTo(px + rr, py);
+    ctx.arcTo(px + pw, py, px + pw, py + ph, rr);
+    ctx.arcTo(px + pw, py + ph, px, py + ph, rr);
+    ctx.arcTo(px, py + ph, px, py, rr);
+    ctx.arcTo(px, py, px + pw, py, rr);
+    ctx.closePath(); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.textAlign = 'center';
+    ctx.font = `700 ${Math.max(11, ph * 0.42)}px "IBM Plex Mono", monospace`;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(s.kind || '', px + pw / 2, py + ph * 0.38);
+    ctx.font = `500 ${Math.max(7, ph * 0.18)}px "IBM Plex Mono", monospace`;
+    ctx.fillText(((s.who || '') + '  ' + (s.ts || '')).trim(), px + pw / 2, py + ph * 0.74);
+    ctx.restore();
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   }
   if (selected) _drwDrawSelection(ctx, s, W, H);
 }
@@ -32966,6 +33011,7 @@ function _drwNormRect(x, y, w, h) {
 function _drwShapeBounds(s) {
   if (!s) return { x: 0, y: 0, w: 0, h: 0 };
   if (s.type === 'rect') return _drwNormRect(s.x || 0, s.y || 0, s.w || 0, s.h || 0);
+  if (s.type === 'stamp') return _drwNormRect(s.x || 0, s.y || 0, s.w || 0.18, s.h || 0.06);
   if (s.type === 'text') return { x: s.x || 0, y: s.y || 0, w: s.w || 0.22, h: s.h || 0.055 };
   if (s.type === 'arrow') {
     const x = Math.min(s.x1 || 0, s.x2 || 0), y = Math.min(s.y1 || 0, s.y2 || 0);
@@ -33028,7 +33074,7 @@ function _drwHitShape(fx, fy) {
   for (let i = _drwMarkupShapes.length - 1; i >= 0; i--) {
     const s = _drwMarkupShapes[i];
     const b = _drwShapeBounds(s);
-    if (s.type === 'rect' || s.type === 'text') {
+    if (s.type === 'rect' || s.type === 'text' || s.type === 'stamp') {
       const inside = fx >= b.x - tol && fx <= b.x + b.w + tol && fy >= b.y - tol && fy <= b.y + b.h + tol;
       if (inside) return i;
     } else if (s.type === 'arrow') {
@@ -33043,7 +33089,7 @@ function _drwHitShape(fx, fy) {
 }
 
 function _drwMoveShape(s, dx, dy) {
-  if (s.type === 'rect' || s.type === 'text') { s.x += dx; s.y += dy; }
+  if (s.type === 'rect' || s.type === 'text' || s.type === 'stamp') { s.x += dx; s.y += dy; }
   else if (s.type === 'arrow') { s.x1 += dx; s.y1 += dy; s.x2 += dx; s.y2 += dy; }
   else if (s.type === 'pen') s.points = (s.points || []).map(p => [p[0] + dx, p[1] + dy]);
 }
@@ -33067,7 +33113,7 @@ function _drwResizeShape(s, before, handle, dx, dy, lockRatio) {
     if (handle.includes('n')) top = bottom - nh; else bottom = top + nh;
   }
   const nb = { x: Math.min(left, right), y: Math.min(top, bottom), w: Math.max(0.008, Math.abs(right - left)), h: Math.max(0.008, Math.abs(bottom - top)) };
-  if (s.type === 'rect' || s.type === 'text') {
+  if (s.type === 'rect' || s.type === 'text' || s.type === 'stamp') {
     s.x = nb.x; s.y = nb.y; s.w = nb.w; s.h = nb.h;
   } else if (s.type === 'pen') {
     const sx = nb.w / Math.max(0.0001, b.w), sy = nb.h / Math.max(0.0001, b.h);
@@ -33127,6 +33173,7 @@ function _drwRemoveTextEditor(commit = true) {
   el.remove();
   _drwTextEditor = null;
   _drwRedraw();
+  if (commit) _drwHistPush();
 }
 
 function _drwCanvasDblClick(e) {
@@ -33140,6 +33187,8 @@ function _drwCanvasDblClick(e) {
 }
 
 function _drwCanvasKeyDown(e) {
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); if (e.shiftKey) _drwRedo(); else _drwUndo(); return; }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); _drwRedo(); return; }
   if (e.key === 'Delete' || e.key === 'Backspace') {
     e.preventDefault();
     _drwDeleteSelected();
@@ -33158,12 +33207,56 @@ function _drwDeleteSelected() {
   _drwMarkupDirty = true;
   _drwRemoveTextEditor(false);
   _drwRedraw();
+  _drwHistPush();
+}
+
+// ── Markup history (undo/redo) + stamps — shared with the CXMarkup engine ─
+function _drwHistReset() {
+  _drwHistory = [JSON.stringify(_drwMarkupShapes)];
+  _drwHp = 0;
+  _drwUpdateUndoButtons();
+}
+function _drwHistPush() {
+  const snap = JSON.stringify(_drwMarkupShapes);
+  if (_drwHistory[_drwHp] === snap) return;          // dedupe no-op mutations
+  _drwHistory = _drwHistory.slice(0, _drwHp + 1);
+  _drwHistory.push(snap);
+  if (_drwHistory.length > 80) _drwHistory.shift();
+  _drwHp = _drwHistory.length - 1;
+  _drwUpdateUndoButtons();
+}
+function _drwUndo() {
+  if (_drwHp <= 0) return;
+  _drwHp--;
+  _drwMarkupShapes = JSON.parse(_drwHistory[_drwHp]);
+  _drwSelectedShape = -1; _drwMarkupDirty = true;
+  _drwRemoveTextEditor(false);
+  _drwRedraw(); _drwUpdateUndoButtons();
+}
+function _drwRedo() {
+  if (_drwHp >= _drwHistory.length - 1) return;
+  _drwHp++;
+  _drwMarkupShapes = JSON.parse(_drwHistory[_drwHp]);
+  _drwSelectedShape = -1; _drwMarkupDirty = true;
+  _drwRedraw(); _drwUpdateUndoButtons();
+}
+function _drwUpdateUndoButtons() {
+  const u = document.getElementById('drw-tool-undo'), r = document.getElementById('drw-tool-redo');
+  if (u) u.disabled = _drwHp <= 0;
+  if (r) r.disabled = _drwHp >= _drwHistory.length - 1;
+}
+function _drwSetStampKind(k) {
+  _drwStampKind = k;
+  _drwSetTool('stamp');
+  document.querySelectorAll('.drw-stamp-chip').forEach(b => b.classList.toggle('active', b.dataset.kind === k));
 }
 
 function _drwSetTool(name) {
   _drwTool.name = name;
   document.querySelectorAll('.drw-tool-btn').forEach(b => b.classList.remove('active'));
   document.getElementById(`drw-tool-${name}`)?.classList.add('active');
+  const _chips = document.getElementById('drw-stamp-chips');
+  if (_chips) _chips.style.display = name === 'stamp' ? 'inline-flex' : 'none';
   _drwUpdateCursor();
 }
 
@@ -33173,6 +33266,7 @@ function _drwSetColor(color) {
     _drwMarkupShapes[_drwSelectedShape].color = color;
     _drwMarkupDirty = true;
     _drwRedraw();
+    _drwHistPush();
   }
   document.querySelectorAll('.drw-color-btn').forEach(b => b.style.outline='none');
   document.querySelector(`.drw-color-btn[data-color="${color}"]`)?.style.setProperty('outline','2px solid white');
@@ -33186,6 +33280,7 @@ function _drwSetWidth(width) {
     else s.width = _drwTool.width;
     _drwMarkupDirty = true;
     _drwRedraw();
+    _drwHistPush();
   }
 }
 
@@ -33203,6 +33298,7 @@ function _drwClearMarkup() {
   _drwMarkupDirty  = true;
   _drwRemoveTextEditor(false);
   _drwRedraw();
+  _drwHistPush();
 }
 
 async function _drwSaveMarkup() {
