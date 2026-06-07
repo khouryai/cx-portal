@@ -370,7 +370,7 @@
 /* Infinite-scroll sentinel */
 #pm-sentinel { height: 24px; }
 
-@media (max-width: 640px), (orientation: landscape) and (max-height: 540px) {
+@media (max-width: 640px), (orientation: landscape) and (max-height: 540px), (pointer: coarse) {
   .pm-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
   .pm-lb-info dl { grid-template-columns: 90px 1fr; }
 }
