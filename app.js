@@ -27780,8 +27780,9 @@ async function _formsSaveEditState(formId, state) {
 let FORMS           = [];
 let FORM_TEST_LINKS = [];
 let FORM_TPL_LINKS  = [];
+let _formsLoadOk    = false;          // false until a forms fetch succeeds
 
-async function loadForms() {
+async function loadForms(attempt = 0) {
   try {
     const [forms, testLinks, tplLinks] = await Promise.all([
       _dbSelect('forms'),
@@ -27791,9 +27792,20 @@ async function loadForms() {
     FORMS           = forms     || [];
     FORM_TEST_LINKS = testLinks || [];
     FORM_TPL_LINKS  = tplLinks  || [];
+    _formsLoadOk = true;
   } catch (e) {
-    console.warn('[loadForms]', e.message);
-    FORMS = []; FORM_TEST_LINKS = []; FORM_TPL_LINKS = [];
+    _formsLoadOk = false;
+    // Retry once after a short delay — covers a stale supabase-js auth token
+    // right after the tab resumes from background (a known issue on phones).
+    if (attempt < 1) {
+      console.warn('[loadForms]', e.message, '— retrying');
+      await new Promise(r => setTimeout(r, 1200));
+      return loadForms(attempt + 1);
+    }
+    // Do NOT blank existing data on failure: a transient error must never look
+    // like "no forms exist." Keep the last-good lists; the picker surfaces a
+    // Reload action when the library is genuinely unavailable.
+    console.warn('[loadForms] giving up, keeping last-good data:', e.message);
   }
 }
 
@@ -29801,7 +29813,7 @@ function openLinkExistingForm(testId, assetId = '') {
 }
 
 function _lefRenderList(list) {
-  if (!list.length) return `<div style="padding:24px;text-align:center;color:var(--gray-500);">No matching forms.</div>`;
+  if (!list.length) return _lefEmptyState();
   return `<table class="data-table"><thead><tr><th>Name</th><th>Phase</th><th>Location</th><th>Subsystem</th><th style="width:90px;"></th></tr></thead>
     <tbody>${list.map(f => `
       <tr>
@@ -29811,6 +29823,37 @@ function _lefRenderList(list) {
         <td><span class="tag">${escapeHtml(f.subsystem || '—')}</span></td>
         <td><button class="admin-action-btn tr-mini-btn" onclick="linkExistingFormToTest('${f.id}', window._lefTestId)">Link</button></td>
       </tr>`).join('')}</tbody></table>`;
+}
+
+// Distinguish "no PDFs match / none uploaded yet" from "the forms library
+// failed to load" (e.g. a stale auth token after the tab resumed), so a
+// transient error never masquerades as data loss.
+function _lefEmptyState() {
+  const noCandidates = !window._lefAll || window._lefAll.length === 0;
+  if (noCandidates && FORMS.length === 0 && !_formsLoadOk) {
+    return `<div style="padding:24px;text-align:center;color:var(--gray-600);">
+      <div style="margin-bottom:10px;">Couldn't load the PDF library — your connection may have dropped or the session needs a refresh.</div>
+      <button class="admin-action-btn" onclick="_lefReload(this)">Reload forms</button>
+    </div>`;
+  }
+  if (noCandidates && FORMS.length === 0) {
+    return `<div style="padding:24px;text-align:center;color:var(--gray-500);">No PDFs have been uploaded yet.</div>`;
+  }
+  return `<div style="padding:24px;text-align:center;color:var(--gray-500);">No matching forms.</div>`;
+}
+
+async function _lefReload(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+  await loadForms();
+  const tid = window._lefTestId, sa = window._lefAssetId || '';
+  const linksHere = FORM_TEST_LINKS.filter(l => l.test_id === tid);
+  const blocked = sa
+    ? new Set(linksHere.filter(l => l.asset_id == null || String(l.asset_id) === String(sa)).map(l => l.form_id))
+    : new Set(linksHere.map(l => l.form_id));
+  window._lefAll = FORMS.filter(f => !blocked.has(f.id) && !f.is_template);
+  const listEl = document.getElementById('lef-list');
+  if (listEl) listEl.innerHTML = _lefRenderList(window._lefAll);
+  if (typeof _reRenderTR === 'function') { try { _reRenderTR(); } catch (_) {} }
 }
 
 async function linkExistingFormToTest(formId, testId) {
