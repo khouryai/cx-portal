@@ -28734,6 +28734,14 @@ function _fmkCapture(destroy) {
   });
   if (destroy) _fmkEngines = {};
 }
+// Markup mode disables the fillable AcroForm field layer so taps land on the
+// markup canvas instead of form inputs (which otherwise swallow every touch
+// on dense test forms). Fields are visually subdued and restored on exit.
+function _fmkSetFieldsActive(rec, active) {
+  if (!rec || !rec.overlay) return;
+  rec.overlay.style.pointerEvents = active ? '' : 'none';
+  rec.overlay.style.opacity       = active ? '' : '0.45';
+}
 function _fmkMountPage(idx) {
   _fmkEnsureForm();
   if (!_fmkActive || _fmkEngines[idx]) return;
@@ -28750,6 +28758,7 @@ function _fmkMountPage(idx) {
   if (_fmkModel[idx]) eng.loadAnnotations(_fmkModel[idx]);
   eng.setTool(_fmkStyle.tool); eng.setColor(_fmkStyle.color); eng.setWidth(_fmkStyle.width); eng.setStampKind(_fmkStyle.stamp);
   _fmkEngines[idx] = eng;
+  _fmkSetFieldsActive(rec, false);
 }
 // One toolbar drives every page: broadcast tool/style to all engines,
 // route undo/redo to the page last touched.
@@ -28794,6 +28803,7 @@ function _fmkToggle() {
     toast('Markup on — Save keeps it editable, Flatten prints a record', 'info');
   } else {
     _fmkCapture(true);
+    (_pdfViewerState.pageRecords || []).forEach(rec => _fmkSetFieldsActive(rec, true));
     const row = document.getElementById('pdf-markup-row');
     if (row) row.remove();
     _fmkBar = null;

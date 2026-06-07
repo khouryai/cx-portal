@@ -433,7 +433,7 @@ function attach(hostCanvas, opts = {}) {
   if (getComputedStyle(wrap).position === "static") wrap.style.position = "relative";
   const overlay = document.createElement("canvas");
   overlay.className = "cx-markup-overlay";
-  overlay.style.cssText = "position:absolute;top:0;left:0;touch-action:none;z-index:5;";
+  overlay.style.cssText = "position:absolute;top:0;left:0;touch-action:none;z-index:20;";
   wrap.appendChild(overlay);
   return new CXMarkupEngine(overlay, {
     host: hostCanvas,
