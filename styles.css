@@ -13415,3 +13415,54 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .drw-subtabs { overflow-x: auto; }
   .drw-subtab { flex: 0 0 auto; white-space: nowrap; }
 }
+
+/* ===================================================================
+   Mobile depth & definition (<=720px)
+   The list-based modules (Punch List, RMAs, Test Reporting and any
+   shared .v2-list) rendered as a flat white sheet with hairline
+   dividers, which was hard to scan on a phone. Give each row an
+   elevated card on a soft canvas with a colored status spine so rows
+   are clearly separated and the status reads at a glance. Uses the
+   existing shadow/colour tokens to stay on-brand.
+   =================================================================== */
+@media (max-width: 720px) {
+  .v2-list {
+    background: var(--surface-3);
+    padding: 12px;
+  }
+  .v2-list-row {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 1px 2px rgba(16,24,40,0.05), 0 10px 22px -10px rgba(16,24,40,0.22);
+    padding: 15px 16px !important;
+    margin-bottom: 12px;
+    overflow: hidden; /* clip the status spine to the rounded corners */
+  }
+  .v2-list-row:last-child { margin-bottom: 0; }
+  .v2-list-row:hover,
+  .v2-list-row.is-expanded { background: var(--surface); }
+
+  /* Colored status spine down the left edge of every card */
+  .v2-list-row::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+    background: var(--border-strong);
+  }
+  .v2-list-row.tone-good::before   { background: #16a34a; }
+  .v2-list-row.tone-warn::before   { background: #d97706; }
+  .v2-list-row.tone-bad::before    { background: var(--hitachi-red); }
+  .v2-list-row.tone-info::before   { background: var(--brand-blue); }
+  .v2-list-row.tone-purple::before { background: var(--pending); }
+  .v2-list-row.tone-muted::before  { background: var(--border-strong); }
+  .v2-list-row.is-overdue::before,
+  .v2-list-row.is-critical::before { background: var(--hitachi-red); width: 4px; }
+
+  /* ID chip (#4, RMA #) hugs its content instead of stretching the cell */
+  .v2-list-row .v2-id-chip { justify-self: start; align-self: start; }
+
+  /* Tighten the now single-column stacked grids */
+  .punch-row, .rma-row, .trp-report { gap: 10px; }
+}

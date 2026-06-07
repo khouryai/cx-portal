@@ -7226,7 +7226,7 @@ function _plRowHTML(p) {
   const bic = _plBallInCourt(p);
 
   return `
-    <div class="v2-list-row ${isOverdue ? 'is-overdue' : (isCritical ? 'is-critical' : '')}"
+    <div class="v2-list-row tone-${pillTone.replace('is-','')} ${isOverdue ? 'is-overdue' : (isCritical ? 'is-critical' : '')}"
          onclick="openPunchDetail('${p.id}')">
       <div class="punch-row">
         <div onclick="event.stopPropagation()" style="padding-top:4px;">
@@ -9697,7 +9697,7 @@ function _trpReportRowHTML(row, canManage) {
       : 'Extract a compiled PDF (or ZIP) of all linked forms with summaries';
 
   return `
-    <div class="v2-list-row ${expanded ? 'is-expanded' : ''}" onclick="_trpToggleLinks('${uid}')">
+    <div class="v2-list-row tone-${pct>=100?'good':pct>0?'info':'muted'} ${expanded ? 'is-expanded' : ''}" onclick="_trpToggleLinks('${uid}')">
       <div class="trp-report">
         <div class="report-title-block">
           <h3 class="report-title">
@@ -16963,7 +16963,7 @@ function _rmaRowHTML(r, canEdit) {
   const dueClass = isOverdue ? 'is-bad' : (r.due_date && (new Date(r.due_date) - now) < 7*86400000) ? 'is-warm' : '';
 
   return `
-    <div class="v2-list-row ${isOverdue ? 'is-overdue' : ''}" onclick="_rmaViewModal('${r.id}')">
+    <div class="v2-list-row tone-${pillTone.replace('is-','')} ${isOverdue ? 'is-overdue' : ''}" onclick="_rmaViewModal('${r.id}')">
       <div class="rma-row">
         <div class="rma-id-block">
           <span class="${idChipClass}">${escapeHtml(r.rma_number || '—')}</span>
