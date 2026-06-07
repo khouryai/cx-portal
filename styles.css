@@ -4774,8 +4774,8 @@ textarea:focus-visible {
   }
 
   .form-submit,
-  .form-secondary,
-  .admin-action-btn {
+  .form-secondary:not(.tr-mini-btn),
+  .admin-action-btn:not(.tr-mini-btn) {
     width: 100%;
   }
 }
