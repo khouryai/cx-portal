@@ -11284,9 +11284,9 @@ function _amDrilldownHTML(key) {
                   const selToneClass = ({Pass:'is-pass', Fail:'is-fail', Blocked:'is-block',
                                           'In Progress':'is-inprog', 'Not Applicable':'is-na',
                                           'Future Test':'is-future'})[cur] || '';
-                  const isFailRow = cur === 'Fail';
+                  const isFailRow = cur === 'Fail'; const rowTone = ({Pass:'good',Fail:'bad',Blocked:'warn','In Progress':'info','Not Applicable':'muted','Future Test':'purple'})[cur] || 'muted';
                   return `
-                    <tr ${isFailRow ? 'class="is-fail"' : ''} ${_trEditMode && isAdmin ? `draggable="true" ondragstart="_trDragStart('${tid}')" ondragover="event.preventDefault()" ondrop="_trDropCase('${dropKey}','${tid}')"` : ''}>
+                    <tr class="tr-tone-${rowTone}${isFailRow ? ' is-fail' : ''}" ${_trEditMode && isAdmin ? `draggable="true" ondragstart="_trDragStart('${tid}')" ondragover="event.preventDefault()" ondrop="_trDropCase('${dropKey}','${tid}')"` : ''}>
                       ${_trBulkMode ? `<td><input type="checkbox" ${_trSelected.has(String(r.TestID))?'checked':''} onchange="_trToggleSelect('${tid}',this.checked)"></td>` : ''}
                       ${_trEditMode && isAdmin ? `<td style="cursor:grab;color:var(--gray-400);font-size:14px;">${icon('menu')}</td>` : ''}
                       <td style="min-width:140px;">${_trEditMode && isAdmin ? `<input class="form-input" style="font-size:11px;font-family:var(--f-mono);min-width:120px;" value="${escapeHtml(r.TestCaseCode||'')}" onchange="_trDraftChange('${tid}','TestCaseCode',this.value)">` : `<span class="v2-id-chip">${escapeHtml(r.TestCaseCode||r.TestID||'—')}</span>`}</td>

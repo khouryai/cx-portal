@@ -13375,23 +13375,55 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .tr-drill-headeractions > div { min-width: 0 !important; width: 100%; }
   .tr-drill-headeractions button { flex: 1 1 auto; }
 
-  /* Test-case table -> stacked cards so the Test Name fits without crushing */
-  .tr-drilldown-shell .table-wrap { overflow-x: visible; }
+  /* Test-case table -> stacked cards so the Test Name fits without crushing,
+     and each test case reads as its own elevated card with a status spine
+     instead of blending into a flat sheet. */
+  .tr-drilldown-shell .table-wrap {
+    overflow-x: visible;
+    background: var(--surface-3);
+    padding: 10px;
+  }
   .tr-case-table { min-width: 0 !important; width: 100%; }
   .tr-case-table thead { display: none; }
   .tr-case-table tbody,
   .tr-case-table tr,
   .tr-case-table td { display: block; width: auto; }
   .tr-case-table tr {
-    border-bottom: 8px solid var(--surface-2);
-    padding: 4px 2px 8px;
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 1px 2px rgba(16,24,40,0.05), 0 10px 22px -10px rgba(16,24,40,0.22);
+    margin-bottom: 12px;
+    padding: 12px 6px 14px;
+    overflow: hidden;
   }
+  .tr-case-table tr:last-child { margin-bottom: 0; }
+  .tr-case-table tbody tr:hover td { background: transparent; }
+  /* Status spine down the left edge, colored by test-case result */
+  .tr-case-table tbody tr::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+    background: var(--border-strong);
+  }
+  .tr-case-table tr.tr-tone-good::before   { background: #16a34a; }
+  .tr-case-table tr.tr-tone-bad::before,
+  .tr-case-table tr.is-fail::before        { background: var(--hitachi-red); }
+  .tr-case-table tr.tr-tone-warn::before   { background: #d97706; }
+  .tr-case-table tr.tr-tone-info::before   { background: var(--brand-blue); }
+  .tr-case-table tr.tr-tone-purple::before { background: var(--pending); }
+  .tr-case-table tr.tr-tone-muted::before  { background: var(--border-strong); }
   .tr-case-table td {
     border-bottom: none !important;
     min-width: 0 !important;
     padding: 5px 14px !important;
   }
   .tr-case-table td:empty { display: none; }
+  /* Reclaim the wide desktop gutters on the drilldown header + procedure head */
+  .tr-drilldown-shell .act-strip { padding: 14px 16px 12px; }
+  .tr-drilldown-shell .proc-head { padding: 12px 16px 10px; }
   .tr-case-table td .form-input,
   .tr-case-table td textarea,
   .tr-case-table td select,
