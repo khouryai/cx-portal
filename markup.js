@@ -113,7 +113,9 @@ class CXMarkupEngine {
 
   /* ---------- sizing — match the host canvas's displayed size --------- */
   resize() {
-    const dispW = (this.host ? this.host.clientWidth  : this.wrap.clientWidth)  || this.pageW;
+    let dispW = (this.host ? this.host.clientWidth : this.wrap.clientWidth);
+    if (!dispW && this.host) dispW = this.host.getBoundingClientRect().width;
+    if (!dispW) dispW = (this.wrap && this.wrap.getBoundingClientRect().width) || this.pageW;
     this.scale = (dispW / this.pageW) || 1;
     const dispH = this.pageH * this.scale;
     const dpr = global.devicePixelRatio || 1;
@@ -310,7 +312,10 @@ class CXMarkupEngine {
   _bind() {
     this._onDown = (e) => {
       if (this.readOnly) return;
-      this.cv.setPointerCapture(e.pointerId);
+      // setPointerCapture throws on iOS Safari for touch pointers in some
+      // contexts; never let it abort the draw handler. Capture is a nicety,
+      // not a requirement — move/up still target this canvas without it.
+      try { this.cv.setPointerCapture(e.pointerId); } catch (_) {}
       const p = this._pt(e), T = this.tool;
       if (T === "select") {
         const h = this._hit(p.x, p.y); this.selected = h;
@@ -435,7 +440,7 @@ function attach(hostCanvas, opts = {}) {
   overlay.className = "cx-markup-overlay";
   overlay.style.cssText = "position:absolute;top:0;left:0;touch-action:none;z-index:20;";
   wrap.appendChild(overlay);
-  return new CXMarkupEngine(overlay, {
+  const eng = new CXMarkupEngine(overlay, {
     host: hostCanvas,
     pageW: opts.pageW || hostCanvas.clientWidth,
     pageH: opts.pageH || hostCanvas.clientHeight,
@@ -443,6 +448,10 @@ function attach(hostCanvas, opts = {}) {
     onChange: opts.onChange,
     readOnly: opts.readOnly
   });
+  // iOS can report a 0/incorrect width on first paint; re-fit once layout settles.
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => eng.resize());
+  setTimeout(() => eng.resize(), 300);
+  return eng;
 }
 
 /* =====================================================================
