@@ -8,7 +8,7 @@
 //    so every deploy forces clients to fetch fresh assets. Manual bumps
 //    here are no longer required.
 
-const CACHE_VERSION = 'cxp-v56';
+const CACHE_VERSION = 'cxp-v57';
 const SHELL_CACHE   = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -16,6 +16,7 @@ const SHELL_ASSETS = [
   './',
   './index.html',
   './app.js',
+  './markup.js',
   './photos.js',
   './data.js',
   './styles.css',
@@ -66,26 +67,28 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
 
-  // Same-origin shell: try cache, then network.
+  // Same-origin shell: stale-while-revalidate. Serve the cached copy instantly
+  // (fast, offline-capable) but ALWAYS refetch in the background and update the
+  // cache, so a new deploy propagates on the next load — even if the service
+  // worker itself is slow to update (a known iOS PWA problem). Cache-first
+  // used to pin clients to a stale app.js indefinitely.
   if (url.origin === self.location.origin) {
     event.respondWith((async () => {
-      const cached = await caches.match(req);
-      if (cached) return cached;
-      try {
-        const res = await fetch(req);
-        if (res && res.ok && (req.destination === 'script' || req.destination === 'style' || req.destination === 'document' || req.destination === 'font')) {
-          const cache = await caches.open(SHELL_CACHE);
-          cache.put(req, res.clone());
-        }
+      const cache = await caches.open(SHELL_CACHE);
+      const cached = await cache.match(req);
+      const network = fetch(req).then((res) => {
+        if (res && res.ok) cache.put(req, res.clone());
         return res;
-      } catch {
-        // Last-resort: hand back the cached index for navigations.
-        if (req.mode === 'navigate') {
-          const fallback = await caches.match('./index.html');
-          if (fallback) return fallback;
-        }
-        throw new Error('offline');
+      }).catch(() => null);
+      if (cached) { network.catch(() => {}); return cached; }   // revalidate in bg
+      const res = await network;
+      if (res) return res;
+      // Offline and uncached: hand back the cached index for navigations.
+      if (req.mode === 'navigate') {
+        const fallback = await caches.match('./index.html');
+        if (fallback) return fallback;
       }
+      throw new Error('offline');
     })());
     return;
   }
