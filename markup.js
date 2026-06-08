@@ -37,8 +37,8 @@ function ic(name, opts) {
 
 /* ---- TEMPORARY on-device diagnostic. Flip DEBUG to false to remove the
    on-screen readout once markup is verified working on iPad/iPhone. ---- */
-let DEBUG = false;
-const BUILD = "mk-debug-1";
+let DEBUG = true;
+const BUILD = "resize-2";
 function _hud(msg) {
   if (!DEBUG) return;
   let el = document.getElementById("cx-markup-hud");
