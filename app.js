@@ -28709,6 +28709,7 @@ let _fmkModel   = {};   // pageIndex -> annotations[]  (authoritative store)
 let _fmkFocus   = -1;   // last page interacted with (for undo/redo target)
 let _fmkBar     = null; // handle from CXMarkup.buildToolbar
 let _fmkStyle   = { tool: 'select', color: '#dc2626', width: 3, stamp: 'PASS' };
+let _fmkEngSeq  = 0;
 
 function _fmkEngineerName() {
   return (typeof currentRoleUser !== 'undefined' && currentRoleUser && currentRoleUser.name)
@@ -28771,6 +28772,7 @@ function _fmkMountPage(idx) {
   eng.cv.addEventListener('pointerdown', () => { _fmkFocus = idx; });
   if (_fmkModel[idx]) eng.loadAnnotations(_fmkModel[idx]);
   eng.setTool(_fmkStyle.tool); eng.setColor(_fmkStyle.color); eng.setWidth(_fmkStyle.width); eng.setStampKind(_fmkStyle.stamp);
+  eng._dbgId = 'p' + idx + '#' + (++_fmkEngSeq);
   _fmkEngines[idx] = eng;
   _fmkSetFieldsActive(rec, false);
 }
@@ -28780,7 +28782,7 @@ function _fmkBroadcastProxy() {
   return {
     get color() { return _fmkStyle.color; },
     get width() { return _fmkStyle.width; },
-    setTool:  t => { _fmkStyle.tool  = t; _fmkEach(e => e.setTool(t)); },
+    setTool:  t => { _fmkStyle.tool  = t; _fmkEach(e => e.setTool(t)); if (typeof CXMarkup !== 'undefined' && CXMarkup._hud) CXMarkup._hud('setTool=' + t + '  -> engines=[' + Object.values(_fmkEngines).map(e => (e._dbgId || '?') + ':' + e.tool).join(', ') + ']'); },
     setColor: c => { _fmkStyle.color = c; _fmkEach(e => e.setColor(c)); },
     setWidth: w => { _fmkStyle.width = w; _fmkEach(e => e.setWidth(w)); },
     setStampKind: k => { _fmkStyle.stamp = k; _fmkEach(e => e.setStampKind(k)); },

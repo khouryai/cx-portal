@@ -338,7 +338,8 @@ class CXMarkupEngine {
         const r = this.cv.getBoundingClientRect();
         _hud("DOWN ok @ " + Math.round(p.x) + "," + Math.round(p.y) + "  tool=" + T +
              "\nscale=" + this.scale.toFixed(2) + "  css=" + this.cv.style.width + " x " + this.cv.style.height +
-             "\nrect=" + Math.round(r.width) + " x " + Math.round(r.height) + "  ptr=" + e.pointerType);
+             "\nrect=" + Math.round(r.width) + " x " + Math.round(r.height) + "  ptr=" + e.pointerType +
+             "  id=" + (this._dbgId || "?"));
         const c = this.ctx; c.save(); c.fillStyle = "rgba(220,38,38,.95)";
         c.beginPath(); c.arc(p.x, p.y, 7, 0, Math.PI * 2); c.fill(); c.restore();
       }
