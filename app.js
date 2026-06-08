@@ -33774,6 +33774,7 @@ const _dynPage = {
   campaigns: [],                         // access_campaigns rows
   shifts: [],                            // zone_access_windows rows (campaign-generated + ad-hoc)
   trainRequests: [],                     // train_requests rows (Phase 2)
+  dynEvents: [],                         // planning_events linked to shifts (Phase 4)
   accWeekStart: null,                    // Monday of the visible week on the Access Plan grid
   accCampaignFilter: '',                 // '' or a campaign id
   // Duration-variance tab filters (client-side, recompute KPIs live)
@@ -33984,6 +33985,8 @@ async function _dynLoadAll() {
       .catch(e => { console.warn('[dyn] shifts load:', e.message); return []; });
     _dynPage.trainRequests = await _dbSelect('train_requests', {}, '*')
       .catch(e => { console.warn('[dyn] train requests load:', e.message); return []; });
+    _dynPage.dynEvents = await _dbSelect('planning_events', {}, 'id,dynamic_shift_id,status,event_date')
+      .catch(e => { console.warn('[dyn] events load:', e.message); return []; });
     _dynPage.loaded = true;
   } finally {
     _dynPage.loading = false;
@@ -36234,9 +36237,12 @@ function _dynOpenShift(id) {
           ${_dynShiftPill(s)}
           <span style="font-size:12px;color:var(--gray-600);">${fmtT(s.start_at)}–${fmtT(s.end_at)} · ${(s.allowed_modes||[]).join('+')||'any'} · ${s.max_trains||1} train${(s.max_trains||1)===1?'':'s'}${s.consist_size?` × ${s.consist_size}-car`:''}</span>
         </div>
-        <div style="font-size:11.5px;margin-bottom:12px;color:${avail.approved>=avail.requested&&avail.requested>0?'#065f46':'#d97706'};">
+        <div style="font-size:11.5px;margin-bottom:8px;color:${avail.approved>=avail.requested&&avail.requested>0?'#065f46':'#d97706'};">
           🚆 Trains: <b>${avail.approved}</b> approved of ${avail.requested} requested${camp?` · <a href="javascript:void(0)" style="color:var(--info);" onclick="closeModal();_dynOpenTrains('${escapeHtml(camp.id)}')">manage</a>`:''}
         </div>
+        ${(() => { const ev = _dynShiftEventRow(s.id); return ev
+          ? `<div style="font-size:11.5px;margin-bottom:12px;color:#6d28d9;">📅 Field event created${ev.status==='cancelled'?' (cancelled)':''} · Train Operator, ROC, EIC auto-added · <a href="javascript:void(0)" style="color:var(--info);" onclick="closeModal();showPage('lookahead')">open Lookahead</a></div>`
+          : (s.status !== 'cancelled' ? `<div style="font-size:11.5px;margin-bottom:12px;color:var(--gray-500);">📅 No field event yet · <a href="javascript:void(0)" style="color:var(--info);" onclick="_dynCreateShiftEventUI('${escapeHtml(s.id)}')">create with BART minimums</a> (auto on Confirm)</div>` : ''); })()}
         ${s.status === 'cancelled' ? `
           <div style="padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#b91c1c;margin-bottom:12px;">
             <b>Cancelled:</b> ${escapeHtml(s.cancellation_category || '—')}${s.cancellation_reason ? ` — ${escapeHtml(s.cancellation_reason)}` : ''}
@@ -36268,9 +36274,18 @@ async function _dynShiftSetStatus(id, status) {
     if (status !== 'cancelled') { payload.cancellation_reason = null; payload.cancellation_category = null; }
     await _dbUpdate('zone_access_windows', payload, { id });
     const s = (_dynPage.shifts || []).find(x => x.id === id); if (s) Object.assign(s, payload);
+    // Lookahead sync: confirming a shift creates the field event with mandatory
+    // BART resources; restoring re-activates it.
+    let extra = '';
+    if (status === 'confirmed' && s && !_dynShiftEventRow(id)) {
+      try { await _dynCreateShiftEvent(s); extra = ' · field event created'; }
+      catch (e) { console.warn('[dyn] event create on confirm:', e.message); }
+    } else if (status === 'planned') {
+      await _dynSyncShiftEventStatus(id, 'planned');
+    }
     closeModal();
     _dynRenderAccess();
-    if (typeof toast === 'function') toast(`Shift ${status}`, 'success');
+    if (typeof toast === 'function') toast(`Shift ${status}${extra}`, 'success');
   } catch (e) { alert(`Update failed: ${e.message}`); }
 }
 
@@ -36281,6 +36296,7 @@ async function _dynShiftCancel(id) {
     const payload = { status: 'cancelled', cancellation_category: cat, cancellation_reason: reason };
     await _dbUpdate('zone_access_windows', payload, { id });
     const s = (_dynPage.shifts || []).find(x => x.id === id); if (s) Object.assign(s, payload);
+    await _dynSyncShiftEventStatus(id, 'cancelled'); // mirror to the Lookahead
     closeModal();
     _dynRenderAccess();
     if (typeof toast === 'function') toast('Shift cancelled', 'success');
@@ -36461,6 +36477,100 @@ function _dynCampaignProgress(campaignId) {
       </div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
   });
+}
+
+// ── Lookahead integration (Phase 4): shift → field event + BART resources ──
+// Every vehicle access day requires a Train Operator, ROC, and EIC. Confirming
+// a shift auto-creates a Lookahead planning_event and attaches those minimums;
+// crews/witnesses can still be dragged in on the Lookahead.
+const _DYN_BART_MANDATORY = ['Train Operator', 'ROC', 'EIC'];
+
+function _dynShiftEventRow(shiftId) {
+  return (_dynPage.dynEvents || []).find(e => e.dynamic_shift_id === shiftId) || null;
+}
+
+async function _dynEnsureBartResources() {
+  if (_dynPage._bartResIds) return _dynPage._bartResIds;
+  let resources = [];
+  try { resources = await _dbSelect('planning_resources', {}, 'id,display_name,category'); } catch (_) {}
+  const find = nm => resources.find(r =>
+    (r.display_name || '').toLowerCase() === nm.toLowerCase() ||
+    (r.category || '').toLowerCase() === nm.toLowerCase());
+  const ids = {};
+  for (const nm of _DYN_BART_MANDATORY) {
+    let r = find(nm);
+    if (!r) {
+      const ins = await _dbInsert('planning_resources', [{
+        display_name: nm, resource_type: 'crew', kind: 'role', category: nm,
+        is_requestable: true, is_active: true,
+      }]);
+      r = Array.isArray(ins) ? ins[0] : ins;
+    }
+    if (r?.id) ids[nm] = r.id;
+  }
+  _dynPage._bartResIds = ids;
+  return ids;
+}
+
+async function _dynCreateShiftEvent(s) {
+  const existing = await _dbSelect('planning_events', { dynamic_shift_id: s.id }, 'id').catch(() => []);
+  if (existing.length) return existing[0].id;
+  const ids = await _dynEnsureBartResources();
+  const camp = _dynPage.campaigns.find(c => c.id === s.campaign_id);
+  const st = new Date(s.start_at), en = new Date(s.end_at);
+  const hhmm = d => `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:00`;
+  const evRows = await _dbInsert('planning_events', [{
+    title: `Dynamic test — ${s.control_zone_code}${camp ? ` (${camp.name})` : ''}`,
+    event_date: s.shift_date,
+    start_time: (s.start_at && s.end_at) ? hhmm(st) : null,
+    end_time:   (s.start_at && s.end_at) ? hhmm(en) : null,
+    all_day: false,
+    location: s.control_zone_code,
+    cell_color_hex: '#6d28d9',
+    source: 'dynamic',
+    status: 'planned',
+    is_locked: false,
+    dynamic_shift_id: s.id,
+    notes: `Auto-created from dynamic access shift${camp ? ` · ${camp.name}` : ''}`,
+    created_by: currentProfile?.id || null,
+    updated_by: currentProfile?.id || null,
+  }]);
+  const eid = Array.isArray(evRows) ? evRows[0]?.id : evRows?.id;
+  if (!eid) throw new Error('event insert returned no id');
+  // Mandatory BART resources for any vehicle access day.
+  const avail = s.campaign_id ? _dynCampaignTrainAvail(s.campaign_id, s.control_zone_code) : { approved: s.max_trains || 1 };
+  const trainOps = Math.max(1, avail.approved || s.max_trains || 1);
+  const res = [];
+  if (ids['Train Operator']) res.push({ event_id: eid, resource_id: ids['Train Operator'], role: 'required', quantity: trainOps, assignment_source: 'dynamic' });
+  if (ids['ROC'])            res.push({ event_id: eid, resource_id: ids['ROC'],            role: 'required', quantity: 1,        assignment_source: 'dynamic' });
+  if (ids['EIC'])            res.push({ event_id: eid, resource_id: ids['EIC'],            role: 'required', quantity: 1,        assignment_source: 'dynamic' });
+  if (res.length) await _dbInsert('planning_event_resources', res);
+  // Reflect in local caches so the badge updates without a full reload.
+  (_dynPage.dynEvents = _dynPage.dynEvents || []).push({ id: eid, dynamic_shift_id: s.id, status: 'planned', event_date: s.shift_date });
+  if (typeof _planningLoadedAt !== 'undefined') _planningLoadedAt = 0; // force Lookahead refetch
+  return eid;
+}
+
+// Keep the linked Lookahead event's status in step with the shift.
+async function _dynSyncShiftEventStatus(shiftId, status) {
+  const ev = _dynShiftEventRow(shiftId);
+  if (!ev) return;
+  try {
+    await _dbUpdate('planning_events', { status, updated_by: currentProfile?.id || null }, { id: ev.id });
+    ev.status = status;
+    if (typeof _planningLoadedAt !== 'undefined') _planningLoadedAt = 0; // force Lookahead refetch
+  } catch (e) { console.warn('[dyn] event status sync:', e.message); }
+}
+
+// Manual "create field event" from the shift modal.
+async function _dynCreateShiftEventUI(shiftId) {
+  const s = (_dynPage.shifts || []).find(x => x.id === shiftId);
+  if (!s) return;
+  try {
+    await _dynCreateShiftEvent(s);
+    _dynOpenShift(shiftId);
+    if (typeof toast === 'function') toast('Field event created · Train Operator, ROC, EIC added', 'success');
+  } catch (e) { alert(`Field event failed: ${e.message}`); }
 }
 
 // ==========================================================================
