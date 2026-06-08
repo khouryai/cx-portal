@@ -121,6 +121,7 @@ class CXMarkupEngine {
     this.selected = null;
     this.draft = null;
     this.dragOff = null;
+    this.resize = null;
     this.history = [];
     this.hp = -1;
     this._savedSnapshot = "[]";
@@ -280,24 +281,26 @@ class CXMarkupEngine {
 
   _stampMetrics(a) {
     const ctx = this.ctx;
+    const s = a.scale || 1;
     ctx.save(); ctx.font = '700 20px ' + STAMP_FONT;
     const w = Math.max(96, ctx.measureText(a.kind).width + 28), h = 46;
     ctx.restore();
-    return { w, h };
+    return { w: w * s, h: h * s };
   }
   _drawStamp(a) {
     const ctx = this.ctx;
     const def = STAMPS.find(s => s.k === a.kind) || STAMPS[0];
+    const sc = a.scale || 1;
     const m = this._stampMetrics(a);
     ctx.save();
     ctx.translate(a.x, a.y);            // NO rotation — flat / horizontal
-    ctx.strokeStyle = def.c; ctx.lineWidth = 3; ctx.globalAlpha = .92;
-    this._roundRect(-m.w / 2, -m.h / 2, m.w, m.h, 8); ctx.stroke();
+    ctx.strokeStyle = def.c; ctx.lineWidth = 3 * sc; ctx.globalAlpha = .92;
+    this._roundRect(-m.w / 2, -m.h / 2, m.w, m.h, 8 * sc); ctx.stroke();
     ctx.fillStyle = def.c; ctx.textAlign = "center";
-    ctx.font = '700 20px ' + STAMP_FONT;
-    ctx.fillText(a.kind, 0, -2);
-    ctx.font = '500 9px ' + STAMP_FONT;
-    ctx.fillText((a.who || "") + "  " + (a.ts || ""), 0, 15);
+    ctx.font = '700 ' + (20 * sc) + 'px ' + STAMP_FONT;
+    ctx.fillText(a.kind, 0, -2 * sc);
+    ctx.font = '500 ' + (9 * sc) + 'px ' + STAMP_FONT;
+    ctx.fillText((a.who || "") + "  " + (a.ts || ""), 0, 15 * sc);
     ctx.restore();
   }
   _roundRect(x, y, w, h, r) {
@@ -316,10 +319,37 @@ class CXMarkupEngine {
     if (a.type === "redline") return { x: Math.min(a.x, a.x2), y: a.y - 22, w: Math.abs(a.x2 - a.x), h: 30 };
     return { x: Math.min(a.x, a.x2), y: Math.min(a.y, a.y2), w: Math.abs(a.x2 - a.x), h: Math.abs(a.y2 - a.y) };
   }
+  // Resize handles in intrinsic coords: endpoints for line/arrow, else corners.
+  _handles(a) {
+    if (a.type === "line" || a.type === "arrow")
+      return [{ id: "p1", x: a.x, y: a.y }, { id: "p2", x: a.x2, y: a.y2 }];
+    const b = this._bounds(a);
+    return [
+      { id: "nw", x: b.x,        y: b.y },
+      { id: "ne", x: b.x + b.w,  y: b.y },
+      { id: "sw", x: b.x,        y: b.y + b.h },
+      { id: "se", x: b.x + b.w,  y: b.y + b.h }
+    ];
+  }
+  _hitHandle(a, x, y) {
+    if (!a) return null;
+    const tol = 18 / this.scale;   // generous for touch
+    return this._handles(a).find(h => Math.abs(x - h.x) <= tol && Math.abs(y - h.y) <= tol) || null;
+  }
   _drawSelection(a) {
-    const ctx = this.ctx, b = this._bounds(a);
-    ctx.save(); ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]);
-    ctx.strokeRect(b.x - 6, b.y - 6, b.w + 12, b.h + 12); ctx.restore();
+    const ctx = this.ctx, b = this._bounds(a), k = this.scale || 1;
+    ctx.save();
+    ctx.strokeStyle = "#2563eb"; ctx.fillStyle = "#fff";
+    ctx.lineWidth = 1.5 / k; ctx.setLineDash([5 / k, 4 / k]);
+    ctx.strokeRect(b.x - 6 / k, b.y - 6 / k, b.w + 12 / k, b.h + 12 / k);
+    ctx.setLineDash([]);
+    const hs = 6 / k;              // handle half-size, ~12px on screen
+    ctx.lineWidth = 1.5 / k;
+    for (const h of this._handles(a)) {
+      ctx.beginPath(); ctx.rect(h.x - hs, h.y - hs, hs * 2, hs * 2);
+      ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
   }
   _hit(x, y) {
     for (let i = this.annotations.length - 1; i >= 0; i--) {
@@ -347,6 +377,14 @@ class CXMarkupEngine {
       // contexts; never let it abort the draw handler.
       try { this.cv.setPointerCapture(e.pointerId); } catch (_) {}
       if (T === "select") {
+        // If something is already selected, a tap on one of its handles starts a resize.
+        if (this.selected) {
+          const hnd = this._hitHandle(this.selected, p.x, p.y);
+          if (hnd) {
+            this.resize = { handle: hnd.id, before: JSON.parse(JSON.stringify(this.selected)), ob: this._bounds(this.selected) };
+            return;
+          }
+        }
         const h = this._hit(p.x, p.y); this.selected = h;
         if (h) { const b = this._bounds(h); this.dragOff = { dx: p.x - b.x, dy: p.y - b.y }; }
         this.redraw(); return;
@@ -366,6 +404,7 @@ class CXMarkupEngine {
     this._onMove = (e) => {
       if (this.readOnly) return;
       const p = this._pt(e);
+      if (this.tool === "select" && this.resize && this.selected) { this._applyResize(p.x, p.y); this.redraw(); return; }
       if (this.tool === "select" && this.dragOff && this.selected) { this._moveTo(this.selected, p.x - this.dragOff.dx, p.y - this.dragOff.dy); this.redraw(); return; }
       if (!this.draft) return;
       if (this.draft.type === "pen") this.draft.pts.push(p);
@@ -374,7 +413,11 @@ class CXMarkupEngine {
     };
     this._onUp = () => {
       if (this.readOnly) return;
-      if (this.tool === "select") { if (this.dragOff) this._commit(); this.dragOff = null; return; }
+      if (this.tool === "select") {
+        if (this.resize) { this.resize = null; this._commit(); return; }
+        if (this.dragOff) this._commit();
+        this.dragOff = null; return;
+      }
       if (this.draft) {
         const d = this.draft;
         const tiny = d.type !== "pen" && Math.abs(d.x2 - d.x) < 4 && Math.abs(d.y2 - d.y) < 4;
@@ -414,6 +457,42 @@ class CXMarkupEngine {
     else if (a.type === "redline") { a.x += dx; a.x2 += dx; a.y += dy; }
     else if (a.type === "text" || a.type === "stamp") { a.x += dx; a.y += dy; }
     else { a.x += dx; a.y += dy; a.x2 += dx; a.y2 += dy; }
+  }
+  // Drag a handle to (nx,ny). Endpoints for line/arrow; corner-driven box
+  // for everything else (geometry remapped from the pre-drag snapshot).
+  _applyResize(nx, ny) {
+    const a = this.selected, r = this.resize;
+    if (a.type === "line" || a.type === "arrow") {
+      if (r.handle === "p1") { a.x = nx; a.y = ny; } else { a.x2 = nx; a.y2 = ny; }
+      return;
+    }
+    const b = r.ob, min = 6 / this.scale;
+    let left = b.x, top = b.y, right = b.x + b.w, bottom = b.y + b.h;
+    if (r.handle.includes("w")) left = nx;
+    if (r.handle.includes("e")) right = nx;
+    if (r.handle.includes("n")) top = ny;
+    if (r.handle.includes("s")) bottom = ny;
+    const nb = {
+      x: Math.min(left, right), y: Math.min(top, bottom),
+      w: Math.max(min, Math.abs(right - left)), h: Math.max(min, Math.abs(bottom - top))
+    };
+    this._applyBounds(a, r.before, b, nb);
+  }
+  _applyBounds(a, before, ob, nb) {
+    const sx = nb.w / (ob.w || 1), sy = nb.h / (ob.h || 1);
+    switch (a.type) {
+      case "rect": case "high": case "ellipse":
+        a.x = nb.x; a.y = nb.y; a.x2 = nb.x + nb.w; a.y2 = nb.y + nb.h; break;
+      case "pen":
+        a.pts = (before.pts || []).map(p => ({ x: nb.x + (p.x - ob.x) * sx, y: nb.y + (p.y - ob.y) * sy })); break;
+      case "text":
+        a.x = nb.x; a.y = nb.y; a.size = Math.max(6, (before.size || 16) * sy); break;
+      case "stamp":
+        a.scale = Math.max(0.4, (before.scale || 1) * ((sx + sy) / 2));
+        a.x = nb.x + nb.w / 2; a.y = nb.y + nb.h / 2; break;
+      case "redline":
+        a.x = nb.x; a.x2 = nb.x + nb.w; break;   // horizontal rule: width only
+    }
   }
   _applyToSelected() { if (this.selected) { this.selected.color = this.color; this.selected.width = this.width; this._commit(); } }
 
