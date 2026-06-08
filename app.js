@@ -28763,11 +28763,12 @@ function _fmkMountPage(idx) {
   if (typeof CXMarkup === 'undefined') return;
   const rec = _pdfViewerState && _pdfViewerState.pageRecords && _pdfViewerState.pageRecords[idx];
   if (!rec || !rec.rendered || !rec.canvas) return;
-  const eng = CXMarkup.attach(rec.canvas, {
+  let eng;
+  eng = CXMarkup.attach(rec.canvas, {
     pageW: rec.baseViewport.width,
     pageH: rec.baseViewport.height,
     engineer: _fmkEngineerName(),
-    onChange: () => { _fmkFocus = idx; _pdfMarkDirty(); if (_fmkBar) _fmkBar.refresh({ canUndo: eng.canUndo(), canRedo: eng.canRedo() }); }
+    onChange: () => { if (!eng) return; _fmkFocus = idx; _pdfMarkDirty(); if (_fmkBar) _fmkBar.refresh({ canUndo: eng.canUndo(), canRedo: eng.canRedo() }); }
   });
   eng.cv.addEventListener('pointerdown', () => { _fmkFocus = idx; });
   if (_fmkModel[idx]) eng.loadAnnotations(_fmkModel[idx]);
