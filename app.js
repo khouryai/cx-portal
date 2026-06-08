@@ -34432,6 +34432,7 @@ async function _dynInstanceUpdateStatus(id, newStatus, selEl) {
     // open day/cell drilldown so the new status shows immediately.
     if (_dynPage.tab === 'board') { _dynRenderBoard(); _dynReopenBoardModal(); }
     else if (_dynPage.tab === 'variance') _dynRenderVariance();
+    else if (_dynPage.tab === 'access') { _dynRenderAccess(); if (_dynPage._shiftBuilderId) _dynBuildShift(_dynPage._shiftBuilderId); }
     else _dynRenderInstances();
   } catch (e) {
     if (selEl) selEl.value = prev || 'Not Started';
@@ -35879,8 +35880,17 @@ function _dynRenderAccess() {
                 ${cShifts.length} shifts · <span style="color:#065f46;">${cConf} confirmed</span> · <span style="color:#b91c1c;">${cCanc} cancelled</span>
                 ${(() => { const av = _dynCampaignTrainAvail(c.id); return ` · <span style="color:${av.approved>=av.requested&&av.requested>0?'#065f46':'#d97706'};">${av.approved}/${av.requested} trains approved</span>`; })()}
               </div>
+              ${(() => { const d = _dynCampaignProgressData(c); if (!d.total) return ''; const tn = d.schedVar > 5 ? '#059669' : d.schedVar >= -5 ? 'var(--gray-500)' : d.schedVar >= -15 ? '#d97706' : '#dc2626'; return `
+              <div style="margin-top:8px;max-width:340px;">
+                <div style="height:7px;background:var(--gray-100);border-radius:5px;overflow:hidden;position:relative;">
+                  <div style="height:100%;width:${d.pct}%;background:${d.pct===100?'var(--good)':'var(--info)'};"></div>
+                  <div style="position:absolute;top:-1px;bottom:-1px;left:${d.expectedPct}%;width:2px;background:#111;"></div>
+                </div>
+                <div style="font-size:11px;color:${tn};margin-top:3px;">${d.done}/${d.total} tests (${d.pct}%) · ${d.schedVar>0?'+':''}${d.schedVar} pts ${d.schedVar>5?'ahead':d.schedVar>=-5?'on plan':'behind'}</div>
+              </div>`; })()}
             </div>
             <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+              <button class="dyn-btn" onclick="_dynCampaignProgress('${escapeHtml(c.id)}')">Progress</button>
               <button class="dyn-btn" onclick="_dynOpenTrains('${escapeHtml(c.id)}')">Trains</button>
               <button class="dyn-btn" onclick="_dynPage.accCampaignFilter='${escapeHtml(c.id)}';_dynAccJumpTo('${escapeHtml(c.start_date)}');">View week</button>
               ${closed
@@ -36242,6 +36252,7 @@ function _dynOpenShift(id) {
       </div>`,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Close</button>
+      ${s.status !== 'cancelled' ? `<button class="dyn-btn" onclick="closeModal();_dynBuildShift('${escapeHtml(s.id)}')">Build shift</button>` : ''}
       ${s.status === 'cancelled'
         ? `<button class="dyn-btn" onclick="_dynShiftSetStatus('${escapeHtml(s.id)}','planned')">Restore to planned</button>`
         : `<button class="dyn-btn" style="color:#dc2626;" onclick="_dynShiftCancel('${escapeHtml(s.id)}')">Cancel shift</button>`}
@@ -36274,6 +36285,182 @@ async function _dynShiftCancel(id) {
     _dynRenderAccess();
     if (typeof toast === 'function') toast('Shift cancelled', 'success');
   } catch (e) { alert(`Cancel failed: ${e.message}`); }
+}
+
+// ── Shift Builder (Phase 3): assign instances into a confirmed shift ─────
+function _dynShiftMinutes(s) {
+  if (!s?.start_at || !s?.end_at) return null;
+  return Math.round((new Date(s.end_at) - new Date(s.start_at)) / 60000);
+}
+
+function _dynBuildShift(shiftId) {
+  const s = (_dynPage.shifts || []).find(x => x.id === shiftId);
+  if (!s) { toast('Shift not found', 'error'); return; }
+  _dynPage._shiftBuilderId = shiftId;
+  const camp = _dynPage.campaigns.find(c => c.id === s.campaign_id);
+  const winMin = _dynShiftMinutes(s);
+  const modes = s.allowed_modes || [];
+  const avail = s.campaign_id ? _dynCampaignTrainAvail(s.campaign_id, s.control_zone_code) : { approved: s.max_trains || 0 };
+  const trainsAvail = avail.approved || s.max_trains || 0;
+
+  const assigned = (_dynPage.instances || []).filter(i => i.shift_id === shiftId);
+  const eligible = (_dynPage.instances || []).filter(i =>
+    i.shift_id !== shiftId &&
+    i.track_section_under_test === s.control_zone_code &&
+    !['Pass', 'Fail', 'Not Applicable'].includes(i.status) &&
+    (!i.required_mode || !modes.length || modes.includes(i.required_mode)));
+
+  const usedMin = assigned.reduce((a, i) => a + (i.expected_duration_minutes || 0), 0);
+  const peakTrains = assigned.reduce((a, i) => Math.max(a, i.trains_needed || 1), 0);
+  const overTime = winMin != null && usedMin > winMin;
+  const overTrain = trainsAvail > 0 && peakTrains > trainsAvail;
+
+  const tcCode = i => (_dynPage.testItemsById.get(i.test_id)?.code) || i.test_id || '';
+  const assignedRows = assigned.length ? assigned.map(i => `
+    <tr style="border-top:1px solid var(--gray-100);">
+      <td style="padding:6px 8px;font-family:monospace;font-size:11.5px;">${escapeHtml(i.code || '—')}</td>
+      <td style="padding:6px 8px;font-size:12px;">${escapeHtml(i.title || tcCode(i))}</td>
+      <td style="padding:6px 8px;text-align:right;font-family:monospace;">${i.expected_duration_minutes ?? '—'}m</td>
+      <td style="padding:6px 8px;text-align:right;font-family:monospace;">${i.trains_needed ?? 1}</td>
+      <td style="padding:6px 8px;">${_dynDayStatusSelect(i)}</td>
+      <td style="padding:6px 8px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:#dc2626;" onclick="_dynShiftUnassign('${i.id}')">Remove</button></td>
+    </tr>`).join('') : `<tr><td colspan="6" style="padding:14px;text-align:center;color:var(--gray-500);">No tests assigned yet — add from the eligible list below.</td></tr>`;
+
+  const eligRows = eligible.length ? eligible.map(i => `
+    <tr style="border-top:1px solid var(--gray-100);">
+      <td style="padding:6px 8px;font-family:monospace;font-size:11.5px;">${escapeHtml(i.code || '—')}</td>
+      <td style="padding:6px 8px;font-size:12px;">${escapeHtml(i.title || tcCode(i))}</td>
+      <td style="padding:6px 8px;text-align:right;font-family:monospace;">${i.expected_duration_minutes ?? '—'}m</td>
+      <td style="padding:6px 8px;text-align:right;font-family:monospace;">${i.trains_needed ?? 1}</td>
+      <td style="padding:6px 8px;">${i.required_mode ? `<span class="badge" style="font-size:10px;">${escapeHtml(i.required_mode)}</span>` : '—'}</td>
+      <td style="padding:6px 8px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 7px;" onclick="_dynShiftAssign('${i.id}','${shiftId}')">Add</button></td>
+    </tr>`).join('') : `<tr><td colspan="6" style="padding:14px;text-align:center;color:var(--gray-500);">No eligible tests for ${escapeHtml(s.control_zone_code)} in these modes.</td></tr>`;
+
+  modal({
+    title: `Build shift — ${escapeHtml(s.control_zone_code)} · ${_dynFmtDate(s.shift_date)}`,
+    sub: camp ? escapeHtml(camp.name) : '',
+    size: 'xl',
+    body: `
+      <div style="padding:8px 20px 16px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:14px;">
+          <div class="dyn-kpi"><span>Assigned</span><b>${assigned.length}</b></div>
+          <div class="dyn-kpi"><span>Planned time</span><b style="color:${overTime?'var(--bad)':'inherit'};">${(usedMin/60).toFixed(1)}h${winMin!=null?` / ${(winMin/60).toFixed(1)}h`:''}</b></div>
+          <div class="dyn-kpi"><span>Peak trains</span><b style="color:${overTrain?'var(--bad)':'inherit'};">${peakTrains}${trainsAvail?` / ${trainsAvail}`:''}</b></div>
+          <div class="dyn-kpi"><span>Modes</span><b style="font-size:13px;">${(modes.join('+'))||'any'}</b></div>
+        </div>
+        ${overTime || overTrain ? `<div style="padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#b91c1c;font-size:12px;margin-bottom:12px;">
+          ⚠ ${overTime ? 'Over the access window. ' : ''}${overTrain ? 'Needs more trains than approved.' : ''}</div>` : ''}
+        <div style="font-size:12px;font-weight:700;color:var(--gray-600);margin:0 0 6px;">ASSIGNED</div>
+        <table style="width:100%;border-collapse:collapse;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;font-size:12px;margin-bottom:16px;">
+          <thead><tr style="background:var(--gray-50);"><th style="text-align:left;padding:6px 8px;">Code</th><th style="text-align:left;padding:6px 8px;">Test</th><th style="text-align:right;padding:6px 8px;">Dur</th><th style="text-align:right;padding:6px 8px;">Trains</th><th style="text-align:left;padding:6px 8px;">Status</th><th></th></tr></thead>
+          <tbody>${assignedRows}</tbody>
+        </table>
+        <div style="font-size:12px;font-weight:700;color:var(--gray-600);margin:0 0 6px;">ELIGIBLE FOR ${escapeHtml(s.control_zone_code)}</div>
+        <table style="width:100%;border-collapse:collapse;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;font-size:12px;">
+          <thead><tr style="background:var(--gray-50);"><th style="text-align:left;padding:6px 8px;">Code</th><th style="text-align:left;padding:6px 8px;">Test</th><th style="text-align:right;padding:6px 8px;">Dur</th><th style="text-align:right;padding:6px 8px;">Trains</th><th style="text-align:left;padding:6px 8px;">Mode</th><th></th></tr></thead>
+          <tbody>${eligRows}</tbody>
+        </table>
+      </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Done</button>`,
+  });
+}
+
+async function _dynShiftAssign(instId, shiftId) {
+  const s = (_dynPage.shifts || []).find(x => x.id === shiftId);
+  if (!s) return;
+  try {
+    const payload = {
+      shift_id: shiftId,
+      scheduled_for_date: s.shift_date,
+      scheduled_window: (s.start_at && s.end_at) ? `[${s.start_at},${s.end_at})` : null,
+      updated_at: new Date().toISOString(),
+    };
+    await _dbUpdate('dynamic_instances', payload, { id: instId });
+    const i = (_dynPage.instances || []).find(x => x.id === instId); if (i) Object.assign(i, payload);
+    _dynBuildShift(shiftId);
+  } catch (e) { alert(`Assign failed: ${e.message}`); }
+}
+
+async function _dynShiftUnassign(instId) {
+  const i = (_dynPage.instances || []).find(x => x.id === instId);
+  const shiftId = i?.shift_id;
+  try {
+    const payload = { shift_id: null, scheduled_for_date: null, scheduled_window: null, updated_at: new Date().toISOString() };
+    await _dbUpdate('dynamic_instances', payload, { id: instId });
+    if (i) Object.assign(i, payload);
+    if (shiftId) _dynBuildShift(shiftId);
+  } catch (e) { alert(`Remove failed: ${e.message}`); }
+}
+
+// ── Campaign progress rollup (Phase 3): long-plan ↔ short-execution ──────
+// Scope = dynamic instances whose section-under-test is one of the campaign's
+// zones. Completion (Pass) and shift cancellations both feed this, so the
+// long-term picture updates from short-term execution automatically.
+function _dynCampaignScope(camp) {
+  const zones = new Set(camp.zone_codes || []);
+  return (_dynPage.instances || []).filter(i => zones.has(i.track_section_under_test));
+}
+
+function _dynCampaignProgressData(camp) {
+  const scope = _dynCampaignScope(camp);
+  const total = scope.length;
+  const done = scope.filter(i => i.status === 'Pass').length;
+  const pct = total ? Math.round(done / total * 100) : 0;
+  const s = _dynParseDate(camp.start_date), f = _dynParseDate(camp.end_date);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const span = f - s;
+  const expectedPct = span > 0 ? Math.round(Math.min(1, Math.max(0, (today - s) / span)) * 100) : (today >= f ? 100 : 0);
+  const schedVar = pct - expectedPct;
+  const cShifts = (_dynPage.shifts || []).filter(x => x.campaign_id === camp.id);
+  const remainShifts = cShifts.filter(x => (x.status === 'planned' || x.status === 'confirmed') && _dynParseDate(x.shift_date) >= today).length;
+  const cancelled = cShifts.filter(x => x.status === 'cancelled').length;
+  const remainWork = total - done;
+  const perShift = remainShifts > 0 ? (remainWork / remainShifts) : null;
+  const assigned = scope.filter(i => i.shift_id).length;
+  return { scope, total, done, pct, expectedPct, schedVar, cShifts, remainShifts, cancelled, remainWork, perShift, assigned };
+}
+
+function _dynCampaignProgress(campaignId) {
+  const camp = _dynPage.campaigns.find(c => c.id === campaignId);
+  if (!camp) return;
+  const d = _dynCampaignProgressData(camp);
+  const tone = d.schedVar > 5 ? '#059669' : d.schedVar >= -5 ? 'var(--gray-600)' : d.schedVar >= -15 ? '#d97706' : '#dc2626';
+  const word = d.schedVar > 5 ? 'ahead of plan' : d.schedVar >= -5 ? 'on plan' : 'behind plan';
+  const feasible = d.perShift === null ? null : d.remainWork === 0 ? true : (d.perShift <= 3); // ~3 tests/shift heuristic
+  const stat = (l, v, t) => `<div class="dyn-kpi"><span>${l}</span><b${t?` style="color:${t};"`:''}>${v}</b></div>`;
+  modal({
+    title: `Progress — ${escapeHtml(camp.name)}`,
+    sub: `${(camp.zone_codes||[]).join(', ')} · ${_dynFmtDate(camp.start_date)} → ${_dynFmtDate(camp.end_date)}`,
+    size: 'large',
+    body: `
+      <div style="padding:8px 22px 16px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:14px;">
+          ${stat('Scope tests', d.total)}
+          ${stat('Complete', `${d.done} (${d.pct}%)`, d.pct===100?'var(--good)':null)}
+          ${stat('Expected by now', `${d.expectedPct}%`)}
+          ${stat('Variance', `${d.schedVar>0?'+':''}${d.schedVar} pts ${word}`, tone)}
+        </div>
+        <div style="height:10px;background:var(--gray-100);border-radius:6px;overflow:hidden;margin-bottom:4px;position:relative;">
+          <div style="height:100%;width:${d.pct}%;background:${d.pct===100?'var(--good)':'var(--info)'};"></div>
+          <div title="Expected by today" style="position:absolute;top:-2px;bottom:-2px;left:${d.expectedPct}%;width:2px;background:#111;"></div>
+        </div>
+        <div style="font-size:11px;color:var(--gray-500);margin-bottom:14px;">Bar = actual completion · black tick = expected by today (${d.expectedPct}%)</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:14px;">
+          ${stat('Remaining tests', d.remainWork)}
+          ${stat('Remaining shifts', d.remainShifts)}
+          ${stat('Needed / shift', d.perShift===null?'—':d.perShift.toFixed(1), feasible===false?'var(--bad)':null)}
+          ${stat('Shifts cancelled', d.cancelled, d.cancelled?'var(--bad)':null)}
+        </div>
+        <div style="padding:10px 12px;border-radius:6px;font-size:12.5px;${feasible===false?'background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;':feasible===true?'background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;':'background:var(--gray-50);border:1px solid var(--gray-200);color:var(--gray-600);'}">
+          ${d.remainWork === 0 ? '✓ All scope tests complete.'
+            : d.remainShifts === 0 ? '⚠ No remaining planned/confirmed shifts — schedule more access to finish the scope.'
+            : feasible === false ? `⚠ At ${d.perShift.toFixed(1)} tests/shift you likely need more shifts or trains to finish ${d.remainWork} tests in ${d.remainShifts} shifts.`
+            : `On pace: ${d.remainWork} tests across ${d.remainShifts} remaining shifts (${d.perShift.toFixed(1)}/shift).`}
+        </div>
+        <div style="font-size:11px;color:var(--gray-500);margin-top:10px;">${d.assigned} of ${d.total} scope tests are assigned to a shift.</div>
+      </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
 }
 
 // ==========================================================================
