@@ -35,6 +35,25 @@ function ic(name, opts) {
   return "";
 }
 
+/* ---- TEMPORARY on-device diagnostic. Flip DEBUG to false to remove the
+   on-screen readout once markup is verified working on iPad/iPhone. ---- */
+let DEBUG = true;
+const BUILD = "mk-debug-1";
+function _hud(msg) {
+  if (!DEBUG) return;
+  let el = document.getElementById("cx-markup-hud");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "cx-markup-hud";
+    el.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:2147483647;max-width:92vw;" +
+      "background:rgba(15,23,42,.93);color:#fff;font:600 11px/1.45 ui-monospace,monospace;" +
+      "padding:8px 10px;border-radius:8px;white-space:pre-wrap;pointer-events:none;" +
+      "box-shadow:0 4px 16px rgba(0,0,0,.4);";
+    document.body.appendChild(el);
+  }
+  el.textContent = "CXMarkup " + BUILD + "\n" + msg;
+}
+
 const STAMPS = [
   { k: "PASS",       c: "#1f9d57" },
   { k: "FAIL",       c: "#dc2626" },
@@ -312,11 +331,18 @@ class CXMarkupEngine {
   _bind() {
     this._onDown = (e) => {
       if (this.readOnly) return;
-      // setPointerCapture throws on iOS Safari for touch pointers in some
-      // contexts; never let it abort the draw handler. Capture is a nicety,
-      // not a requirement — move/up still target this canvas without it.
-      try { this.cv.setPointerCapture(e.pointerId); } catch (_) {}
       const p = this._pt(e), T = this.tool;
+      if (DEBUG) {
+        const r = this.cv.getBoundingClientRect();
+        _hud("DOWN ok @ " + Math.round(p.x) + "," + Math.round(p.y) + "  tool=" + T +
+             "\nscale=" + this.scale.toFixed(2) + "  css=" + this.cv.style.width + " x " + this.cv.style.height +
+             "\nrect=" + Math.round(r.width) + " x " + Math.round(r.height) + "  ptr=" + e.pointerType);
+        const c = this.ctx; c.save(); c.fillStyle = "rgba(220,38,38,.95)";
+        c.beginPath(); c.arc(p.x, p.y, 7, 0, Math.PI * 2); c.fill(); c.restore();
+      }
+      // setPointerCapture throws on iOS Safari for touch pointers in some
+      // contexts; never let it abort the draw handler.
+      try { this.cv.setPointerCapture(e.pointerId); } catch (_) {}
       if (T === "select") {
         const h = this._hit(p.x, p.y); this.selected = h;
         if (h) { const b = this._bounds(h); this.dragOff = { dx: p.x - b.x, dy: p.y - b.y }; }
@@ -438,7 +464,8 @@ function attach(hostCanvas, opts = {}) {
   if (getComputedStyle(wrap).position === "static") wrap.style.position = "relative";
   const overlay = document.createElement("canvas");
   overlay.className = "cx-markup-overlay";
-  overlay.style.cssText = "position:absolute;top:0;left:0;touch-action:none;z-index:20;";
+  overlay.style.cssText = "position:absolute;top:0;left:0;touch-action:none;z-index:20;" +
+    (DEBUG ? "background:rgba(37,99,235,.06);outline:2px dashed rgba(37,99,235,.6);outline-offset:-2px;" : "");
   wrap.appendChild(overlay);
   const eng = new CXMarkupEngine(overlay, {
     host: hostCanvas,
@@ -451,6 +478,13 @@ function attach(hostCanvas, opts = {}) {
   // iOS can report a 0/incorrect width on first paint; re-fit once layout settles.
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => eng.resize());
   setTimeout(() => eng.resize(), 300);
+  if (DEBUG) {
+    const r = overlay.getBoundingClientRect();
+    _hud("mounted ✓  page " + eng.pageW + "x" + eng.pageH +
+         "\ncss=" + overlay.style.width + " x " + overlay.style.height +
+         "\nrect=" + Math.round(r.width) + " x " + Math.round(r.height) +
+         "\nnow tap the page…");
+  }
   return eng;
 }
 
@@ -670,7 +704,10 @@ const CXMarkup = {
   attach,
   buildToolbar,
   injectStyles,
-  flattenIntoPdfPage
+  flattenIntoPdfPage,
+  _hud,
+  get DEBUG() { return DEBUG; },
+  set DEBUG(v) { DEBUG = v; }
 };
 global.CXMarkup = CXMarkup;
 

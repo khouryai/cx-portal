@@ -28814,6 +28814,7 @@ function _fmkToggle() {
       });
     }
     (_pdfViewerState.pageRecords || []).forEach((rec, i) => { if (rec && rec.rendered) _fmkMountPage(i); });
+    if (typeof CXMarkup !== 'undefined' && CXMarkup._hud) CXMarkup._hud('markup ON · engines=' + Object.keys(_fmkEngines).length + ' · renderedPages=' + (_pdfViewerState.pageRecords || []).filter(r => r && r.rendered).length);
     toast('Markup on — Save keeps it editable, Flatten prints a record', 'info');
   } else {
     _fmkCapture(true);
