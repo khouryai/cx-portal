@@ -38,7 +38,7 @@ function ic(name, opts) {
 /* ---- TEMPORARY on-device diagnostic. Flip DEBUG to false to remove the
    on-screen readout once markup is verified working on iPad/iPhone. ---- */
 let DEBUG = true;
-const BUILD = "resize-2";
+const BUILD = "resize-3";
 function _hud(msg) {
   if (!DEBUG) return;
   let el = document.getElementById("cx-markup-hud");
@@ -219,12 +219,19 @@ class CXMarkupEngine {
   _emit() {
     if (DEBUG) _hud("items=" + this.annotations.length + "  tool=" + this.tool +
                     "  scale=" + this.scale.toFixed(2) + "  size=" + this.cv.style.width + " x " + this.cv.style.height);
-    this.onChange({
-      count: this.annotations.length,
-      canUndo: this.canUndo(),
-      canRedo: this.canRedo(),
-      dirty: this.isDirty()
-    });
+    // A host onChange callback must NEVER be able to break the engine — e.g. a
+    // callback that references a not-yet-initialized variable would otherwise
+    // throw out of the constructor and abort the whole mount. Swallow its errors.
+    try {
+      this.onChange({
+        count: this.annotations.length,
+        canUndo: this.canUndo(),
+        canRedo: this.canRedo(),
+        dirty: this.isDirty()
+      });
+    } catch (e) {
+      console.warn("[CXMarkup onChange]", e && e.message);
+    }
   }
 
   /* ===================== RENDER ===================== */
