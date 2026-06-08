@@ -216,6 +216,8 @@ class CXMarkupEngine {
     this.redraw(); this._emit();
   }
   _emit() {
+    if (DEBUG) _hud("items=" + this.annotations.length + "  tool=" + this.tool +
+                    "  scale=" + this.scale.toFixed(2) + "  size=" + this.cv.style.width + " x " + this.cv.style.height);
     this.onChange({
       count: this.annotations.length,
       canUndo: this.canUndo(),
