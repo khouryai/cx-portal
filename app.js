@@ -33773,6 +33773,7 @@ const _dynPage = {
   // Access Plan (Phase 1): campaigns + generated per-day shift windows
   campaigns: [],                         // access_campaigns rows
   shifts: [],                            // zone_access_windows rows (campaign-generated + ad-hoc)
+  trainRequests: [],                     // train_requests rows (Phase 2)
   accWeekStart: null,                    // Monday of the visible week on the Access Plan grid
   accCampaignFilter: '',                 // '' or a campaign id
   // Duration-variance tab filters (client-side, recompute KPIs live)
@@ -33981,6 +33982,8 @@ async function _dynLoadAll() {
       .catch(e => { console.warn('[dyn] campaigns load:', e.message); return []; });
     _dynPage.shifts = await _dbSelect('zone_access_windows', {}, '*')
       .catch(e => { console.warn('[dyn] shifts load:', e.message); return []; });
+    _dynPage.trainRequests = await _dbSelect('train_requests', {}, '*')
+      .catch(e => { console.warn('[dyn] train requests load:', e.message); return []; });
     _dynPage.loaded = true;
   } finally {
     _dynPage.loading = false;
@@ -35874,9 +35877,11 @@ function _dynRenderAccess() {
               </div>
               <div style="font-size:11px;color:var(--gray-500);margin-top:6px;">
                 ${cShifts.length} shifts · <span style="color:#065f46;">${cConf} confirmed</span> · <span style="color:#b91c1c;">${cCanc} cancelled</span>
+                ${(() => { const av = _dynCampaignTrainAvail(c.id); return ` · <span style="color:${av.approved>=av.requested&&av.requested>0?'#065f46':'#d97706'};">${av.approved}/${av.requested} trains approved</span>`; })()}
               </div>
             </div>
             <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+              <button class="dyn-btn" onclick="_dynOpenTrains('${escapeHtml(c.id)}')">Trains</button>
               <button class="dyn-btn" onclick="_dynPage.accCampaignFilter='${escapeHtml(c.id)}';_dynAccJumpTo('${escapeHtml(c.start_date)}');">View week</button>
               ${closed
                 ? `<button class="dyn-btn" onclick="_dynSetCampaignStatus('${escapeHtml(c.id)}','active')">Reopen</button>`
@@ -36024,6 +36029,15 @@ async function _dynSaveCampaign() {
     for (let i = 0; i < shiftRows.length; i += 200) {
       await _dbInsert('zone_access_windows', shiftRows.slice(i, i + 200));
     }
+    // Seed an initial train request from the campaign ask (Phase 2 manages approvals).
+    await _dbInsert('train_requests', [{
+      campaign_id: camp.id, zone_code: null,
+      quantity: camp.trains_requested || 1,
+      requested_cars: camp.consist_size || null,
+      status: 'requested',
+      date_start: camp.start_date, date_end: camp.end_date,
+      created_by: currentRoleUser?.email || currentRoleUser?.id || null,
+    }]).catch(e => console.warn('[dyn] seed train request:', e.message));
     closeModal();
     _dynPage.loaded = false;
     await _dynLoadAll();
@@ -36058,6 +36072,141 @@ async function _dynDeleteCampaign(id) {
   } catch (e) { alert(`Delete failed: ${e.message}`); }
 }
 
+// ── Train (consist) requests — availability per campaign (Phase 2) ───────
+// Availability = approved/substituted request lines. Effective cars use the
+// granted (approved) size when the client substitutes a different consist.
+function _dynCampaignTrainAvail(campaignId, zoneCode) {
+  const lines = (_dynPage.trainRequests || []).filter(r => r.campaign_id === campaignId
+    && (!zoneCode || !r.zone_code || r.zone_code === zoneCode));
+  let requested = 0, approved = 0;
+  for (const r of lines) {
+    requested += (r.quantity || 0);
+    if (r.status === 'approved' || r.status === 'substituted') approved += (r.quantity || 0);
+  }
+  return { requested, approved, lines };
+}
+
+const _DYN_TRAIN_TONE = {
+  requested:   { bg: '#eef2ff', fg: '#3730a3', label: 'Requested' },
+  approved:    { bg: '#ecfdf5', fg: '#065f46', label: 'Approved' },
+  substituted: { bg: '#fff7ed', fg: '#c2410c', label: 'Substituted' },
+  denied:      { bg: '#fef2f2', fg: '#b91c1c', label: 'Denied' },
+};
+
+function _dynOpenTrains(campaignId) {
+  const camp = _dynPage.campaigns.find(c => c.id === campaignId);
+  if (!camp) { toast('Campaign not found', 'error'); return; }
+  const { lines, requested, approved } = _dynCampaignTrainAvail(campaignId);
+  const zoneOpts = (camp.zone_codes || []);
+  const rowsHtml = lines.length ? lines.map(r => {
+    const t = _DYN_TRAIN_TONE[r.status] || _DYN_TRAIN_TONE.requested;
+    const cars = r.status === 'substituted' && r.approved_cars != null
+      ? `<s style="color:var(--gray-400);">${r.requested_cars || '?'}-car</s> → <b>${r.approved_cars}-car</b>`
+      : `${r.requested_cars != null ? r.requested_cars + '-car' : '— cars'}`;
+    return `<tr style="border-top:1px solid var(--gray-100);">
+      <td style="padding:7px 8px;">${r.quantity || 1} × ${cars}${r.zone_code ? ` <span class="tag" style="font-family:monospace;font-size:10px;">${escapeHtml(r.zone_code)}</span>` : ''}</td>
+      <td style="padding:7px 8px;"><span class="tag" style="background:${t.bg};color:${t.fg};border-color:transparent;">${t.label}</span></td>
+      <td style="padding:7px 8px;text-align:right;white-space:nowrap;">
+        ${r.status !== 'approved' ? `<button class="dyn-btn" style="font-size:11px;padding:3px 7px;" onclick="_dynTrainSetStatus('${r.id}','approved')">Approve</button>` : ''}
+        <button class="dyn-btn" style="font-size:11px;padding:3px 7px;" onclick="_dynTrainSubstitute('${r.id}')">Substitute</button>
+        ${r.status !== 'denied' ? `<button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:#b91c1c;" onclick="_dynTrainSetStatus('${r.id}','denied')">Deny</button>` : ''}
+        <button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:#dc2626;" onclick="_dynTrainDelete('${r.id}')">✕</button>
+      </td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="3" style="padding:18px;text-align:center;color:var(--gray-500);">No train requests yet.</td></tr>`;
+
+  const fld = 'padding:6px 8px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;';
+  modal({
+    title: `Trains — ${escapeHtml(camp.name)}`,
+    sub: `${approved} of ${requested} consists approved · availability = approved requests`,
+    size: 'large',
+    body: `
+      <div style="padding:8px 22px 16px;">
+        <table style="width:100%;border-collapse:collapse;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;font-size:12px;">
+          <thead><tr style="background:var(--gray-50);">
+            <th style="text-align:left;padding:7px 8px;">Consist request</th>
+            <th style="text-align:left;padding:7px 8px;">Status</th>
+            <th style="text-align:right;padding:7px 8px;">Actions</th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--gray-200);">
+          <div style="font-size:12px;font-weight:600;margin-bottom:8px;">Add a consist request</div>
+          <div style="display:grid;grid-template-columns:90px 110px 1fr;gap:8px;align-items:end;">
+            <div class="form-field"><label style="font-size:11px;">Quantity</label><input id="tr-qty" type="number" min="1" value="1" style="${fld}width:100%;"></div>
+            <div class="form-field"><label style="font-size:11px;">Cars/consist</label><input id="tr-cars" type="number" min="1" max="10" placeholder="4–10" style="${fld}width:100%;"></div>
+            <div class="form-field"><label style="font-size:11px;">Zone (optional)</label>
+              <select id="tr-zone" style="${fld}width:100%;"><option value="">All campaign zones</option>${zoneOpts.map(z=>`<option value="${escapeHtml(z)}">${escapeHtml(z)}</option>`).join('')}</select></div>
+          </div>
+          <button class="dyn-btn primary" style="margin-top:10px;" onclick="_dynTrainAdd('${campaignId}')">+ Add request</button>
+        </div>
+      </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
+}
+
+async function _dynTrainAdd(campaignId) {
+  const camp = _dynPage.campaigns.find(c => c.id === campaignId);
+  const qty = parseInt(document.getElementById('tr-qty')?.value, 10) || 1;
+  const cars = document.getElementById('tr-cars')?.value ? parseInt(document.getElementById('tr-cars').value, 10) : null;
+  const zone = document.getElementById('tr-zone')?.value || null;
+  try {
+    await _dbInsert('train_requests', [{
+      campaign_id: campaignId, zone_code: zone, quantity: qty, requested_cars: cars,
+      status: 'requested', date_start: camp?.start_date || null, date_end: camp?.end_date || null,
+      created_by: currentRoleUser?.email || currentRoleUser?.id || null,
+    }]);
+    _dynPage.loaded = false; await _dynLoadAll();
+    _dynOpenTrains(campaignId); _dynRenderAccess();
+    if (typeof toast === 'function') toast('Train request added', 'success');
+  } catch (e) { alert(`Add failed: ${e.message}`); }
+}
+
+async function _dynTrainSetStatus(id, status) {
+  try {
+    const payload = { status, updated_at: new Date().toISOString() };
+    if (status === 'approved') {
+      const r = (_dynPage.trainRequests || []).find(x => x.id === id);
+      payload.approved_cars = r?.requested_cars ?? null; // granted as requested
+    }
+    if (status === 'denied') payload.approved_cars = null;
+    await _dbUpdate('train_requests', payload, { id });
+    const r = (_dynPage.trainRequests || []).find(x => x.id === id); const cid = r?.campaign_id;
+    if (r) Object.assign(r, payload);
+    _dynRenderAccess();
+    if (cid) _dynOpenTrains(cid);
+    if (typeof toast === 'function') toast(`Request ${status}`, 'success');
+  } catch (e) { alert(`Update failed: ${e.message}`); }
+}
+
+async function _dynTrainSubstitute(id) {
+  const r = (_dynPage.trainRequests || []).find(x => x.id === id);
+  const ans = prompt(`Client substituted a different consist.\nEnter the actual cars per consist granted${r?.requested_cars?` (requested ${r.requested_cars})`:''}:`, r?.approved_cars ?? r?.requested_cars ?? '');
+  if (ans === null) return;
+  const cars = parseInt(ans, 10);
+  if (!Number.isFinite(cars) || cars < 1) { alert('Enter a valid car count.'); return; }
+  try {
+    const payload = { status: 'substituted', approved_cars: cars, updated_at: new Date().toISOString() };
+    await _dbUpdate('train_requests', payload, { id });
+    if (r) Object.assign(r, payload);
+    _dynRenderAccess();
+    if (r?.campaign_id) _dynOpenTrains(r.campaign_id);
+    if (typeof toast === 'function') toast(`Substituted → ${cars}-car`, 'success');
+  } catch (e) { alert(`Update failed: ${e.message}`); }
+}
+
+async function _dynTrainDelete(id) {
+  const r = (_dynPage.trainRequests || []).find(x => x.id === id);
+  if (!confirm('Delete this train request?')) return;
+  try {
+    await _dbDelete('train_requests', { id });
+    _dynPage.trainRequests = (_dynPage.trainRequests || []).filter(x => x.id !== id);
+    _dynRenderAccess();
+    if (r?.campaign_id) _dynOpenTrains(r.campaign_id);
+    if (typeof toast === 'function') toast('Request removed', 'success');
+  } catch (e) { alert(`Delete failed: ${e.message}`); }
+}
+
 // ── Single-shift management ─────────────────────────────────────────────
 function _dynOpenShift(id) {
   const s = (_dynPage.shifts || []).find(x => x.id === id);
@@ -36065,6 +36214,7 @@ function _dynOpenShift(id) {
   const camp = _dynPage.campaigns.find(c => c.id === s.campaign_id);
   const t = _DYN_SHIFT_TONE[s.status] || _DYN_SHIFT_TONE.planned;
   const fmtT = iso => iso ? new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
+  const avail = s.campaign_id ? _dynCampaignTrainAvail(s.campaign_id, s.control_zone_code) : { requested: s.max_trains || 0, approved: 0 };
   modal({
     title: `Shift — ${escapeHtml(s.control_zone_code)} · ${_dynFmtDate(s.shift_date)}`,
     sub: camp ? escapeHtml(camp.name) : '',
@@ -36073,6 +36223,9 @@ function _dynOpenShift(id) {
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
           ${_dynShiftPill(s)}
           <span style="font-size:12px;color:var(--gray-600);">${fmtT(s.start_at)}–${fmtT(s.end_at)} · ${(s.allowed_modes||[]).join('+')||'any'} · ${s.max_trains||1} train${(s.max_trains||1)===1?'':'s'}${s.consist_size?` × ${s.consist_size}-car`:''}</span>
+        </div>
+        <div style="font-size:11.5px;margin-bottom:12px;color:${avail.approved>=avail.requested&&avail.requested>0?'#065f46':'#d97706'};">
+          🚆 Trains: <b>${avail.approved}</b> approved of ${avail.requested} requested${camp?` · <a href="javascript:void(0)" style="color:var(--info);" onclick="closeModal();_dynOpenTrains('${escapeHtml(camp.id)}')">manage</a>`:''}
         </div>
         ${s.status === 'cancelled' ? `
           <div style="padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#b91c1c;margin-bottom:12px;">
