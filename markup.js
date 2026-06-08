@@ -37,7 +37,7 @@ function ic(name, opts) {
 
 /* ---- TEMPORARY on-device diagnostic. Flip DEBUG to false to remove the
    on-screen readout once markup is verified working on iPad/iPhone. ---- */
-let DEBUG = true;
+let DEBUG = false;
 const BUILD = "resize-3";
 function _hud(msg) {
   if (!DEBUG) return;
@@ -121,7 +121,7 @@ class CXMarkupEngine {
     this.selected = null;
     this.draft = null;
     this.dragOff = null;
-    this.resize = null;
+    this.rsz = null;            // active resize-drag state (NOT the resize() method)
     this.history = [];
     this.hp = -1;
     this._savedSnapshot = "[]";
@@ -388,7 +388,7 @@ class CXMarkupEngine {
         if (this.selected) {
           const hnd = this._hitHandle(this.selected, p.x, p.y);
           if (hnd) {
-            this.resize = { handle: hnd.id, before: JSON.parse(JSON.stringify(this.selected)), ob: this._bounds(this.selected) };
+            this.rsz = { handle: hnd.id, before: JSON.parse(JSON.stringify(this.selected)), ob: this._bounds(this.selected) };
             return;
           }
         }
@@ -411,7 +411,7 @@ class CXMarkupEngine {
     this._onMove = (e) => {
       if (this.readOnly) return;
       const p = this._pt(e);
-      if (this.tool === "select" && this.resize && this.selected) { this._applyResize(p.x, p.y); this.redraw(); return; }
+      if (this.tool === "select" && this.rsz && this.selected) { this._applyResize(p.x, p.y); this.redraw(); return; }
       if (this.tool === "select" && this.dragOff && this.selected) { this._moveTo(this.selected, p.x - this.dragOff.dx, p.y - this.dragOff.dy); this.redraw(); return; }
       if (!this.draft) return;
       if (this.draft.type === "pen") this.draft.pts.push(p);
@@ -421,7 +421,7 @@ class CXMarkupEngine {
     this._onUp = () => {
       if (this.readOnly) return;
       if (this.tool === "select") {
-        if (this.resize) { this.resize = null; this._commit(); return; }
+        if (this.rsz) { this.rsz = null; this._commit(); return; }
         if (this.dragOff) this._commit();
         this.dragOff = null; return;
       }
@@ -468,7 +468,7 @@ class CXMarkupEngine {
   // Drag a handle to (nx,ny). Endpoints for line/arrow; corner-driven box
   // for everything else (geometry remapped from the pre-drag snapshot).
   _applyResize(nx, ny) {
-    const a = this.selected, r = this.resize;
+    const a = this.selected, r = this.rsz;
     if (a.type === "line" || a.type === "arrow") {
       if (r.handle === "p1") { a.x = nx; a.y = ny; } else { a.x2 = nx; a.y2 = ny; }
       return;
@@ -551,19 +551,30 @@ function attach(hostCanvas, opts = {}) {
   const wrap = hostCanvas.parentNode;
   // Host wrappers in both modules are position:relative; enforce it anyway.
   if (getComputedStyle(wrap).position === "static") wrap.style.position = "relative";
+  // Remove any stale markup overlays so a previous failed/duplicate mount can't
+  // stack on top and intercept taps.
+  try { Array.prototype.forEach.call(wrap.querySelectorAll(".cx-markup-overlay"), c => c.remove()); } catch (_) {}
   const overlay = document.createElement("canvas");
   overlay.className = "cx-markup-overlay";
   overlay.style.cssText = "position:absolute;top:0;left:0;touch-action:none;z-index:20;" +
     (DEBUG ? "background:rgba(37,99,235,.06);outline:2px dashed rgba(37,99,235,.6);outline-offset:-2px;" : "");
   wrap.appendChild(overlay);
-  const eng = new CXMarkupEngine(overlay, {
-    host: hostCanvas,
-    pageW: opts.pageW || hostCanvas.clientWidth,
-    pageH: opts.pageH || hostCanvas.clientHeight,
-    engineer: opts.engineer,
-    onChange: opts.onChange,
-    readOnly: opts.readOnly
-  });
+  let eng;
+  try {
+    eng = new CXMarkupEngine(overlay, {
+      host: hostCanvas,
+      pageW: opts.pageW || hostCanvas.clientWidth,
+      pageH: opts.pageH || hostCanvas.clientHeight,
+      engineer: opts.engineer,
+      onChange: opts.onChange,
+      readOnly: opts.readOnly
+    });
+  } catch (err) {
+    // Never leave an orphan canvas behind if construction fails.
+    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    console.error("[CXMarkup.attach]", err);
+    throw err;
+  }
   // iOS can report a 0/incorrect width on first paint; re-fit once layout settles.
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => eng.resize());
   setTimeout(() => eng.resize(), 300);
