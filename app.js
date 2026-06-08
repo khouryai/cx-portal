@@ -6265,6 +6265,28 @@ function _loadIntakeDraft() {
 
 function _clearIntakeDraft() { try { localStorage.removeItem(_intakeDraftKey()); } catch {} }
 
+// Tests already pulled into a *submitted* daily log today, keyed by user+day.
+// We can't use test_results for this: a plain status change in the register also
+// writes a test_results row (attempt-level KPI logging), so keying off that table
+// would wrongly hide freshly-touched tests. We record each submission's test ids
+// with a timestamp and only suppress a test if it hasn't been touched again since.
+function _intakeSubmittedKey() {
+  const who = currentProfile?.id || currentRoleUser?.name || 'anon';
+  return `cx-intake-submitted-${who}-${_intakeToday()}`;
+}
+function _loadSubmittedMap() {
+  try { const d = JSON.parse(localStorage.getItem(_intakeSubmittedKey()) || '{}'); return (d && typeof d === 'object') ? d : {}; }
+  catch { return {}; }
+}
+function _markSubmitted(testIds) {
+  try {
+    const map = _loadSubmittedMap();
+    const now = new Date().toISOString();
+    (testIds || []).forEach(id => { if (id != null) map[String(id)] = now; });
+    localStorage.setItem(_intakeSubmittedKey(), JSON.stringify(map));
+  } catch (err) { console.warn('[intakeSubmitted] mark skipped:', err.message); }
+}
+
 // Raw PostgREST GET with an arbitrary query string — the equality-only
 // _dbSelect can't express the changed_at date range we need here.
 async function _dbQuery(table, query) {
@@ -6299,20 +6321,12 @@ async function _fetchTouchedToday() {
   if (sub) q += `&subsystem=eq.${encodeURIComponent(sub)}`;
   const rows = await _dbQuery('test_item_status_history', q);
 
-  // Tests already written to test_results today (this subsystem) are done — don't
-  // re-surface them, or a post-submit refresh would double-count.
-  let alreadyLogged = new Set();
-  try {
-    let rq = `date_tested=eq.${_intakeToday()}&select=test_id`;
-    if (sub) rq += `&subsystem=eq.${encodeURIComponent(sub)}`;
-    const done = await _dbQuery('test_results', rq);
-    alreadyLogged = new Set(done.map(r => String(r.test_id)));
-  } catch (err) { console.warn('[rehydrate] test_results check skipped:', err.message); }
+  // Suppress only tests already pulled into a submitted daily log today (local).
+  const submittedMap = _loadSubmittedMap();
 
   const byTest = new Map();
   for (const row of rows) {
     const id = String(row.test_id);
-    if (alreadyLogged.has(id)) continue;
     if (!byTest.has(id)) {
       byTest.set(id, {
         testId:     row.test_id,  testCode:  row.test_case_code, testName: row.test_name,
@@ -6334,7 +6348,11 @@ async function _fetchTouchedToday() {
     e.failedReason  = row.new_status === 'Fail'    ? (row.reason || '') : '';
     e.blockedReason = row.new_status === 'Blocked' ? (row.reason || '') : '';
   }
-  return [...byTest.values()];
+  return [...byTest.values()].filter(e => {
+    const submittedAt = submittedMap[String(e.testId)];
+    if (!submittedAt) return true;                          // never logged today → show
+    return new Date(e.changedAt) > new Date(submittedAt);   // re-touched after submit → show
+  });
 }
 
 // Restore the draft + re-derive the touched set, then merge into _sessionLog.
@@ -7021,6 +7039,7 @@ async function submitIntakeFinal() {
     })();
 
     logAudit('Daily Log Submitted', `${allItems.length} test cases logged`, 'Daily report generated');
+    _markSubmitted(allItems.map(i => i.testId));
     _sessionLog     = [];
     intakeAdditions = [];
     intakeStep      = 1;
