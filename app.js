@@ -3095,6 +3095,7 @@ async function signOut() {
   _sessionLog     = [];
   intakeAdditions = [];
   intakeStep      = 1;
+  _resetIntakeRehydration();
   showPage('dashboard');
 }
 
@@ -6207,8 +6208,248 @@ let intakeStep = 1;
 let intakeAdditions = [];
 let _s2Phase = '', _s2Loc = '', _s2Act = '', _s2TestId = '', _s2AssetId = '';
 
+// ──────────────────────────────────────────────────────────────────────────
+// DAILY LOG PERSISTENCE / REHYDRATION
+// The Step-1 working set used to live only in the in-memory _sessionLog, so a
+// refresh, sign-out or closed tab wiped a half-finished daily log. We now
+//   (a) restore a per-user/day draft from localStorage (hours, notes, manual
+//       additions, the location opt-outs), and
+//   (b) re-derive the "touched today" set from the durable
+//       test_item_status_history table, scoped to the issuer's subsystem, so a
+//       teammate's touches survive a refresh too.
+// Touches are grouped by location and a team can opt a location out (another
+// team owns it) — that separates teams sharing a subsystem. Tests already
+// written to today's test_results for this subsystem are excluded so a
+// post-submit refresh can't double-log them.
+// ──────────────────────────────────────────────────────────────────────────
+let _intakeRehydrated   = false;     // synced today's history this session?
+let _intakeRehydrating  = false;     // network in-flight guard
+let _intakeSyncedAt     = null;      // last successful sync (Date) for the banner
+let _intakeExcludedLocs = new Set(); // locations the issuer opted out of (other teams)
+let _rehydratedCache    = [];        // full touched-today union from history (pre-exclusion)
+let _pendingStep3       = null;      // step-3 field values restored from a draft
+
+function _intakeToday() { return new Date().toISOString().slice(0, 10); }
+
+function _intakeDraftKey() {
+  const who = currentProfile?.id || currentRoleUser?.name || 'anon';
+  return `cx-intake-draft-${who}-${_intakeToday()}`;
+}
+
+function _saveIntakeDraft() {
+  try {
+    const step3 = {};
+    ['i3-date', 'i3-testers', 'i3-idle', 'i3-delay-cat', 'i3-delay-hrs', 'i3-delay-notes', 'i3-notes', 'i3-next']
+      .forEach(id => { const el = document.getElementById(id); if (el) step3[id] = el.value; });
+    const activeToggle = document.getElementById('field-intake-content')?.querySelector('.toggle-btn.active');
+    if (activeToggle) step3._delay = activeToggle.dataset.val;
+    localStorage.setItem(_intakeDraftKey(), JSON.stringify({
+      date:         _intakeToday(),
+      sessionLog:   _sessionLog,
+      additions:    intakeAdditions,
+      excludedLocs: [..._intakeExcludedLocs],
+      step:         intakeStep,
+      step3,
+      savedAt:      new Date().toISOString(),
+    }));
+  } catch (err) { console.warn('[intakeDraft] save skipped:', err.message); }
+}
+
+function _loadIntakeDraft() {
+  try {
+    const raw = localStorage.getItem(_intakeDraftKey());
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (d?.date !== _intakeToday()) { localStorage.removeItem(_intakeDraftKey()); return null; }
+    return d;
+  } catch { return null; }
+}
+
+function _clearIntakeDraft() { try { localStorage.removeItem(_intakeDraftKey()); } catch {} }
+
+// Tests already pulled into a *submitted* daily log today, keyed by user+day.
+// We can't use test_results for this: a plain status change in the register also
+// writes a test_results row (attempt-level KPI logging), so keying off that table
+// would wrongly hide freshly-touched tests. We record each submission's test ids
+// with a timestamp and only suppress a test if it hasn't been touched again since.
+function _intakeSubmittedKey() {
+  const who = currentProfile?.id || currentRoleUser?.name || 'anon';
+  return `cx-intake-submitted-${who}-${_intakeToday()}`;
+}
+function _loadSubmittedMap() {
+  try { const d = JSON.parse(localStorage.getItem(_intakeSubmittedKey()) || '{}'); return (d && typeof d === 'object') ? d : {}; }
+  catch { return {}; }
+}
+function _markSubmitted(testIds) {
+  try {
+    const map = _loadSubmittedMap();
+    const now = new Date().toISOString();
+    (testIds || []).forEach(id => { if (id != null) map[String(id)] = now; });
+    localStorage.setItem(_intakeSubmittedKey(), JSON.stringify(map));
+  } catch (err) { console.warn('[intakeSubmitted] mark skipped:', err.message); }
+}
+
+// Raw PostgREST GET with an arbitrary query string — the equality-only
+// _dbSelect can't express the changed_at date range we need here.
+async function _dbQuery(table, query) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, {
+      method: 'GET',
+      signal: ctrl.signal,
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), Accept: 'application/json' },
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`${table} query failed (${res.status}): ${await res.text()}`);
+    return await res.json();
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error(`${table} query timed out after 15s`);
+    throw e;
+  }
+}
+
+// Pull today's status-history rows for the issuer's subsystem and collapse them
+// to one "touched" entry per test case (earliest old_status → latest new_status).
+async function _fetchTouchedToday() {
+  const sub   = currentRoleUser?.subsystem || null;
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const end   = new Date(start); end.setDate(end.getDate() + 1);
+  let q = `changed_at=gte.${encodeURIComponent(start.toISOString())}` +
+          `&changed_at=lt.${encodeURIComponent(end.toISOString())}` +
+          `&order=changed_at.asc` +
+          `&select=test_id,test_case_code,test_name,phase,location,subsystem,activity,old_status,new_status,reason,changed_at`;
+  if (sub) q += `&subsystem=eq.${encodeURIComponent(sub)}`;
+  const rows = await _dbQuery('test_item_status_history', q);
+
+  // Suppress only tests already pulled into a submitted daily log today (local).
+  const submittedMap = _loadSubmittedMap();
+
+  const byTest = new Map();
+  for (const row of rows) {
+    const id = String(row.test_id);
+    if (!byTest.has(id)) {
+      byTest.set(id, {
+        testId:     row.test_id,  testCode:  row.test_case_code, testName: row.test_name,
+        phase:      row.phase,    location:  row.location,       subsystem: row.subsystem,
+        activity:   row.activity, prevStatus: row.old_status || 'Not Started',
+        newStatus:  row.new_status, changedAt: row.changed_at,
+        failedReason: '', blockedReason: '', hours: 0, _rehydrated: true,
+      });
+    }
+    const e = byTest.get(id); // latest row wins for current status / metadata
+    e.newStatus    = row.new_status;
+    e.changedAt    = row.changed_at;
+    e.testCode     = row.test_case_code || e.testCode;
+    e.testName     = row.test_name      || e.testName;
+    e.phase        = row.phase          || e.phase;
+    e.location     = row.location       || e.location;
+    e.subsystem    = row.subsystem      || e.subsystem;
+    e.activity     = row.activity       || e.activity;
+    e.failedReason  = row.new_status === 'Fail'    ? (row.reason || '') : '';
+    e.blockedReason = row.new_status === 'Blocked' ? (row.reason || '') : '';
+  }
+  return [...byTest.values()].filter(e => {
+    const submittedAt = submittedMap[String(e.testId)];
+    if (!submittedAt) return true;                          // never logged today → show
+    return new Date(e.changedAt) > new Date(submittedAt);   // re-touched after submit → show
+  });
+}
+
+// Restore the draft + re-derive the touched set, then merge into _sessionLog.
+// Draft / in-memory entries (with the issuer's hours/notes) win over re-derived ones.
+async function _rehydrateIntake({ force = false } = {}) {
+  if (_intakeRehydrating) return;
+  if (_intakeRehydrated && !force) return;
+  _intakeRehydrating = true;
+  if (intakeStep === 1) renderFieldIntake(); // show the syncing banner
+
+  // 1. Restore local draft once per session (not on a manual refresh)
+  if (!_intakeRehydrated) {
+    const draft = _loadIntakeDraft();
+    if (draft) {
+      if (Array.isArray(draft.sessionLog) && draft.sessionLog.length && !_sessionLog.length)   _sessionLog     = draft.sessionLog;
+      if (Array.isArray(draft.additions)  && draft.additions.length  && !intakeAdditions.length) intakeAdditions = draft.additions;
+      if (Array.isArray(draft.excludedLocs)) _intakeExcludedLocs = new Set(draft.excludedLocs);
+      if (draft.step)  intakeStep   = draft.step;
+      if (draft.step3) _pendingStep3 = draft.step3;
+    }
+  }
+
+  // 2. Re-derive touched-today from the durable history (best effort)
+  try {
+    const touched = await _fetchTouchedToday();
+    _rehydratedCache = touched;
+    const seen = new Set(
+      _sessionLog.map(e => String(e.testId)).concat(intakeAdditions.map(a => String(a.testId)))
+    );
+    for (const t of touched) {
+      if (seen.has(String(t.testId)))           continue; // draft / in-memory wins
+      if (_intakeExcludedLocs.has(t.location || '')) continue; // another team's location
+      _sessionLog.push(t);
+    }
+    _intakeSyncedAt = new Date();
+  } catch (err) {
+    console.warn('[rehydrate] history fetch failed:', err.message);
+  } finally {
+    _intakeRehydrated  = true;
+    _intakeRehydrating = false;
+    if (document.getElementById('field-intake-content')) renderFieldIntake();
+  }
+}
+
+function _intakeRefresh() { _rehydrateIntake({ force: true }); }
+
+// Opt a location in/out of this team's log. Out = drop its entries from the
+// submit set (another team owns that location); in = re-add them from the cache.
+function _intakeToggleLoc(loc) {
+  loc = loc || '';
+  if (_intakeExcludedLocs.has(loc)) {
+    _intakeExcludedLocs.delete(loc);
+    const seen = new Set(_sessionLog.map(e => String(e.testId)));
+    _rehydratedCache
+      .filter(t => (t.location || '') === loc && !seen.has(String(t.testId)))
+      .forEach(t => _sessionLog.push(t));
+  } else {
+    _intakeExcludedLocs.add(loc);
+    _sessionLog     = _sessionLog.filter(e => (e.location || '') !== loc);
+    intakeAdditions = intakeAdditions.filter(a => (a.location || '') !== loc);
+  }
+  _saveIntakeDraft();
+  renderFieldIntake();
+}
+
+// Reset all rehydration state (sign-out / after submit). The localStorage draft
+// is left intact unless clearDraft is set, so a same-day re-login can restore it.
+function _resetIntakeRehydration({ clearDraft = false } = {}) {
+  if (clearDraft) _clearIntakeDraft();
+  _intakeRehydrated   = false;
+  _intakeRehydrating  = false;
+  _intakeSyncedAt     = null;
+  _intakeExcludedLocs = new Set();
+  _rehydratedCache    = [];
+  _pendingStep3       = null;
+}
+
+function _applyPendingStep3() {
+  if (!_pendingStep3) return;
+  const s = _pendingStep3;
+  Object.entries(s).forEach(([id, val]) => {
+    if (id === '_delay') return;
+    const el = document.getElementById(id);
+    if (el && val != null) el.value = val;
+  });
+  if (s._delay === 'Yes') {
+    const yesBtn = document.getElementById('field-intake-content')?.querySelector('.toggle-btn[data-val="Yes"]');
+    if (yesBtn) toggleDelayI3(yesBtn, true);
+  }
+  _pendingStep3 = null;
+}
+
 function _updateSessionHours(idx, val) {
   if (_sessionLog[idx]) _sessionLog[idx].hours = parseFloat(val) || 0;
+  _saveIntakeDraft();
 }
 
 function _s2SetPhase(v)  { _s2Phase=v; _s2Loc=''; _s2Act=''; _s2TestId=''; _s2AssetId=''; renderFieldIntake(); }
@@ -6232,6 +6473,8 @@ function renderFieldIntake() {
   }
   setTimeout(_initPageLibraries, 80);
 
+  if (!_intakeRehydrated && !_intakeRehydrating) _rehydrateIntake();
+
   const allItems = [..._sessionLog.map(e => ({...e, _fromLog:true})), ...intakeAdditions];
 
   _htmlPreserveFocus(root, `
@@ -6250,18 +6493,72 @@ function renderFieldIntake() {
       intakeStep === 2 ? renderIntakeStep2() :
       renderIntakeStep3(allItems)}
   `);
+  if (intakeStep === 3 && _pendingStep3) setTimeout(_applyPendingStep3, 60);
+}
+
+function _intakeSyncBanner() {
+  const syncing = _intakeRehydrating;
+  const when = _intakeSyncedAt
+    ? _intakeSyncedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null;
+  const sub = currentRoleUser?.subsystem;
+  const scope = sub ? `${escapeHtml(sub)} team` : 'all subsystems';
+  const status = syncing
+    ? 'Syncing today’s test activity…'
+    : when
+      ? `Synced from today’s test activity (${scope}) at ${when}`
+      : `Auto-pulls today’s touched tests for the ${scope}`;
+  return `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 12px;margin-bottom:14px;">
+      <span style="font-size:12px;color:#1e40af;flex:1;min-width:0;">
+        ${syncing ? '<span class="cx-spin" aria-hidden="true">↻</span> ' : ''}${status}
+      </span>
+      <button class="form-secondary" style="padding:4px 12px;font-size:12px;"
+        onclick="_intakeRefresh()" ${syncing ? 'disabled' : ''}>↻ Refresh</button>
+    </div>`;
+}
+
+function _intakeLocChips() {
+  // Every location seen today (touched set ∪ current entries ∪ opt-outs)
+  const locs = new Set();
+  _rehydratedCache.forEach(t => locs.add(t.location || ''));
+  _sessionLog.forEach(e => locs.add(e.location || ''));
+  intakeAdditions.forEach(a => locs.add(a.location || ''));
+  _intakeExcludedLocs.forEach(l => locs.add(l));
+  const list = [...locs].filter(l => l !== '' || locs.size > 1).sort();
+  if (list.length <= 1) return ''; // nothing to separate — single location
+  const countFor = loc => _rehydratedCache.filter(t => (t.location || '') === loc).length
+    || _sessionLog.filter(e => (e.location || '') === loc).length;
+  return `
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px;color:var(--gray-500);margin-bottom:6px;">Location scope — tap to exclude a location another team is logging:</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        ${list.map(loc => {
+          const off = _intakeExcludedLocs.has(loc);
+          const label = loc || '(no location)';
+          return `<button type="button"
+            onclick="_intakeToggleLoc('${escapeHtml(loc).replace(/'/g, "\\'")}')"
+            aria-pressed="${off ? 'false' : 'true'}"
+            style="font-size:12px;padding:3px 10px;border-radius:14px;cursor:pointer;border:1px solid ${off ? '#e5e7eb' : '#1d4ed8'};background:${off ? '#f9fafb' : '#1d4ed8'};color:${off ? 'var(--gray-400)' : 'var(--white)'};${off ? 'text-decoration:line-through;' : ''}">
+            ${escapeHtml(label)}${countFor(loc) ? ` · ${countFor(loc)}` : ''}</button>`;
+        }).join('')}
+      </div>
+    </div>`;
 }
 
 function renderIntakeStep1() {
   const log = _sessionLog;
+  const banner = _intakeSyncBanner();
+
   if (!log.length && !intakeAdditions.length) {
     return `
       <div class="form-card">
         <h3 class="form-card-title">Step 1: Review Today's Tests</h3>
-        <p class="form-card-sub">No status changes recorded yet this session. Update statuses in the Test Matrix to see them here.</p>
+        <p class="form-card-sub">Touched test cases are pulled automatically from today's test activity — your work is restored even after a refresh or sign-out.</p>
+        ${banner}
         <div class="intake-summary-empty">
-          <h3 style="font-size:16px;margin-bottom:8px;">No tests logged yet</h3>
-          <p style="font-size:13px;">Open the Test Register, update test case statuses as you work, then return here to complete the Daily Log.</p>
+          <h3 style="font-size:16px;margin-bottom:8px;">${_intakeRehydrating ? 'Checking today’s activity…' : 'No tests logged yet'}</h3>
+          <p style="font-size:13px;">Open the Test Register, update test case statuses as you work, then return here — or hit Refresh to pull touches logged by your team.</p>
         </div>
         <div class="form-actions">
           <button class="form-secondary" onclick="showPage('test-register')">Open Test Register</button>
@@ -6272,43 +6569,53 @@ function renderIntakeStep1() {
   }
 
   const allEntries = [
-    ...log.map((e,i) => ({...e, _idx:i, _fromLog:true})),
-    ...intakeAdditions.map((a,i) => ({...a, _idx:i, _fromAdditions:true}))
+    ...log.map((e, i) => ({ ...e, _idx: i, _fromLog: true })),
+    ...intakeAdditions.map((a, i) => ({ ...a, _idx: i, _fromAdditions: true })),
   ];
-  const statusColor = s => ({'Pass':'#059669','In Progress':'#1d4ed8','Fail':'#dc2626','Blocked':'#d97706','Not Started':'#6b7280','Not Applicable':'#9ca3af','Future Test':'#5b21b6'}[s]||'#6b7280');
+  const statusColor = s => ({ 'Pass': '#059669', 'In Progress': '#1d4ed8', 'Fail': '#dc2626', 'Blocked': '#d97706', 'Not Started': '#6b7280', 'Not Applicable': '#9ca3af', 'Future Test': '#5b21b6' }[s] || '#6b7280');
+
+  // Group by location so multi-team / multi-location days read clearly
+  const groups = {};
+  allEntries.forEach(e => { const k = e.location || '(no location)'; (groups[k] = groups[k] || []).push(e); });
+  const groupKeys = Object.keys(groups).sort();
+  const multiLoc = groupKeys.length > 1;
+
+  const renderEntry = e => {
+    const ns = e._fromLog ? e.newStatus : e.status;
+    const ps = e._fromLog ? e.prevStatus : null;
+    const reason = (ns === 'Fail' ? e.failedReason : ns === 'Blocked' ? e.blockedReason : '') || '';
+    return `
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;display:flex;gap:16px;align-items:center;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:600;font-size:13px;margin-bottom:3px;">${escapeHtml(e.testCode)} · ${escapeHtml(e.testName)}${e.assetName ? ` <span style="background:#dbeafe;color:#1d4ed8;font-size:11px;padding:1px 7px;border-radius:10px;font-weight:500;margin-left:4px;">${icon('package')} ${escapeHtml(e.assetName)}</span>` : ''}${e._rehydrated ? ` <span style="background:#dcfce7;color:#166534;font-size:10px;padding:1px 7px;border-radius:10px;font-weight:600;margin-left:4px;">auto</span>` : ''}</div>
+          <div style="font-size:11px;color:var(--gray-500);margin-bottom:5px;">${escapeHtml(e.phase || '—')} · ${escapeHtml(e.location || '—')} · ${escapeHtml(e.activity || '—')}</div>
+          <div style="font-size:12px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            ${ps ? `<span style="background:#e5e7eb;color:#374151;padding:2px 8px;border-radius:10px;">${escapeHtml(ps)}</span><span style="color:var(--gray-400);">→</span>` : ''}
+            <span style="background:${statusColor(ns)}20;color:${statusColor(ns)};padding:2px 8px;border-radius:10px;font-weight:600;">${escapeHtml(ns)}</span>
+            ${reason ? `<span style="font-size:11px;color:#dc2626;">✗ ${escapeHtml(reason)}</span>` : ''}
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;width:110px;">
+          <label style="font-size:11px;color:var(--gray-500);white-space:nowrap;">Hours Spent</label>
+          <input type="number" min="0" step="0.25" class="form-input"
+            style="width:100%;text-align:center;"
+            value="${e.hours || 0}"
+            ${e._fromLog ? `onchange="_updateSessionHours(${e._idx},this.value)"` : `onchange="_updateAdditionHours(${e._idx},this.value)"`}>
+        </div>
+      </div>`;
+  };
 
   return `
     <div class="form-card">
       <h3 class="form-card-title">Step 1: Review Today's Tests</h3>
-      <p class="form-card-sub">${allEntries.length} test case${allEntries.length!==1?'s':''} recorded this session. Add hours spent and verify transitions.</p>
+      <p class="form-card-sub">${allEntries.length} test case${allEntries.length !== 1 ? 's' : ''} touched today. Add hours spent and verify transitions.</p>
+      ${banner}
+      ${_intakeLocChips()}
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
-        ${allEntries.map(e => {
-          const isFailed  = e.newStatus==='Failed'  || e.status==='Failed';
-          const isBlocked = e.newStatus==='Blocked' || e.status==='Blocked';
-          const ns = e._fromLog ? e.newStatus : e.status;
-          const ps = e._fromLog ? e.prevStatus : null;
-          const reason = (ns === 'Fail' ? e.failedReason : ns === 'Blocked' ? e.blockedReason : '') || '';
-          return `
-            <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;display:flex;gap:16px;align-items:center;">
-              <div style="flex:1;min-width:0;">
-                <div style="font-weight:600;font-size:13px;margin-bottom:3px;">${escapeHtml(e.testCode)} · ${escapeHtml(e.testName)}${e.assetName ? ` <span style="background:#dbeafe;color:#1d4ed8;font-size:11px;padding:1px 7px;border-radius:10px;font-weight:500;margin-left:4px;">${icon('package')} ${escapeHtml(e.assetName)}</span>` : ''}</div>
-                <div style="font-size:11px;color:var(--gray-500);margin-bottom:5px;">${escapeHtml(e.phase||'—')} · ${escapeHtml(e.location||'—')} · ${escapeHtml(e.activity||'—')}</div>
-                <div style="font-size:12px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                  ${ps ? `<span style="background:#e5e7eb;color:#374151;padding:2px 8px;border-radius:10px;">${escapeHtml(ps)}</span><span style="color:var(--gray-400);">→</span>` : ''}
-                  <span style="background:${statusColor(ns)}20;color:${statusColor(ns)};padding:2px 8px;border-radius:10px;font-weight:600;">${escapeHtml(ns)}</span>
-                  ${reason ? `<span style="font-size:11px;color:#dc2626;">✗ ${escapeHtml(reason)}</span>` : ''}
-                </div>
-              </div>
-              <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;width:110px;">
-                <label style="font-size:11px;color:var(--gray-500);white-space:nowrap;">Hours Spent</label>
-                <input type="number" min="0" step="0.25" class="form-input"
-                  style="width:100%;text-align:center;"
-                  value="${e.hours||0}"
-                  ${e._fromLog ? `onchange="_updateSessionHours(${e._idx},this.value)"` : `onchange="_updateAdditionHours(${e._idx},this.value)"`}>
-              </div>
-            </div>
-          `;
-        }).join('')}
+        ${groupKeys.map(k => `
+          ${multiLoc ? `<div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-top:6px;">${escapeHtml(k)} · ${groups[k].length}</div>` : ''}
+          ${groups[k].map(renderEntry).join('')}
+        `).join('')}
       </div>
       <div class="form-actions">
         <button class="form-secondary" onclick="showPage('test-register')">↺ Back to Test Register</button>
@@ -6451,15 +6758,15 @@ function renderIntakeStep3(items) {
         </div>
         <div class="form-field">
           <label>Date</label>
-          <input type="date" id="i3-date" class="form-input" value="${new Date().toISOString().split('T')[0]}">
+          <input type="date" id="i3-date" class="form-input" onchange="_saveIntakeDraft()" value="${new Date().toISOString().split('T')[0]}">
         </div>
         <div class="form-field">
           <label>Number of Testers</label>
-          <input type="number" id="i3-testers" class="form-input" value="2" min="1">
+          <input type="number" id="i3-testers" class="form-input" onchange="_saveIntakeDraft()" value="2" min="1">
         </div>
         <div class="form-field">
           <label>Idle Hours</label>
-          <input type="number" id="i3-idle" class="form-input" value="${Math.max(0, 8 - parseFloat(totalHrs)).toFixed(1)}" min="0" step="0.5">
+          <input type="number" id="i3-idle" class="form-input" onchange="_saveIntakeDraft()" value="${Math.max(0, 8 - parseFloat(totalHrs)).toFixed(1)}" min="0" step="0.5">
         </div>
         <div class="form-field">
           <label>Delay Occurred?</label>
@@ -6470,26 +6777,26 @@ function renderIntakeStep3(items) {
         </div>
         <div class="form-field" id="i3-delay-cat-wrap" style="display:none;">
           <label>Delay Category</label>
-          <select id="i3-delay-cat" class="filter-select">
+          <select id="i3-delay-cat" class="filter-select" onchange="_saveIntakeDraft()">
             <option value="">Select category…</option>
             ${delayCats.map(c=>`<option>${escapeHtml(c)}</option>`).join('')}
           </select>
         </div>
         <div class="form-field" id="i3-delay-hrs-wrap" style="display:none;">
           <label>Delay Hours</label>
-          <input type="number" id="i3-delay-hrs" class="form-input" value="0" min="0" step="0.5">
+          <input type="number" id="i3-delay-hrs" class="form-input" onchange="_saveIntakeDraft()" value="0" min="0" step="0.5">
         </div>
         <div class="form-field form-field-full" id="i3-delay-notes-wrap" style="display:none;">
           <label>Delay Notes</label>
-          <textarea id="i3-delay-notes" class="form-input" rows="2" placeholder="Describe the delay…"></textarea>
+          <textarea id="i3-delay-notes" class="form-input" rows="2" oninput="_saveIntakeDraft()" placeholder="Describe the delay…"></textarea>
         </div>
         <div class="form-field form-field-full">
           <label>Overall Day Notes</label>
-          <textarea id="i3-notes" class="form-input" rows="3" placeholder="Summary of the day's work…"></textarea>
+          <textarea id="i3-notes" class="form-input" rows="3" oninput="_saveIntakeDraft()" placeholder="Summary of the day's work…"></textarea>
         </div>
         <div class="form-field form-field-full">
           <label>Plan for Next Day</label>
-          <textarea id="i3-next" class="form-input" rows="2" placeholder="What's planned tomorrow?"></textarea>
+          <textarea id="i3-next" class="form-input" rows="2" oninput="_saveIntakeDraft()" placeholder="What's planned tomorrow?"></textarea>
         </div>
       </div>
 
@@ -6521,6 +6828,7 @@ function filterAddTestcases() {
 
 function _updateAdditionHours(idx, val) {
   if (intakeAdditions[idx]) intakeAdditions[idx].hours = parseFloat(val) || 0;
+  _saveIntakeDraft();
 }
 
 function addIntakeAddition() {
@@ -6560,6 +6868,7 @@ function addIntakeAddition() {
   else intakeAdditions.push(row);
   _s2TestId = ''; _s2AssetId = '';
   toast('Added to list', 'success');
+  _saveIntakeDraft();
   renderFieldIntake();
 }
 
@@ -6582,6 +6891,7 @@ function continueIntakeStep3() {
 
 function removeIntakeAddition(i) {
   intakeAdditions.splice(i, 1);
+  _saveIntakeDraft();
   renderFieldIntake();
 }
 
@@ -6595,6 +6905,7 @@ function toggleDelayI3(btn, isYes) {
   if (catWrap)   catWrap.style.display   = show;
   if (hrsWrap)   hrsWrap.style.display   = show;
   if (notesWrap) notesWrap.style.display = show;
+  _saveIntakeDraft();
 }
 
 async function submitIntakeFinal() {
@@ -6730,10 +7041,12 @@ async function submitIntakeFinal() {
     })();
 
     logAudit('Daily Log Submitted', `${allItems.length} test cases logged`, 'Daily report generated');
+    _markSubmitted(allItems.map(i => i.testId));
     _sessionLog     = [];
     intakeAdditions = [];
     intakeStep      = 1;
     _s2Phase = ''; _s2Loc = ''; _s2Act = ''; _s2TestId = ''; _s2AssetId = '';
+    _resetIntakeRehydration({ clearDraft: true });
     alert(`✓ Daily log submitted!\n\n${resultRows.length > 0 ? `${resultRows.length} test result(s) saved\n` : 'No test results logged (delay-only day)\n'}1 daily log row saved`);
     renderFieldIntake();
 
