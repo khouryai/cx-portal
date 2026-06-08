@@ -3405,6 +3405,8 @@ function onLoggedIn() {
     loadAssetData(),
     loadRMAs(),
     loadSoftwareConfigs(),
+    loadForms(),
+    loadDrawingsData(),
     _colLoadAll(),
   ]).then(() => {
     // Re-init views with freshly loaded data
