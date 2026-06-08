@@ -28742,6 +28742,44 @@ function _fmkCollectModel() {
   Object.keys(_fmkModel).forEach(k => { if ((_fmkModel[k] || []).length) out[k] = _fmkModel[k]; });
   return out;
 }
+// Merge saved + captured + live markup into {pageIndex: annotations[]} for export.
+function _fmkModelForFlatten() {
+  const out = {};
+  const saved = (_pdfViewerState && _pdfViewerState.editState && _pdfViewerState.editState.markup) || {};
+  Object.keys(saved).forEach(k => { const m = saved[k]; const a = Array.isArray(m) ? m : ((m && m.annotations) || []); if (a.length) out[k] = a; });
+  Object.keys(_fmkModel).forEach(k => { if ((_fmkModel[k] || []).length) out[k] = _fmkModel[k]; });
+  Object.keys(_fmkEngines).forEach(k => { out[k] = _fmkEngines[k].getAnnotations(); });
+  Object.keys(out).forEach(k => { if (!(out[k] || []).length) delete out[k]; });
+  return out;
+}
+
+// Bake markup overlays into a (filled) PDF blob via pdf-lib (vector). Returns
+// the blob unchanged when there's no markup. Called automatically on download
+// so the saved file always carries the markups — no separate Flatten step.
+async function _fmkBakeMarkup(blob) {
+  if (typeof CXMarkup === 'undefined' || typeof PDFLib === 'undefined') return blob;
+  const model = _fmkModelForFlatten();
+  if (!Object.keys(model).length) return blob;
+  try {
+    const doc = await PDFLib.PDFDocument.load(await blob.arrayBuffer());
+    const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+    const pages = doc.getPages();
+    Object.keys(model).forEach(k => {
+      const idx = +k, page = pages[idx];
+      if (!page) return;
+      const rec = _pdfViewerState && _pdfViewerState.pageRecords && _pdfViewerState.pageRecords[idx];
+      const pw = rec && rec.baseViewport ? rec.baseViewport.width  : page.getWidth();
+      const ph = rec && rec.baseViewport ? rec.baseViewport.height : page.getHeight();
+      CXMarkup.flattenIntoPdfPage(model[k], page, { pageW: pw, pageH: ph, font });
+    });
+    const out = await doc.save();
+    return new Blob([out], { type: 'application/pdf' });
+  } catch (e) {
+    console.warn('[_fmkBakeMarkup]', e.message);
+    return blob;
+  }
+}
+
 function _fmkCapture(destroy) {
   Object.keys(_fmkEngines).forEach(k => {
     _fmkModel[k] = _fmkEngines[k].getAnnotations();
@@ -28811,8 +28849,7 @@ function _fmkToggle() {
       tb.appendChild(row);
       _fmkBar = CXMarkup.buildToolbar(row, _fmkBroadcastProxy(), {
         extra: [
-          { icon: 'save',    label: 'Save',    fn: () => saveFormPDF(_pdfViewerState.formId) },
-          { icon: 'printer', label: 'Flatten', fn: () => _fmkFlatten() }
+          { icon: 'save', label: 'Save', fn: () => saveFormPDF(_pdfViewerState.formId) }
         ]
       });
     }
@@ -28825,39 +28862,6 @@ function _fmkToggle() {
     const row = document.getElementById('pdf-markup-row');
     if (row) row.remove();
     _fmkBar = null;
-  }
-}
-async function _fmkFlatten() {
-  if (typeof PDFLib === 'undefined') { toast('pdf-lib not loaded', 'error'); return; }
-  const form = FORMS.find(f => f.id === _pdfViewerState.formId);
-  if (!form) return;
-  _fmkCapture(false);
-  const model = _fmkCollectModel();
-  if (!Object.keys(model).length) { toast('No markup to flatten yet', 'info'); return; }
-  try {
-    // Start from the filled PDF (AcroForm values baked in) then overlay markup.
-    const filled = await _buildEditedFormPdfBlob(form, _pdfViewerState.editState);
-    const doc = await PDFLib.PDFDocument.load(await filled.arrayBuffer());
-    const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
-    const pages = doc.getPages();
-    Object.keys(model).forEach(k => {
-      const idx = +k, page = pages[idx];
-      if (!page) return;
-      const rec = _pdfViewerState.pageRecords && _pdfViewerState.pageRecords[idx];
-      const pw = rec ? rec.baseViewport.width  : page.getWidth();
-      const ph = rec ? rec.baseViewport.height : page.getHeight();
-      CXMarkup.flattenIntoPdfPage(model[k], page, { pageW: pw, pageH: ph, font });
-    });
-    const out = await doc.save();
-    const blob = new Blob([out], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const w = window.open(url, '_blank');
-    if (!w) { const a = document.createElement('a'); a.href = url; a.download = (form.name || 'form') + '_markup.pdf'; a.click(); }
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
-    toast('Flattened record created', 'success');
-  } catch (e) {
-    console.error('[_fmkFlatten]', e);
-    toast('Flatten failed: ' + e.message, 'error');
   }
 }
 
@@ -29569,7 +29573,8 @@ async function downloadFormPDF(formId) {
       signatures: _pdfViewerState.signatures || {},
       layouts: _pdfViewerState.fieldLayouts || [],
     } : null;
-    const blob = await _buildEditedFormPdfBlob(form, liveState);
+    let blob = await _buildEditedFormPdfBlob(form, liveState);
+    blob = await _fmkBakeMarkup(blob);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = form.original_filename || `${form.name || 'form'}.pdf`;

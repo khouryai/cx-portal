@@ -37,7 +37,7 @@ function ic(name, opts) {
 
 /* ---- TEMPORARY on-device diagnostic. Flip DEBUG to false to remove the
    on-screen readout once markup is verified working on iPad/iPhone. ---- */
-let DEBUG = true;
+let DEBUG = false;
 const BUILD = "mk-debug-1";
 function _hud(msg) {
   if (!DEBUG) return;
