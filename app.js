@@ -33770,6 +33770,11 @@ const _dynPage = {
   planSchedFilter: '',                   // '' | 'scheduled' | 'unscheduled' (feasibility table)
   planLoading: false,
   planWindows: [],                       // zone_access_windows rows (cached)
+  // Access Plan (Phase 1): campaigns + generated per-day shift windows
+  campaigns: [],                         // access_campaigns rows
+  shifts: [],                            // zone_access_windows rows (campaign-generated + ad-hoc)
+  accWeekStart: null,                    // Monday of the visible week on the Access Plan grid
+  accCampaignFilter: '',                 // '' or a campaign id
   // Duration-variance tab filters (client-side, recompute KPIs live)
   varSubsys: '',
   varPhase: '',
@@ -33905,6 +33910,7 @@ async function renderDynamicTestingPage() {
       <button class="hero-tab ${_dynPage.tab==='cases'?'active':''}" onclick="_dynTabSwitch('cases')">Test Cases</button>
       <button class="hero-tab ${_dynPage.tab==='instances'?'active':''}" onclick="_dynTabSwitch('instances')">Instances</button>
       <button class="hero-tab ${_dynPage.tab==='board'?'active':''}" onclick="_dynTabSwitch('board')">Planning Board</button>
+      <button class="hero-tab ${_dynPage.tab==='access'?'active':''}" onclick="_dynTabSwitch('access')">Access Plan</button>
       <button class="hero-tab ${_dynPage.tab==='planning'?'active':''}" onclick="_dynTabSwitch('planning')">Capacity Planning</button>
       <button class="hero-tab ${_dynPage.tab==='variance'?'active':''}" onclick="_dynTabSwitch('variance')">Duration Variance</button>
     </div>
@@ -33946,6 +33952,7 @@ async function renderDynamicTestingPage() {
   if (_dynPage.tab === 'cases')          _dynRenderCases();
   else if (_dynPage.tab === 'instances') _dynRenderInstances();
   else if (_dynPage.tab === 'board')     _dynRenderBoard();
+  else if (_dynPage.tab === 'access')    _dynRenderAccess();
   else if (_dynPage.tab === 'planning')  _dynRenderPlanning();
   else if (_dynPage.tab === 'variance')  _dynRenderVariance();
 }
@@ -33969,6 +33976,11 @@ async function _dynLoadAll() {
       'test_id,test_case_code,test_name,subsystem,phase,location,scope_type,test_scope,procedure_code,procedure_name,applicable_locations')
       .catch(e => { console.warn('[dyn] test_items load:', e.message); return []; });
     _dynBuildTestItemsIndex();
+    // Access Plan data (Phase 1) — campaigns + their generated shift windows.
+    _dynPage.campaigns = await _dbSelect('access_campaigns', {}, '*')
+      .catch(e => { console.warn('[dyn] campaigns load:', e.message); return []; });
+    _dynPage.shifts = await _dbSelect('zone_access_windows', {}, '*')
+      .catch(e => { console.warn('[dyn] shifts load:', e.message); return []; });
     _dynPage.loaded = true;
   } finally {
     _dynPage.loading = false;
@@ -35710,6 +35722,406 @@ function _dynBoardOpenCell(rowKey, periodKey) {
 }
 
 
+
+// ==========================================================================
+// DYNAMIC TESTING — ACCESS PLAN TAB  (Phase 1)
+//
+//   Long-range track-access backbone. An "access campaign" (zone(s) × date
+//   range × days-of-week × shift time × trains requested) generates one
+//   shift per zone per access day as a zone_access_windows row. Shifts carry a
+//   status (planned → confirmed → cancelled/completed) so the volatility of
+//   client access (night-before/whole-week cancellations) is recorded data,
+//   not a lost plan. The generated windows are what Capacity Planning consumes.
+// ==========================================================================
+
+const _DYN_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const _DYN_CANCEL_CATEGORIES = [
+  'Track access unavailable',
+  'Higher-priority maintenance',
+  'No train operator',
+  'Train malfunction / no start',
+  'Weather',
+  'Other',
+];
+const _DYN_SHIFT_TONE = {
+  planned:   { bg: '#eef2ff', fg: '#3730a3', bd: '#c7d2fe', label: 'Planned' },
+  confirmed: { bg: '#ecfdf5', fg: '#065f46', bd: '#a7f3d0', label: 'Confirmed' },
+  cancelled: { bg: '#fef2f2', fg: '#b91c1c', bd: '#fecaca', label: 'Cancelled' },
+  completed: { bg: '#f1f5f9', fg: '#475569', bd: '#e2e8f0', label: 'Completed' },
+};
+
+function _dynAccZoneOptions() {
+  return _dynSectionOptions().filter(o => !_dynIsStaticOnlyZone(o.code));
+}
+
+function _dynShiftPill(s) {
+  const t = _DYN_SHIFT_TONE[s.status] || _DYN_SHIFT_TONE.planned;
+  return `<span class="tag" style="background:${t.bg};color:${t.fg};border-color:${t.bd};">${t.label}</span>`;
+}
+
+// Visible-week shifts keyed by "zone|YYYY-MM-DD".
+function _dynAccShiftMap(shifts) {
+  const m = new Map();
+  for (const s of shifts) {
+    if (!s.shift_date) continue;
+    m.set(`${s.control_zone_code}|${_dynDayKey(s.shift_date)}`, s);
+  }
+  return m;
+}
+
+function _dynRenderAccess() {
+  const cont = document.getElementById('dyn-content');
+  if (!cont) return;
+  if (!_dynPage.accWeekStart) _dynPage.accWeekStart = _dynStartOfWeek(new Date());
+
+  const campaigns = _dynPage.campaigns || [];
+  const allShifts = (_dynPage.shifts || []).filter(s => s.campaign_id); // campaign-generated only
+  const filtered = _dynPage.accCampaignFilter
+    ? allShifts.filter(s => s.campaign_id === _dynPage.accCampaignFilter)
+    : allShifts;
+
+  // KPIs
+  const planned   = filtered.filter(s => s.status === 'planned').length;
+  const confirmed = filtered.filter(s => s.status === 'confirmed').length;
+  const cancelled = filtered.filter(s => s.status === 'cancelled').length;
+  const completed = filtered.filter(s => s.status === 'completed').length;
+  const cancelRate = filtered.length ? Math.round(cancelled / filtered.length * 100) : 0;
+  const stat = (label, val, tone) => `<div class="dyn-kpi"><span>${label}</span><b${tone?` style="color:${tone};"`:''}>${val}</b></div>`;
+
+  const kpiHtml = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:0 0 16px;">
+      ${stat('Campaigns', campaigns.filter(c => c.status !== 'closed').length)}
+      ${stat('Planned', planned)}
+      ${stat('Confirmed', confirmed, confirmed ? 'var(--good)' : null)}
+      ${stat('Cancelled', cancelled, cancelled ? 'var(--bad)' : null)}
+      ${stat('Cancel rate', `${cancelRate}%`, cancelRate >= 25 ? 'var(--bad)' : cancelRate >= 10 ? '#d97706' : null)}
+    </div>`;
+
+  // Week grid: rows = zones present in filtered shifts; cols = Mon–Sun.
+  const weekStart = _dynPage.accWeekStart;
+  const days = []; for (let i = 0; i < 7; i++) days.push(_dynAddDays(weekStart, i));
+  const shiftMap = _dynAccShiftMap(filtered);
+  const zones = [...new Set(filtered.map(s => s.control_zone_code))]
+    .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+
+  const headCols = days.map(d => `<th style="text-align:center;font-size:11px;">${_dynDayLabel(d)}</th>`).join('');
+  const gridBody = zones.length
+    ? zones.map(z => {
+        const cells = days.map(d => {
+          const s = shiftMap.get(`${z}|${_dynDayKey(d)}`);
+          if (!s) return `<td style="text-align:center;color:var(--gray-300);">·</td>`;
+          const t = _DYN_SHIFT_TONE[s.status] || _DYN_SHIFT_TONE.planned;
+          const sub = s.status === 'cancelled' && s.cancellation_category
+            ? `<div style="font-size:9px;color:${t.fg};opacity:.8;margin-top:2px;">${escapeHtml(s.cancellation_category)}</div>` : '';
+          return `<td style="text-align:center;padding:4px;">
+            <div onclick="_dynOpenShift('${escapeHtml(s.id)}')" title="${escapeHtml(t.label)} — click to manage"
+                 style="cursor:pointer;border:1px solid ${t.bd};background:${t.bg};color:${t.fg};border-radius:6px;padding:5px 4px;font-size:10.5px;font-weight:600;">
+              ${t.label}
+              <div style="font-size:9px;font-weight:500;opacity:.85;">${s.max_trains||1}T${s.consist_size?`·${s.consist_size}c`:''}</div>
+              ${sub}
+            </div>
+          </td>`;
+        }).join('');
+        return `<tr><td style="font-family:monospace;font-weight:600;white-space:nowrap;">${escapeHtml(z)}</td>${cells}</tr>`;
+      }).join('')
+    : `<tr><td colspan="8" style="padding:28px;text-align:center;color:var(--gray-500);">No shifts in this week${_dynPage.accCampaignFilter?' for this campaign':''}. Create a campaign or use Prev/Next.</td></tr>`;
+
+  const weekLabel = `${_dynDayLabel(days[0])} — ${_dynDayLabel(days[6])}`;
+  const campOpts = campaigns.map(c => `<option value="${escapeHtml(c.id)}" ${_dynPage.accCampaignFilter===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
+
+  const toolbar = `
+    <div class="dyn-toolbar">
+      <button class="dyn-btn primary" onclick="_dynOpenNewCampaign()">+ New campaign</button>
+      <select onchange="_dynPage.accCampaignFilter=this.value;_dynRenderAccess();" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-300);border-radius:5px;">
+        <option value="">All campaigns</option>${campOpts}
+      </select>
+      <span style="flex:1;"></span>
+      <button class="dyn-btn" onclick="_dynAccShift(-1)">‹ Prev</button>
+      <span style="font-weight:600;color:var(--gray-700);font-size:13px;">${escapeHtml(weekLabel)}</span>
+      <button class="dyn-btn" onclick="_dynAccShift(1)">Next ›</button>
+      <button class="dyn-btn" onclick="_dynAccToday()">This week</button>
+    </div>`;
+
+  const gridHtml = `
+    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow-x:auto;margin-bottom:18px;">
+      <table class="dyn-board" style="min-width:760px;">
+        <thead><tr><th style="text-align:left;">Zone</th>${headCols}</tr></thead>
+        <tbody>${gridBody}</tbody>
+      </table>
+    </div>`;
+
+  // Campaign list
+  const fmtDOW = arr => (arr || []).slice().sort((a,b)=>a-b).map(d => _DYN_DOW[d]).join(' ');
+  const campCards = campaigns.length
+    ? campaigns.map(c => {
+        const cShifts = allShifts.filter(s => s.campaign_id === c.id);
+        const cConf = cShifts.filter(s => s.status === 'confirmed').length;
+        const cCanc = cShifts.filter(s => s.status === 'cancelled').length;
+        const closed = c.status === 'closed';
+        return `<div class="data-card" style="padding:14px 16px;margin-bottom:10px;${closed?'opacity:.6;':''}">
+          <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:240px;">
+              <div style="font-weight:700;font-size:14px;">${escapeHtml(c.name)} ${closed?'<span class="tag" style="background:var(--gray-100);">closed</span>':''}</div>
+              <div style="font-size:12px;color:var(--gray-600);margin-top:3px;">
+                ${(c.zone_codes||[]).map(z=>`<span class="tag" style="font-family:monospace;">${escapeHtml(z)}</span>`).join(' ')}
+              </div>
+              <div style="font-size:11.5px;color:var(--gray-500);margin-top:6px;">
+                ${_dynFmtDate(c.start_date)} → ${_dynFmtDate(c.end_date)} · ${escapeHtml(fmtDOW(c.days_of_week))} ·
+                ${escapeHtml(String(c.shift_start||'').slice(0,5))}–${escapeHtml(String(c.shift_end||'').slice(0,5))} ·
+                ${c.trains_requested||1} train${(c.trains_requested||1)===1?'':'s'}${c.consist_size?` × ${c.consist_size}-car`:''} ·
+                ${escapeHtml((c.allowed_modes||[]).join('+')||'any')}
+                ${c.subsystem?` · ${escapeHtml(c.subsystem)}`:''}${c.permit_no?` · permit ${escapeHtml(c.permit_no)}`:''}
+              </div>
+              <div style="font-size:11px;color:var(--gray-500);margin-top:6px;">
+                ${cShifts.length} shifts · <span style="color:#065f46;">${cConf} confirmed</span> · <span style="color:#b91c1c;">${cCanc} cancelled</span>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+              <button class="dyn-btn" onclick="_dynPage.accCampaignFilter='${escapeHtml(c.id)}';_dynAccJumpTo('${escapeHtml(c.start_date)}');">View week</button>
+              ${closed
+                ? `<button class="dyn-btn" onclick="_dynSetCampaignStatus('${escapeHtml(c.id)}','active')">Reopen</button>`
+                : `<button class="dyn-btn" onclick="_dynSetCampaignStatus('${escapeHtml(c.id)}','closed')">Close</button>`}
+              <button class="dyn-btn" style="color:#dc2626;" onclick="_dynDeleteCampaign('${escapeHtml(c.id)}')">Delete</button>
+            </div>
+          </div>
+        </div>`;
+      }).join('')
+    : `<div style="padding:30px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:8px;">No access campaigns yet. Click <b>+ New campaign</b> to request zone access over a date range.</div>`;
+
+  cont.innerHTML = kpiHtml + toolbar + gridHtml +
+    `<h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-600);margin:0 0 10px;">Campaigns</h3>` + campCards;
+}
+
+function _dynAccShift(n) {
+  _dynPage.accWeekStart = _dynAddDays(_dynPage.accWeekStart || _dynStartOfWeek(new Date()), 7 * n);
+  _dynRenderAccess();
+}
+function _dynAccToday() {
+  _dynPage.accWeekStart = _dynStartOfWeek(new Date());
+  _dynRenderAccess();
+}
+function _dynAccJumpTo(dateStr) {
+  _dynPage.accWeekStart = _dynStartOfWeek(_dynParseDate(dateStr));
+  _dynRenderAccess();
+}
+
+function _dynOpenNewCampaign() {
+  const zoneOpts = _dynAccZoneOptions();
+  const phaseOpts = (typeof LOCS !== 'undefined' ? LOCS : []).filter(l => l.level === 1)
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  const subsysOpts = [...new Set((typeof TI !== 'undefined' ? TI : []).map(t => t.Subsystem).filter(Boolean))].sort();
+  const today = _dynFmtDate(new Date());
+  const dowChk = [1, 2, 3, 4, 5, 6, 0].map(d =>
+    `<label style="display:inline-flex;align-items:center;gap:3px;font-size:12px;margin-right:8px;">
+      <input type="checkbox" class="camp-dow" value="${d}" ${[1,2,3,4,5].includes(d)?'checked':''}>${_DYN_DOW[d]}</label>`).join('');
+  const fld = 'width:100%;padding:6px 8px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;';
+  modal({
+    title: 'New access campaign',
+    sub: 'Request zone access over a date range — one shift per zone per access day',
+    size: 'large',
+    body: `
+      <div style="padding:8px 22px 16px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="form-field" style="grid-column:1/-1;"><label>Campaign name</label>
+          <input id="camp-name" style="${fld}" placeholder="e.g. W40 CBTC dynamic — Spring window"></div>
+        <div class="form-field" style="grid-column:1/-1;"><label>Zones <span style="color:var(--gray-500);font-weight:400;">(⌘/Ctrl for multiple)</span></label>
+          <select id="camp-zones" multiple size="6" style="${fld}">
+            ${zoneOpts.map(o => `<option value="${escapeHtml(o.code)}">${escapeHtml(o.name)}</option>`).join('')}
+          </select></div>
+        <div class="form-field"><label>Start date</label><input id="camp-start" type="date" value="${today}" style="${fld}"></div>
+        <div class="form-field"><label>End date</label><input id="camp-end" type="date" value="${today}" style="${fld}"></div>
+        <div class="form-field" style="grid-column:1/-1;"><label>Days of week</label><div style="padding:4px 0;">${dowChk}</div></div>
+        <div class="form-field"><label>Shift start</label><input id="camp-shift-start" type="time" value="07:00" style="${fld}"></div>
+        <div class="form-field"><label>Shift end</label><input id="camp-shift-end" type="time" value="15:00" style="${fld}"></div>
+        <div class="form-field"><label>Trains requested</label><input id="camp-trains" type="number" min="1" value="2" style="${fld}"></div>
+        <div class="form-field"><label>Consist size <span style="color:var(--gray-500);font-weight:400;">(cars, 4–10)</span></label><input id="camp-consist" type="number" min="1" max="10" placeholder="e.g. 4" style="${fld}"></div>
+        <div class="form-field"><label>Modes</label><div style="padding:6px 0;">
+          <label style="margin-right:10px;font-size:12px;"><input type="checkbox" class="camp-mode" value="CBTC" checked> CBTC</label>
+          <label style="font-size:12px;"><input type="checkbox" class="camp-mode" value="VATC" checked> VATC</label>
+        </div></div>
+        <div class="form-field"><label>Requesting subsystem</label>
+          <input id="camp-subsys" list="camp-subsys-list" style="${fld}" placeholder="optional">
+          <datalist id="camp-subsys-list">${subsysOpts.map(s=>`<option value="${escapeHtml(s)}">`).join('')}</datalist></div>
+        <div class="form-field"><label>Phase</label>
+          <select id="camp-phase" style="${fld}"><option value="">—</option>${phaseOpts.map(p=>`<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`).join('')}</select></div>
+        <div class="form-field"><label>BART permit / work order #</label><input id="camp-permit" style="${fld}" placeholder="optional"></div>
+        <div class="form-field" style="grid-column:1/-1;"><label>Notes</label><input id="camp-notes" style="${fld}" placeholder="optional"></div>
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="_dynSaveCampaign()">Create &amp; generate shifts</button>`,
+  });
+}
+
+// Build the per-day shift window rows for a campaign (one per zone per access day).
+function _dynGenerateShiftRows(campaign) {
+  const rows = [];
+  const dow = new Set((campaign.days_of_week || []).map(Number));
+  const start = _dynParseDate(campaign.start_date);
+  const end = _dynParseDate(campaign.end_date);
+  const by = currentRoleUser?.email || currentRoleUser?.id || null;
+  for (let d = new Date(start); d <= end; d = _dynAddDays(d, 1)) {
+    if (!dow.has(d.getDay())) continue;
+    const dateStr = _dynDayKey(d);
+    const startAt = new Date(`${dateStr}T${String(campaign.shift_start).slice(0,5)}:00`);
+    const endAt   = new Date(`${dateStr}T${String(campaign.shift_end).slice(0,5)}:00`);
+    for (const z of (campaign.zone_codes || [])) {
+      rows.push({
+        control_zone_code: z,
+        shift_date: dateStr,
+        start_at: startAt.toISOString(),
+        end_at: endAt.toISOString(),
+        allowed_modes: campaign.allowed_modes || ['CBTC', 'VATC'],
+        max_trains: campaign.trains_requested || 1,
+        consist_size: campaign.consist_size || null,
+        subsystem: campaign.subsystem || null,
+        campaign_id: campaign.id,
+        status: 'planned',
+        created_by: by,
+      });
+    }
+  }
+  return rows;
+}
+
+async function _dynSaveCampaign() {
+  const g = id => document.getElementById(id);
+  const name = g('camp-name').value.trim();
+  const zones = Array.from(g('camp-zones').selectedOptions).map(o => o.value);
+  const startDate = g('camp-start').value;
+  const endDate = g('camp-end').value;
+  const dow = Array.from(document.querySelectorAll('.camp-dow:checked')).map(c => parseInt(c.value, 10));
+  const shiftStart = g('camp-shift-start').value || '07:00';
+  const shiftEnd = g('camp-shift-end').value || '15:00';
+  const modes = Array.from(document.querySelectorAll('.camp-mode:checked')).map(c => c.value);
+  const trains = parseInt(g('camp-trains').value, 10) || 1;
+  const consist = g('camp-consist').value ? parseInt(g('camp-consist').value, 10) : null;
+  const phase = g('camp-phase').value || null;
+  const subsystem = g('camp-subsys').value.trim() || null;
+  const permit = g('camp-permit').value.trim() || null;
+  const notes = g('camp-notes').value.trim() || null;
+
+  if (!name) { alert('Campaign name is required.'); return; }
+  if (!zones.length) { alert('Pick at least one zone.'); return; }
+  if (!startDate || !endDate) { alert('Start and end dates are required.'); return; }
+  if (_dynParseDate(endDate) < _dynParseDate(startDate)) { alert('End date must be on or after start.'); return; }
+  if (!dow.length) { alert('Pick at least one day of week.'); return; }
+  if (shiftEnd <= shiftStart) { alert('Shift end must be after shift start.'); return; }
+
+  try {
+    const inserted = await _dbInsert('access_campaigns', [{
+      name, zone_codes: zones, phase, subsystem,
+      start_date: startDate, end_date: endDate,
+      days_of_week: dow, shift_start: shiftStart, shift_end: shiftEnd,
+      allowed_modes: modes.length ? modes : ['CBTC', 'VATC'],
+      trains_requested: trains, consist_size: consist,
+      permit_no: permit, notes,
+      created_by: currentRoleUser?.email || currentRoleUser?.id || null,
+    }]);
+    const camp = Array.isArray(inserted) ? inserted[0] : inserted;
+    if (!camp?.id) throw new Error('Campaign insert returned no id');
+
+    const shiftRows = _dynGenerateShiftRows(camp);
+    for (let i = 0; i < shiftRows.length; i += 200) {
+      await _dbInsert('zone_access_windows', shiftRows.slice(i, i + 200));
+    }
+    closeModal();
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    _dynPage.accCampaignFilter = camp.id;
+    _dynAccJumpTo(startDate);
+    if (typeof toast === 'function') toast(`Campaign created · ${shiftRows.length} shift${shiftRows.length===1?'':'s'} generated`, 'success');
+  } catch (e) {
+    alert(`Create failed: ${e.message}`);
+  }
+}
+
+async function _dynSetCampaignStatus(id, status) {
+  try {
+    await _dbUpdate('access_campaigns', { status, updated_at: new Date().toISOString() }, { id });
+    const c = _dynPage.campaigns.find(x => x.id === id); if (c) c.status = status;
+    _dynRenderAccess();
+    if (typeof toast === 'function') toast(`Campaign ${status}`, 'success');
+  } catch (e) { alert(`Update failed: ${e.message}`); }
+}
+
+async function _dynDeleteCampaign(id) {
+  const c = _dynPage.campaigns.find(x => x.id === id);
+  const n = (_dynPage.shifts || []).filter(s => s.campaign_id === id).length;
+  if (!confirm(`Delete campaign "${c?.name || ''}" and its ${n} generated shift${n===1?'':'s'}? This cannot be undone.`)) return;
+  try {
+    await _dbDelete('access_campaigns', { id }); // shifts cascade via FK
+    if (_dynPage.accCampaignFilter === id) _dynPage.accCampaignFilter = '';
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    _dynRenderAccess();
+    if (typeof toast === 'function') toast('Campaign deleted', 'success');
+  } catch (e) { alert(`Delete failed: ${e.message}`); }
+}
+
+// ── Single-shift management ─────────────────────────────────────────────
+function _dynOpenShift(id) {
+  const s = (_dynPage.shifts || []).find(x => x.id === id);
+  if (!s) { toast('Shift not found', 'error'); return; }
+  const camp = _dynPage.campaigns.find(c => c.id === s.campaign_id);
+  const t = _DYN_SHIFT_TONE[s.status] || _DYN_SHIFT_TONE.planned;
+  const fmtT = iso => iso ? new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
+  modal({
+    title: `Shift — ${escapeHtml(s.control_zone_code)} · ${_dynFmtDate(s.shift_date)}`,
+    sub: camp ? escapeHtml(camp.name) : '',
+    body: `
+      <div style="padding:8px 22px 16px;">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+          ${_dynShiftPill(s)}
+          <span style="font-size:12px;color:var(--gray-600);">${fmtT(s.start_at)}–${fmtT(s.end_at)} · ${(s.allowed_modes||[]).join('+')||'any'} · ${s.max_trains||1} train${(s.max_trains||1)===1?'':'s'}${s.consist_size?` × ${s.consist_size}-car`:''}</span>
+        </div>
+        ${s.status === 'cancelled' ? `
+          <div style="padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#b91c1c;margin-bottom:12px;">
+            <b>Cancelled:</b> ${escapeHtml(s.cancellation_category || '—')}${s.cancellation_reason ? ` — ${escapeHtml(s.cancellation_reason)}` : ''}
+          </div>` : ''}
+        ${s.status !== 'cancelled' ? `
+          <div style="border:1px solid var(--gray-200);border-radius:6px;padding:12px;margin-bottom:6px;">
+            <div style="font-size:12px;font-weight:600;margin-bottom:8px;">Cancel this shift</div>
+            <select id="shift-cancel-cat" style="width:100%;padding:6px 8px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;margin-bottom:8px;">
+              ${_DYN_CANCEL_CATEGORIES.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+            </select>
+            <input id="shift-cancel-reason" placeholder="Note (optional)" style="width:100%;padding:6px 8px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
+          </div>` : ''}
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Close</button>
+      ${s.status === 'cancelled'
+        ? `<button class="dyn-btn" onclick="_dynShiftSetStatus('${escapeHtml(s.id)}','planned')">Restore to planned</button>`
+        : `<button class="dyn-btn" style="color:#dc2626;" onclick="_dynShiftCancel('${escapeHtml(s.id)}')">Cancel shift</button>`}
+      ${s.status === 'planned' ? `<button class="form-submit" onclick="_dynShiftSetStatus('${escapeHtml(s.id)}','confirmed')">Confirm</button>` : ''}
+      ${s.status === 'confirmed' ? `<button class="form-submit" onclick="_dynShiftSetStatus('${escapeHtml(s.id)}','completed')">Mark completed</button>` : ''}
+    `,
+  });
+}
+
+async function _dynShiftSetStatus(id, status) {
+  try {
+    const payload = { status };
+    if (status !== 'cancelled') { payload.cancellation_reason = null; payload.cancellation_category = null; }
+    await _dbUpdate('zone_access_windows', payload, { id });
+    const s = (_dynPage.shifts || []).find(x => x.id === id); if (s) Object.assign(s, payload);
+    closeModal();
+    _dynRenderAccess();
+    if (typeof toast === 'function') toast(`Shift ${status}`, 'success');
+  } catch (e) { alert(`Update failed: ${e.message}`); }
+}
+
+async function _dynShiftCancel(id) {
+  const cat = document.getElementById('shift-cancel-cat')?.value || 'Other';
+  const reason = document.getElementById('shift-cancel-reason')?.value.trim() || null;
+  try {
+    const payload = { status: 'cancelled', cancellation_category: cat, cancellation_reason: reason };
+    await _dbUpdate('zone_access_windows', payload, { id });
+    const s = (_dynPage.shifts || []).find(x => x.id === id); if (s) Object.assign(s, payload);
+    closeModal();
+    _dynRenderAccess();
+    if (typeof toast === 'function') toast('Shift cancelled', 'success');
+  } catch (e) { alert(`Cancel failed: ${e.message}`); }
+}
 
 // ==========================================================================
 // DYNAMIC TESTING — CAPACITY PLANNING TAB
