@@ -6226,6 +6226,7 @@ let _intakeRehydrated   = false;     // synced today's history this session?
 let _intakeRehydrating  = false;     // network in-flight guard
 let _intakeSyncedAt     = null;      // last successful sync (Date) for the banner
 let _intakeExcludedLocs = new Set(); // locations the issuer opted out of (other teams)
+let _intakeExcludedTests = new Set(); // individual test ids the issuer removed from today's log
 let _rehydratedCache    = [];        // full touched-today union from history (pre-exclusion)
 let _pendingStep3       = null;      // step-3 field values restored from a draft
 
@@ -6247,7 +6248,8 @@ function _saveIntakeDraft() {
       date:         _intakeToday(),
       sessionLog:   _sessionLog,
       additions:    intakeAdditions,
-      excludedLocs: [..._intakeExcludedLocs],
+      excludedLocs:  [..._intakeExcludedLocs],
+      excludedTests: [..._intakeExcludedTests],
       step:         intakeStep,
       step3,
       savedAt:      new Date().toISOString(),
@@ -6381,7 +6383,8 @@ async function _rehydrateIntake({ force = false } = {}) {
     if (draft) {
       if (Array.isArray(draft.sessionLog) && draft.sessionLog.length && !_sessionLog.length)   _sessionLog     = draft.sessionLog;
       if (Array.isArray(draft.additions)  && draft.additions.length  && !intakeAdditions.length) intakeAdditions = draft.additions;
-      if (Array.isArray(draft.excludedLocs)) _intakeExcludedLocs = new Set(draft.excludedLocs);
+      if (Array.isArray(draft.excludedLocs))  _intakeExcludedLocs  = new Set(draft.excludedLocs);
+      if (Array.isArray(draft.excludedTests)) _intakeExcludedTests = new Set(draft.excludedTests);
       if (draft.step)  intakeStep   = draft.step;
       if (draft.step3) _pendingStep3 = draft.step3;
     }
@@ -6397,6 +6400,7 @@ async function _rehydrateIntake({ force = false } = {}) {
     for (const t of touched) {
       if (seen.has(String(t.testId)))           continue; // draft / in-memory wins
       if (_intakeExcludedLocs.has(t.location || '')) continue; // another team's location
+      if (_intakeExcludedTests.has(String(t.testId))) continue; // user removed this one
       _sessionLog.push(t);
     }
     _intakeSyncedAt = new Date();
@@ -6419,7 +6423,7 @@ function _intakeToggleLoc(loc) {
     _intakeExcludedLocs.delete(loc);
     const seen = new Set(_sessionLog.map(e => String(e.testId)));
     _rehydratedCache
-      .filter(t => (t.location || '') === loc && !seen.has(String(t.testId)))
+      .filter(t => (t.location || '') === loc && !seen.has(String(t.testId)) && !_intakeExcludedTests.has(String(t.testId)))
       .forEach(t => _sessionLog.push(t));
   } else {
     _intakeExcludedLocs.add(loc);
@@ -6430,6 +6434,26 @@ function _intakeToggleLoc(loc) {
   renderFieldIntake();
 }
 
+// Remove a single test case from today's log. Keyed by test id so it survives
+// re-renders, and recorded in _intakeExcludedTests so a refresh / Refresh / the
+// location re-include won't bring it back. Manual Step-2 additions are simply
+// dropped (they are never re-derived).
+function _intakeRemoveEntry(testId) {
+  const id = String(testId);
+  _sessionLog     = _sessionLog.filter(e => String(e.testId) !== id);
+  intakeAdditions = intakeAdditions.filter(a => String(a.testId) !== id);
+  _intakeExcludedTests.add(id);
+  _saveIntakeDraft();
+  renderFieldIntake();
+}
+
+// Undo all per-test removals and re-pull today's touched set.
+function _intakeRestoreRemoved() {
+  _intakeExcludedTests = new Set();
+  _saveIntakeDraft();
+  _rehydrateIntake({ force: true });
+}
+
 // Reset all rehydration state (sign-out / after submit). The localStorage draft
 // is left intact unless clearDraft is set, so a same-day re-login can restore it.
 function _resetIntakeRehydration({ clearDraft = false } = {}) {
@@ -6438,6 +6462,7 @@ function _resetIntakeRehydration({ clearDraft = false } = {}) {
   _intakeRehydrating  = false;
   _intakeSyncedAt     = null;
   _intakeExcludedLocs = new Set();
+  _intakeExcludedTests = new Set();
   _rehydratedCache    = [];
   _pendingStep3       = null;
 }
@@ -6612,6 +6637,9 @@ function renderIntakeStep1() {
             value="${e.hours || 0}"
             ${e._fromLog ? `onchange="_updateSessionHours(${e._idx},this.value)"` : `onchange="_updateAdditionHours(${e._idx},this.value)"`}>
         </div>
+        <button class="logout-mini" aria-label="Remove this test from today\u2019s log" title="Remove from today\u2019s log"
+          style="flex-shrink:0;color:#dc2626;display:flex;align-items:center;"
+          onclick="_intakeRemoveEntry('${escapeHtml(String(e.testId)).replace(/'/g, "\\'")}')">${icon('x')}</button>
       </div>`;
   };
 
@@ -6627,6 +6655,10 @@ function renderIntakeStep1() {
           ${groups[k].map(renderEntry).join('')}
         `).join('')}
       </div>
+      ${_intakeExcludedTests.size ? `<div style="font-size:12px;color:var(--gray-500);margin:-8px 0 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        ${_intakeExcludedTests.size} test${_intakeExcludedTests.size !== 1 ? 's' : ''} removed from today\u2019s log.
+        <button class="logout-mini" style="color:#1d4ed8;" onclick="_intakeRestoreRemoved()">Restore removed</button>
+      </div>` : ''}
       <div class="form-actions">
         <button class="form-secondary" onclick="showPage('test-register')">↺ Back to Test Register</button>
         <button class="form-submit" onclick="setIntakeStep(2)">Continue to Step 2 →</button>
