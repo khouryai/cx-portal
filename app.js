@@ -6316,41 +6316,51 @@ async function _fetchTouchedToday() {
   const sub   = currentRoleUser?.subsystem || null;
   const start = new Date(); start.setHours(0, 0, 0, 0);
   const end   = new Date(start); end.setDate(end.getDate() + 1);
-  let q = `changed_at=gte.${encodeURIComponent(start.toISOString())}` +
-          `&changed_at=lt.${encodeURIComponent(end.toISOString())}` +
-          `&order=changed_at.asc` +
-          `&select=test_id,test_case_code,test_name,phase,location,subsystem,activity,old_status,new_status,reason,changed_at`;
-  if (sub) q += `&subsystem=eq.${encodeURIComponent(sub)}`;
-  const rows = await _dbQuery('test_item_status_history', q);
+  // Read today's status transitions from db_change_log. It is written by a
+  // server-side trigger on every test_items UPDATE, so it is reliably populated
+  // even though the client-side test_item_status_history insert is currently
+  // being rejected. Keep only rows whose changed_columns include 'status'.
+  const q = `table_name=eq.test_items&operation=eq.UPDATE` +
+            `&changed_at=gte.${encodeURIComponent(start.toISOString())}` +
+            `&changed_at=lt.${encodeURIComponent(end.toISOString())}` +
+            `&changed_columns=cs.%7Bstatus%7D` +
+            `&order=changed_at.asc` +
+            `&select=record_id,changed_at,old_row,new_row`;
+  const rows = await _dbQuery('db_change_log', q);
 
   // Suppress only tests already pulled into a submitted daily log today (local).
   const submittedMap = _loadSubmittedMap();
+  // Setup/reset transitions are not test execution — don't surface them.
+  const ACTIVE = new Set(['In Progress', 'Pass', 'Fail', 'Blocked', 'Not Applicable']);
 
   const byTest = new Map();
   for (const row of rows) {
-    const id = String(row.test_id);
+    const nr = row.new_row || {};
+    const or = row.old_row || {};
+    if (sub && (nr.subsystem || '').toLowerCase() !== sub.toLowerCase()) continue;
+    const id = String(row.record_id);
     if (!byTest.has(id)) {
       byTest.set(id, {
-        testId:     row.test_id,  testCode:  row.test_case_code, testName: row.test_name,
-        phase:      row.phase,    location:  row.location,       subsystem: row.subsystem,
-        activity:   row.activity, prevStatus: row.old_status || 'Not Started',
-        newStatus:  row.new_status, changedAt: row.changed_at,
-        failedReason: '', blockedReason: '', hours: 0, _rehydrated: true,
+        testId: row.record_id, testCode: nr.test_case_code, testName: nr.test_name,
+        phase: nr.phase, location: nr.location, subsystem: nr.subsystem, activity: nr.activity,
+        prevStatus: or.status || 'Not Started', newStatus: nr.status,
+        changedAt: row.changed_at, failedReason: '', blockedReason: '', hours: 0, _rehydrated: true,
       });
     }
     const e = byTest.get(id); // latest row wins for current status / metadata
-    e.newStatus    = row.new_status;
+    e.newStatus    = nr.status;
     e.changedAt    = row.changed_at;
-    e.testCode     = row.test_case_code || e.testCode;
-    e.testName     = row.test_name      || e.testName;
-    e.phase        = row.phase          || e.phase;
-    e.location     = row.location       || e.location;
-    e.subsystem    = row.subsystem      || e.subsystem;
-    e.activity     = row.activity       || e.activity;
-    e.failedReason  = row.new_status === 'Fail'    ? (row.reason || '') : '';
-    e.blockedReason = row.new_status === 'Blocked' ? (row.reason || '') : '';
+    e.testCode     = nr.test_case_code || e.testCode;
+    e.testName     = nr.test_name      || e.testName;
+    e.phase        = nr.phase          || e.phase;
+    e.location     = nr.location       || e.location;
+    e.subsystem    = nr.subsystem      || e.subsystem;
+    e.activity     = nr.activity       || e.activity;
+    e.failedReason  = nr.status === 'Fail'    ? (nr.failed_reason  || '') : '';
+    e.blockedReason = nr.status === 'Blocked' ? (nr.blocked_reason || '') : '';
   }
   return [...byTest.values()].filter(e => {
+    if (!ACTIVE.has(e.newStatus)) return false;             // skip Not Started / Future Test resets
     const submittedAt = submittedMap[String(e.testId)];
     if (!submittedAt) return true;                          // never logged today → show
     return new Date(e.changedAt) > new Date(submittedAt);   // re-touched after submit → show
