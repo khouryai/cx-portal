@@ -118,6 +118,9 @@ Owner has explicitly requested **all** areas, **full implementation**:
 4. **UX / visual / accessibility** — production-grade, consistent, WCAG-minded, great on mobile.
 5. **Feature completeness** — wire photo upload, finish stubbed workflows.
 6. **Backend & integration** — Supabase hardening now; Azure/SharePoint migration prep.
+7. **Granular permissions module (Procore-style)** — replace the fixed 5-role
+   model with a flexible, per-module permission system (see dedicated section
+   below). This is a **first-class epic** and the backbone of the security rewrite.
 
 ### Architecture freedom
 The owner wants you to **"go crazy" and rebuild it modern if that's what it
@@ -131,12 +134,75 @@ system, a component library, a design system — whatever you can justify. BUT:
   to produce the same servable output, and verify before relying on it.
 - Preserve data correctness and the audit trail (`db_change_log`) at all times.
 
+### Brand & visual direction
+- **Anchor on the existing Hitachi Rail color scheme** as the primary palette —
+  formalize it into semantic design tokens rather than raw hex.
+- **Layout and styles are fair game to change** wherever it enhances the overall
+  delivery and experience. Deviate from the current look when it genuinely
+  improves clarity, consistency, or usability — just keep it professional and
+  appropriate for a rail / enterprise-commissioning context.
+- Use the installed **`frontend-design`** and **`ui-ux-pro-max`** skills in this
+  repo to drive high-quality, non-generic UI work.
+
+---
+
+## GRANULAR PERMISSIONS MODULE (PROCORE-STYLE) — KEY NEW FEATURE
+
+Replace the current fixed 5-role model (Admin / Field / Punch Manager /
+Technician / Client) with a **flexible, per-module permission system** modeled on
+**Procore's permissions structure** (study Procore's help/support pages on
+*Permission Templates* and *Granular Permissions* for the conceptual model).
+Design this **early** — the Phase 1 RLS rewrite must enforce *this* model, not
+the legacy roles, so the two efforts are one effort.
+
+### Core concepts to implement
+- **Modules (tools).** Treat each feature area as a permission-controlled module:
+  Directory/Users, Test Matrix, Punch List, P6 Schedule, Assets/RMA,
+  Planning & Look-ahead, Dynamic Testing, Drawings/Markup, Photos, Meetings,
+  Forms, Reports/KPIs, Audit Log, Admin/Templates.
+- **Per-module permission levels.** For each module, a user/template gets one of
+  (Procore-style): **None → Read Only → Standard → Admin**. Levels are
+  independent per module (e.g., Standard on Punch List, Read Only on Schedule,
+  None on Directory).
+- **Granular permissions.** Within a module, support fine-grained toggles beyond
+  the base level (e.g., create / edit / delete / change-status / export /
+  approve), so a "Read Only + can export" or "Standard + can delete" is possible.
+- **Permission Templates.** Reusable named templates (e.g., "Field Engineer",
+  "Punch Manager", "Client Reviewer") that bundle the per-module levels +
+  granular toggles. Assign a template to a user instead of hand-setting each
+  permission. Editing a template propagates to everyone assigned it.
+- **Directory.** A central user directory (`profiles`) where each user is
+  assigned a template (and optionally per-user overrides), plus scope (e.g.,
+  subsystem/location restriction, which already exists conceptually).
+- **Admin UI.** Build the management surface: directory list, template editor
+  (matrix of modules × levels × granular toggles), per-user assignment &
+  override, and an effective-permissions preview ("what can this user actually
+  do?").
+
+### Enforcement — both layers, RLS is the real gate
+- **Database (authoritative).** Model templates/levels/grants in tables; write
+  helper functions (e.g., `has_module_perm(module, action)`) and base **all RLS
+  policies** on them. This is how you replace the ~27 always-true policies —
+  every policy expresses the permission model, evaluated efficiently
+  (`(select auth.uid())`, indexed lookups).
+- **UI (advisory).** Nav visibility, button enablement, and route guards read
+  the same effective-permissions object so the UI matches what RLS allows.
+- **Migration path.** Map the existing 5 roles onto starter templates so current
+  users keep working, then layer in granularity. Keep the app functional at
+  every step; never lock admins out (guard against zero-admin states).
+- **Audit.** Permission changes (template edits, assignments, overrides) must be
+  written to the audit trail like any other privileged action.
+
 ---
 
 ## DATABASE AUTHORITY & SAFETY
 
 You have **full latitude** over the live Supabase project (id
 `uqtwiucxktljhukmgmxg`) via the Supabase MCP tools. With that power:
+- **Safety net first.** Before any destructive or large structural change, create
+  a recovery point: a **Supabase branch** (`create_branch`) to develop/verify
+  against, and/or a snapshot/`pg_dump` of affected tables. This DB holds real
+  data — a bad policy or wrong `DROP` must always be recoverable.
 - **Use `apply_migration` (named, reversible migrations), never ad-hoc destructive SQL.**
   One logical change per migration; descriptive names.
 - **Before** any schema/policy change: `list_tables` to confirm current state.
@@ -149,6 +215,56 @@ You have **full latitude** over the live Supabase project (id
   silence the advisor.
 - Don't touch `auth` internals or secrets destructively. Don't exfiltrate the
   service-role key into client code, ever.
+
+---
+
+## TESTING, VERIFICATION & SAFETY
+
+You are responsible for proving your changes work — there is no QA team and the
+app currently has no automated test suite.
+
+- **Provision your own test users.** Create dedicated test accounts in Supabase
+  Auth — at least one per permission template/role (Admin, Field, Punch Manager,
+  Technician, Client, plus any new templates) — and use them to verify
+  role-based behavior end-to-end. Name them obviously (e.g.
+  `fable-test-admin@…`), record them in the ledger, and clean them up (or
+  document them) at handoff. Never weaken real users' credentials to test.
+- **Per-role verification matrix.** After any RLS/permission change, prove for
+  **each** role: the actions it *should* be able to do still work, and the
+  actions it *should not* are blocked at the DB. Don't just silence the advisor.
+- **Never trigger live side-effects against real people.** The Edge Functions
+  (`send-daily-log-email`, `send-rma-email`) send real email. Do not fire them at
+  real recipients while testing — stub, point at a test address, or guard them.
+- **Don't pollute production data.** Use test users / clearly-labeled test rows /
+  a Supabase branch for experiments, and remove test artifacts afterward.
+- **Know demo vs. real data.** `demo_seed_log` and the `supabase_demo_seed.sql` /
+  `_teardown.sql` files mark disposable seed data. Confirm what's seed vs. real
+  before deleting or "cleaning up" anything.
+- **Capture before/after baselines.** At Phase 0, record a baseline: both advisor
+  counts, key screenshots, a Lighthouse/perf snapshot, and timings of the
+  heaviest queries. Re-measure at the end to prove improvement and catch
+  regressions. Store the baseline in the ledger.
+
+### Definition of "done" for the whole engagement (objective targets)
+- Security advisor: **0 findings**; performance advisor: warnings driven down
+  with every remaining one consciously justified in the ledger.
+- Every RLS policy expresses the real permission model (no `USING(true)` for
+  write paths); per-role verification matrix passes.
+- Accessibility: automated a11y check (e.g. axe) clean on every page; icon-only
+  buttons have `aria-label`; keyboard nav + modal focus management work.
+- `node --check` passes on all edited JS; build/typecheck/tests (if introduced)
+  green; deploy stays live.
+- Photo upload works end-to-end; previously-stubbed workflows are functional.
+
+### STOP and ask the owner before (hard gates)
+- A from-scratch frontend rebuild (propose in the ledger, get a yes first).
+- Any **destructive** DB action — dropping a table/column, deleting rows, or a
+  migration that isn't cleanly reversible.
+- Anything touching auth internals, secrets, or that could lock out admins.
+- Decommissioning the legacy role model before the new permission model is
+  proven to keep every current user working.
+Record the question in the ledger's "Open questions" and move to the next
+unblocked task rather than stalling.
 
 ---
 
@@ -207,13 +323,19 @@ At the top of each session, **before any work**:
 ## SUGGESTED PHASE PLAN (refine in the ledger; keep app deployable throughout)
 
 - **Phase 0 — Orient & baseline.** Read the codebase + docs, run both advisors,
-  write `FABLE5_PROGRESS.md` with the full backlog and your architecture
-  recommendation (keep-and-improve vs. modular split vs. rebuild). Get owner
-  sign-off on direction if a from-scratch rebuild is proposed.
-- **Phase 1 — Security hardening (highest risk first).** Enable RLS on
-  `demo_seed_log`; replace every always-true policy with real role/ownership
-  policies; fix SECURITY DEFINER views/functions; lock down anon EXECUTE; set
-  function `search_path`; enable leaked-password protection. Re-run advisors to zero.
+  and record the **baseline** (advisor counts, screenshots, Lighthouse/perf,
+  heavy-query timings). Use **parallel sub-agents** to fan out this read-only
+  audit and conserve session budget. Write `FABLE5_PROGRESS.md` with the full
+  backlog and your architecture recommendation (keep-and-improve vs. modular
+  split vs. rebuild). Get owner sign-off if a from-scratch rebuild is proposed.
+- **Phase 1 — Permission model + security hardening (highest risk first).**
+  Design and build the **Procore-style granular permissions module** (tables,
+  templates, `has_module_perm` helpers) and migrate the 5 legacy roles onto it.
+  Then rebuild RLS on top of it: enable RLS on `demo_seed_log`; replace every
+  always-true policy with permission-model-driven policies; fix SECURITY DEFINER
+  views/functions; lock down anon EXECUTE; set function `search_path`; enable
+  leaked-password protection. Provision test users and run the per-role
+  verification matrix. Re-run advisors to zero.
 - **Phase 2 — DB performance.** Wrap `auth.uid()` in RLS policies; add the 42 FK
   indexes; drop unused/duplicate indexes (after confirming); consolidate
   multiple-permissive policies. Re-run advisors.
@@ -251,9 +373,12 @@ At the top of each session, **before any work**:
 - [ ] P0-1 (TODO) Read codebase + docs
 - [ ] P0-2 (TODO) Run security + performance advisors, snapshot counts
 - [ ] P0-3 (TODO) Write architecture recommendation
-### Phase 1 — Security hardening
-- [ ] P1-1 (TODO) Enable RLS on demo_seed_log
-- [ ] P1-2 (TODO) Replace always-true policies (per table)
+### Phase 1 — Permission model + security hardening
+- [ ] P1-1 (TODO) Design Procore-style permissions schema (modules/levels/templates)
+- [ ] P1-2 (TODO) Build has_module_perm() helpers + migrate 5 legacy roles
+- [ ] P1-3 (TODO) Enable RLS on demo_seed_log
+- [ ] P1-4 (TODO) Replace always-true policies with permission-driven policies
+- [ ] P1-5 (TODO) Provision test users + run per-role verification matrix
 ...
 
 ## Migrations applied
