@@ -1,13 +1,14 @@
 # Fable 5 Progress Ledger
 
 ## ▶ Current position
-- Phase: 0 — Orient & baseline
-- Doing right now: First-session bootstrap — parallel audit agents running
-  (frontend architecture; feature gaps). Baseline below is partial pending
-  their results + screenshots/Lighthouse.
-- Exact next action: Fold audit-agent findings into this ledger, finalize the
-  architecture recommendation, report Phase 0 checkpoint to owner.
-- Half-finished state: none (tree clean; no code/DB changes made yet).
+- Phase: 0 — COMPLETE (visual baseline P0-4 deferred to start of Phase 4 —
+  capture screenshots/Lighthouse immediately before UX changes begin, decision
+  logged below). Phase 0 checkpoint report sent to owner.
+- Doing right now: awaiting/continuing into Phase 1.
+- Exact next action: P1-1 — design the Procore-style permissions schema
+  (modules/levels/templates/grants doc + DDL draft). OWNER CHECKPOINT after
+  design, before any RLS policy is written.
+- Half-finished state: none (no code/DB changes made yet).
 
 ## Decisions log
 - 2026-06-10: Engagement begun per FABLE5_AUDIT_PROMPT.md. Owner directives:
@@ -44,13 +45,62 @@
 - Pending baseline items: screenshots (incl. sidebar), Lighthouse/perf snapshot,
   heavy-query timings. (P0-4)
 
+## Audit findings — feature gaps (P0-3a, 2026-06-10)
+**Corrections to baseline assumptions:**
+- **Photos: FULLY WIRED** (not stubbed). photos.js uploads to Storage bucket
+  `photos` via REST (`storageUpload()` ~line 137), client-side compression,
+  offline IndexedDB queue w/ auto-flush, paginated gallery w/ lazy signed URLs,
+  albums (auto + manual), punch/daily-log integration, ZIP download. Missing:
+  SharePoint sync (sp_* columns are stubs). → P5-1 rescoped: verify e2e + add
+  tests, not build.
+- **Dead schema (no code refs): `punch_photos` (replaced by `photos`),
+  `punch_history`, `template_test_cases`, `deployment_locations`,
+  `test_instances`.** → candidates for documented drop (HARD GATE: owner yes).
+- **`deployments` HALF-BUILT:** read-only from in-memory DATA.deployments
+  (data.js seed); count shown in UI; no DB read/write. → finish or retire.
+- **`test_results` write-only:** 9 write sites, zero UI reads (attempt log only).
+  → decide: surface in UI or document as log-only.
+- Wired-but-empty (just unused, no work needed): meeting_templates/attendees,
+  planning_import_batches, software_configs, form_template_links,
+  drawing_markups, access_campaigns, train_requests, photo_album_items,
+  test_item_prerequisites.
+- **Nav stubs without handlers:** activities, audit, lineitems, team (+
+  punch-workflow flagged ambiguously — verify; login handled separately).
+  `tcv` page has handler but no nav link (internal).
+- Edge functions: send-daily-log-email (app.js:7063, fire-and-forget inside
+  submitIntakeFinal), send-rma-email (app.js:17604). No other invocations.
+- TODO/FIXME/HACK markers: zero across all JS.
+
+## Audit findings — frontend architecture (P0-3b, 2026-06-10)
+- Structure: ~40 banner-delimited sections; admin renders dominate (lines
+  ~3473–38920). Init at DOMContentLoaded ~2275. Auth/session 2896–3421.
+- State: 277 underscore-prefixed globals; no framework; rendering = template
+  literals + innerHTML (102 full-section replaces) + 198 appendChild/insertAdjacentHTML.
+- Coupling: **44 inline onclick= handlers in index.html require global fns** —
+  blocks naive ES-module export. Mitigation: global-shim module first (Option B),
+  event-delegation refactor later. window.* exports: icon, PhotosModule, _p (75
+  uses), etc. Load order strict: data.js → app.js → photos.js → markup.js.
+- Data layer: _db* helpers well-adopted (115 update / 90 insert / 78 delete /
+  27 select); native-fetch by design (supabase-js hang workaround); 4 direct
+  supabase.* calls (auth only). No dead code in data layer.
+- Dead weight: data.js (1.2MB) is **fallback-only** — removable once Supabase
+  is mandatory (also cached by SW — real load cost). chart.umd.js active (13
+  charts). photos.js/markup.js feature-critical.
+- Perf: ~225 DOM queries inside loops; dashboard destroys+rebuilds all charts
+  on view switch; innerHTML layout thrash. Grade C+; quick wins identified.
+- Modularization verdict: **incremental strangler split is viable** —
+  (0) .gitattributes/CRLF guard, (1) extract non-handler utils to lib/,
+  (2) table/dashboard modules, (3) admin feature modules, (4) onclick →
+  event delegation last. GitHub Pages supports type="module" (no build needed).
+
 ## Phase plan & backlog
 ### Phase 0 — Orient & baseline
 - [x] P0-1 (DONE) Read codebase + docs (CLAUDE/README/SECURITY/docs/)
 - [x] P0-2 (DONE) Run security + performance advisors, snapshot counts (above)
-- [ ] P0-3 (IN-PROGRESS) Parallel audits: frontend architecture; feature gaps
-- [ ] P0-4 (TODO) Visual/perf baseline: screenshots, Lighthouse, query timings
-- [ ] P0-5 (TODO) Phase 0 checkpoint report to owner (incl. architecture rec)
+- [x] P0-3 (DONE) Parallel audits: frontend architecture; feature gaps (findings above)
+- [ ] P0-4 (DEFERRED→Phase 4 start) Visual/perf baseline: screenshots,
+      Lighthouse, query timings — capture immediately before UX work begins
+- [x] P0-5 (DONE) Phase 0 checkpoint report to owner (incl. architecture rec)
 
 ### Phase 1 — Permission model + security hardening
 - [ ] P1-1 (TODO) Design Procore-style permissions schema (modules/levels/
@@ -100,8 +150,15 @@
 - (none yet)
 
 ## Checkpoints sent
-- (Phase 0 report pending — P0-5)
+- 2026-06-10: Phase 0 complete report — baseline, audit corrections,
+  architecture rec (incremental modularization). Proceeding into P1-1 design
+  (no hard gate); owner may redirect.
 
 ## Open questions for owner
-- Confirm architecture direction: incremental modularization (recommended) vs.
-  from-scratch framework rebuild.
+- Architecture direction: proceeding with **incremental modularization**
+  (audit-confirmed viable; from-scratch rebuild rejected as violating
+  deployable-at-every-commit under session limits). Object if you want the
+  full rebuild instead.
+- Phase 5 will propose dropping dead tables (punch_photos, punch_history,
+  template_test_cases, deployment_locations, test_instances) — destructive,
+  needs explicit yes when we get there.
