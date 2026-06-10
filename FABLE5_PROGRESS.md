@@ -2,14 +2,22 @@
 
 ## ▶ Current position
 - Phase: 1 — Permission model + security hardening. Owner APPROVED the rewrite.
-  Permission model live + 24 always-true tables rewritten + demo_seed_log RLS,
-  all verified (per-role matrix + advisors). Clean committed boundary.
-- Doing right now: about to continue P1-5 (SECURITY DEFINER views → invoker;
-  lock anon EXECUTE; set function search_path).
-- Exact next action: P1-5 — flip 9 vw_*/kpi_* views to security_invoker (app
-  users now have underlying-table perms via new policies → re-verify they still
-  read); revoke anon EXECUTE on audit_db_change/capture_planning_week/is_admin;
-  set search_path on planning_touch_updated_at + fn_feasible_instances.
+  P1-1..P1-5 + P1-7 DONE. Permission model live + 24 always-true tables
+  rewritten + demo_seed_log RLS + 9 SECURITY DEFINER views→invoker + function
+  EXECUTE lockdown + RLS helpers moved to private schema + search_path pinned.
+  Security advisors: ALL DB-level lints CLEARED (only auth_leaked_password
+  remains, dashboard-only — see P1-6). All verified (per-role matrix + advisors).
+- Doing right now: P1-5 complete & committed. Next substantive work = Phase 2
+  (DB performance) unless owner redirects.
+- Exact next action: P2-1 — wrap auth.* calls in RLS with (select auth.uid())
+  to fix 49 auth_rls_initplan warnings; then FK indexes (P2-2).
+- P1-6 BLOCKER (leaked-password protection): not doable from this environment.
+  It is a GoTrue/Auth config toggle, not SQL; no Management API PAT is present
+  in env, no Supabase CLI, no token file (api.supabase.com reachable but 403),
+  and the Supabase MCP server exposes no auth-config tool. Requires the owner to
+  flip it in Dashboard → Authentication → Sign In / Providers → Password →
+  "Leaked password protection" (or PATCH /v1/projects/{ref}/config/auth
+  {"password_hibp_enabled":true} with a PAT). One toggle, ~15s.
 - Half-finished state: none. All DB changes are applied migrations + verified.
 - Verification note: test profiles can't be persisted (profiles.id FK→auth.users);
   RLS verified via ephemeral rolled-back JWT-claim simulation. Real auth test
@@ -131,11 +139,24 @@
       has_module_perm()-driven policies, (select ...)-wrapped. Advisor delta:
       rls_policy_always_true 24→0. Verified via per-role matrix (all 6 templates
       correct). Migration: rls_rewrite_alwaystrue_to_permission_model.
-- [ ] P1-5 (IN-PROGRESS) 9 SECURITY DEFINER views → invoker; lock anon EXECUTE
-      (audit_db_change, capture_planning_week, is_admin); set search_path
-      (planning_touch_updated_at, fn_feasible_instances)
-- [ ] P1-6 (TODO) Enable leaked-password protection (Supabase Auth dashboard
-      setting — likely not MCP-doable; flag for owner)
+- [x] P1-5 (DONE) 9 SECURITY DEFINER views → security_invoker (re-verified an
+      authenticated admin still reads them: tcc=1111, kpi=1111, gcov=1). Locked
+      EXECUTE: audit_db_change + capture_planning_week → postgres/service_role
+      only (trigger-only / cron-only, never frontend); is_admin → dropped
+      anon+PUBLIC, kept authenticated (RLS needs it). Pinned search_path=public
+      on planning_touch_updated_at + fn_feasible_instances. THEN moved the two
+      RLS helpers (is_admin, has_module_perm) to a new non-exposed `private`
+      schema so they are no longer PostgREST-RPC-callable, clearing the residual
+      0029 warnings while RLS keeps working (policies bind by OID; authenticated
+      granted USAGE on private). Advisor delta: security_definer_view 9→0,
+      function_search_path_mutable 2→0, anon_security_definer 3→0,
+      authenticated_security_definer 4→0. Verified RLS post-move (perm_modules=22,
+      dynamic_instances=22 as authenticated admin). Migrations:
+      p1_5_secdef_views_func_execute_searchpath, p1_5_move_rls_helpers_to_private_schema.
+- [ ] P1-6 (BLOCKED — owner action) Enable leaked-password protection. NOT doable
+      from this environment (Auth/GoTrue config, not SQL; no Management API PAT /
+      CLI / token available; MCP has no auth-config tool). Owner: Dashboard →
+      Authentication → Password policy → enable "Leaked password protection".
 - [x] P1-7 (DONE for DB layer) Per-role verification via ephemeral JWT-claim
       simulation. Real auth test users deferred to Phase 4 (UI/E2E).
 - [ ] P1-8 (TODO, Phase 3 stack) Permissions admin UI: directory, template
@@ -186,6 +207,17 @@
   by has_module_perm() wrapped in (select ...). Advisor delta:
   rls_policy_always_true 24→0; contributes to initplan perf fix. Reversible
   (could restore permissive policies). Verified per-role matrix.
+- p1_5_secdef_views_func_execute_searchpath (2026-06-10) — 9 views→security_invoker;
+  revoked EXECUTE (audit_db_change, capture_planning_week from public/anon/auth;
+  is_admin from public/anon); pinned search_path=public on planning_touch_updated_at
+  + fn_feasible_instances. Advisor delta: security_definer_view 9→0,
+  function_search_path_mutable 2→0, anon_security_definer 3→0. Verified invoker
+  views still read for authenticated admin.
+- p1_5_move_rls_helpers_to_private_schema (2026-06-10) — created `private` schema
+  (USAGE→authenticated,service_role), moved is_admin() + has_module_perm(text,text)
+  into it. RLS unaffected (OID-bound policies). Advisor delta:
+  authenticated_security_definer 2→0. Only remaining lint: auth_leaked_password
+  (dashboard-only). Verified RLS post-move as authenticated admin.
 
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
