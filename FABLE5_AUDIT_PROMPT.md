@@ -335,6 +335,24 @@ as you go; don't leave it to the end.
 Record the question in the ledger's "Open questions" and move to the next
 unblocked task rather than stalling.
 
+### Owner checkpoint cadence (when to pause and report)
+Don't go fully silent across a long engagement, and don't ask permission for
+every small step. Pause and give the owner a concise report at these points:
+- **End of every phase** — what shipped, advisor deltas, what's next. Report and
+  continue, unless the next phase involves a hard gate (below), in which case
+  wait for a go-ahead.
+- **Before any hard-gate action** — from-scratch rebuild, destructive DB change,
+  auth/secret changes, or decommissioning the legacy role model. These require an
+  explicit owner "yes."
+- **After the permission-model schema design, before writing the 27 RLS
+  policies** — show the model so it can be sanity-checked before it's baked into
+  every table.
+- **When blocked** on an owner-only decision (also record it in "Open questions").
+- **At the start of each session** — a 2–3 line "here's where we are / what I'm
+  doing next" so the owner can redirect early.
+Keep each report short (done / in-flight / next / anything I need from you), and
+note in the ledger when a checkpoint was sent and what the owner decided.
+
 ---
 
 ## NAVIGATION & INFORMATION ARCHITECTURE (left sidebar) — explicit focus
