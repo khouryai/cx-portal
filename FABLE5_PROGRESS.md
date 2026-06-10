@@ -1,14 +1,25 @@
 # Fable 5 Progress Ledger
 
 ## ▶ Current position
-- Phase: 0 — COMPLETE (visual baseline P0-4 deferred to start of Phase 4 —
-  capture screenshots/Lighthouse immediately before UX changes begin, decision
-  logged below). Phase 0 checkpoint report sent to owner.
-- Doing right now: awaiting/continuing into Phase 1.
-- Exact next action: P1-1 — design the Procore-style permissions schema
-  (modules/levels/templates/grants doc + DDL draft). OWNER CHECKPOINT after
-  design, before any RLS policy is written.
-- Half-finished state: none (no code/DB changes made yet).
+- Phase: 1 — Permission model + security hardening. Permission **infrastructure
+  is built & verified on the live DB** (additive, reversible). HARD GATE next.
+- Doing right now: paused at the mandated checkpoint — owner review of the model
+  before rewriting the ~27 existing-table RLS policies onto it.
+- Exact next action: on owner OK → P1-7 provision per-role test users, then P1-4
+  rewrite policies batched per module (advisor + per-role matrix per batch).
+- Half-finished state: none. Migrations applied & verified; docs committed.
+  Legacy role columns/`is_admin()` untouched and still authoritative until the
+  rewrite, so the live app is unaffected.
+
+## Architecture decision (2026-06-10, owner-authorized)
+- **Deliver a modern framework end-state via STRANGLER migration**, not a
+  big-bang rewrite. Owner authorized a full rebuild "if needed"; chosen execution
+  stands up the new stack alongside legacy and ports module-by-module so the app
+  stays deployable every commit. Phase 1 (perms/security) is framework-agnostic
+  DB work → proceeds first; the permissions ADMIN UI (P1-8) will be built natively
+  in the new stack (Phase 3) rather than thrown away in legacy.
+- README.md flagged STALE/outdated by owner (2026-06-10) — ignore as source of
+  truth; rewrite or delete in Phase 7. Ground truth = live DB + code.
 
 ## Decisions log
 - 2026-06-10: Engagement begun per FABLE5_AUDIT_PROMPT.md. Owner directives:
@@ -103,13 +114,16 @@
 - [x] P0-5 (DONE) Phase 0 checkpoint report to owner (incl. architecture rec)
 
 ### Phase 1 — Permission model + security hardening
-- [ ] P1-1 (TODO) Design Procore-style permissions schema (modules/levels/
-      templates/granular grants) — OWNER CHECKPOINT before policies are written
-- [ ] P1-2 (TODO) Build has_module_perm() helpers; migrate 5 legacy roles to
-      starter templates; guard against zero-admin state
+- [x] P1-1 (DONE) Design Procore-style permissions schema → PERMISSIONS_MODEL.md
+- [x] P1-2 (DONE) Built has_module_perm()/_perm_baseline(); 22-module catalog;
+      6 system templates absorbing all 6 legacy role values; assigned 3/3
+      profiles. Verified (75 grants, resolver correct). Global-admin shortcut +
+      is_active guard prevent zero-admin/lockout. Migrations: perm_module_
+      infrastructure, perm_module_seed_and_assign, perm_baseline_fix_search_path.
 - [ ] P1-3 (TODO) Enable RLS on demo_seed_log
-- [ ] P1-4 (TODO) Replace ~27 always-true policies with permission-driven ones
-      (batched per module; advisor re-run per batch)
+- [ ] P1-4 (GATED — awaiting owner OK) Replace ~27 always-true policies with
+      has_module_perm()-driven policies, (select auth.uid())-wrapped (also fixes
+      P2-1 initplan). Batched per module; advisor + per-role matrix per batch
 - [ ] P1-5 (TODO) Fix 9 SECURITY DEFINER views → invoker; lock anon EXECUTE on
       definer functions; set search_path on flagged functions
 - [ ] P1-6 (TODO) Enable leaked-password protection
@@ -147,12 +161,22 @@
 - [ ] P7-1 (TODO) Full regression + advisor zero + docs update + final report
 
 ## Migrations applied
-- (none yet)
+- perm_module_infrastructure (2026-06-10) — new tables (perm_modules,
+  permission_templates, template_module_perms, user_module_overrides) +
+  profiles.permission_template_id + has_module_perm()/_perm_baseline() + RLS on
+  new tables + FK indexes. Advisor delta: +1 WARN (_perm_baseline search_path),
+  no new ERRORs/always-true. Reversible (additive).
+- perm_module_seed_and_assign (2026-06-10) — 22 modules, 6 templates, 75 grants,
+  3/3 profiles assigned. Data-only.
+- perm_baseline_fix_search_path (2026-06-10) — set search_path='' on
+  _perm_baseline. Advisor delta: -1 WARN (back to baseline security counts).
 
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
-  architecture rec (incremental modularization). Proceeding into P1-1 design
-  (no hard gate); owner may redirect.
+  architecture rec. Owner replied: do a full framework rebuild if best (→ chose
+  strangler), full DB latitude, README is stale, continue.
+- 2026-06-10: P1 GATE — permission model built & verified; requesting OK to
+  rewrite the ~27 existing-table RLS policies onto it (this message).
 
 ## Open questions for owner
 - Architecture direction: proceeding with **incremental modularization**
