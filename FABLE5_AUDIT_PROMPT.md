@@ -26,6 +26,38 @@ uncommittable chunk of work you can't checkpoint.
 
 ---
 
+## 🚀 START HERE — SESSION KICKOFF CHECKLIST
+
+**Do these in order at the start of EVERY session, before any other work:**
+1. **Read `FABLE5_PROGRESS.md`** top to bottom — especially the "▶ Current
+   position" block. If the file doesn't exist yet, this is session 1 → do the
+   First-session bootstrap below.
+2. **Check real state:** `git log --oneline -15`, `git status`, and confirm you
+   are on the right branch with a clean (or understood) tree.
+3. **Re-run both Supabase advisors** (`get_advisors` security + performance) to
+   get live counts; note any drift vs. the ledger.
+4. **Reconcile** ledger vs. reality (git + advisors). If they disagree, fix the
+   ledger first. Then continue from the exact "next action."
+5. **Pick up the next task**, set it `IN-PROGRESS` in the ledger, and work it to
+   a clean, committed, verified, *tested* boundary.
+
+**First-session bootstrap (session 1 only), in addition to the above:**
+1. Read `CLAUDE.md`, `README.md`, `SECURITY.md`, and the `docs/` folder.
+2. Fan out a read-only audit with **parallel sub-agents** (frontend, RLS/DB,
+   features/gaps, nav/IA) to conserve budget.
+3. Capture the **baseline** (advisor counts, key screenshots incl. the sidebar,
+   a Lighthouse/perf snapshot, heavy-query timings).
+4. Decide and record your **architecture recommendation** (keep-improve vs.
+   modularize vs. rebuild). If proposing a from-scratch rebuild, STOP and get
+   owner sign-off.
+5. Write `FABLE5_PROGRESS.md` from the starter template with the full phased
+   backlog, then report the baseline + proposed direction before changing code.
+
+**Do NOT skip the kickoff to "save time" — re-orienting is what makes the
+engagement resumable.**
+
+---
+
 ## WHAT THIS APP IS
 
 - **Purpose:** Project portal for the BART CBTC (rail signaling) Testing &
@@ -223,6 +255,43 @@ You have **full latitude** over the live Supabase project (id
 You are responsible for proving your changes work — there is no QA team and the
 app currently has no automated test suite.
 
+### Testing rigor — every change is tested before it ships (non-negotiable)
+**No change is "done" until it is tested and the tests pass.** Build testing up
+as you go; don't leave it to the end.
+
+- **Establish a test harness early.** There is already a headless pattern in
+  `tools/` (plain Node files that re-implement an `app.js` helper and assert —
+  e.g. `tools/test_activity_stats.js`, run via `node tools/<file>.js`, Node 22).
+  Formalize it: add a runner (a `package.json` with `npm test`, or a simple
+  script that runs every `tools/test_*.js` and exits non-zero on failure). If
+  you introduce a build/framework, stand up a real test stack
+  (unit + component + E2E) instead.
+- **Three layers of testing, matched to the change:**
+  1. **Unit / logic tests** for any pure logic you touch or add (stats,
+     permission evaluation `has_module_perm`, status transitions, conversions).
+     Cover happy path **and** edge/failure cases.
+  2. **Browser / end-to-end verification** for UI and workflow changes — use the
+     installed **`verify`** and **`run`** skills (and a headless browser such as
+     Playwright if you add one) to actually load the app, sign in, exercise the
+     changed flow, and confirm behavior + no console errors. Don't claim a UI
+     change works without driving it.
+  3. **Database / RLS tests** — the per-role verification matrix: for every
+     affected table/policy, prove with real test users that each role can do
+     what it should and is blocked from what it shouldn't. Re-run advisors.
+- **Regression safety.** Run the **full** existing test suite before every
+  commit; never commit with a failing or skipped test. When you fix a bug, add a
+  test that fails before the fix and passes after. Keep `node --check app.js`
+  (and other edited JS) green.
+- **Critical-path coverage.** Ensure tests exist for the highest-risk flows:
+  auth/sign-in, the permission model, RLS enforcement, punch-list lifecycle,
+  test-matrix status writes, daily-log submission, photo upload, and P6 import.
+- **Record results in the ledger.** For each task note what was tested and the
+  outcome. A task moving to `DONE` must list its passing verification.
+- **Test in isolation, never against real users/data.** Use the provisioned
+  test users, labeled test rows, and/or a Supabase branch; never fire real
+  emails or mutate production records to test (see safety rules below).
+
+
 - **Provision your own test users.** Create dedicated test accounts in Supabase
   Auth — at least one per permission template/role (Admin, Field, Punch Manager,
   Technician, Client, plus any new templates) — and use them to verify
@@ -352,8 +421,9 @@ At the top of each session, **before any work**:
   strings. If you add a build, its build+typecheck+tests must pass too.
 - Each commit message: what changed + the ledger task ID. Push regularly so no
   work lives only in the container (it's ephemeral).
-- A task is **DONE** only when: implemented, verified, advisor re-checked (if
-  DB), ledger updated, and committed.
+- A task is **DONE** only when: implemented, **tested (relevant tests written +
+  full suite green)**, verified, advisor re-checked (if DB), ledger updated, and
+  committed.
 
 ### 4. Budget awareness & graceful stop
 - Prefer finishing a small task fully over starting a large one you can't close.
