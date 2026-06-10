@@ -268,6 +268,52 @@ unblocked task rather than stalling.
 
 ---
 
+## NAVIGATION & INFORMATION ARCHITECTURE (left sidebar) — explicit focus
+
+The left sidebar (`#sidenav` in `index.html`, behavior in `app.js`) has grown
+organically and no longer groups or flows well. **Restructure it** as a
+deliberate part of the UX work.
+
+### Current state (for reference)
+- Regular nav has only two section labels — **"Work"** and **"Views"** — that
+  have become grab-bags. Today's pages (`data-page` values):
+  - *Work:* `field-intake`, `test-register`, `forms`, `rma`, `meetings`,
+    `punch-workflow`, `test-reporting`, `lookahead`.
+  - *Views:* `dashboard`, `activities`, `lineitems`, `locations`, `team`,
+    `schedule`, `drawings`, `dynamic-testing`.
+  - A separate **Admin mode** (`#nav-admin-items`) swaps the entire nav to
+    `admin-templates`, `admin-weights`, `admin-locations`, `admin-fieldconfig`,
+    `admin-directory`, `audit`, `admin-p6`, `admin-assets`, `admin-config`,
+    `admin-planning`.
+- Problems: inconsistent grouping (e.g. `drawings`/`dynamic-testing` under
+  "Views", `schedule` here but `admin-p6` under Admin), the binary Work/Views
+  split doesn't scale, and the full-nav Admin-mode swap hides related tools.
+
+### What to design
+- **Coherent, scalable grouping** by workflow domain — e.g. *Overview*
+  (dashboard/KPIs), *Testing* (test register, matrix, dynamic testing, reports),
+  *Field Work* (intake, punch list, RMA, photos, forms), *Planning & Schedule*
+  (look-ahead, P6 schedule, planning, meetings), *Project Data* (assets, track
+  plan, drawings, locations), *People* (directory/team), *Admin* (templates,
+  field config, permissions, audit). Refine these names/groupings as you see fit.
+- **Collapsible/grouped sections** with sensible defaults, clear active state,
+  and (if a rebuild) a tidy collapsed/icon-rail mode. Keep it usable on mobile
+  / the PWA tab bar.
+- **Permission-driven visibility.** Nav groups and items render from the new
+  granular-permissions model's *effective permissions* — a user sees exactly the
+  modules they have at least Read Only on. Reconsider the all-or-nothing "Admin
+  mode" swap: admin tools should live as permission-gated groups in the same nav,
+  not a separate mode (unless you make a deliberate, documented case otherwise).
+- **Consistency:** unify the icon system (the sidebar currently uses inline
+  `<svg>` paths separate from the `icon()` map), labels, ordering, and spacing.
+- Preserve deep-linkability / existing `data-page` routing (or migrate routing
+  cleanly) so no page becomes unreachable.
+
+Treat this as a dedicated task in the ledger under the UX phase, and capture a
+before/after screenshot of the sidebar in the baseline.
+
+---
+
 ## ⚠️ SESSION-LIMIT RESILIENCE PROTOCOL (most important section)
 
 You operate under session limits and **will** be interrupted. Make every
@@ -342,9 +388,10 @@ At the top of each session, **before any work**:
 - **Phase 3 — Frontend foundation.** Execute the chosen architecture direction
   (modularize or rebuild) incrementally; kill dead code; establish the design
   system / component patterns; keep deploy green at every step.
-- **Phase 4 — UX, visual & accessibility.** Consistency pass, a11y
-  (labels/contrast/keyboard/focus), responsive + PWA polish, loading/empty/error
-  states across every feature.
+- **Phase 4 — UX, visual & accessibility.** **Restructure the left-sidebar IA**
+  (see "Navigation & Information Architecture") into coherent, permission-driven,
+  collapsible groups. Consistency pass, a11y (labels/contrast/keyboard/focus),
+  responsive + PWA polish, loading/empty/error states across every feature.
 - **Phase 5 — Feature completeness.** Wire photo upload via a storage-agnostic
   adapter; finish stubbed workflows; close functional gaps.
 - **Phase 6 — Integration prep.** Move toward the Azure/SharePoint target
