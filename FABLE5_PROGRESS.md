@@ -13,13 +13,14 @@
 - Exact next action: P3-1 — carve the first safe ES-module seam out of app.js
   (start with leaf pure-helpers already unit-tested, e.g. planning stats / copy-
   paste logic) behind existing globals, keeping the app deployable each commit.
-- OPEN AUTHORIZATION FINDING (for owner decision, Phase 1 follow-up): 43 tables
-  still carry a blanket `auth_all` policy = ANY authenticated user has full CRUD,
-  bypassing the permission model (has_module_perm now gates only the 24 P1-4
-  tables + perm infra). P2-1 only made these performant (semantics preserved on
-  purpose); it did NOT tighten them. Deciding which of the 43 should move onto
-  has_module_perm vs. stay all-authenticated is a permission-model design call
-  (overlaps P1-8) — flagged, not silently changed.
+- AUTHORIZATION FINDING — RESOLVED (P1-9, owner chose "tighten all"): the 43
+  blanket `auth_all` tables now enforce the permission model. 40 mapped 1:1 to a
+  module (full per-command has_module_perm gating); fieldset_config + locations =
+  reference data (SELECT to all authenticated, writes module-gated, so cross-
+  module UI dropdowns don't break); pto_requests = self-service (own-row + planning
+  manager override); audit_log/db_change_log = audit module (admin-only reads).
+  Verified per-role: Field Engineer sees test_items/meetings/locations but 0 of
+  18,513 db_change_log rows (admin sees all). No advisor regressions.
 - P1-6 BLOCKER (leaked-password protection): not doable from this environment.
   It is a GoTrue/Auth config toggle, not SQL; no Management API PAT is present
   in env, no Supabase CLI, no token file (api.supabase.com reachable but 403),
@@ -168,6 +169,17 @@
       Authentication → Password policy → enable "Leaked password protection".
 - [x] P1-7 (DONE for DB layer) Per-role verification via ephemeral JWT-claim
       simulation. Real auth test users deferred to Phase 4 (UI/E2E).
+- [x] P1-9 (DONE) Tightened all 43 remaining `auth_all` (any-authenticated full
+      CRUD) tables onto the permission model. 40 module-scoped (meetings/planning/
+      schedule_p6/punch_list/rma/assets/templates/test_register/test_reporting/
+      audit) with per-command has_module_perm gating; fieldset_config+locations as
+      read-all reference data with module-gated writes; pto_requests self-service
+      (own-row + planning override). Verified per-role (FE: 0/18513 db_change_log;
+      admin: all). No advisor regressions. Migration:
+      p1_tighten_auth_all_tables_onto_permission_model. NOTE: a few module
+      mappings are best-judgment (activity_records→test_register,
+      delay_log/test_results→test_reporting, test_instances→templates) — revisit
+      if a screen turns up empty for a role that should see it.
 - [ ] P1-8 (TODO, Phase 3 stack) Permissions admin UI: directory, template
       editor, per-user overrides, effective-permissions preview
 
@@ -261,6 +273,12 @@
 - p2_4_dedupe_index_and_consolidate_shift_templates (2026-06-10) — dropped dup
   idx_dynamic_instances_tsut; split shift_templates_write FOR ALL → ins/upd/del.
   Advisor delta: duplicate_index 1→0, multiple_permissive_policies 1→0.
+- p1_tighten_auth_all_tables_onto_permission_model (2026-06-10) — replaced
+  `auth_all` on 43 tables with command-specific policies: 40 module-scoped via
+  private.has_module_perm(module,action) (loop), fieldset_config+locations
+  read-all/module-write, pto_requests own-row+planning, audit_log/db_change_log
+  audit-only. All (select ...)-wrapped → no initplan/permissive regressions.
+  Verified per-role. Closes the auth_all authorization gap.
 
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
