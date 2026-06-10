@@ -36,6 +36,7 @@ for (const f of ["app.js", "photos.js", "markup.js"]) {
 
 // 2) Unit suites (each prints "N passed, M failed" and exits non-zero on fail).
 const suites = [
+  { file: "tools/smoke_app.js", needs: [] },            // headless boot of data.js + app.js
   { file: "tools/test_activity_stats.js", needs: [] },
   { file: "tools/markup_test.js", needs: [] },
   { file: "tools/test_copy_paste.js", needs: ["dayjs"] },

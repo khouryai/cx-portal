@@ -7,12 +7,19 @@
   CLEARED (auth_rls_initplan 49→0, unindexed_foreign_keys 42→0, duplicate_index
   1→0, multiple_permissive_policies 1→0). Only INFO unused_index remains (121,
   expected — see P2-3). All verified (RLS still permits as authenticated admin).
-- Doing right now: Phase 3 started — P3-2 (test harness + CI) DONE & committed.
-  Next = P3-1 (incremental ES-module split of app.js) or P3-3 (dead-code/data.js
-  audit) — both larger, multi-step; P3-1 is the architecture spine.
-- Exact next action: P3-1 — carve the first safe ES-module seam out of app.js
-  (start with leaf pure-helpers already unit-tested, e.g. planning stats / copy-
-  paste logic) behind existing globals, keeping the app deployable each commit.
+- Doing right now: Phase 1 fully closed (P1-9 tightening done). Phase 3 groundwork
+  done — boot/smoke harness (tools/smoke_app.js) now loads data.js+app.js headlessly
+  and asserts the whole 38,920-line file executes without throwing + bootstrap
+  registers. Safety net for the module split is in place.
+- Exact next action: P3-1 — begin the strangler split. Extract leaf helpers from
+  app.js into separate classic scripts loaded before app.js in index.html, each
+  EXPORTING VIA `window.X = X` (not top-level const sharing — keeps the smoke
+  loader, which runs scripts as separate vm contexts, faithful). After each
+  extraction: add the new file to smoke_app.js's load order, run tools/run_tests.js,
+  keep app deployable. First candidate: the ICONS map + icon() SVG system.
+- VERIFICATION CAPABILITY GAINED: the module split is now verifiable headlessly
+  (parse + full top-level execution + bootstrap wiring). Live DOMContentLoaded
+  init / real network still require a browser; out of scope for the smoke net.
 - AUTHORIZATION FINDING — RESOLVED (P1-9, owner chose "tighten all"): the 43
   blanket `auth_all` tables now enforce the permission model. 40 mapped 1:1 to a
   module (full per-command has_module_perm gating); fieldset_config + locations =
@@ -207,7 +214,10 @@
   traffic). Not a regression; see P2-3.
 
 ### Phase 3 — Frontend foundation
-- [ ] P3-1 (TODO) Execute architecture direction (incremental ES-module split)
+- [~] P3-1 (IN-PROGRESS) Incremental strangler split of app.js. GROUNDWORK DONE:
+      headless boot/smoke (tools/smoke_app.js) loads data.js+app.js under a
+      universal-Proxy DOM/lib shim and asserts full top-level execution + bootstrap
+      registration (9 checks). Next: carve leaf helpers out behind window exports.
 - [x] P3-2 (DONE) Test harness — committed `tools/run_tests.js` (node --check on
       app.js/photos.js/markup.js + runs the 3 headless suites: test_activity_stats,
       markup_test, test_copy_paste = 88 assertions, all green) + CI workflow
