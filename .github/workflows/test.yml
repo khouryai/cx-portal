@@ -1,0 +1,25 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # This repo is package.json-free by design (static GitHub Pages deploy).
+      # dayjs is the only test-only dependency; install it transiently.
+      - name: Install test-only dependency
+        run: npm install --no-save --no-package-lock dayjs@1.11.13
+      - name: Run headless test suite
+        run: node tools/run_tests.js

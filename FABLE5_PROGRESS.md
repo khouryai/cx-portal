@@ -7,10 +7,12 @@
   CLEARED (auth_rls_initplan 49→0, unindexed_foreign_keys 42→0, duplicate_index
   1→0, multiple_permissive_policies 1→0). Only INFO unused_index remains (121,
   expected — see P2-3). All verified (RLS still permits as authenticated admin).
-- Doing right now: Phase 2 complete & committed. Next substantive work = Phase 3
-  (frontend foundation) unless owner redirects.
-- Exact next action: P3-1/P3-2 — stand up a test harness (package.json + npm test
-  over tools/test_*.js) and begin the incremental ES-module split of app.js.
+- Doing right now: Phase 3 started — P3-2 (test harness + CI) DONE & committed.
+  Next = P3-1 (incremental ES-module split of app.js) or P3-3 (dead-code/data.js
+  audit) — both larger, multi-step; P3-1 is the architecture spine.
+- Exact next action: P3-1 — carve the first safe ES-module seam out of app.js
+  (start with leaf pure-helpers already unit-tested, e.g. planning stats / copy-
+  paste logic) behind existing globals, keeping the app deployable each commit.
 - OPEN AUTHORIZATION FINDING (for owner decision, Phase 1 follow-up): 43 tables
   still carry a blanket `auth_all` policy = ANY authenticated user has full CRUD,
   bypassing the permission model (has_module_perm now gates only the 24 P1-4
@@ -194,7 +196,15 @@
 
 ### Phase 3 — Frontend foundation
 - [ ] P3-1 (TODO) Execute architecture direction (incremental ES-module split)
-- [ ] P3-2 (TODO) Test harness: package.json + npm test running tools/test_*.js
+- [x] P3-2 (DONE) Test harness — committed `tools/run_tests.js` (node --check on
+      app.js/photos.js/markup.js + runs the 3 headless suites: test_activity_stats,
+      markup_test, test_copy_paste = 88 assertions, all green) + CI workflow
+      `.github/workflows/test.yml` (push/PR). DELIBERATELY package.json-free:
+      repo deploys static to GH Pages publishing the root verbatim, and root
+      package.json is gitignored by owner convention. Sole test dep `dayjs` is
+      installed transiently in CI (`npm install --no-save dayjs@1.11.13`); runner
+      SKIPs (not fails) the copy/paste suite if dayjs is absent locally. If owner
+      later prefers a committed package.json, trivial to switch.
 - [ ] P3-3 (TODO) Dead-code removal (data.js audit, unused functions)
 - [ ] P3-4 (TODO) Design tokens / component patterns on Hitachi palette
 
