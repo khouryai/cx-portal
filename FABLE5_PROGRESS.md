@@ -1,16 +1,23 @@
 # Fable 5 Progress Ledger
 
 ## ▶ Current position
-- Phase: 1 — Permission model + security hardening. Owner APPROVED the rewrite.
-  P1-1..P1-5 + P1-7 DONE. Permission model live + 24 always-true tables
-  rewritten + demo_seed_log RLS + 9 SECURITY DEFINER views→invoker + function
-  EXECUTE lockdown + RLS helpers moved to private schema + search_path pinned.
-  Security advisors: ALL DB-level lints CLEARED (only auth_leaked_password
-  remains, dashboard-only — see P1-6). All verified (per-role matrix + advisors).
-- Doing right now: P1-5 complete & committed. Next substantive work = Phase 2
-  (DB performance) unless owner redirects.
-- Exact next action: P2-1 — wrap auth.* calls in RLS with (select auth.uid())
-  to fix 49 auth_rls_initplan warnings; then FK indexes (P2-2).
+- Phase: 2 — DB performance. P1 (security) DONE; P2-1/P2-2/P2-4 DONE, P2-3
+  decided (no-op, see below). Security advisors: only auth_leaked_password
+  remains (dashboard-only, P1-6). Performance advisors: ALL WARN-level lints
+  CLEARED (auth_rls_initplan 49→0, unindexed_foreign_keys 42→0, duplicate_index
+  1→0, multiple_permissive_policies 1→0). Only INFO unused_index remains (121,
+  expected — see P2-3). All verified (RLS still permits as authenticated admin).
+- Doing right now: Phase 2 complete & committed. Next substantive work = Phase 3
+  (frontend foundation) unless owner redirects.
+- Exact next action: P3-1/P3-2 — stand up a test harness (package.json + npm test
+  over tools/test_*.js) and begin the incremental ES-module split of app.js.
+- OPEN AUTHORIZATION FINDING (for owner decision, Phase 1 follow-up): 43 tables
+  still carry a blanket `auth_all` policy = ANY authenticated user has full CRUD,
+  bypassing the permission model (has_module_perm now gates only the 24 P1-4
+  tables + perm infra). P2-1 only made these performant (semantics preserved on
+  purpose); it did NOT tighten them. Deciding which of the 43 should move onto
+  has_module_perm vs. stay all-authenticated is a permission-model design call
+  (overlaps P1-8) — flagged, not silently changed.
 - P1-6 BLOCKER (leaked-password protection): not doable from this environment.
   It is a GoTrue/Auth config toggle, not SQL; no Management API PAT is present
   in env, no Supabase CLI, no token file (api.supabase.com reachable but 403),
@@ -163,10 +170,27 @@
       editor, per-user overrides, effective-permissions preview
 
 ### Phase 2 — DB performance
-- [ ] P2-1 (TODO) Wrap auth.* calls in RLS policies ((select auth.uid())) — 49
-- [ ] P2-2 (TODO) Add 42 FK covering indexes
-- [ ] P2-3 (TODO) Evaluate + drop 77 unused / 1 duplicate index (confirm usage first)
-- [ ] P2-4 (TODO) Consolidate multiple-permissive policies
+- [x] P2-1 (DONE) Wrapped auth.<fn>() in (select ...) across 49 policies:
+      43 `auth_all` (loop), profiles_select/_update, 4 user_column_prefs.
+      Semantics-preserving. Advisor: auth_rls_initplan 49→0. Verified RLS still
+      permits as authenticated admin. Migration: p2_1_wrap_auth_calls_in_rls_initplan.
+- [x] P2-2 (DONE) Added 42 FK covering indexes (catalog-derived, IF NOT EXISTS).
+      Advisor: unindexed_foreign_keys 42→0. Migration: p2_2_add_fk_covering_indexes.
+- [x] P2-3 (DECIDED — deliberate no-op) Did NOT drop "unused" indexes. On this
+      seed/low-traffic DB "unused" = no scan stats yet, not redundant; 42 of them
+      are the FK indexes just added (best practice; prevent prod lock/scan), and
+      pre-existing lookup indexes will be used under real traffic. Dropping to
+      satisfy an INFO lint would regress production. Revisit only with real
+      pg_stat_user_indexes data from production traffic (Phase 7). The genuinely
+      redundant case (1 duplicate index) WAS dropped under P2-4.
+- [x] P2-4 (DONE) Dropped duplicate index idx_dynamic_instances_tsut (identical
+      to dynamic_instances_tsut_idx). Split shift_templates_write (FOR ALL,
+      overlapped SELECT) into command-specific ins/upd/del admin policies so
+      SELECT has a single permissive policy. Advisor: duplicate_index 1→0,
+      multiple_permissive_policies 1→0. Behavior preserved (all auth read; admin
+      writes). Migration: p2_4_dedupe_index_and_consolidate_shift_templates.
+- NOTE: unused_index INFO rose 80→121 by design (new FK indexes unscanned until
+  traffic). Not a regression; see P2-3.
 
 ### Phase 3 — Frontend foundation
 - [ ] P3-1 (TODO) Execute architecture direction (incremental ES-module split)
@@ -218,6 +242,15 @@
   into it. RLS unaffected (OID-bound policies). Advisor delta:
   authenticated_security_definer 2→0. Only remaining lint: auth_leaked_password
   (dashboard-only). Verified RLS post-move as authenticated admin.
+- p2_1_wrap_auth_calls_in_rls_initplan (2026-06-10) — wrapped auth.<fn>() in
+  (select ...) across 49 policies (43 auth_all via loop + profiles x2 + 4 ucp).
+  Advisor delta: auth_rls_initplan 49→0. Semantics-preserving; verified.
+- p2_2_add_fk_covering_indexes (2026-06-10) — 42 FK covering indexes
+  (IF NOT EXISTS). Advisor delta: unindexed_foreign_keys 42→0; unused_index
+  80→121 (expected, FK indexes unscanned until traffic).
+- p2_4_dedupe_index_and_consolidate_shift_templates (2026-06-10) — dropped dup
+  idx_dynamic_instances_tsut; split shift_templates_write FOR ALL → ins/upd/del.
+  Advisor delta: duplicate_index 1→0, multiple_permissive_policies 1→0.
 
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
