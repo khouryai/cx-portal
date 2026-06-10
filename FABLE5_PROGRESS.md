@@ -1,15 +1,20 @@
 # Fable 5 Progress Ledger
 
 ## ▶ Current position
-- Phase: 1 — Permission model + security hardening. Permission **infrastructure
-  is built & verified on the live DB** (additive, reversible). HARD GATE next.
-- Doing right now: paused at the mandated checkpoint — owner review of the model
-  before rewriting the ~27 existing-table RLS policies onto it.
-- Exact next action: on owner OK → P1-7 provision per-role test users, then P1-4
-  rewrite policies batched per module (advisor + per-role matrix per batch).
-- Half-finished state: none. Migrations applied & verified; docs committed.
-  Legacy role columns/`is_admin()` untouched and still authoritative until the
-  rewrite, so the live app is unaffected.
+- Phase: 1 — Permission model + security hardening. Owner APPROVED the rewrite.
+  Permission model live + 24 always-true tables rewritten + demo_seed_log RLS,
+  all verified (per-role matrix + advisors). Clean committed boundary.
+- Doing right now: about to continue P1-5 (SECURITY DEFINER views → invoker;
+  lock anon EXECUTE; set function search_path).
+- Exact next action: P1-5 — flip 9 vw_*/kpi_* views to security_invoker (app
+  users now have underlying-table perms via new policies → re-verify they still
+  read); revoke anon EXECUTE on audit_db_change/capture_planning_week/is_admin;
+  set search_path on planning_touch_updated_at + fn_feasible_instances.
+- Half-finished state: none. All DB changes are applied migrations + verified.
+- Verification note: test profiles can't be persisted (profiles.id FK→auth.users);
+  RLS verified via ephemeral rolled-back JWT-claim simulation. Real auth test
+  users to be created in Phase 4 for UI/E2E. profiles_role_check allows only
+  admin/field_engineer/readonly (legacy data inconsistency; templates supersede).
 
 ## Architecture decision (2026-06-10, owner-authorized)
 - **Deliver a modern framework end-state via STRANGLER migration**, not a
@@ -120,17 +125,21 @@
       profiles. Verified (75 grants, resolver correct). Global-admin shortcut +
       is_active guard prevent zero-admin/lockout. Migrations: perm_module_
       infrastructure, perm_module_seed_and_assign, perm_baseline_fix_search_path.
-- [ ] P1-3 (TODO) Enable RLS on demo_seed_log
-- [ ] P1-4 (GATED — awaiting owner OK) Replace ~27 always-true policies with
-      has_module_perm()-driven policies, (select auth.uid())-wrapped (also fixes
-      P2-1 initplan). Batched per module; advisor + per-role matrix per batch
-- [ ] P1-5 (TODO) Fix 9 SECURITY DEFINER views → invoker; lock anon EXECUTE on
-      definer functions; set search_path on flagged functions
-- [ ] P1-6 (TODO) Enable leaked-password protection
-- [ ] P1-7 (TODO) Provision per-role test users (fable-test-*) + run per-role
-      verification matrix
-- [ ] P1-8 (TODO) Permissions admin UI: directory, template editor, per-user
-      overrides, effective-permissions preview
+- [x] P1-3 (DONE) Enabled RLS on demo_seed_log (admin-only policy). Advisor
+      delta: rls_disabled_in_public 1→0. Migration: enable_rls_demo_seed_log.
+- [x] P1-4 (DONE) Rewrote 24 always-true tables → command-specific
+      has_module_perm()-driven policies, (select ...)-wrapped. Advisor delta:
+      rls_policy_always_true 24→0. Verified via per-role matrix (all 6 templates
+      correct). Migration: rls_rewrite_alwaystrue_to_permission_model.
+- [ ] P1-5 (IN-PROGRESS) 9 SECURITY DEFINER views → invoker; lock anon EXECUTE
+      (audit_db_change, capture_planning_week, is_admin); set search_path
+      (planning_touch_updated_at, fn_feasible_instances)
+- [ ] P1-6 (TODO) Enable leaked-password protection (Supabase Auth dashboard
+      setting — likely not MCP-doable; flag for owner)
+- [x] P1-7 (DONE for DB layer) Per-role verification via ephemeral JWT-claim
+      simulation. Real auth test users deferred to Phase 4 (UI/E2E).
+- [ ] P1-8 (TODO, Phase 3 stack) Permissions admin UI: directory, template
+      editor, per-user overrides, effective-permissions preview
 
 ### Phase 2 — DB performance
 - [ ] P2-1 (TODO) Wrap auth.* calls in RLS policies ((select auth.uid())) — 49
@@ -170,6 +179,13 @@
   3/3 profiles assigned. Data-only.
 - perm_baseline_fix_search_path (2026-06-10) — set search_path='' on
   _perm_baseline. Advisor delta: -1 WARN (back to baseline security counts).
+- enable_rls_demo_seed_log (2026-06-10) — RLS + admin-only policy on
+  demo_seed_log. Advisor delta: rls_disabled_in_public 1→0 (CRITICAL resolved).
+- rls_rewrite_alwaystrue_to_permission_model (2026-06-10) — 24 tables: dropped
+  always-true ALL policies, created select/insert/update/delete policies driven
+  by has_module_perm() wrapped in (select ...). Advisor delta:
+  rls_policy_always_true 24→0; contributes to initplan perf fix. Reversible
+  (could restore permissive policies). Verified per-role matrix.
 
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
