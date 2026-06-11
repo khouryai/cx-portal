@@ -9,6 +9,7 @@
 // `compute` module safe. Run: node tools/test_activity_compute.js
 "use strict";
 
+const vm = require("vm");
 const { loadApp } = require("./_load_app.js");
 
 let pass = 0, fail = 0;
@@ -18,7 +19,7 @@ function ok(name, cond, details) {
 }
 function eq(name, got, want) { ok(`${name} (=${JSON.stringify(want)})`, got === want, `got ${JSON.stringify(got)}`); }
 
-const { sandbox, loadError, loadErrorFile } = loadApp();
+const { sandbox, ctx, loadError, loadErrorFile } = loadApp();
 if (loadError) { console.error("FATAL: load —", loadErrorFile, loadError.message); process.exit(1); }
 const { _amComputeStatus, _amComputeCompletion, _tcWeightFor, _actWeightFor } = sandbox;
 for (const [n, f] of Object.entries({ _amComputeStatus, _amComputeCompletion, _tcWeightFor, _actWeightFor })) {
@@ -84,6 +85,29 @@ eq("  _tcWeightFor hit", _tcWeightFor({ TestCaseCode: "C", TestName: "T" }, map(
 eq("  _tcWeightFor miss → default 1", _tcWeightFor({ TestCaseCode: "X", TestName: "Y" }, map({})), 1);
 eq("  _actWeightFor hit", _actWeightFor({ Subsystem: "S", Activity: "A" }, map({ "S||A": 5 })), 5);
 eq("  _actWeightFor miss → default 1", _actWeightFor({}, map({})), 1);
+
+// ── _apBuildRows: the Test Activities page, now sourced from the real Test
+//    Register (grouped TI) instead of data.js actionPlans demo ──
+console.log("\n_apBuildRows (Activities page ← real test register):");
+{
+  const { _apBuildRows } = sandbox;
+  ok("  _apBuildRows exists", typeof _apBuildRows === "function");
+  vm.runInContext(`TI = ${JSON.stringify([
+    { Phase: "2", Location: "W40", Subsystem: "CBTC", Activity: "Wayside Verif", Status: "Pass", TestCaseCode: "C1", TestName: "N1" },
+    { Phase: "2", Location: "W40", Subsystem: "CBTC", Activity: "Wayside Verif", Status: "Not Started", TestCaseCode: "C2", TestName: "N2" },
+    { Phase: "3", Location: "X10", Subsystem: "DCS", Activity: "DCS SIT", Status: "Pass", TestCaseCode: "C3", TestName: "N3" },
+  ])}; _activityWeights = []; _testCaseWeights = [];`, ctx);
+  const rows = _apBuildRows();
+  eq("  groups TI into activities", rows.length, 2);
+  const wv = rows.find((r) => r.Name === "Wayside Verif");
+  const dcs = rows.find((r) => r.Name === "DCS SIT");
+  eq("  partial activity → Open status", wv.Status, "Open");
+  eq("  partial activity → 50% progress", wv.Progress, "50%");
+  eq("  carries subsystem/phase/location", `${wv["SubSystem-"]}|${wv.Phase}|${wv.Location}`, "CBTC|2|W40");
+  eq("  all-done activity → Closed status", dcs.Status, "Closed");
+  eq("  all-done activity → 100% progress", dcs.Progress, "100%");
+  eq("  empty TI → no rows", (vm.runInContext(`TI = [];`, ctx), _apBuildRows().length), 0);
+}
 
 console.log(`\n${pass} passed, ${fail} failed.\n`);
 process.exit(fail === 0 ? 0 : 1);

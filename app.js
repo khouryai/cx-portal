@@ -3,7 +3,7 @@
 // ==========================================
 
 const DATA = window.PORTAL_DATA;
-const AP = DATA.actionPlans;
+let AP = [];        // derived from real Test Register activities (_amGetActivities)
 const LI = DATA.lineItems;
 const PL = DATA.punchList;
 const ORG = DATA.org;
@@ -1396,7 +1396,33 @@ function _dashRenderQuality() {
 // ==========================================
 let apSort = { col: null, asc: false };
 
+
+// Build the Activities table rows from the REAL test register (grouped TI +
+// activity_records), reusing the activity-manager derivation + status/completion
+// math. Replaces the old data.js actionPlans demo source.
+let _apBound = false;
+function _apBuildRows() {
+  if (typeof _amGetActivities !== 'function') return [];
+  const tcw = (typeof _buildTestCaseWeightLookup === 'function') ? _buildTestCaseWeightLookup() : null;
+  return _amGetActivities().map(act => {
+    const comp = _amComputeCompletion(act, tcw);
+    const first = act.items[0] || {};
+    return {
+      Name:               act.activity,
+      Description:         act.activity,
+      'SubSystem-':        act.subsystem,
+      Phase:              act.phase,
+      'Test Level':       first.TestLevel || first['Test Level'] || '—',
+      Location:           act.location,
+      Progress:           comp.pct + '%',
+      Status:             _amComputeStatus(act),
+      'Test Report CDRL': act.testReport || '',
+      _comp:              comp,
+    };
+  });
+}
 function initActivities() {
+  AP = _apBuildRows();
   document.getElementById('ap-summary').textContent = `${AP.length} SAT activities across ${new Set(AP.map(r => r.Location).filter(Boolean)).size} locations`;
 
   // Build filter options
@@ -1410,6 +1436,8 @@ function initActivities() {
   populateSelect('ap-phase-filter', 'All phases', phases.map(p => `Phase ${p}`));
   populateSelect('ap-location-filter', 'All locations', locs);
 
+  if (!_apBound) {
+    _apBound = true;
   ['ap-search','ap-status-filter','ap-subsys-filter'].forEach(id => {
     document.getElementById(id).addEventListener('input', renderAPTable);
   });
@@ -1426,6 +1454,7 @@ function initActivities() {
     });
   });
 
+  }
   renderAPTable();
 }
 
@@ -3246,6 +3275,7 @@ function onLoggedIn() {
     // Re-init views with freshly loaded data
     initLineItems();
     if (typeof initOrg==='function') initOrg();
+    initActivities();
     renderAdminPortal(); renderAdminTemplates(); renderTestRegister(); renderFieldIntake();
     renderPunchWorkflow(); renderAuditLog(); renderTestReporting();
     refreshAuditLog().catch(err => console.warn('[audit] refresh failed:', err.message));
