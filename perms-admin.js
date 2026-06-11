@@ -56,6 +56,93 @@ window.permBaseline  = permBaseline;
 window.permEffective = permEffective;
 window.PERM_ACTIONS  = PERM_ACTIONS;
 
+/* ── Signed-in user's effective permissions (UI gating, P4-1a) ──────────────
+   The UI mirrors what RLS enforces: after login, app.js calls
+   loadMyPermissions(currentProfile); nav links whose page module lacks 'view'
+   are hidden, and feature code can ask uiCan(module, action).
+   FAIL-OPEN BY DESIGN: if the load errors, the UI falls back to the legacy
+   role-based visibility — showing too much is harmless (RLS rejects), while
+   hiding everything would brick navigation. */
+
+const PAGE_MODULE = {
+  'dashboard': 'overview',
+  'activities': 'test_register', 'lineitems': 'test_register',
+  'field-intake': 'test_register', 'test-register': 'test_register', 'tcv': 'test_register',
+  'test-reporting': 'test_reporting',
+  'punch-workflow': 'punch_list',
+  'rma': 'rma',
+  'forms': 'forms',
+  'meetings': 'meetings',
+  'lookahead': 'lookahead',
+  'schedule': 'schedule_p6',
+  'drawings': 'drawings',
+  'dynamic-testing': 'dynamic_testing',
+  'locations': 'locations',
+  'team': 'directory',
+  'audit': 'audit',
+  'admin-templates': 'templates',
+  'admin-weights': 'weights',
+  'admin-locations': 'locations',
+  'admin-fieldconfig': 'forms',
+  'admin-directory': 'directory',
+  'admin-permissions': 'admin',
+  'admin-p6': 'schedule_p6',
+  'admin-assets': 'assets',
+  'admin-config': 'config',
+  'admin-planning': 'planning',
+};
+
+let _myPerms = null;   // 'admin' | Map(moduleKey -> actions[]) | null (not loaded / failed)
+
+async function loadMyPermissions(profile) {
+  _myPerms = null;
+  if (profile && profile.role === 'admin') { _myPerms = 'admin'; _applyPermNav(); return; }
+  if (!profile) { _applyPermNav(); return; }
+  try {
+    const [tmp, ovs] = await Promise.all([
+      profile.permission_template_id
+        ? _sb.from('template_module_perms').select('*').eq('template_id', profile.permission_template_id)
+        : Promise.resolve({ data: [] }),
+      _sb.from('user_module_overrides').select('*').eq('user_id', profile.id),
+    ]);
+    if (tmp.error || ovs.error) throw (tmp.error || ovs.error);
+    const tmpMap = new Map((tmp.data || []).map(r => [r.module_key, r]));
+    const ovMap  = new Map((ovs.data || []).map(r => [r.module_key, r]));
+    const keys = new Set([...tmpMap.keys(), ...ovMap.keys()]);
+    const perms = new Map();
+    for (const k of keys) perms.set(k, permEffective(profile, tmpMap.get(k) || null, ovMap.get(k) || null));
+    _myPerms = perms;
+  } catch (e) {
+    console.warn('[perms] UI permission load failed — falling back to role-based nav (RLS still enforces):', e.message || e);
+    _myPerms = null;
+  }
+  _applyPermNav();
+}
+
+function uiCan(moduleKey, action) {
+  action = action || 'view';
+  if (_myPerms === 'admin') return true;
+  if (!_myPerms) return true;                 // fail-open: UI only, RLS is the gate
+  const acts = _myPerms.get(moduleKey);
+  return !!acts && acts.includes(action);
+}
+
+function _applyPermNav() {
+  // Admins and the fallback state keep the legacy role-based visibility as-is.
+  if (_myPerms === 'admin' || !_myPerms) return;
+  document.querySelectorAll('.nav-link[data-page]').forEach(link => {
+    const mod = PAGE_MODULE[link.dataset.page];
+    if (!mod) return;                          // unmapped pages keep legacy visibility
+    // Permission gating only ever HIDES further — it never reveals a link the
+    // legacy role filter already hid.
+    if (!uiCan(mod, 'view')) link.style.display = 'none';
+  });
+}
+
+window.PAGE_MODULE = PAGE_MODULE;
+window.loadMyPermissions = loadMyPermissions;
+window.uiCan = uiCan;
+
 /* ── State ── */
 
 let _paTab = 'templates';            // 'templates' | 'users'

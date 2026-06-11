@@ -329,8 +329,26 @@
 - [ ] P3-4 (TODO) Design tokens / component patterns on Hitachi palette
 
 ### Phase 4 — UX, visual & accessibility
-- [ ] P4-1 (TODO) Restructure left-sidebar IA (permission-driven groups; dissolve
-      Admin-mode swap; icon() unification; mobile/PWA)
+- [~] P4-1 (IN-PROGRESS) Sidebar IA / permission-driven UI.
+      • P4-1a (DONE): UI now consumes the permission model. perms-admin.js gained
+        PAGE_MODULE (28 nav pages → 22 catalog modules), loadMyPermissions(profile)
+        (loads the signed-in user's template rows + own overrides — select
+        policies verified readable by non-admins), uiCan(module, action), and
+        _applyPermNav (hides nav links lacking 'view'). Hooked into onLoggedIn
+        (all 3 login paths set currentProfile first — verified). FAIL-OPEN by
+        design: load failure → legacy role-based nav (showing too much is
+        harmless, RLS rejects; hiding everything would brick nav). Gating only
+        ever HIDES beyond the legacy role filter, never reveals. uiCan() is now
+        available for incremental adoption by feature code (replacing the ~30
+        scattered role==='admin' checks over time). tools/test_ui_can.js (8)
+        incl. 2 integrity invariants: every nav data-page mapped (or known
+        non-module) + every mapping targets a real catalog key — new nav entries
+        can't silently bypass gating. NOTE for owner: needs a quick browser spin
+        (sign in as the Field Engineer; admin-category links should be hidden,
+        everything else unchanged).
+      • REMAINING P4-1: IA regrouping ("Work"/"Views" grab-bags), dissolve
+        Admin-mode swap, icon() unification in sidebar, mobile/PWA pass —
+        visual work, needs owner browser QA per direction note.
 - [ ] P4-2 (TODO) A11y pass (labels/contrast/keyboard/focus; axe clean)
 - [ ] P4-3 (TODO) Loading/empty/error states consistency pass
 

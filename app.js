@@ -2930,6 +2930,8 @@ function _onSignedOut() {
   document.getElementById('nav-admin-toggle')?.classList.remove('active');
   const pill = document.getElementById('nav-user-pill');
   if (pill) { pill.style.display = 'none'; pill.innerHTML = ''; }
+  // Permission-model nav gating (P4-1a): hides modules the user lacks view on.
+  if (typeof loadMyPermissions === 'function') loadMyPermissions(currentProfile);
   const navLogin = document.getElementById('nav-login');
   if (navLogin) navLogin.style.display = '';
 }
