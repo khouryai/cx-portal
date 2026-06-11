@@ -397,6 +397,18 @@
       • REMAINING P4-1: IA regrouping ("Work"/"Views" grab-bags), dissolve
         Admin-mode swap, icon() unification in sidebar, mobile/PWA pass —
         visual work, needs owner browser QA per direction note.
+      • P4-1c (DONE) Sidebar IA regrouped: the two arbitrary "Work"/"Views"
+        grab-bags → 5 permission-aligned sections (Overview / Testing / Field /
+        Planning / Project), fixing miscategorized links (Dashboard, Dynamic
+        Testing, Schedule, Lookahead were split illogically). Done programmatically
+        — every <a>'s data-page/data-role/icon/label preserved exactly (16 links,
+        verified unique + all placed); section-label data-role = union of children.
+        No JS touched (onLoggedIn role filter, _applyPermNav, showPage all iterate
+        by class/attr, order-independent). Nav-mapping integrity test still green.
+        DEFERRED (debatable UX, unverifiable headlessly — needs owner): dissolving
+        the admin-mode full-swap (kept; now permission-gated via uiCanAnyAdmin) and
+        icon() unification of the sidebar's inline SVGs (would require JS-rendering
+        nav icons). NEEDS BROWSER QA: confirm grouping/labels render well.
 - [ ] P4-2 (TODO) A11y pass (labels/contrast/keyboard/focus; axe clean)
 - [~] P4-3 (IN-PROGRESS) Loading/empty/error states. FINDING: the cx* helpers
       (cxSkeleton/cxEmpty/cxError) existed but had ZERO call sites in app.js.
