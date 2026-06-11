@@ -2,7 +2,7 @@
 // Reusable headless loader for the cx-portal browser bundle.
 //
 // Loads the page's classic <script> files in index.html order
-// (data.js → icons.js → format.js → cx-state.js → compute.js → app.js) into a single Node vm
+// (data.js → icons.js → format.js → cx-state.js → compute.js → app.js → perms-admin.js) into a single Node vm
 // context under a permissive DOM/lib shim, and returns the shared global object
 // (`sandbox`) so tests can call the REAL app.js functions headlessly.
 //
@@ -18,7 +18,7 @@ const vm = require("vm");
 const ROOT = path.resolve(__dirname, "..");
 
 // Classic-script order from index.html (extracted modules first, then app.js).
-const SCRIPTS = ["data.js", "icons.js", "format.js", "cx-state.js", "compute.js", "app.js"];
+const SCRIPTS = ["data.js", "icons.js", "format.js", "cx-state.js", "compute.js", "app.js", "perms-admin.js"];
 
 // A callable/constructable Proxy that answers ANY property access with another
 // universal mock, so arbitrary browser-API chains resolve without throwing.

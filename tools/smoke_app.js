@@ -41,6 +41,10 @@ ok("compute core provided by compute.js",
     "_trpCleanReportValue", "_trpReportKey", "_trpInferCdrlNumber", "_trpRecordKeys"]
      .every((f) => typeof sandbox[f] === "function"));
 
+ok("permissions admin provided by perms-admin.js",
+   typeof sandbox.renderAdminPermissions === "function" &&
+   typeof sandbox.permEffective === "function" && typeof sandbox.permBaseline === "function");
+
 // Bootstrap wiring: the DOMContentLoaded handler must have been registered
 // (proves execution reached the bootstrap) — but NOT fired (no live init/network).
 ok("DOMContentLoaded bootstrap registered",

@@ -322,7 +322,7 @@ _applyChartTheme();
 // ==========================================
 // ROUTING
 // ==========================================
-const _adminPages = new Set(['admin-templates','admin-weights','admin-locations','admin-fieldconfig','admin-directory','audit','admin-p6','admin-assets','admin-planning','admin-config']);
+const _adminPages = new Set(['admin-templates','admin-weights','admin-locations','admin-fieldconfig','admin-directory','admin-permissions','audit','admin-p6','admin-assets','admin-planning','admin-config']);
 let _adminModeOn = false;
 
 // ── Mobile PWA tab bar ───────────────────────────────────────────────────────
@@ -355,6 +355,7 @@ function showPage(name) {
   if (name === 'admin-locations')  renderAdminLocations();
   if (name === 'admin-fieldconfig') renderAdminFieldConfig();
   if (name === 'admin-directory')  renderAdminDirectory();
+  if (name === 'admin-permissions') renderAdminPermissions();
   if (name === 'admin-p6')         renderAdminP6();
   if (name === 'admin-assets')     renderAdminAssets();
   if (name === 'admin-config')     renderConfigMgmt();

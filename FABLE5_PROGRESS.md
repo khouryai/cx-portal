@@ -194,8 +194,27 @@
       mappings are best-judgment (activity_records→test_register,
       delay_log/test_results→test_reporting, test_instances→templates) — revisit
       if a screen turns up empty for a role that should see it.
-- [ ] P1-8 (TODO, Phase 3 stack) Permissions admin UI: directory, template
-      editor, per-user overrides, effective-permissions preview
+- [x] P1-8 (DONE — v1) Permissions admin UI shipped as a NEW module
+      perms-admin.js (strangler-native, loaded after app.js): Admin →
+      Permissions page (nav + page-admin-permissions + showPage hook).
+      • Templates tab: per-template 22-module grid grouped by category — level
+        select (none/read_only/standard/admin) + 7 action chips with explicit-
+        grant highlighting; immediate upsert to template_module_perms (PK
+        verified template_id,module_key); new/rename/duplicate/delete (system
+        templates protected; delete blocked while users assigned).
+      • Users & Overrides tab: assign profiles.permission_template_id; per-user
+        override editor (add/edit/remove user_module_overrides, PK verified);
+        EFFECTIVE preview per module with source (template/override/global-admin/
+        inactive) computed by a pure client resolver permEffective() that mirrors
+        private.has_module_perm — pinned by tools/test_perm_resolver.js (18
+        assertions: baseline tiers, inactive/global-admin guards, override level
+        REPLACES / grants MERGE, grant true-adds/false-removes, canonical order).
+      • Writes ride the admin's JWT through _sb; RLS (admin-only policies from
+        P1-2) is the real enforcement; UI additionally gates non-admins.
+      • Wired: index.html (nav/page/script, CRLF), sw.js precache, _adminPages,
+        _load_app SCRIPTS, smoke assertion. Harness 13 suites / 270 assertions.
+      • v1 captures the full management loop; polish (search/filter on big
+        directories, modal instead of prompt()) can come with the Phase 4 UX pass.
 
 ### Phase 2 — DB performance
 - [x] P2-1 (DONE) Wrapped auth.<fn>() in (select ...) across 49 policies:
@@ -291,9 +310,12 @@
         future branches, issue escalation), _planningRowProgressChip (% color
         tiers), _planningDeriveInitials. State-injected; left in app.js.
       • Harness now 12 suites / 252 assertions, all green + CI.
-      • NEXT: date/format helpers cluster; then either continue compute clusters
-        or shift to feature work (P1-8 permissions admin UI) — owner's call at
-        next checkpoint. Modules so far: icons, format, cx-state, compute.
+      • NEXT: P1-8 permissions admin UI SHIPPED (see Phase 1) — built as a new
+        module (perms-admin.js), validating the strangler direction for FEATURE
+        work, not just extractions. Remaining compute clusters (date/format
+        helpers) have diminishing returns; next priorities are Phase 4 UX/a11y
+        or Phase 5 feature triage. Modules: icons, format, cx-state, compute,
+        perms-admin.
 - [x] P3-2 (DONE) Test harness — committed `tools/run_tests.js` (node --check on
       app.js/photos.js/markup.js + runs the 3 headless suites: test_activity_stats,
       markup_test, test_copy_paste = 88 assertions, all green) + CI workflow
