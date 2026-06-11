@@ -161,6 +161,32 @@ window.PAGE_MODULE = PAGE_MODULE;
 window.loadMyPermissions = loadMyPermissions;
 window.uiCan = uiCan;
 
+/* ── Module presentation helpers ────────────────────────────────────────────
+   The catalog now carries per-module `actions` (only what the module really
+   supports — owner feedback: approve/manage everywhere was noise) and a
+   `description`. The UI renders only relevant actions; "appears as" page chips
+   are derived live from PAGE_MODULE so the mapping can never drift. */
+
+function _paModuleActions(mod) {
+  const a = mod && Array.isArray(mod.actions) && mod.actions.length ? mod.actions : PERM_ACTIONS;
+  return PERM_ACTIONS.filter(x => a.includes(x));   // canonical order
+}
+
+function _paModulePages(modKey) {
+  return Object.keys(PAGE_MODULE).filter(p => PAGE_MODULE[p] === modKey);
+}
+
+function _paModuleMetaHTML(mod) {
+  const pages = _paModulePages(mod.key);
+  const pagesHtml = pages.length
+    ? `<div style="margin-top:3px;">${pages.map(p => `<span class="tag" style="font-size:9px;margin-right:3px;">${escapeHtml(p)}</span>`).join('')}</div>`
+    : `<div style="margin-top:3px;font-size:10px;color:var(--text-muted);font-style:italic;">data-only — no page of its own</div>`;
+  return `${mod.description ? `<div style="font-weight:400;font-size:10px;color:var(--text-muted);margin-top:2px;max-width:260px;">${escapeHtml(mod.description)}</div>` : ''}${pagesHtml}`;
+}
+
+window._paModuleActions = _paModuleActions;
+window._paModulePages = _paModulePages;
+
 /* ── State ── */
 
 let _paTab = 'templates';            // 'templates' | 'users'
@@ -310,16 +336,16 @@ function _paTplRowHTML(tplId, mod) {
   const base = new Set(permBaseline(row.level));
   return `
     <tr>
-      <td style="width:220px;font-weight:600;">${escapeHtml(mod.label)}<div style="font-weight:400;font-size:10px;color:var(--text-muted);">${escapeHtml(mod.key)}</div></td>
-      <td style="width:130px;">
+      <td style="width:280px;font-weight:600;vertical-align:top;">${escapeHtml(mod.label)}${_paModuleMetaHTML(mod)}</td>
+      <td style="width:130px;vertical-align:top;">
         <select class="form-input" style="font-size:12px;padding:4px 8px;" aria-label="Access level for ${escapeHtml(mod.label)}"
           onchange="_paSetLevel('${tplId}','${mod.key}',this.value)">
           ${PERM_LEVELS.map(l => `<option value="${l}" ${row.level === l ? 'selected' : ''}>${l.replace('_', ' ')}</option>`).join('')}
         </select>
       </td>
-      <td>
+      <td style="vertical-align:top;">
         <div style="display:flex;gap:4px;flex-wrap:wrap;">
-          ${PERM_ACTIONS.map(a => {
+          ${_paModuleActions(mod).map(a => {
             const on = eff.has(a);
             const isGrant = on !== base.has(a);   // differs from the baseline → explicit grant
             return `<button class="tag" style="cursor:pointer;border:1px solid ${on ? 'var(--brand,#0f62fe)' : 'var(--border)'};
@@ -503,7 +529,7 @@ function _paOverridesPanelHTML(u) {
                 </select>
               </td>
               <td><div style="display:flex;gap:4px;flex-wrap:wrap;">
-                ${PERM_ACTIONS.map(a => {
+                ${_paModuleActions(mod).map(a => {
                   const on = eff.has(a); const isGrant = on !== base.has(a);
                   return `<button class="tag" style="cursor:pointer;border:1px solid ${on ? 'var(--brand,#0f62fe)' : 'var(--border)'};
                       ${on ? 'background:var(--brand,#0f62fe);color:var(--white,#fff);' : 'background:var(--surface);color:var(--text-muted);'}
@@ -592,11 +618,12 @@ function _paEffectivePanelHTML(u) {
         ${_paModules.map(m => {
           const tmpRow = tplMap.get(m.key) || null;
           const ovRow  = ovMap.get(m.key) || null;
-          const eff = permEffective(u, tmpRow, ovRow);
+          const relevant = _paModuleActions(m);
+          const eff = permEffective(u, tmpRow, ovRow).filter(a => relevant.includes(a));
           return `<tr>
-            <td style="width:200px;font-weight:600;">${escapeHtml(m.label)}</td>
-            <td style="width:110px;">${ovRow ? '<span class="tag" title="A per-user override applies to this module">override</span>' : '<span style="color:var(--text-muted);">template</span>'}</td>
-            <td>${eff.length
+            <td style="width:260px;font-weight:600;vertical-align:top;">${escapeHtml(m.label)}${_paModuleMetaHTML(m)}</td>
+            <td style="width:110px;vertical-align:top;">${ovRow ? '<span class="tag" title="A per-user override applies to this module">override</span>' : '<span style="color:var(--text-muted);">template</span>'}</td>
+            <td style="vertical-align:top;">${eff.length
               ? eff.map(a => `<span class="tag" style="margin-right:3px;">${a}</span>`).join('')
               : '<span style="color:var(--text-muted);">no access</span>'}</td>
           </tr>`;

@@ -87,6 +87,23 @@ console.log("\nuiCanAnyAdmin (per-module admin delegation):");
   vm.runInContext(`_myPerms = null;`, ctx);
 }
 
+console.log("\nmodule presentation helpers (per-module relevant actions):");
+{
+  const { _paModuleActions, _paModulePages } = sandbox;
+  ok("  helpers exported", typeof _paModuleActions === "function" && typeof _paModulePages === "function");
+  ok("  filters to the module's declared actions, canonical order",
+     JSON.stringify(_paModuleActions({ actions: ["export", "view"] })) === JSON.stringify(["view", "export"]));
+  ok("  audit-style module: view+export only",
+     JSON.stringify(_paModuleActions({ actions: ["view", "export"] })) === JSON.stringify(["view", "export"]));
+  ok("  missing/empty actions → all (back-compat)",
+     _paModuleActions({}).length === 7 && _paModuleActions({ actions: [] }).length === 7);
+  ok("  unknown entries ignored",
+     JSON.stringify(_paModuleActions({ actions: ["view", "bogus"] })) === JSON.stringify(["view"]));
+  ok("  _paModulePages reverse-maps nav pages (test_register has several)",
+     _paModulePages("test_register").includes("test-register") && _paModulePages("test_register").length >= 3);
+  ok("  data-only module (track_plan) → no pages", _paModulePages("track_plan").length === 0);
+}
+
 console.log("\nfeature predicates (real app.js fns now driven by uiCan):");
 {
   const { _trpCanManage, _trpCanView } = sandbox;

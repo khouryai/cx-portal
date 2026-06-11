@@ -230,6 +230,25 @@
       (AM/Overview/Portal, not nav-wired) stay role-admin. Verified per-role (JWT
       sim): delegated FE(weights=admin) CAN write weights, CANNOT touch perm infra.
       test_ui_can.js +5. Migration: per_module_admin_delegation.
+- [x] P1-11 (DONE — owner feedback on the permissions UI) Per-module action
+      relevance + self-describing catalog. Owner: "why approve/manage for
+      everything? actions should be unique to the module" + "hard to map
+      permission to actual module". Evidence-grounded fix: approve/manage were
+      checked NOWHERE (decorative); export exists on test_register/punch_list/
+      audit; approve flows exist in punch (acceptance), planning (PTO review),
+      test_reporting (approval status); manage only meaningful on admin.
+      • DB (perm_modules_actions_and_descriptions): perm_modules += `actions`
+        text[] (per-module relevant set; overview/audit read-only-style) and
+        `description` (plain-language, incl. Track Plan = topology data consumed
+        by Dynamic Testing, data-only; Planning & Resources = roster/activities/
+        PTO/shift templates behind Admin Planning).
+      • UI: chips in template grid / overrides / effective preview now render
+        ONLY the module's relevant actions; module cells show description +
+        live "appears as" page chips derived from PAGE_MODULE (can't drift);
+        data-only modules say so. Resolver unchanged (baselines identical;
+        irrelevant actions simply never offered/checked).
+      • test_ui_can.js +7 (_paModuleActions filter/order/back-compat,
+        _paModulePages reverse map incl. track_plan = data-only).
 - [x] SECURITY FIX (found during P1-10 testing) profiles privilege-escalation:
       own-row update let a non-admin set their OWN role/is_active/permission_
       template_id and self-escalate (PRE-EXISTING — own-row clause predates
