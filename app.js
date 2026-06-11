@@ -722,18 +722,7 @@ function _colCells(tableId, row) {
   return vis.map(c => reg.render(c.id, row)).join('');
 }
 
-function escapeHtml(s) {
-  if (s === null || s === undefined) return '';
-  return String(s).replace(/[&<>"']/g, c => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
-  })[c]);
-}
-
-function getLocationCode(loc) {
-  if (!loc) return '';
-  const m = loc.match(/^(\w+)/);
-  return m ? m[1] : loc;
-}
+// ── escapeHtml + getLocationCode → extracted to format.js (P3-1 seam #2) ──
 
 // ──────────────────────────────────────────────────────────────────────────────
 // PAGE HERO HELPER — compact strip with optional inline KPI stats

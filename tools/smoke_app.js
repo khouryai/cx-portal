@@ -139,7 +139,7 @@ const ROOT = path.resolve(__dirname, "..");
 
 // Load the page's classic scripts in the SAME order as index.html, into one
 // shared context. Append future extracted modules here as the split proceeds.
-const SCRIPTS = ["data.js", "icons.js", "app.js"];
+const SCRIPTS = ["data.js", "icons.js", "format.js", "app.js"];
 let loadErr = null, loadErrFile = null;
 for (const f of SCRIPTS) {
   try {
@@ -155,6 +155,8 @@ ok("data.js set window.PORTAL_DATA",
    sandbox.window.PORTAL_DATA && typeof sandbox.window.PORTAL_DATA === "object");
 ok("icon() global provided by icons.js",
    typeof sandbox.icon === "function" && typeof sandbox.window.icon === "function");
+ok("escapeHtml() global provided by format.js",
+   typeof sandbox.escapeHtml === "function" && typeof sandbox.window.escapeHtml === "function");
 
 // Bootstrap wiring: the DOMContentLoaded handler must have been registered
 // (proves execution reached the bootstrap) — but NOT fired (no live init/network).

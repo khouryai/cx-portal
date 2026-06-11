@@ -227,11 +227,15 @@
         as a global (312 call sites, 0 ICONS refs left). New tools/test_icons.js
         (11 assertions) + smoke updated (loads data.js→icons.js→app.js). Harness:
         5 suites / 108 assertions green. CRLF preserved (Node-based edit).
+      • SEAM #2 (DONE): extracted escapeHtml (1083 call sites) + getLocationCode
+        → format.js. Wired index.html (data→icons→format→app), sw.js precache,
+        smoke load order. New tools/test_format.js (10 assertions incl. XSS-payload
+        escaping). Harness: 6 suites / 119 assertions green.
       • PATTERN ESTABLISHED for subsequent leaves: move self-contained block →
         new classic script exporting via global/window → wire index.html + sw.js +
         smoke load order → add a unit test → run tools/run_tests.js.
-      • NEXT candidates: escapeHtml + other pure string/format helpers; cx* state
-        helpers (cxSkeleton/cxEmpty/cxError); date/format utilities.
+      • NEXT candidates: cx* state helpers (cxSkeleton/cxEmpty/cxError, EOF; depend
+        on icon+escapeHtml — both now modules); date/number format helpers.
 - [x] P3-2 (DONE) Test harness — committed `tools/run_tests.js` (node --check on
       app.js/photos.js/markup.js + runs the 3 headless suites: test_activity_stats,
       markup_test, test_copy_paste = 88 assertions, all green) + CI workflow

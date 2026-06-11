@@ -38,6 +38,7 @@ for (const f of ["app.js", "photos.js", "markup.js"]) {
 const suites = [
   { file: "tools/smoke_app.js", needs: [] },            // headless boot of data.js + icons.js + app.js
   { file: "tools/test_icons.js", needs: [] },           // extracted icon system
+  { file: "tools/test_format.js", needs: [] },          // extracted format utils
   { file: "tools/test_activity_stats.js", needs: [] },
   { file: "tools/markup_test.js", needs: [] },
   { file: "tools/test_copy_paste.js", needs: ["dayjs"] },
