@@ -282,9 +282,18 @@
         PLANNING_TEST_RESULTS via vm.runInContext. Same 23 assertions pass against
         the real _planningTestActivityStats (proved no drift had occurred; locked
         against future drift). All characterization now tests real code only.
-      • NEXT: continue the characterize→extract loop on the next compute cluster
-        (date/format helpers; _trpReportKey/_trpCleanReportValue; planning badge
-        logic _planningCellBadge). Modules so far: icons, format, cx-state, compute.
+      • tools/test_trp_keys.js (26) — report-key normalization characterized:
+        _trpCleanReportValue, _trpReportKey (CDRL-prefix-insensitive canonical
+        keys), _trpInferCdrlNumber, _trpRecordKeys, _trpFindRecordByText (state
+        injected). THEN extracted the pure quartet → compute.js (find stays in
+        app.js, reads _testReports).
+      • tools/test_planning_badges.js (17) — _planningCellBadge (past/today/
+        future branches, issue escalation), _planningRowProgressChip (% color
+        tiers), _planningDeriveInitials. State-injected; left in app.js.
+      • Harness now 12 suites / 252 assertions, all green + CI.
+      • NEXT: date/format helpers cluster; then either continue compute clusters
+        or shift to feature work (P1-8 permissions admin UI) — owner's call at
+        next checkpoint. Modules so far: icons, format, cx-state, compute.
 - [x] P3-2 (DONE) Test harness — committed `tools/run_tests.js` (node --check on
       app.js/photos.js/markup.js + runs the 3 headless suites: test_activity_stats,
       markup_test, test_copy_paste = 88 assertions, all green) + CI workflow

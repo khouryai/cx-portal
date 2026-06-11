@@ -148,3 +148,30 @@ function _wgtStat(items, awLookup, tcwLookup) {
     testedW:   passW + failW + blockedW,
   };
 }
+
+// ── Test-report key normalization (Test Report ↔ Test Register linking) ──
+// _trpFindRecordByText stays in app.js (reads _testReports module state).
+function _trpCleanReportValue(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function _trpReportKey(value) {
+  const clean = _trpCleanReportValue(value);
+  if (!clean) return '';
+  return clean
+    .replace(/^CDRL[\s#:.\-]*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+function _trpInferCdrlNumber(value) {
+  const clean = _trpCleanReportValue(value);
+  if (!clean) return null;
+  if (/^CDRL\b/i.test(clean) || /^\d+(\.\d+)+/.test(clean)) return clean;
+  return null;
+}
+
+function _trpRecordKeys(r) {
+  return [...new Set([r?.cdrl_number, r?.title].map(_trpReportKey).filter(Boolean))];
+}

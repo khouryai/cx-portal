@@ -9184,30 +9184,7 @@ function _trpCanView() {
   return ['admin', 'field_engineer', 'client', 'readonly'].includes(currentRoleUser?.role);
 }
 
-function _trpCleanReportValue(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim();
-}
-
-function _trpReportKey(value) {
-  const clean = _trpCleanReportValue(value);
-  if (!clean) return '';
-  return clean
-    .replace(/^CDRL[\s#:.\-]*/i, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toUpperCase();
-}
-
-function _trpInferCdrlNumber(value) {
-  const clean = _trpCleanReportValue(value);
-  if (!clean) return null;
-  if (/^CDRL\b/i.test(clean) || /^\d+(\.\d+)+/.test(clean)) return clean;
-  return null;
-}
-
-function _trpRecordKeys(r) {
-  return [...new Set([r?.cdrl_number, r?.title].map(_trpReportKey).filter(Boolean))];
-}
+// ── _trpCleanReportValue/_trpReportKey/_trpInferCdrlNumber/_trpRecordKeys → extracted to compute.js (P3-1) ──
 
 function _trpFindRecordByText(value) {
   const key = _trpReportKey(value);

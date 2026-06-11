@@ -43,6 +43,8 @@ const suites = [
   { file: "tools/test_wgtstat.js", needs: [] },         // KPI weighting math (real app.js fn)
   { file: "tools/test_activity_compute.js", needs: [] },// activity status + completion math
   { file: "tools/test_status_compute.js", needs: [] },  // status badges/buckets/lookahead status
+  { file: "tools/test_trp_keys.js", needs: [] },        // report key normalization + lookup
+  { file: "tools/test_planning_badges.js", needs: [] }, // lookahead cell badges + progress chips
   { file: "tools/test_activity_stats.js", needs: [] },
   { file: "tools/markup_test.js", needs: [] },
   { file: "tools/test_copy_paste.js", needs: ["dayjs"] },
