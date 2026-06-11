@@ -35,6 +35,10 @@ ok("escapeHtml() global provided by format.js",
 ok("cx* state helpers provided by cx-state.js",
    typeof sandbox.cxSkeleton === "function" && typeof sandbox.cxEmpty === "function" &&
    typeof sandbox.cxError === "function");
+ok("compute core provided by compute.js",
+   ["getStatusBadge", "getPriorityPill", "_wgtStat", "_amComputeStatus", "_amComputeCompletion",
+    "_p6WeightedCompletion", "_trpStatusCounts", "_tcWeightFor", "_actWeightFor"]
+     .every((f) => typeof sandbox[f] === "function"));
 
 // Bootstrap wiring: the DOMContentLoaded handler must have been registered
 // (proves execution reached the bootstrap) — but NOT fired (no live init/network).

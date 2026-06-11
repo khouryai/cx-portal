@@ -111,5 +111,15 @@ const tcwMap = (o) => new Map(Object.entries(o || {}));
   ok("  every weighted bucket is 0", allZero, JSON.stringify(r));
 }
 
+// ── Scenario F: default-lookup path (cross-script seam) ──
+// _wgtStat lives in compute.js; when called WITHOUT lookups it must resolve the
+// weight-lookup builders that stayed in app.js (loaded after compute.js).
+{
+  const r = _wgtStat([{ Status: "Pass" }]);
+  console.log("\nScenario F — no lookups passed (builders resolved from app.js):");
+  eq("  totalW via builder defaults", r.totalW, 1);
+  eq("  passW via builder defaults", r.passW, 1);
+}
+
 console.log(`\n${pass} passed, ${fail} failed.\n`);
 process.exit(fail === 0 ? 0 : 1);

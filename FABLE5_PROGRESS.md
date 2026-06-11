@@ -261,11 +261,26 @@
         Open/Future Test/Closed/Partial Completion; parent rows excluded),
         _amComputeCompletion (weighted %, Future Test in denominator), and the pure
         resolvers _tcWeightFor/_actWeightFor. 23 assertions.
-      • Harness now 9 suites / 178 assertions, all green + CI.
-      • NEXT: getStatusBadge, _trpStatusCounts, _liMatchKpiStatus, _laAutoStatus —
-        then extract the characterized compute set into a tested `compute` module
-        (note: weight-lookup BUILDERS read app.js-internal `let` state, so they're
-        best extracted+tested together rather than characterized in place).
+      • tools/test_status_compute.js — getStatusBadge (19 mappings), getPriorityPill,
+        _trpStatusCounts (case-insensitive buckets), _liMatchKpiStatus (module state
+        driven via vm.runInContext), _laAutoStatus/_laActStatus (incl. discovered
+        precedence: done outranks cancellation once all active shifts are past —
+        matches the doc comment). 29 assertions.
+      • CONVERGENCE STEP (DONE): extracted the characterized compute core →
+        compute.js (~6.5KB, 9 functions + _P6_DONE_STATUSES): getStatusBadge,
+        getPriorityPill, _tcWeightFor, _actWeightFor, _amComputeStatus,
+        _amComputeCompletion, _p6WeightedCompletion, _trpStatusCounts, _wgtStat.
+        Left in app.js BY DESIGN: weight-lookup builders, _liMatchKpiStatus,
+        _laAutoStatus/_laActStatus (all read app.js module state). Default-lookup
+        cross-script seam (_wgtStat() with no args resolves app.js builders) is
+        pinned by test (Scenario F). Wired index.html (…cx-state→compute→app),
+        sw.js precache, _load_app SCRIPTS, smoke assertion. 74 characterization
+        assertions now exercise the functions from their new home.
+      • Harness now 10 suites / 209 assertions, all green + CI.
+      • NEXT: continue the characterize→extract loop on the next compute cluster
+        (e.g. _planningTestActivityStats already has a re-implementation test —
+        characterize the REAL one, then move; date/format helpers; _trpReportKey/
+        _trpCleanReportValue). Modules so far: icons, format, cx-state, compute.
 - [x] P3-2 (DONE) Test harness — committed `tools/run_tests.js` (node --check on
       app.js/photos.js/markup.js + runs the 3 headless suites: test_activity_stats,
       markup_test, test_copy_paste = 88 assertions, all green) + CI workflow
