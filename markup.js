@@ -15,7 +15,7 @@
 
    Conventions (see CLAUDE.md):
      • Light UI only — semantic tokens (--surface/--text/--border …).
-     • Icons via the global icon() helper; glyphs live in ICONS (app.js).
+     • Icons via the global icon() helper; glyphs live in ICONS (icons.js).
      • No emoji-as-icons, no new fonts/CDN, no dark mode.
 
    Public surface (window.CXMarkup):
@@ -70,7 +70,7 @@ const STAMP_FONT  = '"IBM Plex Mono", ui-monospace, monospace';
 const TEXT_FONT   = '"IBM Plex Sans", system-ui, sans-serif';
 
 /* Tool palette shared by every host toolbar. `icon` is a key in the
-   project ICONS map (added in app.js). */
+   project ICONS map (icons.js). */
 const TOOLS = [
   { id: "select",  label: "Select",     icon: "cursor" },
   { id: "text",    label: "Text",       icon: "type" },

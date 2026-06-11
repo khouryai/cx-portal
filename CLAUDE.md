@@ -10,12 +10,13 @@
   `index.html` (don't let edits convert them to LF — keeps diffs clean).
 
 ## Frontend conventions
-- **No emoji as icons.** Use the inline SVG system in `app.js`:
+- **No emoji as icons.** Use the inline SVG system in `icons.js`:
   `${icon('name')}` inside template-literal HTML, `' + icon('name') + '`
   inside quoted strings, or set config `icon:` values to `icon('name')`.
-  Add new glyphs to the `ICONS` map near the top of `app.js`. Icons use
-  `currentColor` so they inherit text color. (Plain typographic arrows
-  like → ← and ✓/✗ are fine; the `⌘`/Ctrl keyboard hint stays.)
+  Add new glyphs to the `ICONS` map in `icons.js` (extracted from app.js;
+  loaded before app.js/photos.js/markup.js, so `icon()` is a shared global).
+  Icons use `currentColor` so they inherit text color. (Plain typographic
+  arrows like → ← and ✓/✗ are fine; the `⌘`/Ctrl keyboard hint stays.)
 - **Colors via semantic tokens**, not raw hex: `--surface`, `--text`,
   `--text-muted`, `--border`, plus the brand/status tokens in `:root`
   (`styles.css`). Backgrounds use `var(--surface)`; white ink stays
@@ -25,6 +26,11 @@
 - Dark mode was intentionally removed — do not reintroduce it.
 
 ## Verify after JS edits
-- `node --check app.js` (and `photos.js`) must pass.
+- Run `node tools/run_tests.js` — syntax-checks app.js/photos.js/markup.js and
+  runs every headless suite (boot smoke + unit + characterization). Must exit 0.
+  (CI runs the same via .github/workflows/test.yml on every push/PR.)
+- When adding an extracted module (icons.js, format.js, cx-state.js, …): load it
+  in index.html BEFORE app.js, add it to sw.js SHELL_ASSETS, and append it to
+  SCRIPTS in tools/_load_app.js so the smoke net covers it.
 - No emoji-in-quoted-string leaks: a `${icon(...)}` must never sit inside
   a single/double-quoted string (it won't interpolate) — use concat form.

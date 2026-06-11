@@ -1,14 +1,19 @@
 # Permissions Model — Procore-style granular permissions (cx-portal)
 
-> Design artifact for Phase 1 (P1-1). The DB infrastructure below is **additive
-> and reversible**. The rewrite of the ~27 existing-table RLS policies onto this
-> model is the **gated** step — owner reviews this document first.
+> **STATUS (2026-06-11): IMPLEMENTED & LIVE.** Owner approved; the model is
+> enforced in RLS on every data table (P1-2/P1-4/P1-9 in FABLE5_PROGRESS.md).
+> The helpers `is_admin()` and `has_module_perm()` now live in the non-exposed
+> **`private` schema** (P1-5) so they aren't PostgREST-RPC-callable; RLS policies
+> reference them as `private.is_admin()` / `private.has_module_perm()`.
+> Remaining: the admin UI (P1-8). The text below is the original design (kept
+> for rationale); "Today" describes the PRE-implementation state.
 
 ## Why
-Today: ~27 tables have always-true (`USING(true)`) policies — any signed-in user
-can read/write/delete everything; the only real gate is `is_admin()`. Role data
-is inconsistent (`admin`, `field_engineer`, `field`, `punch_manager`,
-`technician`, `client`). UI does ~30 scattered advisory `role==='admin'` checks.
+At design time: ~27 tables had always-true (`USING(true)`) policies — any
+signed-in user could read/write/delete everything; the only real gate was
+`is_admin()`. Role data was inconsistent (`admin`, `field_engineer`, `field`,
+`punch_manager`, `technician`, `client`). UI did ~30 scattered advisory
+`role==='admin'` checks.
 
 Target (Procore-modeled): **per-module permission levels + reusable templates +
 granular overrides**, enforced authoritatively in RLS and mirrored in the UI.
@@ -42,7 +47,8 @@ granular overrides**, enforced authoritatively in RLS and mirrored in the UI.
    removes). Return whether `action` is in the effective set.
 
 SECURITY DEFINER, `search_path=public`, STABLE; `EXECUTE` granted to
-`authenticated`, revoked from `anon`.
+`authenticated`, revoked from `anon`. (As implemented: both helpers moved to the
+non-exposed `private` schema — RLS-only, not callable via `/rest/v1/rpc/`.)
 
 ## New tables (additive)
 - `perm_modules(key pk, label, category, sort_order, governs text[])`
