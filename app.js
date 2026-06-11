@@ -19154,10 +19154,11 @@ const _ACTIVITY_GROUPS = {
   construction: { label: 'Construction',         bg: '#fed7aa', fg: '#7c2d12', accent: '#ea580c' },
   design:       { label: 'Design',               bg: '#bfdbfe', fg: '#1e3a8a', accent: '#2563eb' },
   training:     { label: 'Training',             bg: '#bbf7d0', fg: '#14532d', accent: '#16a34a' },
+  dynamic_testing: { label: 'Dynamic Testing',   bg: '#ddd6fe', fg: '#4c1d95', accent: '#6d28d9' },
   other:        { label: 'Other',                bg: '#e5e7eb', fg: '#1f2937', accent: '#6b7280' },
 };
 // Fixed render order — drives the band order in the master grid.
-const _GROUP_ORDER = ['tc','construction','design','training','other'];
+const _GROUP_ORDER = ['tc','dynamic_testing','construction','design','training','other'];
 function _groupMeta(key) { return _ACTIVITY_GROUPS[key] || _ACTIVITY_GROUPS.other; }
 
 // ── Location prefix matching ──────────────────────────────────
@@ -36152,9 +36153,16 @@ async function _dynSaveCampaign() {
     if (!camp?.id) throw new Error('Campaign insert returned no id');
 
     const shiftRows = _dynGenerateShiftRows(camp);
+    const insertedShifts = [];
     for (let i = 0; i < shiftRows.length; i += 200) {
-      await _dbInsert('zone_access_windows', shiftRows.slice(i, i + 200));
+      const r = await _dbInsert('zone_access_windows', shiftRows.slice(i, i + 200));
+      if (Array.isArray(r)) insertedShifts.push(...r);
     }
+    // Shared-record bridge: mint the campaign's Lookahead row + one cell per window.
+    try {
+      const activityId = await _dynEnsureCampaignActivity(camp);
+      for (const w of insertedShifts) await _dynEnsureShiftCell(w, activityId, camp);
+    } catch (e) { console.warn('[dyn] lookahead bridge:', e.message); }
     // Seed an initial train request from the campaign ask (Phase 2 manages approvals).
     await _dbInsert('train_requests', [{
       campaign_id: camp.id, zone_code: null,
@@ -36625,42 +36633,90 @@ async function _dynEnsureBartResources() {
   return ids;
 }
 
-async function _dynCreateShiftEvent(s) {
-  const existing = await _dbSelect('planning_events', { dynamic_shift_id: s.id }, 'id').catch(() => []);
-  if (existing.length) return existing[0].id;
-  const ids = await _dynEnsureBartResources();
-  const camp = _dynPage.campaigns.find(c => c.id === s.campaign_id);
-  const st = new Date(s.start_at), en = new Date(s.end_at);
-  const hhmm = d => `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:00`;
+// Shared-record bridge (Lookahead ⇄ Dynamic Testing) ─────────────────────
+// A campaign owns ONE Lookahead activity row (planning_activities.access_campaign_id);
+// each access window is a planning_event cell on that row (source='dynamic',
+// dynamic_shift_id set). One plan, rendered natively in both modules.
+async function _dynEnsureCampaignActivity(camp) {
+  if (!camp?.id) return null;
+  try {
+    const existing = await _dbSelect('planning_activities', { access_campaign_id: camp.id }, 'id');
+    if (existing && existing.length) return existing[0].id;
+  } catch (_) {}
+  const ins = await _dbInsert('planning_activities', [{
+    access_campaign_id: camp.id,
+    description: camp.name,
+    activity_group: 'dynamic_testing',
+    location: (camp.zone_codes || []).join(', '),
+    phase: camp.phase || null,
+    activity_id_text: 'DYN-' + String(camp.id).replace(/-/g, '').slice(0, 8),
+    match_status: 'unmatched',
+    sort_order: 0,
+  }]);
+  const row = Array.isArray(ins) ? ins[0] : ins;
+  return row?.id || null;
+}
+
+function _dynWindowWallTimes(s) {
+  const hhmm = v => { const d = new Date(v); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:00`; };
+  return { st: s.start_at ? hhmm(s.start_at) : null, en: s.end_at ? hhmm(s.end_at) : null };
+}
+
+// Find-or-create the Lookahead cell (planning_event) for one access window.
+// Idempotent: returns the existing cell's id (ensuring its row link) if present.
+async function _dynEnsureShiftCell(s, activityId, camp) {
+  const existing = await _dbSelect('planning_events', { dynamic_shift_id: s.id }, 'id,planning_activity_id').catch(() => []);
+  if (existing.length) {
+    if (activityId && existing[0].planning_activity_id !== activityId) {
+      try { await _dbUpdate('planning_events', { planning_activity_id: activityId }, { id: existing[0].id }); } catch (_) {}
+    }
+    return existing[0].id;
+  }
+  const wall = (camp && camp.shift_start && camp.shift_end)
+    ? { st: String(camp.shift_start).slice(0, 8), en: String(camp.shift_end).slice(0, 8) }
+    : _dynWindowWallTimes(s);
   const evRows = await _dbInsert('planning_events', [{
+    planning_activity_id: activityId || null,
     title: `Dynamic test — ${s.control_zone_code}${camp ? ` (${camp.name})` : ''}`,
     event_date: s.shift_date,
-    start_time: (s.start_at && s.end_at) ? hhmm(st) : null,
-    end_time:   (s.start_at && s.end_at) ? hhmm(en) : null,
+    start_time: wall.st,
+    end_time: wall.en,
     all_day: false,
     location: s.control_zone_code,
     cell_color_hex: '#6d28d9',
     source: 'dynamic',
-    status: 'planned',
-    is_locked: false,
+    status: s.status === 'cancelled' ? 'cancelled' : 'planned',
     dynamic_shift_id: s.id,
-    notes: `Auto-created from dynamic access shift${camp ? ` · ${camp.name}` : ''}`,
+    notes: `Access plan cell${camp ? ` · ${camp.name}` : ''}`,
     created_by: currentProfile?.id || null,
     updated_by: currentProfile?.id || null,
   }]);
   const eid = Array.isArray(evRows) ? evRows[0]?.id : evRows?.id;
+  if (eid) {
+    (_dynPage.dynEvents = _dynPage.dynEvents || []).push({ id: eid, dynamic_shift_id: s.id, status: 'planned', event_date: s.shift_date });
+    if (typeof _planningLoadedAt !== 'undefined') _planningLoadedAt = 0; // force Lookahead refetch
+  }
+  return eid;
+}
+
+// Confirm path: ensure the cell exists AND attach the mandatory BART crew once.
+async function _dynCreateShiftEvent(s) {
+  const camp = _dynPage.campaigns.find(c => c.id === s.campaign_id) || null;
+  const activityId = camp ? await _dynEnsureCampaignActivity(camp) : null;
+  const eid = await _dynEnsureShiftCell(s, activityId, camp);
   if (!eid) throw new Error('event insert returned no id');
-  // Mandatory BART resources for any vehicle access day.
-  const avail = s.campaign_id ? _dynCampaignTrainAvail(s.campaign_id, s.control_zone_code) : { approved: s.max_trains || 1 };
-  const trainOps = Math.max(1, avail.approved || s.max_trains || 1);
-  const res = [];
-  if (ids['Train Operator']) res.push({ event_id: eid, resource_id: ids['Train Operator'], role: 'required', quantity: trainOps, assignment_source: 'dynamic' });
-  if (ids['ROC'])            res.push({ event_id: eid, resource_id: ids['ROC'],            role: 'required', quantity: 1,        assignment_source: 'dynamic' });
-  if (ids['EIC'])            res.push({ event_id: eid, resource_id: ids['EIC'],            role: 'required', quantity: 1,        assignment_source: 'dynamic' });
-  if (res.length) await _dbInsert('planning_event_resources', res);
-  // Reflect in local caches so the badge updates without a full reload.
-  (_dynPage.dynEvents = _dynPage.dynEvents || []).push({ id: eid, dynamic_shift_id: s.id, status: 'planned', event_date: s.shift_date });
-  if (typeof _planningLoadedAt !== 'undefined') _planningLoadedAt = 0; // force Lookahead refetch
+  // Mandatory BART resources for any vehicle access day — attach once.
+  const have = await _dbSelect('planning_event_resources', { event_id: eid }, 'id').catch(() => []);
+  if (!have.length) {
+    const ids = await _dynEnsureBartResources();
+    const avail = s.campaign_id ? _dynCampaignTrainAvail(s.campaign_id, s.control_zone_code) : { approved: s.max_trains || 1 };
+    const trainOps = Math.max(1, avail.approved || s.max_trains || 1);
+    const res = [];
+    if (ids['Train Operator']) res.push({ event_id: eid, resource_id: ids['Train Operator'], role: 'required', quantity: trainOps, assignment_source: 'dynamic' });
+    if (ids['ROC'])            res.push({ event_id: eid, resource_id: ids['ROC'],            role: 'required', quantity: 1,        assignment_source: 'dynamic' });
+    if (ids['EIC'])            res.push({ event_id: eid, resource_id: ids['EIC'],            role: 'required', quantity: 1,        assignment_source: 'dynamic' });
+    if (res.length) await _dbInsert('planning_event_resources', res);
+  }
   return eid;
 }
 
