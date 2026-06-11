@@ -10,18 +10,22 @@
   CLEARED (auth_rls_initplan 49→0, unindexed_foreign_keys 42→0, duplicate_index
   1→0, multiple_permissive_policies 1→0). Only INFO unused_index remains (121,
   expected — see P2-3). All verified (RLS still permits as authenticated admin).
-- Doing right now: Phase 1 fully closed (P1-9 tightening done). Phase 3 groundwork
-  done — boot/smoke harness (tools/smoke_app.js) now loads data.js+app.js headlessly
-  and asserts the whole 38,920-line file executes without throwing + bootstrap
-  registers. Safety net for the module split is in place.
-- Exact next action: P3-1 SEAM #2 — extract the next leaf (escapeHtml + pure
-  string/format helpers, or the cx* state helpers) following the now-proven
-  pattern: new classic script exporting a global → wire index.html + sw.js
-  precache + smoke load order → add a unit test → run tools/run_tests.js. Seam #1
-  (icons.js) is committed and green; the mechanism is validated end-to-end.
-- VERIFICATION CAPABILITY GAINED: the module split is now verifiable headlessly
-  (parse + full top-level execution + bootstrap wiring). Live DOMContentLoaded
-  init / real network still require a browser; out of scope for the smoke net.
+- Doing right now: Phase 3 — STRATEGIC PIVOT (owner: "do what's best long term").
+  After 3 pure-leaf seams (icons/format/cx-state, ~134 lines = 0.3% of app.js) it
+  was clear leaf-carving is motion, not progress, and the parts that would really
+  shrink app.js (dashboard/planning/test-register) carry business logic the
+  load-time smoke net can't protect. Pivoted to TEST-DRIVEN HARDENING of the
+  computational core: built a reusable headless harness (tools/_load_app.js) that
+  loads the REAL bundle and lets tests call app.js's actual functions, then wrote
+  the first characterization test on _wgtStat (the weighted completion %/pass-rate
+  KPI math) — 22 assertions pinning exact behavior. smoke_app.js refactored onto
+  the shared loader. Harness: 8 suites / 155 assertions, all green + CI.
+- Exact next action: continue characterization of the computational core (highest
+  value first): _amComputeStatus (activity status), _buildActivity/TestCaseWeight
+  Lookup + _tcWeightFor/_actWeightFor, _trpStatusCounts, getStatusBadge. Each is a
+  few lines now (loadApp() → call real fn → assert). This protects the business
+  math AND makes later extraction of these into a tested `compute` module safe —
+  converging the modularization and safety goals instead of carving blind.
 - AUTHORIZATION FINDING — RESOLVED (P1-9, owner chose "tighten all"): the 43
   blanket `auth_all` tables now enforce the permission model. 40 mapped 1:1 to a
   module (full per-command has_module_perm gating); fieldset_config + locations =
@@ -241,9 +245,20 @@
         new classic script exporting via global/window → wire index.html + sw.js +
         smoke load order → add a unit test → run tools/run_tests.js. 3 module files
         extracted so far (icons.js, format.js, cx-state.js); app.js: 38,920→38,786 ln.
-      • NEXT candidates: date/number format helpers; other pure leaf utilities.
-        Larger feature clusters (dashboard, planning) come later — they carry app
-        state and need more care than these pure leaves.
+      • PIVOT (after seam #3): leaf-carving was 0.3% of app.js for the effort.
+        Switched to test-driven hardening — see "Doing right now". The split
+        continues, but now DRIVEN by testability/value: characterize a computation,
+        then extract it into a tested module, rather than picking pure leaves blind.
+- [~] P3-5 (IN-PROGRESS) Behavioral test net for the computational core.
+      • tools/_load_app.js — reusable headless loader; loads data→icons→format→
+        cx-state→app into one vm context under a DOM/lib shim, returns the sandbox
+        so tests call the REAL app.js functions. smoke_app.js refactored onto it.
+      • tools/test_wgtstat.js — characterizes _wgtStat (weighted completion %/pass
+        rate; the headline KPI math), 22 assertions: weight = activityW × testCaseW,
+        default 1, status buckets (Pass/Passed/Complete→pass, Fail/Failed→fail, NA,
+        Blocked, In Progress, Future Test, Not Started/missing), completeW/testedW.
+      • NEXT: _amComputeStatus, weight-lookup builders, _trpStatusCounts,
+        getStatusBadge — then extract the characterized set into a `compute` module.
 - [x] P3-2 (DONE) Test harness — committed `tools/run_tests.js` (node --check on
       app.js/photos.js/markup.js + runs the 3 headless suites: test_activity_stats,
       markup_test, test_copy_paste = 88 assertions, all green) + CI workflow
