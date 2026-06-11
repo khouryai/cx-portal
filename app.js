@@ -3353,10 +3353,7 @@ let _awSubFilter = '';
 function renderAdminWeights() {
   const root = document.getElementById('admin-weights-content');
   if (!root || !currentRoleUser) return;
-  if (currentRoleUser.role !== 'admin') {
-    root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`;
-    return;
-  }
+  if (!uiCan('weights', 'view')) { root.innerHTML = cxEmpty({ icon: 'lock', title: 'Not authorized', message: 'You don\u2019t have access to this admin area.' }); return; }
   root.innerHTML = _adminWeightsHTML();
 }
 
@@ -3692,28 +3689,28 @@ async function _awSaveTestCaseWeight(el) {
 function renderAdminTemplates() {
   const root = document.getElementById('admin-templates-content');
   if (!root || !currentRoleUser) return;
-  if (currentRoleUser.role !== 'admin') { root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`; return; }
+  if (!uiCan('templates', 'view')) { root.innerHTML = cxEmpty({ icon: 'lock', title: 'Not authorized', message: 'You don\u2019t have access to this admin area.' }); return; }
   root.innerHTML = _adminTemplatesHTML();
 }
 
 function renderAdminLocations() {
   const root = document.getElementById('admin-locations-content');
   if (!root || !currentRoleUser) return;
-  if (currentRoleUser.role !== 'admin') { root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`; return; }
+  if (!uiCan('locations', 'view')) { root.innerHTML = cxEmpty({ icon: 'lock', title: 'Not authorized', message: 'You don\u2019t have access to this admin area.' }); return; }
   root.innerHTML = _adminLocationsHTML();
 }
 
 function renderAdminFieldConfig() {
   const root = document.getElementById('admin-fieldconfig-content');
   if (!root || !currentRoleUser) return;
-  if (currentRoleUser.role !== 'admin') { root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`; return; }
+  if (!uiCan('forms', 'view')) { root.innerHTML = cxEmpty({ icon: 'lock', title: 'Not authorized', message: 'You don\u2019t have access to this admin area.' }); return; }
   root.innerHTML = _adminFieldConfigHTML();
 }
 
 function renderAdminDirectory() {
   const root = document.getElementById('admin-directory-content');
   if (!root || !currentRoleUser) return;
-  if (currentRoleUser.role !== 'admin') { root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`; return; }
+  if (!uiCan('directory', 'view')) { root.innerHTML = cxEmpty({ icon: 'lock', title: 'Not authorized', message: 'You don\u2019t have access to this admin area.' }); return; }
   root.innerHTML = _adminDirectoryHTML();
   _loadDirectoryUsers();
 }
@@ -8943,10 +8940,7 @@ function _auditGoToPage(p) {
 function renderAuditLog() {
   const root = document.getElementById('audit-content');
   if (!root || !currentRoleUser) return;
-  if (currentRoleUser.role !== 'admin') {
-    root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`;
-    return;
-  }
+  if (!uiCan('audit', 'view')) { root.innerHTML = cxEmpty({ icon: 'lock', title: 'Not authorized', message: 'You don\u2019t have access to this admin area.' }); return; }
   setTimeout(_initPageLibraries, 80);
 
   root.innerHTML = `
@@ -16549,7 +16543,7 @@ async function undoRegression(testId) {
   }
 }
 
-function _cmCanManage() { return currentRoleUser?.role === 'admin'; }
+function _cmCanManage() { return uiCan('config', 'edit'); }
 
 function renderConfigMgmt() {
   const root = document.getElementById('admin-config-content');
@@ -25491,7 +25485,7 @@ function renderAdminPlanning() {
   const hero = document.getElementById('admin-planning-hero-content');
   const body = document.getElementById('admin-planning-content');
   if (!body) return;
-  if (currentRoleUser?.role !== 'admin') {
+  if (!uiCan('planning', 'view')) {
     body.innerHTML = `<div class="docs-empty"><h3>Admin only</h3><p>You don't have permission to view this page.</p></div>`;
     return;
   }

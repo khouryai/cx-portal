@@ -68,6 +68,25 @@ ok("  default action is 'view'", uiCan("punch_list"));
 ok("  module present, action absent → false", uiCan("punch_list", "create") === false);
 ok("  module absent from perms → false", uiCan("audit", "view") === false);
 
+console.log("\nuiCanAnyAdmin (per-module admin delegation):");
+{
+  const { uiCanAnyAdmin, ADMIN_AREA_MODULES } = sandbox;
+  ok("  uiCanAnyAdmin exported + ADMIN_AREA_MODULES is non-empty array",
+     typeof uiCanAnyAdmin === "function" && Array.isArray(ADMIN_AREA_MODULES) && ADMIN_AREA_MODULES.length > 0);
+  ok("  every admin-area module is a real catalog key",
+     ADMIN_AREA_MODULES.every((m) => CATALOG.has(m)), ADMIN_AREA_MODULES.find((m) => !CATALOG.has(m)));
+
+  vm.runInContext(`_myPerms = new Map(Object.entries({ test_register: ['view'] }));`, ctx);
+  ok("  non-admin with only a regular module → no admin entry", uiCanAnyAdmin() === false);
+
+  vm.runInContext(`_myPerms = new Map(Object.entries({ weights: ['view','create','edit'] }));`, ctx);
+  ok("  delegated weights manager → admin entry shown", uiCanAnyAdmin() === true);
+
+  vm.runInContext(`_myPerms = 'admin';`, ctx);
+  ok("  global admin → admin entry shown", uiCanAnyAdmin() === true);
+  vm.runInContext(`_myPerms = null;`, ctx);
+}
+
 console.log("\nfeature predicates (real app.js fns now driven by uiCan):");
 {
   const { _trpCanManage, _trpCanView } = sandbox;

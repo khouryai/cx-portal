@@ -215,6 +215,29 @@
         _load_app SCRIPTS, smoke assertion. Harness 13 suites / 270 assertions.
       • v1 captures the full management loop; polish (search/filter on big
         directories, modal instead of prompt()) can come with the Phase 4 UX pass.
+- [x] P1-10 (DONE — owner-directed: "admin permissions per module") Per-module
+      admin delegation. Migrated all is_admin()-gated admin-area RLS to
+      has_module_perm(<module>,<action>) per the perm_modules `governs` catalog:
+      weights (activity/test_case_weights), planning (shift_templates), directory
+      (profiles write + users → 4 command policies), admin (perm infra). demo_seed_log
+      stays is_admin (internal infra, no module). Strict SUPERSET — global admins
+      unaffected (has_module_perm keeps the role='admin' shortcut). UI: page guards
+      for weights/templates/locations/forms/directory/audit/planning → uiCan(mod,
+      'view') (cxEmpty not-authorized); renderAdminPermissions → uiCan('admin',
+      'view'); _cmCanManage → uiCan('config','edit'); admin-mode bar revealed to
+      non-admins via uiCanAnyAdmin()/ADMIN_AREA_MODULES so delegated users enter
+      admin mode and see only permitted links. Legacy combined-portal fns
+      (AM/Overview/Portal, not nav-wired) stay role-admin. Verified per-role (JWT
+      sim): delegated FE(weights=admin) CAN write weights, CANNOT touch perm infra.
+      test_ui_can.js +5. Migration: per_module_admin_delegation.
+- [x] SECURITY FIX (found during P1-10 testing) profiles privilege-escalation:
+      own-row update let a non-admin set their OWN role/is_active/permission_
+      template_id and self-escalate (PRE-EXISTING — own-row clause predates
+      delegation). Closed with BEFORE UPDATE trigger profiles_guard_privileged_cols:
+      those 3 cols change only with directory-edit perm; self name/subsystem edits
+      still allowed. Verified: FE self-name ALLOWED, self-role-escalation BLOCKED,
+      admin role change ALLOWED. No advisor regressions. Migration:
+      profiles_protect_privileged_columns.
 
 ### Phase 2 — DB performance
 - [x] P2-1 (DONE) Wrapped auth.<fn>() in (select ...) across 49 policies:

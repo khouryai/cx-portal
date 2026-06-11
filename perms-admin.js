@@ -137,7 +137,25 @@ function _applyPermNav() {
     // legacy role filter already hid.
     if (!uiCan(mod, 'view')) link.style.display = 'none';
   });
+  // Per-module admin delegation: a non-admin who can VIEW any admin-area module
+  // needs the Admin-mode entry (the legacy nav-role filter hid it by role).
+  // Inside admin mode, the individual links are still filtered above.
+  if (uiCanAnyAdmin()) {
+    const bar = document.getElementById('sidenav-admin-bar');
+    if (bar) bar.style.display = '';
+  }
 }
+
+// Modules whose management pages live behind the Admin-mode toggle.
+const ADMIN_AREA_MODULES = ['templates', 'weights', 'locations', 'forms', 'directory',
+  'admin', 'audit', 'schedule_p6', 'assets', 'planning', 'config'];
+
+function uiCanAnyAdmin() {
+  return ADMIN_AREA_MODULES.some(m => uiCan(m, 'view'));
+}
+
+window.uiCanAnyAdmin = uiCanAnyAdmin;
+window.ADMIN_AREA_MODULES = ADMIN_AREA_MODULES;
 
 window.PAGE_MODULE = PAGE_MODULE;
 window.loadMyPermissions = loadMyPermissions;
@@ -159,8 +177,8 @@ let _paUserPanel = {};               // userId -> 'overrides' | 'effective' | un
 function renderAdminPermissions() {
   const root = document.getElementById('admin-permissions-content');
   if (!root || !currentRoleUser) return;
-  if (currentRoleUser.role !== 'admin') {
-    root.innerHTML = '<div class="docs-empty"><h3>Admins only</h3><p>Permission management is restricted to administrators.</p></div>';
+  if (!uiCan('admin', 'view')) {
+    root.innerHTML = '<div class="docs-empty"><h3>Not authorized</h3><p>Permission management requires access to the Permissions Admin module.</p></div>';
     return;
   }
   root.innerHTML = cxSkeleton(6);
