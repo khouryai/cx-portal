@@ -355,8 +355,11 @@
       Adopted at 8 sites: 7 ad-hoc "Loading…" placeholders (directory users,
       punch photos, RMA list, lookahead history modal + week body, dynamic
       instances + test cases) → cxSkeleton(n); field-intake access guard →
-      cxEmpty(). Remaining: empty/error inline states sweep (larger; many are
-      per-table "no rows" cells that may be fine as-is).
+      cxEmpty(); 4 catch-block error renders → cxError with retry handlers
+      (directory users, meeting detail, dynamic cases; drawing-import modal
+      without retry — footer Close exists). 12 cx* call sites total. Remaining:
+      per-table "no rows" cells — reviewed, most are contextually fine as-is;
+      revisit only during the visual IA pass.
 - [~] P4-1b uiCan ADOPTION (batch 1, DONE): replaced ALL 6 legacy role-array
       predicates in app.js (0 remain): _trpCanManage→uiCan('test_reporting',
       'edit'), _trpCanView→('test_reporting','view'), field-intake guard→

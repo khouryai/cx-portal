@@ -5393,7 +5393,7 @@ async function _loadDirectoryUsers() {
   `;
   } catch (err) {
     console.error('_loadDirectoryUsers error:', err);
-    wrap.innerHTML = `<div style="padding:20px;color:#dc2626;font-size:13px;">Error loading users: ${escapeHtml(err.message)}</div>`;
+    wrap.innerHTML = cxError({ message: 'Error loading users: ' + (err.message || err), retry: '_loadDirectoryUsers()' });
   }
 }
 
@@ -17427,7 +17427,7 @@ async function renderMeetings() {
       // Init Quill editors for any already-expanded items
       setTimeout(_mtgInitQuillEditors, 0);
     } catch(e) {
-      el.innerHTML = `<p style="color:var(--bad);padding:20px;">Error loading meeting: ${escapeHtml(e.message)}</p>`;
+      el.innerHTML = cxError({ message: 'Error loading meeting: ' + (e.message || e), retry: 'renderMeetings()' });
     }
   } else {
     _htmlPreserveFocus(el, _mtgListPageHTML());
@@ -32557,7 +32557,7 @@ async function _drwConfirmImport() {
     const skipped = _drwParsedSheets.length - toImport.length;
     toast(`Drawing set imported: ${toImport.length} sheets${skipped ? `, ${skipped} skipped` : ''}${toSupersede.length ? `, ${toSupersede.length} auto-upreved` : ''}${addedDisciplines.length ? `, ${addedDisciplines.length} discipline${addedDisciplines.length===1?'':'s'} added` : ''}${insertResult.pageNumberSkipped ? ', page numbers skipped until DB migration is run' : ''}`, 'success');
   } catch(e) {
-    document.querySelector('#modal-overlay .modal-body').innerHTML = `<p style="color:var(--bad);padding:20px;">Import failed: ${escapeHtml(e.message)}</p>`;
+    document.querySelector('#modal-overlay .modal-body').innerHTML = cxError({ message: 'Import failed: ' + (e.message || e) });
     document.querySelector('#modal-overlay .modal-footer').innerHTML = `<button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Close</button>`;
   }
 }
@@ -37369,7 +37369,7 @@ async function _dynRenderCases() {
       prereqCounts.set(p.test_id, (prereqCounts.get(p.test_id) || 0) + 1);
     });
   } catch (e) {
-    cont.innerHTML = `<div style="padding:40px;color:var(--bad);">Load failed: ${escapeHtml(e.message)}</div>`;
+    cont.innerHTML = cxError({ message: 'Load failed: ' + (e.message || e), retry: '_dynRenderCases()' });
     return;
   }
 
