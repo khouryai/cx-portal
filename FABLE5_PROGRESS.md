@@ -257,8 +257,15 @@
         rate; the headline KPI math), 22 assertions: weight = activityW × testCaseW,
         default 1, status buckets (Pass/Passed/Complete→pass, Fail/Failed→fail, NA,
         Blocked, In Progress, Future Test, Not Started/missing), completeW/testedW.
-      • NEXT: _amComputeStatus, weight-lookup builders, _trpStatusCounts,
-        getStatusBadge — then extract the characterized set into a `compute` module.
+      • tools/test_activity_compute.js — _amComputeStatus (rollup state-machine:
+        Open/Future Test/Closed/Partial Completion; parent rows excluded),
+        _amComputeCompletion (weighted %, Future Test in denominator), and the pure
+        resolvers _tcWeightFor/_actWeightFor. 23 assertions.
+      • Harness now 9 suites / 178 assertions, all green + CI.
+      • NEXT: getStatusBadge, _trpStatusCounts, _liMatchKpiStatus, _laAutoStatus —
+        then extract the characterized compute set into a tested `compute` module
+        (note: weight-lookup BUILDERS read app.js-internal `let` state, so they're
+        best extracted+tested together rather than characterized in place).
 - [x] P3-2 (DONE) Test harness — committed `tools/run_tests.js` (node --check on
       app.js/photos.js/markup.js + runs the 3 headless suites: test_activity_stats,
       markup_test, test_copy_paste = 88 assertions, all green) + CI workflow

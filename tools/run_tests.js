@@ -41,6 +41,7 @@ const suites = [
   { file: "tools/test_format.js", needs: [] },          // extracted format utils
   { file: "tools/test_cx_state.js", needs: [] },        // extracted cx* state helpers
   { file: "tools/test_wgtstat.js", needs: [] },         // KPI weighting math (real app.js fn)
+  { file: "tools/test_activity_compute.js", needs: [] },// activity status + completion math
   { file: "tools/test_activity_stats.js", needs: [] },
   { file: "tools/markup_test.js", needs: [] },
   { file: "tools/test_copy_paste.js", needs: ["dayjs"] },
