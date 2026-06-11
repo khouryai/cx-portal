@@ -34480,9 +34480,13 @@ function _dynRowHtml(r) {
     ? ` <span title="${escapeHtml(r.prerequisites)}" style="cursor:help;color:#b45309;font-size:11px;">${icon('flag')} prereq</span>` : '';
   const selected = _dynPage.selInstances.has(r.id);
   const schedLabel = _dynScheduledLabel(r);
-  const schedCell = schedLabel
+  // Auto-roll-forward trail: flag runs bumped off a cancelled window (Increment D).
+  const movedBadge = (r.roll_count > 0)
+    ? `<br/><span class="badge" style="background:#fef3c7;color:#92400e;font-size:10px;" title="${escapeHtml(r.roll_note || 'Rolled forward from a cancelled access window')}">↻ moved${r.roll_count > 1 ? ` ×${r.roll_count}` : ''}</span>`
+    : '';
+  const schedCell = (schedLabel
     ? `<span class="tag" style="background:#ecfdf5;color:#065f46;border-color:#a7f3d0;font-family:var(--font-mono,monospace);" title="Scheduled">${escapeHtml(schedLabel)}</span>`
-    : `<span style="color:var(--gray-400);font-size:11px;">Not scheduled</span>`;
+    : `<span style="color:var(--gray-400);font-size:11px;">Not scheduled</span>`) + movedBadge;
   return `
     <tr${selected ? ' style="background:#eff6ff;"' : ''}>
       <td style="text-align:center;"><input type="checkbox" ${selected?'checked':''} onchange="_dynInstToggleSelect('${escapeHtml(r.id)}',this.checked)"></td>
