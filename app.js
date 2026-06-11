@@ -35898,6 +35898,7 @@ function _dynRenderAccess() {
   const cont = document.getElementById('dyn-content');
   if (!cont) return;
   if (!_dynPage.accWeekStart) _dynPage.accWeekStart = _dynStartOfWeek(new Date());
+  if (!_dynPage.accView) _dynPage.accView = 'week';
 
   const campaigns = _dynPage.campaigns || [];
   const allShifts = (_dynPage.shifts || []).filter(s => s.campaign_id); // campaign-generated only
@@ -35954,20 +35955,27 @@ function _dynRenderAccess() {
   const weekLabel = `${_dynDayLabel(days[0])} — ${_dynDayLabel(days[6])}`;
   const campOpts = campaigns.map(c => `<option value="${escapeHtml(c.id)}" ${_dynPage.accCampaignFilter===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
 
+  const periodLabel = _dynPage.accView === 'month'
+    ? new Date(weekStart.getFullYear(), weekStart.getMonth(), 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+    : weekLabel;
+  const vbtn = (v, lbl) => `<button class="dyn-btn" style="border-radius:0;${_dynPage.accView===v?'background:var(--info);color:#fff;border-color:var(--info);':''}" onclick="_dynAccSetView('${v}')">${lbl}</button>`;
   const toolbar = `
     <div class="dyn-toolbar">
       <button class="dyn-btn primary" onclick="_dynOpenNewCampaign()">+ New campaign</button>
       <select onchange="_dynPage.accCampaignFilter=this.value;_dynRenderAccess();" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-300);border-radius:5px;">
         <option value="">All campaigns</option>${campOpts}
       </select>
+      <span style="display:inline-flex;border:1px solid var(--gray-300);border-radius:6px;overflow:hidden;">${vbtn('week','Week')}${vbtn('month','Month')}</span>
       <span style="flex:1;"></span>
       <button class="dyn-btn" onclick="_dynAccShift(-1)">‹ Prev</button>
-      <span style="font-weight:600;color:var(--gray-700);font-size:13px;">${escapeHtml(weekLabel)}</span>
+      <span style="font-weight:600;color:var(--gray-700);font-size:13px;min-width:150px;text-align:center;">${escapeHtml(periodLabel)}</span>
       <button class="dyn-btn" onclick="_dynAccShift(1)">Next ›</button>
-      <button class="dyn-btn" onclick="_dynAccToday()">This week</button>
+      <button class="dyn-btn" onclick="_dynAccToday()">Today</button>
     </div>`;
 
-  const gridHtml = `
+  const gridHtml = _dynPage.accView === 'month'
+    ? `<div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow-x:auto;margin-bottom:18px;padding:6px;">${_dynAccMonthGridHtml(filtered, weekStart)}</div>`
+    : `
     <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow-x:auto;margin-bottom:18px;">
       <table class="dyn-board" style="min-width:760px;">
         <thead><tr><th style="text-align:left;">Zone</th>${headCols}</tr></thead>
@@ -36030,8 +36038,56 @@ function _dynRenderAccess() {
 }
 
 function _dynAccShift(n) {
-  _dynPage.accWeekStart = _dynAddDays(_dynPage.accWeekStart || _dynStartOfWeek(new Date()), 7 * n);
+  const a = _dynPage.accWeekStart || _dynStartOfWeek(new Date());
+  _dynPage.accWeekStart = _dynPage.accView === 'month'
+    ? new Date(a.getFullYear(), a.getMonth() + n, 1)
+    : _dynAddDays(a, 7 * n);
   _dynRenderAccess();
+}
+function _dynAccSetView(v) {
+  _dynPage.accView = (v === 'month') ? 'month' : 'week';
+  _dynRenderAccess();
+}
+// Month calendar for the Access Plan: weeks × days, each day shows its shift
+// pills (zone + trains), click-through to the shift editor.
+function _dynAccMonthGridHtml(shifts, anchor) {
+  const a = anchor || _dynStartOfWeek(new Date());
+  const first = new Date(a.getFullYear(), a.getMonth(), 1);
+  const gridStart = _dynStartOfWeek(first);
+  const todayKey = _dynDayKey(new Date());
+  const byDay = new Map();
+  for (const s of (shifts || [])) {
+    const k = _dynDayKey(s.shift_date);
+    if (!byDay.has(k)) byDay.set(k, []);
+    byDay.get(k).push(s);
+  }
+  const labels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const head = `<tr>${labels.map(l => `<th style="padding:5px 6px;font-size:10.5px;color:var(--gray-500);text-align:center;border:1px solid var(--gray-100);">${l}</th>`).join('')}</tr>`;
+  let body = '';
+  for (let wk = 0; wk < 6; wk++) {
+    let row = '', anyIn = false;
+    for (let dd = 0; dd < 7; dd++) {
+      const d = _dynAddDays(gridStart, wk * 7 + dd);
+      const inMonth = d.getMonth() === a.getMonth();
+      if (inMonth) anyIn = true;
+      const k = _dynDayKey(d);
+      const list = (byDay.get(k) || []).slice().sort((x, y) =>
+        String(x.control_zone_code).localeCompare(String(y.control_zone_code), undefined, { numeric: true }));
+      const pills = list.map(s => {
+        const t = _DYN_SHIFT_TONE[s.status] || _DYN_SHIFT_TONE.planned;
+        const cat = s.status === 'cancelled' && s.cancellation_category ? ` · ${s.cancellation_category}` : '';
+        return `<div onclick="event.stopPropagation();_dynOpenShift('${escapeHtml(s.id)}')" title="${escapeHtml(s.control_zone_code + ' — ' + t.label + cat)}" style="cursor:pointer;border:1px solid ${t.bd};background:${t.bg};color:${t.fg};border-radius:4px;padding:1px 4px;font-size:10px;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.control_zone_code)} <span style="font-weight:500;opacity:.85;">${s.max_trains || 1}T</span></div>`;
+      }).join('');
+      const isToday = k === todayKey;
+      const dayNum = isToday
+        ? `<span style="background:var(--info);color:#fff;border-radius:10px;display:inline-block;min-width:18px;height:18px;line-height:18px;text-align:center;font-weight:700;padding:0 4px;">${d.getDate()}</span>`
+        : `<span style="color:var(--gray-500);font-weight:500;">${d.getDate()}</span>`;
+      row += `<td style="vertical-align:top;height:86px;width:14.28%;border:1px solid var(--gray-100);padding:3px;${inMonth ? '' : 'background:var(--gray-50);opacity:.5;'}"><div style="font-size:10.5px;margin-bottom:2px;">${dayNum}</div>${pills}</td>`;
+    }
+    if (wk >= 4 && !anyIn) break;
+    body += `<tr>${row}</tr>`;
+  }
+  return `<table style="width:100%;border-collapse:collapse;table-layout:fixed;"><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }
 function _dynAccToday() {
   _dynPage.accWeekStart = _dynStartOfWeek(new Date());
@@ -36473,11 +36529,17 @@ function _dynBuildShift(shiftId) {
   const trainsAvail = avail.approved || s.max_trains || 0;
 
   const assigned = (_dynPage.instances || []).filter(i => i.shift_id === shiftId);
-  const eligible = (_dynPage.instances || []).filter(i =>
+  // Access gating: an instance is only eligible if ALL its required access zones
+  // are within what this campaign (or stand-alone window) grants.
+  const grantedZones = new Set(camp ? (camp.zone_codes || []) : [s.control_zone_code]);
+  const accessOk = i => (i.track_section_access_req || []).every(z => grantedZones.has(z));
+  const baseEligible = (_dynPage.instances || []).filter(i =>
     i.shift_id !== shiftId &&
     i.track_section_under_test === s.control_zone_code &&
     !['Pass', 'Fail', 'Not Applicable'].includes(i.status) &&
     (!i.required_mode || !modes.length || modes.includes(i.required_mode)));
+  const eligible = baseEligible.filter(accessOk);
+  const blockedByAccess = baseEligible.length - eligible.length;
 
   const usedMin = assigned.reduce((a, i) => a + (i.expected_duration_minutes || 0), 0);
   const peakTrains = assigned.reduce((a, i) => Math.max(a, i.trains_needed || 1), 0);
@@ -36524,7 +36586,7 @@ function _dynBuildShift(shiftId) {
           <thead><tr style="background:var(--gray-50);"><th style="text-align:left;padding:6px 8px;">Code</th><th style="text-align:left;padding:6px 8px;">Test</th><th style="text-align:right;padding:6px 8px;">Dur</th><th style="text-align:right;padding:6px 8px;">Trains</th><th style="text-align:left;padding:6px 8px;">Status</th><th></th></tr></thead>
           <tbody>${assignedRows}</tbody>
         </table>
-        <div style="font-size:12px;font-weight:700;color:var(--gray-600);margin:0 0 6px;">ELIGIBLE FOR ${escapeHtml(s.control_zone_code)}</div>
+        <div style="font-size:12px;font-weight:700;color:var(--gray-600);margin:0 0 6px;">ELIGIBLE FOR ${escapeHtml(s.control_zone_code)}${blockedByAccess?` <span style="font-weight:500;color:#b45309;">· ${blockedByAccess} hidden — need access beyond ${escapeHtml([...grantedZones].join(', '))}</span>`:''}</div>
         <table style="width:100%;border-collapse:collapse;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;font-size:12px;">
           <thead><tr style="background:var(--gray-50);"><th style="text-align:left;padding:6px 8px;">Code</th><th style="text-align:left;padding:6px 8px;">Test</th><th style="text-align:right;padding:6px 8px;">Dur</th><th style="text-align:right;padding:6px 8px;">Trains</th><th style="text-align:left;padding:6px 8px;">Mode</th><th></th></tr></thead>
           <tbody>${eligRows}</tbody>
@@ -36537,6 +36599,13 @@ function _dynBuildShift(shiftId) {
 async function _dynShiftAssign(instId, shiftId) {
   const s = (_dynPage.shifts || []).find(x => x.id === shiftId);
   if (!s) return;
+  const _inst = (_dynPage.instances || []).find(x => x.id === instId);
+  if (_inst) {
+    const _camp = _dynPage.campaigns.find(c => c.id === s.campaign_id);
+    const _granted = new Set(_camp ? (_camp.zone_codes || []) : [s.control_zone_code]);
+    const _need = (_inst.track_section_access_req || []).filter(z => !_granted.has(z));
+    if (_need.length) { toast(`Can't assign — needs access to ${_need.join(', ')} (not granted by this ${_camp ? 'campaign' : 'window'})`, 'error'); return; }
+  }
   try {
     const payload = {
       shift_id: shiftId,
@@ -37203,9 +37272,11 @@ function _dynCampShiftSummary(c) {
 // prerequisite CHAINS — a run whose test case depends on others is never
 // placed before an earlier-or-same window already holds those prerequisites'
 // runs. Returns a draft the planner reviews before commit. Cycle-safe.
-function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3 }) {
+function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3, grantedZones = null }) {
+  const granted = grantedZones ? new Set(grantedZones) : null;
+  const accessOk = i => !granted || (i.track_section_access_req || []).every(z => granted.has(z));
   const elig = (instances || []).filter(i =>
-    i && i.track_section_under_test && !['Pass', 'Not Applicable'].includes(i.status));
+    i && i.track_section_under_test && !['Pass', 'Not Applicable'].includes(i.status) && accessOk(i));
   const wins = (windows || [])
     .filter(w => w && w.status === 'planned' && w.control_zone_code)
     .slice()
@@ -37326,7 +37397,7 @@ async function _dynAutoAllocateRun() {
       && (!tcs || tcs.has(i.test_id))
       && !['Pass', 'Not Applicable'].includes(i.status));
     if (!pool.length) { toast('No unscheduled runs in this campaign\'s zones', 'info'); return; }
-    const draft = _dynCascadeAllocate({ instances: pool, windows, prereqs, capacityPerWindow: _dynAllocCapacity(camp) });
+    const draft = _dynCascadeAllocate({ instances: pool, windows, prereqs, capacityPerWindow: _dynAllocCapacity(camp), grantedZones: camp.zone_codes || [] });
     _dynPage._allocDraft = { campId: camp.id, assignments: draft.assignments, unplaced: draft.unplaced };
     _dynAutoAllocatePreview(camp, draft);
   } catch (e) { toast('Allocate failed: ' + e.message, 'error'); }

@@ -1,0 +1,22 @@
+-- ============================================================
+-- fn_feasible_instances: enforce track_section_access_req
+--
+-- An instance is only feasible for a request when ALL of its required access
+-- zones are within the requested zones: track_section_access_req <@ p_zone_codes.
+-- (Empty / null access_req = no special access needed.) So a run needing
+-- [W40, Y10] is excluded from a W40-only request and is never auto-allocated or
+-- linkable to a W40-only campaign. The client mirrors this in the Shift Builder,
+-- the assign guard, and the cascade allocator (grantedZones = campaign.zone_codes).
+--
+-- Applied live as migration: feasible_instances_enforce_access_req.
+-- Only the candidates CTE changed (new access_req clause); body otherwise as in
+-- supabase_dynamic_testing_schema.sql follow-ons.
+-- ============================================================
+-- (See migration feasible_instances_enforce_access_req for the full function
+--  body. The added predicate, inside the candidates CTE, is:)
+--
+--   and (p_zone_codes is null
+--        or array_length(p_zone_codes, 1) is null
+--        or di.track_section_access_req is null
+--        or di.track_section_access_req = '{}'
+--        or di.track_section_access_req <@ p_zone_codes)

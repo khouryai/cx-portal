@@ -128,5 +128,29 @@ console.log("\n=== Scenario 5: start-area clustering ===");
      winAreas.length === 2 && [...winAreas[0]][0] !== [...winAreas[1]][0]);
 }
 
+// ── Scenario 6: access-requirement gating (grantedZones) ───────────────────
+console.log("\n=== Scenario 6: track_section_access_req gating ===");
+{
+  const w = [{ id: "z1", control_zone_code: "W40", shift_date: "2026-08-01", start_at: "2026-08-01T08:00:00Z", end_at: "2026-08-01T12:00:00Z", allowed_modes: ["CBTC", "VATC"], status: "planned" }];
+  const runs = [
+    { id: "ix", test_id: "tx", code: "X", track_section_under_test: "W40", track_section_access_req: ["W40"],        required_mode: null, status: "Not Started" },
+    { id: "iy", test_id: "ty", code: "Y", track_section_under_test: "W40", track_section_access_req: ["W40", "Y10"], required_mode: null, status: "Not Started" },
+    { id: "iw", test_id: "tw", code: "W", track_section_under_test: "W40", track_section_access_req: [],             required_mode: null, status: "Not Started" },
+  ];
+  const find = (res, id) => res.assignments.find(a => a.instanceId === id);
+
+  const a = _dynCascadeAllocate({ instances: runs, windows: w, prereqs: [], capacityPerWindow: 9, grantedZones: ["W40"] });
+  ok("W40-only grant: in-zone run placed", !!find(a, "ix"));
+  ok("W40-only grant: no-access-req run placed", !!find(a, "iw"));
+  ok("W40-only grant: run needing Y10 is excluded (not placed)", !find(a, "iy"));
+  ok("W40-only grant: excluded run is not in unplaced either (filtered out)", !a.unplaced.includes("iy"));
+
+  const b = _dynCascadeAllocate({ instances: runs, windows: w, prereqs: [], capacityPerWindow: 9, grantedZones: ["W40", "Y10"] });
+  ok("W40+Y10 grant: run needing Y10 now placed", !!find(b, "iy"));
+
+  const cNo = _dynCascadeAllocate({ instances: runs, windows: w, prereqs: [], capacityPerWindow: 9 });
+  ok("no grantedZones ⇒ no access gating (all placed)", cNo.assignments.length === 3);
+}
+
 console.log(`\n${pass} passed, ${fail} failed.`);
 process.exit(fail ? 1 : 0);
