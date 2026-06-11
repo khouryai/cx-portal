@@ -35940,10 +35940,11 @@ function _dynRenderAccess() {
           const sub = s.status === 'cancelled' && s.cancellation_category
             ? `<div style="font-size:9px;color:${t.fg};opacity:.8;margin-top:2px;">${escapeHtml(s.cancellation_category)}</div>` : '';
           return `<td style="text-align:center;padding:4px;">
-            <div onclick="_dynOpenShift('${escapeHtml(s.id)}')" title="${escapeHtml(t.label)} — click to manage"
+            <div onclick="_dynOpenShift('${escapeHtml(s.id)}')" title="${escapeHtml(t.label)}${(s.access_zones&&s.access_zones.length>1)?' — grants '+escapeHtml(s.access_zones.join(', ')):''} — click to manage"
                  style="cursor:pointer;border:1px solid ${t.bd};background:${t.bg};color:${t.fg};border-radius:6px;padding:5px 4px;font-size:10.5px;font-weight:600;">
               ${t.label}
               <div style="font-size:9px;font-weight:500;opacity:.85;">${s.max_trains||1}T${s.consist_size?`·${s.consist_size}c`:''}</div>
+              ${(s.access_zones&&s.access_zones.length>1)?`<div style="font-size:8.5px;font-weight:700;opacity:.9;">+${escapeHtml(s.access_zones.filter(x=>x!==s.control_zone_code).join(','))}</div>`:''}
               ${sub}
             </div>
           </td>`;
@@ -36076,7 +36077,7 @@ function _dynAccMonthGridHtml(shifts, anchor) {
       const pills = list.map(s => {
         const t = _DYN_SHIFT_TONE[s.status] || _DYN_SHIFT_TONE.planned;
         const cat = s.status === 'cancelled' && s.cancellation_category ? ` · ${s.cancellation_category}` : '';
-        return `<div onclick="event.stopPropagation();_dynOpenShift('${escapeHtml(s.id)}')" title="${escapeHtml(s.control_zone_code + ' — ' + t.label + cat)}" style="cursor:pointer;border:1px solid ${t.bd};background:${t.bg};color:${t.fg};border-radius:4px;padding:1px 4px;font-size:10px;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.control_zone_code)} <span style="font-weight:500;opacity:.85;">${s.max_trains || 1}T</span></div>`;
+        return `<div onclick="event.stopPropagation();_dynOpenShift('${escapeHtml(s.id)}')" title="${escapeHtml(s.control_zone_code + ' — ' + t.label + cat)}" style="cursor:pointer;border:1px solid ${t.bd};background:${t.bg};color:${t.fg};border-radius:4px;padding:1px 4px;font-size:10px;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.control_zone_code)}${(s.access_zones&&s.access_zones.length>1)?'+'+escapeHtml(s.access_zones.filter(x=>x!==s.control_zone_code).join(',')):''} <span style="font-weight:500;opacity:.85;">${s.max_trains || 1}T</span></div>`;
       }).join('');
       const isToday = k === todayKey;
       const dayNum = isToday
@@ -36176,6 +36177,7 @@ function _dynGenerateShiftRows(campaign) {
     for (const z of (campaign.zone_codes || [])) {
       rows.push({
         control_zone_code: z,
+        access_zones: (campaign.zone_codes && campaign.zone_codes.length) ? campaign.zone_codes : [z],
         shift_date: dateStr,
         start_at: startAt.toISOString(),
         end_at: endAt.toISOString(),
@@ -36531,7 +36533,7 @@ function _dynBuildShift(shiftId) {
   const assigned = (_dynPage.instances || []).filter(i => i.shift_id === shiftId);
   // Access gating: an instance is only eligible if ALL its required access zones
   // are within what this campaign (or stand-alone window) grants.
-  const grantedZones = new Set(camp ? (camp.zone_codes || []) : [s.control_zone_code]);
+  const grantedZones = new Set((s.access_zones && s.access_zones.length) ? s.access_zones : (camp ? (camp.zone_codes || []) : [s.control_zone_code]));
   const accessOk = i => (i.track_section_access_req || []).every(z => grantedZones.has(z));
   const baseEligible = (_dynPage.instances || []).filter(i =>
     i.shift_id !== shiftId &&
@@ -36569,7 +36571,7 @@ function _dynBuildShift(shiftId) {
 
   modal({
     title: `Build shift — ${escapeHtml(s.control_zone_code)} · ${_dynFmtDate(s.shift_date)}`,
-    sub: camp ? escapeHtml(camp.name) : '',
+    sub: `${camp ? escapeHtml(camp.name) + ' · ' : ''}grants ${escapeHtml([...grantedZones].join(', '))}`,
     size: 'xl',
     body: `
       <div style="padding:8px 20px 16px;">
@@ -36602,7 +36604,7 @@ async function _dynShiftAssign(instId, shiftId) {
   const _inst = (_dynPage.instances || []).find(x => x.id === instId);
   if (_inst) {
     const _camp = _dynPage.campaigns.find(c => c.id === s.campaign_id);
-    const _granted = new Set(_camp ? (_camp.zone_codes || []) : [s.control_zone_code]);
+    const _granted = new Set((s.access_zones && s.access_zones.length) ? s.access_zones : (_camp ? (_camp.zone_codes || []) : [s.control_zone_code]));
     const _need = (_inst.track_section_access_req || []).filter(z => !_granted.has(z));
     if (_need.length) { toast(`Can't assign — needs access to ${_need.join(', ')} (not granted by this ${_camp ? 'campaign' : 'window'})`, 'error'); return; }
   }
@@ -37272,11 +37274,13 @@ function _dynCampShiftSummary(c) {
 // prerequisite CHAINS — a run whose test case depends on others is never
 // placed before an earlier-or-same window already holds those prerequisites'
 // runs. Returns a draft the planner reviews before commit. Cycle-safe.
-function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3, grantedZones = null }) {
-  const granted = grantedZones ? new Set(grantedZones) : null;
-  const accessOk = i => !granted || (i.track_section_access_req || []).every(z => granted.has(z));
+function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3 }) {
+  // A shift grants a SET of zones; a run fits only if its access requirement is
+  // a subset of THAT window's zones (so [W40,Y10] needs a window granting both).
+  const winZonesOf = w => new Set((w.access_zones && w.access_zones.length) ? w.access_zones : [w.control_zone_code]);
+  const accessOkWin = (i, wz) => (i.track_section_access_req || []).every(z => wz.has(z));
   const elig = (instances || []).filter(i =>
-    i && i.track_section_under_test && !['Pass', 'Not Applicable'].includes(i.status) && accessOk(i));
+    i && i.track_section_under_test && !['Pass', 'Not Applicable'].includes(i.status));
   const wins = (windows || [])
     .filter(w => w && w.status === 'planned' && w.control_zone_code)
     .slice()
@@ -37315,9 +37319,11 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
   wins.forEach((w, idx) => {
     let cap = Math.max(0, capacityPerWindow | 0);
     let winArea = null; // start-point area anchoring this shift (soft grouping)
+    const wz = winZonesOf(w); // zones this shift grants
     while (cap > 0) {
       const cands = elig.filter(i => !placed.has(i.id)
         && i.track_section_under_test === w.control_zone_code
+        && accessOkWin(i, wz)
         && (!i.required_mode || (w.allowed_modes || []).includes(i.required_mode))
         && prereqOkBy(i.test_id, idx));
       if (!cands.length) break;
@@ -37397,7 +37403,7 @@ async function _dynAutoAllocateRun() {
       && (!tcs || tcs.has(i.test_id))
       && !['Pass', 'Not Applicable'].includes(i.status));
     if (!pool.length) { toast('No unscheduled runs in this campaign\'s zones', 'info'); return; }
-    const draft = _dynCascadeAllocate({ instances: pool, windows, prereqs, capacityPerWindow: _dynAllocCapacity(camp), grantedZones: camp.zone_codes || [] });
+    const draft = _dynCascadeAllocate({ instances: pool, windows, prereqs, capacityPerWindow: _dynAllocCapacity(camp) });
     _dynPage._allocDraft = { campId: camp.id, assignments: draft.assignments, unplaced: draft.unplaced };
     _dynAutoAllocatePreview(camp, draft);
   } catch (e) { toast('Allocate failed: ' + e.message, 'error'); }
