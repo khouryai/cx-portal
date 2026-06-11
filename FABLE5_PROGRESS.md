@@ -350,7 +350,27 @@
         Admin-mode swap, icon() unification in sidebar, mobile/PWA pass —
         visual work, needs owner browser QA per direction note.
 - [ ] P4-2 (TODO) A11y pass (labels/contrast/keyboard/focus; axe clean)
-- [ ] P4-3 (TODO) Loading/empty/error states consistency pass
+- [~] P4-3 (IN-PROGRESS) Loading/empty/error states. FINDING: the cx* helpers
+      (cxSkeleton/cxEmpty/cxError) existed but had ZERO call sites in app.js.
+      Adopted at 8 sites: 7 ad-hoc "Loading…" placeholders (directory users,
+      punch photos, RMA list, lookahead history modal + week body, dynamic
+      instances + test cases) → cxSkeleton(n); field-intake access guard →
+      cxEmpty(). Remaining: empty/error inline states sweep (larger; many are
+      per-table "no rows" cells that may be fine as-is).
+- [~] P4-1b uiCan ADOPTION (batch 1, DONE): replaced ALL 6 legacy role-array
+      predicates in app.js (0 remain): _trpCanManage→uiCan('test_reporting',
+      'edit'), _trpCanView→('test_reporting','view'), field-intake guard→
+      ('test_register','create'), 2 inline matrix status-selects→
+      ('test_register','edit'), _regressionCellHTML canManage→same,
+      _rmaPageHTML canEdit→('rma','edit'). All target modules use
+      has_module_perm-driven RLS (P1-4/P1-9) and the seeded templates reproduce
+      today's behavior exactly (FE=standard, readonly/client=read_only); custom
+      templates now shape these UIs as intended. Fail-open preserved. Integration-
+      tested via real predicates with injected _myPerms (test_ui_can.js, now 13).
+      NOTE: ~24 bare role==='admin' checks remain — those gate admin-only pages
+      whose RLS is still is_admin()-based (weights, templates, config…), so
+      migrating them is NOT behavior-preserving; they stay until/unless the
+      owner wants per-module admin delegation.
 
 ### Phase 5 — Feature completeness
 - [ ] P5-1 (TODO) Photo upload end-to-end via storage-agnostic adapter

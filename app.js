@@ -5319,7 +5319,7 @@ function _adminDirectoryHTML() {
         <button class="admin-action-btn" onclick="openInviteUserModal()">+ Invite User</button>
       </div>
       <div class="data-card" id="dir-table-wrap" style="padding:0;">
-        <div style="padding:24px;text-align:center;color:var(--gray-400);font-size:13px;">Loading users…</div>
+        ${cxSkeleton(4)}
       </div>
     </div>
   `;
@@ -6363,8 +6363,8 @@ function ai_toggleReasonFields() {
 function renderFieldIntake() {
   const root = document.getElementById('field-intake-content');
   if (!root || !currentRoleUser) return;
-  if (!['field_engineer', 'admin'].includes(currentRoleUser.role)) {
-    root.innerHTML = `<div class="docs-empty"><h3>Field & Admin only</h3></div>`;
+  if (!uiCan('test_register', 'create')) {
+    root.innerHTML = cxEmpty({ icon: 'lock', title: 'No access', message: 'Submitting field results requires create access on the Test Register module.' });
     return;
   }
   setTimeout(_initPageLibraries, 80);
@@ -7814,7 +7814,7 @@ function openPunchDetail(id) {
             ${canComment ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchAddPhotos('${id}')">+ Add photo</button>` : ''}
           </div>
         </div>
-        <div id="punch-photos-${id}" class="punch-photo-grid"><div style="font-size:12px;color:var(--gray-400);padding:8px 0;">Loading photos…</div></div>
+        <div id="punch-photos-${id}" class="punch-photo-grid">${cxSkeleton(2)}</div>
         <input type="file" id="punch-gallery-file-${id}" accept="image/*" multiple style="display:none" onchange="_punchGalleryFilesChosen('${id}', this)">
       </div>
 
@@ -9180,11 +9180,11 @@ const TRP_SOURCE_LABELS = {
 };
 
 function _trpCanManage() {
-  return ['admin', 'field_engineer'].includes(currentRoleUser?.role);
+  return uiCan('test_reporting', 'edit');
 }
 
 function _trpCanView() {
-  return ['admin', 'field_engineer', 'client', 'readonly'].includes(currentRoleUser?.role);
+  return uiCan('test_reporting', 'view');
 }
 
 // ── _trpCleanReportValue/_trpReportKey/_trpInferCdrlNumber/_trpRecordKeys → extracted to compute.js (P3-1) ──
@@ -11423,7 +11423,7 @@ function _amDrilldownHTML(key) {
                         ${_swSnapshotChipHTML(r)}
                       </td>
                       <td>
-                        ${['admin','field_engineer'].includes(currentRoleUser?.role) ? `
+                        ${uiCan('test_register','edit') ? `
                           <select class="form-input mx-status-select status-select ${selToneClass}" style="font-size:12px;padding:4px 6px;" onchange="_mxStatusChange('${tid}',this.value,this)">
                             ${statuses.map(s=>`<option value="${s}" ${cur===s?'selected':''}>${s}</option>`).join('')}
                           </select>
@@ -15635,7 +15635,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
           ${_swSnapshotChipHTML(c)}
         </td>
         <td>
-          ${['admin','field_engineer'].includes(currentRoleUser?.role) ? `
+          ${uiCan('test_register','edit') ? `
             <select class="form-input mx-status-select" style="font-size:12px;padding:4px 6px;" onchange="_mxStatusChange('${ctid}',this.value,this)">
               ${statuses.map(s => `<option value="${s}" ${cur === s ? 'selected' : ''}>${s}</option>`).join('')}
             </select>
@@ -16395,7 +16395,7 @@ function _regressionCellHTML(r) {
   const attempts = _attemptsInGroup(groupId);
   const attemptNo = r.AttemptNumber || 1;
   const isTerminal = _REGRESSION_TERMINAL.has(r.Status);
-  const canManage = ['admin','field_engineer'].includes(currentRoleUser?.role);
+  const canManage = uiCan('test_register', 'edit');
   const histCount = attempts.length - 1;
   const safeG = encodeURIComponent(groupId);
 
@@ -16971,7 +16971,7 @@ function _rmaStatusBadge(s) {
 }
 
 function _rmaPageHTML() {
-  const canEdit  = ['admin','field_engineer'].includes(currentRoleUser?.role);
+  const canEdit  = uiCan('rma', 'edit');
   const locOpts  = [...new Set(LOCS.filter(l => l.level === 2).map(l => l.name))].sort();
 
   const srch = (_rmaFilter.search || '').toLowerCase();
@@ -17420,7 +17420,7 @@ async function renderMeetings() {
   _quillInstances  = {};
   _mtgEditorContent = {};
   if (_mtgDetailId) {
-    el.innerHTML = '<p style="text-align:center;padding:60px;color:var(--gray-500);">Loading…</p>';
+    el.innerHTML = cxSkeleton(5);
     try {
       await _mtgLoadDetail(_mtgDetailId);
       el.innerHTML = _mtgDetailPageHTML();
@@ -21677,7 +21677,7 @@ async function openPlanningHistory() {
     title: 'Past Weeks — Frozen Lookahead',
     sub: 'Immutable weekly record (Mon–Sun) of activities, shifts and assigned resources. Captured automatically each Monday.',
     size: 'large',
-    body: '<div id="la-hist-body"><div style="padding:24px;text-align:center;color:var(--gray-400);">Loading…</div></div>',
+    body: '<div id="la-hist-body">' + cxSkeleton(4) + '</div>',
     footer: '<button class="form-secondary" onclick="closeModal()">Close</button>',
   });
   let rows = [];
@@ -21710,7 +21710,7 @@ function _laRenderHistoryList() {
 
 async function _laShowSnapshot(weekStart) {
   const body = document.getElementById('la-hist-body');
-  if (body) body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--gray-400);">Loading week…</div>';
+  if (body) body.innerHTML = cxSkeleton(4);
   let rows = [];
   try { rows = await _fetchAnon('planning_week_snapshots?select=*&week_start=eq.' + weekStart + '&limit=1'); } catch (e) { /* */ }
   const snap = rows && rows[0];
@@ -34040,7 +34040,7 @@ async function renderDynamicTestingPage() {
   `;
 
   if (!_dynPage.loaded || _dynPage.tab === 'instances') {
-    cont.innerHTML = `<div style="padding:40px;text-align:center;color:var(--gray-500);">Loading dynamic instances…</div>`;
+    cont.innerHTML = cxSkeleton(6);
   }
 
   await _dynLoadAll();
@@ -37359,7 +37359,7 @@ async function _dynConfirmDeleteTestCase(testId) {
 async function _dynRenderCases() {
   const cont = document.getElementById('dyn-content');
   if (!cont) return;
-  cont.innerHTML = `<div style="padding:40px;text-align:center;color:var(--gray-500);">Loading dynamic test cases…</div>`;
+  cont.innerHTML = cxSkeleton(6);
 
   let rollup = [], prereqCounts = new Map();
   try {

@@ -68,5 +68,24 @@ ok("  default action is 'view'", uiCan("punch_list"));
 ok("  module present, action absent → false", uiCan("punch_list", "create") === false);
 ok("  module absent from perms → false", uiCan("audit", "view") === false);
 
+console.log("\nfeature predicates (real app.js fns now driven by uiCan):");
+{
+  const { _trpCanManage, _trpCanView } = sandbox;
+  ok("  predicates exist", typeof _trpCanManage === "function" && typeof _trpCanView === "function");
+
+  vm.runInContext(`_myPerms = new Map(Object.entries({ test_reporting: ['view','export'] }));`, ctx);
+  ok("  read_only-style perms: view yes, manage no", _trpCanView() === true && _trpCanManage() === false);
+
+  vm.runInContext(`_myPerms = new Map(Object.entries({ test_reporting: ['view','export','create','edit'] }));`, ctx);
+  ok("  standard-style perms: manage yes", _trpCanManage() === true);
+
+  vm.runInContext(`_myPerms = new Map();`, ctx);
+  ok("  no module grant: view no", _trpCanView() === false);
+
+  vm.runInContext(`_myPerms = 'admin';`, ctx);
+  ok("  global admin: both yes", _trpCanManage() === true && _trpCanView() === true);
+  vm.runInContext(`_myPerms = null;`, ctx);
+}
+
 console.log(`\n${pass} passed, ${fail} failed.\n`);
 process.exit(fail === 0 ? 0 : 1);
