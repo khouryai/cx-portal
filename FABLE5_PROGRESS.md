@@ -476,8 +476,30 @@
       owner wants per-module admin delegation.
 
 ### Phase 5 — Feature completeness
-- [ ] P5-1 (TODO) Photo upload end-to-end via storage-agnostic adapter
-- [ ] P5-2 (TODO) Triage empty-table features (finish / wire / deprecate, per audit)
+- [x] P5-1 (DONE — Phase-0 note was STALE) Photo upload is already end-to-end:
+      photos.js (rebuilt May 29, commit e42659a) has the full pipeline — client
+      compression, native-fetch storage uploads, signed URLs, offline IndexedDB
+      queue, storage cleanup on delete. Verified infra: `photos` bucket exists
+      (plus forms/drawings), storage.objects policies per bucket, ALL
+      authenticated-only (no anon storage access). Private bucket + signed URLs.
+      Remaining: a browser upload smoke (owner QA) — nothing to build.
+- [~] P5-2 (AUDITED — kill list awaiting owner approval) Empty-table triage.
+      Method: exact row counts + code-reference scan (incl. PostgREST embedded-
+      resource syntax, which a naive grep misses — caught meeting_template_
+      categories/items as wired).
+      • WIRED, keep (empty = awaiting use): test_results (daily log), photos/
+        photo_albums/photo_album_items, software_configs, drawing_markups,
+        train_requests, access_campaigns, zone_access_windows, meeting_templates
+        + categories + items, meeting_attendees, planning_import_batches,
+        form_template_links, form_test_item_links, test_item_prerequisites.
+      • DEAD SCHEMA — 0 rows AND 0 code mentions anywhere, drop candidates
+        (presented to owner per standing wipe rule, NOT executed):
+        punch_history (superseded by db_change_log audit), punch_photos (photos
+        feature uses `photos` w/ source links), template_test_cases (templates
+        store test_cases inline as jsonb), deployments + deployment_locations +
+        test_instances (deployment flow was mock-demo only, never DB-wired).
+        Drops are data-loss-free; would also clear their RLS policies + unused
+        FK indexes.
 
 ### Phase 6 — Integration prep
 - [ ] P6-1 (TODO) Azure/SharePoint incremental steps per docs/sharepoint-integration
