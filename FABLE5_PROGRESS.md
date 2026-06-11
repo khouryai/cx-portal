@@ -348,8 +348,19 @@
       installed transiently in CI (`npm install --no-save dayjs@1.11.13`); runner
       SKIPs (not fails) the copy/paste suite if dayjs is absent locally. If owner
       later prefers a committed package.json, trivial to switch.
-- [~] P3-3 (AUDITED — removal blocked on product decision) data.js (1.2MB,
-      precached, shipped every load) usage audit complete:
+- [x] P3-3 (DONE — owner-directed) data.js wiped: 1,230,062 → 1,016 bytes
+      (-99.9%, removed from every page load + offline precache). Owner chose
+      "keep only real data"; the three mock-only screens were re-sourced to real
+      data first, THEN the file emptied (all keys kept as [] so the
+      window.PORTAL_DATA contract still resolves; dead LI/ORG globals removed):
+      • Test Activities ← _amGetActivities() (real test register); idempotent
+        re-init. • Test Cases (was "Line Items") — already TI-sourced; nav was
+        already relabeled; DATA.lineItems (496KB) was fully dead. • Team ← new
+        team_members Supabase table (editable, directory-gated). • Legacy punch
+        list page (PL) not nav-reachable → renders empty harmlessly; admin
+        deployments demo → existing empty state. Verified: smoke loads the empty
+        data.js through the full bundle; behavioral tests pin the new sources.
+      [original audit, for reference:]
       • Supabase-backed w/ mock fallback: testItems→TI (replaced on login);
         templates→TEMPLATES (loader intentionally MERGES data.js baseline rows).
       • MOCK-ONLY screens (no Supabase source — these show static May-2026 demo

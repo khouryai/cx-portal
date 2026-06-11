@@ -4,9 +4,7 @@
 
 const DATA = window.PORTAL_DATA;
 let AP = [];        // derived from real Test Register activities (_amGetActivities)
-const LI = DATA.lineItems;
 const PL = DATA.punchList;
-const ORG = DATA.org;
 
 // ── Inline SVG icon system → extracted to icons.js (P3-1); loaded before app.js in index.html ──
 
