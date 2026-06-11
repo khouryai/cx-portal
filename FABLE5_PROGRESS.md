@@ -551,6 +551,51 @@
   audit-only. All (select ...)-wrapped → no initplan/permissive regressions.
   Verified per-role. Closes the auth_all authorization gap.
 
+## Dynamic Testing ⇄ Lookahead integration (2026-06-11, owner-directed)
+Owner goal: dynamic-testing access planning and the Lookahead should be ONE
+linked plan; cancellations/delays visible from either side; tests auto-allocated
+to access windows by prerequisite order and auto-rolled-forward on cancellation.
+Owner decisions (this session): **shared records** (one source of truth, not a
+sync layer); build **all four** increments A→B→D→C; commit **directly to main**
+(CLAUDE.md wins over the session branch directive — explicit). Model: a campaign
+ROW = a Lookahead activity; each per-day access window = a planning_event CELL.
+- **A — shared rows (DONE, commit 35e3904).** planning_activities.access_campaign_id
+  link; 'dynamic_testing' activity-group band; 'dynamic' added to
+  planning_events.source check. _dynEnsureCampaignActivity/_dynEnsureShiftCell
+  mint the row+cells on campaign create; _dynCreateShiftEvent made idempotent/
+  additive + sets planning_activity_id. Backfilled the existing campaign → 1 row
+  + 13 cells (campaign wall-clock times to dodge start_at UTC drift). Renders
+  natively under a "Dynamic Testing" band in the Lookahead grid.
+- **B — bidirectional cancel/delay (DONE, commit 444fa1e).** SECURITY DEFINER
+  trigger pair (dyn_sync_pe_to_window / dyn_sync_window_to_pe) mirrors cancel/
+  un-cancel + reason + category both ways via dynamic_shift_id; IS DISTINCT FROM
+  guards break recursion; each module keeps its own confirmed/completed lifecycle.
+  Verified both directions round-trip + restore. FK audit: campaign delete
+  cascades cleanly (activity→cells CASCADE; windows SET NULL on instances).
+- **D — auto-roll-forward (DONE, commit a45bf24).** dynamic_instances trail cols
+  (moved_from_window_id/roll_count/rolled_at/roll_note) + SECURITY DEFINER trigger
+  dyn_roll_forward_on_cancel on zone_access_windows status→cancelled: assigned
+  runs move to the earliest future PLANNED window of the same campaign+core zone
+  (mode-compatible) or fall back to flagged backlog. Fires no matter which module
+  cancelled (B routes a cell cancel to a window UPDATE). "↻ moved" badge in the
+  instances list. Verified roll 06-17→06-18 + restore.
+- **C — cascade auto-allocation (DONE, commit 4e74676).** "Auto-allocate campaign"
+  in Capacity Planning: pure _dynCascadeAllocate + _dynTopoRank place unscheduled
+  runs into planned windows in date order by prerequisite CHAINS (filter enforces
+  no-dependent-before-prereq; sort tie-breaks by downstream-unblock then mode-
+  constraint so scarce windows aren't wasted), editable draft → commit writes
+  shift_id/scheduled_for_date/scheduled_window. Prereq-capture UI
+  (_dtOpenPrereqEditor) + fn_feasible_instances scoring already existed (table was
+  just empty). tools/test_dyn_cascade.js (20 assertions) → harness now 16 suites.
+- Migrations applied: dyn_lookahead_shared_records_campaign_activity,
+  dyn_lookahead_bidirectional_cancellation_sync, dyn_auto_roll_forward_on_window_cancel.
+  In-repo SQL: supabase_dyn_lookahead_shared_records.sql,
+  supabase_dyn_lookahead_cancellation_sync.sql, supabase_dyn_auto_roll_forward.sql.
+- Follow-ups (not blocking): capacity-aware roll distribution (currently piles onto
+  next window; planner rebalances); surface the "moved from" trail in the Lookahead
+  cell tooltip; optional draft-editing UI before commit (today: edit post-commit via
+  Shift Builder/Access Plan). Needs a browser QA pass (owner).
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose
