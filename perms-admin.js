@@ -112,6 +112,17 @@ async function loadMyPermissions(profile) {
     const perms = new Map();
     for (const k of keys) perms.set(k, permEffective(profile, tmpMap.get(k) || null, ovMap.get(k) || null));
     _myPerms = perms;
+    // Show the template name in the sidebar user pill (role is retired from the UI).
+    if (profile.permission_template_id) {
+      _sb.from('permission_templates').select('name').eq('id', profile.permission_template_id).single()
+        .then(({ data }) => {
+          const el = document.querySelector('.sidenav-user-role');
+          if (data && data.name && el) {
+            const sub = profile.subsystem ? ' · ' + profile.subsystem : '';
+            el.textContent = data.name + sub;
+          }
+        });
+    }
   } catch (e) {
     console.warn('[perms] UI permission load failed — falling back to role-based nav (RLS still enforces):', e.message || e);
     _myPerms = null;
@@ -127,24 +138,41 @@ function uiCan(moduleKey, action) {
   return !!acts && acts.includes(action);
 }
 
+// Pure visibility decision for one nav page:
+//   'show' / 'hide'  — permissions are loaded and AUTHORITATIVE (role no longer
+//                      decides; templates fully shape the nav)
+//   'legacy'         — global admin, perms not loaded (fail-open), or unmapped
+//                      page: leave the legacy role-filter visibility untouched.
+function _paLinkDecision(page) {
+  if (_myPerms === 'admin' || !_myPerms) return 'legacy';
+  const mod = PAGE_MODULE[page];
+  if (!mod) return 'legacy';
+  return uiCan(mod, 'view') ? 'show' : 'hide';
+}
+
 function _applyPermNav() {
-  // Admins and the fallback state keep the legacy role-based visibility as-is.
-  if (_myPerms === 'admin' || !_myPerms) return;
+  if (_myPerms === 'admin' || !_myPerms) return;   // legacy visibility stands
   document.querySelectorAll('.nav-link[data-page]').forEach(link => {
-    const mod = PAGE_MODULE[link.dataset.page];
-    if (!mod) return;                          // unmapped pages keep legacy visibility
-    // Permission gating only ever HIDES further — it never reveals a link the
-    // legacy role filter already hid.
-    if (!uiCan(mod, 'view')) link.style.display = 'none';
+    const d = _paLinkDecision(link.dataset.page);
+    if (d === 'show') link.style.display = '';
+    else if (d === 'hide') link.style.display = 'none';
+  });
+  // Section labels: visible iff any link in their section is visible.
+  document.querySelectorAll('#nav-regular-items .sidenav-section-label').forEach(label => {
+    let any = false;
+    for (let el = label.nextElementSibling; el && !el.classList.contains('sidenav-section-label'); el = el.nextElementSibling) {
+      if (el.classList.contains('nav-link') && el.style.display !== 'none') { any = true; break; }
+    }
+    label.style.display = any ? '' : 'none';
   });
   // Per-module admin delegation: a non-admin who can VIEW any admin-area module
   // needs the Admin-mode entry (the legacy nav-role filter hid it by role).
-  // Inside admin mode, the individual links are still filtered above.
   if (uiCanAnyAdmin()) {
     const bar = document.getElementById('sidenav-admin-bar');
     if (bar) bar.style.display = '';
   }
 }
+window._paLinkDecision = _paLinkDecision;
 
 // Modules whose management pages live behind the Admin-mode toggle.
 const ADMIN_AREA_MODULES = ['templates', 'weights', 'locations', 'forms', 'directory',
@@ -451,7 +479,7 @@ function _paUsersHTML() {
       <div class="data-card" style="padding:0;">
         <table class="dir-table">
           <thead><tr>
-            <th style="width:40px;"></th><th>User</th><th>Role</th><th>Template</th>
+            <th style="width:40px;"></th><th>User</th><th>Global admin</th><th>Template</th>
             <th>Overrides</th><th style="width:190px;"></th>
           </tr></thead>
           <tbody>
@@ -473,7 +501,12 @@ function _paUserRowHTML(u) {
     <tr ${u.is_active ? '' : 'style="opacity:.55;"'}>
       <td><div class="user-avatar-sm">${escapeHtml(initials)}</div></td>
       <td style="font-weight:500;">${escapeHtml(name)}<div style="font-weight:400;font-size:11px;color:var(--text-muted);">${escapeHtml(u.email || '')}</div></td>
-      <td style="font-size:12px;">${escapeHtml(u.role || '')}${isGlobalAdmin ? ` <span class="tag" title="Global admin — full access to every module; template is ignored">all access</span>` : ''}</td>
+      <td style="font-size:12px;">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap;" title="Global admins bypass templates: every action on every module">
+          <input type="checkbox" ${isGlobalAdmin ? 'checked' : ''} onchange="_paSetGlobalAdmin('${u.id}',this.checked)">
+          <span style="color:${isGlobalAdmin ? 'var(--bad)' : 'var(--text-muted)'};font-weight:600;">${isGlobalAdmin ? 'all access' : 'off'}</span>
+        </label>
+      </td>
       <td>
         <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:150px;" aria-label="Permission template for ${escapeHtml(name)}"
           ${isGlobalAdmin ? 'title="Assigned but ignored while role is admin"' : ''}
@@ -494,6 +527,18 @@ function _paUserRowHTML(u) {
 
 function _paToggleUserPanel(userId, which) {
   _paUserPanel[userId] = _paUserPanel[userId] === which ? undefined : which;
+  _paRender();
+}
+
+// Global admin = profiles.role flag (the has_module_perm/is_admin shortcut).
+// Off-state is 'readonly': least privilege for the legacy role fallbacks.
+async function _paSetGlobalAdmin(userId, makeAdmin) {
+  const { error } = await _sb.from('profiles')
+    .update({ role: makeAdmin ? 'admin' : 'readonly' }).eq('id', userId);
+  if (error) { toast('Update failed: ' + error.message, 'error'); _paRender(); return; }
+  const u = _paUsers.find(x => x.id === userId);
+  if (u) u.role = makeAdmin ? 'admin' : 'readonly';
+  toast(makeAdmin ? 'Global admin granted' : 'Global admin revoked');
   _paRender();
 }
 

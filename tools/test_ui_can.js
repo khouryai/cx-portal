@@ -87,6 +87,22 @@ console.log("\nuiCanAnyAdmin (per-module admin delegation):");
   vm.runInContext(`_myPerms = null;`, ctx);
 }
 
+console.log("\n_paLinkDecision (permission-AUTHORITATIVE nav — role retired):");
+{
+  const { _paLinkDecision } = sandbox;
+  ok("  exported", typeof _paLinkDecision === "function");
+  vm.runInContext(`_myPerms = 'admin';`, ctx);
+  ok("  global admin → legacy visibility untouched", _paLinkDecision("test-register") === "legacy");
+  vm.runInContext(`_myPerms = null;`, ctx);
+  ok("  perms not loaded (fail-open) → legacy", _paLinkDecision("test-register") === "legacy");
+  vm.runInContext(`_myPerms = new Map(Object.entries({ test_register: ['view'] }));`, ctx);
+  ok("  granted module → SHOW (reveals even what the role filter hid)",
+     _paLinkDecision("test-register") === "show");
+  ok("  ungranted module → hide", _paLinkDecision("rma") === "hide");
+  ok("  unmapped page → legacy", _paLinkDecision("login") === "legacy");
+  vm.runInContext(`_myPerms = null;`, ctx);
+}
+
 console.log("\nmodule presentation helpers (per-module relevant actions):");
 {
   const { _paModuleActions, _paModulePages } = sandbox;

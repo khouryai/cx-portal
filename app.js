@@ -3232,7 +3232,9 @@ function onLoggedIn() {
   if (pill) {
     pill.style.display = 'flex';
     const initials = currentRoleUser.name.split(' ').filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase();
-    const roleLabel = { admin:'Administrator', field_engineer:'Field Engineer', readonly:'Read Only', client:'Client' }[currentRoleUser.role] || currentRoleUser.role;
+    // Role is retired from the UI: admins show as Global Administrator; everyone
+    // else shows their permission template (filled in async by loadMyPermissions).
+    const roleLabel = currentRoleUser.role === 'admin' ? 'Global Administrator' : 'Member';
     const subNote = currentRoleUser.subsystem ? ` · ${currentRoleUser.subsystem}` : '';
     pill.innerHTML = `
       <div class="user-avatar" style="width:32px;height:32px;font-size:12px;flex-shrink:0;">${initials}</div>
@@ -5327,13 +5329,17 @@ async function _loadDirectoryUsers() {
   const wrap = document.getElementById('dir-table-wrap');
   if (!wrap) return;
   try {
-    const { data, error } = await _sb.from('profiles').select('*').order('created_at');
+    const [prof, tpls] = await Promise.all([
+      _sb.from('profiles').select('*').order('created_at'),
+      _sb.from('permission_templates').select('id,name').order('name'),
+    ]);
+    const { data, error } = prof;
     if (error) throw error;
+    const dirTemplates = tpls.data || [];
     if (!data || !data.length) {
       wrap.innerHTML = `<div style="padding:32px;text-align:center;color:var(--gray-400);font-size:13px;">No users yet — click + Invite User to add one.</div>`;
       return;
     }
-  const roleLabel = { admin:'Administrator', field_engineer:'Field Engineer', readonly:'Read Only', client:'Client' };
   wrap.innerHTML = `
     <table class="dir-table">
       <thead>
@@ -5341,7 +5347,7 @@ async function _loadDirectoryUsers() {
           <th style="width:40px;"></th>
           <th>Name</th>
           <th>Email</th>
-          <th>Role</th>
+          <th>Access</th>
           <th>Subsystem</th>
           <th>Status</th>
           <th style="width:80px;"></th>
@@ -5359,13 +5365,16 @@ async function _loadDirectoryUsers() {
             <td style="font-weight:500;">${escapeHtml(name)}${tempBadge}</td>
             <td style="color:var(--gray-600);font-size:12px;">${escapeHtml(u.email||'')}</td>
             <td>
-              <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:140px;"
-                onchange="updateProfileRole('${u.id}',this.value)">
-                <option value="readonly"      ${u.role==='readonly'      ?'selected':''}>Read Only</option>
-                <option value="field_engineer" ${u.role==='field_engineer'?'selected':''}>Field Engineer</option>
-                <option value="admin"          ${u.role==='admin'         ?'selected':''}>Administrator</option>
-                <option value="client"         ${u.role==='client'        ?'selected':''}>Client</option>
+              <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:150px;" aria-label="Permission template for ${escapeHtml(name)}"
+                ${u.role==='admin' ? 'title="Assigned but bypassed while Global admin is on"' : ''}
+                onchange="updateProfileTemplate('${u.id}',this.value)">
+                <option value="" ${!u.permission_template_id?'selected':''}>— no template —</option>
+                ${dirTemplates.map(t=>`<option value="${t.id}" ${u.permission_template_id===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}
               </select>
+              <label style="display:flex;align-items:center;gap:5px;font-size:11px;cursor:pointer;white-space:nowrap;margin-top:4px;" title="Global admins bypass templates: every action on every module">
+                <input type="checkbox" ${u.role==='admin'?'checked':''} onchange="updateProfileGlobalAdmin('${u.id}',this.checked)">
+                <span style="color:${u.role==='admin'?'var(--bad)':'var(--gray-500)'};font-weight:600;">Global admin</span>
+              </label>
             </td>
             <td>
               <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:130px;"
@@ -5395,10 +5404,19 @@ async function _loadDirectoryUsers() {
   }
 }
 
-async function updateProfileRole(id, role) {
-  const { error } = await _sb.from('profiles').update({ role }).eq('id', id);
+async function updateProfileTemplate(id, tplId) {
+  const { error } = await _sb.from('profiles').update({ permission_template_id: tplId || null }).eq('id', id);
   if (error) toast('Update failed: ' + error.message, 'error');
-  else toast('Role updated', 'success');
+  else toast('Template assigned', 'success');
+}
+
+// Global admin = profiles.role flag (the has_module_perm/is_admin shortcut).
+// Off-state is 'readonly': least privilege for the legacy role fallbacks.
+async function updateProfileGlobalAdmin(id, makeAdmin) {
+  const { error } = await _sb.from('profiles').update({ role: makeAdmin ? 'admin' : 'readonly' }).eq('id', id);
+  if (error) { toast('Update failed: ' + error.message, 'error'); _loadDirectoryUsers(); return; }
+  toast(makeAdmin ? 'Global admin granted' : 'Global admin revoked', 'success');
+  _loadDirectoryUsers();
 }
 
 async function updateProfileSubsystem(id, subsystem) {
@@ -5421,7 +5439,9 @@ async function deleteUserConfirm(id, name) {
   _loadDirectoryUsers();
 }
 
-function openInviteUserModal() {
+async function openInviteUserModal() {
+  const { data: _invTpls } = await _sb.from('permission_templates').select('id,name').order('name');
+  const invTemplates = _invTpls || [];
   modal({
     title: 'Invite User',
     sub: 'Create a new portal account',
@@ -5441,13 +5461,14 @@ function openInviteUserModal() {
           <input type="text" id="inv-password" class="form-input" placeholder="At least 6 characters">
         </div>
         <div class="form-field">
-          <label>Role</label>
-          <select id="inv-role" class="form-input">
-            <option value="readonly">Read Only — Dashboards only</option>
-            <option value="field_engineer">Field Engineer — Field intake + Test Matrix</option>
-            <option value="admin">Administrator — Full access</option>
-            <option value="client">Client — Dashboard + Punch List view</option>
+          <label>Permission template</label>
+          <select id="inv-template" class="form-input">
+            <option value="">— no template (no access until assigned) —</option>
+            ${invTemplates.map(t=>`<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}
           </select>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:6px;cursor:pointer;" title="Global admins bypass templates: every action on every module">
+            <input type="checkbox" id="inv-admin"> Global admin
+          </label>
         </div>
         <div class="form-field">
           <label>Subsystem <span style="font-weight:400;color:var(--gray-500);">(optional — blank = all)</span></label>
@@ -5473,7 +5494,8 @@ async function inviteUser() {
   const name      = document.getElementById('inv-name').value.trim();
   const email     = document.getElementById('inv-email').value.trim();
   const password  = document.getElementById('inv-password').value;
-  const role      = document.getElementById('inv-role').value;
+  const tplId     = document.getElementById('inv-template').value;
+  const isAdmin   = document.getElementById('inv-admin').checked;
   const subsystem = document.getElementById('inv-subsystem').value;
 
   if (!name || !email || !password) { toast('Name, email, and password are all required', 'error'); return; }
@@ -5491,7 +5513,9 @@ async function inviteUser() {
 
   const { error: profErr } = await _sb.from('profiles').insert({
     id: data.user.id, email, full_name: name,
-    role, subsystem: subsystem || null, is_active: true,
+    role: isAdmin ? 'admin' : 'readonly',   // role survives only as the global-admin flag
+    permission_template_id: tplId || null,
+    subsystem: subsystem || null, is_active: true,
     must_change_password: true,
   });
   if (profErr) { toast('Profile save failed: ' + profErr.message, 'error'); return; }

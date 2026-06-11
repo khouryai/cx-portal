@@ -249,6 +249,27 @@
         irrelevant actions simply never offered/checked).
       • test_ui_can.js +7 (_paModuleActions filter/order/back-compat,
         _paModulePages reverse map incl. track_plan = data-only).
+- [x] P1-12 (DONE — owner-directed: "directory should use permissions, not Role")
+      Role retired from the UI. Role survives ONLY as (a) the global-admin flag
+      (is_admin()/has_module_perm shortcut + escalation guard) and (b) the legacy
+      fail-open nav fallback. Changes:
+      • Directory: Role dropdown (which offered "Client" — REJECTED by
+        profiles_role_check, a latent bug) → permission-template select + a single
+        "Global admin" toggle. updateProfileRole removed; updateProfileTemplate +
+        updateProfileGlobalAdmin added (off-state role = readonly, least privilege
+        for the legacy fallback).
+      • Invite flow: Role select → template select + Global admin checkbox;
+        new profiles insert role admin|readonly + permission_template_id.
+      • Nav is now permission-AUTHORITATIVE when perms load (_paLinkDecision:
+        show/hide per uiCan for mapped pages — templates can now REVEAL pages the
+        legacy role filter hid, e.g. a readonly-role user with an FE template gets
+        the full FE nav); section labels auto-hide when all their links hide;
+        global-admin/fail-open/unmapped keep legacy visibility.
+      • User pill shows "Global Administrator" or the user's TEMPLATE name
+        (async) instead of a role label. perms-admin Users tab Role column →
+        Global admin toggle (_paSetGlobalAdmin).
+      • Existing role values grandfathered (constraint-valid); test_ui_can.js +6
+        (_paLinkDecision matrix). Harness 15 suites / 319 assertions.
 - [x] SECURITY FIX (found during P1-10 testing) profiles privilege-escalation:
       own-row update let a non-admin set their OWN role/is_active/permission_
       template_id and self-escalate (PRE-EXISTING — own-row clause predates
