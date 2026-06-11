@@ -3,7 +3,10 @@
 ## ▶ Current position
 - Phase: 2 — DB performance. P1 (security) DONE; P2-1/P2-2/P2-4 DONE, P2-3
   decided (no-op, see below). Security advisors: only auth_leaked_password
-  remains (dashboard-only, P1-6). Performance advisors: ALL WARN-level lints
+  remains — CLOSED as WONT-FIX: owner confirmed Free plan (2026-06-11); the
+  HaveIBeenPwned toggle is Pro-plan-gated, so it's unenableable until upgrade.
+  Accepted plan limitation, not a defect — every actionable security item is done.
+  Performance advisors: ALL WARN-level lints
   CLEARED (auth_rls_initplan 49→0, unindexed_foreign_keys 42→0, duplicate_index
   1→0, multiple_permissive_policies 1→0). Only INFO unused_index remains (121,
   expected — see P2-3). All verified (RLS still permits as authenticated admin).
@@ -170,10 +173,11 @@
       authenticated_security_definer 4→0. Verified RLS post-move (perm_modules=22,
       dynamic_instances=22 as authenticated admin). Migrations:
       p1_5_secdef_views_func_execute_searchpath, p1_5_move_rls_helpers_to_private_schema.
-- [ ] P1-6 (BLOCKED — owner action) Enable leaked-password protection. NOT doable
-      from this environment (Auth/GoTrue config, not SQL; no Management API PAT /
-      CLI / token available; MCP has no auth-config tool). Owner: Dashboard →
-      Authentication → Password policy → enable "Leaked password protection".
+- [x] P1-6 (CLOSED — WONT-FIX, plan-gated) Leaked-password protection. Owner
+      confirmed Free plan (2026-06-11); the HaveIBeenPwned toggle (Auth → Sign In/
+      Providers → Email → Passwords) is Pro-plan-and-above only, so it cannot be
+      enabled on the current plan by anyone (dashboard, PAT, or MCP). Re-enable in
+      one toggle if/when the project upgrades to Pro. Accepted residual WARN.
 - [x] P1-7 (DONE for DB layer) Per-role verification via ephemeral JWT-claim
       simulation. Real auth test users deferred to Phase 4 (UI/E2E).
 - [x] P1-9 (DONE) Tightened all 43 remaining `auth_all` (any-authenticated full
