@@ -36865,6 +36865,7 @@ function _dynRenderPlanning() {
                oninput="_dynPage.planMaxTrains=this.value;">
       </label>
       <button class="dyn-btn primary" onclick="_dynPlanRun()">Compute feasible</button>
+      <button class="dyn-btn" onclick="_dynAutoAllocateRun()" title="Cascade-allocate unscheduled runs across this campaign's access windows, prerequisites first">Auto-allocate campaign</button>
       <span style="flex:1;"></span>
       <button class="dyn-btn" onclick="_dynPlanOpenWindowsAdmin()">${icon('settings')} Manage Windows</button>
     </div>
@@ -37100,6 +37101,196 @@ async function _dynPlanCommit() {
   } catch (e) {
     toast(`Commit failed: ${e.message}`, 'error');
   }
+}
+
+// ── Cascade auto-allocation (Increment C) ───────────────────────────────
+// Pure + testable: places unscheduled runs into a campaign's PLANNED access
+// windows in date order, honoring zone + mode fit, a per-shift capacity, and
+// prerequisite CHAINS — a run whose test case depends on others is never
+// placed before an earlier-or-same window already holds those prerequisites'
+// runs. Returns a draft the planner reviews before commit. Cycle-safe.
+function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3 }) {
+  const elig = (instances || []).filter(i =>
+    i && i.track_section_under_test && !['Pass', 'Not Applicable'].includes(i.status));
+  const wins = (windows || [])
+    .filter(w => w && w.status === 'planned' && w.control_zone_code)
+    .slice()
+    .sort((a, b) =>
+      String(a.shift_date || '').localeCompare(String(b.shift_date || '')) ||
+      String(a.start_at || '').localeCompare(String(b.start_at || '')));
+
+  // Prerequisite DAG over test_ids → topological rank (prereqs rank lower).
+  const preMap = new Map();
+  for (const p of (prereqs || [])) {
+    if (!p || !p.test_id || !p.prerequisite_test_id) continue;
+    if (!preMap.has(p.test_id)) preMap.set(p.test_id, new Set());
+    preMap.get(p.test_id).add(p.prerequisite_test_id);
+  }
+  const rank = _dynTopoRank(preMap);
+  // Downstream count: how many test cases list each test as a prerequisite
+  // (runs that unblock others are scheduled earlier).
+  const downstream = new Map();
+  preMap.forEach(ps => ps.forEach(p => downstream.set(p, (downstream.get(p) || 0) + 1)));
+
+  const testsInPool = new Set(elig.map(i => i.test_id));
+  const placedTestAt = new Map();
+  const prereqOkBy = (testId, idx) => {
+    const ps = preMap.get(testId);
+    if (!ps) return true;
+    for (const p of ps) {
+      if (!testsInPool.has(p)) continue;        // no runs to place → satisfied
+      const at = placedTestAt.get(p);
+      if (at === undefined || at > idx) return false;
+    }
+    return true;
+  };
+
+  const placed = new Set();
+  const assignments = [];
+  wins.forEach((w, idx) => {
+    let cap = Math.max(0, capacityPerWindow | 0);
+    while (cap > 0) {
+      const cands = elig.filter(i => !placed.has(i.id)
+        && i.track_section_under_test === w.control_zone_code
+        && (!i.required_mode || (w.allowed_modes || []).includes(i.required_mode))
+        && prereqOkBy(i.test_id, idx));
+      if (!cands.length) break;
+      cands.sort((a, b) =>
+        // (1) prerequisites/roots first (absent from graph ⇒ root, rank 0)
+        ((rank.get(a.test_id) ?? 0) - (rank.get(b.test_id) ?? 0)) ||
+        // (2) runs that unblock more dependents first
+        ((downstream.get(b.test_id) || 0) - (downstream.get(a.test_id) || 0)) ||
+        // (3) mode-constrained runs first, so scarce windows are not wasted
+        ((a.required_mode ? 0 : 1) - (b.required_mode ? 0 : 1)) ||
+        String(a.test_id).localeCompare(String(b.test_id)) ||
+        String(a.code || a.id).localeCompare(String(b.code || b.id)));
+      const pick = cands[0];
+      placed.add(pick.id);
+      if (!placedTestAt.has(pick.test_id)) placedTestAt.set(pick.test_id, idx);
+      assignments.push({ instanceId: pick.id, windowId: w.id, shiftDate: w.shift_date });
+      cap--;
+    }
+  });
+  return { assignments, unplaced: elig.filter(i => !placed.has(i.id)).map(i => i.id) };
+}
+
+// Longest-prereq-chain depth per test_id (memoized, cycle-guarded). Roots = 0.
+function _dynTopoRank(preMap) {
+  const rank = new Map();
+  const nodes = new Set();
+  preMap.forEach((ps, t) => { nodes.add(t); ps.forEach(p => nodes.add(p)); });
+  const visiting = new Set();
+  const depth = (t) => {
+    if (rank.has(t)) return rank.get(t);
+    if (visiting.has(t)) return 0;              // cycle → treat as root
+    visiting.add(t);
+    let d = 0;
+    const ps = preMap.get(t);
+    if (ps) for (const p of ps) d = Math.max(d, depth(p) + 1);
+    visiting.delete(t);
+    rank.set(t, d);
+    return d;
+  };
+  nodes.forEach(depth);
+  return rank;
+}
+
+function _dynAllocCapacity(camp) {
+  // Tests per shift ≈ window length / 40 min, clamped 1..8; default 3.
+  try {
+    const s = String(camp?.shift_start || '').slice(0, 5), e = String(camp?.shift_end || '').slice(0, 5);
+    if (s && e) {
+      const mins = (parseInt(e.slice(0,2),10)*60 + parseInt(e.slice(3),10)) -
+                   (parseInt(s.slice(0,2),10)*60 + parseInt(s.slice(3),10));
+      if (mins > 0) return Math.max(1, Math.min(8, Math.round(mins / 40)));
+    }
+  } catch (_) {}
+  return 3;
+}
+
+async function _dynAutoAllocateRun() {
+  const camps = (_dynPage.campaigns || []).filter(c => c.status !== 'archived');
+  if (!camps.length) { toast('No access campaigns to allocate into', 'error'); return; }
+  let camp = camps.find(c => c.id === _dynPage.accCampaignFilter) || (camps.length === 1 ? camps[0] : null);
+  if (!camp) {
+    const pick = prompt('Allocate into which campaign?\n' + camps.map((c, i) => (i + 1) + '. ' + c.name).join('\n'), '1');
+    const idx = parseInt(pick, 10) - 1;
+    if (isNaN(idx) || !camps[idx]) return;
+    camp = camps[idx];
+  }
+  try {
+    const prereqs = await _dbSelect('test_item_prerequisites', {}, '*').catch(() => []);
+    const windows = (_dynPage.shifts || []).filter(w => w.campaign_id === camp.id);
+    const zoneSet = new Set(camp.zone_codes || []);
+    const pool = (_dynPage.instances || []).filter(i =>
+      !i.shift_id && i.track_section_under_test && zoneSet.has(i.track_section_under_test)
+      && !['Pass', 'Not Applicable'].includes(i.status));
+    if (!pool.length) { toast('No unscheduled runs in this campaign\'s zones', 'info'); return; }
+    const draft = _dynCascadeAllocate({ instances: pool, windows, prereqs, capacityPerWindow: _dynAllocCapacity(camp) });
+    _dynPage._allocDraft = { campId: camp.id, assignments: draft.assignments, unplaced: draft.unplaced };
+    _dynAutoAllocatePreview(camp, draft);
+  } catch (e) { toast('Allocate failed: ' + e.message, 'error'); }
+}
+
+function _dynAutoAllocatePreview(camp, draft) {
+  const instById = new Map((_dynPage.instances || []).map(i => [i.id, i]));
+  const winById = new Map((_dynPage.shifts || []).map(w => [w.id, w]));
+  const byWin = new Map();
+  for (const a of draft.assignments) {
+    const w = winById.get(a.windowId);
+    const key = (a.shiftDate || '') + ' · ' + (w ? w.control_zone_code : '');
+    if (!byWin.has(key)) byWin.set(key, []);
+    byWin.get(key).push(instById.get(a.instanceId));
+  }
+  const rowsHtml = [...byWin.entries()].map(([k, list]) =>
+    '<tr style="border-bottom:1px solid var(--gray-100);">' +
+      '<td style="padding:6px 10px;font-family:monospace;font-size:11.5px;white-space:nowrap;">' + escapeHtml(k) + '</td>' +
+      '<td style="padding:6px 10px;"><b>' + list.length + '</b></td>' +
+      '<td style="padding:6px 10px;font-size:11.5px;">' + list.map(i => escapeHtml((i && (i.code || i.id)) || '')).join(', ') + '</td>' +
+    '</tr>').join('') ||
+    '<tr><td colspan="3" style="padding:16px;text-align:center;color:var(--gray-500);">No feasible placements.</td></tr>';
+  modal({
+    title: 'Auto-allocate — draft',
+    sub: escapeHtml(camp.name) + ' · ' + draft.assignments.length + ' placed, ' + draft.unplaced.length + ' left in backlog',
+    body:
+      '<div style="padding:8px 24px 16px;">' +
+        '<p style="font-size:13px;color:var(--gray-600);margin:0 0 10px;">Runs placed into planned access windows in date order, prerequisites first. Review, then commit — fine-tune any shift afterward in the Access Plan or Shift Builder.</p>' +
+        '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
+          '<thead><tr style="background:var(--gray-50);">' +
+            '<th style="text-align:left;padding:6px 10px;">Window</th>' +
+            '<th style="text-align:left;padding:6px 10px;">Runs</th>' +
+            '<th style="text-align:left;padding:6px 10px;">Codes</th>' +
+          '</tr></thead><tbody>' + rowsHtml + '</tbody></table>' +
+        (draft.unplaced.length ? '<p style="font-size:12px;color:#92400e;margin-top:10px;">' + draft.unplaced.length + ' run(s) could not be placed (no feasible window / capacity) — they stay in the backlog.</p>' : '') +
+      '</div>',
+    footer:
+      '<button class="form-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="form-submit" ' + (draft.assignments.length ? '' : 'disabled') + ' onclick="_dynAutoAllocateCommit()">Commit ' + draft.assignments.length + ' placement(s)</button>',
+    size: 'large',
+  });
+}
+
+async function _dynAutoAllocateCommit() {
+  const d = _dynPage._allocDraft;
+  if (!d || !d.assignments || !d.assignments.length) { closeModal(); return; }
+  const winById = new Map((_dynPage.shifts || []).map(w => [w.id, w]));
+  try {
+    for (const a of d.assignments) {
+      const w = winById.get(a.windowId);
+      await _dbUpdate('dynamic_instances', {
+        shift_id: a.windowId,
+        scheduled_for_date: a.shiftDate,
+        scheduled_window: (w && w.start_at && w.end_at) ? '[' + w.start_at + ',' + w.end_at + ')' : null,
+        updated_at: new Date().toISOString(),
+      }, { id: a.instanceId });
+    }
+    toast('Allocated ' + d.assignments.length + ' run(s) across the campaign', 'success');
+    _dynPage._allocDraft = null;
+    closeModal();
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    _dynRenderPlanning();
+  } catch (e) { toast('Commit failed: ' + e.message, 'error'); }
 }
 
 // ── Zone access windows admin (lightweight CRUD inside the planning tab) ────

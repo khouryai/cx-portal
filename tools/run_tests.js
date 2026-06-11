@@ -45,6 +45,7 @@ const suites = [
   { file: "tools/test_status_compute.js", needs: [] },  // status badges/buckets/lookahead status
   { file: "tools/test_trp_keys.js", needs: [] },        // report key normalization + lookup
   { file: "tools/test_planning_badges.js", needs: [] }, // lookahead cell badges + progress chips
+  { file: "tools/test_dyn_cascade.js", needs: [] },     // dynamic-testing cascade auto-allocator
   { file: "tools/test_perm_resolver.js", needs: [] },   // perms-admin effective-permission resolver
   { file: "tools/test_ui_can.js", needs: [] },          // UI permission gating + nav mapping integrity
   { file: "tools/test_team.js", needs: [] },            // team.js org helpers
