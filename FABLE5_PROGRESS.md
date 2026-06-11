@@ -231,11 +231,19 @@
         → format.js. Wired index.html (data→icons→format→app), sw.js precache,
         smoke load order. New tools/test_format.js (10 assertions incl. XSS-payload
         escaping). Harness: 6 suites / 119 assertions green.
+      • SEAM #3 (DONE): extracted cx* state helpers (cxSkeleton/cxEmpty/cxError)
+        → cx-state.js, loaded after icons+format (runtime deps) and before app.js.
+        New tools/test_cx_state.js (13 assertions) loads format+icons+cx-state and
+        verifies cross-module integration (cxEmpty uses icon()+escapeHtml, XSS-safe).
+        index.html order: data→icons→format→cx-state→app. Harness: 7 suites /
+        133 assertions green.
       • PATTERN ESTABLISHED for subsequent leaves: move self-contained block →
         new classic script exporting via global/window → wire index.html + sw.js +
-        smoke load order → add a unit test → run tools/run_tests.js.
-      • NEXT candidates: cx* state helpers (cxSkeleton/cxEmpty/cxError, EOF; depend
-        on icon+escapeHtml — both now modules); date/number format helpers.
+        smoke load order → add a unit test → run tools/run_tests.js. 3 module files
+        extracted so far (icons.js, format.js, cx-state.js); app.js: 38,920→38,786 ln.
+      • NEXT candidates: date/number format helpers; other pure leaf utilities.
+        Larger feature clusters (dashboard, planning) come later — they carry app
+        state and need more care than these pure leaves.
 - [x] P3-2 (DONE) Test harness — committed `tools/run_tests.js` (node --check on
       app.js/photos.js/markup.js + runs the 3 headless suites: test_activity_stats,
       markup_test, test_copy_paste = 88 assertions, all green) + CI workflow
