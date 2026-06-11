@@ -277,10 +277,14 @@
         sw.js precache, _load_app SCRIPTS, smoke assertion. 74 characterization
         assertions now exercise the functions from their new home.
       • Harness now 10 suites / 209 assertions, all green + CI.
+      • test_activity_stats.js CONVERTED from re-implementation → real function:
+        now loads the bundle and injects fixtures into app.js's actual TI /
+        PLANNING_TEST_RESULTS via vm.runInContext. Same 23 assertions pass against
+        the real _planningTestActivityStats (proved no drift had occurred; locked
+        against future drift). All characterization now tests real code only.
       • NEXT: continue the characterize→extract loop on the next compute cluster
-        (e.g. _planningTestActivityStats already has a re-implementation test —
-        characterize the REAL one, then move; date/format helpers; _trpReportKey/
-        _trpCleanReportValue). Modules so far: icons, format, cx-state, compute.
+        (date/format helpers; _trpReportKey/_trpCleanReportValue; planning badge
+        logic _planningCellBadge). Modules so far: icons, format, cx-state, compute.
 - [x] P3-2 (DONE) Test harness — committed `tools/run_tests.js` (node --check on
       app.js/photos.js/markup.js + runs the 3 headless suites: test_activity_stats,
       markup_test, test_copy_paste = 88 assertions, all green) + CI workflow
