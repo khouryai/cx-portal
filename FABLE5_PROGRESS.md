@@ -14,12 +14,11 @@
   done — boot/smoke harness (tools/smoke_app.js) now loads data.js+app.js headlessly
   and asserts the whole 38,920-line file executes without throwing + bootstrap
   registers. Safety net for the module split is in place.
-- Exact next action: P3-1 — begin the strangler split. Extract leaf helpers from
-  app.js into separate classic scripts loaded before app.js in index.html, each
-  EXPORTING VIA `window.X = X` (not top-level const sharing — keeps the smoke
-  loader, which runs scripts as separate vm contexts, faithful). After each
-  extraction: add the new file to smoke_app.js's load order, run tools/run_tests.js,
-  keep app deployable. First candidate: the ICONS map + icon() SVG system.
+- Exact next action: P3-1 SEAM #2 — extract the next leaf (escapeHtml + pure
+  string/format helpers, or the cx* state helpers) following the now-proven
+  pattern: new classic script exporting a global → wire index.html + sw.js
+  precache + smoke load order → add a unit test → run tools/run_tests.js. Seam #1
+  (icons.js) is committed and green; the mechanism is validated end-to-end.
 - VERIFICATION CAPABILITY GAINED: the module split is now verifiable headlessly
   (parse + full top-level execution + bootstrap wiring). Live DOMContentLoaded
   init / real network still require a browser; out of scope for the smoke net.
@@ -218,10 +217,21 @@
   traffic). Not a regression; see P2-3.
 
 ### Phase 3 — Frontend foundation
-- [~] P3-1 (IN-PROGRESS) Incremental strangler split of app.js. GROUNDWORK DONE:
-      headless boot/smoke (tools/smoke_app.js) loads data.js+app.js under a
-      universal-Proxy DOM/lib shim and asserts full top-level execution + bootstrap
-      registration (9 checks). Next: carve leaf helpers out behind window exports.
+- [~] P3-1 (IN-PROGRESS) Incremental strangler split of app.js.
+      • GROUNDWORK: headless boot/smoke (tools/smoke_app.js) loads the page's
+        classic scripts in index.html order under a universal-Proxy DOM/lib shim
+        and asserts full top-level execution + bootstrap registration.
+      • SEAM #1 (DONE): extracted the ICONS map + icon() SVG system (~12.9KB,
+        lines 14-109) → icons.js, loaded before app.js/photos.js/markup.js in
+        index.html, added to sw.js precache. app.js now references icon() purely
+        as a global (312 call sites, 0 ICONS refs left). New tools/test_icons.js
+        (11 assertions) + smoke updated (loads data.js→icons.js→app.js). Harness:
+        5 suites / 108 assertions green. CRLF preserved (Node-based edit).
+      • PATTERN ESTABLISHED for subsequent leaves: move self-contained block →
+        new classic script exporting via global/window → wire index.html + sw.js +
+        smoke load order → add a unit test → run tools/run_tests.js.
+      • NEXT candidates: escapeHtml + other pure string/format helpers; cx* state
+        helpers (cxSkeleton/cxEmpty/cxError); date/format utilities.
 - [x] P3-2 (DONE) Test harness — committed `tools/run_tests.js` (node --check on
       app.js/photos.js/markup.js + runs the 3 headless suites: test_activity_stats,
       markup_test, test_copy_paste = 88 assertions, all green) + CI workflow

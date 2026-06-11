@@ -137,26 +137,24 @@ console.log("=== app.js headless boot/smoke ===\n");
 
 const ROOT = path.resolve(__dirname, "..");
 
-// data.js runs first in the browser (sets window.PORTAL_DATA), exactly like the
-// <script> order in index.html. Run it into the same context first.
-let dataThrew = null;
-try {
-  new vm.Script(fs.readFileSync(path.join(ROOT, "data.js"), "utf8"), { filename: "data.js" }).runInContext(ctx);
-} catch (e) { dataThrew = e; }
-ok("data.js evaluates and sets window.PORTAL_DATA",
-   !dataThrew && sandbox.window.PORTAL_DATA && typeof sandbox.window.PORTAL_DATA === "object",
-   dataThrew && dataThrew.message);
-
-let threw = null;
-try {
-  new vm.Script(fs.readFileSync(path.join(ROOT, "app.js"), "utf8"), { filename: "app.js" })
-    .runInContext(ctx, { timeout: 20000 });
-} catch (e) {
-  threw = e;
+// Load the page's classic scripts in the SAME order as index.html, into one
+// shared context. Append future extracted modules here as the split proceeds.
+const SCRIPTS = ["data.js", "icons.js", "app.js"];
+let loadErr = null, loadErrFile = null;
+for (const f of SCRIPTS) {
+  try {
+    new vm.Script(fs.readFileSync(path.join(ROOT, f), "utf8"), { filename: f })
+      .runInContext(ctx, { timeout: 20000 });
+  } catch (e) { loadErr = e; loadErrFile = f; break; }
 }
+ok(`page scripts evaluate top-to-bottom without throwing (${SCRIPTS.join(" → ")})`,
+   !loadErr, loadErr && (loadErrFile + ": " + loadErr.message +
+     (loadErr.stack ? "\n    " + loadErr.stack.split("\n")[1] : "")));
 
-ok("app.js evaluates top-to-bottom without throwing",
-   !threw, threw && (threw.message + (threw.stack ? "\n    " + threw.stack.split("\n")[1] : "")));
+ok("data.js set window.PORTAL_DATA",
+   sandbox.window.PORTAL_DATA && typeof sandbox.window.PORTAL_DATA === "object");
+ok("icon() global provided by icons.js",
+   typeof sandbox.icon === "function" && typeof sandbox.window.icon === "function");
 
 // Bootstrap wiring: the DOMContentLoaded handler must have been registered
 // (proves execution reached the bootstrap) — but NOT fired (no live init/network).
@@ -167,8 +165,8 @@ ok("DOMContentLoaded bootstrap registered",
 // Top-level (non-hoisted) side effect near the start: the Supabase client init.
 ok("Supabase client initialized (_sb set at top level)", sandbox._sb !== undefined && sandbox._sb !== null);
 
-// Representative defined helpers (smoke — these are hoisted, so mainly a parse guard).
-for (const sym of ["icon", "escapeHtml", "cxSkeleton", "cxEmpty", "cxError"]) {
+// Representative app.js helpers still defined (smoke — hoisted, mainly a parse guard).
+for (const sym of ["escapeHtml", "cxSkeleton", "cxEmpty", "cxError"]) {
   ok(`function \`${sym}\` defined`, typeof sandbox[sym] === "function");
 }
 
