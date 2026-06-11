@@ -325,7 +325,21 @@
       installed transiently in CI (`npm install --no-save dayjs@1.11.13`); runner
       SKIPs (not fails) the copy/paste suite if dayjs is absent locally. If owner
       later prefers a committed package.json, trivial to switch.
-- [ ] P3-3 (TODO) Dead-code removal (data.js audit, unused functions)
+- [~] P3-3 (AUDITED — removal blocked on product decision) data.js (1.2MB,
+      precached, shipped every load) usage audit complete:
+      • Supabase-backed w/ mock fallback: testItems→TI (replaced on login);
+        templates→TEMPLATES (loader intentionally MERGES data.js baseline rows).
+      • MOCK-ONLY screens (no Supabase source — these show static May-2026 demo
+        data in production): actionPlans→AP ("activities" page), lineItems→LI
+        ("lineitems" page), punchList→PL (legacy punch filter views; the live
+        punch list uses PUNCH_DB/Supabase), org→ORG ("team" page),
+        deployments/testInstances (admin portal demo).
+      • Nearly dead: locations (LOCS=Supabase), users_v2, auditLog, fieldUsers,
+        config (≤3 refs each).
+      ⇒ data.js is NOT safely removable today. The heavy keys back mock-only
+      screens whose fate is a PRODUCT call (owner): migrate activities/lineitems/
+      team to real tables (activity_records exists, 73 rows) or deprecate the
+      screens — overlaps P5-2 triage. Decision pending; flagged to owner.
 - [ ] P3-4 (TODO) Design tokens / component patterns on Hitachi palette
 
 ### Phase 4 — UX, visual & accessibility
