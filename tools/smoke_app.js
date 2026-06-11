@@ -44,6 +44,9 @@ ok("compute core provided by compute.js",
 ok("permissions admin provided by perms-admin.js",
    typeof sandbox.renderAdminPermissions === "function" &&
    typeof sandbox.permEffective === "function" && typeof sandbox.permBaseline === "function");
+ok("team module provided by team.js",
+   typeof sandbox.initOrg === "function" && typeof sandbox.loadTeamMembers === "function" &&
+   typeof sandbox._teamInitials === "function");
 
 // Bootstrap wiring: the DOMContentLoaded handler must have been registered
 // (proves execution reached the bootstrap) — but NOT fired (no live init/network).

@@ -1,0 +1,52 @@
+// Unit test for the pure helpers in team.js (real fns via tools/_load_app.js):
+//   _teamInitials(name) — avatar initials, incl. "A / B" multi-person + TBD
+//   _teamRows(members)  — group into ordered level rows
+// (CRUD + render go through Supabase/DOM and are covered by the smoke load.)
+//
+// Run: node tools/test_team.js
+"use strict";
+
+const { loadApp } = require("./_load_app.js");
+
+let pass = 0, fail = 0;
+function ok(name, cond, details) {
+  if (cond) { pass++; console.log(`  ✓ ${name}`); }
+  else { fail++; console.log(`  ✗ ${name}${details ? " — " + details : ""}`); }
+}
+
+const { sandbox, loadError, loadErrorFile } = loadApp();
+if (loadError) { console.error("FATAL: load —", loadErrorFile, loadError.message); process.exit(1); }
+const { _teamInitials, _teamRows } = sandbox;
+if (typeof _teamInitials !== "function" || typeof _teamRows !== "function") {
+  console.error("FATAL: team helpers not found"); process.exit(1);
+}
+
+console.log("=== team.js helpers ===\n");
+
+console.log("_teamInitials:");
+ok("  two-word name → first letters", _teamInitials("Christopher Burford") === "CB");
+ok("  single name → one letter", _teamInitials("Madonna") === "M");
+ok("  multi-person 'A / B' → first letter of first two tokens",
+   _teamInitials("Alex Khoury / Syed Rahman") === "AK");
+ok("  TBD → '?'", _teamInitials("TBD") === "?");
+ok("  empty/null → '?'", _teamInitials("") === "?" && _teamInitials(null) === "?");
+ok("  caps the result at 2", _teamInitials("a b c d e").length === 2);
+
+console.log("\n_teamRows:");
+{
+  const members = [
+    { name: "Top", level: 0, sort_order: 0 },
+    { name: "B1", level: 1, sort_order: 1 },
+    { name: "A1", level: 1, sort_order: 0 },
+    { name: "C2", level: 2, sort_order: 0 },
+  ];
+  const rows = _teamRows(members);
+  ok("  one row per distinct level (3)", rows.length === 3);
+  ok("  rows ordered by level ascending", rows[0][0].level === 0 && rows[2][0].level === 2);
+  ok("  level-1 row preserves the input order it was given",
+     rows[1].map((m) => m.name).join(",") === "B1,A1");
+  ok("  empty input → no rows", _teamRows([]).length === 0 && _teamRows(null).length === 0);
+}
+
+console.log(`\n${pass} passed, ${fail} failed.\n`);
+process.exit(fail === 0 ? 0 : 1);

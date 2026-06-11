@@ -1958,36 +1958,7 @@ function _locFilterPhase(phase) {
 // ==========================================
 // ORG TREE
 // ==========================================
-function initOrg() {
-  const tree = document.getElementById('org-tree');
-  // Group by level
-  const byLevel = {};
-  ORG.forEach(p => {
-    if (!byLevel[p.level]) byLevel[p.level] = [];
-    byLevel[p.level].push(p);
-  });
-
-  let html = '';
-  Object.keys(byLevel).sort((a,b) => Number(a) - Number(b)).forEach(level => {
-    html += `<div class="org-row">${byLevel[level].map(p => orgCard(p, level === '0')).join('')}</div>`;
-  });
-  tree.innerHTML = html;
-}
-
-function orgCard(p, isLead) {
-  const initials = p.name === 'TBD'
-    ? '?'
-    : p.name.split(/[\s\/]+/).filter(s => s.length > 0).slice(0, 2).map(n => n[0]).join('').toUpperCase();
-  return `
-    <div class="org-card ${isLead ? 'org-lead' : ''}">
-      <div class="org-avatar">${initials}</div>
-      <div class="org-info">
-        <div class="org-title">${escapeHtml(p.title)}</div>
-        <div class="org-name">${escapeHtml(p.name)}</div>
-      </div>
-    </div>
-  `;
-}
+// ── initOrg + orgCard → extracted to team.js (Team is now a real, editable Supabase table) ──
 
 // ==========================================
 // CSV EXPORT
@@ -2136,7 +2107,7 @@ function _initProductionVisualLayer() {
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
   _initProductionVisualLayer();
-  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs(), loadForms(), loadDrawingsData()]);
+  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs(), loadForms(), loadDrawingsData(), (typeof loadTeamMembers==='function'?loadTeamMembers():Promise.resolve())]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -3270,9 +3241,11 @@ function onLoggedIn() {
     loadForms(),
     loadDrawingsData(),
     _colLoadAll(),
+    (typeof loadTeamMembers==='function'?loadTeamMembers():Promise.resolve()),
   ]).then(() => {
     // Re-init views with freshly loaded data
     initLineItems();
+    if (typeof initOrg==='function') initOrg();
     renderAdminPortal(); renderAdminTemplates(); renderTestRegister(); renderFieldIntake();
     renderPunchWorkflow(); renderAuditLog(); renderTestReporting();
     refreshAuditLog().catch(err => console.warn('[audit] refresh failed:', err.message));

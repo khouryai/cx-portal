@@ -47,6 +47,7 @@ const suites = [
   { file: "tools/test_planning_badges.js", needs: [] }, // lookahead cell badges + progress chips
   { file: "tools/test_perm_resolver.js", needs: [] },   // perms-admin effective-permission resolver
   { file: "tools/test_ui_can.js", needs: [] },          // UI permission gating + nav mapping integrity
+  { file: "tools/test_team.js", needs: [] },            // team.js org helpers
   { file: "tools/test_activity_stats.js", needs: [] },
   { file: "tools/markup_test.js", needs: [] },
   { file: "tools/test_copy_paste.js", needs: ["dayjs"] },
