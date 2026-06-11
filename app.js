@@ -35989,10 +35989,11 @@ function _dynRenderAccess() {
               <div style="font-weight:700;font-size:14px;">${escapeHtml(c.name)} ${closed?'<span class="tag" style="background:var(--gray-100);">closed</span>':''}</div>
               <div style="font-size:12px;color:var(--gray-600);margin-top:3px;">
                 ${(c.zone_codes||[]).map(z=>`<span class="tag" style="font-family:monospace;">${escapeHtml(z)}</span>`).join(' ')}
+                ${(c.test_case_ids&&c.test_case_ids.length)?`<span class="tag" style="background:#ede9fe;color:#5b21b6;">${c.test_case_ids.length} test case${c.test_case_ids.length===1?'':'s'} in scope</span>`:''}
               </div>
               <div style="font-size:11.5px;color:var(--gray-500);margin-top:6px;">
                 ${_dynFmtDate(c.start_date)} → ${_dynFmtDate(c.end_date)} · ${escapeHtml(fmtDOW(c.days_of_week))} ·
-                ${escapeHtml(String(c.shift_start||'').slice(0,5))}–${escapeHtml(String(c.shift_end||'').slice(0,5))} ·
+                ${escapeHtml(_dynCampShiftSummary(c))} ·
                 ${c.trains_requested||1} train${(c.trains_requested||1)===1?'':'s'}${c.consist_size?` × ${c.consist_size}-car`:''} ·
                 ${escapeHtml((c.allowed_modes||[]).join('+')||'any')}
                 ${c.subsystem?` · ${escapeHtml(c.subsystem)}`:''}${c.permit_no?` · permit ${escapeHtml(c.permit_no)}`:''}
@@ -36042,6 +36043,7 @@ function _dynAccJumpTo(dateStr) {
 }
 
 function _dynOpenNewCampaign() {
+  window._dynCampScope = new Set();
   const zoneOpts = _dynAccZoneOptions();
   const phaseOpts = (typeof LOCS !== 'undefined' ? LOCS : []).filter(l => l.level === 1)
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
@@ -36065,9 +36067,17 @@ function _dynOpenNewCampaign() {
           </select></div>
         <div class="form-field"><label>Start date</label><input id="camp-start" type="date" value="${today}" style="${fld}"></div>
         <div class="form-field"><label>End date</label><input id="camp-end" type="date" value="${today}" style="${fld}"></div>
-        <div class="form-field" style="grid-column:1/-1;"><label>Days of week</label><div style="padding:4px 0;">${dowChk}</div></div>
-        <div class="form-field"><label>Shift start</label><input id="camp-shift-start" type="time" value="07:00" style="${fld}"></div>
-        <div class="form-field"><label>Shift end</label><input id="camp-shift-end" type="time" value="15:00" style="${fld}"></div>
+        <div class="form-field" style="grid-column:1/-1;"><label>Access days &amp; times <span style="color:var(--gray-500);font-weight:400;">(check a day, set its window — times can differ per day)</span></label>
+          <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 10px;align-items:center;padding:4px 0;max-width:420px;">
+            <div></div><div style="font-size:10.5px;color:var(--gray-500);">Start</div><div style="font-size:10.5px;color:var(--gray-500);">End</div>
+            ${[1,2,3,4,5,6,0].map(d => `
+              <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;">
+                <input type="checkbox" class="camp-dow" value="${d}" ${[1,2,3,4,5].includes(d)?'checked':''} onchange="_dynCampDowToggle(${d},this.checked)">${_DYN_DOW[d]}</label>
+              <input type="time" class="camp-day-start" data-dow="${d}" value="07:00" ${[1,2,3,4,5].includes(d)?'':'disabled'} style="${fld}">
+              <input type="time" class="camp-day-end" data-dow="${d}" value="15:00" ${[1,2,3,4,5].includes(d)?'':'disabled'} style="${fld}">
+            `).join('')}
+          </div>
+        </div>
         <div class="form-field"><label>Trains requested</label><input id="camp-trains" type="number" min="1" value="2" style="${fld}"></div>
         <div class="form-field"><label>Consist size <span style="color:var(--gray-500);font-weight:400;">(cars, 4–10)</span></label><input id="camp-consist" type="number" min="1" max="10" placeholder="e.g. 4" style="${fld}"></div>
         <div class="form-field"><label>Modes</label><div style="padding:6px 0;">
@@ -36080,6 +36090,11 @@ function _dynOpenNewCampaign() {
         <div class="form-field"><label>Phase</label>
           <select id="camp-phase" style="${fld}"><option value="">—</option>${phaseOpts.map(p=>`<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`).join('')}</select></div>
         <div class="form-field"><label>BART permit / work order #</label><input id="camp-permit" style="${fld}" placeholder="optional"></div>
+        <div class="form-field" style="grid-column:1/-1;"><label>Test case scope <span style="color:var(--gray-500);font-weight:400;">(which dynamic test cases this campaign covers — leave empty for all in-zone)</span></label>
+          <input id="camp-scope-search" placeholder="Search test cases…" style="${fld};margin-bottom:6px;" oninput="_dynCampScopeFilter(this.value)">
+          <div id="camp-scope-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;">${_dynCampScopeListHtml('')}</div>
+          <div id="camp-scope-summary" style="font-size:11.5px;color:var(--gray-500);margin-top:4px;">0 selected — all in-zone tests in scope.</div>
+        </div>
         <div class="form-field" style="grid-column:1/-1;"><label>Notes</label><input id="camp-notes" style="${fld}" placeholder="optional"></div>
       </div>`,
     footer: `
@@ -36098,8 +36113,10 @@ function _dynGenerateShiftRows(campaign) {
   for (let d = new Date(start); d <= end; d = _dynAddDays(d, 1)) {
     if (!dow.has(d.getDay())) continue;
     const dateStr = _dynDayKey(d);
-    const startAt = new Date(`${dateStr}T${String(campaign.shift_start).slice(0,5)}:00`);
-    const endAt   = new Date(`${dateStr}T${String(campaign.shift_end).slice(0,5)}:00`);
+    const sched = campaign.day_schedule || {};
+    const dt = sched[String(d.getDay())] || sched[d.getDay()] || { start: campaign.shift_start, end: campaign.shift_end };
+    const startAt = new Date(`${dateStr}T${String(dt.start).slice(0,5)}:00`);
+    const endAt   = new Date(`${dateStr}T${String(dt.end).slice(0,5)}:00`);
     for (const z of (campaign.zone_codes || [])) {
       rows.push({
         control_zone_code: z,
@@ -36126,8 +36143,18 @@ async function _dynSaveCampaign() {
   const startDate = g('camp-start').value;
   const endDate = g('camp-end').value;
   const dow = Array.from(document.querySelectorAll('.camp-dow:checked')).map(c => parseInt(c.value, 10));
-  const shiftStart = g('camp-shift-start').value || '07:00';
-  const shiftEnd = g('camp-shift-end').value || '15:00';
+  // Per-day access window times (access can differ by day).
+  const daySchedule = {};
+  for (const d of dow) {
+    const st = document.querySelector('.camp-day-start[data-dow="' + d + '"]')?.value || '07:00';
+    const en = document.querySelector('.camp-day-end[data-dow="' + d + '"]')?.value || '15:00';
+    if (en <= st) { alert(_DYN_DOW[d] + ': end time must be after start time.'); return; }
+    daySchedule[d] = { start: st, end: en };
+  }
+  const baseDow = dow.slice().sort((a, b) => a - b)[0];
+  const shiftStart = (daySchedule[baseDow] && daySchedule[baseDow].start) || '07:00';
+  const shiftEnd   = (daySchedule[baseDow] && daySchedule[baseDow].end)   || '15:00';
+  const scopeIds = [...(window._dynCampScope || [])];
   const modes = Array.from(document.querySelectorAll('.camp-mode:checked')).map(c => c.value);
   const trains = parseInt(g('camp-trains').value, 10) || 1;
   const consist = g('camp-consist').value ? parseInt(g('camp-consist').value, 10) : null;
@@ -36148,6 +36175,7 @@ async function _dynSaveCampaign() {
       name, zone_codes: zones, phase, subsystem,
       start_date: startDate, end_date: endDate,
       days_of_week: dow, shift_start: shiftStart, shift_end: shiftEnd,
+      day_schedule: daySchedule, test_case_ids: scopeIds,
       allowed_modes: modes.length ? modes : ['CBTC', 'VATC'],
       trains_requested: trains, consist_size: consist,
       permit_no: permit, notes,
@@ -36539,7 +36567,9 @@ async function _dynShiftUnassign(instId) {
 // long-term picture updates from short-term execution automatically.
 function _dynCampaignScope(camp) {
   const zones = new Set(camp.zone_codes || []);
-  return (_dynPage.instances || []).filter(i => zones.has(i.track_section_under_test));
+  const tcs = (camp.test_case_ids && camp.test_case_ids.length) ? new Set(camp.test_case_ids) : null;
+  return (_dynPage.instances || []).filter(i =>
+    zones.has(i.track_section_under_test) && (!tcs || tcs.has(i.test_id)));
 }
 
 function _dynCampaignProgressData(camp) {
@@ -37103,6 +37133,70 @@ async function _dynPlanCommit() {
   }
 }
 
+// Start-point "area" = the leading token of a start/finish point code
+// ("W45-J" → "W45", "Y10-PL-2" → "Y10"); falls back to the section under test.
+function _dynStartArea(inst) {
+  const sp = inst && (inst.start_point || inst.track_section_under_test);
+  if (!sp) return null;
+  const m = String(sp).trim().match(/^[A-Za-z0-9]+/);
+  return m ? m[0].toUpperCase() : null;
+}
+
+// Dynamic test cases available as campaign scope (dynamic-scope items + any
+// referenced by existing instances).
+function _dynCampScopeItems() {
+  const ids = new Set();
+  for (const [id, info] of (_dynPage.testItemsById || new Map())) {
+    if (String((info && info.scope_type) || '').toLowerCase() === 'dynamic') ids.add(id);
+  }
+  for (const i of (_dynPage.instances || [])) if (i.test_id) ids.add(i.test_id);
+  return [...ids].map(id => {
+    const info = _dynPage.testItemsById && _dynPage.testItemsById.get(id);
+    return { id, code: (info && info.code) || id, name: (info && info.name) || '' };
+  }).sort((a, b) => String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
+}
+function _dynCampScopeListHtml(q) {
+  const items = _dynCampScopeItems();
+  const sel = window._dynCampScope || new Set();
+  const ql = (q || '').toLowerCase();
+  const filtered = ql ? items.filter(i => (i.code + ' ' + i.name).toLowerCase().includes(ql)) : items.slice(0, 300);
+  if (!filtered.length) return '<div style="padding:14px;text-align:center;color:var(--gray-500);font-size:12px;">No matching dynamic test cases.</div>';
+  return '<table style="width:100%;font-size:12px;border-collapse:collapse;"><tbody>' + filtered.map(i =>
+    '<tr style="border-bottom:1px solid var(--gray-100);">' +
+      '<td style="padding:5px 10px;width:30px;"><input type="checkbox" ' + (sel.has(i.id) ? 'checked' : '') + ' onchange="_dynCampScopeToggle(\'' + escapeHtml(i.id) + '\',this.checked)"></td>' +
+      '<td style="padding:5px 10px;font-family:monospace;font-size:11px;">' + escapeHtml(i.code) + '</td>' +
+      '<td style="padding:5px 10px;">' + escapeHtml(String(i.name).slice(0, 60)) + '</td>' +
+    '</tr>').join('') + '</tbody></table>';
+}
+function _dynCampScopeFilter(q) {
+  const el = document.getElementById('camp-scope-list');
+  if (el) el.innerHTML = _dynCampScopeListHtml(q);
+}
+function _dynCampScopeToggle(id, on) {
+  const sel = window._dynCampScope = window._dynCampScope || new Set();
+  if (on) sel.add(id); else sel.delete(id);
+  const sum = document.getElementById('camp-scope-summary');
+  if (sum) sum.textContent = sel.size
+    ? (sel.size + ' test case' + (sel.size === 1 ? '' : 's') + ' in scope.')
+    : '0 selected — all in-zone tests in scope.';
+}
+function _dynCampDowToggle(d, on) {
+  for (const cls of ['camp-day-start', 'camp-day-end']) {
+    const el = document.querySelector('.' + cls + '[data-dow="' + d + '"]');
+    if (el) el.disabled = !on;
+  }
+}
+function _dynCampShiftSummary(c) {
+  const sched = c.day_schedule || {};
+  const keys = Object.keys(sched);
+  if (keys.length) {
+    const uniq = new Set(keys.map(k => sched[k].start + '-' + sched[k].end));
+    if (uniq.size === 1) return String(sched[keys[0]].start).slice(0, 5) + '–' + String(sched[keys[0]].end).slice(0, 5);
+    return 'times vary by day';
+  }
+  return String(c.shift_start || '').slice(0, 5) + '–' + String(c.shift_end || '').slice(0, 5);
+}
+
 // ── Cascade auto-allocation (Increment C) ───────────────────────────────
 // Pure + testable: places unscheduled runs into a campaign's PLANNED access
 // windows in date order, honoring zone + mode fit, a per-shift capacity, and
@@ -37149,6 +37243,7 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
   const assignments = [];
   wins.forEach((w, idx) => {
     let cap = Math.max(0, capacityPerWindow | 0);
+    let winArea = null; // start-point area anchoring this shift (soft grouping)
     while (cap > 0) {
       const cands = elig.filter(i => !placed.has(i.id)
         && i.track_section_under_test === w.control_zone_code
@@ -37158,13 +37253,16 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
       cands.sort((a, b) =>
         // (1) prerequisites/roots first (absent from graph ⇒ root, rank 0)
         ((rank.get(a.test_id) ?? 0) - (rank.get(b.test_id) ?? 0)) ||
-        // (2) runs that unblock more dependents first
+        // (2) keep a shift focused on one start-point area (e.g. W45-*)
+        (winArea ? ((_dynStartArea(a) === winArea ? 0 : 1) - (_dynStartArea(b) === winArea ? 0 : 1)) : 0) ||
+        // (3) runs that unblock more dependents first
         ((downstream.get(b.test_id) || 0) - (downstream.get(a.test_id) || 0)) ||
-        // (3) mode-constrained runs first, so scarce windows are not wasted
+        // (4) mode-constrained runs first, so scarce windows are not wasted
         ((a.required_mode ? 0 : 1) - (b.required_mode ? 0 : 1)) ||
         String(a.test_id).localeCompare(String(b.test_id)) ||
         String(a.code || a.id).localeCompare(String(b.code || b.id)));
       const pick = cands[0];
+      if (winArea === null) winArea = _dynStartArea(pick);
       placed.add(pick.id);
       if (!placedTestAt.has(pick.test_id)) placedTestAt.set(pick.test_id, idx);
       assignments.push({ instanceId: pick.id, windowId: w.id, shiftDate: w.shift_date });
@@ -37222,8 +37320,10 @@ async function _dynAutoAllocateRun() {
     const prereqs = await _dbSelect('test_item_prerequisites', {}, '*').catch(() => []);
     const windows = (_dynPage.shifts || []).filter(w => w.campaign_id === camp.id);
     const zoneSet = new Set(camp.zone_codes || []);
+    const tcs = (camp.test_case_ids && camp.test_case_ids.length) ? new Set(camp.test_case_ids) : null;
     const pool = (_dynPage.instances || []).filter(i =>
       !i.shift_id && i.track_section_under_test && zoneSet.has(i.track_section_under_test)
+      && (!tcs || tcs.has(i.test_id))
       && !['Pass', 'Not Applicable'].includes(i.status));
     if (!pool.length) { toast('No unscheduled runs in this campaign\'s zones', 'info'); return; }
     const draft = _dynCascadeAllocate({ instances: pool, windows, prereqs, capacityPerWindow: _dynAllocCapacity(camp) });

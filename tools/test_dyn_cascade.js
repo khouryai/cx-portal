@@ -103,5 +103,30 @@ console.log("\n=== Scenario 4: _dynTopoRank ===");
   ok("cycle ranks are finite numbers", rc && Number.isFinite(rc.get("A")) && Number.isFinite(rc.get("B")));
 }
 
+// ── Scenario 5: start-point area clustering (soft grouping) ────────────────
+console.log("\n=== Scenario 5: start-area clustering ===");
+{
+  const w2 = [
+    { id: "g1", control_zone_code: "W40", shift_date: "2026-07-01", start_at: "2026-07-01T08:00:00Z", end_at: "2026-07-01T10:00:00Z", allowed_modes: ["CBTC", "VATC"], status: "planned" },
+    { id: "g2", control_zone_code: "W40", shift_date: "2026-07-02", start_at: "2026-07-02T08:00:00Z", end_at: "2026-07-02T10:00:00Z", allowed_modes: ["CBTC", "VATC"], status: "planned" },
+  ];
+  // Two start areas: W45-* and W37-* (no prereqs/modes → only area should cluster).
+  const runs = [
+    { id: "m1", test_id: "tM1", code: "M1", track_section_under_test: "W40", start_point: "W45-J", required_mode: null, status: "Not Started" },
+    { id: "n1", test_id: "tN1", code: "N1", track_section_under_test: "W40", start_point: "W37-C", required_mode: null, status: "Not Started" },
+    { id: "m2", test_id: "tM2", code: "M2", track_section_under_test: "W40", start_point: "W45-L", required_mode: null, status: "Not Started" },
+    { id: "n2", test_id: "tN2", code: "N2", track_section_under_test: "W40", start_point: "W37-E", required_mode: null, status: "Not Started" },
+  ];
+  const res = _dynCascadeAllocate({ instances: runs, windows: w2, prereqs: [], capacityPerWindow: 2 });
+  const area = id => ({ m1: "W45", m2: "W45", n1: "W37", n2: "W37" }[id]);
+  const perWin = {};
+  for (const a of res.assignments) (perWin[a.windowId] = perWin[a.windowId] || []).push(a.instanceId);
+  ok("all 4 runs placed", res.assignments.length === 4, JSON.stringify(res.assignments));
+  const winAreas = Object.values(perWin).map(ids => new Set(ids.map(area)));
+  ok("each shift holds a single start area", winAreas.every(s => s.size === 1), JSON.stringify(perWin));
+  ok("the two shifts cover different areas",
+     winAreas.length === 2 && [...winAreas[0]][0] !== [...winAreas[1]][0]);
+}
+
 console.log(`\n${pass} passed, ${fail} failed.`);
 process.exit(fail ? 1 : 0);
