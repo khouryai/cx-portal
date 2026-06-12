@@ -911,6 +911,30 @@ per campaign; mark-Pass releases a future slot with a tag.
   more-aggressive-than-legacy, over-length run still placed). Harness 22/22.
   Verified Progress + Schedule-map modals visually. Advisors clean. CRLF preserved.
 
+## Dynamic Testing — what-if rebuild (2026-06-12, owner-directed)
+Owner: what-if should show many more schedule KPIs; apply to single/multiple
+campaigns OR a location/locations over a period; show a comparison chart; and
+extend shift hours per INDIVIDUAL DAY, not uniformly for the week.
+- SCOPE: _dynWhatIfScope() resolves either mode — 'campaigns' (multi-select
+  checklist; windows = those campaigns' planned windows, pool = their zones +
+  union test-case scope) or 'locations' (multi-select zones + date range;
+  windows granting any selected zone within the range, pool = those zones).
+- PER-DAY EXTENSION: _dynWhatIfExtend() applies a per-DOW target-hours map
+  (Mon–Sun inputs, blank = keep) — extend Saturday to 5 h without touching
+  weekdays. Each window's end = start + that DOW's target.
+- KPIs (current vs scenario vs Δ): runs scheduled, % of scope, backlog, shifts
+  used/avail, avg runs/shift, window utilization, total access hours, completion
+  date (Δ in "days sooner"), calendar days to finish. Uses the duration-aware
+  cascade + alloc slack so the projection matches real allocation.
+- CHART: Chart.js stepped line of CUMULATIVE runs scheduled over time, Current
+  vs Scenario — shows the work finishing sooner/higher. Redraws live on any
+  scope/extension change (chart instance on _dynPage._whatIfChart, destroyed
+  first). Replaced the old single-campaign / global-hours / count-based version.
+- Test: tools/test_dyn_whatif.js (10 assertions — single/multi-campaign scope,
+  location+date-range scope, per-DOW extension isolation, metrics + scenario
+  improvement + cumulative series). Harness 23/23. Verified the modal + live
+  chart visually. CRLF preserved. (No DB change.)
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose

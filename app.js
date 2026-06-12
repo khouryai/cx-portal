@@ -37921,87 +37921,260 @@ function _dynTopoRank(preMap) {
   return rank;
 }
 
-// What-if: project scheduling throughput under the contract window vs an
-// extended window, to quantify the schedule benefit of more access. Read-only
-// (runs the cascade twice; no writes).
+// What-if: project scheduling throughput under the current access windows vs an
+// EXTENDED scenario, to quantify the schedule benefit of more access. Scope can
+// be one/many campaigns OR one/many locations over a date range; extensions are
+// per DAY OF WEEK (extend Sat without touching weekdays). Read-only (runs the
+// duration-aware cascade twice; no writes). Renders a comparison chart + KPIs.
+const _DYN_WIF_DOW = [['1','Mon'],['2','Tue'],['3','Wed'],['4','Thu'],['5','Fri'],['6','Sat'],['0','Sun']];
+
 async function _dynWhatIfRun() {
   const camps = (_dynPage.campaigns || []).filter(c => c.status !== 'archived');
   if (!camps.length) { toast('No campaigns', 'error'); return; }
-  let camp = camps.find(c => c.id === _dynPage.accCampaignFilter) || (camps.length === 1 ? camps[0] : null);
-  if (!camp) {
-    const pick = prompt('What-if for which campaign?\n' + camps.map((c, i) => (i + 1) + '. ' + c.name).join('\n'), '1');
-    const idx = parseInt(pick, 10) - 1;
-    if (isNaN(idx) || !camps[idx]) return;
-    camp = camps[idx];
-  }
-  try {
-    const prereqs = await _dbSelect('test_item_prerequisites', {}, '*').catch(() => []);
-    const windows = (_dynPage.shifts || []).filter(w => w.campaign_id === camp.id && w.status === 'planned');
-    const zoneSet = new Set(camp.zone_codes || []);
-    const tcs = (camp.test_case_ids && camp.test_case_ids.length) ? new Set(camp.test_case_ids) : null;
-    const pool = (_dynPage.instances || []).filter(i =>
-      i.track_section_under_test && zoneSet.has(i.track_section_under_test)
-      && (!tcs || tcs.has(i.test_id)) && !['Pass', 'Not Applicable'].includes(i.status));
-    window._dynWhatIf = { camp, prereqs, windows, pool };
-    _dynWhatIfRender(6);
-  } catch (e) { toast('What-if failed: ' + e.message, 'error'); }
-}
-function _dynWhatIfCompute(targetHours) {
-  const w = window._dynWhatIf;
-  if (!w) return null;
-  const run = (windows) => {
-    const d = _dynCascadeAllocate({ instances: w.pool, windows, prereqs: w.prereqs, capacityFn: _dynWindowCapacity });
-    const lastDate = d.assignments.reduce((m, a) => (a.shiftDate > m ? a.shiftDate : m), '');
-    return { placed: d.assignments.length, unplaced: d.unplaced.length, lastDate };
+  let prereqs = [];
+  try { prereqs = await _dbSelect('test_item_prerequisites', {}, '*').catch(() => []); } catch (_) {}
+  // default scope: the currently-filtered campaign, else the first.
+  const initCamp = camps.find(c => String(c.id) === String(_dynPage.accCampaignFilter)) || camps[0];
+  const dates = (_dynPage.shifts || []).filter(s => s.shift_date).map(s => s.shift_date).sort();
+  window._dynWhatIf = {
+    prereqs,
+    mode: 'campaigns',
+    campIds: new Set([String(initCamp.id)]),
+    zones: new Set(),
+    dateStart: dates[0] || _dynFmtDate(new Date()),
+    dateEnd: dates[dates.length - 1] || _dynFmtDate(new Date()),
+    dow: {},   // { '6': 5 } → Saturday shifts extended to 5 h; absent = keep current
   };
-  const contract = run(w.windows);
-  const ext = w.windows.map(x => {
-    if (!x.start_at) return x;
-    const s = new Date(x.start_at);
-    return Object.assign({}, x, { end_at: new Date(s.getTime() + targetHours * 3600 * 1000).toISOString() });
+  _dynWhatIfRender();
+}
+
+// All zones present across campaign windows (for the location scope picker).
+function _dynWhatIfZonesAll() {
+  const z = new Set();
+  (_dynPage.shifts || []).forEach(s => {
+    (s.access_zones && s.access_zones.length ? s.access_zones : [s.control_zone_code]).forEach(x => x && z.add(x));
   });
-  const extended = run(ext);
-  return { contract, extended, total: w.pool.length };
+  (_dynPage.campaigns || []).forEach(c => (c.zone_codes || []).forEach(x => x && z.add(x)));
+  return [...z].sort();
 }
-function _dynWhatIfBodyHtml(hours) {
-  const r = _dynWhatIfCompute(hours);
-  if (!r) return '';
-  const col = (label, s, accent) => `<div style="flex:1;border:1px solid var(--gray-200);border-radius:8px;padding:12px 14px;border-top:3px solid ${accent};">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:6px;">${escapeHtml(label)}</div>
-      <div style="font-size:22px;font-weight:700;">${s.placed}<span style="font-size:12px;font-weight:500;color:var(--gray-500);"> / ${r.total} scheduled</span></div>
-      <div style="font-size:12px;color:${s.unplaced ? '#b45309' : '#059669'};margin-top:2px;">${s.unplaced} still in backlog</div>
-      <div style="font-size:12px;color:var(--gray-600);margin-top:4px;">Last run: ${s.lastDate ? escapeHtml(s.lastDate) : '—'}</div>
-    </div>`;
-  const gain = r.extended.placed - r.contract.placed;
-  return `<div style="display:flex;gap:12px;">${col('Non-Revenue Hours (current)', r.contract, 'var(--gray-400)')}${col(hours + ' h per shift', r.extended, 'var(--info)')}</div>
-    <div style="margin-top:12px;padding:10px 14px;background:${gain > 0 ? '#ecfdf5' : '#f9fafb'};border:1px solid ${gain > 0 ? '#a7f3d0' : 'var(--gray-200)'};border-radius:8px;font-size:13px;color:${gain > 0 ? '#065f46' : 'var(--gray-600)'};">
-      ${gain > 0
-        ? `<b>+${gain} more runs scheduled</b> by extending to ${hours} h per shift — ${r.extended.unplaced} left in backlog vs ${r.contract.unplaced} under Non-Revenue Hours.`
-        : `No additional runs fit at ${hours} h — the limit here is windows / zones / prerequisites, not shift length.`}
-    </div>`;
-}
-function _dynWhatIfUpdate(v) {
-  const el = document.getElementById('whatif-body');
-  if (el) el.innerHTML = _dynWhatIfBodyHtml(parseFloat(v) || 6);
-}
-function _dynWhatIfRender(hours) {
+
+// Resolve the current scope to { windows, pool }.
+function _dynWhatIfScope() {
   const w = window._dynWhatIf;
-  if (!w) return;
-  modal({
-    title: 'What-if — extend the access window',
-    sub: escapeHtml(w.camp.name) + ' · ' + w.pool.length + ' runs in scope',
-    size: 'large',
-    body: `<div style="padding:8px 22px 16px;">
-      <p style="font-size:12.5px;color:var(--gray-600);margin:0 0 10px;">Projects how many backlog runs the auto-allocator can schedule into this campaign's windows at the current length vs a longer window — to show the client the schedule benefit of more access.</p>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
-        <label style="font-size:13px;color:var(--gray-600);">Extend each shift to</label>
-        <input id="whatif-hours" type="number" min="1" max="12" step="0.5" value="${hours}" style="width:74px;padding:5px 7px;border:1px solid var(--gray-300);border-radius:5px;" oninput="_dynWhatIfUpdate(this.value)">
-        <span style="font-size:13px;color:var(--gray-600);">hours per shift</span>
+  const allWins = (_dynPage.shifts || []).filter(s => s.status === 'planned');
+  const allInst = (_dynPage.instances || []).filter(i =>
+    i.track_section_under_test && !['Pass', 'Not Applicable'].includes(i.status));
+  if (w.mode === 'campaigns') {
+    const ids = w.campIds;
+    const camps = (_dynPage.campaigns || []).filter(c => ids.has(String(c.id)));
+    const zones = new Set(); const tcs = new Set(); let anyScope = false;
+    camps.forEach(c => {
+      (c.zone_codes || []).forEach(z => zones.add(z));
+      if (c.test_case_ids && c.test_case_ids.length) { anyScope = true; c.test_case_ids.forEach(t => tcs.add(t)); }
+    });
+    const windows = allWins.filter(s => ids.has(String(s.campaign_id)));
+    const pool = allInst.filter(i => zones.has(i.track_section_under_test) && (!anyScope || tcs.has(i.test_id)));
+    return { windows, pool, label: camps.length === 1 ? camps[0].name : camps.length + ' campaigns' };
+  }
+  // location mode: windows in the selected zones within the date range
+  const zones = w.zones;
+  const inRange = s => (!w.dateStart || s.shift_date >= w.dateStart) && (!w.dateEnd || s.shift_date <= w.dateEnd);
+  const winGrantsZone = s => (s.access_zones && s.access_zones.length ? s.access_zones : [s.control_zone_code]).some(z => zones.has(z));
+  const windows = allWins.filter(s => inRange(s) && winGrantsZone(s));
+  const pool = allInst.filter(i => zones.has(i.track_section_under_test));
+  return { windows, pool, label: zones.size === 1 ? [...zones][0] : zones.size + ' locations' };
+}
+
+// Apply the per-DOW extension to a window set (end = start + target hours).
+function _dynWhatIfExtend(windows) {
+  const w = window._dynWhatIf;
+  return windows.map(x => {
+    if (!x.start_at) return x;
+    const dow = String(new Date(x.shift_date + 'T12:00:00').getDay());
+    const target = w.dow[dow];
+    if (!(target > 0)) return x;
+    const s = new Date(x.start_at);
+    return Object.assign({}, x, { end_at: new Date(s.getTime() + target * 3600 * 1000).toISOString() });
+  });
+}
+
+// Full KPI set for one window scenario.
+function _dynWhatIfMetrics(windows, pool, prereqs) {
+  const d = _dynCascadeAllocate({
+    instances: pool, windows, prereqs,
+    runMinutesFn: i => i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN,
+    windowMinutesFn: _dynWinMinutes, slack: _dynAllocSlack(),
+  });
+  const total = pool.length;
+  const placed = d.assignments.length;
+  const instById = new Map(pool.map(i => [i.id, i]));
+  const usedWins = new Set(d.assignments.map(a => a.windowId));
+  let plannedMin = 0;
+  d.assignments.forEach(a => { const i = instById.get(a.instanceId); plannedMin += (i && i.expected_duration_minutes) || _DYN_DEFAULT_RUN_MIN; });
+  let availMin = 0; windows.forEach(x => { availMin += _dynWinMinutes(x); });
+  // cumulative scheduled by date
+  const perDate = new Map();
+  d.assignments.forEach(a => perDate.set(a.shiftDate, (perDate.get(a.shiftDate) || 0) + 1));
+  const dates = [...perDate.keys()].sort();
+  let run = 0; const cumulative = dates.map(dt => { run += perDate.get(dt); return { date: dt, n: run }; });
+  const completion = dates.length ? dates[dates.length - 1] : null;
+  const firstWin = windows.map(x => x.shift_date).filter(Boolean).sort()[0] || null;
+  const calDays = (completion && firstWin) ? Math.round((_dynParseDate(completion) - _dynParseDate(firstWin)) / 86400000) + 1 : null;
+  return {
+    total, placed, unplaced: d.unplaced.length,
+    pctScheduled: total ? Math.round(placed / total * 100) : 0,
+    shiftsUsed: usedWins.size, shiftsAvail: windows.length,
+    avgPerShift: usedWins.size ? +(placed / usedWins.size).toFixed(1) : 0,
+    utilPct: availMin > 0 ? Math.round(plannedMin / availMin * 100) : null,
+    accessHours: +(availMin / 60).toFixed(1),
+    completion, calDays, cumulative,
+  };
+}
+
+function _dynWhatIfCompute() {
+  const w = window._dynWhatIf;
+  const { windows, pool, label } = _dynWhatIfScope();
+  const base = _dynWhatIfMetrics(windows, pool, w.prereqs);
+  const scenario = _dynWhatIfMetrics(_dynWhatIfExtend(windows), pool, w.prereqs);
+  return { base, scenario, label, nWindows: windows.length, nPool: pool.length };
+}
+
+function _dynWhatIfKpiHtml(r) {
+  const dlt = (a, b, unit, goodUp) => {
+    const d = b - a;
+    if (!d) return '<span style="color:var(--gray-400);">—</span>';
+    const good = goodUp ? d > 0 : d < 0;
+    return `<span style="color:${good ? '#059669' : '#b45309'};font-weight:600;">${d > 0 ? '+' : ''}${d}${unit || ''}</span>`;
+  };
+  const dateDelta = (a, b) => {
+    if (!a || !b) return '<span style="color:var(--gray-400);">—</span>';
+    const days = Math.round((_dynParseDate(a) - _dynParseDate(b)) / 86400000);
+    if (!days) return '<span style="color:var(--gray-400);">same day</span>';
+    return `<span style="color:${days > 0 ? '#059669' : '#b45309'};font-weight:600;">${days > 0 ? days + ' days sooner' : Math.abs(days) + ' days later'}</span>`;
+  };
+  const row = (label, a, b, delta) => `<tr style="border-top:1px solid var(--gray-100);">
+    <td style="padding:6px 10px;color:var(--gray-600);">${label}</td>
+    <td style="padding:6px 10px;text-align:right;font-family:monospace;">${a}</td>
+    <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:600;">${b}</td>
+    <td style="padding:6px 10px;text-align:right;">${delta}</td></tr>`;
+  const B = r.base, S = r.scenario;
+  return `<table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+    <thead><tr style="background:var(--gray-50);">
+      <th style="text-align:left;padding:6px 10px;">Metric</th>
+      <th style="text-align:right;padding:6px 10px;">Current</th>
+      <th style="text-align:right;padding:6px 10px;">Scenario</th>
+      <th style="text-align:right;padding:6px 10px;">Difference</th>
+    </tr></thead><tbody>
+      ${row('Runs scheduled', `${B.placed}/${B.total}`, `${S.placed}/${S.total}`, dlt(B.placed, S.placed, '', true))}
+      ${row('% of scope scheduled', B.pctScheduled + '%', S.pctScheduled + '%', dlt(B.pctScheduled, S.pctScheduled, ' pts', true))}
+      ${row('Backlog remaining', B.unplaced, S.unplaced, dlt(B.unplaced, S.unplaced, '', false))}
+      ${row('Shifts used', `${B.shiftsUsed}/${B.shiftsAvail}`, `${S.shiftsUsed}/${S.shiftsAvail}`, dlt(B.shiftsUsed, S.shiftsUsed, '', false))}
+      ${row('Avg runs / shift', B.avgPerShift, S.avgPerShift, dlt(B.avgPerShift, S.avgPerShift, '', true))}
+      ${row('Window utilization', (B.utilPct ?? '—') + '%', (S.utilPct ?? '—') + '%', B.utilPct != null && S.utilPct != null ? dlt(B.utilPct, S.utilPct, ' pts', true) : '—')}
+      ${row('Total access hours', B.accessHours + ' h', S.accessHours + ' h', dlt(B.accessHours, S.accessHours, ' h', true))}
+      ${row('Completion date', B.completion ? _dynFmtDate(B.completion) : '—', S.completion ? _dynFmtDate(S.completion) : '—', dateDelta(B.completion, S.completion))}
+      ${row('Calendar days to finish', B.calDays ?? '—', S.calDays ?? '—', B.calDays != null && S.calDays != null ? dlt(B.calDays, S.calDays, ' d', false) : '—')}
+    </tbody></table>`;
+}
+
+function _dynWhatIfScopeControlsHtml() {
+  const w = window._dynWhatIf;
+  const camps = (_dynPage.campaigns || []).filter(c => c.status !== 'archived');
+  const tab = (m, label) => `<button class="dyn-btn ${w.mode === m ? 'primary' : ''}" style="font-size:12px;" onclick="_dynWhatIfSetMode('${m}')">${label}</button>`;
+  let scopeBody = '';
+  if (w.mode === 'campaigns') {
+    scopeBody = `<div style="max-height:120px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;padding:6px 8px;">
+      ${camps.map(c => `<label style="display:block;font-size:12px;margin:2px 0;cursor:pointer;"><input type="checkbox" ${w.campIds.has(String(c.id)) ? 'checked' : ''} onchange="_dynWhatIfToggleCamp('${escapeHtml(String(c.id))}',this.checked)"> ${escapeHtml(c.name)}</label>`).join('')}
+    </div>`;
+  } else {
+    const zones = _dynWhatIfZonesAll();
+    scopeBody = `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
+        ${zones.map(z => `<label style="font-size:12px;cursor:pointer;border:1px solid ${w.zones.has(z) ? 'var(--hitachi-red)' : 'var(--gray-300)'};border-radius:5px;padding:3px 8px;"><input type="checkbox" style="margin-right:4px;" ${w.zones.has(z) ? 'checked' : ''} onchange="_dynWhatIfToggleZone('${escapeHtml(z)}',this.checked)">${escapeHtml(z)}</label>`).join('') || '<span style="font-size:12px;color:var(--gray-400);">No zones.</span>'}
       </div>
-      <div id="whatif-body">${_dynWhatIfBodyHtml(hours)}</div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--gray-600);">
+        <label>From <input type="date" value="${escapeHtml(w.dateStart)}" onchange="window._dynWhatIf.dateStart=this.value;_dynWhatIfRedraw();" style="padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;"></label>
+        <label>to <input type="date" value="${escapeHtml(w.dateEnd)}" onchange="window._dynWhatIf.dateEnd=this.value;_dynWhatIfRedraw();" style="padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;"></label>
+      </div>`;
+  }
+  const dowInputs = _DYN_WIF_DOW.map(([d, lbl]) =>
+    `<label style="display:flex;flex-direction:column;align-items:center;font-size:10.5px;color:var(--gray-600);gap:2px;">
+      ${lbl}
+      <input type="number" min="0" max="12" step="0.5" value="${w.dow[d] != null ? w.dow[d] : ''}" placeholder="—" style="width:48px;padding:4px;border:1px solid var(--gray-300);border-radius:5px;text-align:center;font-size:12px;" onchange="_dynWhatIfSetDow('${d}',this.value)">
+    </label>`).join('');
+  return `
+    <div style="display:flex;gap:6px;margin-bottom:8px;">${tab('campaigns', 'By campaign')}${tab('locations', 'By location')}</div>
+    ${scopeBody}
+    <div style="margin-top:12px;">
+      <div style="font-size:12px;color:var(--gray-600);margin-bottom:5px;">Extend shift length on these days (hours) <span style="color:var(--gray-400);">— blank = keep current</span></div>
+      <div style="display:flex;gap:6px;">${dowInputs}</div>
+    </div>`;
+}
+
+function _dynWhatIfSetMode(m) { window._dynWhatIf.mode = m; if (m === 'locations' && !window._dynWhatIf.zones.size) { const z = _dynWhatIfZonesAll(); if (z[0]) window._dynWhatIf.zones.add(z[0]); } _dynWhatIfRender(); }
+function _dynWhatIfToggleCamp(id, on) { if (on) window._dynWhatIf.campIds.add(String(id)); else window._dynWhatIf.campIds.delete(String(id)); _dynWhatIfRedraw(); }
+function _dynWhatIfToggleZone(z, on) { if (on) window._dynWhatIf.zones.add(z); else window._dynWhatIf.zones.delete(z); _dynWhatIfRedraw(); }
+function _dynWhatIfSetDow(d, v) { const n = parseFloat(v); if (n > 0) window._dynWhatIf.dow[d] = n; else delete window._dynWhatIf.dow[d]; _dynWhatIfRedraw(); }
+
+function _dynWhatIfRedraw() {
+  const r = _dynWhatIfCompute();
+  const sub = document.getElementById('whatif-sub'); if (sub) sub.textContent = `${r.label} · ${r.nPool} runs in scope · ${r.nWindows} planned shift${r.nWindows === 1 ? '' : 's'}`;
+  const kpi = document.getElementById('whatif-kpi'); if (kpi) kpi.innerHTML = _dynWhatIfKpiHtml(r);
+  _dynWhatIfDrawChart(r);
+}
+
+function _dynWhatIfDrawChart(r) {
+  const cv = document.getElementById('whatif-chart');
+  if (!cv || typeof Chart === 'undefined') return;
+  // union of all dates, cumulative step series for each scenario
+  const allDates = [...new Set([...r.base.cumulative.map(p => p.date), ...r.scenario.cumulative.map(p => p.date)])].sort();
+  const series = cum => { let last = 0; const m = new Map(cum.map(p => [p.date, p.n])); return allDates.map(d => { if (m.has(d)) last = m.get(d); return last; }); };
+  if (_dynPage._whatIfChart) { try { _dynPage._whatIfChart.destroy(); } catch (_) {} }
+  _dynPage._whatIfChart = new Chart(cv.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: allDates.map(d => _dynFmtDate(d)),
+      datasets: [
+        { label: 'Current', data: series(r.base.cumulative), borderColor: '#9ca3af', backgroundColor: 'rgba(156,163,175,.12)', borderWidth: 2, stepped: true, fill: true, tension: 0, pointRadius: 2 },
+        { label: 'Scenario', data: series(r.scenario.cumulative), borderColor: '#1d4eaf', backgroundColor: 'rgba(29,78,175,.10)', borderWidth: 2, stepped: true, fill: true, tension: 0, pointRadius: 2 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, usePointStyle: true, pointStyle: 'line' } },
+        title: { display: true, text: 'Cumulative runs scheduled over time', font: { size: 12, weight: '600' }, color: '#6b7280' },
+      },
+      scales: {
+        y: { beginAtZero: true, title: { display: true, text: 'Runs scheduled', font: { size: 10 } }, ticks: { precision: 0 } },
+        x: { ticks: { font: { size: 9 }, maxRotation: 60, autoSkip: true, maxTicksLimit: 12 } },
+      },
+    },
+  });
+}
+
+function _dynWhatIfRender() {
+  const r = _dynWhatIfCompute();
+  modal({
+    title: 'What-if — schedule impact of more access',
+    sub: '',
+    size: 'xl',
+    body: `<div style="padding:8px 22px 16px;">
+      <p style="font-size:12.5px;color:var(--gray-600);margin:0 0 12px;">Project how many backlog runs the auto-allocator schedules — and how much sooner the work finishes — if access is extended. Pick a scope, extend specific days, and compare. Read-only.</p>
+      <div style="display:grid;grid-template-columns:minmax(0,340px) 1fr;gap:18px;align-items:start;">
+        <div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:8px;">Scope &amp; scenario</div>
+          ${_dynWhatIfScopeControlsHtml()}
+          <div id="whatif-sub" style="font-size:11.5px;color:var(--gray-500);margin-top:12px;"></div>
+        </div>
+        <div>
+          <div style="height:230px;margin-bottom:14px;"><canvas id="whatif-chart"></canvas></div>
+          <div id="whatif-kpi">${_dynWhatIfKpiHtml(r)}</div>
+        </div>
+      </div>
     </div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
   });
+  setTimeout(() => _dynWhatIfRedraw(), 0);
 }
 
 function _dynAllocCapacity(camp) {
