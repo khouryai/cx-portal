@@ -35987,12 +35987,12 @@ function _dynRenderAccess() {
   // Campaign list
   const fmtDOW = arr => (arr || []).slice().sort((a,b)=>a-b).map(d => _DYN_DOW[d]).join(' ');
   const campCards = campaigns.length
-    ? campaigns.map(c => {
+    ? campaigns.slice().sort((a, b) => String(a.subsystem || 'zzz').localeCompare(String(b.subsystem || 'zzz'), undefined, { numeric: true }) || String(a.name || '').localeCompare(String(b.name || ''))).map(c => {
         const cShifts = allShifts.filter(s => s.campaign_id === c.id);
         const cConf = cShifts.filter(s => s.status === 'confirmed').length;
         const cCanc = cShifts.filter(s => s.status === 'cancelled').length;
         const closed = c.status === 'closed';
-        return `<div class="data-card" style="padding:14px 16px;margin-bottom:10px;${closed?'opacity:.6;':''}">
+        return `<div class="data-card" style="padding:14px 16px;margin-bottom:10px;border-left:4px solid ${_planningSubsystemColor(c.subsystem).bg};${closed?'opacity:.6;':''}">
           <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
             <div style="flex:1;min-width:240px;">
               <div style="font-weight:700;font-size:14px;">${escapeHtml(c.name)} ${closed?'<span class="tag" style="background:var(--gray-100);">closed</span>':''}</div>
@@ -36102,6 +36102,18 @@ function _dynAccJumpTo(dateStr) {
 // Per-day access schedule for the new-campaign modal: each weekday can carry its
 // own window time AND its own zone subset (a bigger window / more zones on the
 // days you have more access). The campaign's zone_codes = union of per-day zones.
+// Apply the contract non-revenue windows (2 h weekday / 3 h Sat / 4 h Sun) to
+// every day's times — a starting point the planner can adjust per day.
+function _dynCampApplyContractHours() {
+  const st = window._dynCampDays = window._dynCampDays || {};
+  const map = { 1: ['01:00', '03:00'], 2: ['01:00', '03:00'], 3: ['01:00', '03:00'], 4: ['01:00', '03:00'], 5: ['01:00', '03:00'], 6: ['01:00', '04:00'], 0: ['01:00', '05:00'] };
+  for (const d of Object.keys(map)) {
+    st[d] = st[d] || { on: false, zones: [] };
+    st[d].start = map[d][0];
+    st[d].end = map[d][1];
+  }
+  _dynCampRerenderDays();
+}
 function _dynCampInitDays() {
   const days = {};
   for (const d of [1, 2, 3, 4, 5, 6, 0]) days[d] = { on: [1, 2, 3, 4, 5].includes(d), start: '07:00', end: '15:00', zones: [] };
@@ -36169,7 +36181,7 @@ function _dynOpenNewCampaign() {
   const zoneOpts = _dynAccZoneOptions();
   const phaseOpts = (typeof LOCS !== 'undefined' ? LOCS : []).filter(l => l.level === 1)
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-  const subsysOpts = [...new Set((typeof TI !== 'undefined' ? TI : []).map(t => t.Subsystem).filter(Boolean))].sort();
+  const subsysOpts = [...new Set(['DCS', 'CBTC', 'ATS', 'ATC', 'IXL', ...((typeof TI !== 'undefined' ? TI : []).map(t => t.Subsystem).filter(Boolean))])];
   const today = _dynFmtDate(new Date());
   const dowChk = [1, 2, 3, 4, 5, 6, 0].map(d =>
     `<label style="display:inline-flex;align-items:center;gap:3px;font-size:12px;margin-right:8px;">
@@ -36189,7 +36201,7 @@ function _dynOpenNewCampaign() {
           </select></div>
         <div class="form-field"><label>Start date</label><input id="camp-start" type="date" value="${today}" style="${fld}"></div>
         <div class="form-field"><label>End date</label><input id="camp-end" type="date" value="${today}" style="${fld}"></div>
-        <div class="form-field" style="grid-column:1/-1;"><label>Access days, times &amp; zones <span style="color:var(--gray-500);font-weight:400;">(per day — a bigger window / more zones on the days you have more access)</span></label>
+        <div class="form-field" style="grid-column:1/-1;"><label>Access days, times &amp; zones <span style="color:var(--gray-500);font-weight:400;">(per day — a bigger window / more zones on the days you have more access)</span> <button type="button" class="dyn-btn" style="font-size:10.5px;padding:2px 8px;margin-left:6px;" onclick="_dynCampApplyContractHours()" title="Set non-revenue contract windows: 2 h weekdays, 3 h Sat, 4 h Sun (adjust as needed)">Apply contract hours</button></label>
           <div id="camp-day-rows">${_dynCampDayRowsHtml()}</div>
         </div>
         <div class="form-field"><label>Trains requested</label><input id="camp-trains" type="number" min="1" value="2" style="${fld}"></div>
@@ -36198,7 +36210,7 @@ function _dynOpenNewCampaign() {
           <label style="margin-right:10px;font-size:12px;"><input type="checkbox" class="camp-mode" value="CBTC" checked> CBTC</label>
           <label style="font-size:12px;"><input type="checkbox" class="camp-mode" value="VATC" checked> VATC</label>
         </div></div>
-        <div class="form-field"><label>Requesting subsystem</label>
+        <div class="form-field"><label>Subsystem / level</label>
           <input id="camp-subsys" list="camp-subsys-list" style="${fld}" placeholder="optional">
           <datalist id="camp-subsys-list">${subsysOpts.map(s=>`<option value="${escapeHtml(s)}">`).join('')}</datalist></div>
         <div class="form-field"><label>Phase</label>
