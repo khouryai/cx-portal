@@ -78,6 +78,32 @@ while ((cm2 = ctrlRe.exec(html))) {
 assert(unlabeled.length === 0,
   "index.html controls with no accessible name: " + unlabeled.join(", "));
 
+// ---- 2c. heading grammar: one hero pattern on every page ---------------------
+// every static .page-hero either carries the canonical eyebrow+title pair or a
+// *-hero-content container that renderPageHero() fills at runtime.
+const sections = html.split(/<section class="page[^"]*" id="page-/).slice(1);
+const badHeroes = [];
+for (const sec of sections) {
+  const pid = sec.slice(0, sec.indexOf('"'));
+  const heroIdx = sec.indexOf('class="page-hero"');
+  if (heroIdx === -1) continue; // pages without a static hero (login, dashboard landing)
+  const head = sec.slice(heroIdx, heroIdx + 900);
+  const canonical = head.includes('class="page-eyebrow"') && head.includes('class="page-title"');
+  const dynamic = /<div id="[a-z0-9-]*hero[a-z0-9-]*-content"/.test(head);
+  if (!canonical && !dynamic) badHeroes.push(pid);
+}
+assert(badHeroes.length === 0,
+  "page heroes missing the canonical eyebrow+title grammar: " + badHeroes.join(", "));
+// role pills are retired from heroes (they were the per-page inconsistency)
+assert(!/class="role-badge/.test(html), "no role-badge pills left in static heroes");
+const appSrc = read("app.js");
+assert(appSrc.includes('class="page-eyebrow"') && appSrc.includes('<h1 class="page-title">'),
+  "renderPageHero emits the canonical page-eyebrow/page-title classes");
+assert(!/renderPageHero\(\{[^}]*role:\s*\{/.test(appSrc.replace(/\n/g, " ")),
+  "no renderPageHero caller passes a role pill");
+assert(read("photos.js").includes('class="page-title">Photos'),
+  "photos page has its hero heading");
+
 // ---- 3. text-token contrast (recomputed from the live sheet) ----------------
 const css = read("styles.css");
 const sheet = css.match(/:root\s*\{([\s\S]*?)\n\}/);

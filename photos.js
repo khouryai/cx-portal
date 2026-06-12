@@ -442,7 +442,15 @@
     if (document.getElementById('page-photos')) return true;
     var anchor = document.getElementById('page-punch-workflow') || document.querySelector('.page');
     if (!anchor) return false;
-    anchor.parentNode.appendChild(elFrom('<section class="page" id="page-photos"><div class="container"><div id="pm-root" class="pm-wrap"></div></div></section>'));
+    anchor.parentNode.appendChild(elFrom(
+      '<section class="page" id="page-photos">' +
+        '<div class="page-hero"><div class="container">' +
+          '<div class="page-eyebrow">Field</div>' +
+          '<h1 class="page-title">Photos</h1>' +
+          '<p class="page-sub">Site photo capture — albums, punch list and daily log evidence</p>' +
+        '</div></div>' +
+        '<div class="container"><div id="pm-root" class="pm-wrap"></div></div>' +
+      '</section>'));
     return true;
   }
 

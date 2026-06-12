@@ -702,15 +702,15 @@ function renderPageHero(opts) {
   opts = opts || {};
   const { eyebrow, title, sub, role, stats } = opts;
 
-  const roleChip = role
-    ? `<span class="ph-role ${role.tone ? 'role-' + role.tone : ''}">${escapeHtml(role.label || '')}</span>`
-    : '';
-  const eyebrowText = eyebrow ? escapeHtml(eyebrow) : '';
-  const eyebrowHtml = (roleChip || eyebrowText)
-    ? `<span class="ph-eyebrow">${roleChip}${roleChip && eyebrowText ? ' ' : ''}${eyebrowText}</span>`
-    : '';
-
-  const subHtml = sub ? `<span class="ph-sub">${sub}</span>` : '';
+  // CANONICAL heading grammar — every page renders the same three lines:
+  //   .page-eyebrow  → the sidebar section (Overview/Testing/Field/Planning/
+  //                    Project/Admin), mono + red dash
+  //   .page-title    → the module name (one size everywhere)
+  //   .page-sub      → one-line description (may carry HTML, e.g. counts)
+  // plus an optional right-aligned .ph-stats strip.
+  // `role` chips are retired: callers that still pass one get its label as
+  // the eyebrow fallback so no page loses its wayfinding line.
+  const eyebrowText = eyebrow || (role && role.label) || '';
 
   const statsHtml = (stats && stats.length) ? `
     <div class="ph-stats">
@@ -725,9 +725,9 @@ function renderPageHero(opts) {
   return `
     <div class="page-hero-v3">
       <div class="ph-left">
-        ${eyebrowHtml}
-        <h1 class="ph-title">${escapeHtml(title || '')}</h1>
-        ${subHtml}
+        ${eyebrowText ? `<div class="page-eyebrow">${escapeHtml(eyebrowText)}</div>` : ''}
+        <h1 class="page-title">${escapeHtml(title || '')}</h1>
+        ${sub ? `<p class="page-sub">${sub}</p>` : ''}
       </div>
       ${statsHtml}
     </div>`;
@@ -7347,10 +7347,9 @@ function renderPunchWorkflow() {
 
   // Wire hero stats
   if (heroEl) heroEl.innerHTML = renderPageHero({
-    eyebrow: 'Field · Punch List',
+    eyebrow: 'Field',
     title: 'Punch List',
     sub: 'Create, track, and resolve punch items across all locations',
-    role: { label: 'Field', tone: 'field' },
     stats: [
       { label: 'Open',     value: openItems.length },
       { label: 'Work Req', value: all.filter(p=>p.status==='work_required'||p.status==='work_not_accepted').length, tone: 'amber' },
@@ -9779,10 +9778,9 @@ function renderTestReporting() {
   const locationOptions = _trpFilterOptions(rows, 'location');
 
   if (heroEl) heroEl.innerHTML = renderPageHero({
-    eyebrow: 'Tools · Reporting',
+    eyebrow: 'Testing',
     title: 'Test Reporting',
     sub: 'Manage test report CDRLs, revisions, and acceptance status',
-    role: { label: 'Tools', tone: 'field' },
     stats: [
       { label: 'Reports',    value: rows.length },
       { label: 'Linked',     value: linkedCount,   tone: linkedCount ? 'blue' : 'muted' },
@@ -10782,10 +10780,9 @@ function renderTestRegister() {
   const _overallPct = _ltWs.totalW > 0 ? Math.round((_ltWs.completeW / _ltWs.totalW) * 100) : 0;
 
   if (heroEl && !_amDrilldownKey) heroEl.innerHTML = renderPageHero({
-    eyebrow: 'Field · Operations',
+    eyebrow: 'Testing',
     title: 'Test Register',
     sub: `${_allActs.length} activities · ${TI.length} test cases across all phases and locations`,
-    role: { label: 'Field', tone: 'field' },
     stats: [
       { label: 'Shown',   value: _filteredCount },
       { label: 'Open',    value: _open,    tone: _open ? 'red' : 'muted' },
@@ -12426,7 +12423,7 @@ function renderAdminP6() {
   const _p6Mapped    = P6_MAP.length;
   const _p6Unmapped  = Math.max(0, _amGetActivities().length - new Set(P6_MAP.filter(m => !m.portal_test_case_code).map(m => `${m.portal_phase}|${m.portal_location}|${m.portal_subsystem}|${m.portal_activity}`)).size);
   root.innerHTML = renderPageHero({
-    role:  { label: 'Admin', tone: 'admin' },
+    eyebrow: 'Admin',
     title: 'P6 Schedule',
     sub:   'Import P6 exports, map activities and track schedule changes',
     stats: [
@@ -14735,7 +14732,7 @@ function renderSchedulePage() {
   const hasData = P6_BATCHES.length > 0;
   if (!hasData) {
     hero.innerHTML = renderPageHero({
-      role:  { label: 'Schedule', tone: 'field' },
+      eyebrow: 'Planning',
       title: 'Project Schedule',
       sub:   'P6-linked activity schedule, planned dates and progress tracking',
     });
@@ -14842,7 +14839,7 @@ function renderSchedulePage() {
 
   // ── Compact hero with inline KPIs ───────────────────────────────────────
   hero.innerHTML = renderPageHero({
-    role:  { label: 'Schedule', tone: 'field' },
+    eyebrow: 'Planning',
     title: 'Project Schedule',
     sub:   'P6-linked activity schedule, planned dates and progress tracking',
     stats: [
@@ -16962,10 +16959,9 @@ function renderRMA() {
   const openLocs = new Set(openRMAs.map(r => r.location).filter(Boolean)).size;
 
   if (heroEl) heroEl.innerHTML = renderPageHero({
-    eyebrow: 'Field · RMA',
+    eyebrow: 'Field',
     title: 'RMA Tracker',
     sub: 'Return Merchandise Authorization — field defect & replacement tracking',
-    role: { label: 'Field', tone: 'field' },
     stats: [
       { label: 'Total',     value: RMAS.length },
       { label: 'Open',      value: openRMAs.length, tone: openRMAs.length ? 'blue' : 'muted' },
@@ -18861,7 +18857,7 @@ function renderLookahead() {
     const _pendingLA   = PTO_REQUESTS.filter(p => p.status === 'pending').length;
     const _outTodayLA  = _ptoActiveOnDate(_today_la).length;
     hero.innerHTML = renderPageHero({
-      eyebrow: 'Work · Planning',
+      eyebrow: 'Planning',
       title:   'Lookahead',
       sub:     'Weekly lookahead, resource availability, PTO & P6 overlay',
       stats: [
@@ -25522,7 +25518,7 @@ function renderAdminPlanning() {
     const _ap_resources     = (PLANNING_RESOURCES  || []).filter(r => r.is_active).length;
     const _ap_ptoPending    = (PTO_REQUESTS        || []).filter(p => p.status === 'pending').length;
     hero.innerHTML = renderPageHero({
-      role:  { label: 'Admin', tone: 'admin' },
+      eyebrow: 'Admin',
       title: 'Planning Admin',
       sub:   'Upload lookahead, resolve unmatched rows, manage resources & conflicts',
       stats: [
@@ -31591,7 +31587,7 @@ function renderDrawingsPage() {
   const _drwLocs    = [...new Set(DRAWING_SETS.map(s => s.location).filter(Boolean))];
   const _drwCurrent = DRAWING_SHEETS.filter(s => s.is_current).length;
   hero.innerHTML = renderPageHero({
-    role:  { label: 'Drawings', tone: 'drawings' },
+    eyebrow: 'Project',
     title: 'Drawing Sets',
     sub:   'Site plan books, drawing sets, and markup tools by location',
     stats: [
@@ -34019,9 +34015,11 @@ async function renderDynamicTestingPage() {
   const cont = document.getElementById('dyn-content');
   if (!hero || !cont) return;
 
-  hero.innerHTML = `
-    <h1 class="page-title">Dynamic Testing</h1>
-    <p class="page-subtitle">Manage executable test instances against the imported track plan.</p>
+  hero.innerHTML = renderPageHero({
+    eyebrow: 'Testing',
+    title: 'Dynamic Testing',
+    sub: 'Manage executable test instances against the imported track plan.',
+  }) + `
     <div style="display:flex;gap:8px;margin-top:14px;">
       <button class="hero-tab ${_dynPage.tab==='cases'?'active':''}" onclick="_dynTabSwitch('cases')">Test Cases</button>
       <button class="hero-tab ${_dynPage.tab==='instances'?'active':''}" onclick="_dynTabSwitch('instances')">Instances</button>
