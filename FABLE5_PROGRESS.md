@@ -881,6 +881,36 @@ test's requirements (no access date → can't schedule there).
   window listing, and the cascade placing both zones of a two-zone window.
   Harness 21/21. CRLF preserved.
 
+## Dynamic Testing — aggressive packing + campaign KPIs/scope/release (2026-06-12)
+Owner: pack shifts harder (10-20% slack, not 50%); bulk-unschedule a campaign
+from the access plan; see scheduled/unscheduled per test-case scope; max KPIs
+per campaign; mark-Pass releases a future slot with a tag.
+- AGGRESSIVE PACKING: _dynCascadeAllocate is now duration-aware. New params
+  runMinutesFn/windowMinutesFn/slack fill each window by the SUM of run durations
+  up to (1−slack) of its length instead of a flat mins/40 count (which under-
+  filled — a 2 h window got ~3 short runs = 50%). _dynAllocateInto passes
+  expected_duration_minutes (default 30) + _dynWinMinutes + _dynAllocSlack()
+  (localStorage, default 15%, editable in the allocate picker, 10-20% rec'd).
+  Always places ≥1 run even if it exceeds the budget. Count model kept as
+  fallback (legacy tests). Preview now shows per-window Fill % and the slack.
+- CAMPAIGN PICKER got a slack input; both buttons honor it (one engine).
+- BULK UNSCHEDULE: _dynCampaignUnscheduleAll(campId) frees every scheduled run in
+  a campaign (button on the Progress modal, count shown).
+- SCHEDULE BY TEST CASE: _dynCampaignScheduleMap(campId) — per test_id in scope,
+  a sched/unsch/done roll-up + per-instance chips (date / "✓ Passed" / unsched).
+- KPIs: _dynCampaignProgressData expanded (passed/failed/blocked/NA/inProgress/
+  future/notStarted, passRate, scheduled/unscheduled, window utilization %). The
+  Progress modal now shows a status-breakdown pill row + a scheduling row +
+  Schedule-by-test-case and Unschedule-all actions.
+- PASS RELEASES FUTURE SLOT: marking a run Pass with a FUTURE scheduled_for_date
+  frees its shift_id/scheduled (client in _dynInstanceUpdateStatus + BEFORE-UPDATE
+  trigger dyn_release_future_slot_on_pass for robustness; search_path pinned). The
+  instances list scheduled column shows a green "✓ Passed" / "✓ N/A" tag for done
+  runs instead of a date. Migrations: dyn_release_future_slot_on_pass (+search_path).
+- Tests: tools/test_dyn_alloc_pack.js (6 assertions — 15%/0% slack fill counts,
+  more-aggressive-than-legacy, over-length run still placed). Harness 22/22.
+  Verified Progress + Schedule-map modals visually. Advisors clean. CRLF preserved.
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose

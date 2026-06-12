@@ -34574,9 +34574,14 @@ function _dynRowHtml(r) {
   const movedBadge = (r.roll_count > 0)
     ? `<br/><span class="badge" style="background:#fef3c7;color:#92400e;font-size:10px;" title="${escapeHtml(r.roll_note || 'Auto-moved off a cancelled access window')}">↻ moved ${escapeHtml(movedDest)}${r.roll_count > 1 ? ` ×${r.roll_count}` : ''}</span>`
     : '';
-  const schedCell = (schedLabel
-    ? `<span class="tag" style="background:#ecfdf5;color:#065f46;border-color:#a7f3d0;font-family:var(--font-mono,monospace);" title="Scheduled">${escapeHtml(schedLabel)}</span>`
-    : `<span style="color:var(--gray-400);font-size:11px;">Not scheduled</span>`) + movedBadge;
+  // A passed/NA run shows a done tag here (not a date) — a Pass auto-releases its
+  // future shift slot, so the scheduled column denotes the test is complete.
+  const isDone = r.status === 'Pass' || r.status === 'Not Applicable';
+  const schedCell = isDone
+    ? `<span class="tag" style="background:#ecfdf5;color:#065f46;border-color:#a7f3d0;" title="${r.status === 'Pass' ? 'Passed — released from any upcoming shift' : 'Not applicable'}">✓ ${escapeHtml(r.status === 'Pass' ? 'Passed' : 'N/A')}</span>`
+    : (schedLabel
+        ? `<span class="tag" style="background:#eef2ff;color:#3730a3;border-color:#c7d2fe;font-family:var(--font-mono,monospace);" title="Scheduled">${escapeHtml(schedLabel)}</span>`
+        : `<span style="color:var(--gray-400);font-size:11px;">Not scheduled</span>`) + movedBadge;
   return `
     <tr${selected ? ' style="background:#eff6ff;"' : ''}>
       <td style="text-align:center;"><input type="checkbox" ${selected?'checked':''} onchange="_dynInstToggleSelect('${escapeHtml(r.id)}',this.checked)"></td>
@@ -34628,17 +34633,28 @@ async function _dynInstanceUpdateStatus(id, newStatus, selEl) {
     if (Number.isFinite(n) && n >= 0) actualDur = n;
   }
 
+  // A Pass releases a FUTURE schedule slot: a test already done doesn't need its
+  // upcoming shift, so free it for other runs. (Past/today slots are kept as the
+  // record of where it ran.) The scheduled column then shows a "Passed" tag.
+  let released = false;
+  if (newStatus === 'Pass' && inst && inst.scheduled_for_date) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (_dynParseDate(inst.scheduled_for_date) > today) released = true;
+  }
+
   try {
     const payload = { status: newStatus, updated_at: new Date().toISOString() };
     if (actualDur != null && actualDur !== inst?.actual_duration_minutes) {
       payload.actual_duration_minutes = actualDur;
     }
+    if (released) { payload.shift_id = null; payload.scheduled_for_date = null; payload.scheduled_window = null; }
     await _dbUpdate('dynamic_instances', payload, { id });
     if (inst) {
       inst.status = newStatus;
       if (payload.actual_duration_minutes != null) inst.actual_duration_minutes = payload.actual_duration_minutes;
+      if (released) { inst.shift_id = null; inst.scheduled_for_date = null; inst.scheduled_window = null; }
     }
-    if (typeof toast === 'function') toast(`Status → ${newStatus}`, 'success');
+    if (typeof toast === 'function') toast(released ? `Passed — released from its upcoming shift` : `Status → ${newStatus}`, 'success');
     // Re-render whichever surface is active. From the board, also refresh the
     // open day/cell drilldown so the new status shows immediately.
     if (_dynPage.tab === 'board') { _dynRenderBoard(); _dynReopenBoardModal(); }
@@ -37039,8 +37055,18 @@ function _dynCampaignScope(camp) {
 function _dynCampaignProgressData(camp) {
   const scope = _dynCampaignScope(camp);
   const total = scope.length;
-  const done = scope.filter(i => i.status === 'Pass').length;
+  const by = s => scope.filter(i => i.status === s).length;
+  const passed   = by('Pass');
+  const failed   = by('Fail');
+  const blocked  = by('Blocked');
+  const na        = by('Not Applicable');
+  const inProg   = by('In Progress');
+  const future   = by('Future Test');
+  const notStarted = scope.filter(i => !i.status || i.status === 'Not Started').length;
+  const done = passed;                              // "complete" = Pass
+  const tested = passed + failed;                   // attempted to a verdict
   const pct = total ? Math.round(done / total * 100) : 0;
+  const passRate = tested ? Math.round(passed / tested * 100) : null;
   const s = _dynParseDate(camp.start_date), f = _dynParseDate(camp.end_date);
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const span = f - s;
@@ -37049,10 +37075,20 @@ function _dynCampaignProgressData(camp) {
   const cShifts = (_dynPage.shifts || []).filter(x => x.campaign_id === camp.id);
   const remainShifts = cShifts.filter(x => (x.status === 'planned' || x.status === 'confirmed') && _dynParseDate(x.shift_date) >= today).length;
   const cancelled = cShifts.filter(x => x.status === 'cancelled').length;
-  const remainWork = total - done;
+  const confirmed = cShifts.filter(x => x.status === 'confirmed').length;
+  const remainWork = total - done - na;             // still needs a pass (NA excluded)
   const perShift = remainShifts > 0 ? (remainWork / remainShifts) : null;
   const assigned = scope.filter(i => i.shift_id).length;
-  return { scope, total, done, pct, expectedPct, schedVar, cShifts, remainShifts, cancelled, remainWork, perShift, assigned };
+  const unscheduled = scope.filter(i => !i.shift_id && !['Pass', 'Not Applicable'].includes(i.status)).length;
+  // Window utilization: planned run-minutes vs available shift-minutes.
+  let availMin = 0;
+  cShifts.filter(x => x.status !== 'cancelled').forEach(x => { availMin += _dynWinMinutes(x); });
+  let plannedMin = 0;
+  scope.filter(i => i.shift_id).forEach(i => { plannedMin += (i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN); });
+  const utilPct = availMin > 0 ? Math.round(plannedMin / availMin * 100) : null;
+  return { scope, total, done, passed, failed, blocked, na, inProg, future, notStarted, tested, pct, passRate,
+           expectedPct, schedVar, cShifts, remainShifts, confirmed, cancelled, remainWork, perShift,
+           assigned, unscheduled, availMin, plannedMin, utilPct };
 }
 
 function _dynCampaignProgress(campaignId) {
@@ -37063,39 +37099,139 @@ function _dynCampaignProgress(campaignId) {
   const word = d.schedVar > 5 ? 'ahead of plan' : d.schedVar >= -5 ? 'on plan' : 'behind plan';
   const feasible = d.perShift === null ? null : d.remainWork === 0 ? true : (d.perShift <= 3); // ~3 tests/shift heuristic
   const stat = (l, v, t) => `<div class="dyn-kpi"><span>${l}</span><b${t?` style="color:${t};"`:''}>${v}</b></div>`;
+  const pill = (label, n, color) => n ? `<span class="tag" style="background:${color}1a;color:${color};border-color:${color}55;">${label} ${n}</span>` : '';
   modal({
     title: `Progress — ${escapeHtml(camp.name)}`,
     sub: `${(camp.zone_codes||[]).join(', ')} · ${_dynFmtDate(camp.start_date)} → ${_dynFmtDate(camp.end_date)}`,
     size: 'large',
     body: `
       <div style="padding:8px 22px 16px;">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:14px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:12px;">
           ${stat('Scope tests', d.total)}
           ${stat('Complete', `${d.done} (${d.pct}%)`, d.pct===100?'var(--good)':null)}
+          ${stat('Pass rate', d.passRate===null?'—':`${d.passRate}%`, d.passRate!==null&&d.passRate<80?'var(--warn)':d.passRate!==null?'var(--good)':null)}
           ${stat('Expected by now', `${d.expectedPct}%`)}
-          ${stat('Variance', `${d.schedVar>0?'+':''}${d.schedVar} pts ${word}`, tone)}
+          ${stat('Variance', `${d.schedVar>0?'+':''}${d.schedVar} pts`, tone)}
         </div>
         <div style="height:10px;background:var(--gray-100);border-radius:6px;overflow:hidden;margin-bottom:4px;position:relative;">
           <div style="height:100%;width:${d.pct}%;background:${d.pct===100?'var(--good)':'var(--info)'};"></div>
           <div title="Expected by today" style="position:absolute;top:-2px;bottom:-2px;left:${d.expectedPct}%;width:2px;background:#111;"></div>
         </div>
-        <div style="font-size:11px;color:var(--gray-500);margin-bottom:14px;">Bar = actual completion · black tick = expected by today (${d.expectedPct}%)</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:14px;">
-          ${stat('Remaining tests', d.remainWork)}
-          ${stat('Remaining shifts', d.remainShifts)}
-          ${stat('Needed / shift', d.perShift===null?'—':d.perShift.toFixed(1), feasible===false?'var(--bad)':null)}
-          ${stat('Shifts cancelled', d.cancelled, d.cancelled?'var(--bad)':null)}
+        <div style="font-size:11px;color:var(--gray-500);margin-bottom:12px;">Bar = completion · black tick = expected by today (${d.expectedPct}%) · ${word}</div>
+
+        <div style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin:0 0 6px;">Status breakdown</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+          ${pill('Passed', d.passed, '#059669')}
+          ${pill('Failed', d.failed, '#dc2626')}
+          ${pill('Blocked', d.blocked, '#d97706')}
+          ${pill('In progress', d.inProg, '#1d4ed8')}
+          ${pill('Future', d.future, '#7c3aed')}
+          ${pill('Not started', d.notStarted, '#6b7280')}
+          ${pill('N/A', d.na, '#9ca3af')}
+          ${d.total===0?'<span style="font-size:12px;color:var(--gray-400);">No tests in scope.</span>':''}
         </div>
+
+        <div style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin:0 0 6px;">Scheduling</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:14px;">
+          ${stat('Scheduled', d.assigned)}
+          ${stat('Unscheduled', d.unscheduled, d.unscheduled?'var(--warn)':null)}
+          ${stat('Remaining', d.remainWork)}
+          ${stat('Shifts', d.cShifts.length)}
+          ${stat('Confirmed', d.confirmed, d.confirmed?'var(--good)':null)}
+          ${stat('Cancelled', d.cancelled, d.cancelled?'var(--bad)':null)}
+          ${stat('Need / shift', d.perShift===null?'—':d.perShift.toFixed(1), feasible===false?'var(--bad)':null)}
+          ${stat('Window use', d.utilPct===null?'—':`${d.utilPct}%`, d.utilPct!==null&&d.utilPct<60?'var(--warn)':null)}
+        </div>
+
         <div style="padding:10px 12px;border-radius:6px;font-size:12.5px;${feasible===false?'background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;':feasible===true?'background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;':'background:var(--gray-50);border:1px solid var(--gray-200);color:var(--gray-600);'}">
           ${d.remainWork === 0 ? '✓ All scope tests complete.'
             : d.remainShifts === 0 ? '⚠ No remaining planned/confirmed shifts — schedule more access to finish the scope.'
             : feasible === false ? `⚠ At ${d.perShift.toFixed(1)} tests/shift you likely need more shifts or trains to finish ${d.remainWork} tests in ${d.remainShifts} shifts.`
             : `On pace: ${d.remainWork} tests across ${d.remainShifts} remaining shifts (${d.perShift.toFixed(1)}/shift).`}
         </div>
-        <div style="font-size:11px;color:var(--gray-500);margin-top:10px;">${d.assigned} of ${d.total} scope tests are assigned to a shift.</div>
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>
+      <button class="dyn-btn" onclick="closeModal();_dynCampaignScheduleMap('${escapeHtml(camp.id)}')">Schedule by test case</button>
+      ${d.assigned ? `<button class="dyn-btn" style="color:#dc2626;" onclick="_dynCampaignUnscheduleAll('${escapeHtml(camp.id)}')">Unschedule all (${d.assigned})</button>` : ''}`,
   });
+}
+
+// Per-test-case-scope schedule map: for each test case in the campaign's scope,
+// show how its instances are scheduled vs unscheduled vs done. Answers
+// "how are instances scheduled under this campaign for each test case scope".
+function _dynCampaignScheduleMap(campaignId) {
+  const camp = _dynPage.campaigns.find(c => c.id === campaignId);
+  if (!camp) return;
+  const scope = _dynCampaignScope(camp);
+  // group by test_id (the "test case scope")
+  const byTc = new Map();
+  for (const i of scope) {
+    if (!byTc.has(i.test_id)) byTc.set(i.test_id, []);
+    byTc.get(i.test_id).push(i);
+  }
+  const tcCode = id => { const tc = _dynPage.testItemsById?.get(id); return tc ? (tc.code || id) : id; };
+  const winById = new Map((_dynPage.shifts || []).map(w => [String(w.id), w]));
+  const schedLabel = i => {
+    if (['Pass', 'Not Applicable'].includes(i.status)) return `<span class="tag" style="background:#ecfdf5;color:#065f46;border-color:#a7f3d0;">✓ ${escapeHtml(i.status)}</span>`;
+    if (i.shift_id) { const w = winById.get(String(i.shift_id)); return `<span class="tag" style="background:#eef2ff;color:#3730a3;border-color:#c7d2fe;font-family:monospace;">${escapeHtml(_dynFmtDate(i.scheduled_for_date || (w && w.shift_date)))}</span>`; }
+    return `<span style="color:var(--warn);font-size:11px;">unscheduled</span>`;
+  };
+  const rows = [...byTc.entries()]
+    .sort((a, b) => String(tcCode(a[0])).localeCompare(String(tcCode(b[0])), undefined, { numeric: true }))
+    .map(([tid, list]) => {
+      const sched = list.filter(i => i.shift_id && !['Pass', 'Not Applicable'].includes(i.status)).length;
+      const done  = list.filter(i => ['Pass', 'Not Applicable'].includes(i.status)).length;
+      const unsch = list.length - sched - done;
+      const chips = list
+        .sort((a, b) => String(a.code || a.id).localeCompare(String(b.code || b.id)))
+        .map(i => `<span style="display:inline-flex;align-items:center;gap:4px;margin:0 8px 4px 0;font-size:11px;"><span style="font-family:monospace;color:var(--gray-600);">${escapeHtml(i.code || i.track_section_under_test || '—')}</span>${schedLabel(i)}</span>`)
+        .join('');
+      return `<tr style="border-top:1px solid var(--gray-100);">
+        <td style="padding:7px 10px;font-family:monospace;font-size:12px;white-space:nowrap;vertical-align:top;font-weight:600;">${escapeHtml(tcCode(tid))}</td>
+        <td style="padding:7px 10px;vertical-align:top;white-space:nowrap;">
+          <span class="tag" style="background:#eef2ff;color:#3730a3;">${sched} sched</span>
+          <span class="tag" style="background:#fef3c7;color:#92400e;">${unsch} unsch</span>
+          <span class="tag" style="background:#ecfdf5;color:#065f46;">${done} done</span>
+        </td>
+        <td style="padding:7px 10px;vertical-align:top;line-height:1.9;">${chips}</td>
+      </tr>`;
+    }).join('') || `<tr><td colspan="3" style="padding:20px;text-align:center;color:var(--gray-500);">No tests in this campaign's scope.</td></tr>`;
+  modal({
+    title: `Schedule by test case — ${escapeHtml(camp.name)}`,
+    sub: `${scope.length} instance(s) across ${byTc.size} test case scope${byTc.size===1?'':'s'}`,
+    size: 'xl',
+    body: `<div style="padding:8px 20px 16px;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr style="background:var(--gray-50);">
+          <th style="text-align:left;padding:7px 10px;">Test case</th>
+          <th style="text-align:left;padding:7px 10px;">Roll-up</th>
+          <th style="text-align:left;padding:7px 10px;">Instances · schedule</th>
+        </tr></thead><tbody>${rows}</tbody>
+      </table></div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>
+      <button class="dyn-btn" onclick="closeModal();_dynCampaignProgress('${escapeHtml(camp.id)}')">← Progress</button>`,
+  });
+}
+
+// Bulk-unschedule every scheduled run in a campaign (frees all its shift slots).
+async function _dynCampaignUnscheduleAll(campaignId) {
+  const camp = _dynPage.campaigns.find(c => c.id === campaignId);
+  if (!camp) return;
+  const winIds = new Set((_dynPage.shifts || []).filter(s => s.campaign_id === campaignId).map(s => String(s.id)));
+  const scoped = (_dynPage.instances || []).filter(i => i.shift_id && winIds.has(String(i.shift_id)));
+  if (!scoped.length) { toast('No scheduled runs in this campaign', 'info'); return; }
+  if (!confirm(`Unschedule all ${scoped.length} scheduled run(s) in "${camp.name}"?\n\nThis frees every shift slot in the campaign; the runs return to the backlog.`)) return;
+  try {
+    for (const i of scoped) {
+      await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, updated_at: new Date().toISOString() }, { id: i.id });
+      i.shift_id = null; i.scheduled_for_date = null; i.scheduled_window = null;
+    }
+    toast(`Unscheduled ${scoped.length} run(s)`, 'success');
+    closeModal();
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    _dynRenderAccess();
+  } catch (e) { alert(`Unschedule failed: ${e.message}`); }
 }
 
 // ── Lookahead integration (Phase 4): shift → field event + BART resources ──
@@ -37669,7 +37805,7 @@ function _dynCampShiftSummary(c) {
 // prerequisite CHAINS — a run whose test case depends on others is never
 // placed before an earlier-or-same window already holds those prerequisites'
 // runs. Returns a draft the planner reviews before commit. Cycle-safe.
-function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3, capacityFn = null, windowAllows = null }) {
+function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3, capacityFn = null, windowAllows = null, runMinutesFn = null, windowMinutesFn = null, slack = 0 }) {
   // A shift grants a SET of zones; a run fits only if its access requirement is
   // a subset of THAT window's zones (so [W40,Y10] needs a window granting both).
   const winZonesOf = w => new Set((w.access_zones && w.access_zones.length) ? w.access_zones : [w.control_zone_code]);
@@ -37709,13 +37845,23 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
     return true;
   };
 
+  // Duration-aware packing: when runMinutesFn is given, fill each window by the
+  // SUM of run durations up to (1 − slack) of the window's minutes — i.e. pack
+  // aggressively, leaving only `slack` (default 0) as buffer — instead of a flat
+  // count. Always allows at least one run even if it alone exceeds the budget.
+  const useDur = typeof runMinutesFn === 'function';
+  const runMin = i => Math.max(0, (runMinutesFn ? runMinutesFn(i) : 0) || 0);
+
   const placed = new Set();
   const assignments = [];
   wins.forEach((w, idx) => {
-    let cap = Math.max(0, (capacityFn ? capacityFn(w) : capacityPerWindow) | 0);
-    let winArea = null; // start-point area anchoring this shift (soft grouping)
+    const capCount = useDur ? Infinity : Math.max(0, (capacityFn ? capacityFn(w) : capacityPerWindow) | 0);
+    const winMin = useDur ? Math.max(0, (windowMinutesFn ? windowMinutesFn(w) : 0) || 0) : 0;
+    const budget = useDur ? winMin * (1 - (slack || 0)) : 0;
+    let usedMin = 0, count = 0, winArea = null;
     const wz = winZonesOf(w); // zones this shift grants
-    while (cap > 0) {
+    for (;;) {
+      if (count >= capCount) break;
       const cands = elig.filter(i => !placed.has(i.id)
         && wz.has(i.track_section_under_test)   // window must GRANT the run's zone (incl. secondary zones)
         && accessOkWin(i, wz)
@@ -37734,12 +37880,21 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
         ((a.required_mode ? 0 : 1) - (b.required_mode ? 0 : 1)) ||
         String(a.test_id).localeCompare(String(b.test_id)) ||
         String(a.code || a.id).localeCompare(String(b.code || b.id)));
-      const pick = cands[0];
+      let pick;
+      if (useDur) {
+        // best candidate that still fits the duration budget; if none fits and
+        // the window is empty, force the best (a single long run still needs a slot).
+        pick = cands.find(c => usedMin + runMin(c) <= budget) || (count === 0 ? cands[0] : null);
+        if (!pick) break;
+      } else {
+        pick = cands[0];
+      }
       if (winArea === null) winArea = _dynStartArea(pick);
       placed.add(pick.id);
       if (!placedTestAt.has(pick.test_id)) placedTestAt.set(pick.test_id, idx);
       assignments.push({ instanceId: pick.id, windowId: w.id, shiftDate: w.shift_date });
-      cap--;
+      if (useDur) usedMin += runMin(pick);
+      count++;
     }
   });
   return { assignments, unplaced: elig.filter(i => !placed.has(i.id)).map(i => i.id) };
@@ -37871,6 +38026,29 @@ function _dynWindowCapacity(w) {
   return 3;
 }
 
+// Minutes of access a window provides.
+function _dynWinMinutes(w) {
+  if (w && w.start_at && w.end_at) {
+    const m = (new Date(w.end_at) - new Date(w.start_at)) / 60000;
+    return m > 0 ? m : 0;
+  }
+  return 0;
+}
+// Assumed run length when a test has no expected_duration_minutes set.
+const _DYN_DEFAULT_RUN_MIN = 30;
+// Slack fraction the aggressive allocator leaves in each window (0.10–0.20).
+// Stored per-planner; default 15%. Lower = pack tighter (tests done sooner).
+function _dynAllocSlack() {
+  const v = parseFloat(localStorage.getItem('dynAllocSlack'));
+  if (Number.isFinite(v) && v >= 0 && v <= 0.5) return v;
+  return 0.15;
+}
+function _dynSetAllocSlack(pct) {
+  const v = Math.max(0, Math.min(50, parseInt(pct, 10) || 0)) / 100;
+  try { localStorage.setItem('dynAllocSlack', String(v)); } catch (_) {}
+  return v;
+}
+
 // ONE allocation engine for BOTH buttons — identical rules (same prereq DAG,
 // per-window capacity, per-campaign scope gate, access/zone/mode gating). The
 // ONLY difference is which campaigns' windows are in scope: a single chosen
@@ -37890,7 +38068,14 @@ async function _dynAllocateInto(campIds, label) {
     const pool = (_dynPage.instances || []).filter(i =>
       !i.shift_id && i.track_section_under_test && !['Pass', 'Not Applicable'].includes(i.status));
     if (!pool.length) { toast('No unscheduled runs to allocate', 'info'); return; }
-    const draft = _dynCascadeAllocate({ instances: pool, windows, prereqs, capacityFn: _dynWindowCapacity, windowAllows });
+    // Aggressive duration-aware packing: fill each window by run durations up to
+    // (1 − slack) of its length, so a 2 h window isn't left half-empty.
+    const slack = _dynAllocSlack();
+    const draft = _dynCascadeAllocate({
+      instances: pool, windows, prereqs, windowAllows,
+      runMinutesFn: i => i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN,
+      windowMinutesFn: _dynWinMinutes, slack,
+    });
     _dynPage._allocDraft = { campId: idSet.size === 1 ? [...idSet][0] : null, assignments: draft.assignments, unplaced: draft.unplaced };
     _dynAutoAllocatePreview(label, draft);
   } catch (e) { toast('Allocate failed: ' + e.message, 'error'); }
@@ -37915,6 +38100,12 @@ function _dynAutoAllocateRun() {
         <select id="dyn-alloc-camp" style="width:100%;padding:8px 10px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px;">
           ${camps.map(c => `<option value="${escapeHtml(String(c.id))}" ${String(c.id) === cur ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
         </select>
+        <label style="display:block;font-size:12px;color:var(--gray-600);margin:12px 0 6px;">Slack to leave per shift
+          <span style="color:var(--gray-400);font-weight:400;">— lower packs tighter (tests done sooner)</span></label>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input id="dyn-alloc-slack" type="number" min="0" max="50" step="5" value="${Math.round(_dynAllocSlack() * 100)}" style="width:80px;padding:7px 8px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px;">
+          <span style="font-size:13px;color:var(--gray-600);">% buffer (10–20% recommended)</span>
+        </div>
       </div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
       <button class="form-submit" onclick="_dynAutoAllocatePick()">Build allocation</button>`,
@@ -37923,6 +38114,8 @@ function _dynAutoAllocateRun() {
 function _dynAutoAllocatePick() {
   const v = document.getElementById('dyn-alloc-camp')?.value;
   if (!v) return;
+  const sl = document.getElementById('dyn-alloc-slack')?.value;
+  if (sl != null && sl !== '') _dynSetAllocSlack(sl);
   const c = (_dynPage.campaigns || []).find(x => String(x.id) === String(v));
   closeModal();
   _dynAllocateInto(new Set([String(v)]), c ? c.name : 'Campaign');
@@ -37937,26 +38130,33 @@ function _dynAutoAllocatePreview(label, draft) {
     const w = winById.get(a.windowId);
     const cm = w && campById.get(w.campaign_id);
     const key = (cm ? cm.name + ' · ' : '') + (a.shiftDate || '') + ' · ' + (w ? w.control_zone_code : '');
-    if (!byWin.has(key)) byWin.set(key, []);
-    byWin.get(key).push(instById.get(a.instanceId));
+    if (!byWin.has(key)) byWin.set(key, { w, list: [] });
+    byWin.get(key).list.push(instById.get(a.instanceId));
   }
-  const rowsHtml = [...byWin.entries()].map(([k, list]) =>
-    '<tr style="border-bottom:1px solid var(--gray-100);">' +
+  const rowsHtml = [...byWin.entries()].map(([k, { w, list }]) => {
+    const winMin = w ? _dynWinMinutes(w) : 0;
+    const usedMin = list.reduce((m, i) => m + ((i && i.expected_duration_minutes) || _DYN_DEFAULT_RUN_MIN), 0);
+    const fill = winMin > 0 ? Math.round(usedMin / winMin * 100) : null;
+    const fillColor = fill === null ? 'var(--gray-400)' : fill >= 80 ? '#059669' : fill >= 60 ? '#b45309' : '#9ca3af';
+    return '<tr style="border-bottom:1px solid var(--gray-100);">' +
       '<td style="padding:6px 10px;font-family:monospace;font-size:11.5px;white-space:nowrap;">' + escapeHtml(k) + '</td>' +
       '<td style="padding:6px 10px;"><b>' + list.length + '</b></td>' +
+      '<td style="padding:6px 10px;white-space:nowrap;font-size:11.5px;color:' + fillColor + ';">' + (fill === null ? '—' : fill + '% fill') + ' <span style="color:var(--gray-400);">(' + Math.round(usedMin) + (winMin ? '/' + Math.round(winMin) : '') + 'm)</span></td>' +
       '<td style="padding:6px 10px;font-size:11.5px;">' + list.map(i => escapeHtml((i && (i.code || i.id)) || '')).join(', ') + '</td>' +
-    '</tr>').join('') ||
-    '<tr><td colspan="3" style="padding:16px;text-align:center;color:var(--gray-500);">No feasible placements.</td></tr>';
+    '</tr>';
+  }).join('') ||
+    '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--gray-500);">No feasible placements.</td></tr>';
   modal({
     title: 'Auto-allocate — draft',
-    sub: escapeHtml(label) + ' · ' + draft.assignments.length + ' placed, ' + draft.unplaced.length + ' left in backlog',
+    sub: escapeHtml(label) + ' · ' + draft.assignments.length + ' placed, ' + draft.unplaced.length + ' left in backlog · ' + Math.round(_dynAllocSlack() * 100) + '% slack',
     body:
       '<div style="padding:8px 24px 16px;">' +
-        '<p style="font-size:13px;color:var(--gray-600);margin:0 0 10px;">Runs placed into planned access windows in date order, prerequisites first. Review, then commit — fine-tune any shift afterward in the Access Plan or Shift Builder.</p>' +
+        '<p style="font-size:13px;color:var(--gray-600);margin:0 0 10px;">Runs packed into planned access windows in date order, prerequisites first, filling each shift to ~' + (100 - Math.round(_dynAllocSlack() * 100)) + '% by duration. Review, then commit — fine-tune any shift afterward in the Access Plan or Shift Builder.</p>' +
         '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
           '<thead><tr style="background:var(--gray-50);">' +
             '<th style="text-align:left;padding:6px 10px;">Window</th>' +
             '<th style="text-align:left;padding:6px 10px;">Runs</th>' +
+            '<th style="text-align:left;padding:6px 10px;">Fill</th>' +
             '<th style="text-align:left;padding:6px 10px;">Codes</th>' +
           '</tr></thead><tbody>' + rowsHtml + '</tbody></table>' +
         (draft.unplaced.length ? '<p style="font-size:12px;color:#92400e;margin-top:10px;">' + draft.unplaced.length + ' run(s) could not be placed (no feasible window / capacity) — they stay in the backlog.</p>' : '') +
