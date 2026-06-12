@@ -35901,6 +35901,7 @@ function _dynRenderAccess() {
   if (!_dynPage.accView) _dynPage.accView = 'week';
 
   const campaigns = _dynPage.campaigns || [];
+  const closureCamps = new Set(campaigns.filter(c => c.campaign_kind === 'closure').map(c => c.id));
   const allShifts = (_dynPage.shifts || []).filter(s => s.campaign_id); // campaign-generated only
   const filtered = _dynPage.accCampaignFilter
     ? allShifts.filter(s => s.campaign_id === _dynPage.accCampaignFilter)
@@ -35941,7 +35942,7 @@ function _dynRenderAccess() {
             ? `<div style="font-size:9px;color:${t.fg};opacity:.8;margin-top:2px;">${escapeHtml(s.cancellation_category)}</div>` : '';
           return `<td style="text-align:center;padding:4px;">
             <div onclick="_dynOpenShift('${escapeHtml(s.id)}')" title="${escapeHtml(t.label)}${(s.access_zones&&s.access_zones.length>1)?' — grants '+escapeHtml(s.access_zones.join(', ')):''} — click to manage"
-                 style="cursor:pointer;border:1px solid ${t.bd};background:${t.bg};color:${t.fg};border-radius:6px;padding:5px 4px;font-size:10.5px;font-weight:600;">
+                 style="cursor:pointer;border:1px solid ${t.bd};background:${t.bg};color:${t.fg};border-radius:6px;padding:5px 4px;font-size:10.5px;font-weight:600;${closureCamps.has(s.campaign_id)?'outline:2px dashed #f59e0b;outline-offset:-2px;':''}">
               ${t.label}
               <div style="font-size:9px;font-weight:500;opacity:.85;">${s.max_trains||1}T${s.consist_size?`·${s.consist_size}c`:''}</div>
               ${(s.access_zones&&s.access_zones.length>1)?`<div style="font-size:8.5px;font-weight:700;opacity:.9;">+${escapeHtml(s.access_zones.filter(x=>x!==s.control_zone_code).join(','))}</div>`:''}
@@ -35995,7 +35996,7 @@ function _dynRenderAccess() {
         return `<div class="data-card" style="padding:14px 16px;margin-bottom:10px;border-left:4px solid ${_planningSubsystemColor(c.subsystem).bg};${closed?'opacity:.6;':''}">
           <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
             <div style="flex:1;min-width:240px;">
-              <div style="font-weight:700;font-size:14px;">${escapeHtml(c.name)} ${closed?'<span class="tag" style="background:var(--gray-100);">closed</span>':''}</div>
+              <div style="font-weight:700;font-size:14px;">${escapeHtml(c.name)} ${c.campaign_kind==='closure'?'<span class="tag" style="background:#fde68a;color:#92400e;border:1px solid #f59e0b;">closure</span>':''} ${closed?'<span class="tag" style="background:var(--gray-100);">closed</span>':''}</div>
               <div style="font-size:12px;color:var(--gray-600);margin-top:3px;">
                 ${(c.zone_codes||[]).map(z=>`<span class="tag" style="font-family:monospace;">${escapeHtml(z)}</span>`).join(' ')}
                 ${(c.test_case_ids&&c.test_case_ids.length)?`<span class="tag" style="background:#ede9fe;color:#5b21b6;">${c.test_case_ids.length} test case${c.test_case_ids.length===1?'':'s'} in scope</span>`:''}
@@ -36056,6 +36057,7 @@ function _dynAccMonthGridHtml(shifts, anchor) {
   const first = new Date(a.getFullYear(), a.getMonth(), 1);
   const gridStart = _dynStartOfWeek(first);
   const todayKey = _dynDayKey(new Date());
+  const closure = new Set((_dynPage.campaigns || []).filter(c => c.campaign_kind === 'closure').map(c => c.id));
   const byDay = new Map();
   for (const s of (shifts || [])) {
     const k = _dynDayKey(s.shift_date);
@@ -36077,7 +36079,7 @@ function _dynAccMonthGridHtml(shifts, anchor) {
       const pills = list.map(s => {
         const t = _DYN_SHIFT_TONE[s.status] || _DYN_SHIFT_TONE.planned;
         const cat = s.status === 'cancelled' && s.cancellation_category ? ` · ${s.cancellation_category}` : '';
-        return `<div onclick="event.stopPropagation();_dynOpenShift('${escapeHtml(s.id)}')" title="${escapeHtml(s.control_zone_code + ' — ' + t.label + cat)}" style="cursor:pointer;border:1px solid ${t.bd};background:${t.bg};color:${t.fg};border-radius:4px;padding:1px 4px;font-size:10px;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.control_zone_code)}${(s.access_zones&&s.access_zones.length>1)?'+'+escapeHtml(s.access_zones.filter(x=>x!==s.control_zone_code).join(',')):''} <span style="font-weight:500;opacity:.85;">${s.max_trains || 1}T</span></div>`;
+        return `<div onclick="event.stopPropagation();_dynOpenShift('${escapeHtml(s.id)}')" title="${escapeHtml(s.control_zone_code + ' — ' + t.label + cat)}" style="cursor:pointer;border:1px solid ${t.bd};background:${t.bg};color:${t.fg};border-radius:4px;padding:1px 4px;font-size:10px;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${closure.has(s.campaign_id)?'box-shadow:0 0 0 2px #f59e0b inset;':''}">${escapeHtml(s.control_zone_code)}${(s.access_zones&&s.access_zones.length>1)?'+'+escapeHtml(s.access_zones.filter(x=>x!==s.control_zone_code).join(',')):''} <span style="font-weight:500;opacity:.85;">${s.max_trains || 1}T</span></div>`;
       }).join('');
       const isToday = k === todayKey;
       const dayNum = isToday
@@ -36215,6 +36217,8 @@ function _dynOpenNewCampaign() {
           <datalist id="camp-subsys-list">${subsysOpts.map(s=>`<option value="${escapeHtml(s)}">`).join('')}</datalist></div>
         <div class="form-field"><label>Phase</label>
           <select id="camp-phase" style="${fld}"><option value="">—</option>${phaseOpts.map(p=>`<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`).join('')}</select></div>
+        <div class="form-field"><label>Access type</label>
+          <select id="camp-kind" style="${fld}"><option value="standard">Standard non-revenue</option><option value="closure">Weekend / line closure</option></select></div>
         <div class="form-field"><label>BART permit / work order #</label><input id="camp-permit" style="${fld}" placeholder="optional"></div>
         <div class="form-field" style="grid-column:1/-1;"><label>Test case scope <span style="color:var(--gray-500);font-weight:400;">(which dynamic test cases this campaign covers — leave empty for all in-zone)</span></label>
           <input id="camp-scope-search" placeholder="Search test cases…" style="${fld};margin-bottom:6px;" oninput="_dynCampScopeFilter(this.value)">
@@ -36293,6 +36297,7 @@ async function _dynSaveCampaign() {
   const consist = g('camp-consist').value ? parseInt(g('camp-consist').value, 10) : null;
   const phase = g('camp-phase').value || null;
   const subsystem = g('camp-subsys').value.trim() || null;
+  const campaignKind = (g('camp-kind') && g('camp-kind').value) || 'standard';
   const permit = g('camp-permit').value.trim() || null;
   const notes = g('camp-notes').value.trim() || null;
 
@@ -36308,7 +36313,7 @@ async function _dynSaveCampaign() {
       name, zone_codes: zones, phase, subsystem,
       start_date: startDate, end_date: endDate,
       days_of_week: dow, shift_start: shiftStart, shift_end: shiftEnd,
-      day_schedule: daySchedule, test_case_ids: scopeIds,
+      day_schedule: daySchedule, test_case_ids: scopeIds, campaign_kind: campaignKind,
       allowed_modes: modes.length ? modes : ['CBTC', 'VATC'],
       trains_requested: trains, consist_size: consist,
       permit_no: permit, notes,
