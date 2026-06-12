@@ -767,6 +767,32 @@ env) and iterated on before/after screenshots headlessly.
   color); dyn board-view toggles now show solid red active state; eyebrows/KPI
   labels/table headers now true mono (Roboto Mono).
 
+## Resource picker company filter + profiles.company (2026-06-12, owner-directed)
+Owner: in Lookahead → assign resources, filter the picker to BART vs Hitachi;
+and add a company field to the Directory tied to the user so it flows into the
+resource roster automatically.
+- DB: profiles.company text (migration profiles_add_company; in-repo
+  supabase/sql/supabase_profiles_company.sql). Backfilled existing users to
+  'Hitachi Rail'; synced person-linked planning_resources.company from the
+  profile. No advisor changes. planning_resources already had `company`.
+- Lookahead picker: new _laResPanelCompany state + All/Hitachi/BART chips at the
+  top of _laResourcePanelHTML() (counts shown, solid-red active), filtered via
+  _laResPanelCompanyMatch (BART = company 'BART'; Hitachi = everything else —
+  same convention as the existing Resource-view _laResCompanyFilter, kept
+  separate so the two don't interfere). _laSetResPanelCompany re-renders the
+  panel preserving the typed search. CSS chips added to styles.css.
+- Directory: new Company column (Hitachi Rail / BART / none) + updateProfileCompany
+  which writes profiles.company AND mirrors it onto the user's planning_resources
+  row (and patches in-memory PLANNING_RESOURCES) so the picker reflects it without
+  a reload. Invite modal gained a Company select (defaults Hitachi Rail) persisted
+  on the new profile. Bootstrap (_planningBootstrapResources) now inherits
+  company from the profile (default Hitachi Rail) and tags kind:'person'.
+- COMPANIES_LIST constant added next to SUBSYSTEMS_LIST.
+- Test: tools/test_la_resource_picker.js (18 assertions, 19th suite) exercises the
+  REAL picker fn with injected resources — match logic + chip counts + filtered
+  lists. Harness 19/19. Verified the picker visually (headless render of all
+  three filter states). CRLF preserved.
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose

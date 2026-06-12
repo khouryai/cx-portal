@@ -4973,6 +4973,10 @@ async function deleteTemplate(id) {
 // ADMIN FIELD CONFIG — Configurable dropdown options, grouped by module
 // ==========================================================================
 const SUBSYSTEMS_LIST = ['DCS','ATS','IXL','CORE CBTC','PS&TP','IAMS','SCADA','CYBER','TCH'];
+// Organizations a portal user can belong to. A user's company propagates to
+// their planning_resources roster row so the Lookahead resource picker can
+// filter by it (see updateProfileCompany / _planningBootstrapResources).
+const COMPANIES_LIST = ['Hitachi Rail', 'BART'];
 const DRAWING_DISCIPLINE_DEFAULTS = [
   'Architectural',
   'Civil',
@@ -5348,6 +5352,7 @@ async function _loadDirectoryUsers() {
           <th>Name</th>
           <th>Email</th>
           <th>Access</th>
+          <th>Company</th>
           <th>Subsystem</th>
           <th>Status</th>
           <th style="width:80px;"></th>
@@ -5375,6 +5380,13 @@ async function _loadDirectoryUsers() {
                 <input type="checkbox" ${u.role==='admin'?'checked':''} onchange="updateProfileGlobalAdmin('${u.id}',this.checked)">
                 <span style="color:${u.role==='admin'?'var(--bad)':'var(--gray-500)'};font-weight:600;">Global admin</span>
               </label>
+            </td>
+            <td>
+              <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:120px;" aria-label="Company for ${escapeHtml(name)}"
+                onchange="updateProfileCompany('${u.id}',this.value)">
+                <option value="" ${!u.company?'selected':''}>— none —</option>
+                ${COMPANIES_LIST.map(c=>`<option value="${c}" ${u.company===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}
+              </select>
             </td>
             <td>
               <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:130px;"
@@ -5423,6 +5435,22 @@ async function updateProfileSubsystem(id, subsystem) {
   const { error } = await _sb.from('profiles').update({ subsystem: subsystem || null }).eq('id', id);
   if (error) toast('Update failed: ' + error.message, 'error');
   else toast('Subsystem updated', 'success');
+}
+
+// Company change propagates to the user's planning_resources roster row so the
+// Lookahead resource picker filters them under the right org automatically.
+async function updateProfileCompany(id, company) {
+  const val = company || null;
+  const { error } = await _sb.from('profiles').update({ company: val }).eq('id', id);
+  if (error) { toast('Update failed: ' + error.message, 'error'); return; }
+  // Mirror onto the linked resource row (best-effort; not all profiles have one).
+  try {
+    await _sb.from('planning_resources').update({ company: val }).eq('user_id', id);
+    if (Array.isArray(PLANNING_RESOURCES)) {
+      PLANNING_RESOURCES.forEach(r => { if (r.user_id === id) r.company = val; });
+    }
+  } catch (e) { /* resource may not exist yet; bootstrap will pick up company later */ }
+  toast('Company updated', 'success');
 }
 
 async function updateProfileActive(id, is_active) {
@@ -5477,6 +5505,13 @@ async function openInviteUserModal() {
             ${SUBSYSTEMS_LIST.map(s=>`<option value="${s}">${s}</option>`).join('')}
           </select>
         </div>
+        <div class="form-field">
+          <label>Company</label>
+          <select id="inv-company" class="form-input">
+            <option value="">— none —</option>
+            ${COMPANIES_LIST.map(c=>`<option value="${c}" ${c==='Hitachi Rail'?'selected':''}>${escapeHtml(c)}</option>`).join('')}
+          </select>
+        </div>
       </div>
       <p style="font-size:12px;color:var(--gray-500);margin-top:14px;line-height:1.5;">
         Share the temporary password securely. On first sign-in, the user will be prompted to set their own password before accessing the portal.
@@ -5497,6 +5532,7 @@ async function inviteUser() {
   const tplId     = document.getElementById('inv-template').value;
   const isAdmin   = document.getElementById('inv-admin').checked;
   const subsystem = document.getElementById('inv-subsystem').value;
+  const company   = document.getElementById('inv-company').value;
 
   if (!name || !email || !password) { toast('Name, email, and password are all required', 'error'); return; }
   if (password.length < 6) { toast('Password must be at least 6 characters', 'error'); return; }
@@ -5515,7 +5551,7 @@ async function inviteUser() {
     id: data.user.id, email, full_name: name,
     role: isAdmin ? 'admin' : 'readonly',   // role survives only as the global-admin flag
     permission_template_id: tplId || null,
-    subsystem: subsystem || null, is_active: true,
+    subsystem: subsystem || null, company: company || null, is_active: true,
     must_change_password: true,
   });
   if (profErr) { toast('Profile save failed: ' + profErr.message, 'error'); return; }
@@ -18649,6 +18685,7 @@ let _laTimelineWindow    = 28;                         // 14 / 21 / 28 / 60 / 90
 let _laCollapsedGroups   = {};                         // { tc: true, ... } — collapsed activity_group bands
 let _laActivitySubGroup  = 'none';                     // 'none' | 'phase' | 'location' | 'phase_location'
 let _laResCompanyFilter  = 'all';                      // 'all' | 'BART' | 'Hitachi' (Resource view)
+let _laResPanelCompany   = 'all';                      // 'all' | 'BART' | 'Hitachi' (Assign-resources picker)
 
 // ── Edit drawer state (Phase 2 — Master Schedule revamp) ─────
 // The right-side persistent drawer replaces modal-per-action for cell &
@@ -18821,7 +18858,7 @@ async function _planningBootstrapResources() {
   // Pull active portal users (profiles) and create matching planning_resources rows.
   // Resource type derived from profile role.
   try {
-    const profs = await _fetchAnon('profiles?select=id,full_name,role,email,subsystem&is_active=eq.true');
+    const profs = await _fetchAnon('profiles?select=id,full_name,role,email,subsystem,company&is_active=eq.true');
     if (!profs || !profs.length) return;
     const seed = profs.filter(p => p.full_name).map(p => ({
       user_id:       p.id,
@@ -18832,6 +18869,8 @@ async function _planningBootstrapResources() {
                     : 'manual'),
       email:         p.email || null,
       subsystem:     p.subsystem || null,
+      company:       p.company || 'Hitachi Rail',  // portal users default to Hitachi
+      kind:          'person',
       is_active:     true,
     }));
     if (!seed.length) return;
@@ -21606,24 +21645,39 @@ async function _laSaveActivityLink(activityId, unlink) {
 }
 
 function _laResourcePanelHTML() {
-  const active = PLANNING_RESOURCES.filter(r => r.is_active).sort((a, b) => a.display_name.localeCompare(b.display_name));
+  const activeAll = PLANNING_RESOURCES.filter(r => r.is_active).sort((a, b) => a.display_name.localeCompare(b.display_name));
+  // Company filter (All / Hitachi / BART) — BART = company 'BART'; Hitachi =
+  // everything else (matches the Resource-view timeline filter convention).
+  const active = activeAll.filter(_laResPanelCompanyMatch);
   const byType = {};
   active.forEach(r => {
     const t = r.resource_type || 'other';
     if (!byType[t]) byType[t] = [];
     byType[t].push(r);
   });
-  const TYPE_LABELS = { admin: 'Admin', field_engineer: 'Field Engineers', manual: 'Team Members', other: 'Other' };
+  const TYPE_LABELS = { admin: 'Admin', field_engineer: 'Field Engineers', manual: 'Team Members', crew: 'Crews', client_witness: 'Client / Witness', other: 'Other' };
   const colors = ['#e60012','#1e40af','#00875a','#b45309','#5b21b6','#065f46','#9a3412','#1f2937'];
 
   const selCount = _laSelectedResIds.size;
 
+  // company chips with live counts
+  const _bartN = activeAll.filter(r => r.company === 'BART').length;
+  const _hitN  = activeAll.length - _bartN;
+  const compChip = (val, label, n) =>
+    `<button class="la-res-comp-chip${_laResPanelCompany === val ? ' active' : ''}"
+       onclick="_laSetResPanelCompany('${val}')">${label}<span class="la-res-comp-n">${n}</span></button>`;
+
   let html = `<div class="la-res-panel" id="la-res-panel">
     <div class="la-res-panel-head">
       <div style="font-size:12px;font-weight:700;color:var(--charcoal);">Resources</div>
-      <div style="font-size:11px;color:var(--gray-400);">${active.length} active</div>
+      <div style="font-size:11px;color:var(--gray-400);">${active.length} shown</div>
     </div>
     <div style="padding:6px 8px;display:flex;flex-direction:column;gap:5px;">
+      <div class="la-res-comp-filter">
+        ${compChip('all', 'All', activeAll.length)}
+        ${compChip('Hitachi', 'Hitachi', _hitN)}
+        ${compChip('BART', 'BART', _bartN)}
+      </div>
       <input type="text" class="la-res-search" placeholder="Search…" oninput="_laFilterResPanel(this.value)">
       <div id="la-sel-bar" style="display:${selCount?'flex':'none'};align-items:center;justify-content:space-between;background:var(--hitachi-red);color:#fff;border-radius:5px;padding:4px 8px;font-size:11px;font-weight:600;">
         <span>${selCount} selected</span>
@@ -21632,6 +21686,10 @@ function _laResourcePanelHTML() {
     </div>
     <div style="padding:4px 8px 4px;font-size:10px;color:var(--gray-400);">Click to select · drag to assign</div>
     <div class="la-res-list" id="la-res-list">`;
+
+  if (!active.length) {
+    html += `<div style="padding:18px 10px;text-align:center;font-size:11px;color:var(--gray-400);">No ${_laResPanelCompany === 'all' ? '' : escapeHtml(_laResPanelCompany) + ' '}resources</div>`;
+  }
 
   Object.entries(byType).forEach(([type, members]) => {
     html += `<div class="la-res-group-label">${TYPE_LABELS[type] || type}</div>`;
@@ -21666,6 +21724,25 @@ function _laResCompanyMatch(r) {
   if (_laResCompanyFilter === 'all') return true;
   if (_laResCompanyFilter === 'BART') return r.company === 'BART';
   return r.company !== 'BART'; // 'Hitachi' = everything not BART
+}
+// Assign-resources picker company filter (independent of the Resource-view one)
+function _laResPanelCompanyMatch(r) {
+  if (_laResPanelCompany === 'all') return true;
+  if (_laResPanelCompany === 'BART') return r.company === 'BART';
+  return r.company !== 'BART'; // 'Hitachi' = everything not BART
+}
+function _laSetResPanelCompany(f) {
+  _laResPanelCompany = f;
+  // Re-render the picker panel in place, preserving any typed search query.
+  const panel = document.getElementById('la-res-panel');
+  const q = document.querySelector('#la-res-panel .la-res-search')?.value || '';
+  if (panel) {
+    panel.outerHTML = _laResourcePanelHTML();
+    if (q) {
+      const input = document.querySelector('#la-res-panel .la-res-search');
+      if (input) { input.value = q; _laFilterResPanel(q); }
+    }
+  }
 }
 function _laToggleGroupCollapse(groupKey) {
   _laCollapsedGroups[groupKey] = !_laCollapsedGroups[groupKey];
