@@ -36099,8 +36099,73 @@ function _dynAccJumpTo(dateStr) {
   _dynRenderAccess();
 }
 
+// Per-day access schedule for the new-campaign modal: each weekday can carry its
+// own window time AND its own zone subset (a bigger window / more zones on the
+// days you have more access). The campaign's zone_codes = union of per-day zones.
+function _dynCampInitDays() {
+  const days = {};
+  for (const d of [1, 2, 3, 4, 5, 6, 0]) days[d] = { on: [1, 2, 3, 4, 5].includes(d), start: '07:00', end: '15:00', zones: [] };
+  window._dynCampDays = days;
+}
+function _dynCampZonePalette() {
+  const sel = document.getElementById('camp-zones');
+  return sel ? Array.from(sel.selectedOptions).map(o => o.value) : [];
+}
+function _dynCampDayRowsHtml() {
+  const st = window._dynCampDays || {};
+  const palette = _dynCampZonePalette();
+  const fld = 'padding:5px 7px;border:1px solid var(--gray-300);border-radius:5px;font-size:12px;';
+  const grid = 'display:grid;grid-template-columns:80px 1fr 78px 78px;gap:6px 8px;align-items:center;';
+  const hdr = `<div style="${grid}font-size:10.5px;color:var(--gray-500);margin-bottom:3px;"><div></div><div>Zones (this day)</div><div>Start</div><div>End</div></div>`;
+  const rows = [1, 2, 3, 4, 5, 6, 0].map(d => {
+    const s = st[d] || { on: false, start: '07:00', end: '15:00', zones: [] };
+    const sel = (s.zones && s.zones.length) ? new Set(s.zones) : new Set(palette);
+    const zoneCtl = palette.length
+      ? palette.map(z => `<label style="font-size:11px;margin-right:8px;white-space:nowrap;${s.on ? '' : 'opacity:.5;'}"><input type="checkbox" class="camp-day-zone" data-dow="${d}" value="${escapeHtml(z)}" ${sel.has(z) ? 'checked' : ''} ${s.on ? '' : 'disabled'} onchange="_dynCampDayZoneToggle(${d})">${escapeHtml(z)}</label>`).join('')
+      : `<span style="font-size:11px;color:var(--gray-400);">choose campaign zones above ↑</span>`;
+    return `<div style="${grid}margin-bottom:4px;">
+      <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;"><input type="checkbox" class="camp-dow" value="${d}" ${s.on ? 'checked' : ''} onchange="_dynCampDayToggle(${d},this.checked)">${_DYN_DOW[d]}</label>
+      <div>${zoneCtl}</div>
+      <input type="time" class="camp-day-start" data-dow="${d}" value="${s.start}" ${s.on ? '' : 'disabled'} style="${fld}" onchange="_dynCampDayTime(${d},'start',this.value)">
+      <input type="time" class="camp-day-end" data-dow="${d}" value="${s.end}" ${s.on ? '' : 'disabled'} style="${fld}" onchange="_dynCampDayTime(${d},'end',this.value)">
+    </div>`;
+  }).join('');
+  return hdr + rows;
+}
+function _dynCampRerenderDays() {
+  const el = document.getElementById('camp-day-rows');
+  if (el) el.innerHTML = _dynCampDayRowsHtml();
+}
+function _dynCampDayToggle(d, on) {
+  const st = window._dynCampDays = window._dynCampDays || {};
+  st[d] = st[d] || { start: '07:00', end: '15:00', zones: [] };
+  st[d].on = on;
+  if (on && (!st[d].zones || !st[d].zones.length)) st[d].zones = _dynCampZonePalette();
+  _dynCampRerenderDays();
+}
+function _dynCampDayTime(d, field, val) {
+  const st = window._dynCampDays = window._dynCampDays || {};
+  st[d] = st[d] || { on: true, start: '07:00', end: '15:00', zones: [] };
+  st[d][field] = val;
+}
+function _dynCampDayZoneToggle(d) {
+  const st = window._dynCampDays = window._dynCampDays || {};
+  st[d] = st[d] || { on: true, start: '07:00', end: '15:00', zones: [] };
+  st[d].zones = Array.from(document.querySelectorAll('.camp-day-zone[data-dow="' + d + '"]:checked')).map(c => c.value);
+}
+function _dynCampSyncDays() {
+  const palette = new Set(_dynCampZonePalette());
+  const st = window._dynCampDays || {};
+  for (const k of Object.keys(st)) {
+    st[k].zones = (st[k].zones || []).filter(z => palette.has(z));
+    if (st[k].on && !st[k].zones.length) st[k].zones = [...palette];
+  }
+  _dynCampRerenderDays();
+}
+
 function _dynOpenNewCampaign() {
   window._dynCampScope = new Set();
+  _dynCampInitDays();
   const zoneOpts = _dynAccZoneOptions();
   const phaseOpts = (typeof LOCS !== 'undefined' ? LOCS : []).filter(l => l.level === 1)
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
@@ -36119,21 +36184,13 @@ function _dynOpenNewCampaign() {
         <div class="form-field" style="grid-column:1/-1;"><label>Campaign name</label>
           <input id="camp-name" style="${fld}" placeholder="e.g. W40 CBTC dynamic — Spring window"></div>
         <div class="form-field" style="grid-column:1/-1;"><label>Zones <span style="color:var(--gray-500);font-weight:400;">(⌘/Ctrl for multiple)</span></label>
-          <select id="camp-zones" multiple size="6" style="${fld}">
+          <select id="camp-zones" multiple size="6" style="${fld}" onchange="_dynCampSyncDays()">
             ${zoneOpts.map(o => `<option value="${escapeHtml(o.code)}">${escapeHtml(o.name)}</option>`).join('')}
           </select></div>
         <div class="form-field"><label>Start date</label><input id="camp-start" type="date" value="${today}" style="${fld}"></div>
         <div class="form-field"><label>End date</label><input id="camp-end" type="date" value="${today}" style="${fld}"></div>
-        <div class="form-field" style="grid-column:1/-1;"><label>Access days &amp; times <span style="color:var(--gray-500);font-weight:400;">(check a day, set its window — times can differ per day)</span></label>
-          <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 10px;align-items:center;padding:4px 0;max-width:420px;">
-            <div></div><div style="font-size:10.5px;color:var(--gray-500);">Start</div><div style="font-size:10.5px;color:var(--gray-500);">End</div>
-            ${[1,2,3,4,5,6,0].map(d => `
-              <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;">
-                <input type="checkbox" class="camp-dow" value="${d}" ${[1,2,3,4,5].includes(d)?'checked':''} onchange="_dynCampDowToggle(${d},this.checked)">${_DYN_DOW[d]}</label>
-              <input type="time" class="camp-day-start" data-dow="${d}" value="07:00" ${[1,2,3,4,5].includes(d)?'':'disabled'} style="${fld}">
-              <input type="time" class="camp-day-end" data-dow="${d}" value="15:00" ${[1,2,3,4,5].includes(d)?'':'disabled'} style="${fld}">
-            `).join('')}
-          </div>
+        <div class="form-field" style="grid-column:1/-1;"><label>Access days, times &amp; zones <span style="color:var(--gray-500);font-weight:400;">(per day — a bigger window / more zones on the days you have more access)</span></label>
+          <div id="camp-day-rows">${_dynCampDayRowsHtml()}</div>
         </div>
         <div class="form-field"><label>Trains requested</label><input id="camp-trains" type="number" min="1" value="2" style="${fld}"></div>
         <div class="form-field"><label>Consist size <span style="color:var(--gray-500);font-weight:400;">(cars, 4–10)</span></label><input id="camp-consist" type="number" min="1" max="10" placeholder="e.g. 4" style="${fld}"></div>
@@ -36172,12 +36229,13 @@ function _dynGenerateShiftRows(campaign) {
     const dateStr = _dynDayKey(d);
     const sched = campaign.day_schedule || {};
     const dt = sched[String(d.getDay())] || sched[d.getDay()] || { start: campaign.shift_start, end: campaign.shift_end };
+    const dayZones = (dt.zones && dt.zones.length) ? dt.zones : (campaign.zone_codes || []);
     const startAt = new Date(`${dateStr}T${String(dt.start).slice(0,5)}:00`);
     const endAt   = new Date(`${dateStr}T${String(dt.end).slice(0,5)}:00`);
-    for (const z of (campaign.zone_codes || [])) {
+    for (const z of dayZones) {
       rows.push({
         control_zone_code: z,
-        access_zones: (campaign.zone_codes && campaign.zone_codes.length) ? campaign.zone_codes : [z],
+        access_zones: dayZones,
         shift_date: dateStr,
         start_at: startAt.toISOString(),
         end_at: endAt.toISOString(),
@@ -36197,21 +36255,26 @@ function _dynGenerateShiftRows(campaign) {
 async function _dynSaveCampaign() {
   const g = id => document.getElementById(id);
   const name = g('camp-name').value.trim();
-  const zones = Array.from(g('camp-zones').selectedOptions).map(o => o.value);
+  const zonePalette = Array.from(g('camp-zones').selectedOptions).map(o => o.value);
   const startDate = g('camp-start').value;
   const endDate = g('camp-end').value;
-  const dow = Array.from(document.querySelectorAll('.camp-dow:checked')).map(c => parseInt(c.value, 10));
-  // Per-day access window times (access can differ by day).
+  const _days = window._dynCampDays || {};
+  const dow = Object.keys(_days).map(Number).filter(d => _days[d] && _days[d].on).sort((a, b) => a - b);
+  // Per-day window times AND zones (access can differ by day).
   const daySchedule = {};
+  const _zoneUnion = new Set();
   for (const d of dow) {
-    const st = document.querySelector('.camp-day-start[data-dow="' + d + '"]')?.value || '07:00';
-    const en = document.querySelector('.camp-day-end[data-dow="' + d + '"]')?.value || '15:00';
-    if (en <= st) { alert(_DYN_DOW[d] + ': end time must be after start time.'); return; }
-    daySchedule[d] = { start: st, end: en };
+    const sd = _days[d];
+    if (sd.end <= sd.start) { alert(_DYN_DOW[d] + ': end time must be after start time.'); return; }
+    const dz = (sd.zones && sd.zones.length) ? sd.zones : zonePalette;
+    if (!dz.length) { alert(_DYN_DOW[d] + ': pick at least one zone for this day.'); return; }
+    daySchedule[d] = { start: sd.start, end: sd.end, zones: dz };
+    dz.forEach(z => _zoneUnion.add(z));
   }
-  const baseDow = dow.slice().sort((a, b) => a - b)[0];
-  const shiftStart = (daySchedule[baseDow] && daySchedule[baseDow].start) || '07:00';
-  const shiftEnd   = (daySchedule[baseDow] && daySchedule[baseDow].end)   || '15:00';
+  const zones = [..._zoneUnion];
+  const baseDow = dow.length ? dow[0] : null;
+  const shiftStart = (baseDow != null && daySchedule[baseDow] && daySchedule[baseDow].start) || '07:00';
+  const shiftEnd   = (baseDow != null && daySchedule[baseDow] && daySchedule[baseDow].end)   || '15:00';
   const scopeIds = [...(window._dynCampScope || [])];
   const modes = Array.from(document.querySelectorAll('.camp-mode:checked')).map(c => c.value);
   const trains = parseInt(g('camp-trains').value, 10) || 1;

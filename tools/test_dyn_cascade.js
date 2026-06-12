@@ -156,5 +156,38 @@ console.log("\n=== Scenario 6: track_section_access_req vs window.access_zones =
   ok("no access_zones ⇒ falls back to control zone (Y10 run excluded)", !find(cc, "iy") && !!find(cc, "ix"));
 }
 
+// ── Scenario 7: per-day zones flow into shift generation (access_zones) ─────
+console.log("\n=== Scenario 7: per-day zones in _dynGenerateShiftRows ===");
+{
+  const gen = sandbox._dynGenerateShiftRows;
+  if (typeof gen !== "function") { console.error("FATAL: _dynGenerateShiftRows not found"); process.exit(1); }
+  const campaign = {
+    id: "cg", zone_codes: ["W40", "Y10"], days_of_week: [1, 2, 3, 4, 5, 6, 0],
+    start_date: "2026-06-01", end_date: "2026-06-14",
+    allowed_modes: ["CBTC", "VATC"], trains_requested: 1,
+    shift_start: "07:00", shift_end: "09:00",
+    day_schedule: {
+      "1": { start: "22:00", end: "23:30", zones: ["W40"] },          // Mon: W40 only
+      "6": { start: "01:00", end: "05:00", zones: ["W40", "Y10"] },   // Sat: both
+    },
+  };
+  const rows = gen(campaign);
+  ok("rows generated", rows.length > 0);
+  // every window's access_zones equals its day's scheduled zone set
+  const allMatch = rows.every(r => {
+    const dow = new Date(r.shift_date + "T12:00:00").getDay();
+    const want = (campaign.day_schedule[String(dow)] || {}).zones || campaign.zone_codes;
+    return JSON.stringify([...r.access_zones].sort()) === JSON.stringify([...want].sort());
+  });
+  ok("each window's access_zones matches its day schedule", allMatch);
+  const sizes = new Set(rows.map(r => r.access_zones.length));
+  ok("mix of single- and multi-zone shifts generated", sizes.has(1) && sizes.has(2));
+  // a single-zone day yields one window; a two-zone day yields two
+  const monRows = rows.filter(r => new Date(r.shift_date + "T12:00:00").getDay() === 1);
+  const satRows = rows.filter(r => new Date(r.shift_date + "T12:00:00").getDay() === 6);
+  ok("single-zone day → 1 window per date", monRows.length > 0 && monRows.every(r => r.access_zones.length === 1));
+  ok("two-zone day → 2 windows per date", satRows.length > 0 && satRows.length === 2 * new Set(satRows.map(r => r.shift_date)).size);
+}
+
 console.log(`\n${pass} passed, ${fail} failed.`);
 process.exit(fail ? 1 : 0);
