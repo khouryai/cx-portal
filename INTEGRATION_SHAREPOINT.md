@@ -1,9 +1,15 @@
 # Photos Module → SharePoint Integration Plan
 
-> Status: **design / not yet enabled.** The Photos Module is built and the
-> database carries the `sp_*` columns (see `supabase_photos_schema.sql`), but no
-> credentials are configured and no external calls are made yet. This document is
-> the brief to take into the meeting with IT.
+> Status: **built & deployed, awaiting IT credentials.** The Photos Module is
+> built, the database carries the `sp_*` columns (see
+> `supabase_photos_schema.sql`), the sync worker is implemented AND deployed as
+> the `photo-sharepoint-sync` Edge Function (source:
+> `supabase/functions/photo-sharepoint-sync/index.ts`), and the Photos toolbar
+> "⇅ Sync to SharePoint" button is live for admins. Until IT provisions the
+> Entra app and the secrets below are set, the function answers
+> `{ configured: false }` and the button explains that — no external calls are
+> made. **Enabling it is now zero-code:** set the 4 secrets and click Sync.
+> This document remains the brief for the meeting with IT.
 
 ## Goal
 

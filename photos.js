@@ -504,7 +504,9 @@
     var cam = canUpload() ? '<button class="pm-btn" id="pm-camera-btn" title="Capture from camera">' + icon('camera') + ' Camera</button>' : '';
     var newAlbum = canUpload() ? '<button class="pm-btn" id="pm-newalbum-btn">+ New album</button>' : '';
     var sel = '<button class="pm-btn ' + (S.selecting ? 'pm-btn-primary' : '') + '" id="pm-select-btn">' + (S.selecting ? 'Done' : 'Select') + '</button>';
-    var sp = '<button class="pm-btn" disabled title="Configured after IT provisions SharePoint access">⇅ Sync to SharePoint</button>';
+    var sp = role() === 'admin'
+      ? '<button class="pm-btn" id="pm-spsync-btn" title="Mirror photos to the corporate SharePoint library (admin)">⇅ Sync to SharePoint</button>'
+      : '';
     var queue = '<span id="pm-queue-badge" class="pm-queue-badge" style="display:' + (S.queueCount ? '' : 'none') + '">' + (S.queueCount ? S.queueCount + ' queued' : '') + '</span>';
     return '<div class="pm-toolbar">' +
       '<div class="pm-toggle">' +
@@ -667,6 +669,41 @@
   }
 
   // ── chrome wiring ───────────────────────────────────────────────────────────
+  // ── SharePoint sync (admin) ────────────────────────────────────────────────
+  // Calls the photo-sharepoint-sync edge function in batches until the queue
+  // drains. Until IT provisions the Entra app the function answers
+  // { configured: false } and we just explain that.
+  async function runSharePointSync() {
+    var btn = document.getElementById('pm-spsync-btn');
+    if (btn && btn.disabled) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
+    var totalSynced = 0, totalFailed = 0;
+    try {
+      for (var round = 0; round < 20; round++) {
+        var res = await fetch(SUPABASE_URL + '/functions/v1/photo-sharepoint-sync', {
+          method: 'POST',
+          headers: restHeaders({ 'Content-Type': 'application/json' }),
+          body: '{}',
+        });
+        var data = await res.json();
+        if (!res.ok) { toast('SharePoint sync failed: ' + (data.error || res.status)); break; }
+        if (data.configured === false) { toast(data.message || 'SharePoint sync is not configured yet.'); break; }
+        totalSynced += data.synced || 0; totalFailed += data.failed || 0;
+        if (btn) btn.textContent = 'Syncing… (' + totalSynced + ' done' + (data.remaining ? ', ' + data.remaining + ' left' : '') + ')';
+        if (!data.remaining || !data.synced) {
+          toast(totalSynced || totalFailed
+            ? 'SharePoint sync: ' + totalSynced + ' synced' + (totalFailed ? ', ' + totalFailed + ' failed (will retry next run)' : '')
+            : 'SharePoint sync: nothing to sync.');
+          break;
+        }
+      }
+    } catch (e) {
+      toast('SharePoint sync failed: ' + e);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '⇅ Sync to SharePoint'; }
+    }
+  }
+
   function bind(id, fn) { var e = document.getElementById(id); if (e) e.addEventListener('click', fn); }
   function wireChrome() {
     var r = root();
@@ -677,6 +714,7 @@
     bind('pm-camera-btn', function () { openUpload({ camera: true }); });
     bind('pm-newalbum-btn', openNewAlbum);
     bind('pm-select-btn', function () { S.selecting = !S.selecting; clearSelection(); paint(); });
+    bind('pm-spsync-btn', runSharePointSync);
     bind('pm-sel-album', bulkAddToAlbum);
     bind('pm-sel-dl', bulkDownload);
     bind('pm-sel-del', bulkDelete);

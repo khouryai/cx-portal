@@ -560,7 +560,27 @@
         FK indexes.
 
 ### Phase 6 — Integration prep
-- [ ] P6-1 (TODO) Azure/SharePoint incremental steps per docs/sharepoint-integration
+- [~] P6-1 (CODE COMPLETE — 2026-06-12; blocked on IT credentials only)
+      Azure/SharePoint photo sync per INTEGRATION_SHAREPOINT design.
+      • Edge Function `photo-sharepoint-sync` implemented + DEPLOYED (verify_jwt
+        on; additionally enforces global-admin via service-role profile check).
+        Source committed at supabase/functions/photo-sharepoint-sync/index.ts.
+        Flow: client-credentials Graph token → batch photos where sp_sync_status
+        in (pending,error) → download from `photos` bucket → Graph PUT (simple
+        ≤4MB / upload-session chunks above) into "CX-Portal Photos/<Punch List|
+        Daily Logs|General>/…" per the doc's folder mapping → write back
+        sp_item_id/sp_web_url/sp_synced_at/sp_sync_status, sp_error on failure
+        (stays retryable). Returns {processed, synced, failed, remaining}.
+      • UNCONFIGURED-SAFE: until the secrets exist (SP_TENANT_ID, SP_CLIENT_ID,
+        SP_CLIENT_SECRET, SP_DRIVE_ID) it answers 200 {configured:false} — no
+        external calls, friendly UI message. Enabling = set 4 secrets, no code.
+      • Photos toolbar: the reserved disabled "Sync to SharePoint" button is now
+        LIVE for admins — drains the queue in batches (≤20 rounds), shows
+        progress on the button, toasts a summary; non-admins don't see it.
+      • INTEGRATION_SHAREPOINT.md status updated. Remaining: IT provisions the
+        Entra app (brief in docs/sharepoint-integration/it-ticket-intro.md),
+        owner sets the 4 function secrets, one end-to-end test photo; optional
+        cron schedule for hands-free sync.
 
 ### Phase 7 — Hardening & handoff
 - [ ] P7-1 (TODO) Full regression + advisor zero + docs update + final report
