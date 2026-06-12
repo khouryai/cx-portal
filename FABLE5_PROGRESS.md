@@ -596,6 +596,37 @@ ROW = a Lookahead activity; each per-day access window = a planning_event CELL.
   cell tooltip; optional draft-editing UI before commit (today: edit post-commit via
   Shift Builder/Access Plan). Needs a browser QA pass (owner).
 
+## Dynamic Testing — planning features (2026-06-12, owner-directed)
+Built on the shared-record integration to support a multi-level testing strategy
+(DCS→CBTC→ATS→ATC, contract non-revenue hours, weekend closures, prereq chains).
+- **Access requirement = per SHIFT** (commit 7dcceaf): zone_access_windows.access_zones
+  is the set a shift grants; a run needs access_req ⊆ access_zones. Gated in Shift
+  Builder, assign guard, cascade allocator (per-window), roll-forward, and the
+  fn_feasible_instances RPC. Single-zone runs fit any shift incl. its zone.
+- **Per-day multi-zone** (commit e925984): each weekday in a campaign can carry its
+  own window time AND zone subset (day_schedule jsonb { start,end,zones }); zone_codes
+  = union; generation tags each window with that day's zone grant. So W40-only
+  Mon–Wed + W40+Y10 Fri/Sat in one campaign.
+- **Program-level auto-allocate** (commit b8220f3): one cascade across ALL active
+  campaigns' windows + all unscheduled runs, so prereqs order ACROSS campaigns.
+  _dynCascadeAllocate gained capacityFn(window) + windowAllows(i,window).
+- **Subsystem/level tagging + contract presets** (commit 934d547): DCS/CBTC/ATS/
+  ATC/IXL in the subsystem field; cards grouped + left-accent-coloured by level;
+  "Apply contract hours" (2h wk / 3h Sat / 4h Sun) one-click preset.
+- **What-if window compare** (commit 22ebb24): runs the cascade at contract vs an
+  extended shift length and shows the marginal runs scheduled — to justify more
+  access to the client. Read-only.
+- **Weekend/line closure type** (commit a03c221): access_campaigns.campaign_kind
+  ('standard'|'closure'); closures badged + outlined on week/month grids for the
+  6-month plan. Visual only.
+- Tests: tools/test_dyn_cascade.js now 39 cascade assertions (+ per-day generation
+  + per-window access + program params); harness 16 suites green. Migrations:
+  zone_access_window_access_zones, feasible_instances_enforce_access_req,
+  access_campaign_scope_and_per_day_schedule, access_campaign_kind_closure (+ in-repo SQL).
+- OPEN (owner choice): prerequisites are soft-ordered for planning + a hard-completion
+  readiness flag for execution; can add a HARD scheduling gate (block dependents
+  until prereq passes) on request. Browser QA still pending.
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose
