@@ -474,7 +474,40 @@
         the admin-mode full-swap (kept; now permission-gated via uiCanAnyAdmin) and
         icon() unification of the sidebar's inline SVGs (would require JS-rendering
         nav icons). NEEDS BROWSER QA: confirm grouping/labels render well.
-- [ ] P4-2 (TODO) A11y pass (labels/contrast/keyboard/focus; axe clean)
+- [~] P4-2 (HEADLESS PASS DONE — 2026-06-12; browser/axe pass remains) A11y.
+      Everything verifiable without a browser is fixed AND guarded:
+      • Accessible names: scanned every <button> in index.html + the template
+        literals of app.js/photos.js/markup.js/perms-admin.js/team.js — the
+        CLAUDE.md aria-label convention had held remarkably well; only 5 unnamed
+        "×" close buttons existed (ta-tag clear/remove, generic modal close,
+        meeting-attendee remove, signature-pad close). All labelled (dynamic
+        names where useful: "Remove <tag>", "Remove attendee <name>").
+      • Form controls: 25 visible <label>s associated via for= (daily-log r-*/
+        d-* report forms), 19 aria-labels on label-less filter/search controls
+        (ap-/li-/pl- filter bars, drawing page/find inputs), fp-email label
+        paired. Sign-in controls were already label-wrapped.
+      • Structure: skip-to-content link (visible on focus), <main id="main-
+        content"> landmark wrapping all page sections (verified no body>
+        child-combinator deps), aria-label="Primary" on the sidenav.
+      • Contrast (WCAG AA 4.5:1, computed): --text-muted #74777f was 4.48 on
+        white → #6e7179 (4.88/4.67 on surface/-2); --text-subtle #98a2b3 was
+        2.58 → #697280 (4.86/4.65). All five status-on-light pairs, brand red
+        on white, and sidenav ink already passed. Raw-gray-as-text (e.g.
+        --gray-500) left for the browser pass — usage-dependent.
+      • Motion: global prefers-reduced-motion rule (animation/transition →
+        0.01ms) on top of the existing scoped login/pdf-shimmer ones.
+      • Focus: :focus-visible already consumed --focus-ring (P3-4); skip-link
+        focus style added. icon() SVGs verified aria-hidden.
+      • GUARD: tools/test_a11y_static.js (26 assertions, 18th suite) — unnamed-
+        button scan across all 6 HTML-emitting files must stay at ZERO, every
+        static control must have an accessible name, landmarks/skip-link/lang
+        present, text-token contrast recomputed live from the sheet ≥ 4.5,
+        reduced-motion + focus invariants. Regressions now fail CI.
+      • REMAINS (needs real browser/axe + owner QA): keyboard operability of
+        JS-driven widgets (onclick-div grids, drag-fill, lookahead cells),
+        focus management in modals (deliberately NOT adding Escape-close: the
+        generic modal's no-outside-click is an explicit product decision),
+        color-only information checks, axe run on each page.
 - [~] P4-3 (IN-PROGRESS) Loading/empty/error states. FINDING: the cx* helpers
       (cxSkeleton/cxEmpty/cxError) existed but had ZERO call sites in app.js.
       Adopted at 8 sites: 7 ad-hoc "Loading…" placeholders (directory users,

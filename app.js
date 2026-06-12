@@ -7038,7 +7038,7 @@ function _taRenderTagsSingle(id, val) {
   const el = document.getElementById(id + '-tags');
   if (!el) return;
   el.innerHTML = val
-    ? `<span class="ta-tag">${escapeHtml(val)}<button type="button" class="ta-remove" onmousedown="event.preventDefault();_taClearSingle('${id}')">×</button></span>`
+    ? `<span class="ta-tag">${escapeHtml(val)}<button type="button" class="ta-remove" aria-label="Clear ${escapeHtml(val)}" onmousedown="event.preventDefault();_taClearSingle('${id}')">×</button></span>`
     : '';
 }
 
@@ -7063,7 +7063,7 @@ function _taRenderTags(id, vals) {
   const el = document.getElementById(id + '-tags');
   if (!el) return;
   el.innerHTML = vals.map(v =>
-    `<span class="ta-tag">${escapeHtml(v)}<button type="button" class="ta-remove" onmousedown="event.preventDefault();_taRemove('${id}','${v.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')">×</button></span>`
+    `<span class="ta-tag">${escapeHtml(v)}<button type="button" class="ta-remove" aria-label="Remove ${escapeHtml(v)}" onmousedown="event.preventDefault();_taRemove('${id}','${v.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')">×</button></span>`
   ).join('');
 }
 
@@ -12388,7 +12388,7 @@ function modal({ title, sub, body, footer, size }) {
           <div class="modal-title">${title}</div>
           ${sub ? `<div class="modal-sub">${sub}</div>` : ''}
         </div>
-        <button class="modal-close" onclick="closeModal()">×</button>
+        <button class="modal-close" aria-label="Close dialog" onclick="closeModal()">×</button>
       </div>
       <div class="modal-body">${body || ''}</div>
       ${footer ? `<div class="modal-footer">${footer}</div>` : ''}
@@ -17654,7 +17654,7 @@ function _mtgAttendeesHTML(attendees, meetingId, isAdmin) {
                   <span style="width:7px;height:7px;border-radius:50%;background:${a.attended?'#27ae60':'#bbb'};display:inline-block;flex-shrink:0;"></span>
                   <span>${escapeHtml(a.name)}</span>
                   ${a.company ? `<span style="color:var(--gray-400);font-size:11px;">(${escapeHtml(a.company)})</span>` : ''}
-                  ${isAdmin ? `<button style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:15px;line-height:1;padding:0 0 0 2px;" onclick="deleteMtgAttendee('${a.id}','${meetingId}')">×</button>` : ''}
+                  ${isAdmin ? `<button style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:15px;line-height:1;padding:0 0 0 2px;" aria-label="Remove attendee ${escapeHtml(a.name)}" onclick="deleteMtgAttendee('${a.id}','${meetingId}')">×</button>` : ''}
                 </div>`).join('')}
             </div>`}
       </div>
@@ -29251,7 +29251,7 @@ function openSignaturePad({ fieldName, pageIndex, rect, target }) {
           <div class="signature-pad-title">Signature</div>
           <div class="signature-pad-sub">${escapeHtml(fieldName)}</div>
         </div>
-        <button class="modal-close" type="button" onclick="closeSignaturePad()">&times;</button>
+        <button class="modal-close" type="button" aria-label="Close signature pad" onclick="closeSignaturePad()">&times;</button>
       </div>
       <div class="signature-pad-tabs">
         <button type="button" class="sig-tab active"  data-mode="draw">Draw</button>

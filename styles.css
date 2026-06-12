@@ -47,8 +47,8 @@
   --card-bg: #ffffff;
   --text: #1a1a1a;
   --text-main: #131316;
-  --text-muted: #74777f;
-  --text-subtle: #98a2b3;
+  --text-muted: #6e7179; /* AA on --surface/-2 (was #74777f @ 4.48) */
+  --text-subtle: #697280; /* AA on --surface/-2 (was #98a2b3 @ 2.58) */
   --border: #ebebeb;
   --border-strong: #d8d8d8;
   --line-soft: #e4e7ec;
@@ -120,6 +120,22 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Skip-to-content link — first tabbable element; visible only on focus */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -52px;
+  z-index: 3000;
+  background: var(--near-black);
+  color: var(--white);
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+.skip-link:focus,
+.skip-link:focus-visible { top: 8px; outline: var(--focus-ring); outline-offset: var(--focus-ring-offset); }
 
 html, body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -13436,4 +13452,16 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
    =================================================================== */
 @media (pointer: coarse) and (min-width: 768px) {
   .container { max-width: 900px; }
+}
+
+/* ============================================================================
+   A11y — honor prefers-reduced-motion globally (P4-2)
+   ============================================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

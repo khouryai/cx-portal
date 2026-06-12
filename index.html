@@ -64,6 +64,7 @@
   crossorigin="anonymous">
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to main content</a>
 
 <div id="login-overlay" class="login-overlay">
   <div class="signin-root">
@@ -221,7 +222,7 @@ function _signinTogglePw(){
     <div style="font-size:18px;font-weight:700;color:#111;margin-bottom:6px;">Reset Password</div>
     <div style="font-size:13px;color:#666;margin-bottom:20px;">Enter your account email and we'll send you a reset link.</div>
     <div style="text-align:left;margin-bottom:16px;">
-      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:0.07em;color:#666;margin-bottom:6px;">EMAIL</label>
+      <label for="fp-email" style="display:block;font-size:11px;font-weight:700;letter-spacing:0.07em;color:#666;margin-bottom:6px;">EMAIL</label>
       <input id="fp-email" type="email" class="form-input" placeholder="you@example.com"
         autocomplete="email" onkeydown="if(event.key==='Enter')submitPasswordReset()">
     </div>
@@ -240,7 +241,7 @@ function _signinTogglePw(){
 </button>
 
 <!-- SIDE NAV -->
-<nav id="sidenav">
+<nav id="sidenav" aria-label="Primary">
 
   <!-- Brand + collapse button -->
   <div class="sidenav-brand">
@@ -468,6 +469,8 @@ function _signinTogglePw(){
 </nav>
 
 <!-- ==== DASHBOARD ==== -->
+<main id="main-content">
+
 <section class="page active" id="page-dashboard">
 
   <!-- HERO -->
@@ -715,11 +718,11 @@ function _signinTogglePw(){
   </div>
   <div class="container">
     <div class="filter-bar">
-      <input type="text" id="ap-search" placeholder="Search activities..." class="filter-input">
-      <select id="ap-status-filter" class="filter-select"></select>
-      <select id="ap-subsys-filter" class="filter-select"></select>
-      <select id="ap-phase-filter" class="filter-select"></select>
-      <select id="ap-location-filter" class="filter-select"></select>
+      <input type="text" id="ap-search" aria-label="Search activities" placeholder="Search activities..." class="filter-input">
+      <select id="ap-status-filter" aria-label="Filter by status" class="filter-select"></select>
+      <select id="ap-subsys-filter" aria-label="Filter by subsystem" class="filter-select"></select>
+      <select id="ap-phase-filter" aria-label="Filter by phase" class="filter-select"></select>
+      <select id="ap-location-filter" aria-label="Filter by location" class="filter-select"></select>
       <button class="filter-clear" onclick="clearAPFilters()">Reset</button>
     </div>
     <div class="data-card">
@@ -764,12 +767,12 @@ function _signinTogglePw(){
       <div class="kpi-card kpi-mini kpi-clickable" id="li-kpi-notstarted" onclick="_liSetKpiFilter('notstarted')" title="Click to filter by Not Started"><div class="kpi-label">Not Started</div><div class="kpi-value" id="li-open">—</div></div>
     </div>
     <div class="filter-bar">
-      <input type="text" id="li-search" placeholder="Search test cases..." class="filter-input">
-      <select id="li-subsys-filter" class="filter-select"></select>
-      <select id="li-phase-filter" class="filter-select"></select>
-      <select id="li-location-filter" class="filter-select"></select>
-      <select id="li-activity-filter" class="filter-select"></select>
-      <select id="li-status-filter" class="filter-select"></select>
+      <input type="text" id="li-search" aria-label="Search test cases" placeholder="Search test cases..." class="filter-input">
+      <select id="li-subsys-filter" aria-label="Filter by subsystem" class="filter-select"></select>
+      <select id="li-phase-filter" aria-label="Filter by phase" class="filter-select"></select>
+      <select id="li-location-filter" aria-label="Filter by location" class="filter-select"></select>
+      <select id="li-activity-filter" aria-label="Filter by activity" class="filter-select"></select>
+      <select id="li-status-filter" aria-label="Filter by status" class="filter-select"></select>
       <button class="filter-clear" onclick="clearLIFilters()">Reset</button>
     </div>
     <div class="data-card">
@@ -804,12 +807,12 @@ function _signinTogglePw(){
       <div class="kpi-card kpi-mini"><div class="kpi-label">Closed</div><div class="kpi-value good" id="pl-closed">—</div></div>
     </div>
     <div class="filter-bar">
-      <input type="text" id="pl-search" placeholder="Search punch items..." class="filter-input">
-      <select id="pl-status-filter" class="filter-select"></select>
-      <select id="pl-priority-filter" class="filter-select"></select>
-      <select id="pl-trade-filter" class="filter-select"></select>
-      <select id="pl-type-filter" class="filter-select"></select>
-      <select id="pl-location-filter" class="filter-select"></select>
+      <input type="text" id="pl-search" aria-label="Search punch items" placeholder="Search punch items..." class="filter-input">
+      <select id="pl-status-filter" aria-label="Filter by status" class="filter-select"></select>
+      <select id="pl-priority-filter" aria-label="Filter by priority" class="filter-select"></select>
+      <select id="pl-trade-filter" aria-label="Filter by trade" class="filter-select"></select>
+      <select id="pl-type-filter" aria-label="Filter by type" class="filter-select"></select>
+      <select id="pl-location-filter" aria-label="Filter by location" class="filter-select"></select>
       <button class="filter-clear" onclick="clearPLFilters()">Reset</button>
     </div>
     <div class="data-card">
@@ -1021,23 +1024,23 @@ function _signinTogglePw(){
 
           <div class="form-grid">
             <div class="form-field">
-              <label>Phase</label>
+              <label for="r-phase">Phase</label>
               <select id="r-phase" class="form-input"></select>
             </div>
             <div class="form-field">
-              <label>Location</label>
+              <label for="r-location">Location</label>
               <select id="r-location" class="form-input"></select>
             </div>
             <div class="form-field">
-              <label>Subsystem</label>
+              <label for="r-subsystem">Subsystem</label>
               <select id="r-subsystem" class="form-input"></select>
             </div>
             <div class="form-field">
-              <label>Activity</label>
+              <label for="r-activity">Activity</label>
               <select id="r-activity" class="form-input"></select>
             </div>
             <div class="form-field form-field-full">
-              <label>Test Case</label>
+              <label for="r-testid">Test Case</label>
               <select id="r-testid" class="form-input"></select>
               <div class="form-hint" id="r-test-info"></div>
             </div>
@@ -1054,37 +1057,37 @@ function _signinTogglePw(){
             </div>
 
             <div class="form-field">
-              <label>Date Tested</label>
+              <label for="r-date">Date Tested</label>
               <input type="date" id="r-date" class="form-input">
             </div>
             <div class="form-field">
-              <label>Attempt Number</label>
+              <label for="r-attempt">Attempt Number</label>
               <input type="number" id="r-attempt" min="1" value="1" class="form-input">
             </div>
             <div class="form-field">
-              <label>Number of Testers</label>
+              <label for="r-testers">Number of Testers</label>
               <input type="number" id="r-testers" min="1" value="1" class="form-input">
             </div>
             <div class="form-field">
-              <label>Test Hours</label>
+              <label for="r-hours">Test Hours</label>
               <input type="number" id="r-hours" min="0" step="0.5" placeholder="e.g. 2.5" class="form-input">
             </div>
             <div class="form-field form-field-full">
-              <label>Team / Crew Name</label>
+              <label for="r-team">Team / Crew Name</label>
               <input type="text" id="r-team" placeholder="e.g. ATS Team A" class="form-input">
             </div>
 
             <div class="form-field form-field-full conditional" id="r-fail-block" style="display:none;">
-              <label>Reason for Failure</label>
+              <label for="r-fail-reason">Reason for Failure</label>
               <textarea id="r-fail-reason" rows="2" placeholder="Describe what went wrong..." class="form-input"></textarea>
             </div>
             <div class="form-field form-field-full conditional" id="r-blocked-block" style="display:none;">
-              <label>Reason for Blocking</label>
+              <label for="r-blocked-reason">Reason for Blocking</label>
               <textarea id="r-blocked-reason" rows="2" placeholder="What's blocking the test? Who can resolve?" class="form-input"></textarea>
             </div>
 
             <div class="form-field form-field-full">
-              <label>Notes (optional)</label>
+              <label for="r-notes">Notes (optional)</label>
               <textarea id="r-notes" rows="2" placeholder="Any other observations..." class="form-input"></textarea>
             </div>
           </div>
@@ -1105,23 +1108,23 @@ function _signinTogglePw(){
 
           <div class="form-grid">
             <div class="form-field">
-              <label>Date</label>
+              <label for="d-date">Date</label>
               <input type="date" id="d-date" class="form-input">
             </div>
             <div class="form-field">
-              <label>Location</label>
+              <label for="d-location">Location</label>
               <select id="d-location" class="form-input"></select>
             </div>
             <div class="form-field">
-              <label>Subsystem</label>
+              <label for="d-subsystem">Subsystem</label>
               <select id="d-subsystem" class="form-input"></select>
             </div>
             <div class="form-field">
-              <label>Number of Testers</label>
+              <label for="d-testers">Number of Testers</label>
               <input type="number" id="d-testers" min="1" value="1" class="form-input">
             </div>
             <div class="form-field">
-              <label>Idle Hours</label>
+              <label for="d-idle">Idle Hours</label>
               <input type="number" id="d-idle" min="0" step="0.5" value="0" class="form-input">
             </div>
             <div class="form-field"></div>
@@ -1148,7 +1151,7 @@ function _signinTogglePw(){
             </div>
 
             <div class="form-field conditional delay-field" style="display:none;">
-              <label>Delay Category</label>
+              <label for="d-delay-category">Delay Category</label>
               <select id="d-delay-category" class="form-input">
                 <option value="">Select...</option>
                 <option>Equipment / Hardware Issue</option>
@@ -1163,15 +1166,15 @@ function _signinTogglePw(){
               </select>
             </div>
             <div class="form-field conditional delay-field" style="display:none;">
-              <label>Delay Duration (hours)</label>
+              <label for="d-delay-duration">Delay Duration (hours)</label>
               <input type="number" id="d-delay-duration" min="0" step="0.5" class="form-input">
             </div>
             <div class="form-field form-field-full conditional delay-field" style="display:none;">
-              <label>Delay Notes</label>
+              <label for="d-delay-notes">Delay Notes</label>
               <textarea id="d-delay-notes" rows="2" placeholder="Describe the delay..." class="form-input"></textarea>
             </div>
             <div class="form-field conditional delay-field" style="display:none;">
-              <label>Responsible Party</label>
+              <label for="d-responsible-party">Responsible Party</label>
               <select id="d-responsible-party" class="form-input" onchange="document.getElementById('d-resp-other-wrap').style.display=this.value==='Other'?'':'none';">
                 <option value="">Select...</option>
                 <option value="BART">BART</option>
@@ -1181,16 +1184,16 @@ function _signinTogglePw(){
               </select>
             </div>
             <div class="form-field conditional delay-field" id="d-resp-other-wrap" style="display:none;">
-              <label>Other — specify</label>
+              <label for="d-responsible-party-other">Other — specify</label>
               <input type="text" id="d-responsible-party-other" class="form-input" placeholder="Enter responsible party...">
             </div>
 
             <div class="form-field form-field-full">
-              <label>Overall Day Notes</label>
+              <label for="d-overall-notes">Overall Day Notes</label>
               <textarea id="d-overall-notes" rows="2" placeholder="Summary of the day's work..." class="form-input"></textarea>
             </div>
             <div class="form-field form-field-full">
-              <label>Plan for Next Day</label>
+              <label for="d-next-plan">Plan for Next Day</label>
               <textarea id="d-next-plan" rows="2" placeholder="What's planned tomorrow?" class="form-input"></textarea>
             </div>
           </div>
@@ -1448,6 +1451,8 @@ function _signinTogglePw(){
   </div>
 </section>
 
+</main>
+
 <footer id="footer">
   <div class="footer-inner">
     <div class="footer-left">
@@ -1538,12 +1543,12 @@ function _signinTogglePw(){
   </div>
   <div id="drw-viewer-navbar" class="drw-viewer-navbar">
     <button class="drw-nav-btn" id="drw-nav-prev" onclick="_drwGotoRel(-1)" title="Previous page (←)">◀</button>
-    <span class="drw-nav-page">Page <input id="drw-nav-page-input" type="number" min="1" value="1" style="width:54px;"> of <span id="drw-nav-page-count">—</span></span>
+    <span class="drw-nav-page">Page <input id="drw-nav-page-input" aria-label="Page number" type="number" min="1" value="1" style="width:54px;"> of <span id="drw-nav-page-count">—</span></span>
     <button class="drw-nav-btn" id="drw-nav-next" onclick="_drwGotoRel(1)" title="Next page (→)">▶</button>
     <span class="drw-nav-divider"></span>
     <span style="font-size:11px;color:var(--gray-500);">Jump:</span>
     <div class="drw-find-wrap">
-      <input id="drw-find-input" type="search" placeholder="Drawing #, name, or any text in the PDF…" autocomplete="off">
+      <input id="drw-find-input" aria-label="Search drawings" type="search" placeholder="Drawing #, name, or any text in the PDF…" autocomplete="off">
       <div id="drw-find-results" class="drw-find-results" style="display:none;"></div>
       <span id="drw-find-status" class="drw-find-status"></span>
     </div>
