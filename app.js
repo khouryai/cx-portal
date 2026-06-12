@@ -37966,11 +37966,19 @@ function _dynWhatIfZonesAll() {
 }
 
 // Resolve the current scope to { windows, pool }.
+// Zones referenced by any per-day scenario override (added access locations).
+function _dynWhatIfScenarioZones() {
+  const z = new Set();
+  Object.values(window._dynWhatIf.dow || {}).forEach(ov => (ov && ov.zones || []).forEach(x => z.add(x)));
+  return z;
+}
+
 function _dynWhatIfScope() {
   const w = window._dynWhatIf;
   const allWins = (_dynPage.shifts || []).filter(s => s.status === 'planned');
   const allInst = (_dynPage.instances || []).filter(i =>
     i.track_section_under_test && !['Pass', 'Not Applicable'].includes(i.status));
+  const scenZones = _dynWhatIfScenarioZones();   // zones added per-day in the scenario
   if (w.mode === 'campaigns') {
     const ids = w.campIds;
     const camps = (_dynPage.campaigns || []).filter(c => ids.has(String(c.id)));
@@ -37980,35 +37988,78 @@ function _dynWhatIfScope() {
       if (c.test_case_ids && c.test_case_ids.length) { anyScope = true; c.test_case_ids.forEach(t => tcs.add(t)); }
     });
     const windows = allWins.filter(s => ids.has(String(s.campaign_id)));
-    const pool = allInst.filter(i => zones.has(i.track_section_under_test) && (!anyScope || tcs.has(i.test_id)));
-    return { windows, pool, label: camps.length === 1 ? camps[0].name : camps.length + ' campaigns' };
+    // pool = campaign-scoped runs, PLUS any run whose zone the scenario adds access for
+    const pool = allInst.filter(i => {
+      const z = i.track_section_under_test;
+      if (zones.has(z)) return !anyScope || tcs.has(i.test_id);
+      return scenZones.has(z);
+    });
+    // window-scope gate matching auto-allocate (a window only takes runs its
+    // campaign scopes in; scenario-added-zone runs are always allowed).
+    const scopeByCamp = new Map();
+    camps.forEach(c => { if (c.test_case_ids && c.test_case_ids.length) scopeByCamp.set(String(c.id), new Set(c.test_case_ids)); });
+    const windowAllows = (i, win) => {
+      if (scenZones.has(i.track_section_under_test)) return true;
+      const sc = scopeByCamp.get(String(win.campaign_id));
+      return !sc || sc.has(i.test_id);
+    };
+    return { windows, pool, windowAllows, label: camps.length === 1 ? camps[0].name : camps.length + ' campaigns' };
   }
-  // location mode: windows in the selected zones within the date range
-  const zones = w.zones;
+  // location mode: windows in the selected zones (∪ scenario zones) within the range
+  const zones = new Set([...w.zones, ...scenZones]);
   const inRange = s => (!w.dateStart || s.shift_date >= w.dateStart) && (!w.dateEnd || s.shift_date <= w.dateEnd);
   const winGrantsZone = s => (s.access_zones && s.access_zones.length ? s.access_zones : [s.control_zone_code]).some(z => zones.has(z));
   const windows = allWins.filter(s => inRange(s) && winGrantsZone(s));
   const pool = allInst.filter(i => zones.has(i.track_section_under_test));
-  return { windows, pool, label: zones.size === 1 ? [...zones][0] : zones.size + ' locations' };
+  return { windows, pool, windowAllows: null, label: w.zones.size === 1 ? [...w.zones][0] : w.zones.size + ' locations' };
 }
 
-// Apply the per-DOW extension to a window set (end = start + target hours).
+// Current (baseline) access hours + zones for a given day-of-week, from scope
+// windows — used to seed the per-day scenario editor.
+function _dynWhatIfDowMeta(windows) {
+  const meta = {};
+  for (const x of windows) {
+    if (!x.shift_date) continue;
+    const d = String(new Date(x.shift_date + 'T12:00:00').getDay());
+    const m = meta[d] || (meta[d] = { count: 0, hours: null, zones: new Set() });
+    m.count++;
+    (x.access_zones && x.access_zones.length ? x.access_zones : [x.control_zone_code]).forEach(z => z && m.zones.add(z));
+    if (x.start_at && x.end_at && m.hours == null) m.hours = +(_dynWinMinutes(x) / 60).toFixed(1);
+  }
+  return meta;
+}
+
+// Apply the per-day scenario to a window set:
+//  • off    → drop that day's windows (no access)
+//  • hours  → set shift length (extend / reduce)
+//  • zones  → replace the day's granted access locations (expand / reduce)
 function _dynWhatIfExtend(windows) {
   const w = window._dynWhatIf;
-  return windows.map(x => {
-    if (!x.start_at) return x;
+  const out = [];
+  for (const x of windows) {
     const dow = String(new Date(x.shift_date + 'T12:00:00').getDay());
-    const target = w.dow[dow];
-    if (!(target > 0)) return x;
-    const s = new Date(x.start_at);
-    return Object.assign({}, x, { end_at: new Date(s.getTime() + target * 3600 * 1000).toISOString() });
-  });
+    const ov = w.dow[dow];
+    if (ov && ov.off) continue;                       // no access this day
+    if (!ov) { out.push(x); continue; }
+    const win = Object.assign({}, x);
+    if (ov.hours > 0 && x.start_at) {
+      win.end_at = new Date(new Date(x.start_at).getTime() + ov.hours * 3600 * 1000).toISOString();
+    }
+    if (ov.zones && ov.zones.length) {
+      win.access_zones = [...ov.zones];
+      win.control_zone_code = ov.zones.includes(x.control_zone_code) ? x.control_zone_code : ov.zones[0];
+    }
+    out.push(win);
+  }
+  return out;
 }
 
-// Full KPI set for one window scenario.
-function _dynWhatIfMetrics(windows, pool, prereqs) {
+// Full KPI set for one window scenario — uses the SAME mapping rules as
+// auto-allocate (duration packing + slack + zone/access/mode gate + per-campaign
+// windowAllows), so the comparison reflects what allocation would actually do.
+function _dynWhatIfMetrics(windows, pool, prereqs, windowAllows) {
   const d = _dynCascadeAllocate({
-    instances: pool, windows, prereqs,
+    instances: pool, windows, prereqs, windowAllows,
     runMinutesFn: i => i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN,
     windowMinutesFn: _dynWinMinutes, slack: _dynAllocSlack(),
   });
@@ -38040,15 +38091,16 @@ function _dynWhatIfMetrics(windows, pool, prereqs) {
 
 function _dynWhatIfCompute() {
   const w = window._dynWhatIf;
-  const { windows, pool, label } = _dynWhatIfScope();
-  const base = _dynWhatIfMetrics(windows, pool, w.prereqs);
-  const scenario = _dynWhatIfMetrics(_dynWhatIfExtend(windows), pool, w.prereqs);
-  return { base, scenario, label, nWindows: windows.length, nPool: pool.length };
+  const { windows, pool, label, windowAllows } = _dynWhatIfScope();
+  const scenWindows = _dynWhatIfExtend(windows);
+  const base = _dynWhatIfMetrics(windows, pool, w.prereqs, windowAllows);
+  const scenario = _dynWhatIfMetrics(scenWindows, pool, w.prereqs, windowAllows);
+  return { base, scenario, label, nWindows: windows.length, nScenWindows: scenWindows.length, nPool: pool.length };
 }
 
 function _dynWhatIfKpiHtml(r) {
   const dlt = (a, b, unit, goodUp) => {
-    const d = b - a;
+    const d = Math.round((b - a) * 100) / 100;   // avoid float noise on averages
     if (!d) return '<span style="color:var(--gray-400);">—</span>';
     const good = goodUp ? d > 0 : d < 0;
     return `<span style="color:${good ? '#059669' : '#b45309'};font-weight:600;">${d > 0 ? '+' : ''}${d}${unit || ''}</span>`;
@@ -38099,32 +38151,86 @@ function _dynWhatIfScopeControlsHtml() {
         ${zones.map(z => `<label style="font-size:12px;cursor:pointer;border:1px solid ${w.zones.has(z) ? 'var(--hitachi-red)' : 'var(--gray-300)'};border-radius:5px;padding:3px 8px;"><input type="checkbox" style="margin-right:4px;" ${w.zones.has(z) ? 'checked' : ''} onchange="_dynWhatIfToggleZone('${escapeHtml(z)}',this.checked)">${escapeHtml(z)}</label>`).join('') || '<span style="font-size:12px;color:var(--gray-400);">No zones.</span>'}
       </div>
       <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--gray-600);">
-        <label>From <input type="date" value="${escapeHtml(w.dateStart)}" onchange="window._dynWhatIf.dateStart=this.value;_dynWhatIfRedraw();" style="padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;"></label>
-        <label>to <input type="date" value="${escapeHtml(w.dateEnd)}" onchange="window._dynWhatIf.dateEnd=this.value;_dynWhatIfRedraw();" style="padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;"></label>
+        <label>From <input type="date" value="${escapeHtml(w.dateStart)}" onchange="window._dynWhatIf.dateStart=this.value;_dynWhatIfRender();" style="padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;"></label>
+        <label>to <input type="date" value="${escapeHtml(w.dateEnd)}" onchange="window._dynWhatIf.dateEnd=this.value;_dynWhatIfRender();" style="padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;"></label>
       </div>`;
   }
-  const dowInputs = _DYN_WIF_DOW.map(([d, lbl]) =>
-    `<label style="display:flex;flex-direction:column;align-items:center;font-size:10.5px;color:var(--gray-600);gap:2px;">
-      ${lbl}
-      <input type="number" min="0" max="12" step="0.5" value="${w.dow[d] != null ? w.dow[d] : ''}" placeholder="—" style="width:48px;padding:4px;border:1px solid var(--gray-300);border-radius:5px;text-align:center;font-size:12px;" onchange="_dynWhatIfSetDow('${d}',this.value)">
-    </label>`).join('');
+  // Per-day scenario editor: No access · hours · access locations, seeded from
+  // each day's current windows.
+  const meta = _dynWhatIfDowMeta(_dynWhatIfScope().windows);
+  const allZones = _dynWhatIfZonesAll();
+  const dowRows = _DYN_WIF_DOW.map(([d, lbl]) => {
+    const m = meta[d];
+    const ov = w.dow[d] || {};
+    const off = !!ov.off;
+    const curHours = m && m.hours != null ? m.hours : null;
+    const curZones = m ? m.zones : new Set();
+    const effZones = ov.zones ? new Set(ov.zones) : curZones;   // shown selection
+    const hasWin = !!m;
+    const zoneChips = allZones.map(z => {
+      const on = effZones.has(z);
+      const added = on && !curZones.has(z);     // newly-added access location
+      const removed = !on && curZones.has(z);
+      return `<button type="button" onclick="_dynWhatIfToggleDowZone('${d}','${escapeHtml(z)}')" ${off ? 'disabled' : ''}
+        style="font-size:10px;padding:1px 6px;border-radius:4px;cursor:${off ? 'default' : 'pointer'};margin:1px;
+          border:1px solid ${on ? (added ? '#059669' : 'var(--hitachi-red)') : 'var(--gray-300)'};
+          background:${on ? (added ? '#ecfdf5' : 'rgba(230,0,18,.06)') : '#fff'};
+          color:${on ? (added ? '#059669' : 'var(--hitachi-red)') : (removed ? '#b45309' : 'var(--gray-500)')};
+          text-decoration:${removed ? 'line-through' : 'none'};opacity:${off ? .5 : 1};">${escapeHtml(z)}</button>`;
+    }).join('');
+    return `<tr style="border-top:1px solid var(--gray-100);${off ? 'opacity:.6;' : ''}">
+      <td style="padding:4px 6px;font-weight:600;white-space:nowrap;">${lbl}${hasWin ? '' : ' <span style="font-weight:400;color:var(--gray-400);font-size:10px;">(no shift)</span>'}</td>
+      <td style="padding:4px 6px;text-align:center;"><input type="checkbox" ${off ? 'checked' : ''} onchange="_dynWhatIfSetDowOff('${d}',this.checked)" title="No access this day — recalculate into other shifts"></td>
+      <td style="padding:4px 6px;"><input type="number" min="0" max="12" step="0.5" value="${ov.hours != null ? ov.hours : ''}" placeholder="${curHours != null ? curHours : '—'}" ${off ? 'disabled' : ''} onchange="_dynWhatIfSetDowHours('${d}',this.value)" style="width:46px;padding:3px;border:1px solid var(--gray-300);border-radius:4px;text-align:center;font-size:11px;"></td>
+      <td style="padding:4px 6px;line-height:1.7;">${zoneChips}</td>
+    </tr>`;
+  }).join('');
   return `
     <div style="display:flex;gap:6px;margin-bottom:8px;">${tab('campaigns', 'By campaign')}${tab('locations', 'By location')}</div>
     ${scopeBody}
     <div style="margin-top:12px;">
-      <div style="font-size:12px;color:var(--gray-600);margin-bottom:5px;">Extend shift length on these days (hours) <span style="color:var(--gray-400);">— blank = keep current</span></div>
-      <div style="display:flex;gap:6px;">${dowInputs}</div>
+      <div style="font-size:12px;color:var(--gray-600);margin-bottom:5px;">Per-day scenario <span style="color:var(--gray-400);">— toggle access off, change hours (blank = keep), add/remove access locations</span></div>
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead><tr style="color:var(--gray-500);font-size:10px;text-transform:uppercase;letter-spacing:.03em;">
+          <th style="text-align:left;padding:2px 6px;">Day</th>
+          <th style="padding:2px 6px;">No&nbsp;access</th>
+          <th style="text-align:left;padding:2px 6px;">Hours</th>
+          <th style="text-align:left;padding:2px 6px;">Access locations</th>
+        </tr></thead><tbody>${dowRows}</tbody>
+      </table>
+      <div style="font-size:10px;color:var(--gray-400);margin-top:4px;">Green = added location · struck-through = removed. Backlog from off/reduced days is re-allocated into the remaining shifts by the auto-schedule rules.</div>
     </div>`;
 }
 
+// Get/create the override object for a day-of-week.
+function _dynWhatIfDow(d) {
+  const w = window._dynWhatIf;
+  return (w.dow[d] = w.dow[d] || { off: false });
+}
+function _dynWhatIfPruneDow(d) {
+  const o = window._dynWhatIf.dow[d];
+  if (o && !o.off && !(o.hours > 0) && !(o.zones && o.zones.length)) delete window._dynWhatIf.dow[d];
+}
 function _dynWhatIfSetMode(m) { window._dynWhatIf.mode = m; if (m === 'locations' && !window._dynWhatIf.zones.size) { const z = _dynWhatIfZonesAll(); if (z[0]) window._dynWhatIf.zones.add(z[0]); } _dynWhatIfRender(); }
-function _dynWhatIfToggleCamp(id, on) { if (on) window._dynWhatIf.campIds.add(String(id)); else window._dynWhatIf.campIds.delete(String(id)); _dynWhatIfRedraw(); }
-function _dynWhatIfToggleZone(z, on) { if (on) window._dynWhatIf.zones.add(z); else window._dynWhatIf.zones.delete(z); _dynWhatIfRedraw(); }
-function _dynWhatIfSetDow(d, v) { const n = parseFloat(v); if (n > 0) window._dynWhatIf.dow[d] = n; else delete window._dynWhatIf.dow[d]; _dynWhatIfRedraw(); }
+function _dynWhatIfToggleCamp(id, on) { if (on) window._dynWhatIf.campIds.add(String(id)); else window._dynWhatIf.campIds.delete(String(id)); _dynWhatIfRender(); }
+function _dynWhatIfToggleZone(z, on) { if (on) window._dynWhatIf.zones.add(z); else window._dynWhatIf.zones.delete(z); _dynWhatIfRender(); }
+function _dynWhatIfSetDowOff(d, on) { _dynWhatIfDow(d).off = !!on; _dynWhatIfPruneDow(d); _dynWhatIfRender(); }
+function _dynWhatIfSetDowHours(d, v) { const n = parseFloat(v); const o = _dynWhatIfDow(d); if (n > 0) o.hours = n; else delete o.hours; _dynWhatIfPruneDow(d); _dynWhatIfRedraw(); }
+function _dynWhatIfToggleDowZone(d, z) {
+  const o = _dynWhatIfDow(d);
+  if (!o.zones) { // seed from this day's CURRENT zones so a toggle expands/reduces from reality
+    const meta = _dynWhatIfDowMeta(_dynWhatIfScope().windows)[d];
+    o.zones = meta ? [...meta.zones] : [];
+  }
+  const i = o.zones.indexOf(z);
+  if (i >= 0) o.zones.splice(i, 1); else o.zones.push(z);
+  _dynWhatIfPruneDow(d);
+  _dynWhatIfRender();
+}
 
 function _dynWhatIfRedraw() {
   const r = _dynWhatIfCompute();
-  const sub = document.getElementById('whatif-sub'); if (sub) sub.textContent = `${r.label} · ${r.nPool} runs in scope · ${r.nWindows} planned shift${r.nWindows === 1 ? '' : 's'}`;
+  const sub = document.getElementById('whatif-sub'); if (sub) sub.textContent = `${r.label} · ${r.nPool} runs in scope · ${r.nWindows} current shift${r.nWindows === 1 ? '' : 's'} → ${r.nScenWindows} in scenario`;
   const kpi = document.getElementById('whatif-kpi'); if (kpi) kpi.innerHTML = _dynWhatIfKpiHtml(r);
   _dynWhatIfDrawChart(r);
 }

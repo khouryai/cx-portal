@@ -957,6 +957,28 @@ checking remaining time, overrunning it by hours.
   (matches the client default; localStorage isn't visible to Postgres).
 - Harness 23/23, advisors clean, CRLF preserved.
 
+## Dynamic Testing — what-if per-day scenario builder (2026-06-12, owner)
+Owner: what-if should let you (1) mark certain days as NO ACCESS and recalc the
+instances into the remaining shifts by the auto-schedule rules; (2) add/remove
+access LOCATIONS per day to expand/reduce access and compare; (3) every compare
+must map instances to windows by the SAME rules as auto-allocate.
+- Per-day scenario model: w.dow[DOW] = { off, hours, zones }. _dynWhatIfExtend
+  now drops off-days' windows, sets hours (extend/reduce), and replaces a day's
+  access_zones (control re-pointed to a granted zone). Editor replaced the
+  hours-only row with a per-day table: Day · No access · Hours · Access-location
+  chips (seeded from each day's current windows; green = added, struck = removed).
+- Scope pool now includes any scenario-ADDED zone's runs (_dynWhatIfScenarioZones),
+  so "add Y10 on Saturdays" pulls Y10 backlog into the comparison; baseline can't
+  place them (no access) → the scenario shows the gain.
+- SAME-RULES guarantee: _dynWhatIfMetrics passes windowAllows (campaign mode gate,
+  added-zone bypass) to _dynCascadeAllocate alongside the duration packing + slack
+  + zone/access/mode gate it already used — identical mapping to auto-allocate.
+  Off/reduced days' backlog re-allocates into remaining shifts automatically.
+- Fixed float-noise on the avg-runs/shift delta (rounded).
+- Test: test_dyn_whatif now 14 (per-day off drops windows, add-location expands
+  access_zones + pulls pool, windowAllows present). Harness 23/23. Verified the
+  per-day editor + chart visually. CRLF preserved. (No DB change.)
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose

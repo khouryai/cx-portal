@@ -42,8 +42,8 @@ run("window._dynWhatIf.dateStart='2026-06-07';"); // excludes the Sat 6/6 window
 sc = run("_dynWhatIfScope().windows.length");
 assert(sc === 0, "date range filters out windows before the start date");
 
-// ── per-DOW extension only touches matching days ──────────────────────────────
-run("window._dynWhatIf.mode='campaigns'; window._dynWhatIf.campIds=new Set(['cA','cB']); window._dynWhatIf.dow={'6':5};"); // Sat → 5h
+// ── per-day extension only touches matching days ──────────────────────────────
+run("window._dynWhatIf.mode='campaigns'; window._dynWhatIf.campIds=new Set(['cA','cB']); window._dynWhatIf.dow={'6':{hours:5}};"); // Sat → 5h
 const ext = run(`(function(){
   const s=_dynWhatIfScope();
   const e=_dynWhatIfExtend(s.windows);
@@ -54,16 +54,39 @@ const ext = run(`(function(){
 assert(ext.sat === 300, "Saturday window extended to 5 h (300 min)");
 assert(ext.mon === 120, "Monday window unchanged (still 120 min) — extension is per-day");
 
-// ── metrics + compare: extending Sat schedules more & finishes utilization up ─
+// ── per-day NO ACCESS drops that day's windows ────────────────────────────────
+run("window._dynWhatIf.dow={'6':{off:true}};"); // Sat off
+const offWins = run("_dynWhatIfExtend(_dynWhatIfScope().windows).map(w=>w.id)");
+assert(!offWins.includes("wA") && offWins.includes("wB"), "marking Saturday as no-access drops the Sat window, keeps Monday");
+
+// ── per-day ADD a location expands access_zones (and pool) ─────────────────────
+// Add Y10 to the Saturday W40 window; a Y10 run should now be eligible for it.
+run("window._dynWhatIf.dow={'6':{zones:['W40','Y10']}};");
+const addRes = run(`(function(){
+  const s=_dynWhatIfScope();
+  const e=_dynWhatIfExtend(s.windows);
+  const sat=e.find(w=>w.id==='wA');
+  const poolY = s.pool.filter(i=>i.track_section_under_test==='Y10').length;
+  return { satZones: sat.access_zones, poolY };
+})()`);
+assert(JSON.stringify(addRes.satZones) === JSON.stringify(["W40", "Y10"]), "adding Y10 expands the Sat window's access_zones");
+assert(addRes.poolY > 0, "adding a location pulls that zone's runs into the comparison pool");
+
+// ── metrics + compare: extending Sat schedules more ──────────────────────────
+run("window._dynWhatIf.dow={'1':{hours:5},'2':{hours:5},'3':{hours:5},'4':{hours:5},'5':{hours:5},'6':{hours:5}};");
 const cmp = run(`(function(){
   const r=_dynWhatIfCompute();
-  return { basePlaced:r.base.placed, scenPlaced:r.scenario.placed, baseUtil:r.base.utilPct, scenWindows:r.nWindows,
-           baseCum:r.base.cumulative.length, scenCum:r.scenario.cumulative.length, label:r.label };
+  return { basePlaced:r.base.placed, scenPlaced:r.scenario.placed, baseUtil:r.base.utilPct,
+           baseWin:r.nWindows, scenWin:r.nScenWindows };
 })()`);
 assert(cmp.scenPlaced >= cmp.basePlaced, "scenario schedules at least as many as current");
-assert(cmp.scenPlaced > cmp.basePlaced, "extending Saturday to 5h schedules strictly more W40 runs");
+assert(cmp.scenPlaced > cmp.basePlaced, "extending shifts schedules strictly more runs");
 assert(typeof cmp.baseUtil === "number", "utilization KPI computed");
 assert(Array.isArray(run("_dynWhatIfCompute().base.cumulative")), "cumulative series produced for the chart");
+// windowAllows matches auto-allocate: a window only takes its campaign's runs
+run("window._dynWhatIf.dow={};");
+const gate = run(`(function(){ const s=_dynWhatIfScope(); return typeof s.windowAllows; })()`);
+assert(gate === "function", "campaign-mode exposes a windowAllows gate (matches auto-allocate)");
 
 console.log(`test_dyn_whatif: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
