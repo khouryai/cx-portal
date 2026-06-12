@@ -29,8 +29,9 @@ Rules of engagement (also in CLAUDE.md):
 | Status mid-dots | `--good-dot`, `--warn-dot`, `--bad-dot`, `--info-dot`, `--pending-dot` | Small indicator dots/pills where the full status color is too dark |
 | Accents | `--accent-blue(-strong)`, `--brand-blue`, `--accent-indigo`, `--accent-amber`, `--green-700` | Charts, links, secondary emphasis |
 | Lookahead disciplines | `--disc-tc`, `--disc-cons`, `--disc-design`, `--disc-default` (+ `-bg` each) | Discipline bands on lookahead/calendar |
-| Typography | `--f-display`, `--f-ui`, `--f-mono`, `--f-input`, `--f-number`, `--input-size/weight`, `--number-size/weight` | NOTE: app.js re-sets the input/number tokens at runtime from `_productionVisualDefaults` |
-| Elevation/shape/motion | `--shadow-sm/md/lg`, `--radius-sm/md/lg/xl`, `--easing` | Cards, modals, transitions |
+| Typography | `--f-display`, `--f-ui`, `--f-mono`, `--f-input`, `--f-number`, `--input-size/weight`, `--number-size/weight` | `--f-mono` is REAL mono (Roboto Mono, imported in styles.css line 1) — used for eyebrows, KPI labels, table headers, metas. NOTE: app.js re-sets the input/number tokens at runtime from `_productionVisualDefaults` |
+| Elevation/shape/motion | `--shadow-sm/md/lg` (layered scale), `--radius-sm/md/lg/xl`, `--easing`, `--dur-fast` (140ms micro), `--dur` (220ms transitions) | Cards, modals, transitions — use the duration tokens, don't invent new timings |
+| Input focus ring | `--ring` | `box-shadow` focus halo for inputs/selects (pairs with a brand-tinted `border-color`) |
 | Spacing | `--space-1` (4px) → `--space-6` (32px) | New layout work (legacy uses literal px — migrate opportunistically, don't sweep) |
 | Focus ring | `--focus-ring`, `--focus-ring-offset` | The ONE focus style; the global `:focus-visible` rule consumes it (P4-2 a11y) |
 
@@ -54,14 +55,27 @@ Reach for these before inventing new classes:
   ad-hoc "Loading…" markup.
 - **Icons** — inline SVG via `icon('name')` from icons.js (see CLAUDE.md; no
   emoji icons). Icon-only buttons need `aria-label`.
-- **Buttons** — legacy reality: there is no single `.btn`; families are
-  per-area (`admin-action-btn(-secondary)` in admin, `dyn-btn`/`dyn-btn primary`
-  in Dynamic Testing, `v2-btn-mini/ghost/primary` in newer screens,
-  `tr-mini-btn` in the Test Register, `cal-btn`, `drw-tool-btn`, `pdf-tb-btn`).
-  **For new work inside an area, reuse that area's family** so the screen stays
-  coherent; don't introduce an 11th family. A future unification pass should
-  pick one family and alias the rest — out of scope for now (high-churn,
-  needs browser QA).
+- **Buttons** — there is no single `.btn`; families are per-area
+  (`admin-action-btn(-secondary)` in admin, `dyn-btn`/`dyn-btn primary` in
+  Dynamic Testing, `v2-btn-mini/ghost/primary` in newer screens, `tr-mini-btn`
+  in the Test Register, `cal-btn`, `pm-btn` in Photos, `drw-tool-btn`,
+  `pdf-tb-btn`). Since the 2026-06-12 aesthetic layer they all share ONE
+  interaction grammar (the `AESTHETIC OVERHAUL LAYER` at the bottom of
+  styles.css): 8px radius, `--dur-fast` transitions, 1px press, 0.45-opacity
+  disabled, and two visual roles — **solid Hitachi red = primary action**
+  (`admin-action-btn`, `v2-btn-primary`, `dyn-btn.primary`, `pm-btn-primary`,
+  `cal-btn-primary`), **bordered surface = everything else**. For new work
+  reuse the area's family; the shared grammar keeps it coherent. Don't
+  introduce an 11th family.
+
+## Visual QA without signing in
+
+`tools/ui_gallery.html` renders every core component (hero, KPI cards, table +
+badges, all button families, form controls, modal, sidebar) against the real
+styles.css using the exact markup app.js emits. Serve the repo root
+(`npx http-server -p 8123 .`) and open it, or screenshot headlessly with
+`node tools/shot_gallery.js /tmp/gallery.png` (playwright). Use it before/after
+any styles.css change.
 
 ## Guard
 

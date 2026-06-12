@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cx-portal UI gallery (dev tool)</title>
+<!--
+  Dev-only component gallery for visual QA of styles.css.
+  Serve the repo root (e.g. `npx http-server -p 8123`) and open
+  /tools/ui_gallery.html — or screenshot it headlessly with playwright.
+  Markup mirrors the real patterns app.js emits, so changes to the
+  component layer of styles.css can be eyeballed without signing in.
+-->
+<link rel="stylesheet" href="../styles.css">
+<style>
+  /* gallery chrome only — keep neutral so it doesn't fight the app styles */
+  body { padding: 0 0 80px; }
+  .g-section { max-width: 1180px; margin: 0 auto 8px; padding: 0 32px; }
+  .g-h { font-family: var(--f-mono); font-size: 11px; letter-spacing: .14em;
+         text-transform: uppercase; color: var(--text-muted);
+         border-bottom: 1px solid var(--border); padding: 28px 0 8px; margin-bottom: 18px; }
+  .g-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .g-modal-stage { position: relative; height: 460px; background: var(--gray-100);
+                   border-radius: var(--radius-lg); overflow: hidden; }
+  .g-modal-stage .modal-overlay { position: absolute; inset: 0; }
+  .g-side-stage { display: flex; gap: 24px; }
+  .g-side-stage #sidenav { position: relative; height: 540px; flex: none; display: flex;
+                           flex-direction: column; }
+</style>
+</head>
+<body>
+
+<!-- ── Page hero ─────────────────────────────────────────────────────────── -->
+<section class="page active" style="margin-left:0 !important;">
+<div class="page-hero">
+  <div class="container">
+    <span class="role-admin-badge">Administrator</span>
+    <div class="page-eyebrow">Site Acceptance Testing</div>
+    <h1 class="page-title">Test Register</h1>
+    <p class="page-sub">1,111 test cases across 14 control zones — weighted completion, pass rate and readiness at a glance.</p>
+  </div>
+</div>
+
+<div class="g-section">
+  <div class="g-h">KPI cards</div>
+  <div class="kpi-grid" style="display:grid;grid-template-columns:repeat(4,1fr);">
+    <div class="kpi-card kpi-primary">
+      <div class="kpi-label">Weighted completion</div>
+      <div class="kpi-value">68.4%</div>
+      <div class="kpi-meta good"><b>+2.1%</b> this week</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Pass rate</div>
+      <div class="kpi-value good">94.2%</div>
+      <div class="kpi-meta">1,046 of 1,111 attempts</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Open punch items</div>
+      <div class="kpi-value warn">37</div>
+      <div class="kpi-meta warn"><b>5</b> blocking</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Failed / retest</div>
+      <div class="kpi-value bad">12</div>
+      <div class="kpi-meta bad"><b>3</b> overdue</div>
+    </div>
+  </div>
+</div>
+
+<div class="g-section">
+  <div class="g-h">Data table + badges</div>
+  <div class="data-card">
+    <div class="data-card-head">
+      <h3>Dynamic test instances</h3>
+      <div class="g-row">
+        <input type="text" class="filter-input" placeholder="Search instances…" aria-label="Search">
+        <select class="filter-select" aria-label="Filter"><option>All zones</option></select>
+      </div>
+    </div>
+    <table class="data-table" style="width:100%;border-collapse:collapse;">
+      <thead><tr><th>Test case</th><th>Zone</th><th>Subsystem</th><th>Status</th><th>Progress</th></tr></thead>
+      <tbody>
+        <tr><td class="cell-name">DCS-W45-001 · Track circuit sequence</td><td>W45</td><td><span class="tag">DCS</span></td><td><span class="badge badge-passed">Passed</span></td><td>100%</td></tr>
+        <tr><td class="cell-name">CBTC-W45-014 · Movement authority limits</td><td>W45</td><td><span class="tag">CBTC</span></td><td><span class="badge badge-inprog">In Progress</span></td><td>62%</td></tr>
+        <tr><td class="cell-name">ATS-W40-007 · Route setting via ATS</td><td>W40</td><td><span class="tag">ATS</span></td><td><span class="badge badge-pending">Future Test</span></td><td>0%</td></tr>
+        <tr><td class="cell-name">ATC-Y10-002 · Overspeed enforcement</td><td>Y10</td><td><span class="tag">ATC</span></td><td><span class="badge badge-failed">Failed</span></td><td>45%</td></tr>
+        <tr><td class="cell-name">IXL-W37-019 · Point machine correspondence</td><td>W37</td><td><span class="tag">IXL</span></td><td><span class="badge badge-warn">Blocked</span></td><td>30%</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="g-section">
+  <div class="g-h">Buttons — every family</div>
+  <div class="g-row" style="margin-bottom:12px;">
+    <button class="admin-action-btn">Primary action</button>
+    <button class="admin-action-btn-secondary">Secondary</button>
+    <button class="dyn-btn primary">Dyn primary</button>
+    <button class="dyn-btn">Dyn default</button>
+    <button class="v2-btn-primary">V2 primary</button>
+    <button class="v2-btn-ghost">V2 ghost</button>
+    <button class="v2-btn-mini">V2 mini</button>
+    <button class="v2-btn-mini danger">V2 mini danger</button>
+  </div>
+  <div class="g-row">
+    <button class="pm-btn">PM button</button>
+    <button class="pm-btn pm-btn-primary">PM primary</button>
+    <button class="form-secondary tr-mini-btn">TR mini</button>
+    <button class="cal-btn">Cal button</button>
+    <button class="admin-action-btn" disabled>Disabled</button>
+  </div>
+</div>
+
+<div class="g-section">
+  <div class="g-h">Form controls</div>
+  <div class="g-row">
+    <div style="width:220px;"><label class="form-label" for="g-in1">Test team</label>
+      <input id="g-in1" class="form-input" placeholder="e.g. ATS Team A"></div>
+    <div style="width:220px;"><label class="form-label" for="g-in2">Subsystem</label>
+      <select id="g-in2" class="form-input"><option>CBTC</option></select>
+    </div>
+    <div style="width:280px;"><label class="form-label" for="g-in3">Notes</label>
+      <textarea id="g-in3" class="form-input" rows="2" placeholder="Any other observations…"></textarea></div>
+  </div>
+</div>
+
+<div class="g-section">
+  <div class="g-h">Modal (static)</div>
+  <div class="g-modal-stage">
+    <div class="modal-overlay active">
+      <div class="modal">
+        <div class="modal-head">
+          <div>
+            <div class="modal-title">Confirm allocation</div>
+            <div class="modal-sub">Cascade auto-allocate · Campaign W45 CBTC nights</div>
+          </div>
+          <button class="modal-close" aria-label="Close dialog">×</button>
+        </div>
+        <div class="modal-body">
+          <p style="margin-bottom:12px;">14 unscheduled runs will be placed across 6 access windows in prerequisite order.</p>
+          <span class="badge badge-ready">Ready</span>
+        </div>
+        <div class="modal-footer">
+          <button class="admin-action-btn-secondary">Cancel</button>
+          <button class="admin-action-btn">Commit allocation</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="g-section">
+  <div class="g-h">Sidebar (static mock)</div>
+  <div class="g-side-stage">
+    <nav id="sidenav" aria-label="Gallery sidenav mock">
+      <div class="sidenav-brand" style="display:flex;align-items:center;">
+        <div class="sidenav-brand-text">
+          <span class="sidenav-brand-name">HITACHI RAIL</span><br>
+          <span class="sidenav-brand-sub">T&amp;C PORTAL</span>
+        </div>
+      </div>
+      <div class="sidenav-links" style="flex:1;">
+        <div class="sidenav-section-label">Testing</div>
+        <a class="nav-link active" href="#">Dashboard</a>
+        <a class="nav-link" href="#">Test Register</a>
+        <a class="nav-link" href="#">Dynamic Testing</a>
+        <div class="sidenav-section-label">Planning</div>
+        <a class="nav-link" href="#">Lookahead</a>
+        <a class="nav-link" href="#">Schedule</a>
+      </div>
+      <div class="sidenav-footer">
+        <div class="sidenav-user">
+          <div class="sidenav-user-name">A. Khoury</div>
+          <div class="sidenav-user-role">Global Administrator</div>
+        </div>
+      </div>
+    </nav>
+    <div style="flex:1;align-self:center;color:var(--text-muted);font-size:13px;">
+      Sidebar rendered against the real #sidenav styles.
+    </div>
+  </div>
+</div>
+</section>
+</body>
+</html>

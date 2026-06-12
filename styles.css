@@ -91,7 +91,7 @@
   /* ── Typography (app.js may override the input/number tokens at runtime) ── */
   --f-display: 'Archivo', system-ui, -apple-system, sans-serif;
   --f-ui: 'Archivo', system-ui, -apple-system, sans-serif;
-  --f-mono: 'Archivo', system-ui, -apple-system, sans-serif;
+  --f-mono: 'Roboto Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --f-input: var(--f-ui);
   --f-number: var(--f-ui);
   --input-size: 14px;
@@ -99,14 +99,17 @@
   --number-size: 28px;
   --number-weight: 600;
   /* ── Elevation / shape / motion ── */
-  --shadow-sm: 0 1px 0 rgba(15,17,21,0.03), 0 1px 2px rgba(15,17,21,0.04);
-  --shadow-md: 0 1px 0 rgba(15,17,21,0.04), 0 4px 14px -6px rgba(15,17,21,0.10);
-  --shadow-lg: 0 18px 40px -18px rgba(15,17,21,0.22);
+  --shadow-sm: 0 1px 2px rgba(15,17,21,0.05), 0 1px 1px rgba(15,17,21,0.03);
+  --shadow-md: 0 1px 2px rgba(15,17,21,0.04), 0 6px 16px -8px rgba(15,17,21,0.14);
+  --shadow-lg: 0 2px 6px rgba(15,17,21,0.06), 0 28px 56px -20px rgba(15,17,21,0.30);
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
   --radius-xl: 20px;
   --easing: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 140ms;
+  --dur: 220ms;
+  --ring: 0 0 0 3px rgba(230,0,18,0.10);
   /* ── Spacing scale (use for new layout work) ── */
   --space-1: 4px;
   --space-2: 8px;
@@ -13465,3 +13468,173 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
     scroll-behavior: auto !important;
   }
 }
+
+/* ============================================================================
+   AESTHETIC OVERHAUL LAYER (2026-06-12)
+   Unifies depth, motion and component coherence on the Hitachi palette.
+   Appended (like the production visual layer) so it wins the cascade without
+   touching earlier rules. Tokens it consumes live in the canonical sheet:
+   --dur-fast/--dur/--easing (motion), --ring (input focus), refreshed
+   --shadow-sm/md/lg (layered elevation), real --f-mono (Roboto Mono).
+   ============================================================================ */
+
+/* ── 1. Data precision: tabular numerals wherever data lives ─────────────── */
+.data-table tbody td,
+.dyn-table tbody td,
+.kpi-value,
+.kpi-meta {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ── 2. Unified button system ─────────────────────────────────────────────
+   One interaction grammar for every legacy family: same radius, motion,
+   press response and focus ring. Families keep their own size/colour roles:
+   solid red = THE primary; bordered surface = secondary/default. */
+:is(.admin-action-btn, .admin-action-btn-secondary, .dyn-btn, .v2-btn-primary,
+    .v2-btn-ghost, .v2-btn-mini, .pm-btn, .tr-mini-btn, .form-secondary,
+    .cal-btn, .drw-tool-btn, .pdf-tb-btn) {
+  font-family: var(--f-ui);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  border-radius: 8px;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color var(--dur-fast) var(--easing),
+    border-color     var(--dur-fast) var(--easing),
+    color            var(--dur-fast) var(--easing),
+    box-shadow       var(--dur-fast) var(--easing),
+    transform        var(--dur-fast) var(--easing);
+}
+:is(.admin-action-btn, .admin-action-btn-secondary, .dyn-btn, .v2-btn-primary,
+    .v2-btn-ghost, .v2-btn-mini, .pm-btn, .tr-mini-btn, .form-secondary,
+    .cal-btn):active:not(:disabled) {
+  transform: translateY(1px);
+}
+:is(.admin-action-btn, .admin-action-btn-secondary, .dyn-btn, .v2-btn-primary,
+    .v2-btn-ghost, .v2-btn-mini, .pm-btn, .tr-mini-btn, .form-secondary,
+    .cal-btn):disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* previously UNSTYLED families get a real base (dyn-btn 48 uses, pm-btn,
+   cal-btn) + align the other secondaries onto the same bordered look */
+.dyn-btn, .pm-btn, .cal-btn {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 12.5px;
+  padding: 7px 13px;
+  box-shadow: 0 1px 1px rgba(15,17,21,0.04);
+}
+:is(.dyn-btn, .pm-btn, .cal-btn, .admin-action-btn-secondary, .v2-btn-ghost,
+    .v2-btn-mini, .form-secondary):hover:not(:disabled) {
+  border-color: var(--gray-400);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+/* solid-red primary role — brand carries the action hierarchy */
+.dyn-btn.primary, .pm-btn.pm-btn-primary, .v2-btn-primary,
+.cal-btn-primary, .admin-action-btn {
+  background: var(--hitachi-red);
+  border: 1px solid var(--hitachi-red);
+  color: var(--white);
+  box-shadow: 0 1px 2px rgba(230,0,18,0.25), inset 0 1px 0 rgba(255,255,255,0.10);
+}
+.dyn-btn.primary:hover:not(:disabled), .pm-btn.pm-btn-primary:hover:not(:disabled),
+.v2-btn-primary:hover:not(:disabled), .cal-btn-primary:hover:not(:disabled),
+.admin-action-btn:hover:not(:disabled) {
+  background: var(--hitachi-red-hover);
+  border-color: var(--hitachi-red-hover);
+  box-shadow: 0 2px 6px rgba(230,0,18,0.30), inset 0 1px 0 rgba(255,255,255,0.10);
+}
+.v2-btn-mini.danger { color: var(--bad); border-color: rgba(192,16,23,0.35); }
+.v2-btn-mini.danger:hover:not(:disabled) { background: var(--bad-light); border-color: var(--bad); }
+
+/* ── 3. Form controls: one focus grammar ──────────────────────────────────── */
+.form-input, .filter-input, .filter-select, .pm-input, .pm-select {
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  transition: border-color var(--dur-fast) var(--easing),
+              box-shadow   var(--dur-fast) var(--easing);
+}
+.form-input:focus, .filter-input:focus, .filter-select:focus,
+.pm-input:focus, .pm-select:focus {
+  outline: none;
+  border-color: rgba(230,0,18,0.45);
+  box-shadow: var(--ring);
+}
+.form-input::placeholder, .filter-input::placeholder, .pm-input::placeholder {
+  color: var(--text-subtle);
+}
+/* visible field labels (form-label was referenced 59x in app.js, never styled) */
+.form-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.005em;
+  margin-bottom: 6px;
+}
+
+/* ── 4. Card + table depth ────────────────────────────────────────────────── */
+.data-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+.data-card-head { border-bottom: 1px solid var(--border); }
+.kpi-card { box-shadow: var(--shadow-md); }
+.kpi-card:hover {
+  box-shadow: 0 2px 4px rgba(15,17,21,0.05), 0 12px 24px -10px rgba(15,17,21,0.16);
+}
+.data-table tbody tr { transition: background-color var(--dur-fast) var(--easing); }
+.data-table tbody tr:hover { background: var(--surface-3); }
+.data-table thead th { border-bottom: 1px solid var(--border-strong); }
+
+/* ── 5. Modal: deeper, calmer, animated in ────────────────────────────────── */
+.modal-overlay { background: rgba(10,10,12,0.55); backdrop-filter: blur(3px); }
+.modal {
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(15,17,21,0.06);
+  box-shadow: var(--shadow-lg);
+}
+@keyframes cxModalIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+.modal-overlay.active .modal { animation: cxModalIn var(--dur) var(--easing); }
+
+/* ── 6. Page hero: brand signature + faint depth wash ─────────────────────── */
+.page-hero {
+  position: relative;
+  background:
+    radial-gradient(640px 220px at 0% 0%, rgba(230,0,18,0.030), transparent 60%),
+    linear-gradient(180deg, var(--white) 0%, #fbfbfc 100%);
+}
+.page-hero::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--hitachi-red) 0%, rgba(230,0,18,0.25) 38%, transparent 72%);
+}
+
+/* ── 7. Sidebar: slightly clearer wayfinding ink ──────────────────────────── */
+.sidenav-section-label { color: rgba(255,255,255,0.42); }
+.nav-link { transition: background-color var(--dur-fast) var(--easing), color var(--dur-fast) var(--easing); }
+
+/* ── 8. Page flow: gentle enter on page switch ────────────────────────────
+   transform clears when the animation ends, so fixed-position descendants
+   (PDF viewer etc.) are unaffected after the 240ms entry. */
+@keyframes cxPageIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.page.active { animation: cxPageIn var(--dur) var(--easing); }

@@ -722,6 +722,40 @@ Built on the shared-record integration to support a multi-level testing strategy
   readiness flag for execution; can add a HARD scheduling gate (block dependents
   until prereq passes) on request. Browser QA still pending.
 
+## UI/UX aesthetic overhaul (2026-06-12, owner-directed)
+Owner: "full overhaul… flows great, looks great, good depth… still maps to the
+Hitachi rail color theme." Executed WITH visual verification: built
+tools/ui_gallery.html (every core component rendered from the exact markup
+app.js emits) + tools/shot_gallery.js (playwright, chromium available in this
+env) and iterated on before/after screenshots headlessly.
+- DIAGNOSIS from the BEFORE shot: solid foundation (KPI cards, badges, sidebar
+  glow nav) but (a) buttons were 8 visually unrelated families — dyn-btn (48
+  uses), pm-btn and cal-btn had NO css at all; (b) form-label referenced 59x,
+  never styled; (c) --f-mono was an Archivo placeholder so every "technical"
+  accent (eyebrows, KPI labels, table headers) rendered as plain sans; (d) depth
+  minimal (near-flat shadow scale); (e) no motion grammar.
+- TOKENS (canonical sheet): --f-mono → real Roboto Mono stack (already imported,
+  never used); layered elevation scale (--shadow-sm/md/lg); --dur-fast 140ms /
+  --dur 220ms; --ring input-focus halo.
+- AESTHETIC OVERHAUL LAYER (appended end of styles.css, like the production
+  visual layer): ① tabular numerals on all data cells/KPIs; ② ONE button
+  grammar across all 10+ families (8px radius, --dur-fast transitions, 1px
+  press, unified disabled) with two roles — solid Hitachi red = primary
+  (admin-action-btn, v2-btn-primary [was black], dyn-btn.primary,
+  pm-btn-primary, cal-btn-primary), bordered surface = secondary — and real
+  bases for the unstyled families; ③ one form-control focus grammar (brand
+  border + --ring halo) + .form-label finally styled; ④ card/table depth
+  (data-card elevation, row hover, stronger thead rule); ⑤ modal: deeper
+  shadow, blur scrim, 220ms entrance; ⑥ page-hero brand signature (2px red
+  gradient line + faint red radial wash); ⑦ sidebar ink bump; ⑧ 240ms page-
+  enter transition (transform clears post-animation → fixed descendants safe).
+  prefers-reduced-motion global rule (P4-2) covers all new motion.
+- Verified: gallery + real login page screenshots before/after; harness 18/18
+  (token guard + a11y contrast suites included); CRLF preserved.
+- Owner QA notes: v2-btn-primary changed black→red (intentional: one primary
+  color); dyn board-view toggles now show solid red active state; eyebrows/KPI
+  labels/table headers now true mono (Roboto Mono).
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose
