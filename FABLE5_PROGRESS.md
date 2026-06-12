@@ -821,6 +821,30 @@ Owner: fully edit a campaign after creation; rename "contract hours" to
   added/updated/removed). Harness 20/20. Edit modal verified visually (all fields
   prefilled, settings panel open). CRLF preserved.
 
+## Dynamic Testing — one window per access day + NRH fit (2026-06-12, owner)
+Owner: a 2-location day was creating two Access-Plan/Lookahead rows instead of
+one; and the edit Non-Revenue Hours time boxes overflowed.
+- ONE WINDOW PER DAY: _dynGenerateShiftRows looped per zone (2 zones → 2
+  zone_access_windows → 2 access-plan cells + 2 Lookahead cells). Now emits ONE
+  window per access day with control_zone_code = primary (first) zone and
+  access_zones = the full day set, so a two-location day is a single row/cell
+  that grants both (the cell label already renders "W40+Y10"). Access gating
+  (access_req ⊆ access_zones), the cascade allocator, and roll-forward are
+  unchanged — they already keyed off access_zones.
+- RECONCILE now DATE-based (was date|zone): one expected window per date updates
+  one existing window on that date in place (preserving id + assignments); any
+  EXTRA windows on that date (legacy one-per-zone rows) are removed, so editing
+  an old duplicated campaign COLLAPSES it to one row/day. Whole dropped dates
+  still removed (with the assigned-instance confirm).
+- NRH FIT: the inline Non-Revenue Hours settings panel and the per-day Start/End
+  time inputs clipped ("02:00 A" + clock cut off). Reworked to CSS grids with
+  box-sizing + min-width:0 — NRH panel is a 4-col grid capped at 440px with
+  Start/End headers; day rows widened the time columns 78→104px. Both fit now.
+- Tests: test_dyn_campaign_edit (now 19) asserts one-row-per-day generation +
+  access_zones + date-based reconcile + legacy collapse; test_dyn_cascade
+  Scenario 7 updated (two-zone day → ONE window granting both, control = primary).
+  Harness 20/20. Verified the edit modal visually (boxes fit). CRLF preserved.
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose

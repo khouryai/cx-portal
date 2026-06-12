@@ -36228,21 +36228,23 @@ function _dynNrhToggleSettings() {
 }
 function _dynNrhSettingsHtml() {
   const h = _dynNonRevHours();
-  const fld = 'padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;font-size:12px;width:88px;';
+  const inp = 'padding:5px 6px;border:1px solid var(--gray-300);border-radius:5px;font-size:12px;width:100%;min-width:0;box-sizing:border-box;';
+  const rowGrid = 'display:grid;grid-template-columns:84px minmax(0,1fr) 14px minmax(0,1fr);align-items:center;gap:8px;';
   const row = (key, label) => `
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
-      <span style="width:78px;font-size:12px;color:var(--gray-600);">${label}</span>
-      <input type="time" id="nrh-${key}-start" value="${h[key][0]}" style="${fld}">
-      <span style="color:var(--gray-400);">→</span>
-      <input type="time" id="nrh-${key}-end" value="${h[key][1]}" style="${fld}">
+    <div style="${rowGrid}margin-bottom:6px;">
+      <span style="font-size:12px;color:var(--gray-600);">${label}</span>
+      <input type="time" id="nrh-${key}-start" value="${h[key][0]}" style="${inp}">
+      <span style="color:var(--gray-400);text-align:center;">→</span>
+      <input type="time" id="nrh-${key}-end" value="${h[key][1]}" style="${inp}">
     </div>`;
-  return `<div id="dyn-nrh-settings" style="display:none;margin-top:8px;padding:10px 12px;background:var(--surface-2);border:1px solid var(--gray-200);border-radius:8px;">
-    <div style="font-size:11px;font-weight:600;color:var(--gray-600);margin-bottom:6px;">Non-Revenue Hours — default windows by day type</div>
+  return `<div id="dyn-nrh-settings" style="display:none;margin-top:8px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--gray-200);border-radius:8px;max-width:440px;">
+    <div style="font-size:11px;font-weight:600;color:var(--gray-600);margin-bottom:8px;">Non-Revenue Hours — default windows by day type</div>
+    <div style="${rowGrid}margin-bottom:3px;font-size:10px;color:var(--gray-400);"><span></span><span>Start</span><span></span><span>End</span></div>
     ${row('wk', 'Weekdays')}${row('sat', 'Saturday')}${row('sun', 'Sunday')}
-    <div style="display:flex;gap:6px;margin-top:8px;">
-      <button type="button" class="dyn-btn primary" style="font-size:11px;padding:3px 10px;" onclick="_dynNrhSaveSettings()">Save &amp; apply</button>
-      <button type="button" class="dyn-btn" style="font-size:11px;padding:3px 10px;" onclick="_dynNrhToggleSettings()">Close</button>
-      <button type="button" class="dyn-btn" style="font-size:11px;padding:3px 10px;margin-left:auto;" onclick="_dynNrhResetSettings()">Reset to default</button>
+    <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+      <button type="button" class="dyn-btn primary" style="font-size:11px;padding:4px 12px;" onclick="_dynNrhSaveSettings()">Save &amp; apply</button>
+      <button type="button" class="dyn-btn" style="font-size:11px;padding:4px 12px;" onclick="_dynNrhToggleSettings()">Close</button>
+      <button type="button" class="dyn-btn" style="font-size:11px;padding:4px 12px;margin-left:auto;" onclick="_dynNrhResetSettings()">Reset</button>
     </div>
   </div>`;
 }
@@ -36276,8 +36278,8 @@ function _dynCampZonePalette() {
 function _dynCampDayRowsHtml() {
   const st = window._dynCampDays || {};
   const palette = _dynCampZonePalette();
-  const fld = 'padding:5px 7px;border:1px solid var(--gray-300);border-radius:5px;font-size:12px;';
-  const grid = 'display:grid;grid-template-columns:80px 1fr 78px 78px;gap:6px 8px;align-items:center;';
+  const fld = 'padding:5px 7px;border:1px solid var(--gray-300);border-radius:5px;font-size:12px;width:100%;min-width:0;box-sizing:border-box;';
+  const grid = 'display:grid;grid-template-columns:72px minmax(0,1fr) 104px 104px;gap:6px 8px;align-items:center;';
   const hdr = `<div style="${grid}font-size:10.5px;color:var(--gray-500);margin-bottom:3px;"><div></div><div>Zones (this day)</div><div>Start</div><div>End</div></div>`;
   const rows = [1, 2, 3, 4, 5, 6, 0].map(d => {
     const s = st[d] || { on: false, start: '07:00', end: '15:00', zones: [] };
@@ -36422,7 +36424,10 @@ function _dynCampaignModal(camp) {
   if (isEdit) setTimeout(() => { try { _dynCampRerenderDays(); } catch (_) {} }, 0);
 }
 
-// Build the per-day shift window rows for a campaign (one per zone per access day).
+// Build the per-day shift window rows for a campaign — ONE window per access
+// day that grants ALL of that day's zones (access_zones), not one window per
+// zone. The control_zone_code is the day's primary (first) zone; access_zones
+// carries the full set, so a 2-location day is a single row/cell granting both.
 function _dynGenerateShiftRows(campaign) {
   const rows = [];
   const dow = new Set((campaign.days_of_week || []).map(Number));
@@ -36435,24 +36440,23 @@ function _dynGenerateShiftRows(campaign) {
     const sched = campaign.day_schedule || {};
     const dt = sched[String(d.getDay())] || sched[d.getDay()] || { start: campaign.shift_start, end: campaign.shift_end };
     const dayZones = (dt.zones && dt.zones.length) ? dt.zones : (campaign.zone_codes || []);
+    if (!dayZones.length) continue;
     const startAt = new Date(`${dateStr}T${String(dt.start).slice(0,5)}:00`);
     const endAt   = new Date(`${dateStr}T${String(dt.end).slice(0,5)}:00`);
-    for (const z of dayZones) {
-      rows.push({
-        control_zone_code: z,
-        access_zones: dayZones,
-        shift_date: dateStr,
-        start_at: startAt.toISOString(),
-        end_at: endAt.toISOString(),
-        allowed_modes: campaign.allowed_modes || ['CBTC', 'VATC'],
-        max_trains: campaign.trains_requested || 1,
-        consist_size: campaign.consist_size || null,
-        subsystem: campaign.subsystem || null,
-        campaign_id: campaign.id,
-        status: 'planned',
-        created_by: by,
-      });
-    }
+    rows.push({
+      control_zone_code: dayZones[0],
+      access_zones: dayZones,
+      shift_date: dateStr,
+      start_at: startAt.toISOString(),
+      end_at: endAt.toISOString(),
+      allowed_modes: campaign.allowed_modes || ['CBTC', 'VATC'],
+      max_trains: campaign.trains_requested || 1,
+      consist_size: campaign.consist_size || null,
+      subsystem: campaign.subsystem || null,
+      campaign_id: campaign.id,
+      status: 'planned',
+      created_by: by,
+    });
   }
   return rows;
 }
@@ -36554,21 +36558,36 @@ async function _dynSaveCampaign(editId) {
 // inserted (+ Lookahead cell), and windows no longer in the schedule removed.
 // Removing a window that has assigned test instances unschedules them, so the
 // planner is asked to confirm first.
-function _dynReconcileShiftKey(s) { return `${s.shift_date}|${s.control_zone_code}`; }
+// One window per access DAY (it grants all that day's zones), so reconcile by
+// date: each expected date updates one existing window on that date (preserving
+// its id + assignments); any EXTRA windows on that date (e.g. legacy one-per-
+// zone rows) are removed, collapsing them to a single multi-zone row.
+function _dynReconcileShiftKey(s) { return String(s.shift_date); }
 async function _dynUpdateCampaign(editId, fields) {
   const campObj = { id: editId, ...fields };
   const expected = _dynGenerateShiftRows(campObj);
   const existing = (_dynPage.shifts || []).filter(s => String(s.campaign_id) === String(editId));
-  const exMap = new Map(existing.map(s => [_dynReconcileShiftKey(s), s]));
-  const expKeys = new Set(expected.map(_dynReconcileShiftKey));
+  const exByDate = new Map();
+  for (const s of existing) {
+    const k = _dynReconcileShiftKey(s);
+    if (!exByDate.has(k)) exByDate.set(k, []);
+    exByDate.get(k).push(s);
+  }
+  const expDates = new Set(expected.map(_dynReconcileShiftKey));
 
   const toUpdate = [];   // { id, row }
   const toInsert = [];   // row
+  const toRemove = [];   // existing windows to delete
   for (const ex of expected) {
-    const cur = exMap.get(_dynReconcileShiftKey(ex));
-    if (cur) toUpdate.push({ id: cur.id, row: ex }); else toInsert.push(ex);
+    const pool = exByDate.get(_dynReconcileShiftKey(ex)) || [];
+    if (pool.length) {
+      toUpdate.push({ id: pool[0].id, row: ex });
+      for (let i = 1; i < pool.length; i++) toRemove.push(pool[i]); // collapse extras
+    } else {
+      toInsert.push(ex);
+    }
   }
-  const toRemove = existing.filter(s => !expKeys.has(_dynReconcileShiftKey(s)));
+  for (const s of existing) if (!expDates.has(_dynReconcileShiftKey(s))) toRemove.push(s);
   const affectedInstances = toRemove.length
     ? (_dynPage.instances || []).filter(i => i.shift_id && toRemove.some(s => String(s.id) === String(i.shift_id)))
     : [];

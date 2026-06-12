@@ -51,38 +51,59 @@ const sh = run("_dynNrhSettingsHtml()");
 assert(/nrh-wk-start/.test(sh) && /nrh-sat-end/.test(sh) && /nrh-sun-start/.test(sh), "settings panel has wk/sat/sun inputs");
 assert(/_dynNrhSaveSettings\(\)/.test(sh), "settings panel wires Save & apply");
 
-// ── reconcile keying: _dynGenerateShiftRows + _dynReconcileShiftKey ───────────
-// Original: W40 Mon+Sat, Y10 Sat  → 3 windows. Edit drops Y10 from Sat and adds
-// a Tue W40 → expect 1 removed (Sat|Y10), 1 added (Tue|W40), rest updated.
+// ── ONE window per access DAY (a 2-location day = one row granting both) ──────
 const orig = {
   id: "c1", zone_codes: ["W40", "Y10"], days_of_week: [1, 6],
   shift_start: "01:00", shift_end: "03:00",
   day_schedule: {
     1: { start: "01:00", end: "03:00", zones: ["W40"] },
-    6: { start: "01:00", end: "04:00", zones: ["W40", "Y10"] },
+    6: { start: "01:00", end: "04:00", zones: ["W40", "Y10"] },  // two-location day
   },
   start_date: "2026-06-01", end_date: "2026-06-07",  // Mon 6/1 .. Sun 6/7
   allowed_modes: ["CBTC"], trains_requested: 1,
 };
+const origRows = run(`_dynGenerateShiftRows(${JSON.stringify(orig)})`);
+assert(origRows.length === 2, "one window per access day — Mon + Sat = 2 (not one-per-zone), got " + origRows.length);
+const satRow = origRows.find(r => r.shift_date === "2026-06-06");
+assert(satRow && JSON.stringify(satRow.access_zones) === JSON.stringify(["W40", "Y10"]),
+  "the two-location Sat day is ONE row granting both zones");
+assert(satRow.control_zone_code === "W40", "control zone is the day's primary zone");
+
+// ── reconcile is DATE-based (one window/day) ──────────────────────────────────
+// Edit: add Tue, drop Y10 from Sat. Expect 1 added (Tue), 2 updated (Mon, Sat),
+// 0 removed (no whole day dropped) — Sat updates in place to drop a zone.
 const edited = JSON.parse(JSON.stringify(orig));
 edited.days_of_week = [1, 2, 6];
 edited.day_schedule[2] = { start: "01:00", end: "03:00", zones: ["W40"] };
-edited.day_schedule[6] = { start: "01:00", end: "04:00", zones: ["W40"] }; // drop Y10 on Sat
-edited.zone_codes = ["W40", "Y10"];
+edited.day_schedule[6] = { start: "01:00", end: "04:00", zones: ["W40"] };
 
-const key = s => run(`_dynReconcileShiftKey(${JSON.stringify({ shift_date: s.shift_date, control_zone_code: s.control_zone_code })})`);
-const origRows = run(`_dynGenerateShiftRows(${JSON.stringify(orig)})`).map(r => ({ shift_date: r.shift_date, control_zone_code: r.control_zone_code }));
-const newRows  = run(`_dynGenerateShiftRows(${JSON.stringify(edited)})`).map(r => ({ shift_date: r.shift_date, control_zone_code: r.control_zone_code }));
+const dkey = s => run(`_dynReconcileShiftKey(${JSON.stringify({ shift_date: s.shift_date })})`);
+function classify(existing, expected) {
+  const byDate = new Map();
+  for (const s of existing) { const k = dkey(s); (byDate.get(k) || byDate.set(k, []).get(k)).push(s); }
+  const expDates = new Set(expected.map(dkey));
+  let add = 0, upd = 0, rem = 0;
+  for (const ex of expected) {
+    const pool = byDate.get(dkey(ex)) || [];
+    if (pool.length) { upd++; rem += pool.length - 1; } else add++;
+  }
+  for (const s of existing) if (!expDates.has(dkey(s))) rem++;
+  return { add, upd, rem };
+}
+const existing1 = origRows.map(r => ({ id: "w-" + r.shift_date, shift_date: r.shift_date }));
+const expected1 = run(`_dynGenerateShiftRows(${JSON.stringify(edited)})`);
+const c1 = classify(existing1, expected1);
+assert(c1.add === 1 && c1.upd === 2 && c1.rem === 0, `add/upd/rem = 1/2/0 (got ${c1.add}/${c1.upd}/${c1.rem})`);
 
-const origKeys = new Set(origRows.map(key));
-const newKeys = new Set(newRows.map(key));
-assert(origRows.length === 3, "original generates 3 windows (W40 Mon, W40+Y10 Sat) got " + origRows.length);
-const added = newRows.filter(r => !origKeys.has(key(r)));
-const removed = origRows.filter(r => !newKeys.has(key(r)));
-const updated = newRows.filter(r => origKeys.has(key(r)));
-assert(added.length === 1 && added[0].control_zone_code === "W40" && added[0].shift_date === "2026-06-02", "added = Tue W40");
-assert(removed.length === 1 && removed[0].control_zone_code === "Y10", "removed = Sat Y10");
-assert(updated.length === 2, "updated = Mon W40 + Sat W40 (got " + updated.length + ")");
+// ── legacy collapse: 2 existing windows on the SAME date → 1 update + 1 remove ─
+const legacy = [
+  { id: "old-a", shift_date: "2026-06-06" },
+  { id: "old-b", shift_date: "2026-06-06" },  // duplicate from old one-per-zone gen
+  { id: "old-mon", shift_date: "2026-06-01" },
+];
+const expected2 = origRows; // one per day (Mon + Sat)
+const c2 = classify(legacy, expected2);
+assert(c2.upd === 2 && c2.rem === 1 && c2.add === 0, `legacy collapse: 2 upd, 1 rem, 0 add (got ${c2.upd}/${c2.rem}/${c2.add})`);
 
 console.log(`test_dyn_campaign_edit: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

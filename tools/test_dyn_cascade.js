@@ -182,11 +182,12 @@ console.log("\n=== Scenario 7: per-day zones in _dynGenerateShiftRows ===");
   ok("each window's access_zones matches its day schedule", allMatch);
   const sizes = new Set(rows.map(r => r.access_zones.length));
   ok("mix of single- and multi-zone shifts generated", sizes.has(1) && sizes.has(2));
-  // a single-zone day yields one window; a two-zone day yields two
+  // ONE window per access day (it grants all that day's zones), never one-per-zone
   const monRows = rows.filter(r => new Date(r.shift_date + "T12:00:00").getDay() === 1);
   const satRows = rows.filter(r => new Date(r.shift_date + "T12:00:00").getDay() === 6);
-  ok("single-zone day → 1 window per date", monRows.length > 0 && monRows.every(r => r.access_zones.length === 1));
-  ok("two-zone day → 2 windows per date", satRows.length > 0 && satRows.length === 2 * new Set(satRows.map(r => r.shift_date)).size);
+  ok("single-zone day → 1 window per date", monRows.length === new Set(monRows.map(r => r.shift_date)).size && monRows.every(r => r.access_zones.length === 1));
+  ok("two-zone day → still ONE window per date (grants both zones)", satRows.length > 0 && satRows.length === new Set(satRows.map(r => r.shift_date)).size && satRows.every(r => r.access_zones.length === 2));
+  ok("multi-zone window control_zone = primary (first) zone", satRows.every(r => r.control_zone_code === r.access_zones[0]));
 }
 
 // ── Scenario 8: program-level params (windowAllows + capacityFn) ───────────
