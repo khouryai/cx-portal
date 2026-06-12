@@ -7778,10 +7778,16 @@ textarea.la-drawer-input { resize: vertical; min-height: 50px; }
   word-break: break-word;
   letter-spacing: 0.02em;
 }
-/* BART roles — blue badge */
+/* BART roles — blue badge. Always full-width so BART resources STACK
+   vertically in the cell (one per row), never side by side. */
 .tlg-res-bart {
   background: rgba(255,255,255,0.85);
   color: #1e3a8a;
+  flex: 0 0 100%;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+  white-space: nowrap;
 }
 /* Hitachi staff — neutral badge */
 .tlg-res-hit {
@@ -7797,6 +7803,7 @@ textarea.la-drawer-input { resize: vertical; min-height: 50px; }
 /* Legacy aliases — kept for any older references */
 .tlg-bart-chips  { display:flex;flex-wrap:wrap;gap:1px;justify-content:center;padding:1px;width:100%; }
 .tlg-bart-chip   { background:rgba(255,255,255,0.82);color:#1e3a8a;font-size:8px;font-weight:800;padding:0px 3px;border-radius:2px;line-height:1.4;white-space:nowrap; }
+.tlg-bart-chip   { flex:0 0 100%;width:100%;box-sizing:border-box;text-align:center; }
 .tlg-bart-chip-denied { background:rgba(220,38,38,0.22);color:#991b1b;text-decoration:line-through; }
 
 /* ── Empty cell staged for bulk creation (Ctrl+click) ──────── */

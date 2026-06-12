@@ -58,5 +58,15 @@ assert(cards(bart) === 2, "BART shows 2 cards (got " + cards(bart) + ")");
 assert(bart.includes("BART Flagger") && bart.includes("BART Witness"), "BART includes BART resources");
 assert(!bart.includes("Alex Khoury"), "BART excludes Hitachi people");
 
+// ── cell chip label: single-word BART role codes stay WHOLE (ROC, not R) ──────
+const label = r => vm.runInContext(`_resChipLabel(${JSON.stringify(r)})`, ctx);
+assert(label({ display_name: "ROC" }) === "ROC", "single-word 'ROC' kept whole (not 'R')");
+assert(label({ display_name: "EIC" }) === "EIC", "single-word 'EIC' kept whole");
+assert(label({ display_name: "TO" }) === "TO", "single-word 'TO' kept whole");
+assert(label({ display_name: "Train Operator" }) === "TO", "multi-word folds to initials");
+assert(label({ initials: "WIT", display_name: "Witness" }) === "WIT", "explicit initials win");
+assert(label({ initials: "roc" }) === "ROC", "initials upper-cased");
+assert(label({ display_name: "Rail Ops Center" }) === "ROC", "3-word folds to ROC");
+
 console.log(`test_la_resource_picker: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

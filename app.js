@@ -20263,6 +20263,18 @@ function _planningEventResourceInitials(eventId) {
     .join(' ');
 }
 
+// Cell-chip label for a resource. Prefers the explicit `initials` code; else
+// derives one — but a SINGLE-word name is kept WHOLE (BART role codes like
+// "ROC", "EIC", "TO", "WIT" must show in full, not collapse to a first letter),
+// while multi-word names fold to their initials (e.g. "Train Operator" -> "TO").
+function _resChipLabel(r) {
+  if (r.initials && r.initials.trim()) return r.initials.trim().toUpperCase();
+  const name = (r.display_name || '?').trim();
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length <= 1) return name.toUpperCase().slice(0, 5);
+  return words.map(w => w[0]).join('').slice(0, 3).toUpperCase();
+}
+
 // Returns compact chip objects for BART roles only on a single event.
 // Each chip: { label: "TTO×2", denied: bool }
 function _planningEventResChips(eventId) {
@@ -20271,9 +20283,8 @@ function _planningEventResChips(eventId) {
     .map(er => {
       const r = (PLANNING_RESOURCES || []).find(x => x.id === er.resource_id);
       if (!r) return null;
-      const initials = r.initials || (r.display_name || '?').split(/\s+/).map(w => w[0]).join('').slice(0, 3).toUpperCase();
       const qty = (er.quantity || 1) > 1 ? '\u00d7' + er.quantity : '';
-      return { label: initials + qty, denied: !!er.denied_at, isBart: r.company === 'BART' };
+      return { label: _resChipLabel(r) + qty, denied: !!er.denied_at, isBart: r.company === 'BART' };
     })
     .filter(Boolean);
 }
