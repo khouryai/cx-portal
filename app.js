@@ -37030,6 +37030,7 @@ function _dynRenderPlanning() {
       </label>
       <button class="dyn-btn primary" onclick="_dynPlanRun()">Compute feasible</button>
       <button class="dyn-btn" onclick="_dynAutoAllocateRun()" title="Cascade-allocate unscheduled runs across this campaign's access windows, prerequisites first">Auto-allocate campaign</button>
+      <button class="dyn-btn" onclick="_dynProgramAllocateRun()" title="Allocate across ALL active campaigns at once — prerequisites order across campaigns (DCS→CBTC→ATC)">Program allocate (all)</button>
       <span style="flex:1;"></span>
       <button class="dyn-btn" onclick="_dynPlanOpenWindowsAdmin()">${icon('settings')} Manage Windows</button>
     </div>
@@ -37337,7 +37338,7 @@ function _dynCampShiftSummary(c) {
 // prerequisite CHAINS — a run whose test case depends on others is never
 // placed before an earlier-or-same window already holds those prerequisites'
 // runs. Returns a draft the planner reviews before commit. Cycle-safe.
-function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3 }) {
+function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3, capacityFn = null, windowAllows = null }) {
   // A shift grants a SET of zones; a run fits only if its access requirement is
   // a subset of THAT window's zones (so [W40,Y10] needs a window granting both).
   const winZonesOf = w => new Set((w.access_zones && w.access_zones.length) ? w.access_zones : [w.control_zone_code]);
@@ -37380,13 +37381,14 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
   const placed = new Set();
   const assignments = [];
   wins.forEach((w, idx) => {
-    let cap = Math.max(0, capacityPerWindow | 0);
+    let cap = Math.max(0, (capacityFn ? capacityFn(w) : capacityPerWindow) | 0);
     let winArea = null; // start-point area anchoring this shift (soft grouping)
     const wz = winZonesOf(w); // zones this shift grants
     while (cap > 0) {
       const cands = elig.filter(i => !placed.has(i.id)
         && i.track_section_under_test === w.control_zone_code
         && accessOkWin(i, wz)
+        && (!windowAllows || windowAllows(i, w))
         && (!i.required_mode || (w.allowed_modes || []).includes(i.required_mode))
         && prereqOkBy(i.test_id, idx));
       if (!cands.length) break;
@@ -37446,6 +37448,38 @@ function _dynAllocCapacity(camp) {
   return 3;
 }
 
+// Per-window capacity from its own length (tests ≈ minutes / 40, clamped 1..8).
+function _dynWindowCapacity(w) {
+  if (w && w.start_at && w.end_at) {
+    const mins = (new Date(w.end_at) - new Date(w.start_at)) / 60000;
+    if (mins > 0) return Math.max(1, Math.min(8, Math.round(mins / 40)));
+  }
+  return 3;
+}
+
+// Program-level allocation: one cascade across ALL active campaigns' planned
+// windows + every unscheduled run, so prerequisites order ACROSS campaigns
+// (DCS → CBTC → ATC). Each window still only takes runs its campaign scopes in.
+async function _dynProgramAllocateRun() {
+  const camps = (_dynPage.campaigns || []).filter(c => c.status !== 'closed' && c.status !== 'archived');
+  if (!camps.length) { toast('No active campaigns', 'error'); return; }
+  const campIds = new Set(camps.map(c => c.id));
+  try {
+    const windows = (_dynPage.shifts || []).filter(w => w.campaign_id && campIds.has(w.campaign_id) && w.status === 'planned');
+    if (!windows.length) { toast('No planned windows across campaigns', 'error'); return; }
+    const prereqs = await _dbSelect('test_item_prerequisites', {}, '*').catch(() => []);
+    const scopeByCamp = new Map();
+    for (const c of camps) if (c.test_case_ids && c.test_case_ids.length) scopeByCamp.set(c.id, new Set(c.test_case_ids));
+    const windowAllows = (i, w) => { const sc = scopeByCamp.get(w.campaign_id); return !sc || sc.has(i.test_id); };
+    const pool = (_dynPage.instances || []).filter(i =>
+      !i.shift_id && i.track_section_under_test && !['Pass', 'Not Applicable'].includes(i.status));
+    if (!pool.length) { toast('No unscheduled runs to allocate', 'info'); return; }
+    const draft = _dynCascadeAllocate({ instances: pool, windows, prereqs, capacityFn: _dynWindowCapacity, windowAllows });
+    _dynPage._allocDraft = { campId: null, assignments: draft.assignments, unplaced: draft.unplaced };
+    _dynAutoAllocatePreview('All active campaigns', draft);
+  } catch (e) { toast('Program allocate failed: ' + e.message, 'error'); }
+}
+
 async function _dynAutoAllocateRun() {
   const camps = (_dynPage.campaigns || []).filter(c => c.status !== 'archived');
   if (!camps.length) { toast('No access campaigns to allocate into', 'error'); return; }
@@ -37468,17 +37502,19 @@ async function _dynAutoAllocateRun() {
     if (!pool.length) { toast('No unscheduled runs in this campaign\'s zones', 'info'); return; }
     const draft = _dynCascadeAllocate({ instances: pool, windows, prereqs, capacityPerWindow: _dynAllocCapacity(camp) });
     _dynPage._allocDraft = { campId: camp.id, assignments: draft.assignments, unplaced: draft.unplaced };
-    _dynAutoAllocatePreview(camp, draft);
+    _dynAutoAllocatePreview(camp.name, draft);
   } catch (e) { toast('Allocate failed: ' + e.message, 'error'); }
 }
 
-function _dynAutoAllocatePreview(camp, draft) {
+function _dynAutoAllocatePreview(label, draft) {
   const instById = new Map((_dynPage.instances || []).map(i => [i.id, i]));
   const winById = new Map((_dynPage.shifts || []).map(w => [w.id, w]));
+  const campById = new Map((_dynPage.campaigns || []).map(c => [c.id, c]));
   const byWin = new Map();
   for (const a of draft.assignments) {
     const w = winById.get(a.windowId);
-    const key = (a.shiftDate || '') + ' · ' + (w ? w.control_zone_code : '');
+    const cm = w && campById.get(w.campaign_id);
+    const key = (cm ? cm.name + ' · ' : '') + (a.shiftDate || '') + ' · ' + (w ? w.control_zone_code : '');
     if (!byWin.has(key)) byWin.set(key, []);
     byWin.get(key).push(instById.get(a.instanceId));
   }
@@ -37491,7 +37527,7 @@ function _dynAutoAllocatePreview(camp, draft) {
     '<tr><td colspan="3" style="padding:16px;text-align:center;color:var(--gray-500);">No feasible placements.</td></tr>';
   modal({
     title: 'Auto-allocate — draft',
-    sub: escapeHtml(camp.name) + ' · ' + draft.assignments.length + ' placed, ' + draft.unplaced.length + ' left in backlog',
+    sub: escapeHtml(label) + ' · ' + draft.assignments.length + ' placed, ' + draft.unplaced.length + ' left in backlog',
     body:
       '<div style="padding:8px 24px 16px;">' +
         '<p style="font-size:13px;color:var(--gray-600);margin:0 0 10px;">Runs placed into planned access windows in date order, prerequisites first. Review, then commit — fine-tune any shift afterward in the Access Plan or Shift Builder.</p>' +
@@ -37524,7 +37560,7 @@ async function _dynAutoAllocateCommit() {
         updated_at: new Date().toISOString(),
       }, { id: a.instanceId });
     }
-    toast('Allocated ' + d.assignments.length + ' run(s) across the campaign', 'success');
+    toast('Allocated ' + d.assignments.length + ' run(s)', 'success');
     _dynPage._allocDraft = null;
     closeModal();
     _dynPage.loaded = false;

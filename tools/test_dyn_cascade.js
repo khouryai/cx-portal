@@ -189,5 +189,27 @@ console.log("\n=== Scenario 7: per-day zones in _dynGenerateShiftRows ===");
   ok("two-zone day → 2 windows per date", satRows.length > 0 && satRows.length === 2 * new Set(satRows.map(r => r.shift_date)).size);
 }
 
+// ── Scenario 8: program-level params (windowAllows + capacityFn) ───────────
+console.log("\n=== Scenario 8: windowAllows (per-campaign scope) + capacityFn ===");
+{
+  const wins = [
+    { id: "wa", control_zone_code: "W40", shift_date: "2026-09-01", start_at: "2026-09-01T08:00:00Z", end_at: "2026-09-01T10:00:00Z", allowed_modes: ["CBTC", "VATC"], access_zones: ["W40"], status: "planned", campaign_id: "cA" },
+    { id: "wb", control_zone_code: "W40", shift_date: "2026-09-02", start_at: "2026-09-02T08:00:00Z", end_at: "2026-09-02T10:00:00Z", allowed_modes: ["CBTC", "VATC"], access_zones: ["W40"], status: "planned", campaign_id: "cB" },
+  ];
+  const runs = [
+    { id: "ra", test_id: "tA", code: "A", track_section_under_test: "W40", track_section_access_req: ["W40"], required_mode: null, status: "Not Started" },
+    { id: "rb", test_id: "tB", code: "B", track_section_under_test: "W40", track_section_access_req: ["W40"], required_mode: null, status: "Not Started" },
+  ];
+  const scope = new Map([["cA", new Set(["tA"])], ["cB", new Set(["tB"])]]);
+  const windowAllows = (i, w) => { const s = scope.get(w.campaign_id); return !s || s.has(i.test_id); };
+  const res = _dynCascadeAllocate({ instances: runs, windows: wins, prereqs: [], capacityPerWindow: 9, windowAllows });
+  const at = id => (res.assignments.find(a => a.instanceId === id) || {}).windowId;
+  ok("campaign-scoped: rA lands only in campaign A's window", at("ra") === "wa");
+  ok("campaign-scoped: rB lands only in campaign B's window", at("rb") === "wb");
+
+  const capRes = _dynCascadeAllocate({ instances: runs, windows: [wins[0]], prereqs: [], capacityFn: () => 1 });
+  ok("capacityFn caps a window to its computed capacity", capRes.assignments.length === 1 && capRes.unplaced.length === 1);
+}
+
 console.log(`\n${pass} passed, ${fail} failed.`);
 process.exit(fail ? 1 : 0);
