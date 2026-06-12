@@ -935,6 +935,28 @@ extend shift hours per INDIVIDUAL DAY, not uniformly for the week.
   improvement + cumulative series). Harness 23/23. Verified the modal + live
   chart visually. CRLF preserved. (No DB change.)
 
+## Dynamic Testing — account for existing shift load (2026-06-12, owner bugs)
+Owner: (1) auto-schedule packed runs onto a date that already had instances and
+blew past the window length — it ignored the pre-scheduled load; (2) cancelling
+a shift from the Lookahead rolled ALL its runs into the next shift without
+checking remaining time, overrunning it by hours.
+- FIX 1 (allocator preload): _dynCascadeAllocate gained a `preload(window)` param
+  seeding each window's used-minutes + count from runs ALREADY scheduled on it
+  (_dynWindowPreload reads _dynPage.instances where shift_id===window.id, not
+  done). _dynAllocateInto passes it, so the duration budget packs ON TOP of
+  existing load instead of from zero; a window already full takes no more (count>0
+  ⇒ no force-place). Test: test_dyn_alloc_pack +2 (80m preload → 1 fits; full → 0).
+- FIX 2 (capacity-aware roll-forward): dyn_roll_forward_on_cancel rewritten
+  (migration dyn_roll_forward_capacity_aware) — each cancelled run moves to the
+  earliest future planned window that grants its zone/access/mode AND has ROOM
+  (used + dur ≤ (1−0.15)×length, same 15% slack as the allocator), re-reading the
+  DB per run so co-rolled runs accumulate; larger first; no room ⇒ backlog.
+  Previously it dumped every run into the next window regardless of remaining
+  time. Verified live in a rolled-back tx (two 60m runs skipped a near-full 2h
+  window and landed on the empty 4h one). NOTE: slack hardcoded 0.15 in SQL
+  (matches the client default; localStorage isn't visible to Postgres).
+- Harness 23/23, advisors clean, CRLF preserved.
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose

@@ -37805,7 +37805,7 @@ function _dynCampShiftSummary(c) {
 // prerequisite CHAINS — a run whose test case depends on others is never
 // placed before an earlier-or-same window already holds those prerequisites'
 // runs. Returns a draft the planner reviews before commit. Cycle-safe.
-function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3, capacityFn = null, windowAllows = null, runMinutesFn = null, windowMinutesFn = null, slack = 0 }) {
+function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3, capacityFn = null, windowAllows = null, runMinutesFn = null, windowMinutesFn = null, slack = 0, preload = null }) {
   // A shift grants a SET of zones; a run fits only if its access requirement is
   // a subset of THAT window's zones (so [W40,Y10] needs a window granting both).
   const winZonesOf = w => new Set((w.access_zones && w.access_zones.length) ? w.access_zones : [w.control_zone_code]);
@@ -37851,14 +37851,21 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
   // count. Always allows at least one run even if it alone exceeds the budget.
   const useDur = typeof runMinutesFn === 'function';
   const runMin = i => Math.max(0, (runMinutesFn ? runMinutesFn(i) : 0) || 0);
+  // Time/slots a window ALREADY holds from previously-scheduled instances, so we
+  // never overfill a shift that isn't empty (fixes auto-allocate ignoring runs
+  // already on a date).
+  const pre = typeof preload === 'function' ? preload : () => ({ minutes: 0, count: 0 });
 
   const placed = new Set();
   const assignments = [];
   wins.forEach((w, idx) => {
+    const p = pre(w) || {};
     const capCount = useDur ? Infinity : Math.max(0, (capacityFn ? capacityFn(w) : capacityPerWindow) | 0);
     const winMin = useDur ? Math.max(0, (windowMinutesFn ? windowMinutesFn(w) : 0) || 0) : 0;
     const budget = useDur ? winMin * (1 - (slack || 0)) : 0;
-    let usedMin = 0, count = 0, winArea = null;
+    let usedMin = useDur ? Math.max(0, p.minutes || 0) : 0;
+    let count = Math.max(0, p.count || 0);          // pre-scheduled runs count toward capacity
+    let winArea = null;
     const wz = winZonesOf(w); // zones this shift grants
     for (;;) {
       if (count >= capCount) break;
@@ -38199,6 +38206,20 @@ function _dynWindowCapacity(w) {
   return 3;
 }
 
+// Minutes + run-count a window ALREADY holds from instances scheduled onto it
+// (excluding done runs). The allocator seeds each window with this so it packs
+// on top of existing load instead of from zero.
+function _dynWindowPreload(w) {
+  let minutes = 0, count = 0;
+  for (const i of (_dynPage.instances || [])) {
+    if (String(i.shift_id) !== String(w.id)) continue;
+    if (['Pass', 'Not Applicable'].includes(i.status)) continue;
+    minutes += i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN;
+    count++;
+  }
+  return { minutes, count };
+}
+
 // Minutes of access a window provides.
 function _dynWinMinutes(w) {
   if (w && w.start_at && w.end_at) {
@@ -38242,12 +38263,15 @@ async function _dynAllocateInto(campIds, label) {
       !i.shift_id && i.track_section_under_test && !['Pass', 'Not Applicable'].includes(i.status));
     if (!pool.length) { toast('No unscheduled runs to allocate', 'info'); return; }
     // Aggressive duration-aware packing: fill each window by run durations up to
-    // (1 − slack) of its length, so a 2 h window isn't left half-empty.
+    // (1 − slack) of its length, so a 2 h window isn't left half-empty — but
+    // SEED each window with the time already consumed by runs scheduled on it,
+    // so a date that already has instances isn't overfilled.
     const slack = _dynAllocSlack();
     const draft = _dynCascadeAllocate({
       instances: pool, windows, prereqs, windowAllows,
       runMinutesFn: i => i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN,
       windowMinutesFn: _dynWinMinutes, slack,
+      preload: _dynWindowPreload,
     });
     _dynPage._allocDraft = { campId: idSet.size === 1 ? [...idSet][0] : null, assignments: draft.assignments, unplaced: draft.unplaced };
     _dynAutoAllocatePreview(label, draft);

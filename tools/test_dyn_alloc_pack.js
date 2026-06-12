@@ -55,5 +55,24 @@ const longRun = [{ id: "rL", test_id: "tL", code: "L", track_section_under_test:
 const dLong = cascade({ instances: longRun, windows: [win], prereqs: [], runMinutesFn: i => i.expected_duration_minutes, windowMinutesFn: w => 120, slack: 0.15 });
 assert(dLong.assignments.length === 1, "an over-length run is still placed (at least one per window)");
 
+// ── preload: a window already holding runs isn't overfilled ───────────────────
+// 120-min window, 15% slack → 102-min budget. Pre-load 80 min already used →
+// only 22 min free → at most one 20-min run fits, not five.
+const dPre = cascade({
+  instances: runs, windows: [win], prereqs: [],
+  runMinutesFn: i => i.expected_duration_minutes || 30,
+  windowMinutesFn: w => 120, slack: 0.15,
+  preload: () => ({ minutes: 80, count: 4 }),
+});
+assert(dPre.assignments.length === 1, "with 80m preloaded, only 1 more 20m run fits (got " + dPre.assignments.length + ")");
+// a window already FULL (>budget) takes none more (count>0 so no force-place)
+const dFull = cascade({
+  instances: runs, windows: [win], prereqs: [],
+  runMinutesFn: i => i.expected_duration_minutes || 30,
+  windowMinutesFn: w => 120, slack: 0.15,
+  preload: () => ({ minutes: 110, count: 5 }),
+});
+assert(dFull.assignments.length === 0, "an already-full window takes no more runs (got " + dFull.assignments.length + ")");
+
 console.log(`test_dyn_alloc_pack: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

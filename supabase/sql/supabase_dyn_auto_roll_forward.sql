@@ -21,11 +21,23 @@ alter table dynamic_instances
 create index if not exists dynamic_instances_moved_from_idx
   on dynamic_instances (moved_from_window_id);
 
+-- CAPACITY-AWARE (migration dyn_roll_forward_capacity_aware): each run moves to
+-- the EARLIEST future planned window that grants its zone/access/mode AND still
+-- has room — used minutes + this run's duration must fit within (1 − 0.15) of
+-- the window length (same 15% buffer the auto-allocator uses). Re-reading the DB
+-- each iteration means runs rolled together accumulate; larger runs placed first.
+-- No window with room → backlog. (Earlier versions dumped all runs into the next
+-- window regardless of remaining time, overflowing it.)
 create or replace function dyn_roll_forward_on_cancel()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare
   inst   record;
-  target zone_access_windows%rowtype;
+  cand   record;
+  slack  constant numeric := 0.15;
+  budget numeric;
+  used   numeric;
+  dur    numeric;
+  placed boolean;
 begin
   if new.status <> 'cancelled' or old.status is not distinct from 'cancelled' then
     return new;
@@ -33,39 +45,46 @@ begin
   for inst in
     select * from dynamic_instances
      where shift_id = new.id and status not in ('Pass','Not Applicable')
+     order by coalesce(expected_duration_minutes, 30) desc, id
   loop
-    -- The target must GRANT the run's zone (access_zones membership) and cover
-    -- its access requirement — updated from a plain control_zone_code match in
-    -- migration dyn_roll_forward_access_zones_match (one-window-per-day model).
-    select w.* into target
-      from zone_access_windows w
-     where w.id <> new.id
-       and w.status = 'planned'
-       and coalesce(inst.track_section_under_test, new.control_zone_code)
-             = any(coalesce(nullif(w.access_zones,'{}'), array[w.control_zone_code]))
-       and coalesce(inst.track_section_access_req,'{}')
-             <@ coalesce(nullif(w.access_zones,'{}'), array[w.control_zone_code])
-       and (w.shift_date > new.shift_date
-            or (w.shift_date = new.shift_date and w.start_at > new.start_at))
-       and (inst.required_mode is null or w.allowed_modes @> array[inst.required_mode])
-       and (new.campaign_id is null or w.campaign_id is not distinct from new.campaign_id)
-     order by w.shift_date asc nulls last, w.start_at asc nulls last
-     limit 1;
-
-    if target.id is not null then
-      update dynamic_instances
-         set shift_id=target.id, scheduled_for_date=target.shift_date,
-             scheduled_window = case when target.start_at is not null and target.end_at is not null
-                                     then tstzrange(target.start_at, target.end_at, '[)') end,
-             moved_from_window_id=new.id, roll_count=coalesce(roll_count,0)+1, rolled_at=now(),
-             roll_note='Auto-rolled from cancelled ' || new.control_zone_code || ' on ' || new.shift_date::text,
-             updated_at=now()
-       where id = inst.id;
-    else
+    dur := coalesce(inst.expected_duration_minutes, 30);
+    placed := false;
+    for cand in
+      select w.* from zone_access_windows w
+       where w.id <> new.id
+         and w.status = 'planned'
+         and coalesce(inst.track_section_under_test, new.control_zone_code)
+               = any(coalesce(nullif(w.access_zones,'{}'), array[w.control_zone_code]))
+         and coalesce(inst.track_section_access_req,'{}')
+               <@ coalesce(nullif(w.access_zones,'{}'), array[w.control_zone_code])
+         and (w.shift_date > new.shift_date
+              or (w.shift_date = new.shift_date and w.start_at > new.start_at))
+         and (inst.required_mode is null or w.allowed_modes @> array[inst.required_mode])
+         and (new.campaign_id is null or w.campaign_id is not distinct from new.campaign_id)
+       order by w.shift_date asc nulls last, w.start_at asc nulls last
+    loop
+      budget := greatest(0, extract(epoch from (cand.end_at - cand.start_at)) / 60 * (1 - slack));
+      select coalesce(sum(coalesce(di.expected_duration_minutes, 30)), 0) into used
+        from dynamic_instances di
+       where di.shift_id = cand.id and di.status not in ('Pass','Not Applicable');
+      if used + dur <= budget or used = 0 then   -- fits, or window empty (never strand)
+        update dynamic_instances
+           set shift_id=cand.id, scheduled_for_date=cand.shift_date,
+               scheduled_window = case when cand.start_at is not null and cand.end_at is not null
+                                       then tstzrange(cand.start_at, cand.end_at, '[)') end,
+               moved_from_window_id=new.id, roll_count=coalesce(roll_count,0)+1, rolled_at=now(),
+               roll_note='Auto-rolled from cancelled ' || new.control_zone_code || ' on ' || new.shift_date::text,
+               updated_at=now()
+         where id = inst.id;
+        placed := true;
+        exit;
+      end if;
+    end loop;
+    if not placed then
       update dynamic_instances
          set shift_id=null, scheduled_for_date=null, scheduled_window=null,
              moved_from_window_id=new.id, roll_count=coalesce(roll_count,0)+1, rolled_at=now(),
-             roll_note='Unscheduled — no feasible window after cancelled ' || new.control_zone_code || ' on ' || new.shift_date::text,
+             roll_note='Unscheduled — no window with room after cancelled ' || new.control_zone_code || ' on ' || new.shift_date::text,
              updated_at=now()
        where id = inst.id;
     end if;
@@ -73,7 +92,7 @@ begin
   return new;
 end; $$;
 
-revoke execute on function dyn_roll_forward_on_cancel() from public, anon;
+revoke execute on function dyn_roll_forward_on_cancel() from public, anon, authenticated;
 
 drop trigger if exists trg_dyn_roll_forward on zone_access_windows;
 create trigger trg_dyn_roll_forward
