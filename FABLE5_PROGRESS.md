@@ -16,12 +16,12 @@
 - Doing right now: between batches. Last 3 commits: P3-4 token consolidation
   (034d234), P4-2 static a11y pass (493a78a), P6-1 SharePoint sync (03cbe38).
 - Exact next action: the remaining items all need OWNER INPUT or a browser:
-  (1) P5-2 dead-table drops — needs explicit owner yes per table;
-  (2) browser QA of Dynamic Testing UI + sidebar regroup + a11y/axe run;
-  (3) prerequisite hard-gate decision (soft-ordering today, owner choice);
-  (4) IT ticket for SharePoint credentials (then set 4 secrets, test 1 photo);
-  (5) P7-1 final hardening: full regression, advisor re-run, README rewrite
-      (flagged stale by owner), final report — best done AFTER 1–4 land.
+  (1) browser QA of Dynamic Testing UI + sidebar regroup + a11y/axe run;
+  (2) prerequisite hard-gate decision (soft-ordering today, owner choice);
+  (3) IT ticket for SharePoint credentials (then set 4 secrets, test 1 photo);
+  (4) P7-1 final hardening: full regression, advisor re-run, README rewrite
+      (flagged stale by owner), final report — best done AFTER 1–3 land.
+  (P5-2 dead-table drops: DONE 2026-06-12, owner-approved.)
 - AUTHORIZATION FINDING — RESOLVED (P1-9, owner chose "tighten all"): the 43
   blanket `auth_all` tables now enforce the permission model. 40 mapped 1:1 to a
   module (full per-command has_module_perm gating); fieldset_config + locations =
@@ -537,7 +537,28 @@
       (plus forms/drawings), storage.objects policies per bucket, ALL
       authenticated-only (no anon storage access). Private bucket + signed URLs.
       Remaining: a browser upload smoke (owner QA) — nothing to build.
-- [~] P5-2 (AUDITED — kill list awaiting owner approval) Empty-table triage.
+- [x] P5-2 (DONE — owner-approved 2026-06-12) Dead tables dropped + advisor
+      cleanup. Re-verified against the LIVE DB before dropping: all six still
+      0 rows, 0 code reads/writes (the app.js "deployments" refs are to the
+      in-memory DATA.deployments array, now [], not the DB table), and the ONLY
+      inbound FKs were internal to the set (deployment_locations + test_instances
+      → deployments). Dropped in dependency order via migration
+      p5_2_drop_dead_tables: deployment_locations, test_instances, deployments,
+      punch_history, punch_photos, template_test_cases. DROP TABLE cleared their
+      RLS policies + indexes too. Verified gone; harness still 18/18; no advisor
+      regressions (perf still only INFO unused_index).
+      • BONUS advisor cleanup: the security advisor surfaced 3 NEW security WARNs
+        introduced earlier this engagement by the Dynamic Testing work — the
+        dyn_roll_forward_on_cancel / dyn_sync_pe_to_window / dyn_sync_window_to_pe
+        SECURITY DEFINER TRIGGER functions were RPC-callable by `authenticated`
+        (advisor 0029). They're trigger-only (return trigger, no args) so no
+        caller needs EXECUTE; revoked from anon/authenticated/public (migration
+        p5_2_revoke_execute_dyn_trigger_fns), same pattern as P1-5. Security
+        advisors back to ONLY the plan-gated auth_leaked_password WONT-FIX.
+      • In-repo record: supabase_p5_2_drop_dead_tables.sql; supabase_schema.sql
+        table defs replaced with drop-note comments.
+      [prior audit findings, for reference:]
+      Empty-table triage.
       Method: exact row counts + code-reference scan (incl. PostgREST embedded-
       resource syntax, which a naive grep misses — caught meeting_template_
       categories/items as wired).

@@ -185,23 +185,9 @@ create table if not exists punch_items (
   updated_at            timestamptz default now()
 );
 
-create table if not exists punch_history (
-  id        uuid primary key default gen_random_uuid(),
-  punch_id  text references punch_items (id) on delete cascade,
-  action    text,
-  by_user   text,
-  at        timestamptz,
-  note      text
-);
-
-create table if not exists punch_photos (
-  id        uuid primary key default gen_random_uuid(),
-  punch_id  text references punch_items (id) on delete cascade,
-  type      text check (type in ('before', 'after')),
-  storage_path text,
-  uploaded_by  text,
-  uploaded_at  timestamptz default now()
-);
+-- punch_history and punch_photos were dropped 2026-06-12 (migration
+-- p5_2_drop_dead_tables): both were empty and unreferenced — punch history is
+-- covered by db_change_log, punch photos by the `photos` feature.
 
 
 -- ============================================================
@@ -216,52 +202,12 @@ create table if not exists templates (
   created_at  timestamptz default now()
 );
 
-create table if not exists template_test_cases (
-  id          uuid primary key default gen_random_uuid(),
-  template_id text references templates (id) on delete cascade,
-  code        text,
-  name        text,
-  procedure   text,
-  duration    numeric default 1
-);
-
-create table if not exists deployments (
-  id            text primary key,
-  template_id   text references templates (id),
-  template_name text,
-  deployed_by   text,
-  deployed_at   timestamptz default now()
-);
-
-create table if not exists deployment_locations (
-  id                    uuid primary key default gen_random_uuid(),
-  deployment_id         text references deployments (id) on delete cascade,
-  location_code         text,
-  applicable_test_cases text[],
-  notes                 text
-);
-
-
--- ============================================================
--- TEST INSTANCES (generated when templates are deployed)
--- ============================================================
-create table if not exists test_instances (
-  id               text primary key,
-  deployment_id    text references deployments (id),
-  template_name    text,
-  subsystem        text,
-  location         text,
-  test_code        text,
-  test_name        text,
-  procedure        text,
-  duration         numeric,
-  status           text default 'not_started',
-  applicable       boolean default true,
-  na_reason        text,
-  last_updated_by  text,
-  last_updated_at  timestamptz,
-  notes            text
-);
+-- template_test_cases, deployments, deployment_locations and test_instances
+-- were dropped 2026-06-12 (migration p5_2_drop_dead_tables): all empty and
+-- never DB-wired. Templates store their test_cases inline as jsonb; the
+-- template→deploy→instance flow only ever ran off the in-memory data.js demo
+-- seed (DATA.deployments), so the tables held no data and no code read or
+-- wrote them.
 
 
 -- ============================================================
