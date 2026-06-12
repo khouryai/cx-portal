@@ -34566,9 +34566,13 @@ function _dynRowHtml(r) {
     ? ` <span title="${escapeHtml(r.prerequisites)}" style="cursor:help;color:#b45309;font-size:11px;">${icon('flag')} prereq</span>` : '';
   const selected = _dynPage.selInstances.has(r.id);
   const schedLabel = _dynScheduledLabel(r);
-  // Auto-roll-forward trail: flag runs bumped off a cancelled window (Increment D).
+  // Auto-roll-forward trail: when an access window is CANCELLED, any runs on it
+  // are automatically moved to the next future planned window of the same
+  // campaign + zone (mode-compatible). If there's no such window they fall back
+  // to the BACKLOG (unscheduled). The badge shows which happened.
+  const movedDest = r.shift_id ? `to ${_dynFmtDate(r.scheduled_for_date)}` : 'to backlog';
   const movedBadge = (r.roll_count > 0)
-    ? `<br/><span class="badge" style="background:#fef3c7;color:#92400e;font-size:10px;" title="${escapeHtml(r.roll_note || 'Rolled forward from a cancelled access window')}">↻ moved${r.roll_count > 1 ? ` ×${r.roll_count}` : ''}</span>`
+    ? `<br/><span class="badge" style="background:#fef3c7;color:#92400e;font-size:10px;" title="${escapeHtml(r.roll_note || 'Auto-moved off a cancelled access window')}">↻ moved ${escapeHtml(movedDest)}${r.roll_count > 1 ? ` ×${r.roll_count}` : ''}</span>`
     : '';
   const schedCell = (schedLabel
     ? `<span class="tag" style="background:#ecfdf5;color:#065f46;border-color:#a7f3d0;font-family:var(--font-mono,monospace);" title="Scheduled">${escapeHtml(schedLabel)}</span>`
@@ -35593,46 +35597,54 @@ function _dynRenderDaySummaries(cols) {
   `;
 }
 
-// All instances scheduled on a given day (across every board row).
 // ── Reschedule / unschedule from the board drilldowns ──────────────────
-// A "scheduled shift" is a distinct (date, committed window) that already has
-// instances on it — moves target one of those, never an arbitrary new date.
-function _dynScheduledShifts() {
-  const map = new Map();
-  for (const r of _dynPage.instances) {
-    if (!r.scheduled_for_date) continue;
-    const key = `${r.scheduled_for_date}|${r.scheduled_window || ''}`;
-    if (!map.has(key)) map.set(key, { key, date: r.scheduled_for_date, window: r.scheduled_window || null, count: 0 });
-    map.get(key).count++;
+// The board schedules runs ONLY onto real access-plan windows (zone_access_
+// windows) that meet a run's requirements — see _dynEligibleWindowsFor /
+// _dynWindowGrantsRun below. A date with no access window can't be scheduled.
+
+// Does an access window (zone_access_window) meet ALL of a run's requirements?
+// The window must GRANT the run's zone (its under-test zone is in access_zones),
+// cover every access-required zone, allow the run's mode, and be a live planned
+// window. This is the SAME gate the cascade allocator uses.
+function _dynWindowGrantsRun(w, r) {
+  if (!w || !r || w.status !== 'planned' || !r.track_section_under_test) return false;
+  const wz = (w.access_zones && w.access_zones.length) ? w.access_zones : (w.control_zone_code ? [w.control_zone_code] : []);
+  if (!wz.includes(r.track_section_under_test)) return false;
+  if (!(r.track_section_access_req || []).every(z => wz.includes(z))) return false;
+  if (r.required_mode && !(w.allowed_modes || []).includes(r.required_mode)) return false;
+  return true;
+}
+// The access-plan windows a run may be scheduled into (date-sorted). The board
+// can ONLY schedule a run onto one of these — no access window on a date means
+// no shift can be scheduled there.
+function _dynEligibleWindowsFor(r) {
+  return (_dynPage.shifts || [])
+    .filter(w => _dynWindowGrantsRun(w, r))
+    .sort((a, b) =>
+      String(a.shift_date || '').localeCompare(String(b.shift_date || '')) ||
+      String(a.start_at || '').localeCompare(String(b.start_at || '')));
+}
+// Label one access window for a move dropdown: date · time · zones granted.
+function _dynWindowLabel(w) {
+  let lbl = _dynFmtDate(w.shift_date);
+  if (w.start_at && w.end_at) {
+    const f = iso => new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    lbl += ` · ${f(w.start_at)}–${f(w.end_at)}`;
   }
-  return [...map.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const wz = (w.access_zones && w.access_zones.length) ? w.access_zones : [w.control_zone_code];
+  return `${lbl} · ${wz.join('+')}`;
 }
 
-function _dynShiftLabel(s) {
-  let lbl = _dynFmtDate(s.date);
-  const rng = _dynParseRange(s.window);
-  if (rng) {
-    const f = d => d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-    lbl += ` · ${f(rng.start)}–${f(rng.end)}`;
-  }
-  return `${lbl} (${s.count})`;
-}
-
-// Dropdown of other scheduled shifts within ±14 days of this instance's date.
+// Dropdown of ACCESS-PLAN windows that meet this run's requirements. The run can
+// only move to a real access shift — if none exist, it cannot be scheduled.
 function _dynMoveShiftOptions(r) {
-  const cur = `${r.scheduled_for_date || ''}|${r.scheduled_window || ''}`;
-  const baseStr = r.scheduled_for_date || r.target_window_start || r.target_window_end;
-  const base = baseStr ? _dynParseDate(baseStr) : new Date();
-  const shifts = _dynScheduledShifts().filter(s => {
-    if (s.key === cur) return false;
-    return Math.abs((_dynParseDate(s.date) - base) / 86400000) <= 14;
-  });
-  if (!shifts.length) {
-    return `<span style="font-size:10.5px;color:var(--gray-400);" title="No other scheduled shift within 14 days">no shift ±14d</span>`;
+  const wins = _dynEligibleWindowsFor(r).filter(w => String(w.id) !== String(r.shift_id));
+  if (!wins.length) {
+    return `<span style="font-size:10.5px;color:var(--gray-400);" title="No planned access window grants this run's zone/access/mode — request access first in the Access Plan">no eligible access shift</span>`;
   }
-  return `<select onchange="if(this.value)_dynMoveInstanceToShift('${escapeHtml(r.id)}',this.value)" title="Move to another scheduled shift (within 14 days)" style="font-size:11px;padding:2px 4px;border:1px solid var(--gray-300);border-radius:4px;max-width:210px;">
-    <option value="">Move to shift…</option>
-    ${shifts.map(s => `<option value="${escapeHtml(s.key)}">${escapeHtml(_dynShiftLabel(s))}</option>`).join('')}
+  return `<select onchange="if(this.value)_dynMoveInstanceToShift('${escapeHtml(r.id)}',this.value)" title="Schedule onto an access-plan shift that meets this run's requirements" style="font-size:11px;padding:2px 4px;border:1px solid var(--gray-300);border-radius:4px;max-width:230px;">
+    <option value="">Move to access shift…</option>
+    ${wins.map(w => `<option value="${escapeHtml(String(w.id))}">${escapeHtml(_dynWindowLabel(w))}</option>`).join('')}
   </select>`;
 }
 
@@ -35645,15 +35657,18 @@ function _dynScheduleRowActions(r) {
   </div>`;
 }
 
-async function _dynMoveInstanceToShift(id, shiftKey) {
-  const i = shiftKey.indexOf('|');
-  const date = i >= 0 ? shiftKey.slice(0, i) : shiftKey;
-  const window = i >= 0 ? shiftKey.slice(i + 1) : '';
+// Schedule a run onto a specific access window (by id). Re-checks eligibility,
+// then links shift_id + the window's date and time range.
+async function _dynMoveInstanceToShift(id, windowId) {
+  const inst = _dynPage.instances.find(x => String(x.id) === String(id));
+  const w = (_dynPage.shifts || []).find(x => String(x.id) === String(windowId));
+  if (!inst || !w) { alert('Run or access window not found.'); return; }
+  if (!_dynWindowGrantsRun(w, inst)) { alert('That access shift does not meet this run’s zone / access / mode requirements.'); return; }
+  const window = (w.start_at && w.end_at) ? '[' + w.start_at + ',' + w.end_at + ')' : null;
   try {
-    await _dbUpdate('dynamic_instances', { scheduled_for_date: date, scheduled_window: window || null, updated_at: new Date().toISOString() }, { id });
-    const inst = _dynPage.instances.find(x => x.id === id);
-    if (inst) { inst.scheduled_for_date = date; inst.scheduled_window = window || null; }
-    if (typeof toast === 'function') toast(`Moved to ${_dynFmtDate(date)}`, 'success');
+    await _dbUpdate('dynamic_instances', { shift_id: w.id, scheduled_for_date: w.shift_date, scheduled_window: window, updated_at: new Date().toISOString() }, { id });
+    inst.shift_id = w.id; inst.scheduled_for_date = w.shift_date; inst.scheduled_window = window;
+    if (typeof toast === 'function') toast(`Scheduled onto ${_dynFmtDate(w.shift_date)} access shift`, 'success');
     _dynPage.loaded = false;
     await _dynLoadAll();
     _dynRenderBoard();
@@ -35664,9 +35679,9 @@ async function _dynMoveInstanceToShift(id, shiftKey) {
 async function _dynUnschedule(id) {
   if (!confirm('Remove this instance from its scheduled date?')) return;
   try {
-    await _dbUpdate('dynamic_instances', { scheduled_for_date: null, scheduled_window: null, updated_at: new Date().toISOString() }, { id });
+    await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, updated_at: new Date().toISOString() }, { id });
     const inst = _dynPage.instances.find(x => x.id === id);
-    if (inst) { inst.scheduled_for_date = null; inst.scheduled_window = null; }
+    if (inst) { inst.shift_id = null; inst.scheduled_for_date = null; inst.scheduled_window = null; }
     if (typeof toast === 'function') toast('Removed from schedule', 'success');
     _dynPage.loaded = false;
     await _dynLoadAll();
@@ -35715,21 +35730,30 @@ function _dynDayClearSel() {
   if (_dynPage._boardModal?.type === 'day') _dynBoardOpenDay(_dynPage._boardModal.key);
 }
 
-async function _dynBulkMoveShift(shiftKey) {
+async function _dynBulkMoveShift(windowId) {
   const ids = [..._dynPage.daySel];
-  if (!ids.length || !shiftKey) return;
-  const i = shiftKey.indexOf('|');
-  const date = i >= 0 ? shiftKey.slice(0, i) : shiftKey;
-  const window = i >= 0 ? shiftKey.slice(i + 1) : '';
-  if (!confirm(`Move ${ids.length} instance(s) to ${_dynFmtDate(date)}?`)) return;
+  if (!ids.length || !windowId) return;
+  const w = (_dynPage.shifts || []).find(x => String(x.id) === String(windowId));
+  if (!w) { alert('Access window not found.'); return; }
+  // Only move runs the window actually grants; skip the rest.
+  const eligible = ids.filter(id => {
+    const inst = _dynPage.instances.find(x => String(x.id) === String(id));
+    return inst && _dynWindowGrantsRun(w, inst);
+  });
+  const skipped = ids.length - eligible.length;
+  if (!eligible.length) { alert(`That access shift doesn’t meet the requirements for any of the ${ids.length} selected run(s).`); return; }
+  let msg = `Schedule ${eligible.length} run(s) onto the ${_dynFmtDate(w.shift_date)} access shift?`;
+  if (skipped) msg += `\n\n${skipped} selected run(s) will be skipped — that shift doesn’t grant their zone / access / mode.`;
+  if (!confirm(msg)) return;
+  const window = (w.start_at && w.end_at) ? '[' + w.start_at + ',' + w.end_at + ')' : null;
   try {
-    for (const id of ids) {
-      await _dbUpdate('dynamic_instances', { scheduled_for_date: date, scheduled_window: window || null, updated_at: new Date().toISOString() }, { id });
+    for (const id of eligible) {
+      await _dbUpdate('dynamic_instances', { shift_id: w.id, scheduled_for_date: w.shift_date, scheduled_window: window, updated_at: new Date().toISOString() }, { id });
       const inst = _dynPage.instances.find(x => x.id === id);
-      if (inst) { inst.scheduled_for_date = date; inst.scheduled_window = window || null; }
+      if (inst) { inst.shift_id = w.id; inst.scheduled_for_date = w.shift_date; inst.scheduled_window = window; }
     }
     _dynPage.daySel.clear();
-    if (typeof toast === 'function') toast(`Moved ${ids.length} to ${_dynFmtDate(date)}`, 'success');
+    if (typeof toast === 'function') toast(`Scheduled ${eligible.length} onto ${_dynFmtDate(w.shift_date)}${skipped ? ` · ${skipped} skipped` : ''}`, 'success');
     _dynPage.loaded = false;
     await _dynLoadAll();
     _dynRenderBoard();
@@ -35743,9 +35767,9 @@ async function _dynBulkUnschedule() {
   if (!confirm(`Remove ${ids.length} instance(s) from their scheduled date?`)) return;
   try {
     for (const id of ids) {
-      await _dbUpdate('dynamic_instances', { scheduled_for_date: null, scheduled_window: null, updated_at: new Date().toISOString() }, { id });
+      await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, updated_at: new Date().toISOString() }, { id });
       const inst = _dynPage.instances.find(x => x.id === id);
-      if (inst) { inst.scheduled_for_date = null; inst.scheduled_window = null; }
+      if (inst) { inst.shift_id = null; inst.scheduled_for_date = null; inst.scheduled_window = null; }
     }
     _dynPage.daySel.clear();
     if (typeof toast === 'function') toast(`Unscheduled ${ids.length}`, 'success');
@@ -35782,20 +35806,23 @@ function _dynBoardOpenDay(dayKey) {
   const selCount = _dynPage.daySel.size;
   const allSel = matches.length > 0 && matches.every(r => _dynPage.daySel.has(r.id));
 
-  // Bulk move targets: other scheduled shifts within ±14 days of this day.
+  // Bulk move targets: planned ACCESS windows within ±21 days of this day.
+  // (Per-run eligibility is enforced on commit — ineligible runs are skipped.)
   const base = _dynParseDate(dayKey);
-  const bulkShifts = _dynScheduledShifts().filter(s =>
-    s.date !== dayKey && Math.abs((_dynParseDate(s.date) - base) / 86400000) <= 14);
+  const bulkWins = (_dynPage.shifts || [])
+    .filter(w => w.status === 'planned' && w.shift_date && _dynDayKey(w.shift_date) !== dayKey
+      && Math.abs((_dynParseDate(w.shift_date) - base) / 86400000) <= 21)
+    .sort((x, y) => String(x.shift_date).localeCompare(String(y.shift_date)) || String(x.start_at || '').localeCompare(String(y.start_at || '')));
 
   const bulkBar = selCount > 0 ? `
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin-bottom:12px;">
       <b style="font-size:13px;">${selCount} selected</b>
-      ${bulkShifts.length
-        ? `<select onchange="if(this.value)_dynBulkMoveShift(this.value)" style="font-size:12px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;">
-            <option value="">Move selected to shift…</option>
-            ${bulkShifts.map(s => `<option value="${escapeHtml(s.key)}">${escapeHtml(_dynShiftLabel(s))}</option>`).join('')}
+      ${bulkWins.length
+        ? `<select onchange="if(this.value)_dynBulkMoveShift(this.value)" style="font-size:12px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;" title="Schedule selected onto an access-plan shift (runs the shift doesn't grant are skipped)">
+            <option value="">Move selected to access shift…</option>
+            ${bulkWins.map(w => `<option value="${escapeHtml(String(w.id))}">${escapeHtml(_dynWindowLabel(w))}</option>`).join('')}
           </select>`
-        : `<span style="font-size:11px;color:var(--gray-500);">No other shift ±14d</span>`}
+        : `<span style="font-size:11px;color:var(--gray-500);">No access shift ±21d</span>`}
       <button class="dyn-btn" style="color:#dc2626;" onclick="_dynBulkUnschedule()">Unschedule selected</button>
       <span style="flex:1;"></span>
       <button class="dyn-btn" onclick="_dynDayClearSel()">Clear</button>
@@ -37690,7 +37717,7 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
     const wz = winZonesOf(w); // zones this shift grants
     while (cap > 0) {
       const cands = elig.filter(i => !placed.has(i.id)
-        && i.track_section_under_test === w.control_zone_code
+        && wz.has(i.track_section_under_test)   // window must GRANT the run's zone (incl. secondary zones)
         && accessOkWin(i, wz)
         && (!windowAllows || windowAllows(i, w))
         && (!i.required_mode || (w.allowed_modes || []).includes(i.required_mode))
@@ -37844,53 +37871,61 @@ function _dynWindowCapacity(w) {
   return 3;
 }
 
-// Program-level allocation: one cascade across ALL active campaigns' planned
-// windows + every unscheduled run, so prerequisites order ACROSS campaigns
-// (DCS → CBTC → ATC). Each window still only takes runs its campaign scopes in.
-async function _dynProgramAllocateRun() {
-  const camps = (_dynPage.campaigns || []).filter(c => c.status !== 'closed' && c.status !== 'archived');
-  if (!camps.length) { toast('No active campaigns', 'error'); return; }
-  const campIds = new Set(camps.map(c => c.id));
+// ONE allocation engine for BOTH buttons — identical rules (same prereq DAG,
+// per-window capacity, per-campaign scope gate, access/zone/mode gating). The
+// ONLY difference is which campaigns' windows are in scope: a single chosen
+// campaign vs all active campaigns. campIds = null means "all active".
+async function _dynAllocateInto(campIds, label) {
+  const active = (_dynPage.campaigns || []).filter(c => c.status !== 'closed' && c.status !== 'archived');
+  const camps = campIds ? active.filter(c => campIds.has(String(c.id))) : active;
+  if (!camps.length) { toast('No active campaigns to allocate into', 'error'); return; }
+  const idSet = new Set(camps.map(c => String(c.id)));
   try {
-    const windows = (_dynPage.shifts || []).filter(w => w.campaign_id && campIds.has(w.campaign_id) && w.status === 'planned');
-    if (!windows.length) { toast('No planned windows across campaigns', 'error'); return; }
+    const windows = (_dynPage.shifts || []).filter(w => w.campaign_id && idSet.has(String(w.campaign_id)) && w.status === 'planned');
+    if (!windows.length) { toast('No planned access windows in scope', 'error'); return; }
     const prereqs = await _dbSelect('test_item_prerequisites', {}, '*').catch(() => []);
     const scopeByCamp = new Map();
-    for (const c of camps) if (c.test_case_ids && c.test_case_ids.length) scopeByCamp.set(c.id, new Set(c.test_case_ids));
-    const windowAllows = (i, w) => { const sc = scopeByCamp.get(w.campaign_id); return !sc || sc.has(i.test_id); };
+    for (const c of camps) if (c.test_case_ids && c.test_case_ids.length) scopeByCamp.set(String(c.id), new Set(c.test_case_ids));
+    const windowAllows = (i, w) => { const sc = scopeByCamp.get(String(w.campaign_id)); return !sc || sc.has(i.test_id); };
     const pool = (_dynPage.instances || []).filter(i =>
       !i.shift_id && i.track_section_under_test && !['Pass', 'Not Applicable'].includes(i.status));
     if (!pool.length) { toast('No unscheduled runs to allocate', 'info'); return; }
     const draft = _dynCascadeAllocate({ instances: pool, windows, prereqs, capacityFn: _dynWindowCapacity, windowAllows });
-    _dynPage._allocDraft = { campId: null, assignments: draft.assignments, unplaced: draft.unplaced };
-    _dynAutoAllocatePreview('All active campaigns', draft);
-  } catch (e) { toast('Program allocate failed: ' + e.message, 'error'); }
+    _dynPage._allocDraft = { campId: idSet.size === 1 ? [...idSet][0] : null, assignments: draft.assignments, unplaced: draft.unplaced };
+    _dynAutoAllocatePreview(label, draft);
+  } catch (e) { toast('Allocate failed: ' + e.message, 'error'); }
 }
 
-async function _dynAutoAllocateRun() {
-  const camps = (_dynPage.campaigns || []).filter(c => c.status !== 'archived');
-  if (!camps.length) { toast('No access campaigns to allocate into', 'error'); return; }
-  let camp = camps.find(c => c.id === _dynPage.accCampaignFilter) || (camps.length === 1 ? camps[0] : null);
-  if (!camp) {
-    const pick = prompt('Allocate into which campaign?\n' + camps.map((c, i) => (i + 1) + '. ' + c.name).join('\n'), '1');
-    const idx = parseInt(pick, 10) - 1;
-    if (isNaN(idx) || !camps[idx]) return;
-    camp = camps[idx];
-  }
-  try {
-    const prereqs = await _dbSelect('test_item_prerequisites', {}, '*').catch(() => []);
-    const windows = (_dynPage.shifts || []).filter(w => w.campaign_id === camp.id);
-    const zoneSet = new Set(camp.zone_codes || []);
-    const tcs = (camp.test_case_ids && camp.test_case_ids.length) ? new Set(camp.test_case_ids) : null;
-    const pool = (_dynPage.instances || []).filter(i =>
-      !i.shift_id && i.track_section_under_test && zoneSet.has(i.track_section_under_test)
-      && (!tcs || tcs.has(i.test_id))
-      && !['Pass', 'Not Applicable'].includes(i.status));
-    if (!pool.length) { toast('No unscheduled runs in this campaign\'s zones', 'info'); return; }
-    const draft = _dynCascadeAllocate({ instances: pool, windows, prereqs, capacityPerWindow: _dynAllocCapacity(camp) });
-    _dynPage._allocDraft = { campId: camp.id, assignments: draft.assignments, unplaced: draft.unplaced };
-    _dynAutoAllocatePreview(camp.name, draft);
-  } catch (e) { toast('Allocate failed: ' + e.message, 'error'); }
+// Program allocate (all): every active campaign at once — prerequisites order
+// across campaigns (DCS → CBTC → ATC); each window still only takes runs its
+// campaign scopes in.
+async function _dynProgramAllocateRun() { return _dynAllocateInto(null, 'All active campaigns'); }
+
+// Auto-allocate campaign: ALWAYS ask which campaign to build for, then run the
+// SAME engine scoped to that one campaign.
+function _dynAutoAllocateRun() {
+  const camps = (_dynPage.campaigns || []).filter(c => c.status !== 'closed' && c.status !== 'archived');
+  if (!camps.length) { toast('No active campaigns to allocate into', 'error'); return; }
+  const cur = String(_dynPage.accCampaignFilter || '');
+  modal({
+    title: 'Auto-allocate — choose a campaign',
+    sub: 'Cascade-allocate this campaign’s unscheduled runs into its planned access windows. Same rules as Program allocate, scoped to one campaign.',
+    body: `<div style="padding:12px 24px 6px;">
+        <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:6px;">Campaign</label>
+        <select id="dyn-alloc-camp" style="width:100%;padding:8px 10px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px;">
+          ${camps.map(c => `<option value="${escapeHtml(String(c.id))}" ${String(c.id) === cur ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+        </select>
+      </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="_dynAutoAllocatePick()">Build allocation</button>`,
+  });
+}
+function _dynAutoAllocatePick() {
+  const v = document.getElementById('dyn-alloc-camp')?.value;
+  if (!v) return;
+  const c = (_dynPage.campaigns || []).find(x => String(x.id) === String(v));
+  closeModal();
+  _dynAllocateInto(new Set([String(v)]), c ? c.name : 'Campaign');
 }
 
 function _dynAutoAllocatePreview(label, draft) {

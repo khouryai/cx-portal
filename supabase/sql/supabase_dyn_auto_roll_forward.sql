@@ -34,11 +34,17 @@ begin
     select * from dynamic_instances
      where shift_id = new.id and status not in ('Pass','Not Applicable')
   loop
+    -- The target must GRANT the run's zone (access_zones membership) and cover
+    -- its access requirement — updated from a plain control_zone_code match in
+    -- migration dyn_roll_forward_access_zones_match (one-window-per-day model).
     select w.* into target
       from zone_access_windows w
      where w.id <> new.id
        and w.status = 'planned'
-       and w.control_zone_code = coalesce(inst.track_section_under_test, new.control_zone_code)
+       and coalesce(inst.track_section_under_test, new.control_zone_code)
+             = any(coalesce(nullif(w.access_zones,'{}'), array[w.control_zone_code]))
+       and coalesce(inst.track_section_access_req,'{}')
+             <@ coalesce(nullif(w.access_zones,'{}'), array[w.control_zone_code])
        and (w.shift_date > new.shift_date
             or (w.shift_date = new.shift_date and w.start_at > new.start_at))
        and (inst.required_mode is null or w.allowed_modes @> array[inst.required_mode])

@@ -845,6 +845,42 @@ one; and the edit Non-Revenue Hours time boxes overflowed.
   Scenario 7 updated (two-zone day → ONE window granting both, control = primary).
   Harness 20/20. Verified the edit modal visually (boxes fit). CRLF preserved.
 
+## Dynamic Testing — unified allocate + board↔access-plan gating (2026-06-12)
+Owner: the two allocate buttons gave different results and should share rules;
+"Auto-allocate campaign" should ask which campaign; clarify the "moved" feature;
+and the Planning Board must only schedule onto access-plan shifts that meet a
+test's requirements (no access date → can't schedule there).
+- UNIFIED ALLOCATE: _dynAutoAllocateRun + _dynProgramAllocateRun collapsed into
+  one engine _dynAllocateInto(campIds|null) — identical rules (same prereq DAG,
+  per-window capacity _dynWindowCapacity, per-campaign scope gate windowAllows,
+  access/zone/mode gating). Difference is ONLY scope: one campaign vs all active.
+  The single button now opens a campaign PICKER modal (was a prompt that could be
+  skipped via the cached filter); Program = _dynAllocateInto(null).
+  ROOT CAUSE of the divergence: single used a campaign-fixed capacity
+  (_dynAllocCapacity) + no windowAllows + zone-prefiltered pool; program used
+  per-window capacity + windowAllows. Now both per-window + windowAllows.
+- CASCADE ZONE FIX (needed by one-window-per-day): candidate match changed from
+  i.track_section_under_test === w.control_zone_code → window GRANTS the run's
+  zone (winZonesOf(w).has(under_test)). So a two-zone day's single window can
+  host BOTH zones' runs (previously the secondary zone could never be placed).
+- BOARD ↔ ACCESS PLAN: the board move dropdowns no longer offer arbitrary
+  scheduled dates. New _dynWindowGrantsRun(w,r) (same gate as the cascade) +
+  _dynEligibleWindowsFor(r) list only PLANNED access windows that grant the run's
+  zone, cover its access_req, and allow its mode. Per-instance + bulk move now
+  set shift_id (+ date + window) from the chosen window; bulk skips ineligible
+  runs with a count. No eligible window → "no eligible access shift" (can't
+  schedule). Unschedule clears shift_id too. Removed dead _dynScheduledShifts/
+  _dynShiftLabel.
+- "MOVED" badge now states the destination: "↻ moved to <date>" (rolled to the
+  next planned window) or "↻ moved to backlog" (no feasible window) — answering
+  "where does it go". Roll-forward DB trigger updated to match on access_zones
+  membership + access_req subset (migration dyn_roll_forward_access_zones_match),
+  consistent with the new zone semantics. Advisors unchanged.
+- Test: tools/test_dyn_board_schedule.js (12 assertions, 21st suite) — the
+  eligibility gate (single/two-zone/secondary-zone/mode/cancelled), eligible-
+  window listing, and the cascade placing both zones of a two-zone window.
+  Harness 21/21. CRLF preserved.
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose
