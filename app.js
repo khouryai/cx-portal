@@ -36108,6 +36108,7 @@ function _dynRenderAccess() {
               </div>`; })()}
             </div>
             <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+              <button class="dyn-btn primary" onclick="_dynEditCampaign('${escapeHtml(c.id)}')">Edit</button>
               <button class="dyn-btn" onclick="_dynCampaignProgress('${escapeHtml(c.id)}')">Progress</button>
               <button class="dyn-btn" onclick="_dynOpenTrains('${escapeHtml(c.id)}')">Trains</button>
               <button class="dyn-btn" onclick="_dynPage.accCampaignFilter='${escapeHtml(c.id)}';_dynAccJumpTo('${escapeHtml(c.start_date)}');">View week</button>
@@ -36187,20 +36188,81 @@ function _dynAccJumpTo(dateStr) {
   _dynRenderAccess();
 }
 
-// Per-day access schedule for the new-campaign modal: each weekday can carry its
+// Per-day access schedule for the campaign modal: each weekday can carry its
 // own window time AND its own zone subset (a bigger window / more zones on the
 // days you have more access). The campaign's zone_codes = union of per-day zones.
-// Apply the contract non-revenue windows (2 h weekday / 3 h Sat / 4 h Sun) to
-// every day's times — a starting point the planner can adjust per day.
-function _dynCampApplyContractHours() {
+//
+// ── Non-Revenue Hours ──────────────────────────────────────────────────────
+// The non-revenue access windows (when trains aren't in passenger service).
+// Configurable per planner via the settings gear; persisted in localStorage.
+// Defaults: 2 h weekdays / 3 h Sat / 4 h Sun, all starting 01:00.
+const _DYN_NRH_DEFAULTS = { wk: ['01:00', '03:00'], sat: ['01:00', '04:00'], sun: ['01:00', '05:00'] };
+function _dynNonRevHours() {
+  try {
+    const s = JSON.parse(localStorage.getItem('dynNonRevHours') || 'null');
+    if (s && Array.isArray(s.wk) && Array.isArray(s.sat) && Array.isArray(s.sun)) return s;
+  } catch (_) {}
+  return JSON.parse(JSON.stringify(_DYN_NRH_DEFAULTS));
+}
+function _dynSaveNonRevHours(h) { try { localStorage.setItem('dynNonRevHours', JSON.stringify(h)); } catch (_) {} }
+
+// Apply the configured Non-Revenue Hours to every day's times — a starting
+// point the planner can still adjust per day.
+function _dynCampApplyNonRevHours() {
+  const h = _dynNonRevHours();
   const st = window._dynCampDays = window._dynCampDays || {};
-  const map = { 1: ['01:00', '03:00'], 2: ['01:00', '03:00'], 3: ['01:00', '03:00'], 4: ['01:00', '03:00'], 5: ['01:00', '03:00'], 6: ['01:00', '04:00'], 0: ['01:00', '05:00'] };
+  const map = { 1: h.wk, 2: h.wk, 3: h.wk, 4: h.wk, 5: h.wk, 6: h.sat, 0: h.sun };
   for (const d of Object.keys(map)) {
     st[d] = st[d] || { on: false, zones: [] };
     st[d].start = map[d][0];
     st[d].end = map[d][1];
   }
   _dynCampRerenderDays();
+}
+
+// Inline settings panel (toggled by the gear next to Apply — kept inline so it
+// doesn't replace the campaign modal).
+function _dynNrhToggleSettings() {
+  const p = document.getElementById('dyn-nrh-settings');
+  if (p) p.style.display = (p.style.display === 'none' || !p.style.display) ? 'block' : 'none';
+}
+function _dynNrhSettingsHtml() {
+  const h = _dynNonRevHours();
+  const fld = 'padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;font-size:12px;width:88px;';
+  const row = (key, label) => `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+      <span style="width:78px;font-size:12px;color:var(--gray-600);">${label}</span>
+      <input type="time" id="nrh-${key}-start" value="${h[key][0]}" style="${fld}">
+      <span style="color:var(--gray-400);">→</span>
+      <input type="time" id="nrh-${key}-end" value="${h[key][1]}" style="${fld}">
+    </div>`;
+  return `<div id="dyn-nrh-settings" style="display:none;margin-top:8px;padding:10px 12px;background:var(--surface-2);border:1px solid var(--gray-200);border-radius:8px;">
+    <div style="font-size:11px;font-weight:600;color:var(--gray-600);margin-bottom:6px;">Non-Revenue Hours — default windows by day type</div>
+    ${row('wk', 'Weekdays')}${row('sat', 'Saturday')}${row('sun', 'Sunday')}
+    <div style="display:flex;gap:6px;margin-top:8px;">
+      <button type="button" class="dyn-btn primary" style="font-size:11px;padding:3px 10px;" onclick="_dynNrhSaveSettings()">Save &amp; apply</button>
+      <button type="button" class="dyn-btn" style="font-size:11px;padding:3px 10px;" onclick="_dynNrhToggleSettings()">Close</button>
+      <button type="button" class="dyn-btn" style="font-size:11px;padding:3px 10px;margin-left:auto;" onclick="_dynNrhResetSettings()">Reset to default</button>
+    </div>
+  </div>`;
+}
+function _dynNrhSaveSettings() {
+  const g = id => document.getElementById(id);
+  const read = key => [g('nrh-' + key + '-start')?.value || _DYN_NRH_DEFAULTS[key][0], g('nrh-' + key + '-end')?.value || _DYN_NRH_DEFAULTS[key][1]];
+  const h = { wk: read('wk'), sat: read('sat'), sun: read('sun') };
+  for (const k of ['wk', 'sat', 'sun']) {
+    if (h[k][1] <= h[k][0]) { alert('Non-Revenue Hours: end must be after start (' + k + ').'); return; }
+  }
+  _dynSaveNonRevHours(h);
+  _dynNrhToggleSettings();
+  _dynCampApplyNonRevHours();
+  if (typeof toast === 'function') toast('Non-Revenue Hours saved', 'success');
+}
+function _dynNrhResetSettings() {
+  _dynSaveNonRevHours(JSON.parse(JSON.stringify(_DYN_NRH_DEFAULTS)));
+  const p = document.getElementById('dyn-nrh-settings');
+  if (p) p.outerHTML = _dynNrhSettingsHtml();
+  const np = document.getElementById('dyn-nrh-settings'); if (np) np.style.display = 'block';
 }
 function _dynCampInitDays() {
   const days = {};
@@ -36263,60 +36325,101 @@ function _dynCampSyncDays() {
   _dynCampRerenderDays();
 }
 
-function _dynOpenNewCampaign() {
-  window._dynCampScope = new Set();
-  _dynCampInitDays();
+function _dynOpenNewCampaign() { _dynCampaignModal(null); }
+function _dynEditCampaign(id) {
+  const camp = (_dynPage.campaigns || []).find(c => String(c.id) === String(id));
+  if (!camp) { alert('Campaign not found.'); return; }
+  _dynCampaignModal(camp);
+}
+// Load the per-day editor state from an existing campaign's stored schedule.
+function _dynCampLoadDays(camp) {
+  const days = {};
+  const sched = camp.day_schedule || {};
+  const dow = new Set((camp.days_of_week || []).map(Number));
+  const t = (v, dflt) => (v ? String(v).slice(0, 5) : dflt);
+  for (const d of [1, 2, 3, 4, 5, 6, 0]) {
+    const sd = sched[String(d)] || sched[d] || null;
+    days[d] = {
+      on: dow.has(d),
+      start: t(sd && sd.start, t(camp.shift_start, '07:00')),
+      end:   t(sd && sd.end,   t(camp.shift_end, '15:00')),
+      zones: (sd && sd.zones && sd.zones.length) ? [...sd.zones] : [...(camp.zone_codes || [])],
+    };
+  }
+  window._dynCampDays = days;
+}
+
+// Shared create/edit campaign modal. `camp` null = create; object = edit.
+function _dynCampaignModal(camp) {
+  const isEdit = !!camp;
+  window._dynCampScope = new Set(isEdit ? (camp.test_case_ids || []) : []);
+  if (isEdit) _dynCampLoadDays(camp); else _dynCampInitDays();
   const zoneOpts = _dynAccZoneOptions();
   const phaseOpts = (typeof LOCS !== 'undefined' ? LOCS : []).filter(l => l.level === 1)
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
   const subsysOpts = [...new Set(['DCS', 'CBTC', 'ATS', 'ATC', 'IXL', ...((typeof TI !== 'undefined' ? TI : []).map(t => t.Subsystem).filter(Boolean))])];
   const today = _dynFmtDate(new Date());
-  const dowChk = [1, 2, 3, 4, 5, 6, 0].map(d =>
-    `<label style="display:inline-flex;align-items:center;gap:3px;font-size:12px;margin-right:8px;">
-      <input type="checkbox" class="camp-dow" value="${d}" ${[1,2,3,4,5].includes(d)?'checked':''}>${_DYN_DOW[d]}</label>`).join('');
   const fld = 'width:100%;padding:6px 8px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;';
+  // prefill helpers
+  const selZones = new Set(isEdit ? (camp.zone_codes || []) : []);
+  const modes = new Set(isEdit ? (camp.allowed_modes || ['CBTC', 'VATC']) : ['CBTC', 'VATC']);
+  const av = isEdit ? (k, d) => (camp[k] == null ? (d ?? '') : camp[k]) : (k, d) => (d ?? '');
+  const scopeN = window._dynCampScope.size;
+  const scopeSummary = scopeN
+    ? `${scopeN} selected — only these tests in scope.`
+    : '0 selected — all in-zone tests in scope.';
   modal({
-    title: 'New access campaign',
-    sub: 'Request zone access over a date range — one shift per zone per access day',
+    title: isEdit ? 'Edit access campaign' : 'New access campaign',
+    sub: isEdit ? 'Update this campaign — generated shifts are reconciled to match' : 'Request zone access over a date range — one shift per zone per access day',
     size: 'large',
     body: `
       <div style="padding:8px 22px 16px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div class="form-field" style="grid-column:1/-1;"><label>Campaign name</label>
-          <input id="camp-name" style="${fld}" placeholder="e.g. W40 CBTC dynamic — Spring window"></div>
+          <input id="camp-name" style="${fld}" placeholder="e.g. W40 CBTC dynamic — Spring window" value="${escapeHtml(String(av('name', '')))}"></div>
         <div class="form-field" style="grid-column:1/-1;"><label>Zones <span style="color:var(--gray-500);font-weight:400;">(⌘/Ctrl for multiple)</span></label>
           <select id="camp-zones" multiple size="6" style="${fld}" onchange="_dynCampSyncDays()">
-            ${zoneOpts.map(o => `<option value="${escapeHtml(o.code)}">${escapeHtml(o.name)}</option>`).join('')}
+            ${zoneOpts.map(o => `<option value="${escapeHtml(o.code)}" ${selZones.has(o.code) ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('')}
           </select></div>
-        <div class="form-field"><label>Start date</label><input id="camp-start" type="date" value="${today}" style="${fld}"></div>
-        <div class="form-field"><label>End date</label><input id="camp-end" type="date" value="${today}" style="${fld}"></div>
-        <div class="form-field" style="grid-column:1/-1;"><label>Access days, times &amp; zones <span style="color:var(--gray-500);font-weight:400;">(per day — a bigger window / more zones on the days you have more access)</span> <button type="button" class="dyn-btn" style="font-size:10.5px;padding:2px 8px;margin-left:6px;" onclick="_dynCampApplyContractHours()" title="Set non-revenue contract windows: 2 h weekdays, 3 h Sat, 4 h Sun (adjust as needed)">Apply contract hours</button></label>
-          <div id="camp-day-rows">${_dynCampDayRowsHtml()}</div>
+        <div class="form-field"><label>Start date</label><input id="camp-start" type="date" value="${escapeHtml(String(av('start_date', today)))}" style="${fld}"></div>
+        <div class="form-field"><label>End date</label><input id="camp-end" type="date" value="${escapeHtml(String(av('end_date', today)))}" style="${fld}"></div>
+        <div class="form-field" style="grid-column:1/-1;"><label>Access days, times &amp; zones <span style="color:var(--gray-500);font-weight:400;">(per day — a bigger window / more zones on the days you have more access)</span>
+          <span style="display:inline-flex;gap:4px;margin-left:6px;vertical-align:middle;">
+            <button type="button" class="dyn-btn" style="font-size:10.5px;padding:2px 8px;" onclick="_dynCampApplyNonRevHours()" title="Apply your configured Non-Revenue Hours to every day (adjust per day after)">Apply Non-Revenue Hours</button>
+            <button type="button" class="dyn-btn" style="font-size:10.5px;padding:2px 6px;" onclick="_dynNrhToggleSettings()" title="Configure Non-Revenue Hours" aria-label="Configure Non-Revenue Hours">${icon('settings')}</button>
+          </span>
+          </label>
+          ${_dynNrhSettingsHtml()}
+          <div id="camp-day-rows" style="margin-top:6px;">${_dynCampDayRowsHtml()}</div>
         </div>
-        <div class="form-field"><label>Trains requested</label><input id="camp-trains" type="number" min="1" value="2" style="${fld}"></div>
-        <div class="form-field"><label>Consist size <span style="color:var(--gray-500);font-weight:400;">(cars, 4–10)</span></label><input id="camp-consist" type="number" min="1" max="10" placeholder="e.g. 4" style="${fld}"></div>
+        <div class="form-field"><label>Trains requested</label><input id="camp-trains" type="number" min="1" value="${escapeHtml(String(av('trains_requested', 2)))}" style="${fld}"></div>
+        <div class="form-field"><label>Consist size <span style="color:var(--gray-500);font-weight:400;">(cars, 4–10)</span></label><input id="camp-consist" type="number" min="1" max="10" placeholder="e.g. 4" value="${escapeHtml(String(av('consist_size', '')))}" style="${fld}"></div>
         <div class="form-field"><label>Modes</label><div style="padding:6px 0;">
-          <label style="margin-right:10px;font-size:12px;"><input type="checkbox" class="camp-mode" value="CBTC" checked> CBTC</label>
-          <label style="font-size:12px;"><input type="checkbox" class="camp-mode" value="VATC" checked> VATC</label>
+          <label style="margin-right:10px;font-size:12px;"><input type="checkbox" class="camp-mode" value="CBTC" ${modes.has('CBTC') ? 'checked' : ''}> CBTC</label>
+          <label style="font-size:12px;"><input type="checkbox" class="camp-mode" value="VATC" ${modes.has('VATC') ? 'checked' : ''}> VATC</label>
         </div></div>
         <div class="form-field"><label>Subsystem / level</label>
-          <input id="camp-subsys" list="camp-subsys-list" style="${fld}" placeholder="optional">
+          <input id="camp-subsys" list="camp-subsys-list" style="${fld}" placeholder="optional" value="${escapeHtml(String(av('subsystem', '')))}">
           <datalist id="camp-subsys-list">${subsysOpts.map(s=>`<option value="${escapeHtml(s)}">`).join('')}</datalist></div>
         <div class="form-field"><label>Phase</label>
-          <select id="camp-phase" style="${fld}"><option value="">—</option>${phaseOpts.map(p=>`<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`).join('')}</select></div>
+          <select id="camp-phase" style="${fld}"><option value="">—</option>${phaseOpts.map(p=>`<option value="${escapeHtml(p.name)}" ${isEdit && camp.phase === p.name ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}</select></div>
         <div class="form-field"><label>Access type</label>
-          <select id="camp-kind" style="${fld}"><option value="standard">Standard non-revenue</option><option value="closure">Weekend / line closure</option></select></div>
-        <div class="form-field"><label>BART permit / work order #</label><input id="camp-permit" style="${fld}" placeholder="optional"></div>
+          <select id="camp-kind" style="${fld}"><option value="standard" ${isEdit && camp.campaign_kind === 'standard' ? 'selected' : ''}>Standard non-revenue</option><option value="closure" ${isEdit && camp.campaign_kind === 'closure' ? 'selected' : ''}>Weekend / line closure</option></select></div>
+        <div class="form-field"><label>BART permit / work order #</label><input id="camp-permit" style="${fld}" placeholder="optional" value="${escapeHtml(String(av('permit_no', '')))}"></div>
         <div class="form-field" style="grid-column:1/-1;"><label>Test case scope <span style="color:var(--gray-500);font-weight:400;">(which dynamic test cases this campaign covers — leave empty for all in-zone)</span></label>
           <input id="camp-scope-search" placeholder="Search test cases…" style="${fld};margin-bottom:6px;" oninput="_dynCampScopeFilter(this.value)">
           <div id="camp-scope-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;">${_dynCampScopeListHtml('')}</div>
-          <div id="camp-scope-summary" style="font-size:11.5px;color:var(--gray-500);margin-top:4px;">0 selected — all in-zone tests in scope.</div>
+          <div id="camp-scope-summary" style="font-size:11.5px;color:var(--gray-500);margin-top:4px;">${scopeSummary}</div>
         </div>
-        <div class="form-field" style="grid-column:1/-1;"><label>Notes</label><input id="camp-notes" style="${fld}" placeholder="optional"></div>
+        <div class="form-field" style="grid-column:1/-1;"><label>Notes</label><input id="camp-notes" style="${fld}" placeholder="optional" value="${escapeHtml(String(av('notes', '')))}"></div>
       </div>`,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-submit" onclick="_dynSaveCampaign()">Create &amp; generate shifts</button>`,
+      <button class="form-submit" onclick="_dynSaveCampaign(${isEdit ? `'${escapeHtml(String(camp.id))}'` : ''})">${isEdit ? 'Save changes' : 'Create &amp; generate shifts'}</button>`,
   });
+  // The day rows are built before the zone <select> is in the DOM, so the
+  // per-day zone checkboxes can't read the palette yet. Re-render once mounted
+  // so an edited campaign shows its zones immediately.
+  if (isEdit) setTimeout(() => { try { _dynCampRerenderDays(); } catch (_) {} }, 0);
 }
 
 // Build the per-day shift window rows for a campaign (one per zone per access day).
@@ -36354,7 +36457,7 @@ function _dynGenerateShiftRows(campaign) {
   return rows;
 }
 
-async function _dynSaveCampaign() {
+async function _dynSaveCampaign(editId) {
   const g = id => document.getElementById(id);
   const name = g('camp-name').value.trim();
   const zonePalette = Array.from(g('camp-zones').selectedOptions).map(o => o.value);
@@ -36394,15 +36497,21 @@ async function _dynSaveCampaign() {
   if (!dow.length) { alert('Pick at least one day of week.'); return; }
   if (shiftEnd <= shiftStart) { alert('Shift end must be after shift start.'); return; }
 
+  const fields = {
+    name, zone_codes: zones, phase, subsystem,
+    start_date: startDate, end_date: endDate,
+    days_of_week: dow, shift_start: shiftStart, shift_end: shiftEnd,
+    day_schedule: daySchedule, test_case_ids: scopeIds, campaign_kind: campaignKind,
+    allowed_modes: modes.length ? modes : ['CBTC', 'VATC'],
+    trains_requested: trains, consist_size: consist,
+    permit_no: permit, notes,
+  };
+
+  if (editId) { return _dynUpdateCampaign(editId, fields); }
+
   try {
     const inserted = await _dbInsert('access_campaigns', [{
-      name, zone_codes: zones, phase, subsystem,
-      start_date: startDate, end_date: endDate,
-      days_of_week: dow, shift_start: shiftStart, shift_end: shiftEnd,
-      day_schedule: daySchedule, test_case_ids: scopeIds, campaign_kind: campaignKind,
-      allowed_modes: modes.length ? modes : ['CBTC', 'VATC'],
-      trains_requested: trains, consist_size: consist,
-      permit_no: permit, notes,
+      ...fields,
       created_by: currentRoleUser?.email || currentRoleUser?.id || null,
     }]);
     const camp = Array.isArray(inserted) ? inserted[0] : inserted;
@@ -36436,6 +36545,78 @@ async function _dynSaveCampaign() {
     if (typeof toast === 'function') toast(`Campaign created · ${shiftRows.length} shift${shiftRows.length===1?'':'s'} generated`, 'success');
   } catch (e) {
     alert(`Create failed: ${e.message}`);
+  }
+}
+
+// Edit path: update the campaign row, then RECONCILE its generated shifts to the
+// new schedule instead of wiping and re-creating — matched (date+zone) windows
+// are updated in place (preserving their id + any assigned instances), new ones
+// inserted (+ Lookahead cell), and windows no longer in the schedule removed.
+// Removing a window that has assigned test instances unschedules them, so the
+// planner is asked to confirm first.
+function _dynReconcileShiftKey(s) { return `${s.shift_date}|${s.control_zone_code}`; }
+async function _dynUpdateCampaign(editId, fields) {
+  const campObj = { id: editId, ...fields };
+  const expected = _dynGenerateShiftRows(campObj);
+  const existing = (_dynPage.shifts || []).filter(s => String(s.campaign_id) === String(editId));
+  const exMap = new Map(existing.map(s => [_dynReconcileShiftKey(s), s]));
+  const expKeys = new Set(expected.map(_dynReconcileShiftKey));
+
+  const toUpdate = [];   // { id, row }
+  const toInsert = [];   // row
+  for (const ex of expected) {
+    const cur = exMap.get(_dynReconcileShiftKey(ex));
+    if (cur) toUpdate.push({ id: cur.id, row: ex }); else toInsert.push(ex);
+  }
+  const toRemove = existing.filter(s => !expKeys.has(_dynReconcileShiftKey(s)));
+  const affectedInstances = toRemove.length
+    ? (_dynPage.instances || []).filter(i => i.shift_id && toRemove.some(s => String(s.id) === String(i.shift_id)))
+    : [];
+
+  // Confirm BEFORE any writes if the edit removes shifts.
+  if (toRemove.length) {
+    let msg = `Saving will remove ${toRemove.length} shift${toRemove.length === 1 ? '' : 's'} that are no longer in the schedule`;
+    if (affectedInstances.length) msg += `, unscheduling ${affectedInstances.length} assigned test instance${affectedInstances.length === 1 ? '' : 's'}`;
+    msg += `.\n\n${toInsert.length} new · ${toUpdate.length} updated · ${toRemove.length} removed.\n\nContinue?`;
+    if (!confirm(msg)) return;
+  }
+
+  try {
+    await _dbUpdate('access_campaigns', { ...fields, updated_at: new Date().toISOString() }, { id: editId });
+
+    const activityId = await _dynEnsureCampaignActivity(campObj).catch(() => null);
+    // updates (preserve window id + assignments)
+    for (const u of toUpdate) {
+      await _dbUpdate('zone_access_windows', {
+        access_zones: u.row.access_zones,
+        start_at: u.row.start_at, end_at: u.row.end_at,
+        allowed_modes: u.row.allowed_modes, max_trains: u.row.max_trains,
+        consist_size: u.row.consist_size, subsystem: u.row.subsystem,
+      }, { id: u.id });
+    }
+    // inserts (+ Lookahead cell)
+    const insertedShifts = [];
+    for (let i = 0; i < toInsert.length; i += 200) {
+      const r = await _dbInsert('zone_access_windows', toInsert.slice(i, i + 200));
+      if (Array.isArray(r)) insertedShifts.push(...r);
+    }
+    for (const w of insertedShifts) await _dynEnsureShiftCell(w, activityId, campObj).catch(() => {});
+    // removals — unschedule any instances first, then delete (cells cascade)
+    for (const ins of affectedInstances) {
+      await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, updated_at: new Date().toISOString() }, { id: ins.id }).catch(() => {});
+    }
+    for (const s of toRemove) await _dbDelete('zone_access_windows', { id: s.id }).catch(() => {});
+
+    closeModal();
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    _dynPage.accCampaignFilter = editId;
+    _dynAccJumpTo(fields.start_date);
+    if (typeof toast === 'function') {
+      toast(`Campaign updated · ${toInsert.length} new, ${toUpdate.length} updated, ${toRemove.length} removed`, 'success');
+    }
+  } catch (e) {
+    alert(`Update failed: ${e.message}`);
   }
 }
 
@@ -37591,10 +37772,10 @@ function _dynWhatIfBodyHtml(hours) {
       <div style="font-size:12px;color:var(--gray-600);margin-top:4px;">Last run: ${s.lastDate ? escapeHtml(s.lastDate) : '—'}</div>
     </div>`;
   const gain = r.extended.placed - r.contract.placed;
-  return `<div style="display:flex;gap:12px;">${col('Contract hours (current)', r.contract, 'var(--gray-400)')}${col(hours + ' h per shift', r.extended, 'var(--info)')}</div>
+  return `<div style="display:flex;gap:12px;">${col('Non-Revenue Hours (current)', r.contract, 'var(--gray-400)')}${col(hours + ' h per shift', r.extended, 'var(--info)')}</div>
     <div style="margin-top:12px;padding:10px 14px;background:${gain > 0 ? '#ecfdf5' : '#f9fafb'};border:1px solid ${gain > 0 ? '#a7f3d0' : 'var(--gray-200)'};border-radius:8px;font-size:13px;color:${gain > 0 ? '#065f46' : 'var(--gray-600)'};">
       ${gain > 0
-        ? `<b>+${gain} more runs scheduled</b> by extending to ${hours} h per shift — ${r.extended.unplaced} left in backlog vs ${r.contract.unplaced} under contract hours.`
+        ? `<b>+${gain} more runs scheduled</b> by extending to ${hours} h per shift — ${r.extended.unplaced} left in backlog vs ${r.contract.unplaced} under Non-Revenue Hours.`
         : `No additional runs fit at ${hours} h — the limit here is windows / zones / prerequisites, not shift length.`}
     </div>`;
 }

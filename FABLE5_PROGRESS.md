@@ -793,6 +793,34 @@ resource roster automatically.
   lists. Harness 19/19. Verified the picker visually (headless render of all
   three filter states). CRLF preserved.
 
+## Dynamic Testing — campaign edit + Non-Revenue Hours (2026-06-12, owner-directed)
+Owner: fully edit a campaign after creation; rename "contract hours" to
+"Non-Revenue Hours" and make its settings a small button next to Apply.
+- EDIT: _dynOpenNewCampaign refactored into a shared _dynCampaignModal(camp)
+  (null = create, object = edit). Edit prefills every field (name, zones, dates,
+  per-day schedule via new _dynCampLoadDays, trains, consist, modes, subsystem,
+  phase, kind, permit, scope, notes). New "Edit" button (primary) on each
+  campaign card → _dynEditCampaign.
+- SAVE: _dynSaveCampaign(editId) branches; edit routes to _dynUpdateCampaign,
+  which UPDATEs the campaign row then RECONCILES generated shifts instead of
+  wipe-and-recreate: matched (date|zone) windows updated in place (preserving
+  the window id + any assigned dynamic_instances), new ones inserted (+ Lookahead
+  cell via _dynEnsureShiftCell), removed ones deleted (cells cascade). Removing a
+  window with assigned instances unschedules them (shift_id/scheduled_for_date/
+  scheduled_window nulled) and the planner is asked to confirm first, with an
+  added/updated/removed summary. No DB writes happen if they cancel.
+- NON-REVENUE HOURS: hardcoded "contract hours" preset → configurable
+  _dynNonRevHours() (localStorage, defaults 2h wk / 3h Sat / 4h Sun). Button
+  renamed "Apply Non-Revenue Hours"; a gear button beside it toggles an INLINE
+  settings panel (kept inline so it doesn't replace the campaign modal) with
+  per-day-type start/end + Save & apply / Reset. What-if comparison text also
+  renamed ("Non-Revenue Hours (current)"). No "contract hour" strings remain.
+- Test: tools/test_dyn_campaign_edit.js (18 assertions, 20th suite) — real-fn
+  schedule round-trip (_dynCampLoadDays), NRH defaults+apply+settings HTML, and
+  the reconcile keying (_dynGenerateShiftRows + _dynReconcileShiftKey classifying
+  added/updated/removed). Harness 20/20. Edit modal verified visually (all fields
+  prefilled, settings panel open). CRLF preserved.
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose
