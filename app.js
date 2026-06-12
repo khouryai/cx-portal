@@ -37043,6 +37043,7 @@ function _dynRenderPlanning() {
       <button class="dyn-btn primary" onclick="_dynPlanRun()">Compute feasible</button>
       <button class="dyn-btn" onclick="_dynAutoAllocateRun()" title="Cascade-allocate unscheduled runs across this campaign's access windows, prerequisites first">Auto-allocate campaign</button>
       <button class="dyn-btn" onclick="_dynProgramAllocateRun()" title="Allocate across ALL active campaigns at once — prerequisites order across campaigns (DCS→CBTC→ATC)">Program allocate (all)</button>
+      <button class="dyn-btn" onclick="_dynWhatIfRun()" title="Project how many more runs you could schedule if the client extends the access window (e.g. 6 h)">What-if window</button>
       <span style="flex:1;"></span>
       <button class="dyn-btn" onclick="_dynPlanOpenWindowsAdmin()">${icon('settings')} Manage Windows</button>
     </div>
@@ -37445,6 +37446,89 @@ function _dynTopoRank(preMap) {
   };
   nodes.forEach(depth);
   return rank;
+}
+
+// What-if: project scheduling throughput under the contract window vs an
+// extended window, to quantify the schedule benefit of more access. Read-only
+// (runs the cascade twice; no writes).
+async function _dynWhatIfRun() {
+  const camps = (_dynPage.campaigns || []).filter(c => c.status !== 'archived');
+  if (!camps.length) { toast('No campaigns', 'error'); return; }
+  let camp = camps.find(c => c.id === _dynPage.accCampaignFilter) || (camps.length === 1 ? camps[0] : null);
+  if (!camp) {
+    const pick = prompt('What-if for which campaign?\n' + camps.map((c, i) => (i + 1) + '. ' + c.name).join('\n'), '1');
+    const idx = parseInt(pick, 10) - 1;
+    if (isNaN(idx) || !camps[idx]) return;
+    camp = camps[idx];
+  }
+  try {
+    const prereqs = await _dbSelect('test_item_prerequisites', {}, '*').catch(() => []);
+    const windows = (_dynPage.shifts || []).filter(w => w.campaign_id === camp.id && w.status === 'planned');
+    const zoneSet = new Set(camp.zone_codes || []);
+    const tcs = (camp.test_case_ids && camp.test_case_ids.length) ? new Set(camp.test_case_ids) : null;
+    const pool = (_dynPage.instances || []).filter(i =>
+      i.track_section_under_test && zoneSet.has(i.track_section_under_test)
+      && (!tcs || tcs.has(i.test_id)) && !['Pass', 'Not Applicable'].includes(i.status));
+    window._dynWhatIf = { camp, prereqs, windows, pool };
+    _dynWhatIfRender(6);
+  } catch (e) { toast('What-if failed: ' + e.message, 'error'); }
+}
+function _dynWhatIfCompute(targetHours) {
+  const w = window._dynWhatIf;
+  if (!w) return null;
+  const run = (windows) => {
+    const d = _dynCascadeAllocate({ instances: w.pool, windows, prereqs: w.prereqs, capacityFn: _dynWindowCapacity });
+    const lastDate = d.assignments.reduce((m, a) => (a.shiftDate > m ? a.shiftDate : m), '');
+    return { placed: d.assignments.length, unplaced: d.unplaced.length, lastDate };
+  };
+  const contract = run(w.windows);
+  const ext = w.windows.map(x => {
+    if (!x.start_at) return x;
+    const s = new Date(x.start_at);
+    return Object.assign({}, x, { end_at: new Date(s.getTime() + targetHours * 3600 * 1000).toISOString() });
+  });
+  const extended = run(ext);
+  return { contract, extended, total: w.pool.length };
+}
+function _dynWhatIfBodyHtml(hours) {
+  const r = _dynWhatIfCompute(hours);
+  if (!r) return '';
+  const col = (label, s, accent) => `<div style="flex:1;border:1px solid var(--gray-200);border-radius:8px;padding:12px 14px;border-top:3px solid ${accent};">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:6px;">${escapeHtml(label)}</div>
+      <div style="font-size:22px;font-weight:700;">${s.placed}<span style="font-size:12px;font-weight:500;color:var(--gray-500);"> / ${r.total} scheduled</span></div>
+      <div style="font-size:12px;color:${s.unplaced ? '#b45309' : '#059669'};margin-top:2px;">${s.unplaced} still in backlog</div>
+      <div style="font-size:12px;color:var(--gray-600);margin-top:4px;">Last run: ${s.lastDate ? escapeHtml(s.lastDate) : '—'}</div>
+    </div>`;
+  const gain = r.extended.placed - r.contract.placed;
+  return `<div style="display:flex;gap:12px;">${col('Contract hours (current)', r.contract, 'var(--gray-400)')}${col(hours + ' h per shift', r.extended, 'var(--info)')}</div>
+    <div style="margin-top:12px;padding:10px 14px;background:${gain > 0 ? '#ecfdf5' : '#f9fafb'};border:1px solid ${gain > 0 ? '#a7f3d0' : 'var(--gray-200)'};border-radius:8px;font-size:13px;color:${gain > 0 ? '#065f46' : 'var(--gray-600)'};">
+      ${gain > 0
+        ? `<b>+${gain} more runs scheduled</b> by extending to ${hours} h per shift — ${r.extended.unplaced} left in backlog vs ${r.contract.unplaced} under contract hours.`
+        : `No additional runs fit at ${hours} h — the limit here is windows / zones / prerequisites, not shift length.`}
+    </div>`;
+}
+function _dynWhatIfUpdate(v) {
+  const el = document.getElementById('whatif-body');
+  if (el) el.innerHTML = _dynWhatIfBodyHtml(parseFloat(v) || 6);
+}
+function _dynWhatIfRender(hours) {
+  const w = window._dynWhatIf;
+  if (!w) return;
+  modal({
+    title: 'What-if — extend the access window',
+    sub: escapeHtml(w.camp.name) + ' · ' + w.pool.length + ' runs in scope',
+    size: 'large',
+    body: `<div style="padding:8px 22px 16px;">
+      <p style="font-size:12.5px;color:var(--gray-600);margin:0 0 10px;">Projects how many backlog runs the auto-allocator can schedule into this campaign's windows at the current length vs a longer window — to show the client the schedule benefit of more access.</p>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+        <label style="font-size:13px;color:var(--gray-600);">Extend each shift to</label>
+        <input id="whatif-hours" type="number" min="1" max="12" step="0.5" value="${hours}" style="width:74px;padding:5px 7px;border:1px solid var(--gray-300);border-radius:5px;" oninput="_dynWhatIfUpdate(this.value)">
+        <span style="font-size:13px;color:var(--gray-600);">hours per shift</span>
+      </div>
+      <div id="whatif-body">${_dynWhatIfBodyHtml(hours)}</div>
+    </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
 }
 
 function _dynAllocCapacity(camp) {
