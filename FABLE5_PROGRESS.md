@@ -414,7 +414,32 @@
       screens whose fate is a PRODUCT call (owner): migrate activities/lineitems/
       team to real tables (activity_records exists, 73 rows) or deprecate the
       screens — overlaps P5-2 triage. Decision pending; flagged to owner.
-- [ ] P3-4 (TODO) Design tokens / component patterns on Hitachi palette
+- [x] P3-4 (DONE — 2026-06-12) Design tokens consolidated + component patterns
+      documented. FINDING: styles.css had accreted FOUR competing bare `:root`
+      blocks (lines 6 / 3755 / 8240 / 11631) redefining the same custom props —
+      36 tokens had 2–3 conflicting values (e.g. --good was #00875a, #027a48,
+      AND #0d7a4f); the effective value was simply whichever block came last.
+      • Consolidated to ONE canonical categorized sheet at the top of styles.css
+        via a generated edit: every token's value computed last-wins from the
+        live cascade, the sheet emitted programmatically from that map, later
+        blocks replaced with pointer comments, then the effective map re-parsed
+        and asserted byte-identical (93 tokens, ZERO visual change). CRLF kept.
+      • NEW tokens: --space-1..6 spacing scale (new layout work), --focus-ring +
+        --focus-ring-offset (the global :focus-visible rule now consumes them —
+        groundwork for P4-2; previously a raw rgba literal).
+      • GUARD: tools/test_css_tokens.js (28 assertions, 17th suite) — exactly one
+        bare :root; no duplicate defs; key families at consolidated values;
+        focus rule uses the token; core tokens never redefined later; CRLF.
+        Sprawl cannot silently return.
+      • DESIGN_TOKENS.md — token catalog by category + component patterns
+        (badge/status via getStatusBadge, .tag skins, cx* state helpers, icon(),
+        and the honest button-family map: 10+ per-area families exist; new work
+        reuses its area's family; unification deliberately deferred as a
+        high-churn browser-QA item). CLAUDE.md points at it + states the
+        one-:root rule.
+      • Deliberately NOT done in this pass: button-family unification and a
+        raw-hex sweep of rgba(230,0,18,*) alpha variants (52 sites) — both are
+        rendering-visible refactors that belong with the P4 browser-QA'd passes.
 
 ### Phase 4 — UX, visual & accessibility
 - [~] P4-1 (IN-PROGRESS) Sidebar IA / permission-driven UI.

@@ -37,6 +37,7 @@ for (const f of ["app.js", "photos.js", "markup.js"]) {
 // 2) Unit suites (each prints "N passed, M failed" and exits non-zero on fail).
 const suites = [
   { file: "tools/smoke_app.js", needs: [] },            // headless boot of data.js + icons.js + app.js
+  { file: "tools/test_css_tokens.js", needs: [] },      // canonical :root token sheet guard (P3-4)
   { file: "tools/test_icons.js", needs: [] },           // extracted icon system
   { file: "tools/test_format.js", needs: [] },          // extracted format utils
   { file: "tools/test_cx_state.js", needs: [] },        // extracted cx* state helpers

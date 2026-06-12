@@ -4,45 +4,28 @@
    =================================== */
 
 :root {
+  /* ── Brand — Hitachi red ── */
   --hitachi-red: #e60012;
-  --hitachi-red-hover: #c5000f;
-  --hitachi-red-light: #fff0f1;
+  --hitachi-red-hover: #b80010;
+  --hitachi-red-light: #fff1f2;
   --primary: #e60012;
-  --primary-hover: #c5000f;
-  --black: #000000;
-  --near-black: #1a1a1a;
-  --charcoal: #2a2a2a;
-  --gray-900: #333333;
-  --gray-800: #4a4a4a;
-  --gray-700: #5e5e5e;
-  --gray-600: #7a7a7a;
-  --gray-500: #999999;
-  --gray-400: #bbbbbb;
-  --gray-300: #d8d8d8;
-  --gray-200: #ebebeb;
-  --gray-100: #f4f4f4;
-  --gray-50: #fafafa;
+  --primary-hover: #b80010;
+  /* ── Warm neutral ink scale (production visual layer) ── */
+  --black: #0a0a0c;
+  --near-black: #131316;
+  --charcoal: #1d1e22;
+  --gray-900: #2a2c31;
+  --gray-800: #3a3c43;
+  --gray-700: #54575f;
+  --gray-600: #74777f;
+  --gray-500: #9a9da4;
+  --gray-400: #c2c5cb;
+  --gray-300: #dfe1e5;
+  --gray-200: #ececef;
+  --gray-100: #f4f4f6;
+  --gray-50: #fafaf8;
   --white: #ffffff;
-  --good: #00875a;
-  --good-light: #e3f5ed;
-  --warn: #d97706;
-  --warn-light: #fef3e0;
-  --bad: #dc2626;
-  --bad-light: #fee2e2;
-  --red-600: #dc2626;
-  --red-300: #fca5a5;
-  --info: #1e40af;
-  --info-light: #e0eaff;
-  --pending: #6d28d9;
-  --pending-light: #ede9fe;
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.05);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.04);
-  --shadow-lg: 0 12px 32px rgba(0,0,0,0.08), 0 4px 8px rgba(0,0,0,0.05);
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
-  /* ── Slate (cool gray) scale — consolidated from sprawl ── */
+  /* ── Slate (cool gray) scale — sidenav / dark chrome ── */
   --slate-900: #111827;
   --slate-800: #1f2937;
   --slate-700: #374151;
@@ -52,24 +35,88 @@
   --slate-200: #e5e7eb;
   --slate-100: #f3f4f6;
   --slate-50: #f9fafb;
-  /* ── Accent colors — consolidated from sprawl ── */
+  --dark-surface: #111827;
+  --dark-surface-2: #172033;
+  --dark-surface-3: #1f2937;
+  /* ── Semantic surfaces / text / borders (themeable) ── */
+  --bg: #f4f4f4;
+  --app-bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f9fafb;
+  --surface-3: #f3f4f6;
+  --card-bg: #ffffff;
+  --text: #1a1a1a;
+  --text-main: #131316;
+  --text-muted: #74777f;
+  --text-subtle: #98a2b3;
+  --border: #ebebeb;
+  --border-strong: #d8d8d8;
+  --line-soft: #e4e7ec;
+  --line-strong: #cfd5df;
+  /* ── Status ── */
+  --good: #0d7a4f;
+  --good-light: #e8f4ee;
+  --warn: #a8550a;
+  --warn-light: #fbf0e1;
+  --bad: #c01017;
+  --bad-light: #fdeaeb;
+  --info: #1d4eaf;
+  --info-light: #e8efff;
+  --pending: #6b21a8;
+  --pending-light: #f1eaf9;
+  --red-600: #c01017;
+  --red-300: #fca5a5;
+  /* ── Status mid-dots (pills / badge dots) ── */
+  --good-dot: #16a571;
+  --warn-dot: #e0900b;
+  --bad-dot: #e51b22;
+  --info-dot: #3a76e8;
+  --pending-dot: #9333d9;
+  /* ── Accents ── */
   --accent-blue: #2563eb;
   --accent-blue-strong: #1d4ed8;
   --brand-blue: #1d4eaf;
   --accent-indigo: #6366f1;
   --accent-amber: #f59e0b;
   --green-700: #15803d;
-  /* ── Semantic surface/text tokens (themeable; light values below) ── */
-  --bg: #f4f4f4;
-  --surface: #ffffff;
-  --surface-2: #f9fafb;
-  --surface-3: #f3f4f6;
-  --text: #1a1a1a;
-  --text-muted: #5e5e5e;
-  --text-subtle: #7a7a7a;
-  --border: #ebebeb;
-  --border-strong: #d8d8d8;
+  /* ── Lookahead discipline bands ── */
+  --disc-tc: #0072ce;
+  --disc-tc-bg: #e6f0fb;
+  --disc-cons: #ea580c;
+  --disc-cons-bg: #fff1e8;
+  --disc-design: #7c3aed;
+  --disc-design-bg: #f0eafe;
+  --disc-default: #6b7280;
+  --disc-default-bg: #f3f4f6;
+  /* ── Typography (app.js may override the input/number tokens at runtime) ── */
+  --f-display: 'Archivo', system-ui, -apple-system, sans-serif;
+  --f-ui: 'Archivo', system-ui, -apple-system, sans-serif;
+  --f-mono: 'Archivo', system-ui, -apple-system, sans-serif;
+  --f-input: var(--f-ui);
+  --f-number: var(--f-ui);
+  --input-size: 14px;
+  --input-weight: 500;
+  --number-size: 28px;
+  --number-weight: 600;
+  /* ── Elevation / shape / motion ── */
+  --shadow-sm: 0 1px 0 rgba(15,17,21,0.03), 0 1px 2px rgba(15,17,21,0.04);
+  --shadow-md: 0 1px 0 rgba(15,17,21,0.04), 0 4px 14px -6px rgba(15,17,21,0.10);
+  --shadow-lg: 0 18px 40px -18px rgba(15,17,21,0.22);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
   --easing: cubic-bezier(0.16, 1, 0.3, 1);
+  /* ── Spacing scale (use for new layout work) ── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  /* ── Focus ring (a11y — keep one visible style everywhere) ── */
+  --focus-ring: 2px solid rgba(230,0,18,0.35);
+  --focus-ring-offset: 2px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -3752,51 +3799,7 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
    MODERN ENTERPRISE UI REFRESH
    Option 1: card + toolbar system
    =================================== */
-:root {
-  --hitachi-red: #e60012;
-  --hitachi-red-hover: #b8000e;
-  --hitachi-red-light: #fff1f2;
-  --dark-surface: #111827;
-  --dark-surface-2: #172033;
-  --dark-surface-3: #1f2937;
-  --app-bg: #f6f7f9;
-  --card-bg: #ffffff;
-  --line-soft: #e4e7ec;
-  --line-strong: #cfd5df;
-  --text-main: #111827;
-  --text-muted: #667085;
-  --text-subtle: #98a2b3;
-  --black: #111827;
-  --near-black: #111827;
-  --charcoal: #1f2937;
-  --gray-900: #111827;
-  --gray-800: #344054;
-  --gray-700: #475467;
-  --gray-600: #667085;
-  --gray-500: #98a2b3;
-  --gray-400: #c0c7d2;
-  --gray-300: #d0d5dd;
-  --gray-200: #e4e7ec;
-  --gray-100: #f2f4f7;
-  --gray-50: #f9fafb;
-  --good: #027a48;
-  --good-light: #ecfdf3;
-  --warn: #b54708;
-  --warn-light: #fffaeb;
-  --bad: #b42318;
-  --bad-light: #fef3f2;
-  --info: #175cd3;
-  --info-light: #eff4ff;
-  --pending: #6941c6;
-  --pending-light: #f4f3ff;
-  --shadow-sm: 0 1px 2px rgba(16,24,40,0.05);
-  --shadow-md: 0 10px 24px rgba(16,24,40,0.08);
-  --shadow-lg: 0 22px 54px rgba(16,24,40,0.14);
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 8px;
-  --radius-xl: 8px;
-}
+/* Tokens consolidated into the single canonical :root sheet at the top of this file. */
 
 html, body {
   color: var(--text-main);
@@ -3821,8 +3824,8 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid rgba(230,0,18,0.35);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .container,
@@ -8235,79 +8238,11 @@ textarea.la-drawer-input { resize: vertical; min-height: 50px; }
    ============================================================================ */
 
 /* ============================================================================
-   Design tokens — redefines existing :root variables, adds new ones
+   Design tokens — consolidated into the canonical :root sheet at the top of styles.css
    ============================================================================ */
-:root {
-  /* family — “Rail” pairing */
-  --f-display: 'Archivo', system-ui, -apple-system, sans-serif;
-  --f-ui:      'Archivo', system-ui, -apple-system, sans-serif;
-  --f-mono:    'Archivo', system-ui, -apple-system, sans-serif;
-  --f-input:   var(--f-ui);
-  --f-number:  var(--f-ui);
-  --input-size: 14px;
-  --input-weight: 500;
-  --number-size: 28px;
-  --number-weight: 600;
-
-  /* brand (kept) */
-  --hitachi-red:       #e60012;
-  --hitachi-red-hover: #b80010;
-  --hitachi-red-light: #fff1f2;
-  --primary:           #e60012;
-  --primary-hover:     #b80010;
-
-  /* re-tuned warm neutrals override the flat grays */
-  --black:      #0a0a0c;
-  --near-black: #131316;
-  --charcoal:   #1d1e22;
-  --gray-900:   #2a2c31;
-  --gray-800:   #3a3c43;
-  --gray-700:   #54575f;
-  --gray-600:   #74777f;
-  --gray-500:   #9a9da4;
-  --gray-400:   #c2c5cb;
-  --gray-300:   #dfe1e5;
-  --gray-200:   #ececef;
-  --gray-100:   #f4f4f6;
-  --gray-50:    #fafaf8;
-  --white:      #ffffff;
-
-  /* status — calmer, more sophisticated */
-  --good:        #0d7a4f;
-  --good-light:  #e8f4ee;
-  --warn:        #a8550a;
-  --warn-light:  #fbf0e1;
-  --bad:         #c01017;
-  --bad-light:   #fdeaeb;
-  --red-600:     #c01017;
-  --red-300:     #fca5a5;
-  --info:        #1d4eaf;
-  --info-light:  #e8efff;
-  --pending:     #6b21a8;
-  --pending-light:#f1eaf9;
-
-  /* mid-dots (used for pills) */
-  --good-dot:    #16a571;
-  --warn-dot:    #e0900b;
-  --bad-dot:     #e51b22;
-  --info-dot:    #3a76e8;
-  --pending-dot: #9333d9;
-
-  /* text aliases (some rules reference these) */
-  --text-main:  #131316;
-  --text-muted: #74777f;
-
-  /* shadows — finer, less puffy */
-  --shadow-sm: 0 1px 0 rgba(15,17,21,0.03), 0 1px 2px rgba(15,17,21,0.04);
-  --shadow-md: 0 1px 0 rgba(15,17,21,0.04), 0 4px 14px -6px rgba(15,17,21,0.10);
-  --shadow-lg: 0 18px 40px -18px rgba(15,17,21,0.22);
-
-  /* radii */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
-}
+/* Tokens consolidated into the single canonical :root sheet at the top of this file.
+   (This block previously re-tuned neutrals/status/shadows; those values ARE the
+   canonical ones now — they were the last-wins winners.) */
 
 /* ============================================================================
    3. Body / global typography
@@ -11628,12 +11563,7 @@ a:focus-visible {
    Shared visual language for the lookahead timeline AND the
    day/week/month calendar event chips.
    ════════════════════════════════════════════════════════════ */
-:root {
-  --disc-tc:        #0072ce;  --disc-tc-bg:        #e6f0fb;
-  --disc-cons:      #ea580c;  --disc-cons-bg:      #fff1e8;
-  --disc-design:    #7c3aed;  --disc-design-bg:    #f0eafe;
-  --disc-default:   #6b7280;  --disc-default-bg:   #f3f4f6;
-}
+/* Discipline tokens (--disc-*) live in the canonical sheet at the top of this file. */
 
 /* Activate combined-view chrome on the lookahead shell */
 .tlg-shell.v-combo { background: var(--surface); }

@@ -20,7 +20,10 @@
 - **Colors via semantic tokens**, not raw hex: `--surface`, `--text`,
   `--text-muted`, `--border`, plus the brand/status tokens in `:root`
   (`styles.css`). Backgrounds use `var(--surface)`; white ink stays
-  `var(--white)`.
+  `var(--white)`. Full catalog + component patterns: `DESIGN_TOKENS.md`.
+  There is exactly ONE bare `:root` token sheet (top of styles.css) — add
+  tokens there, never open another `:root {}` block (guarded by
+  `tools/test_css_tokens.js`).
 - **Icon-only buttons need an `aria-label`** (icons are `aria-hidden`).
 - Reusable state helpers exist: `cxSkeleton()`, `cxEmpty()`, `cxError()`.
 - Dark mode was intentionally removed — do not reintroduce it.
