@@ -1,31 +1,27 @@
 # Fable 5 Progress Ledger
 
 ## ▶ Current position
-- Phase: 2 — DB performance. P1 (security) DONE; P2-1/P2-2/P2-4 DONE, P2-3
-  decided (no-op, see below). Security advisors: only auth_leaked_password
-  remains — CLOSED as WONT-FIX: owner confirmed Free plan (2026-06-11); the
-  HaveIBeenPwned toggle is Pro-plan-gated, so it's unenableable until upgrade.
-  Accepted plan limitation, not a defect — every actionable security item is done.
-  Performance advisors: ALL WARN-level lints
-  CLEARED (auth_rls_initplan 49→0, unindexed_foreign_keys 42→0, duplicate_index
-  1→0, multiple_permissive_policies 1→0). Only INFO unused_index remains (121,
-  expected — see P2-3). All verified (RLS still permits as authenticated admin).
-- Doing right now: Phase 3 — STRATEGIC PIVOT (owner: "do what's best long term").
-  After 3 pure-leaf seams (icons/format/cx-state, ~134 lines = 0.3% of app.js) it
-  was clear leaf-carving is motion, not progress, and the parts that would really
-  shrink app.js (dashboard/planning/test-register) carry business logic the
-  load-time smoke net can't protect. Pivoted to TEST-DRIVEN HARDENING of the
-  computational core: built a reusable headless harness (tools/_load_app.js) that
-  loads the REAL bundle and lets tests call app.js's actual functions, then wrote
-  the first characterization test on _wgtStat (the weighted completion %/pass-rate
-  KPI math) — 22 assertions pinning exact behavior. smoke_app.js refactored onto
-  the shared loader. Harness: 8 suites / 155 assertions, all green + CI.
-- Exact next action: continue characterization of the computational core (highest
-  value first): _amComputeStatus (activity status), _buildActivity/TestCaseWeight
-  Lookup + _tcWeightFor/_actWeightFor, _trpStatusCounts, getStatusBadge. Each is a
-  few lines now (loadApp() → call real fn → assert). This protects the business
-  math AND makes later extraction of these into a tested `compute` module safe —
-  converging the modularization and safety goals instead of carving blind.
+- Phase: 7 is all that's materially left. P1 (security) DONE, P2 (DB perf) DONE
+  (advisors: only the Pro-plan-gated auth_leaked_password WONT-FIX + expected
+  INFO unused_index remain), P3 DONE (strangler modules icons/format/cx-state/
+  compute/perms-admin + 18-suite characterization harness + P3-4 token
+  consolidation), P4-1 mostly done (perm-driven nav, IA regroup, uiCan batch 1;
+  admin-mode dissolve + sidebar icon() unification deferred pending browser QA),
+  P4-2 headless a11y pass DONE (browser/axe pass remains), P4-3 cx* adoption
+  done, P5-1 verified, P6-1 CODE COMPLETE (SharePoint sync deployed, awaiting
+  IT credentials only). The Dynamic Testing ⇄ Lookahead integration (owner-
+  directed, beyond original scope) is fully built: shared records, bidirectional
+  cancel sync, auto-roll-forward, cascade + program-level auto-allocation,
+  per-day multi-zone access, what-if compare, closures.
+- Doing right now: between batches. Last 3 commits: P3-4 token consolidation
+  (034d234), P4-2 static a11y pass (493a78a), P6-1 SharePoint sync (03cbe38).
+- Exact next action: the remaining items all need OWNER INPUT or a browser:
+  (1) P5-2 dead-table drops — needs explicit owner yes per table;
+  (2) browser QA of Dynamic Testing UI + sidebar regroup + a11y/axe run;
+  (3) prerequisite hard-gate decision (soft-ordering today, owner choice);
+  (4) IT ticket for SharePoint credentials (then set 4 secrets, test 1 photo);
+  (5) P7-1 final hardening: full regression, advisor re-run, README rewrite
+      (flagged stale by owner), final report — best done AFTER 1–4 land.
 - AUTHORIZATION FINDING — RESOLVED (P1-9, owner chose "tighten all"): the 43
   blanket `auth_all` tables now enforce the permission model. 40 mapped 1:1 to a
   module (full per-command has_module_perm gating); fieldset_config + locations =
