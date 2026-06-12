@@ -19,10 +19,10 @@ Total: **42 rows**, every one recorded in the `demo_seed_log` manifest.
   `software_configs.created_by='DEMO_SEED'`, `p6_*` via `'DEMO_SEED'` fields,
   `[DEMO]` text in labels/notes).
 - **Teardown deletes only the pks in the manifest** — real rows were never
-  recorded, so they cannot be matched. See `supabase_demo_teardown.sql`.
+  recorded, so they cannot be matched. See `supabase/sql/supabase_demo_teardown.sql`.
 
 ## To remove ("scrap the presentation data")
-Run `supabase_demo_teardown.sql` against the project (or ask Claude to run the
+Run `supabase/sql/supabase_demo_teardown.sql` against the project (or ask Claude to run the
 `demo_teardown` migration). It deletes the manifest's rows in FK-safe order and
 empties the manifest. Idempotent.
 

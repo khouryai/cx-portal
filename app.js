@@ -27705,7 +27705,7 @@ function _apHistoryStub() {
 // ║                 cutover — nothing above the adapter changes.           ║
 // ║                                                                        ║
 // ║  Tables: forms, form_test_item_links, form_template_links              ║
-// ║  Schema: see supabase_forms_schema.sql                                 ║
+// ║  Schema: see supabase/sql/supabase_forms_schema.sql                    ║
 // ╚════════════════════════════════════════════════════════════════════════╝
 
 const _formsStorage = {
@@ -31214,7 +31214,7 @@ Each PDF in this bundle has its own bookmark outline for fast navigation.
 // ╔════════════════════════════════════════════════════════════════════════╗
 // ║  DRAWINGS MODULE                                                        ║
 // ║  Tables: drawing_sets, drawing_sheets, drawing_markups                  ║
-// ║  Schema: see supabase_drawings_schema.sql                               ║
+// ║  Schema: see supabase/sql/supabase_drawings_schema.sql                  ║
 // ╚════════════════════════════════════════════════════════════════════════╝
 
 // ── Globals ───────────────────────────────────────────────────────────────
@@ -32504,7 +32504,7 @@ async function _drwInsertSheetRows(setId, meta, sheets) {
   } catch (e) {
     const msg = String(e?.message || '');
     if (!msg.includes("'page_number' column") && !msg.includes('page_number')) throw e;
-    console.warn('[drawings import] page_number column missing; retrying without page_number. Run supabase_drawings_add_page_number.sql to preserve PAGE NO.');
+    console.warn('[drawings import] page_number column missing; retrying without page_number. Run supabase/sql/supabase_drawings_add_page_number.sql to preserve PAGE NO.');
     await _dbInsert('drawing_sheets', _drwSheetInsertRows(setId, meta, sheets, false));
     return { pageNumberSkipped: true };
   }

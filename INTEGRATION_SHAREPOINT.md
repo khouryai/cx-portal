@@ -2,7 +2,7 @@
 
 > Status: **built & deployed, awaiting IT credentials.** The Photos Module is
 > built, the database carries the `sp_*` columns (see
-> `supabase_photos_schema.sql`), the sync worker is implemented AND deployed as
+> `supabase/sql/supabase_photos_schema.sql`), the sync worker is implemented AND deployed as
 > the `photo-sharepoint-sync` Edge Function (source:
 > `supabase/functions/photo-sharepoint-sync/index.ts`), and the Photos toolbar
 > "⇅ Sync to SharePoint" button is live for admins. Until IT provisions the

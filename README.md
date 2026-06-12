@@ -1,76 +1,46 @@
-# HITACHI Rail T&C Portal — Prototype v2
+# Hitachi Rail T&C Portal
 
-Comprehensive project portal for the BART CBTC Project covering testing status, punch list workflow, team org, and field intake — with role-based access for Admin, Field Engineer, Punch Manager, Technician, and Client.
+Testing & Commissioning portal for the BART CBTC project: test register and
+weighted progress KPIs, dynamic-testing access planning (campaigns, access
+windows, cascade auto-allocation), lookahead planning, punch list, daily field
+logs, photos, drawings, RMAs, meetings, and a per-module permission system.
 
-## What's New in v2
+**Stack:** vanilla JS/CSS/HTML (no build step), hosted on GitHub Pages,
+backed by Supabase (Postgres + RLS, Auth, Storage, Edge Functions).
 
-### Role-Based Access Control
-5 roles with tailored UI and permissions:
-- **Admin** — Full access. Template management, deployment, audit log.
-- **Field** — Test matrix, 3-step intake, punch creation.
-- **Punch Manager** — Punch assignment, approval workflow.
-- **Technician** — Assigned punches only, photo upload, closure.
-- **Client** — View only items pending their approval.
+## Run / deploy
 
-### Admin Portal — Template Engine
-Create reusable test case templates with code, name, procedure, duration. Deploy a single template to multiple locations simultaneously, toggling which test cases apply at each site.
+There is no build. The repo root **is** the site:
 
-### Test Matrix View (Live Scratchpad)
-Per-location, per-subsystem grid of all applicable test cases. Field team toggles statuses (Pass/Fail/Block/In Progress) directly. Admins can mark test cases N/A with a reason. Last-updated tracking shows who changed what and when.
+- Local: serve the root (`npx http-server -p 8123 .`) and open `index.html`.
+- Production: every push to `main` deploys via GitHub Pages
+  (`.github/workflows/deploy.yml`).
+- Data lives in Supabase; the app signs in via Supabase Auth and talks to
+  PostgREST directly (see the `_db*` helpers in `app.js`).
 
-### 3-Step Field Intake
-- **Step 1** — Review test cases toggled today
-- **Step 2** — Add manually any items missed
-- **Step 3** — Submit daily log with auto-counted statistics, delay reporting, and next-day plan
+## Layout
 
-### Punch List Workflow (Kanban)
-Full lifecycle: Open → In Progress → Ready for Sign-off → Client Approval → Closed. Photos before/after, audit trail, role-based actions.
+| Path | What it is |
+|---|---|
+| `index.html`, `styles.css`, `app.js` | App shell, styles (canonical token sheet at top — see `DESIGN_TOKENS.md`), main bundle |
+| `icons.js`, `format.js`, `cx-state.js`, `compute.js`, `perms-admin.js`, `team.js`, `photos.js`, `markup.js`, `photos.css` | Extracted modules (loaded in index.html order) |
+| `data.js` | Legacy mock-data contract, intentionally empty (`PORTAL_DATA` keys resolve to `[]`) |
+| `sw.js`, `manifest.webmanifest`, `assets/` | PWA shell + icons + login imagery |
+| `chart.umd.js` | Chart.js (vendored) |
+| `supabase/functions/` | Edge Functions source (e.g. `photo-sharepoint-sync`) |
+| `supabase/sql/` | In-repo record of the base schema + every applied migration |
+| `sync_testplan.js`, `sync_track_plan.js`, `track_plan_importer.html` | Operational importers (test-plan master, Visio track-plan extract) |
+| `tools/` | Test harness + dev tools — `run_tests.js` runs all suites (CI: `.github/workflows/test.yml`); `ui_gallery.html` + `shot_gallery.js` for visual QA without signing in |
+| `CLAUDE.md` | Working conventions (CRLF rules, tokens, icon system, verification) |
+| `DESIGN_TOKENS.md`, `PERMISSIONS_MODEL.md`, `SECURITY.md`, `INTEGRATION_SHAREPOINT.md`, `DEMO_DATA.md` | Living docs |
+| `FABLE5_AUDIT_PROMPT.md`, `FABLE5_PROGRESS.md` | Audit engagement brief + progress ledger |
 
-### Photo Upload
-Before/after photos for punch items with thumbnail grid. Click to view full size.
+## Verify changes
 
-### Audit Log
-Every action logged with user, role, timestamp, target, and notes. Exportable to CSV.
+```
+node tools/run_tests.js
+```
 
-## Demo Sign-In Credentials
-
-| Role | Name | PIN |
-|---|---|---|
-| Admin | Alex Khoury | 1234 |
-| Admin | Christopher Burford | 9999 |
-| Field | John Sterrett | 1111 |
-| Field | Viktor Hryshko | 2222 |
-| Field | Trevor Abeldt | 3333 |
-| Punch Manager | Mustafa Isik | 5555 |
-| Technician | Davinder Nagra | 6666 |
-| Technician | Alpin Saglambilek | 7777 |
-| Client | BART Inspector | 0000 |
-
-The portal auto-routes each role to their primary page on login.
-
-## File Structure
-
-| File | Purpose |
-|------|---------|
-| `index.html` | Main page structure |
-| `styles.css` | Hitachi-branded styling, all role/feature UI |
-| `app.js` | Read-only views + all v2 features |
-| `data.js` | Production data + mock prototype data |
-| `chart.umd.js` | Chart.js library |
-| `update_data.py` | Data refresh script |
-| `POWER_AUTOMATE_SETUP.md` | Future SharePoint integration guide |
-
-## Deploy to GitHub Pages
-
-1. Create new public repo on GitHub
-2. Drag and drop ALL files into the repo
-3. Settings → Pages → Source: Deploy from a branch (main)
-4. Site live at `https://YOURUSERNAME.github.io/REPO-NAME/`
-
-## Prototype Notes
-
-This is a demo prototype — submissions and changes happen in browser memory only and don't persist. All workflows, role views, and interactions are fully functional for demo purposes. Wire up to SharePoint or a real backend after demo approval.
-
----
-
-Built for the Hitachi Rail STS USA — BART CBTC Project T&C team.
+Syntax-checks the bundles and runs every headless suite (boot smoke, unit,
+characterization, CSS token guard, static a11y guard). CI runs the same on
+every push and PR. Must exit 0.

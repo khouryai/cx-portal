@@ -600,7 +600,18 @@
         cron schedule for hands-free sync.
 
 ### Phase 7 — Hardening & handoff
-- [ ] P7-1 (TODO) Full regression + advisor zero + docs update + final report
+- [~] P7-1 (PARTIAL) Repo cleanup + README rewrite done (owner-directed,
+      2026-06-12): deleted update_data.py (regenerated the now-wiped data.js
+      from CSVs not in the repo), assets/hsts-2.png + docs/punch-icons-preview
+      .html (unreferenced); moved all 28 supabase_*.sql applied-migration
+      records → supabase/sql/ (git mv; updated the 3 app.js comment refs +
+      live doc paths); REWROTE the stale README (was still describing the
+      browser-memory demo prototype with PIN sign-in) to the real architecture,
+      run/deploy story, layout table and verify instructions. KEPT (operational,
+      verified referenced): sync_testplan.js / sync_track_plan.js /
+      track_plan_importer.html (importers), lookahead template tools,
+      DEMO_DATA.md + demo seed/teardown SQL, .claude/ (session tooling).
+      Remaining for P7: full regression, advisor re-run, final report.
 
 ## Migrations applied
 - perm_module_infrastructure (2026-06-10) — new tables (perm_modules,
