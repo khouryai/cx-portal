@@ -28625,7 +28625,7 @@ function _clonePdfBytes(bytes) {
 }
 
 // ── Open viewer (entry point) ───────────────────────────────────────────
-async function openFormViewer(formId) {
+async function openFormViewer(formId, backTo = null) {
   const form = FORMS.find(f => f.id === formId);
   if (!form) { toast('Form not found', 'error'); return; }
   if (typeof pdfjsLib === 'undefined') { toast('PDF viewer library not loaded', 'error'); return; }
@@ -28683,6 +28683,7 @@ async function openFormViewer(formId) {
       </div>
     `,
     footer: `
+      ${backTo ? `<button class="form-secondary" onclick="_fpBackToForms('${escapeHtml(String(backTo.testId))}','${escapeHtml(String(backTo.assetId || ''))}')">← Back to Forms</button>` : ''}
       <button class="form-secondary" onclick="closeFormViewer()">Close</button>
       <button class="form-secondary" onclick="downloadFormPDF('${form.id}')">↓ Download</button>
       <button class="form-submit" id="form-viewer-save" onclick="saveFormPDF('${form.id}')">Save</button>
@@ -29900,7 +29901,7 @@ async function downloadFormPDF(formId) {
   } catch (e) { toast('Download failed: ' + e.message, 'error'); }
 }
 
-function closeFormViewer() {
+function _pdfViewerTeardown() {
   closeSignaturePad();
   if (_pdfViewerState?.dirty) {
     // Best-effort flush: local draft is already saved; try remote async.
@@ -29908,7 +29909,18 @@ function closeFormViewer() {
   }
   if (_pdfViewerState?.autosaveTimer) clearTimeout(_pdfViewerState.autosaveTimer);
   _pdfViewerState = null;
+}
+function closeFormViewer() {
+  _pdfViewerTeardown();
   closeModal();
+}
+// Back from the PDF viewer to the Linked Forms picker. Used by the single-form
+// quick-open shortcut so the user can still link / unlink / attach. Tears the
+// viewer down like closeFormViewer, then reopens the picker (forced open so it
+// doesn't bounce straight back into the PDF).
+function _fpBackToForms(testId, assetId) {
+  _pdfViewerTeardown();
+  openFormPickerForTest(testId, assetId, { forcePicker: true });
 }
 
 // ── FORM PICKER (per test case, scope-aware) ────────────────────────────
@@ -29934,8 +29946,19 @@ function _fpResolveContext(testIdOrChildId, assetIdArg) {
   }
   return { parentRow, assetId, parentTestId: parentRow ? String(parentRow.TestID) : String(testIdOrChildId) };
 }
-function openFormPickerForTest(testId, assetId = '') {
+function openFormPickerForTest(testId, assetId = '', opts = {}) {
   const ctx = _fpResolveContext(testId, assetId);
+  // Quick-open shortcut: if exactly ONE form is linked for this scope, open the
+  // PDF straight away (the user presses "← Back to Forms" in the viewer to reach
+  // this picker for linking/unlinking). forcePicker bypasses the shortcut so the
+  // viewer's Back button and post-action returns always land on the list.
+  if (!opts.forcePicker) {
+    const linked = _formPickerVisibleForms(ctx.parentTestId, ctx.assetId);
+    if (linked.length === 1) {
+      openFormViewer(linked[0].form.id, { testId: ctx.parentTestId, assetId: ctx.assetId });
+      return;
+    }
+  }
   const row = ctx.parentRow;
   const asset = ctx.assetId ? (typeof ASSETS !== 'undefined' ? ASSETS : []).find(a => a.id === ctx.assetId) : null;
   const baseSub = row ? `${row.TestCaseCode || row.TestID} · ${row.Activity || ''}`.trim() : ctx.parentTestId;
@@ -29947,15 +29970,20 @@ function openFormPickerForTest(testId, assetId = '') {
   });
 }
 
+// The forms visible in the picker for a test case (+ optional asset scope).
+function _formPickerVisibleForms(testId, assetId = '') {
+  const allLinks = _formsLinkRowsForTestCase(testId);
+  return assetId
+    ? allLinks.filter(r => r.scope === 'parent' || String(r.link.asset_id) === String(assetId))
+    : allLinks;
+}
+
 function _formPickerBody(testId, assetId = '') {
   const parentRow = TI.find(r => String(r.TestID) === String(testId));
   const isParentCase = !!(parentRow && parentRow.IsParent);
   const childRows = isParentCase ? TI.filter(r => String(r.ParentTestId) === String(testId)) : [];
-  const allLinks = _formsLinkRowsForTestCase(testId);
   // Filter for the current scope view
-  const visible = assetId
-    ? allLinks.filter(r => r.scope === 'parent' || String(r.link.asset_id) === String(assetId))
-    : allLinks;
+  const visible = _formPickerVisibleForms(testId, assetId);
 
   const targetAsset = assetId ? (typeof ASSETS !== 'undefined' ? ASSETS : []).find(a => a.id === assetId) : null;
   const tid = escapeHtml(String(testId));
@@ -29977,7 +30005,7 @@ function _formPickerBody(testId, assetId = '') {
 
   const rowsHtml = visible.length === 0
     ? `<div style="padding:24px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:6px;">No forms linked${assetId ? ' to this asset' : ' to this test case'} yet.</div>`
-    : `<table class="data-table">
+    : `<table class="data-table fp-forms-table">
          <thead><tr><th>Name</th>${isParentCase ? '<th>Scope</th>' : ''}<th>Phase</th><th>Subsystem</th><th>Description</th><th style="width:200px;">Actions</th></tr></thead>
          <tbody>${visible.map(({ form, scope, asset }) => {
             const inherited = !!(assetId && scope === 'parent');
@@ -29991,13 +30019,13 @@ function _formPickerBody(testId, assetId = '') {
               : `<button class="form-secondary tr-mini-btn" onclick="unlinkFormFromTest('${form.id}','${tid}','${scope === 'asset' ? escapeHtml(String(asset?.id || '')) : ''}')">Unlink</button>`;
             return `
              <tr${inherited ? ' style="background:#fafafa;"' : ''}>
-               <td style="font-weight:600;">${escapeHtml(form.name)}</td>
-               ${isParentCase ? `<td>${scopeCell}</td>` : ''}
-               <td style="font-size:12px;">${escapeHtml(form.phase || '—')}</td>
-               <td><span class="tag">${escapeHtml(form.subsystem || '—')}</span></td>
-               <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(form.description || '')}</td>
-               <td style="white-space:nowrap;">
-                 <button class="admin-action-btn tr-mini-btn" onclick="openFormViewer('${form.id}')">Open</button>
+               <td class="fp-name" style="font-weight:600;">${escapeHtml(form.name)}</td>
+               ${isParentCase ? `<td data-label="Scope">${scopeCell}</td>` : ''}
+               <td data-label="Phase" style="font-size:12px;">${escapeHtml(form.phase || '—')}</td>
+               <td data-label="Subsystem"><span class="tag">${escapeHtml(form.subsystem || '—')}</span></td>
+               <td data-label="Description" style="font-size:12px;color:var(--gray-600);">${escapeHtml(form.description || '')}</td>
+               <td class="fp-actions" style="white-space:nowrap;">
+                 <button class="admin-action-btn tr-mini-btn" onclick="openFormViewer('${form.id}', { testId: '${tid}', assetId: '${aid}' })">Open</button>
                  ${unlinkBtn}
                </td>
              </tr>`;
@@ -30063,7 +30091,7 @@ function openAttachNewForm(testId, assetId = '') {
         <div class="form-field form-field-full"><label>Notes / Description</label><textarea id="frm-desc" class="form-input" rows="2" placeholder="Optional high-level description"></textarea></div>
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="openFormPickerForTest('${tid}','${aid}')">Cancel</button>
+    footer: `<button class="form-secondary" onclick="openFormPickerForTest('${tid}','${aid}',{forcePicker:true})">Cancel</button>
              <button class="form-submit" onclick="submitAttachNewForm('${tid}','${aid}')">Upload &amp; Link</button>`,
   });
 }
@@ -30094,7 +30122,7 @@ async function submitAttachNewForm(testId, assetId = '') {
       : 'all assets';
     logAudit('Attached Form to Test Case', name, `${testId} · ${scopeNote}`);
     toast('✓ Form attached', 'success');
-    openFormPickerForTest(testId, scopeAssetId);
+    openFormPickerForTest(testId, scopeAssetId, { forcePicker: true });
     if (typeof _reRenderTR === 'function') _reRenderTR();
   } catch (e) {
     toast('Upload failed: ' + e.message, 'error');
@@ -30125,7 +30153,7 @@ function openLinkExistingForm(testId, assetId = '') {
              oninput="document.getElementById('lef-list').innerHTML = window._lefFilter(this.value)">
       <div id="lef-list" style="max-height:45vh;overflow:auto;">${_lefRenderList(candidates)}</div>
     `,
-    footer: `<button class="form-secondary" onclick="openFormPickerForTest('${tid}','${aid}')">Cancel</button>`,
+    footer: `<button class="form-secondary" onclick="openFormPickerForTest('${tid}','${aid}',{forcePicker:true})">Cancel</button>`,
   });
   window._lefFilter = (q) => {
     q = (q || '').trim().toLowerCase();
@@ -30194,7 +30222,7 @@ async function linkExistingFormToTest(formId, testId) {
       : 'all assets';
     logAudit('Linked Existing Form to Test Case', FORMS.find(f => f.id === formId)?.name || formId, `${testId} · ${scopeNote}`);
     toast('✓ Linked', 'success');
-    openFormPickerForTest(testId, scopeAssetId);
+    openFormPickerForTest(testId, scopeAssetId, { forcePicker: true });
     if (typeof _reRenderTR === 'function') _reRenderTR();
   } catch (e) { toast('Link failed: ' + e.message, 'error'); }
 }
@@ -30212,7 +30240,7 @@ async function unlinkFormFromTest(formId, testId, assetId = '') {
     })() ? null : (assetId || null);
     await _formsUnlinkFromTest(formId, testId, scope);
     logAudit('Unlinked Form from Test Case', FORMS.find(f => f.id === formId)?.name || formId, testId);
-    openFormPickerForTest(testId, assetId);
+    openFormPickerForTest(testId, assetId, { forcePicker: true });
     if (typeof _reRenderTR === 'function') _reRenderTR();
   } catch (e) { toast('Unlink failed: ' + e.message, 'error'); }
 }
