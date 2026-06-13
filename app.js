@@ -16509,14 +16509,15 @@ function _regressionCellHTML(r) {
     bits += `<span style="font-size:10px;font-weight:700;background:#ede9fe;color:#6d28d9;border:1px solid #ddd6fe;border-radius:3px;padding:1px 6px;">Attempt ${attemptNo}/${attempts.length}</span>`;
   }
   // Regression availability (owner rule): a FAILED completed test always offers
-  // the button. Any OTHER completed test (Pass / Blocked / Complete) shows a
-  // per-test-case "Flag for regression" checkbox instead, and only offers the
-  // button once that flag is set — e.g. after a new software release or an
-  // updated test procedure means a previously-passing test must be re-run.
+  // the button. Any OTHER completed test (Pass / Blocked / Complete) is opted in
+  // via the per-test-case "Flag for regression" checkbox, which is only shown
+  // while the activity is in edit mode; once flagged, the button appears in both
+  // edit and view mode — e.g. after a new software release or an updated test
+  // procedure means a previously-passing test must be re-run.
   if (canManage && isTerminal && r.IsLatestAttempt) {
     const isFailed = _REGRESSION_FAILED.has(r.Status);
     const flagged  = r.RegressionFlagged === true;
-    if (!isFailed) {
+    if (!isFailed && _trEditMode) {
       bits += `<label title="Flag this completed test case for regression — typically after a new software release or an updated test procedure" style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;color:var(--gray-600);cursor:pointer;">
         <input type="checkbox" ${flagged ? 'checked' : ''} onchange="toggleRegressionFlag('${escapeHtml(String(r.TestID))}',this.checked)" style="cursor:pointer;margin:0;"> Flag for regression
       </label>`;
@@ -16581,6 +16582,10 @@ function toggleRegressionFlag(testId, flagged) {
   const r = TI.find(t => String(t.TestID) === String(testId));
   if (!r) return;
   r.RegressionFlagged = !!flagged;
+  // Keep the edit-mode draft copy in sync so a mid-edit re-render doesn't revert
+  // the checkbox (the toggle is shown only in edit mode).
+  const draft = (_trDraftItems || []).find(d => String(d.TestID) === String(testId));
+  if (draft) draft.RegressionFlagged = !!flagged;
   const cell = document.getElementById(`regcell-${encodeURIComponent(String(r.TestID))}`);
   if (cell) cell.innerHTML = _regressionCellHTML(r);
   _dbUpdate('test_items', { regression_flagged: !!flagged }, { test_id: r.TestID }).catch(err => {
