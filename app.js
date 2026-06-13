@@ -332,6 +332,9 @@ function _syncMobileTabs(name) {
 }
 
 function showPage(name) {
+  // Permissions has been merged into the Directory module — keep the legacy
+  // route (old bookmarks / history hashes) working by landing on its tab.
+  if (name === 'admin-permissions') { name = 'admin-directory'; _dirTab = 'templates'; }
   // Tear down planning calendar/timeline instances on any page change to avoid leaks
   if (typeof _planningCleanupInstances === 'function') _planningCleanupInstances();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -352,8 +355,7 @@ function showPage(name) {
   if (name === 'admin-weights')    renderAdminWeights();
   if (name === 'admin-locations')  renderAdminLocations();
   if (name === 'admin-fieldconfig') renderAdminFieldConfig();
-  if (name === 'admin-directory')  renderAdminDirectory();
-  if (name === 'admin-permissions') renderAdminPermissions();
+  if (name === 'admin-directory')  { _dirPermsLoaded = false; renderAdminDirectory(); }
   if (name === 'admin-p6')         renderAdminP6();
   if (name === 'admin-assets')     renderAdminAssets();
   if (name === 'admin-config')     renderConfigMgmt();
@@ -3710,12 +3712,58 @@ function renderAdminFieldConfig() {
   root.innerHTML = _adminFieldConfigHTML();
 }
 
+// Directory now hosts the merged Permissions experience as a single tabbed
+// surface: the user directory plus the permission-template and per-user-override
+// tools that used to live on a standalone Permissions page. Tabs appear per the
+// viewer's module access — `directory` gates Users, `admin` gates the two
+// permission tabs — so a user sees only what they're allowed to manage.
+let _dirTab = 'users';          // 'users' | 'templates' | 'overrides'
+let _dirPermsLoaded = false;    // perms data (_paLoad) cached for this page visit
+
 function renderAdminDirectory() {
   const root = document.getElementById('admin-directory-content');
   if (!root || !currentRoleUser) return;
-  if (!uiCan('directory', 'view')) { root.innerHTML = cxEmpty({ icon: 'lock', title: 'Not authorized', message: 'You don\u2019t have access to this admin area.' }); return; }
-  root.innerHTML = _adminDirectoryHTML();
-  _loadDirectoryUsers();
+  const canDir   = uiCan('directory', 'view');
+  const canPerms = uiCan('admin', 'view');
+  if (!canDir && !canPerms) {
+    root.innerHTML = cxEmpty({ icon: 'lock', title: 'Not authorized', message: 'You don\u2019t have access to this admin area.' });
+    return;
+  }
+  const tabs = [];
+  if (canDir)   tabs.push({ id: 'users',     label: 'Users' });
+  if (canPerms) tabs.push({ id: 'templates', label: 'Permission Templates' }, { id: 'overrides', label: 'Users & Overrides' });
+  if (!tabs.some(t => t.id === _dirTab)) _dirTab = tabs[0].id;
+  root.innerHTML = `
+    <div class="admin-tabs">
+      ${tabs.map(t => `<button class="admin-tab${_dirTab === t.id ? ' active' : ''}" onclick="setDirectoryTab('${t.id}')">${t.label}</button>`).join('')}
+    </div>
+    <div id="dir-tab-body"></div>
+  `;
+  renderDirectoryTabBody();
+}
+
+function setDirectoryTab(tab) {
+  _dirTab = tab;
+  renderAdminDirectory();
+}
+
+function renderDirectoryTabBody() {
+  const body = document.getElementById('dir-tab-body');
+  if (!body) return;
+  if (_dirTab === 'users') {
+    body.innerHTML = _adminDirectoryHTML();
+    _loadDirectoryUsers();
+    return;
+  }
+  // Permission Templates / Users & Overrides — backed by perms-admin.js. Load
+  // the permission catalog once per page visit, then let _paRender repaint the
+  // shared tab body in place on subsequent edits and tab switches.
+  _paTab = (_dirTab === 'templates') ? 'templates' : 'users';
+  if (_dirPermsLoaded) { _paRender(); return; }
+  body.innerHTML = cxSkeleton(6);
+  _paLoad()
+    .then(() => { _dirPermsLoaded = true; _paRender(); })
+    .catch(err => { body.innerHTML = cxError({ message: 'Could not load permission data: ' + (err.message || err), retry: 'renderDirectoryTabBody()' }); });
 }
 
 function renderAdminOverview() {

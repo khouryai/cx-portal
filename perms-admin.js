@@ -145,6 +145,11 @@ function uiCan(moduleKey, action) {
 //                      page: leave the legacy role-filter visibility untouched.
 function _paLinkDecision(page) {
   if (_myPerms === 'admin' || !_myPerms) return 'legacy';
+  // Directory hosts the merged Permissions tools, so it stays reachable for
+  // anyone who can view EITHER the directory or the permissions-admin module.
+  if (page === 'admin-directory') {
+    return (uiCan('directory', 'view') || uiCan('admin', 'view')) ? 'show' : 'hide';
+  }
   const mod = PAGE_MODULE[page];
   if (!mod) return 'legacy';
   return uiCan(mod, 'view') ? 'show' : 'hide';
@@ -228,17 +233,12 @@ let _paUserPanel = {};               // userId -> 'overrides' | 'effective' | un
 
 /* ── Entry point (called from showPage) ── */
 
+// Permissions is now merged into the Directory module (see renderAdminDirectory).
+// This thin alias keeps legacy callers and bookmarks working by routing them to
+// the Directory page's permission tab instead of a standalone page.
 function renderAdminPermissions() {
-  const root = document.getElementById('admin-permissions-content');
-  if (!root || !currentRoleUser) return;
-  if (!uiCan('admin', 'view')) {
-    root.innerHTML = '<div class="docs-empty"><h3>Not authorized</h3><p>Permission management requires access to the Permissions Admin module.</p></div>';
-    return;
-  }
-  root.innerHTML = cxSkeleton(6);
-  _paLoad().then(() => _paRender()).catch(err => {
-    root.innerHTML = cxError({ message: 'Could not load permission data: ' + (err.message || err), retry: 'renderAdminPermissions()' });
-  });
+  if (_dirTab !== 'overrides') _dirTab = 'templates';
+  if (typeof renderAdminDirectory === 'function') renderAdminDirectory();
 }
 
 async function _paLoad() {
@@ -270,16 +270,13 @@ async function _paLoad() {
 
 /* ── Shell ── */
 
+// Renders the active permission tab into the Directory page's shared tab body.
+// The tab bar itself is owned by renderAdminDirectory; here we only paint the
+// body so in-place edits (level/grant/override changes) re-render seamlessly.
 function _paRender() {
-  const root = document.getElementById('admin-permissions-content');
-  if (!root) return;
-  root.innerHTML = `
-    <div class="admin-tabs">
-      <button class="admin-tab${_paTab === 'templates' ? ' active' : ''}" onclick="_paSetTab('templates')">Templates</button>
-      <button class="admin-tab${_paTab === 'users' ? ' active' : ''}" onclick="_paSetTab('users')">Users &amp; Overrides</button>
-    </div>
-    <div id="pa-tab-body">${_paTab === 'templates' ? _paTemplatesHTML() : _paUsersHTML()}</div>
-  `;
+  const body = document.getElementById('dir-tab-body');
+  if (!body) return;
+  body.innerHTML = _paTab === 'templates' ? _paTemplatesHTML() : _paUsersHTML();
 }
 
 function _paSetTab(t) { _paTab = t; _paRender(); }
