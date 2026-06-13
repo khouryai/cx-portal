@@ -11352,6 +11352,13 @@ function _amDrilldownHTML(key) {
         r.IsLatestAttempt !== false
         && (_trShowDynamic || String(r.ScopeType || 'static').toLowerCase() !== 'dynamic'));
 
+  // Does this activity actually contain dynamic-scope test cases? The "Show
+  // Dynamic" toggle is only meaningful (and only shown) when it does.
+  const _scopeBase = (_trEditMode && _trDraftItems)
+    ? _trDraftItems
+    : act.items.filter(r => r.IsLatestAttempt !== false);
+  const hasDynamic = _scopeBase.some(r => String(r.ScopeType || 'static').toLowerCase() === 'dynamic');
+
   // Status filter (drilldown-level)
   const drillFiltered = _trDrillStatusFilter
     ? viewItems.filter(r => (legacyMap[r.Status] || r.Status || 'Not Started') === _trDrillStatusFilter)
@@ -11428,7 +11435,7 @@ function _amDrilldownHTML(key) {
               <div class="v2-bar-track"><div class="v2-bar-fill ${barTone}" style="width:${pct}%;"></div></div>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
-              ${isAdmin ? `<button class="v2-btn-ghost" onclick="_trToggleShowDynamic()" title="Show or hide dynamic-scope test cases in this register">${_trShowDynamic?'Hide Dynamic':'Show Dynamic'}</button>` : ''}
+              ${isAdmin && hasDynamic ? `<button class="v2-btn-ghost" onclick="_trToggleShowDynamic()" title="Show or hide dynamic-scope test cases in this register">${_trShowDynamic?'Hide Dynamic':'Show Dynamic'}</button>` : ''}
               <button class="v2-btn-ghost" onclick="_trToggleBulkEdit()">${_trBulkMode?'Bulk Edit On':'Bulk Edit'}</button>
               ${isAdmin ? (_trEditMode
                 ? `<button class="v2-btn-ghost" onclick="_trAddSection()">＋ Section</button>
