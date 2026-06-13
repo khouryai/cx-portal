@@ -979,6 +979,49 @@ must map instances to windows by the SAME rules as auto-allocate.
   access_zones + pulls pool, windowAllows present). Harness 23/23. Verified the
   per-day editor + chart visually. CRLF preserved. (No DB change.)
 
+## Dynamic Testing — Schedule Simulator (2026-06-12/13, owner-directed)
+Owner: conceptual planning WITHOUT real access campaigns — project completion of
+the open backlog against user-defined estimated access windows; multiple what-if
+scenarios with timelines (Gantt/S-curve); baseline → map to real execution;
+recalibrate at milestones (e.g. 30%). Owner-chosen defaults: Wed/Thu/Fri 2h +
+Sat 3h + Sun 4h; weekend closure = CONTINUOUS 48h; auto-optimize location pick;
+max 2 adjacent locations/shift (Phase 2 adjacency: W40-W34, Y10-W34, W40-Y10,
+W34-W30, W30-W10); single-location shifts allowed.
+- NEW "Simulator" hero tab (_dynRenderSimulator). Scenarios persist in
+  localStorage ('dynSimScenarios'): weekly template (hours per DOW, blank = no
+  access), allowed-locations chips, max-locations/shift (1|2), editable adjacency
+  pairs, scope (subsystem + only-unscheduled), caps (max closures / max extended
+  weeks), per-week overrides table (closure ✓ = one continuous 48h Sat block that
+  consumes Sunday; per-week wkdy/sat/sun hour overrides — extensions consume the
+  cap, reductions incl. 0 always apply).
+- ENGINE (_dynSimRun): walks days from startDate (horizon 120 wks), mints one
+  simulated window per access day, AUTO-PICKS its location(s) = the single zone
+  or allowed adjacent pair with the most remaining schedulable minutes (ties →
+  fewer zones), and fills it with the REAL _dynCascadeAllocate (duration packing
+  + slack + zone/access/mode + prereqs). Incremental per-window calls preserve
+  prereq ordering (placed prereqs leave the pool → dependents unlock). Metrics:
+  completion date, weeks, shifts, access hours, utilization, closures/extended
+  used, out-of-scope + unplaced counts, cumulative %-complete, per-zone spans.
+- VISUALS: KPI cards; S-curve (Chart.js stepped lines, ALL scenarios, baseline
+  red/starred, active bold); per-location HTML Gantt with closure markers; shift
+  log (closure rows highlighted).
+- SCENARIOS: create/duplicate/rename/delete, one ★ baseline (snapshot {date,
+  total, done%} captured + baselineCompletion).
+- MAP TO EXECUTION: drafts a REAL access campaign prefilled from the scenario
+  (zones, sim start→completion, per-day day_schedule at 01:00 + template hours)
+  via the existing _dynCampaignModal — which now supports prefilled-CREATE
+  (isEdit = camp && camp.id; prefill = camp truthy).
+- RECALIBRATE: captures actual progress (done% over the FULL scope incl. Pass)
+  and re-projects the remaining open work from TODAY with the same template;
+  banner shows now-vs-baseline % and new vs baseline completion; recals logged.
+- Tests: tools/test_dyn_simulator.js (22 assertions, 24th suite) — template
+  day/hour mapping, week-1 throughput math (20 runs), adjacency-constrained
+  pairing (W10 never with W40), 1-location mode, 48h closure consuming Sunday,
+  extended-hours cap, sun=0 reduction, zone-restricted scope reporting, prereq
+  ordering across simulated windows. Harness 24/24. Rendered the full tab
+  visually (2 scenarios, closure jump on the S-curve). CRLF preserved. No DB
+  change (simulation is entirely client-side).
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose
