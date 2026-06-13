@@ -2296,6 +2296,7 @@ async function loadTestItems() {
         RegressionGroupId: r.regression_group_id || r.test_id,
         AttemptNumber:     r.attempt_number || 1,
         IsLatestAttempt:   r.is_latest_attempt !== false,
+        RegressionFlagged: r.regression_flagged === true,
       }));
       console.log(`Loaded ${TI.length} test items from Supabase`);
     }
@@ -16471,6 +16472,10 @@ function _swSnapshotChipHTML(r) {
 // Prior attempts freeze read-only; only the latest attempt counts in KPIs.
 // ==========================================================================
 const _REGRESSION_TERMINAL = new Set(['Pass','Fail','Blocked','Passed','Failed','Complete']);
+// Failed completed tests offer the regression button automatically (a failure
+// invites a retest). Every other completed status offers it only once the test
+// case is flagged for regression (regression_flagged) — see toggleRegressionFlag.
+const _REGRESSION_FAILED = new Set(['Fail','Failed']);
 
 // Phase 4: a row counts toward KPIs only if it is the latest attempt.
 // Legacy/null is_latest_attempt is treated as latest (true).
@@ -16503,9 +16508,23 @@ function _regressionCellHTML(r) {
   if (attempts.length > 1) {
     bits += `<span style="font-size:10px;font-weight:700;background:#ede9fe;color:#6d28d9;border:1px solid #ddd6fe;border-radius:3px;padding:1px 6px;">Attempt ${attemptNo}/${attempts.length}</span>`;
   }
+  // Regression availability (owner rule): a FAILED completed test always offers
+  // the button. Any OTHER completed test (Pass / Blocked / Complete) shows a
+  // per-test-case "Flag for regression" checkbox instead, and only offers the
+  // button once that flag is set — e.g. after a new software release or an
+  // updated test procedure means a previously-passing test must be re-run.
   if (canManage && isTerminal && r.IsLatestAttempt) {
-    bits += `<button onclick="regressionTestCase('${escapeHtml(String(r.TestID))}')" title="Create a new regression attempt — preserves this result as history"
-      style="font-size:10px;font-weight:600;padding:3px 8px;background:#f5f3ff;border:1px solid #c4b5fd;color:#6d28d9;border-radius:5px;cursor:pointer;">⟳ Regression</button>`;
+    const isFailed = _REGRESSION_FAILED.has(r.Status);
+    const flagged  = r.RegressionFlagged === true;
+    if (!isFailed) {
+      bits += `<label title="Flag this completed test case for regression — typically after a new software release or an updated test procedure" style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;color:var(--gray-600);cursor:pointer;">
+        <input type="checkbox" ${flagged ? 'checked' : ''} onchange="toggleRegressionFlag('${escapeHtml(String(r.TestID))}',this.checked)" style="cursor:pointer;margin:0;"> Flag for regression
+      </label>`;
+    }
+    if (isFailed || flagged) {
+      bits += `<button onclick="regressionTestCase('${escapeHtml(String(r.TestID))}')" title="Create a new regression attempt — preserves this result as history"
+        style="font-size:10px;font-weight:600;padding:3px 8px;background:#f5f3ff;border:1px solid #c4b5fd;color:#6d28d9;border-radius:5px;cursor:pointer;">⟳ Regression</button>`;
+    }
   }
   // Undo: only when the latest attempt is uncompleted (no real data to lose)
   if (canManage && r.IsLatestAttempt && attempts.length > 1 &&
@@ -16537,6 +16556,24 @@ function _regressionCellHTML(r) {
     </div>`;
   }
   return `<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">${bits}</div>${histPanel}`;
+}
+
+// Toggle the per-test-case "Flag for regression" state (offered only on
+// non-failed completed tests). Persists to test_items.regression_flagged and
+// repaints just this row's regression cell so the ⟳ Regression button
+// appears/disappears in place. Failed tests don't use this — they always
+// offer the button.
+function toggleRegressionFlag(testId, flagged) {
+  const r = TI.find(t => String(t.TestID) === String(testId));
+  if (!r) return;
+  r.RegressionFlagged = !!flagged;
+  const cell = document.getElementById(`regcell-${encodeURIComponent(String(r.TestID))}`);
+  if (cell) cell.innerHTML = _regressionCellHTML(r);
+  _dbUpdate('test_items', { regression_flagged: !!flagged }, { test_id: r.TestID }).catch(err => {
+    console.error('[toggleRegressionFlag] failed:', err.message);
+    toast('Could not save regression flag: ' + err.message, 'error');
+  });
+  if (flagged) toast('Flagged for regression', 'success');
 }
 
 let _trAttemptHistOpen = new Set();
