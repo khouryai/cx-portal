@@ -687,7 +687,14 @@ function _colCells(tableId, row) {
   const vis = _colGetVisible(tableId);
   const reg = _colRegistry[tableId];
   if (!reg || !reg.render) return '';
-  return vis.map(c => reg.render(c.id, row)).join('');
+  return vis.map(c => {
+    const html  = reg.render(c.id, row);
+    const def   = reg.defs && reg.defs.find(d => d.id === c.id);
+    const label = (def && def.label) || c.id;
+    // Tag each cell with its column label so the mobile card layout can show a
+    // field label before the value. Desktop tables ignore data-label entirely.
+    return html.replace('<td', `<td data-label="${escapeHtml(label)}"`);
+  }).join('');
 }
 
 // ── escapeHtml + getLocationCode → extracted to format.js (P3-1 seam #2) ──
@@ -11001,7 +11008,7 @@ function _testRegisterHTML() {
     const actRow = `
       <tr style="${isSel?'background:#f5f3ff;':''}" class="tr-activity-row">
         ${isAdmin ? `<td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} onchange="_amToggleRow('${safeKey}',this.checked)"></td>` : ''}
-        <td>
+        <td class="am-actions-cell">
           <div class="tr-row-actions">
             ${isAdmin ? `<button class="form-secondary tr-mini-btn" onclick="_amOpenEditModal('${safeKey}')">Edit</button>` : ''}
             <button class="admin-action-btn tr-mini-btn" onclick="_amOpenDrilldown('${safeKey}')">Open</button>
