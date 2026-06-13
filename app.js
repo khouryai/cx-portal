@@ -16548,9 +16548,23 @@ function _regressionCellHTML(r) {
       ${prior.map(a => {
         const col = {Pass:'#16a34a',Fail:'#dc2626',Blocked:'#d97706'}[a.Status] || '#6b7280';
         const sw  = Array.isArray(a.SwSnapshot) && a.SwSnapshot.length ? a.SwSnapshot.map(s=>`${s.software_name} ${s.version}`).join(', ') : '—';
-        return `<div style="font-size:10px;color:var(--gray-600);padding:3px 0;border-bottom:1px solid var(--gray-100);display:flex;justify-content:space-between;gap:8px;">
-          <span>${icon('lock')} <strong>Attempt ${a.AttemptNumber||1}</strong> · <span style="color:${col};font-weight:600;">${escapeHtml(a.Status||'—')}</span>${a.CompletedBy?' · by '+escapeHtml(a.CompletedBy):''}${a.CompletedDate?' · '+new Date(a.CompletedDate).toLocaleDateString():''}</span>
-          <span style="color:#3730a3;">${icon('puzzle')} ${escapeHtml(sw)}</span>
+        // Evidence forms/data sheets logged on THIS attempt. Forms are keyed to
+        // the attempt's own test_id, so each run's evidence stays frozen with it
+        // — a regression links a NEW form to the new attempt without disturbing
+        // the prior attempt's data sheet.
+        const forms = (typeof _formsForTestRow === 'function') ? _formsForTestRow(a) : [];
+        const formsHtml = forms.length
+          ? forms.map(f => `<button onclick="openFormViewer('${escapeHtml(String(f.id))}')" title="Open the data sheet logged for attempt ${a.AttemptNumber||1}"
+              style="font-size:10px;padding:1px 7px;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;border-radius:4px;cursor:pointer;">${icon('paperclip')} ${escapeHtml(f.name||'Form')}</button>`).join(' ')
+          : '<span style="color:var(--gray-400);">no form linked</span>';
+        return `<div style="font-size:10px;color:var(--gray-600);padding:4px 0;border-bottom:1px solid var(--gray-100);">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+            <span>${icon('lock')} <strong>Attempt ${a.AttemptNumber||1}</strong> · <span style="color:${col};font-weight:600;">${escapeHtml(a.Status||'—')}</span>${a.CompletedBy?' · by '+escapeHtml(a.CompletedBy):''}${a.CompletedDate?' · '+new Date(a.CompletedDate).toLocaleDateString():''}</span>
+            <span style="color:#3730a3;">${icon('puzzle')} ${escapeHtml(sw)}</span>
+          </div>
+          <div style="margin-top:3px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+            <span style="color:var(--gray-500);font-weight:600;">Evidence:</span> ${formsHtml}
+          </div>
         </div>`;
       }).join('')}
     </div>`;
