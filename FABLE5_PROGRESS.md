@@ -1051,6 +1051,16 @@ baseline/scenarios/locations/settings.
   preserved. No DB change. NOTE: actual completion is dated by updated_at (best
   available proxy; no dedicated passed_at column).
 
+## Dynamic Testing — Simulator baseline-vs-scenario KPI table (2026-06-13)
+Owner: show the difference between baseline and scenario as a side-by-side KPI
+table like the capacity what-if. Added _dynSimKpiCompareHtml — when a baseline
+exists and ≠ the active scenario, the KPI cards are replaced by a Metric / ★
+Baseline / Scenario / Difference table (runs scheduled, % scheduled, backlog,
+completion date as "N days sooner", duration, shifts used, access hours,
+utilization, closures, extended weeks) with good/bad-coloured deltas; the
+baseline view (no comparison) keeps the plain KPI cards. test_dyn_simulator now
+35 (compare table rows + columns). Harness 24/24. CRLF preserved. No DB change.
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose

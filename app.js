@@ -38838,8 +38838,9 @@ function _dynSimConfigHtml(sc, res) {
 function _dynSimResultsHtml(sc, res, baseRes, baseline) {
   const kpi = (l, v, t) => `<div class="dyn-kpi" style="margin-right:0;"><span>${l}</span><b${t ? ` style="color:${t};"` : ''}>${v}</b></div>`;
   const cmp = !!baseRes;
-  return `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px;margin-bottom:12px;">
+  const kpiBlock = cmp
+    ? _dynSimKpiCompareHtml(baseRes, res, baseline, sc)
+    : `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px;margin-bottom:12px;">
       ${kpi('Backlog', res.total)}
       ${kpi('Scheduled', `${res.placed}${res.unplaced ? ` <span style="font-size:11px;color:#b45309;">+${res.unplaced} left</span>` : ''}`, res.unplaced ? null : 'var(--good)')}
       ${kpi('Completion', res.completion ? _dynFmtDate(res.completion) : '—', 'var(--info)')}
@@ -38848,7 +38849,9 @@ function _dynSimResultsHtml(sc, res, baseRes, baseline) {
       ${kpi('Access hours', res.accessHours + 'h')}
       ${kpi('Utilization', (res.utilPct ?? '—') + '%')}
       ${kpi('Closures', res.closuresUsed, res.closuresUsed ? '#b45309' : null)}
-    </div>
+    </div>`;
+  return `
+    ${kpiBlock}
     ${res.outOfScope ? `<div style="margin-bottom:10px;padding:7px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e;">${res.outOfScope} open run(s) are in locations OUTSIDE this scenario — add their locations to include them.</div>` : ''}
     ${res.unplaced ? `<div style="margin-bottom:10px;padding:7px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#b91c1c;">${res.unplaced} run(s) could not be placed within ${Math.round(_DYN_SIM_HORIZON_DAYS / 7)} weeks — check adjacency vs their access requirements.</div>` : ''}
     <div class="data-card" style="padding:12px 14px;margin-bottom:12px;">
@@ -38862,6 +38865,49 @@ function _dynSimResultsHtml(sc, res, baseRes, baseline) {
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:6px;">Simulated shifts ${cmp ? `<span style="font-weight:400;color:var(--gray-400);">— baseline vs scenario</span>` : ''}</div>
       ${_dynSimShiftsHtml(sc, res, baseRes, baseline)}
     </div>`;
+}
+
+// Baseline-vs-scenario KPI table (like the what-if Current/Scenario/Difference).
+function _dynSimKpiCompareHtml(B, S, baseline, sc) {
+  const dlt = (a, b, unit, goodUp) => {
+    const d = Math.round((b - a) * 100) / 100;
+    if (!d) return '<span style="color:var(--gray-400);">—</span>';
+    const good = goodUp ? d > 0 : d < 0;
+    return `<span style="color:${good ? '#059669' : '#b45309'};font-weight:600;">${d > 0 ? '+' : ''}${d}${unit || ''}</span>`;
+  };
+  const dateDelta = (a, b) => {
+    if (!a || !b) return '<span style="color:var(--gray-400);">—</span>';
+    const days = Math.round((_dynParseDate(a) - _dynParseDate(b)) / 86400000);
+    if (!days) return '<span style="color:var(--gray-400);">same day</span>';
+    return `<span style="color:${days > 0 ? '#059669' : '#b45309'};font-weight:600;">${days > 0 ? days + ' days sooner' : Math.abs(days) + ' days later'}</span>`;
+  };
+  const pct = r => r.total ? Math.round(r.placed / r.total * 100) : 0;
+  const row = (label, a, b, delta) => `<tr style="border-top:1px solid var(--gray-100);">
+    <td style="padding:6px 10px;color:var(--gray-600);">${label}</td>
+    <td style="padding:6px 10px;text-align:right;font-family:monospace;">${a}</td>
+    <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:600;">${b}</td>
+    <td style="padding:6px 10px;text-align:right;">${delta}</td></tr>`;
+  return `<div class="data-card" style="padding:0;margin-bottom:12px;overflow:hidden;">
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+      <thead><tr style="background:var(--gray-50);">
+        <th style="text-align:left;padding:6px 10px;">Metric</th>
+        <th style="text-align:right;padding:6px 10px;">★ ${escapeHtml(baseline.name)}</th>
+        <th style="text-align:right;padding:6px 10px;">${escapeHtml(sc.name)}</th>
+        <th style="text-align:right;padding:6px 10px;">Difference</th>
+      </tr></thead><tbody>
+        ${row('Runs scheduled', `${B.placed}/${B.total}`, `${S.placed}/${S.total}`, dlt(B.placed, S.placed, '', true))}
+        ${row('% scheduled', pct(B) + '%', pct(S) + '%', dlt(pct(B), pct(S), ' pts', true))}
+        ${row('Backlog remaining', B.unplaced, S.unplaced, dlt(B.unplaced, S.unplaced, '', false))}
+        ${row('Completion date', B.completion ? _dynFmtDate(B.completion) : '—', S.completion ? _dynFmtDate(S.completion) : '—', dateDelta(B.completion, S.completion))}
+        ${row('Duration', (B.weeks ?? '—') + ' wks', (S.weeks ?? '—') + ' wks', B.weeks != null && S.weeks != null ? dlt(B.weeks, S.weeks, ' wks', false) : '—')}
+        ${row('Shifts used', `${B.shiftsUsed}/${B.shifts}`, `${S.shiftsUsed}/${S.shifts}`, dlt(B.shiftsUsed, S.shiftsUsed, '', false))}
+        ${row('Access hours', B.accessHours + ' h', S.accessHours + ' h', dlt(B.accessHours, S.accessHours, ' h', false))}
+        ${row('Utilization', (B.utilPct ?? '—') + '%', (S.utilPct ?? '—') + '%', B.utilPct != null && S.utilPct != null ? dlt(B.utilPct, S.utilPct, ' pts', true) : '—')}
+        ${row('Closures used', B.closuresUsed, S.closuresUsed, dlt(B.closuresUsed, S.closuresUsed, '', true))}
+        ${row('Extended weeks', B.extendedUsed, S.extendedUsed, dlt(B.extendedUsed, S.extendedUsed, '', true))}
+      </tbody>
+    </table>
+  </div>`;
 }
 
 // Location Gantt; in compare mode each location shows TWO bars (baseline grey,

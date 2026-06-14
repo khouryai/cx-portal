@@ -151,5 +151,14 @@ assert(ac.total === 8 && ac.done === 2 && ac.donePct === 25, "actual curve: 2/8 
 assert(ac.lastPct === 25, "actual curve ends at the current completion %");
 run(`_dynPage.instances = ${JSON.stringify(pool)};`); // restore
 
+// ── baseline-vs-scenario KPI compare table ───────────────────────────────────
+const cmpHtml = run(`(function(){
+  const B=_dynSimRun(${JSON.stringify(Object.assign({}, baseSc, { name: "Base" }))}, []);
+  const S=_dynSimRun(${JSON.stringify(Object.assign({}, baseSc, { name: "Fast", weekOverrides: { 0: { closure: true } } }))}, []);
+  return _dynSimKpiCompareHtml(B, S, { name: "Base" }, { name: "Fast" });
+})()`);
+assert(/Runs scheduled/.test(cmpHtml) && /Completion date/.test(cmpHtml) && /Utilization/.test(cmpHtml), "compare table lists the KPI rows");
+assert(/★ Base/.test(cmpHtml) && /Fast/.test(cmpHtml) && /Difference/.test(cmpHtml), "compare table has baseline, scenario and difference columns");
+
 console.log(`test_dyn_simulator: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
