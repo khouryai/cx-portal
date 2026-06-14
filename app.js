@@ -38777,15 +38777,22 @@ function _dynSimConfigHtml(sc, res) {
   const adjTxt = (sc.adjacency || []).map(p => p.join('-')).join(', ');
   const closTxt = (sc.closureGroups || []).map(p => p.join('-')).join(', ');
   const weeks = res ? (res.weeks || 4) : 4;
+  // An override hour input + a "×" that reverts it to the dash "—" (template).
+  // Without this, typing 0 means "closed that day" with no way back to template.
+  const ovInp = 'padding:4px;border:1px solid var(--gray-300);border-radius:4px;text-align:center;font-size:11.5px;width:38px;';
+  const hourCell = (k, key, val, disabled) => `<td style="padding:3px 4px;white-space:nowrap;">
+      <input type="number" min="0" max="24" step="0.5" value="${val ?? ''}" placeholder="—" style="${ovInp}" ${disabled ? 'disabled' : ''} onchange="_dynSimSetOv(${k},'${key}',this.value)">
+      ${(val != null && !disabled) ? `<button type="button" title="Revert to template (—)" onclick="_dynSimSetOv(${k},'${key}','')" style="border:none;background:none;cursor:pointer;color:var(--gray-400);font-size:13px;line-height:1;padding:0 1px;vertical-align:middle;">×</button>` : `<span style="display:inline-block;width:9px;"></span>`}
+    </td>`;
   const ovRows = Array.from({ length: Math.min(Math.max(weeks, 4), 26) }, (_, k) => {
     const ov = (sc.weekOverrides || {})[k] || {};
     const wkStart = _dynFmtDate(_dynAddDays(_dynParseDate(sc.startDate), k * 7));
     return `<tr style="border-top:1px solid var(--gray-100);">
       <td style="padding:3px 6px;font-size:11px;white-space:nowrap;">W${k + 1} <span style="color:var(--gray-400);">${wkStart}</span></td>
       <td style="padding:3px 6px;text-align:center;"><input type="checkbox" ${ov.closure ? 'checked' : ''} onchange="_dynSimSetOv(${k},'closure',this.checked)" title="Continuous 48h weekend possession (up to 4 consecutive locations)"></td>
-      <td style="padding:3px 6px;"><input type="number" min="0" max="24" step="0.5" value="${ov.wk ?? ''}" placeholder="—" style="${inp}" onchange="_dynSimSetOv(${k},'wk',this.value)"></td>
-      <td style="padding:3px 6px;"><input type="number" min="0" max="24" step="0.5" value="${ov.sat ?? ''}" placeholder="—" style="${inp}" ${ov.closure ? 'disabled' : ''} onchange="_dynSimSetOv(${k},'sat',this.value)"></td>
-      <td style="padding:3px 6px;"><input type="number" min="0" max="24" step="0.5" value="${ov.sun ?? ''}" placeholder="—" style="${inp}" ${ov.closure ? 'disabled' : ''} onchange="_dynSimSetOv(${k},'sun',this.value)"></td>
+      ${hourCell(k, 'wk', ov.wk, false)}
+      ${hourCell(k, 'sat', ov.sat, !!ov.closure)}
+      ${hourCell(k, 'sun', ov.sun, !!ov.closure)}
     </tr>`;
   }).join('');
   return `
@@ -38823,11 +38830,11 @@ function _dynSimConfigHtml(sc, res) {
       <label>Max extended wks <input type="number" min="0" max="30" value="${sc.maxExtended ?? 4}" style="${inp}" onchange="_dynSimField('maxExtended',parseInt(this.value,10)||0)"></label>
     </div>
     <div style="font-size:12px;color:var(--gray-600);margin-bottom:4px;">Week overrides <span style="color:var(--gray-400);">(closure = continuous 48h weekend; hours blank = template)</span></div>
-    <div style="max-height:240px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;">
+    <div style="max-height:240px;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">
       <table style="width:100%;border-collapse:collapse;font-size:11px;">
         <thead><tr style="background:var(--gray-50);color:var(--gray-500);font-size:10px;">
-          <th style="text-align:left;padding:3px 6px;">Week</th><th style="padding:3px 6px;">Closure</th>
-          <th style="text-align:left;padding:3px 6px;">Wkdy h</th><th style="text-align:left;padding:3px 6px;">Sat h</th><th style="text-align:left;padding:3px 6px;">Sun h</th>
+          <th style="text-align:left;padding:3px 6px;">Week</th><th style="padding:3px 4px;">Closure</th>
+          <th style="text-align:left;padding:3px 4px;">Wkdy h</th><th style="text-align:left;padding:3px 4px;">Sat h</th><th style="text-align:left;padding:3px 4px;">Sun h</th>
         </tr></thead><tbody>${ovRows}</tbody>
       </table>
     </div>

@@ -1061,6 +1061,18 @@ utilization, closures, extended weeks) with good/bad-coloured deltas; the
 baseline view (no comparison) keeps the plain KPI cards. test_dyn_simulator now
 35 (compare table rows + columns). Harness 24/24. CRLF preserved. No DB change.
 
+## Dynamic Testing — Simulator override revert-to-template (2026-06-14)
+Owner bug: setting a week-override Sat/Sun hour then lowering it to 0 enforced
+"0 hours = day closed" with no way back to the template value (the number input
+couldn't return to the dash "—"). Fix: each override hour cell (wk/sat/sun) now
+shows a small "×" once a value is set; clicking it calls _dynSimSetOv(k,key,'')
+which DELETES the override (reverting that day to the Access-hours-per-day
+template), and removes the whole week entry if it becomes empty. 0 remains a
+valid explicit "closed" value; the × is the documented way back to "—". Narrowed
+the override inputs (38px) + tightened padding so the last column's × isn't
+clipped; container overflow:auto as a safety. test_dyn_simulator now 37 (clear
+reverts to template, not 0). Harness 24/24. CRLF preserved. No DB change.
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose

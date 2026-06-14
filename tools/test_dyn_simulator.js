@@ -160,5 +160,15 @@ const cmpHtml = run(`(function(){
 assert(/Runs scheduled/.test(cmpHtml) && /Completion date/.test(cmpHtml) && /Utilization/.test(cmpHtml), "compare table lists the KPI rows");
 assert(/★ Base/.test(cmpHtml) && /Fast/.test(cmpHtml) && /Difference/.test(cmpHtml), "compare table has baseline, scenario and difference columns");
 
+// ── week-override clear reverts to template (not 0/closed) ───────────────────
+run(`globalThis.__rs = _dynRenderSimulator; _dynRenderSimulator = function(){};`); // stub re-render
+run(`_dynPage.instances = ${JSON.stringify(pool.map(i => ({ ...i, target_phase: "Phase 2" })))}; _dynPage.simPhase = "Phase 2"; _dynPage.simActiveByPhase = {};`);
+run(`(function(){ const s=_dynSimDefaultScenario("OvTest","Phase 2"); _dynSimSaveScenarios([s]); _dynPage.simActiveByPhase["Phase 2"]=s.id; })()`);
+run(`_dynSimSetOv(0,'sat',0);`);
+assert(run(`(_dynSimActive().weekOverrides[0]||{}).sat`) === 0, "setting Sat=0 stores a 0 (that day closed)");
+run(`_dynSimSetOv(0,'sat','');`);
+assert(run(`_dynSimActive().weekOverrides[0]`) === undefined, "clearing (×) removes the override → reverts to template, not 0");
+run(`_dynRenderSimulator = globalThis.__rs;`); // restore
+
 console.log(`test_dyn_simulator: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
