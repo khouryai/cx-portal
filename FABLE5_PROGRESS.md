@@ -1022,6 +1022,35 @@ W34-W30, W30-W10); single-location shifts allowed.
   visually (2 scenarios, closure jump on the S-curve). CRLF preserved. No DB
   change (simulation is entirely client-side).
 
+## Dynamic Testing — Simulator phase-split + comparisons + actual curve (2026-06-13)
+Owner follow-ups on the Simulator: (1) closures can request up to FOUR
+consecutive locations, written in a text field like the adjacency pairs; (2) max
+locations/shift is a number 1–5 (was a 1|2 dropdown); (3) the simulated-shifts
+table AND the location timeline become BASELINE-vs-selected-scenario comparisons;
+(4) the S-curve also shows ACTUAL completion %; (5) the whole simulator is split
+by PHASE (Phase 0/2/3…, no Phase 1) — switching phase swaps to that phase's own
+baseline/scenarios/locations/settings.
+- PHASE: scenarios carry a `phase`; _dynSimPhases() lists distinct target_phase
+  (numeric-sorted); phase tabs at top; _dynPage.simPhase + simActiveByPhase track
+  selection per phase; scope (_dynSimScopeAll/Pool) filters to sc.phase; default
+  scenario seeds zones from that phase's instances; one baseline per phase.
+- LOCATIONS 1–5: _dynSimChains() enumerates connected consecutive chains from the
+  adjacency graph up to maxZonesPerShift (number input 1–5), replacing the
+  pair-only logic. Closures use _dynSimClosureCands() from a new `closureGroups`
+  text field (≤4 consecutive, parsed like adjacency; blank → auto ≤4 chains).
+- COMPARISONS: when a baseline exists and ≠ active, _dynSimGanttHtml shows two
+  bars per location (baseline grey / scenario blue on a shared axis) and
+  _dynSimShiftsHtml shows Date | baseline | scenario columns.
+- ACTUAL CURVE: _dynSimActualCurve(phase) = cumulative % of Pass/NA over time
+  (dated by updated_at, extended to today at current %); plotted black-dashed on
+  the S-curve alongside every scenario, plus an "Actual <phase> N%" KPI.
+- map-to-execution now passes phase to the drafted campaign.
+- Tests: tools/test_dyn_simulator.js now 33 (chains ≤ max + 4-long chain present,
+  closure-group pick, phase scoping P2/P3, phase list, actual-curve %). Harness
+  24/24. Rendered the phase-split UI with both comparisons + actual curve. CRLF
+  preserved. No DB change. NOTE: actual completion is dated by updated_at (best
+  available proxy; no dedicated passed_at column).
+
 ## Checkpoints sent
 - 2026-06-10: Phase 0 complete report — baseline, audit corrections,
   architecture rec. Owner replied: do a full framework rebuild if best (→ chose

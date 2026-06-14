@@ -38458,38 +38458,64 @@ function _dynWhatIfRender() {
 const _DYN_SIM_ADJ_DEFAULT = [['W40','W34'],['Y10','W34'],['W40','Y10'],['W34','W30'],['W30','W10']];
 const _DYN_SIM_HORIZON_DAYS = 120 * 7;   // give up after 120 weeks
 
-function _dynSimDefaultScenario(name) {
-  const zones = _dynWhatIfZonesAll();
+function _dynSimPhases() {
+  const set = new Set((_dynPage.instances || []).map(i => i.target_phase).filter(Boolean));
+  const arr = [...set].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  return arr.length ? arr : ['Phase 2'];
+}
+function _dynSimPhaseZones(phase) {
+  const z = new Set();
+  (_dynPage.instances || []).forEach(i => {
+    if ((i.target_phase || '') !== phase) return;
+    if (i.track_section_under_test) z.add(i.track_section_under_test);
+    (i.track_section_access_req || []).forEach(x => x && z.add(x));
+  });
+  return [...z].sort();
+}
+
+function _dynSimDefaultScenario(name, phase) {
+  phase = phase || _dynPage.simPhase || _dynSimPhases()[0];
+  const zones = _dynSimPhaseZones(phase);
   const monday = _dynDayKey(_dynAddDays(_dynStartOfWeek(new Date()), 7)); // next Monday
   return {
     id: 'sim-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-    name: name || 'Scenario ' + (_dynSimScenarios().length + 1),
+    name: name || 'Scenario ' + (_dynSimScenarios().filter(s => (s.phase || '') === phase).length + 1),
+    phase,
     startDate: monday,
-    // hours per day-of-week (0=Sun..6=Sat). Default: Wed/Thu/Fri 2h, Sat 3h, Sun 4h.
-    weekly: { 0: 4, 3: 2, 4: 2, 5: 2, 6: 3 },
-    maxZonesPerShift: 2,
+    weekly: { 0: 4, 3: 2, 4: 2, 5: 2, 6: 3 },     // Wed/Thu/Fri 2h, Sat 3h, Sun 4h
+    maxZonesPerShift: 2,                            // 1..5 consecutive locations / shift
     zones: zones.length ? zones : ['W40', 'W34', 'W30', 'W10', 'Y10'],
     adjacency: _DYN_SIM_ADJ_DEFAULT.map(p => p.slice()),
-    weekOverrides: {},          // { weekIdx: { closure:true, wk:h, sat:h, sun:h } }
+    closureGroups: [],                             // up to-4-consecutive groups for closures (blank = derive from adjacency)
+    weekOverrides: {},
     maxClosures: 4,
     maxExtended: 4,
     scope: { subsystem: '', onlyUnscheduled: false },
     baseline: false,
-    snapshot: null,             // { date, total, done } captured at baseline
-    recals: [],                 // [{ date, donePct, completion }]
+    snapshot: null,
+    recals: [],
   };
 }
 
 function _dynSimScenarios() {
   try {
     const arr = JSON.parse(localStorage.getItem('dynSimScenarios') || '[]');
-    return Array.isArray(arr) ? arr : [];
+    if (!Array.isArray(arr)) return [];
+    const fallback = _dynSimPhases()[0];
+    arr.forEach(s => { if (!s.phase) s.phase = fallback; });   // migrate pre-phase scenarios
+    return arr;
   } catch (_) { return []; }
 }
 function _dynSimSaveScenarios(arr) { try { localStorage.setItem('dynSimScenarios', JSON.stringify(arr)); } catch (_) {} }
 function _dynSimActive() {
-  const arr = _dynSimScenarios();
-  return arr.find(s => s.id === _dynPage.simActiveId) || arr[0] || null;
+  const phase = _dynPage.simPhase;
+  const list = _dynSimScenarios().filter(s => (s.phase || '') === phase);
+  const id = (_dynPage.simActiveByPhase || {})[phase];
+  return list.find(s => s.id === id) || list[0] || null;
+}
+function _dynSimBaseline() {
+  const phase = _dynPage.simPhase;
+  return _dynSimScenarios().find(s => (s.phase || '') === phase && s.baseline) || null;
 }
 function _dynSimPatch(id, patch) {
   const arr = _dynSimScenarios();
@@ -38499,12 +38525,11 @@ function _dynSimPatch(id, patch) {
   _dynSimSaveScenarios(arr);
 }
 
-// ── Scope: which instances this scenario simulates ─────────────────────────
-// FULL scope (incl. done) is used for progress %; OPEN scope is what gets
-// scheduled. Locations outside sc.zones are excluded (reported separately).
+// ── Scope: instances in this scenario's PHASE (full = progress %, pool = open) ─
 function _dynSimScopeAll(sc) {
   return (_dynPage.instances || []).filter(i =>
     i.track_section_under_test
+    && (i.target_phase || '') === (sc.phase || '')
     && (!sc.scope.subsystem || (i.subsystem || '') === sc.scope.subsystem));
 }
 function _dynSimScopePool(sc) {
@@ -38515,21 +38540,64 @@ function _dynSimScopePool(sc) {
     && (!sc.scope.onlyUnscheduled || !i.shift_id));
 }
 
-// ── Auto-optimize location pick: the single location or allowed adjacent pair
-// with the most remaining schedulable work-minutes. Ties prefer fewer zones.
-function _dynSimZoneCandidates(sc) {
-  const zset = new Set(sc.zones || []);
-  const cands = [...zset].map(z => [z]);
-  if ((sc.maxZonesPerShift || 2) >= 2) {
-    for (const [a, b] of (sc.adjacency || [])) {
-      if (zset.has(a) && zset.has(b)) cands.push([a, b]);
-    }
+// ── Actual completion S-curve for a phase: cumulative % of PASS/NA over time,
+// dated by updated_at, extended to today at the current %. ────────────────────
+function _dynSimActualCurve(phase) {
+  const all = (_dynPage.instances || []).filter(i => (i.target_phase || '') === phase && i.track_section_under_test);
+  const total = all.length;
+  const done = all.filter(i => ['Pass', 'Not Applicable'].includes(i.status));
+  if (!total) return { points: [], donePct: 0, total: 0, done: 0 };
+  const perDate = new Map();
+  done.forEach(i => { const d = String(i.updated_at || i.created_at || '').slice(0, 10); if (d) perDate.set(d, (perDate.get(d) || 0) + 1); });
+  let run = 0;
+  const points = [...perDate.keys()].sort().map(d => { run += perDate.get(d); return { date: d, pct: Math.round(run / total * 100) }; });
+  const donePct = Math.round(done.length / total * 100);
+  const today = _dynFmtDate(new Date());
+  if (!points.length || points[points.length - 1].date < today) points.push({ date: today, pct: donePct });
+  return { points, donePct, total, done: done.length };
+}
+
+// ── Location candidates: connected chains (consecutive locations) up to a size
+// limit, derived from the adjacency graph. Closures use explicit groups (or a
+// ≤4 chain fallback). ─────────────────────────────────────────────────────────
+function _dynSimChains(pairs, zoneSet, maxLen) {
+  const adj = new Map();
+  const link = (a, b) => { if (!adj.has(a)) adj.set(a, new Set()); adj.get(a).add(b); };
+  for (const [a, b] of (pairs || [])) { if (zoneSet.has(a) && zoneSet.has(b)) { link(a, b); link(b, a); } }
+  const out = new Map();
+  const key = arr => arr.slice().sort().join('|');
+  for (const z of zoneSet) out.set(z, [z]);
+  if (maxLen >= 2) {
+    const dfs = (path, visited) => {
+      if (path.length >= 2) out.set(key(path), path.slice());
+      if (path.length >= maxLen) return;
+      for (const nb of (adj.get(path[path.length - 1]) || [])) {
+        if (visited.has(nb)) continue;
+        visited.add(nb); path.push(nb);
+        dfs(path, visited);
+        path.pop(); visited.delete(nb);
+      }
+    };
+    for (const z of zoneSet) dfs([z], new Set([z]));
   }
+  return [...out.values()];
+}
+function _dynSimClosureCands(sc, zoneSet) {
+  const cands = [...zoneSet].map(z => [z]);
+  const seen = new Set(cands.map(c => c.join('|')));
+  const push = g => { const k = g.slice().sort().join('|'); if (!seen.has(k)) { seen.add(k); cands.push(g.slice()); } };
+  const groups = (sc.closureGroups || []).map(g => g.filter(z => zoneSet.has(z))).filter(g => g.length >= 1);
+  if (groups.length) groups.forEach(push);
+  else _dynSimChains(sc.adjacency || [], zoneSet, 4).forEach(push);   // fallback: ≤4 chains
   return cands;
 }
-function _dynSimPickZones(sc, remaining) {
+function _dynSimPickZones(sc, remaining, isClosure) {
+  const zset = new Set(sc.zones || []);
+  const cands = isClosure
+    ? _dynSimClosureCands(sc, zset)
+    : _dynSimChains(sc.adjacency || [], zset, Math.max(1, Math.min(5, sc.maxZonesPerShift || 2)));
   let best = null, bestMin = 0;
-  for (const cand of _dynSimZoneCandidates(sc)) {
+  for (const cand of cands) {
     const set = new Set(cand);
     let m = 0;
     for (const i of remaining) {
@@ -38542,18 +38610,14 @@ function _dynSimPickZones(sc, remaining) {
   return bestMin > 0 ? best : [];
 }
 
-// ── The simulation: walk days from startDate, mint a window per access day
-// (weekly template + week overrides; closure = one continuous 48h Sat block),
-// auto-pick its locations, and fill it with the REAL cascade allocator.
-// Incremental per-window calls keep prerequisite ordering: a prereq placed in
-// an earlier window leaves the pool, so its dependents become eligible.
+// ── The simulation (same as before, now closure-aware location pick) ──────────
 function _dynSimRun(sc, prereqs) {
   const slack = _dynAllocSlack();
   const pool0 = _dynSimScopePool(sc);
   let remaining = pool0.slice();
   const assignments = [], winLog = [];
   const start = _dynParseDate(sc.startDate || _dynFmtDate(new Date()));
-  let closuresUsed = 0, extendedUsed = 0;
+  let closuresUsed = 0;
   const extendedWeeks = new Set();
   for (let day = 0; day < _DYN_SIM_HORIZON_DAYS && remaining.length; day++) {
     const d = _dynAddDays(start, day);
@@ -38562,15 +38626,15 @@ function _dynSimRun(sc, prereqs) {
     const dow = d.getDay();
     let hours = null, isClosure = false;
     if (ov.closure && closuresUsed < (sc.maxClosures ?? 99)) {
-      if (dow === 6) { hours = 48; isClosure = true; }        // continuous 48h possession
-      else if (dow === 0) continue;                            // consumed by the 48h block
+      if (dow === 6) { hours = 48; isClosure = true; }
+      else if (dow === 0) continue;
       else hours = _dynSimDayHours(sc, ov, dow, wk, extendedWeeks);
     } else {
       hours = _dynSimDayHours(sc, ov, dow, wk, extendedWeeks);
     }
     if (!(hours > 0)) continue;
-    const zones = _dynSimPickZones(sc, remaining);
-    if (!zones.length) break;                                  // nothing left is schedulable
+    const zones = _dynSimPickZones(sc, remaining, isClosure);
+    if (!zones.length) break;
     if (isClosure) closuresUsed++;
     const iso = _dynDayKey(d);
     const startAt = new Date(iso + 'T01:00:00');
@@ -38592,8 +38656,6 @@ function _dynSimRun(sc, prereqs) {
     for (const a of d2.assignments) assignments.push({ instanceId: a.instanceId, date: iso, zones });
     winLog.push({ date: iso, dow, zones, hours, placed: d2.assignments.length, placedMin, isClosure, week: wk });
   }
-  extendedUsed = extendedWeeks.size;
-  // ── metrics ──
   const zset = new Set(sc.zones || []);
   const outOfScope = _dynSimScopeAll(sc).filter(i =>
     !['Pass', 'Not Applicable'].includes(i.status) && i.track_section_under_test && !zset.has(i.track_section_under_test)).length;
@@ -38604,12 +38666,10 @@ function _dynSimRun(sc, prereqs) {
   const usedShifts = winLog.filter(w => w.placed > 0);
   let availMin = 0, plannedMin = 0;
   winLog.forEach(w => { availMin += w.hours * 60; plannedMin += w.placedMin; });
-  // cumulative % complete by date (for the S-curve)
   const perDate = new Map();
   assignments.forEach(a => perDate.set(a.date, (perDate.get(a.date) || 0) + 1));
   let run = 0;
   const cumulative = [...perDate.keys()].sort().map(dt => { run += perDate.get(dt); return { date: dt, n: run, pct: total ? Math.round(run / total * 100) : 0 }; });
-  // per-zone Gantt spans
   const zoneSpan = new Map();
   assignments.forEach(a => a.zones.forEach(z => {
     const s2 = zoneSpan.get(z) || { first: a.date, last: a.date, n: 0 };
@@ -38623,7 +38683,7 @@ function _dynSimRun(sc, prereqs) {
     shifts: winLog.length, shiftsUsed: usedShifts.length,
     accessHours: +(availMin / 60).toFixed(1),
     utilPct: availMin > 0 ? Math.round(plannedMin / availMin * 100) : null,
-    closuresUsed, extendedUsed, cumulative, winLog, zoneSpan, startDate: _dynDayKey(start),
+    closuresUsed, extendedUsed: extendedWeeks.size, cumulative, winLog, zoneSpan, startDate: _dynDayKey(start),
   };
 }
 function _dynSimDayHours(sc, ov, dow, wk, extendedWeeks) {
@@ -38633,52 +38693,61 @@ function _dynSimDayHours(sc, ov, dow, wk, extendedWeeks) {
   if (ovh != null && ovh !== '' && !isNaN(parseFloat(ovh))) {
     const o = parseFloat(ovh);
     if (o > (h || 0)) {
-      // an EXTENSION consumes the extended-weeks budget (a week with several
-      // extended days counts once); beyond the cap the base hours stand.
       if (extendedWeeks.has(wk) || extendedWeeks.size < (sc.maxExtended ?? 99)) { extendedWeeks.add(wk); h = o; }
-    } else {
-      h = o;   // reductions always apply (0 = that day closed)
-    }
+    } else { h = o; }
   }
   return h;
 }
 
-// ── Simulator tab UI ─────────────────────────────────────────────────────────
+// ── Simulator tab UI (phase-grouped) ─────────────────────────────────────────
 async function _dynRenderSimulator() {
   const cont = document.getElementById('dyn-content');
   if (!cont) return;
-  if (!_dynPage._simPrereqs) {
-    _dynPage._simPrereqs = await _dbSelect('test_item_prerequisites', {}, '*').catch(() => []);
-  }
+  if (!_dynPage._simPrereqs) _dynPage._simPrereqs = await _dbSelect('test_item_prerequisites', {}, '*').catch(() => []);
+  const phases = _dynSimPhases();
+  if (!_dynPage.simPhase || !phases.includes(_dynPage.simPhase)) _dynPage.simPhase = phases[0];
+  _dynPage.simActiveByPhase = _dynPage.simActiveByPhase || {};
   let arr = _dynSimScenarios();
-  if (!arr.length) { arr = [_dynSimDefaultScenario('Baseline plan')]; arr[0].baseline = true; _dynSimSaveScenarios(arr); }
-  if (!_dynPage.simActiveId || !arr.some(s => s.id === _dynPage.simActiveId)) _dynPage.simActiveId = arr[0].id;
+  if (!arr.some(s => (s.phase || '') === _dynPage.simPhase)) {
+    const def = _dynSimDefaultScenario(_dynPage.simPhase + ' baseline', _dynPage.simPhase);
+    def.baseline = true; arr.push(def); _dynSimSaveScenarios(arr);
+  }
   const sc = _dynSimActive();
-  const res = _dynSimRun(sc, _dynPage._simPrereqs);
+  if (sc) _dynPage.simActiveByPhase[_dynPage.simPhase] = sc.id;
+  const res = sc ? _dynSimRun(sc, _dynPage._simPrereqs) : null;
   _dynPage._simResult = res;
+  const baseline = _dynSimBaseline();
+  const baseRes = (baseline && sc && baseline.id !== sc.id) ? _dynSimRun(baseline, _dynPage._simPrereqs) : null;
+  const actual = _dynSimActualCurve(_dynPage.simPhase);
 
-  const chips = arr.map(s => `
-    <button class="dyn-btn ${s.id === sc.id ? 'primary' : ''}" style="font-size:12px;position:relative;" onclick="_dynSimSelect('${s.id}')">
-      ${s.baseline ? '★ ' : ''}${escapeHtml(s.name)}
-    </button>`).join('');
+  const phaseTabs = phases.map(p =>
+    `<button class="hero-tab ${p === _dynPage.simPhase ? 'active' : ''}" style="font-size:12px;padding:6px 14px;" onclick="_dynSimSetPhase('${escapeHtml(p)}')">${escapeHtml(p)}</button>`).join('');
+  const chips = _dynSimScenarios().filter(s => (s.phase || '') === _dynPage.simPhase).map(s => `
+    <button class="dyn-btn ${sc && s.id === sc.id ? 'primary' : ''}" style="font-size:12px;" onclick="_dynSimSelect('${s.id}')">${s.baseline ? '★ ' : ''}${escapeHtml(s.name)}</button>`).join('');
 
   cont.innerHTML = `
-    <div class="dyn-toolbar" style="margin-top:16px;">
+    <div style="display:flex;gap:6px;align-items:center;margin-top:16px;flex-wrap:wrap;">
+      <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-right:4px;">Phase</span>
+      ${phaseTabs}
+      <span style="width:1px;height:22px;background:var(--gray-200);margin:0 6px;"></span>
+      <span class="dyn-kpi" style="margin:0;padding:5px 12px;"><span>Actual ${escapeHtml(_dynPage.simPhase)}</span><b>${actual.donePct}% <span style="font-size:11px;font-weight:500;color:var(--gray-500);">(${actual.done}/${actual.total})</span></b></span>
+    </div>
+    <div class="dyn-toolbar" style="margin-top:10px;">
       ${chips}
       <button class="dyn-btn" onclick="_dynSimNew()">+ New scenario</button>
       <button class="dyn-btn" onclick="_dynSimDuplicate()">Duplicate</button>
       <button class="dyn-btn" onclick="_dynSimRename()">Rename</button>
       <button class="dyn-btn" style="color:#dc2626;" onclick="_dynSimDelete()">Delete</button>
       <span style="flex:1;"></span>
-      <button class="dyn-btn ${sc.baseline ? '' : 'primary'}" onclick="_dynSimSetBaseline()">${sc.baseline ? '★ Baseline' : 'Set as baseline'}</button>
-      <button class="dyn-btn" onclick="_dynSimMapToCampaign()" title="Draft a REAL access campaign prefilled from this scenario's template">Map to execution</button>
+      <button class="dyn-btn ${sc && sc.baseline ? '' : 'primary'}" onclick="_dynSimSetBaseline()">${sc && sc.baseline ? '★ Baseline' : 'Set as baseline'}</button>
+      <button class="dyn-btn" onclick="_dynSimMapToCampaign()" title="Draft a REAL access campaign prefilled from this scenario">Map to execution</button>
       <button class="dyn-btn" onclick="_dynSimRecalibrate()" title="Re-project the remaining work from today using actual progress">Recalibrate</button>
     </div>
-    ${_dynSimRecalBannerHtml(sc, res)}
-    <div style="display:grid;grid-template-columns:minmax(0,400px) 1fr;gap:16px;align-items:start;">
+    ${sc ? _dynSimRecalBannerHtml(sc, res) : ''}
+    ${sc ? `<div style="display:grid;grid-template-columns:minmax(0,400px) 1fr;gap:16px;align-items:start;">
       <div class="data-card" style="padding:14px 16px;">${_dynSimConfigHtml(sc, res)}</div>
-      <div>${_dynSimResultsHtml(sc, res)}</div>
-    </div>`;
+      <div>${_dynSimResultsHtml(sc, res, baseRes, baseline)}</div>
+    </div>` : '<div style="padding:30px;text-align:center;color:var(--gray-400);">No scenario for this phase.</div>'}`;
   setTimeout(() => _dynSimDrawChart(), 0);
 }
 
@@ -38693,35 +38762,34 @@ function _dynSimRecalBannerHtml(sc, res) {
 }
 
 function _dynSimConfigHtml(sc, res) {
-  const allZones = [...new Set([..._dynWhatIfZonesAll(), ...(sc.zones || [])])].sort();
-  const subsystems = [...new Set((_dynPage.instances || []).map(i => i.subsystem).filter(Boolean))].sort();
+  const allZones = [...new Set([..._dynSimPhaseZones(sc.phase), ..._dynWhatIfZonesAll(), ...(sc.zones || [])])].sort();
+  const subsystems = [...new Set(_dynSimScopeAll(Object.assign({}, sc, { scope: { subsystem: '' } })).map(i => i.subsystem).filter(Boolean))].sort();
   const dows = [['1','Mon'],['2','Tue'],['3','Wed'],['4','Thu'],['5','Fri'],['6','Sat'],['0','Sun']];
   const inp = 'padding:4px;border:1px solid var(--gray-300);border-radius:4px;text-align:center;font-size:11.5px;width:44px;';
   const weeklyRow = dows.map(([d, lbl]) => `
     <label style="display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10px;color:var(--gray-500);">${lbl}
-      <input type="number" min="0" max="48" step="0.5" value="${sc.weekly[d] != null ? sc.weekly[d] : ''}" placeholder="—" style="${inp}"
-        onchange="_dynSimSet('weekly','${d}',this.value)">
+      <input type="number" min="0" max="48" step="0.5" value="${sc.weekly[d] != null ? sc.weekly[d] : ''}" placeholder="—" style="${inp}" onchange="_dynSimSet('weekly','${d}',this.value)">
     </label>`).join('');
   const zoneChips = allZones.map(z => {
     const on = (sc.zones || []).includes(z);
-    return `<button type="button" onclick="_dynSimToggleZone('${escapeHtml(z)}')"
-      style="font-size:11px;padding:2px 8px;border-radius:5px;cursor:pointer;margin:2px;border:1px solid ${on ? 'var(--hitachi-red)' : 'var(--gray-300)'};background:${on ? 'rgba(230,0,18,.06)' : '#fff'};color:${on ? 'var(--hitachi-red)' : 'var(--gray-500)'};">${escapeHtml(z)}</button>`;
+    return `<button type="button" onclick="_dynSimToggleZone('${escapeHtml(z)}')" style="font-size:11px;padding:2px 8px;border-radius:5px;cursor:pointer;margin:2px;border:1px solid ${on ? 'var(--hitachi-red)' : 'var(--gray-300)'};background:${on ? 'rgba(230,0,18,.06)' : '#fff'};color:${on ? 'var(--hitachi-red)' : 'var(--gray-500)'};">${escapeHtml(z)}</button>`;
   }).join('');
   const adjTxt = (sc.adjacency || []).map(p => p.join('-')).join(', ');
-  const weeks = res.weeks || 4;
+  const closTxt = (sc.closureGroups || []).map(p => p.join('-')).join(', ');
+  const weeks = res ? (res.weeks || 4) : 4;
   const ovRows = Array.from({ length: Math.min(Math.max(weeks, 4), 26) }, (_, k) => {
     const ov = (sc.weekOverrides || {})[k] || {};
     const wkStart = _dynFmtDate(_dynAddDays(_dynParseDate(sc.startDate), k * 7));
     return `<tr style="border-top:1px solid var(--gray-100);">
       <td style="padding:3px 6px;font-size:11px;white-space:nowrap;">W${k + 1} <span style="color:var(--gray-400);">${wkStart}</span></td>
-      <td style="padding:3px 6px;text-align:center;"><input type="checkbox" ${ov.closure ? 'checked' : ''} onchange="_dynSimSetOv(${k},'closure',this.checked)" title="Continuous 48h weekend possession"></td>
+      <td style="padding:3px 6px;text-align:center;"><input type="checkbox" ${ov.closure ? 'checked' : ''} onchange="_dynSimSetOv(${k},'closure',this.checked)" title="Continuous 48h weekend possession (up to 4 consecutive locations)"></td>
       <td style="padding:3px 6px;"><input type="number" min="0" max="24" step="0.5" value="${ov.wk ?? ''}" placeholder="—" style="${inp}" onchange="_dynSimSetOv(${k},'wk',this.value)"></td>
       <td style="padding:3px 6px;"><input type="number" min="0" max="24" step="0.5" value="${ov.sat ?? ''}" placeholder="—" style="${inp}" ${ov.closure ? 'disabled' : ''} onchange="_dynSimSetOv(${k},'sat',this.value)"></td>
       <td style="padding:3px 6px;"><input type="number" min="0" max="24" step="0.5" value="${ov.sun ?? ''}" placeholder="—" style="${inp}" ${ov.closure ? 'disabled' : ''} onchange="_dynSimSetOv(${k},'sun',this.value)"></td>
     </tr>`;
   }).join('');
   return `
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:10px;">Scenario — ${escapeHtml(sc.name)}</div>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:10px;">${escapeHtml(sc.phase)} · ${escapeHtml(sc.name)}</div>
     <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:10px;">Start date
       <input type="date" value="${escapeHtml(sc.startDate)}" style="display:block;margin-top:3px;padding:5px 7px;border:1px solid var(--gray-300);border-radius:5px;font-size:12px;" onchange="_dynSimField('startDate',this.value)">
     </label>
@@ -38731,14 +38799,15 @@ function _dynSimConfigHtml(sc, res) {
     <div style="margin-bottom:8px;">${zoneChips}</div>
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;font-size:12px;color:var(--gray-600);">
       <label>Max locations / shift
-        <select style="margin-left:4px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:12px;" onchange="_dynSimField('maxZonesPerShift',parseInt(this.value,10))">
-          <option value="1" ${sc.maxZonesPerShift === 1 ? 'selected' : ''}>1</option>
-          <option value="2" ${sc.maxZonesPerShift !== 1 ? 'selected' : ''}>2 (adjacent)</option>
-        </select>
+        <input type="number" min="1" max="5" value="${sc.maxZonesPerShift || 2}" style="${inp}margin-left:4px;" onchange="_dynSimField('maxZonesPerShift',Math.max(1,Math.min(5,parseInt(this.value,10)||1)))">
+        <span style="color:var(--gray-400);">consecutive</span>
       </label>
     </div>
-    <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:10px;">Adjacent pairs <span style="color:var(--gray-400);">(may share a shift)</span>
+    <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:10px;">Adjacent pairs <span style="color:var(--gray-400);">(may share a normal shift)</span>
       <input type="text" value="${escapeHtml(adjTxt)}" style="display:block;width:100%;margin-top:3px;padding:5px 7px;border:1px solid var(--gray-300);border-radius:5px;font-size:11.5px;font-family:monospace;box-sizing:border-box;" onchange="_dynSimSetAdj(this.value)">
+    </label>
+    <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:10px;">Closure locations <span style="color:var(--gray-400);">(up to 4 consecutive, available during a closure — blank = auto from adjacency)</span>
+      <input type="text" value="${escapeHtml(closTxt)}" placeholder="e.g. W40-W34-W30-W10, Y10-W34-W30" style="display:block;width:100%;margin-top:3px;padding:5px 7px;border:1px solid var(--gray-300);border-radius:5px;font-size:11.5px;font-family:monospace;box-sizing:border-box;" onchange="_dynSimSetClosure(this.value)">
     </label>
     <div style="display:flex;gap:10px;margin-bottom:10px;font-size:12px;color:var(--gray-600);">
       <label>Subsystem
@@ -38753,7 +38822,7 @@ function _dynSimConfigHtml(sc, res) {
       <label>Max closures <input type="number" min="0" max="20" value="${sc.maxClosures ?? 4}" style="${inp}" onchange="_dynSimField('maxClosures',parseInt(this.value,10)||0)"></label>
       <label>Max extended wks <input type="number" min="0" max="30" value="${sc.maxExtended ?? 4}" style="${inp}" onchange="_dynSimField('maxExtended',parseInt(this.value,10)||0)"></label>
     </div>
-    <div style="font-size:12px;color:var(--gray-600);margin-bottom:4px;">Week overrides <span style="color:var(--gray-400);">(closure = continuous 48 h weekend; hours blank = template)</span></div>
+    <div style="font-size:12px;color:var(--gray-600);margin-bottom:4px;">Week overrides <span style="color:var(--gray-400);">(closure = continuous 48h weekend; hours blank = template)</span></div>
     <div style="max-height:240px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;">
       <table style="width:100%;border-collapse:collapse;font-size:11px;">
         <thead><tr style="background:var(--gray-50);color:var(--gray-500);font-size:10px;">
@@ -38762,19 +38831,13 @@ function _dynSimConfigHtml(sc, res) {
         </tr></thead><tbody>${ovRows}</tbody>
       </table>
     </div>
-    <div style="font-size:10.5px;color:var(--gray-400);margin-top:6px;">${res.closuresUsed}/${sc.maxClosures ?? '∞'} closures · ${res.extendedUsed}/${sc.maxExtended ?? '∞'} extended weeks used.</div>`;
+    <div style="font-size:10.5px;color:var(--gray-400);margin-top:6px;">${res ? res.closuresUsed : 0}/${sc.maxClosures ?? '∞'} closures · ${res ? res.extendedUsed : 0}/${sc.maxExtended ?? '∞'} extended weeks used.</div>`;
 }
 
-function _dynSimResultsHtml(sc, res) {
+// Results: KPIs + S-curve + baseline-vs-scenario Gantt + baseline-vs-scenario shifts.
+function _dynSimResultsHtml(sc, res, baseRes, baseline) {
   const kpi = (l, v, t) => `<div class="dyn-kpi" style="margin-right:0;"><span>${l}</span><b${t ? ` style="color:${t};"` : ''}>${v}</b></div>`;
-  const gantt = _dynSimGanttHtml(sc, res);
-  const logRows = res.winLog.slice(0, 24).map(w => `
-    <tr style="border-top:1px solid var(--gray-100);${w.isClosure ? 'background:#fffbeb;' : ''}">
-      <td style="padding:4px 8px;font-family:monospace;font-size:11px;white-space:nowrap;">${escapeHtml(_dynFmtDate(w.date))}</td>
-      <td style="padding:4px 8px;font-size:11px;">${w.zones.map(z => `<span class="tag" style="font-family:monospace;font-size:10px;">${escapeHtml(z)}</span>`).join(' ')}${w.isClosure ? ' <span class="tag" style="background:#fde68a;color:#92400e;font-size:10px;">48h closure</span>' : ''}</td>
-      <td style="padding:4px 8px;text-align:right;font-family:monospace;font-size:11px;">${w.hours}h</td>
-      <td style="padding:4px 8px;text-align:right;font-family:monospace;font-size:11px;">${w.placed}</td>
-    </tr>`).join('');
+  const cmp = !!baseRes;
   return `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px;margin-bottom:12px;">
       ${kpi('Backlog', res.total)}
@@ -38789,63 +38852,117 @@ function _dynSimResultsHtml(sc, res) {
     ${res.outOfScope ? `<div style="margin-bottom:10px;padding:7px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e;">${res.outOfScope} open run(s) are in locations OUTSIDE this scenario — add their locations to include them.</div>` : ''}
     ${res.unplaced ? `<div style="margin-bottom:10px;padding:7px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#b91c1c;">${res.unplaced} run(s) could not be placed within ${Math.round(_DYN_SIM_HORIZON_DAYS / 7)} weeks — check adjacency vs their access requirements.</div>` : ''}
     <div class="data-card" style="padding:12px 14px;margin-bottom:12px;">
-      <div style="height:220px;"><canvas id="dyn-sim-chart"></canvas></div>
+      <div style="height:230px;"><canvas id="dyn-sim-chart"></canvas></div>
     </div>
     <div class="data-card" style="padding:12px 14px;margin-bottom:12px;">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:8px;">Location timeline</div>
-      ${gantt}
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:8px;">Location timeline ${cmp ? `<span style="font-weight:400;color:var(--gray-400);">— ${escapeHtml(baseline.name)} (grey) vs ${escapeHtml(sc.name)} (blue)</span>` : ''}</div>
+      ${_dynSimGanttHtml(sc, res, baseRes)}
     </div>
     <div class="data-card" style="padding:12px 14px;">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:6px;">Simulated shifts ${res.winLog.length > 24 ? `<span style="font-weight:400;color:var(--gray-400);">(first 24 of ${res.winLog.length})</span>` : ''}</div>
-      <table style="width:100%;border-collapse:collapse;">
-        <thead><tr style="color:var(--gray-500);font-size:10px;text-transform:uppercase;"><th style="text-align:left;padding:3px 8px;">Date</th><th style="text-align:left;padding:3px 8px;">Locations</th><th style="text-align:right;padding:3px 8px;">Hours</th><th style="text-align:right;padding:3px 8px;">Runs</th></tr></thead>
-        <tbody>${logRows || '<tr><td colspan="4" style="padding:14px;text-align:center;color:var(--gray-400);font-size:12px;">No shifts simulated — set access hours.</td></tr>'}</tbody>
-      </table>
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:6px;">Simulated shifts ${cmp ? `<span style="font-weight:400;color:var(--gray-400);">— baseline vs scenario</span>` : ''}</div>
+      ${_dynSimShiftsHtml(sc, res, baseRes, baseline)}
     </div>`;
 }
 
-// Per-location bars across the simulated horizon (simple HTML Gantt).
-function _dynSimGanttHtml(sc, res) {
-  if (!res.completion) return '<div style="font-size:12px;color:var(--gray-400);">Nothing scheduled.</div>';
-  const t0 = _dynParseDate(res.startDate).getTime();
-  const t1 = _dynParseDate(res.completion).getTime() + 86400000;
+// Location Gantt; in compare mode each location shows TWO bars (baseline grey,
+// scenario blue) on a shared time axis.
+function _dynSimGanttHtml(sc, res, baseRes) {
+  if (!res.completion && !(baseRes && baseRes.completion)) return '<div style="font-size:12px;color:var(--gray-400);">Nothing scheduled.</div>';
+  const ends = [res.completion, baseRes && baseRes.completion].filter(Boolean);
+  const starts = [res.startDate, baseRes && baseRes.startDate].filter(Boolean);
+  const t0 = Math.min(...starts.map(d => _dynParseDate(d).getTime()));
+  const t1 = Math.max(...ends.map(d => _dynParseDate(d).getTime())) + 86400000;
   const span = Math.max(1, t1 - t0);
-  const rows = [...res.zoneSpan.entries()].sort((a, b) => a[1].first.localeCompare(b[1].first)).map(([z, s2]) => {
+  const bar = (s2, color) => {
+    if (!s2) return '';
     const l = ((_dynParseDate(s2.first).getTime() - t0) / span) * 100;
     const w2 = Math.max(1.5, ((_dynParseDate(s2.last).getTime() + 86400000 - _dynParseDate(s2.first).getTime()) / span) * 100);
+    return `<div title="${_dynFmtDate(s2.first)} → ${_dynFmtDate(s2.last)} · ${s2.n} runs" style="position:absolute;left:${l}%;width:${w2}%;top:0;bottom:0;background:${color};border-radius:4px;opacity:.9;"></div>`;
+  };
+  const zones = [...new Set([...res.zoneSpan.keys(), ...(baseRes ? baseRes.zoneSpan.keys() : [])])].sort();
+  const rows = zones.map(z => {
+    const sb = baseRes ? baseRes.zoneSpan.get(z) : null;
+    const ss = res.zoneSpan.get(z);
+    const track = h => `<div style="flex:1;height:${h}px;background:var(--gray-100);border-radius:4px;position:relative;">`;
+    if (baseRes) {
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <span style="width:46px;font-family:monospace;font-size:11px;color:var(--gray-600);">${escapeHtml(z)}</span>
+        <div style="flex:1;display:flex;flex-direction:column;gap:2px;">
+          ${track(9)}${bar(sb, '#9ca3af')}</div>
+          ${track(9)}${bar(ss, '#1d4eaf')}</div>
+        </div>
+      </div>`;
+    }
     return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
       <span style="width:46px;font-family:monospace;font-size:11px;color:var(--gray-600);">${escapeHtml(z)}</span>
-      <div style="flex:1;height:14px;background:var(--gray-100);border-radius:4px;position:relative;">
-        <div title="${escapeHtml(z)}: ${_dynFmtDate(s2.first)} → ${_dynFmtDate(s2.last)} · ${s2.n} runs" style="position:absolute;left:${l}%;width:${w2}%;top:0;bottom:0;background:#1d4eaf;border-radius:4px;opacity:.85;"></div>
-      </div>
-      <span style="width:120px;font-size:10px;color:var(--gray-500);white-space:nowrap;">${_dynFmtDate(s2.first)} → ${_dynFmtDate(s2.last)} · ${s2.n}</span>
+      ${track(14)}${bar(ss, '#1d4eaf')}</div>
+      <span style="width:120px;font-size:10px;color:var(--gray-500);white-space:nowrap;">${ss ? _dynFmtDate(ss.first) + ' → ' + _dynFmtDate(ss.last) + ' · ' + ss.n : '—'}</span>
     </div>`;
   }).join('');
   const closures = res.winLog.filter(w => w.isClosure).map(w => _dynFmtDate(w.date)).join(', ');
   return rows + (closures ? `<div style="font-size:10.5px;color:#92400e;margin-top:4px;">48h closures: ${escapeHtml(closures)}</div>` : '');
 }
 
-// S-curve: every scenario's cumulative % complete; baseline solid red, active bold.
+// Shift log; in compare mode the date rows show baseline and scenario side by side.
+function _dynSimShiftsHtml(sc, res, baseRes, baseline) {
+  const cell = w => w
+    ? `${w.zones.map(z => `<span class="tag" style="font-family:monospace;font-size:10px;">${escapeHtml(z)}</span>`).join(' ')}${w.isClosure ? ' <span class="tag" style="background:#fde68a;color:#92400e;font-size:9px;">48h</span>' : ''} <span style="color:var(--gray-400);">${w.hours}h·${w.placed}</span>`
+    : '<span style="color:var(--gray-300);">—</span>';
+  if (!baseRes) {
+    const rows = res.winLog.slice(0, 30).map(w => `
+      <tr style="border-top:1px solid var(--gray-100);${w.isClosure ? 'background:#fffbeb;' : ''}">
+        <td style="padding:4px 8px;font-family:monospace;font-size:11px;white-space:nowrap;">${escapeHtml(_dynFmtDate(w.date))}</td>
+        <td style="padding:4px 8px;font-size:11px;">${cell(w)}</td>
+      </tr>`).join('');
+    return `<table style="width:100%;border-collapse:collapse;"><thead><tr style="color:var(--gray-500);font-size:10px;text-transform:uppercase;"><th style="text-align:left;padding:3px 8px;">Date</th><th style="text-align:left;padding:3px 8px;">Locations · h · runs</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="2" style="padding:14px;text-align:center;color:var(--gray-400);font-size:12px;">No shifts simulated.</td></tr>'}</tbody></table>`;
+  }
+  const bMap = new Map(baseRes.winLog.map(w => [w.date, w]));
+  const sMap = new Map(res.winLog.map(w => [w.date, w]));
+  const dates = [...new Set([...bMap.keys(), ...sMap.keys()])].sort().slice(0, 40);
+  const rows = dates.map(d => `
+    <tr style="border-top:1px solid var(--gray-100);">
+      <td style="padding:4px 8px;font-family:monospace;font-size:11px;white-space:nowrap;">${escapeHtml(_dynFmtDate(d))}</td>
+      <td style="padding:4px 8px;font-size:11px;">${cell(bMap.get(d))}</td>
+      <td style="padding:4px 8px;font-size:11px;">${cell(sMap.get(d))}</td>
+    </tr>`).join('');
+  return `<table style="width:100%;border-collapse:collapse;">
+    <thead><tr style="color:var(--gray-500);font-size:10px;text-transform:uppercase;">
+      <th style="text-align:left;padding:3px 8px;">Date</th>
+      <th style="text-align:left;padding:3px 8px;">★ ${escapeHtml(baseline.name)}</th>
+      <th style="text-align:left;padding:3px 8px;">${escapeHtml(sc.name)}</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// S-curve: every scenario in the phase (baseline red, active bold) + ACTUAL
+// progress (black dashed).
 function _dynSimDrawChart() {
   const cv = document.getElementById('dyn-sim-chart');
   if (!cv || typeof Chart === 'undefined') return;
-  const arr = _dynSimScenarios();
+  const phase = _dynPage.simPhase;
   const active = _dynSimActive();
-  const runs = arr.map(s => ({ s, r: s.id === active.id ? _dynPage._simResult : _dynSimRun(s, _dynPage._simPrereqs || []) }));
-  const allDates = [...new Set(runs.flatMap(x => x.r.cumulative.map(p => p.date)))].sort();
+  const list = _dynSimScenarios().filter(s => (s.phase || '') === phase);
+  const runs = list.map(s => ({ s, r: (active && s.id === active.id && _dynPage._simResult) ? _dynPage._simResult : _dynSimRun(s, _dynPage._simPrereqs || []) }));
+  const actual = _dynSimActualCurve(phase);
+  const allDates = [...new Set([...runs.flatMap(x => x.r.cumulative.map(p => p.date)), ...actual.points.map(p => p.date)])].sort();
   const palette = ['#1d4eaf', '#059669', '#7c3aed', '#b45309', '#0e7490', '#9d174d'];
   const datasets = runs.map(({ s, r }, i) => {
-    let last = 0;
-    const m = new Map(r.cumulative.map(p => [p.date, p.pct]));
-    const data = allDates.map(d => { if (m.has(d)) last = m.get(d); return last; });
+    let last = 0; const m = new Map(r.cumulative.map(p => [p.date, p.pct]));
     return {
       label: (s.baseline ? '★ ' : '') + s.name,
-      data,
+      data: allDates.map(d => { if (m.has(d)) last = m.get(d); return last; }),
       borderColor: s.baseline ? '#e60012' : palette[i % palette.length],
-      borderWidth: s.id === active.id ? 3 : 1.5,
+      borderWidth: (active && s.id === active.id) ? 3 : 1.5,
       stepped: true, fill: false, pointRadius: 0, tension: 0,
     };
   });
+  if (actual.points.length) {
+    let last = 0; const m = new Map(actual.points.map(p => [p.date, p.pct]));
+    datasets.push({
+      label: 'Actual progress', data: allDates.map(d => { if (m.has(d)) last = m.get(d); return last; }),
+      borderColor: '#111827', borderWidth: 2.5, borderDash: [5, 3], pointRadius: 0, fill: false, tension: 0,
+    });
+  }
   if (_dynPage._simChart) { try { _dynPage._simChart.destroy(); } catch (_) {} }
   _dynPage._simChart = new Chart(cv.getContext('2d'), {
     type: 'line',
@@ -38854,30 +38971,29 @@ function _dynSimDrawChart() {
       responsive: true, maintainAspectRatio: false,
       plugins: {
         legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, usePointStyle: true, pointStyle: 'line' } },
-        title: { display: true, text: 'S-curve — % of backlog complete (all scenarios)', font: { size: 12, weight: '600' }, color: '#6b7280' },
+        title: { display: true, text: 'S-curve — % complete: scenarios vs actual (' + phase + ')', font: { size: 12, weight: '600' }, color: '#6b7280' },
       },
-      scales: {
-        y: { beginAtZero: true, max: 100, title: { display: true, text: '% complete', font: { size: 10 } } },
-        x: { ticks: { font: { size: 9 }, maxRotation: 60, autoSkip: true, maxTicksLimit: 14 } },
-      },
+      scales: { y: { beginAtZero: true, max: 100, title: { display: true, text: '% complete', font: { size: 10 } } },
+        x: { ticks: { font: { size: 9 }, maxRotation: 60, autoSkip: true, maxTicksLimit: 14 } } },
     },
   });
 }
 
 // ── scenario CRUD + field handlers ───────────────────────────────────────────
-function _dynSimSelect(id) { _dynPage.simActiveId = id; _dynRenderSimulator(); }
+function _dynSimSetPhase(p) { _dynPage.simPhase = p; _dynRenderSimulator(); }
+function _dynSimSelect(id) { _dynPage.simActiveByPhase = _dynPage.simActiveByPhase || {}; _dynPage.simActiveByPhase[_dynPage.simPhase] = id; _dynRenderSimulator(); }
 function _dynSimNew() {
   const arr = _dynSimScenarios();
-  const s = _dynSimDefaultScenario();
+  const s = _dynSimDefaultScenario(null, _dynPage.simPhase);
   arr.push(s); _dynSimSaveScenarios(arr);
-  _dynPage.simActiveId = s.id; _dynRenderSimulator();
+  _dynSimSelect(s.id);
 }
 function _dynSimDuplicate() {
   const arr = _dynSimScenarios(); const cur = _dynSimActive(); if (!cur) return;
   const s = JSON.parse(JSON.stringify(cur));
   s.id = 'sim-' + Date.now().toString(36); s.name = cur.name + ' (copy)'; s.baseline = false; s.snapshot = null; s.recals = [];
   arr.push(s); _dynSimSaveScenarios(arr);
-  _dynPage.simActiveId = s.id; _dynRenderSimulator();
+  _dynSimSelect(s.id);
 }
 function _dynSimRename() {
   const cur = _dynSimActive(); if (!cur) return;
@@ -38888,32 +39004,29 @@ function _dynSimDelete() {
   const arr = _dynSimScenarios(); const cur = _dynSimActive(); if (!cur) return;
   if (!confirm(`Delete scenario "${cur.name}"?`)) return;
   _dynSimSaveScenarios(arr.filter(s => s.id !== cur.id));
-  _dynPage.simActiveId = null; _dynRenderSimulator();
+  if (_dynPage.simActiveByPhase) delete _dynPage.simActiveByPhase[_dynPage.simPhase];
+  _dynRenderSimulator();
 }
 function _dynSimSetBaseline() {
   const cur = _dynSimActive(); if (!cur) return;
   const all = _dynSimScopeAll(cur);
   const done = all.filter(i => ['Pass', 'Not Applicable'].includes(i.status)).length;
   const res = _dynPage._simResult;
-  const arr = _dynSimScenarios();          // single read-modify-save: only ONE baseline
-  arr.forEach(x => { x.baseline = (x.id === cur.id); });
+  const arr = _dynSimScenarios();
+  arr.forEach(x => { if ((x.phase || '') === (cur.phase || '')) x.baseline = (x.id === cur.id); }); // one baseline per phase
   const s = arr.find(x => x.id === cur.id);
   if (s) {
     s.snapshot = { date: _dynFmtDate(new Date()), total: all.length, done, donePct: all.length ? Math.round(done / all.length * 100) : 0 };
     s.baselineCompletion = res ? res.completion : null;
   }
   _dynSimSaveScenarios(arr);
-  toast('Baseline set — progress snapshot captured', 'success');
+  toast('Baseline set for ' + cur.phase, 'success');
   _dynRenderSimulator();
 }
-// Map the scenario to execution: open the REAL campaign modal prefilled from
-// the template (zones, dates, per-day hours starting 01:00). Closures/week
-// overrides stay simulation-only — note shown in the modal subtitle via name.
 function _dynSimMapToCampaign() {
   const sc = _dynSimActive(); const res = _dynPage._simResult;
   if (!sc) return;
-  const daySchedule = {};
-  const dows = [];
+  const daySchedule = {}; const dows = [];
   for (const d of [1, 2, 3, 4, 5, 6, 0]) {
     const h = (sc.weekly || {})[d];
     if (h > 0 && h <= 12) {
@@ -38923,31 +39036,19 @@ function _dynSimMapToCampaign() {
     }
   }
   _dynCampaignModal({
-    name: `${sc.name} — from simulation`,
-    zone_codes: (sc.zones || []).slice(),
-    days_of_week: dows,
-    shift_start: '01:00', shift_end: '03:00',
-    day_schedule: daySchedule,
-    start_date: sc.startDate,
-    end_date: res && res.completion ? res.completion : sc.startDate,
-    allowed_modes: ['CBTC', 'VATC'],
-    trains_requested: 1,
-    campaign_kind: 'standard',
-    test_case_ids: [],
+    name: `${sc.name} — from simulation`, zone_codes: (sc.zones || []).slice(),
+    days_of_week: dows, shift_start: '01:00', shift_end: '03:00', day_schedule: daySchedule,
+    start_date: sc.startDate, end_date: res && res.completion ? res.completion : sc.startDate,
+    phase: sc.phase, allowed_modes: ['CBTC', 'VATC'], trains_requested: 1, campaign_kind: 'standard', test_case_ids: [],
   });
 }
-// Recalibrate at a milestone: capture actual progress over the FULL scope and
-// re-project the remaining open work from TODAY with the same template.
 function _dynSimRecalibrate() {
   const sc = _dynSimActive(); if (!sc) return;
   const all = _dynSimScopeAll(sc);
   const done = all.filter(i => ['Pass', 'Not Applicable'].includes(i.status)).length;
   const donePct = all.length ? Math.round(done / all.length * 100) : 0;
   const reproj = _dynSimRun(Object.assign({}, sc, { startDate: _dynFmtDate(new Date()) }), _dynPage._simPrereqs || []);
-  _dynSimPatch(sc.id, s => {
-    (s.recals = s.recals || []).push({ date: _dynFmtDate(new Date()), donePct, completion: reproj.completion });
-    return {};
-  });
+  _dynSimPatch(sc.id, s => { (s.recals = s.recals || []).push({ date: _dynFmtDate(new Date()), donePct, completion: reproj.completion }); return {}; });
   toast(`Recalibrated at ${donePct}% complete`, 'success');
   _dynRenderSimulator();
 }
@@ -38955,31 +39056,21 @@ function _dynSimField(k, v) { const sc = _dynSimActive(); if (!sc) return; _dynS
 function _dynSimScopeField(k, v) { const sc = _dynSimActive(); if (!sc) return; _dynSimPatch(sc.id, s => { s.scope = s.scope || {}; s.scope[k] = v; return {}; }); _dynRenderSimulator(); }
 function _dynSimSet(group, key, val) {
   const sc = _dynSimActive(); if (!sc) return;
-  _dynSimPatch(sc.id, s => {
-    s[group] = s[group] || {};
-    const n = parseFloat(val);
-    if (val === '' || isNaN(n)) delete s[group][key]; else s[group][key] = n;
-    return {};
-  });
+  _dynSimPatch(sc.id, s => { s[group] = s[group] || {}; const n = parseFloat(val); if (val === '' || isNaN(n)) delete s[group][key]; else s[group][key] = n; return {}; });
   _dynRenderSimulator();
 }
 function _dynSimToggleZone(z) {
   const sc = _dynSimActive(); if (!sc) return;
-  _dynSimPatch(sc.id, s => {
-    const i = (s.zones = s.zones || []).indexOf(z);
-    if (i >= 0) s.zones.splice(i, 1); else s.zones.push(z);
-    return {};
-  });
+  _dynSimPatch(sc.id, s => { const i = (s.zones = s.zones || []).indexOf(z); if (i >= 0) s.zones.splice(i, 1); else s.zones.push(z); return {}; });
   _dynRenderSimulator();
 }
-function _dynSimSetAdj(txt) {
-  const sc = _dynSimActive(); if (!sc) return;
-  const pairs = String(txt).split(',').map(t => t.trim()).filter(Boolean)
+function _dynSimParseGroups(txt, min, max) {
+  return String(txt).split(',').map(t => t.trim()).filter(Boolean)
     .map(t => t.split(/[-+/ ]+/).map(x => x.trim().toUpperCase()).filter(Boolean))
-    .filter(p => p.length === 2);
-  _dynSimPatch(sc.id, { adjacency: pairs });
-  _dynRenderSimulator();
+    .filter(p => p.length >= min && p.length <= max);
 }
+function _dynSimSetAdj(txt) { const sc = _dynSimActive(); if (!sc) return; _dynSimPatch(sc.id, { adjacency: _dynSimParseGroups(txt, 2, 2) }); _dynRenderSimulator(); }
+function _dynSimSetClosure(txt) { const sc = _dynSimActive(); if (!sc) return; _dynSimPatch(sc.id, { closureGroups: _dynSimParseGroups(txt, 1, 4) }); _dynRenderSimulator(); }
 function _dynSimSetOv(wk, key, val) {
   const sc = _dynSimActive(); if (!sc) return;
   _dynSimPatch(sc.id, s => {
@@ -38992,7 +39083,6 @@ function _dynSimSetOv(wk, key, val) {
   });
   _dynRenderSimulator();
 }
-
 function _dynAllocCapacity(camp) {
   // Tests per shift ≈ window length / 40 min, clamped 1..8; default 3.
   try {

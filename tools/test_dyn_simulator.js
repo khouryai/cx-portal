@@ -108,5 +108,48 @@ assert(r7.placed === 2 && r7.dates.length === 2 && r7.dates[0] < r7.dates[1],
   "prereq pair placed on two ordered shifts (A's before B's)");
 run(`_dynPage.instances = ${JSON.stringify(pool)};`); // restore
 
+// ── 1..5 consecutive locations: chains derived from the adjacency graph ───────
+// adjacency W40-W34-W30-W10 forms a path; maxZonesPerShift=4 should let a single
+// shift cover up to 4 consecutive locations.
+const chains = run(`_dynSimChains(${JSON.stringify(baseSc.adjacency)}, new Set(["W40","W34","W30","W10","Y10"]), 4).map(c=>c.slice().sort().join("|"))`);
+assert(chains.includes("W10|W30|W34|W40"), "a 4-long consecutive chain (W40-W34-W30-W10) is generated");
+assert(!chains.some(c => c.split("|").length > 4), "chains never exceed the max length");
+assert(chains.includes("W34|W40|Y10") || chains.includes("W34|W40") , "branches off W34 are reachable");
+const r8 = runSim(Object.assign({}, baseSc, { maxZonesPerShift: 4 }));
+assert(r8.log.some(w => w.zones.length >= 3), "with max 4, some shift covers 3+ consecutive locations");
+assert(r8.log.every(w => w.zones.length <= 4), "never exceeds the configured max locations/shift");
+
+// ── closure location groups: up to 4 consecutive during a closure ────────────
+const r9 = runSim(Object.assign({}, baseSc, {
+  closureGroups: [["W40","W34","W30","W10"]],
+  weekOverrides: { 0: { closure: true } },
+}));
+const closSat = r9.log.find(w => w.isClosure);
+assert(closSat && closSat.hours === 48, "closure week has the 48h block");
+assert(closSat && closSat.zones.length <= 4 && closSat.zones.every(z => ["W40","W34","W30","W10"].includes(z)),
+  "closure shift draws from the written closure-location group (≤4 consecutive)");
+
+// ── phase scoping: instances split by target_phase ───────────────────────────
+const phased = [
+  ...mk("W40", 4).map(i => ({ ...i, target_phase: "Phase 2" })),
+  ...mk("W34", 6).map(i => ({ ...i, id: "p3" + i.id, test_id: "p3" + i.test_id, target_phase: "Phase 3" })),
+];
+run(`_dynPage.instances = ${JSON.stringify(phased)};`);
+const p2 = run(`_dynSimScopeAll(${JSON.stringify(Object.assign({}, baseSc, { phase: "Phase 2", scope: {} }))}).length`);
+const p3 = run(`_dynSimScopeAll(${JSON.stringify(Object.assign({}, baseSc, { phase: "Phase 3", scope: {} }))}).length`);
+assert(p2 === 4 && p3 === 6, "scope is filtered to the scenario's phase (P2=4, P3=6)");
+const phases = run("_dynSimPhases()");
+assert(JSON.stringify(phases) === JSON.stringify(["Phase 2", "Phase 3"]), "phases listed from instances, numeric-sorted");
+
+// ── actual-progress curve: cumulative % of Pass/NA by updated_at ─────────────
+const withDone = [
+  ...mk("W40", 8).map((i, k) => ({ ...i, target_phase: "Phase 2", status: k < 2 ? "Pass" : "Not Started", updated_at: "2026-06-10T00:00:00Z" })),
+];
+run(`_dynPage.instances = ${JSON.stringify(withDone)};`);
+const ac = run(`(function(){ const c=_dynSimActualCurve("Phase 2"); return { donePct:c.donePct, total:c.total, done:c.done, lastPct: c.points.length?c.points[c.points.length-1].pct:null }; })()`);
+assert(ac.total === 8 && ac.done === 2 && ac.donePct === 25, "actual curve: 2/8 done = 25%");
+assert(ac.lastPct === 25, "actual curve ends at the current completion %");
+run(`_dynPage.instances = ${JSON.stringify(pool)};`); // restore
+
 console.log(`test_dyn_simulator: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
