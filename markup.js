@@ -118,10 +118,11 @@ class CXMarkupEngine {
     this.stampKind = "PASS";
 
     this.annotations = [];
-    this.selected = null;
+    this.selected = [];          // array of selected annotations (multi-select)
     this.draft = null;
-    this.dragOff = null;
-    this.rsz = null;            // active resize-drag state (NOT the resize() method)
+    this.drag = null;            // active group-move drag {lastX,lastY,moved}
+    this.marquee = null;         // active rubber-band selection rect
+    this.rsz = null;             // active resize-drag state (NOT the resize() method)
     this.history = [];
     this.hp = -1;
     this._savedSnapshot = "[]";
@@ -149,7 +150,7 @@ class CXMarkupEngine {
   setPageSize(w, h) { this.pageW = w; this.pageH = h; this.resize(); }
 
   /* ---------- tool / style ---------- */
-  setTool(id) { this.tool = id; if (id !== "select") this.selected = null; this.cv.style.cursor = id === "select" ? "default" : "crosshair"; this.redraw(); }
+  setTool(id) { this.tool = id; if (id !== "select") this.selected = []; this.cv.style.cursor = id === "select" ? "default" : "crosshair"; this.redraw(); }
   setColor(c) { this.color = c; this._applyToSelected(); }
   setWidth(w) { this.width = +w || 3; this._applyToSelected(); }
   setStampKind(k) { this.stampKind = k; }
@@ -157,7 +158,7 @@ class CXMarkupEngine {
 
   /* ---------- editable model ---------- */
   getAnnotations()   { return JSON.parse(JSON.stringify(this.annotations)); }
-  loadAnnotations(a) { this.annotations = Array.isArray(a) ? a : []; this.selected = null; this._commit(true); }
+  loadAnnotations(a) { this.annotations = Array.isArray(a) ? a : []; this.selected = []; this._commit(true); }
   isEmpty()          { return this.annotations.length === 0; }
   isDirty()          { return JSON.stringify(this.annotations) !== this._savedSnapshot; }
   markSaved()        { this._savedSnapshot = JSON.stringify(this.annotations); this._emit(); }
@@ -182,7 +183,7 @@ class CXMarkupEngine {
   // hands this to print or to pdf-lib as an embedded image. For vector
   // output prefer CXMarkup.flattenIntoPdfPage().
   exportFlattened() {
-    this.selected = null; this.draft = null;
+    this.selected = []; this.draft = null;
     const rw = this.host ? this.host.width  : Math.round(this.pageW);
     const rh = this.host ? this.host.height : Math.round(this.pageH);
     const off = document.createElement("canvas");
@@ -203,8 +204,8 @@ class CXMarkupEngine {
   }
 
   /* ---------- history ---------- */
-  undo() { if (this.hp > 0) { this.hp--; this.annotations = JSON.parse(this.history[this.hp]); this.selected = null; this.redraw(); this._emit(); } }
-  redo() { if (this.hp < this.history.length - 1) { this.hp++; this.annotations = JSON.parse(this.history[this.hp]); this.redraw(); this._emit(); } }
+  undo() { if (this.hp > 0) { this.hp--; this.annotations = JSON.parse(this.history[this.hp]); this.selected = []; this.redraw(); this._emit(); } }
+  redo() { if (this.hp < this.history.length - 1) { this.hp++; this.annotations = JSON.parse(this.history[this.hp]); this.selected = []; this.redraw(); this._emit(); } }
   canUndo() { return this.hp > 0; }
   canRedo() { return this.hp < this.history.length - 1; }
 
@@ -241,7 +242,11 @@ class CXMarkupEngine {
     ctx.clearRect(0, 0, this.pageW, this.pageH);
     for (const a of this.annotations) this._drawAnno(a);
     if (this.draft) this._drawAnno(this.draft);
-    if (this.selected && !this.readOnly) this._drawSelection(this.selected);
+    if (!this.readOnly) {
+      const single = this.selected.length === 1;   // handles only when one is selected
+      for (const a of this.selected) this._drawSelection(a, single);
+      if (this.marquee) this._drawMarquee();
+    }
   }
 
   _drawAnno(a) {
@@ -343,19 +348,31 @@ class CXMarkupEngine {
     const tol = 18 / this.scale;   // generous for touch
     return this._handles(a).find(h => Math.abs(x - h.x) <= tol && Math.abs(y - h.y) <= tol) || null;
   }
-  _drawSelection(a) {
+  _drawSelection(a, withHandles) {
     const ctx = this.ctx, b = this._bounds(a), k = this.scale || 1;
     ctx.save();
     ctx.strokeStyle = "#2563eb"; ctx.fillStyle = "#fff";
     ctx.lineWidth = 1.5 / k; ctx.setLineDash([5 / k, 4 / k]);
     ctx.strokeRect(b.x - 6 / k, b.y - 6 / k, b.w + 12 / k, b.h + 12 / k);
     ctx.setLineDash([]);
-    const hs = 6 / k;              // handle half-size, ~12px on screen
-    ctx.lineWidth = 1.5 / k;
-    for (const h of this._handles(a)) {
-      ctx.beginPath(); ctx.rect(h.x - hs, h.y - hs, hs * 2, hs * 2);
-      ctx.fill(); ctx.stroke();
+    if (withHandles) {
+      const hs = 6 / k;              // handle half-size, ~12px on screen
+      ctx.lineWidth = 1.5 / k;
+      for (const h of this._handles(a)) {
+        ctx.beginPath(); ctx.rect(h.x - hs, h.y - hs, hs * 2, hs * 2);
+        ctx.fill(); ctx.stroke();
+      }
     }
+    ctx.restore();
+  }
+  _drawMarquee() {
+    const m = this.marquee, ctx = this.ctx, k = this.scale || 1;
+    const x = Math.min(m.x0, m.x1), y = Math.min(m.y0, m.y1),
+          w = Math.abs(m.x1 - m.x0), h = Math.abs(m.y1 - m.y0);
+    ctx.save();
+    ctx.strokeStyle = "#2563eb"; ctx.fillStyle = "rgba(37,99,235,.08)";
+    ctx.lineWidth = 1 / k; ctx.setLineDash([4 / k, 3 / k]);
+    ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
     ctx.restore();
   }
   _hit(x, y) {
@@ -384,16 +401,28 @@ class CXMarkupEngine {
       // contexts; never let it abort the draw handler.
       try { this.cv.setPointerCapture(e.pointerId); } catch (_) {}
       if (T === "select") {
-        // If something is already selected, a tap on one of its handles starts a resize.
-        if (this.selected) {
-          const hnd = this._hitHandle(this.selected, p.x, p.y);
+        // 1) Resize handle of the single selected item starts a resize.
+        if (this.selected.length === 1) {
+          const hnd = this._hitHandle(this.selected[0], p.x, p.y);
           if (hnd) {
-            this.rsz = { handle: hnd.id, before: JSON.parse(JSON.stringify(this.selected)), ob: this._bounds(this.selected) };
+            this.rsz = { handle: hnd.id, before: JSON.parse(JSON.stringify(this.selected[0])), ob: this._bounds(this.selected[0]) };
             return;
           }
         }
-        const h = this._hit(p.x, p.y); this.selected = h;
-        if (h) { const b = this._bounds(h); this.dragOff = { dx: p.x - b.x, dy: p.y - b.y }; }
+        const h = this._hit(p.x, p.y);
+        if (h) {
+          if (e.shiftKey) {                       // toggle this item in/out of the set
+            const i = this.selected.indexOf(h);
+            if (i >= 0) this.selected.splice(i, 1); else this.selected.push(h);
+          } else if (this.selected.indexOf(h) < 0) {
+            this.selected = [h];                  // fresh single selection
+          }
+          if (this.selected.indexOf(h) >= 0) this.drag = { lastX: p.x, lastY: p.y, moved: false };
+          this.redraw(); return;
+        }
+        // Empty space: start a marquee (shift keeps the current selection).
+        if (!e.shiftKey) this.selected = [];
+        this.marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
         this.redraw(); return;
       }
       if (T === "erase") { const h = this._hit(p.x, p.y); if (h) { this.annotations.splice(this.annotations.indexOf(h), 1); this._commit(); } return; }
@@ -411,19 +440,36 @@ class CXMarkupEngine {
     this._onMove = (e) => {
       if (this.readOnly) return;
       const p = this._pt(e);
-      if (this.tool === "select" && this.rsz && this.selected) { this._applyResize(p.x, p.y); this.redraw(); return; }
-      if (this.tool === "select" && this.dragOff && this.selected) { this._moveTo(this.selected, p.x - this.dragOff.dx, p.y - this.dragOff.dy); this.redraw(); return; }
+      if (this.tool === "select") {
+        if (this.rsz && this.selected.length === 1) { this._applyResize(p.x, p.y, e.shiftKey); this.redraw(); return; }
+        if (this.drag && this.selected.length) {
+          const dx = p.x - this.drag.lastX, dy = p.y - this.drag.lastY;
+          if (dx || dy) { this.drag.moved = true; this.drag.lastX = p.x; this.drag.lastY = p.y; for (const a of this.selected) this._moveBy(a, dx, dy); this.redraw(); }
+          return;
+        }
+        if (this.marquee) { this.marquee.x1 = p.x; this.marquee.y1 = p.y; this.redraw(); return; }
+        return;
+      }
       if (!this.draft) return;
       if (this.draft.type === "pen") this.draft.pts.push(p);
-      else { this.draft.x2 = p.x; this.draft.y2 = p.y; }
+      else this._draftTo(p.x, p.y, e.shiftKey);
       this.redraw();
     };
-    this._onUp = () => {
+    this._onUp = (e) => {
       if (this.readOnly) return;
       if (this.tool === "select") {
         if (this.rsz) { this.rsz = null; this._commit(); return; }
-        if (this.dragOff) this._commit();
-        this.dragOff = null; return;
+        if (this.drag) { const moved = this.drag.moved; this.drag = null; if (moved) this._commit(); else this._emit(); return; }
+        if (this.marquee) {
+          const m = this.marquee; this.marquee = null;
+          if (Math.abs(m.x1 - m.x0) > 3 || Math.abs(m.y1 - m.y0) > 3) {
+            const rx0 = Math.min(m.x0, m.x1), ry0 = Math.min(m.y0, m.y1), rx1 = Math.max(m.x0, m.x1), ry1 = Math.max(m.y0, m.y1);
+            const picked = this.annotations.filter(a => { const b = this._bounds(a); return b.x < rx1 && b.x + b.w > rx0 && b.y < ry1 && b.y + b.h > ry0; });
+            this.selected = (e && e.shiftKey) ? this.selected.concat(picked.filter(a => this.selected.indexOf(a) < 0)) : picked;
+          }
+          this.redraw(); this._emit(); return;
+        }
+        return;
       }
       if (this.draft) {
         const d = this.draft;
@@ -444,11 +490,30 @@ class CXMarkupEngine {
     };
     this._onKey = (e) => {
       if (this.readOnly) return;
-      if ((e.key === "Delete" || e.key === "Backspace") && this.selected) {
-        this.annotations.splice(this.annotations.indexOf(this.selected), 1); this.selected = null; this._commit(); e.preventDefault();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+      const mod = e.ctrlKey || e.metaKey;
+      const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+      if ((e.key === "Delete" || e.key === "Backspace") && this.selected.length) {
+        const sel = this.selected; this.annotations = this.annotations.filter(a => sel.indexOf(a) < 0);
+        this.selected = []; this._commit(); e.preventDefault();
+      } else if (mod && e.key.toLowerCase() === "z") {
         if (e.shiftKey) this.redo(); else this.undo(); e.preventDefault();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") { this.redo(); e.preventDefault(); }
+      } else if (mod && e.key.toLowerCase() === "y") { this.redo(); e.preventDefault(); }
+      else if (mod && e.key.toLowerCase() === "a") {
+        this.selected = this.annotations.slice(); this.redraw(); this._emit(); e.preventDefault();
+      } else if (mod && e.key.toLowerCase() === "d") {
+        if (this.selected.length) {
+          const copies = this.selected.map(a => JSON.parse(JSON.stringify(a)));
+          copies.forEach(c => this._moveBy(c, 12, 12));
+          this.annotations.push(...copies); this.selected = copies; this._commit();
+        }
+        e.preventDefault();
+      } else if (nudge && this.selected.length) {
+        const step = e.shiftKey ? 10 : 1;
+        for (const a of this.selected) this._moveBy(a, nudge[0] * step, nudge[1] * step);
+        this._commit(); e.preventDefault();
+      } else if (e.key === "Escape" && this.selected.length) {
+        this.selected = []; this.redraw(); e.preventDefault();
+      }
     };
     this.cv.addEventListener("pointerdown", this._onDown);
     this.cv.addEventListener("pointermove", this._onMove);
@@ -458,17 +523,32 @@ class CXMarkupEngine {
     this.cv.addEventListener("keydown", this._onKey);
   }
 
-  _moveTo(a, nx, ny) {
-    const b = this._bounds(a), dx = nx - b.x, dy = ny - b.y;
+  // Shift relative geometry by (dx,dy).
+  _moveBy(a, dx, dy) {
     if (a.type === "pen") a.pts.forEach(p => { p.x += dx; p.y += dy; });
     else if (a.type === "redline") { a.x += dx; a.x2 += dx; a.y += dy; }
     else if (a.type === "text" || a.type === "stamp") { a.x += dx; a.y += dy; }
     else { a.x += dx; a.y += dy; a.x2 += dx; a.y2 += dy; }
   }
+  // Update a drawing draft's end point, with optional Shift-constrain:
+  // 45° increments for lines/arrows/redline, square for boxes/ovals/highlights.
+  _draftTo(nx, ny, shift) {
+    const d = this.draft;
+    if (!shift) { d.x2 = nx; d.y2 = ny; return; }
+    if (d.type === "line" || d.type === "arrow" || d.type === "redline") {
+      const dx = nx - d.x, dy = ny - d.y, len = Math.hypot(dx, dy);
+      const ang = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+      d.x2 = d.x + len * Math.cos(ang); d.y2 = d.y + len * Math.sin(ang);
+    } else {
+      const dx = nx - d.x, dy = ny - d.y, s = Math.max(Math.abs(dx), Math.abs(dy));
+      d.x2 = d.x + (dx < 0 ? -s : s); d.y2 = d.y + (dy < 0 ? -s : s);
+    }
+  }
   // Drag a handle to (nx,ny). Endpoints for line/arrow; corner-driven box
   // for everything else (geometry remapped from the pre-drag snapshot).
-  _applyResize(nx, ny) {
-    const a = this.selected, r = this.rsz;
+  _applyResize(nx, ny, lockRatio) {
+    const a = this.selected[0], r = this.rsz;
+    if (!a) return;
     if (a.type === "line" || a.type === "arrow") {
       if (r.handle === "p1") { a.x = nx; a.y = ny; } else { a.x2 = nx; a.y2 = ny; }
       return;
@@ -479,10 +559,19 @@ class CXMarkupEngine {
     if (r.handle.includes("e")) right = nx;
     if (r.handle.includes("n")) top = ny;
     if (r.handle.includes("s")) bottom = ny;
-    const nb = {
+    let nb = {
       x: Math.min(left, right), y: Math.min(top, bottom),
       w: Math.max(min, Math.abs(right - left)), h: Math.max(min, Math.abs(bottom - top))
     };
+    if (lockRatio && b.w > 0 && b.h > 0) {
+      const ratio = b.w / b.h, s = Math.max(nb.w, nb.h * ratio);
+      const nw = s, nh = s / ratio;
+      nb = {
+        x: r.handle.includes("w") ? (b.x + b.w - nw) : b.x,
+        y: r.handle.includes("n") ? (b.y + b.h - nh) : b.y,
+        w: nw, h: nh
+      };
+    }
     this._applyBounds(a, r.before, b, nb);
   }
   _applyBounds(a, before, ob, nb) {
@@ -501,7 +590,7 @@ class CXMarkupEngine {
         a.x = nb.x; a.x2 = nb.x + nb.w; break;   // horizontal rule: width only
     }
   }
-  _applyToSelected() { if (this.selected) { this.selected.color = this.color; this.selected.width = this.width; this._commit(); } }
+  _applyToSelected() { if (this.selected.length) { for (const a of this.selected) { a.color = this.color; a.width = this.width; } this._commit(); } }
 
   _floatInput(x, y, multiline, value, color) {
     const el = document.createElement(multiline ? "textarea" : "input");

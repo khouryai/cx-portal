@@ -22,6 +22,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Guardrail: never deploy a build that fails syntax checks or the markup
+      # engine tests. Catches regressions (e.g. the resize()/this.resize name
+      # collision, onChange throw-on-mount) before they ever reach a device.
+      - name: Verify (syntax + markup engine tests)
+        run: |
+          node --check app.js
+          node --check markup.js
+          node --check photos.js
+          node --check sw.js
+          node tools/markup_test.js
       # Cache-bust the service worker on every deploy so clients always pick
       # up new app.js / styles.css / index.html instead of the SW's cached
       # copies. The committed CACHE_VERSION is just a baseline; this rewrites
