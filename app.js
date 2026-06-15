@@ -28813,7 +28813,7 @@ async function _pdfBuildPages(form) {
   for (const rec of (_pdfViewerState.pageRecords || [])) {
     if (rec?.renderTask) { try { rec.renderTask.cancel(); } catch { /* noop */ } }
   }
-  if (_fmkActive) _fmkCapture(true);
+  _fmkCapture(true);
   pagesEl.innerHTML = '';
   if (thumbsEl) thumbsEl.innerHTML = '';
   _pdfViewerState.pageOverlays = [];
@@ -28922,7 +28922,7 @@ async function _pdfRenderPage(idx) {
     _renderFormFieldOverlay(rec.overlay, annots, viewport, idx);
     _renderSavedFieldLayouts();
     rec.rendered = true;
-    if (_fmkActive) _fmkMountPage(idx);
+    _fmkMountPage(idx);
   } catch (e) {
     if (e?.name !== 'RenderingCancelledException') console.warn('[_pdfRenderPage]', idx, e.message || e);
   } finally {
@@ -29114,25 +29114,45 @@ function _fmkSetFieldsActive(rec, active) {
   rec.overlay.style.pointerEvents = active ? '' : 'none';
   rec.overlay.style.opacity       = active ? '' : '0.45';
 }
+// Saved markup annotations for a page (from the persisted form edit-state).
+function _fmkSavedFor(idx) {
+  const saved = _pdfViewerState && _pdfViewerState.editState && _pdfViewerState.editState.markup;
+  const m = saved && saved[idx];
+  return Array.isArray(m) ? m : ((m && m.annotations) || []);
+}
+// Toggle a page's markup layer between editable (markup mode) and read-only
+// (still visible, but taps fall through to the form so markups stay on the PDF).
+function _fmkSetEditable(eng, rec, editable) {
+  if (!eng) return;
+  eng.readOnly = !editable;
+  eng.cv.style.pointerEvents = editable ? 'auto' : 'none';
+  if (rec) _fmkSetFieldsActive(rec, !editable);   // mute form fields only while editing
+  eng.redraw();
+}
+// Mount a markup layer on a rendered page. Always renders saved markups (so they
+// persist outside markup mode); editable only when markup mode is active.
 function _fmkMountPage(idx) {
   _fmkEnsureForm();
-  if (!_fmkActive || _fmkEngines[idx]) return;
+  if (_fmkEngines[idx]) return;
   if (typeof CXMarkup === 'undefined') return;
   const rec = _pdfViewerState && _pdfViewerState.pageRecords && _pdfViewerState.pageRecords[idx];
   if (!rec || !rec.rendered || !rec.canvas) return;
+  const ann = _fmkModel[idx] || _fmkSavedFor(idx);
+  if (!_fmkActive && (!ann || !ann.length)) return;   // nothing to show, skip overlay
   let eng;
   eng = CXMarkup.attach(rec.canvas, {
     pageW: rec.baseViewport.width,
     pageH: rec.baseViewport.height,
     engineer: _fmkEngineerName(),
+    readOnly: !_fmkActive,
     onChange: (st) => { if (!eng) return; _fmkFocus = idx; if (st && st.dirty) _pdfMarkDirty(); if (_fmkBar) _fmkBar.refresh({ canUndo: eng.canUndo(), canRedo: eng.canRedo() }); }
   });
   eng.cv.addEventListener('pointerdown', () => { _fmkFocus = idx; });
-  if (_fmkModel[idx]) eng.loadAnnotations(_fmkModel[idx]);
+  if (ann && ann.length) eng.loadAnnotations(ann);
   eng.setTool(_fmkStyle.tool); eng.setColor(_fmkStyle.color); eng.setWidth(_fmkStyle.width); eng.setStampKind(_fmkStyle.stamp);
   eng._dbgId = 'p' + idx + '#' + (++_fmkEngSeq);
   _fmkEngines[idx] = eng;
-  _fmkSetFieldsActive(rec, false);
+  _fmkSetEditable(eng, rec, _fmkActive);
 }
 // One toolbar drives every page: broadcast tool/style to all engines,
 // route undo/redo to the page last touched.
@@ -29172,12 +29192,18 @@ function _fmkToggle() {
         ]
       });
     }
-    (_pdfViewerState.pageRecords || []).forEach((rec, i) => { if (rec && rec.rendered) _fmkMountPage(i); });
-    if (typeof CXMarkup !== 'undefined' && CXMarkup._hud) CXMarkup._hud('markup ON · engines=' + Object.keys(_fmkEngines).length + ' · renderedPages=' + (_pdfViewerState.pageRecords || []).filter(r => r && r.rendered).length);
-    toast('Markup on — Save keeps it editable, Flatten prints a record', 'info');
+    (_pdfViewerState.pageRecords || []).forEach((rec, i) => {
+      if (rec && rec.rendered) { _fmkMountPage(i); if (_fmkEngines[i]) _fmkSetEditable(_fmkEngines[i], rec, true); }
+    });
+    toast('Markup on — drag to move, Save/Download keeps it on the PDF', 'info');
   } else {
-    _fmkCapture(true);
-    (_pdfViewerState.pageRecords || []).forEach(rec => _fmkSetFieldsActive(rec, true));
+    // Exit markup mode WITHOUT removing the markups: capture them and switch the
+    // layers to read-only so they stay visible and save with the form.
+    Object.keys(_fmkEngines).forEach(i => {
+      _fmkModel[i] = _fmkEngines[i].getAnnotations();
+      const rec = _pdfViewerState.pageRecords && _pdfViewerState.pageRecords[i];
+      _fmkSetEditable(_fmkEngines[i], rec, false);
+    });
     const row = document.getElementById('pdf-markup-row');
     if (row) row.remove();
     _fmkBar = null;

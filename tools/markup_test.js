@@ -186,5 +186,11 @@ ok(scroller.scrollTop === 50, "drag-to-pan scrolled the container (top=" + scrol
 up({ touch: true });
 ok(!eng.pan, "pan ends on pointerup");
 
+// ---- read-only mode renders but ignores input (persistent display outside markup mode) ----
+const roCount = eng.annotations.length;
+eng.readOnly = true; eng.setTool("rect"); down(20, 20); move(80, 80); up();
+ok(eng.annotations.length === roCount, "readOnly engine ignores drawing (markups stay, not editable)");
+eng.readOnly = false;
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
