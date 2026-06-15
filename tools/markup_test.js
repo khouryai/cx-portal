@@ -47,7 +47,10 @@ function makeWrap() {
 
 globalThis.devicePixelRatio = 2;
 globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
-globalThis.getComputedStyle = () => ({ position: "relative" });
+// A scrollable ancestor so drag-to-pan (touch scroll) can be exercised.
+const scroller = { nodeType: 1, scrollLeft: 0, scrollTop: 0, scrollHeight: 5000, clientHeight: 800, parentNode: null,
+  appendChild(c) { c.parentNode = scroller; return c; } };
+globalThis.getComputedStyle = (el) => ({ position: "relative", overflowY: el === scroller ? "auto" : "visible" });
 globalThis.document = {
   createElement: (tag) => (tag === "canvas" ? makeCanvas() : { style: {}, set textContent(v) { this._t = v; }, appendChild: () => {} }),
   getElementById: () => null, head: { appendChild: () => {} }, body: { appendChild: () => {} },
@@ -63,6 +66,7 @@ let pass = 0, fail = 0;
 const ok = (c, m) => { c ? pass++ : (fail++, console.error("  ✗ " + m)); };
 
 const wrap = makeWrap();
+scroller.appendChild(wrap);              // wrap lives inside a scrollable container
 const host = makeCanvas(1200, 1600);
 host.style.width = "600px"; host.style.height = "800px";
 wrap.appendChild(host);
@@ -160,15 +164,27 @@ eng.undo();
 ok(eng.annotations.length !== beforeUndo, "undo changed the model");
 ok(typeof eng.exportFlattened === "function" && typeof CXMarkup.flattenIntoPdfPage === "function", "flatten APIs present");
 
-// ---- touch ergonomics: select mode scrolls (pan-y, no marquee); tools capture ----
-eng.setTool("select");
-ok(eng.cv.style.touchAction === "pan-y", "select tool sets touch-action pan-y (page scrolls)");
-eng.setTool("rect");
-ok(eng.cv.style.touchAction === "none", "drawing tool sets touch-action none (captures)");
+// ---- touch ergonomics: drag a markup moves it; drag empty space scrolls ----
+// Moving: grab a markup on touch and drag it any direction (no scroll-stealing).
 eng.setTool("select"); key("Escape");
-down(5, 5, { touch: true });           // empty-space touch
-ok(!eng.marquee, "touch on empty space does NOT start a marquee (lets the page scroll)");
+eng.setTool("rect"); down(60, 500); move(160, 560); up();
+const tbox = eng.annotations[eng.annotations.length - 1];
+eng.setTool("select");
+const tcb = center(tbox);
+down(tcb[0], tcb[1], { touch: true });
+const tby0 = tbox.y;
+move(tcb[0], tcb[1] + 30, { touch: true });      // vertical touch-drag on the item
 up({ touch: true });
+ok(Math.abs(tbox.y - (tby0 + 30)) < 2, "touch-drag on a markup moves it vertically (not scroll)");
+ok(scroller.scrollTop === 0, "moving a markup did not scroll the page");
+// Scrolling: drag empty space on touch pans the container instead of marqueeing.
+scroller.scrollTop = 0;
+down(5, 5, { touch: true });
+ok(eng.pan && eng.pan.sc === scroller && !eng.marquee, "touch on empty space starts a drag-to-scroll pan (no marquee)");
+move(5, -45, { touch: true });                    // drag up 50px
+ok(scroller.scrollTop === 50, "drag-to-pan scrolled the container (top=" + scroller.scrollTop + ")");
+up({ touch: true });
+ok(!eng.pan, "pan ends on pointerup");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

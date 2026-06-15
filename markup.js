@@ -116,7 +116,6 @@ class CXMarkupEngine {
     this.color = "#dc2626";
     this.width = 3;
     this.stampKind = "PASS";
-    this.cv.style.touchAction = "pan-y";   // default (select): allow page scroll
 
     this.annotations = [];
     this.selected = [];          // array of selected annotations (multi-select)
@@ -124,6 +123,7 @@ class CXMarkupEngine {
     this.drag = null;            // active group-move drag {lastX,lastY,moved}
     this.marquee = null;         // active rubber-band selection rect
     this.rsz = null;             // active resize-drag state (NOT the resize() method)
+    this.pan = null;             // active drag-to-scroll on empty space (touch)
     this.history = [];
     this.hp = -1;
     this._savedSnapshot = "[]";
@@ -151,14 +151,7 @@ class CXMarkupEngine {
   setPageSize(w, h) { this.pageW = w; this.pageH = h; this.resize(); }
 
   /* ---------- tool / style ---------- */
-  setTool(id) {
-    this.tool = id;
-    if (id !== "select") this.selected = [];
-    this.cv.style.cursor = id === "select" ? "default" : "crosshair";
-    // Select mode lets the page scroll (pan-y); drawing tools capture all touches.
-    this.cv.style.touchAction = id === "select" ? "pan-y" : "none";
-    this.redraw();
-  }
+  setTool(id) { this.tool = id; if (id !== "select") this.selected = []; this.cv.style.cursor = id === "select" ? "default" : "crosshair"; this.redraw(); }
   setColor(c) { this.color = c; this._applyToSelected(); }
   setWidth(w) { this.width = +w || 3; this._applyToSelected(); }
   setStampKind(k) { this.stampKind = k; }
@@ -314,13 +307,16 @@ class CXMarkupEngine {
     const m = this._stampMetrics(a);
     ctx.save();
     ctx.translate(a.x, a.y);            // NO rotation — flat / horizontal
-    ctx.strokeStyle = def.c; ctx.lineWidth = 3 * sc; ctx.globalAlpha = .92;
-    this._roundRect(-m.w / 2, -m.h / 2, m.w, m.h, 8 * sc); ctx.stroke();
-    ctx.fillStyle = def.c; ctx.textAlign = "center";
-    ctx.font = '700 ' + (20 * sc) + 'px ' + STAMP_FONT;
-    ctx.fillText(a.kind, 0, -2 * sc);
-    ctx.font = '500 ' + (9 * sc) + 'px ' + STAMP_FONT;
-    ctx.fillText((a.who || "") + "  " + (a.ts || ""), 0, 15 * sc);
+    // Solid (mostly opaque) backing so the stamp reads clearly over dense form
+    // lines, then the colored border + text on top.
+    this._roundRect(-m.w / 2, -m.h / 2, m.w, m.h, 8 * sc);
+    ctx.globalAlpha = 0.9; ctx.fillStyle = "#ffffff"; ctx.fill();
+    ctx.globalAlpha = 1; ctx.strokeStyle = def.c; ctx.lineWidth = 2.5 * sc; ctx.stroke();
+    ctx.fillStyle = def.c; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+    ctx.font = '700 ' + (18 * sc) + 'px ' + STAMP_FONT;
+    ctx.fillText(a.kind, 0, -1 * sc);
+    ctx.font = '500 ' + (8.5 * sc) + 'px ' + STAMP_FONT;
+    ctx.fillText((a.who || "") + "  " + (a.ts || ""), 0, 14 * sc);
     ctx.restore();
   }
   _roundRect(x, y, w, h, r) {
@@ -392,6 +388,18 @@ class CXMarkupEngine {
 
   /* ===================== POINTER ===================== */
   _pt(e) { const r = this.cv.getBoundingClientRect(); return { x: (e.clientX - r.left) / this.scale, y: (e.clientY - r.top) / this.scale }; }
+  // Nearest vertically-scrollable ancestor — so dragging empty space scrolls the
+  // PDF while dragging a markup still moves it freely.
+  _scrollParent() {
+    let el = this.wrap && this.wrap.parentNode;
+    while (el && el.nodeType === 1) {
+      let oy = "";
+      try { oy = getComputedStyle(el).overflowY; } catch (_) {}
+      if (/(auto|scroll)/.test(oy) && el.scrollHeight > el.clientHeight + 2) return el;
+      el = el.parentNode;
+    }
+    return null;
+  }
   _bind() {
     this._onDown = (e) => {
       if (this.readOnly) return;
@@ -405,12 +413,12 @@ class CXMarkupEngine {
         const c = this.ctx; c.save(); c.fillStyle = "rgba(220,38,38,.95)";
         c.beginPath(); c.arc(p.x, p.y, 7, 0, Math.PI * 2); c.fill(); c.restore();
       }
-      // setPointerCapture throws on iOS Safari for touch pointers in some
-      // contexts; never let it abort the draw handler. Only capture when we're
-      // actually interacting — capturing on an empty select-tap makes iOS scroll
-      // the canvas into view ("springs back to top").
-      const _cap = () => { try { this.cv.setPointerCapture(e.pointerId); } catch (_) {} };
+      // setPointerCapture throws on iOS Safari for touch pointers and (when
+      // called on an empty tap) makes iOS scroll the canvas into view. Capture
+      // only for mouse; on touch the overlay's touch-action:none keeps events
+      // on the canvas without it.
       const _touch = e.pointerType === "touch";
+      const _cap = () => { if (!_touch) { try { this.cv.setPointerCapture(e.pointerId); } catch (_) {} } };
       if (T === "select") {
         // Resize handle of the single selected item starts a resize.
         if (this.selected.length === 1) {
@@ -418,7 +426,7 @@ class CXMarkupEngine {
           if (hnd) { _cap(); this.rsz = { handle: hnd.id, before: JSON.parse(JSON.stringify(this.selected[0])), ob: this._bounds(this.selected[0]) }; return; }
         }
         const h = this._hit(p.x, p.y);
-        if (h) {
+        if (h) {                                  // grabbed a markup -> move it (any direction)
           _cap();
           if (e.shiftKey) {                       // toggle this item in/out of the set
             const i = this.selected.indexOf(h);
@@ -429,10 +437,16 @@ class CXMarkupEngine {
           if (this.selected.indexOf(h) >= 0) this.drag = { lastX: p.x, lastY: p.y, moved: false };
           this.redraw(); return;
         }
-        // Empty space. On touch, don't capture — let the page scroll (overlay is
-        // touch-action:pan-y in select mode). Marquee select is mouse-only.
+        // Empty space. On touch, drag scrolls the page (we pan the scroll
+        // container ourselves so moving a markup stays free in any direction).
+        // On mouse, drag draws a marquee selection.
         if (!e.shiftKey && this.selected.length) { this.selected = []; this.redraw(); }
-        if (!_touch) { this.marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y }; }
+        if (_touch) {
+          const sc = this._scrollParent();
+          if (sc) this.pan = { sc, x: e.clientX, y: e.clientY, l: sc.scrollLeft, t: sc.scrollTop };
+        } else {
+          this.marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+        }
         return;
       }
       _cap();   // drawing tools capture the pointer for the whole stroke
@@ -452,6 +466,7 @@ class CXMarkupEngine {
       if (this.readOnly) return;
       const p = this._pt(e);
       if (this.tool === "select") {
+        if (this.pan) { this.pan.sc.scrollLeft = this.pan.l - (e.clientX - this.pan.x); this.pan.sc.scrollTop = this.pan.t - (e.clientY - this.pan.y); return; }
         if (this.rsz && this.selected.length === 1) { this._applyResize(p.x, p.y, e.shiftKey); this.redraw(); return; }
         if (this.drag && this.selected.length) {
           const dx = p.x - this.drag.lastX, dy = p.y - this.drag.lastY;
@@ -469,6 +484,7 @@ class CXMarkupEngine {
     this._onUp = (e) => {
       if (this.readOnly) return;
       if (this.tool === "select") {
+        if (this.pan) { this.pan = null; return; }
         if (this.rsz) { this.rsz = null; this._commit(); return; }
         if (this.drag) { const moved = this.drag.moved; this.drag = null; if (moved) this._commit(); else this._emit(); return; }
         if (this.marquee) {
@@ -892,12 +908,13 @@ function flattenIntoPdfPage(annos, page, opts = {}) {
       case "stamp": {
         const def = STAMPS.find(s => s.k === a.kind) || STAMPS[0];
         const sc = col(def.c);
-        const w = Math.max(96, (a.kind.length * 13) + 28), h = 46;
-        page.drawRectangle({ x: X(a.x - w / 2), y: Y(a.y + h / 2), width: w * sx, height: h * sy, borderColor: sc, borderWidth: 3 * sx, opacity: 0, borderOpacity: .92 });
+        const st = a.scale || 1;
+        const w = Math.max(96, (a.kind.length * 13) + 28) * st, h = 46 * st;
+        page.drawRectangle({ x: X(a.x - w / 2), y: Y(a.y + h / 2), width: w * sx, height: h * sy, color: rgb(1, 1, 1), opacity: 0.9, borderColor: sc, borderWidth: 2.5 * sx * st, borderOpacity: 1 });
         if (font) {
-          page.drawText(a.kind, { x: X(a.x - (a.kind.length * 6)), y: Y(a.y - 2), size: 20 * sy, font, color: sc });
+          page.drawText(a.kind, { x: X(a.x - (a.kind.length * 6 * st)), y: Y(a.y - 1 * st), size: 18 * sy * st, font, color: sc });
           const sub = (a.who || "") + "  " + (a.ts || "");
-          page.drawText(sub, { x: X(a.x - (sub.length * 2.7)), y: Y(a.y + 15), size: 9 * sy, font, color: sc });
+          page.drawText(sub, { x: X(a.x - (sub.length * 2.5 * st)), y: Y(a.y + 14 * st), size: 8.5 * sy * st, font, color: sc });
         }
         break;
       }
