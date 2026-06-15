@@ -29123,7 +29123,7 @@ function _fmkMountPage(idx) {
     pageW: rec.baseViewport.width,
     pageH: rec.baseViewport.height,
     engineer: _fmkEngineerName(),
-    onChange: () => { if (!eng) return; _fmkFocus = idx; _pdfMarkDirty(); if (_fmkBar) _fmkBar.refresh({ canUndo: eng.canUndo(), canRedo: eng.canRedo() }); }
+    onChange: (st) => { if (!eng) return; _fmkFocus = idx; if (st && st.dirty) _pdfMarkDirty(); if (_fmkBar) _fmkBar.refresh({ canUndo: eng.canUndo(), canRedo: eng.canRedo() }); }
   });
   eng.cv.addEventListener('pointerdown', () => { _fmkFocus = idx; });
   if (_fmkModel[idx]) eng.loadAnnotations(_fmkModel[idx]);

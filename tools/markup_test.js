@@ -77,9 +77,10 @@ ok(Array.isArray(eng.selected), "selected is an array (multi-select)");
 ok(eng.cv.style.width === "600px" && Math.abs(eng.scale - 1) < 1e-9, "overlay sized to host, scale=1");
 
 const H = eng.cv._handlers;
-const down = (x, y, o = {}) => H.pointerdown({ clientX: x, clientY: y, pointerId: 1, pointerType: "touch", shiftKey: !!o.shift });
-const move = (x, y, o = {}) => H.pointermove({ clientX: x, clientY: y, pointerId: 1, pointerType: "touch", shiftKey: !!o.shift });
-const up   = (o = {}) => H.pointerup({ pointerId: 1, shiftKey: !!o.shift });
+const _pt = (o) => o.touch ? "touch" : "mouse";
+const down = (x, y, o = {}) => H.pointerdown({ clientX: x, clientY: y, pointerId: 1, pointerType: _pt(o), shiftKey: !!o.shift });
+const move = (x, y, o = {}) => H.pointermove({ clientX: x, clientY: y, pointerId: 1, pointerType: _pt(o), shiftKey: !!o.shift });
+const up   = (o = {}) => H.pointerup({ pointerId: 1, pointerType: _pt(o), shiftKey: !!o.shift });
 const key  = (k, o = {}) => H.keydown({ key: k, ctrlKey: !!o.mod, metaKey: false, shiftKey: !!o.shift, preventDefault() {} });
 
 // ---- place a stamp, a box, an arrow ----
@@ -158,6 +159,16 @@ const beforeUndo = eng.annotations.length;
 eng.undo();
 ok(eng.annotations.length !== beforeUndo, "undo changed the model");
 ok(typeof eng.exportFlattened === "function" && typeof CXMarkup.flattenIntoPdfPage === "function", "flatten APIs present");
+
+// ---- touch ergonomics: select mode scrolls (pan-y, no marquee); tools capture ----
+eng.setTool("select");
+ok(eng.cv.style.touchAction === "pan-y", "select tool sets touch-action pan-y (page scrolls)");
+eng.setTool("rect");
+ok(eng.cv.style.touchAction === "none", "drawing tool sets touch-action none (captures)");
+eng.setTool("select"); key("Escape");
+down(5, 5, { touch: true });           // empty-space touch
+ok(!eng.marquee, "touch on empty space does NOT start a marquee (lets the page scroll)");
+up({ touch: true });
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

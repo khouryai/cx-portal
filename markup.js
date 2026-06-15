@@ -116,6 +116,7 @@ class CXMarkupEngine {
     this.color = "#dc2626";
     this.width = 3;
     this.stampKind = "PASS";
+    this.cv.style.touchAction = "pan-y";   // default (select): allow page scroll
 
     this.annotations = [];
     this.selected = [];          // array of selected annotations (multi-select)
@@ -150,7 +151,14 @@ class CXMarkupEngine {
   setPageSize(w, h) { this.pageW = w; this.pageH = h; this.resize(); }
 
   /* ---------- tool / style ---------- */
-  setTool(id) { this.tool = id; if (id !== "select") this.selected = []; this.cv.style.cursor = id === "select" ? "default" : "crosshair"; this.redraw(); }
+  setTool(id) {
+    this.tool = id;
+    if (id !== "select") this.selected = [];
+    this.cv.style.cursor = id === "select" ? "default" : "crosshair";
+    // Select mode lets the page scroll (pan-y); drawing tools capture all touches.
+    this.cv.style.touchAction = id === "select" ? "pan-y" : "none";
+    this.redraw();
+  }
   setColor(c) { this.color = c; this._applyToSelected(); }
   setWidth(w) { this.width = +w || 3; this._applyToSelected(); }
   setStampKind(k) { this.stampKind = k; }
@@ -398,19 +406,20 @@ class CXMarkupEngine {
         c.beginPath(); c.arc(p.x, p.y, 7, 0, Math.PI * 2); c.fill(); c.restore();
       }
       // setPointerCapture throws on iOS Safari for touch pointers in some
-      // contexts; never let it abort the draw handler.
-      try { this.cv.setPointerCapture(e.pointerId); } catch (_) {}
+      // contexts; never let it abort the draw handler. Only capture when we're
+      // actually interacting — capturing on an empty select-tap makes iOS scroll
+      // the canvas into view ("springs back to top").
+      const _cap = () => { try { this.cv.setPointerCapture(e.pointerId); } catch (_) {} };
+      const _touch = e.pointerType === "touch";
       if (T === "select") {
-        // 1) Resize handle of the single selected item starts a resize.
+        // Resize handle of the single selected item starts a resize.
         if (this.selected.length === 1) {
           const hnd = this._hitHandle(this.selected[0], p.x, p.y);
-          if (hnd) {
-            this.rsz = { handle: hnd.id, before: JSON.parse(JSON.stringify(this.selected[0])), ob: this._bounds(this.selected[0]) };
-            return;
-          }
+          if (hnd) { _cap(); this.rsz = { handle: hnd.id, before: JSON.parse(JSON.stringify(this.selected[0])), ob: this._bounds(this.selected[0]) }; return; }
         }
         const h = this._hit(p.x, p.y);
         if (h) {
+          _cap();
           if (e.shiftKey) {                       // toggle this item in/out of the set
             const i = this.selected.indexOf(h);
             if (i >= 0) this.selected.splice(i, 1); else this.selected.push(h);
@@ -420,11 +429,13 @@ class CXMarkupEngine {
           if (this.selected.indexOf(h) >= 0) this.drag = { lastX: p.x, lastY: p.y, moved: false };
           this.redraw(); return;
         }
-        // Empty space: start a marquee (shift keeps the current selection).
-        if (!e.shiftKey) this.selected = [];
-        this.marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
-        this.redraw(); return;
+        // Empty space. On touch, don't capture — let the page scroll (overlay is
+        // touch-action:pan-y in select mode). Marquee select is mouse-only.
+        if (!e.shiftKey && this.selected.length) { this.selected = []; this.redraw(); }
+        if (!_touch) { this.marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y }; }
+        return;
       }
+      _cap();   // drawing tools capture the pointer for the whole stroke
       if (T === "erase") { const h = this._hit(p.x, p.y); if (h) { this.annotations.splice(this.annotations.indexOf(h), 1); this._commit(); } return; }
       if (T === "text") { this._openText(p.x, p.y); return; }
       if (T === "stamp") {
@@ -707,6 +718,17 @@ function injectStyles() {
   .cx-mk-chip{padding:6px 9px;border-radius:7px;font:700 11px/1 ${STAMP_FONT};letter-spacing:.05em;color:#fff;
     cursor:pointer;border:1px solid rgba(0,0,0,.08);}
   .cx-mk-chip.active{outline:2px solid var(--text,#0f172a);outline-offset:1px;}
+  /* Mobile: compact single scrollable row of icons so the PDF stays visible. */
+  @media (max-width: 720px) {
+    .cx-mk-bar{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;gap:3px;padding:4px;scrollbar-width:none;}
+    .cx-mk-bar::-webkit-scrollbar{display:none;}
+    .cx-mk-tool{min-width:34px;height:34px;padding:0 4px;font-size:0;gap:0;flex:0 0 auto;}
+    .cx-mk-tool .icon-svg{width:18px;height:18px;}
+    .cx-mk-tool span{display:none;}
+    .cx-mk-sw{width:20px;height:20px;flex:0 0 auto;}
+    .cx-mk-wp{min-width:24px;height:24px;flex:0 0 auto;}
+    .cx-mk-chip{padding:5px 7px;font-size:10px;flex:0 0 auto;}
+  }
   `;
   const s = document.createElement("style");
   s.id = "cx-markup-styles"; s.textContent = css;
