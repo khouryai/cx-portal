@@ -29377,7 +29377,7 @@ function _pdfAutoFitField(el) {
   el.style.fontSize = f + 'px';
   const fits = () => area ? (el.scrollHeight <= el.clientHeight + 1) : (el.scrollWidth <= el.clientWidth + 1);
   let guard = 0;
-  while (!fits() && f > 6 && guard++ < 48) { f -= 0.5; el.style.fontSize = f + 'px'; }
+  while (!fits() && f > 4 && guard++ < 60) { f -= 0.5; el.style.fontSize = f + 'px'; }
 }
 
 // Estimate a font size (pt) that fits `text` inside a field box for the flattened
@@ -29388,7 +29388,7 @@ function _pdfFitFontSize(text, box, multiline) {
   if (!s) return maxByH;
   if (!multiline) {
     const byW = (box.width - 4) / (Math.max(1, s.length) * 0.5);   // Helvetica avg advance ~0.5em
-    return Math.max(6, Math.min(maxByH, byW));
+    return Math.max(4, Math.min(maxByH, byW));
   }
   const cpl = (size) => Math.max(1, Math.floor((box.width - 4) / (size * 0.5)));
   const linesAt = (size) => {
@@ -29481,7 +29481,7 @@ function _renderPdfFieldControl(overlay, layout, viewport) {
   if (el.tagName === 'INPUT' && el.type === 'text' || el.tagName === 'TEXTAREA') {
     el.dataset.maxFont = String(fontPx);
     if (el.tagName === 'TEXTAREA') { el.style.whiteSpace = 'pre-wrap'; el.style.overflow = 'hidden'; el.style.resize = 'none'; el.setAttribute('wrap', 'soft'); }
-    else { el.style.whiteSpace = 'nowrap'; }
+    else { el.style.whiteSpace = 'nowrap'; el.style.paddingLeft = '2px'; el.style.paddingRight = '2px'; }
     el.addEventListener('input', () => _pdfAutoFitField(el));
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => _pdfAutoFitField(el)); else _pdfAutoFitField(el);
   }
