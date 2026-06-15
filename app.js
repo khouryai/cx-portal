@@ -29404,6 +29404,20 @@ function _pdfFitFontSize(text, box, multiline) {
   return Math.max(6, size);
 }
 
+// Decide whether a field should WRAP (multi-line) or SHRINK-TO-FIT one line.
+// Default is single-line shrink so text is never pushed to a hidden second row.
+// Wrap only when the cell can actually show >=2 readable lines AND either the
+// PDF flags it multi-line or the text is too long to fit one readable line.
+// w/h and `floor` (legibility floor) are in the same units (px overlay / pt pdf).
+function _pdfWrapDecision(text, w, h, floor, flagged) {
+  const canMultiRow = (h - 6) >= floor * 1.3 * 2;
+  if (!canMultiRow) return false;                 // would hide a 2nd line -> never wrap
+  if (flagged) return true;                        // PDF says multi-line and there is room
+  const len = String(text == null ? '' : text).length;
+  const oneLineFont = (w - 6) / Math.max(1, len * 0.5);
+  return len > 0 && oneLineFont < floor;           // too long for one readable line
+}
+
 function _renderPdfFieldControl(overlay, layout, viewport) {
   const [x1, y1, x2, y2] = layout.rect;
   const tl = viewport.convertToViewportPoint(x1, y2);
@@ -29430,10 +29444,11 @@ function _renderPdfFieldControl(overlay, layout, viewport) {
   } else if (layout.kind === 'text' || layout.kind === 'textarea') {
     // Treat tall text fields as wrapping multi-line boxes even if the PDF
     // didn't flag them, so notes/remarks wrap instead of overflowing.
-    const _wrap = layout.kind === 'textarea' || height >= 30;
+    const _fval = hasSavedValue ? savedFields[fieldName] : (layout.fieldValue || '');
+    const _wrap = _pdfWrapDecision(_fval, width, height, 9, layout.kind === 'textarea');
     el = _wrap ? document.createElement('textarea') : document.createElement('input');
     if (!_wrap) el.type = 'text';
-    el.value = hasSavedValue ? savedFields[fieldName] : (layout.fieldValue || '');
+    el.value = _fval;
     const im = _pdfInferInputMode(fieldName);
     if (im) el.inputMode = im;
     el.addEventListener('input', _pdfMarkDirty);
@@ -29763,7 +29778,7 @@ function _setExistingPdfFieldValue(acroForm, layout, value) {
   try {
     if (layout.kind === 'text' || layout.kind === 'textarea') {
       const box = _pdfRectBox(layout.rect);
-      const multiline = layout.kind === 'textarea' || box.height >= 26;
+      const multiline = _pdfWrapDecision(value, box.width, box.height, 8, layout.kind === 'textarea');
       if (multiline) { try { field.enableMultiline(); } catch (_) {} }
       try { field.setFontSize(_pdfFitFontSize(value, box, multiline)); } catch (_) {}
       field.setText(String(value ?? ''));
@@ -29804,7 +29819,7 @@ async function _addDownloadStateFields(doc, acroForm, state) {
       if (_setExistingPdfFieldValue(acroForm, layout, value)) return;
       if (layout.kind === 'text' || layout.kind === 'textarea') {
         const field = acroForm.createTextField(fieldName);
-        const _multi = layout.kind === 'textarea' || box.height >= 26;
+        const _multi = _pdfWrapDecision(value, box.width, box.height, 8, layout.kind === 'textarea');
         if (_multi) field.enableMultiline();
         field.setFontSize(_pdfFitFontSize(value, box, _multi));
         field.setText(String(value ?? ''));
