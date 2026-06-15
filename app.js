@@ -34204,6 +34204,9 @@ const _dynPage = {
   planEnd: '',                           // window end
   planModes: ['CBTC','VATC'],            // allowed modes filter
   planMaxTrains: '',                     // optional train budget cap
+  planMaxLocs: '',                       // max locations/zones per shift (track-plan auto-expand)
+  adjacency: [],                         // zone_adjacency rows (track plan)
+  prereqs: [],                           // test_item_prerequisites rows (test-case edges)
   planFeasible: [],                      // last fn_feasible_instances result
   planSelected: new Set(),               // instance ids the planner has picked
   planSchedFilter: '',                   // '' | 'scheduled' | 'unscheduled' (feasibility table)
@@ -34430,6 +34433,10 @@ async function _dynLoadAll() {
       .catch(e => { console.warn('[dyn] train requests load:', e.message); return []; });
     _dynPage.dynEvents = await _dbSelect('planning_events', {}, 'id,dynamic_shift_id,status,event_date')
       .catch(e => { console.warn('[dyn] events load:', e.message); return []; });
+    _dynPage.adjacency = await _dbSelect('zone_adjacency', {}, '*')
+      .catch(e => { console.warn('[dyn] adjacency load:', e.message); return []; });
+    _dynPage.prereqs = await _dbSelect('test_item_prerequisites', {}, 'test_id,prerequisite_test_id')
+      .catch(e => { console.warn('[dyn] prereqs load:', e.message); return []; });
     _dynPage.loaded = true;
   } finally {
     _dynPage.loading = false;
@@ -37104,11 +37111,11 @@ function _dynOpenShift(id) {
           <span style="font-size:12px;color:var(--gray-600);">${fmtT(s.start_at)}–${fmtT(s.end_at)} · ${(s.allowed_modes||[]).join('+')||'any'} · ${s.max_trains||1} train${(s.max_trains||1)===1?'':'s'}${s.consist_size?` × ${s.consist_size}-car`:''}</span>
         </div>
         <div style="font-size:11.5px;margin-bottom:8px;color:${avail.approved>=avail.requested&&avail.requested>0?'#065f46':'#d97706'};">
-          🚆 Trains: <b>${avail.approved}</b> approved of ${avail.requested} requested${camp?` · <a href="javascript:void(0)" style="color:var(--info);" onclick="closeModal();_dynOpenTrains('${escapeHtml(camp.id)}')">manage</a>`:''}
+          Trains: <b>${avail.approved}</b> approved of ${avail.requested} requested${camp?` · <a href="javascript:void(0)" style="color:var(--info);" onclick="closeModal();_dynOpenTrains('${escapeHtml(camp.id)}')">manage</a>`:''}
         </div>
         ${(() => { const ev = _dynShiftEventRow(s.id); return ev
-          ? `<div style="font-size:11.5px;margin-bottom:12px;color:#6d28d9;">📅 Field event created${ev.status==='cancelled'?' (cancelled)':''} · Train Operator, ROC, EIC auto-added · <a href="javascript:void(0)" style="color:var(--info);" onclick="closeModal();showPage('lookahead')">open Lookahead</a></div>`
-          : (s.status !== 'cancelled' ? `<div style="font-size:11.5px;margin-bottom:12px;color:var(--gray-500);">📅 No field event yet · <a href="javascript:void(0)" style="color:var(--info);" onclick="_dynCreateShiftEventUI('${escapeHtml(s.id)}')">create with BART minimums</a> (auto on Confirm)</div>` : ''); })()}
+          ? `<div style="font-size:11.5px;margin-bottom:12px;color:#6d28d9;">${icon('calendar')} Field event created${ev.status==='cancelled'?' (cancelled)':''} · Train Operator, ROC, EIC auto-added · <a href="javascript:void(0)" style="color:var(--info);" onclick="closeModal();showPage('lookahead')">open Lookahead</a></div>`
+          : (s.status !== 'cancelled' ? `<div style="font-size:11.5px;margin-bottom:12px;color:var(--gray-500);">${icon('calendar')} No field event yet · <a href="javascript:void(0)" style="color:var(--info);" onclick="_dynCreateShiftEventUI('${escapeHtml(s.id)}')">create with BART minimums</a> (auto on Confirm)</div>` : ''); })()}
         ${s.status === 'cancelled' ? `
           <div style="padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#b91c1c;margin-bottom:12px;">
             <b>Cancelled:</b> ${escapeHtml(s.cancellation_category || '—')}${s.cancellation_reason ? ` — ${escapeHtml(s.cancellation_reason)}` : ''}
@@ -37740,11 +37747,19 @@ function _dynRenderPlanning() {
         <input type="number" min="1" style="width:70px;" placeholder="any" value="${escapeHtml(_dynPage.planMaxTrains)}"
                oninput="_dynPage.planMaxTrains=this.value;">
       </label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
+        Max locations/shift
+        <input type="number" min="1" style="width:70px;" placeholder="any" value="${escapeHtml(_dynPage.planMaxLocs)}"
+               oninput="_dynPage.planMaxLocs=this.value;">
+      </label>
       <button class="dyn-btn primary" onclick="_dynPlanRun()">Compute feasible</button>
       <button class="dyn-btn" onclick="_dynAutoAllocateRun()" title="Cascade-allocate unscheduled runs across this campaign's access windows, prerequisites first">Auto-allocate campaign</button>
       <button class="dyn-btn" onclick="_dynProgramAllocateRun()" title="Allocate across ALL active campaigns at once — prerequisites order across campaigns (DCS→CBTC→ATC)">Program allocate (all)</button>
       <button class="dyn-btn" onclick="_dynWhatIfRun()" title="Project how many more runs you could schedule if the client extends the access window (e.g. 6 h)">What-if window</button>
+      <button class="dyn-btn" onclick="_dynPlanAutoFill()" title="Grow the selected zones along the track plan up to the max-locations budget">↳ Auto-fill zones</button>
+      <button class="dyn-btn" onclick="_dynPlanAutoSchedule()" title="Pick the best adjacent cluster and pre-select a window-filling set">${icon('zap')} Auto-schedule</button>
       <span style="flex:1;"></span>
+      <button class="dyn-btn" onclick="_dynOpenTrackPlan()">${icon('git-branch')} Track Plan</button>
       <button class="dyn-btn" onclick="_dynPlanOpenWindowsAdmin()">${icon('settings')} Manage Windows</button>
     </div>
 
@@ -37779,7 +37794,58 @@ function _dynRenderPlanning() {
             <button class="dyn-btn primary" ${selected.length===0?'disabled':''} onclick="_dynPlanCommit()">${icon('calendar')} Schedule${selected.length?` ${selected.length}`:''}</button>
           </div>
           ${_dynRenderPlanningTable()}`}
+    ${(!_dynPage.planLoading && _dynPage.planZones.length) ? _dynRenderPlanExcluded() : ''}
   `;
+}
+
+// "Not feasible" panel — every non-terminal test the current inputs leave out,
+// with the concrete fix. Access-scope gaps get a one-click "add zones" button.
+function _dynRenderPlanExcluded() {
+  const ex = _dynPlanExcluded();
+  if (!ex.length) {
+    return `<div style="margin-top:14px;font-size:12px;color:var(--good);">✓ Nothing left out — every eligible test in these zones is in the feasible list.</div>`;
+  }
+  // One-click set: union of all addable zones across access-blocked rows.
+  const allAdd = [...new Set(ex.flatMap(r => r.addZones))];
+  const rows = ex.map(r => {
+    const i = r.inst;
+    const chips = r.reasons.map(rs => {
+      const tone = rs.type === 'access' || rs.type === 'zone' ? { bg: '#fef3c7', fg: '#92400e' }
+        : rs.type === 'mode' ? { bg: '#ede9fe', fg: '#6d28d9' }
+        : rs.type === 'window' ? { bg: '#e0f2fe', fg: '#0369a1' }
+        : { bg: '#fee2e2', fg: '#b91c1c' };
+      return `<span class="tag" style="background:${tone.bg};color:${tone.fg};border-color:transparent;">${escapeHtml(rs.label)}</span>`;
+    }).join(' ');
+    const fix = r.addZones.length
+      ? `<button class="dyn-btn" style="font-size:11px;padding:3px 8px;" onclick="_dynPlanAddZones('${escapeHtml(r.addZones.join(','))}')">+ add ${escapeHtml(r.addZones.join(', '))}</button>`
+      : '<span style="color:var(--gray-400);font-size:11px;">—</span>';
+    return `<tr style="border-top:1px solid var(--gray-100);">
+      <td style="padding:6px 10px;font-family:monospace;font-size:11.5px;">${escapeHtml(i.code || '—')}</td>
+      <td style="padding:6px 10px;font-size:12px;">${escapeHtml(i.title || i.test_id || '—')}</td>
+      <td style="padding:6px 10px;font-family:monospace;font-size:11.5px;">${escapeHtml(i.track_section_under_test || '—')}</td>
+      <td style="padding:6px 10px;">${chips}</td>
+      <td style="padding:6px 10px;text-align:right;">${fix}</td>
+    </tr>`;
+  }).join('');
+  return `
+    <div style="margin-top:18px;background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#fffbeb;border-bottom:1px solid #fde68a;">
+        <b style="font-size:13px;color:#92400e;">${icon('alert')} Not feasible with current inputs (${ex.length})</b>
+        <span style="font-size:11.5px;color:var(--gray-600);">What each is missing — most are an access-scope gap.</span>
+        <span style="flex:1;"></span>
+        ${allAdd.length ? `<button class="dyn-btn" style="font-size:11.5px;" onclick="_dynPlanAddZones('${escapeHtml(allAdd.join(','))}')">+ Add all missing zones (${escapeHtml(allAdd.join(', '))})</button>` : ''}
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr style="background:var(--gray-50);">
+          <th style="text-align:left;padding:6px 10px;">Code</th>
+          <th style="text-align:left;padding:6px 10px;">Title</th>
+          <th style="text-align:left;padding:6px 10px;">Zone</th>
+          <th style="text-align:left;padding:6px 10px;">Missing</th>
+          <th style="text-align:right;padding:6px 10px;">Fix</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 function _dynPlanSyncZones(sel) {
@@ -39433,6 +39499,267 @@ async function _dynAutoAllocateCommit() {
     await _dynLoadAll();
     _dynRenderPlanning();
   } catch (e) { toast('Commit failed: ' + e.message, 'error'); }
+}
+
+// ==========================================================================
+// TRACK PLAN (zone adjacency) + UNSCHEDULED ANALYSIS + AUTO-SCHEDULE
+//
+//   · Adjacency is the source of truth for which zones touch. Given a seed
+//     zone + "max locations/shift", we grow a connected cluster from the
+//     graph and feed it to the scheduler.
+//   · The "Not feasible" panel explains, per excluded test, exactly what the
+//     current inputs are missing — especially which access zones to add.
+// ==========================================================================
+
+// Undirected adjacency map for a phase: zone -> Set(neighbours).
+function _dynAdjacencyMap(phase) {
+  const m = new Map();
+  const add = (a, b) => { if (!m.has(a)) m.set(a, new Set()); m.get(a).add(b); };
+  for (const e of (_dynPage.adjacency || [])) {
+    if (phase && e.phase && e.phase !== phase) continue;
+    if (!e.zone_a || !e.zone_b) continue;
+    add(e.zone_a, e.zone_b); add(e.zone_b, e.zone_a);
+  }
+  return m;
+}
+
+// Grow a connected zone cluster from seed zones along the track plan, breadth
+// first, until it reaches `max` zones (or the graph is exhausted).
+function _dynExpandZones(seeds, max, phase) {
+  const adj = _dynAdjacencyMap(phase);
+  const out = []; const seen = new Set();
+  const q = [];
+  for (const s of seeds) { if (!seen.has(s)) { seen.add(s); out.push(s); q.push(s); } }
+  while (q.length && out.length < max) {
+    const cur = q.shift();
+    const nbrs = [...(adj.get(cur) || [])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    for (const n of nbrs) {
+      if (out.length >= max) break;
+      if (!seen.has(n)) { seen.add(n); out.push(n); q.push(n); }
+    }
+  }
+  return out;
+}
+
+// Client-side mirror of vw_test_case_completion for dynamic cases:
+// a case is complete when it has ≥1 instance and all are Pass / Not Applicable.
+function _dynCaseComplete(testId) {
+  const inst = (_dynPage.instances || []).filter(i => i.test_id === testId);
+  if (!inst.length) return false;
+  return inst.every(i => i.status === 'Pass' || i.status === 'Not Applicable');
+}
+function _dynPrereqsMet(testId) {
+  const edges = (_dynPage.prereqs || []).filter(p => p.test_id === testId);
+  return edges.every(e => _dynCaseComplete(e.prerequisite_test_id));
+}
+
+// What is each excluded test missing, given the current inputs? Returns rows
+// for non-terminal instances that the feasibility query would drop, with the
+// concrete fix — especially the access zones to add.
+function _dynPlanExcluded() {
+  const zones = _dynPage.planZones || [];
+  const zoneSet = new Set(zones);
+  const modes = _dynPage.planModes || [];
+  const winMin = _dynWindowMinutes(_dynPage.planStart, _dynPage.planEnd);
+  const maxTrains = _dynPage.planMaxTrains ? parseInt(_dynPage.planMaxTrains, 10) : null;
+  const feasibleIds = new Set((_dynPage.planFeasible || []).map(r => r.instance_id));
+  const terminal = new Set(['Pass', 'Fail', 'Not Applicable']);
+  const out = [];
+  for (const i of (_dynPage.instances || [])) {
+    if (terminal.has(i.status)) continue;
+    if (feasibleIds.has(i.id)) continue;                 // already shown as feasible
+    const reasons = [];
+    let addZones = [];
+    // Zone under test not selected
+    if (i.track_section_under_test && zones.length && !zoneSet.has(i.track_section_under_test)) {
+      reasons.push({ type: 'zone', label: `zone ${i.track_section_under_test} not selected` });
+      addZones.push(i.track_section_under_test);
+    }
+    // Access scope: required zones missing from the selection
+    const missing = (i.track_section_access_req || []).filter(z => zones.length && !zoneSet.has(z));
+    if (missing.length) {
+      reasons.push({ type: 'access', label: `needs access: ${missing.join(', ')}` });
+      addZones.push(...missing);
+    }
+    // Mode
+    if (i.required_mode && modes.length && !modes.includes(i.required_mode)) {
+      reasons.push({ type: 'mode', label: `needs ${i.required_mode} mode` });
+    }
+    // Duration vs window
+    if (winMin > 0 && i.expected_duration_minutes && i.expected_duration_minutes > winMin) {
+      reasons.push({ type: 'window', label: `needs ≥ ${i.expected_duration_minutes} min window` });
+    }
+    // Trains
+    if (maxTrains != null && (i.trains_needed || 1) > maxTrains) {
+      reasons.push({ type: 'trains', label: `needs ${i.trains_needed} trains` });
+    }
+    if (!reasons.length) continue;                       // would be feasible — skip
+    addZones = [...new Set(addZones)].filter(z => !zoneSet.has(z));
+    out.push({ inst: i, reasons, addZones });
+  }
+  // Surface access-only fixes first (a single click adds the zones).
+  const rank = r => r.reasons.every(x => x.type === 'zone' || x.type === 'access') ? 0 : 1;
+  out.sort((a, b) => rank(a) - rank(b) || (a.inst.code || '').localeCompare(b.inst.code || ''));
+  return out;
+}
+
+function _dynPlanAddZones(codesCsv) {
+  const codes = codesCsv.split(',').map(s => s.trim()).filter(Boolean);
+  const next = new Set(_dynPage.planZones);
+  codes.forEach(c => next.add(c));
+  _dynPage.planZones = [...next];
+  _dynPage.planFeasible = [];
+  _dynPage.planSelected.clear();
+  _dynPlanRun();
+}
+
+// Auto-fill zones: grow the current selection along the track plan up to the
+// max-locations budget, then re-run feasibility.
+function _dynPlanAutoFill() {
+  const max = parseInt(_dynPage.planMaxLocs, 10);
+  if (!max || max < 1) { toast('Set "Max locations/shift" first', 'error'); return; }
+  if (!_dynPage.planZones.length) { toast('Pick at least one seed zone to expand from', 'error'); return; }
+  const expanded = _dynExpandZones(_dynPage.planZones, max, 'Phase 2');
+  if (expanded.length === _dynPage.planZones.length) {
+    toast('No further adjacent zones in the track plan', 'info');
+  }
+  _dynPage.planZones = expanded;
+  _dynPage.planFeasible = [];
+  _dynPage.planSelected.clear();
+  _dynPlanRun();
+}
+
+// Auto-schedule: try every seed zone, grow a cluster to the location budget,
+// score it by how many prereq-met instances fit the window, pick the best
+// cluster, run it, and pre-select a greedy time-fitting set for review.
+async function _dynPlanAutoSchedule() {
+  const max = parseInt(_dynPage.planMaxLocs, 10) || (_dynPage.planZones.length || 1);
+  const winMin = _dynWindowMinutes(_dynPage.planStart, _dynPage.planEnd);
+  if (winMin <= 0) { toast('Set a valid window first', 'error'); return; }
+  const modes = _dynPage.planModes || [];
+  const maxTrains = _dynPage.planMaxTrains ? parseInt(_dynPage.planMaxTrains, 10) : null;
+  const terminal = new Set(['Pass', 'Fail', 'Not Applicable']);
+
+  // Candidate seeds: the user's current zones, else every zone in the track plan.
+  const adj = _dynAdjacencyMap('Phase 2');
+  const seeds = _dynPage.planZones.length ? _dynPage.planZones : [...adj.keys()];
+  if (!seeds.length) { toast('No track plan defined — open Track Plan to add adjacencies', 'error'); return; }
+
+  const fitsCluster = (zoneSet) => {
+    // prereq-met, non-terminal instances feasible within this cluster
+    const ok = [];
+    for (const i of (_dynPage.instances || [])) {
+      if (terminal.has(i.status)) continue;
+      if (i.track_section_under_test && !zoneSet.has(i.track_section_under_test)) continue;
+      if ((i.track_section_access_req || []).some(z => !zoneSet.has(z))) continue;
+      if (i.required_mode && modes.length && !modes.includes(i.required_mode)) continue;
+      if (i.expected_duration_minutes && i.expected_duration_minutes > winMin) continue;
+      if (maxTrains != null && (i.trains_needed || 1) > maxTrains) continue;
+      if (!_dynPrereqsMet(i.test_id)) continue;
+      ok.push(i);
+    }
+    return ok;
+  };
+
+  let best = null;
+  for (const s of seeds) {
+    const cluster = _dynExpandZones([s], max, 'Phase 2');
+    const set = new Set(cluster);
+    const fit = fitsCluster(set);
+    const totalMin = fit.reduce((a, i) => a + (i.expected_duration_minutes || 0), 0);
+    const score = fit.length * 1000 + Math.min(totalMin, winMin);
+    if (!best || score > best.score) best = { cluster, fit, score };
+  }
+  if (!best || !best.fit.length) {
+    toast('No prereq-met instances fit any cluster — try a longer window or complete prerequisites', 'error');
+    return;
+  }
+  _dynPage.planZones = best.cluster;
+  _dynPage.planFeasible = [];
+  _dynPage.planSelected.clear();
+  await _dynPlanRun();
+
+  // Greedily pre-select feasible rows (highest score first) until the window fills.
+  const rows = (_dynPage.planFeasible || []).filter(r => r.prerequisites_met)
+    .sort((a, b) => (b.score || 0) - (a.score || 0));
+  let used = 0;
+  _dynPage.planSelected.clear();
+  for (const r of rows) {
+    const d = r.expected_duration_minutes || 0;
+    if (used + d > winMin) continue;
+    _dynPage.planSelected.add(r.instance_id);
+    used += d;
+  }
+  _dynRenderPlanning();
+  toast(`Auto-scheduled ${_dynPage.planSelected.size} test(s) across ${best.cluster.join(', ')} (${(used/60).toFixed(1)} h)`, 'success');
+}
+
+// ── Track plan editor ───────────────────────────────────────────────────
+function _dynOpenTrackPlan() {
+  const phase = 'Phase 2';
+  const edges = (_dynPage.adjacency || []).filter(e => !e.phase || e.phase === phase)
+    .sort((a, b) => (a.zone_a || '').localeCompare(b.zone_a || '', undefined, { numeric: true }));
+  const zoneOpts = _dynAccZoneOptions();
+  const adj = _dynAdjacencyMap(phase);
+  const summary = [...adj.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .map(z => `<div style="font-size:12px;padding:3px 0;"><b style="font-family:monospace;">${escapeHtml(z)}</b> — ${[...adj.get(z)].sort().map(n => escapeHtml(n)).join(', ')}</div>`).join('') || '<div style="color:var(--gray-500);font-size:12px;">No adjacencies yet.</div>';
+  const fld = 'padding:6px 8px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;';
+  const edgeRows = edges.length ? edges.map(e => `
+    <tr style="border-top:1px solid var(--gray-100);">
+      <td style="padding:6px 10px;font-family:monospace;">${escapeHtml(e.zone_a)} — ${escapeHtml(e.zone_b)}</td>
+      <td style="padding:6px 10px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 8px;color:#dc2626;" onclick="_dynTrackPlanDelete('${e.id}')">Remove</button></td>
+    </tr>`).join('') : `<tr><td colspan="2" style="padding:16px;text-align:center;color:var(--gray-500);">No edges yet.</td></tr>`;
+  modal({
+    title: 'Track plan — Phase 2 adjacency',
+    sub: 'Define which zones physically connect. The scheduler grows from a seed zone along these edges up to your max-locations budget.',
+    size: 'large',
+    body: `
+      <div style="padding:8px 22px 16px;display:grid;grid-template-columns:1fr 1fr;gap:18px;">
+        <div>
+          <div style="font-size:12px;font-weight:700;color:var(--gray-600);margin-bottom:6px;">EDGES</div>
+          <table style="width:100%;border-collapse:collapse;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;font-size:12px;">
+            <tbody>${edgeRows}</tbody>
+          </table>
+          <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end;">
+            <div><label style="font-size:11px;">Zone A</label><select id="tp-a" style="${fld}width:100%;">${zoneOpts.map(o=>`<option value="${escapeHtml(o.code)}">${escapeHtml(o.code)}</option>`).join('')}</select></div>
+            <div><label style="font-size:11px;">Zone B</label><select id="tp-b" style="${fld}width:100%;">${zoneOpts.map(o=>`<option value="${escapeHtml(o.code)}">${escapeHtml(o.code)}</option>`).join('')}</select></div>
+            <button class="dyn-btn primary" onclick="_dynTrackPlanAdd()">+ Add</button>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:12px;font-weight:700;color:var(--gray-600);margin-bottom:6px;">ADJACENCY</div>
+          <div style="border:1px solid var(--gray-200);border-radius:6px;padding:10px 12px;background:var(--gray-50);">${summary}</div>
+        </div>
+      </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
+}
+
+async function _dynTrackPlanAdd() {
+  const a = document.getElementById('tp-a')?.value;
+  const b = document.getElementById('tp-b')?.value;
+  if (!a || !b || a === b) { toast('Pick two different zones', 'error'); return; }
+  const exists = (_dynPage.adjacency || []).some(e =>
+    (e.phase === 'Phase 2' || !e.phase) &&
+    ((e.zone_a === a && e.zone_b === b) || (e.zone_a === b && e.zone_b === a)));
+  if (exists) { toast('That edge already exists', 'info'); return; }
+  try {
+    const ins = await _dbInsert('zone_adjacency', [{ phase: 'Phase 2', zone_a: a, zone_b: b,
+      created_by: currentRoleUser?.email || currentRoleUser?.id || null }]);
+    const row = Array.isArray(ins) ? ins[0] : ins;
+    if (row) (_dynPage.adjacency = _dynPage.adjacency || []).push(row);
+    _dynOpenTrackPlan();
+    toast('Edge added', 'success');
+  } catch (e) { alert(`Add failed: ${e.message}`); }
+}
+
+async function _dynTrackPlanDelete(id) {
+  try {
+    await _dbDelete('zone_adjacency', { id });
+    _dynPage.adjacency = (_dynPage.adjacency || []).filter(e => e.id !== id);
+    _dynOpenTrackPlan();
+    toast('Edge removed', 'success');
+  } catch (e) { alert(`Delete failed: ${e.message}`); }
 }
 
 // ── Zone access windows admin (lightweight CRUD inside the planning tab) ────
