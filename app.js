@@ -28683,10 +28683,12 @@ async function openFormViewer(formId, backTo = null) {
       </div>
     `,
     footer: `
-      ${backTo ? `<button class="form-secondary" onclick="_fpBackToForms('${escapeHtml(String(backTo.testId))}','${escapeHtml(String(backTo.assetId || ''))}')">← Back to Forms</button>` : ''}
-      <button class="form-secondary" onclick="closeFormViewer()">Close</button>
-      <button class="form-secondary" onclick="downloadFormPDF('${form.id}')">↓ Download</button>
-      <button class="form-submit" id="form-viewer-save" onclick="saveFormPDF('${form.id}')">Save</button>
+      <div class="pdf-viewer-actions" style="display:flex;gap:6px;width:100%;">
+        ${backTo ? `<button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" onclick="_fpBackToForms('${escapeHtml(String(backTo.testId))}','${escapeHtml(String(backTo.assetId || ''))}')">← Back</button>` : ''}
+        <button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" onclick="closeFormViewer()">Close</button>
+        <button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" onclick="downloadFormPDF('${form.id}')">↓ Download</button>
+        <button class="form-submit" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" id="form-viewer-save" onclick="saveFormPDF('${form.id}')">Save</button>
+      </div>
     `,
   });
 

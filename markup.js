@@ -295,9 +295,13 @@ class CXMarkupEngine {
   _stampMetrics(a) {
     const ctx = this.ctx;
     const s = a.scale || 1;
-    ctx.save(); ctx.font = '700 20px ' + STAMP_FONT;
-    const w = Math.max(96, ctx.measureText(a.kind).width + 28), h = 46;
+    ctx.save();
+    ctx.font = '700 18px ' + STAMP_FONT;
+    const wKind = ctx.measureText(a.kind || "").width;
+    ctx.font = '500 8.5px ' + STAMP_FONT;
+    const wSub = ctx.measureText((a.who || "") + "  " + (a.ts || "")).width;
     ctx.restore();
+    const w = Math.max(96, wKind + 28, wSub + 20), h = 46;   // fit the longest line
     return { w: w * s, h: h * s };
   }
   _drawStamp(a) {
@@ -898,11 +902,11 @@ function flattenIntoPdfPage(annos, page, opts = {}) {
         const def = STAMPS.find(s => s.k === a.kind) || STAMPS[0];
         const sc = col(def.c);
         const st = a.scale || 1;
-        const w = Math.max(96, (a.kind.length * 13) + 28) * st, h = 46 * st;
+        const sub = (a.who || "") + "  " + (a.ts || "");
+        const w = Math.max(96, (a.kind.length * 11) + 28, (sub.length * 5) + 20) * st, h = 46 * st;
         page.drawRectangle({ x: X(a.x - w / 2), y: Y(a.y + h / 2), width: w * sx, height: h * sy, color: rgb(1, 1, 1), opacity: 0.9, borderColor: sc, borderWidth: 2.5 * sx * st, borderOpacity: 1 });
         if (font) {
           page.drawText(a.kind, { x: X(a.x - (a.kind.length * 6 * st)), y: Y(a.y - 1 * st), size: 18 * sy * st, font, color: sc });
-          const sub = (a.who || "") + "  " + (a.ts || "");
           page.drawText(sub, { x: X(a.x - (sub.length * 2.5 * st)), y: Y(a.y + 14 * st), size: 8.5 * sy * st, font, color: sc });
         }
         break;
