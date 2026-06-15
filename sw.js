@@ -8,7 +8,7 @@
 //    so every deploy forces clients to fetch fresh assets. Manual bumps
 //    here are no longer required.
 
-const CACHE_VERSION = 'cxp-v68';
+const CACHE_VERSION = 'cxp-v69';
 const SHELL_CACHE   = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 

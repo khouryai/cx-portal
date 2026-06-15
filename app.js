@@ -29367,6 +29367,43 @@ function _pdfInferInputMode(name) {
   return null;
 }
 
+// Shrink an overlay field's font until its content fits (auto-fit), re-running
+// on input so size grows back as text is deleted. Textareas wrap (multi-line);
+// single-line inputs shrink to fit width.
+function _pdfAutoFitField(el) {
+  if (!el) return;
+  const area = el.tagName === 'TEXTAREA';
+  let f = Math.max(8, Math.min(18, parseFloat(el.dataset.maxFont) || parseFloat(el.style.fontSize) || 14));
+  el.style.fontSize = f + 'px';
+  const fits = () => area ? (el.scrollHeight <= el.clientHeight + 1) : (el.scrollWidth <= el.clientWidth + 1);
+  let guard = 0;
+  while (!fits() && f > 6 && guard++ < 48) { f -= 0.5; el.style.fontSize = f + 'px'; }
+}
+
+// Estimate a font size (pt) that fits `text` inside a field box for the flattened
+// PDF. Single-line shrinks to fit width; multi-line wraps and shrinks to height.
+function _pdfFitFontSize(text, box, multiline) {
+  const s = String(text == null ? '' : text);
+  const maxByH = Math.max(6, Math.min(13, box.height * (multiline ? 0.9 : 0.72)));
+  if (!s) return maxByH;
+  if (!multiline) {
+    const byW = (box.width - 4) / (Math.max(1, s.length) * 0.5);   // Helvetica avg advance ~0.5em
+    return Math.max(6, Math.min(maxByH, byW));
+  }
+  const cpl = (size) => Math.max(1, Math.floor((box.width - 4) / (size * 0.5)));
+  const linesAt = (size) => {
+    let lines = 0;
+    for (const para of s.split(/\n/)) lines += Math.max(1, Math.ceil(para.length / cpl(size)));
+    return lines;
+  };
+  let size = maxByH;
+  for (let i = 0; i < 40 && size > 6; i++) {
+    if (linesAt(size) * size * 1.2 <= box.height - 2) break;
+    size -= 0.5;
+  }
+  return Math.max(6, size);
+}
+
 function _renderPdfFieldControl(overlay, layout, viewport) {
   const [x1, y1, x2, y2] = layout.rect;
   const tl = viewport.convertToViewportPoint(x1, y2);
@@ -29391,8 +29428,11 @@ function _renderPdfFieldControl(overlay, layout, viewport) {
       target: el,
     }));
   } else if (layout.kind === 'text' || layout.kind === 'textarea') {
-    el = layout.kind === 'textarea' ? document.createElement('textarea') : document.createElement('input');
-    if (layout.kind === 'text') el.type = 'text';
+    // Treat tall text fields as wrapping multi-line boxes even if the PDF
+    // didn't flag them, so notes/remarks wrap instead of overflowing.
+    const _wrap = layout.kind === 'textarea' || height >= 30;
+    el = _wrap ? document.createElement('textarea') : document.createElement('input');
+    if (!_wrap) el.type = 'text';
     el.value = hasSavedValue ? savedFields[fieldName] : (layout.fieldValue || '');
     const im = _pdfInferInputMode(fieldName);
     if (im) el.inputMode = im;
@@ -29416,13 +29456,20 @@ function _renderPdfFieldControl(overlay, layout, viewport) {
     el.addEventListener('change', _pdfMarkDirty);
   } else { return; }
   if (!el.dataset.pdfSignatureField) el.dataset.pdfFieldName = fieldName;
-  const fontPx = Math.max(11, Math.min(16, height * 0.65));
+  const fontPx = Math.max(8, Math.min(16, height * 0.7));
   el.className = (el.className ? el.className + ' ' : '') + 'pdf-field-input';
   el.style.cssText = `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;font-size:${fontPx}px;`;
   if (layout.readOnly && !el.dataset.pdfSignatureField) { el.disabled = true; el.classList.add('readonly'); }
   const savedSig = editState.signatures?.[fieldName]?.dataUrl;
   if (savedSig && el.dataset.pdfSignatureField) _setSignatureFieldPreview(el, savedSig);
   overlay.appendChild(el);
+  if (el.tagName === 'INPUT' && el.type === 'text' || el.tagName === 'TEXTAREA') {
+    el.dataset.maxFont = String(fontPx);
+    if (el.tagName === 'TEXTAREA') { el.style.whiteSpace = 'pre-wrap'; el.style.overflow = 'hidden'; el.style.resize = 'none'; el.setAttribute('wrap', 'soft'); }
+    else { el.style.whiteSpace = 'nowrap'; }
+    el.addEventListener('input', () => _pdfAutoFitField(el));
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => _pdfAutoFitField(el)); else _pdfAutoFitField(el);
+  }
   _pdfViewerState?.renderedLayoutIds?.add(_pdfLayoutId(layout));
 }
 
@@ -29715,6 +29762,10 @@ function _setExistingPdfFieldValue(acroForm, layout, value) {
   catch { return false; }
   try {
     if (layout.kind === 'text' || layout.kind === 'textarea') {
+      const box = _pdfRectBox(layout.rect);
+      const multiline = layout.kind === 'textarea' || box.height >= 26;
+      if (multiline) { try { field.enableMultiline(); } catch (_) {} }
+      try { field.setFontSize(_pdfFitFontSize(value, box, multiline)); } catch (_) {}
       field.setText(String(value ?? ''));
       return true;
     }
@@ -29753,9 +29804,10 @@ async function _addDownloadStateFields(doc, acroForm, state) {
       if (_setExistingPdfFieldValue(acroForm, layout, value)) return;
       if (layout.kind === 'text' || layout.kind === 'textarea') {
         const field = acroForm.createTextField(fieldName);
-        if (layout.kind === 'textarea') field.enableMultiline();
+        const _multi = layout.kind === 'textarea' || box.height >= 26;
+        if (_multi) field.enableMultiline();
+        field.setFontSize(_pdfFitFontSize(value, box, _multi));
         field.setText(String(value ?? ''));
-        field.setFontSize(Math.max(8, Math.min(12, box.height * 0.55)));
         field.addToPage(page, {
           x: box.x, y: box.y, width: box.width, height: box.height,
           textColor: fontColor,
