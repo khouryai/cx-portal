@@ -734,17 +734,6 @@ function injectStyles() {
   .cx-mk-chip{padding:6px 9px;border-radius:7px;font:700 11px/1 ${STAMP_FONT};letter-spacing:.05em;color:#fff;
     cursor:pointer;border:1px solid rgba(0,0,0,.08);}
   .cx-mk-chip.active{outline:2px solid var(--text,#0f172a);outline-offset:1px;}
-  /* Mobile: compact single scrollable row of icons so the PDF stays visible. */
-  @media (max-width: 720px) {
-    .cx-mk-bar{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;gap:3px;padding:4px;scrollbar-width:none;}
-    .cx-mk-bar::-webkit-scrollbar{display:none;}
-    .cx-mk-tool{min-width:34px;height:34px;padding:0 4px;font-size:0;gap:0;flex:0 0 auto;}
-    .cx-mk-tool .icon-svg{width:18px;height:18px;}
-    .cx-mk-tool span{display:none;}
-    .cx-mk-sw{width:20px;height:20px;flex:0 0 auto;}
-    .cx-mk-wp{min-width:24px;height:24px;flex:0 0 auto;}
-    .cx-mk-chip{padding:5px 7px;font-size:10px;flex:0 0 auto;}
-  }
   `;
   const s = document.createElement("style");
   s.id = "cx-markup-styles"; s.textContent = css;
