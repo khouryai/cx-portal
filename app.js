@@ -34204,7 +34204,6 @@ const _dynPage = {
   planEnd: '',                           // window end
   planModes: ['CBTC','VATC'],            // allowed modes filter
   planMaxTrains: '',                     // optional train budget cap
-  planMaxLocs: '',                       // max locations/zones per shift (track-plan auto-expand)
   adjacency: [],                         // zone_adjacency rows (track plan)
   prereqs: [],                           // test_item_prerequisites rows (test-case edges)
   planFeasible: [],                      // last fn_feasible_instances result
@@ -37747,19 +37746,11 @@ function _dynRenderPlanning() {
         <input type="number" min="1" style="width:70px;" placeholder="any" value="${escapeHtml(_dynPage.planMaxTrains)}"
                oninput="_dynPage.planMaxTrains=this.value;">
       </label>
-      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
-        Max locations/shift
-        <input type="number" min="1" style="width:70px;" placeholder="any" value="${escapeHtml(_dynPage.planMaxLocs)}"
-               oninput="_dynPage.planMaxLocs=this.value;">
-      </label>
       <button class="dyn-btn primary" onclick="_dynPlanRun()">Compute feasible</button>
       <button class="dyn-btn" onclick="_dynAutoAllocateRun()" title="Cascade-allocate unscheduled runs across this campaign's access windows, prerequisites first">Auto-allocate campaign</button>
       <button class="dyn-btn" onclick="_dynProgramAllocateRun()" title="Allocate across ALL active campaigns at once — prerequisites order across campaigns (DCS→CBTC→ATC)">Program allocate (all)</button>
       <button class="dyn-btn" onclick="_dynWhatIfRun()" title="Project how many more runs you could schedule if the client extends the access window (e.g. 6 h)">What-if window</button>
-      <button class="dyn-btn" onclick="_dynPlanAutoFill()" title="Grow the selected zones along the track plan up to the max-locations budget">↳ Auto-fill zones</button>
-      <button class="dyn-btn" onclick="_dynPlanAutoSchedule()" title="Pick the best adjacent cluster and pre-select a window-filling set">${icon('zap')} Auto-schedule</button>
       <span style="flex:1;"></span>
-      <button class="dyn-btn" onclick="_dynOpenTrackPlan()">${icon('git-branch')} Track Plan</button>
       <button class="dyn-btn" onclick="_dynPlanOpenWindowsAdmin()">${icon('settings')} Manage Windows</button>
     </div>
 
@@ -37794,58 +37785,7 @@ function _dynRenderPlanning() {
             <button class="dyn-btn primary" ${selected.length===0?'disabled':''} onclick="_dynPlanCommit()">${icon('calendar')} Schedule${selected.length?` ${selected.length}`:''}</button>
           </div>
           ${_dynRenderPlanningTable()}`}
-    ${(!_dynPage.planLoading && _dynPage.planZones.length) ? _dynRenderPlanExcluded() : ''}
   `;
-}
-
-// "Not feasible" panel — every non-terminal test the current inputs leave out,
-// with the concrete fix. Access-scope gaps get a one-click "add zones" button.
-function _dynRenderPlanExcluded() {
-  const ex = _dynPlanExcluded();
-  if (!ex.length) {
-    return `<div style="margin-top:14px;font-size:12px;color:var(--good);">✓ Nothing left out — every eligible test in these zones is in the feasible list.</div>`;
-  }
-  // One-click set: union of all addable zones across access-blocked rows.
-  const allAdd = [...new Set(ex.flatMap(r => r.addZones))];
-  const rows = ex.map(r => {
-    const i = r.inst;
-    const chips = r.reasons.map(rs => {
-      const tone = rs.type === 'access' || rs.type === 'zone' ? { bg: '#fef3c7', fg: '#92400e' }
-        : rs.type === 'mode' ? { bg: '#ede9fe', fg: '#6d28d9' }
-        : rs.type === 'window' ? { bg: '#e0f2fe', fg: '#0369a1' }
-        : { bg: '#fee2e2', fg: '#b91c1c' };
-      return `<span class="tag" style="background:${tone.bg};color:${tone.fg};border-color:transparent;">${escapeHtml(rs.label)}</span>`;
-    }).join(' ');
-    const fix = r.addZones.length
-      ? `<button class="dyn-btn" style="font-size:11px;padding:3px 8px;" onclick="_dynPlanAddZones('${escapeHtml(r.addZones.join(','))}')">+ add ${escapeHtml(r.addZones.join(', '))}</button>`
-      : '<span style="color:var(--gray-400);font-size:11px;">—</span>';
-    return `<tr style="border-top:1px solid var(--gray-100);">
-      <td style="padding:6px 10px;font-family:monospace;font-size:11.5px;">${escapeHtml(i.code || '—')}</td>
-      <td style="padding:6px 10px;font-size:12px;">${escapeHtml(i.title || i.test_id || '—')}</td>
-      <td style="padding:6px 10px;font-family:monospace;font-size:11.5px;">${escapeHtml(i.track_section_under_test || '—')}</td>
-      <td style="padding:6px 10px;">${chips}</td>
-      <td style="padding:6px 10px;text-align:right;">${fix}</td>
-    </tr>`;
-  }).join('');
-  return `
-    <div style="margin-top:18px;background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
-      <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#fffbeb;border-bottom:1px solid #fde68a;">
-        <b style="font-size:13px;color:#92400e;">${icon('alert')} Not feasible with current inputs (${ex.length})</b>
-        <span style="font-size:11.5px;color:var(--gray-600);">What each is missing — most are an access-scope gap.</span>
-        <span style="flex:1;"></span>
-        ${allAdd.length ? `<button class="dyn-btn" style="font-size:11.5px;" onclick="_dynPlanAddZones('${escapeHtml(allAdd.join(','))}')">+ Add all missing zones (${escapeHtml(allAdd.join(', '))})</button>` : ''}
-      </div>
-      <table style="width:100%;border-collapse:collapse;font-size:12px;">
-        <thead><tr style="background:var(--gray-50);">
-          <th style="text-align:left;padding:6px 10px;">Code</th>
-          <th style="text-align:left;padding:6px 10px;">Title</th>
-          <th style="text-align:left;padding:6px 10px;">Zone</th>
-          <th style="text-align:left;padding:6px 10px;">Missing</th>
-          <th style="text-align:right;padding:6px 10px;">Fix</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`;
 }
 
 function _dynPlanSyncZones(sel) {
@@ -38022,22 +37962,88 @@ function _dynPlanSelectAll(on) {
   _dynRenderPlanning();
 }
 
+// Scheduling MUST tie to a campaign in the Access Plan. The user picks a
+// campaign; we auto-assign each selected instance to a fitting shift in it
+// (zone match + remaining capacity) — no manual per-shift picking.
 async function _dynPlanCommit() {
   const ids = [..._dynPage.planSelected];
   if (!ids.length) return;
-  if (!confirm(`Schedule ${ids.length} instance(s) into the ${_dynPage.planZones.join(', ') || 'selected'} window starting ${_dynPage.planStart}?`)) return;
-  const startISO = new Date(_dynPage.planStart).toISOString();
-  const endISO   = new Date(_dynPage.planEnd).toISOString();
-  const datePart = startISO.slice(0, 10);
-  try {
-    for (const id of ids) {
-      await _dbUpdate('dynamic_instances', {
-        scheduled_for_date: datePart,
-        scheduled_window: `[${startISO},${endISO})`,
-        updated_at: new Date().toISOString(),
-      }, { id });
+  const camps = (_dynPage.campaigns || []).filter(c => c.status !== 'closed');
+  if (!camps.length) {
+    toast('No active campaign — create one in Access Plan first. Scheduling must tie to a campaign.', 'error');
+    return;
+  }
+  const opts = camps.map((c, idx) => `
+    <label style="display:flex;gap:9px;align-items:flex-start;padding:9px 11px;border:1px solid var(--gray-200);border-radius:7px;margin-bottom:7px;cursor:pointer;">
+      <input type="radio" name="plan-camp" value="${escapeHtml(c.id)}" ${idx === 0 ? 'checked' : ''} style="margin-top:2px;">
+      <span>
+        <span style="font-weight:600;font-size:13px;">${escapeHtml(c.name)}</span>
+        <span style="display:block;font-size:11.5px;color:var(--gray-500);margin-top:2px;">
+          ${(c.zone_codes || []).join(', ')} · ${_dynFmtDate(c.start_date)} → ${_dynFmtDate(c.end_date)}
+        </span>
+      </span>
+    </label>`).join('');
+  modal({
+    title: `Schedule ${ids.length} test${ids.length === 1 ? '' : 's'} into a campaign`,
+    sub: 'Tests are auto-assigned to fitting access-day shifts in the campaign you pick',
+    body: `<div style="padding:8px 22px 14px;">
+      <div style="font-size:12px;color:var(--gray-600);margin-bottom:10px;">Each selected test is placed on the earliest shift in this campaign whose zone matches and still has time — by access-day, no manual picking.</div>
+      ${opts}
+    </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" onclick="_dynPlanCommitToCampaign()">Auto-schedule into campaign</button>`,
+  });
+}
+
+async function _dynPlanCommitToCampaign() {
+  const campId = document.querySelector('input[name="plan-camp"]:checked')?.value;
+  if (!campId) { toast('Pick a campaign', 'error'); return; }
+  const camp = (_dynPage.campaigns || []).find(c => c.id === campId);
+  const campZones = new Set(camp?.zone_codes || []);
+  const ids = [..._dynPage.planSelected];
+  // Open shifts in this campaign, earliest first, with current time usage.
+  const shifts = (_dynPage.shifts || [])
+    .filter(s => s.campaign_id === campId && ['planned', 'confirmed'].includes(s.status))
+    .sort((a, b) => String(a.shift_date).localeCompare(String(b.shift_date)));
+  const used = new Map();
+  for (const s of shifts) {
+    used.set(s.id, (_dynPage.instances || []).filter(x => x.shift_id === s.id)
+      .reduce((a, x) => a + (x.expected_duration_minutes || 0), 0));
+  }
+  const selInstances = ids.map(id => (_dynPage.instances || []).find(x => x.id === id)).filter(Boolean)
+    .sort((a, b) => (b.expected_duration_minutes || 0) - (a.expected_duration_minutes || 0)); // pack big first
+  const placed = [], unplaced = [];
+  for (const inst of selInstances) {
+    if ((inst.track_section_access_req || []).some(z => !campZones.has(z))) {
+      unplaced.push({ inst, why: `access ${(inst.track_section_access_req || []).filter(z => !campZones.has(z)).join(', ')} not in campaign` });
+      continue;
     }
-    toast(`Scheduled ${ids.length} instance(s)`, 'success');
+    const dur = inst.expected_duration_minutes || 0;
+    const shift = shifts.find(s => s.control_zone_code === inst.track_section_under_test
+      && (used.get(s.id) + dur) <= (_dynShiftMinutes(s) || 0));
+    if (!shift) { unplaced.push({ inst, why: `no shift with room for ${inst.track_section_under_test}` }); continue; }
+    used.set(shift.id, used.get(shift.id) + dur);
+    placed.push({ inst, shift });
+  }
+  if (!placed.length) {
+    toast(`Nothing scheduled — ${unplaced.length} test(s) had no fitting shift in ${camp?.name || 'campaign'}`, 'error');
+    return;
+  }
+  try {
+    for (const p of placed) {
+      await _dbUpdate('dynamic_instances', {
+        shift_id: p.shift.id,
+        scheduled_for_date: p.shift.shift_date,
+        scheduled_window: (p.shift.start_at && p.shift.end_at) ? `[${p.shift.start_at},${p.shift.end_at})` : null,
+        updated_at: new Date().toISOString(),
+      }, { id: p.inst.id });
+    }
+    closeModal();
+    toast(`Scheduled ${placed.length} into ${camp?.name}${unplaced.length ? ` · ${unplaced.length} couldn't fit` : ''}`, 'success');
+    if (unplaced.length) {
+      const lines = unplaced.slice(0, 8).map(u => `• ${u.inst.code || u.inst.test_id}: ${u.why}`).join('\n');
+      setTimeout(() => alert(`${unplaced.length} test(s) not scheduled:\n\n${lines}${unplaced.length > 8 ? '\n…' : ''}`), 100);
+    }
     _dynPage.planSelected.clear();
     _dynPage.loaded = false;
     await _dynLoadAll();
@@ -38749,14 +38755,20 @@ function _dynSimClosureCands(sc, zoneSet) {
   const push = g => { const k = g.slice().sort().join('|'); if (!seen.has(k)) { seen.add(k); cands.push(g.slice()); } };
   const groups = (sc.closureGroups || []).map(g => g.filter(z => zoneSet.has(z))).filter(g => g.length >= 1);
   if (groups.length) groups.forEach(push);
-  else _dynSimChains(sc.adjacency || [], zoneSet, 4).forEach(push);   // fallback: ≤4 chains
+  else _dynSimChains(_dynSimAdjPairs(sc), zoneSet, 4).forEach(push);   // fallback: ≤4 chains from track plan
   return cands;
+}
+// Adjacency for the simulator = the shared Track Plan for this phase; if none is
+// defined yet, fall back to the scenario's own pairs.
+function _dynSimAdjPairs(sc) {
+  const tp = _dynTrackPlanPairs(sc.phase);
+  return tp.length ? tp : (sc.adjacency || []);
 }
 function _dynSimPickZones(sc, remaining, isClosure) {
   const zset = new Set(sc.zones || []);
   const cands = isClosure
     ? _dynSimClosureCands(sc, zset)
-    : _dynSimChains(sc.adjacency || [], zset, Math.max(1, Math.min(5, sc.maxZonesPerShift || 2)));
+    : _dynSimChains(_dynSimAdjPairs(sc), zset, Math.max(1, Math.min(5, sc.maxZonesPerShift || 2)));
   let best = null, bestMin = 0;
   for (const cand of cands) {
     const set = new Set(cand);
@@ -38839,7 +38851,7 @@ function _dynSimRun(sc, prereqs) {
     s2.n++; zoneSpan.set(z, s2);
   }));
   return {
-    total, placed, unplaced: remaining.length, outOfScope,
+    total, placed, unplaced: remaining.length, unplacedList: remaining.slice(), outOfScope,
     completion, calDays, weeks: calDays ? Math.ceil(calDays / 7) : null,
     shifts: winLog.length, shiftsUsed: usedShifts.length,
     accessHours: +(availMin / 60).toFixed(1),
@@ -38935,8 +38947,15 @@ function _dynSimConfigHtml(sc, res) {
     const on = (sc.zones || []).includes(z);
     return `<button type="button" onclick="_dynSimToggleZone('${escapeHtml(z)}')" style="font-size:11px;padding:2px 8px;border-radius:5px;cursor:pointer;margin:2px;border:1px solid ${on ? 'var(--hitachi-red)' : 'var(--gray-300)'};background:${on ? 'rgba(230,0,18,.06)' : '#fff'};color:${on ? 'var(--hitachi-red)' : 'var(--gray-500)'};">${escapeHtml(z)}</button>`;
   }).join('');
-  const adjTxt = (sc.adjacency || []).map(p => p.join('-')).join(', ');
   const closTxt = (sc.closureGroups || []).map(p => p.join('-')).join(', ');
+  // Adjacency comes from the shared Track Plan now (not a per-scenario field).
+  const tpAdj = new Map();
+  for (const [a, b] of _dynSimAdjPairs(sc)) {
+    if (!tpAdj.has(a)) tpAdj.set(a, new Set()); tpAdj.get(a).add(b);
+    if (!tpAdj.has(b)) tpAdj.set(b, new Set()); tpAdj.get(b).add(a);
+  }
+  const tpSummary = [...tpAdj.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .map(z => `${z}↔${[...tpAdj.get(z)].sort().join('/')}`).join('  ·  ') || 'none defined';
   const weeks = res ? (res.weeks || 4) : 4;
   // An override hour input + a "×" that reverts it to the dash "—" (template).
   // Without this, typing 0 means "closed that day" with no way back to template.
@@ -38966,15 +38985,19 @@ function _dynSimConfigHtml(sc, res) {
     <div style="font-size:12px;color:var(--gray-600);margin-bottom:4px;">Locations in this simulation</div>
     <div style="margin-bottom:8px;">${zoneChips}</div>
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;font-size:12px;color:var(--gray-600);">
-      <label>Max locations / shift
+      <label title="Max access locations one shift can cover. A test that needs access to more locations than this can't be scheduled.">Max locations / shift
         <input type="number" min="1" max="5" value="${sc.maxZonesPerShift || 2}" style="${inp}margin-left:4px;" onchange="_dynSimField('maxZonesPerShift',Math.max(1,Math.min(5,parseInt(this.value,10)||1)))">
-        <span style="color:var(--gray-400);">consecutive</span>
+        <span style="color:var(--gray-400);">caps a test's access zones</span>
       </label>
     </div>
-    <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:10px;">Adjacent pairs <span style="color:var(--gray-400);">(may share a normal shift)</span>
-      <input type="text" value="${escapeHtml(adjTxt)}" style="display:block;width:100%;margin-top:3px;padding:5px 7px;border:1px solid var(--gray-300);border-radius:5px;font-size:11.5px;font-family:monospace;box-sizing:border-box;" onchange="_dynSimSetAdj(this.value)">
-    </label>
-    <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:10px;">Closure locations <span style="color:var(--gray-400);">(up to 4 consecutive, available during a closure — blank = auto from adjacency)</span>
+    <div style="margin-bottom:10px;font-size:12px;color:var(--gray-600);">
+      <div style="display:flex;align-items:center;gap:8px;">Adjacency <span style="color:var(--gray-400);">— from the shared Track Plan</span>
+        <span style="flex:1;"></span>
+        <button type="button" class="dyn-btn" style="font-size:11px;padding:3px 8px;" onclick="_dynOpenTrackPlan()">${icon('git-branch')} Edit track plan</button>
+      </div>
+      <div style="margin-top:5px;padding:6px 9px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:5px;font-size:10.5px;font-family:monospace;color:var(--gray-600);line-height:1.5;">${escapeHtml(tpSummary)}</div>
+    </div>
+    <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:10px;">Closure locations <span style="color:var(--gray-400);">(up to 4 consecutive, available during a closure — blank = auto from track plan)</span>
       <input type="text" value="${escapeHtml(closTxt)}" placeholder="e.g. W40-W34-W30-W10, Y10-W34-W30" style="display:block;width:100%;margin-top:3px;padding:5px 7px;border:1px solid var(--gray-300);border-radius:5px;font-size:11.5px;font-family:monospace;box-sizing:border-box;" onchange="_dynSimSetClosure(this.value)">
     </label>
     <div style="display:flex;gap:10px;margin-bottom:10px;font-size:12px;color:var(--gray-600);">
@@ -39002,6 +39025,60 @@ function _dynSimConfigHtml(sc, res) {
     <div style="font-size:10.5px;color:var(--gray-400);margin-top:6px;">${res ? res.closuresUsed : 0}/${sc.maxClosures ?? '∞'} closures · ${res ? res.extendedUsed : 0}/${sc.maxExtended ?? '∞'} extended weeks used.</div>`;
 }
 
+// "+N left" breakdown: for every run the simulation couldn't place, say WHY —
+// add-location, over max/shift, not adjacent in the track plan, prereq-blocked,
+// run-too-long, or simply no capacity in the horizon.
+function _dynSimUnplacedHtml(sc, res) {
+  const list = res.unplacedList || [];
+  if (!list.length) return '';
+  const maxZ = Math.max(1, Math.min(5, sc.maxZonesPerShift || 2));
+  const zset = new Set(sc.zones || []);
+  const chains = _dynSimChains(_dynSimAdjPairs(sc), zset, maxZ);   // candidate location sets
+  const horizonWk = Math.round(_DYN_SIM_HORIZON_DAYS / 7);
+  const wkVals = Object.values(sc.weekly || {}).map(Number).filter(n => n > 0);
+  const maxShiftMin = Math.max(0, ...wkVals, (sc.maxClosures > 0 ? 48 : 0)) * 60;
+  const codeFor = id => (_dynPage.testItemsById.get(id) || {}).code || id;
+
+  const rows = list.map(i => {
+    const req = [...new Set([i.track_section_under_test, ...(i.track_section_access_req || [])].filter(Boolean))];
+    const outside = req.filter(z => !zset.has(z));
+    let type, label, tone;
+    if (outside.length) { type = 'loc'; tone = { bg: '#fef3c7', fg: '#92400e' }; label = `add location(s): ${outside.join(', ')}`; }
+    else if (req.length > maxZ) { type = 'max'; tone = { bg: '#fde68a', fg: '#92400e' }; label = `needs ${req.length} locations — raise max (${maxZ})/shift`; }
+    else if (!chains.some(c => { const s = new Set(c); return req.every(z => s.has(z)); })) { type = 'adj'; tone = { bg: '#e0e7ff', fg: '#3730a3' }; label = `${req.join(', ')} not adjacent in track plan`; }
+    else if (!_dynPrereqsMet(i.test_id)) {
+      const unmet = [...new Set((_dynPage.prereqs || []).filter(p => p.test_id === i.test_id && !_dynCaseComplete(p.prerequisite_test_id)).map(p => codeFor(p.prerequisite_test_id)))];
+      type = 'prereq'; tone = { bg: '#ede9fe', fg: '#6d28d9' }; label = `blocked by prereq: ${unmet.join(', ') || '—'}`;
+    }
+    else if (i.expected_duration_minutes && maxShiftMin && i.expected_duration_minutes > maxShiftMin) { type = 'dur'; tone = { bg: '#e0f2fe', fg: '#0369a1' }; label = `run (${i.expected_duration_minutes}m) longer than any shift (${maxShiftMin / 60}h)`; }
+    else { type = 'cap'; tone = { bg: '#fee2e2', fg: '#b91c1c' }; label = `no capacity within ${horizonWk} weeks`; }
+    return { i, type, label, tone };
+  });
+  const order = ['loc', 'max', 'adj', 'prereq', 'dur', 'cap'];
+  rows.sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type) || (a.i.code || '').localeCompare(b.i.code || ''));
+  const counts = {}; rows.forEach(r => counts[r.type] = (counts[r.type] || 0) + 1);
+  const names = { loc: 'add location', max: 'over max/shift', adj: 'not adjacent', prereq: 'prereq blocked', dur: 'run too long', cap: 'no capacity' };
+  const summary = order.filter(t => counts[t]).map(t => `${counts[t]} ${names[t]}`).join(' · ');
+  const show = rows.slice(0, 40);
+  const body = show.map(r => `<tr style="border-top:1px solid var(--gray-100);">
+    <td style="padding:5px 9px;font-family:monospace;font-size:11px;">${escapeHtml(r.i.code || '—')}</td>
+    <td style="padding:5px 9px;font-size:11.5px;">${escapeHtml(r.i.title || r.i.test_id || '—')}</td>
+    <td style="padding:5px 9px;font-family:monospace;font-size:11px;">${escapeHtml(r.i.track_section_under_test || '—')}</td>
+    <td style="padding:5px 9px;"><span class="tag" style="background:${r.tone.bg};color:${r.tone.fg};border-color:transparent;">${escapeHtml(r.label)}</span></td>
+  </tr>`).join('');
+  return `<div style="margin-bottom:12px;background:white;border:1px solid #fecaca;border-radius:8px;overflow:hidden;">
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 13px;background:#fef2f2;border-bottom:1px solid #fecaca;flex-wrap:wrap;">
+      <b style="font-size:12.5px;color:#b91c1c;">${icon('alert')} ${res.unplaced} left unscheduled — why</b>
+      <span style="font-size:11px;color:var(--gray-600);">${escapeHtml(summary)}</span>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr style="background:var(--gray-50);"><th style="text-align:left;padding:5px 9px;">Code</th><th style="text-align:left;padding:5px 9px;">Test</th><th style="text-align:left;padding:5px 9px;">Zone</th><th style="text-align:left;padding:5px 9px;">What's missing</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+    ${rows.length > show.length ? `<div style="padding:6px 13px;font-size:11px;color:var(--gray-500);">+${rows.length - show.length} more…</div>` : ''}
+  </div>`;
+}
+
 // Results: KPIs + S-curve + baseline-vs-scenario Gantt + baseline-vs-scenario shifts.
 function _dynSimResultsHtml(sc, res, baseRes, baseline) {
   const kpi = (l, v, t) => `<div class="dyn-kpi" style="margin-right:0;"><span>${l}</span><b${t ? ` style="color:${t};"` : ''}>${v}</b></div>`;
@@ -39021,7 +39098,7 @@ function _dynSimResultsHtml(sc, res, baseRes, baseline) {
   return `
     ${kpiBlock}
     ${res.outOfScope ? `<div style="margin-bottom:10px;padding:7px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e;">${res.outOfScope} open run(s) are in locations OUTSIDE this scenario — add their locations to include them.</div>` : ''}
-    ${res.unplaced ? `<div style="margin-bottom:10px;padding:7px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#b91c1c;">${res.unplaced} run(s) could not be placed within ${Math.round(_DYN_SIM_HORIZON_DAYS / 7)} weeks — check adjacency vs their access requirements.</div>` : ''}
+    ${_dynSimUnplacedHtml(sc, res)}
     <div class="data-card" style="padding:12px 14px;margin-bottom:12px;">
       <div style="height:230px;"><canvas id="dyn-sim-chart"></canvas></div>
     </div>
@@ -39283,7 +39360,6 @@ function _dynSimParseGroups(txt, min, max) {
     .map(t => t.split(/[-+/ ]+/).map(x => x.trim().toUpperCase()).filter(Boolean))
     .filter(p => p.length >= min && p.length <= max);
 }
-function _dynSimSetAdj(txt) { const sc = _dynSimActive(); if (!sc) return; _dynSimPatch(sc.id, { adjacency: _dynSimParseGroups(txt, 2, 2) }); _dynRenderSimulator(); }
 function _dynSimSetClosure(txt) { const sc = _dynSimActive(); if (!sc) return; _dynSimPatch(sc.id, { closureGroups: _dynSimParseGroups(txt, 1, 4) }); _dynRenderSimulator(); }
 function _dynSimSetOv(wk, key, val) {
   const sc = _dynSimActive(); if (!sc) return;
@@ -39502,13 +39578,9 @@ async function _dynAutoAllocateCommit() {
 }
 
 // ==========================================================================
-// TRACK PLAN (zone adjacency) + UNSCHEDULED ANALYSIS + AUTO-SCHEDULE
-//
-//   · Adjacency is the source of truth for which zones touch. Given a seed
-//     zone + "max locations/shift", we grow a connected cluster from the
-//     graph and feed it to the scheduler.
-//   · The "Not feasible" panel explains, per excluded test, exactly what the
-//     current inputs are missing — especially which access zones to add.
+// TRACK PLAN (zone adjacency) — single source of truth for which zones touch.
+// Edited here, consumed by the Simulator to decide which locations can share a
+// shift. Also exposes prerequisite-completion helpers used across the module.
 // ==========================================================================
 
 // Undirected adjacency map for a phase: zone -> Set(neighbours).
@@ -39523,22 +39595,11 @@ function _dynAdjacencyMap(phase) {
   return m;
 }
 
-// Grow a connected zone cluster from seed zones along the track plan, breadth
-// first, until it reaches `max` zones (or the graph is exhausted).
-function _dynExpandZones(seeds, max, phase) {
-  const adj = _dynAdjacencyMap(phase);
-  const out = []; const seen = new Set();
-  const q = [];
-  for (const s of seeds) { if (!seen.has(s)) { seen.add(s); out.push(s); q.push(s); } }
-  while (q.length && out.length < max) {
-    const cur = q.shift();
-    const nbrs = [...(adj.get(cur) || [])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-    for (const n of nbrs) {
-      if (out.length >= max) break;
-      if (!seen.has(n)) { seen.add(n); out.push(n); q.push(n); }
-    }
-  }
-  return out;
+// Track-plan adjacency as [[a,b],…] pairs for a phase (consumed by the Simulator).
+function _dynTrackPlanPairs(phase) {
+  return (_dynPage.adjacency || [])
+    .filter(e => (!phase || !e.phase || e.phase === phase) && e.zone_a && e.zone_b)
+    .map(e => [e.zone_a, e.zone_b]);
 }
 
 // Client-side mirror of vw_test_case_completion for dynamic cases:
@@ -39551,147 +39612,6 @@ function _dynCaseComplete(testId) {
 function _dynPrereqsMet(testId) {
   const edges = (_dynPage.prereqs || []).filter(p => p.test_id === testId);
   return edges.every(e => _dynCaseComplete(e.prerequisite_test_id));
-}
-
-// What is each excluded test missing, given the current inputs? Returns rows
-// for non-terminal instances that the feasibility query would drop, with the
-// concrete fix — especially the access zones to add.
-function _dynPlanExcluded() {
-  const zones = _dynPage.planZones || [];
-  const zoneSet = new Set(zones);
-  const modes = _dynPage.planModes || [];
-  const winMin = _dynWindowMinutes(_dynPage.planStart, _dynPage.planEnd);
-  const maxTrains = _dynPage.planMaxTrains ? parseInt(_dynPage.planMaxTrains, 10) : null;
-  const feasibleIds = new Set((_dynPage.planFeasible || []).map(r => r.instance_id));
-  const terminal = new Set(['Pass', 'Fail', 'Not Applicable']);
-  const out = [];
-  for (const i of (_dynPage.instances || [])) {
-    if (terminal.has(i.status)) continue;
-    if (feasibleIds.has(i.id)) continue;                 // already shown as feasible
-    const reasons = [];
-    let addZones = [];
-    // Zone under test not selected
-    if (i.track_section_under_test && zones.length && !zoneSet.has(i.track_section_under_test)) {
-      reasons.push({ type: 'zone', label: `zone ${i.track_section_under_test} not selected` });
-      addZones.push(i.track_section_under_test);
-    }
-    // Access scope: required zones missing from the selection
-    const missing = (i.track_section_access_req || []).filter(z => zones.length && !zoneSet.has(z));
-    if (missing.length) {
-      reasons.push({ type: 'access', label: `needs access: ${missing.join(', ')}` });
-      addZones.push(...missing);
-    }
-    // Mode
-    if (i.required_mode && modes.length && !modes.includes(i.required_mode)) {
-      reasons.push({ type: 'mode', label: `needs ${i.required_mode} mode` });
-    }
-    // Duration vs window
-    if (winMin > 0 && i.expected_duration_minutes && i.expected_duration_minutes > winMin) {
-      reasons.push({ type: 'window', label: `needs ≥ ${i.expected_duration_minutes} min window` });
-    }
-    // Trains
-    if (maxTrains != null && (i.trains_needed || 1) > maxTrains) {
-      reasons.push({ type: 'trains', label: `needs ${i.trains_needed} trains` });
-    }
-    if (!reasons.length) continue;                       // would be feasible — skip
-    addZones = [...new Set(addZones)].filter(z => !zoneSet.has(z));
-    out.push({ inst: i, reasons, addZones });
-  }
-  // Surface access-only fixes first (a single click adds the zones).
-  const rank = r => r.reasons.every(x => x.type === 'zone' || x.type === 'access') ? 0 : 1;
-  out.sort((a, b) => rank(a) - rank(b) || (a.inst.code || '').localeCompare(b.inst.code || ''));
-  return out;
-}
-
-function _dynPlanAddZones(codesCsv) {
-  const codes = codesCsv.split(',').map(s => s.trim()).filter(Boolean);
-  const next = new Set(_dynPage.planZones);
-  codes.forEach(c => next.add(c));
-  _dynPage.planZones = [...next];
-  _dynPage.planFeasible = [];
-  _dynPage.planSelected.clear();
-  _dynPlanRun();
-}
-
-// Auto-fill zones: grow the current selection along the track plan up to the
-// max-locations budget, then re-run feasibility.
-function _dynPlanAutoFill() {
-  const max = parseInt(_dynPage.planMaxLocs, 10);
-  if (!max || max < 1) { toast('Set "Max locations/shift" first', 'error'); return; }
-  if (!_dynPage.planZones.length) { toast('Pick at least one seed zone to expand from', 'error'); return; }
-  const expanded = _dynExpandZones(_dynPage.planZones, max, 'Phase 2');
-  if (expanded.length === _dynPage.planZones.length) {
-    toast('No further adjacent zones in the track plan', 'info');
-  }
-  _dynPage.planZones = expanded;
-  _dynPage.planFeasible = [];
-  _dynPage.planSelected.clear();
-  _dynPlanRun();
-}
-
-// Auto-schedule: try every seed zone, grow a cluster to the location budget,
-// score it by how many prereq-met instances fit the window, pick the best
-// cluster, run it, and pre-select a greedy time-fitting set for review.
-async function _dynPlanAutoSchedule() {
-  const max = parseInt(_dynPage.planMaxLocs, 10) || (_dynPage.planZones.length || 1);
-  const winMin = _dynWindowMinutes(_dynPage.planStart, _dynPage.planEnd);
-  if (winMin <= 0) { toast('Set a valid window first', 'error'); return; }
-  const modes = _dynPage.planModes || [];
-  const maxTrains = _dynPage.planMaxTrains ? parseInt(_dynPage.planMaxTrains, 10) : null;
-  const terminal = new Set(['Pass', 'Fail', 'Not Applicable']);
-
-  // Candidate seeds: the user's current zones, else every zone in the track plan.
-  const adj = _dynAdjacencyMap('Phase 2');
-  const seeds = _dynPage.planZones.length ? _dynPage.planZones : [...adj.keys()];
-  if (!seeds.length) { toast('No track plan defined — open Track Plan to add adjacencies', 'error'); return; }
-
-  const fitsCluster = (zoneSet) => {
-    // prereq-met, non-terminal instances feasible within this cluster
-    const ok = [];
-    for (const i of (_dynPage.instances || [])) {
-      if (terminal.has(i.status)) continue;
-      if (i.track_section_under_test && !zoneSet.has(i.track_section_under_test)) continue;
-      if ((i.track_section_access_req || []).some(z => !zoneSet.has(z))) continue;
-      if (i.required_mode && modes.length && !modes.includes(i.required_mode)) continue;
-      if (i.expected_duration_minutes && i.expected_duration_minutes > winMin) continue;
-      if (maxTrains != null && (i.trains_needed || 1) > maxTrains) continue;
-      if (!_dynPrereqsMet(i.test_id)) continue;
-      ok.push(i);
-    }
-    return ok;
-  };
-
-  let best = null;
-  for (const s of seeds) {
-    const cluster = _dynExpandZones([s], max, 'Phase 2');
-    const set = new Set(cluster);
-    const fit = fitsCluster(set);
-    const totalMin = fit.reduce((a, i) => a + (i.expected_duration_minutes || 0), 0);
-    const score = fit.length * 1000 + Math.min(totalMin, winMin);
-    if (!best || score > best.score) best = { cluster, fit, score };
-  }
-  if (!best || !best.fit.length) {
-    toast('No prereq-met instances fit any cluster — try a longer window or complete prerequisites', 'error');
-    return;
-  }
-  _dynPage.planZones = best.cluster;
-  _dynPage.planFeasible = [];
-  _dynPage.planSelected.clear();
-  await _dynPlanRun();
-
-  // Greedily pre-select feasible rows (highest score first) until the window fills.
-  const rows = (_dynPage.planFeasible || []).filter(r => r.prerequisites_met)
-    .sort((a, b) => (b.score || 0) - (a.score || 0));
-  let used = 0;
-  _dynPage.planSelected.clear();
-  for (const r of rows) {
-    const d = r.expected_duration_minutes || 0;
-    if (used + d > winMin) continue;
-    _dynPage.planSelected.add(r.instance_id);
-    used += d;
-  }
-  _dynRenderPlanning();
-  toast(`Auto-scheduled ${_dynPage.planSelected.size} test(s) across ${best.cluster.join(', ')} (${(used/60).toFixed(1)} h)`, 'success');
 }
 
 // ── Track plan editor ───────────────────────────────────────────────────
