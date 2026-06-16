@@ -38906,6 +38906,34 @@ function _dynSimEverPlaceable(sc, pool, prereqs) {
   return new Set(pool.filter(i => ok.get(i.id)).map(i => i.id));
 }
 
+// Expand a connected access cluster of up to `size` locations, anchored on the
+// week's base zone. Multi-location work is weighted by its footprint so a longer
+// window opens the adjacent zones a multi-location test needs, rather than being
+// spent re-covering the base zone alone. Returns [] when nothing fits.
+function _dynSimExpandFrom(sc, base, size, remaining) {
+  const zset = new Set(sc.zones || []);
+  if (!zset.has(base)) return [];
+  const all = _dynSimChains(_dynSimAdjPairs(sc), zset, Math.max(1, size)).filter(c => c.includes(base));
+  if (!all.some(c => c.length === 1 && c[0] === base)) all.push([base]);
+  const score = cand => {
+    const set = new Set(cand);
+    let m = 0;
+    for (const i of remaining) {
+      if (!set.has(i.track_section_under_test)) continue;
+      const req = i.track_section_access_req || [];
+      if (!req.every(z => set.has(z))) continue;
+      m += (i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN) * Math.max(1, req.length);
+    }
+    return m;
+  };
+  let best = [base], bestS = -1;
+  for (const cand of all) {
+    const s = score(cand);
+    if (s > bestS || (s === bestS && cand.length > best.length)) { best = cand; bestS = s; }
+  }
+  return bestS > 0 ? best : [];
+}
+
 function _dynSimRun(sc, prereqs) {
   const slack = _dynAllocSlack();
   const pool0 = _dynSimScopePool(sc);
@@ -38915,8 +38943,6 @@ function _dynSimRun(sc, prereqs) {
   const start = _dynParseDate(sc.startDate || _dynFmtDate(new Date()));
   let closuresUsed = 0;
   const extendedWeeks = new Set();
-  // Safety backstop: never run more than 2 weeks past the last scheduled
-  // override/closure week without placing anything (bounds pathological loops).
   let maxOvWeek = -1;
   for (const [k, ov] of Object.entries(sc.weekOverrides || {})) {
     if (ov && (ov.closure || ov.wk || ov.sat || ov.sun)) maxOvWeek = Math.max(maxOvWeek, Number(k));
@@ -38924,54 +38950,91 @@ function _dynSimRun(sc, prereqs) {
   const mix = _dynSimMix(sc);
   const sizeCounts = new Map();   // granted size → # of shifts (mix realization)
   let totalShifts = 0;
-  let lastProgressDay = 0;
-  for (let day = 0; day < _DYN_SIM_HORIZON_DAYS && remaining.length; day++) {
-    if (!remaining.some(i => everSet.has(i.id))) break;        // nothing left that can ever be placed
-    const d = _dynAddDays(start, day);
-    const wk = Math.floor(day / 7);
-    if (wk > maxOvWeek && (day - lastProgressDay) > 21) break;  // stalled well past all scheduled access changes
+  let base = null;                // current work zone, persists until drained
+  let lastProgressWeek = 0;
+  const everHasWork = z => remaining.some(i => everSet.has(i.id) && i.track_section_under_test === z);
+  const pickBase = () => {        // zone with the most remaining reachable work
+    const dem = new Map();
+    for (const i of remaining) {
+      if (!everSet.has(i.id) || !i.track_section_under_test) continue;
+      dem.set(i.track_section_under_test, (dem.get(i.track_section_under_test) || 0) + (i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN));
+    }
+    return [...dem.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))[0]?.[0] || null;
+  };
+  const maxWeeks = Math.ceil(_DYN_SIM_HORIZON_DAYS / 7);
+  for (let wk = 0; wk < maxWeeks && remaining.length; wk++) {
+    if (!remaining.some(i => everSet.has(i.id))) break;          // nothing left that can ever be placed
+    if (wk > maxOvWeek && (wk - lastProgressWeek) > 3) break;    // stalled past all scheduled access changes
     const ov = (sc.weekOverrides || {})[wk] || {};
-    const dow = d.getDay();
-    let hours = null, isClosure = false;
-    if (ov.closure && closuresUsed < (sc.maxClosures ?? 99)) {
-      if (dow === 6) { hours = 48; isClosure = true; }
-      else if (dow === 0) continue;
-      else hours = _dynSimDayHours(sc, ov, dow, wk, extendedWeeks);
-    } else {
-      hours = _dynSimDayHours(sc, ov, dow, wk, extendedWeeks);
+    // This week's access days (hours + closure flags).
+    const days = [];
+    for (let dn = 0; dn < 7; dn++) {
+      const day = wk * 7 + dn;
+      const d = _dynAddDays(start, day);
+      const dow = d.getDay();
+      let hours = null, isClosure = false;
+      if (ov.closure && closuresUsed < (sc.maxClosures ?? 99)) {
+        if (dow === 6) { hours = 48; isClosure = true; }
+        else if (dow === 0) hours = null;
+        else hours = _dynSimDayHours(sc, ov, dow, wk, extendedWeeks);
+      } else {
+        hours = _dynSimDayHours(sc, ov, dow, wk, extendedWeeks);
+      }
+      if (hours > 0) days.push({ day, dow, iso: _dynDayKey(d), hours, isClosure });
     }
-    if (!(hours > 0)) continue;
-    // This access day is a shift whose location budget comes from the mix.
-    const sizeToday = isClosure ? 4 : _dynSimNextSize(mix, sizeCounts, totalShifts);
-    if (!isClosure) { sizeCounts.set(sizeToday, (sizeCounts.get(sizeToday) || 0) + 1); totalShifts++; }
-    const iso = _dynDayKey(d);
-    const zones = _dynSimPickZones(sc, remaining, isClosure, sizeToday);
-    if (!zones.length) {
-      // Real access slot, but nothing fits this size today → wasted shift (the
-      // brownfield cost). Keep going: a larger-size day will pick up the rest.
-      if (!isClosure) winLog.push({ date: iso, dow, zones: [], hours, placed: 0, placedMin: 0, isClosure, week: wk, size: sizeToday });
-      continue;
+    if (!days.length) continue;
+
+    // Keep the SAME work zone across the week (and onward) until its work is
+    // drained — so access is consistent per week, not a different zone each day.
+    if (!base || !everHasWork(base)) base = pickBase();
+    if (!base) break;
+
+    // Budget the week's NORMAL days from the mix, then give the biggest budgets
+    // to the LONGEST windows: weekends (more hours) get multi-location access,
+    // short weekdays stay single-location. Closure weekends get the big cluster.
+    const normalIdx = days.map((x, i) => i).filter(i => !days[i].isClosure);
+    const sizes = normalIdx.map(() => { const s = _dynSimNextSize(mix, sizeCounts, totalShifts); sizeCounts.set(s, (sizeCounts.get(s) || 0) + 1); totalShifts++; return s; });
+    sizes.sort((a, b) => b - a);
+    const byHours = normalIdx.slice().sort((a, b) => days[b].hours - days[a].hours || a - b);
+    const sizeForDay = new Map();
+    byHours.forEach((di, rank) => sizeForDay.set(di, sizes[rank]));
+
+    let weekPlaced = 0;
+    for (let i = 0; i < days.length; i++) {
+      const dd = days[i];
+      // Hand off to the next zone the moment the current one is finished, so a
+      // drained zone doesn't waste the rest of the week.
+      if (!dd.isClosure && (!base || !everHasWork(base))) { base = pickBase(); if (!base) break; }
+      const size = dd.isClosure ? 4 : (sizeForDay.get(i) || 1);
+      const cluster = dd.isClosure
+        ? _dynSimPickZones(sc, remaining, true)
+        : _dynSimExpandFrom(sc, base, size, remaining);
+      if (!cluster.length) {
+        if (!dd.isClosure) winLog.push({ date: dd.iso, dow: dd.dow, zones: [], hours: dd.hours, placed: 0, placedMin: 0, isClosure: false, week: wk, size });
+        continue;
+      }
+      if (dd.isClosure) closuresUsed++;
+      const startAt = new Date(dd.iso + 'T01:00:00');
+      const win = {
+        id: 'sim-' + dd.day, status: 'planned',
+        control_zone_code: cluster[0], access_zones: cluster,
+        shift_date: dd.iso, start_at: startAt.toISOString(),
+        end_at: new Date(startAt.getTime() + dd.hours * 3600 * 1000).toISOString(),
+        allowed_modes: ['CBTC', 'VATC'],
+      };
+      const d2 = _dynCascadeAllocate({
+        instances: remaining, windows: [win], prereqs: prereqs || [],
+        runMinutesFn: i2 => i2.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN,
+        windowMinutesFn: _dynWinMinutes, slack, footprintFirst: true,
+      });
+      const placedIds = new Set(d2.assignments.map(a => a.instanceId));
+      let placedMin = 0;
+      remaining = remaining.filter(i2 => { if (!placedIds.has(i2.id)) return true; placedMin += i2.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN; return false; });
+      for (const a of d2.assignments) assignments.push({ instanceId: a.instanceId, date: dd.iso, zones: cluster });
+      winLog.push({ date: dd.iso, dow: dd.dow, zones: cluster, hours: dd.hours, placed: d2.assignments.length, placedMin, isClosure: dd.isClosure, week: wk, size: dd.isClosure ? cluster.length : size });
+      weekPlaced += d2.assignments.length;
     }
-    if (isClosure) closuresUsed++;
-    const startAt = new Date(iso + 'T01:00:00');
-    const win = {
-      id: 'sim-' + day, status: 'planned',
-      control_zone_code: zones[0], access_zones: zones,
-      shift_date: iso, start_at: startAt.toISOString(),
-      end_at: new Date(startAt.getTime() + hours * 3600 * 1000).toISOString(),
-      allowed_modes: ['CBTC', 'VATC'],
-    };
-    const d2 = _dynCascadeAllocate({
-      instances: remaining, windows: [win], prereqs: prereqs || [],
-      runMinutesFn: i => i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN,
-      windowMinutesFn: _dynWinMinutes, slack, footprintFirst: true,
-    });
-    const placedIds = new Set(d2.assignments.map(a => a.instanceId));
-    if (placedIds.size) lastProgressDay = day;
-    let placedMin = 0;
-    remaining = remaining.filter(i => { if (!placedIds.has(i.id)) return true; placedMin += i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN; return false; });
-    for (const a of d2.assignments) assignments.push({ instanceId: a.instanceId, date: iso, zones });
-    winLog.push({ date: iso, dow, zones, hours, placed: d2.assignments.length, placedMin, isClosure, week: wk, size: isClosure ? zones.length : sizeToday });
+    if (weekPlaced > 0) lastProgressWeek = wk;
   }
   const zset = new Set(sc.zones || []);
   const outOfScope = _dynSimScopeAll(sc).filter(i =>
