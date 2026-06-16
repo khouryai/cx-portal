@@ -38784,15 +38784,72 @@ function _dynSimPickZones(sc, remaining, isClosure) {
 }
 
 // ── The simulation (same as before, now closure-aware location pick) ──────────
+
+// Largest shift (minutes) that will ever occur in this scenario — weekly
+// template, any week-override hours, plus a 48 h closure if one is enabled.
+function _dynSimMaxShiftMinutes(sc) {
+  const vals = [];
+  Object.values(sc.weekly || {}).forEach(h => { const n = Number(h); if (n > 0) vals.push(n); });
+  let anyClosure = false;
+  Object.values(sc.weekOverrides || {}).forEach(ov => {
+    ['wk', 'sat', 'sun'].forEach(k => { const n = Number(ov[k]); if (n > 0) vals.push(n); });
+    if (ov.closure) anyClosure = true;
+  });
+  if (anyClosure && (sc.maxClosures ?? 0) > 0) vals.push(48);
+  return (vals.length ? Math.max(...vals) : 0) * 60;
+}
+
+// Which pooled runs can EVER be placed: access fits a track-plan chain (or a
+// closure group), duration fits the largest shift, and every prerequisite case
+// is itself fully ever-placeable. Used to stop the run once only permanently
+// blocked work remains — otherwise the loop emits empty shifts to the horizon.
+function _dynSimEverPlaceable(sc, pool, prereqs) {
+  const zset = new Set(sc.zones || []);
+  const maxZ = Math.max(1, Math.min(5, sc.maxZonesPerShift || 2));
+  const chains = _dynSimChains(_dynSimAdjPairs(sc), zset, maxZ);
+  const closure = _dynSimClosureCands(sc, zset);
+  const maxMin = _dynSimMaxShiftMinutes(sc);
+  const fits = i => {
+    const req = [i.track_section_under_test, ...(i.track_section_access_req || [])].filter(Boolean);
+    const within = cands => cands.some(c => { const s = new Set(c); return req.every(z => s.has(z)); });
+    return zset.has(i.track_section_under_test) && (within(chains) || within(closure));
+  };
+  const preByTest = new Map();
+  for (const p of (prereqs || [])) {
+    if (!p || !p.test_id || !p.prerequisite_test_id) continue;
+    if (!preByTest.has(p.test_id)) preByTest.set(p.test_id, new Set());
+    preByTest.get(p.test_id).add(p.prerequisite_test_id);
+  }
+  const poolTests = new Set(pool.map(i => i.test_id));
+  const byTest = new Map();
+  pool.forEach(i => { if (!byTest.has(i.test_id)) byTest.set(i.test_id, []); byTest.get(i.test_id).push(i); });
+  const ok = new Map(pool.map(i => [i.id, fits(i) && (!i.expected_duration_minutes || !maxMin || i.expected_duration_minutes <= maxMin)]));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const i of pool) {
+      if (!ok.get(i.id)) continue;
+      for (const pt of (preByTest.get(i.test_id) || [])) {
+        if (!poolTests.has(pt)) continue;                      // no runs to place → satisfied
+        const insts = byTest.get(pt) || [];
+        if (!insts.length || !insts.every(x => ok.get(x.id))) { ok.set(i.id, false); changed = true; break; }
+      }
+    }
+  }
+  return new Set(pool.filter(i => ok.get(i.id)).map(i => i.id));
+}
+
 function _dynSimRun(sc, prereqs) {
   const slack = _dynAllocSlack();
   const pool0 = _dynSimScopePool(sc);
   let remaining = pool0.slice();
+  const everSet = _dynSimEverPlaceable(sc, pool0, prereqs);   // stop once only blocked work is left
   const assignments = [], winLog = [];
   const start = _dynParseDate(sc.startDate || _dynFmtDate(new Date()));
   let closuresUsed = 0;
   const extendedWeeks = new Set();
   for (let day = 0; day < _DYN_SIM_HORIZON_DAYS && remaining.length; day++) {
+    if (!remaining.some(i => everSet.has(i.id))) break;        // nothing left that can ever be placed
     const d = _dynAddDays(start, day);
     const wk = Math.floor(day / 7);
     const ov = (sc.weekOverrides || {})[wk] || {};
@@ -39035,8 +39092,7 @@ function _dynSimUnplacedHtml(sc, res) {
   const zset = new Set(sc.zones || []);
   const chains = _dynSimChains(_dynSimAdjPairs(sc), zset, maxZ);   // candidate location sets
   const horizonWk = Math.round(_DYN_SIM_HORIZON_DAYS / 7);
-  const wkVals = Object.values(sc.weekly || {}).map(Number).filter(n => n > 0);
-  const maxShiftMin = Math.max(0, ...wkVals, (sc.maxClosures > 0 ? 48 : 0)) * 60;
+  const maxShiftMin = _dynSimMaxShiftMinutes(sc);
   const codeFor = id => (_dynPage.testItemsById.get(id) || {}).code || id;
 
   const rows = list.map(i => {
