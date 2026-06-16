@@ -39032,30 +39032,27 @@ function _dynSimEverPlaceable(sc, pool, prereqs) {
   return new Set(pool.filter(i => ok.get(i.id)).map(i => i.id));
 }
 
-// Expand a connected access cluster of up to `size` locations, anchored on the
-// week's base zone. Multi-location work is weighted by its footprint so a longer
-// window opens the adjacent zones a multi-location test needs, rather than being
-// spent re-covering the base zone alone. Returns [] when nothing fits.
-function _dynSimExpandFrom(sc, base, size, remaining) {
+// Best connected access cluster (≤ maxSize locations) for the work that is
+// READY now (prereqs satisfied), across ALL zones — so a shift is never left
+// idle just because the current base zone has nothing to do. Footprint-weighted
+// so multi-location work opens the zones it needs; a soft bonus keeps the shift
+// on the current base zone for week-to-week consistency. [] when nothing fits.
+function _dynSimBestCluster(sc, pool, maxSize, base) {
   const zset = new Set(sc.zones || []);
-  if (!zset.has(base)) return [];
-  const all = _dynSimChains(_dynSimAdjPairs(sc), zset, Math.max(1, size)).filter(c => c.includes(base));
-  if (!all.some(c => c.length === 1 && c[0] === base)) all.push([base]);
-  const score = cand => {
+  const cands = _dynSimChains(_dynSimAdjPairs(sc), zset, Math.max(1, Math.min(5, maxSize)));
+  let best = [], bestS = -1;
+  for (const cand of cands) {
     const set = new Set(cand);
     let m = 0;
-    for (const i of remaining) {
+    for (const i of pool) {
       if (!set.has(i.track_section_under_test)) continue;
       const req = i.track_section_access_req || [];
       if (!req.every(z => set.has(z))) continue;
       m += (i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN) * Math.max(1, req.length);
     }
-    return m;
-  };
-  let best = [base], bestS = -1;
-  for (const cand of all) {
-    const s = score(cand);
-    if (s > bestS || (s === bestS && cand.length > best.length)) { best = cand; bestS = s; }
+    if (m <= 0) continue;
+    if (base && cand.includes(base)) m *= 1.5;   // soft preference to stay on the current zone
+    if (m > bestS || (m === bestS && cand.length < best.length)) { best = cand; bestS = m; }
   }
   return bestS > 0 ? best : [];
 }
@@ -39077,16 +39074,24 @@ function _dynSimRun(sc, prereqs) {
   const setupMin = Math.max(0, parseFloat(sc.setupMin) || 0);                 // consist/mode/move changeover
   const sizeCounts = new Map();   // granted size → # of shifts (mix realization)
   let totalShifts = 0;
-  let base = null;                // current work zone, persists until drained
+  let base = null;                // current work zone (soft preference, not a lock)
   let lastProgressWeek = 0;
-  const everHasWork = z => remaining.some(i => everSet.has(i.id) && i.track_section_under_test === z);
-  const pickBase = () => {        // zone with the most remaining reachable work
-    const dem = new Map();
-    for (const i of remaining) {
-      if (!everSet.has(i.id) || !i.track_section_under_test) continue;
-      dem.set(i.track_section_under_test, (dem.get(i.track_section_under_test) || 0) + (i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN));
-    }
-    return [...dem.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))[0]?.[0] || null;
+  // Prereq map (test → its prerequisite test_ids) for "ready now" detection.
+  const preByTest = new Map();
+  for (const p of (prereqs || [])) {
+    if (!p || !p.test_id || !p.prerequisite_test_id) continue;
+    if (!preByTest.has(p.test_id)) preByTest.set(p.test_id, new Set());
+    preByTest.get(p.test_id).add(p.prerequisite_test_id);
+  }
+  // Runs whose prerequisite cases are fully placed already → schedulable today.
+  const readyNow = () => {
+    const remTests = new Set(remaining.map(r => r.test_id));
+    return remaining.filter(r => {
+      const ps = preByTest.get(r.test_id);
+      if (!ps) return true;
+      for (const p of ps) if (remTests.has(p)) return false;
+      return true;
+    });
   };
   const maxWeeks = Math.ceil(_DYN_SIM_HORIZON_DAYS / 7);
   for (let wk = 0; wk < maxWeeks && remaining.length; wk++) {
@@ -39111,11 +39116,6 @@ function _dynSimRun(sc, prereqs) {
     }
     if (!days.length) continue;
 
-    // Keep the SAME work zone across the week (and onward) until its work is
-    // drained — so access is consistent per week, not a different zone each day.
-    if (!base || !everHasWork(base)) base = pickBase();
-    if (!base) break;
-
     // Budget the week's NORMAL days from the mix, then give the biggest budgets
     // to the LONGEST windows: weekends (more hours) get multi-location access,
     // short weekdays stay single-location. Closure weekends get the big cluster.
@@ -39128,18 +39128,25 @@ function _dynSimRun(sc, prereqs) {
 
     let weekPlaced = 0;
     for (let i = 0; i < days.length; i++) {
+      if (!remaining.some(r => everSet.has(r.id))) break;   // nothing schedulable left — don't emit empty shifts
       const dd = days[i];
-      // Hand off to the next zone the moment the current one is finished, so a
-      // drained zone doesn't waste the rest of the week.
-      if (!dd.isClosure && (!base || !everHasWork(base))) { base = pickBase(); if (!base) break; }
       const size = dd.isClosure ? 4 : (sizeForDay.get(i) || 1);
-      const cluster = dd.isClosure
-        ? _dynSimPickZones(sc, remaining, true)
-        : _dynSimExpandFrom(sc, base, size, remaining);
-      if (!cluster.length) {
+      const ready = readyNow();
+      let cluster, useSize = size;
+      if (dd.isClosure) {
+        cluster = _dynSimPickZones(sc, remaining, true);
+      } else {
+        // Fill the shift with the best READY work anywhere at the day's size…
+        cluster = _dynSimBestCluster(sc, ready, size, base);
+        // …and if nothing ready fits this size (only larger-footprint work is
+        // ready), grow the cluster rather than waste the access (avoids gaps).
+        for (let s2 = size + 1; s2 <= 5 && !cluster.length; s2++) { const c = _dynSimBestCluster(sc, ready, s2, base); if (c.length) { cluster = c; useSize = s2; } }
+      }
+      if (!cluster.length) {   // truly nothing schedulable today (rare)
         if (!dd.isClosure) winLog.push({ date: dd.iso, dow: dd.dow, zones: [], hours: dd.hours, placed: 0, placedMin: 0, isClosure: false, week: wk, size });
         continue;
       }
+      if (!dd.isClosure) base = cluster[0];   // stay on this zone tomorrow if it still has work
       if (dd.isClosure) closuresUsed++;
       const startAt = new Date(dd.iso + 'T01:00:00');
       const win = {
@@ -39159,7 +39166,7 @@ function _dynSimRun(sc, prereqs) {
       let placedMin = 0;
       remaining = remaining.filter(i2 => { if (!placedIds.has(i2.id)) return true; placedMin += i2.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN; return false; });
       for (const a of d2.assignments) assignments.push({ instanceId: a.instanceId, date: dd.iso, zones: cluster });
-      winLog.push({ date: dd.iso, dow: dd.dow, zones: cluster, hours: dd.hours, placed: d2.assignments.length, placedMin, isClosure: dd.isClosure, week: wk, size: dd.isClosure ? cluster.length : size });
+      winLog.push({ date: dd.iso, dow: dd.dow, zones: cluster, hours: dd.hours, placed: d2.assignments.length, placedMin, isClosure: dd.isClosure, week: wk, size: dd.isClosure ? cluster.length : useSize });
       weekPlaced += d2.assignments.length;
     }
     if (weekPlaced > 0) lastProgressWeek = wk;
