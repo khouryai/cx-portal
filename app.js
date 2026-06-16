@@ -38139,7 +38139,7 @@ function _dynCampShiftSummary(c) {
 // prerequisite CHAINS — a run whose test case depends on others is never
 // placed before an earlier-or-same window already holds those prerequisites'
 // runs. Returns a draft the planner reviews before commit. Cycle-safe.
-function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3, capacityFn = null, windowAllows = null, runMinutesFn = null, windowMinutesFn = null, slack = 0, preload = null }) {
+function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3, capacityFn = null, windowAllows = null, runMinutesFn = null, windowMinutesFn = null, slack = 0, preload = null, footprintFirst = false }) {
   // A shift grants a SET of zones; a run fits only if its access requirement is
   // a subset of THAT window's zones (so [W40,Y10] needs a window granting both).
   const winZonesOf = w => new Set((w.access_zones && w.access_zones.length) ? w.access_zones : [w.control_zone_code]);
@@ -38213,6 +38213,10 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
       cands.sort((a, b) =>
         // (1) prerequisites/roots first (absent from graph ⇒ root, rank 0)
         ((rank.get(a.test_id) ?? 0) - (rank.get(b.test_id) ?? 0)) ||
+        // (1b) on multi-location shifts, place the runs that NEED the most
+        // locations first, so scarce multi-location access isn't spent on runs
+        // that a single-location shift could have served.
+        (footprintFirst ? (((b.track_section_access_req || []).length) - ((a.track_section_access_req || []).length)) : 0) ||
         // (2) keep a shift focused on one start-point area (e.g. W45-*)
         (winArea ? ((_dynStartArea(a) === winArea ? 0 : 1) - (_dynStartArea(b) === winArea ? 0 : 1)) : 0) ||
         // (3) runs that unblock more dependents first
@@ -38788,11 +38792,47 @@ function _dynSimAdjPairs(sc) {
   const tp = _dynTrackPlanPairs(sc.phase);
   return tp.length ? tp : (sc.adjacency || []);
 }
-function _dynSimPickZones(sc, remaining, isClosure) {
+
+// ── Access mix ────────────────────────────────────────────────────────────
+// Brownfield access is uneven: most shifts grant only one location, fewer grant
+// two, rarely three. sc.shiftMix is { "<size>": <pct> } (e.g. {1:50,2:30,3:20}).
+// Returns a normalized [{size, pct}] (pcts sum to 100); falls back to 100 % at
+// the legacy single maxZonesPerShift so old scenarios keep working.
+function _dynSimMix(sc) {
+  let entries = [];
+  const raw = sc && sc.shiftMix && typeof sc.shiftMix === 'object' ? sc.shiftMix : null;
+  if (raw) {
+    for (const [k, v] of Object.entries(raw)) {
+      const size = parseInt(k, 10), pct = Number(v);
+      if (size >= 1 && size <= 5 && pct > 0) entries.push({ size, pct });
+    }
+  }
+  if (!entries.length) entries = [{ size: Math.max(1, Math.min(5, (sc && sc.maxZonesPerShift) || 2)), pct: 100 }];
+  const sum = entries.reduce((a, e) => a + e.pct, 0) || 1;
+  entries.forEach(e => { e.pct = e.pct / sum * 100; });
+  entries.sort((a, b) => a.size - b.size);
+  return entries;
+}
+function _dynSimMaxMixSize(sc) { return _dynSimMix(sc).reduce((m, e) => Math.max(m, e.size), 1); }
+
+// Smooth (largest-remainder) pick: the next shift gets the size that is most
+// under its target share, so the realized distribution tracks the mix and the
+// sizes are interleaved rather than clustered.
+function _dynSimNextSize(mix, counts, total) {
+  let best = mix[0].size, bestDef = -Infinity;
+  for (const e of mix) {
+    const def = (e.pct / 100) * (total + 1) - (counts.get(e.size) || 0);
+    if (def > bestDef + 1e-9) { bestDef = def; best = e.size; }
+  }
+  return best;
+}
+
+function _dynSimPickZones(sc, remaining, isClosure, maxLen) {
   const zset = new Set(sc.zones || []);
+  const lim = isClosure ? 4 : Math.max(1, Math.min(5, maxLen || sc.maxZonesPerShift || 2));
   const cands = isClosure
     ? _dynSimClosureCands(sc, zset)
-    : _dynSimChains(_dynSimAdjPairs(sc), zset, Math.max(1, Math.min(5, sc.maxZonesPerShift || 2)));
+    : _dynSimChains(_dynSimAdjPairs(sc), zset, lim);
   let best = null, bestMin = 0;
   for (const cand of cands) {
     const set = new Set(cand);
@@ -38829,7 +38869,7 @@ function _dynSimMaxShiftMinutes(sc) {
 // blocked work remains — otherwise the loop emits empty shifts to the horizon.
 function _dynSimEverPlaceable(sc, pool, prereqs) {
   const zset = new Set(sc.zones || []);
-  const maxZ = Math.max(1, Math.min(5, sc.maxZonesPerShift || 2));
+  const maxZ = _dynSimMaxMixSize(sc);   // a run is placeable only up to the biggest shift the mix offers
   const chains = _dynSimChains(_dynSimAdjPairs(sc), zset, maxZ);
   // Closure-sized chains (up to 4 zones) are only reachable if a closure week is
   // actually scheduled — otherwise normal shifts (maxZ chains) are all that run.
@@ -38881,12 +38921,15 @@ function _dynSimRun(sc, prereqs) {
   for (const [k, ov] of Object.entries(sc.weekOverrides || {})) {
     if (ov && (ov.closure || ov.wk || ov.sat || ov.sun)) maxOvWeek = Math.max(maxOvWeek, Number(k));
   }
+  const mix = _dynSimMix(sc);
+  const sizeCounts = new Map();   // granted size → # of shifts (mix realization)
+  let totalShifts = 0;
   let lastProgressDay = 0;
   for (let day = 0; day < _DYN_SIM_HORIZON_DAYS && remaining.length; day++) {
     if (!remaining.some(i => everSet.has(i.id))) break;        // nothing left that can ever be placed
     const d = _dynAddDays(start, day);
     const wk = Math.floor(day / 7);
-    if (wk > maxOvWeek && (day - lastProgressDay) > 14) break;  // stalled past all scheduled access changes
+    if (wk > maxOvWeek && (day - lastProgressDay) > 21) break;  // stalled well past all scheduled access changes
     const ov = (sc.weekOverrides || {})[wk] || {};
     const dow = d.getDay();
     let hours = null, isClosure = false;
@@ -38898,10 +38941,18 @@ function _dynSimRun(sc, prereqs) {
       hours = _dynSimDayHours(sc, ov, dow, wk, extendedWeeks);
     }
     if (!(hours > 0)) continue;
-    const zones = _dynSimPickZones(sc, remaining, isClosure);
-    if (!zones.length) break;
-    if (isClosure) closuresUsed++;
+    // This access day is a shift whose location budget comes from the mix.
+    const sizeToday = isClosure ? 4 : _dynSimNextSize(mix, sizeCounts, totalShifts);
+    if (!isClosure) { sizeCounts.set(sizeToday, (sizeCounts.get(sizeToday) || 0) + 1); totalShifts++; }
     const iso = _dynDayKey(d);
+    const zones = _dynSimPickZones(sc, remaining, isClosure, sizeToday);
+    if (!zones.length) {
+      // Real access slot, but nothing fits this size today → wasted shift (the
+      // brownfield cost). Keep going: a larger-size day will pick up the rest.
+      if (!isClosure) winLog.push({ date: iso, dow, zones: [], hours, placed: 0, placedMin: 0, isClosure, week: wk, size: sizeToday });
+      continue;
+    }
+    if (isClosure) closuresUsed++;
     const startAt = new Date(iso + 'T01:00:00');
     const win = {
       id: 'sim-' + day, status: 'planned',
@@ -38913,14 +38964,14 @@ function _dynSimRun(sc, prereqs) {
     const d2 = _dynCascadeAllocate({
       instances: remaining, windows: [win], prereqs: prereqs || [],
       runMinutesFn: i => i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN,
-      windowMinutesFn: _dynWinMinutes, slack,
+      windowMinutesFn: _dynWinMinutes, slack, footprintFirst: true,
     });
     const placedIds = new Set(d2.assignments.map(a => a.instanceId));
     if (placedIds.size) lastProgressDay = day;
     let placedMin = 0;
     remaining = remaining.filter(i => { if (!placedIds.has(i.id)) return true; placedMin += i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN; return false; });
     for (const a of d2.assignments) assignments.push({ instanceId: a.instanceId, date: iso, zones });
-    winLog.push({ date: iso, dow, zones, hours, placed: d2.assignments.length, placedMin, isClosure, week: wk });
+    winLog.push({ date: iso, dow, zones, hours, placed: d2.assignments.length, placedMin, isClosure, week: wk, size: isClosure ? zones.length : sizeToday });
   }
   const zset = new Set(sc.zones || []);
   const outOfScope = _dynSimScopeAll(sc).filter(i =>
@@ -38943,12 +38994,19 @@ function _dynSimRun(sc, prereqs) {
     if (a.date > s2.last) s2.last = a.date;
     s2.n++; zoneSpan.set(z, s2);
   }));
+  // Realized access mix: granted size → {shifts, used} (used = placed≥1).
+  const mixUsed = [...sizeCounts.keys()].sort((a, b) => a - b).map(size => ({
+    size,
+    shifts: sizeCounts.get(size),
+    used: winLog.filter(w => !w.isClosure && w.size === size && w.placed > 0).length,
+  }));
   return {
     total, placed, unplaced: remaining.length, unplacedList: remaining.slice(), outOfScope,
     completion, calDays, weeks: calDays ? Math.ceil(calDays / 7) : null,
     shifts: winLog.length, shiftsUsed: usedShifts.length,
     accessHours: +(availMin / 60).toFixed(1),
     utilPct: availMin > 0 ? Math.round(plannedMin / availMin * 100) : null,
+    mixUsed, maxMixSize: _dynSimMaxMixSize(sc),
     closuresUsed, extendedUsed: extendedWeeks.size, cumulative, winLog, zoneSpan, startDate: _dynDayKey(start),
   };
 }
@@ -39077,11 +39135,22 @@ function _dynSimConfigHtml(sc, res) {
     <div style="display:flex;gap:5px;margin-bottom:12px;">${weeklyRow}</div>
     <div style="font-size:12px;color:var(--gray-600);margin-bottom:4px;">Locations in this simulation</div>
     <div style="margin-bottom:8px;">${zoneChips}</div>
-    <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;font-size:12px;color:var(--gray-600);">
-      <label title="Max access locations one shift can cover. A test that needs access to more locations than this can't be scheduled.">Max locations / shift
-        <input type="number" min="1" max="5" value="${sc.maxZonesPerShift || 2}" style="${inp}margin-left:4px;" onchange="_dynSimField('maxZonesPerShift',Math.max(1,Math.min(5,parseInt(this.value,10)||1)))">
-        <span style="color:var(--gray-400);">caps a test's access zones</span>
-      </label>
+    <div style="margin-bottom:10px;font-size:12px;color:var(--gray-600);">
+      <div style="margin-bottom:4px;">Access mix <span style="color:var(--gray-400);">— % of shifts by how many adjacent locations they grant (→ = normalized)</span></div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+        ${(() => {
+          const mixObj = (sc.shiftMix && typeof sc.shiftMix === 'object') ? sc.shiftMix : null;
+          const legacy = Math.max(1, Math.min(5, sc.maxZonesPerShift || 2));
+          const norm = _dynSimMix(sc);
+          const npct = s => { const e = norm.find(x => x.size === s); return e ? Math.round(e.pct) : 0; };
+          const rawVal = s => mixObj ? (mixObj[s] != null ? mixObj[s] : '') : (s === legacy ? 100 : '');
+          const maxShow = Math.min(5, Math.max(3, _dynSimMaxMixSize(sc)));
+          const sizes = []; for (let s = 1; s <= maxShow; s++) sizes.push(s);
+          return sizes.map(s => `<label style="display:flex;align-items:center;gap:3px;"><b style="font-family:monospace;">${s}</b>-loc
+            <input type="number" min="0" max="100" value="${rawVal(s)}" placeholder="0" style="${inp}width:44px;" onchange="_dynSimSetMix(${s},this.value)">%
+            <span style="color:var(--gray-400);font-size:10px;">→${npct(s)}%</span></label>`).join('');
+        })()}
+      </div>
     </div>
     <div style="margin-bottom:10px;font-size:12px;color:var(--gray-600);">
       <div style="display:flex;align-items:center;gap:8px;">Adjacency <span style="color:var(--gray-400);">— from the shared Track Plan</span>
@@ -39118,13 +39187,29 @@ function _dynSimConfigHtml(sc, res) {
     <div style="font-size:10.5px;color:var(--gray-400);margin-top:6px;">${res ? res.closuresUsed : 0}/${sc.maxClosures ?? '∞'} closures · ${res ? res.extendedUsed : 0}/${sc.maxExtended ?? '∞'} extended weeks used.</div>`;
 }
 
+// "Shifts needed by access size" — how many shifts of each location-size the
+// plan consumed, and how many were wasted (granted but nothing fit that size),
+// which signals an access-mix mismatch.
+function _dynSimMixHtml(res) {
+  if (!res || !res.mixUsed || !res.mixUsed.length) return '';
+  const wasted = res.mixUsed.reduce((a, m) => a + (m.shifts - m.used), 0);
+  const parts = res.mixUsed.map(m => {
+    const w = m.shifts - m.used;
+    return `<span style="white-space:nowrap;"><b>${m.shifts}×</b> ${m.size}-loc${w ? ` <span style="color:#b45309;">(${w} unused)</span>` : ''}</span>`;
+  });
+  return `<div style="margin-bottom:10px;padding:8px 12px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:6px;font-size:12px;color:var(--gray-700);">
+    <b>Shifts needed by access size:</b> ${parts.join(' &nbsp;·&nbsp; ')}
+    ${wasted ? `<div style="font-size:11px;color:#b45309;margin-top:3px;">${wasted} shift(s) granted access but had no test that fit that size — raise the share of larger shifts in the mix to finish sooner.</div>` : ''}
+  </div>`;
+}
+
 // "+N left" breakdown: for every run the simulation couldn't place, say WHY —
 // add-location, over max/shift, not adjacent in the track plan, prereq-blocked,
 // run-too-long, or simply no capacity in the horizon.
 function _dynSimUnplacedHtml(sc, res) {
   const list = res.unplacedList || [];
   if (!list.length) return '';
-  const maxZ = Math.max(1, Math.min(5, sc.maxZonesPerShift || 2));
+  const maxZ = _dynSimMaxMixSize(sc);
   const zset = new Set(sc.zones || []);
   const chains = _dynSimChains(_dynSimAdjPairs(sc), zset, maxZ);   // candidate location sets
   const horizonWk = Math.round(_DYN_SIM_HORIZON_DAYS / 7);
@@ -39136,7 +39221,7 @@ function _dynSimUnplacedHtml(sc, res) {
     const outside = req.filter(z => !zset.has(z));
     let type, label, tone;
     if (outside.length) { type = 'loc'; tone = { bg: '#fef3c7', fg: '#92400e' }; label = `add location(s): ${outside.join(', ')}`; }
-    else if (req.length > maxZ) { type = 'max'; tone = { bg: '#fde68a', fg: '#92400e' }; label = `needs ${req.length} locations — raise max (${maxZ})/shift`; }
+    else if (req.length > maxZ) { type = 'max'; tone = { bg: '#fde68a', fg: '#92400e' }; label = `needs a ${req.length}-location shift — add it to your access mix (max is ${maxZ})`; }
     else if (!chains.some(c => { const s = new Set(c); return req.every(z => s.has(z)); })) { type = 'adj'; tone = { bg: '#e0e7ff', fg: '#3730a3' }; label = `${req.join(', ')} not adjacent in track plan`; }
     else if (!_dynPrereqsMet(i.test_id)) {
       const unmet = [...new Set((_dynPage.prereqs || []).filter(p => p.test_id === i.test_id && !_dynCaseComplete(p.prerequisite_test_id)).map(p => codeFor(p.prerequisite_test_id)))];
@@ -39189,6 +39274,7 @@ function _dynSimResultsHtml(sc, res, baseRes, baseline) {
     </div>`;
   return `
     ${kpiBlock}
+    ${_dynSimMixHtml(res)}
     ${res.outOfScope ? `<div style="margin-bottom:10px;padding:7px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e;">${res.outOfScope} open run(s) are in locations OUTSIDE this scenario — add their locations to include them.</div>` : ''}
     ${_dynSimUnplacedHtml(sc, res)}
     <div class="data-card" style="padding:12px 14px;margin-bottom:12px;">
@@ -39288,9 +39374,11 @@ function _dynSimGanttHtml(sc, res, baseRes) {
 
 // Shift log; in compare mode the date rows show baseline and scenario side by side.
 function _dynSimShiftsHtml(sc, res, baseRes, baseline) {
-  const cell = w => w
-    ? `${w.zones.map(z => `<span class="tag" style="font-family:monospace;font-size:10px;">${escapeHtml(z)}</span>`).join(' ')}${w.isClosure ? ' <span class="tag" style="background:#fde68a;color:#92400e;font-size:9px;">48h</span>' : ''} <span style="color:var(--gray-400);">${w.hours}h·${w.placed}</span>`
-    : '<span style="color:var(--gray-300);">—</span>';
+  const cell = w => {
+    if (!w) return '<span style="color:var(--gray-300);">—</span>';
+    if (!w.isClosure && w.placed === 0) return `<span style="color:#b45309;font-size:10px;">${w.size || 1}-loc access · unused</span> <span style="color:var(--gray-400);">${w.hours}h</span>`;
+    return `${w.zones.map(z => `<span class="tag" style="font-family:monospace;font-size:10px;">${escapeHtml(z)}</span>`).join(' ')}${w.isClosure ? ' <span class="tag" style="background:#fde68a;color:#92400e;font-size:9px;">48h</span>' : ''} <span style="color:var(--gray-400);">${w.hours}h·${w.placed}</span>`;
+  };
   if (!baseRes) {
     const rows = res.winLog.slice(0, 30).map(w => `
       <tr style="border-top:1px solid var(--gray-100);${w.isClosure ? 'background:#fffbeb;' : ''}">
@@ -39436,6 +39524,17 @@ function _dynSimRecalibrate() {
   _dynRenderSimulator();
 }
 function _dynSimField(k, v) { const sc = _dynSimActive(); if (!sc) return; _dynSimPatch(sc.id, { [k]: v }); _dynRenderSimulator(); }
+function _dynSimSetMix(size, val) {
+  const sc = _dynSimActive(); if (!sc) return;
+  _dynSimPatch(sc.id, s => {
+    const mix = (s.shiftMix && typeof s.shiftMix === 'object') ? { ...s.shiftMix } : {};
+    const n = parseFloat(val);
+    if (!Number.isFinite(n) || n <= 0) delete mix[size]; else mix[size] = n;
+    s.shiftMix = mix;
+    return {};
+  });
+  _dynRenderSimulator();
+}
 function _dynSimScopeField(k, v) { const sc = _dynSimActive(); if (!sc) return; _dynSimPatch(sc.id, s => { s.scope = s.scope || {}; s.scope[k] = v; return {}; }); _dynRenderSimulator(); }
 function _dynSimSet(group, key, val) {
   const sc = _dynSimActive(); if (!sc) return;
