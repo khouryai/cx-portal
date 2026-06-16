@@ -34409,12 +34409,28 @@ function _dynTabSwitch(tab) {
   renderDynamicTestingPage();
 }
 
+// Parse a list of zone/location codes from free text. Separators are comma,
+// semicolon and whitespace — NOT dash or slash, since some real zone codes
+// contain those (e.g. "C-156", "L20/C19"). Codes are upper-cased so case never
+// causes a mismatch ("w40" → "W40").
+function _dynParseZones(s) {
+  return String(s || '').split(/[\s,;]+/).map(x => x.trim().toUpperCase()).filter(Boolean);
+}
+// Upper-case a single zone code (trimmed).
+function _dynUZ(z) { return z == null ? z : String(z).trim().toUpperCase(); }
+
 async function _dynLoadAll() {
   if (_dynPage.loading) return;
   _dynPage.loading = true;
   try {
     const insts = await _dbSelect('dynamic_instances', {}, '*')
       .catch(e => { console.warn('[dyn] instances load:', e.message); return []; });
+    // Normalise zone codes to upper-case so matching is case-insensitive
+    // regardless of how they were entered.
+    for (const i of insts) {
+      if (i.track_section_under_test) i.track_section_under_test = _dynUZ(i.track_section_under_test);
+      if (Array.isArray(i.track_section_access_req)) i.track_section_access_req = i.track_section_access_req.map(_dynUZ).filter(Boolean);
+    }
     _dynPage.instances = insts;
     // The global TI cache is role/scope-filtered and excludes dynamic cases, so
     // load the dynamic test_items directly — they are the source of truth for
@@ -34704,7 +34720,7 @@ async function _dynBulkEditApply() {
   if (on('intermediate_points'))       payload.intermediate_points = splitList(val('intermediate_points'));
   if (on('target_phase'))              payload.target_phase = val('target_phase') || null;
   if (on('track_section_under_test'))  payload.track_section_under_test = val('track_section_under_test') || null;
-  if (on('track_section_access_req'))  payload.track_section_access_req = splitList(val('track_section_access_req'));
+  if (on('track_section_access_req'))  payload.track_section_access_req = _dynParseZones(val('track_section_access_req'));
   if (on('status'))                    payload.status = val('status') || 'Not Started';
 
   const changeSubsys = on('subsystem');
@@ -35116,7 +35132,7 @@ async function _dynSaveInstance(id) {
     finish_point: get('dyn-f-finish'),
     intermediate_points: splitList(document.getElementById('dyn-f-inter')?.value),
     track_section_under_test: get('dyn-f-tsut'),
-    track_section_access_req: splitList(document.getElementById('dyn-f-access')?.value),
+    track_section_access_req: _dynParseZones(document.getElementById('dyn-f-access')?.value),
     prerequisites: get('dyn-f-prereq'),
     required_mode: get('dyn-f-mode'),
     status: get('dyn-f-status') || 'Not Started',
@@ -35431,7 +35447,7 @@ function _dynParseRuns(parsed) {
       intermediate_points: inter,
       finish_point: finish || null,
       track_section_under_test: get('tsut') || null,
-      track_section_access_req: splitList(get('access_req')),
+      track_section_access_req: _dynParseZones(get('access_req')),
       prerequisites: get('prerequisites') || null,
       trains_needed: intOrNull(get('num_trains')),
       consist_size: consistOrNull(get('train1')),
@@ -39658,7 +39674,8 @@ function _dynAdjacencyMap(phase) {
   for (const e of (_dynPage.adjacency || [])) {
     if (phase && e.phase && e.phase !== phase) continue;
     if (!e.zone_a || !e.zone_b) continue;
-    add(e.zone_a, e.zone_b); add(e.zone_b, e.zone_a);
+    const A = _dynUZ(e.zone_a), B = _dynUZ(e.zone_b);
+    add(A, B); add(B, A);
   }
   return m;
 }
@@ -39667,7 +39684,7 @@ function _dynAdjacencyMap(phase) {
 function _dynTrackPlanPairs(phase) {
   return (_dynPage.adjacency || [])
     .filter(e => (!phase || !e.phase || e.phase === phase) && e.zone_a && e.zone_b)
-    .map(e => [e.zone_a, e.zone_b]);
+    .map(e => [_dynUZ(e.zone_a), _dynUZ(e.zone_b)]);
 }
 
 // Client-side mirror of vw_test_case_completion for dynamic cases:
@@ -39724,12 +39741,12 @@ function _dynOpenTrackPlan() {
 }
 
 async function _dynTrackPlanAdd() {
-  const a = document.getElementById('tp-a')?.value;
-  const b = document.getElementById('tp-b')?.value;
+  const a = _dynUZ(document.getElementById('tp-a')?.value);
+  const b = _dynUZ(document.getElementById('tp-b')?.value);
   if (!a || !b || a === b) { toast('Pick two different zones', 'error'); return; }
   const exists = (_dynPage.adjacency || []).some(e =>
     (e.phase === 'Phase 2' || !e.phase) &&
-    ((e.zone_a === a && e.zone_b === b) || (e.zone_a === b && e.zone_b === a)));
+    ((_dynUZ(e.zone_a) === a && _dynUZ(e.zone_b) === b) || (_dynUZ(e.zone_a) === b && _dynUZ(e.zone_b) === a)));
   if (exists) { toast('That edge already exists', 'info'); return; }
   try {
     const ins = await _dbInsert('zone_adjacency', [{ phase: 'Phase 2', zone_a: a, zone_b: b,
