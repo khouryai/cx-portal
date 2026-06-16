@@ -91,6 +91,7 @@ const key  = (k, o = {}) => H.keydown({ key: k, ctrlKey: !!o.mod, metaKey: false
 eng.setTool("stamp"); eng.setStampKind("WITNESSED"); down(120, 120); up();
 const stamp = eng.annotations[eng.annotations.length - 1];
 ok(eng.annotations.length === 1 && stamp.type === "stamp" && stamp.kind === "WITNESSED", "stamp placed");
+ok(stamp.scale === 0.5, "new stamp starts at 50% scale");
 
 eng.setTool("rect"); down(50, 50); move(200, 160); up();
 const box = eng.annotations[eng.annotations.length - 1];
@@ -99,6 +100,16 @@ ok(eng.annotations.length === 2 && box.type === "rect", "box placed");
 eng.setTool("arrow"); down(300, 300); move(420, 360); up();
 const arrow = eng.annotations[eng.annotations.length - 1];
 ok(eng.annotations.length === 3 && arrow.type === "arrow", "arrow placed");
+
+// ---- auto-select: pressing a markup while a drawing tool is active selects it ----
+eng.setTool("select"); key("Escape");
+const acN = eng.annotations.length;
+eng.setTool("stamp");                         // drawing tool active
+const ab = eng._bounds(arrow);
+down(ab.x + ab.w / 2, ab.y + ab.h / 2); up(); // press on an existing markup
+ok(eng.annotations.length === acN, "drawing tool + press on a markup did NOT add a new markup");
+ok(eng.selected.indexOf(arrow) >= 0, "drawing tool + press on a markup auto-selected it");
+eng.setTool("select"); key("Escape");
 
 // ---- single select + move ----
 eng.setTool("select");

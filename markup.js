@@ -423,14 +423,16 @@ class CXMarkupEngine {
       // on the canvas without it.
       const _touch = e.pointerType === "touch";
       const _cap = () => { if (!_touch) { try { this.cv.setPointerCapture(e.pointerId); } catch (_) {} } };
-      if (T === "select") {
-        // Resize handle of the single selected item starts a resize.
-        if (this.selected.length === 1) {
-          const hnd = this._hitHandle(this.selected[0], p.x, p.y);
-          if (hnd) { _cap(); this.rsz = { handle: hnd.id, before: JSON.parse(JSON.stringify(this.selected[0])), ob: this._bounds(this.selected[0]) }; return; }
-        }
-        const h = this._hit(p.x, p.y);
-        if (h) {                                  // grabbed a markup -> move it (any direction)
+      // Auto-select: if the press lands on an existing markup (or a handle of the
+      // current selection), treat it as select/move/resize even when a drawing
+      // tool is active — so tapping a markup picks it instead of stamping again.
+      const handleHit = this.selected.length === 1 ? this._hitHandle(this.selected[0], p.x, p.y) : null;
+      const annoHit = this._hit(p.x, p.y);
+      const asSelect = T === "select" || (T !== "erase" && (handleHit || annoHit));
+      if (asSelect) {
+        if (handleHit) { _cap(); this.rsz = { handle: handleHit.id, before: JSON.parse(JSON.stringify(this.selected[0])), ob: this._bounds(this.selected[0]) }; return; }
+        const h = annoHit;
+        if (h) {                                  // grabbed a markup -> select / move it
           _cap();
           if (e.shiftKey) {                       // toggle this item in/out of the set
             const i = this.selected.indexOf(h);
@@ -441,9 +443,8 @@ class CXMarkupEngine {
           if (this.selected.indexOf(h) >= 0) this.drag = { lastX: p.x, lastY: p.y, moved: false };
           this.redraw(); return;
         }
-        // Empty space. On touch, drag scrolls the page (we pan the scroll
-        // container ourselves so moving a markup stays free in any direction).
-        // On mouse, drag draws a marquee selection.
+        // Empty space (select tool only). On touch, drag scrolls the page; on
+        // mouse, drag draws a marquee selection.
         if (!e.shiftKey && this.selected.length) { this.selected = []; this.redraw(); }
         if (_touch) {
           const sc = this._scrollParent();
@@ -458,7 +459,7 @@ class CXMarkupEngine {
       if (T === "text") { this._openText(p.x, p.y); return; }
       if (T === "stamp") {
         const now = new Date();
-        this.annotations.push({ type: "stamp", kind: this.stampKind, x: p.x, y: p.y, who: this.engineer,
+        this.annotations.push({ type: "stamp", kind: this.stampKind, x: p.x, y: p.y, scale: 0.5, who: this.engineer,
           ts: now.toLocaleDateString() + " " + now.toTimeString().slice(0, 5) });
         this._commit(); return;
       }
