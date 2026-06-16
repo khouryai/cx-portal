@@ -38815,6 +38815,40 @@ function _dynSimMix(sc) {
 }
 function _dynSimMaxMixSize(sc) { return _dynSimMix(sc).reduce((m, e) => Math.max(m, e.size), 1); }
 
+// Smallest connected track-plan cluster (number of locations) that can cover a
+// run's under-test + access zones — i.e. the shift size it truly needs. Returns
+// null if its zones can't be connected within 5 locations (unschedulable).
+function _dynSimRequiredSize(sc, inst) {
+  const req = [...new Set([inst.track_section_under_test, ...(inst.track_section_access_req || [])].filter(Boolean))];
+  if (!req.length) return 1;
+  const zset = new Set(sc.zones || []);
+  if (!req.every(z => zset.has(z))) return null;          // needs a location outside the sim
+  if (req.length === 1) return 1;
+  let min = null;
+  for (const c of _dynSimChains(_dynSimAdjPairs(sc), zset, 5)) {
+    const s = new Set(c);
+    if (req.every(z => s.has(z))) min = (min == null) ? c.length : Math.min(min, c.length);
+  }
+  return min;
+}
+
+// Auto access mix: % of shifts by size = share of remaining work (by time) that
+// needs that size. Supply then matches demand, so no shift is wasted on a size
+// that has no work. Returns { size: pct } or null when there's nothing to size.
+function _dynSimAutoMix(sc) {
+  const dur = new Map();
+  for (const i of _dynSimScopePool(sc)) {
+    const k = _dynSimRequiredSize(sc, i);
+    if (!k) continue;                                      // unschedulable → ignore
+    dur.set(k, (dur.get(k) || 0) + (i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN));
+  }
+  const total = [...dur.values()].reduce((a, b) => a + b, 0);
+  if (!total) return null;
+  const mix = {};
+  for (const [k, v] of dur) { const p = Math.round(v / total * 100); if (p > 0) mix[k] = p; }
+  return Object.keys(mix).length ? mix : null;
+}
+
 // Smooth (largest-remainder) pick: the next shift gets the size that is most
 // under its target share, so the realized distribution tracks the mix and the
 // sizes are interleaved rather than clustered.
@@ -39199,7 +39233,10 @@ function _dynSimConfigHtml(sc, res) {
     <div style="font-size:12px;color:var(--gray-600);margin-bottom:4px;">Locations in this simulation</div>
     <div style="margin-bottom:8px;">${zoneChips}</div>
     <div style="margin-bottom:10px;font-size:12px;color:var(--gray-600);">
-      <div style="margin-bottom:4px;">Access mix <span style="color:var(--gray-400);">— % of shifts by how many adjacent locations they grant (→ = normalized)</span></div>
+      <div style="margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">Access mix <span style="color:var(--gray-400);">— % of shifts by how many adjacent locations they grant (→ = normalized)</span>
+        <span style="flex:1;"></span>
+        <button type="button" class="dyn-btn" style="font-size:11px;padding:3px 8px;" title="Set the mix to match your work's access needs so no shift is wasted" onclick="_dynSimAutoFillMix()">${icon('zap')} Auto-fill (no waste)</button>
+      </div>
       <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
         ${(() => {
           const mixObj = (sc.shiftMix && typeof sc.shiftMix === 'object') ? sc.shiftMix : null;
@@ -39597,6 +39634,14 @@ function _dynSimSetMix(size, val) {
     return {};
   });
   _dynRenderSimulator();
+}
+function _dynSimAutoFillMix() {
+  const sc = _dynSimActive(); if (!sc) return;
+  const mix = _dynSimAutoMix(sc);
+  if (!mix) { toast('No schedulable work to size the mix from', 'error'); return; }
+  _dynSimPatch(sc.id, { shiftMix: mix });
+  _dynRenderSimulator();
+  if (typeof toast === 'function') toast('Access mix auto-filled to match your work — minimises wasted shifts', 'success');
 }
 function _dynSimScopeField(k, v) { const sc = _dynSimActive(); if (!sc) return; _dynSimPatch(sc.id, s => { s.scope = s.scope || {}; s.scope[k] = v; return {}; }); _dynRenderSimulator(); }
 function _dynSimSet(group, key, val) {
