@@ -38747,32 +38747,40 @@ function _dynSimChains(pairs, zoneSet, maxLen) {
   const adj = new Map();
   const link = (a, b) => { if (!adj.has(a)) adj.set(a, new Set()); adj.get(a).add(b); };
   for (const [a, b] of (pairs || [])) { if (zoneSet.has(a) && zoneSet.has(b)) { link(a, b); link(b, a); } }
+  // Canonical zone order so the result does NOT depend on the order zones were
+  // added to sc.zones (two scenarios with the same location SET must plan the
+  // same way regardless of toggle history).
+  const cmp = (x, y) => String(x).localeCompare(String(y), undefined, { numeric: true });
+  const zones = [...zoneSet].sort(cmp);
   const out = new Map();
-  const key = arr => arr.slice().sort().join('|');
-  for (const z of zoneSet) out.set(z, [z]);
+  const key = arr => arr.slice().sort(cmp).join('|');
+  for (const z of zones) out.set(z, [z]);
   if (maxLen >= 2) {
     const dfs = (path, visited) => {
       if (path.length >= 2) out.set(key(path), path.slice());
       if (path.length >= maxLen) return;
-      for (const nb of (adj.get(path[path.length - 1]) || [])) {
+      const nbrs = [...(adj.get(path[path.length - 1]) || [])].sort(cmp);
+      for (const nb of nbrs) {
         if (visited.has(nb)) continue;
         visited.add(nb); path.push(nb);
         dfs(path, visited);
         path.pop(); visited.delete(nb);
       }
     };
-    for (const z of zoneSet) dfs([z], new Set([z]));
+    for (const z of zones) dfs([z], new Set([z]));
   }
-  return [...out.values()];
+  // Canonical candidate order: shorter chains first, then by sorted key.
+  return [...out.values()].sort((a, b) => a.length - b.length || key(a).localeCompare(key(b)));
 }
 function _dynSimClosureCands(sc, zoneSet) {
-  const cands = [...zoneSet].map(z => [z]);
+  const cmp = (x, y) => String(x).localeCompare(String(y), undefined, { numeric: true });
+  const cands = [...zoneSet].sort(cmp).map(z => [z]);
   const seen = new Set(cands.map(c => c.join('|')));
-  const push = g => { const k = g.slice().sort().join('|'); if (!seen.has(k)) { seen.add(k); cands.push(g.slice()); } };
+  const push = g => { const k = g.slice().sort(cmp).join('|'); if (!seen.has(k)) { seen.add(k); cands.push(g.slice()); } };
   const groups = (sc.closureGroups || []).map(g => g.filter(z => zoneSet.has(z))).filter(g => g.length >= 1);
   if (groups.length) groups.forEach(push);
   else _dynSimChains(_dynSimAdjPairs(sc), zoneSet, 4).forEach(push);   // fallback: ≤4 chains from track plan
-  return cands;
+  return cands.sort((a, b) => a.length - b.length || a.slice().sort(cmp).join('|').localeCompare(b.slice().sort(cmp).join('|')));
 }
 // Adjacency for the simulator = the shared Track Plan for this phase; if none is
 // defined yet, fall back to the scenario's own pairs.
