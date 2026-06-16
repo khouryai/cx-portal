@@ -38026,8 +38026,13 @@ async function _dynPlanCommitToCampaign() {
     used.set(s.id, (_dynPage.instances || []).filter(x => x.shift_id === s.id)
       .reduce((a, x) => a + (x.expected_duration_minutes || 0), 0));
   }
+  // Group by zone, then by consist+train signature, then longest-first — so the
+  // same train configuration is mobilised once and its tests land together.
   const selInstances = ids.map(id => (_dynPage.instances || []).find(x => x.id === id)).filter(Boolean)
-    .sort((a, b) => (b.expected_duration_minutes || 0) - (a.expected_duration_minutes || 0)); // pack big first
+    .sort((a, b) =>
+      String(a.track_section_under_test || '').localeCompare(String(b.track_section_under_test || '')) ||
+      _dynConsistSig(a).localeCompare(_dynConsistSig(b)) ||
+      (b.expected_duration_minutes || 0) - (a.expected_duration_minutes || 0));
   const placed = [], unplaced = [];
   for (const inst of selInstances) {
     if ((inst.track_section_access_req || []).some(z => !campZones.has(z))) {
@@ -38076,6 +38081,13 @@ function _dynStartArea(inst) {
   if (!sp) return null;
   const m = String(sp).trim().match(/^[A-Za-z0-9]+/);
   return m ? m[0].toUpperCase() : null;
+}
+
+// Train-configuration signature: runs sharing it (same consist size + train
+// count) can run back-to-back without re-mobilising trains, so the scheduler
+// batches them into the same shift.
+function _dynConsistSig(inst) {
+  return `${inst && inst.consist_size != null ? inst.consist_size : ''}|${inst && inst.trains_needed != null ? inst.trains_needed : ''}`;
 }
 
 // Dynamic test cases available as campaign scope (dynamic-scope items + any
@@ -38200,6 +38212,7 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
     let usedMin = useDur ? Math.max(0, p.minutes || 0) : 0;
     let count = Math.max(0, p.count || 0);          // pre-scheduled runs count toward capacity
     let winArea = null;
+    let winConsist = null;                          // consist+train signature this shift settled on
     const wz = winZonesOf(w); // zones this shift grants
     for (;;) {
       if (count >= capCount) break;
@@ -38217,6 +38230,9 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
         // locations first, so scarce multi-location access isn't spent on runs
         // that a single-location shift could have served.
         (footprintFirst ? (((b.track_section_access_req || []).length) - ((a.track_section_access_req || []).length)) : 0) ||
+        // (1c) batch runs that need the SAME consist + train count, so a shift
+        // mobilises one train configuration and isn't reconfigured mid-shift.
+        (winConsist != null ? ((_dynConsistSig(a) === winConsist ? 0 : 1) - (_dynConsistSig(b) === winConsist ? 0 : 1)) : 0) ||
         // (2) keep a shift focused on one start-point area (e.g. W45-*)
         (winArea ? ((_dynStartArea(a) === winArea ? 0 : 1) - (_dynStartArea(b) === winArea ? 0 : 1)) : 0) ||
         // (3) runs that unblock more dependents first
@@ -38235,6 +38251,7 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
         pick = cands[0];
       }
       if (winArea === null) winArea = _dynStartArea(pick);
+      if (winConsist === null) winConsist = _dynConsistSig(pick);
       placed.add(pick.id);
       if (!placedTestAt.has(pick.test_id)) placedTestAt.set(pick.test_id, idx);
       assignments.push({ instanceId: pick.id, windowId: w.id, shiftDate: w.shift_date });
