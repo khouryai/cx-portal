@@ -38878,6 +38878,16 @@ function _dynSimMix(sc) {
 }
 function _dynSimMaxMixSize(sc) { return _dynSimMix(sc).reduce((m, e) => Math.max(m, e.size), 1); }
 
+// Trains (and operators) available per shift. If the user hasn't set a value,
+// default to the most train-hungry run in scope so 2-train tests aren't
+// silently unschedulable; set it lower to model fewer trains.
+function _dynSimTrains(sc) {
+  if (sc && sc.trainsPerShift != null && sc.trainsPerShift !== '') return Math.max(1, parseInt(sc.trainsPerShift, 10) || 1);
+  let m = 1;
+  for (const i of _dynSimScopePool(sc)) m = Math.max(m, i.trains_needed || 1);
+  return m;
+}
+
 // Smallest connected track-plan cluster (number of locations) that can cover a
 // run's under-test + access zones — i.e. the shift size it truly needs. Returns
 // null if its zones can't be connected within 5 locations (unschedulable).
@@ -38973,6 +38983,7 @@ function _dynSimEverPlaceable(sc, pool, prereqs) {
   const hasClosure = (sc.maxClosures ?? 0) > 0 && Object.values(sc.weekOverrides || {}).some(ov => ov && ov.closure);
   const closure = hasClosure ? _dynSimClosureCands(sc, zset) : [];
   const maxMin = _dynSimMaxShiftMinutes(sc);
+  const trains = _dynSimTrains(sc);   // a run needing more trains than a shift has can never run
   const fits = i => {
     const req = [i.track_section_under_test, ...(i.track_section_access_req || [])].filter(Boolean);
     const within = cands => cands.some(c => { const s = new Set(c); return req.every(z => s.has(z)); });
@@ -38987,7 +38998,7 @@ function _dynSimEverPlaceable(sc, pool, prereqs) {
   const poolTests = new Set(pool.map(i => i.test_id));
   const byTest = new Map();
   pool.forEach(i => { if (!byTest.has(i.test_id)) byTest.set(i.test_id, []); byTest.get(i.test_id).push(i); });
-  const ok = new Map(pool.map(i => [i.id, fits(i) && (!i.expected_duration_minutes || !maxMin || i.expected_duration_minutes <= maxMin)]));
+  const ok = new Map(pool.map(i => [i.id, fits(i) && (i.trains_needed || 1) <= trains && (!i.expected_duration_minutes || !maxMin || i.expected_duration_minutes <= maxMin)]));
   let changed = true;
   while (changed) {
     changed = false;
@@ -39045,7 +39056,7 @@ function _dynSimRun(sc, prereqs) {
     if (ov && (ov.closure || ov.wk || ov.sat || ov.sun)) maxOvWeek = Math.max(maxOvWeek, Number(k));
   }
   const mix = _dynSimMix(sc);
-  const trainsPerShift = Math.max(1, parseInt(sc.trainsPerShift, 10) || 1);   // concurrency / operators
+  const trainsPerShift = _dynSimTrains(sc);   // concurrency / operators (defaults to cover the work)
   const setupMin = Math.max(0, parseFloat(sc.setupMin) || 0);                 // consist/mode/move changeover
   const sizeCounts = new Map();   // granted size → # of shifts (mix realization)
   let totalShifts = 0;
@@ -39366,7 +39377,7 @@ function _dynSimConfigHtml(sc, res) {
     </div>
     <div style="display:flex;gap:10px;margin-bottom:10px;font-size:12px;color:var(--gray-600);flex-wrap:wrap;">
       <label title="Trains (and operators) available per shift. >1 runs tests in parallel — a 2-train shift does ~2× the work.">Trains / shift
-        <input type="number" min="1" max="6" value="${sc.trainsPerShift ?? 1}" style="${inp}" onchange="_dynSimField('trainsPerShift',Math.max(1,parseInt(this.value,10)||1))"></label>
+        <input type="number" min="1" max="6" value="${sc.trainsPerShift ?? _dynSimTrains(sc)}" style="${inp}" onchange="_dynSimField('trainsPerShift',Math.max(1,parseInt(this.value,10)||1))"></label>
       <label title="Setup/positioning minutes lost when a shift switches consist, signalling mode, or start-area — discourages fragmenting a shift across configurations.">Setup min
         <input type="number" min="0" max="120" value="${sc.setupMin ?? 0}" style="${inp}" onchange="_dynSimField('setupMin',Math.max(0,parseInt(this.value,10)||0))"></label>
       <label title="Optional deadline. The plan is checked against it and flagged if it finishes late.">Target date
@@ -39427,6 +39438,7 @@ function _dynSimUnplacedHtml(sc, res) {
   const chains = _dynSimChains(_dynSimAdjPairs(sc), zset, maxZ);   // candidate location sets
   const horizonWk = Math.round(_DYN_SIM_HORIZON_DAYS / 7);
   const maxShiftMin = _dynSimMaxShiftMinutes(sc);
+  const trains = _dynSimTrains(sc);
   const codeFor = id => (_dynPage.testItemsById.get(id) || {}).code || id;
   // A prerequisite is "blocked in THIS sim" when its case still has runs the sim
   // couldn't place (not when it merely isn't Passed in live data).
@@ -39438,6 +39450,7 @@ function _dynSimUnplacedHtml(sc, res) {
     const unmetSim = [...new Set((_dynPage.prereqs || []).filter(p => p.test_id === i.test_id && unplacedTestIds.has(p.prerequisite_test_id)).map(p => p.prerequisite_test_id))];
     let type, label, tone;
     if (outside.length) { type = 'loc'; tone = { bg: '#fef3c7', fg: '#92400e' }; label = `add location(s): ${outside.join(', ')}`; }
+    else if ((i.trains_needed || 1) > trains) { type = 'trains'; tone = { bg: '#fae8ff', fg: '#a21caf' }; label = `needs ${i.trains_needed} trains — raise trains/shift (now ${trains})`; }
     else if (req.length > maxZ) { type = 'max'; tone = { bg: '#fde68a', fg: '#92400e' }; label = `needs a ${req.length}-location shift — add it to your access mix (max is ${maxZ})`; }
     else if (!chains.some(c => { const s = new Set(c); return req.every(z => s.has(z)); })) { type = 'adj'; tone = { bg: '#e0e7ff', fg: '#3730a3' }; label = `${req.join(', ')} not adjacent in track plan`; }
     else if (unmetSim.length) {
@@ -39447,10 +39460,10 @@ function _dynSimUnplacedHtml(sc, res) {
     else { type = 'cap'; tone = { bg: '#fee2e2', fg: '#b91c1c' }; label = `no capacity within ${horizonWk} weeks`; }
     return { i, type, label, tone };
   });
-  const order = ['loc', 'max', 'adj', 'prereq', 'dur', 'cap'];
+  const order = ['loc', 'trains', 'max', 'adj', 'prereq', 'dur', 'cap'];
   rows.sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type) || (a.i.code || '').localeCompare(b.i.code || ''));
   const counts = {}; rows.forEach(r => counts[r.type] = (counts[r.type] || 0) + 1);
-  const names = { loc: 'add location', max: 'over max/shift', adj: 'not adjacent', prereq: 'prereq blocked', dur: 'run too long', cap: 'no capacity' };
+  const names = { loc: 'add location', trains: 'needs more trains', max: 'over max/shift', adj: 'not adjacent', prereq: 'prereq blocked', dur: 'run too long', cap: 'no capacity' };
   const summary = order.filter(t => counts[t]).map(t => `${counts[t]} ${names[t]}`).join(' · ');
   const show = rows.slice(0, 40);
   const body = show.map(r => `<tr style="border-top:1px solid var(--gray-100);">
