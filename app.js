@@ -38151,7 +38151,7 @@ function _dynCampShiftSummary(c) {
 // prerequisite CHAINS — a run whose test case depends on others is never
 // placed before an earlier-or-same window already holds those prerequisites'
 // runs. Returns a draft the planner reviews before commit. Cycle-safe.
-function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3, capacityFn = null, windowAllows = null, runMinutesFn = null, windowMinutesFn = null, slack = 0, preload = null, footprintFirst = false }) {
+function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 3, capacityFn = null, windowAllows = null, runMinutesFn = null, windowMinutesFn = null, slack = 0, preload = null, footprintFirst = false, trainsFn = null, changeoverMin = 0 }) {
   // A shift grants a SET of zones; a run fits only if its access requirement is
   // a subset of THAT window's zones (so [W40,Y10] needs a window granting both).
   const winZonesOf = w => new Set((w.access_zones && w.access_zones.length) ? w.access_zones : [w.control_zone_code]);
@@ -38177,6 +38177,20 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
   // (runs that unblock others are scheduled earlier).
   const downstream = new Map();
   preMap.forEach(ps => ps.forEach(p => downstream.set(p, (downstream.get(p) || 0) + 1)));
+  // Critical depth: longest chain of DEPENDENTS below each test, so the deepest
+  // prerequisite chains start earliest and don't bottleneck the end of the plan.
+  const dependents = new Map();   // test → tests that require it
+  preMap.forEach((ps, t) => ps.forEach(p => { if (!dependents.has(p)) dependents.set(p, new Set()); dependents.get(p).add(t); }));
+  const critMemo = new Map(); const critVisiting = new Set();
+  const critDepth = t => {
+    if (critMemo.has(t)) return critMemo.get(t);
+    if (critVisiting.has(t)) return 0;
+    critVisiting.add(t);
+    let d = 0;
+    for (const c of (dependents.get(t) || [])) d = Math.max(d, critDepth(c) + 1);
+    critVisiting.delete(t); critMemo.set(t, d);
+    return d;
+  };
 
   const testsInPool = new Set(elig.map(i => i.test_id));
   const placedTestAt = new Map();
@@ -38208,12 +38222,28 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
     const p = pre(w) || {};
     const capCount = useDur ? Infinity : Math.max(0, (capacityFn ? capacityFn(w) : capacityPerWindow) | 0);
     const winMin = useDur ? Math.max(0, (windowMinutesFn ? windowMinutesFn(w) : 0) || 0) : 0;
-    const budget = useDur ? winMin * (1 - (slack || 0)) : 0;
-    let usedMin = useDur ? Math.max(0, p.minutes || 0) : 0;
+    // Trains available this shift → concurrency. Capacity is TRAIN-minutes
+    // (trains × window); a run consumes trains_needed × duration train-minutes,
+    // so a 2-train shift does ~twice the work of a 1-train shift.
+    const trains = Math.max(1, (trainsFn ? (trainsFn(w) | 0) : 1) || 1);
+    const budget = useDur ? winMin * trains * (1 - (slack || 0)) : 0;
+    const cost = i => runMin(i) * Math.max(1, (i.trains_needed || 1));   // train-minutes
+    let usedMin = useDur ? Math.max(0, p.minutes || 0) * trains : 0;
     let count = Math.max(0, p.count || 0);          // pre-scheduled runs count toward capacity
     let winArea = null;
     let winConsist = null;                          // consist+train signature this shift settled on
+    let winMode = null;                             // signalling mode this shift settled on
     const wz = winZonesOf(w); // zones this shift grants
+    // Setup (changeover/positioning) train-minutes for switching consist, mode,
+    // or start-area away from what the shift already settled on.
+    const setup = i => {
+      if (!changeoverMin) return 0;
+      let s = 0;
+      if (winConsist != null && _dynConsistSig(i) !== winConsist) s += changeoverMin;
+      if (winMode != null && (i.required_mode || '') !== winMode) s += changeoverMin;
+      if (winArea != null && _dynStartArea(i) !== winArea) s += changeoverMin;
+      return s * Math.max(1, (i.trains_needed || 1));
+    };
     for (;;) {
       if (count >= capCount) break;
       const cands = elig.filter(i => !placed.has(i.id)
@@ -38221,11 +38251,15 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
         && accessOkWin(i, wz)
         && (!windowAllows || windowAllows(i, w))
         && (!i.required_mode || (w.allowed_modes || []).includes(i.required_mode))
+        && (i.trains_needed || 1) <= trains       // can't run a test needing more trains than the shift has
         && prereqOkBy(i.test_id, idx));
       if (!cands.length) break;
       cands.sort((a, b) =>
         // (1) prerequisites/roots first (absent from graph ⇒ root, rank 0)
         ((rank.get(a.test_id) ?? 0) - (rank.get(b.test_id) ?? 0)) ||
+        // (1a) critical path: deepest remaining dependent chain first, so the
+        // longest prerequisite chains progress and never bottleneck the end.
+        ((critDepth(b.test_id)) - (critDepth(a.test_id))) ||
         // (1b) on multi-location shifts, place the runs that NEED the most
         // locations first, so scarce multi-location access isn't spent on runs
         // that a single-location shift could have served.
@@ -38233,6 +38267,8 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
         // (1c) batch runs that need the SAME consist + train count, so a shift
         // mobilises one train configuration and isn't reconfigured mid-shift.
         (winConsist != null ? ((_dynConsistSig(a) === winConsist ? 0 : 1) - (_dynConsistSig(b) === winConsist ? 0 : 1)) : 0) ||
+        // (1d) batch runs of the same signalling mode (avoid mode changeovers).
+        (winMode != null ? (((a.required_mode || '') === winMode ? 0 : 1) - ((b.required_mode || '') === winMode ? 0 : 1)) : 0) ||
         // (2) keep a shift focused on one start-point area (e.g. W45-*)
         (winArea ? ((_dynStartArea(a) === winArea ? 0 : 1) - (_dynStartArea(b) === winArea ? 0 : 1)) : 0) ||
         // (3) runs that unblock more dependents first
@@ -38243,19 +38279,20 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
         String(a.code || a.id).localeCompare(String(b.code || b.id)));
       let pick;
       if (useDur) {
-        // best candidate that still fits the duration budget; if none fits and
-        // the window is empty, force the best (a single long run still needs a slot).
-        pick = cands.find(c => usedMin + runMin(c) <= budget) || (count === 0 ? cands[0] : null);
+        // best candidate that still fits the (train-minute) budget incl. setup;
+        // if none fits and the window is empty, force the best.
+        pick = cands.find(c => usedMin + cost(c) + setup(c) <= budget) || (count === 0 ? cands[0] : null);
         if (!pick) break;
       } else {
         pick = cands[0];
       }
+      if (useDur) usedMin += cost(pick) + setup(pick);
       if (winArea === null) winArea = _dynStartArea(pick);
       if (winConsist === null) winConsist = _dynConsistSig(pick);
+      if (winMode === null) winMode = pick.required_mode || '';
       placed.add(pick.id);
       if (!placedTestAt.has(pick.test_id)) placedTestAt.set(pick.test_id, idx);
       assignments.push({ instanceId: pick.id, windowId: w.id, shiftDate: w.shift_date });
-      if (useDur) usedMin += runMin(pick);
       count++;
     }
   });
@@ -38738,10 +38775,19 @@ function _dynSimScopeAll(sc) {
 }
 function _dynSimScopePool(sc) {
   const zset = new Set(sc.zones || []);
-  return _dynSimScopeAll(sc).filter(i =>
+  const base = _dynSimScopeAll(sc).filter(i =>
     !['Pass', 'Not Applicable'].includes(i.status)
     && zset.has(i.track_section_under_test)
     && (!sc.scope.onlyUnscheduled || !i.shift_id));
+  // Equivalence groups are substitutes — only ONE needs to run, so keep a single
+  // representative per group (shortest first) rather than scheduling all of them.
+  const byGroup = new Map(); const out = [];
+  for (const i of base.slice().sort((a, b) => (a.expected_duration_minutes || 0) - (b.expected_duration_minutes || 0))) {
+    const g = i.equivalence_group_id;
+    if (g) { if (byGroup.has(g)) continue; byGroup.set(g, true); }
+    out.push(i);
+  }
+  return out;
 }
 
 // ── Actual completion S-curve for a phase: cumulative % of PASS/NA over time,
@@ -38999,6 +39045,8 @@ function _dynSimRun(sc, prereqs) {
     if (ov && (ov.closure || ov.wk || ov.sat || ov.sun)) maxOvWeek = Math.max(maxOvWeek, Number(k));
   }
   const mix = _dynSimMix(sc);
+  const trainsPerShift = Math.max(1, parseInt(sc.trainsPerShift, 10) || 1);   // concurrency / operators
+  const setupMin = Math.max(0, parseFloat(sc.setupMin) || 0);                 // consist/mode/move changeover
   const sizeCounts = new Map();   // granted size → # of shifts (mix realization)
   let totalShifts = 0;
   let base = null;                // current work zone, persists until drained
@@ -39077,6 +39125,7 @@ function _dynSimRun(sc, prereqs) {
         instances: remaining, windows: [win], prereqs: prereqs || [],
         runMinutesFn: i2 => i2.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN,
         windowMinutesFn: _dynWinMinutes, slack, footprintFirst: true,
+        trainsFn: () => trainsPerShift, changeoverMin: setupMin,
       });
       const placedIds = new Set(d2.assignments.map(a => a.instanceId));
       let placedMin = 0;
@@ -39096,7 +39145,10 @@ function _dynSimRun(sc, prereqs) {
   const calDays = completion ? Math.round((_dynParseDate(completion) - start) / 86400000) + 1 : null;
   const usedShifts = winLog.filter(w => w.placed > 0);
   let availMin = 0, plannedMin = 0;
-  winLog.forEach(w => { availMin += w.hours * 60; plannedMin += w.placedMin; });
+  // Capacity is train-minutes (window × trains), so utilization reflects how well
+  // the available trains were used, not just calendar window time.
+  winLog.forEach(w => { availMin += w.hours * 60 * trainsPerShift; plannedMin += w.placedMin; });
+  const accessHours = winLog.reduce((a, w) => a + w.hours, 0);   // calendar window hours
   const perDate = new Map();
   assignments.forEach(a => perDate.set(a.date, (perDate.get(a.date) || 0) + 1));
   let run = 0;
@@ -39114,13 +39166,22 @@ function _dynSimRun(sc, prereqs) {
     shifts: sizeCounts.get(size),
     used: winLog.filter(w => !w.isClosure && w.size === size && w.placed > 0).length,
   }));
+  // Target-date feasibility (backward check): does the plan finish by the date?
+  let target = null;
+  if (sc.targetDate && completion) {
+    const late = _dynParseDate(completion) > _dynParseDate(sc.targetDate);
+    const daysLate = Math.round((_dynParseDate(completion) - _dynParseDate(sc.targetDate)) / 86400000);
+    target = { date: sc.targetDate, onTrack: !late, daysLate: late ? daysLate : 0 };
+  } else if (sc.targetDate && remaining.length) {
+    target = { date: sc.targetDate, onTrack: false, daysLate: null };   // didn't finish at all
+  }
   return {
     total, placed, unplaced: remaining.length, unplacedList: remaining.slice(), outOfScope,
     completion, calDays, weeks: calDays ? Math.ceil(calDays / 7) : null,
     shifts: winLog.length, shiftsUsed: usedShifts.length,
-    accessHours: +(availMin / 60).toFixed(1),
+    accessHours: +accessHours.toFixed(1), trainsPerShift,
     utilPct: availMin > 0 ? Math.round(plannedMin / availMin * 100) : null,
-    mixUsed, maxMixSize: _dynSimMaxMixSize(sc),
+    mixUsed, maxMixSize: _dynSimMaxMixSize(sc), target,
     closuresUsed, extendedUsed: extendedWeeks.size, cumulative, winLog, zoneSpan, startDate: _dynDayKey(start),
   };
 }
@@ -39292,6 +39353,14 @@ function _dynSimConfigHtml(sc, res) {
       <label>Max closures <input type="number" min="0" max="20" value="${sc.maxClosures ?? 4}" style="${inp}" onchange="_dynSimField('maxClosures',parseInt(this.value,10)||0)"></label>
       <label>Max extended wks <input type="number" min="0" max="30" value="${sc.maxExtended ?? 4}" style="${inp}" onchange="_dynSimField('maxExtended',parseInt(this.value,10)||0)"></label>
     </div>
+    <div style="display:flex;gap:10px;margin-bottom:10px;font-size:12px;color:var(--gray-600);flex-wrap:wrap;">
+      <label title="Trains (and operators) available per shift. >1 runs tests in parallel — a 2-train shift does ~2× the work.">Trains / shift
+        <input type="number" min="1" max="6" value="${sc.trainsPerShift ?? 1}" style="${inp}" onchange="_dynSimField('trainsPerShift',Math.max(1,parseInt(this.value,10)||1))"></label>
+      <label title="Setup/positioning minutes lost when a shift switches consist, signalling mode, or start-area — discourages fragmenting a shift across configurations.">Setup min
+        <input type="number" min="0" max="120" value="${sc.setupMin ?? 0}" style="${inp}" onchange="_dynSimField('setupMin',Math.max(0,parseInt(this.value,10)||0))"></label>
+      <label title="Optional deadline. The plan is checked against it and flagged if it finishes late.">Target date
+        <input type="date" value="${escapeHtml(sc.targetDate || '')}" style="margin-left:4px;padding:3px 5px;border:1px solid var(--gray-300);border-radius:4px;font-size:12px;" onchange="_dynSimField('targetDate',this.value||null)"></label>
+    </div>
     <div style="font-size:12px;color:var(--gray-600);margin-bottom:4px;">Week overrides <span style="color:var(--gray-400);">(closure = continuous 48h weekend; hours blank = template)</span></div>
     <div style="max-height:240px;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">
       <table style="width:100%;border-collapse:collapse;font-size:11px;">
@@ -39307,6 +39376,22 @@ function _dynSimConfigHtml(sc, res) {
 // "Shifts needed by access size" — how many shifts of each location-size the
 // plan consumed, and how many were wasted (granted but nothing fit that size),
 // which signals an access-mix mismatch.
+// Target-date feasibility (backward check): green if the plan finishes by the
+// deadline, red with the gap + levers (more trains / larger access mix / shifts)
+// if it doesn't.
+function _dynSimTargetHtml(res) {
+  if (!res || !res.target) return '';
+  const t = res.target;
+  if (t.onTrack) {
+    return `<div style="margin-bottom:10px;padding:8px 12px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:6px;font-size:12px;color:#065f46;">✓ Finishes ${escapeHtml(_dynFmtDate(res.completion))} — on or before target ${escapeHtml(_dynFmtDate(t.date))}.</div>`;
+  }
+  const gap = t.daysLate == null ? null : Math.max(1, Math.ceil(t.daysLate / 7));
+  return `<div style="margin-bottom:10px;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#b91c1c;">
+    ⚠ Misses target ${escapeHtml(_dynFmtDate(t.date))}${t.daysLate == null ? ' (work does not complete in the horizon)' : ` by ${t.daysLate} day${t.daysLate === 1 ? '' : 's'} (~${gap} week${gap === 1 ? '' : 's'})`}.
+    <span style="color:var(--gray-600);">Levers: more trains/shift (parallel runs), a larger-shift access mix, more shifts, or a closure week.</span>
+  </div>`;
+}
+
 function _dynSimMixHtml(res) {
   if (!res || !res.mixUsed || !res.mixUsed.length) return '';
   const wasted = res.mixUsed.reduce((a, m) => a + (m.shifts - m.used), 0);
@@ -39391,6 +39476,7 @@ function _dynSimResultsHtml(sc, res, baseRes, baseline) {
     </div>`;
   return `
     ${kpiBlock}
+    ${_dynSimTargetHtml(res)}
     ${_dynSimMixHtml(res)}
     ${res.outOfScope ? `<div style="margin-bottom:10px;padding:7px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e;">${res.outOfScope} open run(s) are in locations OUTSIDE this scenario — add their locations to include them.</div>` : ''}
     ${_dynSimUnplacedHtml(sc, res)}
@@ -39776,7 +39862,8 @@ async function _dynAllocateInto(campIds, label) {
       instances: pool, windows, prereqs, windowAllows,
       runMinutesFn: i => i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN,
       windowMinutesFn: _dynWinMinutes, slack,
-      preload: _dynWindowPreload,
+      preload: _dynWindowPreload, footprintFirst: true,
+      trainsFn: w => Math.max(1, w.max_trains || 1),   // a multi-train window runs tests in parallel
     });
     _dynPage._allocDraft = { campId: idSet.size === 1 ? [...idSet][0] : null, assignments: draft.assignments, unplaced: draft.unplaced };
     _dynAutoAllocatePreview(label, draft);
