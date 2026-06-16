@@ -39211,6 +39211,17 @@ async function _dynRenderSimulator() {
     const def = _dynSimDefaultScenario(_dynPage.simPhase + ' baseline', _dynPage.simPhase);
     def.baseline = true; arr.push(def); _dynSimSaveScenarios(arr);
   }
+  // Auto-populate the access mix (once) sized to the work's footprints, so
+  // multi-location work — and every prerequisite chain that depends on it — is
+  // actually schedulable instead of structurally blocked by a too-small mix.
+  let mixSeeded = false;
+  for (const s of arr) {
+    if ((s.phase || '') !== _dynPage.simPhase) continue;
+    if (s.shiftMix && typeof s.shiftMix === 'object' && Object.keys(s.shiftMix).length) continue;
+    const am = _dynSimAutoMix(s);
+    if (am) { s.shiftMix = am; mixSeeded = true; }
+  }
+  if (mixSeeded) _dynSimSaveScenarios(arr);
   const sc = _dynSimActive();
   if (sc) _dynPage.simActiveByPhase[_dynPage.simPhase] = sc.id;
   const res = sc ? _dynSimRun(sc, _dynPage._simPrereqs) : null;
@@ -39417,17 +39428,20 @@ function _dynSimUnplacedHtml(sc, res) {
   const horizonWk = Math.round(_DYN_SIM_HORIZON_DAYS / 7);
   const maxShiftMin = _dynSimMaxShiftMinutes(sc);
   const codeFor = id => (_dynPage.testItemsById.get(id) || {}).code || id;
+  // A prerequisite is "blocked in THIS sim" when its case still has runs the sim
+  // couldn't place (not when it merely isn't Passed in live data).
+  const unplacedTestIds = new Set(list.map(i => i.test_id));
 
   const rows = list.map(i => {
     const req = [...new Set([i.track_section_under_test, ...(i.track_section_access_req || [])].filter(Boolean))];
     const outside = req.filter(z => !zset.has(z));
+    const unmetSim = [...new Set((_dynPage.prereqs || []).filter(p => p.test_id === i.test_id && unplacedTestIds.has(p.prerequisite_test_id)).map(p => p.prerequisite_test_id))];
     let type, label, tone;
     if (outside.length) { type = 'loc'; tone = { bg: '#fef3c7', fg: '#92400e' }; label = `add location(s): ${outside.join(', ')}`; }
     else if (req.length > maxZ) { type = 'max'; tone = { bg: '#fde68a', fg: '#92400e' }; label = `needs a ${req.length}-location shift — add it to your access mix (max is ${maxZ})`; }
     else if (!chains.some(c => { const s = new Set(c); return req.every(z => s.has(z)); })) { type = 'adj'; tone = { bg: '#e0e7ff', fg: '#3730a3' }; label = `${req.join(', ')} not adjacent in track plan`; }
-    else if (!_dynPrereqsMet(i.test_id)) {
-      const unmet = [...new Set((_dynPage.prereqs || []).filter(p => p.test_id === i.test_id && !_dynCaseComplete(p.prerequisite_test_id)).map(p => codeFor(p.prerequisite_test_id)))];
-      type = 'prereq'; tone = { bg: '#ede9fe', fg: '#6d28d9' }; label = `blocked by prereq: ${unmet.join(', ') || '—'}`;
+    else if (unmetSim.length) {
+      type = 'prereq'; tone = { bg: '#ede9fe', fg: '#6d28d9' }; label = `waiting on prereq: ${unmetSim.map(codeFor).join(', ')} (also unscheduled — fix those first)`;
     }
     else if (i.expected_duration_minutes && maxShiftMin && i.expected_duration_minutes > maxShiftMin) { type = 'dur'; tone = { bg: '#e0f2fe', fg: '#0369a1' }; label = `run (${i.expected_duration_minutes}m) longer than any shift (${maxShiftMin / 60}h)`; }
     else { type = 'cap'; tone = { bg: '#fee2e2', fg: '#b91c1c' }; label = `no capacity within ${horizonWk} weeks`; }
