@@ -38807,7 +38807,10 @@ function _dynSimEverPlaceable(sc, pool, prereqs) {
   const zset = new Set(sc.zones || []);
   const maxZ = Math.max(1, Math.min(5, sc.maxZonesPerShift || 2));
   const chains = _dynSimChains(_dynSimAdjPairs(sc), zset, maxZ);
-  const closure = _dynSimClosureCands(sc, zset);
+  // Closure-sized chains (up to 4 zones) are only reachable if a closure week is
+  // actually scheduled — otherwise normal shifts (maxZ chains) are all that run.
+  const hasClosure = (sc.maxClosures ?? 0) > 0 && Object.values(sc.weekOverrides || {}).some(ov => ov && ov.closure);
+  const closure = hasClosure ? _dynSimClosureCands(sc, zset) : [];
   const maxMin = _dynSimMaxShiftMinutes(sc);
   const fits = i => {
     const req = [i.track_section_under_test, ...(i.track_section_access_req || [])].filter(Boolean);
@@ -38848,10 +38851,18 @@ function _dynSimRun(sc, prereqs) {
   const start = _dynParseDate(sc.startDate || _dynFmtDate(new Date()));
   let closuresUsed = 0;
   const extendedWeeks = new Set();
+  // Safety backstop: never run more than 2 weeks past the last scheduled
+  // override/closure week without placing anything (bounds pathological loops).
+  let maxOvWeek = -1;
+  for (const [k, ov] of Object.entries(sc.weekOverrides || {})) {
+    if (ov && (ov.closure || ov.wk || ov.sat || ov.sun)) maxOvWeek = Math.max(maxOvWeek, Number(k));
+  }
+  let lastProgressDay = 0;
   for (let day = 0; day < _DYN_SIM_HORIZON_DAYS && remaining.length; day++) {
     if (!remaining.some(i => everSet.has(i.id))) break;        // nothing left that can ever be placed
     const d = _dynAddDays(start, day);
     const wk = Math.floor(day / 7);
+    if (wk > maxOvWeek && (day - lastProgressDay) > 14) break;  // stalled past all scheduled access changes
     const ov = (sc.weekOverrides || {})[wk] || {};
     const dow = d.getDay();
     let hours = null, isClosure = false;
@@ -38881,6 +38892,7 @@ function _dynSimRun(sc, prereqs) {
       windowMinutesFn: _dynWinMinutes, slack,
     });
     const placedIds = new Set(d2.assignments.map(a => a.instanceId));
+    if (placedIds.size) lastProgressDay = day;
     let placedMin = 0;
     remaining = remaining.filter(i => { if (!placedIds.has(i.id)) return true; placedMin += i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN; return false; });
     for (const a of d2.assignments) assignments.push({ instanceId: a.instanceId, date: iso, zones });
