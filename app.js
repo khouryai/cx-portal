@@ -39193,12 +39193,18 @@ function _dynSimRun(sc, prereqs) {
     if (a.date > s2.last) s2.last = a.date;
     s2.n++; zoneSpan.set(z, s2);
   }));
-  // Realized access mix: granted size → {shifts, used} (used = placed≥1).
-  const mixUsed = [...sizeCounts.keys()].sort((a, b) => a - b).map(size => ({
-    size,
-    shifts: sizeCounts.get(size),
-    used: winLog.filter(w => !w.isClosure && w.size === size && w.placed > 0).length,
-  }));
+  // Realized access mix: the ACTUAL shifts that ran, grouped by the size they
+  // ended up using (after any escalation to fill), so counts are consistent —
+  // "unused" only counts shifts that genuinely placed nothing.
+  const mixBy = new Map();
+  for (const w of winLog) {
+    if (w.isClosure) continue;
+    const sz = w.size || 1;
+    const e = mixBy.get(sz) || { size: sz, shifts: 0, used: 0 };
+    e.shifts++; if (w.placed > 0) e.used++;
+    mixBy.set(sz, e);
+  }
+  const mixUsed = [...mixBy.values()].sort((a, b) => a.size - b.size);
   // Target-date feasibility (backward check): does the plan finish by the date?
   let target = null;
   if (sc.targetDate && completion) {
