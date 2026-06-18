@@ -39993,21 +39993,34 @@ function _dynSimDrawChart() {
   const phase = _dynPage.simPhase;
   const active = _dynSimActive();
   const list = _dynSimScenarios().filter(s => (s.phase || '') === phase);
-  const runs = list.map(s => ({ s, r: (active && s.id === active.id && _dynPage._simResult) ? _dynPage._simResult : _dynSimRun(s, _dynPage._simPrereqs || []) }));
+  const prereqs = _dynPage._simPrereqs || [];
+  // Each scenario with regression projection ENABLED gets its S-curve extended
+  // through the dev gaps + regression campaigns — independent of which scenario
+  // is currently selected, so an enabled regression always shows on the chart.
+  const runs = list.map(s => {
+    const r = (active && s.id === active.id && _dynPage._simResult) ? _dynPage._simResult : _dynSimRun(s, prereqs);
+    let curve = r.cumulative;
+    if (_dynRegConfig(s).enabled) {
+      const rr = (active && s.id === active.id && _dynPage._simRegResult)
+        ? _dynPage._simRegResult
+        : _dynSimRunRegression(s, prereqs, r);
+      const ext = rr ? _dynSimRegressionCurve(r, rr) : null;
+      if (ext) curve = ext;
+    }
+    return { s, r, curve };
+  });
   const actual = _dynSimActualCurve(phase);
-  const regRes = _dynPage._simRegResult;
-  const regCurve = (active && _dynPage._simResult && regRes) ? _dynSimRegressionCurve(_dynPage._simResult, regRes) : null;
-  const allDates = [...new Set([...runs.flatMap(x => x.r.cumulative.map(p => p.date)), ...(regCurve ? regCurve.map(p => p.date) : []), ...actual.points.map(p => p.date)])].sort();
+  const allDates = [...new Set([...runs.flatMap(x => x.curve.map(p => p.date)), ...actual.points.map(p => p.date)])].sort();
   const palette = ['#1d4eaf', '#059669', '#7c3aed', '#b45309', '#0e7490', '#9d174d'];
   const hidden = _dynPage._simHiddenSeries || (_dynPage._simHiddenSeries = new Set());
   const datasets = [];
-  runs.forEach(({ s, r }, i) => {
+  runs.forEach(({ s, r, curve }, i) => {
     if (hidden.has(s.id)) return;
     const isActive = active && s.id === active.id;
-    const src = (isActive && regCurve) ? regCurve : r.cumulative;
-    let last = 0; const m = new Map(src.map(p => [p.date, p.pct]));
+    const hasReg = curve !== r.cumulative;
+    let last = 0; const m = new Map(curve.map(p => [p.date, p.pct]));
     datasets.push({
-      label: (s.baseline ? '★ ' : '') + s.name + ((isActive && regCurve) ? ' (incl. regression)' : ''),
+      label: (s.baseline ? '★ ' : '') + s.name + (hasReg ? ' (incl. regression)' : ''),
       data: allDates.map(d => { if (m.has(d)) last = m.get(d); return last; }),
       borderColor: s.baseline ? '#e60012' : palette[i % palette.length],
       borderWidth: isActive ? 3 : 1.5,
