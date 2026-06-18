@@ -35950,6 +35950,12 @@ function _dynScheduleRowActions(r) {
   </div>`;
 }
 
+// A MANUAL schedule/unschedule means a human now owns this run's placement, so the
+// auto-roll-forward trail (set by the cancelled-window trigger; drives the
+// "↻ moved … ×N" badge) is stale and gets reset. Otherwise the badge lingers on a
+// run the planner has since rescheduled or pulled back to the backlog by hand.
+const _DYN_ROLL_RESET = { roll_count: 0, roll_note: null, rolled_at: null, moved_from_window_id: null };
+
 // Schedule a run onto a specific access window (by id). Re-checks eligibility,
 // then links shift_id + the window's date and time range.
 async function _dynMoveInstanceToShift(id, windowId) {
@@ -35959,8 +35965,8 @@ async function _dynMoveInstanceToShift(id, windowId) {
   if (!_dynWindowGrantsRun(w, inst)) { alert('That access shift does not meet this run’s zone / access / mode requirements.'); return; }
   const window = (w.start_at && w.end_at) ? '[' + w.start_at + ',' + w.end_at + ')' : null;
   try {
-    await _dbUpdate('dynamic_instances', { shift_id: w.id, scheduled_for_date: w.shift_date, scheduled_window: window, updated_at: new Date().toISOString() }, { id });
-    inst.shift_id = w.id; inst.scheduled_for_date = w.shift_date; inst.scheduled_window = window;
+    await _dbUpdate('dynamic_instances', { shift_id: w.id, scheduled_for_date: w.shift_date, scheduled_window: window, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() }, { id });
+    inst.shift_id = w.id; inst.scheduled_for_date = w.shift_date; inst.scheduled_window = window; Object.assign(inst, _DYN_ROLL_RESET);
     if (typeof toast === 'function') toast(`Scheduled onto ${_dynFmtDate(w.shift_date)} access shift`, 'success');
     _dynPage.loaded = false;
     await _dynLoadAll();
@@ -35972,9 +35978,9 @@ async function _dynMoveInstanceToShift(id, windowId) {
 async function _dynUnschedule(id) {
   if (!confirm('Remove this instance from its scheduled date?')) return;
   try {
-    await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, updated_at: new Date().toISOString() }, { id });
+    await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() }, { id });
     const inst = _dynPage.instances.find(x => x.id === id);
-    if (inst) { inst.shift_id = null; inst.scheduled_for_date = null; inst.scheduled_window = null; }
+    if (inst) { inst.shift_id = null; inst.scheduled_for_date = null; inst.scheduled_window = null; Object.assign(inst, _DYN_ROLL_RESET); }
     if (typeof toast === 'function') toast('Removed from schedule', 'success');
     _dynPage.loaded = false;
     await _dynLoadAll();
@@ -36041,9 +36047,9 @@ async function _dynBulkMoveShift(windowId) {
   const window = (w.start_at && w.end_at) ? '[' + w.start_at + ',' + w.end_at + ')' : null;
   try {
     for (const id of eligible) {
-      await _dbUpdate('dynamic_instances', { shift_id: w.id, scheduled_for_date: w.shift_date, scheduled_window: window, updated_at: new Date().toISOString() }, { id });
+      await _dbUpdate('dynamic_instances', { shift_id: w.id, scheduled_for_date: w.shift_date, scheduled_window: window, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() }, { id });
       const inst = _dynPage.instances.find(x => x.id === id);
-      if (inst) { inst.shift_id = w.id; inst.scheduled_for_date = w.shift_date; inst.scheduled_window = window; }
+      if (inst) { inst.shift_id = w.id; inst.scheduled_for_date = w.shift_date; inst.scheduled_window = window; Object.assign(inst, _DYN_ROLL_RESET); }
     }
     _dynPage.daySel.clear();
     if (typeof toast === 'function') toast(`Scheduled ${eligible.length} onto ${_dynFmtDate(w.shift_date)}${skipped ? ` · ${skipped} skipped` : ''}`, 'success');
@@ -36060,9 +36066,9 @@ async function _dynBulkUnschedule() {
   if (!confirm(`Remove ${ids.length} instance(s) from their scheduled date?`)) return;
   try {
     for (const id of ids) {
-      await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, updated_at: new Date().toISOString() }, { id });
+      await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() }, { id });
       const inst = _dynPage.instances.find(x => x.id === id);
-      if (inst) { inst.shift_id = null; inst.scheduled_for_date = null; inst.scheduled_window = null; }
+      if (inst) { inst.shift_id = null; inst.scheduled_for_date = null; inst.scheduled_window = null; Object.assign(inst, _DYN_ROLL_RESET); }
     }
     _dynPage.daySel.clear();
     if (typeof toast === 'function') toast(`Unscheduled ${ids.length}`, 'success');
@@ -36945,7 +36951,7 @@ async function _dynUpdateCampaign(editId, fields) {
     for (const w of insertedShifts) await _dynEnsureShiftCell(w, activityId, campObj).catch(() => {});
     // removals — unschedule any instances first, then delete (cells cascade)
     for (const ins of affectedInstances) {
-      await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, updated_at: new Date().toISOString() }, { id: ins.id }).catch(() => {});
+      await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() }, { id: ins.id }).catch(() => {});
     }
     for (const s of toRemove) await _dbDelete('zone_access_windows', { id: s.id }).catch(() => {});
 
@@ -37302,6 +37308,7 @@ async function _dynShiftAssign(instId, shiftId) {
       shift_id: shiftId,
       scheduled_for_date: s.shift_date,
       scheduled_window: (s.start_at && s.end_at) ? `[${s.start_at},${s.end_at})` : null,
+      ..._DYN_ROLL_RESET,
       updated_at: new Date().toISOString(),
     };
     await _dbUpdate('dynamic_instances', payload, { id: instId });
@@ -37314,7 +37321,7 @@ async function _dynShiftUnassign(instId) {
   const i = (_dynPage.instances || []).find(x => x.id === instId);
   const shiftId = i?.shift_id;
   try {
-    const payload = { shift_id: null, scheduled_for_date: null, scheduled_window: null, updated_at: new Date().toISOString() };
+    const payload = { shift_id: null, scheduled_for_date: null, scheduled_window: null, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() };
     await _dbUpdate('dynamic_instances', payload, { id: instId });
     if (i) Object.assign(i, payload);
     if (shiftId) _dynBuildShift(shiftId);
@@ -37503,8 +37510,8 @@ async function _dynCampaignUnscheduleAll(campaignId) {
   if (!confirm(`Unschedule all ${scoped.length} scheduled run(s) in "${camp.name}"?\n\nThis frees every shift slot in the campaign; the runs return to the backlog.`)) return;
   try {
     for (const i of scoped) {
-      await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, updated_at: new Date().toISOString() }, { id: i.id });
-      i.shift_id = null; i.scheduled_for_date = null; i.scheduled_window = null;
+      await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() }, { id: i.id });
+      i.shift_id = null; i.scheduled_for_date = null; i.scheduled_window = null; Object.assign(i, _DYN_ROLL_RESET);
     }
     toast(`Unscheduled ${scoped.length} run(s)`, 'success');
     closeModal();
