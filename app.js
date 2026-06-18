@@ -39361,7 +39361,9 @@ function _dynSimRunRegression(sc, prereqs, baseRes) {
     const slice = _dynRegSelectFailures(prevPool, cfg.failureRate, cfg.weights);
     if (!slice.length) break;
     const gm = cfg.gaps[ci];
-    const regStart = _dynDayKey(_dynAddMonths(_dynParseDate(prevEnd), gm));
+    // Dev gap = gm calendar months at 30 days each (NOT _dynAddMonths, which snaps
+    // to the 1st of the month and would shorten the gap, e.g. 09-20 → 10-01).
+    const regStart = _dynDayKey(_dynAddDays(_dynParseDate(prevEnd), Math.round(gm * 30)));
     const sub = Object.assign({}, sc, { startDate: regStart, _poolOverride: slice, targetDate: null });
     const r = _dynSimRun(sub, prereqs);
     campaigns.push({
