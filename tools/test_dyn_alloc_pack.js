@@ -74,5 +74,27 @@ const dFull = cascade({
 });
 assert(dFull.assignments.length === 0, "an already-full window takes no more runs (got " + dFull.assignments.length + ")");
 
+// ── two windows on the SAME date+zone are filled independently ────────────────
+// Regression for the bogus ">100% fill" the preview showed: it grouped draft rows
+// by date+control_zone, merging two distinct windows' runs against ONE window's
+// length. The allocator assigns each run to its own window id, and each window is
+// independently capped at its (1−slack) budget — so grouping by window id (as the
+// preview now does) can never exceed 100%.
+const winA = { ...win, id: "wA" };
+const winB = { ...win, id: "wB" }; // same date, same zone, different id
+const many = Array.from({ length: 10 }, (_, n) => ({
+  id: "m" + n, test_id: "m" + n, code: "M" + n,
+  track_section_under_test: "W40", track_section_access_req: ["W40"],
+  required_mode: null, status: "Not Started", expected_duration_minutes: 20,
+}));
+const dTwo = cascade({
+  instances: many, windows: [winA, winB], prereqs: [],
+  runMinutesFn: i => i.expected_duration_minutes, windowMinutesFn: () => 120, slack: 0.15,
+});
+const byId = new Map();
+for (const a of dTwo.assignments) byId.set(a.windowId, (byId.get(a.windowId) || 0) + 20);
+assert(byId.size === 2, "runs spread across BOTH same-date+zone windows (distinct ids), not merged (got " + byId.size + ")");
+assert([...byId.values()].every(m => m <= 102), "each window stays within its 102m budget — per-window fill ≤ 100% (mins: " + [...byId.values()].join(",") + ")");
+
 console.log(`test_dyn_alloc_pack: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

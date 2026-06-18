@@ -38295,8 +38295,10 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
         String(a.code || a.id).localeCompare(String(b.code || b.id)));
       let pick;
       if (useDur) {
-        // best candidate that still fits the time budget incl. setup; if none
-        // fits and the window is empty, force the best.
+        // best candidate that still fits the (1−slack) time budget incl. setup; if
+        // none fits and the window is empty, force the best so work is never
+        // stranded (a run longer than the window gets placed anyway and shows as a
+        // >100% fill — flagged red in the preview — for the planner to split).
         pick = cands.find(c => usedMin + runMin(c) + setup(c) <= budget) || (count === 0 ? cands[0] : null);
         if (!pick) break;
       } else {
@@ -40512,19 +40514,21 @@ function _dynAutoAllocatePreview(label, draft) {
   const instById = new Map((_dynPage.instances || []).map(i => [i.id, i]));
   const winById = new Map((_dynPage.shifts || []).map(w => [w.id, w]));
   const campById = new Map((_dynPage.campaigns || []).map(c => [c.id, c]));
+  // Group by the actual WINDOW id — NOT a date+zone string. Two distinct windows
+  // that share a date and control zone must stay separate rows; merging them summed
+  // both windows' run minutes against a single window's length → bogus >100% fill.
   const byWin = new Map();
   for (const a of draft.assignments) {
-    const w = winById.get(a.windowId);
-    const cm = w && campById.get(w.campaign_id);
-    const key = (cm ? cm.name + ' · ' : '') + (a.shiftDate || '') + ' · ' + (w ? w.control_zone_code : '');
-    if (!byWin.has(key)) byWin.set(key, { w, list: [] });
-    byWin.get(key).list.push(instById.get(a.instanceId));
+    if (!byWin.has(a.windowId)) byWin.set(a.windowId, { w: winById.get(a.windowId), list: [] });
+    byWin.get(a.windowId).list.push(instById.get(a.instanceId));
   }
-  const rowsHtml = [...byWin.entries()].map(([k, { w, list }]) => {
+  const rowsHtml = [...byWin.values()].map(({ w, list }) => {
+    const cm = w && campById.get(w.campaign_id);
+    const k = (cm ? cm.name + ' · ' : '') + (w ? _dynWindowLabel(w) : '—');
     const winMin = w ? _dynWinMinutes(w) : 0;
     const usedMin = list.reduce((m, i) => m + ((i && i.expected_duration_minutes) || _DYN_DEFAULT_RUN_MIN), 0);
     const fill = winMin > 0 ? Math.round(usedMin / winMin * 100) : null;
-    const fillColor = fill === null ? 'var(--gray-400)' : fill >= 80 ? '#059669' : fill >= 60 ? '#b45309' : '#9ca3af';
+    const fillColor = fill === null ? 'var(--gray-400)' : fill > 100 ? '#dc2626' : fill >= 80 ? '#059669' : fill >= 60 ? '#b45309' : '#9ca3af';
     return '<tr style="border-bottom:1px solid var(--gray-100);">' +
       '<td style="padding:6px 10px;font-family:monospace;font-size:11.5px;white-space:nowrap;">' + escapeHtml(k) + '</td>' +
       '<td style="padding:6px 10px;"><b>' + list.length + '</b></td>' +
