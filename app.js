@@ -34439,6 +34439,12 @@ async function _dynLoadAll() {
       'test_id,test_case_code,test_name,subsystem,phase,location,scope_type,test_scope,procedure_code,procedure_name,applicable_locations')
       .catch(e => { console.warn('[dyn] test_items load:', e.message); return []; });
     _dynBuildTestItemsIndex();
+    // Each instance inherits its subsystem from the linked test case (the
+    // dynamic_instances table has no subsystem column) so the simulator's
+    // subsystem scope/regression weighting can use it.
+    for (const i of _dynPage.instances) {
+      i.subsystem = (_dynPage.testItemsById.get(i.test_id) || {}).subsystem || '';
+    }
     // Access Plan data (Phase 1) — campaigns + their generated shift windows.
     _dynPage.campaigns = await _dbSelect('access_campaigns', {}, '*')
       .catch(e => { console.warn('[dyn] campaigns load:', e.message); return []; });
@@ -34566,15 +34572,15 @@ function _dynRenderInstances() {
     return true;
   });
 
-  // Sort: clickable column headers, else default to target window / created desc.
+  // Sort: clickable column headers, else default to created desc.
   if (_dynPage.instSortCol) {
     const dir = _dynPage.instSortDir === 'asc' ? 1 : -1;
     const val = r => _dynInstSortValue(r, _dynPage.instSortCol);
     rows.sort((a, b) => dir * String(val(a)).localeCompare(String(val(b)), undefined, { numeric: true }));
   } else {
     rows.sort((a, b) => {
-      const ka = (a.target_window_start || a.created_at || '');
-      const kb = (b.target_window_start || b.created_at || '');
+      const ka = (a.created_at || '');
+      const kb = (b.created_at || '');
       return String(kb).localeCompare(String(ka));
     });
   }
@@ -35051,14 +35057,6 @@ function _dynBuildInstanceForm(inst, tcOpts) {
         <label>Target phase</label>
         <input id="dyn-f-phase" value="${escapeHtml(v.target_phase || '')}" placeholder="e.g. Phase 2" />
       </div>
-      <div class="form-field">
-        <label>Target window start</label>
-        <input id="dyn-f-win-start" type="date" value="${_dynFmtDate(v.target_window_start)}" />
-      </div>
-      <div class="form-field">
-        <label>Target window end</label>
-        <input id="dyn-f-win-end" type="date" value="${_dynFmtDate(v.target_window_end)}" />
-      </div>
 
       <div class="form-field">
         <label>Scheduled for</label>
@@ -35137,8 +35135,6 @@ async function _dynSaveInstance(id) {
     required_mode: get('dyn-f-mode'),
     status: get('dyn-f-status') || 'Not Started',
     target_phase: get('dyn-f-phase'),
-    target_window_start: get('dyn-f-win-start'),
-    target_window_end: get('dyn-f-win-end'),
     scheduled_for_date: get('dyn-f-sched'),
     blocked_reason: get('dyn-f-blocked'),
     notes: get('dyn-f-notes'),
@@ -35236,8 +35232,8 @@ function _dynOpenCSVModal() {
 
 // Native procedure-template headers (what planners actually export).
 const _DYN_TEMPLATE_HEADERS = [
-  'Test Procedure', 'Test Case Code', 'Test Case Name', 'Prerequisites', 'Phase',
-  'Track Section Under Test', 'Track Section Access Req', 'Number of Trains',
+  'Test Procedure', 'Test Case Code', 'Test Case Name', 'Subsystem', 'Prerequisites', 'Target Phase',
+  'Required Mode', 'Track Section Under Test', 'Track Section Access Req', 'Number of Trains',
   'Train 1 car #', 'Train 2 car #', 'Substitute', 'Estimated duration (m)',
   'Starting Point', 'Intermediate Points', 'Finish Point',
   'Test Scope', 'Applicable Locations',
@@ -35247,9 +35243,9 @@ function _dynCSVPasteSample() {
   const h = _DYN_TEMPLATE_HEADERS.join(',');
   const sample = [
     h,
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M,per_location,"W40, W37, W45"',
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,W40,1,Any,,,20,W45-L,,W45-A,per_location,"W40, W37, W45"',
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,"W40, W34",1,Any,,SIT_016b,20,W37-G,,W33-N,per_location,"W40, W37, W45"',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M,per_location,"W40, W37, W45"',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,W40,1,Any,,,20,W45-L,,W45-A,per_location,"W40, W37, W45"',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, W34",1,Any,,SIT_016b,20,W37-G,,W33-N,per_location,"W40, W37, W45"',
   ].join('\n');
   document.getElementById('dyn-csv-text').value = sample;
   _dynCSVValidate();
@@ -35259,8 +35255,8 @@ function _dynDownloadCSVTemplate() {
   const headers = _DYN_TEMPLATE_HEADERS.join(',');
   const instructions = '# One row per run. REQUIRED: Test Case Code. Rows with the same code roll up to one test case. Track Section Access Req / Intermediate Points: comma- or semicolon-separated. Substitute: a Test Case Code or run code that is an alternative way to pass (groups the runs, counted once for KPIs).';
   const examples = [
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M,per_location,"W40, W37, W45"',
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,,Phase 2,W40,W40,1,Any,,,20,W45-A,,W45-L,per_location,"W40, W37, W45"',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M,per_location,"W40, W37, W45"',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,W40,1,Any,,,20,W45-A,,W45-L,per_location,"W40, W37, W45"',
   ];
   const csv = [headers, instructions, ...examples].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -35322,6 +35318,12 @@ function _dynNormScope(raw) {
   return null;
 }
 
+// Normalize a required-mode value to one of the canonical codes (or null).
+function _dynNormMode(raw) {
+  const t = String(raw || '').trim().toUpperCase();
+  return (t === 'CBTC' || t === 'VATC') ? t : null;
+}
+
 // Last parsed import preview, set by _dynCSVValidate, consumed by _dynImportCSVRows.
 let _dynImportPreview = null;
 
@@ -35339,6 +35341,10 @@ function _dynHeaderKey(raw) {
     'test case name': 'case_name',
     'prerequisites': 'prerequisites',
     'phase': 'phase',
+    'target phase': 'phase',
+    'subsystem': 'subsystem',
+    'required mode': 'required_mode',
+    'mode': 'required_mode',
     'track section under test': 'tsut',
     'track section access req': 'access_req',
     'number of trains': 'num_trains',
@@ -35408,6 +35414,7 @@ function _dynParseRuns(parsed) {
         code,
         name: get('case_name') || code,
         procedure: get('procedure') || '',
+        subsystem: get('subsystem') || '',
         phase: get('phase') || '',
         test_scope: _dynNormScope(get('test_scope')),
         applicable_locations: splitList(get('applicable_locations')),
@@ -35420,6 +35427,7 @@ function _dynParseRuns(parsed) {
     // Backfill case metadata from any row that carries it.
     if (!c.name && get('case_name')) c.name = get('case_name');
     if (!c.procedure && get('procedure')) c.procedure = get('procedure');
+    if (!c.subsystem && get('subsystem')) c.subsystem = get('subsystem');
     if (!c.phase && get('phase')) c.phase = get('phase');
     if (!c.test_scope) c.test_scope = _dynNormScope(get('test_scope'));
     if ((!c.applicable_locations || !c.applicable_locations.length) && get('applicable_locations')) {
@@ -35448,6 +35456,7 @@ function _dynParseRuns(parsed) {
       finish_point: finish || null,
       track_section_under_test: get('tsut') || null,
       track_section_access_req: _dynParseZones(get('access_req')),
+      required_mode: _dynNormMode(get('required_mode')),
       prerequisites: get('prerequisites') || null,
       trains_needed: intOrNull(get('num_trains')),
       consist_size: consistOrNull(get('train1')),
@@ -35598,6 +35607,7 @@ async function _dynImportCSVRows() {
         test_case_code: c.code,
         test_name:      c.name,
         test_procedure: c.procedure || '',
+        subsystem:      c.subsystem || null,
         phase:          c.phase || null,
         location:       c.location || null,
         scope_type:     'dynamic',
@@ -35615,7 +35625,7 @@ async function _dynImportCSVRows() {
       if (typeof TI !== 'undefined') {
         for (const c of newCases) {
           TI.push({ TestID: c.code, TestCaseCode: c.code, TestName: c.name,
-                    TestProcedure: c.procedure || '', Phase: c.phase || '',
+                    TestProcedure: c.procedure || '', Subsystem: c.subsystem || '', Phase: c.phase || '',
                     Location: c.location || '', Status: 'Not Started', ScopeType: 'dynamic',
                     TestScope: c.test_scope || '', ProcedureCode: c.procedure_code || '',
                     ProcedureName: c.procedure_name || '', ApplicableLocations: c.applicable_locations || [] });
@@ -35628,6 +35638,7 @@ async function _dynImportCSVRows() {
     const matchedCases = v.cases.filter(c => !c.isNew && c.existingTestId);
     for (const c of matchedCases) {
       const upd = { scope_type: 'dynamic' };
+      if (c.subsystem) upd.subsystem = c.subsystem;
       if (c.test_scope) upd.test_scope = c.test_scope;
       if (c.location) upd.location = c.location;
       if (c.procedure_code) upd.procedure_code = c.procedure_code;
@@ -35638,6 +35649,7 @@ async function _dynImportCSVRows() {
         const ti = TI.find(t => t.TestID === c.existingTestId);
         if (ti) {
           ti.ScopeType = 'dynamic';
+          if (c.subsystem) ti.Subsystem = c.subsystem;
           if (c.test_scope) ti.TestScope = c.test_scope;
           if (c.location) ti.Location = c.location;
           if (c.procedure_code) ti.ProcedureCode = c.procedure_code;
@@ -35676,7 +35688,7 @@ async function _dynImportCSVRows() {
 //   · Month view — 6-month grid (each column = a calendar month)
 //   · Week view  — single week grid (each column = a day, Mon–Sun)
 // Rows are either phase or section-under-test; cells count instances whose
-// scheduled date (falling back to target window) falls in that period.
+// scheduled date falls in that period.
 function _dynBoardRowKeys(r) {
   return _dynPage.boardAxis === 'zone'
     ? [r.track_section_under_test || '— No section —']
@@ -35718,8 +35730,8 @@ function _dynRenderBoard() {
   const buckets = new Map(); // rowKey → colKey → count
   const rowSet = new Set();
   for (const r of _dynPage.instances) {
-    // Date to bucket on: scheduled_for_date else target_window_start else target_window_end.
-    const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
+    // Date to bucket on: the committed schedule date.
+    const when = r.scheduled_for_date;
     if (!when) continue;
     const ck = keyOf(when);
     if (!colKeys.has(ck)) continue;
@@ -35755,7 +35767,7 @@ function _dynRenderBoard() {
 
   let bodyHtml;
   if (rowKeysSorted.length === 0) {
-    bodyHtml = `<tr><td colspan="${cols.length + 2}" style="padding:32px;text-align:center;color:var(--gray-500);">No instances have a date (target window or scheduled date) inside this range.</td></tr>`;
+    bodyHtml = `<tr><td colspan="${cols.length + 2}" style="padding:32px;text-align:center;color:var(--gray-500);">No instances have a scheduled date inside this range.</td></tr>`;
   } else {
     bodyHtml = rowKeysSorted.map(rk => {
       const m = buckets.get(rk) || new Map();
@@ -35776,16 +35788,16 @@ function _dynRenderBoard() {
       <table class="dyn-board"><thead>${headHtml}</thead><tbody>${bodyHtml}</tbody></table>
     </div>
     <p style="margin-top:12px;font-size:12px;color:var(--gray-500);">
-      Counts include instances with a scheduled date, falling back to target window start/end.
+      Counts include instances with a scheduled date.
       Click a cell to drill in.
     </p>
     ${_dynPage.boardView === 'week' ? _dynRenderDaySummaries(cols) : ''}
   `;
 }
 
-// Date a board row buckets on: committed schedule date, else target window.
+// Date a board row buckets on: the committed schedule date.
 function _dynBoardWhen(r) {
-  return r.scheduled_for_date || r.target_window_start || r.target_window_end;
+  return r.scheduled_for_date;
 }
 
 // Parse a Postgres tstzrange string like [start,end) into {start,end} Dates.
@@ -36185,7 +36197,7 @@ function _dynBoardOpenCell(rowKey, periodKey) {
   const keyOf = _dynPage.boardView === 'week' ? _dynDayKey : _dynMonthKey;
   const matches = _dynPage.instances.filter(r => {
     if (!_dynBoardRowKeys(r).includes(rowKey)) return false;
-    const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
+    const when = r.scheduled_for_date;
     if (!when) return false;
     return keyOf(when) === periodKey;
   });
@@ -36220,7 +36232,7 @@ function _dynBoardOpenCell(rowKey, periodKey) {
             </tr></thead>
             <tbody>${matches.map(r => {
               const tc = _dynPage.testItemsById.get(r.test_id);
-              const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
+              const when = r.scheduled_for_date;
               return `<tr>
                 <td style="font-family:var(--font-mono,monospace);font-size:12px;white-space:nowrap;">${escapeHtml(r.code || '—')}</td>
                 <td style="white-space:nowrap;">${tc ? escapeHtml(tc.code || r.test_id) : escapeHtml(r.test_id || '—')}</td>
@@ -41414,7 +41426,7 @@ function _dynRenderVariance() {
       .sort((a, b) => (_dynVarDelta(b) ?? -1e9) - (_dynVarDelta(a) ?? -1e9))
       .map(r => {
         const d = _dynVarDelta(r);
-        const when = r.scheduled_for_date || r.target_window_start || r.target_window_end;
+        const when = r.scheduled_for_date;
         return `<tr style="border-top:1px solid var(--gray-100);background:#fbfdff;">
           <td style="padding-left:24px;font-family:var(--font-mono,monospace);font-size:11.5px;">${escapeHtml(r.code || '—')}</td>
           <td style="font-size:12px;">${escapeHtml(r.title || '')}${r.track_section_under_test ? ` <span style="color:var(--gray-500);font-family:monospace;">· ${escapeHtml(r.track_section_under_test)}</span>` : ''}${when ? ` <span style="color:var(--gray-400);">· ${escapeHtml(_dynFmtDate(when))}</span>` : ''}</td>
