@@ -39101,6 +39101,37 @@ function _dynSimBestCluster(sc, pool, maxSize, base) {
   return bestS > 0 ? best : [];
 }
 
+// ── Access-cancellation assumption (global) ─────────────────────────────────
+// A planning buffer: assume a share of planned track access gets cancelled and
+// pad EVERY scenario + regression campaign's completion/duration by that % (a
+// flat extension — the shift-by-shift plan is unchanged). Default 15%, adjustable,
+// persisted in localStorage.
+function _dynSimCancelCfg() {
+  if (!_dynPage.simCancel) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem('dynSimCancel') || 'null'); } catch (_) {}
+    _dynPage.simCancel = (saved && typeof saved === 'object')
+      ? { enabled: !!saved.enabled, pct: saved.pct == null ? 15 : Math.max(0, Math.min(100, Number(saved.pct) || 0)) }
+      : { enabled: false, pct: 15 };
+  }
+  return _dynPage.simCancel;
+}
+function _dynSimCancelFactor() {
+  const c = _dynSimCancelCfg();
+  return c.enabled ? (1 + Math.max(0, Number(c.pct) || 0) / 100) : 1;
+}
+function _dynSimCancelSave() {
+  try { localStorage.setItem('dynSimCancel', JSON.stringify(_dynSimCancelCfg())); } catch (_) {}
+}
+function _dynSimCancelToggle(on) {
+  _dynSimCancelCfg().enabled = !!on; _dynSimCancelSave(); _dynRenderSimulator();
+}
+function _dynSimCancelSetPct(val) {
+  _dynSimCancelCfg().pct = Math.max(0, Math.min(100, Math.round(Number(val) || 0)));
+  _dynSimCancelSave();
+  if (_dynSimCancelCfg().enabled) _dynRenderSimulator();
+}
+
 function _dynSimRun(sc, prereqs) {
   const slack = _dynAllocSlack();
   const pool0 = _dynSimScopePool(sc);
@@ -39222,6 +39253,15 @@ function _dynSimRun(sc, prereqs) {
   const placed = assignments.length;
   const completion = assignments.length ? assignments[assignments.length - 1].date : null;
   const calDays = completion ? Math.round((_dynParseDate(completion) - start) / 86400000) + 1 : null;
+  // Access-cancellation assumption: pad the realized schedule by the global
+  // cancellation rate — a flat extension of the completion date + duration. The
+  // shift-by-shift plan is unchanged; only the finish/duration absorb the buffer.
+  let completionPadded = completion, calDaysPadded = calDays;
+  const _cancelF = _dynSimCancelFactor();
+  if (_cancelF > 1 && completion && calDays) {
+    calDaysPadded = Math.round(calDays * _cancelF);
+    completionPadded = _dynDayKey(_dynAddDays(start, calDaysPadded - 1));
+  }
   const usedShifts = winLog.filter(w => w.placed > 0);
   let availMin = 0, plannedMin = 0;
   winLog.forEach(w => { availMin += w.hours * 60; plannedMin += w.placedMin; });
@@ -39230,6 +39270,11 @@ function _dynSimRun(sc, prereqs) {
   assignments.forEach(a => perDate.set(a.date, (perDate.get(a.date) || 0) + 1));
   let run = 0;
   const cumulative = [...perDate.keys()].sort().map(dt => { run += perDate.get(dt); return { date: dt, n: run, pct: total ? Math.round(run / total * 100) : 0 }; });
+  // Extend the S-curve flat to the padded completion (buffer time, no new work).
+  if (_cancelF > 1 && completionPadded && cumulative.length) {
+    const _lp = cumulative[cumulative.length - 1];
+    if (_lp.date !== completionPadded) cumulative.push({ date: completionPadded, n: _lp.n, pct: _lp.pct });
+  }
   const zoneSpan = new Map();
   assignments.forEach(a => a.zones.forEach(z => {
     const s2 = zoneSpan.get(z) || { first: a.date, last: a.date, n: 0 };
@@ -39251,16 +39296,16 @@ function _dynSimRun(sc, prereqs) {
   const mixUsed = [...mixBy.values()].sort((a, b) => a.size - b.size);
   // Target-date feasibility (backward check): does the plan finish by the date?
   let target = null;
-  if (sc.targetDate && completion) {
-    const late = _dynParseDate(completion) > _dynParseDate(sc.targetDate);
-    const daysLate = Math.round((_dynParseDate(completion) - _dynParseDate(sc.targetDate)) / 86400000);
+  if (sc.targetDate && completionPadded) {
+    const late = _dynParseDate(completionPadded) > _dynParseDate(sc.targetDate);
+    const daysLate = Math.round((_dynParseDate(completionPadded) - _dynParseDate(sc.targetDate)) / 86400000);
     target = { date: sc.targetDate, onTrack: !late, daysLate: late ? daysLate : 0 };
   } else if (sc.targetDate && remaining.length) {
     target = { date: sc.targetDate, onTrack: false, daysLate: null };   // didn't finish at all
   }
   return {
     total, placed, unplaced: remaining.length, unplacedList: remaining.slice(), outOfScope,
-    completion, calDays, weeks: calDays ? Math.ceil(calDays / 7) : null,
+    completion: completionPadded, calDays: calDaysPadded, weeks: calDaysPadded ? Math.ceil(calDaysPadded / 7) : null,
     shifts: winLog.length, shiftsUsed: usedShifts.length,
     accessHours: +accessHours.toFixed(1),
     utilPct: availMin > 0 ? Math.round(plannedMin / availMin * 100) : null,
@@ -39430,12 +39475,20 @@ async function _dynRenderSimulator() {
   const chips = _dynSimScenarios().filter(s => (s.phase || '') === _dynPage.simPhase).map(s => `
     <button class="dyn-btn ${sc && s.id === sc.id ? 'primary' : ''}" style="font-size:12px;" onclick="_dynSimSelect('${s.id}')">${s.baseline ? '★ ' : ''}${escapeHtml(s.name)}</button>`).join('');
 
+  const cc = _dynSimCancelCfg();
   cont.innerHTML = `
     <div style="display:flex;gap:6px;align-items:center;margin-top:16px;flex-wrap:wrap;">
       <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-right:4px;">Phase</span>
       ${phaseTabs}
       <span style="width:1px;height:22px;background:var(--gray-200);margin:0 6px;"></span>
       <span class="dyn-kpi" style="margin:0;padding:5px 12px;"><span>Actual ${escapeHtml(_dynPage.simPhase)}</span><b>${actual.donePct}% <span style="font-size:11px;font-weight:500;color:var(--gray-500);">(${actual.done}/${actual.total})</span></b></span>
+      <span style="flex:1;"></span>
+      <label title="Assume a share of planned track access gets cancelled — pads every scenario AND regression campaign's completion/duration by this %. The shift-by-shift plan is unchanged." style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-700);font-weight:600;cursor:pointer;white-space:nowrap;">
+        <input type="checkbox" ${cc.enabled ? 'checked' : ''} onchange="_dynSimCancelToggle(this.checked)"> Access cancellation
+      </label>
+      <span style="display:inline-flex;align-items:center;gap:3px;font-size:12px;color:${cc.enabled ? 'var(--gray-700)' : 'var(--gray-400)'};white-space:nowrap;">
+        <input type="number" min="0" max="100" value="${cc.pct}" ${cc.enabled ? '' : 'disabled'} style="width:48px;padding:4px;border:1px solid var(--gray-300);border-radius:4px;text-align:center;font-size:11.5px;" onchange="_dynSimCancelSetPct(this.value)">% extension
+      </span>
     </div>
     <div class="dyn-toolbar" style="margin-top:10px;">
       ${chips}
