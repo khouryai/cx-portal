@@ -159,6 +159,21 @@ const cmpHtml = run(`(function(){
 })()`);
 assert(/Runs scheduled/.test(cmpHtml) && /Completion date/.test(cmpHtml) && /Utilization/.test(cmpHtml), "compare table lists the KPI rows");
 assert(/★ Base/.test(cmpHtml) && /Fast/.test(cmpHtml) && /Difference/.test(cmpHtml), "compare table has baseline, scenario and difference columns");
+assert(!/Including regression projection/.test(cmpHtml), "no regression rows when projection is off");
+
+// ── compare table folds in regression-projection program figures ─────────────
+const regSc = Object.assign({}, baseSc, {
+  regression: { enabled: true, failureRate: 30, gaps: [3, 3], weights: {}, subsystems: [] },
+});
+const cmpRegHtml = run(`(function(){
+  const B=_dynSimRun(${JSON.stringify(Object.assign({}, regSc, { name: "Base" }))}, []);
+  const S=_dynSimRun(${JSON.stringify(Object.assign({}, regSc, { name: "Fast", weekOverrides: { 0: { closure: true } } }))}, []);
+  const bReg=_dynSimRunRegression(${JSON.stringify(Object.assign({}, regSc, { name: "Base" }))}, [], B);
+  const sReg=_dynSimRunRegression(${JSON.stringify(Object.assign({}, regSc, { name: "Fast", weekOverrides: { 0: { closure: true } } }))}, [], S);
+  return _dynSimKpiCompareHtml(B, S, { name: "Base" }, { name: "Fast" }, bReg, sReg);
+})()`);
+assert(/Including regression projection/.test(cmpRegHtml), "compare table adds a regression section when projection is on");
+assert(/Program end/.test(cmpRegHtml) && /Program duration/.test(cmpRegHtml) && /Program runs/.test(cmpRegHtml), "regression section lists program-level rows");
 
 // ── week-override clear reverts to template (not 0/closed) ───────────────────
 run(`globalThis.__rs = _dynRenderSimulator; _dynRenderSimulator = function(){};`); // stub re-render

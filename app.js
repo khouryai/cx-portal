@@ -39468,6 +39468,7 @@ async function _dynRenderSimulator() {
   _dynPage._simRegResult = regRes;
   const baseline = _dynSimBaseline();
   const baseRes = (baseline && sc && baseline.id !== sc.id) ? _dynSimRun(baseline, _dynPage._simPrereqs) : null;
+  const baseRegRes = baseRes ? _dynSimRunRegression(baseline, _dynPage._simPrereqs, baseRes) : null;
   const actual = _dynSimActualCurve(_dynPage.simPhase);
 
   const phaseTabs = phases.map(p =>
@@ -39504,7 +39505,7 @@ async function _dynRenderSimulator() {
     ${sc ? _dynSimRecalBannerHtml(sc, res) : ''}
     ${sc ? `<div style="display:grid;grid-template-columns:minmax(0,400px) 1fr;gap:16px;align-items:start;">
       <div class="data-card" style="padding:14px 16px;">${_dynSimConfigHtml(sc, res)}</div>
-      <div>${_dynSimResultsHtml(sc, res, baseRes, baseline, regRes)}</div>
+      <div>${_dynSimResultsHtml(sc, res, baseRes, baseline, regRes, baseRegRes)}</div>
     </div>` : '<div style="padding:30px;text-align:center;color:var(--gray-400);">No scenario for this phase.</div>'}`;
   setTimeout(() => _dynSimDrawChart(), 0);
 }
@@ -39757,11 +39758,15 @@ function _dynSimUnplacedHtml(sc, res) {
 }
 
 // Results: KPIs + S-curve + baseline-vs-scenario Gantt + baseline-vs-scenario shifts.
-function _dynSimResultsHtml(sc, res, baseRes, baseline, regRes) {
+function _dynSimResultsHtml(sc, res, baseRes, baseline, regRes, baseRegRes) {
   const kpi = (l, v, t) => `<div class="dyn-kpi" style="margin-right:0;"><span>${l}</span><b${t ? ` style="color:${t};"` : ''}>${v}</b></div>`;
   const cmp = !!baseRes;
+  // Program-level figures roll the regression campaigns into the original run:
+  // when projection is on, the headline completion/duration/runs cover the WHOLE
+  // program (baseline → dev gap → regression campaigns), not just the first run.
+  const progRuns = regRes ? regRes.campaigns.reduce((a, c) => a + (c.runs || 0), 0) : res.placed;
   const kpiBlock = cmp
-    ? _dynSimKpiCompareHtml(baseRes, res, baseline, sc)
+    ? _dynSimKpiCompareHtml(baseRes, res, baseline, sc, baseRegRes, regRes)
     : `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px;margin-bottom:12px;">
       ${kpi('Backlog', res.total)}
       ${kpi('Scheduled', `${res.placed}${res.unplaced ? ` <span style="font-size:11px;color:#b45309;">+${res.unplaced} left</span>` : ''}`, res.unplaced ? null : 'var(--good)')}
@@ -39771,6 +39776,9 @@ function _dynSimResultsHtml(sc, res, baseRes, baseline, regRes) {
       ${kpi('Access hours', res.accessHours + 'h')}
       ${kpi('Utilization', (res.utilPct ?? '—') + '%')}
       ${kpi('Closures', res.closuresUsed, res.closuresUsed ? '#b45309' : null)}
+      ${regRes ? kpi('Program end', regRes.programEnd ? _dynFmtDate(regRes.programEnd) : '—', '#1d4eaf') : ''}
+      ${regRes ? kpi('Program duration', regRes.totalWeeks != null ? `${regRes.totalWeeks} wks` : '—', '#1d4eaf') : ''}
+      ${regRes ? kpi('Program runs', progRuns, '#1d4eaf') : ''}
     </div>`;
   return `
     ${kpiBlock}
@@ -39851,7 +39859,7 @@ function _dynSimRegressionHtml(sc, regRes) {
 }
 
 // Baseline-vs-scenario KPI table (like the what-if Current/Scenario/Difference).
-function _dynSimKpiCompareHtml(B, S, baseline, sc) {
+function _dynSimKpiCompareHtml(B, S, baseline, sc, bReg, sReg) {
   const dlt = (a, b, unit, goodUp) => {
     const d = Math.round((b - a) * 100) / 100;
     if (!d) return '<span style="color:var(--gray-400);">—</span>';
@@ -39888,9 +39896,47 @@ function _dynSimKpiCompareHtml(B, S, baseline, sc) {
         ${row('Utilization', (B.utilPct ?? '—') + '%', (S.utilPct ?? '—') + '%', B.utilPct != null && S.utilPct != null ? dlt(B.utilPct, S.utilPct, ' pts', true) : '—')}
         ${row('Closures used', B.closuresUsed, S.closuresUsed, dlt(B.closuresUsed, S.closuresUsed, '', true))}
         ${row('Extended weeks', B.extendedUsed, S.extendedUsed, dlt(B.extendedUsed, S.extendedUsed, '', true))}
+        ${_dynSimKpiRegRows(B, S, bReg, sReg)}
       </tbody>
     </table>
   </div>`;
+}
+
+// Program-level rows (regression projection) appended to the compare table when
+// either side has projection enabled: they roll the dev gaps + regression
+// campaigns into the headline, so a scenario with heavy regression no longer
+// looks identical to one without. A side with projection OFF falls back to its
+// original run (program end = its completion), keeping the comparison fair.
+function _dynSimKpiRegRows(B, S, bReg, sReg) {
+  if (!bReg && !sReg) return '';
+  const dlt = (a, b, unit, goodUp) => {
+    const d = Math.round((b - a) * 100) / 100;
+    if (!d) return '<span style="color:var(--gray-400);">—</span>';
+    const good = goodUp ? d > 0 : d < 0;
+    return `<span style="color:${good ? '#059669' : '#b45309'};font-weight:600;">${d > 0 ? '+' : ''}${d}${unit || ''}</span>`;
+  };
+  const dateDelta = (a, b) => {
+    if (!a || !b) return '<span style="color:var(--gray-400);">—</span>';
+    const days = Math.round((_dynParseDate(a) - _dynParseDate(b)) / 86400000);
+    if (!days) return '<span style="color:var(--gray-400);">same day</span>';
+    return `<span style="color:${days > 0 ? '#059669' : '#b45309'};font-weight:600;">${days > 0 ? days + ' days sooner' : Math.abs(days) + ' days later'}</span>`;
+  };
+  const row = (label, a, b, delta) => `<tr style="border-top:1px solid var(--gray-100);">
+    <td style="padding:6px 10px;color:var(--gray-600);">${label}</td>
+    <td style="padding:6px 10px;text-align:right;font-family:monospace;">${a}</td>
+    <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:600;">${b}</td>
+    <td style="padding:6px 10px;text-align:right;">${delta}</td></tr>`;
+  const pEnd = (reg, r) => reg ? reg.programEnd : r.completion;
+  const pWeeks = (reg, r) => reg ? reg.totalWeeks : r.weeks;
+  const pRuns = (reg, r) => reg ? reg.campaigns.reduce((a, c) => a + (c.runs || 0), 0) : r.placed;
+  const pRegs = reg => reg ? reg.regressions : 0;
+  const bEnd = pEnd(bReg, B), sEnd = pEnd(sReg, S);
+  const bWk = pWeeks(bReg, B), sWk = pWeeks(sReg, S);
+  return `<tr><td colspan="4" style="padding:5px 10px;background:#eff6ff;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#1e3a8a;">Including regression projection</td></tr>
+    ${row('Program end', bEnd ? _dynFmtDate(bEnd) : '—', sEnd ? _dynFmtDate(sEnd) : '—', dateDelta(bEnd, sEnd))}
+    ${row('Program duration', (bWk ?? '—') + ' wks', (sWk ?? '—') + ' wks', bWk != null && sWk != null ? dlt(bWk, sWk, ' wks', false) : '—')}
+    ${row('Regression campaigns', pRegs(bReg), pRegs(sReg), dlt(pRegs(bReg), pRegs(sReg), '', false))}
+    ${row('Program runs', pRuns(bReg, B), pRuns(sReg, S), dlt(pRuns(bReg, B), pRuns(sReg, S), '', true))}`;
 }
 
 // Location Gantt; in compare mode each location shows TWO bars (baseline grey,
