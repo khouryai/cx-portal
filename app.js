@@ -39958,19 +39958,23 @@ function _dynSimGanttHtml(sc, res, baseRes) {
   const rows = zones.map(z => {
     const sb = baseRes ? baseRes.zoneSpan.get(z) : null;
     const ss = res.zoneSpan.get(z);
-    const track = h => `<div style="flex:1;height:${h}px;background:var(--gray-100);border-radius:4px;position:relative;">`;
+    // NOTE: in compare mode the two tracks sit in a COLUMN flex, so they must NOT
+    // use `flex:1` (that resolves to flex-basis:0% and collapses their height to
+    // 0 — the bars render but are invisible). Single mode keeps flex:1 because
+    // there the track is in a ROW flex and flex:1 only drives its width.
+    const track = (h, grow) => `<div style="${grow ? 'flex:1;' : 'width:100%;'}height:${h}px;background:var(--gray-100);border-radius:4px;position:relative;">`;
     if (baseRes) {
       return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
         <span style="width:46px;font-family:monospace;font-size:11px;color:var(--gray-600);">${escapeHtml(z)}</span>
         <div style="flex:1;display:flex;flex-direction:column;gap:2px;">
-          ${track(9)}${bar(sb, '#9ca3af')}</div>
-          ${track(9)}${bar(ss, '#1d4eaf')}</div>
+          ${track(9, false)}${bar(sb, '#9ca3af')}</div>
+          ${track(9, false)}${bar(ss, '#1d4eaf')}</div>
         </div>
       </div>`;
     }
     return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
       <span style="width:46px;font-family:monospace;font-size:11px;color:var(--gray-600);">${escapeHtml(z)}</span>
-      ${track(14)}${bar(ss, '#1d4eaf')}</div>
+      ${track(14, true)}${bar(ss, '#1d4eaf')}</div>
       <span style="width:120px;font-size:10px;color:var(--gray-500);white-space:nowrap;">${ss ? _dynFmtDate(ss.first) + ' → ' + _dynFmtDate(ss.last) + ' · ' + ss.n : '—'}</span>
     </div>`;
   }).join('');
