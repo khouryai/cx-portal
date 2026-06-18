@@ -38867,12 +38867,12 @@ function _dynSimAdjPairs(sc) {
   return tp.length ? tp : (sc.adjacency || []);
 }
 
-// ── Shared "always totals 100%" helpers ─────────────────────────────────────
-// A spread (access mix sizes, regression subsystem weights) must never read as a
-// sub-100 total. _dynNorm100 rescales any raw shares to integers that sum to
-// EXACTLY 100 (largest-remainder rounding). _dynRebalance100 pins the key the
-// user just edited and proportionally rebalances the rest to fill the remainder,
-// so editing one field never leaves the total short or over 100.
+// ── Shared spread helper ────────────────────────────────────────────────────
+// _dynNorm100 rescales raw shares (access mix sizes, regression subsystem
+// weights) to integers that sum to EXACTLY 100 (largest-remainder rounding).
+// Used to SEED an even split and for the explicit "Auto-fill" action; live
+// editing stores raw values untouched (the consumers normalize proportionally),
+// so changing one field never reshuffles the others.
 function _dynNorm100(raw, keys) {
   const ks = (keys && keys.length ? keys : Object.keys(raw || {}));
   const cur = ks.map(k => Math.max(0, Number((raw || {})[k]) || 0));
@@ -38892,34 +38892,6 @@ function _dynNorm100(raw, keys) {
   const order = exact.map((x, i) => ({ i, frac: x - Math.floor(x) })).sort((a, b) => b.frac - a.frac);
   for (let j = 0; j < left; j++) floor[order[j % order.length].i]++;
   ks.forEach((k, i) => out[k] = floor[i]);
-  return out;
-}
-function _dynRebalance100(raw, keys, changedKey, newVal) {
-  const ks = (keys && keys.length ? keys : Object.keys(raw || {}));
-  let v = Math.round(Number(newVal) || 0);
-  v = Math.max(0, Math.min(100, v));
-  const others = ks.filter(k => k !== changedKey);
-  const out = {};
-  if (!others.length) { out[changedKey] = 100; return out; }
-  out[changedKey] = v;
-  const rem = 100 - v;
-  const cur = others.map(k => Math.max(0, Number((raw || {})[k]) || 0));
-  const sum = cur.reduce((a, b) => a + b, 0);
-  let shares;
-  if (rem <= 0) shares = others.map(() => 0);
-  else if (sum <= 0) {                             // others were all 0 → even split of remainder
-    const base = Math.floor(rem / others.length);
-    shares = others.map(() => base);
-    let left = rem - base * others.length;
-    for (let i = 0; i < left; i++) shares[i]++;
-  } else {
-    const exact = cur.map(c => c / sum * rem);
-    shares = exact.map(x => Math.floor(x));
-    let left = rem - shares.reduce((a, b) => a + b, 0);
-    const order = exact.map((x, i) => ({ i, frac: x - Math.floor(x) })).sort((a, b) => b.frac - a.frac);
-    for (let j = 0; j < left; j++) shares[order[j % order.length].i]++;
-  }
-  others.forEach((k, i) => out[k] = shares[i]);
   return out;
 }
 
@@ -39319,10 +39291,20 @@ function _dynRegSubsystems(sc) {
 function _dynRegConfig(sc) {
   const reg = (sc && sc.regression) || {};
   const subs = _dynRegSubsystems(sc);
-  // Seed/repair weights so every available subsystem has a key and the spread is
-  // normalized to exactly 100% — never a sub-100 total.
+  // Weights are kept EXACTLY as the user set them — each subsystem independent.
+  // Only when nothing is set yet do we seed an even split (totals 100); after
+  // that we preserve raw values (a newly-appearing subsystem starts at 0) so
+  // editing one weight never reshuffles the others. The simulation normalizes
+  // proportionally at use, so the stored spread need not total 100.
   const raw = (reg.weights && typeof reg.weights === 'object') ? reg.weights : {};
-  const weights = _dynNorm100(raw, subs.length ? subs : Object.keys(raw));
+  const keys = subs.length ? subs : Object.keys(raw);
+  const anySet = keys.some(k => Number(raw[k]) > 0);
+  const weights = {};
+  if (!anySet && keys.length) {
+    Object.assign(weights, _dynNorm100({}, keys));   // first-time even split
+  } else {
+    keys.forEach(k => { weights[k] = Math.max(0, Math.round(Number(raw[k]) || 0)); });
+  }
   let gaps = Array.isArray(reg.gaps) ? reg.gaps.map(g => Math.max(0, Number(g) || 0)) : [2, 3];
   if (!gaps.length) gaps = [2];
   return {
@@ -39583,13 +39565,13 @@ function _dynSimConfigHtml(sc, res) {
           const legacy = Math.max(1, Math.min(5, sc.maxZonesPerShift || 2));
           const maxShow = Math.min(5, Math.max(3, _dynSimMaxMixSize(sc)));
           const sizes = []; for (let s = 1; s <= maxShow; s++) sizes.push(s);
-          // Raw shares for the shown sizes (legacy scenarios: 100% at maxZonesPerShift),
-          // then normalized to integers that sum to EXACTLY 100 for display.
+          // Show the raw share the user set for each size (legacy scenarios:
+          // 100% at maxZonesPerShift). No re-normalizing for display, so editing
+          // one cell leaves the others exactly as typed.
           const raw = {};
           sizes.forEach(s => raw[s] = mixObj ? (Number(mixObj[s]) || 0) : (s === legacy ? 100 : 0));
-          const norm = _dynNorm100(raw, sizes);
           return sizes.map(s => `<label style="display:flex;align-items:center;gap:3px;"><b style="font-family:monospace;">${s}</b>-loc
-            <input type="number" min="0" max="100" value="${norm[s]}" style="${inp}width:44px;" onchange="_dynSimSetMix(${s},this.value)">%</label>`).join('');
+            <input type="number" min="0" max="100" value="${raw[s]}" style="${inp}width:44px;" onchange="_dynSimSetMix(${s},this.value)">%</label>`).join('');
         })()}
       </div>
     </div>
@@ -40173,16 +40155,18 @@ function _dynSimField(k, v) { const sc = _dynSimActive(); if (!sc) return; _dynS
 function _dynSimSetMix(size, val) {
   const sc = _dynSimActive(); if (!sc) return;
   _dynSimPatch(sc.id, s => {
-    const cur = (s.shiftMix && typeof s.shiftMix === 'object') ? { ...s.shiftMix } : {};
-    // Shown sizes (1..max present, min 3) — the spread is rebalanced across these
-    // so the total stays EXACTLY 100%: pin the edited size, scale the rest.
+    const cur = (s.shiftMix && typeof s.shiftMix === 'object') ? { ...s.shiftMix } : null;
     const legacy = Math.max(1, Math.min(5, s.maxZonesPerShift || 2));
     const maxShow = Math.min(5, Math.max(3, _dynSimMaxMixSize(s)));
     const sizes = []; for (let z = 1; z <= maxShow; z++) sizes.push(z);
     if (!sizes.includes(size)) sizes.push(size);
-    const raw = {};
-    sizes.forEach(z => raw[z] = (s.shiftMix && typeof s.shiftMix === 'object') ? (Number(cur[z]) || 0) : (z === legacy ? 100 : 0));
-    s.shiftMix = _dynRebalance100(raw, sizes, size, val);
+    // Set ONLY the edited size; leave every other size exactly as the user left
+    // it. _dynSimMix normalizes proportionally at use, so the spread need not
+    // total 100 — this keeps the inputs from jumbling while you dial them in.
+    const mix = {};
+    sizes.forEach(z => mix[z] = cur ? (Number(cur[z]) || 0) : (z === legacy ? 100 : 0));
+    mix[size] = Math.max(0, Math.min(100, Math.round(Number(val) || 0)));
+    s.shiftMix = mix;
     return {};
   });
   _dynRenderSimulator();
@@ -40230,8 +40214,13 @@ function _dynSimRegSetWeight(sub, val) {
     s.regression = s.regression || {};
     const subs = _dynRegSubsystems(s);
     const keys = subs.length ? subs : Object.keys(s.regression.weights || {});
-    const cur = _dynNorm100(s.regression.weights || {}, keys);    // current normalized shares
-    s.regression.weights = _dynRebalance100(cur, keys, sub, val); // pin edited subsystem, rebalance rest
+    // Set ONLY the edited subsystem; leave the others exactly as the user set
+    // them. _dynRegSelectFailures normalizes proportionally at use, so the spread
+    // need not total 100 — no auto-rebalance jumbling the values mid-edit.
+    const w = { ...(s.regression.weights || {}) };
+    keys.forEach(k => { if (w[k] == null) w[k] = 0; });
+    w[sub] = Math.max(0, Math.min(100, Math.round(Number(val) || 0)));
+    s.regression.weights = w;
     return {};
   });
   _dynRenderSimulator();
