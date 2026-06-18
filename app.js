@@ -38769,6 +38769,10 @@ function _dynSimScopeAll(sc) {
     && (!sc.scope.subsystem || (i.subsystem || '') === sc.scope.subsystem));
 }
 function _dynSimScopePool(sc) {
+  // Regression campaigns run on an explicit failure slice (already de-duped and
+  // zone-filtered when it was selected) — use it verbatim so the campaign plans
+  // exactly that work.
+  if (Array.isArray(sc._poolOverride)) return sc._poolOverride.slice();
   const zset = new Set(sc.zones || []);
   const base = _dynSimScopeAll(sc).filter(i =>
     !['Pass', 'Not Applicable'].includes(i.status)
@@ -38849,6 +38853,62 @@ function _dynSimClosureCands(sc, zoneSet) {
 function _dynSimAdjPairs(sc) {
   const tp = _dynTrackPlanPairs(sc.phase);
   return tp.length ? tp : (sc.adjacency || []);
+}
+
+// ── Shared "always totals 100%" helpers ─────────────────────────────────────
+// A spread (access mix sizes, regression subsystem weights) must never read as a
+// sub-100 total. _dynNorm100 rescales any raw shares to integers that sum to
+// EXACTLY 100 (largest-remainder rounding). _dynRebalance100 pins the key the
+// user just edited and proportionally rebalances the rest to fill the remainder,
+// so editing one field never leaves the total short or over 100.
+function _dynNorm100(raw, keys) {
+  const ks = (keys && keys.length ? keys : Object.keys(raw || {}));
+  const cur = ks.map(k => Math.max(0, Number((raw || {})[k]) || 0));
+  const sum = cur.reduce((a, b) => a + b, 0);
+  const out = {};
+  if (!ks.length) return out;
+  if (sum <= 0) {                                  // nothing set yet → even split
+    const base = Math.floor(100 / ks.length);
+    ks.forEach(k => out[k] = base);
+    let left = 100 - base * ks.length;
+    for (let i = 0; i < left; i++) out[ks[i]]++;
+    return out;
+  }
+  const exact = cur.map(c => c / sum * 100);
+  const floor = exact.map(x => Math.floor(x));
+  let left = 100 - floor.reduce((a, b) => a + b, 0);
+  const order = exact.map((x, i) => ({ i, frac: x - Math.floor(x) })).sort((a, b) => b.frac - a.frac);
+  for (let j = 0; j < left; j++) floor[order[j % order.length].i]++;
+  ks.forEach((k, i) => out[k] = floor[i]);
+  return out;
+}
+function _dynRebalance100(raw, keys, changedKey, newVal) {
+  const ks = (keys && keys.length ? keys : Object.keys(raw || {}));
+  let v = Math.round(Number(newVal) || 0);
+  v = Math.max(0, Math.min(100, v));
+  const others = ks.filter(k => k !== changedKey);
+  const out = {};
+  if (!others.length) { out[changedKey] = 100; return out; }
+  out[changedKey] = v;
+  const rem = 100 - v;
+  const cur = others.map(k => Math.max(0, Number((raw || {})[k]) || 0));
+  const sum = cur.reduce((a, b) => a + b, 0);
+  let shares;
+  if (rem <= 0) shares = others.map(() => 0);
+  else if (sum <= 0) {                             // others were all 0 → even split of remainder
+    const base = Math.floor(rem / others.length);
+    shares = others.map(() => base);
+    let left = rem - base * others.length;
+    for (let i = 0; i < left; i++) shares[i]++;
+  } else {
+    const exact = cur.map(c => c / sum * rem);
+    shares = exact.map(x => Math.floor(x));
+    let left = rem - shares.reduce((a, b) => a + b, 0);
+    const order = exact.map((x, i) => ({ i, frac: x - Math.floor(x) })).sort((a, b) => b.frac - a.frac);
+    for (let j = 0; j < left; j++) shares[order[j % order.length].i]++;
+  }
+  others.forEach((k, i) => out[k] = shares[i]);
+  return out;
 }
 
 // ── Access mix ────────────────────────────────────────────────────────────
@@ -39224,6 +39284,103 @@ function _dynSimRun(sc, prereqs) {
     closuresUsed, extendedUsed: extendedWeeks.size, cumulative, winLog, zoneSpan, startDate: _dynDayKey(start),
   };
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// REGRESSION PROJECTION — Option C (subsystem-weighted, compounding) ───────────
+// After the baseline campaign clears the backlog, software development continues
+// and a share of the work fails verification and must be re-run in a later
+// campaign — separated from the previous one by a development gap (months waiting
+// on the next release). Failures are COMPOUNDING (each regression draws its own
+// failures from the slice that just ran) and WEIGHTED by subsystem: the per-
+// subsystem weights (always summing to 100%) decide where the failures land, so
+// a buggy subsystem dominates the regression. Prerequisites that passed (i.e. are
+// not in the failed slice) stay satisfied, so the regression doesn't re-stall on
+// chains. Returns the full chain of campaigns and the extended program end date.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Default per-subsystem weights = an even split (summing to 100) over whichever
+// subsystems actually have schedulable work in this scenario's phase.
+function _dynRegSubsystems(sc) {
+  return [...new Set(_dynSimScopeAll(Object.assign({}, sc, { scope: { subsystem: '' } }))
+    .map(i => i.subsystem || '').filter(Boolean))].sort();
+}
+function _dynRegConfig(sc) {
+  const reg = (sc && sc.regression) || {};
+  const subs = _dynRegSubsystems(sc);
+  // Seed/repair weights so every available subsystem has a key and the spread is
+  // normalized to exactly 100% — never a sub-100 total.
+  const raw = (reg.weights && typeof reg.weights === 'object') ? reg.weights : {};
+  const weights = _dynNorm100(raw, subs.length ? subs : Object.keys(raw));
+  let gaps = Array.isArray(reg.gaps) ? reg.gaps.map(g => Math.max(0, Number(g) || 0)) : [2, 3];
+  if (!gaps.length) gaps = [2];
+  return {
+    enabled: !!reg.enabled,
+    failureRate: reg.failureRate == null ? 30 : Math.max(0, Math.min(100, Number(reg.failureRate) || 0)),
+    gaps, weights, subsystems: subs,
+  };
+}
+
+// Pick the failing slice of a pool: failTotal = pool × failureRate, distributed
+// across subsystems by their (100%-summed) weights via largest remainder, capped
+// by what each subsystem actually has. Deterministic (sorted by id) so the same
+// inputs always reproduce the same regression.
+function _dynRegSelectFailures(pool, ratePct, weights) {
+  const rate = Math.max(0, Math.min(100, Number(ratePct) || 0));
+  const failTotal = Math.round(pool.length * rate / 100);
+  if (failTotal <= 0) return [];
+  const bySub = new Map();
+  for (const i of pool) { const s = i.subsystem || '(none)'; if (!bySub.has(s)) bySub.set(s, []); bySub.get(s).push(i); }
+  const subs = [...bySub.keys()];
+  const wsum = subs.reduce((a, s) => a + (Number(weights[s]) || 0), 0);
+  const exact = subs.map(s => wsum > 0 ? failTotal * (Number(weights[s]) || 0) / wsum : failTotal / subs.length);
+  const counts = exact.map(x => Math.floor(x));
+  let left = failTotal - counts.reduce((a, b) => a + b, 0);
+  const order = exact.map((x, i) => ({ i, frac: x - Math.floor(x) })).sort((a, b) => b.frac - a.frac);
+  for (let j = 0; j < left && order.length; j++) counts[order[j % order.length].i]++;
+  const out = [];
+  subs.forEach((s, idx) => {
+    const avail = bySub.get(s).slice().sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+    const n = Math.min(counts[idx], avail.length);
+    for (let k = 0; k < n; k++) out.push(avail[k]);
+  });
+  return out;
+}
+
+function _dynSimRunRegression(sc, prereqs, baseRes) {
+  const cfg = _dynRegConfig(sc);
+  if (!cfg.enabled) return null;
+  const base = baseRes || _dynSimRun(sc, prereqs);
+  const campaigns = [{
+    kind: 'baseline', name: 'Baseline', gapMonths: 0,
+    start: base.startDate, end: base.completion, weeks: base.weeks, runs: base.placed, res: base,
+  }];
+  let prevPool = _dynSimScopePool(sc);           // the work the baseline ran
+  let prevEnd = base.completion;
+  for (let ci = 0; ci < cfg.gaps.length; ci++) {
+    if (!prevEnd || !prevPool.length) break;
+    const slice = _dynRegSelectFailures(prevPool, cfg.failureRate, cfg.weights);
+    if (!slice.length) break;
+    const gm = cfg.gaps[ci];
+    const regStart = _dynDayKey(_dynAddMonths(_dynParseDate(prevEnd), gm));
+    const sub = Object.assign({}, sc, { startDate: regStart, _poolOverride: slice, targetDate: null });
+    const r = _dynSimRun(sub, prereqs);
+    campaigns.push({
+      kind: 'regression', name: 'Regression ' + (ci + 1), gapMonths: gm,
+      start: r.startDate, end: r.completion, weeks: r.weeks, runs: r.placed, failCount: slice.length, res: r,
+    });
+    prevPool = slice;                             // compounding: next failures come from this slice
+    prevEnd = r.completion || regStart;
+  }
+  const programStart = base.startDate;
+  const programEnd = campaigns.reduce((acc, c) => (c.end && (!acc || c.end > acc)) ? c.end : acc, null);
+  const totalDays = programEnd ? Math.round((_dynParseDate(programEnd) - _dynParseDate(programStart)) / 86400000) + 1 : null;
+  return {
+    campaigns, programStart, programEnd,
+    totalDays, totalWeeks: totalDays ? Math.ceil(totalDays / 7) : null,
+    regressions: campaigns.length - 1,
+  };
+}
+
 function _dynSimDayHours(sc, ov, dow, wk, extendedWeeks) {
   const base = (sc.weekly || {})[dow];
   let h = base != null ? parseFloat(base) : null;
@@ -39257,13 +39414,15 @@ async function _dynRenderSimulator() {
     if ((s.phase || '') !== _dynPage.simPhase) continue;
     if (s.shiftMix && typeof s.shiftMix === 'object' && Object.keys(s.shiftMix).length) continue;
     const am = _dynSimAutoMix(s);
-    if (am) { s.shiftMix = am; mixSeeded = true; }
+    if (am) { s.shiftMix = _dynNorm100(am, Object.keys(am)); mixSeeded = true; }
   }
   if (mixSeeded) _dynSimSaveScenarios(arr);
   const sc = _dynSimActive();
   if (sc) _dynPage.simActiveByPhase[_dynPage.simPhase] = sc.id;
   const res = sc ? _dynSimRun(sc, _dynPage._simPrereqs) : null;
   _dynPage._simResult = res;
+  const regRes = (sc && res) ? _dynSimRunRegression(sc, _dynPage._simPrereqs, res) : null;
+  _dynPage._simRegResult = regRes;
   const baseline = _dynSimBaseline();
   const baseRes = (baseline && sc && baseline.id !== sc.id) ? _dynSimRun(baseline, _dynPage._simPrereqs) : null;
   const actual = _dynSimActualCurve(_dynPage.simPhase);
@@ -39294,7 +39453,7 @@ async function _dynRenderSimulator() {
     ${sc ? _dynSimRecalBannerHtml(sc, res) : ''}
     ${sc ? `<div style="display:grid;grid-template-columns:minmax(0,400px) 1fr;gap:16px;align-items:start;">
       <div class="data-card" style="padding:14px 16px;">${_dynSimConfigHtml(sc, res)}</div>
-      <div>${_dynSimResultsHtml(sc, res, baseRes, baseline)}</div>
+      <div>${_dynSimResultsHtml(sc, res, baseRes, baseline, regRes)}</div>
     </div>` : '<div style="padding:30px;text-align:center;color:var(--gray-400);">No scenario for this phase.</div>'}`;
   setTimeout(() => _dynSimDrawChart(), 0);
 }
@@ -39306,6 +39465,45 @@ function _dynSimRecalBannerHtml(sc, res) {
   return `<div style="margin:4px 0 12px;padding:9px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:12.5px;color:#1e3a8a;">
     Recalibrated ${_dynFmtDate(last.date)}: <b>${last.donePct}% complete</b>${snap ? ` (was ${snap.donePct ?? 0}% at baseline ${_dynFmtDate(snap.date)})` : ''}
     · remaining work projects to <b>${last.completion ? _dynFmtDate(last.completion) : '—'}</b>${sc.baselineCompletion ? ` vs baseline ${_dynFmtDate(sc.baselineCompletion)}` : ''}.
+  </div>`;
+}
+
+// Regression projection inputs (Option C). Subsystems are auto-generated from the
+// scenario's available work; the per-subsystem failure weights are auto-balanced
+// to total EXACTLY 100% (editing one rebalances the rest), matching the access
+// mix. Hidden body until enabled to keep the panel compact.
+function _dynSimRegConfigHtml(sc) {
+  const cfg = _dynRegConfig(sc);
+  const inp = 'padding:4px;border:1px solid var(--gray-300);border-radius:4px;text-align:center;font-size:11.5px;';
+  const head = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:${cfg.enabled ? 8 : 0}px;">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-700);font-weight:600;cursor:pointer;">
+        <input type="checkbox" ${cfg.enabled ? 'checked' : ''} onchange="_dynSimRegToggle(this.checked)"> Regression projection
+      </label>
+      <span style="color:var(--gray-400);font-size:11px;">Option C · subsystem-weighted, compounding</span>
+    </div>`;
+  if (!cfg.enabled) {
+    return `<div style="margin-bottom:10px;padding:8px 10px;border:1px solid var(--gray-200);border-radius:6px;background:var(--gray-50);">${head}</div>`;
+  }
+  const weightRows = cfg.subsystems.length
+    ? cfg.subsystems.map(s => `<label style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11.5px;color:var(--gray-600);">
+        <span style="font-family:monospace;">${escapeHtml(s)}</span>
+        <span><input type="number" min="0" max="100" value="${cfg.weights[s] || 0}" style="${inp}width:46px;" onchange="_dynSimRegSetWeight('${escapeHtml(s)}',this.value)">%</span>
+      </label>`).join('')
+    : '<div style="font-size:11px;color:var(--gray-400);">No subsystems found in this scenario\'s work.</div>';
+  return `<div style="margin-bottom:10px;padding:8px 10px;border:1px solid #bfdbfe;border-radius:6px;background:#eff6ff;">
+    ${head}
+    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:8px;font-size:12px;color:var(--gray-600);">
+      <label title="Share of each campaign's work that fails verification and re-runs in the next campaign (compounding).">Failure rate
+        <input type="number" min="0" max="100" value="${cfg.failureRate}" style="${inp}width:48px;margin-left:4px;" onchange="_dynSimRegField('failureRate',this.value)">%</label>
+      <label title="Development gap (months) before each regression campaign — time waiting on the next software release. One value per campaign, comma-separated.">Dev gaps (mo)
+        <input type="text" value="${escapeHtml(cfg.gaps.join(', '))}" placeholder="e.g. 2, 3, 3" style="${inp}width:90px;margin-left:4px;font-family:monospace;text-align:left;padding-left:6px;" onchange="_dynSimRegSetGaps(this.value)"></label>
+      <span style="color:var(--gray-400);font-size:11px;">${cfg.gaps.length} regression campaign${cfg.gaps.length === 1 ? '' : 's'}</span>
+    </div>
+    <div style="font-size:11.5px;color:var(--gray-600);margin-bottom:4px;display:flex;align-items:center;gap:8px;">
+      Failure weight by subsystem
+      <span class="tag" style="font-size:10px;background:#dcfce7;color:#166534;" title="Auto-generated from the available subsystems and auto-balanced — the spread always totals 100%.">= 100%</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:4px 14px;">${weightRows}</div>
   </div>`;
 }
 
@@ -39360,22 +39558,24 @@ function _dynSimConfigHtml(sc, res) {
     <div style="font-size:12px;color:var(--gray-600);margin-bottom:4px;">Locations in this simulation</div>
     <div style="margin-bottom:8px;">${zoneChips}</div>
     <div style="margin-bottom:10px;font-size:12px;color:var(--gray-600);">
-      <div style="margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">Access mix <span style="color:var(--gray-400);">— % of shifts by how many adjacent locations they grant (→ = normalized)</span>
+      <div style="margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">Access mix <span style="color:var(--gray-400);">— % of shifts by how many adjacent locations they grant</span>
         <span style="flex:1;"></span>
+        <span class="tag" style="font-size:10px;background:#dcfce7;color:#166534;" title="The spread is auto-balanced — editing one share rebalances the rest so the total is always 100%.">= 100%</span>
         <button type="button" class="dyn-btn" style="font-size:11px;padding:3px 8px;" title="Set the mix to match your work's access needs so no shift is wasted" onclick="_dynSimAutoFillMix()">${icon('zap')} Auto-fill (no waste)</button>
       </div>
       <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
         ${(() => {
           const mixObj = (sc.shiftMix && typeof sc.shiftMix === 'object') ? sc.shiftMix : null;
           const legacy = Math.max(1, Math.min(5, sc.maxZonesPerShift || 2));
-          const norm = _dynSimMix(sc);
-          const npct = s => { const e = norm.find(x => x.size === s); return e ? Math.round(e.pct) : 0; };
-          const rawVal = s => mixObj ? (mixObj[s] != null ? mixObj[s] : '') : (s === legacy ? 100 : '');
           const maxShow = Math.min(5, Math.max(3, _dynSimMaxMixSize(sc)));
           const sizes = []; for (let s = 1; s <= maxShow; s++) sizes.push(s);
+          // Raw shares for the shown sizes (legacy scenarios: 100% at maxZonesPerShift),
+          // then normalized to integers that sum to EXACTLY 100 for display.
+          const raw = {};
+          sizes.forEach(s => raw[s] = mixObj ? (Number(mixObj[s]) || 0) : (s === legacy ? 100 : 0));
+          const norm = _dynNorm100(raw, sizes);
           return sizes.map(s => `<label style="display:flex;align-items:center;gap:3px;"><b style="font-family:monospace;">${s}</b>-loc
-            <input type="number" min="0" max="100" value="${rawVal(s)}" placeholder="0" style="${inp}width:44px;" onchange="_dynSimSetMix(${s},this.value)">%
-            <span style="color:var(--gray-400);font-size:10px;">→${npct(s)}%</span></label>`).join('');
+            <input type="number" min="0" max="100" value="${norm[s]}" style="${inp}width:44px;" onchange="_dynSimSetMix(${s},this.value)">%</label>`).join('');
         })()}
       </div>
     </div>
@@ -39404,6 +39604,7 @@ function _dynSimConfigHtml(sc, res) {
       <label title="Optional deadline. The plan is checked against it and flagged if it finishes late.">Target date
         <input type="date" value="${escapeHtml(sc.targetDate || '')}" style="margin-left:4px;padding:3px 5px;border:1px solid var(--gray-300);border-radius:4px;font-size:12px;" onchange="_dynSimField('targetDate',this.value||null)"></label>
     </div>
+    ${_dynSimRegConfigHtml(sc)}
     <div style="font-size:12px;color:var(--gray-600);margin-bottom:4px;">Week overrides <span style="color:var(--gray-400);">(check closure = continuous 48h weekend; any hours entered are used as-is — this table is the only source of closures/extended weeks)</span></div>
     <div style="max-height:240px;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">
       <table style="width:100%;border-collapse:collapse;font-size:11px;">
@@ -39505,7 +39706,7 @@ function _dynSimUnplacedHtml(sc, res) {
 }
 
 // Results: KPIs + S-curve + baseline-vs-scenario Gantt + baseline-vs-scenario shifts.
-function _dynSimResultsHtml(sc, res, baseRes, baseline) {
+function _dynSimResultsHtml(sc, res, baseRes, baseline, regRes) {
   const kpi = (l, v, t) => `<div class="dyn-kpi" style="margin-right:0;"><span>${l}</span><b${t ? ` style="color:${t};"` : ''}>${v}</b></div>`;
   const cmp = !!baseRes;
   const kpiBlock = cmp
@@ -39522,6 +39723,7 @@ function _dynSimResultsHtml(sc, res, baseRes, baseline) {
     </div>`;
   return `
     ${kpiBlock}
+    ${regRes ? _dynSimRegressionHtml(sc, regRes) : ''}
     ${_dynSimTargetHtml(res)}
     ${_dynSimMixHtml(res)}
     ${res.outOfScope ? `<div style="margin-bottom:10px;padding:7px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e;">${res.outOfScope} open run(s) are in locations OUTSIDE this scenario — add their locations to include them.</div>` : ''}
@@ -39537,6 +39739,63 @@ function _dynSimResultsHtml(sc, res, baseRes, baseline) {
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:6px;">Simulated shifts ${cmp ? `<span style="font-weight:400;color:var(--gray-400);">— baseline vs scenario</span>` : ''}</div>
       ${_dynSimShiftsHtml(sc, res, baseRes, baseline)}
     </div>`;
+}
+
+// Regression projection panel: the program timeline as baseline → gap → regression
+// campaigns, the extended program-end date, and the per-subsystem failure spread.
+function _dynSimRegressionHtml(sc, regRes) {
+  if (!regRes) return '';
+  const cfg = _dynRegConfig(sc);
+  const ev = [];
+  regRes.campaigns.forEach((c, i) => {
+    if (c.gapMonths > 0) ev.push({ type: 'gap', months: c.gapMonths });
+    ev.push({ type: 'camp', c, i });
+  });
+  const fmt = d => d ? _dynFmtDate(d) : '—';
+  const rows = regRes.campaigns.map((c, i) => {
+    const gap = c.gapMonths > 0
+      ? `<span style="color:#92400e;">+${c.gapMonths} mo dev gap</span>`
+      : '<span style="color:var(--gray-400);">—</span>';
+    return `<tr style="border-top:1px solid var(--gray-100);${c.kind === 'regression' ? '' : 'background:var(--gray-50);'}">
+      <td style="padding:6px 10px;white-space:nowrap;">${c.kind === 'baseline' ? '★ ' : ''}${escapeHtml(c.name)}${c.kind === 'regression' ? ` <span style="color:var(--gray-400);font-size:11px;">${c.failCount} fail${c.failCount === 1 ? '' : 's'}</span>` : ''}</td>
+      <td style="padding:6px 10px;text-align:right;">${gap}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:11.5px;white-space:nowrap;">${fmt(c.start)} → ${fmt(c.end)}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;">${c.weeks != null ? c.weeks + ' wk' : '—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;">${c.runs}</td>
+    </tr>`;
+  }).join('');
+  // Mini ribbon: campaigns (blue) and dev gaps (amber) proportional to weeks/months.
+  const wkFor = e => e.type === 'gap' ? Math.max(0.5, e.months * 4.33) : Math.max(0.5, e.c.weeks || 1);
+  const totW = ev.reduce((a, e) => a + wkFor(e), 0) || 1;
+  const ribbon = ev.map(e => {
+    const pct = wkFor(e) / totW * 100;
+    if (e.type === 'gap') return `<div title="${e.months} month dev gap" style="width:${pct}%;background:repeating-linear-gradient(45deg,#fde68a,#fde68a 5px,#fef3c7 5px,#fef3c7 10px);"></div>`;
+    const base = e.c.kind === 'baseline';
+    return `<div title="${escapeHtml(e.c.name)}: ${fmt(e.c.start)} → ${fmt(e.c.end)}" style="width:${pct}%;background:${base ? '#1d4eaf' : '#3b82f6'};display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;font-weight:600;overflow:hidden;white-space:nowrap;">${pct > 7 ? (base ? 'Base' : 'R' + e.i) : ''}</div>`;
+  }).join('');
+  const weightChips = cfg.subsystems.length
+    ? cfg.subsystems.map(s => `<span class="tag" style="font-size:10px;">${escapeHtml(s)} ${cfg.weights[s] || 0}%</span>`).join(' ')
+    : '<span style="color:var(--gray-400);">no subsystems</span>';
+  return `<div class="data-card" style="padding:12px 14px;margin-bottom:12px;border-left:3px solid #1d4eaf;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+      <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);">Regression projection</span>
+      <span style="color:var(--gray-400);font-size:11px;">Option C · subsystem-weighted · compounding ${cfg.failureRate}% fail rate</span>
+      <span style="flex:1;"></span>
+      <span class="dyn-kpi" style="margin:0;padding:5px 12px;"><span>Program end</span><b style="color:var(--info);">${fmt(regRes.programEnd)}</b></span>
+      <span class="dyn-kpi" style="margin:0;padding:5px 12px;"><span>Total</span><b>${regRes.totalWeeks != null ? regRes.totalWeeks + ' wks' : '—'}</b></span>
+    </div>
+    <div style="display:flex;height:22px;border-radius:5px;overflow:hidden;border:1px solid var(--gray-200);margin-bottom:10px;">${ribbon}</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+      <thead><tr style="color:var(--gray-500);font-size:10px;text-transform:uppercase;">
+        <th style="text-align:left;padding:3px 10px;">Campaign</th>
+        <th style="text-align:right;padding:3px 10px;">Lead-in</th>
+        <th style="text-align:right;padding:3px 10px;">Dates</th>
+        <th style="text-align:right;padding:3px 10px;">Duration</th>
+        <th style="text-align:right;padding:3px 10px;">Runs</th>
+      </tr></thead><tbody>${rows}</tbody>
+    </table>
+    <div style="margin-top:8px;font-size:11px;color:var(--gray-500);">Failure spread: ${weightChips}</div>
+  </div>`;
 }
 
 // Baseline-vs-scenario KPI table (like the what-if Current/Scenario/Difference).
@@ -39776,10 +40035,65 @@ function _dynSimField(k, v) { const sc = _dynSimActive(); if (!sc) return; _dynS
 function _dynSimSetMix(size, val) {
   const sc = _dynSimActive(); if (!sc) return;
   _dynSimPatch(sc.id, s => {
-    const mix = (s.shiftMix && typeof s.shiftMix === 'object') ? { ...s.shiftMix } : {};
-    const n = parseFloat(val);
-    if (!Number.isFinite(n) || n <= 0) delete mix[size]; else mix[size] = n;
-    s.shiftMix = mix;
+    const cur = (s.shiftMix && typeof s.shiftMix === 'object') ? { ...s.shiftMix } : {};
+    // Shown sizes (1..max present, min 3) — the spread is rebalanced across these
+    // so the total stays EXACTLY 100%: pin the edited size, scale the rest.
+    const legacy = Math.max(1, Math.min(5, s.maxZonesPerShift || 2));
+    const maxShow = Math.min(5, Math.max(3, _dynSimMaxMixSize(s)));
+    const sizes = []; for (let z = 1; z <= maxShow; z++) sizes.push(z);
+    if (!sizes.includes(size)) sizes.push(size);
+    const raw = {};
+    sizes.forEach(z => raw[z] = (s.shiftMix && typeof s.shiftMix === 'object') ? (Number(cur[z]) || 0) : (z === legacy ? 100 : 0));
+    s.shiftMix = _dynRebalance100(raw, sizes, size, val);
+    return {};
+  });
+  _dynRenderSimulator();
+}
+function _dynSimRegToggle(on) {
+  const sc = _dynSimActive(); if (!sc) return;
+  _dynSimPatch(sc.id, s => {
+    s.regression = s.regression || {};
+    s.regression.enabled = !!on;
+    if (on) {
+      if (s.regression.failureRate == null) s.regression.failureRate = 30;
+      if (!Array.isArray(s.regression.gaps) || !s.regression.gaps.length) s.regression.gaps = [2, 3];
+      const subs = _dynRegSubsystems(s);
+      if (subs.length && (!s.regression.weights || !Object.keys(s.regression.weights).length)) {
+        s.regression.weights = _dynNorm100({}, subs);   // even split summing to 100
+      }
+    }
+    return {};
+  });
+  _dynRenderSimulator();
+}
+function _dynSimRegField(k, val) {
+  const sc = _dynSimActive(); if (!sc) return;
+  _dynSimPatch(sc.id, s => {
+    s.regression = s.regression || {};
+    s.regression[k] = Math.max(0, Math.min(100, parseFloat(val) || 0));
+    return {};
+  });
+  _dynRenderSimulator();
+}
+function _dynSimRegSetGaps(txt) {
+  const sc = _dynSimActive(); if (!sc) return;
+  _dynSimPatch(sc.id, s => {
+    s.regression = s.regression || {};
+    const gaps = String(txt).split(/[,\s]+/).map(t => t.trim()).filter(t => t !== '')
+      .map(t => Math.max(0, Number(t) || 0));
+    s.regression.gaps = gaps.length ? gaps : [2];
+    return {};
+  });
+  _dynRenderSimulator();
+}
+function _dynSimRegSetWeight(sub, val) {
+  const sc = _dynSimActive(); if (!sc) return;
+  _dynSimPatch(sc.id, s => {
+    s.regression = s.regression || {};
+    const subs = _dynRegSubsystems(s);
+    const keys = subs.length ? subs : Object.keys(s.regression.weights || {});
+    const cur = _dynNorm100(s.regression.weights || {}, keys);    // current normalized shares
+    s.regression.weights = _dynRebalance100(cur, keys, sub, val); // pin edited subsystem, rebalance rest
     return {};
   });
   _dynRenderSimulator();
@@ -39788,7 +40102,7 @@ function _dynSimAutoFillMix() {
   const sc = _dynSimActive(); if (!sc) return;
   const mix = _dynSimAutoMix(sc);
   if (!mix) { toast('No schedulable work to size the mix from', 'error'); return; }
-  _dynSimPatch(sc.id, { shiftMix: mix });
+  _dynSimPatch(sc.id, { shiftMix: _dynNorm100(mix, Object.keys(mix)) });
   _dynRenderSimulator();
   if (typeof toast === 'function') toast('Access mix auto-filled to match your work — minimises wasted shifts', 'success');
 }
