@@ -39730,7 +39730,7 @@ function _dynSimResultsHtml(sc, res, baseRes, baseline, regRes) {
     ${_dynSimUnplacedHtml(sc, res)}
     <div class="data-card" style="padding:12px 14px;margin-bottom:12px;">
       ${_dynSimChartControlsHtml()}
-      <div style="height:230px;"><canvas id="dyn-sim-chart"></canvas></div>
+      <div style="height:280px;"><canvas id="dyn-sim-chart"></canvas></div>
     </div>
     <div class="data-card" style="padding:12px 14px;margin-bottom:12px;">
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:8px;">Location timeline ${cmp ? `<span style="font-weight:400;color:var(--gray-400);">— ${escapeHtml(baseline.name)} (grey) vs ${escapeHtml(sc.name)} (blue)</span>` : ''}</div>
@@ -39938,6 +39938,39 @@ function _dynSimShiftsHtml(sc, res, baseRes, baseline, regRes) {
     </tr></thead><tbody>${rows}${regRows(3)}</tbody></table>`;
 }
 
+// Extend the active scenario's S-curve through the regression projection: after
+// the baseline peak, each campaign shows a dev-gap plateau (a dip as the failed
+// slice is reopened) then a climb back as it is re-verified. Same denominator as
+// the baseline, so the line stays comparable to the other scenarios and actual.
+function _dynSimRegressionCurve(activeRes, regRes) {
+  if (!regRes) return null;
+  const regs = regRes.campaigns.filter(c => c.kind === 'regression');
+  if (!regs.length) return null;
+  const baseTotal = activeRes.total || 1;
+  const baseCum = activeRes.cumulative || [];
+  const basePeak = baseCum.length ? baseCum[baseCum.length - 1].pct : 100;
+  const pts = baseCum.map(p => ({ date: p.date, pct: p.pct }));
+  const r1 = x => Math.round(x * 10) / 10;
+  let level = basePeak;
+  let prevEnd = activeRes.completion;
+  regs.forEach(c => {
+    if (!c.start || !prevEnd) return;
+    const drop = baseTotal ? 100 * (c.failCount || 0) / baseTotal : 0;
+    const lowered = Math.max(0, r1(level - drop));
+    // failures reopen entering the dev gap, then sit flat until the campaign starts
+    pts.push({ date: prevEnd, pct: level });
+    pts.push({ date: _dynDayKey(_dynAddDays(_dynParseDate(prevEnd), 1)), pct: lowered });
+    pts.push({ date: c.start, pct: lowered });
+    // the regression campaign re-verifies the slice, climbing back to the peak
+    ((c.res && c.res.cumulative) || []).forEach(p => {
+      pts.push({ date: p.date, pct: r1(lowered + drop * (p.pct / 100)) });
+    });
+    pts.push({ date: c.end || c.start, pct: level });
+    prevEnd = c.end || c.start;
+  });
+  return pts;
+}
+
 // S-curve: every scenario in the phase (baseline red, active bold) + ACTUAL
 // progress (black dashed).
 function _dynSimDrawChart() {
@@ -39948,18 +39981,22 @@ function _dynSimDrawChart() {
   const list = _dynSimScenarios().filter(s => (s.phase || '') === phase);
   const runs = list.map(s => ({ s, r: (active && s.id === active.id && _dynPage._simResult) ? _dynPage._simResult : _dynSimRun(s, _dynPage._simPrereqs || []) }));
   const actual = _dynSimActualCurve(phase);
-  const allDates = [...new Set([...runs.flatMap(x => x.r.cumulative.map(p => p.date)), ...actual.points.map(p => p.date)])].sort();
+  const regRes = _dynPage._simRegResult;
+  const regCurve = (active && _dynPage._simResult && regRes) ? _dynSimRegressionCurve(_dynPage._simResult, regRes) : null;
+  const allDates = [...new Set([...runs.flatMap(x => x.r.cumulative.map(p => p.date)), ...(regCurve ? regCurve.map(p => p.date) : []), ...actual.points.map(p => p.date)])].sort();
   const palette = ['#1d4eaf', '#059669', '#7c3aed', '#b45309', '#0e7490', '#9d174d'];
   const hidden = _dynPage._simHiddenSeries || (_dynPage._simHiddenSeries = new Set());
   const datasets = [];
   runs.forEach(({ s, r }, i) => {
     if (hidden.has(s.id)) return;
-    let last = 0; const m = new Map(r.cumulative.map(p => [p.date, p.pct]));
+    const isActive = active && s.id === active.id;
+    const src = (isActive && regCurve) ? regCurve : r.cumulative;
+    let last = 0; const m = new Map(src.map(p => [p.date, p.pct]));
     datasets.push({
-      label: (s.baseline ? '★ ' : '') + s.name,
+      label: (s.baseline ? '★ ' : '') + s.name + ((isActive && regCurve) ? ' (incl. regression)' : ''),
       data: allDates.map(d => { if (m.has(d)) last = m.get(d); return last; }),
       borderColor: s.baseline ? '#e60012' : palette[i % palette.length],
-      borderWidth: (active && s.id === active.id) ? 3 : 1.5,
+      borderWidth: isActive ? 3 : 1.5,
       stepped: true, fill: false, pointRadius: 0, tension: 0,
     });
   });
