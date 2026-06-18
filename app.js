@@ -39358,7 +39358,9 @@ function _dynSimRunRegression(sc, prereqs, baseRes) {
     // Dev gap = gm calendar months at 30 days each (NOT _dynAddMonths, which snaps
     // to the 1st of the month and would shorten the gap, e.g. 09-20 → 10-01).
     const regStart = _dynDayKey(_dynAddDays(_dynParseDate(prevEnd), Math.round(gm * 30)));
-    const sub = Object.assign({}, sc, { startDate: regStart, _poolOverride: slice, targetDate: null });
+    // Regression campaigns run on the plain weekly template only — no weekend
+    // closures or extended hours carry over from the baseline's week overrides.
+    const sub = Object.assign({}, sc, { startDate: regStart, _poolOverride: slice, targetDate: null, weekOverrides: {} });
     const r = _dynSimRun(sub, prereqs);
     campaigns.push({
       kind: 'regression', name: 'Regression ' + (ci + 1), gapMonths: gm,
