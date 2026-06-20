@@ -363,6 +363,7 @@ function showPage(name) {
   if (name === 'rma')              renderRMA();
   if (name === 'schedule')         renderSchedulePage();
   if (name === 'drawings')         { loadDrawingsData().then(renderDrawingsPage); }
+  if (name === 'documents')        { loadDocsData().then(renderDocumentsPage); }
   if (name === 'meetings')         { loadMeetings().then(() => { loadMtgTemplates(); renderMeetings(); }); }
   if (name === 'lookahead')        { loadPlanningData().then(renderLookahead); }
   if (name === 'admin-planning')   { loadPlanningData().then(renderAdminPlanning); }
@@ -42297,3 +42298,581 @@ function _drwUploadRevision(setId) {
 
 
 // ── Reusable cx* state helpers (cxSkeleton/cxEmpty/cxError) → extracted to cx-state.js (P3-1 seam #3) ──
+
+// ╔════════════════════════════════════════════════════════════════════════╗
+// ║  DOCUMENTS — Controlled document library for the field team             ║
+// ║                                                                        ║
+// ║  Storage today: Supabase Storage bucket "documents" + tables           ║
+// ║                 documents / document_versions (see                     ║
+// ║                 supabase_documents_schema.sql).                        ║
+// ║                                                                        ║
+// ║  MIGRATION SEAM — everything the UI touches goes through DocsAPI and    ║
+// ║  _docsStorage below. At the Microsoft/Azure cutover, reimplement those  ║
+// ║  two objects against MS Graph (SharePoint doc library + list columns)  ║
+// ║  or Dataverse + Azure Blob; NOTHING above the seam changes.            ║
+// ║                                                                        ║
+// ║  Features: metadata filters (type/discipline/location/search),         ║
+// ║  version control with auto-supersede, and offline caching (the SW in   ║
+// ║  sw.js stale-while-revalidates storage GETs; "Make available offline"  ║
+// ║  pre-warms that cache).                                                 ║
+// ╚════════════════════════════════════════════════════════════════════════╝
+
+let DOCUMENTS    = [];
+let DOC_VERSIONS = [];
+
+const DOC_TYPES = [
+  { id: 'procedure',     label: 'Procedure'     },
+  { id: 'specification', label: 'Specification' },
+  { id: 'drawing',       label: 'Drawing'       },
+  { id: 'permit',        label: 'Permit'        },
+  { id: 'report',        label: 'Report'        },
+  { id: 'manual',        label: 'Manual'        },
+  { id: 'other',         label: 'Other'         },
+];
+const _docTypeLabel = (id) => (DOC_TYPES.find(t => t.id === id) || {}).label || 'Other';
+
+// Roles allowed to upload / manage documents: admin + field engineer.
+function _docsCanManage() {
+  return ['admin', 'field_engineer'].includes(currentRoleUser?.role);
+}
+
+// ── Storage adapter (migration seam) ───────────────────────────────────────
+const _docsStorage = {
+  bucket: 'documents',
+  _url(path, cacheBust = false) {
+    const clean = String(path || '').split('/').map(encodeURIComponent).join('/');
+    const url = `${SUPABASE_URL}/storage/v1/object/${this.bucket}/${clean}`;
+    return cacheBust ? `${url}?t=${Date.now()}` : url;
+  },
+  _hdrs(extra = {}) {
+    return { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), ...extra };
+  },
+  async upload(path, file, contentType) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 120000);
+    try {
+      const res = await fetch(this._url(path), {
+        method: 'POST', signal: ctrl.signal, cache: 'no-store',
+        headers: this._hdrs({ 'Content-Type': contentType || file.type || 'application/octet-stream', 'x-upsert': 'true' }),
+        body: file,
+      });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`Upload failed (${res.status}): ${await res.text()}`);
+      return path;
+    } catch (e) {
+      clearTimeout(timer);
+      if (e.name === 'AbortError') throw new Error('Upload timed out after 120s');
+      throw e;
+    }
+  },
+  async downloadBlob(path) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 60000);
+    try {
+      const res = await fetch(this._url(path), { method: 'GET', signal: ctrl.signal, headers: this._hdrs() });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      return await res.blob();
+    } catch (e) {
+      clearTimeout(timer);
+      if (e.name === 'AbortError') throw new Error('Download timed out after 60s');
+      throw e;
+    }
+  },
+  // Warm the service-worker cache for this object so it opens with no signal.
+  async prefetch(path) {
+    const res = await fetch(this._url(path), { method: 'GET', headers: this._hdrs() });
+    if (!res.ok) throw new Error(`Prefetch failed (${res.status})`);
+    return true;
+  },
+  async remove(path) {
+    const { error } = await _sb.storage.from(this.bucket).remove([path]);
+    if (error) throw new Error('Storage delete failed: ' + error.message);
+  },
+};
+
+// ── Data-access layer (migration seam) ─────────────────────────────────────
+// The ONLY place that knows about Supabase tables + storage. Swap the bodies
+// here at the Azure/SharePoint cutover; the render layer stays untouched.
+const DocsAPI = {
+  async loadAll() {
+    const [docs, versions] = await Promise.all([
+      _fetchAnon('documents?select=*&order=updated_at.desc'),
+      _fetchAnon('document_versions?select=*&order=created_at.desc'),
+    ]);
+    DOCUMENTS    = docs     || [];
+    DOC_VERSIONS = versions || [];
+  },
+  versionsFor(docId) {
+    return DOC_VERSIONS
+      .filter(v => v.document_id === docId)
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  },
+  currentVersion(doc) {
+    if (!doc) return null;
+    return DOC_VERSIONS.find(v => v.id === doc.current_version_id)
+        || this.versionsFor(doc.id).find(v => v.is_current)
+        || this.versionsFor(doc.id)[0]
+        || null;
+  },
+  // Create a new document of record + its first revision.
+  async createDocument(meta, file, revInfo) {
+    const docRows = await _dbInsert('documents', [{
+      title:      meta.title,
+      doc_type:   meta.doc_type || 'other',
+      doc_number: meta.doc_number || null,
+      discipline: meta.discipline || null,
+      location:   meta.location || null,
+      subsystem:  meta.subsystem || null,
+      tags:       meta.tags || [],
+      created_by: currentRoleUser?.name || null,
+    }]);
+    const doc = docRows[0];
+    await this.addVersion(doc, file, revInfo);
+    return doc;
+  },
+  // Upload a new revision; auto-supersedes the previous current revision.
+  async addVersion(doc, file, revInfo) {
+    const ext  = (file.name.split('.').pop() || '').toLowerCase();
+    const verId = (crypto.randomUUID && crypto.randomUUID()) ||
+                  ('v-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+    const path = `${doc.id}/${verId}.${ext || 'bin'}`;
+    let sha = null;
+    try { sha = await _sha256Hex(new Uint8Array(await file.arrayBuffer())); } catch { /* hashing optional */ }
+    await _docsStorage.upload(path, file);
+
+    // Demote whatever revision is currently live.
+    const prev = this.versionsFor(doc.id).filter(v => v.is_current);
+    for (const p of prev) {
+      await _dbUpdate('document_versions',
+        { is_current: false, superseded_at: new Date().toISOString() },
+        { id: p.id });
+    }
+
+    const rows = await _dbInsert('document_versions', [{
+      id:           verId,
+      document_id:  doc.id,
+      revision:     revInfo?.revision || 'A',
+      storage_path: path,
+      file_name:    file.name,
+      file_ext:     ext,
+      mime_type:    file.type || null,
+      file_size:    file.size || null,
+      sha256:       sha,
+      change_note:  revInfo?.change_note || null,
+      is_current:   true,
+      uploaded_by:  currentRoleUser?.name || null,
+    }]);
+    const ver = rows[0];
+    await _dbUpdate('documents',
+      { current_version_id: ver.id, updated_at: new Date().toISOString() },
+      { id: doc.id });
+    return ver;
+  },
+  async updateMeta(docId, patch) {
+    patch.updated_at = new Date().toISOString();
+    await _dbUpdate('documents', patch, { id: docId });
+  },
+  async archive(docId, archived = true) {
+    await this.updateMeta(docId, { status: archived ? 'archived' : 'active' });
+  },
+  async deleteDocument(doc) {
+    // Remove stored objects first, then the rows (versions cascade on the FK).
+    for (const v of this.versionsFor(doc.id)) {
+      try { await _docsStorage.remove(v.storage_path); } catch (e) { console.warn('[docs] remove obj', e.message); }
+    }
+    await _dbDelete('documents', { id: doc.id });
+  },
+};
+
+// ── Offline tracking ───────────────────────────────────────────────────────
+const _DOCS_OFFLINE_KEY = 'cxp_docs_offline';
+function _docsOfflineSet() {
+  try { return new Set(JSON.parse(localStorage.getItem(_DOCS_OFFLINE_KEY) || '[]')); }
+  catch { return new Set(); }
+}
+function _docsOfflineSave(set) {
+  try { localStorage.setItem(_DOCS_OFFLINE_KEY, JSON.stringify([...set])); } catch { /* quota — non-fatal */ }
+}
+function _docIsOffline(versionId) { return _docsOfflineSet().has(versionId); }
+
+async function _docMakeOffline(versionId) {
+  const ver = DOC_VERSIONS.find(v => v.id === versionId);
+  if (!ver) return;
+  toast('Caching for offline…', 'info');
+  try {
+    await _docsStorage.prefetch(ver.storage_path);
+    const set = _docsOfflineSet(); set.add(versionId); _docsOfflineSave(set);
+    toast('Available offline ✓', 'success');
+    renderDocumentsPage();
+  } catch (e) { toast('Could not cache: ' + e.message, 'error'); }
+}
+function _docRemoveOffline(versionId) {
+  const set = _docsOfflineSet(); set.delete(versionId); _docsOfflineSave(set);
+  toast('Removed from offline', 'info');
+  renderDocumentsPage();
+}
+
+// ── Data loader ────────────────────────────────────────────────────────────
+async function loadDocsData() {
+  try { await DocsAPI.loadAll(); }
+  catch (e) { console.warn('[loadDocsData]', e.message); }
+}
+
+// ── View state + filters ───────────────────────────────────────────────────
+const _docsFilter = { q: '', type: '', discipline: '', location: '', showArchived: false };
+
+function _docsLocationOptions() {
+  const locs = new Set();
+  DOCUMENTS.forEach(d => d.location && locs.add(d.location));
+  (typeof TI !== 'undefined' ? TI : []).forEach(r => r.Location && locs.add(r.Location));
+  return [...locs].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+function _docsDisciplineOptions() {
+  const ds = new Set();
+  DOCUMENTS.forEach(d => d.discipline && ds.add(d.discipline));
+  ['Civil', 'Electrical', 'Train Control', 'Mechanical', 'Structural', 'Systems', 'General']
+    .forEach(d => ds.add(d));
+  return [...ds].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+function _docsApplyFilters() {
+  const q = _docsFilter.q.trim().toLowerCase();
+  return DOCUMENTS.filter(d => {
+    if (!_docsFilter.showArchived && d.status === 'archived') return false;
+    if (_docsFilter.type && d.doc_type !== _docsFilter.type) return false;
+    if (_docsFilter.discipline && d.discipline !== _docsFilter.discipline) return false;
+    if (_docsFilter.location && d.location !== _docsFilter.location) return false;
+    if (q) {
+      const hay = [d.title, d.doc_number, d.discipline, d.location, d.subsystem, (d.tags || []).join(' ')]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function _docsSetFilter(key, val) {
+  _docsFilter[key] = val;
+  if (key === 'q') { _docsRenderList(); }   // keep search focus — only re-render the list
+  else { _docsRenderList(); }
+}
+
+// ── Page render ────────────────────────────────────────────────────────────
+function renderDocumentsPage() {
+  const hero = document.getElementById('documents-hero-content');
+  const cont = document.getElementById('documents-content');
+  if (!hero || !cont) return;
+
+  const active   = DOCUMENTS.filter(d => d.status !== 'archived');
+  const offCount = _docsOfflineSet().size;
+  hero.innerHTML = renderPageHero({
+    role:  { label: 'Documents', tone: 'drawings' },
+    title: 'Document Library',
+    sub:   'Controlled procedures, specs, permits & reports — versioned, searchable, offline-ready',
+    stats: [
+      { label: 'Documents', value: active.length, tone: 'blue' },
+      { label: 'Revisions', value: DOC_VERSIONS.length },
+      { label: 'Offline',   value: offCount, tone: 'good' },
+      { label: 'Types',     value: new Set(active.map(d => d.doc_type)).size, tone: 'muted' },
+    ],
+  });
+
+  const manageBtn = _docsCanManage() ? `
+    <button class="admin-action-btn" onclick="_docsOpenUpload()" style="background:#6366f1;color:#fff;border:none;padding:8px 18px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;">
+      + Add Document
+    </button>` : '';
+
+  const typeOpts = DOC_TYPES.map(t =>
+    `<option value="${t.id}" ${_docsFilter.type === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`).join('');
+  const discOpts = _docsDisciplineOptions().map(d =>
+    `<option value="${escapeHtml(d)}" ${_docsFilter.discipline === d ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('');
+  const locOpts  = _docsLocationOptions().map(l =>
+    `<option value="${escapeHtml(l)}" ${_docsFilter.location === l ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('');
+
+  cont.innerHTML = `
+    <div class="docs-toolbar">
+      <div class="docs-search-wrap">
+        <svg class="docs-search-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/></svg>
+        <input id="docs-search" class="docs-search-input" type="search" placeholder="Search title, number, tags…"
+          value="${escapeHtml(_docsFilter.q)}" oninput="_docsSetFilter('q', this.value)">
+      </div>
+      <select class="filter-select" onchange="_docsSetFilter('type', this.value)">
+        <option value="">All types</option>${typeOpts}
+      </select>
+      <select class="filter-select" onchange="_docsSetFilter('discipline', this.value)">
+        <option value="">All disciplines</option>${discOpts}
+      </select>
+      <select class="filter-select" onchange="_docsSetFilter('location', this.value)">
+        <option value="">All locations</option>${locOpts}
+      </select>
+      <label class="docs-archived-toggle">
+        <input type="checkbox" ${_docsFilter.showArchived ? 'checked' : ''} onchange="_docsSetFilter('showArchived', this.checked)">
+        Show archived
+      </label>
+      <div style="flex:1;"></div>
+      ${manageBtn}
+    </div>
+    <div id="docs-list"></div>`;
+
+  _docsRenderList();
+}
+
+function _docsRenderList() {
+  const el = document.getElementById('docs-list');
+  if (!el) return;
+  const docs = _docsApplyFilters();
+
+  if (!DOCUMENTS.length) {
+    el.innerHTML = `<div class="docs-empty"><h3>No documents yet</h3>
+      <p>${_docsCanManage() ? 'Click “Add Document” to upload your first controlled document.' : 'An admin or field engineer needs to add documents first.'}</p></div>`;
+    return;
+  }
+  if (!docs.length) {
+    el.innerHTML = `<div class="docs-empty"><h3>No matches</h3><p>Try clearing filters or search.</p></div>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="data-card" style="padding:0;overflow:hidden;">
+      <table class="data-table docs-table">
+        <thead><tr>
+          <th>Document</th><th>Type</th><th>Discipline</th><th>Location</th>
+          <th>Rev</th><th>Updated</th><th style="text-align:right;">Actions</th>
+        </tr></thead>
+        <tbody>
+          ${docs.map(d => _docsRowHTML(d)).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function _docsRowHTML(d) {
+  const ver   = DocsAPI.currentVersion(d);
+  const verN  = DocsAPI.versionsFor(d.id).length;
+  const off   = ver && _docIsOffline(ver.id);
+  const arch  = d.status === 'archived';
+  const tags  = (d.tags || []).slice(0, 4).map(t => `<span class="docs-tag">${escapeHtml(t)}</span>`).join('');
+  return `
+    <tr class="${arch ? 'docs-row-archived' : ''}">
+      <td>
+        <div class="docs-title-cell">
+          <span class="docs-ftype-badge ftype-${escapeHtml(ver?.file_ext || 'file')}">${escapeHtml((ver?.file_ext || '?').toUpperCase())}</span>
+          <div>
+            <div class="docs-title" onclick="_docsOpenDetail('${d.id}')">${escapeHtml(d.title)}${arch ? ' <span class="badge badge-notstarted">Archived</span>' : ''}</div>
+            <div class="docs-meta-line">
+              ${d.doc_number ? `<span class="docs-docnum">${escapeHtml(d.doc_number)}</span>` : ''}
+              ${off ? '<span class="docs-offline-pill">● Offline</span>' : ''}
+              ${tags}
+            </div>
+          </div>
+        </div>
+      </td>
+      <td><span class="docs-type-chip">${escapeHtml(_docTypeLabel(d.doc_type))}</span></td>
+      <td>${escapeHtml(d.discipline || '—')}</td>
+      <td>${escapeHtml(d.location || '—')}</td>
+      <td><span class="badge badge-passed">${escapeHtml(ver?.revision || '—')}</span>${verN > 1 ? `<span class="docs-vcount" title="${verN} revisions">·${verN}</span>` : ''}</td>
+      <td style="font-size:12px;color:var(--gray-500);">${d.updated_at ? new Date(d.updated_at).toLocaleDateString() : '—'}</td>
+      <td style="text-align:right;white-space:nowrap;">
+        ${ver ? `<button class="docs-icon-btn" title="Open / download" onclick="_docsDownload('${ver.id}')">⬇</button>` : ''}
+        ${ver ? (off
+          ? `<button class="docs-icon-btn" title="Remove offline copy" onclick="_docRemoveOffline('${ver.id}')">✓</button>`
+          : `<button class="docs-icon-btn" title="Make available offline" onclick="_docMakeOffline('${ver.id}')">☁</button>`) : ''}
+        <button class="docs-icon-btn" title="Details & revisions" onclick="_docsOpenDetail('${d.id}')">⋯</button>
+      </td>
+    </tr>`;
+}
+
+// ── Open / download a version (private bucket → fetch w/ auth → object URL) ──
+async function _docsDownload(versionId) {
+  const ver = DOC_VERSIONS.find(v => v.id === versionId);
+  if (!ver) return;
+  try {
+    const blob = await _docsStorage.downloadBlob(ver.storage_path);
+    const url  = URL.createObjectURL(blob);
+    const ext  = (ver.file_ext || '').toLowerCase();
+    if (['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'txt'].includes(ext)) {
+      window.open(url, '_blank');               // viewable inline
+    } else {
+      const a = document.createElement('a');     // force download for office/binary
+      a.href = url; a.download = ver.file_name || ('document.' + (ext || 'bin'));
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) { toast('Open failed: ' + e.message, 'error'); }
+}
+
+// ── Detail / revision-history drawer ───────────────────────────────────────
+function _docsOpenDetail(docId) {
+  const d = DOCUMENTS.find(x => x.id === docId);
+  if (!d) return;
+  const versions = DocsAPI.versionsFor(docId);
+  const canManage = _docsCanManage();
+
+  const rows = versions.map(v => {
+    const off = _docIsOffline(v.id);
+    return `
+      <tr class="${v.is_current ? 'docs-ver-current' : ''}">
+        <td><span class="badge ${v.is_current ? 'badge-passed' : 'badge-notstarted'}">${escapeHtml(v.revision)}</span></td>
+        <td>${escapeHtml(v.file_name || '—')} ${off ? '<span class="docs-offline-pill">● Offline</span>' : ''}</td>
+        <td style="font-size:12px;">${v.created_at ? new Date(v.created_at).toLocaleString() : '—'}</td>
+        <td style="font-size:12px;">${escapeHtml(v.uploaded_by || '—')}</td>
+        <td style="font-size:12px;color:var(--gray-500);">${escapeHtml(v.change_note || '')}</td>
+        <td style="text-align:right;white-space:nowrap;">
+          <button class="docs-icon-btn" title="Open / download" onclick="_docsDownload('${v.id}')">⬇</button>
+          ${off
+            ? `<button class="docs-icon-btn" title="Remove offline" onclick="_docRemoveOffline('${v.id}')">✓</button>`
+            : `<button class="docs-icon-btn" title="Make available offline" onclick="_docMakeOffline('${v.id}')">☁</button>`}
+        </td>
+      </tr>`;
+  }).join('');
+
+  const manageBtns = canManage ? `
+    <button class="admin-action-btn" onclick="_docsOpenUpload('${d.id}')">+ Upload New Revision</button>
+    <button class="admin-action-btn-secondary" onclick="_docsArchive('${d.id}', ${d.status !== 'archived'})">${d.status === 'archived' ? 'Restore' : 'Archive'}</button>
+    <button class="admin-action-btn-secondary" style="color:var(--bad);" onclick="_docsDelete('${d.id}')">Delete</button>` : '';
+
+  modal({
+    title: escapeHtml(d.title),
+    sub: `${escapeHtml(_docTypeLabel(d.doc_type))}${d.doc_number ? ' · ' + escapeHtml(d.doc_number) : ''}`,
+    size: 'large',
+    body: `
+      <div class="docs-detail-meta">
+        ${[['Discipline', d.discipline], ['Location', d.location], ['Subsystem', d.subsystem],
+            ['Tags', (d.tags || []).join(', ')], ['Created by', d.created_by]]
+          .map(([k, v]) => `<div><span class="docs-dm-k">${k}</span><span class="docs-dm-v">${escapeHtml(v || '—')}</span></div>`).join('')}
+      </div>
+      <h4 class="docs-section-h">Revision history (${versions.length})</h4>
+      <table class="data-table">
+        <thead><tr><th>Rev</th><th>File</th><th>Uploaded</th><th>By</th><th>Change note</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--gray-400);">No revisions.</td></tr>'}</tbody>
+      </table>`,
+    footer: `${manageBtns}<button class="admin-action-btn-secondary" onclick="closeModal()">Close</button>`,
+  });
+}
+
+async function _docsArchive(docId, archived) {
+  try { await DocsAPI.archive(docId, archived); await loadDocsData(); closeModal(); renderDocumentsPage();
+    toast(archived ? 'Document archived' : 'Document restored', 'success');
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function _docsDelete(docId) {
+  const d = DOCUMENTS.find(x => x.id === docId);
+  if (!d) return;
+  if (!confirm(`Delete “${d.title}” and all ${DocsAPI.versionsFor(docId).length} revision(s)? This cannot be undone.`)) return;
+  try { await DocsAPI.deleteDocument(d); await loadDocsData(); closeModal(); renderDocumentsPage();
+    toast('Document deleted', 'success');
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ── Upload modal (new doc, or new revision when docId is passed) ────────────
+function _docsOpenUpload(docId) {
+  if (!_docsCanManage()) { toast('You do not have permission to upload', 'warn'); return; }
+  const existing = docId ? DOCUMENTS.find(d => d.id === docId) : null;
+  const isRev = !!existing;
+  const today = new Date().toISOString().slice(0, 10);
+
+  const typeOpts = DOC_TYPES.map(t => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join('');
+  const discList = _docsDisciplineOptions().map(d => `<option value="${escapeHtml(d)}"></option>`).join('');
+  const locList  = _docsLocationOptions().map(l => `<option value="${escapeHtml(l)}"></option>`).join('');
+
+  const metaFields = isRev ? '' : `
+    <div class="docs-form-row">
+      <label>Title <span class="req">*</span></label>
+      <input id="doc-f-title" type="text" placeholder="e.g. CBTC Static Test Procedure">
+    </div>
+    <div class="docs-form-grid">
+      <div><label>Type</label>
+        <select id="doc-f-type" class="filter-select">${typeOpts}</select></div>
+      <div><label>Document #</label>
+        <input id="doc-f-number" type="text" placeholder="optional"></div>
+    </div>
+    <div class="docs-form-grid">
+      <div><label>Discipline</label>
+        <input id="doc-f-discipline" type="text" list="doc-disc-list" placeholder="optional"></div>
+      <div><label>Location</label>
+        <input id="doc-f-location" type="text" list="doc-loc-list" placeholder="optional"></div>
+    </div>
+    <div class="docs-form-grid">
+      <div><label>Subsystem</label>
+        <input id="doc-f-subsystem" type="text" placeholder="optional"></div>
+      <div><label>Tags (comma-separated)</label>
+        <input id="doc-f-tags" type="text" placeholder="e.g. safety, rev-controlled"></div>
+    </div>
+    <datalist id="doc-disc-list">${discList}</datalist>
+    <datalist id="doc-loc-list">${locList}</datalist>`;
+
+  modal({
+    title: isRev ? `Upload New Revision` : 'Add Document',
+    sub: isRev ? escapeHtml(existing.title) : 'Upload a controlled document and its first revision',
+    body: `
+      ${isRev ? `<div class="docs-rev-banner">Uploading a new revision will <b>supersede</b> the current Rev ${escapeHtml(DocsAPI.currentVersion(existing)?.revision || '—')}. The old revision is kept in the history.</div>` : ''}
+      ${metaFields}
+      <div class="docs-form-grid">
+        <div><label>Revision <span class="req">*</span></label>
+          <input id="doc-f-rev" type="text" value="${isRev ? '' : 'A'}" placeholder="e.g. A, B, 1.0"></div>
+        <div><label>Date</label><input id="doc-f-date" type="date" value="${today}"></div>
+      </div>
+      <div class="docs-form-row">
+        <label>Change note</label>
+        <input id="doc-f-note" type="text" placeholder="What changed in this revision? (optional)">
+      </div>
+      <div class="docs-form-row">
+        <label>File <span class="req">*</span></label>
+        <input id="doc-f-file" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.txt,.csv,.dwg">
+      </div>
+      <div id="doc-upload-status" class="docs-upload-status"></div>`,
+    footer: `
+      <button class="admin-action-btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn" id="doc-upload-btn" onclick="_docsSubmitUpload('${docId || ''}')">${isRev ? 'Upload Revision' : 'Add Document'}</button>`,
+  });
+}
+
+async function _docsSubmitUpload(docId) {
+  const isRev = !!docId;
+  const fileEl = document.getElementById('doc-f-file');
+  const file = fileEl?.files?.[0];
+  const statusEl = document.getElementById('doc-upload-status');
+  const btn = document.getElementById('doc-upload-btn');
+  const fail = (m) => { if (statusEl) { statusEl.textContent = m; statusEl.className = 'docs-upload-status err'; } };
+
+  if (!file) return fail('Please choose a file.');
+  const rev = document.getElementById('doc-f-rev')?.value.trim();
+  if (!rev) return fail('Revision is required.');
+
+  let meta = null;
+  if (!isRev) {
+    const title = document.getElementById('doc-f-title')?.value.trim();
+    if (!title) return fail('Title is required.');
+    meta = {
+      title,
+      doc_type:   document.getElementById('doc-f-type')?.value || 'other',
+      doc_number: document.getElementById('doc-f-number')?.value.trim() || null,
+      discipline: document.getElementById('doc-f-discipline')?.value.trim() || null,
+      location:   document.getElementById('doc-f-location')?.value.trim() || null,
+      subsystem:  document.getElementById('doc-f-subsystem')?.value.trim() || null,
+      tags: (document.getElementById('doc-f-tags')?.value || '')
+              .split(',').map(t => t.trim()).filter(Boolean),
+    };
+  }
+  const revInfo = { revision: rev, change_note: document.getElementById('doc-f-note')?.value.trim() || null };
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
+  if (statusEl) { statusEl.textContent = `Uploading ${file.name}…`; statusEl.className = 'docs-upload-status'; }
+  try {
+    if (isRev) {
+      const doc = DOCUMENTS.find(d => d.id === docId);
+      await DocsAPI.addVersion(doc, file, revInfo);
+    } else {
+      await DocsAPI.createDocument(meta, file, revInfo);
+    }
+    await loadDocsData();
+    closeModal();
+    renderDocumentsPage();
+    toast(isRev ? 'Revision uploaded' : 'Document added', 'success');
+  } catch (e) {
+    fail('Upload failed: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = isRev ? 'Upload Revision' : 'Add Document'; }
+  }
+}

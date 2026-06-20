@@ -49,8 +49,10 @@ self.addEventListener('activate', (event) => {
 });
 
 function isSupabaseStorageGet(url) {
-  // Cache PDF + edit-state JSON GETs only.
-  return /\/storage\/v1\/object\//.test(url.pathname) && /\.(pdf|json)$/.test(url.pathname);
+  // Cache PDFs + edit-state JSON + document-library file types so the field team
+  // can open them offline. The Documents module pre-warms this cache via prefetch.
+  return /\/storage\/v1\/object\//.test(url.pathname) &&
+    /\.(pdf|json|docx?|xlsx?|pptx?|png|jpe?g|gif|webp|svg|txt|csv|dwg)$/i.test(url.pathname);
 }
 
 function isCdnAsset(url) {
