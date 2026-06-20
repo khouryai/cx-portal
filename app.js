@@ -5123,6 +5123,17 @@ const FIELDCONFIG_MODULES = [
       },
     ],
   },
+  {
+    id: 'documents', label: 'Documents', icon: 'DOC',
+    fields: [
+      {
+        key: 'document_type',
+        label: 'Document Type',
+        defaults: ['Procedure', 'Specification', 'Drawing', 'Permit', 'Report', 'Manual', 'Other'],
+        hint: 'Drives the Type filter and the type picker when adding a document in the Documents module.',
+      },
+    ],
+  },
 ];
 
 // Flattened list for backward-compat lookups (e.g. _fscDef(key))
@@ -42321,16 +42332,15 @@ let DOCUMENTS    = [];
 let DOC_VERSIONS = [];
 let DOC_FOLDERS  = [];
 
-const DOC_TYPES = [
-  { id: 'procedure',     label: 'Procedure'     },
-  { id: 'specification', label: 'Specification' },
-  { id: 'drawing',       label: 'Drawing'       },
-  { id: 'permit',        label: 'Permit'        },
-  { id: 'report',        label: 'Report'        },
-  { id: 'manual',        label: 'Manual'        },
-  { id: 'other',         label: 'Other'         },
-];
-const _docTypeLabel = (id) => (DOC_TYPES.find(t => t.id === id) || {}).label || 'Other';
+// Document types are controlled by the Field Config module (key 'document_type').
+// Admins edit the list under Admin → Field Config → Documents. _fsOptions falls
+// back to the registered defaults until they customize it.
+function _docsTypeOptions() { return _fsOptions('document_type'); }
+// Back-compat: early docs stored lowercase ids; map them to a display label,
+// otherwise the stored value is already the label string.
+const _DOC_TYPE_LEGACY = { procedure: 'Procedure', specification: 'Specification',
+  drawing: 'Drawing', permit: 'Permit', report: 'Report', manual: 'Manual', other: 'Other' };
+const _docTypeLabel = (v) => v ? (_DOC_TYPE_LEGACY[v] || v) : '—';
 
 // Roles allowed to upload / manage documents: admin + field engineer.
 function _docsCanManage() {
@@ -42585,27 +42595,30 @@ async function loadDocsData() {
 }
 
 // ── View state + filters ───────────────────────────────────────────────────
-const _docsFilter = { q: '', type: '', discipline: '', location: '', showArchived: false };
+const _docsFilter = { q: '', type: '', subsystem: '', location: '', showArchived: false };
 let _docsCwd = null;   // current folder id being browsed (null = root)
 
 // When any search/filter is active we show flat results across ALL folders
 // (with each result's folder path), instead of the single-folder browser.
 function _docsFilterActive() {
-  return !!(_docsFilter.q.trim() || _docsFilter.type || _docsFilter.discipline || _docsFilter.location);
+  return !!(_docsFilter.q.trim() || _docsFilter.type || _docsFilter.subsystem || _docsFilter.location);
 }
 
+// Master project locations (level-2 nodes from the locations table), unioned
+// with any locations already on documents. NOT the subsystem-filtered TI list.
 function _docsLocationOptions() {
   const locs = new Set();
+  (typeof LOCS !== 'undefined' ? LOCS : [])
+    .filter(l => l.level === 2 && l.name).forEach(l => locs.add(l.name));
   DOCUMENTS.forEach(d => d.location && locs.add(d.location));
-  (typeof TI !== 'undefined' ? TI : []).forEach(r => r.Location && locs.add(r.Location));
   return [...locs].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 }
-function _docsDisciplineOptions() {
-  const ds = new Set();
-  DOCUMENTS.forEach(d => d.discipline && ds.add(d.discipline));
-  ['Civil', 'Electrical', 'Train Control', 'Mechanical', 'Structural', 'Systems', 'General']
-    .forEach(d => ds.add(d));
-  return [...ds].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+// Master subsystem vocabulary (Field Config key 'punch_subsystem' → SUBSYSTEMS_LIST),
+// unioned with any subsystems already on documents.
+function _docsSubsystemOptions() {
+  const ss = new Set(_fsOptions('punch_subsystem'));
+  DOCUMENTS.forEach(d => d.subsystem && ss.add(d.subsystem));
+  return [...ss].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 }
 
 function _docsApplyFilters() {
@@ -42613,10 +42626,10 @@ function _docsApplyFilters() {
   return DOCUMENTS.filter(d => {
     if (!_docsFilter.showArchived && d.status === 'archived') return false;
     if (_docsFilter.type && d.doc_type !== _docsFilter.type) return false;
-    if (_docsFilter.discipline && d.discipline !== _docsFilter.discipline) return false;
+    if (_docsFilter.subsystem && d.subsystem !== _docsFilter.subsystem) return false;
     if (_docsFilter.location && d.location !== _docsFilter.location) return false;
     if (q) {
-      const hay = [d.title, d.doc_number, d.discipline, d.location, d.subsystem, (d.tags || []).join(' ')]
+      const hay = [d.title, d.doc_number, d.subsystem, d.location, d.discipline, (d.tags || []).join(' ')]
         .filter(Boolean).join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
@@ -42658,10 +42671,10 @@ function renderDocumentsPage() {
       + Add Document
     </button>` : '';
 
-  const typeOpts = DOC_TYPES.map(t =>
-    `<option value="${t.id}" ${_docsFilter.type === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`).join('');
-  const discOpts = _docsDisciplineOptions().map(d =>
-    `<option value="${escapeHtml(d)}" ${_docsFilter.discipline === d ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('');
+  const typeOpts = _docsTypeOptions().map(t =>
+    `<option value="${escapeHtml(t)}" ${_docsFilter.type === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('');
+  const subOpts  = _docsSubsystemOptions().map(s =>
+    `<option value="${escapeHtml(s)}" ${_docsFilter.subsystem === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
   const locOpts  = _docsLocationOptions().map(l =>
     `<option value="${escapeHtml(l)}" ${_docsFilter.location === l ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('');
 
@@ -42675,8 +42688,8 @@ function renderDocumentsPage() {
       <select class="filter-select" onchange="_docsSetFilter('type', this.value)">
         <option value="">All types</option>${typeOpts}
       </select>
-      <select class="filter-select" onchange="_docsSetFilter('discipline', this.value)">
-        <option value="">All disciplines</option>${discOpts}
+      <select class="filter-select" onchange="_docsSetFilter('subsystem', this.value)">
+        <option value="">All subsystems</option>${subOpts}
       </select>
       <select class="filter-select" onchange="_docsSetFilter('location', this.value)">
         <option value="">All locations</option>${locOpts}
@@ -42752,7 +42765,7 @@ function _docsRenderList() {
     <div class="data-card" style="padding:0;overflow:hidden;">
       <table class="data-table docs-table">
         <thead><tr>
-          <th>${searchMode ? 'Document' : 'Name'}</th><th>Type</th><th>${searchMode ? 'Folder' : 'Discipline'}</th><th>Location</th>
+          <th>${searchMode ? 'Document' : 'Name'}</th><th>Type</th><th>${searchMode ? 'Folder' : 'Subsystem'}</th><th>Location</th>
           <th>Rev</th><th>Updated</th><th style="text-align:right;">Actions</th>
         </tr></thead>
         <tbody>
@@ -42801,11 +42814,11 @@ function _docsRowHTML(d, searchMode = false) {
   const arch  = d.status === 'archived';
   const manage = _docsCanManage();
   const tags  = (d.tags || []).slice(0, 4).map(t => `<span class="docs-tag">${escapeHtml(t)}</span>`).join('');
-  // Third column shows the folder path in search mode, discipline otherwise.
+  // Third column shows the folder path in search mode, subsystem otherwise.
   const pathStr = DocsAPI.folderPath(d.folder_id).map(f => f.name).join(' / ') || 'All Documents';
   const col3 = searchMode
     ? `<span class="docs-path-chip" title="${escapeHtml(pathStr)}">📁 ${escapeHtml(pathStr)}</span>`
-    : escapeHtml(d.discipline || '—');
+    : escapeHtml(d.subsystem || '—');
   return `
     <tr class="${arch ? 'docs-row-archived' : ''}"
         ${manage ? `draggable="true" ondragstart="_docsDragStart(event,'doc','${d.id}')" ondragend="_docsDragEnd(event)"` : ''}>
@@ -42893,7 +42906,7 @@ function _docsOpenDetail(docId) {
     size: 'large',
     body: `
       <div class="docs-detail-meta">
-        ${[['Discipline', d.discipline], ['Location', d.location], ['Subsystem', d.subsystem],
+        ${[['Type', _docTypeLabel(d.doc_type)], ['Subsystem', d.subsystem], ['Location', d.location],
             ['Tags', (d.tags || []).join(', ')], ['Created by', d.created_by]]
           .map(([k, v]) => `<div><span class="docs-dm-k">${k}</span><span class="docs-dm-v">${escapeHtml(v || '—')}</span></div>`).join('')}
       </div>
@@ -43077,8 +43090,8 @@ function _docsOpenUpload(docId) {
   const isRev = !!existing;
   const today = new Date().toISOString().slice(0, 10);
 
-  const typeOpts = DOC_TYPES.map(t => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join('');
-  const discList = _docsDisciplineOptions().map(d => `<option value="${escapeHtml(d)}"></option>`).join('');
+  const typeOpts = _docsTypeOptions().map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  const subOpts  = _docsSubsystemOptions().map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
   const locList  = _docsLocationOptions().map(l => `<option value="${escapeHtml(l)}"></option>`).join('');
 
   const metaFields = isRev ? '' : `
@@ -43093,16 +43106,16 @@ function _docsOpenUpload(docId) {
         <input id="doc-f-number" type="text" placeholder="optional"></div>
     </div>
     <div class="docs-form-grid">
-      <div><label>Discipline</label>
-        <input id="doc-f-discipline" type="text" list="doc-disc-list" placeholder="optional"></div>
+      <div><label>Subsystem</label>
+        <select id="doc-f-subsystem" class="filter-select">
+          <option value="">—</option>${subOpts}
+        </select></div>
       <div><label>Location</label>
         <input id="doc-f-location" type="text" list="doc-loc-list" placeholder="optional"></div>
     </div>
-    <div class="docs-form-grid">
-      <div><label>Subsystem</label>
-        <input id="doc-f-subsystem" type="text" placeholder="optional"></div>
-      <div><label>Tags (comma-separated)</label>
-        <input id="doc-f-tags" type="text" placeholder="e.g. safety, rev-controlled"></div>
+    <div class="docs-form-row">
+      <label>Tags (comma-separated)</label>
+      <input id="doc-f-tags" type="text" placeholder="e.g. safety, rev-controlled">
     </div>
     <div class="docs-form-row">
       <label>Folder</label>
@@ -43110,7 +43123,6 @@ function _docsOpenUpload(docId) {
         ${_docsFolderSelectOptions(_docsCwd, null)}
       </select>
     </div>
-    <datalist id="doc-disc-list">${discList}</datalist>
     <datalist id="doc-loc-list">${locList}</datalist>`;
 
   modal({
@@ -43157,11 +43169,10 @@ async function _docsSubmitUpload(docId) {
     if (!title) return fail('Title is required.');
     meta = {
       title,
-      doc_type:   document.getElementById('doc-f-type')?.value || 'other',
+      doc_type:   document.getElementById('doc-f-type')?.value || null,
       doc_number: document.getElementById('doc-f-number')?.value.trim() || null,
-      discipline: document.getElementById('doc-f-discipline')?.value.trim() || null,
       location:   document.getElementById('doc-f-location')?.value.trim() || null,
-      subsystem:  document.getElementById('doc-f-subsystem')?.value.trim() || null,
+      subsystem:  document.getElementById('doc-f-subsystem')?.value || null,
       tags: (document.getElementById('doc-f-tags')?.value || '')
               .split(',').map(t => t.trim()).filter(Boolean),
       folder_id:  document.getElementById('doc-f-folder')?.value || null,
