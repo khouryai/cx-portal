@@ -13929,3 +13929,37 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .docs-search-wrap { flex: 1 1 100%; max-width: none; }
   .docs-form-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Documents: folders, breadcrumb, drag & drop ──────────────────────────── */
+.docs-crumbs {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  margin: 0 0 14px; font-size: 13px;
+}
+.docs-crumb {
+  padding: 3px 9px; border-radius: 6px; cursor: pointer; color: var(--gray-700);
+  border: 1px solid transparent; transition: all .12s;
+}
+.docs-crumb:hover { background: var(--gray-100); color: #6366f1; }
+.docs-crumb.active { font-weight: 700; color: #4338ca; }
+.docs-crumb-sep { color: var(--gray-400); }
+.docs-crumb-muted { font-size: 12.5px; color: var(--gray-500); font-style: italic; }
+.docs-crumb.docs-drop-hot { background: #eef2ff; border-color: #6366f1; color: #4338ca; }
+
+.docs-folder-row { cursor: pointer; }
+.docs-folder-row:hover { background: var(--gray-100); }
+.docs-folder-icon { font-size: 22px; line-height: 1; flex: 0 0 auto; width: 38px; text-align: center; }
+.docs-folder-name { color: #92400e; }
+.docs-folder-row:hover .docs-folder-name { color: #6366f1; }
+.docs-folder-count { font-size: 11px; color: var(--gray-500); }
+
+.docs-path-chip {
+  display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; vertical-align: bottom;
+  font-size: 11px; color: var(--gray-700); background: var(--gray-100);
+  border-radius: 5px; padding: 2px 8px;
+}
+
+/* drop target highlight on folder rows + breadcrumb */
+tr.docs-drop-hot td { background: #eef2ff !important; box-shadow: inset 0 0 0 2px #6366f1; }
+.docs-table tr[draggable="true"] { cursor: grab; }
+.docs-table tr[draggable="true"]:active { cursor: grabbing; }

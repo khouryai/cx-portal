@@ -42319,6 +42319,7 @@ function _drwUploadRevision(setId) {
 
 let DOCUMENTS    = [];
 let DOC_VERSIONS = [];
+let DOC_FOLDERS  = [];
 
 const DOC_TYPES = [
   { id: 'procedure',     label: 'Procedure'     },
@@ -42396,12 +42397,15 @@ const _docsStorage = {
 // here at the Azure/SharePoint cutover; the render layer stays untouched.
 const DocsAPI = {
   async loadAll() {
-    const [docs, versions] = await Promise.all([
+    const [docs, versions, folders] = await Promise.all([
       _fetchAnon('documents?select=*&order=updated_at.desc'),
       _fetchAnon('document_versions?select=*&order=created_at.desc'),
+      // Folders are optional — the add-on migration may not be applied yet.
+      _fetchAnon('document_folders?select=*&order=name.asc').catch(() => []),
     ]);
     DOCUMENTS    = docs     || [];
     DOC_VERSIONS = versions || [];
+    DOC_FOLDERS  = folders  || [];
   },
   versionsFor(docId) {
     return DOC_VERSIONS
@@ -42425,6 +42429,7 @@ const DocsAPI = {
       location:   meta.location || null,
       subsystem:  meta.subsystem || null,
       tags:       meta.tags || [],
+      folder_id:  meta.folder_id || null,
       created_by: currentRoleUser?.name || null,
     }]);
     const doc = docRows[0];
@@ -42483,6 +42488,66 @@ const DocsAPI = {
     }
     await _dbDelete('documents', { id: doc.id });
   },
+
+  // ── Folders ───────────────────────────────────────────────────────────────
+  childFolders(parentId) {
+    return DOC_FOLDERS
+      .filter(f => (f.parent_id || null) === (parentId || null))
+      .sort((a, b) => (a.sort_order - b.sort_order) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  },
+  docsInFolder(folderId) {
+    return DOCUMENTS.filter(d => (d.folder_id || null) === (folderId || null));
+  },
+  folderPath(folderId) {                    // root → … → folder (array of folder rows)
+    const path = [];
+    let id = folderId || null, guard = 0;
+    while (id && guard++ < 50) {
+      const f = DOC_FOLDERS.find(x => x.id === id);
+      if (!f) break;
+      path.unshift(f);
+      id = f.parent_id || null;
+    }
+    return path;
+  },
+  // True if `maybeAncestorId` is `folderId` or sits above it — used to block
+  // moving a folder into itself or one of its own descendants.
+  isAncestorOrSelf(maybeAncestorId, folderId) {
+    if (!maybeAncestorId) return false;
+    let id = folderId || null, guard = 0;
+    while (id && guard++ < 50) {
+      if (id === maybeAncestorId) return true;
+      id = (DOC_FOLDERS.find(x => x.id === id) || {}).parent_id || null;
+    }
+    return false;
+  },
+  async createFolder(name, parentId) {
+    const rows = await _dbInsert('document_folders', [{
+      name, parent_id: parentId || null, created_by: currentRoleUser?.name || null,
+    }]);
+    return rows[0];
+  },
+  async renameFolder(id, name) {
+    await _dbUpdate('document_folders', { name, updated_at: new Date().toISOString() }, { id });
+  },
+  async moveFolder(id, newParentId) {
+    if (this.isAncestorOrSelf(id, newParentId)) throw new Error('Cannot move a folder into itself or its subfolder.');
+    await _dbUpdate('document_folders', { parent_id: newParentId || null, updated_at: new Date().toISOString() }, { id });
+  },
+  // Delete a folder and re-parent its direct contents (docs + subfolders) up one level.
+  async deleteFolder(id) {
+    const folder = DOC_FOLDERS.find(f => f.id === id);
+    const up = folder?.parent_id || null;
+    for (const child of this.childFolders(id)) {
+      await _dbUpdate('document_folders', { parent_id: up }, { id: child.id });
+    }
+    for (const doc of this.docsInFolder(id)) {
+      await _dbUpdate('documents', { folder_id: up, updated_at: new Date().toISOString() }, { id: doc.id });
+    }
+    await _dbDelete('document_folders', { id });
+  },
+  async moveDocument(docId, folderId) {
+    await _dbUpdate('documents', { folder_id: folderId || null, updated_at: new Date().toISOString() }, { id: docId });
+  },
 };
 
 // ── Offline tracking ───────────────────────────────────────────────────────
@@ -42521,6 +42586,13 @@ async function loadDocsData() {
 
 // ── View state + filters ───────────────────────────────────────────────────
 const _docsFilter = { q: '', type: '', discipline: '', location: '', showArchived: false };
+let _docsCwd = null;   // current folder id being browsed (null = root)
+
+// When any search/filter is active we show flat results across ALL folders
+// (with each result's folder path), instead of the single-folder browser.
+function _docsFilterActive() {
+  return !!(_docsFilter.q.trim() || _docsFilter.type || _docsFilter.discipline || _docsFilter.location);
+}
 
 function _docsLocationOptions() {
   const locs = new Set();
@@ -42579,6 +42651,9 @@ function renderDocumentsPage() {
   });
 
   const manageBtn = _docsCanManage() ? `
+    <button class="admin-action-btn-secondary" onclick="_docsNewFolder()" style="padding:8px 14px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;">
+      + New Folder
+    </button>
     <button class="admin-action-btn" onclick="_docsOpenUpload()" style="background:#6366f1;color:#fff;border:none;padding:8px 18px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;">
       + Add Document
     </button>` : '';
@@ -42613,23 +42688,63 @@ function renderDocumentsPage() {
       <div style="flex:1;"></div>
       ${manageBtn}
     </div>
+    <div id="docs-breadcrumb"></div>
     <div id="docs-list"></div>`;
 
+  _docsRenderBreadcrumb();
+  _docsRenderList();
+}
+
+// ── Breadcrumb (folder path) ───────────────────────────────────────────────
+function _docsRenderBreadcrumb() {
+  const el = document.getElementById('docs-breadcrumb');
+  if (!el) return;
+  if (_docsFilterActive()) {                       // search mode — no folder path
+    el.innerHTML = `<div class="docs-crumbs"><span class="docs-crumb-muted">Search results across all folders</span></div>`;
+    return;
+  }
+  const path = DocsAPI.folderPath(_docsCwd);
+  const root = `<span class="docs-crumb ${_docsCwd ? '' : 'active'}"
+      ondragover="_docsDragOver(event)" ondragleave="_docsDragLeave(event)" ondrop="_docsDrop(event,'')"
+      onclick="_docsNavTo('')">All Documents</span>`;
+  const parts = path.map((f, i) => {
+    const isLast = i === path.length - 1;
+    return `<span class="docs-crumb-sep">›</span>` +
+      `<span class="docs-crumb ${isLast ? 'active' : ''}"
+        ondragover="_docsDragOver(event)" ondragleave="_docsDragLeave(event)" ondrop="_docsDrop(event,'${f.id}')"
+        onclick="_docsNavTo('${f.id}')">${escapeHtml(f.name)}</span>`;
+  }).join('');
+  el.innerHTML = `<div class="docs-crumbs">${root}${parts}</div>`;
+}
+
+function _docsNavTo(folderId) {
+  _docsCwd = folderId || null;
+  _docsRenderBreadcrumb();
   _docsRenderList();
 }
 
 function _docsRenderList() {
   const el = document.getElementById('docs-list');
   if (!el) return;
-  const docs = _docsApplyFilters();
 
-  if (!DOCUMENTS.length) {
+  if (!DOCUMENTS.length && !DOC_FOLDERS.length) {
     el.innerHTML = `<div class="docs-empty"><h3>No documents yet</h3>
-      <p>${_docsCanManage() ? 'Click “Add Document” to upload your first controlled document.' : 'An admin or field engineer needs to add documents first.'}</p></div>`;
+      <p>${_docsCanManage() ? 'Click “New Folder” to organize, or “Add Document” to upload your first controlled document.' : 'An admin or field engineer needs to add documents first.'}</p></div>`;
     return;
   }
-  if (!docs.length) {
-    el.innerHTML = `<div class="docs-empty"><h3>No matches</h3><p>Try clearing filters or search.</p></div>`;
+
+  const searchMode = _docsFilterActive();
+  // Browser mode: subfolders of the current folder, then documents in it.
+  // Search mode: flat list of all filtered documents (folder path shown per row).
+  const folders = searchMode ? [] : DocsAPI.childFolders(_docsCwd);
+  const docs = searchMode
+    ? _docsApplyFilters()
+    : _docsApplyFilters().filter(d => (d.folder_id || null) === (_docsCwd || null));
+
+  if (!folders.length && !docs.length) {
+    el.innerHTML = searchMode
+      ? `<div class="docs-empty"><h3>No matches</h3><p>Try clearing filters or search.</p></div>`
+      : `<div class="docs-empty"><h3>This folder is empty</h3><p>${_docsCanManage() ? 'Add a document or create a subfolder here, or drag items in.' : 'Nothing here yet.'}</p></div>`;
     return;
   }
 
@@ -42637,24 +42752,63 @@ function _docsRenderList() {
     <div class="data-card" style="padding:0;overflow:hidden;">
       <table class="data-table docs-table">
         <thead><tr>
-          <th>Document</th><th>Type</th><th>Discipline</th><th>Location</th>
+          <th>${searchMode ? 'Document' : 'Name'}</th><th>Type</th><th>${searchMode ? 'Folder' : 'Discipline'}</th><th>Location</th>
           <th>Rev</th><th>Updated</th><th style="text-align:right;">Actions</th>
         </tr></thead>
         <tbody>
-          ${docs.map(d => _docsRowHTML(d)).join('')}
+          ${folders.map(f => _docsFolderRowHTML(f)).join('')}
+          ${docs.map(d => _docsRowHTML(d, searchMode)).join('')}
         </tbody>
       </table>
     </div>`;
 }
 
-function _docsRowHTML(d) {
+function _docsFolderRowHTML(f) {
+  const docCount = DocsAPI.docsInFolder(f.id).length;
+  const subCount = DocsAPI.childFolders(f.id).length;
+  const bits = [];
+  if (subCount) bits.push(`${subCount} folder${subCount > 1 ? 's' : ''}`);
+  if (docCount) bits.push(`${docCount} doc${docCount > 1 ? 's' : ''}`);
+  const manage = _docsCanManage();
+  return `
+    <tr class="docs-folder-row" data-folder-id="${f.id}"
+        ${manage ? `draggable="true" ondragstart="_docsDragStart(event,'folder','${f.id}')" ondragend="_docsDragEnd(event)"` : ''}
+        ondragover="_docsDragOver(event)" ondragleave="_docsDragLeave(event)" ondrop="_docsDrop(event,'${f.id}')">
+      <td>
+        <div class="docs-title-cell" onclick="_docsNavTo('${f.id}')">
+          <span class="docs-folder-icon">📁</span>
+          <div><div class="docs-title docs-folder-name">${escapeHtml(f.name)}</div>
+            <div class="docs-meta-line"><span class="docs-folder-count">${bits.join(' · ') || 'empty'}</span></div></div>
+        </div>
+      </td>
+      <td><span class="docs-type-chip" style="background:#fef3c7;color:#92400e;">Folder</span></td>
+      <td>—</td><td>—</td><td>—</td>
+      <td style="font-size:12px;color:var(--gray-500);">${f.updated_at ? new Date(f.updated_at).toLocaleDateString() : '—'}</td>
+      <td style="text-align:right;white-space:nowrap;">
+        <button class="docs-icon-btn" title="Open folder" onclick="_docsNavTo('${f.id}')">↳</button>
+        ${manage ? `
+          <button class="docs-icon-btn" title="Move folder" onclick="_docsOpenMove('folder','${f.id}')">📂</button>
+          <button class="docs-icon-btn" title="Rename" onclick="_docsRenameFolder('${f.id}')">✎</button>
+          <button class="docs-icon-btn" title="Delete folder" style="color:var(--bad);" onclick="_docsDeleteFolder('${f.id}')">🗑</button>` : ''}
+      </td>
+    </tr>`;
+}
+
+function _docsRowHTML(d, searchMode = false) {
   const ver   = DocsAPI.currentVersion(d);
   const verN  = DocsAPI.versionsFor(d.id).length;
   const off   = ver && _docIsOffline(ver.id);
   const arch  = d.status === 'archived';
+  const manage = _docsCanManage();
   const tags  = (d.tags || []).slice(0, 4).map(t => `<span class="docs-tag">${escapeHtml(t)}</span>`).join('');
+  // Third column shows the folder path in search mode, discipline otherwise.
+  const pathStr = DocsAPI.folderPath(d.folder_id).map(f => f.name).join(' / ') || 'All Documents';
+  const col3 = searchMode
+    ? `<span class="docs-path-chip" title="${escapeHtml(pathStr)}">📁 ${escapeHtml(pathStr)}</span>`
+    : escapeHtml(d.discipline || '—');
   return `
-    <tr class="${arch ? 'docs-row-archived' : ''}">
+    <tr class="${arch ? 'docs-row-archived' : ''}"
+        ${manage ? `draggable="true" ondragstart="_docsDragStart(event,'doc','${d.id}')" ondragend="_docsDragEnd(event)"` : ''}>
       <td>
         <div class="docs-title-cell">
           <span class="docs-ftype-badge ftype-${escapeHtml(ver?.file_ext || 'file')}">${escapeHtml((ver?.file_ext || '?').toUpperCase())}</span>
@@ -42669,7 +42823,7 @@ function _docsRowHTML(d) {
         </div>
       </td>
       <td><span class="docs-type-chip">${escapeHtml(_docTypeLabel(d.doc_type))}</span></td>
-      <td>${escapeHtml(d.discipline || '—')}</td>
+      <td>${col3}</td>
       <td>${escapeHtml(d.location || '—')}</td>
       <td><span class="badge badge-passed">${escapeHtml(ver?.revision || '—')}</span>${verN > 1 ? `<span class="docs-vcount" title="${verN} revisions">·${verN}</span>` : ''}</td>
       <td style="font-size:12px;color:var(--gray-500);">${d.updated_at ? new Date(d.updated_at).toLocaleDateString() : '—'}</td>
@@ -42678,6 +42832,7 @@ function _docsRowHTML(d) {
         ${ver ? (off
           ? `<button class="docs-icon-btn" title="Remove offline copy" onclick="_docRemoveOffline('${ver.id}')">✓</button>`
           : `<button class="docs-icon-btn" title="Make available offline" onclick="_docMakeOffline('${ver.id}')">☁</button>`) : ''}
+        ${manage ? `<button class="docs-icon-btn" title="Move to folder" onclick="_docsOpenMove('doc','${d.id}')">📂</button>` : ''}
         <button class="docs-icon-btn" title="Details & revisions" onclick="_docsOpenDetail('${d.id}')">⋯</button>
       </td>
     </tr>`;
@@ -42766,6 +42921,155 @@ async function _docsDelete(docId) {
   } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
 }
 
+// ── Folder picker options (indented tree) ──────────────────────────────────
+// Builds <option> rows for a destination-folder <select>. `excludeId` (and its
+// whole subtree) is omitted — used when moving a folder so it can't land inside
+// itself or a descendant.
+function _docsFolderSelectOptions(selectedId, excludeId) {
+  const out = [`<option value="" ${!selectedId ? 'selected' : ''}>All Documents (root)</option>`];
+  const walk = (parentId, depth) => {
+    for (const f of DocsAPI.childFolders(parentId)) {
+      if (excludeId && DocsAPI.isAncestorOrSelf(excludeId, f.id)) continue;
+      out.push(`<option value="${f.id}" ${f.id === selectedId ? 'selected' : ''}>${'  '.repeat(depth)}${escapeHtml(f.name)}</option>`);
+      walk(f.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  return out.join('');
+}
+
+// ── Folder CRUD ────────────────────────────────────────────────────────────
+async function _docsNewFolder() {
+  if (!_docsCanManage()) return;
+  const name = (prompt('New folder name:') || '').trim();
+  if (!name) return;
+  try {
+    await DocsAPI.createFolder(name, _docsCwd);
+    await loadDocsData();
+    _docsRenderBreadcrumb(); _docsRenderList();
+    toast('Folder created', 'success');
+  } catch (e) { toast('Could not create folder: ' + e.message, 'error'); }
+}
+
+async function _docsRenameFolder(id) {
+  if (!_docsCanManage()) return;
+  const f = DOC_FOLDERS.find(x => x.id === id);
+  const name = (prompt('Rename folder:', f?.name || '') || '').trim();
+  if (!name || name === f?.name) return;
+  try {
+    await DocsAPI.renameFolder(id, name);
+    await loadDocsData();
+    _docsRenderBreadcrumb(); _docsRenderList();
+    toast('Folder renamed', 'success');
+  } catch (e) { toast('Rename failed: ' + e.message, 'error'); }
+}
+
+async function _docsDeleteFolder(id) {
+  if (!_docsCanManage()) return;
+  const f = DOC_FOLDERS.find(x => x.id === id);
+  const docN = DocsAPI.docsInFolder(id).length;
+  const subN = DocsAPI.childFolders(id).length;
+  const note = (docN || subN)
+    ? `\n\nIts ${[docN && `${docN} document(s)`, subN && `${subN} subfolder(s)`].filter(Boolean).join(' and ')} will move up one level (not deleted).`
+    : '';
+  if (!confirm(`Delete folder “${f?.name}”?${note}`)) return;
+  try {
+    await DocsAPI.deleteFolder(id);
+    // If we were inside (or below) the deleted folder, step up to its parent.
+    if (_docsCwd && DocsAPI.isAncestorOrSelf(id, _docsCwd)) _docsCwd = f?.parent_id || null;
+    await loadDocsData();
+    _docsRenderBreadcrumb(); _docsRenderList();
+    toast('Folder deleted', 'success');
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ── Move (documents and folders) via picker modal ──────────────────────────
+function _docsOpenMove(kind, id) {
+  if (!_docsCanManage()) return;
+  const isFolder = kind === 'folder';
+  const item = isFolder ? DOC_FOLDERS.find(f => f.id === id) : DOCUMENTS.find(d => d.id === id);
+  if (!item) return;
+  const curParent = isFolder ? (item.parent_id || null) : (item.folder_id || null);
+  modal({
+    title: `Move ${isFolder ? 'Folder' : 'Document'}`,
+    sub: escapeHtml(isFolder ? item.name : item.title),
+    body: `
+      <div class="docs-form-row">
+        <label>Destination folder</label>
+        <select id="doc-move-target" class="filter-select" style="width:100%;">
+          ${_docsFolderSelectOptions(curParent, isFolder ? id : null)}
+        </select>
+      </div>
+      <div id="doc-move-status" class="docs-upload-status"></div>`,
+    footer: `
+      <button class="admin-action-btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn" id="doc-move-btn" onclick="_docsMoveSubmit('${kind}','${id}')">Move here</button>`,
+  });
+}
+
+async function _docsMoveSubmit(kind, id) {
+  const target = document.getElementById('doc-move-target')?.value || null;
+  const statusEl = document.getElementById('doc-move-status');
+  const btn = document.getElementById('doc-move-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Moving…'; }
+  try {
+    if (kind === 'folder') await DocsAPI.moveFolder(id, target);
+    else                   await DocsAPI.moveDocument(id, target);
+    await loadDocsData();
+    closeModal();
+    _docsRenderBreadcrumb(); _docsRenderList();
+    toast('Moved', 'success');
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = e.message; statusEl.className = 'docs-upload-status err'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Move here'; }
+  }
+}
+
+// ── Drag & drop ────────────────────────────────────────────────────────────
+let _docsDragItem = null;   // { kind:'doc'|'folder', id }
+function _docsDragStart(e, kind, id) {
+  _docsDragItem = { kind, id };
+  try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id); } catch { /* noop */ }
+}
+function _docsDragEnd() {
+  _docsDragItem = null;
+  document.querySelectorAll('.docs-drop-hot').forEach(el => el.classList.remove('docs-drop-hot'));
+}
+function _docsDragOver(e) {
+  if (!_docsDragItem) return;
+  e.preventDefault();
+  try { e.dataTransfer.dropEffect = 'move'; } catch { /* noop */ }
+  const tgt = e.currentTarget;
+  // A folder can't be dropped into itself or its own descendant.
+  if (_docsDragItem.kind === 'folder') {
+    const fid = tgt.getAttribute('data-folder-id');
+    if (fid && DocsAPI.isAncestorOrSelf(_docsDragItem.id, fid)) return;
+    if (fid === _docsDragItem.id) return;
+  }
+  tgt.classList.add('docs-drop-hot');
+}
+function _docsDragLeave(e) { e.currentTarget.classList.remove('docs-drop-hot'); }
+
+async function _docsDrop(e, folderId) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('docs-drop-hot');
+  const item = _docsDragItem;
+  _docsDragItem = null;
+  if (!item) return;
+  const dest = folderId || null;
+  try {
+    if (item.kind === 'folder') {
+      if (item.id === dest) return;
+      await DocsAPI.moveFolder(item.id, dest);
+    } else {
+      await DocsAPI.moveDocument(item.id, dest);
+    }
+    await loadDocsData();
+    _docsRenderBreadcrumb(); _docsRenderList();
+    toast('Moved', 'success');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 // ── Upload modal (new doc, or new revision when docId is passed) ────────────
 function _docsOpenUpload(docId) {
   if (!_docsCanManage()) { toast('You do not have permission to upload', 'warn'); return; }
@@ -42799,6 +43103,12 @@ function _docsOpenUpload(docId) {
         <input id="doc-f-subsystem" type="text" placeholder="optional"></div>
       <div><label>Tags (comma-separated)</label>
         <input id="doc-f-tags" type="text" placeholder="e.g. safety, rev-controlled"></div>
+    </div>
+    <div class="docs-form-row">
+      <label>Folder</label>
+      <select id="doc-f-folder" class="filter-select" style="width:100%;">
+        ${_docsFolderSelectOptions(_docsCwd, null)}
+      </select>
     </div>
     <datalist id="doc-disc-list">${discList}</datalist>
     <datalist id="doc-loc-list">${locList}</datalist>`;
@@ -42854,6 +43164,7 @@ async function _docsSubmitUpload(docId) {
       subsystem:  document.getElementById('doc-f-subsystem')?.value.trim() || null,
       tags: (document.getElementById('doc-f-tags')?.value || '')
               .split(',').map(t => t.trim()).filter(Boolean),
+      folder_id:  document.getElementById('doc-f-folder')?.value || null,
     };
   }
   const revInfo = { revision: rev, change_note: document.getElementById('doc-f-note')?.value.trim() || null };
