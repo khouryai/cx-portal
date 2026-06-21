@@ -24601,16 +24601,27 @@ async function _planningDeleteEvent(eventId) {
   const ev = PLANNING_EVENTS.find(e => e.id === eventId);
   if (!ev) return;
   if (ev.is_locked) { toast('Cannot delete a locked event', 'error'); return; }
-  if (!confirm(`Delete "${ev.title}" on ${ev.event_date}? This cannot be undone.`)) return;
+  // A dynamic cell IS its Dynamic-Testing access window — deleting the shift here
+  // deletes the window too (its cell then cascades), mirroring the two modules and
+  // returning any tests on it to the backlog.
+  const isDyn = ev.source === 'dynamic' && !!ev.dynamic_shift_id;
+  if (!confirm(isDyn
+      ? `Delete this access shift on ${ev.event_date}?\n\nIt is removed from Dynamic Testing too, and any tests scheduled on it return to the backlog. This cannot be undone.`
+      : `Delete "${ev.title}" on ${ev.event_date}? This cannot be undone.`)) return;
   try {
     // Remove all resource assignments first
     const erRows = PLANNING_EVENT_RES.filter(er => er.event_id === eventId);
     for (const er of erRows) {
       await _dbDelete('planning_event_resources', { id: er.id });
     }
-    await _dbDelete('planning_events', { id: eventId });
+    if (isDyn) {
+      await _dbDelete('zone_access_windows', { id: ev.dynamic_shift_id });  // cell cascades
+      if (typeof _dynPage !== 'undefined') _dynPage.loaded = false;          // refetch Dynamic
+    } else {
+      await _dbDelete('planning_events', { id: eventId });
+    }
     closeModal();
-    toast('Event deleted', 'success');
+    toast(isDyn ? 'Access shift deleted (Dynamic + Lookahead)' : 'Event deleted', 'success');
     await loadPlanningData(true);
     if (_lookaheadTab === 'lookahead') _laMountLookaheadTL();
     if (_lookaheadTab === 'resources') _laMountResourcesTL();
@@ -34471,6 +34482,10 @@ async function _dynLoadAll() {
     _dynPage.prereqs = await _dbSelect('test_item_prerequisites', {}, 'test_id,prerequisite_test_id')
       .catch(e => { console.warn('[dyn] prereqs load:', e.message); return []; });
     _dynPage.loaded = true;
+    // The DB occupancy trigger mints/removes Lookahead cells as tests are
+    // (un)scheduled here, so invalidate the Lookahead's cache — it refetches the
+    // updated planning_events the next time it renders.
+    if (typeof _planningLoadedAt !== 'undefined') _planningLoadedAt = 0;
   } finally {
     _dynPage.loading = false;
   }
@@ -36863,16 +36878,13 @@ async function _dynSaveCampaign(editId) {
     if (!camp?.id) throw new Error('Campaign insert returned no id');
 
     const shiftRows = _dynGenerateShiftRows(camp);
-    const insertedShifts = [];
     for (let i = 0; i < shiftRows.length; i += 200) {
-      const r = await _dbInsert('zone_access_windows', shiftRows.slice(i, i + 200));
-      if (Array.isArray(r)) insertedShifts.push(...r);
+      await _dbInsert('zone_access_windows', shiftRows.slice(i, i + 200));
     }
-    // Shared-record bridge: mint the campaign's Lookahead row + one cell per window.
-    try {
-      const activityId = await _dynEnsureCampaignActivity(camp);
-      for (const w of insertedShifts) await _dynEnsureShiftCell(w, activityId, camp);
-    } catch (e) { console.warn('[dyn] lookahead bridge:', e.message); }
+    // Shared-record bridge: the campaign's Lookahead row + its per-window cells are
+    // now minted on demand by the DB occupancy trigger when a test is scheduled onto
+    // a window. A window with nothing scheduled does NOT appear in the Lookahead, so
+    // the two modules stay mirrored.
     // Seed an initial train request from the campaign ask (Phase 2 manages approvals).
     await _dbInsert('train_requests', [{
       campaign_id: camp.id, zone_code: null,
@@ -36944,7 +36956,6 @@ async function _dynUpdateCampaign(editId, fields) {
   try {
     await _dbUpdate('access_campaigns', { ...fields, updated_at: new Date().toISOString() }, { id: editId });
 
-    const activityId = await _dynEnsureCampaignActivity(campObj).catch(() => null);
     // updates (preserve window id + assignments)
     for (const u of toUpdate) {
       await _dbUpdate('zone_access_windows', {
@@ -36954,13 +36965,11 @@ async function _dynUpdateCampaign(editId, fields) {
         consist_size: u.row.consist_size, subsystem: u.row.subsystem,
       }, { id: u.id });
     }
-    // inserts (+ Lookahead cell)
-    const insertedShifts = [];
+    // inserts (Lookahead cells are minted on demand by the occupancy trigger when
+    // a test is scheduled onto the window — empty windows stay out of the Lookahead)
     for (let i = 0; i < toInsert.length; i += 200) {
-      const r = await _dbInsert('zone_access_windows', toInsert.slice(i, i + 200));
-      if (Array.isArray(r)) insertedShifts.push(...r);
+      await _dbInsert('zone_access_windows', toInsert.slice(i, i + 200));
     }
-    for (const w of insertedShifts) await _dynEnsureShiftCell(w, activityId, campObj).catch(() => {});
     // removals — unschedule any instances first, then delete (cells cascade)
     for (const ins of affectedInstances) {
       await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() }, { id: ins.id }).catch(() => {});
