@@ -42661,7 +42661,7 @@ function renderDocumentsPage() {
   const active   = DOCUMENTS.filter(d => d.status !== 'archived');
   const offCount = _docsOfflineSet().size;
   hero.innerHTML = renderPageHero({
-    role:  { label: 'Documents', tone: 'drawings' },
+    eyebrow: 'Project',
     title: 'Document Library',
     sub:   'Controlled procedures, specs, permits & reports — versioned, searchable, offline-ready',
     stats: [

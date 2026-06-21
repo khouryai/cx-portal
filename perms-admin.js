@@ -76,6 +76,7 @@ const PAGE_MODULE = {
   'lookahead': 'lookahead',
   'schedule': 'schedule_p6',
   'drawings': 'drawings',
+  'documents': 'drawings',
   'dynamic-testing': 'dynamic_testing',
   'locations': 'locations',
   'team': 'directory',
