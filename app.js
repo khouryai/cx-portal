@@ -347,6 +347,7 @@ function showPage(name) {
   // Re-render pages that need fresh state on each visit
   if (name === 'dashboard')        refreshDashboard();
   if (name === 'locations')        initLocations();
+  if (name === 'team')             { if (typeof renderOrg === 'function') renderOrg(); }
   if (name === 'field-intake')     renderFieldIntake();
   if (name === 'test-register')    renderTestRegister();
   if (name === 'tcv')              renderTCV();

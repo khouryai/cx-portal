@@ -88,5 +88,15 @@ console.log("\n_teamDescendantIds (re-parent cycle guard):");
   ok("  manager's set covers the whole tree", _teamDescendantIds("mgr", members).size === 4);
 }
 
+console.log("\n_teamFitScale (fit-to-window scaling):");
+{
+  const { _teamFitScale } = sandbox;
+  ok("  wide chart scales down to fit", _teamFitScale(1900, 950) === 0.5);
+  ok("  chart narrower than window is never enlarged", _teamFitScale(600, 1200) === 1);
+  ok("  exact fit stays at 1", _teamFitScale(1000, 1000) === 1);
+  ok("  zero/undefined measurement → no scaling (1)",
+     _teamFitScale(0, 1000) === 1 && _teamFitScale(1900, 0) === 1 && _teamFitScale(undefined, undefined) === 1);
+}
+
 console.log(`\n${pass} passed, ${fail} failed.\n`);
 process.exit(fail === 0 ? 0 : 1);

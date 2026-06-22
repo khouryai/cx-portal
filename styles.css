@@ -1410,8 +1410,8 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 
 /* Horizontal scroll guard — deep/wide branches stay usable on narrow screens */
 .org-chart-scroll {
-  overflow-x: auto;
-  padding: 12px 4px 24px;
+  overflow: hidden;
+  padding: 12px 0 24px;
 }
 
 /* Nested tree: each <li> holds a card and (optionally) a child <ul> branch.

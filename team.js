@@ -99,6 +99,50 @@ function renderOrg() {
   const roots = _buildTeamTree(TEAM);
   const list = `<ul class="org-tree-list org-root">${roots.map(n => _renderTeamNode(n, editing)).join('')}</ul>`;
   tree.innerHTML = toolbar + `<div class="org-chart-scroll">${list}</div>`;
+  // Scale the whole chart down so it always fits the window — never scroll sideways.
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_teamFitToWidth);
+  else _teamFitToWidth();
+}
+
+// Pure: scale factor that makes a `natural`-wide chart fit `avail` px — never
+// enlarges (caps at 1), guards against zero/undefined measurements.
+function _teamFitScale(natural, avail) {
+  if (!natural || !avail) return 1;
+  return Math.min(1, avail / natural);
+}
+
+// Shrink the chart to fit its container width so the org never scrolls left/right.
+// (Transform-only: layout is untouched; we just collapse the leftover height.)
+function _teamFitToWidth() {
+  const scroll = document.querySelector('#org-tree .org-chart-scroll');
+  const list = scroll && scroll.querySelector('.org-root');
+  if (!scroll || !list) return;
+  // Reset, then measure the chart's natural (unscaled) width.
+  list.style.transformOrigin = 'top center';
+  list.style.transform = 'none';
+  const prevWidth = list.style.width;
+  list.style.width = 'max-content';
+  const natural = list.offsetWidth;
+  list.style.width = prevWidth;
+  const avail = scroll.clientWidth;
+  if (!avail || !natural) return;            // page hidden / not laid out yet
+  const scale = _teamFitScale(natural, avail);
+  list.style.transform = scale < 1 ? `scale(${scale})` : 'none';
+  // A scaled element keeps its original layout box, leaving dead space below —
+  // pin the container to the scaled height so the page flows naturally.
+  scroll.style.height = Math.ceil(list.getBoundingClientRect().height) + 'px';
+}
+
+// Re-fit on viewport resize (rAF-debounced), bound once.
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function' && !window.__teamFitBound) {
+  window.__teamFitBound = true;
+  let _fitQueued = false;
+  window.addEventListener('resize', () => {
+    if (_fitQueued) return;
+    _fitQueued = true;
+    const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn => setTimeout(fn, 16));
+    raf(() => { _fitQueued = false; _teamFitToWidth(); });
+  });
 }
 
 // Render one subtree as an <li> card with a nested <ul> branch of direct reports.
@@ -300,3 +344,5 @@ window._teamRows = _teamRows;
 window._buildTeamTree = _buildTeamTree;
 window._teamDescendantIds = _teamDescendantIds;
 window._teamManagerOptions = _teamManagerOptions;
+window._teamFitToWidth = _teamFitToWidth;
+window._teamFitScale = _teamFitScale;
