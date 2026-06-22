@@ -106,15 +106,18 @@ console.log("\n_paLinkDecision (permission-AUTHORITATIVE nav — role retired):"
 console.log("\nmodule presentation helpers (per-module relevant actions):");
 {
   const { _paModuleActions, _paModulePages } = sandbox;
+  const catTR = sandbox.PERM_CATALOG.test_register.map((e) => e[0]);
   ok("  helpers exported", typeof _paModuleActions === "function" && typeof _paModulePages === "function");
-  ok("  filters to the module's declared actions, canonical order",
-     JSON.stringify(_paModuleActions({ actions: ["export", "view"] })) === JSON.stringify(["view", "export"]));
-  ok("  audit-style module: view+export only",
-     JSON.stringify(_paModuleActions({ actions: ["view", "export"] })) === JSON.stringify(["view", "export"]));
-  ok("  missing/empty actions → all (back-compat)",
+  ok("  returns the module's granular catalog keys (by key)",
+     JSON.stringify(_paModuleActions({ key: "test_register" })) === JSON.stringify(catTR) && catTR.includes("bulk_edit"));
+  ok("  audit module: view+export only",
+     JSON.stringify(_paModuleActions({ key: "audit" })) === JSON.stringify(["view", "export"]));
+  ok("  photos module: ownership pair present",
+     _paModuleActions({ key: "photos" }).includes("delete_own") && _paModuleActions({ key: "photos" }).includes("delete_any"));
+  ok("  missing/empty actions + no catalog key → legacy verbs (back-compat)",
      _paModuleActions({}).length === 7 && _paModuleActions({ actions: [] }).length === 7);
-  ok("  unknown entries ignored",
-     JSON.stringify(_paModuleActions({ actions: ["view", "bogus"] })) === JSON.stringify(["view"]));
+  ok("  no catalog key but actions present → uses provided actions",
+     JSON.stringify(_paModuleActions({ key: "zzz", actions: ["view", "export"] })) === JSON.stringify(["view", "export"]));
   ok("  _paModulePages reverse-maps nav pages (test_register has several)",
      _paModulePages("test_register").includes("test-register") && _paModulePages("test_register").length >= 3);
   ok("  data-only module (track_plan) → no pages", _paModulePages("track_plan").length === 0);

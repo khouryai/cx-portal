@@ -72,7 +72,14 @@
   function role() { try { return (typeof currentRoleUser !== 'undefined' && currentRoleUser && currentRoleUser.role) || null; } catch (e) { return null; } }
   function userName() { try { return (typeof currentRoleUser !== 'undefined' && currentRoleUser && currentRoleUser.name) || 'unknown'; } catch (e) { return 'unknown'; } }
   function canUpload() { return UPLOAD_ROLES.indexOf(role()) !== -1; }
-  function canDeletePhoto(p) { return role() === 'admin' || (p && p.uploaded_by === userName()); }
+  // Ownership-aware: routes through the granular permission gate (photos
+  // delete_own / delete_any). Owner = the uploader. Falls back to the legacy
+  // role/owner check if the gate isn't loaded (fail-open; RLS is authoritative).
+  function canDeletePhoto(p) {
+    var owner = !!(p && p.uploaded_by === userName());
+    if (typeof can === 'function') return can('photos', 'delete', owner);
+    return role() === 'admin' || owner;
+  }
   function slugify(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40); }
   function uuid() { return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)); }
   function encPath(p) { return String(p).split('/').map(encodeURIComponent).join('/'); }

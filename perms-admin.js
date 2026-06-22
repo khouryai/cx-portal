@@ -20,41 +20,164 @@
 
 /* ── Pure resolver (mirror of private.has_module_perm + _perm_baseline) ── */
 
+// Legacy universal verbs — kept as a back-compat layer: every module's baseline
+// is the legacy verbs for the level UNIONed with that module's granular catalog
+// keys. This mirrors the DB's public._perm_baseline(module, level), so RLS
+// policies that still check 'edit'/'delete' keep resolving while granular keys
+// (add_test_case, bulk_edit, delete_own, …) resolve too.
 const PERM_ACTIONS = ['view', 'export', 'create', 'edit', 'delete', 'approve', 'manage'];
 const PERM_LEVELS  = ['none', 'read_only', 'standard', 'admin'];
+const _LVL = { none: 0, read_only: 1, standard: 2, admin: 3 };
 
-function permBaseline(level) {
+// Granular per-module capability catalog (mirror of perm_modules.action_meta /
+// PERMISSIONS_MODEL.md). Each entry: [key, min_level, grant_only]. Ownership
+// pairs are encoded by the _own/_any suffix convention. Pinned by
+// tools/test_perm_resolver.js — keep in sync with the DB seed.
+const PERM_CATALOG = {
+  overview: [['view', 'read_only', false]],
+  test_register: [
+    ['view','read_only',false],['export','read_only',false],
+    ['add_activity','standard',false],['add_test_case','standard',false],['edit_case','standard',false],
+    ['set_status','standard',false],['field_intake','standard',false],['bulk_edit','standard',true],
+    ['manage_assets','standard',false],['delete_case','admin',false],['delete_activity','admin',false],
+    ['bulk_delete','admin',false],['deploy_field','admin',false],['manage_p6_links','admin',false],['import','admin',false],
+  ],
+  dynamic_testing: [
+    ['view','read_only',false],['export','read_only',false],['create_instance','standard',false],
+    ['edit_instance','standard',false],['set_status','standard',false],['schedule','standard',false],
+    ['bulk_edit','standard',true],['manage_shifts','admin',false],['approve_trains','admin',false],
+    ['delete_instance','admin',false],['import','admin',false],
+  ],
+  test_reporting: [
+    ['view','read_only',false],['export','read_only',false],['create','standard',false],
+    ['edit','standard',false],['sync','standard',true],['delete','admin',false],
+  ],
+  punch_list: [
+    ['view','read_only',false],['export','read_only',false],['create','standard',false],['edit','standard',false],
+    ['comment','standard',false],['link_test','standard',false],['advance_status','standard',false],
+    ['import','standard',true],['delete','admin',false],['override_workflow','admin',true],
+  ],
+  rma: [
+    ['view','read_only',false],['export','read_only',false],['create','standard',false],
+    ['edit','standard',false],['change_status','standard',true],['delete','admin',false],
+  ],
+  forms: [
+    ['view','read_only',false],['upload','standard',false],['fill_pdf','standard',false],
+    ['link','standard',false],['delete','admin',false],['manage_fieldsets','admin',false],
+  ],
+  photos: [
+    ['view','read_only',false],['upload','standard',false],
+    ['edit_metadata_own','standard',false],['edit_metadata_any','admin',false],
+    ['delete_own','standard',false],['delete_any','admin',false],
+    ['create_album','standard',false],['manage_album_contents','standard',false],
+    ['manage_album_own','standard',false],['manage_album_any','admin',false],
+  ],
+  meetings: [
+    ['view','read_only',false],['export','read_only',false],['create','standard',false],['edit','standard',false],
+    ['manage_agenda','standard',false],['record_minutes','standard',false],['manage_action_items','standard',false],
+    ['manage_attendees','standard',false],['create_followup','standard',false],['delete','admin',false],
+  ],
+  planning: [
+    ['view','read_only',false],['pto_submit','standard',false],['pto_approve','admin',false],
+    ['resolve_conflicts','admin',false],['manage_resources','admin',false],
+  ],
+  lookahead: [
+    ['view','read_only',false],['export','read_only',false],['create_event','standard',false],['edit_event','standard',false],
+    ['cancel','standard',false],['manage_activities','standard',false],['assign_resources','standard',false],
+    ['bulk_edit','standard',true],['lock','admin',false],['delete','admin',false],['import','admin',false],
+  ],
+  schedule_p6: [
+    ['view','read_only',false],['import','admin',false],['rebaseline','admin',false],
+    ['manage_links','admin',false],['remove_activities','admin',false],
+  ],
+  assets: [
+    ['view','read_only',false],['export','read_only',false],['add','standard',false],['edit','standard',false],
+    ['link','standard',false],['bulk_edit','standard',true],['import','admin',false],['bulk_delete','admin',false],
+  ],
+  track_plan: [['view','read_only',false],['manage','admin',false]],
+  drawings: [
+    ['view','read_only',false],['create_markup','standard',false],['edit_markup_own','standard',false],
+    ['publish','standard',false],['manage_markup_any','admin',false],['upload_set','admin',false],['delete_set','admin',false],
+  ],
+  locations: [
+    ['view','read_only',false],['create','standard',false],['edit','standard',false],
+    ['delete','admin',false],['import','admin',false],
+  ],
+  directory: [
+    ['view','read_only',false],['manage_org_chart','standard',false],['invite','admin',false],['edit_profile','admin',false],
+    ['activate','admin',false],['remove','admin',false],['assign_template','admin',false],['grant_global_admin','admin',true],
+  ],
+  templates: [
+    ['view','read_only',false],['export','read_only',false],['create','standard',false],
+    ['edit','standard',false],['delete','admin',false],['deploy','admin',false],
+  ],
+  weights: [
+    ['view','read_only',false],['edit_activity','admin',false],['edit_test_case','admin',false],['bulk_apply','admin',true],
+  ],
+  config: [
+    ['view','read_only',false],['create','standard',false],['new_version','standard',false],
+    ['edit','standard',false],['delete','admin',false],
+  ],
+  audit: [['view','read_only',false],['export','read_only',false]],
+  admin: [['view','admin',false],['manage_templates','admin',true],['manage_overrides','admin',true]],
+};
+
+function _legacyBaseline(level) {
   if (level === 'admin')     return ['view', 'export', 'create', 'edit', 'delete', 'approve', 'manage'];
   if (level === 'standard')  return ['view', 'export', 'create', 'edit'];
   if (level === 'read_only') return ['view', 'export'];
   return [];
 }
 
+function _catKeys(moduleKey)  { return (PERM_CATALOG[moduleKey] || []).map(e => e[0]); }
+// All keys for a module in display order: catalog keys first, then any legacy
+// verbs not already present (so the back-compat verbs sort after granular ones).
+function _allKeys(moduleKey)  {
+  const out = _catKeys(moduleKey);
+  for (const a of PERM_ACTIONS) if (!out.includes(a)) out.push(a);
+  return out;
+}
+function _orderKeys(moduleKey, set) { return _allKeys(moduleKey).filter(k => set.has(k)); }
+
+// Baseline action set for a (level, module): legacy verbs ∪ granular catalog
+// keys whose min_level <= level (grant_only keys never baseline). moduleKey
+// omitted → legacy-only (preserves the old single-arg contract).
+function permBaseline(level, moduleKey) {
+  const out = _legacyBaseline(level);
+  const cat = PERM_CATALOG[moduleKey];
+  if (!cat) return out;
+  const lv = _LVL[level] ?? 0;
+  for (const [k, m, x] of cat) if (!x && (_LVL[m] ?? 3) <= lv && !out.includes(k)) out.push(k);
+  return out;
+}
+
 // Effective action set for one user × one module.
 //   profile: { role, is_active }
 //   tmpRow:  { level, grants } from template_module_perms (or null)
 //   ovRow:   { level, grants } from user_module_overrides  (or null)
+//   moduleKey: drives the granular catalog (omit → legacy-only).
 // Mirrors the DB resolution order: inactive → nothing; global admin → all;
 // override level replaces template level; override grants merge over template
-// grants; effective = baseline(level) then grants add (true) / remove (false).
-function permEffective(profile, tmpRow, ovRow) {
+// grants; effective = baseline(level, module) then grants add (true)/remove(false).
+function permEffective(profile, tmpRow, ovRow, moduleKey) {
   if (!profile || profile.is_active === false) return [];
-  if (profile.role === 'admin') return PERM_ACTIONS.slice();
+  if (profile.role === 'admin') return _orderKeys(moduleKey, new Set(_allKeys(moduleKey)));
   let level  = (tmpRow && tmpRow.level) || 'none';
   let grants = Object.assign({}, (tmpRow && tmpRow.grants) || {});
   if (ovRow && ovRow.level)  level  = ovRow.level;
   if (ovRow && ovRow.grants) grants = Object.assign(grants, ovRow.grants);
-  const eff = new Set(permBaseline(level));
+  const eff = new Set(permBaseline(level, moduleKey));
   for (const [action, allowed] of Object.entries(grants)) {
     if (allowed === true) eff.add(action);
     else if (allowed === false) eff.delete(action);
   }
-  return PERM_ACTIONS.filter(a => eff.has(a));
+  return _orderKeys(moduleKey, eff);
 }
 
 window.permBaseline  = permBaseline;
 window.permEffective = permEffective;
 window.PERM_ACTIONS  = PERM_ACTIONS;
+window.PERM_CATALOG  = PERM_CATALOG;
 
 /* ── Signed-in user's effective permissions (UI gating, P4-1a) ──────────────
    The UI mirrors what RLS enforces: after login, app.js calls
@@ -110,7 +233,7 @@ async function loadMyPermissions(profile) {
     const ovMap  = new Map((ovs.data || []).map(r => [r.module_key, r]));
     const keys = new Set([...tmpMap.keys(), ...ovMap.keys()]);
     const perms = new Map();
-    for (const k of keys) perms.set(k, permEffective(profile, tmpMap.get(k) || null, ovMap.get(k) || null));
+    for (const k of keys) perms.set(k, permEffective(profile, tmpMap.get(k) || null, ovMap.get(k) || null, k));
     _myPerms = perms;
     // Show the template name in the sidebar user pill (role is retired from the UI).
     if (profile.permission_template_id) {
@@ -137,6 +260,19 @@ function uiCan(moduleKey, action) {
   const acts = _myPerms.get(moduleKey);
   return !!acts && acts.includes(action);
 }
+
+// Ownership-aware gate. `verb` is the base capability (e.g. 'delete',
+// 'edit_metadata', 'manage_album'); isOwner is whether the current user owns the
+// row. Mirrors the RLS rule: <verb>_any OR <verb> OR (<verb>_own AND owner).
+// Fail-open like uiCan (RLS is authoritative).
+function can(moduleKey, verb, isOwner) {
+  if (_myPerms === 'admin' || !_myPerms) return true;
+  const acts = _myPerms.get(moduleKey);
+  if (!acts) return false;
+  return acts.includes(verb + '_any') || acts.includes(verb) ||
+         (!!isOwner && acts.includes(verb + '_own'));
+}
+window.can = can;
 
 // Pure visibility decision for one nav page:
 //   'show' / 'hide'  — permissions are loaded and AUTHORITATIVE (role no longer
@@ -201,9 +337,38 @@ window.uiCan = uiCan;
    are derived live from PAGE_MODULE so the mapping can never drift. */
 
 function _paModuleActions(mod) {
-  const a = mod && Array.isArray(mod.actions) && mod.actions.length ? mod.actions : PERM_ACTIONS;
-  return PERM_ACTIONS.filter(x => a.includes(x));   // canonical order
+  // Granular catalog keys for the module (display order). Falls back to the
+  // module's DB `actions` list, then the legacy verbs, for safety.
+  const cat = _catKeys(mod && mod.key);
+  if (cat.length) return cat;
+  if (mod && Array.isArray(mod.actions) && mod.actions.length) return mod.actions.slice();
+  return PERM_ACTIONS.slice();
 }
+
+// Shared chip renderer for a single capability key. Handles grant_only styling
+// (dashed when off) and the _own/_any ownership pairing (an _own chip shows as
+// implied-on when its _any sibling is granted).
+function _paActionChip(modKey, key, eff, base, onclick) {
+  const meta = (PERM_CATALOG[modKey] || []).find(e => e[0] === key);
+  const grantOnly = meta ? !!meta[2] : false;
+  const anySib = /_own$/.test(key) ? key.replace(/_own$/, '_any') : null;
+  const impliedByAny = anySib ? eff.has(anySib) : false;
+  const on = eff.has(key) || impliedByAny;
+  const isGrant = !impliedByAny && (on !== base.has(key));   // differs from baseline → explicit grant
+  const border = on ? 'var(--brand,#0f62fe)' : 'var(--border)';
+  const fill = on ? 'background:var(--brand,#0f62fe);color:var(--white,#fff);'
+                  : 'background:var(--surface);color:var(--text-muted);';
+  const dashed = (grantOnly && !on) ? 'border-style:dashed;' : '';
+  const ring = isGrant ? 'box-shadow:0 0 0 2px var(--warn,#f59e0b) inset;' : '';
+  const dim = impliedByAny ? 'opacity:.65;' : '';
+  const title = key
+    + (grantOnly ? ' · grant-only (never in a level baseline)' : '')
+    + (impliedByAny ? ' · implied by ' + anySib : (isGrant ? ' · explicit grant override' : ''))
+    + ' — click to ' + (on ? 'revoke' : 'grant');
+  return `<button class="tag" style="cursor:pointer;border:1px solid ${border};${fill}${dashed}${ring}${dim}"
+      title="${title}" onclick="${onclick}">${key}</button>`;
+}
+window._paActionChip = _paActionChip;
 
 function _paModulePages(modKey) {
   return Object.keys(PAGE_MODULE).filter(p => PAGE_MODULE[p] === modKey);
@@ -340,7 +505,7 @@ function _paTplPanelHTML(tpl) {
         </div>
       </div>
       <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">
-        Level sets a baseline; click action chips to grant (filled) / revoke beyond it. Changes save immediately and apply on the user's next query.
+        Level sets a baseline; click action chips to grant (filled) / revoke beyond it. Chips with a <b>dashed</b> border are grant-only (never in a level baseline — must be granted explicitly). <code>_own</code>/<code>_any</code> pairs are ownership-scoped: granting <code>_any</code> implies <code>_own</code>. Changes save immediately and apply on the user's next query.
       </div>
       ${[...byCat.entries()].map(([cat, mods]) => `
         <div style="margin-top:14px;">
@@ -357,8 +522,8 @@ function _paTplPanelHTML(tpl) {
 
 function _paTplRowHTML(tplId, mod) {
   const row = (_paTmp.get(tplId) || new Map()).get(mod.key) || { level: 'none', grants: {} };
-  const eff = new Set(permEffective({ role: 'x', is_active: true }, row, null));
-  const base = new Set(permBaseline(row.level));
+  const eff = new Set(permEffective({ role: 'x', is_active: true }, row, null, mod.key));
+  const base = new Set(permBaseline(row.level, mod.key));
   return `
     <tr>
       <td style="width:280px;font-weight:600;vertical-align:top;">${escapeHtml(mod.label)}${_paModuleMetaHTML(mod)}</td>
@@ -370,15 +535,8 @@ function _paTplRowHTML(tplId, mod) {
       </td>
       <td style="vertical-align:top;">
         <div style="display:flex;gap:4px;flex-wrap:wrap;">
-          ${_paModuleActions(mod).map(a => {
-            const on = eff.has(a);
-            const isGrant = on !== base.has(a);   // differs from the baseline → explicit grant
-            return `<button class="tag" style="cursor:pointer;border:1px solid ${on ? 'var(--brand,#0f62fe)' : 'var(--border)'};
-                ${on ? 'background:var(--brand,#0f62fe);color:var(--white,#fff);' : 'background:var(--surface);color:var(--text-muted);'}
-                ${isGrant ? 'box-shadow:0 0 0 2px var(--warn,#f59e0b) inset;' : ''}"
-              title="${a}${isGrant ? ' (explicit grant override)' : ''} — click to ${on ? 'revoke' : 'grant'}"
-              onclick="_paToggleAction('${tplId}','${mod.key}','${a}')">${a}</button>`;
-          }).join('')}
+          ${_paModuleActions(mod).map(a =>
+            _paActionChip(mod.key, a, eff, base, `_paToggleAction('${tplId}','${mod.key}','${a}')`)).join('')}
         </div>
       </td>
     </tr>
@@ -403,9 +561,9 @@ async function _paSetLevel(tplId, modKey, level) {
 
 async function _paToggleAction(tplId, modKey, action) {
   const cur = (_paTmp.get(tplId) || new Map()).get(modKey) || { level: 'none', grants: {} };
-  const eff = new Set(permEffective({ role: 'x', is_active: true }, cur, null));
+  const eff = new Set(permEffective({ role: 'x', is_active: true }, cur, null, modKey));
   const want = !eff.has(action);
-  const base = new Set(permBaseline(cur.level));
+  const base = new Set(permBaseline(cur.level, modKey));
   const grants = Object.assign({}, cur.grants);
   if (want === base.has(action)) delete grants[action];   // matches baseline → no explicit grant needed
   else grants[action] = want;
@@ -560,8 +718,8 @@ function _paOverridesPanelHTML(u) {
         <tbody>
           ${[...ovs.entries()].map(([key, row]) => {
             const mod = _paModules.find(m => m.key === key) || { label: key, key };
-            const eff = new Set(permEffective({ role: 'x', is_active: true }, row, null));
-            const base = new Set(permBaseline(row.level));
+            const eff = new Set(permEffective({ role: 'x', is_active: true }, row, null, key));
+            const base = new Set(permBaseline(row.level, key));
             return `<tr>
               <td style="width:200px;font-weight:600;">${escapeHtml(mod.label)}</td>
               <td style="width:130px;">
@@ -571,13 +729,8 @@ function _paOverridesPanelHTML(u) {
                 </select>
               </td>
               <td><div style="display:flex;gap:4px;flex-wrap:wrap;">
-                ${_paModuleActions(mod).map(a => {
-                  const on = eff.has(a); const isGrant = on !== base.has(a);
-                  return `<button class="tag" style="cursor:pointer;border:1px solid ${on ? 'var(--brand,#0f62fe)' : 'var(--border)'};
-                      ${on ? 'background:var(--brand,#0f62fe);color:var(--white,#fff);' : 'background:var(--surface);color:var(--text-muted);'}
-                      ${isGrant ? 'box-shadow:0 0 0 2px var(--warn,#f59e0b) inset;' : ''}"
-                    title="${a}${isGrant ? ' (explicit grant)' : ''}" onclick="_paToggleOverrideAction('${u.id}','${key}','${a}')">${a}</button>`;
-                }).join('')}
+                ${_paModuleActions(mod).map(a =>
+                  _paActionChip(key, a, eff, base, `_paToggleOverrideAction('${u.id}','${key}','${a}')`)).join('')}
               </div></td>
               <td style="width:40px;text-align:right;">
                 <button class="form-secondary" style="font-size:11px;padding:3px 7px;color:var(--bad);" aria-label="Remove override for ${escapeHtml(mod.label)}"
@@ -624,9 +777,9 @@ async function _paSetOverride(userId, modKey, level) {
 
 async function _paToggleOverrideAction(userId, modKey, action) {
   const cur = (_paOverrides.get(userId) || new Map()).get(modKey) || { level: 'none', grants: {} };
-  const eff = new Set(permEffective({ role: 'x', is_active: true }, cur, null));
+  const eff = new Set(permEffective({ role: 'x', is_active: true }, cur, null, modKey));
   const want = !eff.has(action);
-  const base = new Set(permBaseline(cur.level));
+  const base = new Set(permBaseline(cur.level, modKey));
   const grants = Object.assign({}, cur.grants);
   if (want === base.has(action)) delete grants[action]; else grants[action] = want;
   if (await _paSaveOverride(userId, modKey, cur.level, grants)) _paRender();
@@ -661,7 +814,7 @@ function _paEffectivePanelHTML(u) {
           const tmpRow = tplMap.get(m.key) || null;
           const ovRow  = ovMap.get(m.key) || null;
           const relevant = _paModuleActions(m);
-          const eff = permEffective(u, tmpRow, ovRow).filter(a => relevant.includes(a));
+          const eff = permEffective(u, tmpRow, ovRow, m.key).filter(a => relevant.includes(a));
           return `<tr>
             <td style="width:260px;font-weight:600;vertical-align:top;">${escapeHtml(m.label)}${_paModuleMetaHTML(m)}</td>
             <td style="width:110px;vertical-align:top;">${ovRow ? '<span class="tag" title="A per-user override applies to this module">override</span>' : '<span style="color:var(--text-muted);">template</span>'}</td>

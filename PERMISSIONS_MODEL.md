@@ -1,15 +1,26 @@
 # Permissions Model — granular per-module capabilities (cx-portal)
 
 > **STATUS (2026-06-15): CANONICAL SPEC — supersedes the generic-7-verb model.**
-> This document is the single source of truth for the permission system. The
-> previously-live model (4 levels expanding to a universal 7 verbs:
-> `view, export, create, edit, delete, approve, manage`) is the *starting point*
-> this spec replaces. The replacement is **not** a parallel "v2" — it is the same
-> level + grants machinery where the universal verb list becomes a **per-module
-> capability catalog** (the old 7 verbs are simply the degenerate case of one
-> catalog shared by every module). All module behaviours, RLS policies, the
-> client resolver (`perms-admin.js`), and the admin UI are migrated to this model
-> in a single coordinated build pass (see "Build plan").
+> This document is the single source of truth for the permission system.
+>
+> **LIVE (this change):** the granular catalog is seeded in `perm_modules`
+> (`actions` + new `action_meta`); the DB baseline is module-aware
+> (`private._perm_baseline(module, level)`) computing **legacy-7 ∪ granular keys**
+> and `private.has_module_perm` is rewired to it; the client resolver +
+> ownership gate (`perms-admin.js`: `PERM_CATALOG`, `permBaseline(level,module)`,
+> `permEffective(…,module)`, `can(module,verb,isOwner)`) and the Permissions
+> admin UI (grouped granular chips, grant-only + ownership) are shipped; the
+> photos delete gate routes through `can('photos','delete',isOwner)`. Pinned by
+> `tools/test_perm_resolver.js` + `tools/test_ui_can.js`. The baseline is a
+> **strict superset** of the old behaviour, so no existing RLS policy lost
+> access and the 2 global admins bypass entirely.
+>
+> **REMAINING (batched, per the build plan):** converting each governed table's
+> RLS policies to *check* the new granular keys, and gating the remaining
+> per-call-site UI in `app.js`. Both vocabularies resolve in the meantime, so
+> this is incremental and safe. Photos ownership RLS is additionally blocked on
+> `photos.uploaded_by` storing a display name (text) rather than `auth.uid()` —
+> a column fix precedes converting photos `delete_own`/`delete_any` to RLS.
 
 ## Why
 At the original design time ~27 tables had always-true (`USING(true)`) policies;
@@ -86,19 +97,23 @@ The admin UI mirrors it: toggling a `_any` chip visually lights its `_own` partn
 Helpers stay SECURITY DEFINER, `search_path=public`, STABLE, in the non-exposed
 `private` schema (RLS-only, not callable via `/rest/v1/rpc/`).
 
-## Schema (what changes)
-The four additive tables stay; only the **catalog metadata** grows:
+## Schema (what changed)
+The four additive tables stay; only the **catalog metadata** on `perm_modules` grows:
 - `perm_modules(key pk, label, category, sort_order, governs text[], description,
-  actions jsonb)` — `actions` becomes an **array of capability descriptors**
-  `{ key, label, group, min_level, grant_only }` instead of a flat list of the 7
-  verbs. `group` lets the admin UI cluster chips (e.g. "Cases", "Destructive").
+  actions text[], action_meta jsonb)`:
+  - `actions` keeps the **ordered list of capability keys** for the module (so
+    existing readers of the column keep working).
+  - `action_meta` (new `jsonb`, default `{}`) maps each key →
+    `{ "m": <min_level>, "x": <grant_only?> }`. Ownership pairs are encoded by the
+    `_own`/`_any` suffix convention (no extra metadata). The admin UI derives chip
+    grouping from `m`/`x` (e.g. dashed = grant-only).
 - `permission_templates(id pk, name unique, description, is_system, timestamps)` — unchanged.
 - `template_module_perms(template_id fk, module_key fk, level, grants jsonb,
   pk(template_id,module_key))` — unchanged; capability keys live in `grants`.
 - `profiles.permission_template_id`, `user_module_overrides(...)` — unchanged.
 
-No new columns on the perm tables themselves: capability keys are values inside the
-existing `grants` jsonb, exactly like the 7 verbs are today.
+No changes to the templates/overrides tables: capability keys are values inside the
+existing `grants` jsonb, exactly like the 7 verbs were.
 
 ---
 
@@ -449,34 +464,40 @@ the expanded set without changing anyone's reach):
 
 ---
 
-## Build plan (single coordinated pass)
-All changes land together — there is no interim "v2 alongside v1" state.
+## Build plan & status
+The model ships behind a **strict-superset union baseline**, so steps land
+incrementally with no interim breakage.
 
-1. **Catalog seed** — populate `perm_modules.actions` with the descriptor arrays
-   above (`{key, label, group, min_level, grant_only}`) for all 22 modules
-   (~120 keys total). One migration.
-2. **Resolver** (`perms-admin.js`) — `permEffective` stays a pure set computation;
-   `permBaseline(level)` becomes `permBaseline(level, moduleActions)` driven by each
-   key's `min_level`/`grant_only`. Add the `can(module, verb, isOwner)` gate helper
-   implementing the `_any ⇒ _own` rule. Update `tools/test_perm_resolver.js` to pin
-   the new baseline-by-catalog and ownership semantics.
-3. **RLS** — rewrite per-table policies to the capability keys, with command-specific
-   policies wrapping auth in a subselect. Ownership tables use the
-   `any OR (own AND owner=auth.uid())` pattern. Rolled out batched per module;
-   advisors re-run per batch; per-template verification matrix run with test users.
-4. **Ownership-identity audit** — confirm `photos.uploaded_by`,
-   `drawing_markups.created_by`, etc. store `auth.uid()` (the photos UI compares a
-   display name today). Backfill / add a stable column where needed before the
-   ownership RLS predicates can rely on it.
-5. **Admin UI** (`perms-admin.js`) — render capability chips grouped by `group`,
-   show `grant_only` chips as ungranted-by-default, and light `_own` when `_any` is
-   toggled. The "Effective" preview uses the same gate.
-6. **UI gates** — replace scattered `role==='admin'` / `canDeletePhoto`-style checks
-   at every enumerated call site with `uiCan(module,key)` / the own-or-any helper.
-   Fail-open behaviour stays (RLS is the authoritative gate).
-7. **Template remap migration** — rewrite the six system templates per the section
-   above and migrate existing `template_module_perms` / `user_module_overrides`
-   grants so effective access is unchanged at cut-over.
+1. **Catalog seed — DONE.** `perm_modules.action_meta` (`{m:min_level, x:grant_only}`)
+   + ordered `actions` for all 22 modules. Migration
+   `perm_granular_catalog_seed`; recorded in
+   `supabase/sql/supabase_perm_granular_catalog.sql`.
+2. **DB baseline + resolver — DONE.** `private._perm_baseline(module, level)`
+   returns legacy-7 ∪ granular keys; `private.has_module_perm` rewired (migration
+   `perm_baseline_module_aware_union`). Client mirror in `perms-admin.js`
+   (`PERM_CATALOG`, `permBaseline(level, module)`, `permEffective(…, module)`,
+   `can(module, verb, isOwner)` with `_any ⇒ _own`). Pinned by
+   `tools/test_perm_resolver.js`.
+3. **Admin UI — DONE.** Permissions admin renders granular chips per module with
+   grant-only (dashed) styling and `_own`/`_any` implication lighting; templates,
+   overrides, and the Effective preview all use the module-aware resolver.
+4. **UI gates — PILOT DONE, rest batched.** Photos delete routes through
+   `can('photos','delete',isOwner)`. Remaining `app.js` call sites convert
+   incrementally (fail-open; RLS authoritative).
+5. **RLS per-table conversion — REMAINING (batched).** Rewrite each governed
+   table's policies to check the granular keys (command-specific, auth in a
+   subselect; ownership tables use `any OR (own AND owner=auth.uid())`). Advisors
+   re-run per batch; per-template verification with test users. Legacy verbs keep
+   working until each table is converted.
+6. **Ownership-identity fix — REMAINING (blocks photos RLS).**
+   `photos.uploaded_by` is `text` (a display name); add/backfill an `auth.uid()`
+   column before converting photos `delete_own`/`delete_any` to RLS.
+   `drawing_markups.created_by` is already `uuid` (RLS-ready).
+7. **Template remap — N/A at cut-over.** Because the baseline is module-aware by
+   *level*, existing template levels already yield the granular keys; the only
+   non-empty grant in the DB (Client Reviewer · lookahead · `{view,export}`)
+   remains valid. No regrant needed.
 
-Verification: `node tools/run_tests.js` must exit 0 (resolver unit test + boot smoke
-+ characterization), plus the per-template RLS matrix.
+Verification: `node tools/run_tests.js` exits 0 (23 suites incl. resolver + UI-can
++ boot smoke + characterization). Per-table RLS conversion adds the per-template
+matrix as it rolls out.
