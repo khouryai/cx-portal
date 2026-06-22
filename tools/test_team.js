@@ -72,5 +72,21 @@ console.log("\n_buildTeamTree:");
   ok("  empty input → no roots", _buildTeamTree([]).length === 0 && _buildTeamTree(null).length === 0);
 }
 
+console.log("\n_teamDescendantIds (re-parent cycle guard):");
+{
+  const members = [
+    { id: "mgr", name: "Manager", level: 0, sort_order: 0, reports_to: null },
+    { id: "ats", name: "Lead ATS", level: 1, sort_order: 0, reports_to: "mgr" },
+    { id: "ats1", name: "ATS One", level: 2, sort_order: 0, reports_to: "ats" },
+    { id: "cbtc", name: "Lead CBTC", level: 1, sort_order: 1, reports_to: "mgr" },
+  ];
+  const { _teamDescendantIds } = sandbox;
+  const ds = _teamDescendantIds("ats", members);
+  ok("  includes self", ds.has("ats"));
+  ok("  includes nested report", ds.has("ats1"));
+  ok("  excludes unrelated branch", !ds.has("cbtc"));
+  ok("  manager's set covers the whole tree", _teamDescendantIds("mgr", members).size === 4);
+}
+
 console.log(`\n${pass} passed, ${fail} failed.\n`);
 process.exit(fail === 0 ? 0 : 1);

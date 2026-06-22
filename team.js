@@ -83,7 +83,7 @@ function renderOrg() {
     const toggle = `<button class="admin-action-btn ${editing ? 'is-on' : ''}" onclick="_teamToggleEdit()">`
       + `${icon(editing ? 'check' : 'edit')} ${editing ? 'Done editing' : 'Edit organization'}</button>`;
     const add = editing
-      ? `<button class="form-secondary" onclick="_teamAdd()">${icon('plus')} Add top-level member</button>`
+      ? `<button class="form-secondary" onclick="_teamAdd()">${icon('plus')} Add member</button>`
       : '';
     toolbar = `<div class="team-toolbar">${add}${toggle}</div>`;
   }
@@ -142,48 +142,124 @@ function _teamNextSort(reportsTo) {
   return peers.length ? Math.max(...peers) + 1 : 0;
 }
 
-async function _teamAdd() {
+// Pure: id + every id beneath it in the reports_to tree (cycle-guard for re-parenting).
+function _teamDescendantIds(id, members) {
+  const list = members || TEAM || [];
+  const ids = new Set([id]);
+  let added = true;
+  while (added) {
+    added = false;
+    list.forEach(t => {
+      if (t.reports_to && ids.has(t.reports_to) && !ids.has(t.id)) { ids.add(t.id); added = true; }
+    });
+  }
+  return ids;
+}
+
+// "Reports to" <option> list, ordered top-down, skipping any excluded ids.
+function _teamManagerOptions(selectedId, excludeIds) {
+  const skip = excludeIds || new Set();
+  const opts = [`<option value=""${selectedId ? '' : ' selected'}>— None (top of chart) —</option>`];
+  (TEAM || []).filter(t => !skip.has(t.id))
+    .slice()
+    .sort((a, b) => (a.level - b.level) || (a.sort_order - b.sort_order) || a.name.localeCompare(b.name))
+    .forEach(t => {
+      const label = (t.title ? t.title + ' — ' : '') + t.name;
+      opts.push(`<option value="${t.id}"${t.id === selectedId ? ' selected' : ''}>${escapeHtml(label)}</option>`);
+    });
+  return opts.join('');
+}
+
+// Shared modal body: name, title, and a "Reports to" control (locked or a picker).
+function _teamFormBody({ name, title, mgrId, excludeIds, mgrLocked, mgrLabel }) {
+  const mgrControl = mgrLocked
+    ? `<input type="text" class="form-input" value="${escapeHtml(mgrLabel || '')}" disabled>`
+    : `<select id="team-mgr" class="form-input">${_teamManagerOptions(mgrId || '', excludeIds)}</select>`;
+  return `
+      <div class="form-field">
+        <label>Name</label>
+        <input type="text" id="team-name" class="form-input" value="${escapeHtml(name || '')}" placeholder="e.g. Jane Smith">
+      </div>
+      <div class="form-field" style="margin-top:12px;">
+        <label>Title / role</label>
+        <input type="text" id="team-title" class="form-input" value="${escapeHtml(title || '')}" placeholder="e.g. ATS T&C Engineer">
+      </div>
+      <div class="form-field" style="margin-top:12px;">
+        <label>Reports to</label>
+        ${mgrControl}
+      </div>`;
+}
+
+function _teamAdd() {
   if (!_teamCanEdit()) return;
-  const name = prompt('Member name:');
-  if (!name || !name.trim()) return;
-  const title = (prompt('Title / role:', '') || '').trim();
-  const levelStr = prompt('Org level (0 = top of chart, higher = lower in hierarchy):', '0');
-  const level = parseInt(levelStr, 10);
-  if (Number.isNaN(level) || level < 0) { toast('Level must be a non-negative number.', 'error'); return; }
-  const sort_order = _teamNextSort(null);
-  const { data, error } = await _sb.from('team_members')
-    .insert({ name: name.trim(), title, level, sort_order, reports_to: null }).select().single();
-  if (error) { toast('Add failed: ' + error.message, 'error'); return; }
-  TEAM.push(data); toast('Member added'); renderOrg();
+  modal({
+    title: 'Add team member', size: 'small',
+    body: _teamFormBody({ mgrId: '', excludeIds: new Set() }),
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+             <button class="form-submit" onclick="_teamSaveNew()">Add member</button>`,
+  });
+  setTimeout(() => document.getElementById('team-name')?.focus(), 50);
 }
 
 // Add a direct report that hangs as a branch under the given manager/position.
-async function _teamAddReport(managerId) {
+function _teamAddReport(managerId) {
   if (!_teamCanEdit()) return;
   const mgr = TEAM.find(t => t.id === managerId); if (!mgr) return;
-  const name = prompt(`Add a direct report under ${mgr.name}${mgr.title ? ` (${mgr.title})` : ''}:\n\nReport name:`);
-  if (!name || !name.trim()) return;
-  const title = (prompt('Title / role:', '') || '').trim();
-  const level = (Number(mgr.level) || 0) + 1;
-  const sort_order = _teamNextSort(managerId);
-  const { data, error } = await _sb.from('team_members')
-    .insert({ name: name.trim(), title, level, sort_order, reports_to: managerId }).select().single();
-  if (error) { toast('Add failed: ' + error.message, 'error'); return; }
-  TEAM.push(data); toast('Direct report added'); renderOrg();
+  const mgrLabel = (mgr.title ? mgr.title + ' — ' : '') + mgr.name;
+  modal({
+    title: 'Add direct report', sub: `Reporting to ${escapeHtml(mgrLabel)}`, size: 'small',
+    body: _teamFormBody({ mgrId: managerId, mgrLocked: true, mgrLabel }),
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+             <button class="form-submit" onclick="_teamSaveNew('${managerId}')">Add report</button>`,
+  });
+  setTimeout(() => document.getElementById('team-name')?.focus(), 50);
 }
 
-async function _teamEdit(id) {
+// Insert a member. managerId (from "Add report") overrides the picker when present.
+async function _teamSaveNew(managerId) {
+  if (!_teamCanEdit()) return;
+  const name = (document.getElementById('team-name')?.value || '').trim();
+  if (!name) { toast('Name is required.', 'error'); return; }
+  const title = (document.getElementById('team-title')?.value || '').trim();
+  const reports_to = managerId || (document.getElementById('team-mgr')?.value || '') || null;
+  const mgr = reports_to ? TEAM.find(t => t.id === reports_to) : null;
+  const level = mgr ? (Number(mgr.level) || 0) + 1 : 0;
+  const sort_order = _teamNextSort(reports_to);
+  const { data, error } = await _sb.from('team_members')
+    .insert({ name, title, level, sort_order, reports_to }).select().single();
+  if (error) { toast('Add failed: ' + error.message, 'error'); return; }
+  TEAM.push(data); closeModal(); toast(reports_to ? 'Direct report added' : 'Member added'); renderOrg();
+}
+
+function _teamEdit(id) {
   if (!_teamCanEdit()) return;
   const m = TEAM.find(t => t.id === id); if (!m) return;
-  const name = prompt('Name:', m.name); if (name === null) return;
-  if (!name.trim()) { toast('Name cannot be empty.', 'error'); return; }
-  const title = prompt('Title / role:', m.title || ''); if (title === null) return;
-  const { error } = await _sb.from('team_members').update({ name: name.trim(), title: title.trim() }).eq('id', id);
-  if (error) { toast('Update failed: ' + error.message, 'error'); return; }
-  m.name = name.trim(); m.title = title.trim(); toast('Updated'); renderOrg();
+  modal({
+    title: 'Edit team member', size: 'small',
+    body: _teamFormBody({ name: m.name, title: m.title, mgrId: m.reports_to || '', excludeIds: _teamDescendantIds(id) }),
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+             <button class="form-submit" onclick="_teamSaveEdit('${id}')">Save</button>`,
+  });
+  setTimeout(() => document.getElementById('team-name')?.focus(), 50);
 }
 
-async function _teamRemove(id) {
+async function _teamSaveEdit(id) {
+  if (!_teamCanEdit()) return;
+  const m = TEAM.find(t => t.id === id); if (!m) return;
+  const name = (document.getElementById('team-name')?.value || '').trim();
+  if (!name) { toast('Name is required.', 'error'); return; }
+  const title = (document.getElementById('team-title')?.value || '').trim();
+  const reports_to = (document.getElementById('team-mgr')?.value || '') || null;
+  const mgr = reports_to ? TEAM.find(t => t.id === reports_to) : null;
+  const patch = { name, title, reports_to, level: mgr ? (Number(mgr.level) || 0) + 1 : 0 };
+  // Moved to a new manager → drop to the end of the new sibling group.
+  if ((m.reports_to || null) !== reports_to) patch.sort_order = _teamNextSort(reports_to);
+  const { error } = await _sb.from('team_members').update(patch).eq('id', id);
+  if (error) { toast('Update failed: ' + error.message, 'error'); return; }
+  Object.assign(m, patch); closeModal(); toast('Updated'); renderOrg();
+}
+
+function _teamRemove(id) {
   if (!_teamCanEdit()) return;
   const m = TEAM.find(t => t.id === id); if (!m) return;
   const reports = TEAM.filter(t => t.reports_to === id);
@@ -191,10 +267,20 @@ async function _teamRemove(id) {
     toast(`${m.name} has ${reports.length} direct report${reports.length > 1 ? 's' : ''}. Reassign or remove them first.`, 'error');
     return;
   }
-  if (!confirm(`Remove ${m.name} from the team roster?`)) return;
+  modal({
+    title: 'Remove team member', size: 'small',
+    body: `<p style="margin:0;color:var(--text);line-height:1.5;">Remove <strong>${escapeHtml(m.name)}</strong>${m.title ? ` <span style="color:var(--text-muted);">(${escapeHtml(m.title)})</span>` : ''} from the org chart? This cannot be undone.</p>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+             <button class="form-submit" style="background:var(--bad);border-color:var(--bad);" onclick="_teamDoRemove('${id}')">Remove</button>`,
+  });
+}
+
+async function _teamDoRemove(id) {
+  if (!_teamCanEdit()) return;
+  const m = TEAM.find(t => t.id === id); if (!m) return;
   const { error } = await _sb.from('team_members').delete().eq('id', id);
   if (error) { toast('Remove failed: ' + error.message, 'error'); return; }
-  TEAM = TEAM.filter(t => t.id !== id); toast('Member removed'); renderOrg();
+  TEAM = TEAM.filter(t => t.id !== id); closeModal(); toast('Member removed'); renderOrg();
 }
 
 window.loadTeamMembers = loadTeamMembers;
@@ -204,8 +290,13 @@ window.orgCard = orgCard;
 window._teamToggleEdit = _teamToggleEdit;
 window._teamAdd = _teamAdd;
 window._teamAddReport = _teamAddReport;
+window._teamSaveNew = _teamSaveNew;
 window._teamEdit = _teamEdit;
+window._teamSaveEdit = _teamSaveEdit;
 window._teamRemove = _teamRemove;
+window._teamDoRemove = _teamDoRemove;
 window._teamInitials = _teamInitials;
 window._teamRows = _teamRows;
 window._buildTeamTree = _buildTeamTree;
+window._teamDescendantIds = _teamDescendantIds;
+window._teamManagerOptions = _teamManagerOptions;
