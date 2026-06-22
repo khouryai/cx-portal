@@ -15,12 +15,14 @@
 > **strict superset** of the old behaviour, so no existing RLS policy lost
 > access and the 2 global admins bypass entirely.
 >
-> **REMAINING (batched, per the build plan):** converting each governed table's
-> RLS policies to *check* the new granular keys, and gating the remaining
+> **RLS PILOT LIVE:** `test_register` + `photos` governed tables now enforce the
+> granular keys in RLS (incl. photos `_own`/`_any` ownership, matched to
+> `profiles.full_name` — no column migration needed).
+>
+> **REMAINING (batched, per the build plan):** converting the other modules'
+> governed tables to *check* the granular keys, and gating the remaining
 > per-call-site UI in `app.js`. Both vocabularies resolve in the meantime, so
-> this is incremental and safe. Photos ownership RLS is additionally blocked on
-> `photos.uploaded_by` storing a display name (text) rather than `auth.uid()` —
-> a column fix precedes converting photos `delete_own`/`delete_any` to RLS.
+> this is incremental and safe.
 
 ## Why
 At the original design time ~27 tables had always-true (`USING(true)`) policies;
@@ -484,15 +486,22 @@ incrementally with no interim breakage.
 4. **UI gates — PILOT DONE, rest batched.** Photos delete routes through
    `can('photos','delete',isOwner)`. Remaining `app.js` call sites convert
    incrementally (fail-open; RLS authoritative).
-5. **RLS per-table conversion — REMAINING (batched).** Rewrite each governed
-   table's policies to check the granular keys (command-specific, auth in a
-   subselect; ownership tables use `any OR (own AND owner=auth.uid())`). Advisors
-   re-run per batch; per-template verification with test users. Legacy verbs keep
-   working until each table is converted.
-6. **Ownership-identity fix — REMAINING (blocks photos RLS).**
-   `photos.uploaded_by` is `text` (a display name); add/backfill an `auth.uid()`
-   column before converting photos `delete_own`/`delete_any` to RLS.
-   `drawing_markups.created_by` is already `uuid` (RLS-ready).
+5. **RLS per-table conversion — PILOT DONE (test_register + photos), rest
+   batched.** `test_register`-governed tables (`test_items`, `test_procedures`,
+   `test_item_status_history`, `test_item_prerequisites`, `activity_records`) and
+   `photos`-governed tables (`photos`, `photo_albums`, `photo_album_items`) now
+   check the granular keys (migrations `rls_test_register_granular_keys`,
+   `rls_photos_granular_ownership_keys`; recorded in
+   `supabase/sql/supabase_perm_rls_granular.sql`). SELECT stays `view`; writes OR
+   the capabilities that legitimately perform each command (no false denials).
+   Remaining modules convert the same way, batched; advisors re-run per batch.
+   (`test_results` is governed by `test_reporting`, not `test_register` — it
+   converts in that module's batch.)
+6. **Ownership-identity — RESOLVED for photos without a column migration.** Photos
+   ownership RLS matches `uploaded_by`/`created_by` to the signed-in user's
+   `profiles.full_name` (mirroring the UI's `=== userName()`); verified against
+   live data. `drawing_markups.created_by` is already `uuid` and RLS-ready for the
+   drawings batch.
 7. **Template remap — N/A at cut-over.** Because the baseline is module-aware by
    *level*, existing template levels already yield the granular keys; the only
    non-empty grant in the DB (Client Reviewer · lookahead · `{view,export}`)
