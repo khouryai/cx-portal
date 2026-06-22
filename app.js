@@ -42648,8 +42648,38 @@ function _docsApplyFilters() {
 
 function _docsSetFilter(key, val) {
   _docsFilter[key] = val;
-  if (key === 'q') { _docsRenderList(); }   // keep search focus — only re-render the list
-  else { _docsRenderList(); }
+  // Only the list + breadcrumb re-render (the toolbar/search input is untouched,
+  // so search keeps focus).
+  _docsRenderBreadcrumb();
+  _docsRenderList();
+}
+
+// ── Formatting helpers ─────────────────────────────────────────────────────
+function _docsFmtDate(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+function _docsRelDate(d) {
+  if (!d) return '';
+  const days = Math.round((Date.now() - new Date(d)) / 86400000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 7) return days + ' days ago';
+  if (days < 14) return 'last week';
+  if (days < 60) return Math.round(days / 7) + ' weeks ago';
+  return Math.round(days / 30) + ' months ago';
+}
+function _docsFmtSize(bytes) {
+  if (!bytes && bytes !== 0) return '—';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+}
+function _docsStatusBadge(status) {
+  if (status === 'review')   return '<span class="badge badge-review">In review</span>';
+  if (status === 'archived') return '<span class="badge badge-draft">Archived</span>';
+  return '<span class="badge badge-accepted">Active</span>';
 }
 
 // ── Page render ────────────────────────────────────────────────────────────
@@ -42658,26 +42688,17 @@ function renderDocumentsPage() {
   const cont = document.getElementById('documents-content');
   if (!hero || !cont) return;
 
-  const active   = DOCUMENTS.filter(d => d.status !== 'archived');
-  const offCount = _docsOfflineSet().size;
-  hero.innerHTML = renderPageHero({
-    eyebrow: 'Project',
-    title: 'Document Library',
-    sub:   'Controlled procedures, specs, permits & reports — versioned, searchable, offline-ready',
-    stats: [
-      { label: 'Documents', value: active.length, tone: 'blue' },
-      { label: 'Revisions', value: DOC_VERSIONS.length },
-      { label: 'Offline',   value: offCount, tone: 'good' },
-      { label: 'Types',     value: new Set(active.map(d => d.doc_type)).size, tone: 'muted' },
-    ],
-  });
+  // Simple hero — no KPI/stat cards (per design handoff).
+  hero.innerHTML = `
+    <div class="page-eyebrow">Documents</div>
+    <h1 class="page-title">Project Documentation</h1>
+    <p class="page-sub">CDRLs, signed test reports, procedures, drawings and reference materials — version-controlled for the BART CBTC field team.</p>`;
 
-  const manageBtn = _docsCanManage() ? `
-    <button class="admin-action-btn-secondary" onclick="_docsNewFolder()" style="padding:8px 14px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;">
-      + New Folder
-    </button>
-    <button class="admin-action-btn" onclick="_docsOpenUpload()" style="background:#6366f1;color:#fff;border:none;padding:8px 18px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;">
-      + Add Document
+  const manageBtns = _docsCanManage() ? `
+    <button class="admin-action-btn-secondary" onclick="_docsNewFolder()" style="padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">+ New Folder</button>
+    <button class="docs-primary-btn" onclick="_docsOpenUpload()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+      Upload Document
     </button>` : '';
 
   const typeOpts = _docsTypeOptions().map(t =>
@@ -42688,29 +42709,30 @@ function renderDocumentsPage() {
     `<option value="${escapeHtml(l)}" ${_docsFilter.location === l ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('');
 
   cont.innerHTML = `
+    <div class="docs-headrow">
+      <div class="docs-crumbs" id="docs-breadcrumb"></div>
+      <div style="display:flex;gap:10px;align-items:center;">${manageBtns}</div>
+    </div>
     <div class="docs-toolbar">
       <div class="docs-search-wrap">
-        <svg class="docs-search-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/></svg>
-        <input id="docs-search" class="docs-search-input" type="search" placeholder="Search title, number, tags…"
+        <svg class="docs-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input id="docs-search" class="docs-search-input" type="search" placeholder="Search documents, numbers, tags…"
           value="${escapeHtml(_docsFilter.q)}" oninput="_docsSetFilter('q', this.value)">
       </div>
-      <select class="filter-select" onchange="_docsSetFilter('type', this.value)">
+      <select class="docs-filter-select" onchange="_docsSetFilter('type', this.value)">
         <option value="">All types</option>${typeOpts}
       </select>
-      <select class="filter-select" onchange="_docsSetFilter('subsystem', this.value)">
+      <select class="docs-filter-select" onchange="_docsSetFilter('subsystem', this.value)">
         <option value="">All subsystems</option>${subOpts}
       </select>
-      <select class="filter-select" onchange="_docsSetFilter('location', this.value)">
+      <select class="docs-filter-select" onchange="_docsSetFilter('location', this.value)">
         <option value="">All locations</option>${locOpts}
       </select>
       <label class="docs-archived-toggle">
         <input type="checkbox" ${_docsFilter.showArchived ? 'checked' : ''} onchange="_docsSetFilter('showArchived', this.checked)">
         Show archived
       </label>
-      <div style="flex:1;"></div>
-      ${manageBtn}
     </div>
-    <div id="docs-breadcrumb"></div>
     <div id="docs-list"></div>`;
 
   _docsRenderBreadcrumb();
@@ -42721,22 +42743,25 @@ function renderDocumentsPage() {
 function _docsRenderBreadcrumb() {
   const el = document.getElementById('docs-breadcrumb');
   if (!el) return;
-  if (_docsFilterActive()) {                       // search mode — no folder path
-    el.innerHTML = `<div class="docs-crumbs"><span class="docs-crumb-muted">Search results across all folders</span></div>`;
-    return;
-  }
   const path = DocsAPI.folderPath(_docsCwd);
-  const root = `<span class="docs-crumb ${_docsCwd ? '' : 'active'}"
+  let html = `<span class="docs-crumb ${_docsCwd ? '' : 'active'}"
       ondragover="_docsDragOver(event)" ondragleave="_docsDragLeave(event)" ondrop="_docsDrop(event,'')"
       onclick="_docsNavTo('')">All Documents</span>`;
-  const parts = path.map((f, i) => {
-    const isLast = i === path.length - 1;
-    return `<span class="docs-crumb-sep">›</span>` +
-      `<span class="docs-crumb ${isLast ? 'active' : ''}"
-        ondragover="_docsDragOver(event)" ondragleave="_docsDragLeave(event)" ondrop="_docsDrop(event,'${f.id}')"
-        onclick="_docsNavTo('${f.id}')">${escapeHtml(f.name)}</span>`;
-  }).join('');
-  el.innerHTML = `<div class="docs-crumbs">${root}${parts}</div>`;
+  if (_docsCwd) {
+    html += path.map((f, i) => {
+      const isLast = i === path.length - 1;
+      return `<span class="docs-crumb-sep">›</span>` +
+        `<span class="docs-crumb ${isLast ? 'active' : ''}"
+          ondragover="_docsDragOver(event)" ondragleave="_docsDragLeave(event)" ondrop="_docsDrop(event,'${f.id}')"
+          onclick="_docsNavTo('${f.id}')">${escapeHtml(f.name)}</span>`;
+    }).join('');
+  } else if (_docsFilterActive()) {
+    html += `<span class="docs-crumb-muted">— search results</span>`;
+  } else {
+    const libs = DocsAPI.childFolders(null).length;
+    if (libs) html += `<span class="docs-crumb-muted">— ${libs} ${libs === 1 ? 'library' : 'libraries'}</span>`;
+  }
+  el.innerHTML = html;
 }
 
 function _docsNavTo(folderId) {
@@ -42755,33 +42780,43 @@ function _docsRenderList() {
     return;
   }
 
-  const searchMode = _docsFilterActive();
-  // Browser mode: subfolders of the current folder, then documents in it.
-  // Search mode: flat list of all filtered documents (folder path shown per row).
-  const folders = searchMode ? [] : DocsAPI.childFolders(_docsCwd);
-  const docs = searchMode
-    ? _docsApplyFilters()
-    : _docsApplyFilters().filter(d => (d.folder_id || null) === (_docsCwd || null));
+  const browsing = !_docsFilterActive();
+  // Folder rows: only when browsing the current folder (not searching/filtering).
+  const folders = browsing ? DocsAPI.childFolders(_docsCwd) : [];
+  // File rows: current folder when browsing; across all folders when searching.
+  const files = browsing
+    ? _docsApplyFilters().filter(d => (d.folder_id || null) === (_docsCwd || null))
+    : _docsApplyFilters();
 
-  if (!folders.length && !docs.length) {
-    el.innerHTML = searchMode
-      ? `<div class="docs-empty"><h3>No matches</h3><p>Try clearing filters or search.</p></div>`
-      : `<div class="docs-empty"><h3>This folder is empty</h3><p>${_docsCanManage() ? 'Add a document or create a subfolder here, or drag items in.' : 'Nothing here yet.'}</p></div>`;
+  if (!folders.length && !files.length) {
+    el.innerHTML = `<div class="docs-empty">
+        <h3>No documents match your filters</h3>
+        <p>Try clearing the search, type filter, or returning to all libraries.</p>
+      </div>`;
     return;
   }
 
+  const latestCount = files.filter(d => !!DocsAPI.currentVersion(d)).length;
+  const itemCount   = folders.length + files.length;
+
   el.innerHTML = `
-    <div class="data-card" style="padding:0;overflow:hidden;">
-      <table class="data-table docs-table">
-        <thead><tr>
-          <th>${searchMode ? 'Document' : 'Name'}</th><th>Type</th><th>${searchMode ? 'Folder' : 'Subsystem'}</th><th>Location</th>
-          <th>Rev</th><th>Updated</th><th style="text-align:right;">Actions</th>
-        </tr></thead>
-        <tbody>
-          ${folders.map(f => _docsFolderRowHTML(f)).join('')}
-          ${docs.map(d => _docsRowHTML(d, searchMode)).join('')}
-        </tbody>
-      </table>
+    <div class="data-card">
+      <div class="data-card-head">
+        <span class="data-count"><span class="docs-count-strong">${itemCount}</span> item${itemCount === 1 ? '' : 's'} · ${latestCount} at latest revision</span>
+        <button class="export-btn" onclick="_docsExportCsv()">Export CSV</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table docs-table">
+          <thead><tr>
+            <th>Document</th><th>Type</th><th>Rev</th><th>Location</th>
+            <th>Updated</th><th>Size</th><th>Status</th><th style="text-align:right;">Actions</th>
+          </tr></thead>
+          <tbody>
+            ${folders.map(f => _docsFolderRowHTML(f)).join('')}
+            ${files.map(d => _docsRowHTML(d)).join('')}
+          </tbody>
+        </table>
+      </div>
     </div>`;
 }
 
@@ -42790,7 +42825,7 @@ function _docsFolderRowHTML(f) {
   const subCount = DocsAPI.childFolders(f.id).length;
   const bits = [];
   if (subCount) bits.push(`${subCount} folder${subCount > 1 ? 's' : ''}`);
-  if (docCount) bits.push(`${docCount} doc${docCount > 1 ? 's' : ''}`);
+  bits.push(`${docCount} document${docCount === 1 ? '' : 's'}`);
   const manage = _docsCanManage();
   return `
     <tr class="docs-folder-row" data-folder-id="${f.id}"
@@ -42799,15 +42834,13 @@ function _docsFolderRowHTML(f) {
       <td>
         <div class="docs-title-cell" onclick="_docsNavTo('${f.id}')">
           <span class="docs-folder-icon">📁</span>
-          <div><div class="docs-title docs-folder-name">${escapeHtml(f.name)}</div>
-            <div class="docs-meta-line"><span class="docs-folder-count">${bits.join(' · ') || 'empty'}</span></div></div>
+          <div><span class="docs-title docs-folder-name">${escapeHtml(f.name)}</span>
+            <div class="docs-meta-line"><span class="docs-folder-count">${bits.join(' · ')}</span></div></div>
         </div>
       </td>
-      <td><span class="docs-type-chip" style="background:#fef3c7;color:#92400e;">Folder</span></td>
-      <td>—</td><td>—</td><td>—</td>
-      <td style="font-size:12px;color:var(--gray-500);">${f.updated_at ? new Date(f.updated_at).toLocaleDateString() : '—'}</td>
-      <td style="text-align:right;white-space:nowrap;">
-        <button class="docs-icon-btn" title="Open folder" onclick="_docsNavTo('${f.id}')">↳</button>
+      <td colspan="6"></td>
+      <td class="docs-actions-cell">
+        <button class="docs-icon-btn" title="Open folder" onclick="_docsNavTo('${f.id}')">›</button>
         ${manage ? `
           <button class="docs-icon-btn" title="Move folder" onclick="_docsOpenMove('folder','${f.id}')">📂</button>
           <button class="docs-icon-btn" title="Rename" onclick="_docsRenameFolder('${f.id}')">✎</button>
@@ -42816,62 +42849,90 @@ function _docsFolderRowHTML(f) {
     </tr>`;
 }
 
-function _docsRowHTML(d, searchMode = false) {
+function _docsRowHTML(d) {
   const ver   = DocsAPI.currentVersion(d);
   const verN  = DocsAPI.versionsFor(d.id).length;
   const off   = ver && _docIsOffline(ver.id);
   const arch  = d.status === 'archived';
   const manage = _docsCanManage();
-  const tags  = (d.tags || []).slice(0, 4).map(t => `<span class="docs-tag">${escapeHtml(t)}</span>`).join('');
-  // Third column shows the folder path in search mode, subsystem otherwise.
-  const pathStr = DocsAPI.folderPath(d.folder_id).map(f => f.name).join(' / ') || 'All Documents';
-  const col3 = searchMode
-    ? `<span class="docs-path-chip" title="${escapeHtml(pathStr)}">📁 ${escapeHtml(pathStr)}</span>`
-    : escapeHtml(d.subsystem || '—');
+  const ext   = (ver?.file_ext || 'file').toLowerCase();
+  const tags  = (d.tags || []).slice(0, 2).map(t => `<span class="docs-tag">${escapeHtml(t)}</span>`).join('');
   return `
     <tr class="${arch ? 'docs-row-archived' : ''}"
         ${manage ? `draggable="true" ondragstart="_docsDragStart(event,'doc','${d.id}')" ondragend="_docsDragEnd(event)"` : ''}>
       <td>
         <div class="docs-title-cell">
-          <span class="docs-ftype-badge ftype-${escapeHtml(ver?.file_ext || 'file')}">${escapeHtml((ver?.file_ext || '?').toUpperCase())}</span>
+          <span class="docs-ftype-badge ftype-${escapeHtml(ext)}">${escapeHtml(ext.toUpperCase())}</span>
           <div>
-            <div class="docs-title" onclick="_docsOpenDetail('${d.id}')">${escapeHtml(d.title)}${arch ? ' <span class="badge badge-notstarted">Archived</span>' : ''}</div>
+            <span class="docs-title" onclick="_docsOpenDetail('${d.id}')">${escapeHtml(d.title)}</span>
             <div class="docs-meta-line">
               ${d.doc_number ? `<span class="docs-docnum">${escapeHtml(d.doc_number)}</span>` : ''}
-              ${off ? '<span class="docs-offline-pill">● Offline</span>' : ''}
               ${tags}
+              ${off ? '<span class="docs-offline-pill">OFFLINE</span>' : ''}
             </div>
           </div>
         </div>
       </td>
       <td><span class="docs-type-chip">${escapeHtml(_docTypeLabel(d.doc_type))}</span></td>
-      <td>${col3}</td>
-      <td>${escapeHtml(d.location || '—')}</td>
-      <td><span class="badge badge-passed">${escapeHtml(ver?.revision || '—')}</span>${verN > 1 ? `<span class="docs-vcount" title="${verN} revisions">·${verN}</span>` : ''}</td>
-      <td style="font-size:12px;color:var(--gray-500);">${d.updated_at ? new Date(d.updated_at).toLocaleDateString() : '—'}</td>
-      <td style="text-align:right;white-space:nowrap;">
-        ${ver ? `<button class="docs-icon-btn" title="Open / download" onclick="_docsDownload('${ver.id}')">⬇</button>` : ''}
+      <td>
+        <span class="docs-rev-cell">Rev ${escapeHtml(ver?.revision || '—')}</span>
+        ${ver ? '<span class="docs-latest-pill">LATEST</span>' : ''}
+        ${verN > 1 ? `<span class="docs-vcount" title="${verN} revisions">v${verN}</span>` : ''}
+      </td>
+      <td class="docs-loc-cell">${escapeHtml(d.location || '—')}</td>
+      <td><div class="docs-date-cell">${_docsFmtDate(d.updated_at)}<span class="rel">${_docsRelDate(d.updated_at)}</span></div></td>
+      <td class="docs-size-cell">${_docsFmtSize(ver?.file_size)}</td>
+      <td>${_docsStatusBadge(d.status)}</td>
+      <td class="docs-actions-cell">
+        ${ver ? `<button class="docs-icon-btn" title="View" onclick="_docsDownload('${ver.id}', false)">👁</button>` : ''}
+        ${ver ? `<button class="docs-icon-btn" title="Download" onclick="_docsDownload('${ver.id}', true)">⤓</button>` : ''}
+        <button class="docs-icon-btn" title="Version history" onclick="_docsOpenDetail('${d.id}')">⟳</button>
         ${ver ? (off
           ? `<button class="docs-icon-btn" title="Remove offline copy" onclick="_docRemoveOffline('${ver.id}')">✓</button>`
           : `<button class="docs-icon-btn" title="Make available offline" onclick="_docMakeOffline('${ver.id}')">☁</button>`) : ''}
         ${manage ? `<button class="docs-icon-btn" title="Move to folder" onclick="_docsOpenMove('doc','${d.id}')">📂</button>` : ''}
-        <button class="docs-icon-btn" title="Details & revisions" onclick="_docsOpenDetail('${d.id}')">⋯</button>
       </td>
     </tr>`;
 }
 
+// ── Export the current view to CSV ─────────────────────────────────────────
+function _docsExportCsv() {
+  const browsing = !_docsFilterActive();
+  const files = browsing
+    ? _docsApplyFilters().filter(d => (d.folder_id || null) === (_docsCwd || null))
+    : _docsApplyFilters();
+  const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+  const head = ['Document #', 'Title', 'Type', 'Subsystem', 'Location', 'Folder', 'Rev', 'Size', 'Updated', 'Status'];
+  const lines = [head.map(esc).join(',')];
+  files.forEach(d => {
+    const ver = DocsAPI.currentVersion(d);
+    const folder = DocsAPI.folderPath(d.folder_id).map(f => f.name).join(' / ');
+    lines.push([
+      d.doc_number, d.title, _docTypeLabel(d.doc_type), d.subsystem, d.location, folder,
+      ver?.revision, _docsFmtSize(ver?.file_size), _docsFmtDate(d.updated_at), d.status,
+    ].map(esc).join(','));
+  });
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `documents-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
 // ── Open / download a version (private bucket → fetch w/ auth → object URL) ──
-async function _docsDownload(versionId) {
+async function _docsDownload(versionId, forceDownload = false) {
   const ver = DOC_VERSIONS.find(v => v.id === versionId);
   if (!ver) return;
   try {
     const blob = await _docsStorage.downloadBlob(ver.storage_path);
     const url  = URL.createObjectURL(blob);
     const ext  = (ver.file_ext || '').toLowerCase();
-    if (['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'txt'].includes(ext)) {
-      window.open(url, '_blank');               // viewable inline
+    const viewable = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'txt'].includes(ext);
+    if (viewable && !forceDownload) {
+      window.open(url, '_blank');               // View — open inline
     } else {
-      const a = document.createElement('a');     // force download for office/binary
+      const a = document.createElement('a');     // Download — force save
       a.href = url; a.download = ver.file_name || ('document.' + (ext || 'bin'));
       document.body.appendChild(a); a.click(); a.remove();
     }

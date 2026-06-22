@@ -13963,3 +13963,76 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 tr.docs-drop-hot td { background: #eef2ff !important; box-shadow: inset 0 0 0 2px #6366f1; }
 .docs-table tr[draggable="true"] { cursor: grab; }
 .docs-table tr[draggable="true"]:active { cursor: grabbing; }
+
+/* ============================================================
+   DESIGN HANDOFF — Documents & Drawings redesign additions
+   (ported verbatim from the Claude Design mocks)
+   ============================================================ */
+.docs-primary-btn{
+  display:inline-flex;align-items:center;gap:7px;
+  background:#4f46e5;color:#fff;font-size:13px;font-weight:600;
+  padding:9px 15px;border-radius:8px;border:none;cursor:pointer;
+  transition:background .14s ease, transform .14s ease;white-space:nowrap;
+}
+.docs-primary-btn:hover{ background:#4338ca; }
+.docs-primary-btn:active{ transform:translateY(1px); }
+.docs-primary-btn svg{ width:16px;height:16px; }
+.docs-toolbar-spacer{ flex:1 1 auto; }
+
+.docs-headrow{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:16px;flex-wrap:wrap;margin:2px 0 16px;
+}
+.docs-headrow .docs-crumbs{ margin:0; }
+
+/* Grouped filter bar (overrides the earlier flat .docs-toolbar) */
+.docs-toolbar{
+  display:flex;flex-wrap:wrap;align-items:center;gap:10px;
+  padding:10px;margin-bottom:18px;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+}
+.docs-toolbar .docs-search-wrap{ flex:1 1 260px;max-width:380px; }
+.docs-archived-toggle{ margin-left:auto;padding-right:4px; }
+
+.docs-filter-select{
+  padding:8px 30px 8px 11px;border:1px solid var(--gray-300);border-radius:7px;
+  font-size:13px;background:#fff
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa0a6' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
+    no-repeat right 10px center;
+  -webkit-appearance:none;appearance:none;cursor:pointer;color:inherit;
+}
+.docs-filter-select:focus{ outline:none;border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.12); }
+
+.docs-latest-pill{
+  font-size:10px;font-weight:700;color:var(--good);background:var(--good-light);
+  border-radius:4px;padding:1px 6px;letter-spacing:.02em;margin-left:6px;
+}
+.docs-rev-cell{ font-family:ui-monospace,monospace;font-size:12px;color:var(--gray-600); }
+.docs-loc-cell{ font-size:12.5px;color:var(--gray-600); }
+.docs-size-cell{ font-family:ui-monospace,monospace;font-size:12px;color:var(--gray-500); }
+.docs-date-cell{ font-size:12.5px;color:var(--gray-700); }
+.docs-date-cell .rel{ display:block;font-size:11px;color:var(--gray-400);margin-top:1px; }
+.docs-actions-cell{ text-align:right;white-space:nowrap; }
+.docs-actions-cell .docs-icon-btn:first-child{ margin-left:0; }
+.docs-count-strong{ color:var(--text);font-weight:700; }
+.docs-empty-hidden{ display:none; }
+
+/* ── Drawings ── */
+.drw-headrow{ display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:2px 0 14px; }
+.drw-toolbar{
+  display:flex;flex-wrap:wrap;align-items:center;gap:10px;
+  padding:10px;margin-bottom:20px;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+}
+.drw-toolbar .docs-search-wrap{ flex:1 1 260px;max-width:380px; }
+.drw-toolbar .docs-filter-select{ min-width:150px; }
+.drw-view-toggle{ margin-left:auto;display:inline-flex;border:1px solid var(--gray-300);border-radius:8px;overflow:hidden; }
+.drw-view-toggle button{ background:#fff;border:none;padding:8px 12px;font-size:12px;font-weight:600;color:var(--text-muted);cursor:pointer;transition:all .14s; }
+.drw-view-toggle button.active{ background:var(--accent-indigo);color:#fff; }
+.drw-view-toggle button:not(.active):hover{ background:var(--surface-3);color:var(--text); }
+.drw-sheet-table td, .drw-sheet-table th{ padding:11px 14px; }
+.drw-sheet-table th:last-child, .drw-sheet-table td:last-child{ text-align:center;width:62px; }
+.drw-latest-pill{ font-size:10px;font-weight:700;color:var(--good);background:var(--good-light);border-radius:4px;padding:1px 6px;margin-left:6px; }
+.drw-super-pill{ font-size:10px;font-weight:700;color:var(--warn);background:var(--warn-light);border-radius:4px;padding:1px 6px;margin-left:6px; }
+.drw-disc-count{ font-weight:600;color:var(--gray-400);margin-left:8px;letter-spacing:0; }
+.drw-card-rev{ font-size:10px;font-weight:700;color:var(--accent-indigo);background:rgba(99,102,241,.1);border-radius:4px;padding:1px 6px; }
