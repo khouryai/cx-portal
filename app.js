@@ -35104,11 +35104,13 @@ function _dynRowHtml(r) {
   const schedLabel = _dynScheduledLabel(r);
   // Auto-roll-forward trail: when an access window is CANCELLED, any runs on it
   // are automatically moved to the next future planned window of the same
-  // campaign + zone (mode-compatible). If there's no such window they fall back
-  // to the BACKLOG (unscheduled). The badge shows which happened.
-  const movedDest = r.shift_id ? `to ${_dynFmtDate(r.scheduled_for_date)}` : 'to backlog';
-  const movedBadge = (r.roll_count > 0)
-    ? `<br/><span class="badge" style="background:#fef3c7;color:#92400e;font-size:10px;" title="${escapeHtml(r.roll_note || 'Auto-moved off a cancelled access window')}">↻ moved ${escapeHtml(movedDest)}${r.roll_count > 1 ? ` ×${r.roll_count}` : ''}</span>`
+  // campaign + zone (mode-compatible). We surface that trail ONLY while the run is
+  // still SCHEDULED at its rolled-to date — once a run sits back in the backlog
+  // (manually unscheduled OR auto-rolled there), the "Not scheduled" state already
+  // says everything, so the stale "↻ moved" badge is hidden. (Consistent with
+  // resetting the roll trail on a manual unschedule.)
+  const movedBadge = (r.roll_count > 0 && r.shift_id)
+    ? `<br/><span class="badge" style="background:#fef3c7;color:#92400e;font-size:10px;" title="${escapeHtml(r.roll_note || 'Auto-moved off a cancelled access window')}">↻ moved to ${escapeHtml(_dynFmtDate(r.scheduled_for_date))}${r.roll_count > 1 ? ` ×${r.roll_count}` : ''}</span>`
     : '';
   // A passed/NA run shows a done tag here (not a date) — a Pass auto-releases its
   // future shift slot, so the scheduled column denotes the test is complete.
