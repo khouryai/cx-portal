@@ -96,6 +96,9 @@ console.log("\n_teamFitScale (fit-to-window scaling):");
   ok("  exact fit stays at 1", _teamFitScale(1000, 1000) === 1);
   ok("  zero/undefined measurement → no scaling (1)",
      _teamFitScale(0, 1000) === 1 && _teamFitScale(1900, 0) === 1 && _teamFitScale(undefined, undefined) === 1);
+  ok("  readability floor caps how small it shrinks", _teamFitScale(2000, 1000, 0.8) === 0.8);
+  ok("  floor doesn't kick in when it already fits larger", _teamFitScale(1100, 1000, 0.8) > 0.8);
+  ok("  floor never enlarges a chart that fits", _teamFitScale(500, 1000, 0.8) === 1);
 }
 
 console.log(`\n${pass} passed, ${fail} failed.\n`);

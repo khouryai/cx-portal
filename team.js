@@ -105,11 +105,16 @@ function renderOrg() {
 }
 
 // Pure: scale factor that makes a `natural`-wide chart fit `avail` px — never
-// enlarges (caps at 1), guards against zero/undefined measurements.
-function _teamFitScale(natural, avail) {
+// enlarges (caps at 1) and never shrinks past `min` (readability floor), so the
+// chart stays legible; guards against zero/undefined measurements.
+function _teamFitScale(natural, avail, min) {
   if (!natural || !avail) return 1;
-  return Math.min(1, avail / natural);
+  return Math.max(min || 0, Math.min(1, avail / natural));
 }
+
+// Below this the text gets hard to read — stop shrinking and let the (rare)
+// extra-wide chart scroll sideways instead of becoming illegible.
+const _TEAM_MIN_SCALE = 0.8;
 
 // Shrink the chart to fit its container width so the org never scrolls left/right.
 // (Transform-only: layout is untouched; we just collapse the leftover height.)
@@ -126,8 +131,11 @@ function _teamFitToWidth() {
   list.style.width = prevWidth;
   const avail = scroll.clientWidth;
   if (!avail || !natural) return;            // page hidden / not laid out yet
-  const scale = _teamFitScale(natural, avail);
+  const scale = _teamFitScale(natural, avail, _TEAM_MIN_SCALE);
   list.style.transform = scale < 1 ? `scale(${scale})` : 'none';
+  // If the readability floor still overflows, allow a horizontal scroll rather
+  // than clip; otherwise keep it pinned with no sideways scrolling.
+  scroll.style.overflowX = (natural * scale > avail + 1) ? 'auto' : 'hidden';
   // A scaled element keeps its original layout box, leaving dead space below —
   // pin the container to the scaled height so the page flows naturally.
   scroll.style.height = Math.ceil(list.getBoundingClientRect().height) + 'px';
