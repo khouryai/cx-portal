@@ -3213,7 +3213,7 @@ function _rayCopyEmail() {
     const btn = event.target;
     btn.textContent = '✓ Copied!';
     setTimeout(() => { btn.innerHTML = icon('clipboard') + ' Copy Email'; }, 2000);
-  }).catch(() => { prompt('Copy this email:', _RA_EMAIL); });
+  }).catch(async () => { await cxPrompt('Copy this email:', _RA_EMAIL); });
 }
 function _rayOpenEmail() {
   window.open(`mailto:${_RA_EMAIL}?subject=Portal%20Access%20Request&body=Hello%2C%0A%0AI%20would%20like%20to%20request%20access%20to%20the%20BART%20CBTC%20T%26C%20Portal.%0A%0AName%3A%20%0ACompany%20%2F%20Role%3A%20%0A`, '_blank');
@@ -4024,7 +4024,7 @@ async function bulkDeleteLocations() {
     toast(`Some selected locations have sub-locations not selected. Select all children too, or delete them first.`, 'error');
     return;
   }
-  if (!confirm(`Delete ${ids.length} location${ids.length > 1 ? 's' : ''}? This cannot be undone.`)) return;
+  if (!await cxConfirm(`Delete ${ids.length} location${ids.length > 1 ? 's' : ''}? This cannot be undone.`)) return;
 
   // Delete children-first order (deepest level first)
   const ordered = ids.slice().sort((a, b) => {
@@ -4132,7 +4132,7 @@ async function deleteLocation(id) {
     toast(`Remove the ${children.length} sub-location(s) under "${loc.name}" first`, 'error');
     return;
   }
-  if (!confirm(`Delete "${loc.name}"? This cannot be undone.`)) return;
+  if (!await cxConfirm(`Delete "${loc.name}"? This cannot be undone.`)) return;
   const { error } = await _sb.from('locations').delete().eq('id', id);
   if (error) { toast('Delete failed: ' + error.message, 'error'); return; }
   LOCS.splice(LOCS.indexOf(loc), 1);
@@ -4817,9 +4817,9 @@ function addTplSection() {
   document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
 }
 
-function removeTplSection(si) {
+async function removeTplSection(si) {
   if (_templateSections.length <= 1) return;
-  if (!confirm(`Remove Section ${si + 1} and all its test cases?`)) return;
+  if (!await cxConfirm(`Remove Section ${si + 1} and all its test cases?`)) return;
   _templateSections.splice(si, 1);
   document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
 }
@@ -5016,7 +5016,7 @@ async function deleteTemplate(id) {
   if (!tpl) return;
   const deployCount = DEPLOYMENTS.filter(d => d.templateId === id).length;
   const warn = deployCount > 0 ? ` This template has ${deployCount} active deployment(s).` : '';
-  if (!confirm(`Delete template "${tpl.name}"?${warn}\n\nThis cannot be undone.`)) return;
+  if (!await cxConfirm(`Delete template "${tpl.name}"?${warn}\n\nThis cannot be undone.`)) return;
   const { error } = await _sb.from('templates').delete().eq('id', id);
   if (error) { toast('Delete failed: ' + error.message, 'error'); return; }
   const idx = TEMPLATES.indexOf(tpl);
@@ -5318,7 +5318,7 @@ async function fscMoveOption(key, idx, dir) {
 async function fscLoadDefaults(key) {
   const def = _fscDef(key);
   if (!def?.defaults?.length) return;
-  if (!confirm(`Reset "${def.label}" to ${def.defaults.length} built-in default options?\nThis will replace any custom options.`)) return;
+  if (!await cxConfirm(`Reset "${def.label}" to ${def.defaults.length} built-in default options?\nThis will replace any custom options.`)) return;
   await _fscSave(key, [...def.defaults]);
 }
 
@@ -5529,7 +5529,7 @@ async function updateProfileActive(id, is_active) {
 }
 
 async function deleteUserConfirm(id, name) {
-  if (!confirm(`Remove "${name}" from the portal?\n\nThis removes their profile and access. Their Supabase auth account is preserved.`)) return;
+  if (!await cxConfirm(`Remove "${name}" from the portal?\n\nThis removes their profile and access. Their Supabase auth account is preserved.`)) return;
   const { error } = await _sb.from('profiles').delete().eq('id', id);
   if (error) { toast('Remove failed: ' + error.message, 'error'); return; }
   toast(`Removed ${name}`, 'success');
@@ -6945,8 +6945,8 @@ async function submitIntakeFinal() {
   const restoreBtn = () => { if (btn) { btn.disabled = false; btn.textContent = 'Submit Daily Log'; } };
 
   try {
-    if (!_sb)             { alert('Supabase client not initialized.'); restoreBtn(); return; }
-    if (!currentRoleUser) { alert('Not logged in — please sign in first.'); restoreBtn(); return; }
+    if (!_sb)             { cxAlert('Supabase client not initialized.'); restoreBtn(); return; }
+    if (!currentRoleUser) { cxAlert('Not logged in — please sign in first.'); restoreBtn(); return; }
 
     const allItems = [
       ..._sessionLog.map(e => ({ ...e, status: e.newStatus })),
@@ -7077,12 +7077,12 @@ async function submitIntakeFinal() {
     intakeStep      = 1;
     _s2Phase = ''; _s2Loc = ''; _s2Act = ''; _s2TestId = ''; _s2AssetId = '';
     _resetIntakeRehydration({ clearDraft: true });
-    alert(`✓ Daily log submitted!\n\n${resultRows.length > 0 ? `${resultRows.length} test result(s) saved\n` : 'No test results logged (delay-only day)\n'}1 daily log row saved`);
+    cxAlert(`✓ Daily log submitted!\n\n${resultRows.length > 0 ? `${resultRows.length} test result(s) saved\n` : 'No test results logged (delay-only day)\n'}1 daily log row saved`);
     renderFieldIntake();
 
   } catch (err) {
     console.error('[submitIntakeFinal] error:', err);
-    alert('Submit failed: ' + (err?.message || JSON.stringify(err)));
+    cxAlert('Submit failed: ' + (err?.message || JSON.stringify(err)));
     restoreBtn();
   }
 }
@@ -8252,7 +8252,7 @@ async function addPunchComment(id) {
 }
 
 async function softDeletePunch(id) {
-  if (!confirm('Move to Recycle Bin?')) return;
+  if (!await cxConfirm('Move to Recycle Bin?')) return;
   const { error } = await _sb.from('punch_items').update({ is_deleted: true }).eq('id', id);
   if (error) { toast('Failed: ' + error.message, 'error'); return; }
   const p = PUNCH_DB.find(x => x.id === id); if (p) p.is_deleted = true;
@@ -10549,7 +10549,7 @@ async function _trpUnlinkActivity(uid, activityKey) {
   if (!act) { toast('Linked activity not found', 'error'); return; }
   const count = act.items.length;
   if (!count) return;
-  if (!confirm(`Unlink "${act.activity}" from "${row.title}"?\n\nThis clears Test Report links from ${count} test case${count===1?'':'s'}.`)) return;
+  if (!await cxConfirm(`Unlink "${act.activity}" from "${row.title}"?\n\nThis clears Test Report links from ${count} test case${count===1?'':'s'}.`)) return;
   try {
     await _trpClearTestItemReportLinks(act.items);
     logAudit('Test Report Activity Unlinked', row.title, `${act.activity}: ${count} test case${count===1?'':'s'}`);
@@ -10573,7 +10573,7 @@ async function _trpDeleteReport(uid) {
     linkedItems.length ? `This will clear related Test Report links from ${linkedItems.length} test case${linkedItems.length===1?'':'s'}.` : '',
     'This cannot be undone.',
   ].filter(Boolean).join('\n\n');
-  if (!confirm(msg)) return;
+  if (!await cxConfirm(msg)) return;
   try {
     await _trpClearTestItemReportLinks(linkedItems);
     const childIds = familyIds.filter(id => String(id) !== String(row.id));
@@ -11646,9 +11646,9 @@ function _trRenameProcedure(oldKey, newProc) {
   _reRenderTR();
 }
 
-function _trAddSection() {
+async function _trAddSection() {
   if (!_trEditMode) return;
-  const name = prompt('Enter new Test Section name');
+  const name = await cxPrompt('Enter new Test Section name');
   if (!name || !name.trim()) return;
   const tp = name.trim();
   const exists = (_trDraftItems || []).some(r => (r.TestProcedure || '(No Procedure)') === tp) || _trEmptySections.includes(tp);
@@ -11769,7 +11769,7 @@ async function _trSaveEdit(key) {
 async function _trDeleteCase(testId) {
   const r = (_trDraftItems || []).find(x => String(x.TestID) === String(testId)) || TI.find(x => String(x.TestID) === String(testId));
   if (!r) return;
-  if (!confirm(`Are you sure you want to permanently delete ${r.TestCaseCode || r.TestName || r.TestID}? This cannot be undone.`)) return;
+  if (!await cxConfirm(`Are you sure you want to permanently delete ${r.TestCaseCode || r.TestName || r.TestID}? This cannot be undone.`)) return;
   try {
     if (!r._isNew) {
       await _dbDelete('test_items', { test_id: r.TestID });
@@ -11791,7 +11791,7 @@ async function _trDeleteParentCase(testId) {
   const parent   = TI.find(r => String(r.TestID) === String(testId));
   if (!parent) return;
   const children = TI.filter(r => String(r.ParentTestId) === String(testId));
-  if (!confirm(
+  if (!await cxConfirm(
     `Delete "${parent.TestCaseCode || parent.TestName || testId}" and all ${children.length} linked asset row${children.length !== 1 ? 's' : ''}?\n\nThis cannot be undone.`
   )) return;
   try {
@@ -11828,7 +11828,7 @@ async function _trDeleteAssetRow(childTestId) {
   if (!child) return;
   const asset = child.AssetId ? ASSETS.find(a => a.id === child.AssetId) : null;
   const label = asset ? asset.name : (child.TestCaseCode || childTestId);
-  if (!confirm(`Remove asset "${label}" from this test case? The asset record itself will be kept.\n\nThis cannot be undone.`)) return;
+  if (!await cxConfirm(`Remove asset "${label}" from this test case? The asset record itself will be kept.\n\nThis cannot be undone.`)) return;
   try {
     // Unlink the asset (removes asset_test_links row and resets child test_item)
     if (child.AssetId && child.ParentTestId) {
@@ -11973,7 +11973,7 @@ async function _trApplyBulkField() {
 async function _trBulkDelete() {
   const ids = [..._trSelected];
   if (!ids.length) return;
-  if (!confirm(`Permanently delete ${ids.length} selected test case${ids.length===1?'':'s'}? This cannot be undone.`)) return;
+  if (!await cxConfirm(`Permanently delete ${ids.length} selected test case${ids.length===1?'':'s'}? This cannot be undone.`)) return;
   // Delete all in one pass — bypass _trDeleteCase's per-item confirm
   let deleted = 0;
   for (const id of ids) {
@@ -12200,7 +12200,7 @@ async function _amDeleteActivity() {
   const act = _amGetActivities().find(a => a.key === key);
   if (!act) return;
   const itemCount = act.items.length;
-  if (!confirm(
+  if (!await cxConfirm(
     `Delete activity "${act.activity}" and all ${itemCount} test case${itemCount !== 1 ? 's' : ''}?\n\n` +
     `Phase: ${act.phase}\nLocation: ${act.location}\nSubsystem: ${act.subsystem}\n\n` +
     `This cannot be undone.`
@@ -12234,7 +12234,7 @@ async function _amBulkDeleteActivities() {
   const selected = all.filter(a => _amSelected.has(a.key));
   if (!selected.length) return;
   const totalItems = selected.reduce((s, a) => s + a.items.length, 0);
-  if (!confirm(
+  if (!await cxConfirm(
     `Delete ${selected.length} activit${selected.length !== 1 ? 'ies' : 'y'} and ${totalItems} test case${totalItems !== 1 ? 's' : ''}?\n\n` +
     `This cannot be undone.`
   )) return;
@@ -12507,7 +12507,86 @@ function modal({ title, sub, body, footer, size }) {
 }
 
 function closeModal() {
+  // If a UI dialog (cxAlert/cxConfirm/cxPrompt) is awaiting, closing via the ×
+  // or a click counts as cancel so the awaiting code never hangs.
+  if (_cxDialogResolver) { const r = _cxDialogResolver; _cxDialogResolver = null; r(_cxDialogCancelValue); }
   document.getElementById('modal-overlay')?.classList.remove('active');
+}
+
+// =============================================================================
+// IN-APP DIALOGS — UI replacements for native alert()/confirm()/prompt().
+// Promise-based and rendered through the same modal() shell as the rest of the
+// app, so we never trigger the browser's "<site> says…" popups. Drop-in:
+//   await cxConfirm(msg)  → true / false      (Cancel or × → false)
+//   await cxPrompt(msg, def) → string / null  (Cancel or × → null)
+//   await cxAlert(msg)    → resolves on OK
+// =============================================================================
+let _cxDialogResolver = null;     // pending Promise resolver, or null
+let _cxDialogCancelValue = null;  // what Cancel/× resolves to for the open dialog
+
+function _cxDialogText(message) {
+  return escapeHtml(message == null ? '' : String(message)).replace(/\n/g, '<br>');
+}
+
+function _cxDialogFinish(value) {
+  const r = _cxDialogResolver;
+  _cxDialogResolver = null;       // clear first so closeModal() won't re-resolve
+  closeModal();
+  if (r) r(value);
+}
+
+function cxAlert(message, opts) {
+  opts = opts || {};
+  return new Promise(resolve => {
+    if (_cxDialogResolver) _cxDialogFinish(_cxDialogCancelValue);
+    _cxDialogResolver = resolve; _cxDialogCancelValue = undefined;
+    modal({
+      title: opts.title || 'Notice', size: 'small',
+      body: `<p class="cx-dialog-text">${_cxDialogText(message)}</p>`,
+      footer: `<button class="form-submit" onclick="_cxDialogFinish(undefined)">${escapeHtml(opts.ok || 'OK')}</button>`,
+    });
+  });
+}
+
+function cxConfirm(message, opts) {
+  opts = opts || {};
+  return new Promise(resolve => {
+    if (_cxDialogResolver) _cxDialogFinish(_cxDialogCancelValue);
+    _cxDialogResolver = resolve; _cxDialogCancelValue = false;
+    modal({
+      title: opts.title || 'Please confirm', size: 'small',
+      body: `<p class="cx-dialog-text">${_cxDialogText(message)}</p>`,
+      footer: `<button class="form-secondary" onclick="closeModal()">${escapeHtml(opts.cancel || 'Cancel')}</button>
+               <button class="form-submit${opts.danger ? ' cx-dialog-danger' : ''}" onclick="_cxDialogFinish(true)">${escapeHtml(opts.ok || 'OK')}</button>`,
+    });
+  });
+}
+
+function cxPrompt(message, defaultValue, opts) {
+  opts = opts || {};
+  return new Promise(resolve => {
+    if (_cxDialogResolver) _cxDialogFinish(_cxDialogCancelValue);
+    _cxDialogResolver = resolve; _cxDialogCancelValue = null;
+    const val = defaultValue == null ? '' : String(defaultValue);
+    modal({
+      title: opts.title || 'Enter a value', size: 'small',
+      body: `<p class="cx-dialog-text">${_cxDialogText(message)}</p>
+             <input type="text" id="cx-dialog-input" class="form-input" value="${escapeHtml(val)}" style="margin-top:10px;">`,
+      footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+               <button class="form-submit" onclick="_cxDialogPromptOk()">${escapeHtml(opts.ok || 'OK')}</button>`,
+    });
+    setTimeout(() => {
+      const el = document.getElementById('cx-dialog-input');
+      if (!el) return;
+      el.focus(); el.select();
+      el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); _cxDialogPromptOk(); } });
+    }, 50);
+  });
+}
+
+function _cxDialogPromptOk() {
+  const el = document.getElementById('cx-dialog-input');
+  _cxDialogFinish(el ? el.value : '');
 }
 
 // =============================================================================
@@ -13268,7 +13347,7 @@ async function _p6BulkLinkTCs(p6Id, sid) {
   if (!act) return;
 
   // Confirm
-  if (!confirm(`Link all ${act.items.length} test cases to "${_p6ActName(p6Id)}"?`)) return;
+  if (!await cxConfirm(`Link all ${act.items.length} test cases to "${_p6ActName(p6Id)}"?`)) return;
 
   let done = 0;
   for (const item of act.items) {
@@ -14743,7 +14822,7 @@ async function _p6HRestoreAll() {
 
 // ── Remove from schedule (deletes p6_activities row) ─────────────────────────
 async function _p6HRemove(pid, name) {
-  if (!confirm(`Remove "${name}" from the P6 schedule? This deletes the imported activity row.`)) return;
+  if (!await cxConfirm(`Remove "${name}" from the P6 schedule? This deletes the imported activity row.`)) return;
   try {
     await _dbDelete('p6_activities', { id: pid });
     toast('P6 activity removed', 'success');
@@ -14754,7 +14833,7 @@ async function _p6HRemove(pid, name) {
 async function _p6HBulkRemove() {
   const sel = [...document.querySelectorAll('.p6h-chk:checked')].map(c => c.dataset.pid);
   if (!sel.length) { toast('Select at least one activity', 'error'); return; }
-  if (!confirm(`Remove ${sel.length} P6 activit${sel.length===1?'y':'ies'} from the schedule?`)) return;
+  if (!await cxConfirm(`Remove ${sel.length} P6 activit${sel.length===1?'y':'ies'} from the schedule?`)) return;
   try {
     for (const pid of sel) await _dbDelete('p6_activities', { id: pid });
     toast(`${sel.length} activit${sel.length===1?'y':'ies'} removed`, 'success');
@@ -15587,7 +15666,7 @@ async function _assetImportCSV(file, onProgress) {
   let msg = `Import complete: ${linkedCount} link(s) created.`;
   if (skippedDup) msg += ` ${skippedDup} already linked (skipped).`;
   if (skippedTc.length) msg += `\n\nUnresolved test cases (check codes & location prefix):\n• ${skippedTc.slice(0, 10).join('\n• ')}`;
-  alert(msg);
+  cxAlert(msg);
 }
 
 // ── Manually add a generic child asset from the test register ─────────────────
@@ -16202,7 +16281,7 @@ async function _assetHandleFile(file) {
   try {
     await _assetImportCSV(file, _assetUpdateProgress);
   } catch(e) {
-    alert('Import failed: ' + e.message);
+    cxAlert('Import failed: ' + e.message);
   } finally {
     if (btn) btn.disabled = false;
     document.getElementById('asset-csv-input').value = '';
@@ -16289,7 +16368,7 @@ async function _assetDelete(assetId) {
   const a = ASSETS.find(x => x.id === assetId);
   if (!a) return;
   const childRows = TI.filter(r => r.AssetId === assetId);
-  if (!confirm(`Delete "${a.name}" and its ${childRows.length} linked test instance(s)? This cannot be undone.`)) return;
+  if (!await cxConfirm(`Delete "${a.name}" and its ${childRows.length} linked test instance(s)? This cannot be undone.`)) return;
   // Remove all links and child rows
   const links = ASSET_LINKS.filter(l => l.asset_id === assetId);
   for (const l of links) {
@@ -16344,7 +16423,7 @@ async function _assetBulkDelete() {
   if (!ids.length) return;
   const names = ids.map(id => ASSETS.find(a => a.id === id)?.name || id).join(', ');
   const totalChildren = ids.reduce((n, id) => n + TI.filter(r => r.AssetId === id).length, 0);
-  if (!confirm(`Permanently delete ${ids.length} asset${ids.length!==1?'s':''}:\n${names}\n\nThis will also remove ${totalChildren} linked test instance${totalChildren!==1?'s':''}. This cannot be undone.`)) return;
+  if (!await cxConfirm(`Permanently delete ${ids.length} asset${ids.length!==1?'s':''}:\n${names}\n\nThis will also remove ${totalChildren} linked test instance${totalChildren!==1?'s':''}. This cannot be undone.`)) return;
 
   for (const id of ids) {
     const links = ASSET_LINKS.filter(l => l.asset_id === id);
@@ -16368,7 +16447,7 @@ async function _assetBulkEditField(field, selectId) {
   const ids = [..._assetSelected];
   if (!ids.length) return;
   const label = field === 'device_type' ? 'Device Type' : 'Location';
-  if (!confirm(`Set ${label} to "${val}" for ${ids.length} asset${ids.length!==1?'s':''}?`)) return;
+  if (!await cxConfirm(`Set ${label} to "${val}" for ${ids.length} asset${ids.length!==1?'s':''}?`)) return;
   try {
     // Batch update via individual upserts (assets table has no bulk endpoint, keep it simple)
     for (const id of ids) {
@@ -16386,7 +16465,7 @@ async function _assetBulkEditField(field, selectId) {
 async function _assetUnlinkConfirm(assetId, parentTestId) {
   const child = TI.find(r => r.AssetId === assetId && String(r.ParentTestId) === String(parentTestId));
   const hasResults = child && (child.Status !== 'Not Started');
-  if (!confirm(`Unlink this asset from the test case?${hasResults ? '\n\nWarning: this asset has a recorded result that will be removed.' : ''}`)) return;
+  if (!await cxConfirm(`Unlink this asset from the test case?${hasResults ? '\n\nWarning: this asset has a recorded result that will be removed.' : ''}`)) return;
   try {
     await _assetUnlink(assetId, parentTestId);
     await loadAssetData();
@@ -16641,7 +16720,7 @@ async function regressionTestCase(testId) {
   const nextNum  = Math.max(...attempts.map(a => a.AttemptNumber || 1)) + 1;
   const newId    = `${groupId}::r${nextNum}-${Date.now().toString(36)}`;
 
-  if (!confirm(`Create regression attempt #${nextNum} for "${r.TestCaseCode || r.TestName}"?\n\nThe current result (${r.Status}) is preserved as a locked historical attempt. KPIs will track the new attempt.`)) return;
+  if (!await cxConfirm(`Create regression attempt #${nextNum} for "${r.TestCaseCode || r.TestName}"?\n\nThe current result (${r.Status}) is preserved as a locked historical attempt. KPIs will track the new attempt.`)) return;
 
   const dbRow = {
     test_id:        newId,
@@ -16713,7 +16792,7 @@ async function undoRegression(testId) {
     toast('Undo blocked — this attempt already has a logged result', 'warn'); return;
   }
   const prev = attempts[attempts.length - 2];
-  if (!confirm(`Undo regression?\n\nThis deletes the empty attempt #${latest.AttemptNumber} and restores attempt #${prev.AttemptNumber} (${prev.Status}) as the active one.`)) return;
+  if (!await cxConfirm(`Undo regression?\n\nThis deletes the empty attempt #${latest.AttemptNumber} and restores attempt #${prev.AttemptNumber} (${prev.Status}) as the active one.`)) return;
 
   try {
     await fetch(`${SUPABASE_URL}/rest/v1/test_items?test_id=eq.${encodeURIComponent(latest.TestID)}`, {
@@ -17073,7 +17152,7 @@ async function saveSwConfig() {
 async function deleteSwConfig(id) {
   const c = SW_CONFIGS.find(x => x.id === id);
   if (!c) return;
-  if (!confirm(`Delete software config "${c.software_name} ${c.version}"?\n\nThis cannot be undone. Test cases already snapshotted keep their frozen copy.`)) return;
+  if (!await cxConfirm(`Delete software config "${c.software_name} ${c.version}"?\n\nThis cannot be undone. Test cases already snapshotted keep their frozen copy.`)) return;
   try {
     await fetch(`${SUPABASE_URL}/rest/v1/software_configs?id=eq.${id}`, {
       method: 'DELETE',
@@ -17407,7 +17486,7 @@ async function saveRMA(editId) {
 async function deleteRMA(id) {
   const rma = RMAS.find(r => r.id === id);
   if (!rma) return;
-  if (!confirm(`Delete RMA "${rma.rma_number}"?\n\nThis cannot be undone.`)) return;
+  if (!await cxConfirm(`Delete RMA "${rma.rma_number}"?\n\nThis cannot be undone.`)) return;
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rmas?id=eq.${id}`, {
     method: 'DELETE', headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': _getAuthHeader() },
   });
@@ -18184,7 +18263,7 @@ async function _mtgApplyTemplate(meetingId, templateId) {
 }
 
 async function deleteMtg(id) {
-  if (!confirm('Delete this meeting and all its agenda items, minutes, and attendees?')) return;
+  if (!await cxConfirm('Delete this meeting and all its agenda items, minutes, and attendees?')) return;
   try {
     await _dbDelete('meetings', { id });
     MEETINGS = MEETINGS.filter(m => m.id !== id);
@@ -18230,7 +18309,7 @@ async function saveMtgCategory(editId, meetingId) {
 }
 
 async function deleteMtgCategory(catId, meetingId) {
-  if (!confirm('Delete this category and all its items?')) return;
+  if (!await cxConfirm('Delete this category and all its items?')) return;
   try {
     await _dbDelete('meeting_categories', { id: catId });
     if (_mtgDetail) {
@@ -18306,7 +18385,7 @@ async function saveMtgItem(editId, categoryId, meetingId) {
 }
 
 async function deleteMtgItem(itemId, meetingId) {
-  if (!confirm('Delete this agenda item and its action items?')) return;
+  if (!await cxConfirm('Delete this agenda item and its action items?')) return;
   try {
     await _dbDelete('meeting_items', { id: itemId });
     if (_mtgDetail) {
@@ -18388,7 +18467,7 @@ async function saveMtgActionItem(editId, itemId, meetingId) {
 }
 
 async function deleteMtgActionItem(aiId, meetingId) {
-  if (!confirm('Delete this action item?')) return;
+  if (!await cxConfirm('Delete this action item?')) return;
   try {
     await _dbDelete('meeting_action_items', { id: aiId });
     if (_mtgDetail) _mtgDetail.actionItems = _mtgDetail.actionItems.filter(a => a.id !== aiId);
@@ -18538,7 +18617,7 @@ async function _mtgImportCSV(meetingId) {
 
 // ─── CONVERT TO MINUTES ──────────────────────────────────────
 async function convertToMinutesMode(meetingId) {
-  if (!confirm('Convert to Minutes Mode? This enables per-item notes recording for the meeting.')) return;
+  if (!await cxConfirm('Convert to Minutes Mode? This enables per-item notes recording for the meeting.')) return;
   try {
     await _dbUpdate('meetings', { status: 'Minutes', updated_at: new Date().toISOString() }, { id: meetingId });
     const m = MEETINGS.find(x => x.id === meetingId);
@@ -18551,7 +18630,7 @@ async function convertToMinutesMode(meetingId) {
 
 // ─── FOLLOW-UP MEETING ────────────────────────────────────────
 async function createFollowUpMtg(meetingId) {
-  if (!confirm('Create a follow-up meeting? This will clone the full agenda and carry forward all open action items.')) return;
+  if (!await cxConfirm('Create a follow-up meeting? This will clone the full agenda and carry forward all open action items.')) return;
   const src = _mtgDetail?.meeting || MEETINGS.find(m => m.id === meetingId);
   if (!src) { toast('Source meeting not found', 'error'); return; }
   try {
@@ -18764,7 +18843,7 @@ async function saveMtgTemplate(editId) {
 }
 
 async function deleteMtgTemplate(id) {
-  if (!confirm('Delete this template?')) return;
+  if (!await cxConfirm('Delete this template?')) return;
   try {
     await _dbDelete('meeting_templates', { id });
     MTG_TEMPLATES = MTG_TEMPLATES.filter(t => t.id !== id);
@@ -20721,7 +20800,7 @@ async function _laBulkSetShift(code) {
   const events = PLANNING_EVENTS.filter(e => ids.includes(e.id) && !e.is_locked);
   if (!events.length) { toast('All selected cells are locked.', 'warn'); return; }
   const labels = { day_shift: 'Day', swing_shift: 'Swing', night_shift: 'Night', blanket_shift: 'Blanket' };
-  if (!confirm(`Set shift to "${labels[code] || code}" for ${events.length} cell${events.length > 1 ? 's' : ''}?`)) return;
+  if (!await cxConfirm(`Set shift to "${labels[code] || code}" for ${events.length} cell${events.length > 1 ? 's' : ''}?`)) return;
   let n = 0;
   for (const e of events) {
     try {
@@ -20744,7 +20823,7 @@ async function _laBulkSetLocation() {
   const ids = [..._laSelectedCellKeys];
   const events = PLANNING_EVENTS.filter(e => ids.includes(e.id) && !e.is_locked);
   if (!events.length) { toast('All selected cells are locked.', 'warn'); return; }
-  if (!confirm(`Set location to "${loc}" for ${events.length} cell${events.length > 1 ? 's' : ''}?`)) return;
+  if (!await cxConfirm(`Set location to "${loc}" for ${events.length} cell${events.length > 1 ? 's' : ''}?`)) return;
   let n = 0;
   for (const e of events) {
     try {
@@ -20769,7 +20848,7 @@ async function _laBulkSetHours() {
   const ids = [..._laSelectedCellKeys];
   const events = PLANNING_EVENTS.filter(e => ids.includes(e.id) && !e.is_locked);
   if (!events.length) { toast('All selected cells are locked.', 'warn'); return; }
-  if (!confirm(`Set work hours to "${raw}" for ${events.length} cell${events.length > 1 ? 's' : ''}?`)) return;
+  if (!await cxConfirm(`Set work hours to "${raw}" for ${events.length} cell${events.length > 1 ? 's' : ''}?`)) return;
   let n = 0;
   for (const e of events) {
     try {
@@ -20789,8 +20868,8 @@ async function _laBulkSetHours() {
 // EDIT DRAWER — Phase 2/3/4 master-schedule editing surface
 // ============================================================
 
-function _laDrawerOpen(mode, targetId) {
-  if (_laDrawer.dirty && !confirm('Discard unsaved changes?')) return;
+async function _laDrawerOpen(mode, targetId) {
+  if (_laDrawer.dirty && !await cxConfirm('Discard unsaved changes?')) return;
   _laDrawer.mode        = mode;
   _laDrawer.targetId    = targetId || null;
   _laDrawer.dirty       = false;
@@ -20811,8 +20890,8 @@ function _laDrawerOpen(mode, targetId) {
   _renderLookaheadTabBody();
 }
 
-function _laDrawerClose() {
-  if (_laDrawer.dirty && !confirm('Discard unsaved changes?')) return;
+async function _laDrawerClose() {
+  if (_laDrawer.dirty && !await cxConfirm('Discard unsaved changes?')) return;
   _laDrawer.mode        = 'closed';
   _laDrawer.targetId    = null;
   _laDrawer.snapshot    = null;
@@ -21602,7 +21681,7 @@ async function _laDrawerSoftDeleteActivity(activityId) {
   if (!a) return;
   const evs = (PLANNING_EVENTS || []).filter(e => e.planning_activity_id === activityId);
   const liveEvs = evs.filter(e => e.status !== 'cancelled');
-  const reason = prompt(
+  const reason = await cxPrompt(
     `Soft-delete "${a.description || a.activity_id_text || '—'}"?\n\n` +
     `This row will be hidden from the grid but can be restored from\n` +
     `Admin → Planning → Recently Deleted.\n\n` +
@@ -22648,7 +22727,7 @@ async function _laDeleteSelection() {
     return;
   }
   const msg = `Delete ${deletable.length} event${deletable.length>1?'s':''}?${lockedCount > 0 ? `\n(${lockedCount} locked event${lockedCount>1?'s':''} will be skipped)` : ''}\n\nYou can undo this right after.`;
-  if (!confirm(msg)) return;
+  if (!await cxConfirm(msg)) return;
 
   // Snapshot rows so the action is reversible (Undo re-inserts them).
   const delIds = deletable.map(e => e.id);
@@ -23667,7 +23746,7 @@ async function _laBulkRemoveCellResources() {
   if (!totalRows) { toast('No resources assigned to selected cells', 'warn'); return; }
 
   const count = eventIds.length;
-  if (!confirm(`Remove all resources from ${count} shift${count>1?'s':''}? This cannot be undone.`)) return;
+  if (!await cxConfirm(`Remove all resources from ${count} shift${count>1?'s':''}? This cannot be undone.`)) return;
 
   try {
     // Delete event_resources for each selected event
@@ -24606,7 +24685,7 @@ async function _planningDeleteEvent(eventId) {
   // deletes the window too (its cell then cascades), mirroring the two modules and
   // returning any tests on it to the backlog.
   const isDyn = ev.source === 'dynamic' && !!ev.dynamic_shift_id;
-  if (!confirm(isDyn
+  if (!await cxConfirm(isDyn
       ? `Delete this access shift on ${ev.event_date}?\n\nIt is removed from Dynamic Testing too, and any tests scheduled on it return to the backlog. This cannot be undone.`
       : `Delete "${ev.title}" on ${ev.event_date}? This cannot be undone.`)) return;
   try {
@@ -25016,7 +25095,7 @@ async function _ptoReview(id, action) {
   const promptNote = action === 'reject' ? 'Reason for rejection (optional):'
                   : action === 'approve' ? 'Review notes (optional):'
                   : 'Notes (optional):';
-  const note = prompt(`${labels[action]} PTO for ${_ptoResourceName(req.resource_id)} (${_ptoFmtRange(req)})\n\n${promptNote}`);
+  const note = await cxPrompt(`${labels[action]} PTO for ${_ptoResourceName(req.resource_id)} (${_ptoFmtRange(req)})\n\n${promptNote}`);
   if (note === null) return; // cancelled
 
   try {
@@ -25037,7 +25116,7 @@ async function _ptoReview(id, action) {
 async function _ptoCancel(id) {
   const req = PTO_REQUESTS.find(p => p.id === id);
   if (!req) return;
-  if (!confirm(`Cancel your PTO request for ${_ptoFmtRange(req)}?`)) return;
+  if (!await cxConfirm(`Cancel your PTO request for ${_ptoFmtRange(req)}?`)) return;
   try {
     await _dbUpdate('pto_requests', { status: 'cancelled' }, { id });
     toast('Request cancelled', 'success');
@@ -25872,7 +25951,7 @@ function _apDeletedActivitiesHTML() {
 async function _apRestoreActivity(activityId) {
   const a = (PLANNING_ACTIVITIES || []).find(x => x.id === activityId);
   if (!a) return;
-  if (!confirm(`Restore "${a.description || a.activity_id_text || '—'}"?\n\nThis brings the activity row back. Events that were cancelled when the row was deleted stay cancelled (you can uncancel them individually).`)) return;
+  if (!await cxConfirm(`Restore "${a.description || a.activity_id_text || '—'}"?\n\nThis brings the activity row back. Events that were cancelled when the row was deleted stay cancelled (you can uncancel them individually).`)) return;
   try {
     await _dbUpdate('planning_activities', {
       deleted_at:      null,
@@ -25890,8 +25969,8 @@ async function _apRestoreActivity(activityId) {
 async function _apHardDeleteActivity(activityId) {
   const a = (PLANNING_ACTIVITIES || []).find(x => x.id === activityId);
   if (!a) return;
-  if (!confirm(`PERMANENTLY DELETE "${a.description || a.activity_id_text || '—'}"?\n\nThis cascades to all events on this row. This cannot be undone.\n\nType "delete" in the next prompt to confirm.`)) return;
-  const t = prompt('Type "delete" to confirm:');
+  if (!await cxConfirm(`PERMANENTLY DELETE "${a.description || a.activity_id_text || '—'}"?\n\nThis cascades to all events on this row. This cannot be undone.\n\nType "delete" in the next prompt to confirm.`)) return;
+  const t = await cxPrompt('Type "delete" to confirm:');
   if (t !== 'delete') { toast('Cancelled', 'warn'); return; }
   try {
     // Cascade in code (FK is ON DELETE CASCADE for events but not for activity_resources)
@@ -26947,7 +27026,7 @@ async function _planningResolveInitials(conflictId, action, token) {
   if (!c) return;
 
   if (action === 'dismiss') {
-    if (!confirm(`Dismiss "${token}" without creating a resource?`)) return;
+    if (!await cxConfirm(`Dismiss "${token}" without creating a resource?`)) return;
     await _dbUpdate('planning_conflicts', {
       is_acknowledged: true,
       acknowledged_by: currentProfile?.id || null,
@@ -26959,7 +27038,7 @@ async function _planningResolveInitials(conflictId, action, token) {
   }
 
   if (action === 'create') {
-    const name = prompt(`Create new resource for initials "${token}".\n\nDisplay name:`);
+    const name = await cxPrompt(`Create new resource for initials "${token}".\n\nDisplay name:`);
     if (!name || !name.trim()) return;
     try {
       await _dbInsert('planning_resources', [{
@@ -26986,7 +27065,7 @@ async function _planningResolveInitials(conflictId, action, token) {
     const choices = PLANNING_RESOURCES.filter(r => r.is_active);
     if (!choices.length) { toast('No active resources to map to', 'error'); return; }
     const list = choices.map((r, i) => `${i+1}. ${r.display_name}${r.initials ? ` (${r.initials})` : ''}`).join('\n');
-    const sel = prompt(`Map "${token}" to which existing resource?\n\n${list}\n\nEnter the number:`);
+    const sel = await cxPrompt(`Map "${token}" to which existing resource?\n\n${list}\n\nEnter the number:`);
     const idx = parseInt(sel) - 1;
     if (isNaN(idx) || idx < 0 || idx >= choices.length) return;
     const target = choices[idx];
@@ -27295,7 +27374,7 @@ async function _planningBulkAck() {
   const open = PLANNING_CONFLICTS.filter(c => !c.is_acknowledged);
   const rows = _conflictFilter === 'all' ? open : open.filter(c => c.conflict_type === _conflictFilter);
   if (!rows.length) return;
-  if (!confirm(`Acknowledge ${rows.length} conflict${rows.length === 1 ? '' : 's'}?`)) return;
+  if (!await cxConfirm(`Acknowledge ${rows.length} conflict${rows.length === 1 ? '' : 's'}?`)) return;
   try {
     for (const c of rows) {
       await _dbUpdate('planning_conflicts', {
@@ -27878,7 +27957,7 @@ async function _apToggleResourceActive(resourceId, isActive) {
 }
 
 async function _apDeleteResource(resourceId, displayName) {
-  if (!confirm(`Delete resource "${displayName}"?\n\nThis will also remove all their event assignments. This cannot be undone.`)) return;
+  if (!await cxConfirm(`Delete resource "${displayName}"?\n\nThis will also remove all their event assignments. This cannot be undone.`)) return;
   try {
     // Remove event assignments first
     const erRows = PLANNING_EVENT_RES.filter(er => er.resource_id === resourceId);
@@ -30347,7 +30426,7 @@ async function linkExistingFormToTest(formId, testId) {
 }
 
 async function unlinkFormFromTest(formId, testId, assetId = '') {
-  if (!confirm('Unlink this form from the test case? The file itself is not deleted.')) return;
+  if (!await cxConfirm('Unlink this form from the test case? The file itself is not deleted.')) return;
   try {
     // assetId === '' from a non-parent (standalone) case → unlink the
     // single (form, test) row. From a parent case the caller always sends
@@ -30482,7 +30561,7 @@ async function submitAttachTemplateForm(templateId) {
 }
 
 async function detachTemplateForm(formId, templateId, testCaseCode) {
-  if (!confirm('Remove this template PDF? It will no longer be cloned on future deployments. Already-deployed copies are untouched.')) return;
+  if (!await cxConfirm('Remove this template PDF? It will no longer be cloned on future deployments. Already-deployed copies are untouched.')) return;
   try {
     await _formsUnlinkFromTemplate(formId, templateId, testCaseCode);
     logAudit('Detached Template Form', FORMS.find(f => f.id === formId)?.name || formId, templateId);
@@ -30668,7 +30747,7 @@ async function deleteFormFromPage(formId) {
   const lt = FORM_TEST_LINKS.filter(l => l.form_id === formId).length;
   const lp = FORM_TPL_LINKS .filter(l => l.form_id === formId).length;
   const warn = (lt + lp) > 0 ? `\n\nThis will also remove ${lt} test-case link(s) and ${lp} template link(s).` : '';
-  if (!confirm(`Delete form "${f.name}"? The PDF file will be removed from storage.${warn}\n\nThis cannot be undone.`)) return;
+  if (!await cxConfirm(`Delete form "${f.name}"? The PDF file will be removed from storage.${warn}\n\nThis cannot be undone.`)) return;
   try {
     await _formsDelete(formId);
     logAudit('Deleted Form', f.name, formId);
@@ -33280,9 +33359,9 @@ async function _drwRenderPage(pageIndex, opts = {}) {
   }
 }
 
-function _drwCloseViewer() {
+async function _drwCloseViewer() {
   if (_drwMarkupDirty) {
-    if (!confirm('You have unsaved markup changes. Close anyway?')) return;
+    if (!await cxConfirm('You have unsaved markup changes. Close anyway?')) return;
   }
   document.getElementById('drw-viewer-overlay').style.display = 'none';
   _drwPdfDoc    = null;
@@ -33975,9 +34054,9 @@ function _drwUpdateCursor() {
   canvas.style.cursor = _drwTool.name === 'select' ? 'default' : _drwTool.name === 'text' ? 'text' : 'crosshair';
 }
 
-function _drwClearMarkup() {
+async function _drwClearMarkup() {
   if (!_drwMarkupShapes.length) return;
-  if (!confirm('Clear all your markup on this sheet?')) return;
+  if (!await cxConfirm('Clear all your markup on this sheet?')) return;
   _drwMarkupShapes = [];
   _drwSelectedShape = -1;
   _drwMarkupDirty  = true;
@@ -34010,7 +34089,7 @@ async function _drwSaveMarkup() {
 
 async function _drwPublishMarkup() {
   if (!_drwCurSheet) return;
-  if (!confirm('Publish your markup? It will be visible to all team members.')) return;
+  if (!await cxConfirm('Publish your markup? It will be visible to all team members.')) return;
   try {
     await _drwSaveMarkup();
     if (!_drwSavedMarkupId) return;
@@ -34097,13 +34176,13 @@ function _drwManageMarkupsOpen() {
   });
 }
 
-function _drwAdminEditMarkup(markupId) {
+async function _drwAdminEditMarkup(markupId) {
   if (currentRoleUser?.role !== 'admin') return;
   const m = DRAWING_MARKUPS.find(x => x.id === markupId);
   if (!m) { toast('Markup not found', 'error'); return; }
 
   if (_drwMarkupDirty) {
-    if (!confirm('You have unsaved changes on the canvas. Discard them and load this markup?')) return;
+    if (!await cxConfirm('You have unsaved changes on the canvas. Discard them and load this markup?')) return;
   }
 
   _drwSavedMarkupId = m.id;
@@ -34132,7 +34211,7 @@ async function _drwAdminDeleteMarkup(markupId) {
   if (!m) return;
   const author = m.creator_name || m.created_by || '—';
   const state = m.is_published ? 'published' : 'draft';
-  if (!confirm(`Delete ${author}'s ${state} markup? This cannot be undone.`)) return;
+  if (!await cxConfirm(`Delete ${author}'s ${state} markup? This cannot be undone.`)) return;
 
   try {
     await _dbDelete('drawing_markups', { id: markupId });
@@ -34251,7 +34330,7 @@ async function _drwDeleteSheet(sheetId, loc, subtab) {
   const sheet = DRAWING_SHEETS.find(s => s.id === sheetId);
   if (!sheet) { toast('Page not found', 'error'); return; }
   const label = sheet.sheet_number || sheet.sheet_title || `page ${(sheet.page_index ?? 0) + 1}`;
-  if (!confirm(`Delete "${label}"?\n\nThis removes the page and any markups on it. The uploaded PDF file is not changed.`)) return;
+  if (!await cxConfirm(`Delete "${label}"?\n\nThis removes the page and any markups on it. The uploaded PDF file is not changed.`)) return;
   try {
     const mk = DRAWING_MARKUPS.filter(m => m.sheet_id === sheetId);
     for (const m of mk) await _dbDelete('drawing_markups', { id: m.id });
@@ -34270,7 +34349,7 @@ async function _drwDeleteSet(setId, loc) {
   const set = DRAWING_SETS.find(s => s.id === setId);
   if (!set) { toast('Drawing set not found', 'error'); return; }
   const sheetsOfSet = DRAWING_SHEETS.filter(s => s.set_id === setId);
-  if (!confirm(`Delete drawing set "${set.title}"?\n\nThis permanently removes the set, all ${sheetsOfSet.length} of its page${sheetsOfSet.length === 1 ? '' : 's'}, their markups, and the uploaded PDF. This cannot be undone.`)) return;
+  if (!await cxConfirm(`Delete drawing set "${set.title}"?\n\nThis permanently removes the set, all ${sheetsOfSet.length} of its page${sheetsOfSet.length === 1 ? '' : 's'}, their markups, and the uploaded PDF. This cannot be undone.`)) return;
   try {
     const sheetIds = new Set(sheetsOfSet.map(s => s.id));
     const mk = DRAWING_MARKUPS.filter(m => sheetIds.has(m.sheet_id));
@@ -34292,7 +34371,7 @@ async function _drwDeleteSet(setId, loc) {
 
 async function openTestCaseScopeModal(testId) {
   const tc = TI.find(r => (r.TestID || r.test_id) === testId);
-  if (!tc) { alert('Test case not found in local cache.'); return; }
+  if (!tc) { cxAlert('Test case not found in local cache.'); return; }
   _dtScopeState.currentTestId = testId;
 
   let scopeType = String(tc.ScopeType || 'static').toLowerCase();
@@ -34344,7 +34423,7 @@ async function _dtSaveScope() {
     closeModal();
     if (typeof toast === 'function') toast(`Scope set to ${newScope}.`, 'success');
   } catch (e) {
-    alert(`Save failed: ${e.message}`);
+    cxAlert(`Save failed: ${e.message}`);
   }
 }
 
@@ -34919,10 +34998,10 @@ async function _dynBulkEditApply() {
   const subsysVal = changeSubsys ? (val('subsystem') || null) : undefined;
 
   if (!Object.keys(payload).length && !changeSubsys) {
-    alert('Tick at least one field to change.');
+    cxAlert('Tick at least one field to change.');
     return;
   }
-  if (!confirm(`Apply the selected change(s) to ${ids.length} instance(s)?`)) return;
+  if (!await cxConfirm(`Apply the selected change(s) to ${ids.length} instance(s)?`)) return;
 
   try {
     // Subsystem is a test-case attribute: update each distinct linked test item.
@@ -34958,7 +35037,7 @@ async function _dynBulkEditApply() {
     _dynRenderInstances();
     if (typeof toast === 'function') toast(`Updated ${ids.length} instance(s).`, 'success');
   } catch (e) {
-    alert(`Bulk edit failed: ${e.message}`);
+    cxAlert(`Bulk edit failed: ${e.message}`);
   }
 }
 
@@ -35077,7 +35156,7 @@ async function _dynInstanceUpdateStatus(id, newStatus, selEl) {
   const isTerminal = newStatus === 'Pass' || newStatus === 'Fail' || newStatus === 'Not Applicable';
   if (isTerminal && actualDur == null) {
     const exp = inst?.expected_duration_minutes;
-    const ans = prompt(
+    const ans = await cxPrompt(
       `Mark "${inst?.code || inst?.title || 'instance'}" as ${newStatus}.\n\n` +
       `Actual duration in minutes${exp ? ` (expected ${exp})` : ''} — leave blank to skip:`,
       exp != null ? String(exp) : ''
@@ -35330,7 +35409,7 @@ async function _dynSaveInstance(id) {
     actual_duration_minutes: intOrNull(get('dyn-f-act-dur')),
     updated_at: new Date().toISOString(),
   };
-  if (!payload.test_id) { alert('Test case is required.'); return; }
+  if (!payload.test_id) { cxAlert('Test case is required.'); return; }
   if (!id && !payload.code) payload.code = _dynNextInstanceCode(payload.test_id);
   try {
     if (id) {
@@ -35345,12 +35424,12 @@ async function _dynSaveInstance(id) {
     if (_dynPage.tab === 'instances') _dynRenderInstances(); else _dynRenderBoard();
     if (typeof toast === 'function') toast(id ? 'Instance updated.' : 'Instance created.', 'success');
   } catch (e) {
-    alert(`Save failed: ${e.message}`);
+    cxAlert(`Save failed: ${e.message}`);
   }
 }
 
 async function _dynDeleteInstance(id, fromModal) {
-  if (!confirm('Delete this dynamic instance? This cannot be undone.')) return;
+  if (!await cxConfirm('Delete this dynamic instance? This cannot be undone.')) return;
   try {
     await _dbDelete('dynamic_instances', { id });
     if (fromModal) closeModal();
@@ -35359,7 +35438,7 @@ async function _dynDeleteInstance(id, fromModal) {
     if (_dynPage.tab === 'instances') _dynRenderInstances(); else _dynRenderBoard();
     if (typeof toast === 'function') toast('Instance deleted.', 'success');
   } catch (e) {
-    alert(`Delete failed: ${e.message}`);
+    cxAlert(`Delete failed: ${e.message}`);
   }
 }
 
@@ -35781,8 +35860,8 @@ function _dynCSVValidate() {
 
 async function _dynImportCSVRows() {
   const v = _dynImportPreview || _dynCSVValidate();
-  if (!v || !v.runs.length) { alert('Nothing to import. Validate first.'); return; }
-  if (v.errors.length && !confirm(`${v.errors.length} row(s) had errors and will be skipped. Continue importing ${v.runs.length} run(s)?`)) return;
+  if (!v || !v.runs.length) { cxAlert('Nothing to import. Validate first.'); return; }
+  if (v.errors.length && !await cxConfirm(`${v.errors.length} row(s) had errors and will be skipped. Continue importing ${v.runs.length} run(s)?`)) return;
   const by = currentRoleUser?.email || currentRoleUser?.id || null;
   try {
     // 1. Create any new dynamic test cases first, so run FKs resolve.
@@ -35865,7 +35944,7 @@ async function _dynImportCSVRows() {
       toast(`Imported ${payload.length} run(s)${newCases.length ? `, created ${newCases.length} case(s)` : ''}.`, 'success');
     }
   } catch (e) {
-    alert(`Import failed: ${e.message}`);
+    cxAlert(`Import failed: ${e.message}`);
   }
 }
 
@@ -36147,8 +36226,8 @@ const _DYN_ROLL_RESET = { roll_count: 0, roll_note: null, rolled_at: null, moved
 async function _dynMoveInstanceToShift(id, windowId) {
   const inst = _dynPage.instances.find(x => String(x.id) === String(id));
   const w = (_dynPage.shifts || []).find(x => String(x.id) === String(windowId));
-  if (!inst || !w) { alert('Run or access window not found.'); return; }
-  if (!_dynWindowGrantsRun(w, inst)) { alert('That access shift does not meet this run’s zone / access / mode requirements.'); return; }
+  if (!inst || !w) { cxAlert('Run or access window not found.'); return; }
+  if (!_dynWindowGrantsRun(w, inst)) { cxAlert('That access shift does not meet this run’s zone / access / mode requirements.'); return; }
   const window = (w.start_at && w.end_at) ? '[' + w.start_at + ',' + w.end_at + ')' : null;
   try {
     await _dbUpdate('dynamic_instances', { shift_id: w.id, scheduled_for_date: w.shift_date, scheduled_window: window, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() }, { id });
@@ -36158,11 +36237,11 @@ async function _dynMoveInstanceToShift(id, windowId) {
     await _dynLoadAll();
     _dynRenderBoard();
     _dynReopenBoardModal();
-  } catch (e) { alert(`Move failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Move failed: ${e.message}`); }
 }
 
 async function _dynUnschedule(id) {
-  if (!confirm('Remove this instance from its scheduled date?')) return;
+  if (!await cxConfirm('Remove this instance from its scheduled date?')) return;
   try {
     await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() }, { id });
     const inst = _dynPage.instances.find(x => x.id === id);
@@ -36172,7 +36251,7 @@ async function _dynUnschedule(id) {
     await _dynLoadAll();
     _dynRenderBoard();
     _dynReopenBoardModal();
-  } catch (e) { alert(`Unschedule failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Unschedule failed: ${e.message}`); }
 }
 
 // Re-open whichever board drilldown was active, if it still has rows.
@@ -36219,17 +36298,17 @@ async function _dynBulkMoveShift(windowId) {
   const ids = [..._dynPage.daySel];
   if (!ids.length || !windowId) return;
   const w = (_dynPage.shifts || []).find(x => String(x.id) === String(windowId));
-  if (!w) { alert('Access window not found.'); return; }
+  if (!w) { cxAlert('Access window not found.'); return; }
   // Only move runs the window actually grants; skip the rest.
   const eligible = ids.filter(id => {
     const inst = _dynPage.instances.find(x => String(x.id) === String(id));
     return inst && _dynWindowGrantsRun(w, inst);
   });
   const skipped = ids.length - eligible.length;
-  if (!eligible.length) { alert(`That access shift doesn’t meet the requirements for any of the ${ids.length} selected run(s).`); return; }
+  if (!eligible.length) { cxAlert(`That access shift doesn’t meet the requirements for any of the ${ids.length} selected run(s).`); return; }
   let msg = `Schedule ${eligible.length} run(s) onto the ${_dynFmtDate(w.shift_date)} access shift?`;
   if (skipped) msg += `\n\n${skipped} selected run(s) will be skipped — that shift doesn’t grant their zone / access / mode.`;
-  if (!confirm(msg)) return;
+  if (!await cxConfirm(msg)) return;
   const window = (w.start_at && w.end_at) ? '[' + w.start_at + ',' + w.end_at + ')' : null;
   try {
     for (const id of eligible) {
@@ -36243,13 +36322,13 @@ async function _dynBulkMoveShift(windowId) {
     await _dynLoadAll();
     _dynRenderBoard();
     _dynReopenBoardModal();
-  } catch (e) { alert(`Move failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Move failed: ${e.message}`); }
 }
 
 async function _dynBulkUnschedule() {
   const ids = [..._dynPage.daySel];
   if (!ids.length) return;
-  if (!confirm(`Remove ${ids.length} instance(s) from their scheduled date?`)) return;
+  if (!await cxConfirm(`Remove ${ids.length} instance(s) from their scheduled date?`)) return;
   try {
     for (const id of ids) {
       await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() }, { id });
@@ -36262,7 +36341,7 @@ async function _dynBulkUnschedule() {
     await _dynLoadAll();
     _dynRenderBoard();
     _dynReopenBoardModal();
-  } catch (e) { alert(`Unschedule failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Unschedule failed: ${e.message}`); }
 }
 
 function _dynBoardOpenDay(dayKey) {
@@ -36765,7 +36844,7 @@ function _dynNrhSaveSettings() {
   const read = key => [g('nrh-' + key + '-start')?.value || _DYN_NRH_DEFAULTS[key][0], g('nrh-' + key + '-end')?.value || _DYN_NRH_DEFAULTS[key][1]];
   const h = { wk: read('wk'), sat: read('sat'), sun: read('sun') };
   for (const k of ['wk', 'sat', 'sun']) {
-    if (h[k][1] <= h[k][0]) { alert('Non-Revenue Hours: end must be after start (' + k + ').'); return; }
+    if (h[k][1] <= h[k][0]) { cxAlert('Non-Revenue Hours: end must be after start (' + k + ').'); return; }
   }
   _dynSaveNonRevHours(h);
   _dynNrhToggleSettings();
@@ -36842,7 +36921,7 @@ function _dynCampSyncDays() {
 function _dynOpenNewCampaign() { _dynCampaignModal(null); }
 function _dynEditCampaign(id) {
   const camp = (_dynPage.campaigns || []).find(c => String(c.id) === String(id));
-  if (!camp) { alert('Campaign not found.'); return; }
+  if (!camp) { cxAlert('Campaign not found.'); return; }
   _dynCampaignModal(camp);
 }
 // Load the per-day editor state from an existing campaign's stored schedule.
@@ -36989,9 +37068,9 @@ async function _dynSaveCampaign(editId) {
   const _zoneUnion = new Set();
   for (const d of dow) {
     const sd = _days[d];
-    if (sd.end <= sd.start) { alert(_DYN_DOW[d] + ': end time must be after start time.'); return; }
+    if (sd.end <= sd.start) { cxAlert(_DYN_DOW[d] + ': end time must be after start time.'); return; }
     const dz = (sd.zones && sd.zones.length) ? sd.zones : zonePalette;
-    if (!dz.length) { alert(_DYN_DOW[d] + ': pick at least one zone for this day.'); return; }
+    if (!dz.length) { cxAlert(_DYN_DOW[d] + ': pick at least one zone for this day.'); return; }
     daySchedule[d] = { start: sd.start, end: sd.end, zones: dz };
     dz.forEach(z => _zoneUnion.add(z));
   }
@@ -37009,12 +37088,12 @@ async function _dynSaveCampaign(editId) {
   const permit = g('camp-permit').value.trim() || null;
   const notes = g('camp-notes').value.trim() || null;
 
-  if (!name) { alert('Campaign name is required.'); return; }
-  if (!zones.length) { alert('Pick at least one zone.'); return; }
-  if (!startDate || !endDate) { alert('Start and end dates are required.'); return; }
-  if (_dynParseDate(endDate) < _dynParseDate(startDate)) { alert('End date must be on or after start.'); return; }
-  if (!dow.length) { alert('Pick at least one day of week.'); return; }
-  if (shiftEnd <= shiftStart) { alert('Shift end must be after shift start.'); return; }
+  if (!name) { cxAlert('Campaign name is required.'); return; }
+  if (!zones.length) { cxAlert('Pick at least one zone.'); return; }
+  if (!startDate || !endDate) { cxAlert('Start and end dates are required.'); return; }
+  if (_dynParseDate(endDate) < _dynParseDate(startDate)) { cxAlert('End date must be on or after start.'); return; }
+  if (!dow.length) { cxAlert('Pick at least one day of week.'); return; }
+  if (shiftEnd <= shiftStart) { cxAlert('Shift end must be after shift start.'); return; }
 
   const fields = {
     name, zone_codes: zones, phase, subsystem,
@@ -37060,7 +37139,7 @@ async function _dynSaveCampaign(editId) {
     _dynAccJumpTo(startDate);
     if (typeof toast === 'function') toast(`Campaign created · ${shiftRows.length} shift${shiftRows.length===1?'':'s'} generated`, 'success');
   } catch (e) {
-    alert(`Create failed: ${e.message}`);
+    cxAlert(`Create failed: ${e.message}`);
   }
 }
 
@@ -37109,7 +37188,7 @@ async function _dynUpdateCampaign(editId, fields) {
     let msg = `Saving will remove ${toRemove.length} shift${toRemove.length === 1 ? '' : 's'} that are no longer in the schedule`;
     if (affectedInstances.length) msg += `, unscheduling ${affectedInstances.length} assigned test instance${affectedInstances.length === 1 ? '' : 's'}`;
     msg += `.\n\n${toInsert.length} new · ${toUpdate.length} updated · ${toRemove.length} removed.\n\nContinue?`;
-    if (!confirm(msg)) return;
+    if (!await cxConfirm(msg)) return;
   }
 
   try {
@@ -37144,7 +37223,7 @@ async function _dynUpdateCampaign(editId, fields) {
       toast(`Campaign updated · ${toInsert.length} new, ${toUpdate.length} updated, ${toRemove.length} removed`, 'success');
     }
   } catch (e) {
-    alert(`Update failed: ${e.message}`);
+    cxAlert(`Update failed: ${e.message}`);
   }
 }
 
@@ -37154,13 +37233,13 @@ async function _dynSetCampaignStatus(id, status) {
     const c = _dynPage.campaigns.find(x => x.id === id); if (c) c.status = status;
     _dynRenderAccess();
     if (typeof toast === 'function') toast(`Campaign ${status}`, 'success');
-  } catch (e) { alert(`Update failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Update failed: ${e.message}`); }
 }
 
 async function _dynDeleteCampaign(id) {
   const c = _dynPage.campaigns.find(x => x.id === id);
   const n = (_dynPage.shifts || []).filter(s => s.campaign_id === id).length;
-  if (!confirm(`Delete campaign "${c?.name || ''}" and its ${n} generated shift${n===1?'':'s'}? This cannot be undone.`)) return;
+  if (!await cxConfirm(`Delete campaign "${c?.name || ''}" and its ${n} generated shift${n===1?'':'s'}? This cannot be undone.`)) return;
   try {
     await _dbDelete('access_campaigns', { id }); // shifts cascade via FK
     if (_dynPage.accCampaignFilter === id) _dynPage.accCampaignFilter = '';
@@ -37168,7 +37247,7 @@ async function _dynDeleteCampaign(id) {
     await _dynLoadAll();
     _dynRenderAccess();
     if (typeof toast === 'function') toast('Campaign deleted', 'success');
-  } catch (e) { alert(`Delete failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Delete failed: ${e.message}`); }
 }
 
 // ── Train (consist) requests — availability per campaign (Phase 2) ───────
@@ -37258,7 +37337,7 @@ async function _dynTrainAdd(campaignId) {
     _dynPage.loaded = false; await _dynLoadAll();
     _dynOpenTrains(campaignId); _dynRenderAccess();
     if (typeof toast === 'function') toast('Train request added', 'success');
-  } catch (e) { alert(`Add failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Add failed: ${e.message}`); }
 }
 
 async function _dynTrainSetStatus(id, status) {
@@ -37275,15 +37354,15 @@ async function _dynTrainSetStatus(id, status) {
     _dynRenderAccess();
     if (cid) _dynOpenTrains(cid);
     if (typeof toast === 'function') toast(`Request ${status}`, 'success');
-  } catch (e) { alert(`Update failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Update failed: ${e.message}`); }
 }
 
 async function _dynTrainSubstitute(id) {
   const r = (_dynPage.trainRequests || []).find(x => x.id === id);
-  const ans = prompt(`Client substituted a different consist.\nEnter the actual cars per consist granted${r?.requested_cars?` (requested ${r.requested_cars})`:''}:`, r?.approved_cars ?? r?.requested_cars ?? '');
+  const ans = await cxPrompt(`Client substituted a different consist.\nEnter the actual cars per consist granted${r?.requested_cars?` (requested ${r.requested_cars})`:''}:`, r?.approved_cars ?? r?.requested_cars ?? '');
   if (ans === null) return;
   const cars = parseInt(ans, 10);
-  if (!Number.isFinite(cars) || cars < 1) { alert('Enter a valid car count.'); return; }
+  if (!Number.isFinite(cars) || cars < 1) { cxAlert('Enter a valid car count.'); return; }
   try {
     const payload = { status: 'substituted', approved_cars: cars, updated_at: new Date().toISOString() };
     await _dbUpdate('train_requests', payload, { id });
@@ -37291,19 +37370,19 @@ async function _dynTrainSubstitute(id) {
     _dynRenderAccess();
     if (r?.campaign_id) _dynOpenTrains(r.campaign_id);
     if (typeof toast === 'function') toast(`Substituted → ${cars}-car`, 'success');
-  } catch (e) { alert(`Update failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Update failed: ${e.message}`); }
 }
 
 async function _dynTrainDelete(id) {
   const r = (_dynPage.trainRequests || []).find(x => x.id === id);
-  if (!confirm('Delete this train request?')) return;
+  if (!await cxConfirm('Delete this train request?')) return;
   try {
     await _dbDelete('train_requests', { id });
     _dynPage.trainRequests = (_dynPage.trainRequests || []).filter(x => x.id !== id);
     _dynRenderAccess();
     if (r?.campaign_id) _dynOpenTrains(r.campaign_id);
     if (typeof toast === 'function') toast('Request removed', 'success');
-  } catch (e) { alert(`Delete failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Delete failed: ${e.message}`); }
 }
 
 // ── Single-shift management ─────────────────────────────────────────────
@@ -37372,7 +37451,7 @@ async function _dynShiftSetStatus(id, status) {
     closeModal();
     _dynRenderAccess();
     if (typeof toast === 'function') toast(`Shift ${status}${extra}`, 'success');
-  } catch (e) { alert(`Update failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Update failed: ${e.message}`); }
 }
 
 async function _dynShiftCancel(id) {
@@ -37386,7 +37465,7 @@ async function _dynShiftCancel(id) {
     closeModal();
     _dynRenderAccess();
     if (typeof toast === 'function') toast('Shift cancelled', 'success');
-  } catch (e) { alert(`Cancel failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Cancel failed: ${e.message}`); }
 }
 
 // ── Shift Builder (Phase 3): assign instances into a confirmed shift ─────
@@ -37494,7 +37573,7 @@ async function _dynShiftAssign(instId, shiftId) {
     await _dbUpdate('dynamic_instances', payload, { id: instId });
     const i = (_dynPage.instances || []).find(x => x.id === instId); if (i) Object.assign(i, payload);
     _dynBuildShift(shiftId);
-  } catch (e) { alert(`Assign failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Assign failed: ${e.message}`); }
 }
 
 async function _dynShiftUnassign(instId) {
@@ -37505,7 +37584,7 @@ async function _dynShiftUnassign(instId) {
     await _dbUpdate('dynamic_instances', payload, { id: instId });
     if (i) Object.assign(i, payload);
     if (shiftId) _dynBuildShift(shiftId);
-  } catch (e) { alert(`Remove failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Remove failed: ${e.message}`); }
 }
 
 // ── Campaign progress rollup (Phase 3): long-plan ↔ short-execution ──────
@@ -37687,7 +37766,7 @@ async function _dynCampaignUnscheduleAll(campaignId) {
   const winIds = new Set((_dynPage.shifts || []).filter(s => s.campaign_id === campaignId).map(s => String(s.id)));
   const scoped = (_dynPage.instances || []).filter(i => i.shift_id && winIds.has(String(i.shift_id)));
   if (!scoped.length) { toast('No scheduled runs in this campaign', 'info'); return; }
-  if (!confirm(`Unschedule all ${scoped.length} scheduled run(s) in "${camp.name}"?\n\nThis frees every shift slot in the campaign; the runs return to the backlog.`)) return;
+  if (!await cxConfirm(`Unschedule all ${scoped.length} scheduled run(s) in "${camp.name}"?\n\nThis frees every shift slot in the campaign; the runs return to the backlog.`)) return;
   try {
     for (const i of scoped) {
       await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() }, { id: i.id });
@@ -37698,7 +37777,7 @@ async function _dynCampaignUnscheduleAll(campaignId) {
     _dynPage.loaded = false;
     await _dynLoadAll();
     _dynRenderAccess();
-  } catch (e) { alert(`Unschedule failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Unschedule failed: ${e.message}`); }
 }
 
 // ── Lookahead integration (Phase 4): shift → field event + BART resources ──
@@ -37840,7 +37919,7 @@ async function _dynCreateShiftEventUI(shiftId) {
     await _dynCreateShiftEvent(s);
     _dynOpenShift(shiftId);
     if (typeof toast === 'function') toast('Field event created · Train Operator, ROC, EIC added', 'success');
-  } catch (e) { alert(`Field event failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Field event failed: ${e.message}`); }
 }
 
 // ==========================================================================
@@ -38262,7 +38341,7 @@ async function _dynPlanCommitToCampaign() {
     toast(`Scheduled ${placed.length} into ${camp?.name}${unplaced.length ? ` · ${unplaced.length} couldn't fit` : ''}`, 'success');
     if (unplaced.length) {
       const lines = unplaced.slice(0, 8).map(u => `• ${u.inst.code || u.inst.test_id}: ${u.why}`).join('\n');
-      setTimeout(() => alert(`${unplaced.length} test(s) not scheduled:\n\n${lines}${unplaced.length > 8 ? '\n…' : ''}`), 100);
+      setTimeout(() => cxAlert(`${unplaced.length} test(s) not scheduled:\n\n${lines}${unplaced.length > 8 ? '\n…' : ''}`), 100);
     }
     _dynPage.planSelected.clear();
     _dynPage.loaded = false;
@@ -40388,14 +40467,14 @@ function _dynSimDuplicate() {
   arr.push(s); _dynSimSaveScenarios(arr);
   _dynSimSelect(s.id);
 }
-function _dynSimRename() {
+async function _dynSimRename() {
   const cur = _dynSimActive(); if (!cur) return;
-  const n = prompt('Scenario name:', cur.name);
+  const n = await cxPrompt('Scenario name:', cur.name);
   if (n && n.trim()) { _dynSimPatch(cur.id, { name: n.trim() }); _dynRenderSimulator(); }
 }
-function _dynSimDelete() {
+async function _dynSimDelete() {
   const arr = _dynSimScenarios(); const cur = _dynSimActive(); if (!cur) return;
-  if (!confirm(`Delete scenario "${cur.name}"?`)) return;
+  if (!await cxConfirm(`Delete scenario "${cur.name}"?`)) return;
   _dynSimSaveScenarios(arr.filter(s => s.id !== cur.id));
   if (_dynPage.simActiveByPhase) delete _dynPage.simActiveByPhase[_dynPage.simPhase];
   _dynRenderSimulator();
@@ -40856,7 +40935,7 @@ async function _dynTrackPlanAdd() {
     if (row) (_dynPage.adjacency = _dynPage.adjacency || []).push(row);
     _dynOpenTrackPlan();
     toast('Edge added', 'success');
-  } catch (e) { alert(`Add failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Add failed: ${e.message}`); }
 }
 
 async function _dynTrackPlanDelete(id) {
@@ -40865,7 +40944,7 @@ async function _dynTrackPlanDelete(id) {
     _dynPage.adjacency = (_dynPage.adjacency || []).filter(e => e.id !== id);
     _dynOpenTrackPlan();
     toast('Edge removed', 'success');
-  } catch (e) { alert(`Delete failed: ${e.message}`); }
+  } catch (e) { cxAlert(`Delete failed: ${e.message}`); }
 }
 
 // ── Zone access windows admin (lightweight CRUD inside the planning tab) ────
@@ -40969,7 +41048,7 @@ async function _dynPlanSaveWindow() {
 }
 
 async function _dynPlanDeleteWindow(id) {
-  if (!confirm('Delete this access window?')) return;
+  if (!await cxConfirm('Delete this access window?')) return;
   try {
     await _dbDelete('zone_access_windows', { id });
     toast('Window deleted', 'success');
@@ -41046,7 +41125,7 @@ async function _dtOpenPrereqEditor(testId) {
     });
     window._dtPrereqState = { testId, current, others };
   } catch (e) {
-    alert(`Load failed: ${e.message}`);
+    cxAlert(`Load failed: ${e.message}`);
   }
 }
 
@@ -41104,7 +41183,7 @@ async function _dtSavePrereqs(testId) {
     toast(`Saved ${st.current.size} prerequisite${st.current.size===1?'':'s'}.`, 'success');
     window._dtPrereqState = null;
   } catch (e) {
-    alert(`Save failed: ${e.message}`);
+    cxAlert(`Save failed: ${e.message}`);
   }
 }
 
@@ -41197,7 +41276,7 @@ async function _dynConfirmDeleteTestCase(testId) {
     if (typeof _reRenderTR === 'function') _reRenderTR();
     if (typeof renderLITable === 'function') renderLITable();
   } catch (e) {
-    alert(`Delete failed: ${e.message}`);
+    cxAlert(`Delete failed: ${e.message}`);
   }
 }
 
@@ -41413,10 +41492,10 @@ async function _dynSaveAddLocation(testId) {
   const procCode = info.procedure_code || info.code || testId;
   const procName = info.procedure_name || info.name || procCode;
   const loc = String(document.getElementById('dyn-addloc-sel')?.value || '').trim();
-  if (!loc) { alert('Pick a location.'); return; }
+  if (!loc) { cxAlert('Pick a location.'); return; }
   const newId = `${loc}-${procCode}`;
   if ((typeof TI !== 'undefined' ? TI : []).some(t => (t.TestID || t.test_id) === newId)) {
-    alert(`An activity for ${loc} already exists (${newId}).`);
+    cxAlert(`An activity for ${loc} already exists (${newId}).`);
     return;
   }
   const row = {
@@ -41440,7 +41519,7 @@ async function _dynSaveAddLocation(testId) {
     if (typeof renderLITable === 'function') renderLITable();
     if (typeof _reRenderTR === 'function') _reRenderTR();
   } catch (e) {
-    alert(`Create failed: ${e.message}`);
+    cxAlert(`Create failed: ${e.message}`);
   }
 }
 
@@ -41568,7 +41647,7 @@ async function _dynSaveCadence(testId) {
     if (document.getElementById('dyn-content')) _dynRenderCases();
     if (typeof _reRenderTR === 'function') _reRenderTR();
   } catch (e) {
-    alert(`Save failed: ${e.message}`);
+    cxAlert(`Save failed: ${e.message}`);
   }
 }
 
@@ -41908,7 +41987,7 @@ async function _drwGotoPage(pageIndex) {
   if (!_drwPdfDoc) return;
   if (pageIndex < 0 || pageIndex >= _drwPdfDoc.numPages) return;
   if (_drwMarkupDirty) {
-    if (!confirm('You have unsaved markup changes. Switch page anyway?')) {
+    if (!await cxConfirm('You have unsaved markup changes. Switch page anyway?')) {
       _drwSyncNavPage();
       return;
     }
@@ -41999,7 +42078,7 @@ async function _drwSwitchToRevision(sheetId) {
   if (!s) return;
   if (s.id === _drwCurSheet?.id) return;
   if (_drwMarkupDirty) {
-    if (!confirm('You have unsaved markup changes. Switch revision anyway?')) {
+    if (!await cxConfirm('You have unsaved markup changes. Switch revision anyway?')) {
       _drwUpdateRevisionPicker();
       return;
     }
@@ -43157,7 +43236,7 @@ async function _docsArchive(docId, archived) {
 async function _docsDelete(docId) {
   const d = DOCUMENTS.find(x => x.id === docId);
   if (!d) return;
-  if (!confirm(`Delete “${d.title}” and all ${DocsAPI.versionsFor(docId).length} revision(s)? This cannot be undone.`)) return;
+  if (!await cxConfirm(`Delete “${d.title}” and all ${DocsAPI.versionsFor(docId).length} revision(s)? This cannot be undone.`)) return;
   try { await DocsAPI.deleteDocument(d); await loadDocsData(); closeModal(); renderDocumentsPage();
     toast('Document deleted', 'success');
   } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
@@ -43183,7 +43262,7 @@ function _docsFolderSelectOptions(selectedId, excludeId) {
 // ── Folder CRUD ────────────────────────────────────────────────────────────
 async function _docsNewFolder() {
   if (!_docsCanManage()) return;
-  const name = (prompt('New folder name:') || '').trim();
+  const name = (await cxPrompt('New folder name:') || '').trim();
   if (!name) return;
   try {
     await DocsAPI.createFolder(name, _docsCwd);
@@ -43196,7 +43275,7 @@ async function _docsNewFolder() {
 async function _docsRenameFolder(id) {
   if (!_docsCanManage()) return;
   const f = DOC_FOLDERS.find(x => x.id === id);
-  const name = (prompt('Rename folder:', f?.name || '') || '').trim();
+  const name = (await cxPrompt('Rename folder:', f?.name || '') || '').trim();
   if (!name || name === f?.name) return;
   try {
     await DocsAPI.renameFolder(id, name);
@@ -43214,7 +43293,7 @@ async function _docsDeleteFolder(id) {
   const note = (docN || subN)
     ? `\n\nIts ${[docN && `${docN} document(s)`, subN && `${subN} subfolder(s)`].filter(Boolean).join(' and ')} will move up one level (not deleted).`
     : '';
-  if (!confirm(`Delete folder “${f?.name}”?${note}`)) return;
+  if (!await cxConfirm(`Delete folder “${f?.name}”?${note}`)) return;
   try {
     await DocsAPI.deleteFolder(id);
     // If we were inside (or below) the deleted folder, step up to its parent.

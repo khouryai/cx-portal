@@ -966,7 +966,7 @@
   }
   async function deleteActiveAlbum() {
     var a = S.activeAlbum; if (!a || a.kind !== 'manual') return;
-    if (!window.confirm('Delete album “' + a.name + '”? Photos are not deleted — only the album.')) return;
+    if (!await cxConfirm('Delete album “' + a.name + '”? Photos are not deleted — only the album.')) return;
     try {
       await _dbUpdate('photo_albums', { is_deleted: true }, { id: a.id });
       toast('Album deleted.'); S.view = 'albums'; S.activeAlbum = null; await loadAlbums(); paintAlbums();
@@ -1016,7 +1016,7 @@
     var deletable = list.filter(canDeletePhoto);
     if (deletable.length < list.length) toast('Some photos can only be deleted by their uploader or an admin.');
     if (!deletable.length) return;
-    if (!window.confirm('Delete ' + deletable.length + ' photo' + (deletable.length === 1 ? '' : 's') + '?')) return;
+    if (!await cxConfirm('Delete ' + deletable.length + ' photo' + (deletable.length === 1 ? '' : 's') + '?')) return;
     var paths = [];
     for (var i = 0; i < deletable.length; i++) {
       try {
@@ -1032,7 +1032,7 @@
 
   async function deletePhoto(p) {
     if (!canDeletePhoto(p)) return;
-    if (!window.confirm('Delete this photo? It will be removed from the timeline and albums.')) return;
+    if (!await cxConfirm('Delete this photo? It will be removed from the timeline and albums.')) return;
     try {
       await _dbUpdate('photos', { is_deleted: true }, { id: p.id });
       await storageRemove([p.storage_path, p.thumb_path].filter(Boolean));

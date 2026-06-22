@@ -2457,6 +2457,9 @@ textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; 
 }
 .modal-close:hover { background: var(--gray-200); color: var(--text); }
 .modal-body { padding: 20px 24px; }
+/* In-app dialog (cxAlert/cxConfirm/cxPrompt) body text + danger action */
+.cx-dialog-text { margin: 0; line-height: 1.55; color: var(--text); }
+.form-submit.cx-dialog-danger { background: var(--bad); border-color: var(--bad); }
 .modal-footer {
   padding: 16px 24px;
   border-top: 1px solid var(--border);

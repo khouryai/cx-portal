@@ -572,7 +572,7 @@ async function _paToggleAction(tplId, modKey, action) {
 }
 
 async function _paNewTemplate() {
-  const name = prompt('New template name:');
+  const name = await cxPrompt('New template name:');
   if (!name || !name.trim()) return;
   const { data, error } = await _sb.from('permission_templates')
     .insert({ name: name.trim(), description: '', is_system: false }).select().single();
@@ -583,7 +583,7 @@ async function _paNewTemplate() {
 
 async function _paRenameTemplate(tplId) {
   const tpl = _paTemplates.find(t => t.id === tplId); if (!tpl) return;
-  const name = prompt('Rename template:', tpl.name);
+  const name = await cxPrompt('Rename template:', tpl.name);
   if (!name || !name.trim() || name.trim() === tpl.name) return;
   const { error } = await _sb.from('permission_templates').update({ name: name.trim() }).eq('id', tplId);
   if (error) { toast('Rename failed: ' + error.message, 'error'); return; }
@@ -592,7 +592,7 @@ async function _paRenameTemplate(tplId) {
 
 async function _paDuplicateTemplate(tplId) {
   const src = _paTemplates.find(t => t.id === tplId); if (!src) return;
-  const name = prompt('Name for the copy:', src.name + ' (copy)');
+  const name = await cxPrompt('Name for the copy:', src.name + ' (copy)');
   if (!name || !name.trim()) return;
   const { data, error } = await _sb.from('permission_templates')
     .insert({ name: name.trim(), description: src.description || '', is_system: false }).select().single();
@@ -611,7 +611,7 @@ async function _paDuplicateTemplate(tplId) {
 async function _paDeleteTemplate(tplId) {
   const tpl = _paTemplates.find(t => t.id === tplId); if (!tpl) return;
   if (tpl.is_system || _paTplAssignedCount(tplId) > 0) return;
-  if (!confirm(`Delete template "${tpl.name}"? This cannot be undone.`)) return;
+  if (!await cxConfirm(`Delete template "${tpl.name}"? This cannot be undone.`)) return;
   const { error: e1 } = await _sb.from('template_module_perms').delete().eq('template_id', tplId);
   if (e1) { toast('Delete failed: ' + e1.message, 'error'); return; }
   const { error: e2 } = await _sb.from('permission_templates').delete().eq('id', tplId);
