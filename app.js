@@ -31883,6 +31883,12 @@ function _drwParseSheetInfo(items, W, H, region) {
 let _drwPhaseFilter = '';
 let _drwActiveLocation = '';
 let _drwActiveSetId = '';
+// Current-Drawings register view state (design handoff)
+let _drwRegView = 'table';   // 'table' | 'cards'
+let _drwRegSearch = '';
+let _drwRegDisc = '';
+let _drwRegSet = '';
+let _drwRegSuper = false;
 const _DRW_VIEW_PREF_KEY = 'cx-drawings-view';
 
 function _drwLoadViewPrefs() {
@@ -31936,19 +31942,10 @@ function renderDrawingsPage() {
 
   const isAdmin = currentRoleUser?.role === 'admin';
 
-  const _drwLocs    = [...new Set(DRAWING_SETS.map(s => s.location).filter(Boolean))];
-  const _drwCurrent = DRAWING_SHEETS.filter(s => s.is_current).length;
-  hero.innerHTML = renderPageHero({
-    eyebrow: 'Project',
-    title: 'Drawing Sets',
-    sub:   'Site plan books, drawing sets, and markup tools by location',
-    stats: [
-      { label: 'Locations', value: _drwLocs.length,      tone: 'blue'  },
-      { label: 'Sets',      value: DRAWING_SETS.length },
-      { label: 'Current',   value: _drwCurrent,          tone: 'good'  },
-      { label: 'Sheets',    value: DRAWING_SHEETS.length, tone: 'muted' },
-    ],
-  });
+  hero.innerHTML = `
+    <div class="page-eyebrow">Project</div>
+    <h1 class="page-title">Drawings</h1>
+    <p class="page-sub">Signal, CBTC and systems sheets by discipline — issued-for-construction sets with revision history and field markup.</p>`;
 
   // Keep the Drawings location picker focused: locations with drawings plus
   // the project exceptions that should remain visible even before upload.
@@ -31964,8 +31961,9 @@ function renderDrawingsPage() {
   }
 
   const uploadBtn = isAdmin ? `
-    <button class="admin-action-btn" onclick="_drwOpenUpload()" style="background:#6366f1;color:#fff;border:none;padding:8px 18px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;">
-      + Upload Drawing Set
+    <button class="docs-primary-btn" onclick="_drwOpenUpload()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+      Upload Drawing Set
     </button>` : '';
 
   const phases = [...new Set(allLocs.map(loc => _drwPhaseForLocation(loc)).filter(Boolean))]
@@ -32054,14 +32052,174 @@ function _drwRenderLocationView(loc, activeSubtab = 'current') {
   if (activeSubtab === 'history') _drwTabHistory(loc, content);
 }
 
-// ── Tab 1: Current Drawings ────────────────────────────────────────────────
+// ── Tab 1: Current Drawings (design-handoff register) ──────────────────────
 function _drwTabCurrent(loc, el) {
-  const sheets = DRAWING_SHEETS.filter(s => s.location === loc && s.is_current && s.confirmed);
-  if (!sheets.length) {
-    el.innerHTML = `<div class="docs-empty"><p>No confirmed drawings for this location yet.</p></div>`;
+  // Disciplines + sets present for this location (for the filter dropdowns).
+  const locSheets = DRAWING_SHEETS.filter(s => s.location === loc && s.confirmed);
+  const discs = [...new Set(locSheets.map(s => s.discipline || 'General'))]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const setsForLoc = DRAWING_SETS.filter(s => s.location === loc);
+  if (_drwRegDisc && !discs.includes(_drwRegDisc)) _drwRegDisc = '';
+  if (_drwRegSet && !setsForLoc.some(s => s.id === _drwRegSet)) _drwRegSet = '';
+
+  const discOpts = discs.map(d => `<option value="${escapeHtml(d)}" ${_drwRegDisc === d ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('');
+  const setOpts = setsForLoc.map(s => `<option value="${s.id}" ${_drwRegSet === s.id ? 'selected' : ''}>${escapeHtml(s.title)}</option>`).join('');
+
+  el.innerHTML = `
+    <div class="drw-toolbar">
+      <div class="docs-search-wrap">
+        <svg class="docs-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input class="docs-search-input" id="drw-reg-search" type="text" placeholder="Search sheet number, title…"
+          value="${escapeHtml(_drwRegSearch)}" oninput="_drwRegSet_('search', this.value)">
+      </div>
+      <select class="docs-filter-select" onchange="_drwRegSet_('disc', this.value)">
+        <option value="">All disciplines</option>${discOpts}
+      </select>
+      <select class="docs-filter-select" onchange="_drwRegSet_('set', this.value)">
+        <option value="">All sets</option>${setOpts}
+      </select>
+      <label class="docs-archived-toggle">
+        <input type="checkbox" ${_drwRegSuper ? 'checked' : ''} onchange="_drwRegSet_('super', this.checked)"> Show superseded
+      </label>
+      <div class="drw-view-toggle">
+        <button class="${_drwRegView === 'table' ? 'active' : ''}" onclick="_drwRegSet_('view','table')">Table</button>
+        <button class="${_drwRegView === 'cards' ? 'active' : ''}" onclick="_drwRegSet_('view','cards')">Cards</button>
+      </div>
+    </div>
+    <div class="data-card-head" style="background:transparent;border:none;padding:0 2px 12px;">
+      <span class="data-count"><span class="docs-count-strong" id="drw-reg-count">0</span> sheets · <span id="drw-reg-latest">0</span> at latest revision</span>
+      <button class="export-btn" onclick="_drwExportIndex('${escapeHtml(loc)}')">Export index</button>
+    </div>
+    <div id="drw-reg-sections"></div>
+    <div class="docs-empty docs-empty-hidden" id="drw-reg-empty">
+      <h3>No sheets match your filters</h3>
+      <p>Try clearing the search, discipline, or set filter.</p>
+    </div>`;
+
+  _drwRenderRegister(loc);
+}
+
+// Update register filter/view state then re-render (keeps search focus —
+// only the sections + count + empty are re-rendered, not the toolbar).
+function _drwRegSet_(key, val) {
+  if (key === 'search') _drwRegSearch = val;
+  else if (key === 'disc') _drwRegDisc = val;
+  else if (key === 'set') _drwRegSet = val;
+  else if (key === 'super') _drwRegSuper = !!val;
+  else if (key === 'view') {
+    _drwRegView = val;
+    document.querySelectorAll('.drw-view-toggle button').forEach(b =>
+      b.classList.toggle('active', b.textContent.trim().toLowerCase() === val));
+  }
+  _drwRenderRegister(_drwActiveLocation);
+}
+
+function _drwRegFiltered(loc) {
+  const q = _drwRegSearch.trim().toLowerCase();
+  return DRAWING_SHEETS.filter(s => {
+    if (s.location !== loc || !s.confirmed) return false;
+    if (!_drwRegSuper && !s.is_current) return false;
+    if (_drwRegDisc && (s.discipline || 'General') !== _drwRegDisc) return false;
+    if (_drwRegSet && s.set_id !== _drwRegSet) return false;
+    if (q) {
+      const hay = `${s.sheet_number || ''} ${s.sheet_title || ''} ${s.page_number || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function _drwRenderRegister(loc) {
+  const host  = document.getElementById('drw-reg-sections');
+  const empty = document.getElementById('drw-reg-empty');
+  if (!host) return;
+  const rows = _drwRegFiltered(loc);
+
+  const countEl = document.getElementById('drw-reg-count');
+  const latestEl = document.getElementById('drw-reg-latest');
+  if (countEl) countEl.textContent = rows.length;
+  if (latestEl) latestEl.textContent = rows.filter(s => s.is_current).length;
+
+  if (!rows.length) {
+    host.innerHTML = '';
+    empty?.classList.remove('docs-empty-hidden');
     return;
   }
-  el.innerHTML = _drwSheetTableHTML(sheets, { loc, subtab: 'current' });
+  empty?.classList.add('docs-empty-hidden');
+
+  const discs = [...new Set(rows.map(s => s.discipline || 'General'))]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  host.innerHTML = discs.map(disc => {
+    const group = rows.filter(s => (s.discipline || 'General') === disc);
+    const body = _drwRegView === 'table' ? _drwRegTableHTML(group) : _drwRegCardsHTML(group);
+    return `<div class="drw-disc-section">
+        <div class="drw-disc-header">${escapeHtml(disc)}<span class="drw-disc-count">${group.length} sheet${group.length === 1 ? '' : 's'}</span></div>
+        ${body}
+      </div>`;
+  }).join('');
+}
+
+function _drwRegRevCell(s) {
+  return (s.revision ? `Rev ${escapeHtml(s.revision)}` : '—') +
+    (s.is_current ? '<span class="drw-latest-pill">LATEST</span>' : '<span class="drw-super-pill">SUPERSEDED</span>');
+}
+
+function _drwRegTableHTML(rows) {
+  const setTitle = s => DRAWING_SETS.find(x => x.id === s.set_id)?.title || '—';
+  return `<div class="drw-sheet-table-card">
+    <table class="data-table drw-sheet-table">
+      <thead><tr>
+        <th style="width:120px;">Sheet #</th><th>Title</th><th style="width:170px;">Rev</th>
+        <th style="width:110px;">Set</th><th style="width:80px;">Page</th>
+        <th style="width:120px;">Location</th><th style="width:150px;">Updated</th><th>Open</th>
+      </tr></thead>
+      <tbody>${rows.map(s => `
+        <tr class="drw-sheet-row${s.is_current ? '' : ' docs-row-archived'}" onclick="_drwOpenSheet('${s.id}','${s.set_id}',${s.page_index})" title="Open ${escapeHtml(s.sheet_number || 'Sheet')}">
+          <td><a class="drw-sheet-link" href="javascript:void(0)" onclick="event.stopPropagation();_drwOpenSheet('${s.id}','${s.set_id}',${s.page_index})">${escapeHtml(s.sheet_number || '—')}</a></td>
+          <td class="drw-sheet-title-cell" title="${escapeHtml(s.sheet_title || '')}">${escapeHtml(s.sheet_title || 'Untitled')}</td>
+          <td class="drw-sheet-rev-cell">${_drwRegRevCell(s)}</td>
+          <td class="drw-sheet-set-cell">${escapeHtml(setTitle(s))}</td>
+          <td class="drw-sheet-page-cell">${escapeHtml(s.page_number || String((s.page_index ?? 0) + 1))}</td>
+          <td class="drw-muted">${escapeHtml(s.location || '—')}</td>
+          <td class="drw-muted">${_docsFmtDate(s.created_at)}</td>
+          <td class="drw-sheet-open-cell"><span class="drw-row-open-dot">›</span></td>
+        </tr>`).join('')}</tbody>
+    </table>
+  </div>`;
+}
+
+function _drwRegCardsHTML(rows) {
+  const setTitle = s => DRAWING_SETS.find(x => x.id === s.set_id)?.title || '—';
+  return `<div class="drw-sheet-grid">${rows.map(s => `
+    <div class="drw-sheet-card${s.is_current ? '' : ' docs-row-archived'}" onclick="_drwOpenSheet('${s.id}','${s.set_id}',${s.page_index})" title="Open ${escapeHtml(s.sheet_number || 'Sheet')}">
+      <span class="drw-sheet-num">${escapeHtml(s.sheet_number || '—')}</span>
+      <span class="drw-sheet-title">${escapeHtml(s.sheet_title || 'Untitled')}</span>
+      <div class="drw-sheet-meta">
+        <span class="drw-card-rev">Rev ${escapeHtml(s.revision || '—')}</span>
+        <span class="docs-tag">${escapeHtml(setTitle(s))}</span>
+        <span class="docs-tag">${escapeHtml(s.page_number || String((s.page_index ?? 0) + 1))}</span>
+      </div>
+    </div>`).join('')}</div>`;
+}
+
+// Export the current filtered register to CSV.
+function _drwExportIndex(loc) {
+  const rows = _drwRegFiltered(loc);
+  const esc = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+  const head = ['Sheet #', 'Title', 'Discipline', 'Rev', 'Set', 'Page', 'Location', 'Status', 'Updated'];
+  const lines = [head.map(esc).join(',')];
+  rows.forEach(s => {
+    const set = DRAWING_SETS.find(x => x.id === s.set_id)?.title || '';
+    lines.push([s.sheet_number, s.sheet_title, s.discipline, s.revision, set,
+      s.page_number || ((s.page_index ?? 0) + 1), s.location,
+      s.is_current ? 'Current' : 'Superseded', _docsFmtDate(s.created_at)].map(esc).join(','));
+  });
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `drawings-${(loc || 'index').replace(/\s+/g, '-')}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 // ── Tab 2: Drawing Sets ────────────────────────────────────────────────────
