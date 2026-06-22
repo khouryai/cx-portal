@@ -486,17 +486,36 @@ incrementally with no interim breakage.
 4. **UI gates — PILOT DONE, rest batched.** Photos delete routes through
    `can('photos','delete',isOwner)`. Remaining `app.js` call sites convert
    incrementally (fail-open; RLS authoritative).
-5. **RLS per-table conversion — PILOT DONE (test_register + photos), rest
-   batched.** `test_register`-governed tables (`test_items`, `test_procedures`,
-   `test_item_status_history`, `test_item_prerequisites`, `activity_records`) and
-   `photos`-governed tables (`photos`, `photo_albums`, `photo_album_items`) now
-   check the granular keys (migrations `rls_test_register_granular_keys`,
-   `rls_photos_granular_ownership_keys`; recorded in
-   `supabase/sql/supabase_perm_rls_granular.sql`). SELECT stays `view`; writes OR
-   the capabilities that legitimately perform each command (no false denials).
-   Remaining modules convert the same way, batched; advisors re-run per batch.
-   (`test_results` is governed by `test_reporting`, not `test_register` — it
-   converts in that module's batch.)
+5. **RLS per-table conversion — IN PROGRESS.** Recorded in
+   `supabase/sql/supabase_perm_rls_granular.sql`; SELECT stays `view`; writes OR
+   the capabilities that legitimately perform each command (no false denials);
+   advisors re-run per batch (clean).
+   - **Converted:** `test_register` (test_items, test_procedures,
+     test_item_status_history, test_item_prerequisites, activity_records);
+     `photos` (+ `_own`/`_any` ownership); `dynamic_testing` (dynamic_instances);
+     `forms`; `drawings` (+ markup ownership via `created_by=auth.uid()`);
+     `assets`; `schedule_p6`; `track_plan`; `weights`.
+   - **Already aligned (no migration needed)** — catalog kept `view/create/edit/
+     delete` as keys, so existing policies already check them: `rma`,
+     `test_reporting`, `meetings`, `locations`, `config`, `templates`,
+     `punch_list` (create/edit/delete; `advance_status`/`comment` are UPDATEs
+     covered by `edit`), `audit`, `overview`.
+   - **Deferred (need a decision, not a blind verb swap):**
+     - `directory` + `admin`: a `profiles`/perm-table UPDATE can't be
+       distinguished by column in RLS, so gating on `edit_profile` would let it
+       also change `role`/`permission_template_id` — defeating
+       `grant_global_admin`/`manage_*` being grant-only. Needs a **column-level
+       guard** (trigger or restrictive policy on `role`/template columns). Global
+       admins bypass, so today's behaviour is unchanged.
+     - `planning` + `lookahead`: all `planning_*` tables are governed by the
+       **`planning`** module in RLS, but the catalog assigns events/resources to
+       **`lookahead`**. Converting would **reassign** governance — an
+       access-semantics change to confirm first.
+     - `dynamic_testing` secondary tables (`access_campaigns`, `train_requests`,
+       `zone_access_windows`): no dedicated catalog key; left on the (still
+       working) coarse verbs.
+     - `test_results`: governed by `test_reporting`; already uses that module's
+       create/edit/delete keys.
 6. **Ownership-identity — RESOLVED for photos without a column migration.** Photos
    ownership RLS matches `uploaded_by`/`created_by` to the signed-in user's
    `profiles.full_name` (mirroring the UI's `=== userName()`); verified against
