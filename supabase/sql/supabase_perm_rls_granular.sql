@@ -253,3 +253,100 @@ alter policy activity_weights_admin_delete on public.activity_weights using ( (s
 alter policy test_case_weights_admin_write on public.test_case_weights with check ( (select private.has_module_perm('weights','edit_test_case')) );
 alter policy test_case_weights_admin_update on public.test_case_weights using ( (select private.has_module_perm('weights','edit_test_case')) ) with check ( (select private.has_module_perm('weights','edit_test_case')) );
 alter policy test_case_weights_admin_delete on public.test_case_weights using ( (select private.has_module_perm('weights','edit_test_case')) );
+
+-- ── rls_planning_lookahead_reassign ─────────────────────────────────────────
+-- Move look-ahead tables from the 'planning' module to 'lookahead' (match the
+-- catalog/nav); convert planning-kept tables to planning's granular keys.
+-- pto_requests preserves its user_id=auth.uid() self-service ownership.
+alter policy planning_events_sel on public.planning_events using ( (select private.has_module_perm('lookahead','view')) );
+alter policy planning_events_ins on public.planning_events with check ( (select private.has_module_perm('lookahead','create_event')) );
+alter policy planning_events_upd on public.planning_events
+  using ( (select private.has_module_perm('lookahead','edit_event')) or (select private.has_module_perm('lookahead','cancel')) or (select private.has_module_perm('lookahead','lock')) )
+  with check ( (select private.has_module_perm('lookahead','edit_event')) or (select private.has_module_perm('lookahead','cancel')) or (select private.has_module_perm('lookahead','lock')) );
+alter policy planning_events_del on public.planning_events using ( (select private.has_module_perm('lookahead','delete')) );
+alter policy planning_event_resources_sel on public.planning_event_resources using ( (select private.has_module_perm('lookahead','view')) );
+alter policy planning_event_resources_ins on public.planning_event_resources with check ( (select private.has_module_perm('lookahead','assign_resources')) );
+alter policy planning_event_resources_upd on public.planning_event_resources using ( (select private.has_module_perm('lookahead','assign_resources')) ) with check ( (select private.has_module_perm('lookahead','assign_resources')) );
+alter policy planning_event_resources_del on public.planning_event_resources using ( (select private.has_module_perm('lookahead','assign_resources')) );
+alter policy planning_activity_resources_sel on public.planning_activity_resources using ( (select private.has_module_perm('lookahead','view')) );
+alter policy planning_activity_resources_ins on public.planning_activity_resources with check ( (select private.has_module_perm('lookahead','assign_resources')) );
+alter policy planning_activity_resources_upd on public.planning_activity_resources using ( (select private.has_module_perm('lookahead','assign_resources')) ) with check ( (select private.has_module_perm('lookahead','assign_resources')) );
+alter policy planning_activity_resources_del on public.planning_activity_resources using ( (select private.has_module_perm('lookahead','assign_resources')) );
+alter policy planning_activities_sel on public.planning_activities using ( (select private.has_module_perm('lookahead','view')) );
+alter policy planning_activities_ins on public.planning_activities with check ( (select private.has_module_perm('lookahead','manage_activities')) );
+alter policy planning_activities_upd on public.planning_activities using ( (select private.has_module_perm('lookahead','manage_activities')) ) with check ( (select private.has_module_perm('lookahead','manage_activities')) );
+alter policy planning_activities_del on public.planning_activities using ( (select private.has_module_perm('lookahead','manage_activities')) );
+alter policy planning_import_batches_sel on public.planning_import_batches using ( (select private.has_module_perm('lookahead','view')) );
+alter policy planning_import_batches_ins on public.planning_import_batches with check ( (select private.has_module_perm('lookahead','import')) );
+alter policy planning_import_batches_upd on public.planning_import_batches using ( (select private.has_module_perm('lookahead','import')) ) with check ( (select private.has_module_perm('lookahead','import')) );
+alter policy planning_import_batches_del on public.planning_import_batches using ( (select private.has_module_perm('lookahead','import')) );
+alter policy planning_resources_ins on public.planning_resources with check ( (select private.has_module_perm('planning','manage_resources')) );
+alter policy planning_resources_upd on public.planning_resources using ( (select private.has_module_perm('planning','manage_resources')) ) with check ( (select private.has_module_perm('planning','manage_resources')) );
+alter policy planning_resources_del on public.planning_resources using ( (select private.has_module_perm('planning','manage_resources')) );
+alter policy shift_templates_ins on public.shift_templates with check ( (select private.has_module_perm('planning','manage_resources')) );
+alter policy shift_templates_upd on public.shift_templates using ( (select private.has_module_perm('planning','manage_resources')) ) with check ( (select private.has_module_perm('planning','manage_resources')) );
+alter policy shift_templates_del on public.shift_templates using ( (select private.has_module_perm('planning','manage_resources')) );
+alter policy planning_week_snapshots_ins on public.planning_week_snapshots with check ( (select private.has_module_perm('planning','manage_resources')) );
+alter policy planning_week_snapshots_upd on public.planning_week_snapshots using ( (select private.has_module_perm('planning','manage_resources')) ) with check ( (select private.has_module_perm('planning','manage_resources')) );
+alter policy planning_week_snapshots_del on public.planning_week_snapshots using ( (select private.has_module_perm('planning','manage_resources')) );
+alter policy planning_conflicts_ins on public.planning_conflicts with check ( (select private.has_module_perm('planning','resolve_conflicts')) );
+alter policy planning_conflicts_upd on public.planning_conflicts using ( (select private.has_module_perm('planning','resolve_conflicts')) ) with check ( (select private.has_module_perm('planning','resolve_conflicts')) );
+alter policy planning_conflicts_del on public.planning_conflicts using ( (select private.has_module_perm('planning','resolve_conflicts')) );
+alter policy pto_requests_upd on public.pto_requests
+  using ( (user_id = (select auth.uid())) or (select private.has_module_perm('planning','pto_approve')) )
+  with check ( (user_id = (select auth.uid())) or (select private.has_module_perm('planning','pto_approve')) );
+alter policy pto_requests_del on public.pto_requests
+  using ( (user_id = (select auth.uid())) or (select private.has_module_perm('planning','pto_approve')) );
+
+-- ── rls_directory_admin_escalation_guard ────────────────────────────────────
+-- Trigger closes a pre-existing self-escalation hole: profiles_update allowed
+-- auth.uid()=id (self-update) including the role column, so any signed-in user
+-- could set their own role='admin'. The trigger blocks privileged-column changes
+-- unless the actor holds the matching capability (service_role/internal bypass;
+-- global admins pass via has_module_perm).
+create or replace function private.guard_profile_privilege_changes()
+returns trigger language plpgsql security definer set search_path to 'public' as $function$
+begin
+  if coalesce((select auth.role()), '') <> 'authenticated' then return new; end if;
+  if new.role is distinct from old.role
+     and not private.has_module_perm('directory','grant_global_admin') then
+    raise exception 'permission denied: changing role requires directory.grant_global_admin';
+  end if;
+  if new.permission_template_id is distinct from old.permission_template_id
+     and not private.has_module_perm('directory','assign_template') then
+    raise exception 'permission denied: changing permission_template_id requires directory.assign_template';
+  end if;
+  return new;
+end;
+$function$;
+drop trigger if exists trg_guard_profile_privilege on public.profiles;
+create trigger trg_guard_profile_privilege before update on public.profiles
+  for each row execute function private.guard_profile_privilege_changes();
+
+alter policy profiles_update on public.profiles
+  using ( ((select auth.uid()) = id)
+       or (select private.has_module_perm('directory','edit_profile')) or (select private.has_module_perm('directory','activate'))
+       or (select private.has_module_perm('directory','assign_template')) or (select private.has_module_perm('directory','grant_global_admin')) )
+  with check ( ((select auth.uid()) = id)
+       or (select private.has_module_perm('directory','edit_profile')) or (select private.has_module_perm('directory','activate'))
+       or (select private.has_module_perm('directory','assign_template')) or (select private.has_module_perm('directory','grant_global_admin')) );
+alter policy profiles_insert on public.profiles with check ( (select private.has_module_perm('directory','invite')) );
+alter policy profiles_delete on public.profiles using ( (select private.has_module_perm('directory','remove')) );
+alter policy users_ins on public.users with check ( (select private.has_module_perm('directory','invite')) );
+alter policy users_upd on public.users using ( (select private.has_module_perm('directory','edit_profile')) ) with check ( (select private.has_module_perm('directory','edit_profile')) );
+alter policy users_del on public.users using ( (select private.has_module_perm('directory','remove')) );
+alter policy team_members_ins on public.team_members with check ( (select private.has_module_perm('directory','manage_org_chart')) );
+alter policy team_members_upd on public.team_members using ( (select private.has_module_perm('directory','manage_org_chart')) ) with check ( (select private.has_module_perm('directory','manage_org_chart')) );
+alter policy team_members_del on public.team_members using ( (select private.has_module_perm('directory','manage_org_chart')) );
+alter policy perm_modules_ins on public.perm_modules with check ( (select private.has_module_perm('admin','manage_templates')) );
+alter policy perm_modules_upd on public.perm_modules using ( (select private.has_module_perm('admin','manage_templates')) ) with check ( (select private.has_module_perm('admin','manage_templates')) );
+alter policy perm_modules_del on public.perm_modules using ( (select private.has_module_perm('admin','manage_templates')) );
+alter policy permission_templates_ins on public.permission_templates with check ( (select private.has_module_perm('admin','manage_templates')) );
+alter policy permission_templates_upd on public.permission_templates using ( (select private.has_module_perm('admin','manage_templates')) ) with check ( (select private.has_module_perm('admin','manage_templates')) );
+alter policy permission_templates_del on public.permission_templates using ( (select private.has_module_perm('admin','manage_templates')) );
+alter policy template_module_perms_ins on public.template_module_perms with check ( (select private.has_module_perm('admin','manage_templates')) );
+alter policy template_module_perms_upd on public.template_module_perms using ( (select private.has_module_perm('admin','manage_templates')) ) with check ( (select private.has_module_perm('admin','manage_templates')) );
+alter policy template_module_perms_del on public.template_module_perms using ( (select private.has_module_perm('admin','manage_templates')) );
+alter policy umo_ins on public.user_module_overrides with check ( (select private.has_module_perm('admin','manage_overrides')) );
+alter policy umo_upd on public.user_module_overrides using ( (select private.has_module_perm('admin','manage_overrides')) ) with check ( (select private.has_module_perm('admin','manage_overrides')) );
+alter policy umo_del on public.user_module_overrides using ( (select private.has_module_perm('admin','manage_overrides')) );

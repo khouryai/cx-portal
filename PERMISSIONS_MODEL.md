@@ -15,14 +15,17 @@
 > **strict superset** of the old behaviour, so no existing RLS policy lost
 > access and the 2 global admins bypass entirely.
 >
-> **RLS PILOT LIVE:** `test_register` + `photos` governed tables now enforce the
-> granular keys in RLS (incl. photos `_own`/`_any` ownership, matched to
-> `profiles.full_name` — no column migration needed).
+> **RLS LIVE across all modules:** every governed table now enforces the granular
+> keys (photos + drawings carry `_own`/`_any` ownership). A `BEFORE UPDATE`
+> trigger on `profiles` enforces role/template column changes and closed a
+> pre-existing self-escalation hole (any signed-in user could self-set
+> `role='admin'`). Advisors clean throughout; only the lone read-only field
+> engineer is RLS-subject, so no disruption.
 >
-> **REMAINING (batched, per the build plan):** converting the other modules'
-> governed tables to *check* the granular keys, and gating the remaining
-> per-call-site UI in `app.js`. Both vocabularies resolve in the meantime, so
-> this is incremental and safe.
+> **REMAINING:** gating the remaining per-call-site UI in `app.js` through
+> `uiCan`/`can` (cosmetic; RLS is authoritative). Two table groups intentionally
+> stay on the (still-resolving) coarse verbs: `dynamic_testing` secondary tables
+> and `test_results` (see build plan).
 
 ## Why
 At the original design time ~27 tables had always-true (`USING(true)`) policies;
@@ -500,22 +503,29 @@ incrementally with no interim breakage.
      `test_reporting`, `meetings`, `locations`, `config`, `templates`,
      `punch_list` (create/edit/delete; `advance_status`/`comment` are UPDATEs
      covered by `edit`), `audit`, `overview`.
-   - **Deferred (need a decision, not a blind verb swap):**
-     - `directory` + `admin`: a `profiles`/perm-table UPDATE can't be
-       distinguished by column in RLS, so gating on `edit_profile` would let it
-       also change `role`/`permission_template_id` — defeating
-       `grant_global_admin`/`manage_*` being grant-only. Needs a **column-level
-       guard** (trigger or restrictive policy on `role`/template columns). Global
-       admins bypass, so today's behaviour is unchanged.
-     - `planning` + `lookahead`: all `planning_*` tables are governed by the
-       **`planning`** module in RLS, but the catalog assigns events/resources to
-       **`lookahead`**. Converting would **reassign** governance — an
-       access-semantics change to confirm first.
-     - `dynamic_testing` secondary tables (`access_campaigns`, `train_requests`,
-       `zone_access_windows`): no dedicated catalog key; left on the (still
-       working) coarse verbs.
-     - `test_results`: governed by `test_reporting`; already uses that module's
-       create/edit/delete keys.
+   - **`lookahead` (reassigned) + `planning` (converted):** `planning_events`,
+     `planning_event_resources`, `planning_activity_resources`,
+     `planning_activities`, `planning_import_batches` now governed by the
+     **`lookahead`** module (matching the catalog/nav); `planning_resources`,
+     `shift_templates`, `planning_week_snapshots` → `manage_resources`;
+     `planning_conflicts` → `resolve_conflicts`; `pto_requests` reviewer path →
+     `pto_approve` (self-service `user_id=auth.uid()` ownership preserved).
+   - **`directory` + `admin` (converted, with an escalation guard):** profiles/
+     users/team_members and the permission tables now check `invite`/
+     `edit_profile`/`remove`/`manage_org_chart`/`manage_templates`/
+     `manage_overrides`. Because RLS can't tell which column an UPDATE touched, a
+     `BEFORE UPDATE` trigger (`private.guard_profile_privilege_changes`) enforces
+     that changing `role` requires `grant_global_admin` and changing
+     `permission_template_id` requires `assign_template`. **This also closed a
+     pre-existing privilege-escalation hole**: `profiles_update` allowed the
+     self-update branch (`auth.uid()=id`) to set any column — including `role` —
+     so any signed-in user could self-promote to `role='admin'`. The trigger now
+     blocks that (service_role/internal bypass; global admins pass).
+   - **Still on coarse verbs (intentional):** `dynamic_testing` secondary tables
+     (`access_campaigns`, `train_requests`, `zone_access_windows` — no dedicated
+     catalog key) and `test_results` (governed by `test_reporting`, already on
+     that module's create/edit/delete keys). Both still resolve via the union
+     baseline.
 6. **Ownership-identity — RESOLVED for photos without a column migration.** Photos
    ownership RLS matches `uploaded_by`/`created_by` to the signed-in user's
    `profiles.full_name` (mirroring the UI's `=== userName()`); verified against
