@@ -16,8 +16,9 @@ function ok(name, cond, details) {
 
 const { sandbox, loadError, loadErrorFile } = loadApp();
 if (loadError) { console.error("FATAL: load —", loadErrorFile, loadError.message); process.exit(1); }
-const { _teamInitials, _teamRows } = sandbox;
-if (typeof _teamInitials !== "function" || typeof _teamRows !== "function") {
+const { _teamInitials, _teamRows, _buildTeamTree } = sandbox;
+if (typeof _teamInitials !== "function" || typeof _teamRows !== "function" ||
+    typeof _buildTeamTree !== "function") {
   console.error("FATAL: team helpers not found"); process.exit(1);
 }
 
@@ -46,6 +47,29 @@ console.log("\n_teamRows:");
   ok("  level-1 row preserves the input order it was given",
      rows[1].map((m) => m.name).join(",") === "B1,A1");
   ok("  empty input → no rows", _teamRows([]).length === 0 && _teamRows(null).length === 0);
+}
+
+console.log("\n_buildTeamTree:");
+{
+  const members = [
+    { id: "mgr", name: "Manager", level: 0, sort_order: 0, reports_to: null },
+    { id: "ats", name: "Lead ATS", level: 1, sort_order: 1, reports_to: "mgr" },
+    { id: "cbtc", name: "Lead CBTC", level: 1, sort_order: 0, reports_to: "mgr" },
+    { id: "ats1", name: "ATS One", level: 2, sort_order: 0, reports_to: "ats" },
+    { id: "ats2", name: "ATS Two", level: 2, sort_order: 1, reports_to: "ats" },
+  ];
+  const roots = _buildTeamTree(members);
+  ok("  one root (the manager)", roots.length === 1 && roots[0].id === "mgr");
+  ok("  manager has 2 direct reports", roots[0].children.length === 2);
+  ok("  siblings ordered by sort_order (CBTC before ATS)",
+     roots[0].children.map((c) => c.id).join(",") === "cbtc,ats");
+  const ats = roots[0].children.find((c) => c.id === "ats");
+  ok("  ATS lead branch carries the 2 ATS members", ats.children.length === 2);
+  ok("  deep report nested under its lead, not at root",
+     roots.length === 1 && ats.children.map((c) => c.id).sort().join(",") === "ats1,ats2");
+  ok("  orphaned reports_to falls back to a root",
+     _buildTeamTree([{ id: "x", name: "X", level: 3, sort_order: 0, reports_to: "ghost" }]).length === 1);
+  ok("  empty input → no roots", _buildTeamTree([]).length === 0 && _buildTeamTree(null).length === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed.\n`);
