@@ -3236,6 +3236,12 @@ function onLoggedIn() {
     const allowed = (item.dataset.role || '').split(' ');
     item.style.display = allowed.includes(currentRoleUser.role) ? '' : 'none';
   });
+  // Permission-model nav gating (AUTHORITATIVE): runs after the legacy role
+  // filter so per-module permissions win — modules the user lacks 'view' on
+  // (e.g. access level NONE) are removed from the nav entirely, and delegated
+  // modules the role would have hidden are revealed. Async (loads template +
+  // overrides, then calls _applyPermNav). Fail-open if it errors (RLS enforces).
+  if (typeof loadMyPermissions === 'function') loadMyPermissions(currentProfile);
   const navLogin = document.getElementById('nav-login');
   if (navLogin) navLogin.style.display = 'none';
 
