@@ -15966,7 +15966,7 @@ function _assetPageHTML() {
           </p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <input type="file" id="asset-csv-input" accept=".csv" style="display:none;" onchange="_assetHandleFile(this.files[0])">
-            <button class="admin-action-btn" onclick="document.getElementById('asset-csv-input').click()">${icon('folder')} Choose CSV File</button>
+            ${uiCan('assets','import') ? `<button class="admin-action-btn" onclick="document.getElementById('asset-csv-input').click()">${icon('folder')} Choose CSV File</button>` : ''}
             <button class="form-secondary" onclick="_assetDownloadTemplate()">${icon('download')} Template</button>
             <button class="form-secondary" onclick="_assetExportCSV()" title="Export all assets and their linked test cases">${icon('upload')} Export CSV</button>
           </div>
@@ -15994,7 +15994,7 @@ function _assetPageHTML() {
             ${allSubs.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
           </select>
           <div id="asset-add-prefix-preview" style="font-size:12px;color:var(--gray-500);"></div>
-          <button class="admin-action-btn" onclick="_assetAddManual()">Add Asset</button>
+          ${uiCan('assets','add') ? `<button class="admin-action-btn" onclick="_assetAddManual()">Add Asset</button>` : ''}
         </div>
       </div>
     </div>
@@ -16053,7 +16053,7 @@ function _assetPageHTML() {
         </select>
         <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_assetBulkEditField('location','am-bulk-loc')">Apply</button>
         <span style="height:24px;border-left:1px solid #ffffff33;align-self:center;"></span>
-        <button class="admin-action-btn" style="background:#dc2626;font-size:12px;" onclick="_assetBulkDelete()">${icon('trash')} Delete</button>
+        ${uiCan('assets','bulk_delete') ? `<button class="admin-action-btn" style="background:#dc2626;font-size:12px;" onclick="_assetBulkDelete()">${icon('trash')} Delete</button>` : ''}
         <button class="btn-ghost-dark" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_assetClearSelection()">Clear</button>
       </div>` : ''}
 
@@ -16297,6 +16297,7 @@ async function _assetHandleFile(file) {
 }
 
 async function _assetAddManual() {
+  if (typeof uiCan === 'function' && !uiCan('assets', 'add')) { toast('You do not have permission to add assets', 'error'); return; }
   const deviceType = document.getElementById('asset-add-type')?.value.trim() || '';
   const deviceName = document.getElementById('asset-add-name')?.value.trim() || '';
   const location   = document.getElementById('asset-add-loc')?.value  || '';
@@ -16426,6 +16427,7 @@ function _assetClearSelection() {
 }
 
 async function _assetBulkDelete() {
+  if (typeof uiCan === 'function' && !uiCan('assets', 'bulk_delete')) { toast('You do not have permission to delete assets', 'error'); return; }
   const ids = [..._assetSelected];
   if (!ids.length) return;
   const names = ids.map(id => ASSETS.find(a => a.id === id)?.name || id).join(', ');
@@ -16449,6 +16451,7 @@ async function _assetBulkDelete() {
 }
 
 async function _assetBulkEditField(field, selectId) {
+  if (typeof uiCan === 'function' && !uiCan('assets', 'bulk_edit')) { toast('You do not have permission to bulk-edit assets', 'error'); return; }
   const val = document.getElementById(selectId)?.value;
   if (!val) { toast('Please choose a value first', 'error'); return; }
   const ids = [..._assetSelected];
@@ -17266,7 +17269,7 @@ function _rmaPageHTML() {
       }).join('')}
       <span class="right">
         <button class="v2-btn-ghost" onclick="_rmaCSVExport()">${icon('download')} Export CSV</button>
-        ${canEdit ? `<button class="v2-btn-primary" onclick="openRMAModal(null)">＋ New RMA</button>` : ''}
+        ${uiCan('rma','create') ? `<button class="v2-btn-primary" onclick="openRMAModal(null)">＋ New RMA</button>` : ''}
       </span>
     </div>
 
@@ -17360,8 +17363,8 @@ function _rmaRowHTML(r, canEdit) {
           <button class="v2-btn-mini" onclick="_rmaViewModal('${r.id}')">${icon('eye')} View</button>
           ${canEdit ? `
             <div style="display:flex;gap:4px;">
-              <button class="v2-btn-mini" onclick="openRMAModal('${r.id}')">${icon('edit')} Edit</button>
-              <button aria-label="Delete" class="v2-btn-mini danger" onclick="deleteRMA('${r.id}')" title="Delete">${icon('trash')}</button>
+              ${uiCan('rma','edit') ? `<button class="v2-btn-mini" onclick="openRMAModal('${r.id}')">${icon('edit')} Edit</button>` : ''}
+              ${uiCan('rma','delete') ? `<button aria-label="Delete" class="v2-btn-mini danger" onclick="deleteRMA('${r.id}')" title="Delete">${icon('trash')}</button>` : ''}
             </div>
           ` : ''}
         </div>
@@ -17427,6 +17430,7 @@ function openRMAModal(rmaId) {
 }
 
 async function saveRMA(editId) {
+  if (typeof uiCan === 'function' && !uiCan('rma', editId ? 'edit' : 'create')) { toast('You do not have permission to save RMAs', 'error'); return; }
   const rmaNumber = (document.getElementById('rma-number')?.value || '').trim();
   const status    = document.getElementById('rma-status')?.value   || 'Open';
   const location  = document.getElementById('rma-location')?.value || '';
@@ -17491,6 +17495,7 @@ async function saveRMA(editId) {
 }
 
 async function deleteRMA(id) {
+  if (typeof uiCan === 'function' && !uiCan('rma', 'delete')) { toast('You do not have permission to delete RMAs', 'error'); return; }
   const rma = RMAS.find(r => r.id === id);
   if (!rma) return;
   if (!await cxConfirm(`Delete RMA "${rma.rma_number}"?\n\nThis cannot be undone.`)) return;
