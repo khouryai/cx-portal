@@ -94,7 +94,6 @@ const PERM_CATALOG = {
     ['view','read_only',false],['export','read_only',false],['add','standard',false],['edit','standard',false],
     ['link','standard',false],['bulk_edit','standard',true],['import','admin',false],['bulk_delete','admin',false],
   ],
-  track_plan: [['view','read_only',false],['manage','admin',false]],
   drawings: [
     ['view','read_only',false],['create_markup','standard',false],['edit_markup_own','standard',false],
     ['publish','standard',false],['manage_markup_any','admin',false],['upload_set','admin',false],['delete_set','admin',false],

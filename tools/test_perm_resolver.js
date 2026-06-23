@@ -91,7 +91,7 @@ ok("  PERM_ACTIONS exported and canonical", JSON.stringify(PERM_ACTIONS) === JSO
 
 // ── module-aware union baseline (mirror of public._perm_baseline(module,level)) ──
 console.log("\nmodule-aware baseline (legacy verbs ∪ granular catalog):");
-ok("  PERM_CATALOG exported with all 22 modules", PERM_CATALOG && Object.keys(PERM_CATALOG).length === 22,
+ok("  PERM_CATALOG exported with all 21 modules", PERM_CATALOG && Object.keys(PERM_CATALOG).length === 21,
    `got ${PERM_CATALOG ? Object.keys(PERM_CATALOG).length : "none"}`);
 const trS = permBaseline("standard", "test_register");
 has("  test_register/standard", trS, "edit_case");

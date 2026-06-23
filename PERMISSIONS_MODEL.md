@@ -333,14 +333,6 @@ governs: assets, asset_test_links, asset_import_batches
 | `import` | batch CSV import | A |
 | `bulk_delete` | bulk delete assets | A |
 
-### Track Plan — `track_plan` (category: data, data-only)
-governs: track_*, train_control_locations
-
-| Key | Guards | Lvl |
-|---|---|---|
-| `view` | preview matching devices/zones in dynamic-scope picker | R |
-| `manage` | define/apply dynamic filters saved to test cases | A |
-
 ### Drawings — `drawings` (category: data)
 governs: drawing_sets, drawing_sheets, drawing_markups
 
@@ -474,8 +466,8 @@ The model ships behind a **strict-superset union baseline**, so steps land
 incrementally with no interim breakage.
 
 1. **Catalog seed — DONE.** `perm_modules.action_meta` (`{m:min_level, x:grant_only}`)
-   + ordered `actions` for all 22 modules. Migration
-   `perm_granular_catalog_seed`; recorded in
+   + ordered `actions` for all modules (21 after track_plan was removed).
+   Migration `perm_granular_catalog_seed`; recorded in
    `supabase/sql/supabase_perm_granular_catalog.sql`.
 2. **DB baseline + resolver — DONE.** `private._perm_baseline(module, level)`
    returns legacy-7 ∪ granular keys; `private.has_module_perm` rewired (migration
@@ -497,7 +489,7 @@ incrementally with no interim breakage.
      test_item_status_history, test_item_prerequisites, activity_records);
      `photos` (+ `_own`/`_any` ownership); `dynamic_testing` (dynamic_instances);
      `forms`; `drawings` (+ markup ownership via `created_by=auth.uid()`);
-     `assets`; `schedule_p6`; `track_plan`; `weights`.
+     `assets`; `schedule_p6`; `weights`.
    - **Already aligned (no migration needed)** — catalog kept `view/create/edit/
      delete` as keys, so existing policies already check them: `rma`,
      `test_reporting`, `meetings`, `locations`, `config`, `templates`,

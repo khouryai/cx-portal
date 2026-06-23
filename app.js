@@ -4808,7 +4808,7 @@ function _tplCaseRowsHTML(si) {
         value="${escapeHtml(tc.code)}" oninput="_templateSections[${si}].cases[${ci}].code=this.value">
       <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Test Case Name"
         value="${escapeHtml(tc.name)}" oninput="_templateSections[${si}].cases[${ci}].name=this.value">
-      <select class="form-input" style="font-size:12px;padding:5px 8px;" title="Static test case or dynamic track-plan scoped test"
+      <select class="form-input" style="font-size:12px;padding:5px 8px;" title="Static test case or dynamic-scope test"
         onchange="_templateSections[${si}].cases[${ci}].scopeType=this.value">
         <option value="static" ${(tc.scopeType || 'static') !== 'dynamic' ? 'selected' : ''}>Static</option>
         <option value="dynamic" ${(tc.scopeType || 'static') === 'dynamic' ? 'selected' : ''}>Dynamic</option>
@@ -34317,10 +34317,10 @@ async function _drwAdminDeleteMarkup(markupId) {
 }
 
 // ==========================================================================
-// DYNAMIC TESTING — SCOPE TOGGLE & FILTER EDITOR
-// Adds a per-test-case scope (static/dynamic) plus a filter editor that
-// queries the imported track-plan catalog (track_devices / track_zones)
-// for a live preview of which devices match the filter criteria.
+// DYNAMIC TESTING — TEST-CASE SCOPE TOGGLE
+// Adds a per-test-case scope (static/dynamic). Dynamic-scoped cases become
+// available in the Dynamic Testing module, where their instances are authored
+// (manual entry or CSV/Excel import).
 //
 // Wired into the Test Cases page via the 'scope' column registered in
 // _colRegister('li', ...). Click the Edit button in a row's Scope cell
@@ -34546,7 +34546,7 @@ const _dynPage = {
   planEnd: '',                           // window end
   planModes: ['CBTC','VATC'],            // allowed modes filter
   planMaxTrains: '',                     // optional train budget cap
-  adjacency: [],                         // zone_adjacency rows (track plan)
+  adjacency: [],                         // zone_adjacency rows
   prereqs: [],                           // test_item_prerequisites rows (test-case edges)
   planFeasible: [],                      // last fn_feasible_instances result
   planSelected: new Set(),               // instance ids the planner has picked
@@ -34691,7 +34691,7 @@ async function renderDynamicTestingPage() {
   hero.innerHTML = renderPageHero({
     eyebrow: 'Testing',
     title: 'Dynamic Testing',
-    sub: 'Manage executable test instances against the imported track plan.',
+    sub: 'Manage executable test instances for dynamic-scope test cases.',
   }) + `
     <div style="display:flex;gap:8px;margin-top:14px;">
       <button class="hero-tab ${_dynPage.tab==='cases'?'active':''}" onclick="_dynTabSwitch('cases')">Test Cases</button>
@@ -39218,13 +39218,13 @@ function _dynSimClosureCands(sc, zoneSet) {
   const push = g => { const k = g.slice().sort(cmp).join('|'); if (!seen.has(k)) { seen.add(k); cands.push(g.slice()); } };
   const groups = (sc.closureGroups || []).map(g => g.filter(z => zoneSet.has(z))).filter(g => g.length >= 1);
   if (groups.length) groups.forEach(push);
-  else _dynSimChains(_dynSimAdjPairs(sc), zoneSet, 4).forEach(push);   // fallback: ≤4 chains from track plan
+  else _dynSimChains(_dynSimAdjPairs(sc), zoneSet, 4).forEach(push);   // fallback: ≤4 chains from adjacency
   return cands.sort((a, b) => a.length - b.length || a.slice().sort(cmp).join('|').localeCompare(b.slice().sort(cmp).join('|')));
 }
-// Adjacency for the simulator = the shared Track Plan for this phase; if none is
+// Adjacency for the simulator = the shared zone adjacency for this phase; if none is
 // defined yet, fall back to the scenario's own pairs.
 function _dynSimAdjPairs(sc) {
-  const tp = _dynTrackPlanPairs(sc.phase);
+  const tp = _dynAdjacencyPairs(sc.phase);
   return tp.length ? tp : (sc.adjacency || []);
 }
 
@@ -39278,7 +39278,7 @@ function _dynSimMix(sc) {
 }
 function _dynSimMaxMixSize(sc) { return _dynSimMix(sc).reduce((m, e) => Math.max(m, e.size), 1); }
 
-// Smallest connected track-plan cluster (number of locations) that can cover a
+// Smallest connected adjacency cluster (number of locations) that can cover a
 // run's under-test + access zones — i.e. the shift size it truly needs. Returns
 // null if its zones can't be connected within 5 locations (unschedulable).
 function _dynSimRequiredSize(sc, inst) {
@@ -39394,7 +39394,7 @@ function _dynSimMaxShiftMinutes(sc) {
   return (vals.length ? Math.max(...vals) : 0) * 60;
 }
 
-// Which pooled runs can EVER be placed: access fits a track-plan chain (or a
+// Which pooled runs can EVER be placed: access fits an adjacency chain (or a
 // closure group), duration fits the largest shift, and every prerequisite case
 // is itself fully ever-placeable. Used to stop the run once only permanently
 // blocked work remains — otherwise the loop emits empty shifts to the horizon.
@@ -39934,7 +39934,7 @@ function _dynSimConfigHtml(sc, res) {
     return `<button type="button" onclick="_dynSimToggleZone('${escapeHtml(z)}')" style="font-size:11px;padding:2px 8px;border-radius:5px;cursor:pointer;margin:2px;border:1px solid ${on ? 'var(--hitachi-red)' : 'var(--gray-300)'};background:${on ? 'rgba(230,0,18,.06)' : '#fff'};color:${on ? 'var(--hitachi-red)' : 'var(--gray-500)'};">${escapeHtml(z)}</button>`;
   }).join('');
   const closTxt = (sc.closureGroups || []).map(p => p.join('-')).join(', ');
-  // Adjacency comes from the shared Track Plan now (not a per-scenario field).
+  // Adjacency comes from the shared zone adjacency now (not a per-scenario field).
   const tpAdj = new Map();
   for (const [a, b] of _dynSimAdjPairs(sc)) {
     if (!tpAdj.has(a)) tpAdj.set(a, new Set()); tpAdj.get(a).add(b);
@@ -39993,13 +39993,13 @@ function _dynSimConfigHtml(sc, res) {
       </div>
     </div>
     <div style="margin-bottom:10px;font-size:12px;color:var(--gray-600);">
-      <div style="display:flex;align-items:center;gap:8px;">Adjacency <span style="color:var(--gray-400);">— from the shared Track Plan</span>
+      <div style="display:flex;align-items:center;gap:8px;">Adjacency <span style="color:var(--gray-400);">— from the shared zone adjacency</span>
         <span style="flex:1;"></span>
-        <button type="button" class="dyn-btn" style="font-size:11px;padding:3px 8px;" onclick="_dynOpenTrackPlan()">${icon('git-branch')} Edit track plan</button>
+        <button type="button" class="dyn-btn" style="font-size:11px;padding:3px 8px;" onclick="_dynOpenAdjacency()">${icon('git-branch')} Edit adjacency</button>
       </div>
       <div style="margin-top:5px;padding:6px 9px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:5px;font-size:10.5px;font-family:monospace;color:var(--gray-600);line-height:1.5;">${escapeHtml(tpSummary)}</div>
     </div>
-    <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:10px;">Closure locations <span style="color:var(--gray-400);">(up to 4 consecutive, available during a closure — blank = auto from track plan)</span>
+    <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:10px;">Closure locations <span style="color:var(--gray-400);">(up to 4 consecutive, available during a closure — blank = auto from adjacency)</span>
       <input type="text" value="${escapeHtml(closTxt)}" placeholder="e.g. W40-W34-W30-W10, Y10-W34-W30" style="display:block;width:100%;margin-top:3px;padding:5px 7px;border:1px solid var(--gray-300);border-radius:5px;font-size:11.5px;font-family:monospace;box-sizing:border-box;" onchange="_dynSimSetClosure(this.value)">
     </label>
     <div style="display:flex;gap:10px;margin-bottom:10px;font-size:12px;color:var(--gray-600);">
@@ -40063,7 +40063,7 @@ function _dynSimMixHtml(res) {
 }
 
 // "+N left" breakdown: for every run the simulation couldn't place, say WHY —
-// add-location, over max/shift, not adjacent in the track plan, prereq-blocked,
+// add-location, over max/shift, not adjacent in the layout, prereq-blocked,
 // run-too-long, or simply no capacity in the horizon.
 function _dynSimUnplacedHtml(sc, res) {
   const list = res.unplacedList || [];
@@ -40085,7 +40085,7 @@ function _dynSimUnplacedHtml(sc, res) {
     let type, label, tone;
     if (outside.length) { type = 'loc'; tone = { bg: '#fef3c7', fg: '#92400e' }; label = `add location(s): ${outside.join(', ')}`; }
     else if (req.length > maxZ) { type = 'max'; tone = { bg: '#fde68a', fg: '#92400e' }; label = `needs a ${req.length}-location shift — add it to your access mix (max is ${maxZ})`; }
-    else if (!chains.some(c => { const s = new Set(c); return req.every(z => s.has(z)); })) { type = 'adj'; tone = { bg: '#e0e7ff', fg: '#3730a3' }; label = `${req.join(', ')} not adjacent in track plan`; }
+    else if (!chains.some(c => { const s = new Set(c); return req.every(z => s.has(z)); })) { type = 'adj'; tone = { bg: '#e0e7ff', fg: '#3730a3' }; label = `${req.join(', ')} not adjacent`; }
     else if (unmetSim.length) {
       type = 'prereq'; tone = { bg: '#ede9fe', fg: '#6d28d9' }; label = `waiting on prereq: ${unmetSim.map(codeFor).join(', ')} (also unscheduled — fix those first)`;
     }
@@ -40982,8 +40982,8 @@ function _dynAdjacencyMap(phase) {
   return m;
 }
 
-// Track-plan adjacency as [[a,b],…] pairs for a phase (consumed by the Simulator).
-function _dynTrackPlanPairs(phase) {
+// Zone adjacency as [[a,b],…] pairs for a phase (consumed by the Simulator).
+function _dynAdjacencyPairs(phase) {
   return (_dynPage.adjacency || [])
     .filter(e => (!phase || !e.phase || e.phase === phase) && e.zone_a && e.zone_b)
     .map(e => [_dynUZ(e.zone_a), _dynUZ(e.zone_b)]);
@@ -41001,8 +41001,8 @@ function _dynPrereqsMet(testId) {
   return edges.every(e => _dynCaseComplete(e.prerequisite_test_id));
 }
 
-// ── Track plan editor ───────────────────────────────────────────────────
-function _dynOpenTrackPlan() {
+// ── Zone adjacency editor ─────────────────────────────────────────────────
+function _dynOpenAdjacency() {
   const phase = 'Phase 2';
   const edges = (_dynPage.adjacency || []).filter(e => !e.phase || e.phase === phase)
     .sort((a, b) => (a.zone_a || '').localeCompare(b.zone_a || '', undefined, { numeric: true }));
@@ -41014,10 +41014,10 @@ function _dynOpenTrackPlan() {
   const edgeRows = edges.length ? edges.map(e => `
     <tr style="border-top:1px solid var(--gray-100);">
       <td style="padding:6px 10px;font-family:monospace;">${escapeHtml(e.zone_a)} — ${escapeHtml(e.zone_b)}</td>
-      <td style="padding:6px 10px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 8px;color:#dc2626;" onclick="_dynTrackPlanDelete('${e.id}')">Remove</button></td>
+      <td style="padding:6px 10px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 8px;color:#dc2626;" onclick="_dynAdjacencyDelete('${e.id}')">Remove</button></td>
     </tr>`).join('') : `<tr><td colspan="2" style="padding:16px;text-align:center;color:var(--gray-500);">No edges yet.</td></tr>`;
   modal({
-    title: 'Track plan — Phase 2 adjacency',
+    title: 'Zone adjacency — Phase 2',
     sub: 'Define which zones physically connect. The scheduler grows from a seed zone along these edges up to your max-locations budget.',
     size: 'large',
     body: `
@@ -41030,7 +41030,7 @@ function _dynOpenTrackPlan() {
           <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end;">
             <div><label style="font-size:11px;">Zone A</label><select id="tp-a" style="${fld}width:100%;">${zoneOpts.map(o=>`<option value="${escapeHtml(o.code)}">${escapeHtml(o.code)}</option>`).join('')}</select></div>
             <div><label style="font-size:11px;">Zone B</label><select id="tp-b" style="${fld}width:100%;">${zoneOpts.map(o=>`<option value="${escapeHtml(o.code)}">${escapeHtml(o.code)}</option>`).join('')}</select></div>
-            <button class="dyn-btn primary" onclick="_dynTrackPlanAdd()">+ Add</button>
+            <button class="dyn-btn primary" onclick="_dynAdjacencyAdd()">+ Add</button>
           </div>
         </div>
         <div>
@@ -41042,7 +41042,7 @@ function _dynOpenTrackPlan() {
   });
 }
 
-async function _dynTrackPlanAdd() {
+async function _dynAdjacencyAdd() {
   const a = _dynUZ(document.getElementById('tp-a')?.value);
   const b = _dynUZ(document.getElementById('tp-b')?.value);
   if (!a || !b || a === b) { toast('Pick two different zones', 'error'); return; }
@@ -41055,16 +41055,16 @@ async function _dynTrackPlanAdd() {
       created_by: currentRoleUser?.email || currentRoleUser?.id || null }]);
     const row = Array.isArray(ins) ? ins[0] : ins;
     if (row) (_dynPage.adjacency = _dynPage.adjacency || []).push(row);
-    _dynOpenTrackPlan();
+    _dynOpenAdjacency();
     toast('Edge added', 'success');
   } catch (e) { cxAlert(`Add failed: ${e.message}`); }
 }
 
-async function _dynTrackPlanDelete(id) {
+async function _dynAdjacencyDelete(id) {
   try {
     await _dbDelete('zone_adjacency', { id });
     _dynPage.adjacency = (_dynPage.adjacency || []).filter(e => e.id !== id);
-    _dynOpenTrackPlan();
+    _dynOpenAdjacency();
     toast('Edge removed', 'success');
   } catch (e) { cxAlert(`Delete failed: ${e.message}`); }
 }

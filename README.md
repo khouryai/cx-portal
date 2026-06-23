@@ -29,7 +29,7 @@ There is no build. The repo root **is** the site:
 | `chart.umd.js` | Chart.js (vendored) |
 | `supabase/functions/` | Edge Functions source (e.g. `photo-sharepoint-sync`) |
 | `supabase/sql/` | In-repo record of the base schema + every applied migration |
-| `sync_testplan.js`, `sync_track_plan.js`, `track_plan_importer.html` | Operational importers (test-plan master, Visio track-plan extract) |
+| `sync_testplan.js` | Operational importer (test-plan master) |
 | `tools/` | Test harness + dev tools — `run_tests.js` runs all suites (CI: `.github/workflows/test.yml`); `ui_gallery.html` + `shot_gallery.js` for visual QA without signing in |
 | `CLAUDE.md` | Working conventions (CRLF rules, tokens, icon system, verification) |
 | `DESIGN_TOKENS.md`, `PERMISSIONS_MODEL.md`, `SECURITY.md`, `INTEGRATION_SHAREPOINT.md`, `DEMO_DATA.md` | Living docs |

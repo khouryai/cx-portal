@@ -223,28 +223,8 @@ alter policy p6_learn_patterns_ins on public.p6_learn_patterns with check ( (sel
 alter policy p6_learn_patterns_upd on public.p6_learn_patterns using ( (select private.has_module_perm('schedule_p6','manage_links')) ) with check ( (select private.has_module_perm('schedule_p6','manage_links')) );
 alter policy p6_learn_patterns_del on public.p6_learn_patterns using ( (select private.has_module_perm('schedule_p6','manage_links')) );
 
--- track_plan (view + manage only) — all writes gated on 'manage'
-alter policy track_devices_ins on public.track_devices with check ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_devices_upd on public.track_devices using ( (select private.has_module_perm('track_plan','manage')) ) with check ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_devices_del on public.track_devices using ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_equations_ins on public.track_equations with check ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_equations_upd on public.track_equations using ( (select private.has_module_perm('track_plan','manage')) ) with check ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_equations_del on public.track_equations using ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_mileposts_ins on public.track_mileposts with check ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_mileposts_upd on public.track_mileposts using ( (select private.has_module_perm('track_plan','manage')) ) with check ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_mileposts_del on public.track_mileposts using ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_plan_imports_ins on public.track_plan_imports with check ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_plan_imports_upd on public.track_plan_imports using ( (select private.has_module_perm('track_plan','manage')) ) with check ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_plan_imports_del on public.track_plan_imports using ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_sections_ins on public.track_sections with check ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_sections_upd on public.track_sections using ( (select private.has_module_perm('track_plan','manage')) ) with check ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_sections_del on public.track_sections using ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_zones_ins on public.track_zones with check ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_zones_upd on public.track_zones using ( (select private.has_module_perm('track_plan','manage')) ) with check ( (select private.has_module_perm('track_plan','manage')) );
-alter policy track_zones_del on public.track_zones using ( (select private.has_module_perm('track_plan','manage')) );
-alter policy train_control_locations_ins on public.train_control_locations with check ( (select private.has_module_perm('track_plan','manage')) );
-alter policy train_control_locations_upd on public.train_control_locations using ( (select private.has_module_perm('track_plan','manage')) ) with check ( (select private.has_module_perm('track_plan','manage')) );
-alter policy train_control_locations_del on public.train_control_locations using ( (select private.has_module_perm('track_plan','manage')) );
+-- NOTE: track_plan was removed (supabase_drop_track_plan.sql) — its tables and
+-- policies no longer exist; the prior 'track_plan'.'manage' RLS block is dropped.
 
 -- weights
 alter policy activity_weights_admin_write on public.activity_weights with check ( (select private.has_module_perm('weights','edit_activity')) );
