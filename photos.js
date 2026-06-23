@@ -72,6 +72,11 @@
   function role() { try { return (typeof currentRoleUser !== 'undefined' && currentRoleUser && currentRoleUser.role) || null; } catch (e) { return null; } }
   function userName() { try { return (typeof currentRoleUser !== 'undefined' && currentRoleUser && currentRoleUser.name) || 'unknown'; } catch (e) { return 'unknown'; } }
   function canUpload() { return UPLOAD_ROLES.indexOf(role()) !== -1; }
+  // Granular gates (fall back to the legacy role check if the perms layer isn't
+  // loaded — fail-open; RLS is authoritative). pCan = flat capability,
+  // pCanOwn = ownership-aware (owner passed in).
+  function pCan(action) { return (typeof uiCan === 'function') ? uiCan('photos', action) : canUpload(); }
+  function pCanOwn(verb, owner) { return (typeof can === 'function') ? can('photos', verb, owner) : (role() === 'admin' || owner); }
   // Ownership-aware: routes through the granular permission gate (photos
   // delete_own / delete_any). Owner = the uploader. Falls back to the legacy
   // role/owner check if the gate isn't loaded (fail-open; RLS is authoritative).
@@ -515,9 +520,9 @@
 
   // ── rendering ───────────────────────────────────────────────────────────────
   function toolbarHTML() {
-    var up = canUpload() ? '<button class="pm-btn pm-btn-primary" id="pm-upload-btn">+ Add photos</button>' : '';
-    var cam = canUpload() ? '<button class="pm-btn" id="pm-camera-btn" title="Capture from camera">' + icon('camera') + ' Camera</button>' : '';
-    var newAlbum = canUpload() ? '<button class="pm-btn" id="pm-newalbum-btn">+ New album</button>' : '';
+    var up = pCan('upload') ? '<button class="pm-btn pm-btn-primary" id="pm-upload-btn">+ Add photos</button>' : '';
+    var cam = pCan('upload') ? '<button class="pm-btn" id="pm-camera-btn" title="Capture from camera">' + icon('camera') + ' Camera</button>' : '';
+    var newAlbum = pCan('create_album') ? '<button class="pm-btn" id="pm-newalbum-btn">+ New album</button>' : '';
     var sel = '<button class="pm-btn ' + (S.selecting ? 'pm-btn-primary' : '') + '" id="pm-select-btn">' + (S.selecting ? 'Done' : 'Select') + '</button>';
     var sp = role() === 'admin'
       ? '<button class="pm-btn" id="pm-spsync-btn" title="Mirror photos to the corporate SharePoint library (admin)">⇅ Sync to SharePoint</button>'
@@ -600,7 +605,7 @@
     var head = toolbarHTML();
     if (isAlbum) {
       var a = S.activeAlbum;
-      var manageBtns = (a.kind === 'manual' && canUpload())
+      var manageBtns = (a.kind === 'manual' && pCanOwn('manage_album', a.created_by === userName()))
         ? '<button class="pm-btn" id="pm-album-rename">Rename</button><button class="pm-btn pm-btn-danger" id="pm-album-del">Delete album</button>'
         : '';
       head += '<div class="pm-toolbar"><button class="pm-btn" id="pm-album-back">‹ All albums</button><div class="pm-spacer"></div><strong style="font-size:16px">' + esc(a.name) + '</strong>' +
@@ -804,9 +809,9 @@
       ['Uploaded by', p.uploaded_by || '—'],
     ];
     var btns = '';
-    if (canUpload()) btns += '<button class="pm-btn" id="pm-lb-edit">Edit</button>';
-    if (canUpload()) btns += '<button class="pm-btn" id="pm-lb-add">Add to album…</button>';
-    if (S.view === 'album' && S.activeAlbum && S.activeAlbum.kind === 'manual' && canUpload()) btns += '<button class="pm-btn" id="pm-lb-cover">Set as cover</button>';
+    if (pCanOwn('edit_metadata', p.uploaded_by === userName())) btns += '<button class="pm-btn" id="pm-lb-edit">Edit</button>';
+    if (pCan('manage_album_contents')) btns += '<button class="pm-btn" id="pm-lb-add">Add to album…</button>';
+    if (S.view === 'album' && S.activeAlbum && S.activeAlbum.kind === 'manual' && pCan('manage_album_contents')) btns += '<button class="pm-btn" id="pm-lb-cover">Set as cover</button>';
     if (canDeletePhoto(p)) btns += '<button class="pm-btn pm-btn-danger" id="pm-lb-del">Delete</button>';
     document.getElementById('pm-lb-info').innerHTML = '<dl>' + rows.map(function (kv) { return '<dt>' + esc(kv[0]) + '</dt><dd>' + esc(kv[1]) + '</dd>'; }).join('') + '</dl><div class="pm-lb-actions">' + btns + '</div>';
     bind('pm-lb-edit', function () { openEditPhoto(p); });
@@ -817,7 +822,7 @@
 
   // ── upload modal (with optional direct camera) ──────────────────────────────
   function openUpload(preset) {
-    if (!canUpload()) { toast('Your role cannot upload photos.'); return; }
+    if (!pCan('upload')) { toast('You do not have permission to upload photos.'); return; }
     preset = preset || {};
     var manual = S.albums.filter(function (a) { return a.kind === 'manual'; });
     var albumOpts = manual.map(function (a) { return '<option value="' + esc(a.id) + '">' + esc(a.name) + '</option>'; }).join('');
@@ -942,7 +947,7 @@
 
   // ── manual albums ────────────────────────────────────────────────────────────
   function openNewAlbum() {
-    if (!canUpload()) return;
+    if (!pCan('create_album')) return;
     modal({ title: 'New album', sub: 'A custom album you fill by adding photos.', body:
       '<div class="pm-field"><label>Album name</label><input id="pm-na-name" placeholder="e.g. Station A — Progress" /></div>' +
       '<div class="pm-field"><label>Description</label><textarea id="pm-na-desc" rows="3"></textarea></div>',
@@ -958,6 +963,7 @@
   }
   function renameActiveAlbum() {
     var a = S.activeAlbum; if (!a || a.kind !== 'manual') return;
+    if (!pCanOwn('manage_album', a.created_by === userName())) { toast('You cannot manage this album.'); return; }
     modal({ title: 'Rename album', body: '<div class="pm-field"><label>Name</label><input id="pm-rn" value="' + esc(a.name) + '" /></div>', footer: '<button class="pm-btn" onclick="closeModal()">Cancel</button><button class="pm-btn pm-btn-primary" id="pm-rn-save">Save</button>' });
     bind('pm-rn-save', async function () {
       var name = document.getElementById('pm-rn').value.trim(); if (!name) return;
@@ -966,6 +972,7 @@
   }
   async function deleteActiveAlbum() {
     var a = S.activeAlbum; if (!a || a.kind !== 'manual') return;
+    if (!pCanOwn('manage_album', a.created_by === userName())) { toast('You cannot manage this album.'); return; }
     if (!await cxConfirm('Delete album “' + a.name + '”? Photos are not deleted — only the album.')) return;
     try {
       await _dbUpdate('photo_albums', { is_deleted: true }, { id: a.id });

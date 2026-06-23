@@ -4375,6 +4375,7 @@ async function handleImportFile(input) {
 }
 
 async function executeImport() {
+  if (typeof uiCan === 'function' && !uiCan('test_register', 'import')) { toast('You do not have permission to import test items.', 'error'); return; }
   if (!_importPendingRows.length || !_sb) return;
   const btn = document.getElementById('do-import-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
@@ -11085,13 +11086,13 @@ function _testRegisterHTML() {
         <span class="count"><b>${filtered.length}</b> of ${all.length}</span>
       </div>
 
-      <!-- Bulk action bar (admin only) -->
-      ${isAdmin && selCount > 0 ? `
+      <!-- Bulk action bar (per-capability) -->
+      ${selCount > 0 && (uiCan('test_register','deploy_field') || uiCan('test_register','bulk_delete')) ? `
         <div class="v2-bulk-bar">
           <span class="count">${selCount} activit${selCount===1?'y':'ies'} selected</span>
-          ${hasNonFuture  ? `<button class="v2-btn-mini primary" style="background:#5b21b6;border-color:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
-          ${hasFutureTest ? `<button class="v2-btn-mini primary" style="background:#15803d;border-color:#15803d;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
-          <button class="v2-btn-mini danger" onclick="_amBulkDeleteActivities()">${icon('trash')} Delete</button>
+          ${hasNonFuture && uiCan('test_register','deploy_field') ? `<button class="v2-btn-mini primary" style="background:#5b21b6;border-color:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
+          ${hasFutureTest && uiCan('test_register','deploy_field') ? `<button class="v2-btn-mini primary" style="background:#15803d;border-color:#15803d;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
+          ${uiCan('test_register','bulk_delete') ? `<button class="v2-btn-mini danger" onclick="_amBulkDeleteActivities()">${icon('trash')} Delete</button>` : ''}
           <button class="clear" onclick="_amClearSelection()">${icon('x')} Clear selection</button>
         </div>` : ''}
 
@@ -11449,9 +11450,9 @@ function _amDrilldownHTML(key) {
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
               ${isAdmin && hasDynamic ? `<button class="v2-btn-ghost" onclick="_trToggleShowDynamic()" title="Show or hide dynamic-scope test cases in this register">${_trShowDynamic?'Hide Dynamic':'Show Dynamic'}</button>` : ''}
-              <button class="v2-btn-ghost" onclick="_trToggleBulkEdit()">${_trBulkMode?'Bulk Edit On':'Bulk Edit'}</button>
-              ${isAdmin ? (_trEditMode
-                ? `<button class="v2-btn-ghost" onclick="_trAddSection()">＋ Section</button>
+              ${uiCan('test_register','bulk_edit') ? `<button class="v2-btn-ghost" onclick="_trToggleBulkEdit()">${_trBulkMode?'Bulk Edit On':'Bulk Edit'}</button>` : ''}
+              ${uiCan('test_register','edit_case') ? (_trEditMode
+                ? `${uiCan('test_register','add_test_case') ? `<button class="v2-btn-ghost" onclick="_trAddSection()">＋ Section</button>` : ''}
                    <button class="v2-btn-ghost" onclick="_trCancelEdit()">Cancel</button>
                    <button class="v2-btn-primary" onclick="_trSaveEdit('${escapeHtml(key)}')">Save</button>`
                 : `<button class="v2-btn-primary" onclick="_trStartEdit('${escapeHtml(key)}')">Edit</button>`) : ''}
@@ -11587,7 +11588,7 @@ function _amDrilldownHTML(key) {
               </tbody>
             </table>
           </div>
-          ${_trEditMode && isAdmin ? `<div style="padding:12px 16px;border-top:1px solid var(--gray-100);"><button class="form-secondary" onclick="_trAddCase('${dropKey}')">+ Add Test Case</button></div>` : ''}
+          ${_trEditMode && uiCan('test_register','add_test_case') ? `<div style="padding:12px 16px;border-top:1px solid var(--gray-100);"><button class="form-secondary" onclick="_trAddCase('${dropKey}')">+ Add Test Case</button></div>` : ''}
         </div>
       `; }).join('')}
       ${_trBulkMode ? _trBulkBarHTML(selectedCount) : ''}
@@ -11767,6 +11768,7 @@ async function _trSaveEdit(key) {
 }
 
 async function _trDeleteCase(testId) {
+  if (typeof uiCan === 'function' && !uiCan('test_register', 'delete_case')) { toast('You do not have permission to delete test cases.', 'error'); return; }
   const r = (_trDraftItems || []).find(x => String(x.TestID) === String(testId)) || TI.find(x => String(x.TestID) === String(testId));
   if (!r) return;
   if (!await cxConfirm(`Are you sure you want to permanently delete ${r.TestCaseCode || r.TestName || r.TestID}? This cannot be undone.`)) return;
@@ -11788,6 +11790,7 @@ async function _trDeleteCase(testId) {
 
 // Delete a parent test case and ALL its linked child asset rows
 async function _trDeleteParentCase(testId) {
+  if (typeof uiCan === 'function' && !uiCan('test_register', 'delete_case')) { toast('You do not have permission to delete test cases.', 'error'); return; }
   const parent   = TI.find(r => String(r.TestID) === String(testId));
   if (!parent) return;
   const children = TI.filter(r => String(r.ParentTestId) === String(testId));
@@ -11971,6 +11974,7 @@ async function _trApplyBulkField() {
 }
 
 async function _trBulkDelete() {
+  if (typeof uiCan === 'function' && !uiCan('test_register', 'bulk_delete')) { toast('You do not have permission to bulk-delete test cases.', 'error'); return; }
   const ids = [..._trSelected];
   if (!ids.length) return;
   if (!await cxConfirm(`Permanently delete ${ids.length} selected test case${ids.length===1?'':'s'}? This cannot be undone.`)) return;
@@ -12196,6 +12200,7 @@ async function _amSaveEdit(deployToField = false) {
 
 // ── Delete a single activity (all its test_items) from Supabase ───────────────
 async function _amDeleteActivity() {
+  if (typeof uiCan === 'function' && !uiCan('test_register', 'delete_activity')) { toast('You do not have permission to delete activities.', 'error'); return; }
   const key = _amCurrentEditKey;
   const act = _amGetActivities().find(a => a.key === key);
   if (!act) return;
@@ -12230,6 +12235,7 @@ async function _amDeleteActivity() {
 
 // ── Bulk delete selected activities ──────────────────────────────────────────
 async function _amBulkDeleteActivities() {
+  if (typeof uiCan === 'function' && !uiCan('test_register', 'bulk_delete')) { toast('You do not have permission to bulk-delete activities.', 'error'); return; }
   const all      = _amGetActivities();
   const selected = all.filter(a => _amSelected.has(a.key));
   if (!selected.length) return;
@@ -12282,6 +12288,7 @@ function _amOpenDeployToFieldModal() {
 }
 
 async function _amConfirmDeployToField() {
+  if (typeof uiCan === 'function' && !uiCan('test_register', 'deploy_field')) { toast('You do not have permission to deploy to field.', 'error'); return; }
   const all = _amGetActivities();
   const selected = all.filter(a => _amSelected.has(a.key) && _amComputeStatus(a) === 'Future Test');
   const allItems = selected.flatMap(a => a.items);
