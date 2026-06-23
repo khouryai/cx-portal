@@ -7480,8 +7480,8 @@ function renderPunchWorkflow() {
         </button>
       </div>
       <div style="display:flex;gap:8px;">
-        <button class="v2-btn-ghost" onclick="openPunchImportModal()">${icon('upload')}Import CSV</button>
-        <button class="v2-btn-primary" onclick="openNewPunchModal()">＋ Create New</button>
+        ${uiCan('punch_list','import') ? `<button class="v2-btn-ghost" onclick="openPunchImportModal()">${icon('upload')}Import CSV</button>` : ''}
+        ${uiCan('punch_list','create') ? `<button class="v2-btn-primary" onclick="openNewPunchModal()">＋ Create New</button>` : ''}
       </div>
     </div>
 
@@ -8208,6 +8208,7 @@ async function advancePunchStatus(id, newStatus) {
 }
 
 async function addPunchComment(id) {
+  if (typeof uiCan === 'function' && !uiCan('punch_list', 'comment')) { toast('You do not have permission to comment', 'error'); return; }
   const input = document.getElementById(`punch-comment-input-${id}`);
   const text = (input?.value || '').trim();
   const file = _punchCommentPhoto[id];
@@ -8253,6 +8254,7 @@ async function addPunchComment(id) {
 }
 
 async function softDeletePunch(id) {
+  if (typeof uiCan === 'function' && !uiCan('punch_list', 'delete')) { toast('You do not have permission to delete punch items', 'error'); return; }
   if (!await cxConfirm('Move to Recycle Bin?')) return;
   const { error } = await _sb.from('punch_items').update({ is_deleted: true }).eq('id', id);
   if (error) { toast('Failed: ' + error.message, 'error'); return; }
@@ -8395,6 +8397,7 @@ function npFilterLoc() {
 }
 
 function openNewPunchModal() {
+  if (typeof uiCan === 'function' && !uiCan('punch_list', 'create')) { toast('You do not have permission to create punch items', 'error'); return; }
   _punchNewPhotos = [];
   modal({
     title: 'New Punch List Item',
@@ -8647,6 +8650,7 @@ function _readPunchForm() {
 }
 
 async function saveNewPunchItem(createAnother) {
+  if (typeof uiCan === 'function' && !uiCan('punch_list', 'create')) { toast('You do not have permission to create punch items', 'error'); return; }
   try {
     const form = _readPunchForm();
     if (!form.title)               { toast('Title is required', 'error'); return; }
@@ -8730,6 +8734,7 @@ function _punchFieldDiff(oldP, newForm) {
 }
 
 async function saveEditPunchItem(id) {
+  if (typeof uiCan === 'function' && !uiCan('punch_list', 'edit')) { toast('You do not have permission to edit punch items', 'error'); return; }
   try {
     const form = _readPunchForm();
     if (!form.title) { toast('Title is required', 'error'); return; }
@@ -8759,6 +8764,7 @@ async function saveEditPunchItem(id) {
 // PUNCH LIST — CSV IMPORT
 // ==========================================================================
 function openPunchImportModal() {
+  if (typeof uiCan === 'function' && !uiCan('punch_list', 'import')) { toast('You do not have permission to import punch items', 'error'); return; }
   modal({
     title: 'Import Punch Items — CSV',
     size: 'large',
