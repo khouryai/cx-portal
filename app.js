@@ -32047,7 +32047,7 @@ function renderDrawingsPage() {
     return;
   }
 
-  const uploadBtn = isAdmin ? `
+  const uploadBtn = uiCan('drawings','upload_set') ? `
     <button class="docs-primary-btn" onclick="_drwOpenUpload()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
       Upload Drawing Set
@@ -32330,14 +32330,14 @@ function _drwTabSets(loc, el) {
             · ${sheets.length} sheet${sheets.length === 1 ? '' : 's'}
           </div>
         </div>
-        <button class="admin-action-btn" style="background:#6366f1;color:#fff;border:none;padding:7px 14px;border-radius:6px;cursor:pointer;font-size:12.5px;font-weight:600;"
+        ${uiCan('drawings','upload_set') ? `<button class="admin-action-btn" style="background:#6366f1;color:#fff;border:none;padding:7px 14px;border-radius:6px;cursor:pointer;font-size:12.5px;font-weight:600;"
                 onclick="_drwUploadRevision('${activeSet.id}')"
                 title="Upload a new revision — matching Drawing Numbers will be superseded automatically">
           + Upload Revision
-        </button>
-        <button class="form-secondary tr-mini-btn" style="margin-left:8px;color:var(--bad);border-color:#fca5a5;"
+        </button>` : ''}
+        ${uiCan('drawings','delete_set') ? `<button class="form-secondary tr-mini-btn" style="margin-left:8px;color:var(--bad);border-color:#fca5a5;"
                 onclick="_drwDeleteSet('${activeSet.id}','${escapeHtml(loc)}')"
-                title="Delete this drawing set, all its pages and the uploaded PDF">Delete set</button>
+                title="Delete this drawing set, all its pages and the uploaded PDF">Delete set</button>` : ''}
       </div>
       ${sheets.length ? _drwSheetTableHTML(sheets, { compact: true, loc, subtab: 'sets' }) : '<p style="color:var(--gray-400);font-size:12px;">No confirmed sheets yet.</p>'}
     `;
@@ -32481,6 +32481,7 @@ function _drwCloseUpload() {
 }
 
 function _drwOpenUpload() {
+  if (typeof uiCan === 'function' && !uiCan('drawings', 'upload_set')) { toast('You do not have permission to upload drawing sets', 'error'); return; }
   const locs    = [...new Set([...DRAWING_SETS.map(s=>s.location), ...TI.map(r=>r.Location)].filter(Boolean))].sort();
   const locOpts = locs.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
   const today   = new Date().toISOString().slice(0,10);
@@ -33296,9 +33297,9 @@ function _drwEnsureEditorChrome() {
       <button class="drw-tool-btn" id="drw-tool-redo" onclick="_drwRedo()" title="Redo (Ctrl/Cmd+Shift+Z)" disabled>Redo</button>
       <button class="drw-tool-btn drw-danger-btn" onclick="_drwDeleteSelected()" title="Delete selected markup">Delete</button>
       <button class="drw-tool-btn drw-danger-btn" onclick="_drwClearMarkup()" title="Clear all your draft markups">Clear</button>
-      <button class="drw-tool-btn" id="drw-tool-manage" onclick="_drwManageMarkupsOpen()" title="Manage all markups on this sheet (admin only)" style="display:${currentRoleUser?.role === 'admin' ? 'inline-flex' : 'none'};background:#fef3c7;color:#92400e;border-color:#fcd34d;">Manage</button>
-      <button class="drw-save-btn" onclick="_drwSaveMarkup()">Save Draft</button>
-      <button class="drw-publish-btn" onclick="_drwPublishMarkup()">Publish</button>`;
+      <button class="drw-tool-btn" id="drw-tool-manage" onclick="_drwManageMarkupsOpen()" title="Manage all markups on this sheet" style="display:${uiCan('drawings','manage_markup_any') ? 'inline-flex' : 'none'};background:#fef3c7;color:#92400e;border-color:#fcd34d;">Manage</button>
+      ${(uiCan('drawings','create_markup') || uiCan('drawings','edit_markup_own') || uiCan('drawings','manage_markup_any')) ? `<button class="drw-save-btn" onclick="_drwSaveMarkup()">Save Draft</button>` : ''}
+      ${(uiCan('drawings','publish') || uiCan('drawings','manage_markup_any')) ? `<button class="drw-publish-btn" onclick="_drwPublishMarkup()">Publish</button>` : ''}`;
     const _chips = document.getElementById('drw-stamp-chips');
     if (_chips && typeof CXMarkup !== 'undefined') {
       _chips.innerHTML = CXMarkup.STAMPS.map(s =>
@@ -34095,6 +34096,7 @@ async function _drwSaveMarkup() {
 }
 
 async function _drwPublishMarkup() {
+  if (typeof uiCan === 'function' && !(uiCan('drawings', 'publish') || uiCan('drawings', 'manage_markup_any'))) { toast('You do not have permission to publish markups', 'error'); return; }
   if (!_drwCurSheet) return;
   if (!await cxConfirm('Publish your markup? It will be visible to all team members.')) return;
   try {
@@ -34122,8 +34124,8 @@ async function _drwPublishMarkup() {
 // DB side. Loading a markup populates the canvas; Save Draft / Publish in the
 // toolbar then act on the loaded markup's row via _drwSavedMarkupId.
 function _drwManageMarkupsOpen() {
-  if (currentRoleUser?.role !== 'admin') {
-    toast('Admin access required', 'error');
+  if (typeof uiCan === 'function' && !uiCan('drawings', 'manage_markup_any')) {
+    toast('You do not have permission to manage all markups', 'error');
     return;
   }
   if (!_drwCurSheet) return;
@@ -34213,7 +34215,7 @@ async function _drwAdminEditMarkup(markupId) {
 }
 
 async function _drwAdminDeleteMarkup(markupId) {
-  if (currentRoleUser?.role !== 'admin') return;
+  if (typeof uiCan === 'function' && !uiCan('drawings', 'manage_markup_any')) { toast('You do not have permission to delete others’ markups', 'error'); return; }
   const m = DRAWING_MARKUPS.find(x => x.id === markupId);
   if (!m) return;
   const author = m.creator_name || m.created_by || '—';
@@ -34352,7 +34354,7 @@ async function _drwDeleteSheet(sheetId, loc, subtab) {
 
 // ── Delete an entire drawing set — its pages, their markups, and the PDF.
 async function _drwDeleteSet(setId, loc) {
-  if (currentRoleUser?.role !== 'admin') { toast('Admin access required', 'error'); return; }
+  if (typeof uiCan === 'function' && !uiCan('drawings', 'delete_set')) { toast('You do not have permission to delete drawing sets', 'error'); return; }
   const set = DRAWING_SETS.find(s => s.id === setId);
   if (!set) { toast('Drawing set not found', 'error'); return; }
   const sheetsOfSet = DRAWING_SHEETS.filter(s => s.set_id === setId);
@@ -42465,6 +42467,7 @@ async function _drwFindPick(pageIndex, sheetId) {
 // supersede pass (drw-confirm-status "Checking for existing revisions…")
 // matches sheets by drawing number against the same drawing family.
 function _drwUploadRevision(setId) {
+  if (typeof uiCan === 'function' && !uiCan('drawings', 'upload_set')) { toast('You do not have permission to upload revisions', 'error'); return; }
   const set = DRAWING_SETS.find(s => s.id === setId);
   if (!set) { toast('Drawing set not found', 'error'); return; }
   // Drop into the existing flow then patch the modal title + pre-fill.
