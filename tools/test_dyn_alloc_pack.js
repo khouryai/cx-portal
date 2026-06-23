@@ -96,5 +96,32 @@ for (const a of dTwo.assignments) byId.set(a.windowId, (byId.get(a.windowId) || 
 assert(byId.size === 2, "runs spread across BOTH same-date+zone windows (distinct ids), not merged (got " + byId.size + ")");
 assert([...byId.values()].every(m => m <= 102), "each window stays within its 102m budget — per-window fill ≤ 100% (mins: " + [...byId.values()].join(",") + ")");
 
+// ── unplaced-reason text: zone gap is named, capacity tail folded in ──────────
+const reasonText = sandbox._dynUnplacedReasonText;
+assert(typeof reasonText === "function", "_dynUnplacedReasonText is exported");
+{
+  const t = reasonText({ noWindow: [["W40", 42], ["W30", 20]], other: 3 });
+  assert(/no planned window grants W40 \(42\), W30 \(20\)/.test(t),
+    "names the zones with no granting window + counts (got: " + t + ")");
+  assert(/3 didn.t fit/.test(t), "folds capacity/mode/prereq misfits into a tail");
+  assert(/no feasible window/.test(reasonText({ noWindow: [], other: 0 })),
+    "falls back to a generic reason when nothing is bucketed");
+}
+
+// ── moved-trail badge is hidden for runs in the backlog (shift_id null) ───────
+// Regression for the stale "↻ moved to backlog ×N" wall: the trail only shows
+// while the run is still scheduled at its rolled-to date.
+{
+  const run = e => vm.runInContext(e, ctx);
+  run("_dynPage.testItemsById = new Map(); _dynPage.selInstances = new Set();");
+  const base = { id: "i1", test_id: "t1", code: "C1", status: "Not Started",
+    track_section_under_test: "W40", track_section_access_req: ["W40"], roll_count: 3 };
+  const row = over => run(`_dynRowHtml(${JSON.stringify({ ...base, ...over })})`);
+  const backlogRow = row({ shift_id: null });
+  const schedRow = row({ shift_id: "w1", scheduled_for_date: "2026-07-01" });
+  assert(!/↻ moved/.test(backlogRow), "no moved badge for a run sitting in the backlog (shift_id null)");
+  assert(/↻ moved to/.test(schedRow), "moved badge still shows for a run rolled to a scheduled date");
+}
+
 console.log(`test_dyn_alloc_pack: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

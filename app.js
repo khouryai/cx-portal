@@ -40818,6 +40818,22 @@ async function _dynAllocateInto(campIds, label) {
       preload: _dynWindowPreload, footprintFirst: true,
     });
     _dynPage._allocDraft = { campId: idSet.size === 1 ? [...idSet][0] : null, assignments: draft.assignments, unplaced: draft.unplaced };
+    // Diagnose WHY runs didn't fit: the usual cause is that NO in-scope window
+    // grants the run's zone (vs. a window exists but capacity/mode/prereq blocked
+    // it). Bucket the zone-gap ones so the planner sees the real gap to fix.
+    const winZoneSets = windows.map(w => new Set((w.access_zones && w.access_zones.length) ? w.access_zones : [w.control_zone_code]));
+    const someWindowGrants = i => winZoneSets.some(wz =>
+      wz.has(i.track_section_under_test) && (i.track_section_access_req || []).every(z => wz.has(z)));
+    const noWinByZone = new Map();
+    let blockedOther = 0;
+    for (const id of draft.unplaced) {
+      const i = pool.find(x => x.id === id);
+      if (i && !someWindowGrants(i)) {
+        const z = i.track_section_under_test || '—';
+        noWinByZone.set(z, (noWinByZone.get(z) || 0) + 1);
+      } else { blockedOther++; }
+    }
+    draft.unplacedReasons = { noWindow: [...noWinByZone.entries()].sort((a, b) => b[1] - a[1]), other: blockedOther };
     _dynAutoAllocatePreview(label, draft);
   } catch (e) { toast('Allocate failed: ' + e.message, 'error'); }
 }
@@ -40862,6 +40878,19 @@ function _dynAutoAllocatePick() {
   _dynAllocateInto(new Set([String(v)]), c ? c.name : 'Campaign');
 }
 
+// Human-readable reason for runs the allocator couldn't place: the zone gap
+// (no planned window grants these zones) is the actionable one — surface it by
+// zone with counts; fold the rest into a capacity/mode/prereq tail.
+function _dynUnplacedReasonText(reasons) {
+  const r = reasons || { noWindow: [], other: 0 };
+  const parts = [];
+  if (r.noWindow && r.noWindow.length) {
+    parts.push('no planned window grants ' + r.noWindow.map(([z, n]) => escapeHtml(z) + ' (' + n + ')').join(', '));
+  }
+  if (r.other) parts.push(r.other + ' didn’t fit (capacity / mode / prerequisite)');
+  return parts.length ? parts.join('; ') : 'no feasible window / capacity';
+}
+
 function _dynAutoAllocatePreview(label, draft) {
   const instById = new Map((_dynPage.instances || []).map(i => [i.id, i]));
   const winById = new Map((_dynPage.shifts || []).map(w => [w.id, w]));
@@ -40902,7 +40931,7 @@ function _dynAutoAllocatePreview(label, draft) {
             '<th style="text-align:left;padding:6px 10px;">Fill</th>' +
             '<th style="text-align:left;padding:6px 10px;">Codes</th>' +
           '</tr></thead><tbody>' + rowsHtml + '</tbody></table>' +
-        (draft.unplaced.length ? '<p style="font-size:12px;color:#92400e;margin-top:10px;">' + draft.unplaced.length + ' run(s) could not be placed (no feasible window / capacity) — they stay in the backlog.</p>' : '') +
+        (draft.unplaced.length ? '<p style="font-size:12px;color:#92400e;margin-top:10px;">' + draft.unplaced.length + ' run(s) could not be placed — ' + _dynUnplacedReasonText(draft.unplacedReasons) + '. They stay in the backlog.</p>' : '') +
       '</div>',
     footer:
       '<button class="form-secondary" onclick="closeModal()">Cancel</button>' +
