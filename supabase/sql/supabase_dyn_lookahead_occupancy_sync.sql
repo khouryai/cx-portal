@@ -124,8 +124,8 @@ end; $$;
 --  NOT a DB trigger — see header. Deleting a window from either side already
 --  removes the cell via the ON DELETE CASCADE FK above.)
 
-revoke execute on function dyn_sync_cell_occupancy(uuid)  from public, anon;
-revoke execute on function dyn_instance_cell_trigger()    from public, anon;
+revoke execute on function dyn_sync_cell_occupancy(uuid)  from public, authenticated, anon;
+revoke execute on function dyn_instance_cell_trigger()    from public, authenticated, anon;
 
 drop trigger if exists trg_dyn_instance_cell on dynamic_instances;
 create trigger trg_dyn_instance_cell
