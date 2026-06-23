@@ -3226,6 +3226,23 @@ document.addEventListener('click', e => {
   if (fp && e.target === fp) closeForgotPassword();
 });
 
+// First nav page the signed-in user may actually view, preferring `preferred`.
+// Used for the post-login landing page so it respects access levels: a module at
+// NONE is hidden from the nav AND skipped as a landing target. Falls back to the
+// first viewable regular nav link, then dashboard, then the preferred page.
+function _navLandingPage(preferred) {
+  const canView = (page) => {
+    if (typeof uiCan !== 'function' || typeof PAGE_MODULE === 'undefined') return true;
+    const m = PAGE_MODULE[page];
+    return !m || uiCan(m, 'view');
+  };
+  if (canView(preferred)) return preferred;
+  for (const l of document.querySelectorAll('#nav-regular-items .nav-link[data-page]')) {
+    if (canView(l.dataset.page)) return l.dataset.page;
+  }
+  return canView('dashboard') ? 'dashboard' : preferred;
+}
+
 function onLoggedIn() {
   document.querySelectorAll('.nav-role').forEach(link => {
     const allowed = (link.dataset.role || '').split(' ');
@@ -3241,7 +3258,8 @@ function onLoggedIn() {
   // (e.g. access level NONE) are removed from the nav entirely, and delegated
   // modules the role would have hidden are revealed. Async (loads template +
   // overrides, then calls _applyPermNav). Fail-open if it errors (RLS enforces).
-  if (typeof loadMyPermissions === 'function') loadMyPermissions(currentProfile);
+  const _permsReady = (typeof loadMyPermissions === 'function')
+    ? Promise.resolve(loadMyPermissions(currentProfile)) : Promise.resolve();
   const navLogin = document.getElementById('nav-login');
   if (navLogin) navLogin.style.display = 'none';
 
@@ -3266,8 +3284,10 @@ function onLoggedIn() {
     `;
   }
 
-  const homePage = { admin:'test-register', field_engineer:'field-intake', readonly:'dashboard', client:'dashboard' }[currentRoleUser.role] || 'dashboard';
-  showPage(homePage);
+  const homeByRole = { admin:'test-register', field_engineer:'field-intake', readonly:'dashboard', client:'dashboard' }[currentRoleUser.role] || 'dashboard';
+  // Land on the role's home page only if the user may view it; otherwise the
+  // first viewable nav page. Wait for permissions so NONE modules are skipped.
+  _permsReady.then(() => showPage(_navLandingPage(homeByRole))).catch(() => showPage(homeByRole));
 
   // Re-load all data tables now that we have an authenticated token.
   // RLS blocks unauthenticated startup loads, so this is the real data fetch.
