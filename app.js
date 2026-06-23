@@ -3610,6 +3610,7 @@ function _awOpenTestCasesModal(sub, act) {
 }
 
 async function _awApplyBulkWeight() {
+  if (typeof uiCan === 'function' && !uiCan('weights', 'bulk_apply')) { toast('You do not have permission to bulk-apply weights', 'error'); return; }
   const val = parseFloat(document.getElementById('aw-bulk-val')?.value);
   if (!isFinite(val) || val <= 0) { toast('Weight must be greater than 0', 'error'); return; }
   const inputs = [...document.querySelectorAll('.aw-tc-input')];
@@ -3648,6 +3649,7 @@ async function _awApplyBulkWeight() {
 }
 
 async function _awSaveActivityWeight(el) {
+  if (typeof uiCan === 'function' && !uiCan('weights', 'edit_activity')) { toast('You do not have permission to edit weights', 'error'); return; }
   const sub = el.getAttribute('data-sub')  || '';
   const act = el.getAttribute('data-act')  || '';
   const w   = parseFloat(el.value);
@@ -3674,6 +3676,7 @@ async function _awSaveActivityWeight(el) {
 }
 
 async function _awSaveTestCaseWeight(el) {
+  if (typeof uiCan === 'function' && !uiCan('weights', 'edit_test_case')) { toast('You do not have permission to edit weights', 'error'); return; }
   const code = el.getAttribute('data-code') || '';
   const name = el.getAttribute('data-name') || '';
   const w    = parseFloat(el.value);
@@ -4015,6 +4018,7 @@ function locUpdateSelection() {
 }
 
 async function bulkDeleteLocations() {
+  if (typeof uiCan === 'function' && !uiCan('locations', 'delete')) { toast('You do not have permission to delete locations', 'error'); return; }
   const checked = [...document.querySelectorAll('.loc-cb:checked')];
   if (!checked.length) return;
   const ids = checked.map(cb => cb.dataset.id);
@@ -4072,6 +4076,7 @@ function openAddLocationModal(parentId, level) {
 }
 
 async function saveNewLocation(parentId, level) {
+  if (typeof uiCan === 'function' && !uiCan('locations', 'create')) { toast('You do not have permission to add locations', 'error'); return; }
   const name = document.getElementById('loc-name').value.trim();
   const sort  = parseInt(document.getElementById('loc-sort').value) || 0;
   if (!name) { toast('Name is required', 'error'); return; }
@@ -4111,6 +4116,7 @@ function openEditLocationModal(id) {
 }
 
 async function saveEditLocation(id) {
+  if (typeof uiCan === 'function' && !uiCan('locations', 'edit')) { toast('You do not have permission to edit locations', 'error'); return; }
   const loc  = LOCS.find(l => l.id === id);
   if (!loc) return;
   const name = document.getElementById('eloc-name').value.trim();
@@ -4125,6 +4131,7 @@ async function saveEditLocation(id) {
 }
 
 async function deleteLocation(id) {
+  if (typeof uiCan === 'function' && !uiCan('locations', 'delete')) { toast('You do not have permission to delete locations', 'error'); return; }
   const loc = LOCS.find(l => l.id === id);
   if (!loc) return;
   const children = LOCS.filter(l => l.parent_id === id);
@@ -4188,6 +4195,7 @@ function handleLocationImport(input) {
 }
 
 async function executeLocationImport() {
+  if (typeof uiCan === 'function' && !uiCan('locations', 'import')) { toast('You do not have permission to import locations', 'error'); return; }
   // Build in-order: parents first (sort by level ascending)
   const sorted = [..._locImportRows].sort((a, b) => a.level - b.level);
   const nameToId = {};
@@ -4562,6 +4570,7 @@ function _deployToggleTc(si, tcCode, checked) {
 }
 
 async function confirmDeploy(templateId) {
+  if (typeof uiCan === 'function' && !uiCan('templates', 'deploy')) { toast('You do not have permission to deploy templates', 'error'); return; }
   const tpl = TEMPLATES.find(t => t.id === templateId);
   if (!_deploySelections.length) { toast('Add at least one location', 'warn'); return; }
   const empty = _deploySelections.filter(s => !s.tcCodes.length);
@@ -4941,6 +4950,7 @@ function openNewTemplateModal() {
 }
 
 async function saveNewTemplate() {
+  if (typeof uiCan === 'function' && !uiCan('templates', 'create')) { toast('You do not have permission to create templates', 'error'); return; }
   const name      = document.getElementById('tpl-name')?.value.trim();
   const subsystem = document.getElementById('tpl-subsystem')?.value;
   const desc      = document.getElementById('tpl-desc')?.value.trim();
@@ -4987,6 +4997,7 @@ function editTemplate(id) {
 }
 
 async function saveEditTemplate() {
+  if (typeof uiCan === 'function' && !uiCan('templates', 'edit')) { toast('You do not have permission to edit templates', 'error'); return; }
   const id  = _editTemplateId;
   const tpl = id ? TEMPLATES.find(t => t.id === id) : null;
   if (!tpl) { toast('Template not found', 'error'); return; }
@@ -5013,6 +5024,7 @@ async function saveEditTemplate() {
 }
 
 async function deleteTemplate(id) {
+  if (typeof uiCan === 'function' && !uiCan('templates', 'delete')) { toast('You do not have permission to delete templates', 'error'); return; }
   const tpl = TEMPLATES.find(t => t.id === id);
   if (!tpl) return;
   const deployCount = DEPLOYMENTS.filter(d => d.templateId === id).length;
@@ -5281,6 +5293,7 @@ function _fscFieldRowHTML(f, isLast) {
 // ── CRUD actions ──────────────────────────────────────────────────────────────
 
 async function fscAddOption(key) {
+  if (typeof uiCan === 'function' && !uiCan('forms', 'manage_fieldsets')) { toast('You do not have permission to edit field options', 'error'); return; }
   const input = document.getElementById(`fsc-new-${key}`);
   const val   = input?.value.trim();
   if (!val) return;
@@ -5297,6 +5310,7 @@ async function fscAddOption(key) {
 }
 
 async function fscRemoveOption(key, idx) {
+  if (typeof uiCan === 'function' && !uiCan('forms', 'manage_fieldsets')) { toast('You do not have permission to edit field options', 'error'); return; }
   // If currently showing defaults, save a copy of defaults minus this one
   let cur = [..._fsCfg(key)];
   if (!cur.length) {
@@ -5317,6 +5331,7 @@ async function fscMoveOption(key, idx, dir) {
 }
 
 async function fscLoadDefaults(key) {
+  if (typeof uiCan === 'function' && !uiCan('forms', 'manage_fieldsets')) { toast('You do not have permission to edit field options', 'error'); return; }
   const def = _fscDef(key);
   if (!def?.defaults?.length) return;
   if (!await cxConfirm(`Reset "${def.label}" to ${def.defaults.length} built-in default options?\nThis will replace any custom options.`)) return;
@@ -5487,6 +5502,7 @@ async function _loadDirectoryUsers() {
 }
 
 async function updateProfileTemplate(id, tplId) {
+  if (typeof uiCan === 'function' && !uiCan('directory', 'assign_template')) { toast('You do not have permission to assign templates', 'error'); return; }
   const { error } = await _sb.from('profiles').update({ permission_template_id: tplId || null }).eq('id', id);
   if (error) toast('Update failed: ' + error.message, 'error');
   else toast('Template assigned', 'success');
@@ -5596,6 +5612,7 @@ async function openInviteUserModal() {
 }
 
 async function inviteUser() {
+  if (typeof uiCan === 'function' && !uiCan('directory', 'invite')) { toast('You do not have permission to invite users', 'error'); return; }
   const name      = document.getElementById('inv-name').value.trim();
   const email     = document.getElementById('inv-email').value.trim();
   const password  = document.getElementById('inv-password').value;
@@ -17097,6 +17114,7 @@ function _swDeviceChange() {
 }
 
 async function saveSwConfig() {
+  if (typeof uiCan === 'function' && !uiCan('config', _cmEditId ? 'edit' : 'create')) { toast('You do not have permission to save software configs', 'error'); return; }
   const editing = _cmEditId ? SW_CONFIGS.find(c => c.id === _cmEditId) : null;
   const subsystem = document.getElementById('sw-subsystem')?.value.trim();
   const phaseId   = document.getElementById('sw-phase')?.value;
@@ -17166,6 +17184,7 @@ async function saveSwConfig() {
 }
 
 async function deleteSwConfig(id) {
+  if (typeof uiCan === 'function' && !uiCan('config', 'delete')) { toast('You do not have permission to delete software configs', 'error'); return; }
   const c = SW_CONFIGS.find(x => x.id === id);
   if (!c) return;
   if (!await cxConfirm(`Delete software config "${c.software_name} ${c.version}"?\n\nThis cannot be undone. Test cases already snapshotted keep their frozen copy.`)) return;
@@ -18263,6 +18282,7 @@ async function saveMtg(editId) {
 }
 
 async function _mtgApplyTemplate(meetingId, templateId) {
+  if (typeof uiCan === 'function' && !uiCan('meetings', 'manage_agenda')) { toast('You do not have permission to manage agendas', 'error'); return; }
   try {
     const tmplCats = await _fetchAnon(`meeting_template_categories?template_id=eq.${templateId}&select=*&order=sort_order.asc`) || [];
     for (const tc of tmplCats) {
@@ -18615,6 +18635,7 @@ function _mtgCSVLine(line) {
 }
 
 async function _mtgImportCSV(meetingId) {
+  if (typeof uiCan === 'function' && !uiCan('meetings', 'manage_attendees')) { toast('You do not have permission to import attendees', 'error'); return; }
   const text   = document.getElementById('mtg-csv-input')?.value || '';
   const parsed = _mtgParseTeamsCSV(text);
   if (!parsed.length) { toast('No attendees found in CSV', 'error'); return; }
@@ -18837,6 +18858,7 @@ function openMtgTemplateEditModal(editId) {
 }
 
 async function saveMtgTemplate(editId) {
+  if (typeof uiCan === 'function' && !uiCan('meetings', 'manage_agenda')) { toast('You do not have permission to manage meeting templates', 'error'); return; }
   const name = document.getElementById('mtg-tpl-name')?.value?.trim();
   if (!name) { toast('Name required', 'error'); return; }
   const payload = {
@@ -18861,6 +18883,7 @@ async function saveMtgTemplate(editId) {
 }
 
 async function deleteMtgTemplate(id) {
+  if (typeof uiCan === 'function' && !uiCan('meetings', 'manage_agenda')) { toast('You do not have permission to manage meeting templates', 'error'); return; }
   if (!await cxConfirm('Delete this template?')) return;
   try {
     await _dbDelete('meeting_templates', { id });
@@ -20834,6 +20857,7 @@ async function _laBulkSetShift(code) {
 }
 
 async function _laBulkSetLocation() {
+  if (typeof uiCan === 'function' && !uiCan('lookahead', 'bulk_edit')) { toast('You do not have permission to bulk-edit look-ahead cells', 'error'); return; }
   if (_laSelectedCellKeys.size === 0) { toast('No cells selected.', 'warn'); return; }
   const inp = document.getElementById('la-bulk-loc');
   const loc = (inp?.value || '').trim();
@@ -21743,6 +21767,7 @@ async function _laDrawerSoftDeleteActivity(activityId) {
 //  across imported and manually-created activities.)
 async function _laDeleteManualActivity(activityId, ev) {
   try { ev?.stopPropagation?.(); } catch (_) {}
+  if (typeof uiCan === 'function' && !uiCan('lookahead', 'manage_activities')) { toast('You do not have permission to manage look-ahead activities', 'error'); return; }
   if (!activityId) return;
   await _laDrawerSoftDeleteActivity(activityId);
 }
@@ -21865,6 +21890,7 @@ function _laRenderLinkModal(activityId, showAll) {
 }
 
 async function _laSaveActivityLink(activityId, unlink) {
+  if (typeof uiCan === 'function' && !uiCan('lookahead', 'manage_activities')) { toast('You do not have permission to manage look-ahead activities', 'error'); return; }
   let val = null;
   if (!unlink) {
     const el = document.getElementById('la-link-tra');
@@ -22420,6 +22446,7 @@ function _laCERefreshPills() {
 }
 
 async function _laSaveCreateEvents(cells) {
+  if (typeof uiCan === 'function' && !uiCan('lookahead', 'create_event')) { toast('You do not have permission to create look-ahead events', 'error'); return; }
   if (!cells || !cells.length) return;
   const btn = document.getElementById('ce-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -22735,6 +22762,7 @@ async function _laExecutePaste(ops, { collisionAction }) {
 
 // ─── Bulk delete selected cells ───────────────────────────────
 async function _laDeleteSelection() {
+  if (typeof uiCan === 'function' && !uiCan('lookahead', 'delete')) { toast('You do not have permission to delete look-ahead events', 'error'); return; }
   if (_laSelectedCellKeys.size === 0) { toast('No cells selected.', 'warn'); return; }
   const eventIds = [..._laSelectedCellKeys];
   const events = PLANNING_EVENTS.filter(e => eventIds.includes(e.id));
@@ -23639,6 +23667,7 @@ function _laNewActivityRebuildLinks() {
 }
 
 async function _laSaveNewActivity() {
+  if (typeof uiCan === 'function' && !uiCan('lookahead', 'manage_activities')) { toast('You do not have permission to manage look-ahead activities', 'error'); return; }
   const desc = document.getElementById('new-act-desc').value.trim();
   const loc  = document.getElementById('new-act-loc').value.trim();
   if (!desc) { toast('Description is required', 'error'); return; }
@@ -25104,7 +25133,7 @@ async function _ptoSubmit() {
 
 // ── Admin: approve / reject / reopen ─────────────────────────
 async function _ptoReview(id, action) {
-  if (currentRoleUser?.role !== 'admin') { toast('Admin only', 'error'); return; }
+  if (typeof uiCan === 'function' && !uiCan('planning', 'pto_approve')) { toast('You do not have permission to review PTO', 'error'); return; }
   const req = PTO_REQUESTS.find(p => p.id === id);
   if (!req) return;
 
@@ -28308,6 +28337,7 @@ async function _formsUpdateMetadata(formId, patch) {
 }
 
 async function _formsReuploadFile(formId, fileOrBlob, expectedBytes = null) {
+  if (typeof uiCan === 'function' && !uiCan('forms', 'upload')) { toast('You do not have permission to upload forms', 'error'); return; }
   const form = FORMS.find(f => f.id === formId);
   const storagePath = form?.storage_path || `${formId}.pdf`;
   const bytesToVerify = expectedBytes
@@ -28319,6 +28349,7 @@ async function _formsReuploadFile(formId, fileOrBlob, expectedBytes = null) {
 }
 
 async function _formsDelete(formId) {
+  if (typeof uiCan === 'function' && !uiCan('forms', 'delete')) { toast('You do not have permission to delete forms', 'error'); return; }
   const form = FORMS.find(f => f.id === formId);
   if (!form) return;
   try { await _formsStorage.remove(form.storage_path); }
@@ -30010,6 +30041,7 @@ async function _addDownloadStateFields(doc, acroForm, state) {
 }
 
 async function saveFormPDF(formId) {
+  if (typeof uiCan === 'function' && !uiCan('forms', 'fill_pdf')) { toast('You do not have permission to edit forms', 'error'); return; }
   if (!_pdfViewerState || _pdfViewerState.formId !== formId) { toast('Viewer state lost — reopen the form', 'error'); return; }
   const btn = document.getElementById('form-viewer-save');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -30313,6 +30345,7 @@ function openAttachNewForm(testId, assetId = '') {
 }
 
 async function submitAttachNewForm(testId, assetId = '') {
+  if (typeof uiCan === 'function' && !uiCan('forms', 'upload')) { toast('You do not have permission to upload forms', 'error'); return; }
   const file = document.getElementById('frm-file')?.files?.[0];
   if (!file) { toast('Select a PDF', 'error'); return; }
   if (file.type !== 'application/pdf') { toast('File must be a PDF', 'error'); return; }
@@ -30428,6 +30461,7 @@ async function _lefReload(btn) {
 }
 
 async function linkExistingFormToTest(formId, testId) {
+  if (typeof uiCan === 'function' && !uiCan('forms', 'link')) { toast('You do not have permission to link forms', 'error'); return; }
   try {
     // Pick scope from the picker UI; fall back to whatever the picker was opened with.
     const scopeField = document.getElementById('lef-scope');
@@ -30444,6 +30478,7 @@ async function linkExistingFormToTest(formId, testId) {
 }
 
 async function unlinkFormFromTest(formId, testId, assetId = '') {
+  if (typeof uiCan === 'function' && !uiCan('forms', 'link')) { toast('You do not have permission to unlink forms', 'error'); return; }
   if (!await cxConfirm('Unlink this form from the test case? The file itself is not deleted.')) return;
   try {
     // assetId === '' from a non-parent (standalone) case → unlink the
@@ -34998,6 +35033,7 @@ function _dynOpenBulkEdit() {
 }
 
 async function _dynBulkEditApply() {
+  if (typeof uiCan === 'function' && !uiCan('dynamic_testing', 'bulk_edit')) { toast('You do not have permission to bulk-edit instances', 'error'); return; }
   const ids = [..._dynPage.selInstances];
   if (!ids.length) { closeModal(); return; }
   const on  = key => document.getElementById(`dyn-be-en-${key}`)?.checked;
@@ -35405,6 +35441,7 @@ function _dynAutoFillInstanceCode() {
 }
 
 async function _dynSaveInstance(id) {
+  if (typeof uiCan === 'function' && !uiCan('dynamic_testing', id ? 'edit_instance' : 'create_instance')) { toast('You do not have permission to save instances', 'error'); return; }
   const get = i => document.getElementById(i)?.value?.trim() || null;
   const intOrNull = (s) => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : null; };
   const splitList = (s) => String(s || '').split(/[;,]/).map(x => x.trim()).filter(Boolean);
@@ -35451,6 +35488,7 @@ async function _dynSaveInstance(id) {
 }
 
 async function _dynDeleteInstance(id, fromModal) {
+  if (typeof uiCan === 'function' && !uiCan('dynamic_testing', 'delete_instance')) { toast('You do not have permission to delete instances', 'error'); return; }
   if (!await cxConfirm('Delete this dynamic instance? This cannot be undone.')) return;
   try {
     await _dbDelete('dynamic_instances', { id });
@@ -35881,6 +35919,7 @@ function _dynCSVValidate() {
 }
 
 async function _dynImportCSVRows() {
+  if (typeof uiCan === 'function' && !uiCan('dynamic_testing', 'import')) { toast('You do not have permission to import instances', 'error'); return; }
   const v = _dynImportPreview || _dynCSVValidate();
   if (!v || !v.runs.length) { cxAlert('Nothing to import. Validate first.'); return; }
   if (v.errors.length && !await cxConfirm(`${v.errors.length} row(s) had errors and will be skipped. Continue importing ${v.runs.length} run(s)?`)) return;
@@ -36246,6 +36285,7 @@ const _DYN_ROLL_RESET = { roll_count: 0, roll_note: null, rolled_at: null, moved
 // Schedule a run onto a specific access window (by id). Re-checks eligibility,
 // then links shift_id + the window's date and time range.
 async function _dynMoveInstanceToShift(id, windowId) {
+  if (typeof uiCan === 'function' && !uiCan('dynamic_testing', 'schedule')) { toast('You do not have permission to schedule instances', 'error'); return; }
   const inst = _dynPage.instances.find(x => String(x.id) === String(id));
   const w = (_dynPage.shifts || []).find(x => String(x.id) === String(windowId));
   if (!inst || !w) { cxAlert('Run or access window not found.'); return; }
@@ -37346,6 +37386,7 @@ function _dynOpenTrains(campaignId) {
 }
 
 async function _dynTrainAdd(campaignId) {
+  if (typeof uiCan === 'function' && !uiCan('dynamic_testing', 'approve_trains')) { toast('You do not have permission to manage train requests', 'error'); return; }
   const camp = _dynPage.campaigns.find(c => c.id === campaignId);
   const qty = parseInt(document.getElementById('tr-qty')?.value, 10) || 1;
   const cars = document.getElementById('tr-cars')?.value ? parseInt(document.getElementById('tr-cars').value, 10) : null;
@@ -37363,6 +37404,7 @@ async function _dynTrainAdd(campaignId) {
 }
 
 async function _dynTrainSetStatus(id, status) {
+  if (typeof uiCan === 'function' && !uiCan('dynamic_testing', 'approve_trains')) { toast('You do not have permission to approve train requests', 'error'); return; }
   try {
     const payload = { status, updated_at: new Date().toISOString() };
     if (status === 'approved') {
@@ -37396,6 +37438,7 @@ async function _dynTrainSubstitute(id) {
 }
 
 async function _dynTrainDelete(id) {
+  if (typeof uiCan === 'function' && !uiCan('dynamic_testing', 'approve_trains')) { toast('You do not have permission to manage train requests', 'error'); return; }
   const r = (_dynPage.trainRequests || []).find(x => x.id === id);
   if (!await cxConfirm('Delete this train request?')) return;
   try {
@@ -37456,6 +37499,7 @@ function _dynOpenShift(id) {
 }
 
 async function _dynShiftSetStatus(id, status) {
+  if (typeof uiCan === 'function' && !uiCan('dynamic_testing', 'manage_shifts')) { toast('You do not have permission to manage shifts', 'error'); return; }
   try {
     const payload = { status };
     if (status !== 'cancelled') { payload.cancellation_reason = null; payload.cancellation_category = null; }
@@ -37477,6 +37521,7 @@ async function _dynShiftSetStatus(id, status) {
 }
 
 async function _dynShiftCancel(id) {
+  if (typeof uiCan === 'function' && !uiCan('dynamic_testing', 'manage_shifts')) { toast('You do not have permission to manage shifts', 'error'); return; }
   const cat = document.getElementById('shift-cancel-cat')?.value || 'Other';
   const reason = document.getElementById('shift-cancel-reason')?.value.trim() || null;
   try {

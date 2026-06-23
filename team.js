@@ -66,7 +66,7 @@ function _buildTeamTree(members) {
 }
 
 function _teamCanEdit() {
-  return typeof uiCan === 'function' ? uiCan('directory', 'edit') : (currentRoleUser?.role === 'admin');
+  return typeof uiCan === 'function' ? uiCan('directory', 'manage_org_chart') : (currentRoleUser?.role === 'admin');
 }
 
 function initOrg() { renderOrg(); }
