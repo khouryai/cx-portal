@@ -34701,6 +34701,7 @@ async function renderDynamicTestingPage() {
       <button class="hero-tab ${_dynPage.tab==='planning'?'active':''}" onclick="_dynTabSwitch('planning')">Capacity Planning</button>
       <button class="hero-tab ${_dynPage.tab==='simulator'?'active':''}" onclick="_dynTabSwitch('simulator')">Simulator</button>
       <button class="hero-tab ${_dynPage.tab==='variance'?'active':''}" onclick="_dynTabSwitch('variance')">Duration Variance</button>
+      <button class="hero-tab" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;" onclick="tpOpen()" title="Open the track plan reference window — keep a track-plan map on screen while you work">${icon('map')} Track Plan</button>
     </div>
     <style>
       .hero-tab{padding:8px 16px;border:1px solid var(--gray-300);background:white;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--gray-700);}

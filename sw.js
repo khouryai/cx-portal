@@ -19,6 +19,7 @@ const SHELL_ASSETS = [
   './format.js',
   './cx-state.js',
   './compute.js',
+  './trackplan.js',
   './app.js',
   './perms-admin.js',
   './team.js',
@@ -27,6 +28,7 @@ const SHELL_ASSETS = [
   './data.js',
   './styles.css',
   './photos.css',
+  './trackplan.css',
   './chart.umd.js',
   './manifest.webmanifest',
 ];

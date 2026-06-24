@@ -1,0 +1,167 @@
+"use strict";
+// Generates lightweight placeholder track-plan PDFs into assets/track-plans/.
+// These are STAND-INS so the Dynamic Testing "Track Plan" window works
+// end-to-end before the real BART CBTC track plans are dropped in. Each page
+// draws a simple signalling strip (track line, interlocking turnouts, signal
+// markers) with a title block, so it reads as a track plan at a glance.
+//
+// Re-run after editing:  node tools/gen_trackplan_placeholders.js
+// Replace the output files with the real maps (same filenames) when available.
+
+const fs = require("fs");
+const path = require("path");
+
+const OUT_DIR = path.join(__dirname, "..", "assets", "track-plans");
+
+// ── minimal PDF writer ────────────────────────────────────────────────────
+// Builds a PDF from a list of content streams (one per page). Computes the
+// xref byte offsets so the file is valid in pdf.js / any conformant reader.
+function buildPdf(pageStreams, { width = 792, height = 612 } = {}) {
+  const objects = [];                 // index 0 unused (objects are 1-based)
+  const add = (body) => { objects.push(body); return objects.length; };
+
+  const catalogId = 1;                // reserve ids in a stable order
+  const pagesId   = 2;
+  const fontId    = 3;
+  const boldId    = 4;
+  // page + content object ids are allocated after the fixed ones
+  const pageIds = [];
+  const contentIds = [];
+
+  objects.length = 4;                 // placeholders for the four fixed objects
+
+  for (const stream of pageStreams) {
+    const cId = add(`<< /Length ${Buffer.byteLength(stream, "latin1")} >>\nstream\n${stream}\nendstream`);
+    contentIds.push(cId);
+    const pId = add(
+      `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${width} ${height}] ` +
+      `/Resources << /Font << /F1 ${fontId} 0 R /F2 ${boldId} 0 R >> >> ` +
+      `/Contents ${cId} 0 R >>`
+    );
+    pageIds.push(pId);
+  }
+
+  objects[catalogId - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
+  objects[pagesId - 1]   = `<< /Type /Pages /Kids [${pageIds.map(id => id + " 0 R").join(" ")}] /Count ${pageIds.length} >>`;
+  objects[fontId - 1]    = `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>`;
+  objects[boldId - 1]    = `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>`;
+
+  let pdf = "%PDF-1.4\n";
+  const offsets = [];
+  for (let i = 0; i < objects.length; i++) {
+    offsets[i] = Buffer.byteLength(pdf, "latin1");
+    pdf += `${i + 1} 0 obj\n${objects[i]}\nendobj\n`;
+  }
+  const xrefStart = Buffer.byteLength(pdf, "latin1");
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += "0000000000 65535 f \n";
+  for (let i = 0; i < objects.length; i++) {
+    pdf += String(offsets[i]).padStart(10, "0") + " 00000 n \n";
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\n`;
+  pdf += `startxref\n${xrefStart}\n%%EOF`;
+  return Buffer.from(pdf, "latin1");
+}
+
+// ── content-stream drawing helpers (PDF user space: origin bottom-left) ─────
+const esc = (s) => String(s).replace(/([\\()])/g, "\\$1");
+const text = (x, y, size, str, bold = false) =>
+  `BT /${bold ? "F2" : "F1"} ${size} Tf ${x} ${y} Td (${esc(str)}) Tj ET\n`;
+const line = (x1, y1, x2, y2, w = 1.5) =>
+  `${w} w ${x1} ${y1} m ${x2} ${y2} l S\n`;
+const rect = (x, y, w, h, fill = false) =>
+  `${x} ${y} ${w} ${h} re ${fill ? "f" : "S"}\n`;
+const gray = (g) => `${g} ${g} ${g} RG ${g} ${g} ${g} rg\n`;
+const red  = () => `0.9 0.0 0.07 RG 0.9 0.0 0.07 rg\n`;
+const black = () => `0 0 0 RG 0 0 0 rg\n`;
+
+// One labelled signalling strip across the page width.
+function strip(title, subtitle, signals, opts = {}) {
+  const W = 792, H = 612;
+  let c = "";
+  // border + title block
+  c += gray(0.6) + rect(24, 24, W - 48, H - 48) + black();
+  c += red() + rect(24, H - 86, W - 48, 62, true) + black();
+  c += "1 1 1 RG 1 1 1 rg\n" + text(40, H - 56, 20, title, true);
+  c += text(40, H - 78, 11, subtitle) + black();
+  // milepost ruler
+  c += gray(0.5);
+  for (let i = 0; i <= 10; i++) {
+    const x = 60 + i * ((W - 120) / 10);
+    c += line(x, 120, x, 128, 0.8);
+    c += text(x - 8, 104, 8, "MP " + (opts.mpStart || 0 + i));
+  }
+  c += black();
+  // mainline track (two rails)
+  const yMid = 320;
+  c += "2 w " + line(60, yMid + 4, W - 60, yMid + 4, 2.4);
+  c += line(60, yMid - 4, W - 60, yMid - 4, 2.4);
+  // sleepers
+  c += gray(0.55);
+  for (let x = 70; x < W - 60; x += 22) c += line(x, yMid - 7, x, yMid + 7, 0.6);
+  c += black();
+  // turnout (interlocking crossover) in the middle, if requested
+  if (opts.crossover) {
+    c += "1.8 w " + line(W / 2 - 60, yMid + 4, W / 2 - 10, yMid + 60, 1.8);
+    c += line(W / 2 + 10, yMid + 60, W / 2 + 60, yMid + 4, 1.8);
+    c += line(W / 2 - 60, yMid + 64, W / 2 + 60, yMid + 64, 2.2);
+    c += text(W / 2 - 36, yMid + 74, 9, "CROSSOVER", true);
+  }
+  // signals + labels
+  for (const s of signals) {
+    const x = 60 + s.at * (W - 120);
+    c += red() + rect(x - 3, yMid + 14, 6, 22, true) + black();
+    c += line(x, yMid + 4, x, yMid + 14, 1.2);
+    c += text(x - 10, yMid + 42, 9, s.label, true);
+    if (s.note) c += gray(0.4) + text(x - 14, yMid - 26, 8, s.note) + black();
+  }
+  // footer
+  c += gray(0.45) + text(40, 40, 9,
+    "PLACEHOLDER — replace with the real track plan PDF (same filename). Generated by tools/gen_trackplan_placeholders.js");
+  c += black();
+  return c;
+}
+
+// ── catalog of placeholder maps ────────────────────────────────────────────
+const FILES = {
+  "phase-2.pdf": buildPdf([
+    strip("PHASE 2 — OVERALL TRACK PLAN", "BART CBTC · Sheet 1 of 2 · Mainline + interlockings",
+      [
+        { at: 0.06, label: "S8", note: "route start" },
+        { at: 0.28, label: "S12" },
+        { at: 0.50, label: "W4", note: "interlocking" },
+        { at: 0.72, label: "S20" },
+        { at: 0.94, label: "SB", note: "route end" },
+      ], { crossover: true }),
+    strip("PHASE 2 — OVERALL TRACK PLAN", "BART CBTC · Sheet 2 of 2 · Continuation",
+      [
+        { at: 0.10, label: "SB" },
+        { at: 0.40, label: "S24" },
+        { at: 0.70, label: "S28" },
+        { at: 0.92, label: "S30", note: "yard limit" },
+      ], { mpStart: 10 }),
+  ]),
+  "w-4.pdf": buildPdf([
+    strip("W-4 INTERLOCKING — ZOOMED", "BART CBTC · Interlocking detail · zoomed to W-4",
+      [
+        { at: 0.18, label: "8R", note: "approach" },
+        { at: 0.42, label: "W4A" },
+        { at: 0.58, label: "W4B" },
+        { at: 0.84, label: "BR", note: "departure" },
+      ], { crossover: true }),
+  ]),
+  "route-1.pdf": buildPdf([
+    strip("ROUTE 1 — S8 → SB", "BART CBTC · Dynamic test route overlay",
+      [
+        { at: 0.06, label: "S8", note: "signal 8 (start)" },
+        { at: 0.50, label: "W4", note: "via W-4" },
+        { at: 0.94, label: "SB", note: "signal B (end)" },
+      ], { crossover: true }),
+  ]),
+};
+
+fs.mkdirSync(OUT_DIR, { recursive: true });
+for (const [name, buf] of Object.entries(FILES)) {
+  fs.writeFileSync(path.join(OUT_DIR, name), buf);
+  console.log(`wrote assets/track-plans/${name} (${buf.length} bytes)`);
+}
