@@ -77,6 +77,7 @@
     layers: [],             // [{type:'group'|'label', id?, name, depth, els?, visible?, opacity?}]
     layersOpen: false,      // is the Layers panel showing?
     layerFilter: "",        // filter text in the layers panel
+    search: { open: false, query: "", matches: [], idx: 0, index: null, curBBox: null },
     renderToken: 0,
     renderTask: null,
     loadToken: 0,
@@ -271,6 +272,7 @@
           '<button class="tp-tbtn" id="tp-fitp" type="button" title="Fit whole page" onclick="tpFitPage()">Page</button>' +
           '<button class="tp-tbtn" id="tp-actual" type="button" title="Actual size (100%)" onclick="tpActualSize()">1:1</button>' +
           '<button class="tp-tbtn" type="button" aria-label="Rotate 90°" title="Rotate 90°" onclick="tpRotate()">' + ic("rotate") + "</button>" +
+          '<button class="tp-tbtn" id="tp-searchbtn" type="button" aria-label="Find on map" title="Find on map (/)" onclick="tpToggleSearch()" style="display:none;">' + ic("search") + "</button>" +
           '<button class="tp-tbtn" id="tp-layersbtn" type="button" title="Toggle map layers" onclick="tpToggleLayers()" style="display:none;">' + ic("layers") + " Layers</button>" +
           '<span class="tp-tb-spacer"></span>' +
           '<button class="tp-tbtn" type="button" title="Add a track plan PDF" onclick="tpAddMap()">' + ic("plus") + " Add</button>" +
@@ -281,12 +283,22 @@
           '<div class="tp-body" id="tp-body">' +
             '<div class="tp-stage" id="tp-stage">' +
               '<canvas class="tp-canvas" id="tp-canvas" style="display:none;"></canvas>' +
+              '<div class="tp-search-hit" id="tp-search-hit" style="display:none;"></div>' +
             "</div>" +
           "</div>" +
           // Overlays — siblings of the scrolling body so they stay pinned to the
           // viewport (not the zoomed content), and the body's wheel-zoom handler
           // never sees scrolls that happen over the layers panel.
           '<div class="tp-status" id="tp-status">Loading…</div>' +
+          '<div class="tp-search" id="tp-search" hidden>' +
+            ic("search") +
+            '<input type="text" id="tp-search-input" placeholder="Find on map…" autocomplete="off" ' +
+              'oninput="tpSearchInput(this.value)" onkeydown="tpSearchKey(event)">' +
+            '<span class="tp-search-count" id="tp-search-count"></span>' +
+            '<button type="button" class="tp-search-btn" aria-label="Previous match" title="Previous (Shift+Enter)" onclick="tpSearchStep(-1)">' + ic("chevron-left") + "</button>" +
+            '<button type="button" class="tp-search-btn" aria-label="Next match" title="Next (Enter)" onclick="tpSearchStep(1)">' + ic("chevron-right") + "</button>" +
+            '<button type="button" class="tp-search-btn" aria-label="Close find" title="Close" onclick="tpToggleSearch()">' + ic("x") + "</button>" +
+          "</div>" +
           '<div class="tp-layers" id="tp-layers" hidden>' +
             '<div class="tp-layers-head">' +
               "<span>Layers</span>" +
@@ -459,6 +471,9 @@
     S.pdfDoc = null; S.page = null; S.pageNum = 1; S.numPages = 1;
     S.mode = "fit-width"; S.rotation = 0; S.scale = 1; S._lastScale = null;
     S.ocConfig = null; S.layers = []; S.layersOpen = false; S.layerFilter = "";
+    S.search = { open: false, query: "", matches: [], idx: 0, index: null, curBBox: null };
+    var sb = el("tp-search"); if (sb) sb.hidden = true;
+    clearSearchHit();
     detachSvg();
     S.docKind = entryFormat(entry);
     // Restore the saved view (zoom/pan/rotation) for this map, if any.
@@ -759,6 +774,7 @@
       body.scrollTop = clamp(body.scrollTop, 0, maxT);
     }
     S._lastScale = S.scale;
+    if (S.search && S.search.curBBox) positionSearchHit(S.search.curBBox, false);
     scheduleSaveView();
     updatePanCursor();
     updateToolbar();
@@ -896,6 +912,11 @@
         : (S.docKind === "svg"
             ? "No layers found in this SVG — put each equipment type on its own Visio layer before exporting. Run tpLayerInfo() for details."
             : "No layers in this PDF — re-export preserving layers (SVG, or Acrobat PDFMaker), not “Print to PDF”. Run tpLayerInfo() for details.");
+    }
+    var sb = el("tp-searchbtn");
+    if (sb) {
+      sb.style.display = hasDoc() ? "inline-flex" : "none";
+      sb.classList.toggle("tp-primary", !!(S.search && S.search.open));
     }
   }
 
@@ -1120,6 +1141,138 @@
     savePresets(ent.id, loadPresets(ent.id).filter(function (x) { return x.name !== name; }));
     renderLayerPanel();
     notify('Deleted preset "' + name + '".');
+  }
+
+  // ── find on map (text search) ───────────────────────────────────────────────
+  function tpToggleSearch() {
+    if (!hasDoc()) return;
+    S.search.open = !S.search.open;
+    var bar = el("tp-search");
+    if (bar) bar.hidden = !S.search.open;
+    updateToolbar();
+    if (S.search.open) {
+      ensureSearchIndex();
+      var inp = el("tp-search-input");
+      if (inp) { inp.value = S.search.query || ""; setTimeout(function () { inp.focus(); inp.select(); }, 30); }
+    } else {
+      clearSearchHit();
+    }
+  }
+
+  function ensureSearchIndex() {
+    if (S.search.index) return Promise.resolve(S.search.index);
+    if (S.docKind === "svg") { S.search.index = buildSvgIndex(); return Promise.resolve(S.search.index); }
+    return buildPdfIndex().then(function (ix) { S.search.index = ix; return ix; });
+  }
+
+  function buildSvgIndex() {
+    var out = [];
+    if (!S.svgEl) return out;
+    var nodes = S.svgEl.querySelectorAll("text, tspan");
+    for (var i = 0; i < nodes.length; i++) {
+      var s = (nodes[i].textContent || "").trim();
+      if (s) out.push({ text: s, el: nodes[i] });
+    }
+    return out;
+  }
+
+  function buildPdfIndex() {
+    var out = [];
+    if (!S.pdfDoc) return Promise.resolve(out);
+    var chain = Promise.resolve();
+    var _loop = function (p) {
+      chain = chain.then(function () { return S.pdfDoc.getPage(p); }).then(function (page) {
+        var vp = page.getViewport({ scale: 1, rotation: 0 });
+        return page.getTextContent().then(function (tc) {
+          tc.items.forEach(function (it) {
+            if (!it.str || !it.str.trim()) return;
+            var tr = it.transform, pt = vp.convertToViewportPoint(tr[4], tr[5]);
+            var h = it.height || Math.abs(tr[3]) || 10, w = it.width || 0;
+            out.push({ text: it.str, page: p, x: pt[0], y: pt[1] - h, w: w, h: h });
+          });
+        });
+      });
+    };
+    for (var p = 1; p <= S.numPages; p++) _loop(p);
+    return chain.then(function () { return out; });
+  }
+
+  function tpSearchInput(q) {
+    S.search.query = q;
+    ensureSearchIndex().then(function (ix) {
+      var qq = (q || "").trim().toLowerCase();
+      S.search.matches = qq ? ix.filter(function (it) { return it.text.toLowerCase().indexOf(qq) >= 0; }) : [];
+      S.search.idx = 0;
+      updateSearchCount();
+      if (S.search.matches.length) tpSearchGoTo(0);
+      else clearSearchHit();
+    });
+  }
+
+  function tpSearchKey(e) {
+    if (e.key === "Enter") { e.preventDefault(); tpSearchStep(e.shiftKey ? -1 : 1); }
+    else if (e.key === "Escape") { e.preventDefault(); tpToggleSearch(); }
+  }
+
+  function tpSearchStep(dir) {
+    if (!S.search.matches.length) return;
+    tpSearchGoTo(S.search.idx + dir);
+  }
+
+  function hitBBox(hit) {
+    if (S.docKind === "svg") {
+      try { var b = hit.el.getBBox(); return { x: b.x, y: b.y, w: b.width, h: b.height }; }
+      catch (e) { return null; }
+    }
+    return { x: hit.x, y: hit.y, w: hit.w || hit.h, h: hit.h };
+  }
+
+  function tpSearchGoTo(i) {
+    var m = S.search.matches;
+    if (!m.length) return;
+    S.search.idx = ((i % m.length) + m.length) % m.length;
+    var hit = m[S.search.idx];
+    var bbox = hitBBox(hit);
+    updateSearchCount();
+    if (!bbox) return;
+    var body = el("tp-body");
+    var vw = body.clientWidth, vh = body.clientHeight;
+    // zoom in if the match would be too small to read at the current scale
+    var sc = S.scale;
+    if (bbox.h * sc < 26) sc = clamp((Math.min(vw, vh) / 7) / Math.max(bbox.h, 1), sc, MAX_SCALE);
+    S.mode = "custom"; S.scale = clamp(sc, MIN_SCALE, MAX_SCALE);
+    var cx = (bbox.x + bbox.w / 2) * S.scale, cy = (bbox.y + bbox.h / 2) * S.scale;
+    S._pendingScroll = { sl: cx - vw / 2, st: cy - vh / 2 };
+    S.search.curBBox = bbox;
+    if (S.docKind !== "svg" && hit.page && hit.page !== S.pageNum) { S.pageNum = hit.page; renderPage(); }
+    else relayoutAndRender(null, false);
+    positionSearchHit(bbox);
+  }
+
+  function positionSearchHit(bbox, pulse) {
+    var hit = el("tp-search-hit");
+    if (!hit || !bbox) return;
+    hit.style.display = "block";
+    hit.style.left = (bbox.x * S.scale) + "px";
+    hit.style.top = (bbox.y * S.scale) + "px";
+    hit.style.width = Math.max(10, bbox.w * S.scale) + "px";
+    hit.style.height = Math.max(10, bbox.h * S.scale) + "px";
+    if (pulse !== false) { hit.classList.remove("tp-pulse"); void hit.offsetWidth; hit.classList.add("tp-pulse"); }
+  }
+
+  function clearSearchHit() {
+    if (S.search) S.search.curBBox = null;
+    var hit = el("tp-search-hit");
+    if (hit) hit.style.display = "none";
+  }
+
+  function updateSearchCount() {
+    var c = el("tp-search-count");
+    if (!c) return;
+    var m = S.search.matches;
+    c.textContent = (S.search.query || "").trim()
+      ? (m.length ? (S.search.idx + 1) + " / " + m.length : "0 / 0")
+      : "";
   }
 
   // ── public actions ──────────────────────────────────────────────────────────
@@ -1354,6 +1507,7 @@
       else if (e.key === "1") { tpActualSize(); }
       else if (e.key === "9") { tpFitPage(); }
       else if (e.key === "r" || e.key === "R") { tpRotate(); }
+      else if (e.key === "/" || ((e.key === "f" || e.key === "F") && !S.search.open)) { if (!S.search.open) tpToggleSearch(); }
       else return;
       e.preventDefault();
     });
@@ -1468,6 +1622,10 @@
   window.tpPresetSave = tpPresetSave;
   window.tpPresetApply = tpPresetApply;
   window.tpPresetDelete = tpPresetDelete;
+  window.tpToggleSearch = tpToggleSearch;
+  window.tpSearchInput = tpSearchInput;
+  window.tpSearchKey = tpSearchKey;
+  window.tpSearchStep = tpSearchStep;
   window.tpLayerInfo = tpLayerInfo;
   window.tpAddMap = tpAddMap;
   window.tpRenameCurrent = tpRenameCurrent;
