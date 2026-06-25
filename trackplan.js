@@ -61,11 +61,16 @@
     renderToken: 0,
     renderTask: null,
     loadToken: 0,
+    _lastScale: null,       // previous scale, for zoom-to-cursor anchoring
     _ro: null,              // ResizeObserver on the body
     _roRaf: 0,
+    _scrollRaf: 0,
+    _wheelRaf: 0,
   };
 
-  var MIN_SCALE = 0.1, MAX_SCALE = 12, MAX_CANVAS_PX = 8192;
+  // Only the visible slice is ever rasterised, so zoom can go very deep and stay
+  // crisp without a giant backing canvas.
+  var MIN_SCALE = 0.05, MAX_SCALE = 80;
 
   // ── persistence ──────────────────────────────────────────────────────────
   function loadCatalog() {
@@ -212,14 +217,15 @@
     bindKeys();
     bindWheelZoom();
     bindPan();
+    el("tp-body").addEventListener("scroll", onBodyScroll);
 
-    // Re-fit the page when the window is resized (only in a fit mode, where the
-    // scale tracks the viewport; 'custom' zoom is left exactly where the user put it).
+    // On viewport resize: re-fit (fit modes) and always repaint the slice for the
+    // new viewport size. Custom zoom keeps its scale.
     if (typeof ResizeObserver !== "undefined") {
       S._ro = new ResizeObserver(function () {
-        if (!S.open || S.minimized || !S.page || S.mode === "custom") return;
+        if (!S.open || S.minimized || !S.page) return;
         if (S._roRaf) return;
-        S._roRaf = requestAnimationFrame(function () { S._roRaf = 0; S.scale = fitScaleFor(S.page); renderPage(); });
+        S._roRaf = requestAnimationFrame(function () { S._roRaf = 0; relayoutAndRender(null, false); });
       });
       S._ro.observe(el("tp-body"));
     }
@@ -322,7 +328,7 @@
     if (!ensureWorker()) { setStatus("PDF viewer library not loaded.", true); return; }
     var myLoad = ++S.loadToken;
     S.pdfDoc = null; S.page = null; S.pageNum = 1; S.numPages = 1;
-    S.mode = "fit-width"; S.rotation = 0; S.scale = 1;
+    S.mode = "fit-width"; S.rotation = 0; S.scale = 1; S._lastScale = null;
     setStatus("Loading " + entry.label + "…", false);
     updateToolbar();
     entryBytes(entry).then(function (bytes) {
@@ -341,81 +347,129 @@
   // Scale that makes the page fit the viewport for the current fit mode.
   function fitScaleFor(page) {
     var body = el("tp-body");
-    var availW = (body ? body.clientWidth : 480) - 24;   // minus stage padding
-    var availH = (body ? body.clientHeight : 360) - 24;
+    var availW = (body ? body.clientWidth : 480) - 4;
+    var availH = (body ? body.clientHeight : 360) - 4;
     var base = page.getViewport({ scale: 1, rotation: S.rotation });
     var sw = Math.max(MIN_SCALE, availW / base.width);
     if (S.mode === "fit-page") return Math.min(sw, Math.max(MIN_SCALE, availH / base.height));
     return sw;
   }
 
-  // Render the current page. Pass anchor {cx,cy} (client coords) to keep that
-  // point stationary while the scale changes (zoom-to-cursor). With no anchor
-  // the view resets to top, horizontally centred.
+  // (Re)load the current page object, then lay out + render. Pass anchor {cx,cy}
+  // to keep that point fixed across a scale change (zoom-to-cursor).
   function renderPage(anchor) {
     if (!S.pdfDoc) return Promise.resolve();
+    var myLoad = S.loadToken;
+    return S.pdfDoc.getPage(S.pageNum).then(function (page) {
+      if (myLoad !== S.loadToken) return;
+      S.page = page;
+      if (S._lastScale == null) S._lastScale = S.scale;
+      relayoutAndRender(anchor, !anchor);
+    }).catch(function (err) {
+      setStatus((err && err.message) || "Failed to render this page.", true);
+    });
+  }
+
+  // Size the scroll "stage" (a spacer the size of the page at the current scale)
+  // and reposition the scroll, then paint the visible slice. The canvas itself is
+  // only ever viewport-sized — so zoom can go arbitrarily deep and stay crisp.
+  function relayoutAndRender(anchor, reset) {
+    if (!S.page) return;
+    var body = el("tp-body"), stage = el("tp-stage");
+    if (!body || !stage) return;
+    var oldScale = S._lastScale || S.scale;
+    if (S.mode !== "custom") S.scale = fitScaleFor(S.page);
+    S.scale = clamp(S.scale, MIN_SCALE, MAX_SCALE);
+
+    var vp = S.page.getViewport({ scale: S.scale, rotation: S.rotation });
+    stage.style.width = Math.ceil(vp.width) + "px";
+    stage.style.height = Math.ceil(vp.height) + "px";
+
+    var maxL = Math.max(0, stage.offsetWidth - body.clientWidth);
+    var maxT = Math.max(0, stage.offsetHeight - body.clientHeight);
+    if (anchor) {
+      var sc = pageToScroll(anchor, oldScale, S.scale);
+      body.scrollLeft = clamp(sc.sl, 0, maxL);
+      body.scrollTop = clamp(sc.st, 0, maxT);
+    } else if (reset) {
+      body.scrollLeft = 0;
+      body.scrollTop = 0;
+    } else {
+      body.scrollLeft = clamp(body.scrollLeft, 0, maxL);
+      body.scrollTop = clamp(body.scrollTop, 0, maxT);
+    }
+    S._lastScale = S.scale;
+    updatePanCursor();
+    updateToolbar();
+    renderSlice();
+  }
+
+  // Map a client-space anchor to the scroll offset that keeps the same page
+  // point under it after a scale change. Page top-left sits at stage origin.
+  function pageToScroll(anchor, oldScale, newScale) {
+    var body = el("tp-body");
+    var r = body.getBoundingClientRect();
+    var cxLocal = anchor.cx - r.left, cyLocal = anchor.cy - r.top;
+    var pageX = (body.scrollLeft + cxLocal) / oldScale;
+    var pageY = (body.scrollTop + cyLocal) / oldScale;
+    return { sl: pageX * newScale - cxLocal, st: pageY * newScale - cyLocal };
+  }
+
+  // Paint only the part of the page currently scrolled into view, at full
+  // device resolution. Re-runs on zoom, pan and scroll.
+  function renderSlice() {
+    if (!S.page) return;
+    var body = el("tp-body"), canvas = el("tp-canvas"), stage = el("tp-stage");
+    if (!body || !canvas || !stage) return;
     var token = ++S.renderToken;
     if (S.renderTask) { try { S.renderTask.cancel(); } catch (e) {} S.renderTask = null; }
-    return S.pdfDoc.getPage(S.pageNum).then(function (page) {
-      if (token !== S.renderToken) return;
-      S.page = page;
-      var canvas = el("tp-canvas"), body = el("tp-body");
-      if (!canvas || !body) return;
 
-      // Capture the content fraction under the anchor BEFORE resizing.
-      var keep = null;
-      if (anchor && canvas.offsetWidth) {
-        var r0 = canvas.getBoundingClientRect();
-        keep = {
-          ax: anchor.cx, ay: anchor.cy,
-          fx: clamp((anchor.cx - r0.left) / r0.width, 0, 1),
-          fy: clamp((anchor.cy - r0.top) / r0.height, 0, 1),
-        };
-      }
+    var dpr = window.devicePixelRatio || 1;
+    var vw = Math.max(1, body.clientWidth), vh = Math.max(1, body.clientHeight);
+    var sl = body.scrollLeft, st = body.scrollTop;
+    // Canvas covers the visible slice but never exceeds the page (stage) size, so
+    // a page smaller than the viewport can't spawn phantom scrollbars.
+    var cw = Math.max(1, Math.min(vw, stage.offsetWidth));
+    var ch = Math.max(1, Math.min(vh, stage.offsetHeight));
+    canvas.style.left = sl + "px";
+    canvas.style.top = st + "px";
+    canvas.style.width = cw + "px";
+    canvas.style.height = ch + "px";
+    canvas.width = Math.floor(cw * dpr);
+    canvas.height = Math.floor(ch * dpr);
+    canvas.style.display = "block";
 
-      if (S.mode !== "custom") S.scale = fitScaleFor(page);
-      var dpr = window.devicePixelRatio || 1;
-      var base = page.getViewport({ scale: 1, rotation: S.rotation });
-      // Cap so the backing canvas never blows past MAX_CANVAS_PX in any dimension.
-      var maxByPx = MAX_CANVAS_PX / (Math.max(base.width, base.height) * dpr);
-      S.scale = clamp(S.scale, MIN_SCALE, Math.min(MAX_SCALE, maxByPx));
-
-      var viewport = page.getViewport({ scale: S.scale, rotation: S.rotation });
-      canvas.width = Math.floor(viewport.width * dpr);
-      canvas.height = Math.floor(viewport.height * dpr);
-      canvas.style.width = Math.floor(viewport.width) + "px";
-      canvas.style.height = Math.floor(viewport.height) + "px";
-      canvas.style.display = "block";
-      var ctx = canvas.getContext("2d");
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      setStatus("", false);
-
-      // Reposition the scroll so the view stays anchored (or resets cleanly).
-      if (keep) {
-        var r1 = canvas.getBoundingClientRect();
-        body.scrollLeft += (r1.left + keep.fx * r1.width) - keep.ax;
-        body.scrollTop += (r1.top + keep.fy * r1.height) - keep.ay;
-      } else {
-        body.scrollTop = 0;
-        body.scrollLeft = Math.max(0, (canvas.offsetWidth - body.clientWidth) / 2);
-      }
-      updatePanCursor();
-
-      S.renderTask = page.render({ canvasContext: ctx, viewport: viewport });
-      return S.renderTask.promise.then(function () {
-        if (token === S.renderToken) { S.renderTask = null; updateToolbar(); }
-      }).catch(function (err) {
-        if (err && err.name === "RenderingCancelledException") return;
-        if (token === S.renderToken) setStatus((err && err.message) || "Render failed.", true);
-      });
+    var vp = S.page.getViewport({ scale: S.scale, rotation: S.rotation });
+    var ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cw, ch);
+    setStatus("", false);
+    // Draw the full page but shifted by -scroll, so only the visible slice lands
+    // on the canvas (pdf.js clips the rest).
+    S.renderTask = S.page.render({ canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, -sl, -st] });
+    S.renderTask.promise.then(function () {
+      if (token === S.renderToken) { S.renderTask = null; updateToolbar(); }
+    }).catch(function (err) {
+      if (err && err.name === "RenderingCancelledException") return;
+      if (token === S.renderToken) setStatus((err && err.message) || "Render failed.", true);
     });
+  }
+
+  // Keep the canvas pinned during native scroll; re-render the slice next frame.
+  function onBodyScroll() {
+    var body = el("tp-body"), canvas = el("tp-canvas");
+    if (!body || !canvas || !S.page) return;
+    canvas.style.left = body.scrollLeft + "px";
+    canvas.style.top = body.scrollTop + "px";
+    if (S._scrollRaf) return;
+    S._scrollRaf = requestAnimationFrame(function () { S._scrollRaf = 0; renderSlice(); });
   }
 
   // Toggle the grab cursor only when the page overflows the viewport.
   function updatePanCursor() {
-    var body = el("tp-body"), canvas = el("tp-canvas");
-    if (!body || !canvas) return;
-    var pan = canvas.offsetWidth > body.clientWidth + 1 || canvas.offsetHeight > body.clientHeight + 1;
+    var body = el("tp-body"), stage = el("tp-stage");
+    if (!body || !stage) return;
+    var pan = stage.offsetWidth > body.clientWidth + 1 || stage.offsetHeight > body.clientHeight + 1;
     body.classList.toggle("tp-pannable", pan);
   }
 
@@ -427,10 +481,10 @@
   }
 
   function zoomBy(factor, anchor) {
-    if (!S.pdfDoc) return;
+    if (!S.page) return;
     S.mode = "custom";
     S.scale = clamp(S.scale * factor, MIN_SCALE, MAX_SCALE);
-    renderPage(anchor || centerAnchor());
+    relayoutAndRender(anchor || centerAnchor(), false);
   }
 
   function updateToolbar() {
@@ -489,8 +543,9 @@
       S.maximized = true;
     }
     applyGeom();
-    // A bigger/smaller window changes the fit; re-fit unless the user set a custom zoom.
-    if (S.mode !== "custom") renderPage();
+    // A bigger/smaller window changes the fit; re-fit/repaint for the new size
+    // without losing the user's place (the ResizeObserver also covers this).
+    if (S.page) relayoutAndRender(null, false);
   }
 
   function tpSelectSection(id) {
@@ -681,7 +736,7 @@
     if (!body) return;
     var pendingAnchor = null;
     body.addEventListener("wheel", function (e) {
-      if (!S.pdfDoc) return;
+      if (!S.page) return;
       e.preventDefault();
       var step = Math.exp(-e.deltaY * 0.0015);      // smooth, proportional to wheel delta
       S.mode = "custom";
@@ -689,7 +744,7 @@
       pendingAnchor = { cx: e.clientX, cy: e.clientY };
       updateToolbar();
       if (S._wheelRaf) return;
-      S._wheelRaf = requestAnimationFrame(function () { S._wheelRaf = 0; renderPage(pendingAnchor); });
+      S._wheelRaf = requestAnimationFrame(function () { S._wheelRaf = 0; relayoutAndRender(pendingAnchor, false); });
     }, { passive: false });
   }
 
@@ -722,7 +777,7 @@
       e.preventDefault();
     });
     body.addEventListener("dblclick", function (e) {
-      if (!S.pdfDoc) return;
+      if (!S.page) return;
       zoomBy(1.6, { cx: e.clientX, cy: e.clientY });
     });
 
@@ -730,7 +785,7 @@
     var pinch = null;
     function dist(t) { var dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY; return Math.hypot(dx, dy); }
     body.addEventListener("touchstart", function (e) {
-      if (!S.pdfDoc) return;
+      if (!S.page) return;
       if (e.touches.length === 2) {
         pinch = { d: dist(e.touches), scale: S.scale,
                   cx: (e.touches[0].clientX + e.touches[1].clientX) / 2,
@@ -745,7 +800,7 @@
         S.mode = "custom";
         S.scale = clamp(pinch.scale * (dist(e.touches) / pinch.d), MIN_SCALE, MAX_SCALE);
         updateToolbar();
-        if (!S._wheelRaf) S._wheelRaf = requestAnimationFrame(function () { S._wheelRaf = 0; renderPage({ cx: pinch.cx, cy: pinch.cy }); });
+        if (!S._wheelRaf) S._wheelRaf = requestAnimationFrame(function () { S._wheelRaf = 0; relayoutAndRender({ cx: pinch.cx, cy: pinch.cy }, false); });
         e.preventDefault();
       } else if (panning && e.touches.length === 1) {
         body.scrollLeft = sl - (e.touches[0].clientX - sx);
