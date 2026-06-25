@@ -35328,8 +35328,6 @@ function _dynSectionOptions() {
 
 function _dynBuildInstanceForm(inst, tcOpts) {
   const v = inst || {};
-  const consistOpts = [1, 2, 3, 4, 5, 6, 7, 8];
-  const consistIsKnown = v.consist_size != null && consistOpts.includes(v.consist_size);
   const sectionOpts = _dynSectionOptions();
   const tsut = v.track_section_under_test || '';
   const tsutKnown = sectionOpts.some(o => o.code === tsut);
@@ -35418,17 +35416,11 @@ function _dynBuildInstanceForm(inst, tcOpts) {
       </div>
 
       <div class="form-field">
-        <label>Consist size <span style="color:var(--gray-500);font-weight:400;">(cars — "Any" means consist-agnostic)</span></label>
-        <select id="dyn-f-consist">
-          <option value="" ${v.consist_size == null ? 'selected' : ''}>Any</option>
-          ${consistOpts.map(n => `<option value="${n}" ${v.consist_size === n ? 'selected' : ''}>${n}</option>`).join('')}
-          ${!consistIsKnown && v.consist_size != null ? `<option value="${v.consist_size}" selected>${v.consist_size}</option>` : ''}
-        </select>
+        <label>Trains needed <span style="color:var(--gray-500);font-weight:400;">(parallel trains for one run)</span></label>
+        <input id="dyn-f-trains" type="number" min="1" value="${v.trains_needed ?? ''}" placeholder="1" onchange="_dynOnTrainsChange()" />
       </div>
-
-      <div class="form-field">
-        <label>Trains needed</label>
-        <input id="dyn-f-trains" type="number" min="1" value="${v.trains_needed ?? ''}" placeholder="1" />
+      <div class="form-field" id="dyn-f-consist-wrap" style="grid-column:1/-1;">
+        ${_dynConsistFieldsHtml(_dynConsistSizes(v), Math.max(1, parseInt(v.trains_needed, 10) || 1))}
       </div>
       <div class="form-field">
         <label>Expected duration <span style="color:var(--gray-500);font-weight:400;">(minutes)</span></label>
@@ -35446,6 +35438,70 @@ function _dynBuildInstanceForm(inst, tcOpts) {
       </div>
     </div>
   `;
+}
+
+// Per-train consist sizes for an instance: required_consists.sizes when present,
+// else the single consist_size replicated across trains_needed (back-compat for
+// instances saved before per-train sizing). Always returns an array of length
+// trains_needed; each entry is a car count or null ("Any").
+function _dynConsistSizes(inst) {
+  const n = Math.max(1, parseInt(inst && inst.trains_needed, 10) || 1);
+  const rc = inst && inst.required_consists;
+  let sizes = (rc && Array.isArray(rc.sizes)) ? rc.sizes.slice() : null;
+  if (!sizes) {
+    const c = (inst && inst.consist_size != null) ? inst.consist_size : null;
+    sizes = Array(n).fill(c);
+  }
+  while (sizes.length < n) sizes.push(sizes[0] != null ? sizes[0] : null);
+  if (sizes.length > n) sizes = sizes.slice(0, n);
+  return sizes.map(x => (x == null || x === '') ? null : (parseInt(x, 10) || null));
+}
+
+// Consist selectors for the instance form: one "Consist size" select for a
+// single train, or a labelled "Train N cars" select per train when an instance
+// needs more than one train (each train can carry a different car count).
+// Selects are id'd dyn-f-consist-0 … dyn-f-consist-(n-1) and read back on save.
+function _dynConsistFieldsHtml(sizes, n) {
+  const consistOpts = [1, 2, 3, 4, 5, 6, 7, 8];
+  n = Math.max(1, parseInt(n, 10) || 1);
+  const one = (val, idx) => {
+    const known = val != null && consistOpts.includes(val);
+    return `<select id="dyn-f-consist-${idx}">
+        <option value="" ${val == null ? 'selected' : ''}>Any</option>
+        ${consistOpts.map(o => `<option value="${o}" ${val === o ? 'selected' : ''}>${o}</option>`).join('')}
+        ${!known && val != null ? `<option value="${val}" selected>${val}</option>` : ''}
+      </select>`;
+  };
+  if (n <= 1) {
+    return `<label>Consist size <span style="color:var(--gray-500);font-weight:400;">(cars — "Any" = consist-agnostic)</span></label>
+      ${one(sizes[0] != null ? sizes[0] : null, 0)}`;
+  }
+  const cells = [];
+  for (let i = 0; i < n; i++) {
+    cells.push(`<div class="form-field" style="margin:0;">
+        <label style="font-size:11px;color:var(--gray-600);">Train ${i + 1} cars</label>
+        ${one(sizes[i] != null ? sizes[i] : null, i)}
+      </div>`);
+  }
+  return `<label>Consist size per train <span style="color:var(--gray-500);font-weight:400;">(cars per train — set each train's car count; "Any" = agnostic)</span></label>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-top:5px;">${cells.join('')}</div>`;
+}
+
+// Re-render the per-train consist selectors when "Trains needed" changes,
+// preserving any car counts already chosen (added trains inherit train 1's).
+function _dynOnTrainsChange() {
+  const wrap = document.getElementById('dyn-f-consist-wrap');
+  if (!wrap) return;
+  const n = Math.max(1, parseInt(document.getElementById('dyn-f-trains') && document.getElementById('dyn-f-trains').value, 10) || 1);
+  const cur = [];
+  for (let i = 0; ; i++) {
+    const el = document.getElementById('dyn-f-consist-' + i);
+    if (!el) break;
+    cur.push(el.value === '' ? null : (parseInt(el.value, 10) || null));
+  }
+  const sizes = [];
+  for (let i = 0; i < n; i++) sizes.push(cur[i] != null ? cur[i] : (cur[0] != null ? cur[0] : null));
+  wrap.innerHTML = _dynConsistFieldsHtml(sizes, n);
 }
 
 function _dynNextInstanceCode(testId) {
@@ -35472,6 +35528,15 @@ async function _dynSaveInstance(id) {
   const get = i => document.getElementById(i)?.value?.trim() || null;
   const intOrNull = (s) => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : null; };
   const splitList = (s) => String(s || '').split(/[;,]/).map(x => x.trim()).filter(Boolean);
+  // Per-train consist sizes: one car count per train (null = "Any"). consist_size
+  // keeps the primary (train 1) value for back-compat; required_consists.sizes
+  // carries the full per-train array.
+  const trainsNeeded = Math.max(1, intOrNull(get('dyn-f-trains')) || 1);
+  const consistSizes = [];
+  for (let i = 0; i < trainsNeeded; i++) {
+    const el = document.getElementById('dyn-f-consist-' + i);
+    consistSizes.push(el && el.value !== '' ? (parseInt(el.value, 10) || null) : null);
+  }
   const payload = {
     test_id: get('dyn-f-test-id'),
     code: get('dyn-f-code'),
@@ -35489,8 +35554,9 @@ async function _dynSaveInstance(id) {
     scheduled_for_date: get('dyn-f-sched'),
     blocked_reason: get('dyn-f-blocked'),
     notes: get('dyn-f-notes'),
-    consist_size: intOrNull(get('dyn-f-consist')),
-    trains_needed: intOrNull(get('dyn-f-trains')),
+    consist_size: consistSizes[0] != null ? consistSizes[0] : null,
+    trains_needed: trainsNeeded,
+    required_consists: { sizes: consistSizes },
     expected_duration_minutes: intOrNull(get('dyn-f-exp-dur')),
     actual_duration_minutes: intOrNull(get('dyn-f-act-dur')),
     updated_at: new Date().toISOString(),
@@ -35540,7 +35606,7 @@ function _dynOpenCSVModal() {
           Import a procedure's runs using its native headers:
           <code>Test Case Code</code> (required), <code>Test Case Name</code>, <code>Test Procedure</code>,
           <code>Prerequisites</code>, <code>Phase</code>, <code>Track Section Under Test</code>,
-          <code>Track Section Access Req</code>, <code>Number of Trains</code>, <code>Train 1 car #</code>,
+          <code>Track Section Access Req</code>, <code>Number of Trains</code>, <code>Train 1 car #</code>, <code>Train 2 car #</code> … (one car # per train),
           <code>Estimated duration (m)</code>, <code>Starting Point</code>, <code>Intermediate Points</code>,
           <code>Finish Point</code>, <code>Substitute</code>, <code>Test Scope</code>, <code>Applicable Locations</code>.
           Each row is one executable run; rows sharing a <code>Test Case Code</code> roll up to that case.
@@ -35700,7 +35766,6 @@ function _dynHeaderKey(raw) {
     'track section under test': 'tsut',
     'track section access req': 'access_req',
     'number of trains': 'num_trains',
-    'train 1 car': 'train1',
     'estimated duration': 'duration',
     'starting point': 'start_point',
     'start point': 'start_point',
@@ -35713,6 +35778,9 @@ function _dynHeaderKey(raw) {
     'cadence': 'test_scope',
     'applicable locations': 'applicable_locations',
   };
+  // "Train 1 car", "Train 2 car", … → train1, train2, … (per-train consist size).
+  const tm = /^train (\d+) car$/.exec(h);
+  if (tm) return 'train' + tm[1];
   return M[h] || null;
 }
 
@@ -35787,6 +35855,17 @@ function _dynParseRuns(parsed) {
     }
     c.runCount++;
 
+    // Per-train consist sizes from the "Train N car #" columns. trains_needed is
+    // the explicit "Number of Trains" or, failing that, the count of trains given
+    // a car number. Each train's size defaults to train 1's when not specified.
+    const _trainCars = [];
+    for (let k = 1; k <= 12; k++) { const ci = idxOf('train' + k); _trainCars.push(ci >= 0 ? consistOrNull(row[ci]) : null); }
+    let _trainsNeeded = intOrNull(get('num_trains'));
+    if (_trainsNeeded == null) _trainsNeeded = _trainCars.filter(x => x != null).length || 1;
+    _trainsNeeded = Math.max(1, _trainsNeeded);
+    const _consistSizes = [];
+    for (let k = 0; k < _trainsNeeded; k++) _consistSizes.push(_trainCars[k] != null ? _trainCars[k] : (_trainCars[0] != null ? _trainCars[0] : null));
+
     const start = get('start_point');
     const finish = get('finish_point');
     const inter = splitList(get('intermediate'));
@@ -35810,8 +35889,9 @@ function _dynParseRuns(parsed) {
       track_section_access_req: _dynParseZones(get('access_req')),
       required_mode: _dynNormMode(get('required_mode')),
       prerequisites: get('prerequisites') || null,
-      trains_needed: intOrNull(get('num_trains')),
-      consist_size: consistOrNull(get('train1')),
+      trains_needed: _trainsNeeded,
+      consist_size: _consistSizes[0] != null ? _consistSizes[0] : null,
+      required_consists: { sizes: _consistSizes },
       expected_duration_minutes: intOrNull(get('duration')),
       notes: null,
       equivalence_group_id: null,
