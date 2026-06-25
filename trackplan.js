@@ -36,6 +36,9 @@
     { id: "builtin-phase-2-layered", label: "Phase 2 — Layered demo", kind: "builtin",
       src: "assets/track-plans/phase-2-layered.pdf",
       note: "Demo of toggleable layers (Signals / Axle Counters / WABs) — like a layered Visio PDF" },
+    { id: "builtin-phase-2-svg", label: "Phase 2 — SVG layers demo", kind: "builtin",
+      src: "assets/track-plans/phase-2-layered.svg", format: "svg",
+      note: "Vector SVG with toggleable layers (Signals / Axle Counters / WABs) — like a Visio SVG export" },
     { id: "builtin-w-4", label: "W-4 Interlocking (zoom)", kind: "builtin",
       src: "assets/track-plans/w-4.pdf", note: "Zoomed to the W-4 interlocking" },
     { id: "builtin-route-1", label: "Route 1 — S8 → SB", kind: "builtin",
@@ -53,16 +56,22 @@
     // floating geometry (px)
     geom: { x: 0, y: 0, w: 540, h: 480 },
     preMax: null,           // geometry saved before maximise
-    // pdf
+    // document
+    docKind: "pdf",         // 'pdf' | 'svg'
     pdfDoc: null,
     pageNum: 1,
     numPages: 1,
-    scale: 1,               // absolute render scale (PDF points → CSS px)
+    scale: 1,               // absolute render scale (page units → CSS px)
     mode: "fit-width",      // 'fit-width' | 'fit-page' | 'custom'
     rotation: 0,            // 0 | 90 | 180 | 270
     page: null,             // current PDFPageProxy (for re-fit on resize without refetch)
     ocConfig: null,         // pdf.js OptionalContentConfig for the loaded doc (PDF layers)
-    layers: [],             // [{type:'group'|'label', id?, name, depth}] flattened layer tree
+    // svg
+    svgEl: null,            // the live inline <svg> element
+    svgBaseW: 0,            // intrinsic svg width (user units)
+    svgBaseH: 0,
+    // layers (shared by PDF OCGs and SVG groups)
+    layers: [],             // [{type:'group'|'label', id?, name, depth, els?, visible?}]
     layersOpen: false,      // is the Layers panel showing?
     renderToken: 0,
     renderTask: null,
@@ -241,7 +250,7 @@
     // new viewport size. Custom zoom keeps its scale.
     if (typeof ResizeObserver !== "undefined") {
       S._ro = new ResizeObserver(function () {
-        if (!S.open || S.minimized || !S.page) return;
+        if (!S.open || S.minimized || !hasDoc()) return;
         if (S._roRaf) return;
         S._roRaf = requestAnimationFrame(function () { S._roRaf = 0; relayoutAndRender(null, false); });
       });
@@ -312,10 +321,16 @@
       s.style.display = "flex";
       s.classList.toggle("tp-error", !!isError);
       if (c) c.style.display = "none";
+      if (S.svgEl) S.svgEl.style.display = "none";
     } else {
       s.style.display = "none";
       s.classList.remove("tp-error");
-      if (c) c.style.display = "block";
+      if (S.docKind === "svg") {
+        if (c) c.style.display = "none";
+        if (S.svgEl) S.svgEl.style.display = "block";
+      } else if (c) {
+        c.style.display = "block";
+      }
     }
   }
 
@@ -324,6 +339,13 @@
     if (typeof pdfjsLib === "undefined") return false;
     if (!pdfjsLib.GlobalWorkerOptions.workerSrc) pdfjsLib.GlobalWorkerOptions.workerSrc = PDF_WORKER;
     return true;
+  }
+
+  function entryFormat(entry) {
+    if (!entry) return "pdf";
+    if (entry.format) return entry.format;
+    if (/\.svg(\?|$)/i.test(entry.src || "") || /\.svg$/i.test(entry.fileName || "")) return "svg";
+    return "pdf";
   }
 
   function entryBytes(entry) {
@@ -339,17 +361,38 @@
     }).then(function (ab) { return new Uint8Array(ab); });
   }
 
+  function entryText(entry) {
+    if (entry.kind === "upload") {
+      return idbGet(entry.id).then(function (rec) {
+        if (!rec || !rec.blob) throw new Error("This uploaded map is no longer stored on this device.");
+        return rec.blob.text();
+      });
+    }
+    return fetch(entry.src, { cache: "force-cache" }).then(function (r) {
+      if (!r.ok) throw new Error("Could not load " + entry.src + " (" + r.status + ")");
+      return r.text();
+    });
+  }
+
   function loadActive() {
     var entry = activeEntry();
     renderSectionSelect();
     if (!entry) { setStatus("No track plan selected.", false); return; }
-    if (!ensureWorker()) { setStatus("PDF viewer library not loaded.", true); return; }
     var myLoad = ++S.loadToken;
+    // reset doc state
     S.pdfDoc = null; S.page = null; S.pageNum = 1; S.numPages = 1;
     S.mode = "fit-width"; S.rotation = 0; S.scale = 1; S._lastScale = null;
     S.ocConfig = null; S.layers = []; S.layersOpen = false;
+    detachSvg();
+    S.docKind = entryFormat(entry);
     setStatus("Loading " + entry.label + "…", false);
     updateToolbar();
+    if (S.docKind === "svg") { loadSvg(entry, myLoad); return; }
+    loadPdf(entry, myLoad);
+  }
+
+  function loadPdf(entry, myLoad) {
+    if (!ensureWorker()) { setStatus("PDF viewer library not loaded.", true); return; }
     entryBytes(entry).then(function (bytes) {
       return pdfjsLib.getDocument({ data: bytes }).promise;
     }).then(function (doc) {
@@ -368,6 +411,147 @@
     }).catch(function (err) {
       if (myLoad !== S.loadToken) return;
       setStatus((err && err.message) || "Failed to load this track plan.", true);
+    });
+  }
+
+  // ── SVG loading + layers ────────────────────────────────────────────────────
+  function detachSvg() {
+    if (S.svgEl && S.svgEl.parentNode) S.svgEl.parentNode.removeChild(S.svgEl);
+    S.svgEl = null; S.svgBaseW = 0; S.svgBaseH = 0;
+  }
+
+  // Strip anything executable so an uploaded SVG can't run script in the app.
+  function sanitizeSvg(svg) {
+    var scripts = svg.querySelectorAll("script");
+    for (var i = scripts.length - 1; i >= 0; i--) scripts[i].parentNode.removeChild(scripts[i]);
+    var all = svg.querySelectorAll("*");
+    for (var j = 0; j < all.length; j++) {
+      var attrs = all[j].attributes;
+      for (var k = attrs.length - 1; k >= 0; k--) {
+        var n = attrs[k].name, v = attrs[k].value || "";
+        if (/^on/i.test(n)) all[j].removeAttribute(n);
+        else if (/^(href|xlink:href)$/i.test(n) && /^\s*javascript:/i.test(v)) all[j].removeAttribute(n);
+      }
+    }
+    return svg;
+  }
+
+  function svgIntrinsicSize(svg) {
+    var vb = svg.getAttribute("viewBox");
+    if (vb) {
+      var p = vb.split(/[\s,]+/).map(Number);
+      if (p.length === 4 && p[2] > 0 && p[3] > 0) return { w: p[2], h: p[3] };
+    }
+    var w = parseFloat(svg.getAttribute("width")), h = parseFloat(svg.getAttribute("height"));
+    if (w > 0 && h > 0) return { w: w, h: h };
+    try { var b = svg.getBBox && svg.getBBox(); if (b && b.width) return { w: b.width, h: b.height }; } catch (e) {}
+    return { w: 1000, h: 700 };
+  }
+
+  function loadSvg(entry, myLoad) {
+    entryText(entry).then(function (txt) {
+      if (myLoad !== S.loadToken) return;
+      var doc = new DOMParser().parseFromString(txt, "image/svg+xml");
+      var svg = doc.documentElement;
+      if (!svg || svg.nodeName.toLowerCase() === "parsererror" || svg.getElementsByTagName("parsererror").length) {
+        throw new Error("This file isn't a readable SVG.");
+      }
+      sanitizeSvg(svg);
+      var size = svgIntrinsicSize(svg);
+      S.svgBaseW = size.w; S.svgBaseH = size.h;
+      if (!svg.getAttribute("viewBox")) svg.setAttribute("viewBox", "0 0 " + size.w + " " + size.h);
+      svg.removeAttribute("style");
+      svg.setAttribute("preserveAspectRatio", "xMinYMin meet");
+      svg.style.position = "absolute";
+      svg.style.top = "0"; svg.style.left = "0";
+      svg.style.transformOrigin = "0 0";
+      // import into our document and mount inside the stage
+      var imported = document.importNode(svg, true);
+      var stage = el("tp-stage");
+      if (!stage) throw new Error("Viewer not ready.");
+      S.svgEl = imported;
+      stage.appendChild(imported);
+      detectSvgLayers(imported);
+      updateToolbar();
+      renderLayerPanel();
+      relayoutAndRender(null, true);
+    }).catch(function (err) {
+      if (myLoad !== S.loadToken) return;
+      setStatus((err && err.message) || "Failed to load this SVG track plan.", true);
+    });
+  }
+
+  var INK_NS = "http://www.inkscape.org/namespaces/inkscape";
+  var VISIO_NS = "http://schemas.microsoft.com/visio/2003/SVGExtensions/";
+
+  function attr(elm, qualified, ns, local) {
+    return elm.getAttribute(qualified) || (ns && elm.getAttributeNS ? elm.getAttributeNS(ns, local) : null);
+  }
+  function groupName(g, i) {
+    var t = g.querySelector ? g.querySelector(":scope > title, :scope > desc") : null;
+    return attr(g, "inkscape:label", INK_NS, "label") || g.getAttribute("data-name") ||
+           g.getAttribute("aria-label") || (t && t.textContent) || g.id || ("Layer " + (i + 1));
+  }
+
+  // Detect toggleable layers in an SVG, trying the common authoring conventions:
+  // Inkscape layer groups → Visio v:layerMember membership → top-level <g> groups.
+  function detectSvgLayers(svg) {
+    S.layers = [];
+    var gAll = Array.prototype.slice.call(svg.querySelectorAll("g"));
+
+    // 1) Inkscape-style layers
+    var ink = gAll.filter(function (g) { return attr(g, "inkscape:groupmode", INK_NS, "groupmode") === "layer"; });
+    if (ink.length) { pushSvgLayers(ink.map(function (g, i) { return { name: groupName(g, i), els: [g] }; })); return; }
+
+    // 2) Visio layer membership (v:layerMember on shapes)
+    var membered = Array.prototype.slice.call(svg.querySelectorAll("*")).filter(function (e) {
+      return e.getAttribute && (attr(e, "v:layerMember", VISIO_NS, "layerMember") != null);
+    });
+    if (membered.length) {
+      var names = readVisioLayerNames(svg);
+      var order = [], byLayer = {};
+      membered.forEach(function (e) {
+        var lm = attr(e, "v:layerMember", VISIO_NS, "layerMember") || "";
+        lm.split(/[;,\s]+/).filter(Boolean).forEach(function (idx) {
+          if (!byLayer[idx]) { byLayer[idx] = []; order.push(idx); }
+          byLayer[idx].push(e);
+        });
+      });
+      pushSvgLayers(order.map(function (idx) {
+        return { name: (names && names[idx]) || ("Layer " + (Number(idx) + 1)), els: byLayer[idx] };
+      }));
+      return;
+    }
+
+    // 3) Top-level <g> groups (Illustrator / Affinity / generic)
+    var top = Array.prototype.slice.call(svg.children).filter(isG);
+    if (top.length === 1) {
+      var inner = Array.prototype.slice.call(top[0].children).filter(isG);
+      if (inner.length > 1) top = inner;
+    }
+    var named = top.filter(function (g) { return g.id || g.getAttribute("data-name") || g.getAttribute("aria-label") || (g.querySelector && g.querySelector(":scope > title")); });
+    if (top.length > 1 && named.length >= 2) {
+      pushSvgLayers(top.map(function (g, i) { return { name: groupName(g, i), els: [g] }; }));
+    }
+  }
+  function isG(n) { return n.tagName && n.tagName.toLowerCase() === "g"; }
+
+  // Best-effort: pull Visio layer display names if the export embedded a table.
+  function readVisioLayerNames(svg) {
+    var names = {};
+    var defs = svg.querySelectorAll("*");
+    for (var i = 0; i < defs.length; i++) {
+      var e = defs[i];
+      var nm = attr(e, "v:name", VISIO_NS, "name");
+      var ix = attr(e, "v:index", VISIO_NS, "index");
+      if (nm != null && ix != null) names[ix] = nm;
+    }
+    return Object.keys(names).length ? names : null;
+  }
+
+  function pushSvgLayers(list) {
+    S.layers = list.map(function (l, i) {
+      return { type: "group", id: "svg-" + i, name: l.name || ("Layer " + (i + 1)), depth: 0, els: l.els, visible: true };
     });
   }
 
@@ -411,20 +595,37 @@
     }
   }
 
+  // Whether a document is currently loaded (PDF page or SVG element).
+  function hasDoc() { return S.docKind === "svg" ? !!S.svgEl : !!S.page; }
+
+  // Base page size in user units at scale 1, accounting for rotation.
+  function baseSize() {
+    var w, h;
+    if (S.docKind === "svg") { w = S.svgBaseW; h = S.svgBaseH; }
+    else { var vp = S.page.getViewport({ scale: 1, rotation: 0 }); w = vp.width; h = vp.height; }
+    return (S.rotation % 180) ? { w: h, h: w } : { w: w, h: h };
+  }
+
   // Scale that makes the page fit the viewport for the current fit mode.
-  function fitScaleFor(page) {
+  function fitScaleFor() {
     var body = el("tp-body");
     var availW = (body ? body.clientWidth : 480) - 4;
     var availH = (body ? body.clientHeight : 360) - 4;
-    var base = page.getViewport({ scale: 1, rotation: S.rotation });
-    var sw = Math.max(MIN_SCALE, availW / base.width);
-    if (S.mode === "fit-page") return Math.min(sw, Math.max(MIN_SCALE, availH / base.height));
+    var b = baseSize();
+    var sw = Math.max(MIN_SCALE, availW / b.w);
+    if (S.mode === "fit-page") return Math.min(sw, Math.max(MIN_SCALE, availH / b.h));
     return sw;
   }
 
   // (Re)load the current page object, then lay out + render. Pass anchor {cx,cy}
   // to keep that point fixed across a scale change (zoom-to-cursor).
   function renderPage(anchor) {
+    if (S.docKind === "svg") {
+      if (!S.svgEl) return Promise.resolve();
+      if (S._lastScale == null) S._lastScale = S.scale;
+      relayoutAndRender(anchor, !anchor);
+      return Promise.resolve();
+    }
     if (!S.pdfDoc) return Promise.resolve();
     var myLoad = S.loadToken;
     return S.pdfDoc.getPage(S.pageNum).then(function (page) {
@@ -438,19 +639,19 @@
   }
 
   // Size the scroll "stage" (a spacer the size of the page at the current scale)
-  // and reposition the scroll, then paint the visible slice. The canvas itself is
-  // only ever viewport-sized — so zoom can go arbitrarily deep and stay crisp.
+  // and reposition the scroll, then paint. PDF paints the visible slice into a
+  // viewport-sized canvas; SVG just resizes the vector element (crisp at any zoom).
   function relayoutAndRender(anchor, reset) {
-    if (!S.page) return;
+    if (!hasDoc()) return;
     var body = el("tp-body"), stage = el("tp-stage");
     if (!body || !stage) return;
     var oldScale = S._lastScale || S.scale;
-    if (S.mode !== "custom") S.scale = fitScaleFor(S.page);
+    if (S.mode !== "custom") S.scale = fitScaleFor();
     S.scale = clamp(S.scale, MIN_SCALE, MAX_SCALE);
 
-    var vp = S.page.getViewport({ scale: S.scale, rotation: S.rotation });
-    stage.style.width = Math.ceil(vp.width) + "px";
-    stage.style.height = Math.ceil(vp.height) + "px";
+    var b = baseSize();
+    stage.style.width = Math.ceil(b.w * S.scale) + "px";
+    stage.style.height = Math.ceil(b.h * S.scale) + "px";
 
     var maxL = Math.max(0, stage.offsetWidth - body.clientWidth);
     var maxT = Math.max(0, stage.offsetHeight - body.clientHeight);
@@ -468,7 +669,26 @@
     S._lastScale = S.scale;
     updatePanCursor();
     updateToolbar();
-    renderSlice();
+    paint();
+  }
+
+  function paint() { if (S.docKind === "svg") sizeSvg(); else renderSlice(); }
+
+  // Resize the inline SVG to the current scale + rotation. Vector stays crisp at
+  // any zoom, so there's no slicing — the whole drawing is the stage.
+  function sizeSvg() {
+    if (!S.svgEl) return;
+    var sw = S.svgBaseW * S.scale, sh = S.svgBaseH * S.scale;  // unrotated scaled size
+    S.svgEl.setAttribute("width", sw);
+    S.svgEl.setAttribute("height", sh);
+    S.svgEl.style.width = sw + "px";
+    S.svgEl.style.height = sh + "px";
+    var t = "";
+    if (S.rotation === 90) t = "translate(" + sh + "px,0) rotate(90deg)";
+    else if (S.rotation === 180) t = "translate(" + sw + "px," + sh + "px) rotate(180deg)";
+    else if (S.rotation === 270) t = "translate(0," + sw + "px) rotate(270deg)";
+    S.svgEl.style.transform = t;
+    setStatus("", false);
   }
 
   // Map a client-space anchor to the scroll offset that keeps the same page
@@ -572,22 +792,31 @@
     var lb = el("tp-layersbtn");
     if (lb) {
       var groupCount = S.layers.filter(function (l) { return l.type === "group"; }).length;
-      // Always show the button once a PDF is loaded, but disable + explain when the
-      // file has no PDF layers — so an unlayered export is obvious, not invisible.
-      lb.style.display = S.pdfDoc ? "inline-flex" : "none";
+      // Always show the button once a map is loaded, but disable + explain when the
+      // file has no layers — so an unlayered export is obvious, not invisible.
+      lb.style.display = hasDoc() ? "inline-flex" : "none";
       lb.disabled = groupCount === 0;
       lb.classList.toggle("tp-primary", groupCount > 0 && S.layersOpen);
       lb.title = groupCount > 0
         ? "Toggle map layers (" + groupCount + " found)"
-        : "No layers in this PDF — re-export from Visio preserving layers (not “Print to PDF”). Run tpLayerInfo() in the console for details.";
+        : (S.docKind === "svg"
+            ? "No layers found in this SVG — put each equipment type on its own Visio layer before exporting. Run tpLayerInfo() for details."
+            : "No layers in this PDF — re-export preserving layers (SVG, or Acrobat PDFMaker), not “Print to PDF”. Run tpLayerInfo() for details.");
     }
   }
 
-  // Console diagnostic: confirm whether the LOADED pdf actually carries PDF
-  // layers (OCGs), using the user's own file in their own browser — nothing is
-  // uploaded anywhere. Usage: open the map, then run tpLayerInfo() in DevTools.
+  // Console diagnostic: confirm whether the LOADED map actually carries layers
+  // (PDF OCGs or SVG groups), using the user's own file in their own browser —
+  // nothing is uploaded. Usage: open the map, then run tpLayerInfo() in DevTools.
   function tpLayerInfo() {
-    if (!S.pdfDoc) { console.log("Track Plan: open a map first, then run tpLayerInfo()."); return Promise.resolve(null); }
+    if (!hasDoc()) { console.log("Track Plan: open a map first, then run tpLayerInfo()."); return Promise.resolve(null); }
+    if (S.docKind === "svg") {
+      var nms = S.layers.filter(function (l) { return l.type === "group"; }).map(function (l) { return l.name; });
+      if (nms.length) console.log("✅ Track Plan (SVG) — " + nms.length + " layer(s): " + nms.join(", "));
+      else console.log("❌ Track Plan (SVG) — no separate layers found. In Visio, put each equipment type on its own layer before exporting SVG (or check the SVG groups its shapes by layer).");
+      return Promise.resolve(nms);
+    }
+    if (!S.pdfDoc) return Promise.resolve(null);
     return S.pdfDoc.getOptionalContentConfig().then(function (cfg) {
       var groups = (cfg && typeof cfg.getGroups === "function" && cfg.getGroups()) || null;
       var names = groups ? Object.keys(groups).map(function (id) { return groups[id].name; }) : [];
@@ -595,7 +824,7 @@
         console.log("✅ Track Plan — this PDF has " + names.length + " layer(s): " + names.join(", "));
       } else {
         console.log("❌ Track Plan — this PDF has NO layers (no OCGs). Your Visio export flattened them. " +
-          "Re-export preserving layers (e.g. Acrobat PDFMaker / “Acrobat” ribbon in Visio), NOT “Microsoft Print to PDF” or plain Save as PDF.");
+          "Re-export preserving layers (e.g. SVG, or Acrobat PDFMaker), NOT “Microsoft Print to PDF” or plain Save as PDF.");
       }
       return names;
     }).catch(function (e) {
@@ -604,12 +833,20 @@
     });
   }
 
-  // ── PDF layers (optional content groups) ────────────────────────────────────
+  // ── Layers panel (PDF optional-content groups OR SVG groups) ────────────────
   function tpToggleLayers() {
     if (!S.layers.some(function (l) { return l.type === "group"; })) return;
     S.layersOpen = !S.layersOpen;
     renderLayerPanel();
     updateToolbar();
+  }
+
+  function layerIsVisible(l) {
+    if (S.docKind === "svg") return l.visible !== false;
+    if (!S.ocConfig) return true;
+    if (typeof S.ocConfig.isVisible === "function") return !!S.ocConfig.isVisible(l.id);
+    var g = S.ocConfig.getGroup(l.id);
+    return g ? !!g.visible : true;
   }
 
   function renderLayerPanel() {
@@ -620,8 +857,7 @@
     list.innerHTML = S.layers.map(function (l) {
       var pad = "padding-left:" + (8 + l.depth * 14) + "px;";
       if (l.type === "label") return '<div class="tp-layer-label" style="' + pad + '">' + esc(l.name) + "</div>";
-      var on = S.ocConfig && typeof S.ocConfig.isVisible === "function" ? !!S.ocConfig.isVisible(l.id)
-             : (S.ocConfig && S.ocConfig.getGroup(l.id) ? !!S.ocConfig.getGroup(l.id).visible : true);
+      var on = layerIsVisible(l);
       return '<label class="tp-layer-row" style="' + pad + '">' +
                '<input type="checkbox" ' + (on ? "checked" : "") +
                ' onchange="tpSetLayer(\'' + esc(l.id).replace(/'/g, "\\'") + "', this.checked)\">" +
@@ -630,19 +866,31 @@
     }).join("");
   }
 
+  function findLayer(id) {
+    for (var i = 0; i < S.layers.length; i++) if (S.layers[i].id === id) return S.layers[i];
+    return null;
+  }
+
+  function setLayerVisible(l, visible) {
+    if (S.docKind === "svg") {
+      l.visible = !!visible;
+      (l.els || []).forEach(function (e) { e.style.display = visible ? "" : "none"; });
+    } else if (S.ocConfig) {
+      try { S.ocConfig.setVisibility(l.id, !!visible); } catch (e) {}
+    }
+  }
+
   function tpSetLayer(id, visible) {
-    if (!S.ocConfig) return;
-    try { S.ocConfig.setVisibility(id, !!visible); } catch (e) { return; }
-    renderSlice();
+    var l = findLayer(id);
+    if (!l) return;
+    setLayerVisible(l, visible);
+    if (S.docKind !== "svg") renderSlice();   // SVG toggles the DOM directly — instant
   }
 
   function tpAllLayers(visible) {
-    if (!S.ocConfig) return;
-    S.layers.forEach(function (l) {
-      if (l.type === "group") { try { S.ocConfig.setVisibility(l.id, !!visible); } catch (e) {} }
-    });
+    S.layers.forEach(function (l) { if (l.type === "group") setLayerVisible(l, visible); });
     renderLayerPanel();
-    renderSlice();
+    if (S.docKind !== "svg") renderSlice();
   }
 
   // ── public actions ──────────────────────────────────────────────────────────
@@ -659,7 +907,10 @@
   function tpClose() {
     S.open = false; S.minimized = false;
     if (S.renderTask) { try { S.renderTask.cancel(); } catch (e) {} S.renderTask = null; }
-    S.pdfDoc = null;
+    S.pdfDoc = null; S.page = null;
+    detachSvg();
+    S.layers = []; S.layersOpen = false;
+    renderLayerPanel();
     refreshChrome();
   }
 
@@ -672,7 +923,7 @@
 
   function tpRestore() {
     ensureMounted();
-    var wasLoaded = !!S.pdfDoc;
+    var wasLoaded = hasDoc();
     S.open = true; S.minimized = false;
     refreshChrome();
     renderSectionSelect();
@@ -691,7 +942,7 @@
     applyGeom();
     // A bigger/smaller window changes the fit; re-fit/repaint for the new size
     // without losing the user's place (the ResizeObserver also covers this).
-    if (S.page) relayoutAndRender(null, false);
+    if (hasDoc()) relayoutAndRender(null, false);
   }
 
   function tpSelectSection(id) {
@@ -714,23 +965,26 @@
     ensureMounted();
     var inp = document.createElement("input");
     inp.type = "file";
-    inp.accept = "application/pdf,.pdf";
+    inp.accept = "application/pdf,.pdf,image/svg+xml,.svg";
     inp.style.display = "none";
     inp.onchange = function () {
       var file = inp.files && inp.files[0];
       document.body.removeChild(inp);
       if (!file) return;
-      if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") { notify("Please choose a PDF file.", "error"); return; }
+      var isSvg = /\.svg$/i.test(file.name) || file.type === "image/svg+xml";
+      var isPdf = /\.pdf$/i.test(file.name) || file.type === "application/pdf";
+      if (!isSvg && !isPdf) { notify("Please choose a PDF or SVG file.", "error"); return; }
       var id = "upload-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
-      var label = file.name.replace(/\.pdf$/i, "");
+      var label = file.name.replace(/\.(pdf|svg)$/i, "");
       idbPut(id, file, file.name).then(function () {
-        S.catalog.push({ id: id, label: label, kind: "upload", note: "Uploaded PDF" });
+        S.catalog.push({ id: id, label: label, kind: "upload", format: isSvg ? "svg" : "pdf",
+                         fileName: file.name, note: isSvg ? "Uploaded SVG" : "Uploaded PDF" });
         S.activeId = id;
         persistCatalog();
         renderSectionSelect();
         if (!S.open) tpOpen(id); else loadActive();
         notify('Added "' + label + '" to the track plan list.');
-      }).catch(function () { notify("Could not store this PDF on the device.", "error"); });
+      }).catch(function () { notify("Could not store this file on the device.", "error"); });
     };
     document.body.appendChild(inp);
     inp.click();
@@ -882,7 +1136,7 @@
     if (!body) return;
     var pendingAnchor = null;
     body.addEventListener("wheel", function (e) {
-      if (!S.page) return;
+      if (!hasDoc()) return;
       e.preventDefault();
       var step = Math.exp(-e.deltaY * 0.0015);      // smooth, proportional to wheel delta
       S.mode = "custom";
@@ -923,7 +1177,7 @@
       e.preventDefault();
     });
     body.addEventListener("dblclick", function (e) {
-      if (!S.page) return;
+      if (!hasDoc()) return;
       zoomBy(1.6, { cx: e.clientX, cy: e.clientY });
     });
 
@@ -931,7 +1185,7 @@
     var pinch = null;
     function dist(t) { var dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY; return Math.hypot(dx, dy); }
     body.addEventListener("touchstart", function (e) {
-      if (!S.page) return;
+      if (!hasDoc()) return;
       if (e.touches.length === 2) {
         pinch = { d: dist(e.touches), scale: S.scale,
                   cx: (e.touches[0].clientX + e.touches[1].clientX) / 2,

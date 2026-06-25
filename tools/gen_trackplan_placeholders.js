@@ -209,9 +209,50 @@ function buildLayeredDemo() {
   return assemble(objs);
 }
 
+// ── layered SVG demo ────────────────────────────────────────────────────────
+// A vector SVG where Signals / Axle Counters / WABs are top-level <g> groups
+// (named by id), which the viewer turns into toggleable layers. Stands in for a
+// Visio "Save as SVG" export. SVG y-axis is top-down (unlike PDF), so this is
+// authored separately from the PDF content above.
+function buildLayeredSvg() {
+  const W = 792, H = 612, yMid = 300;
+  const at = (f) => 60 + f * (W - 120);
+  const sig = [[0.08, "S8"], [0.30, "S12"], [0.55, "S16"], [0.80, "S20"], [0.95, "SB"]]
+    .map(([f, l]) => { const x = at(f); return `<rect x="${x - 3}" y="${yMid - 36}" width="6" height="22" fill="#e10012"/>` +
+      `<line x1="${x}" y1="${yMid - 4}" x2="${x}" y2="${yMid - 14}" stroke="#e10012" stroke-width="1.2"/>` +
+      `<text x="${x}" y="${yMid - 42}" font-family="Helvetica" font-size="11" font-weight="bold" text-anchor="middle">${l}</text>`; }).join("");
+  const ac = [0.18, 0.42, 0.66, 0.88].map((f, i) => { const x = at(f);
+    return `<rect x="${x - 4}" y="${yMid + 16}" width="8" height="8" fill="#0073cc"/>` +
+      `<line x1="${x}" y1="${yMid + 4}" x2="${x}" y2="${yMid + 16}" stroke="#0073cc" stroke-width="1"/>` +
+      `<text x="${x}" y="${yMid + 40}" font-family="Helvetica" font-size="9" font-weight="bold" fill="#0073cc" text-anchor="middle">AC${i + 1}</text>`; }).join("");
+  const wab = [0.25, 0.5, 0.74].map((f, i) => { const x = at(f);
+    return `<path d="M ${x - 6} ${yMid + 60} L ${x} ${yMid + 52} L ${x + 6} ${yMid + 60} L ${x} ${yMid + 68} Z" fill="#0a8d40"/>` +
+      `<text x="${x}" y="${yMid + 84} " font-family="Helvetica" font-size="9" font-weight="bold" fill="#0a8d40" text-anchor="middle">WAB-${i + 1}</text>`; }).join("");
+  let sleepers = "";
+  for (let x = 70; x < W - 60; x += 22) sleepers += `<line x1="${x}" y1="${yMid - 7}" x2="${x}" y2="${yMid + 7}" stroke="#8c8c8c" stroke-width="0.6"/>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+  <g id="Track base">
+    <rect x="24" y="24" width="${W - 48}" height="${H - 48}" fill="none" stroke="#999"/>
+    <rect x="24" y="24" width="${W - 48}" height="56" fill="#e10012"/>
+    <text x="40" y="54" font-family="Helvetica" font-size="20" font-weight="bold" fill="#fff">PHASE 2 — SVG LAYERS DEMO</text>
+    <text x="40" y="72" font-family="Helvetica" font-size="11" fill="#fff">Vector · toggle Signals / Axle Counters / WABs in the Layers panel</text>
+    <line x1="60" y1="${yMid - 4}" x2="${W - 60}" y2="${yMid - 4}" stroke="#222" stroke-width="2.4"/>
+    <line x1="60" y1="${yMid + 4}" x2="${W - 60}" y2="${yMid + 4}" stroke="#222" stroke-width="2.4"/>
+    ${sleepers}
+    <text x="40" y="${H - 32}" font-family="Helvetica" font-size="9" fill="#777">LAYERED SVG PLACEHOLDER — Signals / Axle Counters / WABs are separate SVG groups.</text>
+  </g>
+  <g id="Signals">${sig}</g>
+  <g id="Axle Counters">${ac}</g>
+  <g id="WABs">${wab}</g>
+</svg>
+`;
+}
+
 // ── catalog of placeholder maps ────────────────────────────────────────────
 const FILES = {
   "phase-2-layered.pdf": buildLayeredDemo(),
+  "phase-2-layered.svg": Buffer.from(buildLayeredSvg(), "utf8"),
   "phase-2.pdf": buildPdf([
     strip("PHASE 2 — OVERALL TRACK PLAN", "BART CBTC · Sheet 1 of 2 · Mainline + interlockings",
       [

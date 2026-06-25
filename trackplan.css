@@ -146,6 +146,14 @@
   display: block;
   max-width: none;
 }
+/* SVG track plans render as a live vector element filling the stage — crisp at
+   any zoom, no slicing. Layer toggles flip group display directly. */
+.tp-stage > svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+}
 .tp-status {
   position: absolute;
   inset: 0;
