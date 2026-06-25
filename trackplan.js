@@ -79,6 +79,7 @@
     layers: [],             // [{type:'group'|'label', id?, name, depth, els?, visible?, opacity?}]
     layersOpen: false,      // is the Layers panel showing?
     layerFilter: "",        // filter text in the layers panel
+    solo: { id: null, snapshot: null },  // temporary solo: id + pre-solo visibility
     search: { open: false, query: "", matches: [], idx: 0, index: null, curBBox: null },
     // markup (annotations drawn over the map, stored in unrotated page units)
     markupEl: null,
@@ -496,6 +497,7 @@
     S.pdfDoc = null; S.page = null; S.pageNum = 1; S.numPages = 1;
     S.mode = "fit-width"; S.rotation = 0; S.scale = 1; S._lastScale = null;
     S.ocConfig = null; S.layers = []; S.layersOpen = false; S.layerFilter = "";
+    S.solo = { id: null, snapshot: null };
     S.search = { open: false, query: "", matches: [], idx: 0, index: null, curBBox: null };
     var sb = el("tp-search"); if (sb) sb.hidden = true;
     clearSearchHit();
@@ -1039,7 +1041,8 @@
                  '<input type="checkbox" ' + (on ? "checked" : "") + ' onchange="tpSetLayer(\'' + q + "', this.checked)\">" +
                  sw + '<span class="tp-layer-nm" title="' + esc(l.name) + '">' + esc(l.name) + "</span>" +
                "</label>" +
-               '<button type="button" class="tp-layer-solo" title="Show only this layer" aria-label="Show only this layer" onclick="tpSoloLayer(\'' + q + "')\">" + ic("eye") + "</button>" +
+               '<button type="button" class="tp-layer-solo' + (S.solo.id === l.id ? " active" : "") +
+                 '" title="Solo this layer (hold-to-show; click again to restore)" aria-label="Solo this layer" onclick="tpSoloLayer(\'' + q + "')\">" + ic("eye") + "</button>" +
                op +
              "</div>";
     }).join("");
@@ -1072,8 +1075,44 @@
       "</div>" : "";
     var filterRow = groups.length > 6 ?
       '<div class="tp-layers-filter"><input type="text" id="tp-layer-filter" placeholder="Filter layers…" value="' + esc(S.layerFilter || "") + '" oninput="tpLayerFilter(this.value)"></div>' : "";
-    panel.innerHTML = head + presetRow + filterRow + '<div class="tp-layers-list" id="tp-layers-list"></div>';
+    panel.innerHTML = head + presetRow + filterRow +
+      '<div class="tp-layers-list" id="tp-layers-list"></div>' +
+      '<div class="tp-layers-resize" id="tp-layers-resize" title="Drag to resize"></div>';
     renderLayerRows();
+    applyLayersPanelSize();
+    bindLayersResize();
+  }
+
+  function applyLayersPanelSize() {
+    var panel = el("tp-layers"); if (!panel) return;
+    var all = readStore(VIEW_KEY);
+    panel.style.width = (all.layersW ? all.layersW : 240) + "px";
+    if (all.layersH) panel.style.height = all.layersH + "px";
+  }
+
+  function bindLayersResize() {
+    var handle = el("tp-layers-resize"), panel = el("tp-layers");
+    if (!handle || !panel) return;
+    handle.onmousedown = function (e) {
+      e.preventDefault(); e.stopPropagation();
+      var sx = e.clientX, sy = e.clientY, sw = panel.offsetWidth, sh = panel.offsetHeight;
+      var vp = el("tp-viewport");
+      var maxW = (vp ? vp.clientWidth : 600) - 16, maxH = (vp ? vp.clientHeight : 600) - 16;
+      function mm(ev) {
+        // panel is anchored top-right, so dragging left widens it
+        panel.style.width = clamp(sw + (sx - ev.clientX), 180, maxW) + "px";
+        panel.style.height = clamp(sh + (ev.clientY - sy), 140, maxH) + "px";
+      }
+      function mu() {
+        window.removeEventListener("mousemove", mm, true);
+        window.removeEventListener("mouseup", mu, true);
+        var all = readStore(VIEW_KEY);
+        all.layersW = panel.offsetWidth; all.layersH = panel.offsetHeight;
+        writeStore(VIEW_KEY, all);
+      }
+      window.addEventListener("mousemove", mm, true);
+      window.addEventListener("mouseup", mu, true);
+    };
   }
 
   function findLayer(id) {
@@ -1099,22 +1138,48 @@
   function tpSetLayer(id, visible) {
     var l = findLayer(id);
     if (!l) return;
+    clearSolo();                              // a manual change ends a temporary solo
     setLayerVisible(l, visible);
     saveLayerState();
     if (S.docKind !== "svg") renderSlice();   // SVG toggles the DOM directly — instant
   }
 
   function tpAllLayers(visible) {
+    clearSolo();
     S.layers.forEach(function (l) { if (l.type === "group") setLayerVisible(l, visible); });
     saveLayerState();
     renderLayerPanel();
     if (S.docKind !== "svg") renderSlice();
   }
 
-  // Show only this layer (isolate). "All" restores everything.
+  function snapshotLayers() {
+    var snap = {};
+    S.layers.forEach(function (l) { if (l.type === "group") snap[l.id] = layerIsVisible(l); });
+    return snap;
+  }
+  function applyLayerSnapshot(snap) {
+    if (!snap) return;
+    S.layers.forEach(function (l) {
+      if (l.type === "group" && Object.prototype.hasOwnProperty.call(snap, l.id)) setLayerVisible(l, snap[l.id]);
+    });
+  }
+  // Forget a solo without restoring (used when the user manually changes layers).
+  function clearSolo() { S.solo = { id: null, snapshot: null }; }
+
+  // Temporary solo: the eye shows only this layer; pressing it again (or another
+  // eye) restores the visibility you had before. Solo never overwrites the saved
+  // selection, so your real choices come back when you un-solo.
   function tpSoloLayer(id) {
-    S.layers.forEach(function (l) { if (l.type === "group") setLayerVisible(l, l.id === id); });
-    saveLayerState();
+    if (S.solo.id === id) {                    // un-solo → restore
+      applyLayerSnapshot(S.solo.snapshot);
+      clearSolo();
+    } else {
+      if (S.solo.id == null) S.solo.snapshot = snapshotLayers();
+      else applyLayerSnapshot(S.solo.snapshot);   // switching solo: restore base first
+      var snap = S.solo.snapshot;
+      S.layers.forEach(function (l) { if (l.type === "group") setLayerVisible(l, l.id === id); });
+      S.solo = { id: id, snapshot: snap };
+    }
     renderLayerRows();
     if (S.docKind !== "svg") renderSlice();
   }
@@ -1158,6 +1223,7 @@
     var ent = activeEntry(); if (!ent) return;
     var preset = loadPresets(ent.id).filter(function (x) { return x.name === name; })[0];
     if (!preset) return;
+    clearSolo();
     S.layers.forEach(function (l) {
       if (l.type === "group" && Object.prototype.hasOwnProperty.call(preset.layers, l.name)) {
         setLayerVisible(l, !!preset.layers[l.name]);
