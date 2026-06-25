@@ -122,8 +122,137 @@ function strip(title, subtitle, signals, opts = {}) {
   return c;
 }
 
+// ── layered (OCG) demo ──────────────────────────────────────────────────────
+// A PDF whose Signals / Axle Counters / WABs sit on separate Optional Content
+// Groups (PDF "layers"), exactly like a Visio "Save as PDF (include layers)"
+// export. The viewer's Layers panel can then toggle each one. This stands in
+// until a real layered Visio export is dropped in.
+function assemble(objs) {            // objs is 1-indexed (objs[0] unused)
+  const N = objs.length - 1;
+  let pdf = "%PDF-1.5\n";
+  const offsets = [];
+  for (let i = 1; i <= N; i++) {
+    offsets[i] = Buffer.byteLength(pdf, "latin1");
+    pdf += `${i} 0 obj\n${objs[i]}\nendobj\n`;
+  }
+  const xrefStart = Buffer.byteLength(pdf, "latin1");
+  pdf += `xref\n0 ${N + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= N; i++) pdf += String(offsets[i]).padStart(10, "0") + " 00000 n \n";
+  pdf += `trailer\n<< /Size ${N + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+  return Buffer.from(pdf, "latin1");
+}
+
+function layeredDemoContent() {
+  const W = 792, H = 612, yMid = 320;
+  let c = "";
+  // base (always-on) track plan
+  c += gray(0.6) + rect(24, 24, W - 48, H - 48) + black();
+  c += red() + rect(24, H - 86, W - 48, 62, true) + black();
+  c += "1 1 1 RG 1 1 1 rg\n" + text(40, H - 56, 20, "PHASE 2 — LAYERED DEMO", true);
+  c += text(40, H - 78, 11, "BART CBTC · toggle Signals / Axle Counters / WABs in the Layers panel") + black();
+  c += "2 w " + line(60, yMid + 4, W - 60, yMid + 4, 2.4) + line(60, yMid - 4, W - 60, yMid - 4, 2.4);
+  c += gray(0.55);
+  for (let x = 70; x < W - 60; x += 22) c += line(x, yMid - 7, x, yMid + 7, 0.6);
+  c += black();
+  const at = (f) => 60 + f * (W - 120);
+
+  // Signals layer
+  c += "/OC /L_sig BDC\n";
+  [[0.08, "S8"], [0.30, "S12"], [0.55, "S16"], [0.80, "S20"], [0.95, "SB"]].forEach(([f, lbl]) => {
+    const x = at(f);
+    c += red() + rect(x - 3, yMid + 14, 6, 22, true) + black();
+    c += line(x, yMid + 4, x, yMid + 14, 1.2) + text(x - 8, yMid + 42, 9, lbl, true);
+  });
+  c += "EMC\n";
+
+  // Axle Counters layer
+  c += "/OC /L_ac BDC\n";
+  c += "0.0 0.45 0.8 RG 0.0 0.45 0.8 rg\n";
+  [0.18, 0.42, 0.66, 0.88].forEach((f, i) => {
+    const x = at(f);
+    c += rect(x - 4, yMid - 24, 8, 8, true);
+    c += line(x, yMid - 16, x, yMid - 4, 1) + text(x - 10, yMid - 36, 8, "AC" + (i + 1), true);
+  });
+  c += black() + "EMC\n";
+
+  // WABs layer
+  c += "/OC /L_wab BDC\n";
+  c += "0.0 0.55 0.25 RG 0.0 0.55 0.25 rg\n";
+  [0.25, 0.5, 0.74].forEach((f, i) => {
+    const x = at(f);
+    c += `${x - 6} ${yMid + 58} m ${x} ${yMid + 50} l ${x + 6} ${yMid + 58} l ${x} ${yMid + 66} l f\n`;
+    c += text(x - 12, yMid + 72, 8, "WAB-" + (i + 1), true);
+  });
+  c += black() + "EMC\n";
+
+  c += gray(0.45) + text(40, 40, 9, "LAYERED PLACEHOLDER — Signals / Axle Counters / WABs are separate PDF layers (OCGs).") + black();
+  return c;
+}
+
+function buildLayeredDemo() {
+  const W = 792, H = 612;
+  const content = layeredDemoContent();
+  const objs = [];
+  const sig = 7, ac = 8, wab = 9;
+  objs[1] = `<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [${sig} 0 R ${ac} 0 R ${wab} 0 R] ` +
+            `/D << /Name (Default) /Order [${sig} 0 R ${ac} 0 R ${wab} 0 R] /ON [${sig} 0 R ${ac} 0 R ${wab} 0 R] /OFF [] >> >> >>`;
+  objs[2] = `<< /Type /Pages /Kids [5 0 R] /Count 1 >>`;
+  objs[3] = `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>`;
+  objs[4] = `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>`;
+  objs[5] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] ` +
+            `/Resources << /Font << /F1 3 0 R /F2 4 0 R >> /Properties << /L_sig ${sig} 0 R /L_ac ${ac} 0 R /L_wab ${wab} 0 R >> >> ` +
+            `/Contents 6 0 R >>`;
+  objs[6] = `<< /Length ${Buffer.byteLength(content, "latin1")} >>\nstream\n${content}\nendstream`;
+  objs[7] = `<< /Type /OCG /Name (Signals) >>`;
+  objs[8] = `<< /Type /OCG /Name (Axle Counters) >>`;
+  objs[9] = `<< /Type /OCG /Name (WABs) >>`;
+  return assemble(objs);
+}
+
+// ── layered SVG demo ────────────────────────────────────────────────────────
+// A vector SVG where Signals / Axle Counters / WABs are top-level <g> groups
+// (named by id), which the viewer turns into toggleable layers. Stands in for a
+// Visio "Save as SVG" export. SVG y-axis is top-down (unlike PDF), so this is
+// authored separately from the PDF content above.
+function buildLayeredSvg() {
+  const W = 792, H = 612, yMid = 300;
+  const at = (f) => 60 + f * (W - 120);
+  const sig = [[0.08, "S8"], [0.30, "S12"], [0.55, "S16"], [0.80, "S20"], [0.95, "SB"]]
+    .map(([f, l]) => { const x = at(f); return `<rect x="${x - 3}" y="${yMid - 36}" width="6" height="22" fill="#e10012"/>` +
+      `<line x1="${x}" y1="${yMid - 4}" x2="${x}" y2="${yMid - 14}" stroke="#e10012" stroke-width="1.2"/>` +
+      `<text x="${x}" y="${yMid - 42}" font-family="Helvetica" font-size="11" font-weight="bold" text-anchor="middle">${l}</text>`; }).join("");
+  const ac = [0.18, 0.42, 0.66, 0.88].map((f, i) => { const x = at(f);
+    return `<rect x="${x - 4}" y="${yMid + 16}" width="8" height="8" fill="#0073cc"/>` +
+      `<line x1="${x}" y1="${yMid + 4}" x2="${x}" y2="${yMid + 16}" stroke="#0073cc" stroke-width="1"/>` +
+      `<text x="${x}" y="${yMid + 40}" font-family="Helvetica" font-size="9" font-weight="bold" fill="#0073cc" text-anchor="middle">AC${i + 1}</text>`; }).join("");
+  const wab = [0.25, 0.5, 0.74].map((f, i) => { const x = at(f);
+    return `<path d="M ${x - 6} ${yMid + 60} L ${x} ${yMid + 52} L ${x + 6} ${yMid + 60} L ${x} ${yMid + 68} Z" fill="#0a8d40"/>` +
+      `<text x="${x}" y="${yMid + 84} " font-family="Helvetica" font-size="9" font-weight="bold" fill="#0a8d40" text-anchor="middle">WAB-${i + 1}</text>`; }).join("");
+  let sleepers = "";
+  for (let x = 70; x < W - 60; x += 22) sleepers += `<line x1="${x}" y1="${yMid - 7}" x2="${x}" y2="${yMid + 7}" stroke="#8c8c8c" stroke-width="0.6"/>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+  <g id="Track base">
+    <rect x="24" y="24" width="${W - 48}" height="${H - 48}" fill="none" stroke="#999"/>
+    <rect x="24" y="24" width="${W - 48}" height="56" fill="#e10012"/>
+    <text x="40" y="54" font-family="Helvetica" font-size="20" font-weight="bold" fill="#fff">PHASE 2 — SVG LAYERS DEMO</text>
+    <text x="40" y="72" font-family="Helvetica" font-size="11" fill="#fff">Vector · toggle Signals / Axle Counters / WABs in the Layers panel</text>
+    <line x1="60" y1="${yMid - 4}" x2="${W - 60}" y2="${yMid - 4}" stroke="#222" stroke-width="2.4"/>
+    <line x1="60" y1="${yMid + 4}" x2="${W - 60}" y2="${yMid + 4}" stroke="#222" stroke-width="2.4"/>
+    ${sleepers}
+    <text x="40" y="${H - 32}" font-family="Helvetica" font-size="9" fill="#777">LAYERED SVG PLACEHOLDER — Signals / Axle Counters / WABs are separate SVG groups.</text>
+  </g>
+  <g id="Signals">${sig}</g>
+  <g id="Axle Counters">${ac}</g>
+  <g id="WABs">${wab}</g>
+</svg>
+`;
+}
+
 // ── catalog of placeholder maps ────────────────────────────────────────────
 const FILES = {
+  "phase-2-layered.pdf": buildLayeredDemo(),
+  "phase-2-layered.svg": Buffer.from(buildLayeredSvg(), "utf8"),
   "phase-2.pdf": buildPdf([
     strip("PHASE 2 — OVERALL TRACK PLAN", "BART CBTC · Sheet 1 of 2 · Mainline + interlockings",
       [
