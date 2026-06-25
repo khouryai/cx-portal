@@ -36628,6 +36628,7 @@ function _dynBoardOpenCell(rowKey, periodKey) {
 const _DYN_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const _DYN_CANCEL_CATEGORIES = [
   'Track access unavailable',
+  'No train available',
   'Higher-priority maintenance',
   'No train operator',
   'Train malfunction / no start',
@@ -36776,7 +36777,6 @@ function _dynRenderAccess() {
               </div>
               <div style="font-size:11px;color:var(--gray-500);margin-top:6px;">
                 ${cShifts.length} shifts · <span style="color:#065f46;">${cConf} confirmed</span> · <span style="color:#b91c1c;">${cCanc} cancelled</span>
-                ${(() => { const av = _dynCampaignTrainAvail(c.id); return ` · <span style="color:${av.approved>=av.requested&&av.requested>0?'#065f46':'#d97706'};">${av.approved}/${av.requested} trains approved</span>`; })()}
               </div>
               ${(() => { const d = _dynCampaignProgressData(c); if (!d.total) return ''; const tn = d.schedVar > 5 ? '#059669' : d.schedVar >= -5 ? 'var(--gray-500)' : d.schedVar >= -15 ? '#d97706' : '#dc2626'; return `
               <div style="margin-top:8px;max-width:340px;">
@@ -37484,7 +37484,6 @@ function _dynOpenShift(id) {
   const camp = _dynPage.campaigns.find(c => c.id === s.campaign_id);
   const t = _DYN_SHIFT_TONE[s.status] || _DYN_SHIFT_TONE.planned;
   const fmtT = iso => iso ? new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
-  const avail = s.campaign_id ? _dynCampaignTrainAvail(s.campaign_id, s.control_zone_code) : { requested: s.max_trains || 0, approved: 0 };
   modal({
     title: `Shift — ${escapeHtml(s.control_zone_code)} · ${_dynFmtDate(s.shift_date)}`,
     sub: camp ? escapeHtml(camp.name) : '',
@@ -37492,10 +37491,7 @@ function _dynOpenShift(id) {
       <div style="padding:8px 22px 16px;">
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
           ${_dynShiftPill(s)}
-          <span style="font-size:12px;color:var(--gray-600);">${fmtT(s.start_at)}–${fmtT(s.end_at)} · ${(s.allowed_modes||[]).join('+')||'any'} · ${s.max_trains||1} train${(s.max_trains||1)===1?'':'s'}${s.consist_size?` × ${s.consist_size}-car`:''}</span>
-        </div>
-        <div style="font-size:11.5px;margin-bottom:8px;color:${avail.approved>=avail.requested&&avail.requested>0?'#065f46':'#d97706'};">
-          Trains: <b>${avail.approved}</b> approved of ${avail.requested} requested${camp?` · <a href="javascript:void(0)" style="color:var(--info);" onclick="closeModal();_dynOpenTrains('${escapeHtml(camp.id)}')">manage</a>`:''}
+          <span style="font-size:12px;color:var(--gray-600);">${fmtT(s.start_at)}–${fmtT(s.end_at)} · ${(s.allowed_modes||[]).join('+')||'any'} · ${s.max_trains||1} train${(s.max_trains||1)===1?'':'s'}${s.consist_size?` × ${s.consist_size}-car`:''} required</span>
         </div>
         ${(() => { const ev = _dynShiftEventRow(s.id); return ev
           ? `<div style="font-size:11.5px;margin-bottom:12px;color:#6d28d9;">${icon('calendar')} Field event created${ev.status==='cancelled'?' (cancelled)':''} · Train Operator, ROC, EIC auto-added · <a href="javascript:void(0)" style="color:var(--info);" onclick="closeModal();showPage('lookahead')">open Lookahead</a></div>`
@@ -37575,8 +37571,7 @@ function _dynBuildShift(shiftId) {
   const camp = _dynPage.campaigns.find(c => c.id === s.campaign_id);
   const winMin = _dynShiftMinutes(s);
   const modes = s.allowed_modes || [];
-  const avail = s.campaign_id ? _dynCampaignTrainAvail(s.campaign_id, s.control_zone_code) : { approved: s.max_trains || 0 };
-  const trainsAvail = avail.approved || s.max_trains || 0;
+  const trainsAvail = s.max_trains || 0;   // train requirement is tied to the campaign
 
   const assigned = (_dynPage.instances || []).filter(i => i.shift_id === shiftId);
   // Access gating: an instance is only eligible if ALL its required access zones
@@ -37983,8 +37978,7 @@ async function _dynCreateShiftEvent(s) {
   const have = await _dbSelect('planning_event_resources', { event_id: eid }, 'id').catch(() => []);
   if (!have.length) {
     const ids = await _dynEnsureBartResources();
-    const avail = s.campaign_id ? _dynCampaignTrainAvail(s.campaign_id, s.control_zone_code) : { approved: s.max_trains || 1 };
-    const trainOps = Math.max(1, avail.approved || s.max_trains || 1);
+    const trainOps = Math.max(1, s.max_trains || 1);   // train requirement is tied to the campaign
     const res = [];
     if (ids['Train Operator']) res.push({ event_id: eid, resource_id: ids['Train Operator'], role: 'required', quantity: trainOps, assignment_source: 'dynamic' });
     if (ids['ROC'])            res.push({ event_id: eid, resource_id: ids['ROC'],            role: 'required', quantity: 1,        assignment_source: 'dynamic' });
