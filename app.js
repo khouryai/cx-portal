@@ -38598,12 +38598,15 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
     let winConsist = null;                          // consist+train signature this shift settled on
     let winMode = null;                             // signalling mode this shift settled on
     const wz = winZonesOf(w); // zones this shift grants
-    // Setup (changeover/positioning) minutes for switching consist, mode, or
-    // start-area away from what the shift already settled on.
+    // Setup (changeover/positioning) minutes for switching signalling mode or
+    // start-area away from what the shift already settled on. Train count and
+    // consist size do NOT cost a changeover: multiple trains run in parallel
+    // within the same window for the same test, so they never change a run's
+    // duration or the shift's throughput. (Consist sig is kept only to batch
+    // like configs together, not to penalise switching.)
     const setup = i => {
       if (!changeoverMin) return 0;
       let s = 0;
-      if (winConsist != null && _dynConsistSig(i) !== winConsist) s += changeoverMin;
       if (winMode != null && (i.required_mode || '') !== winMode) s += changeoverMin;
       if (winArea != null && _dynStartArea(i) !== winArea) s += changeoverMin;
       return s;
@@ -40007,7 +40010,7 @@ function _dynSimConfigHtml(sc, res) {
       <label title="Exclude runs already assigned to a real shift"><input type="checkbox" ${sc.scope.onlyUnscheduled ? 'checked' : ''} onchange="_dynSimScopeField('onlyUnscheduled',this.checked)"> only unscheduled</label>
     </div>
     <div style="display:flex;gap:10px;margin-bottom:10px;font-size:12px;color:var(--gray-600);flex-wrap:wrap;">
-      <label title="Setup/positioning minutes lost when a shift switches consist, signalling mode, or start-area — discourages fragmenting a shift across configurations.">Setup min
+      <label title="Setup/positioning minutes lost when a shift switches signalling mode or start-area — discourages fragmenting a shift across configurations. Train count and consist size do not cost a changeover.">Setup min
         <input type="number" min="0" max="120" value="${sc.setupMin ?? 0}" style="${inp}" onchange="_dynSimField('setupMin',Math.max(0,parseInt(this.value,10)||0))"></label>
       <label title="Optional deadline. The plan is checked against it and flagged if it finishes late.">Target date
         <input type="date" value="${escapeHtml(sc.targetDate || '')}" style="margin-left:4px;padding:3px 5px;border:1px solid var(--gray-300);border-radius:4px;font-size:12px;" onchange="_dynSimField('targetDate',this.value||null)"></label>
