@@ -119,14 +119,24 @@
 .tp-tb-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 2px; }
 .tp-tb-spacer { flex: 1 1 auto; }
 
-/* ── Body (PDF viewport) ─────────────────────────────────────────────────── */
+/* ── Viewport + body ─────────────────────────────────────────────────────── */
+/* .tp-viewport is the non-scrolling frame; .tp-body scrolls inside it. Overlays
+   (status, layers) are siblings of the body so they stay pinned to the viewport
+   when the content is zoomed/scrolled, and the body's wheel-zoom handler never
+   intercepts a scroll that happens over the layers panel. */
+.tp-viewport {
+  flex: 1 1 auto;
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+}
 /* Only the visible slice is rasterised: the stage is a page-sized spacer that
    drives the scrollbars, and the canvas is a viewport-sized layer pinned to the
    scrolled-into-view rectangle (positioned in JS). This keeps zoom crisp at any
    depth without ever allocating a giant backing canvas. */
 .tp-body {
-  flex: 1 1 auto;
-  position: relative;
+  position: absolute;
+  inset: 0;
   overflow: auto;
   background: var(--gray-100);
   overscroll-behavior: contain;   /* don't bounce the page behind the window */

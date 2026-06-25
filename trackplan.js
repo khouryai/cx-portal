@@ -23,6 +23,7 @@
   "use strict";
 
   var CATALOG_KEY = "cx_trackplan_catalog_v1";
+  var LAYERS_KEY = "cx_trackplan_layers_v1";   // per-map layer on/off, persisted
   var IDB_NAME = "cx-trackplan";
   var IDB_STORE = "pdfs";
   var PDF_WORKER = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js";
@@ -119,6 +120,37 @@
     return S.catalog[0] || null;
   }
 
+  // Per-map layer visibility, keyed by layer NAME (survives reloads / re-exports
+  // better than an internal id), persisted in localStorage.
+  function loadSavedLayerState(entryId) {
+    try { var all = JSON.parse(localStorage.getItem(LAYERS_KEY) || "{}"); return (all && all[entryId]) || null; }
+    catch (e) { return null; }
+  }
+  function saveLayerState() {
+    var ent = activeEntry(); if (!ent) return;
+    var groups = S.layers.filter(function (l) { return l.type === "group"; });
+    try {
+      var all = JSON.parse(localStorage.getItem(LAYERS_KEY) || "{}");
+      if (!all || typeof all !== "object") all = {};
+      if (!groups.length) { delete all[ent.id]; }
+      else {
+        var state = {};
+        groups.forEach(function (l) { state[l.name] = layerIsVisible(l); });
+        all[ent.id] = state;
+      }
+      localStorage.setItem(LAYERS_KEY, JSON.stringify(all));
+    } catch (e) { /* quota / private mode — non-fatal */ }
+  }
+  function applySavedLayerState() {
+    var ent = activeEntry(); if (!ent) return;
+    var saved = loadSavedLayerState(ent.id); if (!saved) return;
+    S.layers.forEach(function (l) {
+      if (l.type === "group" && Object.prototype.hasOwnProperty.call(saved, l.name)) {
+        setLayerVisible(l, !!saved[l.name]);
+      }
+    });
+  }
+
   // ── IndexedDB (uploaded PDF blobs) ─────────────────────────────────────────
   function idb() {
     return new Promise(function (resolve, reject) {
@@ -206,10 +238,15 @@
           '<button class="tp-tbtn" type="button" aria-label="Rename this map" title="Rename this map" onclick="tpRenameCurrent()">' + ic("edit") + "</button>" +
           '<button class="tp-tbtn" type="button" aria-label="Remove this map" title="Remove this map" onclick="tpDeleteCurrent()">' + ic("trash") + "</button>" +
         "</div>" +
-        '<div class="tp-body" id="tp-body">' +
-          '<div class="tp-stage" id="tp-stage">' +
-            '<canvas class="tp-canvas" id="tp-canvas" style="display:none;"></canvas>' +
+        '<div class="tp-viewport" id="tp-viewport">' +
+          '<div class="tp-body" id="tp-body">' +
+            '<div class="tp-stage" id="tp-stage">' +
+              '<canvas class="tp-canvas" id="tp-canvas" style="display:none;"></canvas>' +
+            "</div>" +
           "</div>" +
+          // Overlays — siblings of the scrolling body so they stay pinned to the
+          // viewport (not the zoomed content), and the body's wheel-zoom handler
+          // never sees scrolls that happen over the layers panel.
           '<div class="tp-status" id="tp-status">Loading…</div>' +
           '<div class="tp-layers" id="tp-layers" hidden>' +
             '<div class="tp-layers-head">' +
@@ -472,6 +509,7 @@
       S.svgEl = imported;
       stage.appendChild(imported);
       detectSvgLayers(imported);
+      applySavedLayerState();
       updateToolbar();
       renderLayerPanel();
       relayoutAndRender(null, true);
@@ -570,6 +608,7 @@
         return { type: "group", id: id, name: groups[id].name || "Layer", depth: 0 };
       });
     }
+    applySavedLayerState();
     renderLayerPanel();
   }
 
@@ -884,11 +923,13 @@
     var l = findLayer(id);
     if (!l) return;
     setLayerVisible(l, visible);
+    saveLayerState();
     if (S.docKind !== "svg") renderSlice();   // SVG toggles the DOM directly — instant
   }
 
   function tpAllLayers(visible) {
     S.layers.forEach(function (l) { if (l.type === "group") setLayerVisible(l, visible); });
+    saveLayerState();
     renderLayerPanel();
     if (S.docKind !== "svg") renderSlice();
   }
