@@ -571,10 +571,37 @@
     if (ac) ac.classList.toggle("tp-primary", S.mode === "custom" && Math.abs(S.scale - 1) < 0.01);
     var lb = el("tp-layersbtn");
     if (lb) {
-      var has = S.layers.some(function (l) { return l.type === "group"; });
-      lb.style.display = has ? "inline-flex" : "none";
-      lb.classList.toggle("tp-primary", has && S.layersOpen);
+      var groupCount = S.layers.filter(function (l) { return l.type === "group"; }).length;
+      // Always show the button once a PDF is loaded, but disable + explain when the
+      // file has no PDF layers — so an unlayered export is obvious, not invisible.
+      lb.style.display = S.pdfDoc ? "inline-flex" : "none";
+      lb.disabled = groupCount === 0;
+      lb.classList.toggle("tp-primary", groupCount > 0 && S.layersOpen);
+      lb.title = groupCount > 0
+        ? "Toggle map layers (" + groupCount + " found)"
+        : "No layers in this PDF — re-export from Visio preserving layers (not “Print to PDF”). Run tpLayerInfo() in the console for details.";
     }
+  }
+
+  // Console diagnostic: confirm whether the LOADED pdf actually carries PDF
+  // layers (OCGs), using the user's own file in their own browser — nothing is
+  // uploaded anywhere. Usage: open the map, then run tpLayerInfo() in DevTools.
+  function tpLayerInfo() {
+    if (!S.pdfDoc) { console.log("Track Plan: open a map first, then run tpLayerInfo()."); return Promise.resolve(null); }
+    return S.pdfDoc.getOptionalContentConfig().then(function (cfg) {
+      var groups = (cfg && typeof cfg.getGroups === "function" && cfg.getGroups()) || null;
+      var names = groups ? Object.keys(groups).map(function (id) { return groups[id].name; }) : [];
+      if (names.length) {
+        console.log("✅ Track Plan — this PDF has " + names.length + " layer(s): " + names.join(", "));
+      } else {
+        console.log("❌ Track Plan — this PDF has NO layers (no OCGs). Your Visio export flattened them. " +
+          "Re-export preserving layers (e.g. Acrobat PDFMaker / “Acrobat” ribbon in Visio), NOT “Microsoft Print to PDF” or plain Save as PDF.");
+      }
+      return names;
+    }).catch(function (e) {
+      console.log("Track Plan — could not read layer info: " + (e && e.message));
+      return null;
+    });
   }
 
   // ── PDF layers (optional content groups) ────────────────────────────────────
@@ -951,6 +978,7 @@
   window.tpToggleLayers = tpToggleLayers;
   window.tpSetLayer = tpSetLayer;
   window.tpAllLayers = tpAllLayers;
+  window.tpLayerInfo = tpLayerInfo;
   window.tpAddMap = tpAddMap;
   window.tpRenameCurrent = tpRenameCurrent;
   window.tpDeleteCurrent = tpDeleteCurrent;
