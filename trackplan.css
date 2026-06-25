@@ -248,6 +248,7 @@
   align-items: center;
 }
 .tp-layers-act:hover { background: var(--gray-100); color: var(--text); }
+.tp-layers-act.active { background: var(--primary); color: var(--white); border-color: var(--primary); }
 .tp-layers-act svg { width: 13px; height: 13px; }
 /* presets row */
 .tp-layers-presets {

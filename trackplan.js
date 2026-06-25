@@ -79,6 +79,7 @@
     layers: [],             // [{type:'group'|'label', id?, name, depth, els?, visible?, opacity?}]
     layersOpen: false,      // is the Layers panel showing?
     layerFilter: "",        // filter text in the layers panel
+    opacityMode: false,     // show the per-layer opacity sliders (off = hidden)
     solo: { id: null, snapshot: null },  // temporary solo: id + pre-solo visibility
     search: { open: false, query: "", matches: [], idx: 0, index: null, curBBox: null },
     // markup (annotations drawn over the map, stored in unrotated page units)
@@ -114,6 +115,7 @@
     });
     S.catalog = entries;
     S.hiddenBuiltins = hidden;
+    S.opacityMode = !!readStore(VIEW_KEY).opacityMode;
     if (!S.activeId) {
       var last = readStore(VIEW_KEY).lastActiveId;
       if (last && entries.some(function (e) { return e.id === last; })) S.activeId = last;
@@ -1032,7 +1034,7 @@
         ? '<span class="tp-layer-sw" style="background:' + esc(l._color) + '"></span>'
         : '<span class="tp-layer-sw tp-layer-sw-none"></span>';
       var q = idq(l.id);
-      var op = (S.docKind === "svg")
+      var op = (S.docKind === "svg" && S.opacityMode)
         ? '<input type="range" class="tp-layer-op" min="10" max="100" value="' + Math.round((l.opacity == null ? 1 : l.opacity) * 100) +
           '" title="Layer opacity" oninput="tpSetLayerOpacity(\'' + q + "', this.value)\">"
         : "";
@@ -1058,8 +1060,13 @@
     var ent = activeEntry();
     var groups = S.layers.filter(function (l) { return l.type === "group"; });
     var presets = ent ? loadPresets(ent.id) : [];
+    var opacityBtn = (S.docKind === "svg" && groups.length)
+      ? '<button type="button" class="tp-layers-act' + (S.opacityMode ? " active" : "") +
+        '" title="Show per-layer opacity sliders" aria-label="Toggle opacity sliders" onclick="tpToggleOpacityMode()">' + ic("sliders") + "</button>"
+      : "";
     var head =
       '<div class="tp-layers-head"><span>Layers</span><span class="tp-layers-acts">' +
+        opacityBtn +
         '<button type="button" class="tp-layers-act" title="Show all" onclick="tpAllLayers(true)">All</button>' +
         '<button type="button" class="tp-layers-act" title="Hide all" onclick="tpAllLayers(false)">None</button>' +
         '<button type="button" class="tp-layers-act" aria-label="Close layers" title="Close" onclick="tpToggleLayers()">' + ic("x") + "</button>" +
@@ -1192,6 +1199,14 @@
   }
 
   function tpLayerFilter(v) { S.layerFilter = v || ""; renderLayerRows(); }
+
+  // Master toggle for the per-layer opacity sliders (hidden by default so the
+  // panel stays uncluttered). Preference is remembered.
+  function tpToggleOpacityMode() {
+    S.opacityMode = !S.opacityMode;
+    var all = readStore(VIEW_KEY); all.opacityMode = S.opacityMode; writeStore(VIEW_KEY, all);
+    renderLayerPanel();
+  }
 
   // ── named layer presets (per map) ───────────────────────────────────────────
   function loadPresets(entryId) { var all = readStore(PRESETS_KEY); return (all[entryId] && all[entryId].slice()) || []; }
@@ -1927,6 +1942,7 @@
   window.tpAllLayers = tpAllLayers;
   window.tpSoloLayer = tpSoloLayer;
   window.tpSetLayerOpacity = tpSetLayerOpacity;
+  window.tpToggleOpacityMode = tpToggleOpacityMode;
   window.tpLayerFilter = tpLayerFilter;
   window.tpPresetSave = tpPresetSave;
   window.tpPresetApply = tpPresetApply;
