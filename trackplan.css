@@ -125,16 +125,28 @@
   position: relative;
   overflow: auto;
   background: var(--gray-100);
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
+  overscroll-behavior: contain;   /* don't bounce the page behind the window */
+}
+.tp-body.tp-pannable { cursor: grab; }
+.tp-body.tp-panning { cursor: grabbing; }
+/* The stage is always >= the viewport, so a zoomed page stays fully scrollable
+   in every direction (a plain flex-centred child clips its overflow on the
+   leading edge — the stage avoids that) while a small page sits centred. */
+.tp-stage {
+  min-width: 100%;
+  min-height: 100%;
+  box-sizing: border-box;
   padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .tp-canvas {
   display: block;
   background: var(--white);
   box-shadow: 0 2px 10px rgba(15, 23, 42, 0.18);
   max-width: none;
+  touch-action: none;             /* we handle pinch/drag ourselves */
 }
 .tp-status {
   position: absolute;

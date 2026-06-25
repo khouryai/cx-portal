@@ -54,14 +54,18 @@
     pdfDoc: null,
     pageNum: 1,
     numPages: 1,
-    userZoom: 1,            // multiplier relative to fit (1 = fit-to-width)
-    fitScale: 1,
+    scale: 1,               // absolute render scale (PDF points → CSS px)
+    mode: "fit-width",      // 'fit-width' | 'fit-page' | 'custom'
+    rotation: 0,            // 0 | 90 | 180 | 270
+    page: null,             // current PDFPageProxy (for re-fit on resize without refetch)
     renderToken: 0,
     renderTask: null,
     loadToken: 0,
     _ro: null,              // ResizeObserver on the body
     _roRaf: 0,
   };
+
+  var MIN_SCALE = 0.1, MAX_SCALE = 12, MAX_CANVAS_PX = 8192;
 
   // ── persistence ──────────────────────────────────────────────────────────
   function loadCatalog() {
@@ -168,16 +172,23 @@
           '<span class="tp-tb-label" id="tp-pagelabel">Page 1 / 1</span>' +
           '<button class="tp-tbtn" id="tp-next" type="button" aria-label="Next page" title="Next page" onclick="tpNextPage()">' + ic("chevron-right") + "</button>" +
           '<span class="tp-tb-sep"></span>' +
-          '<button class="tp-tbtn" type="button" aria-label="Zoom out" title="Zoom out" onclick="tpZoomOut()">' + ic("minimize") + "</button>" +
-          '<button class="tp-tbtn" id="tp-zoomlabel" type="button" title="Fit to width" onclick="tpZoomFit()">Fit</button>' +
-          '<button class="tp-tbtn" type="button" aria-label="Zoom in" title="Zoom in" onclick="tpZoomIn()">' + ic("plus") + "</button>" +
+          '<button class="tp-tbtn" type="button" aria-label="Zoom out" title="Zoom out (− / scroll)" onclick="tpZoomOut()">' + ic("minimize") + "</button>" +
+          '<span class="tp-tb-label" id="tp-zoomlabel" title="Current zoom">100%</span>' +
+          '<button class="tp-tbtn" type="button" aria-label="Zoom in" title="Zoom in (+ / scroll)" onclick="tpZoomIn()">' + ic("plus") + "</button>" +
+          '<span class="tp-tb-sep"></span>' +
+          '<button class="tp-tbtn" id="tp-fitw" type="button" title="Fit width" onclick="tpFitWidth()">Width</button>' +
+          '<button class="tp-tbtn" id="tp-fitp" type="button" title="Fit whole page" onclick="tpFitPage()">Page</button>' +
+          '<button class="tp-tbtn" id="tp-actual" type="button" title="Actual size (100%)" onclick="tpActualSize()">1:1</button>' +
+          '<button class="tp-tbtn" type="button" aria-label="Rotate 90°" title="Rotate 90°" onclick="tpRotate()">' + ic("rotate") + "</button>" +
           '<span class="tp-tb-spacer"></span>' +
           '<button class="tp-tbtn" type="button" title="Add a track plan PDF" onclick="tpAddMap()">' + ic("plus") + " Add</button>" +
           '<button class="tp-tbtn" type="button" aria-label="Rename this map" title="Rename this map" onclick="tpRenameCurrent()">' + ic("edit") + "</button>" +
           '<button class="tp-tbtn" type="button" aria-label="Remove this map" title="Remove this map" onclick="tpDeleteCurrent()">' + ic("trash") + "</button>" +
         "</div>" +
         '<div class="tp-body" id="tp-body">' +
-          '<canvas class="tp-canvas" id="tp-canvas" style="display:none;"></canvas>' +
+          '<div class="tp-stage" id="tp-stage">' +
+            '<canvas class="tp-canvas" id="tp-canvas" style="display:none;"></canvas>' +
+          "</div>" +
           '<div class="tp-status" id="tp-status">Loading…</div>' +
         "</div>" +
         '<div class="tp-resize" id="tp-resize" aria-hidden="true"></div>' +
@@ -199,13 +210,16 @@
     bindDrag();
     bindResize();
     bindKeys();
+    bindWheelZoom();
+    bindPan();
 
-    // Re-fit the page when the window is resized (only while at fit zoom).
+    // Re-fit the page when the window is resized (only in a fit mode, where the
+    // scale tracks the viewport; 'custom' zoom is left exactly where the user put it).
     if (typeof ResizeObserver !== "undefined") {
       S._ro = new ResizeObserver(function () {
-        if (!S.open || S.minimized || S.userZoom !== 1) return;
+        if (!S.open || S.minimized || !S.page || S.mode === "custom") return;
         if (S._roRaf) return;
-        S._roRaf = requestAnimationFrame(function () { S._roRaf = 0; renderPage(); });
+        S._roRaf = requestAnimationFrame(function () { S._roRaf = 0; S.scale = fitScaleFor(S.page); renderPage(); });
       });
       S._ro.observe(el("tp-body"));
     }
@@ -307,7 +321,8 @@
     if (!entry) { setStatus("No track plan selected.", false); return; }
     if (!ensureWorker()) { setStatus("PDF viewer library not loaded.", true); return; }
     var myLoad = ++S.loadToken;
-    S.pdfDoc = null; S.pageNum = 1; S.numPages = 1; S.userZoom = 1;
+    S.pdfDoc = null; S.page = null; S.pageNum = 1; S.numPages = 1;
+    S.mode = "fit-width"; S.rotation = 0; S.scale = 1;
     setStatus("Loading " + entry.label + "…", false);
     updateToolbar();
     entryBytes(entry).then(function (bytes) {
@@ -323,32 +338,69 @@
     });
   }
 
-  function computeFitScale(page) {
+  // Scale that makes the page fit the viewport for the current fit mode.
+  function fitScaleFor(page) {
     var body = el("tp-body");
-    var avail = (body ? body.clientWidth : 480) - 24;   // minus body padding
-    var base = page.getViewport({ scale: 1 });
-    return Math.max(0.1, avail / base.width);
+    var availW = (body ? body.clientWidth : 480) - 24;   // minus stage padding
+    var availH = (body ? body.clientHeight : 360) - 24;
+    var base = page.getViewport({ scale: 1, rotation: S.rotation });
+    var sw = Math.max(MIN_SCALE, availW / base.width);
+    if (S.mode === "fit-page") return Math.min(sw, Math.max(MIN_SCALE, availH / base.height));
+    return sw;
   }
 
-  function renderPage() {
+  // Render the current page. Pass anchor {cx,cy} (client coords) to keep that
+  // point stationary while the scale changes (zoom-to-cursor). With no anchor
+  // the view resets to top, horizontally centred.
+  function renderPage(anchor) {
     if (!S.pdfDoc) return Promise.resolve();
     var token = ++S.renderToken;
     if (S.renderTask) { try { S.renderTask.cancel(); } catch (e) {} S.renderTask = null; }
     return S.pdfDoc.getPage(S.pageNum).then(function (page) {
       if (token !== S.renderToken) return;
-      S.fitScale = computeFitScale(page);
-      var scale = S.fitScale * S.userZoom;
+      S.page = page;
+      var canvas = el("tp-canvas"), body = el("tp-body");
+      if (!canvas || !body) return;
+
+      // Capture the content fraction under the anchor BEFORE resizing.
+      var keep = null;
+      if (anchor && canvas.offsetWidth) {
+        var r0 = canvas.getBoundingClientRect();
+        keep = {
+          ax: anchor.cx, ay: anchor.cy,
+          fx: clamp((anchor.cx - r0.left) / r0.width, 0, 1),
+          fy: clamp((anchor.cy - r0.top) / r0.height, 0, 1),
+        };
+      }
+
+      if (S.mode !== "custom") S.scale = fitScaleFor(page);
       var dpr = window.devicePixelRatio || 1;
-      var viewport = page.getViewport({ scale: scale });
-      var canvas = el("tp-canvas");
-      if (!canvas) return;
+      var base = page.getViewport({ scale: 1, rotation: S.rotation });
+      // Cap so the backing canvas never blows past MAX_CANVAS_PX in any dimension.
+      var maxByPx = MAX_CANVAS_PX / (Math.max(base.width, base.height) * dpr);
+      S.scale = clamp(S.scale, MIN_SCALE, Math.min(MAX_SCALE, maxByPx));
+
+      var viewport = page.getViewport({ scale: S.scale, rotation: S.rotation });
       canvas.width = Math.floor(viewport.width * dpr);
       canvas.height = Math.floor(viewport.height * dpr);
       canvas.style.width = Math.floor(viewport.width) + "px";
       canvas.style.height = Math.floor(viewport.height) + "px";
+      canvas.style.display = "block";
       var ctx = canvas.getContext("2d");
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       setStatus("", false);
+
+      // Reposition the scroll so the view stays anchored (or resets cleanly).
+      if (keep) {
+        var r1 = canvas.getBoundingClientRect();
+        body.scrollLeft += (r1.left + keep.fx * r1.width) - keep.ax;
+        body.scrollTop += (r1.top + keep.fy * r1.height) - keep.ay;
+      } else {
+        body.scrollTop = 0;
+        body.scrollLeft = Math.max(0, (canvas.offsetWidth - body.clientWidth) / 2);
+      }
+      updatePanCursor();
+
       S.renderTask = page.render({ canvasContext: ctx, viewport: viewport });
       return S.renderTask.promise.then(function () {
         if (token === S.renderToken) { S.renderTask = null; updateToolbar(); }
@@ -359,12 +411,38 @@
     });
   }
 
+  // Toggle the grab cursor only when the page overflows the viewport.
+  function updatePanCursor() {
+    var body = el("tp-body"), canvas = el("tp-canvas");
+    if (!body || !canvas) return;
+    var pan = canvas.offsetWidth > body.clientWidth + 1 || canvas.offsetHeight > body.clientHeight + 1;
+    body.classList.toggle("tp-pannable", pan);
+  }
+
+  function centerAnchor() {
+    var b = el("tp-body");
+    if (!b) return null;
+    var r = b.getBoundingClientRect();
+    return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+  }
+
+  function zoomBy(factor, anchor) {
+    if (!S.pdfDoc) return;
+    S.mode = "custom";
+    S.scale = clamp(S.scale * factor, MIN_SCALE, MAX_SCALE);
+    renderPage(anchor || centerAnchor());
+  }
+
   function updateToolbar() {
     var pl = el("tp-pagelabel"), prev = el("tp-prev"), next = el("tp-next"), zl = el("tp-zoomlabel");
     if (pl) pl.textContent = "Page " + S.pageNum + " / " + S.numPages;
     if (prev) prev.disabled = !S.pdfDoc || S.pageNum <= 1;
     if (next) next.disabled = !S.pdfDoc || S.pageNum >= S.numPages;
-    if (zl) zl.textContent = Math.abs(S.userZoom - 1) < 0.01 ? "Fit" : Math.round(S.userZoom * 100) + "%";
+    if (zl) zl.textContent = Math.round(S.scale * 100) + "%";
+    var fw = el("tp-fitw"), fp = el("tp-fitp"), ac = el("tp-actual");
+    if (fw) fw.classList.toggle("tp-primary", S.mode === "fit-width");
+    if (fp) fp.classList.toggle("tp-primary", S.mode === "fit-page");
+    if (ac) ac.classList.toggle("tp-primary", S.mode === "custom" && Math.abs(S.scale - 1) < 0.01);
   }
 
   // ── public actions ──────────────────────────────────────────────────────────
@@ -411,7 +489,8 @@
       S.maximized = true;
     }
     applyGeom();
-    if (S.userZoom === 1) renderPage();
+    // A bigger/smaller window changes the fit; re-fit unless the user set a custom zoom.
+    if (S.mode !== "custom") renderPage();
   }
 
   function tpSelectSection(id) {
@@ -422,9 +501,12 @@
 
   function tpPrevPage() { if (S.pdfDoc && S.pageNum > 1) { S.pageNum--; renderPage(); } }
   function tpNextPage() { if (S.pdfDoc && S.pageNum < S.numPages) { S.pageNum++; renderPage(); } }
-  function tpZoomIn() { S.userZoom = clamp(S.userZoom * 1.25, 0.25, 6); renderPage(); }
-  function tpZoomOut() { S.userZoom = clamp(S.userZoom / 1.25, 0.25, 6); renderPage(); }
-  function tpZoomFit() { S.userZoom = 1; renderPage(); }
+  function tpZoomIn() { zoomBy(1.25); }
+  function tpZoomOut() { zoomBy(1 / 1.25); }
+  function tpFitWidth() { S.mode = "fit-width"; renderPage(); }
+  function tpFitPage() { S.mode = "fit-page"; renderPage(); }
+  function tpActualSize() { S.mode = "custom"; S.scale = 1; renderPage(centerAnchor()); }
+  function tpRotate() { S.rotation = (S.rotation + 90) % 360; renderPage(); }
 
   // ── catalog management (user-managed) ───────────────────────────────────────
   function tpAddMap() {
@@ -576,12 +658,104 @@
   function bindKeys() {
     document.addEventListener("keydown", function (e) {
       if (!S.open || S.minimized) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;   // don't shadow app/browser shortcuts
       var tag = (e.target && e.target.tagName) || "";
-      if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || (e.target && e.target.isContentEditable)) return;
       if (e.key === "ArrowLeft") { tpPrevPage(); }
       else if (e.key === "ArrowRight") { tpNextPage(); }
       else if (e.key === "+" || e.key === "=") { tpZoomIn(); }
-      else if (e.key === "-") { tpZoomOut(); }
+      else if (e.key === "-" || e.key === "_") { tpZoomOut(); }
+      else if (e.key === "0") { tpFitWidth(); }
+      else if (e.key === "1") { tpActualSize(); }
+      else if (e.key === "9") { tpFitPage(); }
+      else if (e.key === "r" || e.key === "R") { tpRotate(); }
+      else return;
+      e.preventDefault();
+    });
+  }
+
+  // Scroll-wheel zooms toward the cursor (map-style). Coalesced to one render
+  // per animation frame so a fast scroll stays smooth.
+  function bindWheelZoom() {
+    var body = el("tp-body");
+    if (!body) return;
+    var pendingAnchor = null;
+    body.addEventListener("wheel", function (e) {
+      if (!S.pdfDoc) return;
+      e.preventDefault();
+      var step = Math.exp(-e.deltaY * 0.0015);      // smooth, proportional to wheel delta
+      S.mode = "custom";
+      S.scale = clamp(S.scale * step, MIN_SCALE, MAX_SCALE);
+      pendingAnchor = { cx: e.clientX, cy: e.clientY };
+      updateToolbar();
+      if (S._wheelRaf) return;
+      S._wheelRaf = requestAnimationFrame(function () { S._wheelRaf = 0; renderPage(pendingAnchor); });
+    }, { passive: false });
+  }
+
+  // Click-and-drag to pan while zoomed; double-click to zoom in at the point;
+  // two-finger pinch to zoom and one-finger drag to pan on touch devices.
+  function bindPan() {
+    var body = el("tp-body");
+    if (!body) return;
+    var panning = false, sx = 0, sy = 0, sl = 0, st = 0;
+
+    function startPan(x, y) {
+      panning = true; sx = x; sy = y; sl = body.scrollLeft; st = body.scrollTop;
+      body.classList.add("tp-panning");
+    }
+    function mm(e) {
+      if (!panning) return;
+      body.scrollLeft = sl - (e.clientX - sx);
+      body.scrollTop = st - (e.clientY - sy);
+    }
+    function mu() {
+      panning = false; body.classList.remove("tp-panning");
+      window.removeEventListener("mousemove", mm, true);
+      window.removeEventListener("mouseup", mu, true);
+    }
+    body.addEventListener("mousedown", function (e) {
+      if (e.button !== 0 || !body.classList.contains("tp-pannable")) return;
+      startPan(e.clientX, e.clientY);
+      window.addEventListener("mousemove", mm, true);
+      window.addEventListener("mouseup", mu, true);
+      e.preventDefault();
+    });
+    body.addEventListener("dblclick", function (e) {
+      if (!S.pdfDoc) return;
+      zoomBy(1.6, { cx: e.clientX, cy: e.clientY });
+    });
+
+    // touch: pinch-zoom + one-finger pan
+    var pinch = null;
+    function dist(t) { var dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY; return Math.hypot(dx, dy); }
+    body.addEventListener("touchstart", function (e) {
+      if (!S.pdfDoc) return;
+      if (e.touches.length === 2) {
+        pinch = { d: dist(e.touches), scale: S.scale,
+                  cx: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+                  cy: (e.touches[0].clientY + e.touches[1].clientY) / 2 };
+        e.preventDefault();
+      } else if (e.touches.length === 1 && body.classList.contains("tp-pannable")) {
+        startPan(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    }, { passive: false });
+    body.addEventListener("touchmove", function (e) {
+      if (pinch && e.touches.length === 2) {
+        S.mode = "custom";
+        S.scale = clamp(pinch.scale * (dist(e.touches) / pinch.d), MIN_SCALE, MAX_SCALE);
+        updateToolbar();
+        if (!S._wheelRaf) S._wheelRaf = requestAnimationFrame(function () { S._wheelRaf = 0; renderPage({ cx: pinch.cx, cy: pinch.cy }); });
+        e.preventDefault();
+      } else if (panning && e.touches.length === 1) {
+        body.scrollLeft = sl - (e.touches[0].clientX - sx);
+        body.scrollTop = st - (e.touches[0].clientY - sy);
+        e.preventDefault();
+      }
+    }, { passive: false });
+    body.addEventListener("touchend", function (e) {
+      if (e.touches.length === 0) { panning = false; pinch = null; body.classList.remove("tp-panning"); }
+      else if (e.touches.length === 1) { pinch = null; }
     });
   }
 
@@ -596,7 +770,10 @@
   window.tpNextPage = tpNextPage;
   window.tpZoomIn = tpZoomIn;
   window.tpZoomOut = tpZoomOut;
-  window.tpZoomFit = tpZoomFit;
+  window.tpFitWidth = tpFitWidth;
+  window.tpFitPage = tpFitPage;
+  window.tpActualSize = tpActualSize;
+  window.tpRotate = tpRotate;
   window.tpAddMap = tpAddMap;
   window.tpRenameCurrent = tpRenameCurrent;
   window.tpDeleteCurrent = tpDeleteCurrent;
