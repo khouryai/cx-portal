@@ -122,8 +122,96 @@ function strip(title, subtitle, signals, opts = {}) {
   return c;
 }
 
+// ── layered (OCG) demo ──────────────────────────────────────────────────────
+// A PDF whose Signals / Axle Counters / WABs sit on separate Optional Content
+// Groups (PDF "layers"), exactly like a Visio "Save as PDF (include layers)"
+// export. The viewer's Layers panel can then toggle each one. This stands in
+// until a real layered Visio export is dropped in.
+function assemble(objs) {            // objs is 1-indexed (objs[0] unused)
+  const N = objs.length - 1;
+  let pdf = "%PDF-1.5\n";
+  const offsets = [];
+  for (let i = 1; i <= N; i++) {
+    offsets[i] = Buffer.byteLength(pdf, "latin1");
+    pdf += `${i} 0 obj\n${objs[i]}\nendobj\n`;
+  }
+  const xrefStart = Buffer.byteLength(pdf, "latin1");
+  pdf += `xref\n0 ${N + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= N; i++) pdf += String(offsets[i]).padStart(10, "0") + " 00000 n \n";
+  pdf += `trailer\n<< /Size ${N + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+  return Buffer.from(pdf, "latin1");
+}
+
+function layeredDemoContent() {
+  const W = 792, H = 612, yMid = 320;
+  let c = "";
+  // base (always-on) track plan
+  c += gray(0.6) + rect(24, 24, W - 48, H - 48) + black();
+  c += red() + rect(24, H - 86, W - 48, 62, true) + black();
+  c += "1 1 1 RG 1 1 1 rg\n" + text(40, H - 56, 20, "PHASE 2 — LAYERED DEMO", true);
+  c += text(40, H - 78, 11, "BART CBTC · toggle Signals / Axle Counters / WABs in the Layers panel") + black();
+  c += "2 w " + line(60, yMid + 4, W - 60, yMid + 4, 2.4) + line(60, yMid - 4, W - 60, yMid - 4, 2.4);
+  c += gray(0.55);
+  for (let x = 70; x < W - 60; x += 22) c += line(x, yMid - 7, x, yMid + 7, 0.6);
+  c += black();
+  const at = (f) => 60 + f * (W - 120);
+
+  // Signals layer
+  c += "/OC /L_sig BDC\n";
+  [[0.08, "S8"], [0.30, "S12"], [0.55, "S16"], [0.80, "S20"], [0.95, "SB"]].forEach(([f, lbl]) => {
+    const x = at(f);
+    c += red() + rect(x - 3, yMid + 14, 6, 22, true) + black();
+    c += line(x, yMid + 4, x, yMid + 14, 1.2) + text(x - 8, yMid + 42, 9, lbl, true);
+  });
+  c += "EMC\n";
+
+  // Axle Counters layer
+  c += "/OC /L_ac BDC\n";
+  c += "0.0 0.45 0.8 RG 0.0 0.45 0.8 rg\n";
+  [0.18, 0.42, 0.66, 0.88].forEach((f, i) => {
+    const x = at(f);
+    c += rect(x - 4, yMid - 24, 8, 8, true);
+    c += line(x, yMid - 16, x, yMid - 4, 1) + text(x - 10, yMid - 36, 8, "AC" + (i + 1), true);
+  });
+  c += black() + "EMC\n";
+
+  // WABs layer
+  c += "/OC /L_wab BDC\n";
+  c += "0.0 0.55 0.25 RG 0.0 0.55 0.25 rg\n";
+  [0.25, 0.5, 0.74].forEach((f, i) => {
+    const x = at(f);
+    c += `${x - 6} ${yMid + 58} m ${x} ${yMid + 50} l ${x + 6} ${yMid + 58} l ${x} ${yMid + 66} l f\n`;
+    c += text(x - 12, yMid + 72, 8, "WAB-" + (i + 1), true);
+  });
+  c += black() + "EMC\n";
+
+  c += gray(0.45) + text(40, 40, 9, "LAYERED PLACEHOLDER — Signals / Axle Counters / WABs are separate PDF layers (OCGs).") + black();
+  return c;
+}
+
+function buildLayeredDemo() {
+  const W = 792, H = 612;
+  const content = layeredDemoContent();
+  const objs = [];
+  const sig = 7, ac = 8, wab = 9;
+  objs[1] = `<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [${sig} 0 R ${ac} 0 R ${wab} 0 R] ` +
+            `/D << /Name (Default) /Order [${sig} 0 R ${ac} 0 R ${wab} 0 R] /ON [${sig} 0 R ${ac} 0 R ${wab} 0 R] /OFF [] >> >> >>`;
+  objs[2] = `<< /Type /Pages /Kids [5 0 R] /Count 1 >>`;
+  objs[3] = `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>`;
+  objs[4] = `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>`;
+  objs[5] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] ` +
+            `/Resources << /Font << /F1 3 0 R /F2 4 0 R >> /Properties << /L_sig ${sig} 0 R /L_ac ${ac} 0 R /L_wab ${wab} 0 R >> >> ` +
+            `/Contents 6 0 R >>`;
+  objs[6] = `<< /Length ${Buffer.byteLength(content, "latin1")} >>\nstream\n${content}\nendstream`;
+  objs[7] = `<< /Type /OCG /Name (Signals) >>`;
+  objs[8] = `<< /Type /OCG /Name (Axle Counters) >>`;
+  objs[9] = `<< /Type /OCG /Name (WABs) >>`;
+  return assemble(objs);
+}
+
 // ── catalog of placeholder maps ────────────────────────────────────────────
 const FILES = {
+  "phase-2-layered.pdf": buildLayeredDemo(),
   "phase-2.pdf": buildPdf([
     strip("PHASE 2 — OVERALL TRACK PLAN", "BART CBTC · Sheet 1 of 2 · Mainline + interlockings",
       [

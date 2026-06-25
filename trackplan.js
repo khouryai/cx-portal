@@ -33,6 +33,9 @@
   var BUILTINS = [
     { id: "builtin-phase-2", label: "Phase 2 — Full Section", kind: "builtin",
       src: "assets/track-plans/phase-2.pdf", note: "Whole Phase 2 mainline + interlockings" },
+    { id: "builtin-phase-2-layered", label: "Phase 2 — Layered demo", kind: "builtin",
+      src: "assets/track-plans/phase-2-layered.pdf",
+      note: "Demo of toggleable layers (Signals / Axle Counters / WABs) — like a layered Visio PDF" },
     { id: "builtin-w-4", label: "W-4 Interlocking (zoom)", kind: "builtin",
       src: "assets/track-plans/w-4.pdf", note: "Zoomed to the W-4 interlocking" },
     { id: "builtin-route-1", label: "Route 1 — S8 → SB", kind: "builtin",
@@ -58,6 +61,9 @@
     mode: "fit-width",      // 'fit-width' | 'fit-page' | 'custom'
     rotation: 0,            // 0 | 90 | 180 | 270
     page: null,             // current PDFPageProxy (for re-fit on resize without refetch)
+    ocConfig: null,         // pdf.js OptionalContentConfig for the loaded doc (PDF layers)
+    layers: [],             // [{type:'group'|'label', id?, name, depth}] flattened layer tree
+    layersOpen: false,      // is the Layers panel showing?
     renderToken: 0,
     renderTask: null,
     loadToken: 0,
@@ -185,6 +191,7 @@
           '<button class="tp-tbtn" id="tp-fitp" type="button" title="Fit whole page" onclick="tpFitPage()">Page</button>' +
           '<button class="tp-tbtn" id="tp-actual" type="button" title="Actual size (100%)" onclick="tpActualSize()">1:1</button>' +
           '<button class="tp-tbtn" type="button" aria-label="Rotate 90°" title="Rotate 90°" onclick="tpRotate()">' + ic("rotate") + "</button>" +
+          '<button class="tp-tbtn" id="tp-layersbtn" type="button" title="Toggle map layers" onclick="tpToggleLayers()" style="display:none;">' + ic("layers") + " Layers</button>" +
           '<span class="tp-tb-spacer"></span>' +
           '<button class="tp-tbtn" type="button" title="Add a track plan PDF" onclick="tpAddMap()">' + ic("plus") + " Add</button>" +
           '<button class="tp-tbtn" type="button" aria-label="Rename this map" title="Rename this map" onclick="tpRenameCurrent()">' + ic("edit") + "</button>" +
@@ -195,6 +202,17 @@
             '<canvas class="tp-canvas" id="tp-canvas" style="display:none;"></canvas>' +
           "</div>" +
           '<div class="tp-status" id="tp-status">Loading…</div>' +
+          '<div class="tp-layers" id="tp-layers" hidden>' +
+            '<div class="tp-layers-head">' +
+              "<span>Layers</span>" +
+              '<span class="tp-layers-acts">' +
+                '<button type="button" class="tp-layers-act" onclick="tpAllLayers(true)">All</button>' +
+                '<button type="button" class="tp-layers-act" onclick="tpAllLayers(false)">None</button>' +
+                '<button type="button" class="tp-layers-act" aria-label="Close layers" title="Close" onclick="tpToggleLayers()">' + ic("x") + "</button>" +
+              "</span>" +
+            "</div>" +
+            '<div class="tp-layers-list" id="tp-layers-list"></div>' +
+          "</div>" +
         "</div>" +
         '<div class="tp-resize" id="tp-resize" aria-hidden="true"></div>' +
       "</div>" +
@@ -329,6 +347,7 @@
     var myLoad = ++S.loadToken;
     S.pdfDoc = null; S.page = null; S.pageNum = 1; S.numPages = 1;
     S.mode = "fit-width"; S.rotation = 0; S.scale = 1; S._lastScale = null;
+    S.ocConfig = null; S.layers = []; S.layersOpen = false;
     setStatus("Loading " + entry.label + "…", false);
     updateToolbar();
     entryBytes(entry).then(function (bytes) {
@@ -336,12 +355,60 @@
     }).then(function (doc) {
       if (myLoad !== S.loadToken) return;        // a newer load superseded this one
       S.pdfDoc = doc; S.numPages = doc.numPages; S.pageNum = 1;
+      // Pull the PDF's optional-content (layer) config BEFORE first render so the
+      // initial paint already honours layer visibility.
+      return doc.getOptionalContentConfig().then(function (cfg) {
+        if (myLoad !== S.loadToken) return;
+        applyOptionalContent(cfg);
+      }, function () { /* no OC info — fine */ });
+    }).then(function () {
+      if (myLoad !== S.loadToken) return;
       updateToolbar();
       return renderPage();
     }).catch(function (err) {
       if (myLoad !== S.loadToken) return;
       setStatus((err && err.message) || "Failed to load this track plan.", true);
     });
+  }
+
+  // Build the flattened layer list from the PDF's optional-content config.
+  function applyOptionalContent(cfg) {
+    S.ocConfig = cfg || null;
+    S.layers = [];
+    if (!cfg || typeof cfg.getGroups !== "function") return;
+    var groups = cfg.getGroups();
+    if (!groups || !Object.keys(groups).length) return;
+    var order = (typeof cfg.getOrder === "function" && cfg.getOrder()) || Object.keys(groups);
+    walkLayerOrder(order, 0, cfg, groups);
+    // Fallback: if the order yielded no toggleable groups, list them flat.
+    if (!S.layers.some(function (l) { return l.type === "group"; })) {
+      S.layers = Object.keys(groups).map(function (id) {
+        return { type: "group", id: id, name: groups[id].name || "Layer", depth: 0 };
+      });
+    }
+    renderLayerPanel();
+  }
+
+  function walkLayerOrder(items, depth, cfg, groups) {
+    if (!Array.isArray(items)) return;
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      if (Array.isArray(item)) {
+        // A nested array may start with a label string, then its members.
+        if (item.length && typeof item[0] === "string" && !groups[item[0]]) {
+          S.layers.push({ type: "label", name: item[0], depth: depth });
+          walkLayerOrder(item.slice(1), depth + 1, cfg, groups);
+        } else {
+          walkLayerOrder(item, depth + 1, cfg, groups);
+        }
+      } else if (typeof item === "string") {
+        if (groups[item]) {
+          S.layers.push({ type: "group", id: item, name: groups[item].name || "Layer", depth: depth });
+        } else {
+          S.layers.push({ type: "label", name: item, depth: depth });
+        }
+      }
+    }
   }
 
   // Scale that makes the page fit the viewport for the current fit mode.
@@ -445,8 +512,13 @@
     ctx.clearRect(0, 0, cw, ch);
     setStatus("", false);
     // Draw the full page but shifted by -scroll, so only the visible slice lands
-    // on the canvas (pdf.js clips the rest).
-    S.renderTask = S.page.render({ canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, -sl, -st] });
+    // on the canvas (pdf.js clips the rest). optionalContentConfig applies the
+    // current PDF-layer visibility.
+    var params = { canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, -sl, -st] };
+    // NB: the render param is optionalContentConfigPromise (resolving to our
+    // mutable config) — passing a bare config is silently ignored by pdf.js.
+    if (S.ocConfig) params.optionalContentConfigPromise = Promise.resolve(S.ocConfig);
+    S.renderTask = S.page.render(params);
     S.renderTask.promise.then(function () {
       if (token === S.renderToken) { S.renderTask = null; updateToolbar(); }
     }).catch(function (err) {
@@ -497,6 +569,53 @@
     if (fw) fw.classList.toggle("tp-primary", S.mode === "fit-width");
     if (fp) fp.classList.toggle("tp-primary", S.mode === "fit-page");
     if (ac) ac.classList.toggle("tp-primary", S.mode === "custom" && Math.abs(S.scale - 1) < 0.01);
+    var lb = el("tp-layersbtn");
+    if (lb) {
+      var has = S.layers.some(function (l) { return l.type === "group"; });
+      lb.style.display = has ? "inline-flex" : "none";
+      lb.classList.toggle("tp-primary", has && S.layersOpen);
+    }
+  }
+
+  // ── PDF layers (optional content groups) ────────────────────────────────────
+  function tpToggleLayers() {
+    if (!S.layers.some(function (l) { return l.type === "group"; })) return;
+    S.layersOpen = !S.layersOpen;
+    renderLayerPanel();
+    updateToolbar();
+  }
+
+  function renderLayerPanel() {
+    var panel = el("tp-layers"), list = el("tp-layers-list");
+    if (!panel || !list) return;
+    if (!S.layersOpen) { panel.hidden = true; return; }
+    panel.hidden = false;
+    list.innerHTML = S.layers.map(function (l) {
+      var pad = "padding-left:" + (8 + l.depth * 14) + "px;";
+      if (l.type === "label") return '<div class="tp-layer-label" style="' + pad + '">' + esc(l.name) + "</div>";
+      var on = S.ocConfig && typeof S.ocConfig.isVisible === "function" ? !!S.ocConfig.isVisible(l.id)
+             : (S.ocConfig && S.ocConfig.getGroup(l.id) ? !!S.ocConfig.getGroup(l.id).visible : true);
+      return '<label class="tp-layer-row" style="' + pad + '">' +
+               '<input type="checkbox" ' + (on ? "checked" : "") +
+               ' onchange="tpSetLayer(\'' + esc(l.id).replace(/'/g, "\\'") + "', this.checked)\">" +
+               "<span>" + esc(l.name) + "</span>" +
+             "</label>";
+    }).join("");
+  }
+
+  function tpSetLayer(id, visible) {
+    if (!S.ocConfig) return;
+    try { S.ocConfig.setVisibility(id, !!visible); } catch (e) { return; }
+    renderSlice();
+  }
+
+  function tpAllLayers(visible) {
+    if (!S.ocConfig) return;
+    S.layers.forEach(function (l) {
+      if (l.type === "group") { try { S.ocConfig.setVisibility(l.id, !!visible); } catch (e) {} }
+    });
+    renderLayerPanel();
+    renderSlice();
   }
 
   // ── public actions ──────────────────────────────────────────────────────────
@@ -829,6 +948,9 @@
   window.tpFitPage = tpFitPage;
   window.tpActualSize = tpActualSize;
   window.tpRotate = tpRotate;
+  window.tpToggleLayers = tpToggleLayers;
+  window.tpSetLayer = tpSetLayer;
+  window.tpAllLayers = tpAllLayers;
   window.tpAddMap = tpAddMap;
   window.tpRenameCurrent = tpRenameCurrent;
   window.tpDeleteCurrent = tpDeleteCurrent;

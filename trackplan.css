@@ -174,6 +174,68 @@
 }
 .tp-window.tp-maximized .tp-resize { display: none; }
 
+/* ── Layers panel (PDF optional-content groups) ──────────────────────────── */
+.tp-layers {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 220px;
+  max-height: calc(100% - 16px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.22);
+  z-index: 2;
+  overflow: hidden;
+}
+.tp-layers[hidden] { display: none; }
+.tp-layers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 10px;
+  font: 600 12px/1 var(--f-ui, "Inter", sans-serif);
+  color: var(--text);
+  background: var(--gray-50);
+  border-bottom: 1px solid var(--border);
+}
+.tp-layers-acts { display: inline-flex; gap: 4px; }
+.tp-layers-act {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+.tp-layers-act:hover { background: var(--gray-100); color: var(--text); }
+.tp-layers-list { overflow: auto; padding: 4px 0; }
+.tp-layer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+}
+.tp-layer-row:hover { background: var(--gray-50); }
+.tp-layer-row input { accent-color: var(--primary); width: 14px; height: 14px; cursor: pointer; }
+.tp-layer-label {
+  padding: 6px 10px 2px;
+  font: 600 11px/1.2 var(--f-ui, "Inter", sans-serif);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
 /* ── Minimised bubble (chat-style launcher) ──────────────────────────────── */
 .tp-bubble {
   position: absolute;
