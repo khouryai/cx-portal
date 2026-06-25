@@ -234,18 +234,67 @@
   align-items: center;
 }
 .tp-layers-act:hover { background: var(--gray-100); color: var(--text); }
+.tp-layers-act svg { width: 13px; height: 13px; }
+/* presets row */
+.tp-layers-presets {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.tp-preset-sel {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+/* filter row */
+.tp-layers-filter { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.tp-layers-filter input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+}
 .tp-layers-list { overflow: auto; padding: 4px 0; }
 .tp-layer-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
+  gap: 6px;
+  padding: 4px 8px 4px 10px;
   font-size: 12.5px;
   color: var(--text);
-  cursor: pointer;
 }
 .tp-layer-row:hover { background: var(--gray-50); }
-.tp-layer-row input { accent-color: var(--primary); width: 14px; height: 14px; cursor: pointer; }
+.tp-layer-main { display: flex; align-items: center; gap: 7px; flex: 1 1 auto; min-width: 0; cursor: pointer; }
+.tp-layer-row input[type="checkbox"] { accent-color: var(--primary); width: 14px; height: 14px; cursor: pointer; flex: 0 0 auto; }
+.tp-layer-sw { width: 11px; height: 11px; border-radius: 3px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px rgba(0,0,0,.18); }
+.tp-layer-sw-none { background: repeating-linear-gradient(45deg, var(--gray-100) 0 3px, var(--gray-300) 3px 5px); }
+.tp-layer-nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-layer-solo {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  line-height: 0;
+  opacity: 0.5;
+}
+.tp-layer-solo:hover { opacity: 1; background: var(--gray-100); color: var(--text); }
+.tp-layer-solo svg { width: 14px; height: 14px; }
+.tp-layer-op { flex: 0 0 56px; width: 56px; height: 14px; accent-color: var(--primary); cursor: pointer; }
 .tp-layer-label {
   padding: 6px 10px 2px;
   font: 600 11px/1.2 var(--f-ui, "Inter", sans-serif);

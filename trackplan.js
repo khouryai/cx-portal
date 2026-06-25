@@ -24,6 +24,8 @@
 
   var CATALOG_KEY = "cx_trackplan_catalog_v1";
   var LAYERS_KEY = "cx_trackplan_layers_v1";   // per-map layer on/off, persisted
+  var VIEW_KEY = "cx_trackplan_view_v1";       // per-map zoom/pan/rotation + last map
+  var PRESETS_KEY = "cx_trackplan_presets_v1"; // per-map named layer presets
   var IDB_NAME = "cx-trackplan";
   var IDB_STORE = "pdfs";
   var PDF_WORKER = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js";
@@ -72,8 +74,9 @@
     svgBaseW: 0,            // intrinsic svg width (user units)
     svgBaseH: 0,
     // layers (shared by PDF OCGs and SVG groups)
-    layers: [],             // [{type:'group'|'label', id?, name, depth, els?, visible?}]
+    layers: [],             // [{type:'group'|'label', id?, name, depth, els?, visible?, opacity?}]
     layersOpen: false,      // is the Layers panel showing?
+    layerFilter: "",        // filter text in the layers panel
     renderToken: 0,
     renderTask: null,
     loadToken: 0,
@@ -104,6 +107,10 @@
     });
     S.catalog = entries;
     S.hiddenBuiltins = hidden;
+    if (!S.activeId) {
+      var last = readStore(VIEW_KEY).lastActiveId;
+      if (last && entries.some(function (e) { return e.id === last; })) S.activeId = last;
+    }
     if (!S.activeId && entries.length) S.activeId = entries[0].id;
   }
 
@@ -135,7 +142,12 @@
       if (!groups.length) { delete all[ent.id]; }
       else {
         var state = {};
-        groups.forEach(function (l) { state[l.name] = layerIsVisible(l); });
+        groups.forEach(function (l) {
+          // value is {v:visible[, o:opacity]}; legacy plain-boolean is still read.
+          var rec = { v: layerIsVisible(l) };
+          if (S.docKind === "svg" && l.opacity != null && l.opacity < 1) rec.o = l.opacity;
+          state[l.name] = rec;
+        });
         all[ent.id] = state;
       }
       localStorage.setItem(LAYERS_KEY, JSON.stringify(all));
@@ -145,10 +157,37 @@
     var ent = activeEntry(); if (!ent) return;
     var saved = loadSavedLayerState(ent.id); if (!saved) return;
     S.layers.forEach(function (l) {
-      if (l.type === "group" && Object.prototype.hasOwnProperty.call(saved, l.name)) {
-        setLayerVisible(l, !!saved[l.name]);
-      }
+      if (l.type !== "group" || !Object.prototype.hasOwnProperty.call(saved, l.name)) return;
+      var rec = saved[l.name];
+      var vis = (rec && typeof rec === "object") ? rec.v !== false : !!rec;   // legacy bool support
+      setLayerVisible(l, vis);
+      if (S.docKind === "svg" && rec && typeof rec === "object" && rec.o != null) setLayerOpacity(l, rec.o);
     });
+  }
+
+  // ── view persistence (zoom / pan / rotation + last-opened map) ──────────────
+  function readStore(key) { try { var o = JSON.parse(localStorage.getItem(key) || "{}"); return (o && typeof o === "object") ? o : {}; } catch (e) { return {}; } }
+  function writeStore(key, o) { try { localStorage.setItem(key, JSON.stringify(o)); } catch (e) {} }
+
+  function loadSavedView(entryId) {
+    var all = readStore(VIEW_KEY);
+    return (all.views && all.views[entryId]) || null;
+  }
+  function saveViewNow() {
+    var ent = activeEntry(); if (!ent || !hasDoc()) return;
+    var body = el("tp-body");
+    var all = readStore(VIEW_KEY);
+    all.views = all.views || {};
+    all.views[ent.id] = {
+      scale: S.scale, mode: S.mode, rotation: S.rotation,
+      sl: body ? body.scrollLeft : 0, st: body ? body.scrollTop : 0,
+    };
+    all.lastActiveId = ent.id;
+    writeStore(VIEW_KEY, all);
+  }
+  function scheduleSaveView() {
+    if (S._saveViewT) return;
+    S._saveViewT = setTimeout(function () { S._saveViewT = 0; saveViewNow(); }, 350);
   }
 
   // ── IndexedDB (uploaded PDF blobs) ─────────────────────────────────────────
@@ -419,9 +458,18 @@
     // reset doc state
     S.pdfDoc = null; S.page = null; S.pageNum = 1; S.numPages = 1;
     S.mode = "fit-width"; S.rotation = 0; S.scale = 1; S._lastScale = null;
-    S.ocConfig = null; S.layers = []; S.layersOpen = false;
+    S.ocConfig = null; S.layers = []; S.layersOpen = false; S.layerFilter = "";
     detachSvg();
     S.docKind = entryFormat(entry);
+    // Restore the saved view (zoom/pan/rotation) for this map, if any.
+    S._pendingScroll = null;
+    var sv = loadSavedView(entry.id);
+    if (sv) {
+      if (sv.mode) S.mode = sv.mode;
+      if (sv.scale) S.scale = sv.scale;
+      if (sv.rotation) S.rotation = sv.rotation;
+      S._pendingScroll = { sl: sv.sl || 0, st: sv.st || 0 };
+    }
     setStatus("Loading " + entry.label + "…", false);
     updateToolbar();
     if (S.docKind === "svg") { loadSvg(entry, myLoad); return; }
@@ -698,6 +746,11 @@
       var sc = pageToScroll(anchor, oldScale, S.scale);
       body.scrollLeft = clamp(sc.sl, 0, maxL);
       body.scrollTop = clamp(sc.st, 0, maxT);
+    } else if (S._pendingScroll) {
+      // first render after a load that restored a saved view
+      body.scrollLeft = clamp(S._pendingScroll.sl, 0, maxL);
+      body.scrollTop = clamp(S._pendingScroll.st, 0, maxT);
+      S._pendingScroll = null;
     } else if (reset) {
       body.scrollLeft = 0;
       body.scrollTop = 0;
@@ -706,6 +759,7 @@
       body.scrollTop = clamp(body.scrollTop, 0, maxT);
     }
     S._lastScale = S.scale;
+    scheduleSaveView();
     updatePanCursor();
     updateToolbar();
     paint();
@@ -788,8 +842,9 @@
 
   // Keep the canvas pinned during native scroll; re-render the slice next frame.
   function onBodyScroll() {
+    if (hasDoc()) scheduleSaveView();
     var body = el("tp-body"), canvas = el("tp-canvas");
-    if (!body || !canvas || !S.page) return;
+    if (!body || !canvas || !S.page) return;   // PDF only: SVG scrolls natively
     canvas.style.left = body.scrollLeft + "px";
     canvas.style.top = body.scrollTop + "px";
     if (S._scrollRaf) return;
@@ -812,7 +867,7 @@
   }
 
   function zoomBy(factor, anchor) {
-    if (!S.page) return;
+    if (!hasDoc()) return;
     S.mode = "custom";
     S.scale = clamp(S.scale * factor, MIN_SCALE, MAX_SCALE);
     relayoutAndRender(anchor || centerAnchor(), false);
@@ -888,21 +943,82 @@
     return g ? !!g.visible : true;
   }
 
+  function idq(id) { return esc(id).replace(/'/g, "\\'"); }
+
+  // Best-effort swatch colour for an SVG layer (first real fill/stroke found).
+  function layerColor(l) {
+    if (S.docKind !== "svg" || !l.els) return null;
+    var seen = 0;
+    for (var i = 0; i < l.els.length && seen < 40; i++) {
+      var nodes = [l.els[i]];
+      if (l.els[i].querySelectorAll) nodes = nodes.concat(Array.prototype.slice.call(l.els[i].querySelectorAll("*")));
+      for (var j = 0; j < nodes.length && seen < 40; j++, seen++) {
+        var n = nodes[j];
+        if (!n.getAttribute) continue;
+        var f = n.getAttribute("fill") || (n.style && n.style.fill);
+        if (f && f !== "none" && !/^url\(/i.test(f) && !/^(currentcolor|inherit)$/i.test(f)) return f;
+        var s = n.getAttribute("stroke") || (n.style && n.style.stroke);
+        if (s && s !== "none" && !/^url\(/i.test(s) && !/^(currentcolor|inherit)$/i.test(s)) return s;
+      }
+    }
+    return null;
+  }
+
+  function layerRowsHtml() {
+    var f = (S.layerFilter || "").trim().toLowerCase();
+    return S.layers.map(function (l) {
+      if (l.type === "label") return f ? "" : '<div class="tp-layer-label">' + esc(l.name) + "</div>";
+      if (f && l.name.toLowerCase().indexOf(f) < 0) return "";
+      var on = layerIsVisible(l);
+      if (l._color === undefined) l._color = layerColor(l);
+      var sw = l._color
+        ? '<span class="tp-layer-sw" style="background:' + esc(l._color) + '"></span>'
+        : '<span class="tp-layer-sw tp-layer-sw-none"></span>';
+      var q = idq(l.id);
+      var op = (S.docKind === "svg")
+        ? '<input type="range" class="tp-layer-op" min="10" max="100" value="' + Math.round((l.opacity == null ? 1 : l.opacity) * 100) +
+          '" title="Layer opacity" oninput="tpSetLayerOpacity(\'' + q + "', this.value)\">"
+        : "";
+      return '<div class="tp-layer-row">' +
+               '<label class="tp-layer-main">' +
+                 '<input type="checkbox" ' + (on ? "checked" : "") + ' onchange="tpSetLayer(\'' + q + "', this.checked)\">" +
+                 sw + '<span class="tp-layer-nm" title="' + esc(l.name) + '">' + esc(l.name) + "</span>" +
+               "</label>" +
+               '<button type="button" class="tp-layer-solo" title="Show only this layer" aria-label="Show only this layer" onclick="tpSoloLayer(\'' + q + "')\">" + ic("eye") + "</button>" +
+               op +
+             "</div>";
+    }).join("");
+  }
+
+  function renderLayerRows() { var list = el("tp-layers-list"); if (list) list.innerHTML = layerRowsHtml(); }
+
   function renderLayerPanel() {
-    var panel = el("tp-layers"), list = el("tp-layers-list");
-    if (!panel || !list) return;
+    var panel = el("tp-layers");
+    if (!panel) return;
     if (!S.layersOpen) { panel.hidden = true; return; }
     panel.hidden = false;
-    list.innerHTML = S.layers.map(function (l) {
-      var pad = "padding-left:" + (8 + l.depth * 14) + "px;";
-      if (l.type === "label") return '<div class="tp-layer-label" style="' + pad + '">' + esc(l.name) + "</div>";
-      var on = layerIsVisible(l);
-      return '<label class="tp-layer-row" style="' + pad + '">' +
-               '<input type="checkbox" ' + (on ? "checked" : "") +
-               ' onchange="tpSetLayer(\'' + esc(l.id).replace(/'/g, "\\'") + "', this.checked)\">" +
-               "<span>" + esc(l.name) + "</span>" +
-             "</label>";
-    }).join("");
+    var ent = activeEntry();
+    var groups = S.layers.filter(function (l) { return l.type === "group"; });
+    var presets = ent ? loadPresets(ent.id) : [];
+    var head =
+      '<div class="tp-layers-head"><span>Layers</span><span class="tp-layers-acts">' +
+        '<button type="button" class="tp-layers-act" title="Show all" onclick="tpAllLayers(true)">All</button>' +
+        '<button type="button" class="tp-layers-act" title="Hide all" onclick="tpAllLayers(false)">None</button>' +
+        '<button type="button" class="tp-layers-act" aria-label="Close layers" title="Close" onclick="tpToggleLayers()">' + ic("x") + "</button>" +
+      "</span></div>";
+    var presetRow = groups.length ?
+      '<div class="tp-layers-presets">' +
+        '<select id="tp-preset" class="tp-preset-sel" onchange="tpPresetApply(this.value)" title="Apply a saved layer preset">' +
+          '<option value="">Preset…</option>' +
+          presets.map(function (p) { return '<option value="' + esc(p.name) + '">' + esc(p.name) + "</option>"; }).join("") +
+        "</select>" +
+        '<button type="button" class="tp-layers-act" title="Save current layers as a preset" aria-label="Save preset" onclick="tpPresetSave()">' + ic("save") + "</button>" +
+        (presets.length ? '<button type="button" class="tp-layers-act" title="Delete the selected preset" aria-label="Delete preset" onclick="tpPresetDelete()">' + ic("trash") + "</button>" : "") +
+      "</div>" : "";
+    var filterRow = groups.length > 6 ?
+      '<div class="tp-layers-filter"><input type="text" id="tp-layer-filter" placeholder="Filter layers…" value="' + esc(S.layerFilter || "") + '" oninput="tpLayerFilter(this.value)"></div>' : "";
+    panel.innerHTML = head + presetRow + filterRow + '<div class="tp-layers-list" id="tp-layers-list"></div>';
+    renderLayerRows();
   }
 
   function findLayer(id) {
@@ -919,6 +1035,12 @@
     }
   }
 
+  function setLayerOpacity(l, o) {
+    o = Math.max(0, Math.min(1, o));
+    l.opacity = o;
+    (l.els || []).forEach(function (e) { e.style.opacity = o >= 1 ? "" : String(o); });
+  }
+
   function tpSetLayer(id, visible) {
     var l = findLayer(id);
     if (!l) return;
@@ -932,6 +1054,72 @@
     saveLayerState();
     renderLayerPanel();
     if (S.docKind !== "svg") renderSlice();
+  }
+
+  // Show only this layer (isolate). "All" restores everything.
+  function tpSoloLayer(id) {
+    S.layers.forEach(function (l) { if (l.type === "group") setLayerVisible(l, l.id === id); });
+    saveLayerState();
+    renderLayerRows();
+    if (S.docKind !== "svg") renderSlice();
+  }
+
+  function tpSetLayerOpacity(id, val) {
+    var l = findLayer(id);
+    if (!l) return;
+    setLayerOpacity(l, Number(val) / 100);
+    saveLayerState();
+  }
+
+  function tpLayerFilter(v) { S.layerFilter = v || ""; renderLayerRows(); }
+
+  // ── named layer presets (per map) ───────────────────────────────────────────
+  function loadPresets(entryId) { var all = readStore(PRESETS_KEY); return (all[entryId] && all[entryId].slice()) || []; }
+  function savePresets(entryId, list) { var all = readStore(PRESETS_KEY); all[entryId] = list; writeStore(PRESETS_KEY, all); }
+
+  function tpPresetSave() {
+    var ent = activeEntry(); if (!ent) return;
+    var groups = S.layers.filter(function (l) { return l.type === "group"; });
+    if (!groups.length) return;
+    var p = (typeof cxPrompt === "function")
+      ? cxPrompt("Save the current layer visibility as a preset:", "", { title: "Save layer preset", ok: "Save" })
+      : Promise.resolve(window.prompt("Preset name:"));
+    p.then(function (name) {
+      if (name == null) return;
+      name = String(name).trim();
+      if (!name) return;
+      var list = loadPresets(ent.id).filter(function (x) { return x.name !== name; });
+      var lay = {};
+      groups.forEach(function (l) { lay[l.name] = layerIsVisible(l); });
+      list.push({ name: name, layers: lay });
+      savePresets(ent.id, list);
+      renderLayerPanel();
+      notify('Saved layer preset "' + name + '".');
+    });
+  }
+
+  function tpPresetApply(name) {
+    if (!name) return;
+    var ent = activeEntry(); if (!ent) return;
+    var preset = loadPresets(ent.id).filter(function (x) { return x.name === name; })[0];
+    if (!preset) return;
+    S.layers.forEach(function (l) {
+      if (l.type === "group" && Object.prototype.hasOwnProperty.call(preset.layers, l.name)) {
+        setLayerVisible(l, !!preset.layers[l.name]);
+      }
+    });
+    saveLayerState();
+    renderLayerRows();
+    if (S.docKind !== "svg") renderSlice();
+  }
+
+  function tpPresetDelete() {
+    var ent = activeEntry(); if (!ent) return;
+    var sel = el("tp-preset"); var name = sel && sel.value;
+    if (!name) { notify("Pick a preset to delete.", "error"); return; }
+    savePresets(ent.id, loadPresets(ent.id).filter(function (x) { return x.name !== name; }));
+    renderLayerPanel();
+    notify('Deleted preset "' + name + '".');
   }
 
   // ── public actions ──────────────────────────────────────────────────────────
@@ -988,6 +1176,7 @@
 
   function tpSelectSection(id) {
     if (id === S.activeId) return;
+    saveViewNow();            // remember where we were on the current map
     S.activeId = id;
     loadActive();
   }
@@ -1273,6 +1462,12 @@
   window.tpToggleLayers = tpToggleLayers;
   window.tpSetLayer = tpSetLayer;
   window.tpAllLayers = tpAllLayers;
+  window.tpSoloLayer = tpSoloLayer;
+  window.tpSetLayerOpacity = tpSetLayerOpacity;
+  window.tpLayerFilter = tpLayerFilter;
+  window.tpPresetSave = tpPresetSave;
+  window.tpPresetApply = tpPresetApply;
+  window.tpPresetDelete = tpPresetDelete;
   window.tpLayerInfo = tpLayerInfo;
   window.tpAddMap = tpAddMap;
   window.tpRenameCurrent = tpRenameCurrent;
