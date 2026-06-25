@@ -26,6 +26,8 @@
   var LAYERS_KEY = "cx_trackplan_layers_v1";   // per-map layer on/off, persisted
   var VIEW_KEY = "cx_trackplan_view_v1";       // per-map zoom/pan/rotation + last map
   var PRESETS_KEY = "cx_trackplan_presets_v1"; // per-map named layer presets
+  var MARKUP_KEY = "cx_trackplan_markup_v1";   // per-map annotations
+  var SVGNS = "http://www.w3.org/2000/svg";
   var IDB_NAME = "cx-trackplan";
   var IDB_STORE = "pdfs";
   var PDF_WORKER = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js";
@@ -78,6 +80,9 @@
     layersOpen: false,      // is the Layers panel showing?
     layerFilter: "",        // filter text in the layers panel
     search: { open: false, query: "", matches: [], idx: 0, index: null, curBBox: null },
+    // markup (annotations drawn over the map, stored in unrotated page units)
+    markupEl: null,
+    markup: { on: false, visible: true, tool: "pen", color: "#e60012", shapes: [], _draw: null },
     renderToken: 0,
     renderTask: null,
     loadToken: 0,
@@ -273,6 +278,7 @@
           '<button class="tp-tbtn" id="tp-actual" type="button" title="Actual size (100%)" onclick="tpActualSize()">1:1</button>' +
           '<button class="tp-tbtn" type="button" aria-label="Rotate 90°" title="Rotate 90°" onclick="tpRotate()">' + ic("rotate") + "</button>" +
           '<button class="tp-tbtn" id="tp-searchbtn" type="button" aria-label="Find on map" title="Find on map (/)" onclick="tpToggleSearch()" style="display:none;">' + ic("search") + "</button>" +
+          '<button class="tp-tbtn" id="tp-markupbtn" type="button" aria-label="Annotate" title="Annotate the map" onclick="tpToggleMarkup()" style="display:none;">' + ic("edit") + "</button>" +
           '<button class="tp-tbtn" id="tp-layersbtn" type="button" title="Toggle map layers" onclick="tpToggleLayers()" style="display:none;">' + ic("layers") + " Layers</button>" +
           '<span class="tp-tb-spacer"></span>' +
           '<button class="tp-tbtn" type="button" title="Add a track plan PDF" onclick="tpAddMap()">' + ic("plus") + " Add</button>" +
@@ -283,6 +289,7 @@
           '<div class="tp-body" id="tp-body">' +
             '<div class="tp-stage" id="tp-stage">' +
               '<canvas class="tp-canvas" id="tp-canvas" style="display:none;"></canvas>' +
+              '<svg class="tp-markup" id="tp-markup" xmlns="http://www.w3.org/2000/svg"></svg>' +
               '<div class="tp-search-hit" id="tp-search-hit" style="display:none;"></div>' +
             "</div>" +
           "</div>" +
@@ -298,6 +305,22 @@
             '<button type="button" class="tp-search-btn" aria-label="Previous match" title="Previous (Shift+Enter)" onclick="tpSearchStep(-1)">' + ic("chevron-left") + "</button>" +
             '<button type="button" class="tp-search-btn" aria-label="Next match" title="Next (Enter)" onclick="tpSearchStep(1)">' + ic("chevron-right") + "</button>" +
             '<button type="button" class="tp-search-btn" aria-label="Close find" title="Close" onclick="tpToggleSearch()">' + ic("x") + "</button>" +
+          "</div>" +
+          '<div class="tp-markupbar" id="tp-markupbar" hidden>' +
+            '<div class="tp-mk-tools">' +
+              '<button type="button" class="tp-mk-tool" data-tool="pen" title="Pen" onclick="tpMkTool(\'pen\')">' + ic("edit") + "</button>" +
+              '<button type="button" class="tp-mk-tool" data-tool="highlight" title="Highlighter" onclick="tpMkTool(\'highlight\')">' + ic("highlighter") + "</button>" +
+              '<button type="button" class="tp-mk-tool" data-tool="arrow" title="Arrow" onclick="tpMkTool(\'arrow\')">' + ic("arrow-ur") + "</button>" +
+              '<button type="button" class="tp-mk-tool" data-tool="rect" title="Rectangle" onclick="tpMkTool(\'rect\')">' + ic("square") + "</button>" +
+              '<button type="button" class="tp-mk-tool" data-tool="text" title="Text note" onclick="tpMkTool(\'text\')">' + ic("type") + "</button>" +
+            "</div>" +
+            '<span class="tp-mk-sep"></span>' +
+            '<div class="tp-mk-colors" id="tp-mk-colors"></div>' +
+            '<span class="tp-mk-sep"></span>' +
+            '<button type="button" class="tp-mk-btn" title="Undo" aria-label="Undo" onclick="tpMkUndo()">' + ic("undo") + "</button>" +
+            '<button type="button" class="tp-mk-btn" title="Clear all annotations" aria-label="Clear" onclick="tpMkClear()">' + ic("trash") + "</button>" +
+            '<button type="button" class="tp-mk-btn" id="tp-mk-vis" title="Show / hide annotations" aria-label="Show or hide" onclick="tpMkToggleVisible()">' + ic("eye") + "</button>" +
+            '<button type="button" class="tp-mk-btn" title="Done" aria-label="Done" onclick="tpToggleMarkup()">' + ic("check") + "</button>" +
           "</div>" +
           '<div class="tp-layers" id="tp-layers" hidden>' +
             '<div class="tp-layers-head">' +
@@ -327,11 +350,13 @@
     S.geom.x = Math.max(16, vw - S.geom.w - 24);
     S.geom.y = Math.max(72, vh - S.geom.h - 24);
 
+    S.markupEl = el("tp-markup");
     bindDrag();
     bindResize();
     bindKeys();
     bindWheelZoom();
     bindPan();
+    bindMarkup();
     el("tp-body").addEventListener("scroll", onBodyScroll);
 
     // On viewport resize: re-fit (fit modes) and always repaint the slice for the
@@ -474,6 +499,10 @@
     S.search = { open: false, query: "", matches: [], idx: 0, index: null, curBBox: null };
     var sb = el("tp-search"); if (sb) sb.hidden = true;
     clearSearchHit();
+    // markup: keep persisted shapes, but exit edit mode for the new map
+    S.markup.on = false; S.markup.visible = true; S.markup._draw = null;
+    var mbar = el("tp-markupbar"); if (mbar) mbar.hidden = true;
+    loadMarkupForEntry();
     detachSvg();
     S.docKind = entryFormat(entry);
     // Restore the saved view (zoom/pan/rotation) for this map, if any.
@@ -781,7 +810,7 @@
     paint();
   }
 
-  function paint() { if (S.docKind === "svg") sizeSvg(); else renderSlice(); }
+  function paint() { if (S.docKind === "svg") sizeSvg(); else renderSlice(); sizeMarkup(); }
 
   // Resize the inline SVG to the current scale + rotation. Vector stays crisp at
   // any zoom, so there's no slicing — the whole drawing is the stage.
@@ -917,6 +946,11 @@
     if (sb) {
       sb.style.display = hasDoc() ? "inline-flex" : "none";
       sb.classList.toggle("tp-primary", !!(S.search && S.search.open));
+    }
+    var mb = el("tp-markupbtn");
+    if (mb) {
+      mb.style.display = hasDoc() ? "inline-flex" : "none";
+      mb.classList.toggle("tp-primary", !!(S.markup && S.markup.on));
     }
   }
 
@@ -1275,6 +1309,214 @@
       : "";
   }
 
+  // ── markup (annotations) ────────────────────────────────────────────────────
+  var MK_COLORS = ["#e60012", "#f59e0b", "#0d7a4f", "#1d4eaf", "#111827", "#ffffff"];
+
+  // Unrotated page size in user units (markup is stored unrotated and rotated
+  // for display via the same transform the content uses).
+  function baseSizeUnrot() {
+    if (S.docKind === "svg") return { w: S.svgBaseW || 1, h: S.svgBaseH || 1 };
+    if (S.page) { var vp = S.page.getViewport({ scale: 1, rotation: 0 }); return { w: vp.width, h: vp.height }; }
+    return { w: 1, h: 1 };
+  }
+  function mkRotTransform(sw, sh) {
+    if (S.rotation === 90) return "translate(" + sh + "px,0) rotate(90deg)";
+    if (S.rotation === 180) return "translate(" + sw + "px," + sh + "px) rotate(180deg)";
+    if (S.rotation === 270) return "translate(0," + sw + "px) rotate(270deg)";
+    return "none";
+  }
+
+  // Size + place the markup overlay so it tracks the content at any zoom/pan/rotation.
+  function sizeMarkup() {
+    var mk = S.markupEl; if (!mk) return;
+    var bu = baseSizeUnrot();
+    var sw = bu.w * S.scale, sh = bu.h * S.scale;
+    mk.setAttribute("viewBox", "0 0 " + bu.w + " " + bu.h);
+    mk.setAttribute("width", sw); mk.setAttribute("height", sh);
+    mk.style.width = sw + "px"; mk.style.height = sh + "px";
+    mk.style.transformOrigin = "0 0";
+    mk.style.transform = mkRotTransform(sw, sh);
+    mk.style.display = (S.markup.visible && (S.markup.shapes.length || S.markup.on)) ? "block" : "none";
+    mk.style.pointerEvents = "none";   // render-only; input is captured on the body
+    var body = el("tp-body");
+    if (body) {
+      body.classList.toggle("tp-mk-draw", S.markup.on && S.markup.tool !== "text");
+      body.classList.toggle("tp-mk-text", S.markup.on && S.markup.tool === "text");
+    }
+    if (S.markup._dirty) { renderMarkupShapes(); S.markup._dirty = false; }
+  }
+
+  function ptsToPath(pts) {
+    if (!pts || !pts.length) return "";
+    var d = "M " + pts[0][0] + " " + pts[0][1];
+    for (var i = 1; i < pts.length; i++) d += " L " + pts[i][0] + " " + pts[i][1];
+    return d;
+  }
+  function mkSet(e, attrs) { for (var k in attrs) e.setAttribute(k, attrs[k]); return e; }
+  function mkNode(tag) { return document.createElementNS(SVGNS, tag); }
+
+  function shapeToEl(s) {
+    if (s.type === "pen" || s.type === "highlight") {
+      return mkSet(mkNode("path"), {
+        d: ptsToPath(s.points), fill: "none", stroke: s.color,
+        "stroke-width": s.type === "highlight" ? 12 : 3,
+        "stroke-linecap": "round", "stroke-linejoin": "round",
+        "vector-effect": "non-scaling-stroke",
+        "stroke-opacity": s.type === "highlight" ? 0.35 : 1,
+      });
+    }
+    if (s.type === "rect") {
+      return mkSet(mkNode("rect"), {
+        x: Math.min(s.x1, s.x2), y: Math.min(s.y1, s.y2),
+        width: Math.abs(s.x2 - s.x1), height: Math.abs(s.y2 - s.y1),
+        fill: "none", stroke: s.color, "stroke-width": 3, "vector-effect": "non-scaling-stroke",
+      });
+    }
+    if (s.type === "arrow") {
+      var g = mkNode("g");
+      g.appendChild(mkSet(mkNode("line"), { x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2, stroke: s.color, "stroke-width": 3, "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
+      var ang = Math.atan2(s.y2 - s.y1, s.x2 - s.x1);
+      var bu = baseSizeUnrot(), hl = Math.max(bu.w, bu.h) * 0.018;
+      var a1 = ang + Math.PI * 0.82, a2 = ang - Math.PI * 0.82;
+      g.appendChild(mkSet(mkNode("path"), {
+        d: "M " + s.x2 + " " + s.y2 + " L " + (s.x2 + hl * Math.cos(a1)) + " " + (s.y2 + hl * Math.sin(a1)) +
+           " L " + (s.x2 + hl * Math.cos(a2)) + " " + (s.y2 + hl * Math.sin(a2)) + " Z",
+        fill: s.color,
+      }));
+      return g;
+    }
+    if (s.type === "text") {
+      var bu2 = baseSizeUnrot();
+      var t = mkSet(mkNode("text"), {
+        x: s.x, y: s.y, fill: s.color, "font-size": s.size || Math.max(bu2.w, bu2.h) * 0.022,
+        "font-family": "Inter, sans-serif", "font-weight": "600", "paint-order": "stroke",
+        stroke: "#fff", "stroke-width": (s.size || Math.max(bu2.w, bu2.h) * 0.022) * 0.12, "stroke-linejoin": "round",
+      });
+      t.textContent = s.text;
+      return t;
+    }
+    return null;
+  }
+
+  function renderMarkupShapes() {
+    var mk = S.markupEl; if (!mk) return;
+    while (mk.firstChild) mk.removeChild(mk.firstChild);
+    S.markup.shapes.forEach(function (s) { var e = shapeToEl(s); if (e) mk.appendChild(e); });
+  }
+
+  function clientToPage(cx, cy) {
+    var mk = S.markupEl; if (!mk || !mk.getScreenCTM) return null;
+    var m = mk.getScreenCTM(); if (!m) return null;
+    try { var pt = new DOMPoint(cx, cy).matrixTransform(m.inverse()); return { x: pt.x, y: pt.y }; }
+    catch (e) { return null; }
+  }
+
+  // Input is captured on the body (reliable hit-testing) and mapped into page
+  // units via the overlay's CTM; the overlay itself is render-only.
+  function bindMarkup() {
+    var body = el("tp-body"); if (!body) return;
+    function refreshPreview() {
+      var mk = S.markupEl;
+      if (S.markup._preview && S.markup._preview.parentNode) mk.removeChild(S.markup._preview);
+      S.markup._preview = shapeToEl(S.markup._draw);
+      if (S.markup._preview) mk.appendChild(S.markup._preview);
+    }
+    function move(e) {
+      var s = S.markup._draw; if (!s) return;
+      var pt = clientToPage(e.clientX, e.clientY); if (!pt) return;
+      if (s.type === "pen" || s.type === "highlight") s.points.push([pt.x, pt.y]);
+      else { s.x2 = pt.x; s.y2 = pt.y; }
+      refreshPreview();
+      e.preventDefault();
+    }
+    function up() {
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", up, true);
+      var s = S.markup._draw; if (!s) return;
+      S.markup._draw = null;
+      var mk = S.markupEl;
+      if (S.markup._preview && S.markup._preview.parentNode) mk.removeChild(S.markup._preview);
+      S.markup._preview = null;
+      var ok = (s.type === "pen" || s.type === "highlight") ? s.points.length > 1 : (Math.abs(s.x2 - s.x1) + Math.abs(s.y2 - s.y1)) > 2;
+      if (ok) addShape(s);
+    }
+    body.addEventListener("pointerdown", function (e) {
+      if (!S.markup.on || !S.markup.visible) return;
+      if (e.button != null && e.button !== 0) return;
+      var pt = clientToPage(e.clientX, e.clientY); if (!pt) return;
+      var tool = S.markup.tool, color = S.markup.color;
+      if (tool === "text") {
+        var pr = (typeof cxPrompt === "function")
+          ? cxPrompt("Note text:", "", { title: "Text annotation", ok: "Add" })
+          : Promise.resolve(window.prompt("Note text:"));
+        pr.then(function (txt) { if (txt == null) return; txt = String(txt).trim(); if (txt) addShape({ type: "text", x: pt.x, y: pt.y, text: txt, color: color }); });
+        e.preventDefault(); return;
+      }
+      S.markup._draw = (tool === "pen" || tool === "highlight")
+        ? { type: tool, color: color, points: [[pt.x, pt.y]] }
+        : { type: tool, color: color, x1: pt.x, y1: pt.y, x2: pt.x, y2: pt.y };
+      refreshPreview();
+      window.addEventListener("pointermove", move, true);
+      window.addEventListener("pointerup", up, true);
+      e.preventDefault();
+    });
+  }
+
+  function addShape(s) { S.markup.shapes.push(s); renderMarkupShapes(); saveMarkup(); }
+
+  function loadMarkupForEntry() {
+    var ent = activeEntry();
+    var all = readStore(MARKUP_KEY);
+    S.markup.shapes = (ent && all[ent.id] && all[ent.id].slice()) || [];
+    S.markup._dirty = true;
+  }
+  function saveMarkup() {
+    var ent = activeEntry(); if (!ent) return;
+    var all = readStore(MARKUP_KEY);
+    if (S.markup.shapes.length) all[ent.id] = S.markup.shapes; else delete all[ent.id];
+    writeStore(MARKUP_KEY, all);
+  }
+
+  function tpToggleMarkup() {
+    if (!hasDoc()) return;
+    S.markup.on = !S.markup.on;
+    if (S.markup.on) { S.markup.visible = true; if (S.search.open) tpToggleSearch(); }
+    var bar = el("tp-markupbar"); if (bar) bar.hidden = !S.markup.on;
+    renderMkColors(); updateMkTools();
+    sizeMarkup();
+    updateToolbar();
+  }
+  function tpMkTool(t) { S.markup.tool = t; updateMkTools(); sizeMarkup(); }
+  function tpMkColor(c) { S.markup.color = c; renderMkColors(); }
+  function tpMkUndo() { if (S.markup.shapes.length) { S.markup.shapes.pop(); renderMarkupShapes(); saveMarkup(); } }
+  function tpMkClear() {
+    if (!S.markup.shapes.length) return;
+    var ask = (typeof cxConfirm === "function")
+      ? cxConfirm("Clear all annotations on this map?", { title: "Clear annotations", ok: "Clear", danger: true })
+      : Promise.resolve(window.confirm("Clear all annotations on this map?"));
+    ask.then(function (ok) { if (!ok) return; S.markup.shapes = []; renderMarkupShapes(); saveMarkup(); });
+  }
+  function tpMkToggleVisible() {
+    S.markup.visible = !S.markup.visible;
+    sizeMarkup();
+    updateMkTools();
+  }
+  function renderMkColors() {
+    var host = el("tp-mk-colors"); if (!host) return;
+    host.innerHTML = MK_COLORS.map(function (c) {
+      return '<button type="button" class="tp-mk-color' + (c === S.markup.color ? " active" : "") +
+             '" style="background:' + c + '" aria-label="Colour ' + c + '" onclick="tpMkColor(\'' + c + "')\"></button>";
+    }).join("");
+  }
+  function updateMkTools() {
+    var bar = el("tp-markupbar"); if (!bar) return;
+    bar.querySelectorAll(".tp-mk-tool").forEach(function (b) {
+      b.classList.toggle("active", b.getAttribute("data-tool") === S.markup.tool);
+    });
+    var vb = el("tp-mk-vis");
+    if (vb) { vb.classList.toggle("tp-primary", !S.markup.visible); vb.title = S.markup.visible ? "Hide annotations" : "Show annotations"; }
+  }
+
   // ── public actions ──────────────────────────────────────────────────────────
   function tpOpen(id) {
     ensureMounted();
@@ -1554,6 +1796,7 @@
       window.removeEventListener("mouseup", mu, true);
     }
     body.addEventListener("mousedown", function (e) {
+      if (S.markup.on) return;          // in markup mode a drag draws, not pans
       if (e.button !== 0 || !body.classList.contains("tp-pannable")) return;
       startPan(e.clientX, e.clientY);
       window.addEventListener("mousemove", mm, true);
@@ -1561,7 +1804,7 @@
       e.preventDefault();
     });
     body.addEventListener("dblclick", function (e) {
-      if (!hasDoc()) return;
+      if (!hasDoc() || S.markup.on) return;
       zoomBy(1.6, { cx: e.clientX, cy: e.clientY });
     });
 
@@ -1569,7 +1812,7 @@
     var pinch = null;
     function dist(t) { var dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY; return Math.hypot(dx, dy); }
     body.addEventListener("touchstart", function (e) {
-      if (!hasDoc()) return;
+      if (!hasDoc() || (S.markup.on && e.touches.length === 1)) return;   // single-finger draws in markup mode
       if (e.touches.length === 2) {
         pinch = { d: dist(e.touches), scale: S.scale,
                   cx: (e.touches[0].clientX + e.touches[1].clientX) / 2,
@@ -1626,6 +1869,12 @@
   window.tpSearchInput = tpSearchInput;
   window.tpSearchKey = tpSearchKey;
   window.tpSearchStep = tpSearchStep;
+  window.tpToggleMarkup = tpToggleMarkup;
+  window.tpMkTool = tpMkTool;
+  window.tpMkColor = tpMkColor;
+  window.tpMkUndo = tpMkUndo;
+  window.tpMkClear = tpMkClear;
+  window.tpMkToggleVisible = tpMkToggleVisible;
   window.tpLayerInfo = tpLayerInfo;
   window.tpAddMap = tpAddMap;
   window.tpRenameCurrent = tpRenameCurrent;
