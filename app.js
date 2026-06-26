@@ -40891,8 +40891,17 @@ async function _dynAllocateInto(campIds, label) {
     const scopeByCamp = new Map();
     for (const c of camps) if (c.test_case_ids && c.test_case_ids.length) scopeByCamp.set(String(c.id), new Set(c.test_case_ids));
     const windowAllows = (i, w) => { const sc = scopeByCamp.get(String(w.campaign_id)); return !sc || sc.has(i.test_id); };
+    // Build union of scoped test IDs across all selected campaigns.
+    // If any campaign has no test_case_ids restriction, pool is unrestricted.
+    const scopedTestIds = new Set();
+    let hasUnscopedCamp = false;
+    for (const c of camps) {
+      if (c.test_case_ids && c.test_case_ids.length) { c.test_case_ids.forEach(id => scopedTestIds.add(id)); }
+      else { hasUnscopedCamp = true; }
+    }
     const pool = (_dynPage.instances || []).filter(i =>
-      !i.shift_id && i.track_section_under_test && !['Pass', 'Not Applicable'].includes(i.status));
+      !i.shift_id && i.track_section_under_test && !['Pass', 'Not Applicable'].includes(i.status) &&
+      (hasUnscopedCamp || !scopedTestIds.size || scopedTestIds.has(i.test_id)));
     if (!pool.length) { toast('No unscheduled runs to allocate', 'info'); return; }
     // Aggressive duration-aware packing: fill each window by run durations up to
     // (1 − slack) of its length, so a 2 h window isn't left half-empty — but
