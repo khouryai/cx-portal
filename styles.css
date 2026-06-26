@@ -6596,11 +6596,12 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
 }
 
 /* ── Individual day cell ─────────────────────────────────────── */
+/* Width is controlled by --tlg-cell-w (set by JS based on window size) */
 .tlg-cell {
-  flex: 0 0 60px;
-  width: 60px;
-  min-width: 60px;
-  max-width: 60px;
+  flex: 0 0 var(--tlg-cell-w, 60px);
+  width: var(--tlg-cell-w, 60px);
+  min-width: var(--tlg-cell-w, 60px);
+  max-width: var(--tlg-cell-w, 60px);
   border-right: 1px solid var(--border);
   box-sizing: border-box;
 }

@@ -20497,6 +20497,10 @@ function _laRenderGrid(target, { groups, days, milestones }) {
   html += `</div>`;  // tlg-shell
   target.innerHTML = html;
 
+  // Scale cell width to window so longer windows show more days per viewport
+  const _cw = days.length <= 14 ? 60 : days.length <= 21 ? 50 : days.length <= 28 ? 40 : 32;
+  target.querySelector('.tlg-shell')?.style.setProperty('--tlg-cell-w', _cw + 'px');
+
   // Re-apply persistent UI state after a fresh render
   _laUpdateSelectionChrome();
   if (_laRowSearch) _laApplyRowSearch();
@@ -23585,6 +23589,40 @@ function _laOpenNewActivityModal() {
           <label>SSWP</label>
           <input type="text" id="new-act-sswp" class="form-input" placeholder="SSWP reference">
         </div>
+        <div class="form-field">
+          <label>Group</label>
+          <select id="new-act-group" class="form-input">
+            ${_GROUP_ORDER.map(g => `<option value="${g}" ${g === 'tc' ? 'selected' : ''}>${_groupMeta(g).label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Discipline</label>
+          <input type="text" id="new-act-discipline" class="form-input" placeholder="T&amp;C" list="new-act-disc-opts">
+          <datalist id="new-act-disc-opts">
+            ${_fsOptions('lookahead_discipline').map(o => `<option value="${escapeHtml(o)}">`).join('')}
+          </datalist>
+        </div>
+        <div class="form-field">
+          <label>Trade</label>
+          <input type="text" id="new-act-trade" class="form-input" placeholder="CBTC" list="new-act-trade-opts">
+          <datalist id="new-act-trade-opts">
+            ${_fsOptions('lookahead_trade').map(o => `<option value="${escapeHtml(o)}">`).join('')}
+          </datalist>
+        </div>
+        <div class="form-field">
+          <label>Work hours</label>
+          <input type="text" id="new-act-hours" class="form-input" placeholder="0700–1500">
+        </div>
+        <div class="form-field form-field-full">
+          <label>Party to Action <span style="font-size:11px;font-weight:400;color:var(--gray-500);">(select all that apply)</span></label>
+          <div class="dw-party-grid">
+            ${_PARTY_TO_ACTION_OPTS.map(([val, lbl]) => `
+              <label class="dw-party-chip">
+                <input type="checkbox" class="new-act-party" value="${val}">
+                <span>${escapeHtml(lbl)}</span>
+              </label>`).join('')}
+          </div>
+        </div>
         <div class="form-field form-field-full">
           <label>${icon('link')} P6 Activity <span style="font-size:11px;font-weight:400;color:var(--gray-500);">— filtered by location · auto-fills Activity ID</span></label>
           <select id="new-act-p6" class="form-input" onchange="_laNewActivityP6Changed()">
@@ -23699,9 +23737,9 @@ async function _laSaveNewActivity() {
   const loc  = document.getElementById('new-act-loc').value.trim();
   if (!desc) { toast('Description is required', 'error'); return; }
   if (!loc)  { toast('Location is required', 'error'); return; }
-  const defaultGroup = 'tc';
+  const selectedGroup = document.getElementById('new-act-group')?.value || 'tc';
   const groupMaxSort = (PLANNING_ACTIVITIES || [])
-    .filter(a => a.activity_group === defaultGroup)
+    .filter(a => a.activity_group === selectedGroup)
     .reduce((m, a) => Math.max(m, a.sort_order || 0), 0);
 
   // Read TomSelect-aware values
@@ -23710,22 +23748,36 @@ async function _laSaveNewActivity() {
   const p6Id  = p6El?.tomselect  ? p6El.tomselect.getValue()  : (p6El?.value  || '');
   const tra   = traEl?.tomselect ? traEl.tomselect.getValue() : (traEl?.value || '');
 
+  const discVal  = document.getElementById('new-act-discipline')?.value?.trim() || null;
+  const tradeVal = document.getElementById('new-act-trade')?.value?.trim()      || null;
+
   const payload = {
     activity_id_text: document.getElementById('new-act-id').value.trim()    || null,
     phase:            document.getElementById('new-act-phase')?.value.trim() || null,
     description: desc,
     location: loc,
-    sswp: document.getElementById('new-act-sswp').value.trim() || null,
-    notes: document.getElementById('new-act-notes').value.trim() || null,
+    sswp:             document.getElementById('new-act-sswp').value.trim()   || null,
+    discipline:       discVal,
+    trade:            tradeVal,
+    work_hours_raw:   document.getElementById('new-act-hours')?.value?.trim() || null,
+    party_to_action:  [...document.querySelectorAll('.new-act-party:checked')].map(c => c.value),
+    notes:            document.getElementById('new-act-notes').value.trim()  || null,
     linked_test_register_activity: tra   || null,
     linked_p6_activity_id:         p6Id  || null,
     match_status: 'manual',
-    activity_group: defaultGroup,
+    activity_group: selectedGroup,
     sort_order:    groupMaxSort + 10,
     batch_id: null,
   };
   try {
     await _dbInsert('planning_activities', [payload]);
+    // Grow Field Config vocabularies for new free-text values
+    try {
+      const vp = [];
+      if (discVal)  vp.push(_fscEnsureOptions('lookahead_discipline', [discVal]));
+      if (tradeVal) vp.push(_fscEnsureOptions('lookahead_trade',      [tradeVal]));
+      if (vp.length) await Promise.all(vp);
+    } catch {}
     closeModal();
     toast('✓ Activity created', 'success');
     await loadPlanningData(true);
