@@ -26,6 +26,7 @@
   var LAYERS_KEY = "cx_trackplan_layers_v1";   // per-map layer on/off, persisted
   var VIEW_KEY = "cx_trackplan_view_v1";       // per-map zoom/pan/rotation + last map
   var PRESETS_KEY = "cx_trackplan_presets_v1"; // per-map named layer presets
+  var LISTHIDDEN_KEY = "cx_trackplan_listhidden_v1"; // per-map: layers hidden+locked from the list
   var MARKUP_KEY = "cx_trackplan_markup_v1";   // per-map annotations
   var SVGNS = "http://www.w3.org/2000/svg";
   var IDB_NAME = "cx-trackplan";
@@ -80,6 +81,8 @@
     layersOpen: false,      // is the Layers panel showing?
     layerFilter: "",        // filter text in the layers panel
     opacityMode: false,     // show the per-layer opacity sliders (off = hidden)
+    listManage: false,      // "manage list" mode (choose which layers appear)
+    lockedNames: {},        // layer name -> true: hidden from the list + locked (pinned visibility)
     solo: { id: null, snapshot: null },  // temporary solo: id + pre-solo visibility
     search: { open: false, query: "", matches: [], idx: 0, index: null, curBBox: null },
     // markup (annotations drawn over the map, stored in unrotated page units)
@@ -500,6 +503,8 @@
     S.mode = "fit-width"; S.rotation = 0; S.scale = 1; S._lastScale = null;
     S.ocConfig = null; S.layers = []; S.layersOpen = false; S.layerFilter = "";
     S.solo = { id: null, snapshot: null };
+    S.listManage = false;
+    S.lockedNames = (entry && readStore(LISTHIDDEN_KEY)[entry.id]) || {};
     S.search = { open: false, query: "", matches: [], idx: 0, index: null, curBBox: null };
     var sb = el("tp-search"); if (sb) sb.hidden = true;
     clearSearchHit();
@@ -1023,10 +1028,22 @@
     return null;
   }
 
+  function isLocked(l) { return !!S.lockedNames[l.name]; }
+
+  // Group layers, sorted alphabetically; labels kept (rare, PDF only) ahead.
+  function sortedLayers() {
+    return S.layers.slice().sort(function (a, b) {
+      if (a.type !== b.type) return a.type === "label" ? -1 : 1;
+      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+    });
+  }
+
   function layerRowsHtml() {
     var f = (S.layerFilter || "").trim().toLowerCase();
-    return S.layers.map(function (l) {
+    return sortedLayers().map(function (l) {
       if (l.type === "label") return f ? "" : '<div class="tp-layer-label">' + esc(l.name) + "</div>";
+      var locked = isLocked(l);
+      if (!S.listManage && locked) return "";                 // hidden from the list
       if (f && l.name.toLowerCase().indexOf(f) < 0) return "";
       var on = layerIsVisible(l);
       if (l._color === undefined) l._color = layerColor(l);
@@ -1034,6 +1051,17 @@
         ? '<span class="tp-layer-sw" style="background:' + esc(l._color) + '"></span>'
         : '<span class="tp-layer-sw tp-layer-sw-none"></span>';
       var q = idq(l.id);
+      if (S.listManage) {
+        // manage mode: choose which layers appear in the list (hidden = locked)
+        return '<div class="tp-layer-row' + (locked ? " tp-layer-locked" : "") + '">' +
+                 '<label class="tp-layer-main">' +
+                   '<input type="checkbox" ' + (on ? "checked" : "") + ' onchange="tpSetLayer(\'' + q + "', this.checked)\">" +
+                   sw + '<span class="tp-layer-nm" title="' + esc(l.name) + '">' + esc(l.name) + "</span>" +
+                 "</label>" +
+                 '<button type="button" class="tp-layer-solo' + (locked ? "" : " active") +
+                   '" title="' + (locked ? "Show in list" : "Hide from list and lock") + '" aria-label="Toggle in list" onclick="tpLayerListToggle(\'' + q + "')\">" + ic(locked ? "eye-off" : "eye") + "</button>" +
+               "</div>";
+      }
       var op = (S.docKind === "svg" && S.opacityMode)
         ? '<input type="range" class="tp-layer-op" min="10" max="100" value="' + Math.round((l.opacity == null ? 1 : l.opacity) * 100) +
           '" title="Layer opacity" oninput="tpSetLayerOpacity(\'' + q + "', this.value)\">"
@@ -1044,7 +1072,7 @@
                  sw + '<span class="tp-layer-nm" title="' + esc(l.name) + '">' + esc(l.name) + "</span>" +
                "</label>" +
                '<button type="button" class="tp-layer-solo' + (S.solo.id === l.id ? " active" : "") +
-                 '" title="Solo this layer (hold-to-show; click again to restore)" aria-label="Solo this layer" onclick="tpSoloLayer(\'' + q + "')\">" + ic("eye") + "</button>" +
+                 '" title="Solo this layer (click again to restore)" aria-label="Solo this layer" onclick="tpSoloLayer(\'' + q + "')\">" + ic("eye") + "</button>" +
                op +
              "</div>";
     }).join("");
@@ -1060,15 +1088,22 @@
     var ent = activeEntry();
     var groups = S.layers.filter(function (l) { return l.type === "group"; });
     var presets = ent ? loadPresets(ent.id) : [];
+    var hiddenCount = groups.filter(isLocked).length;
     var opacityBtn = (S.docKind === "svg" && groups.length)
       ? '<button type="button" class="tp-layers-act' + (S.opacityMode ? " active" : "") +
         '" title="Show per-layer opacity sliders" aria-label="Toggle opacity sliders" onclick="tpToggleOpacityMode()">' + ic("sliders") + "</button>"
       : "";
+    var manageBtn = groups.length
+      ? '<button type="button" class="tp-layers-act' + (S.listManage ? " active" : "") +
+        '" title="' + (hiddenCount ? hiddenCount + " hidden — m" : "M") + 'anage which layers appear (hidden layers are locked)" aria-label="Manage list" onclick="tpToggleLayerManage()">' + ic("eye-off") + "</button>"
+      : "";
     var head =
-      '<div class="tp-layers-head"><span>Layers</span><span class="tp-layers-acts">' +
-        opacityBtn +
-        '<button type="button" class="tp-layers-act" title="Show all" onclick="tpAllLayers(true)">All</button>' +
-        '<button type="button" class="tp-layers-act" title="Hide all" onclick="tpAllLayers(false)">None</button>' +
+      '<div class="tp-layers-head"><span>' + (S.listManage ? "Manage list" : "Layers") + "</span>" +
+      '<span class="tp-layers-acts">' +
+        opacityBtn + manageBtn +
+        (S.listManage ? "" :
+          '<button type="button" class="tp-layers-act" title="Show all" onclick="tpAllLayers(true)">All</button>' +
+          '<button type="button" class="tp-layers-act" title="Hide all" onclick="tpAllLayers(false)">None</button>') +
         '<button type="button" class="tp-layers-act" aria-label="Close layers" title="Close" onclick="tpToggleLayers()">' + ic("x") + "</button>" +
       "</span></div>";
     var presetRow = groups.length ?
@@ -1153,7 +1188,7 @@
 
   function tpAllLayers(visible) {
     clearSolo();
-    S.layers.forEach(function (l) { if (l.type === "group") setLayerVisible(l, visible); });
+    S.layers.forEach(function (l) { if (l.type === "group" && !isLocked(l)) setLayerVisible(l, visible); });
     saveLayerState();
     renderLayerPanel();
     if (S.docKind !== "svg") renderSlice();
@@ -1184,7 +1219,8 @@
       if (S.solo.id == null) S.solo.snapshot = snapshotLayers();
       else applyLayerSnapshot(S.solo.snapshot);   // switching solo: restore base first
       var snap = S.solo.snapshot;
-      S.layers.forEach(function (l) { if (l.type === "group") setLayerVisible(l, l.id === id); });
+      // locked (list-hidden) layers stay as they are — they're pinned
+      S.layers.forEach(function (l) { if (l.type === "group" && !isLocked(l)) setLayerVisible(l, l.id === id); });
       S.solo = { id: id, snapshot: snap };
     }
     renderLayerRows();
@@ -1205,6 +1241,25 @@
   function tpToggleOpacityMode() {
     S.opacityMode = !S.opacityMode;
     var all = readStore(VIEW_KEY); all.opacityMode = S.opacityMode; writeStore(VIEW_KEY, all);
+    renderLayerPanel();
+  }
+
+  // ── manage which layers appear in the list (hidden = locked/pinned) ─────────
+  function tpToggleLayerManage() { S.listManage = !S.listManage; renderLayerPanel(); }
+
+  function saveHiddenList() {
+    var ent = activeEntry(); if (!ent) return;
+    var all = readStore(LISTHIDDEN_KEY);
+    if (Object.keys(S.lockedNames).length) all[ent.id] = S.lockedNames; else delete all[ent.id];
+    writeStore(LISTHIDDEN_KEY, all);
+  }
+
+  // Hide a layer from the list (and lock it at its current visibility) or restore it.
+  function tpLayerListToggle(id) {
+    var l = findLayer(id); if (!l) return;
+    if (S.lockedNames[l.name]) delete S.lockedNames[l.name];
+    else { S.lockedNames[l.name] = true; if (S.solo.id) clearSolo(); }
+    saveHiddenList();
     renderLayerPanel();
   }
 
@@ -1240,7 +1295,7 @@
     if (!preset) return;
     clearSolo();
     S.layers.forEach(function (l) {
-      if (l.type === "group" && Object.prototype.hasOwnProperty.call(preset.layers, l.name)) {
+      if (l.type === "group" && !isLocked(l) && Object.prototype.hasOwnProperty.call(preset.layers, l.name)) {
         setLayerVisible(l, !!preset.layers[l.name]);
       }
     });
@@ -1943,6 +1998,8 @@
   window.tpSoloLayer = tpSoloLayer;
   window.tpSetLayerOpacity = tpSetLayerOpacity;
   window.tpToggleOpacityMode = tpToggleOpacityMode;
+  window.tpToggleLayerManage = tpToggleLayerManage;
+  window.tpLayerListToggle = tpLayerListToggle;
   window.tpLayerFilter = tpLayerFilter;
   window.tpPresetSave = tpPresetSave;
   window.tpPresetApply = tpPresetApply;

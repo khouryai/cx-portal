@@ -310,6 +310,9 @@
 }
 .tp-layer-solo:hover { opacity: 1; background: var(--gray-100); color: var(--text); }
 .tp-layer-solo.active { opacity: 1; background: var(--primary); color: var(--white); }
+/* manage-list mode: a layer hidden from the list (locked) shows dimmed */
+.tp-layer-row.tp-layer-locked { opacity: 0.55; }
+.tp-layer-row.tp-layer-locked .tp-layer-nm { font-style: italic; }
 .tp-layer-solo svg { width: 14px; height: 14px; }
 .tp-layer-op { flex: 0 0 56px; width: 56px; height: 14px; margin-top: 2px; accent-color: var(--primary); cursor: pointer; }
 .tp-layer-label {
