@@ -37800,10 +37800,12 @@ function _dynCampaignProgressData(camp) {
   cShifts.filter(x => x.status !== 'cancelled').forEach(x => { availMin += _dynWinMinutes(x); });
   let plannedMin = 0;
   scope.filter(i => i.shift_id).forEach(i => { plannedMin += (i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN); });
+  let openMin = 0;
+  scope.filter(i => !['Pass', 'Not Applicable'].includes(i.status)).forEach(i => { openMin += (i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN); });
   const utilPct = availMin > 0 ? Math.round(plannedMin / availMin * 100) : null;
   return { scope, total, done, passed, failed, blocked, na, inProg, future, notStarted, tested, pct, passRate,
            expectedPct, schedVar, cShifts, remainShifts, confirmed, cancelled, remainWork, perShift,
-           assigned, unscheduled, availMin, plannedMin, utilPct };
+           assigned, unscheduled, availMin, plannedMin, openMin, utilPct };
 }
 
 function _dynCampaignProgress(campaignId) {
@@ -37825,7 +37827,7 @@ function _dynCampaignProgress(campaignId) {
           ${stat('Scope tests', d.total)}
           ${stat('Complete', `${d.done} (${d.pct}%)`, d.pct===100?'var(--good)':null)}
           ${stat('Pass rate', d.passRate===null?'—':`${d.passRate}%`, d.passRate!==null&&d.passRate<80?'var(--warn)':d.passRate!==null?'var(--good)':null)}
-          ${stat('Expected by now', `${d.expectedPct}%`)}
+          ${stat('Exp. today', `${d.expectedPct}%`)}
           ${stat('Variance', `${d.schedVar>0?'+':''}${d.schedVar} pts`, tone)}
         </div>
         <div style="height:10px;background:var(--gray-100);border-radius:6px;overflow:hidden;margin-bottom:4px;position:relative;">
@@ -37854,8 +37856,10 @@ function _dynCampaignProgress(campaignId) {
           ${stat('Shifts', d.cShifts.length)}
           ${stat('Confirmed', d.confirmed, d.confirmed?'var(--good)':null)}
           ${stat('Cancelled', d.cancelled, d.cancelled?'var(--bad)':null)}
-          ${stat('Need / shift', d.perShift===null?'—':d.perShift.toFixed(1), feasible===false?'var(--bad)':null)}
+          ${stat('Need/shift', d.perShift===null?'—':d.perShift.toFixed(1), feasible===false?'var(--bad)':null)}
           ${stat('Window use', d.utilPct===null?'—':`${d.utilPct}%`, d.utilPct!==null&&d.utilPct<60?'var(--warn)':null)}
+          ${stat('Hrs needed', d.openMin > 0 ? (d.openMin/60).toFixed(1)+'h' : '—', null)}
+          ${stat('Hrs avail', d.availMin > 0 ? (d.availMin/60).toFixed(1)+'h' : '—', d.availMin > 0 && d.openMin > d.availMin ? 'var(--bad)' : d.availMin > 0 ? 'var(--good)' : null)}
         </div>
 
         <div style="padding:10px 12px;border-radius:6px;font-size:12.5px;${feasible===false?'background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;':feasible===true?'background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;':'background:var(--gray-50);border:1px solid var(--gray-200);color:var(--gray-600);'}">
