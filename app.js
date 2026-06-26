@@ -18961,7 +18961,7 @@ let _laTimelineGroupBy   = 'activity';                 // activity | resource | 
 let _laTimelineWindow    = 28;                         // 14 / 21 / 28 / 60 / 90 days
 let _laCollapsedGroups   = {};                         // { tc: true, ... } — collapsed activity_group bands
 let _laActivitySubGroup  = 'none';                     // 'none' | 'phase' | 'location' | 'phase_location'
-let _laResCompanyFilter  = 'all';                      // 'all' | 'BART' | 'Hitachi' (Resource view)
+let _laResCompanyFilter  = 'Hitachi';                  // 'all' | 'BART' | 'Hitachi' (Resource view)
 let _laResPanelCompany   = 'all';                      // 'all' | 'BART' | 'Hitachi' (Assign-resources picker)
 
 // ── Edit drawer state (Phase 2 — Master Schedule revamp) ─────
@@ -21550,6 +21550,7 @@ function _laExportTimelinePDF() {
     <link rel="stylesheet" href="styles.css">
     <style>
       @page { size: A4 landscape; margin: 8mm; }
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
       html, body { margin: 0; padding: 0; background: #fff; }
       .pdf-head { font-family: Arial, sans-serif; padding: 2px 2px 12px; }
       .pdf-title { font-size: 17px; font-weight: 800; color: #111; }
