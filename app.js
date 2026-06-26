@@ -32097,10 +32097,14 @@ function _drwParseSheetInfo(items, W, H, fieldRegions) {
   let sheetTitle = null;
   const stCells = fieldCellsFor('sheetTitle');
   if (stCells) {
+    // Filter out banners/labels so a mis-aimed region (pointed at the project
+    // description banner) doesn't poison every row.  If cands is empty after
+    // filtering we fall through to the label-anchored search below rather than
+    // using the raw banner text as the title.
     const cands = stCells.filter(c => c.str.length >= 3 && !_drwIsLabel(c.str) && !_drwIsBanner(c.str) && !_drwMatchSheetNum(c.str) && !/^\d+$/.test(c.str));
-    const pool = cands.length ? cands : stCells;
-    if (pool.length) sheetTitle = pool.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
-  } else {
+    if (cands.length) sheetTitle = cands.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
+  }
+  if (!sheetTitle) {
     const contractNo = _drwFindNearLabel(baseCells, /^contract\s*no\.?$/i, () => true);
     const knownValues = new Set([sheetNumber, revision, pageNumber, contractNo].filter(Boolean).map(s => s.toString().toUpperCase()));
     const titleCandidates = baseCells.filter(c => {
@@ -33032,26 +33036,22 @@ async function _drwRunExtract() {
         included: !!(parsed.sheetNumber || parsed.sheetTitle || parsed.pageNumber),
       });
     }
-    // Cross-page deduplication: if the same title/sheetNumber/revision appears
-    // on the majority of included sheets it landed on a repeated banner, not the
-    // per-sheet value.  Clear it so the row shows as "needs review" in the table.
-    const _dedupField = (key, minFrac) => {
-      const src = sheets.filter(s => s.included && s[key]);
-      if (src.length < 2) return;
+    // Safety dedup: if the same revision value appears on every single included
+    // sheet AND it looks like a label (e.g. "REV" or "REVISION") rather than
+    // an actual revision identifier, clear it.  Title deduplication was removed
+    // because legitimate drawing sets can share the same per-sheet title text.
+    const _dedupRevision = () => {
+      const src = sheets.filter(s => s.included && s.revision);
+      if (src.length < 3) return;
       const counts = {};
-      src.forEach(s => { const v = s[key].trim().toUpperCase(); counts[v] = (counts[v]||0) + 1; });
-      const threshold = Math.max(2, Math.round(src.length * minFrac));
-      const banners = new Set(Object.entries(counts).filter(([,n])=>n>=threshold).map(([v])=>v));
-      if (!banners.size) return;
-      sheets.forEach(s => {
-        if (s[key] && banners.has(s[key].trim().toUpperCase())) {
-          s[key] = null;
-          if (key === 'sheetTitle' || key === 'sheetNumber') s.needsReview = true;
+      src.forEach(s => { const v = s.revision.trim().toUpperCase(); counts[v] = (counts[v]||0) + 1; });
+      Object.entries(counts).forEach(([v, n]) => {
+        if (n === src.length && /^(REV|REVISION|NO\.?)$/i.test(v)) {
+          sheets.forEach(s => { if (s.revision && s.revision.trim().toUpperCase() === v) s.revision = null; });
         }
       });
     };
-    _dedupField('sheetTitle', 0.5);
-    _dedupField('revision', 0.8);
+    _dedupRevision();
     _drwParsedSheets = sheets;
     _drwShowReview(numPages);
   } catch(e) {
