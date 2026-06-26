@@ -40935,6 +40935,10 @@ async function _dynAllocateInto(campIds, label) {
       } else { blockedOther++; }
     }
     draft.unplacedReasons = { noWindow: [...noWinByZone.entries()].sort((a, b) => b[1] - a[1]), other: blockedOther };
+    draft.unplacedDetail = draft.unplaced.map(id => {
+      const i = pool.find(x => x.id === id);
+      return { id, inst: i, reason: (i && !someWindowGrants(i)) ? 'no-window' : 'capacity' };
+    });
     _dynAutoAllocatePreview(label, draft);
   } catch (e) { toast('Allocate failed: ' + e.message, 'error'); }
 }
@@ -41032,7 +41036,47 @@ function _dynAutoAllocatePreview(label, draft) {
             '<th style="text-align:left;padding:6px 10px;">Fill</th>' +
             '<th style="text-align:left;padding:6px 10px;">Codes</th>' +
           '</tr></thead><tbody>' + rowsHtml + '</tbody></table>' +
-        (draft.unplaced.length ? '<p style="font-size:12px;color:#92400e;margin-top:10px;">' + draft.unplaced.length + ' run(s) could not be placed — ' + _dynUnplacedReasonText(draft.unplacedReasons) + '. They stay in the backlog.</p>' : '') +
+        (draft.unplaced.length ? (function() {
+          const fmtDur = m => m == null ? '—' : m < 60 ? m + 'm' : (m / 60).toFixed(1) + 'h';
+          const fmtCars = i => {
+            const n = i.trains_needed || 1;
+            const sizes = (i.required_consists && Array.isArray(i.required_consists.sizes)) ? i.required_consists.sizes : Array(n).fill(i.consist_size);
+            if (n === 1) return sizes[0] != null ? sizes[0] + '' : '—';
+            return sizes.map((s, k) => 'T' + (k + 1) + ':' + (s != null ? s : '?')).join(' ');
+          };
+          const rows = (draft.unplacedDetail || draft.unplaced.map(id => ({ id, inst: instById.get(id), reason: 'capacity' }))).map(({ inst, reason }) => {
+            const i = inst || {};
+            const reasonLabel = reason === 'no-window'
+              ? '<span style="color:#b45309;">No window for zone</span>'
+              : '<span style="color:#6b7280;">Capacity/mode/prereq</span>';
+            const accessReq = (i.track_section_access_req || []).join('+') || '—';
+            return '<tr style="border-top:1px solid var(--gray-100);">' +
+              '<td style="padding:5px 8px;font-family:monospace;font-size:11px;white-space:nowrap;">' + escapeHtml(i.code || i.id || '—') + '</td>' +
+              '<td style="padding:5px 8px;font-size:11px;white-space:nowrap;">' + escapeHtml(i.track_section_under_test || '—') + '</td>' +
+              '<td style="padding:5px 8px;font-size:11px;white-space:nowrap;color:var(--gray-500);">' + escapeHtml(accessReq) + '</td>' +
+              '<td style="padding:5px 8px;font-size:11px;white-space:nowrap;">' + fmtDur(i.expected_duration_minutes) + '</td>' +
+              '<td style="padding:5px 8px;font-size:11px;text-align:center;">' + (i.trains_needed || 1) + '</td>' +
+              '<td style="padding:5px 8px;font-size:11px;white-space:nowrap;">' + escapeHtml(fmtCars(i)) + '</td>' +
+              '<td style="padding:5px 8px;font-size:11px;white-space:nowrap;color:var(--gray-500);">' + escapeHtml(i.required_mode || '—') + '</td>' +
+              '<td style="padding:5px 8px;font-size:11px;">' + reasonLabel + '</td>' +
+            '</tr>';
+          }).join('');
+          return '<div style="margin-top:14px;">' +
+            '<div style="font-size:11px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">' + draft.unplaced.length + ' run(s) left in backlog</div>' +
+            '<div style="overflow-x:auto;">' +
+            '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">' +
+              '<thead><tr style="background:#fef3c7;">' +
+                '<th style="text-align:left;padding:5px 8px;color:#92400e;font-weight:600;">Code</th>' +
+                '<th style="text-align:left;padding:5px 8px;color:#92400e;font-weight:600;">Zone</th>' +
+                '<th style="text-align:left;padding:5px 8px;color:#92400e;font-weight:600;">Also needs</th>' +
+                '<th style="text-align:left;padding:5px 8px;color:#92400e;font-weight:600;">Duration</th>' +
+                '<th style="text-align:center;padding:5px 8px;color:#92400e;font-weight:600;">Trains</th>' +
+                '<th style="text-align:left;padding:5px 8px;color:#92400e;font-weight:600;">Cars</th>' +
+                '<th style="text-align:left;padding:5px 8px;color:#92400e;font-weight:600;">Mode</th>' +
+                '<th style="text-align:left;padding:5px 8px;color:#92400e;font-weight:600;">Why backlog</th>' +
+              '</tr></thead><tbody>' + rows + '</tbody>' +
+            '</table></div></div>';
+        })() : '') +
       '</div>',
     footer:
       '<button class="form-secondary" onclick="closeModal()">Cancel</button>' +
