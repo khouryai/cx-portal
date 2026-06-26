@@ -32980,6 +32980,26 @@ async function _drwRunExtract() {
         included: !!(parsed.sheetNumber || parsed.sheetTitle || parsed.pageNumber),
       });
     }
+    // Cross-page deduplication: if the same title/sheetNumber/revision appears
+    // on the majority of included sheets it landed on a repeated banner, not the
+    // per-sheet value.  Clear it so the row shows as "needs review" in the table.
+    const _dedupField = (key, minFrac) => {
+      const src = sheets.filter(s => s.included && s[key]);
+      if (src.length < 2) return;
+      const counts = {};
+      src.forEach(s => { const v = s[key].trim().toUpperCase(); counts[v] = (counts[v]||0) + 1; });
+      const threshold = Math.max(2, Math.round(src.length * minFrac));
+      const banners = new Set(Object.entries(counts).filter(([,n])=>n>=threshold).map(([v])=>v));
+      if (!banners.size) return;
+      sheets.forEach(s => {
+        if (s[key] && banners.has(s[key].trim().toUpperCase())) {
+          s[key] = null;
+          if (key === 'sheetTitle' || key === 'sheetNumber') s.needsReview = true;
+        }
+      });
+    };
+    _dedupField('sheetTitle', 0.5);
+    _dedupField('revision', 0.8);
     _drwParsedSheets = sheets;
     _drwShowReview(numPages);
   } catch(e) {
@@ -33200,6 +33220,36 @@ async function _drwReviewRenderPage(pageNum) {
     // Center horizontally only when wider than the stage; otherwise left-align.
     if (stage) stage.style.justifyContent = viewport.width > maxW ? 'flex-start' : 'center';
     await page.render({ canvasContext: cv.getContext('2d'), viewport }).promise;
+    // Draw field-region overlays so the user can see exactly where calibration lands.
+    const _revLoc = _drwUploadMeta?.location;
+    const _revRegs = Object.keys(_drwFieldRegions).length > 0
+      ? _drwFieldRegions
+      : (_revLoc ? _drwLoadAllFieldRegions(_revLoc) : {});
+    if (Object.keys(_revRegs).length > 0) {
+      const ctx2 = cv.getContext('2d');
+      const lw = Math.max(2, cv.width / 300);
+      const fs = Math.max(11, Math.round(cv.width / 55));
+      _DRW_CAL_FIELDS.forEach(f => {
+        const r = _revRegs[f.key];
+        if (!r || !r.fw || !r.fh) return;
+        const rx = r.fx * cv.width, ry = r.fy * cv.height;
+        const rw = r.fw * cv.width,  rh = r.fh * cv.height;
+        ctx2.save();
+        ctx2.strokeStyle = f.color; ctx2.lineWidth = lw;
+        ctx2.setLineDash([8, 4]);
+        ctx2.strokeRect(rx + lw, ry + lw, rw - lw*2, rh - lw*2);
+        ctx2.fillStyle = f.color + '1a';
+        ctx2.fillRect(rx + lw, ry + lw, rw - lw*2, rh - lw*2);
+        ctx2.setLineDash([]);
+        ctx2.font = `bold ${fs}px sans-serif`;
+        const tw = ctx2.measureText(f.label).width;
+        ctx2.fillStyle = f.color + 'cc';
+        ctx2.fillRect(rx + lw, ry + lw, tw + 8, fs + 6);
+        ctx2.fillStyle = '#fff';
+        ctx2.fillText(f.label, rx + lw + 4, ry + lw + fs);
+        ctx2.restore();
+      });
+    }
     const zl = document.getElementById('drw-rev-zoom-label');
     if (zl) zl.textContent = _drwReviewZoomScale ? `${Math.round((_drwReviewZoomScale / _drwReviewFitScale) * 100)}%` : 'Fit';
   } catch (e) {
