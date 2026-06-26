@@ -40627,7 +40627,17 @@ function _dynSimSetPhase(p) { _dynPage.simPhase = p; _dynRenderSimulator(); }
 function _dynSimSelect(id) { _dynPage.simActiveByPhase = _dynPage.simActiveByPhase || {}; _dynPage.simActiveByPhase[_dynPage.simPhase] = id; _dynRenderSimulator(); }
 function _dynSimNew() {
   const arr = _dynSimScenarios();
-  const s = _dynSimDefaultScenario(null, _dynPage.simPhase);
+  const phase = _dynPage.simPhase;
+  const bl = _dynSimBaseline();
+  let s;
+  if (bl) {
+    s = JSON.parse(JSON.stringify(bl));
+    s.id = 'sim-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    s.name = 'Scenario ' + (arr.filter(x => (x.phase || '') === phase).length + 1);
+    s.baseline = false; s.snapshot = null; s.recals = [];
+  } else {
+    s = _dynSimDefaultScenario(null, phase);
+  }
   arr.push(s); _dynSimSaveScenarios(arr);
   _dynSimSelect(s.id);
 }
