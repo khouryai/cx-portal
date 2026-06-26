@@ -31965,7 +31965,7 @@ function _drwMatchSheetNum(s) {
 }
 
 function _drwBuildCells(items, W, H, region) {
-  let pdfXMin = 0, pdfXMax = W, pdfYMin = 0, pdfYMax = H * 0.3;
+  let pdfXMin = 0, pdfXMax = W, pdfYMin = 0, pdfYMax = H * 0.35;
   if (region && region.fw > 0.01 && region.fh > 0.01) {
     pdfYMax = H * (1 - region.fy);
     pdfYMin = H * (1 - region.fy - region.fh);
@@ -32012,11 +32012,11 @@ function _drwFindNearLabel(cells, labelRe, valueOk = (() => true), opts = {}) {
 }
 
 function _drwParseSheetInfo(items, W, H, fieldRegions) {
-  // fieldRegions: { sheetNumber: {fx,fy,fw,fh}, pageNumber: {...}, ... } or null/{}
-  // For each field with a calibrated region, text is pulled directly from that area.
-  // Uncalibrated fields fall back to label-anchored search on the bottom-strip cells.
+  // If a calibrated region exists for a field, text is pulled directly from
+  // that spatial area.  Otherwise falls back to the strategies below.
   const regs = (fieldRegions && typeof fieldRegions.fx !== 'number') ? (fieldRegions || {}) : {};
 
+  // baseCells: all text in the bottom 35% of the page (title-block strip).
   const baseCells = _drwBuildCells(items, W, H, null);
   if (!baseCells.length) {
     return { sheetNumber: null, sheetTitle: null, revision: null, pageNumber: null, discipline: 'General' };
@@ -32029,7 +32029,7 @@ function _drwParseSheetInfo(items, W, H, fieldRegions) {
     return fc.length ? fc : null;
   }
 
-  // ── Sheet number ──────────────────────────────────────────────────────────
+  // ── CONTRACT SHEET NO. ────────────────────────────────────────────────────
   let sheetNumber = null;
   const snCells = fieldCellsFor('sheetNumber');
   if (snCells) {
@@ -32058,34 +32058,20 @@ function _drwParseSheetInfo(items, W, H, fieldRegions) {
   }
   if (sheetNumber) sheetNumber = sheetNumber.toUpperCase();
 
-  // ── Page number ───────────────────────────────────────────────────────────
-  let pageNumber = null;
-  const pnCells = fieldCellsFor('pageNumber');
-  if (pnCells) {
-    for (const c of pnCells) {
-      if (/^\d{1,4}[A-Z]?$/i.test(c.str) && c.str !== sheetNumber) { pageNumber = c.str; break; }
-    }
-    if (!pageNumber && pnCells.length) pageNumber = pnCells[0].str;
-  } else {
-    pageNumber = _drwFindNearLabel(baseCells, /^(page|pg)\s*no\.?$/i,
-      s => /^\d{1,4}[A-Z]?$/i.test(s) && s !== sheetNumber);
-  }
-
-  // ── Revision ──────────────────────────────────────────────────────────────
+  // ── REV — short code only (01, A, B…), never prose text ──────────────────
   let revision = null;
   const rvCells = fieldCellsFor('revision');
   if (rvCells) {
     for (const c of rvCells) {
-      if (/^[A-Z0-9]{1,3}$/i.test(c.str) && !/^(OF|NO|TO|NTS)$/i.test(c.str)
-          && c.str !== (sheetNumber || '').slice(-1) && c.str !== pageNumber) {
+      if (/^[A-Z0-9]{1,3}$/.test(c.str) && !/^(OF|NO|TO|NTS|REV|D)$/i.test(c.str)) {
         revision = c.str.toUpperCase(); break;
       }
     }
     if (!revision && rvCells.length) revision = rvCells[0].str.toUpperCase();
   } else {
     revision = _drwFindNearLabel(baseCells, /^rev\.?(ision)?$/i,
-      s => /^[A-Z0-9]{1,3}$/i.test(s) && !/^(OF|NO|TO|NTS)$/i.test(s)
-        && s !== (sheetNumber || '').slice(-1) && s !== pageNumber);
+      s => /^[A-Z0-9]{1,3}$/.test(s.trim()) && !/^(OF|NO|TO|NTS|REV|REVISION|D)$/i.test(s.trim()),
+      { maxDist: 200 });
     if (!revision) {
       for (const c of baseCells) {
         const m = c.str.match(/^rev\.?(?:ision)?[:.\s]+([A-Z0-9]{1,3})$/i);
@@ -32095,43 +32081,76 @@ function _drwParseSheetInfo(items, W, H, fieldRegions) {
   }
   if (revision) revision = revision.toUpperCase();
 
-  // ── Title ─────────────────────────────────────────────────────────────────
+  // ── PAGE NO. — digits only ────────────────────────────────────────────────
+  let pageNumber = null;
+  const pnCells = fieldCellsFor('pageNumber');
+  if (pnCells) {
+    for (const c of pnCells) {
+      if (/^\d{1,4}$/.test(c.str.trim()) && c.str !== sheetNumber) { pageNumber = c.str.trim(); break; }
+    }
+    if (!pageNumber && pnCells.length) pageNumber = pnCells[0].str;
+  } else {
+    pageNumber = _drwFindNearLabel(baseCells, /^(page|pg)\s*no\.?$/i,
+      s => /^\d{1,4}$/.test(s.trim()) && s !== sheetNumber,
+      { maxDist: 200 });
+  }
+
+  // ── TITLE — template anchor: before "DESIGN-BUILD" banner in PDF stream ───
+  // In this CBTC drawing template the CAD software writes the per-sheet title
+  // text into the PDF content stream BEFORE the "DESIGN-BUILD OF A
+  // COMMUNICATIONS BASED TRAIN CONTROL (CBTC) SYSTEM" banner object.
+  // Strategy: find the banner item, collect items that (a) appear before it
+  // in the stream AND (b) sit spatially below the banner (lower PDF y-coord)
+  // within the left column (x < 65% of page width, the title-text area).
+  // Multi-line titles are sorted top→bottom and joined with spaces.
   let sheetTitle = null;
   const stCells = fieldCellsFor('sheetTitle');
   if (stCells) {
-    // Filter out banners/labels so a mis-aimed region (pointed at the project
-    // description banner) doesn't poison every row.  If cands is empty after
-    // filtering we fall through to the label-anchored search below rather than
-    // using the raw banner text as the title.
-    const cands = stCells.filter(c => c.str.length >= 3 && !_drwIsLabel(c.str) && !_drwIsBanner(c.str) && !_drwMatchSheetNum(c.str) && !/^\d+$/.test(c.str));
-    if (cands.length) sheetTitle = cands.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
+    const cands = stCells.filter(c =>
+      c.str.length >= 3 && !_drwIsLabel(c.str) && !_drwIsBanner(c.str)
+      && !_drwMatchSheetNum(c.str) && !/^\d+$/.test(c.str));
+    if (cands.length) {
+      sheetTitle = [...cands].sort((a, b) => b.y - a.y).map(c => c.str).join(' ');
+    }
   }
   if (!sheetTitle) {
-    // Label-anchored first: find text explicitly near a "TITLE" or "DRAWING TITLE" label.
+    const bannerIdx = items.findIndex(it => /design[\s-]+build/i.test((it.str || '').trim()));
+    if (bannerIdx > 0) {
+      const bannerY = items[bannerIdx].transform[5];
+      const titleLines = items
+        .slice(0, bannerIdx)
+        .filter(it => {
+          const s = (it.str || '').trim();
+          const iy = it.transform[5], ix = it.transform[4];
+          return s.length >= 3
+            && iy < bannerY              // below banner in PDF y-coords
+            && iy > bannerY - H * 0.25  // within 25% page-height below banner
+            && ix < W * 0.65            // left column (title area, not right data column)
+            && !_drwIsLabel(s) && !_drwIsBanner(s) && !_drwMatchSheetNum(s)
+            && !/^\d{1,4}$/.test(s);
+        })
+        .sort((a, b) => b.transform[5] - a.transform[5]) // top→bottom reading order
+        .map(it => (it.str || '').trim());
+      if (titleLines.length) sheetTitle = titleLines.join(' ');
+    }
+  }
+  if (!sheetTitle) {
+    // Secondary: near an explicit "TITLE" / "DRAWING TITLE" label
     sheetTitle = _drwFindNearLabel(baseCells, /^(drawing\s*)?title$/i,
       s => s.length >= 4 && !_drwIsBanner(s) && !_drwIsLabel(s) && !_drwMatchSheetNum(s));
   }
   if (!sheetTitle) {
+    // Last resort: longest non-banner text in bottom strip
     const contractNo = _drwFindNearLabel(baseCells, /^contract\s*no\.?$/i, () => true);
-    const knownValues = new Set([sheetNumber, revision, pageNumber, contractNo].filter(Boolean).map(s => s.toString().toUpperCase()));
-    const titleCandidates = baseCells.filter(c => {
+    const known = new Set([sheetNumber, revision, pageNumber, contractNo].filter(Boolean).map(s => s.toUpperCase()));
+    const cands = baseCells.filter(c => {
       const s = c.str;
-      if (s.length < 4) return false;
-      if (_drwIsLabel(s)) return false;
-      if (_drwIsBanner(s)) return false;
-      if (knownValues.has(s.toUpperCase())) return false;
-      if (/^\d+$/.test(s)) return false;
-      if (/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(s)) return false;
-      if (/\.(dgn|dwg|pdf)\b/i.test(s)) return false;
-      if (_drwMatchSheetNum(s)) return false;
-      return true;
+      return s.length >= 4 && !_drwIsLabel(s) && !_drwIsBanner(s)
+        && !known.has(s.toUpperCase()) && !/^\d+$/.test(s)
+        && !/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(s)
+        && !/\.(dgn|dwg|pdf)\b/i.test(s) && !_drwMatchSheetNum(s);
     });
-    // Pick the longest candidate — don't bias toward the upper title-block area
-    // since project-name banners live there.  Banner patterns above handle the
-    // common offenders; longest-wins selects the most descriptive unique text.
-    if (titleCandidates.length) {
-      sheetTitle = titleCandidates.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
-    }
+    if (cands.length) sheetTitle = cands.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
   }
 
   return { sheetNumber, sheetTitle, revision, pageNumber, discipline: _drwDiscipline(sheetNumber) };
