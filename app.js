@@ -31886,6 +31886,13 @@ const _DRW_SHEET_PATTERNS = [
 
 const _DRW_FILENAME_RE = /([A-Z]{1,4}\d{2,}-[A-Z0-9]+(?:-\d+[A-Z]?)?)/i;
 
+const _DRW_CAL_FIELDS = [
+  { key: 'sheetNumber', label: 'Sheet #',  color: '#2563eb' },
+  { key: 'pageNumber',  label: 'Page #',   color: '#16a34a' },
+  { key: 'sheetTitle',  label: 'Title',    color: '#9333ea' },
+  { key: 'revision',    label: 'Revision', color: '#d97706' },
+];
+
 function _drwIsLabel(s) {
   const t = s.replace(/\s+/g, ' ').trim();
   return _DRW_LABELS.some(re => re.test(t));
@@ -31947,92 +31954,118 @@ function _drwFindNearLabel(cells, labelRe, valueOk = (() => true), opts = {}) {
   return cands.length ? cands[0].c.str.trim() : null;
 }
 
-function _drwParseSheetInfo(items, W, H, region) {
-  const cells = _drwBuildCells(items, W, H, region);
-  if (!cells.length) {
+function _drwParseSheetInfo(items, W, H, fieldRegions) {
+  // fieldRegions: { sheetNumber: {fx,fy,fw,fh}, pageNumber: {...}, ... } or null/{}
+  // For each field with a calibrated region, text is pulled directly from that area.
+  // Uncalibrated fields fall back to label-anchored search on the bottom-strip cells.
+  const regs = (fieldRegions && typeof fieldRegions.fx !== 'number') ? (fieldRegions || {}) : {};
+
+  const baseCells = _drwBuildCells(items, W, H, null);
+  if (!baseCells.length) {
     return { sheetNumber: null, sheetTitle: null, revision: null, pageNumber: null, discipline: 'General' };
   }
 
-  // ── Sheet number (label-anchored first, pattern fallback) ────────────────
-  let sheetNumber = _drwFindNearLabel(cells,
-    /^contract\s*sheet\s*no\.?$/i,
-    s => _drwMatchSheetNum(s),
-  );
-  if (!sheetNumber) {
-    sheetNumber = _drwFindNearLabel(cells,
-      /^(sheet|dwg|drawing)\s*no\.?$/i,
-      s => _drwMatchSheetNum(s),
-    );
+  function fieldCellsFor(key) {
+    const r = regs[key];
+    if (!r || !r.fw) return null;
+    const fc = _drwBuildCells(items, W, H, r);
+    return fc.length ? fc : null;
   }
-  // Pure pattern match — but exclude the cell adjacent to "CONTRACT NO." (which is
-  // a project-level contract number, not a sheet number).
-  if (!sheetNumber) {
-    const contractNoVal = _drwFindNearLabel(cells, /^contract\s*no\.?$/i, () => true);
-    for (const c of cells) {
-      if (c.str === contractNoVal) continue;
-      if (_drwMatchSheetNum(c.str) && !_drwIsLabel(c.str)) { sheetNumber = c.str.toUpperCase(); break; }
+
+  // ── Sheet number ──────────────────────────────────────────────────────────
+  let sheetNumber = null;
+  const snCells = fieldCellsFor('sheetNumber');
+  if (snCells) {
+    for (const c of snCells) {
+      if (_drwMatchSheetNum(c.str)) { sheetNumber = c.str.toUpperCase(); break; }
     }
-  }
-  // Fallback: pull from CADD FILENAME.
-  if (!sheetNumber) {
-    for (const c of cells) {
-      if (/\.(dgn|dwg|pdf)\b/i.test(c.str)) {
-        const m = c.str.match(_DRW_FILENAME_RE);
-        if (m) { sheetNumber = m[1].toUpperCase(); break; }
+    if (!sheetNumber && snCells.length) sheetNumber = snCells[0].str.toUpperCase();
+  } else {
+    sheetNumber = _drwFindNearLabel(baseCells, /^contract\s*sheet\s*no\.?$/i, s => _drwMatchSheetNum(s));
+    if (!sheetNumber) sheetNumber = _drwFindNearLabel(baseCells, /^(sheet|dwg|drawing)\s*no\.?$/i, s => _drwMatchSheetNum(s));
+    if (!sheetNumber) {
+      const contractNoVal = _drwFindNearLabel(baseCells, /^contract\s*no\.?$/i, () => true);
+      for (const c of baseCells) {
+        if (c.str === contractNoVal) continue;
+        if (_drwMatchSheetNum(c.str) && !_drwIsLabel(c.str)) { sheetNumber = c.str.toUpperCase(); break; }
+      }
+    }
+    if (!sheetNumber) {
+      for (const c of baseCells) {
+        if (/\.(dgn|dwg|pdf)\b/i.test(c.str)) {
+          const m = c.str.match(_DRW_FILENAME_RE);
+          if (m) { sheetNumber = m[1].toUpperCase(); break; }
+        }
       }
     }
   }
   if (sheetNumber) sheetNumber = sheetNumber.toUpperCase();
 
-  // ── Page number ──────────────────────────────────────────────────────────
-  // Always label-anchored — page numbers are bare digits that would match
-  // anything if we pattern-matched alone.
-  const pageNumber = _drwFindNearLabel(cells,
-    /^(page|pg)\s*no\.?$/i,
-    s => /^\d{1,4}[A-Z]?$/i.test(s) && s !== sheetNumber,
-  );
+  // ── Page number ───────────────────────────────────────────────────────────
+  let pageNumber = null;
+  const pnCells = fieldCellsFor('pageNumber');
+  if (pnCells) {
+    for (const c of pnCells) {
+      if (/^\d{1,4}[A-Z]?$/i.test(c.str) && c.str !== sheetNumber) { pageNumber = c.str; break; }
+    }
+    if (!pageNumber && pnCells.length) pageNumber = pnCells[0].str;
+  } else {
+    pageNumber = _drwFindNearLabel(baseCells, /^(page|pg)\s*no\.?$/i,
+      s => /^\d{1,4}[A-Z]?$/i.test(s) && s !== sheetNumber);
+  }
 
-  // ── Revision ─────────────────────────────────────────────────────────────
-  let revision = _drwFindNearLabel(cells,
-    /^rev\.?(ision)?$/i,
-    s => /^[A-Z0-9]{1,3}$/i.test(s)
-      && !/^(OF|NO|TO|NTS)$/i.test(s)
-      && s !== (sheetNumber || '').slice(-1)
-      && s !== pageNumber,
-  );
-  // Inline form: "REV. A" or "REV: 2" all in one text item.
-  if (!revision) {
-    for (const c of cells) {
-      const m = c.str.match(/^rev\.?(?:ision)?[:.\s]+([A-Z0-9]{1,3})$/i);
-      if (m) { revision = m[1]; break; }
+  // ── Revision ──────────────────────────────────────────────────────────────
+  let revision = null;
+  const rvCells = fieldCellsFor('revision');
+  if (rvCells) {
+    for (const c of rvCells) {
+      if (/^[A-Z0-9]{1,3}$/i.test(c.str) && !/^(OF|NO|TO|NTS)$/i.test(c.str)
+          && c.str !== (sheetNumber || '').slice(-1) && c.str !== pageNumber) {
+        revision = c.str.toUpperCase(); break;
+      }
+    }
+    if (!revision && rvCells.length) revision = rvCells[0].str.toUpperCase();
+  } else {
+    revision = _drwFindNearLabel(baseCells, /^rev\.?(ision)?$/i,
+      s => /^[A-Z0-9]{1,3}$/i.test(s) && !/^(OF|NO|TO|NTS)$/i.test(s)
+        && s !== (sheetNumber || '').slice(-1) && s !== pageNumber);
+    if (!revision) {
+      for (const c of baseCells) {
+        const m = c.str.match(/^rev\.?(?:ision)?[:.\s]+([A-Z0-9]{1,3})$/i);
+        if (m) { revision = m[1]; break; }
+      }
     }
   }
   if (revision) revision = revision.toUpperCase();
 
-  // ── Title ────────────────────────────────────────────────────────────────
-  // Strip project banner, labels, sheet/rev/page/contract values, dates, filenames.
-  const contractNo = _drwFindNearLabel(cells, /^contract\s*no\.?$/i, () => true);
-  const knownValues = new Set([sheetNumber, revision, pageNumber, contractNo].filter(Boolean).map(s => s.toString().toUpperCase()));
-  const titleCandidates = cells.filter(c => {
-    const s = c.str;
-    if (s.length < 4) return false;
-    if (_drwIsLabel(s)) return false;
-    if (_drwIsBanner(s)) return false;
-    if (knownValues.has(s.toUpperCase())) return false;
-    if (/^\d+$/.test(s)) return false;
-    if (/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(s)) return false;   // dates
-    if (/\.(dgn|dwg|pdf)\b/i.test(s)) return false;
-    if (_drwMatchSheetNum(s)) return false;
-    return true;
-  });
+  // ── Title ─────────────────────────────────────────────────────────────────
   let sheetTitle = null;
-  if (titleCandidates.length) {
-    // Prefer cells in the upper portion of the region (drawing titles sit
-    // above the sheet-number / rev block in a typical title block).
-    const ySorted = [...titleCandidates].sort((a, b) => b.y - a.y); // higher y = upper
-    const upper   = ySorted.slice(0, Math.max(3, Math.ceil(ySorted.length / 2)));
-    const pool    = upper.length ? upper : titleCandidates;
-    sheetTitle    = pool.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
+  const stCells = fieldCellsFor('sheetTitle');
+  if (stCells) {
+    const cands = stCells.filter(c => c.str.length >= 3 && !_drwIsLabel(c.str) && !_drwIsBanner(c.str) && !_drwMatchSheetNum(c.str) && !/^\d+$/.test(c.str));
+    const pool = cands.length ? cands : stCells;
+    if (pool.length) sheetTitle = pool.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
+  } else {
+    const contractNo = _drwFindNearLabel(baseCells, /^contract\s*no\.?$/i, () => true);
+    const knownValues = new Set([sheetNumber, revision, pageNumber, contractNo].filter(Boolean).map(s => s.toString().toUpperCase()));
+    const titleCandidates = baseCells.filter(c => {
+      const s = c.str;
+      if (s.length < 4) return false;
+      if (_drwIsLabel(s)) return false;
+      if (_drwIsBanner(s)) return false;
+      if (knownValues.has(s.toUpperCase())) return false;
+      if (/^\d+$/.test(s)) return false;
+      if (/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(s)) return false;
+      if (/\.(dgn|dwg|pdf)\b/i.test(s)) return false;
+      if (_drwMatchSheetNum(s)) return false;
+      return true;
+    });
+    if (titleCandidates.length) {
+      const ySorted = [...titleCandidates].sort((a, b) => b.y - a.y);
+      const upper   = ySorted.slice(0, Math.max(3, Math.ceil(ySorted.length / 2)));
+      const pool    = upper.length ? upper : titleCandidates;
+      sheetTitle    = pool.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
+    }
   }
 
   return { sheetNumber, sheetTitle, revision, pageNumber, discipline: _drwDiscipline(sheetNumber) };
@@ -32537,18 +32570,24 @@ function _drwSheetCard(sheet) {
 let _drwUploadMeta    = null;
 let _drwParsedSheets  = [];
 let _drwUploadPdfDoc  = null;
-let _drwTitleRegion   = null;
-let _drwCalSel        = { active: false, x0:0, y0:0, x1:0, y1:0 };
-let _drwCalPage       = 1;
-let _drwCalRendering  = false;
+let _drwFieldRegions   = {};
+let _drwCalActiveField = 'sheetNumber';
+let _drwCalSel         = { active: false, x0:0, y0:0, x1:0, y1:0 };
+let _drwCalPage        = 1;
+let _drwCalRendering   = false;
 
-function _drwRegionKey(loc) { return `drw_tb_${loc}`; }
-function _drwLoadRegion(loc) { try { return JSON.parse(localStorage.getItem(_drwRegionKey(loc))); } catch { return null; } }
-function _drwSaveRegion(loc, r) { localStorage.setItem(_drwRegionKey(loc), JSON.stringify(r)); }
+function _drwFieldRegionKey(loc, k) { return 'drw_field_' + k + '_' + loc; }
+function _drwLoadFieldRegion(loc, k) { try { return JSON.parse(localStorage.getItem(_drwFieldRegionKey(loc, k))); } catch { return null; } }
+function _drwSaveFieldRegion(loc, k, r) { localStorage.setItem(_drwFieldRegionKey(loc, k), JSON.stringify(r)); }
+function _drwLoadAllFieldRegions(loc) {
+  const regs = {};
+  _DRW_CAL_FIELDS.forEach(f => { const r = _drwLoadFieldRegion(loc, f.key); if (r) regs[f.key] = r; });
+  return regs;
+}
 
 function _drwCloseUpload() {
   closeModal();
-  _drwUploadMeta = null; _drwParsedSheets = []; _drwUploadPdfDoc = null; _drwTitleRegion = null;
+  _drwUploadMeta = null; _drwParsedSheets = []; _drwUploadPdfDoc = null; _drwFieldRegions = {}; _drwCalActiveField = 'sheetNumber';
   _drwCalPage = 1; _drwCalRendering = false;
 }
 
@@ -32654,73 +32693,81 @@ async function _drwStep1Next() {
 }
 
 async function _drwShowCalibrate() {
-  const loc        = _drwUploadMeta.location;
-  const savedRegion = _drwLoadRegion(loc);
-  const numPages   = _drwUploadPdfDoc.numPages;
+  const loc      = _drwUploadMeta.location;
+  _drwFieldRegions   = _drwLoadAllFieldRegions(loc);
+  _drwCalActiveField = 'sheetNumber';
+  const numPages = _drwUploadPdfDoc.numPages;
   _drwCalPage = Math.min(Math.max(1, _drwCalPage || 1), numPages);
 
-  // Switch to extra-large modal — fills most of the viewport so the PDF is readable
   const modalEl = document.querySelector('#modal-overlay .modal');
   modalEl.className = 'modal modal-large';
   modalEl.style.maxWidth  = '98vw';
   modalEl.style.width     = '98vw';
   modalEl.style.maxHeight = '95vh';
-  document.querySelector('#modal-overlay .modal-head .modal-title').textContent = 'Calibrate Title Block';
+  document.querySelector('#modal-overlay .modal-head .modal-title').textContent = 'Calibrate Fields';
   const subEl = document.querySelector('#modal-overlay .modal-head .modal-sub');
-  if (subEl) subEl.textContent = 'Navigate to a sheet with a normal title block, then drag a box over the title block. The region applies to every page.';
+  if (subEl) subEl.textContent = 'Navigate to a sheet, select a field, then drag a box around where that value appears. Regions are saved per location.';
 
-  document.querySelector('#modal-overlay .modal-body').innerHTML = `
-    <div style="display:flex;gap:16px;align-items:flex-start;">
-      <div style="flex:1;min-width:0;">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
-          <button class="admin-action-btn-secondary" id="drw-cal-prev" style="padding:6px 12px;font-size:13px;">◀ Prev</button>
-          <span style="font-size:13px;color:var(--gray-700);">Page</span>
-          <input id="drw-cal-page-input" type="number" min="1" max="${numPages}" value="${_drwCalPage}"
-                 style="width:64px;padding:5px 8px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px;text-align:center;" />
-          <span style="font-size:13px;color:var(--gray-500);">of ${numPages}</span>
-          <button class="admin-action-btn-secondary" id="drw-cal-next" style="padding:6px 12px;font-size:13px;">Next ▶</button>
-          <span style="flex:1;"></span>
-          <span style="font-size:12px;color:var(--gray-500);">
-            ${savedRegion
-              ? `<span style="color:var(--good);font-weight:600;">✓ Saved region for ${escapeHtml(loc)}</span> — redraw to change, or Extract to use as-is.`
-              : `Skip past cover pages — pick a sheet with a real title block.`}
-          </span>
-        </div>
-        <div id="drw-cal-stage" style="position:relative;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:300px;">
-          <canvas id="drw-cal-pdf" style="display:block;"></canvas>
-          <canvas id="drw-cal-sel" style="position:absolute;cursor:crosshair;"></canvas>
-        </div>
-      </div>
-      <div style="width:210px;flex-shrink:0;">
-        <div style="font-size:12px;font-weight:700;color:var(--gray-700);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">How it works</div>
-        <ol style="font-size:12px;color:var(--gray-600);padding-left:16px;line-height:1.7;margin:0;">
-          <li>Use Prev / Next to find a sheet with a normal title block (cover pages often have none)</li>
-          <li>Drag a box over the title block on that page</li>
-          <li>The region is saved per location and reused for future imports</li>
-          <li>Click <strong>Extract →</strong> to scan every page using that region</li>
-        </ol>
-        <div id="drw-cal-info" style="margin-top:14px;padding:10px;background:var(--gray-50);border-radius:6px;font-size:11px;color:var(--gray-500);line-height:1.6;">
-          ${savedRegion ? `<span style="color:var(--good);">✓ Saved region loaded</span>` : 'No region selected yet'}
-        </div>
-        <button class="admin-action-btn-secondary" onclick="_drwCalClear()" style="margin-top:8px;font-size:12px;padding:6px 12px;width:100%;">Clear Selection</button>
-      </div>
-    </div>`;
+  const savedCount = Object.keys(_drwFieldRegions).length;
+  const fieldBtnsHTML = _DRW_CAL_FIELDS.map(f => {
+    const hasSaved = !!_drwFieldRegions[f.key];
+    return '<button id="drw-cal-field-' + f.key + '" onclick="_drwCalSetField(\'' + f.key + '\')" aria-label="Calibrate ' + f.label + ' field"'
+      + ' style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--gray-200);background:var(--gray-50);cursor:pointer;font-size:12px;color:var(--gray-600);font-weight:500;text-align:left;">'
+      + '<span style="display:inline-block;width:10px;height:10px;flex-shrink:0;border-radius:2px;background:' + f.color + ';"></span>'
+      + escapeHtml(f.label)
+      + '<span id="drw-cal-check-' + f.key + '" style="margin-left:auto;font-size:11px;color:var(--good);">' + (hasSaved ? '✓' : '') + '</span>'
+      + '</button>';
+  }).join('');
 
-  document.querySelector('#modal-overlay .modal-footer').innerHTML = `
-    <button class="admin-action-btn-secondary" onclick="_drwOpenUpload()">← Back</button>
-    <button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Cancel</button>
-    <button class="admin-action-btn" onclick="_drwRunExtract()">Extract with Region →</button>`;
+  document.querySelector('#modal-overlay .modal-body').innerHTML = '<div style="display:flex;gap:16px;align-items:flex-start;">'
+    + '<div style="flex:1;min-width:0;">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">'
+    + '<button class="admin-action-btn-secondary" id="drw-cal-prev" style="padding:6px 12px;font-size:13px;">◀ Prev</button>'
+    + '<span style="font-size:13px;color:var(--gray-700);">Page</span>'
+    + '<input id="drw-cal-page-input" type="number" min="1" max="' + numPages + '" value="' + _drwCalPage + '" style="width:64px;padding:5px 8px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px;text-align:center;" />'
+    + '<span style="font-size:13px;color:var(--gray-500);">of ' + numPages + '</span>'
+    + '<button class="admin-action-btn-secondary" id="drw-cal-next" style="padding:6px 12px;font-size:13px;">Next ▶</button>'
+    + '<span style="flex:1;"></span>'
+    + '<span style="font-size:12px;color:var(--gray-500);">'
+    + (savedCount > 0
+        ? '<span style="color:var(--good);font-weight:600;">✓ ' + savedCount + ' of ' + _DRW_CAL_FIELDS.length + ' fields calibrated for ' + escapeHtml(loc) + '</span>'
+        : 'Select a field below, then drag a box over where it appears on the page.')
+    + '</span>'
+    + '</div>'
+    + '<div id="drw-cal-stage" style="position:relative;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:300px;">'
+    + '<canvas id="drw-cal-pdf" style="display:block;"></canvas>'
+    + '<canvas id="drw-cal-sel" style="position:absolute;cursor:crosshair;"></canvas>'
+    + '</div>'
+    + '</div>'
+    + '<div style="width:220px;flex-shrink:0;">'
+    + '<div style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Fields</div>'
+    + '<div style="display:flex;flex-direction:column;gap:4px;" id="drw-cal-field-bar">' + fieldBtnsHTML + '</div>'
+    + '<div id="drw-cal-info" style="margin-top:12px;padding:10px;background:var(--gray-50);border-radius:6px;font-size:11px;color:var(--gray-500);line-height:1.6;">Select a field above, then draw a box around it</div>'
+    + '<button class="admin-action-btn-secondary" onclick="_drwCalClear()" style="margin-top:8px;font-size:12px;padding:6px 12px;width:100%;">Clear Field Region</button>'
+    + '<div style="margin-top:14px;font-size:11px;color:var(--gray-500);line-height:1.7;">'
+    + '<div style="font-weight:700;color:var(--gray-600);margin-bottom:4px;">How it works</div>'
+    + '<ol style="padding-left:14px;margin:0;">'
+    + '<li>Navigate to a sheet with a full title block</li>'
+    + '<li>Click a field button to select it</li>'
+    + '<li>Drag a box around that field\'s value on the PDF</li>'
+    + '<li>Repeat for each field to calibrate</li>'
+    + '<li>Fields without a region use auto-detection</li>'
+    + '</ol>'
+    + '</div>'
+    + '</div>'
+    + '</div>';
 
-  if (savedRegion) _drwTitleRegion = savedRegion;
+  document.querySelector('#modal-overlay .modal-footer').innerHTML = ''
+    + '<button class="admin-action-btn-secondary" onclick="_drwOpenUpload()">← Back</button>'
+    + '<button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Cancel</button>'
+    + '<button class="admin-action-btn" onclick="_drwRunExtract()">Extract with Regions →</button>';
 
   // Wire navigation
-  const prevBtn = document.getElementById('drw-cal-prev');
-  const nextBtn = document.getElementById('drw-cal-next');
-  const pageInp = document.getElementById('drw-cal-page-input');
-  prevBtn.onclick = () => _drwCalGoToPage(_drwCalPage - 1);
-  nextBtn.onclick = () => _drwCalGoToPage(_drwCalPage + 1);
-  pageInp.onchange = () => _drwCalGoToPage(parseInt(pageInp.value, 10) || 1);
+  document.getElementById('drw-cal-prev').onclick = () => _drwCalGoToPage(_drwCalPage - 1);
+  document.getElementById('drw-cal-next').onclick = () => _drwCalGoToPage(_drwCalPage + 1);
+  document.getElementById('drw-cal-page-input').onchange = function() { _drwCalGoToPage(parseInt(this.value, 10) || 1); };
 
+  _drwCalUpdateFieldBar();
   await _drwCalRenderPage(_drwCalPage);
 }
 
@@ -32740,7 +32787,6 @@ async function _drwCalRenderPage(pageNum) {
   try {
     const page  = await _drwUploadPdfDoc.getPage(pageNum);
     const vp0   = page.getViewport({ scale: 1 });
-    // Size to fill the available stage area (modal is 98vw, sidebar ~210px + gap/padding)
     const stage = document.getElementById('drw-cal-stage');
     const maxW  = Math.max(400, (stage?.clientWidth  || window.innerWidth  * 0.7) - 4);
     const maxH  = Math.max(300, Math.min(window.innerHeight * 0.72, 900));
@@ -32756,16 +32802,10 @@ async function _drwCalRenderPage(pageNum) {
     selCv.style.left = pdfCv.offsetLeft + 'px';
     selCv.style.top  = pdfCv.offsetTop + 'px';
     await page.render({ canvasContext: pdfCv.getContext('2d'), viewport }).promise;
-    // Keep selection canvas aligned after render
     selCv.style.left = pdfCv.offsetLeft + 'px';
     selCv.style.top  = pdfCv.offsetTop + 'px';
 
-    if (_drwTitleRegion) {
-      const saved = _drwLoadRegion(_drwUploadMeta?.location);
-      const isSaved = saved && saved.fx === _drwTitleRegion.fx && saved.fy === _drwTitleRegion.fy
-                            && saved.fw === _drwTitleRegion.fw && saved.fh === _drwTitleRegion.fh;
-      _drwDrawCalSel(selCv, _drwTitleRegion, !!isSaved);
-    }
+    _drwCalRedrawRegions(selCv, null);
 
     _drwCalSel = { active: false, x0:0, y0:0, x1:0, y1:0 };
     selCv.onpointerdown = _drwCalDown;
@@ -32776,18 +32816,71 @@ async function _drwCalRenderPage(pageNum) {
   }
 }
 
-function _drwDrawCalSel(canvas, r, saved) {
+function _drwDrawFieldRegion(canvas, r, color, isActive) {
   const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (!r) return;
   const x = r.fx*canvas.width, y = r.fy*canvas.height, w = r.fw*canvas.width, h = r.fh*canvas.height;
-  ctx.strokeStyle = saved ? '#16a34a' : 'var(--hitachi-red)';
-  ctx.lineWidth = 2;
-  ctx.setLineDash(saved ? [] : [6,4]);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = isActive ? 2.5 : 1.5;
+  ctx.setLineDash(isActive ? [] : [5,3]);
   ctx.strokeRect(x, y, w, h);
-  ctx.fillStyle = saved ? 'rgba(22,163,74,0.08)' : 'rgba(230,0,18,0.08)';
+  ctx.fillStyle = color + (isActive ? '22' : '11');
   ctx.fillRect(x, y, w, h);
   ctx.setLineDash([]);
+  if (isActive) {
+    const field = _DRW_CAL_FIELDS.find(f => f.key === _drwCalActiveField);
+    if (field) {
+      ctx.font = 'bold 11px sans-serif';
+      ctx.fillStyle = color;
+      ctx.fillText(field.label, x + 4, y + 13);
+    }
+  }
+}
+
+function _drwCalRedrawRegions(canvas, dragReg) {
+  canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+  _DRW_CAL_FIELDS.forEach(f => {
+    const r = (f.key === _drwCalActiveField && dragReg) ? dragReg : _drwFieldRegions[f.key];
+    if (r) _drwDrawFieldRegion(canvas, r, f.color, f.key === _drwCalActiveField);
+  });
+}
+
+function _drwCalSetField(key) {
+  _drwCalActiveField = key;
+  _drwCalUpdateFieldBar();
+  const c = document.getElementById('drw-cal-sel');
+  if (c) _drwCalRedrawRegions(c, null);
+  _drwCalUpdateInfo();
+}
+
+function _drwCalUpdateFieldBar() {
+  _DRW_CAL_FIELDS.forEach(f => {
+    const btn = document.getElementById('drw-cal-field-' + f.key);
+    if (!btn) return;
+    const isActive = f.key === _drwCalActiveField;
+    const hasRegion = !!_drwFieldRegions[f.key];
+    btn.style.background   = isActive ? f.color : (hasRegion ? f.color + '18' : 'var(--gray-50)');
+    btn.style.color        = isActive ? '#fff'   : (hasRegion ? f.color        : 'var(--gray-600)');
+    btn.style.borderColor  = isActive ? f.color  : (hasRegion ? f.color        : 'var(--gray-200)');
+    btn.style.fontWeight   = isActive ? '600'    : '500';
+    const chk = document.getElementById('drw-cal-check-' + f.key);
+    if (chk) chk.textContent = hasRegion ? '✓' : '';
+  });
+}
+
+function _drwCalUpdateInfo() {
+  const info = document.getElementById('drw-cal-info');
+  if (!info) return;
+  const field = _DRW_CAL_FIELDS.find(f => f.key === _drwCalActiveField);
+  if (!field) return;
+  const r = _drwFieldRegions[_drwCalActiveField];
+  if (r) {
+    info.innerHTML = '<span style="color:' + field.color + ';font-weight:600;">' + escapeHtml(field.label) + '</span> region set<br>'
+      + 'x=' + Math.round(r.fx*100) + '% y=' + Math.round(r.fy*100) + '%<br>'
+      + 'w=' + Math.round(r.fw*100) + '% h=' + Math.round(r.fh*100) + '%<br>'
+      + '<span style="font-size:10px;color:var(--gray-400);">Redraw to change</span>';
+  } else {
+    info.innerHTML = 'Draw a box around the <strong>' + escapeHtml(field.label) + '</strong> value on the PDF';
+  }
 }
 
 function _drwCalDown(e) {
@@ -32799,7 +32892,7 @@ function _drwCalMove(e) {
   if (!_drwCalSel.active) return;
   const c = document.getElementById('drw-cal-sel'), r = c.getBoundingClientRect();
   _drwCalSel.x1 = e.clientX-r.left; _drwCalSel.y1 = e.clientY-r.top;
-  _drwDrawCalSel(c, { fx:Math.min(_drwCalSel.x0,_drwCalSel.x1)/c.width, fy:Math.min(_drwCalSel.y0,_drwCalSel.y1)/c.height, fw:Math.abs(_drwCalSel.x1-_drwCalSel.x0)/c.width, fh:Math.abs(_drwCalSel.y1-_drwCalSel.y0)/c.height }, false);
+  _drwCalRedrawRegions(c, { fx:Math.min(_drwCalSel.x0,_drwCalSel.x1)/c.width, fy:Math.min(_drwCalSel.y0,_drwCalSel.y1)/c.height, fw:Math.abs(_drwCalSel.x1-_drwCalSel.x0)/c.width, fh:Math.abs(_drwCalSel.y1-_drwCalSel.y0)/c.height });
 }
 function _drwCalUp(e) {
   if (!_drwCalSel.active) return;
@@ -32807,21 +32900,22 @@ function _drwCalUp(e) {
   const c = document.getElementById('drw-cal-sel');
   const reg = { fx:Math.min(_drwCalSel.x0,_drwCalSel.x1)/c.width, fy:Math.min(_drwCalSel.y0,_drwCalSel.y1)/c.height, fw:Math.abs(_drwCalSel.x1-_drwCalSel.x0)/c.width, fh:Math.abs(_drwCalSel.y1-_drwCalSel.y0)/c.height };
   if (reg.fw < 0.02 || reg.fh < 0.02) return;
-  _drwTitleRegion = reg;
-  _drwDrawCalSel(c, reg, false);
-  const info = document.getElementById('drw-cal-info');
-  if (info) info.innerHTML = `Region selected<br>x=${Math.round(reg.fx*100)}% y=${Math.round(reg.fy*100)}%<br>w=${Math.round(reg.fw*100)}% h=${Math.round(reg.fh*100)}%<br><span style="color:var(--hitachi-red);font-weight:600;">Will be saved for ${escapeHtml(_drwUploadMeta?.location||'')}</span>`;
+  _drwFieldRegions[_drwCalActiveField] = reg;
+  _drwCalRedrawRegions(c, null);
+  _drwCalUpdateInfo();
+  _drwCalUpdateFieldBar();
 }
 function _drwCalClear() {
-  _drwTitleRegion = null;
+  delete _drwFieldRegions[_drwCalActiveField];
   const c = document.getElementById('drw-cal-sel');
-  if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
-  const info = document.getElementById('drw-cal-info');
-  if (info) info.textContent = 'No region selected yet';
+  if (c) _drwCalRedrawRegions(c, null);
+  _drwCalUpdateInfo();
+  _drwCalUpdateFieldBar();
 }
 
 async function _drwRunExtract() {
-  if (_drwTitleRegion && _drwUploadMeta?.location) _drwSaveRegion(_drwUploadMeta.location, _drwTitleRegion);
+  const _loc = _drwUploadMeta?.location;
+  if (_loc) _DRW_CAL_FIELDS.forEach(f => { if (_drwFieldRegions[f.key]) _drwSaveFieldRegion(_loc, f.key, _drwFieldRegions[f.key]); });
   const numPages = _drwUploadPdfDoc.numPages;
 
   document.querySelector('#modal-overlay .modal-body').innerHTML = `
@@ -32842,7 +32936,7 @@ async function _drwRunExtract() {
       const page     = await _drwUploadPdfDoc.getPage(i);
       const viewport = page.getViewport({ scale: 1 });
       const content  = await page.getTextContent();
-      const parsed   = _drwParseSheetInfo(content.items, viewport.width, viewport.height, _drwTitleRegion);
+      const parsed   = _drwParseSheetInfo(content.items, viewport.width, viewport.height, _drwFieldRegions);
       sheets.push({
         pageIndex: i-1, ...parsed,
         needsReview: !parsed.sheetNumber || !parsed.sheetTitle,
