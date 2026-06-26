@@ -31884,35 +31884,45 @@ function _drwDisciplineListHTML() {
 // ── PDF text parsing ───────────────────────────────────────────────────────
 // Title-block field labels we must NOT confuse for values.
 const _DRW_LABELS = [
-  /^contract\s*sheet\s*no\.?$/i,
-  /^sheet\s*no\.?(\s*of\s*\d+)?$/i,
-  /^page\s*no\.?$/i,
-  /^pg\.?\s*no\.?$/i,
-  /^dwg\.?\s*no\.?$/i,
-  /^drawing\s*no\.?$/i,
-  /^drawing\s*number$/i,
-  /^drawing\s*title$/i,
-  /^rev\.?(ision)?$/i,
-  /^revisions?$/i,
-  /^scale$/i,
-  /^size$/i,
-  /^date$/i,
-  /^drawn\s*by$/i,
-  /^designed\s*by$/i,
-  /^approved\s*by$/i,
-  /^checked\s*by$/i,
-  /^title$/i,
-  /^sheet$/i,
+  /^contract\s*sheet\s*no\.?:?$/i,
+  /^sheet\s*no\.?:?(\s*of\s*\d+)?$/i,
+  /^page\s*no\.?:?$/i,
+  /^pg\.?\s*no\.?:?$/i,
+  /^dwg\.?\s*no\.?:?$/i,
+  /^drawing\s*no\.?:?$/i,
+  /^drawing\s*number:?$/i,
+  /^drawing\s*title:?$/i,
+  /^rev\.?(ision)?:?$/i,
+  /^revisions?:?$/i,
+  /^scale:?$/i,
+  /^size:?$/i,
+  /^date:?$/i,
+  /^drawn\s*by:?$/i,
+  /^designed\s*by:?$/i,
+  /^approved\s*by:?$/i,
+  /^checked\s*by:?$/i,
+  /^title:?$/i,
+  /^sheet:?$/i,
   /^of$/i,
   /^cadd\s*filename:?$/i,
   /^filename:?$/i,
   /^nts$/i,
   /^n\.t\.s\.?$/i,
-  /^project$/i,
-  /^description$/i,
+  /^project:?$/i,
+  /^description:?$/i,
   /^bart$/i,
-  /^contract\s*no\.?$/i,
-  /^contract$/i,
+  /^contract\s*no\.?:?$/i,
+  /^contract:?$/i,
+  // PLM / PDM system labels that appear in some title blocks
+  /^teamcenter(\s+(dwg|drawing|doc))?\s*(no\.?|number|#):?$/i,
+  /^[a-z][a-z\s]+(dwg|drawing|doc)\s*no\.?:$/i,  // e.g. "WBS DWG NO.:"
+  /^wbs\s*(no\.?|number)?:?$/i,
+  /^wbs\s*bs:?$/i,
+  /^cont\.?\s*on:?$/i,
+  /^field\s*office:?$/i,
+  /^master\s*copy:?$/i,
+  /^inspire\s*the\s*next:?$/i,
+  /^hitachi:?$/i,
 ];
 
 // Project-banner text that appears on every sheet — should NEVER be picked as a title.
@@ -31923,9 +31933,14 @@ const _DRW_BANNER_PATTERNS = [
   /\bCBTC\b/,
   /communications?\s+based\s+train\s+control/i,
   /train\s+control\s+\(?CBTC/i,
-  /\bBART\b.*(contract|project)/i,
+  /\bBART\b/i,                 // BART — always a project/agency name
   /\bBAY\s+AREA\b/i,           // "San Francisco Bay Area" project header
-  /^[A-Z\s]+\s+(RAPID\s+TRANSIT|TRANSIT\s+DISTRICT|TRANSIT\s+AUTHORITY)\b/i,
+  /rapid\s+transit/i,          // any transit authority name
+  /transit\s+district/i,
+  /transit\s+authority/i,
+  /\bHITACHI\b/i,              // company banner
+  /inspire\s+the\s+next/i,     // Hitachi tagline
+  /field\s+office\s+master/i,  // "FIELD OFFICE MASTER COPY" stamp
 ];
 
 // Sheet-number formats — checked in order from most specific to least.
