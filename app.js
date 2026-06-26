@@ -31924,6 +31924,8 @@ const _DRW_BANNER_PATTERNS = [
   /communications?\s+based\s+train\s+control/i,
   /train\s+control\s+\(?CBTC/i,
   /\bBART\b.*(contract|project)/i,
+  /\bBAY\s+AREA\b/i,           // "San Francisco Bay Area" project header
+  /^[A-Z\s]+\s+(RAPID\s+TRANSIT|TRANSIT\s+DISTRICT|TRANSIT\s+AUTHORITY)\b/i,
 ];
 
 // Sheet-number formats — checked in order from most specific to least.
@@ -32105,6 +32107,11 @@ function _drwParseSheetInfo(items, W, H, fieldRegions) {
     if (cands.length) sheetTitle = cands.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
   }
   if (!sheetTitle) {
+    // Label-anchored first: find text explicitly near a "TITLE" or "DRAWING TITLE" label.
+    sheetTitle = _drwFindNearLabel(baseCells, /^(drawing\s*)?title$/i,
+      s => s.length >= 4 && !_drwIsBanner(s) && !_drwIsLabel(s) && !_drwMatchSheetNum(s));
+  }
+  if (!sheetTitle) {
     const contractNo = _drwFindNearLabel(baseCells, /^contract\s*no\.?$/i, () => true);
     const knownValues = new Set([sheetNumber, revision, pageNumber, contractNo].filter(Boolean).map(s => s.toString().toUpperCase()));
     const titleCandidates = baseCells.filter(c => {
@@ -32119,11 +32126,11 @@ function _drwParseSheetInfo(items, W, H, fieldRegions) {
       if (_drwMatchSheetNum(s)) return false;
       return true;
     });
+    // Pick the longest candidate — don't bias toward the upper title-block area
+    // since project-name banners live there.  Banner patterns above handle the
+    // common offenders; longest-wins selects the most descriptive unique text.
     if (titleCandidates.length) {
-      const ySorted = [...titleCandidates].sort((a, b) => b.y - a.y);
-      const upper   = ySorted.slice(0, Math.max(3, Math.ceil(ySorted.length / 2)));
-      const pool    = upper.length ? upper : titleCandidates;
-      sheetTitle    = pool.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
+      sheetTitle = titleCandidates.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
     }
   }
 
@@ -32998,6 +33005,8 @@ function _drwCalUp(e) {
   _drwCalUpdateFieldBar();
 }
 function _drwCalClear() {
+  const loc = _drwUploadMeta?.location;
+  if (loc) localStorage.removeItem(_drwFieldRegionKey(loc, _drwCalActiveField));
   delete _drwFieldRegions[_drwCalActiveField];
   const c = document.getElementById('drw-cal-sel');
   if (c) _drwCalRedrawRegions(c, null);
@@ -33007,7 +33016,10 @@ function _drwCalClear() {
 
 async function _drwRunExtract() {
   const _loc = _drwUploadMeta?.location;
-  if (_loc) _DRW_CAL_FIELDS.forEach(f => { if (_drwFieldRegions[f.key]) _drwSaveFieldRegion(_loc, f.key, _drwFieldRegions[f.key]); });
+  if (_loc) _DRW_CAL_FIELDS.forEach(f => {
+    if (_drwFieldRegions[f.key]) _drwSaveFieldRegion(_loc, f.key, _drwFieldRegions[f.key]);
+    else localStorage.removeItem(_drwFieldRegionKey(_loc, f.key));
+  });
   const numPages = _drwUploadPdfDoc.numPages;
 
   document.querySelector('#modal-overlay .modal-body').innerHTML = `
