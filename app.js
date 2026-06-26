@@ -27347,10 +27347,11 @@ async function _planningRecomputeConflicts(silentSuccess = false) {
     (byResource[er.resource_id] = byResource[er.resource_id] || []).push(ev);
   });
   Object.entries(byResource).forEach(([resId, evs]) => {
+    const r = PLANNING_RESOURCES.find(x => x.id === resId);
+    if (r?.kind === 'role') return; // role resources are shared/fungible, never double-booked
     for (let i = 0; i < evs.length; i++) {
       for (let j = i + 1; j < evs.length; j++) {
         if (_planningEventsOverlap(evs[i], evs[j])) {
-          const r = PLANNING_RESOURCES.find(x => x.id === resId);
           newConflicts.push({
             event_id: evs[i].id,
             resource_id: resId,
