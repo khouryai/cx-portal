@@ -23951,7 +23951,8 @@ function _laDetectAssignmentConflicts(resourceId, events) {
     }
 
     // Double-booked — resource already on a different overlapping event
-    (PLANNING_EVENT_RES || [])
+    // Role resources (kind='role') are shared/fungible and never conflict.
+    if (r?.kind !== 'role') (PLANNING_EVENT_RES || [])
       .filter(er => er.resource_id === resourceId && er.event_id !== ev.id)
       .forEach(er => {
         const other = (PLANNING_EVENTS || []).find(e => e.id === er.event_id);
