@@ -32577,6 +32577,8 @@ let _drwCalActiveField = 'sheetNumber';
 let _drwCalSel         = { active: false, x0:0, y0:0, x1:0, y1:0 };
 let _drwCalPage        = 1;
 let _drwCalRendering   = false;
+let _drwCalZoom        = 1.0;
+const _DRW_CAL_ZOOM_STEPS = [0.5, 0.75, 1, 1.5, 2, 3, 4, 6];
 
 function _drwFieldRegionKey(loc, k) { return 'drw_field_' + k + '_' + loc; }
 function _drwLoadFieldRegion(loc, k) { try { return JSON.parse(localStorage.getItem(_drwFieldRegionKey(loc, k))); } catch { return null; } }
@@ -32590,7 +32592,7 @@ function _drwLoadAllFieldRegions(loc) {
 function _drwCloseUpload() {
   closeModal();
   _drwUploadMeta = null; _drwParsedSheets = []; _drwUploadPdfDoc = null; _drwFieldRegions = {}; _drwCalActiveField = 'sheetNumber';
-  _drwCalPage = 1; _drwCalRendering = false;
+  _drwCalPage = 1; _drwCalRendering = false; _drwCalZoom = 1.0;
 }
 
 function _drwOpenUpload() {
@@ -32701,6 +32703,8 @@ async function _drwShowCalibrate() {
   const numPages = _drwUploadPdfDoc.numPages;
   _drwCalPage = Math.min(Math.max(1, _drwCalPage || 1), numPages);
 
+  _drwCalZoom = 1.0;
+
   const modalEl = document.querySelector('#modal-overlay .modal');
   modalEl.className = 'modal modal-large';
   modalEl.style.maxWidth  = '98vw';
@@ -32708,7 +32712,7 @@ async function _drwShowCalibrate() {
   modalEl.style.maxHeight = '95vh';
   document.querySelector('#modal-overlay .modal-head .modal-title').textContent = 'Calibrate Fields';
   const subEl = document.querySelector('#modal-overlay .modal-head .modal-sub');
-  if (subEl) subEl.textContent = 'Navigate to a sheet, select a field, then drag a box around where that value appears. Regions are saved per location.';
+  if (subEl) subEl.textContent = 'Zoom in to draw precise regions for each field. Regions are saved per location and reused.';
 
   const savedCount = Object.keys(_drwFieldRegions).length;
   const fieldBtnsHTML = _DRW_CAL_FIELDS.map(f => {
@@ -32723,22 +32727,26 @@ async function _drwShowCalibrate() {
 
   document.querySelector('#modal-overlay .modal-body').innerHTML = '<div style="display:flex;gap:16px;align-items:flex-start;">'
     + '<div style="flex:1;min-width:0;">'
-    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">'
     + '<button class="admin-action-btn-secondary" id="drw-cal-prev" style="padding:6px 12px;font-size:13px;">◀ Prev</button>'
     + '<span style="font-size:13px;color:var(--gray-700);">Page</span>'
-    + '<input id="drw-cal-page-input" type="number" min="1" max="' + numPages + '" value="' + _drwCalPage + '" style="width:64px;padding:5px 8px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px;text-align:center;" />'
+    + '<input id="drw-cal-page-input" type="number" min="1" max="' + numPages + '" value="' + _drwCalPage + '" style="width:56px;padding:5px 8px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px;text-align:center;" />'
     + '<span style="font-size:13px;color:var(--gray-500);">of ' + numPages + '</span>'
     + '<button class="admin-action-btn-secondary" id="drw-cal-next" style="padding:6px 12px;font-size:13px;">Next ▶</button>'
+    + '<span style="display:inline-block;width:1px;height:20px;background:var(--gray-200);margin:0 4px;"></span>'
+    + '<button class="admin-action-btn-secondary" id="drw-cal-zoom-out" aria-label="Zoom out" onclick="_drwCalChangeZoom(-1)" style="padding:4px 10px;font-size:15px;font-weight:700;line-height:1;">−</button>'
+    + '<span id="drw-cal-zoom-label" style="font-size:12px;font-weight:600;color:var(--gray-700);min-width:32px;text-align:center;">1×</span>'
+    + '<button class="admin-action-btn-secondary" id="drw-cal-zoom-in" aria-label="Zoom in" onclick="_drwCalChangeZoom(+1)" style="padding:4px 10px;font-size:15px;font-weight:700;line-height:1;">+</button>'
     + '<span style="flex:1;"></span>'
     + '<span style="font-size:12px;color:var(--gray-500);">'
     + (savedCount > 0
         ? '<span style="color:var(--good);font-weight:600;">✓ ' + savedCount + ' of ' + _DRW_CAL_FIELDS.length + ' fields calibrated for ' + escapeHtml(loc) + '</span>'
-        : 'Select a field below, then drag a box over where it appears on the page.')
+        : 'Zoom in, then drag a box over each field value.')
     + '</span>'
     + '</div>'
-    + '<div id="drw-cal-stage" style="position:relative;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:300px;">'
+    + '<div id="drw-cal-stage" style="position:relative;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:6px;overflow:auto;min-height:300px;max-height:72vh;">'
     + '<canvas id="drw-cal-pdf" style="display:block;"></canvas>'
-    + '<canvas id="drw-cal-sel" style="position:absolute;cursor:crosshair;"></canvas>'
+    + '<canvas id="drw-cal-sel" style="position:absolute;top:0;left:0;cursor:crosshair;"></canvas>'
     + '</div>'
     + '</div>'
     + '<div style="width:220px;flex-shrink:0;">'
@@ -32783,6 +32791,33 @@ async function _drwCalGoToPage(n) {
   await _drwCalRenderPage(target);
 }
 
+async function _drwCalChangeZoom(dir) {
+  const idx = _DRW_CAL_ZOOM_STEPS.indexOf(_drwCalZoom);
+  const next = _DRW_CAL_ZOOM_STEPS[Math.max(0, Math.min(_DRW_CAL_ZOOM_STEPS.length - 1, idx + dir))];
+  if (next === _drwCalZoom) return;
+
+  // Preserve the scroll center fraction so the same spot stays centered after zoom
+  const stage = document.getElementById('drw-cal-stage');
+  const centerFx = stage ? (stage.scrollLeft + stage.clientWidth / 2)  / (stage.scrollWidth  || 1) : 0.5;
+  const centerFy = stage ? (stage.scrollTop  + stage.clientHeight / 2) / (stage.scrollHeight || 1) : 0.5;
+
+  _drwCalZoom = next;
+  const lbl = document.getElementById('drw-cal-zoom-label');
+  if (lbl) lbl.textContent = (next === 1 ? '1' : next < 1 ? next.toFixed(2).replace(/\.?0+$/, '') : next % 1 === 0 ? String(next) : next.toFixed(1)) + '×';
+  const zOut = document.getElementById('drw-cal-zoom-out');
+  const zIn  = document.getElementById('drw-cal-zoom-in');
+  if (zOut) zOut.disabled = _drwCalZoom <= _DRW_CAL_ZOOM_STEPS[0];
+  if (zIn)  zIn.disabled  = _drwCalZoom >= _DRW_CAL_ZOOM_STEPS[_DRW_CAL_ZOOM_STEPS.length - 1];
+
+  await _drwCalRenderPage(_drwCalPage);
+
+  // Restore scroll center
+  if (stage) {
+    stage.scrollLeft = centerFx * stage.scrollWidth  - stage.clientWidth  / 2;
+    stage.scrollTop  = centerFy * stage.scrollHeight - stage.clientHeight / 2;
+  }
+}
+
 async function _drwCalRenderPage(pageNum) {
   if (_drwCalRendering) return;
   _drwCalRendering = true;
@@ -32790,22 +32825,20 @@ async function _drwCalRenderPage(pageNum) {
     const page  = await _drwUploadPdfDoc.getPage(pageNum);
     const vp0   = page.getViewport({ scale: 1 });
     const stage = document.getElementById('drw-cal-stage');
-    const maxW  = Math.max(400, (stage?.clientWidth  || window.innerWidth  * 0.7) - 4);
-    const maxH  = Math.max(300, Math.min(window.innerHeight * 0.72, 900));
-    const scale = Math.min(maxW / vp0.width, maxH / vp0.height);
+    // Fit-to-stage scale (ignoring scrollbars — use clientWidth)
+    const stageW = Math.max(400, (stage?.clientWidth  || window.innerWidth  * 0.7) - 4);
+    const stageH = Math.max(300, Math.min(window.innerHeight * 0.72, 900));
+    const fitScale = Math.min(stageW / vp0.width, stageH / vp0.height);
+    const scale = fitScale * _drwCalZoom;
     const viewport = page.getViewport({ scale });
     const pdfCv = document.getElementById('drw-cal-pdf');
     const selCv = document.getElementById('drw-cal-sel');
     if (!pdfCv || !selCv) return;
-    pdfCv.width = viewport.width; pdfCv.height = viewport.height;
-    selCv.width = viewport.width; selCv.height = viewport.height;
-    selCv.style.width  = viewport.width + 'px';
+    pdfCv.width  = viewport.width;  pdfCv.height  = viewport.height;
+    selCv.width  = viewport.width;  selCv.height  = viewport.height;
+    selCv.style.width  = viewport.width  + 'px';
     selCv.style.height = viewport.height + 'px';
-    selCv.style.left = pdfCv.offsetLeft + 'px';
-    selCv.style.top  = pdfCv.offsetTop + 'px';
     await page.render({ canvasContext: pdfCv.getContext('2d'), viewport }).promise;
-    selCv.style.left = pdfCv.offsetLeft + 'px';
-    selCv.style.top  = pdfCv.offsetTop + 'px';
 
     _drwCalRedrawRegions(selCv, null);
 
