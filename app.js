@@ -32133,11 +32133,11 @@ function _drwParseSheetInfo(items, W, H, fieldRegions) {
   let sheetTitle = null;
   const stCells = fieldCellsFor('sheetTitle');
   if (stCells) {
-    const cands = stCells.filter(c =>
-      c.str.length >= 3 && !_drwIsLabel(c.str) && !_drwIsBanner(c.str)
-      && !_drwMatchSheetNum(c.str) && !/^\d+$/.test(c.str) && !_drwIsJunkTitle(c.str));
+    // When the user has explicitly calibrated a region, trust their box —
+    // just concatenate whatever non-empty text is there, sorted top→bottom.
+    const cands = stCells.filter(c => c.str.trim().length > 0);
     if (cands.length) {
-      sheetTitle = [...cands].sort((a, b) => b.y - a.y).map(c => c.str).join(' ');
+      sheetTitle = [...cands].sort((a, b) => b.y - a.y).map(c => c.str.trim()).join(' ').trim();
     }
   }
   if (!sheetTitle) {
@@ -32695,6 +32695,7 @@ let _drwCalSel         = { active: false, x0:0, y0:0, x1:0, y1:0 };
 let _drwCalPage        = 1;
 let _drwCalRendering   = false;
 let _drwCalZoom        = 1.0;
+let _drwCalPageItems   = [];   // text items for the currently displayed calibration page
 const _DRW_CAL_ZOOM_STEPS = [0.5, 0.75, 1, 1.5, 2, 3, 4, 6];
 
 function _drwFieldRegionKey(loc, k) { return 'drw_field_' + k + '_' + loc; }
@@ -32956,6 +32957,10 @@ async function _drwCalRenderPage(pageNum) {
     selCv.style.width  = viewport.width  + 'px';
     selCv.style.height = viewport.height + 'px';
     await page.render({ canvasContext: pdfCv.getContext('2d'), viewport }).promise;
+    // Cache text items for the live preview (getTextContent uses PDF coords at scale=1)
+    const vp1 = page.getViewport({ scale: 1 });
+    const content = await page.getTextContent();
+    _drwCalPageItems = { items: content.items, W: vp1.width, H: vp1.height };
 
     _drwCalRedrawRegions(selCv, null);
 
@@ -33026,10 +33031,25 @@ function _drwCalUpdateInfo() {
   if (!field) return;
   const r = _drwFieldRegions[_drwCalActiveField];
   if (r) {
+    // Live preview: show what text items fall inside this region on the current page
+    let previewHtml = '';
+    if (_drwCalPageItems && _drwCalPageItems.items) {
+      const cells = _drwBuildCells(_drwCalPageItems.items, _drwCalPageItems.W, _drwCalPageItems.H, r);
+      const found = cells.filter(c => c.str.trim().length > 0).map(c => c.str.trim());
+      if (found.length) {
+        previewHtml = '<div style="margin-top:7px;padding:6px 8px;background:#f0fdf4;border:1px solid #86efac;border-radius:5px;">'
+          + '<div style="font-size:10px;font-weight:700;color:#166534;margin-bottom:4px;">Found in region:</div>'
+          + found.slice(0, 8).map(s => '<div style="font-size:11px;color:#15803d;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(s) + '</div>').join('')
+          + (found.length > 8 ? '<div style="font-size:10px;color:#4ade80;">+' + (found.length - 8) + ' more</div>' : '')
+          + '</div>';
+      } else {
+        previewHtml = '<div style="margin-top:7px;padding:6px 8px;background:#fef2f2;border:1px solid #fca5a5;border-radius:5px;font-size:10px;color:#991b1b;">'
+          + 'No text found in this region on this page. Try a different area or check the PDF has selectable text.</div>';
+      }
+    }
     info.innerHTML = '<span style="color:' + field.color + ';font-weight:600;">' + escapeHtml(field.label) + '</span> region set<br>'
-      + 'x=' + Math.round(r.fx*100) + '% y=' + Math.round(r.fy*100) + '%<br>'
-      + 'w=' + Math.round(r.fw*100) + '% h=' + Math.round(r.fh*100) + '%<br>'
-      + '<span style="font-size:10px;color:var(--gray-400);">Redraw to change</span>';
+      + '<span style="font-size:10px;color:var(--gray-400);">Redraw to change</span>'
+      + previewHtml;
   } else {
     info.innerHTML = 'Draw a box around the <strong>' + escapeHtml(field.label) + '</strong> value on the PDF';
   }
