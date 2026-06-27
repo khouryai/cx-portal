@@ -32167,18 +32167,24 @@ function _drwParseSheetInfo(items, W, H, fieldRegions) {
       s => s.length >= 4 && !_drwIsBanner(s) && !_drwIsLabel(s) && !_drwMatchSheetNum(s) && !_drwIsJunkTitle(s));
   }
   if (!sheetTitle) {
-    // Last resort: longest non-banner text in bottom strip
-    const contractNo = _drwFindNearLabel(baseCells, /^contract\s*no\.?$/i, () => true);
-    const known = new Set([sheetNumber, revision, pageNumber, contractNo].filter(Boolean).map(s => s.toUpperCase()));
-    const cands = baseCells.filter(c => {
-      const s = c.str;
-      return s.length >= 4 && !_drwIsLabel(s) && !_drwIsBanner(s)
-        && !known.has(s.toUpperCase()) && !/^\d+$/.test(s)
-        && !/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(s)
-        && !/\.(dgn|dwg|pdf)\b/i.test(s) && !_drwMatchSheetNum(s)
-        && !_drwIsJunkTitle(s);
-    });
-    if (cands.length) sheetTitle = cands.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
+    // Last resort: longest non-banner text in bottom strip.
+    // Only applies when a DESIGN-BUILD banner is present (confirms CBTC format).
+    // Drawings without that banner (plumbing, wiring sheets, etc.) return null
+    // rather than picking legend text or cross-reference content.
+    const hasBanner = items.some(it => /design[\s-]+build/i.test((it.str || '').trim()));
+    if (hasBanner) {
+      const contractNo = _drwFindNearLabel(baseCells, /^contract\s*no\.?$/i, () => true);
+      const known = new Set([sheetNumber, revision, pageNumber, contractNo].filter(Boolean).map(s => s.toUpperCase()));
+      const cands = baseCells.filter(c => {
+        const s = c.str;
+        return s.length >= 4 && !_drwIsLabel(s) && !_drwIsBanner(s)
+          && !known.has(s.toUpperCase()) && !/^\d+$/.test(s)
+          && !/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(s)
+          && !/\.(dgn|dwg|pdf)\b/i.test(s) && !_drwMatchSheetNum(s)
+          && !_drwIsJunkTitle(s);
+      });
+      if (cands.length) sheetTitle = cands.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
+    }
   }
 
   return { sheetNumber, sheetTitle, revision, pageNumber, discipline: _drwDiscipline(sheetNumber) };
