@@ -31991,43 +31991,6 @@ function _drwIsJunkTitle(s) {
   return false;
 }
 
-// ── Vision-based extraction fallback ──────────────────────────────────────
-// When text coordinate extraction is incomplete, render the page to a canvas,
-// crop to the lower half (where title blocks live), and ask Claude to read it.
-const _DRW_VISION_URL = 'https://uqtwiucxktljhukmgmxg.supabase.co/functions/v1/extract-drawing-fields';
-
-async function _drwPageToJpegBase64(page) {
-  const scale = 1.5;
-  const vp = page.getViewport({ scale });
-  const fullW = Math.round(vp.width);
-  const fullH = Math.round(vp.height);
-  const tmp = document.createElement('canvas');
-  tmp.width = fullW; tmp.height = fullH;
-  await page.render({ canvasContext: tmp.getContext('2d'), viewport: vp }).promise;
-  // Crop the lower 50% — title block is always in the bottom portion
-  const cropH = Math.round(fullH * 0.50);
-  const out = document.createElement('canvas');
-  out.width = fullW; out.height = cropH;
-  out.getContext('2d').drawImage(tmp, 0, fullH - cropH, fullW, cropH, 0, 0, fullW, cropH);
-  return out.toDataURL('image/jpeg', 0.85).replace(/^data:image\/jpeg;base64,/, '');
-}
-
-async function _drwVisionExtract(page) {
-  try {
-    const imgBase64 = await _drwPageToJpegBase64(page);
-    const resp = await fetch(_DRW_VISION_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imageBase64: imgBase64, mimeType: 'image/jpeg' }),
-    });
-    if (!resp.ok) { console.warn('[drw-vision] HTTP', resp.status); return {}; }
-    return await resp.json();
-  } catch (e) {
-    console.warn('[drw-vision] Failed:', e);
-    return {};
-  }
-}
-
 function _drwBuildCells(items, W, H, region) {
   let pdfXMin = 0, pdfXMax = W, pdfYMin = 0, pdfYMax = H * 0.35;
   if (region && region.fw > 0.01 && region.fh > 0.01) {
@@ -33131,17 +33094,6 @@ async function _drwRunExtract() {
       const viewport = page.getViewport({ scale: 1 });
       const content  = await page.getTextContent();
       const parsed   = _drwParseSheetInfo(content.items, viewport.width, viewport.height, _drwFieldRegions);
-      // Vision fallback — when text extraction couldn't find the title or sheet number,
-      // render the page and ask Claude to read the title block image.
-      if (!parsed.sheetTitle || !parsed.sheetNumber) {
-        document.getElementById('drw-parse-status').textContent = `Vision analysis page ${i} of ${numPages}…`;
-        const vision = await _drwVisionExtract(page);
-        if (!parsed.sheetNumber && vision.sheetNumber) parsed.sheetNumber = String(vision.sheetNumber).toUpperCase().trim();
-        if (!parsed.sheetTitle  && vision.sheetTitle)  parsed.sheetTitle  = String(vision.sheetTitle).trim();
-        if (!parsed.revision    && vision.revision)    parsed.revision    = String(vision.revision).toUpperCase().trim();
-        if (!parsed.pageNumber  && vision.pageNumber)  parsed.pageNumber  = String(vision.pageNumber).trim();
-        if (parsed.sheetNumber) parsed.discipline = _drwDiscipline(parsed.sheetNumber);
-      }
       sheets.push({
         pageIndex: i-1, ...parsed,
         needsReview: !parsed.sheetNumber || !parsed.sheetTitle,
