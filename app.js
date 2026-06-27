@@ -31923,6 +31923,8 @@ const _DRW_LABELS = [
   /^master\s*copy:?$/i,
   /^inspire\s*the\s*next:?$/i,
   /^hitachi:?$/i,
+  /^approved$/i,                           // bare approval stamp
+  /^cdrl\s*(dwg|drawing)\s*no\.?:?$/i,    // CDRL DWG NO:
 ];
 
 // Project-banner text that appears on every sheet — should NEVER be picked as a title.
@@ -31977,6 +31979,16 @@ function _drwIsBanner(s) {
 function _drwMatchSheetNum(s) {
   const t = s.trim();
   return _DRW_SHEET_PATTERNS.some(re => re.test(t));
+}
+
+// Returns true when a string is clearly not a drawing title:
+//   • Written-out month dates  → "January 31, 2025"
+//   • No-space hyphenated IDs  → "W37-275-375LB24-D", "779-MAIN", "W39ALNX-D"
+//     (real titles are English phrases and always contain spaces)
+function _drwIsJunkTitle(s) {
+  if (/^(january|february|march|april|may|june|july|august|september|october|november|december)\b/i.test(s)) return true;
+  if (!/\s/.test(s) && /-/.test(s)) return true;
+  return false;
 }
 
 function _drwBuildCells(items, W, H, region) {
@@ -32123,7 +32135,7 @@ function _drwParseSheetInfo(items, W, H, fieldRegions) {
   if (stCells) {
     const cands = stCells.filter(c =>
       c.str.length >= 3 && !_drwIsLabel(c.str) && !_drwIsBanner(c.str)
-      && !_drwMatchSheetNum(c.str) && !/^\d+$/.test(c.str));
+      && !_drwMatchSheetNum(c.str) && !/^\d+$/.test(c.str) && !_drwIsJunkTitle(c.str));
     if (cands.length) {
       sheetTitle = [...cands].sort((a, b) => b.y - a.y).map(c => c.str).join(' ');
     }
@@ -32142,7 +32154,7 @@ function _drwParseSheetInfo(items, W, H, fieldRegions) {
             && iy > bannerY - H * 0.25  // within 25% page-height below banner
             && ix < W * 0.65            // left column (title area, not right data column)
             && !_drwIsLabel(s) && !_drwIsBanner(s) && !_drwMatchSheetNum(s)
-            && !/^\d{1,4}$/.test(s);
+            && !/^\d{1,4}$/.test(s) && !_drwIsJunkTitle(s);
         })
         .sort((a, b) => b.transform[5] - a.transform[5]) // top→bottom reading order
         .map(it => (it.str || '').trim());
@@ -32152,7 +32164,7 @@ function _drwParseSheetInfo(items, W, H, fieldRegions) {
   if (!sheetTitle) {
     // Secondary: near an explicit "TITLE" / "DRAWING TITLE" label
     sheetTitle = _drwFindNearLabel(baseCells, /^(drawing\s*)?title$/i,
-      s => s.length >= 4 && !_drwIsBanner(s) && !_drwIsLabel(s) && !_drwMatchSheetNum(s));
+      s => s.length >= 4 && !_drwIsBanner(s) && !_drwIsLabel(s) && !_drwMatchSheetNum(s) && !_drwIsJunkTitle(s));
   }
   if (!sheetTitle) {
     // Last resort: longest non-banner text in bottom strip
@@ -32163,7 +32175,8 @@ function _drwParseSheetInfo(items, W, H, fieldRegions) {
       return s.length >= 4 && !_drwIsLabel(s) && !_drwIsBanner(s)
         && !known.has(s.toUpperCase()) && !/^\d+$/.test(s)
         && !/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(s)
-        && !/\.(dgn|dwg|pdf)\b/i.test(s) && !_drwMatchSheetNum(s);
+        && !/\.(dgn|dwg|pdf)\b/i.test(s) && !_drwMatchSheetNum(s)
+        && !_drwIsJunkTitle(s);
     });
     if (cands.length) sheetTitle = cands.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
   }
