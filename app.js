@@ -5940,27 +5940,6 @@ async function _updateTestItemStatus(testId, status, opts = {}) {
   patch.future_test_reason = status === 'Future Test' ? (opts.futureTestReason !== undefined ? opts.futureTestReason : (r.FutureTestReason || null)) : null;
   if (Object.prototype.hasOwnProperty.call(opts, 'notes')) patch.notes = opts.notes || null;
 
-  // ── Phase 2: snapshot the active software config at the moment of a
-  // terminal result (Pass/Fail). Frozen onto the test result so later
-  // software installs never alter what a completed test was run against.
-  if (status === 'Pass' || status === 'Fail') {
-    try {
-      const now = new Date().toISOString();
-      const active = _activeSwConfigsFor(r.Subsystem, r.Location, now);
-      const snap = active.map(c => ({
-        config_id:     c.id,
-        software_name: c.software_name,
-        version:       c.version,
-        install_date:  c.install_date,
-        device_label:  c.device_label || null,
-        baseline:      c.baseline || null,
-      }));
-      patch.sw_snapshot = snap;
-      patch.sw_snapshot_at = now;
-      r.SwSnapshot = snap;
-      r.SwSnapshotAt = now;
-    } catch (e) { console.warn('[swSnapshot] capture skipped:', e.message); }
-  }
 
   r.Status = status;
   r.FailedReason = patch.failed_reason;
@@ -16561,7 +16540,7 @@ let _cmVddExpanded = new Set(); // expanded master VDD rows in VDD view
 
 async function loadSoftwareConfigs() {
   try {
-    const data = await _fetchAnon('software_configs?select=*&order=install_date.desc');
+    const data = await _fetchAnon('software_configs?select=*&order=created_at.desc');
     SW_CONFIGS = data || [];
     console.log(`Loaded ${SW_CONFIGS.length} software configs`);
   } catch (err) { console.warn('Software configs load failed:', err.message); SW_CONFIGS = []; }
@@ -16585,53 +16564,7 @@ function _resolveSwLocation(loc) {
   return loc;
 }
 
-// Return the active software config(s) for a subsystem+location as of a date.
-// Used by Phase 2 snapshotting. asOf = ISO date string or Date.
-function _activeSwConfigsFor(subsystem, location, asOf) {
-  const sub = (subsystem || '').trim().toLowerCase();
-  const resolvedLoc = _resolveSwLocation(location || '');
-  const locL = resolvedLoc.trim().toLowerCase();
-  const asOfTime = asOf ? new Date(asOf).getTime() : Date.now();
-
-  // Candidate rows: same subsystem + location, installed on/before asOf, not rolled back
-  const cand = SW_CONFIGS.filter(c =>
-    (c.subsystem || '').trim().toLowerCase() === sub &&
-    (c.location  || '').trim().toLowerCase() === locL &&
-    c.status !== 'rolled_back' && c.status !== 'planned' &&
-    new Date(c.install_date).getTime() <= asOfTime
-  );
-  // For each config item, keep only the newest install ≤ asOf
-  const byItem = new Map();
-  for (const c of cand) {
-    const k = _swItemKey(c);
-    const prev = byItem.get(k);
-    if (!prev || new Date(c.install_date).getTime() > new Date(prev.install_date).getTime()) byItem.set(k, c);
-  }
-  return [...byItem.values()];
-}
-
-// Renders the frozen software-config snapshot chip for a test row (Phase 2),
-// plus a "newer SW available" retest hint (Phase 4) when applicable.
-function _swSnapshotChipHTML(r) {
-  const snap = Array.isArray(r.SwSnapshot) ? r.SwSnapshot : null;
-  if (!snap || !snap.length) return '';
-  const label = snap.map(s => `${s.software_name} ${s.version}`).join(' · ');
-  const tip = `Tested against (captured ${r.SwSnapshotAt ? new Date(r.SwSnapshotAt).toLocaleDateString() : '—'}):\n` +
-    snap.map(s => `• ${s.software_name} ${s.version} (installed ${s.install_date})`).join('\n');
-  // Phase 4 hint: is there a newer active config than what was snapshotted?
-  let staleBadge = '';
-  try {
-    const current = _activeSwConfigsFor(r.Subsystem, r.Location, new Date().toISOString());
-    const snapIds = new Set(snap.map(s => s.config_id));
-    const newer = current.some(c => !snapIds.has(c.id));
-    if (newer && (r.Status === 'Pass')) {
-      staleBadge = `<span title="Newer software installed since this test passed — retest recommended" style="display:inline-block;font-size:9px;font-weight:700;background:#fef3c7;color:#b45309;border:1px solid #fcd34d;border-radius:3px;padding:1px 5px;margin-left:4px;">⟳ RETEST?</span>`;
-    }
-  } catch {}
-  return `<div style="font-size:10px;color:#3730a3;margin-top:3px;display:flex;align-items:center;gap:3px;flex-wrap:wrap;" title="${escapeHtml(tip)}">
-    <span style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:3px;padding:1px 6px;">${icon('puzzle')} ${escapeHtml(label.length > 46 ? label.slice(0,46)+'…' : label)}</span>${staleBadge}
-  </div>`;
-}
+function _swSnapshotChipHTML() { return ''; }
 
 // ==========================================================================
 // REGRESSION TESTING — clone a completed test case into a fresh attempt.
@@ -16714,7 +16647,6 @@ function _regressionCellHTML(r) {
     histPanel = `<div style="margin-top:5px;border:1px solid var(--gray-200);border-radius:6px;background:var(--gray-50);padding:6px 8px;">
       ${prior.map(a => {
         const col = {Pass:'#16a34a',Fail:'#dc2626',Blocked:'#d97706'}[a.Status] || '#6b7280';
-        const sw  = Array.isArray(a.SwSnapshot) && a.SwSnapshot.length ? a.SwSnapshot.map(s=>`${s.software_name} ${s.version}`).join(', ') : '—';
         // Evidence forms/data sheets logged on THIS attempt. Forms are keyed to
         // the attempt's own test_id, so each run's evidence stays frozen with it
         // — a regression links a NEW form to the new attempt without disturbing
@@ -16727,7 +16659,6 @@ function _regressionCellHTML(r) {
         return `<div style="font-size:10px;color:var(--gray-600);padding:4px 0;border-bottom:1px solid var(--gray-100);">
           <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
             <span>${icon('lock')} <strong>Attempt ${a.AttemptNumber||1}</strong> · <span style="color:${col};font-weight:600;">${escapeHtml(a.Status||'—')}</span>${a.CompletedBy?' · by '+escapeHtml(a.CompletedBy):''}${a.CompletedDate?' · '+new Date(a.CompletedDate).toLocaleDateString():''}</span>
-            <span style="color:#3730a3;">${icon('puzzle')} ${escapeHtml(sw)}</span>
           </div>
           <div style="margin-top:3px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
             <span style="color:var(--gray-500);font-weight:600;">Evidence:</span> ${formsHtml}
@@ -16934,7 +16865,7 @@ function _cmPageHTML() {
             <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:6px;">${icon('pin')} ${escapeHtml(loc)}</div>`;
           const items = tree[sub][loc];
           for (const ik of Object.keys(items)) {
-            const versions = items[ik].slice().sort((a,b) => new Date(b.install_date) - new Date(a.install_date));
+            const versions = items[ik].slice().sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
             const latest = versions[0];
             const expanded = _cmExpanded.has(ik);
             const histCount = versions.length - 1;
@@ -16948,7 +16879,7 @@ function _cmPageHTML() {
                       <span style="font-size:11px;font-weight:600;color:${statusColor};margin-left:6px;">● ${escapeHtml(latest.status)}</span>
                     </div>
                     <div style="font-size:11px;color:var(--gray-500);margin-top:3px;">
-                      ${icon('pin')} ${escapeHtml(latest.location || '— phase level —')} · Installed ${latest.install_date}${latest.installed_by ? ' by '+escapeHtml(latest.installed_by) : ''}${latest.baseline ? ' · Baseline: '+escapeHtml(latest.baseline) : ''}
+                      ${icon('pin')} ${escapeHtml(latest.location || '— phase level —')}${latest.baseline ? ' · Baseline: '+escapeHtml(latest.baseline) : ''}${latest.cdrl_ref ? ' · '+escapeHtml(latest.cdrl_ref) : ''}
                     </div>
                   </div>
                   <div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">
@@ -16960,7 +16891,7 @@ function _cmPageHTML() {
                 ${expanded && histCount > 0 ? `<div style="border-top:1px solid var(--gray-100);background:var(--gray-50);padding:6px 14px;">
                   ${versions.slice(1).map(v => `
                     <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--gray-600);padding:5px 0;border-bottom:1px solid var(--gray-100);">
-                      <span><span style="font-family:monospace;background:var(--gray-200);padding:1px 6px;border-radius:3px;">${escapeHtml(v.version)}</span> · ${v.install_date}${v.installed_by?' · '+escapeHtml(v.installed_by):''} · <span style="color:#6b7280;">${escapeHtml(v.status)}</span></span>
+                      <span><span style="font-family:monospace;background:var(--gray-200);padding:1px 6px;border-radius:3px;">${escapeHtml(v.version)}</span> · <span style="color:#6b7280;">${escapeHtml(v.status)}</span></span>
                       <button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="openSwConfigModal('${v.id}')">View / Edit</button>
                     </div>`).join('')}
                 </div>` : ''}
@@ -17074,7 +17005,7 @@ function _cmVDDViewHTML(f) {
 
   if (masters.length) {
     html += '<div style="margin-bottom:8px;font-size:11px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.07em;">Master VDDs</div>';
-    for (const master of masters.slice().sort((a,b) => new Date(b.install_date)-new Date(a.install_date))) {
+    for (const master of masters.slice().sort((a,b) => new Date(b.created_at||0)-new Date(a.created_at||0))) {
       const children = (childMap.get(master.id)||[]).slice().sort((a,b)=>(a.subsystem||'').localeCompare(b.subsystem||''));
       const expanded = _cmVddExpanded.has(master.id);
       html += '<div style="border:2px solid var(--hitachi-red);border-radius:10px;margin-bottom:14px;overflow:hidden;">' +
@@ -17086,7 +17017,7 @@ function _cmVDDViewHTML(f) {
               '<span style="font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:1px 6px;margin-left:8px;">MASTER VDD</span>' +
             '</div>' +
             '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
-              icon('settings') + ' ' + escapeHtml(master.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(master.location||'—') + ' · ' + master.install_date +
+              icon('settings') + ' ' + escapeHtml(master.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(master.location||'—') +
               (master.baseline ? ' · Baseline: ' + escapeHtml(master.baseline) : '') +
               (master.cdrl_ref ? ' · ' + escapeHtml(master.cdrl_ref) : '') +
             '</div>' +
@@ -17110,7 +17041,6 @@ function _cmVDDViewHTML(f) {
                 '</div>' +
                 '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
                   icon('settings') + ' ' + escapeHtml(ch.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(ch.location||'—') +
-                  ' · ' + ch.install_date +
                   (ch.baseline ? ' · Baseline: ' + escapeHtml(ch.baseline) : '') +
                   (ch.cdrl_ref ? ' · ' + escapeHtml(ch.cdrl_ref) : '') +
                 '</div>' +
@@ -17138,7 +17068,7 @@ function _cmVDDViewHTML(f) {
               '<span style="font-size:11px;font-weight:600;color:' + _sc(c) + ';margin-left:6px;">● ' + escapeHtml(c.status) + '</span>' +
             '</div>' +
             '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
-              icon('settings') + ' ' + escapeHtml(c.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(c.location||'—') + ' · ' + c.install_date +
+              icon('settings') + ' ' + escapeHtml(c.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(c.location||'—') +
             '</div>' +
           '</div>' +
           '<div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">' +
@@ -17217,14 +17147,6 @@ function openSwConfigModal(editId, cloneFromId, parentVddId) {
           <input type="text" id="sw-version" class="form-input" placeholder="e.g. v2.4.1" value="${escapeHtml(existing?v('version'):'')}">
         </div>
         <div class="form-field">
-          <label>Install Date *</label>
-          <input type="date" id="sw-install-date" class="form-input" value="${existing?v('install_date'):today}">
-        </div>
-        <div class="form-field">
-          <label>Installed By</label>
-          ${_taHTMLSingle('sw-installed-by','admin_field')}
-        </div>
-        <div class="form-field">
           <label>Status</label>
           <select id="sw-status" class="form-input">
             ${['active','patch','planned','superseded','rolled_back'].map(s=>`<option ${ (existing? v('status'):'active')===s?'selected':''}>${s}</option>`).join('')}
@@ -17262,9 +17184,6 @@ function openSwConfigModal(editId, cloneFromId, parentVddId) {
     `,
   });
 
-  setTimeout(() => {
-    _taInitSingle('sw-installed-by', existing ? (base?.installed_by||'') : (currentRoleUser?.name||''));
-  }, 30);
 }
 
 function _swPhaseChange() {
@@ -17302,8 +17221,6 @@ async function saveSwConfig() {
   const location  = document.getElementById('sw-location')?.value.trim() || null;
   const swName    = document.getElementById('sw-name')?.value.trim();
   const version   = document.getElementById('sw-version')?.value.trim();
-  const instDate  = document.getElementById('sw-install-date')?.value;
-  const instBy    = document.getElementById('sw-installed-by')?.value.trim() || null;
   const status    = document.getElementById('sw-status')?.value || 'active';
   const baseline  = document.getElementById('sw-baseline')?.value.trim() || null;
   const cdrl      = document.getElementById('sw-cdrl')?.value.trim() || null;
@@ -17316,12 +17233,11 @@ async function saveSwConfig() {
   if (!resolvedSub) { toast('Subsystem is required', 'error'); return; }
   if (!swName)      { toast('Software Name is required', 'error'); return; }
   if (!version)     { toast('Version is required', 'error'); return; }
-  if (!instDate)    { toast('Install Date is required', 'error'); return; }
 
   if (editing) {
     const patch = {
       subsystem: resolvedSub, location: resolvedLoc,
-      software_name: swName, version, install_date: instDate, installed_by: instBy,
+      software_name: swName, version,
       status, baseline, cdrl_ref: cdrl, notes, parent_id: parentId || null,
     };
     try {
@@ -17337,7 +17253,7 @@ async function saveSwConfig() {
   // New record. Auto-supersede prior active versions of the same config item.
   const newRow = {
     subsystem: resolvedSub, location: resolvedLoc,
-    software_name: swName, version, install_date: instDate, installed_by: instBy,
+    software_name: swName, version,
     status, baseline, cdrl_ref: cdrl, notes, created_by: currentRoleUser?.name || null,
     parent_id: parentId || null,
   };
