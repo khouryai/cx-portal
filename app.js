@@ -370,6 +370,7 @@ function showPage(name) {
   if (name === 'lookahead')        { loadPlanningData().then(renderLookahead); }
   if (name === 'admin-planning')   { loadPlanningData().then(renderAdminPlanning); }
   if (name === 'dynamic-testing')  renderDynamicTestingPage();
+  if (name === 'vehicle-management') renderVehicleManagement();
   window.scrollTo(0, 0);
   // Init libraries for any page — auto-detects selects, tooltips, date inputs
   setTimeout(_initPageLibraries, 150);
@@ -455,6 +456,7 @@ async function refreshApp() {
   try { await loadTasks(); }    catch(e) { console.warn('[refreshApp] Tasks reload failed:', e.message); }
   try { await loadSoftwareConfigs(); } catch(e) { console.warn('[refreshApp] SW config reload failed:', e.message); }
   try { await loadSwEquipment(); } catch(e) { console.warn('[refreshApp] SW equipment reload failed:', e.message); }
+  try { await loadVehicles(); } catch(e) { console.warn('[refreshApp] vehicles reload failed:', e.message); }
 
   // 3. Reload test items only when no status save is in flight
   if (!_mxSavePending) {
@@ -3312,6 +3314,7 @@ function onLoggedIn() {
     loadTasks(),
     loadSoftwareConfigs(),
     loadSwEquipment(),
+    loadVehicles(),
     loadForms(),
     loadDrawingsData(),
     _colLoadAll(),
@@ -17515,6 +17518,847 @@ async function deleteSwEquip(id, configId) {
     renderConfigMgmt();
   } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
 }
+
+
+// ==========================================================================
+// VEHICLE MANAGEMENT — D/E car registry, as-loaded software compliance vs the
+// Config Management VDD family, and a per-type readiness workflow (regression-
+// capable) with fillable-PDF form links. Mirrors the config / test-register /
+// punch patterns. Tables: vehicles, vehicle_equipment, vehicle_workflow_items,
+// vehicle_equipment_templates, vehicle_workflow_templates,
+// form_vehicle_item_links, punch_items.linked_car_ids.
+// ==========================================================================
+let VEHICLES       = [];
+let VEH_EQUIP      = [];
+let VEH_WORKFLOW   = [];
+let VEH_EQ_TPL     = [];
+let VEH_WF_TPL     = [];
+let VEH_FORM_LINKS = [];
+let _vmSel    = null;        // selected car id (null → registry list)
+let _vmTab    = 'workflow';  // detail tab: workflow | equipment | punch
+let _vmFilter = { search: '', type: '' };
+let _vmWfHistOpen = new Set();
+
+async function loadVehicles() {
+  try {
+    const [veh, eq, wf, eqTpl, wfTpl, fLinks] = await Promise.all([
+      _dbSelect('vehicles'),
+      _dbSelect('vehicle_equipment'),
+      _dbSelect('vehicle_workflow_items'),
+      _dbSelect('vehicle_equipment_templates'),
+      _dbSelect('vehicle_workflow_templates'),
+      _dbSelect('form_vehicle_item_links'),
+    ]);
+    VEHICLES = veh || []; VEH_EQUIP = eq || []; VEH_WORKFLOW = wf || [];
+    VEH_EQ_TPL = eqTpl || []; VEH_WF_TPL = wfTpl || []; VEH_FORM_LINKS = fLinks || [];
+    console.log(`Loaded ${VEHICLES.length} vehicles`);
+  } catch (e) { console.warn('[loadVehicles]', e.message); }
+}
+
+function _vmCan(action) { return (typeof uiCan !== 'function') || uiCan('vehicle_mgmt', action); }
+function _vmWho() { return (typeof currentProfile !== 'undefined' && currentProfile?.full_name) || currentRoleUser?.name || null; }
+
+// ── Small presentational helpers ──────────────────────────────────────────
+const _VM_CHIP_TONE = {
+  good:  ['#dcfce7', '#15803d', '#bbf7d0'],
+  bad:   ['#fee2e2', '#b91c1c', '#fecaca'],
+  warn:  ['#fef3c7', '#b45309', '#fde68a'],
+  info:  ['#dbeafe', '#1d4ed8', '#bfdbfe'],
+  muted: ['#f1f5f9', '#64748b', '#e2e8f0'],
+};
+function _vmChip(text, tone) {
+  const [bg, fg, bd] = _VM_CHIP_TONE[tone] || _VM_CHIP_TONE.muted;
+  return `<span style="display:inline-block;font-size:11px;font-weight:600;background:${bg};color:${fg};border:1px solid ${bd};border-radius:999px;padding:1px 9px;white-space:nowrap;">${escapeHtml(text)}</span>`;
+}
+const _VM_LIGHT = { green: '#16a34a', amber: '#f59e0b', red: '#dc2626' };
+function _vmLightDot(light, size) {
+  size = size || 12;
+  const c = _VM_LIGHT[light] || '#9ca3af';
+  return `<span aria-hidden="true" style="display:inline-block;width:${size}px;height:${size}px;border-radius:50%;background:${c};box-shadow:0 0 0 3px ${c}22;"></span>`;
+}
+function _vmTypeBadge(type) {
+  const isD = type === 'D';
+  const bg = isD ? '#1e3a8a' : '#7c2d12';
+  return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;background:${bg};color:#fff;border-radius:5px;padding:2px 8px;letter-spacing:.04em;">${escapeHtml(type)}-Car</span>`;
+}
+const _VM_WF_TONE = {
+  'Not Started': 'muted', 'In Progress': 'info', 'Complete': 'good', 'Failed': 'bad', 'N/A': 'muted',
+};
+const _VM_WF_STATUSES = ['Not Started', 'In Progress', 'Complete', 'Failed', 'N/A'];
+
+// ── Sorting: split by type (D before E), then numeric car number ───────────
+function _vmSortCars(list) {
+  return list.slice().sort((a, b) =>
+    String(a.car_type || '').localeCompare(String(b.car_type || '')) ||
+    (parseInt(a.car_number, 10) || 0) - (parseInt(b.car_number, 10) || 0) ||
+    String(a.car_number || '').localeCompare(String(b.car_number || '')));
+}
+
+// ── Compliance engine — compare loaded version vs latest released in the VDD
+//    family. SW_CONFIGS is the Config Management source of truth. ───────────
+function _vmConfigById(id) { return id ? SW_CONFIGS.find(c => c.id === id) || null : null; }
+function _vmRootConfig(c) {
+  let cur = c, guard = 0;
+  while (cur && cur.parent_id && guard++ < 25) {
+    const p = _vmConfigById(cur.parent_id);
+    if (!p) break; cur = p;
+  }
+  return cur;
+}
+function _vmFamilyConfigs(c) {
+  const root = _vmRootConfig(c);
+  if (!root) return c ? [c] : [];
+  const out = [], stack = [root], seen = new Set();
+  while (stack.length) {
+    const n = stack.pop();
+    if (!n || seen.has(n.id)) continue;
+    seen.add(n.id); out.push(n);
+    for (const ch of SW_CONFIGS.filter(x => x.parent_id === n.id)) stack.push(ch);
+  }
+  return out;
+}
+function _vmVerCmp(a, b) {
+  const pa = String(a || '').split(/[^0-9]+/).filter(Boolean).map(Number);
+  const pb = String(b || '').split(/[^0-9]+/).filter(Boolean).map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x - y;
+  }
+  return String(a || '').localeCompare(String(b || ''));
+}
+// Latest released version applicable to the car scope = newest active version
+// in the linked config's VDD family.
+function _vmExpectedVersion(configId) {
+  const c = _vmConfigById(configId);
+  if (!c) return null;
+  const fam = _vmFamilyConfigs(c).filter(x => (x.status || 'active') === 'active' && String(x.version || '').trim());
+  if (!fam.length) return c.version || null;
+  fam.sort((p, q) => _vmVerCmp(p.version, q.version));
+  return fam[fam.length - 1].version || null;
+}
+function _vmCompliance(eq) {
+  const loaded = String(eq.loaded_version || '').trim();
+  if (!eq.config_id) return { state: 'no_target', expected: null };
+  const expected = _vmExpectedVersion(eq.config_id);
+  if (!loaded) return { state: 'not_loaded', expected };
+  if (expected == null) return { state: 'no_target', expected: null };
+  return { state: (loaded === String(expected).trim() ? 'match' : 'mismatch'), expected };
+}
+const _VM_COMPLIANCE_META = {
+  match:      ['Match', 'good'],
+  mismatch:   ['Mismatch', 'bad'],
+  not_loaded: ['Not loaded', 'warn'],
+  no_target:  ['No VDD linked', 'muted'],
+};
+
+// ── Per-car selectors + readiness rollup ──────────────────────────────────
+function _vmWfLatest(carId) {
+  return VEH_WORKFLOW.filter(w => w.vehicle_id === carId && w.is_latest_attempt !== false)
+    .sort((a, b) => (a.seq || 0) - (b.seq || 0) || String(a.title || '').localeCompare(String(b.title || '')));
+}
+function _vmWfHistory(groupId) {
+  return VEH_WORKFLOW.filter(w => (w.regression_group_id || w.id) === groupId && w.is_latest_attempt === false)
+    .sort((a, b) => (a.attempt_number || 1) - (b.attempt_number || 1));
+}
+function _vmEquipFor(carId) {
+  return VEH_EQUIP.filter(e => e.vehicle_id === carId)
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0) || String(a.equipment_name || '').localeCompare(String(b.equipment_name || '')));
+}
+function _vmPunchFor(carId) {
+  const db = (typeof PUNCH_DB !== 'undefined' ? PUNCH_DB : []);
+  return db.filter(p => !p.is_deleted && (p.linked_car_ids || []).includes(carId));
+}
+function _vmReadiness(carId) {
+  const reqd = _vmWfLatest(carId).filter(w => w.required !== false);
+  const wfTotal = reqd.length;
+  const wfComplete = reqd.filter(w => w.status === 'Complete' || w.status === 'N/A').length;
+  const wfFailed = reqd.some(w => w.status === 'Failed');
+  const eqs = _vmEquipFor(carId);
+  let match = 0, mismatch = 0, incomplete = 0;
+  for (const e of eqs) {
+    const s = _vmCompliance(e).state;
+    if (s === 'match') match++;
+    else if (s === 'mismatch') mismatch++;
+    else incomplete++;
+  }
+  const openPunch = _vmPunchFor(carId).filter(p => p.status !== 'closed').length;
+  const allWf = wfTotal > 0 ? wfComplete === wfTotal : false;
+  const ready = allWf && !wfFailed && mismatch === 0 && incomplete === 0 && eqs.length > 0;
+  let light = 'amber';
+  if (wfFailed || mismatch > 0) light = 'red';
+  else if (ready) light = 'green';
+  return { light, ready, wfComplete, wfTotal, wfFailed, match, mismatch, incomplete, eqTotal: eqs.length, openPunch };
+}
+
+// ── Top-level render ──────────────────────────────────────────────────────
+function renderVehicleManagement() {
+  const root = document.getElementById('vehicle-content');
+  const heroEl = document.getElementById('vehicle-hero-content');
+  if (!root || !currentRoleUser) return;
+  if (!_vmCan('view')) {
+    if (heroEl) heroEl.innerHTML = '';
+    root.innerHTML = cxEmpty({ icon: 'lock', title: 'Not authorized', message: 'You don’t have access to Vehicle Management.' });
+    return;
+  }
+  if (_vmSel && VEHICLES.find(v => v.id === _vmSel)) _vmRenderDetail(root, heroEl);
+  else { _vmSel = null; _vmRenderRegistry(root, heroEl); }
+}
+
+// ── Registry view ─────────────────────────────────────────────────────────
+function _vmRenderRegistry(root, heroEl) {
+  const cars = VEHICLES;
+  const ds = cars.filter(c => c.car_type === 'D').length;
+  const es = cars.filter(c => c.car_type === 'E').length;
+  let ready = 0, blocked = 0;
+  for (const c of cars) { const r = _vmReadiness(c.id); if (r.light === 'green') ready++; else if (r.light === 'red') blocked++; }
+  if (heroEl) heroEl.innerHTML = renderPageHero({
+    eyebrow: 'Vehicle',
+    title: 'Vehicle Management',
+    sub: 'Car registry, software compliance vs VDDs, and readiness for dynamic testing',
+    stats: [
+      { label: 'Cars', value: cars.length },
+      { label: 'D-Cars', value: ds, tone: ds ? 'blue' : 'muted' },
+      { label: 'E-Cars', value: es, tone: es ? 'blue' : 'muted' },
+      { label: 'Ready', value: ready, tone: 'good' },
+      { label: 'Blocked', value: blocked, tone: blocked ? 'amber' : 'muted' },
+    ],
+  });
+
+  const f = _vmFilter;
+  let rows = _vmSortCars(cars);
+  if (f.type) rows = rows.filter(c => c.car_type === f.type);
+  if (f.search) {
+    const q = f.search.toLowerCase();
+    rows = rows.filter(c => String(c.car_number || '').toLowerCase().includes(q));
+  }
+
+  const toolbar = `
+    <div class="admin-section" style="margin-bottom:18px;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+          <div style="display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:12px;">
+            ${['', 'D', 'E'].map(t => `<button style="padding:5px 14px;border:none;cursor:pointer;${t ? 'border-left:1px solid var(--border);' : ''}background:${f.type === t ? 'var(--hitachi-red)' : 'var(--surface)'};color:${f.type === t ? 'var(--white)' : 'var(--text)'};font-weight:${f.type === t ? '600' : '400'};" onclick="_vmSetFilter('type','${t}')">${t ? t + '-Cars' : 'All'}</button>`).join('')}
+          </div>
+          <input type="text" class="form-input" style="max-width:220px;" placeholder="Search car number…" value="${escapeHtml(f.search)}" oninput="_vmSetFilter('search',this.value)">
+          ${(f.search || f.type) ? `<button class="form-secondary" style="font-size:12px;" onclick="_vmClearFilters()">Clear</button>` : ''}
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          ${_vmCan('manage_templates') ? `<button class="form-secondary" onclick="_vmTemplatesModal()">${icon('sliders')} Templates</button>` : ''}
+          ${_vmCan('bulk_edit') ? `<button class="form-secondary" onclick="_vmBulkUpdateModal()">${icon('layers')} Bulk SW Update</button>` : ''}
+          ${_vmCan('create') ? `<button class="admin-action-btn" onclick="_vmAddCarModal()">${icon('plus')} Add Car</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+
+  if (!cars.length) {
+    root.innerHTML = toolbar + cxEmpty({
+      icon: 'truck', title: 'No cars yet',
+      message: 'Add a D-Car or E-Car to start tracking its software and readiness.',
+      actionLabel: _vmCan('create') ? '+ Add Car' : null, onAction: _vmCan('create') ? '_vmAddCarModal()' : null,
+    });
+    return;
+  }
+
+  // Group into D then E sections
+  const groups = [['D', 'D-Cars'], ['E', 'E-Cars']];
+  let body = '';
+  for (const [type, label] of groups) {
+    const g = rows.filter(c => c.car_type === type);
+    if (!g.length) continue;
+    body += `<div style="font-size:11px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.07em;margin:6px 2px 10px;">${label} (${g.length})</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;margin-bottom:22px;">
+      ${g.map(_vmCarCardHTML).join('')}</div>`;
+  }
+  if (!body) body = cxEmpty({ icon: 'search', title: 'No matches', message: 'No cars match the current filter.' });
+  root.innerHTML = toolbar + `<div class="admin-section">${body}</div>`;
+}
+
+function _vmCarCardHTML(car) {
+  const r = _vmReadiness(car.id);
+  const readyTxt = r.ready ? 'Ready' : (r.light === 'red' ? 'Blocked' : 'In progress');
+  const readyTone = r.ready ? 'good' : (r.light === 'red' ? 'bad' : 'warn');
+  return `
+    <div onclick="_vmOpenCar('${car.id}')" style="cursor:pointer;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:14px 16px;transition:box-shadow .12s;" onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,.08)'" onmouseout="this.style.boxShadow='none'">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <div style="display:flex;align-items:center;gap:9px;">
+          ${_vmLightDot(r.light, 14)}
+          <span style="font-size:20px;font-weight:700;font-family:monospace;letter-spacing:.02em;">${escapeHtml(car.car_number)}</span>
+        </div>
+        ${_vmTypeBadge(car.car_type)}
+      </div>
+      <div style="margin-top:8px;">${_vmChip(readyTxt, readyTone)}</div>
+      <div style="display:flex;gap:14px;margin-top:12px;flex-wrap:wrap;">
+        <div><div style="font-size:16px;font-weight:700;">${r.wfComplete}/${r.wfTotal}</div><div style="font-size:10px;color:var(--gray-500);">Workflow</div></div>
+        <div><div style="font-size:16px;font-weight:700;color:${r.mismatch ? '#dc2626' : 'inherit'};">${r.match}/${r.eqTotal}</div><div style="font-size:10px;color:var(--gray-500);">SW Compliant</div></div>
+        <div><div style="font-size:16px;font-weight:700;color:${r.openPunch ? '#b45309' : 'inherit'};">${r.openPunch}</div><div style="font-size:10px;color:var(--gray-500);">Open Punch</div></div>
+      </div>
+    </div>`;
+}
+
+function _vmSetFilter(k, v) { _vmFilter[k] = v; renderVehicleManagement(); }
+function _vmClearFilters() { _vmFilter = { search: '', type: '' }; renderVehicleManagement(); }
+function _vmOpenCar(id) { _vmSel = id; _vmTab = 'workflow'; _vmWfHistOpen.clear(); window.scrollTo(0, 0); renderVehicleManagement(); }
+function _vmBackToList() { _vmSel = null; renderVehicleManagement(); }
+function _vmSetTab(t) { _vmTab = t; renderVehicleManagement(); }
+
+// ── Detail view ───────────────────────────────────────────────────────────
+function _vmRenderDetail(root, heroEl) {
+  const car = VEHICLES.find(v => v.id === _vmSel);
+  if (!car) { _vmBackToList(); return; }
+  const r = _vmReadiness(car.id);
+  const readyTxt = r.ready ? 'Ready for dynamic testing' : (r.light === 'red' ? 'Blocked' : 'In progress');
+  const readyTone = r.ready ? 'good' : (r.light === 'red' ? 'bad' : 'warn');
+  if (heroEl) heroEl.innerHTML = renderPageHero({
+    eyebrow: 'Vehicle',
+    title: car.car_number + '  ·  ' + car.car_type + '-Car',
+    sub: 'Software compliance and readiness workflow for this car',
+    stats: [
+      { label: 'Workflow', value: `${r.wfComplete}/${r.wfTotal}` },
+      { label: 'SW Compliant', value: `${r.match}/${r.eqTotal}`, tone: r.mismatch ? 'amber' : 'good' },
+      { label: 'Mismatches', value: r.mismatch, tone: r.mismatch ? 'amber' : 'muted' },
+      { label: 'Open Punch', value: r.openPunch, tone: r.openPunch ? 'amber' : 'muted' },
+    ],
+  });
+
+  const tabs = [['workflow', 'Workflow', icon('clipboard')], ['equipment', 'Equipment & Software', icon('cpu')], ['punch', 'Punch List', icon('flag')]];
+  const tabBar = `<div style="display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap;">
+    ${tabs.map(([id, label, ic]) => `<button onclick="_vmSetTab('${id}')" style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;color:${_vmTab === id ? 'var(--hitachi-red)' : 'var(--gray-500)'};border-bottom:2px solid ${_vmTab === id ? 'var(--hitachi-red)' : 'transparent'};margin-bottom:-1px;">${ic} ${label}</button>`).join('')}
+  </div>`;
+
+  const head = `
+    <div class="admin-section" style="margin-bottom:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+          <button class="form-secondary" style="font-size:12px;" onclick="_vmBackToList()">${icon('chevron-left')} All Cars</button>
+          ${_vmLightDot(r.light, 16)}
+          <span style="font-size:22px;font-weight:700;font-family:monospace;">${escapeHtml(car.car_number)}</span>
+          ${_vmTypeBadge(car.car_type)}
+          ${_vmChip(readyTxt, readyTone)}
+        </div>
+        <div style="display:flex;gap:8px;">
+          ${_vmCan('edit') ? `<button class="form-secondary" style="font-size:12px;" onclick="_vmEditCarModal('${car.id}')">${icon('edit')} Edit</button>` : ''}
+          ${_vmCan('delete') ? `<button class="form-secondary" style="font-size:12px;color:var(--bad);" onclick="_vmDeleteCar('${car.id}')">${icon('trash')} Delete</button>` : ''}
+        </div>
+      </div>
+      ${car.notes ? `<div style="margin-top:8px;font-size:12px;color:var(--gray-500);">${escapeHtml(car.notes)}</div>` : ''}
+    </div>`;
+
+  let tabBody = '';
+  if (_vmTab === 'workflow') tabBody = _vmWorkflowTabHTML(car);
+  else if (_vmTab === 'equipment') tabBody = _vmEquipTabHTML(car);
+  else tabBody = _vmPunchTabHTML(car);
+
+  _htmlPreserveFocus(root, head + `<div class="admin-section">${tabBar}${tabBody}</div>`);
+}
+
+// ── Workflow tab ──────────────────────────────────────────────────────────
+function _vmFormsForItem(itemId) {
+  const ids = VEH_FORM_LINKS.filter(l => l.workflow_item_id === itemId).map(l => l.form_id);
+  return FORMS.filter(f => ids.includes(f.id));
+}
+function _vmWorkflowTabHTML(car) {
+  const items = _vmWfLatest(car.id);
+  if (!items.length) {
+    return cxEmpty({ icon: 'clipboard', title: 'No workflow items', message: 'This car has no readiness checklist. Re-seed from its type template, or edit templates first.', actionLabel: _vmCan('edit') ? 'Seed from template' : null, onAction: _vmCan('edit') ? `_vmSeedWorkflow('${car.id}')` : null });
+  }
+  const canEdit = _vmCan('edit');
+  let h = '<div style="display:flex;flex-direction:column;gap:10px;">';
+  for (const it of items) {
+    const tone = _VM_WF_TONE[it.status] || 'muted';
+    const forms = _vmFormsForItem(it.id);
+    const hist = _vmWfHistory(it.regression_group_id || it.id);
+    const failed = it.status === 'Failed';
+    const histOpen = _vmWfHistOpen.has(it.id);
+    h += `<div style="border:1px solid var(--border);border-left:3px solid ${_VM_CHIP_TONE[tone][1]};border-radius:8px;padding:12px 14px;background:var(--surface);">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:200px;">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span style="font-size:14px;font-weight:600;">${escapeHtml(it.title)}</span>
+            ${it.required === false ? _vmChip('Optional', 'muted') : ''}
+            ${(it.attempt_number || 1) > 1 ? `<span style="font-size:10px;font-weight:700;background:#ede9fe;color:#6d28d9;border:1px solid #ddd6fe;border-radius:3px;padding:1px 6px;">Attempt ${it.attempt_number}</span>` : ''}
+          </div>
+          ${it.description ? `<div style="font-size:12px;color:var(--gray-500);margin-top:3px;">${escapeHtml(it.description)}</div>` : ''}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          ${canEdit
+            ? `<select onchange="_vmSetWfStatus('${it.id}',this.value)" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-weight:600;">
+                ${_VM_WF_STATUSES.map(s => `<option ${it.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+              </select>`
+            : _vmChip(it.status, tone)}
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        ${forms.map(f => `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;background:#eef2ff;color:#3730a3;border:1px solid #e0e7ff;border-radius:6px;padding:3px 8px;">
+            <button onclick="openFormViewer('${f.id}')" title="Open / fill" style="border:none;background:none;color:#3730a3;cursor:pointer;font:inherit;display:inline-flex;align-items:center;gap:5px;padding:0;">${icon('file')} ${escapeHtml(f.name || f.original_filename || 'Form')}</button>
+            ${canEdit ? `<button onclick="_vmUnlinkForm('${f.id}','${it.id}')" aria-label="Unlink form" title="Unlink" style="border:none;background:none;color:#9ca3af;cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}
+          </span>`).join('')}
+        ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;" onclick="_vmLinkFormModal('${it.id}')">${icon('paperclip')} Attach form</button>` : ''}
+        ${failed && canEdit ? `<button onclick="_vmWfRegression('${it.id}')" title="Freeze this failed attempt and start a fresh run" style="font-size:11px;font-weight:600;padding:3px 9px;background:#f5f3ff;border:1px solid #c4b5fd;color:#6d28d9;border-radius:6px;cursor:pointer;">${icon('refresh')} New attempt</button>` : ''}
+        ${hist.length ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;" onclick="_vmToggleHist('${it.id}')">${histOpen ? '▾' : '▸'} History (${hist.length})</button>` : ''}
+      </div>
+      ${histOpen && hist.length ? `<div style="margin-top:8px;border-top:1px dashed var(--border);padding-top:8px;display:flex;flex-direction:column;gap:5px;">
+        ${hist.slice().reverse().map(a => `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--gray-500);">
+          <span style="font-weight:700;">Attempt ${a.attempt_number || 1}</span> ${_vmChip(a.status, _VM_WF_TONE[a.status] || 'muted')}
+          ${a.completed_by ? '· ' + escapeHtml(a.completed_by) : ''}
+          ${a.completed_at ? '· ' + escapeHtml(new Date(a.completed_at).toLocaleDateString()) : ''}
+          ${_vmFormsForItem(a.id).map(f => `<button onclick="openFormViewer('${f.id}')" style="border:none;background:none;color:#3730a3;cursor:pointer;font:inherit;">${icon('file')} ${escapeHtml(f.name || 'Form')}</button>`).join('')}
+        </div>`).join('')}
+      </div>` : ''}
+    </div>`;
+  }
+  h += '</div>';
+  return h;
+}
+function _vmToggleHist(id) { if (_vmWfHistOpen.has(id)) _vmWfHistOpen.delete(id); else _vmWfHistOpen.add(id); renderVehicleManagement(); }
+
+async function _vmSetWfStatus(itemId, status) {
+  if (!_vmCan('edit')) { toast('Not permitted', 'error'); return; }
+  const it = VEH_WORKFLOW.find(w => w.id === itemId);
+  if (!it) return;
+  const patch = { status };
+  if (status === 'Complete') { patch.completed_by = _vmWho(); patch.completed_at = new Date().toISOString(); }
+  else { patch.completed_by = null; patch.completed_at = null; }
+  try {
+    const [row] = await _dbUpdate('vehicle_workflow_items', patch, { id: itemId });
+    Object.assign(it, row || patch);
+    renderVehicleManagement();
+  } catch (e) { toast('Update failed: ' + e.message, 'error'); }
+}
+
+// Regression: freeze the failed attempt (keeps its form links as history) and
+// clone a fresh "Not Started" attempt under the same regression group.
+async function _vmWfRegression(itemId) {
+  if (!_vmCan('edit')) { toast('Not permitted', 'error'); return; }
+  const it = VEH_WORKFLOW.find(w => w.id === itemId);
+  if (!it) return;
+  if (!await cxConfirm('Start a fresh attempt for "' + it.title + '"?\n\nThe current failed attempt and its attached forms are kept as history.')) return;
+  const groupId = it.regression_group_id || it.id;
+  try {
+    await _dbUpdate('vehicle_workflow_items', { is_latest_attempt: false, regression_group_id: groupId }, { id: it.id });
+    it.is_latest_attempt = false; it.regression_group_id = groupId;
+    const newRow = {
+      vehicle_id: it.vehicle_id, title: it.title, description: it.description, seq: it.seq,
+      required: it.required, status: 'Not Started', regression_group_id: groupId,
+      attempt_number: (it.attempt_number || 1) + 1, is_latest_attempt: true, created_by: _vmWho(),
+    };
+    const [inserted] = await _dbInsert('vehicle_workflow_items', [newRow]);
+    if (inserted) VEH_WORKFLOW.push(inserted);
+    toast('Fresh attempt started', 'success');
+    renderVehicleManagement();
+  } catch (e) { toast('Regression failed: ' + e.message, 'error'); }
+}
+
+// ── Equipment & Software tab ──────────────────────────────────────────────
+function _vmEquipTabHTML(car) {
+  const eqs = _vmEquipFor(car.id);
+  const canEdit = _vmCan('edit');
+  const toolbar = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      <div style="font-size:12px;color:var(--gray-500);">As-loaded software compared against the latest released version in each linked VDD.</div>
+      <div style="display:flex;gap:8px;">
+        ${canEdit && !eqs.length ? `<button class="form-secondary" style="font-size:12px;" onclick="_vmSeedEquip('${car.id}')">${icon('layers')} Seed from ${escapeHtml(car.car_type)}-template</button>` : ''}
+        ${canEdit ? `<button class="admin-action-btn" onclick="_vmEquipModal('${car.id}')">${icon('plus')} Add Equipment</button>` : ''}
+      </div>
+    </div>`;
+  if (!eqs.length) {
+    return toolbar + cxEmpty({ icon: 'cpu', title: 'No equipment', message: 'Add equipment manually or seed the baseline list for this car type.' });
+  }
+  let h = toolbar + `<table style="width:100%;border-collapse:collapse;font-size:12px;">
+    <thead><tr>${['Equipment', 'Type', 'Part No.', 'Loaded Ver.', 'Expected (VDD)', 'CRC', 'Compliance', ''].map(x => `<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">${x}</th>`).join('')}</tr></thead><tbody>`;
+  for (const e of eqs) {
+    const c = _vmCompliance(e);
+    const [label, tone] = _VM_COMPLIANCE_META[c.state] || ['—', 'muted'];
+    h += `<tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:6px 8px;font-weight:600;">${escapeHtml(e.equipment_name)}</td>
+      <td style="padding:6px 8px;">${e.sw_type ? `<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 5px;border-radius:3px;">${escapeHtml(e.sw_type)}</span>` : ''}</td>
+      <td style="padding:6px 8px;font-family:monospace;font-size:11px;">${escapeHtml(e.part_number || '')}</td>
+      <td style="padding:6px 8px;font-family:monospace;font-weight:600;">${escapeHtml(e.loaded_version || '—')}</td>
+      <td style="padding:6px 8px;font-family:monospace;color:var(--gray-500);">${escapeHtml(c.expected || (e.config_id ? '—' : 'not linked'))}</td>
+      <td style="padding:6px 8px;font-family:monospace;font-size:11px;color:var(--gray-500);">${escapeHtml(e.loaded_crc || '')}</td>
+      <td style="padding:6px 8px;">${_vmChip(label, tone)}</td>
+      <td style="padding:6px 8px;text-align:right;white-space:nowrap;">
+        ${canEdit ? `<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="_vmEquipModal('${car.id}','${e.id}')">Edit</button>
+        <button class="form-secondary" style="font-size:10px;padding:2px 7px;color:var(--bad);" onclick="_vmDeleteEquip('${e.id}')">Del</button>` : ''}
+      </td>
+    </tr>`;
+  }
+  h += '</tbody></table>';
+  return h;
+}
+
+// ── Punch tab ─────────────────────────────────────────────────────────────
+function _vmPunchTabHTML(car) {
+  const items = _vmPunchFor(car.id).sort((a, b) => (b.number || 0) - (a.number || 0));
+  const canEdit = _vmCan('edit');
+  const toolbar = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      <div style="font-size:12px;color:var(--gray-500);">Punch list items tagged to this car (install / test &amp; commissioning defects).</div>
+      ${canEdit ? `<button class="admin-action-btn" onclick="_vmLinkPunchModal('${car.id}')">${icon('link')} Link Punch Item</button>` : ''}
+    </div>`;
+  if (!items.length) return toolbar + cxEmpty({ icon: 'flag', title: 'No punch items', message: 'No punch items are linked to this car yet.' });
+  let h = toolbar + '<div style="display:flex;flex-direction:column;gap:8px;">';
+  for (const p of items) {
+    const closed = p.status === 'closed';
+    h += `<div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;background:var(--surface);">
+      <span style="font-family:monospace;font-weight:700;color:var(--gray-500);">#${p.number ?? ''}</span>
+      <span style="flex:1;min-width:0;font-size:13px;font-weight:600;">${escapeHtml(p.title || '(untitled)')}</span>
+      ${_vmChip(p.status || 'open', closed ? 'good' : (p.status === 'ready_to_inspect' ? 'info' : 'warn'))}
+      ${p.priority ? _vmChip(p.priority, p.priority === 'high' || p.priority === 'critical' ? 'bad' : 'muted') : ''}
+      ${canEdit ? `<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="_vmUnlinkPunch('${car.id}','${String(p.id).replace(/'/g, "\\'")}')">Unlink</button>` : ''}
+    </div>`;
+  }
+  h += '</div>';
+  return h;
+}
+
+// ── Car CRUD ──────────────────────────────────────────────────────────────
+function _vmAddCarModal() {
+  if (!_vmCan('create')) { toast('Not permitted', 'error'); return; }
+  modal({
+    title: '+ Add Car', size: 'medium',
+    body: `<div class="form-grid">
+      <div class="form-field"><label>Car Number *</label><input type="text" id="vm-num" class="form-input" placeholder="e.g. 1024" maxlength="6"></div>
+      <div class="form-field"><label>Car Type *</label>
+        <select id="vm-type" class="form-input"><option value="D">D-Car</option><option value="E">E-Car</option></select>
+      </div>
+      <div class="form-field form-field-full"><label>Notes</label><input type="text" id="vm-notes" class="form-input" placeholder="Optional"></div>
+      <div class="form-field form-field-full"><label style="display:flex;align-items:center;gap:7px;font-weight:400;"><input type="checkbox" id="vm-seed" checked style="margin:0;"> Seed workflow &amp; equipment from the type template</label></div>
+    </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmSaveCar()">Save</button>`,
+  });
+}
+async function _vmSaveCar() {
+  const num = (document.getElementById('vm-num')?.value || '').trim();
+  const type = (document.getElementById('vm-type')?.value || 'D').trim();
+  const notes = (document.getElementById('vm-notes')?.value || '').trim() || null;
+  const seed = !!document.getElementById('vm-seed')?.checked;
+  if (!num) { toast('Car number is required', 'error'); return; }
+  if (VEHICLES.some(v => String(v.car_number).toLowerCase() === num.toLowerCase())) { toast('Car ' + num + ' already exists', 'error'); return; }
+  try {
+    const [car] = await _dbInsert('vehicles', [{ car_number: num, car_type: type, notes, created_by: _vmWho() }]);
+    if (!car) throw new Error('insert returned no row');
+    VEHICLES.push(car);
+    if (seed) {
+      const wfRows = VEH_WF_TPL.filter(t => t.car_type === type).map(t => ({
+        vehicle_id: car.id, title: t.title, description: t.description, seq: t.seq, required: t.required,
+        status: 'Not Started', attempt_number: 1, is_latest_attempt: true, created_by: _vmWho(),
+      }));
+      const eqRows = VEH_EQ_TPL.filter(t => t.car_type === type).map(t => ({
+        vehicle_id: car.id, equipment_name: t.equipment_name, sw_type: t.sw_type, config_id: t.config_id,
+        part_number: t.part_number, sort_order: t.sort_order, created_by: _vmWho(),
+      }));
+      if (wfRows.length) { const ins = await _dbInsert('vehicle_workflow_items', wfRows); VEH_WORKFLOW.push(...(ins || [])); }
+      if (eqRows.length) { const ins = await _dbInsert('vehicle_equipment', eqRows); VEH_EQUIP.push(...(ins || [])); }
+    }
+    toast('Car ' + num + ' added', 'success');
+    closeModal();
+    _vmOpenCar(car.id);
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+function _vmEditCarModal(id) {
+  const car = VEHICLES.find(v => v.id === id); if (!car) return;
+  modal({
+    title: 'Edit Car ' + escapeHtml(car.car_number), size: 'medium',
+    body: `<div class="form-grid">
+      <div class="form-field"><label>Car Number *</label><input type="text" id="vm-num" class="form-input" value="${escapeHtml(car.car_number)}" maxlength="6"></div>
+      <div class="form-field"><label>Car Type *</label><select id="vm-type" class="form-input"><option value="D" ${car.car_type === 'D' ? 'selected' : ''}>D-Car</option><option value="E" ${car.car_type === 'E' ? 'selected' : ''}>E-Car</option></select></div>
+      <div class="form-field form-field-full"><label>Notes</label><input type="text" id="vm-notes" class="form-input" value="${escapeHtml(car.notes || '')}"></div>
+    </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmUpdateCar('${id}')">Save Changes</button>`,
+  });
+}
+async function _vmUpdateCar(id) {
+  const car = VEHICLES.find(v => v.id === id); if (!car) return;
+  const num = (document.getElementById('vm-num')?.value || '').trim();
+  const type = (document.getElementById('vm-type')?.value || 'D').trim();
+  const notes = (document.getElementById('vm-notes')?.value || '').trim() || null;
+  if (!num) { toast('Car number is required', 'error'); return; }
+  if (VEHICLES.some(v => v.id !== id && String(v.car_number).toLowerCase() === num.toLowerCase())) { toast('Car ' + num + ' already exists', 'error'); return; }
+  try {
+    const [row] = await _dbUpdate('vehicles', { car_number: num, car_type: type, notes }, { id });
+    Object.assign(car, row || { car_number: num, car_type: type, notes });
+    toast('Car updated', 'success'); closeModal(); renderVehicleManagement();
+  } catch (e) { toast('Update failed: ' + e.message, 'error'); }
+}
+async function _vmDeleteCar(id) {
+  const car = VEHICLES.find(v => v.id === id); if (!car) return;
+  if (!_vmCan('delete')) { toast('Not permitted', 'error'); return; }
+  if (!await cxConfirm('Delete car ' + car.car_number + '?\n\nThis removes its workflow, equipment, and form links. This cannot be undone.')) return;
+  try {
+    await _dbDelete('vehicles', { id });
+    VEHICLES = VEHICLES.filter(v => v.id !== id);
+    VEH_EQUIP = VEH_EQUIP.filter(e => e.vehicle_id !== id);
+    VEH_WORKFLOW = VEH_WORKFLOW.filter(w => w.vehicle_id !== id);
+    toast('Car deleted', 'success'); _vmBackToList();
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+async function _vmSeedWorkflow(carId) {
+  const car = VEHICLES.find(v => v.id === carId); if (!car) return;
+  const rows = VEH_WF_TPL.filter(t => t.car_type === car.car_type).map(t => ({
+    vehicle_id: carId, title: t.title, description: t.description, seq: t.seq, required: t.required,
+    status: 'Not Started', attempt_number: 1, is_latest_attempt: true, created_by: _vmWho(),
+  }));
+  if (!rows.length) { toast('No workflow template for ' + car.car_type + '-Car', 'error'); return; }
+  try { const ins = await _dbInsert('vehicle_workflow_items', rows); VEH_WORKFLOW.push(...(ins || [])); toast('Workflow seeded', 'success'); renderVehicleManagement(); }
+  catch (e) { toast('Seed failed: ' + e.message, 'error'); }
+}
+async function _vmSeedEquip(carId) {
+  const car = VEHICLES.find(v => v.id === carId); if (!car) return;
+  const rows = VEH_EQ_TPL.filter(t => t.car_type === car.car_type).map(t => ({
+    vehicle_id: carId, equipment_name: t.equipment_name, sw_type: t.sw_type, config_id: t.config_id,
+    part_number: t.part_number, sort_order: t.sort_order, created_by: _vmWho(),
+  }));
+  if (!rows.length) { toast('No equipment template for ' + car.car_type + '-Car. Add one under Templates.', 'error'); return; }
+  try { const ins = await _dbInsert('vehicle_equipment', rows); VEH_EQUIP.push(...(ins || [])); toast('Equipment seeded', 'success'); renderVehicleManagement(); }
+  catch (e) { toast('Seed failed: ' + e.message, 'error'); }
+}
+
+// ── Equipment CRUD ────────────────────────────────────────────────────────
+function _vmConfigOptions(selectedId) {
+  // Offer master/standalone configs (VDD families) as targets, labelled with latest version.
+  const masters = SW_CONFIGS.filter(c => !c.parent_id);
+  const opts = masters.slice().sort((a, b) => String(a.software_name || '').localeCompare(String(b.software_name || '')))
+    .map(c => {
+      const ver = _vmExpectedVersion(c.id);
+      const label = (c.software_name || c.device_label || 'Config') + (ver ? ' — latest ' + ver : '');
+      return `<option value="${c.id}" ${selectedId === c.id ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    }).join('');
+  return `<option value="">— No VDD link —</option>` + opts;
+}
+function _vmEquipModal(carId, editId) {
+  const existing = editId ? VEH_EQUIP.find(e => e.id === editId) : null;
+  const v = (f, d = '') => existing ? (existing[f] ?? d) : d;
+  const swTypes = (typeof _fsOptions === 'function') ? _fsOptions('sw_equipment_type') : [];
+  modal({
+    title: existing ? 'Edit Equipment' : '+ Add Equipment', size: 'medium',
+    body: `<div class="form-grid">
+      <div class="form-field"><label>Equipment Name *</label><input type="text" id="vme-name" class="form-input" placeholder="e.g. CC, ATC-C, DCS Radio" value="${escapeHtml(v('equipment_name'))}"></div>
+      <div class="form-field"><label>SW Type</label><input type="text" id="vme-type" class="form-input" placeholder="CBTC, DCS, FW…" value="${escapeHtml(v('sw_type'))}" list="vme-type-list"><datalist id="vme-type-list">${swTypes.map(t => '<option value="' + escapeHtml(t) + '">').join('')}</datalist></div>
+      <div class="form-field form-field-full"><label>VDD Link <span style="font-weight:400;color:var(--gray-500);">(defines the expected version)</span></label><select id="vme-config" class="form-input">${_vmConfigOptions(existing?.config_id || '')}</select></div>
+      <div class="form-field"><label>Loaded Version</label><input type="text" id="vme-loaded" class="form-input" placeholder="version actually loaded" value="${escapeHtml(v('loaded_version'))}"></div>
+      <div class="form-field"><label>Loaded CRC</label><input type="text" id="vme-crc" class="form-input" placeholder="optional" value="${escapeHtml(v('loaded_crc'))}"></div>
+      <div class="form-field form-field-full"><label>Part Number</label><input type="text" id="vme-part" class="form-input" value="${escapeHtml(v('part_number'))}"></div>
+      <div class="form-field form-field-full"><label>Notes</label><input type="text" id="vme-notes" class="form-input" value="${escapeHtml(v('notes'))}"></div>
+    </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+      ${existing ? `<button class="form-secondary" style="color:var(--bad);" onclick="_vmDeleteEquip('${existing.id}')">Delete</button>` : ''}
+      <button class="form-submit" onclick="_vmSaveEquip('${carId}'${existing ? ",'" + existing.id + "'" : ''})">${existing ? 'Save Changes' : 'Save'}</button>`,
+  });
+}
+async function _vmSaveEquip(carId, editId) {
+  const name = (document.getElementById('vme-name')?.value || '').trim();
+  if (!name) { toast('Equipment name is required', 'error'); return; }
+  const data = {
+    equipment_name: name,
+    sw_type: (document.getElementById('vme-type')?.value || '').trim() || null,
+    config_id: (document.getElementById('vme-config')?.value || '') || null,
+    loaded_version: (document.getElementById('vme-loaded')?.value || '').trim() || null,
+    loaded_crc: (document.getElementById('vme-crc')?.value || '').trim() || null,
+    part_number: (document.getElementById('vme-part')?.value || '').trim() || null,
+    notes: (document.getElementById('vme-notes')?.value || '').trim() || null,
+  };
+  try {
+    if (editId) {
+      const eq = VEH_EQUIP.find(e => e.id === editId);
+      const [row] = await _dbUpdate('vehicle_equipment', data, { id: editId });
+      Object.assign(eq, row || data);
+      toast('Equipment updated', 'success');
+    } else {
+      const [row] = await _dbInsert('vehicle_equipment', [{ vehicle_id: carId, ...data, sort_order: _vmEquipFor(carId).length, created_by: _vmWho() }]);
+      if (row) VEH_EQUIP.push(row);
+      toast('Equipment added', 'success');
+    }
+    closeModal(); renderVehicleManagement();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+async function _vmDeleteEquip(id) {
+  const eq = VEH_EQUIP.find(e => e.id === id); if (!eq) return;
+  if (!await cxConfirm('Delete "' + eq.equipment_name + '"?')) return;
+  try { await _dbDelete('vehicle_equipment', { id }); VEH_EQUIP = VEH_EQUIP.filter(e => e.id !== id); toast('Equipment deleted', 'success'); closeModal(); renderVehicleManagement(); }
+  catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ── Bulk software update across selected cars ─────────────────────────────
+function _vmBulkUpdateModal() {
+  if (!_vmCan('bulk_edit')) { toast('Not permitted', 'error'); return; }
+  // Distinct equipment names across all cars, to pick which CI to update.
+  const names = [...new Set(VEH_EQUIP.map(e => e.equipment_name).filter(Boolean))].sort();
+  if (!names.length) { toast('No equipment exists on any car yet', 'error'); return; }
+  const carsByType = t => _vmSortCars(VEHICLES.filter(c => c.car_type === t));
+  const carChecks = type => {
+    const g = carsByType(type);
+    if (!g.length) return '';
+    return `<div style="margin-top:8px;"><div style="font-size:11px;font-weight:700;color:var(--gray-400);text-transform:uppercase;margin-bottom:4px;">${type}-Cars</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        <label style="font-size:11px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" onchange="_vmBulkToggleType('${type}',this.checked)" style="margin:0;"> <em>all ${type}</em></label>
+        ${g.map(c => `<label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;border:1px solid var(--border);border-radius:6px;padding:3px 8px;"><input type="checkbox" class="vm-bulk-car" value="${c.id}" data-type="${type}" style="margin:0;"> ${escapeHtml(c.car_number)}</label>`).join('')}
+      </div></div>`;
+  };
+  modal({
+    title: 'Bulk Software Update', size: 'large',
+    body: `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">Set a loaded version on one equipment item across every selected car. Matching is by equipment name.</div>
+      <div class="form-grid">
+        <div class="form-field"><label>Equipment *</label><select id="vm-bulk-name" class="form-input">${names.map(n => `<option>${escapeHtml(n)}</option>`).join('')}</select></div>
+        <div class="form-field"><label>New Loaded Version *</label><input type="text" id="vm-bulk-ver" class="form-input" placeholder="e.g. C11_D470"></div>
+        <div class="form-field form-field-full"><label>Loaded CRC <span style="font-weight:400;color:var(--gray-500);">(optional, also applied)</span></label><input type="text" id="vm-bulk-crc" class="form-input" placeholder="leave blank to keep existing"></div>
+      </div>
+      <div style="margin-top:6px;"><label style="font-weight:600;font-size:12px;">Apply to cars</label>${carChecks('D')}${carChecks('E')}</div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmApplyBulkUpdate()">Apply Update</button>`,
+  });
+}
+function _vmBulkToggleType(type, on) {
+  document.querySelectorAll('.vm-bulk-car[data-type="' + type + '"]').forEach(cb => { cb.checked = on; });
+}
+async function _vmApplyBulkUpdate() {
+  const name = (document.getElementById('vm-bulk-name')?.value || '').trim();
+  const ver = (document.getElementById('vm-bulk-ver')?.value || '').trim();
+  const crc = (document.getElementById('vm-bulk-crc')?.value || '').trim();
+  const carIds = [...document.querySelectorAll('.vm-bulk-car:checked')].map(cb => cb.value);
+  if (!ver) { toast('New loaded version is required', 'error'); return; }
+  if (!carIds.length) { toast('Select at least one car', 'error'); return; }
+  const targets = VEH_EQUIP.filter(e => e.equipment_name === name && carIds.includes(e.vehicle_id));
+  if (!targets.length) { toast('No matching equipment on the selected cars', 'error'); return; }
+  const patch = { loaded_version: ver };
+  if (crc) patch.loaded_crc = crc;
+  let okN = 0;
+  try {
+    for (const e of targets) {
+      const [row] = await _dbUpdate('vehicle_equipment', patch, { id: e.id });
+      Object.assign(e, row || patch); okN++;
+    }
+    toast('Updated ' + okN + ' car' + (okN === 1 ? '' : 's'), 'success');
+    closeModal(); renderVehicleManagement();
+  } catch (err) { toast('Bulk update failed after ' + okN + ': ' + err.message, 'error'); renderVehicleManagement(); }
+}
+
+// ── Form linking (fillable PDFs from the Forms module) ────────────────────
+function _vmLinkFormModal(itemId) {
+  if (!FORMS.length) { toast('No forms available. Upload one in the Forms module first.', 'error'); return; }
+  const linkedIds = new Set(VEH_FORM_LINKS.filter(l => l.workflow_item_id === itemId).map(l => l.form_id));
+  const avail = FORMS.filter(f => !linkedIds.has(f.id))
+    .sort((a, b) => String(a.name || a.original_filename || '').localeCompare(String(b.name || b.original_filename || '')));
+  modal({
+    title: 'Attach Form', size: 'medium',
+    body: avail.length ? `<div style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto;">
+        ${avail.map(f => `<button class="form-secondary" style="text-align:left;display:flex;align-items:center;gap:8px;" onclick="_vmAttachForm('${f.id}','${itemId}')">${icon('file')} ${escapeHtml(f.name || f.original_filename || 'Form')}${f.is_template ? ' ' + _vmChip('template', 'info') : ''}</button>`).join('')}
+      </div>` : `<div style="font-size:13px;color:var(--gray-500);">All available forms are already attached.</div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
+}
+async function _vmAttachForm(formId, itemId) {
+  if (VEH_FORM_LINKS.some(l => l.form_id === formId && l.workflow_item_id === itemId)) { closeModal(); return; }
+  try {
+    const [link] = await _dbInsert('form_vehicle_item_links', [{ form_id: formId, workflow_item_id: itemId, linked_by: _vmWho() }]);
+    if (link) VEH_FORM_LINKS.push(link);
+    toast('Form attached', 'success'); closeModal(); renderVehicleManagement();
+  } catch (e) { toast('Attach failed: ' + e.message, 'error'); }
+}
+async function _vmUnlinkForm(formId, itemId) {
+  const links = VEH_FORM_LINKS.filter(l => l.form_id === formId && l.workflow_item_id === itemId);
+  try {
+    for (const l of links) if (l.id) await _dbDelete('form_vehicle_item_links', { id: l.id });
+    VEH_FORM_LINKS = VEH_FORM_LINKS.filter(l => !links.includes(l));
+    renderVehicleManagement();
+  } catch (e) { toast('Unlink failed: ' + e.message, 'error'); }
+}
+
+// ── Punch linking ─────────────────────────────────────────────────────────
+function _vmLinkPunchModal(carId) {
+  const db = (typeof PUNCH_DB !== 'undefined' ? PUNCH_DB : []);
+  const linked = new Set(_vmPunchFor(carId).map(p => String(p.id)));
+  const avail = db.filter(p => !p.is_deleted && !linked.has(String(p.id)))
+    .sort((a, b) => (b.number || 0) - (a.number || 0));
+  modal({
+    title: 'Link Punch Item', size: 'medium',
+    body: avail.length ? `<input type="text" class="form-input" placeholder="Filter…" oninput="_vmPunchFilter(this.value)" style="margin-bottom:8px;">
+      <div id="vm-punch-list" style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto;">
+        ${avail.map(p => `<button class="form-secondary vm-punch-opt" data-txt="${escapeHtml(String((p.number || '') + ' ' + (p.title || '')).toLowerCase())}" style="text-align:left;display:flex;align-items:center;gap:8px;" onclick="_vmLinkPunch('${carId}','${String(p.id).replace(/'/g, "\\'")}')"><span style="font-family:monospace;font-weight:700;color:var(--gray-500);">#${p.number ?? ''}</span> ${escapeHtml(p.title || '(untitled)')}</button>`).join('')}
+      </div>` : `<div style="font-size:13px;color:var(--gray-500);">No unlinked punch items available.</div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
+}
+function _vmPunchFilter(q) {
+  q = (q || '').toLowerCase();
+  document.querySelectorAll('#vm-punch-list .vm-punch-opt').forEach(b => { b.style.display = b.dataset.txt.includes(q) ? '' : 'none'; });
+}
+async function _vmLinkPunch(carId, punchId) {
+  const db = (typeof PUNCH_DB !== 'undefined' ? PUNCH_DB : []);
+  const p = db.find(x => String(x.id) === String(punchId)); if (!p) return;
+  const ids = Array.from(new Set([...(p.linked_car_ids || []), carId]));
+  try {
+    await _dbUpdate('punch_items', { linked_car_ids: ids }, { id: p.id });
+    p.linked_car_ids = ids;
+    toast('Punch item linked', 'success'); closeModal(); renderVehicleManagement();
+  } catch (e) { toast('Link failed: ' + e.message, 'error'); }
+}
+async function _vmUnlinkPunch(carId, punchId) {
+  const db = (typeof PUNCH_DB !== 'undefined' ? PUNCH_DB : []);
+  const p = db.find(x => String(x.id) === String(punchId)); if (!p) return;
+  const ids = (p.linked_car_ids || []).filter(id => id !== carId);
+  try {
+    await _dbUpdate('punch_items', { linked_car_ids: ids }, { id: p.id });
+    p.linked_car_ids = ids;
+    renderVehicleManagement();
+  } catch (e) { toast('Unlink failed: ' + e.message, 'error'); }
+}
+
+// ── Type templates manager (workflow + equipment baselines) ───────────────
+let _vmTplType = 'D';
+function _vmTemplatesModal(type) {
+  if (!_vmCan('manage_templates')) { toast('Not permitted', 'error'); return; }
+  _vmTplType = type || _vmTplType || 'D';
+  modal({ title: 'Vehicle Templates', size: 'large', body: _vmTemplatesBodyHTML(), footer: `<button class="form-secondary" onclick="closeModal()">Done</button>` });
+}
+function _vmTemplatesBodyHTML() {
+  const t = _vmTplType;
+  const wf = VEH_WF_TPL.filter(x => x.car_type === t).sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  const eq = VEH_EQ_TPL.filter(x => x.car_type === t).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const typeBtns = ['D', 'E'].map(x => `<button onclick="_vmTplSetType('${x}')" style="padding:5px 14px;border:1px solid var(--border);cursor:pointer;background:${t === x ? 'var(--hitachi-red)' : 'var(--surface)'};color:${t === x ? 'var(--white)' : 'var(--text)'};font-weight:600;border-radius:6px;">${x}-Car</button>`).join(' ');
+  return `<div id="vm-tpl-body">
+    <div style="display:flex;gap:8px;margin-bottom:14px;">${typeBtns}</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;"><div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--gray-400);">Workflow checklist</div><button class="form-secondary" style="font-size:11px;" onclick="_vmTplAddWf()">${icon('plus')} Add item</button></div>
+    <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:18px;">
+      ${wf.length ? wf.map(i => `<div style="display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;">
+        <span style="font-family:monospace;color:var(--gray-400);">${i.seq}</span>
+        <span style="flex:1;font-weight:600;">${escapeHtml(i.title)}</span>
+        ${i.required === false ? _vmChip('optional', 'muted') : ''}
+        <button class="form-secondary" style="font-size:10px;padding:1px 6px;color:var(--bad);" onclick="_vmTplDelWf('${i.id}')">Del</button>
+      </div>`).join('') : `<div style="font-size:12px;color:var(--gray-500);">No workflow items for ${t}-Car.</div>`}
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;"><div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--gray-400);">Equipment baseline</div><button class="form-secondary" style="font-size:11px;" onclick="_vmTplAddEq()">${icon('plus')} Add equipment</button></div>
+    <div style="display:flex;flex-direction:column;gap:5px;">
+      ${eq.length ? eq.map(i => `<div style="display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;">
+        <span style="flex:1;font-weight:600;">${escapeHtml(i.equipment_name)}</span>
+        ${i.sw_type ? `<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 5px;border-radius:3px;">${escapeHtml(i.sw_type)}</span>` : ''}
+        <span style="color:var(--gray-500);">${escapeHtml(_vmConfigById(i.config_id)?.software_name || (i.config_id ? '' : 'no VDD'))}</span>
+        <button class="form-secondary" style="font-size:10px;padding:1px 6px;color:var(--bad);" onclick="_vmTplDelEq('${i.id}')">Del</button>
+      </div>`).join('') : `<div style="font-size:12px;color:var(--gray-500);">No equipment baseline for ${t}-Car.</div>`}
+    </div>
+  </div>`;
+}
+function _vmTplSetType(t) { _vmTplType = t; const b = document.getElementById('vm-tpl-body'); if (b) b.outerHTML = _vmTemplatesBodyHTML(); }
+function _vmTplRefresh() { const b = document.getElementById('vm-tpl-body'); if (b) b.outerHTML = _vmTemplatesBodyHTML(); }
+function _vmTplAddWf() {
+  const title = prompt('Workflow item title for ' + _vmTplType + '-Car:'); if (!title || !title.trim()) return;
+  const seq = (VEH_WF_TPL.filter(x => x.car_type === _vmTplType).reduce((m, x) => Math.max(m, x.seq || 0), 0)) + 1;
+  _dbInsert('vehicle_workflow_templates', [{ car_type: _vmTplType, title: title.trim(), seq, required: true, created_by: _vmWho() }])
+    .then(([row]) => { if (row) VEH_WF_TPL.push(row); _vmTplRefresh(); toast('Added', 'success'); })
+    .catch(e => toast('Add failed: ' + e.message, 'error'));
+}
+function _vmTplDelWf(id) {
+  _dbDelete('vehicle_workflow_templates', { id }).then(() => { VEH_WF_TPL = VEH_WF_TPL.filter(x => x.id !== id); _vmTplRefresh(); })
+    .catch(e => toast('Delete failed: ' + e.message, 'error'));
+}
+function _vmTplAddEq() {
+  const name = prompt('Equipment name for ' + _vmTplType + '-Car:'); if (!name || !name.trim()) return;
+  const sort = (VEH_EQ_TPL.filter(x => x.car_type === _vmTplType).reduce((m, x) => Math.max(m, x.sort_order || 0), 0)) + 1;
+  _dbInsert('vehicle_equipment_templates', [{ car_type: _vmTplType, equipment_name: name.trim(), sort_order: sort, created_by: _vmWho() }])
+    .then(([row]) => { if (row) VEH_EQ_TPL.push(row); _vmTplRefresh(); toast('Added', 'success'); })
+    .catch(e => toast('Add failed: ' + e.message, 'error'));
+}
+function _vmTplDelEq(id) {
+  _dbDelete('vehicle_equipment_templates', { id }).then(() => { VEH_EQ_TPL = VEH_EQ_TPL.filter(x => x.id !== id); _vmTplRefresh(); })
+    .catch(e => toast('Delete failed: ' + e.message, 'error'));
+}
+
 
 // ==========================================================================
 // RMA — Return Merchandise Authorization

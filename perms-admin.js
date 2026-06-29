@@ -121,6 +121,11 @@ const PERM_CATALOG = {
     ['view','read_only',false],['create','standard',false],['new_version','standard',false],
     ['edit','standard',false],['delete','admin',false],
   ],
+  vehicle_mgmt: [
+    ['view','read_only',false],['export','read_only',false],
+    ['create','standard',false],['edit','standard',false],
+    ['bulk_edit','standard',true],['manage_templates','admin',false],['delete','admin',false],
+  ],
   audit: [['view','read_only',false],['export','read_only',false]],
   admin: [['view','admin',false],['manage_templates','admin',true],['manage_overrides','admin',true]],
 };
@@ -205,6 +210,7 @@ const PAGE_MODULE = {
   'drawings': 'drawings',
   'documents': 'drawings',
   'dynamic-testing': 'dynamic_testing',
+  'vehicle-management': 'vehicle_mgmt',
   'locations': 'locations',
   'team': 'directory',
   'audit': 'audit',

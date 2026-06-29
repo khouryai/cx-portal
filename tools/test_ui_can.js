@@ -32,7 +32,7 @@ const CATALOG = new Set([
   "overview", "test_register", "dynamic_testing", "test_reporting", "punch_list",
   "rma", "tasks", "forms", "photos", "meetings", "planning", "lookahead", "schedule_p6",
   "assets", "drawings", "locations", "directory", "templates",
-  "weights", "config", "audit", "admin",
+  "weights", "config", "vehicle_mgmt", "audit", "admin",
 ]);
 // Nav entries that intentionally have no permission module.
 const NON_MODULE_PAGES = new Set(["login"]);
