@@ -16554,9 +16554,10 @@ async function _assetLinkFromPanel(assetId) {
 // subsystem · location · device. Append-only install log → free history.
 // ==========================================================================
 let SW_CONFIGS = [];
-let _cmFilter  = { subsystem: '', phase: '', location: '', search: '' };
+let _cmFilter  = { subsystem: '', phase: '', location: '', search: '', vddView: false };
 let _cmEditId  = null;
 let _cmExpanded = new Set(); // expanded config-item history keys
+let _cmVddExpanded = new Set(); // expanded master VDD rows in VDD view
 
 async function loadSoftwareConfigs() {
   try {
@@ -16918,56 +16919,62 @@ function _cmPageHTML() {
   const locOpts   = f.phase ? _cmLocs(f.phase) : [];
 
   let body = '';
-  const subKeys = Object.keys(tree).sort();
-  if (!subKeys.length) {
-    body = `<div style="text-align:center;padding:48px 0;color:var(--gray-400);">No software configurations match your filters. Click <strong>+ Add Software Config</strong> to create the first one.</div>`;
+  if (f.vddView) {
+    body = _cmVDDViewHTML(f);
   } else {
-    for (const sub of subKeys) {
-      body += `<div style="margin-bottom:22px;">
-        <div style="font-size:14px;font-weight:700;color:var(--gray-800);padding:8px 0;border-bottom:2px solid var(--hitachi-red);margin-bottom:10px;">${icon('settings')}️ ${escapeHtml(sub)}</div>`;
-      const locKeys = Object.keys(tree[sub]).sort();
-      for (const loc of locKeys) {
-        body += `<div style="margin:0 0 14px 4px;">
-          <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:6px;">${icon('pin')} ${escapeHtml(loc)}</div>`;
-        const items = tree[sub][loc];
-        for (const ik of Object.keys(items)) {
-          const versions = items[ik].slice().sort((a,b) => new Date(b.install_date) - new Date(a.install_date));
-          const latest = versions[0];
-          const expanded = _cmExpanded.has(ik);
-          const histCount = versions.length - 1;
-          const statusColor = { active:'#16a34a', superseded:'#6b7280', rolled_back:'#dc2626', planned:'#7c3aed' }[latest.status] || '#6b7280';
-          body += `
-            <div style="border:1px solid var(--gray-200);border-radius:8px;margin-bottom:8px;overflow:hidden;">
-              <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 14px;background:var(--white);">
-                <div>
-                  <div style="font-size:13px;font-weight:600;">${escapeHtml(latest.software_name)}
-                    <span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">${escapeHtml(latest.version)}</span>
-                    <span style="font-size:11px;font-weight:600;color:${statusColor};margin-left:6px;">● ${escapeHtml(latest.status)}</span>
+    const subKeys = Object.keys(tree).sort();
+    if (!subKeys.length) {
+      body = `<div style="text-align:center;padding:48px 0;color:var(--gray-400);">No software configurations match your filters. Click <strong>+ Add Software Config</strong> to create the first one.</div>`;
+    } else {
+      for (const sub of subKeys) {
+        body += `<div style="margin-bottom:22px;">
+          <div style="font-size:14px;font-weight:700;color:var(--gray-800);padding:8px 0;border-bottom:2px solid var(--hitachi-red);margin-bottom:10px;">${icon('settings')}️ ${escapeHtml(sub)}</div>`;
+        const locKeys = Object.keys(tree[sub]).sort();
+        for (const loc of locKeys) {
+          body += `<div style="margin:0 0 14px 4px;">
+            <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:6px;">${icon('pin')} ${escapeHtml(loc)}</div>`;
+          const items = tree[sub][loc];
+          for (const ik of Object.keys(items)) {
+            const versions = items[ik].slice().sort((a,b) => new Date(b.install_date) - new Date(a.install_date));
+            const latest = versions[0];
+            const expanded = _cmExpanded.has(ik);
+            const histCount = versions.length - 1;
+            const statusColor = { active:'#16a34a', superseded:'#6b7280', rolled_back:'#dc2626', planned:'#7c3aed' }[latest.status] || '#6b7280';
+            body += `
+              <div style="border:1px solid var(--gray-200);border-radius:8px;margin-bottom:8px;overflow:hidden;">
+                <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 14px;background:var(--white);">
+                  <div>
+                    <div style="font-size:13px;font-weight:600;">${escapeHtml(latest.software_name)}
+                      <span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">${escapeHtml(latest.version)}</span>
+                      <span style="font-size:11px;font-weight:600;color:${statusColor};margin-left:6px;">● ${escapeHtml(latest.status)}</span>
+                    </div>
+                    <div style="font-size:11px;color:var(--gray-500);margin-top:3px;">
+                      ${icon('monitor')} ${escapeHtml(latest.device_label || '— general —')} · Installed ${latest.install_date}${latest.installed_by ? ' by '+escapeHtml(latest.installed_by) : ''}${latest.baseline ? ' · Baseline: '+escapeHtml(latest.baseline) : ''}
+                    </div>
                   </div>
-                  <div style="font-size:11px;color:var(--gray-500);margin-top:3px;">
-                    ${icon('monitor')} ${escapeHtml(latest.device_label || '— general —')} · Installed ${latest.install_date}${latest.installed_by ? ' by '+escapeHtml(latest.installed_by) : ''}${latest.baseline ? ' · Baseline: '+escapeHtml(latest.baseline) : ''}
+                  <div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">
+                    ${histCount > 0 ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_cmToggleHistory('${ik.replace(/'/g,"\\'")}')">${expanded?'▼':'▶'} ${histCount} prior</button>` : ''}
+                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(null,'${latest.id}')">↑ New Version</button>
+                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal('${latest.id}')">Edit</button>
                   </div>
                 </div>
-                <div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">
-                  ${histCount > 0 ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_cmToggleHistory('${ik.replace(/'/g,"\\'")}')">${expanded?'▼':'▶'} ${histCount} prior</button>` : ''}
-                  <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(null,'${latest.id}')">↑ New Version</button>
-                  <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal('${latest.id}')">Edit</button>
-                </div>
-              </div>
-              ${expanded && histCount > 0 ? `<div style="border-top:1px solid var(--gray-100);background:var(--gray-50);padding:6px 14px;">
-                ${versions.slice(1).map(v => `
-                  <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--gray-600);padding:5px 0;border-bottom:1px solid var(--gray-100);">
-                    <span><span style="font-family:monospace;background:var(--gray-200);padding:1px 6px;border-radius:3px;">${escapeHtml(v.version)}</span> · ${v.install_date}${v.installed_by?' · '+escapeHtml(v.installed_by):''} · <span style="color:#6b7280;">${escapeHtml(v.status)}</span></span>
-                    <button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="openSwConfigModal('${v.id}')">View / Edit</button>
-                  </div>`).join('')}
-              </div>` : ''}
-            </div>`;
+                ${expanded && histCount > 0 ? `<div style="border-top:1px solid var(--gray-100);background:var(--gray-50);padding:6px 14px;">
+                  ${versions.slice(1).map(v => `
+                    <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--gray-600);padding:5px 0;border-bottom:1px solid var(--gray-100);">
+                      <span><span style="font-family:monospace;background:var(--gray-200);padding:1px 6px;border-radius:3px;">${escapeHtml(v.version)}</span> · ${v.install_date}${v.installed_by?' · '+escapeHtml(v.installed_by):''} · <span style="color:#6b7280;">${escapeHtml(v.status)}</span></span>
+                      <button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="openSwConfigModal('${v.id}')">View / Edit</button>
+                    </div>`).join('')}
+                </div>` : ''}
+              </div>`;
+          }
+          body += `</div>`;
         }
         body += `</div>`;
       }
-      body += `</div>`;
     }
   }
+
+  const masterCount = new Set(SW_CONFIGS.filter(c => c.parent_id).map(c => c.parent_id).filter(Boolean)).size;
 
   return `
     <div class="admin-section" style="margin-bottom:18px;">
@@ -16975,13 +16982,19 @@ function _cmPageHTML() {
         <div style="display:flex;gap:24px;flex-wrap:wrap;">
           <div><div style="font-size:22px;font-weight:700;">${totalItems}</div><div style="font-size:11px;color:var(--gray-500);">Config Items</div></div>
           <div><div style="font-size:22px;font-weight:700;color:#16a34a;">${activeCount}</div><div style="font-size:11px;color:var(--gray-500);">Active Versions</div></div>
-          <div><div style="font-size:22px;font-weight:700;">${SW_CONFIGS.length}</div><div style="font-size:11px;color:var(--gray-500);">Total Records</div></div>
+          <div><div style="font-size:22px;font-weight:700;">${masterCount}</div><div style="font-size:11px;color:var(--gray-500);">Master VDDs</div></div>
         </div>
-        <button class="admin-action-btn" onclick="openSwConfigModal(null)">+ Add Software Config</button>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <div style="display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:12px;">
+            <button style="padding:5px 14px;border:none;cursor:pointer;background:${!f.vddView ? 'var(--hitachi-red)' : 'var(--surface)'};color:${!f.vddView ? 'var(--white)' : 'var(--text)'};font-weight:${!f.vddView ? '600' : '400'};" onclick="_cmToggleVDDView(false)">By Location</button>
+            <button style="padding:5px 14px;border:none;cursor:pointer;border-left:1px solid var(--border);background:${f.vddView ? 'var(--hitachi-red)' : 'var(--surface)'};color:${f.vddView ? 'var(--white)' : 'var(--text)'};font-weight:${f.vddView ? '600' : '400'};" onclick="_cmToggleVDDView(true)">By VDD Release</button>
+          </div>
+          <button class="admin-action-btn" onclick="openSwConfigModal(null)">+ Add Software Config</button>
+        </div>
       </div>
     </div>
 
-    <div class="admin-section" style="margin-bottom:18px;">
+    ${!f.vddView ? `<div class="admin-section" style="margin-bottom:18px;">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <select class="filter-select" onchange="_cmSetFilter('subsystem',this.value)">
           <option value="">All Subsystems</option>
@@ -16998,7 +17011,13 @@ function _cmPageHTML() {
         <input type="text" class="form-input" style="max-width:240px;" placeholder="Search software / version / device…" value="${escapeHtml(f.search)}" oninput="_cmSetFilter('search',this.value)">
         ${(f.subsystem||f.phase||f.location||f.search)?`<button class="form-secondary" style="font-size:12px;" onclick="_cmClearFilters()">Clear</button>`:''}
       </div>
-    </div>
+    </div>` : `<div class="admin-section" style="margin-bottom:18px;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <input type="text" class="form-input" style="max-width:320px;" placeholder="Search VDDs or sub-softwares…" value="${escapeHtml(f.search)}" oninput="_cmSetFilter('search',this.value)">
+        ${f.search?`<button class="form-secondary" style="font-size:12px;" onclick="_cmSetFilter('search','')">Clear</button>`:''}
+        <span style="font-size:12px;color:var(--gray-500);">Showing master → sub-software hierarchy. Use <strong>+ Add Sub-Software</strong> on any master VDD to link components.</span>
+      </div>
+    </div>`}
 
     <div class="admin-section">${body}</div>
   `;
@@ -17006,11 +17025,139 @@ function _cmPageHTML() {
 
 function _cmSetFilter(k, v) { _cmFilter[k] = v; renderConfigMgmt(); }
 function _cmPhaseFilterChange(phaseId) { _cmFilter.phase = phaseId; _cmFilter.location = ''; renderConfigMgmt(); }
-function _cmClearFilters() { _cmFilter = { subsystem:'', phase:'', location:'', search:'' }; renderConfigMgmt(); }
+function _cmClearFilters() { _cmFilter = { subsystem:'', phase:'', location:'', search:'', vddView: _cmFilter.vddView }; renderConfigMgmt(); }
 function _cmToggleHistory(k) { if (_cmExpanded.has(k)) _cmExpanded.delete(k); else _cmExpanded.add(k); renderConfigMgmt(); }
+function _cmToggleVDDView(on) { _cmFilter.vddView = on; renderConfigMgmt(); }
+function _cmToggleVddMaster(id) { if (_cmVddExpanded.has(id)) _cmVddExpanded.delete(id); else _cmVddExpanded.add(id); renderConfigMgmt(); }
 
-// Modal — create new, edit existing, or "new version" (cloneFromId pre-fills item identity)
-function openSwConfigModal(editId, cloneFromId) {
+function _cmVDDViewHTML(f) {
+  const q = (f.search || '').toLowerCase();
+  // Build parent→children map
+  const childMap = new Map();
+  for (const c of SW_CONFIGS) {
+    if (c.parent_id) {
+      if (!childMap.has(c.parent_id)) childMap.set(c.parent_id, []);
+      childMap.get(c.parent_id).push(c);
+    }
+  }
+  const masterIds = new Set([...childMap.keys()]);
+
+  // Masters = configs that have at least one child; standalone = no parent, no children
+  let masters = SW_CONFIGS.filter(c => !c.parent_id && masterIds.has(c.id));
+  let standalone = SW_CONFIGS.filter(c => !c.parent_id && !masterIds.has(c.id));
+
+  if (q) {
+    masters = masters.filter(m =>
+      (m.software_name||'').toLowerCase().includes(q) ||
+      (m.version||'').toLowerCase().includes(q) ||
+      (m.baseline||'').toLowerCase().includes(q) ||
+      (m.subsystem||'').toLowerCase().includes(q) ||
+      (childMap.get(m.id)||[]).some(ch =>
+        (ch.software_name||'').toLowerCase().includes(q) ||
+        (ch.version||'').toLowerCase().includes(q) ||
+        (ch.subsystem||'').toLowerCase().includes(q)
+      )
+    );
+    standalone = standalone.filter(c =>
+      (c.software_name||'').toLowerCase().includes(q) ||
+      (c.version||'').toLowerCase().includes(q) ||
+      (c.subsystem||'').toLowerCase().includes(q)
+    );
+  }
+
+  if (!masters.length && !standalone.length) {
+    return '<div style="text-align:center;padding:48px 0;color:var(--gray-400);">No software configurations yet. Click <strong>+ Add Software Config</strong> to create a Master VDD, then use <strong>+ Add Sub-Software</strong> to link subsystem components.</div>';
+  }
+
+  const _sc = c => ({ active:'#16a34a', superseded:'#6b7280', rolled_back:'#dc2626', planned:'#7c3aed' }[c.status] || '#6b7280');
+
+  let html = '';
+
+  if (masters.length) {
+    html += '<div style="margin-bottom:8px;font-size:11px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.07em;">Master VDDs</div>';
+    for (const master of masters.slice().sort((a,b) => new Date(b.install_date)-new Date(a.install_date))) {
+      const children = (childMap.get(master.id)||[]).slice().sort((a,b)=>(a.subsystem||'').localeCompare(b.subsystem||''));
+      const expanded = _cmVddExpanded.has(master.id);
+      html += '<div style="border:2px solid var(--hitachi-red);border-radius:10px;margin-bottom:14px;overflow:hidden;">' +
+        '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:12px 16px;background:var(--white);">' +
+          '<div>' +
+            '<div style="font-size:13px;font-weight:700;">' + icon('file') + ' ' + escapeHtml(master.software_name) +
+              '<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">' + escapeHtml(master.version) + '</span>' +
+              '<span style="font-size:11px;font-weight:600;color:' + _sc(master) + ';margin-left:6px;">● ' + escapeHtml(master.status) + '</span>' +
+              '<span style="font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:1px 6px;margin-left:8px;">MASTER VDD</span>' +
+            '</div>' +
+            '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
+              icon('settings') + ' ' + escapeHtml(master.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(master.location||'—') + ' · ' + master.install_date +
+              (master.baseline ? ' · Baseline: ' + escapeHtml(master.baseline) : '') +
+              (master.cdrl_ref ? ' · ' + escapeHtml(master.cdrl_ref) : '') +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">' +
+            '<span style="font-size:11px;color:var(--gray-500);white-space:nowrap;">' + children.length + ' sub-software' + (children.length!==1?'s':'') + '</span>' +
+            '<button class="form-secondary" style="font-size:11px;padding:3px 10px;white-space:nowrap;" onclick="_cmToggleVddMaster(\'' + master.id + '\')">' + (expanded?'▼ Hide':'▶ Show') + ' Sub-Softwares</button>' +
+            '<button class="form-secondary" style="font-size:11px;padding:3px 8px;white-space:nowrap;" onclick="openSwConfigModal(null,null,\'' + master.id + '\')">+ Add Sub-Software</button>' +
+            '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(null,\'' + master.id + '\')">↑ New Version</button>' +
+            '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(\'' + master.id + '\')">Edit</button>' +
+          '</div>' +
+        '</div>' +
+        (expanded ?
+          '<div style="border-top:2px solid var(--hitachi-red);background:#fffbeb;">' +
+          (children.length ? children.map(ch =>
+            '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 16px 10px 28px;border-bottom:1px solid #fde68a;">' +
+              '<div>' +
+                '<div style="font-size:13px;font-weight:600;">' + icon('puzzle') + ' ' + escapeHtml(ch.software_name) +
+                  '<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">' + escapeHtml(ch.version) + '</span>' +
+                  '<span style="font-size:11px;font-weight:600;color:' + _sc(ch) + ';margin-left:6px;">● ' + escapeHtml(ch.status) + '</span>' +
+                '</div>' +
+                '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
+                  icon('settings') + ' ' + escapeHtml(ch.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(ch.location||'—') +
+                  (ch.device_label ? ' · ' + icon('monitor') + ' ' + escapeHtml(ch.device_label) : '') +
+                  ' · ' + ch.install_date +
+                  (ch.baseline ? ' · Baseline: ' + escapeHtml(ch.baseline) : '') +
+                  (ch.cdrl_ref ? ' · ' + escapeHtml(ch.cdrl_ref) : '') +
+                '</div>' +
+              '</div>' +
+              '<div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">' +
+                '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(null,\'' + ch.id + '\')">↑ New Version</button>' +
+                '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(\'' + ch.id + '\')">Edit</button>' +
+              '</div>' +
+            '</div>'
+          ).join('') : '<div style="padding:16px 28px;font-size:12px;color:var(--gray-400);">No sub-softwares linked yet. Click <strong>+ Add Sub-Software</strong> to assign a subsystem component to this Master VDD.</div>') +
+          '</div>'
+        : '') +
+      '</div>';
+    }
+  }
+
+  if (standalone.length) {
+    html += '<div style="margin-top:' + (masters.length?'24px':'0') + ';margin-bottom:8px;font-size:11px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.07em;">Standalone Configs (no parent VDD)</div>';
+    for (const c of standalone.slice().sort((a,b)=>(a.subsystem||'').localeCompare(b.subsystem||''))) {
+      html += '<div style="border:1px solid var(--gray-200);border-radius:8px;margin-bottom:8px;overflow:hidden;">' +
+        '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 14px;background:var(--white);">' +
+          '<div>' +
+            '<div style="font-size:13px;font-weight:600;">' + escapeHtml(c.software_name) +
+              '<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">' + escapeHtml(c.version) + '</span>' +
+              '<span style="font-size:11px;font-weight:600;color:' + _sc(c) + ';margin-left:6px;">● ' + escapeHtml(c.status) + '</span>' +
+            '</div>' +
+            '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
+              icon('settings') + ' ' + escapeHtml(c.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(c.location||'—') + ' · ' + c.install_date +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">' +
+            '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(null,\'' + c.id + '\')">↑ New Version</button>' +
+            '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(\'' + c.id + '\')">Edit</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }
+  }
+
+  return html;
+}
+
+// Modal — create new, edit existing, or "new version" (cloneFromId pre-fills item identity).
+// parentVddId: pre-select a Master VDD when adding a sub-software from the VDD view.
+function openSwConfigModal(editId, cloneFromId, parentVddId) {
   _cmEditId = editId || null;
   const existing = editId ? SW_CONFIGS.find(c => c.id === editId) : null;
   const clone    = cloneFromId ? SW_CONFIGS.find(c => c.id === cloneFromId) : null;
@@ -17030,9 +17177,15 @@ function openSwConfigModal(editId, cloneFromId) {
   const v = (field, def='') => base ? (base[field] ?? def) : def;
   const isNewVersion = !!clone && !existing;
 
+  // Parent VDD: configs with no parent_id themselves are eligible masters.
+  // For new-version flow, inherit parent_id from the cloned record (read-only).
+  const effectiveParentId = isNewVersion ? (clone.parent_id || null) : (existing ? (existing.parent_id || null) : (parentVddId || null));
+  const eligibleMasters = SW_CONFIGS.filter(c => !c.parent_id && c.id !== (existing?.id));
+  const parentVdd = effectiveParentId ? SW_CONFIGS.find(c => c.id === effectiveParentId) : null;
+
   modal({
-    title: existing ? 'Edit Software Config' : isNewVersion ? '↑ Install New Version' : '+ Add Software Config',
-    sub: isNewVersion ? `${escapeHtml(clone.software_name)} — current ${escapeHtml(clone.version)}` : '',
+    title: existing ? 'Edit Software Config' : isNewVersion ? '↑ Install New Version' : (parentVddId ? '+ Add Sub-Software' : '+ Add Software Config'),
+    sub: isNewVersion ? `${escapeHtml(clone.software_name)} — current ${escapeHtml(clone.version)}` : (parentVddId && eligibleMasters.find(m=>m.id===parentVddId) ? `Sub-software of: ${escapeHtml(eligibleMasters.find(m=>m.id===parentVddId).software_name)} ${escapeHtml(eligibleMasters.find(m=>m.id===parentVddId).version)}` : ''),
     size: 'large',
     body: `
       <div class="form-grid">
@@ -17091,6 +17244,16 @@ function openSwConfigModal(editId, cloneFromId) {
         <div class="form-field">
           <label>CDRL / Document Ref</label>
           <input type="text" id="sw-cdrl" class="form-input" placeholder="e.g. CDRL 9.04.53" value="${escapeHtml(v('cdrl_ref'))}">
+        </div>
+        <div class="form-field form-field-full">
+          <label>Parent Master VDD <span style="font-weight:400;color:var(--gray-500);">(optional — links this as a sub-software under a master VDD)</span></label>
+          ${isNewVersion
+            ? `<input type="hidden" id="sw-parent-vdd" value="${escapeHtml(effectiveParentId||'')}"><div style="padding:7px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:13px;color:var(--gray-500);">${parentVdd ? escapeHtml(parentVdd.software_name)+' '+escapeHtml(parentVdd.version) : '— none —'} <span style="font-size:11px;">(inherited from previous version)</span></div>`
+            : `<select id="sw-parent-vdd" class="form-input">
+                <option value="">— Standalone (no parent VDD) —</option>
+                ${eligibleMasters.map(m=>`<option value="${m.id}" ${effectiveParentId===m.id?'selected':''}>${escapeHtml(m.software_name)} ${escapeHtml(m.version)} · ${escapeHtml(m.subsystem||'')}</option>`).join('')}
+              </select>`
+          }
         </div>
         <div class="form-field form-field-full">
           <label>Release Notes</label>
@@ -17154,6 +17317,7 @@ async function saveSwConfig() {
   const baseline  = document.getElementById('sw-baseline')?.value.trim() || null;
   const cdrl      = document.getElementById('sw-cdrl')?.value.trim() || null;
   const notes     = document.getElementById('sw-notes')?.value.trim() || null;
+  const parentId  = document.getElementById('sw-parent-vdd')?.value || null;
 
   // For new version (fields disabled), pull identity from editing-disabled selects' current values
   const resolvedSub = subsystem || editing?.subsystem;
@@ -17170,7 +17334,7 @@ async function saveSwConfig() {
     const patch = {
       subsystem: resolvedSub, location: resolvedLoc, device_id: deviceId, device_label: deviceLabel,
       software_name: swName, version, install_date: instDate, installed_by: instBy,
-      status, baseline, cdrl_ref: cdrl, notes,
+      status, baseline, cdrl_ref: cdrl, notes, parent_id: parentId || null,
     };
     try {
       const [row] = await _dbUpdate('software_configs', patch, { id: editing.id });
@@ -17187,6 +17351,7 @@ async function saveSwConfig() {
     subsystem: resolvedSub, location: resolvedLoc, device_id: deviceId, device_label: deviceLabel,
     software_name: swName, version, install_date: instDate, installed_by: instBy,
     status, baseline, cdrl_ref: cdrl, notes, created_by: currentRoleUser?.name || null,
+    parent_id: parentId || null,
   };
   const itemKey = _swItemKey(newRow);
   const priorActive = SW_CONFIGS.filter(c => _swItemKey(c) === itemKey && c.status === 'active');
@@ -17203,7 +17368,7 @@ async function saveSwConfig() {
       }
       if (inserted) inserted.supersedes_id = priorActive[0].id;
     }
-    logAudit('Software Config Added', `${resolvedSub} · ${swName} ${version}`, resolvedLoc);
+    logAudit('Software Config Added', `${resolvedSub} · ${swName} ${version}${parentId ? ' (sub-software)' : ''}`, resolvedLoc);
     toast(priorActive.length ? `Saved — ${priorActive.length} prior version superseded` : 'Software config saved', 'success');
     closeModal(); renderConfigMgmt();
   } catch (e) { toast('Save failed: ' + e.message, 'error'); }
