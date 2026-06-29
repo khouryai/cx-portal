@@ -18014,6 +18014,11 @@ function _taskComments(t) {
 function _taskCommentText(t) {
   return _taskComments(t).map(c => c.text || '').join(' ');
 }
+function _taskPrereqComments(t) {
+  let raw = t?.prerequisite_comments;
+  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = []; } }
+  return Array.isArray(raw) ? raw : [];
+}
 
 function renderTasks() {
   const root   = document.getElementById('tasks-content');
@@ -18195,7 +18200,10 @@ function openTaskModal(taskId) {
       `<input id="task-name" class="form-input" placeholder="e.g. Remove Transponder @ W40" value="${v('task_name')}"></div>` +
       `<div class="form-field form-field-full"><label>Description</label>` +
       `<textarea id="task-desc" class="form-input" rows="2" placeholder="What needs to be done…">${v('description')}</textarea></div>` +
-      `<div class="form-field form-field-full"><label>Prerequisites / Status</label>` +
+      `<div class="form-field form-field-full">` +
+      `<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;"><label style="margin:0;">Prerequisite</label>` +
+      `<label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:400;color:var(--gray-600);cursor:pointer;">` +
+      `<input type="checkbox" id="task-prereq-met" ${task?.prerequisite_met ? 'checked' : ''}> Met</label></div>` +
       `<textarea id="task-prereq" class="form-input" rows="2" placeholder="Blocking items or current standing…">${v('prerequisites')}</textarea></div>` +
       `<div class="form-field"><label>Status <span style="color:var(--bad)">*</span></label>` +
       `<select id="task-status" class="form-input">` +
@@ -18279,8 +18287,9 @@ async function saveTask(editId) {
   const payload = {
     task_name:     taskName,
     description:   g('task-desc'),
-    prerequisites: g('task-prereq'),
-    status:        document.getElementById('task-status')?.value   || 'Not Started',
+    prerequisites:      g('task-prereq'),
+    prerequisite_met:   !!(document.getElementById('task-prereq-met')?.checked),
+    status:             document.getElementById('task-status')?.value   || 'Not Started',
     priority:      document.getElementById('task-priority')?.value || 'Medium',
     effort:        g('task-effort'),
     assignee:      g('task-assignee'),
@@ -18340,26 +18349,28 @@ function _taskViewModal(id) {
     ? `<tr><td style="padding:7px 16px 7px 0;font-size:13px;color:#6b7280;font-weight:500;white-space:nowrap;width:210px;vertical-align:top;">${label}</td>` +
       `<td style="padding:7px 0;font-size:13px;color:#111827;">${val}</td></tr>`
     : '';
-  const types       = _taskTypeList(t);
-  const comments    = _taskComments(t).slice().sort((a, b) => new Date(a.at) - new Date(b.at));
-  const canComment  = uiCan('tasks', 'edit') || uiCan('tasks', 'create');
-  const canPhotos   = !!(window.PhotosModule && PhotosModule.uploadFile);
+  const types          = _taskTypeList(t);
+  const comments       = _taskComments(t).slice().sort((a, b) => new Date(a.at) - new Date(b.at));
+  const prereqComments = _taskPrereqComments(t).slice().sort((a, b) => new Date(a.at) - new Date(b.at));
+  const canComment     = uiCan('tasks', 'edit') || uiCan('tasks', 'create');
+  const canPhotos      = !!(window.PhotosModule && PhotosModule.uploadFile);
 
-  const commentsHTML = comments.length
-    ? comments.map(c => {
-        const initials  = (c.by || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
-        const roleLabel = { admin:'Admin', field_engineer:'Field Engineer', client:'Client', readonly:'Read Only' }[c.by_role] || c.by_role || '';
-        return `
-          <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border-bottom:1px solid var(--gray-100);">
-            <div style="width:30px;height:30px;border-radius:50%;background:var(--hitachi-red);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${escapeHtml(initials)}</div>
-            <div style="flex:1;min-width:0;">
-              <div style="font-size:12px;font-weight:600;color:var(--gray-800);">${escapeHtml(c.by || '—')} <span style="font-weight:400;color:var(--gray-500);">${roleLabel ? '· ' + escapeHtml(roleLabel) + ' ' : ''}· ${dateAgo(c.at)}</span></div>
-              ${c.text ? `<div style="font-size:13px;color:var(--gray-700);margin-top:3px;white-space:pre-wrap;">${escapeHtml(c.text)}</div>` : ''}
-              ${c.photo ? `<img class="punch-comment-photo" data-photo-thumb="${escapeHtml(c.photo.thumb_path||c.photo.storage_path)}" data-photo-full="${escapeHtml(c.photo.storage_path)}" alt="attached photo" loading="lazy">` : ''}
-            </div>
-          </div>`;
-      }).join('')
-    : '<div style="font-size:12px;color:var(--gray-400);padding:14px 16px;">No comments yet</div>';
+  const _buildCommentItem = c => {
+    const initials  = (c.by || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+    const roleLabel = { admin:'Admin', field_engineer:'Field Engineer', client:'Client', readonly:'Read Only' }[c.by_role] || c.by_role || '';
+    return `
+      <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border-bottom:1px solid var(--gray-100);">
+        <div style="width:30px;height:30px;border-radius:50%;background:var(--hitachi-red);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${escapeHtml(initials)}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:12px;font-weight:600;color:var(--gray-800);">${escapeHtml(c.by || '—')} <span style="font-weight:400;color:var(--gray-500);">${roleLabel ? '· ' + escapeHtml(roleLabel) + ' ' : ''}· ${dateAgo(c.at)}</span></div>
+          ${c.text ? `<div style="font-size:13px;color:var(--gray-700);margin-top:3px;white-space:pre-wrap;">${escapeHtml(c.text)}</div>` : ''}
+          ${c.photo ? `<img class="punch-comment-photo" data-photo-thumb="${escapeHtml(c.photo.thumb_path||c.photo.storage_path)}" data-photo-full="${escapeHtml(c.photo.storage_path)}" alt="attached photo" loading="lazy">` : ''}
+        </div>
+      </div>`;
+  };
+
+  const commentsHTML     = comments.length     ? comments.map(_buildCommentItem).join('')     : '<div style="font-size:12px;color:var(--gray-400);padding:14px 16px;">No comments yet</div>';
+  const prereqCommHTML   = prereqComments.length ? prereqComments.map(_buildCommentItem).join('') : '<div style="font-size:12px;color:var(--gray-400);padding:14px 16px;">No updates yet</div>';
 
   modal({
     title: `Task — ${escapeHtml(t.task_name)}`,
@@ -18375,10 +18386,29 @@ function _taskViewModal(id) {
       row('Due Date',     t.due_date ? _fmtDate(t.due_date) : null) +
       row('Task Type',    types.length ? types.map(ty => `<span class="v2-pill is-muted">${escapeHtml(ty)}</span>`).join(' ') : null) +
       row('Description',  t.description ? escapeHtml(t.description) : null) +
-      row('Prerequisites / Status', t.prerequisites ? escapeHtml(t.prerequisites) : null) +
+      row('Prerequisite',  t.prerequisites
+        ? escapeHtml(t.prerequisites) + (t.prerequisite_met
+            ? ` <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:#059669;background:#d1fae5;padding:1px 7px;border-radius:10px;margin-left:6px;vertical-align:middle;">${icon('check')} Met</span>`
+            : ` <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:#92400e;background:#fef3c7;padding:1px 7px;border-radius:10px;margin-left:6px;vertical-align:middle;">Pending</span>`)
+        : null) +
       row('Last Edited',  t.updated_at ? `${_fmtDate(t.updated_at)}${t.updated_by ? ' by ' + escapeHtml(t.updated_by) : ''}` : null) +
       `</table>` +
       (t.updates ? `<div style="margin-top:14px;padding:12px 14px;background:var(--gray-50);border-radius:6px;font-size:13px;color:var(--gray-700);white-space:pre-wrap;"><strong>Earlier notes:</strong>\n${escapeHtml(t.updates)}</div>` : '') +
+
+      // ── Prerequisite Updates ─────────────────────────────────────────────────
+      `<div style="margin:22px 0 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">` +
+      `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">` +
+      `<div style="font-size:11px;font-weight:700;color:#b45309;text-transform:uppercase;letter-spacing:0.06em;">${icon('flag')} Prerequisite Updates</div>` +
+      `<span style="font-size:11px;color:#92400e;">${t.prerequisite_met ? '<span style=\'font-weight:600;color:#059669;\'>&#10003; Prerequisite Met</span>' : 'Prerequisite Pending'}</span>` +
+      `</div>` +
+      `<div style="display:flex;flex-direction:column;gap:0;max-height:240px;overflow-y:auto;border:1px solid #fde68a;border-radius:8px;background:#fff;padding:4px 0;" id="task-prereq-timeline-${id}">${prereqCommHTML}</div>` +
+      (canComment ? (
+        `<div class="punch-comment-composer" style="margin-top:8px;">` +
+          `<textarea id="task-prereq-input-${id}" class="form-input" rows="2" placeholder="Update on the prerequisite…"></textarea>` +
+          `<button class="form-submit punch-comment-post" style="background:#b45309;" onclick="addTaskPrereqComment('${id}')">Post</button>` +
+        `</div>`
+      ) : '') +
+      `</div>` +
 
       // ── Photos ──
       `<div style="margin:20px 0 8px;display:flex;align-items:center;justify-content:space-between;">` +
@@ -18523,12 +18553,38 @@ async function addTaskComment(id) {
   renderTasks();
 }
 
+async function addTaskPrereqComment(id) {
+  if (typeof uiCan === 'function' && !(uiCan('tasks', 'edit') || uiCan('tasks', 'create'))) { toast('You do not have permission to comment', 'error'); return; }
+  const input = document.getElementById(`task-prereq-input-${id}`);
+  const text  = (input?.value || '').trim();
+  if (!text) { toast('Enter an update', 'error'); return; }
+  const t = TASKS.find(x => x.id === id);
+  if (!t) return;
+  const comment = {
+    id: crypto.randomUUID(),
+    text,
+    by: currentRoleUser?.name || '',
+    by_role: currentRoleUser?.role || '',
+    at: new Date().toISOString(),
+  };
+  const prereqComments = [..._taskPrereqComments(t), comment];
+  try {
+    const [updated] = await _dbUpdate('tasks', { prerequisite_comments: prereqComments }, { id });
+    if (!updated) throw new Error('No row was updated — you may not have permission to comment on this task.');
+    Object.assign(t, updated);
+  } catch (e) { toast('Update failed: ' + e.message, 'error'); return; }
+  toast('Update posted', 'success');
+  closeModal();
+  _taskViewModal(id);
+  renderTasks();
+}
+
 function _taskCSVExport() {
   const headers = ['Task Name','Status','Priority','Effort','Assignee','Due Date','Task Type',
-    'Description','Prerequisites/Status','Updates','Created By','Created At','Last Edited By','Last Edited'];
+    'Description','Prerequisite','Prerequisite Met','Updates','Created By','Created At','Last Edited By','Last Edited'];
   const rows = TASKS.map(t => [
     t.task_name||'', t.status||'Not Started', t.priority||'', t.effort||'', t.assignee||'',
-    t.due_date||'', _taskTypeList(t).join('; '), t.description||'', t.prerequisites||'', t.updates||'',
+    t.due_date||'', _taskTypeList(t).join('; '), t.description||'', t.prerequisites||'', t.prerequisite_met ? 'Yes' : 'No', t.updates||'',
     t.created_by||'', t.created_at ? _fmtDate(t.created_at) : '', t.updated_by||'', t.updated_at ? _fmtDate(t.updated_at) : '',
   ].map(v => '"' + String(v).replace(/"/g,'""') + '"'));
   const csv = [headers.map(h => '"' + h + '"').join(','), ...rows.map(r => r.join(','))].join('\n');
