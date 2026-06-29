@@ -17636,13 +17636,47 @@ function _vmExpectedVersion(configId) {
   fam.sort((p, q) => _vmVerCmp(p.version, q.version));
   return fam[fam.length - 1].version || null;
 }
+// Config Management builds (sw_equipment CIs) for a device, optionally a type.
+function _vmCMBuilds(device, swType) {
+  const d = String(device || '').trim().toLowerCase();
+  if (!d) return [];
+  return SW_EQUIPMENT.filter(e =>
+    String(e.equipment_name || '').trim().toLowerCase() === d &&
+    (swType == null || String(e.sw_type || '').trim().toLowerCase() === String(swType).trim().toLowerCase()));
+}
+function _vmBuildConfigVersion(ci) { const c = ci ? _vmConfigById(ci.config_id) : null; return c ? c.version : null; }
+// Latest released build for a device+type = the CI under the newest config version.
+function _vmLatestBuild(device, swType) {
+  const builds = _vmCMBuilds(device, swType);
+  if (!builds.length) return null;
+  return builds.slice().sort((a, b) =>
+    _vmVerCmp(_vmBuildConfigVersion(a), _vmBuildConfigVersion(b)) ||
+    _vmVerCmp(a.part_number, b.part_number) ||
+    String(a.created_at || '').localeCompare(String(b.created_at || '')))[builds.length - 1];
+}
+function _vmBuildLabel(ci) {
+  const ver = _vmBuildConfigVersion(ci);
+  const name = _vmConfigById(ci.config_id)?.software_name || ci.equipment_name || 'Software';
+  return [name, ver, ci.part_number].filter(Boolean).join(' · ') + (ci.crc ? ' · CRC ' + ci.crc : '');
+}
 function _vmCompliance(eq) {
+  // New CI-linked model: compare the loaded build against the latest available
+  // build for the same device + software type in Configuration Management.
+  if (eq.sw_equipment_id) {
+    const loadedCI = SW_EQUIPMENT.find(e => e.id === eq.sw_equipment_id);
+    if (!loadedCI) return { state: 'mismatch', expected: null, loaded: eq.part_number || null };
+    const latest = _vmLatestBuild(loadedCI.equipment_name, loadedCI.sw_type);
+    const expected = latest ? (latest.part_number || _vmBuildConfigVersion(latest)) : null;
+    const loaded = loadedCI.part_number || _vmBuildConfigVersion(loadedCI);
+    return { state: (latest && latest.id === loadedCI.id) ? 'match' : 'mismatch', expected, loaded };
+  }
+  // Fallback (free-text or template-seeded rows): version vs config-family latest.
   const loaded = String(eq.loaded_version || '').trim();
-  if (!eq.config_id) return { state: 'no_target', expected: null };
+  if (!eq.config_id) return { state: 'no_target', expected: null, loaded };
   const expected = _vmExpectedVersion(eq.config_id);
-  if (!loaded) return { state: 'not_loaded', expected };
-  if (expected == null) return { state: 'no_target', expected: null };
-  return { state: (loaded === String(expected).trim() ? 'match' : 'mismatch'), expected };
+  if (!loaded) return { state: 'not_loaded', expected, loaded };
+  if (expected == null) return { state: 'no_target', expected: null, loaded };
+  return { state: (loaded === String(expected).trim() ? 'match' : 'mismatch'), expected, loaded };
 }
 const _VM_COMPLIANCE_META = {
   match:      ['Match', 'good'],
@@ -17962,26 +17996,43 @@ function _vmEquipTabHTML(car) {
   if (!eqs.length) {
     return toolbar + cxEmpty({ icon: 'cpu', title: 'No equipment', message: 'Add equipment manually or seed the baseline list for this car type.' });
   }
-  let h = toolbar + `<table style="width:100%;border-collapse:collapse;font-size:12px;">
-    <thead><tr>${['Equipment', 'Type', 'Part No.', 'Loaded Ver.', 'Expected (VDD)', 'CRC', 'Compliance', ''].map(x => `<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">${x}</th>`).join('')}</tr></thead><tbody>`;
+  // Group loadings by device (equipment_name); each device lists its software types.
+  const byDevice = new Map();
   for (const e of eqs) {
-    const c = _vmCompliance(e);
-    const [label, tone] = _VM_COMPLIANCE_META[c.state] || ['—', 'muted'];
-    h += `<tr style="border-bottom:1px solid var(--border);">
-      <td style="padding:6px 8px;font-weight:600;">${escapeHtml(e.equipment_name)}</td>
-      <td style="padding:6px 8px;">${e.sw_type ? `<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 5px;border-radius:3px;">${escapeHtml(e.sw_type)}</span>` : ''}</td>
-      <td style="padding:6px 8px;font-family:monospace;font-size:11px;">${escapeHtml(e.part_number || '')}</td>
-      <td style="padding:6px 8px;font-family:monospace;font-weight:600;">${escapeHtml(e.loaded_version || '—')}</td>
-      <td style="padding:6px 8px;font-family:monospace;color:var(--gray-500);">${escapeHtml(c.expected || (e.config_id ? '—' : 'not linked'))}</td>
-      <td style="padding:6px 8px;font-family:monospace;font-size:11px;color:var(--gray-500);">${escapeHtml(e.loaded_crc || '')}</td>
-      <td style="padding:6px 8px;">${_vmChip(label, tone)}</td>
-      <td style="padding:6px 8px;text-align:right;white-space:nowrap;">
-        ${canEdit ? `<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="_vmEquipModal('${car.id}','${e.id}')">Edit</button>
-        <button class="form-secondary" style="font-size:10px;padding:2px 7px;color:var(--bad);" onclick="_vmDeleteEquip('${e.id}')">Del</button>` : ''}
-      </td>
-    </tr>`;
+    const k = e.equipment_name || '—';
+    if (!byDevice.has(k)) byDevice.set(k, []);
+    byDevice.get(k).push(e);
   }
-  h += '</tbody></table>';
+  const th = x => `<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">${x}</th>`;
+  let h = toolbar;
+  for (const [device, rows] of byDevice) {
+    h += `<div style="margin-bottom:16px;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+      <div style="display:flex;align-items:center;justify-content:space-between;background:#f8fafc;padding:8px 12px;border-bottom:1px solid var(--border);">
+        <span style="font-weight:700;font-size:13px;">${icon('cpu')} ${escapeHtml(device)}</span>
+        ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:2px 9px;" onclick="_vmEquipModal('${car.id}',null,'${escapeHtml(device).replace(/'/g, "\\'")}')">${icon('plus')} Add software type</button>` : ''}
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr>${['Type', 'Loaded Build', 'Serial No.', 'Part No.', 'CRC', 'Expected (latest)', 'Compliance', ''].map(th).join('')}</tr></thead><tbody>`;
+    for (const e of rows) {
+      const c = _vmCompliance(e);
+      const [label, tone] = _VM_COMPLIANCE_META[c.state] || ['—', 'muted'];
+      const loadedTxt = c.loaded || e.loaded_version || '—';
+      h += `<tr style="border-bottom:1px solid var(--border);">
+        <td style="padding:6px 8px;">${e.sw_type ? `<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 5px;border-radius:3px;">${escapeHtml(e.sw_type)}</span>` : ''}</td>
+        <td style="padding:6px 8px;font-family:monospace;font-weight:600;">${escapeHtml(loadedTxt)}</td>
+        <td style="padding:6px 8px;font-family:monospace;font-size:11px;">${escapeHtml(e.serial_number || '')}</td>
+        <td style="padding:6px 8px;font-family:monospace;font-size:11px;">${escapeHtml(e.part_number || '')}</td>
+        <td style="padding:6px 8px;font-family:monospace;font-size:11px;color:var(--gray-500);">${escapeHtml(e.loaded_crc || '')}</td>
+        <td style="padding:6px 8px;font-family:monospace;color:var(--gray-500);">${escapeHtml(c.expected || (e.sw_equipment_id || e.config_id ? '—' : 'not linked'))}</td>
+        <td style="padding:6px 8px;">${_vmChip(label, tone)}</td>
+        <td style="padding:6px 8px;text-align:right;white-space:nowrap;">
+          ${canEdit ? `<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="_vmEquipModal('${car.id}','${e.id}')">Edit</button>
+          <button class="form-secondary" style="font-size:10px;padding:2px 7px;color:var(--bad);" onclick="_vmDeleteEquip('${e.id}')">Del</button>` : ''}
+        </td>
+      </tr>`;
+    }
+    h += '</tbody></table></div>';
+  }
   return h;
 }
 
@@ -18112,61 +18163,168 @@ async function _vmSeedEquip(carId) {
 }
 
 // ── Equipment CRUD ────────────────────────────────────────────────────────
-function _vmConfigOptions(selectedId) {
-  // Offer master/standalone configs (VDD families) as targets, labelled with latest version.
-  const masters = SW_CONFIGS.filter(c => !c.parent_id);
-  const opts = masters.slice().sort((a, b) => String(a.software_name || '').localeCompare(String(b.software_name || '')))
-    .map(c => {
-      const ver = _vmExpectedVersion(c.id);
-      const label = (c.software_name || c.device_label || 'Config') + (ver ? ' — latest ' + ver : '');
-      return `<option value="${c.id}" ${selectedId === c.id ? 'selected' : ''}>${escapeHtml(label)}</option>`;
-    }).join('');
-  return `<option value="">— No VDD link —</option>` + opts;
-}
-function _vmEquipModal(carId, editId) {
+// Add flow is device-centric: pick a device, then check the software type(s)
+// loaded on it (GA, SA, OS, FW…) and the exact build released in Configuration
+// Management. Each checked type becomes one vehicle_equipment row.
+function _vmEquipModal(carId, editId, presetDevice) {
   const existing = editId ? VEH_EQUIP.find(e => e.id === editId) : null;
-  const v = (f, d = '') => existing ? (existing[f] ?? d) : d;
+  if (existing) return _vmEquipEditModal(carId, existing);
+  const devices = [...new Set(SW_EQUIPMENT.map(e => e.equipment_name).filter(Boolean))].sort();
+  modal({
+    title: '+ Add Equipment', size: 'large',
+    body: `<div class="form-grid">
+        <div class="form-field form-field-full"><label>Device / Equipment *</label>
+          <input type="text" id="vme-device" class="form-input" list="vme-device-list" placeholder="e.g. CC, ATC-C, DCS Radio" value="${escapeHtml(presetDevice || '')}" oninput="_vmEquipDeviceChanged()">
+          <datalist id="vme-device-list">${devices.map(d => '<option value="' + escapeHtml(d) + '">').join('')}</datalist>
+        </div>
+      </div>
+      <div id="vme-entries" style="margin-top:6px;"></div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmSaveEquipMulti('${carId}')">Save</button>`,
+  });
+  if (presetDevice) setTimeout(_vmEquipDeviceChanged, 0);
+}
+function _vmEquipDeviceChanged() {
+  const device = (document.getElementById('vme-device')?.value || '').trim();
+  const wrap = document.getElementById('vme-entries');
+  if (!wrap) return;
+  if (!device) { wrap.innerHTML = ''; return; }
+  const builds = _vmCMBuilds(device);
+  if (!builds.length) { wrap.innerHTML = _vmManualEntryHTML(); return; }
+  const types = [...new Set(builds.map(b => (b.sw_type || '').trim()).filter(Boolean))].sort();
+  let h = `<div style="font-size:11px;color:var(--gray-500);margin:4px 0 8px;">Check the software type(s) loaded on this device and select the exact build released in Configuration Management.</div>`;
+  h += types.map(t => _vmTypeEntryHTML(device, t)).join('');
+  if (builds.some(b => !(b.sw_type || '').trim())) h += _vmTypeEntryHTML(device, '');
+  wrap.innerHTML = h;
+}
+function _vmTypeEntryHTML(device, t) {
+  const builds = _vmCMBuilds(device, t || null).filter(b => (t ? true : !(b.sw_type || '').trim()));
+  const latest = builds.length ? builds.slice().sort((a, b) => _vmVerCmp(_vmBuildConfigVersion(a), _vmBuildConfigVersion(b)) || _vmVerCmp(a.part_number, b.part_number))[builds.length - 1] : null;
+  const key = t || '_';
+  return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;cursor:pointer;">
+        <input type="checkbox" class="vme-chk" data-key="${escapeHtml(key)}" style="margin:0;"> ${escapeHtml(t || '(untyped)')}
+        <span style="font-weight:400;color:var(--gray-500);font-size:11px;">${builds.length} build${builds.length === 1 ? '' : 's'} available</span>
+      </label>
+      <div class="form-grid" style="margin-top:8px;">
+        <div class="form-field form-field-full"><label>Loaded software / version *</label>
+          <select class="vme-build form-input" data-key="${escapeHtml(key)}">
+            ${builds.map(b => `<option value="${b.id}" ${latest && b.id === latest.id ? 'selected' : ''}>${escapeHtml(_vmBuildLabel(b))}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field"><label>Serial Number</label><input type="text" class="vme-serial form-input" data-key="${escapeHtml(key)}"></div>
+        <div class="form-field"><label>Loaded CRC</label><input type="text" class="vme-crc form-input" data-key="${escapeHtml(key)}" placeholder="defaults to build CRC"></div>
+      </div>
+    </div>`;
+}
+function _vmManualEntryHTML() {
+  const swTypes = (typeof _fsOptions === 'function') ? _fsOptions('sw_equipment_type') : [];
+  return `<div style="font-size:11px;color:var(--gray-500);margin:4px 0 8px;">No Configuration Management builds match this device — enter the loaded software manually.</div>
+    <div id="vme-manual" class="form-grid">
+      <div class="form-field"><label>Software Type</label><input type="text" id="vmem-type" class="form-input" placeholder="GA, SA, OS, FW…" list="vme-type-list"><datalist id="vme-type-list">${swTypes.map(t => '<option value="' + escapeHtml(t) + '">').join('')}</datalist></div>
+      <div class="form-field"><label>Loaded Version</label><input type="text" id="vmem-loaded" class="form-input"></div>
+      <div class="form-field"><label>Serial Number</label><input type="text" id="vmem-serial" class="form-input"></div>
+      <div class="form-field"><label>Part Number</label><input type="text" id="vmem-part" class="form-input"></div>
+      <div class="form-field"><label>Loaded CRC</label><input type="text" id="vmem-crc" class="form-input"></div>
+    </div>`;
+}
+async function _vmSaveEquipMulti(carId) {
+  const device = (document.getElementById('vme-device')?.value || '').trim();
+  if (!device) { toast('Device is required', 'error'); return; }
+  const rows = [];
+  if (document.getElementById('vme-manual')) {
+    rows.push({
+      vehicle_id: carId, equipment_name: device,
+      sw_type: (document.getElementById('vmem-type')?.value || '').trim() || null,
+      loaded_version: (document.getElementById('vmem-loaded')?.value || '').trim() || null,
+      serial_number: (document.getElementById('vmem-serial')?.value || '').trim() || null,
+      part_number: (document.getElementById('vmem-part')?.value || '').trim() || null,
+      loaded_crc: (document.getElementById('vmem-crc')?.value || '').trim() || null,
+      created_by: _vmWho(),
+    });
+  } else {
+    const checks = [...document.querySelectorAll('.vme-chk:checked')];
+    if (!checks.length) { toast('Select at least one software type', 'error'); return; }
+    for (const chk of checks) {
+      const key = chk.dataset.key;
+      const sel = document.querySelector('.vme-build[data-key="' + key + '"]');
+      const ci = sel ? SW_EQUIPMENT.find(e => e.id === sel.value) : null;
+      if (!ci) continue;
+      const serial = (document.querySelector('.vme-serial[data-key="' + key + '"]')?.value || '').trim() || null;
+      const crc = (document.querySelector('.vme-crc[data-key="' + key + '"]')?.value || '').trim();
+      rows.push({
+        vehicle_id: carId, equipment_name: device, sw_type: ci.sw_type || null,
+        sw_equipment_id: ci.id, config_id: ci.config_id || null,
+        loaded_version: _vmBuildConfigVersion(ci) || null, part_number: ci.part_number || null,
+        loaded_crc: crc || ci.crc || null, serial_number: serial, created_by: _vmWho(),
+      });
+    }
+  }
+  if (!rows.length) { toast('Nothing to add', 'error'); return; }
+  const base = _vmEquipFor(carId).length;
+  rows.forEach((r, i) => { r.sort_order = base + i; });
+  try {
+    const ins = await _dbInsert('vehicle_equipment', rows);
+    VEH_EQUIP.push(...(ins || []));
+    const n = (ins || rows).length;
+    toast('Added ' + n + ' software item' + (n === 1 ? '' : 's'), 'success');
+    closeModal(); renderVehicleManagement();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+function _vmEquipEditModal(carId, e) {
+  const device = e.equipment_name || '';
+  const builds = _vmCMBuilds(device, e.sw_type || null);
   const swTypes = (typeof _fsOptions === 'function') ? _fsOptions('sw_equipment_type') : [];
   modal({
-    title: existing ? 'Edit Equipment' : '+ Add Equipment', size: 'medium',
+    title: 'Edit ' + escapeHtml(device) + (e.sw_type ? ' · ' + escapeHtml(e.sw_type) : ''), size: 'medium',
     body: `<div class="form-grid">
-      <div class="form-field"><label>Equipment Name *</label><input type="text" id="vme-name" class="form-input" placeholder="e.g. CC, ATC-C, DCS Radio" value="${escapeHtml(v('equipment_name'))}"></div>
-      <div class="form-field"><label>SW Type</label><input type="text" id="vme-type" class="form-input" placeholder="CBTC, DCS, FW…" value="${escapeHtml(v('sw_type'))}" list="vme-type-list"><datalist id="vme-type-list">${swTypes.map(t => '<option value="' + escapeHtml(t) + '">').join('')}</datalist></div>
-      <div class="form-field form-field-full"><label>VDD Link <span style="font-weight:400;color:var(--gray-500);">(defines the expected version)</span></label><select id="vme-config" class="form-input">${_vmConfigOptions(existing?.config_id || '')}</select></div>
-      <div class="form-field"><label>Loaded Version</label><input type="text" id="vme-loaded" class="form-input" placeholder="version actually loaded" value="${escapeHtml(v('loaded_version'))}"></div>
-      <div class="form-field"><label>Loaded CRC</label><input type="text" id="vme-crc" class="form-input" placeholder="optional" value="${escapeHtml(v('loaded_crc'))}"></div>
-      <div class="form-field form-field-full"><label>Part Number</label><input type="text" id="vme-part" class="form-input" value="${escapeHtml(v('part_number'))}"></div>
-      <div class="form-field form-field-full"><label>Notes</label><input type="text" id="vme-notes" class="form-input" value="${escapeHtml(v('notes'))}"></div>
-    </div>`,
+        <div class="form-field"><label>Device *</label><input type="text" id="vme-device" class="form-input" value="${escapeHtml(device)}"></div>
+        <div class="form-field"><label>Software Type</label><input type="text" id="vme-type" class="form-input" value="${escapeHtml(e.sw_type || '')}" list="vme-type-list"><datalist id="vme-type-list">${swTypes.map(t => '<option value="' + escapeHtml(t) + '">').join('')}</datalist></div>
+        ${builds.length ? `<div class="form-field form-field-full"><label>Loaded software / version <span style="font-weight:400;color:var(--gray-500);">(from Config Mgmt)</span></label>
+          <select id="vme-build" class="form-input" onchange="_vmEditBuildPick()">
+            <option value="">— manual / not linked —</option>
+            ${builds.map(b => `<option value="${b.id}" ${e.sw_equipment_id === b.id ? 'selected' : ''}>${escapeHtml(_vmBuildLabel(b))}</option>`).join('')}
+          </select></div>` : ''}
+        <div class="form-field"><label>Loaded Version</label><input type="text" id="vme-loaded" class="form-input" value="${escapeHtml(e.loaded_version || '')}"></div>
+        <div class="form-field"><label>Serial Number</label><input type="text" id="vme-serial" class="form-input" value="${escapeHtml(e.serial_number || '')}"></div>
+        <div class="form-field"><label>Part Number</label><input type="text" id="vme-part" class="form-input" value="${escapeHtml(e.part_number || '')}"></div>
+        <div class="form-field"><label>Loaded CRC</label><input type="text" id="vme-crc" class="form-input" value="${escapeHtml(e.loaded_crc || '')}"></div>
+        <div class="form-field form-field-full"><label>Notes</label><input type="text" id="vme-notes" class="form-input" value="${escapeHtml(e.notes || '')}"></div>
+      </div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
-      ${existing ? `<button class="form-secondary" style="color:var(--bad);" onclick="_vmDeleteEquip('${existing.id}')">Delete</button>` : ''}
-      <button class="form-submit" onclick="_vmSaveEquip('${carId}'${existing ? ",'" + existing.id + "'" : ''})">${existing ? 'Save Changes' : 'Save'}</button>`,
+      <button class="form-secondary" style="color:var(--bad);" onclick="_vmDeleteEquip('${e.id}')">Delete</button>
+      <button class="form-submit" onclick="_vmSaveEquipOne('${carId}','${e.id}')">Save Changes</button>`,
   });
 }
-async function _vmSaveEquip(carId, editId) {
-  const name = (document.getElementById('vme-name')?.value || '').trim();
-  if (!name) { toast('Equipment name is required', 'error'); return; }
+function _vmEditBuildPick() {
+  const sel = document.getElementById('vme-build');
+  const ci = sel && sel.value ? SW_EQUIPMENT.find(x => x.id === sel.value) : null;
+  if (!ci) return;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
+  set('vme-loaded', _vmBuildConfigVersion(ci) || '');
+  set('vme-part', ci.part_number || '');
+  set('vme-crc', ci.crc || '');
+  if (ci.sw_type) set('vme-type', ci.sw_type);
+}
+async function _vmSaveEquipOne(carId, editId) {
+  const eq = VEH_EQUIP.find(x => x.id === editId);
+  const device = (document.getElementById('vme-device')?.value || '').trim();
+  if (!device) { toast('Device is required', 'error'); return; }
+  const buildId = document.getElementById('vme-build')?.value || '';
   const data = {
-    equipment_name: name,
+    equipment_name: device,
     sw_type: (document.getElementById('vme-type')?.value || '').trim() || null,
-    config_id: (document.getElementById('vme-config')?.value || '') || null,
+    sw_equipment_id: buildId || null,
+    config_id: buildId ? (SW_EQUIPMENT.find(x => x.id === buildId)?.config_id || null) : (eq?.config_id || null),
     loaded_version: (document.getElementById('vme-loaded')?.value || '').trim() || null,
-    loaded_crc: (document.getElementById('vme-crc')?.value || '').trim() || null,
+    serial_number: (document.getElementById('vme-serial')?.value || '').trim() || null,
     part_number: (document.getElementById('vme-part')?.value || '').trim() || null,
+    loaded_crc: (document.getElementById('vme-crc')?.value || '').trim() || null,
     notes: (document.getElementById('vme-notes')?.value || '').trim() || null,
   };
   try {
-    if (editId) {
-      const eq = VEH_EQUIP.find(e => e.id === editId);
-      const [row] = await _dbUpdate('vehicle_equipment', data, { id: editId });
-      Object.assign(eq, row || data);
-      toast('Equipment updated', 'success');
-    } else {
-      const [row] = await _dbInsert('vehicle_equipment', [{ vehicle_id: carId, ...data, sort_order: _vmEquipFor(carId).length, created_by: _vmWho() }]);
-      if (row) VEH_EQUIP.push(row);
-      toast('Equipment added', 'success');
-    }
-    closeModal(); renderVehicleManagement();
+    const [row] = await _dbUpdate('vehicle_equipment', data, { id: editId });
+    if (eq) Object.assign(eq, row || data);
+    toast('Equipment updated', 'success'); closeModal(); renderVehicleManagement();
   } catch (e) { toast('Save failed: ' + e.message, 'error'); }
 }
 async function _vmDeleteEquip(id) {
@@ -18358,7 +18516,6 @@ function _vmTplDelEq(id) {
   _dbDelete('vehicle_equipment_templates', { id }).then(() => { VEH_EQ_TPL = VEH_EQ_TPL.filter(x => x.id !== id); _vmTplRefresh(); })
     .catch(e => toast('Delete failed: ' + e.message, 'error'));
 }
-
 
 // ==========================================================================
 // RMA — Return Merchandise Authorization
