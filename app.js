@@ -452,6 +452,7 @@ async function refreshApp() {
   try { await loadAssetData(); } catch(e) { console.warn('[refreshApp] asset reload failed:', e.message); }
   try { await loadRMAs(); }     catch(e) { console.warn('[refreshApp] RMA reload failed:',   e.message); }
   try { await loadSoftwareConfigs(); } catch(e) { console.warn('[refreshApp] SW config reload failed:', e.message); }
+  try { await loadSwEquipment(); } catch(e) { console.warn('[refreshApp] SW equipment reload failed:', e.message); }
 
   // 3. Reload test items only when no status save is in flight
   if (!_mxSavePending) {
@@ -3305,6 +3306,7 @@ function onLoggedIn() {
     loadAssetData(),
     loadRMAs(),
     loadSoftwareConfigs(),
+    loadSwEquipment(),
     loadForms(),
     loadDrawingsData(),
     _colLoadAll(),
@@ -5069,7 +5071,7 @@ async function deleteTemplate(id) {
 // ==========================================================================
 // ADMIN FIELD CONFIG — Configurable dropdown options, grouped by module
 // ==========================================================================
-const SUBSYSTEMS_LIST = ['DCS','ATS','IXL','CORE CBTC','PS&TP','IAMS','SCADA','CYBER','TCH'];
+const SUBSYSTEMS_LIST = ['ATC','DCS','ATS','IXL','CORE CBTC','PS&TP','IAMS','SCADA','CYBER','TCH'];
 // Organizations a portal user can belong to. A user's company propagates to
 // their planning_resources roster row so the Lookahead resource picker can
 // filter by it (see updateProfileCompany / _planningBootstrapResources).
@@ -16533,10 +16535,14 @@ async function _assetLinkFromPanel(assetId) {
 // subsystem · location · device. Append-only install log → free history.
 // ==========================================================================
 let SW_CONFIGS = [];
+let SW_EQUIPMENT = [];
 let _cmFilter  = { subsystem: '', phase: '', location: '', search: '', vddView: false };
 let _cmEditId  = null;
 let _cmExpanded = new Set(); // expanded config-item history keys
 let _cmVddExpanded = new Set(); // expanded master VDD rows in VDD view
+let _cmEquipExpanded = new Set(); // expanded equipment sections per config id
+let _cmEquipEditId = null;
+let _cmEquipConfigId = null;
 
 async function loadSoftwareConfigs() {
   try {
@@ -16544,6 +16550,17 @@ async function loadSoftwareConfigs() {
     SW_CONFIGS = data || [];
     console.log(`Loaded ${SW_CONFIGS.length} software configs`);
   } catch (err) { console.warn('Software configs load failed:', err.message); SW_CONFIGS = []; }
+}
+
+async function loadSwEquipment() {
+  try {
+    const data = await _fetchAnon('sw_equipment?select=*&order=equipment_name.asc,sw_type.asc');
+    SW_EQUIPMENT = data || [];
+  } catch (err) { console.warn('SW equipment load failed:', err.message); SW_EQUIPMENT = []; }
+}
+
+function _swEquipFor(configId) {
+  return SW_EQUIPMENT.filter(e => e.config_id === configId);
 }
 
 // Identity of a logical "configuration item" (the thing that gets versioned)
@@ -16959,6 +16976,47 @@ function _cmClearFilters() { _cmFilter = { subsystem:'', phase:'', location:'', 
 function _cmToggleHistory(k) { if (_cmExpanded.has(k)) _cmExpanded.delete(k); else _cmExpanded.add(k); renderConfigMgmt(); }
 function _cmToggleVDDView(on) { _cmFilter.vddView = on; renderConfigMgmt(); }
 function _cmToggleVddMaster(id) { if (_cmVddExpanded.has(id)) _cmVddExpanded.delete(id); else _cmVddExpanded.add(id); renderConfigMgmt(); }
+function _cmToggleEquip(id) { if (_cmEquipExpanded.has(id)) _cmEquipExpanded.delete(id); else _cmEquipExpanded.add(id); renderConfigMgmt(); }
+
+function _cmEquipSectionHTML(configId) {
+  const items = _swEquipFor(configId);
+  const expanded = _cmEquipExpanded.has(configId);
+  let h = '<div style="border-top:1px solid var(--border);padding:5px 14px 7px;background:#f8fafc;">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;min-height:22px;">' +
+      '<span style="font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.07em;">' + icon('cpu') + ' Equipment SW (' + items.length + ')</span>' +
+      '<div style="display:flex;gap:3px;">' +
+        (items.length ? '<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="_cmToggleEquip(\'' + configId + '\')">' + (expanded ? '▼ Hide' : '▶ Show') + '</button>' : '') +
+        '<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="openSwEquipModal(\'' + configId + '\')">+ Add Equipment</button>' +
+      '</div>' +
+    '</div>';
+  if (expanded && items.length) {
+    h += '<table style="width:100%;border-collapse:collapse;margin-top:5px;font-size:12px;">' +
+      '<thead><tr>' +
+        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Equipment</th>' +
+        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Type</th>' +
+        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Part Number</th>' +
+        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Notes</th>' +
+        '<th style="padding:2px 7px;border-bottom:1px solid var(--border);"></th>' +
+      '</tr></thead><tbody>';
+    for (const eq of items) {
+      h += '<tr style="border-bottom:1px solid var(--border);">' +
+        '<td style="padding:3px 7px;font-weight:600;">' + escapeHtml(eq.equipment_name) + '</td>' +
+        '<td style="padding:3px 7px;">' +
+          '<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 5px;border-radius:3px;font-size:11px;">' + escapeHtml(eq.sw_type) + '</span>' +
+        '</td>' +
+        '<td style="padding:3px 7px;font-family:monospace;font-size:11px;">' + escapeHtml(eq.part_number) + '</td>' +
+        '<td style="padding:3px 7px;color:var(--gray-500);font-size:11px;">' + escapeHtml(eq.notes || '') + '</td>' +
+        '<td style="padding:3px 7px;text-align:right;white-space:nowrap;">' +
+          '<button class="form-secondary" style="font-size:10px;padding:1px 6px;" onclick="openSwEquipModal(\'' + configId + '\',\'' + eq.id + '\')">Edit</button>' +
+          ' <button class="form-secondary" style="font-size:10px;padding:1px 6px;color:var(--bad);" onclick="deleteSwEquip(\'' + eq.id + '\',\'' + configId + '\')">Del</button>' +
+        '</td>' +
+      '</tr>';
+    }
+    h += '</tbody></table>';
+  }
+  h += '</div>';
+  return h;
+}
 
 function _cmVDDViewHTML(f) {
   const q = (f.search || '').toLowerCase();
@@ -17030,25 +17088,29 @@ function _cmVDDViewHTML(f) {
             '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(\'' + master.id + '\')">Edit</button>' +
           '</div>' +
         '</div>' +
+        _cmEquipSectionHTML(master.id) +
         (expanded ?
           '<div style="border-top:2px solid var(--hitachi-red);background:#fffbeb;">' +
           (children.length ? children.map(ch =>
-            '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 16px 10px 28px;border-bottom:1px solid #fde68a;">' +
-              '<div>' +
-                '<div style="font-size:13px;font-weight:600;">' + icon('puzzle') + ' ' + escapeHtml(ch.software_name) +
-                  '<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">' + escapeHtml(ch.version) + '</span>' +
-                  '<span style="font-size:11px;font-weight:600;color:' + _sc(ch) + ';margin-left:6px;">● ' + escapeHtml(ch.status) + '</span>' +
+            '<div style="border-bottom:1px solid #fde68a;">' +
+              '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 16px 10px 28px;">' +
+                '<div>' +
+                  '<div style="font-size:13px;font-weight:600;">' + icon('puzzle') + ' ' + escapeHtml(ch.software_name) +
+                    '<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">' + escapeHtml(ch.version) + '</span>' +
+                    '<span style="font-size:11px;font-weight:600;color:' + _sc(ch) + ';margin-left:6px;">● ' + escapeHtml(ch.status) + '</span>' +
+                  '</div>' +
+                  '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
+                    icon('settings') + ' ' + escapeHtml(ch.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(ch.location||'—') +
+                    (ch.baseline ? ' · Baseline: ' + escapeHtml(ch.baseline) : '') +
+                    (ch.cdrl_ref ? ' · ' + escapeHtml(ch.cdrl_ref) : '') +
+                  '</div>' +
                 '</div>' +
-                '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
-                  icon('settings') + ' ' + escapeHtml(ch.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(ch.location||'—') +
-                  (ch.baseline ? ' · Baseline: ' + escapeHtml(ch.baseline) : '') +
-                  (ch.cdrl_ref ? ' · ' + escapeHtml(ch.cdrl_ref) : '') +
+                '<div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">' +
+                  '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(null,\'' + ch.id + '\')">↑ New Version</button>' +
+                  '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(\'' + ch.id + '\')">Edit</button>' +
                 '</div>' +
               '</div>' +
-              '<div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">' +
-                '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(null,\'' + ch.id + '\')">↑ New Version</button>' +
-                '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(\'' + ch.id + '\')">Edit</button>' +
-              '</div>' +
+              _cmEquipSectionHTML(ch.id) +
             '</div>'
           ).join('') : '<div style="padding:16px 28px;font-size:12px;color:var(--gray-400);">No sub-softwares linked yet. Click <strong>+ Add Sub-Software</strong> to assign a subsystem component to this Master VDD.</div>') +
           '</div>'
@@ -17076,6 +17138,7 @@ function _cmVDDViewHTML(f) {
             '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(\'' + c.id + '\')">Edit</button>' +
           '</div>' +
         '</div>' +
+        _cmEquipSectionHTML(c.id) +
       '</div>';
     }
   }
@@ -17292,6 +17355,96 @@ async function deleteSwConfig(id) {
     logAudit('Software Config Deleted', `${c.software_name} ${c.version}`, c.location);
     toast('Software config deleted', 'success');
     closeModal(); renderConfigMgmt();
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// Equipment SW — per-VDD equipment entries (GA, SA, OS, FW, etc.)
+function openSwEquipModal(configId, editId) {
+  _cmEquipConfigId = configId;
+  _cmEquipEditId = editId || null;
+  const existing = editId ? SW_EQUIPMENT.find(e => e.id === editId) : null;
+  const cfg = SW_CONFIGS.find(x => x.id === configId);
+  const v = (f, def='') => existing ? (existing[f] ?? def) : def;
+  modal({
+    title: existing ? 'Edit Equipment SW Entry' : '+ Add Equipment SW Entry',
+    sub: cfg ? escapeHtml(cfg.software_name) + ' ' + escapeHtml(cfg.version) : '',
+    size: 'medium',
+    body: `
+      <div class="form-grid">
+        <div class="form-field">
+          <label>Equipment Name *</label>
+          <input type="text" id="sweq-name" class="form-input" placeholder="e.g. CC, OCC, WS, ATC-C" value="${escapeHtml(v('equipment_name'))}">
+        </div>
+        <div class="form-field">
+          <label>SW Type *</label>
+          <input type="text" id="sweq-type" class="form-input" placeholder="GA, SA, OS, FW…" value="${escapeHtml(v('sw_type'))}" list="sweq-type-list">
+          <datalist id="sweq-type-list">
+            <option value="GA">
+            <option value="SA">
+            <option value="OS">
+            <option value="FW">
+            <option value="BSP">
+            <option value="DB">
+          </datalist>
+        </div>
+        <div class="form-field form-field-full">
+          <label>Part Number / Version String *</label>
+          <input type="text" id="sweq-part" class="form-input" placeholder="e.g. STD_C11_D154 or BART_C11_D470" value="${escapeHtml(v('part_number'))}">
+        </div>
+        <div class="form-field form-field-full">
+          <label>Notes</label>
+          <input type="text" id="sweq-notes" class="form-input" placeholder="Optional notes" value="${escapeHtml(v('notes'))}">
+        </div>
+      </div>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      ${existing ? '<button class="form-secondary" style="color:var(--bad);" onclick="deleteSwEquip(\'' + existing.id + '\',\'' + configId + '\')">Delete</button>' : ''}
+      <button class="form-submit" onclick="saveSwEquip('${configId}')">${existing ? 'Save Changes' : 'Save'}</button>
+    `,
+  });
+}
+
+async function saveSwEquip(configId) {
+  const name  = (document.getElementById('sweq-name')?.value || '').trim();
+  const type  = (document.getElementById('sweq-type')?.value || '').trim();
+  const part  = (document.getElementById('sweq-part')?.value || '').trim();
+  const notes = (document.getElementById('sweq-notes')?.value || '').trim() || null;
+  if (!name) { toast('Equipment name is required', 'error'); return; }
+  if (!type) { toast('SW Type is required', 'error'); return; }
+  if (!part) { toast('Part number is required', 'error'); return; }
+  const editing = _cmEquipEditId ? SW_EQUIPMENT.find(e => e.id === _cmEquipEditId) : null;
+  try {
+    if (editing) {
+      const patch = { equipment_name: name, sw_type: type, part_number: part, notes };
+      const [row] = await _dbUpdate('sw_equipment', patch, { id: editing.id });
+      Object.assign(editing, row || patch);
+      toast('Equipment entry updated', 'success');
+    } else {
+      const newRow = { config_id: configId, equipment_name: name, sw_type: type, part_number: part, notes, created_by: currentRoleUser?.name || null };
+      const [inserted] = await _dbInsert('sw_equipment', [newRow]);
+      if (inserted) SW_EQUIPMENT.push(inserted);
+      toast('Equipment entry saved', 'success');
+    }
+    closeModal();
+    _cmEquipExpanded.add(configId);
+    renderConfigMgmt();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function deleteSwEquip(id, configId) {
+  const eq = SW_EQUIPMENT.find(e => e.id === id);
+  if (!eq) return;
+  if (!await cxConfirm('Delete "' + eq.equipment_name + ' (' + eq.sw_type + ': ' + eq.part_number + ')"?\n\nThis cannot be undone.')) return;
+  try {
+    await fetch(SUPABASE_URL + '/rest/v1/sw_equipment?id=eq.' + id, {
+      method: 'DELETE',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() },
+    });
+    SW_EQUIPMENT = SW_EQUIPMENT.filter(e => e.id !== id);
+    toast('Equipment entry deleted', 'success');
+    closeModal();
+    renderConfigMgmt();
   } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
 }
 
