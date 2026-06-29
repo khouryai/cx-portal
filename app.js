@@ -16993,9 +16993,10 @@ function _cmPageHTML() {
       </div>
     </div>` : `<div class="admin-section" style="margin-bottom:18px;">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-        <input type="text" class="form-input" style="max-width:320px;" placeholder="Search VDDs or sub-softwares…" value="${escapeHtml(f.search)}" oninput="_cmSetFilter('search',this.value)">
+        <input type="text" class="form-input" style="max-width:320px;" placeholder="Search VDDs…" value="${escapeHtml(f.search)}" oninput="_cmSetFilter('search',this.value)">
         ${f.search?`<button class="form-secondary" style="font-size:12px;" onclick="_cmSetFilter('search','')">Clear</button>`:''}
-        <span style="font-size:12px;color:var(--gray-500);">Showing master → sub-software hierarchy. Use <strong>+ Add Sub-Software</strong> on any master VDD to link components.</span>
+        <button class="form-secondary" style="font-size:12px;" onclick="_cmExpandAll()">Expand All</button>
+        <button class="form-secondary" style="font-size:12px;" onclick="_cmCollapseAll()">Collapse All</button>
       </div>
     </div>`}
 
@@ -17010,6 +17011,19 @@ function _cmToggleHistory(k) { if (_cmExpanded.has(k)) _cmExpanded.delete(k); el
 function _cmToggleVDDView(on) { _cmFilter.vddView = on; renderConfigMgmt(); }
 function _cmToggleVddMaster(id) { if (_cmVddExpanded.has(id)) _cmVddExpanded.delete(id); else _cmVddExpanded.add(id); renderConfigMgmt(); }
 function _cmToggleEquip(id) { if (_cmEquipExpanded.has(id)) _cmEquipExpanded.delete(id); else _cmEquipExpanded.add(id); renderConfigMgmt(); }
+
+function _cmExpandAll() {
+  for (const c of SW_CONFIGS) {
+    if (SW_CONFIGS.some(x => x.parent_id === c.id)) _cmVddExpanded.add(c.id);
+    _cmEquipExpanded.add(c.id);
+  }
+  renderConfigMgmt();
+}
+function _cmCollapseAll() {
+  _cmVddExpanded.clear();
+  _cmEquipExpanded.clear();
+  renderConfigMgmt();
+}
 
 function _cmEquipSectionHTML(configId) {
   const items = _swEquipFor(configId);
