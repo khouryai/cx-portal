@@ -2736,7 +2736,7 @@ let ASSET_LINKS   = [];  // asset_test_links table rows
 let RMAS = [];
 let _rmaFilter = { status: '', location: '', search: '' };
 let TASKS = [];
-let _taskFilter = { status: '', priority: '', type: '', search: '' };
+let _taskFilter = { status: '', priority: '', type: '', search: '', mine: false };
 
 // ── Health tab filter state ───────────────────────────────────────────────────
 let _p6HealthFilter     = { search: '', dateMode: 'all', dateFrom: '', dateTo: '' };
@@ -17989,6 +17989,18 @@ function _taskTypeList(t) {
   return [];
 }
 
+// Comment thread: array of { id, text, by, by_role, at, photo? }. Tolerant of a
+// stringified payload (PostgREST occasionally hands jsonb back as text).
+function _taskComments(t) {
+  let raw = t?.comments;
+  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = []; } }
+  return Array.isArray(raw) ? raw : [];
+}
+// Flattened comment text — feeds the list search box.
+function _taskCommentText(t) {
+  return _taskComments(t).map(c => c.text || '').join(' ');
+}
+
 function renderTasks() {
   const root   = document.getElementById('tasks-content');
   const heroEl = document.getElementById('tasks-hero-content');
@@ -18026,12 +18038,17 @@ function _tasksPageHTML() {
   const typeOpts  = _taskTypes();
   const prioOpts  = _taskPriorities();
 
+  const myName  = currentRoleUser?.name || '';
+  const isMine  = t => myName && (t.assignee || '') === myName;
+  const myCount = TASKS.filter(isMine).length;
+
   const srch = (_taskFilter.search || '').toLowerCase();
   const filtered = TASKS.filter(t => {
+    if (_taskFilter.mine     && !isMine(t)) return false;
     if (_taskFilter.status   && (t.status || 'Not Started') !== _taskFilter.status) return false;
     if (_taskFilter.priority && t.priority !== _taskFilter.priority) return false;
     if (_taskFilter.type     && !_taskTypeList(t).includes(_taskFilter.type)) return false;
-    if (srch && !`${t.task_name||''} ${t.description||''} ${t.assignee||''} ${t.updates||''} ${t.prerequisites||''} ${_taskTypeList(t).join(' ')}`
+    if (srch && !`${t.task_name||''} ${t.description||''} ${t.assignee||''} ${_taskCommentText(t)} ${t.prerequisites||''} ${_taskTypeList(t).join(' ')}`
                   .toLowerCase().includes(srch)) return false;
     return true;
   });
@@ -18039,8 +18056,10 @@ function _tasksPageHTML() {
   return `
     <!-- Status chips -->
     <div class="v2-chips-row">
-      <span class="v2-chip ${!_taskFilter.status ? 'active' : ''}"
-            onclick="_taskFilter.status=''; renderTasks()">All <span class="n">${TASKS.length}</span></span>
+      <span class="v2-chip ${!_taskFilter.status && !_taskFilter.mine ? 'active' : ''}"
+            onclick="_taskFilter.status=''; _taskFilter.mine=false; renderTasks()">All <span class="n">${TASKS.length}</span></span>
+      <span class="v2-chip is-info ${_taskFilter.mine ? 'active' : ''}"
+            onclick="_taskFilter.mine=!_taskFilter.mine; renderTasks()">${icon('user')} My Tasks <span class="n">${myCount}</span></span>
       ${TASK_STATUS_CHIPS.map(([val, label, tone]) => {
         const count = TASKS.filter(t => (t.status || 'Not Started') === val).length;
         if (!count && _taskFilter.status !== val) return '';
@@ -18115,7 +18134,12 @@ function _taskRowHTML(t, canEdit) {
           <div class="v2-meta-line">
             ${t.due_date ? `<span class="${dueClass}">${isOverdue?icon('alert')+' ':''}Due ${_fmtDate(t.due_date)}</span>` : '<span style="color:var(--gray-400);">No due date</span>'}
           </div>
-          ${t.updates ? `<div class="v2-meta-line" title="${escapeHtml(t.updates)}">${escapeHtml(_truncate(t.updates, 60))}</div>` : ''}
+          ${(() => {
+            const cs = _taskComments(t);
+            if (!cs.length) return '';
+            const last = cs[cs.length - 1];
+            return `<div class="v2-meta-line" title="${escapeHtml(last.text||'(photo)')}">${icon('inbox')} ${cs.length} comment${cs.length!==1?'s':''} · ${escapeHtml(_truncate(last.text||'(photo)', 42))}</div>`;
+          })()}
         </div>
 
         <div class="rma-actions" onclick="event.stopPropagation()">
@@ -18181,13 +18205,45 @@ function openTaskModal(taskId) {
       types.map(ty => `<label style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--gray-300);border-radius:6px;cursor:pointer;font-size:13px;">` +
         `<input type="checkbox" class="task-type-cb" value="${escapeHtml(ty)}" ${selTypes.includes(ty)?'checked':''}> ${escapeHtml(ty)}</label>`).join('') +
       `</div></div>` +
-      `<div class="form-field form-field-full"><label>Updates</label>` +
-      `<textarea id="task-updates" class="form-input" rows="3" placeholder="Progress notes, dated updates…">${v('updates')}</textarea></div>` +
+      (task
+        ? `<div class="form-field form-field-full"><label>Updates</label>` +
+          `<div style="font-size:12px;color:var(--gray-500);padding:8px 0;">Progress is tracked as a comment thread — open the task to read and post comments (with photos).</div></div>`
+        : `<div class="form-field form-field-full"><label>Photos <span style="font-weight:400;color:var(--gray-500);font-size:11px;">(optional — uploaded when the task is created)</span></label>` +
+          `<div class="punch-newphoto-row" id="task-newphoto-row"></div>` +
+          `<button type="button" class="form-secondary" style="margin-top:6px;" onclick="document.getElementById('task-newphoto-file').click()">${icon('camera')} Add photos</button>` +
+          `<input type="file" id="task-newphoto-file" accept="image/*" multiple style="display:none" onchange="_taskNewPhotoChosen(this)"></div>`) +
       `</div>`,
     footer:
       `<button class="form-secondary" onclick="closeModal()">Cancel</button>` +
       `<button class="form-submit" onclick="saveTask(${taskId ? `'${taskId}'` : 'null'})">${task ? 'Save Changes' : 'Create Task'}</button>`,
   });
+  if (!task) { _taskNewPhotos = []; _taskRenderNewPhotoRow(); }
+}
+
+// ── Staged photos for a NEW task (uploaded after the task row exists) ─────────
+let _taskNewPhotos = [];
+function _taskNewPhotoChosen(input) {
+  const files = [...(input.files || [])];
+  files.forEach(f => { if (f.type && f.type.indexOf('image/') === 0) _taskNewPhotos.push(f); });
+  input.value = '';
+  _taskRenderNewPhotoRow();
+}
+function _taskRenderNewPhotoRow() {
+  const row = document.getElementById('task-newphoto-row');
+  if (!row) return;
+  row.innerHTML = _taskNewPhotos.map((f, i) =>
+    `<div class="punch-newphoto-tile"><img src="${URL.createObjectURL(f)}" alt=""><button type="button" onclick="_taskNewPhotoRemove(${i})" title="Remove">×</button></div>`
+  ).join('');
+}
+function _taskNewPhotoRemove(i) { _taskNewPhotos.splice(i, 1); _taskRenderNewPhotoRow(); }
+
+// Photo-link context — ties an uploaded photo to this task (source_type 'tasks').
+function _taskPhotoCtx(t) {
+  return {
+    source_type: 'tasks', source_id: t.id,
+    source_label: 'Task: ' + (t.task_name || t.id),
+    location: null, subsystem: null, phase: null,
+  };
 }
 
 // Assignee options: known directory users, plus the current task's assignee even
@@ -18216,10 +18272,10 @@ async function saveTask(editId) {
     assignee:      g('task-assignee'),
     due_date:      document.getElementById('task-due')?.value || null,
     task_type:     types,
-    updates:       g('task-updates'),
     updated_by:    me,
     updated_at:    new Date().toISOString(),
   };
+  const stagedPhotos = editId ? [] : _taskNewPhotos.slice();
 
   closeModal();
   try {
@@ -18235,6 +18291,14 @@ async function saveTask(editId) {
       if (!created) throw new Error('Task was not created — you may not have permission.');
       TASKS.unshift(created);
       toast('Task created', 'success');
+      // Upload any photos staged in the create dialog, linked to the new task.
+      if (stagedPhotos.length && window.PhotosModule && PhotosModule.uploadFile) {
+        const ctx = _taskPhotoCtx(created);
+        let ok = 0;
+        for (const f of stagedPhotos) { try { await PhotosModule.uploadFile(f, ctx); ok++; } catch (e) { console.error('[task photo] upload failed:', e); } }
+        if (ok) toast(ok + ' photo' + (ok !== 1 ? 's' : '') + ' added', 'success');
+      }
+      _taskNewPhotos = [];
     }
     logAudit(editId ? 'Task Updated' : 'Task Created', taskName, `Status: ${payload.status} · ${payload.priority}`);
     renderTasks();
@@ -18262,7 +18326,27 @@ function _taskViewModal(id) {
     ? `<tr><td style="padding:7px 16px 7px 0;font-size:13px;color:#6b7280;font-weight:500;white-space:nowrap;width:210px;vertical-align:top;">${label}</td>` +
       `<td style="padding:7px 0;font-size:13px;color:#111827;">${val}</td></tr>`
     : '';
-  const types = _taskTypeList(t);
+  const types       = _taskTypeList(t);
+  const comments    = _taskComments(t).slice().sort((a, b) => new Date(a.at) - new Date(b.at));
+  const canComment  = uiCan('tasks', 'edit') || uiCan('tasks', 'create');
+  const canPhotos   = !!(window.PhotosModule && PhotosModule.uploadFile);
+
+  const commentsHTML = comments.length
+    ? comments.map(c => {
+        const initials  = (c.by || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+        const roleLabel = { admin:'Admin', field_engineer:'Field Engineer', client:'Client', readonly:'Read Only' }[c.by_role] || c.by_role || '';
+        return `
+          <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border-bottom:1px solid var(--gray-100);">
+            <div style="width:30px;height:30px;border-radius:50%;background:var(--hitachi-red);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${escapeHtml(initials)}</div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:12px;font-weight:600;color:var(--gray-800);">${escapeHtml(c.by || '—')} <span style="font-weight:400;color:var(--gray-500);">${roleLabel ? '· ' + escapeHtml(roleLabel) + ' ' : ''}· ${dateAgo(c.at)}</span></div>
+              ${c.text ? `<div style="font-size:13px;color:var(--gray-700);margin-top:3px;white-space:pre-wrap;">${escapeHtml(c.text)}</div>` : ''}
+              ${c.photo ? `<img class="punch-comment-photo" data-photo-thumb="${escapeHtml(c.photo.thumb_path||c.photo.storage_path)}" data-photo-full="${escapeHtml(c.photo.storage_path)}" alt="attached photo" loading="lazy">` : ''}
+            </div>
+          </div>`;
+      }).join('')
+    : '<div style="font-size:12px;color:var(--gray-400);padding:14px 16px;">No comments yet</div>';
+
   modal({
     title: `Task — ${escapeHtml(t.task_name)}`,
     size:  'large',
@@ -18280,11 +18364,149 @@ function _taskViewModal(id) {
       row('Prerequisites / Status', t.prerequisites ? escapeHtml(t.prerequisites) : null) +
       row('Last Edited',  t.updated_at ? `${_fmtDate(t.updated_at)}${t.updated_by ? ' by ' + escapeHtml(t.updated_by) : ''}` : null) +
       `</table>` +
-      (t.updates ? `<div style="margin-top:14px;padding:12px 14px;background:var(--gray-50);border-radius:6px;font-size:13px;color:var(--gray-700);white-space:pre-wrap;"><strong>Updates:</strong>\n${escapeHtml(t.updates)}</div>` : ''),
+      (t.updates ? `<div style="margin-top:14px;padding:12px 14px;background:var(--gray-50);border-radius:6px;font-size:13px;color:var(--gray-700);white-space:pre-wrap;"><strong>Earlier notes:</strong>\n${escapeHtml(t.updates)}</div>` : '') +
+
+      // ── Photos ──
+      `<div style="margin:20px 0 8px;display:flex;align-items:center;justify-content:space-between;">` +
+      `<div style="font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:0.06em;">Photos</div>` +
+      (canPhotos ? `<button type="button" class="v2-btn-mini" onclick="_taskAddPhotos('${id}')">${icon('camera')} Add photos</button>` : '') +
+      `</div>` +
+      `<div class="punch-photo-grid" id="task-photos-${id}"><div style="font-size:12px;color:var(--gray-400);padding:8px 0;">Loading photos…</div></div>` +
+      `<input type="file" id="task-gallery-file-${id}" accept="image/*" multiple style="display:none" onchange="_taskGalleryFilesChosen('${id}', this)">` +
+
+      // ── Comments / activity ──
+      `<div style="margin:20px 0 8px;font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:0.06em;">Comments</div>` +
+      `<div style="display:flex;flex-direction:column;gap:0;max-height:340px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;padding:4px 0;" id="task-timeline-${id}">${commentsHTML}</div>` +
+      (canComment ? (
+        `<div class="punch-comment-composer">` +
+          `<textarea id="task-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…"></textarea>` +
+          `<button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" aria-label="Attach a photo" onclick="document.getElementById('task-comment-file-${id}').click()">${icon('camera')}</button>` +
+          `<button class="form-submit punch-comment-post" onclick="addTaskComment('${id}')">Post</button>` +
+        `</div>` +
+        `<input type="file" id="task-comment-file-${id}" accept="image/*" style="display:none" onchange="_taskCommentPhotoChosen('${id}', this)">` +
+        `<div id="task-comment-preview-${id}" class="punch-comment-preview" style="display:none;"></div>`
+      ) : ''),
     footer:
       `<button class="form-secondary" onclick="closeModal()">Close</button>` +
       (uiCan('tasks','edit') ? `<button class="form-submit" onclick="closeModal();openTaskModal('${id}')">${icon('edit')} Edit</button>` : ''),
   });
+  _taskHydratePhotos(id);
+}
+
+// ── Task photos: gallery in the detail view + inline comment attachments ──────
+let _taskCommentPhoto = {};   // task id -> File chosen for the next comment
+
+async function _taskHydratePhotos(id) {
+  await _taskRenderGallery(id);
+  const body = document.querySelector('.modal-overlay .modal-body') || document.querySelector('.modal-body');
+  if (body && typeof _punchSignImages === 'function') await _punchSignImages(body);
+}
+
+async function _taskRenderGallery(id) {
+  const wrap = document.getElementById('task-photos-' + id);
+  if (!wrap) return;
+  if (!window.PhotosModule || !PhotosModule.listFor) { wrap.innerHTML = '<div style="font-size:12px;color:var(--gray-400);padding:8px 0;">Photos module not loaded.</div>'; return; }
+  const photos = await PhotosModule.listFor({ source_type: 'tasks', source_id: id });
+  if (!photos.length) { wrap.innerHTML = '<div style="font-size:12px;color:var(--gray-400);padding:8px 0;">No photos linked yet.</div>'; return; }
+  wrap.innerHTML = photos.map(ph => {
+    const thumb = ph.thumb_path || ph.storage_path;
+    return `<div class="punch-photo-tile" title="${escapeHtml(ph.caption || ph.file_name || '')}">
+      <img data-photo-thumb="${escapeHtml(thumb)}" data-photo-full="${escapeHtml(ph.storage_path)}" alt="${escapeHtml(ph.caption || '')}" loading="lazy">
+      <button aria-label="Save photo" class="punch-photo-dl" title="Save photo" onclick="_punchDownloadPhoto('${escapeHtml(ph.storage_path)}', ${JSON.stringify(ph.file_name || '').replace(/"/g,'&quot;')}, event)">${icon('download')}</button>
+    </div>`;
+  }).join('');
+  if (typeof _punchSignImages === 'function') await _punchSignImages(wrap);
+}
+
+function _taskAddPhotos(id) { const i = document.getElementById('task-gallery-file-' + id); if (i) i.click(); }
+
+async function _taskGalleryFilesChosen(id, input) {
+  const files = [...(input.files || [])];
+  if (!files.length) return;
+  const t = TASKS.find(x => x.id === id);
+  if (!t) return;
+  if (!window.PhotosModule || !PhotosModule.uploadFile) { toast('Photos module not loaded', 'error'); return; }
+  const ctx = _taskPhotoCtx(t);
+  toast('Uploading ' + files.length + ' photo' + (files.length > 1 ? 's' : '') + '…');
+  let ok = 0;
+  for (const f of files) { try { await PhotosModule.uploadFile(f, ctx); ok++; } catch (e) { console.error('[task photo] upload failed:', e); } }
+  input.value = '';
+  toast(ok + ' photo' + (ok !== 1 ? 's' : '') + ' added', ok ? 'success' : 'error');
+  await _taskRenderGallery(id);
+  const body = document.querySelector('.modal-overlay .modal-body') || document.querySelector('.modal-body');
+  if (body && typeof _punchSignImages === 'function') await _punchSignImages(body);
+}
+
+function _taskCommentPhotoChosen(id, input) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  _taskCommentPhoto[id] = f;
+  const prev = document.getElementById('task-comment-preview-' + id);
+  if (prev) {
+    prev.style.display = '';
+    prev.innerHTML = `<div class="punch-comment-preview-item">
+      <img src="${URL.createObjectURL(f)}" alt="">
+      <span>${escapeHtml(f.name || 'photo')}</span>
+      <button type="button" onclick="_taskCommentPhotoClear('${id}')" title="Remove">×</button>
+    </div>`;
+  }
+}
+
+function _taskCommentPhotoClear(id) {
+  delete _taskCommentPhoto[id];
+  const input = document.getElementById('task-comment-file-' + id);
+  const prev  = document.getElementById('task-comment-preview-' + id);
+  if (input) input.value = '';
+  if (prev) { prev.style.display = 'none'; prev.innerHTML = ''; }
+}
+
+async function addTaskComment(id) {
+  if (typeof uiCan === 'function' && !(uiCan('tasks', 'edit') || uiCan('tasks', 'create'))) { toast('You do not have permission to comment', 'error'); return; }
+  const input = document.getElementById(`task-comment-input-${id}`);
+  const text  = (input?.value || '').trim();
+  const file  = _taskCommentPhoto[id];
+  if (!text && !file) { toast('Add a comment or a photo', 'error'); return; }
+  const t = TASKS.find(x => x.id === id);
+  if (!t) return;
+
+  // Upload the attached photo first (linked to this task, so it also shows in the gallery).
+  let photoRef = null;
+  if (file) {
+    if (!window.PhotosModule || !PhotosModule.uploadFile) { toast('Photos module not loaded', 'error'); return; }
+    const postBtn = document.querySelector(`#task-comment-input-${id}`)?.closest('.punch-comment-composer')?.querySelector('.form-submit');
+    if (postBtn) postBtn.disabled = true;
+    try {
+      toast('Uploading photo…');
+      const ctx = _taskPhotoCtx(t);
+      ctx.caption = text || null;
+      const r = await PhotosModule.uploadFile(file, ctx);
+      photoRef = { id: r.id || null, storage_path: r.storage_path, thumb_path: r.thumb_path || null, file_name: r.file_name || null };
+    } catch (e) {
+      if (postBtn) postBtn.disabled = false;
+      toast('Photo upload failed: ' + (e && e.message || e), 'error');
+      return;
+    }
+  }
+
+  const comment = {
+    id: crypto.randomUUID(),
+    text: text || '',
+    by: currentRoleUser?.name || '',
+    by_role: currentRoleUser?.role || '',
+    at: new Date().toISOString(),
+  };
+  if (photoRef) comment.photo = photoRef;
+  const comments = [..._taskComments(t), comment];
+  try {
+    const [updated] = await _dbUpdate('tasks', { comments }, { id });
+    if (!updated) throw new Error('No row was updated — you may not have permission to comment on this task.');
+    Object.assign(t, updated);
+  } catch (e) { toast('Comment failed: ' + e.message, 'error'); return; }
+  _taskCommentPhotoClear(id);
+  toast('Comment posted', 'success');
+  closeModal();
+  _taskViewModal(id);
+  renderTasks();
 }
 
 function _taskCSVExport() {

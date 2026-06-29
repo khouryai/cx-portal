@@ -27,7 +27,8 @@ create table if not exists tasks (
   assignee      text,
   due_date      date,
   task_type     text[] not null default '{}'::text[],  -- multi-valued
-  updates       text,
+  updates       text,                        -- legacy free-text; superseded by comments
+  comments      jsonb not null default '[]'::jsonb,     -- thread: {id,text,by,by_role,at,photo?}
   created_by    text,
   created_at    timestamptz default now(),
   updated_by    text,
