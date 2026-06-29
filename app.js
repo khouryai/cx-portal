@@ -17044,7 +17044,7 @@ function _cmEquipSectionHTML(configId) {
       '<thead><tr>' +
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Equipment</th>' +
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Type</th>' +
-        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Part Number</th>' +
+        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Software Version</th>' +
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">CRC</th>' +
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Notes</th>' +
         '<th style="padding:2px 7px;border-bottom:1px solid var(--border);"></th>' +
@@ -17454,7 +17454,7 @@ function openSwEquipModal(configId, editId) {
           </datalist>
         </div>
         <div class="form-field form-field-full">
-          <label>Part Number / Version String *</label>
+          <label>Software Version *</label>
           <input type="text" id="sweq-part" class="form-input" placeholder="e.g. STD_C11_D154 or BART_C11_D470" value="${escapeHtml(v('part_number'))}">
         </div>
         <div class="form-field form-field-full">
@@ -17654,10 +17654,10 @@ function _vmLatestBuild(device, swType) {
     _vmVerCmp(a.part_number, b.part_number) ||
     String(a.created_at || '').localeCompare(String(b.created_at || '')))[builds.length - 1];
 }
+// ci.part_number is the Configuration Management "Software Version" string.
 function _vmBuildLabel(ci) {
-  const ver = _vmBuildConfigVersion(ci);
   const name = _vmConfigById(ci.config_id)?.software_name || ci.equipment_name || 'Software';
-  return [name, ver, ci.part_number].filter(Boolean).join(' · ') + (ci.crc ? ' · CRC ' + ci.crc : '');
+  return [name, ci.part_number].filter(Boolean).join(' · ');
 }
 function _vmCompliance(eq) {
   // New CI-linked model: compare the loaded build against the latest available
@@ -18012,7 +18012,7 @@ function _vmEquipTabHTML(car) {
         ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:2px 9px;" onclick="_vmEquipModal('${car.id}',null,'${escapeHtml(device).replace(/'/g, "\\'")}')">${icon('plus')} Add software type</button>` : ''}
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
-        <thead><tr>${['Type', 'Loaded Build', 'Serial No.', 'Part No.', 'CRC', 'Expected (latest)', 'Compliance', ''].map(th).join('')}</tr></thead><tbody>`;
+        <thead><tr>${['Type', 'Loaded Software Version', 'Serial No.', 'Hardware Part No.', 'Expected (latest)', 'Compliance', ''].map(th).join('')}</tr></thead><tbody>`;
     for (const e of rows) {
       const c = _vmCompliance(e);
       const [label, tone] = _VM_COMPLIANCE_META[c.state] || ['—', 'muted'];
@@ -18022,7 +18022,6 @@ function _vmEquipTabHTML(car) {
         <td style="padding:6px 8px;font-family:monospace;font-weight:600;">${escapeHtml(loadedTxt)}</td>
         <td style="padding:6px 8px;font-family:monospace;font-size:11px;">${escapeHtml(e.serial_number || '')}</td>
         <td style="padding:6px 8px;font-family:monospace;font-size:11px;">${escapeHtml(e.part_number || '')}</td>
-        <td style="padding:6px 8px;font-family:monospace;font-size:11px;color:var(--gray-500);">${escapeHtml(e.loaded_crc || '')}</td>
         <td style="padding:6px 8px;font-family:monospace;color:var(--gray-500);">${escapeHtml(c.expected || (e.sw_equipment_id || e.config_id ? '—' : 'not linked'))}</td>
         <td style="padding:6px 8px;">${_vmChip(label, tone)}</td>
         <td style="padding:6px 8px;text-align:right;white-space:nowrap;">
@@ -18206,25 +18205,24 @@ function _vmTypeEntryHTML(device, t) {
         <span style="font-weight:400;color:var(--gray-500);font-size:11px;">${builds.length} build${builds.length === 1 ? '' : 's'} available</span>
       </label>
       <div class="form-grid" style="margin-top:8px;">
-        <div class="form-field form-field-full"><label>Loaded software / version *</label>
+        <div class="form-field form-field-full"><label>Loaded Software Version *</label>
           <select class="vme-build form-input" data-key="${escapeHtml(key)}">
             ${builds.map(b => `<option value="${b.id}" ${latest && b.id === latest.id ? 'selected' : ''}>${escapeHtml(_vmBuildLabel(b))}</option>`).join('')}
           </select>
         </div>
         <div class="form-field"><label>Serial Number</label><input type="text" class="vme-serial form-input" data-key="${escapeHtml(key)}"></div>
-        <div class="form-field"><label>Loaded CRC</label><input type="text" class="vme-crc form-input" data-key="${escapeHtml(key)}" placeholder="defaults to build CRC"></div>
+        <div class="form-field"><label>Hardware Part No.</label><input type="text" class="vme-part form-input" data-key="${escapeHtml(key)}" placeholder="hardware P/N"></div>
       </div>
     </div>`;
 }
 function _vmManualEntryHTML() {
   const swTypes = (typeof _fsOptions === 'function') ? _fsOptions('sw_equipment_type') : [];
-  return `<div style="font-size:11px;color:var(--gray-500);margin:4px 0 8px;">No Configuration Management builds match this device — enter the loaded software manually.</div>
+  return `<div style="font-size:11px;color:var(--gray-500);margin:4px 0 8px;">No Configuration Management software versions match this device — enter the loaded software manually.</div>
     <div id="vme-manual" class="form-grid">
       <div class="form-field"><label>Software Type</label><input type="text" id="vmem-type" class="form-input" placeholder="GA, SA, OS, FW…" list="vme-type-list"><datalist id="vme-type-list">${swTypes.map(t => '<option value="' + escapeHtml(t) + '">').join('')}</datalist></div>
-      <div class="form-field"><label>Loaded Version</label><input type="text" id="vmem-loaded" class="form-input"></div>
+      <div class="form-field"><label>Loaded Software Version</label><input type="text" id="vmem-loaded" class="form-input"></div>
       <div class="form-field"><label>Serial Number</label><input type="text" id="vmem-serial" class="form-input"></div>
-      <div class="form-field"><label>Part Number</label><input type="text" id="vmem-part" class="form-input"></div>
-      <div class="form-field"><label>Loaded CRC</label><input type="text" id="vmem-crc" class="form-input"></div>
+      <div class="form-field"><label>Hardware Part No.</label><input type="text" id="vmem-part" class="form-input"></div>
     </div>`;
 }
 async function _vmSaveEquipMulti(carId) {
@@ -18238,7 +18236,6 @@ async function _vmSaveEquipMulti(carId) {
       loaded_version: (document.getElementById('vmem-loaded')?.value || '').trim() || null,
       serial_number: (document.getElementById('vmem-serial')?.value || '').trim() || null,
       part_number: (document.getElementById('vmem-part')?.value || '').trim() || null,
-      loaded_crc: (document.getElementById('vmem-crc')?.value || '').trim() || null,
       created_by: _vmWho(),
     });
   } else {
@@ -18250,12 +18247,12 @@ async function _vmSaveEquipMulti(carId) {
       const ci = sel ? SW_EQUIPMENT.find(e => e.id === sel.value) : null;
       if (!ci) continue;
       const serial = (document.querySelector('.vme-serial[data-key="' + key + '"]')?.value || '').trim() || null;
-      const crc = (document.querySelector('.vme-crc[data-key="' + key + '"]')?.value || '').trim();
+      const hwPart = (document.querySelector('.vme-part[data-key="' + key + '"]')?.value || '').trim() || null;
       rows.push({
         vehicle_id: carId, equipment_name: device, sw_type: ci.sw_type || null,
         sw_equipment_id: ci.id, config_id: ci.config_id || null,
-        loaded_version: _vmBuildConfigVersion(ci) || null, part_number: ci.part_number || null,
-        loaded_crc: crc || ci.crc || null, serial_number: serial, created_by: _vmWho(),
+        loaded_version: ci.part_number || null, part_number: hwPart, serial_number: serial,
+        created_by: _vmWho(),
       });
     }
   }
@@ -18279,15 +18276,14 @@ function _vmEquipEditModal(carId, e) {
     body: `<div class="form-grid">
         <div class="form-field"><label>Device *</label><input type="text" id="vme-device" class="form-input" value="${escapeHtml(device)}"></div>
         <div class="form-field"><label>Software Type</label><input type="text" id="vme-type" class="form-input" value="${escapeHtml(e.sw_type || '')}" list="vme-type-list"><datalist id="vme-type-list">${swTypes.map(t => '<option value="' + escapeHtml(t) + '">').join('')}</datalist></div>
-        ${builds.length ? `<div class="form-field form-field-full"><label>Loaded software / version <span style="font-weight:400;color:var(--gray-500);">(from Config Mgmt)</span></label>
+        ${builds.length ? `<div class="form-field form-field-full"><label>Loaded Software Version <span style="font-weight:400;color:var(--gray-500);">(from Config Mgmt)</span></label>
           <select id="vme-build" class="form-input" onchange="_vmEditBuildPick()">
             <option value="">— manual / not linked —</option>
             ${builds.map(b => `<option value="${b.id}" ${e.sw_equipment_id === b.id ? 'selected' : ''}>${escapeHtml(_vmBuildLabel(b))}</option>`).join('')}
           </select></div>` : ''}
-        <div class="form-field"><label>Loaded Version</label><input type="text" id="vme-loaded" class="form-input" value="${escapeHtml(e.loaded_version || '')}"></div>
+        <div class="form-field"><label>Loaded Software Version</label><input type="text" id="vme-loaded" class="form-input" value="${escapeHtml(e.loaded_version || '')}"></div>
         <div class="form-field"><label>Serial Number</label><input type="text" id="vme-serial" class="form-input" value="${escapeHtml(e.serial_number || '')}"></div>
-        <div class="form-field"><label>Part Number</label><input type="text" id="vme-part" class="form-input" value="${escapeHtml(e.part_number || '')}"></div>
-        <div class="form-field"><label>Loaded CRC</label><input type="text" id="vme-crc" class="form-input" value="${escapeHtml(e.loaded_crc || '')}"></div>
+        <div class="form-field"><label>Hardware Part No.</label><input type="text" id="vme-part" class="form-input" value="${escapeHtml(e.part_number || '')}"></div>
         <div class="form-field form-field-full"><label>Notes</label><input type="text" id="vme-notes" class="form-input" value="${escapeHtml(e.notes || '')}"></div>
       </div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
@@ -18300,9 +18296,7 @@ function _vmEditBuildPick() {
   const ci = sel && sel.value ? SW_EQUIPMENT.find(x => x.id === sel.value) : null;
   if (!ci) return;
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
-  set('vme-loaded', _vmBuildConfigVersion(ci) || '');
-  set('vme-part', ci.part_number || '');
-  set('vme-crc', ci.crc || '');
+  set('vme-loaded', ci.part_number || '');
   if (ci.sw_type) set('vme-type', ci.sw_type);
 }
 async function _vmSaveEquipOne(carId, editId) {
@@ -18318,7 +18312,6 @@ async function _vmSaveEquipOne(carId, editId) {
     loaded_version: (document.getElementById('vme-loaded')?.value || '').trim() || null,
     serial_number: (document.getElementById('vme-serial')?.value || '').trim() || null,
     part_number: (document.getElementById('vme-part')?.value || '').trim() || null,
-    loaded_crc: (document.getElementById('vme-crc')?.value || '').trim() || null,
     notes: (document.getElementById('vme-notes')?.value || '').trim() || null,
   };
   try {
