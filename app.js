@@ -42794,14 +42794,16 @@ async function _drwBuildFindIndex(setId) {
   if (!_drwPdfDoc || !setId) return;
   const cached = _drwFindIndex.get(setId);
   if (cached && (cached.status === 'ready' || cached.status === 'loading')) return;
+  const importedIndices = _drwCurSetPageIndices();
+  const total = importedIndices.length;
   _drwFindIndex.set(setId, { pages: [], status: 'loading' });
-  _drwFindStatus(`Indexing ${_drwPdfDoc.numPages} pages…`);
+  _drwFindStatus(`Indexing ${total} pages…`);
 
   const pages = [];
-  const total = _drwPdfDoc.numPages;
   try {
-    for (let i = 1; i <= total; i++) {
-      const page = await _drwPdfDoc.getPage(i);
+    for (let n = 0; n < total; n++) {
+      const pageIndex = importedIndices[n];
+      const page = await _drwPdfDoc.getPage(pageIndex + 1);
       const tc = await page.getTextContent();
       const items = tc.items || [];
       // Join with a separator that never appears naturally so item char ranges
@@ -42814,8 +42816,8 @@ async function _drwBuildFindIndex(setId) {
         width: it.width || 0,
         height: it.height || Math.abs(it.transform?.[3] || 12),
       }));
-      pages.push({ pageIndex: i - 1, text, items: slim });
-      if (i % 10 === 0) _drwFindStatus(`Indexed ${i}/${total}`);
+      pages.push({ pageIndex, text, items: slim });
+      if ((n + 1) % 10 === 0) _drwFindStatus(`Indexed ${n + 1}/${total}`);
     }
     _drwFindIndex.set(setId, { pages, status: 'ready' });
     _drwFindStatus('Indexed');
