@@ -2736,7 +2736,7 @@ let ASSET_LINKS   = [];  // asset_test_links table rows
 let RMAS = [];
 let _rmaFilter = { status: '', location: '', search: '' };
 let TASKS = [];
-let _taskFilter = { status: '', priority: '', type: '', search: '', mine: false };
+let _taskFilter = { status: '', priority: '', type: '', search: '', mine: false, prereqMet: false };
 
 // ── Health tab filter state ───────────────────────────────────────────────────
 let _p6HealthFilter     = { search: '', dateMode: 'all', dateFrom: '', dateTo: '' };
@@ -18057,13 +18057,15 @@ function _tasksPageHTML() {
   const typeOpts  = _taskTypes();
   const prioOpts  = _taskPriorities();
 
-  const myName  = currentRoleUser?.name || '';
-  const isMine  = t => myName && (t.assignee || '') === myName;
-  const myCount = TASKS.filter(isMine).length;
+  const myName      = currentRoleUser?.name || '';
+  const isMine      = t => myName && (t.assignee || '') === myName;
+  const myCount     = TASKS.filter(isMine).length;
+  const prereqCount = TASKS.filter(t => t.prerequisite_met).length;
 
   const srch = (_taskFilter.search || '').toLowerCase();
   const filtered = TASKS.filter(t => {
     if (_taskFilter.mine     && !isMine(t)) return false;
+    if (_taskFilter.prereqMet && !t.prerequisite_met) return false;
     if (_taskFilter.status   && (t.status || 'Not Started') !== _taskFilter.status) return false;
     if (_taskFilter.priority && t.priority !== _taskFilter.priority) return false;
     if (_taskFilter.type     && !_taskTypeList(t).includes(_taskFilter.type)) return false;
@@ -18075,10 +18077,12 @@ function _tasksPageHTML() {
   return `
     <!-- Status chips -->
     <div class="v2-chips-row">
-      <span class="v2-chip ${!_taskFilter.status && !_taskFilter.mine ? 'active' : ''}"
-            onclick="_taskFilter.status=''; _taskFilter.mine=false; renderTasks()">All <span class="n">${TASKS.length}</span></span>
+      <span class="v2-chip ${!_taskFilter.status && !_taskFilter.mine && !_taskFilter.prereqMet ? 'active' : ''}"
+            onclick="_taskFilter.status=''; _taskFilter.mine=false; _taskFilter.prereqMet=false; renderTasks()">All <span class="n">${TASKS.length}</span></span>
       <span class="v2-chip is-info ${_taskFilter.mine ? 'active' : ''}"
             onclick="_taskFilter.mine=!_taskFilter.mine; renderTasks()">${icon('user')} My Tasks <span class="n">${myCount}</span></span>
+      ${prereqCount ? `<span class="v2-chip is-good ${_taskFilter.prereqMet ? 'active' : ''}"
+            onclick="_taskFilter.prereqMet=!_taskFilter.prereqMet; renderTasks()">${icon('check')} Prereq Met <span class="n">${prereqCount}</span></span>` : ''}
       ${TASK_STATUS_CHIPS.map(([val, label, tone]) => {
         const count = TASKS.filter(t => (t.status || 'Not Started') === val).length;
         if (!count && _taskFilter.status !== val) return '';
@@ -18342,6 +18346,30 @@ async function deleteTask(id) {
   } catch(e) { toast('Delete failed: ' + e.message, 'error'); }
 }
 
+// Quick patch — save one or more fields from the view modal without opening edit.
+async function _taskQuickPatch(id, patch) {
+  if (typeof uiCan === 'function' && !uiCan('tasks', 'edit') && !uiCan('tasks', 'change_status')) { toast('You do not have permission', 'error'); return; }
+  const t = TASKS.find(x => x.id === id);
+  if (!t) return;
+  const me = currentRoleUser?.name || currentProfile?.full_name || '';
+  try {
+    const [updated] = await _dbUpdate('tasks', { ...patch, updated_by: me, updated_at: new Date().toISOString() }, { id });
+    if (!updated) throw new Error('Update failed — permission denied.');
+    Object.assign(t, updated);
+    renderTasks();
+    closeModal();
+    _taskViewModal(id);
+  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+// Returns inline style string for a status value so the select looks badge-like.
+function _taskStatusSelectStyle(status) {
+  const m = { 'Not Started': 'background:#f3f4f6;color:#6b7280;border-color:#d1d5db;',
+               'In Progress': 'background:#eef3ff;color:#1d4eaf;border-color:rgba(29,78,175,0.25);',
+               'Done':        'background:#ecfdf5;color:#15803d;border-color:rgba(21,128,61,0.25);' };
+  return m[status] || m['Not Started'];
+}
+
 function _taskViewModal(id) {
   const t = TASKS.find(x => x.id === id);
   if (!t) return;
@@ -18377,7 +18405,12 @@ function _taskViewModal(id) {
     size:  'large',
     body:
       `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #e5e7eb;">` +
-      `${_taskStatusBadge(t.status || 'Not Started')}` +
+      (uiCan('tasks','edit') || uiCan('tasks','change_status')
+        ? `<select onchange="_taskQuickPatch('${id}', {status: this.value}); this.style.cssText='border:1px solid;border-radius:20px;padding:3px 12px;font-size:12px;font-weight:600;cursor:pointer;appearance:auto;'+_taskStatusSelectStyle(this.value);"
+             style="border:1px solid;border-radius:20px;padding:3px 12px;font-size:12px;font-weight:600;cursor:pointer;appearance:auto;${_taskStatusSelectStyle(t.status || 'Not Started')}">` +
+          _taskStatuses().map(s => `<option value="${escapeHtml(s)}" ${(t.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('') +
+          `</select>`
+        : `${_taskStatusBadge(t.status || 'Not Started')}`) +
       `<span class="v2-pill ${_taskPriorityTone(t.priority)}">${escapeHtml(t.priority || '—')}</span>` +
       `${t.effort ? `<span class="v2-pill ${_taskEffortTone(t.effort)}">${escapeHtml(t.effort)}</span>` : ''}` +
       `<span style="font-size:12px;color:var(--gray-500);margin-left:auto;">Created ${t.created_at ? _fmtDate(t.created_at) : '—'} by ${escapeHtml(t.created_by||'—')}</span></div>` +
@@ -18387,9 +18420,14 @@ function _taskViewModal(id) {
       row('Task Type',    types.length ? types.map(ty => `<span class="v2-pill is-muted">${escapeHtml(ty)}</span>`).join(' ') : null) +
       row('Description',  t.description ? escapeHtml(t.description) : null) +
       row('Prerequisite',  t.prerequisites
-        ? escapeHtml(t.prerequisites) + (t.prerequisite_met
-            ? ` <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:#059669;background:#d1fae5;padding:1px 7px;border-radius:10px;margin-left:6px;vertical-align:middle;">${icon('check')} Met</span>`
-            : ` <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:#92400e;background:#fef3c7;padding:1px 7px;border-radius:10px;margin-left:6px;vertical-align:middle;">Pending</span>`)
+        ? escapeHtml(t.prerequisites) +
+          (uiCan('tasks','edit') || uiCan('tasks','change_status')
+            ? ` <label style="display:inline-flex;align-items:center;gap:5px;margin-left:10px;cursor:pointer;vertical-align:middle;">` +
+              `<input type="checkbox" onchange="_taskQuickPatch('${id}', {prerequisite_met: this.checked})" ${t.prerequisite_met ? 'checked' : ''}>` +
+              `<span style="font-size:11px;font-weight:600;${t.prerequisite_met ? 'color:#059669;' : 'color:#92400e;'}">${t.prerequisite_met ? 'Met' : 'Pending'}</span></label>`
+            : (t.prerequisite_met
+                ? ` <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:#059669;background:#d1fae5;padding:1px 7px;border-radius:10px;margin-left:6px;vertical-align:middle;">${icon('check')} Met</span>`
+                : ` <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:#92400e;background:#fef3c7;padding:1px 7px;border-radius:10px;margin-left:6px;vertical-align:middle;">Pending</span>`))
         : null) +
       row('Last Edited',  t.updated_at ? `${_fmtDate(t.updated_at)}${t.updated_by ? ' by ' + escapeHtml(t.updated_by) : ''}` : null) +
       `</table>` +
