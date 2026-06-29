@@ -5191,6 +5191,17 @@ const FIELDCONFIG_MODULES = [
       },
     ],
   },
+  {
+    id: 'config_management', label: 'Config Management', icon: icon('settings'),
+    fields: [
+      {
+        key: 'sw_equipment_type',
+        label: 'Configuration Item SW Type',
+        defaults: ['GA', 'SA', 'OS', 'FW', 'BSP', 'DB'],
+        hint: 'Short codes for software types on configuration items — e.g. GA (General Application), SA (Specific Application), OS (Operating System), FW (Firmware). Shown as badges on each CI entry.',
+      },
+    ],
+  },
 ];
 
 // Flattened list for backward-compat lookups (e.g. _fscDef(key))
@@ -17005,10 +17016,10 @@ function _cmEquipSectionHTML(configId) {
   const expanded = _cmEquipExpanded.has(configId);
   let h = '<div style="border-top:1px solid var(--border);padding:5px 14px 7px;background:#f8fafc;">' +
     '<div style="display:flex;align-items:center;justify-content:space-between;min-height:22px;">' +
-      '<span style="font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.07em;">' + icon('cpu') + ' Equipment SW (' + items.length + ')</span>' +
+      '<span style="font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.07em;">' + icon('cpu') + ' Configuration Items (' + items.length + ')</span>' +
       '<div style="display:flex;gap:3px;">' +
         (items.length ? '<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="_cmToggleEquip(\'' + configId + '\')">' + (expanded ? '▼ Hide' : '▶ Show') + '</button>' : '') +
-        '<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="openSwEquipModal(\'' + configId + '\')">+ Add Equipment</button>' +
+        '<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="openSwEquipModal(\'' + configId + '\')">+ Add CI</button>' +
       '</div>' +
     '</div>';
   if (expanded && items.length) {
@@ -17017,6 +17028,7 @@ function _cmEquipSectionHTML(configId) {
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Equipment</th>' +
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Type</th>' +
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Part Number</th>' +
+        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">CRC</th>' +
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Notes</th>' +
         '<th style="padding:2px 7px;border-bottom:1px solid var(--border);"></th>' +
       '</tr></thead><tbody>';
@@ -17027,6 +17039,7 @@ function _cmEquipSectionHTML(configId) {
           '<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 5px;border-radius:3px;font-size:11px;">' + escapeHtml(eq.sw_type) + '</span>' +
         '</td>' +
         '<td style="padding:3px 7px;font-family:monospace;font-size:11px;">' + escapeHtml(eq.part_number) + '</td>' +
+        '<td style="padding:3px 7px;font-family:monospace;font-size:11px;color:var(--gray-500);">' + escapeHtml(eq.crc || '') + '</td>' +
         '<td style="padding:3px 7px;color:var(--gray-500);font-size:11px;">' + escapeHtml(eq.notes || '') + '</td>' +
         '<td style="padding:3px 7px;text-align:right;white-space:nowrap;">' +
           '<button class="form-secondary" style="font-size:10px;padding:1px 6px;" onclick="openSwEquipModal(\'' + configId + '\',\'' + eq.id + '\')">Edit</button>' +
@@ -17040,9 +17053,74 @@ function _cmEquipSectionHTML(configId) {
   return h;
 }
 
+// Recursive card renderer for the VDD hierarchy (supports unlimited depth).
+function _cmVddCardHTML(config, depth, childMap, _sc) {
+  const children = (childMap.get(config.id) || []).slice().sort((a,b) => (a.subsystem||'').localeCompare(b.subsystem||''));
+  const hasChildren = children.length > 0;
+  const expanded = _cmVddExpanded.has(config.id);
+
+  // Visual treatment by depth
+  const isRoot = depth === 0;
+  const borderColor = isRoot ? (hasChildren ? 'var(--hitachi-red)' : 'var(--gray-200)') : (depth === 1 ? '#fbbf24' : '#93c5fd');
+  const borderW    = (isRoot && hasChildren) ? '2px' : '1px';
+  const headerBg   = isRoot ? 'var(--white)' : (depth === 1 ? '#fffbeb' : '#eff6ff');
+  const childAreaBg = depth === 0 ? '#fffbeb' : (depth === 1 ? '#eff6ff' : '#f0fdf4');
+  const radius     = isRoot ? '10px' : '7px';
+  const padL       = 14 + depth * 18;
+  const padding    = isRoot ? '12px 16px' : ('10px 14px 10px ' + padL + 'px');
+  const mb         = isRoot ? '14px' : '7px';
+  const nameSize   = isRoot ? '13px' : '12px';
+  const fontWeight = isRoot ? '700' : '600';
+  const nameIcon   = isRoot && hasChildren ? icon('file') : (hasChildren ? icon('file') : icon('puzzle'));
+
+  let h = '<div style="border:' + borderW + ' solid ' + borderColor + ';border-radius:' + radius + ';margin-bottom:' + mb + ';overflow:hidden;">';
+
+  // ── Header row ──
+  h += '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:' + padding + ';background:' + headerBg + ';">';
+  h += '<div>';
+  h += '<div style="font-size:' + nameSize + ';font-weight:' + fontWeight + ';">' + nameIcon + ' ' + escapeHtml(config.software_name) +
+    '<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">' + escapeHtml(config.version) + '</span>' +
+    '<span style="font-size:11px;font-weight:600;color:' + _sc(config) + ';margin-left:6px;">● ' + escapeHtml(config.status) + '</span>';
+  if (isRoot && hasChildren) h += '<span style="font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:1px 6px;margin-left:8px;">MASTER VDD</span>';
+  else if (hasChildren)      h += '<span style="font-size:10px;font-weight:700;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:3px;padding:1px 6px;margin-left:8px;">SUB-VDD</span>';
+  h += '</div>';
+  h += '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
+    icon('settings') + ' ' + escapeHtml(config.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(config.location||'—') +
+    (config.baseline ? ' · Baseline: ' + escapeHtml(config.baseline) : '') +
+    (config.cdrl_ref ? ' · ' + escapeHtml(config.cdrl_ref) : '') +
+  '</div>';
+  h += '</div>'; // left col
+
+  // Button bar
+  h += '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">';
+  if (hasChildren) {
+    h += '<span style="font-size:11px;color:var(--gray-500);white-space:nowrap;">' + children.length + ' sub-VDD' + (children.length !== 1 ? 's' : '') + '</span>';
+    h += '<button class="form-secondary" style="font-size:11px;padding:3px 9px;white-space:nowrap;" onclick="_cmToggleVddMaster(\'' + config.id + '\')">' + (expanded ? '▼ Hide' : '▶ Show') + ' Sub-VDDs</button>';
+  }
+  h += '<button class="form-secondary" style="font-size:11px;padding:3px 8px;white-space:nowrap;" onclick="openSwConfigModal(null,null,\'' + config.id + '\')">+ Sub-VDD</button>';
+  h += '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(null,\'' + config.id + '\')">↑ New Version</button>';
+  h += '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(\'' + config.id + '\')">Edit</button>';
+  h += '</div>'; // button bar
+  h += '</div>'; // header grid
+
+  // CI section
+  h += _cmEquipSectionHTML(config.id);
+
+  // Expanded children (recursive)
+  if (hasChildren && expanded) {
+    h += '<div style="border-top:' + borderW + ' solid ' + borderColor + ';background:' + childAreaBg + ';padding:8px 8px 2px;">';
+    for (const child of children) h += _cmVddCardHTML(child, depth + 1, childMap, _sc);
+    h += '</div>';
+  }
+
+  h += '</div>'; // card
+  return h;
+}
+
 function _cmVDDViewHTML(f) {
   const q = (f.search || '').toLowerCase();
-  // Build parent→children map
+
+  // Build full parent→children map
   const childMap = new Map();
   for (const c of SW_CONFIGS) {
     if (c.parent_id) {
@@ -17050,121 +17128,41 @@ function _cmVDDViewHTML(f) {
       childMap.get(c.parent_id).push(c);
     }
   }
-  const masterIds = new Set([...childMap.keys()]);
 
-  // Masters = configs that have at least one child; standalone = no parent, no children
-  let masters = SW_CONFIGS.filter(c => !c.parent_id && masterIds.has(c.id));
-  let standalone = SW_CONFIGS.filter(c => !c.parent_id && !masterIds.has(c.id));
+  // Check if a config or any descendant matches query
+  const matchesQ = c =>
+    (c.software_name||'').toLowerCase().includes(q) ||
+    (c.version||'').toLowerCase().includes(q) ||
+    (c.baseline||'').toLowerCase().includes(q) ||
+    (c.subsystem||'').toLowerCase().includes(q);
+  const hasMatch = id => {
+    const cfg = SW_CONFIGS.find(c => c.id === id);
+    if (cfg && matchesQ(cfg)) return true;
+    return (childMap.get(id) || []).some(ch => hasMatch(ch.id));
+  };
 
-  if (q) {
-    masters = masters.filter(m =>
-      (m.software_name||'').toLowerCase().includes(q) ||
-      (m.version||'').toLowerCase().includes(q) ||
-      (m.baseline||'').toLowerCase().includes(q) ||
-      (m.subsystem||'').toLowerCase().includes(q) ||
-      (childMap.get(m.id)||[]).some(ch =>
-        (ch.software_name||'').toLowerCase().includes(q) ||
-        (ch.version||'').toLowerCase().includes(q) ||
-        (ch.subsystem||'').toLowerCase().includes(q)
-      )
-    );
-    standalone = standalone.filter(c =>
-      (c.software_name||'').toLowerCase().includes(q) ||
-      (c.version||'').toLowerCase().includes(q) ||
-      (c.subsystem||'').toLowerCase().includes(q)
-    );
-  }
+  // Roots = no parent_id
+  let roots = SW_CONFIGS.filter(c => !c.parent_id);
+  if (q) roots = roots.filter(r => hasMatch(r.id));
 
-  if (!masters.length && !standalone.length) {
-    return '<div style="text-align:center;padding:48px 0;color:var(--gray-400);">No software configurations yet. Click <strong>+ Add Software Config</strong> to create a Master VDD, then use <strong>+ Add Sub-Software</strong> to link subsystem components.</div>';
+  if (!roots.length) {
+    return '<div style="text-align:center;padding:48px 0;color:var(--gray-400);">No software configurations yet. Click <strong>+ Add Software Config</strong> to create a Master VDD, then use <strong>+ Sub-VDD</strong> to add hierarchy.</div>';
   }
 
   const _sc = c => ({ active:'#16a34a', patch:'#ea580c', planned:'#7c3aed', superseded:'#6b7280', rolled_back:'#dc2626' }[c.status] || '#6b7280');
 
-  let html = '';
+  const masters    = roots.filter(r => childMap.has(r.id)).sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
+  const standalone = roots.filter(r => !childMap.has(r.id)).sort((a,b) => (a.subsystem||'').localeCompare(b.subsystem||''));
 
+  let html = '';
   if (masters.length) {
     html += '<div style="margin-bottom:8px;font-size:11px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.07em;">Master VDDs</div>';
-    for (const master of masters.slice().sort((a,b) => new Date(b.created_at||0)-new Date(a.created_at||0))) {
-      const children = (childMap.get(master.id)||[]).slice().sort((a,b)=>(a.subsystem||'').localeCompare(b.subsystem||''));
-      const expanded = _cmVddExpanded.has(master.id);
-      html += '<div style="border:2px solid var(--hitachi-red);border-radius:10px;margin-bottom:14px;overflow:hidden;">' +
-        '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:12px 16px;background:var(--white);">' +
-          '<div>' +
-            '<div style="font-size:13px;font-weight:700;">' + icon('file') + ' ' + escapeHtml(master.software_name) +
-              '<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">' + escapeHtml(master.version) + '</span>' +
-              '<span style="font-size:11px;font-weight:600;color:' + _sc(master) + ';margin-left:6px;">● ' + escapeHtml(master.status) + '</span>' +
-              '<span style="font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:1px 6px;margin-left:8px;">MASTER VDD</span>' +
-            '</div>' +
-            '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
-              icon('settings') + ' ' + escapeHtml(master.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(master.location||'—') +
-              (master.baseline ? ' · Baseline: ' + escapeHtml(master.baseline) : '') +
-              (master.cdrl_ref ? ' · ' + escapeHtml(master.cdrl_ref) : '') +
-            '</div>' +
-          '</div>' +
-          '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">' +
-            '<span style="font-size:11px;color:var(--gray-500);white-space:nowrap;">' + children.length + ' sub-software' + (children.length!==1?'s':'') + '</span>' +
-            '<button class="form-secondary" style="font-size:11px;padding:3px 10px;white-space:nowrap;" onclick="_cmToggleVddMaster(\'' + master.id + '\')">' + (expanded?'▼ Hide':'▶ Show') + ' Sub-Softwares</button>' +
-            '<button class="form-secondary" style="font-size:11px;padding:3px 8px;white-space:nowrap;" onclick="openSwConfigModal(null,null,\'' + master.id + '\')">+ Add Sub-Software</button>' +
-            '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(null,\'' + master.id + '\')">↑ New Version</button>' +
-            '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(\'' + master.id + '\')">Edit</button>' +
-          '</div>' +
-        '</div>' +
-        _cmEquipSectionHTML(master.id) +
-        (expanded ?
-          '<div style="border-top:2px solid var(--hitachi-red);background:#fffbeb;">' +
-          (children.length ? children.map(ch =>
-            '<div style="border-bottom:1px solid #fde68a;">' +
-              '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 16px 10px 28px;">' +
-                '<div>' +
-                  '<div style="font-size:13px;font-weight:600;">' + icon('puzzle') + ' ' + escapeHtml(ch.software_name) +
-                    '<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">' + escapeHtml(ch.version) + '</span>' +
-                    '<span style="font-size:11px;font-weight:600;color:' + _sc(ch) + ';margin-left:6px;">● ' + escapeHtml(ch.status) + '</span>' +
-                  '</div>' +
-                  '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
-                    icon('settings') + ' ' + escapeHtml(ch.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(ch.location||'—') +
-                    (ch.baseline ? ' · Baseline: ' + escapeHtml(ch.baseline) : '') +
-                    (ch.cdrl_ref ? ' · ' + escapeHtml(ch.cdrl_ref) : '') +
-                  '</div>' +
-                '</div>' +
-                '<div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">' +
-                  '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(null,\'' + ch.id + '\')">↑ New Version</button>' +
-                  '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(\'' + ch.id + '\')">Edit</button>' +
-                '</div>' +
-              '</div>' +
-              _cmEquipSectionHTML(ch.id) +
-            '</div>'
-          ).join('') : '<div style="padding:16px 28px;font-size:12px;color:var(--gray-400);">No sub-softwares linked yet. Click <strong>+ Add Sub-Software</strong> to assign a subsystem component to this Master VDD.</div>') +
-          '</div>'
-        : '') +
-      '</div>';
-    }
+    for (const m of masters) html += _cmVddCardHTML(m, 0, childMap, _sc);
   }
-
   if (standalone.length) {
-    html += '<div style="margin-top:' + (masters.length?'24px':'0') + ';margin-bottom:8px;font-size:11px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.07em;">Standalone Configs (no parent VDD)</div>';
-    for (const c of standalone.slice().sort((a,b)=>(a.subsystem||'').localeCompare(b.subsystem||''))) {
-      html += '<div style="border:1px solid var(--gray-200);border-radius:8px;margin-bottom:8px;overflow:hidden;">' +
-        '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 14px;background:var(--white);">' +
-          '<div>' +
-            '<div style="font-size:13px;font-weight:600;">' + escapeHtml(c.software_name) +
-              '<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">' + escapeHtml(c.version) + '</span>' +
-              '<span style="font-size:11px;font-weight:600;color:' + _sc(c) + ';margin-left:6px;">● ' + escapeHtml(c.status) + '</span>' +
-            '</div>' +
-            '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
-              icon('settings') + ' ' + escapeHtml(c.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(c.location||'—') +
-            '</div>' +
-          '</div>' +
-          '<div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">' +
-            '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(null,\'' + c.id + '\')">↑ New Version</button>' +
-            '<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(\'' + c.id + '\')">Edit</button>' +
-          '</div>' +
-        '</div>' +
-        _cmEquipSectionHTML(c.id) +
-      '</div>';
-    }
+    html += '<div style="margin-top:' + (masters.length ? '24px' : '0') + ';margin-bottom:8px;font-size:11px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.07em;">Standalone Configs (no parent VDD)</div>';
+    for (const c of standalone) html += _cmVddCardHTML(c, 0, childMap, _sc);
   }
-
   return html;
 }
 
@@ -17190,15 +17188,48 @@ function openSwConfigModal(editId, cloneFromId, parentVddId) {
   const v = (field, def='') => base ? (base[field] ?? def) : def;
   const isNewVersion = !!clone && !existing;
 
-  // Parent VDD: configs with no parent_id themselves are eligible masters.
+  // Parent VDD: any config is a valid parent (unlimited depth).
   // For new-version flow, inherit parent_id from the cloned record (read-only).
   const effectiveParentId = isNewVersion ? (clone.parent_id || null) : (existing ? (existing.parent_id || null) : (parentVddId || null));
-  const eligibleMasters = SW_CONFIGS.filter(c => !c.parent_id && c.id !== (existing?.id));
   const parentVdd = effectiveParentId ? SW_CONFIGS.find(c => c.id === effectiveParentId) : null;
 
+  // Build a depth-indented flat list of all eligible parents (excludes self + descendants)
+  const _excludedIds = new Set();
+  if (existing) {
+    const _stack = [existing.id];
+    while (_stack.length) {
+      const _id = _stack.pop();
+      _excludedIds.add(_id);
+      SW_CONFIGS.filter(c => c.parent_id === _id).forEach(c => _stack.push(c.id));
+    }
+  }
+  const _parentDropdownItems = [];
+  const _pdChildMap = new Map();
+  for (const c of SW_CONFIGS) {
+    if (c.parent_id && !_excludedIds.has(c.id)) {
+      if (!_pdChildMap.has(c.parent_id)) _pdChildMap.set(c.parent_id, []);
+      _pdChildMap.get(c.parent_id).push(c);
+    }
+  }
+  (function _flattenPD(cfg, depth) {
+    if (_excludedIds.has(cfg.id)) return;
+    _parentDropdownItems.push({ cfg, depth });
+    (_pdChildMap.get(cfg.id) || []).sort((a,b) => (a.subsystem||'').localeCompare(b.subsystem||'')).forEach(ch => _flattenPD(ch, depth + 1));
+  });
+  SW_CONFIGS.filter(c => !c.parent_id && !_excludedIds.has(c.id))
+    .sort((a,b) => (a.software_name||'').localeCompare(b.software_name||''))
+    .forEach(r => {
+      _parentDropdownItems.push({ cfg: r, depth: 0 });
+      (_pdChildMap.get(r.id) || []).sort((a,b) => (a.subsystem||'').localeCompare(b.subsystem||'')).forEach(function flatten(ch, d) {
+        if (_excludedIds.has(ch.id)) return;
+        _parentDropdownItems.push({ cfg: ch, depth: d });
+        (_pdChildMap.get(ch.id) || []).sort((a,b) => (a.subsystem||'').localeCompare(b.subsystem||'')).forEach(g => flatten(g, d + 1));
+      });
+    });
+
   modal({
-    title: existing ? 'Edit Software Config' : isNewVersion ? '↑ Install New Version' : (parentVddId ? '+ Add Sub-Software' : '+ Add Software Config'),
-    sub: isNewVersion ? `${escapeHtml(clone.software_name)} — current ${escapeHtml(clone.version)}` : (parentVddId && eligibleMasters.find(m=>m.id===parentVddId) ? `Sub-software of: ${escapeHtml(eligibleMasters.find(m=>m.id===parentVddId).software_name)} ${escapeHtml(eligibleMasters.find(m=>m.id===parentVddId).version)}` : ''),
+    title: existing ? 'Edit Software Config' : isNewVersion ? '↑ Install New Version' : (parentVddId ? '+ Add Sub-VDD' : '+ Add Software Config'),
+    sub: isNewVersion ? `${escapeHtml(clone.software_name)} — current ${escapeHtml(clone.version)}` : (parentVdd ? 'Sub-VDD of: ' + escapeHtml(parentVdd.software_name) + ' ' + escapeHtml(parentVdd.version) : ''),
     size: 'large',
     body: `
       <div class="form-grid">
@@ -17246,12 +17277,12 @@ function openSwConfigModal(editId, cloneFromId, parentVddId) {
           <input type="text" id="sw-cdrl" class="form-input" placeholder="e.g. CDRL 9.04.53" value="${escapeHtml(v('cdrl_ref'))}">
         </div>
         <div class="form-field form-field-full">
-          <label>Parent Master VDD <span style="font-weight:400;color:var(--gray-500);">(optional — links this as a sub-software under a master VDD)</span></label>
+          <label>Parent VDD <span style="font-weight:400;color:var(--gray-500);">(optional — attach this config under another VDD at any depth)</span></label>
           ${isNewVersion
             ? `<input type="hidden" id="sw-parent-vdd" value="${escapeHtml(effectiveParentId||'')}"><div style="padding:7px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:13px;color:var(--gray-500);">${parentVdd ? escapeHtml(parentVdd.software_name)+' '+escapeHtml(parentVdd.version) : '— none —'} <span style="font-size:11px;">(inherited from previous version)</span></div>`
             : `<select id="sw-parent-vdd" class="form-input">
                 <option value="">— Standalone (no parent VDD) —</option>
-                ${eligibleMasters.map(m=>`<option value="${m.id}" ${effectiveParentId===m.id?'selected':''}>${escapeHtml(m.software_name)} ${escapeHtml(m.version)} · ${escapeHtml(m.subsystem||'')}</option>`).join('')}
+                ${_parentDropdownItems.map(({cfg:m, depth:d})=>`<option value="${m.id}" ${effectiveParentId===m.id?'selected':''}>${'    '.repeat(d)}${escapeHtml(m.software_name)} ${escapeHtml(m.version)}${m.subsystem?' · '+escapeHtml(m.subsystem):''}</option>`).join('')}
               </select>`
           }
         </div>
@@ -17380,15 +17411,16 @@ async function deleteSwConfig(id) {
   } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
 }
 
-// Equipment SW — per-VDD equipment entries (GA, SA, OS, FW, etc.)
+// Configuration Items — per-VDD CI entries (GA, SA, OS, FW, etc.)
 function openSwEquipModal(configId, editId) {
   _cmEquipConfigId = configId;
   _cmEquipEditId = editId || null;
   const existing = editId ? SW_EQUIPMENT.find(e => e.id === editId) : null;
   const cfg = SW_CONFIGS.find(x => x.id === configId);
   const v = (f, def='') => existing ? (existing[f] ?? def) : def;
+  const swTypes = _fsOptions('sw_equipment_type');
   modal({
-    title: existing ? 'Edit Equipment SW Entry' : '+ Add Equipment SW Entry',
+    title: existing ? 'Edit Configuration Item' : '+ Add Configuration Item',
     sub: cfg ? escapeHtml(cfg.software_name) + ' ' + escapeHtml(cfg.version) : '',
     size: 'medium',
     body: `
@@ -17401,17 +17433,16 @@ function openSwEquipModal(configId, editId) {
           <label>SW Type *</label>
           <input type="text" id="sweq-type" class="form-input" placeholder="GA, SA, OS, FW…" value="${escapeHtml(v('sw_type'))}" list="sweq-type-list">
           <datalist id="sweq-type-list">
-            <option value="GA">
-            <option value="SA">
-            <option value="OS">
-            <option value="FW">
-            <option value="BSP">
-            <option value="DB">
+            ${swTypes.map(t => '<option value="' + escapeHtml(t) + '">').join('')}
           </datalist>
         </div>
         <div class="form-field form-field-full">
           <label>Part Number / Version String *</label>
           <input type="text" id="sweq-part" class="form-input" placeholder="e.g. STD_C11_D154 or BART_C11_D470" value="${escapeHtml(v('part_number'))}">
+        </div>
+        <div class="form-field form-field-full">
+          <label>CRC <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
+          <input type="text" id="sweq-crc" class="form-input" placeholder="e.g. 0xA3F2C1 or checksum value" value="${escapeHtml(v('crc'))}">
         </div>
         <div class="form-field form-field-full">
           <label>Notes</label>
@@ -17431,6 +17462,7 @@ async function saveSwEquip(configId) {
   const name  = (document.getElementById('sweq-name')?.value || '').trim();
   const type  = (document.getElementById('sweq-type')?.value || '').trim();
   const part  = (document.getElementById('sweq-part')?.value || '').trim();
+  const crc   = (document.getElementById('sweq-crc')?.value || '').trim() || null;
   const notes = (document.getElementById('sweq-notes')?.value || '').trim() || null;
   if (!name) { toast('Equipment name is required', 'error'); return; }
   if (!type) { toast('SW Type is required', 'error'); return; }
@@ -17438,15 +17470,15 @@ async function saveSwEquip(configId) {
   const editing = _cmEquipEditId ? SW_EQUIPMENT.find(e => e.id === _cmEquipEditId) : null;
   try {
     if (editing) {
-      const patch = { equipment_name: name, sw_type: type, part_number: part, notes };
+      const patch = { equipment_name: name, sw_type: type, part_number: part, crc, notes };
       const [row] = await _dbUpdate('sw_equipment', patch, { id: editing.id });
       Object.assign(editing, row || patch);
-      toast('Equipment entry updated', 'success');
+      toast('Configuration item updated', 'success');
     } else {
-      const newRow = { config_id: configId, equipment_name: name, sw_type: type, part_number: part, notes, created_by: currentRoleUser?.name || null };
+      const newRow = { config_id: configId, equipment_name: name, sw_type: type, part_number: part, crc, notes, created_by: currentRoleUser?.name || null };
       const [inserted] = await _dbInsert('sw_equipment', [newRow]);
       if (inserted) SW_EQUIPMENT.push(inserted);
-      toast('Equipment entry saved', 'success');
+      toast('Configuration item saved', 'success');
     }
     closeModal();
     _cmEquipExpanded.add(configId);
@@ -17464,7 +17496,7 @@ async function deleteSwEquip(id, configId) {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() },
     });
     SW_EQUIPMENT = SW_EQUIPMENT.filter(e => e.id !== id);
-    toast('Equipment entry deleted', 'success');
+    toast('Configuration item deleted', 'success');
     closeModal();
     renderConfigMgmt();
   } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
