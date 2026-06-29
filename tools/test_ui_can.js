@@ -27,10 +27,10 @@ if (loadError) { console.error("FATAL: load —", loadErrorFile, loadError.messa
 const { PAGE_MODULE, uiCan } = sandbox;
 if (!PAGE_MODULE || typeof uiCan !== "function") { console.error("FATAL: gating layer not found"); process.exit(1); }
 
-// The 21 module keys of the live perm_modules catalog (P1-2 seed).
+// The 22 module keys of the live perm_modules catalog (P1-2 seed + tasks).
 const CATALOG = new Set([
   "overview", "test_register", "dynamic_testing", "test_reporting", "punch_list",
-  "rma", "forms", "photos", "meetings", "planning", "lookahead", "schedule_p6",
+  "rma", "tasks", "forms", "photos", "meetings", "planning", "lookahead", "schedule_p6",
   "assets", "drawings", "locations", "directory", "templates",
   "weights", "config", "audit", "admin",
 ]);

@@ -362,6 +362,7 @@ function showPage(name) {
   if (name === 'admin-config')     renderConfigMgmt();
   if (name === 'forms')            renderFormsPage();
   if (name === 'rma')              renderRMA();
+  if (name === 'tasks')            renderTasks();
   if (name === 'schedule')         renderSchedulePage();
   if (name === 'drawings')         { loadDrawingsData().then(renderDrawingsPage); }
   if (name === 'documents')        { loadDocsData().then(renderDocumentsPage); }
@@ -451,6 +452,7 @@ async function refreshApp() {
   try { await loadP6Data(); }  catch(e) { console.warn('[refreshApp] P6 reload failed:',  e.message); }
   try { await loadAssetData(); } catch(e) { console.warn('[refreshApp] asset reload failed:', e.message); }
   try { await loadRMAs(); }     catch(e) { console.warn('[refreshApp] RMA reload failed:',   e.message); }
+  try { await loadTasks(); }    catch(e) { console.warn('[refreshApp] Tasks reload failed:', e.message); }
   try { await loadSoftwareConfigs(); } catch(e) { console.warn('[refreshApp] SW config reload failed:', e.message); }
   try { await loadSwEquipment(); } catch(e) { console.warn('[refreshApp] SW equipment reload failed:', e.message); }
 
@@ -2146,7 +2148,7 @@ function _initProductionVisualLayer() {
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
   _initProductionVisualLayer();
-  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs(), loadForms(), loadDrawingsData(), (typeof loadTeamMembers==='function'?loadTeamMembers():Promise.resolve())]);
+  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs(), loadTasks(), loadForms(), loadDrawingsData(), (typeof loadTeamMembers==='function'?loadTeamMembers():Promise.resolve())]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -2733,6 +2735,8 @@ let ASSET_LINKS   = [];  // asset_test_links table rows
 // ── RMA globals ───────────────────────────────────────────────────────────────
 let RMAS = [];
 let _rmaFilter = { status: '', location: '', search: '' };
+let TASKS = [];
+let _taskFilter = { status: '', priority: '', type: '', search: '' };
 
 // ── Health tab filter state ───────────────────────────────────────────────────
 let _p6HealthFilter     = { search: '', dateMode: 'all', dateFrom: '', dateTo: '' };
@@ -3305,6 +3309,7 @@ function onLoggedIn() {
     loadP6Data(),
     loadAssetData(),
     loadRMAs(),
+    loadTasks(),
     loadSoftwareConfigs(),
     loadSwEquipment(),
     loadForms(),
@@ -5116,6 +5121,16 @@ const FIELDCONFIG_MODULES = [
     id: 'rma', label: 'RMA', icon: icon('refresh'),
     fields: [
       { key: 'rma_status', label: 'RMA Status', defaults: ['Open','Pending Replacement','Shipped','Awaiting Return','Closed','Cancelled'] },
+    ],
+  },
+  {
+    id: 'tasks', label: 'Tasks', icon: icon('check-circle'),
+    fields: [
+      { key: 'task_type',     label: 'Task Type',     defaults: ['Maintenance','Upgrade','Hardware','Procedure Development','Flashing','Test'],
+        hint: 'Drives the Task Type chips in the Tasks module. A task can carry more than one type.' },
+      { key: 'task_status',   label: 'Status',        defaults: ['Not Started','In Progress','Done'] },
+      { key: 'task_priority', label: 'Priority',      defaults: ['Low','Medium','High'] },
+      { key: 'task_effort',   label: 'Effort',        defaults: ['Small','Medium','Large'] },
     ],
   },
   {
@@ -15219,6 +15234,13 @@ async function loadRMAs() {
   } catch(e) { console.warn('[loadRMAs] failed:', e.message); }
 }
 
+async function loadTasks() {
+  try {
+    const data = await _fetchAnon('tasks?select=*&order=created_at.desc');
+    TASKS = data || [];
+  } catch(e) { console.warn('[loadTasks] failed:', e.message); }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function _assetParsePrefix(name) {
   // e.g. "W40-AC01" → "W40", "ATS-W40-AC01" → try to match a known location prefix
@@ -17892,6 +17914,360 @@ async function _rmaSendEmail(rma, eventType, oldStatus) {
       body: JSON.stringify({ rma, creatorEmail: rma.created_by_email || '', eventType, oldStatus }),
     });
   } catch(e) { console.warn('[_rmaSendEmail]', e.message); }
+}
+
+
+// ==========================================================================
+// TASKS — Field task tracker (Tasks Tracker)
+//
+// A lightweight task board for the Field section. Mirrors the RMA module's
+// structure (load → render hero + list → modal CRUD → audit) and pulls its
+// dropdown vocabularies (Task Type, Status, Priority, Effort) from Field Config
+// so they stay admin-editable alongside every other module.
+// ==========================================================================
+
+const TASK_STATUS_CHIPS = [
+  ['Not Started', 'Not Started', 'is-muted'],
+  ['In Progress', 'In Progress', 'is-info'],
+  ['Done',        'Done',        'is-good'],
+];
+
+function _taskStatusTone(s) {
+  return ({ 'Not Started':'is-muted', 'In Progress':'is-info', 'Done':'is-good' })[s] || 'is-muted';
+}
+function _taskPriorityTone(p) {
+  return ({ 'Low':'is-muted', 'Medium':'is-warn', 'High':'is-bad' })[p] || 'is-muted';
+}
+function _taskEffortTone(e) {
+  return ({ 'Small':'is-good', 'Medium':'is-warn', 'Large':'is-bad' })[e] || 'is-muted';
+}
+
+// Vocabulary accessors — Field Config first, hardcoded fallback second.
+function _taskTypes()      { return _fsOptions('task_type'); }
+function _taskStatuses()   { return _fsOptions('task_status'); }
+function _taskPriorities() { return _fsOptions('task_priority'); }
+function _taskEfforts()    { return _fsOptions('task_effort'); }
+
+// task_type is multi-valued; normalize whatever shape the DB hands back
+// (text[], comma string, or null) into a clean array.
+function _taskTypeList(t) {
+  const raw = t?.task_type;
+  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (typeof raw === 'string' && raw.trim()) return raw.split(',').map(s => s.trim()).filter(Boolean);
+  return [];
+}
+
+function renderTasks() {
+  const root   = document.getElementById('tasks-content');
+  const heroEl = document.getElementById('tasks-hero-content');
+  if (!root || !currentRoleUser) return;
+
+  const now       = Date.now();
+  const notStarted = TASKS.filter(t => (t.status || 'Not Started') === 'Not Started').length;
+  const inProgress = TASKS.filter(t => t.status === 'In Progress').length;
+  const done       = TASKS.filter(t => t.status === 'Done').length;
+  const overdue    = TASKS.filter(t => t.due_date && new Date(t.due_date) < new Date() && t.status !== 'Done').length;
+
+  if (heroEl) heroEl.innerHTML = renderPageHero({
+    eyebrow: 'Field',
+    title: 'Tasks Tracker',
+    sub: 'Field task board — track work, owners, priority and progress',
+    stats: [
+      { label: 'Total',       value: TASKS.length },
+      { label: 'Not Started', value: notStarted, tone: 'muted' },
+      { label: 'In Progress', value: inProgress, tone: inProgress ? 'blue' : 'muted' },
+      { label: 'Done',        value: done,       tone: 'good' },
+      { label: 'Overdue',     value: overdue,    tone: overdue ? 'amber' : 'muted' },
+    ],
+  });
+
+  _htmlPreserveFocus(root, _tasksPageHTML());
+  setTimeout(_initPageLibraries, 80);
+}
+
+function _taskStatusBadge(s) {
+  return `<span class="v2-pill ${_taskStatusTone(s)}">${escapeHtml(s || '—')}</span>`;
+}
+
+function _tasksPageHTML() {
+  const canEdit   = uiCan('tasks', 'edit');
+  const typeOpts  = _taskTypes();
+  const prioOpts  = _taskPriorities();
+
+  const srch = (_taskFilter.search || '').toLowerCase();
+  const filtered = TASKS.filter(t => {
+    if (_taskFilter.status   && (t.status || 'Not Started') !== _taskFilter.status) return false;
+    if (_taskFilter.priority && t.priority !== _taskFilter.priority) return false;
+    if (_taskFilter.type     && !_taskTypeList(t).includes(_taskFilter.type)) return false;
+    if (srch && !`${t.task_name||''} ${t.description||''} ${t.assignee||''} ${t.updates||''} ${t.prerequisites||''} ${_taskTypeList(t).join(' ')}`
+                  .toLowerCase().includes(srch)) return false;
+    return true;
+  });
+
+  return `
+    <!-- Status chips -->
+    <div class="v2-chips-row">
+      <span class="v2-chip ${!_taskFilter.status ? 'active' : ''}"
+            onclick="_taskFilter.status=''; renderTasks()">All <span class="n">${TASKS.length}</span></span>
+      ${TASK_STATUS_CHIPS.map(([val, label, tone]) => {
+        const count = TASKS.filter(t => (t.status || 'Not Started') === val).length;
+        if (!count && _taskFilter.status !== val) return '';
+        return `<span class="v2-chip ${tone} ${_taskFilter.status === val ? 'active' : ''}"
+                      onclick="_taskFilter.status='${escapeHtml(val)}'; renderTasks()">
+          <span class="dot"></span>${escapeHtml(label)} <span class="n">${count}</span>
+        </span>`;
+      }).join('')}
+      <span class="right">
+        <button class="v2-btn-ghost" onclick="_taskCSVExport()">${icon('download')} Export CSV</button>
+        ${uiCan('tasks','create') ? `<button class="v2-btn-primary" onclick="openTaskModal(null)">＋ New Task</button>` : ''}
+      </span>
+    </div>
+
+    <!-- Search + filters -->
+    <div class="v2-filter-row">
+      <div class="v2-search-wrap">
+        <span class="icon">${icon('search')}</span>
+        <input id="tasks-search-input" type="text" value="${escapeHtml(_taskFilter.search)}"
+               placeholder="Search task, description, assignee, updates…"
+               oninput="_taskFilter.search=this.value; renderTasks()">
+      </div>
+      <select onchange="_taskFilter.priority=this.value; renderTasks()">
+        <option value="">All Priorities</option>
+        ${prioOpts.map(p => `<option value="${escapeHtml(p)}" ${_taskFilter.priority===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
+      </select>
+      <select onchange="_taskFilter.type=this.value; renderTasks()">
+        <option value="">All Types</option>
+        ${typeOpts.map(t => `<option value="${escapeHtml(t)}" ${_taskFilter.type===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}
+      </select>
+      <span class="count"><b>${filtered.length}</b> of ${TASKS.length}</span>
+    </div>
+
+    <!-- Task rows -->
+    <div class="v2-list">
+      ${filtered.length ? filtered.map(t => _taskRowHTML(t, canEdit)).join('') : `
+        <div style="padding:48px;text-align:center;color:var(--gray-500);">
+          <div style="font-size:32px;margin-bottom:8px;">${icon('check-circle')}</div>
+          <div style="font-size:14px;">${TASKS.length ? 'No tasks match your filters' : 'No tasks yet — click ＋ New Task to get started'}</div>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function _taskRowHTML(t, canEdit) {
+  const now      = Date.now();
+  const status   = t.status || 'Not Started';
+  const isDone    = status === 'Done';
+  const isOverdue = t.due_date && new Date(t.due_date) < new Date() && !isDone;
+  const stTone   = _taskStatusTone(status);
+  const types    = _taskTypeList(t);
+  const dueClass = isOverdue ? 'is-bad' : (t.due_date && (new Date(t.due_date) - now) < 7*86400000 && !isDone) ? 'is-warm' : '';
+
+  return `
+    <div class="v2-list-row tone-${stTone.replace('is-','')} ${isOverdue ? 'is-overdue' : ''}" onclick="_taskViewModal('${t.id}')">
+      <div class="rma-row">
+        <div class="rma-id-block">
+          <span class="v2-pill ${_taskPriorityTone(t.priority)}">${escapeHtml(t.priority || '—')}</span>
+          <h3 class="rma-material" title="${escapeHtml(t.task_name || '')}">${escapeHtml(t.task_name || '—')}</h3>
+          ${t.description ? `<div class="v2-meta-line" style="margin-top:2px;">${escapeHtml(_truncate(t.description, 110))}</div>` : ''}
+        </div>
+
+        <div class="rma-parts">
+          <span class="k">Owner</span><span class="v">${escapeHtml(t.assignee || '—')}</span>
+          <span class="k">Effort</span><span class="v">${t.effort ? `<span class="v2-pill ${_taskEffortTone(t.effort)}">${escapeHtml(t.effort)}</span>` : '—'}</span>
+          <span class="k">Type</span><span class="v">${types.length ? types.map(ty => `<span class="v2-pill is-muted">${escapeHtml(ty)}</span>`).join(' ') : '—'}</span>
+        </div>
+
+        <div class="rma-status-block">
+          <span class="v2-pill ${stTone}">${escapeHtml(status)}</span>
+          <div class="v2-meta-line">
+            ${t.due_date ? `<span class="${dueClass}">${isOverdue?icon('alert')+' ':''}Due ${_fmtDate(t.due_date)}</span>` : '<span style="color:var(--gray-400);">No due date</span>'}
+          </div>
+          ${t.updates ? `<div class="v2-meta-line" title="${escapeHtml(t.updates)}">${escapeHtml(_truncate(t.updates, 60))}</div>` : ''}
+        </div>
+
+        <div class="rma-actions" onclick="event.stopPropagation()">
+          <button class="v2-btn-mini" onclick="_taskViewModal('${t.id}')">${icon('eye')} View</button>
+          ${canEdit ? `
+            <div style="display:flex;gap:4px;">
+              ${uiCan('tasks','edit') ? `<button class="v2-btn-mini" onclick="openTaskModal('${t.id}')">${icon('edit')} Edit</button>` : ''}
+              ${uiCan('tasks','delete') ? `<button aria-label="Delete" class="v2-btn-mini danger" onclick="deleteTask('${t.id}')" title="Delete">${icon('trash')}</button>` : ''}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function _truncate(s, n) {
+  s = String(s || '');
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+function openTaskModal(taskId) {
+  const task    = taskId ? TASKS.find(t => t.id === taskId) : null;
+  const statuses = _taskStatuses();
+  const prios    = _taskPriorities();
+  const efforts  = _taskEfforts();
+  const types    = _taskTypes();
+  const selTypes = _taskTypeList(task);
+  const people   = _taskAssigneeOptions(task?.assignee);
+  const today    = new Date().toISOString().slice(0, 10);
+  const v        = (id, fallback) => escapeHtml(task?.[id] || fallback || '');
+
+  modal({
+    title: task ? `Edit Task — ${task.task_name}` : 'New Task',
+    size:  'large',
+    body:
+      `<div class="form-grid">` +
+      `<div class="form-field form-field-full"><label>Task Name <span style="color:var(--bad)">*</span></label>` +
+      `<input id="task-name" class="form-input" placeholder="e.g. Remove Transponder @ W40" value="${v('task_name')}"></div>` +
+      `<div class="form-field form-field-full"><label>Description</label>` +
+      `<textarea id="task-desc" class="form-input" rows="2" placeholder="What needs to be done…">${v('description')}</textarea></div>` +
+      `<div class="form-field form-field-full"><label>Prerequisites / Status</label>` +
+      `<textarea id="task-prereq" class="form-input" rows="2" placeholder="Blocking items or current standing…">${v('prerequisites')}</textarea></div>` +
+      `<div class="form-field"><label>Status <span style="color:var(--bad)">*</span></label>` +
+      `<select id="task-status" class="form-input">` +
+      statuses.map(s => `<option value="${escapeHtml(s)}" ${(task?.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('') +
+      `</select></div>` +
+      `<div class="form-field"><label>Priority</label>` +
+      `<select id="task-priority" class="form-input">` +
+      prios.map(p => `<option value="${escapeHtml(p)}" ${(task?.priority||'Medium')===p?'selected':''}>${escapeHtml(p)}</option>`).join('') +
+      `</select></div>` +
+      `<div class="form-field"><label>Effort</label>` +
+      `<select id="task-effort" class="form-input"><option value="">— None —</option>` +
+      efforts.map(e => `<option value="${escapeHtml(e)}" ${task?.effort===e?'selected':''}>${escapeHtml(e)}</option>`).join('') +
+      `</select></div>` +
+      `<div class="form-field"><label>Assignee</label>` +
+      `<select id="task-assignee" class="form-input"><option value="">— Unassigned —</option>` +
+      people.map(p => `<option value="${escapeHtml(p)}" ${task?.assignee===p?'selected':''}>${escapeHtml(p)}</option>`).join('') +
+      `</select></div>` +
+      `<div class="form-field"><label>Due Date</label><input id="task-due" type="date" class="form-input" value="${task?.due_date||''}"></div>` +
+      `<div class="form-field form-field-full"><label>Task Type <span style="font-weight:400;color:var(--gray-500);font-size:11px;">(select one or more)</span></label>` +
+      `<div class="task-type-grid" style="display:flex;flex-wrap:wrap;gap:8px;">` +
+      types.map(ty => `<label style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--gray-300);border-radius:6px;cursor:pointer;font-size:13px;">` +
+        `<input type="checkbox" class="task-type-cb" value="${escapeHtml(ty)}" ${selTypes.includes(ty)?'checked':''}> ${escapeHtml(ty)}</label>`).join('') +
+      `</div></div>` +
+      `<div class="form-field form-field-full"><label>Updates</label>` +
+      `<textarea id="task-updates" class="form-input" rows="3" placeholder="Progress notes, dated updates…">${v('updates')}</textarea></div>` +
+      `</div>`,
+    footer:
+      `<button class="form-secondary" onclick="closeModal()">Cancel</button>` +
+      `<button class="form-submit" onclick="saveTask(${taskId ? `'${taskId}'` : 'null'})">${task ? 'Save Changes' : 'Create Task'}</button>`,
+  });
+}
+
+// Assignee options: known directory users, plus the current task's assignee even
+// if they're not (or no longer) in the directory, so an imported name survives.
+function _taskAssigneeOptions(current) {
+  const set = new Set(_taUsersByFilter('all'));
+  if (current) set.add(current);
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+async function saveTask(editId) {
+  if (typeof uiCan === 'function' && !uiCan('tasks', editId ? 'edit' : 'create')) { toast('You do not have permission to save tasks', 'error'); return; }
+  const taskName = (document.getElementById('task-name')?.value || '').trim();
+  if (!taskName) { toast('Task Name is required', 'error'); return; }
+
+  const g = id => (document.getElementById(id)?.value || '').trim() || null;
+  const types = [...document.querySelectorAll('.task-type-cb:checked')].map(cb => cb.value);
+  const me = currentRoleUser?.name || currentProfile?.full_name || '';
+  const payload = {
+    task_name:     taskName,
+    description:   g('task-desc'),
+    prerequisites: g('task-prereq'),
+    status:        document.getElementById('task-status')?.value   || 'Not Started',
+    priority:      document.getElementById('task-priority')?.value || 'Medium',
+    effort:        g('task-effort'),
+    assignee:      g('task-assignee'),
+    due_date:      document.getElementById('task-due')?.value || null,
+    task_type:     types,
+    updates:       g('task-updates'),
+    updated_by:    me,
+    updated_at:    new Date().toISOString(),
+  };
+
+  closeModal();
+  try {
+    if (editId) {
+      const [updated] = await _dbUpdate('tasks', payload, { id: editId });
+      if (!updated) throw new Error('No row was updated — you may not have permission to edit this task.');
+      const idx = TASKS.findIndex(t => t.id === editId);
+      if (idx >= 0) TASKS[idx] = updated;
+      toast('Task updated', 'success');
+    } else {
+      payload.created_by = me;
+      const [created] = await _dbInsert('tasks', [payload]);
+      if (!created) throw new Error('Task was not created — you may not have permission.');
+      TASKS.unshift(created);
+      toast('Task created', 'success');
+    }
+    logAudit(editId ? 'Task Updated' : 'Task Created', taskName, `Status: ${payload.status} · ${payload.priority}`);
+    renderTasks();
+  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function deleteTask(id) {
+  if (typeof uiCan === 'function' && !uiCan('tasks', 'delete')) { toast('You do not have permission to delete tasks', 'error'); return; }
+  const t = TASKS.find(x => x.id === id);
+  if (!t) return;
+  if (!await cxConfirm(`Delete task "${t.task_name}"?\n\nThis cannot be undone.`)) return;
+  try {
+    await _dbDelete('tasks', { id });
+    TASKS.splice(TASKS.findIndex(x => x.id === id), 1);
+    toast('Task deleted', 'success');
+    logAudit('Task Deleted', t.task_name);
+    renderTasks();
+  } catch(e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+function _taskViewModal(id) {
+  const t = TASKS.find(x => x.id === id);
+  if (!t) return;
+  const row = (label, val) => val
+    ? `<tr><td style="padding:7px 16px 7px 0;font-size:13px;color:#6b7280;font-weight:500;white-space:nowrap;width:210px;vertical-align:top;">${label}</td>` +
+      `<td style="padding:7px 0;font-size:13px;color:#111827;">${val}</td></tr>`
+    : '';
+  const types = _taskTypeList(t);
+  modal({
+    title: `Task — ${escapeHtml(t.task_name)}`,
+    size:  'large',
+    body:
+      `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #e5e7eb;">` +
+      `${_taskStatusBadge(t.status || 'Not Started')}` +
+      `<span class="v2-pill ${_taskPriorityTone(t.priority)}">${escapeHtml(t.priority || '—')}</span>` +
+      `${t.effort ? `<span class="v2-pill ${_taskEffortTone(t.effort)}">${escapeHtml(t.effort)}</span>` : ''}` +
+      `<span style="font-size:12px;color:var(--gray-500);margin-left:auto;">Created ${t.created_at ? _fmtDate(t.created_at) : '—'} by ${escapeHtml(t.created_by||'—')}</span></div>` +
+      `<table style="width:100%;border-collapse:collapse;margin-bottom:4px;">` +
+      row('Assignee',     escapeHtml(t.assignee || '—')) +
+      row('Due Date',     t.due_date ? _fmtDate(t.due_date) : null) +
+      row('Task Type',    types.length ? types.map(ty => `<span class="v2-pill is-muted">${escapeHtml(ty)}</span>`).join(' ') : null) +
+      row('Description',  t.description ? escapeHtml(t.description) : null) +
+      row('Prerequisites / Status', t.prerequisites ? escapeHtml(t.prerequisites) : null) +
+      row('Last Edited',  t.updated_at ? `${_fmtDate(t.updated_at)}${t.updated_by ? ' by ' + escapeHtml(t.updated_by) : ''}` : null) +
+      `</table>` +
+      (t.updates ? `<div style="margin-top:14px;padding:12px 14px;background:var(--gray-50);border-radius:6px;font-size:13px;color:var(--gray-700);white-space:pre-wrap;"><strong>Updates:</strong>\n${escapeHtml(t.updates)}</div>` : ''),
+    footer:
+      `<button class="form-secondary" onclick="closeModal()">Close</button>` +
+      (uiCan('tasks','edit') ? `<button class="form-submit" onclick="closeModal();openTaskModal('${id}')">${icon('edit')} Edit</button>` : ''),
+  });
+}
+
+function _taskCSVExport() {
+  const headers = ['Task Name','Status','Priority','Effort','Assignee','Due Date','Task Type',
+    'Description','Prerequisites/Status','Updates','Created By','Created At','Last Edited By','Last Edited'];
+  const rows = TASKS.map(t => [
+    t.task_name||'', t.status||'Not Started', t.priority||'', t.effort||'', t.assignee||'',
+    t.due_date||'', _taskTypeList(t).join('; '), t.description||'', t.prerequisites||'', t.updates||'',
+    t.created_by||'', t.created_at ? _fmtDate(t.created_at) : '', t.updated_by||'', t.updated_at ? _fmtDate(t.updated_at) : '',
+  ].map(v => '"' + String(v).replace(/"/g,'""') + '"'));
+  const csv = [headers.map(h => '"' + h + '"').join(','), ...rows.map(r => r.join(','))].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download = 'Tasks-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
 }
 
 

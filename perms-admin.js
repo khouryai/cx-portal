@@ -61,6 +61,10 @@ const PERM_CATALOG = {
     ['view','read_only',false],['export','read_only',false],['create','standard',false],
     ['edit','standard',false],['change_status','standard',true],['delete','admin',false],
   ],
+  tasks: [
+    ['view','read_only',false],['export','read_only',false],['create','standard',false],
+    ['edit','standard',false],['change_status','standard',true],['assign','standard',true],['delete','admin',false],
+  ],
   forms: [
     ['view','read_only',false],['upload','standard',false],['fill_pdf','standard',false],
     ['link','standard',false],['delete','admin',false],['manage_fieldsets','admin',false],
@@ -193,6 +197,7 @@ const PAGE_MODULE = {
   'test-reporting': 'test_reporting',
   'punch-workflow': 'punch_list',
   'rma': 'rma',
+  'tasks': 'tasks',
   'forms': 'forms',
   'meetings': 'meetings',
   'lookahead': 'lookahead',
