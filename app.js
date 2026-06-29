@@ -16897,7 +16897,6 @@ function _cmPageHTML() {
     rows = rows.filter(c =>
       (c.software_name||'').toLowerCase().includes(q) ||
       (c.version||'').toLowerCase().includes(q) ||
-      (c.device_label||'').toLowerCase().includes(q) ||
       (c.baseline||'').toLowerCase().includes(q));
   }
 
@@ -16939,7 +16938,7 @@ function _cmPageHTML() {
             const latest = versions[0];
             const expanded = _cmExpanded.has(ik);
             const histCount = versions.length - 1;
-            const statusColor = { active:'#16a34a', superseded:'#6b7280', rolled_back:'#dc2626', planned:'#7c3aed' }[latest.status] || '#6b7280';
+            const statusColor = { active:'#16a34a', patch:'#ea580c', planned:'#7c3aed', superseded:'#6b7280', rolled_back:'#dc2626' }[latest.status] || '#6b7280';
             body += `
               <div style="border:1px solid var(--gray-200);border-radius:8px;margin-bottom:8px;overflow:hidden;">
                 <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 14px;background:var(--white);">
@@ -16949,7 +16948,7 @@ function _cmPageHTML() {
                       <span style="font-size:11px;font-weight:600;color:${statusColor};margin-left:6px;">● ${escapeHtml(latest.status)}</span>
                     </div>
                     <div style="font-size:11px;color:var(--gray-500);margin-top:3px;">
-                      ${icon('monitor')} ${escapeHtml(latest.device_label || '— general —')} · Installed ${latest.install_date}${latest.installed_by ? ' by '+escapeHtml(latest.installed_by) : ''}${latest.baseline ? ' · Baseline: '+escapeHtml(latest.baseline) : ''}
+                      ${icon('pin')} ${escapeHtml(latest.location || '— phase level —')} · Installed ${latest.install_date}${latest.installed_by ? ' by '+escapeHtml(latest.installed_by) : ''}${latest.baseline ? ' · Baseline: '+escapeHtml(latest.baseline) : ''}
                     </div>
                   </div>
                   <div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">
@@ -17069,7 +17068,7 @@ function _cmVDDViewHTML(f) {
     return '<div style="text-align:center;padding:48px 0;color:var(--gray-400);">No software configurations yet. Click <strong>+ Add Software Config</strong> to create a Master VDD, then use <strong>+ Add Sub-Software</strong> to link subsystem components.</div>';
   }
 
-  const _sc = c => ({ active:'#16a34a', superseded:'#6b7280', rolled_back:'#dc2626', planned:'#7c3aed' }[c.status] || '#6b7280');
+  const _sc = c => ({ active:'#16a34a', patch:'#ea580c', planned:'#7c3aed', superseded:'#6b7280', rolled_back:'#dc2626' }[c.status] || '#6b7280');
 
   let html = '';
 
@@ -17111,7 +17110,6 @@ function _cmVDDViewHTML(f) {
                 '</div>' +
                 '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
                   icon('settings') + ' ' + escapeHtml(ch.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(ch.location||'—') +
-                  (ch.device_label ? ' · ' + icon('monitor') + ' ' + escapeHtml(ch.device_label) : '') +
                   ' · ' + ch.install_date +
                   (ch.baseline ? ' · Baseline: ' + escapeHtml(ch.baseline) : '') +
                   (ch.cdrl_ref ? ' · ' + escapeHtml(ch.cdrl_ref) : '') +
@@ -17204,15 +17202,10 @@ function openSwConfigModal(editId, cloneFromId, parentVddId) {
           </select>
         </div>
         <div class="form-field">
-          <label>Location *</label>
+          <label>Location <span style="font-weight:400;color:var(--gray-500);">(optional — leave blank for phase-level software)</span></label>
           <select id="sw-location" class="form-input" ${isNewVersion?'disabled':''}>
-            ${locOpts.length?'<option value="">Select location…</option>'+locOpts.map(l=>`<option ${v('location')===l.name?'selected':''}>${escapeHtml(l.name)}</option>`).join(''):'<option value="">Select phase first…</option>'}
-          </select>
-        </div>
-        <div class="form-field">
-          <label>Device / Asset</label>
-          <select id="sw-device" class="form-input" onchange="_swDeviceChange()" ${isNewVersion?'disabled':''}>
-            <option value="">— General / non-asset component —</option>
+            <option value="">— Phase level (no specific location) —</option>
+            ${locOpts.map(l=>`<option ${v('location')===l.name?'selected':''}>${escapeHtml(l.name)}</option>`).join('')}
           </select>
         </div>
         <div class="form-field">
@@ -17234,7 +17227,7 @@ function openSwConfigModal(editId, cloneFromId, parentVddId) {
         <div class="form-field">
           <label>Status</label>
           <select id="sw-status" class="form-input">
-            ${['active','superseded','rolled_back','planned'].map(s=>`<option ${ (existing? v('status'):'active')===s?'selected':''}>${s}</option>`).join('')}
+            ${['active','patch','planned','superseded','rolled_back'].map(s=>`<option ${ (existing? v('status'):'active')===s?'selected':''}>${s}</option>`).join('')}
           </select>
         </div>
         <div class="form-field">
@@ -17271,7 +17264,6 @@ function openSwConfigModal(editId, cloneFromId, parentVddId) {
 
   setTimeout(() => {
     _taInitSingle('sw-installed-by', existing ? (base?.installed_by||'') : (currentRoleUser?.name||''));
-    _swPopulateDevices(base?.device_id || '');
   }, 30);
 }
 
@@ -17280,9 +17272,9 @@ function _swPhaseChange() {
   const locSel  = document.getElementById('sw-location');
   if (locSel) {
     const kids = _cmLocs(phaseId);
-    locSel.innerHTML = kids.length ? '<option value="">Select location…</option>'+kids.map(l=>`<option>${escapeHtml(l.name)}</option>`).join('') : '<option value="">Select phase first…</option>';
+    locSel.innerHTML = '<option value="">— Phase level (no specific location) —</option>' +
+      kids.map(l=>`<option>${escapeHtml(l.name)}</option>`).join('');
   }
-  _swPopulateDevices('');
 }
 
 function _swPopulateDevices(selectId) {
@@ -17307,8 +17299,7 @@ async function saveSwConfig() {
   const editing = _cmEditId ? SW_CONFIGS.find(c => c.id === _cmEditId) : null;
   const subsystem = document.getElementById('sw-subsystem')?.value.trim();
   const phaseId   = document.getElementById('sw-phase')?.value;
-  const location  = document.getElementById('sw-location')?.value.trim();
-  const deviceId  = document.getElementById('sw-device')?.value || null;
+  const location  = document.getElementById('sw-location')?.value.trim() || null;
   const swName    = document.getElementById('sw-name')?.value.trim();
   const version   = document.getElementById('sw-version')?.value.trim();
   const instDate  = document.getElementById('sw-install-date')?.value;
@@ -17321,25 +17312,22 @@ async function saveSwConfig() {
 
   // For new version (fields disabled), pull identity from editing-disabled selects' current values
   const resolvedSub = subsystem || editing?.subsystem;
-  const resolvedLoc = location  || editing?.location;
+  const resolvedLoc = location  ?? editing?.location ?? null;
   if (!resolvedSub) { toast('Subsystem is required', 'error'); return; }
-  if (!resolvedLoc) { toast('Location is required', 'error'); return; }
   if (!swName)      { toast('Software Name is required', 'error'); return; }
   if (!version)     { toast('Version is required', 'error'); return; }
   if (!instDate)    { toast('Install Date is required', 'error'); return; }
 
-  const deviceLabel = deviceId ? (ASSETS.find(a => a.id === deviceId)?.name || null) : null;
-
   if (editing) {
     const patch = {
-      subsystem: resolvedSub, location: resolvedLoc, device_id: deviceId, device_label: deviceLabel,
+      subsystem: resolvedSub, location: resolvedLoc,
       software_name: swName, version, install_date: instDate, installed_by: instBy,
       status, baseline, cdrl_ref: cdrl, notes, parent_id: parentId || null,
     };
     try {
       const [row] = await _dbUpdate('software_configs', patch, { id: editing.id });
       Object.assign(editing, row || patch);
-      logAudit('Software Config Updated', `${resolvedSub} · ${swName} ${version}`, resolvedLoc);
+      logAudit('Software Config Updated', `${resolvedSub} · ${swName} ${version}`, resolvedLoc || '—');
       toast('Software config updated', 'success');
       closeModal(); renderConfigMgmt();
     } catch (e) { toast('Save failed: ' + e.message, 'error'); }
@@ -17348,7 +17336,7 @@ async function saveSwConfig() {
 
   // New record. Auto-supersede prior active versions of the same config item.
   const newRow = {
-    subsystem: resolvedSub, location: resolvedLoc, device_id: deviceId, device_label: deviceLabel,
+    subsystem: resolvedSub, location: resolvedLoc,
     software_name: swName, version, install_date: instDate, installed_by: instBy,
     status, baseline, cdrl_ref: cdrl, notes, created_by: currentRoleUser?.name || null,
     parent_id: parentId || null,
@@ -17368,7 +17356,7 @@ async function saveSwConfig() {
       }
       if (inserted) inserted.supersedes_id = priorActive[0].id;
     }
-    logAudit('Software Config Added', `${resolvedSub} · ${swName} ${version}${parentId ? ' (sub-software)' : ''}`, resolvedLoc);
+    logAudit('Software Config Added', `${resolvedSub} · ${swName} ${version}${parentId ? ' (sub-software)' : ''}`, resolvedLoc || '—');
     toast(priorActive.length ? `Saved — ${priorActive.length} prior version superseded` : 'Software config saved', 'success');
     closeModal(); renderConfigMgmt();
   } catch (e) { toast('Save failed: ' + e.message, 'error'); }
