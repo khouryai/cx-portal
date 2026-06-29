@@ -18047,16 +18047,25 @@ function _vmPunchTabHTML(car) {
   let h = toolbar + '<div style="display:flex;flex-direction:column;gap:8px;">';
   for (const p of items) {
     const closed = p.status === 'closed';
+    const pid = String(p.id).replace(/'/g, "\\'");
     h += `<div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;background:var(--surface);">
       <span style="font-family:monospace;font-weight:700;color:var(--gray-500);">#${p.number ?? ''}</span>
-      <span style="flex:1;min-width:0;font-size:13px;font-weight:600;">${escapeHtml(p.title || '(untitled)')}</span>
+      <button onclick="_vmGoToPunch('${pid}')" title="Open in Punch List" style="flex:1;min-width:0;text-align:left;border:none;background:none;cursor:pointer;font:inherit;font-size:13px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px;padding:0;">
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(p.title || '(untitled)')}</span>
+        <span style="color:var(--gray-400);flex-shrink:0;">${icon('external')}</span>
+      </button>
       ${_vmChip(p.status || 'open', closed ? 'good' : (p.status === 'ready_to_inspect' ? 'info' : 'warn'))}
       ${p.priority ? _vmChip(p.priority, p.priority === 'high' || p.priority === 'critical' ? 'bad' : 'muted') : ''}
-      ${canEdit ? `<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="_vmUnlinkPunch('${car.id}','${String(p.id).replace(/'/g, "\\'")}')">Unlink</button>` : ''}
+      ${canEdit ? `<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="_vmUnlinkPunch('${car.id}','${pid}')">Unlink</button>` : ''}
     </div>`;
   }
   h += '</div>';
   return h;
+}
+// Jump to the Punch List tool and open the linked item there.
+function _vmGoToPunch(id) {
+  if (typeof showPage === 'function') showPage('punch-workflow');
+  setTimeout(() => { if (typeof openPunchDetail === 'function') openPunchDetail(id); }, 80);
 }
 
 // ── Car CRUD ──────────────────────────────────────────────────────────────
