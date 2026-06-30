@@ -17402,6 +17402,7 @@ async function deleteSwConfig(id) {
       method: 'DELETE',
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() },
     });
+    if (typeof _vmPurgeDeletedConfig === 'function') { try { await _vmPurgeDeletedConfig(id); } catch (e) { console.warn('[vmPurge config]', e.message); } }
     SW_CONFIGS = SW_CONFIGS.filter(x => x.id !== id);
     logAudit('Software Config Deleted', `${c.software_name} ${c.version}`, c.location);
     toast('Software config deleted', 'success');
@@ -17494,6 +17495,7 @@ async function deleteSwEquip(id, configId) {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() },
     });
     SW_EQUIPMENT = SW_EQUIPMENT.filter(e => e.id !== id);
+    if (typeof _vmPurgeDeletedCIs === 'function') { try { await _vmPurgeDeletedCIs([id]); } catch (e) { console.warn('[vmPurge ci]', e.message); } }
     toast('Configuration item deleted', 'success');
     closeModal();
     renderConfigMgmt();
@@ -17537,6 +17539,39 @@ async function loadVehicles() {
 }
 
 function _vmCan(action) { return (typeof uiCan !== 'function') || uiCan('vehicle_mgmt', action); }
+
+// ── Cleanup hooks for Config Management deletions ─────────────────────────
+// When a CI (sw_equipment) or a config (software_configs) is deleted in Config
+// Management, the DB cascades/null-sets the links, but the in-memory catalog +
+// vehicle rows must be wiped too so the deleted software vanishes from the
+// vehicle dropdowns and cars immediately. Called from deleteSwEquip /
+// deleteSwConfig. Also clears the now-dangling loaded_version text.
+async function _vmPurgeDeletedCIs(ciIds) {
+  if (!ciIds || !ciIds.length) return;
+  const set = new Set(ciIds);
+  if (typeof SW_EQUIPMENT !== 'undefined') SW_EQUIPMENT = SW_EQUIPMENT.filter(e => !set.has(e.id));
+  const affected = (typeof VEH_EQUIP !== 'undefined' ? VEH_EQUIP : []).filter(e => set.has(e.sw_equipment_id));
+  for (const e of affected) {
+    try { await _dbUpdate('vehicle_equipment', { sw_equipment_id: null, config_id: null, loaded_version: null }, { id: e.id }); }
+    catch (err) { console.warn('[vmPurge] clear vehicle link failed:', err.message); }
+    e.sw_equipment_id = null; e.config_id = null; e.loaded_version = null;
+  }
+}
+async function _vmPurgeDeletedConfig(configId) {
+  if (!configId) return;
+  // CIs under this config are CASCADE-deleted in the DB — mirror locally + wipe links.
+  const ciIds = (typeof SW_EQUIPMENT !== 'undefined' ? SW_EQUIPMENT : []).filter(e => e.config_id === configId).map(e => e.id);
+  await _vmPurgeDeletedCIs(ciIds);
+  // Vehicle rows linked to the config directly (config_id) — SET NULL in DB.
+  const affected = (typeof VEH_EQUIP !== 'undefined' ? VEH_EQUIP : []).filter(e => e.config_id === configId);
+  for (const e of affected) {
+    try { await _dbUpdate('vehicle_equipment', { config_id: null }, { id: e.id }); } catch (_) {}
+    e.config_id = null;
+  }
+  // Child configs' parent_id are SET NULL in the DB — mirror locally.
+  if (typeof SW_CONFIGS !== 'undefined') SW_CONFIGS.forEach(c => { if (c.parent_id === configId) c.parent_id = null; });
+  if (typeof renderVehicleManagement === 'function') { try { renderVehicleManagement(); } catch (_) {} }
+}
 function _vmWho() { return (typeof currentProfile !== 'undefined' && currentProfile?.full_name) || currentRoleUser?.name || null; }
 
 // ── Small presentational helpers ──────────────────────────────────────────
