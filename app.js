@@ -18046,6 +18046,19 @@ function _vmPunchMeta(label, val) {
   if (!val) return '';
   return `<div><div style="font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.03em;">${label}</div><div style="font-size:12px;color:var(--text);">${escapeHtml(val)}</div></div>`;
 }
+// Most recent comment(s) on a punch item, shown inline on the car's punch card.
+function _vmPunchLatestComments(p) {
+  const cs = (p.comments || []).slice().sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0)).slice(0, 2);
+  if (!cs.length) return '';
+  return `<div style="margin-top:10px;border-top:1px dashed var(--border);padding-top:8px;">
+      <div style="font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.03em;margin-bottom:5px;">${icon('inbox')} Latest comments</div>
+      ${cs.map(c => `<div style="font-size:12px;color:var(--gray-700);margin-bottom:5px;">
+        <span style="font-weight:600;">${escapeHtml(c.by || '?')}</span>
+        <span style="color:var(--gray-400);font-size:11px;">${c.at && typeof dateAgo === 'function' ? ' · ' + escapeHtml(dateAgo(c.at)) : ''}</span>
+        ${c.text ? `<div style="white-space:pre-wrap;line-height:1.45;">${escapeHtml(c.text)}</div>` : ''}
+      </div>`).join('')}
+    </div>`;
+}
 function _vmPunchCardHTML(car, p, canEdit) {
   const pid = String(p.id).replace(/'/g, "\\'");
   const closed = p.status === 'closed';
@@ -18066,7 +18079,7 @@ function _vmPunchCardHTML(car, p, canEdit) {
         </button>
         ${statusBadge} ${prioBadge}
       </div>
-      ${p.description ? `<div style="font-size:12px;color:var(--gray-600);margin-top:8px;line-height:1.5;max-height:4.5em;overflow:hidden;white-space:pre-wrap;">${escapeHtml(p.description)}</div>` : ''}
+      ${p.description ? `<div style="margin-top:8px;"><div style="font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.03em;margin-bottom:3px;">Description</div><div style="font-size:12px;color:var(--gray-700);line-height:1.5;white-space:pre-wrap;">${escapeHtml(p.description)}</div></div>` : ''}
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px 14px;margin-top:10px;">
         ${_vmPunchMeta('Type', p.type)}
         ${_vmPunchMeta('Subsystem', p.subsystem)}
@@ -18078,6 +18091,7 @@ function _vmPunchCardHTML(car, p, canEdit) {
         ${_vmPunchMeta('Due', due)}
         ${_vmPunchMeta('Created', created)}
       </div>
+      ${_vmPunchLatestComments(p)}
       <div style="display:flex;gap:8px;margin-top:10px;">
         <button class="form-secondary" style="font-size:11px;" onclick="_vmGoToPunch('${pid}')">${icon('external')} Open in Punch List</button>
         ${canEdit ? `<button class="form-secondary" style="font-size:11px;color:var(--bad);" onclick="_vmUnlinkPunch('${car.id}','${pid}')">Unlink</button>` : ''}
@@ -18599,24 +18613,56 @@ function _punchLinkCarPicker(punchId) {
     footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
   });
 }
+let _ptp = { punchId: null, all: [], phase: '', loc: '', sub: '', act: '', q: '' };
 function _punchLinkTestPicker(punchId) {
   const p = PUNCH_DB.find(x => String(x.id) === String(punchId)); if (!p) return;
   const linked = new Set((p.linked_test_ids || []).map(String));
   const TIarr = (typeof TI !== 'undefined') ? TI : [];
-  const avail = TIarr.filter(t => !t.IsParent && !linked.has(String(t.TestID))).slice(0, 600);
-  const pid = String(p.id).replace(/'/g, "\\'");
+  _ptp = {
+    punchId: p.id, phase: '', loc: '', sub: '', act: '', q: '',
+    all: TIarr.filter(t => !t.IsParent && !linked.has(String(t.TestID))),
+  };
+  const distinct = key => [...new Set(_ptp.all.map(t => (t[key] || '').toString().trim()).filter(Boolean))].sort();
+  const sel = (id, label, opts) => `<select id="${id}" class="filter-select" onchange="_ptpSet('${id}',this.value)" style="font-size:12px;"><option value="">${label}</option>${opts.map(o => `<option>${escapeHtml(o)}</option>`).join('')}</select>`;
   modal({
     title: 'Link Test Case / Activity', size: 'large',
-    body: `<input type="text" class="form-input" placeholder="Filter by code, name, or activity…" oninput="_punchPickFilter(this.value,'pk-test')" style="margin-bottom:8px;">
-      <div id="pk-test" style="display:flex;flex-direction:column;gap:5px;max-height:55vh;overflow:auto;">
-        ${avail.map(t => `<button class="form-secondary pk-opt" data-txt="${escapeHtml(((t.TestCaseCode || '') + ' ' + (t.TestName || '') + ' ' + (t.Activity || '')).toLowerCase())}" style="text-align:left;display:flex;gap:8px;align-items:center;" onclick="_punchLinkTestCase('${pid}','${escapeHtml(String(t.TestID))}')">
-          <span style="font-family:monospace;font-size:11px;font-weight:700;color:var(--gray-600);">${escapeHtml(t.TestCaseCode || '—')}</span>
-          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(t.TestName || '—')}</span>
-          <span style="font-size:10px;color:var(--gray-400);white-space:nowrap;">${escapeHtml(t.Activity || '')}</span>
-        </button>`).join('')}
-      </div>`,
+    body: `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+        ${sel('ptp-phase', 'All Phases', distinct('Phase'))}
+        ${sel('ptp-loc', 'All Locations', distinct('Location'))}
+        ${sel('ptp-sub', 'All Subsystems', distinct('Subsystem'))}
+        ${sel('ptp-act', 'All Activities', distinct('Activity'))}
+        <input type="text" id="ptp-q" class="form-input" placeholder="Search code / name…" oninput="_ptpSet('ptp-q',this.value)" style="flex:1;min-width:160px;font-size:12px;">
+      </div>
+      <div id="ptp-count" style="font-size:11px;color:var(--gray-500);margin-bottom:6px;"></div>
+      <div id="ptp-list" style="display:flex;flex-direction:column;gap:5px;max-height:50vh;overflow:auto;"></div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
   });
+  _ptpRender();
+}
+function _ptpSet(id, val) {
+  const map = { 'ptp-phase': 'phase', 'ptp-loc': 'loc', 'ptp-sub': 'sub', 'ptp-act': 'act', 'ptp-q': 'q' };
+  const k = map[id]; if (!k) return;
+  _ptp[k] = val; _ptpRender();
+}
+function _ptpRender() {
+  const list = document.getElementById('ptp-list'); if (!list) return;
+  const q = (_ptp.q || '').toLowerCase();
+  let rows = _ptp.all.filter(t =>
+    (!_ptp.phase || String(t.Phase || '').trim() === _ptp.phase) &&
+    (!_ptp.loc || String(t.Location || '').trim() === _ptp.loc) &&
+    (!_ptp.sub || String(t.Subsystem || '').trim() === _ptp.sub) &&
+    (!_ptp.act || String(t.Activity || '').trim() === _ptp.act) &&
+    (!q || ((t.TestCaseCode || '') + ' ' + (t.TestName || '') + ' ' + (t.Activity || '')).toLowerCase().includes(q)));
+  const total = rows.length;
+  rows = rows.slice(0, 300);
+  const pid = String(_ptp.punchId).replace(/'/g, "\\'");
+  list.innerHTML = rows.length ? rows.map(t => `<button class="form-secondary" style="text-align:left;display:flex;gap:8px;align-items:center;" onclick="_punchLinkTestCase('${pid}','${escapeHtml(String(t.TestID))}')">
+      <span style="font-family:monospace;font-size:11px;font-weight:700;color:var(--gray-600);">${escapeHtml(t.TestCaseCode || '—')}</span>
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(t.TestName || '—')}</span>
+      <span style="font-size:10px;color:var(--gray-400);white-space:nowrap;">${escapeHtml([t.Activity, t.Location].filter(Boolean).join(' · '))}</span>
+    </button>`).join('') : `<div style="font-size:12px;color:var(--gray-400);padding:8px;">No matching test cases.</div>`;
+  const count = document.getElementById('ptp-count');
+  if (count) count.textContent = total + ' match' + (total === 1 ? '' : 'es') + (total > 300 ? ' (showing first 300 — narrow the filters)' : '');
 }
 async function _punchLinkCar(punchId, carId) {
   const p = PUNCH_DB.find(x => String(x.id) === String(punchId)); if (!p) return;
