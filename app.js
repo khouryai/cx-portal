@@ -17541,17 +17541,27 @@ function _vmWho() { return (typeof currentProfile !== 'undefined' && currentProf
 
 // ── Small presentational helpers ──────────────────────────────────────────
 const _VM_CHIP_TONE = {
-  good:  ['#dcfce7', '#15803d', '#bbf7d0'],
-  bad:   ['#fee2e2', '#b91c1c', '#fecaca'],
-  warn:  ['#fef3c7', '#b45309', '#fde68a'],
-  info:  ['#dbeafe', '#1d4ed8', '#bfdbfe'],
-  muted: ['#f1f5f9', '#64748b', '#e2e8f0'],
+  good:   ['#dcfce7', '#15803d', '#bbf7d0'],
+  bad:    ['#fee2e2', '#b91c1c', '#fecaca'],
+  warn:   ['#fef3c7', '#b45309', '#fde68a'],
+  orange: ['#ffedd5', '#c2410c', '#fed7aa'],
+  info:   ['#dbeafe', '#1d4ed8', '#bfdbfe'],
+  muted:  ['#f1f5f9', '#64748b', '#e2e8f0'],
 };
 function _vmChip(text, tone) {
   const [bg, fg, bd] = _VM_CHIP_TONE[tone] || _VM_CHIP_TONE.muted;
   return `<span style="display:inline-block;font-size:11px;font-weight:600;background:${bg};color:${fg};border:1px solid ${bd};border-radius:999px;padding:1px 9px;white-space:nowrap;">${escapeHtml(text)}</span>`;
 }
-const _VM_LIGHT = { green: '#16a34a', amber: '#f59e0b', red: '#dc2626' };
+const _VM_LIGHT = { green: '#16a34a', amber: '#f59e0b', red: '#dc2626', stale: '#f97316' };
+// Car readiness status → label / chip tone / traffic-light colour.
+// Blocked is reserved for a FAILED workflow item; a software mismatch is its
+// own "Software out of date" state (not blocked).
+const _VM_STATUS = {
+  ready:      { label: 'Ready', tone: 'good', light: 'green' },
+  blocked:    { label: 'Blocked', tone: 'bad', light: 'red' },
+  stale:      { label: 'Software out of date', tone: 'orange', light: 'stale' },
+  inprogress: { label: 'In progress', tone: 'warn', light: 'amber' },
+};
 function _vmLightDot(light, size) {
   size = size || 12;
   const c = _VM_LIGHT[light] || '#9ca3af';
@@ -17709,10 +17719,15 @@ function _vmReadiness(carId) {
   const openPunch = _vmPunchFor(carId).filter(p => p.status !== 'closed').length;
   const allWf = wfTotal > 0 ? wfComplete === wfTotal : false;
   const ready = allWf && !wfFailed && mismatch === 0 && incomplete === 0 && eqs.length > 0;
-  let light = 'amber';
-  if (wfFailed || mismatch > 0) light = 'red';
-  else if (ready) light = 'green';
-  return { light, ready, wfComplete, wfTotal, wfFailed, match, mismatch, incomplete, eqTotal: eqs.length, openPunch };
+  // Status priority: a failed test BLOCKS; otherwise out-of-date software is its
+  // own state; otherwise ready / in-progress.
+  let status;
+  if (wfFailed) status = 'blocked';
+  else if (mismatch > 0) status = 'stale';
+  else if (ready) status = 'ready';
+  else status = 'inprogress';
+  const light = _VM_STATUS[status].light;
+  return { status, light, ready, wfComplete, wfTotal, wfFailed, match, mismatch, incomplete, eqTotal: eqs.length, openPunch };
 }
 
 // ── Top-level render ──────────────────────────────────────────────────────
@@ -17734,8 +17749,8 @@ function _vmRenderRegistry(root, heroEl) {
   const cars = VEHICLES;
   const ds = cars.filter(c => c.car_type === 'D').length;
   const es = cars.filter(c => c.car_type === 'E').length;
-  let ready = 0, blocked = 0;
-  for (const c of cars) { const r = _vmReadiness(c.id); if (r.light === 'green') ready++; else if (r.light === 'red') blocked++; }
+  let ready = 0, stale = 0, blocked = 0;
+  for (const c of cars) { const st = _vmReadiness(c.id).status; if (st === 'ready') ready++; else if (st === 'stale') stale++; else if (st === 'blocked') blocked++; }
   if (heroEl) heroEl.innerHTML = renderPageHero({
     eyebrow: 'Vehicle',
     title: 'Vehicle Management',
@@ -17745,7 +17760,8 @@ function _vmRenderRegistry(root, heroEl) {
       { label: 'D-Cars', value: ds, tone: ds ? 'blue' : 'muted' },
       { label: 'E-Cars', value: es, tone: es ? 'blue' : 'muted' },
       { label: 'Ready', value: ready, tone: 'good' },
-      { label: 'Blocked', value: blocked, tone: blocked ? 'amber' : 'muted' },
+      { label: 'SW Out of Date', value: stale, tone: stale ? 'amber' : 'muted' },
+      { label: 'Blocked', value: blocked, tone: blocked ? 'red' : 'muted' },
     ],
   });
 
@@ -17800,8 +17816,8 @@ function _vmRenderRegistry(root, heroEl) {
 
 function _vmCarCardHTML(car) {
   const r = _vmReadiness(car.id);
-  const readyTxt = r.ready ? 'Ready' : (r.light === 'red' ? 'Blocked' : 'In progress');
-  const readyTone = r.ready ? 'good' : (r.light === 'red' ? 'bad' : 'warn');
+  const sm = _VM_STATUS[r.status];
+  const readyTxt = sm.label, readyTone = sm.tone;
   return `
     <div onclick="_vmOpenCar('${car.id}')" style="cursor:pointer;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:14px 16px;transition:box-shadow .12s;" onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,.08)'" onmouseout="this.style.boxShadow='none'">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
@@ -17831,8 +17847,9 @@ function _vmRenderDetail(root, heroEl) {
   const car = VEHICLES.find(v => v.id === _vmSel);
   if (!car) { _vmBackToList(); return; }
   const r = _vmReadiness(car.id);
-  const readyTxt = r.ready ? 'Ready for dynamic testing' : (r.light === 'red' ? 'Blocked' : 'In progress');
-  const readyTone = r.ready ? 'good' : (r.light === 'red' ? 'bad' : 'warn');
+  const sm = _VM_STATUS[r.status];
+  const readyTxt = r.status === 'ready' ? 'Ready for dynamic testing' : sm.label;
+  const readyTone = sm.tone;
   if (heroEl) heroEl.innerHTML = renderPageHero({
     eyebrow: 'Vehicle',
     title: car.car_number + '  ·  ' + car.car_type + '-Car',
@@ -17840,7 +17857,7 @@ function _vmRenderDetail(root, heroEl) {
     stats: [
       { label: 'Workflow', value: `${r.wfComplete}/${r.wfTotal}` },
       { label: 'SW Compliant', value: `${r.match}/${r.eqTotal}`, tone: r.mismatch ? 'amber' : 'good' },
-      { label: 'Mismatches', value: r.mismatch, tone: r.mismatch ? 'amber' : 'muted' },
+      { label: 'Out of Date', value: r.mismatch, tone: r.mismatch ? 'amber' : 'muted' },
       { label: 'Open Punch', value: r.openPunch, tone: r.openPunch ? 'amber' : 'muted' },
     ],
   });
@@ -18302,6 +18319,10 @@ function _vmEquipEditModal(carId, e) {
           </select></div>` : ''}
         <div class="form-field form-field-full"><label>Loaded Software Version ${builds.length ? '<span style="font-weight:400;color:var(--gray-500);">(or type manually)</span>' : ''}</label><input type="text" id="vme-loaded" class="form-input" value="${escapeHtml(e.loaded_version || '')}"></div>
         <div class="form-field form-field-full"><label>Notes</label><input type="text" id="vme-notes" class="form-input" value="${escapeHtml(e.notes || '')}"></div>
+      </div>
+      <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px;">
+        <div style="font-size:11px;color:var(--gray-500);margin-bottom:6px;">Need a fix release? A patch adds a new patch-status software release under the master VDD in Configuration Management and loads it on this car.</div>
+        <button type="button" class="form-secondary" onclick="_vmPatchModal('${carId}','${e.id}')">${icon('git-branch')} Create Patch…</button>
       </div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
       <button class="form-secondary" style="color:var(--bad);" onclick="_vmDeleteEquip('${e.id}')">Delete</button>
@@ -18341,6 +18362,82 @@ async function _vmDeleteEquip(id) {
   if (!await cxConfirm('Delete "' + eq.equipment_name + '"?')) return;
   try { await _dbDelete('vehicle_equipment', { id }); VEH_EQUIP = VEH_EQUIP.filter(e => e.id !== id); toast('Equipment deleted', 'success'); closeModal(); renderVehicleManagement(); }
   catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ── Software patch — create a new patch-status release in Config Management,
+//    linked to the master VDD, and load it onto this car's equipment line. ────
+async function _vmRpc(fn, body) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${fn} (${res.status}): ${await res.text()}`);
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : null;
+}
+function _vmPatchModal(carId, equipId) {
+  const e = VEH_EQUIP.find(x => x.id === equipId);
+  if (!e) { toast('Equipment not found', 'error'); return; }
+  // Resolve the master VDD from the line's linked build / config / device family.
+  let master = null;
+  if (e.sw_equipment_id) { const ci = SW_EQUIPMENT.find(x => x.id === e.sw_equipment_id); if (ci) master = _vmRootConfig(_vmConfigById(ci.config_id)); }
+  if (!master && e.config_id) master = _vmRootConfig(_vmConfigById(e.config_id));
+  if (!master) { const lb = _vmLatestBuild(e.equipment_name, (e.sw_type || '').trim() ? e.sw_type : null); if (lb) master = _vmRootConfig(_vmConfigById(lb.config_id)); }
+  const roots = SW_CONFIGS.filter(c => !c.parent_id).sort((a, b) => String(a.software_name || '').localeCompare(String(b.software_name || '')));
+  const swTypes = (typeof _fsOptions === 'function') ? _fsOptions('sw_equipment_type') : [];
+  modal({
+    title: 'Create Patch · ' + escapeHtml(e.equipment_name) + (e.sw_type ? ' · ' + escapeHtml(e.sw_type) : ''), size: 'medium',
+    body: `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">Creates a new <strong>patch-status</strong> software release under the master VDD in Configuration Management and loads it onto this car — keeping config and vehicle in sync.</div>
+      <div class="form-grid">
+        <div class="form-field form-field-full"><label>Master VDD *</label>
+          ${master
+            ? `<input type="text" class="form-input" value="${escapeHtml((master.software_name || 'VDD') + (master.version ? ' · ' + master.version : ''))}" disabled><input type="hidden" id="vmp-master" value="${master.id}">`
+            : `<select id="vmp-master" class="form-input"><option value="">— select master VDD —</option>${roots.map(r => `<option value="${r.id}">${escapeHtml((r.software_name || 'VDD') + (r.version ? ' · ' + r.version : ''))}</option>`).join('')}</select>`}
+        </div>
+        <div class="form-field"><label>Software Type *</label><input type="text" id="vmp-type" class="form-input" value="${escapeHtml(e.sw_type || '')}" list="vmp-type-list" placeholder="GA, SA…"><datalist id="vmp-type-list">${swTypes.map(t => '<option value="' + escapeHtml(t) + '">').join('')}</datalist></div>
+        <div class="form-field"><label>Patch Software Version *</label><input type="text" id="vmp-ver" class="form-input" placeholder="e.g. CC_GA_D210_p1"></div>
+        <div class="form-field form-field-full"><label>CRC</label><input type="text" id="vmp-crc" class="form-input" placeholder="optional"></div>
+        <div class="form-field form-field-full"><label>Notes *</label><textarea id="vmp-notes" class="form-input" rows="3" placeholder="What does this patch change or fix?"></textarea></div>
+      </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmCreatePatch('${carId}','${equipId}')">Create Patch</button>`,
+  });
+}
+async function _vmCreatePatch(carId, equipId) {
+  const e = VEH_EQUIP.find(x => x.id === equipId); if (!e) return;
+  const master = (document.getElementById('vmp-master')?.value || '') || null;
+  const swType = (document.getElementById('vmp-type')?.value || '').trim();
+  const ver = (document.getElementById('vmp-ver')?.value || '').trim();
+  const crc = (document.getElementById('vmp-crc')?.value || '').trim() || null;
+  const notes = (document.getElementById('vmp-notes')?.value || '').trim();
+  if (!swType) { toast('Software type is required', 'error'); return; }
+  if (!ver) { toast('Patch software version is required', 'error'); return; }
+  if (!notes) { toast('Notes are required', 'error'); return; }
+  const masterCfg = master ? _vmConfigById(master) : null;
+  try {
+    const res = await _vmRpc('create_vehicle_patch', {
+      p_equipment_name: e.equipment_name,
+      p_sw_type: swType,
+      p_version: ver,
+      p_part_number: ver,
+      p_vehicle_equipment_id: equipId,
+      p_master_config_id: master,
+      p_software_name: masterCfg?.software_name || e.equipment_name,
+      p_subsystem: masterCfg?.subsystem || null,
+      p_crc: crc,
+      p_notes: notes,
+      p_created_by: _vmWho(),
+    });
+    const configId = res && res.config_id, ciId = res && res.ci_id;
+    if (!configId || !ciId) throw new Error('no ids returned');
+    // Reflect the new config + CI + car link locally so both modules update now.
+    const now = new Date().toISOString();
+    SW_CONFIGS.push({ id: configId, subsystem: masterCfg?.subsystem || 'Vehicle', software_name: masterCfg?.software_name || e.equipment_name, version: ver, status: 'patch', parent_id: master, notes, location: null, created_at: now, created_by: _vmWho() });
+    SW_EQUIPMENT.push({ id: ciId, config_id: configId, equipment_name: e.equipment_name, sw_type: swType, part_number: ver, crc, notes, created_at: now });
+    Object.assign(e, { sw_equipment_id: ciId, config_id: configId, loaded_version: ver, sw_type: e.sw_type || swType });
+    toast('Patch created and loaded on car', 'success');
+    closeModal(); renderVehicleManagement();
+  } catch (err) { toast('Patch failed: ' + err.message, 'error'); }
 }
 
 // ── Bulk software update across selected cars ─────────────────────────────
