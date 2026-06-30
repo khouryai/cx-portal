@@ -17546,6 +17546,7 @@ const _VM_CHIP_TONE = {
   warn:   ['#fef3c7', '#b45309', '#fde68a'],
   orange: ['#ffedd5', '#c2410c', '#fed7aa'],
   info:   ['#dbeafe', '#1d4ed8', '#bfdbfe'],
+  purple: ['#ede9fe', '#6d28d9', '#ddd6fe'],
   muted:  ['#f1f5f9', '#64748b', '#e2e8f0'],
 };
 function _vmChip(text, tone) {
@@ -17636,9 +17637,12 @@ function _vmCMBuilds(device, swType) {
     (swType == null || String(e.sw_type || '').trim().toLowerCase() === String(swType).trim().toLowerCase()));
 }
 function _vmBuildConfigVersion(ci) { const c = ci ? _vmConfigById(ci.config_id) : null; return c ? c.version : null; }
-// Latest released build for a device+type = the CI under the newest config version.
+function _vmIsPatchConfig(configId) { const c = _vmConfigById(configId); return !!c && c.status === 'patch'; }
+// Latest *released* build for a device+type = the CI under the newest config
+// version, EXCLUDING patch releases (a patch is a targeted fix, not the fleet
+// baseline, so it must not make other cars look out of date).
 function _vmLatestBuild(device, swType) {
-  const builds = _vmCMBuilds(device, swType);
+  const builds = _vmCMBuilds(device, swType).filter(b => !_vmIsPatchConfig(b.config_id));
   if (!builds.length) return null;
   return builds.slice().sort((a, b) =>
     _vmVerCmp(_vmBuildConfigVersion(a), _vmBuildConfigVersion(b)) ||
@@ -17656,6 +17660,8 @@ function _vmCompliance(eq) {
   if (eq.sw_equipment_id) {
     const loadedCI = SW_EQUIPMENT.find(e => e.id === eq.sw_equipment_id);
     if (!loadedCI) return { state: 'mismatch', expected: null, loaded: eq.loaded_version || null };
+    // A loaded patch release gets its own "Patch" compliance state.
+    if (_vmIsPatchConfig(loadedCI.config_id)) return { state: 'patch', expected: loadedCI.part_number, loaded: loadedCI.part_number };
     const latest = _vmLatestBuild(loadedCI.equipment_name, loadedCI.sw_type);
     const expected = latest ? latest.part_number : null;
     return { state: (latest && latest.id === loadedCI.id) ? 'match' : 'mismatch', expected, loaded: loadedCI.part_number };
@@ -17681,6 +17687,7 @@ function _vmCompliance(eq) {
 }
 const _VM_COMPLIANCE_META = {
   match:      ['Match', 'good'],
+  patch:      ['Patch', 'purple'],
   mismatch:   ['Mismatch', 'bad'],
   not_loaded: ['Not loaded', 'warn'],
   no_target:  ['No VDD linked', 'muted'],
@@ -17712,7 +17719,7 @@ function _vmReadiness(carId) {
   let match = 0, mismatch = 0, incomplete = 0;
   for (const e of eqs) {
     const s = _vmCompliance(e).state;
-    if (s === 'match') match++;
+    if (s === 'match' || s === 'patch') match++;  // a loaded patch counts as compliant
     else if (s === 'mismatch') mismatch++;
     else incomplete++;
   }
@@ -18314,10 +18321,10 @@ function _vmEquipEditModal(carId, e) {
         <div class="form-field"><label>Software Type</label><input type="text" id="vme-type" class="form-input" value="${escapeHtml(e.sw_type || '')}" list="vme-type-list"><datalist id="vme-type-list">${swTypes.map(t => '<option value="' + escapeHtml(t) + '">').join('')}</datalist></div>
         ${builds.length ? `<div class="form-field form-field-full"><label>Loaded Software Version <span style="font-weight:400;color:var(--gray-500);">(from Config Mgmt)</span></label>
           <select id="vme-build" class="form-input" onchange="_vmEditBuildPick()">
-            <option value="">— manual / not linked —</option>
-            ${builds.map(b => `<option value="${b.id}" ${e.sw_equipment_id === b.id ? 'selected' : ''}>${escapeHtml(_vmBuildLabel(b))}</option>`).join('')}
-          </select></div>` : ''}
-        <div class="form-field form-field-full"><label>Loaded Software Version ${builds.length ? '<span style="font-weight:400;color:var(--gray-500);">(or type manually)</span>' : ''}</label><input type="text" id="vme-loaded" class="form-input" value="${escapeHtml(e.loaded_version || '')}"></div>
+            <option value="">— not loaded —</option>
+            ${builds.map(b => `<option value="${b.id}" ${e.sw_equipment_id === b.id ? 'selected' : ''}>${escapeHtml(_vmBuildLabel(b))}${_vmIsPatchConfig(b.config_id) ? ' (patch)' : ''}</option>`).join('')}
+          </select></div>`
+          : `<div class="form-field form-field-full"><label>Loaded Software Version</label><div style="font-size:12px;color:var(--gray-500);padding:6px 0;">No software versions in Configuration Management for this device yet.</div></div>`}
         <div class="form-field form-field-full"><label>Notes</label><input type="text" id="vme-notes" class="form-input" value="${escapeHtml(e.notes || '')}"></div>
       </div>
       <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px;">
@@ -18333,9 +18340,7 @@ function _vmEditBuildPick() {
   const sel = document.getElementById('vme-build');
   const ci = sel && sel.value ? SW_EQUIPMENT.find(x => x.id === sel.value) : null;
   if (!ci) return;
-  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
-  set('vme-loaded', ci.part_number || '');
-  if (ci.sw_type) set('vme-type', ci.sw_type);
+  if (ci.sw_type) { const el = document.getElementById('vme-type'); if (el) el.value = ci.sw_type; }
 }
 async function _vmSaveEquipOne(carId, editId) {
   const eq = VEH_EQUIP.find(x => x.id === editId);
@@ -18348,7 +18353,7 @@ async function _vmSaveEquipOne(carId, editId) {
     sw_type: (document.getElementById('vme-type')?.value || '').trim() || null,
     sw_equipment_id: buildId || null,
     config_id: ci ? (ci.config_id || null) : (eq?.config_id || null),
-    loaded_version: ci ? (ci.part_number || null) : ((document.getElementById('vme-loaded')?.value || '').trim() || null),
+    loaded_version: ci ? (ci.part_number || null) : null,
     notes: (document.getElementById('vme-notes')?.value || '').trim() || null,
   };
   try {
@@ -18379,25 +18384,28 @@ async function _vmRpc(fn, body) {
 function _vmPatchModal(carId, equipId) {
   const e = VEH_EQUIP.find(x => x.id === equipId);
   if (!e) { toast('Equipment not found', 'error'); return; }
-  // Resolve the master VDD from the line's linked build / config / device family.
-  let master = null;
-  if (e.sw_equipment_id) { const ci = SW_EQUIPMENT.find(x => x.id === e.sw_equipment_id); if (ci) master = _vmRootConfig(_vmConfigById(ci.config_id)); }
-  if (!master && e.config_id) master = _vmRootConfig(_vmConfigById(e.config_id));
-  if (!master) { const lb = _vmLatestBuild(e.equipment_name, (e.sw_type || '').trim() ? e.sw_type : null); if (lb) master = _vmRootConfig(_vmConfigById(lb.config_id)); }
-  const roots = SW_CONFIGS.filter(c => !c.parent_id).sort((a, b) => String(a.software_name || '').localeCompare(String(b.software_name || '')));
+  // Parent VDD = the config the equipment is currently assigned to (the loaded
+  // build's config / its config_id / the device's latest release) — NOT the
+  // root master. The patch is created as a child of that VDD.
+  let parent = null;
+  if (e.sw_equipment_id) { const ci = SW_EQUIPMENT.find(x => x.id === e.sw_equipment_id); if (ci) parent = _vmConfigById(ci.config_id); }
+  if (!parent && e.config_id) parent = _vmConfigById(e.config_id);
+  if (!parent) { const lb = _vmLatestBuild(e.equipment_name, (e.sw_type || '').trim() ? e.sw_type : null); if (lb) parent = _vmConfigById(lb.config_id); }
+  // Selectable parents (when not derivable): all non-patch releases.
+  const cfgOpts = SW_CONFIGS.filter(c => c.status !== 'patch').sort((a, b) => String(a.software_name || '').localeCompare(String(b.software_name || '')) || _vmVerCmp(a.version, b.version));
+  const cfgLabel = c => (c.software_name || 'VDD') + (c.version ? ' · ' + c.version : '');
   const swTypes = (typeof _fsOptions === 'function') ? _fsOptions('sw_equipment_type') : [];
   modal({
     title: 'Create Patch · ' + escapeHtml(e.equipment_name) + (e.sw_type ? ' · ' + escapeHtml(e.sw_type) : ''), size: 'medium',
-    body: `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">Creates a new <strong>patch-status</strong> software release under the master VDD in Configuration Management and loads it onto this car — keeping config and vehicle in sync.</div>
+    body: `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">Creates a new <strong>patch-status</strong> software release under the parent VDD this equipment is assigned to, directly in Configuration Management, and loads it onto this car.</div>
       <div class="form-grid">
-        <div class="form-field form-field-full"><label>Master VDD *</label>
-          ${master
-            ? `<input type="text" class="form-input" value="${escapeHtml((master.software_name || 'VDD') + (master.version ? ' · ' + master.version : ''))}" disabled><input type="hidden" id="vmp-master" value="${master.id}">`
-            : `<select id="vmp-master" class="form-input"><option value="">— select master VDD —</option>${roots.map(r => `<option value="${r.id}">${escapeHtml((r.software_name || 'VDD') + (r.version ? ' · ' + r.version : ''))}</option>`).join('')}</select>`}
+        <div class="form-field form-field-full"><label>Parent VDD *</label>
+          ${parent
+            ? `<input type="text" class="form-input" value="${escapeHtml(cfgLabel(parent))}" disabled><input type="hidden" id="vmp-parent" value="${parent.id}">`
+            : `<select id="vmp-parent" class="form-input"><option value="">— select parent VDD —</option>${cfgOpts.map(c => `<option value="${c.id}">${escapeHtml(cfgLabel(c))}</option>`).join('')}</select>`}
         </div>
         <div class="form-field"><label>Software Type *</label><input type="text" id="vmp-type" class="form-input" value="${escapeHtml(e.sw_type || '')}" list="vmp-type-list" placeholder="GA, SA…"><datalist id="vmp-type-list">${swTypes.map(t => '<option value="' + escapeHtml(t) + '">').join('')}</datalist></div>
         <div class="form-field"><label>Patch Software Version *</label><input type="text" id="vmp-ver" class="form-input" placeholder="e.g. CC_GA_D210_p1"></div>
-        <div class="form-field form-field-full"><label>CRC</label><input type="text" id="vmp-crc" class="form-input" placeholder="optional"></div>
         <div class="form-field form-field-full"><label>Notes *</label><textarea id="vmp-notes" class="form-input" rows="3" placeholder="What does this patch change or fix?"></textarea></div>
       </div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmCreatePatch('${carId}','${equipId}')">Create Patch</button>`,
@@ -18405,15 +18413,15 @@ function _vmPatchModal(carId, equipId) {
 }
 async function _vmCreatePatch(carId, equipId) {
   const e = VEH_EQUIP.find(x => x.id === equipId); if (!e) return;
-  const master = (document.getElementById('vmp-master')?.value || '') || null;
+  const parent = (document.getElementById('vmp-parent')?.value || '') || null;
   const swType = (document.getElementById('vmp-type')?.value || '').trim();
   const ver = (document.getElementById('vmp-ver')?.value || '').trim();
-  const crc = (document.getElementById('vmp-crc')?.value || '').trim() || null;
   const notes = (document.getElementById('vmp-notes')?.value || '').trim();
+  if (!parent) { toast('Parent VDD is required', 'error'); return; }
   if (!swType) { toast('Software type is required', 'error'); return; }
   if (!ver) { toast('Patch software version is required', 'error'); return; }
   if (!notes) { toast('Notes are required', 'error'); return; }
-  const masterCfg = master ? _vmConfigById(master) : null;
+  const parentCfg = _vmConfigById(parent);
   try {
     const res = await _vmRpc('create_vehicle_patch', {
       p_equipment_name: e.equipment_name,
@@ -18421,10 +18429,9 @@ async function _vmCreatePatch(carId, equipId) {
       p_version: ver,
       p_part_number: ver,
       p_vehicle_equipment_id: equipId,
-      p_master_config_id: master,
-      p_software_name: masterCfg?.software_name || e.equipment_name,
-      p_subsystem: masterCfg?.subsystem || null,
-      p_crc: crc,
+      p_master_config_id: parent,   // patch parent_id = the VDD the equipment is assigned to
+      p_software_name: parentCfg?.software_name || e.equipment_name,
+      p_subsystem: parentCfg?.subsystem || null,
       p_notes: notes,
       p_created_by: _vmWho(),
     });
@@ -18432,8 +18439,8 @@ async function _vmCreatePatch(carId, equipId) {
     if (!configId || !ciId) throw new Error('no ids returned');
     // Reflect the new config + CI + car link locally so both modules update now.
     const now = new Date().toISOString();
-    SW_CONFIGS.push({ id: configId, subsystem: masterCfg?.subsystem || 'Vehicle', software_name: masterCfg?.software_name || e.equipment_name, version: ver, status: 'patch', parent_id: master, notes, location: null, created_at: now, created_by: _vmWho() });
-    SW_EQUIPMENT.push({ id: ciId, config_id: configId, equipment_name: e.equipment_name, sw_type: swType, part_number: ver, crc, notes, created_at: now });
+    SW_CONFIGS.push({ id: configId, subsystem: parentCfg?.subsystem || 'Vehicle', software_name: parentCfg?.software_name || e.equipment_name, version: ver, status: 'patch', parent_id: parent, notes, location: null, created_at: now, created_by: _vmWho() });
+    SW_EQUIPMENT.push({ id: ciId, config_id: configId, equipment_name: e.equipment_name, sw_type: swType, part_number: ver, notes, created_at: now });
     Object.assign(e, { sw_equipment_id: ciId, config_id: configId, loaded_version: ver, sw_type: e.sw_type || swType });
     toast('Patch created and loaded on car', 'success');
     closeModal(); renderVehicleManagement();
