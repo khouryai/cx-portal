@@ -7287,6 +7287,7 @@ let _plStatusFilter = '', _plPhaseFilter = '', _plLocFilter = '';
 let _plSubFilter = '', _plPriorityFilter = '', _plActivityFilter = '';
 let _plSelected = new Set(); // IDs of punch items checked for PDF export
 let _punchFromTestId = null; // set by openPunchFromTestCase; cleared after save
+var _punchFromCarId = null;  // set by _vmCreatePunch; cleared after save
 // ── Punch List column definitions (generic system) ──────────────────────────
 _colRegister('pl', [
   { id: 'number',       label: '#',               default: true  },
@@ -7951,39 +7952,8 @@ function openPunchDetail(id) {
           <div style="font-size:13px;color:var(--gray-800);line-height:1.6;white-space:pre-wrap;padding:10px 14px;background:var(--gray-50);border-radius:8px;">${escapeHtml(p.description)}</div>
         </div>` : ''}
 
-      <!-- Linked Test Cases -->
-      ${(() => {
-        const ids = p.linked_test_ids || [];
-        const linkedTI = ids.map(id => TI.find(t => String(t.TestID) === String(id))).filter(Boolean);
-        if (!linkedTI.length) return '';
-        const statusCls = { Pass:'#16a34a', Fail:'#dc2626', Blocked:'#d97706', 'Not Started':'#6b7280', 'In Progress':'#1d4ed8', 'Not Applicable':'#6b7280', 'Future Test':'#7c3aed' };
-        return `
-          <div style="margin-bottom:18px;">
-            <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;">
-              ${icon('link')}Linked Test Cases <span style="font-weight:400;font-size:10px;">(${linkedTI.length})</span>
-            </div>
-            <div style="border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
-              ${linkedTI.map((t, i) => {
-                const col = statusCls[t.Status] || '#6b7280';
-                return `
-                  <div onclick="navigateToTestCase('${escapeHtml(String(t.TestID))}')"
-                    title="Open in Test Register"
-                    style="display:grid;grid-template-columns:110px 1fr auto;align-items:center;gap:10px;padding:9px 14px;${i > 0 ? 'border-top:1px solid var(--gray-100);' : ''}background:var(--white);cursor:pointer;transition:background 0.15s;"
-                    onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='var(--white)'">
-                    <div style="font-family:monospace;font-size:11px;color:var(--gray-700);font-weight:600;">${escapeHtml(t.TestCaseCode || '—')}</div>
-                    <div>
-                      <div style="font-size:13px;font-weight:500;">${escapeHtml(t.TestName || '—')}</div>
-                      <div style="font-size:11px;color:var(--gray-500);margin-top:1px;">${escapeHtml(t.Activity || '')}${t.Location ? ' · ' + escapeHtml(t.Location) : ''}</div>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:8px;">
-                      <span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;white-space:nowrap;background:${col}20;color:${col};border:1px solid ${col}40;">${escapeHtml(t.Status || 'Unknown')}</span>
-                      <span style="font-size:12px;color:var(--gray-400);" title="Open in Test Register">${icon('external')}</span>
-                    </div>
-                  </div>`;
-              }).join('')}
-            </div>
-          </div>`;
-      })()}
+      <!-- Linked Test Cases + Cars (managed from the Punch List tool) -->
+      ${_punchLinksSectionHTML(p)}
 
       <!-- Linked Photos -->
       <div style="margin-bottom:18px;">
@@ -8452,6 +8422,7 @@ function npFilterLoc() {
 function openNewPunchModal() {
   if (typeof uiCan === 'function' && !uiCan('punch_list', 'create')) { toast('You do not have permission to create punch items', 'error'); return; }
   _punchNewPhotos = [];
+  _punchFromCarId = null;
   modal({
     title: 'New Punch List Item',
     size: 'large',
@@ -8757,6 +8728,16 @@ async function saveNewPunchItem(createAnother) {
       _punchFromTestId = null;
     }
 
+    // Auto-link to a car when created from the Vehicle Management view.
+    if (_punchFromCarId) {
+      const carId = _punchFromCarId; _punchFromCarId = null;
+      try {
+        const carIds = [...(data.linked_car_ids || []), carId];
+        await _sb.from('punch_items').update({ linked_car_ids: carIds }).eq('id', data.id);
+        data.linked_car_ids = carIds;
+        if (typeof renderVehicleManagement === 'function') renderVehicleManagement();
+      } catch (e) { console.warn('[autoLink] Failed to auto-link punch to car:', e.message); }
+    }
     if (createAnother) { closeModal(); openNewPunchModal(); }
     else { closeModal(); renderPunchWorkflow(); }
   } catch (err) {
@@ -17660,17 +17641,27 @@ function _vmBuildLabel(ci) {
   return [name, ci.part_number].filter(Boolean).join(' · ');
 }
 function _vmCompliance(eq) {
-  // New CI-linked model: compare the loaded build against the latest available
-  // build for the same device + software type in Configuration Management.
+  // Linked to a specific Config Mgmt software version: compare it against the
+  // latest released version for the same device + software type.
   if (eq.sw_equipment_id) {
     const loadedCI = SW_EQUIPMENT.find(e => e.id === eq.sw_equipment_id);
-    if (!loadedCI) return { state: 'mismatch', expected: null, loaded: eq.part_number || null };
+    if (!loadedCI) return { state: 'mismatch', expected: null, loaded: eq.loaded_version || null };
     const latest = _vmLatestBuild(loadedCI.equipment_name, loadedCI.sw_type);
-    const expected = latest ? (latest.part_number || _vmBuildConfigVersion(latest)) : null;
-    const loaded = loadedCI.part_number || _vmBuildConfigVersion(loadedCI);
-    return { state: (latest && latest.id === loadedCI.id) ? 'match' : 'mismatch', expected, loaded };
+    const expected = latest ? latest.part_number : null;
+    return { state: (latest && latest.id === loadedCI.id) ? 'match' : 'mismatch', expected, loaded: loadedCI.part_number };
   }
-  // Fallback (free-text or template-seeded rows): version vs config-family latest.
+  // Not linked yet: derive the expected latest from device + software type, so a
+  // version-less row (added but not yet loaded) shows "Not loaded" with a target.
+  const swType = (eq.sw_type || '').trim() ? eq.sw_type : null;
+  const builds = _vmCMBuilds(eq.equipment_name, swType);
+  if (builds.length) {
+    const latest = _vmLatestBuild(eq.equipment_name, swType);
+    const expected = latest ? latest.part_number : null;
+    const loaded = String(eq.loaded_version || '').trim();
+    if (!loaded) return { state: 'not_loaded', expected, loaded: '' };
+    return { state: (loaded === String(expected || '').trim() ? 'match' : 'mismatch'), expected, loaded };
+  }
+  // Fallback: legacy config_id family.
   const loaded = String(eq.loaded_version || '').trim();
   if (!eq.config_id) return { state: 'no_target', expected: null, loaded };
   const expected = _vmExpectedVersion(eq.config_id);
@@ -18012,7 +18003,7 @@ function _vmEquipTabHTML(car) {
         ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:2px 9px;" onclick="_vmEquipModal('${car.id}',null,'${escapeHtml(device).replace(/'/g, "\\'")}')">${icon('plus')} Add software type</button>` : ''}
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
-        <thead><tr>${['Type', 'Loaded Software Version', 'Serial No.', 'Hardware Part No.', 'Expected (latest)', 'Compliance', ''].map(th).join('')}</tr></thead><tbody>`;
+        <thead><tr>${['Type', 'Loaded Software Version', 'Expected (latest)', 'Compliance', ''].map(th).join('')}</tr></thead><tbody>`;
     for (const e of rows) {
       const c = _vmCompliance(e);
       const [label, tone] = _VM_COMPLIANCE_META[c.state] || ['—', 'muted'];
@@ -18020,8 +18011,6 @@ function _vmEquipTabHTML(car) {
       h += `<tr style="border-bottom:1px solid var(--border);">
         <td style="padding:6px 8px;">${e.sw_type ? `<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 5px;border-radius:3px;">${escapeHtml(e.sw_type)}</span>` : ''}</td>
         <td style="padding:6px 8px;font-family:monospace;font-weight:600;">${escapeHtml(loadedTxt)}</td>
-        <td style="padding:6px 8px;font-family:monospace;font-size:11px;">${escapeHtml(e.serial_number || '')}</td>
-        <td style="padding:6px 8px;font-family:monospace;font-size:11px;">${escapeHtml(e.part_number || '')}</td>
         <td style="padding:6px 8px;font-family:monospace;color:var(--gray-500);">${escapeHtml(c.expected || (e.sw_equipment_id || e.config_id ? '—' : 'not linked'))}</td>
         <td style="padding:6px 8px;">${_vmChip(label, tone)}</td>
         <td style="padding:6px 8px;text-align:right;white-space:nowrap;">
@@ -18039,28 +18028,69 @@ function _vmEquipTabHTML(car) {
 function _vmPunchTabHTML(car) {
   const items = _vmPunchFor(car.id).sort((a, b) => (b.number || 0) - (a.number || 0));
   const canEdit = _vmCan('edit');
+  const canCreate = (typeof uiCan !== 'function') || uiCan('punch_list', 'create');
   const toolbar = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
       <div style="font-size:12px;color:var(--gray-500);">Punch list items tagged to this car (install / test &amp; commissioning defects).</div>
-      ${canEdit ? `<button class="admin-action-btn" onclick="_vmLinkPunchModal('${car.id}')">${icon('link')} Link Punch Item</button>` : ''}
+      <div style="display:flex;gap:8px;">
+        ${canCreate ? `<button class="admin-action-btn" onclick="_vmCreatePunch('${car.id}')">${icon('plus')} Create Punch</button>` : ''}
+        ${canEdit ? `<button class="form-secondary" onclick="_vmLinkPunchModal('${car.id}')">${icon('link')} Link Existing</button>` : ''}
+      </div>
     </div>`;
-  if (!items.length) return toolbar + cxEmpty({ icon: 'flag', title: 'No punch items', message: 'No punch items are linked to this car yet.' });
-  let h = toolbar + '<div style="display:flex;flex-direction:column;gap:8px;">';
-  for (const p of items) {
-    const closed = p.status === 'closed';
-    const pid = String(p.id).replace(/'/g, "\\'");
-    h += `<div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;background:var(--surface);">
-      <span style="font-family:monospace;font-weight:700;color:var(--gray-500);">#${p.number ?? ''}</span>
-      <button onclick="_vmGoToPunch('${pid}')" title="Open in Punch List" style="flex:1;min-width:0;text-align:left;border:none;background:none;cursor:pointer;font:inherit;font-size:13px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px;padding:0;">
-        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(p.title || '(untitled)')}</span>
-        <span style="color:var(--gray-400);flex-shrink:0;">${icon('external')}</span>
-      </button>
-      ${_vmChip(p.status || 'open', closed ? 'good' : (p.status === 'ready_to_inspect' ? 'info' : 'warn'))}
-      ${p.priority ? _vmChip(p.priority, p.priority === 'high' || p.priority === 'critical' ? 'bad' : 'muted') : ''}
-      ${canEdit ? `<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="_vmUnlinkPunch('${car.id}','${pid}')">Unlink</button>` : ''}
-    </div>`;
-  }
+  if (!items.length) return toolbar + cxEmpty({ icon: 'flag', title: 'No punch items', message: 'No punch items are linked to this car yet.', actionLabel: canCreate ? '+ Create Punch' : null, onAction: canCreate ? `_vmCreatePunch('${car.id}')` : null });
+  let h = toolbar + '<div style="display:flex;flex-direction:column;gap:10px;">';
+  for (const p of items) h += _vmPunchCardHTML(car, p, canEdit);
   h += '</div>';
   return h;
+}
+function _vmPunchMeta(label, val) {
+  if (!val) return '';
+  return `<div><div style="font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.03em;">${label}</div><div style="font-size:12px;color:var(--text);">${escapeHtml(val)}</div></div>`;
+}
+function _vmPunchCardHTML(car, p, canEdit) {
+  const pid = String(p.id).replace(/'/g, "\\'");
+  const closed = p.status === 'closed';
+  const locName = (typeof _plLocName === 'function') ? _plLocName(p.location) : p.location;
+  const phaseName = (typeof _plLocName === 'function') ? _plLocName(p.phase) : p.phase;
+  const bic = (typeof _plBallInCourt === 'function') ? _plBallInCourt(p) : (p.ball_in_court || '');
+  const assignees = Array.isArray(p.assignees) ? p.assignees.join(', ') : (p.assigned_to || '');
+  const due = p.due_date ? new Date(p.due_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+  const created = p.created_at ? ((typeof dateAgo === 'function') ? dateAgo(p.created_at) : new Date(p.created_at).toLocaleDateString()) : '';
+  const statusBadge = (typeof _plStatusBadge === 'function') ? _plStatusBadge(p.status) : _vmChip(p.status || 'open', closed ? 'good' : 'warn');
+  const prioBadge = p.priority ? ((typeof _plPriorityBadge === 'function') ? _plPriorityBadge(p.priority) : _vmChip(p.priority, 'muted')) : '';
+  return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:12px 14px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="font-family:monospace;font-weight:700;color:var(--gray-500);">#${p.number ?? ''}</span>
+        <button onclick="_vmGoToPunch('${pid}')" title="Open in Punch List" style="flex:1;min-width:0;text-align:left;border:none;background:none;cursor:pointer;font:inherit;font-size:14px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px;padding:0;">
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(p.title || '(untitled)')}</span>
+          <span style="color:var(--gray-400);flex-shrink:0;">${icon('external')}</span>
+        </button>
+        ${statusBadge} ${prioBadge}
+      </div>
+      ${p.description ? `<div style="font-size:12px;color:var(--gray-600);margin-top:8px;line-height:1.5;max-height:4.5em;overflow:hidden;white-space:pre-wrap;">${escapeHtml(p.description)}</div>` : ''}
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px 14px;margin-top:10px;">
+        ${_vmPunchMeta('Type', p.type)}
+        ${_vmPunchMeta('Subsystem', p.subsystem)}
+        ${_vmPunchMeta('Location', [phaseName, locName].filter(Boolean).join(' · '))}
+        ${_vmPunchMeta('Ball in Court', bic)}
+        ${_vmPunchMeta('Assignees', assignees)}
+        ${_vmPunchMeta('Trade', p.trade)}
+        ${_vmPunchMeta('Category of Failure', p.category_of_failure)}
+        ${_vmPunchMeta('Due', due)}
+        ${_vmPunchMeta('Created', created)}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <button class="form-secondary" style="font-size:11px;" onclick="_vmGoToPunch('${pid}')">${icon('external')} Open in Punch List</button>
+        ${canEdit ? `<button class="form-secondary" style="font-size:11px;color:var(--bad);" onclick="_vmUnlinkPunch('${car.id}','${pid}')">Unlink</button>` : ''}
+      </div>
+    </div>`;
+}
+// Create a new punch from the car view; saveNewPunchItem auto-links the car.
+// _punchFromCarId is a global declared in app.js; openNewPunchModal clears it,
+// so we set it after opening.
+function _vmCreatePunch(carId) {
+  if (typeof openNewPunchModal !== 'function') { toast('Punch tool unavailable', 'error'); return; }
+  openNewPunchModal();
+  _punchFromCarId = carId;
 }
 // Jump to the Punch List tool and open the linked item there.
 function _vmGoToPunch(id) {
@@ -18199,80 +18229,46 @@ function _vmEquipDeviceChanged() {
   const builds = _vmCMBuilds(device);
   if (!builds.length) { wrap.innerHTML = _vmManualEntryHTML(); return; }
   const types = [...new Set(builds.map(b => (b.sw_type || '').trim()).filter(Boolean))].sort();
-  let h = `<div style="font-size:11px;color:var(--gray-500);margin:4px 0 8px;">Check the software type(s) loaded on this device and select the exact build released in Configuration Management.</div>`;
-  h += types.map(t => _vmTypeEntryHTML(device, t)).join('');
-  if (builds.some(b => !(b.sw_type || '').trim())) h += _vmTypeEntryHTML(device, '');
+  let h = `<div style="font-size:11px;color:var(--gray-500);margin:4px 0 8px;">Check the software type(s) present on this device. Set the loaded version later via Bulk Software Update or the row editor.</div>`;
+  h += types.map(t => _vmTypeCheckHTML(device, t)).join('');
+  if (builds.some(b => !(b.sw_type || '').trim())) h += _vmTypeCheckHTML(device, '');
   wrap.innerHTML = h;
 }
-function _vmTypeEntryHTML(device, t) {
-  const builds = _vmCMBuilds(device, t || null).filter(b => (t ? true : !(b.sw_type || '').trim()));
-  const latest = builds.length ? builds.slice().sort((a, b) => _vmVerCmp(_vmBuildConfigVersion(a), _vmBuildConfigVersion(b)) || _vmVerCmp(a.part_number, b.part_number))[builds.length - 1] : null;
-  const key = t || '_';
-  return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;">
-      <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;cursor:pointer;">
-        <input type="checkbox" class="vme-chk" data-key="${escapeHtml(key)}" style="margin:0;"> ${escapeHtml(t || '(untyped)')}
-        <span style="font-weight:400;color:var(--gray-500);font-size:11px;">${builds.length} build${builds.length === 1 ? '' : 's'} available</span>
-      </label>
-      <div class="form-grid" style="margin-top:8px;">
-        <div class="form-field form-field-full"><label>Loaded Software Version *</label>
-          <select class="vme-build form-input" data-key="${escapeHtml(key)}">
-            ${builds.map(b => `<option value="${b.id}" ${latest && b.id === latest.id ? 'selected' : ''}>${escapeHtml(_vmBuildLabel(b))}</option>`).join('')}
-          </select>
-        </div>
-        <div class="form-field"><label>Serial Number</label><input type="text" class="vme-serial form-input" data-key="${escapeHtml(key)}"></div>
-        <div class="form-field"><label>Hardware Part No.</label><input type="text" class="vme-part form-input" data-key="${escapeHtml(key)}" placeholder="hardware P/N"></div>
-      </div>
-    </div>`;
+function _vmTypeCheckHTML(device, t) {
+  const n = _vmCMBuilds(device, t || null).filter(b => (t ? true : !(b.sw_type || '').trim())).length;
+  return `<label style="display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;margin-bottom:6px;cursor:pointer;font-weight:600;font-size:13px;">
+      <input type="checkbox" class="vme-chk" value="${escapeHtml(t)}" style="margin:0;"> ${escapeHtml(t || '(untyped)')}
+      <span style="font-weight:400;color:var(--gray-500);font-size:11px;">${n} version${n === 1 ? '' : 's'} in Config Mgmt</span>
+    </label>`;
 }
 function _vmManualEntryHTML() {
   const swTypes = (typeof _fsOptions === 'function') ? _fsOptions('sw_equipment_type') : [];
-  return `<div style="font-size:11px;color:var(--gray-500);margin:4px 0 8px;">No Configuration Management software versions match this device — enter the loaded software manually.</div>
+  return `<div style="font-size:11px;color:var(--gray-500);margin:4px 0 8px;">No Configuration Management entries match this device — add the software type(s) manually (comma-separated).</div>
     <div id="vme-manual" class="form-grid">
-      <div class="form-field"><label>Software Type</label><input type="text" id="vmem-type" class="form-input" placeholder="GA, SA, OS, FW…" list="vme-type-list"><datalist id="vme-type-list">${swTypes.map(t => '<option value="' + escapeHtml(t) + '">').join('')}</datalist></div>
-      <div class="form-field"><label>Loaded Software Version</label><input type="text" id="vmem-loaded" class="form-input"></div>
-      <div class="form-field"><label>Serial Number</label><input type="text" id="vmem-serial" class="form-input"></div>
-      <div class="form-field"><label>Hardware Part No.</label><input type="text" id="vmem-part" class="form-input"></div>
+      <div class="form-field form-field-full"><label>Software Type(s)</label><input type="text" id="vmem-types" class="form-input" placeholder="e.g. GA, SA" list="vme-type-list"><datalist id="vme-type-list">${swTypes.map(t => '<option value="' + escapeHtml(t) + '">').join('')}</datalist></div>
     </div>`;
 }
 async function _vmSaveEquipMulti(carId) {
   const device = (document.getElementById('vme-device')?.value || '').trim();
   if (!device) { toast('Device is required', 'error'); return; }
-  const rows = [];
+  let types;
   if (document.getElementById('vme-manual')) {
-    rows.push({
-      vehicle_id: carId, equipment_name: device,
-      sw_type: (document.getElementById('vmem-type')?.value || '').trim() || null,
-      loaded_version: (document.getElementById('vmem-loaded')?.value || '').trim() || null,
-      serial_number: (document.getElementById('vmem-serial')?.value || '').trim() || null,
-      part_number: (document.getElementById('vmem-part')?.value || '').trim() || null,
-      created_by: _vmWho(),
-    });
+    types = (document.getElementById('vmem-types')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!types.length) types = ['']; // a single untyped row is allowed
   } else {
     const checks = [...document.querySelectorAll('.vme-chk:checked')];
     if (!checks.length) { toast('Select at least one software type', 'error'); return; }
-    for (const chk of checks) {
-      const key = chk.dataset.key;
-      const sel = document.querySelector('.vme-build[data-key="' + key + '"]');
-      const ci = sel ? SW_EQUIPMENT.find(e => e.id === sel.value) : null;
-      if (!ci) continue;
-      const serial = (document.querySelector('.vme-serial[data-key="' + key + '"]')?.value || '').trim() || null;
-      const hwPart = (document.querySelector('.vme-part[data-key="' + key + '"]')?.value || '').trim() || null;
-      rows.push({
-        vehicle_id: carId, equipment_name: device, sw_type: ci.sw_type || null,
-        sw_equipment_id: ci.id, config_id: ci.config_id || null,
-        loaded_version: ci.part_number || null, part_number: hwPart, serial_number: serial,
-        created_by: _vmWho(),
-      });
-    }
+    types = checks.map(c => c.value);
   }
-  if (!rows.length) { toast('Nothing to add', 'error'); return; }
   const base = _vmEquipFor(carId).length;
-  rows.forEach((r, i) => { r.sort_order = base + i; });
+  const rows = types.map((t, i) => ({
+    vehicle_id: carId, equipment_name: device, sw_type: (t || null), sort_order: base + i, created_by: _vmWho(),
+  }));
   try {
     const ins = await _dbInsert('vehicle_equipment', rows);
     VEH_EQUIP.push(...(ins || []));
     const n = (ins || rows).length;
-    toast('Added ' + n + ' software item' + (n === 1 ? '' : 's'), 'success');
+    toast('Added ' + n + ' item' + (n === 1 ? '' : 's'), 'success');
     closeModal(); renderVehicleManagement();
   } catch (e) { toast('Save failed: ' + e.message, 'error'); }
 }
@@ -18290,9 +18286,7 @@ function _vmEquipEditModal(carId, e) {
             <option value="">— manual / not linked —</option>
             ${builds.map(b => `<option value="${b.id}" ${e.sw_equipment_id === b.id ? 'selected' : ''}>${escapeHtml(_vmBuildLabel(b))}</option>`).join('')}
           </select></div>` : ''}
-        <div class="form-field"><label>Loaded Software Version</label><input type="text" id="vme-loaded" class="form-input" value="${escapeHtml(e.loaded_version || '')}"></div>
-        <div class="form-field"><label>Serial Number</label><input type="text" id="vme-serial" class="form-input" value="${escapeHtml(e.serial_number || '')}"></div>
-        <div class="form-field"><label>Hardware Part No.</label><input type="text" id="vme-part" class="form-input" value="${escapeHtml(e.part_number || '')}"></div>
+        <div class="form-field form-field-full"><label>Loaded Software Version ${builds.length ? '<span style="font-weight:400;color:var(--gray-500);">(or type manually)</span>' : ''}</label><input type="text" id="vme-loaded" class="form-input" value="${escapeHtml(e.loaded_version || '')}"></div>
         <div class="form-field form-field-full"><label>Notes</label><input type="text" id="vme-notes" class="form-input" value="${escapeHtml(e.notes || '')}"></div>
       </div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
@@ -18313,14 +18307,13 @@ async function _vmSaveEquipOne(carId, editId) {
   const device = (document.getElementById('vme-device')?.value || '').trim();
   if (!device) { toast('Device is required', 'error'); return; }
   const buildId = document.getElementById('vme-build')?.value || '';
+  const ci = buildId ? SW_EQUIPMENT.find(x => x.id === buildId) : null;
   const data = {
     equipment_name: device,
     sw_type: (document.getElementById('vme-type')?.value || '').trim() || null,
     sw_equipment_id: buildId || null,
-    config_id: buildId ? (SW_EQUIPMENT.find(x => x.id === buildId)?.config_id || null) : (eq?.config_id || null),
-    loaded_version: (document.getElementById('vme-loaded')?.value || '').trim() || null,
-    serial_number: (document.getElementById('vme-serial')?.value || '').trim() || null,
-    part_number: (document.getElementById('vme-part')?.value || '').trim() || null,
+    config_id: ci ? (ci.config_id || null) : (eq?.config_id || null),
+    loaded_version: ci ? (ci.part_number || null) : ((document.getElementById('vme-loaded')?.value || '').trim() || null),
     notes: (document.getElementById('vme-notes')?.value || '').trim() || null,
   };
   try {
@@ -18339,9 +18332,12 @@ async function _vmDeleteEquip(id) {
 // ── Bulk software update across selected cars ─────────────────────────────
 function _vmBulkUpdateModal() {
   if (!_vmCan('bulk_edit')) { toast('Not permitted', 'error'); return; }
-  // Distinct equipment names across all cars, to pick which CI to update.
-  const names = [...new Set(VEH_EQUIP.map(e => e.equipment_name).filter(Boolean))].sort();
-  if (!names.length) { toast('No equipment exists on any car yet', 'error'); return; }
+  // Devices present on cars OR known to Config Management.
+  const names = [...new Set([
+    ...VEH_EQUIP.map(e => e.equipment_name),
+    ...SW_EQUIPMENT.map(e => e.equipment_name),
+  ].filter(Boolean))].sort();
+  if (!names.length) { toast('No equipment exists yet', 'error'); return; }
   const carsByType = t => _vmSortCars(VEHICLES.filter(c => c.car_type === t));
   const carChecks = type => {
     const g = carsByType(type);
@@ -18354,39 +18350,52 @@ function _vmBulkUpdateModal() {
   };
   modal({
     title: 'Bulk Software Update', size: 'large',
-    body: `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">Set a loaded version on one equipment item across every selected car. Matching is by equipment name.</div>
+    body: `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">Set the loaded software version on one device across every selected car. The version list comes from Configuration Management for that device.</div>
       <div class="form-grid">
-        <div class="form-field"><label>Equipment *</label><select id="vm-bulk-name" class="form-input">${names.map(n => `<option>${escapeHtml(n)}</option>`).join('')}</select></div>
-        <div class="form-field"><label>New Loaded Version *</label><input type="text" id="vm-bulk-ver" class="form-input" placeholder="e.g. C11_D470"></div>
-        <div class="form-field form-field-full"><label>Loaded CRC <span style="font-weight:400;color:var(--gray-500);">(optional, also applied)</span></label><input type="text" id="vm-bulk-crc" class="form-input" placeholder="leave blank to keep existing"></div>
+        <div class="form-field"><label>Device *</label><select id="vm-bulk-device" class="form-input" onchange="_vmBulkDeviceChanged()">${names.map(n => `<option>${escapeHtml(n)}</option>`).join('')}</select></div>
+        <div class="form-field"><label>New Loaded Software Version *</label><select id="vm-bulk-build" class="form-input"></select></div>
       </div>
       <div style="margin-top:6px;"><label style="font-weight:600;font-size:12px;">Apply to cars</label>${carChecks('D')}${carChecks('E')}</div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmApplyBulkUpdate()">Apply Update</button>`,
   });
+  setTimeout(_vmBulkDeviceChanged, 0);
+}
+function _vmBulkDeviceChanged() {
+  const device = (document.getElementById('vm-bulk-device')?.value || '').trim();
+  const sel = document.getElementById('vm-bulk-build');
+  if (!sel) return;
+  const builds = _vmCMBuilds(device);
+  sel.innerHTML = builds.length
+    ? builds.map(b => `<option value="${b.id}">${escapeHtml((b.sw_type ? b.sw_type + ' · ' : '') + _vmBuildLabel(b))}</option>`).join('')
+    : `<option value="">(no Config Mgmt versions for this device)</option>`;
 }
 function _vmBulkToggleType(type, on) {
   document.querySelectorAll('.vm-bulk-car[data-type="' + type + '"]').forEach(cb => { cb.checked = on; });
 }
 async function _vmApplyBulkUpdate() {
-  const name = (document.getElementById('vm-bulk-name')?.value || '').trim();
-  const ver = (document.getElementById('vm-bulk-ver')?.value || '').trim();
-  const crc = (document.getElementById('vm-bulk-crc')?.value || '').trim();
+  const device = (document.getElementById('vm-bulk-device')?.value || '').trim();
+  const buildId = document.getElementById('vm-bulk-build')?.value || '';
+  const ci = buildId ? SW_EQUIPMENT.find(x => x.id === buildId) : null;
+  if (!ci) { toast('Select a software version', 'error'); return; }
   const carIds = [...document.querySelectorAll('.vm-bulk-car:checked')].map(cb => cb.value);
-  if (!ver) { toast('New loaded version is required', 'error'); return; }
   if (!carIds.length) { toast('Select at least one car', 'error'); return; }
-  const targets = VEH_EQUIP.filter(e => e.equipment_name === name && carIds.includes(e.vehicle_id));
-  if (!targets.length) { toast('No matching equipment on the selected cars', 'error'); return; }
-  const patch = { loaded_version: ver };
-  if (crc) patch.loaded_crc = crc;
-  let okN = 0;
+  const swType = ci.sw_type || null;
+  const patch = { sw_equipment_id: ci.id, config_id: ci.config_id || null, loaded_version: ci.part_number || null, sw_type: swType };
+  let updated = 0, created = 0;
   try {
-    for (const e of targets) {
-      const [row] = await _dbUpdate('vehicle_equipment', patch, { id: e.id });
-      Object.assign(e, row || patch); okN++;
+    for (const carId of carIds) {
+      const match = VEH_EQUIP.find(e => e.vehicle_id === carId && e.equipment_name === device && (e.sw_type || null) === swType);
+      if (match) {
+        const [row] = await _dbUpdate('vehicle_equipment', patch, { id: match.id });
+        Object.assign(match, row || patch); updated++;
+      } else {
+        const [row] = await _dbInsert('vehicle_equipment', [{ vehicle_id: carId, equipment_name: device, ...patch, sort_order: _vmEquipFor(carId).length, created_by: _vmWho() }]);
+        if (row) { VEH_EQUIP.push(row); created++; }
+      }
     }
-    toast('Updated ' + okN + ' car' + (okN === 1 ? '' : 's'), 'success');
+    toast('Updated ' + updated + (created ? ' · created ' + created : '') + ' car' + ((updated + created) === 1 ? '' : 's'), 'success');
     closeModal(); renderVehicleManagement();
-  } catch (err) { toast('Bulk update failed after ' + okN + ': ' + err.message, 'error'); renderVehicleManagement(); }
+  } catch (err) { toast('Bulk update failed: ' + err.message, 'error'); renderVehicleManagement(); }
 }
 
 // ── Form linking (fillable PDFs from the Forms module) ────────────────────
@@ -18517,6 +18526,137 @@ function _vmTplAddEq() {
 function _vmTplDelEq(id) {
   _dbDelete('vehicle_equipment_templates', { id }).then(() => { VEH_EQ_TPL = VEH_EQ_TPL.filter(x => x.id !== id); _vmTplRefresh(); })
     .catch(e => toast('Delete failed: ' + e.message, 'error'));
+}
+
+// ==========================================================================
+// PUNCH LIST ↔ VEHICLE / TEST linking — rendered inside the Punch List tool's
+// detail modal (openPunchDetail), so a punch item can be linked to cars and
+// test register activities directly from there. Functions are global so the
+// punch modal's template can call them.
+// ==========================================================================
+function _punchCanLink() {
+  return (typeof uiCan !== 'function') || uiCan('punch_list', 'edit') || uiCan('punch_list', 'link_test');
+}
+function _punchLinksSectionHTML(p) {
+  const canLink = _punchCanLink();
+  const pid = String(p.id).replace(/'/g, "\\'");
+  const TIarr = (typeof TI !== 'undefined') ? TI : [];
+  const VEHarr = (typeof VEHICLES !== 'undefined') ? VEHICLES : [];
+  // Linked test cases
+  const tRows = (p.linked_test_ids || []).map(id => TIarr.find(t => String(t.TestID) === String(id))).filter(Boolean);
+  const statusCls = { Pass: '#16a34a', Fail: '#dc2626', Blocked: '#d97706', 'Not Started': '#6b7280', 'In Progress': '#1d4ed8', 'Not Applicable': '#6b7280', 'Future Test': '#7c3aed' };
+  const tHTML = tRows.length ? tRows.map((t, i) => {
+    const col = statusCls[t.Status] || '#6b7280';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:9px 14px;${i ? 'border-top:1px solid var(--gray-100);' : ''}background:var(--white);">
+        <div onclick="navigateToTestCase('${escapeHtml(String(t.TestID))}')" title="Open in Test Register" style="flex:1;min-width:0;cursor:pointer;display:grid;grid-template-columns:110px 1fr auto;align-items:center;gap:10px;">
+          <div style="font-family:monospace;font-size:11px;color:var(--gray-700);font-weight:600;">${escapeHtml(t.TestCaseCode || '—')}</div>
+          <div><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(t.TestName || '—')}</div>
+            <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(t.Activity || '')}${t.Location ? ' · ' + escapeHtml(t.Location) : ''}</div></div>
+          <span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;white-space:nowrap;background:${col}20;color:${col};border:1px solid ${col}40;">${escapeHtml(t.Status || 'Unknown')}</span>
+        </div>
+        ${canLink ? `<button class="form-secondary" style="font-size:10px;padding:2px 7px;" title="Unlink" onclick="_punchUnlinkTestCase('${pid}','${escapeHtml(String(t.TestID))}')">${icon('x')}</button>` : ''}
+      </div>`;
+  }).join('') : `<div style="font-size:12px;color:var(--gray-400);padding:10px 14px;">No linked test cases.</div>`;
+  // Linked cars
+  const cars = (p.linked_car_ids || []).map(id => VEHarr.find(v => v.id === id)).filter(Boolean);
+  const cHTML = cars.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:10px 14px;">${cars.map(v => `<span style="display:inline-flex;align-items:center;gap:7px;font-size:12px;background:#eef2ff;color:#3730a3;border:1px solid #e0e7ff;border-radius:6px;padding:4px 10px;">
+        <button onclick="_punchOpenCar('${v.id}')" title="Open in Vehicle Management" style="border:none;background:none;color:#3730a3;cursor:pointer;font:inherit;font-weight:700;font-family:monospace;">${escapeHtml(v.car_number)} · ${escapeHtml(v.car_type)}</button>
+        ${canLink ? `<button onclick="_punchUnlinkCar('${pid}','${v.id}')" aria-label="Unlink car" title="Unlink" style="border:none;background:none;color:#9ca3af;cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}
+      </span>`).join('')}</div>` : `<div style="font-size:12px;color:var(--gray-400);padding:10px 14px;">No linked cars.</div>`;
+  return `<div style="margin-bottom:18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;">${icon('link')}Linked Test Cases <span style="font-weight:400;font-size:10px;">(${tRows.length})</span></div>
+        ${canLink ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchLinkTestPicker('${pid}')">+ Link test case</button>` : ''}
+      </div>
+      <div style="border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">${tHTML}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin:16px 0 8px;">
+        <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;">${icon('truck')}Linked Cars <span style="font-weight:400;font-size:10px;">(${cars.length})</span></div>
+        ${canLink ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchLinkCarPicker('${pid}')">+ Link car</button>` : ''}
+      </div>
+      <div style="border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">${cHTML}</div>
+    </div>`;
+}
+function _punchOpenCar(carId) {
+  if (typeof showPage === 'function') showPage('vehicle-management');
+  setTimeout(() => { if (typeof _vmOpenCar === 'function') _vmOpenCar(carId); }, 80);
+}
+function _punchPickFilter(q, containerId) {
+  q = (q || '').toLowerCase();
+  document.querySelectorAll('#' + containerId + ' .pk-opt').forEach(b => { b.style.display = b.dataset.txt.includes(q) ? '' : 'none'; });
+}
+function _punchLinkCarPicker(punchId) {
+  const p = PUNCH_DB.find(x => String(x.id) === String(punchId)); if (!p) return;
+  const linked = new Set(p.linked_car_ids || []);
+  const avail = ((typeof VEHICLES !== 'undefined') ? VEHICLES : []).filter(v => !linked.has(v.id))
+    .sort((a, b) => String(a.car_type).localeCompare(String(b.car_type)) || (parseInt(a.car_number, 10) || 0) - (parseInt(b.car_number, 10) || 0));
+  const pid = String(p.id).replace(/'/g, "\\'");
+  modal({
+    title: 'Link Car', size: 'medium',
+    body: avail.length ? `<input type="text" class="form-input" placeholder="Filter…" oninput="_punchPickFilter(this.value,'pk-car')" style="margin-bottom:8px;">
+      <div id="pk-car" style="display:flex;flex-wrap:wrap;gap:6px;max-height:50vh;overflow:auto;">
+        ${avail.map(v => `<button class="form-secondary pk-opt" data-txt="${escapeHtml((v.car_number + ' ' + v.car_type).toLowerCase())}" style="font-family:monospace;font-weight:600;" onclick="_punchLinkCar('${pid}','${v.id}')">${escapeHtml(v.car_number)} · ${escapeHtml(v.car_type)}</button>`).join('')}
+      </div>` : `<div style="font-size:13px;color:var(--gray-500);">All cars are already linked, or none exist.</div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
+}
+function _punchLinkTestPicker(punchId) {
+  const p = PUNCH_DB.find(x => String(x.id) === String(punchId)); if (!p) return;
+  const linked = new Set((p.linked_test_ids || []).map(String));
+  const TIarr = (typeof TI !== 'undefined') ? TI : [];
+  const avail = TIarr.filter(t => !t.IsParent && !linked.has(String(t.TestID))).slice(0, 600);
+  const pid = String(p.id).replace(/'/g, "\\'");
+  modal({
+    title: 'Link Test Case / Activity', size: 'large',
+    body: `<input type="text" class="form-input" placeholder="Filter by code, name, or activity…" oninput="_punchPickFilter(this.value,'pk-test')" style="margin-bottom:8px;">
+      <div id="pk-test" style="display:flex;flex-direction:column;gap:5px;max-height:55vh;overflow:auto;">
+        ${avail.map(t => `<button class="form-secondary pk-opt" data-txt="${escapeHtml(((t.TestCaseCode || '') + ' ' + (t.TestName || '') + ' ' + (t.Activity || '')).toLowerCase())}" style="text-align:left;display:flex;gap:8px;align-items:center;" onclick="_punchLinkTestCase('${pid}','${escapeHtml(String(t.TestID))}')">
+          <span style="font-family:monospace;font-size:11px;font-weight:700;color:var(--gray-600);">${escapeHtml(t.TestCaseCode || '—')}</span>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(t.TestName || '—')}</span>
+          <span style="font-size:10px;color:var(--gray-400);white-space:nowrap;">${escapeHtml(t.Activity || '')}</span>
+        </button>`).join('')}
+      </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+  });
+}
+async function _punchLinkCar(punchId, carId) {
+  const p = PUNCH_DB.find(x => String(x.id) === String(punchId)); if (!p) return;
+  const ids = Array.from(new Set([...(p.linked_car_ids || []), carId]));
+  try {
+    await _dbUpdate('punch_items', { linked_car_ids: ids }, { id: p.id });
+    p.linked_car_ids = ids;
+    closeModal(); if (typeof openPunchDetail === 'function') openPunchDetail(p.id);
+    if (typeof renderVehicleManagement === 'function') renderVehicleManagement();
+  } catch (e) { toast('Link failed: ' + e.message, 'error'); }
+}
+async function _punchUnlinkCar(punchId, carId) {
+  const p = PUNCH_DB.find(x => String(x.id) === String(punchId)); if (!p) return;
+  const ids = (p.linked_car_ids || []).filter(id => id !== carId);
+  try {
+    await _dbUpdate('punch_items', { linked_car_ids: ids }, { id: p.id });
+    p.linked_car_ids = ids;
+    closeModal(); if (typeof openPunchDetail === 'function') openPunchDetail(p.id);
+    if (typeof renderVehicleManagement === 'function') renderVehicleManagement();
+  } catch (e) { toast('Unlink failed: ' + e.message, 'error'); }
+}
+async function _punchLinkTestCase(punchId, testId) {
+  const p = PUNCH_DB.find(x => String(x.id) === String(punchId)); if (!p) return;
+  const ids = Array.from(new Set([...(p.linked_test_ids || []).map(String), String(testId)]));
+  try {
+    await _dbUpdate('punch_items', { linked_test_ids: ids }, { id: p.id });
+    p.linked_test_ids = ids;
+    if (typeof _refreshPunchChips === 'function') { try { _refreshPunchChips(testId); } catch (_) {} }
+    closeModal(); if (typeof openPunchDetail === 'function') openPunchDetail(p.id);
+  } catch (e) { toast('Link failed: ' + e.message, 'error'); }
+}
+async function _punchUnlinkTestCase(punchId, testId) {
+  const p = PUNCH_DB.find(x => String(x.id) === String(punchId)); if (!p) return;
+  const ids = (p.linked_test_ids || []).map(String).filter(id => id !== String(testId));
+  try {
+    await _dbUpdate('punch_items', { linked_test_ids: ids }, { id: p.id });
+    p.linked_test_ids = ids;
+    if (typeof _refreshPunchChips === 'function') { try { _refreshPunchChips(testId); } catch (_) {} }
+    closeModal(); if (typeof openPunchDetail === 'function') openPunchDetail(p.id);
+  } catch (e) { toast('Unlink failed: ' + e.message, 'error'); }
 }
 
 // ==========================================================================
