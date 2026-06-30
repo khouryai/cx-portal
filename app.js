@@ -456,6 +456,7 @@ async function refreshApp() {
   try { await loadTasks(); }    catch(e) { console.warn('[refreshApp] Tasks reload failed:', e.message); }
   try { await loadSoftwareConfigs(); } catch(e) { console.warn('[refreshApp] SW config reload failed:', e.message); }
   try { await loadSwEquipment(); } catch(e) { console.warn('[refreshApp] SW equipment reload failed:', e.message); }
+  try { await loadSwDeployments(); } catch(e) { console.warn('[refreshApp] SW deployments reload failed:', e.message); }
   try { await loadVehicles(); } catch(e) { console.warn('[refreshApp] vehicles reload failed:', e.message); }
   try { await loadPunchTemplates(); } catch(e) { console.warn('[refreshApp] punch templates reload failed:', e.message); }
 
@@ -3315,6 +3316,7 @@ function onLoggedIn() {
     loadTasks(),
     loadSoftwareConfigs(),
     loadSwEquipment(),
+    loadSwDeployments(),
     loadVehicles(),
     loadPunchTemplates(),
     loadForms(),
@@ -16823,12 +16825,14 @@ async function _assetLinkFromPanel(assetId) {
 // subsystem · location · device. Append-only install log → free history.
 // ==========================================================================
 let SW_CONFIGS = [];
-let SW_EQUIPMENT = [];
-let _cmFilter  = { subsystem: '', phase: '', location: '', search: '', vddView: false };
+let SW_EQUIPMENT   = [];
+let SW_DEPLOYMENTS = [];
+let _cmFilter  = { subsystem: '', phase: '', location: '', search: '', vddView: false, deployView: false };
 let _cmEditId  = null;
-let _cmExpanded = new Set(); // expanded config-item history keys
-let _cmVddExpanded = new Set(); // expanded master VDD rows in VDD view
-let _cmEquipExpanded = new Set(); // expanded equipment sections per config id
+let _cmExpanded = new Set();
+let _cmVddExpanded = new Set();
+let _cmEquipExpanded = new Set();
+let _cmDeployExpanded = new Set();
 let _cmEquipEditId = null;
 let _cmEquipConfigId = null;
 
@@ -16845,6 +16849,13 @@ async function loadSwEquipment() {
     const data = await _fetchAnon('sw_equipment?select=*&order=equipment_name.asc,sw_type.asc');
     SW_EQUIPMENT = data || [];
   } catch (err) { console.warn('SW equipment load failed:', err.message); SW_EQUIPMENT = []; }
+}
+
+async function loadSwDeployments() {
+  try {
+    const data = await _fetchAnon('sw_deployments?select=*&order=deployed_at.desc,created_at.desc');
+    SW_DEPLOYMENTS = data || [];
+  } catch (err) { console.warn('SW deployments load failed:', err.message); SW_DEPLOYMENTS = []; }
 }
 
 function _swEquipFor(configId) {
@@ -17154,7 +17165,9 @@ function _cmPageHTML() {
   const locOpts   = f.phase ? _cmLocs(f.phase) : [];
 
   let body = '';
-  if (f.vddView) {
+  if (f.deployView) {
+    body = _cmDeployViewHTML(f);
+  } else if (f.vddView) {
     body = _cmVDDViewHTML(f);
   } else {
     const subKeys = Object.keys(tree).sort();
@@ -17209,7 +17222,11 @@ function _cmPageHTML() {
     }
   }
 
-  const masterCount = new Set(SW_CONFIGS.filter(c => c.parent_id).map(c => c.parent_id).filter(Boolean)).size;
+  const masterCount  = new Set(SW_CONFIGS.filter(c => c.parent_id).map(c => c.parent_id).filter(Boolean)).size;
+  const deployTotal  = SW_DEPLOYMENTS.length;
+  const deploySync   = SW_DEPLOYMENTS.filter(d => _swDeployStatus(d) === 'in_sync').length;
+  const deployDrift  = deployTotal - deploySync;
+  const activeView   = f.deployView ? 'deploy' : f.vddView ? 'vdd' : 'location';
 
   return `
     <div class="admin-section" style="margin-bottom:18px;">
@@ -17218,13 +17235,16 @@ function _cmPageHTML() {
           <div><div style="font-size:22px;font-weight:700;">${totalItems}</div><div style="font-size:11px;color:var(--gray-500);">Config Items</div></div>
           <div><div style="font-size:22px;font-weight:700;color:#16a34a;">${activeCount}</div><div style="font-size:11px;color:var(--gray-500);">Active Versions</div></div>
           <div><div style="font-size:22px;font-weight:700;">${masterCount}</div><div style="font-size:11px;color:var(--gray-500);">Master VDDs</div></div>
+          <div><div style="font-size:22px;font-weight:700;">${deployTotal}</div><div style="font-size:11px;color:var(--gray-500);">Deployments</div></div>
+          ${deployTotal ? `<div><div style="font-size:22px;font-weight:700;color:${deployDrift ? '#d97706' : '#16a34a'};">${deployDrift ? deployDrift + ' drifted' : '100% in sync'}</div><div style="font-size:11px;color:var(--gray-500);">Field Status</div></div>` : ''}
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <div style="display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:12px;">
-            <button style="padding:5px 14px;border:none;cursor:pointer;background:${!f.vddView ? 'var(--hitachi-red)' : 'var(--surface)'};color:${!f.vddView ? 'var(--white)' : 'var(--text)'};font-weight:${!f.vddView ? '600' : '400'};" onclick="_cmToggleVDDView(false)">By Location</button>
-            <button style="padding:5px 14px;border:none;cursor:pointer;border-left:1px solid var(--border);background:${f.vddView ? 'var(--hitachi-red)' : 'var(--surface)'};color:${f.vddView ? 'var(--white)' : 'var(--text)'};font-weight:${f.vddView ? '600' : '400'};" onclick="_cmToggleVDDView(true)">By VDD Release</button>
+            <button style="padding:5px 14px;border:none;cursor:pointer;background:${activeView==='location'?'var(--hitachi-red)':'var(--surface)'};color:${activeView==='location'?'var(--white)':'var(--text)'};font-weight:${activeView==='location'?'600':'400'};" onclick="_cmToggleVDDView(false)">By Location</button>
+            <button style="padding:5px 14px;border:none;cursor:pointer;border-left:1px solid var(--border);background:${activeView==='vdd'?'var(--hitachi-red)':'var(--surface)'};color:${activeView==='vdd'?'var(--white)':'var(--text)'};font-weight:${activeView==='vdd'?'600':'400'};" onclick="_cmToggleVDDView(true)">By VDD Release</button>
+            <button style="padding:5px 14px;border:none;cursor:pointer;border-left:1px solid var(--border);background:${activeView==='deploy'?'var(--hitachi-red)':'var(--surface)'};color:${activeView==='deploy'?'var(--white)':'var(--text)'};font-weight:${activeView==='deploy'?'600':'400'};" onclick="_cmToggleDeployView(true)">Deployment Status</button>
           </div>
-          <button class="admin-action-btn" onclick="openSwConfigModal(null)">+ Add Software Config</button>
+          <button class="admin-action-btn" onclick="${activeView==='deploy' ? 'openSwDeployModal(\'\')' : 'openSwConfigModal(null)'}">+ ${activeView==='deploy' ? 'Log Deployment' : 'Add Software Config'}</button>
         </div>
       </div>
     </div>
@@ -17261,24 +17281,41 @@ function _cmPageHTML() {
 
 function _cmSetFilter(k, v) { _cmFilter[k] = v; renderConfigMgmt(); }
 function _cmPhaseFilterChange(phaseId) { _cmFilter.phase = phaseId; _cmFilter.location = ''; renderConfigMgmt(); }
-function _cmClearFilters() { _cmFilter = { subsystem:'', phase:'', location:'', search:'', vddView: _cmFilter.vddView }; renderConfigMgmt(); }
+function _cmClearFilters() { _cmFilter = { subsystem:'', phase:'', location:'', search:'', vddView: _cmFilter.vddView, deployView: _cmFilter.deployView }; renderConfigMgmt(); }
 function _cmToggleHistory(k) { if (_cmExpanded.has(k)) _cmExpanded.delete(k); else _cmExpanded.add(k); renderConfigMgmt(); }
-function _cmToggleVDDView(on) { _cmFilter.vddView = on; renderConfigMgmt(); }
+function _cmToggleVDDView(on) { _cmFilter.vddView = on; if (on) _cmFilter.deployView = false; renderConfigMgmt(); }
+function _cmToggleDeployView(on) { _cmFilter.deployView = on; if (on) _cmFilter.vddView = false; renderConfigMgmt(); }
 function _cmToggleVddMaster(id) { if (_cmVddExpanded.has(id)) _cmVddExpanded.delete(id); else _cmVddExpanded.add(id); renderConfigMgmt(); }
 function _cmToggleEquip(id) { if (_cmEquipExpanded.has(id)) _cmEquipExpanded.delete(id); else _cmEquipExpanded.add(id); renderConfigMgmt(); }
+function _cmToggleDeploy(id) { if (_cmDeployExpanded.has(id)) _cmDeployExpanded.delete(id); else _cmDeployExpanded.add(id); renderConfigMgmt(); }
 
 function _cmExpandAll() {
   for (const c of SW_CONFIGS) {
     if (SW_CONFIGS.some(x => x.parent_id === c.id)) _cmVddExpanded.add(c.id);
     _cmEquipExpanded.add(c.id);
+    _cmDeployExpanded.add(c.id);
   }
   renderConfigMgmt();
 }
 function _cmCollapseAll() {
   _cmVddExpanded.clear();
   _cmEquipExpanded.clear();
+  _cmDeployExpanded.clear();
   renderConfigMgmt();
 }
+
+// Deployment status: compare deployed_version against the active version in the software family
+function _swDeployStatus(deploy) {
+  const target = SW_CONFIGS.find(c => c.id === deploy.config_id);
+  if (!target) return 'unknown';
+  const family = SW_CONFIGS.filter(c => c.software_name === target.software_name && c.subsystem === target.subsystem);
+  const active  = family.find(c => c.status === 'active');
+  const refVer  = (active || target).version;
+  if (deploy.deployed_version === refVer) return 'in_sync';
+  if (family.some(c => c.version === deploy.deployed_version)) return 'behind';
+  return 'unknown';
+}
+const _swDeployInfo = { in_sync: { label: 'In Sync', color: '#16a34a' }, behind: { label: 'Behind Baseline', color: '#d97706' }, unknown: { label: 'Unknown Version', color: '#dc2626' } };
 
 function _cmEquipSectionHTML(configId) {
   const items = _swEquipFor(configId);
@@ -17313,6 +17350,46 @@ function _cmEquipSectionHTML(configId) {
         '<td style="padding:3px 7px;text-align:right;white-space:nowrap;">' +
           '<button class="form-secondary" style="font-size:10px;padding:1px 6px;" onclick="openSwEquipModal(\'' + configId + '\',\'' + eq.id + '\')">Edit</button>' +
           ' <button class="form-secondary" style="font-size:10px;padding:1px 6px;color:var(--bad);" onclick="deleteSwEquip(\'' + eq.id + '\',\'' + configId + '\')">Del</button>' +
+        '</td>' +
+      '</tr>';
+    }
+    h += '</tbody></table>';
+  }
+  h += '</div>';
+  return h;
+}
+
+function _cmDeploySectionHTML(configId) {
+  const items = SW_DEPLOYMENTS.filter(d => d.config_id === configId);
+  const expanded = _cmDeployExpanded.has(configId);
+  let h = '<div style="border-top:1px solid var(--border);padding:5px 14px 7px;background:#f0fdf4;">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;min-height:22px;">' +
+      '<span style="font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.07em;">' + icon('map-pin') + ' Field Deployments (' + items.length + ')</span>' +
+      '<div style="display:flex;gap:3px;">' +
+        (items.length ? '<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="_cmToggleDeploy(\'' + configId + '\')">' + (expanded ? '▼ Hide' : '▶ Show') + '</button>' : '') +
+        '<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="openSwDeployModal(\'' + configId + '\')">+ Log</button>' +
+      '</div>' +
+    '</div>';
+  if (expanded && items.length) {
+    h += '<table style="width:100%;border-collapse:collapse;margin-top:5px;font-size:12px;">' +
+      '<thead><tr>' +
+        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Equipment</th>' +
+        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Location</th>' +
+        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Deployed Version</th>' +
+        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Status</th>' +
+        '<th style="padding:2px 7px;border-bottom:1px solid var(--border);"></th>' +
+      '</tr></thead><tbody>';
+    for (const d of items.slice().sort((a,b) => (a.equipment_name||'').localeCompare(b.equipment_name||''))) {
+      const st = _swDeployStatus(d);
+      const si = _swDeployInfo[st];
+      h += '<tr style="border-bottom:1px solid var(--border);">' +
+        '<td style="padding:3px 7px;font-weight:600;">' + escapeHtml(d.equipment_name) + '</td>' +
+        '<td style="padding:3px 7px;color:var(--gray-600);font-size:11px;">' + escapeHtml(d.location || '—') + '</td>' +
+        '<td style="padding:3px 7px;font-family:monospace;font-size:11px;">' + escapeHtml(d.deployed_version) + '</td>' +
+        '<td style="padding:3px 7px;"><span style="font-size:11px;font-weight:600;color:' + si.color + ';">● ' + si.label + '</span></td>' +
+        '<td style="padding:3px 7px;text-align:right;white-space:nowrap;">' +
+          '<button class="form-secondary" style="font-size:10px;padding:1px 6px;" onclick="openSwDeployModal(\'' + configId + '\',\'' + d.id + '\')">Edit</button>' +
+          ' <button class="form-secondary" style="font-size:10px;padding:1px 6px;color:var(--bad);" onclick="deleteSwDeploy(\'' + d.id + '\',\'' + configId + '\')">Del</button>' +
         '</td>' +
       '</tr>';
     }
@@ -17374,6 +17451,8 @@ function _cmVddCardHTML(config, depth, childMap, _sc) {
 
   // CI section
   h += _cmEquipSectionHTML(config.id);
+  // Field Deployments section
+  h += _cmDeploySectionHTML(config.id);
 
   // Expanded children (recursive)
   if (hasChildren && expanded) {
@@ -17431,6 +17510,96 @@ function _cmVDDViewHTML(f) {
   if (standalone.length) {
     html += '<div style="margin-top:' + (masters.length ? '24px' : '0') + ';margin-bottom:8px;font-size:11px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.07em;">Standalone Configs (no parent VDD)</div>';
     for (const c of standalone) html += _cmVddCardHTML(c, 0, childMap, _sc);
+  }
+  return html;
+}
+
+function _cmDeployViewHTML(f) {
+  const q = (f.search || '').toLowerCase();
+
+  // Group all deployments by software family (software_name + subsystem)
+  const groups = new Map();
+  for (const d of SW_DEPLOYMENTS) {
+    const cfg = SW_CONFIGS.find(c => c.id === d.config_id);
+    if (!cfg) continue;
+    const key = (cfg.software_name||'') + '|||' + (cfg.subsystem||'');
+    if (!groups.has(key)) groups.set(key, { software_name: cfg.software_name, subsystem: cfg.subsystem, deployments: [] });
+    groups.get(key).deployments.push(d);
+  }
+
+  let list = [...groups.values()];
+  if (f.subsystem) list = list.filter(g => g.subsystem === f.subsystem);
+  if (q) list = list.filter(g =>
+    (g.software_name||'').toLowerCase().includes(q) ||
+    (g.subsystem||'').toLowerCase().includes(q) ||
+    g.deployments.some(d =>
+      (d.equipment_name||'').toLowerCase().includes(q) ||
+      (d.location||'').toLowerCase().includes(q) ||
+      (d.deployed_version||'').toLowerCase().includes(q)
+    )
+  );
+  list.sort((a,b) => (a.subsystem||'').localeCompare(b.subsystem||'') || (a.software_name||'').localeCompare(b.software_name||''));
+
+  if (!SW_DEPLOYMENTS.length && !list.length) {
+    return '<div style="text-align:center;padding:48px 0;color:var(--gray-400);">No deployments logged yet.<br>Open any VDD card in the <strong>By VDD Release</strong> view and click <strong>+ Log</strong> to record the first field install.</div>';
+  }
+  if (!list.length) {
+    return '<div style="text-align:center;padding:48px 0;color:var(--gray-400);">No deployments match your filters.</div>';
+  }
+
+  let html = '';
+  for (const g of list) {
+    const activeCfg = SW_CONFIGS.find(c => c.software_name === g.software_name && c.subsystem === g.subsystem && c.status === 'active')
+                   || SW_CONFIGS.find(c => c.software_name === g.software_name && c.subsystem === g.subsystem);
+    const syncCount    = g.deployments.filter(d => _swDeployStatus(d) === 'in_sync').length;
+    const behindCount  = g.deployments.filter(d => _swDeployStatus(d) === 'behind').length;
+    const unknownCount = g.deployments.filter(d => _swDeployStatus(d) === 'unknown').length;
+    const hasDrift     = behindCount + unknownCount > 0;
+    const borderColor  = hasDrift ? (unknownCount ? '#dc2626' : '#d97706') : '#16a34a';
+
+    html += '<div style="border:1px solid ' + borderColor + ';border-radius:8px;margin-bottom:12px;overflow:hidden;">' +
+      '<div style="display:grid;grid-template-columns:1fr auto;align-items:center;padding:10px 14px;background:var(--white);border-bottom:1px solid var(--gray-100);">' +
+        '<div>' +
+          '<div style="font-size:13px;font-weight:700;">' + escapeHtml(g.software_name) +
+            '<span style="font-size:11px;font-weight:400;color:var(--gray-500);margin-left:8px;">' + icon('settings') + ' ' + escapeHtml(g.subsystem||'—') + '</span>' +
+            (activeCfg ? ' <span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;">baseline: ' + escapeHtml(activeCfg.version) + '</span>' : '') +
+          '</div>' +
+          '<div style="display:flex;gap:10px;margin-top:3px;">' +
+            (syncCount   ? '<span style="font-size:11px;font-weight:600;color:#16a34a;">● ' + syncCount + ' in sync</span>' : '') +
+            (behindCount ? '<span style="font-size:11px;font-weight:600;color:#d97706;">● ' + behindCount + ' behind baseline</span>' : '') +
+            (unknownCount? '<span style="font-size:11px;font-weight:600;color:#dc2626;">● ' + unknownCount + ' unknown version</span>' : '') +
+          '</div>' +
+        '</div>' +
+        '<button class="form-secondary" style="font-size:11px;padding:3px 8px;white-space:nowrap;" onclick="openSwDeployModal(\'' + (activeCfg?.id || '') + '\')">+ Log Deployment</button>' +
+      '</div>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
+        '<thead><tr style="background:#f8fafc;">' +
+          '<th style="text-align:left;padding:4px 12px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Equipment</th>' +
+          '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Location</th>' +
+          '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Deployed Version</th>' +
+          '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Status</th>' +
+          '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Logged By / Date</th>' +
+          '<th style="padding:4px 10px;"></th>' +
+        '</tr></thead>' +
+        '<tbody>' +
+        g.deployments.slice().sort((a,b) => (a.location||'').localeCompare(b.location||'') || (a.equipment_name||'').localeCompare(b.equipment_name||'')).map(d => {
+          const st = _swDeployStatus(d);
+          const si = _swDeployInfo[st];
+          return '<tr style="border-top:1px solid var(--gray-100);">' +
+            '<td style="padding:5px 12px;font-weight:600;">' + escapeHtml(d.equipment_name) + '</td>' +
+            '<td style="padding:5px 10px;color:var(--gray-600);">' + escapeHtml(d.location || '—') + '</td>' +
+            '<td style="padding:5px 10px;font-family:monospace;font-size:11px;">' + escapeHtml(d.deployed_version) + '</td>' +
+            '<td style="padding:5px 10px;"><span style="font-size:11px;font-weight:600;color:' + si.color + ';">● ' + si.label + '</span></td>' +
+            '<td style="padding:5px 10px;font-size:11px;color:var(--gray-500);">' + escapeHtml(d.deployed_by || '—') + (d.deployed_at ? ' · ' + escapeHtml(d.deployed_at) : '') + '</td>' +
+            '<td style="padding:5px 10px;text-align:right;white-space:nowrap;">' +
+              '<button class="form-secondary" style="font-size:10px;padding:1px 6px;" onclick="openSwDeployModal(\'' + d.config_id + '\',\'' + d.id + '\')">Edit</button>' +
+              ' <button class="form-secondary" style="font-size:10px;padding:1px 6px;color:var(--bad);" onclick="deleteSwDeploy(\'' + d.id + '\',\'' + d.config_id + '\')">Del</button>' +
+            '</td>' +
+          '</tr>';
+        }).join('') +
+        '</tbody>' +
+      '</table>' +
+    '</div>';
   }
   return html;
 }
@@ -17773,21 +17942,6 @@ async function deleteSwEquip(id, configId) {
   } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
 }
 
-
-// ==========================================================================
-// VEHICLE MANAGEMENT — D/E car registry, as-loaded software compliance vs the
-// Config Management VDD family, and a per-type readiness workflow (regression-
-// capable) with fillable-PDF form links. Mirrors the config / test-register /
-// punch patterns. Tables: vehicles, vehicle_equipment, vehicle_workflow_items,
-// vehicle_equipment_templates, vehicle_workflow_templates,
-// form_vehicle_item_links, punch_items.linked_car_ids.
-// ==========================================================================
-let VEHICLES       = [];
-let VEH_EQUIP      = [];
-let VEH_WORKFLOW   = [];
-let VEH_EQ_TPL     = [];
-let VEH_WF_TPL     = [];
-let VEH_FORM_LINKS = [];
 let _vmSel    = null;        // selected car id (null → registry list)
 let _vmTab    = 'workflow';  // detail tab: workflow | equipment | punch
 let _vmFilter = { search: '', type: '' };
@@ -19120,6 +19274,129 @@ async function _punchUnlinkTestCase(punchId, testId) {
     if (typeof _refreshPunchChips === 'function') { try { _refreshPunchChips(testId); } catch (_) {} }
     closeModal(); if (typeof openPunchDetail === 'function') openPunchDetail(p.id);
   } catch (e) { toast('Unlink failed: ' + e.message, 'error'); }
+}
+
+// Field Deployment log — per-VDD actual install records
+function openSwDeployModal(configId, editId) {
+  const existing = editId ? SW_DEPLOYMENTS.find(d => d.id === editId) : null;
+  const preCfg   = configId ? SW_CONFIGS.find(c => c.id === configId) : null;
+  const v = (f, def='') => existing ? (existing[f] ?? def) : def;
+  const today = new Date().toISOString().slice(0,10);
+
+  // Sort configs: active first, then by name
+  const cfgOpts = SW_CONFIGS.slice().sort((a,b) => {
+    if (a.status === 'active' && b.status !== 'active') return -1;
+    if (b.status === 'active' && a.status !== 'active') return 1;
+    return (a.software_name||'').localeCompare(b.software_name||'');
+  });
+
+  const selectedCfgId = existing ? existing.config_id : (configId || '');
+  const selectedCfg   = SW_CONFIGS.find(c => c.id === selectedCfgId);
+
+  modal({
+    title: existing ? 'Edit Deployment Record' : '+ Log Field Deployment',
+    sub: preCfg && !existing ? escapeHtml(preCfg.software_name) + ' ' + escapeHtml(preCfg.version) : '',
+    size: 'large',
+    body: `
+      <div class="form-grid">
+        <div class="form-field form-field-full">
+          <label>Software Config *</label>
+          <select id="swdep-cfg" class="form-input" onchange="_swDepCfgChange()">
+            <option value="">Select software…</option>
+            ${cfgOpts.map(c => '<option value="' + c.id + '"' + (selectedCfgId === c.id ? ' selected' : '') + '>' +
+              escapeHtml(c.software_name) + ' ' + escapeHtml(c.version) + ' · ' + escapeHtml(c.subsystem||'—') +
+              (c.status === 'active' ? ' (active)' : c.status !== 'active' ? ' (' + c.status + ')' : '') +
+            '</option>').join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Equipment Name *</label>
+          <input type="text" id="swdep-equip" class="form-input" placeholder="e.g. CC-01, WS-03, OCC-PROC" value="${escapeHtml(v('equipment_name'))}">
+        </div>
+        <div class="form-field">
+          <label>Location <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
+          <input type="text" id="swdep-loc" class="form-input" placeholder="e.g. W40, Station 24, OCC" value="${escapeHtml(v('location'))}">
+        </div>
+        <div class="form-field">
+          <label>Deployed Version *</label>
+          <input type="text" id="swdep-ver" class="form-input" placeholder="e.g. v3.2.1" value="${escapeHtml(existing ? v('deployed_version') : (selectedCfg?.version || ''))}">
+          <div style="font-size:11px;color:var(--gray-500);margin-top:3px;">Enter the version actually running — edit if it differs from the approved config version.</div>
+        </div>
+        <div class="form-field">
+          <label>Deployed By</label>
+          <input type="text" id="swdep-by" class="form-input" placeholder="Name" value="${escapeHtml(v('deployed_by', currentRoleUser?.name || ''))}">
+        </div>
+        <div class="form-field">
+          <label>Deployed Date</label>
+          <input type="date" id="swdep-date" class="form-input" value="${escapeHtml(v('deployed_at', today))}">
+        </div>
+        <div class="form-field form-field-full">
+          <label>Notes</label>
+          <input type="text" id="swdep-notes" class="form-input" placeholder="Optional notes" value="${escapeHtml(v('notes'))}">
+        </div>
+      </div>
+    `,
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      ${existing ? '<button class="form-secondary" style="color:var(--bad);" onclick="deleteSwDeploy(\'' + existing.id + '\',\'' + existing.config_id + '\')">Delete</button>' : ''}
+      <button class="form-submit" onclick="saveSwDeploy('${existing?.id || ''}')">Save</button>
+    `,
+  });
+}
+
+function _swDepCfgChange() {
+  const sel = document.getElementById('swdep-cfg');
+  const cfg = SW_CONFIGS.find(c => c.id === sel?.value);
+  const verEl = document.getElementById('swdep-ver');
+  if (cfg && verEl && !verEl.value) verEl.value = cfg.version;
+}
+
+async function saveSwDeploy(editId) {
+  const cfgId   = document.getElementById('swdep-cfg')?.value;
+  const equip   = (document.getElementById('swdep-equip')?.value || '').trim();
+  const loc     = (document.getElementById('swdep-loc')?.value || '').trim() || null;
+  const ver     = (document.getElementById('swdep-ver')?.value || '').trim();
+  const by      = (document.getElementById('swdep-by')?.value || '').trim() || null;
+  const date    = document.getElementById('swdep-date')?.value || null;
+  const notes   = (document.getElementById('swdep-notes')?.value || '').trim() || null;
+
+  if (!cfgId) { toast('Select a software config', 'error'); return; }
+  if (!equip) { toast('Equipment name is required', 'error'); return; }
+  if (!ver)   { toast('Deployed version is required', 'error'); return; }
+
+  const existing = editId ? SW_DEPLOYMENTS.find(d => d.id === editId) : null;
+  try {
+    if (existing) {
+      const patch = { config_id: cfgId, equipment_name: equip, location: loc, deployed_version: ver, deployed_by: by, deployed_at: date, notes };
+      const [row] = await _dbUpdate('sw_deployments', patch, { id: existing.id });
+      Object.assign(existing, row || patch);
+      toast('Deployment record updated', 'success');
+    } else {
+      const newRow = { config_id: cfgId, equipment_name: equip, location: loc, deployed_version: ver, deployed_by: by, deployed_at: date, notes, created_by: currentRoleUser?.name || null };
+      const [inserted] = await _dbInsert('sw_deployments', [newRow]);
+      if (inserted) SW_DEPLOYMENTS.unshift(inserted);
+      _cmDeployExpanded.add(cfgId);
+      toast('Deployment logged', 'success');
+    }
+    closeModal();
+    renderConfigMgmt();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function deleteSwDeploy(id, configId) {
+  const d = SW_DEPLOYMENTS.find(x => x.id === id);
+  if (!d) return;
+  if (!await cxConfirm('Delete deployment record for "' + d.equipment_name + ' — ' + d.deployed_version + '"?')) return;
+  try {
+    await fetch(SUPABASE_URL + '/rest/v1/sw_deployments?id=eq.' + id, {
+      method: 'DELETE',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() },
+    });
+    SW_DEPLOYMENTS = SW_DEPLOYMENTS.filter(x => x.id !== id);
+    toast('Deployment record deleted', 'success');
+    closeModal();
+    renderConfigMgmt();
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
 }
 
 // ==========================================================================
