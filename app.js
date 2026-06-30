@@ -457,6 +457,7 @@ async function refreshApp() {
   try { await loadSoftwareConfigs(); } catch(e) { console.warn('[refreshApp] SW config reload failed:', e.message); }
   try { await loadSwEquipment(); } catch(e) { console.warn('[refreshApp] SW equipment reload failed:', e.message); }
   try { await loadVehicles(); } catch(e) { console.warn('[refreshApp] vehicles reload failed:', e.message); }
+  try { await loadPunchTemplates(); } catch(e) { console.warn('[refreshApp] punch templates reload failed:', e.message); }
 
   // 3. Reload test items only when no status save is in flight
   if (!_mxSavePending) {
@@ -3315,6 +3316,7 @@ function onLoggedIn() {
     loadSoftwareConfigs(),
     loadSwEquipment(),
     loadVehicles(),
+    loadPunchTemplates(),
     loadForms(),
     loadDrawingsData(),
     _colLoadAll(),
@@ -7285,6 +7287,7 @@ let PUNCH_DB = [];
 let _plTab = 'all', _plPage = 1, _plSearch = '';
 let _plStatusFilter = '', _plPhaseFilter = '', _plLocFilter = '';
 let _plSubFilter = '', _plPriorityFilter = '', _plActivityFilter = '';
+let _plTemplateFilter = '';
 let _plSelected = new Set(); // IDs of punch items checked for PDF export
 let _punchFromTestId = null; // set by openPunchFromTestCase; cleared after save
 var _punchFromCarId = null;  // set by _vmCreatePunch; cleared after save
@@ -7479,6 +7482,7 @@ function renderPunchWorkflow() {
   if (_plPhaseFilter)    items = items.filter(p => p.phase === _plPhaseFilter);
   if (_plLocFilter)      items = items.filter(p => p.location === _plLocFilter);
   if (_plSubFilter)      items = items.filter(p => p.subsystem === _plSubFilter);
+  if (_plTemplateFilter) items = items.filter(p => (p.template_id||'') === _plTemplateFilter);
   if (_plPriorityFilter) items = items.filter(p => p.priority === _plPriorityFilter);
   if (_plActivityFilter) {
     const actCodes = new Set(TI.filter(r => r.Activity === _plActivityFilter).map(r => r.TestCaseCode));
@@ -7535,6 +7539,7 @@ function renderPunchWorkflow() {
       </div>
       <div style="display:flex;gap:8px;">
         ${uiCan('punch_list','import') ? `<button class="v2-btn-ghost" onclick="openPunchImportModal()">${icon('upload')}Import CSV</button>` : ''}
+        ${uiCan('punch_list','manage_templates') ? `<button class="v2-btn-ghost" onclick="_punchTemplatesModal()">${icon('sliders')}Templates</button>` : ''}
         ${uiCan('punch_list','create') ? `<button class="v2-btn-primary" onclick="openNewPunchModal()">＋ Create New</button>` : ''}
       </div>
     </div>
@@ -7584,6 +7589,7 @@ function renderPunchWorkflow() {
         <option value="">All Activities</option>
         ${plActivities.map(a=>`<option value="${escapeHtml(a)}" ${_plActivityFilter===a?'selected':''}>${escapeHtml(a)}</option>`).join('')}
       </select>` : ''}
+      ${(typeof PUNCH_TEMPLATES!=='undefined' && PUNCH_TEMPLATES.length) ? `<select onchange="_plSetFilter('template',this.value)"><option value="">All Templates</option>${PUNCH_TEMPLATES.map(t=>`<option value="${t.id}" ${_plTemplateFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}</select>` : ''}
       <span class="count"><b>${total}</b> of ${baseItems.length}</span>
     </div>
 
@@ -7639,6 +7645,7 @@ function _plRowHTML(p) {
             <h3>${escapeHtml(p.title||'')}</h3>
             ${p.priority ? `<span class="v2-priority is-${(p.priority||'').toLowerCase()}">${escapeHtml(p.priority)}</span>` : ''}
             <span class="v2-pill ${pillTone}">${escapeHtml(PL_STATUS_LABELS[p.status] || p.status || '—')}</span>
+            ${_punchTemplateBadge(p)}
           </div>
           ${p.description ? `<p class="punch-desc">${escapeHtml(p.description)}</p>` : ''}
           <div class="v2-meta-line">
@@ -7669,10 +7676,11 @@ function _plSetFilter(k,v) {
   else if (k==='sub') _plSubFilter=v;
   else if (k==='priority') _plPriorityFilter=v;
   else if (k==='activity') _plActivityFilter=v;
+  else if (k==='template') _plTemplateFilter=v;
   _plPage=1; renderPunchWorkflow();
 }
 function _plPhaseChange(id) { _plPhaseFilter=id; _plLocFilter=''; _plSubFilter=''; _plPage=1; renderPunchWorkflow(); }
-function _plClearFilters()  { _plSearch=''; _plStatusFilter=''; _plPhaseFilter=''; _plLocFilter=''; _plSubFilter=''; _plPriorityFilter=''; _plActivityFilter=''; _plPage=1; renderPunchWorkflow(); }
+function _plClearFilters()  { _plSearch=''; _plStatusFilter=''; _plPhaseFilter=''; _plLocFilter=''; _plSubFilter=''; _plPriorityFilter=''; _plActivityFilter=''; _plTemplateFilter=''; _plPage=1; renderPunchWorkflow(); }
 
 function _plToggleSelect(id, checked) {
   if (checked) _plSelected.add(id);
@@ -7952,6 +7960,7 @@ function openPunchDetail(id) {
           <div style="font-size:13px;color:var(--gray-800);line-height:1.6;white-space:pre-wrap;padding:10px 14px;background:var(--gray-50);border-radius:8px;">${escapeHtml(p.description)}</div>
         </div>` : ''}
 
+      ${_punchCustomFieldsHTML(p)}
       <!-- Linked Test Cases + Cars (managed from the Punch List tool) -->
       ${_punchLinksSectionHTML(p)}
 
@@ -8293,15 +8302,53 @@ async function restorePunch(id) {
 }
 
 function _punchFormHTML(p) {
+  // Resolve active template: edit → item's template; create → current selection/default.
+  let t = _punchActiveTemplate;
+  if (p && p.template_id) { const pt = _punchTemplateById(p.template_id); if (pt) t = pt; }
+  if (!t) t = _punchDefaultTemplate();
+  _punchActiveTemplate = t || null;
+  const cfg = _punchTplCfg(t);
+  const mode = cfg.location_mode || 'wayside';
+  const hide = new Set(cfg.hide_core || []);
+  const optKey = (core, def) => (cfg.option_keys && cfg.option_keys[core]) || def;
+  const optList = (key, fb) => (_fsCfg(key).length ? _fsCfg(key) : fb);
+
   const phases  = LOCS.filter(l => l.level === 1).sort((a,b) => a.sort_order - b.sort_order);
   const locs    = p?.phase ? LOCS.filter(l => l.level === 2 && l.parent_id === p.phase) : [];
   const v   = (id) => p ? escapeHtml(p[id]||'') : '';
   const sel = (id, val) => p?.[id] === val ? 'selected' : '';
-  const fOpts = (key, selVal) => (_fsCfg(key).length ? _fsCfg(key) : []).map(o => `<option ${o===selVal?'selected':''}>${escapeHtml(o)}</option>`).join('');
-  // Photos Module link context — only meaningful for an existing (saved) punch item.
   if (p) { try { window._pmPunchCtx = { source_type:'punch', source_id: p.id, source_label: 'Punch #' + (p.number || p.id), location: (LOCS.find(l => l.id === p.location)||{}).name || '', subsystem: p.subsystem || '', phase: (LOCS.find(l => l.id === p.phase)||{}).name || p.phase || '' }; } catch(e) {} }
+
+  const tmplRow = `
+      <div class="form-field form-field-full">
+        <label>Punch Template${p?'':' *'}</label>
+        ${p
+          ? `<div style="font-size:13px;font-weight:600;">${escapeHtml(t ? t.name : '—')}</div>`
+          : `<select id="np-template" class="form-input" onchange="_punchSwitchTemplate(this.value)">
+              ${_punchTemplatesActive().map(x=>`<option value="${x.id}" ${t&&t.id===x.id?'selected':''}>${escapeHtml(x.name)}</option>`).join('')}
+            </select>${t&&t.description?`<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">${escapeHtml(t.description)}</div>`:''}`}
+      </div>`;
+
+  const locHTML = mode === 'wayside'
+    ? `<div class="form-field">
+        <label>Phase</label>
+        <select id="np-phase" class="form-input" onchange="npFilterLoc()">
+          <option value="">Select phase…</option>
+          ${phases.map(ph=>`<option value="${ph.id}" ${p?.phase===ph.id?'selected':''}>${escapeHtml(ph.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Location</label>
+        <select id="np-location" class="form-input">
+          ${locs.length ? '<option value="">Select location…</option>'+locs.map(l=>`<option value="${l.id}" ${p?.location===l.id?'selected':''}>${escapeHtml(l.name)}</option>`).join('')
+            : '<option value="">Select phase first…</option>'}
+        </select>
+      </div>`
+    : (mode === 'vehicle' ? _punchCarFieldHTML(p, cfg) : '');
+
   return `
     <div class="form-grid">
+      ${tmplRow}
       <div class="form-field form-field-full">
         <label>Title *</label>
         <input type="text" id="np-title" class="form-input" placeholder="Describe the punch item" value="${v('title')}">
@@ -8310,14 +8357,13 @@ function _punchFormHTML(p) {
         <label>Type *</label>
         <select id="np-type" class="form-input">
           <option value="">Select…</option>
-          ${fOpts('punch_type', p?.type)||['Defect','Issue','NCR','Observation','RFI'].map(t=>`<option ${sel('type',t)}>${t}</option>`).join('')}
+          ${optList(optKey('punch_type','punch_type'), ['Defect','Issue','NCR','Observation','RFI']).map(o=>`<option ${o===(p?.type)?'selected':''}>${escapeHtml(o)}</option>`).join('')}
         </select>
       </div>
       <div class="form-field">
         <label>Priority *</label>
         <select id="np-priority" class="form-input">
-          ${((_fsCfg('priority').length ? _fsCfg('priority') : ['Low','Medium','High','Critical'])
-            .map(t=>`<option ${sel('priority',t)||(!p&&t==='Medium'?'selected':'')}>${t}</option>`)).join('')}
+          ${optList('priority', ['Low','Medium','High','Critical']).map(o=>`<option ${sel('priority',o)||(!p&&o==='Medium'?'selected':'')}>${escapeHtml(o)}</option>`).join('')}
         </select>
       </div>
       <div class="form-field">
@@ -8336,34 +8382,21 @@ function _punchFormHTML(p) {
         <label>Distribution List</label>
         ${_taHTML('np-distlist', false)}
       </div>
-      <div class="form-field">
-        <label>Phase</label>
-        <select id="np-phase" class="form-input" onchange="npFilterLoc()">
-          <option value="">Select phase…</option>
-          ${phases.map(ph=>`<option value="${ph.id}" ${p?.phase===ph.id?'selected':''}>${escapeHtml(ph.name)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="form-field">
-        <label>Location</label>
-        <select id="np-location" class="form-input">
-          ${locs.length ? '<option value="">Select location…</option>'+locs.map(l=>`<option value="${l.id}" ${p?.location===l.id?'selected':''}>${escapeHtml(l.name)}</option>`).join('')
-            : '<option value="">Select phase first…</option>'}
-        </select>
-      </div>
-      <div class="form-field">
+      ${locHTML}
+      ${hide.has('subsystem') ? '' : `<div class="form-field">
         <label>Subsystem</label>
         <select id="np-subsystem" class="form-input">
           <option value="">Select…</option>
-          ${(_fsCfg('punch_subsystem').length ? _fsCfg('punch_subsystem') : SUBSYSTEMS_LIST).map(s=>`<option ${sel('subsystem',s)}>${s}</option>`).join('')}
+          ${optList(optKey('punch_subsystem','punch_subsystem'), SUBSYSTEMS_LIST).map(s=>`<option ${sel('subsystem',s)}>${escapeHtml(s)}</option>`).join('')}
         </select>
-      </div>
-      <div class="form-field">
+      </div>`}
+      ${hide.has('schedule_impact') ? '' : `<div class="form-field">
         <label>Schedule Impact</label>
         <select id="np-schedule" class="form-input">
           <option value="">None</option>
-          ${(_fsCfg('schedule_impact').length ? _fsCfg('schedule_impact') : ['Minor','Moderate','Major','Critical']).map(s=>`<option ${sel('schedule_impact',s)}>${s}</option>`).join('')}
+          ${optList(optKey('schedule_impact','schedule_impact'), ['Minor','Moderate','Major','Critical']).map(s=>`<option ${sel('schedule_impact',s)}>${escapeHtml(s)}</option>`).join('')}
         </select>
-      </div>
+      </div>`}
       <div class="form-field">
         <label>Due Date</label>
         <input type="date" id="np-due" class="form-input" value="${v('due_date')}">
@@ -8372,20 +8405,21 @@ function _punchFormHTML(p) {
         <label>Description</label>
         <textarea id="np-desc" class="form-input" rows="4" placeholder="Describe the issue in detail…">${v('description')}</textarea>
       </div>
-      <div class="form-field">
+      ${hide.has('category_of_failure') ? '' : `<div class="form-field">
         <label>Category of Failure</label>
         <select id="np-cat" class="form-input">
           <option value="">Select…</option>
-          ${(_fsCfg('category_of_failure').length ? _fsCfg('category_of_failure') : ['Hardware Failure','Software Defect','Procedure Issue','Documentation Error','Integration Issue','Environmental','Design Issue','Other']).map(s=>`<option ${sel('category_of_failure',s)}>${s}</option>`).join('')}
+          ${optList(optKey('category_of_failure','category_of_failure'), ['Hardware Failure','Software Defect','Procedure Issue','Documentation Error','Integration Issue','Environmental','Design Issue','Other']).map(s=>`<option ${sel('category_of_failure',s)}>${escapeHtml(s)}</option>`).join('')}
         </select>
-      </div>
-      <div class="form-field">
+      </div>`}
+      ${hide.has('type_of_failure') ? '' : `<div class="form-field">
         <label>Type of Failure</label>
         <select id="np-failtype" class="form-input">
           <option value="">Select…</option>
-          ${(_fsCfg('type_of_failure').length ? _fsCfg('type_of_failure') : ['First Occurrence','Repeat Failure','Systematic Issue']).map(s=>`<option ${sel('type_of_failure',s)}>${s}</option>`).join('')}
+          ${optList(optKey('type_of_failure','type_of_failure'), ['First Occurrence','Repeat Failure','Systematic Issue']).map(s=>`<option ${sel('type_of_failure',s)}>${escapeHtml(s)}</option>`).join('')}
         </select>
-      </div>
+      </div>`}
+      ${_punchExtraFieldsHTML(p, cfg)}
       <div class="form-field">
         <label>RTC / Work Item ID</label>
         <input type="text" id="np-rtc" class="form-input" placeholder="e.g. RTC-12345" value="${v('rtc_work_item_id')}">
@@ -8423,22 +8457,18 @@ function openNewPunchModal() {
   if (typeof uiCan === 'function' && !uiCan('punch_list', 'create')) { toast('You do not have permission to create punch items', 'error'); return; }
   _punchNewPhotos = [];
   _punchFromCarId = null;
+  _punchActiveTemplate = _punchDefaultTemplate();
   modal({
     title: 'New Punch List Item',
     size: 'large',
-    body: _punchFormHTML(null),
+    body: `<div id="punch-form-wrap">${_punchFormHTML(null)}</div>`,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
       <button class="form-secondary" onclick="saveNewPunchItem(true)">Save &amp; Create New</button>
       <button class="form-submit" onclick="saveNewPunchItem(false)">Save</button>
     `,
   });
-  setTimeout(() => {
-    _taInitField('np-assignees', [], false);
-    _taInitField('np-distlist', [], false);
-    _taInitSingle('np-pim', currentRoleUser?.name || '');
-    _taInitSingle('np-approver', '');
-  }, 30);
+  _punchFormInit(null);
 }
 
 // ── Create punch item pre-filled from a failed test case ─────────────────────
@@ -8447,6 +8477,7 @@ function openPunchFromTestCase(testId) {
   if (!ti) { toast('Test case not found', 'error'); return; }
   _punchNewPhotos = [];
   _punchFromTestId = String(testId); // remember origin so saveNewPunchItem can auto-link
+  _punchActiveTemplate = _punchDefaultTemplate();
 
   const titlePrefill = `Failed: ${ti.TestCaseCode}${ti.TestName ? ' — ' + ti.TestName : ''}`;
   const descParts = [
@@ -8462,7 +8493,7 @@ function openPunchFromTestCase(testId) {
     title: 'Create Punch List Item',
     sub: `Linked to failed test case ${ti.TestCaseCode}`,
     size: 'large',
-    body: _punchFormHTML(null),
+    body: `<div id="punch-form-wrap">${_punchFormHTML(null)}</div>`,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
       <button class="form-submit" onclick="saveNewPunchItem(false)">Create Punch Item</button>
@@ -8634,43 +8665,59 @@ async function _unlinkPunchFromTest(testId, punchId) {
 function openEditPunchModal(id) {
   const p = PUNCH_DB.find(x => x.id === id);
   if (!p) return;
+  _punchActiveTemplate = (p.template_id && _punchTemplateById(p.template_id)) || _punchDefaultTemplate();
   modal({
     title: `Edit Punch #${p.number}`,
     size: 'large',
-    body: _punchFormHTML(p),
+    body: `<div id="punch-form-wrap">${_punchFormHTML(p)}</div>`,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
       <button class="form-submit" onclick="saveEditPunchItem('${id}')">Save Changes</button>
     `,
   });
-  setTimeout(() => {
-    _taInitField('np-assignees', p.assignees || [], false);
-    _taInitField('np-distlist', p.distribution_list || [], false);
-    _taInitSingle('np-pim', p.punch_item_manager || '');
-    _taInitSingle('np-approver', p.final_approver || '');
-  }, 30);
+  _punchFormInit(p);
 }
 
 function _readPunchForm() {
-  return {
-    title:              document.getElementById('np-title').value.trim(),
-    type:               document.getElementById('np-type').value,
-    priority:           document.getElementById('np-priority').value,
-    punch_item_manager: document.getElementById('np-pim').value.trim(),
-    final_approver:     document.getElementById('np-approver').value.trim(),
-    assignees:          document.getElementById('np-assignees').value.split(',').map(s=>s.trim()).filter(Boolean),
-    distribution_list:  document.getElementById('np-distlist').value.split(',').map(s=>s.trim()).filter(Boolean),
-    phase:              document.getElementById('np-phase').value || null,
-    location:           document.getElementById('np-location').value || null,
-    subsystem:          document.getElementById('np-subsystem').value || null,
-    schedule_impact:    document.getElementById('np-schedule').value || null,
-    due_date:           document.getElementById('np-due').value || null,
-    description:        document.getElementById('np-desc').value.trim(),
-    category_of_failure:document.getElementById('np-cat').value || null,
-    type_of_failure:    document.getElementById('np-failtype').value || null,
-    rtc_work_item_id:   document.getElementById('np-rtc').value.trim() || null,
-    is_private:         document.getElementById('np-private').checked,
+  const g = (id) => document.getElementById(id);
+  const val = (id) => { const el = g(id); return el ? el.value : ''; };
+  const t = _punchActiveTemplate;
+  const cfg = _punchTplCfg(t);
+  const mode = cfg.location_mode || 'wayside';
+  const out = {
+    title:              val('np-title').trim(),
+    type:               val('np-type'),
+    priority:           val('np-priority'),
+    punch_item_manager: val('np-pim').trim(),
+    final_approver:     val('np-approver').trim(),
+    assignees:          (val('np-assignees')||'').split(',').map(s=>s.trim()).filter(Boolean),
+    distribution_list:  (val('np-distlist')||'').split(',').map(s=>s.trim()).filter(Boolean),
+    subsystem:          val('np-subsystem') || null,
+    schedule_impact:    val('np-schedule') || null,
+    due_date:           val('np-due') || null,
+    description:        val('np-desc').trim(),
+    category_of_failure:val('np-cat') || null,
+    type_of_failure:    val('np-failtype') || null,
+    rtc_work_item_id:   val('np-rtc').trim() || null,
+    is_private:         !!(g('np-private') && g('np-private').checked),
+    template_id:        (t && t.id) || null,
   };
+  if (mode === 'wayside') { out.phase = val('np-phase') || null; out.location = val('np-location') || null; }
+  else { out.phase = null; out.location = null; }
+  // Template-specific extra fields → custom_fields jsonb.
+  const custom = {};
+  for (const f of (cfg.extra_fields || [])) {
+    const el = g('npx-' + f.key);
+    if (!el) continue;
+    custom[f.key] = (f.type === 'checkbox') ? el.checked : (el.value || '');
+  }
+  out.custom_fields = custom;
+  // Car selection (vehicle mode) — consumed by save into linked_car_ids; never a column.
+  if (mode === 'vehicle') {
+    if (cfg.multi_car) out._cars = [...document.querySelectorAll('.npcar:checked')].map(c => c.value);
+    else { const cv = val('np-car'); out._cars = cv ? [cv] : []; }
+  }
+  return out;
 }
 
 async function saveNewPunchItem(createAnother) {
@@ -8680,6 +8727,10 @@ async function saveNewPunchItem(createAnother) {
     if (!form.title)               { toast('Title is required', 'error'); return; }
     if (!form.type)                { toast('Type is required', 'error'); return; }
     if (!form.punch_item_manager)  { toast('Punch Item Manager is required', 'error'); return; }
+    const _tcfg = _punchTplCfg(_punchActiveTemplate);
+    const _verr = _punchValidateTemplate(form, _tcfg);
+    if (_verr) { toast(_verr, 'error'); return; }
+    const _formCars = form._cars || []; delete form._cars;
 
     const nums = PUNCH_DB.map(p => p.number || 0);
     const nextNum = nums.length ? Math.max(...nums) + 1 : 1;
@@ -8738,6 +8789,14 @@ async function saveNewPunchItem(createAnother) {
         if (typeof renderVehicleManagement === 'function') renderVehicleManagement();
       } catch (e) { console.warn('[autoLink] Failed to auto-link punch to car:', e.message); }
     }
+    if (_formCars.length) {
+      try {
+        const merged = Array.from(new Set([...(data.linked_car_ids || []), ..._formCars]));
+        await _sb.from('punch_items').update({ linked_car_ids: merged }).eq('id', data.id);
+        data.linked_car_ids = merged;
+        if (typeof renderVehicleManagement === 'function') renderVehicleManagement();
+      } catch (e) { console.warn('[punch form cars]', e.message); }
+    }
     if (createAnother) { closeModal(); openNewPunchModal(); }
     else { closeModal(); renderPunchWorkflow(); }
   } catch (err) {
@@ -8772,6 +8831,10 @@ async function saveEditPunchItem(id) {
   try {
     const form = _readPunchForm();
     if (!form.title) { toast('Title is required', 'error'); return; }
+    const _ecfg = _punchTplCfg(_punchActiveTemplate);
+    const _everr = _punchValidateTemplate(form, _ecfg);
+    if (_everr) { toast(_everr, 'error'); return; }
+    const _editCars = form._cars; delete form._cars;
     const p = PUNCH_DB.find(x => x.id === id);
     if (!p) return;
     const changes = _punchFieldDiff(p, form);
@@ -8783,6 +8846,7 @@ async function saveEditPunchItem(id) {
     };
     const updates = { ...form, updated_at: new Date().toISOString(),
       history: [...(p.history||[]), histEntry] };
+    if (_editCars !== undefined) updates.linked_car_ids = _editCars;
     const { error } = await _sb.from('punch_items').update(updates).eq('id', id);
     if (error) { toast('Save failed: ' + error.message, 'error'); return; }
     Object.assign(p, updates);
@@ -8792,6 +8856,213 @@ async function saveEditPunchItem(id) {
     toast('Unexpected error: ' + err.message, 'error');
     console.error('saveEditPunchItem error:', err);
   }
+}
+
+// ==========================================================================
+// PUNCH TEMPLATES — named punch "types/domains" (Vehicle Defect, Wayside
+// Defect, …). A template's config drives the create/edit form: location mode
+// (wayside Phase/Location vs vehicle Car picker), option-list overrides for the
+// core selects, hidden core fields, and extra custom fields stored in
+// punch_items.custom_fields. Phase 2 adds an admin editor (manage_templates).
+// ==========================================================================
+let PUNCH_TEMPLATES = [];
+let _punchActiveTemplate = null;
+let _ptpEditFields = [];
+
+async function loadPunchTemplates() {
+  try {
+    const d = await _dbSelect('punch_templates');
+    PUNCH_TEMPLATES = (d || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  } catch (e) { console.warn('[loadPunchTemplates]', e.message); }
+}
+function _punchTemplateById(id) { return id ? PUNCH_TEMPLATES.find(t => t.id === id) || null : null; }
+function _punchTemplatesActive() { return PUNCH_TEMPLATES.filter(t => t.active !== false).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)); }
+function _punchDefaultTemplate() { return PUNCH_TEMPLATES.find(t => t.is_default && t.active !== false) || _punchTemplatesActive()[0] || null; }
+function _punchTplCfg(t) { return (t && t.config) || {}; }
+
+function _punchValidateTemplate(form, cfg) {
+  cfg = cfg || {};
+  if (cfg.location_mode === 'vehicle' && cfg.require_car && !(form._cars && form._cars.length)) return 'At least one car is required for this template';
+  for (const f of (cfg.extra_fields || [])) {
+    if (!f.required) continue;
+    const val = form.custom_fields ? form.custom_fields[f.key] : null;
+    if (val === undefined || val === null || val === '' || val === false) return (f.label || f.key) + ' is required';
+  }
+  return null;
+}
+
+function _punchCarFieldHTML(p, cfg) {
+  const all = (typeof VEHICLES !== 'undefined') ? VEHICLES : [];
+  const cars = (typeof _vmSortCars === 'function') ? _vmSortCars(all) : all.slice();
+  const linked = new Set((p && p.linked_car_ids) || []);
+  if (cfg.multi_car) {
+    const groups = ['D', 'E'].map(tp => {
+      const g = cars.filter(c => c.car_type === tp);
+      if (!g.length) return '';
+      return `<div style="margin-top:4px;"><div style="font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">${tp}-Cars</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:3px;">${g.map(c => `<label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;cursor:pointer;"><input type="checkbox" class="npcar" value="${c.id}" ${linked.has(c.id) ? 'checked' : ''} style="margin:0;"> ${escapeHtml(c.car_number)}</label>`).join('')}</div></div>`;
+    }).join('');
+    return `<div class="form-field form-field-full"><label>Car(s)</label>${groups || '<div style="font-size:12px;color:var(--gray-500);">No cars in the registry yet.</div>'}</div>`;
+  }
+  const cur = ((p && p.linked_car_ids) || [])[0] || '';
+  return `<div class="form-field form-field-full"><label>Car</label><select id="np-car" class="form-input"><option value="">Select car…</option>${cars.map(c => `<option value="${c.id}" ${cur === c.id ? 'selected' : ''}>${escapeHtml(c.car_number)} · ${escapeHtml(c.car_type)}</option>`).join('')}</select></div>`;
+}
+
+function _punchExtraFieldsHTML(p, cfg) {
+  const fields = cfg.extra_fields || [];
+  if (!fields.length) return '';
+  const cf = (p && p.custom_fields) || {};
+  return fields.map(f => {
+    const id = 'npx-' + f.key;
+    const val = cf[f.key];
+    const req = f.required ? ' *' : '';
+    if (f.type === 'textarea') return `<div class="form-field form-field-full"><label>${escapeHtml(f.label)}${req}</label><textarea id="${id}" class="form-input" rows="3">${escapeHtml(val || '')}</textarea></div>`;
+    if (f.type === 'select') { const opts = f.options_key ? _fsCfg(f.options_key) : (f.options || []); return `<div class="form-field"><label>${escapeHtml(f.label)}${req}</label><select id="${id}" class="form-input"><option value="">Select…</option>${opts.map(o => `<option ${val === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}</select></div>`; }
+    if (f.type === 'checkbox') return `<div class="form-field" style="display:flex;align-items:center;gap:8px;padding-top:24px;"><input type="checkbox" id="${id}" ${val ? 'checked' : ''} style="width:16px;height:16px;"><label for="${id}" style="cursor:pointer;font-size:13px;">${escapeHtml(f.label)}</label></div>`;
+    if (f.type === 'date') return `<div class="form-field"><label>${escapeHtml(f.label)}${req}</label><input type="date" id="${id}" class="form-input" value="${escapeHtml(val || '')}"></div>`;
+    if (f.type === 'number') return `<div class="form-field"><label>${escapeHtml(f.label)}${req}</label><input type="number" id="${id}" class="form-input" value="${escapeHtml(val || '')}"></div>`;
+    return `<div class="form-field"><label>${escapeHtml(f.label)}${req}</label><input type="text" id="${id}" class="form-input" value="${escapeHtml(val || '')}"></div>`;
+  }).join('');
+}
+
+function _punchTemplateBadge(p) {
+  const t = _punchTemplateById(p.template_id);
+  if (!t) return '';
+  return `<span style="font-size:10px;font-weight:600;background:#eef2ff;color:#3730a3;border:1px solid #e0e7ff;border-radius:4px;padding:1px 6px;">${escapeHtml(t.name)}</span>`;
+}
+function _punchCustomFieldsHTML(p) {
+  const t = _punchTemplateById(p.template_id);
+  const cfg = _punchTplCfg(t);
+  const fields = cfg.extra_fields || [];
+  const cf = p.custom_fields || {};
+  const rows = fields.filter(f => { const x = cf[f.key]; return x !== undefined && x !== '' && x !== false; });
+  if (!t && !rows.length) return '';
+  return `<div style="margin-bottom:18px;">
+      <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;">${t ? escapeHtml(t.name) + ' fields' : 'Template fields'}</div>
+      ${rows.length ? `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:14px;background:var(--gray-50);border-radius:8px;">${rows.map(f => `<div><div style="font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;">${escapeHtml(f.label)}</div><div style="font-size:12px;color:var(--gray-800);">${escapeHtml(String(cf[f.key] === true ? 'Yes' : cf[f.key]))}</div></div>`).join('')}</div>` : '<div style="font-size:12px;color:var(--gray-400);">No template-specific values.</div>'}
+    </div>`;
+}
+function _punchFormInit(p) {
+  setTimeout(() => {
+    _taInitField('np-assignees', (p && p.assignees) || [], false);
+    _taInitField('np-distlist', (p && p.distribution_list) || [], false);
+    _taInitSingle('np-pim', (p && p.punch_item_manager) || (p ? '' : (currentRoleUser && currentRoleUser.name) || ''));
+    _taInitSingle('np-approver', (p && p.final_approver) || '');
+  }, 30);
+}
+function _punchSwitchTemplate(id) {
+  _punchActiveTemplate = _punchTemplateById(id) || _punchDefaultTemplate();
+  const wrap = document.getElementById('punch-form-wrap');
+  if (wrap) { wrap.innerHTML = _punchFormHTML(null); _punchFormInit(null); }
+}
+
+// ── Phase 2: template admin editor ────────────────────────────────────────
+function _punchTemplatesModal() {
+  if (typeof uiCan === 'function' && !uiCan('punch_list', 'manage_templates')) { toast('Not permitted', 'error'); return; }
+  const ts = PUNCH_TEMPLATES.slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  modal({
+    title: 'Punch Templates', size: 'large',
+    body: `<div style="display:flex;justify-content:flex-end;margin-bottom:10px;"><button class="form-submit" onclick="_punchTplEditModal('')">+ New Template</button></div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+      ${ts.length ? ts.map(t => { const cfg = _punchTplCfg(t); return `<div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;">
+        <div style="flex:1;"><div style="font-weight:600;">${escapeHtml(t.name)} ${t.is_default ? '<span style="color:#d97706;" title="Default">★</span>' : ''} ${t.active === false ? '<span style="font-size:11px;color:var(--gray-400);">(inactive)</span>' : ''}</div>
+          <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(cfg.location_mode || 'wayside')}${(cfg.extra_fields || []).length ? ' · ' + (cfg.extra_fields || []).length + ' extra field(s)' : ''}</div></div>
+        <button class="form-secondary" style="font-size:11px;" onclick="_punchTplEditModal('${t.id}')">Edit</button>
+      </div>`; }).join('') : '<div style="font-size:13px;color:var(--gray-500);">No templates yet.</div>'}
+      </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Done</button>`,
+  });
+}
+function _punchTplEditModal(id) {
+  const t = id ? _punchTemplateById(id) : null;
+  const cfg = _punchTplCfg(t);
+  _ptpEditFields = JSON.parse(JSON.stringify(cfg.extra_fields || []));
+  const ok = cfg.option_keys || {};
+  const mode = cfg.location_mode || 'wayside';
+  const coreKeys = [['punch_type', 'Type'], ['punch_subsystem', 'Subsystem'], ['schedule_impact', 'Schedule Impact'], ['category_of_failure', 'Category of Failure'], ['type_of_failure', 'Type of Failure']];
+  modal({
+    title: t ? 'Edit Template' : 'New Punch Template', size: 'large',
+    body: `<div class="form-grid">
+        <div class="form-field"><label>Name *</label><input id="ptpe-name" class="form-input" value="${escapeHtml(t ? t.name : '')}"></div>
+        <div class="form-field"><label>Location Mode</label><select id="ptpe-mode" class="form-input">${['wayside', 'vehicle', 'none'].map(m => `<option value="${m}" ${mode === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
+        <div class="form-field form-field-full"><label>Description</label><input id="ptpe-desc" class="form-input" value="${escapeHtml(t ? (t.description || '') : '')}"></div>
+        <div class="form-field"><label style="display:flex;gap:6px;align-items:center;font-weight:400;"><input type="checkbox" id="ptpe-default" ${t && t.is_default ? 'checked' : ''}> Default template</label></div>
+        <div class="form-field"><label style="display:flex;gap:6px;align-items:center;font-weight:400;"><input type="checkbox" id="ptpe-active" ${!t || t.active !== false ? 'checked' : ''}> Active</label></div>
+        <div class="form-field"><label style="display:flex;gap:6px;align-items:center;font-weight:400;"><input type="checkbox" id="ptpe-multicar" ${cfg.multi_car ? 'checked' : ''}> Allow multiple cars</label></div>
+        <div class="form-field"><label style="display:flex;gap:6px;align-items:center;font-weight:400;"><input type="checkbox" id="ptpe-reqcar" ${cfg.require_car ? 'checked' : ''}> Car required</label></div>
+      </div>
+      <div style="margin-top:10px;"><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--gray-400);margin-bottom:6px;">Option-list overrides <span style="font-weight:400;text-transform:none;color:var(--gray-500);">(fieldset key per select; blank = default)</span></div>
+        <div class="form-grid">${coreKeys.map(([k, lbl]) => `<div class="form-field"><label>${lbl}</label><input id="ptpe-ok-${k}" class="form-input" placeholder="${k}" value="${escapeHtml(ok[k] || '')}"></div>`).join('')}</div>
+      </div>
+      <div style="margin-top:10px;"><div style="display:flex;justify-content:space-between;align-items:center;"><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--gray-400);">Extra fields</div><button class="form-secondary" style="font-size:11px;" onclick="_punchTplAddField()">+ Add field</button></div>
+        <div id="ptpe-fields" style="margin-top:6px;"></div>
+      </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+      ${t ? `<button class="form-secondary" style="color:var(--bad);" onclick="_punchTplDelete('${t.id}')">Delete</button>` : ''}
+      <button class="form-submit" onclick="_punchTplSave('${id || ''}')">Save Template</button>`,
+  });
+  _punchTplRenderFields();
+}
+function _punchTplRenderFields() {
+  const wrap = document.getElementById('ptpe-fields'); if (!wrap) return;
+  if (!_ptpEditFields.length) { wrap.innerHTML = '<div style="font-size:12px;color:var(--gray-500);">No extra fields.</div>'; return; }
+  wrap.innerHTML = _ptpEditFields.map((f, i) => `<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;flex-wrap:wrap;border:1px solid var(--border);border-radius:6px;padding:6px 8px;">
+      <input class="form-input ptpf-key" data-i="${i}" placeholder="key" value="${escapeHtml(f.key || '')}" style="width:110px;font-size:12px;">
+      <input class="form-input ptpf-label" data-i="${i}" placeholder="label" value="${escapeHtml(f.label || '')}" style="width:150px;font-size:12px;">
+      <select class="form-input ptpf-type" data-i="${i}" style="width:110px;font-size:12px;">${['text', 'textarea', 'select', 'date', 'number', 'checkbox'].map(ty => `<option ${f.type === ty ? 'selected' : ''}>${ty}</option>`).join('')}</select>
+      <input class="form-input ptpf-opts" data-i="${i}" placeholder="options (comma) or fieldset key" value="${escapeHtml(f.options ? f.options.join(', ') : (f.options_key || ''))}" style="flex:1;min-width:140px;font-size:12px;">
+      <label style="font-size:11px;display:inline-flex;gap:3px;align-items:center;"><input type="checkbox" class="ptpf-req" data-i="${i}" ${f.required ? 'checked' : ''}> req</label>
+      <button class="form-secondary" style="font-size:11px;padding:2px 7px;color:var(--bad);" aria-label="Remove field" onclick="_punchTplRemoveField(${i})">${icon('x')}</button>
+    </div>`).join('');
+}
+function _punchTplSyncFields() {
+  document.querySelectorAll('#ptpe-fields .ptpf-key').forEach(el => { const i = +el.dataset.i; _ptpEditFields[i] = _ptpEditFields[i] || {}; _ptpEditFields[i].key = el.value.trim(); });
+  document.querySelectorAll('#ptpe-fields .ptpf-label').forEach(el => { _ptpEditFields[+el.dataset.i].label = el.value.trim(); });
+  document.querySelectorAll('#ptpe-fields .ptpf-type').forEach(el => { _ptpEditFields[+el.dataset.i].type = el.value; });
+  document.querySelectorAll('#ptpe-fields .ptpf-req').forEach(el => { _ptpEditFields[+el.dataset.i].required = el.checked; });
+  document.querySelectorAll('#ptpe-fields .ptpf-opts').forEach(el => {
+    const f = _ptpEditFields[+el.dataset.i]; const raw = el.value.trim();
+    delete f.options; delete f.options_key;
+    if (raw.includes(',')) f.options = raw.split(',').map(s => s.trim()).filter(Boolean);
+    else if (raw) f.options_key = raw;
+  });
+}
+function _punchTplAddField() { _punchTplSyncFields(); _ptpEditFields.push({ key: '', label: '', type: 'text' }); _punchTplRenderFields(); }
+function _punchTplRemoveField(i) { _punchTplSyncFields(); _ptpEditFields.splice(i, 1); _punchTplRenderFields(); }
+async function _punchTplSave(id) {
+  _punchTplSyncFields();
+  const name = (document.getElementById('ptpe-name')?.value || '').trim();
+  if (!name) { toast('Name is required', 'error'); return; }
+  const coreKeys = ['punch_type', 'punch_subsystem', 'schedule_impact', 'category_of_failure', 'type_of_failure'];
+  const option_keys = {};
+  coreKeys.forEach(k => { const v = (document.getElementById('ptpe-ok-' + k)?.value || '').trim(); if (v) option_keys[k] = v; });
+  const fields = _ptpEditFields.filter(f => f.key && f.label).map(f => { const o = { key: f.key, label: f.label, type: f.type || 'text' }; if (f.required) o.required = true; if (f.options) o.options = f.options; if (f.options_key) o.options_key = f.options_key; return o; });
+  const config = {
+    location_mode: document.getElementById('ptpe-mode')?.value || 'wayside',
+    multi_car: !!document.getElementById('ptpe-multicar')?.checked,
+    require_car: !!document.getElementById('ptpe-reqcar')?.checked,
+    option_keys, hide_core: [], extra_fields: fields,
+  };
+  const isDefault = !!document.getElementById('ptpe-default')?.checked;
+  const active = !!document.getElementById('ptpe-active')?.checked;
+  const desc = (document.getElementById('ptpe-desc')?.value || '').trim() || null;
+  try {
+    if (isDefault) { for (const ot of PUNCH_TEMPLATES) { if (ot.is_default && ot.id !== id) { try { await _dbUpdate('punch_templates', { is_default: false }, { id: ot.id }); ot.is_default = false; } catch (_) {} } } }
+    if (id) {
+      const [row] = await _dbUpdate('punch_templates', { name, description: desc, config, is_default: isDefault, active }, { id });
+      const t = _punchTemplateById(id); if (t) Object.assign(t, row || { name, description: desc, config, is_default: isDefault, active });
+    } else {
+      const sort = PUNCH_TEMPLATES.reduce((m, t) => Math.max(m, t.sort_order || 0), 0) + 1;
+      const [row] = await _dbInsert('punch_templates', [{ name, description: desc, config, is_default: isDefault, active, sort_order: sort, created_by: (currentRoleUser && currentRoleUser.name) || null }]);
+      if (row) PUNCH_TEMPLATES.push(row);
+    }
+    toast('Template saved', 'success'); _punchTemplatesModal();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+async function _punchTplDelete(id) {
+  if (!await cxConfirm('Delete this template?\n\nExisting punch items keep their data but lose the template link.')) return;
+  try { await _dbDelete('punch_templates', { id }); PUNCH_TEMPLATES = PUNCH_TEMPLATES.filter(t => t.id !== id); toast('Template deleted', 'success'); _punchTemplatesModal(); }
+  catch (e) { toast('Delete failed: ' + e.message, 'error'); }
 }
 
 // ==========================================================================
@@ -18163,7 +18434,14 @@ function _vmPunchCardHTML(car, p, canEdit) {
 function _vmCreatePunch(carId) {
   if (typeof openNewPunchModal !== 'function') { toast('Punch tool unavailable', 'error'); return; }
   openNewPunchModal();
+  // Pre-select the Vehicle Defect template and pre-check this car.
+  const vt = (typeof PUNCH_TEMPLATES !== 'undefined') ? PUNCH_TEMPLATES.find(t => t.active && ((t.config || {}).location_mode === 'vehicle')) : null;
+  if (vt && typeof _punchSwitchTemplate === 'function') _punchSwitchTemplate(vt.id);
   _punchFromCarId = carId;
+  setTimeout(() => {
+    const cb = document.querySelector('.npcar[value="' + carId + '"]'); if (cb) cb.checked = true;
+    const sel = document.getElementById('np-car'); if (sel) sel.value = carId;
+  }, 80);
 }
 // Jump to the Punch List tool and open the linked item there.
 function _vmGoToPunch(id) {

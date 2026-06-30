@@ -55,7 +55,7 @@ const PERM_CATALOG = {
   punch_list: [
     ['view','read_only',false],['export','read_only',false],['create','standard',false],['edit','standard',false],
     ['comment','standard',false],['link_test','standard',false],['advance_status','standard',false],
-    ['import','standard',true],['delete','admin',false],['override_workflow','admin',true],
+    ['import','standard',true],['manage_templates','admin',false],['delete','admin',false],['override_workflow','admin',true],
   ],
   rma: [
     ['view','read_only',false],['export','read_only',false],['create','standard',false],
