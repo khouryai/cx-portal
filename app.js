@@ -17332,15 +17332,21 @@ function _cmEquipSectionHTML(configId) {
     h += '<table style="width:100%;border-collapse:collapse;margin-top:5px;font-size:12px;">' +
       '<thead><tr>' +
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Equipment</th>' +
-        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Type</th>' +
+        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">CI Type</th>' +
+        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">SW Type</th>' +
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Software Version</th>' +
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">CRC</th>' +
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Notes</th>' +
         '<th style="padding:2px 7px;border-bottom:1px solid var(--border);"></th>' +
       '</tr></thead><tbody>';
     for (const eq of items) {
+      const isWayside = (eq.ci_type || 'wayside') === 'wayside';
+      const ciBadge = isWayside
+        ? '<span style="background:#ecfeff;color:#0e7490;border:1px solid #a5f3fc;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;">Wayside</span>'
+        : '<span style="background:#faf5ff;color:#7e22ce;border:1px solid #e9d5ff;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;">Vehicle</span>';
       h += '<tr style="border-bottom:1px solid var(--border);">' +
         '<td style="padding:3px 7px;font-weight:600;">' + escapeHtml(eq.equipment_name) + '</td>' +
+        '<td style="padding:3px 7px;">' + ciBadge + '</td>' +
         '<td style="padding:3px 7px;">' +
           '<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 5px;border-radius:3px;font-size:11px;">' + escapeHtml(eq.sw_type) + '</span>' +
         '</td>' +
@@ -17348,6 +17354,7 @@ function _cmEquipSectionHTML(configId) {
         '<td style="padding:3px 7px;font-family:monospace;font-size:11px;color:var(--gray-500);">' + escapeHtml(eq.crc || '') + '</td>' +
         '<td style="padding:3px 7px;color:var(--gray-500);font-size:11px;">' + escapeHtml(eq.notes || '') + '</td>' +
         '<td style="padding:3px 7px;text-align:right;white-space:nowrap;">' +
+          (isWayside ? '<button class="form-secondary" style="font-size:10px;padding:1px 6px;" onclick="openSwDeployModal(\'' + configId + '\',null,\'' + eq.id + '\')" title="Log a field deployment for this CI">+ Log</button> ' : '') +
           '<button class="form-secondary" style="font-size:10px;padding:1px 6px;" onclick="openSwEquipModal(\'' + configId + '\',\'' + eq.id + '\')">Edit</button>' +
           ' <button class="form-secondary" style="font-size:10px;padding:1px 6px;color:var(--bad);" onclick="deleteSwEquip(\'' + eq.id + '\',\'' + configId + '\')">Del</button>' +
         '</td>' +
@@ -17374,7 +17381,7 @@ function _cmDeploySectionHTML(configId) {
     h += '<table style="width:100%;border-collapse:collapse;margin-top:5px;font-size:12px;">' +
       '<thead><tr>' +
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Equipment</th>' +
-        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Location</th>' +
+        '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Phase / Location</th>' +
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Deployed Version</th>' +
         '<th style="text-align:left;padding:2px 7px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Status</th>' +
         '<th style="padding:2px 7px;border-bottom:1px solid var(--border);"></th>' +
@@ -17382,9 +17389,10 @@ function _cmDeploySectionHTML(configId) {
     for (const d of items.slice().sort((a,b) => (a.equipment_name||'').localeCompare(b.equipment_name||''))) {
       const st = _swDeployStatus(d);
       const si = _swDeployInfo[st];
+      const locText = [d.phase, d.location].filter(Boolean).join(' · ') || '—';
       h += '<tr style="border-bottom:1px solid var(--border);">' +
         '<td style="padding:3px 7px;font-weight:600;">' + escapeHtml(d.equipment_name) + '</td>' +
-        '<td style="padding:3px 7px;color:var(--gray-600);font-size:11px;">' + escapeHtml(d.location || '—') + '</td>' +
+        '<td style="padding:3px 7px;color:var(--gray-600);font-size:11px;">' + escapeHtml(locText) + '</td>' +
         '<td style="padding:3px 7px;font-family:monospace;font-size:11px;">' + escapeHtml(d.deployed_version) + '</td>' +
         '<td style="padding:3px 7px;"><span style="font-size:11px;font-weight:600;color:' + si.color + ';">● ' + si.label + '</span></td>' +
         '<td style="padding:3px 7px;text-align:right;white-space:nowrap;">' +
@@ -17575,7 +17583,7 @@ function _cmDeployViewHTML(f) {
       '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
         '<thead><tr style="background:#f8fafc;">' +
           '<th style="text-align:left;padding:4px 12px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Equipment</th>' +
-          '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Location</th>' +
+          '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Phase / Location</th>' +
           '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Deployed Version</th>' +
           '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Status</th>' +
           '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Logged By / Date</th>' +
@@ -17585,9 +17593,10 @@ function _cmDeployViewHTML(f) {
         g.deployments.slice().sort((a,b) => (a.location||'').localeCompare(b.location||'') || (a.equipment_name||'').localeCompare(b.equipment_name||'')).map(d => {
           const st = _swDeployStatus(d);
           const si = _swDeployInfo[st];
+          const locText = [d.phase, d.location].filter(Boolean).join(' · ') || '—';
           return '<tr style="border-top:1px solid var(--gray-100);">' +
             '<td style="padding:5px 12px;font-weight:600;">' + escapeHtml(d.equipment_name) + '</td>' +
-            '<td style="padding:5px 10px;color:var(--gray-600);">' + escapeHtml(d.location || '—') + '</td>' +
+            '<td style="padding:5px 10px;color:var(--gray-600);">' + escapeHtml(locText) + '</td>' +
             '<td style="padding:5px 10px;font-family:monospace;font-size:11px;">' + escapeHtml(d.deployed_version) + '</td>' +
             '<td style="padding:5px 10px;"><span style="font-size:11px;font-weight:600;color:' + si.color + ';">● ' + si.label + '</span></td>' +
             '<td style="padding:5px 10px;font-size:11px;color:var(--gray-500);">' + escapeHtml(d.deployed_by || '—') + (d.deployed_at ? ' · ' + escapeHtml(d.deployed_at) : '') + '</td>' +
@@ -17869,6 +17878,12 @@ function openSwEquipModal(configId, editId) {
           <input type="text" id="sweq-name" class="form-input" placeholder="e.g. CC, OCC, WS, ATC-C" value="${escapeHtml(v('equipment_name'))}">
         </div>
         <div class="form-field">
+          <label>CI Type *</label>
+          <select id="sweq-citype" class="form-input">
+            ${[['wayside','Wayside'],['vehicle','Vehicle']].map(([val,lbl]) => '<option value="' + val + '"' + ((v('ci_type','wayside'))===val?' selected':'') + '>' + lbl + '</option>').join('')}
+          </select>
+        </div>
+        <div class="form-field">
           <label>SW Type *</label>
           <input type="text" id="sweq-type" class="form-input" placeholder="GA, SA, OS, FW…" value="${escapeHtml(v('sw_type'))}" list="sweq-type-list">
           <datalist id="sweq-type-list">
@@ -17898,23 +17913,24 @@ function openSwEquipModal(configId, editId) {
 }
 
 async function saveSwEquip(configId) {
-  const name  = (document.getElementById('sweq-name')?.value || '').trim();
-  const type  = (document.getElementById('sweq-type')?.value || '').trim();
-  const part  = (document.getElementById('sweq-part')?.value || '').trim();
-  const crc   = (document.getElementById('sweq-crc')?.value || '').trim() || null;
-  const notes = (document.getElementById('sweq-notes')?.value || '').trim() || null;
+  const name   = (document.getElementById('sweq-name')?.value || '').trim();
+  const ciType = document.getElementById('sweq-citype')?.value || 'wayside';
+  const type   = (document.getElementById('sweq-type')?.value || '').trim();
+  const part   = (document.getElementById('sweq-part')?.value || '').trim();
+  const crc    = (document.getElementById('sweq-crc')?.value || '').trim() || null;
+  const notes  = (document.getElementById('sweq-notes')?.value || '').trim() || null;
   if (!name) { toast('Equipment name is required', 'error'); return; }
   if (!type) { toast('SW Type is required', 'error'); return; }
   if (!part) { toast('Part number is required', 'error'); return; }
   const editing = _cmEquipEditId ? SW_EQUIPMENT.find(e => e.id === _cmEquipEditId) : null;
   try {
     if (editing) {
-      const patch = { equipment_name: name, sw_type: type, part_number: part, crc, notes };
+      const patch = { equipment_name: name, ci_type: ciType, sw_type: type, part_number: part, crc, notes };
       const [row] = await _dbUpdate('sw_equipment', patch, { id: editing.id });
       Object.assign(editing, row || patch);
       toast('Configuration item updated', 'success');
     } else {
-      const newRow = { config_id: configId, equipment_name: name, sw_type: type, part_number: part, crc, notes, created_by: currentRoleUser?.name || null };
+      const newRow = { config_id: configId, equipment_name: name, ci_type: ciType, sw_type: type, part_number: part, crc, notes, created_by: currentRoleUser?.name || null };
       const [inserted] = await _dbInsert('sw_equipment', [newRow]);
       if (inserted) SW_EQUIPMENT.push(inserted);
       toast('Configuration item saved', 'success');
@@ -19276,8 +19292,21 @@ async function _punchUnlinkTestCase(punchId, testId) {
   } catch (e) { toast('Unlink failed: ' + e.message, 'error'); }
 }
 
-// Field Deployment log — per-VDD actual install records
-function openSwDeployModal(configId, editId) {
+// Field Deployment log — location-based install records (wayside only; vehicles
+// are tracked in the Vehicle Management module). Can be logged at the VDD level
+// or against a specific wayside Configuration Item.
+function _swDepWaysideCIs(configId) {
+  return _swEquipFor(configId).filter(e => (e.ci_type || 'wayside') === 'wayside');
+}
+function _swDepCiOptionsHTML(configId, selectedCiId) {
+  const cis = _swDepWaysideCIs(configId);
+  return '<option value="">— VDD level (no specific CI) —</option>' +
+    cis.map(e => '<option value="' + e.id + '"' + (selectedCiId === e.id ? ' selected' : '') + '>' +
+      escapeHtml(e.equipment_name) + ' · ' + escapeHtml(e.sw_type) + ' (' + escapeHtml(e.part_number) + ')' +
+    '</option>').join('');
+}
+
+function openSwDeployModal(configId, editId, equipmentId) {
   const existing = editId ? SW_DEPLOYMENTS.find(d => d.id === editId) : null;
   const preCfg   = configId ? SW_CONFIGS.find(c => c.id === configId) : null;
   const v = (f, def='') => existing ? (existing[f] ?? def) : def;
@@ -19292,10 +19321,31 @@ function openSwDeployModal(configId, editId) {
 
   const selectedCfgId = existing ? existing.config_id : (configId || '');
   const selectedCfg   = SW_CONFIGS.find(c => c.id === selectedCfgId);
+  const selectedCiId  = existing ? (existing.equipment_id || '') : (equipmentId || '');
+  const selectedCi    = selectedCiId ? SW_EQUIPMENT.find(e => e.id === selectedCiId) : null;
+
+  const subs = (_fsCfg('punch_subsystem').length ? _fsCfg('punch_subsystem') : SUBSYSTEMS_LIST);
+  const phases = _cmPhases();
+
+  // Subsystem: from the record, else the selected config's subsystem
+  const curSubsystem = existing ? (existing.subsystem || '') : (selectedCfg?.subsystem || '');
+
+  // Phase: resolve id from stored phase name (or the config's location's phase)
+  let basePhaseId = '';
+  const curPhaseName = v('phase', '');
+  if (curPhaseName) {
+    basePhaseId = phases.find(p => p.name === curPhaseName)?.id || '';
+  }
+  const locOpts = basePhaseId ? _cmLocs(basePhaseId) : [];
+  const curLocation = v('location', '');
+
+  // Equipment name auto-fills from a chosen CI when creating fresh
+  const equipDefault = existing ? v('equipment_name') : (selectedCi?.equipment_name || '');
+  const verDefault   = existing ? v('deployed_version') : (selectedCi?.part_number || selectedCfg?.version || '');
 
   modal({
     title: existing ? 'Edit Deployment Record' : '+ Log Field Deployment',
-    sub: preCfg && !existing ? escapeHtml(preCfg.software_name) + ' ' + escapeHtml(preCfg.version) : '',
+    sub: preCfg && !existing ? escapeHtml(preCfg.software_name) + ' ' + escapeHtml(preCfg.version) + (selectedCi ? ' · ' + escapeHtml(selectedCi.equipment_name) : '') : '',
     size: 'large',
     body: `
       <div class="form-grid">
@@ -19309,17 +19359,40 @@ function openSwDeployModal(configId, editId) {
             '</option>').join('')}
           </select>
         </div>
-        <div class="form-field">
-          <label>Equipment Name *</label>
-          <input type="text" id="swdep-equip" class="form-input" placeholder="e.g. CC-01, WS-03, OCC-PROC" value="${escapeHtml(v('equipment_name'))}">
+        <div class="form-field form-field-full">
+          <label>Configuration Item <span style="font-weight:400;color:var(--gray-500);">(optional — log against a specific wayside CI)</span></label>
+          <select id="swdep-ci" class="form-input" onchange="_swDepCiChange()">
+            ${selectedCfgId ? _swDepCiOptionsHTML(selectedCfgId, selectedCiId) : '<option value="">— VDD level (no specific CI) —</option>'}
+          </select>
         </div>
         <div class="form-field">
-          <label>Location <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
-          <input type="text" id="swdep-loc" class="form-input" placeholder="e.g. W40, Station 24, OCC" value="${escapeHtml(v('location'))}">
+          <label>Subsystem</label>
+          <select id="swdep-sub" class="form-input">
+            <option value="">Select…</option>
+            ${subs.map(s => '<option' + (curSubsystem === s ? ' selected' : '') + '>' + escapeHtml(s) + '</option>').join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Phase *</label>
+          <select id="swdep-phase" class="form-input" onchange="_swDepPhaseChange()">
+            <option value="">Select phase…</option>
+            ${phases.map(p => '<option value="' + p.id + '"' + (basePhaseId === p.id ? ' selected' : '') + '>' + escapeHtml(p.name) + '</option>').join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Location <span style="font-weight:400;color:var(--gray-500);">(optional — cascades from phase)</span></label>
+          <select id="swdep-loc" class="form-input">
+            <option value="">— Phase level (no specific location) —</option>
+            ${locOpts.map(l => '<option' + (curLocation === l.name ? ' selected' : '') + '>' + escapeHtml(l.name) + '</option>').join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Equipment Name *</label>
+          <input type="text" id="swdep-equip" class="form-input" placeholder="e.g. CC-01, WS-03, OCC-PROC" value="${escapeHtml(equipDefault)}">
         </div>
         <div class="form-field">
           <label>Deployed Version *</label>
-          <input type="text" id="swdep-ver" class="form-input" placeholder="e.g. v3.2.1" value="${escapeHtml(existing ? v('deployed_version') : (selectedCfg?.version || ''))}">
+          <input type="text" id="swdep-ver" class="form-input" placeholder="e.g. v3.2.1" value="${escapeHtml(verDefault)}">
           <div style="font-size:11px;color:var(--gray-500);margin-top:3px;">Enter the version actually running — edit if it differs from the approved config version.</div>
         </div>
         <div class="form-field">
@@ -19344,17 +19417,46 @@ function openSwDeployModal(configId, editId) {
   });
 }
 
+// Config changed → sync subsystem, repopulate the CI dropdown, auto-fill version
 function _swDepCfgChange() {
-  const sel = document.getElementById('swdep-cfg');
-  const cfg = SW_CONFIGS.find(c => c.id === sel?.value);
+  const cfgId = document.getElementById('swdep-cfg')?.value;
+  const cfg   = SW_CONFIGS.find(c => c.id === cfgId);
+  const ciSel = document.getElementById('swdep-ci');
+  if (ciSel) ciSel.innerHTML = cfgId ? _swDepCiOptionsHTML(cfgId, '') : '<option value="">— VDD level (no specific CI) —</option>';
+  const subSel = document.getElementById('swdep-sub');
+  if (subSel && cfg?.subsystem) subSel.value = cfg.subsystem;
   const verEl = document.getElementById('swdep-ver');
   if (cfg && verEl && !verEl.value) verEl.value = cfg.version;
 }
 
+// CI chosen → adopt its equipment name + software version
+function _swDepCiChange() {
+  const ci = SW_EQUIPMENT.find(e => e.id === document.getElementById('swdep-ci')?.value);
+  if (!ci) return;
+  const equipEl = document.getElementById('swdep-equip');
+  if (equipEl) equipEl.value = ci.equipment_name || equipEl.value;
+  const verEl = document.getElementById('swdep-ver');
+  if (verEl && ci.part_number) verEl.value = ci.part_number;
+}
+
+// Phase changed → cascade the location dropdown
+function _swDepPhaseChange() {
+  const phaseId = document.getElementById('swdep-phase')?.value;
+  const locSel  = document.getElementById('swdep-loc');
+  if (locSel) {
+    const kids = _cmLocs(phaseId);
+    locSel.innerHTML = '<option value="">— Phase level (no specific location) —</option>' +
+      kids.map(l => '<option>' + escapeHtml(l.name) + '</option>').join('');
+  }
+}
+
 async function saveSwDeploy(editId) {
   const cfgId   = document.getElementById('swdep-cfg')?.value;
-  const equip   = (document.getElementById('swdep-equip')?.value || '').trim();
+  const ciId    = document.getElementById('swdep-ci')?.value || null;
+  const sub     = (document.getElementById('swdep-sub')?.value || '').trim() || null;
+  const phaseId = document.getElementById('swdep-phase')?.value || '';
   const loc     = (document.getElementById('swdep-loc')?.value || '').trim() || null;
+  const equip   = (document.getElementById('swdep-equip')?.value || '').trim();
   const ver     = (document.getElementById('swdep-ver')?.value || '').trim();
   const by      = (document.getElementById('swdep-by')?.value || '').trim() || null;
   const date    = document.getElementById('swdep-date')?.value || null;
@@ -19364,15 +19466,17 @@ async function saveSwDeploy(editId) {
   if (!equip) { toast('Equipment name is required', 'error'); return; }
   if (!ver)   { toast('Deployed version is required', 'error'); return; }
 
+  const phaseName = phaseId ? (_cmPhases().find(p => p.id === phaseId)?.name || null) : null;
+
   const existing = editId ? SW_DEPLOYMENTS.find(d => d.id === editId) : null;
   try {
     if (existing) {
-      const patch = { config_id: cfgId, equipment_name: equip, location: loc, deployed_version: ver, deployed_by: by, deployed_at: date, notes };
+      const patch = { config_id: cfgId, equipment_id: ciId, subsystem: sub, phase: phaseName, equipment_name: equip, location: loc, deployed_version: ver, deployed_by: by, deployed_at: date, notes };
       const [row] = await _dbUpdate('sw_deployments', patch, { id: existing.id });
       Object.assign(existing, row || patch);
       toast('Deployment record updated', 'success');
     } else {
-      const newRow = { config_id: cfgId, equipment_name: equip, location: loc, deployed_version: ver, deployed_by: by, deployed_at: date, notes, created_by: currentRoleUser?.name || null };
+      const newRow = { config_id: cfgId, equipment_id: ciId, subsystem: sub, phase: phaseName, equipment_name: equip, location: loc, deployed_version: ver, deployed_by: by, deployed_at: date, notes, created_by: currentRoleUser?.name || null };
       const [inserted] = await _dbInsert('sw_deployments', [newRow]);
       if (inserted) SW_DEPLOYMENTS.unshift(inserted);
       _cmDeployExpanded.add(cfgId);
