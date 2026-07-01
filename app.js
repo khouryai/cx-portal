@@ -5263,7 +5263,8 @@ function fscToggle(key) {
 // ── HTML generators ───────────────────────────────────────────────────────────
 
 function _adminFieldConfigHTML() {
-  const totalFields = FIELDCONFIG_MODULES.reduce((s, m) => s + m.fields.length, 0);
+  const _fcMods = _fscAllModules();
+  const totalFields = _fcMods.reduce((s, m) => s + m.fields.length, 0);
   return `
     <div class="admin-section">
       <div class="admin-section-head" style="margin-bottom:20px;">
@@ -5271,10 +5272,10 @@ function _adminFieldConfigHTML() {
           <div class="admin-section-title">Field Config</div>
           <p class="section-sub">Manage dropdown options for each module. Click any fieldset to expand and edit its options.</p>
         </div>
-        <span style="font-size:12px;color:var(--gray-400);">${totalFields} fieldsets · ${FIELDCONFIG_MODULES.length} modules</span>
+        <span style="font-size:12px;color:var(--gray-400);">${totalFields} fieldsets · ${_fcMods.length} modules</span>
       </div>
       <div style="display:flex;flex-direction:column;gap:16px;">
-        ${FIELDCONFIG_MODULES.map(mod => _fscModuleHTML(mod)).join('')}
+        ${_fcMods.map(mod => _fscModuleHTML(mod)).join('')}
       </div>
     </div>
   `;
@@ -5402,7 +5403,7 @@ async function fscLoadDefaults(key) {
 async function _fscSave(key, options) {
   const def = _fscDef(key);
   const { error } = await _sb.from('fieldset_config')
-    .upsert({ field_key: key, label: def?.label || key, options, updated_at: new Date().toISOString() }, { onConflict: 'field_key' });
+    .upsert({ field_key: key, label: def?.label || _punchFieldConfigLabel(key) || key, options, updated_at: new Date().toISOString() }, { onConflict: 'field_key' });
   if (error) { toast('Save failed: ' + error.message, 'error'); return; }
   FIELDSET_CONFIG[key] = options;
   toast('Saved', 'success');
@@ -8312,6 +8313,8 @@ function _punchFormHTML(p) {
   const cfg = _punchTplCfg(t);
   const mode = cfg.location_mode || 'wayside';
   const hide = new Set(cfg.hide_core || []);
+  const reqc = new Set(cfg.require_core || []);
+  const rm = k => reqc.has(k) ? ' *' : '';
   const optKey = (core, def) => (cfg.option_keys && cfg.option_keys[core]) || def;
   const optList = (key, fb) => (_fsCfg(key).length ? _fsCfg(key) : fb);
 
@@ -8386,46 +8389,46 @@ function _punchFormHTML(p) {
       </div>
       ${locHTML}
       ${hide.has('subsystem') ? '' : `<div class="form-field">
-        <label>Subsystem</label>
+        <label>Subsystem${rm('subsystem')}</label>
         <select id="np-subsystem" class="form-input">
           <option value="">Select…</option>
           ${optList(optKey('punch_subsystem','punch_subsystem'), SUBSYSTEMS_LIST).map(s=>`<option ${sel('subsystem',s)}>${escapeHtml(s)}</option>`).join('')}
         </select>
       </div>`}
       ${hide.has('schedule_impact') ? '' : `<div class="form-field">
-        <label>Schedule Impact</label>
+        <label>Schedule Impact${rm('schedule_impact')}</label>
         <select id="np-schedule" class="form-input">
           <option value="">None</option>
           ${optList(optKey('schedule_impact','schedule_impact'), ['Minor','Moderate','Major','Critical']).map(s=>`<option ${sel('schedule_impact',s)}>${escapeHtml(s)}</option>`).join('')}
         </select>
       </div>`}
-      <div class="form-field">
-        <label>Due Date</label>
+      ${hide.has('due_date') ? '' : `<div class="form-field">
+        <label>Due Date${rm('due_date')}</label>
         <input type="date" id="np-due" class="form-input" value="${v('due_date')}">
-      </div>
+      </div>`}
       <div class="form-field form-field-full">
-        <label>Description</label>
+        <label>Description${rm('description')}</label>
         <textarea id="np-desc" class="form-input" rows="4" placeholder="Describe the issue in detail…">${v('description')}</textarea>
       </div>
       ${hide.has('category_of_failure') ? '' : `<div class="form-field">
-        <label>Category of Failure</label>
+        <label>Category of Failure${rm('category_of_failure')}</label>
         <select id="np-cat" class="form-input">
           <option value="">Select…</option>
           ${optList(optKey('category_of_failure','category_of_failure'), ['Hardware Failure','Software Defect','Procedure Issue','Documentation Error','Integration Issue','Environmental','Design Issue','Other']).map(s=>`<option ${sel('category_of_failure',s)}>${escapeHtml(s)}</option>`).join('')}
         </select>
       </div>`}
       ${hide.has('type_of_failure') ? '' : `<div class="form-field">
-        <label>Type of Failure</label>
+        <label>Type of Failure${rm('type_of_failure')}</label>
         <select id="np-failtype" class="form-input">
           <option value="">Select…</option>
           ${optList(optKey('type_of_failure','type_of_failure'), ['First Occurrence','Repeat Failure','Systematic Issue']).map(s=>`<option ${sel('type_of_failure',s)}>${escapeHtml(s)}</option>`).join('')}
         </select>
       </div>`}
       ${_punchExtraFieldsHTML(p, cfg)}
-      <div class="form-field">
-        <label>RTC / Work Item ID</label>
+      ${hide.has('rtc_work_item_id') ? '' : `<div class="form-field">
+        <label>RTC / Work Item ID${rm('rtc_work_item_id')}</label>
         <input type="text" id="np-rtc" class="form-input" placeholder="e.g. RTC-12345" value="${v('rtc_work_item_id')}">
-      </div>
+      </div>`}
       <div class="form-field" style="display:flex;align-items:center;gap:8px;padding-top:24px;">
         <input type="checkbox" id="np-private" style="width:16px;height:16px;" ${p?.is_private?'checked':''}>
         <label for="np-private" style="cursor:pointer;font-size:13px;">Private — visible to assignees and managers only</label>
@@ -8706,9 +8709,13 @@ function _readPunchForm() {
   };
   if (mode === 'wayside') { out.phase = val('np-phase') || null; out.location = val('np-location') || null; }
   else { out.phase = null; out.location = null; }
-  // Template-specific extra fields → custom_fields jsonb.
+  // Template-specific custom fields (library refs + legacy inline) → custom_fields jsonb.
   const custom = {};
-  for (const f of (cfg.extra_fields || [])) {
+  for (const f of _punchResolvedFields(cfg)) {
+    if (f.type === 'multiselect') {
+      custom[f.key] = [...document.querySelectorAll('.npxm-' + f.key + ':checked')].map(c => c.value);
+      continue;
+    }
     const el = g('npx-' + f.key);
     if (!el) continue;
     custom[f.key] = (f.type === 'checkbox') ? el.checked : (el.value || '');
@@ -8861,34 +8868,71 @@ async function saveEditPunchItem(id) {
 }
 
 // ==========================================================================
-// PUNCH TEMPLATES — named punch "types/domains" (Vehicle Defect, Wayside
-// Defect, …). A template's config drives the create/edit form: location mode
-// (wayside Phase/Location vs vehicle Car picker), option-list overrides for the
-// core selects, hidden core fields, and extra custom fields stored in
-// punch_items.custom_fields. Phase 2 adds an admin editor (manage_templates).
+// PUNCH TEMPLATES + CUSTOM FIELD LIBRARY — named punch "types/domains"
+// (Vehicle Defect, Wayside Defect, …). A template's config drives the
+// create/edit form: location mode (wayside Phase/Location vs vehicle Car
+// picker), shown/hidden + required core fields, option-list overrides, and
+// custom fields ALLOCATED from a reusable library (punch_custom_fields).
+// Select-type library fields keep their options in fieldset_config, so they
+// surface in the Field Config admin for future editing. Editor is gated on
+// punch_list:manage_templates.
 // ==========================================================================
 let PUNCH_TEMPLATES = [];
+let PUNCH_CUSTOM_FIELDS = [];
 let _punchActiveTemplate = null;
-let _ptpEditFields = [];
 
 async function loadPunchTemplates() {
   try {
-    const d = await _dbSelect('punch_templates');
-    PUNCH_TEMPLATES = (d || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    const [tpls, fields] = await Promise.all([
+      _dbSelect('punch_templates'),
+      _dbSelect('punch_custom_fields'),
+    ]);
+    PUNCH_TEMPLATES = (tpls || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    PUNCH_CUSTOM_FIELDS = (fields || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0) || String(a.label || '').localeCompare(String(b.label || '')));
   } catch (e) { console.warn('[loadPunchTemplates]', e.message); }
 }
 function _punchTemplateById(id) { return id ? PUNCH_TEMPLATES.find(t => t.id === id) || null : null; }
 function _punchTemplatesActive() { return PUNCH_TEMPLATES.filter(t => t.active !== false).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)); }
 function _punchDefaultTemplate() { return PUNCH_TEMPLATES.find(t => t.is_default && t.active !== false) || _punchTemplatesActive()[0] || null; }
 function _punchTplCfg(t) { return (t && t.config) || {}; }
+function _punchFieldByKey(key) { return PUNCH_CUSTOM_FIELDS.find(f => f.key === key) || null; }
+
+// Fields a template renders: legacy inline extra_fields + library refs.
+function _punchResolvedFields(cfg) {
+  const out = (cfg.extra_fields || []).slice();
+  for (const r of (cfg.field_refs || [])) {
+    const lib = _punchFieldByKey(r.key);
+    if (!lib || lib.active === false) continue;
+    out.push({ key: lib.key, label: lib.label, type: lib.type, options_key: lib.options_key || null, required: !!r.required });
+  }
+  return out;
+}
+
+// Core fields a template can hide and/or mark required (form column → label).
+const _PUNCH_CORE_FIELDS = [
+  ['subsystem', 'Subsystem'],
+  ['schedule_impact', 'Schedule Impact'],
+  ['category_of_failure', 'Category of Failure'],
+  ['type_of_failure', 'Type of Failure'],
+  ['due_date', 'Due Date'],
+  ['rtc_work_item_id', 'RTC / Work Item ID'],
+];
+const _PUNCH_CORE_LABELS = Object.fromEntries(_PUNCH_CORE_FIELDS.concat([['description', 'Description']]));
 
 function _punchValidateTemplate(form, cfg) {
   cfg = cfg || {};
   if (cfg.location_mode === 'vehicle' && cfg.require_car && !(form._cars && form._cars.length)) return 'At least one car is required for this template';
-  for (const f of (cfg.extra_fields || [])) {
+  const hidden = new Set(cfg.hide_core || []);
+  for (const k of (cfg.require_core || [])) {
+    if (hidden.has(k) || !_PUNCH_CORE_LABELS[k]) continue;
+    const v = form[k];
+    if (v === undefined || v === null || v === '') return _PUNCH_CORE_LABELS[k] + ' is required';
+  }
+  for (const f of _punchResolvedFields(cfg)) {
     if (!f.required) continue;
     const val = form.custom_fields ? form.custom_fields[f.key] : null;
-    if (val === undefined || val === null || val === '' || val === false) return (f.label || f.key) + ' is required';
+    const empty = Array.isArray(val) ? !val.length : (val === undefined || val === null || val === '' || val === false);
+    if (empty) return (f.label || f.key) + ' is required';
   }
   return null;
 }
@@ -8904,25 +8948,32 @@ function _punchCarFieldHTML(p, cfg) {
       return `<div style="margin-top:4px;"><div style="font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">${tp}-Cars</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:3px;">${g.map(c => `<label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;cursor:pointer;"><input type="checkbox" class="npcar" value="${c.id}" ${linked.has(c.id) ? 'checked' : ''} style="margin:0;"> ${escapeHtml(c.car_number)}</label>`).join('')}</div></div>`;
     }).join('');
-    return `<div class="form-field form-field-full"><label>Car(s)</label>${groups || '<div style="font-size:12px;color:var(--gray-500);">No cars in the registry yet.</div>'}</div>`;
+    return `<div class="form-field form-field-full"><label>Car(s)${cfg.require_car ? ' *' : ''}</label>${groups || '<div style="font-size:12px;color:var(--gray-500);">No cars in the registry yet.</div>'}</div>`;
   }
   const cur = ((p && p.linked_car_ids) || [])[0] || '';
-  return `<div class="form-field form-field-full"><label>Car</label><select id="np-car" class="form-input"><option value="">Select car…</option>${cars.map(c => `<option value="${c.id}" ${cur === c.id ? 'selected' : ''}>${escapeHtml(c.car_number)} · ${escapeHtml(c.car_type)}</option>`).join('')}</select></div>`;
+  return `<div class="form-field form-field-full"><label>Car${cfg.require_car ? ' *' : ''}</label><select id="np-car" class="form-input"><option value="">Select car…</option>${cars.map(c => `<option value="${c.id}" ${cur === c.id ? 'selected' : ''}>${escapeHtml(c.car_number)} · ${escapeHtml(c.car_type)}</option>`).join('')}</select></div>`;
 }
 
 function _punchExtraFieldsHTML(p, cfg) {
-  const fields = cfg.extra_fields || [];
+  const fields = _punchResolvedFields(cfg);
   if (!fields.length) return '';
   const cf = (p && p.custom_fields) || {};
   return fields.map(f => {
     const id = 'npx-' + f.key;
     const val = cf[f.key];
     const req = f.required ? ' *' : '';
+    const opts = f.options_key ? _fsCfg(f.options_key) : (f.options || []);
     if (f.type === 'textarea') return `<div class="form-field form-field-full"><label>${escapeHtml(f.label)}${req}</label><textarea id="${id}" class="form-input" rows="3">${escapeHtml(val || '')}</textarea></div>`;
-    if (f.type === 'select') { const opts = f.options_key ? _fsCfg(f.options_key) : (f.options || []); return `<div class="form-field"><label>${escapeHtml(f.label)}${req}</label><select id="${id}" class="form-input"><option value="">Select…</option>${opts.map(o => `<option ${val === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}</select></div>`; }
+    if (f.type === 'select') return `<div class="form-field"><label>${escapeHtml(f.label)}${req}</label><select id="${id}" class="form-input"><option value="">Select…</option>${opts.map(o => `<option ${val === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}</select></div>`;
+    if (f.type === 'multiselect') {
+      const cur = Array.isArray(val) ? val : [];
+      return `<div class="form-field form-field-full"><label>${escapeHtml(f.label)}${req}</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">${opts.length ? opts.map(o => `<label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;cursor:pointer;"><input type="checkbox" class="npxm-${f.key}" value="${escapeHtml(o)}" ${cur.includes(o) ? 'checked' : ''} style="margin:0;"> ${escapeHtml(o)}</label>`).join('') : '<span style="font-size:12px;color:var(--gray-500);">No options configured — add them in Field Config.</span>'}</div>
+      </div>`;
+    }
     if (f.type === 'checkbox') return `<div class="form-field" style="display:flex;align-items:center;gap:8px;padding-top:24px;"><input type="checkbox" id="${id}" ${val ? 'checked' : ''} style="width:16px;height:16px;"><label for="${id}" style="cursor:pointer;font-size:13px;">${escapeHtml(f.label)}</label></div>`;
     if (f.type === 'date') return `<div class="form-field"><label>${escapeHtml(f.label)}${req}</label><input type="date" id="${id}" class="form-input" value="${escapeHtml(val || '')}"></div>`;
-    if (f.type === 'number') return `<div class="form-field"><label>${escapeHtml(f.label)}${req}</label><input type="number" id="${id}" class="form-input" value="${escapeHtml(val || '')}"></div>`;
+    if (f.type === 'number') return `<div class="form-field"><label>${escapeHtml(f.label)}${req}</label><input type="number" id="${id}" class="form-input" value="${escapeHtml(val ?? '')}"></div>`;
     return `<div class="form-field"><label>${escapeHtml(f.label)}${req}</label><input type="text" id="${id}" class="form-input" value="${escapeHtml(val || '')}"></div>`;
   }).join('');
 }
@@ -8935,13 +8986,14 @@ function _punchTemplateBadge(p) {
 function _punchCustomFieldsHTML(p) {
   const t = _punchTemplateById(p.template_id);
   const cfg = _punchTplCfg(t);
-  const fields = cfg.extra_fields || [];
+  const fields = _punchResolvedFields(cfg);
   const cf = p.custom_fields || {};
-  const rows = fields.filter(f => { const x = cf[f.key]; return x !== undefined && x !== '' && x !== false; });
+  const rows = fields.filter(f => { const x = cf[f.key]; return Array.isArray(x) ? x.length : (x !== undefined && x !== '' && x !== false); });
   if (!t && !rows.length) return '';
+  const disp = x => Array.isArray(x) ? x.join(', ') : (x === true ? 'Yes' : String(x));
   return `<div style="margin-bottom:18px;">
       <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;">${t ? escapeHtml(t.name) + ' fields' : 'Template fields'}</div>
-      ${rows.length ? `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:14px;background:var(--gray-50);border-radius:8px;">${rows.map(f => `<div><div style="font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;">${escapeHtml(f.label)}</div><div style="font-size:12px;color:var(--gray-800);">${escapeHtml(String(cf[f.key] === true ? 'Yes' : cf[f.key]))}</div></div>`).join('')}</div>` : '<div style="font-size:12px;color:var(--gray-400);">No template-specific values.</div>'}
+      ${rows.length ? `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:14px;background:var(--gray-50);border-radius:8px;">${rows.map(f => `<div><div style="font-size:10px;font-weight:600;color:var(--gray-500);text-transform:uppercase;">${escapeHtml(f.label)}</div><div style="font-size:12px;color:var(--gray-800);">${escapeHtml(disp(cf[f.key]))}</div></div>`).join('')}</div>` : '<div style="font-size:12px;color:var(--gray-400);">No template-specific values.</div>'}
     </div>`;
 }
 function _punchFormInit(p) {
@@ -8958,32 +9010,198 @@ function _punchSwitchTemplate(id) {
   if (wrap) { wrap.innerHTML = _punchFormHTML(null); _punchFormInit(null); }
 }
 
+// Label fallback for dynamic fieldset keys owned by punch custom fields (used
+// by _fscSave upserts so an admin edit never clobbers the stored label).
+function _punchFieldConfigLabel(key) {
+  const f = PUNCH_CUSTOM_FIELDS.find(x => x.options_key === key);
+  return f ? f.label + ' (Punch Field)' : null;
+}
+// Field Config admin: static catalog + a dynamic module for punch custom-field
+// option lists, so template select fields stay editable there.
+function _fscAllModules() {
+  const dyn = PUNCH_CUSTOM_FIELDS
+    .filter(f => (f.type === 'select' || f.type === 'multiselect') && f.options_key)
+    .map(f => ({ key: f.options_key, label: f.label + ' (Punch Field)', defaults: [] }));
+  if (!dyn.length) return FIELDCONFIG_MODULES;
+  return FIELDCONFIG_MODULES.concat([{ id: 'punch_custom', label: 'Punch Custom Fields', icon: icon('puzzle'), fields: dyn }]);
+}
+
+const _PUNCH_FIELD_TYPES = [
+  ['text', 'Plain Text (Short)'], ['textarea', 'Rich Text (Long)'],
+  ['select', 'Single Select (Dropdown)'], ['multiselect', 'Multi Select'],
+  ['date', 'Date'], ['number', 'Number'], ['checkbox', 'Checkbox'],
+];
+function _punchFieldTypeLabel(t) { const e = _PUNCH_FIELD_TYPES.find(x => x[0] === t); return e ? e[1] : t; }
+
 // ── Phase 2: template admin editor ────────────────────────────────────────
 function _punchTemplatesModal() {
   if (typeof uiCan === 'function' && !uiCan('punch_list', 'manage_templates')) { toast('Not permitted', 'error'); return; }
   const ts = PUNCH_TEMPLATES.slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   modal({
     title: 'Punch Templates', size: 'large',
-    body: `<div style="display:flex;justify-content:flex-end;margin-bottom:10px;"><button class="form-submit" onclick="_punchTplEditModal('')">+ New Template</button></div>
+    body: `<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px;">
+        <button class="form-secondary" onclick="_punchFieldLibModal()">${icon('puzzle')} Field Library</button>
+        <button class="form-submit" onclick="_punchTplEditModal('')">+ New Template</button>
+      </div>
       <div style="display:flex;flex-direction:column;gap:6px;">
-      ${ts.length ? ts.map(t => { const cfg = _punchTplCfg(t); return `<div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;">
+      ${ts.length ? ts.map(t => { const cfg = _punchTplCfg(t); const nf = _punchResolvedFields(cfg).length; return `<div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;">
         <div style="flex:1;"><div style="font-weight:600;">${escapeHtml(t.name)} ${t.is_default ? '<span style="color:#d97706;" title="Default">★</span>' : ''} ${t.active === false ? '<span style="font-size:11px;color:var(--gray-400);">(inactive)</span>' : ''}</div>
-          <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(cfg.location_mode || 'wayside')}${(cfg.extra_fields || []).length ? ' · ' + (cfg.extra_fields || []).length + ' extra field(s)' : ''}</div></div>
+          <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(cfg.location_mode || 'wayside')}${nf ? ' · ' + nf + ' custom field(s)' : ''}</div></div>
         <button class="form-secondary" style="font-size:11px;" onclick="_punchTplEditModal('${t.id}')">Edit</button>
       </div>`; }).join('') : '<div style="font-size:13px;color:var(--gray-500);">No templates yet.</div>'}
       </div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Done</button>`,
   });
 }
+
+// ── Field Library manager ─────────────────────────────────────────────────
+function _punchFieldLibModal() {
+  if (typeof uiCan === 'function' && !uiCan('punch_list', 'manage_templates')) { toast('Not permitted', 'error'); return; }
+  modal({
+    title: 'Punch Field Library', size: 'large',
+    body: `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">Reusable custom fields. Allocate them to any punch template; dropdown options are managed in <strong>Admin → Field Config → Punch Custom Fields</strong>.</div>
+      <div style="display:flex;justify-content:flex-end;margin-bottom:8px;"><button class="form-submit" onclick="_punchLibShowCreate()">+ New Field</button></div>
+      <div id="plib-create"></div>
+      <div id="plib-list"></div>`,
+    footer: `<button class="form-secondary" onclick="_punchTemplatesModal()">Back to Templates</button><button class="form-secondary" onclick="closeModal()">Done</button>`,
+  });
+  _punchLibRenderList();
+}
+function _punchLibRenderList() {
+  const wrap = document.getElementById('plib-list'); if (!wrap) return;
+  const fields = PUNCH_CUSTOM_FIELDS.slice();
+  wrap.innerHTML = fields.length ? `<div style="display:flex;flex-direction:column;gap:6px;">${fields.map(f => {
+    const usedBy = PUNCH_TEMPLATES.filter(t => (_punchTplCfg(t).field_refs || []).some(r => r.key === f.key)).map(t => t.name);
+    return `<div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:8px 12px;${f.active === false ? 'opacity:.55;' : ''}">
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:13px;">${escapeHtml(f.label)} ${f.active === false ? '<span style="font-size:11px;color:var(--gray-400);">(inactive)</span>' : ''}</div>
+        <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(_punchFieldTypeLabel(f.type))} · <span style="font-family:monospace;">${escapeHtml(f.key)}</span>${usedBy.length ? ' · used by ' + usedBy.map(escapeHtml).join(', ') : ' · unused'}</div>
+      </div>
+      ${(f.type === 'select' || f.type === 'multiselect') && f.options_key ? `<button class="form-secondary" style="font-size:11px;" title="Edit dropdown options in Field Config" onclick="closeModal();showPage('admin-fieldconfig')">${icon('settings')} Options</button>` : ''}
+      <button class="form-secondary" style="font-size:11px;" onclick="_punchLibRename('${f.id}')">Rename</button>
+      <button class="form-secondary" style="font-size:11px;" onclick="_punchLibToggleActive('${f.id}')">${f.active === false ? 'Activate' : 'Deactivate'}</button>
+      <button class="form-secondary" style="font-size:11px;color:var(--bad);" aria-label="Delete field" onclick="_punchLibDelete('${f.id}')">${icon('trash')}</button>
+    </div>`;
+  }).join('')}</div>` : '<div style="font-size:13px;color:var(--gray-500);">No custom fields yet — create one.</div>';
+}
+function _punchLibShowCreate() {
+  const wrap = document.getElementById('plib-create'); if (!wrap) return;
+  wrap.innerHTML = _punchFieldCreateFormHTML('_punchLibCreateSubmit()');
+}
+function _punchFieldCreateFormHTML(submitCall) {
+  return `<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;background:var(--gray-50);">
+      <div class="form-grid">
+        <div class="form-field"><label>Field Name *</label><input type="text" id="pcf-name" class="form-input" placeholder="e.g. Wheel Diameter"></div>
+        <div class="form-field"><label>Field Type *</label><select id="pcf-type" class="form-input" onchange="_punchFieldTypeChanged()">${_PUNCH_FIELD_TYPES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>
+        <div class="form-field form-field-full" id="pcf-opts-wrap" style="display:none;"><label>Options <span style="font-weight:400;color:var(--gray-500);">(comma-separated — editable later in Field Config)</span></label><input type="text" id="pcf-opts" class="form-input" placeholder="Option A, Option B, Option C"></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
+        <button class="form-secondary" style="font-size:12px;" onclick="this.closest('div').parentElement.parentElement.innerHTML=''">Cancel</button>
+        <button class="form-submit" style="font-size:12px;" onclick="${submitCall}">Create Field</button>
+      </div>
+    </div>`;
+}
+function _punchFieldTypeChanged() {
+  const t = document.getElementById('pcf-type')?.value;
+  const w = document.getElementById('pcf-opts-wrap');
+  if (w) w.style.display = (t === 'select' || t === 'multiselect') ? '' : 'none';
+}
+function _punchFieldSlug(name) {
+  let base = String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'field';
+  let key = base, n = 2;
+  while (_punchFieldByKey(key)) key = base + '_' + (n++);
+  return key;
+}
+// Create a library field (+ fieldset_config row for select types). Returns the row.
+async function _punchLibCreateField() {
+  const name = (document.getElementById('pcf-name')?.value || '').trim();
+  const type = document.getElementById('pcf-type')?.value || 'text';
+  if (!name) { toast('Field name is required', 'error'); return null; }
+  const key = _punchFieldSlug(name);
+  let optionsKey = null;
+  if (type === 'select' || type === 'multiselect') {
+    const opts = (document.getElementById('pcf-opts')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!opts.length) { toast('Add at least one option for a select field', 'error'); return null; }
+    optionsKey = 'pcf_' + key;
+    await _dbInsert('fieldset_config', [{ field_key: optionsKey, label: name + ' (Punch Field)', options: opts }]);
+    FIELDSET_CONFIG[optionsKey] = opts;
+  }
+  const sort = PUNCH_CUSTOM_FIELDS.reduce((m, f) => Math.max(m, f.sort_order || 0), 0) + 1;
+  const [row] = await _dbInsert('punch_custom_fields', [{ key, label: name, type, options_key: optionsKey, sort_order: sort, created_by: (currentRoleUser && currentRoleUser.name) || null }]);
+  if (row) PUNCH_CUSTOM_FIELDS.push(row);
+  return row || null;
+}
+async function _punchLibCreateSubmit() {
+  try {
+    const row = await _punchLibCreateField();
+    if (!row) return;
+    toast('Field "' + row.label + '" created', 'success');
+    const c = document.getElementById('plib-create'); if (c) c.innerHTML = '';
+    _punchLibRenderList();
+  } catch (e) { toast('Create failed: ' + e.message, 'error'); }
+}
+async function _punchLibRename(id) {
+  const f = PUNCH_CUSTOM_FIELDS.find(x => x.id === id); if (!f) return;
+  const name = prompt('Rename field:', f.label);
+  if (!name || !name.trim() || name.trim() === f.label) return;
+  try {
+    const [row] = await _dbUpdate('punch_custom_fields', { label: name.trim() }, { id });
+    Object.assign(f, row || { label: name.trim() });
+    _punchLibRenderList();
+  } catch (e) { toast('Rename failed: ' + e.message, 'error'); }
+}
+async function _punchLibToggleActive(id) {
+  const f = PUNCH_CUSTOM_FIELDS.find(x => x.id === id); if (!f) return;
+  try {
+    const next = f.active === false;
+    const [row] = await _dbUpdate('punch_custom_fields', { active: next }, { id });
+    Object.assign(f, row || { active: next });
+    _punchLibRenderList();
+  } catch (e) { toast('Update failed: ' + e.message, 'error'); }
+}
+async function _punchLibDelete(id) {
+  const f = PUNCH_CUSTOM_FIELDS.find(x => x.id === id); if (!f) return;
+  const usedBy = PUNCH_TEMPLATES.filter(t => (_punchTplCfg(t).field_refs || []).some(r => r.key === f.key));
+  if (!await cxConfirm('Delete field "' + f.label + '"?' + (usedBy.length ? '\n\nIt will be removed from: ' + usedBy.map(t => t.name).join(', ') + '.' : '') + '\nSaved values on existing punch items are kept.')) return;
+  try {
+    await _dbDelete('punch_custom_fields', { id });
+    PUNCH_CUSTOM_FIELDS = PUNCH_CUSTOM_FIELDS.filter(x => x.id !== id);
+    for (const t of usedBy) {
+      const cfg = _punchTplCfg(t);
+      const refs = (cfg.field_refs || []).filter(r => r.key !== f.key);
+      const config = { ...cfg, field_refs: refs };
+      try { await _dbUpdate('punch_templates', { config }, { id: t.id }); t.config = config; } catch (_) {}
+    }
+    toast('Field deleted', 'success');
+    _punchLibRenderList();
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ── Template editor (Procore-style: toggle + required rows) ───────────────
+let _ptpe = null; // editing state: { id, hide:Set, reqc:Set, refs:[{key,required}], legacy:[inline fields] }
+
+function _ptpeSwitchHTML(on, onclick, label, disabled) {
+  return `<button type="button" ${disabled ? 'disabled' : ''} aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" onclick="${onclick}" style="border:none;background:none;padding:0;cursor:${disabled ? 'default' : 'pointer'};line-height:0;">
+      <span style="display:inline-block;width:34px;height:18px;border-radius:9px;background:${on ? '#16a34a' : '#cbd5e1'};position:relative;${disabled ? 'opacity:.55;' : ''}">
+        <span style="position:absolute;top:2px;left:${on ? '18px' : '2px'};width:14px;height:14px;border-radius:50%;background:var(--white);"></span>
+      </span>
+    </button>`;
+}
 function _punchTplEditModal(id) {
   const t = id ? _punchTemplateById(id) : null;
   const cfg = _punchTplCfg(t);
-  _ptpEditFields = JSON.parse(JSON.stringify(cfg.extra_fields || []));
+  _ptpe = {
+    id: id || '',
+    hide: new Set(cfg.hide_core || []),
+    reqc: new Set(cfg.require_core || []),
+    refs: JSON.parse(JSON.stringify(cfg.field_refs || [])),
+    legacy: JSON.parse(JSON.stringify(cfg.extra_fields || [])),
+  };
   const ok = cfg.option_keys || {};
   const mode = cfg.location_mode || 'wayside';
   const coreKeys = [['punch_type', 'Type'], ['punch_subsystem', 'Subsystem'], ['schedule_impact', 'Schedule Impact'], ['category_of_failure', 'Category of Failure'], ['type_of_failure', 'Type of Failure']];
   modal({
-    title: t ? 'Edit Template' : 'New Punch Template', size: 'large',
+    title: t ? 'Edit Template · ' + escapeHtml(t.name) : 'New Punch Template', size: 'large',
     body: `<div class="form-grid">
         <div class="form-field"><label>Name *</label><input id="ptpe-name" class="form-input" value="${escapeHtml(t ? t.name : '')}"></div>
         <div class="form-field"><label>Location Mode</label><select id="ptpe-mode" class="form-input">${['wayside', 'vehicle', 'none'].map(m => `<option value="${m}" ${mode === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
@@ -8993,57 +9211,127 @@ function _punchTplEditModal(id) {
         <div class="form-field"><label style="display:flex;gap:6px;align-items:center;font-weight:400;"><input type="checkbox" id="ptpe-multicar" ${cfg.multi_car ? 'checked' : ''}> Allow multiple cars</label></div>
         <div class="form-field"><label style="display:flex;gap:6px;align-items:center;font-weight:400;"><input type="checkbox" id="ptpe-reqcar" ${cfg.require_car ? 'checked' : ''}> Car required</label></div>
       </div>
-      <div style="margin-top:10px;"><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--gray-400);margin-bottom:6px;">Option-list overrides <span style="font-weight:400;text-transform:none;color:var(--gray-500);">(fieldset key per select; blank = default)</span></div>
-        <div class="form-grid">${coreKeys.map(([k, lbl]) => `<div class="form-field"><label>${lbl}</label><input id="ptpe-ok-${k}" class="form-input" placeholder="${k}" value="${escapeHtml(ok[k] || '')}"></div>`).join('')}</div>
+      <div style="margin-top:14px;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+        <div style="padding:8px 12px;background:var(--gray-50);border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--gray-400);">Core fields</div>
+        <div id="ptpe-core"></div>
       </div>
-      <div style="margin-top:10px;"><div style="display:flex;justify-content:space-between;align-items:center;"><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--gray-400);">Extra fields</div><button class="form-secondary" style="font-size:11px;" onclick="_punchTplAddField()">+ Add field</button></div>
-        <div id="ptpe-fields" style="margin-top:6px;"></div>
-      </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <div style="margin-top:14px;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--gray-50);border-bottom:1px solid var(--border);">
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--gray-400);">Custom fields</span>
+          <span style="display:flex;gap:6px;">
+            <button class="form-secondary" style="font-size:11px;" onclick="_ptpeShowPicker()">${icon('search')} Choose From Existing</button>
+            <button class="form-secondary" style="font-size:11px;" onclick="_ptpeShowCreate()">${icon('plus')} Create New</button>
+          </span>
+        </div>
+        <div id="ptpe-addpanel"></div>
+        <div id="ptpe-fields"></div>
+      </div>
+      <details style="margin-top:14px;">
+        <summary style="cursor:pointer;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--gray-400);">Advanced — option-list overrides</summary>
+        <div style="font-size:11px;color:var(--gray-500);margin:6px 0;">Point a core dropdown at a different Field Config fieldset key (blank = default).</div>
+        <div class="form-grid">${coreKeys.map(([k, lbl]) => `<div class="form-field"><label>${lbl}</label><input id="ptpe-ok-${k}" class="form-input" placeholder="${k}" value="${escapeHtml(ok[k] || '')}"></div>`).join('')}</div>
+      </details>`,
+    footer: `<button class="form-secondary" onclick="_punchTemplatesModal()">Back</button>
       ${t ? `<button class="form-secondary" style="color:var(--bad);" onclick="_punchTplDelete('${t.id}')">Delete</button>` : ''}
       <button class="form-submit" onclick="_punchTplSave('${id || ''}')">Save Template</button>`,
   });
-  _punchTplRenderFields();
+  _ptpeRenderCore();
+  _ptpeRenderFields();
 }
-function _punchTplRenderFields() {
+function _ptpeCoreRowHTML(key, label, opts) {
+  const shown = !_ptpe.hide.has(key);
+  const req = _ptpe.reqc.has(key);
+  const lockOn = !!(opts && opts.alwaysOn);
+  return `<div style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid var(--gray-100);">
+      ${_ptpeSwitchHTML(shown, lockOn ? '' : `_ptpeHideToggle('${key}')`, (shown ? 'Hide ' : 'Show ') + label, lockOn)}
+      <span style="flex:1;font-size:13px;font-weight:500;${shown ? '' : 'color:var(--gray-400);'}">${escapeHtml(label)}${lockOn ? ' <span style="font-size:10px;color:var(--gray-400);">(always shown)</span>' : ''}</span>
+      <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:${shown ? 'var(--text)' : 'var(--gray-400)'};cursor:${shown ? 'pointer' : 'default'};">
+        <input type="checkbox" ${req ? 'checked' : ''} ${shown ? '' : 'disabled'} onchange="_ptpeReqCore('${key}', this.checked)" style="margin:0;"> Required
+      </label>
+    </div>`;
+}
+function _ptpeRenderCore() {
+  const wrap = document.getElementById('ptpe-core'); if (!wrap) return;
+  wrap.innerHTML = _PUNCH_CORE_FIELDS.map(([k, l]) => _ptpeCoreRowHTML(k, l)).join('')
+    + _ptpeCoreRowHTML('description', 'Description', { alwaysOn: true });
+}
+function _ptpeHideToggle(key) {
+  if (_ptpe.hide.has(key)) _ptpe.hide.delete(key);
+  else { _ptpe.hide.add(key); _ptpe.reqc.delete(key); }
+  _ptpeRenderCore();
+}
+function _ptpeReqCore(key, on) { if (on) _ptpe.reqc.add(key); else _ptpe.reqc.delete(key); }
+function _ptpeRenderFields() {
   const wrap = document.getElementById('ptpe-fields'); if (!wrap) return;
-  if (!_ptpEditFields.length) { wrap.innerHTML = '<div style="font-size:12px;color:var(--gray-500);">No extra fields.</div>'; return; }
-  wrap.innerHTML = _ptpEditFields.map((f, i) => `<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;flex-wrap:wrap;border:1px solid var(--border);border-radius:6px;padding:6px 8px;">
-      <input class="form-input ptpf-key" data-i="${i}" placeholder="key" value="${escapeHtml(f.key || '')}" style="width:110px;font-size:12px;">
-      <input class="form-input ptpf-label" data-i="${i}" placeholder="label" value="${escapeHtml(f.label || '')}" style="width:150px;font-size:12px;">
-      <select class="form-input ptpf-type" data-i="${i}" style="width:110px;font-size:12px;">${['text', 'textarea', 'select', 'date', 'number', 'checkbox'].map(ty => `<option ${f.type === ty ? 'selected' : ''}>${ty}</option>`).join('')}</select>
-      <input class="form-input ptpf-opts" data-i="${i}" placeholder="options (comma) or fieldset key" value="${escapeHtml(f.options ? f.options.join(', ') : (f.options_key || ''))}" style="flex:1;min-width:140px;font-size:12px;">
-      <label style="font-size:11px;display:inline-flex;gap:3px;align-items:center;"><input type="checkbox" class="ptpf-req" data-i="${i}" ${f.required ? 'checked' : ''}> req</label>
-      <button class="form-secondary" style="font-size:11px;padding:2px 7px;color:var(--bad);" aria-label="Remove field" onclick="_punchTplRemoveField(${i})">${icon('x')}</button>
-    </div>`).join('');
-}
-function _punchTplSyncFields() {
-  document.querySelectorAll('#ptpe-fields .ptpf-key').forEach(el => { const i = +el.dataset.i; _ptpEditFields[i] = _ptpEditFields[i] || {}; _ptpEditFields[i].key = el.value.trim(); });
-  document.querySelectorAll('#ptpe-fields .ptpf-label').forEach(el => { _ptpEditFields[+el.dataset.i].label = el.value.trim(); });
-  document.querySelectorAll('#ptpe-fields .ptpf-type').forEach(el => { _ptpEditFields[+el.dataset.i].type = el.value; });
-  document.querySelectorAll('#ptpe-fields .ptpf-req').forEach(el => { _ptpEditFields[+el.dataset.i].required = el.checked; });
-  document.querySelectorAll('#ptpe-fields .ptpf-opts').forEach(el => {
-    const f = _ptpEditFields[+el.dataset.i]; const raw = el.value.trim();
-    delete f.options; delete f.options_key;
-    if (raw.includes(',')) f.options = raw.split(',').map(s => s.trim()).filter(Boolean);
-    else if (raw) f.options_key = raw;
+  let h = '';
+  _ptpe.refs.forEach((r, i) => {
+    const lib = _punchFieldByKey(r.key);
+    h += `<div style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid var(--gray-100);">
+        <span style="color:var(--gray-400);">${icon('puzzle')}</span>
+        <span style="flex:1;font-size:13px;font-weight:500;">${lib ? escapeHtml(lib.label) : '<span style="color:var(--bad);">' + escapeHtml(r.key) + ' (missing from library)</span>'}
+          ${lib ? `<span style="font-size:11px;color:var(--gray-500);font-weight:400;"> · ${escapeHtml(_punchFieldTypeLabel(lib.type))}</span>` : ''}</span>
+        <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;"><input type="checkbox" ${r.required ? 'checked' : ''} onchange="_ptpeRefReq(${i}, this.checked)" style="margin:0;"> Required</label>
+        <button class="form-secondary" style="font-size:11px;padding:2px 8px;color:var(--bad);" aria-label="Remove field from template" onclick="_ptpeRemoveRef(${i})">${icon('x')} Remove</button>
+      </div>`;
   });
+  _ptpe.legacy.forEach((f, i) => {
+    h += `<div style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid var(--gray-100);">
+        <span style="color:var(--gray-400);">${icon('file')}</span>
+        <span style="flex:1;font-size:13px;font-weight:500;">${escapeHtml(f.label || f.key)} <span style="font-size:11px;color:var(--gray-500);font-weight:400;">· ${escapeHtml(_punchFieldTypeLabel(f.type || 'text'))} · inline (legacy)</span></span>
+        <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;"><input type="checkbox" ${f.required ? 'checked' : ''} onchange="_ptpe.legacy[${i}].required=this.checked" style="margin:0;"> Required</label>
+        <button class="form-secondary" style="font-size:11px;padding:2px 8px;color:var(--bad);" aria-label="Remove legacy field" onclick="_ptpeRemoveLegacy(${i})">${icon('x')} Remove</button>
+      </div>`;
+  });
+  wrap.innerHTML = h || '<div style="padding:12px;font-size:12px;color:var(--gray-500);">No custom fields on this template — choose one from the library or create a new one.</div>';
 }
-function _punchTplAddField() { _punchTplSyncFields(); _ptpEditFields.push({ key: '', label: '', type: 'text' }); _punchTplRenderFields(); }
-function _punchTplRemoveField(i) { _punchTplSyncFields(); _ptpEditFields.splice(i, 1); _punchTplRenderFields(); }
+function _ptpeRefReq(i, on) { if (_ptpe.refs[i]) _ptpe.refs[i].required = on; }
+function _ptpeRemoveRef(i) { _ptpe.refs.splice(i, 1); _ptpeRenderFields(); }
+function _ptpeRemoveLegacy(i) { _ptpe.legacy.splice(i, 1); _ptpeRenderFields(); }
+function _ptpeShowPicker() {
+  const wrap = document.getElementById('ptpe-addpanel'); if (!wrap) return;
+  const allocated = new Set(_ptpe.refs.map(r => r.key));
+  const avail = PUNCH_CUSTOM_FIELDS.filter(f => f.active !== false && !allocated.has(f.key));
+  wrap.innerHTML = `<div style="padding:10px 12px;border-bottom:1px solid var(--gray-100);background:var(--gray-50);">
+      <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-bottom:6px;">Choose from the field library:</div>
+      ${avail.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;">${avail.map(f => `<button class="form-secondary" style="font-size:12px;" onclick="_ptpeAllocField('${escapeHtml(f.key)}')">${icon('plus')} ${escapeHtml(f.label)} <span style="font-size:10px;color:var(--gray-500);">${escapeHtml(_punchFieldTypeLabel(f.type))}</span></button>`).join('')}</div>`
+        : '<div style="font-size:12px;color:var(--gray-500);">Every library field is already on this template. Create a new one instead.</div>'}
+      <div style="margin-top:6px;"><button class="form-secondary" style="font-size:11px;" onclick="document.getElementById('ptpe-addpanel').innerHTML=''">Close</button></div>
+    </div>`;
+}
+function _ptpeAllocField(key) {
+  if (!_ptpe.refs.some(r => r.key === key)) _ptpe.refs.push({ key, required: false });
+  const wrap = document.getElementById('ptpe-addpanel'); if (wrap) wrap.innerHTML = '';
+  _ptpeRenderFields();
+}
+function _ptpeShowCreate() {
+  const wrap = document.getElementById('ptpe-addpanel'); if (!wrap) return;
+  wrap.innerHTML = `<div style="padding:10px 12px;border-bottom:1px solid var(--gray-100);">${_punchFieldCreateFormHTML('_ptpeCreateSubmit()')}</div>`;
+}
+async function _ptpeCreateSubmit() {
+  try {
+    const row = await _punchLibCreateField();
+    if (!row) return;
+    _ptpe.refs.push({ key: row.key, required: false });
+    const wrap = document.getElementById('ptpe-addpanel'); if (wrap) wrap.innerHTML = '';
+    toast('Field "' + row.label + '" created and added', 'success');
+    _ptpeRenderFields();
+  } catch (e) { toast('Create failed: ' + e.message, 'error'); }
+}
 async function _punchTplSave(id) {
-  _punchTplSyncFields();
   const name = (document.getElementById('ptpe-name')?.value || '').trim();
   if (!name) { toast('Name is required', 'error'); return; }
   const coreKeys = ['punch_type', 'punch_subsystem', 'schedule_impact', 'category_of_failure', 'type_of_failure'];
   const option_keys = {};
   coreKeys.forEach(k => { const v = (document.getElementById('ptpe-ok-' + k)?.value || '').trim(); if (v) option_keys[k] = v; });
-  const fields = _ptpEditFields.filter(f => f.key && f.label).map(f => { const o = { key: f.key, label: f.label, type: f.type || 'text' }; if (f.required) o.required = true; if (f.options) o.options = f.options; if (f.options_key) o.options_key = f.options_key; return o; });
   const config = {
     location_mode: document.getElementById('ptpe-mode')?.value || 'wayside',
     multi_car: !!document.getElementById('ptpe-multicar')?.checked,
     require_car: !!document.getElementById('ptpe-reqcar')?.checked,
-    option_keys, hide_core: [], extra_fields: fields,
+    option_keys,
+    hide_core: [..._ptpe.hide],
+    require_core: [..._ptpe.reqc],
+    field_refs: _ptpe.refs.filter(r => r.key),
+    extra_fields: _ptpe.legacy,
   };
   const isDefault = !!document.getElementById('ptpe-default')?.checked;
   const active = !!document.getElementById('ptpe-active')?.checked;
