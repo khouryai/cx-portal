@@ -9059,7 +9059,7 @@ function _punchFieldLibModal() {
   if (typeof uiCan === 'function' && !uiCan('punch_list', 'manage_templates')) { toast('Not permitted', 'error'); return; }
   modal({
     title: 'Punch Field Library', size: 'large',
-    body: `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">Reusable custom fields. Allocate them to any punch template; dropdown options are managed in <strong>Admin → Field Config → Punch Custom Fields</strong>.</div>
+    body: `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">Reusable custom fields. Allocate them to any punch template. Only <strong>Single/Multi Select</strong> fields carry a dropdown option list — managed in <strong>Admin → Field Config → Punch Custom Fields</strong>. Use <strong>Edit</strong> to rename a field or change its type (e.g. convert a text field to a dropdown).</div>
       <div style="display:flex;justify-content:flex-end;margin-bottom:8px;"><button class="form-submit" onclick="_punchLibShowCreate()">+ New Field</button></div>
       <div id="plib-create"></div>
       <div id="plib-list"></div>`,
@@ -9078,7 +9078,7 @@ function _punchLibRenderList() {
         <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(_punchFieldTypeLabel(f.type))} · <span style="font-family:monospace;">${escapeHtml(f.key)}</span>${usedBy.length ? ' · used by ' + usedBy.map(escapeHtml).join(', ') : ' · unused'}</div>
       </div>
       ${(f.type === 'select' || f.type === 'multiselect') && f.options_key ? `<button class="form-secondary" style="font-size:11px;" title="Edit dropdown options in Field Config" onclick="closeModal();showPage('admin-fieldconfig')">${icon('settings')} Options</button>` : ''}
-      <button class="form-secondary" style="font-size:11px;" onclick="_punchLibRename('${f.id}')">Rename</button>
+      <button class="form-secondary" style="font-size:11px;" onclick="_punchLibEditShow('${f.id}')">Edit</button>
       <button class="form-secondary" style="font-size:11px;" onclick="_punchLibToggleActive('${f.id}')">${f.active === false ? 'Activate' : 'Deactivate'}</button>
       <button class="form-secondary" style="font-size:11px;color:var(--bad);" aria-label="Delete field" onclick="_punchLibDelete('${f.id}')">${icon('trash')}</button>
     </div>`;
@@ -9140,15 +9140,54 @@ async function _punchLibCreateSubmit() {
     _punchLibRenderList();
   } catch (e) { toast('Create failed: ' + e.message, 'error'); }
 }
-async function _punchLibRename(id) {
+// Edit a library field: rename, change its type, and manage options. Switching
+// to select/multiselect creates (or reuses) its fieldset_config option list, so
+// the field appears under Field Config → Punch Custom Fields; switching away
+// detaches it. Values already saved on punch items are kept as-is.
+function _punchLibEditShow(id) {
   const f = PUNCH_CUSTOM_FIELDS.find(x => x.id === id); if (!f) return;
-  const name = prompt('Rename field:', f.label);
-  if (!name || !name.trim() || name.trim() === f.label) return;
+  const wrap = document.getElementById('plib-create'); if (!wrap) return;
+  const opts = f.options_key ? _fsCfg(f.options_key) : [];
+  const isSel = f.type === 'select' || f.type === 'multiselect';
+  wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;background:var(--gray-50);">
+      <div style="font-size:12px;font-weight:700;margin-bottom:8px;">Edit field · ${escapeHtml(f.label)}</div>
+      <div class="form-grid">
+        <div class="form-field"><label>Field Name *</label><input type="text" id="pcf-name" class="form-input" value="${escapeHtml(f.label)}"></div>
+        <div class="form-field"><label>Field Type *</label><select id="pcf-type" class="form-input" onchange="_punchFieldTypeChanged()">${_PUNCH_FIELD_TYPES.map(([v, l]) => `<option value="${v}" ${f.type === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        <div class="form-field form-field-full" id="pcf-opts-wrap" style="display:${isSel ? '' : 'none'};"><label>Options <span style="font-weight:400;color:var(--gray-500);">(comma-separated — editable later in Field Config)</span></label><input type="text" id="pcf-opts" class="form-input" value="${escapeHtml(opts.join(', '))}"></div>
+      </div>
+      <div style="font-size:11px;color:var(--gray-500);margin-top:6px;">Changing the type keeps values already saved on punch items.</div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
+        <button class="form-secondary" style="font-size:12px;" onclick="document.getElementById('plib-create').innerHTML=''">Cancel</button>
+        <button class="form-submit" style="font-size:12px;" onclick="_punchLibEditSubmit('${id}')">Save Field</button>
+      </div>
+    </div>`;
+}
+async function _punchLibEditSubmit(id) {
+  const f = PUNCH_CUSTOM_FIELDS.find(x => x.id === id); if (!f) return;
+  const name = (document.getElementById('pcf-name')?.value || '').trim();
+  const type = document.getElementById('pcf-type')?.value || f.type;
+  if (!name) { toast('Field name is required', 'error'); return; }
+  let optionsKey = f.options_key || null;
   try {
-    const [row] = await _dbUpdate('punch_custom_fields', { label: name.trim() }, { id });
-    Object.assign(f, row || { label: name.trim() });
+    if (type === 'select' || type === 'multiselect') {
+      const opts = (document.getElementById('pcf-opts')?.value || '').split(',').map(x => x.trim()).filter(Boolean);
+      if (!opts.length) { toast('Add at least one option for a select field', 'error'); return; }
+      optionsKey = optionsKey || ('pcf_' + f.key);
+      const { error } = await _sb.from('fieldset_config')
+        .upsert({ field_key: optionsKey, label: name + ' (Punch Field)', options: opts, updated_at: new Date().toISOString() }, { onConflict: 'field_key' });
+      if (error) throw new Error(error.message);
+      FIELDSET_CONFIG[optionsKey] = opts;
+    } else {
+      optionsKey = null;
+    }
+    const patch = { label: name, type, options_key: optionsKey };
+    const [row] = await _dbUpdate('punch_custom_fields', patch, { id });
+    Object.assign(f, row || patch);
+    toast('Field updated', 'success');
+    const c = document.getElementById('plib-create'); if (c) c.innerHTML = '';
     _punchLibRenderList();
-  } catch (e) { toast('Rename failed: ' + e.message, 'error'); }
+  } catch (e) { toast('Update failed: ' + e.message, 'error'); }
 }
 async function _punchLibToggleActive(id) {
   const f = PUNCH_CUSTOM_FIELDS.find(x => x.id === id); if (!f) return;
