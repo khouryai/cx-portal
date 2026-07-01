@@ -18328,6 +18328,12 @@ async function deleteSwEquip(id, configId) {
   } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
 }
 
+// Vehicle module data (assigned by loadVehicles; declared here so reads
+// before the first load never throw).
+let VEHICLES = [], VEH_EQUIP = [], VEH_WORKFLOW = [], VEH_EQ_TPL = [], VEH_WF_TPL = [], VEH_FORM_LINKS = [];
+let VEH_CHECKLIST = [], VEH_CHK_TPL = [], VEH_FILES = [], VEH_EVENTS = [];
+let _vmChkOpen = new Set();   // expanded checklists per workflow item
+let _vmChkPhotos = {};        // checklist line id -> photo rows (lazy)
 let _vmSel    = null;        // selected car id (null → registry list)
 let _vmTab    = 'workflow';  // detail tab: workflow | equipment | punch
 let _vmFilter = { search: '', type: '' };
@@ -18335,16 +18341,21 @@ let _vmWfHistOpen = new Set();
 
 async function loadVehicles() {
   try {
-    const [veh, eq, wf, eqTpl, wfTpl, fLinks] = await Promise.all([
+    const [veh, eq, wf, eqTpl, wfTpl, fLinks, chk, chkTpl, vFiles, vEvents] = await Promise.all([
       _dbSelect('vehicles'),
       _dbSelect('vehicle_equipment'),
       _dbSelect('vehicle_workflow_items'),
       _dbSelect('vehicle_equipment_templates'),
       _dbSelect('vehicle_workflow_templates'),
       _dbSelect('form_vehicle_item_links'),
+      _dbSelect('vehicle_checklist_items'),
+      _dbSelect('vehicle_checklist_tpl_items'),
+      _dbSelect('vehicle_files'),
+      _dbSelect('vehicle_events'),
     ]);
     VEHICLES = veh || []; VEH_EQUIP = eq || []; VEH_WORKFLOW = wf || [];
     VEH_EQ_TPL = eqTpl || []; VEH_WF_TPL = wfTpl || []; VEH_FORM_LINKS = fLinks || [];
+    VEH_CHECKLIST = chk || []; VEH_CHK_TPL = chkTpl || []; VEH_FILES = vFiles || []; VEH_EVENTS = vEvents || [];
     console.log(`Loaded ${VEHICLES.length} vehicles`);
   } catch (e) { console.warn('[loadVehicles]', e.message); }
 }
@@ -18703,19 +18714,21 @@ function _vmRenderDetail(root, heroEl) {
   const sm = _VM_STATUS[r.status];
   const readyTxt = r.status === 'ready' ? 'Ready for dynamic testing' : sm.label;
   const readyTone = sm.tone;
+  const cs = _vmChkCarStats(car.id);
   if (heroEl) heroEl.innerHTML = renderPageHero({
     eyebrow: 'Vehicle',
     title: car.car_number + '  ·  ' + car.car_type + '-Car',
     sub: 'Software compliance and readiness workflow for this car',
     stats: [
       { label: 'Workflow', value: `${r.wfComplete}/${r.wfTotal}` },
+      ...(cs.total ? [{ label: 'Checklist', value: cs.done + '/' + cs.total, tone: cs.fails ? 'amber' : (cs.done === cs.total ? 'good' : 'muted') }] : []),
       { label: 'SW Compliant', value: `${r.match}/${r.eqTotal}`, tone: r.mismatch ? 'amber' : 'good' },
       { label: 'Out of Date', value: r.mismatch, tone: r.mismatch ? 'amber' : 'muted' },
       { label: 'Open Punch', value: r.openPunch, tone: r.openPunch ? 'amber' : 'muted' },
     ],
   });
 
-  const tabs = [['workflow', 'Workflow', icon('clipboard')], ['equipment', 'Equipment & Software', icon('cpu')], ['punch', 'Punch List', icon('flag')]];
+  const tabs = [['workflow', 'Workflow', icon('clipboard')], ['equipment', 'Equipment & Software', icon('cpu')], ['punch', 'Punch List', icon('flag')], ['history', 'Car History', icon('clock')]];
   const tabBar = `<div style="display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap;">
     ${tabs.map(([id, label, ic]) => `<button onclick="_vmSetTab('${id}')" style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;color:${_vmTab === id ? 'var(--hitachi-red)' : 'var(--gray-500)'};border-bottom:2px solid ${_vmTab === id ? 'var(--hitachi-red)' : 'transparent'};margin-bottom:-1px;">${ic} ${label}</button>`).join('')}
   </div>`;
@@ -18741,6 +18754,7 @@ function _vmRenderDetail(root, heroEl) {
   let tabBody = '';
   if (_vmTab === 'workflow') tabBody = _vmWorkflowTabHTML(car);
   else if (_vmTab === 'equipment') tabBody = _vmEquipTabHTML(car);
+  else if (_vmTab === 'history') tabBody = _vmHistoryTabHTML(car);
   else tabBody = _vmPunchTabHTML(car);
 
   _htmlPreserveFocus(root, head + `<div class="admin-section">${tabBar}${tabBody}</div>`);
@@ -18753,17 +18767,26 @@ function _vmFormsForItem(itemId) {
 }
 function _vmWorkflowTabHTML(car) {
   const items = _vmWfLatest(car.id);
-  if (!items.length) {
-    return cxEmpty({ icon: 'clipboard', title: 'No workflow items', message: 'This car has no readiness checklist. Re-seed from its type template, or edit templates first.', actionLabel: _vmCan('edit') ? 'Seed from template' : null, onAction: _vmCan('edit') ? `_vmSeedWorkflow('${car.id}')` : null });
-  }
   const canEdit = _vmCan('edit');
-  let h = '<div style="display:flex;flex-direction:column;gap:10px;">';
-  for (const it of items) {
+  const toolbar = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      <div style="font-size:12px;color:var(--gray-500);">Readiness workflow for this car — edit activities and fill their checklists here.</div>
+      <div style="display:flex;gap:8px;">
+        ${canEdit && !items.length ? `<button class="form-secondary" style="font-size:12px;" onclick="_vmSeedWorkflow('${car.id}')">${icon('layers')} Seed from ${escapeHtml(car.car_type)}-template</button>` : ''}
+        ${canEdit ? `<button class="admin-action-btn" onclick="_vmWfAddModal('${car.id}')">${icon('plus')} Add Activity</button>` : ''}
+      </div>
+    </div>`;
+  if (!items.length) {
+    return toolbar + cxEmpty({ icon: 'clipboard', title: 'No workflow items', message: 'Seed the readiness checklist from the type template, or add activities manually.' });
+  }
+  let h = toolbar + '<div style="display:flex;flex-direction:column;gap:10px;">';
+  items.forEach((it, idx) => {
     const tone = _VM_WF_TONE[it.status] || 'muted';
     const forms = _vmFormsForItem(it.id);
     const hist = _vmWfHistory(it.regression_group_id || it.id);
     const failed = it.status === 'Failed';
     const histOpen = _vmWfHistOpen.has(it.id);
+    const cs = _vmChkItemStats(it.id);
+    const chkOpen = _vmChkOpen.has(it.id);
     h += `<div style="border:1px solid var(--border);border-left:3px solid ${_VM_CHIP_TONE[tone][1]};border-radius:8px;padding:12px 14px;background:var(--surface);">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
         <div style="flex:1;min-width:200px;">
@@ -18771,12 +18794,16 @@ function _vmWorkflowTabHTML(car) {
             <span style="font-size:14px;font-weight:600;">${escapeHtml(it.title)}</span>
             ${it.required === false ? _vmChip('Optional', 'muted') : ''}
             ${(it.attempt_number || 1) > 1 ? `<span style="font-size:10px;font-weight:700;background:#ede9fe;color:#6d28d9;border:1px solid #ddd6fe;border-radius:3px;padding:1px 6px;">Attempt ${it.attempt_number}</span>` : ''}
+            ${cs.total ? _vmChip('Checklist ' + cs.done + '/' + cs.total + (cs.fails ? ' · ' + cs.fails + ' fail' : ''), cs.fails ? 'bad' : (cs.done === cs.total ? 'good' : 'info')) : ''}
           </div>
           ${it.description ? `<div style="font-size:12px;color:var(--gray-500);margin-top:3px;">${escapeHtml(it.description)}</div>` : ''}
         </div>
-        <div style="display:flex;align-items:center;gap:8px;">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:2px 7px;" ${idx === 0 ? 'disabled' : ''} aria-label="Move activity up" title="Move up" onclick="_vmWfMove('${it.id}',-1)">▲</button>
+          <button class="form-secondary" style="font-size:11px;padding:2px 7px;" ${idx === items.length - 1 ? 'disabled' : ''} aria-label="Move activity down" title="Move down" onclick="_vmWfMove('${it.id}',1)">▼</button>
+          <button class="form-secondary" style="font-size:11px;padding:2px 8px;" aria-label="Edit activity" title="Edit activity" onclick="_vmWfEditModal('${it.id}')">${icon('edit')}</button>` : ''}
           ${canEdit
-            ? `<select onchange="_vmSetWfStatus('${it.id}',this.value)" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-weight:600;">
+            ? `<select onchange="_vmSetWfStatus('${it.id}',this.value)" aria-label="Activity status" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-weight:600;">
                 ${_VM_WF_STATUSES.map(s => `<option ${it.status === s ? 'selected' : ''}>${s}</option>`).join('')}
               </select>`
             : _vmChip(it.status, tone)}
@@ -18788,9 +18815,13 @@ function _vmWorkflowTabHTML(car) {
             ${canEdit ? `<button onclick="_vmUnlinkForm('${f.id}','${it.id}')" aria-label="Unlink form" title="Unlink" style="border:none;background:none;color:#9ca3af;cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}
           </span>`).join('')}
         ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;" onclick="_vmLinkFormModal('${it.id}')">${icon('paperclip')} Attach form</button>` : ''}
+        <button class="form-secondary" style="font-size:11px;padding:3px 9px;" onclick="_vmChkToggleOpen('${it.id}')">${chkOpen ? '▾' : '▸'} Checklist${cs.total ? ' (' + cs.done + '/' + cs.total + ')' : ''}</button>
+        ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;" onclick="_vmChkBuilderModal('item','${it.id}')">${icon('sliders')} Edit checklist</button>` : ''}
         ${failed && canEdit ? `<button onclick="_vmWfRegression('${it.id}')" title="Freeze this failed attempt and start a fresh run" style="font-size:11px;font-weight:600;padding:3px 9px;background:#f5f3ff;border:1px solid #c4b5fd;color:#6d28d9;border-radius:6px;cursor:pointer;">${icon('refresh')} New attempt</button>` : ''}
         ${hist.length ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;" onclick="_vmToggleHist('${it.id}')">${histOpen ? '▾' : '▸'} History (${hist.length})</button>` : ''}
+        ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;color:var(--bad);margin-left:auto;" onclick="_vmWfDelete('${it.id}')">${icon('trash')} Delete</button>` : ''}
       </div>
+      ${chkOpen ? _vmChecklistHTML(car, it, canEdit) : ''}
       ${histOpen && hist.length ? `<div style="margin-top:8px;border-top:1px dashed var(--border);padding-top:8px;display:flex;flex-direction:column;gap:5px;">
         ${hist.slice().reverse().map(a => `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--gray-500);">
           <span style="font-weight:700;">Attempt ${a.attempt_number || 1}</span> ${_vmChip(a.status, _VM_WF_TONE[a.status] || 'muted')}
@@ -18800,22 +18831,25 @@ function _vmWorkflowTabHTML(car) {
         </div>`).join('')}
       </div>` : ''}
     </div>`;
-  }
+  });
   h += '</div>';
   return h;
 }
+
 function _vmToggleHist(id) { if (_vmWfHistOpen.has(id)) _vmWfHistOpen.delete(id); else _vmWfHistOpen.add(id); renderVehicleManagement(); }
 
-async function _vmSetWfStatus(itemId, status) {
+async function _vmSetWfStatus(itemId, status, opts) {
+  opts = opts || {};
   if (!_vmCan('edit')) { toast('Not permitted', 'error'); return; }
   const it = VEH_WORKFLOW.find(w => w.id === itemId);
-  if (!it) return;
+  if (!it || it.status === status) return;
   const patch = { status };
   if (status === 'Complete') { patch.completed_by = _vmWho(); patch.completed_at = new Date().toISOString(); }
   else { patch.completed_by = null; patch.completed_at = null; }
   try {
     const [row] = await _dbUpdate('vehicle_workflow_items', patch, { id: itemId });
     Object.assign(it, row || patch);
+    _vmLogEvent(it.vehicle_id, 'workflow', it.title + ' → ' + status + (opts.auto ? ' (auto from checklist)' : ''), { item_id: it.id, status, auto: !!opts.auto });
     renderVehicleManagement();
   } catch (e) { toast('Update failed: ' + e.message, 'error'); }
 }
@@ -18837,7 +18871,16 @@ async function _vmWfRegression(itemId) {
       attempt_number: (it.attempt_number || 1) + 1, is_latest_attempt: true, created_by: _vmWho(),
     };
     const [inserted] = await _dbInsert('vehicle_workflow_items', [newRow]);
-    if (inserted) VEH_WORKFLOW.push(inserted);
+    if (inserted) {
+      VEH_WORKFLOW.push(inserted);
+      // Clone the checklist definition onto the fresh attempt (blank responses).
+      const defs = _vmChkFor(it.id);
+      if (defs.length) {
+        const rows = defs.map(l => ({ workflow_item_id: inserted.id, section: l.section, seq: l.seq, label: l.label, kind: l.kind, unit: l.unit, expected: l.expected, required: l.required, created_by: _vmWho() }));
+        try { const cIns = await _dbInsert('vehicle_checklist_items', rows); VEH_CHECKLIST.push(...(cIns || [])); } catch (e2) { console.warn('[regression checklist]', e2.message); }
+      }
+      _vmLogEvent(it.vehicle_id, 'workflow', it.title + ' — attempt ' + ((it.attempt_number || 1) + 1) + ' started', { item_id: inserted.id });
+    }
     toast('Fresh attempt started', 'success');
     renderVehicleManagement();
   } catch (e) { toast('Regression failed: ' + e.message, 'error'); }
@@ -19025,7 +19068,7 @@ async function _vmSaveCar() {
         vehicle_id: car.id, equipment_name: t.equipment_name, sw_type: t.sw_type, config_id: t.config_id,
         part_number: t.part_number, sort_order: t.sort_order, created_by: _vmWho(),
       }));
-      if (wfRows.length) { const ins = await _dbInsert('vehicle_workflow_items', wfRows); VEH_WORKFLOW.push(...(ins || [])); }
+      if (wfRows.length) { const ins = await _dbInsert('vehicle_workflow_items', wfRows); VEH_WORKFLOW.push(...(ins || [])); await _vmSeedChecklists(VEH_WF_TPL.filter(t => t.car_type === type), ins || []); }
       if (eqRows.length) { const ins = await _dbInsert('vehicle_equipment', eqRows); VEH_EQUIP.push(...(ins || [])); }
     }
     toast('Car ' + num + ' added', 'success');
@@ -19077,7 +19120,12 @@ async function _vmSeedWorkflow(carId) {
     status: 'Not Started', attempt_number: 1, is_latest_attempt: true, created_by: _vmWho(),
   }));
   if (!rows.length) { toast('No workflow template for ' + car.car_type + '-Car', 'error'); return; }
-  try { const ins = await _dbInsert('vehicle_workflow_items', rows); VEH_WORKFLOW.push(...(ins || [])); toast('Workflow seeded', 'success'); renderVehicleManagement(); }
+  try {
+    const ins = await _dbInsert('vehicle_workflow_items', rows); VEH_WORKFLOW.push(...(ins || []));
+    await _vmSeedChecklists(VEH_WF_TPL.filter(t => t.car_type === car.car_type), ins || []);
+    _vmLogEvent(carId, 'workflow', 'Workflow seeded from ' + car.car_type + '-Car template', {});
+    toast('Workflow seeded', 'success'); renderVehicleManagement();
+  }
   catch (e) { toast('Seed failed: ' + e.message, 'error'); }
 }
 async function _vmSeedEquip(carId) {
@@ -19197,6 +19245,7 @@ function _vmEditBuildPick() {
 }
 async function _vmSaveEquipOne(carId, editId) {
   const eq = VEH_EQUIP.find(x => x.id === editId);
+  const prevVer = eq ? (eq.loaded_version || null) : null;
   const device = (document.getElementById('vme-device')?.value || '').trim();
   if (!device) { toast('Device is required', 'error'); return; }
   const buildId = document.getElementById('vme-build')?.value || '';
@@ -19212,6 +19261,7 @@ async function _vmSaveEquipOne(carId, editId) {
   try {
     const [row] = await _dbUpdate('vehicle_equipment', data, { id: editId });
     if (eq) Object.assign(eq, row || data);
+    if ((data.loaded_version || null) !== prevVer) _vmLogEvent(carId, 'software', device + (data.sw_type ? ' · ' + data.sw_type : '') + ' — loaded ' + (data.loaded_version || 'nothing'), { equip_id: editId });
     toast('Equipment updated', 'success'); closeModal(); renderVehicleManagement();
   } catch (e) { toast('Save failed: ' + e.message, 'error'); }
 }
@@ -19295,6 +19345,7 @@ async function _vmCreatePatch(carId, equipId) {
     SW_CONFIGS.push({ id: configId, subsystem: parentCfg?.subsystem || 'Vehicle', software_name: parentCfg?.software_name || e.equipment_name, version: ver, status: 'patch', parent_id: parent, notes, location: null, created_at: now, created_by: _vmWho() });
     SW_EQUIPMENT.push({ id: ciId, config_id: configId, equipment_name: e.equipment_name, sw_type: swType, part_number: ver, notes, created_at: now });
     Object.assign(e, { sw_equipment_id: ciId, config_id: configId, loaded_version: ver, sw_type: e.sw_type || swType });
+    _vmLogEvent(carId, 'software', e.equipment_name + ' — patch ' + ver + ' created under ' + ((parentCfg && parentCfg.software_name) || 'VDD') + ' and loaded', { patch: true });
     toast('Patch created and loaded on car', 'success');
     closeModal(); renderVehicleManagement();
   } catch (err) { toast('Patch failed: ' + err.message, 'error'); }
@@ -19363,6 +19414,7 @@ async function _vmApplyBulkUpdate() {
         const [row] = await _dbInsert('vehicle_equipment', [{ vehicle_id: carId, equipment_name: device, ...patch, sort_order: _vmEquipFor(carId).length, created_by: _vmWho() }]);
         if (row) { VEH_EQUIP.push(row); created++; }
       }
+      _vmLogEvent(carId, 'software', device + (swType ? ' · ' + swType : '') + ' — bulk loaded ' + (ci.part_number || ''), { bulk: true });
     }
     toast('Updated ' + updated + (created ? ' · created ' + created : '') + ' car' + ((updated + created) === 1 ? '' : 's'), 'success');
     closeModal(); renderVehicleManagement();
@@ -19426,6 +19478,7 @@ async function _vmLinkPunch(carId, punchId) {
   try {
     await _dbUpdate('punch_items', { linked_car_ids: ids }, { id: p.id });
     p.linked_car_ids = ids;
+    _vmLogEvent(carId, 'punch', 'Punch #' + (p.number ?? '') + ' linked to car', { punch_id: p.id });
     toast('Punch item linked', 'success'); closeModal(); renderVehicleManagement();
   } catch (e) { toast('Link failed: ' + e.message, 'error'); }
 }
@@ -19436,6 +19489,7 @@ async function _vmUnlinkPunch(carId, punchId) {
   try {
     await _dbUpdate('punch_items', { linked_car_ids: ids }, { id: p.id });
     p.linked_car_ids = ids;
+    _vmLogEvent(carId, 'punch', 'Punch #' + (p.number ?? '') + ' unlinked from car', { punch_id: p.id });
     renderVehicleManagement();
   } catch (e) { toast('Unlink failed: ' + e.message, 'error'); }
 }
@@ -19460,6 +19514,7 @@ function _vmTemplatesBodyHTML() {
         <span style="font-family:monospace;color:var(--gray-400);">${i.seq}</span>
         <span style="flex:1;font-weight:600;">${escapeHtml(i.title)}</span>
         ${i.required === false ? _vmChip('optional', 'muted') : ''}
+        <button class="form-secondary" style="font-size:10px;padding:1px 6px;" onclick="_vmChkBuilderModal('tpl','${i.id}')">Checklist (${VEH_CHK_TPL.filter(c => c.workflow_template_id === i.id).length})</button>
         <button class="form-secondary" style="font-size:10px;padding:1px 6px;color:var(--bad);" onclick="_vmTplDelWf('${i.id}')">Del</button>
       </div>`).join('') : `<div style="font-size:12px;color:var(--gray-500);">No workflow items for ${t}-Car.</div>`}
     </div>
@@ -19899,6 +19954,457 @@ async function deleteSwDeploy(id, configId) {
     closeModal();
     renderConfigMgmt();
   } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ==========================================================================
+// VEHICLE WORKFLOW CHECKLISTS + PER-CAR EDITING + CAR HISTORY
+// A workflow activity carries a sectioned checklist of four line kinds:
+// check (tick), passfail (Pass/Fail/N/A), value (measured entry with unit +
+// expected), note. Lines take photos (Photos module, source_type 'vehicle')
+// and any-type file attachments (vehicle-files bucket). Completing all
+// required lines auto-completes the activity; a Fail verdict auto-fails it
+// (manual status override always available — auto never downgrades).
+// vehicle_events records car history; the History tab merges logged events
+// with timestamps already present on punch/equipment/forms/car data.
+// ==========================================================================
+
+// ── Car history event log ─────────────────────────────────────────────────
+async function _vmLogEvent(vehicleId, kind, summary, meta) {
+  try {
+    const [row] = await _dbInsert('vehicle_events', [{ vehicle_id: vehicleId, kind, summary, meta: meta || {}, created_by: _vmWho() }]);
+    if (row) VEH_EVENTS.push(row);
+  } catch (e) { console.warn('[vmLogEvent]', e.message); }
+}
+
+// ── Checklist selectors + stats ───────────────────────────────────────────
+function _vmChkFor(itemId) {
+  return VEH_CHECKLIST.filter(c => c.workflow_item_id === itemId)
+    .sort((a, b) => (a.seq || 0) - (b.seq || 0) || String(a.created_at || '').localeCompare(String(b.created_at || '')));
+}
+function _vmChkLineComplete(l) {
+  if (l.kind === 'check') return !!l.done;
+  if (l.kind === 'passfail') return l.verdict === 'Pass' || l.verdict === 'N/A';
+  if (l.kind === 'value') return !!(l.value_text && String(l.value_text).trim());
+  return l.required === false || !!(l.value_text && String(l.value_text).trim());
+}
+function _vmChkItemStats(itemId) {
+  const lines = _vmChkFor(itemId);
+  return { total: lines.length, done: lines.filter(_vmChkLineComplete).length, fails: lines.filter(l => l.verdict === 'Fail').length };
+}
+function _vmChkCarStats(carId) {
+  let total = 0, done = 0, fails = 0;
+  for (const it of _vmWfLatest(carId)) { const s = _vmChkItemStats(it.id); total += s.total; done += s.done; fails += s.fails; }
+  return { total, done, fails };
+}
+// Auto status from the checklist: a Fail verdict fails the activity; all
+// required lines complete finishes it. Never downgrades a manual status.
+async function _vmChkAutoStatus(itemId) {
+  const it = VEH_WORKFLOW.find(w => w.id === itemId); if (!it) return;
+  const lines = _vmChkFor(itemId); if (!lines.length) return;
+  const anyFail = lines.some(l => l.verdict === 'Fail');
+  const req = lines.filter(l => l.required !== false);
+  const allDone = req.length > 0 && req.every(_vmChkLineComplete);
+  if (anyFail && it.status !== 'Failed') await _vmSetWfStatus(itemId, 'Failed', { auto: true });
+  else if (!anyFail && allDone && it.status !== 'Complete') await _vmSetWfStatus(itemId, 'Complete', { auto: true });
+}
+
+// ── Seeding: copy template checklist lines onto freshly seeded activities ──
+// tpls and insertedItems are index-paired (both built from the same filter).
+async function _vmSeedChecklists(tpls, insertedItems) {
+  const rows = [];
+  insertedItems.forEach((item, i) => {
+    const tpl = tpls[i]; if (!tpl) return;
+    for (const l of VEH_CHK_TPL.filter(x => x.workflow_template_id === tpl.id).sort((a, b) => (a.seq || 0) - (b.seq || 0))) {
+      rows.push({ workflow_item_id: item.id, section: l.section, seq: l.seq, label: l.label, kind: l.kind, unit: l.unit, expected: l.expected, required: l.required, created_by: _vmWho() });
+    }
+  });
+  if (!rows.length) return;
+  try { const ins = await _dbInsert('vehicle_checklist_items', rows); VEH_CHECKLIST.push(...(ins || [])); }
+  catch (e) { console.warn('[seed checklists]', e.message); }
+}
+
+// ── Checklist fill UI ─────────────────────────────────────────────────────
+function _vmChkToggleOpen(itemId) {
+  if (_vmChkOpen.has(itemId)) { _vmChkOpen.delete(itemId); renderVehicleManagement(); return; }
+  _vmChkOpen.add(itemId);
+  renderVehicleManagement();
+  _vmChkHydratePhotos(itemId);
+}
+async function _vmChkHydratePhotos(itemId) {
+  const ids = _vmChkFor(itemId).map(l => l.id);
+  if (!ids.length) return;
+  try {
+    const rows = await _fetchAnon('photos?select=*&is_deleted=eq.false&source_type=eq.vehicle&source_id=in.(' + ids.map(encodeURIComponent).join(',') + ')');
+    let changed = false;
+    for (const id of ids) {
+      const mine = (rows || []).filter(r => r.source_id === id);
+      if ((_vmChkPhotos[id] || []).length !== mine.length) changed = true;
+      _vmChkPhotos[id] = mine;
+    }
+    if (changed) renderVehicleManagement();
+  } catch (e) { console.warn('[chk photos]', e.message); }
+}
+async function _vmChkSaveLine(lineId, patch) {
+  if (!_vmCan('edit')) { toast('Not permitted', 'error'); return; }
+  const l = VEH_CHECKLIST.find(x => x.id === lineId); if (!l) return;
+  const probe = { ...l, ...patch };
+  if (_vmChkLineComplete(probe) && !_vmChkLineComplete(l)) { patch.completed_by = _vmWho(); patch.completed_at = new Date().toISOString(); }
+  else if (!_vmChkLineComplete(probe)) { patch.completed_by = null; patch.completed_at = null; }
+  try {
+    const [row] = await _dbUpdate('vehicle_checklist_items', patch, { id: lineId });
+    Object.assign(l, row || patch);
+    await _vmChkAutoStatus(l.workflow_item_id);
+    renderVehicleManagement();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+function _vmChkSetDone(id, on) { _vmChkSaveLine(id, { done: !!on }); }
+function _vmChkSetVerdict(id, v) { const l = VEH_CHECKLIST.find(x => x.id === id); _vmChkSaveLine(id, { verdict: (l && l.verdict === v) ? null : v }); }
+function _vmChkSetValue(id, v) { _vmChkSaveLine(id, { value_text: (v || '').trim() || null }); }
+
+function _vmChecklistHTML(car, it, canEdit) {
+  const lines = _vmChkFor(it.id);
+  if (!lines.length) {
+    return `<div style="margin-top:8px;border-top:1px dashed var(--border);padding-top:8px;font-size:12px;color:var(--gray-500);">No checklist lines yet.${canEdit ? ` <button class="form-secondary" style="font-size:11px;" onclick="_vmChkBuilderModal('item','${it.id}')">Build one</button>` : ''}</div>`;
+  }
+  const cs = _vmChkItemStats(it.id);
+  const pct = cs.total ? Math.round(cs.done / cs.total * 100) : 0;
+  let h = `<div style="margin-top:10px;border-top:1px dashed var(--border);padding-top:10px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+      <div style="flex:1;height:6px;background:var(--gray-100);border-radius:3px;overflow:hidden;"><div style="width:${pct}%;height:100%;background:${cs.fails ? '#dc2626' : '#16a34a'};"></div></div>
+      <span style="font-size:11px;font-weight:700;color:var(--gray-500);">${cs.done}/${cs.total}</span>
+    </div>`;
+  let lastSection = null;
+  for (const l of lines) {
+    const sec = (l.section || '').trim();
+    if (sec !== lastSection) {
+      if (sec) h += `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-400);margin:8px 0 3px;">${escapeHtml(sec)}</div>`;
+      lastSection = sec;
+    }
+    h += _vmChkLineHTML(car, it, l, canEdit);
+  }
+  h += '</div>';
+  return h;
+}
+function _vmChkLineHTML(car, it, l, canEdit) {
+  const complete = _vmChkLineComplete(l);
+  const dis = canEdit ? '' : 'disabled';
+  let ctl = '';
+  if (l.kind === 'check') {
+    ctl = `<input type="checkbox" ${l.done ? 'checked' : ''} ${dis} onchange="_vmChkSetDone('${l.id}',this.checked)" aria-label="${escapeHtml(l.label)}" style="width:16px;height:16px;cursor:pointer;">`;
+  } else if (l.kind === 'passfail') {
+    ctl = ['Pass', 'Fail', 'N/A'].map(v => {
+      const on = l.verdict === v;
+      const col = v === 'Pass' ? '#16a34a' : v === 'Fail' ? '#dc2626' : '#64748b';
+      return `<button ${dis} onclick="_vmChkSetVerdict('${l.id}','${v}')" style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:5px;cursor:pointer;border:1px solid ${on ? col : 'var(--border)'};background:${on ? col : 'var(--surface)'};color:${on ? 'var(--white)' : 'var(--text)'};">${v}</button>`;
+    }).join('');
+  } else if (l.kind === 'value') {
+    ctl = `<input type="text" value="${escapeHtml(l.value_text || '')}" ${dis} placeholder="value" aria-label="${escapeHtml(l.label)}" onchange="_vmChkSetValue('${l.id}',this.value)" style="width:110px;font-size:12px;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);">${l.unit ? `<span style="font-size:11px;color:var(--gray-500);">${escapeHtml(l.unit)}</span>` : ''}`;
+  } else {
+    ctl = `<input type="text" value="${escapeHtml(l.value_text || '')}" ${dis} placeholder="note…" aria-label="${escapeHtml(l.label)}" onchange="_vmChkSetValue('${l.id}',this.value)" style="width:200px;font-size:12px;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);">`;
+  }
+  const photos = _vmChkPhotos[l.id] || [];
+  const files = VEH_FILES.filter(f => f.checklist_item_id === l.id);
+  return `<div style="display:flex;align-items:center;gap:10px;padding:6px 4px;border-bottom:1px solid var(--gray-100);flex-wrap:wrap;">
+      <span aria-hidden="true" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${l.verdict === 'Fail' ? '#dc2626' : complete ? '#16a34a' : '#cbd5e1'};"></span>
+      <span style="flex:1;min-width:160px;font-size:13px;${complete ? 'color:var(--gray-500);' : ''}">${escapeHtml(l.label)}${l.required === false ? ' <span style="font-size:10px;color:var(--gray-400);">(optional)</span>' : ''}${l.kind === 'value' && l.expected ? ` <span style="font-size:10px;color:var(--gray-400);">exp. ${escapeHtml(l.expected)}${l.unit ? ' ' + escapeHtml(l.unit) : ''}</span>` : ''}</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;">${ctl}</span>
+      ${canEdit ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;" aria-label="Add photo" title="Add photo" onclick="document.getElementById('vmchkp-${l.id}').click()">${icon('camera')}${photos.length ? ' ' + photos.length : ''}</button>
+      <input type="file" id="vmchkp-${l.id}" accept="image/*" multiple style="display:none" onchange="_vmChkPhotoChosen('${l.id}','${car.id}',this)">
+      <button class="form-secondary" style="font-size:10px;padding:2px 6px;" aria-label="Attach file" title="Attach file" onclick="document.getElementById('vmchkf-${l.id}').click()">${icon('paperclip')}${files.length ? ' ' + files.length : ''}</button>
+      <input type="file" id="vmchkf-${l.id}" multiple style="display:none" onchange="_vmChkFileChosen('${l.id}',this)">` : ''}
+      ${l.completed_by ? `<span style="font-size:10px;color:var(--gray-400);">${escapeHtml(l.completed_by)}</span>` : ''}
+      ${(photos.length || files.length) ? `<div style="flex-basis:100%;display:flex;flex-wrap:wrap;gap:5px;padding-left:18px;">
+        ${photos.map(ph => `<button onclick="_vmChkOpenPhoto('${escapeHtml(ph.storage_path)}')" style="font-size:10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);padding:2px 7px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">${icon('image')} ${escapeHtml(ph.file_name || 'photo')}</button>`).join('')}
+        ${files.map(f => `<span style="font-size:10px;border:1px solid var(--border);border-radius:5px;padding:2px 7px;display:inline-flex;align-items:center;gap:4px;"><button onclick="_vmFileOpen('${escapeHtml(f.storage_path)}')" style="border:none;background:none;cursor:pointer;font:inherit;color:var(--text);display:inline-flex;align-items:center;gap:4px;padding:0;">${icon('paperclip')} ${escapeHtml(f.file_name)}</button>${canEdit ? `<button aria-label="Delete file" title="Delete file" onclick="_vmFileDelete('${f.id}')" style="border:none;background:none;color:#9ca3af;cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}</span>`).join('')}
+      </div>` : ''}
+    </div>`;
+}
+
+// ── Per-line photos (Photos module) + any-type file attachments ───────────
+async function _vmChkPhotoChosen(lineId, carId, input) {
+  const files = [...(input.files || [])]; input.value = '';
+  if (!files.length) return;
+  if (!window.PhotosModule || !PhotosModule.uploadFile) { toast('Photos module unavailable', 'error'); return; }
+  const car = VEHICLES.find(v => v.id === carId);
+  const l = VEH_CHECKLIST.find(x => x.id === lineId);
+  const it = l ? VEH_WORKFLOW.find(w => w.id === l.workflow_item_id) : null;
+  toast('Uploading ' + files.length + ' photo' + (files.length > 1 ? 's' : '') + '…');
+  for (const f of files) {
+    try {
+      const row = await PhotosModule.uploadFile(f, { source_type: 'vehicle', source_id: lineId, source_label: 'Car ' + (car ? car.car_number : '') + (it ? ' · ' + it.title : '') + (l ? ' · ' + l.label : '') });
+      (_vmChkPhotos[lineId] = _vmChkPhotos[lineId] || []).push(row);
+    } catch (e) { console.error('[chk photo]', e); toast('Photo upload failed: ' + e.message, 'error'); }
+  }
+  renderVehicleManagement();
+}
+function _vmChkOpenPhoto(path) {
+  if (!window.PhotosModule || !PhotosModule.sign) return;
+  PhotosModule.sign([path]).then(m => { const u = m && m[path]; if (u) window.open(u, '_blank'); });
+}
+async function _vmFileUpload(lineId, file) {
+  const safe = (file.name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = lineId + '/' + Date.now() + '_' + safe;
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/vehicle-files/${path}`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': 'true' },
+    body: file,
+  });
+  if (!res.ok) throw new Error('upload failed (' + res.status + ')');
+  const [row] = await _dbInsert('vehicle_files', [{ checklist_item_id: lineId, file_name: file.name || safe, storage_path: path, file_size: file.size || null, content_type: file.type || null, uploaded_by: _vmWho() }]);
+  if (row) VEH_FILES.push(row);
+}
+async function _vmChkFileChosen(lineId, input) {
+  const files = [...(input.files || [])]; input.value = '';
+  if (!files.length) return;
+  toast('Uploading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '…');
+  for (const f of files) {
+    try { await _vmFileUpload(lineId, f); }
+    catch (e) { toast('File upload failed: ' + e.message, 'error'); }
+  }
+  renderVehicleManagement();
+}
+async function _vmFileSign(path) {
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/vehicle-files/${path}`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expiresIn: 3600 }),
+  });
+  if (!res.ok) return null;
+  const j = await res.json();
+  return j && j.signedURL ? SUPABASE_URL + '/storage/v1' + j.signedURL : null;
+}
+function _vmFileOpen(path) {
+  _vmFileSign(path).then(u => { if (u) window.open(u, '_blank'); else toast('Could not open file', 'error'); });
+}
+async function _vmFileDelete(id) {
+  const f = VEH_FILES.find(x => x.id === id); if (!f) return;
+  if (!await cxConfirm('Delete attachment "' + f.file_name + '"?')) return;
+  try {
+    try { await _sb.storage.from('vehicle-files').remove([f.storage_path]); } catch (_) {}
+    await _dbDelete('vehicle_files', { id });
+    VEH_FILES = VEH_FILES.filter(x => x.id !== id);
+    renderVehicleManagement();
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ── Checklist builder (per-car activity OR type-template activity) ────────
+let _vmCkb = null;
+function _vmChkBuilderModal(scope, parentId) {
+  if (!_vmCan(scope === 'tpl' ? 'manage_templates' : 'edit')) { toast('Not permitted', 'error'); return; }
+  const src = scope === 'tpl'
+    ? VEH_CHK_TPL.filter(x => x.workflow_template_id === parentId)
+    : _vmChkFor(parentId);
+  _vmCkb = { scope, parentId, removed: [], lines: JSON.parse(JSON.stringify(src.slice().sort((a, b) => (a.seq || 0) - (b.seq || 0)))) };
+  const parentTitle = scope === 'tpl'
+    ? ((VEH_WF_TPL.find(t => t.id === parentId) || {}).title || '')
+    : ((VEH_WORKFLOW.find(w => w.id === parentId) || {}).title || '');
+  modal({
+    title: (scope === 'tpl' ? 'Checklist Template · ' : 'Checklist · ') + escapeHtml(parentTitle), size: 'large',
+    body: `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">Build a detailed field checklist: group lines into sections; each line can be a tick, a Pass/Fail/N.A. verdict, a measured value (unit + expected), or a note.${scope === 'item' ? ' Responses already recorded are kept for lines you keep.' : ' New cars seeded from the template receive these lines.'}</div>
+      <div id="vmckb-rows"></div>
+      <div style="margin-top:8px;"><button class="form-secondary" style="font-size:12px;" onclick="_vmCkbAdd()">${icon('plus')} Add line</button></div>`,
+    footer: `<button class="form-secondary" onclick="${scope === 'tpl' ? '_vmTemplatesModal()' : 'closeModal();renderVehicleManagement()'}">Cancel</button>
+      <button class="form-submit" onclick="_vmCkbSave()">Save Checklist</button>`,
+  });
+  _vmCkbRender();
+}
+function _vmCkbRender() {
+  const wrap = document.getElementById('vmckb-rows'); if (!wrap) return;
+  wrap.innerHTML = _vmCkb.lines.length ? _vmCkb.lines.map((l, i) => `
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;border:1px solid var(--border);border-radius:6px;padding:6px 8px;margin-bottom:5px;">
+      <input class="form-input vmckb-sec" data-i="${i}" placeholder="Section" value="${escapeHtml(l.section || '')}" style="width:120px;font-size:12px;">
+      <input class="form-input vmckb-label" data-i="${i}" placeholder="Line label *" value="${escapeHtml(l.label || '')}" style="flex:1;min-width:160px;font-size:12px;">
+      <select class="form-input vmckb-kind" data-i="${i}" onchange="_vmCkbKind(${i},this.value)" style="width:120px;font-size:12px;">
+        ${[['check', 'Checkbox'], ['passfail', 'Pass/Fail/N.A.'], ['value', 'Value'], ['note', 'Note']].map(([v, lbl]) => `<option value="${v}" ${l.kind === v ? 'selected' : ''}>${lbl}</option>`).join('')}
+      </select>
+      <input class="form-input vmckb-unit" data-i="${i}" placeholder="unit" value="${escapeHtml(l.unit || '')}" style="width:64px;font-size:12px;${l.kind === 'value' ? '' : 'display:none;'}">
+      <input class="form-input vmckb-exp" data-i="${i}" placeholder="expected" value="${escapeHtml(l.expected || '')}" style="width:90px;font-size:12px;${l.kind === 'value' ? '' : 'display:none;'}">
+      <label style="font-size:11px;display:inline-flex;gap:3px;align-items:center;"><input type="checkbox" class="vmckb-req" data-i="${i}" ${l.required !== false ? 'checked' : ''}> req</label>
+      <button class="form-secondary" style="font-size:11px;padding:1px 6px;" ${i === 0 ? 'disabled' : ''} aria-label="Move line up" title="Move up" onclick="_vmCkbMove(${i},-1)">▲</button>
+      <button class="form-secondary" style="font-size:11px;padding:1px 6px;" ${i === _vmCkb.lines.length - 1 ? 'disabled' : ''} aria-label="Move line down" title="Move down" onclick="_vmCkbMove(${i},1)">▼</button>
+      <button class="form-secondary" style="font-size:11px;padding:1px 6px;color:var(--bad);" aria-label="Remove line" title="Remove line" onclick="_vmCkbRemove(${i})">${icon('x')}</button>
+    </div>`).join('') : '<div style="font-size:12px;color:var(--gray-500);padding:8px;">No lines yet — add the first one.</div>';
+}
+function _vmCkbSync() {
+  const get = (cls, i) => document.querySelector('.' + cls + '[data-i="' + i + '"]');
+  _vmCkb.lines.forEach((l, i) => {
+    l.section = (get('vmckb-sec', i)?.value || '').trim() || null;
+    l.label = (get('vmckb-label', i)?.value || '').trim();
+    l.kind = get('vmckb-kind', i)?.value || l.kind || 'check';
+    l.unit = (get('vmckb-unit', i)?.value || '').trim() || null;
+    l.expected = (get('vmckb-exp', i)?.value || '').trim() || null;
+    l.required = !!get('vmckb-req', i)?.checked;
+  });
+}
+function _vmCkbKind(i, v) { _vmCkbSync(); _vmCkb.lines[i].kind = v; _vmCkbRender(); }
+function _vmCkbAdd() { _vmCkbSync(); const last = _vmCkb.lines[_vmCkb.lines.length - 1]; _vmCkb.lines.push({ section: last ? last.section : null, label: '', kind: 'check', required: true }); _vmCkbRender(); }
+function _vmCkbMove(i, dir) { _vmCkbSync(); const j = i + dir; if (j < 0 || j >= _vmCkb.lines.length) return; [_vmCkb.lines[i], _vmCkb.lines[j]] = [_vmCkb.lines[j], _vmCkb.lines[i]]; _vmCkbRender(); }
+function _vmCkbRemove(i) { _vmCkbSync(); const gone = _vmCkb.lines.splice(i, 1)[0]; if (gone && gone.id) _vmCkb.removed.push(gone.id); _vmCkbRender(); }
+async function _vmCkbSave() {
+  _vmCkbSync();
+  const lines = _vmCkb.lines.filter(l => l.label);
+  const isTpl = _vmCkb.scope === 'tpl';
+  const table = isTpl ? 'vehicle_checklist_tpl_items' : 'vehicle_checklist_items';
+  const parentCol = isTpl ? 'workflow_template_id' : 'workflow_item_id';
+  try {
+    for (const id of _vmCkb.removed) await _dbDelete(table, { id });
+    const kept = [];
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      const base = { section: l.section, seq: (i + 1) * 10, label: l.label, kind: l.kind, unit: l.kind === 'value' ? l.unit : null, expected: l.kind === 'value' ? l.expected : null, required: l.required !== false };
+      if (l.id) { const [row] = await _dbUpdate(table, base, { id: l.id }); kept.push(row || { ...l, ...base }); }
+      else { const [row] = await _dbInsert(table, [{ ...base, [parentCol]: _vmCkb.parentId, created_by: _vmWho() }]); if (row) kept.push(row); }
+    }
+    if (isTpl) {
+      VEH_CHK_TPL = VEH_CHK_TPL.filter(x => x.workflow_template_id !== _vmCkb.parentId).concat(kept);
+      toast('Checklist template saved', 'success');
+      _vmTemplatesModal();
+    } else {
+      VEH_CHECKLIST = VEH_CHECKLIST.filter(x => x.workflow_item_id !== _vmCkb.parentId).concat(kept);
+      const it = VEH_WORKFLOW.find(w => w.id === _vmCkb.parentId);
+      if (it) _vmLogEvent(it.vehicle_id, 'checklist', 'Checklist updated for ' + it.title + ' (' + kept.length + ' line' + (kept.length === 1 ? '' : 's') + ')', { item_id: it.id });
+      _vmChkOpen.add(_vmCkb.parentId);
+      toast('Checklist saved', 'success');
+      closeModal(); renderVehicleManagement();
+      if (it) _vmChkAutoStatus(it.id);
+    }
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+// ── Per-car workflow activity editing ─────────────────────────────────────
+function _vmWfAddModal(carId) {
+  if (!_vmCan('edit')) { toast('Not permitted', 'error'); return; }
+  modal({
+    title: '+ Add Activity', size: 'medium',
+    body: `<div class="form-grid">
+      <div class="form-field form-field-full"><label>Title *</label><input type="text" id="vmwf-title" class="form-input" placeholder="e.g. HVAC Functional Check"></div>
+      <div class="form-field form-field-full"><label>Description</label><input type="text" id="vmwf-desc" class="form-input"></div>
+      <div class="form-field"><label style="display:flex;gap:6px;align-items:center;font-weight:400;"><input type="checkbox" id="vmwf-req" checked> Required for readiness</label></div>
+    </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmWfSaveNew('${carId}')">Add Activity</button>`,
+  });
+}
+async function _vmWfSaveNew(carId) {
+  const title = (document.getElementById('vmwf-title')?.value || '').trim();
+  if (!title) { toast('Title is required', 'error'); return; }
+  const description = (document.getElementById('vmwf-desc')?.value || '').trim() || null;
+  const required = !!document.getElementById('vmwf-req')?.checked;
+  const seq = _vmWfLatest(carId).reduce((m, x) => Math.max(m, x.seq || 0), 0) + 10;
+  try {
+    const [row] = await _dbInsert('vehicle_workflow_items', [{ vehicle_id: carId, title, description, seq, required, status: 'Not Started', attempt_number: 1, is_latest_attempt: true, created_by: _vmWho() }]);
+    if (row) VEH_WORKFLOW.push(row);
+    _vmLogEvent(carId, 'workflow', 'Activity added: ' + title, { item_id: row && row.id });
+    toast('Activity added', 'success');
+    closeModal(); renderVehicleManagement();
+  } catch (e) { toast('Add failed: ' + e.message, 'error'); }
+}
+function _vmWfEditModal(itemId) {
+  const it = VEH_WORKFLOW.find(w => w.id === itemId); if (!it) return;
+  modal({
+    title: 'Edit Activity', size: 'medium',
+    body: `<div class="form-grid">
+      <div class="form-field form-field-full"><label>Title *</label><input type="text" id="vmwf-title" class="form-input" value="${escapeHtml(it.title)}"></div>
+      <div class="form-field form-field-full"><label>Description</label><input type="text" id="vmwf-desc" class="form-input" value="${escapeHtml(it.description || '')}"></div>
+      <div class="form-field"><label style="display:flex;gap:6px;align-items:center;font-weight:400;"><input type="checkbox" id="vmwf-req" ${it.required !== false ? 'checked' : ''}> Required for readiness</label></div>
+    </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmWfSaveEdit('${itemId}')">Save Changes</button>`,
+  });
+}
+async function _vmWfSaveEdit(itemId) {
+  const it = VEH_WORKFLOW.find(w => w.id === itemId); if (!it) return;
+  const title = (document.getElementById('vmwf-title')?.value || '').trim();
+  if (!title) { toast('Title is required', 'error'); return; }
+  const patch = { title, description: (document.getElementById('vmwf-desc')?.value || '').trim() || null, required: !!document.getElementById('vmwf-req')?.checked };
+  try {
+    const [row] = await _dbUpdate('vehicle_workflow_items', patch, { id: itemId });
+    Object.assign(it, row || patch);
+    _vmLogEvent(it.vehicle_id, 'workflow', 'Activity edited: ' + title, { item_id: it.id });
+    toast('Activity updated', 'success');
+    closeModal(); renderVehicleManagement();
+  } catch (e) { toast('Update failed: ' + e.message, 'error'); }
+}
+async function _vmWfDelete(itemId) {
+  if (!_vmCan('edit')) { toast('Not permitted', 'error'); return; }
+  const it = VEH_WORKFLOW.find(w => w.id === itemId); if (!it) return;
+  if (!await cxConfirm('Delete activity "' + it.title + '"?\n\nIts checklist, attachments, and any prior attempts are removed. This cannot be undone.')) return;
+  const groupId = it.regression_group_id || it.id;
+  const all = VEH_WORKFLOW.filter(w => w.vehicle_id === it.vehicle_id && (w.regression_group_id || w.id) === groupId);
+  try {
+    for (const w of all) await _dbDelete('vehicle_workflow_items', { id: w.id });
+    const wfIds = new Set(all.map(w => w.id));
+    const lineIds = new Set(VEH_CHECKLIST.filter(c => wfIds.has(c.workflow_item_id)).map(c => c.id));
+    VEH_WORKFLOW = VEH_WORKFLOW.filter(w => !wfIds.has(w.id));
+    VEH_CHECKLIST = VEH_CHECKLIST.filter(c => !wfIds.has(c.workflow_item_id));
+    VEH_FILES = VEH_FILES.filter(f => !lineIds.has(f.checklist_item_id));
+    VEH_FORM_LINKS = VEH_FORM_LINKS.filter(l => !wfIds.has(l.workflow_item_id));
+    _vmLogEvent(it.vehicle_id, 'workflow', 'Activity removed: ' + it.title, {});
+    toast('Activity deleted', 'success');
+    renderVehicleManagement();
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+async function _vmWfMove(itemId, dir) {
+  if (!_vmCan('edit')) return;
+  const it = VEH_WORKFLOW.find(w => w.id === itemId); if (!it) return;
+  const items = _vmWfLatest(it.vehicle_id);
+  const i = items.findIndex(x => x.id === itemId); const j = i + dir;
+  if (i < 0 || j < 0 || j >= items.length) return;
+  [items[i], items[j]] = [items[j], items[i]];
+  try {
+    for (let k = 0; k < items.length; k++) {
+      const want = (k + 1) * 10;
+      if ((items[k].seq || 0) !== want) { await _dbUpdate('vehicle_workflow_items', { seq: want }, { id: items[k].id }); items[k].seq = want; }
+    }
+    renderVehicleManagement();
+  } catch (e) { toast('Reorder failed: ' + e.message, 'error'); }
+}
+
+// ── Car History tab ───────────────────────────────────────────────────────
+const _VM_EVENT_META = {
+  workflow:  { icon: 'clipboard', color: '#1d4ed8' },
+  checklist: { icon: 'check-circle', color: '#0d9488' },
+  software:  { icon: 'cpu', color: '#7c3aed' },
+  punch:     { icon: 'flag', color: '#b45309' },
+  form:      { icon: 'file', color: '#3730a3' },
+  equipment: { icon: 'package', color: '#0369a1' },
+  car:       { icon: 'truck', color: '#334155' },
+};
+function _vmHistoryTabHTML(car) {
+  const ev = [];
+  const push = (at, kind, summary, by) => { if (at) ev.push({ at, kind, summary, by: by || null }); };
+  // Logged events (fine-grained, going forward)
+  for (const e of VEH_EVENTS.filter(x => x.vehicle_id === car.id)) push(e.at, e.kind, e.summary, e.created_by);
+  // Synthesized from data that already carries timestamps
+  push(car.created_at, 'car', 'Car added to registry', car.created_by);
+  for (const e of _vmEquipFor(car.id)) push(e.created_at, 'equipment', 'Equipment added: ' + (e.equipment_name || '') + (e.sw_type ? ' · ' + e.sw_type : ''), e.created_by);
+  const carWf = VEH_WORKFLOW.filter(w => w.vehicle_id === car.id);
+  const wfIds = new Set(carWf.map(w => w.id));
+  const loggedItems = new Set(VEH_EVENTS.filter(x => x.vehicle_id === car.id && x.kind === 'workflow' && x.meta && x.meta.item_id).map(x => x.meta.item_id));
+  for (const w of carWf) {
+    if (w.completed_at && !loggedItems.has(w.id)) push(w.completed_at, 'workflow', w.title + ' marked Complete', w.completed_by);
+  }
+  for (const l of VEH_FORM_LINKS) {
+    if (!wfIds.has(l.workflow_item_id)) continue;
+    const w = carWf.find(x => x.id === l.workflow_item_id);
+    const f = FORMS.find(x => x.id === l.form_id);
+    push(l.linked_at, 'form', 'Form attached' + (f ? ': ' + (f.name || f.original_filename || '') : '') + (w ? ' → ' + w.title : ''), l.linked_by);
+  }
+  for (const p of _vmPunchFor(car.id)) {
+    push(p.created_at, 'punch', 'Punch #' + (p.number ?? '') + ' created — ' + (p.title || ''), p.created_by);
+    if (p.closed_at) push(p.closed_at, 'punch', 'Punch #' + (p.number ?? '') + ' closed', p.closed_by);
+  }
+  ev.sort((a, b) => new Date(b.at) - new Date(a.at));
+  if (!ev.length) return cxEmpty({ icon: 'clock', title: 'No history yet', message: 'Actions taken on this car will appear here chronologically.' });
+  const fmt = d => { const x = new Date(d); return x.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' + x.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); };
+  return `<div style="display:flex;flex-direction:column;">
+    ${ev.map(e => { const m = _VM_EVENT_META[e.kind] || { icon: 'dot', color: '#64748b' }; return `
+      <div style="display:flex;gap:12px;padding:9px 4px;border-bottom:1px solid var(--gray-100);align-items:flex-start;">
+        <span aria-hidden="true" style="width:26px;height:26px;border-radius:50%;background:${m.color}18;color:${m.color};display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">${icon(m.icon)}</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;color:var(--text);">${escapeHtml(e.summary)}</div>
+          <div style="font-size:11px;color:var(--gray-400);">${escapeHtml(fmt(e.at))}${e.by ? ' · ' + escapeHtml(e.by) : ''}</div>
+        </div>
+      </div>`; }).join('')}
+  </div>`;
 }
 
 // ==========================================================================
