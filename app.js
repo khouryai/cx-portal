@@ -17197,7 +17197,7 @@ function _cmPageHTML() {
                       <span style="font-size:11px;font-weight:600;color:${statusColor};margin-left:6px;">● ${escapeHtml(latest.status)}</span>
                     </div>
                     <div style="font-size:11px;color:var(--gray-500);margin-top:3px;">
-                      ${icon('pin')} ${escapeHtml(latest.location || '— phase level —')}${latest.baseline ? ' · Baseline: '+escapeHtml(latest.baseline) : ''}${latest.cdrl_ref ? ' · '+escapeHtml(latest.cdrl_ref) : ''}
+                      ${icon('pin')} ${escapeHtml([latest.phase, latest.location].filter(Boolean).join(' · ') || '— phase level —')}${latest.baseline ? ' · Baseline: '+escapeHtml(latest.baseline) : ''}${latest.cdrl_ref ? ' · '+escapeHtml(latest.cdrl_ref) : ''}
                     </div>
                   </div>
                   <div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">
@@ -17326,12 +17326,14 @@ function _swDeployStatus(deploy) {
   const ref = _swDeployRefVer(deploy);
   if (ref == null) return 'unknown';
   const verOk = deploy.deployed_version === ref;
-  // CI-level: match against the CI baseline. When the CI defines a CRC and a
-  // deployed CRC was captured, they must also match to be in sync.
+  // CI-level: match against the CI baseline.
   if (deploy.equipment_id) {
+    if (!verOk) return 'behind';
+    // Version matches — if the CI defines a CRC and a deployed CRC was
+    // captured, they must match too, else it's a CRC mismatch.
     const ci = SW_EQUIPMENT.find(e => e.id === deploy.equipment_id);
-    const crcOk = !ci || !ci.crc || !deploy.crc || deploy.crc === ci.crc;
-    return (verOk && crcOk) ? 'in_sync' : 'behind';
+    if (ci && ci.crc && deploy.crc && deploy.crc !== ci.crc) return 'crc_mismatch';
+    return 'in_sync';
   }
   if (verOk) return 'in_sync';
   // VDD-level: a known older family version is "behind", otherwise unknown.
@@ -17340,7 +17342,7 @@ function _swDeployStatus(deploy) {
   if (family.some(c => c.version === deploy.deployed_version)) return 'behind';
   return 'unknown';
 }
-const _swDeployInfo = { in_sync: { label: 'In Sync', color: '#16a34a' }, behind: { label: 'Behind Baseline', color: '#d97706' }, unknown: { label: 'Unknown Version', color: '#dc2626' } };
+const _swDeployInfo = { in_sync: { label: 'In Sync', color: '#16a34a' }, behind: { label: 'Behind Baseline', color: '#d97706' }, crc_mismatch: { label: 'CRC Mismatch', color: '#dc2626' }, unknown: { label: 'Unknown Version', color: '#dc2626' } };
 
 function _cmEquipSectionHTML(configId) {
   const items = _swEquipFor(configId);
@@ -17465,7 +17467,7 @@ function _cmVddCardHTML(config, depth, childMap, _sc) {
   else if (hasChildren)      h += '<span style="font-size:10px;font-weight:700;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:3px;padding:1px 6px;margin-left:8px;">SUB-VDD</span>';
   h += '</div>';
   h += '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
-    icon('settings') + ' ' + escapeHtml(config.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml(config.location||'—') +
+    icon('settings') + ' ' + escapeHtml(config.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml([config.phase, config.location].filter(Boolean).join(' · ') || '—') +
     (config.baseline ? ' · Baseline: ' + escapeHtml(config.baseline) : '') +
     (config.cdrl_ref ? ' · ' + escapeHtml(config.cdrl_ref) : '') +
   '</div>';
@@ -17587,9 +17589,10 @@ function _cmDeployViewHTML(f) {
                    || SW_CONFIGS.find(c => c.software_name === g.software_name && c.subsystem === g.subsystem);
     const syncCount    = g.deployments.filter(d => _swDeployStatus(d) === 'in_sync').length;
     const behindCount  = g.deployments.filter(d => _swDeployStatus(d) === 'behind').length;
+    const crcCount     = g.deployments.filter(d => _swDeployStatus(d) === 'crc_mismatch').length;
     const unknownCount = g.deployments.filter(d => _swDeployStatus(d) === 'unknown').length;
-    const hasDrift     = behindCount + unknownCount > 0;
-    const borderColor  = hasDrift ? (unknownCount ? '#dc2626' : '#d97706') : '#16a34a';
+    const hasDrift     = behindCount + crcCount + unknownCount > 0;
+    const borderColor  = hasDrift ? ((unknownCount + crcCount) ? '#dc2626' : '#d97706') : '#16a34a';
 
     html += '<div style="border:1px solid ' + borderColor + ';border-radius:8px;margin-bottom:12px;overflow:hidden;">' +
       '<div style="display:grid;grid-template-columns:1fr auto;align-items:center;padding:10px 14px;background:var(--white);border-bottom:1px solid var(--gray-100);">' +
@@ -17601,6 +17604,7 @@ function _cmDeployViewHTML(f) {
           '<div style="display:flex;gap:10px;margin-top:3px;">' +
             (syncCount   ? '<span style="font-size:11px;font-weight:600;color:#16a34a;">● ' + syncCount + ' in sync</span>' : '') +
             (behindCount ? '<span style="font-size:11px;font-weight:600;color:#d97706;">● ' + behindCount + ' behind baseline</span>' : '') +
+            (crcCount    ? '<span style="font-size:11px;font-weight:600;color:#dc2626;">● ' + crcCount + ' CRC mismatch</span>' : '') +
             (unknownCount? '<span style="font-size:11px;font-weight:600;color:#dc2626;">● ' + unknownCount + ' unknown version</span>' : '') +
           '</div>' +
         '</div>' +
@@ -17654,9 +17658,13 @@ function openSwConfigModal(editId, cloneFromId, parentVddId) {
   const subs = (_fsCfg('punch_subsystem').length ? _fsCfg('punch_subsystem') : SUBSYSTEMS_LIST);
   const phases = _cmPhases();
 
-  // Determine phase id from base location
+  // Determine phase id: prefer the stored phase, fall back to the phase that
+  // owns the config's location (legacy records saved before phase was stored).
   let basePhaseId = '';
-  if (base?.location) {
+  if (base?.phase) {
+    basePhaseId = phases.find(p => p.name === base.phase)?.id || '';
+  }
+  if (!basePhaseId && base?.location) {
     const locNode = LOCS.find(l => l.level === 2 && l.name === base.location);
     if (locNode) basePhaseId = locNode.parent_id || '';
   }
@@ -17812,6 +17820,7 @@ async function saveSwConfig() {
   const editing = _cmEditId ? SW_CONFIGS.find(c => c.id === _cmEditId) : null;
   const subsystem = document.getElementById('sw-subsystem')?.value.trim();
   const phaseId   = document.getElementById('sw-phase')?.value;
+  const phaseName = phaseId ? (_cmPhases().find(p => p.id === phaseId)?.name || null) : null;
   const location  = document.getElementById('sw-location')?.value.trim() || null;
   const swName    = document.getElementById('sw-name')?.value.trim();
   const version   = document.getElementById('sw-version')?.value.trim();
@@ -17821,16 +17830,19 @@ async function saveSwConfig() {
   const notes     = document.getElementById('sw-notes')?.value.trim() || null;
   const parentId  = document.getElementById('sw-parent-vdd')?.value || null;
 
-  // For new version (fields disabled), pull identity from editing-disabled selects' current values
-  const resolvedSub = subsystem || editing?.subsystem;
-  const resolvedLoc = location  ?? editing?.location ?? null;
+  // Read straight from the selects — even when disabled (new-version flow) the
+  // selected option value is still returned, so we honor exactly what's shown.
+  // The subsystem fallback stays only as a last-resort guard.
+  const resolvedSub   = subsystem || editing?.subsystem;
+  const resolvedPhase = phaseName;
+  const resolvedLoc   = location;
   if (!resolvedSub) { toast('Subsystem is required', 'error'); return; }
   if (!swName)      { toast('Software Name is required', 'error'); return; }
   if (!version)     { toast('Version is required', 'error'); return; }
 
   if (editing) {
     const patch = {
-      subsystem: resolvedSub, location: resolvedLoc,
+      subsystem: resolvedSub, phase: resolvedPhase, location: resolvedLoc,
       software_name: swName, version,
       status, baseline, cdrl_ref: cdrl, notes, parent_id: parentId || null,
     };
@@ -17846,7 +17858,7 @@ async function saveSwConfig() {
 
   // New record. Auto-supersede prior active versions of the same config item.
   const newRow = {
-    subsystem: resolvedSub, location: resolvedLoc,
+    subsystem: resolvedSub, phase: resolvedPhase, location: resolvedLoc,
     software_name: swName, version,
     status, baseline, cdrl_ref: cdrl, notes, created_by: currentRoleUser?.name || null,
     parent_id: parentId || null,
