@@ -17305,13 +17305,32 @@ function _cmCollapseAll() {
 }
 
 // Deployment status: compare deployed_version against the active version in the software family
-function _swDeployStatus(deploy) {
+// The approved baseline version a deployment is measured against.
+// CI-level deployment: the specific Configuration Item's software version
+// (part_number), NOT the parent VDD version — a VDD like "3.1.1" bundles CIs
+// that each carry their own version (e.g. 2.00). VDD-level deployment: the
+// active config's version in the software family.
+function _swDeployRefVer(deploy) {
+  if (deploy.equipment_id) {
+    const ci = SW_EQUIPMENT.find(e => e.id === deploy.equipment_id);
+    if (ci) return ci.part_number;
+  }
   const target = SW_CONFIGS.find(c => c.id === deploy.config_id);
-  if (!target) return 'unknown';
+  if (!target) return null;
   const family = SW_CONFIGS.filter(c => c.software_name === target.software_name && c.subsystem === target.subsystem);
   const active  = family.find(c => c.status === 'active');
-  const refVer  = (active || target).version;
-  if (deploy.deployed_version === refVer) return 'in_sync';
+  return (active || target).version;
+}
+
+function _swDeployStatus(deploy) {
+  const ref = _swDeployRefVer(deploy);
+  if (ref == null) return 'unknown';
+  if (deploy.deployed_version === ref) return 'in_sync';
+  // CI-level: any mismatch against the CI baseline is drift.
+  if (deploy.equipment_id) return 'behind';
+  // VDD-level: a known older family version is "behind", otherwise unknown.
+  const target = SW_CONFIGS.find(c => c.id === deploy.config_id);
+  const family = target ? SW_CONFIGS.filter(c => c.software_name === target.software_name && c.subsystem === target.subsystem) : [];
   if (family.some(c => c.version === deploy.deployed_version)) return 'behind';
   return 'unknown';
 }
@@ -17570,7 +17589,7 @@ function _cmDeployViewHTML(f) {
         '<div>' +
           '<div style="font-size:13px;font-weight:700;">' + escapeHtml(g.software_name) +
             '<span style="font-size:11px;font-weight:400;color:var(--gray-500);margin-left:8px;">' + icon('settings') + ' ' + escapeHtml(g.subsystem||'—') + '</span>' +
-            (activeCfg ? ' <span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;">baseline: ' + escapeHtml(activeCfg.version) + '</span>' : '') +
+            (activeCfg ? ' <span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;">VDD: ' + escapeHtml(activeCfg.version) + '</span>' : '') +
           '</div>' +
           '<div style="display:flex;gap:10px;margin-top:3px;">' +
             (syncCount   ? '<span style="font-size:11px;font-weight:600;color:#16a34a;">● ' + syncCount + ' in sync</span>' : '') +
@@ -17585,6 +17604,7 @@ function _cmDeployViewHTML(f) {
           '<th style="text-align:left;padding:4px 12px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Equipment</th>' +
           '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Phase / Location</th>' +
           '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Deployed Version</th>' +
+          '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Approved</th>' +
           '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Status</th>' +
           '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Logged By / Date</th>' +
           '<th style="padding:4px 10px;"></th>' +
@@ -17594,10 +17614,12 @@ function _cmDeployViewHTML(f) {
           const st = _swDeployStatus(d);
           const si = _swDeployInfo[st];
           const locText = [d.phase, d.location].filter(Boolean).join(' · ') || '—';
+          const refVer = _swDeployRefVer(d);
           return '<tr style="border-top:1px solid var(--gray-100);">' +
             '<td style="padding:5px 12px;font-weight:600;">' + escapeHtml(d.equipment_name) + '</td>' +
             '<td style="padding:5px 10px;color:var(--gray-600);">' + escapeHtml(locText) + '</td>' +
             '<td style="padding:5px 10px;font-family:monospace;font-size:11px;">' + escapeHtml(d.deployed_version) + '</td>' +
+            '<td style="padding:5px 10px;font-family:monospace;font-size:11px;color:var(--gray-500);">' + escapeHtml(refVer || '—') + '</td>' +
             '<td style="padding:5px 10px;"><span style="font-size:11px;font-weight:600;color:' + si.color + ';">● ' + si.label + '</span></td>' +
             '<td style="padding:5px 10px;font-size:11px;color:var(--gray-500);">' + escapeHtml(d.deployed_by || '—') + (d.deployed_at ? ' · ' + escapeHtml(d.deployed_at) : '') + '</td>' +
             '<td style="padding:5px 10px;text-align:right;white-space:nowrap;">' +
