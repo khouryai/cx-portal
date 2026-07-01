@@ -17325,9 +17325,15 @@ function _swDeployRefVer(deploy) {
 function _swDeployStatus(deploy) {
   const ref = _swDeployRefVer(deploy);
   if (ref == null) return 'unknown';
-  if (deploy.deployed_version === ref) return 'in_sync';
-  // CI-level: any mismatch against the CI baseline is drift.
-  if (deploy.equipment_id) return 'behind';
+  const verOk = deploy.deployed_version === ref;
+  // CI-level: match against the CI baseline. When the CI defines a CRC and a
+  // deployed CRC was captured, they must also match to be in sync.
+  if (deploy.equipment_id) {
+    const ci = SW_EQUIPMENT.find(e => e.id === deploy.equipment_id);
+    const crcOk = !ci || !ci.crc || !deploy.crc || deploy.crc === ci.crc;
+    return (verOk && crcOk) ? 'in_sync' : 'behind';
+  }
+  if (verOk) return 'in_sync';
   // VDD-level: a known older family version is "behind", otherwise unknown.
   const target = SW_CONFIGS.find(c => c.id === deploy.config_id);
   const family = target ? SW_CONFIGS.filter(c => c.software_name === target.software_name && c.subsystem === target.subsystem) : [];
@@ -17409,10 +17415,11 @@ function _cmDeploySectionHTML(configId) {
       const st = _swDeployStatus(d);
       const si = _swDeployInfo[st];
       const locText = [d.phase, d.location].filter(Boolean).join(' · ') || '—';
+      const crcLine = d.crc ? '<div style="font-size:10px;color:var(--gray-400);">CRC ' + escapeHtml(d.crc) + '</div>' : '';
       h += '<tr style="border-bottom:1px solid var(--border);">' +
         '<td style="padding:3px 7px;font-weight:600;">' + escapeHtml(d.equipment_name) + '</td>' +
         '<td style="padding:3px 7px;color:var(--gray-600);font-size:11px;">' + escapeHtml(locText) + '</td>' +
-        '<td style="padding:3px 7px;font-family:monospace;font-size:11px;">' + escapeHtml(d.deployed_version) + '</td>' +
+        '<td style="padding:3px 7px;font-family:monospace;font-size:11px;">' + escapeHtml(d.deployed_version) + crcLine + '</td>' +
         '<td style="padding:3px 7px;"><span style="font-size:11px;font-weight:600;color:' + si.color + ';">● ' + si.label + '</span></td>' +
         '<td style="padding:3px 7px;text-align:right;white-space:nowrap;">' +
           '<button class="form-secondary" style="font-size:10px;padding:1px 6px;" onclick="openSwDeployModal(\'' + configId + '\',\'' + d.id + '\')">Edit</button>' +
@@ -17615,11 +17622,13 @@ function _cmDeployViewHTML(f) {
           const si = _swDeployInfo[st];
           const locText = [d.phase, d.location].filter(Boolean).join(' · ') || '—';
           const refVer = _swDeployRefVer(d);
+          const ci = d.equipment_id ? SW_EQUIPMENT.find(e => e.id === d.equipment_id) : null;
+          const crcLine = (crc) => crc ? '<div style="font-size:10px;color:var(--gray-400);">CRC ' + escapeHtml(crc) + '</div>' : '';
           return '<tr style="border-top:1px solid var(--gray-100);">' +
             '<td style="padding:5px 12px;font-weight:600;">' + escapeHtml(d.equipment_name) + '</td>' +
             '<td style="padding:5px 10px;color:var(--gray-600);">' + escapeHtml(locText) + '</td>' +
-            '<td style="padding:5px 10px;font-family:monospace;font-size:11px;">' + escapeHtml(d.deployed_version) + '</td>' +
-            '<td style="padding:5px 10px;font-family:monospace;font-size:11px;color:var(--gray-500);">' + escapeHtml(refVer || '—') + '</td>' +
+            '<td style="padding:5px 10px;font-family:monospace;font-size:11px;">' + escapeHtml(d.deployed_version) + crcLine(d.crc) + '</td>' +
+            '<td style="padding:5px 10px;font-family:monospace;font-size:11px;color:var(--gray-500);">' + escapeHtml(refVer || '—') + crcLine(ci?.crc) + '</td>' +
             '<td style="padding:5px 10px;"><span style="font-size:11px;font-weight:600;color:' + si.color + ';">● ' + si.label + '</span></td>' +
             '<td style="padding:5px 10px;font-size:11px;color:var(--gray-500);">' + escapeHtml(d.deployed_by || '—') + (d.deployed_at ? ' · ' + escapeHtml(d.deployed_at) : '') + '</td>' +
             '<td style="padding:5px 10px;text-align:right;white-space:nowrap;">' +
@@ -19417,6 +19426,11 @@ function openSwDeployModal(configId, editId, equipmentId) {
           <input type="text" id="swdep-ver" class="form-input" placeholder="e.g. v3.2.1" value="${escapeHtml(verDefault)}">
           <div style="font-size:11px;color:var(--gray-500);margin-top:3px;">Enter the version actually running — edit if it differs from the approved config version.</div>
         </div>
+        <div class="form-field" id="swdep-crc-field"${(selectedCi && selectedCi.crc) ? '' : ' style="display:none;"'}>
+          <label>CRC</label>
+          <input type="text" id="swdep-crc" class="form-input" placeholder="e.g. 1EF6C147" value="${escapeHtml(existing ? v('crc') : (selectedCi?.crc || ''))}">
+          <div style="font-size:11px;color:var(--gray-500);margin-top:3px;">Approved CRC for this CI — edit to the value actually running in the field.</div>
+        </div>
         <div class="form-field">
           <label>Deployed By</label>
           <input type="text" id="swdep-by" class="form-input" placeholder="Name" value="${escapeHtml(v('deployed_by', currentRoleUser?.name || ''))}">
@@ -19449,16 +19463,34 @@ function _swDepCfgChange() {
   if (subSel && cfg?.subsystem) subSel.value = cfg.subsystem;
   const verEl = document.getElementById('swdep-ver');
   if (cfg && verEl && !verEl.value) verEl.value = cfg.version;
+  _swDepSyncCrcField(null); // CI reset to VDD level → hide CRC
 }
 
-// CI chosen → adopt its equipment name + software version
+// CI chosen → adopt its equipment name + software version, and surface CRC
+// only when the CI actually defines one.
 function _swDepCiChange() {
   const ci = SW_EQUIPMENT.find(e => e.id === document.getElementById('swdep-ci')?.value);
+  _swDepSyncCrcField(ci || null);
   if (!ci) return;
   const equipEl = document.getElementById('swdep-equip');
   if (equipEl) equipEl.value = ci.equipment_name || equipEl.value;
   const verEl = document.getElementById('swdep-ver');
   if (verEl && ci.part_number) verEl.value = ci.part_number;
+}
+
+// Show the CRC field (prefilled with the CI's approved CRC) only when the
+// selected CI has a CRC defined; otherwise hide and clear it.
+function _swDepSyncCrcField(ci) {
+  const field = document.getElementById('swdep-crc-field');
+  const input = document.getElementById('swdep-crc');
+  if (!field) return;
+  if (ci && ci.crc) {
+    field.style.display = '';
+    if (input) input.value = ci.crc;
+  } else {
+    field.style.display = 'none';
+    if (input) input.value = '';
+  }
 }
 
 // Phase changed → cascade the location dropdown
@@ -19480,6 +19512,11 @@ async function saveSwDeploy(editId) {
   const loc     = (document.getElementById('swdep-loc')?.value || '').trim() || null;
   const equip   = (document.getElementById('swdep-equip')?.value || '').trim();
   const ver     = (document.getElementById('swdep-ver')?.value || '').trim();
+  // CRC only applies when the selected CI defines one (field visible)
+  const crcField = document.getElementById('swdep-crc-field');
+  const crc     = (crcField && crcField.style.display !== 'none')
+    ? ((document.getElementById('swdep-crc')?.value || '').trim() || null)
+    : null;
   const by      = (document.getElementById('swdep-by')?.value || '').trim() || null;
   const date    = document.getElementById('swdep-date')?.value || null;
   const notes   = (document.getElementById('swdep-notes')?.value || '').trim() || null;
@@ -19493,12 +19530,12 @@ async function saveSwDeploy(editId) {
   const existing = editId ? SW_DEPLOYMENTS.find(d => d.id === editId) : null;
   try {
     if (existing) {
-      const patch = { config_id: cfgId, equipment_id: ciId, subsystem: sub, phase: phaseName, equipment_name: equip, location: loc, deployed_version: ver, deployed_by: by, deployed_at: date, notes };
+      const patch = { config_id: cfgId, equipment_id: ciId, subsystem: sub, phase: phaseName, equipment_name: equip, location: loc, deployed_version: ver, crc, deployed_by: by, deployed_at: date, notes };
       const [row] = await _dbUpdate('sw_deployments', patch, { id: existing.id });
       Object.assign(existing, row || patch);
       toast('Deployment record updated', 'success');
     } else {
-      const newRow = { config_id: cfgId, equipment_id: ciId, subsystem: sub, phase: phaseName, equipment_name: equip, location: loc, deployed_version: ver, deployed_by: by, deployed_at: date, notes, created_by: currentRoleUser?.name || null };
+      const newRow = { config_id: cfgId, equipment_id: ciId, subsystem: sub, phase: phaseName, equipment_name: equip, location: loc, deployed_version: ver, crc, deployed_by: by, deployed_at: date, notes, created_by: currentRoleUser?.name || null };
       const [inserted] = await _dbInsert('sw_deployments', [newRow]);
       if (inserted) SW_DEPLOYMENTS.unshift(inserted);
       _cmDeployExpanded.add(cfgId);
