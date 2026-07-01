@@ -20122,6 +20122,7 @@ function _vmChkLineHTML(car, it, l, canEdit) {
 
 // ── Per-line photos (Photos module) + any-type file attachments ───────────
 async function _vmChkPhotoChosen(lineId, carId, input) {
+  if (!_vmCan('edit')) { toast('Not permitted', 'error'); return; }
   const files = [...(input.files || [])]; input.value = '';
   if (!files.length) return;
   if (!window.PhotosModule || !PhotosModule.uploadFile) { toast('Photos module unavailable', 'error'); return; }
@@ -20154,6 +20155,7 @@ async function _vmFileUpload(lineId, file) {
   if (row) VEH_FILES.push(row);
 }
 async function _vmChkFileChosen(lineId, input) {
+  if (!_vmCan('edit')) { toast('Not permitted', 'error'); return; }
   const files = [...(input.files || [])]; input.value = '';
   if (!files.length) return;
   toast('Uploading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '…');
@@ -20177,6 +20179,7 @@ function _vmFileOpen(path) {
   _vmFileSign(path).then(u => { if (u) window.open(u, '_blank'); else toast('Could not open file', 'error'); });
 }
 async function _vmFileDelete(id) {
+  if (!_vmCan('edit')) { toast('Not permitted', 'error'); return; }
   const f = VEH_FILES.find(x => x.id === id); if (!f) return;
   if (!await cxConfirm('Delete attachment "' + f.file_name + '"?')) return;
   try {
