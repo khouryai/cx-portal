@@ -2965,12 +2965,42 @@ async function signIn() {
   showAuthError('');
   if (!email || !password) { showAuthError('Enter your email and password.'); return; }
   btn.textContent = 'Signing in…'; btn.disabled = true;
-  const { error } = await _sb.auth.signInWithPassword({ email, password });
-  if (error) {
-    showAuthError(error.message);
-    btn.textContent = 'Sign In'; btn.disabled = false;
+  const resetBtn = () => { btn.textContent = 'Sign In'; btn.disabled = false; };
+  // supabase-js wraps auth calls in a navigator.locks mutex shared across every
+  // tab of the site — a wedged tab can make signInWithPassword wait forever
+  // WITHOUT ever issuing a request (a known hang on this stack; see the
+  // _getSessionFromStorage note). Race it against a timeout and fall back to
+  // calling GoTrue's REST endpoint directly with plain fetch, which cannot
+  // deadlock, then persist the session where supabase-js expects it.
+  try {
+    const result = await Promise.race([
+      _sb.auth.signInWithPassword({ email, password }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('__signin_hang__')), 12000)),
+    ]);
+    if (result && result.error) { showAuthError(result.error.message); resetBtn(); }
+    // onAuthStateChange handles the rest on success
+  } catch (e) {
+    console.warn('[auth] signInWithPassword hung or threw — falling back to direct REST grant:', e && e.message);
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      clearTimeout(timer);
+      const j = await res.json();
+      if (!res.ok) { showAuthError(j.error_description || j.msg || 'Sign-in failed.'); resetBtn(); return; }
+      const ref = SUPABASE_URL.replace('https://', '').split('.')[0];
+      localStorage.setItem(`sb-${ref}-auth-token`, JSON.stringify(j));
+      location.reload();   // boot path restores the stored session
+    } catch (e2) {
+      showAuthError('Sign-in timed out. Close any other portal tabs (or restart the browser) and try again.');
+      resetBtn();
+    }
   }
-  // onAuthStateChange handles the rest on success
 }
 
 async function signOut() {
