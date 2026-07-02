@@ -4,14 +4,15 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>HITACHI Rail T&C Portal — BART CBTC Project</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Inter:wght@300;400;450;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="vendor/fonts/fonts.css" rel="stylesheet">
 <!-- SRI-pinned CDN dependencies — hashes verified 2026-05-15 -->
 <script src="chart.umd.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"
+<script src="vendor/js/supabase.js"
   integrity="sha384-2zrRDgDHSYB/GN3nFW3fsZXoxEhKIr3N2h63Tc6DEOB9JJdFIu8xMJT2Cph/gBil"
   crossorigin="anonymous"></script>
+<!-- xlsx 0.20.3 is distributed only via cdn.sheetjs.com (npm registry stops at 0.18.x).
+     At the Microsoft migration cutover, mirror this exact file into vendor/js/ from an
+     approved artifact store instead of downgrading. -->
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
   integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"
   crossorigin="anonymous"></script>
@@ -19,10 +20,10 @@
 <!-- pdf-lib – fills AcroForm fields and saves the modified PDF back -->
 <!-- pdf.worker.min.js (loaded dynamically by pdf.js, pinned in app.js)
      expected sha384-sS8B4COeBqzQV9DaPpp5cbpF+xz2jPcFbN3L8FL3/dx0RMC6WLUwTUOFm0iFb1lw -->
-<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.min.js"
+<script src="vendor/js/pdf.min.js"
   integrity="sha384-OemFRmhjDZwhIKuUld0HJozkF2YErsgDaCL41trxGQZt4/WgnopJQqQl2DvDZ07Z"
   crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"
+<script src="vendor/js/pdf-lib.min.js"
   integrity="sha384-weMABwrltA6jWR8DDe9Jp5blk+tZQh7ugpCsF3JwSA53WZM9/14PjS5LAJNHNjAI"
   crossorigin="anonymous"></script>
 <!-- JSZip — used by Test Reporting "Extract Report" feature for ZIP-mode output.
@@ -36,7 +37,7 @@
     if (window._extractJSZipPromise) return window._extractJSZipPromise;
     window._extractJSZipPromise = new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
+      s.src = 'vendor/js/jszip.min.js';
       s.crossOrigin = 'anonymous';
       s.onload  = () => resolve(typeof JSZip !== 'undefined' ? JSZip : null);
       s.onerror = () => reject(new Error('JSZip failed to load — check network and try Single PDF mode.'));
@@ -48,19 +49,19 @@
 <link rel="stylesheet" href="styles.css" />
 <link rel="stylesheet" href="photos.css" />
 <link rel="stylesheet" href="trackplan.css" />
-<link href="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.snow.css" rel="stylesheet"
+<link href="vendor/css/quill.snow.css" rel="stylesheet"
   integrity="sha384-ecIckRi4QlKYya/FQUbBUjS4qp65jF/J87Guw5uzTbO1C1Jfa/6kYmd6dXUF6D7i"
   crossorigin="anonymous" />
 <!-- Flatpickr – date picker -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css"
+<link rel="stylesheet" href="vendor/css/flatpickr.min.css"
   integrity="sha384-RkASv+6KfBMW9eknReJIJ6b3UnjKOKC5bOUaNgIY778NFbQ8MtWq9Lr/khUgqtTt"
   crossorigin="anonymous">
 <!-- Tom Select – enhanced dropdowns -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.4.3/dist/css/tom-select.min.css"
+<link rel="stylesheet" href="vendor/css/tom-select.min.css"
   integrity="sha384-EIA8J01pb+PXiVYnDYseaCki0ke5k3Z/QNbhj0nU+Uso0kvSYdFnQB3G6ia7lU+Y"
   crossorigin="anonymous">
 <!-- Tippy.js – tooltips -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tippy.js@6.3.7/dist/tippy.css"
+<link rel="stylesheet" href="vendor/css/tippy.css"
   integrity="sha384-IBgYl+I5X6ZDZXI5zv1vsSE3VopDomz4BxSu/GlxaPHfFtcrJ3uj70z1w6srO9zU"
   crossorigin="anonymous">
 </head>
@@ -1522,47 +1523,47 @@ function _signinTogglePw(){
 
 <!-- ── Modern UI Library Stack — all pinned + SRI verified ──── -->
 <!-- Alpine.js – reactive components -->
-<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"
+<script defer src="vendor/js/alpine.min.js"
   integrity="sha384-9Ax3MmS9AClxJyd5/zafcXXjxmwFhZCdsT6HJoJjarvCaAkJlk5QDzjLJm+Wdx5F"
   crossorigin="anonymous"></script>
 <!-- Flatpickr – date/time picker -->
-<script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"
+<script src="vendor/js/flatpickr.min.js"
   integrity="sha384-5JqMv4L/Xa0hfvtF06qboNdhvuYXUku9ZrhZh3bSk8VXF0A/RuSLHpLsSV9Zqhl6"
   crossorigin="anonymous"></script>
 <!-- Tom Select – searchable, taggable selects -->
-<script src="https://cdn.jsdelivr.net/npm/tom-select@2.4.3/dist/js/tom-select.complete.min.js"
+<script src="vendor/js/tom-select.complete.min.js"
   integrity="sha384-A4TlP4zHVPP9oVIQ8pTVaV6MhvBkDx1sRpmEUfAlO5e7xpodrdr6uNmUV7alXAWW"
   crossorigin="anonymous"></script>
 <!-- Fuse.js – fuzzy search -->
-<script src="https://cdn.jsdelivr.net/npm/fuse.js@7.1.0/dist/fuse.min.js"
+<script src="vendor/js/fuse.min.js"
   integrity="sha384-P/y/5cwqUn6MDvJ9lCHJSaAi2EoH3JSeEdyaORsQMPgbpvA+NvvUqik7XH2YGBjb"
   crossorigin="anonymous"></script>
 <!-- Day.js – lightweight date formatting -->
-<script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/dayjs.min.js"
+<script src="vendor/js/dayjs.min.js"
   integrity="sha384-DpVxUeeBWjUvUV1czyIHJAjh+jYUZFu2lLakbdua5vbwOrBGi1UgaKCHjTC+x3Ky"
   crossorigin="anonymous"></script>
 <!-- Tippy.js – tooltips and popovers -->
-<script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.8/dist/umd/popper.min.js"
+<script src="vendor/js/popper.min.js"
   integrity="sha384-I7E8VVD/ismYTF4hNIPjVp/Zjvgyol6VFvRkX/vR+Vc4jQkC+hVqc2pM8ODewa9r"
   crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/tippy.js@6.3.7/dist/tippy.umd.min.js"
+<script src="vendor/js/tippy.umd.min.js"
   integrity="sha384-pjtv4LzKGI/lGxchW/wd/upB/HsGOP/Q2iPYyDU8qo2bp4JLbN34hQkdAArvidZX"
   crossorigin="anonymous"></script>
 <!-- Quill rich text editor -->
-<script src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js"
+<script src="vendor/js/quill.js"
   integrity="sha384-utBUCeG4SYaCm4m7GQZYr8Hy8Fpy3V4KGjBZaf4WTKOcwhCYpt/0PfeEe3HNlwx8"
   crossorigin="anonymous"></script>
 
 <!-- ── Planning Module Libraries ─────────────────────────── -->
 <!-- ExcelJS – reads cell fill colors (for Lookahead import) -->
-<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"
+<script src="vendor/js/exceljs.min.js"
   integrity="sha384-Pqp51FUN2/qzfxZxBCtF0stpc9ONI6MYZpVqmo8m20SoaQCzf+arZvACkLkirlPz"
   crossorigin="anonymous"></script>
 <!-- vis-timeline – Apache-2.0 timeline/Gantt -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vis-timeline@7.7.3/styles/vis-timeline-graph2d.min.css"
+<link rel="stylesheet" href="vendor/css/vis-timeline-graph2d.min.css"
   integrity="sha384-N/4l0y8PNlO5uZuzP9PK3bAgJQ8ZChybZFXB2mpkZRUil/bui++mvYXPzPAHpbr6"
   crossorigin="anonymous">
-<script src="https://cdn.jsdelivr.net/npm/vis-timeline@7.7.3/standalone/umd/vis-timeline-graph2d.min.js"
+<script src="vendor/js/vis-timeline-graph2d.min.js"
   integrity="sha384-MLX+7yEEPNEznaIWwQi2pBMODSBP6Qo6BOVpzjFWB0UkfEzEYsvHOo7ISLfcQeiI"
   crossorigin="anonymous"></script>
 
@@ -1620,6 +1621,7 @@ function _signinTogglePw(){
   </div>
 </div>
 
+<script src="config.js"></script>
 <script src="data.js"></script>
 <script src="icons.js"></script>
 <script src="format.js"></script>

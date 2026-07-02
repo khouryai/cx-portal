@@ -31,7 +31,7 @@
   var SVGNS = "http://www.w3.org/2000/svg";
   var IDB_NAME = "cx-trackplan";
   var IDB_STORE = "pdfs";
-  var PDF_WORKER = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js";
+  var PDF_WORKER = "vendor/js/pdf.worker.min.js";
 
   // Built-in maps — committed placeholder PDFs (swap in the real track plans,
   // same filenames). `kind:'builtin'` entries load by URL; `kind:'upload'`

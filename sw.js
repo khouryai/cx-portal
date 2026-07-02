@@ -8,7 +8,7 @@
 //    so every deploy forces clients to fetch fresh assets. Manual bumps
 //    here are no longer required.
 
-const CACHE_VERSION = 'cxp-v77';
+const CACHE_VERSION = 'cxp-v78';
 const SHELL_CACHE   = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -31,6 +31,39 @@ const SHELL_ASSETS = [
   './trackplan.css',
   './chart.umd.js',
   './manifest.webmanifest',
+  './config.js',
+  './vendor/js/supabase.js',
+  './vendor/js/jszip.min.js',
+  './vendor/js/591.supabase.js',
+  './vendor/js/alpine.min.js',
+  './vendor/js/dayjs.min.js',
+  './vendor/js/exceljs.min.js',
+  './vendor/js/flatpickr.min.js',
+  './vendor/js/fuse.min.js',
+  './vendor/js/pdf-lib.min.js',
+  './vendor/js/pdf.min.js',
+  './vendor/js/pdf.worker.min.js',
+  './vendor/js/quill.js',
+  './vendor/js/tippy.umd.min.js',
+  './vendor/js/tom-select.complete.min.js',
+  './vendor/js/vis-timeline-graph2d.min.js',
+  './vendor/js/popper.min.js',
+  './vendor/css/flatpickr.min.css',
+  './vendor/css/quill.snow.css',
+  './vendor/css/tippy.css',
+  './vendor/css/tom-select.min.css',
+  './vendor/css/vis-timeline-graph2d.min.css',
+  './vendor/fonts/archivo-latin-ext-wght-normal.woff2',
+  './vendor/fonts/archivo-latin-wght-normal.woff2',
+  './vendor/fonts/fonts.css',
+  './vendor/fonts/ibm-plex-mono-latin-400-normal.woff2',
+  './vendor/fonts/ibm-plex-mono-latin-500-normal.woff2',
+  './vendor/fonts/ibm-plex-mono-latin-600-normal.woff2',
+  './vendor/fonts/ibm-plex-mono-latin-ext-400-normal.woff2',
+  './vendor/fonts/ibm-plex-mono-latin-ext-500-normal.woff2',
+  './vendor/fonts/ibm-plex-mono-latin-ext-600-normal.woff2',
+  './vendor/fonts/inter-latin-ext-wght-normal.woff2',
+  './vendor/fonts/inter-latin-wght-normal.woff2',
 ];
 
 self.addEventListener('install', (event) => {

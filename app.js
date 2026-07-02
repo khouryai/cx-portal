@@ -8,9 +8,7 @@ const PL = DATA.punchList;
 
 // ── Inline SVG icon system → extracted to icons.js (P3-1); loaded before app.js in index.html ──
 
-// ── Supabase config ─────────────────────────────────────────
-const SUPABASE_URL      = 'https://uqtwiucxktljhukmgmxg.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxdHdpdWN4a3Rsamh1a21nbXhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NDMxMDcsImV4cCI6MjA5MzUxOTEwN30.nJuQOOyvGpGphSqiNxrO2_p1oYroev8mVdNn9unxmdI';
+// ── Supabase config → extracted to config.js (loaded first in index.html) ──
 let _sb = null;
 try {
   _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -20142,39 +20140,42 @@ function _vmChkOpenPhoto(path) {
   if (!window.PhotosModule || !PhotosModule.sign) return;
   PhotosModule.sign([path]).then(m => { const u = m && m[path]; if (u) window.open(u, '_blank'); });
 }
+// ── Vehicle-files storage adapter ─────────────────────────────────────────
+// All checklist-attachment storage I/O flows through this adapter (same
+// pattern as _formsStorage): swap the internals for Azure Blob SAS or
+// MS Graph/SharePoint at migration cutover — callers above never change.
+const _vfStorage = {
+  bucket: 'vehicle-files',
+  async upload(path, file) {
+    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${this.bucket}/${path}`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': 'true' },
+      body: file,
+    });
+    if (!res.ok) throw new Error('upload failed (' + res.status + ')');
+  },
+  async signedUrl(path) {
+    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/${this.bucket}/${path}`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expiresIn: 3600 }),
+    });
+    if (!res.ok) return null;
+    const j = await res.json();
+    return j && j.signedURL ? SUPABASE_URL + '/storage/v1' + j.signedURL : null;
+  },
+  async remove(path) {
+    try { await _sb.storage.from(this.bucket).remove([path]); } catch (_) {}
+  },
+};
 async function _vmFileUpload(lineId, file) {
   const safe = (file.name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
   const path = lineId + '/' + Date.now() + '_' + safe;
-  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/vehicle-files/${path}`, {
-    method: 'POST',
-    headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': 'true' },
-    body: file,
-  });
-  if (!res.ok) throw new Error('upload failed (' + res.status + ')');
+  await _vfStorage.upload(path, file);
   const [row] = await _dbInsert('vehicle_files', [{ checklist_item_id: lineId, file_name: file.name || safe, storage_path: path, file_size: file.size || null, content_type: file.type || null, uploaded_by: _vmWho() }]);
   if (row) VEH_FILES.push(row);
 }
-async function _vmChkFileChosen(lineId, input) {
-  if (!_vmCan('edit')) { toast('Not permitted', 'error'); return; }
-  const files = [...(input.files || [])]; input.value = '';
-  if (!files.length) return;
-  toast('Uploading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '…');
-  for (const f of files) {
-    try { await _vmFileUpload(lineId, f); }
-    catch (e) { toast('File upload failed: ' + e.message, 'error'); }
-  }
-  renderVehicleManagement();
-}
-async function _vmFileSign(path) {
-  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/vehicle-files/${path}`, {
-    method: 'POST',
-    headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expiresIn: 3600 }),
-  });
-  if (!res.ok) return null;
-  const j = await res.json();
-  return j && j.signedURL ? SUPABASE_URL + '/storage/v1' + j.signedURL : null;
-}
+async function _vmFileSign(path) { return _vfStorage.signedUrl(path); }
 function _vmFileOpen(path) {
   _vmFileSign(path).then(u => { if (u) window.open(u, '_blank'); else toast('Could not open file', 'error'); });
 }
@@ -20183,7 +20184,7 @@ async function _vmFileDelete(id) {
   const f = VEH_FILES.find(x => x.id === id); if (!f) return;
   if (!await cxConfirm('Delete attachment "' + f.file_name + '"?')) return;
   try {
-    try { await _sb.storage.from('vehicle-files').remove([f.storage_path]); } catch (_) {}
+    await _vfStorage.remove(f.storage_path);
     await _dbDelete('vehicle_files', { id });
     VEH_FILES = VEH_FILES.filter(x => x.id !== id);
     renderVehicleManagement();
@@ -32718,7 +32719,7 @@ async function openFormViewer(formId, backTo = null) {
   if (typeof pdfjsLib === 'undefined') { toast('PDF viewer library not loaded', 'error'); return; }
   if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
     pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js';
+      'vendor/js/pdf.worker.min.js';
   }
   // Kick off pin + recents lookups in parallel — both are needed before render but
   // can run concurrently with the modal mount.
@@ -36659,7 +36660,7 @@ async function _drwStep1Next() {
   try {
     if (typeof pdfjsLib === 'undefined') throw new Error('PDF.js not loaded');
     if (!pdfjsLib.GlobalWorkerOptions.workerSrc)
-      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js';
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/js/pdf.worker.min.js';
     _drwUploadPdfDoc = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
     await _drwShowCalibrate();
   } catch(e) {
@@ -37483,7 +37484,7 @@ async function _drwOpenSheet(sheetId, setId, pageIndex) {
     if (typeof pdfjsLib === 'undefined') throw new Error('PDF.js not loaded');
     if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
       pdfjsLib.GlobalWorkerOptions.workerSrc =
-        'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js';
+        'vendor/js/pdf.worker.min.js';
     }
     const bytes   = await _drawStorage.downloadBytes(set.storage_path);
     _drwPdfDoc    = await pdfjsLib.getDocument({ data: bytes }).promise;
