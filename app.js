@@ -8,7 +8,12 @@ const PL = DATA.punchList;
 
 // ── Inline SVG icon system → extracted to icons.js (P3-1); loaded before app.js in index.html ──
 
-// ── Supabase config → extracted to config.js (loaded first in index.html) ──
+// ── Supabase config ── config.js (loaded first) provides window.CX_CONFIG; the
+// inline fallbacks keep every mix of cached shell versions working (the PWA
+// shell updates files independently, so an old index.html can briefly pair
+// with a new app.js or vice versa). Remove fallbacks at migration cutover.
+const SUPABASE_URL      = (window.CX_CONFIG && window.CX_CONFIG.SUPABASE_URL) || 'https://uqtwiucxktljhukmgmxg.supabase.co';
+const SUPABASE_ANON_KEY = (window.CX_CONFIG && window.CX_CONFIG.SUPABASE_ANON_KEY) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxdHdpdWN4a3Rsamh1a21nbXhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NDMxMDcsImV4cCI6MjA5MzUxOTEwN30.nJuQOOyvGpGphSqiNxrO2_p1oYroev8mVdNn9unxmdI';
 let _sb = null;
 try {
   _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
