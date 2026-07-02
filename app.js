@@ -12683,14 +12683,25 @@ function _amCloseDrilldown() {
   _reRenderTR();
 }
 
+// Locations available for a given phase name: the master LOCS tree (so a
+// location can be picked even if no test item is using it yet) unioned with
+// any legacy location names already present on test items under that phase
+// (in case older data used a name that was never added to LOCS).
+function _amLocationsForPhase(phaseName) {
+  const phaseNode = LOCS.find(l => l.level === 1 && l.name === phaseName);
+  const master = phaseNode ? LOCS.filter(l => l.level === 2 && l.parent_id === phaseNode.id).map(l => l.name) : [];
+  const legacy = TI.filter(r => r.Phase === phaseName).map(r => r.Location).filter(Boolean);
+  return [...new Set([...master, ...legacy])].sort();
+}
+
 function _amOpenEditModal(key) {
   const act = _amGetActivities().find(a => a.key === key);
   if (!act) return;
   _amCurrentEditKey = key; // store so onclick handlers don't need to embed it
   const selectedReport = _trpFindRecordForActivity(act);
   const customReport = selectedReport ? '' : (act.testReport || '');
-  const phases     = [...new Set(TI.map(r=>r.Phase)   .filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
-  const locations  = [...new Set(TI.map(r=>r.Location).filter(Boolean))].sort();
+  const phases     = [...new Set([...LOCS.filter(l=>l.level===1).map(l=>l.name), ...TI.map(r=>r.Phase).filter(Boolean)])].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const locations  = _amLocationsForPhase(act.phase);
   const subsystems = [...new Set(TI.map(r=>r.Subsystem).filter(Boolean))].sort();
   const st = _amComputeStatus(act);
   modal({
@@ -12704,7 +12715,7 @@ function _amOpenEditModal(key) {
         </div>
         <div class="form-field">
           <label>Phase</label>
-          <select id="am-edit-phase" class="form-input">
+          <select id="am-edit-phase" class="form-input" onchange="_amFilterEditLocations()">
             ${phases.map(p=>`<option value="${escapeHtml(p)}" ${act.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
           </select>
         </div>
@@ -12739,6 +12750,15 @@ function _amOpenEditModal(key) {
     `,
     footer: `<button class="admin-action-btn" style="background:#dc2626;margin-right:auto;" onclick="_amDeleteActivity()">${icon('trash')} Delete Activity</button><button class="form-secondary" onclick="closeModal()">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amSaveEdit(true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" onclick="_amSaveEdit()">Save Changes</button>`
   });
+}
+
+function _amFilterEditLocations() {
+  const phaseSel = document.getElementById('am-edit-phase');
+  const locSel   = document.getElementById('am-edit-location');
+  if (!phaseSel || !locSel) return;
+  const prevLocation = locSel.value;
+  const locations = _amLocationsForPhase(phaseSel.value);
+  locSel.innerHTML = locations.map(l => `<option value="${escapeHtml(l)}" ${l === prevLocation ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('');
 }
 
 async function _amSaveEdit(deployToField = false) {
