@@ -44768,6 +44768,10 @@ function _dynSimDrawChart() {
   });
   const actual = _dynSimActualCurve(phase);
   const allDates = [...new Set([...runs.flatMap(x => x.curve.map(p => p.date)), ...actual.points.map(p => p.date)])].sort();
+  // Plot on a real time axis (ms since epoch) instead of one slot per date, so a
+  // 2–3 month stoppage during regression development renders as ONE long flat
+  // segment — proportional to the gap — rather than a single even-width step.
+  const _ts = d => _dynParseDate(d).getTime();
   const palette = ['#1d4eaf', '#059669', '#7c3aed', '#b45309', '#0e7490', '#9d174d'];
   const hidden = _dynPage._simHiddenSeries || (_dynPage._simHiddenSeries = new Set());
   const datasets = [];
@@ -44778,7 +44782,7 @@ function _dynSimDrawChart() {
     let last = 0; const m = new Map(curve.map(p => [p.date, p.pct]));
     datasets.push({
       label: (s.baseline ? '★ ' : '') + s.name + (hasReg ? ' (incl. regression)' : ''),
-      data: allDates.map(d => { if (m.has(d)) last = m.get(d); return last; }),
+      data: allDates.map(d => { if (m.has(d)) last = m.get(d); return { x: _ts(d), y: last }; }),
       borderColor: s.baseline ? '#e60012' : palette[i % palette.length],
       borderWidth: isActive ? 3 : 1.5,
       stepped: true, fill: false, pointRadius: 0, tension: 0,
@@ -44787,22 +44791,33 @@ function _dynSimDrawChart() {
   if (actual.points.length && !hidden.has('__actual__')) {
     let last = 0; const m = new Map(actual.points.map(p => [p.date, p.pct]));
     datasets.push({
-      label: 'Actual progress', data: allDates.map(d => { if (m.has(d)) last = m.get(d); return last; }),
+      label: 'Actual progress', data: allDates.map(d => { if (m.has(d)) last = m.get(d); return { x: _ts(d), y: last }; }),
       borderColor: '#111827', borderWidth: 2.5, borderDash: [5, 3], pointRadius: 0, fill: false, tension: 0,
     });
   }
+  // Long, regression-spanning timelines read best with month+year ticks; a short
+  // span (no dev gap) keeps month+day so the weekly cadence is still legible.
+  const _spanDays = allDates.length ? (_ts(allDates[allDates.length - 1]) - _ts(allDates[0])) / 86400000 : 0;
+  const _xTick = _spanDays > 75
+    ? v => new Date(v).toLocaleString('en-US', { month: 'short', year: '2-digit' })
+    : v => new Date(v).toLocaleString('en-US', { month: 'short', day: 'numeric' });
   if (_dynPage._simChart) { try { _dynPage._simChart.destroy(); } catch (_) {} }
   _dynPage._simChart = new Chart(cv.getContext('2d'), {
     type: 'line',
-    data: { labels: allDates.map(d => _dynFmtDate(d)), datasets },
+    data: { datasets },
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: {
         legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, usePointStyle: true, pointStyle: 'line' } },
         title: { display: true, text: 'S-curve — % complete: scenarios vs actual (' + phase + ')', font: { size: 12, weight: '600' }, color: '#6b7280' },
+        tooltip: { callbacks: { title: items => (items.length ? _dynFmtDate(new Date(items[0].parsed.x)) : '') } },
       },
       scales: { y: { beginAtZero: true, max: 100, title: { display: true, text: '% complete', font: { size: 10 } } },
-        x: { ticks: { font: { size: 9 }, maxRotation: 60, autoSkip: true, maxTicksLimit: 14 } } },
+        x: { type: 'linear', bounds: 'data',
+             ticks: { font: { size: 9 }, maxRotation: 60, autoSkip: true, maxTicksLimit: 14,
+               // blank a tick whose label repeats its neighbour (many linear ticks can
+               // land in the same month) so the month/year axis reads cleanly
+               callback: (v, i, ticks) => { const l = _xTick(v); return (i > 0 && _xTick(ticks[i - 1].value) === l) ? '' : l; } } } },
     },
   });
 }
