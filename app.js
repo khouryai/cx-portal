@@ -19407,12 +19407,12 @@ async function _vmCreatePatch(carId, equipId) {
 // ── Bulk software update across selected cars ─────────────────────────────
 function _vmBulkUpdateModal() {
   if (!_vmCan('bulk_edit')) { toast('Not permitted', 'error'); return; }
-  // Devices present on cars OR known to Config Management.
-  const names = [...new Set([
-    ...VEH_EQUIP.map(e => e.equipment_name),
-    ...SW_EQUIPMENT.map(e => e.equipment_name),
-  ].filter(Boolean))].sort();
-  if (!names.length) { toast('No equipment exists yet', 'error'); return; }
+  // Only devices denoted as CI type "Vehicle" in Configuration Management —
+  // wayside CIs (and on-car equipment without a Vehicle config item) are excluded.
+  const names = [...new Set(
+    SW_EQUIPMENT.filter(e => e.ci_type === 'vehicle').map(e => e.equipment_name).filter(Boolean)
+  )].sort();
+  if (!names.length) { toast('No Vehicle devices exist in Configuration Management yet', 'error'); return; }
   const carsByType = t => _vmSortCars(VEHICLES.filter(c => c.car_type === t));
   const carChecks = type => {
     const g = carsByType(type);
@@ -19439,7 +19439,7 @@ function _vmBulkDeviceChanged() {
   const device = (document.getElementById('vm-bulk-device')?.value || '').trim();
   const sel = document.getElementById('vm-bulk-build');
   if (!sel) return;
-  const builds = _vmCMBuilds(device);
+  const builds = _vmCMBuilds(device).filter(b => b.ci_type === 'vehicle');
   sel.innerHTML = builds.length
     ? builds.map(b => `<option value="${b.id}">${escapeHtml((b.sw_type ? b.sw_type + ' · ' : '') + _vmBuildLabel(b))}</option>`).join('')
     : `<option value="">(no Config Mgmt versions for this device)</option>`;
