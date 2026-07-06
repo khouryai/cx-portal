@@ -39436,7 +39436,7 @@ function _dynRowHtml(r) {
       <td style="font-family:var(--font-mono,monospace);font-size:12px;">${escapeHtml(r.code || '—')}</td>
       <td>${tc ? `<span style="font-family:var(--font-mono,monospace);font-size:11px;color:var(--gray-500);">${escapeHtml(tc.code || r.test_id || '')}</span><br/><span style="font-size:12px;">${escapeHtml((tc.name || '').slice(0,40))}</span>` : `<span style="color:var(--gray-400);">${escapeHtml(r.test_id || '—')}</span>`}</td>
       <td>${_dynSubsystemBadge(tc && tc.subsystem)}</td>
-      <td>${escapeHtml(r.title || '')}${prereq}${subBadge}</td>
+      <td>${escapeHtml(r.title || '')}${r.test_direction ? ` <span class="badge" style="background:#eef2ff;color:#3730a3;font-size:10px;" title="Test direction">\u21b3 ${escapeHtml(r.test_direction)}</span>` : ''}${prereq}${subBadge}</td>
       <td>${r.target_phase ? `<span class="tag tag-phase">${escapeHtml(r.target_phase)}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>
       <td style="font-size:12px;">${sectionsCell}</td>
       <td style="font-size:12px;white-space:nowrap;">${schedCell}</td>
@@ -39594,6 +39594,10 @@ function _dynBuildInstanceForm(inst, tcOpts) {
       <div class="form-field" style="grid-column:1/-1;">
         <label>Intermediate points <span style="color:var(--gray-500);font-weight:400;">(comma-separated)</span></label>
         <input id="dyn-f-inter" value="${escapeHtml((v.intermediate_points || []).join(', '))}" placeholder="e.g. W42-B, W43-C" />
+      </div>
+      <div class="form-field" style="grid-column:1/-1;">
+        <label>Test direction <span style="color:var(--gray-500);font-weight:400;">(optional — used instead of start/finish on some runs; for the tester)</span></label>
+        <input id="dyn-f-testdir" value="${escapeHtml(v.test_direction || '')}" placeholder="e.g. Northbound, Southbound, Bidirectional" />
       </div>
 
       <div class="form-field">
@@ -39772,6 +39776,7 @@ async function _dynSaveInstance(id) {
     start_point: get('dyn-f-start'),
     finish_point: get('dyn-f-finish'),
     intermediate_points: splitList(document.getElementById('dyn-f-inter')?.value),
+    test_direction: get('dyn-f-testdir') || null,
     track_section_under_test: get('dyn-f-tsut'),
     track_section_access_req: _dynParseZones(document.getElementById('dyn-f-access')?.value),
     prerequisites: get('dyn-f-prereq'),
@@ -39835,12 +39840,13 @@ function _dynOpenCSVModal() {
           <code>Prerequisites</code>, <code>Phase</code>, <code>Track Section Under Test</code>,
           <code>Track Section Access Req</code>, <code>Number of Trains</code>, <code>Train 1 car #</code>, <code>Train 2 car #</code> … (one car # per train),
           <code>Estimated duration (m)</code>, <code>Starting Point</code>, <code>Intermediate Points</code>,
-          <code>Finish Point</code>, <code>Substitute</code>, <code>Test Scope</code>, <code>Applicable Locations</code>.
+          <code>Finish Point</code>, <code>Test Direction</code>, <code>Substitute</code>, <code>Test Scope</code>.
           Each row is one executable run; rows sharing a <code>Test Case Code</code> roll up to that case.
           Unknown case codes are created as dynamic test cases. A <code>Substitute</code> linking two runs
           groups them so completing either satisfies both (counted once for KPIs).
-          <code>Test Scope</code> = <code>per_location</code> / <code>per_phase</code> / <code>functional</code> (cadence of the case);
-          <code>Applicable Locations</code> lists the section codes a per-location case repeats at.
+          <code>Test Scope</code> = <code>per_location</code> / <code>per_phase</code> / <code>functional</code> (cadence of the case).
+          <code>Test Direction</code> is an optional free-text run direction (e.g. Northbound) for cases that
+          use a direction instead of start/intermediate/finish points — shown to the tester, not used for scheduling.
         </p>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
           <input id="dyn-csv-file" type="file" accept=".csv,.xlsx,.xls" style="font-size:12px;" />
@@ -39880,17 +39886,17 @@ const _DYN_TEMPLATE_HEADERS = [
   'Test Procedure', 'Test Case Code', 'Test Case Name', 'Subsystem', 'Prerequisites', 'Target Phase',
   'Required Mode', 'Track Section Under Test', 'Track Section Access Req', 'Number of Trains',
   'Train 1 car #', 'Train 2 car #', 'Substitute', 'Estimated duration (m)',
-  'Starting Point', 'Intermediate Points', 'Finish Point',
-  'Test Scope', 'Applicable Locations',
+  'Starting Point', 'Intermediate Points', 'Finish Point', 'Test Direction',
+  'Test Scope',
 ];
 
 function _dynCSVPasteSample() {
   const h = _DYN_TEMPLATE_HEADERS.join(',');
   const sample = [
     h,
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M,per_location,"W40, W37, W45"',
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,W40,1,Any,,,20,W45-L,,W45-A,per_location,"W40, W37, W45"',
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, W34",1,Any,,SIT_016b,20,W37-G,,W33-N,per_location,"W40, W37, W45"',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M,Northbound,per_location',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,W40,1,Any,,,20,W45-L,,W45-A,Southbound,per_location',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, W34",1,Any,,SIT_016b,20,,,,Bidirectional,per_location',
   ].join('\n');
   document.getElementById('dyn-csv-text').value = sample;
   _dynCSVValidate();
@@ -39900,8 +39906,8 @@ function _dynDownloadCSVTemplate() {
   const headers = _DYN_TEMPLATE_HEADERS.join(',');
   const instructions = '# One row per run. REQUIRED: Test Case Code. Rows with the same code roll up to one test case. Track Section Access Req / Intermediate Points: comma- or semicolon-separated. Substitute: a Test Case Code or run code that is an alternative way to pass (groups the runs, counted once for KPIs).';
   const examples = [
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M,per_location,"W40, W37, W45"',
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,W40,1,Any,,,20,W45-A,,W45-L,per_location,"W40, W37, W45"',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M,Northbound,per_location',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,W40,1,Any,,,20,W45-A,,W45-L,Southbound,per_location',
   ];
   const csv = [headers, instructions, ...examples].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -39999,6 +40005,8 @@ function _dynHeaderKey(raw) {
     'intermediate points': 'intermediate',
     'intermediate point': 'intermediate',
     'finish point': 'finish_point',
+    'test direction': 'test_direction',
+    'direction': 'test_direction',
     'substitute': 'substitute',
     'status': 'status',
     'test scope': 'test_scope',
@@ -40112,6 +40120,7 @@ function _dynParseRuns(parsed) {
       start_point: start || null,
       intermediate_points: inter,
       finish_point: finish || null,
+      test_direction: get('test_direction') || null,
       track_section_under_test: get('tsut') || null,
       track_section_access_req: _dynParseZones(get('access_req')),
       required_mode: _dynNormMode(get('required_mode')),
@@ -40560,9 +40569,10 @@ function _dynRenderDaySummaries(cols) {
 // cover every access-required zone, allow the run's mode, and be a live planned
 // window. This is the SAME gate the cascade allocator uses.
 function _dynWindowGrantsRun(w, r) {
-  if (!w || !r || w.status !== 'planned' || !r.track_section_under_test) return false;
+  if (!w || !r || w.status !== 'planned') return false;
   const wz = (w.access_zones && w.access_zones.length) ? w.access_zones : (w.control_zone_code ? [w.control_zone_code] : []);
-  if (!wz.includes(r.track_section_under_test)) return false;
+  // Access mapping uses ONLY track_section_access_req; the under-test section is
+  // the planning axis, not an access requirement, so it is not gated here.
   if (!(r.track_section_access_req || []).every(z => wz.includes(z))) return false;
   if (r.required_mode && !(w.allowed_modes || []).includes(r.required_mode)) return false;
   return true;
@@ -41885,9 +41895,10 @@ function _dynBuildShift(shiftId) {
   // are within what this campaign (or stand-alone window) grants.
   const grantedZones = new Set((s.access_zones && s.access_zones.length) ? s.access_zones : (camp ? (camp.zone_codes || []) : [s.control_zone_code]));
   const accessOk = i => (i.track_section_access_req || []).every(z => grantedZones.has(z));
+  // Eligibility is access-based: any unfinished run this shift can GRANT access to
+  // (access_req ⊆ granted). The under-test section is the planning axis, not a gate.
   const baseEligible = (_dynPage.instances || []).filter(i =>
     i.shift_id !== shiftId &&
-    i.track_section_under_test === s.control_zone_code &&
     !['Pass', 'Fail', 'Not Applicable'].includes(i.status) &&
     (!i.required_mode || !modes.length || modes.includes(i.required_mode)));
   const eligible = baseEligible.filter(accessOk);
@@ -42717,9 +42728,12 @@ async function _dynPlanCommitToCampaign() {
       continue;
     }
     const dur = inst.expected_duration_minutes || 0;
-    const shift = shifts.find(s => s.control_zone_code === inst.track_section_under_test
-      && (used.get(s.id) + dur) <= (_dynShiftMinutes(s) || 0));
-    if (!shift) { unplaced.push({ inst, why: `no shift with room for ${inst.track_section_under_test}` }); continue; }
+    const _reqZones = inst.track_section_access_req || [];
+    const shift = shifts.find(s => {
+      const gz = (s.access_zones && s.access_zones.length) ? s.access_zones : [s.control_zone_code];
+      return _reqZones.every(z => gz.includes(z)) && (used.get(s.id) + dur) <= (_dynShiftMinutes(s) || 0);
+    });
+    if (!shift) { unplaced.push({ inst, why: `no shift with room/access for ${_reqZones.join(', ') || inst.code || 'run'}` }); continue; }
     used.set(shift.id, used.get(shift.id) + dur);
     placed.push({ inst, shift });
   }
@@ -42925,8 +42939,7 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
     for (;;) {
       if (count >= capCount) break;
       const cands = elig.filter(i => !placed.has(i.id)
-        && wz.has(i.track_section_under_test)   // window must GRANT the run's zone (incl. secondary zones)
-        && accessOkWin(i, wz)
+        && accessOkWin(i, wz)   // access mapping = access_req ⊆ window zones (under_test is not gated)
         && (!windowAllows || windowAllows(i, w))
         && (!i.required_mode || (w.allowed_modes || []).includes(i.required_mode))
         && prereqOkBy(i.test_id, idx));
@@ -43591,7 +43604,9 @@ function _dynSimMaxMixSize(sc) { return _dynSimMix(sc).reduce((m, e) => Math.max
 // run's under-test + access zones — i.e. the shift size it truly needs. Returns
 // null if its zones can't be connected within 5 locations (unschedulable).
 function _dynSimRequiredSize(sc, inst) {
-  const req = [...new Set([inst.track_section_under_test, ...(inst.track_section_access_req || [])].filter(Boolean))];
+  // Access mapping uses ONLY track_section_access_req — the under-test section is
+  // the planning axis (often a phase label like "PHASE 2"), never an access zone.
+  const req = [...new Set((inst.track_section_access_req || []).filter(Boolean))];
   if (!req.length) return 1;
   const zset = new Set(sc.zones || []);
   if (!req.every(z => zset.has(z))) return null;          // needs a location outside the sim
@@ -43678,7 +43693,6 @@ function _dynSimPickZones(sc, remaining, isClosure, maxLen) {
     const set = new Set(cand);
     let m = 0;
     for (const i of remaining) {
-      if (!set.has(i.track_section_under_test)) continue;
       if (!(i.track_section_access_req || []).every(z => set.has(z))) continue;
       m += i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN;
     }
@@ -43717,7 +43731,7 @@ function _dynSimEverPlaceable(sc, pool, prereqs) {
   const closure = hasClosure ? _dynSimClosureCands(sc, zset) : [];
   const maxMin = _dynSimMaxShiftMinutes(sc);
   const fits = i => {
-    const req = [i.track_section_under_test, ...(i.track_section_access_req || [])].filter(Boolean);
+    const req = (i.track_section_access_req || []).filter(Boolean);   // access = access_req only
     const within = cands => cands.some(c => { const s = new Set(c); return req.every(z => s.has(z)); });
     return zset.has(i.track_section_under_test) && (within(chains) || within(closure));
   };
@@ -43759,7 +43773,6 @@ function _dynSimBestCluster(sc, pool, maxSize, base) {
     const set = new Set(cand);
     let m = 0;
     for (const i of pool) {
-      if (!set.has(i.track_section_under_test)) continue;
       const req = i.track_section_access_req || [];
       if (!req.every(z => set.has(z))) continue;
       m += (i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN) * Math.max(1, req.length);
@@ -44388,7 +44401,7 @@ function _dynSimUnplacedHtml(sc, res) {
   const unplacedTestIds = new Set(list.map(i => i.test_id));
 
   const rows = list.map(i => {
-    const req = [...new Set([i.track_section_under_test, ...(i.track_section_access_req || [])].filter(Boolean))];
+    const req = [...new Set((i.track_section_access_req || []).filter(Boolean))];   // access = access_req only
     const outside = req.filter(z => !zset.has(z));
     const unmetSim = [...new Set((_dynPage.prereqs || []).filter(p => p.test_id === i.test_id && unplacedTestIds.has(p.prerequisite_test_id)).map(p => p.prerequisite_test_id))];
     let type, label, tone;

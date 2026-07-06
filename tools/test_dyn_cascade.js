@@ -34,7 +34,7 @@ const instances = [
   { id: "iA", test_id: "A", code: "A-1", track_section_under_test: "W40", required_mode: null,   status: "Not Started" },
   { id: "iB", test_id: "B", code: "B-1", track_section_under_test: "W40", required_mode: null,   status: "Not Started" }, // prereq: A
   { id: "iC", test_id: "C", code: "C-1", track_section_under_test: "W40", required_mode: "CBTC", status: "Not Started" }, // CBTC-only
-  { id: "iZ", test_id: "Z", code: "Z-1", track_section_under_test: "Y10", required_mode: null,   status: "Not Started" }, // wrong zone
+  { id: "iZ", test_id: "Z", code: "Z-1", track_section_under_test: "Y10", track_section_access_req: ["Y10"], required_mode: null,   status: "Not Started" }, // wrong zone — access needs Y10 (windows grant W40 only). Access mapping keys off track_section_access_req, not under_test.
   { id: "iP", test_id: "A", code: "A-2", track_section_under_test: "W40", required_mode: null,   status: "Pass" },        // done → skipped
 ];
 const prereqs = [{ test_id: "B", prerequisite_test_id: "A" }];
@@ -210,6 +210,31 @@ console.log("\n=== Scenario 8: windowAllows (per-campaign scope) + capacityFn ==
 
   const capRes = _dynCascadeAllocate({ instances: runs, windows: [wins[0]], prereqs: [], capacityFn: () => 1 });
   ok("capacityFn caps a window to its computed capacity", capRes.assignments.length === 1 && capRes.unplaced.length === 1);
+}
+
+// ── Scenario 9: access mapping keys off track_section_access_req ONLY ───────
+// Regression guard for the owner's rule: the section UNDER TEST is a planning
+// label (often a phase like "PHASE 2"), never an access zone. A run must place
+// on a window that grants its access_req even though no window ever "grants
+// PHASE 2"; and a window that lacks an access_req zone must still block it.
+console.log("\n=== Scenario 9: under_test is not an access gate (access_req only) ===");
+{
+  const _dynWindowGrantsRun = sandbox._dynWindowGrantsRun;
+  if (typeof _dynWindowGrantsRun !== "function") { console.error("FATAL: _dynWindowGrantsRun not found"); process.exit(1); }
+  const wW40 = { status: "planned", control_zone_code: "W40", access_zones: ["W40"], allowed_modes: ["CBTC", "VATC"] };
+  const wY10 = { status: "planned", control_zone_code: "Y10", access_zones: ["Y10"], allowed_modes: ["CBTC", "VATC"] };
+  const rPhase = { track_section_under_test: "PHASE 2", track_section_access_req: ["W40"] };
+  ok("PHASE-2 under_test run grants on the W40 window (access_req=[W40])", _dynWindowGrantsRun(wW40, rPhase) === true);
+  ok("same run does NOT grant on a Y10 window (W40 not granted)", _dynWindowGrantsRun(wY10, rPhase) === false);
+  const rNoAccess = { track_section_under_test: "PHASE 2", track_section_access_req: [] };
+  ok("run with no access_req grants on any planned window", _dynWindowGrantsRun(wW40, rNoAccess) === true && _dynWindowGrantsRun(wY10, rNoAccess) === true);
+
+  // End-to-end through the allocator: the PHASE-2 run now PLACES (before the
+  // fix its under_test made every window "not granting PHASE 2" → unplaced).
+  const wins = [{ id: "p1", control_zone_code: "W40", access_zones: ["W40"], shift_date: "2026-10-01", start_at: "2026-10-01T08:00:00Z", end_at: "2026-10-01T10:00:00Z", allowed_modes: ["CBTC", "VATC"], status: "planned" }];
+  const runs = [{ id: "iPh", test_id: "tPh", code: "PH-1", track_section_under_test: "PHASE 2", track_section_access_req: ["W40"], required_mode: null, status: "Not Started" }];
+  const res = _dynCascadeAllocate({ instances: runs, windows: wins, prereqs: [], capacityPerWindow: 9 });
+  ok("allocator places the PHASE-2 run onto the W40 window", res.assignments.some(a => a.instanceId === "iPh"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed.`);
