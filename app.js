@@ -39439,6 +39439,7 @@ function _dynRowHtml(r) {
       <td style="max-width:480px;">
         <div>${escapeHtml(r.title || '')}${prereq}${subBadge}</div>
         ${r.test_notes ? `<div style="margin-top:3px;font-size:11px;color:var(--gray-500);white-space:normal;overflow-wrap:anywhere;line-height:1.45;"><span style="color:var(--gray-400);font-weight:600;">Notes:</span> ${escapeHtml(r.test_notes)}</div>` : ''}
+        ${r.substitute_notes ? `<div style="margin-top:3px;font-size:11px;color:#6d28d9;white-space:normal;overflow-wrap:anywhere;line-height:1.45;"><span style="font-weight:600;">Alt locations:</span> ${escapeHtml(r.substitute_notes)}</div>` : ''}
       </td>
       <td>${r.target_phase ? `<span class="tag tag-phase">${escapeHtml(r.target_phase)}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>
       <td style="font-size:12px;">${sectionsCell}</td>
@@ -39601,6 +39602,10 @@ function _dynBuildInstanceForm(inst, tcOpts) {
       <div class="form-field" style="grid-column:1/-1;">
         <label>Test notes <span style="color:var(--gray-500);font-weight:400;">(optional — staging &amp; execution details for the tester; used instead of / alongside start/finish)</span></label>
         <textarea id="dyn-f-testnotes" rows="2" style="width:100%;font-size:13px;" placeholder="e.g. Stage both trains at TM5 before Step 9; hold at W45-A between passes">${escapeHtml(v.test_notes || '')}</textarea>
+      </div>
+      <div class="form-field" style="grid-column:1/-1;">
+        <label>Substitute notes <span style="color:var(--gray-500);font-weight:400;">(optional — other locations this SAME run may be executed at; not a separate instance)</span></label>
+        <textarea id="dyn-f-subnotes" rows="2" style="width:100%;font-size:13px;" placeholder="e.g. May be run on Y10 PL-2 or PL-3 instead of PL-1">${escapeHtml(v.substitute_notes || '')}</textarea>
       </div>
 
       <div class="form-field">
@@ -39780,6 +39785,7 @@ async function _dynSaveInstance(id) {
     finish_point: get('dyn-f-finish'),
     intermediate_points: splitList(document.getElementById('dyn-f-inter')?.value),
     test_notes: get('dyn-f-testnotes') || null,
+    substitute_notes: get('dyn-f-subnotes') || null,
     track_section_under_test: get('dyn-f-tsut'),
     track_section_access_req: _dynParseZones(document.getElementById('dyn-f-access')?.value),
     prerequisites: get('dyn-f-prereq'),
@@ -39843,13 +39849,16 @@ function _dynOpenCSVModal() {
           <code>Prerequisites</code>, <code>Phase</code>, <code>Track Section Under Test</code>,
           <code>Track Section Access Req</code>, <code>Number of Trains</code>, <code>Train 1 car #</code>, <code>Train 2 car #</code> … (one car # per train),
           <code>Estimated duration (m)</code>, <code>Starting Point</code>, <code>Intermediate Points</code>,
-          <code>Finish Point</code>, <code>Test Notes</code>, <code>Substitute</code>, <code>Test Scope</code>.
+          <code>Finish Point</code>, <code>Test Notes</code>, <code>Substitute Notes</code>, <code>Substitute</code>, <code>Test Scope</code>.
           Each row is one executable run; rows sharing a <code>Test Case Code</code> roll up to that case.
           Unknown case codes are created as dynamic test cases. A <code>Substitute</code> linking two runs
           groups them so completing either satisfies both (counted once for KPIs).
           <code>Test Scope</code> = <code>per_location</code> / <code>per_phase</code> / <code>functional</code> (cadence of the case).
           <code>Test Notes</code> is an optional free-text note for the tester — staging & execution details that
           help them set up and run the test (used instead of / alongside start/intermediate/finish points). Display-only.
+          <code>Substitute Notes</code> tells the tester where else this SAME run may be executed (e.g. "can run on
+          Y10 PL-2 or PL-3") — display-only alternative-location guidance. This is NOT the <code>Substitute</code>
+          column: it never creates a separate run or equivalence group.
         </p>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
           <input id="dyn-csv-file" type="file" accept=".csv,.xlsx,.xls" style="font-size:12px;" />
@@ -39889,7 +39898,7 @@ const _DYN_TEMPLATE_HEADERS = [
   'Test Procedure', 'Test Case Code', 'Test Case Name', 'Subsystem', 'Prerequisites', 'Target Phase',
   'Required Mode', 'Track Section Under Test', 'Track Section Access Req', 'Number of Trains',
   'Train 1 car #', 'Train 2 car #', 'Substitute', 'Estimated duration (m)',
-  'Starting Point', 'Intermediate Points', 'Finish Point', 'Test Notes',
+  'Starting Point', 'Intermediate Points', 'Finish Point', 'Test Notes', 'Substitute Notes',
   'Test Scope',
 ];
 
@@ -39897,9 +39906,9 @@ function _dynCSVPasteSample() {
   const h = _DYN_TEMPLATE_HEADERS.join(',');
   const sample = [
     h,
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M,"Stage both trains at TM5 before Step 9",per_location',
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,W40,1,Any,,,20,W45-L,,W45-A,"Hold at W45-A between passes",per_location',
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, W34",1,Any,,SIT_016b,20,,,,"No start/finish — follow the route in the test steps",per_location',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M,"Stage both trains at TM5 before Step 9","May be run on Y10 PL-2 or PL-3 instead of PL-1",per_location',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,W40,1,Any,,,20,W45-L,,W45-A,"Hold at W45-A between passes",,per_location',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, W34",1,Any,,SIT_016b,20,,,,"No start/finish — follow the route in the test steps","Can also execute at W34",per_location',
   ].join('\n');
   document.getElementById('dyn-csv-text').value = sample;
   _dynCSVValidate();
@@ -39909,8 +39918,8 @@ function _dynDownloadCSVTemplate() {
   const headers = _DYN_TEMPLATE_HEADERS.join(',');
   const instructions = '# One row per run. REQUIRED: Test Case Code. Rows with the same code roll up to one test case. Track Section Access Req / Intermediate Points: comma- or semicolon-separated. Substitute: a Test Case Code or run code that is an alternative way to pass (groups the runs, counted once for KPIs).';
   const examples = [
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M,"Stage both trains at TM5 before Step 9",per_location',
-    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,W40,1,Any,,,20,W45-A,,W45-L,"Hold at W45-L between passes",per_location',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,"W40, Y10",1,Any,,,30,Y10-PL-3,,W45-M,"Stage both trains at TM5 before Step 9","May be run on Y10 PL-2 or PL-3 instead of PL-1",per_location',
+    'CDRL 9.04.53 - DCS SIT Procedures,TC_DCS_SIT_016,Wayside Radio Coverage,DCS,,Phase 2,CBTC,W40,W40,1,Any,,,20,W45-A,,W45-L,"Hold at W45-L between passes",,per_location',
   ];
   const csv = [headers, instructions, ...examples].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -40010,6 +40019,7 @@ function _dynHeaderKey(raw) {
     'finish point': 'finish_point',
     'test notes': 'test_notes',
     'test direction': 'test_notes',
+    'substitute notes': 'substitute_notes',
     'substitute': 'substitute',
     'status': 'status',
     'test scope': 'test_scope',
@@ -40124,6 +40134,7 @@ function _dynParseRuns(parsed) {
       intermediate_points: inter,
       finish_point: finish || null,
       test_notes: get('test_notes') || null,
+      substitute_notes: get('substitute_notes') || null,
       track_section_under_test: get('tsut') || null,
       track_section_access_req: _dynParseZones(get('access_req')),
       required_mode: _dynNormMode(get('required_mode')),
