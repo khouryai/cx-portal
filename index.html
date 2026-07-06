@@ -5,11 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>HITACHI Rail T&C Portal — BART CBTC Project</title>
 <link href="vendor/fonts/fonts.css" rel="stylesheet">
-<!-- SRI-pinned CDN dependencies — hashes verified 2026-05-15 -->
+<!-- Self-hosted vendor dependencies (no SRI — same-origin files; the one external CDN tag below keeps its hash) -->
 <script src="chart.umd.js"></script>
-<script src="vendor/js/supabase.js"
-  integrity="sha384-2zrRDgDHSYB/GN3nFW3fsZXoxEhKIr3N2h63Tc6DEOB9JJdFIu8xMJT2Cph/gBil"
-  crossorigin="anonymous"></script>
+<script src="vendor/js/supabase.js"></script>
 <!-- xlsx 0.20.3 is distributed only via cdn.sheetjs.com (npm registry stops at 0.18.x).
      At the Microsoft migration cutover, mirror this exact file into vendor/js/ from an
      approved artifact store instead of downgrading. -->
@@ -20,12 +18,8 @@
 <!-- pdf-lib – fills AcroForm fields and saves the modified PDF back -->
 <!-- pdf.worker.min.js (loaded dynamically by pdf.js, pinned in app.js)
      expected sha384-sS8B4COeBqzQV9DaPpp5cbpF+xz2jPcFbN3L8FL3/dx0RMC6WLUwTUOFm0iFb1lw -->
-<script src="vendor/js/pdf.min.js"
-  integrity="sha384-OemFRmhjDZwhIKuUld0HJozkF2YErsgDaCL41trxGQZt4/WgnopJQqQl2DvDZ07Z"
-  crossorigin="anonymous"></script>
-<script src="vendor/js/pdf-lib.min.js"
-  integrity="sha384-weMABwrltA6jWR8DDe9Jp5blk+tZQh7ugpCsF3JwSA53WZM9/14PjS5LAJNHNjAI"
-  crossorigin="anonymous"></script>
+<script src="vendor/js/pdf.min.js"></script>
+<script src="vendor/js/pdf-lib.min.js"></script>
 <!-- JSZip — used by Test Reporting "Extract Report" feature for ZIP-mode output.
      Loaded lazily by _extractEnsureJSZip() the first time a user picks ZIP mode,
      so it never adds to first-paint cost. SRI hash is verified at load time
@@ -49,21 +43,13 @@
 <link rel="stylesheet" href="styles.css" />
 <link rel="stylesheet" href="photos.css" />
 <link rel="stylesheet" href="trackplan.css" />
-<link href="vendor/css/quill.snow.css" rel="stylesheet"
-  integrity="sha384-ecIckRi4QlKYya/FQUbBUjS4qp65jF/J87Guw5uzTbO1C1Jfa/6kYmd6dXUF6D7i"
-  crossorigin="anonymous" />
+<link href="vendor/css/quill.snow.css" rel="stylesheet" />
 <!-- Flatpickr – date picker -->
-<link rel="stylesheet" href="vendor/css/flatpickr.min.css"
-  integrity="sha384-RkASv+6KfBMW9eknReJIJ6b3UnjKOKC5bOUaNgIY778NFbQ8MtWq9Lr/khUgqtTt"
-  crossorigin="anonymous">
+<link rel="stylesheet" href="vendor/css/flatpickr.min.css">
 <!-- Tom Select – enhanced dropdowns -->
-<link rel="stylesheet" href="vendor/css/tom-select.min.css"
-  integrity="sha384-EIA8J01pb+PXiVYnDYseaCki0ke5k3Z/QNbhj0nU+Uso0kvSYdFnQB3G6ia7lU+Y"
-  crossorigin="anonymous">
+<link rel="stylesheet" href="vendor/css/tom-select.min.css">
 <!-- Tippy.js – tooltips -->
-<link rel="stylesheet" href="vendor/css/tippy.css"
-  integrity="sha384-IBgYl+I5X6ZDZXI5zv1vsSE3VopDomz4BxSu/GlxaPHfFtcrJ3uj70z1w6srO9zU"
-  crossorigin="anonymous">
+<link rel="stylesheet" href="vendor/css/tippy.css">
 </head>
 <body>
 <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -1523,49 +1509,27 @@ function _signinTogglePw(){
 
 <!-- ── Modern UI Library Stack — all pinned + SRI verified ──── -->
 <!-- Alpine.js – reactive components -->
-<script defer src="vendor/js/alpine.min.js"
-  integrity="sha384-9Ax3MmS9AClxJyd5/zafcXXjxmwFhZCdsT6HJoJjarvCaAkJlk5QDzjLJm+Wdx5F"
-  crossorigin="anonymous"></script>
+<script defer src="vendor/js/alpine.min.js"></script>
 <!-- Flatpickr – date/time picker -->
-<script src="vendor/js/flatpickr.min.js"
-  integrity="sha384-5JqMv4L/Xa0hfvtF06qboNdhvuYXUku9ZrhZh3bSk8VXF0A/RuSLHpLsSV9Zqhl6"
-  crossorigin="anonymous"></script>
+<script src="vendor/js/flatpickr.min.js"></script>
 <!-- Tom Select – searchable, taggable selects -->
-<script src="vendor/js/tom-select.complete.min.js"
-  integrity="sha384-A4TlP4zHVPP9oVIQ8pTVaV6MhvBkDx1sRpmEUfAlO5e7xpodrdr6uNmUV7alXAWW"
-  crossorigin="anonymous"></script>
+<script src="vendor/js/tom-select.complete.min.js"></script>
 <!-- Fuse.js – fuzzy search -->
-<script src="vendor/js/fuse.min.js"
-  integrity="sha384-P/y/5cwqUn6MDvJ9lCHJSaAi2EoH3JSeEdyaORsQMPgbpvA+NvvUqik7XH2YGBjb"
-  crossorigin="anonymous"></script>
+<script src="vendor/js/fuse.min.js"></script>
 <!-- Day.js – lightweight date formatting -->
-<script src="vendor/js/dayjs.min.js"
-  integrity="sha384-DpVxUeeBWjUvUV1czyIHJAjh+jYUZFu2lLakbdua5vbwOrBGi1UgaKCHjTC+x3Ky"
-  crossorigin="anonymous"></script>
+<script src="vendor/js/dayjs.min.js"></script>
 <!-- Tippy.js – tooltips and popovers -->
-<script src="vendor/js/popper.min.js"
-  integrity="sha384-I7E8VVD/ismYTF4hNIPjVp/Zjvgyol6VFvRkX/vR+Vc4jQkC+hVqc2pM8ODewa9r"
-  crossorigin="anonymous"></script>
-<script src="vendor/js/tippy.umd.min.js"
-  integrity="sha384-pjtv4LzKGI/lGxchW/wd/upB/HsGOP/Q2iPYyDU8qo2bp4JLbN34hQkdAArvidZX"
-  crossorigin="anonymous"></script>
+<script src="vendor/js/popper.min.js"></script>
+<script src="vendor/js/tippy.umd.min.js"></script>
 <!-- Quill rich text editor -->
-<script src="vendor/js/quill.js"
-  integrity="sha384-utBUCeG4SYaCm4m7GQZYr8Hy8Fpy3V4KGjBZaf4WTKOcwhCYpt/0PfeEe3HNlwx8"
-  crossorigin="anonymous"></script>
+<script src="vendor/js/quill.js"></script>
 
 <!-- ── Planning Module Libraries ─────────────────────────── -->
 <!-- ExcelJS – reads cell fill colors (for Lookahead import) -->
-<script src="vendor/js/exceljs.min.js"
-  integrity="sha384-Pqp51FUN2/qzfxZxBCtF0stpc9ONI6MYZpVqmo8m20SoaQCzf+arZvACkLkirlPz"
-  crossorigin="anonymous"></script>
+<script src="vendor/js/exceljs.min.js"></script>
 <!-- vis-timeline – Apache-2.0 timeline/Gantt -->
-<link rel="stylesheet" href="vendor/css/vis-timeline-graph2d.min.css"
-  integrity="sha384-N/4l0y8PNlO5uZuzP9PK3bAgJQ8ZChybZFXB2mpkZRUil/bui++mvYXPzPAHpbr6"
-  crossorigin="anonymous">
-<script src="vendor/js/vis-timeline-graph2d.min.js"
-  integrity="sha384-MLX+7yEEPNEznaIWwQi2pBMODSBP6Qo6BOVpzjFWB0UkfEzEYsvHOo7ISLfcQeiI"
-  crossorigin="anonymous"></script>
+<link rel="stylesheet" href="vendor/css/vis-timeline-graph2d.min.css">
+<script src="vendor/js/vis-timeline-graph2d.min.js"></script>
 
 <!-- ── DRAWINGS SHEET VIEWER ──────────────────────────────── -->
 <div id="drw-viewer-overlay" style="display:none;position:fixed;inset:0;z-index:3800;background:#111;flex-direction:column;">
