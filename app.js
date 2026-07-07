@@ -39056,31 +39056,30 @@ async function renderDynamicTestingPage() {
       <button class="hero-tab" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;" onclick="tpOpen()" title="Open the track plan reference window — keep a track-plan map on screen while you work">${icon('map')} Track Plan</button>
     </div>
     <style>
-      .hero-tab{padding:8px 16px;border:1px solid var(--gray-300);background:white;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--gray-700);}
-      .hero-tab.active{background:#e60012;color:white;border-color:#e60012;}
-      .dyn-kpi{display:inline-block;margin-right:16px;padding:8px 14px;background:white;border:1px solid var(--gray-200);border-radius:6px;}
-      .dyn-kpi b{display:block;font-size:18px;color:var(--gray-900);line-height:1.1;}
-      .dyn-kpi span{font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.4px;}
+      /* Module chrome — tokenized to match the capx-/accx-/simx- design language.
+         .dyn-btn is styled globally (aesthetic overhaul layer in styles.css). */
+      .hero-tab{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border:1px solid var(--border-strong);background:var(--surface);border-radius:var(--radius-md);cursor:pointer;font-size:13px;font-weight:600;color:var(--text-muted);transition:all var(--dur-fast) var(--easing);}
+      .hero-tab:hover{border-color:var(--gray-400);background:var(--surface-2);}
+      .hero-tab.active{background:var(--hitachi-red);color:var(--white);border-color:var(--hitachi-red);}
+      .dyn-kpi{display:inline-block;margin-right:16px;padding:8px 14px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius-md);}
+      .dyn-kpi b{display:block;font-size:18px;color:var(--text);line-height:1.1;font-family:var(--f-number,var(--f-ui));}
+      .dyn-kpi span{font-family:var(--f-mono);font-size:10px;font-weight:700;color:var(--text-subtle);text-transform:uppercase;letter-spacing:.05em;}
       .dyn-toolbar{display:flex;gap:8px;align-items:center;margin:14px 0;flex-wrap:wrap;}
-      .dyn-toolbar input,.dyn-toolbar select{padding:6px 10px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;}
-      .dyn-btn{padding:7px 14px;border:1px solid var(--gray-300);background:white;border-radius:5px;cursor:pointer;font-size:13px;color:var(--gray-700);}
-      .dyn-btn.primary{background:#e60012;color:white;border-color:#e60012;}
-      .dyn-btn:hover{background:var(--gray-50);}
-      .dyn-btn.primary:hover{background:#c20010;}
-      .dyn-table{width:100%;border-collapse:collapse;background:white;}
-      .dyn-table th{background:var(--gray-50);text-align:left;padding:8px 10px;font-size:12px;color:var(--gray-600);border-bottom:1px solid var(--gray-200);}
-      .dyn-table td{padding:8px 10px;font-size:13px;border-bottom:1px solid var(--gray-100);vertical-align:top;}
-      .dyn-table tr:hover{background:var(--gray-50);}
+      .dyn-toolbar input,.dyn-toolbar select{padding:6px 10px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);font-size:13px;background:var(--surface);color:var(--text);}
+      .dyn-table{width:100%;border-collapse:collapse;background:var(--card-bg);}
+      .dyn-table th{background:var(--surface-2);text-align:left;padding:8px 10px;font-family:var(--f-mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-subtle);border-bottom:1px solid var(--border);}
+      .dyn-table td{padding:8px 10px;font-size:13px;border-bottom:1px solid var(--line-soft);vertical-align:top;}
+      .dyn-table tr:hover{background:var(--surface-2);}
       .dyn-board{width:100%;border-collapse:collapse;}
-      .dyn-board th{background:var(--gray-50);padding:8px 6px;font-size:11px;border:1px solid var(--gray-200);text-align:center;}
-      .dyn-board td{padding:0;border:1px solid var(--gray-200);min-width:60px;height:48px;text-align:center;vertical-align:middle;}
+      .dyn-board th{background:var(--surface-2);padding:8px 6px;font-family:var(--f-mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-subtle);border:1px solid var(--line-soft);text-align:center;}
+      .dyn-board td{padding:0;border:1px solid var(--line-soft);min-width:60px;height:48px;text-align:center;vertical-align:middle;}
       .dyn-board td.cell{cursor:pointer;}
-      .dyn-board td.cell:hover{background:#fff7ed;}
-      .dyn-board td.row-label{background:var(--gray-50);font-size:12px;padding:6px 10px;text-align:left;font-weight:500;color:var(--gray-700);min-width:120px;}
-      .dyn-cell-pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;}
-      .dyn-cell-pill.zero{color:var(--gray-400);}
-      .dyn-cell-pill.some{background:#dbeafe;color:#1d4ed8;}
-      .dyn-cell-pill.lots{background:#fde68a;color:#92400e;}
+      .dyn-board td.cell:hover{background:var(--warn-light);}
+      .dyn-board td.row-label{background:var(--surface-2);font-family:var(--f-mono);font-size:11.5px;font-weight:700;padding:6px 10px;text-align:left;color:var(--text);min-width:120px;}
+      .dyn-cell-pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;font-family:var(--f-number,var(--f-ui));}
+      .dyn-cell-pill.zero{color:var(--border-strong);}
+      .dyn-cell-pill.some{background:var(--info-light);color:var(--info);}
+      .dyn-cell-pill.lots{background:var(--warn-light);color:var(--warn);}
     </style>
   `;
 
@@ -39288,42 +39287,44 @@ function _dynRenderInstances() {
   _dynPage._lastInstIds = rows.map(r => r.id);
   const allVisibleSelected = rows.length > 0 && rows.every(r => _dynPage.selInstances.has(r.id));
 
+  // KPI chips double as filters: click a status (or Scheduled) to toggle it.
+  const statusTone = { 'Pass': 'is-good', 'Fail': 'is-bad', 'Blocked': 'is-warn', 'In Progress': 'is-info' };
+  const chip = (label, val, cls) => `<span class="simx-chipstat ${cls || ''}"><span class="capx-chiplbl">${label}</span><b>${val}</b></span>`;
+  const fchip = (label, val, tone, on, click) =>
+    `<button type="button" class="simx-chipstat capx-chipbtn ${tone || ''} ${on ? 'on' : ''}" onclick="${click}" title="Filter: ${escapeHtml(label)}"><span class="capx-chiplbl">${escapeHtml(label)}</span><b>${val}</b></button>`;
   const kpiHtml = `
-    <div style="margin-bottom:14px;">
-      <div class="dyn-kpi"><b>${k.total}</b><span>Runs</span></div>
-      <div class="dyn-kpi" title="Equivalence groups count once"><b>${k.coverage.done}/${k.coverage.total}</b><span>Coverage ${k.coverage.pct}%</span></div>
-      ${_DYN_STATUSES.map(s => `<div class="dyn-kpi"><b>${k.counts[s] || 0}</b><span>${escapeHtml(s)}</span></div>`).join('')}
-      <div class="dyn-kpi"><b>${k.scheduled}</b><span>Scheduled</span></div>
-    </div>
-  `;
+    <div class="capx-stats">
+      ${chip('Runs', k.total)}
+      ${chip('Coverage', `${k.coverage.done}/${k.coverage.total} · ${k.coverage.pct}%`)}
+      ${_DYN_STATUSES.map(s => fchip(s, k.counts[s] || 0, statusTone[s], _dynPage.statusFilter === s, `_dynInstFilterStatus('${escapeHtml(s)}')`)).join('')}
+      ${fchip('Scheduled', k.scheduled, '', _dynPage.schedFilter === 'scheduled', `_dynInstFilterSched()`)}
+    </div>`;
 
   const toolbar = `
-    <div class="dyn-toolbar">
-      <button class="dyn-btn primary" onclick="_dynOpenInstanceModal(null)">+ New instance</button>
-      <button class="dyn-btn" onclick="_dynOpenCSVModal()">Import CSV / Excel</button>
-      <span style="flex:1"></span>
-      <input id="dyn-search" placeholder="Search code / title / phase…" value="${escapeHtml(_dynPage.search)}" oninput="_dynPage.search=this.value;_dynRenderInstances();" />
-      <select id="dyn-status-filter" onchange="_dynPage.statusFilter=this.value;_dynRenderInstances();">
+    <div class="capx-ctl">
+      <button class="dyn-btn primary" onclick="_dynOpenInstanceModal(null)">${icon('plus')} New instance</button>
+      <button class="dyn-btn" onclick="_dynOpenCSVModal()">${icon('upload')} Import CSV / Excel</button>
+      <span class="capx-searchwrap">${icon('search')}<input id="dyn-search" class="capx-input wide" type="search" placeholder="Search code / title / phase…" value="${escapeHtml(_dynPage.search)}" oninput="_dynPage.search=this.value;_dynInstSearchRerender();" /></span>
+      <select class="capx-select" style="min-width:0;" id="dyn-status-filter" onchange="_dynPage.statusFilter=this.value;_dynRenderInstances();">
         <option value="">All statuses</option>
         ${_DYN_STATUSES.map(s => `<option value="${escapeHtml(s)}" ${_dynPage.statusFilter===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
       </select>
-      <select id="dyn-sched-filter" onchange="_dynPage.schedFilter=this.value;_dynRenderInstances();" title="Filter by scheduling state">
+      <select class="capx-select" style="min-width:0;" id="dyn-sched-filter" onchange="_dynPage.schedFilter=this.value;_dynRenderInstances();" title="Filter by scheduling state">
         <option value="" ${_dynPage.schedFilter===''?'selected':''}>All scheduling</option>
         <option value="scheduled" ${_dynPage.schedFilter==='scheduled'?'selected':''}>Scheduled</option>
         <option value="unscheduled" ${_dynPage.schedFilter==='unscheduled'?'selected':''}>Not scheduled</option>
       </select>
-      <select id="dyn-test-filter" onchange="_dynPage.testFilter=this.value;_dynRenderInstances();">
+      <select class="capx-select" id="dyn-test-filter" onchange="_dynPage.testFilter=this.value;_dynRenderInstances();">
         <option value="">All test cases</option>
         ${tcOpts.map(t => `<option value="${escapeHtml(t.id)}" ${_dynPage.testFilter===t.id?'selected':''}>${escapeHtml(t.info?.code || t.id)} — ${escapeHtml((t.info?.name||'').slice(0,40))}</option>`).join('')}
       </select>
-    </div>
-  `;
+    </div>`;
 
   const tableHtml = `
-    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow-x:auto;">
-      <table class="dyn-table">
+    <div class="capx-tblwrap">
+      <table class="capx-tbl">
         <thead><tr>
-          <th style="width:32px;text-align:center;"><input type="checkbox" ${allVisibleSelected?'checked':''} onchange="_dynInstSelectAllVisible(this.checked)" title="Select all visible"></th>
+          <th style="width:32px;text-align:center;"><input type="checkbox" ${allVisibleSelected?'checked':''} onchange="_dynInstSelectAllVisible(this.checked)" title="Select all visible" aria-label="Select all visible instances"></th>
           ${_dynInstSortTh('Code', 'code')}
           ${_dynInstSortTh('Test Case', 'testcase')}
           ${_dynInstSortTh('Subsystem', 'subsystem')}
@@ -39336,22 +39337,48 @@ function _dynRenderInstances() {
         </tr></thead>
         <tbody>${rows.length
           ? rows.map(r => _dynRowHtml(r)).join('')
-          : `<tr><td colspan="10" style="padding:40px;text-align:center;color:var(--gray-500);">No runs match the current filters.</td></tr>`}
+          : `<tr><td colspan="10" style="padding:40px;text-align:center;color:var(--text-subtle);">No runs match the current filters.</td></tr>`}
         </tbody>
       </table>
-    </div>
-  `;
+    </div>`;
 
   const selCount = _dynPage.selInstances.size;
-  const bulkBar = selCount > 0 ? `
-    <div style="position:sticky;top:0;background:white;border:1px solid var(--gray-200);border-radius:8px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;gap:14px;z-index:5;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
-      <span><b>${selCount}</b> instance${selCount===1?'':'s'} selected</span>
-      <span style="flex:1;"></span>
-      <button class="dyn-btn" onclick="_dynInstClearSel()">Clear selection</button>
-      <button class="dyn-btn primary" onclick="_dynOpenBulkEdit()">Bulk edit ${selCount}</button>
-    </div>` : '';
+  const bulkBar = `
+    <div class="capx-tray">
+      ${selCount > 0
+        ? `<span class="capx-tray-sum"><b>${selCount}</b> instance${selCount===1?'':'s'} selected</span>
+           <button class="dyn-btn" onclick="_dynInstClearSel()">Clear</button>
+           <button class="dyn-btn primary" onclick="_dynOpenBulkEdit()">${icon('edit')} Bulk edit ${selCount}</button>`
+        : `<span class="capx-tray-sum is-empty">Tick rows to bulk-edit status, locations, phase and more in one pass</span>
+           <button class="dyn-btn primary" disabled>${icon('edit')} Bulk edit</button>`}
+    </div>`;
 
-  cont.innerHTML = kpiHtml + toolbar + bulkBar + tableHtml;
+  cont.innerHTML = `<div class="capx">` + kpiHtml + toolbar + tableHtml + bulkBar + `</div>`;
+  if (_dynPage._instSearchFocus) {
+    _dynPage._instSearchFocus = false;
+    const si = document.getElementById('dyn-search');
+    if (si) { si.focus(); si.setSelectionRange?.(si.value.length, si.value.length); }
+  }
+}
+
+// Debounced search re-render that restores focus to the search box afterward
+// (the whole tab re-renders, which would otherwise drop the caret every keystroke).
+function _dynInstSearchRerender() {
+  clearTimeout(window._dynInstSearchT);
+  window._dynInstSearchT = setTimeout(() => {
+    _dynPage._instSearchFocus = true;
+    _dynRenderInstances();
+  }, 150);
+}
+
+// Chip-click filters: toggle on/off.
+function _dynInstFilterStatus(s) {
+  _dynPage.statusFilter = _dynPage.statusFilter === s ? '' : s;
+  _dynRenderInstances();
+}
+function _dynInstFilterSched() {
+  _dynPage.schedFilter = _dynPage.schedFilter === 'scheduled' ? '' : 'scheduled';
+  _dynRenderInstances();
 }
 
 // ── Instances bulk selection ────────────────────────────────────────────
@@ -39496,7 +39523,7 @@ function _dynInstSortValue(r, col) {
 function _dynInstSortTh(label, col, style = '') {
   const active = _dynPage.instSortCol === col;
   const arrow  = active ? (_dynPage.instSortDir === 'asc' ? '↑' : '↓') : '↕';
-  const color  = active ? '#e60012' : 'var(--gray-300)';
+  const color  = active ? 'var(--hitachi-red)' : 'var(--border-strong)';
   return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" onclick="_dynInstSort('${col}')" title="Sort by ${escapeHtml(label)}">${escapeHtml(label)}<span style="font-size:10px;color:${color};margin-left:4px;">${arrow}</span></th>`;
 }
 
@@ -40552,30 +40579,52 @@ function _dynRenderBoard() {
   }
   const rowKeysSorted = [...rowSet].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
 
-  const viewBtn = (v, label) =>
-    `<button class="dyn-btn ${_dynPage.boardView===v?'primary':''}" onclick="_dynBoardSetView('${v}')">${label}</button>`;
+  // Instances with a scheduled date inside the visible range (hero chip).
+  let schedInRange = 0;
+  for (const r of _dynPage.instances) {
+    const w = r.scheduled_for_date;
+    if (w && colKeys.has(keyOf(w))) schedInRange++;
+  }
 
-  const navHtml = `
-    <div class="dyn-toolbar">
-      <button class="dyn-btn" onclick="_dynBoardShift(-1)">‹ Prev</button>
-      <span style="font-weight:600;color:var(--gray-700);">${escapeHtml(title)}</span>
-      <button class="dyn-btn" onclick="_dynBoardShift(1)">Next ›</button>
-      <button class="dyn-btn" onclick="_dynBoardToday()">Today</button>
-      <span style="display:inline-flex;gap:4px;margin-left:8px;">${viewBtn('month','Month')}${viewBtn('week','Week (day)')}</span>
-      <span style="flex:1"></span>
-      <label style="font-size:13px;color:var(--gray-600);">Rows:</label>
-      <select onchange="_dynPage.boardAxis=this.value;_dynRenderBoard();">
-        <option value="phase" ${_dynPage.boardAxis==='phase'?'selected':''}>Phase</option>
-        <option value="zone" ${_dynPage.boardAxis==='zone'?'selected':''}>Section under test</option>
-      </select>
-    </div>
-  `;
+  const chip = (label, val, cls) => `<span class="simx-chipstat ${cls || ''}"><span class="capx-chiplbl">${label}</span><b>${val}</b></span>`;
+  const heroHtml = `
+    <div class="capx-hero accx-hero">
+      <div class="capx-hero-main">
+        <div class="capx-lbl">${icon('columns')} Planning board</div>
+        <div class="accx-title">${escapeHtml(title)}</div>
+        <div class="accx-chips">
+          ${chip('Scheduled in range', schedInRange, schedInRange ? 'is-info' : '')}
+          ${chip('Rows', rowKeysSorted.length)}
+        </div>
+      </div>
+      <div class="accx-hero-ctl">
+        <div class="accx-ctl-row">
+          <label class="capx-field-inline">Rows
+            <select class="capx-select" style="min-width:0;" onchange="_dynPage.boardAxis=this.value;_dynRenderBoard();">
+              <option value="phase" ${_dynPage.boardAxis==='phase'?'selected':''}>Phase</option>
+              <option value="zone" ${_dynPage.boardAxis==='zone'?'selected':''}>Section under test</option>
+            </select>
+          </label>
+        </div>
+        <div class="accx-ctl-row">
+          <span class="accx-seg">
+            <button class="dyn-btn ${_dynPage.boardView==='month'?'on':''}" onclick="_dynBoardSetView('month')">Month</button>
+            <button class="dyn-btn ${_dynPage.boardView==='week'?'on':''}" onclick="_dynBoardSetView('week')">Week</button>
+          </span>
+          <span class="accx-nav">
+            <button class="simx-iconbtn" onclick="_dynBoardShift(-1)" aria-label="Previous period">${icon('chevron-left')}</button>
+            <button class="dyn-btn" onclick="_dynBoardToday()">Today</button>
+            <button class="simx-iconbtn" onclick="_dynBoardShift(1)" aria-label="Next period">${icon('chevron-right')}</button>
+          </span>
+        </div>
+      </div>
+    </div>`;
 
   const headHtml = `<tr><th></th>${cols.map(c => `<th>${escapeHtml(c.label)}</th>`).join('')}<th>Total</th></tr>`;
 
   let bodyHtml;
   if (rowKeysSorted.length === 0) {
-    bodyHtml = `<tr><td colspan="${cols.length + 2}" style="padding:32px;text-align:center;color:var(--gray-500);">No instances have a scheduled date inside this range.</td></tr>`;
+    bodyHtml = `<tr><td colspan="${cols.length + 2}" style="padding:32px;text-align:center;color:var(--text-subtle);">No instances have a scheduled date inside this range.</td></tr>`;
   } else {
     bodyHtml = rowKeysSorted.map(rk => {
       const m = buckets.get(rk) || new Map();
@@ -40587,20 +40636,19 @@ function _dynRenderBoard() {
         const onClick = n > 0 ? `onclick="_dynBoardOpenCell('${escapeHtml(rk)}','${escapeHtml(c.key)}')"` : '';
         return `<td class="cell" ${onClick}><span class="dyn-cell-pill ${cls}">${n || '·'}</span></td>`;
       }).join('');
-      return `<tr><td class="row-label">${escapeHtml(rk)}</td>${cells}<td style="text-align:center;font-weight:600;color:var(--gray-700);">${total}</td></tr>`;
+      return `<tr><td class="row-label">${escapeHtml(rk)}</td>${cells}<td style="text-align:center;font-weight:700;color:var(--text);font-family:var(--f-number,var(--f-ui));">${total}</td></tr>`;
     }).join('');
   }
 
-  cont.innerHTML = navHtml + `
-    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow-x:auto;">
+  cont.innerHTML = `<div class="capx">` + heroHtml + `
+    <div class="accx-gridcard">
       <table class="dyn-board"><thead>${headHtml}</thead><tbody>${bodyHtml}</tbody></table>
     </div>
-    <p style="margin-top:12px;font-size:12px;color:var(--gray-500);">
-      Counts include instances with a scheduled date.
-      Click a cell to drill in.
-    </p>
+    <div class="capx-hint" style="margin-top:10px;">
+      Counts include instances with a scheduled date. Click a cell to drill in.
+    </div>
     ${_dynPage.boardView === 'week' ? _dynRenderDaySummaries(cols) : ''}
-  `;
+  </div>`;
 }
 
 // Date a board row buckets on: the committed schedule date.
@@ -40652,9 +40700,8 @@ function _dynDayAggregate(instances) {
 function _dynRenderDaySummaries(cols) {
   const fmtH = m => (m / 60).toFixed(1).replace(/\.0$/, '') + ' h';
   const fmtT = d => d ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
-  const chip = (txt, bg, fg) => `<span class="tag" style="background:${bg};color:${fg};border-color:transparent;font-size:10px;">${escapeHtml(txt)}</span>`;
-  const line = (icon, label, val) => val
-    ? `<div style="display:flex;gap:6px;font-size:11.5px;line-height:1.5;"><span style="width:16px;flex-shrink:0;">${icon}</span><span style="color:var(--gray-500);min-width:54px;flex-shrink:0;">${label}</span><span style="color:var(--gray-800);">${val}</span></div>`
+  const line = (icn, label, val) => val
+    ? `<div class="capx-dayline"><span class="capx-dayline-ic">${icn}</span><span class="capx-dayline-lbl">${label}</span><span class="capx-dayline-val">${val}</span></div>`
     : '';
   const cards = cols.map(c => {
     const insts = _dynPage.instances.filter(r => {
@@ -40662,38 +40709,35 @@ function _dynRenderDaySummaries(cols) {
       return w && _dynDayKey(w) === c.key;
     });
     if (!insts.length) {
-      return `<div style="border:1px dashed var(--gray-200);border-radius:8px;padding:10px;background:var(--gray-50);">
-        <div style="font-weight:600;font-size:12px;color:var(--gray-600);">${escapeHtml(c.label)}</div>
-        <div style="font-size:11px;color:var(--gray-400);margin-top:8px;">No tests planned</div>
+      return `<div class="capx-daycard is-empty">
+        <div class="capx-daycard-head"><b>${escapeHtml(c.label)}</b></div>
+        <div class="capx-hint" style="margin-top:8px;">No tests planned</div>
       </div>`;
     }
     const a = _dynDayAggregate(insts);
     const windowVal = (a.winStart && a.winEnd)
-      ? `${fmtT(a.winStart)}–${fmtT(a.winEnd)} <span style="color:var(--gray-500);">(${fmtH((a.winEnd - a.winStart) / 60000)})</span>`
+      ? `${fmtT(a.winStart)}–${fmtT(a.winEnd)} <span style="color:var(--text-subtle);">(${fmtH((a.winEnd - a.winStart) / 60000)})</span>`
       : '';
-    return `<div onclick="_dynBoardOpenDay('${escapeHtml(c.key)}')" style="border:1px solid var(--gray-200);border-radius:8px;padding:10px;background:white;cursor:pointer;transition:box-shadow .12s;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow='none'">
-      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;">
-        <div style="font-weight:700;font-size:12px;color:var(--gray-800);">${escapeHtml(c.label)}</div>
-        <div style="font-size:11px;color:var(--gray-500);">${a.count} test${a.count===1?'':'s'}</div>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:3px;">
+    return `<button type="button" class="capx-daycard" onclick="_dynBoardOpenDay('${escapeHtml(c.key)}')">
+      <div class="capx-daycard-head"><b>${escapeHtml(c.label)}</b><span>${a.count} test${a.count===1?'':'s'}</span></div>
+      <div class="capx-daycard-lines">
         ${line(icon('window'), 'Window', windowVal)}
         ${line(icon('timer'), 'Planned', fmtH(a.plannedMin))}
         ${line(icon('train'), 'Max trains', String(a.peakTrains))}
-        ${line(icon('target'), 'Sections', a.sections.length ? a.sections.join(', ') : '')}
-        ${line(icon('pin'), 'Access', a.access.length ? a.access.join(', ') : '')}
+        ${line(icon('target'), 'Sections', a.sections.length ? a.sections.map(escapeHtml).join(', ') : '')}
+        ${line(icon('pin'), 'Access', a.access.length ? a.access.map(escapeHtml).join(', ') : '')}
       </div>
-      ${(a.modes.length || a.teams.length || a.phases.length) ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;">
-        ${a.modes.map(m => chip(m, '#eef2ff', '#3730a3')).join('')}
-        ${a.teams.map(t => chip(t, '#ecfdf5', '#065f46')).join('')}
-        ${a.phases.map(p => chip(p, '#eff6ff', '#1d4ed8')).join('')}
+      ${(a.modes.length || a.teams.length || a.phases.length) ? `<div class="capx-daycard-tags">
+        ${a.modes.map(m => `<span class="capx-mode">${escapeHtml(m)}</span>`).join('')}
+        ${a.teams.map(t => `<span class="capx-tag-good">${escapeHtml(t)}</span>`).join('')}
+        ${a.phases.map(p => `<span class="accx-zone-tag">${escapeHtml(p)}</span>`).join('')}
       </div>` : ''}
-    </div>`;
+    </button>`;
   }).join('');
   return `
     <div style="margin-top:18px;">
-      <h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-600);margin:0 0 10px;">Daily request summary</h3>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;">${cards}</div>
+      <div class="accx-camps-head"><h3>Daily request summary</h3></div>
+      <div class="capx-daygrid">${cards}</div>
     </div>
   `;
 }
@@ -46385,52 +46429,52 @@ async function _dynRenderCases() {
   const memberRow = (m, indented) => {
     const r = m.r, info = m.info;
     const isPerLoc = info.test_scope === 'per_location';
-    const locLabel = info.location ? `<span class="badge" style="background:#f1f5f9;color:#0f172a;font-family:monospace;font-size:10px;margin-right:6px;">${escapeHtml(info.location)}</span>` : '';
+    const locLabel = info.location ? `<span class="accx-zone-tag" style="margin-right:6px;">${escapeHtml(info.location)}</span>` : '';
     return `
-      <tr style="border-top:1px solid var(--gray-100);${indented ? 'background:#fbfdff;' : ''}">
-        <td style="font-family:monospace;font-size:11.5px;${indented ? 'padding-left:26px;' : ''}">${escapeHtml(r.test_case_code || r.test_id)}</td>
+      <tr class="capx-row ${indented ? 'is-child' : ''}">
+        <td class="mono" style="${indented ? 'padding-left:26px;' : ''}">${escapeHtml(r.test_case_code || r.test_id)}</td>
         <td>${indented ? locLabel : ''}${escapeHtml((indented ? (info.location ? '' : r.test_name) : r.test_name) || '').slice(0,80)}</td>
         <td>${indented ? '' : _dynSubsystemBadge(info.subsystem)}</td>
         <td>${indented ? '' : _dynCadenceBadge(r.test_id)}</td>
         <td>${_dynStatusBadge(r.rollup_status)}</td>
-        <td style="text-align:right;font-family:monospace;">${r.instance_count}</td>
-        <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.complete_count}</td>
-        <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${prereqCounts.get(r.test_id) || 0}</td>
+        <td class="num">${r.instance_count}</td>
+        <td class="num" style="color:var(--text-muted);">${r.complete_count}</td>
+        <td class="num" style="color:var(--text-muted);">${prereqCounts.get(r.test_id) || 0}</td>
         <td style="text-align:right;white-space:nowrap;">${_dynCaseActions(r.test_id, isPerLoc)}</td>
       </tr>`;
   };
 
   const groupHeaderRow = (g) => `
-    <tr style="border-top:2px solid var(--gray-200);background:#f8fafc;">
-      <td style="font-family:monospace;font-size:11.5px;font-weight:700;">${escapeHtml(g.key)}</td>
-      <td style="font-weight:600;">${escapeHtml((g.name || '').slice(0,80))}</td>
+    <tr class="capx-grp">
+      <td><span class="capx-grp-code">${escapeHtml(g.key)}</span></td>
+      <td><span class="capx-grp-title">${escapeHtml((g.name || '').slice(0,80))}</span></td>
       <td>${_dynSubsystemBadge((g.members[0] && g.members[0].info && g.members[0].info.subsystem) || '')}</td>
-      <td><span class="badge" style="background:#eef2ff;color:#3730a3;font-size:10.5px;">Per location</span></td>
-      <td>${_dynStatusBadge(g.status)} <span style="font-size:10.5px;color:var(--gray-600);">${g.passed}/${g.members.length} locations</span></td>
-      <td style="text-align:right;font-family:monospace;">${g.instances}</td>
-      <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${g.complete}</td>
+      <td><span class="capx-mode">Per location</span></td>
+      <td>${_dynStatusBadge(g.status)} <span class="capx-grp-meta">${g.passed}/${g.members.length} locations</span></td>
+      <td class="num">${g.instances}</td>
+      <td class="num" style="color:var(--text-muted);">${g.complete}</td>
       <td></td>
-      <td style="text-align:right;white-space:nowrap;"></td>
+      <td></td>
     </tr>`;
 
   const bodyRows = groupArr.length === 0
-    ? `<tr><td colspan="9" style="padding:30px;text-align:center;color:var(--gray-500);">No dynamic test cases yet. Open the Test Register and toggle a test case's scope to Dynamic.</td></tr>`
+    ? `<tr><td colspan="9" style="padding:30px;text-align:center;color:var(--text-subtle);">No dynamic test cases yet. Open the Test Register and toggle a test case's scope to Dynamic.</td></tr>`
     : groupArr.map(g => {
         // Single-activity procedures render as one plain row (no group header).
         if (g.members.length === 1) return memberRow(g.members[0], false);
         return groupHeaderRow(g) + g.members.map(m => memberRow(m, true)).join('');
       }).join('');
 
-  cont.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:10px;margin:0 0 18px;">
-      <div class="dyn-kpi"><span>Procedures</span><b>${procCount}</b></div>
-      <div class="dyn-kpi"><span>Location activities</span><b>${actCount}</b></div>
-      <div class="dyn-kpi"><span>Procedures passed</span><b>${procPassed}</b></div>
-      <div class="dyn-kpi"><span>Fail / Blocked</span><b>${procFailBlocked}</b></div>
+  const chip = (label, val, cls) => `<span class="simx-chipstat ${cls || ''}"><span class="capx-chiplbl">${label}</span><b>${val}</b></span>`;
+  cont.innerHTML = `<div class="capx">
+    <div class="capx-stats">
+      ${chip('Procedures', procCount)}
+      ${chip('Location activities', actCount)}
+      ${chip('Procedures passed', procPassed, procPassed ? 'is-good' : '')}
+      ${chip('Fail / Blocked', procFailBlocked, procFailBlocked ? 'is-bad' : '')}
     </div>
-
-    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
-      <table class="dyn-table">
+    <div class="capx-tblwrap" style="max-height:none;">
+      <table class="capx-tbl">
         <thead>
           <tr>
             ${_dynCaseSortTh('Code', 'code')}
@@ -46447,14 +46491,14 @@ async function _dynRenderCases() {
         <tbody>${bodyRows}</tbody>
       </table>
     </div>
-  `;
+  </div>`;
 }
 
 // Clickable sortable header for the test-cases table.
 function _dynCaseSortTh(label, col, style = '') {
   const active = (_dynPage.caseSortCol || 'name') === col;
   const arrow  = active ? (_dynPage.caseSortDir === 'desc' ? '↓' : '↑') : '↕';
-  const color  = active ? '#e60012' : 'var(--gray-300)';
+  const color  = active ? 'var(--hitachi-red)' : 'var(--border-strong)';
   return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" onclick="_dynCaseSort('${col}')" title="Sort by ${escapeHtml(label)}">${escapeHtml(label)}<span style="font-size:10px;color:${color};margin-left:4px;">${arrow}</span></th>`;
 }
 
@@ -46753,43 +46797,41 @@ function _dynRenderVariance() {
   const avgActual = avg(rows.map(r => r.actual_duration_minutes));
   const avgExpected = avg(withDelta.map(r => r.expected_duration_minutes));
 
-  const kpi = (label, val, tone) => `<div class="dyn-kpi"><span>${label}</span><b${tone?` style="color:${tone};"`:''}>${val}</b></div>`;
+  const chip = (label, val, cls) => `<span class="simx-chipstat ${cls || ''}"><span class="capx-chiplbl">${label}</span><b>${val}</b></span>`;
+  const deltaCls = d => d == null ? '' : d > 15 ? 'is-bad' : d < -15 ? 'is-info' : 'is-good';
   const kpiHtml = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:0 0 16px;">
-      ${kpi('Completed runs', n)}
-      ${kpi('Avg Δ (min)', `${avgDelta > 0 ? '+' : ''}${avgDelta}`, _dynVarTone(avgDelta))}
-      ${kpi('Running long', `${overN} · ${overPct}%`, overN ? 'var(--bad)' : null)}
-      ${kpi('Total overrun', `${totalOverrunH} h`)}
-      ${kpi('Avg expected', avgExpected)}
-      ${kpi('Avg actual', avgActual)}
-      ${kpi('Worst overrun', `${worst > 0 ? '+' : ''}${worst}`, _dynVarTone(worst))}
+    <div class="capx-stats">
+      ${chip('Completed runs', n)}
+      ${chip('Avg Δ min', `${avgDelta > 0 ? '+' : ''}${avgDelta}`, deltaCls(avgDelta))}
+      ${chip('Running long', `${overN} · ${overPct}%`, overN ? 'is-bad' : 'is-good')}
+      ${chip('Total overrun', `${totalOverrunH} h`, Number(totalOverrunH) > 0 ? 'is-warn' : '')}
+      ${chip('Avg expected', avgExpected)}
+      ${chip('Avg actual', avgActual)}
+      ${chip('Worst overrun', `${worst > 0 ? '+' : ''}${worst}`, deltaCls(worst))}
     </div>`;
 
   const sel = (id, cur, opts, allLabel) => `
-    <select onchange="_dynPage.${id}=this.value;_dynRenderVariance();" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-300);border-radius:5px;">
+    <select class="capx-select" style="min-width:0;" onchange="_dynPage.${id}=this.value;_dynRenderVariance();">
       <option value="">${allLabel}</option>
       ${opts.map(o => `<option value="${escapeHtml(o.value)}" ${cur===o.value?'selected':''}>${escapeHtml(o.label)}</option>`).join('')}
     </select>`;
   const anyFilter = _dynPage.varSubsys || _dynPage.varPhase || _dynPage.varBand;
   const filterHtml = `
-    <div class="dyn-toolbar" style="margin-bottom:14px;">
-      <label style="font-size:12px;color:var(--gray-600);">Subsystem</label>
-      ${sel('varSubsys', _dynPage.varSubsys, subsysList.map(s => ({ value: s, label: s })), 'All subsystems')}
-      <label style="font-size:12px;color:var(--gray-600);">Phase</label>
-      ${sel('varPhase', _dynPage.varPhase, phaseList.map(s => ({ value: s, label: s })), 'All phases')}
-      <label style="font-size:12px;color:var(--gray-600);">Variance</label>
-      ${sel('varBand', _dynPage.varBand, [
+    <div class="capx-ctl">
+      <label class="capx-field-inline">Subsystem ${sel('varSubsys', _dynPage.varSubsys, subsysList.map(s => ({ value: s, label: s })), 'All subsystems')}</label>
+      <label class="capx-field-inline">Phase ${sel('varPhase', _dynPage.varPhase, phaseList.map(s => ({ value: s, label: s })), 'All phases')}</label>
+      <label class="capx-field-inline">Variance ${sel('varBand', _dynPage.varBand, [
         { value: 'over', label: 'Running long (>15m)' },
         { value: 'under', label: 'Running short (<−15m)' },
         { value: 'ontime', label: 'On time (±15m)' },
-      ], 'Any variance')}
-      ${anyFilter ? `<button class="dyn-btn" onclick="_dynPage.varSubsys='';_dynPage.varPhase='';_dynPage.varBand='';_dynRenderVariance();">Clear filters</button>` : ''}
+      ], 'Any variance')}</label>
+      ${anyFilter ? `<button type="button" class="capx-linkish" onclick="_dynPage.varSubsys='';_dynPage.varPhase='';_dynPage.varBand='';_dynRenderVariance();">Clear filters</button>` : ''}
     </div>`;
 
   if (n === 0) {
-    cont.innerHTML = kpiHtml + filterHtml + `<div style="padding:40px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:8px;">
+    cont.innerHTML = `<div class="capx">` + kpiHtml + filterHtml + `<div class="capx-empty">
       ${all.length ? 'No completed runs match the current filters.' : 'No completed dynamic instances with actual duration recorded yet. Mark instances Pass/Fail/NA with an <b>Actual duration</b> to populate this view.'}
-    </div>`;
+    </div></div>`;
     return;
   }
 
@@ -46816,14 +46858,14 @@ function _dynRenderVariance() {
   const groupRows = groupArr.map(g => {
     const open = _dynPage.varExpanded.has(g.key);
     const dTone = _dynVarTone(g.avgDelta);
-    const header = `<tr style="border-top:2px solid var(--gray-200);background:#f8fafc;cursor:pointer;" onclick="_dynVarToggle('${escapeHtml(g.key)}')">
-      <td style="font-family:var(--font-mono,monospace);font-size:12px;font-weight:700;">${open ? '▾' : '▸'} ${escapeHtml(g.code)}</td>
-      <td style="font-weight:600;">${escapeHtml((g.name || '').slice(0, 50))}</td>
+    const header = `<tr class="capx-grp ${open ? 'open' : ''}" onclick="_dynVarToggle('${escapeHtml(g.key)}')">
+      <td><span class="capx-grp-chev">${icon('chevron-right')}</span><span class="capx-grp-code">${escapeHtml(g.code)}</span></td>
+      <td><span class="capx-grp-title">${escapeHtml((g.name || '').slice(0, 50))}</span></td>
       <td>${_dynSubsystemBadge(g.subsystem)}</td>
-      <td style="text-align:right;font-family:monospace;">${g.n}</td>
-      <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${g.avgExpected ?? '—'}</td>
-      <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${g.avgActual ?? '—'}</td>
-      <td style="text-align:right;font-family:monospace;color:${dTone};font-weight:700;">${g.avgDelta == null ? '—' : (g.avgDelta > 0 ? '+' : '') + g.avgDelta}</td>
+      <td class="num">${g.n}</td>
+      <td class="num" style="color:var(--text-muted);">${g.avgExpected ?? '—'}</td>
+      <td class="num" style="color:var(--text-muted);">${g.avgActual ?? '—'}</td>
+      <td class="num" style="color:${dTone};font-weight:700;">${g.avgDelta == null ? '—' : (g.avgDelta > 0 ? '+' : '') + g.avgDelta}</td>
     </tr>`;
     if (!open) return header;
     const runRows = g.runs
@@ -46832,30 +46874,31 @@ function _dynRenderVariance() {
       .map(r => {
         const d = _dynVarDelta(r);
         const when = r.scheduled_for_date;
-        return `<tr style="border-top:1px solid var(--gray-100);background:#fbfdff;">
-          <td style="padding-left:24px;font-family:var(--font-mono,monospace);font-size:11.5px;">${escapeHtml(r.code || '—')}</td>
-          <td style="font-size:12px;">${escapeHtml(r.title || '')}${r.track_section_under_test ? ` <span style="color:var(--gray-500);font-family:monospace;">· ${escapeHtml(r.track_section_under_test)}</span>` : ''}${when ? ` <span style="color:var(--gray-400);">· ${escapeHtml(_dynFmtDate(when))}</span>` : ''}</td>
+        return `<tr class="capx-row is-child">
+          <td class="mono" style="padding-left:24px;">${escapeHtml(r.code || '—')}</td>
+          <td style="font-size:12px;">${escapeHtml(r.title || '')}${r.track_section_under_test ? ` <span class="capx-dim mono">· ${escapeHtml(r.track_section_under_test)}</span>` : ''}${when ? ` <span class="capx-dim">· ${escapeHtml(_dynFmtDate(when))}</span>` : ''}</td>
           <td>${_dynStatusBadge(r.status)}</td>
-          <td style="text-align:right;font-family:monospace;color:var(--gray-700);">${r.expected_duration_minutes ?? '—'}</td>
-          <td style="text-align:right;font-family:monospace;">${r.actual_duration_minutes ?? '—'}</td>
-          <td style="text-align:right;font-family:monospace;color:${_dynVarTone(d)};font-weight:600;">${d == null ? '—' : (d > 0 ? '+' : '') + d}</td>
+          <td></td>
+          <td class="num" style="color:var(--text-muted);">${r.expected_duration_minutes ?? '—'}</td>
+          <td class="num">${r.actual_duration_minutes ?? '—'}</td>
+          <td class="num" style="color:${_dynVarTone(d)};font-weight:600;">${d == null ? '—' : (d > 0 ? '+' : '') + d}</td>
         </tr>`;
       }).join('');
     return header + runRows;
   }).join('');
 
-  cont.innerHTML = kpiHtml + filterHtml + `
-    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
-      <table class="dyn-table">
+  cont.innerHTML = `<div class="capx">` + kpiHtml + filterHtml + `
+    <div class="capx-tblwrap" style="max-height:none;">
+      <table class="capx-tbl">
         <thead><tr>
           <th>Activity</th><th>Run / Test name</th><th>Subsystem / Status</th>
-          <th style="text-align:right;">Avg/Exp</th><th style="text-align:right;">Avg/Act</th><th style="text-align:right;">Δ (min)</th>
+          <th class="num">Runs</th><th class="num">Avg/Exp</th><th class="num">Avg/Act</th><th class="num">Δ (min)</th>
         </tr></thead>
         <tbody>${groupRows}</tbody>
       </table>
     </div>
-    <p style="margin-top:12px;font-size:12px;color:var(--gray-500);">Grouped by activity, worst average variance first. Click an activity to see the individual runs. KPIs and rows reflect the active filters.</p>
-  `;
+    <div class="capx-hint" style="margin-top:10px;">Grouped by activity, worst average variance first. Click an activity to see the individual runs. KPIs and rows reflect the active filters.</div>
+  </div>`;
 }
 
 

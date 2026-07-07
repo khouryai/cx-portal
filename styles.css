@@ -14807,3 +14807,36 @@ tr.docs-drop-hot td { background: #eef2ff !important; box-shadow: inset 0 0 0 2p
 .accx-camp-actions .dyn-btn svg { width: 12px; height: 12px; }
 .accx-camp-actions .dyn-btn.danger { color: var(--bad); }
 .accx-camp-actions .dyn-btn.danger:hover { border-color: var(--bad); background: var(--bad-light); }
+
+/* ── Instances / Cases / Board / Variance v2 additions ─────────────────────── */
+.capx-chipbtn { cursor: pointer; font-family: inherit; transition: all var(--dur-fast) var(--easing); }
+.capx-chipbtn:hover { border-color: var(--gray-400); }
+.capx-chipbtn.on { box-shadow: 0 0 0 2px var(--hitachi-red); border-color: transparent; }
+.capx-tbl tr.capx-grp { cursor: pointer; }
+.capx-tag-good {
+  display: inline-block; font-family: var(--f-mono); font-size: 9.5px; font-weight: 700;
+  padding: 1px 7px; border-radius: 999px; background: var(--good-light); color: var(--good);
+}
+
+/* Board: daily request-summary cards */
+.capx-daygrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.capx-daycard {
+  display: block; width: 100%; text-align: left; font-family: inherit; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--card-bg); padding: 10px 12px; color: var(--text);
+  transition: box-shadow var(--dur-fast) var(--easing), transform var(--dur-fast) var(--easing);
+}
+.capx-daycard:hover { box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+.capx-daycard:focus-visible { outline: none; box-shadow: var(--ring); }
+.capx-daycard.is-empty { border-style: dashed; background: var(--surface); cursor: default; }
+.capx-daycard.is-empty:hover { box-shadow: none; transform: none; }
+.capx-daycard-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
+.capx-daycard-head b { font-size: 12px; font-weight: 700; color: var(--text); }
+.capx-daycard-head span { font-family: var(--f-mono); font-size: 10px; color: var(--text-subtle); }
+.capx-daycard-lines { display: flex; flex-direction: column; gap: 3px; }
+.capx-dayline { display: flex; gap: 6px; font-size: 11.5px; line-height: 1.5; }
+.capx-dayline-ic { width: 16px; flex: none; color: var(--text-subtle); }
+.capx-dayline-ic svg { width: 12px; height: 12px; }
+.capx-dayline-lbl { color: var(--text-subtle); min-width: 56px; flex: none; }
+.capx-dayline-val { color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+.capx-daycard-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
