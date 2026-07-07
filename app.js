@@ -38900,6 +38900,10 @@ const _dynPage = {
   planSelected: new Set(),               // instance ids the planner has picked
   planSchedFilter: '',                   // '' | 'scheduled' | 'unscheduled' (feasibility table)
   planLoading: false,
+  planSearch: '',                        // free-text filter over the feasibility table
+  planGrouped: true,                     // group feasibility rows by test case
+  planGroupsOpen: null,                  // Set of open group keys; null = "use default"
+  planAllocCamp: '',                     // campaign picked in the Auto-allocate bar ('__all__' = program)
   planWindows: [],                       // zone_access_windows rows (cached)
   // Access Plan (Phase 1): campaigns + generated per-day shift windows
   campaigns: [],                         // access_campaigns rows
@@ -41132,16 +41136,6 @@ function _dynRenderAccess() {
   const cancelled = filtered.filter(s => s.status === 'cancelled').length;
   const completed = filtered.filter(s => s.status === 'completed').length;
   const cancelRate = filtered.length ? Math.round(cancelled / filtered.length * 100) : 0;
-  const stat = (label, val, tone) => `<div class="dyn-kpi"><span>${label}</span><b${tone?` style="color:${tone};"`:''}>${val}</b></div>`;
-
-  const kpiHtml = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:0 0 16px;">
-      ${stat('Campaigns', campaigns.filter(c => c.status !== 'closed').length)}
-      ${stat('Planned', planned)}
-      ${stat('Confirmed', confirmed, confirmed ? 'var(--good)' : null)}
-      ${stat('Cancelled', cancelled, cancelled ? 'var(--bad)' : null)}
-      ${stat('Cancel rate', `${cancelRate}%`, cancelRate >= 25 ? 'var(--bad)' : cancelRate >= 10 ? '#d97706' : null)}
-    </div>`;
 
   // Week grid: rows = zones present in filtered shifts; cols = Mon–Sun.
   const weekStart = _dynPage.accWeekStart;
@@ -41149,113 +41143,141 @@ function _dynRenderAccess() {
   const shiftMap = _dynAccShiftMap(filtered);
   const zones = [...new Set(filtered.map(s => s.control_zone_code))]
     .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
-
-  const headCols = days.map(d => `<th style="text-align:center;font-size:11px;">${_dynDayLabel(d)}</th>`).join('');
-  const gridBody = zones.length
-    ? zones.map(z => {
-        const cells = days.map(d => {
-          const s = shiftMap.get(`${z}|${_dynDayKey(d)}`);
-          if (!s) return `<td style="text-align:center;color:var(--gray-300);">·</td>`;
-          const t = _DYN_SHIFT_TONE[s.status] || _DYN_SHIFT_TONE.planned;
-          const sub = s.status === 'cancelled' && s.cancellation_category
-            ? `<div style="font-size:9px;color:${t.fg};opacity:.8;margin-top:2px;">${escapeHtml(s.cancellation_category)}</div>` : '';
-          return `<td style="text-align:center;padding:4px;">
-            <div onclick="_dynOpenShift('${escapeHtml(s.id)}')" title="${escapeHtml(t.label)}${(s.access_zones&&s.access_zones.length>1)?' — grants '+escapeHtml(s.access_zones.join(', ')):''} — click to manage"
-                 style="cursor:pointer;border:1px solid ${t.bd};background:${t.bg};color:${t.fg};border-radius:6px;padding:5px 4px;font-size:10.5px;font-weight:600;${closureCamps.has(s.campaign_id)?'outline:2px dashed #f59e0b;outline-offset:-2px;':''}">
-              ${t.label}
-              <div style="font-size:9px;font-weight:500;opacity:.85;">${s.max_trains||1}T${s.consist_size?`·${s.consist_size}c`:''}</div>
-              ${(s.access_zones&&s.access_zones.length>1)?`<div style="font-size:8.5px;font-weight:700;opacity:.9;">+${escapeHtml(s.access_zones.filter(x=>x!==s.control_zone_code).join(','))}</div>`:''}
-              ${sub}
-            </div>
-          </td>`;
-        }).join('');
-        return `<tr><td style="font-family:monospace;font-weight:600;white-space:nowrap;">${escapeHtml(z)}</td>${cells}</tr>`;
-      }).join('')
-    : `<tr><td colspan="8" style="padding:28px;text-align:center;color:var(--gray-500);">No shifts in this week${_dynPage.accCampaignFilter?' for this campaign':''}. Create a campaign or use Prev/Next.</td></tr>`;
+  const todayKey = _dynDayKey(new Date());
 
   const weekLabel = `${_dynDayLabel(days[0])} — ${_dynDayLabel(days[6])}`;
   const campOpts = campaigns.map(c => `<option value="${escapeHtml(c.id)}" ${_dynPage.accCampaignFilter===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
-
   const periodLabel = _dynPage.accView === 'month'
     ? new Date(weekStart.getFullYear(), weekStart.getMonth(), 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
     : weekLabel;
-  const vbtn = (v, lbl) => `<button class="dyn-btn" style="border-radius:0;${_dynPage.accView===v?'background:var(--info);color:#fff;border-color:var(--info);':''}" onclick="_dynAccSetView('${v}')">${lbl}</button>`;
-  const toolbar = `
-    <div class="dyn-toolbar">
-      <button class="dyn-btn primary" onclick="_dynOpenNewCampaign()">+ New campaign</button>
-      <select onchange="_dynPage.accCampaignFilter=this.value;_dynRenderAccess();" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-300);border-radius:5px;">
-        <option value="">All campaigns</option>${campOpts}
-      </select>
-      <span style="display:inline-flex;border:1px solid var(--gray-300);border-radius:6px;overflow:hidden;">${vbtn('week','Week')}${vbtn('month','Month')}</span>
-      <span style="flex:1;"></span>
-      <button class="dyn-btn" onclick="_dynAccShift(-1)">‹ Prev</button>
-      <span style="font-weight:600;color:var(--gray-700);font-size:13px;min-width:150px;text-align:center;">${escapeHtml(periodLabel)}</span>
-      <button class="dyn-btn" onclick="_dynAccShift(1)">Next ›</button>
-      <button class="dyn-btn" onclick="_dynAccToday()">Today</button>
+
+  const chip = (label, val, cls) => `<span class="simx-chipstat ${cls || ''}"><span class="capx-chiplbl">${label}</span><b>${val}</b></span>`;
+  const heroHtml = `
+    <div class="capx-hero accx-hero">
+      <div class="capx-hero-main">
+        <div class="capx-lbl">${icon('calendar')} Access plan</div>
+        <div class="accx-title">${escapeHtml(periodLabel)}</div>
+        <div class="accx-chips">
+          ${chip('Campaigns', campaigns.filter(c => c.status !== 'closed').length)}
+          ${chip('Planned', planned, planned ? 'is-info' : '')}
+          ${chip('Confirmed', confirmed, confirmed ? 'is-good' : '')}
+          ${chip('Cancelled', cancelled, cancelled ? 'is-bad' : '')}
+          ${chip('Completed', completed)}
+          ${chip('Cancel rate', `${cancelRate}%`, cancelRate >= 25 ? 'is-bad' : cancelRate >= 10 ? 'is-warn' : '')}
+        </div>
+      </div>
+      <div class="accx-hero-ctl">
+        <div class="accx-ctl-row">
+          <button class="dyn-btn primary" onclick="_dynOpenNewCampaign()">${icon('plus')} New campaign</button>
+          <select class="capx-select" onchange="_dynPage.accCampaignFilter=this.value;_dynRenderAccess();">
+            <option value="">All campaigns</option>${campOpts}
+          </select>
+        </div>
+        <div class="accx-ctl-row">
+          <span class="accx-seg">
+            <button class="dyn-btn ${_dynPage.accView==='week'?'on':''}" onclick="_dynAccSetView('week')">Week</button>
+            <button class="dyn-btn ${_dynPage.accView==='month'?'on':''}" onclick="_dynAccSetView('month')">Month</button>
+          </span>
+          <span class="accx-nav">
+            <button class="simx-iconbtn" onclick="_dynAccShift(-1)" aria-label="Previous ${_dynPage.accView}">${icon('chevron-left')}</button>
+            <button class="dyn-btn" onclick="_dynAccToday()">Today</button>
+            <button class="simx-iconbtn" onclick="_dynAccShift(1)" aria-label="Next ${_dynPage.accView}">${icon('chevron-right')}</button>
+          </span>
+        </div>
+      </div>
     </div>`;
+
+  const gridBody = zones.length
+    ? zones.map(z => {
+        const cells = days.map(d => {
+          const k = _dynDayKey(d);
+          const s = shiftMap.get(`${z}|${k}`);
+          const today = k === todayKey ? ' is-today' : '';
+          if (!s) return `<td class="${today.trim()}"><span class="accx-dot">·</span></td>`;
+          return `<td class="${today.trim()}">${_dynAccShiftChip(s, closureCamps, false)}</td>`;
+        }).join('');
+        return `<tr><td class="zone-cell">${escapeHtml(z)}</td>${cells}</tr>`;
+      }).join('')
+    : `<tr><td colspan="8" style="padding:30px;text-align:center;color:var(--text-subtle);border-left:none;">No shifts in this week${_dynPage.accCampaignFilter ? ' for this campaign' : ''}. Create a campaign or step through the weeks.</td></tr>`;
 
   const gridHtml = _dynPage.accView === 'month'
-    ? `<div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow-x:auto;margin-bottom:18px;padding:6px;">${_dynAccMonthGridHtml(filtered, weekStart)}</div>`
-    : `
-    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow-x:auto;margin-bottom:18px;">
-      <table class="dyn-board" style="min-width:760px;">
-        <thead><tr><th style="text-align:left;">Zone</th>${headCols}</tr></thead>
-        <tbody>${gridBody}</tbody>
-      </table>
-    </div>`;
+    ? `<div class="accx-gridcard" style="padding:6px;">${_dynAccMonthGridHtml(filtered, weekStart)}</div>`
+    : `<div class="accx-gridcard">
+        <table class="accx-grid">
+          <thead><tr><th class="zone-col">Zone</th>${days.map(d => `<th class="${_dynDayKey(d) === todayKey ? 'is-today' : ''}">${_dynDayLabel(d)}</th>`).join('')}</tr></thead>
+          <tbody>${gridBody}</tbody>
+        </table>
+      </div>`;
 
-  // Campaign list
+  // Campaign cards
   const fmtDOW = arr => (arr || []).slice().sort((a,b)=>a-b).map(d => _DYN_DOW[d]).join(' ');
   const campCards = campaigns.length
-    ? campaigns.slice().sort((a, b) => String(a.subsystem || 'zzz').localeCompare(String(b.subsystem || 'zzz'), undefined, { numeric: true }) || String(a.name || '').localeCompare(String(b.name || ''))).map(c => {
+    ? `<div class="accx-camps">` + campaigns.slice().sort((a, b) => String(a.subsystem || 'zzz').localeCompare(String(b.subsystem || 'zzz'), undefined, { numeric: true }) || String(a.name || '').localeCompare(String(b.name || ''))).map(c => {
         const cShifts = allShifts.filter(s => s.campaign_id === c.id);
         const cConf = cShifts.filter(s => s.status === 'confirmed').length;
         const cCanc = cShifts.filter(s => s.status === 'cancelled').length;
         const closed = c.status === 'closed';
-        return `<div class="data-card" style="padding:14px 16px;margin-bottom:10px;border-left:4px solid ${_planningSubsystemColor(c.subsystem).bg};${closed?'opacity:.6;':''}">
-          <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
-            <div style="flex:1;min-width:240px;">
-              <div style="font-weight:700;font-size:14px;">${escapeHtml(c.name)} ${c.campaign_kind==='closure'?'<span class="tag" style="background:#fde68a;color:#92400e;border:1px solid #f59e0b;">closure</span>':''} ${closed?'<span class="tag" style="background:var(--gray-100);">closed</span>':''}</div>
-              <div style="font-size:12px;color:var(--gray-600);margin-top:3px;">
-                ${(c.zone_codes||[]).map(z=>`<span class="tag" style="font-family:monospace;">${escapeHtml(z)}</span>`).join(' ')}
-                ${(c.test_case_ids&&c.test_case_ids.length)?`<span class="tag" style="background:#ede9fe;color:#5b21b6;">${c.test_case_ids.length} test case${c.test_case_ids.length===1?'':'s'} in scope</span>`:''}
-              </div>
-              <div style="font-size:11.5px;color:var(--gray-500);margin-top:6px;">
-                ${_dynFmtDate(c.start_date)} → ${_dynFmtDate(c.end_date)} · ${escapeHtml(fmtDOW(c.days_of_week))} ·
-                ${escapeHtml(_dynCampShiftSummary(c))} ·
-                ${c.trains_requested||1} train${(c.trains_requested||1)===1?'':'s'}${c.consist_size?` × ${c.consist_size}-car`:''} ·
-                ${escapeHtml((c.allowed_modes||[]).join('+')||'any')}
-                ${c.subsystem?` · ${escapeHtml(c.subsystem)}`:''}${c.permit_no?` · permit ${escapeHtml(c.permit_no)}`:''}
-              </div>
-              <div style="font-size:11px;color:var(--gray-500);margin-top:6px;">
-                ${cShifts.length} shifts · <span style="color:#065f46;">${cConf} confirmed</span> · <span style="color:#b91c1c;">${cCanc} cancelled</span>
-              </div>
-              ${(() => { const d = _dynCampaignProgressData(c); if (!d.total) return ''; const tn = d.schedVar > 5 ? '#059669' : d.schedVar >= -5 ? 'var(--gray-500)' : d.schedVar >= -15 ? '#d97706' : '#dc2626'; return `
-              <div style="margin-top:8px;max-width:340px;">
-                <div style="height:7px;background:var(--gray-100);border-radius:5px;overflow:hidden;position:relative;">
-                  <div style="height:100%;width:${d.pct}%;background:${d.pct===100?'var(--good)':'var(--info)'};"></div>
-                  <div style="position:absolute;top:-1px;bottom:-1px;left:${d.expectedPct}%;width:2px;background:#111;"></div>
-                </div>
-                <div style="font-size:11px;color:${tn};margin-top:3px;">${d.done}/${d.total} tests (${d.pct}%) · ${d.schedVar>0?'+':''}${d.schedVar} pts ${d.schedVar>5?'ahead':d.schedVar>=-5?'on plan':'behind'}</div>
-              </div>`; })()}
-            </div>
-            <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
-              <button class="dyn-btn primary" onclick="_dynEditCampaign('${escapeHtml(c.id)}')">Edit</button>
-              <button class="dyn-btn" onclick="_dynCampaignProgress('${escapeHtml(c.id)}')">Progress</button>
-              <button class="dyn-btn" onclick="_dynOpenTrains('${escapeHtml(c.id)}')">Trains</button>
-              <button class="dyn-btn" onclick="_dynPage.accCampaignFilter='${escapeHtml(c.id)}';_dynAccJumpTo('${escapeHtml(c.start_date)}');">View week</button>
-              ${closed
-                ? `<button class="dyn-btn" onclick="_dynSetCampaignStatus('${escapeHtml(c.id)}','active')">Reopen</button>`
-                : `<button class="dyn-btn" onclick="_dynSetCampaignStatus('${escapeHtml(c.id)}','closed')">Close</button>`}
-              <button class="dyn-btn" style="color:#dc2626;" onclick="_dynDeleteCampaign('${escapeHtml(c.id)}')">Delete</button>
-            </div>
+        const prog = (() => {
+          const d = _dynCampaignProgressData(c); if (!d.total) return '';
+          const tone = d.schedVar > 5 ? 'var(--good)' : d.schedVar >= -5 ? 'var(--text-subtle)' : d.schedVar >= -15 ? 'var(--warn)' : 'var(--bad)';
+          return `
+            <div class="accx-bar ${d.pct === 100 ? 'done' : ''}" title="Progress vs plan"><i style="width:${d.pct}%;"></i><b style="left:${d.expectedPct}%;"></b></div>
+            <div class="accx-camp-prog" style="color:${tone};">${d.done}/${d.total} tests (${d.pct}%) · ${d.schedVar > 0 ? '+' : ''}${d.schedVar} pts ${d.schedVar > 5 ? 'ahead' : d.schedVar >= -5 ? 'on plan' : 'behind'}</div>`;
+        })();
+        return `<div class="accx-camp ${closed ? 'is-closed' : ''}" style="--camp-accent:${_planningSubsystemColor(c.subsystem).bg};">
+          <div class="accx-camp-name">${escapeHtml(c.name)}
+            ${c.campaign_kind === 'closure' ? '<span class="accx-tag-closure">closure</span>' : ''}
+            ${closed ? '<span class="accx-tag-closed">closed</span>' : ''}
+          </div>
+          <div class="accx-camp-zones">
+            ${(c.zone_codes || []).map(z => `<span class="accx-zone-tag">${escapeHtml(z)}</span>`).join('')}
+            ${(c.test_case_ids && c.test_case_ids.length) ? `<span class="accx-tag-scope">${c.test_case_ids.length} test case${c.test_case_ids.length === 1 ? '' : 's'} in scope</span>` : ''}
+          </div>
+          <div class="accx-camp-meta">
+            ${_dynFmtDate(c.start_date)} → ${_dynFmtDate(c.end_date)} · ${escapeHtml(fmtDOW(c.days_of_week))} ·
+            ${escapeHtml(_dynCampShiftSummary(c))} ·
+            ${c.trains_requested || 1} train${(c.trains_requested || 1) === 1 ? '' : 's'}${c.consist_size ? ` × ${c.consist_size}-car` : ''} ·
+            ${escapeHtml((c.allowed_modes || []).join('+') || 'any')}
+            ${c.subsystem ? ` · ${escapeHtml(c.subsystem)}` : ''}${c.permit_no ? ` · permit ${escapeHtml(c.permit_no)}` : ''}
+          </div>
+          <div class="accx-camp-shifts">
+            ${chip('Shifts', cShifts.length)}
+            ${chip('Confirmed', cConf, cConf ? 'is-good' : '')}
+            ${chip('Cancelled', cCanc, cCanc ? 'is-bad' : '')}
+          </div>
+          ${prog}
+          <div class="accx-camp-actions">
+            <button class="dyn-btn" onclick="_dynEditCampaign('${escapeHtml(c.id)}')">${icon('edit')} Edit</button>
+            <button class="dyn-btn" onclick="_dynCampaignProgress('${escapeHtml(c.id)}')">Progress</button>
+            <button class="dyn-btn" onclick="_dynOpenTrains('${escapeHtml(c.id)}')">${icon('train')} Trains</button>
+            <button class="dyn-btn" onclick="_dynPage.accCampaignFilter='${escapeHtml(c.id)}';_dynAccJumpTo('${escapeHtml(c.start_date)}');">View week</button>
+            ${closed
+              ? `<button class="dyn-btn" onclick="_dynSetCampaignStatus('${escapeHtml(c.id)}','active')">Reopen</button>`
+              : `<button class="dyn-btn" onclick="_dynSetCampaignStatus('${escapeHtml(c.id)}','closed')">Close</button>`}
+            <button class="dyn-btn danger" onclick="_dynDeleteCampaign('${escapeHtml(c.id)}')">Delete</button>
           </div>
         </div>`;
-      }).join('')
-    : `<div style="padding:30px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:8px;">No access campaigns yet. Click <b>+ New campaign</b> to request zone access over a date range.</div>`;
+      }).join('') + `</div>`
+    : `<div class="capx-empty">No access campaigns yet. Click <b>New campaign</b> to request zone access over a date range.</div>`;
 
-  cont.innerHTML = kpiHtml + toolbar + gridHtml +
-    `<h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-600);margin:0 0 10px;">Campaigns</h3>` + campCards;
+  cont.innerHTML = `<div class="capx">` + heroHtml + gridHtml +
+    `<div class="accx-camps-head"><h3>Campaigns</h3><span class="capx-count">${campaigns.length}</span></div>` + campCards + `</div>`;
+}
+
+// One shift chip — shared by the week grid (full) and month grid (compact).
+function _dynAccShiftChip(s, closureCamps, small) {
+  const t = _DYN_SHIFT_TONE[s.status] || _DYN_SHIFT_TONE.planned;
+  const fmtT = iso => new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const time = (s.start_at && s.end_at) ? `${fmtT(s.start_at)}–${fmtT(s.end_at)}` : '';
+  const extra = (s.access_zones || []).filter(x => x !== s.control_zone_code);
+  const cls = `accx-shift is-${escapeHtml(s.status || 'planned')}${closureCamps && closureCamps.has(s.campaign_id) ? ' is-closure' : ''}${small ? ' sm' : ''}`;
+  const title = `${s.control_zone_code} — ${t.label}${time ? ' · ' + time : ''}${extra.length ? ' · grants ' + extra.join(', ') : ''}${s.status === 'cancelled' && s.cancellation_category ? ' · ' + s.cancellation_category : ''} — click to manage`;
+  return `<button type="button" class="${cls}" onclick="_dynOpenShift('${escapeHtml(s.id)}')" title="${escapeHtml(title)}">
+    <span class="accx-shift-top"><b>${small ? escapeHtml(s.control_zone_code) : t.label}</b><span>${s.max_trains || 1}T${s.consist_size ? `·${s.consist_size}c` : ''}</span></span>
+    ${time && !small ? `<span class="accx-shift-time">${time}</span>` : ''}
+    ${extra.length ? `<span class="accx-shift-zones">+${escapeHtml(extra.join(','))}</span>` : ''}
+    ${s.status === 'cancelled' && s.cancellation_category ? `<span class="accx-shift-cat">${escapeHtml(s.cancellation_category)}</span>` : ''}
+  </button>`;
 }
 
 function _dynAccShift(n) {
@@ -41284,7 +41306,7 @@ function _dynAccMonthGridHtml(shifts, anchor) {
     byDay.get(k).push(s);
   }
   const labels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  const head = `<tr>${labels.map(l => `<th style="padding:5px 6px;font-size:10.5px;color:var(--gray-500);text-align:center;border:1px solid var(--gray-100);">${l}</th>`).join('')}</tr>`;
+  const head = `<tr>${labels.map(l => `<th>${l}</th>`).join('')}</tr>`;
   let body = '';
   for (let wk = 0; wk < 6; wk++) {
     let row = '', anyIn = false;
@@ -41295,21 +41317,14 @@ function _dynAccMonthGridHtml(shifts, anchor) {
       const k = _dynDayKey(d);
       const list = (byDay.get(k) || []).slice().sort((x, y) =>
         String(x.control_zone_code).localeCompare(String(y.control_zone_code), undefined, { numeric: true }));
-      const pills = list.map(s => {
-        const t = _DYN_SHIFT_TONE[s.status] || _DYN_SHIFT_TONE.planned;
-        const cat = s.status === 'cancelled' && s.cancellation_category ? ` · ${s.cancellation_category}` : '';
-        return `<div onclick="event.stopPropagation();_dynOpenShift('${escapeHtml(s.id)}')" title="${escapeHtml(s.control_zone_code + ' — ' + t.label + cat)}" style="cursor:pointer;border:1px solid ${t.bd};background:${t.bg};color:${t.fg};border-radius:4px;padding:1px 4px;font-size:10px;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${closure.has(s.campaign_id)?'box-shadow:0 0 0 2px #f59e0b inset;':''}">${escapeHtml(s.control_zone_code)}${(s.access_zones&&s.access_zones.length>1)?'+'+escapeHtml(s.access_zones.filter(x=>x!==s.control_zone_code).join(',')):''} <span style="font-weight:500;opacity:.85;">${s.max_trains || 1}T</span></div>`;
-      }).join('');
+      const pills = list.map(s => _dynAccShiftChip(s, closure, true)).join('');
       const isToday = k === todayKey;
-      const dayNum = isToday
-        ? `<span style="background:var(--info);color:#fff;border-radius:10px;display:inline-block;min-width:18px;height:18px;line-height:18px;text-align:center;font-weight:700;padding:0 4px;">${d.getDate()}</span>`
-        : `<span style="color:var(--gray-500);font-weight:500;">${d.getDate()}</span>`;
-      row += `<td style="vertical-align:top;height:86px;width:14.28%;border:1px solid var(--gray-100);padding:3px;${inMonth ? '' : 'background:var(--gray-50);opacity:.5;'}"><div style="font-size:10.5px;margin-bottom:2px;">${dayNum}</div>${pills}</td>`;
+      row += `<td class="${inMonth ? '' : 'is-out'}${isToday ? ' is-today' : ''}"><span class="accx-day-num ${isToday ? 'is-today' : ''}">${d.getDate()}</span>${pills}</td>`;
     }
     if (wk >= 4 && !anyIn) break;
     body += `<tr>${row}</tr>`;
   }
-  return `<table style="width:100%;border-collapse:collapse;table-layout:fixed;"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  return `<table class="accx-grid accx-month"><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }
 function _dynAccToday() {
   _dynPage.accWeekStart = _dynStartOfWeek(new Date());
@@ -42521,123 +42536,230 @@ function _dynRenderPlanning() {
     zonesByPhase.set(p.id, arr);
   });
 
-  cont.innerHTML = `
-    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;padding:14px;margin-bottom:16px;">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
-        <b style="font-size:12px;text-transform:uppercase;color:var(--gray-600);letter-spacing:.05em;">Zones</b>
-        <span style="font-size:11px;color:var(--gray-500);">Hold ⌘/Ctrl to select multiple. "Whole phase" buttons toggle all zones under a phase.</span>
-        <span style="flex:1;"></span>
-        ${_dynPage.planZones.length
-          ? `<button class="dyn-btn" style="font-size:11px;padding:4px 10px;" onclick="_dynPlanClearZones()">Clear (${_dynPage.planZones.length})</button>`
-          : ''}
+  // ── Auto-allocate bar data ──────────────────────────────────────────────
+  const activeCamps = (_dynPage.campaigns || []).filter(c => c.status !== 'closed' && c.status !== 'archived');
+  const allocSel = _dynPage.planAllocCamp || (activeCamps[0] ? String(activeCamps[0].id) : '');
+
+  const heroHtml = `
+    <div class="capx-hero">
+      <div class="capx-hero-main">
+        <div class="capx-lbl">${icon('zap')} Schedule builder</div>
+        <div class="capx-hero-title">Auto-allocate the backlog</div>
+        <p class="capx-hero-sub">Packs every unscheduled run into planned access windows — date order, prerequisites first, matching train configurations batched into the same shift. You review the draft before anything commits.</p>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-        ${phases.filter(p => (zonesByPhase.get(p.id) || []).length > 0).map(p => {
-          const zoneCodes = (zonesByPhase.get(p.id) || []).map(z => z.code);
-          const allSelected = zoneCodes.length > 0 && zoneCodes.every(c => _dynPage.planZones.includes(c));
-          return `<button class="dyn-btn" style="font-size:11px;padding:4px 10px;${allSelected ? 'background:#e60012;color:white;border-color:#e60012;' : ''}"
-                          onclick="_dynPlanTogglePhase('${escapeHtml(p.id)}')">
-            ${escapeHtml(p.name)} <span style="opacity:.7;">(${zoneCodes.length})</span>
-          </button>`;
-        }).join('')}
+      <div class="capx-hero-ctl">
+        <label class="capx-field">
+          <span>Campaign</span>
+          <select id="capx-alloc-camp" class="capx-select" onchange="_dynPage.planAllocCamp=this.value;">
+            ${activeCamps.map(c => `<option value="${escapeHtml(String(c.id))}" ${allocSel === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+            <option value="__all__" ${allocSel === '__all__' ? 'selected' : ''}>All active campaigns (program)</option>
+          </select>
+        </label>
+        <label class="capx-field">
+          <span>Slack %</span>
+          <input id="capx-alloc-slack" class="capx-input" type="number" min="0" max="50" step="5" value="${Math.round(_dynAllocSlack() * 100)}" title="Buffer left unfilled in each shift — lower packs tighter (tests done sooner)">
+        </label>
+        <button class="dyn-btn primary capx-alloc-btn" ${activeCamps.length ? '' : 'disabled'} onclick="_dynAllocFromBar()">${icon('zap')} Build allocation</button>
+        <button class="dyn-btn" onclick="_dynWhatIfRun()" title="Project how many more runs you could schedule if the client extends the access window">What-if</button>
+        <button class="simx-iconbtn" onclick="_dynPlanOpenWindowsAdmin()" aria-label="Manage access windows" title="Manage access windows">${icon('settings')}</button>
       </div>
-      <select id="plan-zones" multiple size="8" style="width:100%;font-size:12px;padding:6px;border:1px solid var(--gray-300);border-radius:5px;font-family:inherit;"
-              onchange="_dynPlanSyncZones(this)">
-        ${phases.map(p => {
-          const zs = zonesByPhase.get(p.id) || [];
-          if (!zs.length) return '';
-          return `<optgroup label="${escapeHtml(p.name)}">
-            ${zs.map(z => `<option value="${escapeHtml(z.code)}" ${_dynPage.planZones.includes(z.code) ? 'selected' : ''}>${escapeHtml(z.label)}</option>`).join('')}
-          </optgroup>`;
-        }).join('')}
-      </select>
-      ${_dynPage.planZones.length
-        ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
-            ${_dynPage.planZones.map(c => `<span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-size:11px;">${escapeHtml(c)} <a href="javascript:void(0)" onclick="_dynPlanRemoveZone('${escapeHtml(c)}')" style="margin-left:4px;color:#92400e;text-decoration:none;">×</a></span>`).join('')}
-           </div>`
-        : ''}
-    </div>
+      ${activeCamps.length ? '' : `<div class="capx-hero-warn">${icon('alert')} No active campaign — create one in the Access Plan tab first. Scheduling always ties to a campaign.</div>`}
+    </div>`;
 
-    <div class="dyn-toolbar">
-      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
-        Window start
-        <input id="plan-start" type="datetime-local" value="${escapeHtml(_dynPage.planStart)}"
-               onchange="_dynPage.planStart=this.value;_dynRenderPlanning();">
-      </label>
-      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
-        Window end
-        <input id="plan-end" type="datetime-local" value="${escapeHtml(_dynPage.planEnd)}"
-               onchange="_dynPage.planEnd=this.value;_dynRenderPlanning();">
-      </label>
-      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
-        Modes
-        <label style="display:flex;align-items:center;gap:3px;font-size:12px;">
-          <input type="checkbox" ${_dynPage.planModes.includes('CBTC')?'checked':''}
-                 onchange="_dynPlanToggleMode('CBTC',this.checked)">CBTC
-        </label>
-        <label style="display:flex;align-items:center;gap:3px;font-size:12px;">
-          <input type="checkbox" ${_dynPage.planModes.includes('VATC')?'checked':''}
-                 onchange="_dynPlanToggleMode('VATC',this.checked)">VATC
-        </label>
-      </label>
-      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
-        Max trains
-        <input type="number" min="1" style="width:70px;" placeholder="any" value="${escapeHtml(_dynPage.planMaxTrains)}"
-               oninput="_dynPage.planMaxTrains=this.value;">
-      </label>
-      <button class="dyn-btn primary" onclick="_dynPlanRun()">Compute feasible</button>
-      <button class="dyn-btn" onclick="_dynAutoAllocateRun()" title="Cascade-allocate unscheduled runs across this campaign's access windows, prerequisites first">Auto-allocate campaign</button>
-      <button class="dyn-btn" onclick="_dynProgramAllocateRun()" title="Allocate across ALL active campaigns at once — prerequisites order across campaigns (DCS→CBTC→ATC)">Program allocate (all)</button>
-      <button class="dyn-btn" onclick="_dynWhatIfRun()" title="Project how many more runs you could schedule if the client extends the access window (e.g. 6 h)">What-if window</button>
-      <span style="flex:1;"></span>
-      <button class="dyn-btn" onclick="_dynPlanOpenWindowsAdmin()">${icon('settings')} Manage Windows</button>
-    </div>
+  // ── Scope rail: tap-to-toggle zone chips grouped by phase ───────────────
+  const zonesHtml = phases.filter(p => (zonesByPhase.get(p.id) || []).length > 0).map(p => {
+    const zs = zonesByPhase.get(p.id) || [];
+    const selCount = zs.filter(z => _dynPage.planZones.includes(z.code)).length;
+    const all = selCount === zs.length;
+    return `
+      <div class="capx-phase">
+        <div class="capx-phase-head">
+          <span class="capx-phase-name">${escapeHtml(p.name)}</span>
+          <span class="capx-phase-n">${selCount ? `${selCount}/${zs.length}` : zs.length}</span>
+          <button type="button" class="capx-linkish" onclick="_dynPlanTogglePhase('${escapeHtml(p.id)}')">${all ? 'none' : 'all'}</button>
+        </div>
+        <div class="capx-zonegrid">
+          ${zs.map(z => `<button type="button" class="capx-zone ${_dynPage.planZones.includes(z.code) ? 'on' : ''}" onclick="_dynPlanToggleZone('${escapeHtml(z.code)}')" title="${escapeHtml(z.label)}">${escapeHtml(z.code)}</button>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
 
-    <div style="display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:10px;margin:14px 0 18px;">
-      <div class="dyn-kpi"><span>Window length</span><b>${winHours} h</b></div>
-      <div class="dyn-kpi"><span>Feasible</span><b>${_dynPage.planFeasible.length}</b></div>
-      <div class="dyn-kpi"><span>Selected duration</span><b>${(selMinutes/60).toFixed(1)} h</b></div>
-      <div class="dyn-kpi"><span>${slack < 0 ? 'Over by' : 'Slack'}</span><b style="color:${slack < 0 ? 'var(--bad)' : 'var(--good)'};">${Math.abs(slack/60).toFixed(1)} h</b></div>
-    </div>
-
-    ${_dynPage.planLoading
-      ? `<div style="padding:40px;text-align:center;color:var(--gray-500);">Computing…</div>`
-      : _dynPage.planFeasible.length === 0
-        ? `<div style="padding:40px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:8px;">
-             ${_dynPage.planZones.length ? 'No matching feasible instances. Try a longer window, more zones, or different mode filter.' : 'Pick one or more zones (or a whole phase), set the window, then click <b>Compute feasible</b>.'}
-           </div>`
-        : `
-          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:white;border:1px solid var(--gray-200);border-radius:8px;padding:10px 14px;margin-bottom:12px;position:sticky;top:0;z-index:5;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
-            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);">
-              Show
-              <select onchange="_dynPage.planSchedFilter=this.value;_dynRenderPlanning();" style="font-size:12px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;">
-                <option value="" ${_dynPage.planSchedFilter===''?'selected':''}>All</option>
-                <option value="scheduled" ${_dynPage.planSchedFilter==='scheduled'?'selected':''}>Scheduled</option>
-                <option value="unscheduled" ${_dynPage.planSchedFilter==='unscheduled'?'selected':''}>Not scheduled</option>
-              </select>
-            </label>
-            <span style="flex:1;"></span>
-            ${selected.length > 0
-              ? `<span style="font-size:13px;"><b>${selected.length}</b> selected · <b>${(selMinutes/60).toFixed(1)} h</b> · <b>${selTrains}</b> trains</span>
-                 <button class="dyn-btn" onclick="_dynPage.planSelected.clear();_dynRenderPlanning();">Clear</button>`
-              : `<span style="font-size:12px;color:var(--gray-500);">Select rows to schedule</span>`}
-            <button class="dyn-btn primary" ${selected.length===0?'disabled':''} onclick="_dynPlanCommit()">${icon('calendar')} Schedule${selected.length?` ${selected.length}`:''}</button>
+  const scopeHtml = `
+    <aside class="capx-rail">
+      <div class="capx-sec">
+        <div class="capx-sec-head">
+          <span class="capx-sec-title">${icon('map')} Zones</span>
+          <span class="capx-count">${_dynPage.planZones.length ? `${_dynPage.planZones.length} selected` : 'tap to toggle'}</span>
+          ${_dynPage.planZones.length ? `<button type="button" class="capx-linkish" onclick="_dynPlanClearZones()">clear</button>` : ''}
+        </div>
+        <div class="capx-sec-body">${zonesHtml || `<div class="capx-hint">No dynamic zones found in the locations table.</div>`}</div>
+      </div>
+      <div class="capx-sec">
+        <div class="capx-sec-head"><span class="capx-sec-title">${icon('clock')} Window &amp; filters</span></div>
+        <div class="capx-sec-body">
+          <div class="capx-presets">
+            <button type="button" class="capx-preset" onclick="_dynPlanPreset('day')">Day 08–17</button>
+            <button type="button" class="capx-preset" onclick="_dynPlanPreset('nrh')" title="Tonight's non-revenue hours">Tonight NRH</button>
           </div>
-          ${_dynRenderPlanningTable()}`}
-  `;
+          <label class="capx-field" style="margin-bottom:8px;"><span>Start</span>
+            <input class="capx-input wide" id="plan-start" type="datetime-local" value="${escapeHtml(_dynPage.planStart)}" onchange="_dynPage.planStart=this.value;_dynRenderPlanning();"></label>
+          <label class="capx-field"><span>End</span>
+            <input class="capx-input wide" id="plan-end" type="datetime-local" value="${escapeHtml(_dynPage.planEnd)}" onchange="_dynPage.planEnd=this.value;_dynRenderPlanning();"></label>
+          <div class="capx-frow">
+            <span class="capx-field-lbl">Modes</span>
+            <label class="capx-check"><input type="checkbox" ${_dynPage.planModes.includes('CBTC') ? 'checked' : ''} onchange="_dynPlanToggleMode('CBTC',this.checked)">CBTC</label>
+            <label class="capx-check"><input type="checkbox" ${_dynPage.planModes.includes('VATC') ? 'checked' : ''} onchange="_dynPlanToggleMode('VATC',this.checked)">VATC</label>
+          </div>
+          <div class="capx-frow">
+            <span class="capx-field-lbl">Max trains</span>
+            <input class="capx-input" type="number" min="1" placeholder="any" value="${escapeHtml(_dynPage.planMaxTrains)}" oninput="_dynPage.planMaxTrains=this.value;">
+          </div>
+        </div>
+      </div>
+      <button class="dyn-btn primary capx-compute" onclick="_dynPlanRun()">${icon('search')} Compute feasible</button>
+      <div class="capx-hint" style="margin-top:7px;">Feasibility honors zone booking, prerequisite chains, mode and the train budget.</div>
+    </aside>`;
+
+  // ── Results ─────────────────────────────────────────────────────────────
+  const chip = (label, val, cls) => `<span class="simx-chipstat ${cls || ''}"><span class="capx-chiplbl">${label}</span><b>${val}</b></span>`;
+  const statsHtml = `
+    <div class="capx-stats">
+      ${chip('Window', `${winHours} h`)}
+      ${chip('Feasible', _dynPage.planFeasible.length, _dynPage.planFeasible.length ? 'is-info' : '')}
+      ${chip('Selected', `${selected.length} · ${(selMinutes / 60).toFixed(1)} h`)}
+      ${chip(slack < 0 ? 'Over by' : 'Slack', `${Math.abs(slack / 60).toFixed(1)} h`, slack < 0 ? 'is-bad' : 'is-good')}
+    </div>`;
+
+  let resultsHtml;
+  if (_dynPage.planLoading) {
+    resultsHtml = `<div class="capx-empty">Computing feasibility…</div>`;
+  } else if (_dynPage.planFeasible.length === 0) {
+    resultsHtml = `<div class="capx-empty">${_dynPage.planZones.length
+      ? 'No matching feasible instances. Try a longer window, more zones, or a different mode filter.'
+      : 'Pick zones on the left (tap chips, or a whole phase), set the window, then <b>Compute feasible</b>.'}</div>`;
+  } else {
+    resultsHtml = `
+      <div class="capx-ctl">
+        <label class="capx-field-inline">Show
+          <select class="capx-select" style="min-width:0;" onchange="_dynPage.planSchedFilter=this.value;_dynRenderPlanning();">
+            <option value="" ${_dynPage.planSchedFilter === '' ? 'selected' : ''}>All</option>
+            <option value="scheduled" ${_dynPage.planSchedFilter === 'scheduled' ? 'selected' : ''}>Scheduled</option>
+            <option value="unscheduled" ${_dynPage.planSchedFilter === 'unscheduled' ? 'selected' : ''}>Not scheduled</option>
+          </select>
+        </label>
+        <span class="capx-searchwrap">${icon('search')}<input id="capx-search" class="capx-input wide" type="search" placeholder="Filter code / title…" value="${escapeHtml(_dynPage.planSearch)}" oninput="_dynPlanSearchInput(this.value)"></span>
+        <label class="capx-check"><input type="checkbox" ${_dynPage.planGrouped ? 'checked' : ''} onchange="_dynPage.planGrouped=this.checked;_dynPage.planGroupsOpen=null;_dynRenderPlanning();">Group by test case</label>
+        ${_dynPage.planGrouped ? `<button type="button" class="capx-linkish" onclick="_dynPlanGroupsAll(true)">Expand all</button>
+        <button type="button" class="capx-linkish" onclick="_dynPlanGroupsAll(false)">Collapse all</button>` : ''}
+      </div>
+      <div id="capx-results">${_dynRenderPlanningTable()}</div>
+      <div class="capx-tray">
+        ${selected.length
+          ? `<span class="capx-tray-sum"><b>${selected.length}</b> run${selected.length === 1 ? '' : 's'} · <b>${(selMinutes / 60).toFixed(1)} h</b> · <b>${selTrains}</b> train${selTrains === 1 ? '' : 's'}</span>
+             <button class="dyn-btn" onclick="_dynPage.planSelected.clear();_dynRenderPlanning();">Clear</button>`
+          : `<span class="capx-tray-sum is-empty">Tick runs — or a whole test case at once — to build the schedule</span>`}
+        <button class="dyn-btn primary" ${selected.length === 0 ? 'disabled' : ''} onclick="_dynPlanCommit()">${icon('calendar')} Schedule${selected.length ? ` ${selected.length}` : ''} into campaign…</button>
+      </div>`;
+  }
+
+  cont.innerHTML = `
+    <div class="capx">
+      ${heroHtml}
+      <div class="capx-grid">
+        ${scopeHtml}
+        <section class="capx-main">
+          ${statsHtml}
+          ${resultsHtml}
+        </section>
+      </div>
+    </div>`;
 }
 
-function _dynPlanSyncZones(sel) {
-  _dynPage.planZones = Array.from(sel.selectedOptions).map(o => o.value);
+// Tap-to-toggle a single zone chip (replaces the old ctrl-click multi-select).
+function _dynPlanToggleZone(code) {
+  const i = _dynPage.planZones.indexOf(code);
+  if (i >= 0) _dynPage.planZones.splice(i, 1); else _dynPage.planZones.push(code);
   _dynPage.planFeasible = [];
   _dynPage.planSelected.clear();
   _dynRenderPlanning();
 }
 
-function _dynPlanRemoveZone(code) {
-  _dynPage.planZones = _dynPage.planZones.filter(c => c !== code);
-  _dynPage.planFeasible = [];
-  _dynPage.planSelected.clear();
+// Window presets: standard day shift, or tonight's configured Non-Revenue Hours.
+function _dynPlanPreset(kind) {
+  if (kind === 'day') {
+    const d = new Date(); d.setHours(8, 0, 0, 0);
+    const e = new Date(d); e.setHours(17, 0, 0, 0);
+    _dynPage.planStart = _dynLocalDateTime(d);
+    _dynPage.planEnd = _dynLocalDateTime(e);
+  } else {
+    const h = _dynNonRevHours();
+    // "Tonight" = the upcoming NRH block: if we're already past ~02:00, that's tomorrow's.
+    const d = new Date();
+    if (d.getHours() >= 2) d.setDate(d.getDate() + 1);
+    const t = d.getDay() === 6 ? h.sat : d.getDay() === 0 ? h.sun : h.wk;
+    const [sh, sm] = String(t[0]).split(':').map(Number);
+    const [eh, em] = String(t[1]).split(':').map(Number);
+    const s = new Date(d); s.setHours(sh || 0, sm || 0, 0, 0);
+    const e = new Date(d); e.setHours(eh || 0, em || 0, 0, 0);
+    if (e <= s) e.setDate(e.getDate() + 1);
+    _dynPage.planStart = _dynLocalDateTime(s);
+    _dynPage.planEnd = _dynLocalDateTime(e);
+  }
+  _dynRenderPlanning();
+}
+
+// Auto-allocate straight from the hero bar — no picker modal. '__all__' runs
+// the program-level allocation; otherwise the chosen campaign. Same engine.
+function _dynAllocFromBar() {
+  const campV = document.getElementById('capx-alloc-camp')?.value || _dynPage.planAllocCamp;
+  const sl = document.getElementById('capx-alloc-slack')?.value;
+  if (sl != null && sl !== '') _dynSetAllocSlack(sl);
+  if (!campV) { toast('No active campaign — create one in the Access Plan first', 'error'); return; }
+  _dynPage.planAllocCamp = campV;
+  if (campV === '__all__') return _dynProgramAllocateRun();
+  const c = (_dynPage.campaigns || []).find(x => String(x.id) === String(campV));
+  return _dynAllocateInto(new Set([String(campV)]), c ? c.name : 'Campaign');
+}
+
+// Re-render only the results table (keeps the search input focused).
+function _dynPlanRefreshResults() {
+  const el = document.getElementById('capx-results');
+  if (el) el.innerHTML = _dynRenderPlanningTable(); else _dynRenderPlanning();
+}
+
+function _dynPlanSearchInput(v) {
+  _dynPage.planSearch = v;
+  clearTimeout(window._capxSearchT);
+  window._capxSearchT = setTimeout(_dynPlanRefreshResults, 150);
+}
+
+// Group open/close state. planGroupsOpen === null means "default": all open
+// when there are few groups, all collapsed when many.
+function _dynPlanToggleGroup(key) {
+  if (!(_dynPage.planGroupsOpen instanceof Set)) _dynPage.planGroupsOpen = new Set(_dynPlanDefaultOpen());
+  const s = _dynPage.planGroupsOpen;
+  if (s.has(key)) s.delete(key); else s.add(key);
+  _dynPlanRefreshResults();
+}
+
+function _dynPlanGroupsAll(open) {
+  _dynPage.planGroupsOpen = open ? new Set(_dynPlanGroupKeys()) : new Set();
+  _dynPlanRefreshResults();
+}
+
+function _dynPlanGroupKey(r) { return r.test_case_code || r.test_id || '—'; }
+function _dynPlanGroupKeys() { return [...new Set(_dynPlanVisibleRows().map(_dynPlanGroupKey))]; }
+function _dynPlanDefaultOpen() {
+  const keys = _dynPlanGroupKeys();
+  return keys.length <= 5 ? keys : [];
+}
+
+// Select/deselect every eligible run of one test-case group in a single click.
+function _dynPlanGroupSel(key, on) {
+  for (const r of _dynPlanVisibleRows()) {
+    if (_dynPlanGroupKey(r) !== key || !r.prerequisites_met) continue;
+    if (on) _dynPage.planSelected.add(r.instance_id); else _dynPage.planSelected.delete(r.instance_id);
+  }
   _dynRenderPlanning();
 }
 
@@ -42732,60 +42854,114 @@ function _dynPlanFilteredRows() {
   });
 }
 
+// Feasibility rows further narrowed by the free-text search.
+function _dynPlanVisibleRows() {
+  let rows = _dynPlanFilteredRows();
+  const q = String(_dynPage.planSearch || '').trim().toLowerCase();
+  if (q) rows = rows.filter(r => `${r.code || ''} ${r.test_case_code || ''} ${r.title || ''}`.toLowerCase().includes(q));
+  return rows;
+}
+
 function _dynRenderPlanningTable() {
-  const rows = _dynPlanFilteredRows();
+  const rows = _dynPlanVisibleRows();
   if (!rows.length) {
-    return `<div style="padding:40px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:8px;">No ${_dynPage.planSchedFilter==='scheduled'?'scheduled':'unscheduled'} instances in the feasible set.</div>`;
+    return `<div class="capx-empty">No runs match${_dynPage.planSearch ? ' the filter' : ` — no ${_dynPage.planSchedFilter === 'scheduled' ? 'scheduled' : 'unscheduled'} instances in the feasible set`}.</div>`;
   }
+  const instById = new Map((_dynPage.instances || []).map(i => [i.id, i]));
+  const allSel = rows.filter(r => r.prerequisites_met).length > 0 &&
+    rows.filter(r => r.prerequisites_met).every(r => _dynPage.planSelected.has(r.instance_id));
+
+  const rowHtml = (r, flat) => {
+    const checked = _dynPage.planSelected.has(r.instance_id);
+    const block = !r.prerequisites_met;
+    const inst = instById.get(r.instance_id);
+    const schLabel = inst ? _dynScheduledLabel(inst) : '';
+    const schCell = schLabel
+      ? `<span class="capx-sched" title="Scheduled">${escapeHtml(schLabel)}</span>`
+      : `<span class="capx-unsched">Not scheduled</span>`;
+    const prereqCell = block
+      ? `<span class="capx-blocked" title="${escapeHtml((r.unmet_prereqs || []).join(', '))}">${icon('alert')} ${(r.unmet_prereqs || []).length} unmet</span>`
+      : `<span style="color:var(--good);">✓</span>`;
+    return `<tr class="capx-row ${flat ? '' : 'is-child'} ${block ? 'is-blocked' : ''}">
+      <td><input type="checkbox" ${checked ? 'checked' : ''} ${block ? 'disabled' : ''}
+           onchange="_dynPlanToggleSelect('${r.instance_id}',this.checked)" aria-label="Select ${escapeHtml(r.code || r.instance_id)}"></td>
+      <td class="mono">${escapeHtml(r.code || '—')}</td>
+      ${flat ? `<td class="mono">${escapeHtml(r.test_case_code || r.test_id || '—')}</td>
+      <td>${escapeHtml(r.title || '—')}</td>
+      <td>${r.required_mode ? `<span class="capx-mode">${escapeHtml(r.required_mode)}</span>` : '—'}</td>`
+      : `<td class="mono">${escapeHtml((inst && inst.track_section_under_test) || '—')}</td>`}
+      <td class="num">${r.expected_duration_minutes ?? '—'} min</td>
+      <td class="num">${r.trains_needed ?? 1}</td>
+      <td style="white-space:nowrap;">${schCell}</td>
+      <td>${_dynStatusBadge(r.status)}</td>
+      <td>${prereqCell}</td>
+      <td class="num" style="color:var(--text-subtle);">${r.score ?? 0}</td>
+    </tr>`;
+  };
+
+  // ── Flat view (grouping off) ─────────────────────────────────────────────
+  if (!_dynPage.planGrouped) {
+    return `
+      <div class="capx-tblwrap">
+        <table class="capx-tbl">
+          <thead><tr>
+            <th style="width:34px;"><input type="checkbox" ${allSel ? 'checked' : ''} onchange="_dynPlanSelectAll(this.checked)" aria-label="Select all eligible runs"></th>
+            <th>Run</th><th>Test case</th><th>Title</th><th>Mode</th>
+            <th class="num">Duration</th><th class="num">Trains</th>
+            <th>Scheduled</th><th>Status</th><th>Prereqs</th><th class="num">Score</th>
+          </tr></thead>
+          <tbody>${rows.map(r => rowHtml(r, true)).join('')}</tbody>
+        </table>
+      </div>`;
+  }
+
+  // ── Grouped view: one band per test case, runs as children ───────────────
+  const groups = new Map();
+  for (const r of rows) {
+    const key = _dynPlanGroupKey(r);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  if (!(_dynPage.planGroupsOpen instanceof Set)) _dynPage.planGroupsOpen = new Set(_dynPlanDefaultOpen());
+  const open = _dynPage.planGroupsOpen;
+
+  const bands = [...groups.entries()].map(([key, list]) => {
+    const eligible = list.filter(r => r.prerequisites_met);
+    const gSel = eligible.length > 0 && eligible.every(r => _dynPage.planSelected.has(r.instance_id));
+    const totMin = list.reduce((s, r) => s + (r.expected_duration_minutes || 0), 0);
+    const blocked = list.length - eligible.length;
+    const schedN = list.filter(r => { const i = instById.get(r.instance_id); return i && _dynIsScheduled(i); }).length;
+    const isOpen = open.has(key);
+    const modes = [...new Set(list.map(r => r.required_mode).filter(Boolean))];
+    const k = escapeHtml(String(key).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+    return `
+      <tr class="capx-grp ${isOpen ? 'open' : ''}">
+        <td class="capx-grp-chk"><input type="checkbox" ${gSel ? 'checked' : ''} ${eligible.length ? '' : 'disabled'}
+             onclick="event.stopPropagation()" onchange="_dynPlanGroupSel('${k}',this.checked)"
+             aria-label="Select all eligible runs of ${escapeHtml(String(key))}"></td>
+        <td colspan="8" class="capx-grp-cell" onclick="_dynPlanToggleGroup('${k}')">
+          <span class="capx-grp-chev">${icon('chevron-right')}</span>
+          <span class="capx-grp-code">${escapeHtml(String(key))}</span>
+          <span class="capx-grp-title">${escapeHtml(list[0].title || '')}</span>
+          ${modes.map(m => `<span class="capx-mode">${escapeHtml(m)}</span>`).join('')}
+          <span class="capx-grp-meta">${list.length} run${list.length === 1 ? '' : 's'} · ${(totMin / 60).toFixed(1)} h${schedN ? ` · ${schedN} scheduled` : ''}${blocked ? ` · <span class="capx-blocked">${blocked} blocked</span>` : ''}</span>
+        </td>
+      </tr>
+      ${isOpen ? list.map(r => rowHtml(r, false)).join('') : ''}`;
+  }).join('');
+
   return `
-    <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
-      <table class="dyn-table">
-        <thead>
-          <tr>
-            <th style="width:36px;">
-              <input type="checkbox" ${rows.length && rows.every(r => _dynPage.planSelected.has(r.instance_id))?'checked':''}
-                onchange="_dynPlanSelectAll(this.checked)">
-            </th>
-            <th>Code</th>
-            <th>Test Case</th>
-            <th>Title</th>
-            <th>Mode</th>
-            <th style="text-align:right;">Duration</th>
-            <th style="text-align:right;">Trains</th>
-            <th>Scheduled</th>
-            <th>Status</th>
-            <th>Prereqs</th>
-            <th style="text-align:right;">Score</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows.map(r => {
-            const checked = _dynPage.planSelected.has(r.instance_id);
-            const block = !r.prerequisites_met;
-            const inst = _dynPage.instances.find(x => x.id === r.instance_id);
-            const schLabel = inst ? _dynScheduledLabel(inst) : '';
-            const schCell = schLabel
-              ? `<span class="tag" style="background:#ecfdf5;color:#065f46;border-color:#a7f3d0;font-family:var(--font-mono,monospace);" title="Scheduled">${escapeHtml(schLabel)}</span>`
-              : `<span style="color:var(--gray-400);font-size:11px;">Not scheduled</span>`;
-            return `<tr style="${block ? 'background:#fef9c3;' : ''}border-top:1px solid var(--gray-100);">
-              <td><input type="checkbox" ${checked?'checked':''} ${block?'disabled':''}
-                   onchange="_dynPlanToggleSelect('${r.instance_id}',this.checked)"></td>
-              <td style="font-family:monospace;font-size:11.5px;">${escapeHtml(r.code || '—')}</td>
-              <td style="font-size:12px;">${escapeHtml(r.test_case_code || r.test_id || '—')}</td>
-              <td>${escapeHtml(r.title || '—')}</td>
-              <td>${r.required_mode ? `<span class="badge" style="font-size:11px;">${escapeHtml(r.required_mode)}</span>` : '—'}</td>
-              <td style="text-align:right;font-family:monospace;">${r.expected_duration_minutes ?? '—'} min</td>
-              <td style="text-align:right;font-family:monospace;">${r.trains_needed ?? 1}</td>
-              <td style="white-space:nowrap;">${schCell}</td>
-              <td>${_dynStatusBadge(r.status)}</td>
-              <td>${block ? `<span style="color:var(--bad);font-size:11.5px;" title="${escapeHtml((r.unmet_prereqs||[]).join(', '))}">${icon('alert')} ${(r.unmet_prereqs||[]).length} unmet</span>` : '<span style="color:var(--good);font-size:11.5px;">✓</span>'}</td>
-              <td style="text-align:right;font-family:monospace;color:var(--gray-600);">${r.score ?? 0}</td>
-            </tr>`;
-          }).join('')}
-        </tbody>
+    <div class="capx-tblwrap">
+      <table class="capx-tbl">
+        <thead><tr>
+          <th style="width:34px;"><input type="checkbox" ${allSel ? 'checked' : ''} onchange="_dynPlanSelectAll(this.checked)" aria-label="Select all eligible runs"></th>
+          <th>Run</th><th>Section</th>
+          <th class="num">Duration</th><th class="num">Trains</th>
+          <th>Scheduled</th><th>Status</th><th>Prereqs</th><th class="num">Score</th>
+        </tr></thead>
+        <tbody>${bands}</tbody>
       </table>
-    </div>
-  `;
+    </div>`;
 }
 
 function _dynPlanToggleSelect(id, on) {
@@ -42796,7 +42972,7 @@ function _dynPlanToggleSelect(id, on) {
 function _dynPlanSelectAll(on) {
   _dynPage.planSelected.clear();
   if (on) {
-    _dynPlanFilteredRows().filter(r => r.prerequisites_met).forEach(r => _dynPage.planSelected.add(r.instance_id));
+    _dynPlanVisibleRows().filter(r => r.prerequisites_met).forEach(r => _dynPage.planSelected.add(r.instance_id));
   }
   _dynRenderPlanning();
 }
