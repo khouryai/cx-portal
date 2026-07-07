@@ -63,7 +63,193 @@ function _getAuthHeader() {
   return 'Bearer ' + SUPABASE_ANON_KEY;
 }
 
+// ── SESSION FRESHNESS ────────────────────────────────────────────────────────
+// supabase-js GoTrueClient auto-refresh can hang on this stack (see the
+// _getSessionFromStorage note), so every REST helper proactively refreshes the
+// JWT itself via GoTrue's REST endpoint once it is within 2 minutes of expiry.
+// If refresh fails and the token is already dead, a blocking banner tells the
+// user to sign in again instead of letting reads/saves fail silently.
+let _sessRefreshInflight = null;
+
+async function _ensureFreshSession() {
+  const s = _getSessionFromStorage();
+  if (!s?.access_token || !s?.refresh_token) return;
+  const msLeft = (s.expires_at || 0) * 1000 - Date.now();
+  if (msLeft > 120_000) return;
+  if (_sessRefreshInflight) return _sessRefreshInflight;
+  _sessRefreshInflight = (async () => {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 10000);
+      const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: s.refresh_token }),
+      });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const fresh = await res.json();
+      if (!fresh?.access_token) throw new Error('no access_token in refresh response');
+      if (!fresh.expires_at && fresh.expires_in) fresh.expires_at = Math.floor(Date.now() / 1000) + fresh.expires_in;
+      if (!fresh.user) fresh.user = s.user;
+      const ref = SUPABASE_URL.replace('https://', '').split('.')[0];
+      localStorage.setItem(`sb-${ref}-auth-token`, JSON.stringify(fresh));
+      console.log('[auth] token refreshed via direct GoTrue REST');
+      _hideSessionExpiredBanner();
+    } catch (e) {
+      console.warn('[auth] token refresh failed:', e.message);
+      const cur = _getSessionFromStorage();
+      if (!cur || Date.now() > (cur.expires_at || 0) * 1000) _showSessionExpiredBanner();
+    } finally {
+      _sessRefreshInflight = null;
+    }
+  })();
+  return _sessRefreshInflight;
+}
+
+function _showSessionExpiredBanner() {
+  if (!currentRoleUser) return; // not signed in — the login overlay is the UI
+  if (document.getElementById('cx-session-expired-banner')) return;
+  const bar = document.createElement('div');
+  bar.id = 'cx-session-expired-banner';
+  bar.className = 'cx-session-banner';
+  bar.setAttribute('role', 'alert');
+  bar.innerHTML = '<div class="icon" aria-hidden="true">' + icon('alert') + '</div>' +
+    '<div>Your session has expired — changes can no longer be saved. Sign in again to continue.</div>' +
+    '<button type="button" onclick="signOut()">Sign in again</button>';
+  document.body.appendChild(bar);
+}
+
+function _hideSessionExpiredBanner() {
+  document.getElementById('cx-session-expired-banner')?.remove();
+}
+
+// ── LOAD-FAILURE SURFACING ───────────────────────────────────────────────────
+// Every REST read funnels through _restGetAll; failures are aggregated here
+// and surfaced as one visible toast instead of dying in the console.
+const _loadErrNames = new Set();
+let _loadErrTimer = null;
+
+function _noteLoadError(name, err) {
+  console.warn(`[load] ${name} failed:`, err?.message || err);
+  if (!currentRoleUser) return; // pre-sign-in loads legitimately return nothing
+  _loadErrNames.add(name);
+  clearTimeout(_loadErrTimer);
+  _loadErrTimer = setTimeout(() => {
+    const names = [..._loadErrNames].slice(0, 6).join(', ');
+    _loadErrNames.clear();
+    toast(`Failed to load: ${names}. Check your connection, then reload the page.`, 'error');
+  }, 1000);
+}
+
+// ── PAGINATED REST GET ───────────────────────────────────────────────────────
+// PostgREST caps every response at the project's max-rows setting (default
+// 1000) and truncates SILENTLY — test_items is already past that. All read
+// helpers page through limit/offset until a short page comes back. Queries
+// that pass their own limit= are returned as a single page.
+const _PG_PAGE = 1000;
+
+async function _restGetAll(pathWithQuery, label) {
+  await _ensureFreshSession();
+  let authHeader;
+  try { authHeader = _getAuthHeader(); } catch { authHeader = 'Bearer ' + SUPABASE_ANON_KEY; }
+  const hasOwnLimit = /(^|[&?])limit=/.test(pathWithQuery);
+  const sep = pathWithQuery.includes('?') ? '&' : '?';
+  const out = [];
+  const t0 = Date.now();
+  for (let offset = 0; offset <= 200000; offset += _PG_PAGE) {
+    const url = `${SUPABASE_URL}/rest/v1/${pathWithQuery}` +
+      (hasOwnLimit ? '' : `${sep}limit=${_PG_PAGE}&offset=${offset}`);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    let res;
+    try {
+      res = await fetch(url, {
+        signal: ctrl.signal,
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: authHeader, Accept: 'application/json' },
+      });
+      clearTimeout(timer);
+    } catch (e) {
+      clearTimeout(timer);
+      const err = e.name === 'AbortError' ? new Error(`${label} request timed out after 15s`) : e;
+      _noteLoadError(label, err);
+      throw err;
+    }
+    if (!res.ok) {
+      const errBody = await res.text();
+      const err = new Error(`${label} select failed (${res.status}): ${errBody}`);
+      if (res.status === 401) _showSessionExpiredBanner(); else _noteLoadError(label, err);
+      throw err;
+    }
+    const rows = await res.json();
+    if (!Array.isArray(rows)) return rows; // single-object response passes through
+    out.push(...rows);
+    if (hasOwnLimit || rows.length < _PG_PAGE) break;
+  }
+  console.log(`[_restGetAll] ✓ ${label} — ${out.length} row(s) in ${Date.now() - t0}ms`);
+  return out;
+}
+
+// ── CLIENT ERROR TELEMETRY ───────────────────────────────────────────────────
+// Uncaught JS errors and unhandled promise rejections are recorded to the
+// client_errors table (authenticated insert-only; reads gated on the audit
+// module) so field failures are visible without a console. Deduped by message
+// and capped per session so a render loop can't flood the table.
+const _errReportedKeys = new Set();
+let _errReportCount = 0;
+let _lastRejectionToastAt = 0;
+
+function _reportClientError(kind, message, stack) {
+  try {
+    if (_errReportCount >= 25) return; // per-session cap
+    const key = kind + '|' + String(message).slice(0, 200);
+    if (_errReportedKeys.has(key)) return;
+    _errReportedKeys.add(key);
+    _errReportCount++;
+    const session = _getSessionFromStorage();
+    if (!session?.access_token) return; // insert policy requires a signed-in user
+    const row = {
+      kind,
+      message:    String(message || 'unknown').slice(0, 2000),
+      stack:      String(stack || '').slice(0, 6000),
+      url:        String(location.href).slice(0, 500),
+      user_agent: String(navigator.userAgent).slice(0, 300),
+      email:      session.user?.email || null,
+    };
+    fetch(`${SUPABASE_URL}/rest/v1/client_errors`, {
+      method: 'POST',
+      keepalive: true,
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: 'Bearer ' + session.access_token,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify([row]),
+    }).catch(() => {});
+  } catch { /* the error reporter must never throw */ }
+}
+
+window.addEventListener('error', (e) => {
+  _reportClientError('js-error', e.message, e.error?.stack || `${e.filename}:${e.lineno}`);
+});
+
+window.addEventListener('unhandledrejection', (e) => {
+  const r = e.reason;
+  const msg = r?.message || String(r || 'unknown');
+  _reportClientError('unhandled-rejection', msg, r?.stack);
+  // Surface uncaught async failures (usually a save no caller handled).
+  // Read failures are excluded — _restGetAll already toasted those.
+  if (currentRoleUser && Date.now() - _lastRejectionToastAt > 5000 &&
+      !/select failed|request timed out/.test(msg)) {
+    _lastRejectionToastAt = Date.now();
+    toast('Something went wrong: ' + msg.slice(0, 140), 'error');
+  }
+});
+
 async function _dbInsert(table, rows) {
+  await _ensureFreshSession();
   const authHeader = _getAuthHeader();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
@@ -82,6 +268,7 @@ async function _dbInsert(table, rows) {
     clearTimeout(timer);
     if (!res.ok) {
       const errBody = await res.text();
+      if (res.status === 401) _showSessionExpiredBanner();
       throw new Error(`${table} insert failed (${res.status}): ${errBody}`);
     }
     return await res.json();
@@ -95,6 +282,7 @@ async function _dbInsert(table, rows) {
 // PATCH a single row; `match` is an object of { col: value } equality filters.
 // Returns the array of updated rows (Prefer: return=representation).
 async function _dbUpdate(table, patch, match) {
+  await _ensureFreshSession();
   const authHeader = _getAuthHeader();
   const qs = Object.entries(match)
     .map(([k, v]) => `${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`)
@@ -121,6 +309,7 @@ async function _dbUpdate(table, patch, match) {
     if (!res.ok) {
       const errBody = await res.text();
       console.error(`[_dbUpdate] ✗ HTTP ${res.status} after ${ms}ms:`, errBody);
+      if (res.status === 401) _showSessionExpiredBanner();
       throw new Error(`${table} update failed (${res.status}): ${errBody}`);
     }
     const rows = await res.json();
@@ -134,6 +323,7 @@ async function _dbUpdate(table, patch, match) {
 }
 
 async function _dbDelete(table, match) {
+  await _ensureFreshSession();
   const authHeader = _getAuthHeader();
   const qs = Object.entries(match)
     .map(([k, v]) => `${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`)
@@ -151,7 +341,10 @@ async function _dbDelete(table, match) {
       },
     });
     clearTimeout(timer);
-    if (!res.ok) throw new Error(`${table} delete failed (${res.status}): ${await res.text()}`);
+    if (!res.ok) {
+      if (res.status === 401) _showSessionExpiredBanner();
+      throw new Error(`${table} delete failed (${res.status}): ${await res.text()}`);
+    }
     return await res.json();
   } catch (e) {
     clearTimeout(timer);
@@ -160,44 +353,13 @@ async function _dbDelete(table, match) {
   }
 }
 // SELECT rows from a table; `match` is an object of { col: value } equality filters.
-// Returns the array of matching rows. Uses native fetch with 15s timeout to bypass
-// supabase-js client state issues (same reason as _dbInsert / _dbUpdate).
+// Returns the array of matching rows. Delegates to _restGetAll, which handles
+// token refresh, 15s timeouts, pagination past the max-rows cap, and surfacing.
 async function _dbSelect(table, match = {}, select = '*') {
-  const authHeader = _getAuthHeader();
   const qs = Object.entries(match)
     .map(([k, v]) => `${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`)
     .join('&');
-  const url = `${SUPABASE_URL}/rest/v1/${table}?${qs ? qs + '&' : ''}select=${encodeURIComponent(select)}`;
-  console.log(`[_dbSelect] GET ${table} WHERE ${JSON.stringify(match)}`);
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15000);
-  const t0 = Date.now();
-  try {
-    const res = await fetch(url, {
-      method: 'GET',
-      signal: ctrl.signal,
-      headers: {
-        apikey:        SUPABASE_ANON_KEY,
-        Authorization: authHeader,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-    });
-    clearTimeout(timer);
-    const ms = Date.now() - t0;
-    if (!res.ok) {
-      const errBody = await res.text();
-      console.error(`[_dbSelect] ✗ HTTP ${res.status} after ${ms}ms:`, errBody);
-      throw new Error(`${table} select failed (${res.status}): ${errBody}`);
-    }
-    const rows = await res.json();
-    console.log(`[_dbSelect] ✓ HTTP 200 in ${ms}ms — ${rows.length} row(s)`);
-    return rows;
-  } catch (e) {
-    clearTimeout(timer);
-    if (e.name === 'AbortError') throw new Error(`${table} select timed out after 15s`);
-    throw e;
-  }
+  return _restGetAll(`${table}?${qs ? qs + '&' : ''}select=${encodeURIComponent(select)}`, table);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2155,7 +2317,8 @@ function _initProductionVisualLayer() {
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
   _initProductionVisualLayer();
-  await Promise.all([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs(), loadTasks(), loadForms(), loadDrawingsData(), (typeof loadTeamMembers==='function'?loadTeamMembers():Promise.resolve())]);
+  // allSettled: one failed loader must not abort the rest of the bootstrap.
+  await Promise.allSettled([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs(), loadTasks(), loadForms(), loadDrawingsData(), (typeof loadTeamMembers==='function'?loadTeamMembers():Promise.resolve())]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -2177,44 +2340,13 @@ let TI = DATA.testItems || []; // populated from Supabase on init; falls back to
 //   • No session yet (first load before sign-in) → falls back to anon key,
 //     which will be blocked by RLS and silently return empty data.
 //     Data is re-loaded after sign-in inside onLoggedIn().
-// Uses a 15s AbortController timeout so it can never hang the DOMContentLoaded bootstrap.
+// Delegates to _restGetAll (token refresh, 15s timeout per page, pagination).
 async function _fetchAnon(path) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15000);
-  // _getAuthHeader() reads the JWT from localStorage; falls back to anon key if no session.
-  let authHeader;
-  try { authHeader = _getAuthHeader(); } catch { authHeader = 'Bearer ' + SUPABASE_ANON_KEY; }
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-      signal: ctrl.signal,
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: authHeader, Accept: 'application/json' },
-    });
-    clearTimeout(timer);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } catch(e) {
-    clearTimeout(timer);
-    if (e.name === 'AbortError') throw new Error('request timed out after 15s');
-    throw e;
-  }
+  return _restGetAll(path, path.split('?')[0]);
 }
 
 async function _fetchCurrentAuth(path) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15000);
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-      signal: ctrl.signal,
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), Accept: 'application/json' },
-    });
-    clearTimeout(timer);
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-    return await res.json();
-  } catch(e) {
-    clearTimeout(timer);
-    if (e.name === 'AbortError') throw new Error('request timed out after 15s');
-    throw e;
-  }
+  return _restGetAll(path, path.split('?')[0]);
 }
 
 async function loadTemplates() {
@@ -3333,7 +3465,9 @@ function onLoggedIn() {
 
   // Re-load all data tables now that we have an authenticated token.
   // RLS blocks unauthenticated startup loads, so this is the real data fetch.
-  Promise.all([
+  // allSettled: a single failed loader (surfaced via _noteLoadError) must not
+  // prevent the view re-inits below from running.
+  Promise.allSettled([
     loadTestItems(),
     loadTemplates(),
     loadLocations(),
@@ -6374,22 +6508,7 @@ function _markSubmitted(testIds) {
 // Raw PostgREST GET with an arbitrary query string — the equality-only
 // _dbSelect can't express the changed_at date range we need here.
 async function _dbQuery(table, query) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15000);
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, {
-      method: 'GET',
-      signal: ctrl.signal,
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), Accept: 'application/json' },
-    });
-    clearTimeout(timer);
-    if (!res.ok) throw new Error(`${table} query failed (${res.status}): ${await res.text()}`);
-    return await res.json();
-  } catch (e) {
-    clearTimeout(timer);
-    if (e.name === 'AbortError') throw new Error(`${table} query timed out after 15s`);
-    throw e;
-  }
+  return _restGetAll(`${table}?${query}`, table);
 }
 
 // Pull today's status-history rows for the issuer's subsystem and collapse them
@@ -9677,7 +9796,9 @@ async function loadDbAuditEvents() {
     console.warn('[audit] status history load skipped:', err.message);
   }
   try {
-    const rows = await _dbSelect('db_change_log', {}, '*');
+    // db_change_log grows on every trigger fire (18k+ rows already) — read only
+    // the most recent slice instead of the whole table.
+    const rows = await _dbQuery('db_change_log', 'select=*&order=changed_at.desc&limit=5000');
     events.push(...(rows || []).map(_auditNormalizeDbChange));
   } catch (err) {
     console.warn('[audit] db change log load skipped:', err.message);

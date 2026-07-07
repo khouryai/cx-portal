@@ -14453,3 +14453,31 @@ tr.docs-drop-hot td { background: #eef2ff !important; box-shadow: inset 0 0 0 2p
 .simx-gantt:has(.simx-gtracks) .simx-gruler { right: 0; }
 .simx-grow .simx-gtrack:not(.thin) { margin-right: 0; }
 .simx-grow:not(:has(.simx-gtracks)) .simx-gtrack { flex: 1; }
+
+/* ── Session-expired banner (production hardening) ── */
+.cx-session-banner {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--bad);
+  color: var(--white);
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.cx-session-banner .icon svg { width: 18px; height: 18px; display: block; }
+.cx-session-banner button {
+  border: 1px solid var(--white);
+  background: transparent;
+  color: var(--white);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cx-session-banner button:hover { background: rgba(255, 255, 255, 0.15); }
