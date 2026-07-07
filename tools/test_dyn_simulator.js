@@ -185,5 +185,26 @@ run(`_dynSimSetOv(0,'sat','');`);
 assert(run(`_dynSimActive().weekOverrides[0]`) === undefined, "clearing (×) removes the override → reverts to template, not 0");
 run(`_dynRenderSimulator = globalThis.__rs;`); // restore
 
+// ── section-under-test is a REFERENCE label, not a location ──────────────────
+// A run whose under-test is a grouping label (e.g. "Phase 2", a campaign) must
+// NOT surface that label as a simulation location; it scopes in via its ACCESS
+// zones. (Owner rule: only track_section_access_req maps to physical access.)
+const refPool = [
+  ...Array.from({ length: 6 }, (_, k) => ({ id: "r" + k, test_id: "rt" + k, code: "R-" + k, track_section_under_test: "Phase 2", track_section_access_req: ["W40"], target_phase: "Phase 2", status: "Not Started", expected_duration_minutes: 30 })),
+  ...Array.from({ length: 4 }, (_, k) => ({ id: "q" + k, test_id: "qt" + k, code: "Q-" + k, track_section_under_test: "Phase 2", track_section_access_req: ["Y10"], target_phase: "Phase 2", status: "Not Started", expected_duration_minutes: 30 })),
+];
+run(`_dynPage.instances = ${JSON.stringify(refPool)};`);
+const refZones = run(`_dynSimPhaseZones("Phase 2")`);
+assert(JSON.stringify(refZones) === JSON.stringify(["W40", "Y10"]),
+  `location list is access zones only, not the "Phase 2" reference (got ${JSON.stringify(refZones)})`);
+const refSc = { id: "rsc", name: "Ref", phase: "Phase 2", startDate: "2026-06-15", weekly: { 0: 4, 3: 2, 4: 2, 5: 2, 6: 3 }, maxZonesPerShift: 2, zones: ["W40", "Y10"], adjacency: [["W40", "Y10"]], weekOverrides: {}, scope: { subsystem: "", onlyUnscheduled: false } };
+const rref = run(`(function(){ const r=_dynSimRun(${JSON.stringify(refSc)}, []); return { total:r.total, placed:r.placed, outOfScope:r.outOfScope }; })()`);
+assert(rref.total === 10 && rref.placed === 10 && rref.outOfScope === 0,
+  `Phase-2-reference runs scope in via access zones (got ${JSON.stringify(rref)})`);
+const rref2 = run(`(function(){ const r=_dynSimRun(${JSON.stringify(Object.assign({}, refSc, { zones: ["W40"] }))}, []); return { total:r.total, placed:r.placed, outOfScope:r.outOfScope }; })()`);
+assert(rref2.total === 6 && rref2.outOfScope === 4,
+  `selecting only W40 scopes the 6 W40-access runs, reports 4 Y10-access out-of-scope (got ${JSON.stringify(rref2)})`);
+run(`_dynPage.instances = ${JSON.stringify(pool)};`); // restore
+
 console.log(`test_dyn_simulator: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -43535,7 +43535,8 @@ function _dynSimPhaseZones(phase) {
   const z = new Set();
   (_dynPage.instances || []).forEach(i => {
     if ((i.target_phase || '') !== phase) return;
-    if (i.track_section_under_test) z.add(i.track_section_under_test);
+    // Locations are ACCESS zones only. The section-under-test is a reference /
+    // grouping label (e.g. "Phase 2", or a W40 campaign) — never a physical location.
     (i.track_section_access_req || []).forEach(x => x && z.add(x));
   });
   return [...z].sort();
@@ -43569,6 +43570,17 @@ function _dynSimScenarios() {
     if (!Array.isArray(arr)) return [];
     const fallback = _dynSimPhases()[0];
     arr.forEach(s => { if (!s.phase) s.phase = fallback; });   // migrate pre-phase scenarios
+    // Locations are ACCESS zones only; strip any section-under-test reference
+    // (e.g. "Phase 2") an older scenario may have captured as a location. In-memory
+    // like the phase migration — it persists next time the scenario is edited.
+    const _accessUniverse = new Set();
+    (_dynPage.instances || []).forEach(i => (i.track_section_access_req || []).forEach(z => z && _accessUniverse.add(z)));
+    if (typeof _dynWhatIfZonesAll === 'function') _dynWhatIfZonesAll().forEach(z => z && _accessUniverse.add(z));
+    if (_accessUniverse.size) arr.forEach(s => {
+      if (!Array.isArray(s.zones)) return;
+      const cleaned = s.zones.filter(z => _accessUniverse.has(z));
+      if (cleaned.length) s.zones = cleaned;
+    });
     return arr;
   } catch (_) { return []; }
 }
@@ -43606,7 +43618,7 @@ function _dynSimScopePool(sc) {
   const zset = new Set(sc.zones || []);
   const base = _dynSimScopeAll(sc).filter(i =>
     !['Pass', 'Not Applicable'].includes(i.status)
-    && zset.has(i.track_section_under_test)
+    && (i.track_section_access_req || []).every(z => zset.has(z))
     && (!sc.scope.onlyUnscheduled || !i.shift_id));
   // Equivalence groups are substitutes — only ONE needs to run, so keep a single
   // representative per group (shortest first) rather than scheduling all of them.
@@ -43868,7 +43880,7 @@ function _dynSimEverPlaceable(sc, pool, prereqs) {
   const fits = i => {
     const req = (i.track_section_access_req || []).filter(Boolean);   // access = access_req only
     const within = cands => cands.some(c => { const s = new Set(c); return req.every(z => s.has(z)); });
-    return zset.has(i.track_section_under_test) && (within(chains) || within(closure));
+    return within(chains) || within(closure);
   };
   const preByTest = new Map();
   for (const p of (prereqs || [])) {
@@ -44066,7 +44078,7 @@ function _dynSimRun(sc, prereqs) {
   }
   const zset = new Set(sc.zones || []);
   const outOfScope = _dynSimScopeAll(sc).filter(i =>
-    !['Pass', 'Not Applicable'].includes(i.status) && i.track_section_under_test && !zset.has(i.track_section_under_test)).length;
+    !['Pass', 'Not Applicable'].includes(i.status) && (i.track_section_access_req || []).some(z => !zset.has(z))).length;
   const total = pool0.length;
   const placed = assignments.length;
   const completion = assignments.length ? assignments[assignments.length - 1].date : null;
