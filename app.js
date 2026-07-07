@@ -44133,7 +44133,68 @@ function _dynSimDayHours(sc, ov, dow, wk, extendedWeeks) {
   return h;
 }
 
-// ── Simulator tab UI (phase-grouped) ─────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// SCHEDULE SIMULATOR — UI v2 (visual rebuild, engine untouched)
+// ----------------------------------------------------------------------------
+// Drop-in replacements for the Simulator tab's RENDER layer only. Every
+// function here keeps its ORIGINAL name and signature, so all existing
+// inline handlers (_dynSimField, _dynSimSet, _dynSimSetOv, _dynSimToggleZone,
+// _dynSimSetMix, _dynSimAutoFillMix, _dynSimSetClosure, _dynSimScopeField,
+// _dynSimReg*, _dynSimCancel*, scenario CRUD, _dynOpenAdjacency, series
+// toggles) and the simulation engine (_dynSimRun, _dynSimRunRegression,
+// _dynSimScopePool, _dynSimChains, _dynSimMix, _dynNorm100, …) keep working
+// with ZERO changes.
+//
+// REPLACES (delete the old definitions of these from app.js):
+//   _dynRenderSimulator, _dynSimRecalBannerHtml, _dynSimRegConfigHtml,
+//   _dynSimConfigHtml, _dynSimTargetHtml, _dynSimMixHtml, _dynSimUnplacedHtml,
+//   _dynSimResultsHtml, _dynSimRegressionHtml, _dynSimKpiCompareHtml,
+//   _dynSimKpiRegRows, _dynSimGanttHtml, _dynSimShiftsHtml, _dynSimDrawChart,
+//   _dynSimChartControlsHtml
+//
+// ADDS (new — UI state + layout helpers, all prefixed _dynSimUi/_dynSimV):
+//   _dynSimUi, _dynSimUiToggleSec, _dynSimUiTogglePanel, _dynSimVerdictHtml,
+//   _dynSimVDeltaCardsHtml, _dynSimSecHtml, _dynSimHexA, _dynSimMonthTicks
+//
+// Layout: verdict hero (the answer first: completion date + target status),
+// then a two-column grid — accordion config (each section header carries a
+// live one-line summary, so collapsed still reads) and the results stack
+// (alerts → S-curve → regression program → location timeline → shift log,
+// the last collapsed by default). Comparison mode replaces the dense
+// 12-row table with three delta cards; the full table is one click away
+// and keeps every metric, including the regression rows.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── UI state (which config sections / result panels are open) ───────────────
+function _dynSimUi() {
+  if (!_dynPage._simUi) {
+    let open = null;
+    try { open = JSON.parse(localStorage.getItem('dynSimUiOpen') || 'null'); } catch (_) {}
+    _dynPage._simUi = {
+      open: new Set(Array.isArray(open) && open.length ? open : ['schedule', 'access']),
+      panels: new Set(),                      // transient: 'compare' | 'unplaced' | 'shifts'
+    };
+  }
+  return _dynPage._simUi;
+}
+function _dynSimUiToggleSec(k) {
+  const u = _dynSimUi();
+  if (u.open.has(k)) u.open.delete(k); else u.open.add(k);
+  try { localStorage.setItem('dynSimUiOpen', JSON.stringify([...u.open])); } catch (_) {}
+  _dynRenderSimulator();
+}
+function _dynSimUiTogglePanel(k) {
+  const u = _dynSimUi();
+  if (u.panels.has(k)) u.panels.delete(k); else u.panels.add(k);
+  _dynRenderSimulator();
+}
+function _dynSimHexA(hex, a) {
+  const h = hex.replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+// ── Main render ──────────────────────────────────────────────────────────────
 async function _dynRenderSimulator() {
   const cont = document.getElementById('dyn-content');
   if (!cont) return;
@@ -44170,107 +44231,170 @@ async function _dynRenderSimulator() {
 
   const phaseTabs = phases.map(p =>
     `<button class="hero-tab ${p === _dynPage.simPhase ? 'active' : ''}" style="font-size:12px;padding:6px 14px;" onclick="_dynSimSetPhase('${escapeHtml(p)}')">${escapeHtml(p)}</button>`).join('');
-  const chips = _dynSimScenarios().filter(s => (s.phase || '') === _dynPage.simPhase).map(s => `
-    <button class="dyn-btn ${sc && s.id === sc.id ? 'primary' : ''}" style="font-size:12px;" onclick="_dynSimSelect('${s.id}')">${s.baseline ? '★ ' : ''}${escapeHtml(s.name)}</button>`).join('');
 
-  const cc = _dynSimCancelCfg();
+  // Scenario rail: chips + compact icon actions + primary actions.
+  const chips = _dynSimScenarios().filter(s => (s.phase || '') === _dynPage.simPhase).map(s => `
+    <button class="simx-chip ${sc && s.id === sc.id ? 'active' : ''}" onclick="_dynSimSelect('${s.id}')" title="${s.baseline ? 'Baseline scenario' : 'Scenario'}">
+      ${s.baseline ? icon('star') : ''}<span>${escapeHtml(s.name)}</span>
+    </button>`).join('');
+
   cont.innerHTML = `
-    <div style="display:flex;gap:6px;align-items:center;margin-top:16px;flex-wrap:wrap;">
-      <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-right:4px;">Phase</span>
-      ${phaseTabs}
-      <span style="width:1px;height:22px;background:var(--gray-200);margin:0 6px;"></span>
-      <span class="dyn-kpi" style="margin:0;padding:5px 12px;"><span>Actual ${escapeHtml(_dynPage.simPhase)}</span><b>${actual.donePct}% <span style="font-size:11px;font-weight:500;color:var(--gray-500);">(${actual.done}/${actual.total})</span></b></span>
-      <span style="flex:1;"></span>
-      <label title="Assume a share of planned track access gets cancelled — pads every scenario AND regression campaign's completion/duration by this %. The shift-by-shift plan is unchanged." style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-700);font-weight:600;cursor:pointer;white-space:nowrap;">
-        <input type="checkbox" ${cc.enabled ? 'checked' : ''} onchange="_dynSimCancelToggle(this.checked)"> Access cancellation
-      </label>
-      <span style="display:inline-flex;align-items:center;gap:3px;font-size:12px;color:${cc.enabled ? 'var(--gray-700)' : 'var(--gray-400)'};white-space:nowrap;">
-        <input type="number" min="0" max="100" value="${cc.pct}" ${cc.enabled ? '' : 'disabled'} style="width:48px;padding:4px;border:1px solid var(--gray-300);border-radius:4px;text-align:center;font-size:11.5px;" onchange="_dynSimCancelSetPct(this.value)">% extension
-      </span>
-    </div>
-    <div class="dyn-toolbar" style="margin-top:10px;">
-      ${chips}
-      <button class="dyn-btn" onclick="_dynSimNew()">+ New scenario</button>
-      <button class="dyn-btn" onclick="_dynSimDuplicate()">Duplicate</button>
-      <button class="dyn-btn" onclick="_dynSimRename()">Rename</button>
-      <button class="dyn-btn" style="color:#dc2626;" onclick="_dynSimDelete()">Delete</button>
-      <span style="flex:1;"></span>
-      <button class="dyn-btn ${sc && sc.baseline ? '' : 'primary'}" onclick="_dynSimSetBaseline()">${sc && sc.baseline ? '★ Baseline' : 'Set as baseline'}</button>
-      <button class="dyn-btn" onclick="_dynSimMapToCampaign()" title="Draft a REAL access campaign prefilled from this scenario">Map to execution</button>
-      <button class="dyn-btn" onclick="_dynSimRecalibrate()" title="Re-project the remaining work from today using actual progress">Recalibrate</button>
-    </div>
-    ${sc ? _dynSimRecalBannerHtml(sc, res) : ''}
-    ${sc ? `<div style="display:grid;grid-template-columns:minmax(0,400px) 1fr;gap:16px;align-items:start;">
-      <div class="data-card" style="padding:14px 16px;">${_dynSimConfigHtml(sc, res)}</div>
-      <div>${_dynSimResultsHtml(sc, res, baseRes, baseline, regRes, baseRegRes)}</div>
-    </div>` : '<div style="padding:30px;text-align:center;color:var(--gray-400);">No scenario for this phase.</div>'}`;
+    <div class="simx">
+      <div class="simx-topbar">
+        <span class="simx-lbl">Phase</span>
+        ${phaseTabs}
+        <span class="simx-vr"></span>
+        <span class="simx-actual" title="Live progress of ${escapeHtml(_dynPage.simPhase)} — the black dashed line on the S-curve">
+          Actual <b>${actual.donePct}%</b> <span>${actual.done}/${actual.total}</span>
+        </span>
+      </div>
+      <div class="simx-rail">
+        ${chips}
+        <button class="simx-iconbtn" aria-label="New scenario" title="New scenario" onclick="_dynSimNew()">${icon('plus')}</button>
+        <button class="simx-iconbtn" aria-label="Duplicate scenario" title="Duplicate" onclick="_dynSimDuplicate()">${icon('clipboard')}</button>
+        <button class="simx-iconbtn" aria-label="Rename scenario" title="Rename" onclick="_dynSimRename()">${icon('edit')}</button>
+        <button class="simx-iconbtn danger" aria-label="Delete scenario" title="Delete" onclick="_dynSimDelete()">${icon('trash')}</button>
+        <span style="flex:1;"></span>
+        <button class="dyn-btn ${sc && sc.baseline ? '' : 'primary'}" onclick="_dynSimSetBaseline()">${sc && sc.baseline ? icon('star') + ' Baseline' : 'Set as baseline'}</button>
+        <button class="dyn-btn" onclick="_dynSimMapToCampaign()" title="Draft a REAL access campaign prefilled from this scenario">${icon('external')} Map to execution</button>
+        <button class="dyn-btn" onclick="_dynSimRecalibrate()" title="Re-project the remaining work from today using actual progress">${icon('refresh')} Recalibrate</button>
+      </div>
+      ${sc ? _dynSimRecalBannerHtml(sc, res) : ''}
+      ${sc ? _dynSimVerdictHtml(sc, res, regRes, baseRes, baseline) : ''}
+      ${sc ? `<div class="simx-grid">
+        <div>${_dynSimConfigHtml(sc, res)}</div>
+        <div>${_dynSimResultsHtml(sc, res, baseRes, baseline, regRes, baseRegRes)}</div>
+      </div>` : (typeof cxEmpty === 'function'
+        ? cxEmpty({ title: 'No scenario for this phase', body: 'Create one to start planning.' })
+        : '<div style="padding:30px;text-align:center;color:var(--text-subtle);">No scenario for this phase.</div>')}
+    </div>`;
   setTimeout(() => _dynSimDrawChart(), 0);
 }
 
+// ── Recalibration banner ─────────────────────────────────────────────────────
 function _dynSimRecalBannerHtml(sc, res) {
   const last = (sc.recals || [])[sc.recals.length - 1];
   if (!last) return '';
   const snap = sc.snapshot;
-  return `<div style="margin:4px 0 12px;padding:9px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:12.5px;color:#1e3a8a;">
-    Recalibrated ${_dynFmtDate(last.date)}: <b>${last.donePct}% complete</b>${snap ? ` (was ${snap.donePct ?? 0}% at baseline ${_dynFmtDate(snap.date)})` : ''}
-    · remaining work projects to <b>${last.completion ? _dynFmtDate(last.completion) : '—'}</b>${sc.baselineCompletion ? ` vs baseline ${_dynFmtDate(sc.baselineCompletion)}` : ''}.
+  return `<div class="simx-alert is-info" style="margin:4px 0 12px;">
+    ${icon('refresh')}<div>Recalibrated ${_dynFmtDate(last.date)}: <b>${last.donePct}% complete</b>${snap ? ` (was ${snap.donePct ?? 0}% at baseline ${_dynFmtDate(snap.date)})` : ''}
+    · remaining work projects to <b>${last.completion ? _dynFmtDate(last.completion) : '—'}</b>${sc.baselineCompletion ? ` vs baseline ${_dynFmtDate(sc.baselineCompletion)}` : ''}.</div>
   </div>`;
 }
 
-// Regression projection inputs (Option C). Subsystems are auto-generated from the
-// scenario's available work; the per-subsystem failure weights are auto-balanced
-// to total EXACTLY 100% (editing one rebalances the rest), matching the access
-// mix. Hidden body until enabled to keep the panel compact.
-function _dynSimRegConfigHtml(sc) {
-  const cfg = _dynRegConfig(sc);
-  const inp = 'padding:4px;border:1px solid var(--gray-300);border-radius:4px;text-align:center;font-size:11.5px;';
-  const head = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:${cfg.enabled ? 8 : 0}px;">
-      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-700);font-weight:600;cursor:pointer;">
-        <input type="checkbox" ${cfg.enabled ? 'checked' : ''} onchange="_dynSimRegToggle(this.checked)"> Regression projection
-      </label>
-      
-    </div>`;
-  if (!cfg.enabled) {
-    return `<div style="margin-bottom:10px;padding:8px 10px;border:1px solid var(--gray-200);border-radius:6px;background:var(--gray-50);">${head}</div>`;
+// ── Verdict hero — the answer first ──────────────────────────────────────────
+// Headline: completion date (padded if cancellation buffer is on). Chips carry
+// target status, cancellation buffer, regression program end, and — when a
+// different baseline exists — the sooner/later delta against it.
+function _dynSimVerdictHtml(sc, res, regRes, baseRes, baseline) {
+  const cc = _dynSimCancelCfg();
+  const chips = [];
+  if (res.target) {
+    chips.push(res.target.onTrack
+      ? `<span class="simx-chipstat is-good">${icon('check')} On track — target ${escapeHtml(_dynFmtDate(res.target.date))}</span>`
+      : `<span class="simx-chipstat is-bad">${icon('alert')} ${res.target.daysLate == null ? 'Does not finish in horizon' : `Misses target by ${res.target.daysLate} day${res.target.daysLate === 1 ? '' : 's'}`}</span>`);
   }
-  const weightRows = cfg.subsystems.length
-    ? cfg.subsystems.map(s => `<label style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11.5px;color:var(--gray-600);">
-        <span style="font-family:monospace;">${escapeHtml(s)}</span>
-        <span><input type="number" min="0" max="100" value="${cfg.weights[s] || 0}" style="${inp}width:46px;" onchange="_dynSimRegSetWeight('${escapeHtml(s)}',this.value)">%</span>
-      </label>`).join('')
-    : '<div style="font-size:11px;color:var(--gray-400);">No subsystems found in this scenario\'s work.</div>';
-  return `<div style="margin-bottom:10px;padding:8px 10px;border:1px solid #bfdbfe;border-radius:6px;background:#eff6ff;">
-    ${head}
-    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:8px;font-size:12px;color:var(--gray-600);">
-      <label title="Share of each campaign's work that fails verification and re-runs in the next campaign (compounding).">Failure rate
-        <input type="number" min="0" max="100" value="${cfg.failureRate}" style="${inp}width:48px;margin-left:4px;" onchange="_dynSimRegField('failureRate',this.value)">%</label>
-      <label title="Development gap (months) before each regression campaign — time waiting on the next software release. One value per campaign, comma-separated.">Dev gaps (mo)
-        <input type="text" value="${escapeHtml(cfg.gaps.join(', '))}" placeholder="e.g. 2, 3, 3" style="${inp}width:90px;margin-left:4px;font-family:monospace;text-align:left;padding-left:6px;" onchange="_dynSimRegSetGaps(this.value)"></label>
-      <span style="color:var(--gray-400);font-size:11px;">${cfg.gaps.length} regression campaign${cfg.gaps.length === 1 ? '' : 's'}</span>
+  if (cc.enabled) chips.push(`<span class="simx-chipstat is-warn" title="Completion padded by the global access-cancellation assumption">${icon('cloud-rain')} +${cc.pct}% cancellation buffer</span>`);
+  if (regRes && regRes.programEnd) chips.push(`<span class="simx-chipstat is-info" title="Baseline + dev gaps + regression campaigns">${icon('layers')} Program end ${escapeHtml(_dynFmtDate(regRes.programEnd))}</span>`);
+  if (baseRes && baseRes.completion && res.completion) {
+    const days = Math.round((_dynParseDate(baseRes.completion) - _dynParseDate(res.completion)) / 86400000);
+    chips.push(days === 0
+      ? `<span class="simx-chipstat">Same finish as ${icon('star')} ${escapeHtml(baseline.name)}</span>`
+      : `<span class="simx-chipstat ${days > 0 ? 'is-good' : 'is-warn'}">${days > 0 ? days + ' days sooner' : Math.abs(days) + ' days later'} than ${icon('star')} ${escapeHtml(baseline.name)}</span>`);
+  }
+  const stat = (l, v) => `<div class="simx-vstat"><span>${l}</span><b>${v}</b></div>`;
+  return `<div class="simx-verdict">
+    <div class="simx-vmain">
+      <div class="simx-lbl">${escapeHtml(sc.phase)} · ${escapeHtml(sc.name)} — projected completion</div>
+      <div class="simx-vdate">${res.completion ? escapeHtml(_dynFmtDate(res.completion)) : 'Does not complete'}</div>
+      <div class="simx-vchips">${chips.join('')}</div>
     </div>
-    <div style="font-size:11.5px;color:var(--gray-600);margin-bottom:4px;display:flex;align-items:center;gap:8px;">
-      Failure weight by subsystem
-      
+    <div class="simx-vstats">
+      ${stat('Duration', res.weeks != null ? res.weeks + ' wks' : '—')}
+      ${stat('Scheduled', `${res.placed}/${res.total}${res.unplaced ? ` <i>+${res.unplaced} left</i>` : ''}`)}
+      ${stat('Shifts used', res.shiftsUsed + '/' + res.shifts)}
+      ${stat('Access', res.accessHours + ' h')}
+      ${stat('Utilization', (res.utilPct ?? '—') + '%')}
+      ${stat('Closures', res.closuresUsed)}
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:4px 14px;">${weightRows}</div>
   </div>`;
 }
 
+// ── Accordion section wrapper ─────────────────────────────────────────────────
+function _dynSimSecHtml(key, iconName, title, summary, bodyHtml) {
+  const open = _dynSimUi().open.has(key);
+  return `<div class="simx-sec ${open ? 'open' : ''}">
+    <button type="button" class="simx-sec-head" aria-expanded="${open}" onclick="_dynSimUiToggleSec('${key}')">
+      <span class="simx-sec-ic">${icon(iconName)}</span>
+      <span class="simx-sec-title">${title}</span>
+      <span class="simx-sec-sum">${summary}</span>
+      <span class="simx-sec-chev">${icon('chevron-right')}</span>
+    </button>
+    ${open ? `<div class="simx-sec-body">${bodyHtml}</div>` : ''}
+  </div>`;
+}
+
+// ── Config column — six sections, each with a live summary ──────────────────
 function _dynSimConfigHtml(sc, res) {
   const allZones = [...new Set([..._dynSimPhaseZones(sc.phase), ..._dynWhatIfZonesAll(), ...(sc.zones || [])])].sort();
   const subsystems = [...new Set(_dynSimScopeAll(Object.assign({}, sc, { scope: { subsystem: '' } })).map(i => i.subsystem).filter(Boolean))].sort();
+  const cc = _dynSimCancelCfg();
+  const regCfg = _dynRegConfig(sc);
+
+  // 1 ── Schedule ─────────────────────────────────────────────────────────────
   const dows = [['1','Mon'],['2','Tue'],['3','Wed'],['4','Thu'],['5','Fri'],['6','Sat'],['0','Sun']];
-  const inp = 'padding:4px;border:1px solid var(--gray-300);border-radius:4px;text-align:center;font-size:11.5px;width:44px;';
   const weeklyRow = dows.map(([d, lbl]) => `
-    <label style="display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10px;color:var(--gray-500);">${lbl}
-      <input type="number" min="0" max="48" step="0.5" value="${sc.weekly[d] != null ? sc.weekly[d] : ''}" placeholder="—" style="${inp}" onchange="_dynSimSet('weekly','${d}',this.value)">
+    <label class="simx-day"><span>${lbl}</span>
+      <input type="number" min="0" max="48" step="0.5" value="${sc.weekly[d] != null ? sc.weekly[d] : ''}" placeholder="—" class="simx-inp" onchange="_dynSimSet('weekly','${d}',this.value)">
     </label>`).join('');
+  const wkHours = dows.reduce((a, [d]) => a + (parseFloat(sc.weekly[d]) || 0), 0);
+  const wkDays = dows.filter(([d]) => parseFloat(sc.weekly[d]) > 0).length;
+  const schedBody = `
+    <div class="simx-row2">
+      <label class="simx-field">Start date
+        <input type="date" value="${escapeHtml(sc.startDate)}" class="simx-inp wide" onchange="_dynSimField('startDate',this.value)"></label>
+      <label class="simx-field" title="Optional deadline — the verdict flags the plan if it finishes late.">Target date
+        <input type="date" value="${escapeHtml(sc.targetDate || '')}" class="simx-inp wide" onchange="_dynSimField('targetDate',this.value||null)"></label>
+    </div>
+    <div class="simx-field-lbl">Access hours per day <span>blank = no access</span></div>
+    <div class="simx-days">${weeklyRow}</div>`;
+  const schedSum = `${escapeHtml(_dynFmtDate(sc.startDate))} · ${wkHours} h/wk over ${wkDays} day${wkDays === 1 ? '' : 's'}${sc.targetDate ? ' · target ' + escapeHtml(_dynFmtDate(sc.targetDate)) : ''}`;
+
+  // 2 ── Week overrides ────────────────────────────────────────────────────────
+  const nClos = Object.values(sc.weekOverrides || {}).filter(o => o && o.closure).length;
+  const nOv = Object.values(sc.weekOverrides || {}).filter(o => o && (o.wk != null || o.sat != null || o.sun != null)).length;
+  const weeks = res ? (res.weeks || 4) : 4;
+  const hourCell = (k, key, val, disabled) => `<td>
+      <input type="number" min="0" max="24" step="0.5" value="${val ?? ''}" placeholder="—" class="simx-inp sm" ${disabled ? 'disabled' : ''} onchange="_dynSimSetOv(${k},'${key}',this.value)">
+      ${(val != null && !disabled) ? `<button type="button" class="simx-x" title="Revert to template (—)" aria-label="Revert to template" onclick="_dynSimSetOv(${k},'${key}','')">×</button>` : '<span class="simx-x-sp"></span>'}
+    </td>`;
+  const ovRows = Array.from({ length: Math.min(Math.max(weeks, 4), 26) }, (_, k) => {
+    const ov = (sc.weekOverrides || {})[k] || {};
+    const wkStart = _dynFmtDate(_dynAddDays(_dynParseDate(sc.startDate), k * 7));
+    return `<tr>
+      <td class="simx-wk">W${k + 1} <span>${wkStart}</span></td>
+      <td style="text-align:center;"><input type="checkbox" ${ov.closure ? 'checked' : ''} onchange="_dynSimSetOv(${k},'closure',this.checked)" title="Continuous 48h weekend possession (up to 4 consecutive locations)"></td>
+      ${hourCell(k, 'wk', ov.wk, false)}
+      ${hourCell(k, 'sat', ov.sat, !!ov.closure)}
+      ${hourCell(k, 'sun', ov.sun, !!ov.closure)}
+    </tr>`;
+  }).join('');
+  const ovBody = `
+    <div class="simx-field-lbl">Check closure = continuous 48h weekend. Hours entered here override the weekly template for that week only.</div>
+    <div class="simx-ov-wrap">
+      <table class="simx-tbl simx-ov">
+        <thead><tr><th>Week</th><th>Closure</th><th>Wkdy h</th><th>Sat h</th><th>Sun h</th></tr></thead>
+        <tbody>${ovRows}</tbody>
+      </table>
+    </div>
+    <div class="simx-foot">${res ? res.closuresUsed : 0} closure(s) · ${res ? res.extendedUsed : 0} extended week(s) in this plan — all from this table.</div>`;
+  const ovSum = (nClos || nOv) ? `${nClos} closure${nClos === 1 ? '' : 's'} · ${nOv} week${nOv === 1 ? '' : 's'} with extra hours` : 'none — weekly template only';
+
+  // 3 ── Locations & adjacency ────────────────────────────────────────────────
   const zoneChips = allZones.map(z => {
     const on = (sc.zones || []).includes(z);
-    return `<button type="button" onclick="_dynSimToggleZone('${escapeHtml(z)}')" style="font-size:11px;padding:2px 8px;border-radius:5px;cursor:pointer;margin:2px;border:1px solid ${on ? 'var(--hitachi-red)' : 'var(--gray-300)'};background:${on ? 'rgba(230,0,18,.06)' : '#fff'};color:${on ? 'var(--hitachi-red)' : 'var(--gray-500)'};">${escapeHtml(z)}</button>`;
+    return `<button type="button" class="simx-zone ${on ? 'on' : ''}" onclick="_dynSimToggleZone('${escapeHtml(z)}')">${escapeHtml(z)}</button>`;
   }).join('');
-  const closTxt = (sc.closureGroups || []).map(p => p.join('-')).join(', ');
-  // Adjacency comes from the shared zone adjacency now (not a per-scenario field).
   const tpAdj = new Map();
   for (const [a, b] of _dynSimAdjPairs(sc)) {
     if (!tpAdj.has(a)) tpAdj.set(a, new Set()); tpAdj.get(a).add(b);
@@ -44278,111 +44402,108 @@ function _dynSimConfigHtml(sc, res) {
   }
   const tpSummary = [...tpAdj.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
     .map(z => `${z}↔${[...tpAdj.get(z)].sort().join('/')}`).join('  ·  ') || 'none defined';
-  const weeks = res ? (res.weeks || 4) : 4;
-  // An override hour input + a "×" that reverts it to the dash "—" (template).
-  // Without this, typing 0 means "closed that day" with no way back to template.
-  const ovInp = 'padding:4px;border:1px solid var(--gray-300);border-radius:4px;text-align:center;font-size:11.5px;width:38px;';
-  const hourCell = (k, key, val, disabled) => `<td style="padding:3px 4px;white-space:nowrap;">
-      <input type="number" min="0" max="24" step="0.5" value="${val ?? ''}" placeholder="—" style="${ovInp}" ${disabled ? 'disabled' : ''} onchange="_dynSimSetOv(${k},'${key}',this.value)">
-      ${(val != null && !disabled) ? `<button type="button" title="Revert to template (—)" onclick="_dynSimSetOv(${k},'${key}','')" style="border:none;background:none;cursor:pointer;color:var(--gray-400);font-size:13px;line-height:1;padding:0 1px;vertical-align:middle;">×</button>` : `<span style="display:inline-block;width:9px;"></span>`}
-    </td>`;
-  const ovRows = Array.from({ length: Math.min(Math.max(weeks, 4), 26) }, (_, k) => {
-    const ov = (sc.weekOverrides || {})[k] || {};
-    const wkStart = _dynFmtDate(_dynAddDays(_dynParseDate(sc.startDate), k * 7));
-    return `<tr style="border-top:1px solid var(--gray-100);">
-      <td style="padding:3px 6px;font-size:11px;white-space:nowrap;">W${k + 1} <span style="color:var(--gray-400);">${wkStart}</span></td>
-      <td style="padding:3px 6px;text-align:center;"><input type="checkbox" ${ov.closure ? 'checked' : ''} onchange="_dynSimSetOv(${k},'closure',this.checked)" title="Continuous 48h weekend possession (up to 4 consecutive locations)"></td>
-      ${hourCell(k, 'wk', ov.wk, false)}
-      ${hourCell(k, 'sat', ov.sat, !!ov.closure)}
-      ${hourCell(k, 'sun', ov.sun, !!ov.closure)}
-    </tr>`;
-  }).join('');
-  return `
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:10px;">${escapeHtml(sc.phase)} · ${escapeHtml(sc.name)}</div>
-    <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:10px;">Start date
-      <input type="date" value="${escapeHtml(sc.startDate)}" style="display:block;margin-top:3px;padding:5px 7px;border:1px solid var(--gray-300);border-radius:5px;font-size:12px;" onchange="_dynSimField('startDate',this.value)">
-    </label>
-    <div style="font-size:12px;color:var(--gray-600);margin-bottom:4px;">Access hours per day <span style="color:var(--gray-400);">(blank = no access)</span></div>
-    <div style="display:flex;gap:5px;margin-bottom:12px;">${weeklyRow}</div>
-    <div style="font-size:12px;color:var(--gray-600);margin-bottom:4px;">Locations in this simulation</div>
-    <div style="margin-bottom:8px;">${zoneChips}</div>
-    <div style="margin-bottom:10px;font-size:12px;color:var(--gray-600);">
-      <div style="margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">Access mix <span style="color:var(--gray-400);">— % of shifts by how many adjacent locations they grant</span>
-        <span style="flex:1;"></span>
-        
-        <button type="button" class="dyn-btn" style="font-size:11px;padding:3px 8px;" title="Set the mix to match your work's access needs so no shift is wasted" onclick="_dynSimAutoFillMix()">${icon('zap')} Auto-fill (no waste)</button>
-      </div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
-        ${(() => {
-          const mixObj = (sc.shiftMix && typeof sc.shiftMix === 'object') ? sc.shiftMix : null;
-          const legacy = Math.max(1, Math.min(5, sc.maxZonesPerShift || 2));
-          const maxShow = Math.min(5, Math.max(3, _dynSimMaxMixSize(sc)));
-          const sizes = []; for (let s = 1; s <= maxShow; s++) sizes.push(s);
-          // Show the raw share the user set for each size (legacy scenarios:
-          // 100% at maxZonesPerShift). No re-normalizing for display, so editing
-          // one cell leaves the others exactly as typed.
-          const raw = {};
-          sizes.forEach(s => raw[s] = mixObj ? (Number(mixObj[s]) || 0) : (s === legacy ? 100 : 0));
-          return sizes.map(s => `<label style="display:flex;align-items:center;gap:3px;"><b style="font-family:monospace;">${s}</b>-loc
-            <input type="number" min="0" max="100" value="${raw[s]}" style="${inp}width:44px;" onchange="_dynSimSetMix(${s},this.value)">%</label>`).join('');
-        })()}
-      </div>
+  const closTxt = (sc.closureGroups || []).map(p => p.join('-')).join(', ');
+  const locBody = `
+    <div class="simx-field-lbl">Locations in this simulation</div>
+    <div class="simx-zones">${zoneChips}</div>
+    <div class="simx-field-lbl" style="display:flex;align-items:center;gap:8px;">Adjacency <span>from the shared zone adjacency</span>
+      <span style="flex:1;"></span>
+      <button type="button" class="dyn-btn xs" onclick="_dynOpenAdjacency()">${icon('git-branch')} Edit</button>
     </div>
-    <div style="margin-bottom:10px;font-size:12px;color:var(--gray-600);">
-      <div style="display:flex;align-items:center;gap:8px;">Adjacency <span style="color:var(--gray-400);">— from the shared zone adjacency</span>
-        <span style="flex:1;"></span>
-        <button type="button" class="dyn-btn" style="font-size:11px;padding:3px 8px;" onclick="_dynOpenAdjacency()">${icon('git-branch')} Edit adjacency</button>
-      </div>
-      <div style="margin-top:5px;padding:6px 9px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:5px;font-size:10.5px;font-family:monospace;color:var(--gray-600);line-height:1.5;">${escapeHtml(tpSummary)}</div>
+    <div class="simx-mono-box">${escapeHtml(tpSummary)}</div>
+    <label class="simx-field" style="display:block;margin-top:10px;">Closure locations <span class="simx-hint">up to 4 consecutive, used during a closure — blank = auto from adjacency</span>
+      <input type="text" value="${escapeHtml(closTxt)}" placeholder="e.g. W40-W34-W30-W10, Y10-W34-W30" class="simx-inp wide mono" onchange="_dynSimSetClosure(this.value)">
+    </label>`;
+  const locSum = `${(sc.zones || []).length}/${allZones.length} locations${closTxt ? ' · closure groups set' : ''}`;
+
+  // 4 ── Access mix ────────────────────────────────────────────────────────────
+  const mixNorm = _dynSimMix(sc);
+  const mixObj = (sc.shiftMix && typeof sc.shiftMix === 'object') ? sc.shiftMix : null;
+  const legacy = Math.max(1, Math.min(5, sc.maxZonesPerShift || 2));
+  const maxShow = Math.min(5, Math.max(3, _dynSimMaxMixSize(sc)));
+  const sizes = []; for (let s = 1; s <= maxShow; s++) sizes.push(s);
+  const rawMix = {};
+  sizes.forEach(s => rawMix[s] = mixObj ? (Number(mixObj[s]) || 0) : (s === legacy ? 100 : 0));
+  const mixInputs = sizes.map(s => `<label class="simx-mixcell"><b>${s}</b>-loc
+      <span><input type="number" min="0" max="100" value="${rawMix[s]}" class="simx-inp" onchange="_dynSimSetMix(${s},this.value)">%</span>
+    </label>`).join('');
+  const mixBody = `
+    <div class="simx-field-lbl">% of shifts by how many adjacent locations they grant. Values need not total 100 — the plan normalizes them.
+      <button type="button" class="dyn-btn xs" style="float:right;" title="Set the mix to match your work's access needs so no shift is wasted" onclick="_dynSimAutoFillMix()">${icon('zap')} Auto-fill</button>
     </div>
-    <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:10px;">Closure locations <span style="color:var(--gray-400);">(up to 4 consecutive, available during a closure — blank = auto from adjacency)</span>
-      <input type="text" value="${escapeHtml(closTxt)}" placeholder="e.g. W40-W34-W30-W10, Y10-W34-W30" style="display:block;width:100%;margin-top:3px;padding:5px 7px;border:1px solid var(--gray-300);border-radius:5px;font-size:11.5px;font-family:monospace;box-sizing:border-box;" onchange="_dynSimSetClosure(this.value)">
-    </label>
-    <div style="display:flex;gap:10px;margin-bottom:10px;font-size:12px;color:var(--gray-600);">
-      <label>Subsystem
-        <select style="margin-left:4px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:12px;" onchange="_dynSimScopeField('subsystem',this.value)">
+    <div class="simx-mix">${mixInputs}</div>
+    <div class="simx-foot">Planning shares: ${mixNorm.map(e => `${Math.round(e.pct)}% ${e.size}-loc`).join(' · ')}</div>`;
+  const mixSum = mixNorm.map(e => `${Math.round(e.pct)}% ${e.size}-loc`).join(' · ');
+
+  // 5 ── Scope ────────────────────────────────────────────────────────────────
+  const scopeBody = `
+    <div class="simx-row2">
+      <label class="simx-field">Subsystem
+        <select class="simx-inp wide" onchange="_dynSimScopeField('subsystem',this.value)">
           <option value="">All</option>
           ${subsystems.map(s => `<option value="${escapeHtml(s)}" ${sc.scope.subsystem === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
-        </select>
-      </label>
-      <label title="Exclude runs already assigned to a real shift"><input type="checkbox" ${sc.scope.onlyUnscheduled ? 'checked' : ''} onchange="_dynSimScopeField('onlyUnscheduled',this.checked)"> only unscheduled</label>
+        </select></label>
+      <label class="simx-field" title="Setup/positioning minutes lost when a shift switches signalling mode or start-area.">Setup min
+        <input type="number" min="0" max="120" value="${sc.setupMin ?? 0}" class="simx-inp wide" onchange="_dynSimField('setupMin',Math.max(0,parseInt(this.value,10)||0))"></label>
     </div>
-    <div style="display:flex;gap:10px;margin-bottom:10px;font-size:12px;color:var(--gray-600);flex-wrap:wrap;">
-      <label title="Setup/positioning minutes lost when a shift switches signalling mode or start-area — discourages fragmenting a shift across configurations. Train count and consist size do not cost a changeover.">Setup min
-        <input type="number" min="0" max="120" value="${sc.setupMin ?? 0}" style="${inp}" onchange="_dynSimField('setupMin',Math.max(0,parseInt(this.value,10)||0))"></label>
-      <label title="Optional deadline. The plan is checked against it and flagged if it finishes late.">Target date
-        <input type="date" value="${escapeHtml(sc.targetDate || '')}" style="margin-left:4px;padding:3px 5px;border:1px solid var(--gray-300);border-radius:4px;font-size:12px;" onchange="_dynSimField('targetDate',this.value||null)"></label>
+    <label class="simx-check" title="Exclude runs already assigned to a real shift"><input type="checkbox" ${sc.scope.onlyUnscheduled ? 'checked' : ''} onchange="_dynSimScopeField('onlyUnscheduled',this.checked)"> Only unscheduled runs</label>`;
+  const scopeSum = `${sc.scope.subsystem ? escapeHtml(sc.scope.subsystem) : 'All subsystems'}${sc.scope.onlyUnscheduled ? ' · unscheduled only' : ''}${sc.setupMin ? ` · ${sc.setupMin} min setup` : ''}`;
+
+  // 6 ── Risk & regression ─────────────────────────────────────────────────────
+  const riskBody = `
+    <div class="simx-subhead">Access cancellation <span class="simx-hint">global — pads EVERY scenario and regression campaign's completion by this %</span></div>
+    <div class="simx-row-inline">
+      <label class="simx-check"><input type="checkbox" ${cc.enabled ? 'checked' : ''} onchange="_dynSimCancelToggle(this.checked)"> Assume cancellations</label>
+      <span class="simx-pctwrap ${cc.enabled ? '' : 'off'}"><input type="number" min="0" max="100" value="${cc.pct}" ${cc.enabled ? '' : 'disabled'} class="simx-inp" onchange="_dynSimCancelSetPct(this.value)">% extension</span>
     </div>
-    ${_dynSimRegConfigHtml(sc)}
-    <div style="font-size:12px;color:var(--gray-600);margin-bottom:4px;">Week overrides <span style="color:var(--gray-400);">(check closure = continuous 48h weekend; any hours entered are used as-is — this table is the only source of closures/extended weeks)</span></div>
-    <div style="max-height:240px;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">
-      <table style="width:100%;border-collapse:collapse;font-size:11px;">
-        <thead><tr style="background:var(--gray-50);color:var(--gray-500);font-size:10px;">
-          <th style="text-align:left;padding:3px 6px;">Week</th><th style="padding:3px 4px;">Closure</th>
-          <th style="text-align:left;padding:3px 4px;">Wkdy h</th><th style="text-align:left;padding:3px 4px;">Sat h</th><th style="text-align:left;padding:3px 4px;">Sun h</th>
-        </tr></thead><tbody>${ovRows}</tbody>
-      </table>
-    </div>
-    <div style="font-size:10.5px;color:var(--gray-400);margin-top:6px;">${res ? res.closuresUsed : 0} closure(s) · ${res ? res.extendedUsed : 0} extended week(s) — all from the overrides above.</div>`;
+    <div class="simx-divider"></div>
+    ${_dynSimRegConfigHtml(sc)}`;
+  const riskSum = [
+    cc.enabled ? `+${cc.pct}% cancellation` : null,
+    regCfg.enabled ? `regression on · ${regCfg.failureRate}% fail · ${regCfg.gaps.length} campaign${regCfg.gaps.length === 1 ? '' : 's'}` : null,
+  ].filter(Boolean).join(' · ') || 'off';
+
+  return `
+    ${_dynSimSecHtml('schedule', 'calendar', 'Schedule', schedSum, schedBody)}
+    ${_dynSimSecHtml('overrides', 'clock', 'Week-by-week access', ovSum, ovBody)}
+    ${_dynSimSecHtml('access', 'map', 'Locations & adjacency', locSum, locBody)}
+    ${_dynSimSecHtml('mix', 'layers', 'Access mix', mixSum, mixBody)}
+    ${_dynSimSecHtml('scope', 'sliders', 'Scope', scopeSum, scopeBody)}
+    ${_dynSimSecHtml('risk', 'activity', 'Risk & regression', riskSum, riskBody)}`;
 }
 
-// "Shifts needed by access size" — how many shifts of each location-size the
-// plan consumed, and how many were wasted (granted but nothing fit that size),
-// which signals an access-mix mismatch.
-// Target-date feasibility (backward check): green if the plan finishes by the
-// deadline, red with the gap + levers (more trains / larger access mix / shifts)
-// if it doesn't.
+// ── Regression inputs (inside the Risk section) ─────────────────────────────
+function _dynSimRegConfigHtml(sc) {
+  const cfg = _dynRegConfig(sc);
+  const head = `<label class="simx-check" style="font-weight:600;"><input type="checkbox" ${cfg.enabled ? 'checked' : ''} onchange="_dynSimRegToggle(this.checked)"> Regression projection</label>`;
+  if (!cfg.enabled) return `<div class="simx-subhead">${head}<span class="simx-hint">project re-test campaigns after each software release</span></div>`;
+  const weightRows = cfg.subsystems.length
+    ? cfg.subsystems.map(s => `<label class="simx-mixcell"><span class="mono">${escapeHtml(s)}</span>
+        <span><input type="number" min="0" max="100" value="${cfg.weights[s] || 0}" class="simx-inp" onchange="_dynSimRegSetWeight('${escapeHtml(s)}',this.value)">%</span>
+      </label>`).join('')
+    : '<div class="simx-hint">No subsystems found in this scenario\'s work.</div>';
+  return `
+    <div class="simx-subhead">${head}</div>
+    <div class="simx-row-inline" style="margin-bottom:8px;">
+      <label class="simx-field-inline" title="Share of each campaign's work that fails verification and re-runs in the next campaign (compounding).">Failure rate
+        <span><input type="number" min="0" max="100" value="${cfg.failureRate}" class="simx-inp" onchange="_dynSimRegField('failureRate',this.value)">%</span></label>
+      <label class="simx-field-inline" title="Development gap (months) before each regression campaign — time waiting on the next software release. One value per campaign, comma-separated.">Dev gaps (mo)
+        <input type="text" value="${escapeHtml(cfg.gaps.join(', '))}" placeholder="e.g. 2, 3, 3" class="simx-inp mono" style="width:90px;text-align:left;" onchange="_dynSimRegSetGaps(this.value)"></label>
+      <span class="simx-hint">${cfg.gaps.length} regression campaign${cfg.gaps.length === 1 ? '' : 's'}</span>
+    </div>
+    <div class="simx-field-lbl">Failure weight by subsystem <span>where the failures land — normalized at use</span></div>
+    <div class="simx-mix">${weightRows}</div>`;
+}
+
+// ── Alerts ───────────────────────────────────────────────────────────────────
 function _dynSimTargetHtml(res) {
-  if (!res || !res.target) return '';
+  if (!res || !res.target || res.target.onTrack) return '';   // on-track lives in the verdict chip
   const t = res.target;
-  if (t.onTrack) {
-    return `<div style="margin-bottom:10px;padding:8px 12px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:6px;font-size:12px;color:#065f46;">✓ Finishes ${escapeHtml(_dynFmtDate(res.completion))} — on or before target ${escapeHtml(_dynFmtDate(t.date))}.</div>`;
-  }
   const gap = t.daysLate == null ? null : Math.max(1, Math.ceil(t.daysLate / 7));
-  return `<div style="margin-bottom:10px;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#b91c1c;">
-    ⚠ Misses target ${escapeHtml(_dynFmtDate(t.date))}${t.daysLate == null ? ' (work does not complete in the horizon)' : ` by ${t.daysLate} day${t.daysLate === 1 ? '' : 's'} (~${gap} week${gap === 1 ? '' : 's'})`}.
-    <span style="color:var(--gray-600);">Levers: more trains/shift (parallel runs), a larger-shift access mix, more shifts, or a closure week.</span>
-  </div>`;
+  return `<div class="simx-alert is-bad">${icon('alert')}<div>
+    <b>Misses target ${escapeHtml(_dynFmtDate(t.date))}</b>${t.daysLate == null ? ' — work does not complete in the horizon.' : ` by ${t.daysLate} day${t.daysLate === 1 ? '' : 's'} (~${gap} week${gap === 1 ? '' : 's'}).`}
+    <span class="simx-hint">Levers: more trains/shift (parallel runs), a larger-shift access mix, more shifts, or a closure week.</span>
+  </div></div>`;
 }
 
 function _dynSimMixHtml(res) {
@@ -44390,43 +44511,39 @@ function _dynSimMixHtml(res) {
   const wasted = res.mixUsed.reduce((a, m) => a + (m.shifts - m.used), 0);
   const parts = res.mixUsed.map(m => {
     const w = m.shifts - m.used;
-    return `<span style="white-space:nowrap;"><b>${m.shifts}×</b> ${m.size}-loc${w ? ` <span style="color:#b45309;">(${w} unused)</span>` : ''}</span>`;
+    return `<span style="white-space:nowrap;"><b>${m.shifts}×</b> ${m.size}-loc${w ? ` <span style="color:var(--warn);">(${w} unused)</span>` : ''}</span>`;
   });
-  return `<div style="margin-bottom:10px;padding:8px 12px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:6px;font-size:12px;color:var(--gray-700);">
-    <b>Shifts needed by access size:</b> ${parts.join(' &nbsp;·&nbsp; ')}
-    ${wasted ? `<div style="font-size:11px;color:#b45309;margin-top:3px;">${wasted} shift(s) granted access but had no test that fit that size — raise the share of larger shifts in the mix to finish sooner.</div>` : ''}
-  </div>`;
+  return `<div class="simx-alert ${wasted ? 'is-warn' : 'is-neutral'}">${icon('layers')}<div>
+    <b>Shifts by access size:</b> ${parts.join(' &nbsp;·&nbsp; ')}
+    ${wasted ? `<span class="simx-hint">${wasted} shift(s) granted access but had no test that fit that size — raise the share of larger shifts in the mix to finish sooner.</span>` : ''}
+  </div></div>`;
 }
 
 // "+N left" breakdown: for every run the simulation couldn't place, say WHY —
-// add-location, over max/shift, not adjacent in the layout, prereq-blocked,
-// run-too-long, or simply no capacity in the horizon.
+// add-location, over max/shift, not adjacent, prereq-blocked, run-too-long,
+// or no capacity in the horizon. Collapsed behind the alert by default.
 function _dynSimUnplacedHtml(sc, res) {
   const list = res.unplacedList || [];
   if (!list.length) return '';
+  const open = _dynSimUi().panels.has('unplaced');
   const maxZ = _dynSimMaxMixSize(sc);
   const zset = new Set(sc.zones || []);
-  const chains = _dynSimChains(_dynSimAdjPairs(sc), zset, maxZ);   // candidate location sets
+  const chains = _dynSimChains(_dynSimAdjPairs(sc), zset, maxZ);
   const horizonWk = Math.round(_DYN_SIM_HORIZON_DAYS / 7);
   const maxShiftMin = _dynSimMaxShiftMinutes(sc);
   const codeFor = id => (_dynPage.testItemsById.get(id) || {}).code || id;
-  // A prerequisite is "blocked in THIS sim" when its case still has runs the sim
-  // couldn't place (not when it merely isn't Passed in live data).
   const unplacedTestIds = new Set(list.map(i => i.test_id));
-
   const rows = list.map(i => {
-    const req = [...new Set((i.track_section_access_req || []).filter(Boolean))];   // access = access_req only
+    const req = [...new Set((i.track_section_access_req || []).filter(Boolean))];
     const outside = req.filter(z => !zset.has(z));
     const unmetSim = [...new Set((_dynPage.prereqs || []).filter(p => p.test_id === i.test_id && unplacedTestIds.has(p.prerequisite_test_id)).map(p => p.prerequisite_test_id))];
     let type, label, tone;
-    if (outside.length) { type = 'loc'; tone = { bg: '#fef3c7', fg: '#92400e' }; label = `add location(s): ${outside.join(', ')}`; }
-    else if (req.length > maxZ) { type = 'max'; tone = { bg: '#fde68a', fg: '#92400e' }; label = `needs a ${req.length}-location shift — add it to your access mix (max is ${maxZ})`; }
-    else if (!chains.some(c => { const s = new Set(c); return req.every(z => s.has(z)); })) { type = 'adj'; tone = { bg: '#e0e7ff', fg: '#3730a3' }; label = `${req.join(', ')} not adjacent`; }
-    else if (unmetSim.length) {
-      type = 'prereq'; tone = { bg: '#ede9fe', fg: '#6d28d9' }; label = `waiting on prereq: ${unmetSim.map(codeFor).join(', ')} (also unscheduled — fix those first)`;
-    }
-    else if (i.expected_duration_minutes && maxShiftMin && i.expected_duration_minutes > maxShiftMin) { type = 'dur'; tone = { bg: '#e0f2fe', fg: '#0369a1' }; label = `run (${i.expected_duration_minutes}m) longer than any shift (${maxShiftMin / 60}h)`; }
-    else { type = 'cap'; tone = { bg: '#fee2e2', fg: '#b91c1c' }; label = `no capacity within ${horizonWk} weeks`; }
+    if (outside.length) { type = 'loc'; tone = { bg: 'var(--warn-light)', fg: 'var(--warn)' }; label = `add location(s): ${outside.join(', ')}`; }
+    else if (req.length > maxZ) { type = 'max'; tone = { bg: 'var(--warn-light)', fg: 'var(--warn)' }; label = `needs a ${req.length}-location shift — add it to your access mix (max is ${maxZ})`; }
+    else if (!chains.some(c => { const s = new Set(c); return req.every(z => s.has(z)); })) { type = 'adj'; tone = { bg: 'var(--info-light)', fg: 'var(--info)' }; label = `${req.join(', ')} not adjacent`; }
+    else if (unmetSim.length) { type = 'prereq'; tone = { bg: 'var(--pending-light)', fg: 'var(--pending)' }; label = `waiting on prereq: ${unmetSim.map(codeFor).join(', ')} (also unscheduled — fix those first)`; }
+    else if (i.expected_duration_minutes && maxShiftMin && i.expected_duration_minutes > maxShiftMin) { type = 'dur'; tone = { bg: 'var(--info-light)', fg: 'var(--info)' }; label = `run (${i.expected_duration_minutes}m) longer than any shift (${maxShiftMin / 60}h)`; }
+    else { type = 'cap'; tone = { bg: 'var(--bad-light)', fg: 'var(--bad)' }; label = `no capacity within ${horizonWk} weeks`; }
     return { i, type, label, tone };
   });
   const order = ['loc', 'max', 'adj', 'prereq', 'dur', 'cap'];
@@ -44435,153 +44552,131 @@ function _dynSimUnplacedHtml(sc, res) {
   const names = { loc: 'add location', max: 'over max/shift', adj: 'not adjacent', prereq: 'prereq blocked', dur: 'run too long', cap: 'no capacity' };
   const summary = order.filter(t => counts[t]).map(t => `${counts[t]} ${names[t]}`).join(' · ');
   const show = rows.slice(0, 40);
-  const body = show.map(r => `<tr style="border-top:1px solid var(--gray-100);">
-    <td style="padding:5px 9px;font-family:monospace;font-size:11px;">${escapeHtml(r.i.code || '—')}</td>
-    <td style="padding:5px 9px;font-size:11.5px;">${escapeHtml(r.i.title || r.i.test_id || '—')}</td>
-    <td style="padding:5px 9px;font-family:monospace;font-size:11px;">${escapeHtml(r.i.track_section_under_test || '—')}</td>
-    <td style="padding:5px 9px;"><span class="tag" style="background:${r.tone.bg};color:${r.tone.fg};border-color:transparent;">${escapeHtml(r.label)}</span></td>
+  const body = show.map(r => `<tr>
+    <td class="mono">${escapeHtml(r.i.code || '—')}</td>
+    <td>${escapeHtml(r.i.title || r.i.test_id || '—')}</td>
+    <td class="mono">${escapeHtml(r.i.track_section_under_test || '—')}</td>
+    <td><span class="tag" style="background:${r.tone.bg};color:${r.tone.fg};border-color:transparent;">${escapeHtml(r.label)}</span></td>
   </tr>`).join('');
-  return `<div style="margin-bottom:12px;background:white;border:1px solid #fecaca;border-radius:8px;overflow:hidden;">
-    <div style="display:flex;align-items:center;gap:10px;padding:9px 13px;background:#fef2f2;border-bottom:1px solid #fecaca;flex-wrap:wrap;">
-      <b style="font-size:12.5px;color:#b91c1c;">${icon('alert')} ${res.unplaced} left unscheduled — why</b>
-      <span style="font-size:11px;color:var(--gray-600);">${escapeHtml(summary)}</span>
-    </div>
-    <table style="width:100%;border-collapse:collapse;font-size:12px;">
-      <thead><tr style="background:var(--gray-50);"><th style="text-align:left;padding:5px 9px;">Code</th><th style="text-align:left;padding:5px 9px;">Test</th><th style="text-align:left;padding:5px 9px;">Zone</th><th style="text-align:left;padding:5px 9px;">What's missing</th></tr></thead>
-      <tbody>${body}</tbody>
-    </table>
-    ${rows.length > show.length ? `<div style="padding:6px 13px;font-size:11px;color:var(--gray-500);">+${rows.length - show.length} more…</div>` : ''}
+  return `<div class="simx-alertcard">
+    <button type="button" class="simx-alertcard-head" aria-expanded="${open}" onclick="_dynSimUiTogglePanel('unplaced')">
+      ${icon('alert')}<b>${res.unplaced} left unscheduled</b>
+      <span class="simx-hint">${escapeHtml(summary)}</span>
+      <span style="flex:1;"></span><span class="simx-linkish">${open ? 'Hide' : 'Why?'}</span>
+    </button>
+    ${open ? `<div class="simx-ov-wrap" style="border:none;border-top:1px solid var(--bad-light);">
+      <table class="simx-tbl">
+        <thead><tr><th>Code</th><th>Test</th><th>Zone</th><th>What's missing</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+      ${rows.length > show.length ? `<div class="simx-foot" style="padding:6px 12px;">+${rows.length - show.length} more…</div>` : ''}
+    </div>` : ''}
   </div>`;
 }
 
-// Results: KPIs + S-curve + baseline-vs-scenario Gantt + baseline-vs-scenario shifts.
+// ── Results column ───────────────────────────────────────────────────────────
 function _dynSimResultsHtml(sc, res, baseRes, baseline, regRes, baseRegRes) {
-  const kpi = (l, v, t) => `<div class="dyn-kpi" style="margin-right:0;"><span>${l}</span><b${t ? ` style="color:${t};"` : ''}>${v}</b></div>`;
   const cmp = !!baseRes;
-  // Program-level figures roll the regression campaigns into the original run:
-  // when projection is on, the headline completion/duration/runs cover the WHOLE
-  // program (baseline → dev gap → regression campaigns), not just the first run.
-  const progRuns = regRes ? regRes.campaigns.reduce((a, c) => a + (c.runs || 0), 0) : res.placed;
-  const kpiBlock = cmp
-    ? _dynSimKpiCompareHtml(baseRes, res, baseline, sc, baseRegRes, regRes)
-    : `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px;margin-bottom:12px;">
-      ${kpi('Backlog', res.total)}
-      ${kpi('Scheduled', `${res.placed}${res.unplaced ? ` <span style="font-size:11px;color:#b45309;">+${res.unplaced} left</span>` : ''}`, res.unplaced ? null : 'var(--good)')}
-      ${kpi('Completion', res.completion ? _dynFmtDate(res.completion) : '—', 'var(--info)')}
-      ${kpi('Duration', res.weeks != null ? `${res.weeks} wks` : '—')}
-      ${kpi('Shifts', res.shiftsUsed + '/' + res.shifts)}
-      ${kpi('Access hours', res.accessHours + 'h')}
-      ${kpi('Utilization', (res.utilPct ?? '—') + '%')}
-      ${kpi('Closures', res.closuresUsed, res.closuresUsed ? '#b45309' : null)}
-      ${regRes ? kpi('Program end', regRes.programEnd ? _dynFmtDate(regRes.programEnd) : '—', '#1d4eaf') : ''}
-      ${regRes ? kpi('Program duration', regRes.totalWeeks != null ? `${regRes.totalWeeks} wks` : '—', '#1d4eaf') : ''}
-      ${regRes ? kpi('Program runs', progRuns, '#1d4eaf') : ''}
-    </div>`;
+  const compareBlock = cmp ? _dynSimKpiCompareHtml(baseRes, res, baseline, sc, baseRegRes, regRes) : '';
   return `
-    ${kpiBlock}
-    ${regRes ? _dynSimRegressionHtml(sc, regRes) : ''}
+    ${compareBlock}
     ${_dynSimTargetHtml(res)}
     ${_dynSimMixHtml(res)}
-    ${res.outOfScope ? `<div style="margin-bottom:10px;padding:7px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e;">${res.outOfScope} open run(s) are in locations OUTSIDE this scenario — add their locations to include them.</div>` : ''}
+    ${res.outOfScope ? `<div class="simx-alert is-warn">${icon('map')}<div>${res.outOfScope} open run(s) are in locations OUTSIDE this scenario — add their locations to include them.</div></div>` : ''}
     ${_dynSimUnplacedHtml(sc, res)}
-    <div class="data-card" style="padding:12px 14px;margin-bottom:12px;">
+    <div class="data-card simx-card">
+      <div class="simx-card-head">
+        <span class="simx-lbl">Completion S-curve · % complete</span>
+        <span style="flex:1;"></span>
+      </div>
       ${_dynSimChartControlsHtml()}
       <div style="height:280px;"><canvas id="dyn-sim-chart"></canvas></div>
     </div>
-    <div class="data-card" style="padding:12px 14px;margin-bottom:12px;">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:8px;">Location timeline ${cmp ? `<span style="font-weight:400;color:var(--gray-400);">— ${escapeHtml(baseline.name)} (grey) vs ${escapeHtml(sc.name)} (blue)</span>` : ''}</div>
+    ${regRes ? _dynSimRegressionHtml(sc, regRes) : ''}
+    <div class="data-card simx-card">
+      <div class="simx-card-head">
+        <span class="simx-lbl">Location timeline</span>
+        ${cmp ? `<span class="simx-legend"><i style="background:var(--gray-400);"></i>${escapeHtml(baseline.name)}<i style="background:var(--brand-blue,#1d4eaf);margin-left:10px;"></i>${escapeHtml(sc.name)}</span>` : ''}
+      </div>
       ${_dynSimGanttHtml(sc, res, baseRes)}
     </div>
-    <div class="data-card" style="padding:12px 14px;">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);margin-bottom:6px;">Simulated shifts ${cmp ? `<span style="font-weight:400;color:var(--gray-400);">— baseline vs scenario</span>` : ''}</div>
-      ${_dynSimShiftsHtml(sc, res, baseRes, baseline, regRes)}
-    </div>`;
+    ${_dynSimShiftsHtml(sc, res, baseRes, baseline, regRes)}`;
 }
 
-// Regression projection panel: the program timeline as baseline → gap → regression
-// campaigns, the extended program-end date, and the per-subsystem failure spread.
-function _dynSimRegressionHtml(sc, regRes) {
-  if (!regRes) return '';
-  const cfg = _dynRegConfig(sc);
-  const ev = [];
-  regRes.campaigns.forEach((c, i) => {
-    if (c.gapMonths > 0) ev.push({ type: 'gap', months: c.gapMonths });
-    ev.push({ type: 'camp', c, i });
-  });
-  const fmt = d => d ? _dynFmtDate(d) : '—';
-  const rows = regRes.campaigns.map((c, i) => {
-    const gap = c.gapMonths > 0
-      ? `<span style="color:#92400e;">+${c.gapMonths} mo dev gap</span>`
-      : '<span style="color:var(--gray-400);">—</span>';
-    return `<tr style="border-top:1px solid var(--gray-100);${c.kind === 'regression' ? '' : 'background:var(--gray-50);'}">
-      <td style="padding:6px 10px;white-space:nowrap;">${c.kind === 'baseline' ? '★ ' : ''}${escapeHtml(c.name)}${c.kind === 'regression' ? ` <span style="color:var(--gray-400);font-size:11px;">${c.failCount} fail${c.failCount === 1 ? '' : 's'}</span>` : ''}</td>
-      <td style="padding:6px 10px;text-align:right;">${gap}</td>
-      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-size:11.5px;white-space:nowrap;">${fmt(c.start)} → ${fmt(c.end)}</td>
-      <td style="padding:6px 10px;text-align:right;font-family:monospace;">${c.weeks != null ? c.weeks + ' wk' : '—'}</td>
-      <td style="padding:6px 10px;text-align:right;font-family:monospace;">${c.runs}</td>
-    </tr>`;
-  }).join('');
-  // Mini ribbon: campaigns (blue) and dev gaps (amber) proportional to weeks/months.
-  const wkFor = e => e.type === 'gap' ? Math.max(0.5, e.months * 4.33) : Math.max(0.5, e.c.weeks || 1);
-  const totW = ev.reduce((a, e) => a + wkFor(e), 0) || 1;
-  const ribbon = ev.map(e => {
-    const pct = wkFor(e) / totW * 100;
-    if (e.type === 'gap') return `<div title="${e.months} month dev gap" style="width:${pct}%;background:repeating-linear-gradient(45deg,#fde68a,#fde68a 5px,#fef3c7 5px,#fef3c7 10px);"></div>`;
-    const base = e.c.kind === 'baseline';
-    return `<div title="${escapeHtml(e.c.name)}: ${fmt(e.c.start)} → ${fmt(e.c.end)}" style="width:${pct}%;background:${base ? '#1d4eaf' : '#3b82f6'};display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;font-weight:600;overflow:hidden;white-space:nowrap;">${pct > 7 ? (base ? 'Base' : 'R' + e.i) : ''}</div>`;
-  }).join('');
-  const weightChips = cfg.subsystems.length
-    ? cfg.subsystems.map(s => `<span class="tag" style="font-size:10px;">${escapeHtml(s)} ${cfg.weights[s] || 0}%</span>`).join(' ')
-    : '<span style="color:var(--gray-400);">no subsystems</span>';
-  return `<div class="data-card" style="padding:12px 14px;margin-bottom:12px;border-left:3px solid #1d4eaf;">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
-      <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-500);">Regression projection</span>
-      <span style="color:var(--gray-400);font-size:11px;">${cfg.failureRate}% fail rate</span>
+// ── Comparison — three delta cards + the full table one click away ──────────
+function _dynSimKpiCompareHtml(B, S, baseline, sc, bReg, sReg) {
+  const open = _dynSimUi().panels.has('compare');
+  const dayDiff = (a, b) => (a && b) ? Math.round((_dynParseDate(a) - _dynParseDate(b)) / 86400000) : null;
+
+  // Card 1 — completion (program end when either side projects regression).
+  const bEnd = bReg ? bReg.programEnd : B.completion;
+  const sEnd = sReg ? sReg.programEnd : S.completion;
+  const dEnd = dayDiff(bEnd, sEnd);   // >0 = scenario sooner
+  const card = (label, value, delta, tone, sub) => `<div class="simx-delta">
+      <span class="simx-lbl">${label}</span>
+      <b>${value}</b>
+      <span class="simx-delta-sub ${tone}">${delta}</span>
+      ${sub ? `<span class="simx-hint">${sub}</span>` : ''}
+    </div>`;
+  const endCard = card(
+    (sReg || bReg) ? 'Program end' : 'Completion',
+    sEnd ? escapeHtml(_dynFmtDate(sEnd)) : 'Does not complete',
+    dEnd == null ? '—' : dEnd === 0 ? 'same day as baseline' : dEnd > 0 ? `${dEnd} days sooner` : `${Math.abs(dEnd)} days later`,
+    dEnd == null || dEnd === 0 ? '' : dEnd > 0 ? 'good' : 'bad',
+    `baseline: ${bEnd ? escapeHtml(_dynFmtDate(bEnd)) : '—'}`);
+
+  const bWk = bReg ? bReg.totalWeeks : B.weeks, sWk = sReg ? sReg.totalWeeks : S.weeks;
+  const dWk = (bWk != null && sWk != null) ? bWk - sWk : null;
+  const durCard = card('Duration', sWk != null ? sWk + ' wks' : '—',
+    dWk == null ? '—' : dWk === 0 ? 'same as baseline' : dWk > 0 ? `${dWk} wks shorter` : `${Math.abs(dWk)} wks longer`,
+    dWk == null || dWk === 0 ? '' : dWk > 0 ? 'good' : 'bad',
+    `baseline: ${bWk != null ? bWk + ' wks' : '—'}`);
+
+  const dPl = S.placed - B.placed;
+  const covCard = card('Coverage', `${S.placed}/${S.total} runs`,
+    dPl === 0 ? (S.unplaced ? `${S.unplaced} still unplaced` : 'all work scheduled') : dPl > 0 ? `+${dPl} more scheduled` : `${Math.abs(dPl)} fewer scheduled`,
+    dPl === 0 ? (S.unplaced ? 'warn' : 'good') : dPl > 0 ? 'good' : 'bad',
+    `baseline: ${B.placed}/${B.total}`);
+
+  return `<div class="simx-compare">
+    <div class="simx-compare-head">
+      <span class="simx-lbl">${escapeHtml(sc.name)} vs ${icon('star')} ${escapeHtml(baseline.name)}</span>
       <span style="flex:1;"></span>
-      <span class="dyn-kpi" style="margin:0;padding:5px 12px;"><span>Program end</span><b style="color:var(--info);">${fmt(regRes.programEnd)}</b></span>
-      <span class="dyn-kpi" style="margin:0;padding:5px 12px;"><span>Total</span><b>${regRes.totalWeeks != null ? regRes.totalWeeks + ' wks' : '—'}</b></span>
+      <button type="button" class="simx-linkish" onclick="_dynSimUiTogglePanel('compare')">${open ? 'Hide full comparison' : 'Full comparison'}</button>
     </div>
-    <div style="display:flex;height:22px;border-radius:5px;overflow:hidden;border:1px solid var(--gray-200);margin-bottom:10px;">${ribbon}</div>
-    <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
-      <thead><tr style="color:var(--gray-500);font-size:10px;text-transform:uppercase;">
-        <th style="text-align:left;padding:3px 10px;">Campaign</th>
-        <th style="text-align:right;padding:3px 10px;">Lead-in</th>
-        <th style="text-align:right;padding:3px 10px;">Dates</th>
-        <th style="text-align:right;padding:3px 10px;">Duration</th>
-        <th style="text-align:right;padding:3px 10px;">Runs</th>
-      </tr></thead><tbody>${rows}</tbody>
-    </table>
-    <div style="margin-top:8px;font-size:11px;color:var(--gray-500);">Failure spread: ${weightChips}</div>
+    <div class="simx-delta-cards">${endCard}${durCard}${covCard}</div>
+    <div class="simx-compare-detail"${open ? '' : ' hidden'}>${_dynSimCompareTableHtml(B, S, baseline, sc, bReg, sReg)}</div>
   </div>`;
 }
 
-// Baseline-vs-scenario KPI table (like the what-if Current/Scenario/Difference).
-function _dynSimKpiCompareHtml(B, S, baseline, sc, bReg, sReg) {
+// The complete metric-by-metric table (every row of the old comparison,
+// including the regression block) — shown on demand under the delta cards.
+function _dynSimCompareTableHtml(B, S, baseline, sc, bReg, sReg) {
   const dlt = (a, b, unit, goodUp) => {
     const d = Math.round((b - a) * 100) / 100;
-    if (!d) return '<span style="color:var(--gray-400);">—</span>';
+    if (!d) return '<span style="color:var(--text-subtle);">—</span>';
     const good = goodUp ? d > 0 : d < 0;
-    return `<span style="color:${good ? '#059669' : '#b45309'};font-weight:600;">${d > 0 ? '+' : ''}${d}${unit || ''}</span>`;
+    return `<span style="color:${good ? 'var(--good)' : 'var(--warn)'};font-weight:600;">${d > 0 ? '+' : ''}${d}${unit || ''}</span>`;
   };
   const dateDelta = (a, b) => {
-    if (!a || !b) return '<span style="color:var(--gray-400);">—</span>';
+    if (!a || !b) return '<span style="color:var(--text-subtle);">—</span>';
     const days = Math.round((_dynParseDate(a) - _dynParseDate(b)) / 86400000);
-    if (!days) return '<span style="color:var(--gray-400);">same day</span>';
-    return `<span style="color:${days > 0 ? '#059669' : '#b45309'};font-weight:600;">${days > 0 ? days + ' days sooner' : Math.abs(days) + ' days later'}</span>`;
+    if (!days) return '<span style="color:var(--text-subtle);">same day</span>';
+    return `<span style="color:${days > 0 ? 'var(--good)' : 'var(--warn)'};font-weight:600;">${days > 0 ? days + ' days sooner' : Math.abs(days) + ' days later'}</span>`;
   };
   const pct = r => r.total ? Math.round(r.placed / r.total * 100) : 0;
-  const row = (label, a, b, delta) => `<tr style="border-top:1px solid var(--gray-100);">
-    <td style="padding:6px 10px;color:var(--gray-600);">${label}</td>
-    <td style="padding:6px 10px;text-align:right;font-family:monospace;">${a}</td>
-    <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:600;">${b}</td>
-    <td style="padding:6px 10px;text-align:right;">${delta}</td></tr>`;
-  return `<div class="data-card" style="padding:0;margin-bottom:12px;overflow:hidden;">
-    <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
-      <thead><tr style="background:var(--gray-50);">
-        <th style="text-align:left;padding:6px 10px;">Metric</th>
-        <th style="text-align:right;padding:6px 10px;">★ ${escapeHtml(baseline.name)}</th>
-        <th style="text-align:right;padding:6px 10px;">${escapeHtml(sc.name)}</th>
-        <th style="text-align:right;padding:6px 10px;">Difference</th>
+  const row = (label, a, b, delta) => `<tr>
+    <td>${label}</td>
+    <td class="num">${a}</td>
+    <td class="num" style="font-weight:600;">${b}</td>
+    <td class="num">${delta}</td></tr>`;
+  return `<div class="simx-ov-wrap" style="margin-top:10px;">
+    <table class="simx-tbl">
+      <thead><tr>
+        <th>Metric</th>
+        <th class="num">★ ${escapeHtml(baseline.name)}</th>
+        <th class="num">${escapeHtml(sc.name)}</th>
+        <th class="num">Difference</th>
       </tr></thead><tbody>
         ${row('Runs scheduled', `${B.placed}/${B.total}`, `${S.placed}/${S.total}`, dlt(B.placed, S.placed, '', true))}
         ${row('% scheduled', pct(B) + '%', pct(S) + '%', dlt(pct(B), pct(S), ' pts', true))}
@@ -44599,142 +44694,212 @@ function _dynSimKpiCompareHtml(B, S, baseline, sc, bReg, sReg) {
   </div>`;
 }
 
-// Program-level rows (regression projection) appended to the compare table when
-// either side has projection enabled: they roll the dev gaps + regression
-// campaigns into the headline, so a scenario with heavy regression no longer
-// looks identical to one without. A side with projection OFF falls back to its
-// original run (program end = its completion), keeping the comparison fair.
+// Program-level rows (regression projection) appended to the full comparison
+// table when either side has projection enabled. A side with projection OFF
+// falls back to its original run, keeping the comparison fair.
 function _dynSimKpiRegRows(B, S, bReg, sReg) {
   if (!bReg && !sReg) return '';
   const dlt = (a, b, unit, goodUp) => {
     const d = Math.round((b - a) * 100) / 100;
-    if (!d) return '<span style="color:var(--gray-400);">—</span>';
+    if (!d) return '<span style="color:var(--text-subtle);">—</span>';
     const good = goodUp ? d > 0 : d < 0;
-    return `<span style="color:${good ? '#059669' : '#b45309'};font-weight:600;">${d > 0 ? '+' : ''}${d}${unit || ''}</span>`;
+    return `<span style="color:${good ? 'var(--good)' : 'var(--warn)'};font-weight:600;">${d > 0 ? '+' : ''}${d}${unit || ''}</span>`;
   };
   const dateDelta = (a, b) => {
-    if (!a || !b) return '<span style="color:var(--gray-400);">—</span>';
+    if (!a || !b) return '<span style="color:var(--text-subtle);">—</span>';
     const days = Math.round((_dynParseDate(a) - _dynParseDate(b)) / 86400000);
-    if (!days) return '<span style="color:var(--gray-400);">same day</span>';
-    return `<span style="color:${days > 0 ? '#059669' : '#b45309'};font-weight:600;">${days > 0 ? days + ' days sooner' : Math.abs(days) + ' days later'}</span>`;
+    if (!days) return '<span style="color:var(--text-subtle);">same day</span>';
+    return `<span style="color:${days > 0 ? 'var(--good)' : 'var(--warn)'};font-weight:600;">${days > 0 ? days + ' days sooner' : Math.abs(days) + ' days later'}</span>`;
   };
-  const row = (label, a, b, delta) => `<tr style="border-top:1px solid var(--gray-100);">
-    <td style="padding:6px 10px;color:var(--gray-600);">${label}</td>
-    <td style="padding:6px 10px;text-align:right;font-family:monospace;">${a}</td>
-    <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:600;">${b}</td>
-    <td style="padding:6px 10px;text-align:right;">${delta}</td></tr>`;
+  const row = (label, a, b, delta) => `<tr>
+    <td>${label}</td><td class="num">${a}</td><td class="num" style="font-weight:600;">${b}</td><td class="num">${delta}</td></tr>`;
   const pEnd = (reg, r) => reg ? reg.programEnd : r.completion;
   const pWeeks = (reg, r) => reg ? reg.totalWeeks : r.weeks;
   const pRuns = (reg, r) => reg ? reg.campaigns.reduce((a, c) => a + (c.runs || 0), 0) : r.placed;
   const pRegs = reg => reg ? reg.regressions : 0;
   const bEnd = pEnd(bReg, B), sEnd = pEnd(sReg, S);
   const bWk = pWeeks(bReg, B), sWk = pWeeks(sReg, S);
-  return `<tr><td colspan="4" style="padding:5px 10px;background:#eff6ff;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#1e3a8a;">Including regression projection</td></tr>
+  return `<tr><td colspan="4" class="simx-tbl-band">Including regression projection</td></tr>
     ${row('Program end', bEnd ? _dynFmtDate(bEnd) : '—', sEnd ? _dynFmtDate(sEnd) : '—', dateDelta(bEnd, sEnd))}
     ${row('Program duration', (bWk ?? '—') + ' wks', (sWk ?? '—') + ' wks', bWk != null && sWk != null ? dlt(bWk, sWk, ' wks', false) : '—')}
     ${row('Regression campaigns', pRegs(bReg), pRegs(sReg), dlt(pRegs(bReg), pRegs(sReg), '', false))}
     ${row('Program runs', pRuns(bReg, B), pRuns(sReg, S), dlt(pRuns(bReg, B), pRuns(sReg, S), '', true))}`;
 }
 
-// Location Gantt; in compare mode each location shows TWO bars (baseline grey,
-// scenario blue) on a shared time axis.
+// ── Regression program card ──────────────────────────────────────────────────
+function _dynSimRegressionHtml(sc, regRes) {
+  if (!regRes) return '';
+  const cfg = _dynRegConfig(sc);
+  const ev = [];
+  regRes.campaigns.forEach((c, i) => {
+    if (c.gapMonths > 0) ev.push({ type: 'gap', months: c.gapMonths });
+    ev.push({ type: 'camp', c, i });
+  });
+  const fmt = d => d ? _dynFmtDate(d) : '—';
+  const rows = regRes.campaigns.map(c => `<tr${c.kind === 'baseline' ? ' style="background:var(--surface-2);"' : ''}>
+      <td style="white-space:nowrap;">${c.kind === 'baseline' ? icon('star') + ' ' : ''}${escapeHtml(c.name)}${c.kind === 'regression' ? ` <span class="simx-hint">${c.failCount} fail${c.failCount === 1 ? '' : 's'}</span>` : ''}</td>
+      <td class="num">${c.gapMonths > 0 ? `<span style="color:var(--warn);">+${c.gapMonths} mo dev gap</span>` : '<span style="color:var(--text-subtle);">—</span>'}</td>
+      <td class="num mono" style="white-space:nowrap;">${fmt(c.start)} → ${fmt(c.end)}</td>
+      <td class="num mono">${c.weeks != null ? c.weeks + ' wk' : '—'}</td>
+      <td class="num mono">${c.runs}</td>
+    </tr>`).join('');
+  const wkFor = e => e.type === 'gap' ? Math.max(0.5, e.months * 4.33) : Math.max(0.5, e.c.weeks || 1);
+  const totW = ev.reduce((a, e) => a + wkFor(e), 0) || 1;
+  const ribbon = ev.map(e => {
+    const pct = wkFor(e) / totW * 100;
+    if (e.type === 'gap') return `<div title="${e.months} month dev gap" class="simx-rib-gap" style="width:${pct}%;"></div>`;
+    const base = e.c.kind === 'baseline';
+    return `<div title="${escapeHtml(e.c.name)}: ${fmt(e.c.start)} → ${fmt(e.c.end)}" class="simx-rib-camp ${base ? 'base' : ''}" style="width:${pct}%;">${pct > 7 ? (base ? 'Base' : 'R' + e.i) : ''}</div>`;
+  }).join('');
+  const weightChips = cfg.subsystems.length
+    ? cfg.subsystems.map(s => `<span class="tag" style="font-size:10px;">${escapeHtml(s)} ${cfg.weights[s] || 0}%</span>`).join(' ')
+    : '<span class="simx-hint">no subsystems</span>';
+  return `<div class="data-card simx-card" style="border-left:3px solid var(--brand-blue,#1d4eaf);">
+    <div class="simx-card-head">
+      <span class="simx-lbl">Regression program · ${cfg.failureRate}% fail rate</span>
+      <span style="flex:1;"></span>
+      <span class="simx-vstat"><span>Program end</span><b>${fmt(regRes.programEnd)}</b></span>
+      <span class="simx-vstat"><span>Total</span><b>${regRes.totalWeeks != null ? regRes.totalWeeks + ' wks' : '—'}</b></span>
+    </div>
+    <div class="simx-ribbon">${ribbon}</div>
+    <table class="simx-tbl">
+      <thead><tr><th>Campaign</th><th class="num">Lead-in</th><th class="num">Dates</th><th class="num">Duration</th><th class="num">Runs</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="simx-foot">Failure spread: ${weightChips}</div>
+  </div>`;
+}
+
+// ── Location timeline (Gantt) with a month ruler ─────────────────────────────
+function _dynSimMonthTicks(t0, t1) {
+  const span = Math.max(1, t1 - t0);
+  const ticks = [];
+  const d = new Date(t0); d.setDate(1); d.setHours(0, 0, 0, 0);
+  if (d.getTime() < t0) d.setMonth(d.getMonth() + 1);
+  const showYear = (t1 - t0) > 300 * 86400000;
+  while (d.getTime() < t1) {
+    ticks.push({
+      left: (d.getTime() - t0) / span * 100,
+      label: d.toLocaleString('en-US', showYear ? { month: 'short', year: '2-digit' } : { month: 'short' }),
+    });
+    d.setMonth(d.getMonth() + 1);
+  }
+  // De-clutter: cap at ~14 labels.
+  const step = Math.ceil(ticks.length / 14);
+  return ticks.filter((_, i) => i % step === 0);
+}
+
 function _dynSimGanttHtml(sc, res, baseRes) {
-  if (!res.completion && !(baseRes && baseRes.completion)) return '<div style="font-size:12px;color:var(--gray-400);">Nothing scheduled.</div>';
+  if (!res.completion && !(baseRes && baseRes.completion)) return '<div class="simx-hint" style="padding:6px 0;">Nothing scheduled.</div>';
   const ends = [res.completion, baseRes && baseRes.completion].filter(Boolean);
   const starts = [res.startDate, baseRes && baseRes.startDate].filter(Boolean);
   const t0 = Math.min(...starts.map(d => _dynParseDate(d).getTime()));
   const t1 = Math.max(...ends.map(d => _dynParseDate(d).getTime())) + 86400000;
   const span = Math.max(1, t1 - t0);
+  const blue = 'var(--brand-blue, #1d4eaf)';
   const bar = (s2, color) => {
     if (!s2) return '';
     const l = ((_dynParseDate(s2.first).getTime() - t0) / span) * 100;
     const w2 = Math.max(1.5, ((_dynParseDate(s2.last).getTime() + 86400000 - _dynParseDate(s2.first).getTime()) / span) * 100);
-    return `<div title="${_dynFmtDate(s2.first)} → ${_dynFmtDate(s2.last)} · ${s2.n} runs" style="position:absolute;left:${l}%;width:${w2}%;top:0;bottom:0;background:${color};border-radius:4px;opacity:.9;"></div>`;
+    return `<div title="${_dynFmtDate(s2.first)} → ${_dynFmtDate(s2.last)} · ${s2.n} runs" class="simx-gbar" style="left:${l}%;width:${w2}%;background:${color};"></div>`;
   };
+  const ticks = _dynSimMonthTicks(t0, t1);
+  const ruler = `<div class="simx-gruler">${ticks.map(t => `<span style="left:${t.left}%;">${t.label}</span>`).join('')}</div>`;
+  const grid = ticks.map(t => `<i class="simx-ggrid" style="left:${t.left}%;"></i>`).join('');
+  const today = Date.now();
+  const todayLine = (today > t0 && today < t1)
+    ? `<i class="simx-gtoday" title="Today" style="left:${(today - t0) / span * 100}%;"></i>` : '';
   const zones = [...new Set([...res.zoneSpan.keys(), ...(baseRes ? baseRes.zoneSpan.keys() : [])])].sort();
   const rows = zones.map(z => {
     const sb = baseRes ? baseRes.zoneSpan.get(z) : null;
     const ss = res.zoneSpan.get(z);
-    // NOTE: in compare mode the two tracks sit in a COLUMN flex, so they must NOT
-    // use `flex:1` (that resolves to flex-basis:0% and collapses their height to
-    // 0 — the bars render but are invisible). Single mode keeps flex:1 because
-    // there the track is in a ROW flex and flex:1 only drives its width.
-    const track = (h, grow) => `<div style="${grow ? 'flex:1;' : 'width:100%;'}height:${h}px;background:var(--gray-100);border-radius:4px;position:relative;">`;
     if (baseRes) {
-      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-        <span style="width:46px;font-family:monospace;font-size:11px;color:var(--gray-600);">${escapeHtml(z)}</span>
-        <div style="flex:1;display:flex;flex-direction:column;gap:2px;">
-          ${track(9, false)}${bar(sb, '#9ca3af')}</div>
-          ${track(9, false)}${bar(ss, '#1d4eaf')}</div>
+      return `<div class="simx-grow">
+        <span class="simx-gzone">${escapeHtml(z)}</span>
+        <div class="simx-gtracks">
+          <div class="simx-gtrack thin">${grid}${bar(sb, 'var(--gray-400)')}</div>
+          <div class="simx-gtrack thin">${grid}${bar(ss, blue)}${todayLine}</div>
         </div>
       </div>`;
     }
-    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
-      <span style="width:46px;font-family:monospace;font-size:11px;color:var(--gray-600);">${escapeHtml(z)}</span>
-      ${track(14, true)}${bar(ss, '#1d4eaf')}</div>
-      <span style="width:120px;font-size:10px;color:var(--gray-500);white-space:nowrap;">${ss ? _dynFmtDate(ss.first) + ' → ' + _dynFmtDate(ss.last) + ' · ' + ss.n : '—'}</span>
+    return `<div class="simx-grow">
+      <span class="simx-gzone">${escapeHtml(z)}</span>
+      <div class="simx-gtrack">${grid}${bar(ss, blue)}${todayLine}</div>
+      <span class="simx-gmeta">${ss ? _dynFmtDate(ss.first) + ' → ' + _dynFmtDate(ss.last) + ' · ' + ss.n : '—'}</span>
     </div>`;
   }).join('');
   const closures = res.winLog.filter(w => w.isClosure).map(w => _dynFmtDate(w.date)).join(', ');
-  return rows + (closures ? `<div style="font-size:10.5px;color:#92400e;margin-top:4px;">48h closures: ${escapeHtml(closures)}</div>` : '');
+  return `<div class="simx-gantt">${ruler}${rows}</div>` +
+    (closures ? `<div class="simx-foot" style="color:var(--warn);">48h closures: ${escapeHtml(closures)}</div>` : '');
 }
 
-// Shift log; in compare mode the date rows show baseline and scenario side by side.
+// ── Shift log — collapsed by default, all data preserved on expand ──────────
 function _dynSimShiftsHtml(sc, res, baseRes, baseline, regRes) {
+  const open = _dynSimUi().panels.has('shifts');
+  const regShiftN = regRes ? regRes.campaigns.filter(c => c.kind === 'regression').reduce((a, c) => a + ((c.res && c.res.winLog) ? c.res.winLog.length : 0), 0) : 0;
+  const head = `<button type="button" class="simx-card-head as-btn" aria-expanded="${open}" onclick="_dynSimUiTogglePanel('shifts')">
+      <span class="simx-lbl">Simulated shifts</span>
+      <span class="simx-hint">${res.winLog.length} shift${res.winLog.length === 1 ? '' : 's'} · ${res.shiftsUsed} used${baseRes ? ' — baseline vs scenario' : ''}${regShiftN ? ` · +${regShiftN} regression` : ''}</span>
+      <span style="flex:1;"></span><span class="simx-linkish">${open ? 'Hide' : 'Show'}</span>
+    </button>`;
+  if (!open) return `<div class="data-card simx-card" style="padding-bottom:10px;">${head}</div>`;
+
   const cell = w => {
     if (!w) return '<span style="color:var(--gray-300);">—</span>';
-    if (!w.isClosure && w.placed === 0) return `<span style="color:#b45309;font-size:10px;">${w.size || 1}-loc access · unused</span> <span style="color:var(--gray-400);">${w.hours}h</span>`;
-    return `${w.zones.map(z => `<span class="tag" style="font-family:monospace;font-size:10px;">${escapeHtml(z)}</span>`).join(' ')}${w.isClosure ? ' <span class="tag" style="background:#fde68a;color:#92400e;font-size:9px;">48h</span>' : ''} <span style="color:var(--gray-400);">${w.hours}h·${w.placed}</span>`;
+    if (!w.isClosure && w.placed === 0) return `<span style="color:var(--warn);font-size:10px;">${w.size || 1}-loc access · unused</span> <span style="color:var(--text-subtle);">${w.hours}h</span>`;
+    return `${w.zones.map(z => `<span class="tag mono" style="font-size:10px;">${escapeHtml(z)}</span>`).join(' ')}${w.isClosure ? ` <span class="tag" style="background:var(--warn-light);color:var(--warn);font-size:9px;">48h</span>` : ''} <span style="color:var(--text-subtle);">${w.hours}h·${w.placed}</span>`;
   };
-  // Regression campaigns are appended below the baseline shifts: a dev-gap
-  // separator, a campaign header (how many regression tests are planned), then
-  // that campaign's own simulated shifts. colspan keeps it aligned in both the
-  // single-column and the baseline-vs-scenario (3-col) layouts.
+  // Regression campaigns append below the baseline shifts: a dev-gap separator,
+  // a campaign header, then that campaign's own simulated shifts.
   const regRows = colspan => {
     if (!regRes) return '';
     const camps = regRes.campaigns.filter(c => c.kind === 'regression');
     if (!camps.length) return '';
     return camps.map(c => {
       const gap = c.gapMonths > 0
-        ? `<tr style="background:#fffbeb;"><td colspan="${colspan}" style="padding:5px 8px;font-size:10.5px;color:#92400e;text-align:center;border-top:1px dashed #fde68a;">↧ +${c.gapMonths} mo dev gap — waiting on next software release</td></tr>`
-        : '';
-      const header = `<tr style="background:#eff6ff;"><td colspan="${colspan}" style="padding:6px 8px;font-size:11px;font-weight:600;color:#1e3a8a;">${escapeHtml(c.name)} — ${c.failCount} regression test${c.failCount === 1 ? '' : 's'} planned${c.runs != null ? ` · ${c.runs} run(s) scheduled` : ''}</td></tr>`;
+        ? `<tr class="simx-tr-gap"><td colspan="${colspan}">+${c.gapMonths} mo dev gap — waiting on next software release</td></tr>` : '';
+      const header = `<tr class="simx-tr-camp"><td colspan="${colspan}">${escapeHtml(c.name)} — ${c.failCount} regression test${c.failCount === 1 ? '' : 's'} planned${c.runs != null ? ` · ${c.runs} run(s) scheduled` : ''}</td></tr>`;
       const wins = (c.res && c.res.winLog) ? c.res.winLog.slice(0, 30) : [];
       const body = wins.length
-        ? wins.map(w => `<tr style="border-top:1px solid var(--gray-100);${w.isClosure ? 'background:#fffbeb;' : ''}">
-            <td style="padding:4px 8px;font-family:monospace;font-size:11px;white-space:nowrap;">${escapeHtml(_dynFmtDate(w.date))}</td>
-            ${colspan === 3 ? '<td style="padding:4px 8px;font-size:11px;color:var(--gray-300);">—</td>' : ''}
-            <td style="padding:4px 8px;font-size:11px;">${cell(w)}</td>
+        ? wins.map(w => `<tr${w.isClosure ? ' class="simx-tr-clos"' : ''}>
+            <td class="mono" style="white-space:nowrap;">${escapeHtml(_dynFmtDate(w.date))}</td>
+            ${colspan === 3 ? '<td style="color:var(--gray-300);">—</td>' : ''}
+            <td>${cell(w)}</td>
           </tr>`).join('')
-        : `<tr><td colspan="${colspan}" style="padding:6px 8px;text-align:center;color:var(--gray-400);font-size:11px;">No regression shifts scheduled.</td></tr>`;
+        : `<tr><td colspan="${colspan}" style="text-align:center;color:var(--text-subtle);">No regression shifts scheduled.</td></tr>`;
       return gap + header + body;
     }).join('');
   };
+
+  let table;
   if (!baseRes) {
     const rows = res.winLog.slice(0, 30).map(w => `
-      <tr style="border-top:1px solid var(--gray-100);${w.isClosure ? 'background:#fffbeb;' : ''}">
-        <td style="padding:4px 8px;font-family:monospace;font-size:11px;white-space:nowrap;">${escapeHtml(_dynFmtDate(w.date))}</td>
-        <td style="padding:4px 8px;font-size:11px;">${cell(w)}</td>
+      <tr${w.isClosure ? ' class="simx-tr-clos"' : ''}>
+        <td class="mono" style="white-space:nowrap;">${escapeHtml(_dynFmtDate(w.date))}</td>
+        <td>${cell(w)}</td>
       </tr>`).join('');
-    return `<table style="width:100%;border-collapse:collapse;"><thead><tr style="color:var(--gray-500);font-size:10px;text-transform:uppercase;"><th style="text-align:left;padding:3px 8px;">Date</th><th style="text-align:left;padding:3px 8px;">Locations · h · runs</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="2" style="padding:14px;text-align:center;color:var(--gray-400);font-size:12px;">No shifts simulated.</td></tr>'}${regRows(2)}</tbody></table>`;
+    table = `<table class="simx-tbl"><thead><tr><th>Date</th><th>Locations · h · runs</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="2" style="padding:14px;text-align:center;color:var(--text-subtle);">No shifts simulated.</td></tr>'}${regRows(2)}</tbody></table>` +
+      (res.winLog.length > 30 ? `<div class="simx-foot" style="padding:6px 12px;">Showing first 30 of ${res.winLog.length} shifts.</div>` : '');
+  } else {
+    const bMap = new Map(baseRes.winLog.map(w => [w.date, w]));
+    const sMap = new Map(res.winLog.map(w => [w.date, w]));
+    const dates = [...new Set([...bMap.keys(), ...sMap.keys()])].sort();
+    const shown = dates.slice(0, 40);
+    const rows = shown.map(d => `
+      <tr>
+        <td class="mono" style="white-space:nowrap;">${escapeHtml(_dynFmtDate(d))}</td>
+        <td>${cell(bMap.get(d))}</td>
+        <td>${cell(sMap.get(d))}</td>
+      </tr>`).join('');
+    table = `<table class="simx-tbl">
+      <thead><tr><th>Date</th><th>${icon('star')} ${escapeHtml(baseline.name)}</th><th>${escapeHtml(sc.name)}</th></tr></thead>
+      <tbody>${rows}${regRows(3)}</tbody></table>` +
+      (dates.length > shown.length ? `<div class="simx-foot" style="padding:6px 12px;">Showing first 40 of ${dates.length} dates.</div>` : '');
   }
-  const bMap = new Map(baseRes.winLog.map(w => [w.date, w]));
-  const sMap = new Map(res.winLog.map(w => [w.date, w]));
-  const dates = [...new Set([...bMap.keys(), ...sMap.keys()])].sort().slice(0, 40);
-  const rows = dates.map(d => `
-    <tr style="border-top:1px solid var(--gray-100);">
-      <td style="padding:4px 8px;font-family:monospace;font-size:11px;white-space:nowrap;">${escapeHtml(_dynFmtDate(d))}</td>
-      <td style="padding:4px 8px;font-size:11px;">${cell(bMap.get(d))}</td>
-      <td style="padding:4px 8px;font-size:11px;">${cell(sMap.get(d))}</td>
-    </tr>`).join('');
-  return `<table style="width:100%;border-collapse:collapse;">
-    <thead><tr style="color:var(--gray-500);font-size:10px;text-transform:uppercase;">
-      <th style="text-align:left;padding:3px 8px;">Date</th>
-      <th style="text-align:left;padding:3px 8px;">★ ${escapeHtml(baseline.name)}</th>
-      <th style="text-align:left;padding:3px 8px;">${escapeHtml(sc.name)}</th>
-    </tr></thead><tbody>${rows}${regRows(3)}</tbody></table>`;
+  return `<div class="data-card simx-card">${head}<div class="simx-ov-wrap" style="border:none;border-top:1px solid var(--line-soft);">${table}</div></div>`;
 }
+
 
 // Extend the active scenario's S-curve through the regression projection: after
 // the baseline peak, each campaign shows a dev-gap plateau (a dip as the failed
@@ -44769,8 +44934,10 @@ function _dynSimRegressionCurve(activeRes, regRes) {
   return pts;
 }
 
-// S-curve: every scenario in the phase (baseline red, active bold) + ACTUAL
-// progress (black dashed).
+// ── S-curve chart ─────────────────────────────────────────────────────────────
+// Cleaner defaults: no in-chart title/legend (the card header + series pills
+// carry that), y-grid only, softer ticks, subtle area fill under the ACTIVE
+// scenario so the eye lands on the one being edited.
 function _dynSimDrawChart() {
   const cv = document.getElementById('dyn-sim-chart');
   if (!cv || typeof Chart === 'undefined') return;
@@ -44779,8 +44946,7 @@ function _dynSimDrawChart() {
   const list = _dynSimScenarios().filter(s => (s.phase || '') === phase);
   const prereqs = _dynPage._simPrereqs || [];
   // Each scenario with regression projection ENABLED gets its S-curve extended
-  // through the dev gaps + regression campaigns — independent of which scenario
-  // is currently selected, so an enabled regression always shows on the chart.
+  // through the dev gaps + regression campaigns.
   const runs = list.map(s => {
     const r = (active && s.id === active.id && _dynPage._simResult) ? _dynPage._simResult : _dynSimRun(s, prereqs);
     let curve = r.cumulative;
@@ -44795,9 +44961,8 @@ function _dynSimDrawChart() {
   });
   const actual = _dynSimActualCurve(phase);
   const allDates = [...new Set([...runs.flatMap(x => x.curve.map(p => p.date)), ...actual.points.map(p => p.date)])].sort();
-  // Plot on a real time axis (ms since epoch) instead of one slot per date, so a
-  // 2–3 month stoppage during regression development renders as ONE long flat
-  // segment — proportional to the gap — rather than a single even-width step.
+  // Real time axis (ms) so a 2–3 month dev-gap stoppage renders as ONE long
+  // flat segment proportional to the gap.
   const _ts = d => _dynParseDate(d).getTime();
   const palette = ['#1d4eaf', '#059669', '#7c3aed', '#b45309', '#0e7490', '#9d174d'];
   const hidden = _dynPage._simHiddenSeries || (_dynPage._simHiddenSeries = new Set());
@@ -44806,24 +44971,26 @@ function _dynSimDrawChart() {
     if (hidden.has(s.id)) return;
     const isActive = active && s.id === active.id;
     const hasReg = curve !== r.cumulative;
+    const color = s.baseline ? '#e60012' : palette[i % palette.length];
     let last = 0; const m = new Map(curve.map(p => [p.date, p.pct]));
     datasets.push({
       label: (s.baseline ? '★ ' : '') + s.name + (hasReg ? ' (incl. regression)' : ''),
       data: allDates.map(d => { if (m.has(d)) last = m.get(d); return { x: _ts(d), y: last }; }),
-      borderColor: s.baseline ? '#e60012' : palette[i % palette.length],
-      borderWidth: isActive ? 3 : 1.5,
-      stepped: true, fill: false, pointRadius: 0, tension: 0,
+      borderColor: color,
+      borderWidth: isActive ? 2.5 : 1.25,
+      stepped: true, pointRadius: 0, tension: 0,
+      fill: isActive ? 'origin' : false,
+      backgroundColor: isActive ? _dynSimHexA(color, 0.06) : 'transparent',
+      order: isActive ? 0 : 1,
     });
   });
   if (actual.points.length && !hidden.has('__actual__')) {
     let last = 0; const m = new Map(actual.points.map(p => [p.date, p.pct]));
     datasets.push({
       label: 'Actual progress', data: allDates.map(d => { if (m.has(d)) last = m.get(d); return { x: _ts(d), y: last }; }),
-      borderColor: '#111827', borderWidth: 2.5, borderDash: [5, 3], pointRadius: 0, fill: false, tension: 0,
+      borderColor: '#111827', borderWidth: 2, borderDash: [5, 3], pointRadius: 0, fill: false, tension: 0, order: 0,
     });
   }
-  // Long, regression-spanning timelines read best with month+year ticks; a short
-  // span (no dev gap) keeps month+day so the weekly cadence is still legible.
   const _spanDays = allDates.length ? (_ts(allDates[allDates.length - 1]) - _ts(allDates[0])) / 86400000 : 0;
   const _xTick = _spanDays > 75
     ? v => new Date(v).toLocaleString('en-US', { month: 'short', year: '2-digit' })
@@ -44834,24 +45001,40 @@ function _dynSimDrawChart() {
     data: { datasets },
     options: {
       responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
       plugins: {
-        legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, usePointStyle: true, pointStyle: 'line' } },
-        title: { display: true, text: 'S-curve — % complete: scenarios vs actual (' + phase + ')', font: { size: 12, weight: '600' }, color: '#6b7280' },
-        tooltip: { callbacks: { title: items => (items.length ? _dynFmtDate(new Date(items[0].parsed.x)) : '') } },
+        legend: { display: false },   // the pill toggles above the chart are the legend
+        tooltip: {
+          usePointStyle: true,
+          callbacks: {
+            title: items => (items.length ? _dynFmtDate(new Date(items[0].parsed.x)) : ''),
+            label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y}%`,
+          },
+        },
       },
-      scales: { y: { beginAtZero: true, max: 100, title: { display: true, text: '% complete', font: { size: 10 } } },
-        x: { type: 'linear', bounds: 'data',
-             ticks: { font: { size: 9 }, maxRotation: 60, autoSkip: true, maxTicksLimit: 14,
-               // blank a tick whose label repeats its neighbour (many linear ticks can
-               // land in the same month) so the month/year axis reads cleanly
-               callback: (v, i, ticks) => { const l = _xTick(v); return (i > 0 && _xTick(ticks[i - 1].value) === l) ? '' : l; } } } },
+      scales: {
+        y: {
+          beginAtZero: true, max: 100,
+          border: { display: false },
+          grid: { color: 'rgba(17,24,39,0.06)' },
+          ticks: { font: { size: 10 }, callback: v => v + '%', maxTicksLimit: 6 },
+        },
+        x: {
+          type: 'linear', bounds: 'data',
+          border: { display: false },
+          grid: { display: false },
+          ticks: {
+            font: { size: 10 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 10,
+            callback: (v, i, ticks) => { const l = _xTick(v); return (i > 0 && _xTick(ticks[i - 1].value) === l) ? '' : l; },
+          },
+        },
+      },
     },
   });
 }
 
-// Chart series toggles: a "Show all" master plus one checkbox per scenario (and
-// the actual-progress line) so the S-curve can be de-cluttered. Hidden series are
-// tracked in _dynPage._simHiddenSeries (by scenario id, or '__actual__').
+// Series toggles as pill chips (checkbox kept inside for the existing
+// _dynSimToggleSeries/_dynSimToggleAllSeries handlers + master-checkbox sync).
 function _dynSimChartControlsHtml() {
   const phase = _dynPage.simPhase;
   const list = _dynSimScenarios().filter(s => (s.phase || '') === phase);
@@ -44861,21 +45044,21 @@ function _dynSimChartControlsHtml() {
     key: s.id,
     label: (s.baseline ? '★ ' : '') + s.name,
     color: s.baseline ? '#e60012' : palette[i % palette.length],
+    dash: false,
   }));
-  if (_dynSimActualCurve(phase).points.length) series.push({ key: '__actual__', label: 'Actual progress', color: '#111827' });
+  if (_dynSimActualCurve(phase).points.length) series.push({ key: '__actual__', label: 'Actual progress', color: '#111827', dash: true });
   if (!series.length) return '';
   const allShown = series.every(x => !hidden.has(x.key));
-  const cbs = series.map(x => `
-    <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--gray-600);cursor:pointer;white-space:nowrap;">
-      <input type="checkbox" class="dyn-sim-series-cb" data-key="${escapeHtml(x.key)}" ${hidden.has(x.key) ? '' : 'checked'} onchange="_dynSimToggleSeries(\'${escapeHtml(x.key)}\',this.checked)">
-      <span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:${x.color};"></span>${escapeHtml(x.label)}
+  const pills = series.map(x => `
+    <label class="simx-pill">
+      <input type="checkbox" class="dyn-sim-series-cb" data-key="${escapeHtml(x.key)}" ${hidden.has(x.key) ? '' : 'checked'} onchange="_dynSimToggleSeries('${x.key}',this.checked)">
+      <i style="background:${x.color};${x.dash ? 'background:repeating-linear-gradient(90deg,' + x.color + ' 0 4px,transparent 4px 7px);' : ''}"></i>${escapeHtml(x.label)}
     </label>`).join('');
-  return `<div style="display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--gray-100);">
-      <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:var(--gray-700);cursor:pointer;white-space:nowrap;">
-        <input type="checkbox" id="dyn-sim-showall" ${allShown ? 'checked' : ''} onchange="_dynSimToggleAllSeries(this.checked)"> Show all
+  return `<div class="simx-series">
+      <label class="simx-pill all">
+        <input type="checkbox" id="dyn-sim-showall" ${allShown ? 'checked' : ''} onchange="_dynSimToggleAllSeries(this.checked)"> All
       </label>
-      <span style="width:1px;height:16px;background:var(--gray-200);"></span>
-      ${cbs}
+      ${pills}
     </div>`;
 }
 function _dynSimToggleSeries(key, checked) {

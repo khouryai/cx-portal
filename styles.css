@@ -14137,3 +14137,319 @@ tr.docs-drop-hot td { background: #eef2ff !important; box-shadow: inset 0 0 0 2p
 .drw-super-pill{ font-size:10px;font-weight:700;color:var(--warn);background:var(--warn-light);border-radius:4px;padding:1px 6px;margin-left:6px; }
 .drw-disc-count{ font-weight:600;color:var(--gray-400);margin-left:8px;letter-spacing:0; }
 .drw-card-rev{ font-size:10px;font-weight:700;color:var(--accent-indigo);background:rgba(99,102,241,.1);border-radius:4px;padding:1px 6px; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   SCHEDULE SIMULATOR — UI v2 (simx-*)
+   Append to the END of styles.css (after the AESTHETIC OVERHAUL LAYER).
+   Tokens only — no raw hex except chart-series colors, which live in JS.
+   No new :root block (guarded by tools/test_css_tokens.js).
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.simx { margin-top: 14px; }
+.simx .simx-lbl {
+  font-family: var(--f-mono);
+  font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-muted);
+}
+.simx-vr { width: 1px; height: 22px; background: var(--border); margin: 0 6px; }
+
+/* ── Top bar + scenario rail ─────────────────────────────────────────────── */
+.simx-topbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.simx-actual {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  font-size: 12px; color: var(--text-muted);
+  padding: 5px 12px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+}
+.simx-actual b { font-size: 14px; color: var(--text); font-family: var(--f-number, var(--f-ui)); }
+.simx-actual span { font-size: 11px; color: var(--text-subtle); }
+
+.simx-rail { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 10px 0 12px; }
+.simx-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 12px; font-size: 12px; font-weight: 600;
+  color: var(--text-muted); background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  cursor: pointer; transition: all var(--dur-fast) var(--easing);
+}
+.simx-chip svg { width: 12px; height: 12px; color: var(--accent-amber, var(--warn)); }
+.simx-chip:hover { border-color: var(--gray-400); background: var(--surface-2); }
+.simx-chip.active {
+  color: var(--white); background: var(--black);
+  border-color: var(--black);
+}
+.simx-chip.active svg { color: var(--white); }
+.simx-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer;
+  transition: all var(--dur-fast) var(--easing);
+}
+.simx-iconbtn svg { width: 14px; height: 14px; }
+.simx-iconbtn:hover { border-color: var(--gray-400); background: var(--surface-2); color: var(--text); }
+.simx-iconbtn.danger:hover { border-color: var(--bad); color: var(--bad); background: var(--bad-light); }
+.simx .dyn-btn.xs { font-size: 11px; padding: 3px 9px; }
+
+/* ── Verdict hero — the signature element ─────────────────────────────────── */
+.simx-verdict {
+  display: flex; gap: 24px; align-items: stretch; flex-wrap: wrap;
+  padding: 16px 20px; margin-bottom: 14px;
+  background: var(--card-bg); border: 1px solid var(--border);
+  border-left: 3px solid var(--hitachi-red);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-sm);
+}
+.simx-vmain { flex: 1 1 320px; min-width: 0; }
+.simx-vdate {
+  font-family: var(--f-display, var(--f-ui));
+  font-size: 30px; font-weight: 700; letter-spacing: -0.5px;
+  color: var(--text); line-height: 1.15; margin: 3px 0 8px;
+}
+.simx-vchips { display: flex; gap: 6px; flex-wrap: wrap; }
+.simx-chipstat {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 600; padding: 4px 10px;
+  border-radius: 999px; background: var(--surface-2);
+  border: 1px solid var(--border); color: var(--text-muted);
+}
+.simx-chipstat svg { width: 12px; height: 12px; }
+.simx-chipstat.is-good { background: var(--good-light); border-color: transparent; color: var(--good); }
+.simx-chipstat.is-bad  { background: var(--bad-light);  border-color: transparent; color: var(--bad); }
+.simx-chipstat.is-warn { background: var(--warn-light); border-color: transparent; color: var(--warn); }
+.simx-chipstat.is-info { background: var(--info-light); border-color: transparent; color: var(--info); }
+.simx-vstats {
+  display: grid; grid-template-columns: repeat(3, minmax(86px, auto));
+  gap: 8px 22px; align-content: center;
+  padding-left: 22px; border-left: 1px solid var(--line-soft);
+}
+.simx-vstat { display: flex; flex-direction: column; gap: 1px; }
+.simx-vstat span {
+  font-family: var(--f-mono); font-size: 9.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--text-subtle);
+}
+.simx-vstat b { font-size: 14.5px; font-weight: 650; color: var(--text); font-family: var(--f-number, var(--f-ui)); }
+.simx-vstat b i { font-style: normal; font-size: 11px; font-weight: 600; color: var(--warn); }
+
+/* ── Layout grid ──────────────────────────────────────────────────────────── */
+.simx-grid {
+  display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
+  gap: 16px; align-items: start;
+}
+@media (max-width: 1100px) { .simx-grid { grid-template-columns: 1fr; } }
+
+/* ── Accordion config sections ────────────────────────────────────────────── */
+.simx-sec {
+  background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: var(--radius-md); margin-bottom: 8px; overflow: hidden;
+}
+.simx-sec-head {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 10px 12px; background: none; border: none; cursor: pointer;
+  text-align: left; font-family: inherit;
+  transition: background var(--dur-fast) var(--easing);
+}
+.simx-sec-head:hover { background: var(--surface-2); }
+.simx-sec-ic { display: inline-flex; color: var(--text-subtle); }
+.simx-sec-ic svg { width: 14px; height: 14px; }
+.simx-sec.open .simx-sec-ic { color: var(--hitachi-red); }
+.simx-sec-title { font-size: 12.5px; font-weight: 700; color: var(--text); white-space: nowrap; }
+.simx-sec-sum {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--f-mono); font-size: 10.5px; color: var(--text-subtle); text-align: right;
+}
+.simx-sec-chev { display: inline-flex; color: var(--text-subtle); transition: transform var(--dur-fast) var(--easing); }
+.simx-sec-chev svg { width: 13px; height: 13px; }
+.simx-sec.open .simx-sec-chev { transform: rotate(90deg); }
+.simx-sec-body { padding: 10px 12px 13px; border-top: 1px solid var(--line-soft); }
+@media (prefers-reduced-motion: reduce) { .simx-sec-chev { transition: none; } }
+
+/* ── Form primitives ──────────────────────────────────────────────────────── */
+.simx-inp {
+  padding: 5px 6px; border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); text-align: center;
+  font-size: 11.5px; font-family: var(--f-input, inherit);
+  width: 48px; background: var(--surface); color: var(--text);
+}
+.simx-inp.sm { width: 40px; }
+.simx-inp.wide { width: 100%; box-sizing: border-box; text-align: left; padding: 6px 8px; }
+.simx-inp.mono { font-family: var(--f-mono); }
+.simx-inp:focus-visible { border-color: var(--hitachi-red); box-shadow: var(--ring); outline: none; }
+.simx-inp:disabled { opacity: .45; }
+.simx-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted); }
+.simx-field-inline { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-muted); }
+.simx-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.simx-row-inline { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.simx-field-lbl { font-size: 11.5px; color: var(--text-muted); margin: 8px 0 5px; }
+.simx-field-lbl span, .simx-hint { font-size: 10.5px; color: var(--text-subtle); font-weight: 400; }
+.simx-hint { display: inline-block; }
+.simx-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); cursor: pointer; }
+.simx-subhead { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); margin-bottom: 6px; flex-wrap: wrap; }
+.simx-divider { height: 1px; background: var(--line-soft); margin: 10px 0; }
+.simx-pctwrap { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--text-muted); }
+.simx-pctwrap.off { color: var(--text-subtle); }
+.simx-days { display: flex; gap: 5px; }
+.simx-day { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; color: var(--text-subtle); flex: 1; }
+.simx-day .simx-inp { width: 100%; box-sizing: border-box; }
+.simx-zones { margin-bottom: 4px; }
+.simx-zone {
+  font-size: 11px; font-family: var(--f-mono); padding: 3px 9px; margin: 2px;
+  border-radius: var(--radius-sm); cursor: pointer;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-subtle);
+  transition: all var(--dur-fast) var(--easing);
+}
+.simx-zone.on { border-color: var(--hitachi-red); background: var(--hitachi-red-light); color: var(--hitachi-red); font-weight: 700; }
+.simx-mono-box {
+  margin-top: 5px; padding: 6px 9px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 10.5px; font-family: var(--f-mono); color: var(--text-muted); line-height: 1.5;
+}
+.simx-mix { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 5px 12px; }
+.simx-mixcell { display: flex; align-items: center; justify-content: space-between; gap: 5px; font-size: 11.5px; color: var(--text-muted); }
+.simx-mixcell .mono { font-family: var(--f-mono); }
+.simx-mixcell span:last-child { display: inline-flex; align-items: center; gap: 2px; }
+.simx-foot { font-size: 10.5px; color: var(--text-subtle); margin-top: 6px; }
+.simx-x { border: none; background: none; cursor: pointer; color: var(--text-subtle); font-size: 13px; line-height: 1; padding: 0 1px; vertical-align: middle; }
+.simx-x:hover { color: var(--bad); }
+.simx-x-sp { display: inline-block; width: 9px; }
+.simx-wk { font-size: 11px; white-space: nowrap; }
+.simx-wk span { color: var(--text-subtle); }
+
+/* ── Tables ───────────────────────────────────────────────────────────────── */
+.simx-ov-wrap { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.simx-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.simx-tbl th {
+  position: sticky; top: 0; z-index: 1;
+  text-align: left; padding: 6px 10px;
+  background: var(--surface-2);
+  font-family: var(--f-mono); font-size: 9.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--text-subtle);
+}
+.simx-tbl td { padding: 5px 10px; border-top: 1px solid var(--line-soft); color: var(--text); }
+.simx-tbl td.mono, .simx-tbl .mono { font-family: var(--f-mono); font-size: 11px; }
+.simx-tbl th.num, .simx-tbl td.num { text-align: right; }
+.simx-tbl td.num { font-family: var(--f-number, var(--f-mono)); }
+.simx-tbl tbody tr:hover { background: var(--surface-2); }
+.simx-tbl-band {
+  background: var(--info-light); font-family: var(--f-mono);
+  font-size: 9.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--info);
+}
+.simx-ov td { padding: 3px 6px; white-space: nowrap; }
+.simx-tr-clos td { background: var(--warn-light); }
+.simx-tr-gap td {
+  background: var(--warn-light); color: var(--warn);
+  font-size: 10.5px; text-align: center; border-top: 1px dashed var(--warn);
+}
+.simx-tr-camp td { background: var(--info-light); color: var(--info); font-size: 11px; font-weight: 600; }
+
+/* ── Alerts ───────────────────────────────────────────────────────────────── */
+.simx-alert {
+  display: flex; gap: 9px; align-items: flex-start;
+  padding: 9px 13px; margin-bottom: 10px;
+  border-radius: var(--radius-md); border: 1px solid var(--border);
+  background: var(--surface-2); font-size: 12px; color: var(--text-muted); line-height: 1.45;
+}
+.simx-alert > svg { width: 15px; height: 15px; flex: none; margin-top: 1px; }
+.simx-alert .simx-hint { display: block; margin-top: 2px; }
+.simx-alert.is-bad  { background: var(--bad-light);  border-color: transparent; color: var(--bad); }
+.simx-alert.is-warn { background: var(--warn-light); border-color: transparent; color: var(--warn); }
+.simx-alert.is-info { background: var(--info-light); border-color: transparent; color: var(--info); }
+.simx-alert.is-neutral b { color: var(--text); }
+.simx-alertcard {
+  margin-bottom: 10px; background: var(--card-bg);
+  border: 1px solid var(--bad-light); border-radius: var(--radius-md); overflow: hidden;
+}
+.simx-alertcard-head {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 9px 13px; background: var(--bad-light); border: none; cursor: pointer;
+  text-align: left; font-family: inherit; font-size: 12px; color: var(--bad);
+}
+.simx-alertcard-head svg { width: 14px; height: 14px; }
+.simx-linkish {
+  background: none; border: none; cursor: pointer; padding: 0;
+  font-size: 11.5px; font-weight: 600; color: var(--info); text-decoration: underline;
+  text-underline-offset: 2px; font-family: inherit;
+}
+.simx-linkish:hover { color: var(--text); }
+
+/* ── Comparison ───────────────────────────────────────────────────────────── */
+.simx-compare {
+  padding: 13px 15px; margin-bottom: 12px;
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-lg);
+}
+.simx-compare-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.simx-compare-head svg { width: 11px; height: 11px; vertical-align: -1px; }
+.simx-delta-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+@media (max-width: 760px) { .simx-delta-cards { grid-template-columns: 1fr; } }
+.simx-delta {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 11px 13px; border: 1px solid var(--border);
+  border-radius: var(--radius-md); background: var(--surface);
+}
+.simx-delta b { font-size: 17px; font-weight: 700; color: var(--text); letter-spacing: -0.2px; }
+.simx-delta-sub { font-size: 12px; font-weight: 650; color: var(--text-subtle); }
+.simx-delta-sub.good { color: var(--good); }
+.simx-delta-sub.bad  { color: var(--warn); }
+.simx-delta-sub.warn { color: var(--warn); }
+
+/* ── Result cards / chart controls ────────────────────────────────────────── */
+.simx-card { padding: 12px 14px; margin-bottom: 12px; }
+.simx-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.simx-card-head.as-btn {
+  width: 100%; margin: 0; padding: 0; background: none; border: none;
+  cursor: pointer; text-align: left; font-family: inherit;
+}
+.simx-legend { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--text-subtle); }
+.simx-legend i { display: inline-block; width: 14px; height: 5px; border-radius: 2px; }
+.simx-series {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--line-soft);
+}
+.simx-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; font-size: 11px; font-weight: 600;
+  color: var(--text-subtle); background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: 999px; cursor: pointer;
+  transition: all var(--dur-fast) var(--easing);
+}
+.simx-pill input { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; }
+.simx-pill i { display: inline-block; width: 11px; height: 4px; border-radius: 2px; opacity: .3; }
+.simx-pill:has(input:checked) { color: var(--text); border-color: var(--gray-400); background: var(--surface-2); }
+.simx-pill:has(input:checked) i { opacity: 1; }
+.simx-pill.all { font-weight: 700; }
+.simx-pill.all:has(input:checked) { border-color: var(--black); }
+
+/* ── Regression ribbon ────────────────────────────────────────────────────── */
+.simx-ribbon {
+  display: flex; height: 20px; border-radius: var(--radius-sm);
+  overflow: hidden; border: 1px solid var(--border); margin-bottom: 10px;
+}
+.simx-rib-gap { background: repeating-linear-gradient(45deg, var(--warn-light), var(--warn-light) 5px, var(--surface-2) 5px, var(--surface-2) 10px); }
+.simx-rib-camp {
+  background: var(--accent-blue, #3b82f6); display: flex; align-items: center; justify-content: center;
+  color: var(--white); font-size: 9px; font-weight: 600; overflow: hidden; white-space: nowrap;
+}
+.simx-rib-camp.base { background: var(--brand-blue, #1d4eaf); }
+
+/* ── Gantt ────────────────────────────────────────────────────────────────── */
+.simx-gantt { position: relative; padding-top: 18px; }
+.simx-gruler { position: absolute; top: 0; left: 54px; right: 128px; height: 14px; }
+.simx-gruler span {
+  position: absolute; transform: translateX(-50%);
+  font-family: var(--f-mono); font-size: 9px; color: var(--text-subtle); white-space: nowrap;
+}
+.simx-grow { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.simx-gzone { width: 46px; font-family: var(--f-mono); font-size: 11px; color: var(--text-muted); }
+.simx-gtracks { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.simx-gtrack { flex: 1; height: 14px; background: var(--surface-2); border-radius: var(--radius-sm); position: relative; overflow: hidden; }
+.simx-gtracks .simx-gtrack { flex: none; width: 100%; }
+.simx-gtrack.thin { height: 8px; }
+.simx-gbar { position: absolute; top: 0; bottom: 0; border-radius: var(--radius-sm); opacity: .9; }
+.simx-ggrid { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line-soft); }
+.simx-gtoday { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--hitachi-red); border-radius: 1px; }
+.simx-gmeta { width: 120px; font-size: 10px; color: var(--text-subtle); white-space: nowrap; }
+.simx-grow:has(.simx-gtracks) .simx-gmeta { display: none; }
+.simx-gantt:has(.simx-gtracks) .simx-gruler { right: 0; }
+.simx-grow .simx-gtrack:not(.thin) { margin-right: 0; }
+.simx-grow:not(:has(.simx-gtracks)) .simx-gtrack { flex: 1; }
