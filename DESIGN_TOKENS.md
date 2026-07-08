@@ -68,6 +68,28 @@ Reach for these before inventing new classes:
   reuse the area's family; the shared grammar keeps it coherent. Don't
   introduce an 11th family.
 
+## Hero KPI chips (chip-stat) — the canonical stat vocabulary
+
+Compact status/metric chips are the shared vocabulary across the app: a mono
+uppercase micro-label + a bold tabular number in a pill, tinted by semantic
+tone. There is ONE look, reached three ways depending on where you are:
+
+- **Any page hero** — pass `stats:[{label,value,tone}]` to `renderPageHero()`.
+  Tones are `red | amber | blue | good | muted` and render as tinted pills
+  (`.page-hero-v3 .ph-stat.tone-*`). This is the default for a page's headline
+  KPIs and every module inherits it for free.
+- **Dashboard secondary metrics** — `.metric-tile` in `#metric-row` renders as
+  the same chip rail (colored dot + mono label + tabular number).
+- **Inside a module render layer** — reuse `.simx-chipstat` (`.is-good /
+  .is-bad / .is-warn / .is-info`), already shared by the Dynamic Testing
+  capacity/access/board/variance tabs.
+
+All three share one visual system; prefer `renderPageHero({stats})` for page
+headers so a new page never hand-rolls a KPI strip. Semantic tone → token:
+good=`--good`, red/bad=`--bad`, amber/warn=`--warn`, blue/info=`--info`, each
+over its `-light` background. Big landing numbers (dashboard `.kpi-card`) stay
+large cards — the chip rail is for *supporting* detail, not the headline.
+
 ## Visual QA without signing in
 
 `tools/ui_gallery.html` renders every core component (hero, KPI cards, table +

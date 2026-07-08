@@ -696,6 +696,7 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   line-height: 1;
   color: var(--text);
   margin-bottom: 8px;
+  font-variant-numeric: tabular-nums;
 }
 .kpi-value.good { color: var(--good); }
 .kpi-value.bad { color: var(--bad); }
@@ -729,17 +730,22 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 /* ===================================
    METRIC ROW (secondary)
    =================================== */
+/* Secondary status metrics — chip rail, same vocabulary as the hero KPI chips
+   and the Dynamic Testing chipstats. Wraps responsively instead of a rigid grid. */
 .metric-row {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-bottom: 64px;
 }
 .metric-tile {
-  background: var(--surface);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 16px 18px;
+  border-radius: 999px;
+  padding: 7px 13px;
   transition: all 0.2s var(--easing);
 }
 .metric-tile:hover {
@@ -747,25 +753,31 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   box-shadow: var(--shadow-sm);
 }
 .metric-tile-label {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-muted);
-  margin-bottom: 6px;
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-subtle);
+  margin-bottom: 0;
   display: flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
 }
 .metric-tile-icon {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
 }
 .metric-tile-value {
-  font-size: 22px;
+  font-family: var(--f-number, var(--f-ui));
+  font-size: 15px;
   font-weight: 700;
   letter-spacing: 0;
   color: var(--text);
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 .metric-tile-value.bad { color: var(--bad); }
 .metric-tile-value.warn { color: var(--warn); }
@@ -12218,44 +12230,63 @@ a:focus-visible {
   margin-top: 2px;
   line-height: 1.35;
 }
+/* Hero KPI strip — canonical chip-stat vocabulary (shared with the Dynamic
+   Testing module's simx-/capx- chipstats). Every page that calls
+   renderPageHero({stats}) inherits this pill treatment: mono micro-label +
+   tabular number, with a semantic tint per tone. One primitive, all pages. */
 .page-hero-v3 .ph-stats {
   display: flex;
   align-items: center;
-  gap: 28px;
+  gap: 7px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .page-hero-v3 .ph-stat {
-  text-align: right;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   line-height: 1;
 }
 .page-hero-v3 .ph-stat-lbl {
   font-family: var(--f-mono, 'SF Mono', Monaco, monospace);
   font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
+  font-weight: 700;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-subtle);
   white-space: nowrap;
 }
 .page-hero-v3 .ph-stat-val {
-  font-family: var(--f-display, 'Archivo', sans-serif);
-  font-size: 22px;
+  font-family: var(--f-number, var(--f-ui, 'Archivo', sans-serif));
+  font-size: 15px;
   font-weight: 700;
   color: var(--text);
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
-.page-hero-v3 .ph-stat.tone-red   .ph-stat-val { color: var(--hitachi-red); }
-.page-hero-v3 .ph-stat.tone-amber .ph-stat-val { color: #c8741a; }
-.page-hero-v3 .ph-stat.tone-blue  .ph-stat-val { color: var(--brand-blue); }
-.page-hero-v3 .ph-stat.tone-good  .ph-stat-val { color: var(--green-700); }
+/* Toned chips: tinted background, label + value both carry the tone. */
+.page-hero-v3 .ph-stat.tone-red   { background: var(--bad-light);  border-color: transparent; }
+.page-hero-v3 .ph-stat.tone-amber { background: var(--warn-light); border-color: transparent; }
+.page-hero-v3 .ph-stat.tone-blue  { background: var(--info-light); border-color: transparent; }
+.page-hero-v3 .ph-stat.tone-good  { background: var(--good-light); border-color: transparent; }
+.page-hero-v3 .ph-stat.tone-red   .ph-stat-val { color: var(--bad); }
+.page-hero-v3 .ph-stat.tone-amber .ph-stat-val { color: var(--warn); }
+.page-hero-v3 .ph-stat.tone-blue  .ph-stat-val { color: var(--info); }
+.page-hero-v3 .ph-stat.tone-good  .ph-stat-val { color: var(--good); }
 .page-hero-v3 .ph-stat.tone-muted .ph-stat-val { color: var(--text-subtle); }
+.page-hero-v3 .ph-stat.tone-red   .ph-stat-lbl { color: var(--bad);  opacity: .72; }
+.page-hero-v3 .ph-stat.tone-amber .ph-stat-lbl { color: var(--warn); opacity: .72; }
+.page-hero-v3 .ph-stat.tone-blue  .ph-stat-lbl { color: var(--info); opacity: .72; }
+.page-hero-v3 .ph-stat.tone-good  .ph-stat-lbl { color: var(--good); opacity: .72; }
 
 @media (max-width: 900px) {
   .page-hero-v3 { flex-direction: column; align-items: flex-start; gap: 14px; }
-  .page-hero-v3 .ph-stats { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 16px; }
+  .page-hero-v3 .ph-stats { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 7px; }
   .page-hero-v3 .ph-stat { text-align: left; }
 }
 
