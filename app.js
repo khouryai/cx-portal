@@ -41153,7 +41153,10 @@ function _dynBoardOpenDay(dayKey) {
       <td style="text-align:center;"><input type="checkbox" ${checked?'checked':''} onchange="_dynDayToggleSel('${escapeHtml(r.id)}',this.checked)"></td>
       <td style="font-family:var(--font-mono,monospace);font-size:12px;white-space:nowrap;">${escapeHtml(r.code || '—')}</td>
       <td style="white-space:nowrap;">${tc ? escapeHtml(tc.code || r.test_id) : escapeHtml(r.test_id || '—')}</td>
-      <td>${escapeHtml(r.title || '')}</td>
+      <td style="min-width:220px;max-width:360px;">${escapeHtml(r.title || '')}
+        ${r.test_notes ? `<div style="margin-top:3px;font-size:11px;color:var(--gray-500);white-space:normal;overflow-wrap:anywhere;line-height:1.45;"><span style="color:var(--gray-400);font-weight:600;">Notes:</span> ${escapeHtml(r.test_notes)}</div>` : ''}
+        ${r.substitute_notes ? `<div style="margin-top:3px;font-size:11px;color:#6d28d9;white-space:normal;overflow-wrap:anywhere;line-height:1.45;"><span style="font-weight:600;">Alt locations:</span> ${escapeHtml(r.substitute_notes)}</div>` : ''}
+      </td>
       <td style="text-align:right;font-family:monospace;">${r.trains_needed ?? 1}</td>
       <td style="text-align:right;font-family:monospace;">${r.expected_duration_minutes ?? '—'}</td>
       <td>${_dynDayStatusSelect(r)}</td>
