@@ -37644,9 +37644,11 @@ async function _drwOpenSheet(sheetId, setId, pageIndex) {
   document.getElementById('drw-markup-canvas').style.display  = 'none';
   document.getElementById('drw-markup-status').textContent    = '';
 
-  // Load existing markup for this user
+  // Load existing markup for this user. Drafts are keyed to the signed-in
+  // profile id (currentProfile.id) — currentRoleUser has no id field, so using
+  // it here silently failed to match and re-loaded nothing.
   const myMarkup = DRAWING_MARKUPS.find(m => m.sheet_id === sheetId
-    && m.created_by === currentRoleUser?.id && !m.is_published);
+    && m.created_by === currentProfile?.id && !m.is_published);
   if (myMarkup) {
     _drwSavedMarkupId = myMarkup.id;
     _drwMarkupShapes  = Array.isArray(myMarkup.markup_data) ? myMarkup.markup_data : [];
@@ -37717,6 +37719,8 @@ function _drwEnsureEditorChrome() {
       <button class="drw-tool-btn" id="drw-tool-redo" onclick="_drwRedo()" title="Redo (Ctrl/Cmd+Shift+Z)" disabled>Redo</button>
       <button class="drw-tool-btn drw-danger-btn" onclick="_drwDeleteSelected()" title="Delete selected markup">Delete</button>
       <button class="drw-tool-btn drw-danger-btn" onclick="_drwClearMarkup()" title="Clear all your draft markups">Clear</button>
+      <span class="drw-toolbar-divider"></span>
+      <button class="drw-tool-btn" onclick="_drwExportOpen()" title="Export this sheet as PDF — original or marked up">Export</button>
       <button class="drw-tool-btn" id="drw-tool-manage" onclick="_drwManageMarkupsOpen()" title="Manage all markups on this sheet" style="display:${uiCan('drawings','manage_markup_any') ? 'inline-flex' : 'none'};background:#fef3c7;color:#92400e;border-color:#fcd34d;">Manage</button>
       ${(uiCan('drawings','create_markup') || uiCan('drawings','edit_markup_own') || uiCan('drawings','manage_markup_any')) ? `<button class="drw-save-btn" onclick="_drwSaveMarkup()">Save Draft</button>` : ''}
       ${(uiCan('drawings','publish') || uiCan('drawings','manage_markup_any')) ? `<button class="drw-publish-btn" onclick="_drwPublishMarkup()">Publish</button>` : ''}`;
@@ -38495,7 +38499,10 @@ async function _drwClearMarkup() {
 
 async function _drwSaveMarkup() {
   if (!_drwCurSheet) return;
+  if (!currentProfile?.id) { toast('Sign in again to save your markup', 'error'); return; }
   const sheetId = _drwCurSheet.id;
+  const statusEl = document.getElementById('drw-markup-status');
+  if (statusEl) { statusEl.style.color = ''; statusEl.textContent = 'Saving…'; }
   try {
     _drwRemoveTextEditor(true);
     const data = { markup_data: _drwMarkupShapes, updated_at: new Date().toISOString() };
@@ -38503,16 +38510,24 @@ async function _drwSaveMarkup() {
       await _dbUpdate('drawing_markups', data, { id: _drwSavedMarkupId });
     } else {
       const rows = await _dbInsert('drawing_markups', {
-        sheet_id: sheetId, created_by: currentRoleUser?.id,
+        sheet_id: sheetId, created_by: currentProfile?.id,
         creator_name: currentRoleUser?.name, markup_data: _drwMarkupShapes,
       });
       _drwSavedMarkupId = rows[0]?.id;
     }
     _drwMarkupDirty = false;
     await loadDrawingsData();
-    document.getElementById('drw-markup-status').textContent = 'Draft saved';
-    setTimeout(() => { const el=document.getElementById('drw-markup-status'); if(el)el.textContent=''; }, 3000);
-  } catch(e) { toast(`Save failed: ${e.message}`, 'error'); }
+    // The status text lives in the footer (easy to miss) — also toast so it's
+    // clear the draft actually saved.
+    toast('Draft saved — visible only to you until you publish', 'success');
+    if (statusEl) {
+      statusEl.textContent = 'Draft saved';
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+    }
+  } catch(e) {
+    if (statusEl) statusEl.textContent = '';
+    toast(`Save failed: ${e.message}`, 'error');
+  }
 }
 
 async function _drwPublishMarkup() {
@@ -38525,7 +38540,7 @@ async function _drwPublishMarkup() {
     await _dbUpdate('drawing_markups', {
       is_published: true,
       published_at: new Date().toISOString(),
-      published_by: currentRoleUser?.id,
+      published_by: currentProfile?.id,
     }, { id: _drwSavedMarkupId });
     await loadDrawingsData();
     _drwRedraw();
@@ -38535,6 +38550,156 @@ async function _drwPublishMarkup() {
       `${pubCount} published markup${pubCount>1?'s':''}`;
     toast('Markup published to team', 'success');
   } catch(e) { toast(`Publish failed: ${e.message}`, 'error'); }
+}
+
+// ── Export current sheet as PDF (original or marked up) ─────────────────────
+// Two flavours:
+//   • original — the clean sheet, exactly as issued (page copied verbatim).
+//   • markup   — the same page with every visible markup baked in as vectors
+//                (published markups + this user's own shapes), via pdf-lib.
+function _drwExportOpen() {
+  if (!_drwCurSheet || !_drwCurSet) { toast('Open a drawing first', 'error'); return; }
+  if (typeof PDFLib === 'undefined') { toast('PDF library not loaded — reload the page', 'error'); return; }
+  const sub = escapeHtml([_drwCurSheet.sheet_number, _drwCurSheet.sheet_title].filter(Boolean).join(' · '));
+  const hasMarkup = (_drwMarkupShapes && _drwMarkupShapes.length) ||
+    DRAWING_MARKUPS.some(m => m.sheet_id === _drwCurSheet.id && m.is_published);
+  modal({
+    title: 'Export drawing',
+    sub,
+    body: `
+      <div style="padding:8px 24px 20px;display:flex;flex-direction:column;gap:12px;">
+        <p style="font-size:13px;color:var(--gray-600);margin:0;">Choose which version of this sheet to download as a PDF.</p>
+        <button class="form-secondary" style="display:block;width:100%;text-align:left;padding:12px 14px;" onclick="_drwExportPdf('original')">
+          <div style="font-weight:600;">Original — no markup</div>
+          <div style="font-size:12px;color:var(--gray-600);">The clean drawing sheet, exactly as issued.</div>
+        </button>
+        <button class="form-submit" style="display:block;width:100%;text-align:left;padding:12px 14px;${hasMarkup ? '' : 'opacity:.55;'}" onclick="_drwExportPdf('markup')">
+          <div style="font-weight:600;">Marked up</div>
+          <div style="font-size:12px;color:rgba(255,255,255,.85);">The sheet with all currently visible markups baked in.${hasMarkup ? '' : ' (No markups on this sheet yet.)'}</div>
+        </button>
+      </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>`,
+    size: 'small',
+  });
+}
+
+async function _drwExportPdf(mode) {
+  if (!_drwCurSheet || !_drwCurSet) return;
+  if (typeof PDFLib === 'undefined') { toast('PDF library not loaded', 'error'); return; }
+  if (typeof closeModal === 'function') closeModal();
+  const statusEl = document.getElementById('drw-markup-status');
+  if (statusEl) { statusEl.style.color = ''; statusEl.textContent = 'Preparing export…'; }
+  try {
+    const bytes  = await _drawStorage.downloadBytes(_drwCurSet.storage_path);
+    const srcDoc = await PDFLib.PDFDocument.load(bytes);
+    const outDoc = await PDFLib.PDFDocument.create();
+    const [page] = await outDoc.copyPages(srcDoc, [_drwPageIndex]);
+    outDoc.addPage(page);
+
+    if (mode === 'markup') {
+      const font     = await outDoc.embedFont(PDFLib.StandardFonts.Helvetica);
+      const fontBold = await outDoc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+      // Composite exactly what's on screen: published markups first (so they sit
+      // underneath), then this user's own shapes on top.
+      const pub = DRAWING_MARKUPS
+        .filter(m => m.sheet_id === _drwCurSheet.id && m.is_published)
+        .flatMap(m => Array.isArray(m.markup_data) ? m.markup_data : []);
+      _drwRemoveTextEditor(true);
+      _drwFlattenShapes(pub, page, { font, fontBold });
+      _drwFlattenShapes(_drwMarkupShapes, page, { font, fontBold });
+    }
+
+    const out  = await outDoc.save();
+    const blob = new Blob([out], { type: 'application/pdf' });
+    const base = String(_drwCurSheet.sheet_number || _drwCurSheet.sheet_title || 'drawing')
+      .replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'drawing';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${base}${mode === 'markup' ? '_markup' : ''}.pdf`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    if (statusEl) {
+      statusEl.textContent = mode === 'markup' ? 'Exported (marked up)' : 'Exported (original)';
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+    }
+  } catch (e) {
+    if (statusEl) statusEl.textContent = '';
+    toast(`Export failed: ${e.message}`, 'error');
+  }
+}
+
+// Bake drawing-markup shapes (stored as 0..1 fractions, top-left origin) into a
+// pdf-lib page (points, bottom-left origin). Mirrors the on-canvas _drwDrawShape
+// renderer. Rotation is treated as 0, matching CXMarkup.flattenIntoPdfPage.
+function _drwFlattenShapes(shapes, page, opts = {}) {
+  if (!Array.isArray(shapes) || !shapes.length) return;
+  const { rgb } = PDFLib;
+  const pw = page.getWidth(), ph = page.getHeight();
+  const font = opts.font || null, fontBold = opts.fontBold || opts.font || null;
+  const X = fx => fx * pw;
+  const Y = fy => ph - fy * ph;            // top-left fraction -> bottom-left points
+  const k = pw / 800;                      // nominal stroke/size scale
+  const col = (hex) => {
+    const h = String(hex || '#dc2626').replace('#', '');
+    const n = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+    return rgb(parseInt(n.slice(0, 2), 16) / 255, parseInt(n.slice(2, 4), 16) / 255, parseInt(n.slice(4, 6), 16) / 255);
+  };
+  for (const s of shapes) {
+    if (!s || !s.type) continue;
+    const c  = col(s.color);
+    const lw = Math.max(0.5, (s.width || 2) * k);
+    if (s.type === 'pen' && s.points?.length > 1) {
+      for (let i = 1; i < s.points.length; i++)
+        page.drawLine({ start: { x: X(s.points[i-1][0]), y: Y(s.points[i-1][1]) }, end: { x: X(s.points[i][0]), y: Y(s.points[i][1]) }, thickness: lw, color: c });
+    } else if (s.type === 'rect') {
+      const b = _drwNormRect(s.x || 0, s.y || 0, s.w || 0, s.h || 0);
+      page.drawRectangle({ x: X(b.x), y: Y(b.y + b.h), width: b.w * pw, height: b.h * ph, borderColor: c, borderWidth: lw });
+    } else if (s.type === 'arrow') {
+      const x1 = X(s.x1 || 0), y1 = Y(s.y1 || 0), x2 = X(s.x2 || 0), y2 = Y(s.y2 || 0);
+      page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: lw, color: c });
+      const ang = Math.atan2(y2 - y1, x2 - x1), hl = 12 * k;
+      page.drawLine({ start: { x: x2, y: y2 }, end: { x: x2 - hl * Math.cos(ang - Math.PI/6), y: y2 - hl * Math.sin(ang - Math.PI/6) }, thickness: lw, color: c });
+      page.drawLine({ start: { x: x2, y: y2 }, end: { x: x2 - hl * Math.cos(ang + Math.PI/6), y: y2 - hl * Math.sin(ang + Math.PI/6) }, thickness: lw, color: c });
+    } else if (s.type === 'text') {
+      if (!s.text || !font) continue;
+      const b = _drwShapeBounds(s);
+      const size = Math.max(6, (s.size || 15) * k);
+      const lines = _drwWrapPdfText(String(s.text), font, size, Math.max(20, b.w * pw - 8 * k));
+      lines.forEach((ln, i) => page.drawText(ln, { x: X(b.x) + 4 * k, y: Y(b.y) - size - i * size * 1.25, size, font, color: c }));
+    } else if (s.type === 'stamp') {
+      const b   = _drwShapeBounds(s);
+      const def = (typeof CXMarkup !== 'undefined' ? CXMarkup.STAMPS.find(x => x.k === s.kind) : null) || { c: s.color || '#c2410c' };
+      const sc  = col(def.c);
+      const bx = X(b.x), by = Y(b.y + b.h), bw = b.w * pw, bh = b.h * ph;
+      page.drawRectangle({ x: bx, y: by, width: bw, height: bh, color: rgb(1, 1, 1), opacity: 0.9, borderColor: sc, borderWidth: Math.max(1.5, 2 * k), borderOpacity: 1 });
+      const kindSize = Math.max(7, bh * 0.42);
+      const kw = fontBold ? fontBold.widthOfTextAtSize(s.kind || '', kindSize) : 0;
+      if (fontBold) page.drawText(s.kind || '', { x: bx + (bw - kw) / 2, y: by + bh * 0.5, size: kindSize, font: fontBold, color: sc });
+      const subTxt = ((s.who || '') + '  ' + (s.ts || '')).trim();
+      if (font && subTxt) {
+        const subSize = Math.max(5, bh * 0.18);
+        const sw = font.widthOfTextAtSize(subTxt, subSize);
+        page.drawText(subTxt, { x: bx + (bw - sw) / 2, y: by + bh * 0.16, size: subSize, font, color: sc });
+      }
+    }
+  }
+}
+
+// Greedy word-wrap for pdf-lib text within a max width (points).
+function _drwWrapPdfText(text, font, size, maxWidth) {
+  const out = [];
+  for (const raw of String(text).split(/\n/)) {
+    const words = raw.split(/\s+/).filter(Boolean);
+    if (!words.length) { out.push(''); continue; }
+    let cur = '';
+    for (const w of words) {
+      const test = cur ? cur + ' ' + w : w;
+      if (font.widthOfTextAtSize(test, size) > maxWidth && cur) { out.push(cur); cur = w; }
+      else cur = test;
+    }
+    if (cur) out.push(cur);
+  }
+  return out;
 }
 
 // ── Admin markup management ─────────────────────────────────────────────────
@@ -47076,7 +47241,7 @@ async function _drwGotoPage(pageIndex) {
     _drwMarkupShapes = [];
     _drwSelectedShape = -1;
     const myMarkup = DRAWING_MARKUPS.find(m => m.sheet_id === newSheet.id
-      && m.created_by === currentRoleUser?.id && !m.is_published);
+      && m.created_by === currentProfile?.id && !m.is_published);
     if (myMarkup) {
       _drwSavedMarkupId = myMarkup.id;
       _drwMarkupShapes  = Array.isArray(myMarkup.markup_data) ? myMarkup.markup_data : [];
