@@ -5,50 +5,32 @@
 -- Makes DRAFT markups private to their creator while keeping
 -- PUBLISHED markups visible to the whole team.
 --
--- Before this migration, drawing_markups used a single
--- `USING (true)` policy, so every client downloaded every
--- other user's unpublished drafts. This replaces the read
--- policy so that a row is only SELECT-able when:
---   • it is published, OR
+-- The drawing_markups table uses the granular-permission RLS
+-- model (private.has_module_perm(module, action)). Its SELECT
+-- policy previously let ANY user with 'drawings.view' read every
+-- row — including other users' unpublished drafts. This narrows
+-- the read policy so a row is only visible when the requester
+-- has drawings.view AND one of:
+--   • the markup is published, OR
 --   • the requester created it, OR
---   • the requester is an admin (needed for the in-app
---     "Manage markups" admin tool).
+--   • the requester has 'manage_markup_any' (the admin markup
+--     tool relies on seeing everyone's markups).
 --
--- Writes stay permissive so existing rows (including any that
--- were saved before created_by was populated) remain editable
--- and nothing regresses. Draft privacy is a read-side concern.
+-- INSERT / UPDATE / DELETE policies are intentionally left
+-- unchanged — they already enforce the drawings permissions.
 -- ============================================================
 
 ALTER TABLE drawing_markups ENABLE ROW LEVEL SECURITY;
 
--- Drop the old catch-all policy (published + drafts visible to all).
-DROP POLICY IF EXISTS drawing_markups_auth_all   ON drawing_markups;
-DROP POLICY IF EXISTS drawing_markups_select     ON drawing_markups;
-DROP POLICY IF EXISTS drawing_markups_insert     ON drawing_markups;
-DROP POLICY IF EXISTS drawing_markups_update     ON drawing_markups;
-DROP POLICY IF EXISTS drawing_markups_delete     ON drawing_markups;
+DROP POLICY IF EXISTS drawing_markups_sel ON drawing_markups;
 
--- READ: published to everyone; drafts only to their creator (or admins).
-CREATE POLICY drawing_markups_select ON drawing_markups
+CREATE POLICY drawing_markups_sel ON drawing_markups
   FOR SELECT TO authenticated
   USING (
-    is_published
-    OR created_by = auth.uid()
-    OR EXISTS (
-      SELECT 1 FROM profiles p
-      WHERE p.id = auth.uid() AND p.role = 'admin'
+    (SELECT private.has_module_perm('drawings'::text, 'view'::text))
+    AND (
+      is_published
+      OR created_by = auth.uid()
+      OR (SELECT private.has_module_perm('drawings'::text, 'manage_markup_any'::text))
     )
   );
-
--- WRITE: unchanged behaviour (app layer enforces the drawings permissions).
-CREATE POLICY drawing_markups_insert ON drawing_markups
-  FOR INSERT TO authenticated
-  WITH CHECK (true);
-
-CREATE POLICY drawing_markups_update ON drawing_markups
-  FOR UPDATE TO authenticated
-  USING (true) WITH CHECK (true);
-
-CREATE POLICY drawing_markups_delete ON drawing_markups
-  FOR DELETE TO authenticated
-  USING (true);
