@@ -39742,11 +39742,12 @@ function _dynRowHtml(r) {
   // A passed/NA run shows a done tag here (not a date) — a Pass auto-releases its
   // future shift slot, so the scheduled column denotes the test is complete.
   const isDone = r.status === 'Pass' || r.status === 'Not Applicable';
+  const issueBadge = (!isDone && r.shift_id) ? _dynIssueBadge(r) : '';
   const schedCell = isDone
     ? `<span class="tag" style="background:#ecfdf5;color:#065f46;border-color:#a7f3d0;" title="${r.status === 'Pass' ? 'Passed — released from any upcoming shift' : 'Not applicable'}">✓ ${escapeHtml(r.status === 'Pass' ? 'Passed' : 'N/A')}</span>`
     : (schedLabel
         ? `<span class="tag" style="background:#eef2ff;color:#3730a3;border-color:#c7d2fe;font-family:var(--font-mono,monospace);" title="Scheduled">${escapeHtml(schedLabel)}</span>`
-        : `<span style="color:var(--gray-400);font-size:11px;">Not scheduled</span>`) + movedBadge;
+        : `<span style="color:var(--gray-400);font-size:11px;">Not scheduled</span>`) + movedBadge + (issueBadge ? `<br/>${issueBadge}` : '');
   return `
     <tr${selected ? ' style="background:#eff6ff;"' : ''}>
       <td style="text-align:center;"><input type="checkbox" ${selected?'checked':''} onchange="_dynInstToggleSelect('${escapeHtml(r.id)}',this.checked)"></td>
@@ -40017,12 +40018,13 @@ function _dynConsistSizes(inst) {
 // single train, or a labelled "Train N cars" select per train when an instance
 // needs more than one train (each train can carry a different car count).
 // Selects are id'd dyn-f-consist-0 … dyn-f-consist-(n-1) and read back on save.
-function _dynConsistFieldsHtml(sizes, n) {
-  const consistOpts = [1, 2, 3, 4, 5, 6, 7, 8];
+function _dynConsistFieldsHtml(sizes, n, idPrefix) {
+  idPrefix = idPrefix || 'dyn-f-consist-';
+  const consistOpts = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
   n = Math.max(1, parseInt(n, 10) || 1);
   const one = (val, idx) => {
     const known = val != null && consistOpts.includes(val);
-    return `<select id="dyn-f-consist-${idx}">
+    return `<select id="${idPrefix}${idx}">
         <option value="" ${val == null ? 'selected' : ''}>Any</option>
         ${consistOpts.map(o => `<option value="${o}" ${val === o ? 'selected' : ''}>${o}</option>`).join('')}
         ${!known && val != null ? `<option value="${val}" selected>${val}</option>` : ''}
@@ -40043,22 +40045,37 @@ function _dynConsistFieldsHtml(sizes, n) {
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-top:5px;">${cells.join('')}</div>`;
 }
 
-// Re-render the per-train consist selectors when "Trains needed" changes,
+// Read the per-train consist <select>s (idPrefix0 … idPrefix(n-1)) back into an
+// array of car counts (null = "Any"). Shared by the instance and campaign forms.
+function _dynReadConsistSizes(idPrefix, n) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const el = document.getElementById(idPrefix + i);
+    out.push(el && el.value !== '' ? (parseInt(el.value, 10) || null) : null);
+  }
+  return out;
+}
+
+// Re-render a block of per-train consist selectors when the train count changes,
 // preserving any car counts already chosen (added trains inherit train 1's).
-function _dynOnTrainsChange() {
-  const wrap = document.getElementById('dyn-f-consist-wrap');
+function _dynRerenderConsist(wrapId, trainsInputId, idPrefix) {
+  const wrap = document.getElementById(wrapId);
   if (!wrap) return;
-  const n = Math.max(1, parseInt(document.getElementById('dyn-f-trains') && document.getElementById('dyn-f-trains').value, 10) || 1);
+  const tEl = document.getElementById(trainsInputId);
+  const n = Math.max(1, parseInt(tEl && tEl.value, 10) || 1);
   const cur = [];
   for (let i = 0; ; i++) {
-    const el = document.getElementById('dyn-f-consist-' + i);
+    const el = document.getElementById(idPrefix + i);
     if (!el) break;
     cur.push(el.value === '' ? null : (parseInt(el.value, 10) || null));
   }
   const sizes = [];
   for (let i = 0; i < n; i++) sizes.push(cur[i] != null ? cur[i] : (cur[0] != null ? cur[0] : null));
-  wrap.innerHTML = _dynConsistFieldsHtml(sizes, n);
+  wrap.innerHTML = _dynConsistFieldsHtml(sizes, n, idPrefix);
 }
+
+function _dynOnTrainsChange() { _dynRerenderConsist('dyn-f-consist-wrap', 'dyn-f-trains', 'dyn-f-consist-'); }
+function _dynCampOnTrainsChange() { _dynRerenderConsist('camp-consist-wrap', 'camp-trains', 'camp-consist-'); }
 
 function _dynNextInstanceCode(testId) {
   const info = _dynPage.testItemsById.get(testId);
@@ -40916,13 +40933,23 @@ function _dynRenderDaySummaries(cols) {
 // The window must GRANT the run's zone (its under-test zone is in access_zones),
 // cover every access-required zone, allow the run's mode, and be a live planned
 // window. This is the SAME gate the cascade allocator uses.
-function _dynWindowGrantsRun(w, r) {
-  if (!w || !r || w.status !== 'planned') return false;
+// Zone + mode gate only (ignores status and consist) — reused by the schedule-
+// staleness flag so it can tell an access problem from a consist problem.
+function _dynWindowAccessOk(w, r) {
+  if (!w || !r) return false;
   const wz = (w.access_zones && w.access_zones.length) ? w.access_zones : (w.control_zone_code ? [w.control_zone_code] : []);
   // Access mapping uses ONLY track_section_access_req; the under-test section is
   // the planning axis, not an access requirement, so it is not gated here.
   if (!(r.track_section_access_req || []).every(z => wz.includes(z))) return false;
   if (r.required_mode && !(w.allowed_modes || []).includes(r.required_mode)) return false;
+  return true;
+}
+function _dynWindowGrantsRun(w, r) {
+  if (!w || !r || w.status !== 'planned') return false;
+  if (!_dynWindowAccessOk(w, r)) return false;
+  // Consist / train-count match: the shift must be able to supply the exact
+  // consists the run needs ("Any" on the run side is a wildcard).
+  if (!_dynConsistFit(_dynConsistSizes(r), _dynShiftAvailConsists(w)).ok) return false;
   return true;
 }
 // The access-plan windows a run may be scheduled into (date-sorted). The board
@@ -40981,7 +41008,11 @@ async function _dynMoveInstanceToShift(id, windowId) {
   const inst = _dynPage.instances.find(x => String(x.id) === String(id));
   const w = (_dynPage.shifts || []).find(x => String(x.id) === String(windowId));
   if (!inst || !w) { cxAlert('Run or access window not found.'); return; }
-  if (!_dynWindowGrantsRun(w, inst)) { cxAlert('That access shift does not meet this run’s zone / access / mode requirements.'); return; }
+  if (!_dynWindowGrantsRun(w, inst)) {
+    const fit = _dynConsistFit(_dynConsistSizes(inst), _dynShiftAvailConsists(w));
+    const why = !_dynWindowAccessOk(w, inst) ? 'zone / access / mode' : (!fit.ok ? `consist / trains (${fit.reason})` : 'requirements');
+    cxAlert(`That access shift does not meet this run’s ${why} requirements.`); return;
+  }
   const window = (w.start_at && w.end_at) ? '[' + w.start_at + ',' + w.end_at + ')' : null;
   try {
     await _dbUpdate('dynamic_instances', { shift_id: w.id, scheduled_for_date: w.shift_date, scheduled_window: window, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() }, { id });
@@ -41149,20 +41180,36 @@ function _dynBoardOpenDay(dayKey) {
   const rowsHtml = matches.map(r => {
     const tc = _dynPage.testItemsById.get(r.test_id);
     const checked = _dynPage.daySel.has(r.id);
-    return `<tr${checked ? ' style="background:#eff6ff;"' : ''}>
+    const issueBadge = _dynIssueBadge(r);
+    const reqConsist = _dynConsistSizes(r);
+    const consistLine = reqConsist.some(x => x != null)
+      ? `<div style="font-size:10px;color:var(--gray-500);font-family:inherit;">${escapeHtml(_dynConsistSummary(reqConsist))}</div>` : '';
+    const rowBg = issueBadge ? '#fef2f2' : (checked ? '#eff6ff' : '');
+    return `<tr${rowBg ? ` style="background:${rowBg};"` : ''}>
       <td style="text-align:center;"><input type="checkbox" ${checked?'checked':''} onchange="_dynDayToggleSel('${escapeHtml(r.id)}',this.checked)"></td>
       <td style="font-family:var(--font-mono,monospace);font-size:12px;white-space:nowrap;">${escapeHtml(r.code || '—')}</td>
       <td style="white-space:nowrap;">${tc ? escapeHtml(tc.code || r.test_id) : escapeHtml(r.test_id || '—')}</td>
       <td style="min-width:220px;max-width:360px;">${escapeHtml(r.title || '')}
+        ${issueBadge ? `<div style="margin-top:3px;">${issueBadge}</div>` : ''}
         ${r.test_notes ? `<div style="margin-top:3px;font-size:11px;color:var(--gray-500);white-space:normal;overflow-wrap:anywhere;line-height:1.45;"><span style="color:var(--gray-400);font-weight:600;">Notes:</span> ${escapeHtml(r.test_notes)}</div>` : ''}
         ${r.substitute_notes ? `<div style="margin-top:3px;font-size:11px;color:#6d28d9;white-space:normal;overflow-wrap:anywhere;line-height:1.45;"><span style="font-weight:600;">Alt locations:</span> ${escapeHtml(r.substitute_notes)}</div>` : ''}
       </td>
-      <td style="text-align:right;font-family:monospace;">${r.trains_needed ?? 1}</td>
+      <td style="text-align:right;font-family:monospace;">${r.trains_needed ?? 1}${consistLine}</td>
       <td style="text-align:right;font-family:monospace;">${r.expected_duration_minutes ?? '—'}</td>
       <td>${_dynDayStatusSelect(r)}</td>
       <td style="text-align:right;">${_dynScheduleRowActions(r)}</td>
     </tr>`;
   }).join('');
+
+  // Soft-grouping / staleness warnings for this shift's runs.
+  const flaggedCount = matches.filter(r => _dynInstanceScheduleIssues(r).length).length;
+  const trainCounts = [...new Set(matches.map(r => r.trains_needed ?? 1))].sort((x, y) => x - y);
+  const mixedTrains = trainCounts.length > 1;
+  const warnHtml = (flaggedCount || mixedTrains) ? `
+    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:12px;color:#92400e;line-height:1.5;">
+      ${flaggedCount ? `<div><b>${flaggedCount} run${flaggedCount === 1 ? '' : 's'} need rescheduling</b> — the assigned shift no longer supplies the required consist/trains (or its zone/mode changed). Move them to a matching shift.</div>` : ''}
+      ${mixedTrains ? `<div${flaggedCount ? ' style="margin-top:4px;"' : ''}>This shift mixes runs needing different train counts (${trainCounts.join(', ')} trains). Group same-train-count runs together so a 2-train run isn't blocked by 1-train fillers.</div>` : ''}
+    </div>` : '';
 
   modal({
     title: `Day plan — ${escapeHtml(dayKey)}`,
@@ -41180,6 +41227,7 @@ function _dynBoardOpenDay(dayKey) {
         ${a.access.length ? `<p style="font-size:12px;margin:0 0 6px;"><b>Access locations needed:</b> ${a.access.map(escapeHtml).join(', ')}</p>` : ''}
         ${a.sections.length ? `<p style="font-size:12px;margin:0 0 6px;"><b>Sections under test:</b> ${a.sections.map(escapeHtml).join(', ')}</p>` : ''}
         ${(a.winStart && a.winEnd) ? `<p style="font-size:12px;margin:0 0 12px;"><b>Committed window:</b> ${fmtT(a.winStart)}–${fmtT(a.winEnd)}${slack != null ? ` · ${slack < 0 ? `<span style="color:var(--bad);">over by ${fmtH(Math.abs(slack))}</span>` : `<span style="color:var(--good);">${fmtH(slack)} slack</span>`}` : ''}</p>` : ''}
+        ${warnHtml}
         ${bulkBar}
         <div style="overflow-x:auto;">
           <table class="dyn-table" style="border:1px solid var(--gray-200);min-width:820px;">
@@ -41448,7 +41496,7 @@ function _dynRenderAccess() {
           <div class="accx-camp-meta">
             ${_dynFmtDate(c.start_date)} → ${_dynFmtDate(c.end_date)} · ${escapeHtml(fmtDOW(c.days_of_week))} ·
             ${escapeHtml(_dynCampShiftSummary(c))} ·
-            ${c.trains_requested || 1} train${(c.trains_requested || 1) === 1 ? '' : 's'}${c.consist_size ? ` × ${c.consist_size}-car` : ''} ·
+            ${c.trains_requested || 1} train${(c.trains_requested || 1) === 1 ? '' : 's'}${(() => { const cs = _dynCampaignConsistSizes(c); return cs.some(x => x != null) ? ` · ${_dynConsistSummary(cs)}` : ''; })()} ·
             ${escapeHtml((c.allowed_modes || []).join('+') || 'any')}
             ${c.subsystem ? ` · ${escapeHtml(c.subsystem)}` : ''}${c.permit_no ? ` · permit ${escapeHtml(c.permit_no)}` : ''}
           </div>
@@ -41755,8 +41803,10 @@ function _dynCampaignModal(camp) {
           ${_dynNrhSettingsHtml()}
           <div id="camp-day-rows" style="margin-top:6px;">${_dynCampDayRowsHtml()}</div>
         </div>
-        <div class="form-field"><label>Trains requested</label><input id="camp-trains" type="number" min="1" value="${escapeHtml(String(av('trains_requested', 2)))}" style="${fld}"></div>
-        <div class="form-field"><label>Consist size <span style="color:var(--gray-500);font-weight:400;">(cars, 4–10)</span></label><input id="camp-consist" type="number" min="1" max="10" placeholder="e.g. 4" value="${escapeHtml(String(av('consist_size', '')))}" style="${fld}"></div>
+        <div class="form-field"><label>Trains requested <span style="color:var(--gray-500);font-weight:400;">(vehicles per shift)</span></label><input id="camp-trains" type="number" min="1" value="${escapeHtml(String(av('trains_requested', 2)))}" style="${fld}" onchange="_dynCampOnTrainsChange()"></div>
+        <div class="form-field" id="camp-consist-wrap" style="grid-column:1/-1;">
+          ${_dynConsistFieldsHtml(prefill ? _dynCampaignConsistSizes(camp) : Array(Math.max(1, parseInt(av('trains_requested', 2), 10) || 2)).fill(null), Math.max(1, parseInt(av('trains_requested', 2), 10) || 2), 'camp-consist-')}
+        </div>
         <div class="form-field"><label>Modes</label><div style="padding:6px 0;">
           <label style="margin-right:10px;font-size:12px;"><input type="checkbox" class="camp-mode" value="CBTC" ${modes.has('CBTC') ? 'checked' : ''}> CBTC</label>
           <label style="font-size:12px;"><input type="checkbox" class="camp-mode" value="VATC" ${modes.has('VATC') ? 'checked' : ''}> VATC</label>
@@ -41814,6 +41864,7 @@ function _dynGenerateShiftRows(campaign) {
       allowed_modes: campaign.allowed_modes || ['CBTC', 'VATC'],
       max_trains: campaign.trains_requested || 1,
       consist_size: campaign.consist_size || null,
+      available_consists: { sizes: _dynCampaignConsistSizes(campaign) },
       subsystem: campaign.subsystem || null,
       campaign_id: campaign.id,
       status: 'planned',
@@ -41849,7 +41900,11 @@ async function _dynSaveCampaign(editId) {
   const scopeIds = [...(window._dynCampScope || [])];
   const modes = Array.from(document.querySelectorAll('.camp-mode:checked')).map(c => c.value);
   const trains = parseInt(g('camp-trains').value, 10) || 1;
-  const consist = g('camp-consist').value ? parseInt(g('camp-consist').value, 10) : null;
+  // Per-train consist sizes (null = "Any"). consist_size keeps the primary
+  // (first specified) value for back-compat; required_consists.sizes carries
+  // the full per-vehicle array.
+  const consistSizes = _dynReadConsistSizes('camp-consist-', trains);
+  const consist = consistSizes.find(x => x != null) ?? null;
   const phase = g('camp-phase').value || null;
   const subsystem = g('camp-subsys').value.trim() || null;
   const campaignKind = (g('camp-kind') && g('camp-kind').value) || 'standard';
@@ -41870,6 +41925,7 @@ async function _dynSaveCampaign(editId) {
     day_schedule: daySchedule, test_case_ids: scopeIds, campaign_kind: campaignKind,
     allowed_modes: modes.length ? modes : ['CBTC', 'VATC'],
     trains_requested: trains, consist_size: consist,
+    required_consists: { sizes: consistSizes },
     permit_no: permit, notes,
   };
 
@@ -41891,15 +41947,21 @@ async function _dynSaveCampaign(editId) {
     // now minted on demand by the DB occupancy trigger when a test is scheduled onto
     // a window. A window with nothing scheduled does NOT appear in the Lookahead, so
     // the two modules stay mirrored.
-    // Seed an initial train request from the campaign ask (Phase 2 manages approvals).
-    await _dbInsert('train_requests', [{
-      campaign_id: camp.id, zone_code: null,
-      quantity: camp.trains_requested || 1,
-      requested_cars: camp.consist_size || null,
-      status: 'requested',
-      date_start: camp.start_date, date_end: camp.end_date,
-      created_by: currentRoleUser?.email || currentRoleUser?.id || null,
-    }]).catch(e => console.warn('[dyn] seed train request:', e.message));
+    // Seed one train request PER DISTINCT consist size the campaign asked for
+    // (per-vehicle), grouped by car count — Phase 2 manages approvals.
+    const _seedBy = currentRoleUser?.email || currentRoleUser?.id || null;
+    const _seedGrp = new Map();
+    for (const sz of _dynCampaignConsistSizes(camp)) {
+      const k = sz == null ? 'any' : sz;
+      _seedGrp.set(k, (_seedGrp.get(k) || 0) + 1);
+    }
+    const _trainReqRows = [..._seedGrp.entries()].map(([k, qty]) => ({
+      campaign_id: camp.id, zone_code: null, quantity: qty,
+      requested_cars: k === 'any' ? null : k,
+      status: 'requested', date_start: camp.start_date, date_end: camp.end_date,
+      created_by: _seedBy,
+    }));
+    await _dbInsert('train_requests', _trainReqRows).catch(e => console.warn('[dyn] seed train requests:', e.message));
     closeModal();
     _dynPage.loaded = false;
     await _dynLoadAll();
@@ -41968,7 +42030,8 @@ async function _dynUpdateCampaign(editId, fields) {
         access_zones: u.row.access_zones,
         start_at: u.row.start_at, end_at: u.row.end_at,
         allowed_modes: u.row.allowed_modes, max_trains: u.row.max_trains,
-        consist_size: u.row.consist_size, subsystem: u.row.subsystem,
+        consist_size: u.row.consist_size, available_consists: u.row.available_consists,
+        subsystem: u.row.subsystem,
       }, { id: u.id });
     }
     // inserts (Lookahead cells are minted on demand by the occupancy trigger when
@@ -42170,7 +42233,7 @@ function _dynOpenShift(id) {
       <div style="padding:8px 22px 16px;">
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
           ${_dynShiftPill(s)}
-          <span style="font-size:12px;color:var(--gray-600);">${fmtT(s.start_at)}–${fmtT(s.end_at)} · ${(s.allowed_modes||[]).join('+')||'any'} · ${s.max_trains||1} train${(s.max_trains||1)===1?'':'s'}${s.consist_size?` × ${s.consist_size}-car`:''} required</span>
+          <span style="font-size:12px;color:var(--gray-600);">${fmtT(s.start_at)}–${fmtT(s.end_at)} · ${(s.allowed_modes||[]).join('+')||'any'} · ${s.max_trains||1} train${(s.max_trains||1)===1?'':'s'}${(() => { const cs = _dynShiftAvailConsists(s); return cs.some(x => x != null) ? ` · ${_dynConsistSummary(cs)}` : ''; })()} available</span>
         </div>
         ${(() => { const ev = _dynShiftEventRow(s.id); return ev
           ? `<div style="font-size:11.5px;margin-bottom:12px;color:#6d28d9;">${icon('calendar')} Field event created${ev.status==='cancelled'?' (cancelled)':''} · Train Operator, ROC, EIC auto-added · <a href="javascript:void(0)" style="color:var(--info);" onclick="closeModal();showPage('lookahead')">open Lookahead</a></div>`
@@ -43233,9 +43296,11 @@ async function _dynPlanCommitToCampaign() {
     .filter(s => s.campaign_id === campId && ['planned', 'confirmed'].includes(s.status))
     .sort((a, b) => String(a.shift_date).localeCompare(String(b.shift_date)));
   const used = new Map();
+  const sigOnShift = new Map();   // shift.id -> Set of consist signatures already on it
   for (const s of shifts) {
-    used.set(s.id, (_dynPage.instances || []).filter(x => x.shift_id === s.id)
-      .reduce((a, x) => a + (x.expected_duration_minutes || 0), 0));
+    const on = (_dynPage.instances || []).filter(x => x.shift_id === s.id);
+    used.set(s.id, on.reduce((a, x) => a + (x.expected_duration_minutes || 0), 0));
+    sigOnShift.set(s.id, new Set(on.map(_dynConsistSig)));
   }
   // Group by zone, then by consist+train signature, then longest-first — so the
   // same train configuration is mobilised once and its tests land together.
@@ -43252,12 +43317,31 @@ async function _dynPlanCommitToCampaign() {
     }
     const dur = inst.expected_duration_minutes || 0;
     const _reqZones = inst.track_section_access_req || [];
-    const shift = shifts.find(s => {
+    const sig = _dynConsistSig(inst);
+    const reqConsist = _dynConsistSizes(inst);
+    // A shift is a candidate if it grants the run's access zones, has room, and
+    // can supply the exact consist the run needs.
+    const canTake = s => {
       const gz = (s.access_zones && s.access_zones.length) ? s.access_zones : [s.control_zone_code];
-      return _reqZones.every(z => gz.includes(z)) && (used.get(s.id) + dur) <= (_dynShiftMinutes(s) || 0);
-    });
-    if (!shift) { unplaced.push({ inst, why: `no shift with room/access for ${_reqZones.join(', ') || inst.code || 'run'}` }); continue; }
+      return _reqZones.every(z => gz.includes(z))
+        && (used.get(s.id) + dur) <= (_dynShiftMinutes(s) || 0)
+        && _dynConsistFit(reqConsist, _dynShiftAvailConsists(s)).ok;
+    };
+    // Soft grouping: prefer a shift that is empty or already carries the SAME
+    // consist signature, so same-config runs batch together and 1-train runs
+    // don't get mixed into a 2-train shift when a cleaner home exists.
+    const shift = shifts.find(s => canTake(s) && (sigOnShift.get(s.id).size === 0 || sigOnShift.get(s.id).has(sig)))
+                || shifts.find(canTake);
+    if (!shift) {
+      const fitReason = shifts.some(s => {
+        const gz = (s.access_zones && s.access_zones.length) ? s.access_zones : [s.control_zone_code];
+        return _reqZones.every(z => gz.includes(z)) && (used.get(s.id) + dur) <= (_dynShiftMinutes(s) || 0);
+      }) ? `no shift offers the ${_dynConsistSummary(reqConsist)} consist for` : `no shift with room/access for`;
+      unplaced.push({ inst, why: `${fitReason} ${_reqZones.join(', ') || inst.code || 'run'}` });
+      continue;
+    }
     used.set(shift.id, used.get(shift.id) + dur);
+    sigOnShift.get(shift.id).add(sig);
     placed.push({ inst, shift });
   }
   if (!placed.length) {
@@ -43297,11 +43381,99 @@ function _dynStartArea(inst) {
   return m ? m[0].toUpperCase() : null;
 }
 
-// Train-configuration signature: runs sharing it (same consist size + train
-// count) can run back-to-back without re-mobilising trains, so the scheduler
-// batches them into the same shift.
+// Train-configuration signature: runs sharing it (same per-train consist sizes
+// AND train count) can run back-to-back without re-mobilising trains, so the
+// scheduler batches them into the same shift. Built from the full per-train
+// consist multiset (order-independent), not just the primary consist_size.
 function _dynConsistSig(inst) {
-  return `${inst && inst.consist_size != null ? inst.consist_size : ''}|${inst && inst.trains_needed != null ? inst.trains_needed : ''}`;
+  const n = Math.max(1, parseInt(inst && inst.trains_needed, 10) || 1);
+  const sizes = _dynConsistSizes(inst).map(x => (x == null ? '*' : x)).sort();
+  return `${n}|${sizes.join(',')}`;
+}
+
+// Per-train consist sizes a campaign is asking for (length = trains_requested).
+// Mirrors _dynConsistSizes for instances: required_consists.sizes when present,
+// else the single consist_size replicated across the requested train count.
+function _dynCampaignConsistSizes(camp) {
+  const n = Math.max(1, parseInt(camp && camp.trains_requested, 10) || 1);
+  const rc = camp && camp.required_consists;
+  let sizes = (rc && Array.isArray(rc.sizes)) ? rc.sizes.slice() : null;
+  if (!sizes) sizes = Array(n).fill((camp && camp.consist_size != null) ? camp.consist_size : null);
+  while (sizes.length < n) sizes.push(sizes[0] != null ? sizes[0] : null);
+  if (sizes.length > n) sizes = sizes.slice(0, n);
+  return sizes.map(x => (x == null || x === '') ? null : (parseInt(x, 10) || null));
+}
+
+// Per-train consist sizes a shift (zone_access_window) makes available
+// (length = max_trains). available_consists.sizes when present, else the single
+// consist_size replicated across max_trains. null entry = size unspecified.
+function _dynShiftAvailConsists(s) {
+  const n = Math.max(1, parseInt(s && s.max_trains, 10) || 1);
+  const rc = s && s.available_consists;
+  let sizes = (rc && Array.isArray(rc.sizes)) ? rc.sizes.slice() : null;
+  if (!sizes) sizes = Array(n).fill((s && s.consist_size != null) ? s.consist_size : null);
+  while (sizes.length < n) sizes.push(sizes[0] != null ? sizes[0] : null);
+  if (sizes.length > n) sizes = sizes.slice(0, n);
+  return sizes.map(x => (x == null || x === '') ? null : (parseInt(x, 10) || null));
+}
+
+// Can a shift supply the trains an instance needs? Requires enough trains and an
+// EXACT car-count match for each specific required consist ("Any" = wildcard,
+// consumes any remaining train). A shift with no concrete consist data at all is
+// treated as consist-agnostic (only the train count is enforced) so campaigns
+// that never specified a consist keep working. Returns { ok, reason }.
+function _dynConsistFit(reqSizes, availSizes) {
+  const need = (reqSizes || []).slice();
+  const pool = (availSizes || []).slice();
+  if (need.length > pool.length) {
+    return { ok: false, reason: `needs ${need.length} train${need.length === 1 ? '' : 's'}, shift offers ${pool.length}` };
+  }
+  const poolHasConcrete = pool.some(x => x != null);
+  const specifics = need.filter(x => x != null);
+  const anyCount = need.length - specifics.length;
+  for (const size of specifics) {
+    let idx = pool.indexOf(size);
+    // Only fall back to an unspecified ("Any") shift slot when the shift has NO
+    // concrete consist data — otherwise a specific ask must meet an exact size.
+    if (idx < 0 && !poolHasConcrete) idx = pool.indexOf(null);
+    if (idx < 0) return { ok: false, reason: `no ${size}-car train available` };
+    pool.splice(idx, 1);
+  }
+  if (anyCount > pool.length) return { ok: false, reason: 'not enough trains' };
+  return { ok: true };
+}
+
+// Human summary of a per-train consist multiset, e.g. [4,4,10] → "2×4-car + 1×10-car".
+function _dynConsistSummary(sizes) {
+  const arr = (sizes || []).map(x => (x == null ? 'Any' : x + '-car'));
+  if (!arr.length) return '—';
+  const counts = new Map();
+  for (const a of arr) counts.set(a, (counts.get(a) || 0) + 1);
+  return [...counts.entries()].map(([k, v]) => `${v}×${k}`).join(' + ');
+}
+
+// Problems with an instance's CURRENT scheduling — surfaces runs scheduled
+// before the campaign changed (e.g. a 2-car shift dropped to 1-car, a zone was
+// removed, or the shift was cancelled). Empty array = still valid.
+function _dynInstanceScheduleIssues(inst) {
+  if (!inst || !inst.shift_id) return [];
+  // A finished run (passed / N/A) never needs rescheduling.
+  if (inst.status === 'Pass' || inst.status === 'Not Applicable') return [];
+  const s = (_dynPage.shifts || []).find(x => String(x.id) === String(inst.shift_id));
+  if (!s) return [{ code: 'missing', label: 'assigned shift no longer exists' }];
+  const out = [];
+  if (s.status === 'cancelled') out.push({ code: 'cancelled', label: 'shift was cancelled' });
+  if (!_dynWindowAccessOk(s, inst)) out.push({ code: 'access', label: 'shift no longer grants the required zone/mode' });
+  const fit = _dynConsistFit(_dynConsistSizes(inst), _dynShiftAvailConsists(s));
+  if (!fit.ok) out.push({ code: 'consist', label: `consist/trains no longer available — ${fit.reason}` });
+  return out;
+}
+// Red "needs reschedule" pill for a scheduled run whose shift no longer fits it.
+function _dynIssueBadge(inst) {
+  const issues = _dynInstanceScheduleIssues(inst);
+  if (!issues.length) return '';
+  const title = 'Needs reschedule: ' + issues.map(i => i.label).join(' · ');
+  return `<span class="badge" style="background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;font-size:10px;" title="${escapeHtml(title)}">${icon('alert')} needs reschedule</span>`;
 }
 
 // Dynamic test cases available as campaign scope (dynamic-scope items + any
@@ -43465,6 +43637,7 @@ function _dynCascadeAllocate({ instances, windows, prereqs, capacityPerWindow = 
         && accessOkWin(i, wz)   // access mapping = access_req ⊆ window zones (under_test is not gated)
         && (!windowAllows || windowAllows(i, w))
         && (!i.required_mode || (w.allowed_modes || []).includes(i.required_mode))
+        && _dynConsistFit(_dynConsistSizes(i), _dynShiftAvailConsists(w)).ok   // exact consist / train-count match
         && prereqOkBy(i.test_id, idx));
       if (!cands.length) break;
       cands.sort((a, b) =>
