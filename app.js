@@ -1659,6 +1659,58 @@ function populateSelect(id, allLabel, options) {
   el.innerHTML = `<option value="">${allLabel}</option>` + options.map(o => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
 }
 
+// ── Cascading filters (shared) ───────────────────────────────────────────────
+// True cross-cascade: each filter's option list is recomputed from the rows that
+// match ALL OTHER active selections, a still-valid current selection is kept, and
+// one that no longer applies is dropped. The pure option math is cxCascadeOptions
+// (unit-testable, no DOM); cxCascadeFilters wires it to <select> elements and
+// keeps any Tom Select display in sync — the key fix for "Reset clears the table
+// but the dropdown still shows the old value".
+//
+//   dims = [{ id, field, allLabel }]   skip = [ids to leave untouched, e.g. a
+//   locked subsystem]. `field` is the row property each dim filters on.
+function cxCascadeOptions(rows, dims, current, skip = []) {
+  const cur = { ...current };
+  const out = {};
+  for (const d of dims) {
+    if (skip.includes(d.id)) { out[d.id] = { options: null, value: cur[d.id] || '' }; continue; }
+    const subset = (rows || []).filter(r =>
+      dims.every(o => o.id === d.id || !cur[o.id] || String(r[o.field] ?? '') === String(cur[o.id])));
+    const options = [...new Set(subset.map(r => r[d.field]).filter(v => v != null && v !== ''))]
+      .map(String).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const value = options.includes(String(cur[d.id] ?? '')) ? String(cur[d.id]) : '';
+    out[d.id] = { options, value };
+    cur[d.id] = value;   // a filter cleared as invalid stops constraining the rest
+  }
+  return out;
+}
+
+function cxCascadeFilters(rows, dims, skip = []) {
+  const current = {};
+  for (const d of dims) { const el = document.getElementById(d.id); current[d.id] = el ? el.value : ''; }
+  const res = cxCascadeOptions(rows, dims, current, skip);
+  for (const d of dims) {
+    if (skip.includes(d.id)) continue;
+    const el = document.getElementById(d.id);
+    if (!el) continue;
+    populateSelect(d.id, d.allLabel, res[d.id].options);
+    el.value = res[d.id].value;
+  }
+  // Push the freshly-set native options/values into any Tom Select wrapper.
+  for (const d of dims) {
+    const el = document.getElementById(d.id);
+    if (el && el.tomselect) { try { el.tomselect.sync(); el.tomselect.setValue(el.value || '', true); } catch (_) {} }
+  }
+}
+
+// Force a filter <select> to a value, keeping Tom Select's display in sync.
+function cxSetFilterValue(id, value) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.value = value;
+  if (el.tomselect) { try { el.tomselect.setValue(value || '', true); } catch (_) {} }
+}
+
 function renderAPTable() {
   const search = document.getElementById('ap-search').value.toLowerCase();
   const statusF = document.getElementById('ap-status-filter').value;
@@ -1765,117 +1817,58 @@ function initLineItems() {
   document.getElementById('li-summary').textContent =
     `${base.length.toLocaleString()} test cases${userSubsys && !isAdmin ? ` · ${userSubsys}` : ' across all subsystems'}`;
 
-  // Populate filter dropdowns from the (already-scoped) TI data
-  const subsystems = [...new Set(base.map(r => r.Subsystem).filter(Boolean))].sort();
-  const phases     = [...new Set(base.map(r => String(r.Phase || '')).filter(Boolean))].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
-  const locs       = [...new Set(base.map(r => r.Location).filter(Boolean))].sort();
-  const activities = [...new Set(base.map(r => r.Activity).filter(Boolean))].sort();
-  const statuses   = [...new Set(base.map(r => r.Status).filter(Boolean))].sort();
-
-  populateSelect('li-subsys-filter',   'All subsystems', subsystems);
-  populateSelect('li-phase-filter',    'All phases',     phases);
-  populateSelect('li-location-filter', 'All locations',  locs);
-  populateSelect('li-activity-filter', 'All activities', activities);
-  populateSelect('li-status-filter',   'All statuses',   statuses);
-
-  // For non-admin with a subsystem, pre-select their subsystem and hide the filter
+  // Subsystem lock for non-admins: fix + hide the subsystem filter.
   const subsysEl = document.getElementById('li-subsys-filter');
   if (userSubsys && !isAdmin) {
-    subsysEl.value = userSubsys;
-    subsysEl.style.display = 'none';
-  } else {
+    populateSelect('li-subsys-filter', 'All subsystems', [userSubsys]);
+    if (subsysEl) { subsysEl.value = userSubsys; subsysEl.style.display = 'none'; }
+  } else if (subsysEl) {
     subsysEl.style.display = '';
   }
 
-  document.getElementById('li-subsys-filter')?.addEventListener('input', () => { _liCascade('subsystem'); renderLITable(); });
-  document.getElementById('li-phase-filter')?.addEventListener('input',  () => { _liCascade('phase');    renderLITable(); });
-  document.getElementById('li-location-filter')?.addEventListener('input',() => { _liCascade('location'); renderLITable(); });
-  document.getElementById('li-activity-filter')?.addEventListener('input', renderLITable);
-  document.getElementById('li-status-filter')?.addEventListener('input',   renderLITable);
-  document.getElementById('li-search')?.addEventListener('input',           renderLITable);
+  // Populate every dropdown via the shared cross-cascade (status included).
+  _liCascade();
+
+  // Wire filters once (guarded — initLineItems re-runs on data reloads). Tom
+  // Select dispatches the native 'change' event on the underlying <select>.
+  const _liOnFilter = () => { _liCascade(); renderLITable(); };
+  _liFilterDims().forEach(d => {
+    const el = document.getElementById(d.id);
+    if (el && !el._liWired) { el.addEventListener('change', _liOnFilter); el._liWired = true; }
+  });
+  const searchEl = document.getElementById('li-search');
+  if (searchEl && !searchEl._liWired) { searchEl.addEventListener('input', renderLITable); searchEl._liWired = true; }
 
   renderLITable();
 }
 
-// changedKey: 'subsystem' | 'phase' | 'location' — the filter the user just changed.
-// Every other dependent dropdown is re-populated based on the current combined selection.
-function _liCascade(changedKey) {
-  const isAdmin    = currentRoleUser?.role === 'admin';
-  const userSubsys = currentRoleUser?.subsystem || null;
-
-  const curSub = document.getElementById('li-subsys-filter').value;
-  const curPh  = document.getElementById('li-phase-filter').value;
-  const curLoc = document.getElementById('li-location-filter').value;
-  const curAct = document.getElementById('li-activity-filter').value;
-
-  // Re-populate subsystem options (skip if it was the changed key, or if locked for non-admin)
-  if (changedKey !== 'subsystem' && (isAdmin || !userSubsys)) {
-    const subs = [...new Set(TI.filter(r =>
-      (!curPh  || r.Phase    === curPh) &&
-      (!curLoc || r.Location === curLoc)
-    ).map(r => r.Subsystem).filter(Boolean))].sort();
-    populateSelect('li-subsys-filter', 'All subsystems', subs);
-    document.getElementById('li-subsys-filter').value = subs.includes(curSub) ? curSub : '';
-  }
-
-  // Re-populate phase options (skip if it was the changed key)
-  if (changedKey !== 'phase') {
-    const fSub = document.getElementById('li-subsys-filter').value;
-    const phases = [...new Set(TI.filter(r =>
-      (!fSub   || r.Subsystem === fSub) &&
-      (!curLoc || r.Location  === curLoc)
-    ).map(r => r.Phase).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-    populateSelect('li-phase-filter', 'All phases', phases);
-    document.getElementById('li-phase-filter').value = phases.includes(curPh) ? curPh : '';
-  }
-
-  // Re-populate location options (skip if it was the changed key)
-  if (changedKey !== 'location') {
-    const fSub   = document.getElementById('li-subsys-filter').value;
-    const fPhase = document.getElementById('li-phase-filter').value;
-    const locs = [...new Set(TI.filter(r =>
-      (!fSub   || r.Subsystem === fSub) &&
-      (!fPhase || r.Phase     === fPhase)
-    ).map(r => r.Location).filter(Boolean))].sort();
-    populateSelect('li-location-filter', 'All locations', locs);
-    document.getElementById('li-location-filter').value = locs.includes(curLoc) ? curLoc : '';
-  }
-
-  // Always re-populate activity options from all active filters
-  const fSub   = document.getElementById('li-subsys-filter').value;
-  const fPhase = document.getElementById('li-phase-filter').value;
-  const fLoc   = document.getElementById('li-location-filter').value;
-  const acts = [...new Set(TI.filter(r =>
-    (!fSub   || r.Subsystem === fSub) &&
-    (!fPhase || r.Phase     === fPhase) &&
-    (!fLoc   || r.Location  === fLoc)
-  ).map(r => r.Activity).filter(Boolean))].sort();
-  populateSelect('li-activity-filter', 'All activities', acts);
-  if (!acts.includes(curAct)) document.getElementById('li-activity-filter').value = '';
+// The Test-Case filter dimensions and the row field each one filters on.
+function _liFilterDims() {
+  return [
+    { id: 'li-subsys-filter',   field: 'Subsystem', allLabel: 'All subsystems' },
+    { id: 'li-phase-filter',    field: 'Phase',     allLabel: 'All phases' },
+    { id: 'li-location-filter', field: 'Location',  allLabel: 'All locations' },
+    { id: 'li-activity-filter', field: 'Activity',  allLabel: 'All activities' },
+    { id: 'li-status-filter',   field: 'Status',    allLabel: 'All statuses' },
+  ];
 }
+// Subsystem is locked (skipped) for a non-admin scoped to one subsystem.
+function _liFilterSkip() {
+  const isAdmin = currentRoleUser?.role === 'admin';
+  const userSubsys = currentRoleUser?.subsystem || null;
+  return (!isAdmin && userSubsys) ? ['li-subsys-filter'] : [];
+}
+// Recompute EVERY dropdown's options from the other active selections (true
+// cross-cascade, status included) and keep Tom Select in sync.
+function _liCascade() { cxCascadeFilters(TI, _liFilterDims(), _liFilterSkip()); }
 
 function clearLIFilters() {
   _liKpiFilter = '';
-  ['li-search','li-phase-filter','li-location-filter','li-activity-filter','li-status-filter'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = '';
-  });
-  const isAdmin    = currentRoleUser?.role === 'admin';
-  const userSubsys = currentRoleUser?.subsystem || null;
-  if (isAdmin) {
-    const el = document.getElementById('li-subsys-filter');
-    if (el) el.value = '';
-  }
-  // Repopulate all dropdowns from full TI dataset so cascaded options are restored
-  const fSub = isAdmin ? '' : (userSubsys || '');
-  const subsystems = [...new Set(TI.map(r => r.Subsystem).filter(Boolean))].sort();
-  const phases     = [...new Set(TI.filter(r => !fSub || r.Subsystem === fSub).map(r => String(r.Phase || '')).filter(Boolean))].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
-  const locs       = [...new Set(TI.filter(r => !fSub || r.Subsystem === fSub).map(r => r.Location).filter(Boolean))].sort();
-  const acts       = [...new Set(TI.filter(r => !fSub || r.Subsystem === fSub).map(r => r.Activity).filter(Boolean))].sort();
-  if (isAdmin) populateSelect('li-subsys-filter', 'All subsystems', subsystems);
-  populateSelect('li-phase-filter',    'All phases',     phases);
-  populateSelect('li-location-filter', 'All locations',  locs);
-  populateSelect('li-activity-filter', 'All activities', acts);
+  const skip = _liFilterSkip();
+  _liFilterDims().forEach(d => { if (!skip.includes(d.id)) cxSetFilterValue(d.id, ''); });
+  cxSetFilterValue('li-search', '');
+  // Rebuild option lists from the now-cleared selection and re-sync Tom Select.
+  _liCascade();
   renderLITable();
 }
 
@@ -5888,18 +5881,18 @@ function renderTestMatrix() {
 
   const isAdmin  = currentRoleUser.role === 'admin';
 
-  // Cascaded option pools from TI
-  const subsystems = [...new Set(TI.map(r => r.Subsystem).filter(Boolean))].sort();
-  const phasePool  = [...new Set(TI.filter(r => !matrixFilter.subsystem || r.Subsystem === matrixFilter.subsystem).map(r => r.Phase).filter(Boolean))].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
-  const locPool    = [...new Set(TI.filter(r =>
-    (!matrixFilter.subsystem || r.Subsystem === matrixFilter.subsystem) &&
-    (!matrixFilter.phase || r.Phase === matrixFilter.phase)
-  ).map(r => r.Location).filter(Boolean))].sort();
-  const actPool    = [...new Set(TI.filter(r =>
-    (!matrixFilter.subsystem || r.Subsystem === matrixFilter.subsystem) &&
-    (!matrixFilter.phase || r.Phase === matrixFilter.phase) &&
-    (!matrixFilter.location || r.Location === matrixFilter.location)
-  ).map(r => r.Activity).filter(Boolean))].sort();
+  // Full cross-cascade option pools — each pool is the distinct values in rows
+  // matching all the OTHER active filters (subsystem, phase, location, activity),
+  // so selecting any one narrows every other dropdown.
+  const _mxMatchExcept = (r, except) =>
+    (except === 'subsystem' || !matrixFilter.subsystem || r.Subsystem === matrixFilter.subsystem) &&
+    (except === 'phase'     || !matrixFilter.phase     || r.Phase     === matrixFilter.phase)     &&
+    (except === 'location'  || !matrixFilter.location  || r.Location  === matrixFilter.location)  &&
+    (except === 'activity'  || !matrixFilter.activity  || r.Activity  === matrixFilter.activity);
+  const subsystems = [...new Set(TI.filter(r => _mxMatchExcept(r, 'subsystem')).map(r => r.Subsystem).filter(Boolean))].sort();
+  const phasePool  = [...new Set(TI.filter(r => _mxMatchExcept(r, 'phase')).map(r => r.Phase).filter(Boolean))].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
+  const locPool    = [...new Set(TI.filter(r => _mxMatchExcept(r, 'location')).map(r => r.Location).filter(Boolean))].sort();
+  const actPool    = [...new Set(TI.filter(r => _mxMatchExcept(r, 'activity')).map(r => r.Activity).filter(Boolean))].sort();
 
   // Apply all filters
   let filtered = TI.filter(r =>
@@ -6049,13 +6042,18 @@ function _renderTIMatrixRow(r, isAdmin) {
   `;
 }
 
-function _mxPhaseChange(v) { matrixFilter.phase=v; matrixFilter.location=''; matrixFilter.activity=''; renderTestMatrix(); }
-function _mxLocChange(v)   { matrixFilter.location=v; matrixFilter.activity=''; renderTestMatrix(); }
-function _mxSetFilter(k,v) { matrixFilter[k]=v; renderTestMatrix(); }
+// renderTestMatrix replaces the whole filter bar's innerHTML, so re-run the
+// shared library init afterwards to rebuild Tom Select on the fresh <select>s —
+// this keeps the dropdown display in sync with the state (and Reset shows the
+// defaults instead of a stale value).
+function _mxPhaseChange(v) { matrixFilter.phase=v; matrixFilter.location=''; matrixFilter.activity=''; renderTestMatrix(); _trInitModernUI(); }
+function _mxLocChange(v)   { matrixFilter.location=v; matrixFilter.activity=''; renderTestMatrix(); _trInitModernUI(); }
+function _mxSetFilter(k,v) { matrixFilter[k]=v; renderTestMatrix(); _trInitModernUI(); }
 function _mxClearFilters() {
   const sub = currentRoleUser?.role!=='admin' ? (currentRoleUser?.subsystem||'') : '';
   matrixFilter = { phase:'', location:'', subsystem:sub, activity:'', applicable:'all' };
   renderTestMatrix();
+  _trInitModernUI();
 }
 
 function _mxStatusChange(testId, status, el = null) {
@@ -11706,27 +11704,28 @@ function _testRegisterHTML() {
   const userSub = currentRoleUser?.subsystem || '';
   if (userSub && _amFilters.subsystem !== userSub) _amFilters.subsystem = userSub;
 
-  // Cascade Phase → Location → Subsystem (only options present in current data)
-  const phases = [...new Set(all
-    .filter(a => !_amFilters.subsystem || a.subsystem === _amFilters.subsystem)
-    .map(a => a.phase).filter(Boolean)
-  )].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
-
-  const locations = [...new Set(all
-    .filter(a =>
-      (!_amFilters.subsystem || a.subsystem === _amFilters.subsystem) &&
-      (!_amFilters.phase     || a.phase     === _amFilters.phase)
-    ).map(a => a.location).filter(Boolean)
-  )].sort();
-
-  const subsystems = [...new Set(all
-    .filter(a =>
-      (!_amFilters.phase    || a.phase    === _amFilters.phase) &&
-      (!_amFilters.location || a.location === _amFilters.location)
-    ).map(a => a.subsystem).filter(Boolean)
-  )].sort();
-
-  const actStatuses = ['Open','Partial Completion','Closed','Future Test'];
+  // Full cross-cascade: each filter's options come from the rows matching ALL the
+  // OTHER active filters (phase, location, subsystem AND status), so picking any
+  // one narrows all the others — and the status chips only offer statuses that
+  // actually exist in the current selection.
+  const _amMatchExcept = (a, except) => {
+    const st = _amComputeStatus(a);
+    return (except === 'phase'     || !_amFilters.phase     || a.phase     === _amFilters.phase)     &&
+           (except === 'location'  || !_amFilters.location  || a.location  === _amFilters.location)  &&
+           (except === 'subsystem' || !_amFilters.subsystem || a.subsystem === _amFilters.subsystem) &&
+           (except === 'status'    || !_amFilters.status    || st          === _amFilters.status);
+  };
+  const phases = [...new Set(all.filter(a => _amMatchExcept(a, 'phase'))
+    .map(a => a.phase).filter(Boolean))].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
+  const locations = [...new Set(all.filter(a => _amMatchExcept(a, 'location'))
+    .map(a => a.location).filter(Boolean))].sort();
+  const subsystems = [...new Set(all.filter(a => _amMatchExcept(a, 'subsystem'))
+    .map(a => a.subsystem).filter(Boolean))].sort();
+  // Status counts within the current (non-status) selection — drives chip visibility.
+  const _amStatusCounts = {};
+  all.filter(a => _amMatchExcept(a, 'status')).forEach(a => {
+    const st = _amComputeStatus(a); _amStatusCounts[st] = (_amStatusCounts[st] || 0) + 1;
+  });
 
   let filtered = all.filter(a => {
     const st = _amComputeStatus(a);
@@ -11834,9 +11833,11 @@ function _testRegisterHTML() {
       <!-- Status chips -->
       <div class="v2-chips-row">
         <span class="v2-chip ${!_amFilters.status ? 'active' : ''}"
-              onclick="_amSetFilter('status','')">All <span class="n">${all.length}</span></span>
+              onclick="_amSetFilter('status','')">All <span class="n">${Object.values(_amStatusCounts).reduce((a,b)=>a+b,0)}</span></span>
         ${[['Open','is-bad','Open'],['Partial Completion','is-warn','Partial'],['Closed','is-good','Closed'],['Future Test','is-muted','Future']].map(([s,tone,label]) => {
-          const count = all.filter(a => _amComputeStatus(a) === s).length;
+          // Count within the current (non-status) selection; hide a status that
+          // isn't present in that selection unless it's the one already chosen.
+          const count = _amStatusCounts[s] || 0;
           if (!count && _amFilters.status !== s) return '';
           return `<span class="v2-chip ${tone} ${_amFilters.status === s ? 'active' : ''}"
                         onclick="_amSetFilter('status','${s}')">
@@ -12015,27 +12016,26 @@ function _adminActivityManagerHTML() {
 
   const all = _amGetActivities();
 
-  // Cascade Phase → Location → Subsystem (admin activity manager has no subsystem lock)
-  const phases = [...new Set(all
-    .filter(a => !_amFilters.subsystem || a.subsystem === _amFilters.subsystem)
-    .map(a => a.phase).filter(Boolean)
-  )].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
-
-  const locations = [...new Set(all
-    .filter(a =>
-      (!_amFilters.subsystem || a.subsystem === _amFilters.subsystem) &&
-      (!_amFilters.phase     || a.phase     === _amFilters.phase)
-    ).map(a => a.location).filter(Boolean)
-  )].sort();
-
-  const subsystems = [...new Set(all
-    .filter(a =>
-      (!_amFilters.phase    || a.phase    === _amFilters.phase) &&
-      (!_amFilters.location || a.location === _amFilters.location)
-    ).map(a => a.subsystem).filter(Boolean)
-  )].sort();
-
-  const statuses = ['Open','Partial Completion','Closed','Future Test'];
+  // Full cross-cascade: every filter's options come from the rows matching all
+  // the OTHER active filters (admin activity manager has no subsystem lock).
+  const _amMatchExcept = (a, except) => {
+    const st = _amComputeStatus(a);
+    return (except === 'phase'     || !_amFilters.phase     || a.phase     === _amFilters.phase)     &&
+           (except === 'location'  || !_amFilters.location  || a.location  === _amFilters.location)  &&
+           (except === 'subsystem' || !_amFilters.subsystem || a.subsystem === _amFilters.subsystem) &&
+           (except === 'status'    || !_amFilters.status    || st          === _amFilters.status);
+  };
+  const phases = [...new Set(all.filter(a => _amMatchExcept(a, 'phase'))
+    .map(a => a.phase).filter(Boolean))].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
+  const locations = [...new Set(all.filter(a => _amMatchExcept(a, 'location'))
+    .map(a => a.location).filter(Boolean))].sort();
+  const subsystems = [...new Set(all.filter(a => _amMatchExcept(a, 'subsystem'))
+    .map(a => a.subsystem).filter(Boolean))].sort();
+  // Only statuses present in the current (non-status) selection, plus whatever is
+  // already selected so it can be de-selected.
+  const _amStatusOrder = ['Open','Partial Completion','Closed','Future Test'];
+  const _amAvailStatuses = new Set(all.filter(a => _amMatchExcept(a, 'status')).map(a => _amComputeStatus(a)));
+  const statuses = _amStatusOrder.filter(s => _amAvailStatuses.has(s) || _amFilters.status === s);
 
   let filtered = all.filter(a => {
     const st = _amComputeStatus(a);
