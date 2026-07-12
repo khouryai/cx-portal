@@ -7642,9 +7642,6 @@ function renderPunchWorkflow() {
     items = items.filter(p => actCodes.has(p.test_case_code));
   }
 
-  // Build activity options from all punch items (via TI lookup)
-  const plActivities = [...new Set(all.map(p => _punchDeriveActivity(p.test_case_code)).filter(Boolean))].sort();
-
   const total = items.length;
   const pages = Math.max(1, Math.ceil(total / PL_PAGE_SIZE));
   if (_plPage > pages) _plPage = pages;
@@ -7653,14 +7650,44 @@ function renderPunchWorkflow() {
   const openItems = all.filter(p => p.status !== 'closed');
   const overdue   = openItems.filter(p => p.due_date && new Date(p.due_date) < new Date());
 
-  // Dynamic cascade Phase → Location → Subsystem from current tab's base items
-  const phaseIds    = new Set(baseItems.map(p => p.phase).filter(Boolean));
+  // Full cross-cascade: each filter's options (and the status-chip counts) come
+  // from the base items matching ALL the OTHER active filters, so any selection
+  // narrows every other control. Search is intentionally not part of the cascade.
+  const _plMatchExcept = (p, except) =>
+    (except === 'status'   || !_plStatusFilter   || _plFilterByChip([p], _plStatusFilter).length > 0) &&
+    (except === 'phase'    || !_plPhaseFilter    || p.phase === _plPhaseFilter) &&
+    (except === 'loc'      || !_plLocFilter      || p.location === _plLocFilter) &&
+    (except === 'sub'      || !_plSubFilter      || p.subsystem === _plSubFilter) &&
+    (except === 'priority' || !_plPriorityFilter || p.priority === _plPriorityFilter) &&
+    (except === 'template' || !_plTemplateFilter || (p.template_id||'') === _plTemplateFilter) &&
+    (except === 'activity' || !_plActivityFilter || _punchDeriveActivity(p.test_case_code) === _plActivityFilter);
+  const _plPool = except => baseItems.filter(p => _plMatchExcept(p, except));
+
+  const phaseIds    = new Set(_plPool('phase').map(p => p.phase).filter(Boolean));
   const phases      = LOCS.filter(l => l.level === 1 && phaseIds.has(l.id)).sort((a,b) => a.sort_order - b.sort_order);
-  const afterPhase  = _plPhaseFilter ? baseItems.filter(p => p.phase === _plPhaseFilter) : baseItems;
-  const locIds      = new Set(afterPhase.map(p => p.location).filter(Boolean));
+  const locIds      = new Set(_plPool('loc').map(p => p.location).filter(Boolean));
   const locPool     = LOCS.filter(l => l.level === 2 && locIds.has(l.id));
-  const afterLoc    = _plLocFilter ? afterPhase.filter(p => p.location === _plLocFilter) : afterPhase;
-  const subPool     = [...new Set(afterLoc.map(p => p.subsystem).filter(Boolean))].sort();
+  const subPool     = [...new Set(_plPool('sub').map(p => p.subsystem).filter(Boolean))].sort();
+  const _prioAvail  = new Set(_plPool('priority').map(p => p.priority).filter(Boolean));
+  const prioPool    = ['Low','Medium','High','Critical'].filter(p => _prioAvail.has(p));
+  const plActivities = [...new Set(_plPool('activity').map(p => _punchDeriveActivity(p.test_case_code)).filter(Boolean))].sort();
+  const _tplAvail   = new Set(_plPool('template').map(p => p.template_id).filter(Boolean));
+  const tplPool     = (typeof PUNCH_TEMPLATES!=='undefined' ? PUNCH_TEMPLATES : []).filter(t => _tplAvail.has(t.id));
+  const chipBase    = _plPool('status');
+  const plHasFilters = _plSearch || _plStatusFilter || _plPhaseFilter || _plLocFilter || _plSubFilter || _plPriorityFilter || _plActivityFilter || _plTemplateFilter;
+
+  // Prune selections the cascade no longer offers (data changed / tab switched),
+  // then re-render once so the pools reflect the cleaned state.
+  {
+    let pruned = false;
+    if (_plPhaseFilter    && !phases.some(p => p.id === _plPhaseFilter))   { _plPhaseFilter = '';    pruned = true; }
+    if (_plLocFilter      && !locPool.some(l => l.id === _plLocFilter))    { _plLocFilter = '';      pruned = true; }
+    if (_plSubFilter      && !subPool.includes(_plSubFilter))              { _plSubFilter = '';      pruned = true; }
+    if (_plPriorityFilter && !prioPool.includes(_plPriorityFilter))        { _plPriorityFilter = ''; pruned = true; }
+    if (_plActivityFilter && !plActivities.includes(_plActivityFilter))    { _plActivityFilter = ''; pruned = true; }
+    if (_plTemplateFilter && !tplPool.some(t => t.id === _plTemplateFilter)) { _plTemplateFilter = ''; pruned = true; }
+    if (pruned) { renderPunchWorkflow(); return; }
+  }
 
   // Wire hero stats
   if (heroEl) heroEl.innerHTML = renderPageHero({
@@ -7697,12 +7724,12 @@ function renderPunchWorkflow() {
       </div>
     </div>
 
-    <!-- Status chips -->
+    <!-- Status chips (counts within the current non-status selection) -->
     <div class="v2-chips-row">
       <span class="v2-chip ${!_plStatusFilter ? 'active' : ''}"
-            onclick="_plSetFilter('status','')">All <span class="n">${baseItems.length}</span></span>
+            onclick="_plSetFilter('status','')">All <span class="n">${chipBase.length}</span></span>
       ${PL_STATUS_CHIPS.map(([val, label, tone]) => {
-        const count = _plCountChip(baseItems, val);
+        const count = _plCountChip(chipBase, val);
         if (!count && _plStatusFilter !== val) return '';
         return `<span class="v2-chip ${tone} ${_plStatusFilter === val ? 'active' : ''}"
                       onclick="_plSetFilter('status','${val}')">
@@ -7736,13 +7763,14 @@ function renderPunchWorkflow() {
       </select>
       <select onchange="_plSetFilter('priority',this.value)">
         <option value="">All Priorities</option>
-        ${['Low','Medium','High','Critical'].map(p=>`<option value="${p}" ${_plPriorityFilter===p?'selected':''}>${p}</option>`).join('')}
+        ${prioPool.map(p=>`<option value="${p}" ${_plPriorityFilter===p?'selected':''}>${p}</option>`).join('')}
       </select>
-      ${plActivities.length ? `<select onchange="_plSetFilter('activity',this.value)">
+      ${(plActivities.length || _plActivityFilter) ? `<select onchange="_plSetFilter('activity',this.value)">
         <option value="">All Activities</option>
         ${plActivities.map(a=>`<option value="${escapeHtml(a)}" ${_plActivityFilter===a?'selected':''}>${escapeHtml(a)}</option>`).join('')}
       </select>` : ''}
-      ${(typeof PUNCH_TEMPLATES!=='undefined' && PUNCH_TEMPLATES.length) ? `<select onchange="_plSetFilter('template',this.value)"><option value="">All Templates</option>${PUNCH_TEMPLATES.map(t=>`<option value="${t.id}" ${_plTemplateFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}</select>` : ''}
+      ${(tplPool.length || _plTemplateFilter) ? `<select onchange="_plSetFilter('template',this.value)"><option value="">All Templates</option>${tplPool.map(t=>`<option value="${t.id}" ${_plTemplateFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}</select>` : ''}
+      ${plHasFilters ? `<button class="v2-btn-mini" onclick="_plClearFilters()">${icon('x')} Reset</button>` : ''}
       <span class="count"><b>${total}</b> of ${baseItems.length}</span>
     </div>
 
@@ -7825,14 +7853,16 @@ function _plSetSearch(v) { _plSearch=v; _plPage=1; renderPunchWorkflow(); }
 function _plSetPage(n)   { _plPage=n; renderPunchWorkflow(); }
 function _plSetFilter(k,v) {
   if (k==='status')   _plStatusFilter=v;
-  else if (k==='loc') { _plLocFilter=v; _plSubFilter=''; }  // cascade: loc change resets sub
+  else if (k==='loc') _plLocFilter=v;   // render-time cascade prunes invalid children
   else if (k==='sub') _plSubFilter=v;
   else if (k==='priority') _plPriorityFilter=v;
   else if (k==='activity') _plActivityFilter=v;
   else if (k==='template') _plTemplateFilter=v;
   _plPage=1; renderPunchWorkflow();
 }
-function _plPhaseChange(id) { _plPhaseFilter=id; _plLocFilter=''; _plSubFilter=''; _plPage=1; renderPunchWorkflow(); }
+// Phase change no longer force-clears location/subsystem — the render-time
+// cascade prunes only selections that are invalid under the new phase.
+function _plPhaseChange(id) { _plPhaseFilter=id; _plPage=1; renderPunchWorkflow(); }
 function _plClearFilters()  { _plSearch=''; _plStatusFilter=''; _plPhaseFilter=''; _plLocFilter=''; _plSubFilter=''; _plPriorityFilter=''; _plActivityFilter=''; _plTemplateFilter=''; _plPage=1; renderPunchWorkflow(); }
 
 function _plToggleSelect(id, checked) {
@@ -10536,9 +10566,8 @@ function _trpFilterOptions(rows, key) {
 
 function _trpSetFilter(key, value) {
   _trpFilters[key] = value;
-  // Cascade: phase change resets location; location change resets (non-locked) subsystem
-  if (key === 'phase')    _trpFilters.location = '';
-  if (key === 'location') _trpFilters.subsystem = currentRoleUser?.subsystem || '';
+  // No forced clearing — the render-time cascade prunes only selections that
+  // are invalid under the new combination and keeps the rest.
   renderTestReporting();
 }
 
@@ -10674,6 +10703,17 @@ function renderTestReporting() {
   const subsystemOptions = _trpFilterOptions(rows, 'subsystem');
   const phaseOptions = _trpFilterOptions(rows, 'phase');
   const locationOptions = _trpFilterOptions(rows, 'location');
+  // Prune selections the cascade no longer offers, then re-render once clean.
+  {
+    let pruned = false;
+    if (_trpFilters.phase && !phaseOptions.includes(_trpFilters.phase)) { _trpFilters.phase = ''; pruned = true; }
+    if (_trpFilters.location && !locationOptions.includes(_trpFilters.location)) { _trpFilters.location = ''; pruned = true; }
+    if (!trpUserSub && _trpFilters.subsystem && !subsystemOptions.includes(_trpFilters.subsystem)) { _trpFilters.subsystem = ''; pruned = true; }
+    if (pruned) { renderTestReporting(); return; }
+  }
+  // Status chips count within the rows matching every non-status filter.
+  const trpChipBase = _trpFilteredRows(rows, 'status');
+  const trpHasFilters = _trpFilters.search || _trpFilters.status || _trpFilters.phase || _trpFilters.location || (!trpUserSub && _trpFilters.subsystem);
 
   if (heroEl) heroEl.innerHTML = renderPageHero({
     eyebrow: 'Testing',
@@ -10693,9 +10733,9 @@ function renderTestReporting() {
       <!-- Status chips -->
       <div class="v2-chips-row">
         <span class="v2-chip ${!_trpFilters.status ? 'active' : ''}"
-              onclick="_trpSetFilter('status','')">All <span class="n">${rows.length}</span></span>
+              onclick="_trpSetFilter('status','')">All <span class="n">${trpChipBase.length}</span></span>
         ${TRP_STATUS_CHIPS.map(([val, label, tone]) => {
-          const count = rows.filter(r => r.status === val).length;
+          const count = trpChipBase.filter(r => r.status === val).length;
           if (!count && _trpFilters.status !== val) return '';
           return `<span class="v2-chip ${tone} ${_trpFilters.status === val ? 'active' : ''}"
                         onclick="_trpSetFilter('status', '${escapeHtml(val)}')">
@@ -10736,6 +10776,7 @@ function renderTestReporting() {
               <option value="">All Subsystems</option>
               ${subsystemOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
             </select>`}
+        ${trpHasFilters ? `<button class="v2-btn-mini" onclick="_trpClearFilters()">${icon('x')} Reset</button>` : ''}
         <span class="count"><b>${filtered.length}</b> of ${rows.length}</span>
       </div>
 
@@ -13746,16 +13787,24 @@ async function _p6ConfirmImport() {
 function _p6MappingTabHTML() {
   const activities = _amGetActivities(); // portal activities
 
-  // Cascade filter options (same pattern as other tools)
-  const phases     = [...new Set(activities.map(a=>a.phase).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
-  const locations  = [...new Set(activities
-    .filter(a => !_p6MappingFilters.phase || a.phase === _p6MappingFilters.phase)
+  // Full cross-cascade: each dropdown's options come from the activities that
+  // match all the OTHER active filters (including the linked/unlinked toggle).
+  const _p6MapMatchExcept = (a, except) =>
+    (except === 'phase'     || !_p6MappingFilters.phase     || a.phase     === _p6MappingFilters.phase)     &&
+    (except === 'location'  || !_p6MappingFilters.location  || a.location  === _p6MappingFilters.location)  &&
+    (except === 'subsystem' || !_p6MappingFilters.subsystem || a.subsystem === _p6MappingFilters.subsystem) &&
+    (except === 'linked'    || !_p6MappingFilters.linked ||
+      (_p6MappingFilters.linked === 'unlinked' ? !_p6IsActivityLinked(a) : _p6IsActivityLinked(a)));
+  const phases     = [...new Set(activities.filter(a => _p6MapMatchExcept(a, 'phase'))
+    .map(a=>a.phase).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const locations  = [...new Set(activities.filter(a => _p6MapMatchExcept(a, 'location'))
     .map(a=>a.location).filter(Boolean))].sort();
-  const subsystems = [...new Set(activities
-    .filter(a =>
-      (!_p6MappingFilters.phase     || a.phase     === _p6MappingFilters.phase) &&
-      (!_p6MappingFilters.location  || a.location  === _p6MappingFilters.location))
+  const subsystems = [...new Set(activities.filter(a => _p6MapMatchExcept(a, 'subsystem'))
     .map(a=>a.subsystem).filter(Boolean))].sort();
+  // Prune selections the cascade no longer offers.
+  if (_p6MappingFilters.phase && !phases.includes(_p6MappingFilters.phase)) _p6MappingFilters.phase = '';
+  if (_p6MappingFilters.location && !locations.includes(_p6MappingFilters.location)) _p6MappingFilters.location = '';
+  if (_p6MappingFilters.subsystem && !subsystems.includes(_p6MappingFilters.subsystem)) _p6MappingFilters.subsystem = '';
 
   let visibleActs = activities.filter(a =>
     (!_p6MappingFilters.phase     || a.phase     === _p6MappingFilters.phase)     &&
@@ -13806,6 +13855,8 @@ function _p6MappingTabHTML() {
             <option value="unlinked" ${_p6MappingFilters.linked==='unlinked'?'selected':''}>Unlinked</option>
             <option value="linked"   ${_p6MappingFilters.linked==='linked'?'selected':''}>Linked</option>
           </select>
+          ${(_p6MappingFilters.phase || _p6MappingFilters.location || _p6MappingFilters.subsystem || _p6MappingFilters.linked)
+            ? `<button class="filter-clear" onclick="_p6MapClearFilters()">Reset</button>` : ''}
         </div>
 
         <!-- Activity list -->
@@ -14322,8 +14373,11 @@ async function _p6AcceptSuggestion(sid, p6Id) {
 
 function _p6MapFilter(k, v) {
   _p6MappingFilters[k] = v;
-  if (k === 'phase')    { _p6MappingFilters.location = ''; _p6MappingFilters.subsystem = ''; }
-  if (k === 'location') { _p6MappingFilters.subsystem = ''; }
+  // Render-time cascade prunes invalid children; valid selections persist.
+  renderAdminP6();
+}
+function _p6MapClearFilters() {
+  _p6MappingFilters = { phase:'', location:'', subsystem:'', linked:'' };
   renderAdminP6();
 }
 
@@ -14679,11 +14733,16 @@ function _p6LearnTabHTML() {
     </div>`;
 
   // Filter dropdown options
+  // Cross-cascade: phase options narrowed by subsystem and vice-versa.
   const allActs = _amGetActivities();
-  const phases     = [...new Set(allActs.map(a=>a.phase).filter(Boolean))].sort();
+  const phases     = [...new Set(allActs
+    .filter(a => !_p6LearnFilters.subsystem || a.subsystem === _p6LearnFilters.subsystem)
+    .map(a=>a.phase).filter(Boolean))].sort();
   const subsystems = [...new Set(allActs
     .filter(a => !_p6LearnFilters.phase || a.phase === _p6LearnFilters.phase)
     .map(a=>a.subsystem).filter(Boolean))].sort();
+  if (_p6LearnFilters.phase && !phases.includes(_p6LearnFilters.phase)) _p6LearnFilters.phase = '';
+  if (_p6LearnFilters.subsystem && !subsystems.includes(_p6LearnFilters.subsystem)) _p6LearnFilters.subsystem = '';
 
   return `
     <div style="max-width:1100px;">
@@ -14714,6 +14773,8 @@ function _p6LearnTabHTML() {
         </select>
         <input type="text" id="p6-learn-search" class="filter-input" style="font-size:12px;max-width:220px;" placeholder="Search test activity…"
           value="${escapeHtml(_p6LearnFilters.search||'')}" oninput="_p6LearnSearch(this.value)">
+        ${(_p6LearnFilters.phase || _p6LearnFilters.subsystem || (_p6LearnFilters.search||'').trim())
+          ? `<button class="filter-clear" onclick="_p6LearnClearFilters()">Reset</button>` : ''}
         <span style="font-size:12px;color:var(--gray-500);margin-left:auto;">
           <b>${candidates.length}</b> of ${totalCandidates} shown \u00b7
           <b>${candidates.reduce((s,c)=>s+c.unlinkedCount,0)}</b> unlinked target${candidates.reduce((s,c)=>s+c.unlinkedCount,0)===1?'':'s'} across all locations
@@ -14803,7 +14864,12 @@ function _p6LearnSetMode(m) {
 }
 function _p6LearnFilter(k, v) {
   _p6LearnFilters[k] = v;
-  if (k === 'phase') _p6LearnFilters.subsystem = '';
+  // Render-time cascade prunes an invalid counterpart; valid ones persist.
+  _p6LearnPage = 1;
+  renderAdminP6();
+}
+function _p6LearnClearFilters() {
+  _p6LearnFilters = { phase:'', subsystem:'', search:'' };
   _p6LearnPage = 1;
   renderAdminP6();
 }
@@ -16759,9 +16825,18 @@ function _assetPageHTML() {
   const isAdmin = currentRoleUser?.role === 'admin';
   if (!isAdmin) return `<div class="docs-empty"><h3>Admin access required</h3></div>`;
 
-  const types    = [...new Set(ASSETS.map(a => a.device_type).filter(Boolean))].sort();
-  const prefixes = [...new Set(ASSETS.map(a => a.location_prefix).filter(Boolean))].sort();
-  const subs     = [...new Set(ASSETS.map(a => a.subsystem).filter(Boolean))].sort();
+  // Full cross-cascade: each dropdown offers only values present in the assets
+  // matching the other two active filters.
+  const _assetMatchExcept = (a, except) =>
+    (except === 'type'   || !_assetFilter.type   || a.device_type     === _assetFilter.type)   &&
+    (except === 'prefix' || !_assetFilter.prefix || a.location_prefix === _assetFilter.prefix) &&
+    (except === 'sub'    || !_assetFilter.sub    || a.subsystem       === _assetFilter.sub);
+  const types    = [...new Set(ASSETS.filter(a => _assetMatchExcept(a, 'type')).map(a => a.device_type).filter(Boolean))].sort();
+  const prefixes = [...new Set(ASSETS.filter(a => _assetMatchExcept(a, 'prefix')).map(a => a.location_prefix).filter(Boolean))].sort();
+  const subs     = [...new Set(ASSETS.filter(a => _assetMatchExcept(a, 'sub')).map(a => a.subsystem).filter(Boolean))].sort();
+  if (_assetFilter.type && !types.includes(_assetFilter.type)) _assetFilter.type = '';
+  if (_assetFilter.prefix && !prefixes.includes(_assetFilter.prefix)) _assetFilter.prefix = '';
+  if (_assetFilter.sub && !subs.includes(_assetFilter.sub)) _assetFilter.sub = '';
   const allSubs  = [...new Set(TI.map(r => r.Subsystem).filter(Boolean))].sort();
   const allLocs  = [...new Set(TI.map(r => r.Location).filter(Boolean))].sort();
 
@@ -16773,6 +16848,7 @@ function _assetPageHTML() {
     if (_assetFilter.sub    && a.subsystem        !== _assetFilter.sub)    return false;
     return true;
   });
+  const assetHasFilters = _assetFilter.search || _assetFilter.type || _assetFilter.prefix || _assetFilter.sub;
 
   return `
     <div style="display:flex;gap:20px;margin-bottom:24px;flex-wrap:wrap;align-items:flex-start;">
@@ -16850,6 +16926,7 @@ function _assetPageHTML() {
         <option value="">All Subsystems</option>
         ${subs.map(s => `<option value="${escapeHtml(s)}" ${_assetFilter.sub===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
       </select>
+      ${assetHasFilters ? `<button class="filter-clear" onclick="_assetClearFilters()">Reset</button>` : ''}
       <span style="font-size:13px;color:var(--gray-500);">${filtered.length} asset${filtered.length!==1?'s':''}</span>
     </div>
 
@@ -17075,6 +17152,10 @@ function _assetPopulateTcSelect(assetId) {
 // ── Asset page actions ────────────────────────────────────────────────────────
 function _assetSetFilter(key, val) {
   _assetFilter[key] = val;
+  renderAdminAssets();
+}
+function _assetClearFilters() {
+  _assetFilter = { search: '', type: '', prefix: '', sub: '' };
   renderAdminAssets();
 }
 
@@ -17625,6 +17706,9 @@ function renderConfigMgmt() {
   const root = document.getElementById('admin-config-content');
   if (!root || !currentRoleUser) return;
   _htmlPreserveFocus(root, _cmPageHTML());
+  // Rebuild Tom Select on the fresh .filter-select elements so the dropdown
+  // display always matches state (and Reset shows the defaults).
+  _initPageLibraries();
 }
 
 function _cmPhases() { return LOCS.filter(l => l.level === 1).sort((a,b)=>a.sort_order-b.sort_order); }
@@ -17633,8 +17717,15 @@ function _cmLocs(phaseId) { return phaseId ? LOCS.filter(l => l.level === 2 && l
 function _cmPageHTML() {
   if (!_cmCanManage()) return `<div class="docs-empty"><h3>Admin access required</h3><p>Configuration Management is restricted to administrators.</p></div>`;
 
-  const subs = (_fsCfg('punch_subsystem').length ? _fsCfg('punch_subsystem') : SUBSYSTEMS_LIST);
   const f = _cmFilter;
+  // Cross-cascade: subsystem options narrow to configs at the selected location,
+  // and the location list (phase-scoped) narrows to the selected subsystem.
+  const _cmSubsAvail = new Set(SW_CONFIGS
+    .filter(c => !f.location || c.location === f.location)
+    .map(c => c.subsystem).filter(Boolean));
+  const subsAll = (_fsCfg('punch_subsystem').length ? _fsCfg('punch_subsystem') : SUBSYSTEMS_LIST);
+  const subs = subsAll.filter(s => _cmSubsAvail.has(s));
+  if (f.subsystem && !subs.includes(f.subsystem)) f.subsystem = '';
 
   // Apply filters
   let rows = SW_CONFIGS.slice();
@@ -17663,7 +17754,13 @@ function _cmPageHTML() {
   const activeCount = SW_CONFIGS.filter(c => c.status === 'active').length;
 
   const phaseOpts = _cmPhases();
-  const locOpts   = f.phase ? _cmLocs(f.phase) : [];
+  // Locations under the picked phase, narrowed to those with configs matching
+  // the subsystem filter; prune a location the cascade no longer offers.
+  const _cmLocsAvail = new Set(SW_CONFIGS
+    .filter(c => !f.subsystem || c.subsystem === f.subsystem)
+    .map(c => c.location).filter(Boolean));
+  const locOpts   = (f.phase ? _cmLocs(f.phase) : []).filter(l => _cmLocsAvail.has(l.name));
+  if (f.location && !locOpts.some(l => l.name === f.location)) f.location = '';
 
   let body = '';
   if (f.deployView) {
@@ -17781,7 +17878,8 @@ function _cmPageHTML() {
 }
 
 function _cmSetFilter(k, v) { _cmFilter[k] = v; renderConfigMgmt(); }
-function _cmPhaseFilterChange(phaseId) { _cmFilter.phase = phaseId; _cmFilter.location = ''; renderConfigMgmt(); }
+// Location is pruned at render time only if invalid under the new phase.
+function _cmPhaseFilterChange(phaseId) { _cmFilter.phase = phaseId; renderConfigMgmt(); }
 function _cmClearFilters() { _cmFilter = { subsystem:'', phase:'', location:'', search:'', vddView: _cmFilter.vddView, deployView: _cmFilter.deployView }; renderConfigMgmt(); }
 function _cmToggleHistory(k) { if (_cmExpanded.has(k)) _cmExpanded.delete(k); else _cmExpanded.add(k); renderConfigMgmt(); }
 function _cmToggleVDDView(on) { _cmFilter.vddView = on; if (on) _cmFilter.deployView = false; renderConfigMgmt(); }
@@ -20643,6 +20741,11 @@ function renderRMA() {
   setTimeout(_initPageLibraries, 80);
 }
 
+function _rmaClearFilters() {
+  _rmaFilter = { status: '', location: '', search: '' };
+  renderRMA();
+}
+
 // Legacy badge kept for any callers outside the V2 page (audit/CSV preview, etc.)
 function _rmaStatusColor(s) {
   return ({ 'Open':'#1d4eaf','Pending Replacement':'#c8741a','Shipped':'#6d28d9',
@@ -20655,7 +20758,16 @@ function _rmaStatusBadge(s) {
 
 function _rmaPageHTML() {
   const canEdit  = uiCan('rma', 'edit');
-  const locOpts  = [...new Set(LOCS.filter(l => l.level === 2).map(l => l.name))].sort();
+  // Cross-cascade: locations narrowed by the status chip, chips counted within
+  // the location selection; prune a location that no longer applies.
+  const _rmaLocsAvail = new Set(RMAS
+    .filter(r => !_rmaFilter.status || r.status === _rmaFilter.status)
+    .map(r => r.location).filter(Boolean));
+  const locOpts  = [...new Set(LOCS.filter(l => l.level === 2).map(l => l.name))].sort()
+    .filter(l => _rmaLocsAvail.has(l));
+  if (_rmaFilter.location && !locOpts.includes(_rmaFilter.location)) _rmaFilter.location = '';
+  const rmaChipBase = RMAS.filter(r => !_rmaFilter.location || r.location === _rmaFilter.location);
+  const rmaHasFilters = _rmaFilter.search || _rmaFilter.status || _rmaFilter.location;
 
   const srch = (_rmaFilter.search || '').toLowerCase();
   const filtered = RMAS.filter(r => {
@@ -20670,9 +20782,9 @@ function _rmaPageHTML() {
     <!-- Status chips -->
     <div class="v2-chips-row">
       <span class="v2-chip ${!_rmaFilter.status ? 'active' : ''}"
-            onclick="_rmaFilter.status=''; renderRMA()">All <span class="n">${RMAS.length}</span></span>
+            onclick="_rmaFilter.status=''; renderRMA()">All <span class="n">${rmaChipBase.length}</span></span>
       ${RMA_STATUS_CHIPS.map(([val, label, tone]) => {
-        const count = RMAS.filter(r => r.status === val).length;
+        const count = rmaChipBase.filter(r => r.status === val).length;
         if (!count && _rmaFilter.status !== val) return '';
         return `<span class="v2-chip ${tone} ${_rmaFilter.status === val ? 'active' : ''}"
                       onclick="_rmaFilter.status='${escapeHtml(val)}'; renderRMA()">
@@ -20697,6 +20809,7 @@ function _rmaPageHTML() {
         <option value="">All Locations</option>
         ${locOpts.map(l => `<option value="${escapeHtml(l)}" ${_rmaFilter.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
       </select>
+      ${rmaHasFilters ? `<button class="v2-btn-mini" onclick="_rmaClearFilters()">${icon('x')} Reset</button>` : ''}
       <span class="count"><b>${filtered.length}</b> of ${RMAS.length}</span>
     </div>
 
@@ -21123,15 +21236,36 @@ function _taskStatusBadge(s) {
   return `<span class="v2-pill ${_taskStatusTone(s)}">${escapeHtml(s || '—')}</span>`;
 }
 
+function _taskClearFilters() {
+  _taskFilter = { status: '', priority: '', type: '', search: '', mine: false, prereqMet: false };
+  renderTasks();
+}
+
 function _tasksPageHTML() {
   const canEdit   = uiCan('tasks', 'edit');
-  const typeOpts  = _taskTypes();
-  const prioOpts  = _taskPriorities();
 
   const myName      = currentRoleUser?.name || '';
   const isMine      = t => myName && (t.assignee || '') === myName;
-  const myCount     = TASKS.filter(isMine).length;
-  const prereqCount = TASKS.filter(t => t.prerequisite_met).length;
+
+  // Full cross-cascade over status / priority / type / mine / prereq — each
+  // control's options and chip counts come from the tasks matching all the
+  // OTHER active filters.
+  const _taskMatchExcept = (t, except) =>
+    (except === 'mine'     || !_taskFilter.mine      || isMine(t)) &&
+    (except === 'prereq'   || !_taskFilter.prereqMet || t.prerequisite_met) &&
+    (except === 'status'   || !_taskFilter.status    || (t.status || 'Not Started') === _taskFilter.status) &&
+    (except === 'priority' || !_taskFilter.priority  || t.priority === _taskFilter.priority) &&
+    (except === 'type'     || !_taskFilter.type      || _taskTypeList(t).includes(_taskFilter.type));
+  const _taskPrioAvail = new Set(TASKS.filter(t => _taskMatchExcept(t, 'priority')).map(t => t.priority).filter(Boolean));
+  const prioOpts  = _taskPriorities().filter(p => _taskPrioAvail.has(p));
+  const _taskTypeAvail = new Set(TASKS.filter(t => _taskMatchExcept(t, 'type')).flatMap(t => _taskTypeList(t)));
+  const typeOpts  = _taskTypes().filter(t => _taskTypeAvail.has(t));
+  if (_taskFilter.priority && !prioOpts.includes(_taskFilter.priority)) _taskFilter.priority = '';
+  if (_taskFilter.type && !typeOpts.includes(_taskFilter.type)) _taskFilter.type = '';
+  const taskChipBase = TASKS.filter(t => _taskMatchExcept(t, 'status'));
+  const myCount     = TASKS.filter(t => _taskMatchExcept(t, 'mine')).filter(isMine).length;
+  const prereqCount = TASKS.filter(t => _taskMatchExcept(t, 'prereq')).filter(t => t.prerequisite_met).length;
+  const taskHasFilters = _taskFilter.search || _taskFilter.status || _taskFilter.priority || _taskFilter.type || _taskFilter.mine || _taskFilter.prereqMet;
 
   const srch = (_taskFilter.search || '').toLowerCase();
   const filtered = TASKS.filter(t => {
@@ -21155,7 +21289,7 @@ function _tasksPageHTML() {
       ${prereqCount ? `<span class="v2-chip is-good ${_taskFilter.prereqMet ? 'active' : ''}"
             onclick="_taskFilter.prereqMet=!_taskFilter.prereqMet; renderTasks()">${icon('check')} Prereq Met <span class="n">${prereqCount}</span></span>` : ''}
       ${TASK_STATUS_CHIPS.map(([val, label, tone]) => {
-        const count = TASKS.filter(t => (t.status || 'Not Started') === val).length;
+        const count = taskChipBase.filter(t => (t.status || 'Not Started') === val).length;
         if (!count && _taskFilter.status !== val) return '';
         return `<span class="v2-chip ${tone} ${_taskFilter.status === val ? 'active' : ''}"
                       onclick="_taskFilter.status='${escapeHtml(val)}'; renderTasks()">
@@ -21184,6 +21318,7 @@ function _tasksPageHTML() {
         <option value="">All Types</option>
         ${typeOpts.map(t => `<option value="${escapeHtml(t)}" ${_taskFilter.type===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}
       </select>
+      ${taskHasFilters ? `<button class="v2-btn-mini" onclick="_taskClearFilters()">${icon('x')} Reset</button>` : ''}
       <span class="count"><b>${filtered.length}</b> of ${TASKS.length}</span>
     </div>
 
@@ -21718,6 +21853,7 @@ let _mtgItemOpen     = {};
 let _mtgSearch       = '';
 let _mtgSeriesFilter = '';
 let _mtgStatusFilter = '';
+function _mtgClearFilters() { _mtgSearch = ''; _mtgSeriesFilter = ''; _mtgStatusFilter = ''; renderMeetings(); }
 let _quillInstances  = {};   // itemId → Quill instance
 let _mtgEditorContent = {};  // itemId → initial HTML (set during render)
 
@@ -21793,7 +21929,16 @@ async function renderMeetings() {
 // ─── LIST PAGE ────────────────────────────────────────────────
 function _mtgListPageHTML() {
   const isAdmin = currentRoleUser?.role === 'admin';
-  const series  = [...new Set(MEETINGS.map(m => m.series).filter(Boolean))].sort();
+  // Cross-cascade: series narrowed by status and vice-versa; prune stale picks.
+  const series  = [...new Set(MEETINGS
+    .filter(m => !_mtgStatusFilter || m.status === _mtgStatusFilter)
+    .map(m => m.series).filter(Boolean))].sort();
+  const mtgStatuses = [...new Set(MEETINGS
+    .filter(m => !_mtgSeriesFilter || m.series === _mtgSeriesFilter)
+    .map(m => m.status).filter(Boolean))];
+  if (_mtgSeriesFilter && !series.includes(_mtgSeriesFilter)) _mtgSeriesFilter = '';
+  if (_mtgStatusFilter && !mtgStatuses.includes(_mtgStatusFilter)) _mtgStatusFilter = '';
+  const mtgHasFilters = _mtgSearch || _mtgSeriesFilter || _mtgStatusFilter;
 
   const filtered = MEETINGS.filter(m => {
     const s = _mtgSearch.toLowerCase();
@@ -21831,9 +21976,10 @@ function _mtgListPageHTML() {
         </select>
         <select class="filter-select" onchange="_mtgStatusFilter=this.value;renderMeetings()">
           <option value="">All Statuses</option>
-          <option value="Agenda"  ${_mtgStatusFilter==='Agenda' ?'selected':''}>Agenda</option>
-          <option value="Minutes" ${_mtgStatusFilter==='Minutes'?'selected':''}>Minutes</option>
+          ${['Agenda','Minutes'].filter(s => mtgStatuses.includes(s) || _mtgStatusFilter === s)
+            .map(s => `<option value="${s}" ${_mtgStatusFilter===s?'selected':''}>${s}</option>`).join('')}
         </select>
+        ${mtgHasFilters ? `<button class="filter-clear" onclick="_mtgClearFilters()">Reset</button>` : ''}
       </div>
       <div style="display:flex;gap:8px;">
         ${isAdmin ? `<button class="form-secondary" onclick="openMtgTemplatesModal()">${icon('settings')} Templates</button>` : ''}
@@ -29687,9 +29833,22 @@ function _laCancellationsTabHTML() {
   const cancels   = allRows.filter(r => r._type === 'cancellation').length;
   const delays    = allRows.filter(r => r._type === 'delay').length;
 
-  // Unique subsystems + parties for filter dropdowns
-  const subsystems = [...new Set(allRows.map(r => r.subsystem).filter(Boolean))].sort();
-  const parties    = [...new Set(allRows.map(r => r.party).filter(Boolean))].sort();
+  // Cross-cascaded dropdown pools: each comes from the rows matching every
+  // OTHER active filter (type/date/location included); prune stale picks.
+  const _crptPoolExcept = (except) => allRows.filter(r => {
+    if (except !== 'type' && _cancelRpt.type === 'cancellations' && r._type !== 'cancellation') return false;
+    if (except !== 'type' && _cancelRpt.type === 'delays'         && r._type !== 'delay')        return false;
+    if (_cancelRpt.dateFrom && r.date < _cancelRpt.dateFrom) return false;
+    if (_cancelRpt.dateTo   && r.date > _cancelRpt.dateTo)   return false;
+    if (except !== 'party'     && _cancelRpt.party     && !r.party.toLowerCase().includes(_cancelRpt.party.toLowerCase())) return false;
+    if (except !== 'location'  && _cancelRpt.location  && !r.location.toLowerCase().includes(_cancelRpt.location.toLowerCase())) return false;
+    if (except !== 'subsystem' && _cancelRpt.subsystem && r.subsystem !== _cancelRpt.subsystem) return false;
+    return true;
+  });
+  const subsystems = [...new Set(_crptPoolExcept('subsystem').map(r => r.subsystem).filter(Boolean))].sort();
+  const parties    = [...new Set(_crptPoolExcept('party').map(r => r.party).filter(Boolean))].sort();
+  if (_cancelRpt.subsystem && !subsystems.includes(_cancelRpt.subsystem)) _cancelRpt.subsystem = '';
+  if (_cancelRpt.party && !parties.includes(_cancelRpt.party)) _cancelRpt.party = '';
 
   // Phase 4D — category + party rollups for this week's meeting
   const allCancelEvents = (PLANNING_EVENTS || []).filter(e => e.status === 'cancelled');
@@ -34773,9 +34932,19 @@ function _formsPageHTML() {
 function _formsPageListHTML() {
   const f = _formsPageFilters;
   const all = FORMS.filter(x => f.showTemplates ? x.is_template : !x.is_template);
-  const phases    = [...new Set(all.map(x => x.phase    ).filter(Boolean))].sort();
-  const locations = [...new Set(all.map(x => x.location ).filter(Boolean))].sort();
-  const subs      = [...new Set(all.map(x => x.subsystem).filter(Boolean))].sort();
+  // Full cross-cascade: each dropdown's options come from forms matching the
+  // other two filters; prune a selection the cascade no longer offers.
+  const _formsMatchExcept = (x, except) =>
+    (except === 'phase'     || !f.phase     || x.phase     === f.phase) &&
+    (except === 'location'  || !f.location  || x.location  === f.location) &&
+    (except === 'subsystem' || !f.subsystem || x.subsystem === f.subsystem);
+  const phases    = [...new Set(all.filter(x => _formsMatchExcept(x, 'phase')).map(x => x.phase).filter(Boolean))].sort();
+  const locations = [...new Set(all.filter(x => _formsMatchExcept(x, 'location')).map(x => x.location).filter(Boolean))].sort();
+  const subs      = [...new Set(all.filter(x => _formsMatchExcept(x, 'subsystem')).map(x => x.subsystem).filter(Boolean))].sort();
+  if (f.phase && !phases.includes(f.phase)) f.phase = '';
+  if (f.location && !locations.includes(f.location)) f.location = '';
+  if (f.subsystem && !subs.includes(f.subsystem)) f.subsystem = '';
+  const formsHasFilters = f.phase || f.location || f.subsystem || f.search;
   let filtered = all.filter(x =>
     (!f.phase     || x.phase     === f.phase) &&
     (!f.location  || x.location  === f.location) &&
@@ -34829,6 +34998,7 @@ function _formsPageListHTML() {
           <input type="checkbox" ${f.showTemplates ? 'checked' : ''} onchange="_formsSetFilter('showTemplates', this.checked)">
           Show template blanks
         </label>
+        ${formsHasFilters ? `<button class="filter-clear" onclick="_formsClearFilters()">Reset</button>` : ''}
       </div>
       <div class="data-card" style="padding:0;overflow:hidden;">
         <table class="data-table">
@@ -34844,6 +35014,12 @@ function _formsPageListHTML() {
         ${filtered.length} of ${all.length} ${f.showTemplates ? 'template blanks' : 'forms'} shown. Attach new forms from the ${icon('paperclip')} icon on a test case row, or as a template-level PDF in the Activity Templates editor.
       </div>
   `;
+}
+
+function _formsClearFilters() {
+  const keep = _formsPageFilters.showTemplates;
+  _formsPageFilters = { phase: '', location: '', subsystem: '', search: '', showTemplates: keep };
+  _formsRenderList();
 }
 
 // Filter setter — re-renders only the list region (no DB hit, no flicker).
@@ -36396,14 +36572,7 @@ function _drwRenderLocationView(loc, activeSubtab = 'current') {
 
 // ── Tab 1: Current Drawings (design-handoff register) ──────────────────────
 function _drwTabCurrent(loc, el) {
-  // Disciplines + sets present for this location (for the filter dropdowns).
-  const locSheets = DRAWING_SHEETS.filter(s => s.location === loc && s.confirmed);
-  const discs = [...new Set(locSheets.map(s => s.discipline || 'General'))]
-    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-  const setsForLoc = DRAWING_SETS.filter(s => s.location === loc);
-  if (_drwRegDisc && !discs.includes(_drwRegDisc)) _drwRegDisc = '';
-  if (_drwRegSet && !setsForLoc.some(s => s.id === _drwRegSet)) _drwRegSet = '';
-
+  const { discs, setsForLoc } = _drwRegFilterPools(loc);
   const discOpts = discs.map(d => `<option value="${escapeHtml(d)}" ${_drwRegDisc === d ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('');
   const setOpts = setsForLoc.map(s => `<option value="${s.id}" ${_drwRegSet === s.id ? 'selected' : ''}>${escapeHtml(s.title)}</option>`).join('');
 
@@ -36441,8 +36610,27 @@ function _drwTabCurrent(loc, el) {
   _drwRenderRegister(loc);
 }
 
+// Cross-cascaded pools for the register filters: discipline options come from
+// sheets in the selected set, set options from sets that contain sheets of the
+// selected discipline; stale selections are pruned.
+function _drwRegFilterPools(loc) {
+  const locSheets = DRAWING_SHEETS.filter(s => s.location === loc && s.confirmed);
+  const discs = [...new Set(locSheets
+    .filter(s => !_drwRegSet || s.set_id === _drwRegSet)
+    .map(s => s.discipline || 'General'))]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const setIdsForDisc = new Set(locSheets
+    .filter(s => !_drwRegDisc || (s.discipline || 'General') === _drwRegDisc)
+    .map(s => s.set_id));
+  const setsForLoc = DRAWING_SETS.filter(s => s.location === loc && setIdsForDisc.has(s.id));
+  if (_drwRegDisc && !discs.includes(_drwRegDisc)) _drwRegDisc = '';
+  if (_drwRegSet && !setsForLoc.some(s => s.id === _drwRegSet)) _drwRegSet = '';
+  return { discs, setsForLoc };
+}
+
 // Update register filter/view state then re-render (keeps search focus —
-// only the sections + count + empty are re-rendered, not the toolbar).
+// only the sections + count + empty are re-rendered, not the toolbar; the two
+// cascading selects are refreshed in place).
 function _drwRegSet_(key, val) {
   if (key === 'search') _drwRegSearch = val;
   else if (key === 'disc') _drwRegDisc = val;
@@ -36452,6 +36640,14 @@ function _drwRegSet_(key, val) {
     _drwRegView = val;
     document.querySelectorAll('.drw-view-toggle button').forEach(b =>
       b.classList.toggle('active', b.textContent.trim().toLowerCase() === val));
+  }
+  if (key === 'disc' || key === 'set' || key === 'super') {
+    const { discs, setsForLoc } = _drwRegFilterPools(_drwActiveLocation);
+    const sels = document.querySelectorAll('#drw-subtab-content .drw-toolbar .docs-filter-select');
+    if (sels[0]) sels[0].innerHTML = `<option value="">All disciplines</option>` +
+      discs.map(d => `<option value="${escapeHtml(d)}" ${_drwRegDisc === d ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('');
+    if (sels[1]) sels[1].innerHTML = `<option value="">All sets</option>` +
+      setsForLoc.map(s => `<option value="${s.id}" ${_drwRegSet === s.id ? 'selected' : ''}>${escapeHtml(s.title)}</option>`).join('');
   }
   _drwRenderRegister(_drwActiveLocation);
 }
@@ -39412,9 +39608,22 @@ function _dynRenderInstances() {
     if (info.scope_type === 'dynamic') dynTcIds.add(id);
   }
   for (const i of _dynPage.instances) if (i.test_id) dynTcIds.add(i.test_id);
-  const tcOpts = [...dynTcIds]
+  // Cross-cascade the three dropdowns: each one's options come from the
+  // instances matching the OTHER two filters; prune stale picks.
+  const _dynInstMatchExcept = (r, except) =>
+    (except === 'status' || !_dynPage.statusFilter || r.status === _dynPage.statusFilter) &&
+    (except === 'test'   || !_dynPage.testFilter   || r.test_id === _dynPage.testFilter) &&
+    (except === 'sched'  || !_dynPage.schedFilter  ||
+      (_dynPage.schedFilter === 'scheduled' ? _dynIsScheduled(r) : !_dynIsScheduled(r)));
+  const _dynStatusAvail = new Set(_dynPage.instances.filter(r => _dynInstMatchExcept(r, 'status')).map(r => r.status).filter(Boolean));
+  const statusOpts = _DYN_STATUSES.filter(s => _dynStatusAvail.has(s));
+  const _dynTcAvail = new Set(_dynPage.instances.filter(r => _dynInstMatchExcept(r, 'test')).map(r => r.test_id).filter(Boolean));
+  const tcOpts = [...dynTcIds].filter(id => _dynTcAvail.has(id))
     .map(id => ({ id, info: _dynPage.testItemsById.get(id) }))
     .sort((a, b) => String(a.info?.code || a.id).localeCompare(String(b.info?.code || b.id)));
+  if (_dynPage.statusFilter && !statusOpts.includes(_dynPage.statusFilter)) _dynPage.statusFilter = '';
+  if (_dynPage.testFilter && !tcOpts.some(t => t.id === _dynPage.testFilter)) _dynPage.testFilter = '';
+  const dynInstHasFilters = _dynPage.search || _dynPage.statusFilter || _dynPage.testFilter || _dynPage.schedFilter;
 
   // Apply filters
   const q = (_dynPage.search || '').toLowerCase();
@@ -39472,7 +39681,7 @@ function _dynRenderInstances() {
       <span class="capx-searchwrap">${icon('search')}<input id="dyn-search" class="capx-input wide" type="search" placeholder="Search code / title / phase…" value="${escapeHtml(_dynPage.search)}" oninput="_dynPage.search=this.value;_dynInstSearchRerender();" /></span>
       <select class="capx-select" style="min-width:0;" id="dyn-status-filter" onchange="_dynPage.statusFilter=this.value;_dynRenderInstances();">
         <option value="">All statuses</option>
-        ${_DYN_STATUSES.map(s => `<option value="${escapeHtml(s)}" ${_dynPage.statusFilter===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+        ${statusOpts.map(s => `<option value="${escapeHtml(s)}" ${_dynPage.statusFilter===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
       </select>
       <select class="capx-select" style="min-width:0;" id="dyn-sched-filter" onchange="_dynPage.schedFilter=this.value;_dynRenderInstances();" title="Filter by scheduling state">
         <option value="" ${_dynPage.schedFilter===''?'selected':''}>All scheduling</option>
@@ -39483,6 +39692,7 @@ function _dynRenderInstances() {
         <option value="">All test cases</option>
         ${tcOpts.map(t => `<option value="${escapeHtml(t.id)}" ${_dynPage.testFilter===t.id?'selected':''}>${escapeHtml(t.info?.code || t.id)} — ${escapeHtml((t.info?.name||'').slice(0,40))}</option>`).join('')}
       </select>
+      ${dynInstHasFilters ? `<button type="button" class="capx-linkish" onclick="_dynInstClearFilters()">Reset</button>` : ''}
     </div>`;
 
   const tableHtml = `
@@ -39543,6 +39753,10 @@ function _dynInstFilterStatus(s) {
 }
 function _dynInstFilterSched() {
   _dynPage.schedFilter = _dynPage.schedFilter === 'scheduled' ? '' : 'scheduled';
+  _dynRenderInstances();
+}
+function _dynInstClearFilters() {
+  _dynPage.search = ''; _dynPage.statusFilter = ''; _dynPage.testFilter = ''; _dynPage.schedFilter = '';
   _dynRenderInstances();
 }
 
@@ -47107,8 +47321,24 @@ function _dynRenderVariance() {
   if (!_dynPage.varExpanded) _dynPage.varExpanded = new Set();
 
   const all = _dynVarianceRows();
-  const subsysList = [...new Set(all.map(_dynVarSubsysOf).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  const phaseList = [...new Set(all.map(r => r.target_phase).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  // Cross-cascade: each dropdown's options come from rows matching the other
+  // active filters (variance band included); prune stale picks.
+  const _varBandOk = r => {
+    if (!_dynPage.varBand) return true;
+    const d = _dynVarDelta(r);
+    if (d == null) return false;
+    if (_dynPage.varBand === 'over') return d > 15;
+    if (_dynPage.varBand === 'under') return d < -15;
+    return Math.abs(d) <= 15;
+  };
+  const subsysList = [...new Set(all
+    .filter(r => (!_dynPage.varPhase || r.target_phase === _dynPage.varPhase) && _varBandOk(r))
+    .map(_dynVarSubsysOf).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const phaseList = [...new Set(all
+    .filter(r => (!_dynPage.varSubsys || _dynVarSubsysOf(r) === _dynPage.varSubsys) && _varBandOk(r))
+    .map(r => r.target_phase).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  if (_dynPage.varSubsys && !subsysList.includes(_dynPage.varSubsys)) _dynPage.varSubsys = '';
+  if (_dynPage.varPhase && !phaseList.includes(_dynPage.varPhase)) _dynPage.varPhase = '';
 
   // Apply active filters.
   const rows = all.filter(r => {
@@ -48266,21 +48496,32 @@ function _docsFilterActive() {
   return !!(_docsFilter.q.trim() || _docsFilter.type || _docsFilter.subsystem || _docsFilter.location);
 }
 
-// Master project locations (level-2 nodes from the locations table), unioned
-// with any locations already on documents. NOT the subsystem-filtered TI list.
+// Documents visible under every active filter EXCEPT the named one — feeds the
+// cross-cascade so each dropdown only offers values that exist in the current
+// selection (search is not part of the cascade).
+function _docsPoolExcept(except) {
+  return DOCUMENTS.filter(d =>
+    (!_docsFilter.showArchived ? d.status !== 'archived' : true) &&
+    (except === 'type'      || !_docsFilter.type      || d.doc_type  === _docsFilter.type) &&
+    (except === 'subsystem' || !_docsFilter.subsystem || d.subsystem === _docsFilter.subsystem) &&
+    (except === 'location'  || !_docsFilter.location  || d.location  === _docsFilter.location));
+}
+// Locations present on documents matching the other filters.
 function _docsLocationOptions() {
   const locs = new Set();
-  (typeof LOCS !== 'undefined' ? LOCS : [])
-    .filter(l => l.level === 2 && l.name).forEach(l => locs.add(l.name));
-  DOCUMENTS.forEach(d => d.location && locs.add(d.location));
+  _docsPoolExcept('location').forEach(d => d.location && locs.add(d.location));
   return [...locs].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 }
-// Master subsystem vocabulary (Field Config key 'punch_subsystem' → SUBSYSTEMS_LIST),
-// unioned with any subsystems already on documents.
+// Subsystems present on documents matching the other filters.
 function _docsSubsystemOptions() {
-  const ss = new Set(_fsOptions('punch_subsystem'));
-  DOCUMENTS.forEach(d => d.subsystem && ss.add(d.subsystem));
+  const ss = new Set();
+  _docsPoolExcept('subsystem').forEach(d => d.subsystem && ss.add(d.subsystem));
   return [...ss].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+// Doc types (Field Config vocabulary) present on documents matching the other filters.
+function _docsTypeOptionsCascaded() {
+  const avail = new Set(_docsPoolExcept('type').map(d => d.doc_type).filter(Boolean));
+  return _docsTypeOptions().filter(t => avail.has(t));
 }
 
 function _docsApplyFilters() {
@@ -48301,10 +48542,39 @@ function _docsApplyFilters() {
 
 function _docsSetFilter(key, val) {
   _docsFilter[key] = val;
-  // Only the list + breadcrumb re-render (the toolbar/search input is untouched,
-  // so search keeps focus).
+  // Prune selections the cascade no longer offers.
+  if (_docsFilter.type && !_docsTypeOptionsCascaded().includes(_docsFilter.type)) _docsFilter.type = '';
+  if (_docsFilter.subsystem && !_docsSubsystemOptions().includes(_docsFilter.subsystem)) _docsFilter.subsystem = '';
+  if (_docsFilter.location && !_docsLocationOptions().includes(_docsFilter.location)) _docsFilter.location = '';
+  // The toolbar selects live outside the re-rendered list, so refresh their
+  // options in place (search input untouched — keeps focus).
+  _docsRefreshFilterSelects();
   _docsRenderBreadcrumb();
   _docsRenderList();
+}
+
+function _docsClearFilters() {
+  _docsFilter.q = ''; _docsFilter.type = ''; _docsFilter.subsystem = ''; _docsFilter.location = '';
+  const search = document.getElementById('docs-search');
+  if (search) search.value = '';
+  _docsRefreshFilterSelects();
+  _docsRenderBreadcrumb();
+  _docsRenderList();
+}
+
+// Re-populate the three cascading toolbar selects from current state.
+function _docsRefreshFilterSelects() {
+  const fill = (sel, allLabel, opts, cur) => {
+    if (!sel) return;
+    sel.innerHTML = `<option value="">${allLabel}</option>` +
+      opts.map(o => `<option value="${escapeHtml(o)}" ${cur === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('');
+  };
+  const sels = document.querySelectorAll('.docs-toolbar .docs-filter-select');
+  fill(sels[0], 'All types',      _docsTypeOptionsCascaded(), _docsFilter.type);
+  fill(sels[1], 'All subsystems', _docsSubsystemOptions(),    _docsFilter.subsystem);
+  fill(sels[2], 'All locations',  _docsLocationOptions(),     _docsFilter.location);
+  const reset = document.getElementById('docs-filter-reset');
+  if (reset) reset.style.display = _docsFilterActive() ? '' : 'none';
 }
 
 // ── Formatting helpers ─────────────────────────────────────────────────────
@@ -48354,7 +48624,7 @@ function renderDocumentsPage() {
       Upload Document
     </button>` : '';
 
-  const typeOpts = _docsTypeOptions().map(t =>
+  const typeOpts = _docsTypeOptionsCascaded().map(t =>
     `<option value="${escapeHtml(t)}" ${_docsFilter.type === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('');
   const subOpts  = _docsSubsystemOptions().map(s =>
     `<option value="${escapeHtml(s)}" ${_docsFilter.subsystem === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
@@ -48385,6 +48655,7 @@ function renderDocumentsPage() {
         <input type="checkbox" ${_docsFilter.showArchived ? 'checked' : ''} onchange="_docsSetFilter('showArchived', this.checked)">
         Show archived
       </label>
+      <button id="docs-filter-reset" class="filter-clear" onclick="_docsClearFilters()" style="${_docsFilterActive() ? '' : 'display:none;'}">Reset</button>
     </div>
     <div id="docs-list"></div>`;
 

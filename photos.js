@@ -376,17 +376,37 @@
     }
   }
 
-  // ── distinct filter values (cheap two-column scan, cached) ──────────────────
+  // ── distinct filter values (cheap slim scan, cached) ────────────────────────
+  // Stores the raw (location, subsystem, source_type, capture_kind) tuples so the
+  // filter dropdowns can cross-cascade client-side without re-querying.
   async function loadDistinct() {
     if (S.distinct.loaded) return;
     try {
-      var rows = await _fetchAnon('photos?select=location,subsystem&is_deleted=eq.false');
+      var rows = await _fetchAnon('photos?select=location,subsystem,source_type,capture_kind&is_deleted=eq.false');
+      S.distinct.pairs = rows || [];
       var L = {}, Sub = {};
       (rows || []).forEach(function (r) { if (r.location) L[r.location] = 1; if (r.subsystem) Sub[r.subsystem] = 1; });
       S.distinct.location = Object.keys(L).sort();
       S.distinct.subsystem = Object.keys(Sub).sort();
       S.distinct.loaded = true;
     } catch (e) { /* non-fatal */ }
+  }
+
+  // Options for one dropdown from the tuples matching every OTHER active filter
+  // (cross-cascade). Falls back to the flat list when tuples aren't loaded yet.
+  function distinctFor(field) {
+    var f = S.filters, pairs = S.distinct.pairs;
+    if (!pairs || !pairs.length) return S.distinct[field] || [];
+    var out = {};
+    pairs.forEach(function (r) {
+      if (field !== 'location'  && f.location  !== 'all' && r.location    !== f.location)  return;
+      if (field !== 'subsystem' && f.subsystem !== 'all' && r.subsystem   !== f.subsystem) return;
+      if (field !== 'source'    && f.source    !== 'all' && r.source_type !== f.source)    return;
+      if (field !== 'kind'      && f.kind      !== 'all' && r.capture_kind !== f.kind)     return;
+      var v = field === 'source' ? r.source_type : field === 'kind' ? r.capture_kind : r[field];
+      if (v) out[v] = 1;
+    });
+    return Object.keys(out).sort();
   }
 
   // ── paginated reads ────────────────────────────────────────────────────────
@@ -539,19 +559,31 @@
 
   function filtersHTML() {
     var f = S.filters;
+    // Cross-cascade: every control's options come from photos matching the OTHER
+    // active filters; prune a selection the cascade no longer offers.
+    var locPool  = distinctFor('location');
+    var subPool  = distinctFor('subsystem');
+    var kindPool = distinctFor('kind');
+    if (f.location !== 'all' && locPool.indexOf(f.location) < 0) f.location = 'all';
+    if (f.subsystem !== 'all' && subPool.indexOf(f.subsystem) < 0) f.subsystem = 'all';
+    if (f.kind !== 'all' && kindPool.indexOf(f.kind) < 0) f.kind = 'all';
     var srcChip = function (val, label) { return '<button class="pm-chip ' + (f.source === val ? 'active' : '') + '" data-src="' + val + '">' + esc(label) + '</button>'; };
     var opts = function (vals, cur) { return vals.map(function (v) { return '<option value="' + esc(v) + '"' + (cur === v ? ' selected' : '') + '>' + esc(v) + '</option>'; }).join(''); };
+    var kindOpt = function (val, label) {
+      if (kindPool.length && kindPool.indexOf(val) < 0 && f.kind !== val) return '';
+      return '<option value="' + val + '"' + (f.kind === val ? ' selected' : '') + '>' + label + '</option>';
+    };
+    var anyFilter = f.source !== 'all' || f.kind !== 'all' || f.location !== 'all' || f.subsystem !== 'all' || (f.q || '').trim();
     return '<div class="pm-filters">' +
       srcChip('all', 'All') + srcChip('punch', 'Punch List') + srcChip('daily_log', 'Daily Logs') + srcChip('tasks', 'Tasks') + srcChip('standalone', 'General') +
       '<select class="pm-select" id="pm-f-kind">' +
         '<option value="all"' + (f.kind === 'all' ? ' selected' : '') + '>Any kind</option>' +
-        '<option value="before"' + (f.kind === 'before' ? ' selected' : '') + '>Before</option>' +
-        '<option value="after"' + (f.kind === 'after' ? ' selected' : '') + '>After</option>' +
-        '<option value="general"' + (f.kind === 'general' ? ' selected' : '') + '>General</option>' +
+        kindOpt('before', 'Before') + kindOpt('after', 'After') + kindOpt('general', 'General') +
       '</select>' +
-      '<select class="pm-select" id="pm-f-loc"><option value="all">All locations</option>' + opts(S.distinct.location, f.location) + '</select>' +
-      '<select class="pm-select" id="pm-f-sub"><option value="all">All subsystems</option>' + opts(S.distinct.subsystem, f.subsystem) + '</select>' +
+      '<select class="pm-select" id="pm-f-loc"><option value="all">All locations</option>' + opts(locPool, f.location) + '</select>' +
+      '<select class="pm-select" id="pm-f-sub"><option value="all">All subsystems</option>' + opts(subPool, f.subsystem) + '</select>' +
       '<input class="pm-input" id="pm-f-q" type="search" placeholder="Search caption, person…" value="' + esc(f.q) + '" />' +
+      (anyFilter ? '<button class="pm-btn" id="pm-f-reset" type="button">Reset</button>' : '') +
     '</div>';
   }
 
@@ -747,6 +779,11 @@
     var sub = document.getElementById('pm-f-sub'); if (sub) sub.addEventListener('change', function () { S.filters.subsystem = sub.value; loadPage(true).then(paint); });
     var q = document.getElementById('pm-f-q');
     if (q) { var t; q.addEventListener('input', function () { clearTimeout(t); t = setTimeout(function () { S.filters.q = q.value; loadPage(true).then(function () { paint(); var nq = document.getElementById('pm-f-q'); if (nq) { nq.focus(); try { nq.setSelectionRange(nq.value.length, nq.value.length); } catch (e) {} } }); }, 300); }); }
+    var rst = document.getElementById('pm-f-reset');
+    if (rst) rst.addEventListener('click', function () {
+      S.filters = { source: 'all', location: 'all', subsystem: 'all', kind: 'all', q: '' };
+      loadPage(true).then(paint);
+    });
   }
 
   function bindTiles() {
