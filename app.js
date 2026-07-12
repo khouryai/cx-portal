@@ -369,7 +369,7 @@ async function _dbSelect(table, match = {}, select = '*') {
 // test_items, and the current tab-visibility state.
 // ─────────────────────────────────────────────────────────────────────────────
 window.runDiagnostics = async function() {
-  console.group('%c[DIAGNOSTICS] CX Portal Health Check', 'color:#e60012;font-size:14px;font-weight:bold');
+  console.group('%c[DIAGNOSTICS] CX Portal Health Check', 'color:var(--hitachi-red);font-size:14px;font-weight:bold');
 
   // 1. Auth / session (read directly from localStorage — bypasses supabase-js hang)
   console.group('1. Auth Session');
@@ -983,7 +983,7 @@ function refreshDashboard() {
   document.getElementById('kpi-passrate-meta').innerHTML = `<b>${tiPass}</b> passed / <b>${tiFail + tiBlocked}</b> failed or blocked${_wNote}`;
 
   document.getElementById('kpi-activities').textContent = acts.length;
-  document.getElementById('kpi-activities-meta').innerHTML = `<b class="good-text">${actClosed}</b> closed · <b>${actOpen}</b> open${actPartial ? ` · <b style="color:#d97706;">${actPartial}</b> partial` : ''}`;
+  document.getElementById('kpi-activities-meta').innerHTML = `<b class="good-text">${actClosed}</b> closed · <b>${actOpen}</b> open${actPartial ? ` · <b style="color:var(--warn);">${actPartial}</b> partial` : ''}`;
 
   document.getElementById('kpi-punch').textContent = punchOpen;
   document.getElementById('kpi-punch-meta').innerHTML = `<b>${punchHigh}</b> high priority · ${punchOverdue} overdue`;
@@ -1006,8 +1006,8 @@ function refreshDashboard() {
       <div class="metric-tile-value">${tiInProg}</div>
     </div>
     <div class="metric-tile">
-      <div class="metric-tile-label"><span class="metric-tile-icon" style="background:#7c3aed"></span>Future Test</div>
-      <div class="metric-tile-value" style="color:#7c3aed;">${tiFuture}</div>
+      <div class="metric-tile-label"><span class="metric-tile-icon" style="background:var(--accent-purple)"></span>Future Test</div>
+      <div class="metric-tile-value" style="color:var(--accent-purple);">${tiFuture}</div>
     </div>
     <div class="metric-tile">
       <div class="metric-tile-label"><span class="metric-tile-icon" style="background:${COLORS.bad}"></span>Punch Overdue</div>
@@ -1056,7 +1056,7 @@ function renderPhaseGrid() {
         <div class="phase-stats">
           <div class="phase-stat-item"><div class="phase-stat-label">Closed</div><div class="phase-stat-value good">${closed}</div></div>
           <div class="phase-stat-item"><div class="phase-stat-label">Open</div><div class="phase-stat-value">${open}</div></div>
-          <div class="phase-stat-item"><div class="phase-stat-label">Future</div><div class="phase-stat-value" style="color:#7c3aed;">${future}</div></div>
+          <div class="phase-stat-item"><div class="phase-stat-label">Future</div><div class="phase-stat-value" style="color:var(--accent-purple);">${future}</div></div>
         </div>
       </div>
     `;
@@ -1232,7 +1232,7 @@ function renderFailedList() {
       <div class="mini-list-content">
         <div class="mini-list-title">${escapeHtml(r.TestName || r.TestCaseCode || '—')}</div>
         <div class="mini-list-meta"><b>${escapeHtml(r.Subsystem||'—')}</b> · ${escapeHtml(r.Location||'—')} · ${escapeHtml(r.Activity||'—')}</div>
-        ${r.FailedReason ? `<div style="font-size:11px;color:#dc2626;margin-top:2px;">${escapeHtml(r.FailedReason)}</div>` : ''}
+        ${r.FailedReason ? `<div style="font-size:11px;color:var(--bad);margin-top:2px;">${escapeHtml(r.FailedReason)}</div>` : ''}
       </div>
     </div>`).join('')
   : `<div style="color:var(--gray-500);font-size:12px;padding:8px 0;">No failed tests ${icon('sparkles')}</div>`;
@@ -4530,8 +4530,8 @@ async function handleImportFile(input) {
   }
 
   const warnHTML = locWarnings.length > 0 ? `
-    <div style="margin-bottom:16px;padding:14px;border:1px solid #d97706;border-radius:8px;background:rgba(217,119,6,0.05);">
-      <div style="font-weight:600;font-size:13px;color:#d97706;margin-bottom:10px;">${icon('alert')} ${locWarnings.length} location name${locWarnings.length > 1 ? 's' : ''} don't match the master list</div>
+    <div style="margin-bottom:16px;padding:14px;border:1px solid var(--warn);border-radius:8px;background:rgba(217,119,6,0.05);">
+      <div style="font-weight:600;font-size:13px;color:var(--warn);margin-bottom:10px;">${icon('alert')} ${locWarnings.length} location name${locWarnings.length > 1 ? 's' : ''} don't match the master list</div>
       <div style="max-height:140px;overflow-y:auto;">
         <table class="data-table">
           <thead><tr><th>Test Case</th><th>Field</th><th>In CSV</th><th>Master List Says</th></tr></thead>
@@ -4539,8 +4539,8 @@ async function handleImportFile(input) {
             ${locWarnings.map(w => `<tr>
               <td style="font-size:11px;font-weight:600;">${escapeHtml(w.id)}</td>
               <td style="font-size:11px;">${escapeHtml(w.field)}</td>
-              <td style="font-size:11px;color:#dc2626;">${escapeHtml(w.value)}</td>
-              <td style="font-size:11px;color:#16a34a;">${w.suggestion ? escapeHtml(w.suggestion) : '<em style="color:var(--gray-400)">no match found</em>'}</td>
+              <td style="font-size:11px;color:var(--bad);">${escapeHtml(w.value)}</td>
+              <td style="font-size:11px;color:var(--good);">${w.suggestion ? escapeHtml(w.suggestion) : '<em style="color:var(--gray-400)">no match found</em>'}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -4639,7 +4639,7 @@ function openDeployModal(templateId) {
     sub: `${tpl.subsystem} · ${tpl.testCases.length} test cases`,
     size: 'large',
     body: `
-      ${noLocs ? `<div style="padding:12px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-size:13px;margin-bottom:16px;">
+      ${noLocs ? `<div style="padding:12px;background:var(--warn-light);border:1px solid var(--accent-amber);border-radius:6px;font-size:13px;margin-bottom:16px;">
         No locations in master list yet — go to Admin → Locations to add them first.
       </div>` : ''}
       <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:flex-end;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--gray-200);">
@@ -5016,7 +5016,7 @@ function _tplCaseFormCellHTML(templateId, tc, si, ci) {
   const names = attached.map(f => f.name).join(', ');
   return `
     <div style="display:flex;align-items:center;gap:4px;min-width:0;">
-      <button class="admin-action-btn tr-mini-btn" title="${escapeHtml(names)}" onclick="openFormViewer('${attached[0].id}')" style="font-size:11px;padding:4px 6px;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;">PDF ${attached.length}</button>
+      <button class="admin-action-btn tr-mini-btn" title="${escapeHtml(names)}" onclick="openFormViewer('${attached[0].id}')" style="font-size:11px;padding:4px 6px;background:var(--info-light);color:var(--info);border:1px solid var(--info-border);">PDF ${attached.length}</button>
       <button class="form-secondary tr-mini-btn" title="Remove PDF from this test case line" onclick="detachTemplateFormForCase('${attached[0].id}','${templateId}',${si},${ci})" style="font-size:11px;padding:4px 6px;color:var(--bad);">x</button>
     </div>
   `;
@@ -5472,7 +5472,7 @@ function _fscFieldRowHTML(f, isLast) {
         style="display:flex;align-items:center;gap:10px;padding:12px 20px;cursor:pointer;"
         onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
         <div style="font-size:13px;font-weight:500;color:var(--gray-700);flex:1;">${f.label}</div>
-        ${isShared ? `<span style="font-size:10px;font-weight:600;background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:10px;border:1px solid #fde68a;white-space:nowrap;" title="Used in: ${sharedMods.join(', ')}">${icon('zap')} Shared</span>` : ''}
+        ${isShared ? `<span style="font-size:10px;font-weight:600;background:var(--warn-light);color:var(--warn);padding:2px 8px;border-radius:10px;border:1px solid var(--warn-border);white-space:nowrap;" title="Used in: ${sharedMods.join(', ')}">${icon('zap')} Shared</span>` : ''}
         ${!isConfigured ? `<span style="font-size:10px;color:var(--gray-400);font-style:italic;white-space:nowrap;">using defaults</span>` : ''}
         <span style="font-size:11px;color:var(--gray-400);white-space:nowrap;">${opts.length} option${opts.length !== 1 ? 's' : ''}</span>
         <span style="font-size:18px;color:var(--gray-300);line-height:1;display:inline-block;transition:transform .15s;transform:${isOpen ? 'rotate(90deg)' : 'rotate(0deg)'};user-select:none;">›</span>
@@ -5670,7 +5670,7 @@ async function _loadDirectoryUsers() {
           const name = u.full_name || u.email || '?';
           const initials = name.split(' ').filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase() || '?';
           const tempBadge = u.must_change_password
-            ? `<span title="User hasn't set their own password yet" style="margin-left:6px;font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fde68a;border-radius:4px;padding:1px 5px;vertical-align:middle;">TEMP PW</span>`
+            ? `<span title="User hasn't set their own password yet" style="margin-left:6px;font-size:10px;font-weight:700;background:var(--warn-light);color:var(--warn);border:1px solid var(--warn-border);border-radius:4px;padding:1px 5px;vertical-align:middle;">TEMP PW</span>`
             : '';
           return `<tr>
             <td><div class="user-avatar-sm">${escapeHtml(initials)}</div></td>
@@ -5934,7 +5934,7 @@ function renderTestMatrix() {
       <div class="matrix-stat"><div class="matrix-stat-label">In Progress</div><div class="matrix-stat-value info" id="mx-stat-inprog">${inprog}</div></div>
       <div class="matrix-stat"><div class="matrix-stat-label">Blocked</div><div class="matrix-stat-value warn" id="mx-stat-blocked">${blocked}</div></div>
       <div class="matrix-stat"><div class="matrix-stat-label">Not Started</div><div class="matrix-stat-value" id="mx-stat-notstarted">${notStarted}</div></div>
-      ${futureTest ? `<div class="matrix-stat"><div class="matrix-stat-label">Future Test</div><div class="matrix-stat-value" style="color:#5b21b6;" id="mx-stat-futuretest">${futureTest}</div></div>` : ''}
+      ${futureTest ? `<div class="matrix-stat"><div class="matrix-stat-label">Future Test</div><div class="matrix-stat-value" style="color:var(--accent-purple);" id="mx-stat-futuretest">${futureTest}</div></div>` : ''}
       <div class="matrix-stat"><div class="matrix-stat-label">Total</div><div class="matrix-stat-value">${filtered.length}</div></div>
     </div>
 
@@ -6741,8 +6741,8 @@ function _intakeSyncBanner() {
       ? `Synced from today’s test activity (${scope}) at ${when}`
       : `Auto-pulls today’s touched tests for the ${scope}`;
   return `
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 12px;margin-bottom:14px;">
-      <span style="font-size:12px;color:#1e40af;flex:1;min-width:0;">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--info-light);border:1px solid var(--info-border);border-radius:8px;padding:8px 12px;margin-bottom:14px;">
+      <span style="font-size:12px;color:var(--info);flex:1;min-width:0;">
         ${syncing ? '<span class="cx-spin" aria-hidden="true">↻</span> ' : ''}${status}
       </span>
       <button class="form-secondary" style="padding:4px 12px;font-size:12px;"
@@ -6817,14 +6817,14 @@ function renderIntakeStep1() {
     const ps = e._fromLog ? e.prevStatus : null;
     const reason = (ns === 'Fail' ? e.failedReason : ns === 'Blocked' ? e.blockedReason : '') || '';
     return `
-      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;display:flex;gap:16px;align-items:center;">
+      <div style="background:var(--surface-2);border:1px solid var(--line-soft);border-radius:8px;padding:12px 16px;display:flex;gap:16px;align-items:center;">
         <div style="flex:1;min-width:0;">
-          <div style="font-weight:600;font-size:13px;margin-bottom:3px;">${escapeHtml(e.testCode)} · ${escapeHtml(e.testName)}${e.assetName ? ` <span style="background:#dbeafe;color:#1d4ed8;font-size:11px;padding:1px 7px;border-radius:10px;font-weight:500;margin-left:4px;">${icon('package')} ${escapeHtml(e.assetName)}</span>` : ''}${e._rehydrated ? ` <span style="background:#dcfce7;color:#166534;font-size:10px;padding:1px 7px;border-radius:10px;font-weight:600;margin-left:4px;">auto</span>` : ''}</div>
+          <div style="font-weight:600;font-size:13px;margin-bottom:3px;">${escapeHtml(e.testCode)} · ${escapeHtml(e.testName)}${e.assetName ? ` <span style="background:var(--info-light);color:var(--info);font-size:11px;padding:1px 7px;border-radius:10px;font-weight:500;margin-left:4px;">${icon('package')} ${escapeHtml(e.assetName)}</span>` : ''}${e._rehydrated ? ` <span style="background:var(--good-light);color:var(--good);font-size:10px;padding:1px 7px;border-radius:10px;font-weight:600;margin-left:4px;">auto</span>` : ''}</div>
           <div style="font-size:11px;color:var(--gray-500);margin-bottom:5px;">${escapeHtml(e.phase || '—')} · ${escapeHtml(e.location || '—')} · ${escapeHtml(e.activity || '—')}</div>
           <div style="font-size:12px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-            ${ps ? `<span style="background:#e5e7eb;color:#374151;padding:2px 8px;border-radius:10px;">${escapeHtml(ps)}</span><span style="color:var(--gray-400);">→</span>` : ''}
+            ${ps ? `<span style="background:var(--surface-3);color:var(--text-muted);padding:2px 8px;border-radius:10px;">${escapeHtml(ps)}</span><span style="color:var(--gray-400);">→</span>` : ''}
             <span style="background:${statusColor(ns)}20;color:${statusColor(ns)};padding:2px 8px;border-radius:10px;font-weight:600;">${escapeHtml(ns)}</span>
-            ${reason ? `<span style="font-size:11px;color:#dc2626;">✗ ${escapeHtml(reason)}</span>` : ''}
+            ${reason ? `<span style="font-size:11px;color:var(--bad);">✗ ${escapeHtml(reason)}</span>` : ''}
           </div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;width:110px;">
@@ -6835,7 +6835,7 @@ function renderIntakeStep1() {
             ${e._fromLog ? `onchange="_updateSessionHours(${e._idx},this.value)"` : `onchange="_updateAdditionHours(${e._idx},this.value)"`}>
         </div>
         <button class="logout-mini" aria-label="Remove this test from today\u2019s log" title="Remove from today\u2019s log"
-          style="flex-shrink:0;color:#dc2626;display:flex;align-items:center;"
+          style="flex-shrink:0;color:var(--bad);display:flex;align-items:center;"
           onclick="_intakeRemoveEntry('${escapeHtml(String(e.testId)).replace(/'/g, "\\'")}')">${icon('x')}</button>
       </div>`;
   };
@@ -6854,7 +6854,7 @@ function renderIntakeStep1() {
       </div>
       ${_intakeExcludedTests.size ? `<div style="font-size:12px;color:var(--gray-500);margin:-8px 0 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         ${_intakeExcludedTests.size} test${_intakeExcludedTests.size !== 1 ? 's' : ''} removed from today\u2019s log.
-        <button class="logout-mini" style="color:#1d4ed8;" onclick="_intakeRestoreRemoved()">Restore removed</button>
+        <button class="logout-mini" style="color:var(--info);" onclick="_intakeRestoreRemoved()">Restore removed</button>
       </div>` : ''}
       <div class="form-actions">
         <button class="form-secondary" onclick="showPage('test-register')">↺ Back to Test Register</button>
@@ -6890,13 +6890,13 @@ function renderIntakeStep2() {
         ${intakeAdditions.length === 0 ?
           '<div style="font-size:13px;color:var(--gray-400);padding:8px 0;">No manually-added items yet</div>' :
           intakeAdditions.map((a,i) => `
-            <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;display:flex;gap:12px;align-items:center;margin-bottom:6px;">
+            <div style="background:var(--surface-2);border:1px solid var(--line-soft);border-radius:8px;padding:10px 14px;display:flex;gap:12px;align-items:center;margin-bottom:6px;">
               <div style="flex:1;">
                 <div style="font-weight:600;font-size:13px;">${escapeHtml(a.testCode||'—')} · ${escapeHtml(a.testName||'—')}</div>
                 <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(a.phase||'—')} · ${escapeHtml(a.location||'—')} · ${escapeHtml(a.activity||'—')}</div>
                 <div style="font-size:11px;margin-top:2px;">Status: <b>${escapeHtml(a.status||'—')}</b>${a.hours?` · ${a.hours}h`:''}${a.failedReason?` · ${escapeHtml(a.failedReason)}`:''}${a.blockedReason?` · ${escapeHtml(a.blockedReason)}`:''}</div>
               </div>
-              <button class="logout-mini" onclick="removeIntakeAddition(${i})" style="color:#dc2626;">Remove</button>
+              <button class="logout-mini" onclick="removeIntakeAddition(${i})" style="color:var(--bad);">Remove</button>
             </div>`).join('')}
       </div>
 
@@ -7485,7 +7485,7 @@ function _plRenderCell(colId, p) {
       return `<td>${_plPriorityBadge(p.priority)}</td>`;
     case 'due_date': {
       const dueStr = p.due_date ? new Date(p.due_date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
-      return `<td style="font-size:12px;${isOverdue?'color:#dc2626;font-weight:600;':''}">${dueStr}${isOverdue?' '+icon('alert'):''}</td>`;
+      return `<td style="font-size:12px;${isOverdue?'color:var(--bad);font-weight:600;':''}">${dueStr}${isOverdue?' '+icon('alert'):''}</td>`;
     }
     case 'pim':
       return `<td style="font-size:12px;white-space:nowrap;">${escapeHtml(p.punch_item_manager||'—')}</td>`;
@@ -7496,7 +7496,7 @@ function _plRenderCell(colId, p) {
       return `<td onclick="event.stopPropagation()" style="font-size:11px;max-width:180px;">${ids.map((id, idx) => {
         const code = TI.find(t => String(t.TestID) === String(id))?.TestCaseCode;
         if (!code) return '';
-        return `<span onclick="navigateToTestCase('${escapeHtml(String(id))}')" title="Open in Test Register" style="display:inline-block;padding:2px 6px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:4px;margin:1px 2px 1px 0;white-space:nowrap;cursor:pointer;">${escapeHtml(code)}</span>`;
+        return `<span onclick="navigateToTestCase('${escapeHtml(String(id))}')" title="Open in Test Register" style="display:inline-block;padding:2px 6px;background:var(--info-light);color:var(--info);border:1px solid var(--info-border);border-radius:4px;margin:1px 2px 1px 0;white-space:nowrap;cursor:pointer;">${escapeHtml(code)}</span>`;
       }).join('')}</td>`;
     }
     case 'type':
@@ -7925,7 +7925,7 @@ async function exportPunchPDF(ids) {
           <div class="tl-badge tl-badge-action">Action</div>
           <div class="tl-meta"><strong>${esc(entry.action)}</strong> · ${esc(entry.by||'')} · ${ts}</div>
           ${changeItems ? `<ul style="margin:4px 0 0 12px;padding:0;">${changeItems}</ul>` : ''}
-          ${entry.note ? `<div style="color:#555;margin-top:2px;">Note: ${esc(entry.note)}</div>` : ''}
+          ${entry.note ? `<div style="color:var(--text-muted);margin-top:2px;">Note: ${esc(entry.note)}</div>` : ''}
         </div>`;
       }
     }).join('') : '<div style="color:#999;font-size:12px;padding:8px 0;">No activity recorded</div>';
@@ -7978,33 +7978,33 @@ async function exportPunchPDF(ids) {
 
   const css = `
     *{box-sizing:border-box;margin:0;padding:0;}
-    body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff;}
+    body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a1a;background:var(--white);}
     .punch-page{padding:32px 40px;max-width:860px;margin:0 auto;}
     .page-break{page-break-before:always;padding-top:32px;}
-    .ph{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;padding-bottom:12px;border-bottom:2px solid #e60012;}
-    .org{font-size:11px;font-weight:700;color:#e60012;text-transform:uppercase;letter-spacing:.06em;}
+    .ph{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;padding-bottom:12px;border-bottom:2px solid var(--hitachi-red);}
+    .org{font-size:11px;font-weight:700;color:var(--hitachi-red);text-transform:uppercase;letter-spacing:.06em;}
     .exp-lbl{font-size:10px;color:#777;margin-top:3px;}
-    .pnum{font-size:28px;font-weight:700;color:#e60012;}
+    .pnum{font-size:28px;font-weight:700;color:var(--hitachi-red);}
     .ptitle{font-size:18px;font-weight:700;color:#111;margin-bottom:12px;line-height:1.4;}
-    .pdesc{font-size:12px;color:#444;line-height:1.6;background:#f7f7f7;padding:10px 14px;border-radius:6px;margin-bottom:16px;white-space:pre-wrap;}
+    .pdesc{font-size:12px;color:var(--text-muted);line-height:1.6;background:var(--surface-2);padding:10px 14px;border-radius:6px;margin-bottom:16px;white-space:pre-wrap;}
     .fgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 16px;margin-bottom:20px;padding:14px;background:#f9f9f9;border-radius:6px;}
     .fl{font-size:9px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;}
     .fv{font-size:12px;color:#222;word-break:break-word;}
     .stitle{font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;padding-top:12px;border-top:1px solid #eee;}
-    .timeline{border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;}
+    .timeline{border:1px solid var(--line-soft);border-radius:6px;overflow:hidden;}
     .tl-item{padding:8px 12px;border-bottom:1px solid #f0f0f0;display:flex;flex-direction:column;gap:3px;}
     .tl-item:last-child{border-bottom:none;}
-    .tl-comment{background:#fff;}
-    .tl-action{background:#f9fafb;}
+    .tl-comment{background:var(--white);}
+    .tl-action{background:var(--surface-2);}
     .tl-badge{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;margin-bottom:2px;text-transform:uppercase;letter-spacing:.04em;width:fit-content;}
-    .tl-badge-comment{background:#fef3e0;color:#d97706;}
-    .tl-badge-action{background:#e5e7eb;color:#555;}
-    .tl-meta{font-size:11px;color:#444;}
+    .tl-badge-comment{background:#fef3e0;color:var(--warn);}
+    .tl-badge-action{background:var(--surface-3);color:var(--text-muted);}
+    .tl-meta{font-size:11px;color:var(--text-muted);}
     .tl-body{font-size:12px;color:#222;white-space:pre-wrap;margin-top:2px;}
     .pgrid{display:flex;flex-direction:column;gap:14px;margin-bottom:20px;}
-    .pfig{break-inside:avoid;page-break-inside:avoid;margin:0 auto;max-width:80%;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;background:#fafafa;}
-    .pfig img{display:block;width:100%;max-height:448px;object-fit:contain;background:#fff;}
-    .pfig figcaption{font-size:11px;color:#555;padding:6px 10px;border-top:1px solid #eee;text-transform:capitalize;}
+    .pfig{break-inside:avoid;page-break-inside:avoid;margin:0 auto;max-width:80%;border:1px solid var(--line-soft);border-radius:6px;overflow:hidden;background:#fafafa;}
+    .pfig img{display:block;width:100%;max-height:448px;object-fit:contain;background:var(--white);}
+    .pfig figcaption{font-size:11px;color:var(--text-muted);padding:6px 10px;border-top:1px solid #eee;text-transform:capitalize;}
     @media print{
       body{padding:0;}
       @page{margin:16mm 14mm;size:A4;}
@@ -8180,7 +8180,7 @@ function openPunchDetail(id) {
                 const roleLabel = {admin:'Admin',field_engineer:'Field Engineer',client:'Client',readonly:'Read Only'}[entry.by_role]||entry.by_role||'';
                 return `
                   <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border-bottom:1px solid var(--gray-100);">
-                    <div style="width:30px;height:30px;border-radius:50%;background:var(--hitachi-red);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${initials}</div>
+                    <div style="width:30px;height:30px;border-radius:50%;background:var(--hitachi-red);color:var(--white);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${initials}</div>
                     <div style="flex:1;min-width:0;">
                       <div style="font-size:12px;font-weight:600;color:var(--gray-800);">${escapeHtml(entry.by)} <span style="font-weight:400;color:var(--gray-500);">· ${roleLabel} · ${dateAgo(entry.at)}</span></div>
                       ${entry.text ? `<div style="font-size:13px;color:var(--gray-700);margin-top:3px;white-space:pre-wrap;">${escapeHtml(entry.text)}</div>` : ''}
@@ -8793,7 +8793,7 @@ function _linkPunchListHTML(punches, testId) {
         </div>
         ${isLinked
           ? `<button onclick="_unlinkPunchFromTest('${escapeHtml(String(testId))}','${p.id}')"
-               style="flex-shrink:0;font-size:11px;padding:4px 10px;border:1px solid #6ee7b7;background:#dcfce7;color:#15803d;border-radius:5px;cursor:pointer;font-weight:600;white-space:nowrap;">
+               style="flex-shrink:0;font-size:11px;padding:4px 10px;border:1px solid var(--good-border);background:var(--good-light);color:var(--good);border-radius:5px;cursor:pointer;font-weight:600;white-space:nowrap;">
                ✓ Linked · Remove
              </button>`
           : `<button onclick="_linkPunchToTest('${escapeHtml(String(testId))}','${p.id}')"
@@ -9161,7 +9161,7 @@ function _punchExtraFieldsHTML(p, cfg) {
 function _punchTemplateBadge(p) {
   const t = _punchTemplateById(p.template_id);
   if (!t) return '';
-  return `<span style="font-size:10px;font-weight:600;background:#eef2ff;color:#3730a3;border:1px solid #e0e7ff;border-radius:4px;padding:1px 6px;">${escapeHtml(t.name)}</span>`;
+  return `<span style="font-size:10px;font-weight:600;background:var(--info-light);color:var(--info);border:1px solid #e0e7ff;border-radius:4px;padding:1px 6px;">${escapeHtml(t.name)}</span>`;
 }
 function _punchCustomFieldsHTML(p) {
   const t = _punchTemplateById(p.template_id);
@@ -9225,7 +9225,7 @@ function _punchTemplatesModal() {
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;">
       ${ts.length ? ts.map(t => { const cfg = _punchTplCfg(t); const nf = _punchResolvedFields(cfg).length; return `<div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;">
-        <div style="flex:1;"><div style="font-weight:600;">${escapeHtml(t.name)} ${t.is_default ? '<span style="color:#d97706;" title="Default">★</span>' : ''} ${t.active === false ? '<span style="font-size:11px;color:var(--gray-400);">(inactive)</span>' : ''}</div>
+        <div style="flex:1;"><div style="font-weight:600;">${escapeHtml(t.name)} ${t.is_default ? '<span style="color:var(--warn);" title="Default">★</span>' : ''} ${t.active === false ? '<span style="font-size:11px;color:var(--gray-400);">(inactive)</span>' : ''}</div>
           <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(cfg.location_mode || 'wayside')}${nf ? ' · ' + nf + ' custom field(s)' : ''}</div></div>
         <button class="form-secondary" style="font-size:11px;" onclick="_punchTplEditModal('${t.id}')">Edit</button>
       </div>`; }).join('') : '<div style="font-size:13px;color:var(--gray-500);">No templates yet.</div>'}
@@ -9619,7 +9619,7 @@ function previewPunchImport(input) {
     const rows = parseCSVGeneric(text);
     if (!rows.length) {
       document.getElementById('punch-import-preview').innerHTML =
-        `<div style="color:#dc2626;font-size:13px;">No data rows found in file.</div>`;
+        `<div style="color:var(--bad);font-size:13px;">No data rows found in file.</div>`;
       return;
     }
     // Validate and map rows
@@ -9665,17 +9665,17 @@ function previewPunchImport(input) {
     const importBtn = document.getElementById('punch-import-btn');
     if (errors.length) {
       preview.innerHTML = `
-        <div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:12px;margin-bottom:12px;">
-          <div style="font-weight:600;font-size:13px;color:#dc2626;margin-bottom:6px;">Validation Errors (${errors.length})</div>
-          ${errors.map(e=>`<div style="font-size:12px;color:#b91c1c;">• ${escapeHtml(e)}</div>`).join('')}
+        <div style="background:var(--bad-light);border:1px solid var(--bad-border);border-radius:8px;padding:12px;margin-bottom:12px;">
+          <div style="font-weight:600;font-size:13px;color:var(--bad);margin-bottom:6px;">Validation Errors (${errors.length})</div>
+          ${errors.map(e=>`<div style="font-size:12px;color:var(--bad);">• ${escapeHtml(e)}</div>`).join('')}
         </div>
         ${_punchImportRows.length ? `<div style="font-size:13px;color:var(--gray-600);">${_punchImportRows.length} valid row(s) will be imported.</div>` : ''}
       `;
       importBtn.disabled = _punchImportRows.length === 0;
     } else {
       preview.innerHTML = `
-        <div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:8px;padding:12px;">
-          <div style="font-weight:600;font-size:13px;color:#059669;">${_punchImportRows.length} item(s) ready to import</div>
+        <div style="background:var(--good-light);border:1px solid var(--good-border);border-radius:8px;padding:12px;">
+          <div style="font-weight:600;font-size:13px;color:var(--good);">${_punchImportRows.length} item(s) ready to import</div>
         </div>
         <div class="data-card" style="padding:0;overflow:hidden;margin-top:12px;max-height:220px;overflow-y:auto;">
           <table class="data-table" style="font-size:12px;">
@@ -10830,7 +10830,7 @@ function _trpReportRowHTML(row, canManage) {
         <div class="report-title-block">
           <h3 class="report-title">
             ${escapeHtml(row.title)}
-            ${row.isDerived ? `<span class="v2-id-chip" style="background:#fff7ed;color:#c8741a;border-color:rgba(200,116,26,0.22);font-size:9.5px;">From TI</span>` : ''}
+            ${row.isDerived ? `<span class="v2-id-chip" style="background:var(--warn-light);color:#c8741a;border-color:rgba(200,116,26,0.22);font-size:9.5px;">From TI</span>` : ''}
           </h3>
           <div class="v2-meta-line">
             ${row.cdrl_number ? `<span class="v2-cdrl-chip">${escapeHtml(row.cdrl_number)}</span>` : ''}
@@ -11074,7 +11074,7 @@ function openAddRevisionModal(reportId) {
     title: `Add Revision — ${escapeHtml(r.title)}`,
     size: 'medium',
     body: `
-      <div style="padding:10px 14px;background:#f8fafc;border:1px solid var(--line-soft);border-radius:8px;margin-bottom:16px;font-size:12px;color:var(--gray-600);">
+      <div style="padding:10px 14px;background:var(--surface-2);border:1px solid var(--line-soft);border-radius:8px;margin-bottom:16px;font-size:12px;color:var(--gray-600);">
         <b style="color:var(--text-main);">Current:</b> Rev ${escapeHtml(r.revision||'A')} · ${escapeHtml(r.status||'Not Started')}
         <br><span style="margin-top:4px;display:block;">The current revision will be archived to history. The report record will be updated in place.</span>
       </div>
@@ -11681,7 +11681,7 @@ _colRegister('tr', [
 ], function _trRenderCell(colId, ctx) {
   const { a, st, done, total, pct, isSel } = ctx;
   switch (colId) {
-    case 'activity': return `<td><div class="tr-activity-title">${escapeHtml(a.activity)}</div>${a.futureTestReason ? `<div style="font-size:11px;color:#5b21b6;margin-top:2px;">↳ ${escapeHtml(a.futureTestReason)}</div>` : ''}</td>`;
+    case 'activity': return `<td><div class="tr-activity-title">${escapeHtml(a.activity)}</div>${a.futureTestReason ? `<div style="font-size:11px;color:var(--accent-purple);margin-top:2px;">↳ ${escapeHtml(a.futureTestReason)}</div>` : ''}</td>`;
     case 'subsystem': return `<td><span class="tag">${escapeHtml(a.subsystem)}</span></td>`;
     case 'location':  return `<td style="font-size:12px;">${escapeHtml(a.location)}</td>`;
     case 'phase':     return `<td><span class="tag tag-phase">${escapeHtml(a.phase)}</span></td>`;
@@ -11854,7 +11854,7 @@ function _testRegisterHTML() {
 
     const trCtx = { a, st, done, total, pct, isSel };
     const actRow = `
-      <tr style="${isSel?'background:#f5f3ff;':''}" class="tr-activity-row">
+      <tr style="${isSel?'background:var(--accent-purple-light);':''}" class="tr-activity-row">
         ${isAdmin ? `<td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} onchange="_amToggleRow('${safeKey}',this.checked)"></td>` : ''}
         <td class="am-actions-cell">
           <div class="tr-row-actions">
@@ -11926,8 +11926,8 @@ function _testRegisterHTML() {
       ${selCount > 0 && (uiCan('test_register','deploy_field') || uiCan('test_register','bulk_delete')) ? `
         <div class="v2-bulk-bar">
           <span class="count">${selCount} activit${selCount===1?'y':'ies'} selected</span>
-          ${hasNonFuture && uiCan('test_register','deploy_field') ? `<button class="v2-btn-mini primary" style="background:#5b21b6;border-color:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
-          ${hasFutureTest && uiCan('test_register','deploy_field') ? `<button class="v2-btn-mini primary" style="background:#15803d;border-color:#15803d;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
+          ${hasNonFuture && uiCan('test_register','deploy_field') ? `<button class="v2-btn-mini primary" style="background:var(--accent-purple);border-color:var(--accent-purple);" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
+          ${hasFutureTest && uiCan('test_register','deploy_field') ? `<button class="v2-btn-mini primary" style="background:var(--good);border-color:var(--good);" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
           ${uiCan('test_register','bulk_delete') ? `<button class="v2-btn-mini danger" onclick="_amBulkDeleteActivities()">${icon('trash')} Delete</button>` : ''}
           <button class="clear" onclick="_amClearSelection()">${icon('x')} Clear selection</button>
         </div>` : ''}
@@ -12029,7 +12029,7 @@ _colRegister('am', [
     case 'activity': {
       return `<td>
         <div style="font-weight:600;font-size:13px;cursor:pointer;color:var(--info);" onclick="_amOpenDrilldown('${escapeHtml(a.key)}')" title="Click to view test items">${escapeHtml(a.activity)}</div>
-        ${a.futureTestReason ? `<div style="font-size:11px;color:#5b21b6;margin-top:2px;">↳ ${escapeHtml(a.futureTestReason)}</div>` : ''}
+        ${a.futureTestReason ? `<div style="font-size:11px;color:var(--accent-purple);margin-top:2px;">↳ ${escapeHtml(a.futureTestReason)}</div>` : ''}
       </td>`;
     }
     case 'subsystem':  return `<td><span class="tag">${escapeHtml(a.subsystem)}</span></td>`;
@@ -12135,9 +12135,9 @@ function _adminActivityManagerHTML() {
       ${selCount > 0 ? `
         <div class="am-bulk-bar">
           <span><b>${selCount}</b> activit${selCount===1?'y':'ies'} selected</span>
-          ${hasNonFuture ? `<button class="admin-action-btn" style="background:#5b21b6;" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
-          ${hasFutureTest ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
-          <button class="admin-action-btn" style="background:#dc2626;" onclick="_amBulkDeleteActivities()">${icon('trash')} Delete Selected</button>
+          ${hasNonFuture ? `<button class="admin-action-btn" style="background:var(--accent-purple);" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
+          ${hasFutureTest ? `<button class="admin-action-btn" style="background:var(--good);" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
+          <button class="admin-action-btn" style="background:var(--bad);" onclick="_amBulkDeleteActivities()">${icon('trash')} Delete Selected</button>
           <button class="btn-ghost-light" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_amClearSelection()">Clear selection</button>
         </div>
       ` : ''}
@@ -12163,7 +12163,7 @@ function _adminActivityManagerHTML() {
                 const isSel = _amSelected.has(a.key);
                 const ctx = { a, st, done, total, pct, isSel };
                 return `
-                  <tr style="${isSel?'background:#f5f3ff;':''}">
+                  <tr style="${isSel?'background:var(--accent-purple-light);':''}">
                     <td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} onchange="_amToggleRow('${escapeHtml(a.key)}',this.checked)"></td>
                     ${_colCells('am', ctx)}
                     <td>
@@ -12404,7 +12404,7 @@ function _amDrilldownHTML(key) {
                         ` : `<span class="v2-pill ${({'Pass':'is-good','Fail':'is-bad','Blocked':'is-warn','Not Applicable':'is-muted','In Progress':'is-info','Future Test':'is-purple'}[cur]||'is-muted')}">${escapeHtml(cur)}</span>`}
                         <div id="punch-actions-${domId}" style="margin-top:6px;display:${cur==='Fail'?'flex':'none'};flex-direction:column;gap:4px;">
                           <div style="display:flex;gap:4px;">
-                            <button class="v2-btn-mini" style="background:#fef2f2;border-color:rgba(230,0,18,0.22);color:var(--hitachi-red);flex:1;justify-content:center;" onclick="openPunchFromTestCase('${tid}')">${icon('clipboard')} Create Punch</button>
+                            <button class="v2-btn-mini" style="background:var(--bad-light);border-color:rgba(230,0,18,0.22);color:var(--hitachi-red);flex:1;justify-content:center;" onclick="openPunchFromTestCase('${tid}')">${icon('clipboard')} Create Punch</button>
                             <button class="v2-btn-mini" style="flex:1;justify-content:center;" onclick="openLinkPunchModal('${tid}')">${icon('link')} Link Existing</button>
                           </div>
                           <div id="punch-chips-${domId}">${_punchLinksForTestHTML(String(r.TestID))}</div>
@@ -12700,7 +12700,7 @@ function _trBulkBarHTML(count) {
       <input id="tr-bulk-notes" class="form-input" placeholder="Bulk notes (optional)" style="min-width:180px;">
       <button class="admin-action-btn" onclick="_trApplyBulkField()">Apply</button>
       <div style="width:1px;background:rgba(255,255,255,.2);align-self:stretch;"></div>
-      ${isAdmin ? `<button class="admin-action-btn" style="background:#dc2626;" onclick="_trBulkDelete()"
+      ${isAdmin ? `<button class="admin-action-btn" style="background:var(--bad);" onclick="_trBulkDelete()"
         data-tippy-content="Permanently delete selected test cases">${icon('trash')} Delete (${count})</button>` : ''}
       <button class="btn-ghost-dark" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_trClearSelection()">Clear</button>
     </div>
@@ -12945,7 +12945,7 @@ function _amOpenEditModal(key) {
         Changes to Activity Name, Phase, Location, or Subsystem update all child test items. Activity Status is auto-calculated from test item statuses.
       </p>
     `,
-    footer: `<button class="admin-action-btn" style="background:#dc2626;margin-right:auto;" onclick="_amDeleteActivity()">${icon('trash')} Delete Activity</button><button class="form-secondary" onclick="closeModal()">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:#059669;" onclick="_amSaveEdit(true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" onclick="_amSaveEdit()">Save Changes</button>`
+    footer: `<button class="admin-action-btn" style="background:var(--bad);margin-right:auto;" onclick="_amDeleteActivity()">${icon('trash')} Delete Activity</button><button class="form-secondary" onclick="closeModal()">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:var(--good);" onclick="_amSaveEdit(true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" onclick="_amSaveEdit()">Save Changes</button>`
   });
 }
 
@@ -13130,15 +13130,15 @@ function _amOpenDeployToFieldModal() {
     title: 'Deploy Activities to Field',
     size: 'medium',
     body: `
-      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 16px;margin-bottom:16px;">
-        <div style="font-weight:600;color:#059669;margin-bottom:4px;">${selected.length} activit${selected.length===1?'y':'ies'} · ${totalItems} test items</div>
-        <div style="font-size:12px;color:#047857;">All test items will be set to "Not Started" and Future Test Reason will be cleared.</div>
+      <div style="background:var(--good-light);border:1px solid var(--good-border);border-radius:8px;padding:12px 16px;margin-bottom:16px;">
+        <div style="font-weight:600;color:var(--good);margin-bottom:4px;">${selected.length} activit${selected.length===1?'y':'ies'} · ${totalItems} test items</div>
+        <div style="font-size:12px;color:var(--good);">All test items will be set to "Not Started" and Future Test Reason will be cleared.</div>
       </div>
       <div style="max-height:140px;overflow-y:auto;margin-bottom:8px;">
-        ${selected.map(a=>`<div style="font-size:12px;padding:3px 0;border-bottom:1px solid #f3f4f6;">${escapeHtml(a.activity)} <span style="color:var(--gray-500);">· ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</span></div>`).join('')}
+        ${selected.map(a=>`<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--line-soft);">${escapeHtml(a.activity)} <span style="color:var(--gray-500);">· ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</span></div>`).join('')}
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" style="background:#059669;" onclick="_amConfirmDeployToField()">Confirm & Deploy</button>`
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" style="background:var(--good);" onclick="_amConfirmDeployToField()">Confirm & Deploy</button>`
   });
 }
 
@@ -13273,12 +13273,12 @@ function _amOpenFutureTestModal() {
     title: 'Mark Activities as Future Test',
     size: 'medium',
     body: `
-      <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:12px 16px;margin-bottom:16px;">
-        <div style="font-weight:600;color:#5b21b6;margin-bottom:4px;">${_amSelected.size} activit${_amSelected.size===1?'y':'ies'} selected · ${totalItems} test items affected</div>
-        <div style="font-size:12px;color:#6d28d9;">All test items within these activities will be updated to "Future Test" status.</div>
+      <div style="background:var(--accent-purple-light);border:1px solid #ddd6fe;border-radius:8px;padding:12px 16px;margin-bottom:16px;">
+        <div style="font-weight:600;color:var(--accent-purple);margin-bottom:4px;">${_amSelected.size} activit${_amSelected.size===1?'y':'ies'} selected · ${totalItems} test items affected</div>
+        <div style="font-size:12px;color:var(--accent-purple);">All test items within these activities will be updated to "Future Test" status.</div>
       </div>
       <div style="margin-bottom:12px;max-height:120px;overflow-y:auto;">
-        ${selected.map(a=>`<div style="font-size:12px;padding:3px 0;border-bottom:1px solid #f3f4f6;">${escapeHtml(a.activity)} <span style="color:var(--gray-500);">· ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</span></div>`).join('')}
+        ${selected.map(a=>`<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--line-soft);">${escapeHtml(a.activity)} <span style="color:var(--gray-500);">· ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</span></div>`).join('')}
       </div>
       <div class="form-field">
         <label>Future Test Reason <span style="color:var(--bad);">*</span></label>
@@ -13290,7 +13290,7 @@ function _amOpenFutureTestModal() {
         </select>
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" style="background:#5b21b6;" onclick="_amConfirmFutureTest()">Confirm & Update All</button>`
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" style="background:var(--accent-purple);" onclick="_amConfirmFutureTest()">Confirm & Update All</button>`
   });
 }
 
@@ -13539,7 +13539,7 @@ function _p6ImportTabHTML() {
             </button>
           </div>
           ${isRebaseline ? `
-            <div style="margin-top:10px;padding:10px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:12px;color:#9a3412;">
+            <div style="margin-top:10px;padding:10px 12px;background:var(--warn-light);border:1px solid #fed7aa;border-radius:8px;font-size:12px;color:#9a3412;">
               ${icon('alert')} A baseline already exists. Uploading again will mark this as a <strong>Re-baseline</strong>. You will be required to enter a reason.
             </div>` : ''}
         </div>
@@ -13716,9 +13716,9 @@ function _p6ShowPreview(activities) {
   if (!preview) return;
   const locs = [...new Set(activities.map(a => a.p6_location_code).filter(Boolean))].sort();
   preview.innerHTML = `
-    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px;">
-      <div style="font-size:13px;font-weight:700;color:#065f46;margin-bottom:10px;">✓ ${activities.length} activities parsed</div>
-      <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:#047857;margin-bottom:12px;">
+    <div style="background:var(--good-light);border:1px solid var(--good-border);border-radius:10px;padding:16px;">
+      <div style="font-size:13px;font-weight:700;color:var(--good);margin-bottom:10px;">✓ ${activities.length} activities parsed</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--good);margin-bottom:12px;">
         <span><b>${locs.length}</b> locations: ${locs.join(', ')}</span>
         <span><b>${activities.filter(a=>a.is_actual).length}</b> actuals</span>
         <span><b>${activities.filter(a=>!a.is_actual).length}</b> planned</span>
@@ -13922,7 +13922,7 @@ function _p6MappingTabHTML() {
                   <div style="font-size:12px;font-weight:600;margin:2px 0;line-height:1.3;">${escapeHtml(p.p6_name)}</div>
                   <div style="font-size:11px;color:var(--gray-500);">
                     ${p.start_date ? _fmtDate(p.start_date) : '—'} → ${p.finish_date ? _fmtDate(p.finish_date) : '—'}
-                    ${p.is_actual ? '<span style="color:#059669;font-weight:600;"> ✓ Actual</span>' : ''}
+                    ${p.is_actual ? '<span style="color:var(--good);font-weight:600;"> ✓ Actual</span>' : ''}
                   </div>
                   ${mappedCount ? `<div style="font-size:10px;color:var(--good);margin-top:3px;font-weight:600;">↔ ${mappedCount} portal link${mappedCount>1?'s':''}</div>` : ''}
                 </div>`;
@@ -14116,7 +14116,7 @@ function _p6ActivityLinkDetail(act, p6List, sid) {
       <!-- ── ACTIVITY-LEVEL LINK ───────────────────────────── -->
       <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;color:var(--gray-500);margin-bottom:8px;">ACTIVITY-LEVEL LINK</div>
       ${actLink ? `
-        <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--good-light);border:1px solid var(--good-border);border-radius:6px;margin-bottom:10px;">
           <div style="flex:1;font-size:12px;">
             <div style="font-weight:600;">${escapeHtml(_p6ActName(actLink.p6_activity_id))}</div>
             <div style="color:var(--gray-500);font-size:11px;">${escapeHtml(_p6ActDates(actLink.p6_activity_id))}</div>
@@ -14125,7 +14125,7 @@ function _p6ActivityLinkDetail(act, p6List, sid) {
         </div>` : `
         <div style="margin-bottom:10px;">
           ${suggestion ? `
-            <div style="padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;margin-bottom:8px;font-size:12px;">
+            <div style="padding:8px 10px;background:var(--info-light);border:1px solid var(--info-border);border-radius:6px;margin-bottom:8px;font-size:12px;">
               ${icon('bulb')} Suggested: <b>${escapeHtml(suggestion.p6_name)}</b>
               <div style="display:flex;gap:6px;margin-top:6px;">
                 <button class="admin-action-btn tr-mini-btn" onclick="_p6AcceptSuggestion('${sid}','${escapeHtml(suggestion.id)}')">Accept</button>
@@ -14746,7 +14746,7 @@ function _p6LearnTabHTML() {
 
   return `
     <div style="max-width:1100px;">
-      <div class="data-card" style="padding:16px 20px;margin-bottom:16px;background:#eff6ff;border:1px solid #bfdbfe;">
+      <div class="data-card" style="padding:16px 20px;margin-bottom:16px;background:var(--info-light);border:1px solid var(--info-border);">
         <div style="font-size:13px;font-weight:700;margin-bottom:6px;">${icon('wand')} Bulk Learn — pick once, apply everywhere</div>
         <p style="font-size:12px;color:var(--gray-600);margin:0;line-height:1.45;">
           Each row is a distinct ${_p6LearnMode==='tc'?'<b>activity + test case</b>':'<b>activity</b>'} that's unlinked in at least one location.
@@ -15051,7 +15051,7 @@ function _p6LearnShowMapping(sid) {
             <div style="color:var(--gray-400);font-size:10.5px;margin-top:1px;">
               ${escapeHtml(p6?.p6_id || '')}${p6 ? ` · ${_p6ActDates(p6.id)}` : ''}${inherited ? ' · inherited from activity link' : ''}
             </div>` : `
-            <div style="color:#b45309;font-size:11px;margin-top:3px;">Not linked to any P6 activity</div>`}
+            <div style="color:var(--warn);font-size:11px;margin-top:3px;">Not linked to any P6 activity</div>`}
           <div style="display:flex;align-items:center;gap:6px;margin-top:6px;">
             <div style="flex:1;min-width:160px;">${_p6SS(actSid, scoped, 'Search P6 activity…', initId)}</div>
             <button class="admin-action-btn tr-mini-btn" style="flex-shrink:0;" onclick="_p6LearnLinkLocation('${actSid}','${sid}')">${linked ? 'Relink' : 'Link'}</button>
@@ -15170,7 +15170,7 @@ function _p6LearnPreview(sid) {
       <div style="flex:1;min-width:0;">
         <div style="font-weight:600;">${escapeHtml(f.act.location)}${f.testCaseCode?` · ${escapeHtml(f.testCaseCode)}`:''}</div>
         <div style="color:var(--gray-500);font-size:11px;">${escapeHtml(f.act.phase||'—')} · ${escapeHtml(f.act.subsystem||'—')}</div>
-        <div style="color:#b45309;font-size:11px;margin-top:3px;">${escapeHtml(flagReason[f.reason] || 'Needs manual link')}</div>
+        <div style="color:var(--warn);font-size:11px;margin-top:3px;">${escapeHtml(flagReason[f.reason] || 'Needs manual link')}</div>
       </div>
     </div>`).join('');
 
@@ -15184,12 +15184,12 @@ function _p6LearnPreview(sid) {
           <span class="badge ${t.changeType === 'new' ? 'badge-notstarted' : 'badge-warn'}" style="font-size:10px;">${escapeHtml(_p6LearnChangeLabel(t))}</span>
         </div>
         ${t.oldP6 ? `
-          <div style="color:#92400e;font-size:11px;margin-top:4px;">
+          <div style="color:var(--warn);font-size:11px;margin-top:4px;">
             Current: ${escapeHtml(t.oldP6.p6_name || _p6ActName(t.oldP6.id))}
           </div>
         ` : ''}
         ${t.changeType === 'override-parent' ? `
-          <div style="color:#92400e;font-size:11px;margin-top:2px;">
+          <div style="color:var(--warn);font-size:11px;margin-top:2px;">
             The parent activity link will stay in place; this test case will use the new TC override.
           </div>
         ` : ''}
@@ -15209,7 +15209,7 @@ function _p6LearnPreview(sid) {
         Confirm the locations to link. The pattern <b>"${escapeHtml(stem)}"</b> will be saved so future P6 imports auto-suggest the same mapping.
       </p>
       ${changing.length ? `
-        <div style="padding:10px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;color:#92400e;font-size:12px;margin-bottom:12px;line-height:1.45;">
+        <div style="padding:10px 12px;background:var(--warn-light);border:1px solid var(--warn-border);border-radius:6px;color:var(--warn);font-size:12px;margin-bottom:12px;line-height:1.45;">
           This will change ${changing.length} existing link${changing.length===1?'':'s'}. Review the Current and New values below before applying.
         </div>
       ` : ''}
@@ -15217,15 +15217,15 @@ function _p6LearnPreview(sid) {
         <div style="font-size:11px;font-weight:700;color:var(--gray-500);letter-spacing:.04em;margin:0 0 6px;">\u2713 ${targets.length} ONE-TO-ONE MATCH${targets.length===1?'':'ES'}</div>
         <div style="max-height:${flagged.length?'260px':'380px'};overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">${rows}</div>
       ` : `
-        <div style="padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;color:#1e40af;font-size:12px;margin-bottom:12px;">
+        <div style="padding:10px 12px;background:var(--info-light);border:1px solid var(--info-border);border-radius:6px;color:var(--info);font-size:12px;margin-bottom:12px;">
           No new one-to-one matches \u2014 every covered location is already linked. Flagged locations below still need attention.
         </div>`}
       ${flagged.length ? `
-        <div style="font-size:11px;font-weight:700;color:#b45309;letter-spacing:.04em;margin:14px 0 6px;">\u26a0\ufe0f ${flagged.length} FLAGGED \u2014 NEEDS MANUAL LINK</div>
-        <div style="padding:8px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;color:#92400e;font-size:11px;margin-bottom:8px;line-height:1.45;">
+        <div style="font-size:11px;font-weight:700;color:var(--warn);letter-spacing:.04em;margin:14px 0 6px;">\u26a0\ufe0f ${flagged.length} FLAGGED \u2014 NEEDS MANUAL LINK</div>
+        <div style="padding:8px 12px;background:var(--warn-light);border:1px solid var(--warn-border);border-radius:6px;color:var(--warn);font-size:11px;margin-bottom:8px;line-height:1.45;">
           These locations have the activity but no clean one-to-one P6 match. Use the Mapping tab (or pick a different P6 item here) to link them by hand.
         </div>
-        <div style="max-height:200px;overflow:auto;border:1px solid #fde68a;border-radius:6px;background:#fffdf7;">${flaggedRows}</div>
+        <div style="max-height:200px;overflow:auto;border:1px solid var(--warn-border);border-radius:6px;background:#fffdf7;">${flaggedRows}</div>
       ` : ''}`,
     footer: `
       <button class="form-secondary" onclick="closeModal();renderAdminP6()">Cancel</button>
@@ -15404,7 +15404,7 @@ function _p6HealthTabHTML() {
             <span style="font-size:13px;font-weight:700;"><span style="color:var(--bad)">${icon('dot')}</span> Unlinked P6 Activities</span>
             <span class="badge badge-review" style="margin-left:8px;font-size:11px;">${unlinkedP6.length}</span>
             ${batchLabel ? `<span style="font-size:11px;color:var(--gray-500);margin-left:10px;">(${escapeHtml(batchLabel)})</span>` : ''}
-            ${P6_DISMISSALS.length ? `<button class="form-secondary tr-mini-btn" style="margin-left:12px;${_p6HShowingSnoozed?'background:var(--hitachi-red);color:#fff;':''}" onclick="_p6HShowingSnoozed=!_p6HShowingSnoozed;renderAdminP6()">
+            ${P6_DISMISSALS.length ? `<button class="form-secondary tr-mini-btn" style="margin-left:12px;${_p6HShowingSnoozed?'background:var(--hitachi-red);color:var(--white);':''}" onclick="_p6HShowingSnoozed=!_p6HShowingSnoozed;renderAdminP6()">
               ${_p6HShowingSnoozed ? '▲ Hide snoozed' : `${icon('eye')} Show ${P6_DISMISSALS.length} snoozed`}
             </button>` : ''}
           </div>
@@ -15414,7 +15414,7 @@ function _p6HealthTabHTML() {
               <input type="checkbox" id="p6h-sel-all" onchange="_p6HSelectAll(this.checked)"> Select all
             </label>
             <button class="form-secondary tr-mini-btn" onclick="_p6HBulkRemindLater()">${icon('clock')} Snooze selected</button>
-            <button class="form-secondary tr-mini-btn" style="color:#dc2626;" onclick="_p6HBulkRemove()">${icon('trash')} Remove selected</button>
+            <button class="form-secondary tr-mini-btn" style="color:var(--bad);" onclick="_p6HBulkRemove()">${icon('trash')} Remove selected</button>
           </div>` : ''}
         </div>
 
@@ -15469,11 +15469,11 @@ function _p6HealthTabHTML() {
                   <td style="font-size:12px;">${p.finish_date ? _fmtDate(p.finish_date) : '—'}</td>
                   <td style="text-align:center;white-space:nowrap;">
                     <button class="form-secondary tr-mini-btn" onclick="_p6HToggleLink('${escapedId}')"
-                      style="${linkOpen?'background:var(--hitachi-red);color:#fff;':''}" >
+                      style="${linkOpen?'background:var(--hitachi-red);color:var(--white);':''}" >
                       ${icon('link')} Link to Activity
                     </button>
                     <button class="form-secondary tr-mini-btn" title="Snooze — hide until restored" aria-label="Snooze" onclick="_p6HRemindLater('${escapedId}')">${icon('clock')}</button>
-                    <button aria-label="Remove from schedule" class="form-secondary tr-mini-btn" style="color:#dc2626;" title="Remove from schedule" onclick="_p6HRemove('${escapedId}','${escapeHtml(p.p6_name).replace(/'/g,"\\'")}')">${icon('trash')}</button>
+                    <button aria-label="Remove from schedule" class="form-secondary tr-mini-btn" style="color:var(--bad);" title="Remove from schedule" onclick="_p6HRemove('${escapedId}','${escapeHtml(p.p6_name).replace(/'/g,"\\'")}')">${icon('trash')}</button>
                   </td>
                 </tr>
                 ${linkOpen ? `
@@ -15487,7 +15487,7 @@ function _p6HealthTabHTML() {
                         style="font-size:12px;"
                         oninput="_p6HLinkFilter('${escapedId}',this.value)">
                       <div id="p6h-link-list-${escapedId}"
-                        style="max-height:240px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;background:#fff;">
+                        style="max-height:240px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;background:var(--white);">
                         ${portalCheckItems}
                       </div>
                       <div style="display:flex;gap:8px;">
@@ -15788,13 +15788,13 @@ _colRegister('p6', [
       return `<td style="font-size:12px;font-weight:600;color:${color};" title="Actual ${pct}% vs ${expectedPct}% expected by P6 schedule">${label}</td>`;
     }
     case 'forecast': {
-      if (pct >= 100) return `<td style="font-size:12px;color:#059669;">Complete</td>`;
+      if (pct >= 100) return `<td style="font-size:12px;color:var(--good);">Complete</td>`;
       if (!forecastFinish) return `<td style="font-size:12px;"><span style="color:var(--gray-400);">—</span></td>`;
       const vtxt = forecastVar === null ? ''
         : `<span style="font-size:10px;margin-left:5px;color:${forecastVar > 0 ? '#dc2626' : forecastVar < 0 ? '#059669' : 'var(--gray-400)'};">${forecastVar > 0 ? '+' : ''}${forecastVar}d vs base</span>`;
       return `<td style="font-size:12px;" title="Today + P6 remaining duration">${_fmtDate(forecastFinish)}${vtxt}</td>`;
     }
-    case 'baselinevar': return `<td style="font-size:12px;font-weight:600;${finDiff===null?'':finDiff>0?'color:#dc2626;':finDiff<0?'color:#059669;':''}">${finDiff === null ? '<span style="color:var(--gray-400);">—</span>' : finDiff === 0 ? 'On time' : `${finDiff>0?'+':''}${finDiff}d`}</td>`;
+    case 'baselinevar': return `<td style="font-size:12px;font-weight:600;${finDiff===null?'':finDiff>0?'color:var(--bad);':finDiff<0?'color:var(--good);':''}">${finDiff === null ? '<span style="color:var(--gray-400);">—</span>' : finDiff === 0 ? 'On time' : `${finDiff>0?'+':''}${finDiff}d`}</td>`;
     case 'status':    return `<td>${_amStatusBadge(status)}</td>`;
     default: return '<td>—</td>';
   }
@@ -16026,7 +16026,7 @@ _colRegister('assets', [
     case 'location': return `<td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.location || a.location_prefix || '—')}</td>`;
     case 'subsystem':return `<td style="font-size:12px;color:var(--gray-600);">${subDisplay}</td>`;
     case 'linked':   return `<td style="font-size:13px;">${links.length} link${links.length!==1?'s':''}</td>`;
-    case 'progress': return `<td>${total > 0 ? `<div style="display:flex;align-items:center;gap:8px;"><div style="flex:1;background:#e5e7eb;border-radius:4px;height:6px;min-width:60px;"><div style="width:${pct}%;background:${pct===100?'#16a34a':'#3b82f6'};height:6px;border-radius:4px;"></div></div><span style="font-size:11px;color:var(--gray-600);">${passCount}/${total}</span></div>` : `<span style="color:var(--gray-400);font-size:12px;">—</span>`}</td>`;
+    case 'progress': return `<td>${total > 0 ? `<div style="display:flex;align-items:center;gap:8px;"><div style="flex:1;background:var(--surface-3);border-radius:4px;height:6px;min-width:60px;"><div style="width:${pct}%;background:${pct===100?'#16a34a':'#3b82f6'};height:6px;border-radius:4px;"></div></div><span style="font-size:11px;color:var(--gray-600);">${passCount}/${total}</span></div>` : `<span style="color:var(--gray-400);font-size:12px;">—</span>`}</td>`;
     default: return '<td>—</td>';
   }
 });
@@ -16176,7 +16176,7 @@ function _assetUpdateParentDOMBadge(parentTestId, newStatus) {
     const isAdmin   = currentRoleUser?.role === 'admin';
     const safePtid  = escapeHtml(String(parentTestId));
     sumEl.innerHTML = `<span>${icon('package')} ${total} asset${total !== 1 ? 's' : ''} &nbsp;·&nbsp; `
-      + `<span style="color:#16a34a;">${passCount} Pass</span>`
+      + `<span style="color:var(--good);">${passCount} Pass</span>`
       + (pending > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${pending} pending</span>` : '')
       + `</span>`
       + (_trEditMode && isAdmin && !_trBulkMode
@@ -16660,7 +16660,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
         </div>
         <div id="aps-${safeId}" style="font-size:11px;color:var(--gray-500);margin-top:2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <span>${icon('package')} ${totalCount} asset${totalCount !== 1 ? 's' : ''} &nbsp;·&nbsp;
-          <span style="color:#16a34a;">${passCount} Pass</span>${totalCount - passCount > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${totalCount - passCount} pending</span>` : ''}</span>
+          <span style="color:var(--good);">${passCount} Pass</span>${totalCount - passCount > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${totalCount - passCount} pending</span>` : ''}</span>
           ${_trEditMode && isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trAddGenericChild('${ptid}')">＋ Asset</button>` : ''}
           ${_trEditMode && isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trOpenAssetPickerModal('${ptid}')">${icon('link')} Link Assets</button>` : ''}
         </div>
@@ -16748,7 +16748,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
           ` : `<span class="badge" style="background:${sc}20;color:${sc};border:1px solid ${sc}40;">${escapeHtml(cur)}</span>`}
           <div id="punch-actions-${domId}" style="margin-top:6px;display:${cur==='Fail'?'flex':'none'};flex-direction:column;gap:4px;">
             <div style="display:flex;gap:4px;">
-              <button onclick="openPunchFromTestCase('${ctid}')" style="flex:1;font-size:11px;padding:4px 6px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:5px;cursor:pointer;font-weight:600;">${icon('clipboard')} Create Punch</button>
+              <button onclick="openPunchFromTestCase('${ctid}')" style="flex:1;font-size:11px;padding:4px 6px;background:var(--bad-light);border:1px solid var(--bad-border);color:var(--bad);border-radius:5px;cursor:pointer;font-weight:600;">${icon('clipboard')} Create Punch</button>
               <button onclick="openLinkPunchModal('${ctid}')" style="flex:1;font-size:11px;padding:4px 6px;background:var(--white);border:1px solid var(--gray-300);color:var(--gray-700);border-radius:5px;cursor:pointer;font-weight:600;">${icon('link')} Link Existing</button>
             </div>
             <div id="punch-chips-${domId}">${_punchLinksForTestHTML(String(c.TestID))}</div>
@@ -16904,7 +16904,7 @@ function _assetPageHTML() {
         { label:'Total Links',     val: ASSET_LINKS.length },
         { label:'Import Batches',  val: ASSET_BATCHES.length },
       ].map(s => `
-        <div style="background:#fff;border:1px solid var(--gray-200);border-radius:8px;padding:14px 20px;min-width:130px;">
+        <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:8px;padding:14px 20px;min-width:130px;">
           <div style="font-size:22px;font-weight:700;color:var(--primary);">${s.val}</div>
           <div style="font-size:12px;color:var(--gray-500);">${s.label}</div>
         </div>`).join('')}
@@ -16932,26 +16932,26 @@ function _assetPageHTML() {
 
     <!-- Bulk action bar -->
     ${_assetSelected.size > 0 ? `
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#1e293b;color:#fff;padding:10px 18px;border-radius:8px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#1e293b;color:var(--white);padding:10px 18px;border-radius:8px;margin-bottom:12px;">
         <span style="font-size:13px;font-weight:600;">${_assetSelected.size} asset${_assetSelected.size!==1?'s':''} selected</span>
         <span style="height:24px;border-left:1px solid #ffffff33;align-self:center;"></span>
         <span style="font-size:12px;color:#94a3b8;white-space:nowrap;">Set Device Type:</span>
         <input id="am-bulk-type" list="am-bulk-type-list" class="form-input"
           placeholder="Type or choose…"
-          style="font-size:12px;max-width:190px;background:#334155;color:#fff;border-color:#475569;caret-color:#fff;">
+          style="font-size:12px;max-width:190px;background:#334155;color:var(--white);border-color:#475569;caret-color:var(--white);">
         <datalist id="am-bulk-type-list">
           ${types.map(t => `<option value="${escapeHtml(t)}"></option>`).join('')}
         </datalist>
         <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_assetBulkEditField('device_type','am-bulk-type')">Apply</button>
         <span style="height:24px;border-left:1px solid #ffffff33;align-self:center;"></span>
         <span style="font-size:12px;color:#94a3b8;white-space:nowrap;">Set Location:</span>
-        <select id="am-bulk-loc" class="form-input" style="font-size:12px;max-width:160px;background:#334155;color:#fff;border-color:#475569;">
+        <select id="am-bulk-loc" class="form-input" style="font-size:12px;max-width:160px;background:#334155;color:var(--white);border-color:#475569;">
           <option value="">— choose —</option>
           ${allLocs.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('')}
         </select>
         <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_assetBulkEditField('location','am-bulk-loc')">Apply</button>
         <span style="height:24px;border-left:1px solid #ffffff33;align-self:center;"></span>
-        ${uiCan('assets','bulk_delete') ? `<button class="admin-action-btn" style="background:#dc2626;font-size:12px;" onclick="_assetBulkDelete()">${icon('trash')} Delete</button>` : ''}
+        ${uiCan('assets','bulk_delete') ? `<button class="admin-action-btn" style="background:var(--bad);font-size:12px;" onclick="_assetBulkDelete()">${icon('trash')} Delete</button>` : ''}
         <button class="btn-ghost-dark" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_assetClearSelection()">Clear</button>
       </div>` : ''}
 
@@ -16999,7 +16999,7 @@ function _assetRowHTML(a) {
 
   const ctx = { a, links, subDisplay, passCount, total, pct };
   const mainRow = `
-    <tr style="${isOpen ? 'background:#eff6ff;' : ''}">
+    <tr style="${isOpen ? 'background:var(--info-light);' : ''}">
       <td><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="_assetToggleSelect('${a.id}',this.checked)"></td>
       ${_colCells('assets', ctx)}
       <td>
@@ -17045,7 +17045,7 @@ function _assetManagePanelHTML(assetId) {
   const sc = s => _assetStatusColor(s);
 
   return `
-    <div style="background:#eff6ff;border-top:1px solid #bfdbfe;padding-bottom:4px;">
+    <div style="background:var(--info-light);border-top:1px solid var(--info-border);padding-bottom:4px;">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px 0;">
         <div style="font-size:13px;font-weight:700;color:var(--primary);">${icon('link')} ${escapeHtml(asset.name)}
           ${asset.location ? `<span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:8px;">${escapeHtml(asset.location)}</span>` : ''}
@@ -17503,7 +17503,7 @@ function _regressionCellHTML(r) {
 
   let bits = '';
   if (attempts.length > 1) {
-    bits += `<span style="font-size:10px;font-weight:700;background:#ede9fe;color:#6d28d9;border:1px solid #ddd6fe;border-radius:3px;padding:1px 6px;">Attempt ${attemptNo}/${attempts.length}</span>`;
+    bits += `<span style="font-size:10px;font-weight:700;background:var(--accent-purple-light);color:var(--accent-purple);border:1px solid #ddd6fe;border-radius:3px;padding:1px 6px;">Attempt ${attemptNo}/${attempts.length}</span>`;
   }
   // Regression availability (owner rule): a FAILED completed test always offers
   // the button. Any OTHER completed test (Pass / Blocked / Complete) is opted in
@@ -17521,18 +17521,18 @@ function _regressionCellHTML(r) {
     }
     if (isFailed || flagged) {
       bits += `<button onclick="regressionTestCase('${escapeHtml(String(r.TestID))}')" title="Create a new regression attempt — preserves this result as history"
-        style="font-size:10px;font-weight:600;padding:3px 8px;background:#f5f3ff;border:1px solid #c4b5fd;color:#6d28d9;border-radius:5px;cursor:pointer;">⟳ Regression</button>`;
+        style="font-size:10px;font-weight:600;padding:3px 8px;background:var(--accent-purple-light);border:1px solid #c4b5fd;color:var(--accent-purple);border-radius:5px;cursor:pointer;">⟳ Regression</button>`;
     }
   }
   // Undo: only when the latest attempt is uncompleted (no real data to lose)
   if (canManage && r.IsLatestAttempt && attempts.length > 1 &&
       (r.Status === 'Not Started' || r.Status === 'In Progress')) {
     bits += `<button onclick="undoRegression('${escapeHtml(String(r.TestID))}')" title="Undo regression — delete this empty attempt and restore the previous one"
-      style="font-size:10px;font-weight:600;padding:3px 8px;background:#fff;border:1px solid var(--gray-300);color:var(--gray-600);border-radius:5px;cursor:pointer;">↶ Undo</button>`;
+      style="font-size:10px;font-weight:600;padding:3px 8px;background:var(--white);border:1px solid var(--gray-300);color:var(--gray-600);border-radius:5px;cursor:pointer;">↶ Undo</button>`;
   }
   if (histCount > 0) {
     bits += `<button onclick="_trToggleAttemptHist('${safeG}')" title="Show previous attempts"
-      style="font-size:10px;padding:3px 7px;background:#fff;border:1px solid var(--gray-300);color:var(--gray-600);border-radius:5px;cursor:pointer;">${icon('clock')} ${histCount} prior</button>`;
+      style="font-size:10px;padding:3px 7px;background:var(--white);border:1px solid var(--gray-300);color:var(--gray-600);border-radius:5px;cursor:pointer;">${icon('clock')} ${histCount} prior</button>`;
   }
   if (!bits) return '';
 
@@ -17552,7 +17552,7 @@ function _regressionCellHTML(r) {
         const forms = (typeof _formsForTestRow === 'function') ? _formsForTestRow(a) : [];
         const formsHtml = forms.length
           ? forms.map(f => `<button onclick="openFormViewer('${escapeHtml(String(f.id))}')" title="Open the data sheet logged for attempt ${a.AttemptNumber||1}"
-              style="font-size:10px;padding:1px 7px;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;border-radius:4px;cursor:pointer;">${icon('paperclip')} ${escapeHtml(f.name||'Form')}</button>`).join(' ')
+              style="font-size:10px;padding:1px 7px;background:var(--info-light);color:var(--info);border:1px solid var(--info-border);border-radius:4px;cursor:pointer;">${icon('paperclip')} ${escapeHtml(f.name||'Form')}</button>`).join(' ')
           : '<span style="color:var(--gray-400);">no form linked</span>';
         return `<div style="font-size:10px;color:var(--gray-600);padding:4px 0;border-bottom:1px solid var(--gray-100);">
           <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
@@ -17791,7 +17791,7 @@ function _cmPageHTML() {
                 <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 14px;background:var(--white);">
                   <div>
                     <div style="font-size:13px;font-weight:600;">${escapeHtml(latest.software_name)}
-                      <span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">${escapeHtml(latest.version)}</span>
+                      <span style="font-family:monospace;background:var(--info-light);color:var(--info);padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">${escapeHtml(latest.version)}</span>
                       <span style="font-size:11px;font-weight:600;color:${statusColor};margin-left:6px;">● ${escapeHtml(latest.status)}</span>
                     </div>
                     <div style="font-size:11px;color:var(--gray-500);margin-top:3px;">
@@ -17807,7 +17807,7 @@ function _cmPageHTML() {
                 ${expanded && histCount > 0 ? `<div style="border-top:1px solid var(--gray-100);background:var(--gray-50);padding:6px 14px;">
                   ${versions.slice(1).map(v => `
                     <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--gray-600);padding:5px 0;border-bottom:1px solid var(--gray-100);">
-                      <span><span style="font-family:monospace;background:var(--gray-200);padding:1px 6px;border-radius:3px;">${escapeHtml(v.version)}</span> · <span style="color:#6b7280;">${escapeHtml(v.status)}</span></span>
+                      <span><span style="font-family:monospace;background:var(--gray-200);padding:1px 6px;border-radius:3px;">${escapeHtml(v.version)}</span> · <span style="color:var(--text-subtle);">${escapeHtml(v.status)}</span></span>
                       <button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="openSwConfigModal('${v.id}')">View / Edit</button>
                     </div>`).join('')}
                 </div>` : ''}
@@ -17831,7 +17831,7 @@ function _cmPageHTML() {
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
         <div style="display:flex;gap:24px;flex-wrap:wrap;">
           <div><div style="font-size:22px;font-weight:700;">${totalItems}</div><div style="font-size:11px;color:var(--gray-500);">Config Items</div></div>
-          <div><div style="font-size:22px;font-weight:700;color:#16a34a;">${activeCount}</div><div style="font-size:11px;color:var(--gray-500);">Active Versions</div></div>
+          <div><div style="font-size:22px;font-weight:700;color:var(--good);">${activeCount}</div><div style="font-size:11px;color:var(--gray-500);">Active Versions</div></div>
           <div><div style="font-size:22px;font-weight:700;">${masterCount}</div><div style="font-size:11px;color:var(--gray-500);">Master VDDs</div></div>
           <div><div style="font-size:22px;font-weight:700;">${deployTotal}</div><div style="font-size:11px;color:var(--gray-500);">Deployments</div></div>
           ${deployTotal ? `<div><div style="font-size:22px;font-weight:700;color:${deployDrift ? '#d97706' : '#16a34a'};">${deployDrift ? deployDrift + ' drifted' : '100% in sync'}</div><div style="font-size:11px;color:var(--gray-500);">Field Status</div></div>` : ''}
@@ -17946,7 +17946,7 @@ const _swDeployInfo = { in_sync: { label: 'In Sync', color: '#16a34a' }, behind:
 function _cmEquipSectionHTML(configId) {
   const items = _swEquipFor(configId);
   const expanded = _cmEquipExpanded.has(configId);
-  let h = '<div style="border-top:1px solid var(--border);padding:5px 14px 7px;background:#f8fafc;">' +
+  let h = '<div style="border-top:1px solid var(--border);padding:5px 14px 7px;background:var(--surface-2);">' +
     '<div style="display:flex;align-items:center;justify-content:space-between;min-height:22px;">' +
       '<span style="font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.07em;">' + icon('cpu') + ' Configuration Items (' + items.length + ')</span>' +
       '<div style="display:flex;gap:3px;">' +
@@ -17974,7 +17974,7 @@ function _cmEquipSectionHTML(configId) {
         '<td style="padding:3px 7px;font-weight:600;">' + escapeHtml(eq.equipment_name) + '</td>' +
         '<td style="padding:3px 7px;">' + ciBadge + '</td>' +
         '<td style="padding:3px 7px;">' +
-          '<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 5px;border-radius:3px;font-size:11px;">' + escapeHtml(eq.sw_type) + '</span>' +
+          '<span style="font-family:monospace;background:var(--info-light);color:var(--info);padding:1px 5px;border-radius:3px;font-size:11px;">' + escapeHtml(eq.sw_type) + '</span>' +
         '</td>' +
         '<td style="padding:3px 7px;font-family:monospace;font-size:11px;">' + escapeHtml(eq.part_number) + '</td>' +
         '<td style="padding:3px 7px;font-family:monospace;font-size:11px;color:var(--gray-500);">' + escapeHtml(eq.crc || '') + '</td>' +
@@ -17995,7 +17995,7 @@ function _cmEquipSectionHTML(configId) {
 function _cmDeploySectionHTML(configId) {
   const items = SW_DEPLOYMENTS.filter(d => d.config_id === configId);
   const expanded = _cmDeployExpanded.has(configId);
-  let h = '<div style="border-top:1px solid var(--border);padding:5px 14px 7px;background:#f0fdf4;">' +
+  let h = '<div style="border-top:1px solid var(--border);padding:5px 14px 7px;background:var(--good-light);">' +
     '<div style="display:flex;align-items:center;justify-content:space-between;min-height:22px;">' +
       '<span style="font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.07em;">' + icon('map-pin') + ' Field Deployments (' + items.length + ')</span>' +
       '<div style="display:flex;gap:3px;">' +
@@ -18060,10 +18060,10 @@ function _cmVddCardHTML(config, depth, childMap, _sc) {
   h += '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:' + padding + ';background:' + headerBg + ';">';
   h += '<div>';
   h += '<div style="font-size:' + nameSize + ';font-weight:' + fontWeight + ';">' + nameIcon + ' ' + escapeHtml(config.software_name) +
-    '<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">' + escapeHtml(config.version) + '</span>' +
+    '<span style="font-family:monospace;background:var(--info-light);color:var(--info);padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px;">' + escapeHtml(config.version) + '</span>' +
     '<span style="font-size:11px;font-weight:600;color:' + _sc(config) + ';margin-left:6px;">● ' + escapeHtml(config.status) + '</span>';
-  if (isRoot && hasChildren) h += '<span style="font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:1px 6px;margin-left:8px;">MASTER VDD</span>';
-  else if (hasChildren)      h += '<span style="font-size:10px;font-weight:700;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:3px;padding:1px 6px;margin-left:8px;">SUB-VDD</span>';
+  if (isRoot && hasChildren) h += '<span style="font-size:10px;font-weight:700;background:var(--warn-light);color:var(--warn);border:1px solid var(--warn-border);border-radius:3px;padding:1px 6px;margin-left:8px;">MASTER VDD</span>';
+  else if (hasChildren)      h += '<span style="font-size:10px;font-weight:700;background:var(--info-light);color:var(--info);border:1px solid var(--info-border);border-radius:3px;padding:1px 6px;margin-left:8px;">SUB-VDD</span>';
   h += '</div>';
   h += '<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">' +
     icon('settings') + ' ' + escapeHtml(config.subsystem||'—') + ' · ' + icon('pin') + ' ' + escapeHtml([config.phase, config.location].filter(Boolean).join(' · ') || '—') +
@@ -18198,19 +18198,19 @@ function _cmDeployViewHTML(f) {
         '<div>' +
           '<div style="font-size:13px;font-weight:700;">' + escapeHtml(g.software_name) +
             '<span style="font-size:11px;font-weight:400;color:var(--gray-500);margin-left:8px;">' + icon('settings') + ' ' + escapeHtml(g.subsystem||'—') + '</span>' +
-            (activeCfg ? ' <span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 7px;border-radius:4px;font-size:11px;">VDD: ' + escapeHtml(activeCfg.version) + '</span>' : '') +
+            (activeCfg ? ' <span style="font-family:monospace;background:var(--info-light);color:var(--info);padding:1px 7px;border-radius:4px;font-size:11px;">VDD: ' + escapeHtml(activeCfg.version) + '</span>' : '') +
           '</div>' +
           '<div style="display:flex;gap:10px;margin-top:3px;">' +
-            (syncCount   ? '<span style="font-size:11px;font-weight:600;color:#16a34a;">● ' + syncCount + ' in sync</span>' : '') +
-            (behindCount ? '<span style="font-size:11px;font-weight:600;color:#d97706;">● ' + behindCount + ' behind baseline</span>' : '') +
-            (crcCount    ? '<span style="font-size:11px;font-weight:600;color:#dc2626;">● ' + crcCount + ' CRC mismatch</span>' : '') +
-            (unknownCount? '<span style="font-size:11px;font-weight:600;color:#dc2626;">● ' + unknownCount + ' unknown version</span>' : '') +
+            (syncCount   ? '<span style="font-size:11px;font-weight:600;color:var(--good);">● ' + syncCount + ' in sync</span>' : '') +
+            (behindCount ? '<span style="font-size:11px;font-weight:600;color:var(--warn);">● ' + behindCount + ' behind baseline</span>' : '') +
+            (crcCount    ? '<span style="font-size:11px;font-weight:600;color:var(--bad);">● ' + crcCount + ' CRC mismatch</span>' : '') +
+            (unknownCount? '<span style="font-size:11px;font-weight:600;color:var(--bad);">● ' + unknownCount + ' unknown version</span>' : '') +
           '</div>' +
         '</div>' +
         '<button class="form-secondary" style="font-size:11px;padding:3px 8px;white-space:nowrap;" onclick="openSwDeployModal(\'' + (activeCfg?.id || '') + '\')">+ Log Deployment</button>' +
       '</div>' +
       '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
-        '<thead><tr style="background:#f8fafc;">' +
+        '<thead><tr style="background:var(--surface-2);">' +
           '<th style="text-align:left;padding:4px 12px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Equipment</th>' +
           '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Phase / Location</th>' +
           '<th style="text-align:left;padding:4px 10px;font-size:10px;font-weight:700;color:var(--gray-400);text-transform:uppercase;">Deployed Version</th>' +
@@ -18376,7 +18376,7 @@ function openSwConfigModal(editId, cloneFromId, parentVddId) {
           <textarea id="sw-notes" class="form-input" rows="3" placeholder="What changed in this version…">${escapeHtml(v('notes'))}</textarea>
         </div>
       </div>
-      ${isNewVersion ? `<div style="font-size:12px;color:var(--gray-500);margin-top:10px;padding:8px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;">Installing a new version will automatically mark the current <strong>${escapeHtml(clone.version)}</strong> as <em>superseded</em>. Completed test cases keep their old snapshot.</div>` : ''}
+      ${isNewVersion ? `<div style="font-size:12px;color:var(--gray-500);margin-top:10px;padding:8px 12px;background:var(--warn-light);border:1px solid var(--warn-border);border-radius:6px;">Installing a new version will automatically mark the current <strong>${escapeHtml(clone.version)}</strong> as <em>superseded</em>. Completed test cases keep their old snapshot.</div>` : ''}
     `,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
@@ -18700,7 +18700,7 @@ function _vmLightDot(light, size) {
 function _vmTypeBadge(type) {
   const isD = type === 'D';
   const bg = isD ? '#1e3a8a' : '#7c2d12';
-  return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;background:${bg};color:#fff;border-radius:5px;padding:2px 8px;letter-spacing:.04em;">${escapeHtml(type)}-Car</span>`;
+  return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;background:${bg};color:var(--white);border-radius:5px;padding:2px 8px;letter-spacing:.04em;">${escapeHtml(type)}-Car</span>`;
 }
 const _VM_WF_TONE = {
   'Not Started': 'muted', 'In Progress': 'info', 'Complete': 'good', 'Failed': 'bad', 'N/A': 'muted',
@@ -19065,7 +19065,7 @@ function _vmWorkflowTabHTML(car) {
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <span style="font-size:14px;font-weight:600;">${escapeHtml(it.title)}</span>
             ${it.required === false ? _vmChip('Optional', 'muted') : ''}
-            ${(it.attempt_number || 1) > 1 ? `<span style="font-size:10px;font-weight:700;background:#ede9fe;color:#6d28d9;border:1px solid #ddd6fe;border-radius:3px;padding:1px 6px;">Attempt ${it.attempt_number}</span>` : ''}
+            ${(it.attempt_number || 1) > 1 ? `<span style="font-size:10px;font-weight:700;background:var(--accent-purple-light);color:var(--accent-purple);border:1px solid #ddd6fe;border-radius:3px;padding:1px 6px;">Attempt ${it.attempt_number}</span>` : ''}
             ${cs.total ? _vmChip('Checklist ' + cs.done + '/' + cs.total + (cs.fails ? ' · ' + cs.fails + ' fail' : ''), cs.fails ? 'bad' : (cs.done === cs.total ? 'good' : 'info')) : ''}
           </div>
           ${it.description ? `<div style="font-size:12px;color:var(--gray-500);margin-top:3px;">${escapeHtml(it.description)}</div>` : ''}
@@ -19082,14 +19082,14 @@ function _vmWorkflowTabHTML(car) {
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
-        ${forms.map(f => `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;background:#eef2ff;color:#3730a3;border:1px solid #e0e7ff;border-radius:6px;padding:3px 8px;">
-            <button onclick="openFormViewer('${f.id}')" title="Open / fill" style="border:none;background:none;color:#3730a3;cursor:pointer;font:inherit;display:inline-flex;align-items:center;gap:5px;padding:0;">${icon('file')} ${escapeHtml(f.name || f.original_filename || 'Form')}</button>
-            ${canEdit ? `<button onclick="_vmUnlinkForm('${f.id}','${it.id}')" aria-label="Unlink form" title="Unlink" style="border:none;background:none;color:#9ca3af;cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}
+        ${forms.map(f => `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;background:var(--info-light);color:var(--info);border:1px solid #e0e7ff;border-radius:6px;padding:3px 8px;">
+            <button onclick="openFormViewer('${f.id}')" title="Open / fill" style="border:none;background:none;color:var(--info);cursor:pointer;font:inherit;display:inline-flex;align-items:center;gap:5px;padding:0;">${icon('file')} ${escapeHtml(f.name || f.original_filename || 'Form')}</button>
+            ${canEdit ? `<button onclick="_vmUnlinkForm('${f.id}','${it.id}')" aria-label="Unlink form" title="Unlink" style="border:none;background:none;color:var(--text-subtle);cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}
           </span>`).join('')}
         ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;" onclick="_vmLinkFormModal('${it.id}')">${icon('paperclip')} Attach form</button>` : ''}
         <button class="form-secondary" style="font-size:11px;padding:3px 9px;" onclick="_vmChkToggleOpen('${it.id}')">${chkOpen ? '▾' : '▸'} Checklist${cs.total ? ' (' + cs.done + '/' + cs.total + ')' : ''}</button>
         ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;" onclick="_vmChkBuilderModal('item','${it.id}')">${icon('sliders')} Edit checklist</button>` : ''}
-        ${failed && canEdit ? `<button onclick="_vmWfRegression('${it.id}')" title="Freeze this failed attempt and start a fresh run" style="font-size:11px;font-weight:600;padding:3px 9px;background:#f5f3ff;border:1px solid #c4b5fd;color:#6d28d9;border-radius:6px;cursor:pointer;">${icon('refresh')} New attempt</button>` : ''}
+        ${failed && canEdit ? `<button onclick="_vmWfRegression('${it.id}')" title="Freeze this failed attempt and start a fresh run" style="font-size:11px;font-weight:600;padding:3px 9px;background:var(--accent-purple-light);border:1px solid #c4b5fd;color:var(--accent-purple);border-radius:6px;cursor:pointer;">${icon('refresh')} New attempt</button>` : ''}
         ${hist.length ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;" onclick="_vmToggleHist('${it.id}')">${histOpen ? '▾' : '▸'} History (${hist.length})</button>` : ''}
         ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;color:var(--bad);margin-left:auto;" onclick="_vmWfDelete('${it.id}')">${icon('trash')} Delete</button>` : ''}
       </div>
@@ -19099,7 +19099,7 @@ function _vmWorkflowTabHTML(car) {
           <span style="font-weight:700;">Attempt ${a.attempt_number || 1}</span> ${_vmChip(a.status, _VM_WF_TONE[a.status] || 'muted')}
           ${a.completed_by ? '· ' + escapeHtml(a.completed_by) : ''}
           ${a.completed_at ? '· ' + escapeHtml(new Date(a.completed_at).toLocaleDateString()) : ''}
-          ${_vmFormsForItem(a.id).map(f => `<button onclick="openFormViewer('${f.id}')" style="border:none;background:none;color:#3730a3;cursor:pointer;font:inherit;">${icon('file')} ${escapeHtml(f.name || 'Form')}</button>`).join('')}
+          ${_vmFormsForItem(a.id).map(f => `<button onclick="openFormViewer('${f.id}')" style="border:none;background:none;color:var(--info);cursor:pointer;font:inherit;">${icon('file')} ${escapeHtml(f.name || 'Form')}</button>`).join('')}
         </div>`).join('')}
       </div>` : ''}
     </div>`;
@@ -19183,7 +19183,7 @@ function _vmEquipTabHTML(car) {
   let h = toolbar;
   for (const [device, rows] of byDevice) {
     h += `<div style="margin-bottom:16px;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
-      <div style="display:flex;align-items:center;justify-content:space-between;background:#f8fafc;padding:8px 12px;border-bottom:1px solid var(--border);">
+      <div style="display:flex;align-items:center;justify-content:space-between;background:var(--surface-2);padding:8px 12px;border-bottom:1px solid var(--border);">
         <span style="font-weight:700;font-size:13px;">${icon('cpu')} ${escapeHtml(device)}</span>
         ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:2px 9px;" onclick="_vmEquipModal('${car.id}',null,'${escapeHtml(device).replace(/'/g, "\\'")}')">${icon('plus')} Add software type</button>` : ''}
       </div>
@@ -19194,7 +19194,7 @@ function _vmEquipTabHTML(car) {
       const [label, tone] = _VM_COMPLIANCE_META[c.state] || ['—', 'muted'];
       const loadedTxt = c.loaded || e.loaded_version || '—';
       h += `<tr style="border-bottom:1px solid var(--border);">
-        <td style="padding:6px 8px;">${e.sw_type ? `<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 5px;border-radius:3px;">${escapeHtml(e.sw_type)}</span>` : ''}</td>
+        <td style="padding:6px 8px;">${e.sw_type ? `<span style="font-family:monospace;background:var(--info-light);color:var(--info);padding:1px 5px;border-radius:3px;">${escapeHtml(e.sw_type)}</span>` : ''}</td>
         <td style="padding:6px 8px;font-family:monospace;font-weight:600;">${escapeHtml(loadedTxt)}</td>
         <td style="padding:6px 8px;font-family:monospace;color:var(--gray-500);">${escapeHtml(c.expected || (e.sw_equipment_id || e.config_id ? '—' : 'not linked'))}</td>
         <td style="padding:6px 8px;">${_vmChip(label, tone)}</td>
@@ -19794,7 +19794,7 @@ function _vmTemplatesBodyHTML() {
     <div style="display:flex;flex-direction:column;gap:5px;">
       ${eq.length ? eq.map(i => `<div style="display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;">
         <span style="flex:1;font-weight:600;">${escapeHtml(i.equipment_name)}</span>
-        ${i.sw_type ? `<span style="font-family:monospace;background:#eef2ff;color:#3730a3;padding:1px 5px;border-radius:3px;">${escapeHtml(i.sw_type)}</span>` : ''}
+        ${i.sw_type ? `<span style="font-family:monospace;background:var(--info-light);color:var(--info);padding:1px 5px;border-radius:3px;">${escapeHtml(i.sw_type)}</span>` : ''}
         <span style="color:var(--gray-500);">${escapeHtml(_vmConfigById(i.config_id)?.software_name || (i.config_id ? '' : 'no VDD'))}</span>
         <button class="form-secondary" style="font-size:10px;padding:1px 6px;color:var(--bad);" onclick="_vmTplDelEq('${i.id}')">Del</button>
       </div>`).join('') : `<div style="font-size:12px;color:var(--gray-500);">No equipment baseline for ${t}-Car.</div>`}
@@ -19857,9 +19857,9 @@ function _punchLinksSectionHTML(p) {
   }).join('') : `<div style="font-size:12px;color:var(--gray-400);padding:10px 14px;">No linked test cases.</div>`;
   // Linked cars
   const cars = (p.linked_car_ids || []).map(id => VEHarr.find(v => v.id === id)).filter(Boolean);
-  const cHTML = cars.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:10px 14px;">${cars.map(v => `<span style="display:inline-flex;align-items:center;gap:7px;font-size:12px;background:#eef2ff;color:#3730a3;border:1px solid #e0e7ff;border-radius:6px;padding:4px 10px;">
-        <button onclick="_punchOpenCar('${v.id}')" title="Open in Vehicle Management" style="border:none;background:none;color:#3730a3;cursor:pointer;font:inherit;font-weight:700;font-family:monospace;">${escapeHtml(v.car_number)} · ${escapeHtml(v.car_type)}</button>
-        ${canLink ? `<button onclick="_punchUnlinkCar('${pid}','${v.id}')" aria-label="Unlink car" title="Unlink" style="border:none;background:none;color:#9ca3af;cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}
+  const cHTML = cars.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:10px 14px;">${cars.map(v => `<span style="display:inline-flex;align-items:center;gap:7px;font-size:12px;background:var(--info-light);color:var(--info);border:1px solid #e0e7ff;border-radius:6px;padding:4px 10px;">
+        <button onclick="_punchOpenCar('${v.id}')" title="Open in Vehicle Management" style="border:none;background:none;color:var(--info);cursor:pointer;font:inherit;font-weight:700;font-family:monospace;">${escapeHtml(v.car_number)} · ${escapeHtml(v.car_type)}</button>
+        ${canLink ? `<button onclick="_punchUnlinkCar('${pid}','${v.id}')" aria-label="Unlink car" title="Unlink" style="border:none;background:none;color:var(--text-subtle);cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}
       </span>`).join('')}</div>` : `<div style="font-size:12px;color:var(--gray-400);padding:10px 14px;">No linked cars.</div>`;
   return `<div style="margin-bottom:18px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -20387,7 +20387,7 @@ function _vmChkLineHTML(car, it, l, canEdit) {
       ${l.completed_by ? `<span style="font-size:10px;color:var(--gray-400);">${escapeHtml(l.completed_by)}</span>` : ''}
       ${(photos.length || files.length) ? `<div style="flex-basis:100%;display:flex;flex-wrap:wrap;gap:5px;padding-left:18px;">
         ${photos.map(ph => `<button onclick="_vmChkOpenPhoto('${escapeHtml(ph.storage_path)}')" style="font-size:10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);padding:2px 7px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">${icon('image')} ${escapeHtml(ph.file_name || 'photo')}</button>`).join('')}
-        ${files.map(f => `<span style="font-size:10px;border:1px solid var(--border);border-radius:5px;padding:2px 7px;display:inline-flex;align-items:center;gap:4px;"><button onclick="_vmFileOpen('${escapeHtml(f.storage_path)}')" style="border:none;background:none;cursor:pointer;font:inherit;color:var(--text);display:inline-flex;align-items:center;gap:4px;padding:0;">${icon('paperclip')} ${escapeHtml(f.file_name)}</button>${canEdit ? `<button aria-label="Delete file" title="Delete file" onclick="_vmFileDelete('${f.id}')" style="border:none;background:none;color:#9ca3af;cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}</span>`).join('')}
+        ${files.map(f => `<span style="font-size:10px;border:1px solid var(--border);border-radius:5px;padding:2px 7px;display:inline-flex;align-items:center;gap:4px;"><button onclick="_vmFileOpen('${escapeHtml(f.storage_path)}')" style="border:none;background:none;cursor:pointer;font:inherit;color:var(--text);display:inline-flex;align-items:center;gap:4px;padding:0;">${icon('paperclip')} ${escapeHtml(f.file_name)}</button>${canEdit ? `<button aria-label="Delete file" title="Delete file" onclick="_vmFileDelete('${f.id}')" style="border:none;background:none;color:var(--text-subtle);cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}</span>`).join('')}
       </div>` : ''}
     </div>`;
 }
@@ -21038,14 +21038,14 @@ function _rmaViewModal(id) {
   const r = RMAS.find(x => x.id === id);
   if (!r) return;
   const row = (label, val) => val
-    ? `<tr><td style="padding:7px 16px 7px 0;font-size:13px;color:#6b7280;font-weight:500;white-space:nowrap;width:210px;">${label}</td>` +
-      `<td style="padding:7px 0;font-size:13px;color:#111827;">${escapeHtml(String(val))}</td></tr>`
+    ? `<tr><td style="padding:7px 16px 7px 0;font-size:13px;color:var(--text-subtle);font-weight:500;white-space:nowrap;width:210px;">${label}</td>` +
+      `<td style="padding:7px 0;font-size:13px;color:var(--text);">${escapeHtml(String(val))}</td></tr>`
     : '';
   modal({
     title: `RMA — ${r.rma_number}`,
     size:  'large',
     body:
-      `<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #e5e7eb;">` +
+      `<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--line-soft);">` +
       `${_rmaStatusBadge(r.status)}<span style="font-size:12px;color:var(--gray-500);">Created ${_fmtDate(r.created_at)} by ${escapeHtml(r.created_by||'—')}</span></div>` +
       `<table style="width:100%;border-collapse:collapse;margin-bottom:4px;">` +
       row('Location',    r.location) +
@@ -21055,7 +21055,7 @@ function _rmaViewModal(id) {
       row('Closed Date', r.closed_date ? _fmtDate(r.closed_date) : null) +
       row(_rmaIsTerminal(r.status) ? 'Cycle Time' : 'Days Open', `${_rmaCycleInfo(r).days} days`) +
       `</table>` +
-      `<div style="margin:16px 0 10px;font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:0.06em;border-top:1px solid #e5e7eb;padding-top:14px;">Field Engineer Details</div>` +
+      `<div style="margin:16px 0 10px;font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:0.06em;border-top:1px solid var(--line-soft);padding-top:14px;">Field Engineer Details</div>` +
       `<table style="width:100%;border-collapse:collapse;margin-bottom:4px;">` +
       row('Manufacturer',         r.manufacturer) +
       row('Serial Number',        r.serial_number) +
@@ -21075,18 +21075,18 @@ function _rmaPrintPDF(id) {
   const r = RMAS.find(x => x.id === id);
   if (!r) return;
   const cell = (label, val) =>
-    `<td style="padding:7px 16px 7px 0;font-size:12px;font-weight:600;color:#374151;width:180px;vertical-align:top;">${label}</td>` +
-    `<td style="padding:7px 16px 7px 0;font-size:12px;color:#111827;vertical-align:top;">${escapeHtml(String(val||'—'))}</td>`;
+    `<td style="padding:7px 16px 7px 0;font-size:12px;font-weight:600;color:var(--text-muted);width:180px;vertical-align:top;">${label}</td>` +
+    `<td style="padding:7px 16px 7px 0;font-size:12px;color:var(--text);vertical-align:top;">${escapeHtml(String(val||'—'))}</td>`;
 
   const html = [
     '<!DOCTYPE html><html><head><meta charset="utf-8"><title>RMA ' + r.rma_number + '</title>',
-    '<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;color:#111827;background:#fff;padding:32px;}',
-    '.hdr{display:flex;justify-content:space-between;padding-bottom:16px;border-bottom:2px solid #C8001A;margin-bottom:20px;}',
-    '.co{font-size:14px;font-weight:700;color:#C8001A;}.co-sub{font-size:11px;color:#6b7280;margin-top:2px;}',
-    '.proj{text-align:right;font-size:11px;color:#6b7280;}h1{font-size:17px;font-weight:700;text-align:center;margin-bottom:20px;}',
-    '.sec{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#C8001A;margin:18px 0 8px;padding-top:14px;border-top:1px solid #e5e7eb;}',
+    '<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;color:var(--text);background:var(--white);padding:32px;}',
+    '.hdr{display:flex;justify-content:space-between;padding-bottom:16px;border-bottom:2px solid var(--hitachi-red-hover);margin-bottom:20px;}',
+    '.co{font-size:14px;font-weight:700;color:var(--hitachi-red-hover);}.co-sub{font-size:11px;color:var(--text-subtle);margin-top:2px;}',
+    '.proj{text-align:right;font-size:11px;color:var(--text-subtle);}h1{font-size:17px;font-weight:700;text-align:center;margin-bottom:20px;}',
+    '.sec{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--hitachi-red-hover);margin:18px 0 8px;padding-top:14px;border-top:1px solid var(--line-soft);}',
     'table{width:100%;border-collapse:collapse;}',
-    '.ftr{margin-top:40px;padding-top:10px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;font-size:10px;color:#9ca3af;}',
+    '.ftr{margin-top:40px;padding-top:10px;border-top:1px solid var(--line-soft);display:flex;justify-content:space-between;font-size:10px;color:var(--text-subtle);}',
     '@media print{body{padding:16px;}}</style></head><body>',
     '<div class="hdr"><div><div class="co">Hitachi Rail STS</div>',
     '<div class="co-sub">1000 Technology Dr, Pittsburgh, Pennsylvania 15219-3120</div>',
@@ -21106,10 +21106,10 @@ function _rmaPrintPDF(id) {
     '<tr>' + cell('Manufacturer', r.manufacturer) + cell('Serial Number', r.serial_number) + '</tr>',
     '<tr>' + cell('Replacement Serial #', r.replacement_serial_number) + cell('Manufacturer P/N', r.manufacturer_pn) + '</tr>',
     '<tr>' + cell('STS P/N', r.sts_pn) + '<td colspan="2"></td></tr>',
-    '<tr><td style="padding:7px 16px 7px 0;font-size:12px;font-weight:600;color:#374151;vertical-align:top;">Material Description</td>',
-    '<td colspan="3" style="padding:7px 0;font-size:12px;color:#111827;">' + escapeHtml(r.material_description||'—') + '</td></tr>',
+    '<tr><td style="padding:7px 16px 7px 0;font-size:12px;font-weight:600;color:var(--text-muted);vertical-align:top;">Material Description</td>',
+    '<td colspan="3" style="padding:7px 0;font-size:12px;color:var(--text);">' + escapeHtml(r.material_description||'—') + '</td></tr>',
     '</table>',
-    r.notes ? '<div style="margin-top:14px;padding:10px 14px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:4px;font-size:12px;"><strong>Notes:</strong> ' + escapeHtml(r.notes) + '</div>' : '',
+    r.notes ? '<div style="margin-top:14px;padding:10px 14px;background:var(--surface-2);border:1px solid var(--line-soft);border-radius:4px;font-size:12px;"><strong>Notes:</strong> ' + escapeHtml(r.notes) + '</div>' : '',
     '<div class="ftr"><span>Hitachi Rail STS</span><span>Page 1 of 1</span>',
     '<span>Printed On: ' + new Date().toLocaleString('en-US',{dateStyle:'long',timeStyle:'short'}) + '</span></div>',
     '</body></html>'
@@ -21570,9 +21570,9 @@ async function _taskQuickPatch(id, patch) {
 
 // Returns inline style string for a status value so the select looks badge-like.
 function _taskStatusSelectStyle(status) {
-  const m = { 'Not Started': 'background:#f3f4f6;color:#6b7280;border-color:#d1d5db;',
+  const m = { 'Not Started': 'background:var(--surface-3);color:var(--text-subtle);border-color:var(--border-strong);',
                'In Progress': 'background:#eef3ff;color:#1d4eaf;border-color:rgba(29,78,175,0.25);',
-               'Done':        'background:#ecfdf5;color:#15803d;border-color:rgba(21,128,61,0.25);' };
+               'Done':        'background:var(--good-light);color:var(--good);border-color:rgba(21,128,61,0.25);' };
   return m[status] || m['Not Started'];
 }
 
@@ -21580,8 +21580,8 @@ function _taskViewModal(id) {
   const t = TASKS.find(x => x.id === id);
   if (!t) return;
   const row = (label, val) => val
-    ? `<tr><td style="padding:7px 16px 7px 0;font-size:13px;color:#6b7280;font-weight:500;white-space:nowrap;width:210px;vertical-align:top;">${label}</td>` +
-      `<td style="padding:7px 0;font-size:13px;color:#111827;">${val}</td></tr>`
+    ? `<tr><td style="padding:7px 16px 7px 0;font-size:13px;color:var(--text-subtle);font-weight:500;white-space:nowrap;width:210px;vertical-align:top;">${label}</td>` +
+      `<td style="padding:7px 0;font-size:13px;color:var(--text);">${val}</td></tr>`
     : '';
   const types          = _taskTypeList(t);
   const comments       = _taskComments(t).slice().sort((a, b) => new Date(a.at) - new Date(b.at));
@@ -21594,7 +21594,7 @@ function _taskViewModal(id) {
     const roleLabel = { admin:'Admin', field_engineer:'Field Engineer', client:'Client', readonly:'Read Only' }[c.by_role] || c.by_role || '';
     return `
       <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border-bottom:1px solid var(--gray-100);">
-        <div style="width:30px;height:30px;border-radius:50%;background:var(--hitachi-red);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${escapeHtml(initials)}</div>
+        <div style="width:30px;height:30px;border-radius:50%;background:var(--hitachi-red);color:var(--white);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${escapeHtml(initials)}</div>
         <div style="flex:1;min-width:0;">
           <div style="font-size:12px;font-weight:600;color:var(--gray-800);">${escapeHtml(c.by || '—')} <span style="font-weight:400;color:var(--gray-500);">${roleLabel ? '· ' + escapeHtml(roleLabel) + ' ' : ''}· ${dateAgo(c.at)}</span></div>
           ${c.text ? `<div style="font-size:13px;color:var(--gray-700);margin-top:3px;white-space:pre-wrap;">${escapeHtml(c.text)}</div>` : ''}
@@ -21610,7 +21610,7 @@ function _taskViewModal(id) {
     title: `Task — ${escapeHtml(t.task_name)}`,
     size:  'large',
     body:
-      `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #e5e7eb;">` +
+      `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--line-soft);">` +
       (uiCan('tasks','edit') || uiCan('tasks','change_status')
         ? `<select onchange="_taskQuickPatch('${id}', {status: this.value}); this.style.cssText='border:1px solid;border-radius:20px;padding:3px 12px;font-size:12px;font-weight:600;cursor:pointer;appearance:auto;'+_taskStatusSelectStyle(this.value);"
              style="border:1px solid;border-radius:20px;padding:3px 12px;font-size:12px;font-weight:600;cursor:pointer;appearance:auto;${_taskStatusSelectStyle(t.status || 'Not Started')}">` +
@@ -21630,26 +21630,26 @@ function _taskViewModal(id) {
           (uiCan('tasks','edit') || uiCan('tasks','change_status')
             ? ` <label style="display:inline-flex;align-items:center;gap:5px;margin-left:10px;cursor:pointer;vertical-align:middle;">` +
               `<input type="checkbox" onchange="_taskQuickPatch('${id}', {prerequisite_met: this.checked})" ${t.prerequisite_met ? 'checked' : ''}>` +
-              `<span style="font-size:11px;font-weight:600;${t.prerequisite_met ? 'color:#059669;' : 'color:#92400e;'}">${t.prerequisite_met ? 'Met' : 'Pending'}</span></label>`
+              `<span style="font-size:11px;font-weight:600;${t.prerequisite_met ? 'color:var(--good);' : 'color:var(--warn);'}">${t.prerequisite_met ? 'Met' : 'Pending'}</span></label>`
             : (t.prerequisite_met
-                ? ` <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:#059669;background:#d1fae5;padding:1px 7px;border-radius:10px;margin-left:6px;vertical-align:middle;">${icon('check')} Met</span>`
-                : ` <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:#92400e;background:#fef3c7;padding:1px 7px;border-radius:10px;margin-left:6px;vertical-align:middle;">Pending</span>`))
+                ? ` <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:var(--good);background:var(--good-light);padding:1px 7px;border-radius:10px;margin-left:6px;vertical-align:middle;">${icon('check')} Met</span>`
+                : ` <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:var(--warn);background:var(--warn-light);padding:1px 7px;border-radius:10px;margin-left:6px;vertical-align:middle;">Pending</span>`))
         : null) +
       row('Last Edited',  t.updated_at ? `${_fmtDate(t.updated_at)}${t.updated_by ? ' by ' + escapeHtml(t.updated_by) : ''}` : null) +
       `</table>` +
       (t.updates ? `<div style="margin-top:14px;padding:12px 14px;background:var(--gray-50);border-radius:6px;font-size:13px;color:var(--gray-700);white-space:pre-wrap;"><strong>Earlier notes:</strong>\n${escapeHtml(t.updates)}</div>` : '') +
 
       // ── Prerequisite Updates ─────────────────────────────────────────────────
-      `<div style="margin:22px 0 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">` +
+      `<div style="margin:22px 0 0;padding:14px 16px;background:var(--warn-light);border:1px solid var(--warn-border);border-radius:10px;">` +
       `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">` +
-      `<div style="font-size:11px;font-weight:700;color:#b45309;text-transform:uppercase;letter-spacing:0.06em;">${icon('flag')} Prerequisite Updates</div>` +
-      `<span style="font-size:11px;color:#92400e;">${t.prerequisite_met ? '<span style=\'font-weight:600;color:#059669;\'>&#10003; Prerequisite Met</span>' : 'Prerequisite Pending'}</span>` +
+      `<div style="font-size:11px;font-weight:700;color:var(--warn);text-transform:uppercase;letter-spacing:0.06em;">${icon('flag')} Prerequisite Updates</div>` +
+      `<span style="font-size:11px;color:var(--warn);">${t.prerequisite_met ? '<span style=\'font-weight:600;color:var(--good);\'>&#10003; Prerequisite Met</span>' : 'Prerequisite Pending'}</span>` +
       `</div>` +
-      `<div style="display:flex;flex-direction:column;gap:0;max-height:240px;overflow-y:auto;border:1px solid #fde68a;border-radius:8px;background:#fff;padding:4px 0;" id="task-prereq-timeline-${id}">${prereqCommHTML}</div>` +
+      `<div style="display:flex;flex-direction:column;gap:0;max-height:240px;overflow-y:auto;border:1px solid var(--warn-border);border-radius:8px;background:var(--white);padding:4px 0;" id="task-prereq-timeline-${id}">${prereqCommHTML}</div>` +
       (canComment ? (
         `<div class="punch-comment-composer" style="margin-top:8px;">` +
           `<textarea id="task-prereq-input-${id}" class="form-input" rows="2" placeholder="Update on the prerequisite…"></textarea>` +
-          `<button class="form-submit punch-comment-post" style="background:#b45309;" onclick="addTaskPrereqComment('${id}')">Post</button>` +
+          `<button class="form-submit punch-comment-post" style="background:var(--warn);" onclick="addTaskPrereqComment('${id}')">Post</button>` +
         `</div>`
       ) : '') +
       `</div>` +
@@ -22385,13 +22385,13 @@ function openMtgModal(editId) {
     body: `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
         <div style="grid-column:span 2;">
-          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Meeting Title *</label>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Meeting Title *</label>
           <input class="form-input" id="mtg-title" value="${escapeHtml(m.title||'')}"
             placeholder="e.g. BART CBTC: T&C Readiness Meeting"
             style="font-size:15px;padding:12px 14px;border-radius:6px;">
         </div>
         <div style="grid-column:span 2;">
-          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Series
+          <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Series
             <span style="font-weight:400;color:var(--gray-400);font-size:11px;margin-left:6px;">groups meetings together in the list</span>
           </label>
           <input class="form-input" id="mtg-series" value="${escapeHtml(m.series||'')}" list="mtg-series-list"
@@ -22400,24 +22400,24 @@ function openMtgModal(editId) {
           <datalist id="mtg-series-list">${series.map(s => `<option value="${escapeHtml(s)}">`).join('')}</datalist>
         </div>
         <div>
-          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Date</label>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Date</label>
           <input class="form-input" type="date" id="mtg-date" value="${m.meeting_date||''}"
             style="font-size:14px;padding:11px 14px;border-radius:6px;">
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <div>
-            <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Start Time</label>
+            <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Start Time</label>
             <input class="form-input" id="mtg-start" value="${escapeHtml(m.start_time||'')}" placeholder="10:00 AM"
               style="font-size:14px;padding:11px 14px;border-radius:6px;">
           </div>
           <div>
-            <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">End Time</label>
+            <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">End Time</label>
             <input class="form-input" id="mtg-end" value="${escapeHtml(m.end_time||'')}" placeholder="11:00 AM"
               style="font-size:14px;padding:11px 14px;border-radius:6px;">
           </div>
         </div>
         <div style="grid-column:span 2;">
-          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Overview</label>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Overview</label>
           <textarea class="form-input" id="mtg-overview" rows="3"
             placeholder="Brief summary of this meeting's purpose…"
             style="font-size:14px;padding:11px 14px;border-radius:6px;resize:vertical;">${escapeHtml(m.overview||'')}</textarea>
@@ -22430,7 +22430,7 @@ function openMtgModal(editId) {
         </div>
         ${!editId && MTG_TEMPLATES.length > 0 ? `
         <div>
-          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Template</label>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Template</label>
           <select class="form-input" id="mtg-template" style="font-size:14px;padding:11px 14px;border-radius:6px;">
             <option value="">No template — start blank</option>
             ${MTG_TEMPLATES.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}
@@ -22520,7 +22520,7 @@ function openMtgCategoryModal(editId, meetingId) {
   modal({
     title: editId ? 'Edit Category' : 'Add Category',
     body: `
-      <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Category Title *</label>
+      <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Category Title *</label>
       <input class="form-input" id="mtg-cat-title" value="${escapeHtml(cat.title||'')}"
         placeholder="e.g. T&C Activities"
         style="font-size:15px;padding:12px 14px;border-radius:6px;">`,
@@ -22570,19 +22570,19 @@ function openMtgItemModal(editId, categoryId, meetingId) {
     body: `
       <div style="display:grid;gap:18px;">
         <div>
-          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Item Title *</label>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Item Title *</label>
           <input class="form-input" id="mtg-item-title" value="${escapeHtml(item.title||'')}"
             placeholder="e.g. 2 Week Lookahead"
             style="font-size:15px;padding:12px 14px;border-radius:6px;">
         </div>
         <div>
-          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Description</label>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Description</label>
           <textarea class="form-input" id="mtg-item-desc" rows="4"
             placeholder="Brief description of this agenda item…"
             style="font-size:14px;padding:12px 14px;border-radius:6px;resize:vertical;">${escapeHtml(item.description||'')}</textarea>
         </div>
         <div>
-          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Status</label>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Status</label>
           <select class="form-input" id="mtg-item-status" style="font-size:14px;padding:11px 14px;border-radius:6px;">
             <option value="Open"   ${(item.status||'Open')==='Open'  ?'selected':''}>Open</option>
             <option value="Closed" ${item.status==='Closed'?'selected':''}>Closed</option>
@@ -22646,26 +22646,26 @@ function openMtgActionItemModal(editId, itemId, meetingId) {
     body: `
       <div style="display:grid;gap:18px;">
         <div>
-          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Description *</label>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Description *</label>
           <textarea class="form-input" id="mtg-ai-desc" rows="3"
             placeholder="What needs to be done?"
             style="font-size:14px;padding:12px 14px;border-radius:6px;resize:vertical;">${escapeHtml(ai.description||'')}</textarea>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
           <div>
-            <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Assignee</label>
+            <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Assignee</label>
             <input class="form-input" id="mtg-ai-assignee" value="${escapeHtml(ai.assignee||'')}"
               placeholder="Name or team"
               style="font-size:14px;padding:11px 14px;border-radius:6px;">
           </div>
           <div>
-            <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Due Date</label>
+            <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Due Date</label>
             <input class="form-input" type="date" id="mtg-ai-due" value="${ai.due_date||''}"
               style="font-size:14px;padding:11px 14px;border-radius:6px;">
           </div>
         </div>
         <div>
-          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Status</label>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Status</label>
           <select class="form-input" id="mtg-ai-status" style="font-size:14px;padding:11px 14px;border-radius:6px;">
             <option value="Open"   ${(ai.status||'Open')==='Open'  ?'selected':''}>Open</option>
             <option value="Closed" ${ai.status==='Closed'?'selected':''}>Closed</option>
@@ -22724,18 +22724,18 @@ function openMtgAddAttendeeModal(meetingId) {
     body: `
       <div style="display:grid;gap:18px;">
         <div>
-          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Name *</label>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Name *</label>
           <input class="form-input" id="mtg-att-name" placeholder="Full name"
             style="font-size:15px;padding:12px 14px;border-radius:6px;">
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
           <div>
-            <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Email</label>
+            <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Email</label>
             <input class="form-input" type="email" id="mtg-att-email" placeholder="name@company.com"
               style="font-size:14px;padding:11px 14px;border-radius:6px;">
           </div>
           <div>
-            <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Company</label>
+            <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Company</label>
             <input class="form-input" id="mtg-att-company" placeholder="Hitachi Rail"
               style="font-size:14px;padding:11px 14px;border-radius:6px;">
           </div>
@@ -22935,19 +22935,19 @@ async function _mtgPrintPDF(meetingId) {
     const catItems = items.filter(i => i.category_id === cat.id);
     return `
       <div style="margin-bottom:18px;">
-        <div style="font-size:13px;font-weight:700;background:#f4f4f4;padding:7px 10px;border-left:4px solid #C8001A;margin-bottom:8px;">${escapeHtml(cat.title)}</div>
+        <div style="font-size:13px;font-weight:700;background:var(--gray-100);padding:7px 10px;border-left:4px solid var(--hitachi-red-hover);margin-bottom:8px;">${escapeHtml(cat.title)}</div>
         ${catItems.map((item, ii) => {
           const itemAI = actionItems.filter(a => a.meeting_item_id === item.id);
           return `
-            <div style="margin-bottom:10px;padding:9px 10px;border:1px solid #e5e7eb;border-radius:3px;">
+            <div style="margin-bottom:10px;padding:9px 10px;border:1px solid var(--line-soft);border-radius:3px;">
               <div style="font-weight:600;font-size:12px;margin-bottom:4px;">${ci+1}.${ii+1} ${escapeHtml(item.title)}</div>
-              ${item.description ? `<div style="font-size:11px;color:#555;margin-bottom:5px;">${escapeHtml(item.description)}</div>` : ''}
+              ${item.description ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:5px;">${escapeHtml(item.description)}</div>` : ''}
               <div style="font-size:10px;color:#888;margin-bottom:5px;">${[
                 item.assignee ? `Assignee: ${item.assignee}` : '',
                 item.due_date ? `Due: ${item.due_date}` : '',
                 `Status: ${item.status||'Open'}`,
               ].filter(Boolean).join(' · ')}</div>
-              ${inMinutes && item.minutes_notes ? `<div style="margin-top:7px;padding:7px;background:#fefefe;border:1px solid #eee;border-radius:3px;font-size:11px;"><strong style="color:#C8001A;">Minutes:</strong> ${item.minutes_notes}</div>` : ''}
+              ${inMinutes && item.minutes_notes ? `<div style="margin-top:7px;padding:7px;background:#fefefe;border:1px solid #eee;border-radius:3px;font-size:11px;"><strong style="color:var(--hitachi-red-hover);">Minutes:</strong> ${item.minutes_notes}</div>` : ''}
               ${itemAI.length ? `<div style="margin-top:7px;">
                 <div style="font-size:10px;font-weight:700;color:#666;margin-bottom:3px;">Action Items:</div>
                 ${itemAI.map(ai => `<div style="font-size:10px;padding:3px 7px;background:#fff8f0;border-left:3px solid #E67E22;margin-bottom:2px;">
@@ -22964,13 +22964,13 @@ async function _mtgPrintPDF(meetingId) {
     <title>${inMinutes ? 'Meeting Minutes — ' : ''}${escapeHtml(m.title||'')}</title>
     <style>
       *{box-sizing:border-box;margin:0;padding:0;}
-      body{font-family:Arial,sans-serif;color:#111;background:#fff;padding:32px;}
+      body{font-family:Arial,sans-serif;color:#111;background:var(--white);padding:32px;}
       @media print{body{padding:16px;}}
     </style>
   </head><body>
-    <div style="display:flex;justify-content:space-between;padding-bottom:14px;border-bottom:3px solid #C8001A;margin-bottom:20px;">
+    <div style="display:flex;justify-content:space-between;padding-bottom:14px;border-bottom:3px solid var(--hitachi-red-hover);margin-bottom:20px;">
       <div>
-        <div style="font-size:15px;font-weight:700;color:#C8001A;">Hitachi Rail STS</div>
+        <div style="font-size:15px;font-weight:700;color:var(--hitachi-red-hover);">Hitachi Rail STS</div>
         <div style="font-size:11px;color:#666;">BART CBTC T&amp;C Portal</div>
       </div>
       <div style="text-align:right;font-size:11px;color:#666;">
@@ -22984,18 +22984,18 @@ async function _mtgPrintPDF(meetingId) {
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;font-size:11px;">
       ${[['Date',m.meeting_date],['Start Time',m.start_time],['End Time',m.end_time],['Location',m.location]]
         .filter(([,v]) => v)
-        .map(([l,v]) => `<div><div style="font-weight:700;color:#C8001A;text-transform:uppercase;font-size:9px;">${l}</div><div>${escapeHtml(v)}</div></div>`)
+        .map(([l,v]) => `<div><div style="font-weight:700;color:var(--hitachi-red-hover);text-transform:uppercase;font-size:9px;">${l}</div><div>${escapeHtml(v)}</div></div>`)
         .join('')}
     </div>
-    ${m.overview ? `<div style="margin-bottom:14px;font-size:12px;color:#444;font-style:italic;">${escapeHtml(m.overview)}</div>` : ''}
+    ${m.overview ? `<div style="margin-bottom:14px;font-size:12px;color:var(--text-muted);font-style:italic;">${escapeHtml(m.overview)}</div>` : ''}
     ${attendees.length ? `
       <div style="margin-bottom:16px;">
-        <div style="font-size:11px;font-weight:700;color:#C8001A;text-transform:uppercase;margin-bottom:6px;">Attendees</div>
+        <div style="font-size:11px;font-weight:700;color:var(--hitachi-red-hover);text-transform:uppercase;margin-bottom:6px;">Attendees</div>
         <div style="display:flex;flex-wrap:wrap;gap:5px;">
           ${attendees.map(a => `<span style="font-size:11px;background:#f5f5f5;padding:2px 9px;border-radius:10px;">${escapeHtml(a.name)}${a.company ? ` (${escapeHtml(a.company)})` : ''}</span>`).join('')}
         </div>
       </div>` : ''}
-    <div style="font-size:11px;font-weight:700;color:#C8001A;text-transform:uppercase;border-bottom:1px solid #eee;padding-bottom:6px;margin-bottom:12px;">Agenda</div>
+    <div style="font-size:11px;font-weight:700;color:var(--hitachi-red-hover);text-transform:uppercase;border-bottom:1px solid #eee;padding-bottom:6px;margin-bottom:12px;">Agenda</div>
     ${agendaHTML}
     <div style="margin-top:30px;padding-top:10px;border-top:1px solid #eee;display:flex;justify-content:space-between;font-size:9px;color:#aaa;">
       <span>Hitachi Rail STS — BART CBTC T&amp;C Portal</span>
@@ -23041,13 +23041,13 @@ function openMtgTemplateEditModal(editId) {
     body: `
       <div style="display:grid;gap:18px;">
         <div>
-          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Template Name *</label>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Template Name *</label>
           <input class="form-input" id="mtg-tpl-name" value="${escapeHtml(t.name||'')}"
             placeholder="e.g. Weekly T&C Review"
             style="font-size:15px;padding:12px 14px;border-radius:6px;">
         </div>
         <div>
-          <label class="form-label" style="font-size:13px;font-weight:600;color:#444;margin-bottom:6px;display:block;">Description</label>
+          <label class="form-label" style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block;">Description</label>
           <textarea class="form-input" id="mtg-tpl-desc" rows="3"
             placeholder="What is this template used for?"
             style="font-size:14px;padding:12px 14px;border-radius:6px;resize:vertical;">${escapeHtml(t.description||'')}</textarea>
@@ -23479,9 +23479,9 @@ function _planningShiftLegend() {
       <strong style="color:var(--gray-700);">Legend:</strong>
       <span><span style="display:inline-block;width:12px;height:12px;background:#FFEB3B;border:1px solid #999;vertical-align:middle;margin-right:4px;"></span> Day shift</span>
       <span><span style="display:inline-block;width:12px;height:12px;background:#2196F3;border:1px solid #999;vertical-align:middle;margin-right:4px;"></span> Night shift</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#1f2937;vertical-align:middle;margin-right:4px;"></span> Blanket</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#fecaca;border:1px solid #7f1d1d;vertical-align:middle;margin-right:4px;"></span> Cancelled</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#fef3c7;border:1px solid #92400e;vertical-align:middle;margin-right:4px;"></span> ${icon('palm')} PTO</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:var(--charcoal);vertical-align:middle;margin-right:4px;"></span> Blanket</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:var(--bad-light);border:1px solid var(--bad);vertical-align:middle;margin-right:4px;"></span> Cancelled</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:var(--warn-light);border:1px solid var(--warn);vertical-align:middle;margin-right:4px;"></span> ${icon('palm')} PTO</span>
     </div>`;
 }
 
@@ -23493,7 +23493,7 @@ function _laCalendarHTML() {
   return `
     ${_planningKPIStrip()}
     ${outToday.length ? `
-      <div style="margin-bottom:14px;padding:10px 14px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
+      <div style="margin-bottom:14px;padding:10px 14px;background:var(--warn-light);border:1px solid var(--warn-border);border-radius:8px;font-size:13px;color:var(--warn);">
         ${icon('palm')} <strong>Out today:</strong> ${outToday.map(x => escapeHtml(x.resource?.display_name || '—')).join(', ')}
       </div>` : ''}
 
@@ -23764,9 +23764,9 @@ function _planningCalendarLegend() {
   const shiftItems = `
     <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#FFEB3B;border-color:#a98e00;"></span>Day shift</span>
     <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#2196F3;border-color:#0d47a1;"></span>Night shift</span>
-    <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#1f2937;border-color:#000;"></span>Blanket</span>
-    <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#b91c1c;border-color:#7f1d1d;"></span>Cancelled</span>
-    <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:#fef3c7;border-color:#92400e;"></span>${icon('palm')} PTO</span>
+    <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:var(--charcoal);border-color:#000;"></span>Blanket</span>
+    <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:var(--bad);border-color:var(--bad);"></span>Cancelled</span>
+    <span class="cal-leg-item"><span class="cal-leg-swatch" style="background:var(--warn-light);border-color:var(--warn);"></span>${icon('palm')} PTO</span>
   `;
 
   const subChips = [...seenSubs].sort().map(s => {
@@ -23809,7 +23809,7 @@ function _laEventTippy(e, v, assignments) {
       ${e.location ? `<div class="cal-tip-row"><span>${icon('pin')}</span> ${escapeHtml(e.location)}</div>` : ''}
       <div class="cal-tip-row"><span>${icon('user')}</span> ${escapeHtml(res)}</div>
       <div class="cal-tip-row"><span>${icon('refresh')}</span> ${escapeHtml(v.label)}</div>
-      ${e.status === 'cancelled' && e.cancellation_reason ? `<div class="cal-tip-row" style="color:#ef4444;"><span>${icon('x')}</span> ${escapeHtml(e.cancellation_reason)}${e.cancellation_responsible_party ? ` · <strong>${escapeHtml(e.cancellation_responsible_party)}</strong>` : ''}</div>` : ''}
+      ${e.status === 'cancelled' && e.cancellation_reason ? `<div class="cal-tip-row" style="color:var(--bad);"><span>${icon('x')}</span> ${escapeHtml(e.cancellation_reason)}${e.cancellation_responsible_party ? ` · <strong>${escapeHtml(e.cancellation_responsible_party)}</strong>` : ''}</div>` : ''}
     </div>`.replace(/"/g, '&quot;');
 }
 
@@ -23982,12 +23982,12 @@ function _laShowDayOverflow(iso) {
         </div>
       </div>`;
     } else if (item.kind === 'pto') {
-      bodyHtml += `<div style="background:#fef3c7;color:#92400e;border-left:4px solid #f59e0b;padding:7px 10px;border-radius:5px;cursor:pointer;font-size:13px;"
+      bodyHtml += `<div style="background:var(--warn-light);color:var(--warn);border-left:4px solid var(--accent-amber);padding:7px 10px;border-radius:5px;cursor:pointer;font-size:13px;"
         onclick="closeModal();_planningOpenPTODetail(PTO_REQUESTS.find(x=>x.id==='${item.p.id}'))">
         ${icon('palm')} ${escapeHtml(_ptoResourceName(item.p.resource_id))} — PTO
       </div>`;
     } else if (item.kind === 'p6') {
-      bodyHtml += `<div style="background:#f0fdf4;color:#166534;border-left:4px solid #22c55e;padding:7px 10px;border-radius:5px;font-size:13px;">
+      bodyHtml += `<div style="background:var(--good-light);color:var(--good);border-left:4px solid var(--good);padding:7px 10px;border-radius:5px;font-size:13px;">
         ${icon('clipboard')} <strong>${escapeHtml(item.p6.p6_id||'')}</strong> ${escapeHtml((item.p6.p6_name||'').slice(0,60))}
       </div>`;
     }
@@ -24203,7 +24203,7 @@ function _laRenderDayView(body) {
         >
           <div class="cal-dl-chip-header">
             <span class="cal-dl-chip-title">${icon('palm')} ${escapeHtml(_ptoResourceName(item.p.resource_id))}</span>
-            <span class="cal-dl-chip-badge" style="background:#d1fae5;color:#065f46;">PTO</span>
+            <span class="cal-dl-chip-badge" style="background:var(--good-light);color:var(--good);">PTO</span>
           </div>
           <div class="cal-dl-chip-meta">${escapeHtml(_ptoFmtRange(item.p))}</div>
         </div>`;
@@ -24214,7 +24214,7 @@ function _laRenderDayView(body) {
         >
           <div class="cal-dl-chip-header">
             <span class="cal-dl-chip-title">${icon('clipboard')} ${escapeHtml((item.p6.p6_name || item.p6.p6_id || '').slice(0, 80))}</span>
-            <span class="cal-dl-chip-badge" style="background:#e0e7ff;color:#3730a3;">P6</span>
+            <span class="cal-dl-chip-badge" style="background:#e0e7ff;color:var(--info);">P6</span>
           </div>
           <div class="cal-dl-chip-meta">${escapeHtml(item.p6.p6_id || '')} · ${escapeHtml(item.p6.start_date || '')} – ${escapeHtml(item.p6.finish_date || '')}</div>
         </div>`;
@@ -24298,7 +24298,7 @@ function _tlgShiftTip(s, v) {
     <div class="cal-tip-title">${escapeHtml(s.title||'(no title)')}</div>
     <div class="cal-tip-row"><span>${icon('clock')}</span> ${escapeHtml(ts)}</div>
     <div class="cal-tip-row"><span>${icon('refresh')}</span> ${escapeHtml(v.label)}</div>
-    ${s.isCancel ? '<div class="cal-tip-row" style="color:#ef4444;"><span>' + icon('x') + '</span> Cancelled</div>' : ''}
+    ${s.isCancel ? '<div class="cal-tip-row" style="color:var(--bad);"><span>' + icon('x') + '</span> Cancelled</div>' : ''}
   </div>`).replace(/"/g, '&quot;');
 }
 
@@ -24822,7 +24822,7 @@ function _laLookaheadHTML() {
         <button class="admin-tab${_laWindowStart ? '' : ' active'}" style="font-size:12px;padding:6px 10px;" onclick="_laResetWindow()" title="Jump to today">Today</button>
         <button class="admin-tab" style="font-size:12px;padding:6px 10px;" onclick="_laShiftWindow(7)" title="Forward one week">Next ›</button>
         <input type="date" value="${_laWinAnchor().format('YYYY-MM-DD')}" onchange="_laJumpWindow(this.value)" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-200);border-radius:6px;" title="Jump to a start date">
-        ${(_laWindowStart && dayjs(_laWindowStart).isBefore(dayjs().startOf('day'))) ? '<span style="font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#92400e;background:#fef3c7;padding:3px 8px;border-radius:99px;">Viewing history</span>' : ''}
+        ${(_laWindowStart && dayjs(_laWindowStart).isBefore(dayjs().startOf('day'))) ? '<span style="font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--warn);background:var(--warn-light);padding:3px 8px;border-radius:99px;">Viewing history</span>' : ''}
         <button class="admin-tab" style="font-size:12px;padding:6px 12px;" onclick="openPlanningHistory()" title="Browse frozen weekly snapshots">${icon('calendar')} Past Weeks</button>
       </div>
       ${_laTimelineGroupBy === 'activity' ? `
@@ -24864,7 +24864,7 @@ function _laLookaheadHTML() {
           value="${escapeHtml(_laRowSearch)}" oninput="_laSetRowSearch(this.value)"
           style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-300);border-radius:6px;width:210px;">
         <button aria-label="Clear filter" id="la-row-search-clear" onclick="_laSetRowSearch('')" title="Clear filter"
-          style="display:${_laRowSearch ? 'inline-flex' : 'none'};font-size:12px;padding:6px 9px;border:1px solid var(--gray-300);background:#fff;border-radius:6px;cursor:pointer;">${icon('x')}</button>
+          style="display:${_laRowSearch ? 'inline-flex' : 'none'};font-size:12px;padding:6px 9px;border:1px solid var(--gray-300);background:var(--white);border-radius:6px;cursor:pointer;">${icon('x')}</button>
         <span id="la-row-search-count" style="font-size:11px;color:var(--gray-500);white-space:nowrap;"></span>
       </div>
       <button onclick="_laOpenNewActivityModal()" class="admin-action-btn" title="Add a new activity row to the lookahead">
@@ -24892,8 +24892,8 @@ function _laLookaheadHTML() {
     </div>` : ''}
 
     <!-- Excel-style edit tips bar (always visible) -->
-    <div class="la-edit-tips-bar" style="display:flex;align-items:center;gap:14px;padding:6px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#475569;margin:8px 0;flex-wrap:wrap;">
-      <strong style="color:#1e40af;">${icon('clipboard')} Excel-style editing:</strong>
+    <div class="la-edit-tips-bar" style="display:flex;align-items:center;gap:14px;padding:6px 12px;background:var(--surface-2);border:1px solid var(--line-soft);border-radius:6px;font-size:11px;color:var(--text-muted);margin:8px 0;flex-wrap:wrap;">
+      <strong style="color:var(--info);">${icon('clipboard')} Excel-style editing:</strong>
       <span><kbd>Ctrl</kbd>+click select</span>
       <span><kbd>Ctrl</kbd>+drag range-select</span>
       <span><kbd>Ctrl</kbd>+<kbd>C</kbd> copy</span>
@@ -24901,9 +24901,9 @@ function _laLookaheadHTML() {
       <span><kbd>Ctrl</kbd>+<kbd>V</kbd> paste</span>
       <span><kbd>Del</kbd> delete</span>
       <span><kbd>Esc</kbd> clear</span>
-      <span style="color:#1e40af;">↔ drag a cell to move it</span>
+      <span style="color:var(--info);">↔ drag a cell to move it</span>
       <span style="color:#0891b2;">↗ fill-handle to extend days</span>
-      <span style="margin-left:auto;color:#64748b;">Right-click for menu</span>
+      <span style="margin-left:auto;color:var(--text-subtle);">Right-click for menu</span>
     </div>
 
     <!-- Floating action banner — populated when cells are selected or clipboard has content -->
@@ -25220,7 +25220,7 @@ function _laDrawerHTML() {
   return `
     <div class="la-drawer-head">
       <div class="la-drawer-title">${title}
-        <span id="la-drawer-dirty-ind" style="display:none;color:#dc2626;font-size:11px;font-weight:700;margin-left:8px;">● unsaved</span>
+        <span id="la-drawer-dirty-ind" style="display:none;color:var(--bad);font-size:11px;font-weight:700;margin-left:8px;">● unsaved</span>
       </div>
       <button aria-label="Close (Esc)" class="la-drawer-close" onclick="_laDrawerClose()" title="Close (Esc)">${icon('x')}</button>
     </div>
@@ -25330,7 +25330,7 @@ function _laDrawerCellHTML(ev) {
           const r = allRes.find(x => x.id === er.resource_id);
           const denied = !!er.denied_at;
           return `<span class="la-drawer-pill ${denied?'la-drawer-pill-denied':''}">${escapeHtml(r?.display_name||'?')} ×${er.quantity||1}
-            ${denied ? `<span title="Denied" style="color:#dc2626;">${icon('alert')}</span>` : ''}
+            ${denied ? `<span title="Denied" style="color:var(--bad);">${icon('alert')}</span>` : ''}
             <button onclick="_laDrawerRemoveEventResource('${er.id}')" title="Remove">×</button></span>`;
         }).join('') || '<span style="color:var(--gray-400);font-size:12px;">None requested</span>'}
       </div>
@@ -25349,8 +25349,8 @@ function _laDrawerCellHTML(ev) {
     </div>
 
     ${isCancel ? `
-    <div class="la-drawer-section" style="background:#fef2f2;border-left:3px solid #dc2626;padding:8px 10px;border-radius:4px;">
-      <div style="font-size:11px;font-weight:700;color:#7f1d1d;">${icon('ban')} CANCELLED</div>
+    <div class="la-drawer-section" style="background:var(--bad-light);border-left:3px solid var(--bad);padding:8px 10px;border-radius:4px;">
+      <div style="font-size:11px;font-weight:700;color:var(--bad);">${icon('ban')} CANCELLED</div>
       ${ev.cancellation_category ? `<div style="font-size:12px;margin-top:3px;"><strong>Category:</strong> ${escapeHtml(ev.cancellation_category)}</div>` : ''}
       ${ev.cancellation_reason ? `<div style="font-size:12px;margin-top:3px;"><strong>Reason:</strong> ${escapeHtml(ev.cancellation_reason)}</div>` : ''}
       ${ev.cancellation_responsible_party ? `<div style="font-size:12px;margin-top:3px;"><strong>Responsible:</strong> ${escapeHtml(ev.cancellation_responsible_party)}</div>` : ''}
@@ -25370,7 +25370,7 @@ function _laDrawerCellFooterHTML(ev) {
       ? `<button class="form-secondary" onclick="_planningToggleLock('${ev.id}')">${icon('unlock')} Unlock</button>`
       : `<button class="form-secondary" onclick="_planningToggleLock('${ev.id}')">${icon('lock')} Lock</button>`}
     ${!isCancel
-      ? `<button class="form-secondary" style="color:#dc2626;" onclick="_planningCancelEvent('${ev.id}')">${icon('ban')} Cancel</button>`
+      ? `<button class="form-secondary" style="color:var(--bad);" onclick="_planningCancelEvent('${ev.id}')">${icon('ban')} Cancel</button>`
       : ''}
     <button class="form-submit la-drawer-save" id="la-drawer-save" disabled onclick="_laDrawerSave()">${icon('save')} Save</button>
   `;
@@ -25503,7 +25503,7 @@ function _laDrawerActivityHTML(a) {
       </datalist>
     </div>
 
-    <div class="la-drawer-section" style="background:#f8fafc;padding:8px 10px;border-radius:4px;">
+    <div class="la-drawer-section" style="background:var(--surface-2);padding:8px 10px;border-radius:4px;">
       <div style="font-size:11px;color:var(--gray-500);">
         ${eventCount} event${eventCount !== 1 ? 's' : ''}${cancelledCount ? ` · ${cancelledCount} cancelled` : ''}
       </div>
@@ -25518,7 +25518,7 @@ function _laDrawerActivityHTML(a) {
 function _laDrawerActivityFooterHTML(a) {
   return `
     <button class="form-secondary" onclick="_laDrawerClose()">Close</button>
-    <button class="form-secondary" style="color:#dc2626;border-color:#fca5a5;" onclick="_laDrawerSoftDeleteActivity('${a.id}')" title="Soft-delete: hidden from grid but restorable">${icon('trash')} Delete</button>
+    <button class="form-secondary" style="color:var(--bad);border-color:var(--bad-border);" onclick="_laDrawerSoftDeleteActivity('${a.id}')" title="Soft-delete: hidden from grid but restorable">${icon('trash')} Delete</button>
     <button class="form-submit la-drawer-save" id="la-drawer-save" disabled onclick="_laDrawerSave()">${icon('save')} Save</button>
   `;
 }
@@ -25540,7 +25540,7 @@ function _laDrawerMultiHTML(eventIds) {
   const cancelled = events.filter(e => e.status === 'cancelled').length;
   const editable = events.length - locked - cancelled;
   return `
-    <div class="la-drawer-section" style="background:#f8fafc;padding:10px;border-radius:4px;">
+    <div class="la-drawer-section" style="background:var(--surface-2);padding:10px;border-radius:4px;">
       <div style="font-size:13px;font-weight:600;">${events.length} cell${events.length>1?'s':''} selected</div>
       <div style="font-size:11px;color:var(--gray-500);margin-top:3px;">
         ${editable} editable${locked ? ` · ${locked} locked` : ''}${cancelled ? ` · ${cancelled} already cancelled` : ''}
@@ -25550,7 +25550,7 @@ function _laDrawerMultiHTML(eventIds) {
       <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Bulk actions</div>
       <div style="display:flex;flex-direction:column;gap:6px;">
         <button class="form-secondary" onclick="_laBulkCancelCells()">${icon('ban')} Cancel all (with reason)</button>
-        <button class="form-secondary" onclick="_laDeleteSelection()" style="color:#dc2626;">${icon('trash')} Delete all</button>
+        <button class="form-secondary" onclick="_laDeleteSelection()" style="color:var(--bad);">${icon('trash')} Delete all</button>
         <button class="form-secondary" onclick="_laBulkRemoveCellResources()">${icon('users')} Remove users only</button>
         <button class="form-secondary" onclick="_laCopySelection('copy')">${icon('clipboard')} Copy</button>
         <button class="form-secondary" onclick="_laCopySelection('cut')">${icon('scissors')} Cut</button>
@@ -25732,12 +25732,12 @@ function _laExportTimelinePDF() {
     <style>
       @page { size: A4 landscape; margin: 8mm; }
       * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-      html, body { margin: 0; padding: 0; background: #fff; }
+      html, body { margin: 0; padding: 0; background: var(--white); }
       .pdf-head { font-family: Arial, sans-serif; padding: 2px 2px 12px; }
       .pdf-title { font-size: 17px; font-weight: 800; color: #111; }
-      .pdf-sub { font-size: 11px; color: #555; margin-top: 3px; }
+      .pdf-sub { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
       .pdf-filters { margin-top: 6px; }
-      .pdf-filters span { display: inline-block; font-size: 10px; color: #334155; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 99px; padding: 2px 9px; margin: 0 6px 4px 0; }
+      .pdf-filters span { display: inline-block; font-size: 10px; color: #334155; background: var(--surface-3); border: 1px solid var(--line-soft); border-radius: 99px; padding: 2px 9px; margin: 0 6px 4px 0; }
       .pdf-grid { zoom: ${zoom}; }
       /* drop sticky/scroll so the full grid lays out for print */
       .tlg-shell { overflow: visible !important; }
@@ -26082,7 +26082,7 @@ function _laRenderLinkModal(activityId, showAll) {
       </div>`,
     footer:
       '<button class="form-secondary" onclick="closeModal()">Cancel</button>' +
-      (current ? `<button class="form-secondary" style="color:#b91c1c;border-color:#fca5a5;" onclick="_laSaveActivityLink('${activityId}',true)">${icon('link')} Unlink</button>` : '') +
+      (current ? `<button class="form-secondary" style="color:var(--bad);border-color:var(--bad-border);" onclick="_laSaveActivityLink('${activityId}',true)">${icon('link')} Unlink</button>` : '') +
       `<button class="form-submit" onclick="_laSaveActivityLink('${activityId}',false)">Save Link</button>`,
   });
 
@@ -26152,9 +26152,9 @@ function _laResourcePanelHTML() {
         ${compChip('BART', 'BART', _bartN)}
       </div>
       <input type="text" class="la-res-search" placeholder="Search…" oninput="_laFilterResPanel(this.value)">
-      <div id="la-sel-bar" style="display:${selCount?'flex':'none'};align-items:center;justify-content:space-between;background:var(--hitachi-red);color:#fff;border-radius:5px;padding:4px 8px;font-size:11px;font-weight:600;">
+      <div id="la-sel-bar" style="display:${selCount?'flex':'none'};align-items:center;justify-content:space-between;background:var(--hitachi-red);color:var(--white);border-radius:5px;padding:4px 8px;font-size:11px;font-weight:600;">
         <span>${selCount} selected</span>
-        <button onclick="_laClearResSelection()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:11px;padding:0;">${icon('x')} Clear</button>
+        <button onclick="_laClearResSelection()" style="background:none;border:none;color:var(--white);cursor:pointer;font-size:11px;padding:0;">${icon('x')} Clear</button>
       </div>
     </div>
     <div style="padding:4px 8px 4px;font-size:10px;color:var(--gray-400);">Click to select · drag to assign</div>
@@ -26268,7 +26268,7 @@ function _laRenderHistoryList() {
       <div class="la-hist-stats">
         <span>${s.activity_count} ${s.activity_count === 1 ? 'activity' : 'activities'}</span>
         <span>${s.event_count} shift${s.event_count === 1 ? '' : 's'}</span>
-        ${s.cancelled_count ? `<span style="color:#dc2626;font-weight:600;">${s.cancelled_count} cancelled</span>` : ''}
+        ${s.cancelled_count ? `<span style="color:var(--bad);font-weight:600;">${s.cancelled_count} cancelled</span>` : ''}
         <span class="la-hist-arrow">›</span>
       </div>
     </button>`).join('') + '</div>';
@@ -26377,20 +26377,20 @@ function _laCellSelActionsHTML() {
 
   const parts = [];
   if (nc > 0) {
-    parts.push(`<span style="font-size:12px;font-weight:700;color:#065f46;">\u271a ${nc} date${nc>1?'s':''} staged</span>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;background:#d1fae5;border-color:#6ee7b7;color:#065f46;" onclick="_laOpenCreateEventModal(_laCreateSel.slice())">\u2795 Create ${nc} event${nc>1?'s':''}</button>`);
+    parts.push(`<span style="font-size:12px;font-weight:700;color:var(--good);">\u271a ${nc} date${nc>1?'s':''} staged</span>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;background:var(--good-light);border-color:var(--good-border);color:var(--good);" onclick="_laOpenCreateEventModal(_laCreateSel.slice())">\u2795 Create ${nc} event${nc>1?'s':''}</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearCreateSel()">\u2715 Clear</button>`);
-    if (n > 0 || hasClipboard) parts.push('<span style="width:1px;background:#e5e7eb;align-self:stretch;margin:0 4px;"></span>');
+    if (n > 0 || hasClipboard) parts.push('<span style="width:1px;background:var(--surface-3);align-self:stretch;margin:0 4px;"></span>');
   }
   if (n > 0) {
     parts.push(`<span style="font-size:12px;font-weight:700;color:#7f0000;">${n} cell${n>1?'s':''} selected</span>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearCellSelection()">${icon('x')} Clear</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laCopySelection('copy')" title="Ctrl+C">${icon('clipboard')} Copy</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laCopySelection('cut')" title="Ctrl+X">${icon('scissors')} Cut</button>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#7f1d1d;border-color:#fca5a5;" onclick="_laDeleteSelection()" title="Del">${icon('trash')} Delete</button>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#7f1d1d;border-color:#fca5a5;" onclick="_laBulkCancelCells()">${icon('ban')} Cancel</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:var(--bad);border-color:var(--bad-border);" onclick="_laDeleteSelection()" title="Del">${icon('trash')} Delete</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:var(--bad);border-color:var(--bad-border);" onclick="_laBulkCancelCells()">${icon('ban')} Cancel</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laBulkRemoveCellResources()">Remove users only</button>`);
-    parts.push('<span style="width:1px;background:#e5e7eb;align-self:stretch;margin:0 4px;"></span>');
+    parts.push('<span style="width:1px;background:var(--surface-3);align-self:stretch;margin:0 4px;"></span>');
     parts.push(`<select onchange="_laBulkSetShift(this.value);this.selectedIndex=0;" title="Set shift for all selected cells" style="font-size:11px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;">
       <option value="">Set shift…</option>
       <option value="day_shift">Day</option>
@@ -26404,14 +26404,14 @@ function _laCellSelActionsHTML() {
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laBulkSetHours()">Apply hrs</button>`);
   }
   if (hasClipboard) {
-    if (n > 0) parts.push('<span style="width:1px;background:#e5e7eb;align-self:stretch;margin:0 4px;"></span>');
+    if (n > 0) parts.push('<span style="width:1px;background:var(--surface-3);align-self:stretch;margin:0 4px;"></span>');
     const mode = _laClipboard.mode === 'cut' ? 'Cut' : 'Copied';
-    parts.push(`<span style="font-size:12px;color:#1e40af;font-weight:600;">${icon('clipboard')} ${mode} ${_laClipboard.items.length}</span>`);
+    parts.push(`<span style="font-size:12px;color:var(--info);font-weight:600;">${icon('clipboard')} ${mode} ${_laClipboard.items.length}</span>`);
     if (hasTarget) {
-      parts.push(`<span style="font-size:11px;color:#059669;">Target: ${_laPasteTarget.date}</span>`);
+      parts.push(`<span style="font-size:11px;color:var(--good);">Target: ${_laPasteTarget.date}</span>`);
       parts.push(`<button class="admin-action-btn" style="font-size:11px;padding:4px 10px;" onclick="_laPasteAtTarget()" title="Ctrl+V">${icon('inbox')} Paste</button>`);
     } else {
-      parts.push(`<span style="font-size:11px;color:#6b7280;">click an empty cell, then Ctrl+V</span>`);
+      parts.push(`<span style="font-size:11px;color:var(--text-subtle);">click an empty cell, then Ctrl+V</span>`);
     }
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearClipboard()">${icon('x')} Cancel</button>`);
   }
@@ -26595,7 +26595,7 @@ function _laOpenCreateEventModal(cells) {
           '<textarea id="ce-notes" class="form-input" rows="2" placeholder="Any notes for this shift…"></textarea>' +
         '</div>' +
       '</div>' +
-      '<div style="margin-top:12px;padding:10px;background:#f8fafc;border-radius:6px;">' +
+      '<div style="margin-top:12px;padding:10px;background:var(--surface-2);border-radius:6px;">' +
         '<div style="font-size:11px;font-weight:600;margin-bottom:6px;">Hitachi resources</div>' +
         '<div id="ce-hit-pills" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;min-height:22px;"><span style="color:var(--gray-400);font-size:12px;">None</span></div>' +
         '<div style="display:flex;gap:6px;">' +
@@ -26603,7 +26603,7 @@ function _laOpenCreateEventModal(cells) {
           '<button class="form-secondary" style="font-size:11px;white-space:nowrap;" onclick="_laCEAddResource(\'hit\')">Add</button>' +
         '</div>' +
       '</div>' +
-      '<div style="margin-top:8px;padding:10px;background:#f8fafc;border-radius:6px;">' +
+      '<div style="margin-top:8px;padding:10px;background:var(--surface-2);border-radius:6px;">' +
         '<div style="font-size:11px;font-weight:600;margin-bottom:6px;">BART requests</div>' +
         '<div id="ce-bart-pills" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;min-height:22px;"><span style="color:var(--gray-400);font-size:12px;">None</span></div>' +
         '<div style="display:flex;gap:6px;">' +
@@ -26830,13 +26830,13 @@ function _laPasteConfirmModal({ ops, collisions, lockedSkips, ptoConflicts }) {
     html += `<p style="margin:0 0 10px;">Paste <strong>${ops.length}</strong> event${ops.length>1?'s':''}.</p>`;
 
     if (lockedSkips.length > 0) {
-      html += `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px;margin:10px 0;">
+      html += `<div style="background:var(--warn-light);border:1px solid var(--accent-amber);border-radius:6px;padding:10px;margin:10px 0;">
         <strong>${icon('lock')} ${lockedSkips.length} target${lockedSkips.length>1?'s':''} locked</strong> — will be skipped silently.
       </div>`;
     }
 
     if (collisions.length > 0) {
-      html += `<div style="background:#fee2e2;border:1px solid #ef4444;border-radius:6px;padding:10px;margin:10px 0;">
+      html += `<div style="background:var(--bad-light);border:1px solid var(--bad);border-radius:6px;padding:10px;margin:10px 0;">
         <strong>${icon('alert')} ${collisions.length} collision${collisions.length>1?'s':''}</strong> — existing event${collisions.length>1?'s':''} on these cells:
         <ul style="margin:6px 0 8px 18px;padding:0;font-size:12px;">
           ${collisions.slice(0,8).map(c => `<li>${escapeHtml(c.existing.title||'(untitled)')} · ${c.op.newDate}</li>`).join('')}
@@ -26848,13 +26848,13 @@ function _laPasteConfirmModal({ ops, collisions, lockedSkips, ptoConflicts }) {
     }
 
     if (ptoConflicts.length > 0) {
-      html += `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px;margin:10px 0;">
+      html += `<div style="background:var(--warn-light);border:1px solid var(--accent-amber);border-radius:6px;padding:10px;margin:10px 0;">
         <strong>${icon('palm')} ${ptoConflicts.length} PTO conflict${ptoConflicts.length>1?'s':''}:</strong>
         <ul style="margin:4px 0 0 18px;padding:0;font-size:12px;">
           ${ptoConflicts.slice(0,10).map(c => `<li>${escapeHtml(c.name)} on ${c.date}</li>`).join('')}
           ${ptoConflicts.length>10?`<li>…and ${ptoConflicts.length-10} more</li>`:''}
         </ul>
-        <p style="margin:6px 0 0;font-size:12px;color:#92400e;">Resources will still be assigned — review and unassign manually if needed.</p>
+        <p style="margin:6px 0 0;font-size:12px;color:var(--warn);">Resources will still be assigned — review and unassign manually if needed.</p>
       </div>`;
     }
 
@@ -27697,19 +27697,19 @@ function _laFillConfirmModal({ total, collisions, lockedSkips, ptoConflicts }) {
     let html = '<div style="font-size:13px;max-height:60vh;overflow-y:auto;">';
     html += `<p style="margin:0 0 10px;">Fill <strong>${total}</strong> cell${total>1?'s':''} from this event.</p>`;
     if (lockedSkips.length > 0) {
-      html += `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px;margin:10px 0;">
+      html += `<div style="background:var(--warn-light);border:1px solid var(--accent-amber);border-radius:6px;padding:10px;margin:10px 0;">
         <strong>${icon('lock')} ${lockedSkips.length} locked</strong> — will be skipped silently.
       </div>`;
     }
     if (collisions.length > 0) {
-      html += `<div style="background:#fee2e2;border:1px solid #ef4444;border-radius:6px;padding:10px;margin:10px 0;">
+      html += `<div style="background:var(--bad-light);border:1px solid var(--bad);border-radius:6px;padding:10px;margin:10px 0;">
         <strong>${icon('alert')} ${collisions.length} existing event${collisions.length>1?'s':''}</strong> in the fill range.<br>
         <label style="display:block;margin-top:8px;"><input type="radio" name="fillcol" value="overwrite" checked> Overwrite existing</label>
         <label style="display:block;"><input type="radio" name="fillcol" value="skip"> Skip these (keep existing)</label>
       </div>`;
     }
     if (ptoConflicts.length > 0) {
-      html += `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px;margin:10px 0;">
+      html += `<div style="background:var(--warn-light);border:1px solid var(--accent-amber);border-radius:6px;padding:10px;margin:10px 0;">
         <strong>${icon('palm')} ${ptoConflicts.length} PTO conflict${ptoConflicts.length>1?'s':''}:</strong>
         <ul style="margin:4px 0 0 18px;padding:0;font-size:12px;">
           ${ptoConflicts.slice(0,8).map(c => `<li>${escapeHtml(c.name)} on ${c.date}</li>`).join('')}
@@ -27750,7 +27750,7 @@ function _laOpenNewActivityModal() {
           <input type="text" id="new-act-id" class="form-input" placeholder="DCS-101">
         </div>
         <div class="form-field">
-          <label>Location <span style="color:#dc2626;">*</span></label>
+          <label>Location <span style="color:var(--bad);">*</span></label>
           <input type="text" id="new-act-loc" class="form-input" placeholder="W40, Cab, Hayward, etc." oninput="_laNewActivityLocChanged()">
           <div id="new-act-loc-phase-hint" style="font-size:11px;margin-top:3px;min-height:16px;"></div>
         </div>
@@ -27759,7 +27759,7 @@ function _laOpenNewActivityModal() {
           <input type="text" id="new-act-phase" class="form-input" placeholder="e.g. Phase 1">
         </div>
         <div class="form-field form-field-full">
-          <label>Description <span style="color:#dc2626;">*</span></label>
+          <label>Description <span style="color:var(--bad);">*</span></label>
           <input type="text" id="new-act-desc" class="form-input" placeholder="What is this activity?" required>
         </div>
         <div class="form-field">
@@ -28006,18 +28006,18 @@ function _laCellContextMenu(ev, eventId, actId, iso, el) {
   const menu = document.createElement('div');
   menu.className = 'la-context-menu';
   menu.style.cssText = `position:fixed;left:${ev.clientX}px;top:${ev.clientY}px;z-index:99999;
-    background:#fff;border:1px solid #d1d5db;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);
+    background:var(--white);border:1px solid var(--border-strong);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);
     padding:6px 0;min-width:200px;font-size:13px;`;
   menu.innerHTML = items.map(it => {
     if (it.disabled) {
-      return `<div style="padding:6px 14px;color:#9ca3af;cursor:not-allowed;">${escapeHtml(it.label)}</div>`;
+      return `<div style="padding:6px 14px;color:var(--text-subtle);cursor:not-allowed;">${escapeHtml(it.label)}</div>`;
     }
     return `<div class="la-context-menu-item"
       style="padding:6px 14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;"
       onmouseover="this.style.background='#f3f4f6';"
       onmouseout="this.style.background='';">
       <span>${escapeHtml(it.label)}</span>
-      ${it.title ? `<span style="color:#9ca3af;font-size:11px;margin-left:14px;">${it.title}</span>` : ''}
+      ${it.title ? `<span style="color:var(--text-subtle);font-size:11px;margin-left:14px;">${it.title}</span>` : ''}
     </div>`;
   }).join('');
 
@@ -28214,8 +28214,8 @@ function _laConflictConfirmModal(resourceName, conflicts) {
   return new Promise(resolve => {
     const items = conflicts.slice(0, 12).map(c => {
       const tag = c.kind === 'pto'
-        ? '<span style="background:#fef3c7;color:#92400e;font-weight:700;font-size:10px;padding:1px 6px;border-radius:8px;">' + icon('palm') + ' PTO</span>'
-        : '<span style="background:#fee2e2;color:#b91c1c;font-weight:700;font-size:10px;padding:1px 6px;border-radius:8px;">' + icon('zap') + ' DOUBLE-BOOKED</span>';
+        ? '<span style="background:var(--warn-light);color:var(--warn);font-weight:700;font-size:10px;padding:1px 6px;border-radius:8px;">' + icon('palm') + ' PTO</span>'
+        : '<span style="background:var(--bad-light);color:var(--bad);font-weight:700;font-size:10px;padding:1px 6px;border-radius:8px;">' + icon('zap') + ' DOUBLE-BOOKED</span>';
       return `<li style="margin:6px 0;list-style:none;display:flex;gap:8px;align-items:flex-start;">
         ${tag}<span style="font-size:12px;">${escapeHtml(c.text)}</span></li>`;
     }).join('');
@@ -28228,7 +28228,7 @@ function _laConflictConfirmModal(resourceName, conflicts) {
         <div style="font-size:13px;margin-bottom:10px;">
           This assignment creates <strong>${conflicts.length} conflict${conflicts.length > 1 ? 's' : ''}</strong>:
         </div>
-        <ul style="margin:0;padding:0;max-height:46vh;overflow-y:auto;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:10px 12px;">
+        <ul style="margin:0;padding:0;max-height:46vh;overflow-y:auto;background:var(--warn-light);border:1px solid #fed7aa;border-radius:8px;padding:10px 12px;">
           ${items}${more}
         </ul>
         <div style="font-size:12px;color:var(--gray-500);margin-top:12px;">
@@ -28238,7 +28238,7 @@ function _laConflictConfirmModal(resourceName, conflicts) {
         </div>`,
       footer:
         '<button class="form-secondary" onclick="window._laConflictResolve(false)">Cancel / adjust</button>' +
-        '<button class="form-submit" style="background:#b45309;border-color:#b45309;" onclick="window._laConflictResolve(true)">Assign anyway &amp; flag</button>',
+        '<button class="form-submit" style="background:var(--warn);border-color:var(--warn);" onclick="window._laConflictResolve(true)">Assign anyway &amp; flag</button>',
     });
     window._laConflictResolve = (proceed) => {
       closeModal();
@@ -28764,7 +28764,7 @@ function _laResourcesBoardHTML() {
   const outToday = _ptoActiveOnDate(today);
   return `
     ${outToday.length ? `
-      <div style="margin-bottom:14px;padding:10px 14px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
+      <div style="margin-bottom:14px;padding:10px 14px;background:var(--warn-light);border:1px solid var(--warn-border);border-radius:8px;font-size:13px;color:var(--warn);">
         ${icon('palm')} <strong>Out today:</strong> ${outToday.map(x => escapeHtml(x.resource?.display_name || '—')).join(', ')}
       </div>` : ''}
     ${_planningShiftLegend()}
@@ -28878,9 +28878,9 @@ function _planningOpenEventDetail(eventId) {
         <div style="color:var(--gray-500);">Status:</div>
         <div>
           <span class="badge" style="background:${v.bg};color:${v.text};border:1px solid ${isCancel ? '#7f1d1d' : v.bg};">${v.icon} ${v.label}</span>
-          ${isCancel && e.cancellation_reason ? `<div style="margin-top:6px;font-size:12px;color:#7f1d1d;background:#fef2f2;padding:6px 10px;border-radius:6px;line-height:1.6;">
+          ${isCancel && e.cancellation_reason ? `<div style="margin-top:6px;font-size:12px;color:var(--bad);background:var(--bad-light);padding:6px 10px;border-radius:6px;line-height:1.6;">
             <span style="font-weight:600;">Reason:</span> ${escapeHtml(e.cancellation_reason)}
-            ${e.cancellation_responsible_party ? `<span style="margin-left:8px;padding:1px 8px;background:#fee2e2;border-radius:10px;font-weight:700;font-size:11px;">${icon('alert')} ${escapeHtml(e.cancellation_responsible_party)}</span>` : ''}
+            ${e.cancellation_responsible_party ? `<span style="margin-left:8px;padding:1px 8px;background:var(--bad-light);border-radius:10px;font-weight:700;font-size:11px;">${icon('alert')} ${escapeHtml(e.cancellation_responsible_party)}</span>` : ''}
           </div>` : ''}
         </div>
 
@@ -28891,7 +28891,7 @@ function _planningOpenEventDetail(eventId) {
         <div>${escapeHtml(e.location || '—')}</div>
 
         <div style="color:var(--gray-500);">Test Item:</div>
-        <div>${ti ? `<strong>${escapeHtml(ti.TestCaseCode || ti.TestID)}</strong> — ${escapeHtml(ti.TestName || '')}` : '<em style="color:#9ca3af;">Not linked</em>'}</div>
+        <div>${ti ? `<strong>${escapeHtml(ti.TestCaseCode || ti.TestID)}</strong> — ${escapeHtml(ti.TestName || '')}` : '<em style="color:var(--text-subtle);">Not linked</em>'}</div>
 
         <div style="color:var(--gray-500);">Source:</div>
         <div style="font-size:12px;">${_sourceLabel}${e.work_hours_raw ? `<span style="color:var(--gray-500);"> · Hours: ${escapeHtml(e.work_hours_raw)}</span>` : ''}</div>
@@ -28900,7 +28900,7 @@ function _planningOpenEventDetail(eventId) {
         <div>
           <div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin-bottom:${isAdmin ? '8px' : '0'};">
             ${assignments.length === 0
-              ? '<em style="color:#9ca3af;">No resources assigned</em>'
+              ? '<em style="color:var(--text-subtle);">No resources assigned</em>'
               : assignments.map(a => {
                   const hasPTO = !!conflicts.find(c => c.resource?.id === a.resource?.id);
                   const badgeClass = hasPTO ? 'badge-failed' : 'badge-passed';
@@ -28937,12 +28937,12 @@ function _planningOpenEventDetail(eventId) {
               style="font-size:12px;resize:vertical;width:100%;box-sizing:border-box;"
               placeholder="Add notes about this activity…">${escapeHtml(e.notes || '')}</textarea>
             <button class="form-secondary" style="font-size:11px;padding:3px 10px;margin-top:4px;" onclick="_planningUpdateEventNotes('${e.id}')">${icon('save')} Save Notes</button>
-          ` : `<div style="font-size:12px;">${e.notes ? escapeHtml(e.notes) : '<em style="color:#9ca3af;">No notes</em>'}</div>`}
+          ` : `<div style="font-size:12px;">${e.notes ? escapeHtml(e.notes) : '<em style="color:var(--text-subtle);">No notes</em>'}</div>`}
         </div>
       </div>
 
       ${conflicts.length ? `
-        <div style="margin-top:14px;padding:10px 14px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;font-size:13px;color:#7f1d1d;">
+        <div style="margin-top:14px;padding:10px 14px;background:var(--bad-light);border:1px solid var(--bad-border);border-radius:8px;font-size:13px;color:var(--bad);">
           ${icon('alert')} <strong>PTO conflict${conflicts.length === 1 ? '' : 's'}:</strong>
           ${conflicts.map(c => `${escapeHtml(c.resource.display_name)} (${escapeHtml(c.pto.start_date)} → ${escapeHtml(c.pto.end_date)})`).join('; ')}
         </div>` : ''}
@@ -28952,7 +28952,7 @@ function _planningOpenEventDetail(eventId) {
       <button class="form-secondary" onclick="_planningToggleLock('${e.id}')">${e.is_locked ? icon('unlock')+' Unlock' : icon('lock')+' Lock'}</button>
       ${!isCancel ? `<button class="form-secondary" style="color:var(--bad);" onclick="_planningCancelEvent('${e.id}')">${icon('x')} Cancel Event</button>` : ''}
       ${isCancel && !e.cancellation_reason ? `<button class="form-submit" onclick="_planningAddCancellationReason('${e.id}')">+ Add Cancel Reason</button>` : ''}
-      ${!e.is_locked ? `<button class="form-secondary" style="color:#7f1d1d;border-color:#fca5a5;" onclick="_planningDeleteEvent('${e.id}')">${icon('trash')} Delete</button>` : ''}
+      ${!e.is_locked ? `<button class="form-secondary" style="color:var(--bad);border-color:var(--bad-border);" onclick="_planningDeleteEvent('${e.id}')">${icon('trash')} Delete</button>` : ''}
     ` : `
       <button class="form-secondary" onclick="closeModal()">Close</button>
     `,
@@ -29247,7 +29247,7 @@ function _ptoRowHTML(p, isAdmin, myResource) {
   let actions = '';
   if (isAdmin && p.status === 'pending') {
     actions = `
-      <button class="form-secondary" style="font-size:11px;padding:4px 8px;color:#16a34a;" onclick="_ptoReview('${p.id}','approve')">✓ Approve</button>
+      <button class="form-secondary" style="font-size:11px;padding:4px 8px;color:var(--good);" onclick="_ptoReview('${p.id}','approve')">✓ Approve</button>
       <button class="form-secondary" style="font-size:11px;padding:4px 8px;color:var(--bad);margin-left:4px;" onclick="_ptoReview('${p.id}','reject')">${icon('x')} Reject</button>`;
   } else if (isAdmin && p.status !== 'pending') {
     actions = `<button class="form-secondary" style="font-size:11px;padding:4px 8px;" onclick="_ptoReview('${p.id}','reopen')">↺ Reopen</button>`;
@@ -29558,8 +29558,8 @@ function _cancelRptTableBody() {
     const isCxl  = r._type === 'cancellation';
     const color  = isCxl ? '#b91c1c' : '#b45309';
     const badge  = isCxl
-      ? `<span class="badge" style="background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;font-size:10px;">${icon('x')} Cancellation</span>`
-      : `<span class="badge" style="background:#fffbeb;color:#b45309;border:1px solid #fde68a;font-size:10px;">${icon('alert')} Delay</span>`;
+      ? `<span class="badge" style="background:var(--bad-light);color:var(--bad);border:1px solid var(--bad-border);font-size:10px;">${icon('x')} Cancellation</span>`
+      : `<span class="badge" style="background:var(--warn-light);color:var(--warn);border:1px solid var(--warn-border);font-size:10px;">${icon('alert')} Delay</span>`;
     const checked = _cancelRptSel.has(r._id) ? 'checked' : '';
     return `<tr style="border-left:3px solid ${color};">
       <td style="width:32px;padding:8px 6px;">
@@ -29572,11 +29572,11 @@ function _cancelRptTableBody() {
       <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(r.location || '—')}</td>
       <td style="font-size:12px;">${escapeHtml(r.subsystem || '—')}</td>
       <td style="font-size:12px;max-width:200px;">
-        ${r.reason ? escapeHtml(r.reason) : '<em style="color:#9ca3af;">—</em>'}
-        ${r.duration ? `<div style="font-size:11px;color:#b45309;margin-top:2px;">${icon('timer')} ${escapeHtml(r.duration)}</div>` : ''}
+        ${r.reason ? escapeHtml(r.reason) : '<em style="color:var(--text-subtle);">—</em>'}
+        ${r.duration ? `<div style="font-size:11px;color:var(--warn);margin-top:2px;">${icon('timer')} ${escapeHtml(r.duration)}</div>` : ''}
       </td>
       <td style="font-size:12px;">
-        ${r.party ? `<span class="badge" style="background:#fee2e2;color:#7f1d1d;font-size:11px;font-weight:700;">${escapeHtml(r.party)}</span>` : '<span style="color:#9ca3af;">—</span>'}
+        ${r.party ? `<span class="badge" style="background:var(--bad-light);color:var(--bad);font-size:11px;font-weight:700;">${escapeHtml(r.party)}</span>` : '<span style="color:var(--text-subtle);">—</span>'}
       </td>
       <td style="font-size:11px;color:var(--gray-500);">
         <div>${escapeHtml(r.source)}</div>
@@ -29701,7 +29701,7 @@ function _laHealthTabHTML() {
         <div class="kpi-value" style="color:${forecastPct === null ? '#9ca3af' : forecastPct >= 70 ? '#16a34a' : forecastPct >= 40 ? '#d97706' : '#dc2626'};">
           ${forecastPct === null ? '—' : forecastPct + '%'}
         </div>
-        <div style="font-size:10px;color:#6b7280;">
+        <div style="font-size:10px;color:var(--text-subtle);">
           ${forecastPct === null ? 'No linked past cells' : `${pastWithResults.length} / ${pastLinked.length} planned cells had results`}
         </div>
       </div>
@@ -29710,14 +29710,14 @@ function _laHealthTabHTML() {
         <div class="kpi-value" style="color:${unmappedPct <= 30 ? '#16a34a' : unmappedPct <= 60 ? '#d97706' : '#dc2626'};">
           ${unmappedPct}%
         </div>
-        <div style="font-size:10px;color:#6b7280;">
+        <div style="font-size:10px;color:var(--text-subtle);">
           ${unmapped} of ${totalActs} have no link (overhead)
         </div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Total Activities</div>
         <div class="kpi-value">${totalActs}</div>
-        <div style="font-size:10px;color:#6b7280;">
+        <div style="font-size:10px;color:var(--text-subtle);">
           ${PLANNING_ACTIVITIES.filter(a => a.linked_test_register_activity).length} linked to TR ·
           ${PLANNING_ACTIVITIES.filter(a => a.linked_p6_activity_id).length} linked to P6
         </div>
@@ -29725,7 +29725,7 @@ function _laHealthTabHTML() {
       <div class="kpi-card">
         <div class="kpi-label">Tests Passed (4 wks)</div>
         <div class="kpi-value">${weekly.reduce((s, w) => s + w.count, 0)}</div>
-        <div style="font-size:10px;color:#6b7280;">
+        <div style="font-size:10px;color:var(--text-subtle);">
           ${weekly[weekly.length-1].count} this week
         </div>
       </div>
@@ -29738,14 +29738,14 @@ function _laHealthTabHTML() {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
       <div class="data-card" style="padding:14px;">
         <div style="font-weight:600;font-size:13px;margin-bottom:10px;">Test Completion Velocity (last 4 weeks)</div>
-        <div style="display:flex;align-items:flex-end;gap:8px;height:100px;padding-bottom:24px;border-bottom:1px solid #e5e7eb;">
+        <div style="display:flex;align-items:flex-end;gap:8px;height:100px;padding-bottom:24px;border-bottom:1px solid var(--line-soft);">
           ${weekly.map(w => {
             const h = Math.max(4, Math.round((w.count / maxWeekly) * 80));
             return `
               <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;">
-                <div style="font-size:11px;font-weight:600;color:#374151;">${w.count}</div>
+                <div style="font-size:11px;font-weight:600;color:var(--text-muted);">${w.count}</div>
                 <div style="width:100%;background:#0891b2;height:${h}px;border-radius:3px 3px 0 0;"></div>
-                <div style="font-size:10px;color:#6b7280;position:absolute;margin-top:${h + 6}px;">${w.label}</div>
+                <div style="font-size:10px;color:var(--text-subtle);position:absolute;margin-top:${h + 6}px;">${w.label}</div>
               </div>`;
           }).join('')}
         </div>
@@ -29753,16 +29753,16 @@ function _laHealthTabHTML() {
 
       <div class="data-card" style="padding:14px;">
         <div style="font-weight:600;font-size:13px;margin-bottom:10px;">Top remaining workload</div>
-        ${remainingByActivity.length === 0 ? '<div style="font-size:12px;color:#6b7280;">No linked activities with remaining tests.</div>' :
+        ${remainingByActivity.length === 0 ? '<div style="font-size:12px;color:var(--text-subtle);">No linked activities with remaining tests.</div>' :
           remainingByActivity.map(x => {
             const pct = Math.round((x.completeInActivity / x.totalInActivity) * 100);
             return `
               <div style="margin-bottom:10px;">
                 <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;">
                   <span style="font-weight:500;">${escapeHtml(x.activity.linked_test_register_activity)}</span>
-                  <span style="color:#6b7280;font-family:monospace;">${x.completeInActivity}/${x.totalInActivity}</span>
+                  <span style="color:var(--text-subtle);font-family:monospace;">${x.completeInActivity}/${x.totalInActivity}</span>
                 </div>
-                <div style="background:#f3f4f6;height:6px;border-radius:3px;overflow:hidden;">
+                <div style="background:var(--surface-3);height:6px;border-radius:3px;overflow:hidden;">
                   <div style="background:${pct>=80?'#16a34a':pct>=50?'#0891b2':'#9ca3af'};height:100%;width:${pct}%;"></div>
                 </div>
               </div>`;
@@ -29775,18 +29775,18 @@ function _laHealthTabHTML() {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
       <div class="data-card" style="padding:14px;">
         <div style="font-weight:600;font-size:13px;margin-bottom:10px;">${icon('alert')} Coverage gap — Activities not in any lookahead</div>
-        ${uncovered.length === 0 ? '<div style="font-size:12px;color:#16a34a;">✓ Every Test Register Activity is linked to a lookahead row.</div>' :
-          `<div style="font-size:11px;color:#6b7280;margin-bottom:8px;">These Test Register Activities have remaining tests but no lookahead row pointing at them — they need to be scheduled or linked.</div>
+        ${uncovered.length === 0 ? '<div style="font-size:12px;color:var(--good);">✓ Every Test Register Activity is linked to a lookahead row.</div>' :
+          `<div style="font-size:11px;color:var(--text-subtle);margin-bottom:8px;">These Test Register Activities have remaining tests but no lookahead row pointing at them — they need to be scheduled or linked.</div>
           <table style="width:100%;border-collapse:collapse;font-size:11px;">
-            <thead><tr style="background:#f8fafc;">
+            <thead><tr style="background:var(--surface-2);">
               <th style="text-align:left;padding:4px 8px;">Activity</th>
               <th style="text-align:right;padding:4px 8px;">Remaining</th>
             </tr></thead>
             <tbody>
               ${uncovered.map(u => `
-                <tr style="border-top:1px solid #f1f5f9;">
+                <tr style="border-top:1px solid var(--line-soft);">
                   <td style="padding:3px 8px;">${escapeHtml(u.name)}</td>
-                  <td style="padding:3px 8px;text-align:right;font-weight:600;color:#dc2626;">${u.total - u.complete}</td>
+                  <td style="padding:3px 8px;text-align:right;font-weight:600;color:var(--bad);">${u.total - u.complete}</td>
                 </tr>`).join('')}
             </tbody>
           </table>`
@@ -29795,9 +29795,9 @@ function _laHealthTabHTML() {
 
       <div class="data-card" style="padding:14px;">
         <div style="font-weight:600;font-size:13px;margin-bottom:10px;">${icon('calendar')} Schedule Drift vs P6</div>
-        ${drift.length === 0 ? '<div style="font-size:12px;color:#6b7280;">No P6-linked activities with scheduled cells.</div>' :
+        ${drift.length === 0 ? '<div style="font-size:12px;color:var(--text-subtle);">No P6-linked activities with scheduled cells.</div>' :
           `<table style="width:100%;border-collapse:collapse;font-size:11px;">
-            <thead><tr style="background:#f8fafc;">
+            <thead><tr style="background:var(--surface-2);">
               <th style="text-align:left;padding:4px 8px;">Activity</th>
               <th style="text-align:left;padding:4px 8px;">P6 finish</th>
               <th style="text-align:left;padding:4px 8px;">Latest planned</th>
@@ -29808,7 +29808,7 @@ function _laHealthTabHTML() {
                 const sign = d.delta > 0 ? '+' : '';
                 const color = d.delta > 5 ? '#dc2626' : d.delta < -5 ? '#16a34a' : '#6b7280';
                 return `
-                  <tr style="border-top:1px solid #f1f5f9;">
+                  <tr style="border-top:1px solid var(--line-soft);">
                     <td style="padding:3px 8px;">${escapeHtml((d.activity.description || d.activity.activity_id_text || '').slice(0, 30))}${(d.activity.description||'').length > 30 ? '…' : ''}</td>
                     <td style="padding:3px 8px;">${escapeHtml(d.p6.finish_date || '—')}</td>
                     <td style="padding:3px 8px;">${escapeHtml(d.latestPlanned || '—')}</td>
@@ -29817,12 +29817,12 @@ function _laHealthTabHTML() {
               }).join('')}
             </tbody>
           </table>
-          <div style="font-size:10px;color:#6b7280;margin-top:8px;">Δ = days the latest planned cell is past the P6 finish date. Positive = late, negative = early.</div>`
+          <div style="font-size:10px;color:var(--text-subtle);margin-top:8px;">Δ = days the latest planned cell is past the P6 finish date. Positive = late, negative = early.</div>`
         }
       </div>
     </div>
 
-    <div style="font-size:11px;color:#9ca3af;text-align:center;margin-top:24px;">
+    <div style="font-size:11px;color:var(--text-subtle);text-align:center;margin-top:24px;">
       Data refreshes when planning data is re-loaded. Forecast accuracy needs at least one linked past cell with results.
     </div>
   `;
@@ -29867,7 +29867,7 @@ function _laCancellationsTabHTML() {
   const catRow = _cancelCats().map(([code, label], ci) => {
     const n     = catCounts[code] || 0;
     const color = _cancelCatColor(code, ci);
-    return `<div style="flex:1;min-width:140px;background:#fff;border:1px solid var(--gray-200);border-left:4px solid ${color};border-radius:6px;padding:10px;">
+    return `<div style="flex:1;min-width:140px;background:var(--white);border:1px solid var(--gray-200);border-left:4px solid ${color};border-radius:6px;padding:10px;">
       <div style="font-size:10px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.03em;">${escapeHtml(label)}</div>
       <div style="font-size:24px;font-weight:700;color:${color};margin-top:4px;">${n}</div>
     </div>`;
@@ -29886,17 +29886,17 @@ function _laCancellationsTabHTML() {
       <div class="kpi-label">Total Records</div>
       <div class="kpi-value" style="font-size:28px;">${allRows.length}</div>
     </div>
-    <div class="kpi-card kpi-mini" style="flex:none;min-width:130px;border-left:4px solid #b91c1c;">
+    <div class="kpi-card kpi-mini" style="flex:none;min-width:130px;border-left:4px solid var(--bad);">
       <div class="kpi-label">Cancellations</div>
-      <div class="kpi-value" style="font-size:28px;color:#b91c1c;">${cancels}</div>
+      <div class="kpi-value" style="font-size:28px;color:var(--bad);">${cancels}</div>
     </div>
-    <div class="kpi-card kpi-mini" style="flex:none;min-width:130px;border-left:4px solid #b45309;">
+    <div class="kpi-card kpi-mini" style="flex:none;min-width:130px;border-left:4px solid var(--warn);">
       <div class="kpi-label">Delays Logged</div>
-      <div class="kpi-value" style="font-size:28px;color:#b45309;">${delays}</div>
+      <div class="kpi-value" style="font-size:28px;color:var(--warn);">${delays}</div>
     </div>
-    <div class="kpi-card kpi-mini" style="flex:none;min-width:130px;border-left:4px solid #1e40af;">
+    <div class="kpi-card kpi-mini" style="flex:none;min-width:130px;border-left:4px solid var(--info);">
       <div class="kpi-label">This Week</div>
-      <div class="kpi-value" style="font-size:28px;color:#1e40af;">${thisWeek.length}</div>
+      <div class="kpi-value" style="font-size:28px;color:var(--info);">${thisWeek.length}</div>
     </div>
   </div>
 
@@ -30016,8 +30016,8 @@ function _cancelRptExportPDF() {
     const borderColor = isCxl ? '#b91c1c' : '#b45309';
     const typeLabel   = isCxl ? 'Cancellation' : 'Delay';
     const typeStyle   = isCxl
-      ? 'background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;'
-      : 'background:#fffbeb;color:#b45309;border:1px solid #fde68a;';
+      ? 'background:var(--bad-light);color:var(--bad);border:1px solid var(--bad-border);'
+      : 'background:var(--warn-light);color:var(--warn);border:1px solid var(--warn-border);';
     return `
       <tr style="border-left:4px solid ${borderColor};">
         <td style="white-space:nowrap;font-weight:600;font-size:11px;">${r.date || '—'}</td>
@@ -30027,7 +30027,7 @@ function _cancelRptExportPDF() {
         <td style="font-size:11px;">${r.subsystem || '—'}</td>
         <td style="font-size:11px;max-width:200px;">${r.reason || '—'}${r.duration ? ` (${r.duration})` : ''}</td>
         <td style="font-size:11px;font-weight:700;color:${borderColor};">${r.party || '—'}</td>
-        <td style="font-size:10px;color:#6b7280;">${r.source}<br>${r.loggedBy}${r.loggedAt ? ' · '+r.loggedAt : ''}</td>
+        <td style="font-size:10px;color:var(--text-subtle);">${r.source}<br>${r.loggedBy}${r.loggedAt ? ' · '+r.loggedAt : ''}</td>
       </tr>`;
   }).join('');
 
@@ -30036,20 +30036,20 @@ function _cancelRptExportPDF() {
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, sans-serif; font-size: 12px; color: #111; padding: 24px; }
-    .report-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; border-bottom: 3px solid #e60012; padding-bottom: 12px; }
-    .report-title { font-size: 20px; font-weight: 800; color: #e60012; }
-    .report-sub { font-size: 12px; color: #6b7280; margin-top: 3px; }
-    .report-meta { font-size: 11px; color: #9ca3af; text-align: right; }
+    .report-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; border-bottom: 3px solid var(--hitachi-red); padding-bottom: 12px; }
+    .report-title { font-size: 20px; font-weight: 800; color: var(--hitachi-red); }
+    .report-sub { font-size: 12px; color: var(--text-subtle); margin-top: 3px; }
+    .report-meta { font-size: 11px; color: var(--text-subtle); text-align: right; }
     .kpi-row { display: flex; gap: 16px; margin-bottom: 16px; }
-    .kpi-box { padding: 10px 16px; border-radius: 6px; border: 1px solid #e5e7eb; flex: 1; }
-    .kpi-box .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: #9ca3af; }
+    .kpi-box { padding: 10px 16px; border-radius: 6px; border: 1px solid var(--line-soft); flex: 1; }
+    .kpi-box .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-subtle); }
     .kpi-box .val { font-size: 24px; font-weight: 800; margin-top: 2px; }
     table { width: 100%; border-collapse: collapse; font-size: 11px; }
-    th { background: #1f2937; color: #fff; padding: 7px 8px; text-align: left; font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; }
-    td { padding: 7px 8px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
-    tr:nth-child(even) td { background: #f9fafb; }
+    th { background: var(--charcoal); color: var(--white); padding: 7px 8px; text-align: left; font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; }
+    td { padding: 7px 8px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+    tr:nth-child(even) td { background: var(--surface-2); }
     tr:nth-child(even) td:first-child { background: inherit; }
-    .filter-summary { font-size: 10px; color: #6b7280; margin-bottom: 10px; }
+    .filter-summary { font-size: 10px; color: var(--text-subtle); margin-bottom: 10px; }
     @media print { body { padding: 12px; } }
   </style>
   </head><body>
@@ -30062,8 +30062,8 @@ function _cancelRptExportPDF() {
   </div>
   <div class="kpi-row">
     <div class="kpi-box"><div class="lbl">Total</div><div class="val">${exportRows.length}</div></div>
-    <div class="kpi-box" style="border-left:4px solid #b91c1c;"><div class="lbl">Cancellations</div><div class="val" style="color:#b91c1c;">${cancels}</div></div>
-    <div class="kpi-box" style="border-left:4px solid #b45309;"><div class="lbl">Delays Logged</div><div class="val" style="color:#b45309;">${delays}</div></div>
+    <div class="kpi-box" style="border-left:4px solid var(--bad);"><div class="lbl">Cancellations</div><div class="val" style="color:var(--bad);">${cancels}</div></div>
+    <div class="kpi-box" style="border-left:4px solid var(--warn);"><div class="lbl">Delays Logged</div><div class="val" style="color:var(--warn);">${delays}</div></div>
   </div>
   ${Object.entries(_cancelRpt).some(([,v])=>v&&v!=='all') ? `<div class="filter-summary">Filters: ${
     [_cancelRpt.type!=='all'?'Type: '+_cancelRpt.type:'',
@@ -30222,12 +30222,12 @@ function _apDeletedActivitiesHTML() {
 
   return `
     <div class="data-card" style="padding:0;">
-      <div style="padding:12px 16px;background:#fef3c7;border-bottom:1px solid var(--gray-200);font-size:12px;color:#78350f;">
+      <div style="padding:12px 16px;background:var(--warn-light);border-bottom:1px solid var(--gray-200);font-size:12px;color:#78350f;">
         ${icon('folder')} Soft-deleted activities stay in the database for audit purposes. Restore brings them back to the grid but does <strong>not</strong> auto-uncancel events that were cancelled when the row was deleted.
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:13px;">
         <thead>
-          <tr style="background:#f8fafc;border-bottom:1px solid var(--gray-200);">
+          <tr style="background:var(--surface-2);border-bottom:1px solid var(--gray-200);">
             <th style="text-align:left;padding:8px 12px;font-weight:600;color:var(--gray-600);">Description</th>
             <th style="text-align:left;padding:8px 12px;font-weight:600;color:var(--gray-600);">Group</th>
             <th style="text-align:left;padding:8px 12px;font-weight:600;color:var(--gray-600);">Location</th>
@@ -30255,7 +30255,7 @@ function _apDeletedActivitiesHTML() {
               <td style="padding:8px 12px;color:var(--gray-500);font-size:11px;">${evCount}</td>
               <td style="padding:8px 12px;text-align:right;white-space:nowrap;">
                 <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_apRestoreActivity('${a.id}')">↩ Restore</button>
-                <button class="form-secondary" style="font-size:11px;padding:4px 10px;color:#dc2626;border-color:#fca5a5;" onclick="_apHardDeleteActivity('${a.id}')">${icon('x')} Purge</button>
+                <button class="form-secondary" style="font-size:11px;padding:4px 10px;color:var(--bad);border-color:var(--bad-border);" onclick="_apHardDeleteActivity('${a.id}')">${icon('x')} Purge</button>
               </td>
             </tr>`;
           }).join('')}
@@ -30317,7 +30317,7 @@ function _apUploadStub() {
         <li><span style="display:inline-block;width:14px;height:14px;background:#F44336;vertical-align:middle;"></span> Red → Cancelled (admin must enter reason)</li>
       </ul>
 
-      <div style="margin-top:22px;padding:18px;background:#f9fafb;border:1px dashed var(--gray-300);border-radius:8px;text-align:center;">
+      <div style="margin-top:22px;padding:18px;background:var(--surface-2);border:1px dashed var(--gray-300);border-radius:8px;text-align:center;">
         <input type="file" id="lookahead-file-input" accept=".xlsx" style="display:none;" onchange="_lookaheadParseFile(this.files[0])">
         <button class="admin-action-btn" onclick="document.getElementById('lookahead-file-input').click()">${icon('upload')} Choose .xlsx File</button>
         <div style="margin-top:8px;font-size:11px;color:var(--gray-500);">
@@ -30344,19 +30344,19 @@ function _apReviewStub() {
     <div class="kpi-grid kpi-grid-mini" style="margin-bottom:16px;grid-template-columns:repeat(5,1fr);">
       <div class="kpi-card kpi-mini"><div class="kpi-label">Unmatched</div><div class="kpi-value" style="color:var(--warn);">${unmatched.length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">No Schedule Link</div><div class="kpi-value" style="color:var(--gray-500);">${noLink.length}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Suggested</div><div class="kpi-value" style="color:#2563eb;">${suggested.length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Suggested</div><div class="kpi-value" style="color:var(--info);">${suggested.length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Unknown Initials</div><div class="kpi-value" style="color:var(--warn);">${unknownInitials.length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Cancellations Pending</div><div class="kpi-value" style="color:var(--bad);">${cancellationsNeedingReason.length}</div></div>
     </div>
 
     ${cancellationsNeedingReason.length ? `
       <div class="data-card" style="padding:0;overflow:hidden;margin-bottom:18px;">
-        <div style="padding:10px 14px;border-bottom:1px solid var(--gray-200);background:#fef2f2;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#b91c1c;">
+        <div style="padding:10px 14px;border-bottom:1px solid var(--gray-200);background:var(--bad-light);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--bad);">
             <input type="checkbox" id="cancel-sel-all" onchange="_cancelToggleAll(this.checked)" style="width:14px;height:14px;">
             All
           </label>
-          <strong style="font-size:13px;color:#b91c1c;">${icon('ban')} Cancellations needing reason (${cancellationsNeedingReason.length})</strong>
+          <strong style="font-size:13px;color:var(--bad);">${icon('ban')} Cancellations needing reason (${cancellationsNeedingReason.length})</strong>
           <span style="font-size:11px;color:var(--gray-500);">Select items then apply a shared reason, or add individually.</span>
           <button id="cancel-bulk-btn" class="admin-action-btn" style="font-size:11px;padding:4px 12px;margin-left:auto;display:none;" onclick="_cancelBulkReason()">${icon('plus')} Add Reason to Selected</button>
         </div>
@@ -30377,8 +30377,8 @@ function _apReviewStub() {
 
     ${unknownInitials.length ? `
       <div class="data-card" style="padding:0;overflow:hidden;margin-bottom:18px;">
-        <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:#fffbeb;">
-          <strong style="font-size:13px;color:#92400e;">${icon('user')} Unknown resource initials (${unknownInitials.length})</strong>
+        <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--warn-light);">
+          <strong style="font-size:13px;color:var(--warn);">${icon('user')} Unknown resource initials (${unknownInitials.length})</strong>
           <span style="font-size:11px;color:var(--gray-500);margin-left:8px;">Map to existing or create as a manual resource.</span>
         </div>
         <table class="data-table">
@@ -30824,19 +30824,19 @@ function _lookaheadOpenPreviewModal() {
         <div class="kpi-card kpi-mini"><div class="kpi-label">Events</div><div class="kpi-value">${s.total_events}</div></div>
         <div class="kpi-card kpi-mini"><div class="kpi-label">Date Cols</div><div class="kpi-value">${s.date_columns}</div></div>
         <div class="kpi-card kpi-mini"><div class="kpi-label">Matched</div><div class="kpi-value good">${s.matched_count}</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Suggested</div><div class="kpi-value" style="color:#2563eb;">${s.suggested_count}</div></div>
+        <div class="kpi-card kpi-mini"><div class="kpi-label">Suggested</div><div class="kpi-value" style="color:var(--info);">${s.suggested_count}</div></div>
         <div class="kpi-card kpi-mini"><div class="kpi-label">Unmatched</div><div class="kpi-value" style="color:var(--warn);">${s.unmatched_count}</div></div>
         <div class="kpi-card kpi-mini"><div class="kpi-label">Cancellations</div><div class="kpi-value" style="color:var(--bad);">${s.cancellations}</div></div>
         <div class="kpi-card kpi-mini"><div class="kpi-label">Unknown Initials</div><div class="kpi-value" style="color:var(--warn);">${f.unknownInitials.length}</div></div>
       </div>
 
       ${f.unknownInitials.length ? `
-        <div style="margin-bottom:14px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
+        <div style="margin-bottom:14px;padding:10px 14px;background:var(--warn-light);border:1px solid var(--warn-border);border-radius:8px;font-size:13px;color:var(--warn);">
           ${icon('alert')} Unknown initials: <strong>${f.unknownInitials.map(escapeHtml).join(', ')}</strong> — they'll land in the Review Queue after import.
         </div>` : ''}
 
       ${s.cancellations > 0 ? `
-        <div style="margin-bottom:14px;padding:10px 14px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;font-size:13px;color:#991b1b;">
+        <div style="margin-bottom:14px;padding:10px 14px;background:var(--bad-light);border:1px solid var(--bad-border);border-radius:8px;font-size:13px;color:var(--bad);">
           ${icon('ban')} <strong>${s.cancellations}</strong> red-cell cancellation${s.cancellations === 1 ? '' : 's'} detected — admin must enter a reason for each in the Review Queue after import.
         </div>` : ''}
 
@@ -30858,7 +30858,7 @@ function _lookaheadOpenPreviewModal() {
             ${sampleRows.map(r => {
               const matchBadge = {
                 matched:   `<span class="badge badge-passed">✓ ${(r.match.confidence*100).toFixed(0)}%</span>`,
-                suggested: `<span class="badge" style="background:#dbeafe;color:#1e40af;">~ ${(r.match.confidence*100).toFixed(0)}%</span>`,
+                suggested: `<span class="badge" style="background:var(--info-light);color:var(--info);">~ ${(r.match.confidence*100).toFixed(0)}%</span>`,
                 unmatched: `<span class="badge badge-warn">${icon('x')}</span>`,
               }[r.match.status] || '—';
               const evCount = r.rowEvents.length;
@@ -31746,14 +31746,14 @@ function _planningOpenP6Detail(p6) {
         <div>
           ${map?.portal_test_case_code
             ? `<strong>${escapeHtml(map.portal_test_case_code)}</strong>${map.was_confirmed ? ' ✓' : ''}`
-            : '<em style="color:#9ca3af;">Not linked</em>'}
+            : '<em style="color:var(--text-subtle);">Not linked</em>'}
         </div>
         <div style="color:var(--gray-500);">Lookahead Events:</div>
         <div>${linkedEvs.length} event${linkedEvs.length === 1 ? '' : 's'} across ${linkedActs.length} activity${linkedActs.length === 1 ? '' : 'ies'}</div>
       </div>
 
       ${varianceEvents.length ? `
-        <div style="margin-top:14px;padding:10px 14px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:12px;color:#92400e;">
+        <div style="margin-top:14px;padding:10px 14px;background:var(--warn-light);border:1px solid var(--warn-border);border-radius:8px;font-size:12px;color:var(--warn);">
           ${icon('alert')} <strong>${varianceEvents.length} event${varianceEvents.length === 1 ? '' : 's'} outside P6 window:</strong><br>
           ${varianceEvents.slice(0, 5).map(v => `• ${escapeHtml(v.ev.title || '')} on ${v.ev.event_date} (${v.variance} day${v.variance === 1 ? '' : 's'} off)`).join('<br>')}
           ${varianceEvents.length > 5 ? `<br>… and ${varianceEvents.length - 5} more` : ''}
@@ -31834,7 +31834,7 @@ function _apConflictsStub() {
   return `
     <div class="kpi-grid kpi-grid-mini" style="margin-bottom:16px;">
       <div class="kpi-card kpi-mini"><div class="kpi-label">Open</div><div class="kpi-value" style="color:var(--bad);">${open.length}</div></div>
-      <div class="kpi-card kpi-mini"><div class="kpi-label">Critical</div><div class="kpi-value" style="color:#dc2626;">${open.filter(c => c.severity === 'critical').length}</div></div>
+      <div class="kpi-card kpi-mini"><div class="kpi-label">Critical</div><div class="kpi-value" style="color:var(--bad);">${open.filter(c => c.severity === 'critical').length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Warnings</div><div class="kpi-value" style="color:var(--warn);">${open.filter(c => c.severity === 'warning').length}</div></div>
       <div class="kpi-card kpi-mini"><div class="kpi-label">Acknowledged</div><div class="kpi-value">${PLANNING_CONFLICTS.length - open.length}</div></div>
     </div>
@@ -31938,7 +31938,7 @@ function _apResourcesStub() {
       </div>
 
       <!-- Filter bar -->
-      <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;background:#f8fafc;border-bottom:1px solid var(--gray-200);font-size:12px;">
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--surface-2);border-bottom:1px solid var(--gray-200);font-size:12px;">
         <input class="form-input" style="flex:1;max-width:280px;font-size:12px;padding:5px 9px;"
                placeholder="Filter by name, initials, email, category…"
                value="${escapeHtml(_apResNameFilter)}"
@@ -32005,7 +32005,7 @@ function _apResourcesStub() {
                   </td>
                   <td style="white-space:nowrap;">
                     <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_apEditResourceModal('${r.id}')">${icon('edit')} Edit</button>
-                    <button title="Delete" aria-label="Delete" class="form-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px;color:#b91c1c;border-color:#fca5a5;" onclick="_apDeleteResource('${r.id}','${escapeHtml(r.display_name)}')">${icon('trash')}</button>
+                    <button title="Delete" aria-label="Delete" class="form-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px;color:var(--bad);border-color:var(--bad-border);" onclick="_apDeleteResource('${r.id}','${escapeHtml(r.display_name)}')">${icon('trash')}</button>
                   </td>
                 </tr>`;
               }).join('')}
@@ -32082,7 +32082,7 @@ function _apEditResourceModal(resourceId) {
           </select>
         </div>
         ${profileSubsys && profileSubsys !== r.subsystem ? `
-          <div style="background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:10px 12px;font-size:12px;">
+          <div style="background:var(--warn-light);border:1px solid #fde047;border-radius:6px;padding:10px 12px;font-size:12px;">
             ${icon('bulb')} Portal profile has subsystem <strong>${escapeHtml(profileSubsys)}</strong>.
             <button class="form-secondary" style="font-size:11px;padding:2px 8px;margin-left:8px;" onclick="_apResSubsysPick('${escapeHtml(profileSubsys)}')">Sync from profile</button>
           </div>
@@ -34510,12 +34510,12 @@ function _formPickerBody(testId, assetId = '') {
 
   const scopeBanner = (() => {
     if (assetId) {
-      return `<div style="margin-bottom:12px;padding:10px 12px;border-radius:6px;background:#eff6ff;border:1px solid #bfdbfe;font-size:12px;color:#1e3a8a;">
+      return `<div style="margin-bottom:12px;padding:10px 12px;border-radius:6px;background:var(--info-light);border:1px solid var(--info-border);font-size:12px;color:#1e3a8a;">
         Showing forms for <strong>${escapeHtml(targetAsset?.name || 'this asset')}</strong>. Forms with scope <em>“Covers all assets”</em> are inherited from the parent test case and managed there.
       </div>`;
     }
     if (isParentCase) {
-      return `<div style="margin-bottom:12px;padding:10px 12px;border-radius:6px;background:#f5f3ff;border:1px solid #ddd6fe;font-size:12px;color:#4c1d95;">
+      return `<div style="margin-bottom:12px;padding:10px 12px;border-radius:6px;background:var(--accent-purple-light);border:1px solid #ddd6fe;font-size:12px;color:#4c1d95;">
         This test case has <strong>${childRows.length} child asset${childRows.length===1?'':'s'}</strong>. Forms can either <strong>cover all assets</strong> (one PDF for the whole test case) or be linked to a <strong>specific asset</strong>.
       </div>`;
     }
@@ -34530,8 +34530,8 @@ function _formPickerBody(testId, assetId = '') {
             const inherited = !!(assetId && scope === 'parent');
             const scopeCell = isParentCase
               ? (scope === 'parent'
-                  ? `<span class="tag" style="background:#ede9fe;color:#5b21b6;border:1px solid #ddd6fe;">All assets</span>`
-                  : `<span class="tag" style="background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe;">${escapeHtml(asset?.name || 'asset')}</span>`)
+                  ? `<span class="tag" style="background:var(--accent-purple-light);color:var(--accent-purple);border:1px solid #ddd6fe;">All assets</span>`
+                  : `<span class="tag" style="background:var(--info-light);color:var(--info);border:1px solid var(--info-border);">${escapeHtml(asset?.name || 'asset')}</span>`)
               : '';
             const unlinkBtn = inherited
               ? `<span style="font-size:11px;color:var(--gray-500);font-style:italic;">inherited</span>`
@@ -34789,7 +34789,7 @@ function _formsBadgeHTML(testIdOrRow, assetId = '') {
   }
   const titleBits = [`${count} form${count===1?'':'s'} linked`];
   if (isChild) titleBits.push('(includes any covering all assets)');
-  return `<button class="admin-action-btn tr-mini-btn" title="${titleBits.join(' ')}" onclick="openFormPickerForTest('${tid}','${aid}')" style="font-size:11px;padding:2px 7px;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;">${icon('paperclip')} ${count}</button>`;
+  return `<button class="admin-action-btn tr-mini-btn" title="${titleBits.join(' ')}" onclick="openFormPickerForTest('${tid}','${aid}')" style="font-size:11px;padding:2px 7px;background:var(--info-light);color:var(--info);border:1px solid var(--info-border);">${icon('paperclip')} ${count}</button>`;
 }
 
 // ── TEMPLATE EDITOR INTEGRATION ─────────────────────────────────────────
@@ -36781,12 +36781,12 @@ function _drwTabSets(loc, el) {
             · ${sheets.length} sheet${sheets.length === 1 ? '' : 's'}
           </div>
         </div>
-        ${uiCan('drawings','upload_set') ? `<button class="admin-action-btn" style="background:#6366f1;color:#fff;border:none;padding:7px 14px;border-radius:6px;cursor:pointer;font-size:12.5px;font-weight:600;"
+        ${uiCan('drawings','upload_set') ? `<button class="admin-action-btn" style="background:#6366f1;color:var(--white);border:none;padding:7px 14px;border-radius:6px;cursor:pointer;font-size:12.5px;font-weight:600;"
                 onclick="_drwUploadRevision('${activeSet.id}')"
                 title="Upload a new revision — matching Drawing Numbers will be superseded automatically">
           + Upload Revision
         </button>` : ''}
-        ${uiCan('drawings','delete_set') ? `<button class="form-secondary tr-mini-btn" style="margin-left:8px;color:var(--bad);border-color:#fca5a5;"
+        ${uiCan('drawings','delete_set') ? `<button class="form-secondary tr-mini-btn" style="margin-left:8px;color:var(--bad);border-color:var(--bad-border);"
                 onclick="_drwDeleteSet('${activeSet.id}','${escapeHtml(loc)}')"
                 title="Delete this drawing set, all its pages and the uploaded PDF">Delete set</button>` : ''}
       </div>
@@ -36829,7 +36829,7 @@ function _drwTabSets(loc, el) {
                 <td style="white-space:nowrap;">
                   <button class="admin-action-btn tr-mini-btn" onclick="_drwOpenSet('${escapeHtml(loc)}','${set.id}')">View</button>
                   <button class="form-secondary tr-mini-btn" style="margin-left:4px;" onclick="event.stopPropagation();_drwUploadRevision('${set.id}')" title="Upload a new revision — matching Drawing Numbers will be superseded automatically">+ Revision</button>
-                  <button class="form-secondary tr-mini-btn" style="margin-left:4px;color:var(--bad);border-color:#fca5a5;" onclick="event.stopPropagation();_drwDeleteSet('${set.id}','${escapeHtml(loc)}')" title="Delete this drawing set, all its pages and the uploaded PDF">Delete</button>
+                  <button class="form-secondary tr-mini-btn" style="margin-left:4px;color:var(--bad);border-color:var(--bad-border);" onclick="event.stopPropagation();_drwDeleteSet('${set.id}','${escapeHtml(loc)}')" title="Delete this drawing set, all its pages and the uploaded PDF">Delete</button>
                 </td>
               </tr>
             `;
@@ -37264,13 +37264,13 @@ function _drwCalUpdateInfo() {
       const cells = _drwBuildCells(_drwCalPageItems.items, _drwCalPageItems.W, _drwCalPageItems.H, r);
       const found = cells.filter(c => c.str.trim().length > 0).map(c => c.str.trim());
       if (found.length) {
-        previewHtml = '<div style="margin-top:7px;padding:6px 8px;background:#f0fdf4;border:1px solid #86efac;border-radius:5px;">'
-          + '<div style="font-size:10px;font-weight:700;color:#166534;margin-bottom:4px;">Found in region:</div>'
-          + found.slice(0, 8).map(s => '<div style="font-size:11px;color:#15803d;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(s) + '</div>').join('')
+        previewHtml = '<div style="margin-top:7px;padding:6px 8px;background:var(--good-light);border:1px solid var(--good-border);border-radius:5px;">'
+          + '<div style="font-size:10px;font-weight:700;color:var(--good);margin-bottom:4px;">Found in region:</div>'
+          + found.slice(0, 8).map(s => '<div style="font-size:11px;color:var(--good);font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(s) + '</div>').join('')
           + (found.length > 8 ? '<div style="font-size:10px;color:#4ade80;">+' + (found.length - 8) + ' more</div>' : '')
           + '</div>';
       } else {
-        previewHtml = '<div style="margin-top:7px;padding:6px 8px;background:#fef2f2;border:1px solid #fca5a5;border-radius:5px;font-size:10px;color:#991b1b;">'
+        previewHtml = '<div style="margin-top:7px;padding:6px 8px;background:var(--bad-light);border:1px solid var(--bad-border);border-radius:5px;font-size:10px;color:var(--bad);">'
           + 'No text found in this region on this page. Try a different area or check the PDF has selectable text.</div>';
       }
     }
@@ -37432,11 +37432,11 @@ function _drwShowReview(numPages) {
   document.querySelector('#modal-overlay .modal-body').innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
       <span style="font-size:13px;color:var(--gray-600);">${numPages} pages parsed.</span>
-      <span id="drw-included-pill" style="background:#e0e7ff;color:#3730a3;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">${includedCount} of ${numPages} to import</span>
-      ${upRevCount ? `<span id="drw-uprev-pill" style="background:#fff7ed;color:#c2410c;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">↑ ${upRevCount} up-rev</span>` : `<span id="drw-uprev-pill" style="display:none;background:#fff7ed;color:#c2410c;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;"></span>`}
+      <span id="drw-included-pill" style="background:#e0e7ff;color:var(--info);padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">${includedCount} of ${numPages} to import</span>
+      ${upRevCount ? `<span id="drw-uprev-pill" style="background:var(--warn-light);color:#c2410c;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">↑ ${upRevCount} up-rev</span>` : `<span id="drw-uprev-pill" style="display:none;background:var(--warn-light);color:#c2410c;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;"></span>`}
       ${needsReview
-        ? `<span style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">${icon('alert')} ${needsReview} need manual entry</span>`
-        : `<span style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">✓ All sheets parsed</span>`}
+        ? `<span style="background:var(--warn-light);color:var(--warn);padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">${icon('alert')} ${needsReview} need manual entry</span>`
+        : `<span style="background:var(--good-light);color:var(--good);padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">✓ All sheets parsed</span>`}
       <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(true)" style="font-size:12px;padding:5px 10px;">Select all</button>
       <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(false)" style="font-size:12px;padding:5px 10px;">Select none</button>
       <button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()" style="font-size:12px;padding:5px 10px;margin-left:auto;">↩ Recalibrate region</button>
@@ -37473,11 +37473,11 @@ function _drwShowReview(numPages) {
               ${_drwParsedSheets.map((s, i) => {
                 const rowUpRev = !!s._existingSheet;
                 const rowStyle = !s.included
-                  ? `opacity:0.45;background:var(--gray-50);${rowUpRev ? 'border-left:3px solid #f59e0b;' : ''}`
-                  : rowUpRev ? 'background:#fff7ed;border-left:3px solid #f59e0b;'
-                  : s.needsReview ? 'background:#fffbeb;' : '';
+                  ? `opacity:0.45;background:var(--gray-50);${rowUpRev ? 'border-left:3px solid var(--accent-amber);' : ''}`
+                  : rowUpRev ? 'background:var(--warn-light);border-left:3px solid var(--accent-amber);'
+                  : s.needsReview ? 'background:var(--warn-light);' : '';
                 const statusCell = rowUpRev
-                  ? `<span style="display:inline-flex;align-items:center;background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;">↑ Rev</span><br><span style="font-size:10px;color:var(--gray-400);">was: ${escapeHtml(s._existingSheet.revision || '—')}</span>`
+                  ? `<span style="display:inline-flex;align-items:center;background:var(--warn-light);color:var(--warn);padding:2px 6px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;">↑ Rev</span><br><span style="font-size:10px;color:var(--gray-400);">was: ${escapeHtml(s._existingSheet.revision || '—')}</span>`
                   : `<span style="font-size:10px;color:var(--gray-400);">New</span>`;
                 return `
                 <tr id="drw-rev-row-${i}" class="drw-rev-clickable" onclick="_drwReviewShowPage(${i})" style="${rowStyle}">
@@ -37653,9 +37653,9 @@ function _drwReviewToggle(idx, included) {
     const s = _drwParsedSheets[idx];
     const hasUpRev = !!s._existingSheet;
     row.style.cssText = !s.included
-      ? `opacity:0.45;background:var(--gray-50);${hasUpRev ? 'border-left:3px solid #f59e0b;' : ''}`
-      : hasUpRev ? 'background:#fff7ed;border-left:3px solid #f59e0b;'
-      : s.needsReview ? 'background:#fffbeb;' : '';
+      ? `opacity:0.45;background:var(--gray-50);${hasUpRev ? 'border-left:3px solid var(--accent-amber);' : ''}`
+      : hasUpRev ? 'background:var(--warn-light);border-left:3px solid var(--accent-amber);'
+      : s.needsReview ? 'background:var(--warn-light);' : '';
   }
   _drwReviewUpdateCounts();
 }
@@ -37669,9 +37669,9 @@ function _drwReviewSelectAll(checked) {
     if (row) {
       const hasUpRev = !!s._existingSheet;
       row.style.cssText = !s.included
-        ? `opacity:0.45;background:var(--gray-50);${hasUpRev ? 'border-left:3px solid #f59e0b;' : ''}`
-        : hasUpRev ? 'background:#fff7ed;border-left:3px solid #f59e0b;'
-        : s.needsReview ? 'background:#fffbeb;' : '';
+        ? `opacity:0.45;background:var(--gray-50);${hasUpRev ? 'border-left:3px solid var(--accent-amber);' : ''}`
+        : hasUpRev ? 'background:var(--warn-light);border-left:3px solid var(--accent-amber);'
+        : s.needsReview ? 'background:var(--warn-light);' : '';
     }
   });
   const toggle = document.getElementById('drw-rev-toggle-all');
@@ -37901,10 +37901,10 @@ function _drwEnsureEditorChrome() {
       <select id="drw-width-select" class="drw-editor-select" onchange="_drwSetWidth(this.value)" title="Line width">
         <option value="2">2px</option><option value="3" selected>3px</option><option value="5">5px</option><option value="8">8px</option>
       </select>
-      <button class="drw-color-btn" data-color="#dc2626" onclick="_drwSetColor('#dc2626')" title="Red" style="background:#dc2626;"></button>
-      <button class="drw-color-btn" data-color="#f59e0b" onclick="_drwSetColor('#f59e0b')" title="Amber" style="background:#f59e0b;"></button>
+      <button class="drw-color-btn" data-color="#dc2626" onclick="_drwSetColor('#dc2626')" title="Red" style="background:var(--bad);"></button>
+      <button class="drw-color-btn" data-color="#f59e0b" onclick="_drwSetColor('#f59e0b')" title="Amber" style="background:var(--accent-amber);"></button>
       <button class="drw-color-btn" data-color="#10b981" onclick="_drwSetColor('#10b981')" title="Green" style="background:#10b981;"></button>
-      <button class="drw-color-btn" data-color="#2563eb" onclick="_drwSetColor('#2563eb')" title="Blue" style="background:#2563eb;"></button>
+      <button class="drw-color-btn" data-color="#2563eb" onclick="_drwSetColor('#2563eb')" title="Blue" style="background:var(--info);"></button>
       <span class="drw-toolbar-divider"></span>
       <button class="drw-tool-btn" onclick="_drwZoomOut()" title="Zoom out">-</button>
       <button class="drw-tool-btn" onclick="_drwFitPage()" title="Fit whole page">Fit</button>
@@ -37917,13 +37917,13 @@ function _drwEnsureEditorChrome() {
       <button class="drw-tool-btn drw-danger-btn" onclick="_drwClearMarkup()" title="Clear all your draft markups">Clear</button>
       <span class="drw-toolbar-divider"></span>
       <button class="drw-tool-btn" onclick="_drwExportOpen()" title="Export this sheet as PDF — original or marked up">Export</button>
-      <button class="drw-tool-btn" id="drw-tool-manage" onclick="_drwManageMarkupsOpen()" title="Manage all markups on this sheet" style="display:${uiCan('drawings','manage_markup_any') ? 'inline-flex' : 'none'};background:#fef3c7;color:#92400e;border-color:#fcd34d;">Manage</button>
+      <button class="drw-tool-btn" id="drw-tool-manage" onclick="_drwManageMarkupsOpen()" title="Manage all markups on this sheet" style="display:${uiCan('drawings','manage_markup_any') ? 'inline-flex' : 'none'};background:var(--warn-light);color:var(--warn);border-color:var(--warn-border);">Manage</button>
       ${(uiCan('drawings','create_markup') || uiCan('drawings','edit_markup_own') || uiCan('drawings','manage_markup_any')) ? `<button class="drw-save-btn" onclick="_drwSaveMarkup()">Save Draft</button>` : ''}
       ${(uiCan('drawings','publish') || uiCan('drawings','manage_markup_any')) ? `<button class="drw-publish-btn" onclick="_drwPublishMarkup()">Publish</button>` : ''}`;
     const _chips = document.getElementById('drw-stamp-chips');
     if (_chips && typeof CXMarkup !== 'undefined') {
       _chips.innerHTML = CXMarkup.STAMPS.map(s =>
-        `<button type="button" class="drw-stamp-chip" data-kind="${s.k}" onclick="_drwSetStampKind('${s.k}')" style="background:${s.c};color:#fff;border:none;border-radius:6px;padding:5px 8px;font:700 11px/1 'IBM Plex Mono',monospace;letter-spacing:.04em;cursor:pointer;">${s.k}</button>`
+        `<button type="button" class="drw-stamp-chip" data-kind="${s.k}" onclick="_drwSetStampKind('${s.k}')" style="background:${s.c};color:var(--white);border:none;border-radius:6px;padding:5px 8px;font:700 11px/1 'IBM Plex Mono',monospace;letter-spacing:.04em;cursor:pointer;">${s.k}</button>`
       ).join('');
     }
   }
@@ -38945,16 +38945,16 @@ function _drwManageMarkupsOpen() {
                   ? new Date(m.updated_at).toLocaleString()
                   : (m.published_at ? new Date(m.published_at).toLocaleString() : '—');
                 const loaded = _drwSavedMarkupId === m.id;
-                return `<tr style="border-top:1px solid var(--gray-100);${loaded ? 'background:#fff7ed;' : ''}">
+                return `<tr style="border-top:1px solid var(--gray-100);${loaded ? 'background:var(--warn-light);' : ''}">
                   <td style="padding:6px 10px;">${escapeHtml(author)}${loaded ? ' <span style="font-size:10px;color:#9a3412;">(loaded)</span>' : ''}</td>
                   <td style="padding:6px 10px;">${isPub
-                    ? `<span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #bbf7d0;font-size:11px;">Published</span>`
+                    ? `<span class="badge" style="background:var(--good-light);color:var(--good);border:1px solid var(--good-border);font-size:11px;">Published</span>`
                     : `<span class="badge" style="background:var(--gray-100);color:var(--gray-700);font-size:11px;">Draft</span>`}</td>
                   <td style="padding:6px 10px;color:var(--gray-700);">${escapeHtml(updated)}</td>
                   <td style="padding:6px 10px;text-align:right;font-family:monospace;color:var(--gray-700);">${shapeCount}</td>
                   <td style="padding:6px 10px;text-align:right;white-space:nowrap;">
                     <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_drwAdminEditMarkup('${escapeHtml(m.id)}')">${loaded ? 'Reload' : 'Load to edit'}</button>
-                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--bad);border-color:#fca5a5;" onclick="_drwAdminDeleteMarkup('${escapeHtml(m.id)}')">Delete</button>
+                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--bad);border-color:var(--bad-border);" onclick="_drwAdminDeleteMarkup('${escapeHtml(m.id)}')">Delete</button>
                   </td>
                 </tr>`;
               }).join('')}</tbody>
@@ -39327,7 +39327,7 @@ function _dynSubsystemBadge(subsystem) {
   // Render as a standard .tag so it inherits the production subsystem theme
   // (mono caps) shared with the Test Register and other tables. The empty
   // state keeps a red tint so coverage gaps stay obvious.
-  if (!s) return `<span class="tag" style="background:#fef2f2;color:#b91c1c;border-color:#fecaca;" title="No subsystem set — assign the team that runs this test">${icon('alert')} No subsystem</span>`;
+  if (!s) return `<span class="tag" style="background:var(--bad-light);color:var(--bad);border-color:var(--bad-border);" title="No subsystem set — assign the team that runs this test">${icon('alert')} No subsystem</span>`;
   return `<span class="tag" title="Subsystem / team running this test">${escapeHtml(s)}</span>`;
 }
 
@@ -39936,11 +39936,11 @@ function _dynRowHtml(r) {
     if (passer && r.status !== 'Pass') {
       subBadge = `<br/><span class="badge" style="background:#ccfbf1;color:#0f766e;font-size:10px;" title="An alternative run in this substitute group passed">↪ satisfied via ${escapeHtml(passer.code || passer.title || 'alt')}</span>`;
     } else {
-      subBadge = `<br/><span class="badge" style="background:#f1f5f9;color:#475569;font-size:10px;" title="Part of a substitute group (${sibs.length} alternatives) — counted once for KPIs">⇄ substitute group</span>`;
+      subBadge = `<br/><span class="badge" style="background:var(--surface-3);color:var(--text-muted);font-size:10px;" title="Part of a substitute group (${sibs.length} alternatives) — counted once for KPIs">⇄ substitute group</span>`;
     }
   }
   const prereq = r.prerequisites
-    ? ` <span title="${escapeHtml(r.prerequisites)}" style="cursor:help;color:#b45309;font-size:11px;">${icon('flag')} prereq</span>` : '';
+    ? ` <span title="${escapeHtml(r.prerequisites)}" style="cursor:help;color:var(--warn);font-size:11px;">${icon('flag')} prereq</span>` : '';
   const selected = _dynPage.selInstances.has(r.id);
   const schedLabel = _dynScheduledLabel(r);
   // Auto-roll-forward trail: when an access window is CANCELLED, any runs on it
@@ -39951,19 +39951,19 @@ function _dynRowHtml(r) {
   // says everything, so the stale "↻ moved" badge is hidden. (Consistent with
   // resetting the roll trail on a manual unschedule.)
   const movedBadge = (r.roll_count > 0 && r.shift_id)
-    ? `<br/><span class="badge" style="background:#fef3c7;color:#92400e;font-size:10px;" title="${escapeHtml(r.roll_note || 'Auto-moved off a cancelled access window')}">↻ moved to ${escapeHtml(_dynFmtDate(r.scheduled_for_date))}${r.roll_count > 1 ? ` ×${r.roll_count}` : ''}</span>`
+    ? `<br/><span class="badge" style="background:var(--warn-light);color:var(--warn);font-size:10px;" title="${escapeHtml(r.roll_note || 'Auto-moved off a cancelled access window')}">↻ moved to ${escapeHtml(_dynFmtDate(r.scheduled_for_date))}${r.roll_count > 1 ? ` ×${r.roll_count}` : ''}</span>`
     : '';
   // A passed/NA run shows a done tag here (not a date) — a Pass auto-releases its
   // future shift slot, so the scheduled column denotes the test is complete.
   const isDone = r.status === 'Pass' || r.status === 'Not Applicable';
   const issueBadge = (!isDone && r.shift_id) ? _dynIssueBadge(r) : '';
   const schedCell = isDone
-    ? `<span class="tag" style="background:#ecfdf5;color:#065f46;border-color:#a7f3d0;" title="${r.status === 'Pass' ? 'Passed — released from any upcoming shift' : 'Not applicable'}">✓ ${escapeHtml(r.status === 'Pass' ? 'Passed' : 'N/A')}</span>`
+    ? `<span class="tag" style="background:var(--good-light);color:var(--good);border-color:var(--good-border);" title="${r.status === 'Pass' ? 'Passed — released from any upcoming shift' : 'Not applicable'}">✓ ${escapeHtml(r.status === 'Pass' ? 'Passed' : 'N/A')}</span>`
     : (schedLabel
-        ? `<span class="tag" style="background:#eef2ff;color:#3730a3;border-color:#c7d2fe;font-family:var(--font-mono,monospace);" title="Scheduled">${escapeHtml(schedLabel)}</span>`
+        ? `<span class="tag" style="background:var(--info-light);color:var(--info);border-color:var(--info-border);font-family:var(--font-mono,monospace);" title="Scheduled">${escapeHtml(schedLabel)}</span>`
         : `<span style="color:var(--gray-400);font-size:11px;">Not scheduled</span>`) + movedBadge + (issueBadge ? `<br/>${issueBadge}` : '');
   return `
-    <tr${selected ? ' style="background:#eff6ff;"' : ''}>
+    <tr${selected ? ' style="background:var(--info-light);"' : ''}>
       <td style="text-align:center;"><input type="checkbox" ${selected?'checked':''} onchange="_dynInstToggleSelect('${escapeHtml(r.id)}',this.checked)"></td>
       <td style="font-family:var(--font-mono,monospace);font-size:12px;">${escapeHtml(r.code || '—')}</td>
       <td>${tc ? `<span style="font-family:var(--font-mono,monospace);font-size:11px;color:var(--gray-500);">${escapeHtml(tc.code || r.test_id || '')}</span><br/><span style="font-size:12px;">${escapeHtml((tc.name || '').slice(0,40))}</span>` : `<span style="color:var(--gray-400);">${escapeHtml(r.test_id || '—')}</span>`}</td>
@@ -39971,7 +39971,7 @@ function _dynRowHtml(r) {
       <td style="max-width:480px;">
         <div>${escapeHtml(r.title || '')}${prereq}${subBadge}</div>
         ${r.test_notes ? `<div style="margin-top:3px;font-size:11px;color:var(--gray-500);white-space:normal;overflow-wrap:anywhere;line-height:1.45;"><span style="color:var(--gray-400);font-weight:600;">Notes:</span> ${escapeHtml(r.test_notes)}</div>` : ''}
-        ${r.substitute_notes ? `<div style="margin-top:3px;font-size:11px;color:#6d28d9;white-space:normal;overflow-wrap:anywhere;line-height:1.45;"><span style="font-weight:600;">Alt locations:</span> ${escapeHtml(r.substitute_notes)}</div>` : ''}
+        ${r.substitute_notes ? `<div style="margin-top:3px;font-size:11px;color:var(--accent-purple);white-space:normal;overflow-wrap:anywhere;line-height:1.45;"><span style="font-weight:600;">Alt locations:</span> ${escapeHtml(r.substitute_notes)}</div>` : ''}
       </td>
       <td>${r.target_phase ? `<span class="tag tag-phase">${escapeHtml(r.target_phase)}</span>` : '<span style="color:var(--gray-400);">—</span>'}</td>
       <td style="font-size:12px;">${sectionsCell}</td>
@@ -39985,7 +39985,7 @@ function _dynRowHtml(r) {
       </td>
       <td style="white-space:nowrap;">
         <button class="dyn-btn" style="padding:3px 8px;font-size:11px;" onclick="_dynOpenInstanceModal('${escapeHtml(r.id)}')">Edit</button>
-        <button class="dyn-btn" style="padding:3px 8px;font-size:11px;color:#dc2626;" onclick="_dynDeleteInstance('${escapeHtml(r.id)}')">Del</button>
+        <button class="dyn-btn" style="padding:3px 8px;font-size:11px;color:var(--bad);" onclick="_dynDeleteInstance('${escapeHtml(r.id)}')">Del</button>
       </td>
     </tr>
   `;
@@ -40069,7 +40069,7 @@ function _dynOpenInstanceModal(id) {
     body: _dynBuildInstanceForm(inst, dynTcOpts),
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      ${!isNew ? `<button class="form-secondary" style="color:#dc2626;" onclick="_dynDeleteInstance('${escapeHtml(inst.id)}', true)">Delete</button>` : ''}
+      ${!isNew ? `<button class="form-secondary" style="color:var(--bad);" onclick="_dynDeleteInstance('${escapeHtml(inst.id)}', true)">Delete</button>` : ''}
       <button class="form-submit" onclick="_dynSaveInstance('${escapeHtml(inst?.id || '')}')">${isNew ? 'Create' : 'Save'}</button>
     `,
     size: 'large',
@@ -40198,7 +40198,7 @@ function _dynBuildInstanceForm(inst, tcOpts) {
         <input id="dyn-f-exp-dur" type="number" min="1" value="${v.expected_duration_minutes ?? ''}" placeholder="e.g. 120" />
       </div>
 
-      <div class="form-field" style="grid-column:1/-1;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:10px;">
+      <div class="form-field" style="grid-column:1/-1;background:var(--warn-light);border:1px solid #fed7aa;border-radius:6px;padding:10px;">
         <label style="color:#9a3412;">Actual duration <span style="color:#9a3412;font-weight:400;">(minutes — fill in when the test is run, drives the duration-variance report)</span></label>
         <input id="dyn-f-act-dur" type="number" min="0" value="${v.actual_duration_minutes ?? ''}" placeholder="e.g. 135" style="background:white;" />
       </div>
@@ -40435,7 +40435,7 @@ function _dynOpenCSVModal() {
         document.getElementById('dyn-csv-text').value = txt;
         _dynCSVValidate();
       } catch (err) {
-        document.getElementById('dyn-csv-status').innerHTML = `<span style="color:#dc2626;">${escapeHtml(err.message)}</span>`;
+        document.getElementById('dyn-csv-status').innerHTML = `<span style="color:var(--bad);">${escapeHtml(err.message)}</span>`;
       }
     });
   }, 50);
@@ -40814,11 +40814,11 @@ function _dynCSVValidate() {
   const newCases = cases.filter(c => c.isNew);
   out.innerHTML = `
     <strong>${runs.length}</strong> run(s) across <strong>${cases.length}</strong> test case(s)
-    ${newCases.length ? `(<span style="color:#1d4ed8;">${newCases.length} new — will be created</span>)` : '(all existing)'}.
+    ${newCases.length ? `(<span style="color:var(--info);">${newCases.length} new — will be created</span>)` : '(all existing)'}.
     ${groupCount ? `<br/><span style="color:#0f766e;">${groupCount} substitute group(s) — each counted once for KPIs.</span>` : ''}
-    ${errors.length ? `<br/><span style="color:#dc2626;">${errors.length} row error(s) — will be skipped.</span>` : ''}
-    ${warnings.length ? `<details style="margin-top:6px;"><summary style="cursor:pointer;color:#b45309;font-size:12px;">${warnings.length} warning(s)</summary><pre style="font-size:11px;background:var(--gray-50);padding:8px;margin-top:6px;max-height:140px;overflow:auto;">${warnings.map(escapeHtml).join('\n')}</pre></details>` : ''}
-    ${errors.length ? `<details style="margin-top:6px;"><summary style="cursor:pointer;color:#dc2626;font-size:12px;">View errors</summary><pre style="font-size:11px;background:var(--gray-50);padding:8px;margin-top:6px;max-height:140px;overflow:auto;">${errors.map(escapeHtml).join('\n')}</pre></details>` : ''}
+    ${errors.length ? `<br/><span style="color:var(--bad);">${errors.length} row error(s) — will be skipped.</span>` : ''}
+    ${warnings.length ? `<details style="margin-top:6px;"><summary style="cursor:pointer;color:var(--warn);font-size:12px;">${warnings.length} warning(s)</summary><pre style="font-size:11px;background:var(--gray-50);padding:8px;margin-top:6px;max-height:140px;overflow:auto;">${warnings.map(escapeHtml).join('\n')}</pre></details>` : ''}
+    ${errors.length ? `<details style="margin-top:6px;"><summary style="cursor:pointer;color:var(--bad);font-size:12px;">View errors</summary><pre style="font-size:11px;background:var(--gray-50);padding:8px;margin-top:6px;max-height:140px;overflow:auto;">${errors.map(escapeHtml).join('\n')}</pre></details>` : ''}
   `;
   return res;
 }
@@ -41204,7 +41204,7 @@ function _dynScheduleRowActions(r) {
   const scheduled = !!(r.scheduled_for_date || r.scheduled_window);
   return `<div style="display:flex;gap:4px;align-items:center;justify-content:flex-end;white-space:nowrap;">
     ${_dynMoveShiftOptions(r)}
-    ${scheduled ? `<button class="dyn-btn" style="padding:3px 8px;font-size:11px;color:#dc2626;" title="Remove from its scheduled date" onclick="_dynUnschedule('${escapeHtml(r.id)}')">Unschedule</button>` : ''}
+    ${scheduled ? `<button class="dyn-btn" style="padding:3px 8px;font-size:11px;color:var(--bad);" title="Remove from its scheduled date" onclick="_dynUnschedule('${escapeHtml(r.id)}')">Unschedule</button>` : ''}
     <button class="dyn-btn" style="padding:3px 8px;font-size:11px;" onclick="closeModal();_dynOpenInstanceModal('${escapeHtml(r.id)}')">Open</button>
   </div>`;
 }
@@ -41378,7 +41378,7 @@ function _dynBoardOpenDay(dayKey) {
     .sort((x, y) => String(x.shift_date).localeCompare(String(y.shift_date)) || String(x.start_at || '').localeCompare(String(y.start_at || '')));
 
   const bulkBar = selCount > 0 ? `
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin-bottom:12px;">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--info-light);border:1px solid var(--info-border);border-radius:8px;padding:10px 12px;margin-bottom:12px;">
       <b style="font-size:13px;">${selCount} selected</b>
       ${bulkWins.length
         ? `<select onchange="if(this.value)_dynBulkMoveShift(this.value)" style="font-size:12px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;" title="Schedule selected onto an access-plan shift (runs the shift doesn't grant are skipped)">
@@ -41386,7 +41386,7 @@ function _dynBoardOpenDay(dayKey) {
             ${bulkWins.map(w => `<option value="${escapeHtml(String(w.id))}">${escapeHtml(_dynWindowLabel(w))}</option>`).join('')}
           </select>`
         : `<span style="font-size:11px;color:var(--gray-500);">No access shift ±21d</span>`}
-      <button class="dyn-btn" style="color:#dc2626;" onclick="_dynBulkUnschedule()">Unschedule selected</button>
+      <button class="dyn-btn" style="color:var(--bad);" onclick="_dynBulkUnschedule()">Unschedule selected</button>
       <span style="flex:1;"></span>
       <button class="dyn-btn" onclick="_dynDayClearSel()">Clear</button>
     </div>` : '';
@@ -41398,7 +41398,7 @@ function _dynBoardOpenDay(dayKey) {
     const reqConsist = _dynConsistSizes(r);
     const consistLine = reqConsist.some(x => x != null)
       ? `<div style="font-size:10px;color:var(--gray-500);font-family:inherit;">${escapeHtml(_dynConsistSummary(reqConsist))}</div>` : '';
-    const rowBg = issueBadge ? '#fef2f2' : (checked ? '#eff6ff' : '');
+    const rowBg = issueBadge ? 'var(--bad-light)' : (checked ? 'var(--info-light)' : '');
     return `<tr${rowBg ? ` style="background:${rowBg};"` : ''}>
       <td style="text-align:center;"><input type="checkbox" ${checked?'checked':''} onchange="_dynDayToggleSel('${escapeHtml(r.id)}',this.checked)"></td>
       <td style="font-family:var(--font-mono,monospace);font-size:12px;white-space:nowrap;">${escapeHtml(r.code || '—')}</td>
@@ -41406,7 +41406,7 @@ function _dynBoardOpenDay(dayKey) {
       <td style="min-width:220px;max-width:360px;">${escapeHtml(r.title || '')}
         ${issueBadge ? `<div style="margin-top:3px;">${issueBadge}</div>` : ''}
         ${r.test_notes ? `<div style="margin-top:3px;font-size:11px;color:var(--gray-500);white-space:normal;overflow-wrap:anywhere;line-height:1.45;"><span style="color:var(--gray-400);font-weight:600;">Notes:</span> ${escapeHtml(r.test_notes)}</div>` : ''}
-        ${r.substitute_notes ? `<div style="margin-top:3px;font-size:11px;color:#6d28d9;white-space:normal;overflow-wrap:anywhere;line-height:1.45;"><span style="font-weight:600;">Alt locations:</span> ${escapeHtml(r.substitute_notes)}</div>` : ''}
+        ${r.substitute_notes ? `<div style="margin-top:3px;font-size:11px;color:var(--accent-purple);white-space:normal;overflow-wrap:anywhere;line-height:1.45;"><span style="font-weight:600;">Alt locations:</span> ${escapeHtml(r.substitute_notes)}</div>` : ''}
       </td>
       <td style="text-align:right;font-family:monospace;">${r.trains_needed ?? 1}${consistLine}</td>
       <td style="text-align:right;font-family:monospace;">${r.expected_duration_minutes ?? '—'}</td>
@@ -41420,7 +41420,7 @@ function _dynBoardOpenDay(dayKey) {
   const trainCounts = [...new Set(matches.map(r => r.trains_needed ?? 1))].sort((x, y) => x - y);
   const mixedTrains = trainCounts.length > 1;
   const warnHtml = (flaggedCount || mixedTrains) ? `
-    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:12px;color:#92400e;line-height:1.5;">
+    <div style="background:var(--warn-light);border:1px solid var(--warn-border);border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:12px;color:var(--warn);line-height:1.5;">
       ${flaggedCount ? `<div><b>${flaggedCount} run${flaggedCount === 1 ? '' : 's'} need rescheduling</b> — the assigned shift no longer supplies the required consist/trains (or its zone/mode changed). Move them to a matching shift.</div>` : ''}
       ${mixedTrains ? `<div${flaggedCount ? ' style="margin-top:4px;"' : ''}>This shift mixes runs needing different train counts (${trainCounts.join(', ')} trains). Group same-train-count runs together so a 2-train run isn't blocked by 1-train fillers.</div>` : ''}
     </div>` : '';
@@ -42332,8 +42332,8 @@ function _dynOpenTrains(campaignId) {
       <td style="padding:7px 8px;text-align:right;white-space:nowrap;">
         ${r.status !== 'approved' ? `<button class="dyn-btn" style="font-size:11px;padding:3px 7px;" onclick="_dynTrainSetStatus('${r.id}','approved')">Approve</button>` : ''}
         <button class="dyn-btn" style="font-size:11px;padding:3px 7px;" onclick="_dynTrainSubstitute('${r.id}')">Substitute</button>
-        ${r.status !== 'denied' ? `<button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:#b91c1c;" onclick="_dynTrainSetStatus('${r.id}','denied')">Deny</button>` : ''}
-        <button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:#dc2626;" onclick="_dynTrainDelete('${r.id}')">✕</button>
+        ${r.status !== 'denied' ? `<button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:var(--bad);" onclick="_dynTrainSetStatus('${r.id}','denied')">Deny</button>` : ''}
+        <button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:var(--bad);" onclick="_dynTrainDelete('${r.id}')">✕</button>
       </td>
     </tr>`;
   }).join('') : `<tr><td colspan="3" style="padding:18px;text-align:center;color:var(--gray-500);">No train requests yet.</td></tr>`;
@@ -42450,10 +42450,10 @@ function _dynOpenShift(id) {
           <span style="font-size:12px;color:var(--gray-600);">${fmtT(s.start_at)}–${fmtT(s.end_at)} · ${(s.allowed_modes||[]).join('+')||'any'} · ${s.max_trains||1} train${(s.max_trains||1)===1?'':'s'}${(() => { const cs = _dynShiftAvailConsists(s); return cs.some(x => x != null) ? ` · ${_dynConsistSummary(cs)}` : ''; })()} available</span>
         </div>
         ${(() => { const ev = _dynShiftEventRow(s.id); return ev
-          ? `<div style="font-size:11.5px;margin-bottom:12px;color:#6d28d9;">${icon('calendar')} Field event created${ev.status==='cancelled'?' (cancelled)':''} · Train Operator, ROC, EIC auto-added · <a href="javascript:void(0)" style="color:var(--info);" onclick="closeModal();showPage('lookahead')">open Lookahead</a></div>`
+          ? `<div style="font-size:11.5px;margin-bottom:12px;color:var(--accent-purple);">${icon('calendar')} Field event created${ev.status==='cancelled'?' (cancelled)':''} · Train Operator, ROC, EIC auto-added · <a href="javascript:void(0)" style="color:var(--info);" onclick="closeModal();showPage('lookahead')">open Lookahead</a></div>`
           : (s.status !== 'cancelled' ? `<div style="font-size:11.5px;margin-bottom:12px;color:var(--gray-500);">${icon('calendar')} No field event yet · <a href="javascript:void(0)" style="color:var(--info);" onclick="_dynCreateShiftEventUI('${escapeHtml(s.id)}')">create with BART minimums</a> (auto on Confirm)</div>` : ''); })()}
         ${s.status === 'cancelled' ? `
-          <div style="padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#b91c1c;margin-bottom:12px;">
+          <div style="padding:10px 12px;background:var(--bad-light);border:1px solid var(--bad-border);border-radius:6px;font-size:12px;color:var(--bad);margin-bottom:12px;">
             <b>Cancelled:</b> ${escapeHtml(s.cancellation_category || '—')}${s.cancellation_reason ? ` — ${escapeHtml(s.cancellation_reason)}` : ''}
           </div>` : ''}
         ${s.status !== 'cancelled' ? `
@@ -42470,7 +42470,7 @@ function _dynOpenShift(id) {
       ${s.status !== 'cancelled' ? `<button class="dyn-btn" onclick="closeModal();_dynBuildShift('${escapeHtml(s.id)}')">Build shift</button>` : ''}
       ${s.status === 'cancelled'
         ? `<button class="dyn-btn" onclick="_dynShiftSetStatus('${escapeHtml(s.id)}','planned')">Restore to planned</button>`
-        : `<button class="dyn-btn" style="color:#dc2626;" onclick="_dynShiftCancel('${escapeHtml(s.id)}')">Cancel shift</button>`}
+        : `<button class="dyn-btn" style="color:var(--bad);" onclick="_dynShiftCancel('${escapeHtml(s.id)}')">Cancel shift</button>`}
       ${s.status === 'planned' ? `<button class="form-submit" onclick="_dynShiftSetStatus('${escapeHtml(s.id)}','confirmed')">Confirm</button>` : ''}
       ${s.status === 'confirmed' ? `<button class="form-submit" onclick="_dynShiftSetStatus('${escapeHtml(s.id)}','completed')">Mark completed</button>` : ''}
     `,
@@ -42556,7 +42556,7 @@ function _dynBuildShift(shiftId) {
       <td style="padding:6px 8px;text-align:right;font-family:monospace;">${i.expected_duration_minutes ?? '—'}m</td>
       <td style="padding:6px 8px;text-align:right;font-family:monospace;">${i.trains_needed ?? 1}</td>
       <td style="padding:6px 8px;">${_dynDayStatusSelect(i)}</td>
-      <td style="padding:6px 8px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:#dc2626;" onclick="_dynShiftUnassign('${i.id}')">Remove</button></td>
+      <td style="padding:6px 8px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:var(--bad);" onclick="_dynShiftUnassign('${i.id}')">Remove</button></td>
     </tr>`).join('') : `<tr><td colspan="6" style="padding:14px;text-align:center;color:var(--gray-500);">No tests assigned yet — add from the eligible list below.</td></tr>`;
 
   const eligRows = eligible.length ? eligible.map(i => `
@@ -42581,14 +42581,14 @@ function _dynBuildShift(shiftId) {
           <div class="dyn-kpi"><span>Peak trains</span><b style="color:${overTrain?'var(--bad)':'inherit'};">${peakTrains}${trainsAvail?` / ${trainsAvail}`:''}</b></div>
           <div class="dyn-kpi"><span>Modes</span><b style="font-size:13px;">${(modes.join('+'))||'any'}</b></div>
         </div>
-        ${overTime || overTrain ? `<div style="padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#b91c1c;font-size:12px;margin-bottom:12px;">
+        ${overTime || overTrain ? `<div style="padding:8px 12px;background:var(--bad-light);border:1px solid var(--bad-border);border-radius:6px;color:var(--bad);font-size:12px;margin-bottom:12px;">
           ⚠ ${overTime ? 'Over the access window. ' : ''}${overTrain ? 'Needs more trains than approved.' : ''}</div>` : ''}
         <div style="font-size:12px;font-weight:700;color:var(--gray-600);margin:0 0 6px;">ASSIGNED</div>
         <table style="width:100%;border-collapse:collapse;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;font-size:12px;margin-bottom:16px;">
           <thead><tr style="background:var(--gray-50);"><th style="text-align:left;padding:6px 8px;">Code</th><th style="text-align:left;padding:6px 8px;">Test</th><th style="text-align:right;padding:6px 8px;">Dur</th><th style="text-align:right;padding:6px 8px;">Trains</th><th style="text-align:left;padding:6px 8px;">Status</th><th></th></tr></thead>
           <tbody>${assignedRows}</tbody>
         </table>
-        <div style="font-size:12px;font-weight:700;color:var(--gray-600);margin:0 0 6px;">ELIGIBLE FOR ${escapeHtml(s.control_zone_code)}${blockedByAccess?` <span style="font-weight:500;color:#b45309;">· ${blockedByAccess} hidden — need access beyond ${escapeHtml([...grantedZones].join(', '))}</span>`:''}</div>
+        <div style="font-size:12px;font-weight:700;color:var(--gray-600);margin:0 0 6px;">ELIGIBLE FOR ${escapeHtml(s.control_zone_code)}${blockedByAccess?` <span style="font-weight:500;color:var(--warn);">· ${blockedByAccess} hidden — need access beyond ${escapeHtml([...grantedZones].join(', '))}</span>`:''}</div>
         <table style="width:100%;border-collapse:collapse;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;font-size:12px;">
           <thead><tr style="background:var(--gray-50);"><th style="text-align:left;padding:6px 8px;">Code</th><th style="text-align:left;padding:6px 8px;">Test</th><th style="text-align:right;padding:6px 8px;">Dur</th><th style="text-align:right;padding:6px 8px;">Trains</th><th style="text-align:left;padding:6px 8px;">Mode</th><th></th></tr></thead>
           <tbody>${eligRows}</tbody>
@@ -42739,7 +42739,7 @@ function _dynCampaignProgress(campaignId) {
           ${stat('Hrs avail', d.availMin > 0 ? (d.availMin/60).toFixed(1)+'h' : '—', d.availMin > 0 && d.openMin > d.availMin ? 'var(--bad)' : d.availMin > 0 ? 'var(--good)' : null)}
         </div>
 
-        <div style="padding:10px 12px;border-radius:6px;font-size:12.5px;${feasible===false?'background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;':feasible===true?'background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;':'background:var(--gray-50);border:1px solid var(--gray-200);color:var(--gray-600);'}">
+        <div style="padding:10px 12px;border-radius:6px;font-size:12.5px;${feasible===false?'background:var(--bad-light);border:1px solid var(--bad-border);color:var(--bad);':feasible===true?'background:var(--good-light);border:1px solid var(--good-border);color:var(--good);':'background:var(--gray-50);border:1px solid var(--gray-200);color:var(--gray-600);'}">
           ${d.remainWork === 0 ? '✓ All scope tests complete.'
             : d.remainShifts === 0 ? '⚠ No remaining planned/confirmed shifts — schedule more access to finish the scope.'
             : feasible === false ? `⚠ At ${d.perShift.toFixed(1)} tests/shift you likely need more shifts or trains to finish ${d.remainWork} tests in ${d.remainShifts} shifts.`
@@ -42748,7 +42748,7 @@ function _dynCampaignProgress(campaignId) {
       </div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Close</button>
       <button class="dyn-btn" onclick="closeModal();_dynCampaignScheduleMap('${escapeHtml(camp.id)}')">Schedule by test case</button>
-      ${d.assigned ? `<button class="dyn-btn" style="color:#dc2626;" onclick="_dynCampaignUnscheduleAll('${escapeHtml(camp.id)}')">Unschedule all (${d.assigned})</button>` : ''}`,
+      ${d.assigned ? `<button class="dyn-btn" style="color:var(--bad);" onclick="_dynCampaignUnscheduleAll('${escapeHtml(camp.id)}')">Unschedule all (${d.assigned})</button>` : ''}`,
   });
 }
 
@@ -42768,8 +42768,8 @@ function _dynCampaignScheduleMap(campaignId) {
   const tcCode = id => { const tc = _dynPage.testItemsById?.get(id); return tc ? (tc.code || id) : id; };
   const winById = new Map((_dynPage.shifts || []).map(w => [String(w.id), w]));
   const schedLabel = i => {
-    if (['Pass', 'Not Applicable'].includes(i.status)) return `<span class="tag" style="background:#ecfdf5;color:#065f46;border-color:#a7f3d0;">✓ ${escapeHtml(i.status)}</span>`;
-    if (i.shift_id) { const w = winById.get(String(i.shift_id)); return `<span class="tag" style="background:#eef2ff;color:#3730a3;border-color:#c7d2fe;font-family:monospace;">${escapeHtml(_dynFmtDate(i.scheduled_for_date || (w && w.shift_date)))}</span>`; }
+    if (['Pass', 'Not Applicable'].includes(i.status)) return `<span class="tag" style="background:var(--good-light);color:var(--good);border-color:var(--good-border);">✓ ${escapeHtml(i.status)}</span>`;
+    if (i.shift_id) { const w = winById.get(String(i.shift_id)); return `<span class="tag" style="background:var(--info-light);color:var(--info);border-color:var(--info-border);font-family:monospace;">${escapeHtml(_dynFmtDate(i.scheduled_for_date || (w && w.shift_date)))}</span>`; }
     return `<span style="color:var(--warn);font-size:11px;">unscheduled</span>`;
   };
   const rows = [...byTc.entries()]
@@ -42785,9 +42785,9 @@ function _dynCampaignScheduleMap(campaignId) {
       return `<tr style="border-top:1px solid var(--gray-100);">
         <td style="padding:7px 10px;font-family:monospace;font-size:12px;white-space:nowrap;vertical-align:top;font-weight:600;">${escapeHtml(tcCode(tid))}</td>
         <td style="padding:7px 10px;vertical-align:top;white-space:nowrap;">
-          <span class="tag" style="background:#eef2ff;color:#3730a3;">${sched} sched</span>
-          <span class="tag" style="background:#fef3c7;color:#92400e;">${unsch} unsch</span>
-          <span class="tag" style="background:#ecfdf5;color:#065f46;">${done} done</span>
+          <span class="tag" style="background:var(--info-light);color:var(--info);">${sched} sched</span>
+          <span class="tag" style="background:var(--warn-light);color:var(--warn);">${unsch} unsch</span>
+          <span class="tag" style="background:var(--good-light);color:var(--good);">${done} done</span>
         </td>
         <td style="padding:7px 10px;vertical-align:top;line-height:1.9;">${chips}</td>
       </tr>`;
@@ -43687,7 +43687,7 @@ function _dynIssueBadge(inst) {
   const issues = _dynInstanceScheduleIssues(inst);
   if (!issues.length) return '';
   const title = 'Needs reschedule: ' + issues.map(i => i.label).join(' · ');
-  return `<span class="badge" style="background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;font-size:10px;" title="${escapeHtml(title)}">${icon('alert')} needs reschedule</span>`;
+  return `<span class="badge" style="background:var(--bad-light);color:var(--bad);border:1px solid var(--bad-border);font-size:10px;" title="${escapeHtml(title)}">${icon('alert')} needs reschedule</span>`;
 }
 
 // Dynamic test cases available as campaign scope (dynamic-scope items + any
@@ -46407,8 +46407,8 @@ function _dynAutoAllocatePreview(label, draft) {
           const rows = (draft.unplacedDetail || draft.unplaced.map(id => ({ id, inst: instById.get(id), reason: 'capacity' }))).map(({ inst, reason }) => {
             const i = inst || {};
             const reasonLabel = reason === 'no-window'
-              ? '<span style="color:#b45309;">No window for zone</span>'
-              : '<span style="color:#6b7280;">Capacity/mode/prereq</span>';
+              ? '<span style="color:var(--warn);">No window for zone</span>'
+              : '<span style="color:var(--text-subtle);">Capacity/mode/prereq</span>';
             const accessReq = (i.track_section_access_req || []).join('+') || '—';
             return '<tr style="border-top:1px solid var(--gray-100);">' +
               '<td style="padding:5px 8px;font-family:monospace;font-size:11px;white-space:nowrap;">' + escapeHtml(i.code || i.id || '—') + '</td>' +
@@ -46422,18 +46422,18 @@ function _dynAutoAllocatePreview(label, draft) {
             '</tr>';
           }).join('');
           return '<div style="margin-top:14px;">' +
-            '<div style="font-size:11px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">' + draft.unplaced.length + ' run(s) left in backlog</div>' +
+            '<div style="font-size:11px;font-weight:700;color:var(--warn);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">' + draft.unplaced.length + ' run(s) left in backlog</div>' +
             '<div style="overflow-x:auto;">' +
             '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">' +
-              '<thead><tr style="background:#fef3c7;">' +
-                '<th style="text-align:left;padding:5px 8px;color:#92400e;font-weight:600;">Code</th>' +
-                '<th style="text-align:left;padding:5px 8px;color:#92400e;font-weight:600;">Zone</th>' +
-                '<th style="text-align:left;padding:5px 8px;color:#92400e;font-weight:600;">Also needs</th>' +
-                '<th style="text-align:left;padding:5px 8px;color:#92400e;font-weight:600;">Duration</th>' +
-                '<th style="text-align:center;padding:5px 8px;color:#92400e;font-weight:600;">Trains</th>' +
-                '<th style="text-align:left;padding:5px 8px;color:#92400e;font-weight:600;">Cars</th>' +
-                '<th style="text-align:left;padding:5px 8px;color:#92400e;font-weight:600;">Mode</th>' +
-                '<th style="text-align:left;padding:5px 8px;color:#92400e;font-weight:600;">Why backlog</th>' +
+              '<thead><tr style="background:var(--warn-light);">' +
+                '<th style="text-align:left;padding:5px 8px;color:var(--warn);font-weight:600;">Code</th>' +
+                '<th style="text-align:left;padding:5px 8px;color:var(--warn);font-weight:600;">Zone</th>' +
+                '<th style="text-align:left;padding:5px 8px;color:var(--warn);font-weight:600;">Also needs</th>' +
+                '<th style="text-align:left;padding:5px 8px;color:var(--warn);font-weight:600;">Duration</th>' +
+                '<th style="text-align:center;padding:5px 8px;color:var(--warn);font-weight:600;">Trains</th>' +
+                '<th style="text-align:left;padding:5px 8px;color:var(--warn);font-weight:600;">Cars</th>' +
+                '<th style="text-align:left;padding:5px 8px;color:var(--warn);font-weight:600;">Mode</th>' +
+                '<th style="text-align:left;padding:5px 8px;color:var(--warn);font-weight:600;">Why backlog</th>' +
               '</tr></thead><tbody>' + rows + '</tbody>' +
             '</table></div></div>';
         })() : '') +
@@ -46519,7 +46519,7 @@ function _dynOpenAdjacency() {
   const edgeRows = edges.length ? edges.map(e => `
     <tr style="border-top:1px solid var(--gray-100);">
       <td style="padding:6px 10px;font-family:monospace;">${escapeHtml(e.zone_a)} — ${escapeHtml(e.zone_b)}</td>
-      <td style="padding:6px 10px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 8px;color:#dc2626;" onclick="_dynAdjacencyDelete('${e.id}')">Remove</button></td>
+      <td style="padding:6px 10px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 8px;color:var(--bad);" onclick="_dynAdjacencyDelete('${e.id}')">Remove</button></td>
     </tr>`).join('') : `<tr><td colspan="2" style="padding:16px;text-align:center;color:var(--gray-500);">No edges yet.</td></tr>`;
   modal({
     title: 'Zone adjacency — Phase 2',
@@ -46642,7 +46642,7 @@ function _dynRenderWindowsTable(windows) {
           <td style="padding:6px 10px;color:var(--gray-700);">${escapeHtml(w.notes||'')}</td>
           <td style="padding:6px 10px;text-align:right;white-space:nowrap;">
             <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynPlanUseWindow('${w.id}')">Use</button>
-            <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--bad);border-color:#fca5a5;" onclick="_dynPlanDeleteWindow('${w.id}')">Delete</button>
+            <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--bad);border-color:var(--bad-border);" onclick="_dynPlanDeleteWindow('${w.id}')">Delete</button>
           </td>
         </tr>`).join('')}
       </tbody>
@@ -46842,7 +46842,7 @@ function _dynCaseActions(testId, isPerLoc) {
     <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynOpenCadenceModal('${escapeHtml(testId)}')">Cadence</button>
     <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dtOpenPrereqEditor('${escapeHtml(testId)}')">Prereqs</button>
     <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openTestCaseScopeModal('${escapeHtml(testId)}')">Scope</button>
-    ${isAdmin ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;color:#dc2626;" onclick="_dynDeleteTestCase('${escapeHtml(testId)}')">Delete</button>` : ''}`;
+    ${isAdmin ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--bad);" onclick="_dynDeleteTestCase('${escapeHtml(testId)}')">Delete</button>` : ''}`;
 }
 
 // Permanently delete a dynamic test case (admin-only). Removes the test_items
@@ -46873,7 +46873,7 @@ function _dynDeleteTestCase(testId) {
       </div>`,
     footer: `
       <button class="form-secondary" onclick="closeModal()">Cancel</button>
-      <button class="form-submit" style="background:#dc2626;border-color:#dc2626;" onclick="_dynConfirmDeleteTestCase('${escapeHtml(testId)}')">Delete permanently</button>`,
+      <button class="form-submit" style="background:var(--bad);border-color:var(--bad);" onclick="_dynConfirmDeleteTestCase('${escapeHtml(testId)}')">Delete permanently</button>`,
   });
 }
 
@@ -47165,13 +47165,13 @@ function _dynCadenceBadge(testId) {
     const locs = info?.location ? [info.location] : _dynCaseLocations(testId);
     sub = locs.length
       ? `<br/><span style="font-size:10px;color:var(--gray-500);">${escapeHtml(locs.join(', '))}</span>`
-      : `<br/><span style="font-size:10px;color:#b45309;">no location yet</span>`;
+      : `<br/><span style="font-size:10px;color:var(--warn);">no location yet</span>`;
   } else if (scope === 'per_phase') {
     sub = info?.phase
       ? `<br/><span style="font-size:10px;color:var(--gray-500);">${escapeHtml(info.phase)}</span>`
-      : `<br/><span style="font-size:10px;color:#b45309;">no phase set</span>`;
+      : `<br/><span style="font-size:10px;color:var(--warn);">no phase set</span>`;
   }
-  return `<span class="badge" style="background:#eef2ff;color:#3730a3;font-size:10.5px;">${escapeHtml(_DYN_SCOPE_LABELS[scope] || scope)}</span>${sub}`;
+  return `<span class="badge" style="background:var(--info-light);color:var(--info);font-size:10.5px;">${escapeHtml(_DYN_SCOPE_LABELS[scope] || scope)}</span>${sub}`;
 }
 
 function _dynOpenCadenceModal(testId) {
@@ -47215,8 +47215,8 @@ function _dynOpenCadenceModal(testId) {
           <label>Location(s) under test <span style="color:var(--gray-500);font-weight:400;">(derived from this activity's instances)</span></label>
           <div style="font-size:12.5px;color:var(--gray-700);padding:6px 0;">
             ${derivedLocs.length
-              ? derivedLocs.map(c => `<span class="badge" style="background:#f1f5f9;color:#0f172a;font-family:monospace;margin-right:4px;">${escapeHtml(c)}</span>`).join('')
-              : `<span style="color:#b45309;">No instances yet — add runs to define the location, or use "Add location" to branch a new one.</span>`}
+              ? derivedLocs.map(c => `<span class="badge" style="background:var(--surface-3);color:var(--text);font-family:monospace;margin-right:4px;">${escapeHtml(c)}</span>`).join('')
+              : `<span style="color:var(--warn);">No instances yet — add runs to define the location, or use "Add location" to branch a new one.</span>`}
           </div>
         </div>
         <div class="form-field" id="dyn-cad-phase-wrap" style="display:${scope==='per_phase'?'block':'none'};">
@@ -47954,7 +47954,7 @@ function _drwRenderFindResults() {
     html += textMatches.slice(0, 200).map((m, i) => {
       const active = i === _drwFindState.currentIndex;
       return `
-        <div class="drw-find-result ${active ? 'is-active' : ''}" style="${active ? 'background:#fef3c7;' : ''}"
+        <div class="drw-find-result ${active ? 'is-active' : ''}" style="${active ? 'background:var(--warn-light);' : ''}"
              onclick="_drwFindGotoMatch(${i})">
           <div>${hlEscape(m.snippet)}</div>
           <div class="drw-find-meta">Match ${i + 1} of ${textMatches.length} · Page ${m.pageIndex + 1}</div>
@@ -48133,7 +48133,7 @@ function _drwUploadRevision(setId) {
     if (body && !document.getElementById('drw-rev-banner')) {
       const banner = document.createElement('div');
       banner.id = 'drw-rev-banner';
-      banner.style.cssText = 'background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:6px;padding:10px 12px;margin:0 0 12px;font-size:12.5px;line-height:1.5;';
+      banner.style.cssText = 'background:var(--warn-light);border:1px solid #fed7aa;color:#9a3412;border-radius:6px;padding:10px 12px;margin:0 0 12px;font-size:12.5px;line-height:1.5;';
       banner.innerHTML = `<b>Revision upload</b> · Sheets you import here will replace the current revision of any matching Drawing Number in this set's location (<b>${escapeHtml(set.location)}</b>). The old sheets stay queryable as prior revisions in the viewer.`;
       body.insertBefore(banner, body.firstChild);
     }

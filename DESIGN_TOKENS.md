@@ -90,6 +90,16 @@ good=`--good`, red/bad=`--bad`, amber/warn=`--warn`, blue/info=`--info`, each
 over its `-light` background. Big landing numbers (dashboard `.kpi-card`) stay
 large cards — the chip rail is for *supporting* detail, not the headline.
 
+Each status family is a **complete triple**: strong ink (`--good`), pale
+background (`--good-light`), and a soft border tint (`--good-border`, an rgba
+of the ink — same for warn/bad/info). Purple (`--accent-purple` /
+`--accent-purple-light`) covers Future Test / pending states. The P3
+harmonization (2026-07) rewrote ~650 inline hex values in app.js/index.html
+onto these tokens — when writing tag/badge/box styles inline, always use the
+triple, never tailwind-style hex. Exceptions that stay literal hex on purpose:
+Chart.js palettes (`COLORS`), canvas drawing, PDF-markup pen colors, and
+console `%c` styles (CSS vars don't resolve there).
+
 ## Visual QA without signing in
 
 `tools/ui_gallery.html` renders every core component (hero, KPI cards, table +
