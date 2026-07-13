@@ -25,7 +25,7 @@ let RD_TPLS = [];        // readiness_templates rows
 let RD_TPL_ITEMS = [];   // readiness_template_items rows
 let TASK_DELAYS = [];    // task_item_delays rows
 let TASK_FILES = [];     // task_files rows
-let _rdFilter = { search: '', location: '', subsystem: '', phase: '', status: '', overdue: false };
+let _rdFilter = { search: '', kind: '', location: '', subsystem: '', phase: '', status: '', priority: '', type: '', mine: false, ready: false, overdue: false };
 let _rdView = 'list';    // list | overview (matrix rollup) | delays (delay analytics)
 let _rdMatrixDim = 'phase'; // matrix columns: phase | location (rows are always subsystem)
 let _rdChkPhotos = {};   // checklist line id -> photo rows (lazy)
@@ -101,8 +101,10 @@ function _rdTaskProgress(taskId, seen) {
   const total = counted.length;
   return { total, done, pct: total ? Math.round(done / total * 100) : 0, fails };
 }
-// Effective prerequisite state for the Tasks board: derived from the checklist
-// when one exists, otherwise the legacy manual prerequisite_met flag.
+// Effective readiness state: every counted checklist line complete. (The
+// legacy manual prerequisite_met flag was migrated into a checklist line and
+// dropped in the Checkpoint merge; in-memory rows that still carry it are
+// honoured as a fallback.)
 function _taskPrereqEff(t) {
   if (!t) return false;
   const counted = _rdCountedLines(t.id);
@@ -130,10 +132,24 @@ function _rdWouldCycle(parentId, childId) {
   };
   return walk(childId);
 }
-// A task surfaces on the Activity Readiness page when it has a checklist or
-// carries any readiness dimension — quick field to-dos stay board-only.
+// Derived membership test — kept as the fallback for rows created before the
+// explicit tasks.kind column existed (and for in-memory rows without it).
 function _rdIsActivity(t) {
   return !!(t && (_rdChkFor(t.id).length || t.template_id || t.location || t.subsystem || t.phase));
+}
+// Explicit type: 'task' (work item) vs 'activity' (readiness activity).
+// tasks.kind is authoritative; derive only when it is absent.
+function _rdKind(t) {
+  if (!t) return 'task';
+  if (t.kind) return t.kind === 'activity' ? 'activity' : 'task';
+  return _rdIsActivity(t) ? 'activity' : 'task';
+}
+function _rdKindPill(t, opts) {
+  const act = _rdKind(t) === 'activity';
+  const compact = opts && opts.compact;
+  return act
+    ? `<span class="v2-pill is-info" title="Readiness activity — a gated checklist that must clear before work starts">${icon('target')}${compact ? '' : ' Readiness'}</span>`
+    : `<span class="v2-pill is-muted" title="Task — a standalone work item">${icon('check')}${compact ? '' : ' Task'}</span>`;
 }
 function _rdDelaysFor(lineId) {
   return TASK_DELAYS.filter(d => d.item_id === lineId)
@@ -255,29 +271,6 @@ function _rdDatalistField(id, label, value, options, placeholder) {
     <datalist id="${id}-dl">${options.map(o => `<option value="${escapeHtml(o)}"></option>`).join('')}</datalist></div>`;
 }
 
-// ── Tasks-board integration (called from app.js with typeof guards) ───────
-// Compact progress strip + dimension pills under the task name on the board.
-function _rdTaskRowExtra(t) {
-  const pills = [
-    t.location ? `<span class="v2-pill is-muted">${icon('pin')} ${escapeHtml(t.location)}</span>` : '',
-    t.subsystem ? `<span class="v2-pill is-muted">${icon('layers')} ${escapeHtml(t.subsystem)}</span>` : '',
-    t.phase ? `<span class="v2-pill is-muted">${icon('flag')} ${escapeHtml(t.phase)}</span>` : '',
-  ].filter(Boolean).join(' ');
-  const lines = _rdChkFor(t.id);
-  let bar = '';
-  if (lines.length) {
-    const p = _rdTaskProgress(t.id);
-    const overdue = _rdTaskOverdueLines(t.id).length;
-    bar = `<span style="display:inline-flex;align-items:center;gap:6px;">
-      <span style="display:inline-block;width:90px;height:5px;background:var(--gray-100);border-radius:3px;overflow:hidden;vertical-align:middle;"><span style="display:block;width:${p.pct}%;height:100%;background:${p.fails ? 'var(--bad)' : 'var(--good)'};"></span></span>
-      <span style="font-size:11px;font-weight:700;color:var(--text-subtle);">${p.pct}%</span>
-      <span style="font-size:11px;color:var(--text-subtle);">${lines.length} item${lines.length !== 1 ? 's' : ''}</span>
-      ${overdue ? `<span style="font-size:11px;font-weight:600;color:var(--bad);">${icon('alert')} ${overdue} overdue</span>` : ''}
-    </span>`;
-  }
-  if (!pills && !bar) return '';
-  return `<div class="v2-meta-line" style="margin-top:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${bar}${pills}</div>`;
-}
 // Purge in-memory checklist state when a task is deleted (DB rows cascade).
 function _rdOnTaskDeleted(taskId) {
   const lineIds = new Set(_rdChkFor(taskId).map(l => l.id));
@@ -365,6 +358,10 @@ function _rdChkLineHTML(t, l, canEdit, seen) {
   const delayChip = delays.length
     ? `<button class="form-secondary" style="font-size:10px;padding:2px 7px;color:var(--warn);" title="Delay history" onclick="_rdDelayHistoryModal('${l.id}')">${icon('clock')} +${_rdSlipDays(l.id)}d ×${delays.length}</button>`
     : '';
+  const cCount = _cpChkCommentCount(l.id, t);
+  const commentChip = cCount
+    ? `<span style="font-size:10px;color:var(--text-subtle);display:inline-flex;align-items:center;gap:3px;" title="${cCount} comment${cCount !== 1 ? 's' : ''} linked to this item (see the thread below)">${icon('inbox')} ${cCount}</span>`
+    : '';
   return `<div style="display:flex;align-items:flex-start;gap:10px;padding:7px 4px;border-bottom:1px solid var(--gray-100);flex-wrap:wrap;">
       <span aria-hidden="true" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:5px;background:${l.verdict === 'Fail' ? 'var(--bad)' : complete ? 'var(--good)' : overdue ? 'var(--warn)' : 'var(--gray-300)'};"></span>
       <span style="flex:1;min-width:170px;">
@@ -373,7 +370,7 @@ function _rdChkLineHTML(t, l, canEdit, seen) {
       </span>
       <span style="display:inline-flex;align-items:center;gap:5px;">${ctl}</span>
       <span style="display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;">
-        ${dueChip}${respChip}${delayChip}
+        ${dueChip}${respChip}${delayChip}${commentChip}
         ${canEdit ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;" aria-label="Add photo" title="Add photo" onclick="document.getElementById('rdchkp-${l.id}').click()">${icon('camera')}${photos.length ? ' ' + photos.length : ''}</button>
         <input type="file" id="rdchkp-${l.id}" accept="image/*" multiple style="display:none" onchange="_rdChkPhotoChosen('${l.id}',this)" aria-label="Photo files">
         <button class="form-secondary" style="font-size:10px;padding:2px 6px;" aria-label="Attach file" title="Attach file" onclick="document.getElementById('rdchkf-${l.id}').click()">${icon('paperclip')}${files.length ? ' ' + files.length : ''}</button>
@@ -388,14 +385,12 @@ function _rdChkLineHTML(t, l, canEdit, seen) {
 }
 
 // Refresh the open task modal's checklist wrap in place (keeps scroll), plus
-// whichever background list view is live.
+// the Checkpoint list behind it.
 function _rdRefresh(taskId) {
   const t = _rdTask(taskId);
   const wrap = document.getElementById('rd-chk-wrap-' + taskId);
   if (wrap && t) wrap.innerHTML = _rdChecklistBodyHTML(t, _rdCan('edit'));
-  const rdRoot = document.getElementById('readiness-content');
-  if (rdRoot && typeof renderReadiness === 'function') renderReadiness();
-  if (typeof renderTasks === 'function') renderTasks();
+  renderWork();
 }
 
 // ── Line responses ────────────────────────────────────────────────────────
@@ -905,6 +900,7 @@ async function _rdIssueSave() {
   const due = document.getElementById('rd-issue-due')?.value || null;
   const payload = {
     task_name: title, description: g('rd-issue-desc'),
+    kind: 'activity',
     location: g('rd-issue-loc'), subsystem: g('rd-issue-sub'), phase: g('rd-issue-phase'),
     template_id: tplId, assignee: g('rd-issue-owner'), due_date: due,
     status: 'Not Started', priority: 'Medium', task_type: [],
@@ -929,9 +925,38 @@ async function _rdIssueSave() {
   } catch (e) { toast('Create failed: ' + e.message, 'error'); }
 }
 
-// ── Activity Readiness page ───────────────────────────────────────────────
+// ── Comment ↔ checklist-item linking (one merged thread) ──────────────────
+// The composer offers "About: whole item / [checklist line]"; a linked comment
+// stores item_id and renders with a chip naming the line. Comments migrated
+// from the retired prerequisite thread carry legacy_prereq:true.
+function _cpCommentItemSelectHTML(t, taskId) {
+  const lines = _rdChkFor(taskId);
+  if (!lines.length) return '';
+  return `<select id="task-comment-item-${taskId}" class="form-input" aria-label="Link comment to a checklist item" title="Link this comment to a checklist item" style="max-width:210px;font-size:12px;">
+    <option value="">About: whole ${_rdKind(t) === 'activity' ? 'activity' : 'task'}</option>
+    ${lines.map(l => `<option value="${l.id}">↳ ${escapeHtml(_truncateRd(l.title, 40))}</option>`).join('')}
+  </select>`;
+}
+function _cpCommentChips(c) {
+  let h = '';
+  if (c && c.item_id) {
+    const l = TASK_CHK.find(x => x.id === c.item_id);
+    h += `<span class="v2-pill is-info" style="font-size:10px;">${icon('link')} ${escapeHtml(_truncateRd(l ? l.title : 'checklist item', 44))}</span> `;
+  }
+  if (c && c.legacy_prereq) h += `<span class="v2-pill is-warn" style="font-size:10px;">${icon('flag')} prerequisite</span> `;
+  return h;
+}
+function _cpCommentItemId(taskId) {
+  return document.getElementById('task-comment-item-' + taskId)?.value || null;
+}
+function _cpChkCommentCount(lineId, t) {
+  return (typeof _taskComments === 'function' ? _taskComments(t) : []).filter(c => c.item_id === lineId).length;
+}
+function _truncateRd(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+
+// ── Checkpoint page (unified tasks + readiness workspace) ──────────────────
 function _rdSetFilter(k, v) { _rdFilter[k] = v; renderReadiness(); }
-function _rdClearFilters() { _rdFilter = { search: '', location: '', subsystem: '', phase: '', status: '', overdue: false }; renderReadiness(); }
+function _rdClearFilters() { _rdFilter = { search: '', kind: '', location: '', subsystem: '', phase: '', status: '', priority: '', type: '', mine: false, ready: false, overdue: false }; renderReadiness(); }
 function _rdSetView(v) { _rdView = v; renderReadiness(); }
 function _rdSetMatrixDim(d) { _rdMatrixDim = d; renderReadiness(); }
 // Drill from a rollup/matrix into the filtered list.
@@ -947,24 +972,28 @@ function _rdDrillCell(sub, col, colDim) {
   renderReadiness();
 }
 
-function renderReadiness() {
-  const root = document.getElementById('readiness-content');
-  const heroEl = document.getElementById('readiness-hero-content');
+// Checkpoint owns the former Tasks page surface (page id 'tasks'); app.js's
+// renderTasks() delegates here, so every legacy call site lands on this.
+function renderWork() {
+  const root = document.getElementById('tasks-content');
+  const heroEl = document.getElementById('tasks-hero-content');
   if (!root || (typeof currentRoleUser !== 'undefined' && !currentRoleUser)) return;
   if (!_rdCan('view')) {
-    root.innerHTML = cxEmpty({ icon: 'lock', title: 'Not authorized', message: 'You don’t have access to Activity Readiness.' });
+    root.innerHTML = cxEmpty({ icon: 'lock', title: 'Not authorized', message: 'You don’t have access to Checkpoint.' });
     return;
   }
-  const acts = (typeof TASKS !== 'undefined' ? TASKS : []).filter(_rdIsActivity);
+  const items = (typeof TASKS !== 'undefined' ? TASKS : []);
+  const acts = items.filter(t => _rdKind(t) === 'activity');
+  const tasksOnly = items.length - acts.length;
 
-  // Overall readiness — item-weighted across ALL activities (an activity with
+  // Overall readiness — item-weighted across activities (an activity with
   // 20 items moves the needle more than one with 3).
   let sumDone = 0, sumTotal = 0, ready = 0, overdueItems = 0;
   const progress = new Map();
-  for (const t of acts) {
+  for (const t of items) {
     const p = _rdTaskProgress(t.id);
     progress.set(t.id, p);
-    sumDone += p.done; sumTotal += p.total;
+    if (_rdKind(t) === 'activity') { sumDone += p.done; sumTotal += p.total; }
     if (p.total && p.pct === 100) ready++;
     overdueItems += _rdTaskOverdueLines(t.id).length;
   }
@@ -972,54 +1001,72 @@ function renderReadiness() {
 
   if (heroEl) heroEl.innerHTML = renderPageHero({
     eyebrow: 'Field',
-    title: 'Activity Readiness',
-    sub: 'Prerequisite checklists per activity — templates, delay tracking and readiness rollup by location / subsystem / phase',
+    title: 'Checkpoint',
+    sub: 'Tasks and readiness activities in one workspace — checklists, templates, delay tracking and rollup by location / subsystem / phase',
     stats: [
-      { label: 'Overall', value: overallPct + '%', tone: overallPct === 100 ? 'good' : 'blue' },
+      { label: 'Readiness', value: overallPct + '%', tone: overallPct === 100 ? 'good' : 'blue' },
+      { label: 'Tasks', value: tasksOnly, tone: 'muted' },
       { label: 'Activities', value: acts.length },
       { label: 'Ready', value: ready, tone: ready ? 'good' : 'muted' },
       { label: 'Overdue items', value: overdueItems, tone: overdueItems ? 'amber' : 'muted' },
     ],
   });
 
-  _htmlPreserveFocus(root, _rdPageHTML(acts, progress, overallPct));
+  _htmlPreserveFocus(root, _rdPageHTML(items, acts, progress, overallPct));
   setTimeout(_initPageLibraries, 80);
 }
+// Back-compat alias — internal handlers and older call sites use this name.
+function renderReadiness() { renderWork(); }
 
-function _rdPageHTML(acts, progress, overallPct) {
+function _rdPageHTML(items, acts, progress, overallPct) {
   const f = _rdFilter;
   const srch = (f.search || '').toLowerCase();
-  const match = t => {
+  const myName = (typeof currentRoleUser !== 'undefined' && currentRoleUser && currentRoleUser.name) || '';
+  const isReadyItem = t => { const p = progress.get(t.id); return p && p.total > 0 && p.pct === 100; };
+  const match = (t, except) => {
+    if (except !== 'kind' && f.kind && _rdKind(t) !== f.kind) return false;
+    if (except !== 'mine' && f.mine && (t.assignee || '') !== myName) return false;
+    if (except !== 'ready' && f.ready && !isReadyItem(t)) return false;
+    if (except !== 'status' && f.status && (t.status || 'Not Started') !== f.status) return false;
+    if (except !== 'overdue' && f.overdue && !_rdTaskOverdueLines(t.id).length) return false;
+    if (f.priority && (t.priority || '') !== f.priority) return false;
+    if (f.type && !(typeof _taskTypeList === 'function' ? _taskTypeList(t) : []).includes(f.type)) return false;
     if (f.location && (t.location || '') !== f.location) return false;
     if (f.subsystem && (t.subsystem || '') !== f.subsystem) return false;
     if (f.phase && (t.phase || '') !== f.phase) return false;
-    if (f.status && (t.status || 'Not Started') !== f.status) return false;
-    if (f.overdue && !_rdTaskOverdueLines(t.id).length) return false;
-    if (srch && !`${t.task_name || ''} ${t.description || ''} ${t.assignee || ''} ${t.location || ''} ${t.subsystem || ''} ${t.phase || ''} ${_rdChkFor(t.id).map(l => l.title).join(' ')}`.toLowerCase().includes(srch)) return false;
+    if (srch && !`${t.task_name || ''} ${t.description || ''} ${t.assignee || ''} ${t.location || ''} ${t.subsystem || ''} ${t.phase || ''} ${(typeof _taskCommentText === 'function' ? _taskCommentText(t) : '')} ${_rdChkFor(t.id).map(l => l.title).join(' ')}`.toLowerCase().includes(srch)) return false;
     return true;
   };
-  const filtered = acts.filter(match).sort((a, b) =>
+  const filtered = items.filter(t => match(t)).sort((a, b) =>
     String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')) ||
     String(a.task_name || '').localeCompare(String(b.task_name || '')));
 
-  // Filtered rollup for the big bar (matches what's on screen).
+  // Filtered readiness rollup for the big bar (activities on screen).
   let fd = 0, ft = 0;
-  for (const t of filtered) { const p = progress.get(t.id); fd += p.done; ft += p.total; }
+  for (const t of filtered) {
+    if (_rdKind(t) !== 'activity') continue;
+    const p = progress.get(t.id); fd += p.done; ft += p.total;
+  }
   const fPct = ft ? Math.round(fd / ft * 100) : 0;
 
-  const locOpts = [...new Set(acts.map(t => t.location).filter(Boolean))].sort();
-  const subOpts = [...new Set(acts.map(t => t.subsystem).filter(Boolean))].sort();
-  const phaseOpts = [...new Set(acts.map(t => t.phase).filter(Boolean))].sort();
+  const locOpts = [...new Set(items.map(t => t.location).filter(Boolean))].sort();
+  const subOpts = [...new Set(items.map(t => t.subsystem).filter(Boolean))].sort();
+  const phaseOpts = [...new Set(items.map(t => t.phase).filter(Boolean))].sort();
+  const prioOpts = (typeof _taskPriorities === 'function') ? _taskPriorities() : [];
+  const typeOpts = (typeof _taskTypes === 'function') ? _taskTypes() : [];
   const statuses = (typeof _taskStatuses === 'function') ? _taskStatuses() : ['Not Started', 'In Progress', 'Done'];
-  const hasFilters = f.search || f.location || f.subsystem || f.phase || f.status || f.overdue;
-  const overdueCount = acts.filter(t => _rdTaskOverdueLines(t.id).length).length;
+  const hasFilters = f.search || f.kind || f.location || f.subsystem || f.phase || f.status || f.priority || f.type || f.mine || f.ready || f.overdue;
+  const overdueCount = items.filter(t => _rdTaskOverdueLines(t.id).length).length;
+  const readyCount = items.filter(t => match(t, 'ready')).filter(isReadyItem).length;
+  const myCount = myName ? items.filter(t => match(t, 'mine')).filter(t => (t.assignee || '') === myName).length : 0;
+  const kindCount = k => items.filter(t => match(t, 'kind')).filter(t => _rdKind(t) === k).length;
   const delayEvents = TASK_DELAYS.filter(d => d.old_due && d.new_due && new Date(d.new_due) > new Date(d.old_due)).length;
 
-  // View switcher — List (default) / Overview (matrix rollup) / Delays.
+  // View switcher — List (everything) / Overview (readiness matrix) / Delays.
   const seg = (v, label, ic, badge) => `<button class="rd-seg${_rdView === v ? ' active' : ''}" aria-pressed="${_rdView === v}" onclick="_rdSetView('${v}')">${icon(ic)} ${label}${badge != null ? ` <span class="rd-seg-n">${badge}</span>` : ''}</button>`;
-  const switcher = `<div class="rd-segmented" role="group" aria-label="Readiness view">
-    ${seg('list', 'Activities', 'clipboard', acts.length)}
-    ${seg('overview', 'Overview', 'layers')}
+  const switcher = `<div class="rd-segmented" role="group" aria-label="Checkpoint view">
+    ${seg('list', 'Work Items', 'clipboard', items.length)}
+    ${seg('overview', 'Readiness Overview', 'layers')}
     ${seg('delays', 'Delays', 'clock', delayEvents || null)}
   </div>`;
 
@@ -1028,25 +1075,39 @@ function _rdPageHTML(acts, progress, overallPct) {
 
   return switcher + `
     <div class="v2-chips-row">
-      <span class="v2-chip ${!f.status && !f.overdue ? 'active' : ''}" onclick="_rdFilter.status='';_rdFilter.overdue=false;renderReadiness()">All <span class="n">${acts.length}</span></span>
+      <span class="v2-chip ${!hasFilters ? 'active' : ''}" onclick="_rdClearFilters()">All <span class="n">${items.length}</span></span>
+      <span class="v2-chip is-muted ${f.kind === 'task' ? 'active' : ''}" onclick="_rdSetFilter('kind', _rdFilter.kind==='task' ? '' : 'task')">${icon('check')} Tasks <span class="n">${kindCount('task')}</span></span>
+      <span class="v2-chip is-info ${f.kind === 'activity' ? 'active' : ''}" onclick="_rdSetFilter('kind', _rdFilter.kind==='activity' ? '' : 'activity')">${icon('target')} Readiness <span class="n">${kindCount('activity')}</span></span>
+      ${myName ? `<span class="v2-chip is-info ${f.mine ? 'active' : ''}" onclick="_rdFilter.mine=!_rdFilter.mine;renderReadiness()">${icon('user')} Mine <span class="n">${myCount}</span></span>` : ''}
+      ${readyCount ? `<span class="v2-chip is-good ${f.ready ? 'active' : ''}" onclick="_rdFilter.ready=!_rdFilter.ready;renderReadiness()">${icon('check-circle')} Ready <span class="n">${readyCount}</span></span>` : ''}
       ${statuses.map(s => {
-        const count = acts.filter(t => (t.status || 'Not Started') === s).length;
+        const count = items.filter(t => match(t, 'status')).filter(t => (t.status || 'Not Started') === s).length;
         if (!count && f.status !== s) return '';
         const tone = (typeof _taskStatusTone === 'function') ? _taskStatusTone(s) : 'is-muted';
         return `<span class="v2-chip ${tone} ${f.status === s ? 'active' : ''}" onclick="_rdSetFilter('status', _rdFilter.status==='${escapeHtml(s)}' ? '' : '${escapeHtml(s)}')"><span class="dot"></span>${escapeHtml(s)} <span class="n">${count}</span></span>`;
       }).join('')}
       ${overdueCount ? `<span class="v2-chip is-bad ${f.overdue ? 'active' : ''}" onclick="_rdFilter.overdue=!_rdFilter.overdue;renderReadiness()">${icon('alert')} Overdue <span class="n">${overdueCount}</span></span>` : ''}
       <span class="right">
+        <button class="v2-btn-ghost" onclick="_taskCSVExport()">${icon('download')} Export CSV</button>
         ${_rdCan('view') ? `<button class="v2-btn-ghost" onclick="_rdTemplatesModal()">${icon('sliders')} Templates</button>` : ''}
-        ${_rdCan('create') ? `<button class="v2-btn-primary" onclick="_rdIssueModal(null)">＋ New Activity</button>` : ''}
+        ${_rdCan('create') ? `<button class="v2-btn-ghost" onclick="openTaskModal(null)">＋ New Task</button>
+        <button class="v2-btn-primary" onclick="_rdIssueModal(null)">＋ New Activity</button>` : ''}
       </span>
     </div>
 
     <div class="v2-filter-row">
       <div class="v2-search-wrap">
         <span class="icon">${icon('search')}</span>
-        <input id="rd-search-input" type="text" value="${escapeHtml(f.search)}" placeholder="Search activity, checklist item, owner…" oninput="_rdFilter.search=this.value; renderReadiness()">
+        <input id="cp-search-input" type="text" value="${escapeHtml(f.search)}" placeholder="Search item, checklist line, owner, comments…" oninput="_rdFilter.search=this.value; renderReadiness()">
       </div>
+      <select onchange="_rdSetFilter('priority', this.value)" aria-label="Filter by priority">
+        <option value="">All Priorities</option>
+        ${prioOpts.map(o => `<option value="${escapeHtml(o)}" ${f.priority === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
+      </select>
+      <select onchange="_rdSetFilter('type', this.value)" aria-label="Filter by task type">
+        <option value="">All Types</option>
+        ${typeOpts.map(o => `<option value="${escapeHtml(o)}" ${f.type === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
+      </select>
       <select onchange="_rdSetFilter('location', this.value)" aria-label="Filter by location">
         <option value="">All Locations</option>
         ${locOpts.map(o => `<option value="${escapeHtml(o)}" ${f.location === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
@@ -1060,25 +1121,35 @@ function _rdPageHTML(acts, progress, overallPct) {
         ${phaseOpts.map(o => `<option value="${escapeHtml(o)}" ${f.phase === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
       </select>
       ${hasFilters ? `<button class="v2-btn-mini" onclick="_rdClearFilters()">${icon('x')} Reset</button>` : ''}
-      <span class="count"><b>${filtered.length}</b> of ${acts.length}</span>
+      <span class="count"><b>${filtered.length}</b> of ${items.length}</span>
     </div>
 
-    <div style="display:flex;align-items:center;gap:12px;margin:6px 2px 14px;">
+    ${ft || (!hasFilters && _cpItemTotal(acts, progress)) ? `<div style="display:flex;align-items:center;gap:12px;margin:6px 2px 14px;">
       <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-subtle);white-space:nowrap;">${hasFilters ? 'Filtered' : 'Project'} readiness</span>
       <div style="flex:1;height:10px;background:var(--gray-100);border-radius:5px;overflow:hidden;"><div style="width:${hasFilters ? fPct : overallPct}%;height:100%;background:var(--good);"></div></div>
       <span style="font-size:13px;font-weight:700;">${hasFilters ? fPct : overallPct}%</span>
-    </div>
+    </div>` : ''}
 
     <div class="v2-list">
-      ${filtered.length ? filtered.map(t => _rdActivityRowHTML(t, progress.get(t.id))).join('') : `
+      ${filtered.length ? filtered.map(t => _cpRowHTML(t, progress.get(t.id))).join('') : `
         <div style="padding:48px;text-align:center;color:var(--gray-500);">
           <div style="font-size:32px;margin-bottom:8px;">${icon('clipboard')}</div>
-          <div style="font-size:14px;">${acts.length ? 'No activities match your filters' : 'No readiness activities yet — create a template, then issue your first activity'}</div>
+          <div style="font-size:14px;">${items.length ? 'Nothing matches your filters' : 'Nothing here yet — add a task, or create a template and issue your first readiness activity'}</div>
         </div>`}
     </div>`;
 }
+// Total checklist items across the activities — guards the project-readiness
+// bar when the portfolio is pure tasks with no checklists.
+function _cpItemTotal(acts, progress) {
+  let n = 0;
+  for (const t of acts) { const p = progress.get(t.id); if (p) n += p.total; }
+  return n;
+}
 
-function _rdActivityRowHTML(t, p) {
+// Unified row — one layout for both kinds. Tasks lead with priority/effort,
+// readiness activities with dimensions + progress; both carry the type pill.
+function _cpRowHTML(t, p) {
+  const isAct = _rdKind(t) === 'activity';
   const status = t.status || 'Not Started';
   const stTone = (typeof _taskStatusTone === 'function') ? _taskStatusTone(status) : 'is-muted';
   const overdue = _rdTaskOverdueLines(t.id).length;
@@ -1086,32 +1157,49 @@ function _rdActivityRowHTML(t, p) {
   const delayed = lines.filter(l => _rdDelaysFor(l.id).length).length;
   const linkedIn = TASK_CHK.filter(c => c.linked_task_id === t.id).length;
   const isReady = p.total > 0 && p.pct === 100;
+  const isDone = status === 'Done';
+  const isOverdueTask = t.due_date && new Date(t.due_date) < new Date() && !isDone;
+  const canEdit = _rdCan('edit');
+  const comments = (typeof _taskComments === 'function') ? _taskComments(t) : [];
+  const last = comments.length ? comments[comments.length - 1] : null;
   return `
-    <div class="v2-list-row tone-${stTone.replace('is-', '')} ${overdue ? 'is-overdue' : ''}" onclick="_taskViewModal('${t.id}')">
+    <div class="v2-list-row tone-${stTone.replace('is-', '')} ${overdue || isOverdueTask ? 'is-overdue' : ''}" onclick="_taskViewModal('${t.id}')">
       <div class="rma-row">
         <div class="rma-id-block">
-          <h3 class="rma-material" title="${escapeHtml(t.task_name || '')}">${escapeHtml(t.task_name || '—')}</h3>
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+            ${_rdKindPill(t)}
+            ${!isAct && t.priority ? `<span class="v2-pill ${typeof _taskPriorityTone === 'function' ? _taskPriorityTone(t.priority) : 'is-muted'}">${escapeHtml(t.priority)}</span>` : ''}
+            <h3 class="rma-material" style="margin:0;" title="${escapeHtml(t.task_name || '')}">${escapeHtml(t.task_name || '—')}</h3>
+          </div>
+          ${t.description ? `<div class="v2-meta-line" style="margin-top:2px;">${escapeHtml(_truncateRd(t.description, 110))}</div>` : ''}
           <div class="v2-meta-line" style="margin-top:3px;display:flex;gap:6px;flex-wrap:wrap;">
             ${t.location ? `<span class="v2-pill is-muted">${icon('pin')} ${escapeHtml(t.location)}</span>` : ''}
             ${t.subsystem ? `<span class="v2-pill is-muted">${icon('layers')} ${escapeHtml(t.subsystem)}</span>` : ''}
             ${t.phase ? `<span class="v2-pill is-muted">${icon('flag')} ${escapeHtml(t.phase)}</span>` : ''}
             ${linkedIn ? `<span class="v2-pill is-info" title="Rolls up into ${linkedIn} other checklist${linkedIn !== 1 ? 's' : ''}">${icon('link')} ×${linkedIn}</span>` : ''}
+            ${last ? `<span style="font-size:11px;color:var(--text-subtle);" title="${escapeHtml(last.text || '(photo)')}">${icon('inbox')} ${comments.length} · ${escapeHtml(_truncateRd(last.text || '(photo)', 40))}</span>` : ''}
           </div>
         </div>
         <div class="rma-parts">
           <span class="k">Owner</span><span class="v">${escapeHtml(t.assignee || '—')}</span>
-          <span class="k">Target</span><span class="v">${t.due_date ? _fmtDate(t.due_date) : '—'}</span>
-          <span class="k">Items</span><span class="v">${p.total ? `${Math.round(p.done * 10) / 10}/${p.total}` : '—'}${overdue ? ` <span style="color:var(--bad);font-weight:600;">· ${overdue} overdue</span>` : ''}${delayed ? ` <span style="color:var(--warn);font-weight:600;">· ${delayed} delayed</span>` : ''}</span>
+          <span class="k">${isAct ? 'Target' : 'Due'}</span><span class="v ${isOverdueTask ? 'is-bad' : ''}">${t.due_date ? _fmtDate(t.due_date) : '—'}</span>
+          <span class="k">${lines.length ? 'Items' : 'Effort'}</span><span class="v">${lines.length
+            ? `${Math.round(p.done * 10) / 10}/${p.total}${overdue ? ` <span style="color:var(--bad);font-weight:600;">· ${overdue} overdue</span>` : ''}${delayed ? ` <span style="color:var(--warn);font-weight:600;">· ${delayed} delayed</span>` : ''}`
+            : (t.effort ? `<span class="v2-pill ${typeof _taskEffortTone === 'function' ? _taskEffortTone(t.effort) : 'is-muted'}">${escapeHtml(t.effort)}</span>` : '—')}</span>
         </div>
         <div class="rma-status-block">
-          ${isReady ? `<span class="v2-pill is-good">${icon('check-circle')} Ready</span>` : `<span class="v2-pill ${stTone}">${escapeHtml(status)}</span>`}
-          <div style="display:flex;align-items:center;gap:8px;margin-top:6px;min-width:150px;">
+          ${isReady && !isDone ? `<span class="v2-pill is-good">${icon('check-circle')} Ready</span>` : `<span class="v2-pill ${stTone}">${escapeHtml(status)}</span>`}
+          ${lines.length ? `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;min-width:150px;">
             <div style="flex:1;height:7px;background:var(--gray-100);border-radius:4px;overflow:hidden;"><div style="width:${p.pct}%;height:100%;background:${p.fails ? 'var(--bad)' : 'var(--good)'};"></div></div>
             <span style="font-size:12px;font-weight:700;color:var(--text-subtle);">${p.pct}%</span>
-          </div>
+          </div>` : ''}
         </div>
         <div class="rma-actions" onclick="event.stopPropagation()">
           <button class="v2-btn-mini" onclick="_taskViewModal('${t.id}')">${icon('eye')} Open</button>
+          ${canEdit ? `<div style="display:flex;gap:4px;">
+            <button class="v2-btn-mini" onclick="openTaskModal('${t.id}')">${icon('edit')} Edit</button>
+            ${_rdCan('delete') ? `<button aria-label="Delete" class="v2-btn-mini danger" onclick="deleteTask('${t.id}')" title="Delete">${icon('trash')}</button>` : ''}
+          </div>` : ''}
         </div>
       </div>
     </div>`;

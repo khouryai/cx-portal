@@ -109,6 +109,28 @@ console.log("\nreadiness-page membership:");
   ok("  subsystem alone qualifies", sandbox._rdIsActivity({ id: "X", subsystem: "DCS" }));
 }
 
+console.log("\nexplicit kind (Checkpoint merge):");
+{
+  ok("  tasks.kind='activity' is authoritative", sandbox._rdKind({ id: "K1", kind: "activity" }) === "activity");
+  ok("  tasks.kind='task' wins even with dimensions", sandbox._rdKind({ id: "K2", kind: "task", subsystem: "DCS" }) === "task");
+  ok("  absent kind falls back to derivation (checklist → activity)",
+     sandbox._rdKind(vm.runInContext(`TASKS.find(t => t.id === 'A')`, ctx)) === "activity");
+  ok("  absent kind, no signals → task", sandbox._rdKind(vm.runInContext(`TASKS.find(t => t.id === 'C')`, ctx)) === "task");
+}
+
+console.log("\ncomment ↔ checklist-item linking:");
+{
+  const t = vm.runInContext(`TASKS.find(x => x.id === 'A')`, ctx);
+  const sel = sandbox._cpCommentItemSelectHTML(t, "A");
+  ok("  composer select lists the task's lines", sel.includes("task-comment-item-A") && sel.includes("Latest DCS book of plans"));
+  ok("  no checklist → no selector", sandbox._cpCommentItemSelectHTML({ id: "C" }, "C") === "");
+  const chips = sandbox._cpCommentChips({ item_id: "a2" });
+  ok("  linked comment renders the item chip", chips.includes("Latest DCS book of plans"));
+  ok("  migrated prereq comment renders the marker chip", sandbox._cpCommentChips({ legacy_prereq: true }).includes("prerequisite"));
+  vm.runInContext(`TASKS.find(x => x.id === 'A').comments = [{ id: 'c1', text: 'hi', at: '2026-07-01', item_id: 'a2' }];`, ctx);
+  ok("  per-line comment count", sandbox._cpChkCommentCount("a2", vm.runInContext(`TASKS.find(x => x.id === 'A')`, ctx)) === 1);
+}
+
 console.log("\ntemplate seeding + delay math:");
 {
   const rows = sandbox._rdSeedRows("T", "NEW", "2026-08-01");

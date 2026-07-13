@@ -622,6 +622,9 @@ function showPage(name) {
   // Permissions has been merged into the Directory module — keep the legacy
   // route (old bookmarks / history hashes) working by landing on its tab.
   if (name === 'admin-permissions') { name = 'admin-directory'; _dirTab = 'templates'; }
+  // Tasks + Activity Readiness merged into Checkpoint (page id stays 'tasks') —
+  // keep old readiness bookmarks/history hashes working.
+  if (name === 'activity-readiness') name = 'tasks';
   // Tear down planning calendar/timeline instances on any page change to avoid leaks
   if (typeof _planningCleanupInstances === 'function') _planningCleanupInstances();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -650,7 +653,6 @@ function showPage(name) {
   if (name === 'forms')            renderFormsPage();
   if (name === 'rma')              renderRMA();
   if (name === 'tasks')            renderTasks();
-  if (name === 'activity-readiness') { if (typeof renderReadiness === 'function') renderReadiness(); }
   if (name === 'schedule')         renderSchedulePage();
   if (name === 'drawings')         { loadDrawingsData().then(renderDrawingsPage); }
   if (name === 'documents')        { loadDocsData().then(renderDocumentsPage); }
@@ -3071,7 +3073,6 @@ let ASSET_LINKS   = [];  // asset_test_links table rows
 let RMAS = [];
 let _rmaFilter = { status: '', location: '', search: '' };
 let TASKS = [];
-let _taskFilter = { status: '', priority: '', type: '', search: '', mine: false, prereqMet: false };
 
 // ── Health tab filter state ───────────────────────────────────────────────────
 let _p6HealthFilter     = { search: '', dateMode: 'all', dateFrom: '', dateTo: '' };
@@ -21355,19 +21356,14 @@ async function _rmaSendEmail(rma, eventType, oldStatus) {
 
 
 // ==========================================================================
-// TASKS — Field task tracker (Tasks Tracker)
+// CHECKPOINT — unified tasks + activity-readiness workspace (module key 'tasks')
 //
-// A lightweight task board for the Field section. Mirrors the RMA module's
-// structure (load → render hero + list → modal CRUD → audit) and pulls its
-// dropdown vocabularies (Task Type, Status, Priority, Effort) from Field Config
-// so they stay admin-editable alongside every other module.
+// One record type: tasks.kind is 'task' (work item) or 'activity' (readiness
+// activity with a gated checklist). The page itself renders in readiness.js
+// (renderWork); this file keeps the shared CRUD — edit/view modals, comments
+// (one thread, optionally linked to a checklist item), photos, CSV — and the
+// Field Config vocabularies (Task Type, Status, Priority, Effort).
 // ==========================================================================
-
-const TASK_STATUS_CHIPS = [
-  ['Not Started', 'Not Started', 'is-muted'],
-  ['In Progress', 'In Progress', 'is-info'],
-  ['Done',        'Done',        'is-good'],
-];
 
 function _taskStatusTone(s) {
   return ({ 'Not Started':'is-muted', 'In Progress':'is-info', 'Done':'is-good' })[s] || 'is-muted';
@@ -21405,198 +21401,14 @@ function _taskComments(t) {
 function _taskCommentText(t) {
   return _taskComments(t).map(c => c.text || '').join(' ');
 }
-// Effective prerequisite state: derived from the readiness checklist when one
-// exists (readiness.js), otherwise the legacy manual prerequisite_met flag.
-function _taskPrereqMetEff(t) {
-  return (typeof _taskPrereqEff === 'function') ? _taskPrereqEff(t) : !!(t && t.prerequisite_met);
-}
-
-function _taskPrereqComments(t) {
-  let raw = t?.prerequisite_comments;
-  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = []; } }
-  return Array.isArray(raw) ? raw : [];
-}
-
+// Checkpoint merge: the unified tasks + readiness page renders in readiness.js
+// (renderWork). Every legacy renderTasks() call site lands there.
 function renderTasks() {
-  const root   = document.getElementById('tasks-content');
-  const heroEl = document.getElementById('tasks-hero-content');
-  if (!root || !currentRoleUser) return;
-
-  const now       = Date.now();
-  const notStarted = TASKS.filter(t => (t.status || 'Not Started') === 'Not Started').length;
-  const inProgress = TASKS.filter(t => t.status === 'In Progress').length;
-  const done       = TASKS.filter(t => t.status === 'Done').length;
-  const overdue    = TASKS.filter(t => t.due_date && new Date(t.due_date) < new Date() && t.status !== 'Done').length;
-
-  if (heroEl) heroEl.innerHTML = renderPageHero({
-    eyebrow: 'Field',
-    title: 'Tasks Tracker',
-    sub: 'Field task board — track work, owners, priority and progress',
-    stats: [
-      { label: 'Total',       value: TASKS.length },
-      { label: 'Not Started', value: notStarted, tone: 'muted' },
-      { label: 'In Progress', value: inProgress, tone: inProgress ? 'blue' : 'muted' },
-      { label: 'Done',        value: done,       tone: 'good' },
-      { label: 'Overdue',     value: overdue,    tone: overdue ? 'amber' : 'muted' },
-    ],
-  });
-
-  _htmlPreserveFocus(root, _tasksPageHTML());
-  setTimeout(_initPageLibraries, 80);
+  if (typeof renderWork === 'function') renderWork();
 }
 
 function _taskStatusBadge(s) {
   return `<span class="v2-pill ${_taskStatusTone(s)}">${escapeHtml(s || '—')}</span>`;
-}
-
-function _taskClearFilters() {
-  _taskFilter = { status: '', priority: '', type: '', search: '', mine: false, prereqMet: false };
-  renderTasks();
-}
-
-function _tasksPageHTML() {
-  const canEdit   = uiCan('tasks', 'edit');
-
-  const myName      = currentRoleUser?.name || '';
-  const isMine      = t => myName && (t.assignee || '') === myName;
-
-  // Full cross-cascade over status / priority / type / mine / prereq — each
-  // control's options and chip counts come from the tasks matching all the
-  // OTHER active filters.
-  const _taskMatchExcept = (t, except) =>
-    (except === 'mine'     || !_taskFilter.mine      || isMine(t)) &&
-    (except === 'prereq'   || !_taskFilter.prereqMet || _taskPrereqMetEff(t)) &&
-    (except === 'status'   || !_taskFilter.status    || (t.status || 'Not Started') === _taskFilter.status) &&
-    (except === 'priority' || !_taskFilter.priority  || t.priority === _taskFilter.priority) &&
-    (except === 'type'     || !_taskFilter.type      || _taskTypeList(t).includes(_taskFilter.type));
-  const _taskPrioAvail = new Set(TASKS.filter(t => _taskMatchExcept(t, 'priority')).map(t => t.priority).filter(Boolean));
-  const prioOpts  = _taskPriorities().filter(p => _taskPrioAvail.has(p));
-  const _taskTypeAvail = new Set(TASKS.filter(t => _taskMatchExcept(t, 'type')).flatMap(t => _taskTypeList(t)));
-  const typeOpts  = _taskTypes().filter(t => _taskTypeAvail.has(t));
-  if (_taskFilter.priority && !prioOpts.includes(_taskFilter.priority)) _taskFilter.priority = '';
-  if (_taskFilter.type && !typeOpts.includes(_taskFilter.type)) _taskFilter.type = '';
-  const taskChipBase = TASKS.filter(t => _taskMatchExcept(t, 'status'));
-  const myCount     = TASKS.filter(t => _taskMatchExcept(t, 'mine')).filter(isMine).length;
-  const prereqCount = TASKS.filter(t => _taskMatchExcept(t, 'prereq')).filter(_taskPrereqMetEff).length;
-  const taskHasFilters = _taskFilter.search || _taskFilter.status || _taskFilter.priority || _taskFilter.type || _taskFilter.mine || _taskFilter.prereqMet;
-
-  const srch = (_taskFilter.search || '').toLowerCase();
-  const filtered = TASKS.filter(t => {
-    if (_taskFilter.mine     && !isMine(t)) return false;
-    if (_taskFilter.prereqMet && !_taskPrereqMetEff(t)) return false;
-    if (_taskFilter.status   && (t.status || 'Not Started') !== _taskFilter.status) return false;
-    if (_taskFilter.priority && t.priority !== _taskFilter.priority) return false;
-    if (_taskFilter.type     && !_taskTypeList(t).includes(_taskFilter.type)) return false;
-    if (srch && !`${t.task_name||''} ${t.description||''} ${t.assignee||''} ${_taskCommentText(t)} ${t.prerequisites||''} ${_taskTypeList(t).join(' ')}`
-                  .toLowerCase().includes(srch)) return false;
-    return true;
-  });
-
-  return `
-    <!-- Status chips -->
-    <div class="v2-chips-row">
-      <span class="v2-chip ${!_taskFilter.status && !_taskFilter.mine && !_taskFilter.prereqMet ? 'active' : ''}"
-            onclick="_taskFilter.status=''; _taskFilter.mine=false; _taskFilter.prereqMet=false; renderTasks()">All <span class="n">${TASKS.length}</span></span>
-      <span class="v2-chip is-info ${_taskFilter.mine ? 'active' : ''}"
-            onclick="_taskFilter.mine=!_taskFilter.mine; renderTasks()">${icon('user')} My Tasks <span class="n">${myCount}</span></span>
-      ${prereqCount ? `<span class="v2-chip is-good ${_taskFilter.prereqMet ? 'active' : ''}"
-            onclick="_taskFilter.prereqMet=!_taskFilter.prereqMet; renderTasks()">${icon('check')} Prereq Met <span class="n">${prereqCount}</span></span>` : ''}
-      ${TASK_STATUS_CHIPS.map(([val, label, tone]) => {
-        const count = taskChipBase.filter(t => (t.status || 'Not Started') === val).length;
-        if (!count && _taskFilter.status !== val) return '';
-        return `<span class="v2-chip ${tone} ${_taskFilter.status === val ? 'active' : ''}"
-                      onclick="_taskFilter.status='${escapeHtml(val)}'; renderTasks()">
-          <span class="dot"></span>${escapeHtml(label)} <span class="n">${count}</span>
-        </span>`;
-      }).join('')}
-      <span class="right">
-        <button class="v2-btn-ghost" onclick="_taskCSVExport()">${icon('download')} Export CSV</button>
-        ${uiCan('tasks','create') ? `<button class="v2-btn-primary" onclick="openTaskModal(null)">＋ New Task</button>` : ''}
-      </span>
-    </div>
-
-    <!-- Search + filters -->
-    <div class="v2-filter-row">
-      <div class="v2-search-wrap">
-        <span class="icon">${icon('search')}</span>
-        <input id="tasks-search-input" type="text" value="${escapeHtml(_taskFilter.search)}"
-               placeholder="Search task, description, assignee, updates…"
-               oninput="_taskFilter.search=this.value; renderTasks()">
-      </div>
-      <select onchange="_taskFilter.priority=this.value; renderTasks()">
-        <option value="">All Priorities</option>
-        ${prioOpts.map(p => `<option value="${escapeHtml(p)}" ${_taskFilter.priority===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
-      </select>
-      <select onchange="_taskFilter.type=this.value; renderTasks()">
-        <option value="">All Types</option>
-        ${typeOpts.map(t => `<option value="${escapeHtml(t)}" ${_taskFilter.type===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}
-      </select>
-      ${taskHasFilters ? `<button class="v2-btn-mini" onclick="_taskClearFilters()">${icon('x')} Reset</button>` : ''}
-      <span class="count"><b>${filtered.length}</b> of ${TASKS.length}</span>
-    </div>
-
-    <!-- Task rows -->
-    <div class="v2-list">
-      ${filtered.length ? filtered.map(t => _taskRowHTML(t, canEdit)).join('') : `
-        <div style="padding:48px;text-align:center;color:var(--gray-500);">
-          <div style="font-size:32px;margin-bottom:8px;">${icon('check-circle')}</div>
-          <div style="font-size:14px;">${TASKS.length ? 'No tasks match your filters' : 'No tasks yet — click ＋ New Task to get started'}</div>
-        </div>
-      `}
-    </div>
-  `;
-}
-
-function _taskRowHTML(t, canEdit) {
-  const now      = Date.now();
-  const status   = t.status || 'Not Started';
-  const isDone    = status === 'Done';
-  const isOverdue = t.due_date && new Date(t.due_date) < new Date() && !isDone;
-  const stTone   = _taskStatusTone(status);
-  const types    = _taskTypeList(t);
-  const dueClass = isOverdue ? 'is-bad' : (t.due_date && (new Date(t.due_date) - now) < 7*86400000 && !isDone) ? 'is-warm' : '';
-
-  return `
-    <div class="v2-list-row tone-${stTone.replace('is-','')} ${isOverdue ? 'is-overdue' : ''}" onclick="_taskViewModal('${t.id}')">
-      <div class="rma-row">
-        <div class="rma-id-block">
-          <span class="v2-pill ${_taskPriorityTone(t.priority)}">${escapeHtml(t.priority || '—')}</span>
-          <h3 class="rma-material" title="${escapeHtml(t.task_name || '')}">${escapeHtml(t.task_name || '—')}</h3>
-          ${t.description ? `<div class="v2-meta-line" style="margin-top:2px;">${escapeHtml(_truncate(t.description, 110))}</div>` : ''}
-          ${typeof _rdTaskRowExtra === 'function' ? _rdTaskRowExtra(t) : ''}
-        </div>
-
-        <div class="rma-parts">
-          <span class="k">Owner</span><span class="v">${escapeHtml(t.assignee || '—')}</span>
-          <span class="k">Effort</span><span class="v">${t.effort ? `<span class="v2-pill ${_taskEffortTone(t.effort)}">${escapeHtml(t.effort)}</span>` : '—'}</span>
-          <span class="k">Type</span><span class="v">${types.length ? types.map(ty => `<span class="v2-pill is-muted">${escapeHtml(ty)}</span>`).join(' ') : '—'}</span>
-        </div>
-
-        <div class="rma-status-block">
-          <span class="v2-pill ${stTone}">${escapeHtml(status)}</span>
-          <div class="v2-meta-line">
-            ${t.due_date ? `<span class="${dueClass}">${isOverdue?icon('alert')+' ':''}Due ${_fmtDate(t.due_date)}</span>` : '<span style="color:var(--gray-400);">No due date</span>'}
-          </div>
-          ${(() => {
-            const cs = _taskComments(t);
-            if (!cs.length) return '';
-            const last = cs[cs.length - 1];
-            return `<div class="v2-meta-line" title="${escapeHtml(last.text||'(photo)')}">${icon('inbox')} ${cs.length} comment${cs.length!==1?'s':''} · ${escapeHtml(_truncate(last.text||'(photo)', 42))}</div>`;
-          })()}
-        </div>
-
-        <div class="rma-actions" onclick="event.stopPropagation()">
-          <button class="v2-btn-mini" onclick="_taskViewModal('${t.id}')">${icon('eye')} View</button>
-          ${canEdit ? `
-            <div style="display:flex;gap:4px;">
-              ${uiCan('tasks','edit') ? `<button class="v2-btn-mini" onclick="openTaskModal('${t.id}')">${icon('edit')} Edit</button>` : ''}
-              ${uiCan('tasks','delete') ? `<button aria-label="Delete" class="v2-btn-mini danger" onclick="deleteTask('${t.id}')" title="Delete">${icon('trash')}</button>` : ''}
-            </div>
-          ` : ''}
-        </div>
-      </div>
-    </div>
-  `;
 }
 
 function _truncate(s, n) {
@@ -21635,11 +21447,11 @@ function openTaskModal(taskId) {
       `<input id="task-name" class="form-input" placeholder="e.g. Remove Transponder @ W40" value="${v('task_name')}"></div>` +
       `<div class="form-field form-field-full"><label>Description</label>` +
       `<textarea id="task-desc" class="form-input" rows="2" placeholder="What needs to be done…">${v('description')}</textarea></div>` +
-      `<div class="form-field form-field-full">` +
-      `<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;"><label style="margin:0;">Prerequisite</label>` +
-      `<label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:400;color:var(--gray-600);cursor:pointer;">` +
-      `<input type="checkbox" id="task-prereq-met" ${task?.prerequisite_met ? 'checked' : ''}> Met</label></div>` +
-      `<textarea id="task-prereq" class="form-input" rows="2" placeholder="Blocking items or current standing…">${v('prerequisites')}</textarea></div>` +
+      // Checkpoint type — Task (work item) vs Readiness Activity (gated checklist).
+      `<div class="form-field"><label>Type</label>` +
+      `<select id="task-kind" class="form-input">` +
+      [['task', 'Task'], ['activity', 'Readiness Activity']].map(([val, lbl]) => `<option value="${val}" ${(typeof _rdKind === 'function' ? _rdKind(task) : 'task') === val ? 'selected' : ''}>${lbl}</option>`).join('') +
+      `</select></div>` +
       `<div class="form-field"><label>Status <span style="color:var(--bad)">*</span></label>` +
       `<select id="task-status" class="form-input">` +
       statuses.map(s => `<option value="${escapeHtml(s)}" ${(task?.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('') +
@@ -21725,8 +21537,7 @@ async function saveTask(editId) {
   const payload = {
     task_name:     taskName,
     description:   g('task-desc'),
-    prerequisites:      g('task-prereq'),
-    prerequisite_met:   !!(document.getElementById('task-prereq-met')?.checked),
+    kind:          document.getElementById('task-kind')?.value || 'task',
     status:             document.getElementById('task-status')?.value   || 'Not Started',
     priority:      document.getElementById('task-priority')?.value || 'Medium',
     effort:        g('task-effort'),
@@ -21817,18 +21628,21 @@ function _taskViewModal(id) {
     : '';
   const types          = _taskTypeList(t);
   const comments       = _taskComments(t).slice().sort((a, b) => new Date(a.at) - new Date(b.at));
-  const prereqComments = _taskPrereqComments(t).slice().sort((a, b) => new Date(a.at) - new Date(b.at));
   const canComment     = uiCan('tasks', 'edit') || uiCan('tasks', 'create');
   const canPhotos      = !!(window.PhotosModule && PhotosModule.uploadFile);
+  const isActivity     = (typeof _rdKind === 'function') && _rdKind(t) === 'activity';
 
   const _buildCommentItem = c => {
     const initials  = (c.by || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
     const roleLabel = { admin:'Admin', field_engineer:'Field Engineer', client:'Client', readonly:'Read Only' }[c.by_role] || c.by_role || '';
+    // Chips: linked checklist item + migrated-prerequisite marker (readiness.js).
+    const chips = (typeof _cpCommentChips === 'function') ? _cpCommentChips(c) : '';
     return `
       <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border-bottom:1px solid var(--gray-100);">
         <div style="width:30px;height:30px;border-radius:50%;background:var(--hitachi-red);color:var(--white);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${escapeHtml(initials)}</div>
         <div style="flex:1;min-width:0;">
           <div style="font-size:12px;font-weight:600;color:var(--gray-800);">${escapeHtml(c.by || '—')} <span style="font-weight:400;color:var(--gray-500);">${roleLabel ? '· ' + escapeHtml(roleLabel) + ' ' : ''}· ${dateAgo(c.at)}</span></div>
+          ${chips ? `<div style="margin-top:3px;">${chips}</div>` : ''}
           ${c.text ? `<div style="font-size:13px;color:var(--gray-700);margin-top:3px;white-space:pre-wrap;">${escapeHtml(c.text)}</div>` : ''}
           ${c.photo ? `<img class="punch-comment-photo" data-photo-thumb="${escapeHtml(c.photo.thumb_path||c.photo.storage_path)}" data-photo-full="${escapeHtml(c.photo.storage_path)}" alt="attached photo" loading="lazy">` : ''}
         </div>
@@ -21836,10 +21650,9 @@ function _taskViewModal(id) {
   };
 
   const commentsHTML     = comments.length     ? comments.map(_buildCommentItem).join('')     : '<div style="font-size:12px;color:var(--gray-400);padding:14px 16px;">No comments yet</div>';
-  const prereqCommHTML   = prereqComments.length ? prereqComments.map(_buildCommentItem).join('') : '<div style="font-size:12px;color:var(--gray-400);padding:14px 16px;">No updates yet</div>';
 
   modal({
-    title: `Task — ${escapeHtml(t.task_name)}`,
+    title: `${isActivity ? 'Activity' : 'Task'} — ${escapeHtml(t.task_name)}`,
     size:  'large',
     body:
       `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--line-soft);">` +
@@ -21849,6 +21662,7 @@ function _taskViewModal(id) {
           _taskStatuses().map(s => `<option value="${escapeHtml(s)}" ${(t.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('') +
           `</select>`
         : `${_taskStatusBadge(t.status || 'Not Started')}`) +
+      (typeof _rdKindPill === 'function' ? _rdKindPill(t) : '') +
       `<span class="v2-pill ${_taskPriorityTone(t.priority)}">${escapeHtml(t.priority || '—')}</span>` +
       `${t.effort ? `<span class="v2-pill ${_taskEffortTone(t.effort)}">${escapeHtml(t.effort)}</span>` : ''}` +
       `<span style="font-size:12px;color:var(--gray-500);margin-left:auto;">Created ${t.created_at ? _fmtDate(t.created_at) : '—'} by ${escapeHtml(t.created_by||'—')}</span></div>` +
@@ -21860,37 +21674,12 @@ function _taskViewModal(id) {
       row('Phase',        t.phase ? escapeHtml(t.phase) : null) +
       row('Task Type',    types.length ? types.map(ty => `<span class="v2-pill is-muted">${escapeHtml(ty)}</span>`).join(' ') : null) +
       row('Description',  t.description ? escapeHtml(t.description) : null) +
-      row('Prerequisite',  t.prerequisites
-        ? escapeHtml(t.prerequisites) +
-          (uiCan('tasks','edit') || uiCan('tasks','change_status')
-            ? ` <label style="display:inline-flex;align-items:center;gap:5px;margin-left:10px;cursor:pointer;vertical-align:middle;">` +
-              `<input type="checkbox" onchange="_taskQuickPatch('${id}', {prerequisite_met: this.checked})" ${t.prerequisite_met ? 'checked' : ''}>` +
-              `<span style="font-size:11px;font-weight:600;${t.prerequisite_met ? 'color:var(--good);' : 'color:var(--warn);'}">${t.prerequisite_met ? 'Met' : 'Pending'}</span></label>`
-            : (t.prerequisite_met
-                ? ` <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:var(--good);background:var(--good-light);padding:1px 7px;border-radius:10px;margin-left:6px;vertical-align:middle;">${icon('check')} Met</span>`
-                : ` <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:var(--warn);background:var(--warn-light);padding:1px 7px;border-radius:10px;margin-left:6px;vertical-align:middle;">Pending</span>`))
-        : null) +
       row('Last Edited',  t.updated_at ? `${_fmtDate(t.updated_at)}${t.updated_by ? ' by ' + escapeHtml(t.updated_by) : ''}` : null) +
       `</table>` +
       (t.updates ? `<div style="margin-top:14px;padding:12px 14px;background:var(--gray-50);border-radius:6px;font-size:13px;color:var(--gray-700);white-space:pre-wrap;"><strong>Earlier notes:</strong>\n${escapeHtml(t.updates)}</div>` : '') +
 
       // ── Readiness checklist (structured prerequisites — readiness.js) ─────────
       (typeof _rdTaskChecklistSection === 'function' ? _rdTaskChecklistSection(t) : '') +
-
-      // ── Prerequisite Updates ─────────────────────────────────────────────────
-      `<div style="margin:22px 0 0;padding:14px 16px;background:var(--warn-light);border:1px solid var(--warn-border);border-radius:10px;">` +
-      `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">` +
-      `<div style="font-size:11px;font-weight:700;color:var(--warn);text-transform:uppercase;letter-spacing:0.06em;">${icon('flag')} Prerequisite Updates</div>` +
-      `<span style="font-size:11px;color:var(--warn);">${t.prerequisite_met ? '<span style=\'font-weight:600;color:var(--good);\'>&#10003; Prerequisite Met</span>' : 'Prerequisite Pending'}</span>` +
-      `</div>` +
-      `<div style="display:flex;flex-direction:column;gap:0;max-height:240px;overflow-y:auto;border:1px solid var(--warn-border);border-radius:8px;background:var(--white);padding:4px 0;" id="task-prereq-timeline-${id}">${prereqCommHTML}</div>` +
-      (canComment ? (
-        `<div class="punch-comment-composer" style="margin-top:8px;">` +
-          `<textarea id="task-prereq-input-${id}" class="form-input" rows="2" placeholder="Update on the prerequisite…"></textarea>` +
-          `<button class="form-submit punch-comment-post" style="background:var(--warn);" onclick="addTaskPrereqComment('${id}')">Post</button>` +
-        `</div>`
-      ) : '') +
-      `</div>` +
 
       // ── Photos ──
       `<div style="margin:20px 0 8px;display:flex;align-items:center;justify-content:space-between;">` +
@@ -21904,6 +21693,11 @@ function _taskViewModal(id) {
       `<div style="margin:20px 0 8px;font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:0.06em;">Comments</div>` +
       `<div style="display:flex;flex-direction:column;gap:0;max-height:340px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;padding:4px 0;" id="task-timeline-${id}">${commentsHTML}</div>` +
       (canComment ? (
+        // Optional link: a comment can be about the whole item or one checklist line.
+        ((typeof _cpCommentItemSelectHTML === 'function') ? (() => {
+          const sel = _cpCommentItemSelectHTML(t, id);
+          return sel ? `<div style="margin-top:8px;">${sel}</div>` : '';
+        })() : '') +
         `<div class="punch-comment-composer">` +
           `<textarea id="task-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…"></textarea>` +
           `<button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" aria-label="Attach a photo" onclick="document.getElementById('task-comment-file-${id}').click()">${icon('camera')}</button>` +
@@ -22023,6 +21817,9 @@ async function addTaskComment(id) {
     at: new Date().toISOString(),
   };
   if (photoRef) comment.photo = photoRef;
+  // Optional checklist-item link chosen in the composer (readiness.js).
+  const itemId = (typeof _cpCommentItemId === 'function') ? _cpCommentItemId(id) : null;
+  if (itemId) comment.item_id = itemId;
   const comments = [..._taskComments(t), comment];
   try {
     const [updated] = await _dbUpdate('tasks', { comments }, { id });
@@ -22036,40 +21833,19 @@ async function addTaskComment(id) {
   renderTasks();
 }
 
-async function addTaskPrereqComment(id) {
-  if (typeof uiCan === 'function' && !(uiCan('tasks', 'edit') || uiCan('tasks', 'create'))) { toast('You do not have permission to comment', 'error'); return; }
-  const input = document.getElementById(`task-prereq-input-${id}`);
-  const text  = (input?.value || '').trim();
-  if (!text) { toast('Enter an update', 'error'); return; }
-  const t = TASKS.find(x => x.id === id);
-  if (!t) return;
-  const comment = {
-    id: crypto.randomUUID(),
-    text,
-    by: currentRoleUser?.name || '',
-    by_role: currentRoleUser?.role || '',
-    at: new Date().toISOString(),
-  };
-  const prereqComments = [..._taskPrereqComments(t), comment];
-  try {
-    const [updated] = await _dbUpdate('tasks', { prerequisite_comments: prereqComments }, { id });
-    if (!updated) throw new Error('No row was updated — you may not have permission to comment on this task.');
-    Object.assign(t, updated);
-  } catch (e) { toast('Update failed: ' + e.message, 'error'); return; }
-  toast('Update posted', 'success');
-  closeModal();
-  _taskViewModal(id);
-  renderTasks();
-}
-
 function _taskCSVExport() {
-  const headers = ['Task Name','Status','Priority','Effort','Assignee','Due Date','Task Type',
-    'Description','Prerequisite','Prerequisite Met','Updates','Created By','Created At','Last Edited By','Last Edited'];
-  const rows = TASKS.map(t => [
-    t.task_name||'', t.status||'Not Started', t.priority||'', t.effort||'', t.assignee||'',
-    t.due_date||'', _taskTypeList(t).join('; '), t.description||'', t.prerequisites||'', t.prerequisite_met ? 'Yes' : 'No', t.updates||'',
-    t.created_by||'', t.created_at ? _fmtDate(t.created_at) : '', t.updated_by||'', t.updated_at ? _fmtDate(t.updated_at) : '',
-  ].map(v => '"' + String(v).replace(/"/g,'""') + '"'));
+  const headers = ['Name','Type','Status','Priority','Effort','Assignee','Due Date','Task Type',
+    'Location','Subsystem','Phase','Checklist Progress','Description','Updates','Created By','Created At','Last Edited By','Last Edited'];
+  const rows = TASKS.map(t => {
+    const kind = (typeof _rdKind === 'function') ? _rdKind(t) : 'task';
+    const p = (typeof _rdTaskProgress === 'function') ? _rdTaskProgress(t.id) : { total: 0, pct: 0 };
+    return [
+      t.task_name||'', kind === 'activity' ? 'Readiness Activity' : 'Task', t.status||'Not Started', t.priority||'', t.effort||'', t.assignee||'',
+      t.due_date||'', _taskTypeList(t).join('; '), t.location||'', t.subsystem||'', t.phase||'',
+      p.total ? p.pct + '%' : '', t.description||'', t.updates||'',
+      t.created_by||'', t.created_at ? _fmtDate(t.created_at) : '', t.updated_by||'', t.updated_at ? _fmtDate(t.updated_at) : '',
+    ].map(v => '"' + String(v).replace(/"/g,'""') + '"');
+  });
   const csv = [headers.map(h => '"' + h + '"').join(','), ...rows.map(r => r.join(','))].join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
