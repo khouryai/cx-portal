@@ -25,6 +25,7 @@ const SHELL_ASSETS = [
   './team.js',
   './markup.js',
   './photos.js',
+  './readiness.js',
   './data.js',
   './styles.css',
   './photos.css',

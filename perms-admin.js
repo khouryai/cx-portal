@@ -203,6 +203,7 @@ const PAGE_MODULE = {
   'punch-workflow': 'punch_list',
   'rma': 'rma',
   'tasks': 'tasks',
+  'activity-readiness': 'tasks',
   'forms': 'forms',
   'meetings': 'meetings',
   'lookahead': 'lookahead',

@@ -17,7 +17,7 @@ function assert(cond, msg) {
 const read = f => fs.readFileSync(path.join(__dirname, "..", f), "utf8").replace(/\r\n/g, "\n");
 
 // ---- 1. unnamed icon/glyph-only buttons ------------------------------------
-const HTML_SOURCES = ["index.html", "app.js", "photos.js", "markup.js", "perms-admin.js", "team.js"];
+const HTML_SOURCES = ["index.html", "app.js", "photos.js", "markup.js", "perms-admin.js", "team.js", "readiness.js"];
 function unnamedButtons(src) {
   const out = [];
   const re = /<button\b([^>]*)>([\s\S]*?)<\/button>/g;

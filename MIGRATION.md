@@ -12,7 +12,7 @@ below). This document is the hand-off for the IT team executing the move.
 | Auth | Supabase GoTrue — email/password, in-app invites (`signUp`) | Session JWT in localStorage; identity = `auth.uid()` |
 | Authorization | **In the database**: ~325 RLS policies + `private.has_module_perm()` + `private._perm_baseline()` reading `perm_modules` / `permission_templates` / `template_module_perms` / `user_module_overrides` | This IS the permission-template system; the client only mirrors it for UI gating (`perms-admin.js`) |
 | Database | Postgres: 82 tables, 20 functions (incl. SECURITY DEFINER RPCs `create_vehicle_patch`, `fn_feasible_instances`), 53 triggers, 26 jsonb columns, 20 array columns | ~59 MB data at time of writing |
-| File storage | 4 Supabase Storage buckets: `photos`, `forms`, `drawings`, `vehicle-files`; signed URLs | `forms` and `vehicle-files` I/O already flow through swappable adapters (`_formsStorage`, `_vfStorage`) |
+| File storage | 5 Supabase Storage buckets: `photos`, `forms`, `drawings`, `vehicle-files`, `task-files`; signed URLs | `forms`, `vehicle-files` and `task-files` I/O already flow through swappable adapters (`_formsStorage`, `_vfStorage`, `_rdStorage`) |
 | Serverless | 3 Edge Functions: `send-daily-log-email`, `send-rma-email`, `photo-sharepoint-sync` | Small; replace with Azure Functions |
 | Config seam | `config.js` — the single file holding backend URL + publishable key | Loaded before every other script |
 

@@ -528,6 +528,7 @@ function showPage(name) {
   if (name === 'forms')            renderFormsPage();
   if (name === 'rma')              renderRMA();
   if (name === 'tasks')            renderTasks();
+  if (name === 'activity-readiness') { if (typeof renderReadiness === 'function') renderReadiness(); }
   if (name === 'schedule')         renderSchedulePage();
   if (name === 'drawings')         { loadDrawingsData().then(renderDrawingsPage); }
   if (name === 'documents')        { loadDocsData().then(renderDocumentsPage); }
@@ -619,6 +620,7 @@ async function refreshApp() {
   try { await loadAssetData(); } catch(e) { console.warn('[refreshApp] asset reload failed:', e.message); }
   try { await loadRMAs(); }     catch(e) { console.warn('[refreshApp] RMA reload failed:',   e.message); }
   try { await loadTasks(); }    catch(e) { console.warn('[refreshApp] Tasks reload failed:', e.message); }
+  try { if (typeof loadReadinessData === 'function') await loadReadinessData(); } catch(e) { console.warn('[refreshApp] readiness reload failed:', e.message); }
   try { await loadSoftwareConfigs(); } catch(e) { console.warn('[refreshApp] SW config reload failed:', e.message); }
   try { await loadSwEquipment(); } catch(e) { console.warn('[refreshApp] SW equipment reload failed:', e.message); }
   try { await loadSwDeployments(); } catch(e) { console.warn('[refreshApp] SW deployments reload failed:', e.message); }
@@ -2311,7 +2313,7 @@ function _initProductionVisualLayer() {
 document.addEventListener('DOMContentLoaded', async () => {
   _initProductionVisualLayer();
   // allSettled: one failed loader must not abort the rest of the bootstrap.
-  await Promise.allSettled([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs(), loadTasks(), loadForms(), loadDrawingsData(), (typeof loadTeamMembers==='function'?loadTeamMembers():Promise.resolve())]);
+  await Promise.allSettled([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs(), loadTasks(), loadForms(), loadDrawingsData(), (typeof loadReadinessData==='function'?loadReadinessData():Promise.resolve()), (typeof loadTeamMembers==='function'?loadTeamMembers():Promise.resolve())]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -3474,6 +3476,7 @@ function onLoggedIn() {
     loadAssetData(),
     loadRMAs(),
     loadTasks(),
+    (typeof loadReadinessData==='function'?loadReadinessData():Promise.resolve()),
     loadSoftwareConfigs(),
     loadSwEquipment(),
     loadSwDeployments(),
@@ -5298,6 +5301,9 @@ const FIELDCONFIG_MODULES = [
       { key: 'task_status',   label: 'Status',        defaults: ['Not Started','In Progress','Done'] },
       { key: 'task_priority', label: 'Priority',      defaults: ['Low','Medium','High'] },
       { key: 'task_effort',   label: 'Effort',        defaults: ['Small','Medium','Large'] },
+      { key: 'readiness_delay_reason', label: 'Readiness Delay Reason',
+        defaults: ['Need more time','Waiting on design input','Waiting on client','Material / equipment delay','Access not available','Plan resequenced','Other'],
+        hint: 'Required when a readiness checklist item’s due date is pushed later — feeds the per-item delay history.' },
     ],
   },
   {
@@ -21198,6 +21204,12 @@ function _taskComments(t) {
 function _taskCommentText(t) {
   return _taskComments(t).map(c => c.text || '').join(' ');
 }
+// Effective prerequisite state: derived from the readiness checklist when one
+// exists (readiness.js), otherwise the legacy manual prerequisite_met flag.
+function _taskPrereqMetEff(t) {
+  return (typeof _taskPrereqEff === 'function') ? _taskPrereqEff(t) : !!(t && t.prerequisite_met);
+}
+
 function _taskPrereqComments(t) {
   let raw = t?.prerequisite_comments;
   if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = []; } }
@@ -21252,7 +21264,7 @@ function _tasksPageHTML() {
   // OTHER active filters.
   const _taskMatchExcept = (t, except) =>
     (except === 'mine'     || !_taskFilter.mine      || isMine(t)) &&
-    (except === 'prereq'   || !_taskFilter.prereqMet || t.prerequisite_met) &&
+    (except === 'prereq'   || !_taskFilter.prereqMet || _taskPrereqMetEff(t)) &&
     (except === 'status'   || !_taskFilter.status    || (t.status || 'Not Started') === _taskFilter.status) &&
     (except === 'priority' || !_taskFilter.priority  || t.priority === _taskFilter.priority) &&
     (except === 'type'     || !_taskFilter.type      || _taskTypeList(t).includes(_taskFilter.type));
@@ -21264,13 +21276,13 @@ function _tasksPageHTML() {
   if (_taskFilter.type && !typeOpts.includes(_taskFilter.type)) _taskFilter.type = '';
   const taskChipBase = TASKS.filter(t => _taskMatchExcept(t, 'status'));
   const myCount     = TASKS.filter(t => _taskMatchExcept(t, 'mine')).filter(isMine).length;
-  const prereqCount = TASKS.filter(t => _taskMatchExcept(t, 'prereq')).filter(t => t.prerequisite_met).length;
+  const prereqCount = TASKS.filter(t => _taskMatchExcept(t, 'prereq')).filter(_taskPrereqMetEff).length;
   const taskHasFilters = _taskFilter.search || _taskFilter.status || _taskFilter.priority || _taskFilter.type || _taskFilter.mine || _taskFilter.prereqMet;
 
   const srch = (_taskFilter.search || '').toLowerCase();
   const filtered = TASKS.filter(t => {
     if (_taskFilter.mine     && !isMine(t)) return false;
-    if (_taskFilter.prereqMet && !t.prerequisite_met) return false;
+    if (_taskFilter.prereqMet && !_taskPrereqMetEff(t)) return false;
     if (_taskFilter.status   && (t.status || 'Not Started') !== _taskFilter.status) return false;
     if (_taskFilter.priority && t.priority !== _taskFilter.priority) return false;
     if (_taskFilter.type     && !_taskTypeList(t).includes(_taskFilter.type)) return false;
@@ -21350,6 +21362,7 @@ function _taskRowHTML(t, canEdit) {
           <span class="v2-pill ${_taskPriorityTone(t.priority)}">${escapeHtml(t.priority || '—')}</span>
           <h3 class="rma-material" title="${escapeHtml(t.task_name || '')}">${escapeHtml(t.task_name || '—')}</h3>
           ${t.description ? `<div class="v2-meta-line" style="margin-top:2px;">${escapeHtml(_truncate(t.description, 110))}</div>` : ''}
+          ${typeof _rdTaskRowExtra === 'function' ? _rdTaskRowExtra(t) : ''}
         </div>
 
         <div class="rma-parts">
@@ -21388,6 +21401,17 @@ function _taskRowHTML(t, canEdit) {
 function _truncate(s, n) {
   s = String(s || '');
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+// Readiness dimension field (Location/Subsystem/Phase) — a datalist picks from
+// the existing vocabularies (readiness.js) but accepts new typed values.
+function _taskDimField(key, label, value) {
+  const fns = { location: '_rdLocationOptions', subsystem: '_rdSubsystemOptions', phase: '_rdPhaseOptions' };
+  const fn = window[fns[key]];
+  const opts = (typeof fn === 'function') ? fn() : [];
+  return `<div class="form-field"><label>${label}</label>` +
+    `<input id="task-${key}" class="form-input" list="task-${key}-dl" value="${escapeHtml(value || '')}" placeholder="pick or type" autocomplete="off">` +
+    `<datalist id="task-${key}-dl">${opts.map(o => `<option value="${escapeHtml(o)}"></option>`).join('')}</datalist></div>`;
 }
 
 function openTaskModal(taskId) {
@@ -21432,6 +21456,9 @@ function openTaskModal(taskId) {
       people.map(p => `<option value="${escapeHtml(p)}" ${task?.assignee===p?'selected':''}>${escapeHtml(p)}</option>`).join('') +
       `</select></div>` +
       `<div class="form-field"><label>Due Date</label><input id="task-due" type="date" class="form-input" value="${task?.due_date||''}"></div>` +
+      _taskDimField('location',  'Location',  task?.location)  +
+      _taskDimField('subsystem', 'Subsystem', task?.subsystem) +
+      _taskDimField('phase',     'Phase',     task?.phase)     +
       `<div class="form-field form-field-full"><label>Task Type <span style="font-weight:400;color:var(--gray-500);font-size:11px;">(select one or more)</span></label>` +
       `<div class="task-type-grid" style="display:flex;flex-wrap:wrap;gap:8px;">` +
       types.map(ty => `<label style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--gray-300);border-radius:6px;cursor:pointer;font-size:13px;">` +
@@ -21504,6 +21531,9 @@ async function saveTask(editId) {
     effort:        g('task-effort'),
     assignee:      g('task-assignee'),
     due_date:      document.getElementById('task-due')?.value || null,
+    location:      g('task-location'),
+    subsystem:     g('task-subsystem'),
+    phase:         g('task-phase'),
     task_type:     types,
     updated_by:    me,
     updated_at:    new Date().toISOString(),
@@ -21546,6 +21576,7 @@ async function deleteTask(id) {
   try {
     await _dbDelete('tasks', { id });
     TASKS.splice(TASKS.findIndex(x => x.id === id), 1);
+    if (typeof _rdOnTaskDeleted === 'function') _rdOnTaskDeleted(id);
     toast('Task deleted', 'success');
     logAudit('Task Deleted', t.task_name);
     renderTasks();
@@ -21623,6 +21654,9 @@ function _taskViewModal(id) {
       `<table style="width:100%;border-collapse:collapse;margin-bottom:4px;">` +
       row('Assignee',     escapeHtml(t.assignee || '—')) +
       row('Due Date',     t.due_date ? _fmtDate(t.due_date) : null) +
+      row('Location',     t.location ? escapeHtml(t.location) : null) +
+      row('Subsystem',    t.subsystem ? escapeHtml(t.subsystem) : null) +
+      row('Phase',        t.phase ? escapeHtml(t.phase) : null) +
       row('Task Type',    types.length ? types.map(ty => `<span class="v2-pill is-muted">${escapeHtml(ty)}</span>`).join(' ') : null) +
       row('Description',  t.description ? escapeHtml(t.description) : null) +
       row('Prerequisite',  t.prerequisites
@@ -21638,6 +21672,9 @@ function _taskViewModal(id) {
       row('Last Edited',  t.updated_at ? `${_fmtDate(t.updated_at)}${t.updated_by ? ' by ' + escapeHtml(t.updated_by) : ''}` : null) +
       `</table>` +
       (t.updates ? `<div style="margin-top:14px;padding:12px 14px;background:var(--gray-50);border-radius:6px;font-size:13px;color:var(--gray-700);white-space:pre-wrap;"><strong>Earlier notes:</strong>\n${escapeHtml(t.updates)}</div>` : '') +
+
+      // ── Readiness checklist (structured prerequisites — readiness.js) ─────────
+      (typeof _rdTaskChecklistSection === 'function' ? _rdTaskChecklistSection(t) : '') +
 
       // ── Prerequisite Updates ─────────────────────────────────────────────────
       `<div style="margin:22px 0 0;padding:14px 16px;background:var(--warn-light);border:1px solid var(--warn-border);border-radius:10px;">` +
@@ -21686,6 +21723,7 @@ let _taskCommentPhoto = {};   // task id -> File chosen for the next comment
 
 async function _taskHydratePhotos(id) {
   await _taskRenderGallery(id);
+  if (typeof _rdChkHydratePhotos === 'function') _rdChkHydratePhotos(id);
   const body = document.querySelector('.modal-overlay .modal-body') || document.querySelector('.modal-body');
   if (body && typeof _punchSignImages === 'function') await _punchSignImages(body);
 }
