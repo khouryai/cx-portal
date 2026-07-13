@@ -26,6 +26,8 @@ let RD_TPL_ITEMS = [];   // readiness_template_items rows
 let TASK_DELAYS = [];    // task_item_delays rows
 let TASK_FILES = [];     // task_files rows
 let _rdFilter = { search: '', location: '', subsystem: '', phase: '', status: '', overdue: false };
+let _rdView = 'list';    // list | overview (matrix rollup) | delays (delay analytics)
+let _rdMatrixDim = 'phase'; // matrix columns: phase | location (rows are always subsystem)
 let _rdChkPhotos = {};   // checklist line id -> photo rows (lazy)
 
 // ── Data loading ──────────────────────────────────────────────────────────
@@ -144,6 +146,79 @@ function _rdSlipDays(lineId) {
   }
   return days;
 }
+
+// ── Rollup analytics (pure — unit-tested) ─────────────────────────────────
+const _RD_UNASSIGNED = '— Unassigned —';
+// Item-weighted readiness grouped along a single dimension (subsystem / phase /
+// location). Returns rows sorted worst-first so the drag on the project floats
+// to the top: [{ key, done, total, pct, overdue, ready, count }].
+function _rdRollup(acts, dim, progress) {
+  const groups = new Map();
+  for (const t of acts) {
+    const key = (t[dim] || '').trim() || _RD_UNASSIGNED;
+    const p = progress ? progress.get(t.id) : _rdTaskProgress(t.id);
+    const g = groups.get(key) || { key, done: 0, total: 0, overdue: 0, ready: 0, count: 0, fails: 0 };
+    g.done += p.done; g.total += p.total; g.fails += p.fails; g.count += 1;
+    g.overdue += _rdTaskOverdueLines(t.id).length;
+    if (p.total && p.pct === 100) g.ready += 1;
+    groups.set(key, g);
+  }
+  return [...groups.values()]
+    .map(g => ({ ...g, pct: g.total ? Math.round(g.done / g.total * 100) : 0 }))
+    .sort((a, b) => a.pct - b.pct || b.total - a.total || String(a.key).localeCompare(String(b.key)));
+}
+// Subsystem (rows) × phase|location (cols) matrix. cells keyed 'row||col'.
+function _rdMatrixData(acts, colDim, progress) {
+  const rows = [], cols = [];
+  const cells = new Map();
+  for (const t of acts) {
+    const r = (t.subsystem || '').trim() || _RD_UNASSIGNED;
+    const c = (t[colDim] || '').trim() || _RD_UNASSIGNED;
+    if (!rows.includes(r)) rows.push(r);
+    if (!cols.includes(c)) cols.push(c);
+    const key = r + '||' + c;
+    const p = progress ? progress.get(t.id) : _rdTaskProgress(t.id);
+    const cell = cells.get(key) || { done: 0, total: 0, overdue: 0, count: 0 };
+    cell.done += p.done; cell.total += p.total; cell.count += 1;
+    cell.overdue += _rdTaskOverdueLines(t.id).length;
+    cells.set(key, cell);
+  }
+  const collate = (arr) => arr.sort((a, b) => a === _RD_UNASSIGNED ? 1 : b === _RD_UNASSIGNED ? -1 : String(a).localeCompare(String(b)));
+  return { rows: collate(rows), cols: collate(cols), cells };
+}
+// Delay analytics across every recorded due-date push. Returns headline totals
+// plus breakdowns by reason, by activity and by responsible party.
+function _rdDelayStats() {
+  const lineById = new Map(TASK_CHK.map(l => [l.id, l]));
+  const byReason = new Map(), byAct = new Map(), byResp = new Map();
+  let totalDays = 0, totalEvents = 0;
+  for (const d of TASK_DELAYS) {
+    if (!d.old_due || !d.new_due) continue;
+    const days = Math.round((new Date(d.new_due) - new Date(d.old_due)) / 86400000);
+    if (days <= 0) continue;
+    totalDays += days; totalEvents += 1;
+    const line = lineById.get(d.item_id);
+    const reason = (d.reason || 'Unspecified').trim() || 'Unspecified';
+    const rG = byReason.get(reason) || { key: reason, days: 0, count: 0 };
+    rG.days += days; rG.count += 1; byReason.set(reason, rG);
+    const resp = (line && line.responsible) || '— Unassigned —';
+    const pG = byResp.get(resp) || { key: resp, days: 0, count: 0 };
+    pG.days += days; pG.count += 1; byResp.set(resp, pG);
+    const t = line ? _rdTask(line.task_id) : null;
+    const aKey = t ? t.id : (line ? line.task_id : d.item_id);
+    const aG = byAct.get(aKey) || { key: aKey, name: t ? t.task_name : 'Unknown activity', days: 0, count: 0 };
+    aG.days += days; aG.count += 1; byAct.set(aKey, aG);
+  }
+  const byDays = m => [...m.values()].sort((a, b) => b.days - a.days || b.count - a.count);
+  return {
+    totalDays, totalEvents,
+    avg: totalEvents ? Math.round(totalDays / totalEvents * 10) / 10 : 0,
+    byReason: byDays(byReason), byActivity: byDays(byAct), byResponsible: byDays(byResp),
+  };
+}
+// Green-tinted heat fill for a readiness %, token-only via color-mix.
+function _rdHeatBg(pct) { return `color-mix(in srgb, var(--good) ${Math.max(6, Math.round(pct))}%, var(--surface-2))`; }
+function _rdHeatFg(pct) { return pct >= 55 ? 'var(--white)' : 'var(--text)'; }
 
 // ── Option vocabularies (reuse existing lists, allow free typing) ─────────
 function _rdLocationOptions() {
@@ -857,6 +932,20 @@ async function _rdIssueSave() {
 // ── Activity Readiness page ───────────────────────────────────────────────
 function _rdSetFilter(k, v) { _rdFilter[k] = v; renderReadiness(); }
 function _rdClearFilters() { _rdFilter = { search: '', location: '', subsystem: '', phase: '', status: '', overdue: false }; renderReadiness(); }
+function _rdSetView(v) { _rdView = v; renderReadiness(); }
+function _rdSetMatrixDim(d) { _rdMatrixDim = d; renderReadiness(); }
+// Drill from a rollup/matrix into the filtered list.
+function _rdDrill(dim, key) {
+  if (key && key !== _RD_UNASSIGNED) _rdFilter[dim] = key;
+  _rdView = 'list';
+  renderReadiness();
+}
+function _rdDrillCell(sub, col, colDim) {
+  if (sub && sub !== _RD_UNASSIGNED) _rdFilter.subsystem = sub;
+  if (col && col !== _RD_UNASSIGNED) _rdFilter[colDim] = col;
+  _rdView = 'list';
+  renderReadiness();
+}
 
 function renderReadiness() {
   const root = document.getElementById('readiness-content');
@@ -924,8 +1013,20 @@ function _rdPageHTML(acts, progress, overallPct) {
   const statuses = (typeof _taskStatuses === 'function') ? _taskStatuses() : ['Not Started', 'In Progress', 'Done'];
   const hasFilters = f.search || f.location || f.subsystem || f.phase || f.status || f.overdue;
   const overdueCount = acts.filter(t => _rdTaskOverdueLines(t.id).length).length;
+  const delayEvents = TASK_DELAYS.filter(d => d.old_due && d.new_due && new Date(d.new_due) > new Date(d.old_due)).length;
 
-  return `
+  // View switcher — List (default) / Overview (matrix rollup) / Delays.
+  const seg = (v, label, ic, badge) => `<button class="rd-seg${_rdView === v ? ' active' : ''}" aria-pressed="${_rdView === v}" onclick="_rdSetView('${v}')">${icon(ic)} ${label}${badge != null ? ` <span class="rd-seg-n">${badge}</span>` : ''}</button>`;
+  const switcher = `<div class="rd-segmented" role="group" aria-label="Readiness view">
+    ${seg('list', 'Activities', 'clipboard', acts.length)}
+    ${seg('overview', 'Overview', 'layers')}
+    ${seg('delays', 'Delays', 'clock', delayEvents || null)}
+  </div>`;
+
+  if (_rdView === 'overview') return switcher + _rdOverviewHTML(acts, progress, overallPct);
+  if (_rdView === 'delays') return switcher + _rdDelaysPanelHTML();
+
+  return switcher + `
     <div class="v2-chips-row">
       <span class="v2-chip ${!f.status && !f.overdue ? 'active' : ''}" onclick="_rdFilter.status='';_rdFilter.overdue=false;renderReadiness()">All <span class="n">${acts.length}</span></span>
       ${statuses.map(s => {
@@ -1014,4 +1115,118 @@ function _rdActivityRowHTML(t, p) {
         </div>
       </div>
     </div>`;
+}
+
+// ── Overview: subsystem × phase/location matrix + grouped rollup bars ──────
+function _rdOverviewHTML(acts, progress, overallPct) {
+  if (!acts.length) {
+    return `<div style="padding:48px;text-align:center;color:var(--gray-500);">
+      <div style="font-size:32px;margin-bottom:8px;">${icon('layers')}</div>
+      <div style="font-size:14px;">No activities yet — the readiness matrix appears once you issue activities with a subsystem / phase.</div>
+    </div>`;
+  }
+  const colDim = _rdMatrixDim;
+  const m = _rdMatrixData(acts, colDim, progress);
+  const cell = (r, c) => m.cells.get(r + '||' + c);
+
+  const th = `<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-subtle);padding:6px 8px;position:sticky;left:0;background:var(--surface);z-index:1;">Subsystem</th>`
+    + m.cols.map(c => `<th style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-subtle);padding:6px 8px;min-width:78px;">${escapeHtml(c)}</th>`).join('');
+  const body = m.rows.map(r => {
+    const tds = m.cols.map(c => {
+      const cl = cell(r, c);
+      if (!cl || !cl.count) return `<td style="padding:3px;"><div style="height:44px;border-radius:6px;background:var(--surface-2);opacity:.4;display:flex;align-items:center;justify-content:center;color:var(--text-subtle);font-size:12px;">·</div></td>`;
+      const pct = cl.total ? Math.round(cl.done / cl.total * 100) : 0;
+      return `<td style="padding:3px;">
+        <button class="rd-cell" title="${escapeHtml(r)} · ${escapeHtml(c)} — ${pct}% ready across ${cl.count} activit${cl.count === 1 ? 'y' : 'ies'}${cl.overdue ? ', ' + cl.overdue + ' overdue' : ''}" aria-label="${escapeHtml(r)} ${escapeHtml(c)} ${pct} percent ready" onclick="_rdDrillCell('${escapeHtml(r).replace(/'/g, "\\'")}','${escapeHtml(c).replace(/'/g, "\\'")}','${colDim}')" style="width:100%;height:44px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:${_rdHeatBg(pct)};color:${_rdHeatFg(pct)};display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;line-height:1;">
+          <span style="font-size:13px;font-weight:800;">${pct}%</span>
+          <span style="font-size:9px;opacity:.85;">${cl.count} act${cl.overdue ? ' · ' + icon('alert') : ''}</span>
+        </button></td>`;
+    }).join('');
+    return `<tr><th scope="row" style="text-align:left;font-size:12px;font-weight:600;padding:6px 8px;position:sticky;left:0;background:var(--surface);white-space:nowrap;"><button class="rd-rowlink" onclick="_rdDrill('subsystem','${escapeHtml(r).replace(/'/g, "\\'")}')" style="border:none;background:none;color:var(--text);font:inherit;font-weight:600;cursor:pointer;padding:0;">${escapeHtml(r)}</button></th>${tds}</tr>`;
+  }).join('');
+
+  const grid = (title, dim) => {
+    const rows = _rdRollup(acts, dim, progress);
+    return `<div style="flex:1;min-width:230px;">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-subtle);margin-bottom:6px;">${escapeHtml(title)}</div>
+      ${rows.map(g => `<button class="rd-bar-row" onclick="_rdDrill('${dim}','${escapeHtml(g.key).replace(/'/g, "\\'")}')" style="display:flex;align-items:center;gap:8px;width:100%;border:none;background:none;cursor:pointer;padding:4px 2px;text-align:left;font:inherit;color:var(--text);">
+        <span style="flex:0 0 96px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(g.key)}</span>
+        <span style="flex:1;height:8px;background:var(--gray-100);border-radius:4px;overflow:hidden;"><span style="display:block;width:${g.pct}%;height:100%;background:${g.fails ? 'var(--bad)' : 'var(--good)'};"></span></span>
+        <span style="flex:0 0 34px;text-align:right;font-size:12px;font-weight:700;color:var(--text-subtle);">${g.pct}%</span>
+        ${g.overdue ? `<span title="${g.overdue} overdue item${g.overdue !== 1 ? 's' : ''}" style="flex:0 0 auto;color:var(--bad);font-size:11px;font-weight:600;">${icon('alert')}${g.overdue}</span>` : '<span style="flex:0 0 auto;width:16px;"></span>'}
+      </button>`).join('')}
+    </div>`;
+  };
+
+  return `
+    <div style="display:flex;align-items:center;gap:12px;margin:4px 2px 16px;">
+      <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-subtle);white-space:nowrap;">Project readiness</span>
+      <div style="flex:1;height:10px;background:var(--gray-100);border-radius:5px;overflow:hidden;"><div style="width:${overallPct}%;height:100%;background:var(--good);"></div></div>
+      <span style="font-size:13px;font-weight:700;">${overallPct}%</span>
+    </div>
+
+    <div class="cx-card" style="padding:14px 16px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+        <div style="font-size:13px;font-weight:700;">Readiness matrix <span style="font-weight:400;color:var(--text-subtle);">— subsystem × ${colDim}</span></div>
+        <div class="rd-segmented rd-segmented-sm" role="group" aria-label="Matrix columns">
+          <button class="rd-seg${colDim === 'phase' ? ' active' : ''}" aria-pressed="${colDim === 'phase'}" onclick="_rdSetMatrixDim('phase')">Phase</button>
+          <button class="rd-seg${colDim === 'location' ? ' active' : ''}" aria-pressed="${colDim === 'location'}" onclick="_rdSetMatrixDim('location')">Location</button>
+        </div>
+      </div>
+      <div style="overflow-x:auto;"><table style="border-collapse:separate;border-spacing:0;width:100%;"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div>
+      <div style="font-size:11px;color:var(--text-subtle);margin-top:8px;">Each cell is item-weighted readiness for that subsystem/${colDim}. Click a cell, a row, or a bar to drill into the activities.</div>
+    </div>
+
+    <div class="cx-card" style="padding:14px 16px;">
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px;">Rollup by dimension</div>
+      <div style="display:flex;gap:24px;flex-wrap:wrap;">
+        ${grid('By subsystem', 'subsystem')}
+        ${grid('By phase', 'phase')}
+        ${grid('By location', 'location')}
+      </div>
+    </div>`;
+}
+
+// ── Delays: analytics over every recorded due-date push ───────────────────
+function _rdDelaysPanelHTML() {
+  const s = _rdDelayStats();
+  if (!s.totalEvents) {
+    return `<div style="padding:48px;text-align:center;color:var(--gray-500);">
+      <div style="font-size:32px;margin-bottom:8px;">${icon('clock')}</div>
+      <div style="font-size:14px;">No delays recorded yet. When a checklist item's due date is pushed later, the reason is logged and analysed here.</div>
+    </div>`;
+  }
+  const maxDays = arr => arr.reduce((m, g) => Math.max(m, g.days), 0) || 1;
+  const barList = (rows, opts) => {
+    opts = opts || {};
+    const mx = maxDays(rows);
+    const shown = opts.limit ? rows.slice(0, opts.limit) : rows;
+    return shown.map(g => {
+      const label = opts.activity ? (g.name || 'Unknown activity') : g.key;
+      const click = opts.dim ? ` onclick="_rdDrill('${opts.dim}','${escapeHtml(String(g.key)).replace(/'/g, "\\'")}')" style="cursor:pointer;"` : '';
+      const open = opts.activity ? ` onclick="_taskViewModal('${g.key}')" style="cursor:pointer;"` : '';
+      return `<div class="rd-bar-row"${click || open} style="display:flex;align-items:center;gap:10px;padding:5px 2px;${(click || open) ? 'cursor:pointer;' : ''}">
+        <span style="flex:0 0 150px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(String(label))}">${escapeHtml(String(label))}</span>
+        <span style="flex:1;height:9px;background:var(--gray-100);border-radius:5px;overflow:hidden;"><span style="display:block;width:${Math.round(g.days / mx * 100)}%;height:100%;background:var(--warn);"></span></span>
+        <span style="flex:0 0 96px;text-align:right;font-size:12px;font-weight:700;color:var(--text-subtle);">+${g.days}d <span style="font-weight:400;">· ${g.count}×</span></span>
+      </div>`;
+    }).join('');
+  };
+
+  const card = (title, hint, inner) => `<div class="cx-card" style="padding:14px 16px;margin-bottom:16px;">
+    <div style="font-size:13px;font-weight:700;margin-bottom:2px;">${escapeHtml(title)}</div>
+    ${hint ? `<div style="font-size:11px;color:var(--text-subtle);margin-bottom:10px;">${escapeHtml(hint)}</div>` : ''}
+    ${inner}</div>`;
+
+  return `
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin:4px 2px 16px;">
+      ${[['Total slip', s.totalDays + ' days', 'warn'], ['Delay events', s.totalEvents, 'muted'], ['Avg per event', s.avg + ' days', 'muted'], ['Reasons', s.byReason.length, 'muted']]
+        .map(([l, v, tone]) => `<div class="cx-card" style="flex:1;min-width:130px;padding:12px 14px;">
+          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-subtle);">${l}</div>
+          <div style="font-size:22px;font-weight:800;color:${tone === 'warn' ? 'var(--warn)' : 'var(--text)'};margin-top:2px;">${v}</div>
+        </div>`).join('')}
+    </div>
+    ${card('Slip by reason', 'Where the schedule is actually going — total days pushed, grouped by the reason given.', barList(s.byReason))}
+    ${card('Worst-slipping activities', 'The activities carrying the most accumulated delay. Click to open.', barList(s.byActivity, { activity: true, limit: 8 }))}
+    ${card('Slip by responsible party', 'Whose items are slipping — the responsible party on each delayed item.', barList(s.byResponsible, { limit: 10 }))}`;
 }

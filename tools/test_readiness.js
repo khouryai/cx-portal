@@ -18,7 +18,7 @@ function ok(name, cond, details) {
 const { sandbox, ctx, loadError, loadErrorFile } = loadApp();
 if (loadError) { console.error("FATAL: load —", loadErrorFile, loadError.message); process.exit(1); }
 
-const need = ["_rdTaskProgress", "_rdLineComplete", "_rdWouldCycle", "_taskPrereqEff", "_rdIsActivity", "_rdSeedRows", "_rdSlipDays"];
+const need = ["_rdTaskProgress", "_rdLineComplete", "_rdWouldCycle", "_taskPrereqEff", "_rdIsActivity", "_rdSeedRows", "_rdSlipDays", "_rdRollup", "_rdMatrixData", "_rdDelayStats"];
 for (const fn of need) {
   if (typeof sandbox[fn] !== "function") { console.error("FATAL: missing", fn); process.exit(1); }
 }
@@ -117,6 +117,66 @@ console.log("\ntemplate seeding + delay math:");
   ok("  no offset → no due date", rows[1].due_date === null);
   ok("  default responsible carried", rows[0].responsible === "QA Lead");
   ok("  slip days accumulate across pushes (7+2)", sandbox._rdSlipDays("a2") === 9, String(sandbox._rdSlipDays("a2")));
+}
+
+// ── Fresh fixture for rollup / matrix / delay analytics ─────────────────────
+vm.runInContext(`
+  TASKS = [
+    { id: 'P1', task_name: 'DCS P1', subsystem: 'DCS', phase: 'Phase 1', location: 'W40' },
+    { id: 'P2', task_name: 'DCS P2', subsystem: 'DCS', phase: 'Phase 2', location: 'W40' },
+    { id: 'P3', task_name: 'IXL P1', subsystem: 'IXL', phase: 'Phase 1', location: 'Y40' },
+  ];
+  TASK_CHK = [
+    { id: 'p1a', task_id: 'P1', seq: 10, title: 'a', kind: 'check', done: true,  required: true, responsible: 'QA' },
+    { id: 'p1b', task_id: 'P1', seq: 20, title: 'b', kind: 'check', done: false, required: true },
+    { id: 'p2a', task_id: 'P2', seq: 10, title: 'a', kind: 'check', done: true,  required: true },
+    { id: 'p2b', task_id: 'P2', seq: 20, title: 'b', kind: 'check', done: true,  required: true },
+    { id: 'p3a', task_id: 'P3', seq: 10, title: 'a', kind: 'check', done: false, required: true, due_date: '2000-01-01', responsible: 'Design' },
+    { id: 'p3b', task_id: 'P3', seq: 20, title: 'b', kind: 'check', done: false, required: true },
+  ];
+  TASK_DELAYS = [
+    { id: 'x1', item_id: 'p3a', old_due: '2026-07-01', new_due: '2026-07-08', reason: 'Waiting on design input', created_at: '2026-06-30' },
+    { id: 'x2', item_id: 'p3a', old_due: '2026-07-08', new_due: '2026-07-11', reason: 'Waiting on design input', created_at: '2026-07-07' },
+    { id: 'x3', item_id: 'p1a', old_due: '2026-07-01', new_due: '2026-07-05', reason: 'Need more time', created_at: '2026-06-30' },
+  ];
+`, ctx);
+const acts = vm.runInContext(`TASKS.filter(_rdIsActivity)`, ctx);
+
+console.log("\nrollup by dimension (worst-first):");
+{
+  const bySub = sandbox._rdRollup(acts, "subsystem", null);
+  ok("  two subsystems", bySub.length === 2);
+  ok("  IXL (0%) sorts before DCS (75%)", bySub[0].key === "IXL" && bySub[0].pct === 0 && bySub[1].pct === 75,
+     JSON.stringify(bySub.map(g => g.key + ":" + g.pct)));
+  ok("  IXL flags its overdue item", bySub[0].overdue === 1, String(bySub[0].overdue));
+  const byPhase = sandbox._rdRollup(acts, "phase", null);
+  ok("  Phase 1 = 25% (1 of 4 items), Phase 2 = 100%",
+     byPhase[0].key === "Phase 1" && byPhase[0].pct === 25 && byPhase[1].pct === 100,
+     JSON.stringify(byPhase.map(g => g.key + ":" + g.pct)));
+}
+
+console.log("\nsubsystem × phase matrix:");
+{
+  const m = sandbox._rdMatrixData(acts, "phase", null);
+  ok("  rows = [DCS, IXL]", JSON.stringify(m.rows) === JSON.stringify(["DCS", "IXL"]));
+  ok("  cols = [Phase 1, Phase 2]", JSON.stringify(m.cols) === JSON.stringify(["Phase 1", "Phase 2"]));
+  const c = (r, col) => m.cells.get(r + "||" + col);
+  ok("  DCS×Phase1 cell = 1/2", c("DCS", "Phase 1").done === 1 && c("DCS", "Phase 1").total === 2);
+  ok("  DCS×Phase2 cell = 2/2", c("DCS", "Phase 2").done === 2 && c("DCS", "Phase 2").total === 2);
+  ok("  IXL×Phase2 has no activity (empty cell)", c("IXL", "Phase 2") === undefined);
+}
+
+console.log("\ndelay analytics:");
+{
+  const s = sandbox._rdDelayStats();
+  ok("  total slip 14 days over 3 events", s.totalDays === 14 && s.totalEvents === 3, JSON.stringify([s.totalDays, s.totalEvents]));
+  ok("  avg 4.7 days/event", s.avg === 4.7, String(s.avg));
+  ok("  top reason = 'Waiting on design input' (10d ×2)",
+     s.byReason[0].key === "Waiting on design input" && s.byReason[0].days === 10 && s.byReason[0].count === 2,
+     JSON.stringify(s.byReason[0]));
+  ok("  worst activity = IXL P1 (10d)", s.byActivity[0].name === "IXL P1" && s.byActivity[0].days === 10, JSON.stringify(s.byActivity[0]));
+  ok("  slip attributed to responsible party 'Design' (10d)",
+     s.byResponsible[0].key === "Design" && s.byResponsible[0].days === 10, JSON.stringify(s.byResponsible[0]));
 }
 
 console.log(`\n${pass} passed, ${fail} failed.\n`);
