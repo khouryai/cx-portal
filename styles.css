@@ -13100,18 +13100,29 @@ a:focus-visible {
   .sidenav-reopen-btn { display: none !important; }
   .page,
   body.sb-collapsed .page { margin-left: 0 !important; }
-  .page { padding-top: 52px; padding-bottom: 72px; }
+  .page { padding-top: calc(52px + env(safe-area-inset-top, 0px)); padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
   #footer { margin-left: 0 !important; display: none; }
 
-  /* Top bar */
+  /* Top bar — notch-safe: reserve the iOS status-bar inset above the 52px row */
   .m-topbar {
-    display: flex; position: fixed; top: 0; left: 0; right: 0; height: 52px;
-    z-index: 400; align-items: center; justify-content: space-between;
-    padding: 0 16px; background: var(--slate-900); color: var(--white);
+    display: flex; position: fixed; top: 0; left: 0; right: 0;
+    height: calc(52px + env(safe-area-inset-top, 0px));
+    padding: env(safe-area-inset-top, 0px) 12px 0;
+    box-sizing: border-box;
+    z-index: 400; align-items: center; gap: 10px;
+    background: var(--slate-900); color: var(--white);
     border-bottom: 1px solid rgba(255,255,255,0.08);
   }
-  .m-topbar-brand { font-size: 13px; font-weight: 600; letter-spacing: 0.04em; }
+  .m-topbar-brand { flex-shrink: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.04em; }
   .m-topbar-brand b { color: var(--hitachi-red); font-weight: 800; }
+  /* Current-page title: appears centred once a page is shown, brand slides left */
+  .m-topbar-title {
+    flex: 1; min-width: 0; text-align: center;
+    font-size: 14px; font-weight: 600; letter-spacing: 0.01em;
+    color: rgba(255,255,255,0.92);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .m-topbar-title[hidden] { display: none; }
   .m-topbar-btn {
     background: none; border: none; color: rgba(255,255,255,0.85);
     padding: 8px; cursor: pointer; display: flex; align-items: center;
@@ -13132,6 +13143,74 @@ a:focus-visible {
   .m-tab svg { width: 22px; height: 22px; }
   .m-tab.active { color: var(--hitachi-red); }
   .m-tab:active { background: var(--surface-2); }
+  .m-tab[hidden] { display: none; }
+
+  /* Mobile "More" sheet — full-screen scrim + bottom-anchored panel */
+  .m-sheet { position: fixed; inset: 0; z-index: 500; display: block; }
+  .m-sheet[hidden] { display: none; }
+  .m-sheet-backdrop {
+    position: absolute; inset: 0; background: rgba(10,10,12,0.55);
+    -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+    animation: mSheetFade 0.18s ease;
+  }
+  .m-sheet-panel {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    max-height: 84vh; display: flex; flex-direction: column;
+    background: var(--surface); border-radius: 16px 16px 0 0;
+    box-shadow: 0 -8px 32px rgba(0,0,0,0.28);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    animation: mSheetUp 0.22s cubic-bezier(0.4,0,0.2,1);
+  }
+  .m-sheet-head {
+    position: relative;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 16px 10px; flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .m-sheet-head::before {
+    content: ""; position: absolute; top: 7px; left: 50%; transform: translateX(-50%);
+    width: 36px; height: 4px; border-radius: 999px; background: var(--border-strong);
+  }
+  .m-sheet-title { font-size: 15px; font-weight: 700; color: var(--text); letter-spacing: 0.01em; }
+  .m-sheet-close {
+    background: none; border: none; cursor: pointer; color: var(--text-muted);
+    padding: 6px; margin: -6px; display: flex; align-items: center; border-radius: 8px;
+  }
+  .m-sheet-close:active { background: var(--surface-2); }
+  .m-sheet-body { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 8px 12px 12px; }
+  .m-sheet-group-label {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--text-subtle); padding: 14px 8px 6px;
+  }
+  .m-sheet-link {
+    width: 100%; display: flex; align-items: center; gap: 13px;
+    padding: 13px 12px; background: none; border: none; cursor: pointer;
+    border-radius: 10px; text-align: left;
+    font-size: 15px; font-weight: 500; color: var(--text); font-family: inherit;
+  }
+  .m-sheet-link svg { width: 20px; height: 20px; flex-shrink: 0; color: var(--text-muted); }
+  .m-sheet-link:active { background: var(--surface-2); }
+  .m-sheet-link.active { background: var(--brand-tint, rgba(230,0,18,0.08)); color: var(--hitachi-red); }
+  .m-sheet-link.active svg { color: var(--hitachi-red); }
+  .m-sheet-foot {
+    flex-shrink: 0; border-top: 1px solid var(--border);
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    display: flex; align-items: center; gap: 12px;
+  }
+  .m-sheet-foot:empty { display: none; }
+  .m-sheet-user { flex: 1; min-width: 0; }
+  .m-sheet-user-name { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .m-sheet-user-role { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .m-sheet-signout {
+    flex-shrink: 0; display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 14px; border-radius: 9px; cursor: pointer; font-family: inherit;
+    font-size: 13px; font-weight: 600;
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  }
+  .m-sheet-signout svg { width: 15px; height: 15px; }
+  .m-sheet-signout:active { background: var(--bad-light); }
+  @keyframes mSheetFade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes mSheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
 }
 
 /* Drawing viewer: own all touch gestures so we can pinch-zoom (otherwise the

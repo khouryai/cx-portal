@@ -490,11 +490,132 @@ let _adminModeOn = false;
 
 // ── Mobile PWA tab bar ───────────────────────────────────────────────────────
 // The bottom tab bar exposes only the modules chosen for mobile field use.
-function _mobileGo(page) { showPage(page); window.scrollTo(0, 0); }
-function _syncMobileTabs(name) {
-  document.querySelectorAll('.m-tab').forEach(t =>
-    t.classList.toggle('active', t.dataset.mpage === name));
+function _mobileGo(page) {
+  const s = document.getElementById('m-sheet');
+  if (s) s.hidden = true;
+  showPage(page);
+  window.scrollTo(0, 0);
 }
+
+// A sidenav link is reachable on mobile when it is not permission-hidden.
+// Admin-area links additionally require admin rights (they live behind the
+// desktop Admin-mode toggle, which has no mobile equivalent).
+function _mobLinkAvailable(link) {
+  if (!link || link.style.display === 'none') return false;
+  if (link.closest('#nav-admin-items')) {
+    const isAdmin = (typeof currentRoleUser !== 'undefined' && currentRoleUser && currentRoleUser.role === 'admin')
+      || (typeof uiCanAnyAdmin === 'function' && uiCanAnyAdmin());
+    if (!isAdmin) return false;
+  }
+  return true;
+}
+
+function _mobTitleFor(name) {
+  const link = document.querySelector(`#sidenav-links .nav-link[data-page="${name}"]`);
+  if (link) return link.textContent.trim();
+  return String(name || '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// Hide any quick tab whose module the current user cannot reach.
+function _mobileSyncQuickTabs() {
+  document.querySelectorAll('.m-tab[data-mpage]').forEach(t => {
+    const link = document.querySelector(`#sidenav-links .nav-link[data-page="${t.dataset.mpage}"]`);
+    t.hidden = !_mobLinkAvailable(link);
+  });
+}
+
+function _syncMobileTabs(name) {
+  _mobileSyncQuickTabs();
+  let onQuick = false;
+  document.querySelectorAll('.m-tab[data-mpage]').forEach(t => {
+    const active = t.dataset.mpage === name && !t.hidden;
+    t.classList.toggle('active', active);
+    if (active) onQuick = true;
+  });
+  document.getElementById('m-tab-more')?.classList.toggle('active', !onQuick);
+  // Reflect the current page in the mobile top bar; brand yields to the title.
+  const showTitle = !!name && name !== 'login' && typeof currentRoleUser !== 'undefined' && !!currentRoleUser;
+  const titleEl = document.getElementById('m-topbar-title');
+  const brandEl = document.getElementById('m-topbar-brand');
+  if (titleEl) {
+    if (showTitle) { titleEl.textContent = _mobTitleFor(name); titleEl.hidden = false; }
+    else { titleEl.textContent = ''; titleEl.hidden = true; }
+  }
+  if (brandEl) brandEl.hidden = showTitle;
+}
+
+// Rebuild the "More" sheet from the currently-visible sidenav links, grouped
+// by the same section labels the sidebar uses.
+function _mobileBuildSheet() {
+  const body = document.getElementById('m-sheet-body');
+  const foot = document.getElementById('m-sheet-foot');
+  if (!body) return;
+  const active = (document.querySelector('.page.active')?.id || '').replace('page-', '');
+  const groups = [];
+  let cur = null;
+  const reg = document.getElementById('nav-regular-items');
+  if (reg) {
+    reg.childNodes.forEach(n => {
+      if (n.nodeType !== 1) return;
+      if (n.classList.contains('sidenav-section-label')) {
+        cur = { label: n.textContent.trim(), links: [] }; groups.push(cur);
+      } else if (n.classList.contains('nav-link') && n.dataset.page && _mobLinkAvailable(n)) {
+        if (!cur) { cur = { label: '', links: [] }; groups.push(cur); }
+        cur.links.push(n);
+      }
+    });
+  }
+  const adminItems = [...document.querySelectorAll('#nav-admin-items .nav-link[data-page]')].filter(_mobLinkAvailable);
+  if (adminItems.length) groups.push({ label: 'Admin Tools', links: adminItems });
+
+  let html = '';
+  groups.forEach(g => {
+    const links = g.links.filter(l => l.dataset.page);
+    if (!links.length) return;
+    if (g.label) html += `<div class="m-sheet-group-label">${escapeHtml(g.label)}</div>`;
+    links.forEach(l => {
+      const page = l.dataset.page;
+      const svg = l.querySelector('svg')?.outerHTML || '';
+      const label = l.textContent.trim();
+      const isActive = page === active ? ' active' : '';
+      html += `<button class="m-sheet-link${isActive}" data-mpage="${escapeHtml(page)}" onclick="_mobileGo('${page}')">${svg}<span>${escapeHtml(label)}</span></button>`;
+    });
+  });
+  body.innerHTML = html || '<div class="m-sheet-group-label">No pages available</div>';
+
+  if (foot) {
+    if (typeof currentRoleUser !== 'undefined' && currentRoleUser) {
+      const nm = currentRoleUser.name || '';
+      const roleLabel = currentRoleUser.role === 'admin' ? 'Global Administrator' : 'Member';
+      const signoutSvg = '<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 001 1h6a1 1 0 100-2H4V5h5a1 1 0 100-2H3zm9.293 3.293a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 01-1.414-1.414L13.586 11H8a1 1 0 110-2h5.586l-1.293-1.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>';
+      foot.innerHTML = `<div class="m-sheet-user"><div class="m-sheet-user-name">${escapeHtml(nm)}</div><div class="m-sheet-user-role">${escapeHtml(roleLabel)}</div></div>` +
+        `<button class="m-sheet-signout" onclick="signOut()">${signoutSvg}<span>Sign out</span></button>`;
+    } else {
+      foot.innerHTML = '';
+    }
+  }
+}
+
+function _mobileOpenSheet() {
+  _mobileBuildSheet();
+  const s = document.getElementById('m-sheet');
+  if (s) s.hidden = false;
+  document.getElementById('m-tab-more')?.classList.add('active');
+}
+
+function _mobileCloseSheet() {
+  const s = document.getElementById('m-sheet');
+  if (s) s.hidden = true;
+  _syncMobileTabs((document.querySelector('.page.active')?.id || '').replace('page-', ''));
+}
+
+// Escape closes the sheet (external/desktop keyboards).
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const s = document.getElementById('m-sheet');
+    if (s && !s.hidden) _mobileCloseSheet();
+  }
+});
 
 function showPage(name) {
   // Permissions has been merged into the Directory module — keep the legacy
