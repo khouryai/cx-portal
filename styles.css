@@ -13093,6 +13093,7 @@ a:focus-visible {
    Desktop is untouched: the bars are hidden and the sidebar stays put.
    ===================================================================== */
 .m-topbar, .m-tabbar { display: none; }
+.m-fab, .m-ptr { display: none; }
 
 @media (max-width: 720px), (orientation: landscape) and (max-height: 540px), (pointer: coarse) {
   /* Reclaim full width: the fixed desktop sidebar is replaced by the bars */
@@ -13211,6 +13212,62 @@ a:focus-visible {
   .m-sheet-signout:active { background: var(--bad-light); }
   @keyframes mSheetFade { from { opacity: 0; } to { opacity: 1; } }
   @keyframes mSheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+  /* Quick-action FAB — one context-aware primary action per page */
+  .m-fab {
+    position: fixed; right: 14px;
+    bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+    z-index: 390;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 13px 18px; border: none; border-radius: 999px; cursor: pointer;
+    background: var(--hitachi-red); color: var(--white);
+    font-family: inherit; font-size: 14px; font-weight: 700; letter-spacing: 0.01em;
+    box-shadow: 0 6px 20px rgba(230,0,18,0.38), 0 2px 6px rgba(0,0,0,0.18);
+  }
+  .m-fab[hidden] { display: none; }
+  .m-fab svg { width: 18px; height: 18px; }
+  .m-fab:active { filter: brightness(0.92); }
+
+  /* Pull-to-refresh indicator */
+  .m-ptr {
+    position: fixed; left: 50%; transform: translate(-50%, 0);
+    top: calc(58px + env(safe-area-inset-top, 0px));
+    z-index: 390;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--border);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.14);
+    font-size: 12.5px; font-weight: 600; color: var(--text-muted);
+    opacity: 0; pointer-events: none; transition: opacity 0.15s;
+  }
+  .m-ptr.show { opacity: 1; }
+  .m-ptr.armed { color: var(--hitachi-red); border-color: var(--hitachi-red); }
+  .m-ptr-spinner {
+    width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid var(--border-strong); border-top-color: var(--hitachi-red);
+  }
+  .m-ptr.refreshing .m-ptr-spinner { animation: mPtrSpin 0.7s linear infinite; }
+  @keyframes mPtrSpin { to { transform: rotate(360deg); } }
+
+  /* Punch row swipe actions (View + Photo) */
+  #page-punch-workflow .v2-list-row[data-pid] { position: relative; overflow: hidden; }
+  #page-punch-workflow .v2-list-row[data-pid] .punch-row {
+    position: relative; z-index: 1; background: inherit;
+    transition: transform 0.18s ease;
+  }
+  #page-punch-workflow .v2-list-row.m-swiping .punch-row { transition: none; }
+  .m-swipe-actions {
+    position: absolute; top: 0; right: 0; bottom: 0; width: 148px;
+    display: flex; z-index: 0;
+  }
+  .m-swipe-btn {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    border: none; cursor: pointer; font-family: inherit;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.03em;
+  }
+  .m-swipe-btn svg { width: 19px; height: 19px; }
+  .m-swipe-view { background: var(--slate-800); color: var(--white); }
+  .m-swipe-cam  { background: var(--hitachi-red); color: var(--white); }
 }
 
 /* Drawing viewer: own all touch gestures so we can pinch-zoom (otherwise the

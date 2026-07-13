@@ -542,6 +542,7 @@ function _syncMobileTabs(name) {
     else { titleEl.textContent = ''; titleEl.hidden = true; }
   }
   if (brandEl) brandEl.hidden = showTitle;
+  if (typeof _mobileFabSync === 'function') _mobileFabSync(name);
 }
 
 // Rebuild the "More" sheet from the currently-visible sidenav links, grouped
@@ -673,6 +674,15 @@ function showPage(name) {
       }
     } catch (e) { /* history API unavailable — non-fatal */ }
   }
+}
+
+// Re-run the active page's renderer without adding a history entry.
+// Used by mobile pull-to-refresh (mobile.js).
+function _refreshActivePage() {
+  const name = (document.querySelector('.page.active')?.id || '').replace('page-', '');
+  if (!name) return;
+  _suppressHistoryPush = true;
+  try { showPage(name); } finally { _suppressHistoryPush = false; }
 }
 
 // Restore the in-app view when the user presses the browser Back/Forward button.
@@ -2776,19 +2786,9 @@ function submitDelayLog() {
   });
 }
 
-async function sendSubmission(payload, messageId, onSuccess) {
-  const queue = loadQueue();
-  const queueEntry = {
-    id: 'q-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
-    payload,
-    status: 'pending',
-    createdAt: new Date().toISOString(),
-  };
-  queue.push(queueEntry);
-  saveQueue(queue);
-
-  showMessage(messageId, 'queued', 'Submitting…');
-
+// Map a queued field submission to its PostgREST row. Shared by the live
+// submit path and the offline-queue flush so replays are byte-identical.
+function _fieldQueueDbRow(payload) {
   const isResult = payload.type === 'TestResult';
   const r = payload.record;
   const su = payload.statusUpdate || {};
@@ -2837,7 +2837,23 @@ async function sendSubmission(payload, messageId, onSuccess) {
     next_day_plan:            r.NextDayPlan,
   };
 
-  const table = isResult ? 'test_results' : 'delay_log';
+  return { table: isResult ? 'test_results' : 'delay_log', row: dbRow };
+}
+
+async function sendSubmission(payload, messageId, onSuccess) {
+  const queue = loadQueue();
+  const queueEntry = {
+    id: 'q-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+    payload,
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+  };
+  queue.push(queueEntry);
+  saveQueue(queue);
+
+  showMessage(messageId, 'queued', 'Submitting…');
+
+  const { table, row: dbRow } = _fieldQueueDbRow(payload);
 
   try {
     const { error } = await _sb.from(table).insert([dbRow]);
@@ -2854,6 +2870,69 @@ async function sendSubmission(payload, messageId, onSuccess) {
     showMessage(messageId, 'queued', 'Saved locally — will sync when connection is restored. View in My Submissions.');
     if (onSuccess) onSuccess();
   }
+}
+
+// ── Offline-queue flush ──────────────────────────────────────────────────
+// Resends every not-yet-sent field submission. Runs on reconnect, on a
+// periodic tick while anything is pending, and from the per-item Retry
+// button in My Submissions. Duplicate-key rejections count as sent (the
+// original insert landed before the connection dropped).
+let _fqFlushing = false;
+async function flushFieldQueue() {
+  if (_fqFlushing) return 0;
+  if (navigator.onLine === false) return 0;
+  if (typeof _sb === 'undefined' || !_sb || !currentRoleUser) return 0;
+  const pending = loadQueue().filter(q => q && q.status !== 'sent');
+  if (!pending.length) return 0;
+  _fqFlushing = true;
+  let synced = 0;
+  try {
+    for (const entry of pending) {
+      try {
+        const { table, row } = _fieldQueueDbRow(entry.payload);
+        const { error } = await _sb.from(table).insert([row]);
+        if (error && !/duplicate key|already exists|23505/i.test(error.message || '')) throw error;
+        entry.status = 'sent';
+        entry.sentAt = new Date().toISOString();
+        delete entry.error;
+        synced++;
+      } catch (err) {
+        entry.status = 'failed';
+        entry.error = err.message;
+      }
+      saveQueue(loadQueue().map(q => q.id === entry.id ? entry : q));
+    }
+  } finally {
+    _fqFlushing = false;
+  }
+  if (synced) {
+    toast(`Synced ${synced} queued submission${synced === 1 ? '' : 's'}`);
+    if (document.getElementById('queue-list')) renderQueue();
+    if (typeof _netUpdate === 'function') _netUpdate();
+  }
+  return synced;
+}
+
+// Retry one entry from My Submissions.
+async function retryQueueEntry(id) {
+  const entry = loadQueue().find(q => q.id === id);
+  if (!entry || entry.status === 'sent') return;
+  try {
+    const { table, row } = _fieldQueueDbRow(entry.payload);
+    const { error } = await _sb.from(table).insert([row]);
+    if (error && !/duplicate key|already exists|23505/i.test(error.message || '')) throw error;
+    entry.status = 'sent';
+    entry.sentAt = new Date().toISOString();
+    delete entry.error;
+    toast('Submission synced');
+  } catch (err) {
+    entry.status = 'failed';
+    entry.error = err.message;
+    toast('Still failing: ' + err.message, 'error');
+  }
+  saveQueue(loadQueue().map(q => q.id === entry.id ? entry : q));
+  renderQueue();
+  if (typeof _netUpdate === 'function') _netUpdate();
 }
 
 function showMessage(id, type, text) {
@@ -2949,6 +3028,7 @@ function renderQueue() {
           ${q.error && q.status !== 'sent' ? `<div class="queue-item-meta" style="color:var(--bad);margin-top:4px">${icon('alert')} ${escapeHtml(q.error)}</div>` : ''}
         </div>
         <span class="queue-status ${q.status}">${status}</span>
+        ${q.status !== 'sent' ? `<button class="v2-btn-mini" style="flex-shrink:0;" onclick="retryQueueEntry('${q.id}')">${icon('refresh')} Retry</button>` : ''}
       </div>
     `;
   }).join('');
@@ -7940,7 +8020,7 @@ function _plRowHTML(p) {
 
   return `
     <div class="v2-list-row tone-${pillTone.replace('is-','')} ${isOverdue ? 'is-overdue' : (isCritical ? 'is-critical' : '')}"
-         onclick="openPunchDetail('${p.id}')">
+         data-pid="${p.id}" onclick="openPunchDetail('${p.id}')">
       <div class="punch-row">
         <div onclick="event.stopPropagation()" style="padding-top:4px;">
           <input type="checkbox" ${_plSelected.has(p.id)?'checked':''}
@@ -48348,11 +48428,18 @@ function _drwUploadRevision(setId) {
   }
   function onOnline() {
     try { if (typeof _pdfFlushQueuedDrafts === 'function') _pdfFlushQueuedDrafts().catch(function () {}); } catch (e) {}
+    try { if (typeof flushFieldQueue === 'function') flushFieldQueue().catch(function () {}); } catch (e) {}
     try { if (typeof renderQueue === 'function') renderQueue(); } catch (e) {}
     update({ justReconnected: true });
   }
   window.addEventListener('online', onOnline);
   window.addEventListener('offline', function () { update(); });
+  // Belt-and-braces: 'online' can fire while the link is still flaky, so a
+  // slow tick retries anything left in the queue until it drains.
+  setInterval(function () {
+    if (navigator.onLine !== false && pendingCount() > 0 &&
+        typeof flushFieldQueue === 'function') flushFieldQueue().catch(function () {});
+  }, 90000);
   document.addEventListener('DOMContentLoaded', function () { update(); });
   if (document.readyState !== 'loading') update();
   window._netUpdate = update;
