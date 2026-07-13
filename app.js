@@ -1741,57 +1741,79 @@ function initActivities() {
   AP = _apBuildRows();
   document.getElementById('ap-summary').textContent = `${AP.length} SAT activities across ${new Set(AP.map(r => r.Location).filter(Boolean)).size} locations`;
 
-  // Build filter options
-  const statuses = [...new Set(AP.map(r => r.Status).filter(Boolean))].sort();
-  const subsys = [...new Set(AP.map(r => r['SubSystem-']).filter(Boolean))].sort();
-  const phases = [...new Set(AP.map(r => String(r.Phase)).filter(p => p && p !== 'undefined'))].sort();
-  const locs = [...new Set(AP.map(r => r.Location).filter(Boolean))].sort();
-
-  populateSelect('ap-status-filter', 'All statuses', statuses);
-  populateSelect('ap-subsys-filter', 'All subsystems', subsys);
-  populateSelect('ap-phase-filter', 'All phases', phases.map(p => `Phase ${p}`));
-  populateSelect('ap-location-filter', 'All locations', locs);
+  // Populate every dropdown via the shared cross-cascade (works in any order:
+  // pick a phase and the other lists narrow to that phase, pick a subsystem
+  // and phases/locations narrow to it, etc.).
+  _apCascade();
 
   if (!_apBound) {
     _apBound = true;
-  ['ap-search','ap-status-filter','ap-subsys-filter'].forEach(id => {
-    document.getElementById(id).addEventListener('input', renderAPTable);
-  });
-  document.getElementById('ap-phase-filter').addEventListener('input', () => { _apCascadeLocation(); renderAPTable(); });
-  document.getElementById('ap-location-filter').addEventListener('input', renderAPTable);
-
-  // Sort handlers
-  document.querySelectorAll('#ap-table th[data-sort]').forEach(th => {
-    th.addEventListener('click', () => {
-      const col = th.dataset.sort;
-      if (apSort.col === col) apSort.asc = !apSort.asc;
-      else { apSort.col = col; apSort.asc = true; }
-      renderAPTable();
+    document.getElementById('ap-search').addEventListener('input', renderAPTable);
+    // Tom Select fires the native 'change' event on the wrapped <select>.
+    _apFilterDims().forEach(d => {
+      document.getElementById(d.id).addEventListener('change', () => { _apCascade(); renderAPTable(); });
     });
-  });
 
+    // Sort handlers
+    document.querySelectorAll('#ap-table th[data-sort]').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.sort;
+        if (apSort.col === col) apSort.asc = !apSort.asc;
+        else { apSort.col = col; apSort.asc = true; }
+        renderAPTable();
+      });
+    });
   }
   renderAPTable();
 }
 
-function _apCascadeLocation() {
-  const subsysF = document.getElementById('ap-subsys-filter').value;
-  const phaseF  = document.getElementById('ap-phase-filter').value.replace('Phase ', '');
-  const avail   = AP.filter(r => (!subsysF || r['SubSystem-'] === subsysF) && (!phaseF || String(r.Phase).trim() === phaseF));
-  const locs    = [...new Set(avail.map(r => r.Location).filter(Boolean))].sort();
-  const cur     = document.getElementById('ap-location-filter').value;
-  populateSelect('ap-location-filter', 'All locations', locs);
-  if (!locs.includes(cur)) document.getElementById('ap-location-filter').value = '';
+// The SAT-Activities filter dimensions. Phase is matched via the same
+// "Phase N" label the dropdown shows (rows carry the bare number).
+function _apFilterDims() {
+  return [
+    { id: 'ap-status-filter',   field: 'Status',     allLabel: 'All statuses' },
+    { id: 'ap-subsys-filter',   field: 'SubSystem-', allLabel: 'All subsystems' },
+    { id: 'ap-phase-filter',    field: '_PhaseLbl',  allLabel: 'All phases' },
+    { id: 'ap-location-filter', field: 'Location',   allLabel: 'All locations' },
+  ];
 }
+function _apCascadeRows() {
+  return AP.map(r => ({
+    'Status': r.Status, 'SubSystem-': r['SubSystem-'], 'Location': r.Location,
+    '_PhaseLbl': (r.Phase != null && String(r.Phase).trim() && String(r.Phase) !== 'undefined')
+      ? `Phase ${String(r.Phase).trim()}` : '',
+  }));
+}
+function _apCascade() { cxCascadeFilters(_apCascadeRows(), _apFilterDims()); }
 
 function clearAPFilters() {
-  ['ap-search','ap-status-filter','ap-subsys-filter','ap-phase-filter','ap-location-filter'].forEach(id => document.getElementById(id).value = '');
+  cxSetFilterValue('ap-search', '');
+  _apFilterDims().forEach(d => cxSetFilterValue(d.id, ''));
+  _apCascade();   // restore every dropdown to its full option list
   renderAPTable();
 }
 
 function populateSelect(id, allLabel, options) {
   const el = document.getElementById(id);
+  const prev = el.value;
   el.innerHTML = `<option value="">${allLabel}</option>` + options.map(o => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
+  // Preserve a still-valid selection across the rebuild (cascade pruning: a
+  // selection whose option vanished falls back to "All").
+  const keep = options.some(o => String(o) === prev) ? prev : '';
+  el.value = keep;
+  // Rebuild any Tom Select wrapper DETERMINISTICALLY. Its dropdown renders from
+  // internal state, so rewriting the native <option>s alone leaves every stale
+  // choice visible, and sync() only ADDS options (and drops the '' "All" one).
+  const ts = el.tomselect;
+  if (ts) {
+    try {
+      ts.clear(true);
+      ts.clearOptions();
+      ts.addOption({ value: '', text: allLabel });
+      options.forEach(o => ts.addOption({ value: String(o), text: String(o) }));
+      ts.setValue(keep, true);
+    } catch (_) {}
+  }
 }
 
 // ── Cascading filters (shared) ───────────────────────────────────────────────
@@ -1806,6 +1828,13 @@ function populateSelect(id, allLabel, options) {
 //   locked subsystem]. `field` is the row property each dim filters on.
 function cxCascadeOptions(rows, dims, current, skip = []) {
   const cur = { ...current };
+  // Pre-prune: a selection whose value no longer exists ANYWHERE in its column
+  // (e.g. after a data reload) is dropped up front, so it can't poison the
+  // option math for the other, still-valid selections in the pass below.
+  for (const d of dims) {
+    if (skip.includes(d.id) || !cur[d.id]) continue;
+    if (!(rows || []).some(r => String(r[d.field] ?? '') === String(cur[d.id]))) cur[d.id] = '';
+  }
   const out = {};
   for (const d of dims) {
     if (skip.includes(d.id)) { out[d.id] = { options: null, value: cur[d.id] || '' }; continue; }
@@ -1828,13 +1857,10 @@ function cxCascadeFilters(rows, dims, skip = []) {
     if (skip.includes(d.id)) continue;
     const el = document.getElementById(d.id);
     if (!el) continue;
+    // populateSelect preserves a still-valid selection and rebuilds any Tom
+    // Select wrapper deterministically (the stale-options fix lives there).
     populateSelect(d.id, d.allLabel, res[d.id].options);
-    el.value = res[d.id].value;
-  }
-  // Push the freshly-set native options/values into any Tom Select wrapper.
-  for (const d of dims) {
-    const el = document.getElementById(d.id);
-    if (el && el.tomselect) { try { el.tomselect.sync(); el.tomselect.setValue(el.value || '', true); } catch (_) {} }
+    if (el.value !== res[d.id].value) cxSetFilterValue(d.id, res[d.id].value);
   }
 }
 
@@ -1956,7 +1982,8 @@ function initLineItems() {
   const subsysEl = document.getElementById('li-subsys-filter');
   if (userSubsys && !isAdmin) {
     populateSelect('li-subsys-filter', 'All subsystems', [userSubsys]);
-    if (subsysEl) { subsysEl.value = userSubsys; subsysEl.style.display = 'none'; }
+    cxSetFilterValue('li-subsys-filter', userSubsys);
+    if (subsysEl) subsysEl.style.display = 'none';
   } else if (subsysEl) {
     subsysEl.style.display = '';
   }
@@ -1994,8 +2021,9 @@ function _liFilterSkip() {
   return (!isAdmin && userSubsys) ? ['li-subsys-filter'] : [];
 }
 // Recompute EVERY dropdown's options from the other active selections (true
-// cross-cascade, status included) and keep Tom Select in sync.
-function _liCascade() { cxCascadeFilters(TI, _liFilterDims(), _liFilterSkip()); }
+// cross-cascade, status included) and keep Tom Select in sync. Options come
+// from latest attempts only — the same rows the table shows.
+function _liCascade() { cxCascadeFilters(TI.filter(_isLatestAttempt), _liFilterDims(), _liFilterSkip()); }
 
 function clearLIFilters() {
   _liKpiFilter = '';
@@ -2098,39 +2126,56 @@ function renderLITable() {
 // ==========================================
 let plSort = { col: null, asc: false };
 
+let _plBound = false;
+
 function initPunchList() {
   document.getElementById('pl-summary').textContent = `${PL.length.toLocaleString()} punch items across all trades and locations`;
 
-  const statuses = [...new Set(PL.map(r => r.Status).filter(Boolean))].sort();
-  const priorities = ['high', 'medium', 'low'];
-  const trades = [...new Set(PL.map(r => r.Trade && r.Trade.trim()).filter(Boolean))].sort();
-  const types = [...new Set(PL.map(r => r.Type && r.Type.trim()).filter(Boolean))].sort();
-  const locs = [...new Set(PL.map(r => r.Location).filter(Boolean))].sort();
+  // Populate every dropdown via the shared cross-cascade (any order).
+  _plCascade();
 
-  populateSelect('pl-status-filter', 'All statuses', statuses);
-  populateSelect('pl-priority-filter', 'All priorities', priorities);
-  populateSelect('pl-trade-filter', 'All trades', trades);
-  populateSelect('pl-type-filter', 'All types', types);
-  populateSelect('pl-location-filter', 'All locations', locs);
-
-  ['pl-search','pl-status-filter','pl-priority-filter','pl-trade-filter','pl-type-filter','pl-location-filter'].forEach(id => {
-    document.getElementById(id).addEventListener('input', renderPLTable);
-  });
-
-  document.querySelectorAll('#pl-table th[data-sort]').forEach(th => {
-    th.addEventListener('click', () => {
-      const col = th.dataset.sort;
-      if (plSort.col === col) plSort.asc = !plSort.asc;
-      else { plSort.col = col; plSort.asc = true; }
-      renderPLTable();
+  if (!_plBound) {
+    _plBound = true;
+    document.getElementById('pl-search').addEventListener('input', renderPLTable);
+    // Tom Select fires the native 'change' event on the wrapped <select>.
+    _plFilterDims().forEach(d => {
+      document.getElementById(d.id).addEventListener('change', () => { _plCascade(); renderPLTable(); });
     });
-  });
+
+    document.querySelectorAll('#pl-table th[data-sort]').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.sort;
+        if (plSort.col === col) plSort.asc = !plSort.asc;
+        else { plSort.col = col; plSort.asc = true; }
+        renderPLTable();
+      });
+    });
+  }
 
   renderPLTable();
 }
 
+function _plFilterDims() {
+  return [
+    { id: 'pl-status-filter',   field: 'Status',   allLabel: 'All statuses' },
+    { id: 'pl-priority-filter', field: 'Priority', allLabel: 'All priorities' },
+    { id: 'pl-trade-filter',    field: '_Trade',   allLabel: 'All trades' },
+    { id: 'pl-type-filter',     field: '_Type',    allLabel: 'All types' },
+    { id: 'pl-location-filter', field: 'Location', allLabel: 'All locations' },
+  ];
+}
+function _plCascadeRows() {
+  return PL.map(r => ({
+    'Status': r.Status, 'Priority': r.Priority, 'Location': r.Location,
+    '_Trade': r.Trade ? r.Trade.trim() : '', '_Type': r.Type ? r.Type.trim() : '',
+  }));
+}
+function _plCascade() { cxCascadeFilters(_plCascadeRows(), _plFilterDims()); }
+
 function clearPLFilters() {
-  ['pl-search','pl-status-filter','pl-priority-filter','pl-trade-filter','pl-type-filter','pl-location-filter'].forEach(id => document.getElementById(id).value = '');
+  cxSetFilterValue('pl-search', '');
+  _plFilterDims().forEach(d => cxSetFilterValue(d.id, ''));
+  _plCascade();   // restore every dropdown to its full option list
   renderPLTable();
 }
 
