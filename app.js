@@ -322,6 +322,44 @@ async function _dbUpdate(table, patch, match) {
   }
 }
 
+// PATCH many rows in one request per chunk: WHERE col IN (values). Returns the
+// updated row count. Same guards as _dbUpdate (refresh, 15s abort, 401 banner).
+async function _dbUpdateIn(table, patch, col, values, chunkSize = 80) {
+  let updated = 0;
+  for (let i = 0; i < values.length; i += chunkSize) {
+    const chunk = values.slice(i, i + chunkSize);
+    await _ensureFreshSession();
+    const url = `${SUPABASE_URL}/rest/v1/${table}?${encodeURIComponent(col)}=in.(${chunk.map(v => encodeURIComponent(v)).join(',')})`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    try {
+      const res = await fetch(url, {
+        method: 'PATCH',
+        signal: ctrl.signal,
+        headers: {
+          apikey:        SUPABASE_ANON_KEY,
+          Authorization: _getAuthHeader(),
+          'Content-Type':'application/json',
+          Prefer:        'return=representation',
+        },
+        body: JSON.stringify(patch),
+      });
+      clearTimeout(timer);
+      if (!res.ok) {
+        const errBody = await res.text();
+        if (res.status === 401) _showSessionExpiredBanner();
+        throw new Error(`${table} bulk update failed (${res.status}): ${errBody}`);
+      }
+      updated += (await res.json()).length;
+    } catch (e) {
+      clearTimeout(timer);
+      if (e.name === 'AbortError') throw new Error(`${table} bulk update timed out after 15s`);
+      throw e;
+    }
+  }
+  return updated;
+}
+
 async function _dbDelete(table, match) {
   await _ensureFreshSession();
   const authHeader = _getAuthHeader();
@@ -39787,11 +39825,18 @@ function _dynRenderInstances() {
     </div>`;
 
   const selCount = _dynPage.selInstances.size;
+  // Of the selection, how many can actually be pulled off the schedule
+  // (scheduled somewhere, and not already complete)?
+  const selUnschedulable = [..._dynPage.selInstances].filter(id => {
+    const r = _dynPage.instances.find(x => String(x.id) === String(id));
+    return r && (r.shift_id || r.scheduled_for_date || r.scheduled_window) && !['Pass', 'Not Applicable'].includes(r.status);
+  }).length;
   const bulkBar = `
     <div class="capx-tray">
       ${selCount > 0
         ? `<span class="capx-tray-sum"><b>${selCount}</b> instance${selCount===1?'':'s'} selected</span>
            <button class="dyn-btn" onclick="_dynInstClearSel()">Clear</button>
+           <button class="dyn-btn" style="color:var(--bad);" ${selUnschedulable ? '' : 'disabled'} onclick="_dynInstBulkUnschedule()" title="Pull the selected runs off the schedule and back to the backlog (completed runs are left alone)">Unschedule${selUnschedulable ? ` ${selUnschedulable}` : ''}</button>
            <button class="dyn-btn primary" onclick="_dynOpenBulkEdit()">${icon('edit')} Bulk edit ${selCount}</button>`
         : `<span class="capx-tray-sum is-empty">Tick rows to bulk-edit status, locations, phase and more in one pass</span>
            <button class="dyn-btn primary" disabled>${icon('edit')} Bulk edit</button>`}
@@ -39843,6 +39888,29 @@ function _dynInstSelectAllVisible(on) {
 function _dynInstClearSel() {
   _dynPage.selInstances.clear();
   _dynRenderInstances();
+}
+
+// Bulk unschedule from the instances tray: pulls the selected runs off the
+// schedule (shift + date + window) back to the backlog. Completed runs
+// (Pass / Not Applicable) and already-unscheduled runs are skipped — their
+// planned date is part of the record of when they ran.
+async function _dynInstBulkUnschedule() {
+  if (typeof uiCan === 'function' && !uiCan('dynamic_testing', 'schedule')) { toast('You do not have permission to schedule instances', 'error'); return; }
+  const sel = [..._dynPage.selInstances].map(id => _dynPage.instances.find(x => String(x.id) === String(id))).filter(Boolean);
+  const eligible = sel.filter(r => (r.shift_id || r.scheduled_for_date || r.scheduled_window) && !['Pass', 'Not Applicable'].includes(r.status));
+  if (!eligible.length) { toast('None of the selected runs are on the schedule (completed runs are left alone)', 'info'); return; }
+  const skipped = sel.length - eligible.length;
+  let msg = `Remove ${eligible.length} run${eligible.length === 1 ? '' : 's'} from the schedule?\n\nThey go back to the backlog — Auto-allocate or the Planning Board can re-slot them any time.`;
+  if (skipped) msg += `\n\n${skipped} selected run${skipped === 1 ? ' is' : 's are'} skipped (already unscheduled, or complete).`;
+  if (!await cxConfirm(msg)) return;
+  try {
+    await _dynBulkUnscheduleIds(eligible.map(r => r.id));
+    _dynPage.selInstances.clear();
+    if (typeof toast === 'function') toast(`Unscheduled ${eligible.length}${skipped ? ` · ${skipped} skipped` : ''}`, 'success');
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    _dynRenderInstances();
+  } catch (e) { cxAlert(`Unschedule failed: ${e.message}`); }
 }
 
 // ── Instances bulk edit ─────────────────────────────────────────────────
@@ -41322,6 +41390,21 @@ async function _dynUnschedule(id) {
   } catch (e) { cxAlert(`Unschedule failed: ${e.message}`); }
 }
 
+// Shared bulk-unschedule plumbing: ONE batched PATCH (id IN (…)) via _dbUpdateIn
+// instead of a request per row, then in-memory sync so the UI can re-render
+// without waiting for a reload. Callers confirm + reload/re-render themselves.
+async function _dynBulkUnscheduleIds(ids) {
+  const patch = { shift_id: null, scheduled_for_date: null, scheduled_window: null, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() };
+  const n = await _dbUpdateIn('dynamic_instances', patch, 'id', ids);
+  const idSet = new Set(ids.map(String));
+  for (const inst of _dynPage.instances) {
+    if (!idSet.has(String(inst.id))) continue;
+    inst.shift_id = null; inst.scheduled_for_date = null; inst.scheduled_window = null;
+    Object.assign(inst, _DYN_ROLL_RESET);
+  }
+  return n;
+}
+
 // Re-open whichever board drilldown was active, if it still has rows.
 function _dynReopenBoardModal() {
   const m = _dynPage._boardModal;
@@ -41398,11 +41481,7 @@ async function _dynBulkUnschedule() {
   if (!ids.length) return;
   if (!await cxConfirm(`Remove ${ids.length} instance(s) from their scheduled date?`)) return;
   try {
-    for (const id of ids) {
-      await _dbUpdate('dynamic_instances', { shift_id: null, scheduled_for_date: null, scheduled_window: null, ..._DYN_ROLL_RESET, updated_at: new Date().toISOString() }, { id });
-      const inst = _dynPage.instances.find(x => x.id === id);
-      if (inst) { inst.shift_id = null; inst.scheduled_for_date = null; inst.scheduled_window = null; Object.assign(inst, _DYN_ROLL_RESET); }
-    }
+    await _dynBulkUnscheduleIds(ids);
     _dynPage.daySel.clear();
     if (typeof toast === 'function') toast(`Unscheduled ${ids.length}`, 'success');
     _dynPage.loaded = false;
@@ -43119,6 +43198,7 @@ function _dynRenderPlanning() {
         </label>
         <button class="dyn-btn primary capx-alloc-btn" ${activeCamps.length ? '' : 'disabled'} onclick="_dynAllocFromBar()">${icon('zap')} Build allocation</button>
         <button class="dyn-btn" onclick="_dynWhatIfRun()" title="Project how many more runs you could schedule if the client extends the access window">What-if</button>
+        <button class="dyn-btn" style="color:var(--bad);" ${activeCamps.length ? '' : 'disabled'} onclick="_dynClearScheduleRun()" title="Pull this campaign’s scheduled runs off their access windows back to the backlog — the inverse of Build allocation. You review the list before anything commits.">Clear schedule…</button>
         <button class="simx-iconbtn" onclick="_dynPlanOpenWindowsAdmin()" aria-label="Manage access windows" title="Manage access windows">${icon('settings')}</button>
       </div>
       ${activeCamps.length ? '' : `<div class="capx-hero-warn">${icon('alert')} No active campaign — create one in the Access Plan tab first. Scheduling always ties to a campaign.</div>`}
@@ -43277,6 +43357,100 @@ function _dynAllocFromBar() {
   if (campV === '__all__') return _dynProgramAllocateRun();
   const c = (_dynPage.campaigns || []).find(x => String(x.id) === String(campV));
   return _dynAllocateInto(new Set([String(campV)]), c ? c.name : 'Campaign');
+}
+
+// "Clear schedule…" — the inverse of Build allocation. Scopes to the hero's
+// campaign selector ('__all__' = every active campaign), pools the
+// not-yet-complete runs sitting on that scope's access windows, and shows a
+// per-window preview before anything commits. Runs scheduled by date only
+// (no window link — hand-placed) belong to no campaign, so they're offered
+// as an opt-in sweep on the program-wide view.
+function _dynClearScheduleRun() {
+  if (typeof uiCan === 'function' && !uiCan('dynamic_testing', 'schedule')) { toast('You do not have permission to schedule instances', 'error'); return; }
+  const campV = document.getElementById('capx-alloc-camp')?.value || _dynPage.planAllocCamp;
+  const active = (_dynPage.campaigns || []).filter(c => c.status !== 'closed' && c.status !== 'archived');
+  const camps = (campV && campV !== '__all__') ? active.filter(c => String(c.id) === String(campV)) : active;
+  if (!camps.length) { toast('No active campaign selected', 'error'); return; }
+  const idSet = new Set(camps.map(c => String(c.id)));
+  const label = (!campV || campV === '__all__') ? 'All active campaigns' : (camps[0].name || 'Campaign');
+  const winIds = new Set((_dynPage.shifts || []).filter(w => w.campaign_id && idSet.has(String(w.campaign_id))).map(w => String(w.id)));
+  const notDone = r => !['Pass', 'Not Applicable'].includes(r.status);
+  const onWindows = (_dynPage.instances || []).filter(r => r.shift_id && winIds.has(String(r.shift_id)) && notDone(r));
+  const loose = (!campV || campV === '__all__')
+    ? (_dynPage.instances || []).filter(r => !r.shift_id && !r.linked_activity_id && (r.scheduled_for_date || r.scheduled_window) && notDone(r))
+    : [];
+  if (!onWindows.length && !loose.length) { toast(`Nothing to clear — ${label} has no incomplete runs on the schedule`, 'info'); return; }
+
+  const winById = new Map((_dynPage.shifts || []).map(w => [String(w.id), w]));
+  const campById = new Map((_dynPage.campaigns || []).map(c => [String(c.id), c]));
+  const byWin = new Map();
+  for (const r of onWindows) {
+    const k = String(r.shift_id);
+    if (!byWin.has(k)) byWin.set(k, []);
+    byWin.get(k).push(r);
+  }
+  const rowsHtml = [...byWin.entries()]
+    .sort((a, b) => String(winById.get(a[0])?.shift_date || '').localeCompare(String(winById.get(b[0])?.shift_date || '')))
+    .map(([wid, list]) => {
+      const w = winById.get(wid);
+      const cm = w && campById.get(String(w.campaign_id));
+      const k = (cm ? cm.name + ' · ' : '') + (w ? _dynWindowLabel(w) : '—');
+      const freed = list.reduce((m, i) => m + (i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN), 0);
+      return '<tr style="border-bottom:1px solid var(--gray-100);">' +
+        '<td style="padding:6px 10px;font-family:monospace;font-size:11.5px;white-space:nowrap;">' + escapeHtml(k) + '</td>' +
+        '<td style="padding:6px 10px;"><b>' + list.length + '</b></td>' +
+        '<td style="padding:6px 10px;white-space:nowrap;font-size:11.5px;color:var(--text-subtle);">' + Math.round(freed) + 'm freed</td>' +
+        '<td style="padding:6px 10px;font-size:11.5px;">' + list.map(i => escapeHtml(i.code || i.id || '')).join(', ') + '</td>' +
+      '</tr>';
+    }).join('') ||
+    '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--gray-500);">No runs on access windows in this scope.</td></tr>';
+
+  _dynPage._clearDraft = { winIds: onWindows.map(r => r.id), looseIds: loose.map(r => r.id) };
+  const btnCount = () => { const b = document.getElementById('capx-clear-commit'); if (!b) return; const on = document.getElementById('capx-clear-loose')?.checked; const n = onWindows.length + (on ? loose.length : 0); b.textContent = 'Unschedule ' + n; b.disabled = !n; };
+  window._dynClearLooseToggle = btnCount;
+  const looseHtml = loose.length ? `
+    <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12.5px;color:var(--text-muted);cursor:pointer;">
+      <input type="checkbox" id="capx-clear-loose" onchange="_dynClearLooseToggle()">
+      Also clear <b>${loose.length}</b> run${loose.length === 1 ? '' : 's'} scheduled by date only (hand-placed, not linked to any access window)
+    </label>` : '';
+  modal({
+    title: 'Clear schedule — review',
+    sub: escapeHtml(label) + ' · ' + onWindows.length + ' run' + (onWindows.length === 1 ? '' : 's') + ' on ' + byWin.size + ' window' + (byWin.size === 1 ? '' : 's') + (loose.length ? ' · ' + loose.length + ' date-only' : ''),
+    body:
+      '<div style="padding:8px 24px 16px;">' +
+        '<p style="font-size:13px;color:var(--gray-600);margin:0 0 10px;">These runs come off their access windows and back into the backlog — completed runs (Pass / Not Applicable) are left alone, and the windows themselves stay in the plan for re-allocation.</p>' +
+        '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
+          '<thead><tr style="background:var(--gray-50);">' +
+            '<th style="text-align:left;padding:6px 10px;">Window</th>' +
+            '<th style="text-align:left;padding:6px 10px;">Runs</th>' +
+            '<th style="text-align:left;padding:6px 10px;">Freed</th>' +
+            '<th style="text-align:left;padding:6px 10px;">Codes</th>' +
+          '</tr></thead><tbody>' + rowsHtml + '</tbody></table>' +
+        looseHtml +
+      '</div>',
+    footer: `
+      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-submit" id="capx-clear-commit" ${onWindows.length ? '' : 'disabled'} onclick="_dynClearScheduleCommit()">Unschedule ${onWindows.length}</button>
+    `,
+    size: 'large',
+  });
+}
+
+async function _dynClearScheduleCommit() {
+  const d = _dynPage._clearDraft;
+  if (!d) { closeModal(); return; }
+  const withLoose = document.getElementById('capx-clear-loose')?.checked;
+  const ids = [...d.winIds, ...(withLoose ? d.looseIds : [])];
+  closeModal();
+  if (!ids.length) return;
+  try {
+    await _dynBulkUnscheduleIds(ids);
+    _dynPage._clearDraft = null;
+    if (typeof toast === 'function') toast(`Unscheduled ${ids.length} — back in the backlog`, 'success');
+    _dynPage.loaded = false;
+    await _dynLoadAll();
+    _dynRenderPlanning();
+  } catch (e) { cxAlert(`Clear schedule failed: ${e.message}`); }
 }
 
 // Re-render only the results table (keeps the search input focused).
