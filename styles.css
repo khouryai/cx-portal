@@ -13348,6 +13348,19 @@ a:focus-visible {
   /* KPI chips wrap with breathing room */
   #page-dynamic-testing .dyn-kpi { margin-right: 8px; margin-bottom: 8px; }
 
+  /* Simulator: grid children default to min-width:auto, so a fixed-width
+     chart canvas forced the whole column past the viewport where the page's
+     overflow-x:hidden clipped it. Let columns shrink and cap canvases at
+     their container (max-width beats the inline width Chart.js sets). */
+  #page-dynamic-testing .simx-grid > div { min-width: 0; }
+  #page-dynamic-testing canvas { max-width: 100%; }
+
+  /* Access Plan "Add window" form: the inline 3-column grid crams zone +
+     two datetime pickers into ~120px each — stack them full-width instead
+     (!important is required to beat the inline style; on browsers without
+     :has() this simply keeps the current 3-column layout). */
+  div:has(> #zaw-zone) { grid-template-columns: 1fr !important; }
+
   /* Touch feedback: replace hover lifts with a press-down response */
   .form-submit:active, .v2-btn-primary:active, .result-btn:active,
   .m-fab:active, .m-sheet-link:active { transform: scale(0.97); }
