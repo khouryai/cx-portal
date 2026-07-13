@@ -39645,7 +39645,7 @@ async function renderDynamicTestingPage() {
     title: 'Dynamic Testing',
     sub: 'Manage executable test instances for dynamic-scope test cases.',
   }) + `
-    <div style="display:flex;gap:8px;margin-top:14px;">
+    <div class="dyn-tabs" style="display:flex;gap:8px;margin-top:14px;">
       <button class="hero-tab ${_dynPage.tab==='cases'?'active':''}" onclick="_dynTabSwitch('cases')">Test Cases</button>
       <button class="hero-tab ${_dynPage.tab==='instances'?'active':''}" onclick="_dynTabSwitch('instances')">Instances</button>
       <button class="hero-tab ${_dynPage.tab==='board'?'active':''}" onclick="_dynTabSwitch('board')">Planning Board</button>
@@ -39682,6 +39682,12 @@ async function renderDynamicTestingPage() {
       .dyn-cell-pill.lots{background:var(--warn-light);color:var(--warn);}
     </style>
   `;
+
+  // On phones the tab row scrolls horizontally — keep the active tab in view.
+  const tabRow = hero.querySelector('.dyn-tabs');
+  if (tabRow && tabRow.scrollWidth > tabRow.clientWidth) {
+    tabRow.querySelector('.hero-tab.active')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  }
 
   if (!_dynPage.loaded || _dynPage.tab === 'instances') {
     cont.innerHTML = cxSkeleton(6);

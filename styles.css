@@ -13306,6 +13306,48 @@ a:focus-visible {
     box-shadow: 0 -6px 18px -6px rgba(0,0,0,0.22);
   }
 
+  /* ── Dynamic Testing on a phone ──────────────────────────────────────
+     The module's own <style> block loads after this sheet, so page-id
+     prefixes keep these overrides winning on specificity. */
+
+  /* 8 hero tabs cannot fit a phone row — swipe through them instead
+     (the active tab is scrolled into view by renderDynamicTestingPage). */
+  #page-dynamic-testing .dyn-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 4px;
+    scroll-snap-type: x proximity;
+  }
+  #page-dynamic-testing .dyn-tabs::-webkit-scrollbar { display: none; }
+  #page-dynamic-testing .dyn-tabs .hero-tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    scroll-snap-align: start;
+  }
+
+  /* Toolbar controls share the narrow width instead of ragged wrapping */
+  #page-dynamic-testing .dyn-toolbar input,
+  #page-dynamic-testing .dyn-toolbar select,
+  #page-dynamic-testing .dyn-toolbar .capx-select {
+    flex: 1 1 150px;
+    min-width: 0;
+  }
+
+  /* Planning Board: keep row labels on screen while panning the wide grid
+     (labels already carry an opaque surface background). */
+  #page-dynamic-testing .dyn-board td.row-label,
+  #page-dynamic-testing .dyn-board th:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    box-shadow: 2px 0 6px -2px rgba(0,0,0,0.18);
+  }
+
+  /* KPI chips wrap with breathing room */
+  #page-dynamic-testing .dyn-kpi { margin-right: 8px; margin-bottom: 8px; }
+
   /* Touch feedback: replace hover lifts with a press-down response */
   .form-submit:active, .v2-btn-primary:active, .result-btn:active,
   .m-fab:active, .m-sheet-link:active { transform: scale(0.97); }
