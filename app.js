@@ -11805,9 +11805,12 @@ function _initPageLibraries() {
   setTimeout(() => {
     _initProductionVisualLayer();
 
-    // ── Tom Select: upgrade every .filter-select not yet initialised ──
+    // ── Tom Select: upgrade only selects that OPT IN via .ts-select ──
+    // Filter bars are plain native selects (canonical chevron look, consistent
+    // across every module); Tom Select is reserved for long searchable pickers
+    // (e.g. the document move target) and the Test Register's own init.
     if (typeof TomSelect !== 'undefined') {
-      document.querySelectorAll('select.filter-select').forEach(el => {
+      document.querySelectorAll('select.ts-select').forEach(el => {
         if (el.tomselect) return; // already live
         new TomSelect(el, {
           create: false,
@@ -49076,7 +49079,7 @@ function _docsOpenMove(kind, id) {
     body: `
       <div class="docs-form-row">
         <label>Destination folder</label>
-        <select id="doc-move-target" class="filter-select" style="width:100%;">
+        <select id="doc-move-target" class="filter-select ts-select" style="width:100%;">
           ${_docsFolderSelectOptions(curParent, isFolder ? id : null)}
         </select>
       </div>

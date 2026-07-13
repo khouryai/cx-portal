@@ -15128,3 +15128,38 @@ tr.docs-drop-hot td { background: #eef2ff !important; box-shadow: inset 0 0 0 2p
 .rd-rowlink:hover { text-decoration: underline; }
 .rd-bar-row { border-radius: 6px; transition: background 0.08s ease; }
 .rd-bar-row[onclick]:hover { background: var(--surface-2); }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   FILTER SELECTS — one canonical look program-wide (chevron arrow)
+   Every filter dropdown renders as a native select with the same border,
+   radius, padding and SVG chevron, matching the V2 filter rows. Tom Select
+   is opt-in (.ts-select) for long searchable pickers; the Test Register's
+   wrapped controls get the same chevron so they match too.
+   ════════════════════════════════════════════════════════════════════════════ */
+select.filter-select {
+  font-family: var(--f-ui);
+  font-size: 12.5px;
+  padding: 8px 26px 8px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23777' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E") no-repeat right 9px center;
+  -webkit-appearance: none; appearance: none;
+  cursor: pointer;
+}
+.am-filter-bar .ts-control,
+.tr-filter-toolbar .ts-control {
+  /* !important counters the global .ts-wrapper .ts-control { background: white !important } */
+  background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23777' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E") no-repeat right 9px center !important;
+  border-color: var(--border-strong) !important;
+  padding-right: 26px !important;
+}
+select.capx-select {
+  padding-right: 26px;
+  background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23777' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E") no-repeat right 9px center;
+  -webkit-appearance: none; appearance: none;
+  cursor: pointer;
+}
+.docs-filter-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23777' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+  background-position: right 9px center;
+}
