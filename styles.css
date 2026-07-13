@@ -13268,6 +13268,48 @@ a:focus-visible {
   .m-swipe-btn svg { width: 19px; height: 19px; }
   .m-swipe-view { background: var(--slate-800); color: var(--white); }
   .m-swipe-cam  { background: var(--hitachi-red); color: var(--white); }
+
+  /* ── Field-use ergonomics ─────────────────────────────────────────────
+     Gloved hands, sunlight, one thumb. Bigger targets on the controls the
+     field team actually hammers, and immediate touch feedback (hover
+     transforms never fire on touch). ──────────────────────────────────── */
+
+  /* Our pull-to-refresh owns the top-of-page pull; stop the browser's
+     native pull-to-refresh from double-firing a full reload over it. */
+  html, body { overscroll-behavior-y: contain; }
+
+  /* Form controls: comfortable 46px rows (16px font is set globally already) */
+  .page input:not([type="checkbox"]):not([type="radio"]),
+  .page select,
+  .page .form-submit,
+  .page .form-secondary,
+  .page .v2-btn-primary {
+    min-height: 46px;
+  }
+  .page .v2-btn-mini { min-height: 38px; padding-left: 12px; padding-right: 12px; }
+
+  /* Pass / Fail / Partial / Blocked — the most-used control in the field.
+     (!important matches the redesign block's own weight, which it must beat.) */
+  .result-btn { font-size: 17px !important; padding: 18px 12px !important; min-height: 58px; }
+
+  /* Intake action row (Back / Submit) stays under the thumb while the long
+     stepper form scrolls. Sticky must sit on the row, not the button — a
+     sticky child cannot escape its own parent's box. */
+  #page-field-intake .form-actions {
+    position: sticky;
+    bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+    z-index: 5;
+    background: var(--surface);
+    padding: 10px 12px;
+    margin-left: -12px; margin-right: -12px;
+    border-radius: 12px;
+    box-shadow: 0 -6px 18px -6px rgba(0,0,0,0.22);
+  }
+
+  /* Touch feedback: replace hover lifts with a press-down response */
+  .form-submit:active, .v2-btn-primary:active, .result-btn:active,
+  .m-fab:active, .m-sheet-link:active { transform: scale(0.97); }
+  * { -webkit-tap-highlight-color: transparent; }
 }
 
 /* Drawing viewer: own all touch gestures so we can pinch-zoom (otherwise the
