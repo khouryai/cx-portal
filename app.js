@@ -281,14 +281,24 @@ async function _dbInsert(table, rows) {
 
 // PATCH a single row; `match` is an object of { col: value } equality filters.
 // Returns the array of updated rows (Prefer: return=representation).
-async function _dbUpdate(table, patch, match) {
+// Optional optimistic-concurrency guard:
+//   _dbUpdate('delay_log', patch, { id }, { expect: { updated_at: row.updated_at } })
+// folds the expected column(s) into the WHERE clause. If the row was changed by
+// someone else since it was read, zero rows match and we throw a CONFLICT error
+// instead of silently applying a last-write-wins overwrite. Callers pick a
+// column they trust (a monotonic `version` is more robust than a timestamp).
+// Omitting `opts` keeps the original last-write-wins behaviour for every
+// existing caller.
+async function _dbUpdate(table, patch, match, opts = {}) {
   await _ensureFreshSession();
   const authHeader = _getAuthHeader();
-  const qs = Object.entries(match)
+  const guard = opts.expect || null;
+  const where = guard ? { ...match, ...guard } : match;
+  const qs = Object.entries(where)
     .map(([k, v]) => `${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`)
     .join('&');
   const url = `${SUPABASE_URL}/rest/v1/${table}?${qs}`;
-  console.log(`[_dbUpdate] PATCH ${table} WHERE ${JSON.stringify(match)} patch=${JSON.stringify(patch)}`);
+  console.log(`[_dbUpdate] PATCH ${table} WHERE ${JSON.stringify(where)} patch=${JSON.stringify(patch)}`);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
   const t0 = Date.now();
@@ -314,6 +324,12 @@ async function _dbUpdate(table, patch, match) {
     }
     const rows = await res.json();
     console.log(`[_dbUpdate] ✓ HTTP 200 in ${ms}ms — ${rows.length} row(s) updated`);
+    // Optimistic guard requested but nothing matched → the row moved under us.
+    if (guard && Array.isArray(rows) && rows.length === 0) {
+      const err = new Error(`${table} was changed by someone else — reload and try again`);
+      err.code = 'CONFLICT';
+      throw err;
+    }
     return rows;
   } catch (e) {
     clearTimeout(timer);

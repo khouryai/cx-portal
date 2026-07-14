@@ -54,6 +54,7 @@ const suites = [
   { file: "tools/test_dyn_alloc_pack.js", needs: [] },     // aggressive duration-aware window packing
   { file: "tools/test_dyn_whatif.js", needs: [] },         // what-if scope/per-DOW extension/metrics
   { file: "tools/test_dyn_simulator.js", needs: [] },      // schedule simulator engine (conceptual planning)
+  { file: "tools/test_db_update_guard.js", needs: [] }, // _dbUpdate optimistic-concurrency guard
   { file: "tools/test_perm_resolver.js", needs: [] },   // perms-admin effective-permission resolver
   { file: "tools/test_ui_can.js", needs: [] },          // UI permission gating + nav mapping integrity
   { file: "tools/test_team.js", needs: [] },            // team.js org helpers
