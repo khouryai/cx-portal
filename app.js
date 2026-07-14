@@ -16374,7 +16374,7 @@ _colRegister('assets', [
     case 'location': return `<td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.location || a.location_prefix || '—')}</td>`;
     case 'subsystem':return `<td style="font-size:12px;color:var(--gray-600);">${subDisplay}</td>`;
     case 'linked':   return `<td style="font-size:13px;">${links.length} link${links.length!==1?'s':''}</td>`;
-    case 'progress': return `<td>${total > 0 ? `<div style="display:flex;align-items:center;gap:8px;"><div style="flex:1;background:var(--surface-3);border-radius:4px;height:6px;min-width:60px;"><div style="width:${pct}%;background:${pct===100?'#16a34a':'#3b82f6'};height:6px;border-radius:4px;"></div></div><span style="font-size:11px;color:var(--gray-600);">${passCount}/${total}</span></div>` : `<span style="color:var(--gray-400);font-size:12px;">—</span>`}</td>`;
+    case 'progress': return `<td>${total > 0 ? `<div style="display:flex;align-items:center;gap:8px;"><div style="flex:1;background:var(--surface-3);border-radius:4px;height:6px;min-width:60px;"><div style="width:${pct}%;background:${pct===100?'var(--good)':'var(--accent-blue)'};height:6px;border-radius:4px;"></div></div><span style="font-size:11px;color:var(--gray-600);">${passCount}/${total}</span></div>` : `<span style="color:var(--gray-400);font-size:12px;">—</span>`}</td>`;
     default: return '<td>—</td>';
   }
 });
@@ -16818,63 +16818,178 @@ async function _trBulkLinkAssets() {
 }
 
 // ── CSV import ────────────────────────────────────────────────────────────────
-async function _assetImportCSV(file, onProgress) {
-  // Detect encoding: Excel saves CSVs as Windows-1252 which breaks UTF-8 for dashes etc.
+// Read a CSV file to text, detecting Excel's Windows-1252 encoding (breaks
+// UTF-8 for dashes etc.). Shared by the import and its dry-run preview.
+async function _assetReadCsvText(file) {
   const buf  = await file.arrayBuffer();
   const utf8 = new TextDecoder('utf-8', { fatal: false }).decode(buf);
-  const text = utf8.includes('�')
-    ? new TextDecoder('windows-1252').decode(buf)
-    : utf8;
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) { toast('CSV has no data rows', 'error'); return; }
+  return utf8.includes('�') ? new TextDecoder('windows-1252').decode(buf) : utf8;
+}
 
-  // Parse header: Device Type | Device Name | Location | Subsystem | Test Case Name
+// Parse CSV text into structured rows. Returns { ok, error } or { ok, rows }.
+// Header: Device Type | Device Name | Location | Subsystem | Test Case Name.
+function _assetParseCsvText(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return { ok: false, error: 'CSV has no data rows' };
   const header = lines[0].split(',').map(h => h.trim().toLowerCase());
   const iType  = header.findIndex(h => h.includes('type'));
   const iName  = header.findIndex(h => h.includes('device name') || (h.includes('name') && !h.includes('test')));
   const iLoc   = header.findIndex(h => h.includes('location'));
   const iSub   = header.findIndex(h => h.includes('subsystem'));
   const iTc    = header.findIndex(h => h.includes('test case') || h.includes('test name'));
-  if (iName < 0 || iTc < 0) { toast('CSV must have "Device Name" and "Test Case Name" columns', 'error'); return; }
+  if (iName < 0 || iTc < 0) return { ok: false, error: 'CSV must have "Device Name" and "Test Case Name" columns' };
+
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+    const deviceName = cols[iName] || '';
+    if (!deviceName) continue;
+    const subsystemRaw = iSub >= 0 ? (cols[iSub] || '') : '';
+    rows.push({
+      deviceName,
+      deviceType:   iType >= 0 ? (cols[iType] || '') : '',
+      location:     iLoc  >= 0 ? (cols[iLoc]  || '') : '',
+      subsystemRaw,
+      subsystems:   subsystemRaw.split('|').map(s => s.trim()).filter(Boolean),
+      tcCodes:      (cols[iTc] || '').split('|').map(t => t.trim()).filter(Boolean),
+      prefix:       _assetParsePrefix(deviceName),
+    });
+  }
+  return { ok: true, rows };
+}
+
+// Read-only simulation of an import: how many devices are new vs existing, how
+// many links will resolve, and which test cases can't be matched. Writes nothing.
+function _assetAnalyzeRows(rows) {
+  const newDevices = new Set(), existingDevices = new Set();
+  let resolved = 0, dup = 0;
+  const unresolved = [];
+  rows.forEach(r => {
+    const existing = ASSETS.find(a => a.name === r.deviceName && (a.location||'') === (r.location||''));
+    if (existing) existingDevices.add(existing.id);
+    else newDevices.add(`${r.deviceName}|||${r.location}`);
+    r.tcCodes.forEach(code => {
+      let parent = null;
+      for (const sub of (r.subsystems.length ? r.subsystems : [''])) {
+        parent = _assetFindParentRow(code, r.prefix, sub, r.location);
+        if (parent) break;
+      }
+      if (!parent) {
+        unresolved.push(`${r.deviceName} → "${code}" (loc: ${r.location||r.prefix||'?'}, sub: ${r.subsystemRaw||'any'})`);
+        return;
+      }
+      if (existing && ASSET_LINKS.some(l => l.asset_id === existing.id && String(l.parent_test_id) === String(parent.TestID))) {
+        dup++; return;
+      }
+      resolved++;
+    });
+  });
+  return {
+    totalRows: rows.length,
+    newDeviceCount: newDevices.size,
+    existingDeviceCount: existingDevices.size,
+    resolved, dup, unresolved,
+  };
+}
+
+// Dry-run: parse + analyze the chosen file and show a preview before committing.
+async function _assetPreviewCSV(file) {
+  if (!file) return;
+  let text;
+  try { text = await _assetReadCsvText(file); }
+  catch(e) { cxAlert('Could not read file: ' + e.message); return; }
+  const parsed = _assetParseCsvText(text);
+  if (!parsed.ok) { cxAlert('Import error: ' + parsed.error); return; }
+  if (!parsed.rows.length) { cxAlert('CSV has no data rows.'); return; }
+
+  const a = _assetAnalyzeRows(parsed.rows);
+  _assetPendingImportFile = file;
+
+  const card = (val, label, color) => `
+    <div style="flex:1;min-width:110px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 16px;">
+      <div style="font-size:22px;font-weight:700;color:${color};">${val}</div>
+      <div style="font-size:12px;color:var(--text-muted);">${label}</div>
+    </div>`;
+
+  modal({
+    title: 'Import Preview',
+    sub: escapeHtml(file.name),
+    body: `
+      <div style="padding:0 24px 8px;">
+        <p style="font-size:13px;color:var(--text-muted);margin:0 0 14px;">
+          Review before committing. Nothing has been written yet.
+        </p>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
+          ${card(a.totalRows, 'Data rows', 'var(--text)')}
+          ${card(a.newDeviceCount, 'New devices', 'var(--good)')}
+          ${card(a.existingDeviceCount, 'Existing devices', 'var(--accent-blue)')}
+          ${card(a.resolved, 'Links to create', 'var(--good)')}
+          ${a.dup ? card(a.dup, 'Already linked', 'var(--text-muted)') : ''}
+          ${a.unresolved.length ? card(a.unresolved.length, 'Unresolved', 'var(--bad)') : ''}
+        </div>
+        ${a.unresolved.length ? `
+          <div style="font-size:12px;font-weight:700;color:var(--bad);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">
+            Unresolved test cases (${a.unresolved.length}) — check codes &amp; location prefix
+          </div>
+          <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:8px 12px;background:var(--surface);">
+            ${a.unresolved.map(u => `<div style="font-size:12px;color:var(--text-muted);padding:2px 0;">• ${escapeHtml(u)}</div>`).join('')}
+          </div>` : `<p style="font-size:13px;color:var(--good);margin:0;">${icon('check')} All test-case links resolved.</p>`}
+      </div>`,
+    footer: `
+      <button class="form-secondary" onclick="_assetCancelImport()">Cancel</button>
+      <button class="admin-action-btn" onclick="_assetConfirmImport()" ${a.resolved === 0 ? 'disabled' : ''}>
+        Import ${a.resolved} link${a.resolved !== 1 ? 's' : ''}
+      </button>`,
+    size: 'large',
+  });
+}
+
+function _assetCancelImport() {
+  _assetPendingImportFile = null;
+  closeModal();
+}
+
+function _assetConfirmImport() {
+  const file = _assetPendingImportFile;
+  _assetPendingImportFile = null;
+  closeModal();
+  if (file) _assetHandleFile(file);
+}
+
+async function _assetImportCSV(file, onProgress) {
+  const text   = await _assetReadCsvText(file);
+  const parsed = _assetParseCsvText(text);
+  if (!parsed.ok) { toast(parsed.error, 'error'); return; }
+  const rows = parsed.rows;
+  if (!rows.length) { toast('CSV has no data rows', 'error'); return; }
 
   // Create import batch
   const [batch] = await _dbInsert('asset_import_batches', [{
     imported_by: currentRoleUser?.name || 'admin',
     filename: file.name,
-    asset_count: lines.length - 1,
+    asset_count: rows.length,
   }]);
 
   let linkedCount = 0, skippedTc = [], skippedDup = 0;
   const affectedParents = new Set();
 
-  const dataRows = lines.length - 1;
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-    const deviceType   = iType >= 0 ? (cols[iType] || '') : '';
-    const deviceName   = cols[iName] || '';
-    const location     = iLoc >= 0  ? (cols[iLoc]  || '') : '';
-    const subsystemRaw = iSub >= 0  ? (cols[iSub]  || '') : '';
-    // Support pipe-separated subsystems e.g. "DCS|COMMS"
-    const subsystems   = subsystemRaw.split('|').map(s => s.trim()).filter(Boolean);
-    const tcRaw        = cols[iTc]  || '';
-    if (!deviceName) continue;
-    if (onProgress) onProgress(i, dataRows, `Processing: ${deviceName}`);
-
-    const prefix = _assetParsePrefix(deviceName);
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (onProgress) onProgress(i + 1, rows.length, `Processing: ${r.deviceName}`);
 
     // Upsert asset by (name, location) — subsystem is intentionally omitted from the unique
     // key so one physical device can link to test cases across multiple subsystems.
     let [assetRow] = await _dbUpsert('assets', [{
-      device_type:     deviceType || null,
-      name:            deviceName,
-      location_prefix: prefix     || null,
-      location:        location   || null,
+      device_type:     r.deviceType || null,
+      name:            r.deviceName,
+      location_prefix: r.prefix     || null,
+      location:        r.location   || null,
       subsystem:       null,        // cleared — subsystem lives on the linked test cases now
       import_batch_id: batch.id,
     }], 'name,location');
     if (!assetRow) {
       // Fallback: look up existing by name + location
-      const found = ASSETS.find(a => a.name === deviceName && (a.location||'') === (location||''));
+      const found = ASSETS.find(a => a.name === r.deviceName && (a.location||'') === (r.location||''));
       if (found) assetRow = found; else continue;
     }
     // Sync local ASSETS array
@@ -16882,21 +16997,20 @@ async function _assetImportCSV(file, onProgress) {
     if (aIdx >= 0) ASSETS[aIdx] = assetRow; else ASSETS.push(assetRow);
 
     // Link each test case name (pipe-separated), try each subsystem
-    const tcCodes = tcRaw.split('|').map(t => t.trim()).filter(Boolean);
-    for (const code of tcCodes) {
+    for (const code of r.tcCodes) {
       let parentRow = null;
-      for (const sub of (subsystems.length ? subsystems : [''])) {
-        parentRow = _assetFindParentRow(code, prefix, sub, location);
+      for (const sub of (r.subsystems.length ? r.subsystems : [''])) {
+        parentRow = _assetFindParentRow(code, r.prefix, sub, r.location);
         if (parentRow) break;
       }
-      if (!parentRow) { skippedTc.push(`${deviceName} → "${code}" (loc: ${location||prefix||'?'}, sub: ${subsystemRaw||'any'})`); continue; }
+      if (!parentRow) { skippedTc.push(`${r.deviceName} → "${code}" (loc: ${r.location||r.prefix||'?'}, sub: ${r.subsystemRaw||'any'})`); continue; }
       try {
         await _assetLinkToParent(assetRow, parentRow);
         affectedParents.add(String(parentRow.TestID));
         linkedCount++;
       } catch(e) {
         if (String(e.message).includes('duplicate') || String(e.message).includes('409')) skippedDup++;
-        else skippedTc.push(`${deviceName} → ${code} (${e.message})`);
+        else skippedTc.push(`${r.deviceName} → ${code} (${e.message})`);
       }
     }
   }
@@ -17116,9 +17230,79 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
 }
 
 // ── Admin Asset page state ────────────────────────────────────────────────────
-let _assetFilter = { search: '', type: '', prefix: '', sub: '' };
+let _assetFilter = { search: '', type: '', prefix: '', sub: '', quick: '' };
+let _assetSort = { col: 'name', dir: 'asc' }; // sortable asset table column + direction
 let _assetManagePanelId = null; // asset id whose link-panel is open (inline)
 let _assetSelected = new Set(); // asset ids checked for bulk ops
+let _assetPendingImportFile = null; // file staged by the import dry-run preview
+
+// ── Shared filter/sort helpers (single source of truth for the asset table) ────
+function _assetLinkCount(a) {
+  return ASSET_LINKS.filter(l => l.asset_id === a.id).length;
+}
+function _assetProgress(a) {
+  const childRows = TI.filter(r => r.AssetId === a.id);
+  const total = childRows.length;
+  const pass  = childRows.filter(r => r.Status === 'Pass').length;
+  return {
+    total, pass,
+    pct: total ? Math.round((pass / total) * 100) : 0,
+    hasFailing: childRows.some(r => r.Status === 'Fail'),
+  };
+}
+function _assetMatchesFilter(a) {
+  const s = _assetFilter.search.toLowerCase();
+  if (s && !a.name.toLowerCase().includes(s) && !(a.device_type||'').toLowerCase().includes(s)) return false;
+  if (_assetFilter.type   && a.device_type     !== _assetFilter.type)   return false;
+  if (_assetFilter.prefix && a.location_prefix !== _assetFilter.prefix) return false;
+  if (_assetFilter.sub    && a.subsystem        !== _assetFilter.sub)    return false;
+  if (_assetFilter.quick === 'unlinked' && _assetLinkCount(a) > 0)    return false;
+  if (_assetFilter.quick === 'failing'  && !_assetProgress(a).hasFailing) return false;
+  return true;
+}
+function _assetSortValue(a, col) {
+  switch (col) {
+    case 'type':      return (a.device_type||'').toLowerCase();
+    case 'location':  return (a.location||a.location_prefix||'').toLowerCase();
+    case 'subsystem': return (a.subsystem||'').toLowerCase();
+    case 'linked':    return _assetLinkCount(a);
+    case 'progress':  return _assetProgress(a).pct;
+    case 'name':
+    default:          return (a.name||'').toLowerCase();
+  }
+}
+// Filter + sort in one place — used by the table render and Select-all so the
+// two can never drift out of sync.
+function _assetFiltered() {
+  const out = ASSETS.filter(_assetMatchesFilter);
+  const { col, dir } = _assetSort;
+  const mul = dir === 'desc' ? -1 : 1;
+  out.sort((x, y) => {
+    const vx = _assetSortValue(x, col), vy = _assetSortValue(y, col);
+    if (vx < vy) return -1 * mul;
+    if (vx > vy) return  1 * mul;
+    return (x.name||'').localeCompare(y.name||''); // stable tiebreak
+  });
+  return out;
+}
+function _assetSetSort(col) {
+  if (_assetSort.col === col) _assetSort.dir = _assetSort.dir === 'asc' ? 'desc' : 'asc';
+  else { _assetSort.col = col; _assetSort.dir = 'asc'; }
+  renderAdminAssets();
+}
+// Sortable header row for the asset table (mirrors _colHeaders but clickable)
+function _assetColHeaders() {
+  const vis = _colGetVisible('assets');
+  const reg = _colRegistry['assets'];
+  if (!reg) return '';
+  return vis.map(c => {
+    const def   = reg.defs.find(d => d.id === c.id);
+    const label = def ? def.label : c.id;
+    const on    = _assetSort.col === c.id;
+    const arrow = on ? (_assetSort.dir === 'asc' ? ' ↑' : ' ↓') : '';
+    return `<th style="cursor:pointer;user-select:none;white-space:nowrap;" onclick="_assetSetSort('${c.id}')" title="Sort by ${escapeHtml(label)}">${escapeHtml(label)}<span style="color:var(--primary);font-weight:700;">${arrow}</span></th>`;
+  }).join('');
+}
 
 function renderAdminAssets() {
   const root = document.getElementById('admin-assets-content');
@@ -17188,15 +17372,20 @@ function _assetPageHTML() {
   const allSubs  = [...new Set(TI.map(r => r.Subsystem).filter(Boolean))].sort();
   const allLocs  = [...new Set(TI.map(r => r.Location).filter(Boolean))].sort();
 
-  const filtered = ASSETS.filter(a => {
-    const s = _assetFilter.search.toLowerCase();
-    if (s && !a.name.toLowerCase().includes(s) && !(a.device_type||'').toLowerCase().includes(s)) return false;
-    if (_assetFilter.type   && a.device_type     !== _assetFilter.type)   return false;
-    if (_assetFilter.prefix && a.location_prefix !== _assetFilter.prefix) return false;
-    if (_assetFilter.sub    && a.subsystem        !== _assetFilter.sub)    return false;
-    return true;
-  });
-  const assetHasFilters = _assetFilter.search || _assetFilter.type || _assetFilter.prefix || _assetFilter.sub;
+  const filtered = _assetFiltered();
+  const assetHasFilters = _assetFilter.search || _assetFilter.type || _assetFilter.prefix || _assetFilter.sub || _assetFilter.quick;
+
+  // Quick-filter chip counts (computed against the full asset list)
+  const unlinkedCount = ASSETS.filter(a => _assetLinkCount(a) === 0).length;
+  const failingCount  = ASSETS.filter(a => _assetProgress(a).hasFailing).length;
+  const _assetChip = (v, label, count) => {
+    const on = _assetFilter.quick === v;
+    return `<button onclick="_assetSetFilter('quick','${v}')"
+      style="font-size:12px;padding:5px 12px;border-radius:14px;cursor:pointer;font-weight:${on?'600':'500'};
+             border:1px solid ${on?'var(--primary)':'var(--border)'};
+             background:${on?'var(--primary)':'var(--surface)'};
+             color:${on?'var(--white)':'var(--text-muted)'};">${label}${count!=null?` (${count})`:''}</button>`;
+  };
 
   return `
     <div style="display:flex;gap:20px;margin-bottom:24px;flex-wrap:wrap;align-items:flex-start;">
@@ -17210,7 +17399,7 @@ function _assetPageHTML() {
             Multiple test cases in one row: separate with <code>|</code> in the Test Case Name cell.
           </p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <input type="file" id="asset-csv-input" accept=".csv" style="display:none;" onchange="_assetHandleFile(this.files[0])">
+            <input type="file" id="asset-csv-input" accept=".csv" style="display:none;" onchange="_assetPreviewCSV(this.files[0]); this.value=''">
             ${uiCan('assets','import') ? `<button class="admin-action-btn" onclick="document.getElementById('asset-csv-input').click()">${icon('folder')} Choose CSV File</button>` : ''}
             <button class="form-secondary" onclick="_assetDownloadTemplate()">${icon('download')} Template</button>
             <button class="form-secondary" onclick="_assetExportCSV()" title="Export all assets and their linked test cases">${icon('upload')} Export CSV</button>
@@ -17278,27 +17467,34 @@ function _assetPageHTML() {
       <span style="font-size:13px;color:var(--gray-500);">${filtered.length} asset${filtered.length!==1?'s':''}</span>
     </div>
 
+    <!-- Quick-filter chips -->
+    <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+      ${_assetChip('', 'All', ASSETS.length)}
+      ${_assetChip('unlinked', 'Unlinked', unlinkedCount)}
+      ${_assetChip('failing', 'Has failing tests', failingCount)}
+    </div>
+
     <!-- Bulk action bar -->
     ${_assetSelected.size > 0 ? `
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#1e293b;color:var(--white);padding:10px 18px;border-radius:8px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--slate-800);color:var(--white);padding:10px 18px;border-radius:8px;margin-bottom:12px;">
         <span style="font-size:13px;font-weight:600;">${_assetSelected.size} asset${_assetSelected.size!==1?'s':''} selected</span>
-        <span style="height:24px;border-left:1px solid #ffffff33;align-self:center;"></span>
-        <span style="font-size:12px;color:#94a3b8;white-space:nowrap;">Set Device Type:</span>
+        <span style="height:24px;border-left:1px solid var(--slate-600);align-self:center;"></span>
+        <span style="font-size:12px;color:var(--slate-300);white-space:nowrap;">Set Device Type:</span>
         <input id="am-bulk-type" list="am-bulk-type-list" class="form-input"
           placeholder="Type or choose…"
-          style="font-size:12px;max-width:190px;background:#334155;color:var(--white);border-color:#475569;caret-color:var(--white);">
+          style="font-size:12px;max-width:190px;background:var(--slate-700);color:var(--white);border-color:var(--slate-600);caret-color:var(--white);">
         <datalist id="am-bulk-type-list">
           ${types.map(t => `<option value="${escapeHtml(t)}"></option>`).join('')}
         </datalist>
         <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_assetBulkEditField('device_type','am-bulk-type')">Apply</button>
-        <span style="height:24px;border-left:1px solid #ffffff33;align-self:center;"></span>
-        <span style="font-size:12px;color:#94a3b8;white-space:nowrap;">Set Location:</span>
-        <select id="am-bulk-loc" class="form-input" style="font-size:12px;max-width:160px;background:#334155;color:var(--white);border-color:#475569;">
+        <span style="height:24px;border-left:1px solid var(--slate-600);align-self:center;"></span>
+        <span style="font-size:12px;color:var(--slate-300);white-space:nowrap;">Set Location:</span>
+        <select id="am-bulk-loc" class="form-input" style="font-size:12px;max-width:160px;background:var(--slate-700);color:var(--white);border-color:var(--slate-600);">
           <option value="">— choose —</option>
           ${allLocs.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('')}
         </select>
         <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_assetBulkEditField('location','am-bulk-loc')">Apply</button>
-        <span style="height:24px;border-left:1px solid #ffffff33;align-self:center;"></span>
+        <span style="height:24px;border-left:1px solid var(--slate-600);align-self:center;"></span>
         ${uiCan('assets','bulk_delete') ? `<button class="admin-action-btn" style="background:var(--bad);font-size:12px;" onclick="_assetBulkDelete()">${icon('trash')} Delete</button>` : ''}
         <button class="btn-ghost-dark" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_assetClearSelection()">Clear</button>
       </div>` : ''}
@@ -17309,7 +17505,7 @@ function _assetPageHTML() {
         <table class="data-table">
           <thead><tr>
             <th style="width:36px;"><input type="checkbox" title="Select all" onchange="_assetSelectAll(this.checked)"></th>
-            ${_colHeaders('assets')}
+            ${_assetColHeaders()}
             <th style="width:160px;">Actions
               <button aria-label="Configure columns" onclick="_colOpenEditor('assets',renderAdminAssets)" title="Configure columns"
                 style="font-size:11px;padding:2px 6px;margin-left:4px;border:1px solid var(--gray-300);border-radius:4px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;">${icon('settings')}</button>
@@ -17503,7 +17699,7 @@ function _assetSetFilter(key, val) {
   renderAdminAssets();
 }
 function _assetClearFilters() {
-  _assetFilter = { search: '', type: '', prefix: '', sub: '' };
+  _assetFilter = { search: '', type: '', prefix: '', sub: '', quick: '' };
   renderAdminAssets();
 }
 
@@ -17659,15 +17855,7 @@ function _assetToggleSelect(id, checked) {
 
 function _assetSelectAll(checked) {
   // Select/deselect all currently visible (filtered) assets
-  const filtered = ASSETS.filter(a => {
-    const s = _assetFilter.search.toLowerCase();
-    if (s && !a.name.toLowerCase().includes(s) && !(a.device_type||'').toLowerCase().includes(s)) return false;
-    if (_assetFilter.type   && a.device_type     !== _assetFilter.type)   return false;
-    if (_assetFilter.prefix && a.location_prefix !== _assetFilter.prefix) return false;
-    if (_assetFilter.sub    && a.subsystem        !== _assetFilter.sub)    return false;
-    return true;
-  });
-  filtered.forEach(a => { if (checked) _assetSelected.add(a.id); else _assetSelected.delete(a.id); });
+  _assetFiltered().forEach(a => { if (checked) _assetSelected.add(a.id); else _assetSelected.delete(a.id); });
   renderAdminAssets();
 }
 
