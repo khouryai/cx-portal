@@ -15247,3 +15247,76 @@ select.capx-select {
   #dir-table-wrap.data-card,
   .admin-section .data-card { overflow: visible; }
 }
+
+/* ============================================================================
+   Admin Directory search bar (Users tab). Sits above the user table; the icon
+   is absolutely placed inside the rounded input.
+   ============================================================================ */
+.dir-search-bar { position: relative; margin-bottom: 14px; }
+.dir-search-ico {
+  position: absolute;
+  left: 12px; top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  color: var(--text-subtle);
+  pointer-events: none;
+}
+.dir-search-ico svg { width: 16px; height: 16px; }
+.dir-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 14px 10px 36px;
+  font-size: 14px;
+  font-family: var(--f-ui);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  transition: border-color var(--dur-fast) var(--easing), box-shadow var(--dur-fast) var(--easing);
+}
+.dir-search-input::placeholder { color: var(--text-subtle); }
+.dir-search-input:focus {
+  outline: none;
+  border-color: var(--hitachi-red);
+  box-shadow: var(--ring);
+}
+
+/* ============================================================================
+   Planning Admin — mobile. The sub-module tab strip and the dense audit/review
+   tables were unreadable on a phone: the tab row overflowed the viewport and
+   the wide tables were clipped by their card. Here the tab strip scrolls
+   horizontally with the action buttons stacked beneath, the KPI mini-grid
+   drops to two columns, and every table scrolls horizontally inside its card
+   at a readable minimum width instead of being squeezed or cut off.
+   ============================================================================ */
+@media (max-width: 720px), (orientation: landscape) and (max-height: 540px), (pointer: coarse) {
+  .ap-plan-tabbar {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 12px;
+  }
+  .ap-plan-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .ap-plan-tabs::-webkit-scrollbar { display: none; }
+  .ap-plan-tabs .admin-tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .ap-plan-tabactions { justify-content: flex-start; flex-wrap: wrap; }
+  .ap-plan-tabactions > button { flex: 1 1 auto; }
+
+  /* KPI strip: 5-across inline grid -> 2 columns. */
+  #page-admin-planning .kpi-grid-mini { grid-template-columns: repeat(2, 1fr) !important; }
+
+  /* Let every planning-admin card scroll its table instead of clipping it
+     (several cards carry an inline overflow:hidden, hence !important). */
+  #page-admin-planning .data-card {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  #page-admin-planning .data-card > table,
+  #page-admin-planning .data-card .data-table { min-width: 620px; }
+}

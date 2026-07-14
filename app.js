@@ -4220,6 +4220,16 @@ function renderAdminFieldConfig() {
 // permission tabs — so a user sees only what they're allowed to manage.
 let _dirTab = 'users';          // 'users' | 'templates' | 'overrides'
 let _dirPermsLoaded = false;    // perms data (_paLoad) cached for this page visit
+let _dirUsers = [];             // last-fetched profiles (kept so search filters without refetch)
+let _dirTemplates = [];         // last-fetched template {id,name} list for the row selects
+let _dirSearch = '';            // directory search term (name / email / company / subsystem)
+
+// Shared viewport check \u2014 mirrors the mobile-chrome media query used across
+// styles.css and mobile.js. Used to drop UI that can't work on a phone.
+function _cxIsMobile() {
+  try { return window.matchMedia('(max-width: 720px), (orientation: landscape) and (max-height: 540px), (pointer: coarse)').matches; }
+  catch (e) { return false; }
+}
 
 function renderAdminDirectory() {
   const root = document.getElementById('admin-directory-content');
@@ -4230,9 +4240,16 @@ function renderAdminDirectory() {
     root.innerHTML = cxEmpty({ icon: 'lock', title: 'Not authorized', message: 'You don\u2019t have access to this admin area.' });
     return;
   }
+  // The Permission Templates editor is a dense per-module \u00d7 action-grant matrix
+  // that can't be used on a phone \u2014 omit it on mobile (assign templates from a
+  // desktop; the Users tab still shows each user's assigned template).
+  const mobile = _cxIsMobile();
   const tabs = [];
   if (canDir)   tabs.push({ id: 'users',     label: 'Users' });
-  if (canPerms) tabs.push({ id: 'templates', label: 'Permission Templates' }, { id: 'overrides', label: 'Users & Overrides' });
+  if (canPerms) {
+    if (!mobile) tabs.push({ id: 'templates', label: 'Permission Templates' });
+    tabs.push({ id: 'overrides', label: 'Users & Overrides' });
+  }
   if (!tabs.some(t => t.id === _dirTab)) _dirTab = tabs[0].id;
   root.innerHTML = `
     <div class="admin-tabs">
@@ -5920,11 +5937,24 @@ function _adminDirectoryHTML() {
         </div>
         <button class="admin-action-btn" onclick="openInviteUserModal()">+ Invite User</button>
       </div>
+      <div class="dir-search-bar">
+        <span class="dir-search-ico" aria-hidden="true">${icon('search')}</span>
+        <input id="dir-search" class="dir-search-input" type="search" autocomplete="off"
+          placeholder="Search users by name, email, company, or subsystem…"
+          value="${escapeHtml(_dirSearch)}" oninput="_dirOnSearch(this.value)" aria-label="Search users">
+      </div>
       <div class="data-card" id="dir-table-wrap" style="padding:0;">
         ${cxSkeleton(4)}
       </div>
     </div>
   `;
+}
+
+// Debounced search: filter the already-fetched directory in place (keeps caret).
+function _dirOnSearch(v) {
+  _dirSearch = v || '';
+  clearTimeout(window._dirSearchT);
+  window._dirSearchT = setTimeout(_renderDirectoryRows, 140);
 }
 
 async function _loadDirectoryUsers() {
@@ -5937,11 +5967,35 @@ async function _loadDirectoryUsers() {
     ]);
     const { data, error } = prof;
     if (error) throw error;
-    const dirTemplates = tpls.data || [];
-    if (!data || !data.length) {
+    _dirTemplates = tpls.data || [];
+    _dirUsers = data || [];
+    if (!_dirUsers.length) {
       wrap.innerHTML = `<div style="padding:32px;text-align:center;color:var(--gray-400);font-size:13px;">No users yet — click + Invite User to add one.</div>`;
       return;
     }
+    _renderDirectoryRows();
+  } catch (err) {
+    console.error('_loadDirectoryUsers error:', err);
+    wrap.innerHTML = cxError({ message: 'Error loading users: ' + (err.message || err), retry: '_loadDirectoryUsers()' });
+  }
+}
+
+// Render (or re-render) the directory table body from _dirUsers, filtered by
+// _dirSearch. Split out from the fetch so search re-filters without a round-trip.
+function _renderDirectoryRows() {
+  const wrap = document.getElementById('dir-table-wrap');
+  if (!wrap) return;
+  const dirTemplates = _dirTemplates;
+  const q = _dirSearch.trim().toLowerCase();
+  const data = !q ? _dirUsers : _dirUsers.filter(u => {
+    const tplName = (dirTemplates.find(t => t.id === u.permission_template_id) || {}).name || '';
+    return [u.full_name, u.email, u.company, u.subsystem, tplName, (u.role === 'admin' ? 'admin global' : '')]
+      .some(f => (f || '').toLowerCase().includes(q));
+  });
+  if (!data.length) {
+    wrap.innerHTML = `<div style="padding:32px;text-align:center;color:var(--gray-400);font-size:13px;">No users match “${escapeHtml(_dirSearch)}”.</div>`;
+    return;
+  }
   wrap.innerHTML = `
     <table class="dir-table">
       <thead>
@@ -6008,10 +6062,6 @@ async function _loadDirectoryUsers() {
       </tbody>
     </table>
   `;
-  } catch (err) {
-    console.error('_loadDirectoryUsers error:', err);
-    wrap.innerHTML = cxError({ message: 'Error loading users: ' + (err.message || err), retry: '_loadDirectoryUsers()' });
-  }
 }
 
 async function updateProfileTemplate(id, tplId) {
@@ -30268,13 +30318,13 @@ function renderAdminPlanning() {
   ];
 
   body.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:2px solid var(--gray-200);padding-bottom:0;">
-      <div style="display:flex;gap:0;">
+    <div class="ap-plan-tabbar" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:2px solid var(--gray-200);padding-bottom:0;">
+      <div class="ap-plan-tabs" style="display:flex;gap:0;">
         ${tabs.map(([id, label]) => `
           <button class="admin-tab${_adminPlanningTab === id ? ' active' : ''}" data-ap-tab="${id}" onclick="_adminPlanningSetTab('${id}')">${label}</button>
         `).join('')}
       </div>
-      <div style="display:flex;gap:8px;">
+      <div class="ap-plan-tabactions" style="display:flex;gap:8px;">
         <button class="form-secondary" onclick="showPage('lookahead')">${icon('calendar')} Lookahead</button>
         <button class="form-secondary" onclick="loadPlanningData(true).then(renderAdminPlanning);">↻ Refresh</button>
       </div>
