@@ -677,6 +677,7 @@ function showPage(name) {
   if (name === 'locations')        initLocations();
   if (name === 'team')             { if (typeof renderOrg === 'function') renderOrg(); }
   if (name === 'field-intake')     renderFieldIntake();
+  if (name === 'daily-log-history') { _dlLoaded = false; renderDailyLogHistory(); }
   if (name === 'test-register')    renderTestRegister();
   if (name === 'tcv')              renderTCV();
   if (name === 'test-reporting')   renderTestReporting();
@@ -7634,6 +7635,309 @@ async function submitIntakeFinal() {
     console.error('[submitIntakeFinal] error:', err);
     cxAlert('Submit failed: ' + (err?.message || JSON.stringify(err)));
     restoreBtn();
+  }
+}
+
+// ==========================================================================
+// DAILY LOG HISTORY — review + correct submitted delay_log entries
+// ==========================================================================
+// The Field Intake wizard writes one delay_log row per end-of-day submission,
+// but until now those rows were only read for aggregate KPIs and the delay
+// report. This view surfaces every submitted log for review and lets an admin
+// (or the original submitter) correct the human-authored fields. Edits go
+// through _dbUpdate, which the delay_log audit trigger records.
+let DAILY_LOGS  = [];      // delay_log rows, newest first
+let _dlLoaded   = false;   // finished a load attempt this visit?
+let _dlLoadErr  = null;    // last load error message
+let _dlFilter   = { search: '', from: '', to: '', sub: '', submitter: '', delayOnly: false };
+let _dlExpanded = null;    // log id whose detail row is open
+
+async function loadDailyLogs() {
+  _dlLoadErr = null;
+  try {
+    DAILY_LOGS = await _fetchAnon('delay_log?select=*&order=log_date.desc,submitted_at.desc') || [];
+  } catch (e) {
+    _dlLoadErr = e.message || 'Failed to load daily logs';
+    console.warn('[loadDailyLogs] failed:', e.message);
+  }
+  _dlLoaded = true;
+}
+
+// Admins can correct any log; everyone else only their own submissions.
+function _dlCanEdit(log) {
+  if (currentRoleUser?.role === 'admin') return true;
+  return !!(currentRoleUser?.name && log.submitted_by === currentRoleUser.name);
+}
+
+function _dlReload() { _dlLoaded = false; renderDailyLogHistory(); }
+
+function renderDailyLogHistory() {
+  const root = document.getElementById('daily-log-history-content');
+  if (!root) return;
+  if (!_dlLoaded) {
+    root.innerHTML = cxSkeleton(6);
+    loadDailyLogs().then(renderDailyLogHistory);
+    return;
+  }
+  if (_dlLoadErr) {
+    root.innerHTML = cxError({ message: 'Could not load daily logs: ' + _dlLoadErr, retry: '_dlReload()' });
+    return;
+  }
+  _htmlPreserveFocus(root, _dlHistoryHTML());
+}
+
+function _dlFiltered() {
+  const s = _dlFilter.search.toLowerCase();
+  return DAILY_LOGS.filter(l => {
+    if (_dlFilter.from && (l.log_date || '') < _dlFilter.from) return false;
+    if (_dlFilter.to   && (l.log_date || '') > _dlFilter.to)   return false;
+    if (_dlFilter.sub  && (l.subsystem || '') !== _dlFilter.sub) return false;
+    if (_dlFilter.submitter && (l.submitted_by || '') !== _dlFilter.submitter) return false;
+    if (_dlFilter.delayOnly && String(l.delay_occurred || '').toLowerCase() !== 'yes') return false;
+    if (s) {
+      const hay = [l.location, l.subsystem, l.submitted_by, l.overall_notes, l.next_day_plan, l.delay_notes, l.delay_category]
+        .map(x => String(x || '').toLowerCase()).join(' ');
+      if (!hay.includes(s)) return false;
+    }
+    return true;
+  });
+}
+
+function _dlSetFilter(key, val) { _dlFilter[key] = val; renderDailyLogHistory(); }
+function _dlClearFilters() {
+  _dlFilter = { search: '', from: '', to: '', sub: '', submitter: '', delayOnly: false };
+  renderDailyLogHistory();
+}
+function _dlToggle(id) { _dlExpanded = _dlExpanded === id ? null : id; renderDailyLogHistory(); }
+
+function _dlHistoryHTML() {
+  const logs        = _dlFiltered();
+  const subs        = [...new Set(DAILY_LOGS.map(l => l.subsystem).filter(Boolean))].sort();
+  const submitters  = [...new Set(DAILY_LOGS.map(l => l.submitted_by).filter(Boolean))].sort();
+  const hasFilters  = _dlFilter.search || _dlFilter.from || _dlFilter.to || _dlFilter.sub || _dlFilter.submitter || _dlFilter.delayOnly;
+  const fieldDays   = new Set(DAILY_LOGS.map(l => l.log_date).filter(Boolean)).size;
+  const delayDays   = DAILY_LOGS.filter(l => String(l.delay_occurred || '').toLowerCase() === 'yes').length;
+  const totLogged   = DAILY_LOGS.reduce((sum, l) => sum + (parseInt(l.total_tests_logged, 10) || 0), 0);
+
+  return `
+    <!-- Summary Stats -->
+    <div style="display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap;">
+      ${[
+        { label: 'Total Logs',   val: DAILY_LOGS.length },
+        { label: 'Field Days',   val: fieldDays },
+        { label: 'Delay Days',   val: delayDays },
+        { label: 'Tests Logged', val: totLogged },
+      ].map(s => `
+        <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:8px;padding:14px 20px;min-width:120px;">
+          <div style="font-size:22px;font-weight:700;color:var(--primary);">${s.val}</div>
+          <div style="font-size:12px;color:var(--gray-500);">${s.label}</div>
+        </div>`).join('')}
+    </div>
+
+    <!-- Filter Bar -->
+    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+      <input id="dl-search" class="form-input" style="max-width:220px;" placeholder="Search notes, location…"
+        value="${escapeHtml(_dlFilter.search)}" oninput="_dlSetFilter('search',this.value)">
+      <label style="font-size:12px;color:var(--gray-500);display:flex;align-items:center;gap:4px;">From
+        <input type="date" class="form-input" style="max-width:150px;" value="${escapeHtml(_dlFilter.from)}" onchange="_dlSetFilter('from',this.value)"></label>
+      <label style="font-size:12px;color:var(--gray-500);display:flex;align-items:center;gap:4px;">To
+        <input type="date" class="form-input" style="max-width:150px;" value="${escapeHtml(_dlFilter.to)}" onchange="_dlSetFilter('to',this.value)"></label>
+      <select class="form-input" style="max-width:150px;" onchange="_dlSetFilter('sub',this.value)">
+        <option value="">All Subsystems</option>
+        ${subs.map(x => `<option value="${escapeHtml(x)}" ${_dlFilter.sub===x?'selected':''}>${escapeHtml(x)}</option>`).join('')}
+      </select>
+      <select class="form-input" style="max-width:170px;" onchange="_dlSetFilter('submitter',this.value)">
+        <option value="">All Submitters</option>
+        ${submitters.map(x => `<option value="${escapeHtml(x)}" ${_dlFilter.submitter===x?'selected':''}>${escapeHtml(x)}</option>`).join('')}
+      </select>
+      <label style="font-size:13px;color:var(--gray-600);display:flex;align-items:center;gap:5px;cursor:pointer;">
+        <input type="checkbox" ${_dlFilter.delayOnly?'checked':''} onchange="_dlSetFilter('delayOnly',this.checked)"> Delays only</label>
+      ${hasFilters ? `<button class="filter-clear" onclick="_dlClearFilters()">Reset</button>` : ''}
+      <span style="font-size:13px;color:var(--gray-500);">${logs.length} log${logs.length!==1?'s':''}</span>
+    </div>
+
+    <!-- Log Table -->
+    <div class="admin-section">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>Date</th><th>Location</th><th>Subsystem</th><th>Submitted By</th>
+            <th>Tests</th><th>Pass / Fail</th><th>Delay</th><th style="width:150px;">Actions</th>
+          </tr></thead>
+          <tbody>
+            ${logs.length ? logs.map(_dlRowHTML).join('') : `
+              <tr><td colspan="8" style="text-align:center;color:var(--gray-400);padding:32px;">
+                ${DAILY_LOGS.length ? 'No daily logs match your filters.' : 'No daily logs submitted yet.'}
+              </td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function _dlRowHTML(l) {
+  const isOpen   = _dlExpanded === l.id;
+  const delayYes = String(l.delay_occurred || '').toLowerCase() === 'yes';
+  const editable = _dlCanEdit(l);
+  const row = `
+    <tr style="${isOpen ? 'background:var(--info-light);' : ''}">
+      <td style="font-weight:600;white-space:nowrap;">${_fmtDate(l.log_date)}</td>
+      <td style="font-size:13px;">${escapeHtml(l.location || '—')}</td>
+      <td style="font-size:13px;">${escapeHtml(l.subsystem || '—')}</td>
+      <td style="font-size:13px;">${escapeHtml(l.submitted_by || '—')}</td>
+      <td style="font-size:13px;">${parseInt(l.total_tests_logged, 10) || 0}</td>
+      <td style="font-size:13px;"><span style="color:var(--good);font-weight:600;">${parseInt(l.total_passed, 10) || 0}</span> / <span style="color:var(--bad);font-weight:600;">${parseInt(l.total_failed, 10) || 0}</span></td>
+      <td>${delayYes
+        ? `<span class="badge badge-warn" title="${escapeHtml(l.delay_category || '')}">${escapeHtml(l.delay_category || 'Delay')}</span>`
+        : `<span style="color:var(--gray-400);font-size:12px;">—</span>`}</td>
+      <td>
+        <button class="form-secondary tr-mini-btn${isOpen ? ' admin-action-btn' : ''}" onclick="_dlToggle('${l.id}')">${isOpen ? 'Close' : 'View'}</button>
+        ${editable ? `<button title="Edit" aria-label="Edit daily log" class="form-secondary tr-mini-btn" onclick="_dlOpenEdit('${l.id}')">${icon('edit')}</button>` : ''}
+      </td>
+    </tr>`;
+  const panel = isOpen ? `
+    <tr><td colspan="8" style="padding:0;border-bottom:2px solid var(--primary);">
+      <div style="padding:4px 0 12px;">${_dlDetailHTML(l)}</div>
+    </td></tr>` : '';
+  return row + panel;
+}
+
+function _dlDetailHTML(l) {
+  const num   = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+  const stat  = (label, val) => `
+    <div style="min-width:120px;">
+      <div style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px;">${label}</div>
+      <div style="font-size:14px;font-weight:600;color:var(--text);">${val}</div>
+    </div>`;
+  const note  = (label, val) => val ? `
+    <div style="margin-top:10px;">
+      <div style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">${label}</div>
+      <div style="font-size:13px;color:var(--text);white-space:pre-wrap;">${escapeHtml(val)}</div>
+    </div>` : '';
+  const delayYes = String(l.delay_occurred || '').toLowerCase() === 'yes';
+  return `
+    <div style="background:var(--info-light);border-top:1px solid var(--info-border);padding:14px 18px;">
+      <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:4px;">
+        ${stat('Testers', num(l.number_of_testers) || 1)}
+        ${stat('Idle Hours', num(l.idle_hours))}
+        ${stat('Tests Logged', parseInt(l.total_tests_logged, 10) || 0)}
+        ${stat('Pass', parseInt(l.total_passed, 10) || 0)}
+        ${stat('Fail', parseInt(l.total_failed, 10) || 0)}
+        ${stat('Blocked', parseInt(l.total_blocked, 10) || 0)}
+        ${stat('In Progress', parseInt(l.total_partial, 10) || 0)}
+        ${stat('Submitted', l.submitted_at ? _fmtDate(l.submitted_at) : '—')}
+      </div>
+      ${delayYes ? `
+        <div style="margin-top:8px;padding:8px 12px;background:var(--warn-light);border:1px solid var(--warn-border);border-radius:6px;">
+          <span style="font-size:12px;font-weight:700;color:var(--warn);">DELAY · ${escapeHtml(l.delay_category || '—')} · ${num(l.delay_duration)} h</span>
+          ${l.delay_notes ? `<div style="font-size:13px;color:var(--text);margin-top:4px;white-space:pre-wrap;">${escapeHtml(l.delay_notes)}</div>` : ''}
+        </div>` : ''}
+      ${note('Overall Day Notes', l.overall_notes)}
+      ${note('Plan for Next Day', l.next_day_plan)}
+      ${_dlCanEdit(l) ? `<div style="margin-top:12px;"><button class="admin-action-btn" onclick="_dlOpenEdit('${l.id}')">${icon('edit')} Edit this log</button></div>` : ''}
+    </div>`;
+}
+
+// ── Edit a submitted log ──────────────────────────────────────────────────────
+// Only the human-authored fields are editable. Test counts stay read-only —
+// they're derived from actual test_results rows, so hand-editing would desync
+// them from the source of truth.
+function _dlOpenEdit(id) {
+  const l = DAILY_LOGS.find(x => String(x.id) === String(id));
+  if (!l) return;
+  if (!_dlCanEdit(l)) { toast('You can only edit your own logs', 'error'); return; }
+  const delayCats = _fsCfg('delay_category');
+  const delayYes  = String(l.delay_occurred || '').toLowerCase() === 'yes';
+  modal({
+    title: `Edit Daily Log — ${_fmtDate(l.log_date)}`,
+    sub: [l.location, l.subsystem, l.submitted_by].filter(Boolean).join(' · '),
+    body: `
+      <div style="padding:0 4px;">
+        <div class="form-grid">
+          <div class="form-field">
+            <label>Number of Testers</label>
+            <input id="dle-testers" type="number" min="1" class="form-input" value="${escapeHtml(String(l.number_of_testers ?? 1))}">
+          </div>
+          <div class="form-field">
+            <label>Idle Hours</label>
+            <input id="dle-idle" type="number" min="0" step="0.5" class="form-input" value="${escapeHtml(String(l.idle_hours ?? 0))}">
+          </div>
+          <div class="form-field">
+            <label>Delay Occurred?</label>
+            <select id="dle-delay" class="form-input" onchange="_dlEditToggleDelay()">
+              <option value="No"  ${!delayYes ? 'selected' : ''}>No</option>
+              <option value="Yes" ${delayYes ? 'selected' : ''}>Yes</option>
+            </select>
+          </div>
+          <div class="form-field" id="dle-cat-wrap" style="${delayYes ? '' : 'display:none;'}">
+            <label>Delay Category</label>
+            <select id="dle-cat" class="form-input">
+              <option value="">Select category…</option>
+              ${delayCats.map(c => `<option ${l.delay_category === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-field" id="dle-dur-wrap" style="${delayYes ? '' : 'display:none;'}">
+            <label>Delay Hours</label>
+            <input id="dle-dur" type="number" min="0" step="0.5" class="form-input" value="${escapeHtml(String(l.delay_duration ?? 0))}">
+          </div>
+          <div class="form-field form-field-full" id="dle-dnotes-wrap" style="${delayYes ? '' : 'display:none;'}">
+            <label>Delay Notes</label>
+            <textarea id="dle-dnotes" rows="2" class="form-input">${escapeHtml(l.delay_notes || '')}</textarea>
+          </div>
+          <div class="form-field form-field-full">
+            <label>Overall Day Notes</label>
+            <textarea id="dle-notes" rows="3" class="form-input">${escapeHtml(l.overall_notes || '')}</textarea>
+          </div>
+          <div class="form-field form-field-full">
+            <label>Plan for Next Day</label>
+            <textarea id="dle-next" rows="2" class="form-input">${escapeHtml(l.next_day_plan || '')}</textarea>
+          </div>
+        </div>
+        <p style="font-size:12px;color:var(--gray-500);margin-top:8px;">
+          Test counts (${parseInt(l.total_tests_logged, 10) || 0} logged) are derived from recorded results and can't be edited here.
+        </p>
+      </div>`,
+    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+             <button class="admin-action-btn" onclick="_dlSaveEdit('${l.id}')">Save changes</button>`,
+    size: 'large',
+  });
+}
+
+function _dlEditToggleDelay() {
+  const yes = document.getElementById('dle-delay')?.value === 'Yes';
+  ['dle-cat-wrap', 'dle-dur-wrap', 'dle-dnotes-wrap'].forEach(wid => {
+    const el = document.getElementById(wid);
+    if (el) el.style.display = yes ? '' : 'none';
+  });
+}
+
+async function _dlSaveEdit(id) {
+  const l = DAILY_LOGS.find(x => String(x.id) === String(id));
+  if (!l) return;
+  if (!_dlCanEdit(l)) { toast('Not permitted', 'error'); return; }
+  const delayYes = document.getElementById('dle-delay')?.value === 'Yes';
+  const patch = {
+    number_of_testers: parseInt(document.getElementById('dle-testers')?.value, 10) || 1,
+    idle_hours:        parseFloat(document.getElementById('dle-idle')?.value) || 0,
+    delay_occurred:    delayYes ? 'Yes' : 'No',
+    delay_category:    delayYes ? (document.getElementById('dle-cat')?.value || null) : null,
+    delay_duration:    delayYes ? (parseFloat(document.getElementById('dle-dur')?.value) || 0) : 0,
+    delay_notes:       delayYes ? ((document.getElementById('dle-dnotes')?.value || '').trim() || null) : null,
+    overall_notes:     (document.getElementById('dle-notes')?.value || '').trim() || null,
+    next_day_plan:     (document.getElementById('dle-next')?.value || '').trim() || null,
+  };
+  if (delayYes && !patch.delay_category) { toast('Pick a delay category for the delay', 'error'); return; }
+  try {
+    await _dbUpdate('delay_log', patch, { id: l.id });
+    Object.assign(l, patch);
+    closeModal();
+    renderDailyLogHistory();
+    if (typeof logAudit === 'function') {
+      logAudit('Daily Log Edited', `${_fmtDate(l.log_date)} · ${[l.location, l.subsystem].filter(Boolean).join(' / ')}`, 'Corrected via Log History');
+    }
+    toast('Daily log updated', 'success');
+  } catch (e) {
+    toast('Save failed: ' + e.message, 'error');
   }
 }
 

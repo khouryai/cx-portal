@@ -199,6 +199,7 @@ const PAGE_MODULE = {
   'dashboard': 'overview',
   'activities': 'test_register', 'lineitems': 'test_register',
   'field-intake': 'test_register', 'test-register': 'test_register', 'tcv': 'test_register',
+  'daily-log-history': 'test_register',
   'test-reporting': 'test_reporting',
   'punch-workflow': 'punch_list',
   'rma': 'rma',
