@@ -666,15 +666,15 @@ function _paUserRowHTML(u) {
   const panel = _paUserPanel[u.id];
   return `
     <tr ${u.is_active ? '' : 'style="opacity:.55;"'}>
-      <td><div class="user-avatar-sm">${escapeHtml(initials)}</div></td>
-      <td style="font-weight:500;">${escapeHtml(name)}<div style="font-weight:400;font-size:11px;color:var(--text-muted);">${escapeHtml(u.email || '')}</div></td>
-      <td style="font-size:12px;">
+      <td class="dir-cell-avatar"><div class="user-avatar-sm">${escapeHtml(initials)}</div></td>
+      <td class="dir-cell-primary" style="font-weight:500;">${escapeHtml(name)}<div style="font-weight:400;font-size:11px;color:var(--text-muted);">${escapeHtml(u.email || '')}</div></td>
+      <td class="dir-cell" data-label="Global admin" style="font-size:12px;">
         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap;" title="Global admins bypass templates: every action on every module">
           <input type="checkbox" ${isGlobalAdmin ? 'checked' : ''} onchange="_paSetGlobalAdmin('${u.id}',this.checked)">
           <span style="color:${isGlobalAdmin ? 'var(--bad)' : 'var(--text-muted)'};font-weight:600;">${isGlobalAdmin ? 'all access' : 'off'}</span>
         </label>
       </td>
-      <td>
+      <td class="dir-cell" data-label="Template">
         <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:150px;" aria-label="Permission template for ${escapeHtml(name)}"
           ${isGlobalAdmin ? 'title="Assigned but ignored while role is admin"' : ''}
           onchange="_paAssignTemplate('${u.id}',this.value)">
@@ -682,13 +682,13 @@ function _paUserRowHTML(u) {
           ${_paTemplates.map(t => `<option value="${t.id}" ${u.permission_template_id === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}
         </select>
       </td>
-      <td style="font-size:12px;">${nOv ? `${nOv} module${nOv === 1 ? '' : 's'}` : '<span style="color:var(--text-muted);">none</span>'}</td>
-      <td>
+      <td class="dir-cell" data-label="Overrides" style="font-size:12px;">${nOv ? `${nOv} module${nOv === 1 ? '' : 's'}` : '<span style="color:var(--text-muted);">none</span>'}</td>
+      <td class="dir-cell-actions">
         <button class="form-secondary" style="font-size:11px;padding:4px 8px;" onclick="_paToggleUserPanel('${u.id}','overrides')">${panel === 'overrides' ? 'Close' : 'Overrides'}</button>
         <button class="form-secondary" style="font-size:11px;padding:4px 8px;" onclick="_paToggleUserPanel('${u.id}','effective')">${panel === 'effective' ? 'Close' : 'Effective'}</button>
       </td>
     </tr>
-    ${panel ? `<tr><td colspan="6" style="background:var(--surface);padding:14px 18px;">${panel === 'overrides' ? _paOverridesPanelHTML(u) : _paEffectivePanelHTML(u)}</td></tr>` : ''}
+    ${panel ? `<tr class="dir-row-panel"><td class="dir-cell-panel" colspan="6" style="background:var(--surface);padding:14px 18px;">${panel === 'overrides' ? _paOverridesPanelHTML(u) : _paEffectivePanelHTML(u)}</td></tr>` : ''}
   `;
 }
 

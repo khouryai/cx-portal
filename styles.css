@@ -15163,3 +15163,87 @@ select.capx-select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23777' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
   background-position: right 9px center;
 }
+
+/* ============================================================================
+   Mobile: reflow the admin directory / permissions user tables into stacked
+   cards. On a phone these .dir-table grids are far wider than the viewport,
+   and the .data-card that holds them clips (overflow:hidden) with no scroll —
+   so Template / Company / Subsystem / Status / actions columns were simply
+   unreachable. Here each row becomes a labelled card so every field shows and
+   stays operable. Matches the mobile-chrome media query used elsewhere.
+   ============================================================================ */
+@media (max-width: 720px), (orientation: landscape) and (max-height: 540px), (pointer: coarse) {
+  .dir-table,
+  .dir-table tbody,
+  .dir-table tr,
+  .dir-table td { display: block; width: 100%; }
+
+  .dir-table thead { display: none; }
+
+  /* Each data row -> a card. */
+  .dir-table tbody tr:not(.dir-row-panel) {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    margin: 12px;
+    padding: 4px 2px;
+    box-shadow: var(--shadow-sm);
+  }
+  .dir-table tbody tr:not(.dir-row-panel):hover td { background: transparent; }
+
+  /* Decorative avatar cell is redundant once the name headlines the card. */
+  .dir-table td.dir-cell-avatar { display: none; }
+
+  /* Card header: the person's name/email, left-aligned, no field label. */
+  .dir-table td.dir-cell-primary {
+    padding: 10px 14px 8px;
+    border-bottom: 1px solid var(--gray-100);
+    font-size: 15px;
+  }
+
+  /* Labelled field rows: LABEL on the left, control/value on the right. */
+  .dir-table td.dir-cell {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--gray-100);
+    min-height: 40px;
+  }
+  .dir-table td.dir-cell::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-subtle);
+  }
+  /* Let selects/controls take the remaining width and stop forcing overflow. */
+  .dir-table td.dir-cell > select,
+  .dir-table td.dir-cell > .form-input {
+    flex: 1 1 auto;
+    min-width: 0 !important;
+    max-width: 62%;
+  }
+
+  /* Actions cell: full-width buttons at the foot of the card. */
+  .dir-table td.dir-cell-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 14px;
+  }
+  .dir-table td.dir-cell-actions > button { flex: 1 1 auto; }
+  .dir-table tbody tr td:last-child { border-bottom: none; }
+
+  /* Expanded overrides/effective panel spans the whole width, flush. */
+  .dir-table tr.dir-row-panel,
+  .dir-table td.dir-cell-panel { padding: 0; }
+  .dir-table td.dir-cell-panel { border-top: 1px solid var(--border); }
+
+  /* The card itself no longer needs to clip a too-wide table. */
+  #dir-table-wrap.data-card,
+  .admin-section .data-card { overflow: visible; }
+}

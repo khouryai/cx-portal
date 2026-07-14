@@ -5964,10 +5964,10 @@ async function _loadDirectoryUsers() {
             ? `<span title="User hasn't set their own password yet" style="margin-left:6px;font-size:10px;font-weight:700;background:var(--warn-light);color:var(--warn);border:1px solid var(--warn-border);border-radius:4px;padding:1px 5px;vertical-align:middle;">TEMP PW</span>`
             : '';
           return `<tr>
-            <td><div class="user-avatar-sm">${escapeHtml(initials)}</div></td>
-            <td style="font-weight:500;">${escapeHtml(name)}${tempBadge}</td>
-            <td style="color:var(--gray-600);font-size:12px;">${escapeHtml(u.email||'')}</td>
-            <td>
+            <td class="dir-cell-avatar"><div class="user-avatar-sm">${escapeHtml(initials)}</div></td>
+            <td class="dir-cell-primary" style="font-weight:500;">${escapeHtml(name)}${tempBadge}</td>
+            <td class="dir-cell" data-label="Email" style="color:var(--gray-600);font-size:12px;">${escapeHtml(u.email||'')}</td>
+            <td class="dir-cell" data-label="Access">
               <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:150px;" aria-label="Permission template for ${escapeHtml(name)}"
                 ${u.role==='admin' ? 'title="Assigned but bypassed while Global admin is on"' : ''}
                 onchange="updateProfileTemplate('${u.id}',this.value)">
@@ -5979,27 +5979,27 @@ async function _loadDirectoryUsers() {
                 <span style="color:${u.role==='admin'?'var(--bad)':'var(--gray-500)'};font-weight:600;">Global admin</span>
               </label>
             </td>
-            <td>
+            <td class="dir-cell" data-label="Company">
               <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:120px;" aria-label="Company for ${escapeHtml(name)}"
                 onchange="updateProfileCompany('${u.id}',this.value)">
                 <option value="" ${!u.company?'selected':''}>— none —</option>
                 ${COMPANIES_LIST.map(c=>`<option value="${c}" ${u.company===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}
               </select>
             </td>
-            <td>
+            <td class="dir-cell" data-label="Subsystem">
               <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:130px;"
                 onchange="updateProfileSubsystem('${u.id}',this.value)">
                 <option value="" ${!u.subsystem?'selected':''}>All subsystems</option>
                 ${SUBSYSTEMS_LIST.map(s=>`<option value="${s}" ${u.subsystem===s?'selected':''}>${s}</option>`).join('')}
               </select>
             </td>
-            <td>
+            <td class="dir-cell" data-label="Status">
               <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;white-space:nowrap;">
                 <input type="checkbox" ${u.is_active?'checked':''} onchange="updateProfileActive('${u.id}',this.checked)">
                 <span style="color:${u.is_active?'var(--good)':'var(--gray-500)'};">${u.is_active?'Active':'Inactive'}</span>
               </label>
             </td>
-            <td>
+            <td class="dir-cell-actions">
               <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--red-600);"
                 onclick="deleteUserConfirm('${u.id}','${escapeHtml(u.full_name).replace(/'/g,'')}')">Remove</button>
             </td>
