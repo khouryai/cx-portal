@@ -2660,6 +2660,7 @@ async function loadTestItems() {
         AttemptNumber:     r.attempt_number || 1,
         IsLatestAttempt:   r.is_latest_attempt !== false,
         RegressionFlagged: r.regression_flagged === true,
+        UpdatedAt:         r.updated_at || null,
       }));
       console.log(`Loaded ${TI.length} test items from Supabase`);
     }
@@ -12389,6 +12390,7 @@ function renderTestRegister() {
 
 function _testRegisterHTML() {
   if (_amDrilldownKey) return _amDrilldownHTML(_amDrilldownKey);
+  if (_trView === 'blockers') return _trBlockersShellHTML();
 
   const isAdmin = currentRoleUser?.role === 'admin';
   const all = _amGetActivities();
@@ -12522,6 +12524,7 @@ function _testRegisterHTML() {
 
   return `
     <div class="admin-section tr-register-shell">
+      ${_trViewBarHTML()}
 
       <!-- Status chips -->
       <div class="v2-chips-row">
@@ -13845,6 +13848,235 @@ function _amClearFilters() {
   _amFilters = { phase:'', location:'', subsystem: userSub, status:'', search:'' };
   _amSelected.clear();
   _reRenderTR();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TEST REGISTER — view mode (Activities | Blockers), saved filter views, and
+// the Blockers & Failures triage list. The blocker/fail reasons and attempts
+// are already captured per case; this surfaces them as one actionable list.
+// ═══════════════════════════════════════════════════════════════════════════
+let _trView = 'activities';    // 'activities' | 'blockers'
+let _trBlockersSub = 'all';    // 'all' | 'Blocked' | 'Fail'
+
+function _trSetView(v) { _trView = v; _amDrilldownKey = null; _reRenderTR(); }
+function _trSetBlockersSub(v) { _trBlockersSub = (_trBlockersSub === v ? 'all' : v); _reRenderTR(); }
+
+// Normalise legacy status spellings to the current vocabulary.
+function _trNormStatus(s) { return ({ Failed: 'Fail', Passed: 'Pass', Complete: 'Pass', Future: 'Not Started' })[s] || s || 'Not Started'; }
+
+// Days a case has sat at its current state (proxy: last row update). null = unknown.
+function _trAgeDays(r) {
+  const d = r.UpdatedAt || (r.Status === 'Pass' ? r.CompletedDate : null);
+  const t = d ? new Date(d).getTime() : NaN;
+  return isNaN(t) ? null : Math.max(0, Math.floor((Date.now() - t) / 86400000));
+}
+
+// ── Saved filter views (per user, localStorage) ────────────────────────────
+function _trViewsKey() { return 'cx_tr_views_' + (currentRoleUser?.id || currentRoleUser?.email || 'anon'); }
+function _trLoadViews() { try { return JSON.parse(localStorage.getItem(_trViewsKey()) || '[]'); } catch (e) { return []; } }
+function _trStoreViews(a) { try { localStorage.setItem(_trViewsKey(), JSON.stringify(a)); } catch (e) { /* private mode */ } }
+function _trFiltersActive() {
+  const lockedSub = currentRoleUser?.subsystem || '';
+  return !!(_amFilters.phase || _amFilters.location || (_amFilters.subsystem && _amFilters.subsystem !== lockedSub) || _amFilters.status || _amFilters.search);
+}
+async function _trSaveCurrentView() {
+  if (!_trFiltersActive()) { toast('Apply a filter or search first, then save it as a view', 'info'); return; }
+  const name = await cxPrompt('Name this view — its filters & search will be saved:', '');
+  if (!name || !name.trim()) return;
+  const views = _trLoadViews();
+  views.push({ id: 'v' + Date.now(), name: name.trim().slice(0, 40), filters: { ..._amFilters } });
+  _trStoreViews(views);
+  toast('View “' + name.trim() + '” saved', 'success');
+  _reRenderTR();
+}
+function _trApplyView(id) {
+  const v = _trLoadViews().find(x => x.id === id);
+  if (!v) return;
+  const userSub = currentRoleUser?.subsystem || '';
+  _amFilters = { phase: '', location: '', subsystem: '', status: '', search: '', ...(v.filters || {}) };
+  if (userSub) _amFilters.subsystem = userSub;   // never override the subsystem lock
+  _amSelected.clear();
+  _reRenderTR();
+}
+async function _trDeleteView(id, ev) {
+  if (ev) ev.stopPropagation();
+  _trStoreViews(_trLoadViews().filter(x => x.id !== id));
+  _reRenderTR();
+}
+
+// ── Blockers & Failures list (latest static attempts, Blocked or Fail) ──────
+function _trBlockersList() {
+  const userSub = currentRoleUser?.subsystem || '';
+  let rows = _latestTI().filter(r =>
+    String(r.ScopeType || 'static').toLowerCase() !== 'dynamic' &&
+    ['Blocked', 'Fail'].includes(_trNormStatus(r.Status)));
+  rows = rows.filter(r =>
+    (!_amFilters.phase     || r.Phase     === _amFilters.phase)     &&
+    (!_amFilters.location  || r.Location  === _amFilters.location)  &&
+    (!_amFilters.subsystem || r.Subsystem === _amFilters.subsystem) &&
+    (!userSub || r.Subsystem === userSub));
+  const q = (_amFilters.search || '').trim().toLowerCase();
+  if (q) rows = rows.filter(r => [r.TestCaseCode, r.TestName, r.Activity, r.BlockedReason, r.FailedReason]
+    .some(f => (f || '').toLowerCase().includes(q)));
+  return rows;
+}
+
+// Count of open blockers ignoring filters — drives the Blockers tab badge.
+function _trBlockersTotal() {
+  const userSub = currentRoleUser?.subsystem || '';
+  return _latestTI().filter(r =>
+    String(r.ScopeType || 'static').toLowerCase() !== 'dynamic' &&
+    ['Blocked', 'Fail'].includes(_trNormStatus(r.Status)) &&
+    (!userSub || r.Subsystem === userSub)).length;
+}
+
+// Inline status change from the triage row. Fail/Blocked prompts for a reason.
+async function _trBlockerStatusChange(testId, status) {
+  if (typeof uiCan === 'function' && !uiCan('test_register', 'edit')) { toast('You do not have permission to change test status', 'error'); _reRenderTR(); return; }
+  let reason = '';
+  if (status === 'Fail' || status === 'Blocked') {
+    reason = await cxPrompt(`Reason this test is ${status === 'Fail' ? 'failing' : 'blocked'}:`, '');
+    if (reason === null) { _reRenderTR(); return; }   // cancelled — revert the select
+  }
+  try {
+    await _updateTestItemStatus(testId, status, { reason });
+    toast('Status updated', 'success');
+    _reRenderTR();
+  } catch (e) { toast('Update failed: ' + (e.message || e), 'error'); }
+}
+
+// The Blockers & Failures triage shell (replaces the activities table when the
+// view toggle is on Blockers).
+function _trBlockersShellHTML() {
+  const userSub = currentRoleUser?.subsystem || '';
+  if (userSub && _amFilters.subsystem !== userSub) _amFilters.subsystem = userSub;
+
+  // Filter option lists drawn from the blocker universe so we only offer values
+  // that actually have a blocker/failure behind them.
+  const universe = _latestTI().filter(r =>
+    String(r.ScopeType || 'static').toLowerCase() !== 'dynamic' &&
+    ['Blocked', 'Fail'].includes(_trNormStatus(r.Status)) &&
+    (!userSub || r.Subsystem === userSub));
+  const phases     = [...new Set(universe.map(r => r.Phase).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const locations  = [...new Set(universe.map(r => r.Location).filter(Boolean))].sort();
+  const subsystems = [...new Set(universe.map(r => r.Subsystem).filter(Boolean))].sort();
+
+  const rows = _trBlockersList();
+  const nBlocked = rows.filter(r => _trNormStatus(r.Status) === 'Blocked').length;
+  const nFailed  = rows.filter(r => _trNormStatus(r.Status) === 'Fail').length;
+  let shown = _trBlockersSub === 'all' ? rows.slice() : rows.filter(r => _trNormStatus(r.Status) === _trBlockersSub);
+  // Oldest / most-stuck at the top (nulls last).
+  shown.sort((a, b) => { const da = _trAgeDays(a), db = _trAgeDays(b); return (db == null ? -1 : db) - (da == null ? -1 : da); });
+
+  const canEdit  = typeof uiCan !== 'function' || uiCan('test_register', 'edit');
+  const canPunch = typeof uiCan !== 'function' || uiCan('punch_list', 'create');
+  const statuses = ['Not Started', 'In Progress', 'Pass', 'Fail', 'Blocked', 'Not Applicable', 'Future Test'];
+  const hasFilters = _trFiltersActive();
+
+  const ageCell = (r) => {
+    const d = _trAgeDays(r);
+    if (d == null) return '<span style="color:var(--gray-400);">—</span>';
+    const col = d > 14 ? 'var(--bad)' : d > 7 ? 'var(--warn)' : 'var(--text-muted)';
+    return `<span style="color:${col};font-weight:600;" title="Days since last update">${d}d</span>`;
+  };
+
+  const bodyRows = shown.map(r => {
+    const stt = _trNormStatus(r.Status);
+    const isFail = stt === 'Fail';
+    const reason = (isFail ? r.FailedReason : r.BlockedReason) || '';
+    const key = [r.Phase || '', r.Location || '', r.Subsystem || '', r.Activity || ''].join('||');
+    const statusCell = canEdit
+      ? `<select class="tr-blocker-status ${isFail ? 'is-fail' : 'is-blocked'}" onchange="_trBlockerStatusChange('${escapeHtml(String(r.TestID))}',this.value)" aria-label="Change status">
+           ${statuses.map(s => `<option value="${s}" ${s === stt ? 'selected' : ''}>${s}</option>`).join('')}
+         </select>`
+      : (isFail ? '<span class="badge badge-failed">Fail</span>' : '<span class="badge badge-open">Blocked</span>');
+    return `<tr>
+      <td style="font-family:var(--f-mono);font-size:12px;white-space:nowrap;">${escapeHtml(r.TestCaseCode || r.TestID || '—')}</td>
+      <td style="min-width:180px;">${escapeHtml(r.TestName || '—')}</td>
+      <td style="font-size:12px;color:var(--text-muted);min-width:150px;">${escapeHtml(r.Activity || '—')}<div style="font-size:11px;color:var(--text-subtle);">${escapeHtml([r.Phase, r.Location, r.Subsystem].filter(Boolean).join(' · ') || '—')}</div></td>
+      <td style="white-space:nowrap;">${statusCell}</td>
+      <td style="min-width:200px;font-size:12px;color:var(--text);">${reason ? escapeHtml(reason) : '<span style="color:var(--gray-400);">No reason recorded</span>'}</td>
+      <td style="text-align:center;white-space:nowrap;">${ageCell(r)}</td>
+      <td style="white-space:nowrap;text-align:right;">
+        <div class="tr-blocker-rowacts">
+          ${canPunch && isFail ? `<button class="form-secondary tr-mini-btn" onclick="openPunchFromTestCase('${escapeHtml(String(r.TestID))}')" title="Raise a punch item linked to this failed test">${icon('plus')} Punch</button>` : ''}
+          <button class="admin-action-btn tr-mini-btn" onclick="_amOpenDrilldown('${escapeHtml(key)}')" title="Open this test's activity">Open</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  const subChip = (val, label, n, tone) => `<span class="v2-chip ${tone} ${_trBlockersSub === val ? 'active' : ''}" onclick="_trSetBlockersSub('${val}')"><span class="dot"></span>${label} <span class="n">${n}</span></span>`;
+
+  return `
+    <div class="admin-section tr-register-shell">
+      ${_trViewBarHTML()}
+
+      <div class="v2-filter-row">
+        <div class="v2-search-wrap">
+          <span class="icon">${icon('search')}</span>
+          <input type="text" id="tr-search-input" class="tr-search" placeholder="Search code, name, activity, reason…"
+            value="${escapeHtml(_amFilters.search || '')}"
+            oninput="clearTimeout(window._trSearchTimer);window._trSearchTimer=setTimeout(()=>_amSetFilter('search',this.value),260)">
+        </div>
+        <select onchange="_amSetFilter('phase',this.value)" aria-label="Filter by phase">
+          <option value="">All Phases</option>
+          ${phases.map(p => `<option value="${escapeHtml(p)}" ${_amFilters.phase === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
+        </select>
+        <select onchange="_amSetFilter('location',this.value)" aria-label="Filter by location">
+          <option value="">All Locations</option>
+          ${locations.map(l => `<option value="${escapeHtml(l)}" ${_amFilters.location === l ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
+        </select>
+        ${userSub
+          ? `<span class="filter-locked-tag" data-tippy-content="Auto-filtered to your assigned subsystem">${icon('pin')} ${escapeHtml(userSub)}</span>`
+          : `<select onchange="_amSetFilter('subsystem',this.value)" aria-label="Filter by subsystem">
+              <option value="">All Subsystems</option>
+              ${subsystems.map(s => `<option value="${escapeHtml(s)}" ${_amFilters.subsystem === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+            </select>`}
+        ${hasFilters ? `<button class="v2-btn-mini" onclick="_amClearFilters()">${icon('x')} Reset</button>` : ''}
+        <span class="count"><b>${shown.length}</b> shown</span>
+      </div>
+
+      <div class="v2-chips-row">
+        ${subChip('all', 'All', rows.length, 'is-muted')}
+        ${subChip('Blocked', 'Blocked', nBlocked, 'is-warn')}
+        ${subChip('Fail', 'Failed', nFailed, 'is-bad')}
+      </div>
+
+      <div class="data-card tr-register-table-card" style="border-radius:0;border-left:0;border-right:0;">
+        <div class="table-wrap">
+          <table class="data-table tr-blockers-table">
+            <thead><tr>
+              <th>Code</th><th>Test Case</th><th>Activity</th><th>Status</th><th>Reason</th>
+              <th style="text-align:center;">Age</th><th style="text-align:right;">Actions</th>
+            </tr></thead>
+            <tbody>
+              ${shown.length ? bodyRows : `<tr><td colspan="7" style="text-align:center;padding:48px 16px;color:var(--text-muted);">
+                <div style="font-size:26px;margin-bottom:8px;">${icon('check-circle')}</div>
+                ${rows.length ? 'No ' + (_trBlockersSub === 'Fail' ? 'failed' : 'blocked') + ' tests in this slice.' : 'Nothing is blocked or failing' + (hasFilters ? ' in the current filter.' : ' right now. ')}
+              </td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>`;
+}
+
+// Shared top bar: Activities | Blockers switcher + saved-view chips.
+function _trViewBarHTML() {
+  const nBlock = _trBlockersTotal();
+  const views = _trLoadViews();
+  return `
+    <div class="tr-viewbar">
+      <div class="rd-segmented" role="group" aria-label="Register view">
+        <button class="rd-seg ${_trView === 'activities' ? 'active' : ''}" onclick="_trSetView('activities')">${icon('clipboard')} Activities</button>
+        <button class="rd-seg ${_trView === 'blockers' ? 'active' : ''}" onclick="_trSetView('blockers')">${icon('alert')} Blockers &amp; Failures${nBlock ? ` <span class="rd-seg-n">${nBlock}</span>` : ''}</button>
+      </div>
+      <div class="tr-savedviews">
+        ${views.map(v => `<button class="tr-savedview" onclick="_trApplyView('${v.id}')" title="Apply saved filter view">${escapeHtml(v.name)}<span class="tr-savedview-x" onclick="_trDeleteView('${v.id}',event)" role="button" aria-label="Delete view ${escapeHtml(v.name)}">×</span></button>`).join('')}
+        <button class="tr-savedview-add" ${_trFiltersActive() ? '' : 'disabled'} onclick="_trSaveCurrentView()" title="${_trFiltersActive() ? 'Save the current filters + search as a reusable view' : 'Apply a filter or search first'}">${icon('plus')} Save view</button>
+      </div>
+    </div>`;
 }
 
 function _amSetSort(col) {

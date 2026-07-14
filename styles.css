@@ -15421,3 +15421,80 @@ select.capx-select {
   .la-controls > div { flex-wrap: wrap; }
   .la-controls input[type="date"] { min-width: 0; }
 }
+
+/* ============================================================================
+   Test Register — view switcher, saved filter views, and Blockers & Failures
+   triage table.
+   ============================================================================ */
+.tr-viewbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 32px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.tr-savedviews { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.tr-savedview {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 6px 5px 12px;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--easing), color var(--dur-fast) var(--easing);
+}
+.tr-savedview:hover { border-color: var(--brand-blue); color: var(--text); }
+.tr-savedview-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-subtle);
+}
+.tr-savedview-x:hover { background: var(--bad-light); color: var(--bad); }
+.tr-savedview-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--brand-blue);
+  background: none;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.tr-savedview-add:hover:not(:disabled) { border-color: var(--brand-blue); background: var(--surface-2); }
+.tr-savedview-add:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Inline status select in the triage rows, tinted by state. */
+.tr-blocker-status {
+  font-family: var(--f-ui);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  cursor: pointer;
+}
+.tr-blocker-status.is-fail    { border-color: var(--bad-border);  color: var(--bad); }
+.tr-blocker-status.is-blocked { border-color: var(--warn-border); color: var(--warn); }
+.tr-blocker-rowacts { display: inline-flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.tr-blockers-table td { vertical-align: middle; }
+
+@media (max-width: 720px), (orientation: landscape) and (max-height: 540px), (pointer: coarse) {
+  .tr-viewbar { padding: 12px 16px; }
+}
