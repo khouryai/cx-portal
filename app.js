@@ -9560,15 +9560,17 @@ function _punchTemplatesModal() {
   const ts = PUNCH_TEMPLATES.slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   modal({
     title: 'Punch Templates', size: 'large',
-    body: `<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px;">
+    body: `<div class="punch-modal-toolbar" style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
         <button class="form-secondary" onclick="_punchFieldLibModal()">${icon('puzzle')} Field Library</button>
         <button class="form-submit" onclick="_punchTplEditModal('')">+ New Template</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;">
-      ${ts.length ? ts.map(t => { const cfg = _punchTplCfg(t); const nf = _punchResolvedFields(cfg).length; return `<div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;">
-        <div style="flex:1;"><div style="font-weight:600;">${escapeHtml(t.name)} ${t.is_default ? '<span style="color:var(--warn);" title="Default">★</span>' : ''} ${t.active === false ? '<span style="font-size:11px;color:var(--gray-400);">(inactive)</span>' : ''}</div>
+      ${ts.length ? ts.map(t => { const cfg = _punchTplCfg(t); const nf = _punchResolvedFields(cfg).length; return `<div class="punch-lib-row" style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;">
+        <div style="flex:1;min-width:0;"><div style="font-weight:600;">${escapeHtml(t.name)} ${t.is_default ? '<span style="color:var(--warn);" title="Default">★</span>' : ''} ${t.active === false ? '<span style="font-size:11px;color:var(--gray-400);">(inactive)</span>' : ''}</div>
           <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(cfg.location_mode || 'wayside')}${nf ? ' · ' + nf + ' custom field(s)' : ''}</div></div>
-        <button class="form-secondary" style="font-size:11px;" onclick="_punchTplEditModal('${t.id}')">Edit</button>
+        <div class="punch-row-actions">
+          <button class="form-secondary" style="font-size:11px;" onclick="_punchTplEditModal('${t.id}')">Edit</button>
+        </div>
       </div>`; }).join('') : '<div style="font-size:13px;color:var(--gray-500);">No templates yet.</div>'}
       </div>`,
     footer: `<button class="form-secondary" onclick="closeModal()">Done</button>`,
@@ -9581,7 +9583,7 @@ function _punchFieldLibModal() {
   modal({
     title: 'Punch Field Library', size: 'large',
     body: `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">Reusable custom fields. Allocate them to any punch template. Only <strong>Single/Multi Select</strong> fields carry a dropdown option list — managed in <strong>Admin → Field Config → Punch Custom Fields</strong>. Use <strong>Edit</strong> to rename a field or change its type (e.g. convert a text field to a dropdown).</div>
-      <div style="display:flex;justify-content:flex-end;margin-bottom:8px;"><button class="form-submit" onclick="_punchLibShowCreate()">+ New Field</button></div>
+      <div class="punch-modal-toolbar" style="display:flex;justify-content:flex-end;margin-bottom:8px;flex-wrap:wrap;"><button class="form-submit" onclick="_punchLibShowCreate()">+ New Field</button></div>
       <div id="plib-create"></div>
       <div id="plib-list"></div>`,
     footer: `<button class="form-secondary" onclick="_punchTemplatesModal()">Back to Templates</button><button class="form-secondary" onclick="closeModal()">Done</button>`,
@@ -9593,15 +9595,17 @@ function _punchLibRenderList() {
   const fields = PUNCH_CUSTOM_FIELDS.slice();
   wrap.innerHTML = fields.length ? `<div style="display:flex;flex-direction:column;gap:6px;">${fields.map(f => {
     const usedBy = PUNCH_TEMPLATES.filter(t => (_punchTplCfg(t).field_refs || []).some(r => r.key === f.key)).map(t => t.name);
-    return `<div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:8px 12px;${f.active === false ? 'opacity:.55;' : ''}">
+    return `<div class="punch-lib-row" style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:8px 12px;${f.active === false ? 'opacity:.55;' : ''}">
       <div style="flex:1;min-width:0;">
         <div style="font-weight:600;font-size:13px;">${escapeHtml(f.label)} ${f.active === false ? '<span style="font-size:11px;color:var(--gray-400);">(inactive)</span>' : ''}</div>
         <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(_punchFieldTypeLabel(f.type))} · <span style="font-family:monospace;">${escapeHtml(f.key)}</span>${usedBy.length ? ' · used by ' + usedBy.map(escapeHtml).join(', ') : ' · unused'}</div>
       </div>
-      ${(f.type === 'select' || f.type === 'multiselect') && f.options_key ? `<button class="form-secondary" style="font-size:11px;" title="Edit dropdown options in Field Config" onclick="closeModal();showPage('admin-fieldconfig')">${icon('settings')} Options</button>` : ''}
-      <button class="form-secondary" style="font-size:11px;" onclick="_punchLibEditShow('${f.id}')">Edit</button>
-      <button class="form-secondary" style="font-size:11px;" onclick="_punchLibToggleActive('${f.id}')">${f.active === false ? 'Activate' : 'Deactivate'}</button>
-      <button class="form-secondary" style="font-size:11px;color:var(--bad);" aria-label="Delete field" onclick="_punchLibDelete('${f.id}')">${icon('trash')}</button>
+      <div class="punch-row-actions">
+        ${(f.type === 'select' || f.type === 'multiselect') && f.options_key ? `<button class="form-secondary" style="font-size:11px;" title="Edit dropdown options in Field Config" onclick="closeModal();showPage('admin-fieldconfig')">${icon('settings')} Options</button>` : ''}
+        <button class="form-secondary" style="font-size:11px;" onclick="_punchLibEditShow('${f.id}')">Edit</button>
+        <button class="form-secondary" style="font-size:11px;" onclick="_punchLibToggleActive('${f.id}')">${f.active === false ? 'Activate' : 'Deactivate'}</button>
+        <button class="form-secondary" style="font-size:11px;color:var(--bad);" aria-label="Delete field" onclick="_punchLibDelete('${f.id}')">${icon('trash')}</button>
+      </div>
     </div>`;
   }).join('')}</div>` : '<div style="font-size:13px;color:var(--gray-500);">No custom fields yet — create one.</div>';
 }

@@ -15320,3 +15320,70 @@ select.capx-select {
   #page-admin-planning .data-card > table,
   #page-admin-planning .data-card .data-table { min-width: 620px; }
 }
+
+/* ============================================================================
+   Checkpoint (page id 'tasks') — mobile layout. On a phone the toolbar buttons
+   in the chips row were pushed off the right edge (margin-left:auto + no wrap),
+   the segmented view switcher overflowed, and the list ran under the FAB /
+   bottom tab bar. Wrap the toolbar full-width, fit the switcher to three equal
+   tap targets, and pad the list clear of the floating controls.
+   ============================================================================ */
+@media (max-width: 720px), (orientation: landscape) and (max-height: 540px), (pointer: coarse) {
+  .v2-chips-row .right {
+    margin-left: 0;
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .v2-chips-row .right > button {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .rd-segmented {
+    display: flex;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .rd-seg {
+    flex: 1 1 0;
+    justify-content: center;
+    text-align: center;
+    min-width: 0;
+    padding: 7px 6px;
+    font-size: 11.5px;
+  }
+
+  /* Clear the last rows of the floating New-task button + bottom tab bar. */
+  #page-tasks .v2-list { padding-bottom: 96px; }
+}
+
+/* ============================================================================
+   Punch Templates / Field Library modals — mobile. The global mobile rule that
+   makes form buttons full-width (for stacked form actions) also hit the Edit /
+   Options / Deactivate / delete buttons that sit BESIDE each row's text, which
+   squeezed the label to one word per line and overlapped the buttons. Here each
+   row stacks (text on its own line, actions wrapping beneath at natural width)
+   and the header toolbars wrap instead of overflowing off the left edge.
+   ============================================================================ */
+@media (max-width: 720px), (orientation: landscape) and (max-height: 540px), (pointer: coarse) {
+  .punch-modal-toolbar { flex-wrap: wrap; }
+
+  .punch-lib-row { flex-wrap: wrap; }
+  .punch-lib-row > :first-child { flex: 1 1 100%; min-width: 0; }
+
+  .punch-row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+  }
+  /* Override the global .form-secondary{width:100%} so the row's buttons share
+     one wrapped line instead of each taking the full width and colliding. */
+  .punch-row-actions > button.form-secondary,
+  .punch-row-actions > button.form-submit {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+  }
+}
