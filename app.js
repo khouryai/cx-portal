@@ -7771,6 +7771,8 @@ function _dlHistoryHTML() {
         <input type="checkbox" ${_dlFilter.delayOnly?'checked':''} onchange="_dlSetFilter('delayOnly',this.checked)"> Delays only</label>
       ${hasFilters ? `<button class="filter-clear" onclick="_dlClearFilters()">Reset</button>` : ''}
       <span style="font-size:13px;color:var(--gray-500);">${logs.length} log${logs.length!==1?'s':''}</span>
+      <button class="form-secondary" style="margin-left:auto;" onclick="_dlExportCSV()"
+        title="Export the filtered logs to CSV"${logs.length ? '' : ' disabled'}>${icon('download')} Export CSV</button>
     </div>
 
     <!-- Log Table -->
@@ -7851,7 +7853,10 @@ function _dlDetailHTML(l) {
         </div>` : ''}
       ${note('Overall Day Notes', l.overall_notes)}
       ${note('Plan for Next Day', l.next_day_plan)}
-      ${_dlCanEdit(l) ? `<div style="margin-top:12px;"><button class="admin-action-btn" onclick="_dlOpenEdit('${l.id}')">${icon('edit')} Edit this log</button></div>` : ''}
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+        ${_dlCanEdit(l) ? `<button class="admin-action-btn" onclick="_dlOpenEdit('${l.id}')">${icon('edit')} Edit this log</button>` : ''}
+        <button class="form-secondary" onclick="_dlPrintLog('${l.id}')">${icon('printer')} Print / PDF</button>
+      </div>
     </div>`;
 }
 
@@ -7956,6 +7961,98 @@ async function _dlSaveEdit(id) {
   } catch (e) {
     toast('Save failed: ' + e.message, 'error');
   }
+}
+
+// ── Reporting / export ────────────────────────────────────────────────────────
+// CSV of the currently-filtered logs (reuses the shared toCSV/downloadCSV).
+function _dlExportCSV() {
+  const logs = _dlFiltered();
+  if (!logs.length) { toast('No logs to export', 'error'); return; }
+  const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+  const rows = logs.map(l => ({
+    date: l.log_date || '', location: l.location || '', subsystem: l.subsystem || '',
+    submitted_by: l.submitted_by || '', submitted_at: l.submitted_at || '',
+    testers: num(l.number_of_testers) || 1, idle_hours: num(l.idle_hours),
+    tests_logged: parseInt(l.total_tests_logged, 10) || 0,
+    passed: parseInt(l.total_passed, 10) || 0, failed: parseInt(l.total_failed, 10) || 0,
+    blocked: parseInt(l.total_blocked, 10) || 0, in_progress: parseInt(l.total_partial, 10) || 0,
+    delay: l.delay_occurred || 'No', delay_category: l.delay_category || '',
+    delay_hours: num(l.delay_duration), delay_notes: l.delay_notes || '',
+    overall_notes: l.overall_notes || '', next_day_plan: l.next_day_plan || '',
+  }));
+  const cols = [
+    { key: 'date', label: 'Date' }, { key: 'location', label: 'Location' }, { key: 'subsystem', label: 'Subsystem' },
+    { key: 'submitted_by', label: 'Submitted By' }, { key: 'submitted_at', label: 'Submitted At' },
+    { key: 'testers', label: 'Testers' }, { key: 'idle_hours', label: 'Idle Hours' },
+    { key: 'tests_logged', label: 'Tests Logged' }, { key: 'passed', label: 'Passed' },
+    { key: 'failed', label: 'Failed' }, { key: 'blocked', label: 'Blocked' }, { key: 'in_progress', label: 'In Progress' },
+    { key: 'delay', label: 'Delay Occurred' }, { key: 'delay_category', label: 'Delay Category' },
+    { key: 'delay_hours', label: 'Delay Hours' }, { key: 'delay_notes', label: 'Delay Notes' },
+    { key: 'overall_notes', label: 'Overall Notes' }, { key: 'next_day_plan', label: 'Next Day Plan' },
+  ];
+  downloadCSV(toCSV(rows, cols), `daily_logs_${new Date().toISOString().slice(0, 10)}.csv`);
+  toast(`Exported ${rows.length} log${rows.length !== 1 ? 's' : ''}`, 'success');
+}
+
+// Print-friendly single-log view → opens a new window and triggers the browser
+// print dialog (which also covers "Save as PDF"), matching the RMA print flow.
+function _dlPrintLog(id) {
+  const l = DAILY_LOGS.find(x => String(x.id) === String(id));
+  if (!l) return;
+  const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+  const delayYes = String(l.delay_occurred || '').toLowerCase() === 'yes';
+  const esc = s => escapeHtml(String(s == null ? '' : s));
+  const row = (k, v) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`;
+  const noteBlock = (label, val) => val
+    ? `<h3>${esc(label)}</h3><p style="white-space:pre-wrap;">${esc(val)}</p>` : '';
+
+  const html =
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Daily Log ' + esc(_fmtDate(l.log_date)) + '</title>' +
+    '<style>' +
+      'body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:32px;font-size:13px;}' +
+      'h1{font-size:20px;margin:0 0 2px;}h2{font-size:13px;font-weight:400;color:#555;margin:0 0 18px;}' +
+      'h3{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#555;margin:18px 0 4px;}' +
+      'table{border-collapse:collapse;width:100%;margin-bottom:8px;}' +
+      'th,td{border:1px solid #ccc;padding:6px 10px;text-align:left;vertical-align:top;}' +
+      'th{background:#f3f4f6;width:170px;font-weight:600;}' +
+      '.metrics{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;}' +
+      '.metric{border:1px solid #ccc;border-radius:6px;padding:8px 14px;min-width:80px;}' +
+      '.metric .v{font-size:18px;font-weight:700;}.metric .l{font-size:11px;color:#555;}' +
+      '.delay{border:1px solid #d0a25a;background:#fdf6ec;border-radius:6px;padding:10px 14px;margin:8px 0;}' +
+    '</style></head><body>' +
+    '<h1>Daily Test Log</h1>' +
+    '<h2>BART CBTC Project &middot; Hitachi Rail T&amp;C Portal</h2>' +
+    '<table>' +
+      row('Date', _fmtDate(l.log_date)) +
+      row('Location', l.location || '—') +
+      row('Subsystem', l.subsystem || '—') +
+      row('Submitted By', l.submitted_by || '—') +
+      row('Submitted At', l.submitted_at ? _fmtDate(l.submitted_at) : '—') +
+      row('Number of Testers', num(l.number_of_testers) || 1) +
+      row('Idle Hours', num(l.idle_hours)) +
+    '</table>' +
+    '<h3>Test Results</h3>' +
+    '<div class="metrics">' +
+      [['Tests Logged', parseInt(l.total_tests_logged, 10) || 0],
+       ['Passed', parseInt(l.total_passed, 10) || 0],
+       ['Failed', parseInt(l.total_failed, 10) || 0],
+       ['Blocked', parseInt(l.total_blocked, 10) || 0],
+       ['In Progress', parseInt(l.total_partial, 10) || 0]]
+      .map(p => '<div class="metric"><div class="v">' + esc(p[1]) + '</div><div class="l">' + esc(p[0]) + '</div></div>').join('') +
+    '</div>' +
+    (delayYes
+      ? '<div class="delay"><strong>Delay — ' + esc(l.delay_category || '—') + ' &middot; ' + num(l.delay_duration) + ' h</strong>' +
+        (l.delay_notes ? '<p style="white-space:pre-wrap;margin:6px 0 0;">' + esc(l.delay_notes) + '</p>' : '') + '</div>'
+      : '') +
+    noteBlock('Overall Day Notes', l.overall_notes) +
+    noteBlock('Plan for Next Day', l.next_day_plan) +
+    '<' + 'script>window.onload=function(){window.print();}<' + '/script>' +
+    '</body></html>';
+
+  const w = window.open('', '_blank');
+  if (!w) { toast('Allow pop-ups to print', 'error'); return; }
+  w.document.write(html);
+  w.document.close();
 }
 
 // ==========================================================================
