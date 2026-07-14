@@ -23528,13 +23528,13 @@ function renderLookahead() {
   ];
 
   body.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:2px solid var(--gray-200);padding-bottom:0;">
-      <div style="display:flex;gap:0;">
+    <div class="ap-plan-tabbar" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:2px solid var(--gray-200);padding-bottom:0;">
+      <div class="ap-plan-tabs" style="display:flex;gap:0;">
         ${tabs.map(([id, label]) => `
           <button class="admin-tab${_lookaheadTab === id ? ' active' : ''}" data-la-tab="${id}" onclick="_lookaheadSetTab('${id}')">${label}</button>
         `).join('')}
       </div>
-      <div style="display:flex;gap:8px;">
+      <div class="ap-plan-tabactions" style="display:flex;gap:8px;">
         ${isAdmin ? `<button class="form-secondary" onclick="showPage('admin-planning')">${icon('settings')} Admin Planning</button>` : ''}
         <button class="form-secondary" onclick="loadPlanningData(true).then(renderLookahead);">↻ Refresh</button>
       </div>
@@ -24955,7 +24955,7 @@ function _laLookaheadHTML() {
     ${_planningKPIStrip()}
     ${_planningShiftLegend()}
 
-    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+    <div class="la-controls" style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
       <div style="display:flex;align-items:center;gap:0;">
         <span style="font-size:11px;color:var(--gray-500);margin-right:8px;white-space:nowrap;">View:</span>
         ${[['activity','Activity'],['resource','Resource'],['subsystem','Subsystem'],['location','Location']].map(([v,l]) => `

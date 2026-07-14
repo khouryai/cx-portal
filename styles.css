@@ -15387,3 +15387,37 @@ select.capx-select {
     min-width: 0;
   }
 }
+
+/* ============================================================================
+   General mobile module polish (from the full-app mobile audit). Systemic
+   fixes so no page clips content off the right edge on a phone:
+     - any .data-card scrolls its too-wide table instead of clipping it;
+     - tab-bar rows (.admin-tabs) scroll horizontally instead of overflowing;
+     - the planning KPI mini-strip drops to two columns;
+     - the Lookahead control cluster lets each control group wrap its buttons.
+   ============================================================================ */
+@media (max-width: 720px), (orientation: landscape) and (max-height: 540px), (pointer: coarse) {
+  /* overflow-x !important so cards with an inline overflow:hidden still scroll */
+  .data-card { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+
+  .admin-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .admin-tabs::-webkit-scrollbar { display: none; }
+  .admin-tabs > .admin-tab,
+  .admin-tabs > .form-tab { flex: 0 0 auto; white-space: nowrap; }
+
+  .kpi-grid-mini { grid-template-columns: repeat(2, 1fr) !important; }
+
+  /* Planning KPI chip strip: wrap to a readable multi-row grid instead of
+     cramming 5 chips into one row (which ellipsised labels to one letter). */
+  .kpi-strip-row { flex-wrap: wrap; }
+  .kpi-strip-row .kpi-chip { flex: 1 1 28%; min-width: 96px; }
+  .kpi-strip-row .kpi-chip-label { white-space: normal; overflow: visible; text-overflow: clip; }
+
+  .la-controls > div { flex-wrap: wrap; }
+  .la-controls input[type="date"] { min-width: 0; }
+}
