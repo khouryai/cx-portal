@@ -13988,6 +13988,7 @@ function _amSetFilter(k, v) {
 function _amClearFilters() {
   const userSub = currentRoleUser?.subsystem || '';
   _amFilters = { phase:'', location:'', subsystem: userSub, status:'', search:'' };
+  if (typeof _trCaseFilter !== 'undefined') _trCaseFilter = null;
   _amSelected.clear();
   _reRenderTR();
 }
@@ -14060,6 +14061,7 @@ function _trBlockersList() {
   const q = (_amFilters.search || '').trim().toLowerCase();
   if (q) rows = rows.filter(r => [r.TestCaseCode, r.TestName, r.Activity, r.BlockedReason, r.FailedReason]
     .some(f => (f || '').toLowerCase().includes(q)));
+  if (_trCaseFilter) rows = rows.filter(r => _trCaseFilterMatch(r, _trCaseFilter));
   return rows;
 }
 
@@ -14085,15 +14087,18 @@ function _trComputeBlockerInsights(allRows, userSub, punchItems) {
     String(r.ScopeType || 'static').toLowerCase() !== 'dynamic' &&
     !r.IsParent &&
     (!userSub || r.Subsystem === userSub));
-  // Identity: the shared test case code (same case deployed at many locations),
-  // falling back to the normalised name when no code exists.
-  const idOf = r => String(r.TestCaseCode || r.TestName || '').trim().toLowerCase();
+  // Identity: code PLUS normalised name. Codes alone are NOT unique here —
+  // e.g. "4.5" is shared by "Permissive aspect (CBTC mode)" and "Axle Counter
+  // System AXM COM module failure" — so grouping by code only would blend
+  // unrelated cases' locations and attempts.
+  const idOf = r => (String(r.TestCaseCode || '').trim().toLowerCase() + '~~' +
+                     String(r.TestName || '').trim().toLowerCase().replace(/\s+/g, ' '));
 
   const groups = new Map();
   const idByTestId = new Map(); // TestID (any attempt) → identity, for punch links
   for (const r of staticRows) {
     const id = idOf(r);
-    if (!id) continue;
+    if (id === '~~') continue; // neither code nor name — nothing to group on
     if (r.TestID != null) idByTestId.set(String(r.TestID), id);
     let g = groups.get(id);
     if (!g) {
@@ -14191,8 +14196,45 @@ function _trComputeBlockerInsights(allRows, userSub, punchItems) {
   };
 }
 
-// Click-through: filter the triage list down to one case / one location.
-function _trInsightCase(enc) { _amSetFilter('search', decodeURIComponent(enc)); }
+// ── Click-through: filter the triage list down to one case / one location ────
+// Codes are not unique (many cases share "4.5"), so a case click applies a
+// STRICT filter: exact code match AND ≥90% name similarity — a plain-text
+// search on "4.5" would pull in every unrelated case with that code.
+let _trCaseFilter = null; // { code, name } | null
+
+// Bigram Dice similarity (0..1) — tolerant of small spelling/spacing drift
+// between locations while rejecting genuinely different test names.
+function _trNameSim(a, b) {
+  const norm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const na = norm(a), nb = norm(b);
+  if (!na || !nb) return na === nb ? 1 : 0;
+  if (na === nb) return 1;
+  if (na.length < 2 || nb.length < 2) return 0;
+  const grams = s => {
+    const m = new Map();
+    for (let i = 0; i < s.length - 1; i++) { const g = s.slice(i, i + 2); m.set(g, (m.get(g) || 0) + 1); }
+    return m;
+  };
+  const ga = grams(na), gb = grams(nb);
+  let inter = 0, ta = 0, tb = 0;
+  ga.forEach(v => { ta += v; });
+  gb.forEach(v => { tb += v; });
+  ga.forEach((v, g) => { if (gb.has(g)) inter += Math.min(v, gb.get(g)); });
+  return (ta + tb) ? (2 * inter) / (ta + tb) : 0;
+}
+
+// Does a row belong to the filtered case? Exact code + ≥90% name similarity.
+function _trCaseFilterMatch(r, cf) {
+  if (!cf) return true;
+  if (cf.code && String(r.TestCaseCode || '').trim().toLowerCase() !== cf.code.trim().toLowerCase()) return false;
+  return _trNameSim(r.TestName, cf.name) >= 0.9;
+}
+
+function _trInsightCase(codeEnc, nameEnc) {
+  _trCaseFilter = { code: decodeURIComponent(codeEnc || ''), name: decodeURIComponent(nameEnc || '') };
+  _reRenderTR();
+}
+function _trClearCaseFilter() { _trCaseFilter = null; _reRenderTR(); }
 function _trInsightLoc(enc)  { _amSetFilter('location', decodeURIComponent(enc)); }
 
 function _trInsightsHTML() {
@@ -14246,9 +14288,8 @@ function _trInsightsHTML() {
   };
 
   const caseRows = ins.cases.slice(0, 8).map(c => {
-    const filterVal = encodeURIComponent(c.code || c.name);
     const multi = c.openLocs >= 2;
-    return `<tr style="cursor:pointer;" onclick="_trInsightCase('${filterVal}')" title="Filter the list to this test case">
+    return `<tr style="cursor:pointer;" onclick="_trInsightCase('${encodeURIComponent(c.code)}','${encodeURIComponent(c.name)}')" title="Filter the list to this test case (exact code + ≥90% name match)">
       <td style="padding:5px 10px;min-width:170px;max-width:230px;">
         <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(c.name || c.code || '')}">${escapeHtml(c.name || c.code || '—')}</div>
         <div style="font-size:10.5px;font-family:var(--f-mono);color:var(--text-subtle);white-space:nowrap;">${escapeHtml(c.code || '')}
@@ -14304,20 +14345,8 @@ function _trInsightsHTML() {
     </div>`;
 }
 
-// Inline status change from the triage row. Fail/Blocked prompts for a reason.
-async function _trBlockerStatusChange(testId, status) {
-  if (typeof uiCan === 'function' && !uiCan('test_register', 'edit')) { toast('You do not have permission to change test status', 'error'); _reRenderTR(); return; }
-  let reason = '';
-  if (status === 'Fail' || status === 'Blocked') {
-    reason = await cxPrompt(`Reason this test is ${status === 'Fail' ? 'failing' : 'blocked'}:`, '');
-    if (reason === null) { _reRenderTR(); return; }   // cancelled — revert the select
-  }
-  try {
-    await _updateTestItemStatus(testId, status, { reason });
-    toast('Status updated', 'success');
-    _reRenderTR();
-  } catch (e) { toast('Update failed: ' + (e.message || e), 'error'); }
-}
+// (Inline status changes were removed from the triage rows on purpose —
+// status is changed via Open → test register so the full flow applies.)
 
 // The Blockers & Failures triage shell (replaces the activities table when the
 // view toggle is on Blockers).
@@ -14342,9 +14371,7 @@ function _trBlockersShellHTML() {
   // Oldest / most-stuck at the top (nulls last).
   shown.sort((a, b) => { const da = _trAgeDays(a), db = _trAgeDays(b); return (db == null ? -1 : db) - (da == null ? -1 : da); });
 
-  const canEdit  = typeof uiCan !== 'function' || uiCan('test_register', 'edit');
   const canPunch = typeof uiCan !== 'function' || uiCan('punch_list', 'create');
-  const statuses = ['Not Started', 'In Progress', 'Pass', 'Fail', 'Blocked', 'Not Applicable', 'Future Test'];
   const hasFilters = _trFiltersActive();
 
   const ageCell = (r) => {
@@ -14359,11 +14386,11 @@ function _trBlockersShellHTML() {
     const isFail = stt === 'Fail';
     const reason = (isFail ? r.FailedReason : r.BlockedReason) || '';
     const key = [r.Phase || '', r.Location || '', r.Subsystem || '', r.Activity || ''].join('||');
-    const statusCell = canEdit
-      ? `<select class="tr-blocker-status ${isFail ? 'is-fail' : 'is-blocked'}" onchange="_trBlockerStatusChange('${escapeHtml(String(r.TestID))}',this.value)" aria-label="Change status">
-           ${statuses.map(s => `<option value="${s}" ${s === stt ? 'selected' : ''}>${s}</option>`).join('')}
-         </select>`
-      : (isFail ? '<span class="badge badge-failed">Fail</span>' : '<span class="badge badge-open">Blocked</span>');
+    // Read-only on purpose: status changes go through Open → test register,
+    // so every change carries the register's full flow (reasons, history).
+    const statusCell = isFail
+      ? '<span class="badge badge-failed">Fail</span>'
+      : '<span class="badge badge-open">Blocked</span>';
     return `<tr>
       <td style="font-family:var(--f-mono);font-size:12px;white-space:nowrap;">${escapeHtml(r.TestCaseCode || r.TestID || '—')}</td>
       <td style="min-width:180px;">${escapeHtml(r.TestName || '—')}</td>
@@ -14407,6 +14434,10 @@ function _trBlockersShellHTML() {
               <option value="">All Subsystems</option>
               ${subsystems.map(s => `<option value="${escapeHtml(s)}" ${_amFilters.subsystem === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
             </select>`}
+        ${_trCaseFilter ? `<button class="v2-btn-mini" onclick="_trClearCaseFilter()"
+            title="Showing only this test case (exact code + ≥90% name match) — click to clear"
+            style="color:var(--primary);border-color:var(--primary);max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            ${icon('target')} ${escapeHtml([_trCaseFilter.code, _trCaseFilter.name].filter(Boolean).join(' · '))} ×</button>` : ''}
         ${hasFilters ? `<button class="v2-btn-mini" onclick="_amClearFilters()">${icon('x')} Reset</button>` : ''}
         <span class="count"><b>${shown.length}</b> shown</span>
       </div>

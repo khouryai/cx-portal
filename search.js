@@ -193,7 +193,7 @@
     _arr('TASKS').forEach(function (t) {
       idx.push({
         kind: 'Task', icon: 'target',
-        label: t.title || t.name || 'Task',
+        label: t.task_name || t.title || t.name || 'Task',
         sub: [t.assignee, t.due_date ? 'due ' + _fdate(t.due_date) : ''].filter(Boolean).join(' · '),
         status: t.status || '',
         desc: t.description || '',

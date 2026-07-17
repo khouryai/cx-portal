@@ -39,7 +39,7 @@
       _fetch('punch_items?select=id,number,title,status,created_at,created_by&is_deleted=eq.false&order=created_at.desc&limit=15'),
       _fetch('rmas?select=id,rma_number,status,created_at&order=created_at.desc&limit=10'),
       _fetch('delay_log?select=id,log_date,location,subsystem,submitted_by,submitted_at&order=submitted_at.desc&limit=10'),
-      _fetch('tasks?select=id,title,status,created_at,assignee&order=created_at.desc&limit=10'),
+      _fetch('tasks?select=id,task_name,status,created_at,assignee&order=created_at.desc&limit=10'),
     ]).then(function (res) {
       var punch = res[0] || [], rmas = res[1] || [], logs = res[2] || [], tasks = res[3] || [];
       var out = [];
@@ -71,7 +71,7 @@
       tasks.forEach(function (t) {
         out.push({
           ts: t.created_at, actor: t.assignee || '', icon: 'target', kind: 'Task',
-          text: t.title || 'Task', meta: (t.status || '') + (t.assignee ? ' · ' + t.assignee : ''),
+          text: t.task_name || 'Task', meta: (t.status || '') + (t.assignee ? ' · ' + t.assignee : ''),
           page: 'tasks',
         });
       });

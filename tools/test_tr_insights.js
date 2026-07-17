@@ -123,6 +123,34 @@ ok("compute without punch arg still works (backward compatible)",
 const empty = compute([], "");
 ok("empty input → no cases, zeroed KPIs", empty.cases.length === 0 && empty.kpis.systemic === 0 && empty.kpis.stale === 0 && empty.kpis.defects === 0);
 
+// ── Non-unique codes: identity must be code + name ───────────────────────────
+// Real data has codes like "4.5" shared by unrelated test cases; grouping by
+// code alone blended their locations and attempt counts.
+const sharedCode = [
+  { TestID: "s1", TestCaseCode: "4.5", TestName: "Permissive aspect (CBTC mode)", Location: "W40", Subsystem: "IXL", Status: "Fail" },
+  { TestID: "s2", TestCaseCode: "4.5", TestName: "Permissive aspect (CBTC mode)", Location: "Y10", Subsystem: "IXL", Status: "Fail" },
+  { TestID: "s3", TestCaseCode: "4.5", TestName: "Axle Counter System AXM COM module failure", Location: "W40", Subsystem: "IXL", Status: "Fail" },
+  { TestID: "s4", TestCaseCode: "4.5", TestName: "Permissive aspect (CBTC mode)", Location: "HTT", Subsystem: "IXL", Status: "Pass" },
+];
+const ins2 = compute(sharedCode, "");
+ok("shared code 4.5 splits into two distinct cases", ins2.cases.length === 2, "got " + ins2.cases.length);
+const perm = ins2.cases.find(c => c.name.indexOf("Permissive") === 0);
+const axle = ins2.cases.find(c => c.name.indexOf("Axle") === 0);
+ok("Permissive counts only its own locations (2 of 3)", perm && perm.openLocs === 2 && perm.totalLocs === 3, perm && JSON.stringify([perm.openLocs, perm.totalLocs]));
+ok("Axle counts separately (1 of 1)", axle && axle.openLocs === 1 && axle.totalLocs === 1);
+ok("attempts not blended across same-code cases", perm && perm.attempts === 3 && axle.attempts === 1);
+
+// ── Name similarity + strict case filter ─────────────────────────────────────
+const sim = sandbox._trNameSim, match = sandbox._trCaseFilterMatch;
+ok("_trNameSim: identical names → 1", sim("Permissive aspect (CBTC mode)", "Permissive aspect (CBTC mode)") === 1);
+ok("_trNameSim: case/spacing drift ≥ 0.9", sim("Permissive aspect (CBTC mode)", "permissive  Aspect (CBTC MODE)") >= 0.9);
+ok("_trNameSim: unrelated names < 0.9", sim("Permissive aspect (CBTC mode)", "Axle Counter System AXM COM module failure") < 0.9);
+const cf = { code: "4.5", name: "Permissive aspect (CBTC mode)" };
+ok("case filter accepts the exact case", match({ TestCaseCode: "4.5", TestName: "Permissive aspect (CBTC mode)" }, cf) === true);
+ok("case filter rejects same-code different-name (the 4.5 bug)", match({ TestCaseCode: "4.5", TestName: "Axle Counter System AXM COM module failure" }, cf) === false);
+ok("case filter rejects different code even with same name", match({ TestCaseCode: "4.6", TestName: "Permissive aspect (CBTC mode)" }, cf) === false);
+ok("case filter tolerates ≥90% name drift", match({ TestCaseCode: "4.5", TestName: "Permissive Aspect (CBTC Mode)" }, cf) === true);
+
 // ── Render smoke: _trInsightsHTML against the real TI binding ────────────────
 // TI/currentRoleUser are let-bindings inside the vm context, so reassign them
 // with an in-context script rather than a sandbox property.
@@ -140,6 +168,23 @@ ok("case row shows punch defect count, not the free-text reason", html.includes(
 ok("no-punch case falls back to its recorded reason", html.includes("No track access"));
 const collapsed = vm.runInContext("_trInsightsOpen = false; _trInsightsHTML();", ctx);
 ok("collapsed state renders header only", collapsed.includes("Failure Insights") && !collapsed.includes("Location hotspots"));
+
+// ── Triage list + shell honour the strict case filter; no inline status edit ─
+ctx._sharedRows = sharedCode;
+vm.runInContext(
+  "TI = _sharedRows; _trCaseFilter = { code: '4.5', name: 'Permissive aspect (CBTC mode)' };" +
+  "currentRoleUser = { name: 'T', role: 'admin', subsystem: '' };", ctx);
+const list = vm.runInContext("_trBlockersList()", ctx);
+ok("_trBlockersList shows ONLY the filtered case (not Axle @4.5)",
+   list.length === 2 && list.every(r => r.TestName.indexOf("Permissive") === 0),
+   JSON.stringify(list.map(r => r.TestName)));
+const shellHtml = vm.runInContext("_trBlockersShellHTML()", ctx);
+ok("shell: inline status dropdown removed", !shellHtml.includes("tr-blocker-status"));
+ok("shell: read-only Fail badge instead", shellHtml.includes("badge-failed"));
+ok("shell: active case-filter chip with clear action", shellHtml.includes("_trClearCaseFilter") && shellHtml.includes("4.5"));
+vm.runInContext("_trCaseFilter = null;", ctx);
+const listAll = vm.runInContext("_trBlockersList()", ctx);
+ok("clearing the case filter restores the full list", listAll.length === 3);
 
 console.log(`\n${pass} passed, ${fail} failed.\n`);
 process.exit(fail === 0 ? 0 : 1);
