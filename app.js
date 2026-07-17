@@ -14043,6 +14043,168 @@ function _trBlockersTotal() {
     (!userSub || r.Subsystem === userSub)).length;
 }
 
+// ── Failure insights: systemic cases, repeat offenders, hotspots ─────────────
+// "Which test cases fail at multiple locations / fail more consistently than
+// others?" — computed over the FULL TI array (prior regression attempts
+// included) so consistency comes from real attempt history, not just the
+// current snapshot. Pure function of (rows, userSub) for headless testing.
+let _trInsightsOpen = true;
+function _trToggleInsights() { _trInsightsOpen = !_trInsightsOpen; _reRenderTR(); }
+
+function _trComputeBlockerInsights(allRows, userSub) {
+  const staticRows = (allRows || []).filter(r => r &&
+    String(r.ScopeType || 'static').toLowerCase() !== 'dynamic' &&
+    !r.IsParent &&
+    (!userSub || r.Subsystem === userSub));
+  // Identity: the shared test case code (same case deployed at many locations),
+  // falling back to the normalised name when no code exists.
+  const idOf = r => String(r.TestCaseCode || r.TestName || '').trim().toLowerCase();
+
+  const groups = new Map();
+  for (const r of staticRows) {
+    const id = idOf(r);
+    if (!id) continue;
+    let g = groups.get(id);
+    if (!g) {
+      g = { code: r.TestCaseCode || '', name: r.TestName || '', locs: new Set(), openLocs: new Set(),
+            openCount: 0, attempts: 0, fails: 0, repeat: false, reasons: new Map(), oldest: null };
+      groups.set(id, g);
+    }
+    if (!g.name && r.TestName) g.name = r.TestName;
+    const st = _trNormStatus(r.Status);
+    // Executed attempt outcomes — every attempt counts, including frozen priors.
+    if (st === 'Pass' || st === 'Fail') { g.attempts++; if (st === 'Fail') g.fails++; }
+    // Current state comes only from latest attempts.
+    if (_isLatestAttempt(r)) {
+      if (r.Location) g.locs.add(r.Location);
+      if (st === 'Fail' || st === 'Blocked') {
+        g.openCount++;
+        if (r.Location) g.openLocs.add(r.Location);
+        if (st === 'Fail' && (r.AttemptNumber || 1) >= 2) g.repeat = true; // failed again after a retest
+        const reason = (st === 'Fail' ? r.FailedReason : r.BlockedReason) || '';
+        if (reason) g.reasons.set(reason, (g.reasons.get(reason) || 0) + 1);
+        const age = _trAgeDays(r);
+        if (age != null && (g.oldest == null || age > g.oldest)) g.oldest = age;
+      }
+    }
+  }
+
+  const cases = [...groups.values()].filter(g => g.openCount > 0).map(g => ({
+    code: g.code, name: g.name,
+    openLocs: g.openLocs.size,
+    totalLocs: Math.max(g.locs.size, g.openLocs.size),
+    openCount: g.openCount,
+    attempts: g.attempts, fails: g.fails,
+    failRate: g.attempts ? g.fails / g.attempts : 0,
+    repeat: g.repeat,
+    topReason: [...g.reasons.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0])[0] || '',
+    oldest: g.oldest,
+  }));
+  // Most systemic first: distinct failing locations, then fail consistency.
+  cases.sort((a, b) => b.openLocs - a.openLocs || b.failRate - a.failRate || b.openCount - a.openCount);
+
+  // Location hotspots + staleness from the current open set.
+  const hot = new Map();
+  let stale = 0;
+  for (const r of staticRows) {
+    if (!_isLatestAttempt(r)) continue;
+    const st = _trNormStatus(r.Status);
+    if (st !== 'Fail' && st !== 'Blocked') continue;
+    if (r.Location) hot.set(r.Location, (hot.get(r.Location) || 0) + 1);
+    const age = _trAgeDays(r);
+    if (age != null && age > 14) stale++;
+  }
+  const hotspots = [...hot.entries()].map(([loc, n]) => ({ loc, n })).sort((a, b) => b.n - a.n || a.loc.localeCompare(b.loc));
+
+  return {
+    cases, hotspots,
+    kpis: {
+      systemic: cases.filter(c => c.openLocs >= 2).length,
+      repeat:   cases.filter(c => c.repeat).length,
+      stale,
+      locations: hotspots.length,
+    },
+  };
+}
+
+// Click-through: filter the triage list down to one case / one location.
+function _trInsightCase(enc) { _amSetFilter('search', decodeURIComponent(enc)); }
+function _trInsightLoc(enc)  { _amSetFilter('location', decodeURIComponent(enc)); }
+
+function _trInsightsHTML() {
+  const ins = _trComputeBlockerInsights(TI, currentRoleUser?.subsystem || '');
+  if (!ins.cases.length) return '';
+  const k = ins.kpis;
+
+  const stat = (val, label, tone) => `
+    <span style="display:inline-flex;align-items:baseline;gap:5px;font-size:12px;color:var(--text-muted);white-space:nowrap;">
+      <b style="font-size:15px;color:${tone || 'var(--text)'};">${val}</b>${label}</span>`;
+
+  const head = `
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:10px 16px;cursor:pointer;user-select:none;"
+         onclick="_trToggleInsights()" role="button" aria-expanded="${_trInsightsOpen}" title="${_trInsightsOpen ? 'Collapse' : 'Expand'} failure insights">
+      <span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);display:inline-flex;align-items:center;gap:6px;">${icon('zap')} Failure Insights</span>
+      ${stat(k.systemic, `systemic case${k.systemic !== 1 ? 's' : ''} (≥2 locations)`, k.systemic ? 'var(--bad)' : 'var(--good)')}
+      ${stat(k.repeat, 'failed after retest', k.repeat ? 'var(--accent-purple)' : 'var(--good)')}
+      ${stat(k.stale, 'stale >14d', k.stale ? 'var(--warn)' : 'var(--good)')}
+      ${stat(k.locations, `location${k.locations !== 1 ? 's' : ''} affected`)}
+      <span style="margin-left:auto;color:var(--text-muted);font-size:12px;">${_trInsightsOpen ? '▾' : '▸'}</span>
+    </div>`;
+
+  if (!_trInsightsOpen) return `<div style="border-bottom:1px solid var(--border);background:var(--surface);">${head}</div>`;
+
+  const rateCell = c => {
+    if (!c.attempts) return '<span style="color:var(--gray-400);">no attempts</span>';
+    const pct = Math.round(c.failRate * 100);
+    const col = c.failRate >= 0.5 ? 'var(--bad)' : c.failRate >= 0.25 ? 'var(--warn)' : 'var(--text-muted)';
+    return `<span style="display:inline-flex;align-items:center;gap:6px;" title="Fail attempts / executed attempts (all regression attempts counted)">
+      <span style="display:inline-block;width:44px;background:var(--surface-3);border-radius:3px;height:5px;"><span style="display:block;width:${pct}%;background:${col};height:5px;border-radius:3px;"></span></span>
+      <b style="color:${col};font-size:11px;">${c.fails}/${c.attempts}</b></span>`;
+  };
+
+  const caseRows = ins.cases.slice(0, 8).map(c => {
+    const filterVal = encodeURIComponent(c.code || c.name);
+    const multi = c.openLocs >= 2;
+    return `<tr style="cursor:pointer;" onclick="_trInsightCase('${filterVal}')" title="Filter the list to this test case">
+      <td style="padding:5px 10px;">
+        <div style="font-size:12px;font-weight:600;">${escapeHtml(c.name || c.code || '—')}</div>
+        <div style="font-size:10.5px;font-family:var(--f-mono);color:var(--text-subtle);">${escapeHtml(c.code || '')}
+          ${c.repeat ? '<span style="font-size:9.5px;font-weight:700;background:var(--accent-purple-light);color:var(--accent-purple);border-radius:3px;padding:0 5px;margin-left:4px;">RETEST FAILED</span>' : ''}</div>
+      </td>
+      <td style="padding:5px 10px;white-space:nowrap;font-size:12px;${multi ? 'color:var(--bad);font-weight:700;' : 'color:var(--text-muted);'}"
+          title="Locations currently failing/blocked, of all locations where this case exists">${c.openLocs} of ${c.totalLocs} loc${c.totalLocs !== 1 ? 's' : ''}</td>
+      <td style="padding:5px 10px;white-space:nowrap;">${rateCell(c)}</td>
+      <td style="padding:5px 10px;font-size:11.5px;color:var(--text-muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${c.topReason ? escapeHtml(c.topReason) : '<span style="color:var(--gray-400);">—</span>'}</td>
+    </tr>`;
+  }).join('');
+
+  const hotRows = ins.hotspots.slice(0, 8).map(h => {
+    const max = ins.hotspots[0].n || 1;
+    return `<tr style="cursor:pointer;" onclick="_trInsightLoc('${encodeURIComponent(h.loc)}')" title="Filter the list to this location">
+      <td style="padding:5px 10px;font-size:12px;font-weight:600;white-space:nowrap;">${escapeHtml(h.loc)}</td>
+      <td style="padding:5px 10px;width:100%;"><span style="display:block;max-width:160px;background:var(--surface-3);border-radius:3px;height:6px;"><span style="display:block;width:${Math.round((h.n / max) * 100)}%;background:var(--warn);height:6px;border-radius:3px;"></span></span></td>
+      <td style="padding:5px 10px;font-size:12px;font-weight:700;text-align:right;">${h.n}</td>
+    </tr>`;
+  }).join('');
+
+  const panelHead = t => `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);padding:8px 10px 2px;">${t}</div>`;
+
+  return `
+    <div style="border-bottom:1px solid var(--border);background:var(--surface);">
+      ${head}
+      <div style="display:flex;gap:16px;flex-wrap:wrap;padding:0 16px 14px;align-items:flex-start;">
+        <div style="flex:1.6;min-width:340px;background:var(--white);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+          ${panelHead('Failing across locations — most systemic first')}
+          <table style="width:100%;border-collapse:collapse;">${caseRows}</table>
+        </div>
+        <div style="flex:1;min-width:240px;background:var(--white);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+          ${panelHead('Location hotspots — open blockers & failures')}
+          <table style="width:100%;border-collapse:collapse;">${hotRows}</table>
+        </div>
+      </div>
+    </div>`;
+}
+
 // Inline status change from the triage row. Fail/Blocked prompts for a reason.
 async function _trBlockerStatusChange(testId, status) {
   if (typeof uiCan === 'function' && !uiCan('test_register', 'edit')) { toast('You do not have permission to change test status', 'error'); _reRenderTR(); return; }
@@ -14155,6 +14317,8 @@ function _trBlockersShellHTML() {
         ${subChip('Blocked', 'Blocked', nBlocked, 'is-warn')}
         ${subChip('Fail', 'Failed', nFailed, 'is-bad')}
       </div>
+
+      ${_trInsightsHTML()}
 
       <div class="data-card tr-register-table-card" style="border-radius:0;border-left:0;border-right:0;">
         <div class="table-wrap">
