@@ -14051,7 +14051,7 @@ function _trBlockersTotal() {
 let _trInsightsOpen = true;
 function _trToggleInsights() { _trInsightsOpen = !_trInsightsOpen; _reRenderTR(); }
 
-function _trComputeBlockerInsights(allRows, userSub) {
+function _trComputeBlockerInsights(allRows, userSub, punchItems) {
   const staticRows = (allRows || []).filter(r => r &&
     String(r.ScopeType || 'static').toLowerCase() !== 'dynamic' &&
     !r.IsParent &&
@@ -14061,13 +14061,16 @@ function _trComputeBlockerInsights(allRows, userSub) {
   const idOf = r => String(r.TestCaseCode || r.TestName || '').trim().toLowerCase();
 
   const groups = new Map();
+  const idByTestId = new Map(); // TestID (any attempt) → identity, for punch links
   for (const r of staticRows) {
     const id = idOf(r);
     if (!id) continue;
+    if (r.TestID != null) idByTestId.set(String(r.TestID), id);
     let g = groups.get(id);
     if (!g) {
       g = { code: r.TestCaseCode || '', name: r.TestName || '', locs: new Set(), openLocs: new Set(),
-            openCount: 0, attempts: 0, fails: 0, repeat: false, reasons: new Map(), oldest: null };
+            openCount: 0, attempts: 0, fails: 0, repeat: false, reasons: new Map(), oldest: null,
+            defects: new Map(), punchCount: 0 };
       groups.set(id, g);
     }
     if (!g.name && r.TestName) g.name = r.TestName;
@@ -14089,6 +14092,26 @@ function _trComputeBlockerInsights(allRows, userSub) {
     }
   }
 
+  // Fold linked punch items into their test case identity: the punch list is
+  // the richer defect record (category_of_failure taxonomy), so defect counts
+  // per case come from there rather than the free-text fail reason. A punch
+  // linked to ANY attempt of a case (linked_test_ids) counts toward it.
+  for (const p of (punchItems || [])) {
+    if (!p || p.is_deleted) continue;
+    const cat = p.category_of_failure || p.type || 'Uncategorized';
+    const hitIds = new Set();
+    for (const tid of (p.linked_test_ids || [])) {
+      const id = idByTestId.get(String(tid));
+      if (id) hitIds.add(id);
+    }
+    hitIds.forEach(id => {
+      const g = groups.get(id);
+      if (!g) return;
+      g.punchCount++;
+      g.defects.set(cat, (g.defects.get(cat) || 0) + 1);
+    });
+  }
+
   const cases = [...groups.values()].filter(g => g.openCount > 0).map(g => ({
     code: g.code, name: g.name,
     openLocs: g.openLocs.size,
@@ -14099,9 +14122,20 @@ function _trComputeBlockerInsights(allRows, userSub) {
     repeat: g.repeat,
     topReason: [...g.reasons.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0])[0] || '',
     oldest: g.oldest,
+    punchCount: g.punchCount,
+    defects: [...g.defects.entries()].map(([cat, n]) => ({ cat, n })).sort((a, b) => b.n - a.n || a.cat.localeCompare(b.cat)),
   }));
   // Most systemic first: distinct failing locations, then fail consistency.
   cases.sort((a, b) => b.openLocs - a.openLocs || b.failRate - a.failRate || b.openCount - a.openCount);
+
+  // Defect-category breakdown across all open cases (from linked punch items).
+  const defectTotals = new Map();
+  let defectCount = 0;
+  cases.forEach(c => c.defects.forEach(d => {
+    defectTotals.set(d.cat, (defectTotals.get(d.cat) || 0) + d.n);
+    defectCount += d.n;
+  }));
+  const defectCats = [...defectTotals.entries()].map(([cat, n]) => ({ cat, n })).sort((a, b) => b.n - a.n || a.cat.localeCompare(b.cat));
 
   // Location hotspots + staleness from the current open set.
   const hot = new Map();
@@ -14117,12 +14151,13 @@ function _trComputeBlockerInsights(allRows, userSub) {
   const hotspots = [...hot.entries()].map(([loc, n]) => ({ loc, n })).sort((a, b) => b.n - a.n || a.loc.localeCompare(b.loc));
 
   return {
-    cases, hotspots,
+    cases, hotspots, defectCats,
     kpis: {
       systemic: cases.filter(c => c.openLocs >= 2).length,
       repeat:   cases.filter(c => c.repeat).length,
       stale,
       locations: hotspots.length,
+      defects:  defectCount,
     },
   };
 }
@@ -14132,7 +14167,8 @@ function _trInsightCase(enc) { _amSetFilter('search', decodeURIComponent(enc)); 
 function _trInsightLoc(enc)  { _amSetFilter('location', decodeURIComponent(enc)); }
 
 function _trInsightsHTML() {
-  const ins = _trComputeBlockerInsights(TI, currentRoleUser?.subsystem || '');
+  const punch = (typeof PUNCH_DB !== 'undefined' && Array.isArray(PUNCH_DB)) ? PUNCH_DB : [];
+  const ins = _trComputeBlockerInsights(TI, currentRoleUser?.subsystem || '', punch);
   if (!ins.cases.length) return '';
   const k = ins.kpis;
 
@@ -14146,6 +14182,7 @@ function _trInsightsHTML() {
       <span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);display:inline-flex;align-items:center;gap:6px;">${icon('zap')} Failure Insights</span>
       ${stat(k.systemic, `systemic case${k.systemic !== 1 ? 's' : ''} (≥2 locations)`, k.systemic ? 'var(--bad)' : 'var(--good)')}
       ${stat(k.repeat, 'failed after retest', k.repeat ? 'var(--accent-purple)' : 'var(--good)')}
+      ${stat(k.defects, `linked punch defect${k.defects !== 1 ? 's' : ''}`, k.defects ? 'var(--info)' : undefined)}
       ${stat(k.stale, 'stale >14d', k.stale ? 'var(--warn)' : 'var(--good)')}
       ${stat(k.locations, `location${k.locations !== 1 ? 's' : ''} affected`)}
       <span style="margin-left:auto;color:var(--text-muted);font-size:12px;">${_trInsightsOpen ? '▾' : '▸'}</span>
@@ -14162,19 +14199,36 @@ function _trInsightsHTML() {
       <b style="color:${col};font-size:11px;">${c.fails}/${c.attempts}</b></span>`;
   };
 
+  // Defect cell: punch-linked defect categories are the primary signal (the
+  // punch list is the structured defect record); the free-text fail/blocked
+  // reason is only a fallback when no punch item is linked yet.
+  const defectCell = c => {
+    if (c.punchCount) {
+      const top = c.defects[0];
+      const extra = c.punchCount - top.n;
+      const full = c.defects.map(d => `${d.cat} ×${d.n}`).join(', ');
+      return `<span title="${escapeHtml(c.punchCount + ' linked punch item' + (c.punchCount !== 1 ? 's' : '') + ': ' + full)}" style="font-size:11.5px;">
+        <b style="color:var(--info);">${icon('flag')} ${c.punchCount}</b>
+        <span style="color:var(--text);">${escapeHtml(top.cat)}${top.n > 1 ? ' ×' + top.n : ''}</span>${extra > 0 ? ` <span style="color:var(--text-subtle);">+${extra} more</span>` : ''}</span>`;
+    }
+    return c.topReason
+      ? `<span style="color:var(--text-muted);font-size:11.5px;" title="Recorded fail/blocked reason (no punch item linked yet)">${escapeHtml(c.topReason)}</span>`
+      : '<span style="color:var(--gray-400);font-size:11.5px;">no punch linked</span>';
+  };
+
   const caseRows = ins.cases.slice(0, 8).map(c => {
     const filterVal = encodeURIComponent(c.code || c.name);
     const multi = c.openLocs >= 2;
     return `<tr style="cursor:pointer;" onclick="_trInsightCase('${filterVal}')" title="Filter the list to this test case">
-      <td style="padding:5px 10px;">
-        <div style="font-size:12px;font-weight:600;">${escapeHtml(c.name || c.code || '—')}</div>
-        <div style="font-size:10.5px;font-family:var(--f-mono);color:var(--text-subtle);">${escapeHtml(c.code || '')}
+      <td style="padding:5px 10px;min-width:170px;max-width:230px;">
+        <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(c.name || c.code || '')}">${escapeHtml(c.name || c.code || '—')}</div>
+        <div style="font-size:10.5px;font-family:var(--f-mono);color:var(--text-subtle);white-space:nowrap;">${escapeHtml(c.code || '')}
           ${c.repeat ? '<span style="font-size:9.5px;font-weight:700;background:var(--accent-purple-light);color:var(--accent-purple);border-radius:3px;padding:0 5px;margin-left:4px;">RETEST FAILED</span>' : ''}</div>
       </td>
       <td style="padding:5px 10px;white-space:nowrap;font-size:12px;${multi ? 'color:var(--bad);font-weight:700;' : 'color:var(--text-muted);'}"
           title="Locations currently failing/blocked, of all locations where this case exists">${c.openLocs} of ${c.totalLocs} loc${c.totalLocs !== 1 ? 's' : ''}</td>
       <td style="padding:5px 10px;white-space:nowrap;">${rateCell(c)}</td>
-      <td style="padding:5px 10px;font-size:11.5px;color:var(--text-muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${c.topReason ? escapeHtml(c.topReason) : '<span style="color:var(--gray-400);">—</span>'}</td>
+      <td style="padding:5px 10px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${defectCell(c)}</td>
     </tr>`;
   }).join('');
 
@@ -14189,17 +14243,33 @@ function _trInsightsHTML() {
 
   const panelHead = t => `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);padding:8px 10px 2px;">${t}</div>`;
 
+  // Defect-category breakdown from the punch items linked to the open cases —
+  // "what KIND of defects are behind our failures", quantified.
+  const defectRows = ins.defectCats.slice(0, 8).map(d => {
+    const max = ins.defectCats[0].n || 1;
+    return `<tr>
+      <td style="padding:5px 10px;font-size:12px;font-weight:600;white-space:nowrap;">${escapeHtml(d.cat)}</td>
+      <td style="padding:5px 10px;width:100%;"><span style="display:block;max-width:150px;background:var(--surface-3);border-radius:3px;height:6px;"><span style="display:block;width:${Math.round((d.n / max) * 100)}%;background:var(--info);height:6px;border-radius:3px;"></span></span></td>
+      <td style="padding:5px 10px;font-size:12px;font-weight:700;text-align:right;">${d.n}</td>
+    </tr>`;
+  }).join('');
+  const defectPanel = ins.defectCats.length ? `
+        <div style="flex:1;min-width:230px;background:var(--white);border:1px solid var(--border);border-radius:8px;">
+          ${panelHead('Defect categories — from linked punch items')}
+          <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">${defectRows}</table></div>
+        </div>` : '';
+
   return `
     <div style="border-bottom:1px solid var(--border);background:var(--surface);">
       ${head}
       <div style="display:flex;gap:16px;flex-wrap:wrap;padding:0 16px 14px;align-items:flex-start;">
-        <div style="flex:1.6;min-width:340px;background:var(--white);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+        <div style="flex:2.2;min-width:480px;background:var(--white);border:1px solid var(--border);border-radius:8px;">
           ${panelHead('Failing across locations — most systemic first')}
-          <table style="width:100%;border-collapse:collapse;">${caseRows}</table>
-        </div>
-        <div style="flex:1;min-width:240px;background:var(--white);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+          <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">${caseRows}</table></div>
+        </div>${defectPanel}
+        <div style="flex:1;min-width:230px;background:var(--white);border:1px solid var(--border);border-radius:8px;">
           ${panelHead('Location hotspots — open blockers & failures')}
-          <table style="width:100%;border-collapse:collapse;">${hotRows}</table>
+          <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">${hotRows}</table></div>
         </div>
       </div>
     </div>`;
