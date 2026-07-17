@@ -9546,7 +9546,7 @@ function openLinkPunchModal(testId) {
 
   modal({
     title: 'Link to Punch Item',
-    sub: ti ? `Failed test case: ${ti.TestCaseCode}${ti.TestName ? ' — ' + ti.TestName : ''}` : '',
+    sub: ti ? `Test case: ${ti.TestCaseCode}${ti.TestName ? ' — ' + ti.TestName : ''}` : '',
     size: 'medium',
     body: `
       <input type="text" class="form-input" id="link-punch-search"
@@ -9619,6 +9619,7 @@ async function _linkPunchToTest(testId, punchId) {
   _filterLinkPunchList(testId);   // refresh modal list
   _refreshPunchChips(testId);     // refresh chips in TR row
   renderPunchWorkflow();          // update Linked Tests column in PL table immediately
+  _reRenderTR();                  // refresh triage Failure Insights (guarded; no-op off the register)
 }
 
 // Remove a punch ↔ test case link
@@ -9633,6 +9634,7 @@ async function _unlinkPunchFromTest(testId, punchId) {
   _filterLinkPunchList(testId);
   _refreshPunchChips(testId);
   renderPunchWorkflow();          // update Linked Tests column in PL table immediately
+  _reRenderTR();                  // refresh triage Failure Insights (guarded; no-op off the register)
 }
 
 function openEditPunchModal(id) {
@@ -14400,7 +14402,8 @@ function _trBlockersShellHTML() {
       <td style="text-align:center;white-space:nowrap;">${ageCell(r)}</td>
       <td style="white-space:nowrap;text-align:right;">
         <div class="tr-blocker-rowacts">
-          ${canPunch && isFail ? `<button class="form-secondary tr-mini-btn" onclick="openPunchFromTestCase('${escapeHtml(String(r.TestID))}')" title="Raise a punch item linked to this failed test">${icon('plus')} Punch</button>` : ''}
+          ${canPunch ? `<button class="form-secondary tr-mini-btn" onclick="openLinkPunchModal('${escapeHtml(String(r.TestID))}')" title="Link this test to an existing punch item">${icon('link')} Link</button>` : ''}
+          ${canPunch && isFail ? `<button class="form-secondary tr-mini-btn" onclick="openPunchFromTestCase('${escapeHtml(String(r.TestID))}')" title="Raise a new punch item linked to this failed test">${icon('plus')} Punch</button>` : ''}
           <button class="admin-action-btn tr-mini-btn" onclick="_amOpenDrilldown('${escapeHtml(key)}')" title="Open this test's activity">Open</button>
         </div>
       </td>
