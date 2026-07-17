@@ -601,6 +601,27 @@ function _syncMobileTabs(name) {
 
 // Rebuild the "More" sheet from the currently-visible sidenav links, grouped
 // by the same section labels the sidebar uses.
+// Field-first mobile nav: by default only these pages appear in the mobile
+// "More" sheet. Everything else (office / planning / analysis pages and all
+// Admin tools) is hidden on the phone. Admins — and only admins — get a
+// "Show all pages" toggle in the sheet that reveals the rest when config
+// access is genuinely needed from the field. ('tasks' is the merged
+// Checkpoint module; Log History is intentionally excluded as a review tool.)
+const _MOBILE_FIELD_PAGES = new Set([
+  'field-intake', 'test-register', 'punch-workflow', 'drawings', 'photos',
+  'forms', 'tasks', 'rma', 'documents', 'locations',
+  'dynamic-testing', 'vehicle-management',
+]);
+let _mobileSheetShowAll = false;   // admin-only escape hatch; reset on each open
+function _mobileIsAdmin() {
+  return typeof currentRoleUser !== 'undefined' && currentRoleUser && currentRoleUser.role === 'admin';
+}
+function _mobileToggleShowAll() {
+  if (!_mobileIsAdmin()) return;
+  _mobileSheetShowAll = !_mobileSheetShowAll;
+  _mobileBuildSheet();
+}
+
 function _mobileBuildSheet() {
   const body = document.getElementById('m-sheet-body');
   const foot = document.getElementById('m-sheet-foot');
@@ -614,14 +635,17 @@ function _mobileBuildSheet() {
       if (n.nodeType !== 1) return;
       if (n.classList.contains('sidenav-section-label')) {
         cur = { label: n.textContent.trim(), links: [] }; groups.push(cur);
-      } else if (n.classList.contains('nav-link') && n.dataset.page && _mobLinkAvailable(n)) {
+      } else if (n.classList.contains('nav-link') && n.dataset.page && _mobLinkAvailable(n) &&
+                 (_mobileSheetShowAll || _MOBILE_FIELD_PAGES.has(n.dataset.page))) {
         if (!cur) { cur = { label: '', links: [] }; groups.push(cur); }
         cur.links.push(n);
       }
     });
   }
-  const adminItems = [...document.querySelectorAll('#nav-admin-items .nav-link[data-page]')].filter(_mobLinkAvailable);
-  if (adminItems.length) groups.push({ label: 'Admin Tools', links: adminItems });
+  if (_mobileSheetShowAll) {
+    const adminItems = [...document.querySelectorAll('#nav-admin-items .nav-link[data-page]')].filter(_mobLinkAvailable);
+    if (adminItems.length) groups.push({ label: 'Admin Tools', links: adminItems });
+  }
 
   let html = '';
   groups.forEach(g => {
@@ -636,6 +660,10 @@ function _mobileBuildSheet() {
       html += `<button class="m-sheet-link${isActive}" data-mpage="${escapeHtml(page)}" onclick="_mobileGo('${page}')">${svg}<span>${escapeHtml(label)}</span></button>`;
     });
   });
+  if (_mobileIsAdmin()) {
+    const toggleLabel = _mobileSheetShowAll ? 'Show field pages only' : 'Show all pages';
+    html += `<button class="m-sheet-showall" onclick="_mobileToggleShowAll()">${escapeHtml(toggleLabel)}</button>`;
+  }
   body.innerHTML = html || '<div class="m-sheet-group-label">No pages available</div>';
 
   if (foot) {
@@ -652,6 +680,7 @@ function _mobileBuildSheet() {
 }
 
 function _mobileOpenSheet() {
+  _mobileSheetShowAll = false;
   _mobileBuildSheet();
   const s = document.getElementById('m-sheet');
   if (s) s.hidden = false;
