@@ -8033,25 +8033,11 @@ function _dlPrintLog(id) {
   const esc = s => escapeHtml(String(s == null ? '' : s));
   const row = (k, v) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`;
   const noteBlock = (label, val) => val
-    ? `<h3>${esc(label)}</h3><p style="white-space:pre-wrap;">${esc(val)}</p>` : '';
+    ? `<div class="cxr-note"><div class="cxr-note-label">${esc(label)}</div><div class="cxr-note-body">${esc(val)}</div></div>` : '';
+  const metric = (lbl, v) => `<div class="cxr-metric"><div class="num">${esc(v)}</div><div class="lbl">${esc(lbl)}</div></div>`;
 
-  const html =
-    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Daily Log ' + esc(_fmtDate(l.log_date)) + '</title>' +
-    '<style>' +
-      'body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:32px;font-size:13px;}' +
-      'h1{font-size:20px;margin:0 0 2px;}h2{font-size:13px;font-weight:400;color:#555;margin:0 0 18px;}' +
-      'h3{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#555;margin:18px 0 4px;}' +
-      'table{border-collapse:collapse;width:100%;margin-bottom:8px;}' +
-      'th,td{border:1px solid #ccc;padding:6px 10px;text-align:left;vertical-align:top;}' +
-      'th{background:#f3f4f6;width:170px;font-weight:600;}' +
-      '.metrics{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;}' +
-      '.metric{border:1px solid #ccc;border-radius:6px;padding:8px 14px;min-width:80px;}' +
-      '.metric .v{font-size:18px;font-weight:700;}.metric .l{font-size:11px;color:#555;}' +
-      '.delay{border:1px solid #d0a25a;background:#fdf6ec;border-radius:6px;padding:10px 14px;margin:8px 0;}' +
-    '</style></head><body>' +
-    '<h1>Daily Test Log</h1>' +
-    '<h2>BART CBTC Project &middot; Hitachi Rail T&amp;C Portal</h2>' +
-    '<table>' +
+  const body =
+    '<table class="cxr-kv">' +
       row('Date', _fmtDate(l.log_date)) +
       row('Location', l.location || '—') +
       row('Subsystem', l.subsystem || '—') +
@@ -8060,28 +8046,30 @@ function _dlPrintLog(id) {
       row('Number of Testers', num(l.number_of_testers) || 1) +
       row('Idle Hours', num(l.idle_hours)) +
     '</table>' +
-    '<h3>Test Results</h3>' +
-    '<div class="metrics">' +
-      [['Tests Logged', parseInt(l.total_tests_logged, 10) || 0],
-       ['Passed', parseInt(l.total_passed, 10) || 0],
-       ['Failed', parseInt(l.total_failed, 10) || 0],
-       ['Blocked', parseInt(l.total_blocked, 10) || 0],
-       ['In Progress', parseInt(l.total_partial, 10) || 0]]
-      .map(p => '<div class="metric"><div class="v">' + esc(p[1]) + '</div><div class="l">' + esc(p[0]) + '</div></div>').join('') +
+    '<div class="cxr-h2">Test Results</div>' +
+    '<div class="cxr-metrics">' +
+      metric('Tests Logged', parseInt(l.total_tests_logged, 10) || 0) +
+      metric('Passed', parseInt(l.total_passed, 10) || 0) +
+      metric('Failed', parseInt(l.total_failed, 10) || 0) +
+      metric('Blocked', parseInt(l.total_blocked, 10) || 0) +
+      metric('In Progress', parseInt(l.total_partial, 10) || 0) +
     '</div>' +
     (delayYes
-      ? '<div class="delay"><strong>Delay — ' + esc(l.delay_category || '—') + ' &middot; ' + num(l.delay_duration) + ' h</strong>' +
-        (l.delay_notes ? '<p style="white-space:pre-wrap;margin:6px 0 0;">' + esc(l.delay_notes) + '</p>' : '') + '</div>'
+      ? '<div class="cxr-callout warn"><span class="cxr-callout-title">Delay — ' + esc(l.delay_category || '—') + ' &middot; ' + num(l.delay_duration) + ' h</span>' +
+        (l.delay_notes ? '<div style="white-space:pre-wrap;margin-top:5px;">' + esc(l.delay_notes) + '</div>' : '') + '</div>'
       : '') +
+    (l.overall_notes || l.next_day_plan ? '<div class="cxr-h2">Notes</div>' : '') +
     noteBlock('Overall Day Notes', l.overall_notes) +
-    noteBlock('Plan for Next Day', l.next_day_plan) +
-    '<' + 'script>window.onload=function(){window.print();}<' + '/script>' +
-    '</body></html>';
+    noteBlock('Plan for Next Day', l.next_day_plan);
 
-  const w = window.open('', '_blank');
-  if (!w) { toast('Allow pop-ups to print', 'error'); return; }
-  w.document.write(html);
-  w.document.close();
+  cxPrintOpen(cxReportShell({
+    docType: 'Field Report',
+    title: 'Daily Test Log',
+    subtitle: [l.location, l.subsystem].filter(Boolean).join(' · '),
+    refNo: _fmtDate(l.log_date),
+    refMeta: l.submitted_by ? 'Submitted by ' + l.submitted_by : '',
+    bodyHtml: body,
+  }));
 }
 
 // ==========================================================================
@@ -8740,11 +8728,8 @@ async function exportPunchPDF(ids) {
     ];
 
     return `<div class="punch-page${pi > 0 ? ' page-break' : ''}">
-      <div class="ph">
-        <div>
-          <div class="org">BART CBTC — Testing &amp; Commissioning Portal</div>
-          <div class="exp-lbl">Punch List Export · ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
-        </div>
+      <div class="pk-head">
+        <div class="pk-eyebrow">Punch List Item</div>
         <div class="pnum">#${esc(String(item.number||'—'))}</div>
       </div>
       <h1 class="ptitle">${esc(item.title)}</h1>
@@ -8764,80 +8749,47 @@ async function exportPunchPDF(ids) {
     </div>`;
   }).join('');
 
-  const css = `
-    *{box-sizing:border-box;margin:0;padding:0;}
-    body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a1a;background:var(--white);}
-    .punch-page{padding:32px 40px;max-width:860px;margin:0 auto;}
-    .page-break{page-break-before:always;padding-top:32px;}
-    .ph{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;padding-bottom:12px;border-bottom:2px solid var(--hitachi-red);}
-    .org{font-size:11px;font-weight:700;color:var(--hitachi-red);text-transform:uppercase;letter-spacing:.06em;}
-    .exp-lbl{font-size:10px;color:#777;margin-top:3px;}
-    .pnum{font-size:28px;font-weight:700;color:var(--hitachi-red);}
-    .ptitle{font-size:18px;font-weight:700;color:#111;margin-bottom:12px;line-height:1.4;}
-    .pdesc{font-size:12px;color:var(--text-muted);line-height:1.6;background:var(--surface-2);padding:10px 14px;border-radius:6px;margin-bottom:16px;white-space:pre-wrap;}
-    .fgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 16px;margin-bottom:20px;padding:14px;background:#f9f9f9;border-radius:6px;}
-    .fl{font-size:9px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;}
-    .fv{font-size:12px;color:#222;word-break:break-word;}
-    .stitle{font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;padding-top:12px;border-top:1px solid #eee;}
-    .timeline{border:1px solid var(--line-soft);border-radius:6px;overflow:hidden;}
-    .tl-item{padding:8px 12px;border-bottom:1px solid #f0f0f0;display:flex;flex-direction:column;gap:3px;}
+  // Punch-specific pieces layered on top of the shared branded shell.
+  const extraCss = `
+    .punch-page{padding-top:2px;}
+    .page-break{page-break-before:always;padding-top:6px;}
+    .pk-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+    .pk-eyebrow{font-size:10px;font-weight:700;color:#E60012;text-transform:uppercase;letter-spacing:.1em;}
+    .pnum{font-size:26px;font-weight:800;color:#E60012;}
+    .ptitle{font-size:17px;font-weight:700;color:#1F2937;margin-bottom:12px;line-height:1.4;}
+    .pdesc{font-size:12px;color:#374151;line-height:1.6;background:#F9FAFB;border:1px solid #EEF0F2;padding:10px 14px;border-radius:6px;margin-bottom:16px;white-space:pre-wrap;}
+    .fgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 16px;margin-bottom:20px;padding:14px;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:6px;}
+    .fl{font-size:9px;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;}
+    .fv{font-size:12px;color:#1F2937;word-break:break-word;}
+    .stitle{font-size:10px;font-weight:700;color:#E60012;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;padding-top:12px;border-top:1px solid #E5E7EB;}
+    .timeline{border:1px solid #E5E7EB;border-radius:6px;overflow:hidden;}
+    .tl-item{padding:8px 12px;border-bottom:1px solid #F0F0F0;display:flex;flex-direction:column;gap:3px;page-break-inside:avoid;}
     .tl-item:last-child{border-bottom:none;}
-    .tl-comment{background:var(--white);}
-    .tl-action{background:var(--surface-2);}
+    .tl-comment{background:#FFFFFF;}
+    .tl-action{background:#F9FAFB;}
     .tl-badge{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;margin-bottom:2px;text-transform:uppercase;letter-spacing:.04em;width:fit-content;}
-    .tl-badge-comment{background:#fef3e0;color:var(--warn);}
-    .tl-badge-action{background:var(--surface-3);color:var(--text-muted);}
-    .tl-meta{font-size:11px;color:var(--text-muted);}
-    .tl-body{font-size:12px;color:#222;white-space:pre-wrap;margin-top:2px;}
+    .tl-badge-comment{background:#FEF6EC;color:#A8550A;}
+    .tl-badge-action{background:#F3F4F6;color:#6B7280;}
+    .tl-meta{font-size:11px;color:#6B7280;}
+    .tl-body{font-size:12px;color:#1F2937;white-space:pre-wrap;margin-top:2px;}
     .pgrid{display:flex;flex-direction:column;gap:14px;margin-bottom:20px;}
-    .pfig{break-inside:avoid;page-break-inside:avoid;margin:0 auto;max-width:80%;border:1px solid var(--line-soft);border-radius:6px;overflow:hidden;background:#fafafa;}
-    .pfig img{display:block;width:100%;max-height:448px;object-fit:contain;background:var(--white);}
-    .pfig figcaption{font-size:11px;color:var(--text-muted);padding:6px 10px;border-top:1px solid #eee;text-transform:capitalize;}
-    @media print{
-      body{padding:0;}
-      @page{margin:16mm 14mm;size:A4;}
-      .page-break{page-break-before:always;}
-    }
+    .pfig{break-inside:avoid;page-break-inside:avoid;margin:0 auto;max-width:80%;border:1px solid #E5E7EB;border-radius:6px;overflow:hidden;background:#FAFAFA;}
+    .pfig img{display:block;width:100%;max-height:448px;object-fit:contain;background:#FFFFFF;}
+    .pfig figcaption{font-size:11px;color:#6B7280;padding:6px 10px;border-top:1px solid #EEE;text-transform:capitalize;}
   `;
 
-  // No inner auto-print script: we trigger print from the iframe's load event,
-  // which fires only after all images (the embedded photos) have loaded.
-  const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Punch Export</title><style>${css}</style></head><body>${pagesHtml}</body></html>`;
+  // autoPrint:false — the hidden iframe triggers print from its load event,
+  // which fires only after the embedded photos have finished loading.
+  const fullHtml = cxReportShell({
+    docType: 'Punch List',
+    title: 'Punch List Export',
+    subtitle: items.length + ' item' + (items.length !== 1 ? 's' : ''),
+    bodyHtml: pagesHtml,
+    extraCss,
+    autoPrint: false,
+  });
 
-  // ── Strategy: Blob URL → hidden iframe → contentWindow.print() ─────────────
-  // This avoids popup blockers entirely (no window.open needed).
-  // The iframe loads the blob, fires onload, then we call print() on its window.
-  try {
-    const blob   = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
-    const blobUrl = URL.createObjectURL(blob);
-
-    const frame = document.createElement('iframe');
-    frame.style.cssText = 'position:fixed;top:-10000px;left:-10000px;width:1px;height:1px;border:none;opacity:0;';
-    document.body.appendChild(frame);
-
-    frame.onload = () => {
-      try {
-        frame.contentWindow.focus();
-        frame.contentWindow.print();
-      } catch(printErr) {
-        console.error('[PDF] iframe print failed, falling back:', printErr);
-        // Fallback: open blob URL in a new tab so user can Ctrl+P manually
-        window.open(blobUrl, '_blank');
-      }
-      // Clean up after print dialog closes (or after 60s timeout)
-      const cleanup = () => {
-        if (document.body.contains(frame)) document.body.removeChild(frame);
-        URL.revokeObjectURL(blobUrl);
-      };
-      frame.contentWindow.onafterprint = cleanup;
-      setTimeout(cleanup, 60000);
-    };
-
-    frame.src = blobUrl;
-  } catch(e) {
-    console.error('[PDF] export failed:', e);
-    toast('PDF export failed: ' + e.message, 'error');
-  }
+  cxPrintFrame(fullHtml);
 }
 
 function _punchWorkflowActions(p) {
@@ -22556,50 +22508,41 @@ function _rmaViewModal(id) {
 function _rmaPrintPDF(id) {
   const r = RMAS.find(x => x.id === id);
   if (!r) return;
-  const cell = (label, val) =>
-    `<td style="padding:7px 16px 7px 0;font-size:12px;font-weight:600;color:var(--text-muted);width:180px;vertical-align:top;">${label}</td>` +
-    `<td style="padding:7px 16px 7px 0;font-size:12px;color:var(--text);vertical-align:top;">${escapeHtml(String(val||'—'))}</td>`;
+  const esc = v => escapeHtml(String(v == null || v === '' ? '—' : v));
+  const kv = (label, val) => `<tr><th>${esc(label)}</th><td>${esc(val)}</td></tr>`;
 
-  const html = [
-    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>RMA ' + r.rma_number + '</title>',
-    '<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;color:var(--text);background:var(--white);padding:32px;}',
-    '.hdr{display:flex;justify-content:space-between;padding-bottom:16px;border-bottom:2px solid var(--hitachi-red-hover);margin-bottom:20px;}',
-    '.co{font-size:14px;font-weight:700;color:var(--hitachi-red-hover);}.co-sub{font-size:11px;color:var(--text-subtle);margin-top:2px;}',
-    '.proj{text-align:right;font-size:11px;color:var(--text-subtle);}h1{font-size:17px;font-weight:700;text-align:center;margin-bottom:20px;}',
-    '.sec{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--hitachi-red-hover);margin:18px 0 8px;padding-top:14px;border-top:1px solid var(--line-soft);}',
-    'table{width:100%;border-collapse:collapse;}',
-    '.ftr{margin-top:40px;padding-top:10px;border-top:1px solid var(--line-soft);display:flex;justify-content:space-between;font-size:10px;color:var(--text-subtle);}',
-    '@media print{body{padding:16px;}}</style></head><body>',
-    '<div class="hdr"><div><div class="co">Hitachi Rail STS</div>',
-    '<div class="co-sub">1000 Technology Dr, Pittsburgh, Pennsylvania 15219-3120</div>',
-    '<div class="co-sub">P: +1 (412) 688-2400</div></div>',
-    '<div class="proj"><div style="font-size:12px;font-weight:600;">Project: 49GH-110 BART CBTC System</div>',
-    '<div>2150 Webster St. 2nd Floor</div><div>Oakland, California 94612</div></div></div>',
-    '<h1>RMA - Return Merchandise Authorization<br><span style="font-size:14px;font-weight:400;">#' + escapeHtml(r.rma_number) + '</span></h1>',
-    '<table>',
-    '<tr>' + cell('Status', r.status) + cell('Created Date', _fmtDate(r.created_at)) + '</tr>',
-    '<tr>' + cell('Issued Date', r.issued_date ? _fmtDate(r.issued_date) : '—') + cell('Due Date', r.due_date ? _fmtDate(r.due_date) : '—') + '</tr>',
-    '<tr>' + cell('Closed Date', r.closed_date ? _fmtDate(r.closed_date) : '—') + cell(_rmaIsTerminal(r.status) ? 'Cycle Time' : 'Days Open', _rmaCycleInfo(r).days + ' days') + '</tr>',
-    '<tr>' + cell('Location', r.location) + cell('Quantity', (r.quantity||1) + ' ea') + '</tr>',
-    '<tr>' + cell('Received From', r.created_by) + '<td colspan="2"></td></tr>',
-    '</table>',
-    '<div class="sec">Completed by Field Engineer</div>',
-    '<table>',
-    '<tr>' + cell('Manufacturer', r.manufacturer) + cell('Serial Number', r.serial_number) + '</tr>',
-    '<tr>' + cell('Replacement Serial #', r.replacement_serial_number) + cell('Manufacturer P/N', r.manufacturer_pn) + '</tr>',
-    '<tr>' + cell('STS P/N', r.sts_pn) + '<td colspan="2"></td></tr>',
-    '<tr><td style="padding:7px 16px 7px 0;font-size:12px;font-weight:600;color:var(--text-muted);vertical-align:top;">Material Description</td>',
-    '<td colspan="3" style="padding:7px 0;font-size:12px;color:var(--text);">' + escapeHtml(r.material_description||'—') + '</td></tr>',
-    '</table>',
-    r.notes ? '<div style="margin-top:14px;padding:10px 14px;background:var(--surface-2);border:1px solid var(--line-soft);border-radius:4px;font-size:12px;"><strong>Notes:</strong> ' + escapeHtml(r.notes) + '</div>' : '',
-    '<div class="ftr"><span>Hitachi Rail STS</span><span>Page 1 of 1</span>',
-    '<span>Printed On: ' + new Date().toLocaleString('en-US',{dateStyle:'long',timeStyle:'short'}) + '</span></div>',
-    '</body></html>'
-  ].join('');
+  const body =
+    '<div class="cxr-h2">Return Details</div>' +
+    '<table class="cxr-kv">' +
+      kv('Status', r.status) +
+      kv('Created Date', _fmtDate(r.created_at)) +
+      kv('Issued Date', r.issued_date ? _fmtDate(r.issued_date) : '—') +
+      kv('Due Date', r.due_date ? _fmtDate(r.due_date) : '—') +
+      kv('Closed Date', r.closed_date ? _fmtDate(r.closed_date) : '—') +
+      kv(_rmaIsTerminal(r.status) ? 'Cycle Time' : 'Days Open', _rmaCycleInfo(r).days + ' days') +
+      kv('Location', r.location) +
+      kv('Quantity', (r.quantity || 1) + ' ea') +
+      kv('Received From', r.created_by) +
+    '</table>' +
+    '<div class="cxr-h2">Completed by Field Engineer</div>' +
+    '<table class="cxr-kv">' +
+      kv('Manufacturer', r.manufacturer) +
+      kv('Serial Number', r.serial_number) +
+      kv('Replacement Serial #', r.replacement_serial_number) +
+      kv('Manufacturer P/N', r.manufacturer_pn) +
+      kv('STS P/N', r.sts_pn) +
+      kv('Material Description', r.material_description) +
+    '</table>' +
+    (r.notes ? '<div class="cxr-note"><div class="cxr-note-label">Notes</div><div class="cxr-note-body">' + escapeHtml(r.notes) + '</div></div>' : '');
 
-  const w = window.open('','_blank','width=900,height=700');
-  w.document.write(html); w.document.close(); w.focus();
-  setTimeout(() => w.print(), 500);
+  cxPrintOpen(cxReportShell({
+    docType: 'Return Merchandise Authorization',
+    title: 'RMA ' + (r.rma_number || ''),
+    subtitle: r.material_description || '',
+    refNo: '#' + (r.rma_number || ''),
+    refMeta: r.status || '',
+    bodyHtml: body,
+  }));
 }
 
 function _rmaCSVExport() {
@@ -24223,24 +24166,24 @@ async function _mtgPrintPDF(meetingId) {
   const agendaHTML = categories.map((cat, ci) => {
     const catItems = items.filter(i => i.category_id === cat.id);
     return `
-      <div style="margin-bottom:18px;">
-        <div style="font-size:13px;font-weight:700;background:var(--gray-100);padding:7px 10px;border-left:4px solid var(--hitachi-red-hover);margin-bottom:8px;">${escapeHtml(cat.title)}</div>
+      <div class="mtg-cat-wrap">
+        <div class="mtg-cat">${escapeHtml(cat.title)}</div>
         ${catItems.map((item, ii) => {
           const itemAI = actionItems.filter(a => a.meeting_item_id === item.id);
           return `
-            <div style="margin-bottom:10px;padding:9px 10px;border:1px solid var(--line-soft);border-radius:3px;">
-              <div style="font-weight:600;font-size:12px;margin-bottom:4px;">${ci+1}.${ii+1} ${escapeHtml(item.title)}</div>
-              ${item.description ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:5px;">${escapeHtml(item.description)}</div>` : ''}
-              <div style="font-size:10px;color:#888;margin-bottom:5px;">${[
-                item.assignee ? `Assignee: ${item.assignee}` : '',
-                item.due_date ? `Due: ${item.due_date}` : '',
-                `Status: ${item.status||'Open'}`,
+            <div class="mtg-item">
+              <div class="mtg-item-title">${ci+1}.${ii+1} ${escapeHtml(item.title)}</div>
+              ${item.description ? `<div class="mtg-item-desc">${escapeHtml(item.description)}</div>` : ''}
+              <div class="mtg-item-meta">${[
+                item.assignee ? `Assignee: ${escapeHtml(item.assignee)}` : '',
+                item.due_date ? `Due: ${escapeHtml(item.due_date)}` : '',
+                `Status: ${escapeHtml(item.status||'Open')}`,
               ].filter(Boolean).join(' · ')}</div>
-              ${inMinutes && item.minutes_notes ? `<div style="margin-top:7px;padding:7px;background:#fefefe;border:1px solid #eee;border-radius:3px;font-size:11px;"><strong style="color:var(--hitachi-red-hover);">Minutes:</strong> ${item.minutes_notes}</div>` : ''}
-              ${itemAI.length ? `<div style="margin-top:7px;">
-                <div style="font-size:10px;font-weight:700;color:#666;margin-bottom:3px;">Action Items:</div>
-                ${itemAI.map(ai => `<div style="font-size:10px;padding:3px 7px;background:#fff8f0;border-left:3px solid #E67E22;margin-bottom:2px;">
-                  ${escapeHtml(ai.description)}${ai.assignee ? ` — ${escapeHtml(ai.assignee)}` : ''}${ai.due_date ? ` (Due: ${ai.due_date})` : ''} [${escapeHtml(ai.status||'Open')}]
+              ${inMinutes && item.minutes_notes ? `<div class="mtg-minutes"><strong>Minutes:</strong> ${escapeHtml(item.minutes_notes)}</div>` : ''}
+              ${itemAI.length ? `<div class="mtg-ai-wrap">
+                <div class="mtg-ai-label">Action Items</div>
+                ${itemAI.map(ai => `<div class="mtg-ai">
+                  ${escapeHtml(ai.description)}${ai.assignee ? ` — ${escapeHtml(ai.assignee)}` : ''}${ai.due_date ? ` (Due: ${escapeHtml(ai.due_date)})` : ''} [${escapeHtml(ai.status||'Open')}]
                 </div>`).join('')}
               </div>` : ''}
             </div>`;
@@ -24248,52 +24191,43 @@ async function _mtgPrintPDF(meetingId) {
       </div>`;
   }).join('');
 
-  const w = window.open('', '_blank', 'width=900,height=700');
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
-    <title>${inMinutes ? 'Meeting Minutes — ' : ''}${escapeHtml(m.title||'')}</title>
-    <style>
-      *{box-sizing:border-box;margin:0;padding:0;}
-      body{font-family:Arial,sans-serif;color:#111;background:var(--white);padding:32px;}
-      @media print{body{padding:16px;}}
-    </style>
-  </head><body>
-    <div style="display:flex;justify-content:space-between;padding-bottom:14px;border-bottom:3px solid var(--hitachi-red-hover);margin-bottom:20px;">
-      <div>
-        <div style="font-size:15px;font-weight:700;color:var(--hitachi-red-hover);">Hitachi Rail STS</div>
-        <div style="font-size:11px;color:#666;">BART CBTC T&amp;C Portal</div>
-      </div>
-      <div style="text-align:right;font-size:11px;color:#666;">
-        <div style="font-weight:700;font-size:13px;">Meeting #${m.meeting_number||''}</div>
-        <div>${m.meeting_date||''}</div>
-      </div>
-    </div>
-    <h1 style="font-size:17px;font-weight:700;margin-bottom:14px;">
-      ${inMinutes ? 'Meeting Minutes for ' : ''}${escapeHtml(m.title||'')}
-    </h1>
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;font-size:11px;">
-      ${[['Date',m.meeting_date],['Start Time',m.start_time],['End Time',m.end_time],['Location',m.location]]
-        .filter(([,v]) => v)
-        .map(([l,v]) => `<div><div style="font-weight:700;color:var(--hitachi-red-hover);text-transform:uppercase;font-size:9px;">${l}</div><div>${escapeHtml(v)}</div></div>`)
-        .join('')}
-    </div>
-    ${m.overview ? `<div style="margin-bottom:14px;font-size:12px;color:var(--text-muted);font-style:italic;">${escapeHtml(m.overview)}</div>` : ''}
-    ${attendees.length ? `
-      <div style="margin-bottom:16px;">
-        <div style="font-size:11px;font-weight:700;color:var(--hitachi-red-hover);text-transform:uppercase;margin-bottom:6px;">Attendees</div>
-        <div style="display:flex;flex-wrap:wrap;gap:5px;">
-          ${attendees.map(a => `<span style="font-size:11px;background:#f5f5f5;padding:2px 9px;border-radius:10px;">${escapeHtml(a.name)}${a.company ? ` (${escapeHtml(a.company)})` : ''}</span>`).join('')}
-        </div>
-      </div>` : ''}
-    <div style="font-size:11px;font-weight:700;color:var(--hitachi-red-hover);text-transform:uppercase;border-bottom:1px solid #eee;padding-bottom:6px;margin-bottom:12px;">Agenda</div>
-    ${agendaHTML}
-    <div style="margin-top:30px;padding-top:10px;border-top:1px solid #eee;display:flex;justify-content:space-between;font-size:9px;color:#aaa;">
-      <span>Hitachi Rail STS — BART CBTC T&amp;C Portal</span>
-      <span>Printed: ${new Date().toLocaleString('en-US',{dateStyle:'long',timeStyle:'short'})}</span>
-    </div>
-  </body></html>`);
-  w.document.close();
-  w.focus();
-  setTimeout(() => w.print(), 600);
+  const metaHtml = [['Date',m.meeting_date],['Start Time',m.start_time],['End Time',m.end_time],['Location',m.location]]
+    .filter(([,v]) => v)
+    .map(([l,v]) => `<div class="mtg-meta-cell"><div class="mtg-meta-lbl">${l}</div><div>${escapeHtml(v)}</div></div>`).join('');
+
+  const body =
+    (metaHtml ? `<div class="mtg-meta">${metaHtml}</div>` : '') +
+    (m.overview ? `<div class="cxr-note"><div class="cxr-note-body" style="font-style:italic;color:#6B7280;">${escapeHtml(m.overview)}</div></div>` : '') +
+    (attendees.length ? `<div class="cxr-h2">Attendees</div><div class="cxr-chips">${
+      attendees.map(a => `<span class="cxr-chip">${escapeHtml(a.name)}${a.company ? ` (${escapeHtml(a.company)})` : ''}</span>`).join('')
+    }</div>` : '') +
+    `<div class="cxr-h2">Agenda</div>${agendaHTML}`;
+
+  const extraCss =
+    '.mtg-meta{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;}' +
+    '.mtg-meta-cell{font-size:11px;color:#1F2937;}' +
+    '.mtg-meta-lbl{font-weight:700;color:#E60012;text-transform:uppercase;font-size:9px;letter-spacing:.06em;margin-bottom:2px;}' +
+    '.mtg-cat-wrap{margin-bottom:16px;}' +
+    '.mtg-cat{font-size:12.5px;font-weight:700;color:#1F2937;background:#F3F4F6;padding:7px 12px;border-left:4px solid #E60012;border-radius:0 4px 4px 0;margin-bottom:8px;}' +
+    '.mtg-item{margin-bottom:9px;padding:9px 12px;border:1px solid #E5E7EB;border-radius:5px;page-break-inside:avoid;}' +
+    '.mtg-item-title{font-weight:600;font-size:12px;margin-bottom:4px;color:#1F2937;}' +
+    '.mtg-item-desc{font-size:11px;color:#6B7280;margin-bottom:5px;}' +
+    '.mtg-item-meta{font-size:10px;color:#9CA3AF;}' +
+    '.mtg-minutes{margin-top:7px;padding:7px 10px;background:#F9FAFB;border:1px solid #EEF0F2;border-radius:4px;font-size:11px;}' +
+    '.mtg-minutes strong{color:#E60012;}' +
+    '.mtg-ai-wrap{margin-top:7px;}' +
+    '.mtg-ai-label{font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;}' +
+    '.mtg-ai{font-size:10.5px;padding:4px 9px;background:#FEF6EC;border-left:3px solid #A8550A;margin-bottom:3px;border-radius:0 3px 3px 0;}';
+
+  cxPrintOpen(cxReportShell({
+    docType: inMinutes ? 'Meeting Minutes' : 'Meeting Agenda',
+    title: m.title || (inMinutes ? 'Meeting Minutes' : 'Meeting Agenda'),
+    subtitle: m.meeting_date || '',
+    refNo: m.meeting_number ? '#' + m.meeting_number : '',
+    refMeta: m.meeting_date || '',
+    bodyHtml: body,
+    extraCss,
+  }));
 }
 
 // ─── TEMPLATES ────────────────────────────────────────────────
@@ -27014,19 +26948,22 @@ function _laExportTimelinePDF() {
   const baseHref = location.origin + location.pathname.replace(/[^/]*$/, '');
   const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+  const chromeCss = (typeof cxReportCSS === 'function') ? cxReportCSS({ landscape: true }) : '';
+  const header = (typeof cxReportHeader === 'function')
+    ? cxReportHeader({ docType: '4-Week Lookahead', title: 'Lookahead — ' + viewLabel + ' view', subtitle: range })
+    : `<div class="pdf-head"><div style="font-size:17px;font-weight:800;">Lookahead — ${esc(viewLabel)} view</div><div>${esc(range)}</div></div>`;
+  const footer = (typeof cxReportFooter === 'function') ? cxReportFooter() : '';
+
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
     <base href="${baseHref}">
     <title>Lookahead — ${esc(range)}</title>
     <link rel="stylesheet" href="styles.css">
     <style>
-      @page { size: A4 landscape; margin: 8mm; }
+      ${chromeCss}
       * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-      html, body { margin: 0; padding: 0; background: var(--white); }
-      .pdf-head { font-family: Arial, sans-serif; padding: 2px 2px 12px; }
-      .pdf-title { font-size: 17px; font-weight: 800; color: #111; }
-      .pdf-sub { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
-      .pdf-filters { margin-top: 6px; }
-      .pdf-filters span { display: inline-block; font-size: 10px; color: #334155; background: var(--surface-3); border: 1px solid var(--line-soft); border-radius: 99px; padding: 2px 9px; margin: 0 6px 4px 0; }
+      body { padding: 24px 12mm 18mm; }
+      .pdf-filters { margin: 2px 0 10px; }
+      .pdf-filters span { display: inline-block; font-size: 10px; color: #374151; background: #F3F4F6; border: 1px solid #E5E7EB; border-radius: 99px; padding: 2px 9px; margin: 0 6px 4px 0; }
       .pdf-grid { zoom: ${zoom}; }
       /* drop sticky/scroll so the full grid lays out for print */
       .tlg-shell { overflow: visible !important; }
@@ -27034,12 +26971,10 @@ function _laExportTimelinePDF() {
       .tlg-fill-handle, .tlg-row-del { display: none !important; }
     </style></head>
     <body>
-      <div class="pdf-head">
-        <div class="pdf-title">Lookahead — ${esc(viewLabel)} view</div>
-        <div class="pdf-sub">${esc(range)} · Generated ${esc(new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))}</div>
-        <div class="pdf-filters">${filters.map(f => '<span>' + esc(f) + '</span>').join('')}</div>
-      </div>
+      ${header}
+      <div class="pdf-filters">${filters.map(f => '<span>' + esc(f) + '</span>').join('')}</div>
       <div class="pdf-grid">${cloneHTML}</div>
+      ${footer}
     </body></html>`;
 
   try {
@@ -31294,89 +31229,57 @@ function _cancelRptExportPDF() {
 
   if (!exportRows.length) { toast('No rows to export', 'warn'); return; }
 
-  const title    = 'Delays & Cancellations Report';
-  const project  = 'BART CBTC Testing & Commissioning';
-  const genDate  = new Date().toLocaleString();
   const cancels  = exportRows.filter(r => r._type === 'cancellation').length;
   const delays   = exportRows.filter(r => r._type === 'delay').length;
+  const esc = s => escapeHtml(String(s == null ? '' : s));
 
   const rowsHTML = exportRows.map(r => {
     const isCxl = r._type === 'cancellation';
-    const borderColor = isCxl ? '#b91c1c' : '#b45309';
+    const borderColor = isCxl ? '#C01017' : '#A8550A';
     const typeLabel   = isCxl ? 'Cancellation' : 'Delay';
-    const typeStyle   = isCxl
-      ? 'background:var(--bad-light);color:var(--bad);border:1px solid var(--bad-border);'
-      : 'background:var(--warn-light);color:var(--warn);border:1px solid var(--warn-border);';
     return `
       <tr style="border-left:4px solid ${borderColor};">
-        <td style="white-space:nowrap;font-weight:600;font-size:11px;">${r.date || '—'}</td>
-        <td><span style="padding:2px 7px;border-radius:8px;font-size:10px;font-weight:700;${typeStyle}">${typeLabel}</span></td>
-        <td style="font-size:11px;max-width:180px;">${r.title}</td>
-        <td style="font-size:11px;">${r.location || '—'}</td>
-        <td style="font-size:11px;">${r.subsystem || '—'}</td>
-        <td style="font-size:11px;max-width:200px;">${r.reason || '—'}${r.duration ? ` (${r.duration})` : ''}</td>
-        <td style="font-size:11px;font-weight:700;color:${borderColor};">${r.party || '—'}</td>
-        <td style="font-size:10px;color:var(--text-subtle);">${r.source}<br>${r.loggedBy}${r.loggedAt ? ' · '+r.loggedAt : ''}</td>
+        <td style="white-space:nowrap;font-weight:600;">${esc(r.date) || '—'}</td>
+        <td>${cxPill(typeLabel)}</td>
+        <td style="max-width:180px;">${esc(r.title)}</td>
+        <td>${esc(r.location) || '—'}</td>
+        <td>${esc(r.subsystem) || '—'}</td>
+        <td style="max-width:200px;">${esc(r.reason) || '—'}${r.duration ? ` (${esc(r.duration)})` : ''}</td>
+        <td style="font-weight:700;color:${borderColor};">${esc(r.party) || '—'}</td>
+        <td style="font-size:10px;color:#9CA3AF;">${esc(r.source)}<br>${esc(r.loggedBy)}${r.loggedAt ? ' · ' + esc(r.loggedAt) : ''}</td>
       </tr>`;
   }).join('');
 
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-  <title>${title}</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Arial, sans-serif; font-size: 12px; color: #111; padding: 24px; }
-    .report-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; border-bottom: 3px solid var(--hitachi-red); padding-bottom: 12px; }
-    .report-title { font-size: 20px; font-weight: 800; color: var(--hitachi-red); }
-    .report-sub { font-size: 12px; color: var(--text-subtle); margin-top: 3px; }
-    .report-meta { font-size: 11px; color: var(--text-subtle); text-align: right; }
-    .kpi-row { display: flex; gap: 16px; margin-bottom: 16px; }
-    .kpi-box { padding: 10px 16px; border-radius: 6px; border: 1px solid var(--line-soft); flex: 1; }
-    .kpi-box .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-subtle); }
-    .kpi-box .val { font-size: 24px; font-weight: 800; margin-top: 2px; }
-    table { width: 100%; border-collapse: collapse; font-size: 11px; }
-    th { background: var(--charcoal); color: var(--white); padding: 7px 8px; text-align: left; font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; }
-    td { padding: 7px 8px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
-    tr:nth-child(even) td { background: var(--surface-2); }
-    tr:nth-child(even) td:first-child { background: inherit; }
-    .filter-summary { font-size: 10px; color: var(--text-subtle); margin-bottom: 10px; }
-    @media print { body { padding: 12px; } }
-  </style>
-  </head><body>
-  <div class="report-header">
-    <div>
-      <div class="report-title">${title}</div>
-      <div class="report-sub">${project}</div>
-    </div>
-    <div class="report-meta">Generated: ${genDate}<br>${exportRows.length} record${exportRows.length!==1?'s':''}</div>
-  </div>
-  <div class="kpi-row">
-    <div class="kpi-box"><div class="lbl">Total</div><div class="val">${exportRows.length}</div></div>
-    <div class="kpi-box" style="border-left:4px solid var(--bad);"><div class="lbl">Cancellations</div><div class="val" style="color:var(--bad);">${cancels}</div></div>
-    <div class="kpi-box" style="border-left:4px solid var(--warn);"><div class="lbl">Delays Logged</div><div class="val" style="color:var(--warn);">${delays}</div></div>
-  </div>
-  ${Object.entries(_cancelRpt).some(([,v])=>v&&v!=='all') ? `<div class="filter-summary">Filters: ${
-    [_cancelRpt.type!=='all'?'Type: '+_cancelRpt.type:'',
-     _cancelRpt.dateFrom?'From: '+_cancelRpt.dateFrom:'',
-     _cancelRpt.dateTo?'To: '+_cancelRpt.dateTo:'',
-     _cancelRpt.party?'Party: '+_cancelRpt.party:'',
-     _cancelRpt.location?'Location: '+_cancelRpt.location:'',
-     _cancelRpt.subsystem?'Subsystem: '+_cancelRpt.subsystem:''
-    ].filter(Boolean).join(' · ')
-  }</div>` : ''}
-  <table>
-    <thead><tr>
-      <th>Date</th><th>Type</th><th>Activity / Category</th><th>Location</th>
-      <th>Subsystem</th><th>Reason / Notes</th><th>Responsible Party</th><th>Source · Logged By</th>
-    </tr></thead>
-    <tbody>${rowsHTML}</tbody>
-  </table>
-  <script>window.onload=function(){window.print();};<\/script>
-  </body></html>`;
+  const filterSummary = Object.entries(_cancelRpt).some(([, v]) => v && v !== 'all')
+    ? `<div style="font-size:10px;color:#9CA3AF;margin-bottom:10px;">Filters: ${esc(
+        [_cancelRpt.type !== 'all' ? 'Type: ' + _cancelRpt.type : '',
+         _cancelRpt.dateFrom ? 'From: ' + _cancelRpt.dateFrom : '',
+         _cancelRpt.dateTo ? 'To: ' + _cancelRpt.dateTo : '',
+         _cancelRpt.party ? 'Party: ' + _cancelRpt.party : '',
+         _cancelRpt.location ? 'Location: ' + _cancelRpt.location : '',
+         _cancelRpt.subsystem ? 'Subsystem: ' + _cancelRpt.subsystem : ''
+        ].filter(Boolean).join(' · '))}</div>`
+    : '';
 
-  const w = window.open('', '_blank', 'width=1100,height=800');
-  if (!w) { toast('Pop-up blocked — allow pop-ups to export PDF', 'warn'); return; }
-  w.document.write(html);
-  w.document.close();
+  const body =
+    '<div class="cxr-metrics">' +
+      `<div class="cxr-metric"><div class="num">${exportRows.length}</div><div class="lbl">Total</div></div>` +
+      `<div class="cxr-metric" style="border-left:4px solid #C01017;"><div class="num" style="color:#C01017;">${cancels}</div><div class="lbl">Cancellations</div></div>` +
+      `<div class="cxr-metric" style="border-left:4px solid #A8550A;"><div class="num" style="color:#A8550A;">${delays}</div><div class="lbl">Delays Logged</div></div>` +
+    '</div>' +
+    filterSummary +
+    '<table class="cxr-table" style="margin-top:12px;"><thead><tr>' +
+      '<th>Date</th><th>Type</th><th>Activity / Category</th><th>Location</th>' +
+      '<th>Subsystem</th><th>Reason / Notes</th><th>Responsible Party</th><th>Source &middot; Logged By</th>' +
+    '</tr></thead><tbody>' + rowsHTML + '</tbody></table>';
+
+  cxPrintOpen(cxReportShell({
+    docType: 'Field Report',
+    title: 'Delays & Cancellations Report',
+    subtitle: exportRows.length + ' record' + (exportRows.length !== 1 ? 's' : ''),
+    bodyHtml: body,
+    landscape: true,
+  }), { features: 'width=1100,height=800' });
 }
 
 // ── PTO conflict detection utility (used by Batch 4 calendar) ─

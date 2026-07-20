@@ -20,6 +20,7 @@ const SHELL_ASSETS = [
   './cx-state.js',
   './compute.js',
   './trackplan.js',
+  './print-report.js',
   './app.js',
   './perms-admin.js',
   './team.js',
