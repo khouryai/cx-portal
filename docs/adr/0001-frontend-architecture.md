@@ -132,7 +132,15 @@ justified against the app that exists then, not today's.
   handler is called exactly like the inline onclick (`fn(...args)`, no appended
   context, `this = global`) — making every port a precise drop-in with no arity
   or `this` surprises; registered actions still opt into `{el,event}` context.
-  Remaining ~740 need concat-context support (codemod v2) or manual conversion.
+  **50% is the ceiling of safe *mechanical* conversion.** The remaining ~740 are
+  not drop-in: 263 `onchange` + 72 `oninput` need the changed value (`el.value`);
+  ~60 drag/drop/key/mouse/focus handlers need the event object; the leftover
+  `onclick`s pass function references, chain statements (`;`), or use
+  `event`/`this`. These convert by becoming REGISTERED actions that read the
+  `{el,event}` context the dispatcher now provides — a per-handler semantic
+  refactor (verify each with pw_smoke.js), not a blind codemod. Do them
+  per-module; the ratchet keeps the count monotonic. (A codemod v2 for the ~26
+  concat-context `onclick`s is possible but low-ROI.)
 - **2026-07-21 — Browser QA unlocked.** `tools/pw_smoke.js` (Playwright via the
   pre-installed `chrome-headless-shell`) serves the app, seeds an authenticated
   admin session into localStorage, MOCKS the Supabase REST/auth layer (offline +
