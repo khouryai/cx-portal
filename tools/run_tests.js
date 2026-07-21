@@ -42,6 +42,9 @@ const suites = [
   { file: "tools/test_icons.js", needs: [] },           // extracted icon system
   { file: "tools/test_format.js", needs: [] },          // extracted format utils
   { file: "tools/test_cx_state.js", needs: [] },        // extracted cx* state helpers
+  { file: "tools/test_cx_store.js", needs: [] },        // observable store seam (Tier 3 #12)
+  { file: "tools/test_cx_actions.js", needs: [] },      // event-delegation dispatcher (Tier 3 #11)
+  { file: "tools/test_size_ratchet.js", needs: [] },    // monolith line-count ratchet (Tier 3 #11)
   { file: "tools/test_wgtstat.js", needs: [] },         // KPI weighting math (real app.js fn)
   { file: "tools/test_activity_compute.js", needs: [] },// activity status + completion math
   { file: "tools/test_status_compute.js", needs: [] },  // status badges/buckets/lookahead status

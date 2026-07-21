@@ -54,6 +54,19 @@
   truth; rewrite or delete in Phase 7. Ground truth = live DB + code.
 
 ## Decisions log
+- 2026-07-21: Tier 1 #3/#4 shipped to main — silent-failure `_logSwallowed`
+  seam + `_dbUpdate` optimistic-concurrency guard on delay_log/punch_items (DB
+  BEFORE UPDATE trigger `cx_set_updated_at` + delay_log.updated_at added;
+  migration recorded in supabase/sql/supabase_optimistic_concurrency_2026_07.sql).
+- 2026-07-21: Tier 3 (architecture) direction FORMALIZED in
+  `docs/adr/0001-frontend-architecture.md` (Accepted): no rebuild; staged
+  strangler — Stage A shipped (line-count ratchet `tools/size_baseline.json` +
+  `tools/test_size_ratchet.js`; event-delegation dispatcher `cx-actions.js`;
+  store seam `cx-store.js`; report-only dead-CSS audit `tools/audit_css_unused.js`
+  found ~347 unreferenced class selectors). Stages B–E (retire ~1k inline
+  onclick → adopt CXStore for hot state → ES modules + JSDoc types → Vite build)
+  proceed as tracked increments. CSP deferred to a header-capable host (GH Pages
+  can't set headers). app.js cap set at 50,612 lines.
 - 2026-06-10: Engagement begun per FABLE5_AUDIT_PROMPT.md. Owner directives:
   full implementation, all priority areas, full DB latitude, modern rebuild
   allowed if justified, work directly on `main` (test repo, no real users yet).

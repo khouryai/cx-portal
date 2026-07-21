@@ -31,6 +31,20 @@
 - Reusable state helpers exist: `cxSkeleton()`, `cxEmpty()`, `cxError()`.
 - Dark mode was intentionally removed — do not reintroduce it.
 
+## Architecture direction (see `docs/adr/0001-frontend-architecture.md`)
+The staged modernization is now policy, not a suggestion:
+- **The monolith only shrinks.** `app.js` has a hard line-count cap in
+  `tools/size_baseline.json`, enforced by `tools/test_size_ratchet.js` in CI.
+  Land new code in a NEW file (wire it into index.html + sw.js + `_load_app.js`);
+  never raise the cap to make CI pass. After extracting code, LOWER the cap in
+  the same commit.
+- **New interactive markup uses event delegation, not inline `onclick=`.** Prefer
+  `data-action="fn" data-args='["x"]'` (routed by `cx-actions.js`) over
+  `onclick="fn('x')"`. Module-local handlers can `CXActions.register('name', fn)`.
+  Inline `on*=` handlers are being retired (they block a strict CSP + ES modules).
+- **New hot state goes in `CXStore`** (`cx-store.js`: get/set/update/subscribe),
+  not a new loose `let _foo` global.
+
 ## Verify after JS edits
 - Run `node tools/run_tests.js` — syntax-checks app.js/photos.js/markup.js and
   runs every headless suite (boot smoke + unit + characterization). Must exit 0.

@@ -1,0 +1,6 @@
+{
+  "_comment": "Tier 3 #11 monolith ratchet. `cap` is the maximum line count for each file; tools/test_size_ratchet.js (run in CI via run_tests.js) FAILS the build if a file exceeds its cap. The cap only ever moves DOWN: new features land in NEW files (wired into index.html + sw.js + tools/_load_app.js), and after extracting code from a monolith you LOWER its cap in the same commit. Never raise a cap to make a build pass — that defeats the ratchet. Baseline captured 2026-07-21 at the start of the Tier 3 modularization program.",
+  "files": {
+    "app.js": 50612
+  }
+}
