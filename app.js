@@ -692,7 +692,7 @@ function _mobileBuildSheet() {
       const svg = l.querySelector('svg')?.outerHTML || '';
       const label = l.textContent.trim();
       const isActive = page === active ? ' active' : '';
-      html += `<button class="m-sheet-link${isActive}" data-mpage="${escapeHtml(page)}" onclick="_mobileGo('${page}')">${svg}<span>${escapeHtml(label)}</span></button>`;
+      html += `<button class="m-sheet-link${isActive}" data-mpage="${escapeHtml(page)}" ${cxAct('_mobileGo', String(page))}>${svg}<span>${escapeHtml(label)}</span></button>`;
     });
   });
   if (_mobileIsAdmin()) {
@@ -2220,7 +2220,7 @@ function renderLITable() {
   document.getElementById('li-thead').innerHTML = `<tr>${liVisCols.map(c => {
     const def = liDefs.find(d => d.id === c.id);
     const sk = def?.sortKey || '';
-    return sk ? `<th data-sort="${sk}" onclick="_liSortBy('${sk}')">${def.label}</th>` : `<th>${def?.label || c.id}</th>`;
+    return sk ? `<th data-sort="${sk}" ${cxAct('_liSortBy', String(sk))}>${def.label}</th>` : `<th>${def?.label || c.id}</th>`;
   }).join('')}<th style="width:48px;text-align:right;padding-right:8px;">
     <button aria-label="Configure columns" onclick="_colOpenEditor('li',renderLITable)" title="Configure columns"
       style="font-size:11px;padding:3px 8px;border:1px solid var(--gray-300);border-radius:5px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;font-weight:600;white-space:nowrap;">${icon('settings')}</button>
@@ -3195,7 +3195,7 @@ function renderQueue() {
           ${q.error && q.status !== 'sent' ? `<div class="queue-item-meta" style="color:var(--bad);margin-top:4px">${icon('alert')} ${escapeHtml(q.error)}</div>` : ''}
         </div>
         <span class="queue-status ${q.status}">${status}</span>
-        ${q.status !== 'sent' ? `<button class="v2-btn-mini" style="flex-shrink:0;" onclick="retryQueueEntry('${q.id}')">${icon('refresh')} Retry</button>` : ''}
+        ${q.status !== 'sent' ? `<button class="v2-btn-mini" style="flex-shrink:0;" ${cxAct('retryQueueEntry', String(q.id))}>${icon('refresh')} Retry</button>` : ''}
       </div>
     `;
   }).join('');
@@ -4080,7 +4080,7 @@ function _awActivityRowsHTML() {
         </td>
         <td>
           <button class="admin-action-btn tr-mini-btn" style="display:inline-flex;align-items:center;gap:6px;"
-            onclick="_awOpenTestCasesModal('${safeSub}','${safeAct}')">
+            ${cxAct('_awOpenTestCasesModal', String(safeSub), String(safeAct))}>
             ${r.distinctTcCount} cases ${tcBadge ? `· ${tcBadge}` : ''} →
           </button>
         </td>
@@ -4335,7 +4335,7 @@ function renderAdminDirectory() {
   if (!tabs.some(t => t.id === _dirTab)) _dirTab = tabs[0].id;
   root.innerHTML = `
     <div class="admin-tabs">
-      ${tabs.map(t => `<button class="admin-tab${_dirTab === t.id ? ' active' : ''}" onclick="setDirectoryTab('${t.id}')">${t.label}</button>`).join('')}
+      ${tabs.map(t => `<button class="admin-tab${_dirTab === t.id ? ' active' : ''}" ${cxAct('setDirectoryTab', String(t.id))}>${t.label}</button>`).join('')}
     </div>
     <div id="dir-tab-body"></div>
   `;
@@ -4394,7 +4394,7 @@ function renderAdminPortal() {
   ];
   root.innerHTML = `
     <div class="admin-tabs">
-      ${tabs.map(t => `<button class="admin-tab${_adminTab === t.id ? ' active' : ''}" onclick="setAdminTab('${t.id}')">${t.label}</button>`).join('')}
+      ${tabs.map(t => `<button class="admin-tab${_adminTab === t.id ? ' active' : ''}" ${cxAct('setAdminTab', String(t.id))}>${t.label}</button>`).join('')}
     </div>
     <div id="admin-tab-body"></div>
   `;
@@ -4478,12 +4478,12 @@ function _adminTemplatesHTML() {
             <div class="template-card-head" style="display:flex;align-items:center;justify-content:space-between;">
               <span class="template-tag">${escapeHtml(tpl.subsystem)}</span>
               <div style="display:flex;gap:6px;">
-                <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="editTemplate('${tpl.id}')">Edit</button>
-                <button class="admin-action-btn" style="font-size:11px;padding:3px 8px;" onclick="openDeployModal('${tpl.id}')">Deploy</button>
-                <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--red-600);" onclick="deleteTemplate('${tpl.id}')">Delete</button>
+                <button class="form-secondary" style="font-size:11px;padding:3px 8px;" ${cxAct('editTemplate', String(tpl.id))}>Edit</button>
+                <button class="admin-action-btn" style="font-size:11px;padding:3px 8px;" ${cxAct('openDeployModal', String(tpl.id))}>Deploy</button>
+                <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--red-600);" ${cxAct('deleteTemplate', String(tpl.id))}>Delete</button>
               </div>
             </div>
-            <div class="template-card-name" style="cursor:pointer;" onclick="openDeployModal('${tpl.id}')">${escapeHtml(tpl.name)}</div>
+            <div class="template-card-name" style="cursor:pointer;" ${cxAct('openDeployModal', String(tpl.id))}>${escapeHtml(tpl.name)}</div>
             <div class="template-card-sub">${escapeHtml(tpl.description || '')}</div>
             <div class="template-card-stats">
               <span><b>${tpl.testCases.length}</b> test cases</span>
@@ -4541,7 +4541,7 @@ function _adminLocationsHTML() {
             <div class="admin-action-btn-secondary" style="display:inline-block;cursor:pointer;padding:9px 16px;font-size:13px;font-weight:600;border:1px solid var(--gray-300);border-radius:var(--radius-sm);">↑ Import CSV</div>
           </label>
           <button class="admin-action-btn-secondary" data-action="downloadLocationTemplate">↓ CSV Template</button>
-          <button class="admin-action-btn" onclick="openAddLocationModal(null, 1)">+ Add Phase</button>
+          <button class="admin-action-btn" ${cxAct('openAddLocationModal', null, 1)}>+ Add Phase</button>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
@@ -4582,8 +4582,8 @@ function _renderLocNode(node, depth) {
         </div>
         <div class="loc-node-actions">
           <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openAddLocationModal('${node.id}', ${node.level + 1})">+ Sub-level</button>
-          <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openEditLocationModal('${node.id}')">Edit</button>
-          <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--red-600);" onclick="deleteLocation('${node.id}')">Delete</button>
+          <button class="form-secondary" style="font-size:11px;padding:3px 8px;" ${cxAct('openEditLocationModal', String(node.id))}>Edit</button>
+          <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--red-600);" ${cxAct('deleteLocation', String(node.id))}>Delete</button>
         </div>
       </div>
     </div>
@@ -4696,7 +4696,7 @@ function openEditLocationModal(id) {
     `,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="saveEditLocation('${id}')">Save</button>
+      <button class="form-submit" ${cxAct('saveEditLocation', String(id))}>Save</button>
     `,
   });
   setTimeout(() => document.getElementById('eloc-name')?.focus(), 50);
@@ -5043,7 +5043,7 @@ function openDeployModal(templateId) {
             <option value="">Select phase first…</option>
           </select>
         </div>
-        <button class="admin-action-btn" onclick="deployAddLocation('${templateId}')" style="white-space:nowrap;" ${noLocs ? 'disabled' : ''}>+ Add</button>
+        <button class="admin-action-btn" ${cxAct('deployAddLocation', String(templateId))} style="white-space:nowrap;" ${noLocs ? 'disabled' : ''}>+ Add</button>
       </div>
       <div id="deploy-selections">
         <div style="text-align:center;color:var(--gray-400);font-size:13px;padding:20px 0;">No locations added yet</div>
@@ -5051,7 +5051,7 @@ function openDeployModal(templateId) {
     `,
     footer: `
       <button class="admin-action-btn-secondary" data-action="closeModal">Cancel</button>
-      <button class="admin-action-btn" id="dep-confirm-btn" onclick="confirmDeploy('${templateId}')">Deploy</button>
+      <button class="admin-action-btn" id="dep-confirm-btn" ${cxAct('confirmDeploy', String(templateId))}>Deploy</button>
     `,
   });
 }
@@ -5128,7 +5128,7 @@ function _renderDeploySelections(tpl) {
           <span style="color:var(--gray-500);font-weight:400;">${escapeHtml(s.phaseName)} /</span> ${escapeHtml(s.locName)}
           <span style="font-size:11px;color:var(--gray-500);font-weight:400;margin-left:8px;" id="dep-count-${s.locId}">${s.tcCodes.length} of ${tpl.testCases.length} test cases</span>
         </div>
-        <button onclick="deployRemoveLocation('${s.locId}')" style="font-size:11px;color:var(--red-600);background:none;border:none;cursor:pointer;padding:2px 6px;">${icon('x')} Remove</button>
+        <button ${cxAct('deployRemoveLocation', String(s.locId))} style="font-size:11px;color:var(--red-600);background:none;border:none;cursor:pointer;padding:2px 6px;">${icon('x')} Remove</button>
       </div>
       ${isMultiSection
         ? sections.map(([secTitle, cases]) => `
@@ -5403,7 +5403,7 @@ function _tplCaseFormCellHTML(templateId, tc, si, ci) {
   const names = attached.map(f => f.name).join(', ');
   return `
     <div style="display:flex;align-items:center;gap:4px;min-width:0;">
-      <button class="admin-action-btn tr-mini-btn" title="${escapeHtml(names)}" onclick="openFormViewer('${attached[0].id}')" style="font-size:11px;padding:4px 6px;background:var(--info-light);color:var(--info);border:1px solid var(--info-border);">PDF ${attached.length}</button>
+      <button class="admin-action-btn tr-mini-btn" title="${escapeHtml(names)}" ${cxAct('openFormViewer', String(attached[0].id))} style="font-size:11px;padding:4px 6px;background:var(--info-light);color:var(--info);border:1px solid var(--info-border);">PDF ${attached.length}</button>
       <button class="form-secondary tr-mini-btn" title="Remove PDF from this test case line" onclick="detachTemplateFormForCase('${attached[0].id}','${templateId}',${si},${ci})" style="font-size:11px;padding:4px 6px;color:var(--bad);">x</button>
     </div>
   `;
@@ -5858,7 +5858,7 @@ function _fscFieldRowHTML(f, isLast) {
 
   return `
     <div style="${isLast ? '' : 'border-bottom:1px solid var(--gray-100);'}">
-      <div onclick="fscToggle('${f.key}')"
+      <div ${cxAct('fscToggle', String(f.key))}
         style="display:flex;align-items:center;gap:10px;padding:12px 20px;cursor:pointer;"
         onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
         <div style="font-size:13px;font-weight:500;color:var(--gray-700);flex:1;">${f.label}</div>
@@ -5894,8 +5894,8 @@ function _fscFieldRowHTML(f, isLast) {
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="text" id="fsc-new-${f.key}" class="form-input" style="font-size:13px;flex:1;"
             placeholder="New option…" onkeydown="if(event.key==='Enter')fscAddOption('${f.key}')">
-          <button class="admin-action-btn" style="white-space:nowrap;" onclick="fscAddOption('${f.key}')">+ Add</button>
-          ${f.defaults?.length ? `<button class="form-secondary" style="white-space:nowrap;font-size:12px;" onclick="fscLoadDefaults('${f.key}')" title="Reset to built-in defaults">↩ Defaults</button>` : ''}
+          <button class="admin-action-btn" style="white-space:nowrap;" ${cxAct('fscAddOption', String(f.key))}>+ Add</button>
+          ${f.defaults?.length ? `<button class="form-secondary" style="white-space:nowrap;font-size:12px;" ${cxAct('fscLoadDefaults', String(f.key))} title="Reset to built-in defaults">↩ Defaults</button>` : ''}
         </div>
       </div>` : ''}
     </div>
@@ -7216,7 +7216,7 @@ function renderIntakeStep1() {
           <p style="font-size:13px;">Open the Test Register, update test case statuses as you work, then return here — or hit Refresh to pull touches logged by your team.</p>
         </div>
         <div class="form-actions">
-          <button class="form-secondary" onclick="showPage('test-register')">Open Test Register</button>
+          <button class="form-secondary" ${cxAct('showPage', 'test-register')}>Open Test Register</button>
           <button class="form-submit" data-action="setIntakeStep" data-args="[2]">Skip to Step 2 →</button>
         </div>
       </div>
@@ -7280,7 +7280,7 @@ function renderIntakeStep1() {
         <button class="logout-mini" style="color:var(--info);" data-action="_intakeRestoreRemoved">Restore removed</button>
       </div>` : ''}
       <div class="form-actions">
-        <button class="form-secondary" onclick="showPage('test-register')">↺ Back to Test Register</button>
+        <button class="form-secondary" ${cxAct('showPage', 'test-register')}>↺ Back to Test Register</button>
         <button class="form-submit" data-action="setIntakeStep" data-args="[2]">Continue to Step 2 →</button>
       </div>
     </div>
@@ -7874,8 +7874,8 @@ function _dlRowHTML(l) {
         ? `<span class="badge badge-warn" title="${escapeHtml(l.delay_category || '')}">${escapeHtml(l.delay_category || 'Delay')}</span>`
         : `<span style="color:var(--gray-400);font-size:12px;">—</span>`}</td>
       <td>
-        <button class="form-secondary tr-mini-btn${isOpen ? ' admin-action-btn' : ''}" onclick="_dlToggle('${l.id}')">${isOpen ? 'Close' : 'View'}</button>
-        ${editable ? `<button title="Edit" aria-label="Edit daily log" class="form-secondary tr-mini-btn" onclick="_dlOpenEdit('${l.id}')">${icon('edit')}</button>` : ''}
+        <button class="form-secondary tr-mini-btn${isOpen ? ' admin-action-btn' : ''}" ${cxAct('_dlToggle', String(l.id))}>${isOpen ? 'Close' : 'View'}</button>
+        ${editable ? `<button title="Edit" aria-label="Edit daily log" class="form-secondary tr-mini-btn" ${cxAct('_dlOpenEdit', String(l.id))}>${icon('edit')}</button>` : ''}
       </td>
     </tr>`;
   const panel = isOpen ? `
@@ -7918,8 +7918,8 @@ function _dlDetailHTML(l) {
       ${note('Overall Day Notes', l.overall_notes)}
       ${note('Plan for Next Day', l.next_day_plan)}
       <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
-        ${_dlCanEdit(l) ? `<button class="admin-action-btn" onclick="_dlOpenEdit('${l.id}')">${icon('edit')} Edit this log</button>` : ''}
-        <button class="form-secondary" onclick="_dlPrintLog('${l.id}')">${icon('printer')} Print / PDF</button>
+        ${_dlCanEdit(l) ? `<button class="admin-action-btn" ${cxAct('_dlOpenEdit', String(l.id))}>${icon('edit')} Edit this log</button>` : ''}
+        <button class="form-secondary" ${cxAct('_dlPrintLog', String(l.id))}>${icon('printer')} Print / PDF</button>
       </div>
     </div>`;
 }
@@ -7984,7 +7984,7 @@ function _dlOpenEdit(id) {
         </p>
       </div>`,
     footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
-             <button class="admin-action-btn" onclick="_dlSaveEdit('${l.id}')">Save changes</button>`,
+             <button class="admin-action-btn" ${cxAct('_dlSaveEdit', String(l.id))}>Save changes</button>`,
     size: 'large',
   });
 }
@@ -8526,13 +8526,13 @@ function renderPunchWorkflow() {
     <!-- Tabs row -->
     <div class="v2-tabs-row">
       <div class="v2-tabs">
-        <button class="v2-tab ${_plTab==='my'?'active':''}" onclick="_plSetTab('my')">
+        <button class="v2-tab ${_plTab==='my'?'active':''}" ${cxAct('_plSetTab', 'my')}>
           My Items <span class="tab-count">${my.length}</span>
         </button>
-        <button class="v2-tab ${_plTab==='all'?'active':''}" onclick="_plSetTab('all')">
+        <button class="v2-tab ${_plTab==='all'?'active':''}" ${cxAct('_plSetTab', 'all')}>
           All Items <span class="tab-count">${all.length}</span>
         </button>
-        <button class="v2-tab ${_plTab==='bin'?'active':''}" onclick="_plSetTab('bin')">
+        <button class="v2-tab ${_plTab==='bin'?'active':''}" ${cxAct('_plSetTab', 'bin')}>
           Recycle Bin <span class="tab-count">${bin.length}</span>
         </button>
       </div>
@@ -8546,12 +8546,12 @@ function renderPunchWorkflow() {
     <!-- Status chips (counts within the current non-status selection) -->
     <div class="v2-chips-row">
       <span class="v2-chip ${!_plStatusFilter ? 'active' : ''}"
-            onclick="_plSetFilter('status','')">All <span class="n">${chipBase.length}</span></span>
+            ${cxAct('_plSetFilter', 'status', '')}>All <span class="n">${chipBase.length}</span></span>
       ${PL_STATUS_CHIPS.map(([val, label, tone]) => {
         const count = _plCountChip(chipBase, val);
         if (!count && _plStatusFilter !== val) return '';
         return `<span class="v2-chip ${tone} ${_plStatusFilter === val ? 'active' : ''}"
-                      onclick="_plSetFilter('status','${val}')">
+                      ${cxAct('_plSetFilter', 'status', String(val))}>
           <span class="dot"></span>${escapeHtml(label)} <span class="n">${count}</span>
         </span>`;
       }).join('')}
@@ -8632,7 +8632,7 @@ function _plRowHTML(p) {
 
   return `
     <div class="v2-list-row tone-${pillTone.replace('is-','')} ${isOverdue ? 'is-overdue' : (isCritical ? 'is-critical' : '')}"
-         data-pid="${p.id}" onclick="openPunchDetail('${p.id}')">
+         data-pid="${p.id}" ${cxAct('openPunchDetail', String(p.id))}>
       <div class="punch-row">
         <div onclick="event.stopPropagation()" style="padding-top:4px;">
           <input type="checkbox" ${_plSelected.has(p.id)?'checked':''}
@@ -8660,7 +8660,7 @@ function _plRowHTML(p) {
           ${bic && bic !== '—' ? `<span class="bic">BIC: <b>${escapeHtml(bic)}</b></span>` : ''}
         </div>
         <div onclick="event.stopPropagation()">
-          <button class="v2-btn-mini primary" onclick="openPunchDetail('${p.id}')">View${icon('chevron-right', {cls:'icon-trail'})}</button>
+          <button class="v2-btn-mini primary" ${cxAct('openPunchDetail', String(p.id))}>View${icon('chevron-right', {cls:'icon-trail'})}</button>
         </div>
       </div>
     </div>
@@ -8844,7 +8844,7 @@ function _punchWorkflowActions(p) {
   const isCreator  = p.created_by === name;
   const isAssignee = (p.assignees||[]).includes(name);
   const btn = (label, status, style='secondary') =>
-    `<button class="form-${style}" style="font-size:12px;" onclick="advancePunchStatus('${p.id}','${status}')">${label}</button>`;
+    `<button class="form-${style}" style="font-size:12px;" ${cxAct('advancePunchStatus', String(p.id), String(status))}>${label}</button>`;
 
   if (p.status === 'closed') return '';
   const actions = [];
@@ -8935,8 +8935,8 @@ function openPunchDetail(id) {
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;">
           <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;">${icon('camera')}Photos</div>
           <div style="display:flex;gap:8px;">
-            <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchDownloadAll('${id}')">${icon('download')}Save all</button>
-            ${canComment ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchAddPhotos('${id}')">+ Add photo</button>` : ''}
+            <button class="form-secondary" style="font-size:11px;padding:4px 10px;" ${cxAct('_punchDownloadAll', String(id))}>${icon('download')}Save all</button>
+            ${canComment ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" ${cxAct('_punchAddPhotos', String(id))}>+ Add photo</button>` : ''}
           </div>
         </div>
         <div id="punch-photos-${id}" class="punch-photo-grid">${cxSkeleton(2)}</div>
@@ -8992,7 +8992,7 @@ function openPunchDetail(id) {
           <div class="punch-comment-composer">
             <textarea id="punch-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…"></textarea>
             <button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" aria-label="Attach a photo" onclick="document.getElementById('punch-comment-file-${id}').click()">${icon('camera')}</button>
-            <button class="form-submit punch-comment-post" onclick="addPunchComment('${id}')">Post</button>
+            <button class="form-submit punch-comment-post" ${cxAct('addPunchComment', String(id))}>Post</button>
           </div>
           <input type="file" id="punch-comment-file-${id}" accept="image/*" style="display:none" onchange="_punchCommentPhotoChosen('${id}', this)">
           <div id="punch-comment-preview-${id}" class="punch-comment-preview" style="display:none;"></div>` : ''}
@@ -9002,8 +9002,8 @@ function openPunchDetail(id) {
       <button class="form-secondary" data-action="closeModal">Close</button>
       <button class="form-secondary" onclick="exportPunchPDF(['${p.id}'])">${icon('download')}Export PDF</button>
       ${p.is_deleted
-        ? `<button class="form-secondary" onclick="restorePunch('${p.id}')">Restore from Bin</button>`
-        : `<button class="form-secondary" style="color:var(--bad);" onclick="softDeletePunch('${p.id}')">Move to Bin</button>`}
+        ? `<button class="form-secondary" ${cxAct('restorePunch', String(p.id))}>Restore from Bin</button>`
+        : `<button class="form-secondary" style="color:var(--bad);" ${cxAct('softDeletePunch', String(p.id))}>Move to Bin</button>`}
       ${p.status !== 'closed' ? `<button class="form-submit" onclick="closeModal();openEditPunchModal('${p.id}')">Edit</button>` : ''}
     `,
   });
@@ -9137,7 +9137,7 @@ function _punchCommentPhotoChosen(id, input) {
     prev.innerHTML = `<div class="punch-comment-preview-item">
       <img src="${URL.createObjectURL(f)}" alt="">
       <span>${escapeHtml(f.name || 'photo')}</span>
-      <button type="button" onclick="_punchCommentPhotoClear('${id}')" title="Remove">×</button>
+      <button type="button" ${cxAct('_punchCommentPhotoClear', String(id))} title="Remove">×</button>
     </div>`;
   }
 }
@@ -9542,7 +9542,7 @@ function _punchLinksForTestHTML(testId) {
     const tip     = isClosed ? `Punch #${p.number} closed — ready to retest` : `Punch #${p.number} open — ${PL_STATUS_LABELS[p.status] || p.status}`;
     const title   = (p.title || '').substring(0, 26);
     const ellipsis = (p.title || '').length > 26 ? '…' : '';
-    return `<span onclick="openPunchDetail('${p.id}')" title="${escapeHtml(tip)}"
+    return `<span ${cxAct('openPunchDetail', String(p.id))} title="${escapeHtml(tip)}"
       style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;padding:3px 8px;background:${bg};color:${color};border:1px solid ${border};border-radius:4px;cursor:pointer;margin:1px 2px 1px 0;white-space:nowrap;">
       ${statusGlyph} #${p.number} <span style="font-weight:400;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(title)}${ellipsis}</span>
     </span>`;
@@ -9667,7 +9667,7 @@ function openEditPunchModal(id) {
     body: `<div id="punch-form-wrap">${_punchFormHTML(p)}</div>`,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="saveEditPunchItem('${id}')">Save Changes</button>
+      <button class="form-submit" ${cxAct('saveEditPunchItem', String(id))}>Save Changes</button>
     `,
   });
   _punchFormInit(p);
@@ -10040,14 +10040,14 @@ function _punchTemplatesModal() {
     title: 'Punch Templates', size: 'large',
     body: `<div class="punch-modal-toolbar" style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
         <button class="form-secondary" data-action="_punchFieldLibModal">${icon('puzzle')} Field Library</button>
-        <button class="form-submit" onclick="_punchTplEditModal('')">+ New Template</button>
+        <button class="form-submit" ${cxAct('_punchTplEditModal', '')}>+ New Template</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;">
       ${ts.length ? ts.map(t => { const cfg = _punchTplCfg(t); const nf = _punchResolvedFields(cfg).length; return `<div class="punch-lib-row" style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;">
         <div style="flex:1;min-width:0;"><div style="font-weight:600;">${escapeHtml(t.name)} ${t.is_default ? '<span style="color:var(--warn);" title="Default">★</span>' : ''} ${t.active === false ? '<span style="font-size:11px;color:var(--gray-400);">(inactive)</span>' : ''}</div>
           <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(cfg.location_mode || 'wayside')}${nf ? ' · ' + nf + ' custom field(s)' : ''}</div></div>
         <div class="punch-row-actions">
-          <button class="form-secondary" style="font-size:11px;" onclick="_punchTplEditModal('${t.id}')">Edit</button>
+          <button class="form-secondary" style="font-size:11px;" ${cxAct('_punchTplEditModal', String(t.id))}>Edit</button>
         </div>
       </div>`; }).join('') : '<div style="font-size:13px;color:var(--gray-500);">No templates yet.</div>'}
       </div>`,
@@ -10080,9 +10080,9 @@ function _punchLibRenderList() {
       </div>
       <div class="punch-row-actions">
         ${(f.type === 'select' || f.type === 'multiselect') && f.options_key ? `<button class="form-secondary" style="font-size:11px;" title="Edit dropdown options in Field Config" onclick="closeModal();showPage('admin-fieldconfig')">${icon('settings')} Options</button>` : ''}
-        <button class="form-secondary" style="font-size:11px;" onclick="_punchLibEditShow('${f.id}')">Edit</button>
-        <button class="form-secondary" style="font-size:11px;" onclick="_punchLibToggleActive('${f.id}')">${f.active === false ? 'Activate' : 'Deactivate'}</button>
-        <button class="form-secondary" style="font-size:11px;color:var(--bad);" aria-label="Delete field" onclick="_punchLibDelete('${f.id}')">${icon('trash')}</button>
+        <button class="form-secondary" style="font-size:11px;" ${cxAct('_punchLibEditShow', String(f.id))}>Edit</button>
+        <button class="form-secondary" style="font-size:11px;" ${cxAct('_punchLibToggleActive', String(f.id))}>${f.active === false ? 'Activate' : 'Deactivate'}</button>
+        <button class="form-secondary" style="font-size:11px;color:var(--bad);" aria-label="Delete field" ${cxAct('_punchLibDelete', String(f.id))}>${icon('trash')}</button>
       </div>
     </div>`;
   }).join('')}</div>` : '<div style="font-size:13px;color:var(--gray-500);">No custom fields yet — create one.</div>';
@@ -10162,7 +10162,7 @@ function _punchLibEditShow(id) {
       <div style="font-size:11px;color:var(--gray-500);margin-top:6px;">Changing the type keeps values already saved on punch items.</div>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
         <button class="form-secondary" style="font-size:12px;" onclick="document.getElementById('plib-create').innerHTML=''">Cancel</button>
-        <button class="form-submit" style="font-size:12px;" onclick="_punchLibEditSubmit('${id}')">Save Field</button>
+        <button class="form-submit" style="font-size:12px;" ${cxAct('_punchLibEditSubmit', String(id))}>Save Field</button>
       </div>
     </div>`;
 }
@@ -10274,8 +10274,8 @@ function _punchTplEditModal(id) {
         <div class="form-grid">${coreKeys.map(([k, lbl]) => `<div class="form-field"><label>${lbl}</label><input id="ptpe-ok-${k}" class="form-input" placeholder="${k}" value="${escapeHtml(ok[k] || '')}"></div>`).join('')}</div>
       </details>`,
     footer: `<button class="form-secondary" data-action="_punchTemplatesModal">Back</button>
-      ${t ? `<button class="form-secondary" style="color:var(--bad);" onclick="_punchTplDelete('${t.id}')">Delete</button>` : ''}
-      <button class="form-submit" onclick="_punchTplSave('${id || ''}')">Save Template</button>`,
+      ${t ? `<button class="form-secondary" style="color:var(--bad);" ${cxAct('_punchTplDelete', String(t.id))}>Delete</button>` : ''}
+      <button class="form-submit" ${cxAct('_punchTplSave', String(id || ''))}>Save Template</button>`,
   });
   _ptpeRenderCore();
   _ptpeRenderFields();
@@ -10728,7 +10728,7 @@ function renderAuditLog() {
             <input id="audit-search" class="audit-search-input" type="search"
               placeholder="Search everything — user, action, target, location, role, table…"
               value="${escapeHtml(_auditSearch)}" oninput="_auditOnSearch(this.value)" autocomplete="off" />
-            ${_auditSearch ? `<button aria-label="Clear" class="audit-search-clear" onclick="_auditOnSearch('')" title="Clear">${icon('x')}</button>` : ''}
+            ${_auditSearch ? `<button aria-label="Clear" class="audit-search-clear" ${cxAct('_auditOnSearch', '')} title="Clear">${icon('x')}</button>` : ''}
           </div>
           <button class="form-secondary" data-action="refreshAuditLog">Refresh</button>
           <button class="export-btn" data-action="exportAudit">Export CSV</button>
@@ -11556,7 +11556,7 @@ function renderTestReporting() {
       <!-- Status chips -->
       <div class="v2-chips-row">
         <span class="v2-chip ${!_trpFilters.status ? 'active' : ''}"
-              onclick="_trpSetFilter('status','')">All <span class="n">${trpChipBase.length}</span></span>
+              ${cxAct('_trpSetFilter', 'status', '')}>All <span class="n">${trpChipBase.length}</span></span>
         ${TRP_STATUS_CHIPS.map(([val, label, tone]) => {
           const count = trpChipBase.filter(r => r.status === val).length;
           if (!count && _trpFilters.status !== val) return '';
@@ -11648,7 +11648,7 @@ function _trpReportRowHTML(row, canManage) {
       : 'Extract a compiled PDF (or ZIP) of all linked forms with summaries';
 
   return `
-    <div class="v2-list-row tone-${pct>=100?'good':pct>0?'info':'muted'} ${expanded ? 'is-expanded' : ''}" onclick="_trpToggleLinks('${uid}')">
+    <div class="v2-list-row tone-${pct>=100?'good':pct>0?'info':'muted'} ${expanded ? 'is-expanded' : ''}" ${cxAct('_trpToggleLinks', String(uid))}>
       <div class="trp-report">
         <div class="report-title-block">
           <h3 class="report-title">
@@ -11677,20 +11677,20 @@ function _trpReportRowHTML(row, canManage) {
         <div class="trp-actions" onclick="event.stopPropagation()">
           <div class="action-primary-row">
             ${row.isDerived && canManage
-              ? `<button class="v2-btn-mini primary" onclick="_trpCreateDerivedReport('${uid}')">↻ Sync</button>`
-              : `<button class="v2-btn-mini primary" onclick="openExtractReportModal('${uid}')" ${canExtract?'':'disabled'} title="${escapeHtml(extractTip)}">${icon('file')} Extract</button>`}
-            <button class="v2-btn-mini" onclick="_trpToggleLinks('${uid}')" style="width:34px;justify-content:center;" title="${expanded?'Collapse':'Expand'} links">${expanded?'▲':'▼'}</button>
+              ? `<button class="v2-btn-mini primary" ${cxAct('_trpCreateDerivedReport', String(uid))}>↻ Sync</button>`
+              : `<button class="v2-btn-mini primary" ${cxAct('openExtractReportModal', String(uid))} ${canExtract?'':'disabled'} title="${escapeHtml(extractTip)}">${icon('file')} Extract</button>`}
+            <button class="v2-btn-mini" ${cxAct('_trpToggleLinks', String(uid))} style="width:34px;justify-content:center;" title="${expanded?'Collapse':'Expand'} links">${expanded?'▲':'▼'}</button>
           </div>
           ${canManage ? `
             <div class="action-row">
-              <button class="v2-btn-mini" onclick="openLinkActivityModal('${uid}')">＋ Link</button>
-              <button class="v2-btn-mini" onclick="openEditTestReportModal('${uid}')">${row.isDerived?'Create':'Edit'}</button>
+              <button class="v2-btn-mini" ${cxAct('openLinkActivityModal', String(uid))}>＋ Link</button>
+              <button class="v2-btn-mini" ${cxAct('openEditTestReportModal', String(uid))}>${row.isDerived?'Create':'Edit'}</button>
               ${!row.isDerived ? `<button class="v2-btn-mini" onclick="openAddRevisionModal('${escapeHtml(row.id)}')">＋ Rev</button>` : ''}
             </div>
             ${(histCount || !row.isDerived) ? `
               <div class="action-row">
-                ${histCount ? `<button class="v2-btn-mini" onclick="openRevisionHistoryModal('${uid}')" title="${histCount} prior revision${histCount===1?'':'s'}">History (${histCount})</button>` : ''}
-                ${!row.isDerived ? `<button aria-label="Delete report" class="v2-btn-mini danger" onclick="_trpDeleteReport('${uid}')" title="Delete report">${icon('trash')}</button>` : ''}
+                ${histCount ? `<button class="v2-btn-mini" ${cxAct('openRevisionHistoryModal', String(uid))} title="${histCount} prior revision${histCount===1?'':'s'}">History (${histCount})</button>` : ''}
+                ${!row.isDerived ? `<button aria-label="Delete report" class="v2-btn-mini danger" ${cxAct('_trpDeleteReport', String(uid))} title="Delete report">${icon('trash')}</button>` : ''}
               </div>` : ''}
           ` : ''}
         </div>
@@ -11708,7 +11708,7 @@ function _trpLinkedActivitiesHTML(row, canManage) {
     return `
       <div class="trp-linked-panel trp-linked-empty" style="display:flex;align-items:center;gap:12px;">
         <span>No linked activities found for this report.</span>
-        ${canManage && !row.isDerived ? `<button class="admin-action-btn tr-mini-btn" onclick="openLinkActivityModal('${uid}')">＋ Link Activity</button>` : ''}
+        ${canManage && !row.isDerived ? `<button class="admin-action-btn tr-mini-btn" ${cxAct('openLinkActivityModal', String(uid))}>＋ Link Activity</button>` : ''}
       </div>`;
   }
   return `
@@ -11718,7 +11718,7 @@ function _trpLinkedActivitiesHTML(row, canManage) {
           <div class="trp-linked-title">Linked Activities</div>
           <div class="section-sub">${row.activityCount} Activit${row.activityCount===1?'y':'ies'} · ${row.testCaseCount} Test Case${row.testCaseCount===1?'':'s'} Linked</div>
         </div>
-        ${canManage && !row.isDerived ? `<button class="admin-action-btn tr-mini-btn" onclick="openLinkActivityModal('${uid}')">＋ Link Activity</button>` : ''}
+        ${canManage && !row.isDerived ? `<button class="admin-action-btn tr-mini-btn" ${cxAct('openLinkActivityModal', String(uid))}>＋ Link Activity</button>` : ''}
       </div>
       <div class="trp-linked-list">
         ${(() => { const _tcw = _buildTestCaseWeightLookup(); return row.activities.map(act => {
@@ -11839,7 +11839,7 @@ function openEditTestReportModal(uid) {
         <div class="form-field form-field-full"><label>Notes</label><textarea id="tr-notes" class="form-input" rows="2">${escapeHtml(row.notes||'')}</textarea></div>
       </div>
     `,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" onclick="saveTestReportEdit('${safeUid}')">${row.isDerived?'Create Record':'Save Changes'}</button>`
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" ${cxAct('saveTestReportEdit', String(safeUid))}>${row.isDerived?'Create Record':'Save Changes'}</button>`
   });
 }
 
@@ -11909,7 +11909,7 @@ function openAddRevisionModal(reportId) {
         <div class="form-field form-field-full"><label>Notes for this revision</label><textarea id="tr-notes" class="form-input" rows="2" placeholder="Optional notes..."></textarea></div>
       </div>
     `,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" onclick="saveNewRevision('${reportId}')">Save New Revision</button>`
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" ${cxAct('saveNewRevision', String(reportId))}>Save New Revision</button>`
   });
 }
 
@@ -12001,7 +12001,7 @@ function openLinkActivityModal(uid) {
         ${listHTML}
       </div>
     `,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>${available.length ? `<button class="admin-action-btn" onclick="_trpConfirmLinkActivities('${safeUid}')">Link Selected</button>` : ''}`
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>${available.length ? `<button class="admin-action-btn" ${cxAct('_trpConfirmLinkActivities', String(safeUid))}>Link Selected</button>` : ''}`
   });
 }
 
@@ -12669,7 +12669,7 @@ function _testRegisterHTML() {
     const isActive = _amSortCol === col || (isPls && plsCols.has(col));
     const arrow   = (isPls && plsCols.has(col)) ? '↕' : (isActive ? (_amSortDir === 'asc' ? '↑' : '↓') : '↕');
     const color   = isActive ? 'var(--info)' : 'var(--gray-300)';
-    return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" onclick="_amSetSort('${col}')" title="Sort by ${label}">${label}<span style="font-size:10px;color:${color};margin-left:3px;">${arrow}</span></th>`;
+    return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" ${cxAct('_amSetSort', String(col))} title="Sort by ${label}">${label}<span style="font-size:10px;color:${color};margin-left:3px;">${arrow}</span></th>`;
   };
 
   const _tcwActRows = _buildTestCaseWeightLookup();
@@ -12685,8 +12685,8 @@ function _testRegisterHTML() {
         ${isAdmin ? `<td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} onchange="_amToggleRow('${safeKey}',this.checked)"></td>` : ''}
         <td class="am-actions-cell">
           <div class="tr-row-actions">
-            ${isAdmin ? `<button class="form-secondary tr-mini-btn" onclick="_amOpenEditModal('${safeKey}')">Edit</button>` : ''}
-            <button class="admin-action-btn tr-mini-btn" onclick="_amOpenDrilldown('${safeKey}')">Open</button>
+            ${isAdmin ? `<button class="form-secondary tr-mini-btn" ${cxAct('_amOpenEditModal', String(safeKey))}>Edit</button>` : ''}
+            <button class="admin-action-btn tr-mini-btn" ${cxAct('_amOpenDrilldown', String(safeKey))}>Open</button>
           </div>
         </td>
         ${_colCells('tr', trCtx)}
@@ -12702,14 +12702,14 @@ function _testRegisterHTML() {
       <!-- Status chips -->
       <div class="v2-chips-row">
         <span class="v2-chip ${!_amFilters.status ? 'active' : ''}"
-              onclick="_amSetFilter('status','')">All <span class="n">${Object.values(_amStatusCounts).reduce((a,b)=>a+b,0)}</span></span>
+              ${cxAct('_amSetFilter', 'status', '')}>All <span class="n">${Object.values(_amStatusCounts).reduce((a,b)=>a+b,0)}</span></span>
         ${[['Open','is-bad','Open'],['Partial Completion','is-warn','Partial'],['Closed','is-good','Closed'],['Future Test','is-muted','Future']].map(([s,tone,label]) => {
           // Count within the current (non-status) selection; hide a status that
           // isn't present in that selection unless it's the one already chosen.
           const count = _amStatusCounts[s] || 0;
           if (!count && _amFilters.status !== s) return '';
           return `<span class="v2-chip ${tone} ${_amFilters.status === s ? 'active' : ''}"
-                        onclick="_amSetFilter('status','${s}')">
+                        ${cxAct('_amSetFilter', 'status', String(s))}>
             <span class="dot"></span>${label} <span class="n">${count}</span>
           </span>`;
         }).join('')}
@@ -13063,7 +13063,7 @@ function _amDrilldownHTML(key) {
     const isActive = _trCaseSortCol === col;
     const arrow = isActive ? (_trCaseSortDir === 'asc' ? '↑' : '↓') : '↕';
     const color = isActive ? 'var(--info)' : 'var(--gray-300)';
-    return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" onclick="_trSetCaseSort('${col}')" title="Sort by ${label}">${label}<span style="font-size:10px;color:${color};margin-left:3px;">${arrow}</span></th>`;
+    return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" ${cxAct('_trSetCaseSort', String(col))} title="Sort by ${label}">${label}<span style="font-size:10px;color:${color};margin-left:3px;">${arrow}</span></th>`;
   };
 
   // Build tpMap keyed by "section~~procedure" so same procedure in different sections stays separate
@@ -13127,13 +13127,13 @@ function _amDrilldownHTML(key) {
       <!-- Status chips (drilldown-level filter) -->
       <div class="v2-chips-row">
         <span class="v2-chip ${!_trDrillStatusFilter ? 'active' : ''}"
-              onclick="_trSetDrillStatusFilter('')">All <span class="n">${viewItems.length}</span></span>
+              ${cxAct('_trSetDrillStatusFilter', '')}>All <span class="n">${viewItems.length}</span></span>
         ${[['Pass','is-good'],['Fail','is-bad'],['Blocked','is-warn'],['In Progress','is-info'],['Not Started','is-muted'],['Not Applicable','is-muted'],['Future Test','is-muted']]
           .map(([s, tone]) => {
             const count = viewItems.filter(r => (legacyMap[r.Status]||r.Status||'Not Started') === s).length;
             if (!count && _trDrillStatusFilter !== s) return '';
             return `<span class="v2-chip ${tone} ${_trDrillStatusFilter === s ? 'active' : ''}"
-                          onclick="_trSetDrillStatusFilter('${s}')">
+                          ${cxAct('_trSetDrillStatusFilter', String(s))}>
               <span class="dot"></span>${s} <span class="n">${count}</span>
             </span>`;
           }).join('')}
@@ -13232,8 +13232,8 @@ function _amDrilldownHTML(key) {
                         ` : `<span class="v2-pill ${({'Pass':'is-good','Fail':'is-bad','Blocked':'is-warn','Not Applicable':'is-muted','In Progress':'is-info','Future Test':'is-purple'}[cur]||'is-muted')}">${escapeHtml(cur)}</span>`}
                         <div id="punch-actions-${domId}" style="margin-top:6px;display:${cur==='Fail'?'flex':'none'};flex-direction:column;gap:4px;">
                           <div style="display:flex;gap:4px;">
-                            <button class="v2-btn-mini" style="background:var(--bad-light);border-color:rgba(230,0,18,0.22);color:var(--hitachi-red);flex:1;justify-content:center;" onclick="openPunchFromTestCase('${tid}')">${icon('clipboard')} Create Punch</button>
-                            <button class="v2-btn-mini" style="flex:1;justify-content:center;" onclick="openLinkPunchModal('${tid}')">${icon('link')} Link Existing</button>
+                            <button class="v2-btn-mini" style="background:var(--bad-light);border-color:rgba(230,0,18,0.22);color:var(--hitachi-red);flex:1;justify-content:center;" ${cxAct('openPunchFromTestCase', String(tid))}>${icon('clipboard')} Create Punch</button>
+                            <button class="v2-btn-mini" style="flex:1;justify-content:center;" ${cxAct('openLinkPunchModal', String(tid))}>${icon('link')} Link Existing</button>
                           </div>
                           <div id="punch-chips-${domId}">${_punchLinksForTestHTML(String(r.TestID))}</div>
                         </div>
@@ -13241,17 +13241,17 @@ function _amDrilldownHTML(key) {
                       ${_dtRenderScopeCell(r)}
                       <td>
                         <textarea class="form-input notes-input" rows="2" placeholder="Notes…" onblur="_mxSaveNotes('${tid}',this.value)">${escapeHtml(r.Notes||'')}</textarea>
-                        ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;"><button class="v2-btn-mini" onclick="_trAddGenericChild('${tid}')">＋ Asset</button><button class="v2-btn-mini" onclick="_trOpenAssetPickerModal('${tid}')">${icon('link')} Link Assets</button></div>` : ''}
+                        ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;"><button class="v2-btn-mini" ${cxAct('_trAddGenericChild', String(tid))}>＋ Asset</button><button class="v2-btn-mini" ${cxAct('_trOpenAssetPickerModal', String(tid))}>${icon('link')} Link Assets</button></div>` : ''}
                         <span id="regcell-${domId}">${_regressionCellHTML(r)}</span>
                       </td>
-                      ${_trEditMode && isAdmin ? `<td style="white-space:nowrap;"><button class="v2-btn-mini" onclick="_trCopyCase('${tid}')" title="Copy">⧉</button> <button title="Delete" aria-label="Delete" class="v2-btn-mini danger" onclick="_trDeleteCase('${tid}')" data-tippy-content="Delete test case">${icon('trash')}</button></td>` : ''}
+                      ${_trEditMode && isAdmin ? `<td style="white-space:nowrap;"><button class="v2-btn-mini" ${cxAct('_trCopyCase', String(tid))} title="Copy">⧉</button> <button title="Delete" aria-label="Delete" class="v2-btn-mini danger" ${cxAct('_trDeleteCase', String(tid))} data-tippy-content="Delete test case">${icon('trash')}</button></td>` : ''}
                     </tr>
                   `;
                 }).join('')}
               </tbody>
             </table>
           </div>
-          ${_trEditMode && uiCan('test_register','add_test_case') ? `<div style="padding:12px 16px;border-top:1px solid var(--gray-100);"><button class="form-secondary" onclick="_trAddCase('${dropKey}')">+ Add Test Case</button></div>` : ''}
+          ${_trEditMode && uiCan('test_register','add_test_case') ? `<div style="padding:12px 16px;border-top:1px solid var(--gray-100);"><button class="form-secondary" ${cxAct('_trAddCase', String(dropKey))}>+ Add Test Case</button></div>` : ''}
         </div>
       `; }).join('')}
       ${_trBulkMode ? _trBulkBarHTML(selectedCount) : ''}
@@ -14439,7 +14439,7 @@ function _trBlockersShellHTML() {
     </tr>`;
   }).join('');
 
-  const subChip = (val, label, n, tone) => `<span class="v2-chip ${tone} ${_trBlockersSub === val ? 'active' : ''}" onclick="_trSetBlockersSub('${val}')"><span class="dot"></span>${label} <span class="n">${n}</span></span>`;
+  const subChip = (val, label, n, tone) => `<span class="v2-chip ${tone} ${_trBlockersSub === val ? 'active' : ''}" ${cxAct('_trSetBlockersSub', String(val))}><span class="dot"></span>${label} <span class="n">${n}</span></span>`;
 
   return `
     <div class="admin-section tr-register-shell">
@@ -14508,11 +14508,11 @@ function _trViewBarHTML() {
   return `
     <div class="tr-viewbar">
       <div class="rd-segmented" role="group" aria-label="Register view">
-        <button class="rd-seg ${_trView === 'activities' ? 'active' : ''}" onclick="_trSetView('activities')">${icon('clipboard')} Activities</button>
-        <button class="rd-seg ${_trView === 'blockers' ? 'active' : ''}" onclick="_trSetView('blockers')">${icon('alert')} Blockers &amp; Failures${nBlock ? ` <span class="rd-seg-n">${nBlock}</span>` : ''}</button>
+        <button class="rd-seg ${_trView === 'activities' ? 'active' : ''}" ${cxAct('_trSetView', 'activities')}>${icon('clipboard')} Activities</button>
+        <button class="rd-seg ${_trView === 'blockers' ? 'active' : ''}" ${cxAct('_trSetView', 'blockers')}>${icon('alert')} Blockers &amp; Failures${nBlock ? ` <span class="rd-seg-n">${nBlock}</span>` : ''}</button>
       </div>
       <div class="tr-savedviews">
-        ${views.map(v => `<button class="tr-savedview" onclick="_trApplyView('${v.id}')" title="Apply saved filter view">${escapeHtml(v.name)}<span class="tr-savedview-x" onclick="_trDeleteView('${v.id}',event)" role="button" aria-label="Delete view ${escapeHtml(v.name)}">×</span></button>`).join('')}
+        ${views.map(v => `<button class="tr-savedview" ${cxAct('_trApplyView', String(v.id))} title="Apply saved filter view">${escapeHtml(v.name)}<span class="tr-savedview-x" onclick="_trDeleteView('${v.id}',event)" role="button" aria-label="Delete view ${escapeHtml(v.name)}">×</span></button>`).join('')}
         <button class="tr-savedview-add" ${_trFiltersActive() ? '' : 'disabled'} data-action="_trSaveCurrentView" title="${_trFiltersActive() ? 'Save the current filters + search as a reusable view' : 'Apply a filter or search first'}">${icon('plus')} Save view</button>
       </div>
     </div>`;
@@ -14825,7 +14825,7 @@ function _p6AdminHTML() {
   return `
     <div class="admin-section p6-shell">
       <div class="admin-tabs" style="margin-bottom:24px;">
-        ${tabs.map(t=>`<button class="admin-tab${_p6Tab===t.id?' active':''}" onclick="_p6SetTab('${t.id}')">${t.label}</button>`).join('')}
+        ${tabs.map(t=>`<button class="admin-tab${_p6Tab===t.id?' active':''}" ${cxAct('_p6SetTab', String(t.id))}>${t.label}</button>`).join('')}
       </div>
       ${_p6Tab === 'import'  ? _p6ImportTabHTML()  : ''}
       ${_p6Tab === 'mapping' ? _p6MappingTabHTML() : ''}
@@ -14854,10 +14854,10 @@ function _p6ImportTabHTML() {
         <div style="margin-bottom:18px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;color:var(--gray-600);margin-bottom:8px;">SCHEDULE TYPE</div>
           <div style="display:flex;gap:0;border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
-            <button onclick="_p6SetImportType('baseline')" class="p6-type-btn${_p6ImportType==='baseline'?' active':''}" style="flex:1;">
+            <button ${cxAct('_p6SetImportType', 'baseline')} class="p6-type-btn${_p6ImportType==='baseline'?' active':''}" style="flex:1;">
               Baseline ${baselineBatch ? '<span class="badge badge-passed" style="font-size:10px;">Already set</span>' : ''}
             </button>
-            <button onclick="_p6SetImportType('current')" class="p6-type-btn${_p6ImportType==='current'?' active':''}" style="flex:1;">
+            <button ${cxAct('_p6SetImportType', 'current')} class="p6-type-btn${_p6ImportType==='current'?' active':''}" style="flex:1;">
               Current ${currentBatch ? '<span class="badge badge-review" style="font-size:10px;">Rev loaded</span>' : ''}
             </button>
           </div>
@@ -15195,7 +15195,7 @@ function _p6MappingTabHTML() {
               const expanded = window._p6ExpandedSid === sid;
               return `
                 <div class="p6-act-row ${isLinked?'p6-act-linked':'p6-act-unlinked'}">
-                  <div class="p6-act-row-header" onclick="_p6ToggleActExpand('${sid}')">
+                  <div class="p6-act-row-header" ${cxAct('_p6ToggleActExpand', String(sid))}>
                     <div style="flex:1;min-width:0;">
                       <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(a.activity)}</div>
                       <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(a.subsystem)} · ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</div>
@@ -15431,7 +15431,7 @@ function _p6ActivityLinkDetail(act, p6List, sid) {
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;font-size:11px;color:var(--gray-500);">
       <span>${showAll ? 'Showing <b>all locations</b>' : `Filtered to location <b>${escapeHtml(locCode)}</b> (${scopedP6.length} of ${p6List.length})`}</span>
       <button class="form-secondary tr-mini-btn" style="font-size:10px;padding:2px 6px;"
-        onclick="_p6ToggleShowAllLocs('${sid}')">${showAll ? 'Filter to ' + escapeHtml(locCode) : 'Show all locations'}</button>
+        ${cxAct('_p6ToggleShowAllLocs', String(sid))}>${showAll ? 'Filter to ' + escapeHtml(locCode) : 'Show all locations'}</button>
     </div>` : '';
 
   return `
@@ -15452,7 +15452,7 @@ function _p6ActivityLinkDetail(act, p6List, sid) {
               ${icon('bulb')} Suggested: <b>${escapeHtml(suggestion.p6_name)}</b>
               <div style="display:flex;gap:6px;margin-top:6px;">
                 <button class="admin-action-btn tr-mini-btn" onclick="_p6AcceptSuggestion('${sid}','${escapeHtml(suggestion.id)}')">Accept</button>
-                <button class="form-secondary tr-mini-btn" onclick="_p6DismissSuggestion('${sid}')">Dismiss</button>
+                <button class="form-secondary tr-mini-btn" ${cxAct('_p6DismissSuggestion', String(sid))}>Dismiss</button>
               </div>
             </div>` : ''}
           ${locToggleHTML}
@@ -15470,7 +15470,7 @@ function _p6ActivityLinkDetail(act, p6List, sid) {
         return `
           <div style="border-top:1px solid var(--gray-100);margin-top:10px;padding-top:8px;">
             <button class="form-secondary tr-mini-btn" style="width:100%;display:flex;align-items:center;justify-content:space-between;"
-              onclick="_p6ToggleTCSection('${sid}')">
+              ${cxAct('_p6ToggleTCSection', String(sid))}>
               <span style="font-size:11px;font-weight:700;letter-spacing:0.05em;color:var(--gray-600);">
                 TEST-CASE OVERRIDES ${tcLinkedCount ? `<span style="color:var(--good);">(${tcLinkedCount} linked)</span>` : '(optional)'}
               </span>
@@ -16082,9 +16082,9 @@ function _p6LearnTabHTML() {
       <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
         <div style="display:inline-flex;background:var(--gray-100);border-radius:6px;padding:3px;">
           <button class="${_p6LearnMode==='activity'?'admin-action-btn':'form-secondary'}" style="font-size:12px;padding:6px 12px;border:none;"
-            onclick="_p6LearnSetMode('activity')">Activities</button>
+            ${cxAct('_p6LearnSetMode', 'activity')}>Activities</button>
           <button class="${_p6LearnMode==='tc'?'admin-action-btn':'form-secondary'}" style="font-size:12px;padding:6px 12px;border:none;"
-            onclick="_p6LearnSetMode('tc')">Activities + Test Cases</button>
+            ${cxAct('_p6LearnSetMode', 'tc')}>Activities + Test Cases</button>
         </div>
         <select class="filter-select" style="font-size:12px;" onchange="_p6LearnFilter('phase',this.value)">
           <option value="">All Phases</option>
@@ -16157,7 +16157,7 @@ function _p6LearnRowHTML(c, p6List) {
           </div>
           <div style="font-size:11px;margin-top:4px;">
             <span class="badge badge-notstarted p6-learn-maplink" style="font-size:10px;cursor:pointer;" role="button" tabindex="0"
-              onclick="_p6LearnShowMapping('${sid}')"
+              ${cxAct('_p6LearnShowMapping', String(sid))}
               title="Click to see how each location currently maps to P6">\ud83d\udd34 ${c.unlinkedCount} of ${c.totalCount} location${c.totalCount===1?'':'s'} unlinked</span>
           </div>
         </div>
@@ -16166,13 +16166,13 @@ function _p6LearnRowHTML(c, p6List) {
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;font-size:11px;color:var(--gray-500);">
               <span>${showAll ? 'Showing <b>all locations</b>' : `Search filtered to <b>${escapeHtml(locCode)}</b> (${scopedP6.length} of ${p6List.length})`}</span>
               <button class="form-secondary tr-mini-btn" style="font-size:10px;padding:2px 6px;"
-                onclick="_p6LearnToggleShowAll('${sid}')">${showAll ? 'Filter to '+escapeHtml(locCode) : 'Show all locations'}</button>
+                ${cxAct('_p6LearnToggleShowAll', String(sid))}>${showAll ? 'Filter to '+escapeHtml(locCode) : 'Show all locations'}</button>
             </div>` : ''}
           ${_p6SS(sid + '_pick', scopedP6, 'Search P6 activities…', initialId)}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
-          <button class="admin-action-btn tr-mini-btn" onclick="_p6LearnPreview('${sid}')">Preview…</button>
-          <button class="form-secondary tr-mini-btn" onclick="_p6LearnSkip('${sid}')">Skip</button>
+          <button class="admin-action-btn tr-mini-btn" ${cxAct('_p6LearnPreview', String(sid))}>Preview…</button>
+          <button class="form-secondary tr-mini-btn" ${cxAct('_p6LearnSkip', String(sid))}>Skip</button>
         </div>
       </div>
     </div>`;
@@ -16377,7 +16377,7 @@ function _p6LearnShowMapping(sid) {
             <div style="color:var(--warn);font-size:11px;margin-top:3px;">Not linked to any P6 activity</div>`}
           <div style="display:flex;align-items:center;gap:6px;margin-top:6px;">
             <div style="flex:1;min-width:160px;">${_p6SS(actSid, scoped, 'Search P6 activity…', initId)}</div>
-            <button class="admin-action-btn tr-mini-btn" style="flex-shrink:0;" onclick="_p6LearnLinkLocation('${actSid}','${sid}')">${linked ? 'Relink' : 'Link'}</button>
+            <button class="admin-action-btn tr-mini-btn" style="flex-shrink:0;" ${cxAct('_p6LearnLinkLocation', String(actSid), String(sid))}>${linked ? 'Relink' : 'Link'}</button>
           </div>
         </div>
       </div>`;
@@ -16791,11 +16791,11 @@ function _p6HealthTabHTML() {
                   <td style="font-size:12px;">${p.start_date  ? _fmtDate(p.start_date)  : '—'}</td>
                   <td style="font-size:12px;">${p.finish_date ? _fmtDate(p.finish_date) : '—'}</td>
                   <td style="text-align:center;white-space:nowrap;">
-                    <button class="form-secondary tr-mini-btn" onclick="_p6HToggleLink('${escapedId}')"
+                    <button class="form-secondary tr-mini-btn" ${cxAct('_p6HToggleLink', String(escapedId))}
                       style="${linkOpen?'background:var(--hitachi-red);color:var(--white);':''}" >
                       ${icon('link')} Link to Activity
                     </button>
-                    <button class="form-secondary tr-mini-btn" title="Snooze — hide until restored" aria-label="Snooze" onclick="_p6HRemindLater('${escapedId}')">${icon('clock')}</button>
+                    <button class="form-secondary tr-mini-btn" title="Snooze — hide until restored" aria-label="Snooze" ${cxAct('_p6HRemindLater', String(escapedId))}>${icon('clock')}</button>
                     <button aria-label="Remove from schedule" class="form-secondary tr-mini-btn" style="color:var(--bad);" title="Remove from schedule" onclick="_p6HRemove('${escapedId}','${escapeHtml(p.p6_name).replace(/'/g,"\\'")}')">${icon('trash')}</button>
                   </td>
                 </tr>
@@ -16815,9 +16815,9 @@ function _p6HealthTabHTML() {
                       </div>
                       <div style="display:flex;gap:8px;">
                         <button class="admin-action-btn" style="font-size:12px;padding:6px 14px;"
-                          onclick="_p6HLinkSave('${escapedId}')">Save Links</button>
+                          ${cxAct('_p6HLinkSave', String(escapedId))}>Save Links</button>
                         <button class="form-secondary" style="font-size:12px;padding:6px 14px;"
-                          onclick="_p6HToggleLink('${escapedId}')">Cancel</button>
+                          ${cxAct('_p6HToggleLink', String(escapedId))}>Cancel</button>
                       </div>
                     </div>
                   </td>
@@ -17141,7 +17141,7 @@ function renderSchedulePage() {
       <div class="docs-empty">
         <h3>No schedule data yet</h3>
         <p>An admin needs to import a P6 schedule and map it to portal activities first.</p>
-        ${currentRoleUser?.role === 'admin' ? `<button class="admin-action-btn" onclick="showPage('admin-p6')">Go to P6 Admin →</button>` : ''}
+        ${currentRoleUser?.role === 'admin' ? `<button class="admin-action-btn" ${cxAct('showPage', 'admin-p6')}>Go to P6 Admin →</button>` : ''}
       </div>`;
     return;
   }
@@ -17713,7 +17713,7 @@ function _trRenderAssetPickerBody() {
             ? `<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--gray-500);">No matching assets.</td></tr>`
             : filtered.map(a => `
               <tr style="border-top:1px solid var(--gray-100);cursor:pointer;"
-                  onclick="_trAssetPickerToggle('${a.id}')">
+                  ${cxAct('_trAssetPickerToggle', String(a.id))}>
                 <td style="padding:6px 10px;">
                   <input type="checkbox" ${_trAssetPicker.selected.has(a.id)?'checked':''}
                          onclick="event.stopPropagation();_trAssetPickerToggle('${a.id}')">
@@ -18079,7 +18079,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
   const chevron    = expanded ? '▼' : '▶';
 
   const parentRowHtml = `
-    <tr style="background:#f0f1f3;cursor:pointer;" onclick="_trToggleParent('${ptid}')">
+    <tr style="background:#f0f1f3;cursor:pointer;" ${cxAct('_trToggleParent', String(ptid))}>
       ${_trBulkMode ? `<td onclick="event.stopPropagation()"></td>` : ''}
       ${_trEditMode && isAdmin ? `<td onclick="event.stopPropagation()"></td>` : ''}
       <td style="font-size:11px;font-family:monospace;color:var(--gray-700);min-width:140px;">
@@ -18139,7 +18139,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
             ${statuses.map(s => `<option value="${s}" ${childFilter.status===s?'selected':''}>${s}</option>`).join('')}
           </select>
           <span style="color:var(--gray-500);">${filteredChildren.length} of ${children.length}</span>
-          ${(childFilter.search || childFilter.status) ? `<button class="form-secondary" style="font-size:11px;padding:2px 8px;" onclick="_trChildFilterClear('${ptid}')">Clear</button>` : ''}
+          ${(childFilter.search || childFilter.status) ? `<button class="form-secondary" style="font-size:11px;padding:2px 8px;" ${cxAct('_trChildFilterClear', String(ptid))}>Clear</button>` : ''}
         </div>
       </td>
     </tr>` : '';
@@ -18185,8 +18185,8 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
           ` : `<span class="badge" style="background:${sc}20;color:${sc};border:1px solid ${sc}40;">${escapeHtml(cur)}</span>`}
           <div id="punch-actions-${domId}" style="margin-top:6px;display:${cur==='Fail'?'flex':'none'};flex-direction:column;gap:4px;">
             <div style="display:flex;gap:4px;">
-              <button onclick="openPunchFromTestCase('${ctid}')" style="flex:1;font-size:11px;padding:4px 6px;background:var(--bad-light);border:1px solid var(--bad-border);color:var(--bad);border-radius:5px;cursor:pointer;font-weight:600;">${icon('clipboard')} Create Punch</button>
-              <button onclick="openLinkPunchModal('${ctid}')" style="flex:1;font-size:11px;padding:4px 6px;background:var(--white);border:1px solid var(--gray-300);color:var(--gray-700);border-radius:5px;cursor:pointer;font-weight:600;">${icon('link')} Link Existing</button>
+              <button ${cxAct('openPunchFromTestCase', String(ctid))} style="flex:1;font-size:11px;padding:4px 6px;background:var(--bad-light);border:1px solid var(--bad-border);color:var(--bad);border-radius:5px;cursor:pointer;font-weight:600;">${icon('clipboard')} Create Punch</button>
+              <button ${cxAct('openLinkPunchModal', String(ctid))} style="flex:1;font-size:11px;padding:4px 6px;background:var(--white);border:1px solid var(--gray-300);color:var(--gray-700);border-radius:5px;cursor:pointer;font-weight:600;">${icon('link')} Link Existing</button>
             </div>
             <div id="punch-chips-${domId}">${_punchLinksForTestHTML(String(c.TestID))}</div>
           </div>
@@ -18197,7 +18197,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
             value="${escapeHtml(c.Notes || '')}" onblur="_mxSaveNotes('${ctid}',this.value)">
           <span id="regcell-${domId}">${_regressionCellHTML(c)}</span>
         </td>
-        ${_trEditMode && isAdmin ? `<td><button title="Delete" aria-label="Delete" class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="_trDeleteAssetRow('${ctid}')" data-tippy-content="Remove asset from test case">${icon('trash')}</button></td>` : ''}
+        ${_trEditMode && isAdmin ? `<td><button title="Delete" aria-label="Delete" class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" ${cxAct('_trDeleteAssetRow', String(ctid))} data-tippy-content="Remove asset from test case">${icon('trash')}</button></td>` : ''}
       </tr>`;
   }).join('') : '';
 
@@ -18275,7 +18275,7 @@ function _assetColHeaders() {
     const label = def ? def.label : c.id;
     const on    = _assetSort.col === c.id;
     const arrow = on ? (_assetSort.dir === 'asc' ? ' ↑' : ' ↓') : '';
-    return `<th style="cursor:pointer;user-select:none;white-space:nowrap;" onclick="_assetSetSort('${c.id}')" title="Sort by ${escapeHtml(label)}">${escapeHtml(label)}<span style="color:var(--primary);font-weight:700;">${arrow}</span></th>`;
+    return `<th style="cursor:pointer;user-select:none;white-space:nowrap;" ${cxAct('_assetSetSort', String(c.id))} title="Sort by ${escapeHtml(label)}">${escapeHtml(label)}<span style="color:var(--primary);font-weight:700;">${arrow}</span></th>`;
   }).join('');
 }
 
@@ -18355,7 +18355,7 @@ function _assetPageHTML() {
   const failingCount  = ASSETS.filter(a => _assetProgress(a).hasFailing).length;
   const _assetChip = (v, label, count) => {
     const on = _assetFilter.quick === v;
-    return `<button onclick="_assetSetFilter('quick','${v}')"
+    return `<button ${cxAct('_assetSetFilter', 'quick', String(v))}
       style="font-size:12px;padding:5px 12px;border-radius:14px;cursor:pointer;font-weight:${on?'600':'500'};
              border:1px solid ${on?'var(--primary)':'var(--border)'};
              background:${on?'var(--primary)':'var(--surface)'};
@@ -18461,14 +18461,14 @@ function _assetPageHTML() {
         <datalist id="am-bulk-type-list">
           ${types.map(t => `<option value="${escapeHtml(t)}"></option>`).join('')}
         </datalist>
-        <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_assetBulkEditField('device_type','am-bulk-type')">Apply</button>
+        <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" ${cxAct('_assetBulkEditField', 'device_type', 'am-bulk-type')}>Apply</button>
         <span style="height:24px;border-left:1px solid var(--slate-600);align-self:center;"></span>
         <span style="font-size:12px;color:var(--slate-300);white-space:nowrap;">Set Location:</span>
         <select id="am-bulk-loc" class="form-input" style="font-size:12px;max-width:160px;background:var(--slate-700);color:var(--white);border-color:var(--slate-600);">
           <option value="">— choose —</option>
           ${allLocs.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('')}
         </select>
-        <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_assetBulkEditField('location','am-bulk-loc')">Apply</button>
+        <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" ${cxAct('_assetBulkEditField', 'location', 'am-bulk-loc')}>Apply</button>
         <span style="height:24px;border-left:1px solid var(--slate-600);align-self:center;"></span>
         ${uiCan('assets','bulk_delete') ? `<button class="admin-action-btn" style="background:var(--bad);font-size:12px;" data-action="_assetBulkDelete">${icon('trash')} Delete</button>` : ''}
         <button class="btn-ghost-dark" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" data-action="_assetClearSelection">Clear</button>
@@ -18522,9 +18522,9 @@ function _assetRowHTML(a) {
       <td><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="_assetToggleSelect('${a.id}',this.checked)"></td>
       ${_colCells('assets', ctx)}
       <td>
-        <button class="form-secondary tr-mini-btn${isOpen?' admin-action-btn':''}" onclick="_assetOpenManageLinks('${a.id}')">${isOpen? icon('link')+' Close' : icon('link')+' Links'}</button>
-        <button class="form-secondary tr-mini-btn" onclick="_assetOpenEdit('${a.id}')">${icon('edit')}️</button>
-        <button title="Delete" aria-label="Delete" class="form-secondary tr-mini-btn" style="color:var(--bad);" onclick="_assetDelete('${a.id}')">${icon('trash')}</button>
+        <button class="form-secondary tr-mini-btn${isOpen?' admin-action-btn':''}" ${cxAct('_assetOpenManageLinks', String(a.id))}>${isOpen? icon('link')+' Close' : icon('link')+' Links'}</button>
+        <button class="form-secondary tr-mini-btn" ${cxAct('_assetOpenEdit', String(a.id))}>${icon('edit')}️</button>
+        <button title="Delete" aria-label="Delete" class="form-secondary tr-mini-btn" style="color:var(--bad);" ${cxAct('_assetDelete', String(a.id))}>${icon('trash')}</button>
       </td>
     </tr>`;
 
@@ -18593,7 +18593,7 @@ function _assetManagePanelHTML(assetId) {
                     <td><span style="font-size:12px;font-weight:600;color:${sc(child?.Status||'Not Started')}">${escapeHtml(child?.Status||'Not Started')}</span></td>
                     <td style="font-size:12px;">${child ? (parseFloat(child.Weight)||0).toFixed(3) : '—'}</td>
                     <td><button class="form-secondary tr-mini-btn" style="color:var(--bad);"
-                      onclick="_assetUnlinkConfirm('${assetId}','${link.parent_test_id}')">Unlink</button></td>
+                      ${cxAct('_assetUnlinkConfirm', String(assetId), String(link.parent_test_id))}>Unlink</button></td>
                   </tr>`).join('')}
               </tbody>
             </table>
@@ -18625,7 +18625,7 @@ function _assetManagePanelHTML(assetId) {
               </select>
             </div>
             <div>
-              <button class="admin-action-btn" onclick="_assetLinkFromPanel('${assetId}')">Link to Test Case</button>
+              <button class="admin-action-btn" ${cxAct('_assetLinkFromPanel', String(assetId))}>Link to Test Case</button>
             </div>
           </div>`}
       </div>
@@ -18768,7 +18768,7 @@ function _assetOpenEdit(assetId) {
         <div id="ae-prefix-preview" style="font-size:12px;color:var(--gray-500);">Location prefix: ${escapeHtml(a.location_prefix||'—')}</div>
       </div>`,
     footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
-             <button class="admin-action-btn" onclick="_assetSaveEdit('${assetId}')">Save</button>`,
+             <button class="admin-action-btn" ${cxAct('_assetSaveEdit', String(assetId))}>Save</button>`,
   });
 }
 
@@ -19042,7 +19042,7 @@ function _regressionCellHTML(r) {
       style="font-size:10px;font-weight:600;padding:3px 8px;background:var(--white);border:1px solid var(--gray-300);color:var(--gray-600);border-radius:5px;cursor:pointer;">↶ Undo</button>`;
   }
   if (histCount > 0) {
-    bits += `<button onclick="_trToggleAttemptHist('${safeG}')" title="Show previous attempts"
+    bits += `<button ${cxAct('_trToggleAttemptHist', String(safeG))} title="Show previous attempts"
       style="font-size:10px;padding:3px 7px;background:var(--white);border:1px solid var(--gray-300);color:var(--gray-600);border-radius:5px;cursor:pointer;">${icon('clock')} ${histCount} prior</button>`;
   }
   if (!bits) return '';
@@ -19311,15 +19311,15 @@ function _cmPageHTML() {
                   </div>
                   <div style="display:flex;gap:6px;align-items:center;white-space:nowrap;">
                     ${histCount > 0 ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_cmToggleHistory('${ik.replace(/'/g,"\\'")}')">${expanded?'▼':'▶'} ${histCount} prior</button>` : ''}
-                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal(null,'${latest.id}')">↑ New Version</button>
-                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="openSwConfigModal('${latest.id}')">Edit</button>
+                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" ${cxAct('openSwConfigModal', null, String(latest.id))}>↑ New Version</button>
+                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" ${cxAct('openSwConfigModal', String(latest.id))}>Edit</button>
                   </div>
                 </div>
                 ${expanded && histCount > 0 ? `<div style="border-top:1px solid var(--gray-100);background:var(--gray-50);padding:6px 14px;">
                   ${versions.slice(1).map(v => `
                     <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--gray-600);padding:5px 0;border-bottom:1px solid var(--gray-100);">
                       <span><span style="font-family:monospace;background:var(--gray-200);padding:1px 6px;border-radius:3px;">${escapeHtml(v.version)}</span> · <span style="color:var(--text-subtle);">${escapeHtml(v.status)}</span></span>
-                      <button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="openSwConfigModal('${v.id}')">View / Edit</button>
+                      <button class="form-secondary" style="font-size:10px;padding:2px 7px;" ${cxAct('openSwConfigModal', String(v.id))}>View / Edit</button>
                     </div>`).join('')}
                 </div>` : ''}
               </div>`;
@@ -19378,7 +19378,7 @@ function _cmPageHTML() {
     </div>` : `<div class="admin-section" style="margin-bottom:18px;">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <input type="text" class="form-input" style="max-width:320px;" placeholder="Search VDDs…" value="${escapeHtml(f.search)}" oninput="_cmSetFilter('search',this.value)">
-        ${f.search?`<button class="form-secondary" style="font-size:12px;" onclick="_cmSetFilter('search','')">Clear</button>`:''}
+        ${f.search?`<button class="form-secondary" style="font-size:12px;" ${cxAct('_cmSetFilter', 'search', '')}>Clear</button>`:''}
         <button class="form-secondary" style="font-size:12px;" data-action="_cmExpandAll">Expand All</button>
         <button class="form-secondary" style="font-size:12px;" data-action="_cmCollapseAll">Collapse All</button>
       </div>
@@ -19891,7 +19891,7 @@ function openSwConfigModal(editId, cloneFromId, parentVddId) {
     `,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      ${existing ? `<button class="form-secondary" style="color:var(--bad);" onclick="deleteSwConfig('${existing.id}')">Delete</button>` : ''}
+      ${existing ? `<button class="form-secondary" style="color:var(--bad);" ${cxAct('deleteSwConfig', String(existing.id))}>Delete</button>` : ''}
       <button class="form-submit" data-action="saveSwConfig">${existing?'Save Changes':'Save'}</button>
     `,
   });
@@ -20060,7 +20060,7 @@ function openSwEquipModal(configId, editId) {
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
       ${existing ? '<button class="form-secondary" style="color:var(--bad);" onclick="deleteSwEquip(\'' + existing.id + '\',\'' + configId + '\')">Delete</button>' : ''}
-      <button class="form-submit" onclick="saveSwEquip('${configId}')">${existing ? 'Save Changes' : 'Save'}</button>
+      <button class="form-submit" ${cxAct('saveSwEquip', String(configId))}>${existing ? 'Save Changes' : 'Save'}</button>
     `,
   });
 }
@@ -20425,7 +20425,7 @@ function _vmRenderRegistry(root, heroEl) {
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
           <div style="display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:12px;">
-            ${['', 'D', 'E'].map(t => `<button style="padding:5px 14px;border:none;cursor:pointer;${t ? 'border-left:1px solid var(--border);' : ''}background:${f.type === t ? 'var(--hitachi-red)' : 'var(--surface)'};color:${f.type === t ? 'var(--white)' : 'var(--text)'};font-weight:${f.type === t ? '600' : '400'};" onclick="_vmSetFilter('type','${t}')">${t ? t + '-Cars' : 'All'}</button>`).join('')}
+            ${['', 'D', 'E'].map(t => `<button style="padding:5px 14px;border:none;cursor:pointer;${t ? 'border-left:1px solid var(--border);' : ''}background:${f.type === t ? 'var(--hitachi-red)' : 'var(--surface)'};color:${f.type === t ? 'var(--white)' : 'var(--text)'};font-weight:${f.type === t ? '600' : '400'};" ${cxAct('_vmSetFilter', 'type', String(t))}>${t ? t + '-Cars' : 'All'}</button>`).join('')}
           </div>
           <input type="text" class="form-input" style="max-width:220px;" placeholder="Search car number…" value="${escapeHtml(f.search)}" oninput="_vmSetFilter('search',this.value)">
           ${(f.search || f.type) ? `<button class="form-secondary" style="font-size:12px;" data-action="_vmClearFilters">Clear</button>` : ''}
@@ -20466,7 +20466,7 @@ function _vmCarCardHTML(car) {
   const sm = _VM_STATUS[r.status];
   const readyTxt = sm.label, readyTone = sm.tone;
   return `
-    <div onclick="_vmOpenCar('${car.id}')" style="cursor:pointer;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:14px 16px;transition:box-shadow .12s;" onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,.08)'" onmouseout="this.style.boxShadow='none'">
+    <div ${cxAct('_vmOpenCar', String(car.id))} style="cursor:pointer;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:14px 16px;transition:box-shadow .12s;" onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,.08)'" onmouseout="this.style.boxShadow='none'">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
         <div style="display:flex;align-items:center;gap:9px;">
           ${_vmLightDot(r.light, 14)}
@@ -20513,7 +20513,7 @@ function _vmRenderDetail(root, heroEl) {
 
   const tabs = [['workflow', 'Workflow', icon('clipboard')], ['equipment', 'Equipment & Software', icon('cpu')], ['punch', 'Punch List', icon('flag')], ['history', 'Car History', icon('clock')]];
   const tabBar = `<div style="display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap;">
-    ${tabs.map(([id, label, ic]) => `<button onclick="_vmSetTab('${id}')" style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;color:${_vmTab === id ? 'var(--hitachi-red)' : 'var(--gray-500)'};border-bottom:2px solid ${_vmTab === id ? 'var(--hitachi-red)' : 'transparent'};margin-bottom:-1px;">${ic} ${label}</button>`).join('')}
+    ${tabs.map(([id, label, ic]) => `<button ${cxAct('_vmSetTab', String(id))} style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;color:${_vmTab === id ? 'var(--hitachi-red)' : 'var(--gray-500)'};border-bottom:2px solid ${_vmTab === id ? 'var(--hitachi-red)' : 'transparent'};margin-bottom:-1px;">${ic} ${label}</button>`).join('')}
   </div>`;
 
   const head = `
@@ -20527,8 +20527,8 @@ function _vmRenderDetail(root, heroEl) {
           ${_vmChip(readyTxt, readyTone)}
         </div>
         <div style="display:flex;gap:8px;">
-          ${_vmCan('edit') ? `<button class="form-secondary" style="font-size:12px;" onclick="_vmEditCarModal('${car.id}')">${icon('edit')} Edit</button>` : ''}
-          ${_vmCan('delete') ? `<button class="form-secondary" style="font-size:12px;color:var(--bad);" onclick="_vmDeleteCar('${car.id}')">${icon('trash')} Delete</button>` : ''}
+          ${_vmCan('edit') ? `<button class="form-secondary" style="font-size:12px;" ${cxAct('_vmEditCarModal', String(car.id))}>${icon('edit')} Edit</button>` : ''}
+          ${_vmCan('delete') ? `<button class="form-secondary" style="font-size:12px;color:var(--bad);" ${cxAct('_vmDeleteCar', String(car.id))}>${icon('trash')} Delete</button>` : ''}
         </div>
       </div>
       ${car.notes ? `<div style="margin-top:8px;font-size:12px;color:var(--gray-500);">${escapeHtml(car.notes)}</div>` : ''}
@@ -20554,8 +20554,8 @@ function _vmWorkflowTabHTML(car) {
   const toolbar = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
       <div style="font-size:12px;color:var(--gray-500);">Readiness workflow for this car — edit activities and fill their checklists here.</div>
       <div style="display:flex;gap:8px;">
-        ${canEdit && !items.length ? `<button class="form-secondary" style="font-size:12px;" onclick="_vmSeedWorkflow('${car.id}')">${icon('layers')} Seed from ${escapeHtml(car.car_type)}-template</button>` : ''}
-        ${canEdit ? `<button class="admin-action-btn" onclick="_vmWfAddModal('${car.id}')">${icon('plus')} Add Activity</button>` : ''}
+        ${canEdit && !items.length ? `<button class="form-secondary" style="font-size:12px;" ${cxAct('_vmSeedWorkflow', String(car.id))}>${icon('layers')} Seed from ${escapeHtml(car.car_type)}-template</button>` : ''}
+        ${canEdit ? `<button class="admin-action-btn" ${cxAct('_vmWfAddModal', String(car.id))}>${icon('plus')} Add Activity</button>` : ''}
       </div>
     </div>`;
   if (!items.length) {
@@ -20582,9 +20582,9 @@ function _vmWorkflowTabHTML(car) {
           ${it.description ? `<div style="font-size:12px;color:var(--gray-500);margin-top:3px;">${escapeHtml(it.description)}</div>` : ''}
         </div>
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-          ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:2px 7px;" ${idx === 0 ? 'disabled' : ''} aria-label="Move activity up" title="Move up" onclick="_vmWfMove('${it.id}',-1)">▲</button>
-          <button class="form-secondary" style="font-size:11px;padding:2px 7px;" ${idx === items.length - 1 ? 'disabled' : ''} aria-label="Move activity down" title="Move down" onclick="_vmWfMove('${it.id}',1)">▼</button>
-          <button class="form-secondary" style="font-size:11px;padding:2px 8px;" aria-label="Edit activity" title="Edit activity" onclick="_vmWfEditModal('${it.id}')">${icon('edit')}</button>` : ''}
+          ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:2px 7px;" ${idx === 0 ? 'disabled' : ''} aria-label="Move activity up" title="Move up" ${cxAct('_vmWfMove', String(it.id), -1)}>▲</button>
+          <button class="form-secondary" style="font-size:11px;padding:2px 7px;" ${idx === items.length - 1 ? 'disabled' : ''} aria-label="Move activity down" title="Move down" ${cxAct('_vmWfMove', String(it.id), 1)}>▼</button>
+          <button class="form-secondary" style="font-size:11px;padding:2px 8px;" aria-label="Edit activity" title="Edit activity" ${cxAct('_vmWfEditModal', String(it.id))}>${icon('edit')}</button>` : ''}
           ${canEdit
             ? `<select onchange="_vmSetWfStatus('${it.id}',this.value)" aria-label="Activity status" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-weight:600;">
                 ${_VM_WF_STATUSES.map(s => `<option ${it.status === s ? 'selected' : ''}>${s}</option>`).join('')}
@@ -20594,15 +20594,15 @@ function _vmWorkflowTabHTML(car) {
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
         ${forms.map(f => `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;background:var(--info-light);color:var(--info);border:1px solid #e0e7ff;border-radius:6px;padding:3px 8px;">
-            <button onclick="openFormViewer('${f.id}')" title="Open / fill" style="border:none;background:none;color:var(--info);cursor:pointer;font:inherit;display:inline-flex;align-items:center;gap:5px;padding:0;">${icon('file')} ${escapeHtml(f.name || f.original_filename || 'Form')}</button>
-            ${canEdit ? `<button onclick="_vmUnlinkForm('${f.id}','${it.id}')" aria-label="Unlink form" title="Unlink" style="border:none;background:none;color:var(--text-subtle);cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}
+            <button ${cxAct('openFormViewer', String(f.id))} title="Open / fill" style="border:none;background:none;color:var(--info);cursor:pointer;font:inherit;display:inline-flex;align-items:center;gap:5px;padding:0;">${icon('file')} ${escapeHtml(f.name || f.original_filename || 'Form')}</button>
+            ${canEdit ? `<button ${cxAct('_vmUnlinkForm', String(f.id), String(it.id))} aria-label="Unlink form" title="Unlink" style="border:none;background:none;color:var(--text-subtle);cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}
           </span>`).join('')}
-        ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;" onclick="_vmLinkFormModal('${it.id}')">${icon('paperclip')} Attach form</button>` : ''}
-        <button class="form-secondary" style="font-size:11px;padding:3px 9px;" onclick="_vmChkToggleOpen('${it.id}')">${chkOpen ? '▾' : '▸'} Checklist${cs.total ? ' (' + cs.done + '/' + cs.total + ')' : ''}</button>
-        ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;" onclick="_vmChkBuilderModal('item','${it.id}')">${icon('sliders')} Edit checklist</button>` : ''}
-        ${failed && canEdit ? `<button onclick="_vmWfRegression('${it.id}')" title="Freeze this failed attempt and start a fresh run" style="font-size:11px;font-weight:600;padding:3px 9px;background:var(--accent-purple-light);border:1px solid #c4b5fd;color:var(--accent-purple);border-radius:6px;cursor:pointer;">${icon('refresh')} New attempt</button>` : ''}
-        ${hist.length ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;" onclick="_vmToggleHist('${it.id}')">${histOpen ? '▾' : '▸'} History (${hist.length})</button>` : ''}
-        ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;color:var(--bad);margin-left:auto;" onclick="_vmWfDelete('${it.id}')">${icon('trash')} Delete</button>` : ''}
+        ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;" ${cxAct('_vmLinkFormModal', String(it.id))}>${icon('paperclip')} Attach form</button>` : ''}
+        <button class="form-secondary" style="font-size:11px;padding:3px 9px;" ${cxAct('_vmChkToggleOpen', String(it.id))}>${chkOpen ? '▾' : '▸'} Checklist${cs.total ? ' (' + cs.done + '/' + cs.total + ')' : ''}</button>
+        ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;" ${cxAct('_vmChkBuilderModal', 'item', String(it.id))}>${icon('sliders')} Edit checklist</button>` : ''}
+        ${failed && canEdit ? `<button ${cxAct('_vmWfRegression', String(it.id))} title="Freeze this failed attempt and start a fresh run" style="font-size:11px;font-weight:600;padding:3px 9px;background:var(--accent-purple-light);border:1px solid #c4b5fd;color:var(--accent-purple);border-radius:6px;cursor:pointer;">${icon('refresh')} New attempt</button>` : ''}
+        ${hist.length ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;" ${cxAct('_vmToggleHist', String(it.id))}>${histOpen ? '▾' : '▸'} History (${hist.length})</button>` : ''}
+        ${canEdit ? `<button class="form-secondary" style="font-size:11px;padding:3px 9px;color:var(--bad);margin-left:auto;" ${cxAct('_vmWfDelete', String(it.id))}>${icon('trash')} Delete</button>` : ''}
       </div>
       ${chkOpen ? _vmChecklistHTML(car, it, canEdit) : ''}
       ${histOpen && hist.length ? `<div style="margin-top:8px;border-top:1px dashed var(--border);padding-top:8px;display:flex;flex-direction:column;gap:5px;">
@@ -20610,7 +20610,7 @@ function _vmWorkflowTabHTML(car) {
           <span style="font-weight:700;">Attempt ${a.attempt_number || 1}</span> ${_vmChip(a.status, _VM_WF_TONE[a.status] || 'muted')}
           ${a.completed_by ? '· ' + escapeHtml(a.completed_by) : ''}
           ${a.completed_at ? '· ' + escapeHtml(new Date(a.completed_at).toLocaleDateString()) : ''}
-          ${_vmFormsForItem(a.id).map(f => `<button onclick="openFormViewer('${f.id}')" style="border:none;background:none;color:var(--info);cursor:pointer;font:inherit;">${icon('file')} ${escapeHtml(f.name || 'Form')}</button>`).join('')}
+          ${_vmFormsForItem(a.id).map(f => `<button ${cxAct('openFormViewer', String(f.id))} style="border:none;background:none;color:var(--info);cursor:pointer;font:inherit;">${icon('file')} ${escapeHtml(f.name || 'Form')}</button>`).join('')}
         </div>`).join('')}
       </div>` : ''}
     </div>`;
@@ -20676,8 +20676,8 @@ function _vmEquipTabHTML(car) {
   const toolbar = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
       <div style="font-size:12px;color:var(--gray-500);">As-loaded software compared against the latest released version in each linked VDD.</div>
       <div style="display:flex;gap:8px;">
-        ${canEdit && !eqs.length ? `<button class="form-secondary" style="font-size:12px;" onclick="_vmSeedEquip('${car.id}')">${icon('layers')} Seed from ${escapeHtml(car.car_type)}-template</button>` : ''}
-        ${canEdit ? `<button class="admin-action-btn" onclick="_vmEquipModal('${car.id}')">${icon('plus')} Add Equipment</button>` : ''}
+        ${canEdit && !eqs.length ? `<button class="form-secondary" style="font-size:12px;" ${cxAct('_vmSeedEquip', String(car.id))}>${icon('layers')} Seed from ${escapeHtml(car.car_type)}-template</button>` : ''}
+        ${canEdit ? `<button class="admin-action-btn" ${cxAct('_vmEquipModal', String(car.id))}>${icon('plus')} Add Equipment</button>` : ''}
       </div>
     </div>`;
   if (!eqs.length) {
@@ -20710,8 +20710,8 @@ function _vmEquipTabHTML(car) {
         <td style="padding:6px 8px;font-family:monospace;color:var(--gray-500);">${escapeHtml(c.expected || (e.sw_equipment_id || e.config_id ? '—' : 'not linked'))}</td>
         <td style="padding:6px 8px;">${_vmChip(label, tone)}</td>
         <td style="padding:6px 8px;text-align:right;white-space:nowrap;">
-          ${canEdit ? `<button class="form-secondary" style="font-size:10px;padding:2px 7px;" onclick="_vmEquipModal('${car.id}','${e.id}')">Edit</button>
-          <button class="form-secondary" style="font-size:10px;padding:2px 7px;color:var(--bad);" onclick="_vmDeleteEquip('${e.id}')">Del</button>` : ''}
+          ${canEdit ? `<button class="form-secondary" style="font-size:10px;padding:2px 7px;" ${cxAct('_vmEquipModal', String(car.id), String(e.id))}>Edit</button>
+          <button class="form-secondary" style="font-size:10px;padding:2px 7px;color:var(--bad);" ${cxAct('_vmDeleteEquip', String(e.id))}>Del</button>` : ''}
         </td>
       </tr>`;
     }
@@ -20728,8 +20728,8 @@ function _vmPunchTabHTML(car) {
   const toolbar = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
       <div style="font-size:12px;color:var(--gray-500);">Punch list items tagged to this car (install / test &amp; commissioning defects).</div>
       <div style="display:flex;gap:8px;">
-        ${canCreate ? `<button class="admin-action-btn" onclick="_vmCreatePunch('${car.id}')">${icon('plus')} Create Punch</button>` : ''}
-        ${canEdit ? `<button class="form-secondary" onclick="_vmLinkPunchModal('${car.id}')">${icon('link')} Link Existing</button>` : ''}
+        ${canCreate ? `<button class="admin-action-btn" ${cxAct('_vmCreatePunch', String(car.id))}>${icon('plus')} Create Punch</button>` : ''}
+        ${canEdit ? `<button class="form-secondary" ${cxAct('_vmLinkPunchModal', String(car.id))}>${icon('link')} Link Existing</button>` : ''}
       </div>
     </div>`;
   if (!items.length) return toolbar + cxEmpty({ icon: 'flag', title: 'No punch items', message: 'No punch items are linked to this car yet.', actionLabel: canCreate ? '+ Create Punch' : null, onAction: canCreate ? `_vmCreatePunch('${car.id}')` : null });
@@ -20769,7 +20769,7 @@ function _vmPunchCardHTML(car, p, canEdit) {
   return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:12px 14px;">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
         <span style="font-family:monospace;font-weight:700;color:var(--gray-500);">#${p.number ?? ''}</span>
-        <button onclick="_vmGoToPunch('${pid}')" title="Open in Punch List" style="flex:1;min-width:0;text-align:left;border:none;background:none;cursor:pointer;font:inherit;font-size:14px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px;padding:0;">
+        <button ${cxAct('_vmGoToPunch', String(pid))} title="Open in Punch List" style="flex:1;min-width:0;text-align:left;border:none;background:none;cursor:pointer;font:inherit;font-size:14px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px;padding:0;">
           <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(p.title || '(untitled)')}</span>
           <span style="color:var(--gray-400);flex-shrink:0;">${icon('external')}</span>
         </button>
@@ -20789,8 +20789,8 @@ function _vmPunchCardHTML(car, p, canEdit) {
       </div>
       ${_vmPunchLatestComments(p)}
       <div style="display:flex;gap:8px;margin-top:10px;">
-        <button class="form-secondary" style="font-size:11px;" onclick="_vmGoToPunch('${pid}')">${icon('external')} Open in Punch List</button>
-        ${canEdit ? `<button class="form-secondary" style="font-size:11px;color:var(--bad);" onclick="_vmUnlinkPunch('${car.id}','${pid}')">Unlink</button>` : ''}
+        <button class="form-secondary" style="font-size:11px;" ${cxAct('_vmGoToPunch', String(pid))}>${icon('external')} Open in Punch List</button>
+        ${canEdit ? `<button class="form-secondary" style="font-size:11px;color:var(--bad);" ${cxAct('_vmUnlinkPunch', String(car.id), String(pid))}>Unlink</button>` : ''}
       </div>
     </div>`;
 }
@@ -20868,7 +20868,7 @@ function _vmEditCarModal(id) {
       <div class="form-field"><label>Car Type *</label><select id="vm-type" class="form-input"><option value="D" ${car.car_type === 'D' ? 'selected' : ''}>D-Car</option><option value="E" ${car.car_type === 'E' ? 'selected' : ''}>E-Car</option></select></div>
       <div class="form-field form-field-full"><label>Notes</label><input type="text" id="vm-notes" class="form-input" value="${escapeHtml(car.notes || '')}"></div>
     </div>`,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" onclick="_vmUpdateCar('${id}')">Save Changes</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" ${cxAct('_vmUpdateCar', String(id))}>Save Changes</button>`,
   });
 }
 async function _vmUpdateCar(id) {
@@ -20939,7 +20939,7 @@ function _vmEquipModal(carId, editId, presetDevice) {
         </div>
       </div>
       <div id="vme-entries" style="margin-top:6px;"></div>`,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" onclick="_vmSaveEquipMulti('${carId}')">Save</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" ${cxAct('_vmSaveEquipMulti', String(carId))}>Save</button>`,
   });
   if (presetDevice) setTimeout(_vmEquipDeviceChanged, 0);
 }
@@ -21013,11 +21013,11 @@ function _vmEquipEditModal(carId, e) {
       </div>
       <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px;">
         <div style="font-size:11px;color:var(--gray-500);margin-bottom:6px;">Need a fix release? A patch adds a new patch-status software release under the master VDD in Configuration Management and loads it on this car.</div>
-        <button type="button" class="form-secondary" onclick="_vmPatchModal('${carId}','${e.id}')">${icon('git-branch')} Create Patch…</button>
+        <button type="button" class="form-secondary" ${cxAct('_vmPatchModal', String(carId), String(e.id))}>${icon('git-branch')} Create Patch…</button>
       </div>`,
     footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-secondary" style="color:var(--bad);" onclick="_vmDeleteEquip('${e.id}')">Delete</button>
-      <button class="form-submit" onclick="_vmSaveEquipOne('${carId}','${e.id}')">Save Changes</button>`,
+      <button class="form-secondary" style="color:var(--bad);" ${cxAct('_vmDeleteEquip', String(e.id))}>Delete</button>
+      <button class="form-submit" ${cxAct('_vmSaveEquipOne', String(carId), String(e.id))}>Save Changes</button>`,
   });
 }
 function _vmEditBuildPick() {
@@ -21094,7 +21094,7 @@ function _vmPatchModal(carId, equipId) {
         <div class="form-field"><label>Patch Software Version *</label><input type="text" id="vmp-ver" class="form-input" placeholder="e.g. CC_GA_D210_p1"></div>
         <div class="form-field form-field-full"><label>Notes *</label><textarea id="vmp-notes" class="form-input" rows="3" placeholder="What does this patch change or fix?"></textarea></div>
       </div>`,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" onclick="_vmCreatePatch('${carId}','${equipId}')">Create Patch</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" ${cxAct('_vmCreatePatch', String(carId), String(equipId))}>Create Patch</button>`,
   });
 }
 async function _vmCreatePatch(carId, equipId) {
@@ -21213,7 +21213,7 @@ function _vmLinkFormModal(itemId) {
   modal({
     title: 'Attach Form', size: 'medium',
     body: avail.length ? `<div style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto;">
-        ${avail.map(f => `<button class="form-secondary" style="text-align:left;display:flex;align-items:center;gap:8px;" onclick="_vmAttachForm('${f.id}','${itemId}')">${icon('file')} ${escapeHtml(f.name || f.original_filename || 'Form')}${f.is_template ? ' ' + _vmChip('template', 'info') : ''}</button>`).join('')}
+        ${avail.map(f => `<button class="form-secondary" style="text-align:left;display:flex;align-items:center;gap:8px;" ${cxAct('_vmAttachForm', String(f.id), String(itemId))}>${icon('file')} ${escapeHtml(f.name || f.original_filename || 'Form')}${f.is_template ? ' ' + _vmChip('template', 'info') : ''}</button>`).join('')}
       </div>` : `<div style="font-size:13px;color:var(--gray-500);">All available forms are already attached.</div>`,
     footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
@@ -21288,7 +21288,7 @@ function _vmTemplatesBodyHTML() {
   const t = _vmTplType;
   const wf = VEH_WF_TPL.filter(x => x.car_type === t).sort((a, b) => (a.seq || 0) - (b.seq || 0));
   const eq = VEH_EQ_TPL.filter(x => x.car_type === t).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-  const typeBtns = ['D', 'E'].map(x => `<button onclick="_vmTplSetType('${x}')" style="padding:5px 14px;border:1px solid var(--border);cursor:pointer;background:${t === x ? 'var(--hitachi-red)' : 'var(--surface)'};color:${t === x ? 'var(--white)' : 'var(--text)'};font-weight:600;border-radius:6px;">${x}-Car</button>`).join(' ');
+  const typeBtns = ['D', 'E'].map(x => `<button ${cxAct('_vmTplSetType', String(x))} style="padding:5px 14px;border:1px solid var(--border);cursor:pointer;background:${t === x ? 'var(--hitachi-red)' : 'var(--surface)'};color:${t === x ? 'var(--white)' : 'var(--text)'};font-weight:600;border-radius:6px;">${x}-Car</button>`).join(' ');
   return `<div id="vm-tpl-body">
     <div style="display:flex;gap:8px;margin-bottom:14px;">${typeBtns}</div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;"><div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--gray-400);">Workflow checklist</div><button class="form-secondary" style="font-size:11px;" data-action="_vmTplAddWf">${icon('plus')} Add item</button></div>
@@ -21297,8 +21297,8 @@ function _vmTemplatesBodyHTML() {
         <span style="font-family:monospace;color:var(--gray-400);">${i.seq}</span>
         <span style="flex:1;font-weight:600;">${escapeHtml(i.title)}</span>
         ${i.required === false ? _vmChip('optional', 'muted') : ''}
-        <button class="form-secondary" style="font-size:10px;padding:1px 6px;" onclick="_vmChkBuilderModal('tpl','${i.id}')">Checklist (${VEH_CHK_TPL.filter(c => c.workflow_template_id === i.id).length})</button>
-        <button class="form-secondary" style="font-size:10px;padding:1px 6px;color:var(--bad);" onclick="_vmTplDelWf('${i.id}')">Del</button>
+        <button class="form-secondary" style="font-size:10px;padding:1px 6px;" ${cxAct('_vmChkBuilderModal', 'tpl', String(i.id))}>Checklist (${VEH_CHK_TPL.filter(c => c.workflow_template_id === i.id).length})</button>
+        <button class="form-secondary" style="font-size:10px;padding:1px 6px;color:var(--bad);" ${cxAct('_vmTplDelWf', String(i.id))}>Del</button>
       </div>`).join('') : `<div style="font-size:12px;color:var(--gray-500);">No workflow items for ${t}-Car.</div>`}
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;"><div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--gray-400);">Equipment baseline</div><button class="form-secondary" style="font-size:11px;" data-action="_vmTplAddEq">${icon('plus')} Add equipment</button></div>
@@ -21307,7 +21307,7 @@ function _vmTemplatesBodyHTML() {
         <span style="flex:1;font-weight:600;">${escapeHtml(i.equipment_name)}</span>
         ${i.sw_type ? `<span style="font-family:monospace;background:var(--info-light);color:var(--info);padding:1px 5px;border-radius:3px;">${escapeHtml(i.sw_type)}</span>` : ''}
         <span style="color:var(--gray-500);">${escapeHtml(_vmConfigById(i.config_id)?.software_name || (i.config_id ? '' : 'no VDD'))}</span>
-        <button class="form-secondary" style="font-size:10px;padding:1px 6px;color:var(--bad);" onclick="_vmTplDelEq('${i.id}')">Del</button>
+        <button class="form-secondary" style="font-size:10px;padding:1px 6px;color:var(--bad);" ${cxAct('_vmTplDelEq', String(i.id))}>Del</button>
       </div>`).join('') : `<div style="font-size:12px;color:var(--gray-500);">No equipment baseline for ${t}-Car.</div>`}
     </div>
   </div>`;
@@ -21369,18 +21369,18 @@ function _punchLinksSectionHTML(p) {
   // Linked cars
   const cars = (p.linked_car_ids || []).map(id => VEHarr.find(v => v.id === id)).filter(Boolean);
   const cHTML = cars.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:10px 14px;">${cars.map(v => `<span style="display:inline-flex;align-items:center;gap:7px;font-size:12px;background:var(--info-light);color:var(--info);border:1px solid #e0e7ff;border-radius:6px;padding:4px 10px;">
-        <button onclick="_punchOpenCar('${v.id}')" title="Open in Vehicle Management" style="border:none;background:none;color:var(--info);cursor:pointer;font:inherit;font-weight:700;font-family:monospace;">${escapeHtml(v.car_number)} · ${escapeHtml(v.car_type)}</button>
-        ${canLink ? `<button onclick="_punchUnlinkCar('${pid}','${v.id}')" aria-label="Unlink car" title="Unlink" style="border:none;background:none;color:var(--text-subtle);cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}
+        <button ${cxAct('_punchOpenCar', String(v.id))} title="Open in Vehicle Management" style="border:none;background:none;color:var(--info);cursor:pointer;font:inherit;font-weight:700;font-family:monospace;">${escapeHtml(v.car_number)} · ${escapeHtml(v.car_type)}</button>
+        ${canLink ? `<button ${cxAct('_punchUnlinkCar', String(pid), String(v.id))} aria-label="Unlink car" title="Unlink" style="border:none;background:none;color:var(--text-subtle);cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}
       </span>`).join('')}</div>` : `<div style="font-size:12px;color:var(--gray-400);padding:10px 14px;">No linked cars.</div>`;
   return `<div style="margin-bottom:18px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
         <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;">${icon('link')}Linked Test Cases <span style="font-weight:400;font-size:10px;">(${tRows.length})</span></div>
-        ${canLink ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchLinkTestPicker('${pid}')">+ Link test case</button>` : ''}
+        ${canLink ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" ${cxAct('_punchLinkTestPicker', String(pid))}>+ Link test case</button>` : ''}
       </div>
       <div style="border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">${tHTML}</div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin:16px 0 8px;">
         <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;">${icon('truck')}Linked Cars <span style="font-weight:400;font-size:10px;">(${cars.length})</span></div>
-        ${canLink ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_punchLinkCarPicker('${pid}')">+ Link car</button>` : ''}
+        ${canLink ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" ${cxAct('_punchLinkCarPicker', String(pid))}>+ Link car</button>` : ''}
       </div>
       <div style="border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">${cHTML}</div>
     </div>`;
@@ -21403,7 +21403,7 @@ function _punchLinkCarPicker(punchId) {
     title: 'Link Car', size: 'medium',
     body: avail.length ? `<input type="text" class="form-input" placeholder="Filter…" oninput="_punchPickFilter(this.value,'pk-car')" style="margin-bottom:8px;">
       <div id="pk-car" style="display:flex;flex-wrap:wrap;gap:6px;max-height:50vh;overflow:auto;">
-        ${avail.map(v => `<button class="form-secondary pk-opt" data-txt="${escapeHtml((v.car_number + ' ' + v.car_type).toLowerCase())}" style="font-family:monospace;font-weight:600;" onclick="_punchLinkCar('${pid}','${v.id}')">${escapeHtml(v.car_number)} · ${escapeHtml(v.car_type)}</button>`).join('')}
+        ${avail.map(v => `<button class="form-secondary pk-opt" data-txt="${escapeHtml((v.car_number + ' ' + v.car_type).toLowerCase())}" style="font-family:monospace;font-weight:600;" ${cxAct('_punchLinkCar', String(pid), String(v.id))}>${escapeHtml(v.car_number)} · ${escapeHtml(v.car_type)}</button>`).join('')}
       </div>` : `<div style="font-size:13px;color:var(--gray-500);">All cars are already linked, or none exist.</div>`,
     footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
@@ -21625,7 +21625,7 @@ function openSwDeployModal(configId, editId, equipmentId) {
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
       ${existing ? '<button class="form-secondary" style="color:var(--bad);" onclick="deleteSwDeploy(\'' + existing.id + '\',\'' + existing.config_id + '\')">Delete</button>' : ''}
-      <button class="form-submit" onclick="saveSwDeploy('${existing?.id || ''}')">Save</button>
+      <button class="form-submit" ${cxAct('saveSwDeploy', String(existing?.id || ''))}>Save</button>
     `,
   });
 }
@@ -21847,7 +21847,7 @@ function _vmChkSetValue(id, v) { _vmChkSaveLine(id, { value_text: (v || '').trim
 function _vmChecklistHTML(car, it, canEdit) {
   const lines = _vmChkFor(it.id);
   if (!lines.length) {
-    return `<div style="margin-top:8px;border-top:1px dashed var(--border);padding-top:8px;font-size:12px;color:var(--gray-500);">No checklist lines yet.${canEdit ? ` <button class="form-secondary" style="font-size:11px;" onclick="_vmChkBuilderModal('item','${it.id}')">Build one</button>` : ''}</div>`;
+    return `<div style="margin-top:8px;border-top:1px dashed var(--border);padding-top:8px;font-size:12px;color:var(--gray-500);">No checklist lines yet.${canEdit ? ` <button class="form-secondary" style="font-size:11px;" ${cxAct('_vmChkBuilderModal', 'item', String(it.id))}>Build one</button>` : ''}</div>`;
   }
   const cs = _vmChkItemStats(it.id);
   const pct = cs.total ? Math.round(cs.done / cs.total * 100) : 0;
@@ -21878,7 +21878,7 @@ function _vmChkLineHTML(car, it, l, canEdit) {
     ctl = ['Pass', 'Fail', 'N/A'].map(v => {
       const on = l.verdict === v;
       const col = v === 'Pass' ? '#16a34a' : v === 'Fail' ? '#dc2626' : '#64748b';
-      return `<button ${dis} onclick="_vmChkSetVerdict('${l.id}','${v}')" style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:5px;cursor:pointer;border:1px solid ${on ? col : 'var(--border)'};background:${on ? col : 'var(--surface)'};color:${on ? 'var(--white)' : 'var(--text)'};">${v}</button>`;
+      return `<button ${dis} ${cxAct('_vmChkSetVerdict', String(l.id), String(v))} style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:5px;cursor:pointer;border:1px solid ${on ? col : 'var(--border)'};background:${on ? col : 'var(--surface)'};color:${on ? 'var(--white)' : 'var(--text)'};">${v}</button>`;
     }).join('');
   } else if (l.kind === 'value') {
     ctl = `<input type="text" value="${escapeHtml(l.value_text || '')}" ${dis} placeholder="value" aria-label="${escapeHtml(l.label)}" onchange="_vmChkSetValue('${l.id}',this.value)" style="width:110px;font-size:12px;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);">${l.unit ? `<span style="font-size:11px;color:var(--gray-500);">${escapeHtml(l.unit)}</span>` : ''}`;
@@ -21898,7 +21898,7 @@ function _vmChkLineHTML(car, it, l, canEdit) {
       ${l.completed_by ? `<span style="font-size:10px;color:var(--gray-400);">${escapeHtml(l.completed_by)}</span>` : ''}
       ${(photos.length || files.length) ? `<div style="flex-basis:100%;display:flex;flex-wrap:wrap;gap:5px;padding-left:18px;">
         ${photos.map(ph => `<button onclick="_vmChkOpenPhoto('${escapeHtml(ph.storage_path)}')" style="font-size:10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);padding:2px 7px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">${icon('image')} ${escapeHtml(ph.file_name || 'photo')}</button>`).join('')}
-        ${files.map(f => `<span style="font-size:10px;border:1px solid var(--border);border-radius:5px;padding:2px 7px;display:inline-flex;align-items:center;gap:4px;"><button onclick="_vmFileOpen('${escapeHtml(f.storage_path)}')" style="border:none;background:none;cursor:pointer;font:inherit;color:var(--text);display:inline-flex;align-items:center;gap:4px;padding:0;">${icon('paperclip')} ${escapeHtml(f.file_name)}</button>${canEdit ? `<button aria-label="Delete file" title="Delete file" onclick="_vmFileDelete('${f.id}')" style="border:none;background:none;color:var(--text-subtle);cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}</span>`).join('')}
+        ${files.map(f => `<span style="font-size:10px;border:1px solid var(--border);border-radius:5px;padding:2px 7px;display:inline-flex;align-items:center;gap:4px;"><button onclick="_vmFileOpen('${escapeHtml(f.storage_path)}')" style="border:none;background:none;cursor:pointer;font:inherit;color:var(--text);display:inline-flex;align-items:center;gap:4px;padding:0;">${icon('paperclip')} ${escapeHtml(f.file_name)}</button>${canEdit ? `<button aria-label="Delete file" title="Delete file" ${cxAct('_vmFileDelete', String(f.id))} style="border:none;background:none;color:var(--text-subtle);cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}</span>`).join('')}
       </div>` : ''}
     </div>`;
 }
@@ -22070,7 +22070,7 @@ function _vmWfAddModal(carId) {
       <div class="form-field form-field-full"><label>Description</label><input type="text" id="vmwf-desc" class="form-input"></div>
       <div class="form-field"><label style="display:flex;gap:6px;align-items:center;font-weight:400;"><input type="checkbox" id="vmwf-req" checked> Required for readiness</label></div>
     </div>`,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" onclick="_vmWfSaveNew('${carId}')">Add Activity</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" ${cxAct('_vmWfSaveNew', String(carId))}>Add Activity</button>`,
   });
 }
 async function _vmWfSaveNew(carId) {
@@ -22096,7 +22096,7 @@ function _vmWfEditModal(itemId) {
       <div class="form-field form-field-full"><label>Description</label><input type="text" id="vmwf-desc" class="form-input" value="${escapeHtml(it.description || '')}"></div>
       <div class="form-field"><label style="display:flex;gap:6px;align-items:center;font-weight:400;"><input type="checkbox" id="vmwf-req" ${it.required !== false ? 'checked' : ''}> Required for readiness</label></div>
     </div>`,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" onclick="_vmWfSaveEdit('${itemId}')">Save Changes</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" ${cxAct('_vmWfSaveEdit', String(itemId))}>Save Changes</button>`,
   });
 }
 async function _vmWfSaveEdit(itemId) {
@@ -22366,7 +22366,7 @@ function _rmaRowHTML(r, canEdit) {
   const dueClass = isOverdue ? 'is-bad' : (r.due_date && (new Date(r.due_date) - now) < 7*86400000) ? 'is-warm' : '';
 
   return `
-    <div class="v2-list-row tone-${pillTone.replace('is-','')} ${isOverdue ? 'is-overdue' : ''}" onclick="_rmaViewModal('${r.id}')">
+    <div class="v2-list-row tone-${pillTone.replace('is-','')} ${isOverdue ? 'is-overdue' : ''}" ${cxAct('_rmaViewModal', String(r.id))}>
       <div class="rma-row">
         <div class="rma-id-block">
           <span class="${idChipClass}">${escapeHtml(r.rma_number || '—')}</span>
@@ -22396,11 +22396,11 @@ function _rmaRowHTML(r, canEdit) {
         </div>
 
         <div class="rma-actions" onclick="event.stopPropagation()">
-          <button class="v2-btn-mini" onclick="_rmaViewModal('${r.id}')">${icon('eye')} View</button>
+          <button class="v2-btn-mini" ${cxAct('_rmaViewModal', String(r.id))}>${icon('eye')} View</button>
           ${canEdit ? `
             <div style="display:flex;gap:4px;">
-              ${uiCan('rma','edit') ? `<button class="v2-btn-mini" onclick="openRMAModal('${r.id}')">${icon('edit')} Edit</button>` : ''}
-              ${uiCan('rma','delete') ? `<button aria-label="Delete" class="v2-btn-mini danger" onclick="deleteRMA('${r.id}')" title="Delete">${icon('trash')}</button>` : ''}
+              ${uiCan('rma','edit') ? `<button class="v2-btn-mini" ${cxAct('openRMAModal', String(r.id))}>${icon('edit')} Edit</button>` : ''}
+              ${uiCan('rma','delete') ? `<button aria-label="Delete" class="v2-btn-mini danger" ${cxAct('deleteRMA', String(r.id))} title="Delete">${icon('trash')}</button>` : ''}
             </div>
           ` : ''}
         </div>
@@ -22978,7 +22978,7 @@ function _taskViewModal(id) {
       // ── Photos ──
       `<div style="margin:20px 0 8px;display:flex;align-items:center;justify-content:space-between;">` +
       `<div style="font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:0.06em;">Photos</div>` +
-      (canPhotos ? `<button type="button" class="v2-btn-mini" onclick="_taskAddPhotos('${id}')">${icon('camera')} Add photos</button>` : '') +
+      (canPhotos ? `<button type="button" class="v2-btn-mini" ${cxAct('_taskAddPhotos', String(id))}>${icon('camera')} Add photos</button>` : '') +
       `</div>` +
       `<div class="punch-photo-grid" id="task-photos-${id}"><div style="font-size:12px;color:var(--gray-400);padding:8px 0;">Loading photos…</div></div>` +
       `<input type="file" id="task-gallery-file-${id}" accept="image/*" multiple style="display:none" onchange="_taskGalleryFilesChosen('${id}', this)">` +
@@ -22995,7 +22995,7 @@ function _taskViewModal(id) {
         `<div class="punch-comment-composer">` +
           `<textarea id="task-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…"></textarea>` +
           `<button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" aria-label="Attach a photo" onclick="document.getElementById('task-comment-file-${id}').click()">${icon('camera')}</button>` +
-          `<button class="form-submit punch-comment-post" onclick="addTaskComment('${id}')">Post</button>` +
+          `<button class="form-submit punch-comment-post" ${cxAct('addTaskComment', String(id))}>Post</button>` +
         `</div>` +
         `<input type="file" id="task-comment-file-${id}" accept="image/*" style="display:none" onchange="_taskCommentPhotoChosen('${id}', this)">` +
         `<div id="task-comment-preview-${id}" class="punch-comment-preview" style="display:none;"></div>`
@@ -23062,7 +23062,7 @@ function _taskCommentPhotoChosen(id, input) {
     prev.innerHTML = `<div class="punch-comment-preview-item">
       <img src="${URL.createObjectURL(f)}" alt="">
       <span>${escapeHtml(f.name || 'photo')}</span>
-      <button type="button" onclick="_taskCommentPhotoClear('${id}')" title="Remove">×</button>
+      <button type="button" ${cxAct('_taskCommentPhotoClear', String(id))} title="Remove">×</button>
     </div>`;
   }
 }
@@ -23320,7 +23320,7 @@ function _mtgListRowHTML(m, indented, isAdmin) {
     <tr class="${indented?'mtg-series-row':''}"
       style="border-bottom:1px solid var(--gray-100);cursor:pointer;transition:background .12s;"
       onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''"
-      onclick="_mtgOpenDetail('${m.id}')">
+      ${cxAct('_mtgOpenDetail', String(m.id))}>
       <td style="padding:10px 14px 10px 0;${pad}font-weight:500;">${escapeHtml(m.title||'')}</td>
       <td style="padding:10px 8px;color:var(--gray-400);">${m.meeting_number||'—'}</td>
       <td style="padding:10px 8px;white-space:nowrap;">${m.meeting_date ? _fmtDate(m.meeting_date) : '—'}</td>
@@ -23328,8 +23328,8 @@ function _mtgListRowHTML(m, indented, isAdmin) {
       <td style="padding:10px 8px;">${_mtgStatusBadge(m.status)}</td>
       <td style="padding:10px 8px;" onclick="event.stopPropagation()">
         ${isAdmin ? `
-          <button class="form-secondary" style="padding:3px 10px;font-size:12px;" onclick="openMtgModal('${m.id}')">Edit</button>
-          <button class="form-secondary" style="padding:3px 10px;font-size:12px;color:var(--bad);" onclick="deleteMtg('${m.id}')">Del</button>` : ''}
+          <button class="form-secondary" style="padding:3px 10px;font-size:12px;" ${cxAct('openMtgModal', String(m.id))}>Edit</button>
+          <button class="form-secondary" style="padding:3px 10px;font-size:12px;color:var(--bad);" ${cxAct('deleteMtg', String(m.id))}>Del</button>` : ''}
       </td>
     </tr>`;
 }
@@ -23381,10 +23381,10 @@ function _mtgDetailPageHTML() {
           &nbsp;${_mtgStatusBadge(m.status)}
         </h2>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          ${isAdmin ? `<button class="form-primary" onclick="createFollowUpMtg('${m.id}')">Follow-Up Meeting</button>` : ''}
-          <button class="form-secondary" onclick="_mtgPrintPDF('${m.id}')">${icon('download')} Export PDF</button>
-          ${isAdmin && !inMinutes ? `<button class="form-secondary" onclick="convertToMinutesMode('${m.id}')">${icon('edit')} Convert to Minutes</button>` : ''}
-          ${isAdmin ? `<button class="form-secondary" onclick="openMtgModal('${m.id}')">${icon('edit')} Edit</button>` : ''}
+          ${isAdmin ? `<button class="form-primary" ${cxAct('createFollowUpMtg', String(m.id))}>Follow-Up Meeting</button>` : ''}
+          <button class="form-secondary" ${cxAct('_mtgPrintPDF', String(m.id))}>${icon('download')} Export PDF</button>
+          ${isAdmin && !inMinutes ? `<button class="form-secondary" ${cxAct('convertToMinutesMode', String(m.id))}>${icon('edit')} Convert to Minutes</button>` : ''}
+          ${isAdmin ? `<button class="form-secondary" ${cxAct('openMtgModal', String(m.id))}>${icon('edit')} Edit</button>` : ''}
         </div>
       </div>
       ${_mtgInfoHTML(m, isAdmin)}
@@ -23403,7 +23403,7 @@ function _mtgInfoHTML(m, isAdmin) {
     <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;margin-bottom:14px;overflow:hidden;">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--gray-200);">
         <span style="font-weight:600;font-size:14px;">Meeting Information</span>
-        ${isAdmin ? `<button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgModal('${m.id}')">${icon('edit')} Edit</button>` : ''}
+        ${isAdmin ? `<button class="form-secondary" style="padding:3px 12px;font-size:12px;" ${cxAct('openMtgModal', String(m.id))}>${icon('edit')} Edit</button>` : ''}
       </div>
       <div style="padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:14px 32px;">
         ${f('Number', m.meeting_number ? String(m.meeting_number) : '—')}
@@ -23432,8 +23432,8 @@ function _mtgAttendeesHTML(attendees, meetingId, isAdmin) {
       <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--gray-200);">
         <span style="font-weight:600;font-size:14px;">Attendees (${attendees.length})</span>
         ${isAdmin ? `<div style="display:flex;gap:6px;">
-          <button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgImportAttendeesModal('${meetingId}')">${icon('inbox')} Import CSV</button>
-          <button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgAddAttendeeModal('${meetingId}')">+ Add</button>
+          <button class="form-secondary" style="padding:3px 12px;font-size:12px;" ${cxAct('openMtgImportAttendeesModal', String(meetingId))}>${icon('inbox')} Import CSV</button>
+          <button class="form-secondary" style="padding:3px 12px;font-size:12px;" ${cxAct('openMtgAddAttendeeModal', String(meetingId))}>+ Add</button>
         </div>` : ''}
       </div>
       <div style="padding:14px 16px;">
@@ -23445,7 +23445,7 @@ function _mtgAttendeesHTML(attendees, meetingId, isAdmin) {
                   <span style="width:7px;height:7px;border-radius:50%;background:${a.attended?'#27ae60':'#bbb'};display:inline-block;flex-shrink:0;"></span>
                   <span>${escapeHtml(a.name)}</span>
                   ${a.company ? `<span style="color:var(--gray-400);font-size:11px;">(${escapeHtml(a.company)})</span>` : ''}
-                  ${isAdmin ? `<button style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:15px;line-height:1;padding:0 0 0 2px;" aria-label="Remove attendee ${escapeHtml(a.name)}" onclick="deleteMtgAttendee('${a.id}','${meetingId}')">×</button>` : ''}
+                  ${isAdmin ? `<button style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:15px;line-height:1;padding:0 0 0 2px;" aria-label="Remove attendee ${escapeHtml(a.name)}" ${cxAct('deleteMtgAttendee', String(a.id), String(meetingId))}>×</button>` : ''}
                 </div>`).join('')}
             </div>`}
       </div>
@@ -23463,7 +23463,7 @@ function _mtgAgendaHTML(m, categories, items, actionItems, isAdmin, inMinutes) {
             <option value="Open">Open</option>
             <option value="Closed">Closed</option>
           </select>
-          ${isAdmin ? `<button class="form-secondary" style="padding:4px 12px;font-size:12px;" onclick="openMtgCategoryModal(null,'${m.id}')">+ Add Category</button>` : ''}
+          ${isAdmin ? `<button class="form-secondary" style="padding:4px 12px;font-size:12px;" ${cxAct('openMtgCategoryModal', null, String(m.id))}>+ Add Category</button>` : ''}
         </div>
       </div>
       <div id="mtg-agenda-body">
@@ -23478,18 +23478,18 @@ function _mtgCategoryHTML(cat, catIdx, items, actionItems, meetingId, inMinutes,
   const catItems = items.filter(i => i.category_id === cat.id);
   return `
     <div class="mtg-cat" style="border-bottom:1px solid var(--gray-100);">
-      <div style="display:flex;align-items:center;padding:11px 16px;background:#fafafa;gap:8px;cursor:pointer;" onclick="_mtgToggleCat('${cat.id}')">
+      <div style="display:flex;align-items:center;padding:11px 16px;background:#fafafa;gap:8px;cursor:pointer;" ${cxAct('_mtgToggleCat', String(cat.id))}>
         <span style="color:var(--gray-300);font-size:12px;user-select:none;">⋮⋮</span>
         <span id="cat-chev-${cat.id}" style="font-size:11px;color:var(--primary);transition:transform .2s;display:inline-block;">▼</span>
         <span style="font-weight:700;font-size:14px;flex:1;">${escapeHtml(cat.title)}</span>
         ${isAdmin ? `<span onclick="event.stopPropagation()">
-          <button title="Edit" aria-label="Edit" class="form-secondary" style="padding:2px 8px;font-size:12px;" onclick="openMtgCategoryModal('${cat.id}','${meetingId}')">${icon('edit')}</button>
-          <button title="Delete" aria-label="Delete" class="form-secondary" style="padding:2px 8px;font-size:12px;color:var(--bad);" onclick="deleteMtgCategory('${cat.id}','${meetingId}')">${icon('trash')}</button>
+          <button title="Edit" aria-label="Edit" class="form-secondary" style="padding:2px 8px;font-size:12px;" ${cxAct('openMtgCategoryModal', String(cat.id), String(meetingId))}>${icon('edit')}</button>
+          <button title="Delete" aria-label="Delete" class="form-secondary" style="padding:2px 8px;font-size:12px;color:var(--bad);" ${cxAct('deleteMtgCategory', String(cat.id), String(meetingId))}>${icon('trash')}</button>
         </span>` : ''}
       </div>
       <div id="cat-body-${cat.id}">
         ${catItems.map((item, ii) => _mtgItemHTML(item, catIdx+1, ii+1, actionItems, meetingId, inMinutes, isAdmin)).join('')}
-        ${isAdmin ? `<div style="padding:8px 16px;"><button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgItemModal(null,'${cat.id}','${meetingId}')">+ Add Item</button></div>` : ''}
+        ${isAdmin ? `<div style="padding:8px 16px;"><button class="form-secondary" style="padding:3px 12px;font-size:12px;" ${cxAct('openMtgItemModal', null, String(cat.id), String(meetingId))}>+ Add Item</button></div>` : ''}
       </div>
     </div>`;
 }
@@ -23511,14 +23511,14 @@ function _mtgItemHTML(item, catNum, itemNum, actionItems, meetingId, inMinutes, 
 
   return `
     <div class="mtg-item" data-item-id="${item.id}" data-status="${escapeHtml(item.status||'Open')}" style="border-top:1px solid var(--gray-100);">
-      <div style="display:flex;align-items:center;padding:10px 16px;cursor:pointer;gap:8px;" onclick="_mtgToggleItem('${item.id}')">
+      <div style="display:flex;align-items:center;padding:10px 16px;cursor:pointer;gap:8px;" ${cxAct('_mtgToggleItem', String(item.id))}>
         <span style="color:var(--gray-300);font-size:11px;user-select:none;">⋮⋮</span>
         <span style="color:var(--primary);font-weight:700;font-size:12px;min-width:30px;">${escapeHtml(num)}</span>
         <span style="flex:1;font-size:13px;font-weight:500;">${escapeHtml(item.title)}</span>
         <span style="background:${sc}18;color:${sc};border:1px solid ${sc}40;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">${escapeHtml(item.status||'Open')}</span>
         ${isAdmin ? `<span onclick="event.stopPropagation()">
-          <button title="Edit" aria-label="Edit" class="form-secondary" style="padding:2px 8px;font-size:12px;" onclick="openMtgItemModal('${item.id}','${item.category_id}','${meetingId}')">${icon('edit')}</button>
-          <button title="Delete" aria-label="Delete" class="form-secondary" style="padding:2px 8px;font-size:12px;color:var(--bad);" onclick="deleteMtgItem('${item.id}','${meetingId}')">${icon('trash')}</button>
+          <button title="Edit" aria-label="Edit" class="form-secondary" style="padding:2px 8px;font-size:12px;" ${cxAct('openMtgItemModal', String(item.id), String(item.category_id), String(meetingId))}>${icon('edit')}</button>
+          <button title="Delete" aria-label="Delete" class="form-secondary" style="padding:2px 8px;font-size:12px;color:var(--bad);" ${cxAct('deleteMtgItem', String(item.id), String(meetingId))}>${icon('trash')}</button>
         </span>` : ''}
       </div>
       <div id="item-body-${item.id}" style="display:${expanded?'':'none'};border-top:1px solid var(--gray-100);">
@@ -23533,7 +23533,7 @@ function _mtgItemHTML(item, catNum, itemNum, actionItems, meetingId, inMinutes, 
             <div style="border-top:1px solid var(--gray-200);padding-top:12px;margin-top:4px;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                 <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;">Action Items (${itemAI.length})</div>
-                ${isAdmin ? `<button class="form-secondary" style="padding:2px 8px;font-size:11px;" onclick="openMtgActionItemModal(null,'${item.id}','${meetingId}')">+ Add</button>` : ''}
+                ${isAdmin ? `<button class="form-secondary" style="padding:2px 8px;font-size:11px;" ${cxAct('openMtgActionItemModal', null, String(item.id), String(meetingId))}>+ Add</button>` : ''}
               </div>
               ${itemAI.length === 0
                 ? '<div style="color:var(--gray-400);font-size:12px;">None yet.</div>'
@@ -23546,8 +23546,8 @@ function _mtgItemHTML(item, catNum, itemNum, actionItems, meetingId, inMinutes, 
                       <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
                         <span style="background:${aic}18;color:${aic};border:1px solid ${aic}40;padding:1px 7px;border-radius:8px;font-size:10px;">${escapeHtml(ai.status||'Open')}</span>
                         ${isAdmin ? `
-                          <button style="background:none;border:none;cursor:pointer;color:var(--primary);font-size:11px;padding:0;" onclick="openMtgActionItemModal('${ai.id}','${item.id}','${meetingId}')">Edit</button>
-                          <button style="background:none;border:none;cursor:pointer;color:var(--bad);font-size:11px;padding:0;" onclick="deleteMtgActionItem('${ai.id}','${meetingId}')">Del</button>` : ''}
+                          <button style="background:none;border:none;cursor:pointer;color:var(--primary);font-size:11px;padding:0;" ${cxAct('openMtgActionItemModal', String(ai.id), String(item.id), String(meetingId))}>Edit</button>
+                          <button style="background:none;border:none;cursor:pointer;color:var(--bad);font-size:11px;padding:0;" ${cxAct('deleteMtgActionItem', String(ai.id), String(meetingId))}>Del</button>` : ''}
                       </div>
                     </div>`;
                   }).join('')}
@@ -23565,7 +23565,7 @@ function _mtgItemHTML(item, catNum, itemNum, actionItems, meetingId, inMinutes, 
               <div style="font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:8px;">Official Documented Meeting Minutes</div>
               ${isAdmin
                 ? `${_mtgRichEditorHTML('minutes-'+item.id, item.minutes_notes||'')}
-                   <button class="form-secondary" style="margin-top:8px;padding:4px 14px;font-size:12px;" onclick="saveMtgItemMinutes('${item.id}')">${icon('save')} Save Notes</button>`
+                   <button class="form-secondary" style="margin-top:8px;padding:4px 14px;font-size:12px;" ${cxAct('saveMtgItemMinutes', String(item.id))}>${icon('save')} Save Notes</button>`
                 : `<div class="mtg-prev-content" style="min-height:40px;">${item.minutes_notes || '<span style="color:var(--gray-400);">No minutes recorded.</span>'}</div>`}
             </div>
             ${_mtgItemPrevMinutesHTML(item)}
@@ -23748,7 +23748,7 @@ function openMtgModal(editId) {
       </div>`,
     footer: `
       <button class="form-secondary" data-action="closeModal" style="padding:10px 22px;font-size:14px;">Cancel</button>
-      <button class="form-submit" onclick="saveMtg('${editId||''}')" style="padding:10px 24px;font-size:14px;border-radius:6px;">${editId ? 'Save Changes' : 'Create Meeting'}</button>`,
+      <button class="form-submit" ${cxAct('saveMtg', String(editId||''))} style="padding:10px 24px;font-size:14px;border-radius:6px;">${editId ? 'Save Changes' : 'Create Meeting'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-title')?.focus(), 100);
 }
@@ -23835,7 +23835,7 @@ function openMtgCategoryModal(editId, meetingId) {
         style="font-size:15px;padding:12px 14px;border-radius:6px;">`,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="saveMtgCategory('${editId||''}','${meetingId}')">${editId ? 'Save Changes' : 'Add Category'}</button>`,
+      <button class="form-submit" ${cxAct('saveMtgCategory', String(editId||''), String(meetingId))}>${editId ? 'Save Changes' : 'Add Category'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-cat-title')?.focus(), 100);
 }
@@ -23900,7 +23900,7 @@ function openMtgItemModal(editId, categoryId, meetingId) {
       </div>`,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="saveMtgItem('${editId||''}','${categoryId}','${meetingId}')">${editId ? 'Save Changes' : 'Add Item'}</button>`,
+      <button class="form-submit" ${cxAct('saveMtgItem', String(editId||''), String(categoryId), String(meetingId))}>${editId ? 'Save Changes' : 'Add Item'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-item-title')?.focus(), 100);
 }
@@ -23983,7 +23983,7 @@ function openMtgActionItemModal(editId, itemId, meetingId) {
       </div>`,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="saveMtgActionItem('${editId||''}','${itemId}','${meetingId}')">${editId ? 'Save Changes' : 'Add Action Item'}</button>`,
+      <button class="form-submit" ${cxAct('saveMtgActionItem', String(editId||''), String(itemId), String(meetingId))}>${editId ? 'Save Changes' : 'Add Action Item'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-ai-desc')?.focus(), 100);
 }
@@ -24055,7 +24055,7 @@ function openMtgAddAttendeeModal(meetingId) {
       </div>`,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="saveMtgAttendee('${meetingId}')">Add Attendee</button>`,
+      <button class="form-submit" ${cxAct('saveMtgAttendee', String(meetingId))}>Add Attendee</button>`,
   });
   setTimeout(() => document.getElementById('mtg-att-name')?.focus(), 100);
 }
@@ -24101,7 +24101,7 @@ function openMtgImportAttendeesModal(meetingId) {
     footer: `
       <button class="form-secondary" data-action="_mtgPreviewCSV">Preview</button>
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="_mtgImportCSV('${meetingId}')">Import</button>`,
+      <button class="form-submit" ${cxAct('_mtgImportCSV', String(meetingId))}>Import</button>`,
   });
 }
 
@@ -24323,8 +24323,8 @@ function openMtgTemplatesModal() {
                   ${t.description ? `<div style="font-size:12px;color:var(--gray-500);">${escapeHtml(t.description)}</div>` : ''}
                 </div>
                 <div style="display:flex;gap:6px;">
-                  <button class="form-secondary" style="padding:3px 12px;font-size:12px;" onclick="openMtgTemplateEditModal('${t.id}')">Edit</button>
-                  <button class="form-secondary" style="padding:3px 12px;font-size:12px;color:var(--bad);" onclick="deleteMtgTemplate('${t.id}')">Delete</button>
+                  <button class="form-secondary" style="padding:3px 12px;font-size:12px;" ${cxAct('openMtgTemplateEditModal', String(t.id))}>Edit</button>
+                  <button class="form-secondary" style="padding:3px 12px;font-size:12px;color:var(--bad);" ${cxAct('deleteMtgTemplate', String(t.id))}>Delete</button>
                 </div>
               </div>`).join('')}
       </div>
@@ -24355,7 +24355,7 @@ function openMtgTemplateEditModal(editId) {
       </div>`,
     footer: `
       <button class="form-secondary" data-action="openMtgTemplatesModal">← Back</button>
-      <button class="form-submit" onclick="saveMtgTemplate('${editId||''}')">${editId ? 'Save Changes' : 'Create Template'}</button>`,
+      <button class="form-submit" ${cxAct('saveMtgTemplate', String(editId||''))}>${editId ? 'Save Changes' : 'Create Template'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-tpl-name')?.focus(), 100);
 }
@@ -24676,11 +24676,11 @@ function renderLookahead() {
     <div class="ap-plan-tabbar" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:2px solid var(--gray-200);padding-bottom:0;">
       <div class="ap-plan-tabs" style="display:flex;gap:0;">
         ${tabs.map(([id, label]) => `
-          <button class="admin-tab${_lookaheadTab === id ? ' active' : ''}" data-la-tab="${id}" onclick="_lookaheadSetTab('${id}')">${label}</button>
+          <button class="admin-tab${_lookaheadTab === id ? ' active' : ''}" data-la-tab="${id}" ${cxAct('_lookaheadSetTab', String(id))}>${label}</button>
         `).join('')}
       </div>
       <div class="ap-plan-tabactions" style="display:flex;gap:8px;">
-        ${isAdmin ? `<button class="form-secondary" onclick="showPage('admin-planning')">${icon('settings')} Admin Planning</button>` : ''}
+        ${isAdmin ? `<button class="form-secondary" ${cxAct('showPage', 'admin-planning')}>${icon('settings')} Admin Planning</button>` : ''}
         <button class="form-secondary" onclick="loadPlanningData(true).then(renderLookahead);">↻ Refresh</button>
       </div>
     </div>
@@ -24819,7 +24819,7 @@ function _laCalendarHTML() {
           </div>
           <div class="cal-view-switch">
             ${[['day','Day'],['week','Week'],['month','Month']].map(([id,label]) => `
-              <button class="cal-view-btn${_planningCalView === id ? ' active' : ''}" data-cal-view="${id}" onclick="_planningSetCalView('${id}')">${label}</button>
+              <button class="cal-view-btn${_planningCalView === id ? ' active' : ''}" data-cal-view="${id}" ${cxAct('_planningSetCalView', String(id))}>${label}</button>
             `).join('')}
           </div>
         </div>
@@ -25222,7 +25222,7 @@ function _laRenderMonthView(body) {
           html += `<div class="cal-event${isCancel ? ' cal-event-cancelled' : ''}"
             style="background:${bg};color:${fg};border-left:4px solid ${stripe};"
             data-cal-tippy="${tip}"
-            onclick="_planningOpenEventDetail('${e.id}')"
+            ${cxAct('_planningOpenEventDetail', String(e.id))}
           >${_planningSubsystemBadge(sub)}<span class="cal-event-label">${escapeHtml((e.title||'').slice(0,28))}</span></div>`;
         } else if (item.kind === 'pto') {
           html += `<div class="cal-event cal-event-pto"
@@ -25235,7 +25235,7 @@ function _laRenderMonthView(body) {
         }
       });
       if (overflow > 0) {
-        html += `<div class="cal-event cal-event-more" onclick="_laShowDayOverflow('${iso}')">+${overflow} more</div>`;
+        html += `<div class="cal-event cal-event-more" ${cxAct('_laShowDayOverflow', String(iso))}>+${overflow} more</div>`;
       }
       html += `</div></div>`;
     }
@@ -25380,7 +25380,7 @@ function _laRenderWeekView(body) {
           html += `<div class="cal-wl-chip${isCancel ? ' cal-wl-chip-cancelled' : ''}"
             style="background:${bg};color:${fg};border-left:4px solid ${bdr};"
             data-cal-tippy="${tip}"
-            onclick="_planningOpenEventDetail('${e.id}')"
+            ${cxAct('_planningOpenEventDetail', String(e.id))}
           >
             <div class="cal-wl-chip-title">${_planningSubsystemBadge(sub)}${escapeHtml(e.title || '(no title)')}</div>
             ${meta ? `<div class="cal-wl-chip-meta">${escapeHtml(meta)}</div>` : ''}
@@ -25486,7 +25486,7 @@ function _laRenderDayView(body) {
         html += `<div class="cal-dl-chip${isCancel ? ' cal-dl-chip-cancelled' : ''}"
           style="border-left:5px solid ${bdr};background:${bg};color:${fg};"
           data-cal-tippy="${tip}"
-          onclick="_planningOpenEventDetail('${e.id}')"
+          ${cxAct('_planningOpenEventDetail', String(e.id))}
         >
           <div class="cal-dl-chip-header">
             <span class="cal-dl-chip-title">${_planningSubsystemBadge(sub)}${escapeHtml(e.title || '(no title)')}</span>
@@ -25750,7 +25750,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       html += `<div class="tlg-row tlg-grp-hdr-row"
           data-group-key="${g.groupKey}"
           style="background:${g.bg};color:${g.fg};border-left:4px solid ${g.accent};"
-          onclick="_laToggleGroupCollapse('${g.groupKey}')"
+          ${cxAct('_laToggleGroupCollapse', String(g.groupKey))}
           title="${g.collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(g.label)}">
         <div class="tlg-label tlg-grp-hdr-label">
           <span class="tlg-grp-caret">${caret}</span>
@@ -26106,7 +26106,7 @@ function _laLookaheadHTML() {
         ${[['activity','Activity'],['resource','Resource'],['subsystem','Subsystem'],['location','Location']].map(([v,l]) => `
           <button class="admin-tab${_laTimelineGroupBy === v ? ' active' : ''}"
             style="font-size:12px;padding:6px 14px;"
-            onclick="_laSetTimelineGroup('${v}')"
+            ${cxAct('_laSetTimelineGroup', String(v))}
             ${_laAssignMode && v !== 'activity' ? 'disabled title="Exit assign mode to switch view"' : ''}>${l}</button>
         `).join('')}
       </div>
@@ -26131,7 +26131,7 @@ function _laLookaheadHTML() {
         ${[['none','None'],['phase','Phase'],['location','Location'],['phase_location','Phase + Loc']].map(([v,l]) => `
           <button class="admin-tab${_laActivitySubGroup === v ? ' active' : ''}"
             style="font-size:12px;padding:6px 14px;"
-            onclick="_laSetActivitySubGroup('${v}')">${l}</button>
+            ${cxAct('_laSetActivitySubGroup', String(v))}>${l}</button>
         `).join('')}
       </div>
       ` : ''}
@@ -26141,7 +26141,7 @@ function _laLookaheadHTML() {
         ${[['all','All'],['Hitachi','Hitachi'],['BART','BART']].map(([v,l]) => `
           <button class="admin-tab${_laResCompanyFilter === v ? ' active' : ''}"
             style="font-size:12px;padding:6px 14px;"
-            onclick="_laSetResCompanyFilter('${v}')">${l}</button>
+            ${cxAct('_laSetResCompanyFilter', String(v))}>${l}</button>
         `).join('')}
       </div>
       ` : ''}
@@ -26151,7 +26151,7 @@ function _laLookaheadHTML() {
         ${[['all','All'],['Hitachi','Hitachi'],['BART','BART']].map(([v,l]) => `
           <button class="admin-tab${_laLocResFilter === v ? ' active' : ''}"
             style="font-size:12px;padding:6px 14px;"
-            onclick="_laSetLocResFilter('${v}')">${l}</button>
+            ${cxAct('_laSetLocResFilter', String(v))}>${l}</button>
         `).join('')}
       </div>
       ` : ''}
@@ -26163,7 +26163,7 @@ function _laLookaheadHTML() {
         <input id="la-row-search" type="text" placeholder="Filter activities…"
           value="${escapeHtml(_laRowSearch)}" oninput="_laSetRowSearch(this.value)"
           style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-300);border-radius:6px;width:210px;">
-        <button aria-label="Clear filter" id="la-row-search-clear" onclick="_laSetRowSearch('')" title="Clear filter"
+        <button aria-label="Clear filter" id="la-row-search-clear" ${cxAct('_laSetRowSearch', '')} title="Clear filter"
           style="display:${_laRowSearch ? 'inline-flex' : 'none'};font-size:12px;padding:6px 9px;border:1px solid var(--gray-300);background:var(--white);border-radius:6px;cursor:pointer;">${icon('x')}</button>
         <span id="la-row-search-count" style="font-size:11px;color:var(--gray-500);white-space:nowrap;"></span>
       </div>
@@ -26612,7 +26612,7 @@ function _laDrawerCellHTML(ev) {
         ${assignedHitachi.map(er => {
           const r = allRes.find(x => x.id === er.resource_id);
           return `<span class="la-drawer-pill">${escapeHtml(r?.display_name||'?')}
-            <button onclick="_laDrawerRemoveEventResource('${er.id}')" title="Remove">×</button></span>`;
+            <button ${cxAct('_laDrawerRemoveEventResource', String(er.id))} title="Remove">×</button></span>`;
         }).join('') || '<span style="color:var(--gray-400);font-size:12px;">None assigned</span>'}
       </div>
       <select class="la-drawer-input" onchange="if(this.value){_laDrawerAddEventResource('${ev.id}',this.value,1);this.value='';}" style="margin-top:6px;">
@@ -26631,7 +26631,7 @@ function _laDrawerCellHTML(ev) {
           const denied = !!er.denied_at;
           return `<span class="la-drawer-pill ${denied?'la-drawer-pill-denied':''}">${escapeHtml(r?.display_name||'?')} ×${er.quantity||1}
             ${denied ? `<span title="Denied" style="color:var(--bad);">${icon('alert')}</span>` : ''}
-            <button onclick="_laDrawerRemoveEventResource('${er.id}')" title="Remove">×</button></span>`;
+            <button ${cxAct('_laDrawerRemoveEventResource', String(er.id))} title="Remove">×</button></span>`;
         }).join('') || '<span style="color:var(--gray-400);font-size:12px;">None requested</span>'}
       </div>
       <div style="display:flex;gap:6px;margin-top:6px;">
@@ -26667,10 +26667,10 @@ function _laDrawerCellFooterHTML(ev) {
   return `
     <button class="form-secondary" data-action="_laDrawerClose">Close</button>
     ${ev.is_locked
-      ? `<button class="form-secondary" onclick="_planningToggleLock('${ev.id}')">${icon('unlock')} Unlock</button>`
-      : `<button class="form-secondary" onclick="_planningToggleLock('${ev.id}')">${icon('lock')} Lock</button>`}
+      ? `<button class="form-secondary" ${cxAct('_planningToggleLock', String(ev.id))}>${icon('unlock')} Unlock</button>`
+      : `<button class="form-secondary" ${cxAct('_planningToggleLock', String(ev.id))}>${icon('lock')} Lock</button>`}
     ${!isCancel
-      ? `<button class="form-secondary" style="color:var(--bad);" onclick="_planningCancelEvent('${ev.id}')">${icon('ban')} Cancel</button>`
+      ? `<button class="form-secondary" style="color:var(--bad);" ${cxAct('_planningCancelEvent', String(ev.id))}>${icon('ban')} Cancel</button>`
       : ''}
     <button class="form-submit la-drawer-save" id="la-drawer-save" disabled data-action="_laDrawerSave">${icon('save')} Save</button>
   `;
@@ -26818,7 +26818,7 @@ function _laDrawerActivityHTML(a) {
 function _laDrawerActivityFooterHTML(a) {
   return `
     <button class="form-secondary" data-action="_laDrawerClose">Close</button>
-    <button class="form-secondary" style="color:var(--bad);border-color:var(--bad-border);" onclick="_laDrawerSoftDeleteActivity('${a.id}')" title="Soft-delete: hidden from grid but restorable">${icon('trash')} Delete</button>
+    <button class="form-secondary" style="color:var(--bad);border-color:var(--bad-border);" ${cxAct('_laDrawerSoftDeleteActivity', String(a.id))} title="Soft-delete: hidden from grid but restorable">${icon('trash')} Delete</button>
     <button class="form-submit la-drawer-save" id="la-drawer-save" disabled data-action="_laDrawerSave">${icon('save')} Save</button>
   `;
 }
@@ -26852,8 +26852,8 @@ function _laDrawerMultiHTML(eventIds) {
         <button class="form-secondary" data-action="_laBulkCancelCells">${icon('ban')} Cancel all (with reason)</button>
         <button class="form-secondary" data-action="_laDeleteSelection" style="color:var(--bad);">${icon('trash')} Delete all</button>
         <button class="form-secondary" data-action="_laBulkRemoveCellResources">${icon('users')} Remove users only</button>
-        <button class="form-secondary" onclick="_laCopySelection('copy')">${icon('clipboard')} Copy</button>
-        <button class="form-secondary" onclick="_laCopySelection('cut')">${icon('scissors')} Cut</button>
+        <button class="form-secondary" ${cxAct('_laCopySelection', 'copy')}>${icon('clipboard')} Copy</button>
+        <button class="form-secondary" ${cxAct('_laCopySelection', 'cut')}>${icon('scissors')} Cut</button>
         <button class="form-secondary" onclick="_laClearCellSelection();_laDrawerClose();">${icon('x')} Clear selection</button>
       </div>
     </div>
@@ -27383,8 +27383,8 @@ function _laRenderLinkModal(activityId, showAll) {
       </div>`,
     footer:
       '<button class="form-secondary" data-action="closeModal">Cancel</button>' +
-      (current ? `<button class="form-secondary" style="color:var(--bad);border-color:var(--bad-border);" onclick="_laSaveActivityLink('${activityId}',true)">${icon('link')} Unlink</button>` : '') +
-      `<button class="form-submit" onclick="_laSaveActivityLink('${activityId}',false)">Save Link</button>`,
+      (current ? `<button class="form-secondary" style="color:var(--bad);border-color:var(--bad-border);" ${cxAct('_laSaveActivityLink', String(activityId), true)}>${icon('link')} Unlink</button>` : '') +
+      `<button class="form-submit" ${cxAct('_laSaveActivityLink', String(activityId), false)}>Save Link</button>`,
   });
 
   // Wire TomSelect for searchability after modal renders
@@ -27439,7 +27439,7 @@ function _laResourcePanelHTML() {
   const _hitN  = activeAll.length - _bartN;
   const compChip = (val, label, n) =>
     `<button class="la-res-comp-chip${_laResPanelCompany === val ? ' active' : ''}"
-       onclick="_laSetResPanelCompany('${val}')">${label}<span class="la-res-comp-n">${n}</span></button>`;
+       ${cxAct('_laSetResPanelCompany', String(val))}>${label}<span class="la-res-comp-n">${n}</span></button>`;
 
   let html = `<div class="la-res-panel" id="la-res-panel">
     <div class="la-res-panel-head">
@@ -27474,7 +27474,7 @@ function _laResourcePanelHTML() {
       html += `<div class="la-res-card${isSel ? ' la-res-card-selected' : ''}" draggable="true"
         data-res-id="${r.id}"
         data-res-name="${escapeHtml(r.display_name)}"
-        onclick="_laToggleResSelect('${r.id}')"
+        ${cxAct('_laToggleResSelect', String(r.id))}
         ondragstart="_laStartResourceDrag('${r.id}',this)"
         ondragend="_laEndResourceDrag(this)">
         <div class="la-res-avatar" style="background:${color};">${escapeHtml(initials)}</div>
@@ -27561,7 +27561,7 @@ function _laRenderHistoryList() {
     return;
   }
   body.innerHTML = '<div class="la-hist-list">' + PLANNING_SNAPSHOTS.map(s => `
-    <button class="la-hist-row" onclick="_laShowSnapshot('${s.week_start}')">
+    <button class="la-hist-row" ${cxAct('_laShowSnapshot', String(s.week_start))}>
       <div>
         <div class="la-hist-wk">${escapeHtml(_laSnapDateShort(s.week_start))} – ${escapeHtml(_laSnapDate(s.week_end))}</div>
         <div class="la-hist-sub">Frozen ${escapeHtml(_laSnapDate(s.captured_at))}</div>
@@ -27686,8 +27686,8 @@ function _laCellSelActionsHTML() {
   if (n > 0) {
     parts.push(`<span style="font-size:12px;font-weight:700;color:#7f0000;">${n} cell${n>1?'s':''} selected</span>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" data-action="_laClearCellSelection">${icon('x')} Clear</button>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laCopySelection('copy')" title="Ctrl+C">${icon('clipboard')} Copy</button>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laCopySelection('cut')" title="Ctrl+X">${icon('scissors')} Cut</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" ${cxAct('_laCopySelection', 'copy')} title="Ctrl+C">${icon('clipboard')} Copy</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" ${cxAct('_laCopySelection', 'cut')} title="Ctrl+X">${icon('scissors')} Cut</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:var(--bad);border-color:var(--bad-border);" data-action="_laDeleteSelection" title="Del">${icon('trash')} Delete</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:var(--bad);border-color:var(--bad-border);" data-action="_laBulkCancelCells">${icon('ban')} Cancel</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" data-action="_laBulkRemoveCellResources">Remove users only</button>`);
@@ -30226,7 +30226,7 @@ function _planningOpenEventDetail(eventId) {
                   <option value="">— Assign resource…</option>
                   ${available.map(r => `<option value="${r.id}">${escapeHtml(r.display_name)}${r.initials ? ' ('+escapeHtml(r.initials)+')' : ''}${r.subsystem ? ' · '+escapeHtml(r.subsystem) : ''}</option>`).join('')}
                 </select>
-                <button class="admin-action-btn" style="font-size:12px;padding:4px 12px;height:32px;" onclick="_planningAssignResourceFromDetail('${e.id}')">Assign</button>
+                <button class="admin-action-btn" style="font-size:12px;padding:4px 12px;height:32px;" ${cxAct('_planningAssignResourceFromDetail', String(e.id))}>Assign</button>
               </div>` : '<em style="font-size:11px;color:var(--gray-400);">All active resources assigned</em>';
           })() : ''}
         </div>
@@ -30237,7 +30237,7 @@ function _planningOpenEventDetail(eventId) {
             <textarea id="ped-notes" class="form-input" rows="3"
               style="font-size:12px;resize:vertical;width:100%;box-sizing:border-box;"
               placeholder="Add notes about this activity…">${escapeHtml(e.notes || '')}</textarea>
-            <button class="form-secondary" style="font-size:11px;padding:3px 10px;margin-top:4px;" onclick="_planningUpdateEventNotes('${e.id}')">${icon('save')} Save Notes</button>
+            <button class="form-secondary" style="font-size:11px;padding:3px 10px;margin-top:4px;" ${cxAct('_planningUpdateEventNotes', String(e.id))}>${icon('save')} Save Notes</button>
           ` : `<div style="font-size:12px;">${e.notes ? escapeHtml(e.notes) : '<em style="color:var(--text-subtle);">No notes</em>'}</div>`}
         </div>
       </div>
@@ -30250,10 +30250,10 @@ function _planningOpenEventDetail(eventId) {
     `,
     footer: isAdmin ? `
       <button class="form-secondary" data-action="closeModal">Close</button>
-      <button class="form-secondary" onclick="_planningToggleLock('${e.id}')">${e.is_locked ? icon('unlock')+' Unlock' : icon('lock')+' Lock'}</button>
-      ${!isCancel ? `<button class="form-secondary" style="color:var(--bad);" onclick="_planningCancelEvent('${e.id}')">${icon('x')} Cancel Event</button>` : ''}
-      ${isCancel && !e.cancellation_reason ? `<button class="form-submit" onclick="_planningAddCancellationReason('${e.id}')">+ Add Cancel Reason</button>` : ''}
-      ${!e.is_locked ? `<button class="form-secondary" style="color:var(--bad);border-color:var(--bad-border);" onclick="_planningDeleteEvent('${e.id}')">${icon('trash')} Delete</button>` : ''}
+      <button class="form-secondary" ${cxAct('_planningToggleLock', String(e.id))}>${e.is_locked ? icon('unlock')+' Unlock' : icon('lock')+' Lock'}</button>
+      ${!isCancel ? `<button class="form-secondary" style="color:var(--bad);" ${cxAct('_planningCancelEvent', String(e.id))}>${icon('x')} Cancel Event</button>` : ''}
+      ${isCancel && !e.cancellation_reason ? `<button class="form-submit" ${cxAct('_planningAddCancellationReason', String(e.id))}>+ Add Cancel Reason</button>` : ''}
+      ${!e.is_locked ? `<button class="form-secondary" style="color:var(--bad);border-color:var(--bad-border);" ${cxAct('_planningDeleteEvent', String(e.id))}>${icon('trash')} Delete</button>` : ''}
     ` : `
       <button class="form-secondary" data-action="closeModal">Close</button>
     `,
@@ -30496,7 +30496,7 @@ function _laPTOStub() {
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;justify-content:space-between;">
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
         ${filterChips.map(([id, label]) => `
-          <button class="admin-tab${_ptoFilter === id ? ' active' : ''}" style="font-size:12px;padding:6px 12px;" onclick="_ptoSetFilter('${id}')">${label}</button>
+          <button class="admin-tab${_ptoFilter === id ? ' active' : ''}" style="font-size:12px;padding:6px 12px;" ${cxAct('_ptoSetFilter', String(id))}>${label}</button>
         `).join('')}
       </div>
       <div style="display:flex;gap:8px;">
@@ -30548,12 +30548,12 @@ function _ptoRowHTML(p, isAdmin, myResource) {
   let actions = '';
   if (isAdmin && p.status === 'pending') {
     actions = `
-      <button class="form-secondary" style="font-size:11px;padding:4px 8px;color:var(--good);" onclick="_ptoReview('${p.id}','approve')">✓ Approve</button>
-      <button class="form-secondary" style="font-size:11px;padding:4px 8px;color:var(--bad);margin-left:4px;" onclick="_ptoReview('${p.id}','reject')">${icon('x')} Reject</button>`;
+      <button class="form-secondary" style="font-size:11px;padding:4px 8px;color:var(--good);" ${cxAct('_ptoReview', String(p.id), 'approve')}>✓ Approve</button>
+      <button class="form-secondary" style="font-size:11px;padding:4px 8px;color:var(--bad);margin-left:4px;" ${cxAct('_ptoReview', String(p.id), 'reject')}>${icon('x')} Reject</button>`;
   } else if (isAdmin && p.status !== 'pending') {
-    actions = `<button class="form-secondary" style="font-size:11px;padding:4px 8px;" onclick="_ptoReview('${p.id}','reopen')">↺ Reopen</button>`;
+    actions = `<button class="form-secondary" style="font-size:11px;padding:4px 8px;" ${cxAct('_ptoReview', String(p.id), 'reopen')}>↺ Reopen</button>`;
   } else if (isMine && p.status === 'pending') {
-    actions = `<button class="form-secondary" style="font-size:11px;padding:4px 8px;color:var(--bad);" onclick="_ptoCancel('${p.id}')">Cancel</button>`;
+    actions = `<button class="form-secondary" style="font-size:11px;padding:4px 8px;color:var(--bad);" ${cxAct('_ptoCancel', String(p.id))}>Cancel</button>`;
   } else {
     actions = `<span style="font-size:11px;color:var(--gray-400);">—</span>`;
   }
@@ -31439,11 +31439,11 @@ function renderAdminPlanning() {
     <div class="ap-plan-tabbar" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:2px solid var(--gray-200);padding-bottom:0;">
       <div class="ap-plan-tabs" style="display:flex;gap:0;">
         ${tabs.map(([id, label]) => `
-          <button class="admin-tab${_adminPlanningTab === id ? ' active' : ''}" data-ap-tab="${id}" onclick="_adminPlanningSetTab('${id}')">${label}</button>
+          <button class="admin-tab${_adminPlanningTab === id ? ' active' : ''}" data-ap-tab="${id}" ${cxAct('_adminPlanningSetTab', String(id))}>${label}</button>
         `).join('')}
       </div>
       <div class="ap-plan-tabactions" style="display:flex;gap:8px;">
-        <button class="form-secondary" onclick="showPage('lookahead')">${icon('calendar')} Lookahead</button>
+        <button class="form-secondary" ${cxAct('showPage', 'lookahead')}>${icon('calendar')} Lookahead</button>
         <button class="form-secondary" onclick="loadPlanningData(true).then(renderAdminPlanning);">↻ Refresh</button>
       </div>
     </div>
@@ -31523,8 +31523,8 @@ function _apDeletedActivitiesHTML() {
               <td style="padding:8px 12px;color:var(--gray-600);font-style:italic;max-width:200px;">${escapeHtml(a.deletion_reason || '—')}</td>
               <td style="padding:8px 12px;color:var(--gray-500);font-size:11px;">${evCount}</td>
               <td style="padding:8px 12px;text-align:right;white-space:nowrap;">
-                <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_apRestoreActivity('${a.id}')">↩ Restore</button>
-                <button class="form-secondary" style="font-size:11px;padding:4px 10px;color:var(--bad);border-color:var(--bad-border);" onclick="_apHardDeleteActivity('${a.id}')">${icon('x')} Purge</button>
+                <button class="form-secondary" style="font-size:11px;padding:4px 10px;" ${cxAct('_apRestoreActivity', String(a.id))}>↩ Restore</button>
+                <button class="form-secondary" style="font-size:11px;padding:4px 10px;color:var(--bad);border-color:var(--bad-border);" ${cxAct('_apHardDeleteActivity', String(a.id))}>${icon('x')} Purge</button>
               </td>
             </tr>`;
           }).join('')}
@@ -31638,7 +31638,7 @@ function _apReviewStub() {
                 <td style="font-size:13px;">${e.event_date || '—'}</td>
                 <td>${escapeHtml(e.title || '—')}</td>
                 <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(e.location || '—')}</td>
-                <td><button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_planningAddCancellationReason('${e.id}')">+ Add Reason</button></td>
+                <td><button class="form-secondary" style="font-size:11px;padding:4px 10px;" ${cxAct('_planningAddCancellationReason', String(e.id))}>+ Add Reason</button></td>
               </tr>`).join('')}
           </tbody>
         </table>
@@ -31687,8 +31687,8 @@ function _apReviewStub() {
                   <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.location || '—')}</td>
                   <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.resource_raw || '—')}</td>
                   <td style="white-space:nowrap;">
-                    <button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_planningLinkActivity('${a.id}')">${icon('link')} Link</button>
-                    <button class="form-secondary" style="font-size:11px;padding:4px 10px;margin-left:4px;color:var(--gray-500);" onclick="_planningMarkNoLink('${a.id}')">⊘ No link</button>
+                    <button class="form-secondary" style="font-size:11px;padding:4px 10px;" ${cxAct('_planningLinkActivity', String(a.id))}>${icon('link')} Link</button>
+                    <button class="form-secondary" style="font-size:11px;padding:4px 10px;margin-left:4px;color:var(--gray-500);" ${cxAct('_planningMarkNoLink', String(a.id))}>⊘ No link</button>
                   </td>
                 </tr>`).join('')}
         </tbody>
@@ -31709,7 +31709,7 @@ function _apReviewStub() {
               <td>${escapeHtml(a.description || '—')}</td>
               <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.location || '—')}</td>
               <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.resource_raw || '—')}</td>
-              <td><button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_planningLinkActivity('${a.id}')">${icon('link')} Link</button></td>
+              <td><button class="form-secondary" style="font-size:11px;padding:4px 10px;" ${cxAct('_planningLinkActivity', String(a.id))}>${icon('link')} Link</button></td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -32703,9 +32703,9 @@ async function _planningLinkActivity(activityId) {
         </select>
       </div>`,
     footer: `
-      <button class="form-secondary" style="margin-right:auto;color:var(--gray-500);" onclick="_planningMarkNoLink('${activityId}')">⊘ No direct link</button>
+      <button class="form-secondary" style="margin-right:auto;color:var(--gray-500);" ${cxAct('_planningMarkNoLink', String(activityId))}>⊘ No direct link</button>
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="admin-action-btn" onclick="_planningConfirmLink('${activityId}')">${icon('link')} Link</button>`,
+      <button class="admin-action-btn" ${cxAct('_planningConfirmLink', String(activityId))}>${icon('link')} Link</button>`,
   });
 
   // TomSelect the fresh <select> (auto-init doesn't run inside modal)
@@ -33111,7 +33111,7 @@ function _apConflictsStub() {
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:14px;justify-content:space-between;">
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
         ${filterChips.map(([id, label]) => `
-          <button class="admin-tab${_conflictFilter === id ? ' active' : ''}" data-conflict-filter="${id}" style="font-size:12px;padding:6px 12px;" onclick="_planningSetConflictFilter('${id}')">${label}</button>
+          <button class="admin-tab${_conflictFilter === id ? ' active' : ''}" data-conflict-filter="${id}" style="font-size:12px;padding:6px 12px;" ${cxAct('_planningSetConflictFilter', String(id))}>${label}</button>
         `).join('')}
       </div>
       <div style="display:flex;gap:8px;">
@@ -33134,7 +33134,7 @@ function _apConflictsStub() {
                               : c.severity === 'warning'  ? `<span class="badge badge-warn">WARNING</span>`
                               : `<span class="badge badge-notstarted">INFO</span>`;
                 const payload = c.payload_json || {};
-                const eventLink = c.event_id ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;margin-right:4px;" onclick="_planningOpenEventDetail('${c.event_id}')">View Event</button>` : '';
+                const eventLink = c.event_id ? `<button class="form-secondary" style="font-size:11px;padding:3px 8px;margin-right:4px;" ${cxAct('_planningOpenEventDetail', String(c.event_id))}>View Event</button>` : '';
                 const createResBtn = c.conflict_type === 'unmatched_resource' && payload.token
                   ? `<button class="admin-action-btn" style="font-size:11px;padding:3px 8px;margin-right:4px;" onclick="_apAddResourceModalWithInitials('${escapeHtml(payload.token)}')">+ Create Resource</button>`
                   : '';
@@ -33144,7 +33144,7 @@ function _apConflictsStub() {
                     <td>${sevBadge}</td>
                     <td style="font-size:12px;color:var(--gray-700);">${escapeHtml(c.message || '—')}</td>
                     <td style="font-size:11px;color:var(--gray-500);">${c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}</td>
-                    <td style="white-space:nowrap;">${eventLink}${createResBtn}<button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_planningAcknowledgeConflict('${c.id}')">✓ Ack</button></td>
+                    <td style="white-space:nowrap;">${eventLink}${createResBtn}<button class="form-secondary" style="font-size:11px;padding:3px 8px;" ${cxAct('_planningAcknowledgeConflict', String(c.id))}>✓ Ack</button></td>
                   </tr>`;
               }).join('')}
         </tbody>
@@ -33196,10 +33196,10 @@ function _apResourcesStub() {
       <!-- Tab bar -->
       <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--gray-200);">
         <div style="display:flex;gap:0;">
-          <button class="admin-tab${!isRoles ? ' active' : ''}" onclick="_apSetResSubTab('people')">
+          <button class="admin-tab${!isRoles ? ' active' : ''}" ${cxAct('_apSetResSubTab', 'people')}>
             ${icon('user')} People <span style="opacity:.6;font-weight:400;">(${peopleAll.length})</span>
           </button>
-          <button class="admin-tab${isRoles ? ' active' : ''}" onclick="_apSetResSubTab('roles')">
+          <button class="admin-tab${isRoles ? ' active' : ''}" ${cxAct('_apSetResSubTab', 'roles')}>
             ${icon('user')} Roles <span style="opacity:.6;font-weight:400;">(${rolesAll.length})</span>
           </button>
         </div>
@@ -33273,7 +33273,7 @@ function _apResourcesStub() {
                     </label>
                   </td>
                   <td style="white-space:nowrap;">
-                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_apEditResourceModal('${r.id}')">${icon('edit')} Edit</button>
+                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" ${cxAct('_apEditResourceModal', String(r.id))}>${icon('edit')} Edit</button>
                     <button title="Delete" aria-label="Delete" class="form-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px;color:var(--bad);border-color:var(--bad-border);" onclick="_apDeleteResource('${r.id}','${escapeHtml(r.display_name)}')">${icon('trash')}</button>
                   </td>
                 </tr>`;
@@ -33313,7 +33313,7 @@ function _apEditResourceModal(resourceId) {
           </label>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;" id="ares-subsys-pills">
             <button class="admin-tab${!r.subsystem ? ' active' : ''}" style="font-size:11px;padding:4px 10px;" data-action="_apResSubsysPick" data-args="[null]">None</button>
-            ${SUBSYSTEMS.map(s => `<button class="admin-tab${r.subsystem===s?' active':''}" style="font-size:11px;padding:4px 10px;" onclick="_apResSubsysPick('${s}')">${s}</button>`).join('')}
+            ${SUBSYSTEMS.map(s => `<button class="admin-tab${r.subsystem===s?' active':''}" style="font-size:11px;padding:4px 10px;" ${cxAct('_apResSubsysPick', String(s))}>${s}</button>`).join('')}
           </div>
           <input type="hidden" id="ares-subsys-val" value="${escapeHtml(r.subsystem||'')}">
         </div>
@@ -33359,7 +33359,7 @@ function _apEditResourceModal(resourceId) {
       </div>`,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="admin-action-btn" onclick="_apSaveResourceEdit('${resourceId}')">Save</button>`,
+      <button class="admin-action-btn" ${cxAct('_apSaveResourceEdit', String(resourceId))}>Save</button>`,
   });
 }
 
@@ -33464,7 +33464,7 @@ function _apAddResourceModal() {
           <label class="form-label">Subsystem</label>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;" id="ares-subsys-pills">
             <button class="admin-tab active" style="font-size:11px;padding:4px 10px;" data-action="_apResSubsysPick" data-args="[null]">None</button>
-            ${SUBSYSTEMS.map(s => `<button class="admin-tab" style="font-size:11px;padding:4px 10px;" onclick="_apResSubsysPick('${s}')">${s}</button>`).join('')}
+            ${SUBSYSTEMS.map(s => `<button class="admin-tab" style="font-size:11px;padding:4px 10px;" ${cxAct('_apResSubsysPick', String(s))}>${s}</button>`).join('')}
           </div>
           <input type="hidden" id="ares-subsys-val" value="">
         </div>
@@ -34378,8 +34378,8 @@ async function openFormViewer(formId, backTo = null) {
       <div class="pdf-viewer-actions" style="display:flex;gap:6px;width:100%;">
         ${backTo ? `<button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" onclick="_fpBackToForms('${escapeHtml(String(backTo.testId))}','${escapeHtml(String(backTo.assetId || ''))}')">← Back</button>` : ''}
         <button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" data-action="closeFormViewer">Close</button>
-        <button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" onclick="downloadFormPDF('${form.id}')">↓ Download</button>
-        <button class="form-submit" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" id="form-viewer-save" onclick="saveFormPDF('${form.id}')">Save</button>
+        <button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" ${cxAct('downloadFormPDF', String(form.id))}>↓ Download</button>
+        <button class="form-submit" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" id="form-viewer-save" ${cxAct('saveFormPDF', String(form.id))}>Save</button>
       </div>
     `,
   });
@@ -35824,8 +35824,8 @@ function _formPickerBody(testId, assetId = '') {
   return `
     ${scopeBanner}
     <div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;">
-      <button class="form-submit" onclick="openAttachNewForm('${tid}','${aid}')">+ Attach New PDF</button>
-      <button class="form-secondary" onclick="openLinkExistingForm('${tid}','${aid}')">Link Existing Form</button>
+      <button class="form-submit" ${cxAct('openAttachNewForm', String(tid), String(aid))}>+ Attach New PDF</button>
+      <button class="form-secondary" ${cxAct('openLinkExistingForm', String(tid), String(aid))}>Link Existing Form</button>
     </div>
     ${rowsHtml}
   `;
@@ -35880,7 +35880,7 @@ function openAttachNewForm(testId, assetId = '') {
       </div>
     `,
     footer: `<button class="form-secondary" onclick="openFormPickerForTest('${tid}','${aid}',{forcePicker:true})">Cancel</button>
-             <button class="form-submit" onclick="submitAttachNewForm('${tid}','${aid}')">Upload &amp; Link</button>`,
+             <button class="form-submit" ${cxAct('submitAttachNewForm', String(tid), String(aid))}>Upload &amp; Link</button>`,
   });
 }
 
@@ -36044,7 +36044,7 @@ function _formsBadgeHTML(testIdOrRow, assetId = '') {
     : testIdOrRow;
   if (!row) {
     const tid = escapeHtml(String(testIdOrRow || ''));
-    return `<button aria-label="Attach form" class="form-secondary tr-mini-btn" title="Attach form" onclick="openFormPickerForTest('${tid}')" style="font-size:13px;padding:2px 6px;color:var(--gray-500);">${icon('paperclip')}</button>`;
+    return `<button aria-label="Attach form" class="form-secondary tr-mini-btn" title="Attach form" ${cxAct('openFormPickerForTest', String(tid))} style="font-size:13px;padding:2px 6px;color:var(--gray-500);">${icon('paperclip')}</button>`;
   }
   const count = _formsCountForTestRow(row);
   // Child asset row → open picker focused on this asset's scope.
@@ -36054,11 +36054,11 @@ function _formsBadgeHTML(testIdOrRow, assetId = '') {
   const tid = escapeHtml(targetTestId);
   const aid = escapeHtml(targetAsset);
   if (count === 0) {
-    return `<button aria-label="Attach form" class="form-secondary tr-mini-btn" title="Attach form" onclick="openFormPickerForTest('${tid}','${aid}')" style="font-size:13px;padding:2px 6px;color:var(--gray-500);">${icon('paperclip')}</button>`;
+    return `<button aria-label="Attach form" class="form-secondary tr-mini-btn" title="Attach form" ${cxAct('openFormPickerForTest', String(tid), String(aid))} style="font-size:13px;padding:2px 6px;color:var(--gray-500);">${icon('paperclip')}</button>`;
   }
   const titleBits = [`${count} form${count===1?'':'s'} linked`];
   if (isChild) titleBits.push('(includes any covering all assets)');
-  return `<button class="admin-action-btn tr-mini-btn" title="${titleBits.join(' ')}" onclick="openFormPickerForTest('${tid}','${aid}')" style="font-size:11px;padding:2px 7px;background:var(--info-light);color:var(--info);border:1px solid var(--info-border);">${icon('paperclip')} ${count}</button>`;
+  return `<button class="admin-action-btn tr-mini-btn" title="${titleBits.join(' ')}" ${cxAct('openFormPickerForTest', String(tid), String(aid))} style="font-size:11px;padding:2px 7px;background:var(--info-light);color:var(--info);border:1px solid var(--info-border);">${icon('paperclip')} ${count}</button>`;
 }
 
 // ── TEMPLATE EDITOR INTEGRATION ─────────────────────────────────────────
@@ -36075,8 +36075,8 @@ function _tplFormsBlockHTML(templateId) {
                <div style="display:flex;align-items:center;gap:10px;padding:6px 10px;background:var(--white);border:1px solid var(--gray-200);border-radius:5px;">
                  <span style="flex:1;font-size:13px;font-weight:600;">${escapeHtml(f.name)}</span>
                  <span class="tag">${escapeHtml(f.subsystem || '—')}</span>
-                 <button class="admin-action-btn tr-mini-btn" onclick="openFormViewer('${f.id}')">View</button>
-                 <button class="form-secondary tr-mini-btn" onclick="detachTemplateForm('${f.id}','${templateId}')">Remove</button>
+                 <button class="admin-action-btn tr-mini-btn" ${cxAct('openFormViewer', String(f.id))}>View</button>
+                 <button class="form-secondary tr-mini-btn" ${cxAct('detachTemplateForm', String(f.id), String(templateId))}>Remove</button>
                </div>`).join('')}
            </div>
     </div>
@@ -36119,8 +36119,8 @@ function openAttachTemplateForm(templateId, testCaseCode = '', testCaseName = ''
       </div>
       <div style="font-size:11px;color:var(--gray-500);margin-top:10px;">On deployment, this PDF is copied for this test case at each selected location and linked to that location's test item.</div>
     `,
-    footer: `<button class="form-secondary" onclick="_reopenTemplateEditor('${templateId}')">Cancel</button>
-             <button class="form-submit" onclick="submitAttachTemplateForm('${templateId}')">Upload &amp; Attach</button>`,
+    footer: `<button class="form-secondary" ${cxAct('_reopenTemplateEditor', String(templateId))}>Cancel</button>
+             <button class="form-submit" ${cxAct('submitAttachTemplateForm', String(templateId))}>Upload &amp; Attach</button>`,
   });
 }
 
@@ -36241,9 +36241,9 @@ function _formsPageListHTML() {
         <td style="font-size:12px;">${summary}</td>
         <td style="font-size:11px;color:var(--gray-500);">${x.updated_at ? new Date(x.updated_at).toLocaleDateString() : '—'}</td>
         <td style="white-space:nowrap;">
-          <button class="admin-action-btn tr-mini-btn" onclick="openFormViewer('${x.id}')">Open</button>
-          <button class="form-secondary tr-mini-btn"   onclick="openEditFormMetadata('${x.id}')">Edit</button>
-          <button title="Delete" aria-label="Delete" class="form-secondary tr-mini-btn"   style="color:var(--bad);" onclick="deleteFormFromPage('${x.id}')">${icon('trash')}</button>
+          <button class="admin-action-btn tr-mini-btn" ${cxAct('openFormViewer', String(x.id))}>Open</button>
+          <button class="form-secondary tr-mini-btn"   ${cxAct('openEditFormMetadata', String(x.id))}>Edit</button>
+          <button title="Delete" aria-label="Delete" class="form-secondary tr-mini-btn"   style="color:var(--bad);" ${cxAct('deleteFormFromPage', String(x.id))}>${icon('trash')}</button>
         </td>
       </tr>`;
   }).join('');
@@ -36329,7 +36329,7 @@ function openEditFormMetadata(formId) {
       </div>
     `,
     footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
-             <button class="form-submit" onclick="submitEditFormMetadata('${formId}')">Save</button>`,
+             <button class="form-submit" ${cxAct('submitEditFormMetadata', String(formId))}>Save</button>`,
   });
 }
 
@@ -36569,7 +36569,7 @@ function openExtractReportModal(uid) {
     `,
     footer: `
       <button class="form-secondary" id="ext-cancel-btn" onclick="_extractCancel(); closeModal();">Cancel</button>
-      <button class="admin-action-btn" id="ext-go-btn" onclick="_extractRun('${safeUid}')">Generate</button>
+      <button class="admin-action-btn" id="ext-go-btn" ${cxAct('_extractRun', String(safeUid))}>Generate</button>
     `,
   });
   setTimeout(() => _extractRecalcEstimate(safeUid), 30);
@@ -37862,8 +37862,8 @@ function _drwTabCurrent(loc, el) {
         <input type="checkbox" ${_drwRegSuper ? 'checked' : ''} onchange="_drwRegSet_('super', this.checked)"> Show superseded
       </label>
       <div class="drw-view-toggle">
-        <button class="${_drwRegView === 'table' ? 'active' : ''}" onclick="_drwRegSet_('view','table')">Table</button>
-        <button class="${_drwRegView === 'cards' ? 'active' : ''}" onclick="_drwRegSet_('view','cards')">Cards</button>
+        <button class="${_drwRegView === 'table' ? 'active' : ''}" ${cxAct('_drwRegSet_', 'view', 'table')}>Table</button>
+        <button class="${_drwRegView === 'cards' ? 'active' : ''}" ${cxAct('_drwRegSet_', 'view', 'cards')}>Cards</button>
       </div>
     </div>
     <div class="data-card-head" style="background:transparent;border:none;padding:0 2px 12px;">
@@ -38051,7 +38051,7 @@ function _drwTabSets(loc, el) {
           </div>
         </div>
         ${uiCan('drawings','upload_set') ? `<button class="admin-action-btn" style="background:#6366f1;color:var(--white);border:none;padding:7px 14px;border-radius:6px;cursor:pointer;font-size:12.5px;font-weight:600;"
-                onclick="_drwUploadRevision('${activeSet.id}')"
+                ${cxAct('_drwUploadRevision', String(activeSet.id))}
                 title="Upload a new revision — matching Drawing Numbers will be superseded automatically">
           + Upload Revision
         </button>` : ''}
@@ -39160,20 +39160,20 @@ function _drwEnsureEditorChrome() {
     toolbar.dataset.modernized = 'true';
     toolbar.className = 'drw-markup-toolbar';
     toolbar.innerHTML = `
-      <button class="drw-tool-btn" id="drw-tool-select" onclick="_drwSetTool('select')" title="Select, move, resize, edit">Select</button>
-      <button class="drw-tool-btn" id="drw-tool-pen" onclick="_drwSetTool('pen')" title="Freehand pen">Pen</button>
-      <button class="drw-tool-btn" id="drw-tool-rect" onclick="_drwSetTool('rect')" title="Rectangle">Rect</button>
-      <button class="drw-tool-btn" id="drw-tool-arrow" onclick="_drwSetTool('arrow')" title="Arrow">Arrow</button>
-      <button class="drw-tool-btn" id="drw-tool-text" onclick="_drwSetTool('text')" title="Inline text box">Text</button>
-      <button class="drw-tool-btn" id="drw-tool-stamp" onclick="_drwSetTool('stamp')" title="Stamp: PASS / FAIL / SUPERSEDED">Stamp</button>
+      <button class="drw-tool-btn" id="drw-tool-select" ${cxAct('_drwSetTool', 'select')} title="Select, move, resize, edit">Select</button>
+      <button class="drw-tool-btn" id="drw-tool-pen" ${cxAct('_drwSetTool', 'pen')} title="Freehand pen">Pen</button>
+      <button class="drw-tool-btn" id="drw-tool-rect" ${cxAct('_drwSetTool', 'rect')} title="Rectangle">Rect</button>
+      <button class="drw-tool-btn" id="drw-tool-arrow" ${cxAct('_drwSetTool', 'arrow')} title="Arrow">Arrow</button>
+      <button class="drw-tool-btn" id="drw-tool-text" ${cxAct('_drwSetTool', 'text')} title="Inline text box">Text</button>
+      <button class="drw-tool-btn" id="drw-tool-stamp" ${cxAct('_drwSetTool', 'stamp')} title="Stamp: PASS / FAIL / SUPERSEDED">Stamp</button>
       <span id="drw-stamp-chips" style="display:none;align-items:center;gap:4px;"></span>
       <select id="drw-width-select" class="drw-editor-select" onchange="_drwSetWidth(this.value)" title="Line width">
         <option value="2">2px</option><option value="3" selected>3px</option><option value="5">5px</option><option value="8">8px</option>
       </select>
-      <button class="drw-color-btn" data-color="#dc2626" onclick="_drwSetColor('#dc2626')" title="Red" style="background:var(--bad);"></button>
-      <button class="drw-color-btn" data-color="#f59e0b" onclick="_drwSetColor('#f59e0b')" title="Amber" style="background:var(--accent-amber);"></button>
-      <button class="drw-color-btn" data-color="#10b981" onclick="_drwSetColor('#10b981')" title="Green" style="background:#10b981;"></button>
-      <button class="drw-color-btn" data-color="#2563eb" onclick="_drwSetColor('#2563eb')" title="Blue" style="background:var(--info);"></button>
+      <button class="drw-color-btn" data-color="#dc2626" ${cxAct('_drwSetColor', '#dc2626')} title="Red" style="background:var(--bad);"></button>
+      <button class="drw-color-btn" data-color="#f59e0b" ${cxAct('_drwSetColor', '#f59e0b')} title="Amber" style="background:var(--accent-amber);"></button>
+      <button class="drw-color-btn" data-color="#10b981" ${cxAct('_drwSetColor', '#10b981')} title="Green" style="background:#10b981;"></button>
+      <button class="drw-color-btn" data-color="#2563eb" ${cxAct('_drwSetColor', '#2563eb')} title="Blue" style="background:var(--info);"></button>
       <span class="drw-toolbar-divider"></span>
       <button class="drw-tool-btn" data-action="_drwZoomOut" title="Zoom out">-</button>
       <button class="drw-tool-btn" data-action="_drwFitPage" title="Fit whole page">Fit</button>
@@ -39192,7 +39192,7 @@ function _drwEnsureEditorChrome() {
     const _chips = document.getElementById('drw-stamp-chips');
     if (_chips && typeof CXMarkup !== 'undefined') {
       _chips.innerHTML = CXMarkup.STAMPS.map(s =>
-        `<button type="button" class="drw-stamp-chip" data-kind="${s.k}" onclick="_drwSetStampKind('${s.k}')" style="background:${s.c};color:var(--white);border:none;border-radius:6px;padding:5px 8px;font:700 11px/1 'IBM Plex Mono',monospace;letter-spacing:.04em;cursor:pointer;">${s.k}</button>`
+        `<button type="button" class="drw-stamp-chip" data-kind="${s.k}" ${cxAct('_drwSetStampKind', String(s.k))} style="background:${s.c};color:var(--white);border:none;border-radius:6px;padding:5px 8px;font:700 11px/1 'IBM Plex Mono',monospace;letter-spacing:.04em;cursor:pointer;">${s.k}</button>`
       ).join('');
     }
   }
@@ -40034,11 +40034,11 @@ function _drwExportOpen() {
     body: `
       <div style="padding:8px 24px 20px;display:flex;flex-direction:column;gap:12px;">
         <p style="font-size:13px;color:var(--gray-600);margin:0;">Choose which version of this sheet to download as a PDF.</p>
-        <button class="form-secondary" style="display:block;width:100%;text-align:left;padding:12px 14px;" onclick="_drwExportPdf('original')">
+        <button class="form-secondary" style="display:block;width:100%;text-align:left;padding:12px 14px;" ${cxAct('_drwExportPdf', 'original')}>
           <div style="font-weight:600;">Original — no markup</div>
           <div style="font-size:12px;color:var(--gray-600);">The clean drawing sheet, exactly as issued.</div>
         </button>
-        <button class="form-submit" style="display:block;width:100%;text-align:left;padding:12px 14px;${hasMarkup ? '' : 'opacity:.55;'}" onclick="_drwExportPdf('markup')">
+        <button class="form-submit" style="display:block;width:100%;text-align:left;padding:12px 14px;${hasMarkup ? '' : 'opacity:.55;'}" ${cxAct('_drwExportPdf', 'markup')}>
           <div style="font-weight:600;">Marked up</div>
           <div style="font-size:12px;color:rgba(255,255,255,.85);">The sheet with all currently visible markups baked in.${hasMarkup ? '' : ' (No markups on this sheet yet.)'}</div>
         </button>
@@ -40676,13 +40676,13 @@ async function renderDynamicTestingPage() {
     sub: 'Manage executable test instances for dynamic-scope test cases.',
   }) + `
     <div class="dyn-tabs" style="display:flex;gap:8px;margin-top:14px;">
-      <button class="hero-tab ${_dynPage.tab==='cases'?'active':''}" onclick="_dynTabSwitch('cases')">Test Cases</button>
-      <button class="hero-tab ${_dynPage.tab==='instances'?'active':''}" onclick="_dynTabSwitch('instances')">Instances</button>
-      <button class="hero-tab ${_dynPage.tab==='board'?'active':''}" onclick="_dynTabSwitch('board')">Planning Board</button>
-      <button class="hero-tab ${_dynPage.tab==='access'?'active':''}" onclick="_dynTabSwitch('access')">Access Plan</button>
-      <button class="hero-tab ${_dynPage.tab==='planning'?'active':''}" onclick="_dynTabSwitch('planning')">Capacity Planning</button>
-      <button class="hero-tab ${_dynPage.tab==='simulator'?'active':''}" onclick="_dynTabSwitch('simulator')">Simulator</button>
-      <button class="hero-tab ${_dynPage.tab==='variance'?'active':''}" onclick="_dynTabSwitch('variance')">Duration Variance</button>
+      <button class="hero-tab ${_dynPage.tab==='cases'?'active':''}" ${cxAct('_dynTabSwitch', 'cases')}>Test Cases</button>
+      <button class="hero-tab ${_dynPage.tab==='instances'?'active':''}" ${cxAct('_dynTabSwitch', 'instances')}>Instances</button>
+      <button class="hero-tab ${_dynPage.tab==='board'?'active':''}" ${cxAct('_dynTabSwitch', 'board')}>Planning Board</button>
+      <button class="hero-tab ${_dynPage.tab==='access'?'active':''}" ${cxAct('_dynTabSwitch', 'access')}>Access Plan</button>
+      <button class="hero-tab ${_dynPage.tab==='planning'?'active':''}" ${cxAct('_dynTabSwitch', 'planning')}>Capacity Planning</button>
+      <button class="hero-tab ${_dynPage.tab==='simulator'?'active':''}" ${cxAct('_dynTabSwitch', 'simulator')}>Simulator</button>
+      <button class="hero-tab ${_dynPage.tab==='variance'?'active':''}" ${cxAct('_dynTabSwitch', 'variance')}>Duration Variance</button>
       <button class="hero-tab" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;" data-action="tpOpen" title="Open the track plan reference window — keep a track-plan map on screen while you work">${icon('map')} Track Plan</button>
     </div>
     <style>
@@ -41208,7 +41208,7 @@ function _dynInstSortTh(label, col, style = '') {
   const active = _dynPage.instSortCol === col;
   const arrow  = active ? (_dynPage.instSortDir === 'asc' ? '↑' : '↓') : '↕';
   const color  = active ? 'var(--hitachi-red)' : 'var(--border-strong)';
-  return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" onclick="_dynInstSort('${col}')" title="Sort by ${escapeHtml(label)}">${escapeHtml(label)}<span style="font-size:10px;color:${color};margin-left:4px;">${arrow}</span></th>`;
+  return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" ${cxAct('_dynInstSort', String(col))} title="Sort by ${escapeHtml(label)}">${escapeHtml(label)}<span style="font-size:10px;color:${color};margin-left:4px;">${arrow}</span></th>`;
 }
 
 // Toggle/cycle sort on the instances table: first click asc, second desc,
@@ -42309,8 +42309,8 @@ function _dynRenderBoard() {
         </div>
         <div class="accx-ctl-row">
           <span class="accx-seg">
-            <button class="dyn-btn ${_dynPage.boardView==='month'?'on':''}" onclick="_dynBoardSetView('month')">Month</button>
-            <button class="dyn-btn ${_dynPage.boardView==='week'?'on':''}" onclick="_dynBoardSetView('week')">Week</button>
+            <button class="dyn-btn ${_dynPage.boardView==='month'?'on':''}" ${cxAct('_dynBoardSetView', 'month')}>Month</button>
+            <button class="dyn-btn ${_dynPage.boardView==='week'?'on':''}" ${cxAct('_dynBoardSetView', 'week')}>Week</button>
           </span>
           <span class="accx-nav">
             <button class="simx-iconbtn" data-action="_dynBoardShift" data-args="[-1]" aria-label="Previous period">${icon('chevron-left')}</button>
@@ -42965,8 +42965,8 @@ function _dynRenderAccess() {
         </div>
         <div class="accx-ctl-row">
           <span class="accx-seg">
-            <button class="dyn-btn ${_dynPage.accView==='week'?'on':''}" onclick="_dynAccSetView('week')">Week</button>
-            <button class="dyn-btn ${_dynPage.accView==='month'?'on':''}" onclick="_dynAccSetView('month')">Month</button>
+            <button class="dyn-btn ${_dynPage.accView==='week'?'on':''}" ${cxAct('_dynAccSetView', 'week')}>Week</button>
+            <button class="dyn-btn ${_dynPage.accView==='month'?'on':''}" ${cxAct('_dynAccSetView', 'month')}>Month</button>
           </span>
           <span class="accx-nav">
             <button class="simx-iconbtn" data-action="_dynAccShift" data-args="[-1]" aria-label="Previous ${_dynPage.accView}">${icon('chevron-left')}</button>
@@ -43646,10 +43646,10 @@ function _dynOpenTrains(campaignId) {
       <td style="padding:7px 8px;">${r.quantity || 1} × ${cars}${r.zone_code ? ` <span class="tag" style="font-family:monospace;font-size:10px;">${escapeHtml(r.zone_code)}</span>` : ''}</td>
       <td style="padding:7px 8px;"><span class="tag" style="background:${t.bg};color:${t.fg};border-color:transparent;">${t.label}</span></td>
       <td style="padding:7px 8px;text-align:right;white-space:nowrap;">
-        ${r.status !== 'approved' ? `<button class="dyn-btn" style="font-size:11px;padding:3px 7px;" onclick="_dynTrainSetStatus('${r.id}','approved')">Approve</button>` : ''}
-        <button class="dyn-btn" style="font-size:11px;padding:3px 7px;" onclick="_dynTrainSubstitute('${r.id}')">Substitute</button>
-        ${r.status !== 'denied' ? `<button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:var(--bad);" onclick="_dynTrainSetStatus('${r.id}','denied')">Deny</button>` : ''}
-        <button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:var(--bad);" onclick="_dynTrainDelete('${r.id}')">✕</button>
+        ${r.status !== 'approved' ? `<button class="dyn-btn" style="font-size:11px;padding:3px 7px;" ${cxAct('_dynTrainSetStatus', String(r.id), 'approved')}>Approve</button>` : ''}
+        <button class="dyn-btn" style="font-size:11px;padding:3px 7px;" ${cxAct('_dynTrainSubstitute', String(r.id))}>Substitute</button>
+        ${r.status !== 'denied' ? `<button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:var(--bad);" ${cxAct('_dynTrainSetStatus', String(r.id), 'denied')}>Deny</button>` : ''}
+        <button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:var(--bad);" ${cxAct('_dynTrainDelete', String(r.id))}>✕</button>
       </td>
     </tr>`;
   }).join('') : `<tr><td colspan="3" style="padding:18px;text-align:center;color:var(--gray-500);">No train requests yet.</td></tr>`;
@@ -43677,7 +43677,7 @@ function _dynOpenTrains(campaignId) {
             <div class="form-field"><label style="font-size:11px;">Zone (optional)</label>
               <select id="tr-zone" style="${fld}width:100%;"><option value="">All campaign zones</option>${zoneOpts.map(z=>`<option value="${escapeHtml(z)}">${escapeHtml(z)}</option>`).join('')}</select></div>
           </div>
-          <button class="dyn-btn primary" style="margin-top:10px;" onclick="_dynTrainAdd('${campaignId}')">+ Add request</button>
+          <button class="dyn-btn primary" style="margin-top:10px;" ${cxAct('_dynTrainAdd', String(campaignId))}>+ Add request</button>
         </div>
       </div>`,
     footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
@@ -43872,7 +43872,7 @@ function _dynBuildShift(shiftId) {
       <td style="padding:6px 8px;text-align:right;font-family:monospace;">${i.expected_duration_minutes ?? '—'}m</td>
       <td style="padding:6px 8px;text-align:right;font-family:monospace;">${i.trains_needed ?? 1}</td>
       <td style="padding:6px 8px;">${_dynDayStatusSelect(i)}</td>
-      <td style="padding:6px 8px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:var(--bad);" onclick="_dynShiftUnassign('${i.id}')">Remove</button></td>
+      <td style="padding:6px 8px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 7px;color:var(--bad);" ${cxAct('_dynShiftUnassign', String(i.id))}>Remove</button></td>
     </tr>`).join('') : `<tr><td colspan="6" style="padding:14px;text-align:center;color:var(--gray-500);">No tests assigned yet — add from the eligible list below.</td></tr>`;
 
   const eligRows = eligible.length ? eligible.map(i => `
@@ -43882,7 +43882,7 @@ function _dynBuildShift(shiftId) {
       <td style="padding:6px 8px;text-align:right;font-family:monospace;">${i.expected_duration_minutes ?? '—'}m</td>
       <td style="padding:6px 8px;text-align:right;font-family:monospace;">${i.trains_needed ?? 1}</td>
       <td style="padding:6px 8px;">${i.required_mode ? `<span class="badge" style="font-size:10px;">${escapeHtml(i.required_mode)}</span>` : '—'}</td>
-      <td style="padding:6px 8px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 7px;" onclick="_dynShiftAssign('${i.id}','${shiftId}')">Add</button></td>
+      <td style="padding:6px 8px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 7px;" ${cxAct('_dynShiftAssign', String(i.id), String(shiftId))}>Add</button></td>
     </tr>`).join('') : `<tr><td colspan="6" style="padding:14px;text-align:center;color:var(--gray-500);">No eligible tests for ${escapeHtml(s.control_zone_code)} in these modes.</td></tr>`;
 
   modal({
@@ -44404,8 +44404,8 @@ function _dynRenderPlanning() {
         <div class="capx-sec-head"><span class="capx-sec-title">${icon('clock')} Window &amp; filters</span></div>
         <div class="capx-sec-body">
           <div class="capx-presets">
-            <button type="button" class="capx-preset" onclick="_dynPlanPreset('day')">Day 08–17</button>
-            <button type="button" class="capx-preset" onclick="_dynPlanPreset('nrh')" title="Tonight's non-revenue hours">Tonight NRH</button>
+            <button type="button" class="capx-preset" ${cxAct('_dynPlanPreset', 'day')}>Day 08–17</button>
+            <button type="button" class="capx-preset" ${cxAct('_dynPlanPreset', 'nrh')} title="Tonight's non-revenue hours">Tonight NRH</button>
           </div>
           <label class="capx-field" style="margin-bottom:8px;"><span>Start</span>
             <input class="capx-input wide" id="plan-start" type="datetime-local" value="${escapeHtml(_dynPage.planStart)}" onchange="_dynPage.planStart=this.value;_dynRenderPlanning();"></label>
@@ -44839,7 +44839,7 @@ function _dynRenderPlanningTable() {
         <td class="capx-grp-chk"><input type="checkbox" ${gSel ? 'checked' : ''} ${eligible.length ? '' : 'disabled'}
              onclick="event.stopPropagation()" onchange="_dynPlanGroupSel('${k}',this.checked)"
              aria-label="Select all eligible runs of ${escapeHtml(String(key))}"></td>
-        <td colspan="8" class="capx-grp-cell" onclick="_dynPlanToggleGroup('${k}')">
+        <td colspan="8" class="capx-grp-cell" ${cxAct('_dynPlanToggleGroup', String(k))}>
           <span class="capx-grp-chev">${icon('chevron-right')}</span>
           <span class="capx-grp-code">${escapeHtml(String(key))}</span>
           <span class="capx-grp-title">${escapeHtml(list[0].title || '')}</span>
@@ -45544,7 +45544,7 @@ function _dynWhatIfKpiHtml(r) {
 function _dynWhatIfScopeControlsHtml() {
   const w = window._dynWhatIf;
   const camps = (_dynPage.campaigns || []).filter(c => c.status !== 'archived');
-  const tab = (m, label) => `<button class="dyn-btn ${w.mode === m ? 'primary' : ''}" style="font-size:12px;" onclick="_dynWhatIfSetMode('${m}')">${label}</button>`;
+  const tab = (m, label) => `<button class="dyn-btn ${w.mode === m ? 'primary' : ''}" style="font-size:12px;" ${cxAct('_dynWhatIfSetMode', String(m))}>${label}</button>`;
   let scopeBody = '';
   if (w.mode === 'campaigns') {
     scopeBody = `<div style="max-height:120px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;padding:6px 8px;">
@@ -46553,7 +46553,7 @@ async function _dynRenderSimulator() {
 
   // Scenario rail: chips + compact icon actions + primary actions.
   const chips = _dynSimScenarios().filter(s => (s.phase || '') === _dynPage.simPhase).map(s => `
-    <button class="simx-chip ${sc && s.id === sc.id ? 'active' : ''}" onclick="_dynSimSelect('${s.id}')" title="${s.baseline ? 'Baseline scenario' : 'Scenario'}">
+    <button class="simx-chip ${sc && s.id === sc.id ? 'active' : ''}" ${cxAct('_dynSimSelect', String(s.id))} title="${s.baseline ? 'Baseline scenario' : 'Scenario'}">
       ${s.baseline ? icon('star') : ''}<span>${escapeHtml(s.name)}</span>
     </button>`).join('');
 
@@ -46643,7 +46643,7 @@ function _dynSimVerdictHtml(sc, res, regRes, baseRes, baseline) {
 function _dynSimSecHtml(key, iconName, title, summary, bodyHtml) {
   const open = _dynSimUi().open.has(key);
   return `<div class="simx-sec ${open ? 'open' : ''}">
-    <button type="button" class="simx-sec-head" aria-expanded="${open}" onclick="_dynSimUiToggleSec('${key}')">
+    <button type="button" class="simx-sec-head" aria-expanded="${open}" ${cxAct('_dynSimUiToggleSec', String(key))}>
       <span class="simx-sec-ic">${icon(iconName)}</span>
       <span class="simx-sec-title">${title}</span>
       <span class="simx-sec-sum">${summary}</span>
@@ -46878,7 +46878,7 @@ function _dynSimUnplacedHtml(sc, res) {
     <td><span class="tag" style="background:${r.tone.bg};color:${r.tone.fg};border-color:transparent;">${escapeHtml(r.label)}</span></td>
   </tr>`).join('');
   return `<div class="simx-alertcard">
-    <button type="button" class="simx-alertcard-head" aria-expanded="${open}" onclick="_dynSimUiTogglePanel('unplaced')">
+    <button type="button" class="simx-alertcard-head" aria-expanded="${open}" ${cxAct('_dynSimUiTogglePanel', 'unplaced')}>
       ${icon('alert')}<b>${res.unplaced} left unscheduled</b>
       <span class="simx-hint">${escapeHtml(summary)}</span>
       <span style="flex:1;"></span><span class="simx-linkish">${open ? 'Hide' : 'Why?'}</span>
@@ -46961,7 +46961,7 @@ function _dynSimKpiCompareHtml(B, S, baseline, sc, bReg, sReg) {
     <div class="simx-compare-head">
       <span class="simx-lbl">${escapeHtml(sc.name)} vs ${icon('star')} ${escapeHtml(baseline.name)}</span>
       <span style="flex:1;"></span>
-      <button type="button" class="simx-linkish" onclick="_dynSimUiTogglePanel('compare')">${open ? 'Hide full comparison' : 'Full comparison'}</button>
+      <button type="button" class="simx-linkish" ${cxAct('_dynSimUiTogglePanel', 'compare')}>${open ? 'Hide full comparison' : 'Full comparison'}</button>
     </div>
     <div class="simx-delta-cards">${endCard}${durCard}${covCard}</div>
     <div class="simx-compare-detail"${open ? '' : ' hidden'}>${_dynSimCompareTableHtml(B, S, baseline, sc, bReg, sReg)}</div>
@@ -47156,7 +47156,7 @@ function _dynSimGanttHtml(sc, res, baseRes) {
 function _dynSimShiftsHtml(sc, res, baseRes, baseline, regRes) {
   const open = _dynSimUi().panels.has('shifts');
   const regShiftN = regRes ? regRes.campaigns.filter(c => c.kind === 'regression').reduce((a, c) => a + ((c.res && c.res.winLog) ? c.res.winLog.length : 0), 0) : 0;
-  const head = `<button type="button" class="simx-card-head as-btn" aria-expanded="${open}" onclick="_dynSimUiTogglePanel('shifts')">
+  const head = `<button type="button" class="simx-card-head as-btn" aria-expanded="${open}" ${cxAct('_dynSimUiTogglePanel', 'shifts')}>
       <span class="simx-lbl">Simulated shifts</span>
       <span class="simx-hint">${res.winLog.length} shift${res.winLog.length === 1 ? '' : 's'} · ${res.shiftsUsed} used${baseRes ? ' — baseline vs scenario' : ''}${regShiftN ? ` · +${regShiftN} regression` : ''}</span>
       <span style="flex:1;"></span><span class="simx-linkish">${open ? 'Hide' : 'Show'}</span>
@@ -47930,7 +47930,7 @@ function _dynOpenAdjacency() {
   const edgeRows = edges.length ? edges.map(e => `
     <tr style="border-top:1px solid var(--gray-100);">
       <td style="padding:6px 10px;font-family:monospace;">${escapeHtml(e.zone_a)} — ${escapeHtml(e.zone_b)}</td>
-      <td style="padding:6px 10px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 8px;color:var(--bad);" onclick="_dynAdjacencyDelete('${e.id}')">Remove</button></td>
+      <td style="padding:6px 10px;text-align:right;"><button class="dyn-btn" style="font-size:11px;padding:3px 8px;color:var(--bad);" ${cxAct('_dynAdjacencyDelete', String(e.id))}>Remove</button></td>
     </tr>`).join('') : `<tr><td colspan="2" style="padding:16px;text-align:center;color:var(--gray-500);">No edges yet.</td></tr>`;
   modal({
     title: 'Zone adjacency — Phase 2',
@@ -48052,8 +48052,8 @@ function _dynRenderWindowsTable(windows) {
           <td style="padding:6px 10px;text-align:right;">${w.max_trains ?? '—'}</td>
           <td style="padding:6px 10px;color:var(--gray-700);">${escapeHtml(w.notes||'')}</td>
           <td style="padding:6px 10px;text-align:right;white-space:nowrap;">
-            <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_dynPlanUseWindow('${w.id}')">Use</button>
-            <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--bad);border-color:var(--bad-border);" onclick="_dynPlanDeleteWindow('${w.id}')">Delete</button>
+            <button class="form-secondary" style="font-size:11px;padding:3px 8px;" ${cxAct('_dynPlanUseWindow', String(w.id))}>Use</button>
+            <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--bad);border-color:var(--bad-border);" ${cxAct('_dynPlanDeleteWindow', String(w.id))}>Delete</button>
           </td>
         </tr>`).join('')}
       </tbody>
@@ -48465,7 +48465,7 @@ function _dynCaseSortTh(label, col, style = '') {
   const active = (_dynPage.caseSortCol || 'name') === col;
   const arrow  = active ? (_dynPage.caseSortDir === 'desc' ? '↓' : '↑') : '↕';
   const color  = active ? 'var(--hitachi-red)' : 'var(--border-strong)';
-  return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" onclick="_dynCaseSort('${col}')" title="Sort by ${escapeHtml(label)}">${escapeHtml(label)}<span style="font-size:10px;color:${color};margin-left:4px;">${arrow}</span></th>`;
+  return `<th style="cursor:pointer;user-select:none;white-space:nowrap;${style}" ${cxAct('_dynCaseSort', String(col))} title="Sort by ${escapeHtml(label)}">${escapeHtml(label)}<span style="font-size:10px;color:${color};margin-left:4px;">${arrow}</span></th>`;
 }
 
 // Toggle/cycle sort on the test-cases table: asc → desc → back to default (name asc).
@@ -50088,14 +50088,14 @@ function _docsRenderBreadcrumb() {
   const path = DocsAPI.folderPath(_docsCwd);
   let html = `<span class="docs-crumb ${_docsCwd ? '' : 'active'}"
       ondragover="_docsDragOver(event)" ondragleave="_docsDragLeave(event)" ondrop="_docsDrop(event,'')"
-      onclick="_docsNavTo('')">All Documents</span>`;
+      ${cxAct('_docsNavTo', '')}>All Documents</span>`;
   if (_docsCwd) {
     html += path.map((f, i) => {
       const isLast = i === path.length - 1;
       return `<span class="docs-crumb-sep">›</span>` +
         `<span class="docs-crumb ${isLast ? 'active' : ''}"
           ondragover="_docsDragOver(event)" ondragleave="_docsDragLeave(event)" ondrop="_docsDrop(event,'${f.id}')"
-          onclick="_docsNavTo('${f.id}')">${escapeHtml(f.name)}</span>`;
+          ${cxAct('_docsNavTo', String(f.id))}>${escapeHtml(f.name)}</span>`;
     }).join('');
   } else if (_docsFilterActive()) {
     html += `<span class="docs-crumb-muted">— search results</span>`;
@@ -50174,7 +50174,7 @@ function _docsFolderRowHTML(f) {
         ${manage ? `draggable="true" ondragstart="_docsDragStart(event,'folder','${f.id}')" ondragend="_docsDragEnd(event)"` : ''}
         ondragover="_docsDragOver(event)" ondragleave="_docsDragLeave(event)" ondrop="_docsDrop(event,'${f.id}')">
       <td>
-        <div class="docs-title-cell" onclick="_docsNavTo('${f.id}')">
+        <div class="docs-title-cell" ${cxAct('_docsNavTo', String(f.id))}>
           <span class="docs-folder-icon">📁</span>
           <div><span class="docs-title docs-folder-name">${escapeHtml(f.name)}</span>
             <div class="docs-meta-line"><span class="docs-folder-count">${bits.join(' · ')}</span></div></div>
@@ -50182,11 +50182,11 @@ function _docsFolderRowHTML(f) {
       </td>
       <td colspan="6"></td>
       <td class="docs-actions-cell">
-        <button class="docs-icon-btn" title="Open folder" onclick="_docsNavTo('${f.id}')">›</button>
+        <button class="docs-icon-btn" title="Open folder" ${cxAct('_docsNavTo', String(f.id))}>›</button>
         ${manage ? `
-          <button class="docs-icon-btn" title="Move folder" onclick="_docsOpenMove('folder','${f.id}')">📂</button>
-          <button class="docs-icon-btn" title="Rename" onclick="_docsRenameFolder('${f.id}')">✎</button>
-          <button class="docs-icon-btn" title="Delete folder" style="color:var(--bad);" onclick="_docsDeleteFolder('${f.id}')">🗑</button>` : ''}
+          <button class="docs-icon-btn" title="Move folder" ${cxAct('_docsOpenMove', 'folder', String(f.id))}>📂</button>
+          <button class="docs-icon-btn" title="Rename" ${cxAct('_docsRenameFolder', String(f.id))}>✎</button>
+          <button class="docs-icon-btn" title="Delete folder" style="color:var(--bad);" ${cxAct('_docsDeleteFolder', String(f.id))}>🗑</button>` : ''}
       </td>
     </tr>`;
 }
@@ -50206,7 +50206,7 @@ function _docsRowHTML(d) {
         <div class="docs-title-cell">
           <span class="docs-ftype-badge ftype-${escapeHtml(ext)}">${escapeHtml(ext.toUpperCase())}</span>
           <div>
-            <span class="docs-title" onclick="_docsOpenDetail('${d.id}')">${escapeHtml(d.title)}</span>
+            <span class="docs-title" ${cxAct('_docsOpenDetail', String(d.id))}>${escapeHtml(d.title)}</span>
             <div class="docs-meta-line">
               ${d.doc_number ? `<span class="docs-docnum">${escapeHtml(d.doc_number)}</span>` : ''}
               ${tags}
@@ -50226,13 +50226,13 @@ function _docsRowHTML(d) {
       <td class="docs-size-cell">${_docsFmtSize(ver?.file_size)}</td>
       <td>${_docsStatusBadge(d.status)}</td>
       <td class="docs-actions-cell">
-        ${ver ? `<button class="docs-icon-btn" title="View" onclick="_docsDownload('${ver.id}', false)">👁</button>` : ''}
-        ${ver ? `<button class="docs-icon-btn" title="Download" onclick="_docsDownload('${ver.id}', true)">⤓</button>` : ''}
-        <button class="docs-icon-btn" title="Version history" onclick="_docsOpenDetail('${d.id}')">⟳</button>
+        ${ver ? `<button class="docs-icon-btn" title="View" ${cxAct('_docsDownload', String(ver.id), false)}>👁</button>` : ''}
+        ${ver ? `<button class="docs-icon-btn" title="Download" ${cxAct('_docsDownload', String(ver.id), true)}>⤓</button>` : ''}
+        <button class="docs-icon-btn" title="Version history" ${cxAct('_docsOpenDetail', String(d.id))}>⟳</button>
         ${ver ? (off
-          ? `<button class="docs-icon-btn" title="Remove offline copy" onclick="_docRemoveOffline('${ver.id}')">✓</button>`
-          : `<button class="docs-icon-btn" title="Make available offline" onclick="_docMakeOffline('${ver.id}')">☁</button>`) : ''}
-        ${manage ? `<button class="docs-icon-btn" title="Move to folder" onclick="_docsOpenMove('doc','${d.id}')">📂</button>` : ''}
+          ? `<button class="docs-icon-btn" title="Remove offline copy" ${cxAct('_docRemoveOffline', String(ver.id))}>✓</button>`
+          : `<button class="docs-icon-btn" title="Make available offline" ${cxAct('_docMakeOffline', String(ver.id))}>☁</button>`) : ''}
+        ${manage ? `<button class="docs-icon-btn" title="Move to folder" ${cxAct('_docsOpenMove', 'doc', String(d.id))}>📂</button>` : ''}
       </td>
     </tr>`;
 }
@@ -50299,18 +50299,18 @@ function _docsOpenDetail(docId) {
         <td style="font-size:12px;">${escapeHtml(v.uploaded_by || '—')}</td>
         <td style="font-size:12px;color:var(--gray-500);">${escapeHtml(v.change_note || '')}</td>
         <td style="text-align:right;white-space:nowrap;">
-          <button class="docs-icon-btn" title="Open / download" onclick="_docsDownload('${v.id}')">⬇</button>
+          <button class="docs-icon-btn" title="Open / download" ${cxAct('_docsDownload', String(v.id))}>⬇</button>
           ${off
-            ? `<button class="docs-icon-btn" title="Remove offline" onclick="_docRemoveOffline('${v.id}')">✓</button>`
-            : `<button class="docs-icon-btn" title="Make available offline" onclick="_docMakeOffline('${v.id}')">☁</button>`}
+            ? `<button class="docs-icon-btn" title="Remove offline" ${cxAct('_docRemoveOffline', String(v.id))}>✓</button>`
+            : `<button class="docs-icon-btn" title="Make available offline" ${cxAct('_docMakeOffline', String(v.id))}>☁</button>`}
         </td>
       </tr>`;
   }).join('');
 
   const manageBtns = canManage ? `
-    <button class="admin-action-btn" onclick="_docsOpenUpload('${d.id}')">+ Upload New Revision</button>
+    <button class="admin-action-btn" ${cxAct('_docsOpenUpload', String(d.id))}>+ Upload New Revision</button>
     <button class="admin-action-btn-secondary" onclick="_docsArchive('${d.id}', ${d.status !== 'archived'})">${d.status === 'archived' ? 'Restore' : 'Archive'}</button>
-    <button class="admin-action-btn-secondary" style="color:var(--bad);" onclick="_docsDelete('${d.id}')">Delete</button>` : '';
+    <button class="admin-action-btn-secondary" style="color:var(--bad);" ${cxAct('_docsDelete', String(d.id))}>Delete</button>` : '';
 
   modal({
     title: escapeHtml(d.title),
@@ -50428,7 +50428,7 @@ function _docsOpenMove(kind, id) {
       <div id="doc-move-status" class="docs-upload-status"></div>`,
     footer: `
       <button class="admin-action-btn-secondary" data-action="closeModal">Cancel</button>
-      <button class="admin-action-btn" id="doc-move-btn" onclick="_docsMoveSubmit('${kind}','${id}')">Move here</button>`,
+      <button class="admin-action-btn" id="doc-move-btn" ${cxAct('_docsMoveSubmit', String(kind), String(id))}>Move here</button>`,
   });
 }
 
@@ -50559,7 +50559,7 @@ function _docsOpenUpload(docId) {
       <div id="doc-upload-status" class="docs-upload-status"></div>`,
     footer: `
       <button class="admin-action-btn-secondary" data-action="closeModal">Cancel</button>
-      <button class="admin-action-btn" id="doc-upload-btn" onclick="_docsSubmitUpload('${docId || ''}')">${isRev ? 'Upload Revision' : 'Add Document'}</button>`,
+      <button class="admin-action-btn" id="doc-upload-btn" ${cxAct('_docsSubmitUpload', String(docId || ''))}>${isRev ? 'Upload Revision' : 'Add Document'}</button>`,
   });
 }
 

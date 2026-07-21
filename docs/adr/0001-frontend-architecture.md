@@ -115,6 +115,24 @@ justified against the app that exists then, not today's.
 - **2026-07-21 — Stage D started:** `tsc --checkJs` (no build) green over
   cx-store.js, cx-actions.js, format.js, cx-state.js. app.js and its tightly
   coupled modules (e.g. compute.js) join as they are decoupled/typed.
+- **2026-07-21 — AST codemod; Stage B at 50%.** `tools/codemod_delegation.js`
+  converts inline `onclick` handlers to the delegated `${cxAct('fn', …)}` form.
+  It uses acorn ONLY to classify each handler's string context (template literal
+  vs single-quoted concat vs comment) and rewrites via surgical, byte-preserving
+  text edits (no AST regen → CRLF/formatting intact), aborting if the result
+  doesn't re-parse. It is conservative and behaviour-preserving by construction:
+  it converts only handlers in template-literal context that are a single
+  `IDENT(args)` call, free of `event`/`this`, whose args are literals or QUOTED
+  lone interpolations `'${EXPR}'` (emitted as `String(EXPR)` to match template
+  coercion exactly). It REJECTS unquoted `${EXPR}` (that renders as click-time
+  *code*, e.g. a function reference, not data), mixed args, `.find(…)`/call args,
+  method-chain callees, and concat-string context. First run converted 361 more
+  handlers (1101 → 740 inline; 739/1479 = 50% now delegated), full suite +
+  browser harness green. Alongside it, the dispatcher was corrected so a GLOBAL
+  handler is called exactly like the inline onclick (`fn(...args)`, no appended
+  context, `this = global`) — making every port a precise drop-in with no arity
+  or `this` surprises; registered actions still opt into `{el,event}` context.
+  Remaining ~740 need concat-context support (codemod v2) or manual conversion.
 - **2026-07-21 — Browser QA unlocked.** `tools/pw_smoke.js` (Playwright via the
   pre-installed `chrome-headless-shell`) serves the app, seeds an authenticated
   admin session into localStorage, MOCKS the Supabase REST/auth layer (offline +

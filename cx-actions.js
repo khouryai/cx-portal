@@ -18,9 +18,12 @@
 // Resolution for data-action="name":
 //   1. an action registered via CXActions.register('name', fn)
 //   2. the global window.name  (bridges existing app.js globals unchanged)
-// The handler is called as fn(...args, { el, event }); the trailing context
-// object is ignored by handlers that only read positional args (the common
-// case), which is what makes a mechanical onclick→data-action port safe.
+// Call convention (chosen so an onclick→data-action port is a precise drop-in):
+//   • a GLOBAL handler is called exactly like the inline onclick did —
+//     fn(...args), no appended context, this = global — so there are no arity
+//     or `this` surprises for ported handlers.
+//   • a REGISTERED action opts into context: fn(...args, { el, event }) with
+//     this = the element — for new code that wants the event/element.
 //
 // Args come from `data-args` (a JSON array) or `data-arg` (a single string).
 // See docs/adr/0001 for the conversion playbook.
@@ -59,7 +62,9 @@
     if (!el || typeof el.getAttribute !== 'function') return false;
     var name = el.getAttribute('data-action');
     if (!name) return false;
-    var fn = resolve(name);
+    var fromRegistry = typeof registry[name] === 'function';
+    var fn = fromRegistry ? registry[name]
+      : (typeof window !== 'undefined' && typeof window[name] === 'function') ? window[name] : null;
     if (!fn) {
       if (typeof window !== 'undefined' && window._logSwallowed) {
         window._logSwallowed('cx-actions: unresolved action "' + name + '"', new Error('no handler'));
@@ -67,7 +72,15 @@
       return false;
     }
     var args = parseArgs(el);
-    fn.apply(el, args.concat([{ el: el, event: event }]));
+    if (fromRegistry) {
+      // Registered actions opt into element + event context: fn(...args, {el,event}).
+      fn.apply(el, args.concat([{ el: el, event: event }]));
+    } else {
+      // Legacy global handler: call EXACTLY like the inline onclick did — same
+      // args, no appended context, this = global scope — so an onclick→data-action
+      // port is a precise drop-in with no arity or `this` surprises.
+      fn.apply(typeof window !== 'undefined' ? window : undefined, args);
+    }
     return true;
   }
 
