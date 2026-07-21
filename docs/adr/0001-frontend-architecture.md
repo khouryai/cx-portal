@@ -113,10 +113,20 @@ justified against the app that exists then, not today's.
 - **2026-07-21 — Stage D started:** `tsc --checkJs` (no build) green over
   cx-store.js, cx-actions.js, format.js, cx-state.js. app.js and its tightly
   coupled modules (e.g. compute.js) join as they are decoupled/typed.
-- **Stage C (store adoption)** and the **Stage B remainder** are the next work;
-  both need behaviour verification (browser QA) that this headless environment
-  can't provide, so they proceed per-module with a human in the loop rather than
-  as blind bulk automation.
+- **2026-07-21 — Browser QA unlocked.** `tools/pw_smoke.js` (Playwright via the
+  pre-installed `chrome-headless-shell`) serves the app, seeds an authenticated
+  admin session into localStorage, MOCKS the Supabase REST/auth layer (offline +
+  deterministic, no proxy/TLS dependency), boots the real bundle logged-in, and
+  drives real UI. It verifies the delegation end-to-end — a real
+  `data-action="closeModal"` click closes the modal — and that every
+  `[data-action]` rendered in the live DOM resolves to a handler. Opt-in suite
+  (needs `playwright-core`; self-skips otherwise), so a normal headless run is
+  unaffected. This removes the "can't click" limitation: the Stage B remainder
+  and Stage C can now be verified per-module in a real browser. A throwaway admin
+  test user (`qa-bot@cx-portal.test`) backs future real-network E2E; the smoke
+  itself needs no credentials because it mocks the backend.
+- **Stage C (store adoption)** and the **Stage B remainder** are the next work,
+  now browser-QA'able via pw_smoke.js.
 
 ## Alternatives considered
 

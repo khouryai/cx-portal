@@ -8,3 +8,6 @@ _xlsm_extract/
 !.claude/skills-vendor/
 !.claude/settings.json
 .claude/settings.local.json
+
+# Local QA test credentials (never commit)
+tools/.qa-credentials

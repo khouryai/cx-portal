@@ -70,6 +70,7 @@ const suites = [
   { file: "tools/markup_test.js", needs: [] },
   { file: "tools/test_copy_paste.js", needs: ["dayjs"] },
   { file: "tools/test_types.js", needs: ["typescript"] }, // JSDoc type-check (Tier 3 Stage D)
+  { file: "tools/pw_smoke.js", needs: ["playwright-core"] }, // real-browser delegation smoke (Stage B QA)
 ];
 
 const results = [];
