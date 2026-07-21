@@ -27,21 +27,42 @@
   }
 
   var CXStore = {
-    // Read a key (optionally with a default when unset).
+    /**
+     * Read a key (optionally with a default when unset).
+     * @param {string} key
+     * @param {*} [fallback]
+     * @returns {*}
+     */
     get: function (key, fallback) {
       return key in state ? state[key] : fallback;
     },
-    // Write a key and synchronously notify its subscribers. Returns the value.
+    /**
+     * Write a key and synchronously notify its subscribers.
+     * @param {string} key
+     * @param {*} value
+     * @returns {*} the written value
+     */
     set: function (key, value) {
       state[key] = value;
       notify(key, value);
       return value;
     },
-    // Functional update: set(key, fn(currentValue)).
+    /**
+     * Functional update: set(key, fn(currentValue)).
+     * @param {string} key
+     * @param {(current: *) => *} fn
+     * @returns {*} the new value
+     */
     update: function (key, fn) {
       return this.set(key, fn(state[key]));
     },
-    // Subscribe to a key. Returns an unsubscribe fn. `immediate` fires now.
+    /**
+     * Subscribe to a key's changes. Returns an unsubscribe fn.
+     * @param {string} key
+     * @param {(value: *, key: string) => void} fn
+     * @param {boolean} [immediate] fire fn now with the current value
+     * @returns {() => void} unsubscribe
+     */
     subscribe: function (key, fn, immediate) {
       (subs[key] = subs[key] || []).push(fn);
       if (immediate) { try { fn(state[key], key); } catch (e) { if (typeof window !== 'undefined' && window._logSwallowed) window._logSwallowed('CXStore immediate(' + key + ')', e); } }

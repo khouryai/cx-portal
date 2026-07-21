@@ -69,6 +69,7 @@ const suites = [
   { file: "tools/test_activity_stats.js", needs: [] },
   { file: "tools/markup_test.js", needs: [] },
   { file: "tools/test_copy_paste.js", needs: ["dayjs"] },
+  { file: "tools/test_types.js", needs: ["typescript"] }, // JSDoc type-check (Tier 3 Stage D)
 ];
 
 const results = [];

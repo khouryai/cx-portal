@@ -1,0 +1,20 @@
+{
+  "//": "Tier 3 Stage D — incremental JSDoc type-checking, no build step. checkJs type-checks the modules under `include` (starting with the ones authored under this ADR); more modules (and eventually app.js, in slices) join as they are typed. Run via tools/test_types.js or `npx tsc -p tools/tsconfig.check.json --noEmit`. Pragmatic (noImplicitAny off) so JSDoc adds value without a strictness cliff.",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "module": "commonjs",
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "types": []
+  },
+  "include": [
+    "./cx-globals.d.ts",
+    "../cx-store.js",
+    "../cx-actions.js"
+  ]
+}

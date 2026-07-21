@@ -48,8 +48,13 @@
     return null;
   }
 
-  // Run the handler bound to `el`. Returns true if a handler was found and run.
-  // Exposed so tests (and programmatic callers) can dispatch without a real DOM.
+  /**
+   * Run the handler bound to `el`. Returns true if a handler was found and run.
+   * Exposed so tests (and programmatic callers) can dispatch without a real DOM.
+   * @param {{ getAttribute: (name: string) => (string | null) } | null} el
+   * @param {Event | {} } event
+   * @returns {boolean}
+   */
   function dispatch(el, event) {
     if (!el || typeof el.getAttribute !== 'function') return false;
     var name = el.getAttribute('data-action');
@@ -86,6 +91,12 @@
   // Args are JSON-encoded and HTML-escaped, so quotes/apostrophes in values are
   // safe (the inline-onclick equivalent had to hand-escape). No args → just the
   // data-action attribute.
+  /**
+   * Build delegation attributes for a template literal (replaces inline onclick).
+   * Extra arguments after `name` are JSON-serialised into data-args.
+   * @param {string} name  the action / handler name
+   * @returns {string} e.g. `data-action="fn" data-args='[…]'`
+   */
   function act(name) {
     var args = Array.prototype.slice.call(arguments, 1);
     var out = 'data-action="' + esc(name) + '"';
