@@ -41003,7 +41003,7 @@ function _dynRenderInstances() {
     <div class="capx-tray">
       ${selCount > 0
         ? `<span class="capx-tray-sum"><b>${selCount}</b> instance${selCount===1?'':'s'} selected</span>
-           <button class="dyn-btn" data-action="_dynInstClearSel">Clear</button>
+           <button class="dyn-btn" data-action="_dynInstClearSel">Clear</button><button class="dyn-btn" style="color:var(--bad);" data-action="_dynInstBulkDelete" title="Permanently delete the selected runs">${icon('trash')} Delete ${selCount}</button>
            <button class="dyn-btn" style="color:var(--bad);" ${selUnschedulable ? '' : 'disabled'} data-action="_dynInstBulkUnschedule" title="Pull the selected runs off the schedule and back to the backlog (completed runs are left alone)">Unschedule${selUnschedulable ? ` ${selUnschedulable}` : ''}</button>
            <button class="dyn-btn primary" data-action="_dynOpenBulkEdit">${icon('edit')} Bulk edit ${selCount}</button>`
         : `<span class="capx-tray-sum is-empty">Tick rows to bulk-edit status, locations, phase and more in one pass</span>

@@ -228,6 +228,28 @@ async function main() {
   ok("punch-actions.js registered its wrapper actions", punch.registered);
   ok("_punchClickNewPhotoFile proxy-clicks the hidden file input", punch.fired);
 
+  // 3f) dyn-actions.js bulk-delete: registered, and deletes each selected
+  //     instance + clears the selection (deps stubbed so no real DB/UI needed).
+  const bulkDel = await page.evaluate(async () => {
+    if (!window.CXActions.has("_dynInstBulkDelete")) return { registered: false };
+    const deleted = [];
+    window._dbDelete = async (t, m) => { deleted.push(m.id); };
+    window.uiCan = () => true;
+    window.cxConfirm = async () => true;
+    window._dynLoadAll = async () => {};
+    window._dynRenderInstances = () => {};
+    window._dynRenderBoard = () => {};
+    if (typeof _dynPage === "undefined") return { registered: true, noPage: true };
+    _dynPage.selInstances = new Set(["i1", "i2", "i3"]);
+    _dynPage.tab = "instances";
+    await window.CXActions.dispatch({ getAttribute: (k) => (k === "data-action" ? "_dynInstBulkDelete" : null) }, {});
+    await new Promise((r) => setTimeout(r, 20));
+    return { registered: true, deletedCount: deleted.length, cleared: _dynPage.selInstances.size };
+  });
+  ok("_dynInstBulkDelete is registered (dyn-actions.js loaded)", bulkDel.registered);
+  ok("bulk-delete removes each selected instance (3)", bulkDel.deletedCount === 3, JSON.stringify(bulkDel));
+  ok("bulk-delete clears the selection afterward", bulkDel.cleared === 0);
+
   // 4) Every static data-action rendered in the live DOM resolves to a handler.
   const liveUnresolved = await page.evaluate(() => {
     const names = new Set();
