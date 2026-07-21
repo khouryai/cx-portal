@@ -8596,7 +8596,7 @@ function renderPunchWorkflow() {
     ${_plSelected.size > 0 ? `
       <div class="v2-bulk-bar">
         <span class="count">${_plSelected.size} item${_plSelected.size===1?'':'s'} selected</span>
-        <button class="v2-btn-mini primary" onclick="exportPunchPDF([..._plSelected])">${icon('download')}Export ${_plSelected.size} as PDF</button>
+        <button class="v2-btn-mini primary" ${cxAct('exportPunchPDF', [..._plSelected])}>${icon('download')}Export ${_plSelected.size} as PDF</button>
         <button class="clear" data-action="_plClearSelection">${icon('x')}Clear selection</button>
       </div>` : ''}
 
@@ -8612,9 +8612,9 @@ function renderPunchWorkflow() {
       <div class="v2-list-foot">
         <span>Showing ${(_plPage-1)*PL_PAGE_SIZE+1}–${Math.min(_plPage*PL_PAGE_SIZE,total)} of ${total}</span>
         <div class="pages">
-          <button class="page-btn" ${_plPage<=1?'disabled':''} onclick="_plSetPage(${_plPage-1})">${icon('chevron-left')}Prev</button>
+          <button class="page-btn" ${_plPage<=1?'disabled':''} ${cxAct('_plSetPage', _plPage-1)}>${icon('chevron-left')}Prev</button>
           <span class="page-btn active">${_plPage} / ${pages}</span>
-          <button class="page-btn" ${_plPage>=pages?'disabled':''} onclick="_plSetPage(${_plPage+1})">Next${icon('chevron-right', {cls:'icon-trail'})}</button>
+          <button class="page-btn" ${_plPage>=pages?'disabled':''} ${cxAct('_plSetPage', _plPage+1)}>Next${icon('chevron-right', {cls:'icon-trail'})}</button>
         </div>
       </div>` : ''}
   `);
@@ -8991,7 +8991,7 @@ function openPunchDetail(id) {
         ${canComment ? `
           <div class="punch-comment-composer">
             <textarea id="punch-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…"></textarea>
-            <button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" aria-label="Attach a photo" onclick="document.getElementById('punch-comment-file-${id}').click()">${icon('camera')}</button>
+            <button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" aria-label="Attach a photo" ${cxAct('_punchAttachComment', String(id))}>${icon('camera')}</button>
             <button class="form-submit punch-comment-post" ${cxAct('addPunchComment', String(id))}>Post</button>
           </div>
           <input type="file" id="punch-comment-file-${id}" accept="image/*" style="display:none" ${cxOn('change', '_punchCommentPhotoChosen', String(id), '$cx.el')}>
@@ -9000,7 +9000,7 @@ function openPunchDetail(id) {
     `,
     footer: `
       <button class="form-secondary" data-action="closeModal">Close</button>
-      <button class="form-secondary" onclick="exportPunchPDF(['${p.id}'])">${icon('download')}Export PDF</button>
+      <button class="form-secondary" ${cxAct('exportPunchPDF', [String(p.id)])}>${icon('download')}Export PDF</button>
       ${p.is_deleted
         ? `<button class="form-secondary" ${cxAct('restorePunch', String(p.id))}>Restore from Bin</button>`
         : `<button class="form-secondary" style="color:var(--bad);" ${cxAct('softDeletePunch', String(p.id))}>Move to Bin</button>`}
@@ -9032,7 +9032,7 @@ async function _punchRenderGallery(id) {
       ? `<span class="punch-photo-kind ${escapeHtml(ph.capture_kind)}">${escapeHtml(ph.capture_kind)}</span>` : '';
     return `<div class="punch-photo-tile" title="${escapeHtml(ph.caption || ph.file_name || '')}">
       <img data-photo-thumb="${escapeHtml(thumb)}" data-photo-full="${escapeHtml(ph.storage_path)}" alt="${escapeHtml(ph.caption || '')}" loading="lazy">${kind}
-      <button aria-label="Save photo" class="punch-photo-dl" title="Save photo" onclick="_punchDownloadPhoto('${escapeHtml(ph.storage_path)}', ${JSON.stringify(ph.file_name || '').replace(/"/g,'&quot;')}, event)">${icon('download')}</button>
+      <button aria-label="Save photo" class="punch-photo-dl" title="Save photo" ${cxAct('_punchDownloadPhoto', String(ph.storage_path), String(ph.file_name || ''), '$cx.event')}>${icon('download')}</button>
     </div>`;
   }).join('');
   await _punchSignImages(wrap);
@@ -9050,7 +9050,7 @@ function _punchRenderNewPhotoRow() {
   const row = document.getElementById('punch-newphoto-row');
   if (!row) return;
   row.innerHTML = _punchNewPhotos.map((f, i) =>
-    `<div class="punch-newphoto-tile"><img src="${URL.createObjectURL(f)}" alt=""><button type="button" onclick="_punchNewPhotoRemove(${i})" title="Remove">×</button></div>`
+    `<div class="punch-newphoto-tile"><img src="${URL.createObjectURL(f)}" alt=""><button type="button" ${cxAct('_punchNewPhotoRemove', i)} title="Remove">×</button></div>`
   ).join('');
 }
 function _punchNewPhotoRemove(i) { _punchNewPhotos.splice(i, 1); _punchRenderNewPhotoRow(); }
@@ -9423,12 +9423,12 @@ function _punchFormHTML(p) {
       </div>
       ${p ? `<div class="form-field form-field-full">
         <label>Photos</label>
-        <button type="button" class="form-secondary" onclick="if(window.PhotosModule)PhotosModule.captureFor(window._pmPunchCtx)">+ Add / view photos</button>
+        <button type="button" class="form-secondary" ${cxAct('_punchCaptureCtxPhoto')}>+ Add / view photos</button>
         <div style="font-size:11px;color:var(--gray-500);margin-top:4px;">Opens the Photos uploader pre-linked to this punch item — uploads appear in the Punch List album.</div>
       </div>` : `<div class="form-field form-field-full">
         <label>Photos</label>
         <div class="punch-newphoto-row" id="punch-newphoto-row"></div>
-        <button type="button" class="form-secondary" onclick="document.getElementById('punch-newphoto-file').click()">${icon('camera')} Add photo</button>
+        <button type="button" class="form-secondary" ${cxAct('_punchClickNewPhotoFile')}>${icon('camera')} Add photo</button>
         <input type="file" id="punch-newphoto-file" accept="image/*" multiple style="display:none" ${cxOn('change', '_punchNewPhotoChosen', '$cx.el')}>
         <div style="font-size:11px;color:var(--gray-500);margin-top:4px;">Take a photo or choose from your device — they attach to this item once it's created.</div>
       </div>`}
@@ -9571,7 +9571,7 @@ function openLinkPunchModal(testId) {
     body: `
       <input type="text" class="form-input" id="link-punch-search"
         placeholder="Search by punch # or title…" style="margin-bottom:12px;"
-        oninput="_filterLinkPunchList('${escapeHtml(String(testId))}')">
+        ${cxOn('input', '_filterLinkPunchList', String(testId))}>
       <div id="link-punch-list" style="max-height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;">
         ${_linkPunchListHTML(openPunches, testId)}
       </div>`,
@@ -9600,11 +9600,11 @@ function _linkPunchListHTML(punches, testId) {
           </div>
         </div>
         ${isLinked
-          ? `<button onclick="_unlinkPunchFromTest('${escapeHtml(String(testId))}','${p.id}')"
+          ? `<button ${cxAct('_unlinkPunchFromTest', String(testId), String(p.id))}
                style="flex-shrink:0;font-size:11px;padding:4px 10px;border:1px solid var(--good-border);background:var(--good-light);color:var(--good);border-radius:5px;cursor:pointer;font-weight:600;white-space:nowrap;">
                ✓ Linked · Remove
              </button>`
-          : `<button onclick="_linkPunchToTest('${escapeHtml(String(testId))}','${p.id}')"
+          : `<button ${cxAct('_linkPunchToTest', String(testId), String(p.id))}
                style="flex-shrink:0;font-size:11px;padding:4px 10px;border:1px solid var(--gray-300);background:var(--gray-50);color:var(--gray-700);border-radius:5px;cursor:pointer;font-weight:600;white-space:nowrap;">
                Link
              </button>`}
@@ -14431,8 +14431,8 @@ function _trBlockersShellHTML() {
       <td style="text-align:center;white-space:nowrap;">${ageCell(r)}</td>
       <td style="white-space:nowrap;text-align:right;">
         <div class="tr-blocker-rowacts">
-          ${canPunch ? `<button class="form-secondary tr-mini-btn" onclick="openLinkPunchModal('${escapeHtml(String(r.TestID))}')" title="Link this test to an existing punch item">${icon('link')} Link</button>` : ''}
-          ${canPunch && isFail ? `<button class="form-secondary tr-mini-btn" onclick="openPunchFromTestCase('${escapeHtml(String(r.TestID))}')" title="Raise a new punch item linked to this failed test">${icon('plus')} Punch</button>` : ''}
+          ${canPunch ? `<button class="form-secondary tr-mini-btn" ${cxAct('openLinkPunchModal', String(r.TestID))} title="Link this test to an existing punch item">${icon('link')} Link</button>` : ''}
+          ${canPunch && isFail ? `<button class="form-secondary tr-mini-btn" ${cxAct('openPunchFromTestCase', String(r.TestID))} title="Raise a new punch item linked to this failed test">${icon('plus')} Punch</button>` : ''}
           <button class="admin-action-btn tr-mini-btn" onclick="_amOpenDrilldown('${escapeHtml(key)}')" title="Open this test's activity">Open</button>
         </div>
       </td>
@@ -21245,7 +21245,7 @@ function _vmLinkPunchModal(carId) {
     title: 'Link Punch Item', size: 'medium',
     body: avail.length ? `<input type="text" class="form-input" placeholder="Filter…" ${cxOn('input', '_vmPunchFilter', '$cx.value')} style="margin-bottom:8px;">
       <div id="vm-punch-list" style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto;">
-        ${avail.map(p => `<button class="form-secondary vm-punch-opt" data-txt="${escapeHtml(String((p.number || '') + ' ' + (p.title || '')).toLowerCase())}" style="text-align:left;display:flex;align-items:center;gap:8px;" onclick="_vmLinkPunch('${carId}','${String(p.id).replace(/'/g, "\\'")}')"><span style="font-family:monospace;font-weight:700;color:var(--gray-500);">#${p.number ?? ''}</span> ${escapeHtml(p.title || '(untitled)')}</button>`).join('')}
+        ${avail.map(p => `<button class="form-secondary vm-punch-opt" data-txt="${escapeHtml(String((p.number || '') + ' ' + (p.title || '')).toLowerCase())}" style="text-align:left;display:flex;align-items:center;gap:8px;" ${cxAct('_vmLinkPunch', String(carId), String(p.id))}><span style="font-family:monospace;font-weight:700;color:var(--gray-500);">#${p.number ?? ''}</span> ${escapeHtml(p.title || '(untitled)')}</button>`).join('')}
       </div>` : `<div style="font-size:13px;color:var(--gray-500);">No unlinked punch items available.</div>`,
     footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
@@ -21363,7 +21363,7 @@ function _punchLinksSectionHTML(p) {
             <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(t.Activity || '')}${t.Location ? ' · ' + escapeHtml(t.Location) : ''}</div></div>
           <span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;white-space:nowrap;background:${col}20;color:${col};border:1px solid ${col}40;">${escapeHtml(t.Status || 'Unknown')}</span>
         </div>
-        ${canLink ? `<button class="form-secondary" style="font-size:10px;padding:2px 7px;" title="Unlink" onclick="_punchUnlinkTestCase('${pid}','${escapeHtml(String(t.TestID))}')">${icon('x')}</button>` : ''}
+        ${canLink ? `<button class="form-secondary" style="font-size:10px;padding:2px 7px;" title="Unlink" ${cxAct('_punchUnlinkTestCase', String(pid), String(t.TestID))}>${icon('x')}</button>` : ''}
       </div>`;
   }).join('') : `<div style="font-size:12px;color:var(--gray-400);padding:10px 14px;">No linked test cases.</div>`;
   // Linked cars
@@ -21451,7 +21451,7 @@ function _ptpRender() {
   const total = rows.length;
   rows = rows.slice(0, 300);
   const pid = String(_ptp.punchId).replace(/'/g, "\\'");
-  list.innerHTML = rows.length ? rows.map(t => `<button class="form-secondary" style="text-align:left;display:flex;gap:8px;align-items:center;" onclick="_punchLinkTestCase('${pid}','${escapeHtml(String(t.TestID))}')">
+  list.innerHTML = rows.length ? rows.map(t => `<button class="form-secondary" style="text-align:left;display:flex;gap:8px;align-items:center;" ${cxAct('_punchLinkTestCase', String(pid), String(t.TestID))}>
       <span style="font-family:monospace;font-size:11px;font-weight:700;color:var(--gray-600);">${escapeHtml(t.TestCaseCode || '—')}</span>
       <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(t.TestName || '—')}</span>
       <span style="font-size:10px;color:var(--gray-400);white-space:nowrap;">${escapeHtml([t.Activity, t.Location].filter(Boolean).join(' · '))}</span>
@@ -23027,7 +23027,7 @@ async function _taskRenderGallery(id) {
     const thumb = ph.thumb_path || ph.storage_path;
     return `<div class="punch-photo-tile" title="${escapeHtml(ph.caption || ph.file_name || '')}">
       <img data-photo-thumb="${escapeHtml(thumb)}" data-photo-full="${escapeHtml(ph.storage_path)}" alt="${escapeHtml(ph.caption || '')}" loading="lazy">
-      <button aria-label="Save photo" class="punch-photo-dl" title="Save photo" onclick="_punchDownloadPhoto('${escapeHtml(ph.storage_path)}', ${JSON.stringify(ph.file_name || '').replace(/"/g,'&quot;')}, event)">${icon('download')}</button>
+      <button aria-label="Save photo" class="punch-photo-dl" title="Save photo" ${cxAct('_punchDownloadPhoto', String(ph.storage_path), String(ph.file_name || ''), '$cx.event')}>${icon('download')}</button>
     </div>`;
   }).join('');
   if (typeof _punchSignImages === 'function') await _punchSignImages(wrap);

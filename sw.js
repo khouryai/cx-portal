@@ -32,6 +32,7 @@ const SHELL_ASSETS = [
   './mobile.js',
   './search.js',
   './notifications.js',
+  './punch-actions.js',
   './data.js',
   './styles.css',
   './photos.css',

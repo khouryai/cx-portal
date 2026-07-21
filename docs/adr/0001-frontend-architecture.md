@@ -95,6 +95,22 @@ justified against the app that exists then, not today's.
 
 ## Progress log
 
+- **2026-07-21 — punch-list module hand-refactored; Stage B at 69%.** First
+  by-hand module pass (the pattern for the rest). All 18 remaining punch inline
+  handlers converted: 15 were mechanical once read (the `escapeHtml(String(x))` /
+  `.replace(…)` / `JSON.stringify(…)` wrapping was just manual attribute-escaping
+  that cxAct/cxOn do themselves — so they became `cxAct('fn', String(x))`, often
+  *removing* redundant escaping; `_punchDownloadPhoto`'s `event` arg became the
+  `$cx.event` sentinel after confirming its `stopPropagation` guarded nothing
+  reachable). The 3 that did more than call-with-data (proxy-clicking a hidden
+  file input; a guarded `PhotosModule.captureFor`) moved into a NEW module
+  `punch-actions.js` as registered CXActions — the first slice of the punch
+  module extraction, wired into index.html/sw.js/_load_app.js. Verified in a real
+  browser (pw_smoke.js: wrappers registered + real proxy-click fires; 12
+  assertions). 474 → 456 inline; **1023/1479 = 69%**. This is the template for
+  refactoring the remaining modules by hand.
+
+
 - **2026-07-21 — Stage A shipped** (ratchet, dispatcher, store seam, dead-CSS
   audit). See the commit history.
 - **2026-07-21 — Stage B partial:** 378 handlers converted and verified (26%) —

@@ -208,6 +208,26 @@ async function main() {
   });
   ok("action sequence runs both handlers in order on real click", seqOrder === "one,two:z", seqOrder);
 
+  // 3e) punch-actions.js registered its wrapper actions, and one really triggers
+  //     the hidden file input it proxies (hand-refactored punch module).
+  const punch = await page.evaluate(async () => {
+    const registered = window.CXActions.has("_punchAttachComment") &&
+      window.CXActions.has("_punchClickNewPhotoFile") && window.CXActions.has("_punchCaptureCtxPhoto");
+    let fired = false;
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.id = "punch-newphoto-file";
+    inp.addEventListener("click", (e) => { e.preventDefault(); fired = true; });
+    document.body.appendChild(inp);
+    const btn = document.createElement("button");
+    btn.setAttribute("data-action", "_punchClickNewPhotoFile");
+    document.body.appendChild(btn);
+    btn.click();
+    await new Promise((r) => setTimeout(r, 0));
+    return { registered, fired };
+  });
+  ok("punch-actions.js registered its wrapper actions", punch.registered);
+  ok("_punchClickNewPhotoFile proxy-clicks the hidden file input", punch.fired);
+
   // 4) Every static data-action rendered in the live DOM resolves to a handler.
   const liveUnresolved = await page.evaluate(() => {
     const names = new Set();
