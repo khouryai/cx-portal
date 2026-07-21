@@ -225,5 +225,37 @@ assert(amix["2"] >= 35, `2-location footprint gets a real share, not collapsed t
 assert(Math.abs((amix["1"] || 0) - (amix["2"] || 0)) <= 20, `equal work → near-equal shares across footprints (got ${JSON.stringify(amix)})`);
 run(`_dynPage.instances = ${JSON.stringify(pool)};`); // restore
 
+// ── fleet model: trains + car-lengths are taken into account ─────────────────
+// Multi-train runs (trains_needed ≥ 2) and specific car-lengths must be honored:
+// a synthetic shift used to offer exactly 1 train / "Any" car-length, so every
+// multi-train run came back mislabeled "no capacity". Now each shift fields the
+// scenario's trains-per-shift (auto-sized to the work by default) and only the
+// available car-lengths.
+const mk1 = (p, n, tn, sizes) => Array.from({ length: n }, (_, k) => ({
+  id: p + k, test_id: p + "t" + k, code: p + "-" + k, track_section_under_test: "W40",
+  track_section_access_req: ["W40"], status: "Not Started", expected_duration_minutes: 30,
+  trains_needed: tn, required_consists: { sizes }, consist_size: sizes[0],
+}));
+const fleetPool = [...mk1("F1", 8, 1, [4]), ...mk1("F2", 8, 2, [4, 10])];  // 8 single-train, 8 two-train
+run(`_dynPage.instances = ${JSON.stringify(fleetPool)};`);
+const fleetSc = { id: "fsc", name: "Fleet", startDate: "2026-06-15", weekly: { 0: 4, 3: 2, 4: 2, 5: 2, 6: 3 }, maxZonesPerShift: 2, zones: baseSc.zones, adjacency: baseSc.adjacency, weekOverrides: {}, scope: { subsystem: "", onlyUnscheduled: false } };
+const goFleet = sc => run(`(function(){ const r=_dynSimRun(${JSON.stringify(sc)}, []); return { placed:r.placed, unplaced:r.unplaced, reasons:[...new Set(r.unplacedList.map(i=>_dynSimFleetReason(${JSON.stringify(sc)}, i)))] }; })()`);
+
+const fDefault = goFleet(fleetSc);
+assert(fDefault.placed === 16 && fDefault.unplaced === 0, `auto-sized fleet schedules multi-train runs (got ${JSON.stringify(fDefault)})`);
+assert(run(`_dynSimTrainsPerShift(${JSON.stringify(fleetSc)})`) === 2, "trains-per-shift auto-sizes to the work (max trains_needed = 2)");
+
+const fOneTrain = goFleet({ ...fleetSc, trainsPerShift: 1 });
+assert(fOneTrain.unplaced === 8 && fOneTrain.reasons.join("|") === "needs 2 trains — shift offers 1",
+  `a 1-train fleet strands the 8 two-train runs with a trains reason (got ${JSON.stringify(fOneTrain)})`);
+
+const fNo10 = goFleet({ ...fleetSc, availConsists: [4] });
+assert(fNo10.unplaced === 8 && fNo10.reasons.join("|") === "no 10-car train available",
+  `restricting to 4-car strands the runs needing a 10-car train (got ${JSON.stringify(fNo10)})`);
+
+// A run needing 1 train / any car-length is unaffected by the fleet gate.
+assert(run(`_dynSimFleetOk(${JSON.stringify(fleetSc)}, {trains_needed:1})`) === true, "single-train run always fits the fleet");
+run(`_dynPage.instances = ${JSON.stringify(pool)};`); // restore
+
 console.log(`test_dyn_simulator: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -45974,12 +45974,10 @@ function _dynSimShiftSupply(sc) {
 
 // Auto access mix, sized to the FOOTPRINT DEMAND of the work. A run needing a
 // k-location shift can only ride a shift of size >= k, so the mix offers each
-// size in proportion to how much WORK needs it: every size is divided by the
-// SAME representative window (avg access day), NOT rank-biased to the longest
-// window as before — that collapsed the biggest footprint to ~1 shift and left
+// size in proportion to how much WORK needs it: every size is divided by the SAME
+// window (avg access day), NOT rank-biased to the longest as before — which left
 // multi-location work 'no capacity' while 1-loc shifts sat idle. Bigger shifts
-// still ride longer windows and shrink to smaller work when idle, so a generous
-// large share is never wasted. Returns { size: pct } or null.
+// still ride longer windows and shrink to smaller work when idle, so a generous large share is never wasted. Returns { size: pct } or null.
 function _dynSimAutoMix(sc) {
   const dur = new Map();
   for (const i of _dynSimScopePool(sc)) {
@@ -46075,7 +46073,7 @@ function _dynSimEverPlaceable(sc, pool, prereqs) {
   const poolTests = new Set(pool.map(i => i.test_id));
   const byTest = new Map();
   pool.forEach(i => { if (!byTest.has(i.test_id)) byTest.set(i.test_id, []); byTest.get(i.test_id).push(i); });
-  const ok = new Map(pool.map(i => [i.id, fits(i) && (!i.expected_duration_minutes || !maxMin || i.expected_duration_minutes <= maxMin)]));
+  const ok = new Map(pool.map(i => [i.id, fits(i) && _dynSimFleetOk(sc, i) && (!i.expected_duration_minutes || !maxMin || i.expected_duration_minutes <= maxMin)]));
   let changed = true;
   while (changed) {
     changed = false;
@@ -46243,13 +46241,13 @@ function _dynSimRun(sc, prereqs) {
         control_zone_code: cluster[0], access_zones: cluster,
         shift_date: dd.iso, start_at: startAt.toISOString(),
         end_at: new Date(startAt.getTime() + dd.hours * 3600 * 1000).toISOString(),
-        allowed_modes: ['CBTC', 'VATC'],
+        allowed_modes: ['CBTC', 'VATC'], max_trains: _dynSimTrainsPerShift(sc),
       };
       const d2 = _dynCascadeAllocate({
         instances: remaining, windows: [win], prereqs: prereqs || [],
         runMinutesFn: i2 => i2.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN,
         windowMinutesFn: _dynWinMinutes, slack, footprintFirst: true,
-        changeoverMin: setupMin,
+        changeoverMin: setupMin, windowAllows: i2 => _dynSimCarLengthsOk(i2, sc),
       });
       const placedIds = new Set(d2.assignments.map(a => a.instanceId));
       let placedMin = 0;
@@ -46762,6 +46760,7 @@ function _dynSimConfigHtml(sc, res) {
         </select></label>
       <label class="simx-field" title="Setup/positioning minutes lost when a shift switches signalling mode or start-area.">Setup min
         <input type="number" min="0" max="120" value="${sc.setupMin ?? 0}" class="simx-inp wide" onchange="_dynSimField('setupMin',Math.max(0,parseInt(this.value,10)||0))"></label>
+      ${_dynSimFleetControlsHtml(sc)}
     </div>
     <label class="simx-check" title="Exclude runs already assigned to a real shift"><input type="checkbox" ${sc.scope.onlyUnscheduled ? 'checked' : ''} ${cxOn('change', '_dynSimScopeField', 'onlyUnscheduled', '$cx.checked')}> Only unscheduled runs</label>`;
   const scopeSum = `${sc.scope.subsystem ? escapeHtml(sc.scope.subsystem) : 'All subsystems'}${sc.scope.onlyUnscheduled ? ' · unscheduled only' : ''}${sc.setupMin ? ` · ${sc.setupMin} min setup` : ''}`;
@@ -46859,14 +46858,15 @@ function _dynSimUnplacedHtml(sc, res) {
     else if (req.length > maxZ) { type = 'max'; tone = { bg: 'var(--warn-light)', fg: 'var(--warn)' }; label = `needs a ${req.length}-location shift — add it to your access mix (max is ${maxZ})`; }
     else if (!chains.some(c => { const s = new Set(c); return req.every(z => s.has(z)); })) { type = 'adj'; tone = { bg: 'var(--info-light)', fg: 'var(--info)' }; label = `${req.join(', ')} not adjacent`; }
     else if (unmetSim.length) { type = 'prereq'; tone = { bg: 'var(--pending-light)', fg: 'var(--pending)' }; label = `waiting on prereq: ${unmetSim.map(codeFor).join(', ')} (also unscheduled — fix those first)`; }
+    else if (!_dynSimFleetOk(sc, i)) { type = 'fleet'; tone = { bg: 'var(--warn-light)', fg: 'var(--warn)' }; label = _dynSimFleetReason(sc, i); }
     else if (i.expected_duration_minutes && maxShiftMin && i.expected_duration_minutes > maxShiftMin) { type = 'dur'; tone = { bg: 'var(--info-light)', fg: 'var(--info)' }; label = `run (${i.expected_duration_minutes}m) longer than any shift (${maxShiftMin / 60}h)`; }
     else { type = 'cap'; tone = { bg: 'var(--bad-light)', fg: 'var(--bad)' }; label = `no capacity within ${horizonWk} weeks`; }
     return { i, type, label, tone };
   });
-  const order = ['loc', 'max', 'adj', 'prereq', 'dur', 'cap'];
+  const order = ['loc', 'max', 'adj', 'prereq', 'fleet', 'dur', 'cap'];
   rows.sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type) || (a.i.code || '').localeCompare(b.i.code || ''));
   const counts = {}; rows.forEach(r => counts[r.type] = (counts[r.type] || 0) + 1);
-  const names = { loc: 'add location', max: 'over max/shift', adj: 'not adjacent', prereq: 'prereq blocked', dur: 'run too long', cap: 'no capacity' };
+  const names = { loc: 'add location', max: 'over max/shift', adj: 'not adjacent', prereq: 'prereq blocked', fleet: 'trains/consist', dur: 'run too long', cap: 'no capacity' };
   const summary = order.filter(t => counts[t]).map(t => `${counts[t]} ${names[t]}`).join(' · ');
   const show = rows.slice(0, 40);
   const body = show.map(r => {
