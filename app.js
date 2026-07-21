@@ -37777,7 +37777,7 @@ function renderDrawingsPage() {
     </div>` : '';
 
   const locTabs = visibleLocs.map(loc => `
-    <button class="drw-loc-tab ${loc === _drwActiveLocation ? 'active' : ''}" onclick="_drwSelectLocation('${escapeHtml(loc)}')" id="drw-loc-tab-${CSS.escape(loc)}">
+    <button class="drw-loc-tab ${loc === _drwActiveLocation ? 'active' : ''}" ${cxAct('_drwSelectLocation', String(loc))} id="drw-loc-tab-${CSS.escape(loc)}">
       ${escapeHtml(loc)}
       <span class="drw-loc-badge">${DRAWING_SHEETS.filter(s => s.location === loc && s.is_current).length}</span>
     </button>`).join('');
@@ -37827,7 +37827,7 @@ function _drwRenderLocationView(loc, activeSubtab = 'current') {
     <div class="drw-subtabs" id="drw-subtabs">
       ${tabs.map(t => `
         <button class="drw-subtab ${t.id === activeSubtab ? 'active' : ''}"
-          onclick="_drwRenderLocationView('${escapeHtml(loc)}','${t.id}')">
+          ${cxAct('_drwRenderLocationView', String(loc), String(t.id))}>
           ${t.label}
         </button>`).join('')}
     </div>
@@ -37868,7 +37868,7 @@ function _drwTabCurrent(loc, el) {
     </div>
     <div class="data-card-head" style="background:transparent;border:none;padding:0 2px 12px;">
       <span class="data-count"><span class="docs-count-strong" id="drw-reg-count">0</span> sheets · <span id="drw-reg-latest">0</span> at latest revision</span>
-      <button class="export-btn" onclick="_drwExportIndex('${escapeHtml(loc)}')">Export index</button>
+      <button class="export-btn" ${cxAct('_drwExportIndex', String(loc))}>Export index</button>
     </div>
     <div id="drw-reg-sections"></div>
     <div class="docs-empty docs-empty-hidden" id="drw-reg-empty">
@@ -37981,8 +37981,8 @@ function _drwRegTableHTML(rows) {
         <th style="width:120px;">Location</th><th style="width:150px;">Updated</th><th>Open</th>
       </tr></thead>
       <tbody>${rows.map(s => `
-        <tr class="drw-sheet-row${s.is_current ? '' : ' docs-row-archived'}" onclick="_drwOpenSheet('${s.id}','${s.set_id}',${s.page_index})" title="Open ${escapeHtml(s.sheet_number || 'Sheet')}">
-          <td><a class="drw-sheet-link" href="javascript:void(0)" onclick="event.stopPropagation();_drwOpenSheet('${s.id}','${s.set_id}',${s.page_index})">${escapeHtml(s.sheet_number || '—')}</a></td>
+        <tr class="drw-sheet-row${s.is_current ? '' : ' docs-row-archived'}" ${cxAct('_drwOpenSheet', String(s.id), String(s.set_id), s.page_index)} title="Open ${escapeHtml(s.sheet_number || 'Sheet')}">
+          <td><a class="drw-sheet-link" href="javascript:void(0)" ${cxAct('_drwOpenSheet', String(s.id), String(s.set_id), s.page_index)}>${escapeHtml(s.sheet_number || '—')}</a></td>
           <td class="drw-sheet-title-cell" title="${escapeHtml(s.sheet_title || '')}">${escapeHtml(s.sheet_title || 'Untitled')}</td>
           <td class="drw-sheet-rev-cell">${_drwRegRevCell(s)}</td>
           <td class="drw-sheet-set-cell">${escapeHtml(setTitle(s))}</td>
@@ -37998,7 +37998,7 @@ function _drwRegTableHTML(rows) {
 function _drwRegCardsHTML(rows) {
   const setTitle = s => DRAWING_SETS.find(x => x.id === s.set_id)?.title || '—';
   return `<div class="drw-sheet-grid">${rows.map(s => `
-    <div class="drw-sheet-card${s.is_current ? '' : ' docs-row-archived'}" onclick="_drwOpenSheet('${s.id}','${s.set_id}',${s.page_index})" title="Open ${escapeHtml(s.sheet_number || 'Sheet')}">
+    <div class="drw-sheet-card${s.is_current ? '' : ' docs-row-archived'}" ${cxAct('_drwOpenSheet', String(s.id), String(s.set_id), s.page_index)} title="Open ${escapeHtml(s.sheet_number || 'Sheet')}">
       <span class="drw-sheet-num">${escapeHtml(s.sheet_number || '—')}</span>
       <span class="drw-sheet-title">${escapeHtml(s.sheet_title || 'Untitled')}</span>
       <div class="drw-sheet-meta">
@@ -38041,7 +38041,7 @@ function _drwTabSets(loc, el) {
     const sheets = DRAWING_SHEETS.filter(s => s.set_id === activeSet.id && s.confirmed);
     el.innerHTML = `
       <div class="drw-set-detail-head">
-        <button class="form-secondary tr-mini-btn" onclick="_drwBackToSets('${escapeHtml(loc)}')">← Drawing Sets</button>
+        <button class="form-secondary tr-mini-btn" ${cxAct('_drwBackToSets', String(loc))}>← Drawing Sets</button>
         <div style="flex:1;">
           <div class="drw-set-detail-title">${escapeHtml(activeSet.title)}</div>
           <div class="drw-set-detail-meta">
@@ -38056,7 +38056,7 @@ function _drwTabSets(loc, el) {
           + Upload Revision
         </button>` : ''}
         ${uiCan('drawings','delete_set') ? `<button class="form-secondary tr-mini-btn" style="margin-left:8px;color:var(--bad);border-color:var(--bad-border);"
-                onclick="_drwDeleteSet('${activeSet.id}','${escapeHtml(loc)}')"
+                ${cxAct('_drwDeleteSet', String(activeSet.id), String(loc))}
                 title="Delete this drawing set, all its pages and the uploaded PDF">Delete set</button>` : ''}
       </div>
       ${sheets.length ? _drwSheetTableHTML(sheets, { compact: true, loc, subtab: 'sets' }) : '<p style="color:var(--gray-400);font-size:12px;">No confirmed sheets yet.</p>'}
@@ -38096,9 +38096,9 @@ function _drwTabSets(loc, el) {
                 <td style="font-size:12px;">${escapeHtml(set.uploaded_by || '—')}</td>
                 <td><span class="drw-status-pill is-current">Ready</span></td>
                 <td style="white-space:nowrap;">
-                  <button class="admin-action-btn tr-mini-btn" onclick="_drwOpenSet('${escapeHtml(loc)}','${set.id}')">View</button>
-                  <button class="form-secondary tr-mini-btn" style="margin-left:4px;" onclick="event.stopPropagation();_drwUploadRevision('${set.id}')" title="Upload a new revision — matching Drawing Numbers will be superseded automatically">+ Revision</button>
-                  <button class="form-secondary tr-mini-btn" style="margin-left:4px;color:var(--bad);border-color:var(--bad-border);" onclick="event.stopPropagation();_drwDeleteSet('${set.id}','${escapeHtml(loc)}')" title="Delete this drawing set, all its pages and the uploaded PDF">Delete</button>
+                  <button class="admin-action-btn tr-mini-btn" ${cxAct('_drwOpenSet', String(loc), String(set.id))}>View</button>
+                  <button class="form-secondary tr-mini-btn" style="margin-left:4px;" ${cxAct('_drwUploadRevision', String(set.id))} title="Upload a new revision — matching Drawing Numbers will be superseded automatically">+ Revision</button>
+                  <button class="form-secondary tr-mini-btn" style="margin-left:4px;color:var(--bad);border-color:var(--bad-border);" ${cxAct('_drwDeleteSet', String(set.id), String(loc))} title="Delete this drawing set, all its pages and the uploaded PDF">Delete</button>
                 </td>
               </tr>
             `;
@@ -38171,7 +38171,7 @@ function _drwSheetCard(sheet) {
   const markups = DRAWING_MARKUPS.filter(m => m.sheet_id === sheet.id);
   const pubCount = markups.filter(m => m.is_published).length;
   return `
-    <div class="drw-sheet-card" onclick="_drwOpenSheet('${sheet.id}','${sheet.set_id}',${sheet.page_index})" title="Open ${escapeHtml(sheet.sheet_number||'Sheet')}">
+    <div class="drw-sheet-card" ${cxAct('_drwOpenSheet', String(sheet.id), String(sheet.set_id), sheet.page_index)} title="Open ${escapeHtml(sheet.sheet_number||'Sheet')}">
       <div class="drw-sheet-num">${escapeHtml(sheet.sheet_number || '—')}</div>
       <div class="drw-sheet-title">${escapeHtml(sheet.sheet_title || 'Untitled')}</div>
       <div class="drw-sheet-meta">
@@ -38331,7 +38331,7 @@ async function _drwShowCalibrate() {
   const savedCount = Object.keys(_drwFieldRegions).length;
   const fieldBtnsHTML = _DRW_CAL_FIELDS.map(f => {
     const hasSaved = !!_drwFieldRegions[f.key];
-    return '<button id="drw-cal-field-' + f.key + '" onclick="_drwCalSetField(\'' + f.key + '\')" aria-label="Calibrate ' + f.label + ' field"'
+    return '<button id="drw-cal-field-' + f.key + '" ' + cxAct('_drwCalSetField', String(f.key)) + ' aria-label="Calibrate ' + f.label + ' field"'
       + ' style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--gray-200);background:var(--gray-50);cursor:pointer;font-size:12px;color:var(--gray-600);font-weight:500;text-align:left;">'
       + '<span style="display:inline-block;width:10px;height:10px;flex-shrink:0;border-radius:2px;background:' + f.color + ';"></span>'
       + escapeHtml(f.label)
@@ -38350,7 +38350,7 @@ async function _drwShowCalibrate() {
     + '<span style="display:inline-block;width:1px;height:20px;background:var(--gray-200);margin:0 4px;"></span>'
     + '<button class="admin-action-btn-secondary" id="drw-cal-zoom-out" aria-label="Zoom out" data-action="_drwCalChangeZoom" data-args="[-1]" style="padding:4px 10px;font-size:15px;font-weight:700;line-height:1;">−</button>'
     + '<span id="drw-cal-zoom-label" style="font-size:12px;font-weight:600;color:var(--gray-700);min-width:32px;text-align:center;">1×</span>'
-    + '<button class="admin-action-btn-secondary" id="drw-cal-zoom-in" aria-label="Zoom in" onclick="_drwCalChangeZoom(+1)" style="padding:4px 10px;font-size:15px;font-weight:700;line-height:1;">+</button>'
+    + '<button class="admin-action-btn-secondary" id="drw-cal-zoom-in" aria-label="Zoom in" ' + cxAct('_drwCalChangeZoom', 1) + ' style="padding:4px 10px;font-size:15px;font-weight:700;line-height:1;">+</button>'
     + '<span style="flex:1;"></span>'
     + '<span style="font-size:12px;color:var(--gray-500);">'
     + (savedCount > 0
@@ -38749,21 +38749,21 @@ function _drwShowReview(numPages) {
                   ? `<span style="display:inline-flex;align-items:center;background:var(--warn-light);color:var(--warn);padding:2px 6px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;">↑ Rev</span><br><span style="font-size:10px;color:var(--gray-400);">was: ${escapeHtml(s._existingSheet.revision || '—')}</span>`
                   : `<span style="font-size:10px;color:var(--gray-400);">New</span>`;
                 return `
-                <tr id="drw-rev-row-${i}" class="drw-rev-clickable" onclick="_drwReviewShowPage(${i})" style="${rowStyle}">
-                  <td style="text-align:center;"><input type="checkbox" ${s.included ? 'checked' : ''} onclick="event.stopPropagation()" onchange="_drwReviewToggle(${i}, this.checked)" /></td>
+                <tr id="drw-rev-row-${i}" class="drw-rev-clickable" ${cxAct('_drwReviewShowPage', i)} style="${rowStyle}">
+                  <td style="text-align:center;"><input type="checkbox" ${s.included ? 'checked' : ''} onclick="event.stopPropagation()" ${cxOn('change', '_drwReviewToggle', i, '$cx.checked')} /></td>
                   <td style="color:var(--gray-400);font-size:12px;">${s.pageIndex+1}</td>
                   <td><input class="form-input" value="${escapeHtml(s.sheetNumber||'')}"
                     style="width:110px;font-family:monospace;font-size:12px;padding:3px 6px;border-color:${s.sheetNumber?'var(--gray-200)':'var(--warn)'};"
-                    onchange="_drwReviewEdit(${i},'sheetNumber',this.value)" /></td>
+                    ${cxOn('change', '_drwReviewEdit', i, 'sheetNumber', '$cx.value')} /></td>
                   <td><input class="form-input" value="${escapeHtml(s.pageNumber||'')}"
                     style="width:54px;font-family:monospace;font-size:12px;padding:3px 6px;text-align:center;"
-                    onchange="_drwReviewEdit(${i},'pageNumber',this.value)" /></td>
+                    ${cxOn('change', '_drwReviewEdit', i, 'pageNumber', '$cx.value')} /></td>
                   <td><input class="form-input" value="${escapeHtml(s.sheetTitle||'')}"
                     style="width:100%;min-width:130px;font-size:12px;padding:3px 6px;border-color:${s.sheetTitle?'var(--gray-200)':'var(--warn)'};"
-                    onchange="_drwReviewEdit(${i},'sheetTitle',this.value)" /></td>
+                    ${cxOn('change', '_drwReviewEdit', i, 'sheetTitle', '$cx.value')} /></td>
                   <td><input class="form-input" value="${escapeHtml(s.revision||'')}"
                     style="width:48px;font-size:12px;padding:3px 6px;"
-                    onchange="_drwReviewEdit(${i},'revision',this.value)" /></td>
+                    ${cxOn('change', '_drwReviewEdit', i, 'revision', '$cx.value')} /></td>
                   <td id="drw-disc-cell-${i}" style="font-size:12px;color:var(--gray-500);">${escapeHtml(s.discipline||'—')}</td>
                   <td style="text-align:center;padding:4px;">${statusCell}</td>
                 </tr>`;
@@ -38899,7 +38899,7 @@ function _drwHydrateDisciplineReviewInputs() {
     cell.innerHTML = `
       <input id="drw-discipline-${i}" class="form-input" list="drw-discipline-options" value="${escapeHtml(s.discipline || '')}"
         style="width:160px;font-size:12px;padding:3px 6px;"
-        placeholder="Discipline..." onchange="_drwReviewEdit(${i},'discipline',this.value)" />`;
+        placeholder="Discipline..." ${cxOn('change', '_drwReviewEdit', i, 'discipline', '$cx.value')} />`;
   });
 }
 
@@ -40222,8 +40222,8 @@ function _drwManageMarkupsOpen() {
                   <td style="padding:6px 10px;color:var(--gray-700);">${escapeHtml(updated)}</td>
                   <td style="padding:6px 10px;text-align:right;font-family:monospace;color:var(--gray-700);">${shapeCount}</td>
                   <td style="padding:6px 10px;text-align:right;white-space:nowrap;">
-                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_drwAdminEditMarkup('${escapeHtml(m.id)}')">${loaded ? 'Reload' : 'Load to edit'}</button>
-                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--bad);border-color:var(--bad-border);" onclick="_drwAdminDeleteMarkup('${escapeHtml(m.id)}')">Delete</button>
+                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;" ${cxAct('_drwAdminEditMarkup', String(m.id))}>${loaded ? 'Reload' : 'Load to edit'}</button>
+                    <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--bad);border-color:var(--bad-border);" ${cxAct('_drwAdminDeleteMarkup', String(m.id))}>Delete</button>
                   </td>
                 </tr>`;
               }).join('')}</tbody>
@@ -40349,15 +40349,15 @@ function _drwSheetTableHTML(sheets, opts = {}) {
             <span class="drw-sheet-group-count">${sorted.filter(s => (s.discipline || 'General') === disc).length}</span>
           </td>
         </tr>` : ''}
-      <tr class="drw-sheet-row" onclick="_drwOpenSheet('${sheet.id}','${sheet.set_id}',${sheet.page_index})" title="Open ${escapeHtml(sheet.sheet_number || 'Sheet')}">
+      <tr class="drw-sheet-row" ${cxAct('_drwOpenSheet', String(sheet.id), String(sheet.set_id), sheet.page_index)} title="Open ${escapeHtml(sheet.sheet_number || 'Sheet')}">
         <td class="drw-sheet-open-cell"><span class="drw-row-open-dot">i</span></td>
-        <td><a href="javascript:void(0)" class="drw-sheet-link" onclick="event.stopPropagation();_drwOpenSheet('${sheet.id}','${sheet.set_id}',${sheet.page_index})">${escapeHtml(sheet.sheet_number || '—')}</a></td>
+        <td><a href="javascript:void(0)" class="drw-sheet-link" ${cxAct('_drwOpenSheet', String(sheet.id), String(sheet.set_id), sheet.page_index)}>${escapeHtml(sheet.sheet_number || '—')}</a></td>
         <td class="drw-sheet-title-cell">${escapeHtml(sheet.sheet_title || 'Untitled')}</td>
         <td class="drw-sheet-rev-cell">${sheet.revision ? `<span class="drw-rev-badge">Rev ${escapeHtml(sheet.revision)}</span>` : '<span class="drw-muted">—</span>'}</td>
         <td class="drw-sheet-page-cell">${escapeHtml(sheet.page_number || String((sheet.page_index ?? 0) + 1))}</td>
         ${opts.compact ? '' : `<td class="drw-sheet-set-cell">${escapeHtml(setTitle(sheet) || '—')}</td>`}
         <td>${pubCount ? `<span class="drw-markup-badge">${pubCount} markup${pubCount > 1 ? 's' : ''}</span>` : '<span class="drw-muted">No markups</span>'}</td>
-        <td><span class="drw-status-pill ${sheet.is_current ? 'is-current' : 'is-old'}">${sheet.is_current ? 'Current' : 'Superseded'}</span>${isAdmin ? ` <button aria-label="Delete this page (and its markups)" class="drw-del-btn" title="Delete this page (and its markups)" onclick="event.stopPropagation();_drwDeleteSheet('${sheet.id}','${escapeHtml(loc)}','${subtab}')">${icon('trash')}</button>` : ''}</td>
+        <td><span class="drw-status-pill ${sheet.is_current ? 'is-current' : 'is-old'}">${sheet.is_current ? 'Current' : 'Superseded'}</span>${isAdmin ? ` <button aria-label="Delete this page (and its markups)" class="drw-del-btn" title="Delete this page (and its markups)" ${cxAct('_drwDeleteSheet', String(sheet.id), String(loc), String(subtab))}>${icon('trash')}</button>` : ''}</td>
       </tr>
     `;
   }).join('');
@@ -49355,7 +49355,7 @@ function _drwRenderFindResults() {
   if (sheets.length) {
     html += `<div class="drw-find-result-section">Sheets (${sheets.length})</div>`;
     html += sheets.map(s => `
-      <div class="drw-find-result" onclick="_drwFindPickSheet('${escapeHtml(s.id)}')">
+      <div class="drw-find-result" ${cxAct('_drwFindPickSheet', String(s.id))}>
         <div><b>${hlEscape(s.sheet_number || '—')}</b> · ${hlEscape((s.sheet_title || '').slice(0,80))}</div>
         <div class="drw-find-meta">Page ${(s.page_index || 0) + 1}${s.revision ? ` · Rev ${escapeHtml(s.revision)}` : ''}</div>
       </div>`).join('');
@@ -49366,7 +49366,7 @@ function _drwRenderFindResults() {
       const active = i === _drwFindState.currentIndex;
       return `
         <div class="drw-find-result ${active ? 'is-active' : ''}" style="${active ? 'background:var(--warn-light);' : ''}"
-             onclick="_drwFindGotoMatch(${i})">
+             ${cxAct('_drwFindGotoMatch', i)}>
           <div>${hlEscape(m.snippet)}</div>
           <div class="drw-find-meta">Match ${i + 1} of ${textMatches.length} · Page ${m.pageIndex + 1}</div>
         </div>`;
