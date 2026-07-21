@@ -7,12 +7,22 @@
 
 // ── Reusable loading / empty / error state helpers ────────────────────────
 // Token-based + icon()-driven so they theme automatically (light/dark).
+/**
+ * Skeleton loading placeholder markup.
+ * @param {number} [rows] number of shimmer lines (default 3)
+ * @returns {string}
+ */
 function cxSkeleton(rows) {
   rows = rows || 3;
   var s = '<div class="cx-skeleton" aria-hidden="true" aria-busy="true">';
   for (var i = 0; i < rows; i++) s += '<div class="cx-skel-line" style="width:' + (72 + (i * 9) % 24) + '%"></div>';
   return s + '</div>';
 }
+/**
+ * Empty-state block.
+ * @param {{icon?:string,title?:string,message?:string,actionLabel?:string,onAction?:string}} [o]
+ * @returns {string}
+ */
 function cxEmpty(o) {
   o = o || {};
   return '<div class="docs-empty">'
@@ -22,6 +32,11 @@ function cxEmpty(o) {
     + (o.actionLabel && o.onAction ? '<button class="form-secondary cx-empty-action" onclick="' + o.onAction + '">' + escapeHtml(o.actionLabel) + '</button>' : '')
     + '</div>';
 }
+/**
+ * Error-state block with an optional retry action.
+ * @param {{message?:string,retry?:string}} [o]
+ * @returns {string}
+ */
 function cxError(o) {
   o = o || {};
   return '<div class="cx-error" role="alert">'
