@@ -97,12 +97,14 @@ justified against the app that exists then, not today's.
 
 - **2026-07-21 — Stage A shipped** (ratchet, dispatcher, store seam, dead-CSS
   audit). See the commit history.
-- **2026-07-21 — Stage B partial:** 345 handlers converted and verified — the
-  fully-automatable classes: 108 `onclick="closeModal()"` + 237 no-arg
-  `onclick="fname()"`. These are behaviour-preserving because a no-arg inline
-  handler passes neither the event nor arguments. Inline-handler count 1479 →
-  1134 (ratcheted). **Ceiling found:** the remaining ~1,134 handlers carry
-  arguments, and a large share live inside JavaScript *string concatenations*
+- **2026-07-21 — Stage B partial:** 378 handlers converted and verified (26%) —
+  the safely-automatable classes: 108 `closeModal()` + 237 no-arg `fname()` + 33
+  quote-free literal-arg `fn(N)` (number/bool/null, emitted as double-quoted
+  `data-args="[N]"` so it's safe even inside single-quoted concat HTML). All
+  behaviour-preserving and browser-verified via pw_smoke.js. Inline-handler count
+  1479 → 1101 (ratcheted). **Ceiling found:** the remaining ~1,101 handlers carry
+  *string* or *interpolated* arguments, and a large share live inside JavaScript
+  *string concatenations*
   (`'…onclick="fn(' + id + ')"…'`) where the argument quote is also a JS string
   delimiter — a naïve regex codemod corrupts them (verified: it mis-converted
   383 sites). So the remainder needs **either** an AST-aware codemod (parse the
