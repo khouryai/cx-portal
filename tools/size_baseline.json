@@ -5,7 +5,7 @@
   },
   "inlineHandlers": {
     "_comment": "Tier 3 #11 Stage B: total inline on*= handlers (onclick/onchange/…) across the listed files may only DECREASE as they move to data-action (cx-actions.js / the act() emitter). tools/test_inline_handler_ratchet.js fails if the count rises, so no new inline handler can be added — convert instead. Lower `cap` in the same commit that converts handlers.",
-    "cap": 1134,
+    "cap": 1101,
     "files": ["app.js", "index.html"]
   }
 }

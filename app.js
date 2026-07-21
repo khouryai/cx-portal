@@ -7217,7 +7217,7 @@ function renderIntakeStep1() {
         </div>
         <div class="form-actions">
           <button class="form-secondary" onclick="showPage('test-register')">Open Test Register</button>
-          <button class="form-submit" onclick="setIntakeStep(2)">Skip to Step 2 →</button>
+          <button class="form-submit" data-action="setIntakeStep" data-args="[2]">Skip to Step 2 →</button>
         </div>
       </div>
     `;
@@ -7281,7 +7281,7 @@ function renderIntakeStep1() {
       </div>` : ''}
       <div class="form-actions">
         <button class="form-secondary" onclick="showPage('test-register')">↺ Back to Test Register</button>
-        <button class="form-submit" onclick="setIntakeStep(2)">Continue to Step 2 →</button>
+        <button class="form-submit" data-action="setIntakeStep" data-args="[2]">Continue to Step 2 →</button>
       </div>
     </div>
   `;
@@ -7382,7 +7382,7 @@ function renderIntakeStep2() {
       </div>
 
       <div class="form-actions">
-        <button class="form-secondary" onclick="setIntakeStep(1)">← Back</button>
+        <button class="form-secondary" data-action="setIntakeStep" data-args="[1]">← Back</button>
         <button class="form-secondary" data-action="addIntakeAddition">+ Add to List</button>
         <button class="form-submit" data-action="continueIntakeStep3">Continue to Step 3 →</button>
       </div>
@@ -7463,7 +7463,7 @@ function renderIntakeStep3(items) {
       </div>
 
       <div class="form-actions">
-        <button class="form-secondary" onclick="setIntakeStep(2)">← Back</button>
+        <button class="form-secondary" data-action="setIntakeStep" data-args="[2]">← Back</button>
         <button class="form-submit" data-action="submitIntakeFinal">Submit Daily Log</button>
       </div>
     </div>
@@ -9457,8 +9457,8 @@ function openNewPunchModal() {
     body: `<div id="punch-form-wrap">${_punchFormHTML(null)}</div>`,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-secondary" onclick="saveNewPunchItem(true)">Save &amp; Create New</button>
-      <button class="form-submit" onclick="saveNewPunchItem(false)">Save</button>
+      <button class="form-secondary" data-action="saveNewPunchItem" data-args="[true]">Save &amp; Create New</button>
+      <button class="form-submit" data-action="saveNewPunchItem" data-args="[false]">Save</button>
     `,
   });
   _punchFormInit(null);
@@ -9489,7 +9489,7 @@ function openPunchFromTestCase(testId) {
     body: `<div id="punch-form-wrap">${_punchFormHTML(null)}</div>`,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="saveNewPunchItem(false)">Create Punch Item</button>
+      <button class="form-submit" data-action="saveNewPunchItem" data-args="[false]">Create Punch Item</button>
     `,
   });
 
@@ -13773,7 +13773,7 @@ function _amOpenEditModal(key) {
         Changes to Activity Name, Phase, Location, or Subsystem update all child test items. Activity Status is auto-calculated from test item statuses.
       </p>
     `,
-    footer: `<button class="admin-action-btn" style="background:var(--bad);margin-right:auto;" data-action="_amDeleteActivity">${icon('trash')} Delete Activity</button><button class="form-secondary" data-action="closeModal">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:var(--good);" onclick="_amSaveEdit(true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" data-action="_amSaveEdit">Save Changes</button>`
+    footer: `<button class="admin-action-btn" style="background:var(--bad);margin-right:auto;" data-action="_amDeleteActivity">${icon('trash')} Delete Activity</button><button class="form-secondary" data-action="closeModal">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:var(--good);" data-action="_amSaveEdit" data-args="[true]">Deploy to Field</button>` : ''}<button class="admin-action-btn" data-action="_amSaveEdit">Save Changes</button>`
   });
 }
 
@@ -14742,7 +14742,7 @@ function cxConfirm(message, opts) {
       title: opts.title || 'Please confirm', size: 'small',
       body: `<p class="cx-dialog-text">${_cxDialogText(message)}</p>`,
       footer: `<button class="form-secondary" data-action="closeModal">${escapeHtml(opts.cancel || 'Cancel')}</button>
-               <button class="form-submit${opts.danger ? ' cx-dialog-danger' : ''}" onclick="_cxDialogFinish(true)">${escapeHtml(opts.ok || 'OK')}</button>`,
+               <button class="form-submit${opts.danger ? ' cx-dialog-danger' : ''}" data-action="_cxDialogFinish" data-args="[true]">${escapeHtml(opts.ok || 'OK')}</button>`,
     });
   });
 }
@@ -17693,8 +17693,8 @@ function _trRenderAssetPickerBody() {
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:12px;color:var(--gray-600);">
       <span><b>${filtered.length}</b> shown · <b>${_trAssetPicker.selected.size}</b> selected</span>
       <span style="display:flex;gap:6px;">
-        <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_trAssetPickerSelectAll(true)">Select all shown</button>
-        <button class="form-secondary" style="font-size:11px;padding:3px 8px;" onclick="_trAssetPickerSelectAll(false)">Clear</button>
+        <button class="form-secondary" style="font-size:11px;padding:3px 8px;" data-action="_trAssetPickerSelectAll" data-args="[true]">Select all shown</button>
+        <button class="form-secondary" style="font-size:11px;padding:3px 8px;" data-action="_trAssetPickerSelectAll" data-args="[false]">Clear</button>
       </span>
     </div>
     <div style="max-height:380px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;">
@@ -19349,9 +19349,9 @@ function _cmPageHTML() {
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <div style="display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:12px;">
-            <button style="padding:5px 14px;border:none;cursor:pointer;background:${activeView==='location'?'var(--hitachi-red)':'var(--surface)'};color:${activeView==='location'?'var(--white)':'var(--text)'};font-weight:${activeView==='location'?'600':'400'};" onclick="_cmToggleVDDView(false)">By Location</button>
-            <button style="padding:5px 14px;border:none;cursor:pointer;border-left:1px solid var(--border);background:${activeView==='vdd'?'var(--hitachi-red)':'var(--surface)'};color:${activeView==='vdd'?'var(--white)':'var(--text)'};font-weight:${activeView==='vdd'?'600':'400'};" onclick="_cmToggleVDDView(true)">By VDD Release</button>
-            <button style="padding:5px 14px;border:none;cursor:pointer;border-left:1px solid var(--border);background:${activeView==='deploy'?'var(--hitachi-red)':'var(--surface)'};color:${activeView==='deploy'?'var(--white)':'var(--text)'};font-weight:${activeView==='deploy'?'600':'400'};" onclick="_cmToggleDeployView(true)">Deployment Status</button>
+            <button style="padding:5px 14px;border:none;cursor:pointer;background:${activeView==='location'?'var(--hitachi-red)':'var(--surface)'};color:${activeView==='location'?'var(--white)':'var(--text)'};font-weight:${activeView==='location'?'600':'400'};" data-action="_cmToggleVDDView" data-args="[false]">By Location</button>
+            <button style="padding:5px 14px;border:none;cursor:pointer;border-left:1px solid var(--border);background:${activeView==='vdd'?'var(--hitachi-red)':'var(--surface)'};color:${activeView==='vdd'?'var(--white)':'var(--text)'};font-weight:${activeView==='vdd'?'600':'400'};" data-action="_cmToggleVDDView" data-args="[true]">By VDD Release</button>
+            <button style="padding:5px 14px;border:none;cursor:pointer;border-left:1px solid var(--border);background:${activeView==='deploy'?'var(--hitachi-red)':'var(--surface)'};color:${activeView==='deploy'?'var(--white)':'var(--text)'};font-weight:${activeView==='deploy'?'600':'400'};" data-action="_cmToggleDeployView" data-args="[true]">Deployment Status</button>
           </div>
           <button class="admin-action-btn" onclick="${activeView==='deploy' ? 'openSwDeployModal(\'\')' : 'openSwConfigModal(null)'}">+ ${activeView==='deploy' ? 'Log Deployment' : 'Add Software Config'}</button>
         </div>
@@ -22304,7 +22304,7 @@ function _rmaPageHTML() {
       }).join('')}
       <span class="right">
         <button class="v2-btn-ghost" data-action="_rmaCSVExport">${icon('download')} Export CSV</button>
-        ${uiCan('rma','create') ? `<button class="v2-btn-primary" onclick="openRMAModal(null)">＋ New RMA</button>` : ''}
+        ${uiCan('rma','create') ? `<button class="v2-btn-primary" data-action="openRMAModal" data-args="[null]">＋ New RMA</button>` : ''}
       </span>
     </div>
 
@@ -24328,7 +24328,7 @@ function openMtgTemplatesModal() {
                 </div>
               </div>`).join('')}
       </div>
-      <button class="form-secondary" style="margin-top:12px;" onclick="openMtgTemplateEditModal(null)">+ New Template</button>`,
+      <button class="form-secondary" style="margin-top:12px;" data-action="openMtgTemplateEditModal" data-args="[null]">+ New Template</button>`,
     footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
 }
@@ -26118,9 +26118,9 @@ function _laLookaheadHTML() {
       </div>
       <div style="display:flex;align-items:center;gap:6px;">
         <span style="font-size:11px;color:var(--gray-500);margin-right:2px;white-space:nowrap;">Period:</span>
-        <button class="admin-tab" style="font-size:12px;padding:6px 10px;" onclick="_laShiftWindow(-7)" title="Back one week">‹ Prev</button>
+        <button class="admin-tab" style="font-size:12px;padding:6px 10px;" data-action="_laShiftWindow" data-args="[-7]" title="Back one week">‹ Prev</button>
         <button class="admin-tab${_laWindowStart ? '' : ' active'}" style="font-size:12px;padding:6px 10px;" data-action="_laResetWindow" title="Jump to today">Today</button>
-        <button class="admin-tab" style="font-size:12px;padding:6px 10px;" onclick="_laShiftWindow(7)" title="Forward one week">Next ›</button>
+        <button class="admin-tab" style="font-size:12px;padding:6px 10px;" data-action="_laShiftWindow" data-args="[7]" title="Forward one week">Next ›</button>
         <input type="date" value="${_laWinAnchor().format('YYYY-MM-DD')}" onchange="_laJumpWindow(this.value)" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-200);border-radius:6px;" title="Jump to a start date">
         ${(_laWindowStart && dayjs(_laWindowStart).isBefore(dayjs().startOf('day'))) ? '<span style="font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--warn);background:var(--warn-light);padding:3px 8px;border-radius:99px;">Viewing history</span>' : ''}
         <button class="admin-tab" style="font-size:12px;padding:6px 12px;" data-action="openPlanningHistory" title="Browse frozen weekly snapshots">${icon('calendar')} Past Weeks</button>
@@ -33115,7 +33115,7 @@ function _apConflictsStub() {
         `).join('')}
       </div>
       <div style="display:flex;gap:8px;">
-        <button class="form-secondary" onclick="_planningRecomputeConflicts(true)">↻ Recompute</button>
+        <button class="form-secondary" data-action="_planningRecomputeConflicts" data-args="[true]">↻ Recompute</button>
         ${rows.length ? `<button class="admin-action-btn" data-action="_planningBulkAck">✓ Acknowledge ${rows.length}</button>` : ''}
       </div>
     </div>
@@ -33312,7 +33312,7 @@ function _apEditResourceModal(resourceId) {
             ${profileSubsys ? `<span style="font-size:11px;color:var(--gray-400);margin-left:6px;">Profile: <strong>${escapeHtml(profileSubsys)}</strong></span>` : ''}
           </label>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;" id="ares-subsys-pills">
-            <button class="admin-tab${!r.subsystem ? ' active' : ''}" style="font-size:11px;padding:4px 10px;" onclick="_apResSubsysPick(null)">None</button>
+            <button class="admin-tab${!r.subsystem ? ' active' : ''}" style="font-size:11px;padding:4px 10px;" data-action="_apResSubsysPick" data-args="[null]">None</button>
             ${SUBSYSTEMS.map(s => `<button class="admin-tab${r.subsystem===s?' active':''}" style="font-size:11px;padding:4px 10px;" onclick="_apResSubsysPick('${s}')">${s}</button>`).join('')}
           </div>
           <input type="hidden" id="ares-subsys-val" value="${escapeHtml(r.subsystem||'')}">
@@ -33463,7 +33463,7 @@ function _apAddResourceModal() {
         <div>
           <label class="form-label">Subsystem</label>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;" id="ares-subsys-pills">
-            <button class="admin-tab active" style="font-size:11px;padding:4px 10px;" onclick="_apResSubsysPick(null)">None</button>
+            <button class="admin-tab active" style="font-size:11px;padding:4px 10px;" data-action="_apResSubsysPick" data-args="[null]">None</button>
             ${SUBSYSTEMS.map(s => `<button class="admin-tab" style="font-size:11px;padding:4px 10px;" onclick="_apResSubsysPick('${s}')">${s}</button>`).join('')}
           </div>
           <input type="hidden" id="ares-subsys-val" value="">
@@ -38348,7 +38348,7 @@ async function _drwShowCalibrate() {
     + '<span style="font-size:13px;color:var(--gray-500);">of ' + numPages + '</span>'
     + '<button class="admin-action-btn-secondary" id="drw-cal-next" style="padding:6px 12px;font-size:13px;">Next ▶</button>'
     + '<span style="display:inline-block;width:1px;height:20px;background:var(--gray-200);margin:0 4px;"></span>'
-    + '<button class="admin-action-btn-secondary" id="drw-cal-zoom-out" aria-label="Zoom out" onclick="_drwCalChangeZoom(-1)" style="padding:4px 10px;font-size:15px;font-weight:700;line-height:1;">−</button>'
+    + '<button class="admin-action-btn-secondary" id="drw-cal-zoom-out" aria-label="Zoom out" data-action="_drwCalChangeZoom" data-args="[-1]" style="padding:4px 10px;font-size:15px;font-weight:700;line-height:1;">−</button>'
     + '<span id="drw-cal-zoom-label" style="font-size:12px;font-weight:600;color:var(--gray-700);min-width:32px;text-align:center;">1×</span>'
     + '<button class="admin-action-btn-secondary" id="drw-cal-zoom-in" aria-label="Zoom in" onclick="_drwCalChangeZoom(+1)" style="padding:4px 10px;font-size:15px;font-weight:700;line-height:1;">+</button>'
     + '<span style="flex:1;"></span>'
@@ -38706,8 +38706,8 @@ function _drwShowReview(numPages) {
       ${needsReview
         ? `<span style="background:var(--warn-light);color:var(--warn);padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">${icon('alert')} ${needsReview} need manual entry</span>`
         : `<span style="background:var(--good-light);color:var(--good);padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">✓ All sheets parsed</span>`}
-      <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(true)" style="font-size:12px;padding:5px 10px;">Select all</button>
-      <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(false)" style="font-size:12px;padding:5px 10px;">Select none</button>
+      <button class="admin-action-btn-secondary" data-action="_drwReviewSelectAll" data-args="[true]" style="font-size:12px;padding:5px 10px;">Select all</button>
+      <button class="admin-action-btn-secondary" data-action="_drwReviewSelectAll" data-args="[false]" style="font-size:12px;padding:5px 10px;">Select none</button>
       <button class="admin-action-btn-secondary" data-action="_drwShowCalibrate" style="font-size:12px;padding:5px 10px;margin-left:auto;">↩ Recalibrate region</button>
     </div>
     ${_drwDisciplineListHTML()}
@@ -40951,7 +40951,7 @@ function _dynRenderInstances() {
 
   const toolbar = `
     <div class="capx-ctl">
-      <button class="dyn-btn primary" onclick="_dynOpenInstanceModal(null)">${icon('plus')} New instance</button>
+      <button class="dyn-btn primary" data-action="_dynOpenInstanceModal" data-args="[null]">${icon('plus')} New instance</button>
       <button class="dyn-btn" data-action="_dynOpenCSVModal">${icon('upload')} Import CSV / Excel</button>
       <span class="capx-searchwrap">${icon('search')}<input id="dyn-search" class="capx-input wide" type="search" placeholder="Search code / title / phase…" value="${escapeHtml(_dynPage.search)}" oninput="_dynPage.search=this.value;_dynInstSearchRerender();" /></span>
       <select class="capx-select" style="min-width:0;" id="dyn-status-filter" onchange="_dynPage.statusFilter=this.value;_dynRenderInstances();">
@@ -42313,9 +42313,9 @@ function _dynRenderBoard() {
             <button class="dyn-btn ${_dynPage.boardView==='week'?'on':''}" onclick="_dynBoardSetView('week')">Week</button>
           </span>
           <span class="accx-nav">
-            <button class="simx-iconbtn" onclick="_dynBoardShift(-1)" aria-label="Previous period">${icon('chevron-left')}</button>
+            <button class="simx-iconbtn" data-action="_dynBoardShift" data-args="[-1]" aria-label="Previous period">${icon('chevron-left')}</button>
             <button class="dyn-btn" data-action="_dynBoardToday">Today</button>
-            <button class="simx-iconbtn" onclick="_dynBoardShift(1)" aria-label="Next period">${icon('chevron-right')}</button>
+            <button class="simx-iconbtn" data-action="_dynBoardShift" data-args="[1]" aria-label="Next period">${icon('chevron-right')}</button>
           </span>
         </div>
       </div>
@@ -42969,9 +42969,9 @@ function _dynRenderAccess() {
             <button class="dyn-btn ${_dynPage.accView==='month'?'on':''}" onclick="_dynAccSetView('month')">Month</button>
           </span>
           <span class="accx-nav">
-            <button class="simx-iconbtn" onclick="_dynAccShift(-1)" aria-label="Previous ${_dynPage.accView}">${icon('chevron-left')}</button>
+            <button class="simx-iconbtn" data-action="_dynAccShift" data-args="[-1]" aria-label="Previous ${_dynPage.accView}">${icon('chevron-left')}</button>
             <button class="dyn-btn" data-action="_dynAccToday">Today</button>
-            <button class="simx-iconbtn" onclick="_dynAccShift(1)" aria-label="Next ${_dynPage.accView}">${icon('chevron-right')}</button>
+            <button class="simx-iconbtn" data-action="_dynAccShift" data-args="[1]" aria-label="Next ${_dynPage.accView}">${icon('chevron-right')}</button>
           </span>
         </div>
       </div>
@@ -44455,8 +44455,8 @@ function _dynRenderPlanning() {
         </label>
         <span class="capx-searchwrap">${icon('search')}<input id="capx-search" class="capx-input wide" type="search" placeholder="Filter code / title…" value="${escapeHtml(_dynPage.planSearch)}" oninput="_dynPlanSearchInput(this.value)"></span>
         <label class="capx-check"><input type="checkbox" ${_dynPage.planGrouped ? 'checked' : ''} onchange="_dynPage.planGrouped=this.checked;_dynPage.planGroupsOpen=null;_dynRenderPlanning();">Group by test case</label>
-        ${_dynPage.planGrouped ? `<button type="button" class="capx-linkish" onclick="_dynPlanGroupsAll(true)">Expand all</button>
-        <button type="button" class="capx-linkish" onclick="_dynPlanGroupsAll(false)">Collapse all</button>` : ''}
+        ${_dynPage.planGrouped ? `<button type="button" class="capx-linkish" data-action="_dynPlanGroupsAll" data-args="[true]">Expand all</button>
+        <button type="button" class="capx-linkish" data-action="_dynPlanGroupsAll" data-args="[false]">Collapse all</button>` : ''}
       </div>
       <div id="capx-results">${_dynRenderPlanningTable()}</div>
       <div class="capx-tray">
@@ -49153,9 +49153,9 @@ function _drwWireFindInput() {
       cycle.id = 'drw-find-cycle';
       cycle.style.cssText = 'display:none;align-items:center;gap:4px;font-size:11px;color:var(--gray-700);';
       cycle.innerHTML = `
-        <button class="drw-nav-btn" onclick="_drwFindCycle(-1)" title="Previous match (Shift+Enter)">◀</button>
+        <button class="drw-nav-btn" data-action="_drwFindCycle" data-args="[-1]" title="Previous match (Shift+Enter)">◀</button>
         <span id="drw-find-counter" style="min-width:54px;text-align:center;font-family:monospace;">0 of 0</span>
-        <button class="drw-nav-btn" onclick="_drwFindCycle(1)" title="Next match (Enter)">▶</button>
+        <button class="drw-nav-btn" data-action="_drwFindCycle" data-args="[1]" title="Next match (Enter)">▶</button>
         <button class="drw-nav-btn" data-action="_drwFindClear" title="Clear search (Esc)">×</button>
       `;
       wrap.parentNode.insertBefore(cycle, wrap.nextSibling);

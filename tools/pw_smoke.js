@@ -157,6 +157,25 @@ async function main() {
   });
   ok("clicking data-action=\"closeModal\" closes the modal (delegation works)", closedAfterClick);
 
+  // 3b) A data-args handler receives the correctly parsed arguments when a real
+  //     user clicks it (verifies the full onclick→data-action/data-args path).
+  const argRoundTrip = await page.evaluate(async () => {
+    let got = null;
+    window.CXActions.register("__qaArgProbe", (a, b) => { got = [a, b]; });
+    const btn = document.createElement("button");
+    btn.setAttribute("data-action", "__qaArgProbe");
+    btn.setAttribute("data-args", "[5,\"x\"]");
+    btn.id = "qa-arg-probe";
+    document.body.appendChild(btn);
+    return new Promise((resolve) => {
+      btn.addEventListener("click", () => setTimeout(() => resolve(got), 0), { once: true });
+      btn.click();
+    });
+  });
+  ok("data-args are parsed and passed to the handler (5,\"x\")",
+    Array.isArray(argRoundTrip) && argRoundTrip[0] === 5 && argRoundTrip[1] === "x",
+    JSON.stringify(argRoundTrip));
+
   // 4) Every static data-action rendered in the live DOM resolves to a handler.
   const liveUnresolved = await page.evaluate(() => {
     const names = new Set();
