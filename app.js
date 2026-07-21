@@ -143,6 +143,41 @@ function _noteLoadError(name, err) {
   }, 1000);
 }
 
+// ── SILENT-FAILURE SEAM ───────────────────────────────────────────────────────
+// Best-effort secondary operations (cascade cleanup, orphan deletes, detach-on-
+// delete) legitimately swallow their errors — the primary op already succeeded
+// and there is nothing the user can do about a failed orphan sweep. But
+// "swallowed" must never mean "invisible": route every such catch here so the
+// failure is logged with a consistent, greppable prefix and there is ONE seam a
+// future error reporter (Sentry, etc.) can hook via window._cxReportSwallowed.
+// Use this instead of an empty `catch {}` on any catch wrapping a DB write /
+// delete or a storage mutation.
+function _logSwallowed(context, e) {
+  try { console.warn(`[cx:swallowed] ${context}:`, e?.message || e); } catch (_) {}
+  if (typeof window !== 'undefined' && typeof window._cxReportSwallowed === 'function') {
+    try { window._cxReportSwallowed(context, e); } catch (_) {}
+  }
+}
+window._logSwallowed = _logSwallowed;
+
+// ── WRITE-CONFLICT SURFACING (optimistic concurrency) ─────────────────────────
+// _dbUpdate with an { expect } guard throws err.code === 'CONFLICT' when the row
+// was changed by someone else between read and write. Callers route that error
+// here to show a clear, actionable toast (and refetch the latest) instead of a
+// generic "save failed". Returns true when it handled a conflict, so callers can
+//   if (_handleWriteConflict(e, { what, reload })) return;
+// and fall through to their generic error handling otherwise.
+function _isConflict(e) { return !!(e && e.code === 'CONFLICT'); }
+
+function _handleWriteConflict(e, opts = {}) {
+  if (!_isConflict(e)) return false;
+  const what = opts.what || 'This record';
+  toast(`${what} was changed by someone else since you opened it — your edit was NOT saved. Reloading the latest version.`, 'error');
+  if (typeof opts.reload === 'function') { Promise.resolve().then(opts.reload).catch(err => _logSwallowed('conflict reload', err)); }
+  return true;
+}
+window._isConflict = _isConflict; window._handleWriteConflict = _handleWriteConflict;
+
 // ── PAGINATED REST GET ───────────────────────────────────────────────────────
 // PostgREST caps every response at the project's max-rows setting (default
 // 1000) and truncates SILENTLY — test_items is already past that. All read
@@ -7979,8 +8014,12 @@ async function _dlSaveEdit(id) {
   };
   if (delayYes && !patch.delay_category) { toast('Pick a delay category for the delay', 'error'); return; }
   try {
-    await _dbUpdate('delay_log', patch, { id: l.id });
-    Object.assign(l, patch);
+    // Optimistic-concurrency guard: if another reviewer corrected this same log
+    // since it was loaded, updated_at no longer matches and _dbUpdate throws
+    // CONFLICT instead of silently clobbering their correction.
+    const rows = await _dbUpdate('delay_log', patch, { id: l.id },
+      l.updated_at ? { expect: { updated_at: l.updated_at } } : {});
+    Object.assign(l, patch, rows && rows[0] ? { updated_at: rows[0].updated_at } : {});
     closeModal();
     renderDailyLogHistory();
     if (typeof logAudit === 'function') {
@@ -7988,6 +8027,10 @@ async function _dlSaveEdit(id) {
     }
     toast('Daily log updated', 'success');
   } catch (e) {
+    if (_handleWriteConflict(e, { what: 'This daily log', reload: async () => {
+      try { const fresh = await _dbSelect('delay_log', { id: l.id }); if (fresh && fresh[0]) Object.assign(l, fresh[0]); } catch (_) {}
+      closeModal(); renderDailyLogHistory();
+    } })) return;
     toast('Save failed: ' + e.message, 'error');
   }
 }
@@ -9147,19 +9190,44 @@ async function advancePunchStatus(id, newStatus) {
   const updates = {
     status: newStatus,
     history: [...(p.history||[]), histEntry],
-    updated_at: new Date().toISOString(),
   };
   if (newStatus === 'closed') {
     updates.closed_at = new Date().toISOString();
     updates.closed_by = currentRoleUser.name;
   }
-  const { error } = await _sb.from('punch_items').update(updates).eq('id', id);
-  if (error) { toast('Failed: ' + error.message, 'error'); return; }
-  Object.assign(p, updates);
+  // Routed through _dbUpdate (native fetch, tab-resume-safe) with the optimistic
+  // guard: updated_at is stamped server-side by a BEFORE UPDATE trigger, so a
+  // concurrent status change by another manager surfaces a CONFLICT here rather
+  // than one silently winning. updated_at is intentionally NOT set client-side.
+  let rows;
+  try {
+    rows = await _dbUpdate('punch_items', updates, { id },
+      p.updated_at ? { expect: { updated_at: p.updated_at } } : {});
+  } catch (e) {
+    if (_handleWriteConflict(e, { what: `Punch #${p.number || ''}`.trim(), reload: () => _punchReloadOne(id) })) return;
+    toast('Failed: ' + e.message, 'error'); return;
+  }
+  Object.assign(p, updates, rows && rows[0] ? { updated_at: rows[0].updated_at } : {});
   toast(`${newLabel}`, 'success');
   closeModal();
   openPunchDetail(id);
   renderPunchWorkflow();
+}
+
+// Refetch a single punch item and refresh the views that show it — used to
+// recover after an optimistic-concurrency CONFLICT so the user sees the latest
+// server state instead of their rejected edit.
+async function _punchReloadOne(id) {
+  try {
+    const fresh = await _dbSelect('punch_items', { id });
+    if (fresh && fresh[0]) {
+      const p = PUNCH_DB.find(x => x.id === id);
+      if (p) Object.assign(p, fresh[0]);
+    }
+  } catch (e) { _logSwallowed('punch reload after conflict', e); }
+  closeModal();
+  if (typeof renderPunchWorkflow === 'function') renderPunchWorkflow();
+  if (typeof openPunchDetail === 'function') openPunchDetail(id);
 }
 
 async function addPunchComment(id) {
@@ -9775,12 +9843,21 @@ async function saveEditPunchItem(id) {
       by: currentRoleUser.name,
       at: new Date().toISOString(),
     };
-    const updates = { ...form, updated_at: new Date().toISOString(),
+    const updates = { ...form,
       history: [...(p.history||[]), histEntry] };
     if (_editCars !== undefined) updates.linked_car_ids = _editCars;
-    const { error } = await _sb.from('punch_items').update(updates).eq('id', id);
-    if (error) { toast('Save failed: ' + error.message, 'error'); return; }
-    Object.assign(p, updates);
+    // Guarded write: updated_at is stamped by a BEFORE UPDATE trigger, so a
+    // concurrent edit to the same punch item is caught as CONFLICT instead of
+    // last-write-wins. Not set client-side.
+    let rows;
+    try {
+      rows = await _dbUpdate('punch_items', updates, { id },
+        p.updated_at ? { expect: { updated_at: p.updated_at } } : {});
+    } catch (e) {
+      if (_handleWriteConflict(e, { what: `Punch #${p.number || ''}`.trim(), reload: () => _punchReloadOne(id) })) return;
+      toast('Save failed: ' + e.message, 'error'); return;
+    }
+    Object.assign(p, updates, rows && rows[0] ? { updated_at: rows[0].updated_at } : {});
     toast('Punch item updated', 'success');
     closeModal(); openPunchDetail(id);
   } catch (err) {
@@ -10135,7 +10212,7 @@ async function _punchLibDelete(id) {
       const cfg = _punchTplCfg(t);
       const refs = (cfg.field_refs || []).filter(r => r.key !== f.key);
       const config = { ...cfg, field_refs: refs };
-      try { await _dbUpdate('punch_templates', { config }, { id: t.id }); t.config = config; } catch (_) {}
+      try { await _dbUpdate('punch_templates', { config }, { id: t.id }); t.config = config; } catch (e) { _logSwallowed('punch_templates: persist column config', e); }
     }
     toast('Field deleted', 'success');
     _punchLibRenderList();
@@ -10302,7 +10379,7 @@ async function _punchTplSave(id) {
   const active = !!document.getElementById('ptpe-active')?.checked;
   const desc = (document.getElementById('ptpe-desc')?.value || '').trim() || null;
   try {
-    if (isDefault) { for (const ot of PUNCH_TEMPLATES) { if (ot.is_default && ot.id !== id) { try { await _dbUpdate('punch_templates', { is_default: false }, { id: ot.id }); ot.is_default = false; } catch (_) {} } } }
+    if (isDefault) { for (const ot of PUNCH_TEMPLATES) { if (ot.is_default && ot.id !== id) { try { await _dbUpdate('punch_templates', { is_default: false }, { id: ot.id }); ot.is_default = false; } catch (e) { _logSwallowed('punch_templates: clear previous default', e); } } } }
     if (id) {
       const [row] = await _dbUpdate('punch_templates', { name, description: desc, config, is_default: isDefault, active }, { id });
       const t = _punchTemplateById(id); if (t) Object.assign(t, row || { name, description: desc, config, is_default: isDefault, active });
@@ -13387,17 +13464,17 @@ async function _trDeleteParentCase(testId) {
     // 1. Remove asset links and child test_items
     for (const c of children) {
       if (c.AssetId) {
-        try { await _assetUnlink(c.AssetId, testId); } catch(_) {}
+        try { await _assetUnlink(c.AssetId, testId); } catch(e) { _logSwallowed('test delete: unlink child asset', e); }
       }
       try {
         await _dbDelete('test_results',             { test_id: c.TestID });
         await _dbDelete('test_item_status_history', { test_id: c.TestID });
-      } catch(_) {}
-      try { await _dbDelete('test_items', { test_id: c.TestID }); } catch(_) {}
+      } catch(e) { _logSwallowed('test delete: prune child results/history', e); }
+      try { await _dbDelete('test_items', { test_id: c.TestID }); } catch(e) { _logSwallowed('test delete: remove child test_item', e); }
     }
     // 2. Remove the parent test_item
-    try { await _dbDelete('test_results',             { test_id: parent.TestID }); } catch(_) {}
-    try { await _dbDelete('test_item_status_history', { test_id: parent.TestID }); } catch(_) {}
+    try { await _dbDelete('test_results',             { test_id: parent.TestID }); } catch(e) { _logSwallowed('test delete: prune parent results', e); }
+    try { await _dbDelete('test_item_status_history', { test_id: parent.TestID }); } catch(e) { _logSwallowed('test delete: prune parent history', e); }
     await _dbDelete('test_items', { test_id: parent.TestID });
     // 3. Prune TI in memory
     const idsToRemove = new Set([String(testId), ...children.map(c => String(c.TestID))]);
@@ -13424,8 +13501,8 @@ async function _trDeleteAssetRow(childTestId) {
       await _assetUnlink(child.AssetId, child.ParentTestId);
     } else {
       // Fallback: just delete the child test_item
-      try { await _dbDelete('test_results',             { test_id: child.TestID }); } catch(_) {}
-      try { await _dbDelete('test_item_status_history', { test_id: child.TestID }); } catch(_) {}
+      try { await _dbDelete('test_results',             { test_id: child.TestID }); } catch(e) { _logSwallowed('asset row delete: prune results', e); }
+      try { await _dbDelete('test_item_status_history', { test_id: child.TestID }); } catch(e) { _logSwallowed('asset row delete: prune history', e); }
       await _dbDelete('test_items', { test_id: child.TestID });
       const idx = TI.findIndex(r => String(r.TestID) === String(childTestId));
       if (idx !== -1) TI.splice(idx, 1);
@@ -13821,8 +13898,8 @@ async function _amDeleteActivity() {
     // Delete FK-dependent child rows first
     for (const r of act.items) {
       if (!r.TestID) continue;
-      try { await _dbDelete('test_results',             { test_id: r.TestID }); } catch(_) {}
-      try { await _dbDelete('test_item_status_history', { test_id: r.TestID }); } catch(_) {}
+      try { await _dbDelete('test_results',             { test_id: r.TestID }); } catch(e) { _logSwallowed('test delete: prune results', e); }
+      try { await _dbDelete('test_item_status_history', { test_id: r.TestID }); } catch(e) { _logSwallowed('test delete: prune status history', e); }
     }
     // Delete the test_items themselves
     await _dbDelete('test_items', {
@@ -13854,8 +13931,8 @@ async function _amBulkDeleteActivities() {
     for (const act of selected) {
       for (const r of act.items) {
         if (!r.TestID) continue;
-        try { await _dbDelete('test_results',             { test_id: r.TestID }); } catch(_) {}
-        try { await _dbDelete('test_item_status_history', { test_id: r.TestID }); } catch(_) {}
+        try { await _dbDelete('test_results',             { test_id: r.TestID }); } catch(e) { _logSwallowed('test delete: prune results', e); }
+        try { await _dbDelete('test_item_status_history', { test_id: r.TestID }); } catch(e) { _logSwallowed('test delete: prune status history', e); }
       }
       await _dbDelete('test_items', {
         phase:     act.phase,
@@ -17490,8 +17567,8 @@ async function _assetUnlink(assetId, parentTestId) {
   const child = TI.find(r => r.AssetId === assetId && String(r.ParentTestId) === String(parentTestId));
   if (child) {
     // Delete child results/history first
-    try { await _dbDelete('test_results', { test_id: child.TestID }); } catch(_){}
-    try { await _dbDelete('test_item_status_history', { test_id: child.TestID }); } catch(_){}
+    try { await _dbDelete('test_results', { test_id: child.TestID }); } catch(e){ _logSwallowed('child delete: prune results', e); }
+    try { await _dbDelete('test_item_status_history', { test_id: child.TestID }); } catch(e){ _logSwallowed('child delete: prune status history', e); }
     await _dbDelete('test_items', { test_id: child.TestID });
     const idx = TI.findIndex(r => r.TestID === child.TestID);
     if (idx >= 0) TI.splice(idx, 1);
@@ -18724,7 +18801,7 @@ async function _assetDelete(assetId) {
   // Remove all links and child rows
   const links = ASSET_LINKS.filter(l => l.asset_id === assetId);
   for (const l of links) {
-    try { await _assetUnlink(assetId, l.parent_test_id); } catch(_){}
+    try { await _assetUnlink(assetId, l.parent_test_id); } catch(e){ _logSwallowed('asset unlink (assetId)', e); }
   }
   // Delete asset
   await _dbDelete('assets', { id: assetId });
@@ -18773,7 +18850,7 @@ async function _assetBulkDelete() {
   for (const id of ids) {
     const links = ASSET_LINKS.filter(l => l.asset_id === id);
     for (const l of links) {
-      try { await _assetUnlink(id, l.parent_test_id); } catch(_){}
+      try { await _assetUnlink(id, l.parent_test_id); } catch(e){ _logSwallowed('asset unlink (id)', e); }
     }
     await _dbDelete('assets', { id });
     ASSETS = ASSETS.filter(a => a.id !== id);
@@ -20093,7 +20170,7 @@ async function _vmPurgeDeletedConfig(configId) {
   // Vehicle rows linked to the config directly (config_id) — SET NULL in DB.
   const affected = (typeof VEH_EQUIP !== 'undefined' ? VEH_EQUIP : []).filter(e => e.config_id === configId);
   for (const e of affected) {
-    try { await _dbUpdate('vehicle_equipment', { config_id: null }, { id: e.id }); } catch (_) {}
+    try { await _dbUpdate('vehicle_equipment', { config_id: null }, { id: e.id }); } catch (err) { _logSwallowed('vehicle_equipment: detach config', err); }
     e.config_id = null;
   }
   // Child configs' parent_id are SET NULL in the DB — mirror locally.
@@ -21873,7 +21950,7 @@ const _vfStorage = {
     return j && j.signedURL ? SUPABASE_URL + '/storage/v1' + j.signedURL : null;
   },
   async remove(path) {
-    try { await _sb.storage.from(this.bucket).remove([path]); } catch (_) {}
+    try { await _sb.storage.from(this.bucket).remove([path]); } catch (e) { _logSwallowed('storage: remove orphaned object', e); }
   },
 };
 async function _vmFileUpload(lineId, file) {
@@ -32849,7 +32926,7 @@ async function _planningRecomputeConflicts(silentSuccess = false) {
     !c.is_acknowledged
   );
   for (const c of toDelete) {
-    try { await _dbDelete('planning_conflicts', { id: c.id }); } catch(_) {}
+    try { await _dbDelete('planning_conflicts', { id: c.id }); } catch(e) { _logSwallowed('planning_conflicts: delete stale', e); }
   }
 
   // Insert new conflicts one-by-one — a single invalid row must NOT
@@ -32968,7 +33045,7 @@ function _planningOpenP6Detail(p6) {
     if (typeof orig !== 'function') return;
     window[name] = async function(...args) {
       const ret = await orig.apply(this, args);
-      try { await _planningRecomputeConflicts(true); } catch(_) {}
+      try { await _planningRecomputeConflicts(true); } catch(e) { _logSwallowed('planning: recompute conflicts', e); }
       return ret;
     };
   };
@@ -44082,7 +44159,7 @@ function _dynShiftEventRow(shiftId) {
 async function _dynEnsureBartResources() {
   if (_dynPage._bartResIds) return _dynPage._bartResIds;
   let resources = [];
-  try { resources = await _dbSelect('planning_resources', {}, 'id,display_name,category'); } catch (_) {}
+  try { resources = await _dbSelect('planning_resources', {}, 'id,display_name,category'); } catch (e) { _logSwallowed('planning_resources: load for picker', e); }
   const find = nm => resources.find(r =>
     (r.display_name || '').toLowerCase() === nm.toLowerCase() ||
     (r.category || '').toLowerCase() === nm.toLowerCase());
@@ -44137,7 +44214,7 @@ async function _dynEnsureShiftCell(s, activityId, camp) {
   const existing = await _dbSelect('planning_events', { dynamic_shift_id: s.id }, 'id,planning_activity_id').catch(() => []);
   if (existing.length) {
     if (activityId && existing[0].planning_activity_id !== activityId) {
-      try { await _dbUpdate('planning_events', { planning_activity_id: activityId }, { id: existing[0].id }); } catch (_) {}
+      try { await _dbUpdate('planning_events', { planning_activity_id: activityId }, { id: existing[0].id }); } catch (e) { _logSwallowed('planning_events: relink activity', e); }
     }
     return existing[0].id;
   }
