@@ -49,7 +49,9 @@ assert(ad[0].end === "05:00", "apply sets Sunday to sun window");
 // settings panel HTML renders the three rows + gear actions
 const sh = run("_dynNrhSettingsHtml()");
 assert(/nrh-wk-start/.test(sh) && /nrh-sat-end/.test(sh) && /nrh-sun-start/.test(sh), "settings panel has wk/sat/sun inputs");
-assert(/_dynNrhSaveSettings\(\)/.test(sh), "settings panel wires Save & apply");
+// Save button is delegated (Tier 3 Stage B): onclick="_dynNrhSaveSettings()"
+// became data-action="_dynNrhSaveSettings" (routed by cx-actions.js).
+assert(/data-action="_dynNrhSaveSettings"/.test(sh), "settings panel wires Save & apply");
 
 // ── ONE window per access DAY (a 2-location day = one row granting both) ──────
 const orig = {

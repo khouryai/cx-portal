@@ -117,7 +117,7 @@ function _showSessionExpiredBanner() {
   bar.setAttribute('role', 'alert');
   bar.innerHTML = '<div class="icon" aria-hidden="true">' + icon('alert') + '</div>' +
     '<div>Your session has expired — changes can no longer be saved. Sign in again to continue.</div>' +
-    '<button type="button" onclick="signOut()">Sign in again</button>';
+    '<button type="button" data-action="signOut">Sign in again</button>';
   document.body.appendChild(bar);
 }
 
@@ -697,7 +697,7 @@ function _mobileBuildSheet() {
   });
   if (_mobileIsAdmin()) {
     const toggleLabel = _mobileSheetShowAll ? 'Show field pages only' : 'Show all pages';
-    html += `<button class="m-sheet-showall" onclick="_mobileToggleShowAll()">${escapeHtml(toggleLabel)}</button>`;
+    html += `<button class="m-sheet-showall" data-action="_mobileToggleShowAll">${escapeHtml(toggleLabel)}</button>`;
   }
   body.innerHTML = html || '<div class="m-sheet-group-label">No pages available</div>';
 
@@ -707,7 +707,7 @@ function _mobileBuildSheet() {
       const roleLabel = currentRoleUser.role === 'admin' ? 'Global Administrator' : 'Member';
       const signoutSvg = '<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 001 1h6a1 1 0 100-2H4V5h5a1 1 0 100-2H3zm9.293 3.293a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 01-1.414-1.414L13.586 11H8a1 1 0 110-2h5.586l-1.293-1.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>';
       foot.innerHTML = `<div class="m-sheet-user"><div class="m-sheet-user-name">${escapeHtml(nm)}</div><div class="m-sheet-user-role">${escapeHtml(roleLabel)}</div></div>` +
-        `<button class="m-sheet-signout" onclick="signOut()">${signoutSvg}<span>Sign out</span></button>`;
+        `<button class="m-sheet-signout" data-action="signOut">${signoutSvg}<span>Sign out</span></button>`;
     } else {
       foot.innerHTML = '';
     }
@@ -3814,7 +3814,7 @@ function onLoggedIn() {
         <div class="sidenav-user-name">${escapeHtml(currentRoleUser.name)}</div>
         <div class="sidenav-user-role">${roleLabel}${subNote}</div>
       </div>
-      <button class="sidenav-signout" onclick="signOut()" title="Sign out">
+      <button class="sidenav-signout" data-action="signOut" title="Sign out">
         <svg width="15" height="15" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 001 1h8a1 1 0 100-2H4V5h7a1 1 0 100-2H3zm10.293 4.293a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 01-1.414-1.414L14.586 11H9a1 1 0 110-2h5.586l-1.293-1.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
       </button>
     `;
@@ -4127,7 +4127,7 @@ function _awOpenTestCasesModal(sub, act) {
       <span style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;">Bulk apply:</span>
       <input type="number" id="aw-bulk-val" class="form-input" min="0" step="0.5" placeholder="weight"
         style="width:90px;font-size:12px;padding:5px 8px;text-align:right;">
-      <button class="admin-action-btn tr-mini-btn" onclick="_awApplyBulkWeight()">Apply to all ${cases.length} test cases</button>
+      <button class="admin-action-btn tr-mini-btn" data-action="_awApplyBulkWeight">Apply to all ${cases.length} test cases</button>
       <span style="margin-left:auto;font-size:11px;color:var(--gray-500);">All changes save instantly</span>
     </div>`;
 
@@ -4470,7 +4470,7 @@ function _adminTemplatesHTML() {
           <div class="admin-section-title">Activity Templates</div>
           <p class="section-sub">Create reusable templates that can be deployed across multiple locations</p>
         </div>
-        <button class="admin-action-btn" onclick="openNewTemplateModal()">+ New Template</button>
+        <button class="admin-action-btn" data-action="openNewTemplateModal">+ New Template</button>
       </div>
       ${TEMPLATES.length ? `<div class="template-grid">
         ${TEMPLATES.map(tpl => `
@@ -4504,7 +4504,7 @@ function _adminTestItemsHTML() {
           <div class="admin-section-title">Import Test Items</div>
           <p class="section-sub">Upload a CSV to add new test cases or update existing ones — status is fully controlled by your file.</p>
         </div>
-        <button class="admin-action-btn" onclick="downloadImportTemplate()">↓ Download Template</button>
+        <button class="admin-action-btn" data-action="downloadImportTemplate">↓ Download Template</button>
       </div>
       <div class="data-card" style="padding:24px;text-align:center;">
         <p style="font-size:13px;color:var(--gray-700);margin-bottom:16px;">
@@ -4535,12 +4535,12 @@ function _adminLocationsHTML() {
           <p class="section-sub">Define phases and stations — used across field intake, templates, and reporting</p>
         </div>
         <div style="display:flex;gap:8px;align-items:center;">
-          <button class="form-secondary" id="loc-delete-btn" style="display:none;font-size:12px;padding:6px 12px;color:var(--red-600);" onclick="bulkDeleteLocations()">Delete Selected</button>
+          <button class="form-secondary" id="loc-delete-btn" style="display:none;font-size:12px;padding:6px 12px;color:var(--red-600);" data-action="bulkDeleteLocations">Delete Selected</button>
           <label style="cursor:pointer;">
             <input type="file" accept=".csv" onchange="handleLocationImport(this)" style="display:none">
             <div class="admin-action-btn-secondary" style="display:inline-block;cursor:pointer;padding:9px 16px;font-size:13px;font-weight:600;border:1px solid var(--gray-300);border-radius:var(--radius-sm);">↑ Import CSV</div>
           </label>
-          <button class="admin-action-btn-secondary" onclick="downloadLocationTemplate()">↓ CSV Template</button>
+          <button class="admin-action-btn-secondary" data-action="downloadLocationTemplate">↓ CSV Template</button>
           <button class="admin-action-btn" onclick="openAddLocationModal(null, 1)">+ Add Phase</button>
         </div>
       </div>
@@ -4775,7 +4775,7 @@ function handleLocationImport(input) {
       `,
       footer: `
         <button class="form-secondary" data-action="closeModal">Cancel</button>
-        <button class="form-submit" onclick="executeLocationImport()">Import ${_locImportRows.length} Locations</button>
+        <button class="form-submit" data-action="executeLocationImport">Import ${_locImportRows.length} Locations</button>
       `,
     });
   });
@@ -4963,7 +4963,7 @@ async function handleImportFile(input) {
     body: warnHTML + newHTML,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" id="do-import-btn" onclick="executeImport()">
+      <button class="form-submit" id="do-import-btn" data-action="executeImport">
         Import ${rows.length} test case${rows.length !== 1 ? 's' : ''}
       </button>`,
   });
@@ -5507,7 +5507,7 @@ function _tplModalBody() {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
       <div style="font-weight:600;font-size:13px;">Sections &amp; Test Cases</div>
       <div style="display:flex;gap:8px;align-items:center;">
-        <button class="form-secondary" style="font-size:12px;padding:5px 10px;" onclick="downloadTemplateCaseCSV()">↓ CSV Template</button>
+        <button class="form-secondary" style="font-size:12px;padding:5px 10px;" data-action="downloadTemplateCaseCSV">↓ CSV Template</button>
         <label style="cursor:pointer;">
           <input type="file" accept=".csv" onchange="handleTemplateCaseImport(this)" style="display:none">
           <div class="form-secondary" style="font-size:12px;padding:5px 10px;cursor:pointer;display:inline-block;">${icon('folder')} Import CSV</div>
@@ -5516,7 +5516,7 @@ function _tplModalBody() {
     </div>
     <div id="tpl-sections">${_tplSectionsHTML()}</div>
     <button class="form-secondary" style="width:100%;font-size:13px;border-style:dashed;margin-top:2px;"
-      onclick="addTplSection()">+ Add Section</button>
+      data-action="addTplSection">+ Add Section</button>
     ${typeof _tplFormsBlockHTML === 'function' ? _tplFormsBlockHTML(_editTemplateId) : ''}
   `;
 }
@@ -5532,7 +5532,7 @@ function openNewTemplateModal() {
     size:   'large',
     body:   _tplModalBody(),
     footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
-             <button class="form-submit" onclick="saveNewTemplate()">Create Activity Template</button>`,
+             <button class="form-submit" data-action="saveNewTemplate">Create Activity Template</button>`,
   });
 }
 
@@ -5573,7 +5573,7 @@ function editTemplate(id) {
     size:   'large',
     body:   _tplModalBody(),
     footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
-             <button class="form-submit" onclick="saveEditTemplate()">Save Changes</button>`,
+             <button class="form-submit" data-action="saveEditTemplate">Save Changes</button>`,
   });
   setTimeout(() => {
     const el = (id) => document.getElementById(id);
@@ -6017,7 +6017,7 @@ function _adminDirectoryHTML() {
           <div class="admin-section-title">User Directory</div>
           <p class="section-sub">Manage portal access, roles, and subsystem visibility</p>
         </div>
-        <button class="admin-action-btn" onclick="openInviteUserModal()">+ Invite User</button>
+        <button class="admin-action-btn" data-action="openInviteUserModal">+ Invite User</button>
       </div>
       <div class="dir-search-bar">
         <span class="dir-search-ico" aria-hidden="true">${icon('search')}</span>
@@ -6251,7 +6251,7 @@ async function openInviteUserModal() {
     `,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="inviteUser()">Create Account</button>
+      <button class="form-submit" data-action="inviteUser">Create Account</button>
     `,
   });
 }
@@ -6383,7 +6383,7 @@ function renderTestMatrix() {
         <option value="yes" ${matrixFilter.applicable==='yes'?'selected':''}>With status only</option>
         <option value="no"  ${matrixFilter.applicable==='no'?'selected':''}>Not started only</option>
       </select>
-      ${hasFilter ? `<button class="filter-clear" onclick="_mxClearFilters()">Reset</button>` : ''}
+      ${hasFilter ? `<button class="filter-clear" data-action="_mxClearFilters">Reset</button>` : ''}
     </div>
 
     ${(() => {
@@ -6796,7 +6796,7 @@ function openEditActivityModal(idx) {
     `,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="admin-action-btn" onclick="saveActivityEdit()">Save Changes</button>
+      <button class="admin-action-btn" data-action="saveActivityEdit">Save Changes</button>
     `
   });
 }
@@ -7169,7 +7169,7 @@ function _intakeSyncBanner() {
         ${syncing ? '<span class="cx-spin" aria-hidden="true">↻</span> ' : ''}${status}
       </span>
       <button class="form-secondary" style="padding:4px 12px;font-size:12px;"
-        onclick="_intakeRefresh()" ${syncing ? 'disabled' : ''}>↻ Refresh</button>
+        data-action="_intakeRefresh" ${syncing ? 'disabled' : ''}>↻ Refresh</button>
     </div>`;
 }
 
@@ -7277,7 +7277,7 @@ function renderIntakeStep1() {
       </div>
       ${_intakeExcludedTests.size ? `<div style="font-size:12px;color:var(--gray-500);margin:-8px 0 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         ${_intakeExcludedTests.size} test${_intakeExcludedTests.size !== 1 ? 's' : ''} removed from today\u2019s log.
-        <button class="logout-mini" style="color:var(--info);" onclick="_intakeRestoreRemoved()">Restore removed</button>
+        <button class="logout-mini" style="color:var(--info);" data-action="_intakeRestoreRemoved">Restore removed</button>
       </div>` : ''}
       <div class="form-actions">
         <button class="form-secondary" onclick="showPage('test-register')">↺ Back to Test Register</button>
@@ -7383,8 +7383,8 @@ function renderIntakeStep2() {
 
       <div class="form-actions">
         <button class="form-secondary" onclick="setIntakeStep(1)">← Back</button>
-        <button class="form-secondary" onclick="addIntakeAddition()">+ Add to List</button>
-        <button class="form-submit" onclick="continueIntakeStep3()">Continue to Step 3 →</button>
+        <button class="form-secondary" data-action="addIntakeAddition">+ Add to List</button>
+        <button class="form-submit" data-action="continueIntakeStep3">Continue to Step 3 →</button>
       </div>
     </div>
   `;
@@ -7464,7 +7464,7 @@ function renderIntakeStep3(items) {
 
       <div class="form-actions">
         <button class="form-secondary" onclick="setIntakeStep(2)">← Back</button>
-        <button class="form-submit" onclick="submitIntakeFinal()">Submit Daily Log</button>
+        <button class="form-submit" data-action="submitIntakeFinal">Submit Daily Log</button>
       </div>
     </div>
   `;
@@ -7833,9 +7833,9 @@ function _dlHistoryHTML() {
       </select>
       <label style="font-size:13px;color:var(--gray-600);display:flex;align-items:center;gap:5px;cursor:pointer;">
         <input type="checkbox" ${_dlFilter.delayOnly?'checked':''} onchange="_dlSetFilter('delayOnly',this.checked)"> Delays only</label>
-      ${hasFilters ? `<button class="filter-clear" onclick="_dlClearFilters()">Reset</button>` : ''}
+      ${hasFilters ? `<button class="filter-clear" data-action="_dlClearFilters">Reset</button>` : ''}
       <span style="font-size:13px;color:var(--gray-500);">${logs.length} log${logs.length!==1?'s':''}</span>
-      <button class="form-secondary" style="margin-left:auto;" onclick="_dlExportCSV()"
+      <button class="form-secondary" style="margin-left:auto;" data-action="_dlExportCSV"
         title="Export the filtered logs to CSV"${logs.length ? '' : ' disabled'}>${icon('download')} Export CSV</button>
     </div>
 
@@ -8537,9 +8537,9 @@ function renderPunchWorkflow() {
         </button>
       </div>
       <div style="display:flex;gap:8px;">
-        ${uiCan('punch_list','import') ? `<button class="v2-btn-ghost" onclick="openPunchImportModal()">${icon('upload')}Import CSV</button>` : ''}
-        ${uiCan('punch_list','manage_templates') ? `<button class="v2-btn-ghost" onclick="_punchTemplatesModal()">${icon('sliders')}Templates</button>` : ''}
-        ${uiCan('punch_list','create') ? `<button class="v2-btn-primary" onclick="openNewPunchModal()">＋ Create New</button>` : ''}
+        ${uiCan('punch_list','import') ? `<button class="v2-btn-ghost" data-action="openPunchImportModal">${icon('upload')}Import CSV</button>` : ''}
+        ${uiCan('punch_list','manage_templates') ? `<button class="v2-btn-ghost" data-action="_punchTemplatesModal">${icon('sliders')}Templates</button>` : ''}
+        ${uiCan('punch_list','create') ? `<button class="v2-btn-primary" data-action="openNewPunchModal">＋ Create New</button>` : ''}
       </div>
     </div>
 
@@ -8556,7 +8556,7 @@ function renderPunchWorkflow() {
         </span>`;
       }).join('')}
       <span class="right">
-        <button class="v2-btn-ghost" onclick="openPlColEditor()" title="Configure columns (legacy table)">${icon('columns')}Cols</button>
+        <button class="v2-btn-ghost" data-action="openPlColEditor" title="Configure columns (legacy table)">${icon('columns')}Cols</button>
       </span>
     </div>
 
@@ -8589,7 +8589,7 @@ function renderPunchWorkflow() {
         ${plActivities.map(a=>`<option value="${escapeHtml(a)}" ${_plActivityFilter===a?'selected':''}>${escapeHtml(a)}</option>`).join('')}
       </select>` : ''}
       ${(tplPool.length || _plTemplateFilter) ? `<select onchange="_plSetFilter('template',this.value)"><option value="">All Templates</option>${tplPool.map(t=>`<option value="${t.id}" ${_plTemplateFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}</select>` : ''}
-      ${plHasFilters ? `<button class="v2-btn-mini" onclick="_plClearFilters()">${icon('x')} Reset</button>` : ''}
+      ${plHasFilters ? `<button class="v2-btn-mini" data-action="_plClearFilters">${icon('x')} Reset</button>` : ''}
       <span class="count"><b>${total}</b> of ${baseItems.length}</span>
     </div>
 
@@ -8597,7 +8597,7 @@ function renderPunchWorkflow() {
       <div class="v2-bulk-bar">
         <span class="count">${_plSelected.size} item${_plSelected.size===1?'':'s'} selected</span>
         <button class="v2-btn-mini primary" onclick="exportPunchPDF([..._plSelected])">${icon('download')}Export ${_plSelected.size} as PDF</button>
-        <button class="clear" onclick="_plClearSelection()">${icon('x')}Clear selection</button>
+        <button class="clear" data-action="_plClearSelection">${icon('x')}Clear selection</button>
       </div>` : ''}
 
     <div class="v2-list">
@@ -10039,7 +10039,7 @@ function _punchTemplatesModal() {
   modal({
     title: 'Punch Templates', size: 'large',
     body: `<div class="punch-modal-toolbar" style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
-        <button class="form-secondary" onclick="_punchFieldLibModal()">${icon('puzzle')} Field Library</button>
+        <button class="form-secondary" data-action="_punchFieldLibModal">${icon('puzzle')} Field Library</button>
         <button class="form-submit" onclick="_punchTplEditModal('')">+ New Template</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;">
@@ -10061,10 +10061,10 @@ function _punchFieldLibModal() {
   modal({
     title: 'Punch Field Library', size: 'large',
     body: `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">Reusable custom fields. Allocate them to any punch template. Only <strong>Single/Multi Select</strong> fields carry a dropdown option list — managed in <strong>Admin → Field Config → Punch Custom Fields</strong>. Use <strong>Edit</strong> to rename a field or change its type (e.g. convert a text field to a dropdown).</div>
-      <div class="punch-modal-toolbar" style="display:flex;justify-content:flex-end;margin-bottom:8px;flex-wrap:wrap;"><button class="form-submit" onclick="_punchLibShowCreate()">+ New Field</button></div>
+      <div class="punch-modal-toolbar" style="display:flex;justify-content:flex-end;margin-bottom:8px;flex-wrap:wrap;"><button class="form-submit" data-action="_punchLibShowCreate">+ New Field</button></div>
       <div id="plib-create"></div>
       <div id="plib-list"></div>`,
-    footer: `<button class="form-secondary" onclick="_punchTemplatesModal()">Back to Templates</button><button class="form-secondary" data-action="closeModal">Done</button>`,
+    footer: `<button class="form-secondary" data-action="_punchTemplatesModal">Back to Templates</button><button class="form-secondary" data-action="closeModal">Done</button>`,
   });
   _punchLibRenderList();
 }
@@ -10261,8 +10261,8 @@ function _punchTplEditModal(id) {
         <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--gray-50);border-bottom:1px solid var(--border);">
           <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--gray-400);">Custom fields</span>
           <span style="display:flex;gap:6px;">
-            <button class="form-secondary" style="font-size:11px;" onclick="_ptpeShowPicker()">${icon('search')} Choose From Existing</button>
-            <button class="form-secondary" style="font-size:11px;" onclick="_ptpeShowCreate()">${icon('plus')} Create New</button>
+            <button class="form-secondary" style="font-size:11px;" data-action="_ptpeShowPicker">${icon('search')} Choose From Existing</button>
+            <button class="form-secondary" style="font-size:11px;" data-action="_ptpeShowCreate">${icon('plus')} Create New</button>
           </span>
         </div>
         <div id="ptpe-addpanel"></div>
@@ -10273,7 +10273,7 @@ function _punchTplEditModal(id) {
         <div style="font-size:11px;color:var(--gray-500);margin:6px 0;">Point a core dropdown at a different Field Config fieldset key (blank = default).</div>
         <div class="form-grid">${coreKeys.map(([k, lbl]) => `<div class="form-field"><label>${lbl}</label><input id="ptpe-ok-${k}" class="form-input" placeholder="${k}" value="${escapeHtml(ok[k] || '')}"></div>`).join('')}</div>
       </details>`,
-    footer: `<button class="form-secondary" onclick="_punchTemplatesModal()">Back</button>
+    footer: `<button class="form-secondary" data-action="_punchTemplatesModal">Back</button>
       ${t ? `<button class="form-secondary" style="color:var(--bad);" onclick="_punchTplDelete('${t.id}')">Delete</button>` : ''}
       <button class="form-submit" onclick="_punchTplSave('${id || ''}')">Save Template</button>`,
   });
@@ -10410,7 +10410,7 @@ function openPunchImportModal() {
         <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px;">
           Upload a CSV file to bulk-create punch items. Download the template to see required columns.
         </p>
-        <button class="form-secondary" style="font-size:12px;" onclick="downloadPunchTemplate()">${icon('download')} Download CSV Template</button>
+        <button class="form-secondary" style="font-size:12px;" data-action="downloadPunchTemplate">${icon('download')} Download CSV Template</button>
       </div>
       <div class="form-field">
         <label>Select CSV File</label>
@@ -10420,7 +10420,7 @@ function openPunchImportModal() {
     `,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" id="punch-import-btn" onclick="executePunchImport()" disabled>Import</button>
+      <button class="form-submit" id="punch-import-btn" data-action="executePunchImport" disabled>Import</button>
     `,
   });
 }
@@ -10730,8 +10730,8 @@ function renderAuditLog() {
               value="${escapeHtml(_auditSearch)}" oninput="_auditOnSearch(this.value)" autocomplete="off" />
             ${_auditSearch ? `<button aria-label="Clear" class="audit-search-clear" onclick="_auditOnSearch('')" title="Clear">${icon('x')}</button>` : ''}
           </div>
-          <button class="form-secondary" onclick="refreshAuditLog()">Refresh</button>
-          <button class="export-btn" onclick="exportAudit()">Export CSV</button>
+          <button class="form-secondary" data-action="refreshAuditLog">Refresh</button>
+          <button class="export-btn" data-action="exportAudit">Export CSV</button>
         </div>
       </div>
       <div class="table-wrap" id="audit-list"></div>
@@ -11567,12 +11567,12 @@ function renderTestReporting() {
         }).join('')}
         <span class="right">
           ${canManage && derivedCount
-            ? `<button class="v2-btn-ghost" onclick="_trpSyncMissingReports()" ${_trpSyncInFlight ? 'disabled' : ''}>
+            ? `<button class="v2-btn-ghost" data-action="_trpSyncMissingReports" ${_trpSyncInFlight ? 'disabled' : ''}>
                  ${_trpSyncInFlight ? 'Syncing…' : `↻ Sync Missing (${derivedCount})`}
                </button>`
             : ''}
           ${canManage
-            ? `<button class="v2-btn-primary" onclick="openNewTestReportModal()">＋ New Report</button>`
+            ? `<button class="v2-btn-primary" data-action="openNewTestReportModal">＋ New Report</button>`
             : ''}
         </span>
       </div>
@@ -11599,7 +11599,7 @@ function renderTestReporting() {
               <option value="">All Subsystems</option>
               ${subsystemOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
             </select>`}
-        ${trpHasFilters ? `<button class="v2-btn-mini" onclick="_trpClearFilters()">${icon('x')} Reset</button>` : ''}
+        ${trpHasFilters ? `<button class="v2-btn-mini" data-action="_trpClearFilters">${icon('x')} Reset</button>` : ''}
         <span class="count"><b>${filtered.length}</b> of ${rows.length}</span>
       </div>
 
@@ -11776,7 +11776,7 @@ function openNewTestReportModal() {
         <div class="form-field form-field-full"><label>Notes</label><textarea id="tr-notes" class="form-input" rows="2" placeholder="Optional notes..."></textarea></div>
       </div>
     `,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" onclick="saveNewTestReport()">Create Report</button>`
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" data-action="saveNewTestReport">Create Report</button>`
   });
 }
 
@@ -12719,7 +12719,7 @@ function _testRegisterHTML() {
               <input type="file" accept=".csv" onchange="handleImportFile(this)" style="display:none">
               <span class="v2-btn-ghost">${icon('folder')} Import Test Items</span>
             </label>
-            <button class="v2-btn-ghost" onclick="downloadImportTemplate()">↓ CSV Template</button>
+            <button class="v2-btn-ghost" data-action="downloadImportTemplate">↓ CSV Template</button>
           ` : ''}
         </span>
       </div>
@@ -12746,7 +12746,7 @@ function _testRegisterHTML() {
               <option value="">All Subsystems</option>
               ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_amFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
             </select>`}
-        ${hasFilters ? `<button class="v2-btn-mini" onclick="_amClearFilters()">${icon('x')} Reset</button>` : ''}
+        ${hasFilters ? `<button class="v2-btn-mini" data-action="_amClearFilters">${icon('x')} Reset</button>` : ''}
         <span class="count"><b>${filtered.length}</b> of ${all.length}</span>
       </div>
 
@@ -12754,10 +12754,10 @@ function _testRegisterHTML() {
       ${selCount > 0 && (uiCan('test_register','deploy_field') || uiCan('test_register','bulk_delete')) ? `
         <div class="v2-bulk-bar">
           <span class="count">${selCount} activit${selCount===1?'y':'ies'} selected</span>
-          ${hasNonFuture && uiCan('test_register','deploy_field') ? `<button class="v2-btn-mini primary" style="background:var(--accent-purple);border-color:var(--accent-purple);" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
-          ${hasFutureTest && uiCan('test_register','deploy_field') ? `<button class="v2-btn-mini primary" style="background:var(--good);border-color:var(--good);" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
-          ${uiCan('test_register','bulk_delete') ? `<button class="v2-btn-mini danger" onclick="_amBulkDeleteActivities()">${icon('trash')} Delete</button>` : ''}
-          <button class="clear" onclick="_amClearSelection()">${icon('x')} Clear selection</button>
+          ${hasNonFuture && uiCan('test_register','deploy_field') ? `<button class="v2-btn-mini primary" style="background:var(--accent-purple);border-color:var(--accent-purple);" data-action="_amOpenFutureTestModal">Mark as Future Test</button>` : ''}
+          ${hasFutureTest && uiCan('test_register','deploy_field') ? `<button class="v2-btn-mini primary" style="background:var(--good);border-color:var(--good);" data-action="_amOpenDeployToFieldModal">Deploy to Field</button>` : ''}
+          ${uiCan('test_register','bulk_delete') ? `<button class="v2-btn-mini danger" data-action="_amBulkDeleteActivities">${icon('trash')} Delete</button>` : ''}
+          <button class="clear" data-action="_amClearSelection">${icon('x')} Clear selection</button>
         </div>` : ''}
 
       <!-- Main table -->
@@ -12933,7 +12933,7 @@ function _adminActivityManagerHTML() {
             <input type="file" accept=".csv" onchange="handleImportFile(this)" style="display:none">
             <div class="admin-action-btn" style="display:inline-block;cursor:pointer;background:var(--gray-700);">${icon('folder')} Import Test Items</div>
           </label>
-          <button class="form-secondary" onclick="downloadImportTemplate()">↓ CSV Template</button>
+          <button class="form-secondary" data-action="downloadImportTemplate">↓ CSV Template</button>
         </div>
       </div>
 
@@ -12955,7 +12955,7 @@ function _adminActivityManagerHTML() {
           <option value="">All Statuses</option>
           ${statuses.map(s=>`<option value="${s}" ${_amFilters.status===s?'selected':''}>${s}</option>`).join('')}
         </select>
-        ${hasFilters ? `<button class="filter-clear" onclick="_amClearFilters()">Reset</button>` : ''}
+        ${hasFilters ? `<button class="filter-clear" data-action="_amClearFilters">Reset</button>` : ''}
         <span style="margin-left:auto;font-size:12px;color:var(--gray-500);">${filtered.length} of ${all.length} shown</span>
       </div>
 
@@ -12963,10 +12963,10 @@ function _adminActivityManagerHTML() {
       ${selCount > 0 ? `
         <div class="am-bulk-bar">
           <span><b>${selCount}</b> activit${selCount===1?'y':'ies'} selected</span>
-          ${hasNonFuture ? `<button class="admin-action-btn" style="background:var(--accent-purple);" onclick="_amOpenFutureTestModal()">Mark as Future Test</button>` : ''}
-          ${hasFutureTest ? `<button class="admin-action-btn" style="background:var(--good);" onclick="_amOpenDeployToFieldModal()">Deploy to Field</button>` : ''}
-          <button class="admin-action-btn" style="background:var(--bad);" onclick="_amBulkDeleteActivities()">${icon('trash')} Delete Selected</button>
-          <button class="btn-ghost-light" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_amClearSelection()">Clear selection</button>
+          ${hasNonFuture ? `<button class="admin-action-btn" style="background:var(--accent-purple);" data-action="_amOpenFutureTestModal">Mark as Future Test</button>` : ''}
+          ${hasFutureTest ? `<button class="admin-action-btn" style="background:var(--good);" data-action="_amOpenDeployToFieldModal">Deploy to Field</button>` : ''}
+          <button class="admin-action-btn" style="background:var(--bad);" data-action="_amBulkDeleteActivities">${icon('trash')} Delete Selected</button>
+          <button class="btn-ghost-light" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" data-action="_amClearSelection">Clear selection</button>
         </div>
       ` : ''}
 
@@ -13089,7 +13089,7 @@ function _amDrilldownHTML(key) {
 
       <!-- Compact activity strip -->
       <div class="act-strip">
-        <button class="back-btn" onclick="_amCloseDrilldown()">← Back to Test Register</button>
+        <button class="back-btn" data-action="_amCloseDrilldown">← Back to Test Register</button>
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:32px;flex-wrap:wrap;">
           <div style="min-width:0;flex:1;">
             <div class="v2-meta-line" style="margin-bottom:6px;">
@@ -13112,11 +13112,11 @@ function _amDrilldownHTML(key) {
               <div class="v2-bar-track"><div class="v2-bar-fill ${barTone}" style="width:${pct}%;"></div></div>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
-              ${isAdmin && hasDynamic ? `<button class="v2-btn-ghost" onclick="_trToggleShowDynamic()" title="Show or hide dynamic-scope test cases in this register">${_trShowDynamic?'Hide Dynamic':'Show Dynamic'}</button>` : ''}
-              ${uiCan('test_register','bulk_edit') ? `<button class="v2-btn-ghost" onclick="_trToggleBulkEdit()">${_trBulkMode?'Bulk Edit On':'Bulk Edit'}</button>` : ''}
+              ${isAdmin && hasDynamic ? `<button class="v2-btn-ghost" data-action="_trToggleShowDynamic" title="Show or hide dynamic-scope test cases in this register">${_trShowDynamic?'Hide Dynamic':'Show Dynamic'}</button>` : ''}
+              ${uiCan('test_register','bulk_edit') ? `<button class="v2-btn-ghost" data-action="_trToggleBulkEdit">${_trBulkMode?'Bulk Edit On':'Bulk Edit'}</button>` : ''}
               ${uiCan('test_register','edit_case') ? (_trEditMode
-                ? `${uiCan('test_register','add_test_case') ? `<button class="v2-btn-ghost" onclick="_trAddSection()">＋ Section</button>` : ''}
-                   <button class="v2-btn-ghost" onclick="_trCancelEdit()">Cancel</button>
+                ? `${uiCan('test_register','add_test_case') ? `<button class="v2-btn-ghost" data-action="_trAddSection">＋ Section</button>` : ''}
+                   <button class="v2-btn-ghost" data-action="_trCancelEdit">Cancel</button>
                    <button class="v2-btn-primary" onclick="_trSaveEdit('${escapeHtml(key)}')">Save</button>`
                 : `<button class="v2-btn-primary" onclick="_trStartEdit('${escapeHtml(key)}')">Edit</button>`) : ''}
             </div>
@@ -13526,11 +13526,11 @@ function _trBulkBarHTML(count) {
         ${['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable','Future Test'].map(s=>`<option value="${s}">${s}</option>`).join('')}
       </select>
       <input id="tr-bulk-notes" class="form-input" placeholder="Bulk notes (optional)" style="min-width:180px;">
-      <button class="admin-action-btn" onclick="_trApplyBulkField()">Apply</button>
+      <button class="admin-action-btn" data-action="_trApplyBulkField">Apply</button>
       <div style="width:1px;background:rgba(255,255,255,.2);align-self:stretch;"></div>
-      ${isAdmin ? `<button class="admin-action-btn" style="background:var(--bad);" onclick="_trBulkDelete()"
+      ${isAdmin ? `<button class="admin-action-btn" style="background:var(--bad);" data-action="_trBulkDelete"
         data-tippy-content="Permanently delete selected test cases">${icon('trash')} Delete (${count})</button>` : ''}
-      <button class="btn-ghost-dark" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_trClearSelection()">Clear</button>
+      <button class="btn-ghost-dark" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" data-action="_trClearSelection">Clear</button>
     </div>
   `;
 }
@@ -13773,7 +13773,7 @@ function _amOpenEditModal(key) {
         Changes to Activity Name, Phase, Location, or Subsystem update all child test items. Activity Status is auto-calculated from test item statuses.
       </p>
     `,
-    footer: `<button class="admin-action-btn" style="background:var(--bad);margin-right:auto;" onclick="_amDeleteActivity()">${icon('trash')} Delete Activity</button><button class="form-secondary" data-action="closeModal">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:var(--good);" onclick="_amSaveEdit(true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" onclick="_amSaveEdit()">Save Changes</button>`
+    footer: `<button class="admin-action-btn" style="background:var(--bad);margin-right:auto;" data-action="_amDeleteActivity">${icon('trash')} Delete Activity</button><button class="form-secondary" data-action="closeModal">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:var(--good);" onclick="_amSaveEdit(true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" data-action="_amSaveEdit">Save Changes</button>`
   });
 }
 
@@ -13966,7 +13966,7 @@ function _amOpenDeployToFieldModal() {
         ${selected.map(a=>`<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--line-soft);">${escapeHtml(a.activity)} <span style="color:var(--gray-500);">· ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</span></div>`).join('')}
       </div>
     `,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" style="background:var(--good);" onclick="_amConfirmDeployToField()">Confirm & Deploy</button>`
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" style="background:var(--good);" data-action="_amConfirmDeployToField">Confirm & Deploy</button>`
   });
 }
 
@@ -14280,7 +14280,7 @@ function _trInsightsHTML() {
 
   const head = `
     <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:10px 16px;cursor:pointer;user-select:none;"
-         onclick="_trToggleInsights()" role="button" aria-expanded="${_trInsightsOpen}" title="${_trInsightsOpen ? 'Collapse' : 'Expand'} failure insights">
+         data-action="_trToggleInsights" role="button" aria-expanded="${_trInsightsOpen}" title="${_trInsightsOpen ? 'Collapse' : 'Expand'} failure insights">
       <span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);display:inline-flex;align-items:center;gap:6px;">${icon('zap')} Failure Insights</span>
       ${stat(k.systemic, `systemic case${k.systemic !== 1 ? 's' : ''} (≥2 locations)`, k.systemic ? 'var(--bad)' : 'var(--good)')}
       ${stat(k.repeat, 'failed after retest', k.repeat ? 'var(--accent-purple)' : 'var(--good)')}
@@ -14466,11 +14466,11 @@ function _trBlockersShellHTML() {
               <option value="">All Subsystems</option>
               ${subsystems.map(s => `<option value="${escapeHtml(s)}" ${_amFilters.subsystem === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
             </select>`}
-        ${_trCaseFilter ? `<button class="v2-btn-mini" onclick="_trClearCaseFilter()"
+        ${_trCaseFilter ? `<button class="v2-btn-mini" data-action="_trClearCaseFilter"
             title="Showing only this test case (exact code + ≥90% name match) — click to clear"
             style="color:var(--primary);border-color:var(--primary);max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
             ${icon('target')} ${escapeHtml([_trCaseFilter.code, _trCaseFilter.name].filter(Boolean).join(' · '))} ×</button>` : ''}
-        ${hasFilters ? `<button class="v2-btn-mini" onclick="_amClearFilters()">${icon('x')} Reset</button>` : ''}
+        ${hasFilters ? `<button class="v2-btn-mini" data-action="_amClearFilters">${icon('x')} Reset</button>` : ''}
         <span class="count"><b>${shown.length}</b> shown</span>
       </div>
 
@@ -14513,7 +14513,7 @@ function _trViewBarHTML() {
       </div>
       <div class="tr-savedviews">
         ${views.map(v => `<button class="tr-savedview" onclick="_trApplyView('${v.id}')" title="Apply saved filter view">${escapeHtml(v.name)}<span class="tr-savedview-x" onclick="_trDeleteView('${v.id}',event)" role="button" aria-label="Delete view ${escapeHtml(v.name)}">×</span></button>`).join('')}
-        <button class="tr-savedview-add" ${_trFiltersActive() ? '' : 'disabled'} onclick="_trSaveCurrentView()" title="${_trFiltersActive() ? 'Save the current filters + search as a reusable view' : 'Apply a filter or search first'}">${icon('plus')} Save view</button>
+        <button class="tr-savedview-add" ${_trFiltersActive() ? '' : 'disabled'} data-action="_trSaveCurrentView" title="${_trFiltersActive() ? 'Save the current filters + search as a reusable view' : 'Apply a filter or search first'}">${icon('plus')} Save view</button>
       </div>
     </div>`;
 }
@@ -14613,7 +14613,7 @@ function _amOpenFutureTestModal() {
         </select>
       </div>
     `,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" style="background:var(--accent-purple);" onclick="_amConfirmFutureTest()">Confirm & Update All</button>`
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" style="background:var(--accent-purple);" data-action="_amConfirmFutureTest">Confirm & Update All</button>`
   });
 }
 
@@ -14758,7 +14758,7 @@ function cxPrompt(message, defaultValue, opts) {
       body: `<p class="cx-dialog-text">${_cxDialogText(message)}</p>
              <input type="text" id="cx-dialog-input" class="form-input" value="${escapeHtml(val)}" style="margin-top:10px;">`,
       footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
-               <button class="form-submit" onclick="_cxDialogPromptOk()">${escapeHtml(opts.ok || 'OK')}</button>`,
+               <button class="form-submit" data-action="_cxDialogPromptOk">${escapeHtml(opts.ok || 'OK')}</button>`,
     });
     setTimeout(() => {
       const el = document.getElementById('cx-dialog-input');
@@ -15046,7 +15046,7 @@ function _p6ShowPreview(activities) {
         <span><b>${activities.filter(a=>a.is_actual).length}</b> actuals</span>
         <span><b>${activities.filter(a=>!a.is_actual).length}</b> planned</span>
       </div>
-      <button class="admin-action-btn" onclick="_p6ConfirmImport()" style="width:100%;">
+      <button class="admin-action-btn" data-action="_p6ConfirmImport" style="width:100%;">
         Confirm Import
       </button>
     </div>`;
@@ -15179,7 +15179,7 @@ function _p6MappingTabHTML() {
             <option value="linked"   ${_p6MappingFilters.linked==='linked'?'selected':''}>Linked</option>
           </select>
           ${(_p6MappingFilters.phase || _p6MappingFilters.location || _p6MappingFilters.subsystem || _p6MappingFilters.linked)
-            ? `<button class="filter-clear" onclick="_p6MapClearFilters()">Reset</button>` : ''}
+            ? `<button class="filter-clear" data-action="_p6MapClearFilters">Reset</button>` : ''}
         </div>
 
         <!-- Activity list -->
@@ -15896,7 +15896,7 @@ async function _p6CheckBatchSuggestions(activityName, subsystem, p6Act) {
       <div>${rows}</div>`,
     footer: `
       <button class="form-secondary" data-action="closeModal">Skip</button>
-      <button class="admin-action-btn" onclick="_p6AcceptBatchSuggestions()">
+      <button class="admin-action-btn" data-action="_p6AcceptBatchSuggestions">
         Accept Selected
       </button>`,
   });
@@ -16097,7 +16097,7 @@ function _p6LearnTabHTML() {
         <input type="text" id="p6-learn-search" class="filter-input" style="font-size:12px;max-width:220px;" placeholder="Search test activity…"
           value="${escapeHtml(_p6LearnFilters.search||'')}" oninput="_p6LearnSearch(this.value)">
         ${(_p6LearnFilters.phase || _p6LearnFilters.subsystem || (_p6LearnFilters.search||'').trim())
-          ? `<button class="filter-clear" onclick="_p6LearnClearFilters()">Reset</button>` : ''}
+          ? `<button class="filter-clear" data-action="_p6LearnClearFilters">Reset</button>` : ''}
         <span style="font-size:12px;color:var(--gray-500);margin-left:auto;">
           <b>${candidates.length}</b> of ${totalCandidates} shown \u00b7
           <b>${candidates.reduce((s,c)=>s+c.unlinkedCount,0)}</b> unlinked target${candidates.reduce((s,c)=>s+c.unlinkedCount,0)===1?'':'s'} across all locations
@@ -16552,7 +16552,7 @@ function _p6LearnPreview(sid) {
       ` : ''}`,
     footer: `
       <button class="form-secondary" onclick="closeModal();renderAdminP6()">Cancel</button>
-      ${targets.length ? `<button class="admin-action-btn" onclick="_p6LearnApply()">Apply Selected</button>` : ''}`,
+      ${targets.length ? `<button class="admin-action-btn" data-action="_p6LearnApply">Apply Selected</button>` : ''}`,
   });
 }
 
@@ -16736,8 +16736,8 @@ function _p6HealthTabHTML() {
             <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;">
               <input type="checkbox" id="p6h-sel-all" onchange="_p6HSelectAll(this.checked)"> Select all
             </label>
-            <button class="form-secondary tr-mini-btn" onclick="_p6HBulkRemindLater()">${icon('clock')} Snooze selected</button>
-            <button class="form-secondary tr-mini-btn" style="color:var(--bad);" onclick="_p6HBulkRemove()">${icon('trash')} Remove selected</button>
+            <button class="form-secondary tr-mini-btn" data-action="_p6HBulkRemindLater">${icon('clock')} Snooze selected</button>
+            <button class="form-secondary tr-mini-btn" style="color:var(--bad);" data-action="_p6HBulkRemove">${icon('trash')} Remove selected</button>
           </div>` : ''}
         </div>
 
@@ -16841,7 +16841,7 @@ function _p6HealthTabHTML() {
         <div class="data-card" style="padding:20px;border-left:3px solid var(--hitachi-red);">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
             <span style="font-size:13px;font-weight:700;">${icon('clock')} Snoozed P6 Activities (${snoozed.length})</span>
-            ${snoozed.length ? `<button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_p6HRestoreAll()">Unsnooze All</button>` : ''}
+            ${snoozed.length ? `<button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" data-action="_p6HRestoreAll">Unsnooze All</button>` : ''}
           </div>
           ${snoozed.length ? `
           <table class="data-table" style="width:100%;">
@@ -17621,7 +17621,7 @@ function _trOpenAssetPickerModal(testId) {
     body: `<div id="tr-asset-picker-body" style="padding:0 24px 16px;"></div>`,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" id="tr-asset-picker-submit" onclick="_trBulkLinkAssets()">Link 0 assets</button>
+      <button class="form-submit" id="tr-asset-picker-submit" data-action="_trBulkLinkAssets">Link 0 assets</button>
     `,
     size: 'large',
   });
@@ -17911,8 +17911,8 @@ async function _assetPreviewCSV(file) {
           </div>` : `<p style="font-size:13px;color:var(--good);margin:0;">${icon('check')} All test-case links resolved.</p>`}
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="_assetCancelImport()">Cancel</button>
-      <button class="admin-action-btn" onclick="_assetConfirmImport()" ${a.resolved === 0 ? 'disabled' : ''}>
+      <button class="form-secondary" data-action="_assetCancelImport">Cancel</button>
+      <button class="admin-action-btn" data-action="_assetConfirmImport" ${a.resolved === 0 ? 'disabled' : ''}>
         Import ${a.resolved} link${a.resolved !== 1 ? 's' : ''}
       </button>`,
     size: 'large',
@@ -18376,8 +18376,8 @@ function _assetPageHTML() {
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <input type="file" id="asset-csv-input" accept=".csv" style="display:none;" onchange="_assetPreviewCSV(this.files[0]); this.value=''">
             ${uiCan('assets','import') ? `<button class="admin-action-btn" onclick="document.getElementById('asset-csv-input').click()">${icon('folder')} Choose CSV File</button>` : ''}
-            <button class="form-secondary" onclick="_assetDownloadTemplate()">${icon('download')} Template</button>
-            <button class="form-secondary" onclick="_assetExportCSV()" title="Export all assets and their linked test cases">${icon('upload')} Export CSV</button>
+            <button class="form-secondary" data-action="_assetDownloadTemplate">${icon('download')} Template</button>
+            <button class="form-secondary" data-action="_assetExportCSV" title="Export all assets and their linked test cases">${icon('upload')} Export CSV</button>
           </div>
           <div id="asset-import-progress"></div>
           ${ASSET_BATCHES.length ? `
@@ -18403,7 +18403,7 @@ function _assetPageHTML() {
             ${allSubs.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
           </select>
           <div id="asset-add-prefix-preview" style="font-size:12px;color:var(--gray-500);"></div>
-          ${uiCan('assets','add') ? `<button class="admin-action-btn" onclick="_assetAddManual()">Add Asset</button>` : ''}
+          ${uiCan('assets','add') ? `<button class="admin-action-btn" data-action="_assetAddManual">Add Asset</button>` : ''}
         </div>
       </div>
     </div>
@@ -18438,7 +18438,7 @@ function _assetPageHTML() {
         <option value="">All Subsystems</option>
         ${subs.map(s => `<option value="${escapeHtml(s)}" ${_assetFilter.sub===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
       </select>
-      ${assetHasFilters ? `<button class="filter-clear" onclick="_assetClearFilters()">Reset</button>` : ''}
+      ${assetHasFilters ? `<button class="filter-clear" data-action="_assetClearFilters">Reset</button>` : ''}
       <span style="font-size:13px;color:var(--gray-500);">${filtered.length} asset${filtered.length!==1?'s':''}</span>
     </div>
 
@@ -18470,8 +18470,8 @@ function _assetPageHTML() {
         </select>
         <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" onclick="_assetBulkEditField('location','am-bulk-loc')">Apply</button>
         <span style="height:24px;border-left:1px solid var(--slate-600);align-self:center;"></span>
-        ${uiCan('assets','bulk_delete') ? `<button class="admin-action-btn" style="background:var(--bad);font-size:12px;" onclick="_assetBulkDelete()">${icon('trash')} Delete</button>` : ''}
-        <button class="btn-ghost-dark" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" onclick="_assetClearSelection()">Clear</button>
+        ${uiCan('assets','bulk_delete') ? `<button class="admin-action-btn" style="background:var(--bad);font-size:12px;" data-action="_assetBulkDelete">${icon('trash')} Delete</button>` : ''}
+        <button class="btn-ghost-dark" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" data-action="_assetClearSelection">Clear</button>
       </div>` : ''}
 
     <!-- Asset Table -->
@@ -18570,7 +18570,7 @@ function _assetManagePanelHTML(assetId) {
           ${asset.location ? `<span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:8px;">${escapeHtml(asset.location)}</span>` : ''}
           ${linkedSubs.length ? `<span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:4px;">· ${linkedSubs.map(s=>escapeHtml(s)).join(', ')}</span>` : ''}
         </div>
-        <button class="form-secondary" style="font-size:11px;" onclick="_assetCloseManageLinks()">Close ${icon('x')}</button>
+        <button class="form-secondary" style="font-size:11px;" data-action="_assetCloseManageLinks">Close ${icon('x')}</button>
       </div>
       <div style="padding:16px;">
 
@@ -19373,14 +19373,14 @@ function _cmPageHTML() {
           ${locOpts.map(l=>`<option value="${escapeHtml(l.name)}" ${f.location===l.name?'selected':''}>${escapeHtml(l.name)}</option>`).join('')}
         </select>
         <input type="text" class="form-input" style="max-width:240px;" placeholder="Search software / version / device…" value="${escapeHtml(f.search)}" oninput="_cmSetFilter('search',this.value)">
-        ${(f.subsystem||f.phase||f.location||f.search)?`<button class="form-secondary" style="font-size:12px;" onclick="_cmClearFilters()">Clear</button>`:''}
+        ${(f.subsystem||f.phase||f.location||f.search)?`<button class="form-secondary" style="font-size:12px;" data-action="_cmClearFilters">Clear</button>`:''}
       </div>
     </div>` : `<div class="admin-section" style="margin-bottom:18px;">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <input type="text" class="form-input" style="max-width:320px;" placeholder="Search VDDs…" value="${escapeHtml(f.search)}" oninput="_cmSetFilter('search',this.value)">
         ${f.search?`<button class="form-secondary" style="font-size:12px;" onclick="_cmSetFilter('search','')">Clear</button>`:''}
-        <button class="form-secondary" style="font-size:12px;" onclick="_cmExpandAll()">Expand All</button>
-        <button class="form-secondary" style="font-size:12px;" onclick="_cmCollapseAll()">Collapse All</button>
+        <button class="form-secondary" style="font-size:12px;" data-action="_cmExpandAll">Expand All</button>
+        <button class="form-secondary" style="font-size:12px;" data-action="_cmCollapseAll">Collapse All</button>
       </div>
     </div>`}
 
@@ -19892,7 +19892,7 @@ function openSwConfigModal(editId, cloneFromId, parentVddId) {
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
       ${existing ? `<button class="form-secondary" style="color:var(--bad);" onclick="deleteSwConfig('${existing.id}')">Delete</button>` : ''}
-      <button class="form-submit" onclick="saveSwConfig()">${existing?'Save Changes':'Save'}</button>
+      <button class="form-submit" data-action="saveSwConfig">${existing?'Save Changes':'Save'}</button>
     `,
   });
 
@@ -20428,12 +20428,12 @@ function _vmRenderRegistry(root, heroEl) {
             ${['', 'D', 'E'].map(t => `<button style="padding:5px 14px;border:none;cursor:pointer;${t ? 'border-left:1px solid var(--border);' : ''}background:${f.type === t ? 'var(--hitachi-red)' : 'var(--surface)'};color:${f.type === t ? 'var(--white)' : 'var(--text)'};font-weight:${f.type === t ? '600' : '400'};" onclick="_vmSetFilter('type','${t}')">${t ? t + '-Cars' : 'All'}</button>`).join('')}
           </div>
           <input type="text" class="form-input" style="max-width:220px;" placeholder="Search car number…" value="${escapeHtml(f.search)}" oninput="_vmSetFilter('search',this.value)">
-          ${(f.search || f.type) ? `<button class="form-secondary" style="font-size:12px;" onclick="_vmClearFilters()">Clear</button>` : ''}
+          ${(f.search || f.type) ? `<button class="form-secondary" style="font-size:12px;" data-action="_vmClearFilters">Clear</button>` : ''}
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          ${_vmCan('manage_templates') ? `<button class="form-secondary" onclick="_vmTemplatesModal()">${icon('sliders')} Templates</button>` : ''}
-          ${_vmCan('bulk_edit') ? `<button class="form-secondary" onclick="_vmBulkUpdateModal()">${icon('layers')} Bulk SW Update</button>` : ''}
-          ${_vmCan('create') ? `<button class="admin-action-btn" onclick="_vmAddCarModal()">${icon('plus')} Add Car</button>` : ''}
+          ${_vmCan('manage_templates') ? `<button class="form-secondary" data-action="_vmTemplatesModal">${icon('sliders')} Templates</button>` : ''}
+          ${_vmCan('bulk_edit') ? `<button class="form-secondary" data-action="_vmBulkUpdateModal">${icon('layers')} Bulk SW Update</button>` : ''}
+          ${_vmCan('create') ? `<button class="admin-action-btn" data-action="_vmAddCarModal">${icon('plus')} Add Car</button>` : ''}
         </div>
       </div>
     </div>`;
@@ -20520,7 +20520,7 @@ function _vmRenderDetail(root, heroEl) {
     <div class="admin-section" style="margin-bottom:16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-          <button class="form-secondary" style="font-size:12px;" onclick="_vmBackToList()">${icon('chevron-left')} All Cars</button>
+          <button class="form-secondary" style="font-size:12px;" data-action="_vmBackToList">${icon('chevron-left')} All Cars</button>
           ${_vmLightDot(r.light, 16)}
           <span style="font-size:22px;font-weight:700;font-family:monospace;">${escapeHtml(car.car_number)}</span>
           ${_vmTypeBadge(car.car_type)}
@@ -20828,7 +20828,7 @@ function _vmAddCarModal() {
       <div class="form-field form-field-full"><label>Notes</label><input type="text" id="vm-notes" class="form-input" placeholder="Optional"></div>
       <div class="form-field form-field-full"><label style="display:flex;align-items:center;gap:7px;font-weight:400;"><input type="checkbox" id="vm-seed" checked style="margin:0;"> Seed workflow &amp; equipment from the type template</label></div>
     </div>`,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" onclick="_vmSaveCar()">Save</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" data-action="_vmSaveCar">Save</button>`,
   });
 }
 async function _vmSaveCar() {
@@ -21161,7 +21161,7 @@ function _vmBulkUpdateModal() {
         <div class="form-field"><label>New Loaded Software Version *</label><select id="vm-bulk-build" class="form-input"></select></div>
       </div>
       <div style="margin-top:6px;"><label style="font-weight:600;font-size:12px;">Apply to cars</label>${carChecks('D')}${carChecks('E')}</div>`,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" onclick="_vmApplyBulkUpdate()">Apply Update</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" data-action="_vmApplyBulkUpdate">Apply Update</button>`,
   });
   setTimeout(_vmBulkDeviceChanged, 0);
 }
@@ -21291,7 +21291,7 @@ function _vmTemplatesBodyHTML() {
   const typeBtns = ['D', 'E'].map(x => `<button onclick="_vmTplSetType('${x}')" style="padding:5px 14px;border:1px solid var(--border);cursor:pointer;background:${t === x ? 'var(--hitachi-red)' : 'var(--surface)'};color:${t === x ? 'var(--white)' : 'var(--text)'};font-weight:600;border-radius:6px;">${x}-Car</button>`).join(' ');
   return `<div id="vm-tpl-body">
     <div style="display:flex;gap:8px;margin-bottom:14px;">${typeBtns}</div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;"><div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--gray-400);">Workflow checklist</div><button class="form-secondary" style="font-size:11px;" onclick="_vmTplAddWf()">${icon('plus')} Add item</button></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;"><div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--gray-400);">Workflow checklist</div><button class="form-secondary" style="font-size:11px;" data-action="_vmTplAddWf">${icon('plus')} Add item</button></div>
     <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:18px;">
       ${wf.length ? wf.map(i => `<div style="display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;">
         <span style="font-family:monospace;color:var(--gray-400);">${i.seq}</span>
@@ -21301,7 +21301,7 @@ function _vmTemplatesBodyHTML() {
         <button class="form-secondary" style="font-size:10px;padding:1px 6px;color:var(--bad);" onclick="_vmTplDelWf('${i.id}')">Del</button>
       </div>`).join('') : `<div style="font-size:12px;color:var(--gray-500);">No workflow items for ${t}-Car.</div>`}
     </div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;"><div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--gray-400);">Equipment baseline</div><button class="form-secondary" style="font-size:11px;" onclick="_vmTplAddEq()">${icon('plus')} Add equipment</button></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;"><div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--gray-400);">Equipment baseline</div><button class="form-secondary" style="font-size:11px;" data-action="_vmTplAddEq">${icon('plus')} Add equipment</button></div>
     <div style="display:flex;flex-direction:column;gap:5px;">
       ${eq.length ? eq.map(i => `<div style="display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;">
         <span style="flex:1;font-weight:600;">${escapeHtml(i.equipment_name)}</span>
@@ -21991,9 +21991,9 @@ function _vmChkBuilderModal(scope, parentId) {
     title: (scope === 'tpl' ? 'Checklist Template · ' : 'Checklist · ') + escapeHtml(parentTitle), size: 'large',
     body: `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">Build a detailed field checklist: group lines into sections; each line can be a tick, a Pass/Fail/N.A. verdict, a measured value (unit + expected), or a note.${scope === 'item' ? ' Responses already recorded are kept for lines you keep.' : ' New cars seeded from the template receive these lines.'}</div>
       <div id="vmckb-rows"></div>
-      <div style="margin-top:8px;"><button class="form-secondary" style="font-size:12px;" onclick="_vmCkbAdd()">${icon('plus')} Add line</button></div>`,
+      <div style="margin-top:8px;"><button class="form-secondary" style="font-size:12px;" data-action="_vmCkbAdd">${icon('plus')} Add line</button></div>`,
     footer: `<button class="form-secondary" onclick="${scope === 'tpl' ? '_vmTemplatesModal()' : 'closeModal();renderVehicleManagement()'}">Cancel</button>
-      <button class="form-submit" onclick="_vmCkbSave()">Save Checklist</button>`,
+      <button class="form-submit" data-action="_vmCkbSave">Save Checklist</button>`,
   });
   _vmCkbRender();
 }
@@ -22303,7 +22303,7 @@ function _rmaPageHTML() {
         </span>`;
       }).join('')}
       <span class="right">
-        <button class="v2-btn-ghost" onclick="_rmaCSVExport()">${icon('download')} Export CSV</button>
+        <button class="v2-btn-ghost" data-action="_rmaCSVExport">${icon('download')} Export CSV</button>
         ${uiCan('rma','create') ? `<button class="v2-btn-primary" onclick="openRMAModal(null)">＋ New RMA</button>` : ''}
       </span>
     </div>
@@ -22320,7 +22320,7 @@ function _rmaPageHTML() {
         <option value="">All Locations</option>
         ${locOpts.map(l => `<option value="${escapeHtml(l)}" ${_rmaFilter.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
       </select>
-      ${rmaHasFilters ? `<button class="v2-btn-mini" onclick="_rmaClearFilters()">${icon('x')} Reset</button>` : ''}
+      ${rmaHasFilters ? `<button class="v2-btn-mini" data-action="_rmaClearFilters">${icon('x')} Reset</button>` : ''}
       <span class="count"><b>${filtered.length}</b> of ${RMAS.length}</span>
     </div>
 
@@ -23288,11 +23288,11 @@ function _mtgListPageHTML() {
           ${['Agenda','Minutes'].filter(s => mtgStatuses.includes(s) || _mtgStatusFilter === s)
             .map(s => `<option value="${s}" ${_mtgStatusFilter===s?'selected':''}>${s}</option>`).join('')}
         </select>
-        ${mtgHasFilters ? `<button class="filter-clear" onclick="_mtgClearFilters()">Reset</button>` : ''}
+        ${mtgHasFilters ? `<button class="filter-clear" data-action="_mtgClearFilters">Reset</button>` : ''}
       </div>
       <div style="display:flex;gap:8px;">
-        ${isAdmin ? `<button class="form-secondary" onclick="openMtgTemplatesModal()">${icon('settings')} Templates</button>` : ''}
-        ${isAdmin ? `<button class="form-primary" onclick="openMtgModal()">+ Create Meeting</button>` : ''}
+        ${isAdmin ? `<button class="form-secondary" data-action="openMtgTemplatesModal">${icon('settings')} Templates</button>` : ''}
+        ${isAdmin ? `<button class="form-primary" data-action="openMtgModal">+ Create Meeting</button>` : ''}
       </div>
     </div>
     ${filtered.length === 0
@@ -23370,7 +23370,7 @@ function _mtgDetailPageHTML() {
   return `
     <div>
       <div style="font-size:13px;color:var(--gray-500);margin-bottom:14px;">
-        <span style="cursor:pointer;color:var(--primary);" onclick="_mtgCloseDetail()">← Meetings</span>
+        <span style="cursor:pointer;color:var(--primary);" data-action="_mtgCloseDetail">← Meetings</span>
         <span style="margin:0 6px;color:var(--gray-300);">›</span>
         <span>${escapeHtml(shortTitle)}</span>
       </div>
@@ -24099,7 +24099,7 @@ function openMtgImportAttendeesModal(meetingId) {
         style="font-family:monospace;font-size:12px;" placeholder="Paste Teams attendance CSV here…"></textarea>
       <div id="mtg-csv-preview" style="margin-top:12px;font-size:13px;"></div>`,
     footer: `
-      <button class="form-secondary" onclick="_mtgPreviewCSV()">Preview</button>
+      <button class="form-secondary" data-action="_mtgPreviewCSV">Preview</button>
       <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="_mtgImportCSV('${meetingId}')">Import</button>`,
   });
@@ -24354,7 +24354,7 @@ function openMtgTemplateEditModal(editId) {
         </div>
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="openMtgTemplatesModal()">← Back</button>
+      <button class="form-secondary" data-action="openMtgTemplatesModal">← Back</button>
       <button class="form-submit" onclick="saveMtgTemplate('${editId||''}')">${editId ? 'Save Changes' : 'Create Template'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-tpl-name')?.focus(), 100);
@@ -24802,9 +24802,9 @@ function _laCalendarHTML() {
     <div class="cal-shell" id="cal-shell" style="zoom:${_calZoom}">
       <div class="cal-toolbar">
         <div class="cal-nav">
-          <button class="cal-btn cal-btn-primary" onclick="_laNavToday()">Today</button>
-          <button class="cal-btn cal-btn-icon" onclick="_laNavPrev()" aria-label="Previous">‹</button>
-          <button class="cal-btn cal-btn-icon" onclick="_laNavNext()" aria-label="Next">›</button>
+          <button class="cal-btn cal-btn-primary" data-action="_laNavToday">Today</button>
+          <button class="cal-btn cal-btn-icon" data-action="_laNavPrev" aria-label="Previous">‹</button>
+          <button class="cal-btn cal-btn-icon" data-action="_laNavNext" aria-label="Next">›</button>
         </div>
         <h2 class="cal-title" id="cal-title">${escapeHtml(_laGetTitle())}</h2>
         <div class="cal-toolbar-right">
@@ -24813,9 +24813,9 @@ function _laCalendarHTML() {
             <span>P6 schedule</span>
           </label>
           <div class="cal-zoom-ctrl" style="display:flex;align-items:center;gap:4px;">
-            <button class="cal-btn cal-btn-icon" onclick="_laCalZoomOut()" title="Zoom out" aria-label="Zoom out">−</button>
+            <button class="cal-btn cal-btn-icon" data-action="_laCalZoomOut" title="Zoom out" aria-label="Zoom out">−</button>
             <span id="cal-zoom-label" style="font-size:11px;color:var(--gray-500);min-width:32px;text-align:center;">${Math.round(_calZoom*100)}%</span>
-            <button class="cal-btn cal-btn-icon" onclick="_laCalZoomIn()"  title="Zoom in"  aria-label="Zoom in">+</button>
+            <button class="cal-btn cal-btn-icon" data-action="_laCalZoomIn"  title="Zoom in"  aria-label="Zoom in">+</button>
           </div>
           <div class="cal-view-switch">
             ${[['day','Day'],['week','Week'],['month','Month']].map(([id,label]) => `
@@ -26119,11 +26119,11 @@ function _laLookaheadHTML() {
       <div style="display:flex;align-items:center;gap:6px;">
         <span style="font-size:11px;color:var(--gray-500);margin-right:2px;white-space:nowrap;">Period:</span>
         <button class="admin-tab" style="font-size:12px;padding:6px 10px;" onclick="_laShiftWindow(-7)" title="Back one week">‹ Prev</button>
-        <button class="admin-tab${_laWindowStart ? '' : ' active'}" style="font-size:12px;padding:6px 10px;" onclick="_laResetWindow()" title="Jump to today">Today</button>
+        <button class="admin-tab${_laWindowStart ? '' : ' active'}" style="font-size:12px;padding:6px 10px;" data-action="_laResetWindow" title="Jump to today">Today</button>
         <button class="admin-tab" style="font-size:12px;padding:6px 10px;" onclick="_laShiftWindow(7)" title="Forward one week">Next ›</button>
         <input type="date" value="${_laWinAnchor().format('YYYY-MM-DD')}" onchange="_laJumpWindow(this.value)" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-200);border-radius:6px;" title="Jump to a start date">
         ${(_laWindowStart && dayjs(_laWindowStart).isBefore(dayjs().startOf('day'))) ? '<span style="font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--warn);background:var(--warn-light);padding:3px 8px;border-radius:99px;">Viewing history</span>' : ''}
-        <button class="admin-tab" style="font-size:12px;padding:6px 12px;" onclick="openPlanningHistory()" title="Browse frozen weekly snapshots">${icon('calendar')} Past Weeks</button>
+        <button class="admin-tab" style="font-size:12px;padding:6px 12px;" data-action="openPlanningHistory" title="Browse frozen weekly snapshots">${icon('calendar')} Past Weeks</button>
       </div>
       ${_laTimelineGroupBy === 'activity' ? `
       <div style="display:flex;align-items:center;gap:0;">
@@ -26167,7 +26167,7 @@ function _laLookaheadHTML() {
           style="display:${_laRowSearch ? 'inline-flex' : 'none'};font-size:12px;padding:6px 9px;border:1px solid var(--gray-300);background:var(--white);border-radius:6px;cursor:pointer;">${icon('x')}</button>
         <span id="la-row-search-count" style="font-size:11px;color:var(--gray-500);white-space:nowrap;"></span>
       </div>
-      <button onclick="_laOpenNewActivityModal()" class="admin-action-btn" title="Add a new activity row to the lookahead">
+      <button data-action="_laOpenNewActivityModal" class="admin-action-btn" title="Add a new activity row to the lookahead">
         + Add Activity
       </button>
       <div style="position:relative;display:inline-block;">
@@ -26181,7 +26181,7 @@ function _laLookaheadHTML() {
           <button onclick="_laExportBARTResourceMap('csv');document.getElementById('la-export-menu').classList.remove('open');">${icon('chart')} BART Resource Map (.csv)</button>
         </div>
       </div>
-      <button onclick="_laToggleAssignMode()" class="admin-action-btn${_laAssignMode ? ' la-assign-btn-active' : ''}">
+      <button data-action="_laToggleAssignMode" class="admin-action-btn${_laAssignMode ? ' la-assign-btn-active' : ''}">
         ${_laAssignMode ? '✓ Done Assigning' : icon('user')+' Assign Resources'}
       </button>
     </div>
@@ -26514,7 +26514,7 @@ function _laDrawerHTML() {
     const n = _laSelectedCellKeys.size;
     title  = `Bulk edit (${n} cell${n>1?'s':''})`;
     body   = _laDrawerMultiHTML([..._laSelectedCellKeys]);
-    footer = `<button class="form-secondary" onclick="_laDrawerClose()">Close</button>`;
+    footer = `<button class="form-secondary" data-action="_laDrawerClose">Close</button>`;
   }
 
   return `
@@ -26522,7 +26522,7 @@ function _laDrawerHTML() {
       <div class="la-drawer-title">${title}
         <span id="la-drawer-dirty-ind" style="display:none;color:var(--bad);font-size:11px;font-weight:700;margin-left:8px;">● unsaved</span>
       </div>
-      <button aria-label="Close (Esc)" class="la-drawer-close" onclick="_laDrawerClose()" title="Close (Esc)">${icon('x')}</button>
+      <button aria-label="Close (Esc)" class="la-drawer-close" data-action="_laDrawerClose" title="Close (Esc)">${icon('x')}</button>
     </div>
     <div class="la-drawer-body">${body}</div>
     <div class="la-drawer-foot">${footer}</div>
@@ -26665,14 +26665,14 @@ function _laDrawerCellHTML(ev) {
 function _laDrawerCellFooterHTML(ev) {
   const isCancel = ev.status === 'cancelled';
   return `
-    <button class="form-secondary" onclick="_laDrawerClose()">Close</button>
+    <button class="form-secondary" data-action="_laDrawerClose">Close</button>
     ${ev.is_locked
       ? `<button class="form-secondary" onclick="_planningToggleLock('${ev.id}')">${icon('unlock')} Unlock</button>`
       : `<button class="form-secondary" onclick="_planningToggleLock('${ev.id}')">${icon('lock')} Lock</button>`}
     ${!isCancel
       ? `<button class="form-secondary" style="color:var(--bad);" onclick="_planningCancelEvent('${ev.id}')">${icon('ban')} Cancel</button>`
       : ''}
-    <button class="form-submit la-drawer-save" id="la-drawer-save" disabled onclick="_laDrawerSave()">${icon('save')} Save</button>
+    <button class="form-submit la-drawer-save" id="la-drawer-save" disabled data-action="_laDrawerSave">${icon('save')} Save</button>
   `;
 }
 
@@ -26817,9 +26817,9 @@ function _laDrawerActivityHTML(a) {
 
 function _laDrawerActivityFooterHTML(a) {
   return `
-    <button class="form-secondary" onclick="_laDrawerClose()">Close</button>
+    <button class="form-secondary" data-action="_laDrawerClose">Close</button>
     <button class="form-secondary" style="color:var(--bad);border-color:var(--bad-border);" onclick="_laDrawerSoftDeleteActivity('${a.id}')" title="Soft-delete: hidden from grid but restorable">${icon('trash')} Delete</button>
-    <button class="form-submit la-drawer-save" id="la-drawer-save" disabled onclick="_laDrawerSave()">${icon('save')} Save</button>
+    <button class="form-submit la-drawer-save" id="la-drawer-save" disabled data-action="_laDrawerSave">${icon('save')} Save</button>
   `;
 }
 
@@ -26849,9 +26849,9 @@ function _laDrawerMultiHTML(eventIds) {
     <div class="la-drawer-section">
       <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Bulk actions</div>
       <div style="display:flex;flex-direction:column;gap:6px;">
-        <button class="form-secondary" onclick="_laBulkCancelCells()">${icon('ban')} Cancel all (with reason)</button>
-        <button class="form-secondary" onclick="_laDeleteSelection()" style="color:var(--bad);">${icon('trash')} Delete all</button>
-        <button class="form-secondary" onclick="_laBulkRemoveCellResources()">${icon('users')} Remove users only</button>
+        <button class="form-secondary" data-action="_laBulkCancelCells">${icon('ban')} Cancel all (with reason)</button>
+        <button class="form-secondary" data-action="_laDeleteSelection" style="color:var(--bad);">${icon('trash')} Delete all</button>
+        <button class="form-secondary" data-action="_laBulkRemoveCellResources">${icon('users')} Remove users only</button>
         <button class="form-secondary" onclick="_laCopySelection('copy')">${icon('clipboard')} Copy</button>
         <button class="form-secondary" onclick="_laCopySelection('cut')">${icon('scissors')} Cut</button>
         <button class="form-secondary" onclick="_laClearCellSelection();_laDrawerClose();">${icon('x')} Clear selection</button>
@@ -27455,7 +27455,7 @@ function _laResourcePanelHTML() {
       <input type="text" class="la-res-search" placeholder="Search…" oninput="_laFilterResPanel(this.value)">
       <div id="la-sel-bar" style="display:${selCount?'flex':'none'};align-items:center;justify-content:space-between;background:var(--hitachi-red);color:var(--white);border-radius:5px;padding:4px 8px;font-size:11px;font-weight:600;">
         <span>${selCount} selected</span>
-        <button onclick="_laClearResSelection()" style="background:none;border:none;color:var(--white);cursor:pointer;font-size:11px;padding:0;">${icon('x')} Clear</button>
+        <button data-action="_laClearResSelection" style="background:none;border:none;color:var(--white);cursor:pointer;font-size:11px;padding:0;">${icon('x')} Clear</button>
       </div>
     </div>
     <div style="padding:4px 8px 4px;font-size:10px;color:var(--gray-400);">Click to select · drag to assign</div>
@@ -27621,7 +27621,7 @@ async function _laShowSnapshot(weekStart) {
   }).join('') : '<div style="padding:20px;color:var(--gray-400);">No activities recorded that week.</div>';
 
   if (body) body.innerHTML = `
-    <button class="form-secondary" style="font-size:12px;margin-bottom:12px;" onclick="_laRenderHistoryList()">‹ All weeks</button>
+    <button class="form-secondary" style="font-size:12px;margin-bottom:12px;" data-action="_laRenderHistoryList">‹ All weeks</button>
     <div class="la-hist-wkhead">
       <strong>${escapeHtml(_laSnapDate(snap.week_start))} – ${escapeHtml(_laSnapDate(snap.week_end))}</strong>
       <span style="color:var(--gray-500);font-size:12px;">${snap.activity_count} activities · ${snap.event_count} shifts${snap.cancelled_count ? ' · ' + snap.cancelled_count + ' cancelled' : ''} · frozen ${escapeHtml(_laSnapDate(snap.captured_at))}</span>
@@ -27680,17 +27680,17 @@ function _laCellSelActionsHTML() {
   if (nc > 0) {
     parts.push(`<span style="font-size:12px;font-weight:700;color:var(--good);">\u271a ${nc} date${nc>1?'s':''} staged</span>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;background:var(--good-light);border-color:var(--good-border);color:var(--good);" onclick="_laOpenCreateEventModal(_laCreateSel.slice())">\u2795 Create ${nc} event${nc>1?'s':''}</button>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearCreateSel()">\u2715 Clear</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" data-action="_laClearCreateSel">\u2715 Clear</button>`);
     if (n > 0 || hasClipboard) parts.push('<span style="width:1px;background:var(--surface-3);align-self:stretch;margin:0 4px;"></span>');
   }
   if (n > 0) {
     parts.push(`<span style="font-size:12px;font-weight:700;color:#7f0000;">${n} cell${n>1?'s':''} selected</span>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearCellSelection()">${icon('x')} Clear</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" data-action="_laClearCellSelection">${icon('x')} Clear</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laCopySelection('copy')" title="Ctrl+C">${icon('clipboard')} Copy</button>`);
     parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laCopySelection('cut')" title="Ctrl+X">${icon('scissors')} Cut</button>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:var(--bad);border-color:var(--bad-border);" onclick="_laDeleteSelection()" title="Del">${icon('trash')} Delete</button>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:var(--bad);border-color:var(--bad-border);" onclick="_laBulkCancelCells()">${icon('ban')} Cancel</button>`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laBulkRemoveCellResources()">Remove users only</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:var(--bad);border-color:var(--bad-border);" data-action="_laDeleteSelection" title="Del">${icon('trash')} Delete</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;color:var(--bad);border-color:var(--bad-border);" data-action="_laBulkCancelCells">${icon('ban')} Cancel</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" data-action="_laBulkRemoveCellResources">Remove users only</button>`);
     parts.push('<span style="width:1px;background:var(--surface-3);align-self:stretch;margin:0 4px;"></span>');
     parts.push(`<select onchange="_laBulkSetShift(this.value);this.selectedIndex=0;" title="Set shift for all selected cells" style="font-size:11px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;">
       <option value="">Set shift…</option>
@@ -27700,9 +27700,9 @@ function _laCellSelActionsHTML() {
       <option value="blanket_shift">■ Blanket</option>
     </select>`);
     parts.push(`<input id="la-bulk-loc" placeholder="Set location…" style="font-size:11px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;width:120px;">`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laBulkSetLocation()">Apply loc</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" data-action="_laBulkSetLocation">Apply loc</button>`);
     parts.push(`<input id="la-bulk-hours" placeholder="Set hours 0700-1500" title="Bulk set work hours (military). Auto-sets shift type." style="font-size:11px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:5px;width:130px;">`);
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laBulkSetHours()">Apply hrs</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" data-action="_laBulkSetHours">Apply hrs</button>`);
   }
   if (hasClipboard) {
     if (n > 0) parts.push('<span style="width:1px;background:var(--surface-3);align-self:stretch;margin:0 4px;"></span>');
@@ -27710,11 +27710,11 @@ function _laCellSelActionsHTML() {
     parts.push(`<span style="font-size:12px;color:var(--info);font-weight:600;">${icon('clipboard')} ${mode} ${_laClipboard.items.length}</span>`);
     if (hasTarget) {
       parts.push(`<span style="font-size:11px;color:var(--good);">Target: ${_laPasteTarget.date}</span>`);
-      parts.push(`<button class="admin-action-btn" style="font-size:11px;padding:4px 10px;" onclick="_laPasteAtTarget()" title="Ctrl+V">${icon('inbox')} Paste</button>`);
+      parts.push(`<button class="admin-action-btn" style="font-size:11px;padding:4px 10px;" data-action="_laPasteAtTarget" title="Ctrl+V">${icon('inbox')} Paste</button>`);
     } else {
       parts.push(`<span style="font-size:11px;color:var(--text-subtle);">click an empty cell, then Ctrl+V</span>`);
     }
-    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_laClearClipboard()">${icon('x')} Cancel</button>`);
+    parts.push(`<button class="form-secondary" style="font-size:11px;padding:4px 10px;" data-action="_laClearClipboard">${icon('x')} Cancel</button>`);
   }
   return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0;">${parts.join('')}</div>`;
 }
@@ -29125,7 +29125,7 @@ function _laOpenNewActivityModal() {
     `,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="_laSaveNewActivity()">Create Activity</button>
+      <button class="form-submit" data-action="_laSaveNewActivity">Create Activity</button>
     `,
   });
   // Populate cascade pickers (unfiltered on open)
@@ -30501,7 +30501,7 @@ function _laPTOStub() {
       </div>
       <div style="display:flex;gap:8px;">
         ${canSubmit
-          ? `<button class="admin-action-btn" onclick="_ptoOpenSubmitModal()">+ Submit PTO</button>`
+          ? `<button class="admin-action-btn" data-action="_ptoOpenSubmitModal">+ Submit PTO</button>`
           : `<button class="admin-action-btn" disabled style="opacity:.55;cursor:not-allowed;" title="No planning resource linked to your account">+ Submit PTO</button>`}
       </div>
     </div>
@@ -30632,7 +30632,7 @@ function _ptoOpenSubmitModal() {
     `,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="_ptoSubmit()">Submit Request</button>
+      <button class="form-submit" data-action="_ptoSubmit">Submit Request</button>
     `,
   });
   document.getElementById('modal-overlay')?.classList.add('active');
@@ -31271,7 +31271,7 @@ function _laCancellationsTabHTML() {
       ${icon('x')} Clear
     </button>
     <button id="crpt-export-btn" class="admin-action-btn" style="font-size:11px;padding:5px 14px;height:32px;"
-      onclick="_cancelRptExportPDF()">${icon('file')} Export All as PDF</button>
+      data-action="_cancelRptExportPDF">${icon('file')} Export All as PDF</button>
   </div>
 
   <div class="data-card" style="padding:0;overflow:hidden;">
@@ -31627,7 +31627,7 @@ function _apReviewStub() {
           </label>
           <strong style="font-size:13px;color:var(--bad);">${icon('ban')} Cancellations needing reason (${cancellationsNeedingReason.length})</strong>
           <span style="font-size:11px;color:var(--gray-500);">Select items then apply a shared reason, or add individually.</span>
-          <button id="cancel-bulk-btn" class="admin-action-btn" style="font-size:11px;padding:4px 12px;margin-left:auto;display:none;" onclick="_cancelBulkReason()">${icon('plus')} Add Reason to Selected</button>
+          <button id="cancel-bulk-btn" class="admin-action-btn" style="font-size:11px;padding:4px 12px;margin-left:auto;display:none;" data-action="_cancelBulkReason">${icon('plus')} Add Reason to Selected</button>
         </div>
         <table class="data-table">
           <thead><tr><th style="width:30px;"></th><th>Date</th><th>Activity</th><th>Location</th><th>Action</th></tr></thead>
@@ -32155,8 +32155,8 @@ function _lookaheadOpenPreviewModal() {
       </div>
     `,
     footer: `
-      <button class="form-secondary" onclick="_lookaheadCancelImport()">Cancel</button>
-      <button class="form-submit" onclick="_lookaheadConfirmImport()">Import ${s.total_events} Events</button>
+      <button class="form-secondary" data-action="_lookaheadCancelImport">Cancel</button>
+      <button class="form-submit" data-action="_lookaheadConfirmImport">Import ${s.total_events} Events</button>
     `,
   });
   document.getElementById('modal-overlay')?.classList.add('active');
@@ -32513,7 +32513,7 @@ function _cancelReasonModalOpen(subTitle, onSave) {
       </div>`,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="admin-action-btn" onclick="_cancelReasonSubmit()">Save</button>`,
+      <button class="admin-action-btn" data-action="_cancelReasonSubmit">Save</button>`,
   });
   window._cancelReasonOnSave = onSave;
 }
@@ -33116,7 +33116,7 @@ function _apConflictsStub() {
       </div>
       <div style="display:flex;gap:8px;">
         <button class="form-secondary" onclick="_planningRecomputeConflicts(true)">↻ Recompute</button>
-        ${rows.length ? `<button class="admin-action-btn" onclick="_planningBulkAck()">✓ Acknowledge ${rows.length}</button>` : ''}
+        ${rows.length ? `<button class="admin-action-btn" data-action="_planningBulkAck">✓ Acknowledge ${rows.length}</button>` : ''}
       </div>
     </div>
 
@@ -33203,7 +33203,7 @@ function _apResourcesStub() {
             ${icon('user')} Roles <span style="opacity:.6;font-weight:400;">(${rolesAll.length})</span>
           </button>
         </div>
-        <button class="admin-action-btn" onclick="_apAddResourceModal()">+ Add ${isRoles ? 'Role' : 'Person'}</button>
+        <button class="admin-action-btn" data-action="_apAddResourceModal">+ Add ${isRoles ? 'Role' : 'Person'}</button>
       </div>
 
       <!-- Filter bar -->
@@ -33476,7 +33476,7 @@ function _apAddResourceModal() {
       </div>`,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="admin-action-btn" onclick="_apCreateResource()">Add Resource</button>`,
+      <button class="admin-action-btn" data-action="_apCreateResource">Add Resource</button>`,
   });
 }
 
@@ -34357,7 +34357,7 @@ async function openFormViewer(formId, backTo = null) {
               <input type="checkbox" id="pdf-tb-pin" ${pin ? 'checked' : ''}/> Available offline
             </label>
             <span class="pdf-tb-divider"></span>
-            <button type="button" class="pdf-tb-btn" id="pdf-tb-markup" aria-pressed="false" title="Markup / redline this page" onclick="_fmkToggle()">${icon('edit')} Markup</button>
+            <button type="button" class="pdf-tb-btn" id="pdf-tb-markup" aria-pressed="false" title="Markup / redline this page" data-action="_fmkToggle">${icon('edit')} Markup</button>
             <span id="pdf-tb-status" class="pdf-tb-status pdf-tb-status-saved">Loaded</span>
           </div>
         </div>
@@ -34377,7 +34377,7 @@ async function openFormViewer(formId, backTo = null) {
     footer: `
       <div class="pdf-viewer-actions" style="display:flex;gap:6px;width:100%;">
         ${backTo ? `<button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" onclick="_fpBackToForms('${escapeHtml(String(backTo.testId))}','${escapeHtml(String(backTo.assetId || ''))}')">← Back</button>` : ''}
-        <button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" onclick="closeFormViewer()">Close</button>
+        <button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" data-action="closeFormViewer">Close</button>
         <button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" onclick="downloadFormPDF('${form.id}')">↓ Download</button>
         <button class="form-submit" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" id="form-viewer-save" onclick="saveFormPDF('${form.id}')">Save</button>
       </div>
@@ -35236,7 +35236,7 @@ function openSignaturePad({ fieldName, pageIndex, rect, target }) {
           <div class="signature-pad-title">Signature</div>
           <div class="signature-pad-sub">${escapeHtml(fieldName)}</div>
         </div>
-        <button class="modal-close" type="button" aria-label="Close signature pad" onclick="closeSignaturePad()">&times;</button>
+        <button class="modal-close" type="button" aria-label="Close signature pad" data-action="closeSignaturePad">&times;</button>
       </div>
       <div class="signature-pad-tabs">
         <button type="button" class="sig-tab active"  data-mode="draw">Draw</button>
@@ -35259,7 +35259,7 @@ function openSignaturePad({ fieldName, pageIndex, rect, target }) {
         </label>
       </div>
       <div class="signature-pad-footer">
-        <button class="form-secondary" type="button" onclick="closeSignaturePad()">Cancel</button>
+        <button class="form-secondary" type="button" data-action="closeSignaturePad">Cancel</button>
         <button class="form-submit" type="button" id="signature-pad-apply">Apply Signature</button>
       </div>
     </div>
@@ -36267,7 +36267,7 @@ function _formsPageListHTML() {
           <input type="checkbox" ${f.showTemplates ? 'checked' : ''} onchange="_formsSetFilter('showTemplates', this.checked)">
           Show template blanks
         </label>
-        ${formsHasFilters ? `<button class="filter-clear" onclick="_formsClearFilters()">Reset</button>` : ''}
+        ${formsHasFilters ? `<button class="filter-clear" data-action="_formsClearFilters">Reset</button>` : ''}
       </div>
       <div class="data-card" style="padding:0;overflow:hidden;">
         <table class="data-table">
@@ -37748,7 +37748,7 @@ function renderDrawingsPage() {
   }
 
   const uploadBtn = uiCan('drawings','upload_set') ? `
-    <button class="docs-primary-btn" onclick="_drwOpenUpload()">
+    <button class="docs-primary-btn" data-action="_drwOpenUpload">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
       Upload Drawing Set
     </button>` : '';
@@ -38257,8 +38257,8 @@ function _drwOpenUpload() {
       </div>
       <div id="drw-upload-err" style="color:var(--bad);font-size:12px;margin-top:4px;display:none;"></div>`,
     footer: `
-      <button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Cancel</button>
-      <button class="admin-action-btn" onclick="_drwStep1Next()">Next: Calibrate →</button>`,
+      <button class="admin-action-btn-secondary" data-action="_drwCloseUpload">Cancel</button>
+      <button class="admin-action-btn" data-action="_drwStep1Next">Next: Calibrate →</button>`,
   });
 
   const zone = document.getElementById('drw-drop-zone');
@@ -38306,7 +38306,7 @@ async function _drwStep1Next() {
     await _drwShowCalibrate();
   } catch(e) {
     document.querySelector('#modal-overlay .modal-body').innerHTML = `<p style="color:var(--bad);padding:20px;">${escapeHtml(e.message)}</p>`;
-    document.querySelector('#modal-overlay .modal-footer').innerHTML = `<button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Close</button>`;
+    document.querySelector('#modal-overlay .modal-footer').innerHTML = `<button class="admin-action-btn-secondary" data-action="_drwCloseUpload">Close</button>`;
   }
 }
 
@@ -38367,7 +38367,7 @@ async function _drwShowCalibrate() {
     + '<div style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Fields</div>'
     + '<div style="display:flex;flex-direction:column;gap:4px;" id="drw-cal-field-bar">' + fieldBtnsHTML + '</div>'
     + '<div id="drw-cal-info" style="margin-top:12px;padding:10px;background:var(--gray-50);border-radius:6px;font-size:11px;color:var(--gray-500);line-height:1.6;">Select a field above, then draw a box around it</div>'
-    + '<button class="admin-action-btn-secondary" onclick="_drwCalClear()" style="margin-top:8px;font-size:12px;padding:6px 12px;width:100%;">Clear Field Region</button>'
+    + '<button class="admin-action-btn-secondary" data-action="_drwCalClear" style="margin-top:8px;font-size:12px;padding:6px 12px;width:100%;">Clear Field Region</button>'
     + '<div style="margin-top:14px;font-size:11px;color:var(--gray-500);line-height:1.7;">'
     + '<div style="font-weight:700;color:var(--gray-600);margin-bottom:4px;">How it works</div>'
     + '<ol style="padding-left:14px;margin:0;">'
@@ -38382,9 +38382,9 @@ async function _drwShowCalibrate() {
     + '</div>';
 
   document.querySelector('#modal-overlay .modal-footer').innerHTML = ''
-    + '<button class="admin-action-btn-secondary" onclick="_drwOpenUpload()">← Back</button>'
-    + '<button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Cancel</button>'
-    + '<button class="admin-action-btn" onclick="_drwRunExtract()">Extract with Regions →</button>';
+    + '<button class="admin-action-btn-secondary" data-action="_drwOpenUpload">← Back</button>'
+    + '<button class="admin-action-btn-secondary" data-action="_drwCloseUpload">Cancel</button>'
+    + '<button class="admin-action-btn" data-action="_drwRunExtract">Extract with Regions →</button>';
 
   // Wire navigation
   document.getElementById('drw-cal-prev').onclick = () => _drwCalGoToPage(_drwCalPage - 1);
@@ -38637,7 +38637,7 @@ async function _drwRunExtract() {
     _drwShowReview(numPages);
   } catch(e) {
     document.querySelector('#modal-overlay .modal-body').innerHTML = `<p style="color:var(--bad);padding:20px;">${escapeHtml(e.message)}</p>`;
-    document.querySelector('#modal-overlay .modal-footer').innerHTML = `<button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Close</button>`;
+    document.querySelector('#modal-overlay .modal-footer').innerHTML = `<button class="admin-action-btn-secondary" data-action="_drwCloseUpload">Close</button>`;
   }
 }
 
@@ -38708,7 +38708,7 @@ function _drwShowReview(numPages) {
         : `<span style="background:var(--good-light);color:var(--good);padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">✓ All sheets parsed</span>`}
       <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(true)" style="font-size:12px;padding:5px 10px;">Select all</button>
       <button class="admin-action-btn-secondary" onclick="_drwReviewSelectAll(false)" style="font-size:12px;padding:5px 10px;">Select none</button>
-      <button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()" style="font-size:12px;padding:5px 10px;margin-left:auto;">↩ Recalibrate region</button>
+      <button class="admin-action-btn-secondary" data-action="_drwShowCalibrate" style="font-size:12px;padding:5px 10px;margin-left:auto;">↩ Recalibrate region</button>
     </div>
     ${_drwDisciplineListHTML()}
     <div style="display:flex;gap:16px;align-items:flex-start;">
@@ -38778,9 +38778,9 @@ function _drwShowReview(numPages) {
   _drwHydrateDisciplineReviewInputs();
 
   document.querySelector('#modal-overlay .modal-footer').innerHTML = `
-    <button class="admin-action-btn-secondary" onclick="_drwShowCalibrate()">← Recalibrate</button>
-    <button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Cancel</button>
-    <button class="admin-action-btn" onclick="_drwConfirmImport()">Confirm &amp; Import</button>`;
+    <button class="admin-action-btn-secondary" data-action="_drwShowCalibrate">← Recalibrate</button>
+    <button class="admin-action-btn-secondary" data-action="_drwCloseUpload">Cancel</button>
+    <button class="admin-action-btn" data-action="_drwConfirmImport">Confirm &amp; Import</button>`;
 
   const prevBtn = document.getElementById('drw-rev-prev');
   const nextBtn = document.getElementById('drw-rev-next');
@@ -39057,7 +39057,7 @@ async function _drwConfirmImport() {
     toast(`Drawing set imported: ${toImport.length} sheets${skipped ? `, ${skipped} skipped` : ''}${toSupersede.length ? `, ${toSupersede.length} auto-upreved` : ''}${addedDisciplines.length ? `, ${addedDisciplines.length} discipline${addedDisciplines.length===1?'':'s'} added` : ''}${insertResult.pageNumberSkipped ? ', page numbers skipped until DB migration is run' : ''}`, 'success');
   } catch(e) {
     document.querySelector('#modal-overlay .modal-body').innerHTML = cxError({ message: 'Import failed: ' + (e.message || e) });
-    document.querySelector('#modal-overlay .modal-footer').innerHTML = `<button class="admin-action-btn-secondary" onclick="_drwCloseUpload()">Close</button>`;
+    document.querySelector('#modal-overlay .modal-footer').innerHTML = `<button class="admin-action-btn-secondary" data-action="_drwCloseUpload">Close</button>`;
   }
 }
 
@@ -39175,20 +39175,20 @@ function _drwEnsureEditorChrome() {
       <button class="drw-color-btn" data-color="#10b981" onclick="_drwSetColor('#10b981')" title="Green" style="background:#10b981;"></button>
       <button class="drw-color-btn" data-color="#2563eb" onclick="_drwSetColor('#2563eb')" title="Blue" style="background:var(--info);"></button>
       <span class="drw-toolbar-divider"></span>
-      <button class="drw-tool-btn" onclick="_drwZoomOut()" title="Zoom out">-</button>
-      <button class="drw-tool-btn" onclick="_drwFitPage()" title="Fit whole page">Fit</button>
-      <button class="drw-tool-btn" onclick="_drwZoomIn()" title="Zoom in">+</button>
+      <button class="drw-tool-btn" data-action="_drwZoomOut" title="Zoom out">-</button>
+      <button class="drw-tool-btn" data-action="_drwFitPage" title="Fit whole page">Fit</button>
+      <button class="drw-tool-btn" data-action="_drwZoomIn" title="Zoom in">+</button>
       <span id="drw-zoom-label" class="drw-zoom-label">Fit</span>
       <span class="drw-toolbar-divider"></span>
-      <button class="drw-tool-btn" id="drw-tool-undo" onclick="_drwUndo()" title="Undo (Ctrl/Cmd+Z)" disabled>Undo</button>
-      <button class="drw-tool-btn" id="drw-tool-redo" onclick="_drwRedo()" title="Redo (Ctrl/Cmd+Shift+Z)" disabled>Redo</button>
-      <button class="drw-tool-btn drw-danger-btn" onclick="_drwDeleteSelected()" title="Delete selected markup">Delete</button>
-      <button class="drw-tool-btn drw-danger-btn" onclick="_drwClearMarkup()" title="Clear all your draft markups">Clear</button>
+      <button class="drw-tool-btn" id="drw-tool-undo" data-action="_drwUndo" title="Undo (Ctrl/Cmd+Z)" disabled>Undo</button>
+      <button class="drw-tool-btn" id="drw-tool-redo" data-action="_drwRedo" title="Redo (Ctrl/Cmd+Shift+Z)" disabled>Redo</button>
+      <button class="drw-tool-btn drw-danger-btn" data-action="_drwDeleteSelected" title="Delete selected markup">Delete</button>
+      <button class="drw-tool-btn drw-danger-btn" data-action="_drwClearMarkup" title="Clear all your draft markups">Clear</button>
       <span class="drw-toolbar-divider"></span>
-      <button class="drw-tool-btn" onclick="_drwExportOpen()" title="Export this sheet as PDF — original or marked up">Export</button>
-      <button class="drw-tool-btn" id="drw-tool-manage" onclick="_drwManageMarkupsOpen()" title="Manage all markups on this sheet" style="display:${uiCan('drawings','manage_markup_any') ? 'inline-flex' : 'none'};background:var(--warn-light);color:var(--warn);border-color:var(--warn-border);">Manage</button>
-      ${(uiCan('drawings','create_markup') || uiCan('drawings','edit_markup_own') || uiCan('drawings','manage_markup_any')) ? `<button class="drw-save-btn" onclick="_drwSaveMarkup()">Save Draft</button>` : ''}
-      ${(uiCan('drawings','publish') || uiCan('drawings','manage_markup_any')) ? `<button class="drw-publish-btn" onclick="_drwPublishMarkup()">Publish</button>` : ''}`;
+      <button class="drw-tool-btn" data-action="_drwExportOpen" title="Export this sheet as PDF — original or marked up">Export</button>
+      <button class="drw-tool-btn" id="drw-tool-manage" data-action="_drwManageMarkupsOpen" title="Manage all markups on this sheet" style="display:${uiCan('drawings','manage_markup_any') ? 'inline-flex' : 'none'};background:var(--warn-light);color:var(--warn);border-color:var(--warn-border);">Manage</button>
+      ${(uiCan('drawings','create_markup') || uiCan('drawings','edit_markup_own') || uiCan('drawings','manage_markup_any')) ? `<button class="drw-save-btn" data-action="_drwSaveMarkup">Save Draft</button>` : ''}
+      ${(uiCan('drawings','publish') || uiCan('drawings','manage_markup_any')) ? `<button class="drw-publish-btn" data-action="_drwPublishMarkup">Publish</button>` : ''}`;
     const _chips = document.getElementById('drw-stamp-chips');
     if (_chips && typeof CXMarkup !== 'undefined') {
       _chips.innerHTML = CXMarkup.STAMPS.map(s =>
@@ -40464,7 +40464,7 @@ async function openTestCaseScopeModal(testId) {
       <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-secondary" onclick="_dynOpenCadenceModal('${escapeHtml(testId)}')">Cadence…</button>
       <button class="form-secondary" onclick="_dtOpenPrereqEditor('${escapeHtml(testId)}')">Prerequisites…</button>
-      <button class="form-submit" onclick="_dtSaveScope()">Save</button>
+      <button class="form-submit" data-action="_dtSaveScope">Save</button>
     `,
   });
 }
@@ -40683,7 +40683,7 @@ async function renderDynamicTestingPage() {
       <button class="hero-tab ${_dynPage.tab==='planning'?'active':''}" onclick="_dynTabSwitch('planning')">Capacity Planning</button>
       <button class="hero-tab ${_dynPage.tab==='simulator'?'active':''}" onclick="_dynTabSwitch('simulator')">Simulator</button>
       <button class="hero-tab ${_dynPage.tab==='variance'?'active':''}" onclick="_dynTabSwitch('variance')">Duration Variance</button>
-      <button class="hero-tab" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;" onclick="tpOpen()" title="Open the track plan reference window — keep a track-plan map on screen while you work">${icon('map')} Track Plan</button>
+      <button class="hero-tab" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;" data-action="tpOpen" title="Open the track plan reference window — keep a track-plan map on screen while you work">${icon('map')} Track Plan</button>
     </div>
     <style>
       /* Module chrome — tokenized to match the capx-/accx-/simx- design language.
@@ -40952,7 +40952,7 @@ function _dynRenderInstances() {
   const toolbar = `
     <div class="capx-ctl">
       <button class="dyn-btn primary" onclick="_dynOpenInstanceModal(null)">${icon('plus')} New instance</button>
-      <button class="dyn-btn" onclick="_dynOpenCSVModal()">${icon('upload')} Import CSV / Excel</button>
+      <button class="dyn-btn" data-action="_dynOpenCSVModal">${icon('upload')} Import CSV / Excel</button>
       <span class="capx-searchwrap">${icon('search')}<input id="dyn-search" class="capx-input wide" type="search" placeholder="Search code / title / phase…" value="${escapeHtml(_dynPage.search)}" oninput="_dynPage.search=this.value;_dynInstSearchRerender();" /></span>
       <select class="capx-select" style="min-width:0;" id="dyn-status-filter" onchange="_dynPage.statusFilter=this.value;_dynRenderInstances();">
         <option value="">All statuses</option>
@@ -40967,7 +40967,7 @@ function _dynRenderInstances() {
         <option value="">All test cases</option>
         ${tcOpts.map(t => `<option value="${escapeHtml(t.id)}" ${_dynPage.testFilter===t.id?'selected':''}>${escapeHtml(t.info?.code || t.id)} — ${escapeHtml((t.info?.name||'').slice(0,40))}</option>`).join('')}
       </select>
-      ${dynInstHasFilters ? `<button type="button" class="capx-linkish" onclick="_dynInstClearFilters()">Reset</button>` : ''}
+      ${dynInstHasFilters ? `<button type="button" class="capx-linkish" data-action="_dynInstClearFilters">Reset</button>` : ''}
     </div>`;
 
   const tableHtml = `
@@ -41003,9 +41003,9 @@ function _dynRenderInstances() {
     <div class="capx-tray">
       ${selCount > 0
         ? `<span class="capx-tray-sum"><b>${selCount}</b> instance${selCount===1?'':'s'} selected</span>
-           <button class="dyn-btn" onclick="_dynInstClearSel()">Clear</button>
-           <button class="dyn-btn" style="color:var(--bad);" ${selUnschedulable ? '' : 'disabled'} onclick="_dynInstBulkUnschedule()" title="Pull the selected runs off the schedule and back to the backlog (completed runs are left alone)">Unschedule${selUnschedulable ? ` ${selUnschedulable}` : ''}</button>
-           <button class="dyn-btn primary" onclick="_dynOpenBulkEdit()">${icon('edit')} Bulk edit ${selCount}</button>`
+           <button class="dyn-btn" data-action="_dynInstClearSel">Clear</button>
+           <button class="dyn-btn" style="color:var(--bad);" ${selUnschedulable ? '' : 'disabled'} data-action="_dynInstBulkUnschedule" title="Pull the selected runs off the schedule and back to the backlog (completed runs are left alone)">Unschedule${selUnschedulable ? ` ${selUnschedulable}` : ''}</button>
+           <button class="dyn-btn primary" data-action="_dynOpenBulkEdit">${icon('edit')} Bulk edit ${selCount}</button>`
         : `<span class="capx-tray-sum is-empty">Tick rows to bulk-edit status, locations, phase and more in one pass</span>
            <button class="dyn-btn primary" disabled>${icon('edit')} Bulk edit</button>`}
     </div>`;
@@ -41116,7 +41116,7 @@ function _dynOpenBulkEdit() {
     `,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="_dynBulkEditApply()">Apply to ${ids.length}</button>
+      <button class="form-submit" data-action="_dynBulkEditApply">Apply to ${ids.length}</button>
     `,
     size: 'large',
   });
@@ -41715,8 +41715,8 @@ function _dynOpenCSVModal() {
         </p>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
           <input id="dyn-csv-file" type="file" accept=".csv,.xlsx,.xls" style="font-size:12px;" />
-          <button class="dyn-btn" onclick="_dynCSVPasteSample()" style="font-size:12px;">Insert sample</button>
-          <button class="form-secondary" onclick="_dynDownloadCSVTemplate()" style="font-size:12px;">${icon('download')} Template</button>
+          <button class="dyn-btn" data-action="_dynCSVPasteSample" style="font-size:12px;">Insert sample</button>
+          <button class="form-secondary" data-action="_dynDownloadCSVTemplate" style="font-size:12px;">${icon('download')} Template</button>
         </div>
         <textarea id="dyn-csv-text" rows="14" style="width:100%;font-family:var(--font-mono,monospace);font-size:12px;border:1px solid var(--gray-300);border-radius:5px;padding:8px;" placeholder="Paste CSV here or pick a file above…"></textarea>
         <div id="dyn-csv-status" style="margin-top:10px;font-size:13px;color:var(--gray-600);min-height:20px;"></div>
@@ -41724,8 +41724,8 @@ function _dynOpenCSVModal() {
     `,
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-secondary" onclick="_dynCSVValidate()">Validate</button>
-      <button class="form-submit" onclick="_dynImportCSVRows()">Import</button>
+      <button class="form-secondary" data-action="_dynCSVValidate">Validate</button>
+      <button class="form-submit" data-action="_dynImportCSVRows">Import</button>
     `,
     size: 'large',
   });
@@ -42314,7 +42314,7 @@ function _dynRenderBoard() {
           </span>
           <span class="accx-nav">
             <button class="simx-iconbtn" onclick="_dynBoardShift(-1)" aria-label="Previous period">${icon('chevron-left')}</button>
-            <button class="dyn-btn" onclick="_dynBoardToday()">Today</button>
+            <button class="dyn-btn" data-action="_dynBoardToday">Today</button>
             <button class="simx-iconbtn" onclick="_dynBoardShift(1)" aria-label="Next period">${icon('chevron-right')}</button>
           </span>
         </div>
@@ -42702,9 +42702,9 @@ function _dynBoardOpenDay(dayKey) {
             ${bulkWins.map(w => `<option value="${escapeHtml(String(w.id))}">${escapeHtml(_dynWindowLabel(w))}</option>`).join('')}
           </select>`
         : `<span style="font-size:11px;color:var(--gray-500);">No access shift ±21d</span>`}
-      <button class="dyn-btn" style="color:var(--bad);" onclick="_dynBulkUnschedule()">Unschedule selected</button>
+      <button class="dyn-btn" style="color:var(--bad);" data-action="_dynBulkUnschedule">Unschedule selected</button>
       <span style="flex:1;"></span>
-      <button class="dyn-btn" onclick="_dynDayClearSel()">Clear</button>
+      <button class="dyn-btn" data-action="_dynDayClearSel">Clear</button>
     </div>` : '';
 
   const rowsHtml = matches.map(r => {
@@ -42958,7 +42958,7 @@ function _dynRenderAccess() {
       </div>
       <div class="accx-hero-ctl">
         <div class="accx-ctl-row">
-          <button class="dyn-btn primary" onclick="_dynOpenNewCampaign()">${icon('plus')} New campaign</button>
+          <button class="dyn-btn primary" data-action="_dynOpenNewCampaign">${icon('plus')} New campaign</button>
           <select class="capx-select" onchange="_dynPage.accCampaignFilter=this.value;_dynRenderAccess();">
             <option value="">All campaigns</option>${campOpts}
           </select>
@@ -42970,7 +42970,7 @@ function _dynRenderAccess() {
           </span>
           <span class="accx-nav">
             <button class="simx-iconbtn" onclick="_dynAccShift(-1)" aria-label="Previous ${_dynPage.accView}">${icon('chevron-left')}</button>
-            <button class="dyn-btn" onclick="_dynAccToday()">Today</button>
+            <button class="dyn-btn" data-action="_dynAccToday">Today</button>
             <button class="simx-iconbtn" onclick="_dynAccShift(1)" aria-label="Next ${_dynPage.accView}">${icon('chevron-right')}</button>
           </span>
         </div>
@@ -43179,9 +43179,9 @@ function _dynNrhSettingsHtml() {
     <div style="${rowGrid}margin-bottom:3px;font-size:10px;color:var(--gray-400);"><span></span><span>Start</span><span></span><span>End</span></div>
     ${row('wk', 'Weekdays')}${row('sat', 'Saturday')}${row('sun', 'Sunday')}
     <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
-      <button type="button" class="dyn-btn primary" style="font-size:11px;padding:4px 12px;" onclick="_dynNrhSaveSettings()">Save &amp; apply</button>
-      <button type="button" class="dyn-btn" style="font-size:11px;padding:4px 12px;" onclick="_dynNrhToggleSettings()">Close</button>
-      <button type="button" class="dyn-btn" style="font-size:11px;padding:4px 12px;margin-left:auto;" onclick="_dynNrhResetSettings()">Reset</button>
+      <button type="button" class="dyn-btn primary" style="font-size:11px;padding:4px 12px;" data-action="_dynNrhSaveSettings">Save &amp; apply</button>
+      <button type="button" class="dyn-btn" style="font-size:11px;padding:4px 12px;" data-action="_dynNrhToggleSettings">Close</button>
+      <button type="button" class="dyn-btn" style="font-size:11px;padding:4px 12px;margin-left:auto;" data-action="_dynNrhResetSettings">Reset</button>
     </div>
   </div>`;
 }
@@ -43326,8 +43326,8 @@ function _dynCampaignModal(camp) {
         <div class="form-field"><label>End date</label><input id="camp-end" type="date" value="${escapeHtml(String(av('end_date', today)))}" style="${fld}"></div>
         <div class="form-field" style="grid-column:1/-1;"><label>Access days, times &amp; zones <span style="color:var(--gray-500);font-weight:400;">(per day — a bigger window / more zones on the days you have more access)</span>
           <span style="display:inline-flex;gap:4px;margin-left:6px;vertical-align:middle;">
-            <button type="button" class="dyn-btn" style="font-size:10.5px;padding:2px 8px;" onclick="_dynCampApplyNonRevHours()" title="Apply your configured Non-Revenue Hours to every day (adjust per day after)">Apply Non-Revenue Hours</button>
-            <button type="button" class="dyn-btn" style="font-size:10.5px;padding:2px 6px;" onclick="_dynNrhToggleSettings()" title="Configure Non-Revenue Hours" aria-label="Configure Non-Revenue Hours">${icon('settings')}</button>
+            <button type="button" class="dyn-btn" style="font-size:10.5px;padding:2px 8px;" data-action="_dynCampApplyNonRevHours" title="Apply your configured Non-Revenue Hours to every day (adjust per day after)">Apply Non-Revenue Hours</button>
+            <button type="button" class="dyn-btn" style="font-size:10.5px;padding:2px 6px;" data-action="_dynNrhToggleSettings" title="Configure Non-Revenue Hours" aria-label="Configure Non-Revenue Hours">${icon('settings')}</button>
           </span>
           </label>
           ${_dynNrhSettingsHtml()}
@@ -44364,10 +44364,10 @@ function _dynRenderPlanning() {
           <span>Slack %</span>
           <input id="capx-alloc-slack" class="capx-input" type="number" min="0" max="50" step="5" value="${Math.round(_dynAllocSlack() * 100)}" title="Buffer left unfilled in each shift — lower packs tighter (tests done sooner)">
         </label>
-        <button class="dyn-btn primary capx-alloc-btn" ${activeCamps.length ? '' : 'disabled'} onclick="_dynAllocFromBar()">${icon('zap')} Build allocation</button>
-        <button class="dyn-btn" onclick="_dynWhatIfRun()" title="Project how many more runs you could schedule if the client extends the access window">What-if</button>
-        <button class="dyn-btn" style="color:var(--bad);" ${activeCamps.length ? '' : 'disabled'} onclick="_dynClearScheduleRun()" title="Pull this campaign’s scheduled runs off their access windows back to the backlog — the inverse of Build allocation. You review the list before anything commits.">Clear schedule…</button>
-        <button class="simx-iconbtn" onclick="_dynPlanOpenWindowsAdmin()" aria-label="Manage access windows" title="Manage access windows">${icon('settings')}</button>
+        <button class="dyn-btn primary capx-alloc-btn" ${activeCamps.length ? '' : 'disabled'} data-action="_dynAllocFromBar">${icon('zap')} Build allocation</button>
+        <button class="dyn-btn" data-action="_dynWhatIfRun" title="Project how many more runs you could schedule if the client extends the access window">What-if</button>
+        <button class="dyn-btn" style="color:var(--bad);" ${activeCamps.length ? '' : 'disabled'} data-action="_dynClearScheduleRun" title="Pull this campaign’s scheduled runs off their access windows back to the backlog — the inverse of Build allocation. You review the list before anything commits.">Clear schedule…</button>
+        <button class="simx-iconbtn" data-action="_dynPlanOpenWindowsAdmin" aria-label="Manage access windows" title="Manage access windows">${icon('settings')}</button>
       </div>
       ${activeCamps.length ? '' : `<div class="capx-hero-warn">${icon('alert')} No active campaign — create one in the Access Plan tab first. Scheduling always ties to a campaign.</div>`}
     </div>`;
@@ -44396,7 +44396,7 @@ function _dynRenderPlanning() {
         <div class="capx-sec-head">
           <span class="capx-sec-title">${icon('map')} Zones</span>
           <span class="capx-count">${_dynPage.planZones.length ? `${_dynPage.planZones.length} selected` : 'tap to toggle'}</span>
-          ${_dynPage.planZones.length ? `<button type="button" class="capx-linkish" onclick="_dynPlanClearZones()">clear</button>` : ''}
+          ${_dynPage.planZones.length ? `<button type="button" class="capx-linkish" data-action="_dynPlanClearZones">clear</button>` : ''}
         </div>
         <div class="capx-sec-body">${zonesHtml || `<div class="capx-hint">No dynamic zones found in the locations table.</div>`}</div>
       </div>
@@ -44422,7 +44422,7 @@ function _dynRenderPlanning() {
           </div>
         </div>
       </div>
-      <button class="dyn-btn primary capx-compute" onclick="_dynPlanRun()">${icon('search')} Compute feasible</button>
+      <button class="dyn-btn primary capx-compute" data-action="_dynPlanRun">${icon('search')} Compute feasible</button>
       <div class="capx-hint" style="margin-top:7px;">Feasibility honors zone booking, prerequisite chains, mode and the train budget.</div>
     </aside>`;
 
@@ -44464,7 +44464,7 @@ function _dynRenderPlanning() {
           ? `<span class="capx-tray-sum"><b>${selected.length}</b> run${selected.length === 1 ? '' : 's'} · <b>${(selMinutes / 60).toFixed(1)} h</b> · <b>${selTrains}</b> train${selTrains === 1 ? '' : 's'}</span>
              <button class="dyn-btn" onclick="_dynPage.planSelected.clear();_dynRenderPlanning();">Clear</button>`
           : `<span class="capx-tray-sum is-empty">Tick runs — or a whole test case at once — to build the schedule</span>`}
-        <button class="dyn-btn primary" ${selected.length === 0 ? 'disabled' : ''} onclick="_dynPlanCommit()">${icon('calendar')} Schedule${selected.length ? ` ${selected.length}` : ''} into campaign…</button>
+        <button class="dyn-btn primary" ${selected.length === 0 ? 'disabled' : ''} data-action="_dynPlanCommit">${icon('calendar')} Schedule${selected.length ? ` ${selected.length}` : ''} into campaign…</button>
       </div>`;
   }
 
@@ -44598,7 +44598,7 @@ function _dynClearScheduleRun() {
       '</div>',
     footer: `
       <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" id="capx-clear-commit" ${onWindows.length ? '' : 'disabled'} onclick="_dynClearScheduleCommit()">Unschedule ${onWindows.length}</button>
+      <button class="form-submit" id="capx-clear-commit" ${onWindows.length ? '' : 'disabled'} data-action="_dynClearScheduleCommit">Unschedule ${onWindows.length}</button>
     `,
     size: 'large',
   });
@@ -44906,7 +44906,7 @@ async function _dynPlanCommit() {
       ${opts}
     </div>`,
     footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="_dynPlanCommitToCampaign()">Auto-schedule into campaign</button>`,
+      <button class="form-submit" data-action="_dynPlanCommitToCampaign">Auto-schedule into campaign</button>`,
   });
 }
 
@@ -46569,14 +46569,14 @@ async function _dynRenderSimulator() {
       </div>
       <div class="simx-rail">
         ${chips}
-        <button class="simx-iconbtn" aria-label="New scenario" title="New scenario" onclick="_dynSimNew()">${icon('plus')}</button>
-        <button class="simx-iconbtn" aria-label="Duplicate scenario" title="Duplicate" onclick="_dynSimDuplicate()">${icon('clipboard')}</button>
-        <button class="simx-iconbtn" aria-label="Rename scenario" title="Rename" onclick="_dynSimRename()">${icon('edit')}</button>
-        <button class="simx-iconbtn danger" aria-label="Delete scenario" title="Delete" onclick="_dynSimDelete()">${icon('trash')}</button>
+        <button class="simx-iconbtn" aria-label="New scenario" title="New scenario" data-action="_dynSimNew">${icon('plus')}</button>
+        <button class="simx-iconbtn" aria-label="Duplicate scenario" title="Duplicate" data-action="_dynSimDuplicate">${icon('clipboard')}</button>
+        <button class="simx-iconbtn" aria-label="Rename scenario" title="Rename" data-action="_dynSimRename">${icon('edit')}</button>
+        <button class="simx-iconbtn danger" aria-label="Delete scenario" title="Delete" data-action="_dynSimDelete">${icon('trash')}</button>
         <span style="flex:1;"></span>
-        <button class="dyn-btn ${sc && sc.baseline ? '' : 'primary'}" onclick="_dynSimSetBaseline()">${sc && sc.baseline ? icon('star') + ' Baseline' : 'Set as baseline'}</button>
-        <button class="dyn-btn" onclick="_dynSimMapToCampaign()" title="Draft a REAL access campaign prefilled from this scenario">${icon('external')} Map to execution</button>
-        <button class="dyn-btn" onclick="_dynSimRecalibrate()" title="Re-project the remaining work from today using actual progress">${icon('refresh')} Recalibrate</button>
+        <button class="dyn-btn ${sc && sc.baseline ? '' : 'primary'}" data-action="_dynSimSetBaseline">${sc && sc.baseline ? icon('star') + ' Baseline' : 'Set as baseline'}</button>
+        <button class="dyn-btn" data-action="_dynSimMapToCampaign" title="Draft a REAL access campaign prefilled from this scenario">${icon('external')} Map to execution</button>
+        <button class="dyn-btn" data-action="_dynSimRecalibrate" title="Re-project the remaining work from today using actual progress">${icon('refresh')} Recalibrate</button>
       </div>
       ${sc ? _dynSimRecalBannerHtml(sc, res) : ''}
       ${sc ? _dynSimVerdictHtml(sc, res, regRes, baseRes, baseline) : ''}
@@ -46727,7 +46727,7 @@ function _dynSimConfigHtml(sc, res) {
     <div class="simx-zones">${zoneChips}</div>
     <div class="simx-field-lbl" style="display:flex;align-items:center;gap:8px;">Adjacency <span>from the shared zone adjacency</span>
       <span style="flex:1;"></span>
-      <button type="button" class="dyn-btn xs" onclick="_dynOpenAdjacency()">${icon('git-branch')} Edit</button>
+      <button type="button" class="dyn-btn xs" data-action="_dynOpenAdjacency">${icon('git-branch')} Edit</button>
     </div>
     <div class="simx-mono-box">${escapeHtml(tpSummary)}</div>
     <label class="simx-field" style="display:block;margin-top:10px;">Closure locations <span class="simx-hint">up to 4 consecutive, used during a closure — blank = auto from adjacency</span>
@@ -46748,7 +46748,7 @@ function _dynSimConfigHtml(sc, res) {
     </label>`).join('');
   const mixBody = `
     <div class="simx-field-lbl">% of shifts by how many adjacent locations they grant. Values need not total 100 — the plan normalizes them.
-      <button type="button" class="dyn-btn xs" style="float:right;" title="Set the mix to match your work's access needs so no shift is wasted" onclick="_dynSimAutoFillMix()">${icon('zap')} Auto-fill</button>
+      <button type="button" class="dyn-btn xs" style="float:right;" title="Set the mix to match your work's access needs so no shift is wasted" data-action="_dynSimAutoFillMix">${icon('zap')} Auto-fill</button>
     </div>
     <div class="simx-mix">${mixInputs}</div>
     <div class="simx-foot">Planning shares: ${mixNorm.map(e => `${Math.round(e.pct)}% ${e.size}-loc`).join(' · ')}</div>`;
@@ -47741,7 +47741,7 @@ function _dynAutoAllocateRun() {
         </div>
       </div>`,
     footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="_dynAutoAllocatePick()">Build allocation</button>`,
+      <button class="form-submit" data-action="_dynAutoAllocatePick">Build allocation</button>`,
   });
 }
 function _dynAutoAllocatePick() {
@@ -47851,7 +47851,7 @@ function _dynAutoAllocatePreview(label, draft) {
       '</div>',
     footer:
       '<button class="form-secondary" data-action="closeModal">Cancel</button>' +
-      '<button class="form-submit" ' + (draft.assignments.length ? '' : 'disabled') + ' onclick="_dynAutoAllocateCommit()">Commit ' + draft.assignments.length + ' placement(s)</button>',
+      '<button class="form-submit" ' + (draft.assignments.length ? '' : 'disabled') + ' data-action="_dynAutoAllocateCommit">Commit ' + draft.assignments.length + ' placement(s)</button>',
     size: 'large',
   });
 }
@@ -47946,7 +47946,7 @@ function _dynOpenAdjacency() {
           <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end;">
             <div><label style="font-size:11px;">Zone A</label><select id="tp-a" style="${fld}width:100%;">${zoneOpts.map(o=>`<option value="${escapeHtml(o.code)}">${escapeHtml(o.code)}</option>`).join('')}</select></div>
             <div><label style="font-size:11px;">Zone B</label><select id="tp-b" style="${fld}width:100%;">${zoneOpts.map(o=>`<option value="${escapeHtml(o.code)}">${escapeHtml(o.code)}</option>`).join('')}</select></div>
-            <button class="dyn-btn primary" onclick="_dynAdjacencyAdd()">+ Add</button>
+            <button class="dyn-btn primary" data-action="_dynAdjacencyAdd">+ Add</button>
           </div>
         </div>
         <div>
@@ -48020,7 +48020,7 @@ async function _dynPlanOpenWindowsAdmin() {
             <input id="zaw-trains" type="number" min="1" placeholder="Max trains (blank = any)" style="padding:6px 10px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
             <input id="zaw-notes" placeholder="Notes" style="padding:6px 10px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
           </div>
-          <button class="dyn-btn primary" style="margin-top:10px;" onclick="_dynPlanSaveWindow()">+ Add window</button>
+          <button class="dyn-btn primary" style="margin-top:10px;" data-action="_dynPlanSaveWindow">+ Add window</button>
         </div>
       </div>
     `,
@@ -48908,7 +48908,7 @@ function _dashRenderOverallProgress({ overallPct, complete, tiTotal, _wNote }) {
     metaEl.innerHTML   =
       `<b>${complete.toLocaleString()}</b> of ${tiTotal.toLocaleString()} test cases passed or N/A${_wNote}`
       + `<div style="margin-top:6px;font-size:11px;">`
-      + `<a href="javascript:void(0)" onclick="_dashToggleScope()" style="color:rgba(255,255,255,0.6);text-decoration:underline;">View combined (static + dynamic)</a>`
+      + `<a href="javascript:void(0)" data-action="_dashToggleScope" style="color:rgba(255,255,255,0.6);text-decoration:underline;">View combined (static + dynamic)</a>`
       + `</div>`;
     setTimeout(() => { barEl.style.width = overallPct + '%'; }, 100);
   };
@@ -48918,7 +48918,7 @@ function _dashRenderOverallProgress({ overallPct, complete, tiTotal, _wNote }) {
     metaEl.innerHTML =
       `<b>${c.complete.toLocaleString()}</b> of ${c.total.toLocaleString()} combined (static + dynamic)`
       + `<div style="margin-top:6px;font-size:11px;">`
-      + `<a href="javascript:void(0)" onclick="_dashToggleScope()" style="color:rgba(255,255,255,0.6);text-decoration:underline;">Static only</a>`
+      + `<a href="javascript:void(0)" data-action="_dashToggleScope" style="color:rgba(255,255,255,0.6);text-decoration:underline;">Static only</a>`
       + `</div>`;
     setTimeout(() => { barEl.style.width = c.pct + '%'; }, 100);
   };
@@ -49156,7 +49156,7 @@ function _drwWireFindInput() {
         <button class="drw-nav-btn" onclick="_drwFindCycle(-1)" title="Previous match (Shift+Enter)">◀</button>
         <span id="drw-find-counter" style="min-width:54px;text-align:center;font-family:monospace;">0 of 0</span>
         <button class="drw-nav-btn" onclick="_drwFindCycle(1)" title="Next match (Enter)">▶</button>
-        <button class="drw-nav-btn" onclick="_drwFindClear()" title="Clear search (Esc)">×</button>
+        <button class="drw-nav-btn" data-action="_drwFindClear" title="Clear search (Esc)">×</button>
       `;
       wrap.parentNode.insertBefore(cycle, wrap.nextSibling);
     }
@@ -50036,8 +50036,8 @@ function renderDocumentsPage() {
     <p class="page-sub">CDRLs, signed test reports, procedures, drawings and reference materials — version-controlled for the BART CBTC field team.</p>`;
 
   const manageBtns = _docsCanManage() ? `
-    <button class="admin-action-btn-secondary" onclick="_docsNewFolder()" style="padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">+ New Folder</button>
-    <button class="docs-primary-btn" onclick="_docsOpenUpload()">
+    <button class="admin-action-btn-secondary" data-action="_docsNewFolder" style="padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">+ New Folder</button>
+    <button class="docs-primary-btn" data-action="_docsOpenUpload">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
       Upload Document
     </button>` : '';
@@ -50073,7 +50073,7 @@ function renderDocumentsPage() {
         <input type="checkbox" ${_docsFilter.showArchived ? 'checked' : ''} onchange="_docsSetFilter('showArchived', this.checked)">
         Show archived
       </label>
-      <button id="docs-filter-reset" class="filter-clear" onclick="_docsClearFilters()" style="${_docsFilterActive() ? '' : 'display:none;'}">Reset</button>
+      <button id="docs-filter-reset" class="filter-clear" data-action="_docsClearFilters" style="${_docsFilterActive() ? '' : 'display:none;'}">Reset</button>
     </div>
     <div id="docs-list"></div>`;
 
@@ -50145,7 +50145,7 @@ function _docsRenderList() {
     <div class="data-card">
       <div class="data-card-head">
         <span class="data-count"><span class="docs-count-strong">${itemCount}</span> item${itemCount === 1 ? '' : 's'} · ${latestCount} at latest revision</span>
-        <button class="export-btn" onclick="_docsExportCsv()">Export CSV</button>
+        <button class="export-btn" data-action="_docsExportCsv">Export CSV</button>
       </div>
       <div class="table-wrap">
         <table class="data-table docs-table">
