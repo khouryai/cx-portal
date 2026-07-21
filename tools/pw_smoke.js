@@ -176,6 +176,23 @@ async function main() {
     Array.isArray(argRoundTrip) && argRoundTrip[0] === 5 && argRoundTrip[1] === "x",
     JSON.stringify(argRoundTrip));
 
+  // 3c) A real DOM `change` event on a data-change element routes through
+  //     delegation and the $cx.value sentinel resolves to the live element value.
+  const changeSentinel = await page.evaluate(async () => {
+    let got = null;
+    window.CXActions.register("__qaChangeProbe", (id, val) => { got = [id, val]; });
+    const inp = document.createElement("input");
+    inp.setAttribute("data-change", "__qaChangeProbe");
+    inp.setAttribute("data-args", '["field","$cx.value"]');
+    document.body.appendChild(inp);
+    inp.value = "user-typed";
+    inp.dispatchEvent(new Event("change", { bubbles: true }));
+    return new Promise((resolve) => setTimeout(() => resolve(got), 0));
+  });
+  ok("real change event + $cx.value sentinel → handler gets live value",
+    Array.isArray(changeSentinel) && changeSentinel[0] === "field" && changeSentinel[1] === "user-typed",
+    JSON.stringify(changeSentinel));
+
   // 4) Every static data-action rendered in the live DOM resolves to a handler.
   const liveUnresolved = await page.evaluate(() => {
     const names = new Set();

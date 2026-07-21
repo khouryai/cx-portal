@@ -2412,7 +2412,7 @@ function initLocations() {
 
   const summaryHTML = phaseSummary.length > 1 ? `
     <div class="loc-phase-summary">
-      <button class="loc-phase-chip${_locPhaseFilter ? '' : ' active'}" data-phase="" onclick="_locFilterPhase('', this)">
+      <button class="loc-phase-chip${_locPhaseFilter ? '' : ' active'}" data-phase="" ${cxAct('_locFilterPhase', '', '$cx.el')}>
         <span class="loc-phase-chip-name">All</span>
         <span class="loc-phase-chip-meta">${cards.length} location${cards.length !== 1 ? 's' : ''}</span>
       </button>
@@ -4018,8 +4018,8 @@ function _adminWeightsHTML() {
       <div class="filter-bar" style="margin-top:6px;">
         <input id="aw-search" class="filter-input" type="text"
           placeholder="Search activity or subsystem…"
-          value="${escapeHtml(_awSearch)}" oninput="_awSetSearch(this.value)">
-        <select class="filter-select" onchange="_awSetSubFilter(this.value)">
+          value="${escapeHtml(_awSearch)}" ${cxOn('input', '_awSetSearch', '$cx.value')}>
+        <select class="filter-select" ${cxOn('change', '_awSetSubFilter', '$cx.value')}>
           <option value="">All subsystems</option>
           ${subs.map(s => `<option value="${escapeHtml(s)}" ${_awSubFilter === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
         </select>
@@ -4075,7 +4075,7 @@ function _awActivityRowsHTML() {
             class="form-input aw-weight-input ${wClass}"
             style="width:100px;text-align:right;"
             value="${r.weight}"
-            onchange="_awSaveActivityWeight(this)"
+            ${cxOn('change', '_awSaveActivityWeight', '$cx.el')}
             title="Weight applied at every location for ${safeSub} · ${safeAct}">
         </td>
         <td>
@@ -4147,7 +4147,7 @@ function _awOpenTestCasesModal(sub, act) {
                 class="form-input aw-weight-input aw-tc-input ${wClass}"
                 style="width:100px;text-align:right;"
                 value="${c.weight}"
-                onchange="_awSaveTestCaseWeight(this)"
+                ${cxOn('change', '_awSaveTestCaseWeight', '$cx.el')}
                 title="Weight for every instance of ${safeCode || '—'} · ${safeName || '—'}">
             </td>
           </tr>`;
@@ -4511,7 +4511,7 @@ function _adminTestItemsHTML() {
           Fill in the template CSV, then upload it here. You'll see a full review before anything is saved.
         </p>
         <label style="cursor:pointer;">
-          <input type="file" accept=".csv" onchange="handleImportFile(this)" style="display:none">
+          <input type="file" accept=".csv" ${cxOn('change', 'handleImportFile', '$cx.el')} style="display:none">
           <div class="admin-action-btn" style="display:inline-block;cursor:pointer;">${icon('folder')} Choose CSV to Import</div>
         </label>
         <p style="font-size:11px;color:var(--gray-500);margin-top:12px;">
@@ -4537,7 +4537,7 @@ function _adminLocationsHTML() {
         <div style="display:flex;gap:8px;align-items:center;">
           <button class="form-secondary" id="loc-delete-btn" style="display:none;font-size:12px;padding:6px 12px;color:var(--red-600);" data-action="bulkDeleteLocations">Delete Selected</button>
           <label style="cursor:pointer;">
-            <input type="file" accept=".csv" onchange="handleLocationImport(this)" style="display:none">
+            <input type="file" accept=".csv" ${cxOn('change', 'handleLocationImport', '$cx.el')} style="display:none">
             <div class="admin-action-btn-secondary" style="display:inline-block;cursor:pointer;padding:9px 16px;font-size:13px;font-weight:600;border:1px solid var(--gray-300);border-radius:var(--radius-sm);">↑ Import CSV</div>
           </label>
           <button class="admin-action-btn-secondary" data-action="downloadLocationTemplate">↓ CSV Template</button>
@@ -4546,7 +4546,7 @@ function _adminLocationsHTML() {
       </div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);cursor:pointer;">
-          <input type="checkbox" id="loc-select-all" onchange="locToggleSelectAll(this.checked)"> Select all
+          <input type="checkbox" id="loc-select-all" ${cxOn('change', 'locToggleSelectAll', '$cx.checked')}> Select all
         </label>
         <span id="loc-selected-count" style="font-size:12px;color:var(--gray-500);"></span>
       </div>
@@ -4575,7 +4575,7 @@ function _renderLocNode(node, depth) {
     <div class="${levelClass}" style="margin-left:${indent}px;">
       <div class="loc-node-row">
         <div class="loc-node-name">
-          <input type="checkbox" class="loc-cb" data-id="${node.id}" onchange="locUpdateSelection()" style="margin-right:6px;">
+          <input type="checkbox" class="loc-cb" data-id="${node.id}" ${cxOn('change', 'locUpdateSelection')} style="margin-right:6px;">
           ${depth > 0 ? '<span class="loc-indent">└─</span>' : ''}
           <span class="loc-level-badge">L${node.level}</span>
           ${escapeHtml(node.name)}
@@ -5032,7 +5032,7 @@ function openDeployModal(templateId) {
       <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:flex-end;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--gray-200);">
         <div>
           <label style="font-size:11px;font-weight:600;color:var(--gray-500);display:block;margin-bottom:4px;">PHASE</label>
-          <select id="dep-phase" class="form-input" onchange="deployFilterLocations()" ${noLocs ? 'disabled' : ''}>
+          <select id="dep-phase" class="form-input" ${cxOn('change', 'deployFilterLocations')} ${noLocs ? 'disabled' : ''}>
             <option value="">Select phase…</option>
             ${phases.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
           </select>
@@ -5509,7 +5509,7 @@ function _tplModalBody() {
       <div style="display:flex;gap:8px;align-items:center;">
         <button class="form-secondary" style="font-size:12px;padding:5px 10px;" data-action="downloadTemplateCaseCSV">↓ CSV Template</button>
         <label style="cursor:pointer;">
-          <input type="file" accept=".csv" onchange="handleTemplateCaseImport(this)" style="display:none">
+          <input type="file" accept=".csv" ${cxOn('change', 'handleTemplateCaseImport', '$cx.el')} style="display:none">
           <div class="form-secondary" style="font-size:12px;padding:5px 10px;cursor:pointer;display:inline-block;">${icon('folder')} Import CSV</div>
         </label>
       </div>
@@ -6023,7 +6023,7 @@ function _adminDirectoryHTML() {
         <span class="dir-search-ico" aria-hidden="true">${icon('search')}</span>
         <input id="dir-search" class="dir-search-input" type="search" autocomplete="off"
           placeholder="Search users by name, email, company, or subsystem…"
-          value="${escapeHtml(_dirSearch)}" oninput="_dirOnSearch(this.value)" aria-label="Search users">
+          value="${escapeHtml(_dirSearch)}" ${cxOn('input', '_dirOnSearch', '$cx.value')} aria-label="Search users">
       </div>
       <div class="data-card" id="dir-table-wrap" style="padding:0;">
         ${cxSkeleton(4)}
@@ -6106,32 +6106,32 @@ function _renderDirectoryRows() {
             <td class="dir-cell" data-label="Access">
               <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:150px;" aria-label="Permission template for ${escapeHtml(name)}"
                 ${u.role==='admin' ? 'title="Assigned but bypassed while Global admin is on"' : ''}
-                onchange="updateProfileTemplate('${u.id}',this.value)">
+                ${cxOn('change', 'updateProfileTemplate', String(u.id), '$cx.value')}>
                 <option value="" ${!u.permission_template_id?'selected':''}>— no template —</option>
                 ${dirTemplates.map(t=>`<option value="${t.id}" ${u.permission_template_id===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}
               </select>
               <label style="display:flex;align-items:center;gap:5px;font-size:11px;cursor:pointer;white-space:nowrap;margin-top:4px;" title="Global admins bypass templates: every action on every module">
-                <input type="checkbox" ${u.role==='admin'?'checked':''} onchange="updateProfileGlobalAdmin('${u.id}',this.checked)">
+                <input type="checkbox" ${u.role==='admin'?'checked':''} ${cxOn('change', 'updateProfileGlobalAdmin', String(u.id), '$cx.checked')}>
                 <span style="color:${u.role==='admin'?'var(--bad)':'var(--gray-500)'};font-weight:600;">Global admin</span>
               </label>
             </td>
             <td class="dir-cell" data-label="Company">
               <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:120px;" aria-label="Company for ${escapeHtml(name)}"
-                onchange="updateProfileCompany('${u.id}',this.value)">
+                ${cxOn('change', 'updateProfileCompany', String(u.id), '$cx.value')}>
                 <option value="" ${!u.company?'selected':''}>— none —</option>
                 ${COMPANIES_LIST.map(c=>`<option value="${c}" ${u.company===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}
               </select>
             </td>
             <td class="dir-cell" data-label="Subsystem">
               <select class="form-input" style="font-size:12px;padding:4px 8px;min-width:130px;"
-                onchange="updateProfileSubsystem('${u.id}',this.value)">
+                ${cxOn('change', 'updateProfileSubsystem', String(u.id), '$cx.value')}>
                 <option value="" ${!u.subsystem?'selected':''}>All subsystems</option>
                 ${SUBSYSTEMS_LIST.map(s=>`<option value="${s}" ${u.subsystem===s?'selected':''}>${s}</option>`).join('')}
               </select>
             </td>
             <td class="dir-cell" data-label="Status">
               <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;white-space:nowrap;">
-                <input type="checkbox" ${u.is_active?'checked':''} onchange="updateProfileActive('${u.id}',this.checked)">
+                <input type="checkbox" ${u.is_active?'checked':''} ${cxOn('change', 'updateProfileActive', String(u.id), '$cx.checked')}>
                 <span style="color:${u.is_active?'var(--good)':'var(--gray-500)'};">${u.is_active?'Active':'Inactive'}</span>
               </label>
             </td>
@@ -6362,23 +6362,23 @@ function renderTestMatrix() {
     </div>
 
     <div class="matrix-filter-bar">
-      ${isAdmin ? `<select class="filter-select" onchange="_mxSetFilter('subsystem',this.value)">
+      ${isAdmin ? `<select class="filter-select" ${cxOn('change', '_mxSetFilter', 'subsystem', '$cx.value')}>
         <option value="">All Subsystems</option>
         ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${matrixFilter.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
       </select>` : ''}
-      <select class="filter-select" onchange="_mxPhaseChange(this.value)">
+      <select class="filter-select" ${cxOn('change', '_mxPhaseChange', '$cx.value')}>
         <option value="">All Phases</option>
         ${phasePool.map(p=>`<option value="${escapeHtml(p)}" ${matrixFilter.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
       </select>
-      <select class="filter-select" onchange="_mxLocChange(this.value)">
+      <select class="filter-select" ${cxOn('change', '_mxLocChange', '$cx.value')}>
         <option value="">All Locations</option>
         ${locPool.map(l=>`<option value="${escapeHtml(l)}" ${matrixFilter.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
       </select>
-      <select class="filter-select" onchange="_mxSetFilter('activity',this.value)">
+      <select class="filter-select" ${cxOn('change', '_mxSetFilter', 'activity', '$cx.value')}>
         <option value="">All Activities</option>
         ${actPool.map(a=>`<option value="${escapeHtml(a)}" ${matrixFilter.activity===a?'selected':''}>${escapeHtml(a)}</option>`).join('')}
       </select>
-      <select class="filter-select" onchange="_mxSetFilter('applicable',this.value)">
+      <select class="filter-select" ${cxOn('change', '_mxSetFilter', 'applicable', '$cx.value')}>
         <option value="all" ${matrixFilter.applicable==='all'?'selected':''}>All test cases</option>
         <option value="yes" ${matrixFilter.applicable==='yes'?'selected':''}>With status only</option>
         <option value="no"  ${matrixFilter.applicable==='no'?'selected':''}>Not started only</option>
@@ -6445,14 +6445,14 @@ function _renderTIMatrixRow(r, isAdmin) {
         ${r.CompletedBy ? `<div class="matrix-tc-meta">Completed by <b>${escapeHtml(r.CompletedBy)}</b></div>` : ''}
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;min-width:200px;">
-        <select class="form-input mx-status-select" onchange="_mxStatusChange('${tid}',this.value,this)">
+        <select class="form-input mx-status-select" ${cxOn('change', '_mxStatusChange', String(tid), '$cx.value', '$cx.el')}>
           ${statuses.map(s=>`<option value="${s}" ${current===s?'selected':''}>${s}</option>`).join('')}
         </select>
         <div id="mx-reason-${domId}" class="mx-reason-wrap" style="${showReason?'':'display:none;'}">
           <input type="text" id="mx-ri-${domId}" class="form-input mx-reason-input" style="font-size:12px;padding:5px 8px;"
             placeholder="${current==='Fail'?'Failure reason...':'Blocked reason...'}"
             value="${escapeHtml(reasonVal)}"
-            oninput="_mxSaveReason('${tid}',this.value)">
+            ${cxOn('input', '_mxSaveReason', String(tid), '$cx.value')}>
         </div>
       </div>
       <div style="width:100%;padding:4px 0 0 0;">
@@ -7326,28 +7326,28 @@ function renderIntakeStep2() {
       <div class="form-grid">
         <div class="form-field">
           <label>Phase</label>
-          <select class="filter-select" onchange="_s2SetPhase(this.value)">
+          <select class="filter-select" ${cxOn('change', '_s2SetPhase', '$cx.value')}>
             <option value="">All Phases</option>
             ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_s2Phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
           </select>
         </div>
         <div class="form-field">
           <label>Location</label>
-          <select class="filter-select" onchange="_s2SetLoc(this.value)">
+          <select class="filter-select" ${cxOn('change', '_s2SetLoc', '$cx.value')}>
             <option value="">Select location…</option>
             ${locs.map(l=>`<option value="${escapeHtml(l)}" ${_s2Loc===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
           </select>
         </div>
         <div class="form-field">
           <label>Activity</label>
-          <select class="filter-select" onchange="_s2SetAct(this.value)">
+          <select class="filter-select" ${cxOn('change', '_s2SetAct', '$cx.value')}>
             <option value="">All Activities</option>
             ${acts.map(a=>`<option value="${escapeHtml(a)}" ${_s2Act===a?'selected':''}>${escapeHtml(a)}</option>`).join('')}
           </select>
         </div>
         <div class="form-field">
           <label>Test Case</label>
-          <select id="ai-testid" class="filter-select" onchange="_s2SetTestId(this.value)">
+          <select id="ai-testid" class="filter-select" ${cxOn('change', '_s2SetTestId', '$cx.value')}>
             <option value="">Select test case…</option>
             ${tests.map(t=>`<option value="${escapeHtml(t.TestID)}" ${_s2TestId===String(t.TestID)?'selected':''}>${escapeHtml(t.TestCaseCode)} · ${escapeHtml(t.TestName)}</option>`).join('')}
           </select>
@@ -7362,7 +7362,7 @@ function renderIntakeStep2() {
         </div>` : ''}
         <div class="form-field">
           <label>Status</label>
-          <select id="ai-status" class="filter-select" onchange="ai_toggleReasonFields()">
+          <select id="ai-status" class="filter-select" ${cxOn('change', 'ai_toggleReasonFields')}>
             <option value="">Select status…</option>
             ${(_fsCfg('test_case_status').length ? _fsCfg('test_case_status') : ['Not Started','In Progress','Pass','Fail','Blocked','Not Applicable']).map(s=>`<option>${s}</option>`).join('')}
           </select>
@@ -7420,45 +7420,45 @@ function renderIntakeStep3(items) {
         </div>
         <div class="form-field">
           <label>Date</label>
-          <input type="date" id="i3-date" class="form-input" onchange="_saveIntakeDraft()" value="${new Date().toISOString().split('T')[0]}">
+          <input type="date" id="i3-date" class="form-input" ${cxOn('change', '_saveIntakeDraft')} value="${new Date().toISOString().split('T')[0]}">
         </div>
         <div class="form-field">
           <label>Number of Testers</label>
-          <input type="number" id="i3-testers" class="form-input" onchange="_saveIntakeDraft()" value="2" min="1">
+          <input type="number" id="i3-testers" class="form-input" ${cxOn('change', '_saveIntakeDraft')} value="2" min="1">
         </div>
         <div class="form-field">
           <label>Idle Hours</label>
-          <input type="number" id="i3-idle" class="form-input" onchange="_saveIntakeDraft()" value="${Math.max(0, 8 - parseFloat(totalHrs)).toFixed(1)}" min="0" step="0.5">
+          <input type="number" id="i3-idle" class="form-input" ${cxOn('change', '_saveIntakeDraft')} value="${Math.max(0, 8 - parseFloat(totalHrs)).toFixed(1)}" min="0" step="0.5">
         </div>
         <div class="form-field">
           <label>Delay Occurred?</label>
           <div class="delay-toggle">
-            <button type="button" class="toggle-btn active" data-val="No" onclick="toggleDelayI3(this,false)">No</button>
-            <button type="button" class="toggle-btn" data-val="Yes" onclick="toggleDelayI3(this,true)">Yes</button>
+            <button type="button" class="toggle-btn active" data-val="No" ${cxAct('toggleDelayI3', '$cx.el', false)}>No</button>
+            <button type="button" class="toggle-btn" data-val="Yes" ${cxAct('toggleDelayI3', '$cx.el', true)}>Yes</button>
           </div>
         </div>
         <div class="form-field" id="i3-delay-cat-wrap" style="display:none;">
           <label>Delay Category</label>
-          <select id="i3-delay-cat" class="filter-select" onchange="_saveIntakeDraft()">
+          <select id="i3-delay-cat" class="filter-select" ${cxOn('change', '_saveIntakeDraft')}>
             <option value="">Select category…</option>
             ${delayCats.map(c=>`<option>${escapeHtml(c)}</option>`).join('')}
           </select>
         </div>
         <div class="form-field" id="i3-delay-hrs-wrap" style="display:none;">
           <label>Delay Hours</label>
-          <input type="number" id="i3-delay-hrs" class="form-input" onchange="_saveIntakeDraft()" value="0" min="0" step="0.5">
+          <input type="number" id="i3-delay-hrs" class="form-input" ${cxOn('change', '_saveIntakeDraft')} value="0" min="0" step="0.5">
         </div>
         <div class="form-field form-field-full" id="i3-delay-notes-wrap" style="display:none;">
           <label>Delay Notes</label>
-          <textarea id="i3-delay-notes" class="form-input" rows="2" oninput="_saveIntakeDraft()" placeholder="Describe the delay…"></textarea>
+          <textarea id="i3-delay-notes" class="form-input" rows="2" ${cxOn('input', '_saveIntakeDraft')} placeholder="Describe the delay…"></textarea>
         </div>
         <div class="form-field form-field-full">
           <label>Overall Day Notes</label>
-          <textarea id="i3-notes" class="form-input" rows="3" oninput="_saveIntakeDraft()" placeholder="Summary of the day's work…"></textarea>
+          <textarea id="i3-notes" class="form-input" rows="3" ${cxOn('input', '_saveIntakeDraft')} placeholder="Summary of the day's work…"></textarea>
         </div>
         <div class="form-field form-field-full">
           <label>Plan for Next Day</label>
-          <textarea id="i3-next" class="form-input" rows="2" oninput="_saveIntakeDraft()" placeholder="What's planned tomorrow?"></textarea>
+          <textarea id="i3-next" class="form-input" rows="2" ${cxOn('input', '_saveIntakeDraft')} placeholder="What's planned tomorrow?"></textarea>
         </div>
       </div>
 
@@ -7818,21 +7818,21 @@ function _dlHistoryHTML() {
     <!-- Filter Bar -->
     <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
       <input id="dl-search" class="form-input" style="max-width:220px;" placeholder="Search notes, location…"
-        value="${escapeHtml(_dlFilter.search)}" oninput="_dlSetFilter('search',this.value)">
+        value="${escapeHtml(_dlFilter.search)}" ${cxOn('input', '_dlSetFilter', 'search', '$cx.value')}>
       <label style="font-size:12px;color:var(--gray-500);display:flex;align-items:center;gap:4px;">From
-        <input type="date" class="form-input" style="max-width:150px;" value="${escapeHtml(_dlFilter.from)}" onchange="_dlSetFilter('from',this.value)"></label>
+        <input type="date" class="form-input" style="max-width:150px;" value="${escapeHtml(_dlFilter.from)}" ${cxOn('change', '_dlSetFilter', 'from', '$cx.value')}></label>
       <label style="font-size:12px;color:var(--gray-500);display:flex;align-items:center;gap:4px;">To
-        <input type="date" class="form-input" style="max-width:150px;" value="${escapeHtml(_dlFilter.to)}" onchange="_dlSetFilter('to',this.value)"></label>
-      <select class="form-input" style="max-width:150px;" onchange="_dlSetFilter('sub',this.value)">
+        <input type="date" class="form-input" style="max-width:150px;" value="${escapeHtml(_dlFilter.to)}" ${cxOn('change', '_dlSetFilter', 'to', '$cx.value')}></label>
+      <select class="form-input" style="max-width:150px;" ${cxOn('change', '_dlSetFilter', 'sub', '$cx.value')}>
         <option value="">All Subsystems</option>
         ${subs.map(x => `<option value="${escapeHtml(x)}" ${_dlFilter.sub===x?'selected':''}>${escapeHtml(x)}</option>`).join('')}
       </select>
-      <select class="form-input" style="max-width:170px;" onchange="_dlSetFilter('submitter',this.value)">
+      <select class="form-input" style="max-width:170px;" ${cxOn('change', '_dlSetFilter', 'submitter', '$cx.value')}>
         <option value="">All Submitters</option>
         ${submitters.map(x => `<option value="${escapeHtml(x)}" ${_dlFilter.submitter===x?'selected':''}>${escapeHtml(x)}</option>`).join('')}
       </select>
       <label style="font-size:13px;color:var(--gray-600);display:flex;align-items:center;gap:5px;cursor:pointer;">
-        <input type="checkbox" ${_dlFilter.delayOnly?'checked':''} onchange="_dlSetFilter('delayOnly',this.checked)"> Delays only</label>
+        <input type="checkbox" ${_dlFilter.delayOnly?'checked':''} ${cxOn('change', '_dlSetFilter', 'delayOnly', '$cx.checked')}> Delays only</label>
       ${hasFilters ? `<button class="filter-clear" data-action="_dlClearFilters">Reset</button>` : ''}
       <span style="font-size:13px;color:var(--gray-500);">${logs.length} log${logs.length!==1?'s':''}</span>
       <button class="form-secondary" style="margin-left:auto;" data-action="_dlExportCSV"
@@ -7950,7 +7950,7 @@ function _dlOpenEdit(id) {
           </div>
           <div class="form-field">
             <label>Delay Occurred?</label>
-            <select id="dle-delay" class="form-input" onchange="_dlEditToggleDelay()">
+            <select id="dle-delay" class="form-input" ${cxOn('change', '_dlEditToggleDelay')}>
               <option value="No"  ${!delayYes ? 'selected' : ''}>No</option>
               <option value="Yes" ${delayYes ? 'selected' : ''}>Yes</option>
             </select>
@@ -8136,7 +8136,7 @@ function _taHTMLSingle(id, filter) {
     <div class="ta-wrap">
       <div class="ta-tags" id="${id}-tags"></div>
       <input type="text" id="${id}-search" class="ta-search form-input" placeholder="Type to search…"
-        autocomplete="off" oninput="_taFilterSingle('${id}','${filter}')"
+        autocomplete="off" ${cxOn('input', '_taFilterSingle', String(id), String(filter))}
         onblur="setTimeout(()=>{ const d=document.getElementById('${id}-drop'); if(d)d.classList.add('hidden'); },150)">
       <div class="ta-drop hidden" id="${id}-drop"></div>
     </div>
@@ -8566,29 +8566,29 @@ function renderPunchWorkflow() {
         <span class="icon">${icon('search')}</span>
         <input type="text" id="pl-search-input" value="${escapeHtml(_plSearch)}"
                placeholder="Search title or #…"
-               oninput="_plSetSearch(this.value)">
+               ${cxOn('input', '_plSetSearch', '$cx.value')}>
       </div>
-      <select onchange="_plPhaseChange(this.value)">
+      <select ${cxOn('change', '_plPhaseChange', '$cx.value')}>
         <option value="">All Phases</option>
         ${phases.map(p=>`<option value="${p.id}" ${_plPhaseFilter===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
       </select>
-      <select onchange="_plSetFilter('loc',this.value)">
+      <select ${cxOn('change', '_plSetFilter', 'loc', '$cx.value')}>
         <option value="">All Locations</option>
         ${locPool.map(l=>`<option value="${l.id}" ${_plLocFilter===l.id?'selected':''}>${escapeHtml(l.name)}</option>`).join('')}
       </select>
-      <select onchange="_plSetFilter('sub',this.value)">
+      <select ${cxOn('change', '_plSetFilter', 'sub', '$cx.value')}>
         <option value="">All Subsystems</option>
         ${subPool.map(s=>`<option value="${escapeHtml(s)}" ${_plSubFilter===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
       </select>
-      <select onchange="_plSetFilter('priority',this.value)">
+      <select ${cxOn('change', '_plSetFilter', 'priority', '$cx.value')}>
         <option value="">All Priorities</option>
         ${prioPool.map(p=>`<option value="${p}" ${_plPriorityFilter===p?'selected':''}>${p}</option>`).join('')}
       </select>
-      ${(plActivities.length || _plActivityFilter) ? `<select onchange="_plSetFilter('activity',this.value)">
+      ${(plActivities.length || _plActivityFilter) ? `<select ${cxOn('change', '_plSetFilter', 'activity', '$cx.value')}>
         <option value="">All Activities</option>
         ${plActivities.map(a=>`<option value="${escapeHtml(a)}" ${_plActivityFilter===a?'selected':''}>${escapeHtml(a)}</option>`).join('')}
       </select>` : ''}
-      ${(tplPool.length || _plTemplateFilter) ? `<select onchange="_plSetFilter('template',this.value)"><option value="">All Templates</option>${tplPool.map(t=>`<option value="${t.id}" ${_plTemplateFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}</select>` : ''}
+      ${(tplPool.length || _plTemplateFilter) ? `<select ${cxOn('change', '_plSetFilter', 'template', '$cx.value')}><option value="">All Templates</option>${tplPool.map(t=>`<option value="${t.id}" ${_plTemplateFilter===t.id?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}</select>` : ''}
       ${plHasFilters ? `<button class="v2-btn-mini" data-action="_plClearFilters">${icon('x')} Reset</button>` : ''}
       <span class="count"><b>${total}</b> of ${baseItems.length}</span>
     </div>
@@ -8636,7 +8636,7 @@ function _plRowHTML(p) {
       <div class="punch-row">
         <div onclick="event.stopPropagation()" style="padding-top:4px;">
           <input type="checkbox" ${_plSelected.has(p.id)?'checked':''}
-                 onchange="_plToggleSelect('${p.id}',this.checked)"
+                 ${cxOn('change', '_plToggleSelect', String(p.id), '$cx.checked')}
                  style="width:16px;height:16px;cursor:pointer;accent-color:#1d4eaf;">
         </div>
         <span class="v2-id-chip ${(isCritical || isOverdue) ? 'is-critical' : ''}">#${p.number}</span>
@@ -8940,7 +8940,7 @@ function openPunchDetail(id) {
           </div>
         </div>
         <div id="punch-photos-${id}" class="punch-photo-grid">${cxSkeleton(2)}</div>
-        <input type="file" id="punch-gallery-file-${id}" accept="image/*" multiple style="display:none" onchange="_punchGalleryFilesChosen('${id}', this)">
+        <input type="file" id="punch-gallery-file-${id}" accept="image/*" multiple style="display:none" ${cxOn('change', '_punchGalleryFilesChosen', String(id), '$cx.el')}>
       </div>
 
       <!-- Combined Activity & Comments Timeline -->
@@ -8994,7 +8994,7 @@ function openPunchDetail(id) {
             <button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" aria-label="Attach a photo" onclick="document.getElementById('punch-comment-file-${id}').click()">${icon('camera')}</button>
             <button class="form-submit punch-comment-post" ${cxAct('addPunchComment', String(id))}>Post</button>
           </div>
-          <input type="file" id="punch-comment-file-${id}" accept="image/*" style="display:none" onchange="_punchCommentPhotoChosen('${id}', this)">
+          <input type="file" id="punch-comment-file-${id}" accept="image/*" style="display:none" ${cxOn('change', '_punchCommentPhotoChosen', String(id), '$cx.el')}>
           <div id="punch-comment-preview-${id}" class="punch-comment-preview" style="display:none;"></div>` : ''}
       </div>
     `,
@@ -9317,7 +9317,7 @@ function _punchFormHTML(p) {
         <label>Punch Template${p?'':' *'}</label>
         ${p
           ? `<div style="font-size:13px;font-weight:600;">${escapeHtml(t ? t.name : '—')}</div>`
-          : `<select id="np-template" class="form-input" onchange="_punchSwitchTemplate(this.value)">
+          : `<select id="np-template" class="form-input" ${cxOn('change', '_punchSwitchTemplate', '$cx.value')}>
               ${_punchTemplatesActive().map(x=>`<option value="${x.id}" ${t&&t.id===x.id?'selected':''}>${escapeHtml(x.name)}</option>`).join('')}
             </select>${t&&t.description?`<div style="font-size:11px;color:var(--gray-500);margin-top:3px;">${escapeHtml(t.description)}</div>`:''}`}
       </div>`;
@@ -9325,7 +9325,7 @@ function _punchFormHTML(p) {
   const locHTML = mode === 'wayside'
     ? `<div class="form-field">
         <label>Phase</label>
-        <select id="np-phase" class="form-input" onchange="npFilterLoc()">
+        <select id="np-phase" class="form-input" ${cxOn('change', 'npFilterLoc')}>
           <option value="">Select phase…</option>
           ${phases.map(ph=>`<option value="${ph.id}" ${p?.phase===ph.id?'selected':''}>${escapeHtml(ph.name)}</option>`).join('')}
         </select>
@@ -9429,7 +9429,7 @@ function _punchFormHTML(p) {
         <label>Photos</label>
         <div class="punch-newphoto-row" id="punch-newphoto-row"></div>
         <button type="button" class="form-secondary" onclick="document.getElementById('punch-newphoto-file').click()">${icon('camera')} Add photo</button>
-        <input type="file" id="punch-newphoto-file" accept="image/*" multiple style="display:none" onchange="_punchNewPhotoChosen(this)">
+        <input type="file" id="punch-newphoto-file" accept="image/*" multiple style="display:none" ${cxOn('change', '_punchNewPhotoChosen', '$cx.el')}>
         <div style="font-size:11px;color:var(--gray-500);margin-top:4px;">Take a photo or choose from your device — they attach to this item once it's created.</div>
       </div>`}
     </div>
@@ -10095,7 +10095,7 @@ function _punchFieldCreateFormHTML(submitCall) {
   return `<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;background:var(--gray-50);">
       <div class="form-grid">
         <div class="form-field"><label>Field Name *</label><input type="text" id="pcf-name" class="form-input" placeholder="e.g. Wheel Diameter"></div>
-        <div class="form-field"><label>Field Type *</label><select id="pcf-type" class="form-input" onchange="_punchFieldTypeChanged()">${_PUNCH_FIELD_TYPES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>
+        <div class="form-field"><label>Field Type *</label><select id="pcf-type" class="form-input" ${cxOn('change', '_punchFieldTypeChanged')}>${_PUNCH_FIELD_TYPES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>
         <div class="form-field form-field-full" id="pcf-opts-wrap" style="display:none;"><label>Options <span style="font-weight:400;color:var(--gray-500);">(comma-separated — editable later in Field Config)</span></label><input type="text" id="pcf-opts" class="form-input" placeholder="Option A, Option B, Option C"></div>
       </div>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
@@ -10156,7 +10156,7 @@ function _punchLibEditShow(id) {
       <div style="font-size:12px;font-weight:700;margin-bottom:8px;">Edit field · ${escapeHtml(f.label)}</div>
       <div class="form-grid">
         <div class="form-field"><label>Field Name *</label><input type="text" id="pcf-name" class="form-input" value="${escapeHtml(f.label)}"></div>
-        <div class="form-field"><label>Field Type *</label><select id="pcf-type" class="form-input" onchange="_punchFieldTypeChanged()">${_PUNCH_FIELD_TYPES.map(([v, l]) => `<option value="${v}" ${f.type === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        <div class="form-field"><label>Field Type *</label><select id="pcf-type" class="form-input" ${cxOn('change', '_punchFieldTypeChanged')}>${_PUNCH_FIELD_TYPES.map(([v, l]) => `<option value="${v}" ${f.type === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         <div class="form-field form-field-full" id="pcf-opts-wrap" style="display:${isSel ? '' : 'none'};"><label>Options <span style="font-weight:400;color:var(--gray-500);">(comma-separated — editable later in Field Config)</span></label><input type="text" id="pcf-opts" class="form-input" value="${escapeHtml(opts.join(', '))}"></div>
       </div>
       <div style="font-size:11px;color:var(--gray-500);margin-top:6px;">Changing the type keeps values already saved on punch items.</div>
@@ -10288,7 +10288,7 @@ function _ptpeCoreRowHTML(key, label, opts) {
       ${_ptpeSwitchHTML(shown, lockOn ? '' : `_ptpeHideToggle('${key}')`, (shown ? 'Hide ' : 'Show ') + label, lockOn)}
       <span style="flex:1;font-size:13px;font-weight:500;${shown ? '' : 'color:var(--gray-400);'}">${escapeHtml(label)}${lockOn ? ' <span style="font-size:10px;color:var(--gray-400);">(always shown)</span>' : ''}</span>
       <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:${shown ? 'var(--text)' : 'var(--gray-400)'};cursor:${shown ? 'pointer' : 'default'};">
-        <input type="checkbox" ${req ? 'checked' : ''} ${shown ? '' : 'disabled'} onchange="_ptpeReqCore('${key}', this.checked)" style="margin:0;"> Required
+        <input type="checkbox" ${req ? 'checked' : ''} ${shown ? '' : 'disabled'} ${cxOn('change', '_ptpeReqCore', String(key), '$cx.checked')} style="margin:0;"> Required
       </label>
     </div>`;
 }
@@ -10414,7 +10414,7 @@ function openPunchImportModal() {
       </div>
       <div class="form-field">
         <label>Select CSV File</label>
-        <input type="file" id="punch-import-file" accept=".csv" class="form-input" onchange="previewPunchImport(this)">
+        <input type="file" id="punch-import-file" accept=".csv" class="form-input" ${cxOn('change', 'previewPunchImport', '$cx.el')}>
       </div>
       <div id="punch-import-preview" style="margin-top:16px;"></div>
     `,
@@ -10727,7 +10727,7 @@ function renderAuditLog() {
             <span class="audit-search-icon">${icon('search')}</span>
             <input id="audit-search" class="audit-search-input" type="search"
               placeholder="Search everything — user, action, target, location, role, table…"
-              value="${escapeHtml(_auditSearch)}" oninput="_auditOnSearch(this.value)" autocomplete="off" />
+              value="${escapeHtml(_auditSearch)}" ${cxOn('input', '_auditOnSearch', '$cx.value')} autocomplete="off" />
             ${_auditSearch ? `<button aria-label="Clear" class="audit-search-clear" ${cxAct('_auditOnSearch', '')} title="Clear">${icon('x')}</button>` : ''}
           </div>
           <button class="form-secondary" data-action="refreshAuditLog">Refresh</button>
@@ -10982,7 +10982,7 @@ function _trpReportSelectHTML(selectedId, customValue) {
     _trpReportLabel(a).localeCompare(_trpReportLabel(b), undefined, { numeric: true, sensitivity: 'base' })
   );
   return `
-    <select id="am-edit-report-id" class="form-input" onchange="_amToggleCustomReport()">
+    <select id="am-edit-report-id" class="form-input" ${cxOn('change', '_amToggleCustomReport')}>
       <option value="" ${!selectedId && !customValue ? 'selected' : ''}>— No Report —</option>
       <option value="__custom__" ${customValue ? 'selected' : ''}>— Enter Manually —</option>
       ${sorted.map(r => `<option value="${escapeHtml(r.id)}" ${String(selectedId || '') === String(r.id) ? 'selected' : ''}>${escapeHtml(_trpReportLabel(r))}</option>`).join('')}
@@ -11471,7 +11471,7 @@ function _trpSourceBadge(row) {
 function _trpStatusControlHTML(row, canManage) {
   if (!canManage) return _trStatusBadge(row.status);
   const uid = encodeURIComponent(row.uid);
-  return `<select class="form-input trp-status-select" onchange="_trpUpdateStatus('${uid}',this)">
+  return `<select class="form-input trp-status-select" ${cxOn('change', '_trpUpdateStatus', String(uid), '$cx.el')}>
     ${_trpStatusOptions(row.status).map(s => `<option value="${escapeHtml(s)}" ${row.status===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
   </select>`;
 }
@@ -11583,19 +11583,19 @@ function renderTestReporting() {
           <span class="icon">${icon('search')}</span>
           <input type="text" value="${escapeHtml(_trpFilters.search)}"
                  placeholder="Search reports, CDRLs, activities, test cases…"
-                 oninput="_trpSetSearch(this.value)">
+                 ${cxOn('input', '_trpSetSearch', '$cx.value')}>
         </div>
-        <select onchange="_trpSetFilter('phase',this.value)">
+        <select ${cxOn('change', '_trpSetFilter', 'phase', '$cx.value')}>
           <option value="">All Phases</option>
           ${phaseOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.phase===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
         </select>
-        <select onchange="_trpSetFilter('location',this.value)">
+        <select ${cxOn('change', '_trpSetFilter', 'location', '$cx.value')}>
           <option value="">All Locations</option>
           ${locationOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.location===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
         </select>
         ${trpUserSub
           ? `<span class="filter-locked-tag" title="Auto-filtered to your assigned subsystem">${icon('pin')} ${escapeHtml(trpUserSub)}</span>`
-          : `<select onchange="_trpSetFilter('subsystem',this.value)">
+          : `<select ${cxOn('change', '_trpSetFilter', 'subsystem', '$cx.value')}>
               <option value="">All Subsystems</option>
               ${subsystemOptions.map(s => `<option value="${escapeHtml(s)}" ${_trpFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
             </select>`}
@@ -11996,7 +11996,7 @@ function openLinkActivityModal(uid) {
     size: 'large',
     body: `
       <p style="font-size:13px;color:var(--gray-500);margin-bottom:12px;">Select activities to link. All test cases in each selected activity will be associated with this report.</p>
-      <input type="text" class="filter-input" placeholder="Search activities…" oninput="_trpFilterLinkList(this.value)" style="width:100%;margin-bottom:10px;">
+      <input type="text" class="filter-input" placeholder="Search activities…" ${cxOn('input', '_trpFilterLinkList', '$cx.value')} style="width:100%;margin-bottom:10px;">
       <div id="trp-link-act-list" style="max-height:420px;overflow-y:auto;border:1px solid var(--line-soft);border-radius:8px;">
         ${listHTML}
       </div>
@@ -12682,7 +12682,7 @@ function _testRegisterHTML() {
     const trCtx = { a, st, done, total, pct, isSel };
     const actRow = `
       <tr style="${isSel?'background:var(--accent-purple-light);':''}" class="tr-activity-row">
-        ${isAdmin ? `<td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} onchange="_amToggleRow('${safeKey}',this.checked)"></td>` : ''}
+        ${isAdmin ? `<td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} ${cxOn('change', '_amToggleRow', String(safeKey), '$cx.checked')}></td>` : ''}
         <td class="am-actions-cell">
           <div class="tr-row-actions">
             ${isAdmin ? `<button class="form-secondary tr-mini-btn" ${cxAct('_amOpenEditModal', String(safeKey))}>Edit</button>` : ''}
@@ -12716,7 +12716,7 @@ function _testRegisterHTML() {
         <span class="right">
           ${isAdmin ? `
             <label style="cursor:pointer;display:inline-flex;">
-              <input type="file" accept=".csv" onchange="handleImportFile(this)" style="display:none">
+              <input type="file" accept=".csv" ${cxOn('change', 'handleImportFile', '$cx.el')} style="display:none">
               <span class="v2-btn-ghost">${icon('folder')} Import Test Items</span>
             </label>
             <button class="v2-btn-ghost" data-action="downloadImportTemplate">↓ CSV Template</button>
@@ -12732,17 +12732,17 @@ function _testRegisterHTML() {
             value="${escapeHtml(_amFilters.search||'')}"
             oninput="clearTimeout(window._trSearchTimer);window._trSearchTimer=setTimeout(()=>_amSetFilter('search',this.value),260)">
         </div>
-        <select id="tr-filter-phase" onchange="_amSetFilter('phase',this.value)">
+        <select id="tr-filter-phase" ${cxOn('change', '_amSetFilter', 'phase', '$cx.value')}>
           <option value="">All Phases</option>
           ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_amFilters.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
         </select>
-        <select id="tr-filter-location" onchange="_amSetFilter('location',this.value)">
+        <select id="tr-filter-location" ${cxOn('change', '_amSetFilter', 'location', '$cx.value')}>
           <option value="">All Locations</option>
           ${locations.map(l=>`<option value="${escapeHtml(l)}" ${_amFilters.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
         </select>
         ${userSub
           ? `<span class="filter-locked-tag" data-tippy-content="Auto-filtered to your assigned subsystem">${icon('pin')} ${escapeHtml(userSub)}</span>`
-          : `<select id="tr-filter-subsystem" onchange="_amSetFilter('subsystem',this.value)">
+          : `<select id="tr-filter-subsystem" ${cxOn('change', '_amSetFilter', 'subsystem', '$cx.value')}>
               <option value="">All Subsystems</option>
               ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_amFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
             </select>`}
@@ -12766,7 +12766,7 @@ function _testRegisterHTML() {
           <table class="data-table">
             <thead>
               <tr>
-                ${isAdmin ? `<th class="am-cb-col"><input type="checkbox" id="am-cb-all" onchange="_amToggleAll(this.checked)" title="Select all"></th>` : ''}
+                ${isAdmin ? `<th class="am-cb-col"><input type="checkbox" id="am-cb-all" ${cxOn('change', '_amToggleAll', '$cx.checked')} title="Select all"></th>` : ''}
                 <th style="min-width:90px;white-space:nowrap;">Actions</th>
                 ${_colGetVisible('tr').map(c => {
                   const def = _colRegistry['tr']?.defs.find(d => d.id === c.id);
@@ -12930,7 +12930,7 @@ function _adminActivityManagerHTML() {
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0;">
           <label style="cursor:pointer;">
-            <input type="file" accept=".csv" onchange="handleImportFile(this)" style="display:none">
+            <input type="file" accept=".csv" ${cxOn('change', 'handleImportFile', '$cx.el')} style="display:none">
             <div class="admin-action-btn" style="display:inline-block;cursor:pointer;background:var(--gray-700);">${icon('folder')} Import Test Items</div>
           </label>
           <button class="form-secondary" data-action="downloadImportTemplate">↓ CSV Template</button>
@@ -12939,19 +12939,19 @@ function _adminActivityManagerHTML() {
 
       <!-- Filters -->
       <div class="am-filter-bar">
-        <select class="filter-select" onchange="_amSetFilter('phase',this.value)">
+        <select class="filter-select" ${cxOn('change', '_amSetFilter', 'phase', '$cx.value')}>
           <option value="">All Phases</option>
           ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_amFilters.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
         </select>
-        <select class="filter-select" onchange="_amSetFilter('location',this.value)">
+        <select class="filter-select" ${cxOn('change', '_amSetFilter', 'location', '$cx.value')}>
           <option value="">All Locations</option>
           ${locations.map(l=>`<option value="${escapeHtml(l)}" ${_amFilters.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
         </select>
-        <select class="filter-select" onchange="_amSetFilter('subsystem',this.value)">
+        <select class="filter-select" ${cxOn('change', '_amSetFilter', 'subsystem', '$cx.value')}>
           <option value="">All Subsystems</option>
           ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_amFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
         </select>
-        <select class="filter-select" onchange="_amSetFilter('status',this.value)">
+        <select class="filter-select" ${cxOn('change', '_amSetFilter', 'status', '$cx.value')}>
           <option value="">All Statuses</option>
           ${statuses.map(s=>`<option value="${s}" ${_amFilters.status===s?'selected':''}>${s}</option>`).join('')}
         </select>
@@ -12976,7 +12976,7 @@ function _adminActivityManagerHTML() {
           <table class="data-table">
             <thead>
               <tr>
-                <th class="am-cb-col"><input type="checkbox" id="am-cb-all" onchange="_amToggleAll(this.checked)" title="Select all"></th>
+                <th class="am-cb-col"><input type="checkbox" id="am-cb-all" ${cxOn('change', '_amToggleAll', '$cx.checked')} title="Select all"></th>
                 ${_colHeaders('am')}
                 <th style="width:120px;">Actions
                   <button aria-label="Configure columns" onclick="_colOpenEditor('am',renderAdminPortal)" title="Configure columns"
@@ -13154,13 +13154,13 @@ function _amDrilldownHTML(key) {
         <div class="proc-section tr-procedure-card" ${_trEditMode && isAdmin ? `ondragover="event.preventDefault()" ondrop="_trDropCase('${dropKey}',null)"` : ''}>
           <div class="proc-head">
             <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1;">
-              ${_trBulkMode ? `<input type="checkbox" ${tpItems.length && tpItems.every(r => _trSelected.has(String(r.TestID))) ? 'checked' : ''} onchange="_trSelectSection('${dropKey}',this.checked)" title="Select All in Section" style="margin-top:14px;">` : ''}
+              ${_trBulkMode ? `<input type="checkbox" ${tpItems.length && tpItems.every(r => _trSelected.has(String(r.TestID))) ? 'checked' : ''} ${cxOn('change', '_trSelectSection', String(dropKey), '$cx.checked')} title="Select All in Section" style="margin-top:14px;">` : ''}
               <div style="display:flex;flex-direction:column;min-width:0;">
                 <span class="proc-label">Procedure</span>
                 <h3>
                   ${tpSecName ? `<span class="proc-subhead">${escapeHtml(tpSecName)}</span>` : ''}
                   ${_trEditMode && isAdmin
-                    ? `<input class="form-input" style="font-weight:600;min-width:320px;font-size:16px;" value="${escapeHtml(tpProc)}" onchange="_trRenameProcedure('${dropKey}',this.value)">`
+                    ? `<input class="form-input" style="font-weight:600;min-width:320px;font-size:16px;" value="${escapeHtml(tpProc)}" ${cxOn('change', '_trRenameProcedure', String(dropKey), '$cx.value')}>`
                     : escapeHtml(tpDispProc)}
                 </h3>
               </div>
@@ -13203,12 +13203,12 @@ function _amDrilldownHTML(key) {
                   const isFailRow = cur === 'Fail'; const rowTone = ({Pass:'good',Fail:'bad',Blocked:'warn','In Progress':'info','Not Applicable':'muted','Future Test':'purple'})[cur] || 'muted';
                   return `
                     <tr class="tr-tone-${rowTone}${isFailRow ? ' is-fail' : ''}" ${_trEditMode && isAdmin ? `draggable="true" ondragstart="_trDragStart('${tid}')" ondragover="event.preventDefault()" ondrop="_trDropCase('${dropKey}','${tid}')"` : ''}>
-                      ${_trBulkMode ? `<td><input type="checkbox" ${_trSelected.has(String(r.TestID))?'checked':''} onchange="_trToggleSelect('${tid}',this.checked)"></td>` : ''}
+                      ${_trBulkMode ? `<td><input type="checkbox" ${_trSelected.has(String(r.TestID))?'checked':''} ${cxOn('change', '_trToggleSelect', String(tid), '$cx.checked')}></td>` : ''}
                       ${_trEditMode && isAdmin ? `<td style="cursor:grab;color:var(--gray-400);font-size:14px;">${icon('menu')}</td>` : ''}
-                      <td style="min-width:140px;">${_trEditMode && isAdmin ? `<input class="form-input" style="font-size:11px;font-family:var(--f-mono);min-width:120px;" value="${escapeHtml(r.TestCaseCode||'')}" onchange="_trDraftChange('${tid}','TestCaseCode',this.value)">` : `<span class="v2-id-chip">${escapeHtml(r.TestCaseCode||r.TestID||'—')}</span>`}</td>
+                      <td style="min-width:140px;">${_trEditMode && isAdmin ? `<input class="form-input" style="font-size:11px;font-family:var(--f-mono);min-width:120px;" value="${escapeHtml(r.TestCaseCode||'')}" ${cxOn('change', '_trDraftChange', String(tid), 'TestCaseCode', '$cx.value')}>` : `<span class="v2-id-chip">${escapeHtml(r.TestCaseCode||r.TestID||'—')}</span>`}</td>
                       <td>
                         <div style="display:flex;align-items:center;gap:8px;">
-                          <div style="font-weight:500;font-size:13px;flex:1;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestName||'')}" onchange="_trDraftChange('${tid}','TestName',this.value)">` : escapeHtml(r.TestName||'—')}</div>
+                          <div style="font-weight:500;font-size:13px;flex:1;">${_trEditMode && isAdmin ? `<input class="form-input" value="${escapeHtml(r.TestName||'')}" ${cxOn('change', '_trDraftChange', String(tid), 'TestName', '$cx.value')}>` : escapeHtml(r.TestName||'—')}</div>
                           ${_trEditMode && isAdmin ? '' : _formsBadgeHTML(r)}
                         </div>
                         ${r.CompletedBy ? `<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(r.CompletedBy)}</div>` : ''}
@@ -13216,14 +13216,14 @@ function _amDrilldownHTML(key) {
                       </td>
                       <td>
                         ${uiCan('test_register','edit') ? `
-                          <select class="form-input mx-status-select status-select ${selToneClass}" style="font-size:12px;padding:4px 6px;" onchange="_mxStatusChange('${tid}',this.value,this)">
+                          <select class="form-input mx-status-select status-select ${selToneClass}" style="font-size:12px;padding:4px 6px;" ${cxOn('change', '_mxStatusChange', String(tid), '$cx.value', '$cx.el')}>
                             ${statuses.map(s=>`<option value="${s}" ${cur===s?'selected':''}>${s}</option>`).join('')}
                           </select>
                           <div id="mx-reason-${domId}" class="mx-reason-wrap" style="${showReason?'':'display:none;'}">
-                            <textarea id="mx-ri-${domId}" class="form-input reason-input mx-reason-input" rows="2" placeholder="${cur==='Fail'?'Failure reason...':'Blocked reason...'}" oninput="_mxSaveReason('${tid}',this.value)">${escapeHtml(reasonVal)}</textarea>
+                            <textarea id="mx-ri-${domId}" class="form-input reason-input mx-reason-input" rows="2" placeholder="${cur==='Fail'?'Failure reason...':'Blocked reason...'}" ${cxOn('input', '_mxSaveReason', String(tid), '$cx.value')}>${escapeHtml(reasonVal)}</textarea>
                           </div>
                           <div id="mx-ft-reason-${domId}" class="mx-reason-wrap" style="${cur==='Future Test'?'':'display:none;'}">
-                            <select id="mx-ft-cat-${domId}" class="form-input" style="font-size:11px;padding:3px 6px;margin-top:4px;" onchange="_mxSaveFtReason('${tid}')">
+                            <select id="mx-ft-cat-${domId}" class="form-input" style="font-size:11px;padding:3px 6px;margin-top:4px;" ${cxOn('change', '_mxSaveFtReason', String(tid))}>
                               <option value="">— Hold reason —</option>
                               ${['Vehicle Availability','Wayside Installation','Future Phase'].map(o=>`<option value="${o}" ${(r.FutureTestReason||'').startsWith(o)?'selected':''}>${o}</option>`).join('')}
                             </select>
@@ -13740,7 +13740,7 @@ function _amOpenEditModal(key) {
         </div>
         <div class="form-field">
           <label>Phase</label>
-          <select id="am-edit-phase" class="form-input" onchange="_amFilterEditLocations()">
+          <select id="am-edit-phase" class="form-input" ${cxOn('change', '_amFilterEditLocations')}>
             ${phases.map(p=>`<option value="${escapeHtml(p)}" ${act.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
           </select>
         </div>
@@ -14452,17 +14452,17 @@ function _trBlockersShellHTML() {
             value="${escapeHtml(_amFilters.search || '')}"
             oninput="clearTimeout(window._trSearchTimer);window._trSearchTimer=setTimeout(()=>_amSetFilter('search',this.value),260)">
         </div>
-        <select onchange="_amSetFilter('phase',this.value)" aria-label="Filter by phase">
+        <select ${cxOn('change', '_amSetFilter', 'phase', '$cx.value')} aria-label="Filter by phase">
           <option value="">All Phases</option>
           ${phases.map(p => `<option value="${escapeHtml(p)}" ${_amFilters.phase === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
         </select>
-        <select onchange="_amSetFilter('location',this.value)" aria-label="Filter by location">
+        <select ${cxOn('change', '_amSetFilter', 'location', '$cx.value')} aria-label="Filter by location">
           <option value="">All Locations</option>
           ${locations.map(l => `<option value="${escapeHtml(l)}" ${_amFilters.location === l ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
         </select>
         ${userSub
           ? `<span class="filter-locked-tag" data-tippy-content="Auto-filtered to your assigned subsystem">${icon('pin')} ${escapeHtml(userSub)}</span>`
-          : `<select onchange="_amSetFilter('subsystem',this.value)" aria-label="Filter by subsystem">
+          : `<select ${cxOn('change', '_amSetFilter', 'subsystem', '$cx.value')} aria-label="Filter by subsystem">
               <option value="">All Subsystems</option>
               ${subsystems.map(s => `<option value="${escapeHtml(s)}" ${_amFilters.subsystem === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
             </select>`}
@@ -14512,7 +14512,7 @@ function _trViewBarHTML() {
         <button class="rd-seg ${_trView === 'blockers' ? 'active' : ''}" ${cxAct('_trSetView', 'blockers')}>${icon('alert')} Blockers &amp; Failures${nBlock ? ` <span class="rd-seg-n">${nBlock}</span>` : ''}</button>
       </div>
       <div class="tr-savedviews">
-        ${views.map(v => `<button class="tr-savedview" ${cxAct('_trApplyView', String(v.id))} title="Apply saved filter view">${escapeHtml(v.name)}<span class="tr-savedview-x" onclick="_trDeleteView('${v.id}',event)" role="button" aria-label="Delete view ${escapeHtml(v.name)}">×</span></button>`).join('')}
+        ${views.map(v => `<button class="tr-savedview" ${cxAct('_trApplyView', String(v.id))} title="Apply saved filter view">${escapeHtml(v.name)}<span class="tr-savedview-x" ${cxAct('_trDeleteView', String(v.id), '$cx.event')} role="button" aria-label="Delete view ${escapeHtml(v.name)}">×</span></button>`).join('')}
         <button class="tr-savedview-add" ${_trFiltersActive() ? '' : 'disabled'} data-action="_trSaveCurrentView" title="${_trFiltersActive() ? 'Save the current filters + search as a reusable view' : 'Apply a filter or search first'}">${icon('plus')} Save view</button>
       </div>
     </div>`;
@@ -14895,7 +14895,7 @@ function _p6ImportTabHTML() {
           </svg>
           <div style="font-size:13px;font-weight:600;color:var(--gray-600);">Drop Excel file here or click to browse</div>
           <div style="font-size:11px;color:var(--gray-400);margin-top:4px;">.xlsx files only</div>
-          <input type="file" id="p6-file-input" accept=".xlsx" style="display:none" onchange="_p6HandleFileSelect(this)">
+          <input type="file" id="p6-file-input" accept=".xlsx" style="display:none" ${cxOn('change', '_p6HandleFileSelect', '$cx.el')}>
         </div>
 
         <div id="p6-import-preview" style="margin-top:16px;"></div>
@@ -15161,19 +15161,19 @@ function _p6MappingTabHTML() {
 
         <!-- Cascade filters -->
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
-          <select class="filter-select" style="font-size:12px;" onchange="_p6MapFilter('phase',this.value)">
+          <select class="filter-select" style="font-size:12px;" ${cxOn('change', '_p6MapFilter', 'phase', '$cx.value')}>
             <option value="">All Phases</option>
             ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_p6MappingFilters.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
           </select>
-          <select class="filter-select" style="font-size:12px;" onchange="_p6MapFilter('location',this.value)">
+          <select class="filter-select" style="font-size:12px;" ${cxOn('change', '_p6MapFilter', 'location', '$cx.value')}>
             <option value="">All Locations</option>
             ${locations.map(l=>`<option value="${escapeHtml(l)}" ${_p6MappingFilters.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
           </select>
-          <select class="filter-select" style="font-size:12px;" onchange="_p6MapFilter('subsystem',this.value)">
+          <select class="filter-select" style="font-size:12px;" ${cxOn('change', '_p6MapFilter', 'subsystem', '$cx.value')}>
             <option value="">All Subsystems</option>
             ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_p6MappingFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
           </select>
-          <select class="filter-select" style="font-size:12px;" onchange="_p6MapFilter('linked',this.value)">
+          <select class="filter-select" style="font-size:12px;" ${cxOn('change', '_p6MapFilter', 'linked', '$cx.value')}>
             <option value="">All</option>
             <option value="unlinked" ${_p6MappingFilters.linked==='unlinked'?'selected':''}>Unlinked</option>
             <option value="linked"   ${_p6MappingFilters.linked==='linked'?'selected':''}>Linked</option>
@@ -15296,7 +15296,7 @@ function _p6SS(sid, p6List, placeholder, initialId = '') {
       <input class="p6-ss-inp form-input" type="text" autocomplete="off"
         placeholder="${escapeHtml(placeholder||'Search P6 activities…')}"
         value="${escapeHtml(initialText)}"
-        oninput="_p6SSFilter('${sid}')"
+        ${cxOn('input', '_p6SSFilter', String(sid))}
         onfocus="_p6SSOpen('${sid}')"
         onblur="_p6SSClose('${sid}')">
       <div class="p6-ss-drop" id="p6-ss-drop-${sid}">
@@ -16086,16 +16086,16 @@ function _p6LearnTabHTML() {
           <button class="${_p6LearnMode==='tc'?'admin-action-btn':'form-secondary'}" style="font-size:12px;padding:6px 12px;border:none;"
             ${cxAct('_p6LearnSetMode', 'tc')}>Activities + Test Cases</button>
         </div>
-        <select class="filter-select" style="font-size:12px;" onchange="_p6LearnFilter('phase',this.value)">
+        <select class="filter-select" style="font-size:12px;" ${cxOn('change', '_p6LearnFilter', 'phase', '$cx.value')}>
           <option value="">All Phases</option>
           ${phases.map(p=>`<option value="${escapeHtml(p)}" ${_p6LearnFilters.phase===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
         </select>
-        <select class="filter-select" style="font-size:12px;" onchange="_p6LearnFilter('subsystem',this.value)">
+        <select class="filter-select" style="font-size:12px;" ${cxOn('change', '_p6LearnFilter', 'subsystem', '$cx.value')}>
           <option value="">All Subsystems</option>
           ${subsystems.map(s=>`<option value="${escapeHtml(s)}" ${_p6LearnFilters.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
         </select>
         <input type="text" id="p6-learn-search" class="filter-input" style="font-size:12px;max-width:220px;" placeholder="Search test activity…"
-          value="${escapeHtml(_p6LearnFilters.search||'')}" oninput="_p6LearnSearch(this.value)">
+          value="${escapeHtml(_p6LearnFilters.search||'')}" ${cxOn('input', '_p6LearnSearch', '$cx.value')}>
         ${(_p6LearnFilters.phase || _p6LearnFilters.subsystem || (_p6LearnFilters.search||'').trim())
           ? `<button class="filter-clear" data-action="_p6LearnClearFilters">Reset</button>` : ''}
         <span style="font-size:12px;color:var(--gray-500);margin-left:auto;">
@@ -16734,7 +16734,7 @@ function _p6HealthTabHTML() {
           ${unlinkedP6.length ? `
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;">
-              <input type="checkbox" id="p6h-sel-all" onchange="_p6HSelectAll(this.checked)"> Select all
+              <input type="checkbox" id="p6h-sel-all" ${cxOn('change', '_p6HSelectAll', '$cx.checked')}> Select all
             </label>
             <button class="form-secondary tr-mini-btn" data-action="_p6HBulkRemindLater">${icon('clock')} Snooze selected</button>
             <button class="form-secondary tr-mini-btn" style="color:var(--bad);" data-action="_p6HBulkRemove">${icon('trash')} Remove selected</button>
@@ -16745,8 +16745,8 @@ function _p6HealthTabHTML() {
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
           <input id="p6-health-search" class="form-input" type="text" placeholder="Search P6 activity name…" style="flex:1;min-width:180px;max-width:320px;font-size:12px;"
             value="${escapeHtml(_p6HealthFilter.search)}"
-            oninput="_p6HealthSearch(this.value)">
-          <select class="filter-select" style="font-size:12px;" onchange="_p6HDateMode(this.value)">
+            ${cxOn('input', '_p6HealthSearch', '$cx.value')}>
+          <select class="filter-select" style="font-size:12px;" ${cxOn('change', '_p6HDateMode', '$cx.value')}>
             <option value="all"   ${_p6HealthFilter.dateMode==='all'  ?'selected':''}>All start dates</option>
             <option value="30d"   ${_p6HealthFilter.dateMode==='30d'  ?'selected':''}>Starting within 30 days</option>
             <option value="6m"    ${_p6HealthFilter.dateMode==='6m'   ?'selected':''}>Starting within 6 months</option>
@@ -16785,7 +16785,7 @@ function _p6HealthTabHTML() {
                 const escapedId = escapeHtml(p.id);
                 return `
                 <tr>
-                  <td><input type="checkbox" class="p6h-chk" data-pid="${escapedId}" onchange="_p6HUpdateSelCount()"></td>
+                  <td><input type="checkbox" class="p6h-chk" data-pid="${escapedId}" ${cxOn('change', '_p6HUpdateSelCount')}></td>
                   <td style="font-weight:500;">${escapeHtml(p.p6_name)}</td>
                   <td style="color:var(--gray-500);font-size:11px;">${escapeHtml(p.p6_id||'')}</td>
                   <td style="font-size:12px;">${p.start_date  ? _fmtDate(p.start_date)  : '—'}</td>
@@ -16808,7 +16808,7 @@ function _p6HealthTabHTML() {
                       </div>
                       <input type="text" class="form-input" placeholder="Search activities…"
                         style="font-size:12px;"
-                        oninput="_p6HLinkFilter('${escapedId}',this.value)">
+                        ${cxOn('input', '_p6HLinkFilter', String(escapedId), '$cx.value')}>
                       <div id="p6h-link-list-${escapedId}"
                         style="max-height:240px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;background:var(--white);">
                         ${portalCheckItems}
@@ -18085,13 +18085,13 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
       <td style="font-size:11px;font-family:monospace;color:var(--gray-700);min-width:140px;">
         <span style="font-size:12px;margin-right:6px;color:var(--gray-500);transition:transform .15s;">${chevron}</span>
         ${_trEditMode && isAdmin
-          ? `<input class="form-input" style="font-size:11px;font-family:monospace;min-width:120px;" value="${escapeHtml(parent.TestCaseCode||'')}" onclick="event.stopPropagation()" onchange="_trDraftChange('${ptid}','TestCaseCode',this.value)">`
+          ? `<input class="form-input" style="font-size:11px;font-family:monospace;min-width:120px;" value="${escapeHtml(parent.TestCaseCode||'')}" onclick="event.stopPropagation()" ${cxOn('change', '_trDraftChange', String(ptid), 'TestCaseCode', '$cx.value')}>`
           : escapeHtml(parent.TestCaseCode || parent.TestID || '—')}
       </td>
       <td>
         <div style="display:flex;align-items:center;gap:8px;">
           <div style="flex:1;min-width:0;">${_trEditMode && isAdmin
-            ? `<input class="form-input" style="font-weight:600;font-size:13px;" value="${escapeHtml(parent.TestName||'')}" onclick="event.stopPropagation()" onchange="_trDraftChange('${ptid}','TestName',this.value)">`
+            ? `<input class="form-input" style="font-weight:600;font-size:13px;" value="${escapeHtml(parent.TestName||'')}" onclick="event.stopPropagation()" ${cxOn('change', '_trDraftChange', String(ptid), 'TestName', '$cx.value')}>`
             : `<div style="font-weight:600;font-size:13px;">${escapeHtml(parent.TestName || '—')}</div>`}</div>
           ${_trEditMode && isAdmin ? '' : `<span onclick="event.stopPropagation()">${_formsBadgeHTML(parent)}</span>`}
         </div>
@@ -18132,9 +18132,9 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;">
           <input placeholder="Search assets…" value="${escapeHtml(childFilter.search)}"
                  style="padding:4px 8px;border:1px solid var(--gray-300);border-radius:4px;font-size:12px;flex:1;min-width:160px;max-width:260px;"
-                 oninput="_trChildFilterSet('${ptid}','search',this.value)">
+                 ${cxOn('input', '_trChildFilterSet', String(ptid), 'search', '$cx.value')}>
           <select style="padding:4px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:12px;"
-                  onchange="_trChildFilterSet('${ptid}','status',this.value)">
+                  ${cxOn('change', '_trChildFilterSet', String(ptid), 'status', '$cx.value')}>
             <option value="">All statuses</option>
             ${statuses.map(s => `<option value="${s}" ${childFilter.status===s?'selected':''}>${s}</option>`).join('')}
           </select>
@@ -18157,7 +18157,7 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
     const sc         = _assetStatusColor(cur);
     return `
       <tr style="background:#fafafa;border-left:3px solid ${sc}40;">
-        ${_trBulkMode ? `<td style="padding-left:20px;"><input type="checkbox" ${_trSelected.has(String(c.TestID)) ? 'checked' : ''} onchange="_trToggleSelect('${ctid}',this.checked)"></td>` : ''}
+        ${_trBulkMode ? `<td style="padding-left:20px;"><input type="checkbox" ${_trSelected.has(String(c.TestID)) ? 'checked' : ''} ${cxOn('change', '_trToggleSelect', String(ctid), '$cx.checked')}></td>` : ''}
         ${_trEditMode && isAdmin ? `<td></td>` : ''}
         <td style="padding-left:24px;font-size:11px;font-family:monospace;color:var(--gray-500);">
           <div style="display:flex;align-items:center;gap:6px;">
@@ -18174,13 +18174,13 @@ function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
         </td>
         <td>
           ${uiCan('test_register','edit') ? `
-            <select class="form-input mx-status-select" style="font-size:12px;padding:4px 6px;" onchange="_mxStatusChange('${ctid}',this.value,this)">
+            <select class="form-input mx-status-select" style="font-size:12px;padding:4px 6px;" ${cxOn('change', '_mxStatusChange', String(ctid), '$cx.value', '$cx.el')}>
               ${statuses.map(s => `<option value="${s}" ${cur === s ? 'selected' : ''}>${s}</option>`).join('')}
             </select>
             <div id="mx-reason-${domId}" class="mx-reason-wrap" style="${showReason ? '' : 'display:none;'}">
               <input type="text" id="mx-ri-${domId}" class="form-input mx-reason-input" style="font-size:11px;padding:3px 6px;margin-top:4px;"
                 placeholder="${cur === 'Fail' ? 'Failure reason...' : 'Blocked reason...'}"
-                value="${escapeHtml(reasonVal)}" oninput="_mxSaveReason('${ctid}',this.value)">
+                value="${escapeHtml(reasonVal)}" ${cxOn('input', '_mxSaveReason', String(ctid), '$cx.value')}>
             </div>
           ` : `<span class="badge" style="background:${sc}20;color:${sc};border:1px solid ${sc}40;">${escapeHtml(cur)}</span>`}
           <div id="punch-actions-${domId}" style="margin-top:6px;display:${cur==='Fail'?'flex':'none'};flex-direction:column;gap:4px;">
@@ -18393,7 +18393,7 @@ function _assetPageHTML() {
         <div class="admin-section-header"><h3 class="admin-section-title">${icon('plus')} Add Asset Manually</h3></div>
         <div style="padding:16px;display:flex;flex-direction:column;gap:8px;">
           <input id="asset-add-type" class="form-input" placeholder="Device Type (e.g. ATC Cabinet)">
-          <input id="asset-add-name" class="form-input" placeholder="Device Name (e.g. W40-AC01)" oninput="_assetPreviewPrefix()">
+          <input id="asset-add-name" class="form-input" placeholder="Device Name (e.g. W40-AC01)" ${cxOn('input', '_assetPreviewPrefix')}>
           <select id="asset-add-loc" class="form-input">
             <option value="">Location (optional)</option>
             ${[...new Set(TI.map(r=>r.Location).filter(Boolean))].sort().map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('')}
@@ -18425,16 +18425,16 @@ function _assetPageHTML() {
     <!-- Filter Bar -->
     <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
       <input id="asset-search-input" class="form-input" style="max-width:220px;" placeholder="Search name or type…"
-        value="${escapeHtml(_assetFilter.search)}" oninput="_assetSetFilter('search',this.value)">
-      <select class="form-input" style="max-width:160px;" onchange="_assetSetFilter('type',this.value)">
+        value="${escapeHtml(_assetFilter.search)}" ${cxOn('input', '_assetSetFilter', 'search', '$cx.value')}>
+      <select class="form-input" style="max-width:160px;" ${cxOn('change', '_assetSetFilter', 'type', '$cx.value')}>
         <option value="">All Types</option>
         ${types.map(t => `<option value="${escapeHtml(t)}" ${_assetFilter.type===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}
       </select>
-      <select class="form-input" style="max-width:140px;" onchange="_assetSetFilter('prefix',this.value)">
+      <select class="form-input" style="max-width:140px;" ${cxOn('change', '_assetSetFilter', 'prefix', '$cx.value')}>
         <option value="">All Locations</option>
         ${prefixes.map(p => `<option value="${escapeHtml(p)}" ${_assetFilter.prefix===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
       </select>
-      <select class="form-input" style="max-width:220px;" onchange="_assetSetFilter('sub',this.value)">
+      <select class="form-input" style="max-width:220px;" ${cxOn('change', '_assetSetFilter', 'sub', '$cx.value')}>
         <option value="">All Subsystems</option>
         ${subs.map(s => `<option value="${escapeHtml(s)}" ${_assetFilter.sub===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
       </select>
@@ -18479,7 +18479,7 @@ function _assetPageHTML() {
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr>
-            <th style="width:36px;"><input type="checkbox" title="Select all" onchange="_assetSelectAll(this.checked)"></th>
+            <th style="width:36px;"><input type="checkbox" title="Select all" ${cxOn('change', '_assetSelectAll', '$cx.checked')}></th>
             ${_assetColHeaders()}
             <th style="width:160px;">Actions
               <button aria-label="Configure columns" onclick="_colOpenEditor('assets',renderAdminAssets)" title="Configure columns"
@@ -18519,7 +18519,7 @@ function _assetRowHTML(a) {
   const ctx = { a, links, subDisplay, passCount, total, pct };
   const mainRow = `
     <tr style="${isOpen ? 'background:var(--info-light);' : ''}">
-      <td><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="_assetToggleSelect('${a.id}',this.checked)"></td>
+      <td><input type="checkbox" ${isChecked ? 'checked' : ''} ${cxOn('change', '_assetToggleSelect', String(a.id), '$cx.checked')}></td>
       ${_colCells('assets', ctx)}
       <td>
         <button class="form-secondary tr-mini-btn${isOpen?' admin-action-btn':''}" ${cxAct('_assetOpenManageLinks', String(a.id))}>${isOpen? icon('link')+' Close' : icon('link')+' Links'}</button>
@@ -18606,14 +18606,14 @@ function _assetManagePanelHTML(assetId) {
           <div style="display:flex;flex-direction:column;gap:10px;max-width:580px;">
             <div>
               <label class="form-label" style="font-size:12px;">Filter by Subsystem <span style="font-weight:400;">(optional)</span></label>
-              <select id="aml-sub-${assetId}" class="form-input" onchange="_assetPopulateActSelect('${assetId}')">
+              <select id="aml-sub-${assetId}" class="form-input" ${cxOn('change', '_assetPopulateActSelect', String(assetId))}>
                 <option value="">All Subsystems</option>
                 ${allCandidateSubs.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
               </select>
             </div>
             <div>
               <label class="form-label" style="font-size:12px;">1. Select Test Activity</label>
-              <select id="aml-act-${assetId}" class="form-input" onchange="_assetPopulateTcSelect('${assetId}')">
+              <select id="aml-act-${assetId}" class="form-input" ${cxOn('change', '_assetPopulateTcSelect', String(assetId))}>
                 <option value="">— Select Activity —</option>
                 ${allActivityOptions.map(act => `<option value="${escapeHtml(act)}">${escapeHtml(act)}</option>`).join('')}
               </select>
@@ -18754,7 +18754,7 @@ function _assetOpenEdit(assetId) {
         <div><label class="form-label">Device Type</label>
           <input id="ae-type" class="form-input" value="${escapeHtml(a.device_type||'')}"></div>
         <div><label class="form-label">Device Name</label>
-          <input id="ae-name" class="form-input" value="${escapeHtml(a.name)}" oninput="_assetEditPreviewPrefix()"></div>
+          <input id="ae-name" class="form-input" value="${escapeHtml(a.name)}" ${cxOn('input', '_assetEditPreviewPrefix')}></div>
         <div><label class="form-label">Location</label>
           <select id="ae-loc" class="form-input">
             <option value="">— None —</option>
@@ -19360,24 +19360,24 @@ function _cmPageHTML() {
 
     ${!f.vddView ? `<div class="admin-section" style="margin-bottom:18px;">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-        <select class="filter-select" onchange="_cmSetFilter('subsystem',this.value)">
+        <select class="filter-select" ${cxOn('change', '_cmSetFilter', 'subsystem', '$cx.value')}>
           <option value="">All Subsystems</option>
           ${subs.map(s=>`<option ${f.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
         </select>
-        <select class="filter-select" onchange="_cmPhaseFilterChange(this.value)">
+        <select class="filter-select" ${cxOn('change', '_cmPhaseFilterChange', '$cx.value')}>
           <option value="">All Phases</option>
           ${phaseOpts.map(p=>`<option value="${p.id}" ${f.phase===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
         </select>
-        <select class="filter-select" onchange="_cmSetFilter('location',this.value)" ${f.phase?'':'disabled'}>
+        <select class="filter-select" ${cxOn('change', '_cmSetFilter', 'location', '$cx.value')} ${f.phase?'':'disabled'}>
           <option value="">${f.phase?'All Locations':'Select phase first'}</option>
           ${locOpts.map(l=>`<option value="${escapeHtml(l.name)}" ${f.location===l.name?'selected':''}>${escapeHtml(l.name)}</option>`).join('')}
         </select>
-        <input type="text" class="form-input" style="max-width:240px;" placeholder="Search software / version / device…" value="${escapeHtml(f.search)}" oninput="_cmSetFilter('search',this.value)">
+        <input type="text" class="form-input" style="max-width:240px;" placeholder="Search software / version / device…" value="${escapeHtml(f.search)}" ${cxOn('input', '_cmSetFilter', 'search', '$cx.value')}>
         ${(f.subsystem||f.phase||f.location||f.search)?`<button class="form-secondary" style="font-size:12px;" data-action="_cmClearFilters">Clear</button>`:''}
       </div>
     </div>` : `<div class="admin-section" style="margin-bottom:18px;">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-        <input type="text" class="form-input" style="max-width:320px;" placeholder="Search VDDs…" value="${escapeHtml(f.search)}" oninput="_cmSetFilter('search',this.value)">
+        <input type="text" class="form-input" style="max-width:320px;" placeholder="Search VDDs…" value="${escapeHtml(f.search)}" ${cxOn('input', '_cmSetFilter', 'search', '$cx.value')}>
         ${f.search?`<button class="form-secondary" style="font-size:12px;" ${cxAct('_cmSetFilter', 'search', '')}>Clear</button>`:''}
         <button class="form-secondary" style="font-size:12px;" data-action="_cmExpandAll">Expand All</button>
         <button class="form-secondary" style="font-size:12px;" data-action="_cmCollapseAll">Collapse All</button>
@@ -19838,7 +19838,7 @@ function openSwConfigModal(editId, cloneFromId, parentVddId) {
         </div>
         <div class="form-field">
           <label>Phase *</label>
-          <select id="sw-phase" class="form-input" onchange="_swPhaseChange()" ${isNewVersion?'disabled':''}>
+          <select id="sw-phase" class="form-input" ${cxOn('change', '_swPhaseChange')} ${isNewVersion?'disabled':''}>
             <option value="">Select phase…</option>
             ${phases.map(p=>`<option value="${p.id}" ${basePhaseId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
           </select>
@@ -20427,7 +20427,7 @@ function _vmRenderRegistry(root, heroEl) {
           <div style="display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:12px;">
             ${['', 'D', 'E'].map(t => `<button style="padding:5px 14px;border:none;cursor:pointer;${t ? 'border-left:1px solid var(--border);' : ''}background:${f.type === t ? 'var(--hitachi-red)' : 'var(--surface)'};color:${f.type === t ? 'var(--white)' : 'var(--text)'};font-weight:${f.type === t ? '600' : '400'};" ${cxAct('_vmSetFilter', 'type', String(t))}>${t ? t + '-Cars' : 'All'}</button>`).join('')}
           </div>
-          <input type="text" class="form-input" style="max-width:220px;" placeholder="Search car number…" value="${escapeHtml(f.search)}" oninput="_vmSetFilter('search',this.value)">
+          <input type="text" class="form-input" style="max-width:220px;" placeholder="Search car number…" value="${escapeHtml(f.search)}" ${cxOn('input', '_vmSetFilter', 'search', '$cx.value')}>
           ${(f.search || f.type) ? `<button class="form-secondary" style="font-size:12px;" data-action="_vmClearFilters">Clear</button>` : ''}
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -20586,7 +20586,7 @@ function _vmWorkflowTabHTML(car) {
           <button class="form-secondary" style="font-size:11px;padding:2px 7px;" ${idx === items.length - 1 ? 'disabled' : ''} aria-label="Move activity down" title="Move down" ${cxAct('_vmWfMove', String(it.id), 1)}>▼</button>
           <button class="form-secondary" style="font-size:11px;padding:2px 8px;" aria-label="Edit activity" title="Edit activity" ${cxAct('_vmWfEditModal', String(it.id))}>${icon('edit')}</button>` : ''}
           ${canEdit
-            ? `<select onchange="_vmSetWfStatus('${it.id}',this.value)" aria-label="Activity status" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-weight:600;">
+            ? `<select ${cxOn('change', '_vmSetWfStatus', String(it.id), '$cx.value')} aria-label="Activity status" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-weight:600;">
                 ${_VM_WF_STATUSES.map(s => `<option ${it.status === s ? 'selected' : ''}>${s}</option>`).join('')}
               </select>`
             : _vmChip(it.status, tone)}
@@ -20934,7 +20934,7 @@ function _vmEquipModal(carId, editId, presetDevice) {
     title: '+ Add Equipment', size: 'large',
     body: `<div class="form-grid">
         <div class="form-field form-field-full"><label>Device / Equipment *</label>
-          <input type="text" id="vme-device" class="form-input" list="vme-device-list" placeholder="e.g. CC, ATC-C, DCS Radio" value="${escapeHtml(presetDevice || '')}" oninput="_vmEquipDeviceChanged()">
+          <input type="text" id="vme-device" class="form-input" list="vme-device-list" placeholder="e.g. CC, ATC-C, DCS Radio" value="${escapeHtml(presetDevice || '')}" ${cxOn('input', '_vmEquipDeviceChanged')}>
           <datalist id="vme-device-list">${devices.map(d => '<option value="' + escapeHtml(d) + '">').join('')}</datalist>
         </div>
       </div>
@@ -21004,7 +21004,7 @@ function _vmEquipEditModal(carId, e) {
         <div class="form-field"><label>Device *</label><input type="text" id="vme-device" class="form-input" value="${escapeHtml(device)}"></div>
         <div class="form-field"><label>Software Type</label><input type="text" id="vme-type" class="form-input" value="${escapeHtml(e.sw_type || '')}" list="vme-type-list"><datalist id="vme-type-list">${swTypes.map(t => '<option value="' + escapeHtml(t) + '">').join('')}</datalist></div>
         ${builds.length ? `<div class="form-field form-field-full"><label>Loaded Software Version <span style="font-weight:400;color:var(--gray-500);">(from Config Mgmt)</span></label>
-          <select id="vme-build" class="form-input" onchange="_vmEditBuildPick()">
+          <select id="vme-build" class="form-input" ${cxOn('change', '_vmEditBuildPick')}>
             <option value="">— not loaded —</option>
             ${builds.map(b => `<option value="${b.id}" ${e.sw_equipment_id === b.id ? 'selected' : ''}>${escapeHtml(_vmBuildLabel(b))}${_vmIsPatchConfig(b.config_id) ? ' (patch)' : ''}</option>`).join('')}
           </select></div>`
@@ -21149,7 +21149,7 @@ function _vmBulkUpdateModal() {
     if (!g.length) return '';
     return `<div style="margin-top:8px;"><div style="font-size:11px;font-weight:700;color:var(--gray-400);text-transform:uppercase;margin-bottom:4px;">${type}-Cars</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;">
-        <label style="font-size:11px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" onchange="_vmBulkToggleType('${type}',this.checked)" style="margin:0;"> <em>all ${type}</em></label>
+        <label style="font-size:11px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" ${cxOn('change', '_vmBulkToggleType', String(type), '$cx.checked')} style="margin:0;"> <em>all ${type}</em></label>
         ${g.map(c => `<label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;border:1px solid var(--border);border-radius:6px;padding:3px 8px;"><input type="checkbox" class="vm-bulk-car" value="${c.id}" data-type="${type}" style="margin:0;"> ${escapeHtml(c.car_number)}</label>`).join('')}
       </div></div>`;
   };
@@ -21157,7 +21157,7 @@ function _vmBulkUpdateModal() {
     title: 'Bulk Software Update', size: 'large',
     body: `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">Set the loaded software version on one device across every selected car. The version list comes from Configuration Management for that device.</div>
       <div class="form-grid">
-        <div class="form-field"><label>Device *</label><select id="vm-bulk-device" class="form-input" onchange="_vmBulkDeviceChanged()">${names.map(n => `<option>${escapeHtml(n)}</option>`).join('')}</select></div>
+        <div class="form-field"><label>Device *</label><select id="vm-bulk-device" class="form-input" ${cxOn('change', '_vmBulkDeviceChanged')}>${names.map(n => `<option>${escapeHtml(n)}</option>`).join('')}</select></div>
         <div class="form-field"><label>New Loaded Software Version *</label><select id="vm-bulk-build" class="form-input"></select></div>
       </div>
       <div style="margin-top:6px;"><label style="font-weight:600;font-size:12px;">Apply to cars</label>${carChecks('D')}${carChecks('E')}</div>`,
@@ -21243,7 +21243,7 @@ function _vmLinkPunchModal(carId) {
     .sort((a, b) => (b.number || 0) - (a.number || 0));
   modal({
     title: 'Link Punch Item', size: 'medium',
-    body: avail.length ? `<input type="text" class="form-input" placeholder="Filter…" oninput="_vmPunchFilter(this.value)" style="margin-bottom:8px;">
+    body: avail.length ? `<input type="text" class="form-input" placeholder="Filter…" ${cxOn('input', '_vmPunchFilter', '$cx.value')} style="margin-bottom:8px;">
       <div id="vm-punch-list" style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto;">
         ${avail.map(p => `<button class="form-secondary vm-punch-opt" data-txt="${escapeHtml(String((p.number || '') + ' ' + (p.title || '')).toLowerCase())}" style="text-align:left;display:flex;align-items:center;gap:8px;" onclick="_vmLinkPunch('${carId}','${String(p.id).replace(/'/g, "\\'")}')"><span style="font-family:monospace;font-weight:700;color:var(--gray-500);">#${p.number ?? ''}</span> ${escapeHtml(p.title || '(untitled)')}</button>`).join('')}
       </div>` : `<div style="font-size:13px;color:var(--gray-500);">No unlinked punch items available.</div>`,
@@ -21401,7 +21401,7 @@ function _punchLinkCarPicker(punchId) {
   const pid = String(p.id).replace(/'/g, "\\'");
   modal({
     title: 'Link Car', size: 'medium',
-    body: avail.length ? `<input type="text" class="form-input" placeholder="Filter…" oninput="_punchPickFilter(this.value,'pk-car')" style="margin-bottom:8px;">
+    body: avail.length ? `<input type="text" class="form-input" placeholder="Filter…" ${cxOn('input', '_punchPickFilter', '$cx.value', 'pk-car')} style="margin-bottom:8px;">
       <div id="pk-car" style="display:flex;flex-wrap:wrap;gap:6px;max-height:50vh;overflow:auto;">
         ${avail.map(v => `<button class="form-secondary pk-opt" data-txt="${escapeHtml((v.car_number + ' ' + v.car_type).toLowerCase())}" style="font-family:monospace;font-weight:600;" ${cxAct('_punchLinkCar', String(pid), String(v.id))}>${escapeHtml(v.car_number)} · ${escapeHtml(v.car_type)}</button>`).join('')}
       </div>` : `<div style="font-size:13px;color:var(--gray-500);">All cars are already linked, or none exist.</div>`,
@@ -21418,7 +21418,7 @@ function _punchLinkTestPicker(punchId) {
     all: TIarr.filter(t => !t.IsParent && !linked.has(String(t.TestID))),
   };
   const distinct = key => [...new Set(_ptp.all.map(t => (t[key] || '').toString().trim()).filter(Boolean))].sort();
-  const sel = (id, label, opts) => `<select id="${id}" class="filter-select" onchange="_ptpSet('${id}',this.value)" style="font-size:12px;"><option value="">${label}</option>${opts.map(o => `<option>${escapeHtml(o)}</option>`).join('')}</select>`;
+  const sel = (id, label, opts) => `<select id="${id}" class="filter-select" ${cxOn('change', '_ptpSet', String(id), '$cx.value')} style="font-size:12px;"><option value="">${label}</option>${opts.map(o => `<option>${escapeHtml(o)}</option>`).join('')}</select>`;
   modal({
     title: 'Link Test Case / Activity', size: 'large',
     body: `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
@@ -21426,7 +21426,7 @@ function _punchLinkTestPicker(punchId) {
         ${sel('ptp-loc', 'All Locations', distinct('Location'))}
         ${sel('ptp-sub', 'All Subsystems', distinct('Subsystem'))}
         ${sel('ptp-act', 'All Activities', distinct('Activity'))}
-        <input type="text" id="ptp-q" class="form-input" placeholder="Search code / name…" oninput="_ptpSet('ptp-q',this.value)" style="flex:1;min-width:160px;font-size:12px;">
+        <input type="text" id="ptp-q" class="form-input" placeholder="Search code / name…" ${cxOn('input', '_ptpSet', 'ptp-q', '$cx.value')} style="flex:1;min-width:160px;font-size:12px;">
       </div>
       <div id="ptp-count" style="font-size:11px;color:var(--gray-500);margin-bottom:6px;"></div>
       <div id="ptp-list" style="display:flex;flex-direction:column;gap:5px;max-height:50vh;overflow:auto;"></div>`,
@@ -21559,7 +21559,7 @@ function openSwDeployModal(configId, editId, equipmentId) {
       <div class="form-grid">
         <div class="form-field form-field-full">
           <label>Software Config *</label>
-          <select id="swdep-cfg" class="form-input" onchange="_swDepCfgChange()">
+          <select id="swdep-cfg" class="form-input" ${cxOn('change', '_swDepCfgChange')}>
             <option value="">Select software…</option>
             ${cfgOpts.map(c => '<option value="' + c.id + '"' + (selectedCfgId === c.id ? ' selected' : '') + '>' +
               escapeHtml(c.software_name) + ' ' + escapeHtml(c.version) + ' · ' + escapeHtml(c.subsystem||'—') +
@@ -21569,7 +21569,7 @@ function openSwDeployModal(configId, editId, equipmentId) {
         </div>
         <div class="form-field form-field-full">
           <label>Configuration Item <span style="font-weight:400;color:var(--gray-500);">(optional — log against a specific wayside CI)</span></label>
-          <select id="swdep-ci" class="form-input" onchange="_swDepCiChange()">
+          <select id="swdep-ci" class="form-input" ${cxOn('change', '_swDepCiChange')}>
             ${selectedCfgId ? _swDepCiOptionsHTML(selectedCfgId, selectedCiId) : '<option value="">— VDD level (no specific CI) —</option>'}
           </select>
         </div>
@@ -21582,7 +21582,7 @@ function openSwDeployModal(configId, editId, equipmentId) {
         </div>
         <div class="form-field">
           <label>Phase *</label>
-          <select id="swdep-phase" class="form-input" onchange="_swDepPhaseChange()">
+          <select id="swdep-phase" class="form-input" ${cxOn('change', '_swDepPhaseChange')}>
             <option value="">Select phase…</option>
             ${phases.map(p => '<option value="' + p.id + '"' + (basePhaseId === p.id ? ' selected' : '') + '>' + escapeHtml(p.name) + '</option>').join('')}
           </select>
@@ -21873,7 +21873,7 @@ function _vmChkLineHTML(car, it, l, canEdit) {
   const dis = canEdit ? '' : 'disabled';
   let ctl = '';
   if (l.kind === 'check') {
-    ctl = `<input type="checkbox" ${l.done ? 'checked' : ''} ${dis} onchange="_vmChkSetDone('${l.id}',this.checked)" aria-label="${escapeHtml(l.label)}" style="width:16px;height:16px;cursor:pointer;">`;
+    ctl = `<input type="checkbox" ${l.done ? 'checked' : ''} ${dis} ${cxOn('change', '_vmChkSetDone', String(l.id), '$cx.checked')} aria-label="${escapeHtml(l.label)}" style="width:16px;height:16px;cursor:pointer;">`;
   } else if (l.kind === 'passfail') {
     ctl = ['Pass', 'Fail', 'N/A'].map(v => {
       const on = l.verdict === v;
@@ -21881,9 +21881,9 @@ function _vmChkLineHTML(car, it, l, canEdit) {
       return `<button ${dis} ${cxAct('_vmChkSetVerdict', String(l.id), String(v))} style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:5px;cursor:pointer;border:1px solid ${on ? col : 'var(--border)'};background:${on ? col : 'var(--surface)'};color:${on ? 'var(--white)' : 'var(--text)'};">${v}</button>`;
     }).join('');
   } else if (l.kind === 'value') {
-    ctl = `<input type="text" value="${escapeHtml(l.value_text || '')}" ${dis} placeholder="value" aria-label="${escapeHtml(l.label)}" onchange="_vmChkSetValue('${l.id}',this.value)" style="width:110px;font-size:12px;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);">${l.unit ? `<span style="font-size:11px;color:var(--gray-500);">${escapeHtml(l.unit)}</span>` : ''}`;
+    ctl = `<input type="text" value="${escapeHtml(l.value_text || '')}" ${dis} placeholder="value" aria-label="${escapeHtml(l.label)}" ${cxOn('change', '_vmChkSetValue', String(l.id), '$cx.value')} style="width:110px;font-size:12px;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);">${l.unit ? `<span style="font-size:11px;color:var(--gray-500);">${escapeHtml(l.unit)}</span>` : ''}`;
   } else {
-    ctl = `<input type="text" value="${escapeHtml(l.value_text || '')}" ${dis} placeholder="note…" aria-label="${escapeHtml(l.label)}" onchange="_vmChkSetValue('${l.id}',this.value)" style="width:200px;font-size:12px;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);">`;
+    ctl = `<input type="text" value="${escapeHtml(l.value_text || '')}" ${dis} placeholder="note…" aria-label="${escapeHtml(l.label)}" ${cxOn('change', '_vmChkSetValue', String(l.id), '$cx.value')} style="width:200px;font-size:12px;padding:3px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);">`;
   }
   const photos = _vmChkPhotos[l.id] || [];
   const files = VEH_FILES.filter(f => f.checklist_item_id === l.id);
@@ -21892,9 +21892,9 @@ function _vmChkLineHTML(car, it, l, canEdit) {
       <span style="flex:1;min-width:160px;font-size:13px;${complete ? 'color:var(--gray-500);' : ''}">${escapeHtml(l.label)}${l.required === false ? ' <span style="font-size:10px;color:var(--gray-400);">(optional)</span>' : ''}${l.kind === 'value' && l.expected ? ` <span style="font-size:10px;color:var(--gray-400);">exp. ${escapeHtml(l.expected)}${l.unit ? ' ' + escapeHtml(l.unit) : ''}</span>` : ''}</span>
       <span style="display:inline-flex;align-items:center;gap:5px;">${ctl}</span>
       ${canEdit ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;" aria-label="Add photo" title="Add photo" onclick="document.getElementById('vmchkp-${l.id}').click()">${icon('camera')}${photos.length ? ' ' + photos.length : ''}</button>
-      <input type="file" id="vmchkp-${l.id}" accept="image/*" multiple style="display:none" onchange="_vmChkPhotoChosen('${l.id}','${car.id}',this)">
+      <input type="file" id="vmchkp-${l.id}" accept="image/*" multiple style="display:none" ${cxOn('change', '_vmChkPhotoChosen', String(l.id), String(car.id), '$cx.el')}>
       <button class="form-secondary" style="font-size:10px;padding:2px 6px;" aria-label="Attach file" title="Attach file" onclick="document.getElementById('vmchkf-${l.id}').click()">${icon('paperclip')}${files.length ? ' ' + files.length : ''}</button>
-      <input type="file" id="vmchkf-${l.id}" multiple style="display:none" onchange="_vmChkFileChosen('${l.id}',this)">` : ''}
+      <input type="file" id="vmchkf-${l.id}" multiple style="display:none" ${cxOn('change', '_vmChkFileChosen', String(l.id), '$cx.el')}>` : ''}
       ${l.completed_by ? `<span style="font-size:10px;color:var(--gray-400);">${escapeHtml(l.completed_by)}</span>` : ''}
       ${(photos.length || files.length) ? `<div style="flex-basis:100%;display:flex;flex-wrap:wrap;gap:5px;padding-left:18px;">
         ${photos.map(ph => `<button onclick="_vmChkOpenPhoto('${escapeHtml(ph.storage_path)}')" style="font-size:10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);padding:2px 7px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">${icon('image')} ${escapeHtml(ph.file_name || 'photo')}</button>`).join('')}
@@ -22434,7 +22434,7 @@ function openRMAModal(rmaId) {
       `<div class="form-field form-field-full"><label>RMA Number <span style="color:var(--bad)">*</span></label>` +
       `<input id="rma-number" class="form-input" placeholder="e.g. RMA-201075569-W30-D_NR3P Vital Relay" value="${v('rma_number')}"></div>` +
       `<div class="form-field"><label>Status <span style="color:var(--bad)">*</span></label>` +
-      `<select id="rma-status" class="form-input" onchange="_rmaOnStatusChange(this.value)">` +
+      `<select id="rma-status" class="form-input" ${cxOn('change', '_rmaOnStatusChange', '$cx.value')}>` +
       statuses.map(s => `<option value="${escapeHtml(s)}" ${(rma?.status||'Open')===s?'selected':''}>${escapeHtml(s)}</option>`).join('') +
       `</select></div>` +
       `<div class="form-field"><label>Location <span style="color:var(--bad)">*</span></label>` +
@@ -22777,7 +22777,7 @@ function openTaskModal(taskId) {
         : `<div class="form-field form-field-full"><label>Photos <span style="font-weight:400;color:var(--gray-500);font-size:11px;">(optional — uploaded when the task is created)</span></label>` +
           `<div class="punch-newphoto-row" id="task-newphoto-row"></div>` +
           `<button type="button" class="form-secondary" style="margin-top:6px;" onclick="document.getElementById('task-newphoto-file').click()">${icon('camera')} Add photos</button>` +
-          `<input type="file" id="task-newphoto-file" accept="image/*" multiple style="display:none" onchange="_taskNewPhotoChosen(this)"></div>`) +
+          `<input type="file" id="task-newphoto-file" accept="image/*" multiple style="display:none" ${cxOn('change', '_taskNewPhotoChosen', '$cx.el')}></div>`) +
       `</div>`,
     footer:
       `<button class="form-secondary" data-action="closeModal">Cancel</button>` +
@@ -22981,7 +22981,7 @@ function _taskViewModal(id) {
       (canPhotos ? `<button type="button" class="v2-btn-mini" ${cxAct('_taskAddPhotos', String(id))}>${icon('camera')} Add photos</button>` : '') +
       `</div>` +
       `<div class="punch-photo-grid" id="task-photos-${id}"><div style="font-size:12px;color:var(--gray-400);padding:8px 0;">Loading photos…</div></div>` +
-      `<input type="file" id="task-gallery-file-${id}" accept="image/*" multiple style="display:none" onchange="_taskGalleryFilesChosen('${id}', this)">` +
+      `<input type="file" id="task-gallery-file-${id}" accept="image/*" multiple style="display:none" ${cxOn('change', '_taskGalleryFilesChosen', String(id), '$cx.el')}>` +
 
       // ── Comments / activity ──
       `<div style="margin:20px 0 8px;font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:0.06em;">Comments</div>` +
@@ -22997,7 +22997,7 @@ function _taskViewModal(id) {
           `<button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" aria-label="Attach a photo" onclick="document.getElementById('task-comment-file-${id}').click()">${icon('camera')}</button>` +
           `<button class="form-submit punch-comment-post" ${cxAct('addTaskComment', String(id))}>Post</button>` +
         `</div>` +
-        `<input type="file" id="task-comment-file-${id}" accept="image/*" style="display:none" onchange="_taskCommentPhotoChosen('${id}', this)">` +
+        `<input type="file" id="task-comment-file-${id}" accept="image/*" style="display:none" ${cxOn('change', '_taskCommentPhotoChosen', String(id), '$cx.el')}>` +
         `<div id="task-comment-preview-${id}" class="punch-comment-preview" style="display:none;"></div>`
       ) : ''),
     footer:
@@ -23263,7 +23263,7 @@ function _mtgListPageHTML() {
   let rowsHTML = '';
   Object.entries(grouped).forEach(([ser, mtgs]) => {
     rowsHTML += `
-      <tr class="mtg-series-hdr" style="background:var(--gray-50);cursor:pointer;" onclick="_mtgToggleSeries(this)">
+      <tr class="mtg-series-hdr" style="background:var(--gray-50);cursor:pointer;" ${cxAct('_mtgToggleSeries', '$cx.el')}>
         <td colspan="6" style="padding:10px 14px;font-weight:600;font-size:13px;border-bottom:1px solid var(--gray-200);">
           <span class="mtg-chev" style="display:inline-block;margin-right:8px;transition:transform .2s;transform:rotate(90deg);">▶</span>
           ${escapeHtml(ser)}
@@ -23458,7 +23458,7 @@ function _mtgAgendaHTML(m, categories, items, actionItems, isAdmin, inMinutes) {
       <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:2px solid var(--gray-200);">
         <span style="font-weight:600;font-size:14px;">Agenda</span>
         <div style="display:flex;gap:8px;align-items:center;">
-          <select class="filter-select" onchange="_mtgFilterItems(this.value)">
+          <select class="filter-select" ${cxOn('change', '_mtgFilterItems', '$cx.value')}>
             <option value="">All Statuses</option>
             <option value="Open">Open</option>
             <option value="Closed">Closed</option>
@@ -24809,7 +24809,7 @@ function _laCalendarHTML() {
         <h2 class="cal-title" id="cal-title">${escapeHtml(_laGetTitle())}</h2>
         <div class="cal-toolbar-right">
           <label class="cal-toggle">
-            <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
+            <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} ${cxOn('change', '_planningTogglePO6Overlay', '$cx.checked')}>
             <span>P6 schedule</span>
           </label>
           <div class="cal-zoom-ctrl" style="display:flex;align-items:center;gap:4px;">
@@ -25893,7 +25893,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
       const cellTargetAttrs = actId ? ` data-activity-id="${actId}" data-event-date="${iso}"` : '';
       const isEmptyTarget = actId && !shifts.length && !ptoEntry;
       const emptyClickAttr = isEmptyTarget
-        ? ` onclick="_laEmptyCellClick(event,'${actId}','${iso}',this)"`
+        ? ` ${cxAct('_laEmptyCellClick', '$cx.event', String(actId), String(iso), '$cx.el')}`
         : '';
       const isThisPasteTarget = isEmptyTarget && _laPasteTarget &&
         _laPasteTarget.activityId === actId && _laPasteTarget.date === iso;
@@ -25922,7 +25922,7 @@ function _laRenderGrid(target, { groups, days, milestones }) {
             data-cell-event-id="${s.event_id}"
             data-activity-id="${actId||''}"
             data-event-date="${iso}"
-            onclick="_laCellClick(event,'${s.event_id}','${actId||''}','${iso}',this)"
+            ${cxAct('_laCellClick', '$cx.event', String(s.event_id), String(actId||''), String(iso), '$cx.el')}
             oncontextmenu="event.preventDefault();_laCellContextMenu(event,'${s.event_id}','${actId||''}','${iso}',this);return false;"
             data-tlg-tip="${tip}"
           >${s.resChips && s.resChips.length
@@ -26121,7 +26121,7 @@ function _laLookaheadHTML() {
         <button class="admin-tab" style="font-size:12px;padding:6px 10px;" data-action="_laShiftWindow" data-args="[-7]" title="Back one week">‹ Prev</button>
         <button class="admin-tab${_laWindowStart ? '' : ' active'}" style="font-size:12px;padding:6px 10px;" data-action="_laResetWindow" title="Jump to today">Today</button>
         <button class="admin-tab" style="font-size:12px;padding:6px 10px;" data-action="_laShiftWindow" data-args="[7]" title="Forward one week">Next ›</button>
-        <input type="date" value="${_laWinAnchor().format('YYYY-MM-DD')}" onchange="_laJumpWindow(this.value)" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-200);border-radius:6px;" title="Jump to a start date">
+        <input type="date" value="${_laWinAnchor().format('YYYY-MM-DD')}" ${cxOn('change', '_laJumpWindow', '$cx.value')} style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-200);border-radius:6px;" title="Jump to a start date">
         ${(_laWindowStart && dayjs(_laWindowStart).isBefore(dayjs().startOf('day'))) ? '<span style="font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--warn);background:var(--warn-light);padding:3px 8px;border-radius:99px;">Viewing history</span>' : ''}
         <button class="admin-tab" style="font-size:12px;padding:6px 12px;" data-action="openPlanningHistory" title="Browse frozen weekly snapshots">${icon('calendar')} Past Weeks</button>
       </div>
@@ -26156,12 +26156,12 @@ function _laLookaheadHTML() {
       </div>
       ` : ''}
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);cursor:pointer;">
-        <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
+        <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} ${cxOn('change', '_planningTogglePO6Overlay', '$cx.checked')}>
         P6 baseline
       </label>
       <div class="la-row-search-wrap" style="display:flex;align-items:center;gap:6px;margin-left:auto;">
         <input id="la-row-search" type="text" placeholder="Filter activities…"
-          value="${escapeHtml(_laRowSearch)}" oninput="_laSetRowSearch(this.value)"
+          value="${escapeHtml(_laRowSearch)}" ${cxOn('input', '_laSetRowSearch', '$cx.value')}
           style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-300);border-radius:6px;width:210px;">
         <button aria-label="Clear filter" id="la-row-search-clear" ${cxAct('_laSetRowSearch', '')} title="Clear filter"
           style="display:${_laRowSearch ? 'inline-flex' : 'none'};font-size:12px;padding:6px 9px;border:1px solid var(--gray-300);background:var(--white);border-radius:6px;cursor:pointer;">${icon('x')}</button>
@@ -26559,17 +26559,17 @@ function _laDrawerCellHTML(ev) {
 
     <div class="la-drawer-section">
       <label class="la-drawer-label">Title</label>
-      <input class="la-drawer-input" id="dw-cell-title" value="${escapeHtml(ev.title || '')}" oninput="_laDrawerMarkDirty()">
+      <input class="la-drawer-input" id="dw-cell-title" value="${escapeHtml(ev.title || '')}" ${cxOn('input', '_laDrawerMarkDirty')}>
     </div>
 
     <div class="la-drawer-section la-drawer-row-2">
       <div>
         <label class="la-drawer-label">Date</label>
-        <input class="la-drawer-input" type="date" id="dw-cell-date" value="${ev.event_date}" onchange="_laDrawerMarkDirty()">
+        <input class="la-drawer-input" type="date" id="dw-cell-date" value="${ev.event_date}" ${cxOn('change', '_laDrawerMarkDirty')}>
       </div>
       <div>
         <label class="la-drawer-label">Shift</label>
-        <select class="la-drawer-input" id="dw-cell-shift" onchange="_laDrawerMarkDirty()">
+        <select class="la-drawer-input" id="dw-cell-shift" ${cxOn('change', '_laDrawerMarkDirty')}>
           <option value="">—</option>
           <option value="day_shift"     ${ev.shift_type==='day_shift'?'selected':''}>\u2600 Day</option>
           <option value="swing_shift"   ${ev.shift_type==='swing_shift'?'selected':''}>\u2194 Swing</option>
@@ -26583,27 +26583,27 @@ function _laDrawerCellHTML(ev) {
       <label class="la-drawer-label">Work hours <span style="font-size:9px;font-weight:400;color:var(--gray-400);">0700-1500 · auto-sets shift</span></label>
       <input class="la-drawer-input" id="dw-cell-hours"
         value="${ev.start_time && ev.end_time ? ev.start_time.replace(':','').slice(0,4)+'-'+ev.end_time.replace(':','').slice(0,4) : ev.start_time ? ev.start_time.replace(':','').slice(0,4) : ''}"
-        placeholder="0700-1500" oninput="_laDrawerCellHoursChanged()">
+        placeholder="0700-1500" ${cxOn('input', '_laDrawerCellHoursChanged')}>
     </div>
     <div class="la-drawer-section la-drawer-row-2">
       <div>
         <label class="la-drawer-label">Start time</label>
-        <input class="la-drawer-input" type="time" id="dw-cell-start" value="${ev.start_time || ''}" onchange="_laDrawerMarkDirty()">
+        <input class="la-drawer-input" type="time" id="dw-cell-start" value="${ev.start_time || ''}" ${cxOn('change', '_laDrawerMarkDirty')}>
       </div>
       <div>
         <label class="la-drawer-label">End time</label>
-        <input class="la-drawer-input" type="time" id="dw-cell-end" value="${ev.end_time || ''}" onchange="_laDrawerMarkDirty()">
+        <input class="la-drawer-input" type="time" id="dw-cell-end" value="${ev.end_time || ''}" ${cxOn('change', '_laDrawerMarkDirty')}>
       </div>
     </div>
 
     <div class="la-drawer-section">
       <label class="la-drawer-label">Location</label>
-      <input class="la-drawer-input" id="dw-cell-loc" value="${escapeHtml(ev.location || '')}" oninput="_laDrawerMarkDirty()">
+      <input class="la-drawer-input" id="dw-cell-loc" value="${escapeHtml(ev.location || '')}" ${cxOn('input', '_laDrawerMarkDirty')}>
     </div>
 
     <div class="la-drawer-section">
       <label class="la-drawer-label">Notes</label>
-      <textarea class="la-drawer-input" id="dw-cell-notes" rows="3" oninput="_laDrawerMarkDirty()">${escapeHtml(ev.notes || '')}</textarea>
+      <textarea class="la-drawer-input" id="dw-cell-notes" rows="3" ${cxOn('input', '_laDrawerMarkDirty')}>${escapeHtml(ev.notes || '')}</textarea>
     </div>
 
     <div class="la-drawer-section">
@@ -26697,18 +26697,18 @@ function _laDrawerActivityHTML(a) {
   return `
     <div class="la-drawer-section">
       <label class="la-drawer-label">Description</label>
-      <textarea class="la-drawer-input" id="dw-act-desc" rows="2" oninput="_laDrawerMarkDirty()">${escapeHtml(a.description || '')}</textarea>
+      <textarea class="la-drawer-input" id="dw-act-desc" rows="2" ${cxOn('input', '_laDrawerMarkDirty')}>${escapeHtml(a.description || '')}</textarea>
     </div>
 
     <div class="la-drawer-section">
       <label class="la-drawer-label">Status</label>
-      <select class="la-drawer-input" id="dw-act-status" onchange="_laDrawerStatusChanged()">
+      <select class="la-drawer-input" id="dw-act-status" ${cxOn('change', '_laDrawerStatusChanged')}>
         <option value="">Auto — from schedule (${escapeHtml(autoLabel)})</option>
         ${STATUS_OPTS.map(([v,l]) => `<option value="${v}" ${curOverride===v?'selected':''}>${l}</option>`).join('')}
       </select>
       <div id="dw-act-status-note-wrap" style="margin-top:6px;display:${noteShown ? '' : 'none'};">
         <label class="la-drawer-label" id="dw-act-status-note-label">Reason ${curOverride==='blocked'?'(why blocked)':'(why at risk)'}</label>
-        <textarea class="la-drawer-input" id="dw-act-status-note" rows="2" placeholder="e.g. Waiting on BART track access" oninput="_laDrawerMarkDirty()">${escapeHtml(a.status_note || '')}</textarea>
+        <textarea class="la-drawer-input" id="dw-act-status-note" rows="2" placeholder="e.g. Waiting on BART track access" ${cxOn('input', '_laDrawerMarkDirty')}>${escapeHtml(a.status_note || '')}</textarea>
       </div>
       ${(curOverride && a.status_set_by) ? `<div style="font-size:10px;color:var(--gray-400);margin-top:4px;">Set by ${escapeHtml(a.status_set_by)}${a.status_set_at?` · ${dayjs(a.status_set_at).format('YYYY-MM-DD')}`:''}</div>` : ''}
     </div>
@@ -26716,11 +26716,11 @@ function _laDrawerActivityHTML(a) {
     <div class="la-drawer-section la-drawer-row-2">
       <div>
         <label class="la-drawer-label">Activity ID / Ref</label>
-        <input class="la-drawer-input" id="dw-act-idtext" value="${escapeHtml(a.activity_id_text || '')}" oninput="_laDrawerMarkDirty()">
+        <input class="la-drawer-input" id="dw-act-idtext" value="${escapeHtml(a.activity_id_text || '')}" ${cxOn('input', '_laDrawerMarkDirty')}>
       </div>
       <div>
         <label class="la-drawer-label">Group</label>
-        <select class="la-drawer-input" id="dw-act-group" onchange="_laDrawerMarkDirty()">
+        <select class="la-drawer-input" id="dw-act-group" ${cxOn('change', '_laDrawerMarkDirty')}>
           ${_GROUP_ORDER.map(g => `<option value="${g}" ${grp === g ? 'selected' : ''}>${_groupMeta(g).label}</option>`).join('')}
         </select>
       </div>
@@ -26729,28 +26729,28 @@ function _laDrawerActivityHTML(a) {
     <div class="la-drawer-section la-drawer-row-2">
       <div>
         <label class="la-drawer-label">Phase${!storedPhase && inferredPhase ? ' <span style="font-size:9px;color:var(--good);font-weight:400;">(from location)</span>' : ''}</label>
-        <input class="la-drawer-input" id="dw-act-phase" value="${escapeHtml(effectivePhase)}" placeholder="e.g. Phase 1" oninput="_laDrawerMarkDirty()" list="dw-act-phase-options">
+        <input class="la-drawer-input" id="dw-act-phase" value="${escapeHtml(effectivePhase)}" placeholder="e.g. Phase 1" ${cxOn('input', '_laDrawerMarkDirty')} list="dw-act-phase-options">
         <datalist id="dw-act-phase-options">
           ${_fsOptions('lookahead_phase').map(o => `<option value="${escapeHtml(o)}">`).join('')}
         </datalist>
       </div>
       <div>
         <label class="la-drawer-label">SSWP</label>
-        <input class="la-drawer-input" id="dw-act-sswp" value="${escapeHtml(a.sswp || '')}" oninput="_laDrawerMarkDirty()">
+        <input class="la-drawer-input" id="dw-act-sswp" value="${escapeHtml(a.sswp || '')}" ${cxOn('input', '_laDrawerMarkDirty')}>
       </div>
     </div>
 
     <div class="la-drawer-section la-drawer-row-2">
       <div>
         <label class="la-drawer-label">Discipline <span style="font-size:9px;color:var(--gray-400);font-weight:400;">(grouping)</span></label>
-        <input class="la-drawer-input" id="dw-act-discipline" value="${escapeHtml(a.discipline || '')}" placeholder="T&amp;C" oninput="_laDrawerMarkDirty()" list="dw-act-disc-options">
+        <input class="la-drawer-input" id="dw-act-discipline" value="${escapeHtml(a.discipline || '')}" placeholder="T&amp;C" ${cxOn('input', '_laDrawerMarkDirty')} list="dw-act-disc-options">
         <datalist id="dw-act-disc-options">
           ${_fsOptions('lookahead_discipline').map(o => `<option value="${escapeHtml(o)}">`).join('')}
         </datalist>
       </div>
       <div>
         <label class="la-drawer-label">Trade <span style="font-size:9px;color:var(--gray-400);font-weight:400;">(chip)</span></label>
-        <input class="la-drawer-input" id="dw-act-trade" value="${escapeHtml(a.trade || '')}" placeholder="CBTC" oninput="_laDrawerMarkDirty()" list="dw-act-trade-options">
+        <input class="la-drawer-input" id="dw-act-trade" value="${escapeHtml(a.trade || '')}" placeholder="CBTC" ${cxOn('input', '_laDrawerMarkDirty')} list="dw-act-trade-options">
         <datalist id="dw-act-trade-options">
           ${_fsOptions('lookahead_trade').map(o => `<option value="${escapeHtml(o)}">`).join('')}
         </datalist>
@@ -26759,7 +26759,7 @@ function _laDrawerActivityHTML(a) {
 
     <div class="la-drawer-section">
       <label class="la-drawer-label">Location${(() => { const resolved = _laResolveLocationPrefix(a.location); return resolved && resolved !== (a.location||'').trim() ? ` <span style="font-size:10px;color:var(--gray-400);font-weight:400;">→ ${escapeHtml(resolved)}</span>` : ''; })()}</label>
-      <input class="la-drawer-input" id="dw-act-loc" value="${escapeHtml(a.location || '')}" placeholder="e.g. W40" oninput="_laDrawerLocationChanged()">
+      <input class="la-drawer-input" id="dw-act-loc" value="${escapeHtml(a.location || '')}" placeholder="e.g. W40" ${cxOn('input', '_laDrawerLocationChanged')}>
       <div id="dw-loc-phase-hint" style="font-size:10px;margin-top:3px;">${(() => {
         if (!inferredPhase && a.location) return `<span style="color:var(--gray-400);">Ad-hoc location — set phase manually</span>`;
         if (!inferredPhase) return '';
@@ -26773,7 +26773,7 @@ function _laDrawerActivityHTML(a) {
 
     <div class="la-drawer-section">
       <label class="la-drawer-label">Work hours / window</label>
-      <input class="la-drawer-input" id="dw-act-hours" value="${escapeHtml(a.work_hours_raw || '')}" oninput="_laDrawerMarkDirty()">
+      <input class="la-drawer-input" id="dw-act-hours" value="${escapeHtml(a.work_hours_raw || '')}" ${cxOn('input', '_laDrawerMarkDirty')}>
     </div>
 
     <div class="la-drawer-section">
@@ -26792,12 +26792,12 @@ function _laDrawerActivityHTML(a) {
 
     <div class="la-drawer-section">
       <label class="la-drawer-label">Notes</label>
-      <textarea class="la-drawer-input" id="dw-act-notes" rows="3" oninput="_laDrawerMarkDirty()">${escapeHtml(a.notes || '')}</textarea>
+      <textarea class="la-drawer-input" id="dw-act-notes" rows="3" ${cxOn('input', '_laDrawerMarkDirty')}>${escapeHtml(a.notes || '')}</textarea>
     </div>
 
     <div class="la-drawer-section">
       <label class="la-drawer-label">Linked Test Register activity</label>
-      <input class="la-drawer-input" id="dw-act-linked-tra" value="${escapeHtml(a.linked_test_register_activity || '')}" oninput="_laDrawerMarkDirty()" list="dw-act-tra-options">
+      <input class="la-drawer-input" id="dw-act-linked-tra" value="${escapeHtml(a.linked_test_register_activity || '')}" ${cxOn('input', '_laDrawerMarkDirty')} list="dw-act-tra-options">
       <datalist id="dw-act-tra-options">
         ${[...new Set((TI || []).map(t => t.Activity).filter(Boolean))].sort().slice(0, 200).map(t => `<option value="${escapeHtml(t)}">`).join('')}
       </datalist>
@@ -27452,7 +27452,7 @@ function _laResourcePanelHTML() {
         ${compChip('Hitachi', 'Hitachi', _hitN)}
         ${compChip('BART', 'BART', _bartN)}
       </div>
-      <input type="text" class="la-res-search" placeholder="Search…" oninput="_laFilterResPanel(this.value)">
+      <input type="text" class="la-res-search" placeholder="Search…" ${cxOn('input', '_laFilterResPanel', '$cx.value')}>
       <div id="la-sel-bar" style="display:${selCount?'flex':'none'};align-items:center;justify-content:space-between;background:var(--hitachi-red);color:var(--white);border-radius:5px;padding:4px 8px;font-size:11px;font-weight:600;">
         <span>${selCount} selected</span>
         <button data-action="_laClearResSelection" style="background:none;border:none;color:var(--white);cursor:pointer;font-size:11px;padding:0;">${icon('x')} Clear</button>
@@ -29052,7 +29052,7 @@ function _laOpenNewActivityModal() {
         </div>
         <div class="form-field">
           <label>Location <span style="color:var(--bad);">*</span></label>
-          <input type="text" id="new-act-loc" class="form-input" placeholder="W40, Cab, Hayward, etc." oninput="_laNewActivityLocChanged()">
+          <input type="text" id="new-act-loc" class="form-input" placeholder="W40, Cab, Hayward, etc." ${cxOn('input', '_laNewActivityLocChanged')}>
           <div id="new-act-loc-phase-hint" style="font-size:11px;margin-top:3px;min-height:16px;"></div>
         </div>
         <div class="form-field">
@@ -29103,7 +29103,7 @@ function _laOpenNewActivityModal() {
         </div>
         <div class="form-field form-field-full">
           <label>${icon('link')} P6 Activity <span style="font-size:11px;font-weight:400;color:var(--gray-500);">— filtered by location · auto-fills Activity ID</span></label>
-          <select id="new-act-p6" class="form-input" onchange="_laNewActivityP6Changed()">
+          <select id="new-act-p6" class="form-input" ${cxOn('change', '_laNewActivityP6Changed')}>
             <option value="">— Not linked —</option>
           </select>
         </div>
@@ -29989,7 +29989,7 @@ function _laGanttHTML() {
     <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
       <span style="font-size:13px;color:var(--gray-600);">One row per activity — cells shaded by shift type. P6 baseline shown when overlay is on.</span>
       <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);cursor:pointer;">
-        <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} onchange="_planningTogglePO6Overlay(this.checked)">
+        <input type="checkbox" ${_planningShowP6 ? 'checked' : ''} ${cxOn('change', '_planningTogglePO6Overlay', '$cx.checked')}>
         P6 baseline
       </label>
     </div>
@@ -30611,7 +30611,7 @@ function _ptoOpenSubmitModal() {
         </div>
         <div class="form-field form-field-full">
           <label style="display:flex;align-items:center;gap:8px;">
-            <input type="checkbox" id="pto-partial" onchange="_ptoTogglePartial(this.checked)">
+            <input type="checkbox" id="pto-partial" ${cxOn('change', '_ptoTogglePartial', '$cx.checked')}>
             <span>Partial day only</span>
           </label>
         </div>
@@ -30865,7 +30865,7 @@ function _cancelRptTableBody() {
     return `<tr style="border-left:3px solid ${color};">
       <td style="width:32px;padding:8px 6px;">
         <input type="checkbox" class="crpt-cb" data-id="${r._id}" ${checked}
-          onchange="_cancelRptToggleSel('${r._id}',this.checked)" style="width:14px;height:14px;cursor:pointer;">
+          ${cxOn('change', '_cancelRptToggleSel', String(r._id), '$cx.checked')} style="width:14px;height:14px;cursor:pointer;">
       </td>
       <td style="white-space:nowrap;font-size:12px;font-weight:600;">${escapeHtml(r.date || '—')}</td>
       <td>${badge}</td>
@@ -31237,17 +31237,17 @@ function _laCancellationsTabHTML() {
     <div>
       <div class="form-label" style="margin-bottom:3px;font-size:11px;">From</div>
       <input type="date" class="form-input" style="font-size:12px;padding:5px 8px;height:32px;" value="${_cancelRpt.dateFrom}"
-        onchange="_cancelRptSetFilter('dateFrom',this.value)">
+        ${cxOn('change', '_cancelRptSetFilter', 'dateFrom', '$cx.value')}>
     </div>
     <div>
       <div class="form-label" style="margin-bottom:3px;font-size:11px;">To</div>
       <input type="date" class="form-input" style="font-size:12px;padding:5px 8px;height:32px;" value="${_cancelRpt.dateTo}"
-        onchange="_cancelRptSetFilter('dateTo',this.value)">
+        ${cxOn('change', '_cancelRptSetFilter', 'dateTo', '$cx.value')}>
     </div>
     <div>
       <div class="form-label" style="margin-bottom:3px;font-size:11px;">Responsible Party</div>
       <select class="form-input" style="font-size:12px;padding:5px 8px;height:32px;min-width:120px;"
-        onchange="_cancelRptSetFilter('party',this.value)">
+        ${cxOn('change', '_cancelRptSetFilter', 'party', '$cx.value')}>
         <option value="">All parties</option>
         ${parties.map(p => `<option value="${escapeHtml(p)}" ${_cancelRpt.party===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
       </select>
@@ -31256,12 +31256,12 @@ function _laCancellationsTabHTML() {
       <div class="form-label" style="margin-bottom:3px;font-size:11px;">Location</div>
       <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;height:32px;width:130px;"
         placeholder="Filter…" value="${escapeHtml(_cancelRpt.location)}"
-        oninput="_cancelRptSetFilter('location',this.value)">
+        ${cxOn('input', '_cancelRptSetFilter', 'location', '$cx.value')}>
     </div>
     <div>
       <div class="form-label" style="margin-bottom:3px;font-size:11px;">Subsystem</div>
       <select class="form-input" style="font-size:12px;padding:5px 8px;height:32px;min-width:110px;"
-        onchange="_cancelRptSetFilter('subsystem',this.value)">
+        ${cxOn('change', '_cancelRptSetFilter', 'subsystem', '$cx.value')}>
         <option value="">All</option>
         ${subsystems.map(s => `<option value="${escapeHtml(s)}" ${_cancelRpt.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
       </select>
@@ -31279,7 +31279,7 @@ function _laCancellationsTabHTML() {
       <thead>
         <tr>
           <th style="width:32px;padding:8px 6px;">
-            <input type="checkbox" id="crpt-sel-all" onchange="_cancelRptToggleAll(this.checked)"
+            <input type="checkbox" id="crpt-sel-all" ${cxOn('change', '_cancelRptToggleAll', '$cx.checked')}
               style="width:14px;height:14px;cursor:pointer;">
           </th>
           <th>Date</th>
@@ -31622,7 +31622,7 @@ function _apReviewStub() {
       <div class="data-card" style="padding:0;overflow:hidden;margin-bottom:18px;">
         <div style="padding:10px 14px;border-bottom:1px solid var(--gray-200);background:var(--bad-light);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--bad);">
-            <input type="checkbox" id="cancel-sel-all" onchange="_cancelToggleAll(this.checked)" style="width:14px;height:14px;">
+            <input type="checkbox" id="cancel-sel-all" ${cxOn('change', '_cancelToggleAll', '$cx.checked')} style="width:14px;height:14px;">
             All
           </label>
           <strong style="font-size:13px;color:var(--bad);">${icon('ban')} Cancellations needing reason (${cancellationsNeedingReason.length})</strong>
@@ -31634,7 +31634,7 @@ function _apReviewStub() {
           <tbody>
             ${cancellationsNeedingReason.slice(0, 50).map(e => `
               <tr id="cancel-row-${e.id}">
-                <td><input type="checkbox" class="cancel-sel-cb" data-id="${e.id}" onchange="_cancelToggleSel('${e.id}',this.checked)" style="width:14px;height:14px;cursor:pointer;"></td>
+                <td><input type="checkbox" class="cancel-sel-cb" data-id="${e.id}" ${cxOn('change', '_cancelToggleSel', String(e.id), '$cx.checked')} style="width:14px;height:14px;cursor:pointer;"></td>
                 <td style="font-size:13px;">${e.event_date || '—'}</td>
                 <td>${escapeHtml(e.title || '—')}</td>
                 <td style="font-size:12px;color:var(--gray-600);">${escapeHtml(e.location || '—')}</td>
@@ -33211,8 +33211,8 @@ function _apResourcesStub() {
         <input class="form-input" style="flex:1;max-width:280px;font-size:12px;padding:5px 9px;"
                placeholder="Filter by name, initials, email, category…"
                value="${escapeHtml(_apResNameFilter)}"
-               oninput="_apSetResNameFilter(this.value)">
-        <select class="form-input" style="width:auto;font-size:12px;padding:5px 9px;" onchange="_apSetResCompanyFilter(this.value)">
+               ${cxOn('input', '_apSetResNameFilter', '$cx.value')}>
+        <select class="form-input" style="width:auto;font-size:12px;padding:5px 9px;" ${cxOn('change', '_apSetResCompanyFilter', '$cx.value')}>
           <option value="">All companies</option>
           ${companies.map(c => `<option value="${escapeHtml(c)}" ${c === _apResCompanyFilter ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
         </select>
@@ -33268,7 +33268,7 @@ function _apResourcesStub() {
                   ${isRoles ? '' : `<td style="font-size:12px;color:var(--gray-500);">${escapeHtml(r.email || '—')}</td>`}
                   <td>
                     <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
-                      <input type="checkbox" ${r.is_active ? 'checked' : ''} onchange="_apToggleResourceActive('${r.id}',this.checked)">
+                      <input type="checkbox" ${r.is_active ? 'checked' : ''} ${cxOn('change', '_apToggleResourceActive', String(r.id), '$cx.checked')}>
                       <span style="font-size:12px;color:${r.is_active ? 'var(--good)' : 'var(--gray-400)'};">${r.is_active ? 'Active' : 'Inactive'}</span>
                     </label>
                   </td>
@@ -35977,7 +35977,7 @@ function _lefEmptyState() {
   if (noCandidates && FORMS.length === 0 && !_formsLoadOk) {
     return `<div style="padding:24px;text-align:center;color:var(--gray-600);">
       <div style="margin-bottom:10px;">Couldn't load the PDF library — your connection may have dropped or the session needs a refresh.</div>
-      <button class="admin-action-btn" onclick="_lefReload(this)">Reload forms</button>
+      <button class="admin-action-btn" ${cxAct('_lefReload', '$cx.el')}>Reload forms</button>
     </div>`;
   }
   if (noCandidates && FORMS.length === 0) {
@@ -36250,21 +36250,21 @@ function _formsPageListHTML() {
   return `
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
         <input type="text" class="form-input" id="forms-page-search" placeholder="Search name, description, filename…" style="flex:1;min-width:240px;"
-               value="${escapeHtml(f.search)}" oninput="_formsSetSearch(this.value)">
-        <select class="form-input" onchange="_formsSetFilter('phase', this.value)">
+               value="${escapeHtml(f.search)}" ${cxOn('input', '_formsSetSearch', '$cx.value')}>
+        <select class="form-input" ${cxOn('change', '_formsSetFilter', 'phase', '$cx.value')}>
           <option value="">All Phases</option>
           ${phases.map(p => `<option value="${escapeHtml(p)}" ${f.phase === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
         </select>
-        <select class="form-input" onchange="_formsSetFilter('location', this.value)">
+        <select class="form-input" ${cxOn('change', '_formsSetFilter', 'location', '$cx.value')}>
           <option value="">All Locations</option>
           ${locations.map(p => `<option value="${escapeHtml(p)}" ${f.location === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
         </select>
-        <select class="form-input" onchange="_formsSetFilter('subsystem', this.value)">
+        <select class="form-input" ${cxOn('change', '_formsSetFilter', 'subsystem', '$cx.value')}>
           <option value="">All Subsystems</option>
           ${subs.map(p => `<option value="${escapeHtml(p)}" ${f.subsystem === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
         </select>
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-700);">
-          <input type="checkbox" ${f.showTemplates ? 'checked' : ''} onchange="_formsSetFilter('showTemplates', this.checked)">
+          <input type="checkbox" ${f.showTemplates ? 'checked' : ''} ${cxOn('change', '_formsSetFilter', 'showTemplates', '$cx.checked')}>
           Show template blanks
         </label>
         ${formsHasFilters ? `<button class="filter-clear" data-action="_formsClearFilters">Reset</button>` : ''}
@@ -36508,7 +36508,7 @@ function openExtractReportModal(uid) {
     return `
       <label class="ext-act-row">
         <input type="checkbox" name="ext-act" value="${escapeHtml(act.key)}" checked
-               onchange="_extractRecalcEstimate('${safeUid}')">
+               ${cxOn('change', '_extractRecalcEstimate', String(safeUid))}>
         <div class="ext-act-info">
           <div class="ext-act-name">${escapeHtml(act.activity)}</div>
           <div class="ext-act-meta">${escapeHtml(act.phase)} · ${escapeHtml(act.location)} · ${escapeHtml(act.subsystem)} · ${sections.length} section${sections.length===1?'':'s'} · ${act.items.length} test case${act.items.length===1?'':'s'}</div>
@@ -36520,7 +36520,7 @@ function openExtractReportModal(uid) {
   const statusBoxes = _EXTRACT_STATUS_KEYS.map(k => `
     <label class="ext-status-chip">
       <input type="checkbox" name="ext-status" value="${k}" checked
-             onchange="_extractRecalcEstimate('${safeUid}')">
+             ${cxOn('change', '_extractRecalcEstimate', String(safeUid))}>
       <span>${_EXTRACT_STATUS_LABELS[k]}</span>
     </label>
   `).join('');
@@ -36546,9 +36546,9 @@ function openExtractReportModal(uid) {
         <section class="ext-section">
           <h4 class="ext-section-title">3. Punch list</h4>
           <div class="ext-radio-row">
-            <label><input type="radio" name="ext-punch" value="open"  checked onchange="_extractRecalcEstimate('${safeUid}')"> Open only</label>
-            <label><input type="radio" name="ext-punch" value="all"   onchange="_extractRecalcEstimate('${safeUid}')"> Open + Closed</label>
-            <label><input type="radio" name="ext-punch" value="none"  onchange="_extractRecalcEstimate('${safeUid}')"> None</label>
+            <label><input type="radio" name="ext-punch" value="open"  checked ${cxOn('change', '_extractRecalcEstimate', String(safeUid))}> Open only</label>
+            <label><input type="radio" name="ext-punch" value="all"   ${cxOn('change', '_extractRecalcEstimate', String(safeUid))}> Open + Closed</label>
+            <label><input type="radio" name="ext-punch" value="none"  ${cxOn('change', '_extractRecalcEstimate', String(safeUid))}> None</label>
           </div>
         </section>
 
@@ -37770,7 +37770,7 @@ function renderDrawingsPage() {
   const phaseFilter = phases.length ? `
     <div class="drw-phase-filter">
       <label>Phase</label>
-      <select class="filter-select" onchange="_drwSetPhaseFilter(this.value)">
+      <select class="filter-select" ${cxOn('change', '_drwSetPhaseFilter', '$cx.value')}>
         <option value="">All Phases</option>
         ${phases.map(p => `<option value="${escapeHtml(p)}" ${_drwPhaseFilter === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
       </select>
@@ -37850,16 +37850,16 @@ function _drwTabCurrent(loc, el) {
       <div class="docs-search-wrap">
         <svg class="docs-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         <input class="docs-search-input" id="drw-reg-search" type="text" placeholder="Search sheet number, title…"
-          value="${escapeHtml(_drwRegSearch)}" oninput="_drwRegSet_('search', this.value)">
+          value="${escapeHtml(_drwRegSearch)}" ${cxOn('input', '_drwRegSet_', 'search', '$cx.value')}>
       </div>
-      <select class="docs-filter-select" onchange="_drwRegSet_('disc', this.value)">
+      <select class="docs-filter-select" ${cxOn('change', '_drwRegSet_', 'disc', '$cx.value')}>
         <option value="">All disciplines</option>${discOpts}
       </select>
-      <select class="docs-filter-select" onchange="_drwRegSet_('set', this.value)">
+      <select class="docs-filter-select" ${cxOn('change', '_drwRegSet_', 'set', '$cx.value')}>
         <option value="">All sets</option>${setOpts}
       </select>
       <label class="docs-archived-toggle">
-        <input type="checkbox" ${_drwRegSuper ? 'checked' : ''} onchange="_drwRegSet_('super', this.checked)"> Show superseded
+        <input type="checkbox" ${_drwRegSuper ? 'checked' : ''} ${cxOn('change', '_drwRegSet_', 'super', '$cx.checked')}> Show superseded
       </label>
       <div class="drw-view-toggle">
         <button class="${_drwRegView === 'table' ? 'active' : ''}" ${cxAct('_drwRegSet_', 'view', 'table')}>Table</button>
@@ -38252,7 +38252,7 @@ function _drwOpenUpload() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:36px;height:36px;color:var(--gray-400);margin-bottom:8px;"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m6.75 12l-3-3m0 0l-3 3m3-3v6m-1.5-15H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
           <p style="color:var(--gray-500);font-size:13px;margin:0;">Drop PDF here or <label for="drw-file-input" style="color:var(--hitachi-red);cursor:pointer;font-weight:600;">browse</label></p>
           <p id="drw-file-name" style="color:var(--gray-600);font-size:12px;margin-top:4px;font-weight:600;"></p>
-          <input id="drw-file-input" type="file" accept="application/pdf" style="display:none;" onchange="_drwFileChosen(this)" />
+          <input id="drw-file-input" type="file" accept="application/pdf" style="display:none;" ${cxOn('change', '_drwFileChosen', '$cx.el')} />
         </div>
       </div>
       <div id="drw-upload-err" style="color:var(--bad);font-size:12px;margin-top:4px;display:none;"></div>`,
@@ -38735,7 +38735,7 @@ function _drwShowReview(numPages) {
         <div style="max-height:64vh;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;">
           <table class="data-table">
             <thead><tr>
-              <th style="width:40px;"><input type="checkbox" id="drw-rev-toggle-all" ${includedCount === _drwParsedSheets.length ? 'checked' : ''} onchange="_drwReviewSelectAll(this.checked)" title="Toggle all" /></th>
+              <th style="width:40px;"><input type="checkbox" id="drw-rev-toggle-all" ${includedCount === _drwParsedSheets.length ? 'checked' : ''} ${cxOn('change', '_drwReviewSelectAll', '$cx.checked')} title="Toggle all" /></th>
               <th style="width:34px;">Pg</th><th>Sheet #</th><th>Page #</th><th>Title</th><th>Rev</th><th>Discipline</th><th style="width:70px;">Status</th>
             </tr></thead>
             <tbody>
@@ -39167,7 +39167,7 @@ function _drwEnsureEditorChrome() {
       <button class="drw-tool-btn" id="drw-tool-text" ${cxAct('_drwSetTool', 'text')} title="Inline text box">Text</button>
       <button class="drw-tool-btn" id="drw-tool-stamp" ${cxAct('_drwSetTool', 'stamp')} title="Stamp: PASS / FAIL / SUPERSEDED">Stamp</button>
       <span id="drw-stamp-chips" style="display:none;align-items:center;gap:4px;"></span>
-      <select id="drw-width-select" class="drw-editor-select" onchange="_drwSetWidth(this.value)" title="Line width">
+      <select id="drw-width-select" class="drw-editor-select" ${cxOn('change', '_drwSetWidth', '$cx.value')} title="Line width">
         <option value="2">2px</option><option value="3" selected>3px</option><option value="5">5px</option><option value="8">8px</option>
       </select>
       <button class="drw-color-btn" data-color="#dc2626" ${cxAct('_drwSetColor', '#dc2626')} title="Red" style="background:var(--bad);"></button>
@@ -40974,7 +40974,7 @@ function _dynRenderInstances() {
     <div class="capx-tblwrap">
       <table class="capx-tbl">
         <thead><tr>
-          <th style="width:32px;text-align:center;"><input type="checkbox" ${allVisibleSelected?'checked':''} onchange="_dynInstSelectAllVisible(this.checked)" title="Select all visible" aria-label="Select all visible instances"></th>
+          <th style="width:32px;text-align:center;"><input type="checkbox" ${allVisibleSelected?'checked':''} ${cxOn('change', '_dynInstSelectAllVisible', '$cx.checked')} title="Select all visible" aria-label="Select all visible instances"></th>
           ${_dynInstSortTh('Code', 'code')}
           ${_dynInstSortTh('Test Case', 'testcase')}
           ${_dynInstSortTh('Subsystem', 'subsystem')}
@@ -41493,7 +41493,7 @@ function _dynBuildInstanceForm(inst, tcOpts) {
 
       <div class="form-field">
         <label>Trains needed <span style="color:var(--gray-500);font-weight:400;">(parallel trains for one run)</span></label>
-        <input id="dyn-f-trains" type="number" min="1" value="${v.trains_needed ?? ''}" placeholder="1" onchange="_dynOnTrainsChange()" />
+        <input id="dyn-f-trains" type="number" min="1" value="${v.trains_needed ?? ''}" placeholder="1" ${cxOn('change', '_dynOnTrainsChange')} />
       </div>
       <div class="form-field" id="dyn-f-consist-wrap" style="grid-column:1/-1;">
         ${_dynConsistFieldsHtml(_dynConsistSizes(v), Math.max(1, parseInt(v.trains_needed, 10) || 1))}
@@ -42762,7 +42762,7 @@ function _dynBoardOpenDay(dayKey) {
         <div style="overflow-x:auto;">
           <table class="dyn-table" style="border:1px solid var(--gray-200);min-width:820px;">
             <thead><tr>
-              <th style="width:30px;text-align:center;"><input type="checkbox" ${allSel?'checked':''} onchange="_dynDaySelectAll(this.checked)" title="Select all"></th>
+              <th style="width:30px;text-align:center;"><input type="checkbox" ${allSel?'checked':''} ${cxOn('change', '_dynDaySelectAll', '$cx.checked')} title="Select all"></th>
               <th>Code</th><th>Test Case</th><th>Title</th><th style="text-align:right;">Trains</th><th style="text-align:right;">Dur</th><th>Status</th><th style="text-align:right;">Reschedule</th>
             </tr></thead>
             <tbody>${rowsHtml}</tbody>
@@ -43319,7 +43319,7 @@ function _dynCampaignModal(camp) {
         <div class="form-field" style="grid-column:1/-1;"><label>Campaign name</label>
           <input id="camp-name" style="${fld}" placeholder="e.g. W40 CBTC dynamic — Spring window" value="${escapeHtml(String(av('name', '')))}"></div>
         <div class="form-field" style="grid-column:1/-1;"><label>Zones <span style="color:var(--gray-500);font-weight:400;">(⌘/Ctrl for multiple)</span></label>
-          <select id="camp-zones" multiple size="6" style="${fld}" onchange="_dynCampSyncDays()">
+          <select id="camp-zones" multiple size="6" style="${fld}" ${cxOn('change', '_dynCampSyncDays')}>
             ${zoneOpts.map(o => `<option value="${escapeHtml(o.code)}" ${selZones.has(o.code) ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('')}
           </select></div>
         <div class="form-field"><label>Start date</label><input id="camp-start" type="date" value="${escapeHtml(String(av('start_date', today)))}" style="${fld}"></div>
@@ -43333,7 +43333,7 @@ function _dynCampaignModal(camp) {
           ${_dynNrhSettingsHtml()}
           <div id="camp-day-rows" style="margin-top:6px;">${_dynCampDayRowsHtml()}</div>
         </div>
-        <div class="form-field"><label>Trains requested <span style="color:var(--gray-500);font-weight:400;">(vehicles per shift)</span></label><input id="camp-trains" type="number" min="1" value="${escapeHtml(String(av('trains_requested', 2)))}" style="${fld}" onchange="_dynCampOnTrainsChange()"></div>
+        <div class="form-field"><label>Trains requested <span style="color:var(--gray-500);font-weight:400;">(vehicles per shift)</span></label><input id="camp-trains" type="number" min="1" value="${escapeHtml(String(av('trains_requested', 2)))}" style="${fld}" ${cxOn('change', '_dynCampOnTrainsChange')}></div>
         <div class="form-field" id="camp-consist-wrap" style="grid-column:1/-1;">
           ${_dynConsistFieldsHtml(prefill ? _dynCampaignConsistSizes(camp) : Array(Math.max(1, parseInt(av('trains_requested', 2), 10) || 2)).fill(null), Math.max(1, parseInt(av('trains_requested', 2), 10) || 2), 'camp-consist-')}
         </div>
@@ -43350,7 +43350,7 @@ function _dynCampaignModal(camp) {
           <select id="camp-kind" style="${fld}"><option value="standard" ${prefill && camp.campaign_kind === 'standard' ? 'selected' : ''}>Standard non-revenue</option><option value="closure" ${prefill && camp.campaign_kind === 'closure' ? 'selected' : ''}>Weekend / line closure</option></select></div>
         <div class="form-field"><label>BART permit / work order #</label><input id="camp-permit" style="${fld}" placeholder="optional" value="${escapeHtml(String(av('permit_no', '')))}"></div>
         <div class="form-field" style="grid-column:1/-1;"><label>Test case scope <span style="color:var(--gray-500);font-weight:400;">(which dynamic test cases this campaign covers — leave empty for all in-zone)</span></label>
-          <input id="camp-scope-search" placeholder="Search test cases…" style="${fld};margin-bottom:6px;" oninput="_dynCampScopeFilter(this.value)">
+          <input id="camp-scope-search" placeholder="Search test cases…" style="${fld};margin-bottom:6px;" ${cxOn('input', '_dynCampScopeFilter', '$cx.value')}>
           <div id="camp-scope-list" style="max-height:170px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;">${_dynCampScopeListHtml('')}</div>
           <div id="camp-scope-summary" style="font-size:11.5px;color:var(--gray-500);margin-top:4px;">${scopeSummary}</div>
         </div>
@@ -44413,8 +44413,8 @@ function _dynRenderPlanning() {
             <input class="capx-input wide" id="plan-end" type="datetime-local" value="${escapeHtml(_dynPage.planEnd)}" onchange="_dynPage.planEnd=this.value;_dynRenderPlanning();"></label>
           <div class="capx-frow">
             <span class="capx-field-lbl">Modes</span>
-            <label class="capx-check"><input type="checkbox" ${_dynPage.planModes.includes('CBTC') ? 'checked' : ''} onchange="_dynPlanToggleMode('CBTC',this.checked)">CBTC</label>
-            <label class="capx-check"><input type="checkbox" ${_dynPage.planModes.includes('VATC') ? 'checked' : ''} onchange="_dynPlanToggleMode('VATC',this.checked)">VATC</label>
+            <label class="capx-check"><input type="checkbox" ${_dynPage.planModes.includes('CBTC') ? 'checked' : ''} ${cxOn('change', '_dynPlanToggleMode', 'CBTC', '$cx.checked')}>CBTC</label>
+            <label class="capx-check"><input type="checkbox" ${_dynPage.planModes.includes('VATC') ? 'checked' : ''} ${cxOn('change', '_dynPlanToggleMode', 'VATC', '$cx.checked')}>VATC</label>
           </div>
           <div class="capx-frow">
             <span class="capx-field-lbl">Max trains</span>
@@ -44453,7 +44453,7 @@ function _dynRenderPlanning() {
             <option value="unscheduled" ${_dynPage.planSchedFilter === 'unscheduled' ? 'selected' : ''}>Not scheduled</option>
           </select>
         </label>
-        <span class="capx-searchwrap">${icon('search')}<input id="capx-search" class="capx-input wide" type="search" placeholder="Filter code / title…" value="${escapeHtml(_dynPage.planSearch)}" oninput="_dynPlanSearchInput(this.value)"></span>
+        <span class="capx-searchwrap">${icon('search')}<input id="capx-search" class="capx-input wide" type="search" placeholder="Filter code / title…" value="${escapeHtml(_dynPage.planSearch)}" ${cxOn('input', '_dynPlanSearchInput', '$cx.value')}></span>
         <label class="capx-check"><input type="checkbox" ${_dynPage.planGrouped ? 'checked' : ''} onchange="_dynPage.planGrouped=this.checked;_dynPage.planGroupsOpen=null;_dynRenderPlanning();">Group by test case</label>
         ${_dynPage.planGrouped ? `<button type="button" class="capx-linkish" data-action="_dynPlanGroupsAll" data-args="[true]">Expand all</button>
         <button type="button" class="capx-linkish" data-action="_dynPlanGroupsAll" data-args="[false]">Collapse all</button>` : ''}
@@ -44578,7 +44578,7 @@ function _dynClearScheduleRun() {
   window._dynClearLooseToggle = btnCount;
   const looseHtml = loose.length ? `
     <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12.5px;color:var(--text-muted);cursor:pointer;">
-      <input type="checkbox" id="capx-clear-loose" onchange="_dynClearLooseToggle()">
+      <input type="checkbox" id="capx-clear-loose" ${cxOn('change', '_dynClearLooseToggle')}>
       Also clear <b>${loose.length}</b> run${loose.length === 1 ? '' : 's'} scheduled by date only (hand-placed, not linked to any access window)
     </label>` : '';
   modal({
@@ -44784,7 +44784,7 @@ function _dynRenderPlanningTable() {
       : `<span style="color:var(--good);">✓</span>`;
     return `<tr class="capx-row ${flat ? '' : 'is-child'} ${block ? 'is-blocked' : ''}">
       <td><input type="checkbox" ${checked ? 'checked' : ''} ${block ? 'disabled' : ''}
-           onchange="_dynPlanToggleSelect('${r.instance_id}',this.checked)" aria-label="Select ${escapeHtml(r.code || r.instance_id)}"></td>
+           ${cxOn('change', '_dynPlanToggleSelect', String(r.instance_id), '$cx.checked')} aria-label="Select ${escapeHtml(r.code || r.instance_id)}"></td>
       <td class="mono">${escapeHtml(r.code || '—')}</td>
       ${flat ? `<td class="mono">${escapeHtml(r.test_case_code || r.test_id || '—')}</td>
       <td>${escapeHtml(r.title || '—')}</td>
@@ -44805,7 +44805,7 @@ function _dynRenderPlanningTable() {
       <div class="capx-tblwrap">
         <table class="capx-tbl">
           <thead><tr>
-            <th style="width:34px;"><input type="checkbox" ${allSel ? 'checked' : ''} onchange="_dynPlanSelectAll(this.checked)" aria-label="Select all eligible runs"></th>
+            <th style="width:34px;"><input type="checkbox" ${allSel ? 'checked' : ''} ${cxOn('change', '_dynPlanSelectAll', '$cx.checked')} aria-label="Select all eligible runs"></th>
             <th>Run</th><th>Test case</th><th>Title</th><th>Mode</th>
             <th class="num">Duration</th><th class="num">Trains</th>
             <th>Scheduled</th><th>Status</th><th>Prereqs</th><th class="num">Score</th>
@@ -44837,7 +44837,7 @@ function _dynRenderPlanningTable() {
     return `
       <tr class="capx-grp ${isOpen ? 'open' : ''}">
         <td class="capx-grp-chk"><input type="checkbox" ${gSel ? 'checked' : ''} ${eligible.length ? '' : 'disabled'}
-             onclick="event.stopPropagation()" onchange="_dynPlanGroupSel('${k}',this.checked)"
+             onclick="event.stopPropagation()" ${cxOn('change', '_dynPlanGroupSel', String(k), '$cx.checked')}
              aria-label="Select all eligible runs of ${escapeHtml(String(key))}"></td>
         <td colspan="8" class="capx-grp-cell" ${cxAct('_dynPlanToggleGroup', String(k))}>
           <span class="capx-grp-chev">${icon('chevron-right')}</span>
@@ -44854,7 +44854,7 @@ function _dynRenderPlanningTable() {
     <div class="capx-tblwrap">
       <table class="capx-tbl">
         <thead><tr>
-          <th style="width:34px;"><input type="checkbox" ${allSel ? 'checked' : ''} onchange="_dynPlanSelectAll(this.checked)" aria-label="Select all eligible runs"></th>
+          <th style="width:34px;"><input type="checkbox" ${allSel ? 'checked' : ''} ${cxOn('change', '_dynPlanSelectAll', '$cx.checked')} aria-label="Select all eligible runs"></th>
           <th>Run</th><th>Section</th>
           <th class="num">Duration</th><th class="num">Trains</th>
           <th>Scheduled</th><th>Status</th><th>Prereqs</th><th class="num">Score</th>
@@ -45585,8 +45585,8 @@ function _dynWhatIfScopeControlsHtml() {
     }).join('');
     return `<tr style="border-top:1px solid var(--gray-100);${off ? 'opacity:.6;' : ''}">
       <td style="padding:4px 6px;font-weight:600;white-space:nowrap;">${lbl}${hasWin ? '' : ' <span style="font-weight:400;color:var(--gray-400);font-size:10px;">(no shift)</span>'}</td>
-      <td style="padding:4px 6px;text-align:center;"><input type="checkbox" ${off ? 'checked' : ''} onchange="_dynWhatIfSetDowOff('${d}',this.checked)" title="No access this day — recalculate into other shifts"></td>
-      <td style="padding:4px 6px;"><input type="number" min="0" max="12" step="0.5" value="${ov.hours != null ? ov.hours : ''}" placeholder="${curHours != null ? curHours : '—'}" ${off ? 'disabled' : ''} onchange="_dynWhatIfSetDowHours('${d}',this.value)" style="width:46px;padding:3px;border:1px solid var(--gray-300);border-radius:4px;text-align:center;font-size:11px;"></td>
+      <td style="padding:4px 6px;text-align:center;"><input type="checkbox" ${off ? 'checked' : ''} ${cxOn('change', '_dynWhatIfSetDowOff', String(d), '$cx.checked')} title="No access this day — recalculate into other shifts"></td>
+      <td style="padding:4px 6px;"><input type="number" min="0" max="12" step="0.5" value="${ov.hours != null ? ov.hours : ''}" placeholder="${curHours != null ? curHours : '—'}" ${off ? 'disabled' : ''} ${cxOn('change', '_dynWhatIfSetDowHours', String(d), '$cx.value')} style="width:46px;padding:3px;border:1px solid var(--gray-300);border-radius:4px;text-align:center;font-size:11px;"></td>
       <td style="padding:4px 6px;line-height:1.7;">${zoneChips}</td>
     </tr>`;
   }).join('');
@@ -46664,14 +46664,14 @@ function _dynSimConfigHtml(sc, res) {
   const dows = [['1','Mon'],['2','Tue'],['3','Wed'],['4','Thu'],['5','Fri'],['6','Sat'],['0','Sun']];
   const weeklyRow = dows.map(([d, lbl]) => `
     <label class="simx-day"><span>${lbl}</span>
-      <input type="number" min="0" max="48" step="0.5" value="${sc.weekly[d] != null ? sc.weekly[d] : ''}" placeholder="—" class="simx-inp" onchange="_dynSimSet('weekly','${d}',this.value)">
+      <input type="number" min="0" max="48" step="0.5" value="${sc.weekly[d] != null ? sc.weekly[d] : ''}" placeholder="—" class="simx-inp" ${cxOn('change', '_dynSimSet', 'weekly', String(d), '$cx.value')}>
     </label>`).join('');
   const wkHours = dows.reduce((a, [d]) => a + (parseFloat(sc.weekly[d]) || 0), 0);
   const wkDays = dows.filter(([d]) => parseFloat(sc.weekly[d]) > 0).length;
   const schedBody = `
     <div class="simx-row2">
       <label class="simx-field">Start date
-        <input type="date" value="${escapeHtml(sc.startDate)}" class="simx-inp wide" onchange="_dynSimField('startDate',this.value)"></label>
+        <input type="date" value="${escapeHtml(sc.startDate)}" class="simx-inp wide" ${cxOn('change', '_dynSimField', 'startDate', '$cx.value')}></label>
       <label class="simx-field" title="Optional deadline — the verdict flags the plan if it finishes late.">Target date
         <input type="date" value="${escapeHtml(sc.targetDate || '')}" class="simx-inp wide" onchange="_dynSimField('targetDate',this.value||null)"></label>
     </div>
@@ -46731,7 +46731,7 @@ function _dynSimConfigHtml(sc, res) {
     </div>
     <div class="simx-mono-box">${escapeHtml(tpSummary)}</div>
     <label class="simx-field" style="display:block;margin-top:10px;">Closure locations <span class="simx-hint">up to 4 consecutive, used during a closure — blank = auto from adjacency</span>
-      <input type="text" value="${escapeHtml(closTxt)}" placeholder="e.g. W40-W34-W30-W10, Y10-W34-W30" class="simx-inp wide mono" onchange="_dynSimSetClosure(this.value)">
+      <input type="text" value="${escapeHtml(closTxt)}" placeholder="e.g. W40-W34-W30-W10, Y10-W34-W30" class="simx-inp wide mono" ${cxOn('change', '_dynSimSetClosure', '$cx.value')}>
     </label>`;
   const locSum = `${(sc.zones || []).length}/${allZones.length} locations${closTxt ? ' · closure groups set' : ''}`;
 
@@ -46758,22 +46758,22 @@ function _dynSimConfigHtml(sc, res) {
   const scopeBody = `
     <div class="simx-row2">
       <label class="simx-field">Subsystem
-        <select class="simx-inp wide" onchange="_dynSimScopeField('subsystem',this.value)">
+        <select class="simx-inp wide" ${cxOn('change', '_dynSimScopeField', 'subsystem', '$cx.value')}>
           <option value="">All</option>
           ${subsystems.map(s => `<option value="${escapeHtml(s)}" ${sc.scope.subsystem === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
         </select></label>
       <label class="simx-field" title="Setup/positioning minutes lost when a shift switches signalling mode or start-area.">Setup min
         <input type="number" min="0" max="120" value="${sc.setupMin ?? 0}" class="simx-inp wide" onchange="_dynSimField('setupMin',Math.max(0,parseInt(this.value,10)||0))"></label>
     </div>
-    <label class="simx-check" title="Exclude runs already assigned to a real shift"><input type="checkbox" ${sc.scope.onlyUnscheduled ? 'checked' : ''} onchange="_dynSimScopeField('onlyUnscheduled',this.checked)"> Only unscheduled runs</label>`;
+    <label class="simx-check" title="Exclude runs already assigned to a real shift"><input type="checkbox" ${sc.scope.onlyUnscheduled ? 'checked' : ''} ${cxOn('change', '_dynSimScopeField', 'onlyUnscheduled', '$cx.checked')}> Only unscheduled runs</label>`;
   const scopeSum = `${sc.scope.subsystem ? escapeHtml(sc.scope.subsystem) : 'All subsystems'}${sc.scope.onlyUnscheduled ? ' · unscheduled only' : ''}${sc.setupMin ? ` · ${sc.setupMin} min setup` : ''}`;
 
   // 6 ── Risk & regression ─────────────────────────────────────────────────────
   const riskBody = `
     <div class="simx-subhead">Access cancellation <span class="simx-hint">global — pads EVERY scenario and regression campaign's completion by this %</span></div>
     <div class="simx-row-inline">
-      <label class="simx-check"><input type="checkbox" ${cc.enabled ? 'checked' : ''} onchange="_dynSimCancelToggle(this.checked)"> Assume cancellations</label>
-      <span class="simx-pctwrap ${cc.enabled ? '' : 'off'}"><input type="number" min="0" max="100" value="${cc.pct}" ${cc.enabled ? '' : 'disabled'} class="simx-inp" onchange="_dynSimCancelSetPct(this.value)">% extension</span>
+      <label class="simx-check"><input type="checkbox" ${cc.enabled ? 'checked' : ''} ${cxOn('change', '_dynSimCancelToggle', '$cx.checked')}> Assume cancellations</label>
+      <span class="simx-pctwrap ${cc.enabled ? '' : 'off'}"><input type="number" min="0" max="100" value="${cc.pct}" ${cc.enabled ? '' : 'disabled'} class="simx-inp" ${cxOn('change', '_dynSimCancelSetPct', '$cx.value')}>% extension</span>
     </div>
     <div class="simx-divider"></div>
     ${_dynSimRegConfigHtml(sc)}`;
@@ -46794,7 +46794,7 @@ function _dynSimConfigHtml(sc, res) {
 // ── Regression inputs (inside the Risk section) ─────────────────────────────
 function _dynSimRegConfigHtml(sc) {
   const cfg = _dynRegConfig(sc);
-  const head = `<label class="simx-check" style="font-weight:600;"><input type="checkbox" ${cfg.enabled ? 'checked' : ''} onchange="_dynSimRegToggle(this.checked)"> Regression projection</label>`;
+  const head = `<label class="simx-check" style="font-weight:600;"><input type="checkbox" ${cfg.enabled ? 'checked' : ''} ${cxOn('change', '_dynSimRegToggle', '$cx.checked')}> Regression projection</label>`;
   if (!cfg.enabled) return `<div class="simx-subhead">${head}<span class="simx-hint">project re-test campaigns after each software release</span></div>`;
   const weightRows = cfg.subsystems.length
     ? cfg.subsystems.map(s => `<label class="simx-mixcell"><span class="mono">${escapeHtml(s)}</span>
@@ -46805,9 +46805,9 @@ function _dynSimRegConfigHtml(sc) {
     <div class="simx-subhead">${head}</div>
     <div class="simx-row-inline" style="margin-bottom:8px;">
       <label class="simx-field-inline" title="Share of each campaign's work that fails verification and re-runs in the next campaign (compounding).">Failure rate
-        <span><input type="number" min="0" max="100" value="${cfg.failureRate}" class="simx-inp" onchange="_dynSimRegField('failureRate',this.value)">%</span></label>
+        <span><input type="number" min="0" max="100" value="${cfg.failureRate}" class="simx-inp" ${cxOn('change', '_dynSimRegField', 'failureRate', '$cx.value')}>%</span></label>
       <label class="simx-field-inline" title="Development gap (months) before each regression campaign — time waiting on the next software release. One value per campaign, comma-separated.">Dev gaps (mo)
-        <input type="text" value="${escapeHtml(cfg.gaps.join(', '))}" placeholder="e.g. 2, 3, 3" class="simx-inp mono" style="width:90px;text-align:left;" onchange="_dynSimRegSetGaps(this.value)"></label>
+        <input type="text" value="${escapeHtml(cfg.gaps.join(', '))}" placeholder="e.g. 2, 3, 3" class="simx-inp mono" style="width:90px;text-align:left;" ${cxOn('change', '_dynSimRegSetGaps', '$cx.value')}></label>
       <span class="simx-hint">${cfg.gaps.length} regression campaign${cfg.gaps.length === 1 ? '' : 's'}</span>
     </div>
     <div class="simx-field-lbl">Failure weight by subsystem <span>where the failures land — normalized at use</span></div>
@@ -47370,12 +47370,12 @@ function _dynSimChartControlsHtml() {
   const allShown = series.every(x => !hidden.has(x.key));
   const pills = series.map(x => `
     <label class="simx-pill">
-      <input type="checkbox" class="dyn-sim-series-cb" data-key="${escapeHtml(x.key)}" ${hidden.has(x.key) ? '' : 'checked'} onchange="_dynSimToggleSeries('${x.key}',this.checked)">
+      <input type="checkbox" class="dyn-sim-series-cb" data-key="${escapeHtml(x.key)}" ${hidden.has(x.key) ? '' : 'checked'} ${cxOn('change', '_dynSimToggleSeries', String(x.key), '$cx.checked')}>
       <i style="background:${x.color};${x.dash ? 'background:repeating-linear-gradient(90deg,' + x.color + ' 0 4px,transparent 4px 7px);' : ''}"></i>${escapeHtml(x.label)}
     </label>`).join('');
   return `<div class="simx-series">
       <label class="simx-pill all">
-        <input type="checkbox" id="dyn-sim-showall" ${allShown ? 'checked' : ''} onchange="_dynSimToggleAllSeries(this.checked)"> All
+        <input type="checkbox" id="dyn-sim-showall" ${allShown ? 'checked' : ''} ${cxOn('change', '_dynSimToggleAllSeries', '$cx.checked')}> All
       </label>
       ${pills}
     </div>`;
@@ -50058,19 +50058,19 @@ function renderDocumentsPage() {
       <div class="docs-search-wrap">
         <svg class="docs-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         <input id="docs-search" class="docs-search-input" type="search" placeholder="Search documents, numbers, tags…"
-          value="${escapeHtml(_docsFilter.q)}" oninput="_docsSetFilter('q', this.value)">
+          value="${escapeHtml(_docsFilter.q)}" ${cxOn('input', '_docsSetFilter', 'q', '$cx.value')}>
       </div>
-      <select class="docs-filter-select" onchange="_docsSetFilter('type', this.value)">
+      <select class="docs-filter-select" ${cxOn('change', '_docsSetFilter', 'type', '$cx.value')}>
         <option value="">All types</option>${typeOpts}
       </select>
-      <select class="docs-filter-select" onchange="_docsSetFilter('subsystem', this.value)">
+      <select class="docs-filter-select" ${cxOn('change', '_docsSetFilter', 'subsystem', '$cx.value')}>
         <option value="">All subsystems</option>${subOpts}
       </select>
-      <select class="docs-filter-select" onchange="_docsSetFilter('location', this.value)">
+      <select class="docs-filter-select" ${cxOn('change', '_docsSetFilter', 'location', '$cx.value')}>
         <option value="">All locations</option>${locOpts}
       </select>
       <label class="docs-archived-toggle">
-        <input type="checkbox" ${_docsFilter.showArchived ? 'checked' : ''} onchange="_docsSetFilter('showArchived', this.checked)">
+        <input type="checkbox" ${_docsFilter.showArchived ? 'checked' : ''} ${cxOn('change', '_docsSetFilter', 'showArchived', '$cx.checked')}>
         Show archived
       </label>
       <button id="docs-filter-reset" class="filter-clear" data-action="_docsClearFilters" style="${_docsFilterActive() ? '' : 'display:none;'}">Reset</button>

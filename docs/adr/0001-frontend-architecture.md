@@ -132,15 +132,23 @@ justified against the app that exists then, not today's.
   handler is called exactly like the inline onclick (`fn(...args)`, no appended
   context, `this = global`) — making every port a precise drop-in with no arity
   or `this` surprises; registered actions still opt into `{el,event}` context.
-  **50% is the ceiling of safe *mechanical* conversion.** The remaining ~740 are
-  not drop-in: 263 `onchange` + 72 `oninput` need the changed value (`el.value`);
-  ~60 drag/drop/key/mouse/focus handlers need the event object; the leftover
-  `onclick`s pass function references, chain statements (`;`), or use
-  `event`/`this`. These convert by becoming REGISTERED actions that read the
-  `{el,event}` context the dispatcher now provides — a per-handler semantic
-  refactor (verify each with pw_smoke.js), not a blind codemod. Do them
-  per-module; the ratchet keeps the count monotonic. (A codemod v2 for the ~26
-  concat-context `onclick`s is possible but low-ROI.)
+- **2026-07-21 — codemod v2: change/input + sentinels; Stage B at 67%.** The
+  dispatcher now delegates `change` and `input` too (`data-change`/`data-input`),
+  and encodes live element state via SENTINELS in data-args — `this.value` →
+  `"$cx.value"`, `this.checked` → `"$cx.checked"`, `this` → `"$cx.el"`, `event` →
+  `"$cx.event"` — which it substitutes with the real values at event time. The
+  codemod emits these (onchange/oninput → `${cxOn('change'|'input', …)}`; onclick
+  passing `this`/`event` → `${cxAct(…, '$cx.el')}`). Second run converted 254
+  more handlers (740 → 486 inline; **993/1479 = 67% delegated**). Real-DOM change
+  events + sentinels are verified in pw_smoke.js; full suite green.
+  The remaining ~486 are genuinely not mechanical: 105 chained (`;` multi-
+  statement), 190 complex-arg (function-reference or expression args like
+  `PTO.find(…)`), 46 method-chain callees (`event.stopPropagation()`,
+  `document.getElementById(…).click()`), 30 concat-context, plus non-click/
+  change/input events (drag/drop/key/mouse/focus). These need per-handler
+  refactoring — splitting chains into named actions, registering wrappers for
+  function-ref args, or wiring focusin/out — each verified with pw_smoke.js. Do
+  them per-module; the ratchet keeps the count monotonic.
 - **2026-07-21 — Browser QA unlocked.** `tools/pw_smoke.js` (Playwright via the
   pre-installed `chrome-headless-shell`) serves the app, seeds an authenticated
   admin session into localStorage, MOCKS the Supabase REST/auth layer (offline +

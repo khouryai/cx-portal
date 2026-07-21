@@ -1,11 +1,12 @@
 "use strict";
 // AST-guided inline-handler codemod (Tier 3 Stage B).
-// Converts safe inline `onclick="fn(args)"` handlers to the delegated
-// `${cxAct('fn', args)}` form (routed by cx-actions.js) — WITHOUT regenerating
-// the file. It uses acorn ONLY to classify the *string context* of each handler
-// (template literal vs single/double-quoted concat vs comment); because a
-// handler's raw source is contiguous, the rewrite itself is a surgical text
-// replacement, so formatting, CRLF, and everything else are byte-preserved.
+// Converts safe inline onclick/onchange/oninput handlers to the delegated form
+//   onclick → `${cxAct('fn', args)}`   onchange/oninput → `${cxOn('change'|'input', 'fn', args)}`
+// (routed by cx-actions.js) — WITHOUT regenerating the file. It uses acorn ONLY
+// to classify the *string context* of each handler (template literal vs single/
+// double-quoted concat vs comment); because a handler's raw source is
+// contiguous, the rewrite itself is a surgical text replacement, so formatting,
+// CRLF, and everything else are byte-preserved.
 //
 // It is deliberately CONSERVATIVE — it transforms only handlers it can prove are
 // behaviour-preserving and skips the rest, reporting why. A handler is converted
@@ -14,11 +15,13 @@
 //     and `"` reliably delimits the attribute),
 //   • it is a single call `IDENT(args)` — no `;`, no chaining, plain-identifier
 //     callee,
-//   • it contains no `event` / `this`,
-//   • every arg is one of: a lone `${EXPR}` (optionally quoted) whose EXPR is a
-//     plain value (no call `(`, no `=>`), a pure static string literal, or a
-//     number / true / false / null.
-// Anything else is left exactly as-is.
+//   • every arg is one of: a lone QUOTED `'${EXPR}'` (→ String(EXPR)), a pure
+//     static string literal, a number / true / false / null, or a live-state
+//     token this.value / this.checked / this / event (encoded as a $cx.* sentinel
+//     the dispatcher substitutes at event time).
+// UNQUOTED `${EXPR}` (renders as click-time code, e.g. a function reference),
+// mixed args, call/`.find()` args, method-chain callees, and non-template
+// context are all left exactly as-is.
 //
 //   node tools/codemod_delegation.js            # dry run: report only
 //   node tools/codemod_delegation.js --apply    # write app.js
@@ -135,6 +138,12 @@ function splitArgs(s) {
 function argToJs(arg) {
   const a = arg.trim();
   if (a === "") return null;
+  // Live-state sentinels: encode this.value/this.checked/this/event so the
+  // dispatcher substitutes the real values at event time (see cx-actions.js).
+  if (a === "this.value") return "'$cx.value'";
+  if (a === "this.checked") return "'$cx.checked'";
+  if (a === "this") return "'$cx.el'";
+  if (a === "event") return "'$cx.event'";
   if (/^-?\d+(\.\d+)?$/.test(a) || a === "true" || a === "false" || a === "null") return a;
   if (/^'[^'\\$]*'$/.test(a)) return a; // pure static single-quoted string
   const quoted = (a[0] === "'" && a[a.length - 1] === "'") || (a[0] === '"' && a[a.length - 1] === '"');
@@ -151,10 +160,11 @@ const edits = [];
 const skip = {};
 let converted = 0, seen = 0;
 const samples = [];
-const re = /onclick="/g;
+const re = /on(click|change|input)="/g;
 let m;
 while ((m = re.exec(src)) !== null) {
   seen++;
+  const ev = m[1];
   const openAt = m.index;
   const valStart = m.index + m[0].length;
   const ctx = ctxAt(openAt);
@@ -162,7 +172,7 @@ while ((m = re.exec(src)) !== null) {
   const end = findAttrEnd(src, valStart);
   if (end === -1) { skip["no-close"] = (skip["no-close"] || 0) + 1; continue; }
   const body = src.slice(valStart, end).trim();
-  if (/;|\bevent\b|\bthis\b/.test(body)) { skip["event/this/;"] = (skip["event/this/;"] || 0) + 1; continue; }
+  if (/;/.test(body)) { skip["chained(;)"] = (skip["chained(;)"] || 0) + 1; continue; }
   const call = body.match(/^([A-Za-z_$][\w$]*)\((.*)\)$/s);
   if (!call) { skip["not-simple-call"] = (skip["not-simple-call"] || 0) + 1; continue; }
   const name = call[1];
@@ -170,9 +180,13 @@ while ((m = re.exec(src)) !== null) {
   const args = argStr === "" ? [] : splitArgs(argStr);
   const jsArgs = args.map(argToJs);
   if (jsArgs.some((x) => x == null)) { skip["complex-arg"] = (skip["complex-arg"] || 0) + 1; continue; }
-  const replacement = "${cxAct(" + ["'" + name + "'"].concat(jsArgs).join(", ") + ")}";
+  // click → cxAct('fn', …);  change/input → cxOn('change'|'input', 'fn', …)
+  const call2 = ev === "click"
+    ? "cxAct(" + ["'" + name + "'"].concat(jsArgs).join(", ") + ")"
+    : "cxOn('" + ev + "', " + ["'" + name + "'"].concat(jsArgs).join(", ") + ")";
+  const replacement = "${" + call2 + "}";
   // validate the emitted expression parses
-  try { acorn.parseExpressionAt(replacement.slice(2, -1), 0, { ecmaVersion: "latest" }); }
+  try { acorn.parseExpressionAt(call2, 0, { ecmaVersion: "latest" }); }
   catch (e) { skip["emit-parse-fail"] = (skip["emit-parse-fail"] || 0) + 1; continue; }
   if (converted < LIMIT) {
     edits.push({ start: openAt, end: end + 1, text: replacement });
@@ -182,7 +196,7 @@ while ((m = re.exec(src)) !== null) {
 }
 
 console.log("=== delegation codemod (Tier 3 Stage B) ===\n");
-console.log(`onclick handlers seen: ${seen}`);
+console.log(`handlers seen (click/change/input): ${seen}`);
 console.log(`convertible (template-context, safe): ${converted}`);
 console.log("skipped:");
 for (const [k, v] of Object.entries(skip).sort((a, b) => b[1] - a[1])) console.log(`  ${String(v).padStart(4)}  ${k}`);

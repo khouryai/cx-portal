@@ -92,5 +92,42 @@ const argMatch = /data-args='(.*)'/.exec(decoded);
 CXActions.dispatch(el({ "data-action": "go", "data-args": argMatch[1] }), {});
 ok("act()-emitted args round-trip through dispatch", rt === "a'b\"c");
 
+// 10) cxOn emitter builds arbitrary-event delegation attributes.
+ok("on('change', name) emits data-change", CXActions.on("change", "f") === 'data-change="f"');
+ok("on('input', name, args) emits data-args",
+  CXActions.on("input", "f", "a") === 'data-input="f" data-args=\'[&quot;a&quot;]\'');
+
+// 11) dispatch reads a custom attribute (change/input) and substitutes the
+//     $cx.value / $cx.checked / $cx.el / $cx.event sentinels with live state.
+function inputEl(attrs, value, checked) {
+  return { getAttribute: (k) => (k in attrs ? attrs[k] : null), value: value, checked: checked };
+}
+let cv = null;
+CXActions.register("onChangeProbe", function (id, val) { cv = [id, val]; });
+const ev = { type: "change" };
+CXActions.dispatch(inputEl({ "data-change": "onChangeProbe", "data-args": '["sub","$cx.value"]' }, "typed-text"), ev, "data-change");
+ok("data-change dispatch resolves via custom attr", cv != null);
+ok("$cx.value sentinel → el.value", cv && cv[0] === "sub" && cv[1] === "typed-text");
+
+let checkedSeen = null;
+CXActions.register("onChk", function (c) { checkedSeen = c; });
+CXActions.dispatch(inputEl({ "data-change": "onChk", "data-args": '["$cx.checked"]' }, "", true), ev, "data-change");
+ok("$cx.checked sentinel → el.checked", checkedSeen === true);
+
+let elSeen = null, evSeen = null;
+CXActions.register("onEl", function (e) { elSeen = e; });
+const theEl = inputEl({ "data-input": "onEl", "data-args": '["$cx.el"]' }, "v");
+CXActions.dispatch(theEl, ev, "data-input");
+ok("$cx.el sentinel → the element", elSeen === theEl);
+CXActions.register("onEv", function (e) { evSeen = e; });
+CXActions.dispatch(inputEl({ "data-input": "onEv", "data-args": '["$cx.event"]' }, "v"), ev, "data-input");
+ok("$cx.event sentinel → the event", evSeen === ev);
+
+// A normal string arg that isn't a sentinel is passed through untouched.
+let plain = null;
+CXActions.register("onPlain", function (v) { plain = v; });
+CXActions.dispatch(inputEl({ "data-change": "onPlain", "data-args": '["hello"]' }, "x"), ev, "data-change");
+ok("non-sentinel string arg passes through", plain === "hello");
+
 console.log(`\n${pass} passed, ${fail} failed.\n`);
 process.exit(fail === 0 ? 0 : 1);
