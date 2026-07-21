@@ -75,5 +75,22 @@ ok("unresolved action returns false", resUnres === false);
 ok("element without data-action returns false", CXActions.dispatch(el({}), {}) === false);
 ok("null element returns false", CXActions.dispatch(null, {}) === false);
 
+// 9) act() emitter builds delegation attributes; round-trips through dispatch.
+ok("act(name) emits just data-action", CXActions.act("go") === 'data-action="go"');
+ok("act(name, args) emits HTML-escaped data-args JSON",
+  CXActions.act("go", "a", 2) === 'data-action="go" data-args=\'[&quot;a&quot;,2]\'');
+// A value with a quote/apostrophe must be HTML-escaped so the attribute is valid.
+const emitted = CXActions.act("go", "a'b\"c");
+ok("act() HTML-escapes arg values", emitted.indexOf("'") === -1 || emitted.indexOf("&#039;") !== -1);
+ok("act() escapes double quotes in values", emitted.indexOf("&quot;") !== -1);
+// Simulate the browser decoding the escaped attribute, then dispatch: args survive.
+let rt = null;
+CXActions.register("go", function (v) { rt = v; });
+const decoded = emitted.replace(/data-args='([^']*)'/, (all, g) =>
+  "data-args='" + g.replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, "&") + "'");
+const argMatch = /data-args='(.*)'/.exec(decoded);
+CXActions.dispatch(el({ "data-action": "go", "data-args": argMatch[1] }), {});
+ok("act()-emitted args round-trip through dispatch", rt === "a'b\"c");
+
 console.log(`\n${pass} passed, ${fail} failed.\n`);
 process.exit(fail === 0 ? 0 : 1);

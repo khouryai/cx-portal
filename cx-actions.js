@@ -72,6 +72,27 @@
     if (el) dispatch(el, event);
   }
 
+  // HTML-escape for building attribute values safely from template literals.
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c];
+    });
+  }
+
+  // Emit the delegation attributes for a template literal, replacing an inline
+  // onclick. Usage inside HTML template strings:
+  //     `<button ${act('openPunchDetail', id)}>Open</button>`
+  //   → `<button data-action="openPunchDetail" data-args='["…"]'>Open</button>`
+  // Args are JSON-encoded and HTML-escaped, so quotes/apostrophes in values are
+  // safe (the inline-onclick equivalent had to hand-escape). No args → just the
+  // data-action attribute.
+  function act(name) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    var out = 'data-action="' + esc(name) + '"';
+    if (args.length) out += " data-args='" + esc(JSON.stringify(args)) + "'";
+    return out;
+  }
+
   var CXActions = {
     // Register a named action. Registered actions win over globals of the same
     // name, so a module can claim its handlers as it is extracted.
@@ -80,12 +101,13 @@
     // True if data-action="name" would resolve to something callable.
     has: function (name) { return resolve(name) != null; },
     dispatch: dispatch,
+    act: act,
     _registry: registry,
   };
 
   if (typeof document !== 'undefined' && document.addEventListener) {
     document.addEventListener('click', onClick);
   }
-  if (typeof window !== 'undefined') window.CXActions = CXActions;
+  if (typeof window !== 'undefined') { window.CXActions = CXActions; window.cxAct = act; }
   if (typeof module !== 'undefined' && module.exports) module.exports = CXActions;
 })();

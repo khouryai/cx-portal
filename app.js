@@ -1087,7 +1087,7 @@ function _colOpenEditor(tableId, refreshFn) {
     body: `<div id="col-editor-${tableId}" style="padding:4px 0;">${_colEditorListHTML(tableId, refreshFn)}</div>`,
     footer: `
       <button class="form-secondary" onclick="_colReset('${tableId}',${fnName})">Reset Defaults</button>
-      <button class="form-submit" onclick="closeModal()">Done</button>`,
+      <button class="form-submit" data-action="closeModal">Done</button>`,
   });
 }
 
@@ -4175,7 +4175,7 @@ function _awOpenTestCasesModal(sub, act) {
           </table>
         </div>
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Done</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Done</button>`,
   });
 }
 
@@ -4655,7 +4655,7 @@ function openAddLocationModal(parentId, level) {
       </div>
     `,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="saveNewLocation('${parentId || ''}', ${level})">Add</button>
     `,
   });
@@ -4695,7 +4695,7 @@ function openEditLocationModal(id) {
       </div>
     `,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="saveEditLocation('${id}')">Save</button>
     `,
   });
@@ -4774,7 +4774,7 @@ function handleLocationImport(input) {
         </div>
       `,
       footer: `
-        <button class="form-secondary" onclick="closeModal()">Cancel</button>
+        <button class="form-secondary" data-action="closeModal">Cancel</button>
         <button class="form-submit" onclick="executeLocationImport()">Import ${_locImportRows.length} Locations</button>
       `,
     });
@@ -4962,7 +4962,7 @@ async function handleImportFile(input) {
     size: 'large',
     body: warnHTML + newHTML,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" id="do-import-btn" onclick="executeImport()">
         Import ${rows.length} test case${rows.length !== 1 ? 's' : ''}
       </button>`,
@@ -5050,7 +5050,7 @@ function openDeployModal(templateId) {
       </div>
     `,
     footer: `
-      <button class="admin-action-btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn-secondary" data-action="closeModal">Cancel</button>
       <button class="admin-action-btn" id="dep-confirm-btn" onclick="confirmDeploy('${templateId}')">Deploy</button>
     `,
   });
@@ -5531,7 +5531,7 @@ function openNewTemplateModal() {
     sub:    'Define reusable test sections and procedures for an activity',
     size:   'large',
     body:   _tplModalBody(),
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
              <button class="form-submit" onclick="saveNewTemplate()">Create Activity Template</button>`,
   });
 }
@@ -5572,7 +5572,7 @@ function editTemplate(id) {
     sub:    tpl.name,
     size:   'large',
     body:   _tplModalBody(),
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
              <button class="form-submit" onclick="saveEditTemplate()">Save Changes</button>`,
   });
   setTimeout(() => {
@@ -6250,7 +6250,7 @@ async function openInviteUserModal() {
       </p>
     `,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="inviteUser()">Create Account</button>
     `,
   });
@@ -6795,7 +6795,7 @@ function openEditActivityModal(idx) {
       <p style="font-size:12px;color:var(--gray-500);margin-top:12px;">Changes apply to all test cases under this activity: <b>${escapeHtml(data.phase)} · ${escapeHtml(data.location)} · ${escapeHtml(data.subsystem)}</b></p>
     `,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="admin-action-btn" onclick="saveActivityEdit()">Save Changes</button>
     `
   });
@@ -7983,7 +7983,7 @@ function _dlOpenEdit(id) {
           Test counts (${parseInt(l.total_tests_logged, 10) || 0} logged) are derived from recorded results and can't be edited here.
         </p>
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
              <button class="admin-action-btn" onclick="_dlSaveEdit('${l.id}')">Save changes</button>`,
     size: 'large',
   });
@@ -8999,7 +8999,7 @@ function openPunchDetail(id) {
       </div>
     `,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Close</button>
+      <button class="form-secondary" data-action="closeModal">Close</button>
       <button class="form-secondary" onclick="exportPunchPDF(['${p.id}'])">${icon('download')}Export PDF</button>
       ${p.is_deleted
         ? `<button class="form-secondary" onclick="restorePunch('${p.id}')">Restore from Bin</button>`
@@ -9174,7 +9174,7 @@ async function advancePunchStatus(id, newStatus) {
             </div>
           </div>`,
         footer: `
-          <button class="form-secondary" onclick="closeModal()">Cancel</button>
+          <button class="form-secondary" data-action="closeModal">Cancel</button>
           <button class="form-submit" onclick="closeModal();openEditPunchModal('${id}')">OK — Add details</button>`,
       });
       return;
@@ -9456,7 +9456,7 @@ function openNewPunchModal() {
     size: 'large',
     body: `<div id="punch-form-wrap">${_punchFormHTML(null)}</div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-secondary" onclick="saveNewPunchItem(true)">Save &amp; Create New</button>
       <button class="form-submit" onclick="saveNewPunchItem(false)">Save</button>
     `,
@@ -9488,7 +9488,7 @@ function openPunchFromTestCase(testId) {
     size: 'large',
     body: `<div id="punch-form-wrap">${_punchFormHTML(null)}</div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="saveNewPunchItem(false)">Create Punch Item</button>
     `,
   });
@@ -9575,7 +9575,7 @@ function openLinkPunchModal(testId) {
       <div id="link-punch-list" style="max-height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;">
         ${_linkPunchListHTML(openPunches, testId)}
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
 }
 
@@ -9666,7 +9666,7 @@ function openEditPunchModal(id) {
     size: 'large',
     body: `<div id="punch-form-wrap">${_punchFormHTML(p)}</div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="saveEditPunchItem('${id}')">Save Changes</button>
     `,
   });
@@ -10051,7 +10051,7 @@ function _punchTemplatesModal() {
         </div>
       </div>`; }).join('') : '<div style="font-size:13px;color:var(--gray-500);">No templates yet.</div>'}
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Done</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Done</button>`,
   });
 }
 
@@ -10064,7 +10064,7 @@ function _punchFieldLibModal() {
       <div class="punch-modal-toolbar" style="display:flex;justify-content:flex-end;margin-bottom:8px;flex-wrap:wrap;"><button class="form-submit" onclick="_punchLibShowCreate()">+ New Field</button></div>
       <div id="plib-create"></div>
       <div id="plib-list"></div>`,
-    footer: `<button class="form-secondary" onclick="_punchTemplatesModal()">Back to Templates</button><button class="form-secondary" onclick="closeModal()">Done</button>`,
+    footer: `<button class="form-secondary" onclick="_punchTemplatesModal()">Back to Templates</button><button class="form-secondary" data-action="closeModal">Done</button>`,
   });
   _punchLibRenderList();
 }
@@ -10419,7 +10419,7 @@ function openPunchImportModal() {
       <div id="punch-import-preview" style="margin-top:16px;"></div>
     `,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" id="punch-import-btn" onclick="executePunchImport()" disabled>Import</button>
     `,
   });
@@ -11776,7 +11776,7 @@ function openNewTestReportModal() {
         <div class="form-field form-field-full"><label>Notes</label><textarea id="tr-notes" class="form-input" rows="2" placeholder="Optional notes..."></textarea></div>
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" onclick="saveNewTestReport()">Create Report</button>`
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" onclick="saveNewTestReport()">Create Report</button>`
   });
 }
 
@@ -11839,7 +11839,7 @@ function openEditTestReportModal(uid) {
         <div class="form-field form-field-full"><label>Notes</label><textarea id="tr-notes" class="form-input" rows="2">${escapeHtml(row.notes||'')}</textarea></div>
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" onclick="saveTestReportEdit('${safeUid}')">${row.isDerived?'Create Record':'Save Changes'}</button>`
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" onclick="saveTestReportEdit('${safeUid}')">${row.isDerived?'Create Record':'Save Changes'}</button>`
   });
 }
 
@@ -11909,7 +11909,7 @@ function openAddRevisionModal(reportId) {
         <div class="form-field form-field-full"><label>Notes for this revision</label><textarea id="tr-notes" class="form-input" rows="2" placeholder="Optional notes..."></textarea></div>
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" onclick="saveNewRevision('${reportId}')">Save New Revision</button>`
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" onclick="saveNewRevision('${reportId}')">Save New Revision</button>`
   });
 }
 
@@ -12001,7 +12001,7 @@ function openLinkActivityModal(uid) {
         ${listHTML}
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>${available.length ? `<button class="admin-action-btn" onclick="_trpConfirmLinkActivities('${safeUid}')">Link Selected</button>` : ''}`
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>${available.length ? `<button class="admin-action-btn" onclick="_trpConfirmLinkActivities('${safeUid}')">Link Selected</button>` : ''}`
   });
 }
 
@@ -12067,7 +12067,7 @@ function openRevisionHistoryModal(uid) {
       <p style="font-size:12px;color:var(--gray-500);margin-bottom:14px;">Current: <b>Rev ${escapeHtml(row.revision||'A')}</b> · ${escapeHtml(row.status||'Not Started')}</p>
       <div style="display:flex;flex-direction:column;gap:10px;">${histHTML}</div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`
   });
 }
 
@@ -13773,7 +13773,7 @@ function _amOpenEditModal(key) {
         Changes to Activity Name, Phase, Location, or Subsystem update all child test items. Activity Status is auto-calculated from test item statuses.
       </p>
     `,
-    footer: `<button class="admin-action-btn" style="background:var(--bad);margin-right:auto;" onclick="_amDeleteActivity()">${icon('trash')} Delete Activity</button><button class="form-secondary" onclick="closeModal()">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:var(--good);" onclick="_amSaveEdit(true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" onclick="_amSaveEdit()">Save Changes</button>`
+    footer: `<button class="admin-action-btn" style="background:var(--bad);margin-right:auto;" onclick="_amDeleteActivity()">${icon('trash')} Delete Activity</button><button class="form-secondary" data-action="closeModal">Cancel</button>${st === 'Future Test' ? `<button class="admin-action-btn" style="background:var(--good);" onclick="_amSaveEdit(true)">Deploy to Field</button>` : ''}<button class="admin-action-btn" onclick="_amSaveEdit()">Save Changes</button>`
   });
 }
 
@@ -13966,7 +13966,7 @@ function _amOpenDeployToFieldModal() {
         ${selected.map(a=>`<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--line-soft);">${escapeHtml(a.activity)} <span style="color:var(--gray-500);">· ${escapeHtml(a.location)} · ${escapeHtml(a.phase)}</span></div>`).join('')}
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" style="background:var(--good);" onclick="_amConfirmDeployToField()">Confirm & Deploy</button>`
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" style="background:var(--good);" onclick="_amConfirmDeployToField()">Confirm & Deploy</button>`
   });
 }
 
@@ -14613,7 +14613,7 @@ function _amOpenFutureTestModal() {
         </select>
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="admin-action-btn" style="background:var(--accent-purple);" onclick="_amConfirmFutureTest()">Confirm & Update All</button>`
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="admin-action-btn" style="background:var(--accent-purple);" onclick="_amConfirmFutureTest()">Confirm & Update All</button>`
   });
 }
 
@@ -14682,7 +14682,7 @@ function modal({ title, sub, body, footer, size }) {
           <div class="modal-title">${title}</div>
           ${sub ? `<div class="modal-sub">${sub}</div>` : ''}
         </div>
-        <button class="modal-close" aria-label="Close dialog" onclick="closeModal()">×</button>
+        <button class="modal-close" aria-label="Close dialog" data-action="closeModal">×</button>
       </div>
       <div class="modal-body">${body || ''}</div>
       ${footer ? `<div class="modal-footer">${footer}</div>` : ''}
@@ -14741,7 +14741,7 @@ function cxConfirm(message, opts) {
     modal({
       title: opts.title || 'Please confirm', size: 'small',
       body: `<p class="cx-dialog-text">${_cxDialogText(message)}</p>`,
-      footer: `<button class="form-secondary" onclick="closeModal()">${escapeHtml(opts.cancel || 'Cancel')}</button>
+      footer: `<button class="form-secondary" data-action="closeModal">${escapeHtml(opts.cancel || 'Cancel')}</button>
                <button class="form-submit${opts.danger ? ' cx-dialog-danger' : ''}" onclick="_cxDialogFinish(true)">${escapeHtml(opts.ok || 'OK')}</button>`,
     });
   });
@@ -14757,7 +14757,7 @@ function cxPrompt(message, defaultValue, opts) {
       title: opts.title || 'Enter a value', size: 'small',
       body: `<p class="cx-dialog-text">${_cxDialogText(message)}</p>
              <input type="text" id="cx-dialog-input" class="form-input" value="${escapeHtml(val)}" style="margin-top:10px;">`,
-      footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+      footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
                <button class="form-submit" onclick="_cxDialogPromptOk()">${escapeHtml(opts.ok || 'OK')}</button>`,
     });
     setTimeout(() => {
@@ -15895,7 +15895,7 @@ async function _p6CheckBatchSuggestions(activityName, subsystem, p6Act) {
       </p>
       <div>${rows}</div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Skip</button>
+      <button class="form-secondary" data-action="closeModal">Skip</button>
       <button class="admin-action-btn" onclick="_p6AcceptBatchSuggestions()">
         Accept Selected
       </button>`,
@@ -16395,7 +16395,7 @@ function _p6LearnShowMapping(sid) {
         </p>
         <div style="border:1px solid var(--gray-200);border-radius:6px;">${rows || '<div style="padding:16px;color:var(--gray-400);font-size:12px;">No locations found.</div>'}</div>
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
 }
 
@@ -17620,7 +17620,7 @@ function _trOpenAssetPickerModal(testId) {
     sub: parent.TestName || parent.TestCaseCode || parent.TestID,
     body: `<div id="tr-asset-picker-body" style="padding:0 24px 16px;"></div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" id="tr-asset-picker-submit" onclick="_trBulkLinkAssets()">Link 0 assets</button>
     `,
     size: 'large',
@@ -18019,7 +18019,7 @@ function _trAddGenericChild(testId) {
         </div>
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="_trSaveGenericChild('${escapeHtml(String(testId))}')">Add Asset</button>`,
   });
 }
@@ -18767,7 +18767,7 @@ function _assetOpenEdit(assetId) {
           </select></div>
         <div id="ae-prefix-preview" style="font-size:12px;color:var(--gray-500);">Location prefix: ${escapeHtml(a.location_prefix||'—')}</div>
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
              <button class="admin-action-btn" onclick="_assetSaveEdit('${assetId}')">Save</button>`,
   });
 }
@@ -19890,7 +19890,7 @@ function openSwConfigModal(editId, cloneFromId, parentVddId) {
       ${isNewVersion ? `<div style="font-size:12px;color:var(--gray-500);margin-top:10px;padding:8px 12px;background:var(--warn-light);border:1px solid var(--warn-border);border-radius:6px;">Installing a new version will automatically mark the current <strong>${escapeHtml(clone.version)}</strong> as <em>superseded</em>. Completed test cases keep their old snapshot.</div>` : ''}
     `,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       ${existing ? `<button class="form-secondary" style="color:var(--bad);" onclick="deleteSwConfig('${existing.id}')">Delete</button>` : ''}
       <button class="form-submit" onclick="saveSwConfig()">${existing?'Save Changes':'Save'}</button>
     `,
@@ -20058,7 +20058,7 @@ function openSwEquipModal(configId, editId) {
       </div>
     `,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       ${existing ? '<button class="form-secondary" style="color:var(--bad);" onclick="deleteSwEquip(\'' + existing.id + '\',\'' + configId + '\')">Delete</button>' : ''}
       <button class="form-submit" onclick="saveSwEquip('${configId}')">${existing ? 'Save Changes' : 'Save'}</button>
     `,
@@ -20828,7 +20828,7 @@ function _vmAddCarModal() {
       <div class="form-field form-field-full"><label>Notes</label><input type="text" id="vm-notes" class="form-input" placeholder="Optional"></div>
       <div class="form-field form-field-full"><label style="display:flex;align-items:center;gap:7px;font-weight:400;"><input type="checkbox" id="vm-seed" checked style="margin:0;"> Seed workflow &amp; equipment from the type template</label></div>
     </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmSaveCar()">Save</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" onclick="_vmSaveCar()">Save</button>`,
   });
 }
 async function _vmSaveCar() {
@@ -20868,7 +20868,7 @@ function _vmEditCarModal(id) {
       <div class="form-field"><label>Car Type *</label><select id="vm-type" class="form-input"><option value="D" ${car.car_type === 'D' ? 'selected' : ''}>D-Car</option><option value="E" ${car.car_type === 'E' ? 'selected' : ''}>E-Car</option></select></div>
       <div class="form-field form-field-full"><label>Notes</label><input type="text" id="vm-notes" class="form-input" value="${escapeHtml(car.notes || '')}"></div>
     </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmUpdateCar('${id}')">Save Changes</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" onclick="_vmUpdateCar('${id}')">Save Changes</button>`,
   });
 }
 async function _vmUpdateCar(id) {
@@ -20939,7 +20939,7 @@ function _vmEquipModal(carId, editId, presetDevice) {
         </div>
       </div>
       <div id="vme-entries" style="margin-top:6px;"></div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmSaveEquipMulti('${carId}')">Save</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" onclick="_vmSaveEquipMulti('${carId}')">Save</button>`,
   });
   if (presetDevice) setTimeout(_vmEquipDeviceChanged, 0);
 }
@@ -21015,7 +21015,7 @@ function _vmEquipEditModal(carId, e) {
         <div style="font-size:11px;color:var(--gray-500);margin-bottom:6px;">Need a fix release? A patch adds a new patch-status software release under the master VDD in Configuration Management and loads it on this car.</div>
         <button type="button" class="form-secondary" onclick="_vmPatchModal('${carId}','${e.id}')">${icon('git-branch')} Create Patch…</button>
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-secondary" style="color:var(--bad);" onclick="_vmDeleteEquip('${e.id}')">Delete</button>
       <button class="form-submit" onclick="_vmSaveEquipOne('${carId}','${e.id}')">Save Changes</button>`,
   });
@@ -21094,7 +21094,7 @@ function _vmPatchModal(carId, equipId) {
         <div class="form-field"><label>Patch Software Version *</label><input type="text" id="vmp-ver" class="form-input" placeholder="e.g. CC_GA_D210_p1"></div>
         <div class="form-field form-field-full"><label>Notes *</label><textarea id="vmp-notes" class="form-input" rows="3" placeholder="What does this patch change or fix?"></textarea></div>
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmCreatePatch('${carId}','${equipId}')">Create Patch</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" onclick="_vmCreatePatch('${carId}','${equipId}')">Create Patch</button>`,
   });
 }
 async function _vmCreatePatch(carId, equipId) {
@@ -21161,7 +21161,7 @@ function _vmBulkUpdateModal() {
         <div class="form-field"><label>New Loaded Software Version *</label><select id="vm-bulk-build" class="form-input"></select></div>
       </div>
       <div style="margin-top:6px;"><label style="font-weight:600;font-size:12px;">Apply to cars</label>${carChecks('D')}${carChecks('E')}</div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmApplyBulkUpdate()">Apply Update</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" onclick="_vmApplyBulkUpdate()">Apply Update</button>`,
   });
   setTimeout(_vmBulkDeviceChanged, 0);
 }
@@ -21215,7 +21215,7 @@ function _vmLinkFormModal(itemId) {
     body: avail.length ? `<div style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto;">
         ${avail.map(f => `<button class="form-secondary" style="text-align:left;display:flex;align-items:center;gap:8px;" onclick="_vmAttachForm('${f.id}','${itemId}')">${icon('file')} ${escapeHtml(f.name || f.original_filename || 'Form')}${f.is_template ? ' ' + _vmChip('template', 'info') : ''}</button>`).join('')}
       </div>` : `<div style="font-size:13px;color:var(--gray-500);">All available forms are already attached.</div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
 }
 async function _vmAttachForm(formId, itemId) {
@@ -21247,7 +21247,7 @@ function _vmLinkPunchModal(carId) {
       <div id="vm-punch-list" style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto;">
         ${avail.map(p => `<button class="form-secondary vm-punch-opt" data-txt="${escapeHtml(String((p.number || '') + ' ' + (p.title || '')).toLowerCase())}" style="text-align:left;display:flex;align-items:center;gap:8px;" onclick="_vmLinkPunch('${carId}','${String(p.id).replace(/'/g, "\\'")}')"><span style="font-family:monospace;font-weight:700;color:var(--gray-500);">#${p.number ?? ''}</span> ${escapeHtml(p.title || '(untitled)')}</button>`).join('')}
       </div>` : `<div style="font-size:13px;color:var(--gray-500);">No unlinked punch items available.</div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
 }
 function _vmPunchFilter(q) {
@@ -21282,7 +21282,7 @@ let _vmTplType = 'D';
 function _vmTemplatesModal(type) {
   if (!_vmCan('manage_templates')) { toast('Not permitted', 'error'); return; }
   _vmTplType = type || _vmTplType || 'D';
-  modal({ title: 'Vehicle Templates', size: 'large', body: _vmTemplatesBodyHTML(), footer: `<button class="form-secondary" onclick="closeModal()">Done</button>` });
+  modal({ title: 'Vehicle Templates', size: 'large', body: _vmTemplatesBodyHTML(), footer: `<button class="form-secondary" data-action="closeModal">Done</button>` });
 }
 function _vmTemplatesBodyHTML() {
   const t = _vmTplType;
@@ -21405,7 +21405,7 @@ function _punchLinkCarPicker(punchId) {
       <div id="pk-car" style="display:flex;flex-wrap:wrap;gap:6px;max-height:50vh;overflow:auto;">
         ${avail.map(v => `<button class="form-secondary pk-opt" data-txt="${escapeHtml((v.car_number + ' ' + v.car_type).toLowerCase())}" style="font-family:monospace;font-weight:600;" onclick="_punchLinkCar('${pid}','${v.id}')">${escapeHtml(v.car_number)} · ${escapeHtml(v.car_type)}</button>`).join('')}
       </div>` : `<div style="font-size:13px;color:var(--gray-500);">All cars are already linked, or none exist.</div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
 }
 let _ptp = { punchId: null, all: [], phase: '', loc: '', sub: '', act: '', q: '' };
@@ -21430,7 +21430,7 @@ function _punchLinkTestPicker(punchId) {
       </div>
       <div id="ptp-count" style="font-size:11px;color:var(--gray-500);margin-bottom:6px;"></div>
       <div id="ptp-list" style="display:flex;flex-direction:column;gap:5px;max-height:50vh;overflow:auto;"></div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
   _ptpRender();
 }
@@ -21623,7 +21623,7 @@ function openSwDeployModal(configId, editId, equipmentId) {
       </div>
     `,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       ${existing ? '<button class="form-secondary" style="color:var(--bad);" onclick="deleteSwDeploy(\'' + existing.id + '\',\'' + existing.config_id + '\')">Delete</button>' : ''}
       <button class="form-submit" onclick="saveSwDeploy('${existing?.id || ''}')">Save</button>
     `,
@@ -22070,7 +22070,7 @@ function _vmWfAddModal(carId) {
       <div class="form-field form-field-full"><label>Description</label><input type="text" id="vmwf-desc" class="form-input"></div>
       <div class="form-field"><label style="display:flex;gap:6px;align-items:center;font-weight:400;"><input type="checkbox" id="vmwf-req" checked> Required for readiness</label></div>
     </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmWfSaveNew('${carId}')">Add Activity</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" onclick="_vmWfSaveNew('${carId}')">Add Activity</button>`,
   });
 }
 async function _vmWfSaveNew(carId) {
@@ -22096,7 +22096,7 @@ function _vmWfEditModal(itemId) {
       <div class="form-field form-field-full"><label>Description</label><input type="text" id="vmwf-desc" class="form-input" value="${escapeHtml(it.description || '')}"></div>
       <div class="form-field"><label style="display:flex;gap:6px;align-items:center;font-weight:400;"><input type="checkbox" id="vmwf-req" ${it.required !== false ? 'checked' : ''}> Required for readiness</label></div>
     </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button><button class="form-submit" onclick="_vmWfSaveEdit('${itemId}')">Save Changes</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button><button class="form-submit" onclick="_vmWfSaveEdit('${itemId}')">Save Changes</button>`,
   });
 }
 async function _vmWfSaveEdit(itemId) {
@@ -22460,7 +22460,7 @@ function openRMAModal(rmaId) {
       `<textarea id="rma-notes" class="form-input" rows="2" placeholder="Additional notes…">${v('notes')}</textarea></div>` +
       `</div>`,
     footer:
-      `<button class="form-secondary" onclick="closeModal()">Cancel</button>` +
+      `<button class="form-secondary" data-action="closeModal">Cancel</button>` +
       `<button class="form-submit" onclick="saveRMA(${rmaId ? `'${rmaId}'` : 'null'})">${rma ? 'Save Changes' : 'Create RMA'}</button>`,
   });
 }
@@ -22577,7 +22577,7 @@ function _rmaViewModal(id) {
       `</table>` +
       (r.notes ? `<div style="margin-top:14px;padding:12px 14px;background:var(--gray-50);border-radius:6px;font-size:13px;color:var(--gray-700);"><strong>Notes:</strong> ${escapeHtml(r.notes)}</div>` : ''),
     footer:
-      `<button class="form-secondary" onclick="closeModal()">Close</button>` +
+      `<button class="form-secondary" data-action="closeModal">Close</button>` +
       `<button class="form-secondary" onclick="closeModal();_rmaPrintPDF('${id}')">${icon('printer')} Print / PDF</button>`,
   });
 }
@@ -22780,7 +22780,7 @@ function openTaskModal(taskId) {
           `<input type="file" id="task-newphoto-file" accept="image/*" multiple style="display:none" onchange="_taskNewPhotoChosen(this)"></div>`) +
       `</div>`,
     footer:
-      `<button class="form-secondary" onclick="closeModal()">Cancel</button>` +
+      `<button class="form-secondary" data-action="closeModal">Cancel</button>` +
       `<button class="form-submit" onclick="saveTask(${taskId ? `'${taskId}'` : 'null'})">${task ? 'Save Changes' : 'Create Task'}</button>`,
   });
   if (!task) { _taskNewPhotos = []; _taskRenderNewPhotoRow(); }
@@ -23001,7 +23001,7 @@ function _taskViewModal(id) {
         `<div id="task-comment-preview-${id}" class="punch-comment-preview" style="display:none;"></div>`
       ) : ''),
     footer:
-      `<button class="form-secondary" onclick="closeModal()">Close</button>` +
+      `<button class="form-secondary" data-action="closeModal">Close</button>` +
       (uiCan('tasks','edit') ? `<button class="form-submit" onclick="closeModal();openTaskModal('${id}')">${icon('edit')} Edit</button>` : ''),
   });
   _taskHydratePhotos(id);
@@ -23747,7 +23747,7 @@ function openMtgModal(editId) {
         </div>` : `<div style="display:none"><input id="mtg-template" value=""></div>`}
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()" style="padding:10px 22px;font-size:14px;">Cancel</button>
+      <button class="form-secondary" data-action="closeModal" style="padding:10px 22px;font-size:14px;">Cancel</button>
       <button class="form-submit" onclick="saveMtg('${editId||''}')" style="padding:10px 24px;font-size:14px;border-radius:6px;">${editId ? 'Save Changes' : 'Create Meeting'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-title')?.focus(), 100);
@@ -23834,7 +23834,7 @@ function openMtgCategoryModal(editId, meetingId) {
         placeholder="e.g. T&C Activities"
         style="font-size:15px;padding:12px 14px;border-radius:6px;">`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="saveMtgCategory('${editId||''}','${meetingId}')">${editId ? 'Save Changes' : 'Add Category'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-cat-title')?.focus(), 100);
@@ -23899,7 +23899,7 @@ function openMtgItemModal(editId, categoryId, meetingId) {
         </div>
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="saveMtgItem('${editId||''}','${categoryId}','${meetingId}')">${editId ? 'Save Changes' : 'Add Item'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-item-title')?.focus(), 100);
@@ -23982,7 +23982,7 @@ function openMtgActionItemModal(editId, itemId, meetingId) {
         </div>
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="saveMtgActionItem('${editId||''}','${itemId}','${meetingId}')">${editId ? 'Save Changes' : 'Add Action Item'}</button>`,
   });
   setTimeout(() => document.getElementById('mtg-ai-desc')?.focus(), 100);
@@ -24054,7 +24054,7 @@ function openMtgAddAttendeeModal(meetingId) {
         </label>
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="saveMtgAttendee('${meetingId}')">Add Attendee</button>`,
   });
   setTimeout(() => document.getElementById('mtg-att-name')?.focus(), 100);
@@ -24100,7 +24100,7 @@ function openMtgImportAttendeesModal(meetingId) {
       <div id="mtg-csv-preview" style="margin-top:12px;font-size:13px;"></div>`,
     footer: `
       <button class="form-secondary" onclick="_mtgPreviewCSV()">Preview</button>
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="_mtgImportCSV('${meetingId}')">Import</button>`,
   });
 }
@@ -24329,7 +24329,7 @@ function openMtgTemplatesModal() {
               </div>`).join('')}
       </div>
       <button class="form-secondary" style="margin-top:12px;" onclick="openMtgTemplateEditModal(null)">+ New Template</button>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
 }
 
@@ -25299,7 +25299,7 @@ function _laShowDayOverflow(iso) {
     sub:   `${items.length} activit${items.length === 1 ? 'y' : 'ies'}`,
     body:  bodyHtml,
     size:  'medium',
-    footer:`<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer:`<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
 }
 
@@ -27382,7 +27382,7 @@ function _laRenderLinkModal(activityId, showAll) {
         </div>
       </div>`,
     footer:
-      '<button class="form-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="form-secondary" data-action="closeModal">Cancel</button>' +
       (current ? `<button class="form-secondary" style="color:var(--bad);border-color:var(--bad-border);" onclick="_laSaveActivityLink('${activityId}',true)">${icon('link')} Unlink</button>` : '') +
       `<button class="form-submit" onclick="_laSaveActivityLink('${activityId}',false)">Save Link</button>`,
   });
@@ -27545,7 +27545,7 @@ async function openPlanningHistory() {
     sub: 'Immutable weekly record (Mon–Sun) of activities, shifts and assigned resources. Captured automatically each Monday.',
     size: 'large',
     body: '<div id="la-hist-body">' + cxSkeleton(4) + '</div>',
-    footer: '<button class="form-secondary" onclick="closeModal()">Close</button>',
+    footer: '<button class="form-secondary" data-action="closeModal">Close</button>',
   });
   let rows = [];
   try { rows = await _fetchAnon('planning_week_snapshots?select=week_start,week_end,captured_at,activity_count,event_count,cancelled_count&order=week_start.desc'); } catch (e) { /* */ }
@@ -27915,7 +27915,7 @@ function _laOpenCreateEventModal(cells) {
       '</div>'
     ),
     footer: (
-      '<button class="form-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="form-secondary" data-action="closeModal">Cancel</button>' +
       '<button class="form-submit" id="ce-save-btn" onclick="_laSaveCreateEvents(window._laCECells)">' + icon('plus') + ' Create ' + cells.length + ' event' + (cells.length > 1 ? 's' : '') + '</button>'
     ),
   });
@@ -29124,7 +29124,7 @@ function _laOpenNewActivityModal() {
       </p>
     `,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="_laSaveNewActivity()">Create Activity</button>
     `,
   });
@@ -30249,13 +30249,13 @@ function _planningOpenEventDetail(eventId) {
         </div>` : ''}
     `,
     footer: isAdmin ? `
-      <button class="form-secondary" onclick="closeModal()">Close</button>
+      <button class="form-secondary" data-action="closeModal">Close</button>
       <button class="form-secondary" onclick="_planningToggleLock('${e.id}')">${e.is_locked ? icon('unlock')+' Unlock' : icon('lock')+' Lock'}</button>
       ${!isCancel ? `<button class="form-secondary" style="color:var(--bad);" onclick="_planningCancelEvent('${e.id}')">${icon('x')} Cancel Event</button>` : ''}
       ${isCancel && !e.cancellation_reason ? `<button class="form-submit" onclick="_planningAddCancellationReason('${e.id}')">+ Add Cancel Reason</button>` : ''}
       ${!e.is_locked ? `<button class="form-secondary" style="color:var(--bad);border-color:var(--bad-border);" onclick="_planningDeleteEvent('${e.id}')">${icon('trash')} Delete</button>` : ''}
     ` : `
-      <button class="form-secondary" onclick="closeModal()">Close</button>
+      <button class="form-secondary" data-action="closeModal">Close</button>
     `,
   });
   document.getElementById('modal-overlay')?.classList.add('active');
@@ -30379,7 +30379,7 @@ function _planningOpenPTODetail(p) {
           <div>${p.partial_start?.slice(0,5)} – ${p.partial_end?.slice(0,5)}</div>` : ''}
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
   document.getElementById('modal-overlay')?.classList.add('active');
 }
@@ -30631,7 +30631,7 @@ function _ptoOpenSubmitModal() {
       </div>
     `,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="_ptoSubmit()">Submit Request</button>
     `,
   });
@@ -32512,7 +32512,7 @@ function _cancelReasonModalOpen(subTitle, onSave) {
         </div>
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="admin-action-btn" onclick="_cancelReasonSubmit()">Save</button>`,
   });
   window._cancelReasonOnSave = onSave;
@@ -32704,7 +32704,7 @@ async function _planningLinkActivity(activityId) {
       </div>`,
     footer: `
       <button class="form-secondary" style="margin-right:auto;color:var(--gray-500);" onclick="_planningMarkNoLink('${activityId}')">⊘ No direct link</button>
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="admin-action-btn" onclick="_planningConfirmLink('${activityId}')">${icon('link')} Link</button>`,
   });
 
@@ -33028,7 +33028,7 @@ function _planningOpenP6Detail(p6) {
           ${varianceEvents.length > 5 ? `<br>… and ${varianceEvents.length - 5} more` : ''}
         </div>` : ''}
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
   document.getElementById('modal-overlay')?.classList.add('active');
 }
@@ -33358,7 +33358,7 @@ function _apEditResourceModal(resourceId) {
         ` : ''}
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="admin-action-btn" onclick="_apSaveResourceEdit('${resourceId}')">Save</button>`,
   });
 }
@@ -33475,7 +33475,7 @@ function _apAddResourceModal() {
         </div>
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="admin-action-btn" onclick="_apCreateResource()">Add Resource</button>`,
   });
 }
@@ -35754,7 +35754,7 @@ function openFormPickerForTest(testId, assetId = '', opts = {}) {
   modal({
     title: 'Linked Forms', sub, size: 'large',
     body: _formPickerBody(ctx.parentTestId, ctx.assetId),
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
 }
 
@@ -36328,7 +36328,7 @@ function openEditFormMetadata(formId) {
         <div class="form-field form-field-full"><label>Notes / Description</label><textarea id="ef-desc" class="form-input" rows="2">${escapeHtml(f.description || '')}</textarea></div>
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
              <button class="form-submit" onclick="submitEditFormMetadata('${formId}')">Save</button>`,
   });
 }
@@ -40043,7 +40043,7 @@ function _drwExportOpen() {
           <div style="font-size:12px;color:rgba(255,255,255,.85);">The sheet with all currently visible markups baked in.${hasMarkup ? '' : ' (No markups on this sheet yet.)'}</div>
         </button>
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>`,
     size: 'small',
   });
 }
@@ -40230,7 +40230,7 @@ function _drwManageMarkupsOpen() {
             </table>`}
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
     size: 'large',
   });
 }
@@ -40461,7 +40461,7 @@ async function openTestCaseScopeModal(testId) {
       </div>
     `,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-secondary" onclick="_dynOpenCadenceModal('${escapeHtml(testId)}')">Cadence…</button>
       <button class="form-secondary" onclick="_dtOpenPrereqEditor('${escapeHtml(testId)}')">Prerequisites…</button>
       <button class="form-submit" onclick="_dtSaveScope()">Save</button>
@@ -41115,7 +41115,7 @@ function _dynOpenBulkEdit() {
       </div>
     `,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="_dynBulkEditApply()">Apply to ${ids.length}</button>
     `,
     size: 'large',
@@ -41373,7 +41373,7 @@ function _dynOpenInstanceModal(id) {
     sub: inst ? `${escapeHtml(inst.code || '')} ${escapeHtml(inst.title || '')}` : '',
     body: _dynBuildInstanceForm(inst, dynTcOpts),
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       ${!isNew ? `<button class="form-secondary" style="color:var(--bad);" onclick="_dynDeleteInstance('${escapeHtml(inst.id)}', true)">Delete</button>` : ''}
       <button class="form-submit" onclick="_dynSaveInstance('${escapeHtml(inst?.id || '')}')">${isNew ? 'Create' : 'Save'}</button>
     `,
@@ -41723,7 +41723,7 @@ function _dynOpenCSVModal() {
       </div>
     `,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-secondary" onclick="_dynCSVValidate()">Validate</button>
       <button class="form-submit" onclick="_dynImportCSVRows()">Import</button>
     `,
@@ -42770,7 +42770,7 @@ function _dynBoardOpenDay(dayKey) {
         </div>
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
     size: 'xl',
   });
 }
@@ -42853,7 +42853,7 @@ function _dynBoardOpenCell(rowKey, periodKey) {
         </div>
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
     size: 'xl',
   });
 }
@@ -43357,7 +43357,7 @@ function _dynCampaignModal(camp) {
         <div class="form-field" style="grid-column:1/-1;"><label>Notes</label><input id="camp-notes" style="${fld}" placeholder="optional" value="${escapeHtml(String(av('notes', '')))}"></div>
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="_dynSaveCampaign(${isEdit ? `'${escapeHtml(String(camp.id))}'` : ''})">${isEdit ? 'Save changes' : 'Create &amp; generate shifts'}</button>`,
   });
   // The day rows are built before the zone <select> is in the DOM, so the
@@ -43680,7 +43680,7 @@ function _dynOpenTrains(campaignId) {
           <button class="dyn-btn primary" style="margin-top:10px;" onclick="_dynTrainAdd('${campaignId}')">+ Add request</button>
         </div>
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
 }
 
@@ -43782,7 +43782,7 @@ function _dynOpenShift(id) {
           </div>` : ''}
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Close</button>
+      <button class="form-secondary" data-action="closeModal">Close</button>
       ${s.status !== 'cancelled' ? `<button class="dyn-btn" onclick="closeModal();_dynBuildShift('${escapeHtml(s.id)}')">Build shift</button>` : ''}
       ${s.status === 'cancelled'
         ? `<button class="dyn-btn" onclick="_dynShiftSetStatus('${escapeHtml(s.id)}','planned')">Restore to planned</button>`
@@ -43910,7 +43910,7 @@ function _dynBuildShift(shiftId) {
           <tbody>${eligRows}</tbody>
         </table>
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Done</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Done</button>`,
   });
 }
 
@@ -44062,7 +44062,7 @@ function _dynCampaignProgress(campaignId) {
             : `On pace: ${d.remainWork} tests across ${d.remainShifts} remaining shifts (${d.perShift.toFixed(1)}/shift).`}
         </div>
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>
       <button class="dyn-btn" onclick="closeModal();_dynCampaignScheduleMap('${escapeHtml(camp.id)}')">Schedule by test case</button>
       ${d.assigned ? `<button class="dyn-btn" style="color:var(--bad);" onclick="_dynCampaignUnscheduleAll('${escapeHtml(camp.id)}')">Unschedule all (${d.assigned})</button>` : ''}`,
   });
@@ -44120,7 +44120,7 @@ function _dynCampaignScheduleMap(campaignId) {
           <th style="text-align:left;padding:7px 10px;">Instances · schedule</th>
         </tr></thead><tbody>${rows}</tbody>
       </table></div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>
       <button class="dyn-btn" onclick="closeModal();_dynCampaignProgress('${escapeHtml(camp.id)}')">← Progress</button>`,
   });
 }
@@ -44597,7 +44597,7 @@ function _dynClearScheduleRun() {
         looseHtml +
       '</div>',
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" id="capx-clear-commit" ${onWindows.length ? '' : 'disabled'} onclick="_dynClearScheduleCommit()">Unschedule ${onWindows.length}</button>
     `,
     size: 'large',
@@ -44905,7 +44905,7 @@ async function _dynPlanCommit() {
       <div style="font-size:12px;color:var(--gray-600);margin-bottom:10px;">Each selected test is placed on the earliest shift in this campaign whose zone matches and still has time — by access-day, no manual picking.</div>
       ${opts}
     </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="_dynPlanCommitToCampaign()">Auto-schedule into campaign</button>`,
   });
 }
@@ -45690,7 +45690,7 @@ function _dynWhatIfRender() {
         </div>
       </div>
     </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
   setTimeout(() => _dynWhatIfRedraw(), 0);
 }
@@ -47740,7 +47740,7 @@ function _dynAutoAllocateRun() {
           <span style="font-size:13px;color:var(--gray-600);">% buffer (10–20% recommended)</span>
         </div>
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Cancel</button>
+    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="_dynAutoAllocatePick()">Build allocation</button>`,
   });
 }
@@ -47850,7 +47850,7 @@ function _dynAutoAllocatePreview(label, draft) {
         })() : '') +
       '</div>',
     footer:
-      '<button class="form-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="form-secondary" data-action="closeModal">Cancel</button>' +
       '<button class="form-submit" ' + (draft.assignments.length ? '' : 'disabled') + ' onclick="_dynAutoAllocateCommit()">Commit ' + draft.assignments.length + ' placement(s)</button>',
     size: 'large',
   });
@@ -47954,7 +47954,7 @@ function _dynOpenAdjacency() {
           <div style="border:1px solid var(--gray-200);border-radius:6px;padding:10px 12px;background:var(--gray-50);">${summary}</div>
         </div>
       </div>`,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
 }
 
@@ -48024,7 +48024,7 @@ async function _dynPlanOpenWindowsAdmin() {
         </div>
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="closeModal()">Close</button>`,
+    footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
     size: 'large',
   });
 }
@@ -48156,7 +48156,7 @@ async function _dtOpenPrereqEditor(testId) {
         </div>
       `,
       footer: `
-        <button class="form-secondary" onclick="closeModal()">Cancel</button>
+        <button class="form-secondary" data-action="closeModal">Cancel</button>
         <button class="form-submit" onclick="_dtSavePrereqs('${escapeHtml(testId)}')">Save</button>
       `,
       size: 'large',
@@ -48283,7 +48283,7 @@ function _dynDeleteTestCase(testId) {
         </ul>
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" style="background:var(--bad);border-color:var(--bad);" onclick="_dynConfirmDeleteTestCase('${escapeHtml(testId)}')">Delete permanently</button>`,
   });
 }
@@ -48520,7 +48520,7 @@ function _dynAddLocation(testId) {
         </div>
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="_dynSaveAddLocation('${escapeHtml(testId)}')">Create activity</button>`,
   });
 }
@@ -48639,7 +48639,7 @@ function _dynOpenCadenceModal(testId) {
         </div>
       </div>`,
     footer: `
-      <button class="form-secondary" onclick="closeModal()">Cancel</button>
+      <button class="form-secondary" data-action="closeModal">Cancel</button>
       <button class="form-submit" onclick="_dynSaveCadence('${escapeHtml(testId)}')">Save</button>`,
   });
 }
@@ -50327,7 +50327,7 @@ function _docsOpenDetail(docId) {
         <thead><tr><th>Rev</th><th>File</th><th>Uploaded</th><th>By</th><th>Change note</th><th></th></tr></thead>
         <tbody>${rows || '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--gray-400);">No revisions.</td></tr>'}</tbody>
       </table>`,
-    footer: `${manageBtns}<button class="admin-action-btn-secondary" onclick="closeModal()">Close</button>`,
+    footer: `${manageBtns}<button class="admin-action-btn-secondary" data-action="closeModal">Close</button>`,
   });
 }
 
@@ -50427,7 +50427,7 @@ function _docsOpenMove(kind, id) {
       </div>
       <div id="doc-move-status" class="docs-upload-status"></div>`,
     footer: `
-      <button class="admin-action-btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn-secondary" data-action="closeModal">Cancel</button>
       <button class="admin-action-btn" id="doc-move-btn" onclick="_docsMoveSubmit('${kind}','${id}')">Move here</button>`,
   });
 }
@@ -50558,7 +50558,7 @@ function _docsOpenUpload(docId) {
       </div>
       <div id="doc-upload-status" class="docs-upload-status"></div>`,
     footer: `
-      <button class="admin-action-btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="admin-action-btn-secondary" data-action="closeModal">Cancel</button>
       <button class="admin-action-btn" id="doc-upload-btn" onclick="_docsSubmitUpload('${docId || ''}')">${isRev ? 'Upload Revision' : 'Add Document'}</button>`,
   });
 }
