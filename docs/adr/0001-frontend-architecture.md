@@ -141,14 +141,19 @@ justified against the app that exists then, not today's.
   passing `this`/`event` → `${cxAct(…, '$cx.el')}`). Second run converted 254
   more handlers (740 → 486 inline; **993/1479 = 67% delegated**). Real-DOM change
   events + sentinels are verified in pw_smoke.js; full suite green.
-  The remaining ~486 are genuinely not mechanical: 105 chained (`;` multi-
-  statement), 190 complex-arg (function-reference or expression args like
-  `PTO.find(…)`), 46 method-chain callees (`event.stopPropagation()`,
-  `document.getElementById(…).click()`), 30 concat-context, plus non-click/
-  change/input events (drag/drop/key/mouse/focus). These need per-handler
-  refactoring — splitting chains into named actions, registering wrappers for
-  function-ref args, or wiring focusin/out — each verified with pw_smoke.js. Do
-  them per-module; the ratchet keeps the count monotonic.
+- **2026-07-21 — action sequences; Stage B at 68%.** The dispatcher now supports
+  a click ACTION SEQUENCE — `data-action="fn1;fn2"` with an array-of-arg-arrays —
+  so a chained inline handler (`a();b('x')`) converts to
+  `${cxSeq(['a'], ['b', String(x)])}` and runs both in order with NO generated
+  code. Verified with a real click in pw_smoke.js. Codemod v3 converted 12 fully-
+  simple chains (486 → 474 inline; **1005/1479 = 68%**).
+  The remaining ~474 genuinely need per-handler refactoring: chains where a
+  statement carries a complex arg (`b(PTO.find(…))`), 190 function-reference /
+  expression args, method-chain callees (`event.stopPropagation()` — which cannot
+  be delegated at all, since document-level delegation runs after bubbling),
+  concat-context handlers, and the drag/drop/key/mouse/focus events. Do them
+  per-module, verifying each with pw_smoke.js; the ratchet keeps the count
+  monotonic.
 - **2026-07-21 — Browser QA unlocked.** `tools/pw_smoke.js` (Playwright via the
   pre-installed `chrome-headless-shell`) serves the app, seeds an authenticated
   admin session into localStorage, MOCKS the Supabase REST/auth layer (offline +

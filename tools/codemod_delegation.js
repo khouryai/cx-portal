@@ -155,6 +155,33 @@ function argToJs(arg) {
   return "String(" + inner + ")";
 }
 
+// Split a handler body into statements on top-level `;`.
+function splitStatements(s) {
+  const out = []; let depth = 0, cur = "", i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === "'" || c === '"') { const j = skipString(s, i + 1, c); cur += s.slice(i, j); i = j; continue; }
+    if (c === "$" && s[i + 1] === "{") { const j = skipInterp(s, i + 2); cur += s.slice(i, j); i = j; continue; }
+    if (c === "(" || c === "[" || c === "{") { depth++; cur += c; i++; continue; }
+    if (c === ")" || c === "]" || c === "}") { depth--; cur += c; i++; continue; }
+    if (c === ";" && depth === 0) { if (cur.trim()) out.push(cur.trim()); cur = ""; i++; continue; }
+    cur += c; i++;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+// Parse one statement as a simple call → { name, jsArgs } or null if unsafe.
+function parseCall(stmt) {
+  const call = stmt.trim().match(/^([A-Za-z_$][\w$]*)\((.*)\)$/s);
+  if (!call) return null;
+  const argStr = call[2].trim();
+  const args = argStr === "" ? [] : splitArgs(argStr);
+  const jsArgs = args.map(argToJs);
+  if (jsArgs.some((x) => x == null)) return null;
+  return { name: call[1], jsArgs: jsArgs };
+}
+
 // ── scan + build edits ───────────────────────────────────────────────────────
 const edits = [];
 const skip = {};
@@ -172,18 +199,27 @@ while ((m = re.exec(src)) !== null) {
   const end = findAttrEnd(src, valStart);
   if (end === -1) { skip["no-close"] = (skip["no-close"] || 0) + 1; continue; }
   const body = src.slice(valStart, end).trim();
-  if (/;/.test(body)) { skip["chained(;)"] = (skip["chained(;)"] || 0) + 1; continue; }
-  const call = body.match(/^([A-Za-z_$][\w$]*)\((.*)\)$/s);
-  if (!call) { skip["not-simple-call"] = (skip["not-simple-call"] || 0) + 1; continue; }
-  const name = call[1];
-  const argStr = call[2].trim();
-  const args = argStr === "" ? [] : splitArgs(argStr);
-  const jsArgs = args.map(argToJs);
-  if (jsArgs.some((x) => x == null)) { skip["complex-arg"] = (skip["complex-arg"] || 0) + 1; continue; }
-  // click → cxAct('fn', …);  change/input → cxOn('change'|'input', 'fn', …)
-  const call2 = ev === "click"
-    ? "cxAct(" + ["'" + name + "'"].concat(jsArgs).join(", ") + ")"
-    : "cxOn('" + ev + "', " + ["'" + name + "'"].concat(jsArgs).join(", ") + ")";
+  const stmts = splitStatements(body);
+  const calls = stmts.map(parseCall);
+  if (calls.some((c) => c == null)) {
+    // pinpoint the reason for the report
+    if (stmts.length > 1) skip["chain-complex-stmt"] = (skip["chain-complex-stmt"] || 0) + 1;
+    else if (!/^[A-Za-z_$][\w$]*\(.*\)$/s.test(body)) skip["not-simple-call"] = (skip["not-simple-call"] || 0) + 1;
+    else skip["complex-arg"] = (skip["complex-arg"] || 0) + 1;
+    continue;
+  }
+  let call2;
+  if (calls.length === 1) {
+    const c = calls[0];
+    // click → cxAct('fn', …);  change/input → cxOn('change'|'input', 'fn', …)
+    call2 = ev === "click"
+      ? "cxAct(" + ["'" + c.name + "'"].concat(c.jsArgs).join(", ") + ")"
+      : "cxOn('" + ev + "', " + ["'" + c.name + "'"].concat(c.jsArgs).join(", ") + ")";
+  } else {
+    // a chain (a();b(x)) → cxSeq([...],[...]); sequences are click-only
+    if (ev !== "click") { skip["seq-non-click"] = (skip["seq-non-click"] || 0) + 1; continue; }
+    call2 = "cxSeq(" + calls.map((c) => "[" + ["'" + c.name + "'"].concat(c.jsArgs).join(", ") + "]").join(", ") + ")";
+  }
   const replacement = "${" + call2 + "}";
   // validate the emitted expression parses
   try { acorn.parseExpressionAt(call2, 0, { ecmaVersion: "latest" }); }

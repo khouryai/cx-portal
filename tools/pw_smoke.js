@@ -193,6 +193,21 @@ async function main() {
     Array.isArray(changeSentinel) && changeSentinel[0] === "field" && changeSentinel[1] === "user-typed",
     JSON.stringify(changeSentinel));
 
+  // 3d) A real click on an action SEQUENCE runs both handlers in order (chained
+  //     inline handler replacement).
+  const seqOrder = await page.evaluate(async () => {
+    const order = [];
+    window.CXActions.register("__qaSeq1", () => order.push("one"));
+    window.CXActions.register("__qaSeq2", (v) => order.push("two:" + v));
+    const b = document.createElement("button");
+    b.setAttribute("data-action", "__qaSeq1;__qaSeq2");
+    b.setAttribute("data-args", '[[],["z"]]');
+    document.body.appendChild(b);
+    b.click();
+    return new Promise((r) => setTimeout(() => r(order.join(",")), 0));
+  });
+  ok("action sequence runs both handlers in order on real click", seqOrder === "one,two:z", seqOrder);
+
   // 4) Every static data-action rendered in the live DOM resolves to a handler.
   const liveUnresolved = await page.evaluate(() => {
     const names = new Set();

@@ -9004,7 +9004,7 @@ function openPunchDetail(id) {
       ${p.is_deleted
         ? `<button class="form-secondary" ${cxAct('restorePunch', String(p.id))}>Restore from Bin</button>`
         : `<button class="form-secondary" style="color:var(--bad);" ${cxAct('softDeletePunch', String(p.id))}>Move to Bin</button>`}
-      ${p.status !== 'closed' ? `<button class="form-submit" onclick="closeModal();openEditPunchModal('${p.id}')">Edit</button>` : ''}
+      ${p.status !== 'closed' ? `<button class="form-submit" ${cxSeq(['closeModal'], ['openEditPunchModal', String(p.id)])}>Edit</button>` : ''}
     `,
   });
   // Load + sign the linked photos (gallery + any inline comment photos).
@@ -9175,7 +9175,7 @@ async function advancePunchStatus(id, newStatus) {
           </div>`,
         footer: `
           <button class="form-secondary" data-action="closeModal">Cancel</button>
-          <button class="form-submit" onclick="closeModal();openEditPunchModal('${id}')">OK — Add details</button>`,
+          <button class="form-submit" ${cxSeq(['closeModal'], ['openEditPunchModal', String(id)])}>OK — Add details</button>`,
       });
       return;
     }
@@ -10079,7 +10079,7 @@ function _punchLibRenderList() {
         <div style="font-size:11px;color:var(--gray-500);">${escapeHtml(_punchFieldTypeLabel(f.type))} · <span style="font-family:monospace;">${escapeHtml(f.key)}</span>${usedBy.length ? ' · used by ' + usedBy.map(escapeHtml).join(', ') : ' · unused'}</div>
       </div>
       <div class="punch-row-actions">
-        ${(f.type === 'select' || f.type === 'multiselect') && f.options_key ? `<button class="form-secondary" style="font-size:11px;" title="Edit dropdown options in Field Config" onclick="closeModal();showPage('admin-fieldconfig')">${icon('settings')} Options</button>` : ''}
+        ${(f.type === 'select' || f.type === 'multiselect') && f.options_key ? `<button class="form-secondary" style="font-size:11px;" title="Edit dropdown options in Field Config" ${cxSeq(['closeModal'], ['showPage', 'admin-fieldconfig'])}>${icon('settings')} Options</button>` : ''}
         <button class="form-secondary" style="font-size:11px;" ${cxAct('_punchLibEditShow', String(f.id))}>Edit</button>
         <button class="form-secondary" style="font-size:11px;" ${cxAct('_punchLibToggleActive', String(f.id))}>${f.active === false ? 'Activate' : 'Deactivate'}</button>
         <button class="form-secondary" style="font-size:11px;color:var(--bad);" aria-label="Delete field" ${cxAct('_punchLibDelete', String(f.id))}>${icon('trash')}</button>
@@ -16469,7 +16469,7 @@ function _p6LearnPreview(sid) {
           <div style="max-height:240px;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">${sample}</div>
           ${sameRows.length > 12 ? `<div style="font-size:11px;color:var(--gray-500);margin-top:6px;">${sameRows.length - 12} more activity rows not shown.</div>` : ''}
         ` : ''}`,
-      footer: `<button class="form-secondary" onclick="closeModal();renderAdminP6()">Close</button>`,
+      footer: `<button class="form-secondary" ${cxSeq(['closeModal'], ['renderAdminP6'])}>Close</button>`,
     });
     return;
   }
@@ -16551,7 +16551,7 @@ function _p6LearnPreview(sid) {
         <div style="max-height:200px;overflow:auto;border:1px solid var(--warn-border);border-radius:6px;background:#fffdf7;">${flaggedRows}</div>
       ` : ''}`,
     footer: `
-      <button class="form-secondary" onclick="closeModal();renderAdminP6()">Cancel</button>
+      <button class="form-secondary" ${cxSeq(['closeModal'], ['renderAdminP6'])}>Cancel</button>
       ${targets.length ? `<button class="admin-action-btn" data-action="_p6LearnApply">Apply Selected</button>` : ''}`,
   });
 }
@@ -22578,7 +22578,7 @@ function _rmaViewModal(id) {
       (r.notes ? `<div style="margin-top:14px;padding:12px 14px;background:var(--gray-50);border-radius:6px;font-size:13px;color:var(--gray-700);"><strong>Notes:</strong> ${escapeHtml(r.notes)}</div>` : ''),
     footer:
       `<button class="form-secondary" data-action="closeModal">Close</button>` +
-      `<button class="form-secondary" onclick="closeModal();_rmaPrintPDF('${id}')">${icon('printer')} Print / PDF</button>`,
+      `<button class="form-secondary" ${cxSeq(['closeModal'], ['_rmaPrintPDF', String(id)])}>${icon('printer')} Print / PDF</button>`,
   });
 }
 
@@ -23002,7 +23002,7 @@ function _taskViewModal(id) {
       ) : ''),
     footer:
       `<button class="form-secondary" data-action="closeModal">Close</button>` +
-      (uiCan('tasks','edit') ? `<button class="form-submit" onclick="closeModal();openTaskModal('${id}')">${icon('edit')} Edit</button>` : ''),
+      (uiCan('tasks','edit') ? `<button class="form-submit" ${cxSeq(['closeModal'], ['openTaskModal', String(id)])}>${icon('edit')} Edit</button>` : ''),
   });
   _taskHydratePhotos(id);
 }
@@ -25274,7 +25274,7 @@ function _laShowDayOverflow(iso) {
       const meta = [e.start_time ? e.start_time.slice(0,5) + (e.end_time ? ' – '+e.end_time.slice(0,5) : '') : '',
                     e.location || ''].filter(Boolean).join(' · ');
       bodyHtml += `<div style="background:${bg};color:${fg};border-left:5px solid ${bdr};padding:7px 10px;border-radius:5px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;"
-        onclick="closeModal();_planningOpenEventDetail('${e.id}')">
+        ${cxSeq(['closeModal'], ['_planningOpenEventDetail', String(e.id)])}>
         ${_planningSubsystemBadge(sub)}
         <div style="flex:1;">
         <div style="font-weight:600;margin-bottom:2px;">${escapeHtml(e.title||'(no title)')}</div>
@@ -26854,7 +26854,7 @@ function _laDrawerMultiHTML(eventIds) {
         <button class="form-secondary" data-action="_laBulkRemoveCellResources">${icon('users')} Remove users only</button>
         <button class="form-secondary" ${cxAct('_laCopySelection', 'copy')}>${icon('clipboard')} Copy</button>
         <button class="form-secondary" ${cxAct('_laCopySelection', 'cut')}>${icon('scissors')} Cut</button>
-        <button class="form-secondary" onclick="_laClearCellSelection();_laDrawerClose();">${icon('x')} Clear selection</button>
+        <button class="form-secondary" ${cxSeq(['_laClearCellSelection'], ['_laDrawerClose'])}>${icon('x')} Clear selection</button>
       </div>
     </div>
     <div class="la-drawer-section" style="font-size:11px;color:var(--gray-400);">
@@ -33217,7 +33217,7 @@ function _apResourcesStub() {
           ${companies.map(c => `<option value="${escapeHtml(c)}" ${c === _apResCompanyFilter ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
         </select>
         ${(_apResNameFilter || _apResCompanyFilter)
-          ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" onclick="_apSetResNameFilter('');_apSetResCompanyFilter('');">${icon('x')} Reset</button>`
+          ? `<button class="form-secondary" style="font-size:11px;padding:4px 10px;" ${cxSeq(['_apSetResNameFilter', ''], ['_apSetResCompanyFilter', ''])}>${icon('x')} Reset</button>`
           : ''}
         <span style="margin-left:auto;color:var(--gray-500);">${filtered.length} of ${list.length}</span>
       </div>
@@ -36568,7 +36568,7 @@ function openExtractReportModal(uid) {
       </div>
     `,
     footer: `
-      <button class="form-secondary" id="ext-cancel-btn" onclick="_extractCancel(); closeModal();">Cancel</button>
+      <button class="form-secondary" id="ext-cancel-btn" ${cxSeq(['_extractCancel'], ['closeModal'])}>Cancel</button>
       <button class="admin-action-btn" id="ext-go-btn" ${cxAct('_extractRun', String(safeUid))}>Generate</button>
     `,
   });
@@ -43766,7 +43766,7 @@ function _dynOpenShift(id) {
           <span style="font-size:12px;color:var(--gray-600);">${fmtT(s.start_at)}–${fmtT(s.end_at)} · ${(s.allowed_modes||[]).join('+')||'any'} · ${s.max_trains||1} train${(s.max_trains||1)===1?'':'s'}${(() => { const cs = _dynShiftAvailConsists(s); return cs.some(x => x != null) ? ` · ${_dynConsistSummary(cs)}` : ''; })()} available</span>
         </div>
         ${(() => { const ev = _dynShiftEventRow(s.id); return ev
-          ? `<div style="font-size:11.5px;margin-bottom:12px;color:var(--accent-purple);">${icon('calendar')} Field event created${ev.status==='cancelled'?' (cancelled)':''} · Train Operator, ROC, EIC auto-added · <a href="javascript:void(0)" style="color:var(--info);" onclick="closeModal();showPage('lookahead')">open Lookahead</a></div>`
+          ? `<div style="font-size:11.5px;margin-bottom:12px;color:var(--accent-purple);">${icon('calendar')} Field event created${ev.status==='cancelled'?' (cancelled)':''} · Train Operator, ROC, EIC auto-added · <a href="javascript:void(0)" style="color:var(--info);" ${cxSeq(['closeModal'], ['showPage', 'lookahead'])}>open Lookahead</a></div>`
           : (s.status !== 'cancelled' ? `<div style="font-size:11.5px;margin-bottom:12px;color:var(--gray-500);">${icon('calendar')} No field event yet · <a href="javascript:void(0)" style="color:var(--info);" onclick="_dynCreateShiftEventUI('${escapeHtml(s.id)}')">create with BART minimums</a> (auto on Confirm)</div>` : ''); })()}
         ${s.status === 'cancelled' ? `
           <div style="padding:10px 12px;background:var(--bad-light);border:1px solid var(--bad-border);border-radius:6px;font-size:12px;color:var(--bad);margin-bottom:12px;">

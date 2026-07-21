@@ -69,20 +69,8 @@
     return null;
   }
 
-  /**
-   * Run the handler bound to `el` for a given attribute. Returns true if a
-   * handler was found and run. Exposed so tests (and programmatic callers) can
-   * dispatch without a real DOM.
-   * @param {{ getAttribute: (name: string) => (string | null) } | null} el
-   * @param {Event | {} } event
-   * @param {string} [attr]  the data attribute to read (default "data-action")
-   * @returns {boolean}
-   */
-  function dispatch(el, event, attr) {
-    if (!el || typeof el.getAttribute !== 'function') return false;
-    attr = attr || 'data-action';
-    var name = el.getAttribute(attr);
-    if (!name) return false;
+  // Resolve + substitute sentinels + call one named handler. Returns true if run.
+  function callOne(name, args, el, event) {
     var fromRegistry = typeof registry[name] === 'function';
     var fn = fromRegistry ? registry[name]
       : (typeof window !== 'undefined' && typeof window[name] === 'function') ? window[name] : null;
@@ -92,7 +80,7 @@
       }
       return false;
     }
-    var args = substSentinels(parseArgs(el), el, event);
+    args = substSentinels(args, el, event);
     if (fromRegistry) {
       // Registered actions opt into element + event context: fn(...args, {el,event}).
       fn.apply(el, args.concat([{ el: el, event: event }]));
@@ -103,6 +91,26 @@
       fn.apply(typeof window !== 'undefined' ? window : undefined, args);
     }
     return true;
+  }
+
+  function dispatch(el, event, attr) {
+    if (!el || typeof el.getAttribute !== 'function') return false;
+    attr = attr || 'data-action';
+    var name = el.getAttribute(attr);
+    if (!name) return false;
+    var parsed = parseArgs(el);
+    // SEQUENCE: `fn1;fn2` runs each in order (replaces a chained inline handler
+    // like `a();b('x')`). data-args is then an array-of-arg-arrays, one per name.
+    if (name.indexOf(';') !== -1) {
+      var names = name.split(';');
+      var ran = false;
+      for (var i = 0; i < names.length; i++) {
+        var a = Array.isArray(parsed[i]) ? parsed[i].slice() : [];
+        if (callOne(names[i], a, el, event)) ran = true;
+      }
+      return ran;
+    }
+    return callOne(name, parsed.slice(), el, event);
   }
 
   // One delegated listener per event type, keyed to its data attribute.
@@ -146,6 +154,20 @@
    */
   function cxOn(evt, name) { return emit(evt, name, Array.prototype.slice.call(arguments, 2)); }
 
+  /**
+   * Emit a click ACTION SEQUENCE (replaces a chained inline handler). Each
+   * argument is a call array `[name, ...args]`; they run in order on click.
+   *   `<button ${cxSeq(['closeModal'], ['openEditModal', id])}>`
+   * → `data-action="closeModal;openEditModal" data-args='[[],["…"]]'`
+   * @returns {string}
+   */
+  function cxSeq() {
+    var calls = Array.prototype.slice.call(arguments);
+    var names = calls.map(function (c) { return c[0]; });
+    var argsArr = calls.map(function (c) { return c.slice(1); });
+    return 'data-action="' + esc(names.join(';')) + "\" data-args='" + esc(JSON.stringify(argsArr)) + "'";
+  }
+
   var CXActions = {
     // Register a named action. Registered actions win over globals of the same
     // name, so a module can claim its handlers as it is extracted.
@@ -156,12 +178,13 @@
     dispatch: dispatch,
     act: act,
     on: cxOn,
+    seq: cxSeq,
     _registry: registry,
   };
 
   if (typeof document !== 'undefined' && document.addEventListener) {
     for (var ev in EVENTS) document.addEventListener(ev, makeListener(EVENTS[ev]));
   }
-  if (typeof window !== 'undefined') { window.CXActions = CXActions; window.cxAct = act; window.cxOn = cxOn; }
+  if (typeof window !== 'undefined') { window.CXActions = CXActions; window.cxAct = act; window.cxOn = cxOn; window.cxSeq = cxSeq; }
   if (typeof module !== 'undefined' && module.exports) module.exports = CXActions;
 })();

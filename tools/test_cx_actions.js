@@ -129,5 +129,22 @@ CXActions.register("onPlain", function (v) { plain = v; });
 CXActions.dispatch(inputEl({ "data-change": "onPlain", "data-args": '["hello"]' }, "x"), ev, "data-change");
 ok("non-sentinel string arg passes through", plain === "hello");
 
+// 12) Action sequences (chained handlers): fn1;fn2 run in order with per-action
+//     args; sentinels still resolve per action.
+ok("seq() emits ;-joined names + nested args",
+  CXActions.seq(["a"], ["b", "x"]) === 'data-action="a;b" data-args=\'[[],[&quot;x&quot;]]\'');
+
+const order = [];
+CXActions.register("seqA", function () { order.push("A"); });
+CXActions.register("seqB", function (v) { order.push("B:" + v); });
+CXActions.dispatch(el({ "data-action": "seqA;seqB", "data-args": '[[],["z"]]' }), {});
+ok("sequence runs each action in order", order.join(",") === "A,B:z");
+
+const seqVals = [];
+CXActions.register("sVal", function (id, v) { seqVals.push([id, v]); });
+CXActions.register("sNoop", function () { seqVals.push(["noop"]); });
+CXActions.dispatch(inputEl({ "data-action": "sVal;sNoop", "data-args": '[["f","$cx.value"],[]]' }, "LIVE"), ev, "data-action");
+ok("sequence substitutes sentinels per action", seqVals[0][0] === "f" && seqVals[0][1] === "LIVE" && seqVals[1][0] === "noop");
+
 console.log(`\n${pass} passed, ${fail} failed.\n`);
 process.exit(fail === 0 ? 0 : 1);
