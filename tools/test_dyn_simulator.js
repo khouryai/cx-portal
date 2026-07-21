@@ -206,5 +206,24 @@ assert(rref2.total === 6 && rref2.outOfScope === 4,
   `selecting only W40 scopes the 6 W40-access runs, reports 4 Y10-access out-of-scope (got ${JSON.stringify(rref2)})`);
 run(`_dynPage.instances = ${JSON.stringify(pool)};`); // restore
 
+// ── auto-mix tracks FOOTPRINT DEMAND, not window rank ────────────────────────
+// Equal work-minutes need a 1-location and a 2-location footprint, and the
+// scenario has one long window (Sun 12h) among short ones. The old heuristic
+// divided the biggest footprint by the single longest window and collapsed it to
+// ~1 shift (a ~14% share here) — which is exactly what leaves multi-location work
+// "no capacity" while small shifts sit idle. The fix sizes each footprint by its
+// own work, so the two sizes get near-equal shares.
+const amixPool = [
+  ...Array.from({ length: 20 }, (_, k) => ({ id: "a1" + k, test_id: "a1t" + k, code: "A1-" + k, track_section_under_test: "W40", track_section_access_req: ["W40"], status: "Not Started", expected_duration_minutes: 30 })),
+  ...Array.from({ length: 20 }, (_, k) => ({ id: "a2" + k, test_id: "a2t" + k, code: "A2-" + k, track_section_under_test: "W40", track_section_access_req: ["W40", "W34"], status: "Not Started", expected_duration_minutes: 30 })),
+];
+run(`_dynPage.instances = ${JSON.stringify(amixPool)};`);
+const amixSc = { id: "amsc", name: "Mix", startDate: "2026-06-15", weekly: { 0: 12, 3: 2, 4: 2, 5: 2, 6: 3 }, maxZonesPerShift: 2, zones: ["W40", "W34", "W30", "W10", "Y10"], adjacency: baseSc.adjacency, weekOverrides: {}, scope: { subsystem: "", onlyUnscheduled: false } };
+const amix = run(`_dynSimAutoMix(${JSON.stringify(amixSc)})`);
+assert(amix && amix["1"] > 0 && amix["2"] > 0, `auto-mix keeps BOTH footprint sizes (got ${JSON.stringify(amix)})`);
+assert(amix["2"] >= 35, `2-location footprint gets a real share, not collapsed to ~1 shift (got 2-loc=${amix && amix["2"]}%)`);
+assert(Math.abs((amix["1"] || 0) - (amix["2"] || 0)) <= 20, `equal work → near-equal shares across footprints (got ${JSON.stringify(amix)})`);
+run(`_dynPage.instances = ${JSON.stringify(pool)};`); // restore
+
 console.log(`test_dyn_simulator: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

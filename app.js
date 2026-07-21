@@ -45972,11 +45972,14 @@ function _dynSimShiftSupply(sc) {
   return mins;
 }
 
-// Auto access mix, sized to the SCHEDULE not just the work: shifts needed per
-// size = work ÷ the length of the shift that size runs on (bigger footprints
-// ride the longer windows). So 2 h/day × 7 days and an 8 h weekend produce
-// different mixes — a long window absorbs many runs (fewer shifts), short
-// windows need many. Returns { size: pct } or null.
+// Auto access mix, sized to the FOOTPRINT DEMAND of the work. A run needing a
+// k-location shift can only ride a shift of size >= k, so the mix offers each
+// size in proportion to how much WORK needs it: every size is divided by the
+// SAME representative window (avg access day), NOT rank-biased to the longest
+// window as before — that collapsed the biggest footprint to ~1 shift and left
+// multi-location work 'no capacity' while 1-loc shifts sat idle. Bigger shifts
+// still ride longer windows and shrink to smaller work when idle, so a generous
+// large share is never wasted. Returns { size: pct } or null.
 function _dynSimAutoMix(sc) {
   const dur = new Map();
   for (const i of _dynSimScopePool(sc)) {
@@ -45985,24 +45988,19 @@ function _dynSimAutoMix(sc) {
     dur.set(k, (dur.get(k) || 0) + (i.expected_duration_minutes || _DYN_DEFAULT_RUN_MIN));
   }
   if (!dur.size) return null;
-  const supply = _dynSimShiftSupply(sc).sort((a, b) => b - a);   // longest first
+  const supply = _dynSimShiftSupply(sc);
   if (!supply.length) return null;
   const slack = _dynAllocSlack();
-  const sizes = [...dur.keys()].sort((a, b) => b - a);           // largest footprint first
-  const n = sizes.length;
+  const avgWin = supply.reduce((a, b) => a + b, 0) / supply.length;
+  const lenMin = Math.max(30, avgWin * (1 - (slack || 0)));
   const shifts = new Map();
-  sizes.forEach((k, r) => {
-    // bigger sizes ride the longer windows: pick a representative length by rank
-    const pos = n > 1 ? Math.round((r / (n - 1)) * (supply.length - 1)) : 0;
-    const lenMin = Math.max(30, supply[pos] * (1 - (slack || 0)));
-    shifts.set(k, Math.max(1, Math.ceil(dur.get(k) / lenMin)));
-  });
+  for (const [k, mins] of dur) shifts.set(k, Math.max(1, Math.ceil(mins / lenMin)));
   const totalShifts = [...shifts.values()].reduce((a, b) => a + b, 0);
   const mix = {};
-  for (const [k, s] of shifts) { const p = Math.round(s / totalShifts * 100); if (p > 0) mix[k] = p; }
+  // Math.max(1, …) so a real-but-small footprint is never rounded away to 0.
+  for (const [k, s] of shifts) { mix[k] = Math.max(1, Math.round(s / totalShifts * 100)); }
   return Object.keys(mix).length ? mix : null;
 }
-
 // Smooth (largest-remainder) pick: the next shift gets the size that is most
 // under its target share, so the realized distribution tracks the mix and the
 // sizes are interleaved rather than clustered.
@@ -46871,12 +46869,12 @@ function _dynSimUnplacedHtml(sc, res) {
   const names = { loc: 'add location', max: 'over max/shift', adj: 'not adjacent', prereq: 'prereq blocked', dur: 'run too long', cap: 'no capacity' };
   const summary = order.filter(t => counts[t]).map(t => `${counts[t]} ${names[t]}`).join(' · ');
   const show = rows.slice(0, 40);
-  const body = show.map(r => `<tr>
-    <td class="mono">${escapeHtml(r.i.code || '—')}</td>
-    <td>${escapeHtml(r.i.title || r.i.test_id || '—')}</td>
-    <td class="mono">${escapeHtml(r.i.track_section_under_test || '—')}</td>
-    <td><span class="tag" style="background:${r.tone.bg};color:${r.tone.fg};border-color:transparent;">${escapeHtml(r.label)}</span></td>
-  </tr>`).join('');
+  const body = show.map(r => {
+    const tc = _dynPage.testItemsById.get(r.i.test_id) || {};
+    const acc = [...new Set((r.i.track_section_access_req || []).filter(Boolean))];
+    const tcCell = (tc.code || tc.name) ? `<span class="mono" style="font-size:11px;color:var(--gray-500);">${escapeHtml(tc.code || r.i.test_id || '')}</span><br/><span style="font-size:12px;">${escapeHtml((tc.name || '').slice(0, 60))}</span>` : escapeHtml(r.i.title || r.i.test_id || '—');
+    return `<tr><td class="mono">${escapeHtml(r.i.code || '—')}</td><td>${tcCell}</td><td class="mono">${acc.length ? escapeHtml(acc.join(', ')) : '—'}</td><td><span class="tag" style="background:${r.tone.bg};color:${r.tone.fg};border-color:transparent;">${escapeHtml(r.label)}</span></td></tr>`;
+  }).join('');
   return `<div class="simx-alertcard">
     <button type="button" class="simx-alertcard-head" aria-expanded="${open}" ${cxAct('_dynSimUiTogglePanel', 'unplaced')}>
       ${icon('alert')}<b>${res.unplaced} left unscheduled</b>
@@ -46885,7 +46883,7 @@ function _dynSimUnplacedHtml(sc, res) {
     </button>
     ${open ? `<div class="simx-ov-wrap" style="border:none;border-top:1px solid var(--bad-light);">
       <table class="simx-tbl">
-        <thead><tr><th>Code</th><th>Test</th><th>Zone</th><th>What's missing</th></tr></thead>
+        <thead><tr><th>Code</th><th>Test case</th><th>Access</th><th>What's missing</th></tr></thead>
         <tbody>${body}</tbody>
       </table>
       ${rows.length > show.length ? `<div class="simx-foot" style="padding:6px 12px;">+${rows.length - show.length} more…</div>` : ''}
