@@ -93,6 +93,31 @@ justified against the app that exists then, not today's.
 - **No new global state without a plan.** New hot state goes in `CXStore`, not a
   new `let _foo`. New interactive markup uses `data-action`, not `onclick=`.
 
+## Progress log
+
+- **2026-07-21 — Stage A shipped** (ratchet, dispatcher, store seam, dead-CSS
+  audit). See the commit history.
+- **2026-07-21 — Stage B partial:** 345 handlers converted and verified — the
+  fully-automatable classes: 108 `onclick="closeModal()"` + 237 no-arg
+  `onclick="fname()"`. These are behaviour-preserving because a no-arg inline
+  handler passes neither the event nor arguments. Inline-handler count 1479 →
+  1134 (ratcheted). **Ceiling found:** the remaining ~1,134 handlers carry
+  arguments, and a large share live inside JavaScript *string concatenations*
+  (`'…onclick="fn(' + id + ')"…'`) where the argument quote is also a JS string
+  delimiter — a naïve regex codemod corrupts them (verified: it mis-converted
+  383 sites). So the remainder needs **either** an AST-aware codemod (parse the
+  JS, find the HTML string/template quasis, rewrite the handler and emit
+  `${act(name, …expr)}`) **or** manual per-module conversion — and, because the
+  headless suite cannot click, **browser QA** to confirm behaviour. The
+  inline-handler ratchet enforces that this only moves forward.
+- **2026-07-21 — Stage D started:** `tsc --checkJs` (no build) green over
+  cx-store.js, cx-actions.js, format.js, cx-state.js. app.js and its tightly
+  coupled modules (e.g. compute.js) join as they are decoupled/typed.
+- **Stage C (store adoption)** and the **Stage B remainder** are the next work;
+  both need behaviour verification (browser QA) that this headless environment
+  can't provide, so they proceed per-module with a human in the loop rather than
+  as blind bulk automation.
+
 ## Alternatives considered
 
 - **Full React/Vue rewrite now** — rejected: months of parked features, long

@@ -58,6 +58,14 @@
   seam + `_dbUpdate` optimistic-concurrency guard on delay_log/punch_items (DB
   BEFORE UPDATE trigger `cx_set_updated_at` + delay_log.updated_at added;
   migration recorded in supabase/sql/supabase_optimistic_concurrency_2026_07.sql).
+- 2026-07-21: Tier 3 Stage B/D progress (owner: build all of Tier 3, no MS-
+  migration-gated work). Stage B: 345 inline handlers converted to data-action
+  (108 closeModal + 237 no-arg), ratchet 1479→1134; act() emitter + wiring guard
+  added. CEILING: remaining ~1134 carry args, many inside JS string concats where
+  regex conversion corrupts them (verified) — need AST codemod or manual + browser
+  QA. Stage D: tsc --checkJs green over cx-store/cx-actions/format/cx-state.
+  Strict CSP explicitly deferred (GH Pages can't set headers; not built per owner
+  "assume no MS migration"). See docs/adr/0001 Progress log.
 - 2026-07-21: Tier 3 (architecture) direction FORMALIZED in
   `docs/adr/0001-frontend-architecture.md` (Accepted): no rebuild; staged
   strangler — Stage A shipped (line-count ratchet `tools/size_baseline.json` +
