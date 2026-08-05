@@ -47,6 +47,7 @@ const suites = [
   { file: "tools/test_size_ratchet.js", needs: [] },    // monolith line-count ratchet (Tier 3 #11)
   { file: "tools/test_inline_handler_ratchet.js", needs: [] }, // inline on*= handler ratchet (Tier 3 #11 Stage B)
   { file: "tools/test_delegation_wiring.js", needs: [] },      // every data-action resolves (Tier 3 #11 Stage B)
+  { file: "tools/test_action_args.js", needs: [] },            // no double-escaped delegation args (PS&TP key bug)
   { file: "tools/test_wgtstat.js", needs: [] },         // KPI weighting math (real app.js fn)
   { file: "tools/test_activity_compute.js", needs: [] },// activity status + completion math
   { file: "tools/test_status_compute.js", needs: [] },  // status badges/buckets/lookahead status

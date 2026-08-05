@@ -12677,16 +12677,16 @@ function _testRegisterHTML() {
     const st = _amComputeStatus(a);
     const { done, total, pct } = _amComputeCompletion(a, _tcwActRows);
     const isSel = _amSelected.has(a.key);
-    const safeKey = escapeHtml(a.key);
+    const rowKey = a.key; // raw: cxAct/cxOn escape their own args (escaping here double-escapes &, breaking the lookup)
 
     const trCtx = { a, st, done, total, pct, isSel };
     const actRow = `
       <tr style="${isSel?'background:var(--accent-purple-light);':''}" class="tr-activity-row">
-        ${isAdmin ? `<td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} ${cxOn('change', '_amToggleRow', String(safeKey), '$cx.checked')}></td>` : ''}
+        ${isAdmin ? `<td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} ${cxOn('change', '_amToggleRow', String(rowKey), '$cx.checked')}></td>` : ''}
         <td class="am-actions-cell">
           <div class="tr-row-actions">
-            ${isAdmin ? `<button class="form-secondary tr-mini-btn" ${cxAct('_amOpenEditModal', String(safeKey))}>Edit</button>` : ''}${typeof _trDupBtnHTML === 'function' ? _trDupBtnHTML(safeKey) : ''}
-            <button class="admin-action-btn tr-mini-btn" ${cxAct('_amOpenDrilldown', String(safeKey))}>Open</button>
+            ${isAdmin ? `<button class="form-secondary tr-mini-btn" ${cxAct('_amOpenEditModal', String(rowKey))}>Edit</button>` : ''}${typeof _trDupBtnHTML === 'function' ? _trDupBtnHTML(rowKey) : ''}
+            <button class="admin-action-btn tr-mini-btn" ${cxAct('_amOpenDrilldown', String(rowKey))}>Open</button>
           </div>
         </td>
         ${_colCells('tr', trCtx)}
