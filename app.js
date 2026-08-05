@@ -12685,7 +12685,7 @@ function _testRegisterHTML() {
         ${isAdmin ? `<td class="am-cb-col"><input type="checkbox" ${isSel?'checked':''} ${cxOn('change', '_amToggleRow', String(safeKey), '$cx.checked')}></td>` : ''}
         <td class="am-actions-cell">
           <div class="tr-row-actions">
-            ${isAdmin ? `<button class="form-secondary tr-mini-btn" ${cxAct('_amOpenEditModal', String(safeKey))}>Edit</button>` : ''}
+            ${isAdmin ? `<button class="form-secondary tr-mini-btn" ${cxAct('_amOpenEditModal', String(safeKey))}>Edit</button>` : ''}${typeof _trDupBtnHTML === 'function' ? _trDupBtnHTML(safeKey) : ''}
             <button class="admin-action-btn tr-mini-btn" ${cxAct('_amOpenDrilldown', String(safeKey))}>Open</button>
           </div>
         </td>
@@ -12713,7 +12713,7 @@ function _testRegisterHTML() {
             <span class="dot"></span>${label} <span class="n">${count}</span>
           </span>`;
         }).join('')}
-        <span class="right">
+        <span class="right">${typeof _trNewActivityBtnHTML === 'function' ? _trNewActivityBtnHTML() : ''}
           ${isAdmin ? `
             <label style="cursor:pointer;display:inline-flex;">
               <input type="file" accept=".csv" ${cxOn('change', 'handleImportFile', '$cx.el')} style="display:none">
@@ -12767,7 +12767,7 @@ function _testRegisterHTML() {
             <thead>
               <tr>
                 ${isAdmin ? `<th class="am-cb-col"><input type="checkbox" id="am-cb-all" ${cxOn('change', '_amToggleAll', '$cx.checked')} title="Select all"></th>` : ''}
-                <th style="min-width:90px;white-space:nowrap;">Actions</th>
+                <th style="min-width:192px;white-space:nowrap;">Actions</th>
                 ${_colGetVisible('tr').map(c => {
                   const def = _colRegistry['tr']?.defs.find(d => d.id === c.id);
                   return def?.sortCol ? sortTh(def.label, def.sortCol, c.id==='completion'?'min-width:160px;':'') : `<th>${def?.label||c.id}</th>`;
