@@ -22921,7 +22921,7 @@ function _taskViewModal(id) {
       `<td style="padding:7px 0;font-size:13px;color:var(--text);">${val}</td></tr>`
     : '';
   const types          = _taskTypeList(t);
-  const comments       = _taskComments(t).slice().sort((a, b) => new Date(a.at) - new Date(b.at));
+  const comments       = _taskComments(t).slice().sort((a, b) => new Date(a.at) - new Date(b.at)).filter(c => !(typeof _cpCommentEmbedded === 'function' && _cpCommentEmbedded(c, t))); // linked ones render in the checklist (readiness.js)
   const canComment     = uiCan('tasks', 'edit') || uiCan('tasks', 'create');
   const canPhotos      = !!(window.PhotosModule && PhotosModule.uploadFile);
   const isActivity     = (typeof _rdKind === 'function') && _rdKind(t) === 'activity';
@@ -22943,7 +22943,7 @@ function _taskViewModal(id) {
       </div>`;
   };
 
-  const commentsHTML     = comments.length     ? comments.map(_buildCommentItem).join('')     : '<div style="font-size:12px;color:var(--gray-400);padding:14px 16px;">No comments yet</div>';
+  const commentsHTML     = ((typeof _cpLinkedThreadNote === 'function' ? _cpLinkedThreadNote(t) : '') || (comments.length ? '' : `<div id="task-timeline-empty-${id}" style="font-size:12px;color:var(--gray-400);padding:14px 16px;">No comments yet</div>`)) + comments.map(_buildCommentItem).join('');
 
   modal({
     title: `${isActivity ? 'Activity' : 'Task'} — ${escapeHtml(t.task_name)}`,

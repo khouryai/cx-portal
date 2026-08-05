@@ -359,9 +359,10 @@ function _rdChkLineHTML(t, l, canEdit, seen) {
     ? `<button class="form-secondary" style="font-size:10px;padding:2px 7px;color:var(--warn);" title="Delay history" onclick="_rdDelayHistoryModal('${l.id}')">${icon('clock')} +${_rdSlipDays(l.id)}d ×${delays.length}</button>`
     : '';
   const cCount = _cpChkCommentCount(l.id, t);
-  const commentChip = cCount
-    ? `<span style="font-size:10px;color:var(--text-subtle);display:inline-flex;align-items:center;gap:3px;" title="${cCount} comment${cCount !== 1 ? 's' : ''} linked to this item (see the thread below)">${icon('inbox')} ${cCount}</span>`
-    : '';
+  const canComment = _rdCanComment();
+  const commentChip = canComment
+    ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;${cCount ? '' : 'color:var(--text-subtle);'}" title="Comment on this item — it stays here, under the line" aria-label="Comment on ${escapeHtml(l.title)}" ${cxAct('_rdChkReplyToggle', String(l.id))}>${icon('comment')}${cCount ? ' ' + cCount : ''}</button>`
+    : (cCount ? `<span style="font-size:10px;color:var(--text-subtle);display:inline-flex;align-items:center;gap:3px;" title="${cCount} comment${cCount !== 1 ? 's' : ''} on this item">${icon('comment')} ${cCount}</span>` : '');
   return `<div style="display:flex;align-items:flex-start;gap:10px;padding:7px 4px;border-bottom:1px solid var(--gray-100);flex-wrap:wrap;">
       <span aria-hidden="true" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:5px;background:${l.verdict === 'Fail' ? 'var(--bad)' : complete ? 'var(--good)' : overdue ? 'var(--warn)' : 'var(--gray-300)'};"></span>
       <span style="flex:1;min-width:170px;">
@@ -381,6 +382,7 @@ function _rdChkLineHTML(t, l, canEdit, seen) {
         ${photos.map(ph => `<button onclick="_rdChkOpenPhoto('${escapeHtml(ph.storage_path)}')" style="font-size:10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);padding:2px 7px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">${icon('image')} ${escapeHtml(ph.file_name || 'photo')}</button>`).join('')}
         ${files.map(f => `<span style="font-size:10px;border:1px solid var(--border);border-radius:5px;padding:2px 7px;display:inline-flex;align-items:center;gap:4px;"><button onclick="_rdFileOpen('${escapeHtml(f.storage_path)}')" style="border:none;background:none;cursor:pointer;font:inherit;color:var(--text);display:inline-flex;align-items:center;gap:4px;padding:0;">${icon('paperclip')} ${escapeHtml(f.file_name)}</button>${canEdit ? `<button aria-label="Delete file" title="Delete file" onclick="_rdFileDelete('${f.id}')" style="border:none;background:none;color:var(--text-subtle);cursor:pointer;padding:0;line-height:1;">${icon('x')}</button>` : ''}</span>`).join('')}
       </div>` : ''}
+      ${_rdChkThreadHTML(t, l)}
     </div>`;
 }
 
@@ -389,7 +391,11 @@ function _rdChkLineHTML(t, l, canEdit, seen) {
 function _rdRefresh(taskId) {
   const t = _rdTask(taskId);
   const wrap = document.getElementById('rd-chk-wrap-' + taskId);
-  if (wrap && t) wrap.innerHTML = _rdChecklistBodyHTML(t, _rdCan('edit'));
+  if (wrap && t) {
+    wrap.innerHTML = _rdChecklistBodyHTML(t, _rdCan('edit'));
+    // Embedded comment photos come back as storage paths — sign them in place.
+    if (typeof _punchSignImages === 'function' && wrap.querySelector('img[data-photo-thumb]')) _punchSignImages(wrap);
+  }
   renderWork();
 }
 
@@ -950,9 +956,145 @@ function _cpCommentItemId(taskId) {
   return document.getElementById('task-comment-item-' + taskId)?.value || null;
 }
 function _cpChkCommentCount(lineId, t) {
-  return (typeof _taskComments === 'function' ? _taskComments(t) : []).filter(c => c.item_id === lineId).length;
+  return _cpChkComments(t, lineId).length;
 }
 function _truncateRd(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+
+// ── Embedded checklist-line comment threads ───────────────────────────────
+// A comment linked to a checklist line renders UNDER that line, not merely as
+// a count chip on the line plus an entry in the running thread far below: the
+// whole state of an item (open? overdue? who owns it? what was said about it?)
+// has to read top-to-bottom in the checklist. The Comments section keeps the
+// comments that are about the activity as a whole, with a note pointing up.
+const _RD_THREAD_KEY   = 'rd.chkThreadOpen';  // { [lineId]: true } — full thread shown
+const _RD_REPLY_KEY    = 'rd.chkReplyOpen';   // { [lineId]: true } — composer open
+const _RD_THREAD_SHOWN = 2;                   // newest N kept visible when collapsed
+
+function _rdUiFlags(key) { return (typeof CXStore !== 'undefined' && CXStore.get(key)) || {}; }
+function _rdUiToggle(key, id, force) {
+  const cur = _rdUiFlags(key);
+  const next = { ...cur, [id]: force === undefined ? !cur[id] : force };
+  if (typeof CXStore !== 'undefined') CXStore.set(key, next);
+  return next;
+}
+function _rdCanComment() { return _rdCan('edit') || _rdCan('create'); }
+
+// Comments linked to one checklist line, oldest first.
+function _cpChkComments(t, lineId) {
+  return (typeof _taskComments === 'function' ? _taskComments(t) : [])
+    .filter(c => c && c.item_id === lineId)
+    .sort((a, b) => new Date(a.at) - new Date(b.at));
+}
+// True when this comment is shown inside the checklist (so the running thread
+// can leave it out). An item_id pointing at a deleted line stays in the thread.
+function _cpCommentEmbedded(c, t) {
+  return !!(c && c.item_id && _rdChkFor(t.id).some(l => l.id === c.item_id));
+}
+
+function _cpChkCommentHTML(c) {
+  const when = (c.at && typeof dateAgo === 'function') ? dateAgo(c.at) : '';
+  return `<div style="padding:4px 0 5px;">
+    <div style="font-size:11px;color:var(--gray-500);"><span style="font-weight:600;color:var(--text-subtle);">${escapeHtml(c.by || '—')}</span>${when ? ' · ' + escapeHtml(when) : ''}</div>
+    ${c.text ? `<div style="font-size:12px;color:var(--gray-700);white-space:pre-wrap;margin-top:1px;">${escapeHtml(c.text)}</div>` : ''}
+    ${c.photo ? `<img class="punch-comment-photo" data-photo-thumb="${escapeHtml(c.photo.thumb_path || c.photo.storage_path)}" data-photo-full="${escapeHtml(c.photo.storage_path)}" alt="attached photo" loading="lazy">` : ''}
+  </div>`;
+}
+
+// The block that hangs under a checklist line: its comments + inline composer.
+function _rdChkThreadHTML(t, l) {
+  const all = _cpChkComments(t, l.id);
+  const replyOpen = !!_rdUiFlags(_RD_REPLY_KEY)[l.id] && _rdCanComment();
+  if (!all.length && !replyOpen) return '';
+  const expanded = !!_rdUiFlags(_RD_THREAD_KEY)[l.id];
+  const hidden = Math.max(0, all.length - _RD_THREAD_SHOWN);
+  const shown = expanded ? all : all.slice(-_RD_THREAD_SHOWN);
+  return `<div style="flex-basis:100%;margin:2px 0 4px 18px;padding:4px 0 4px 10px;border-left:2px solid var(--border);">
+    ${hidden && !expanded ? `<button style="border:none;background:none;padding:0 0 3px;font:inherit;font-size:11px;font-weight:600;color:var(--text-subtle);cursor:pointer;" ${cxAct('_rdChkThreadToggle', String(l.id))}>↑ Show ${hidden} earlier comment${hidden !== 1 ? 's' : ''}</button>` : ''}
+    ${shown.map(_cpChkCommentHTML).join('')}
+    ${expanded && hidden ? `<button style="border:none;background:none;padding:2px 0 0;font:inherit;font-size:11px;font-weight:600;color:var(--text-subtle);cursor:pointer;" ${cxAct('_rdChkThreadToggle', String(l.id))}>↓ Show fewer</button>` : ''}
+    ${replyOpen ? `<div style="display:flex;gap:6px;align-items:flex-start;margin-top:5px;">
+      <textarea id="rdchkc-${l.id}" class="form-input" rows="2" style="flex:1;font-size:12px;min-width:140px;" placeholder="Comment on “${escapeHtml(_truncateRd(l.title, 40))}”…" aria-label="Comment on ${escapeHtml(l.title)}"></textarea>
+      <span style="display:inline-flex;flex-direction:column;gap:4px;">
+        <button class="form-submit" style="font-size:11px;padding:3px 10px;" ${cxAct('_rdChkPostComment', String(l.id))}>Post</button>
+        <button class="form-secondary" style="font-size:11px;padding:3px 10px;" ${cxAct('_rdChkReplyToggle', String(l.id))}>Cancel</button>
+      </span>
+    </div>` : ''}
+  </div>`;
+}
+
+function _rdChkThreadToggle(lineId) {
+  _rdUiToggle(_RD_THREAD_KEY, lineId);
+  const l = TASK_CHK.find(x => x.id === lineId);
+  if (l) _rdRefresh(l.task_id);
+}
+function _rdChkReplyToggle(lineId) {
+  if (!_rdCanComment()) { toast('Not permitted', 'error'); return; }
+  const open = !!_rdUiFlags(_RD_REPLY_KEY)[lineId];
+  _rdUiToggle(_RD_REPLY_KEY, lineId, !open);
+  const l = TASK_CHK.find(x => x.id === lineId);
+  if (l) _rdRefresh(l.task_id);
+  if (!open) document.getElementById('rdchkc-' + lineId)?.focus();
+}
+
+// Post a comment already linked to this line (no "About:" picker needed) and
+// re-render the checklist in place so the modal keeps its scroll position.
+async function _rdChkPostComment(lineId) {
+  if (!_rdCanComment()) { toast('Not permitted', 'error'); return; }
+  const l = TASK_CHK.find(x => x.id === lineId); if (!l) return;
+  const t = _rdTask(l.task_id); if (!t) return;
+  const box = document.getElementById('rdchkc-' + lineId);
+  const text = (box && box.value || '').trim();
+  if (!text) { toast('Write a comment first', 'error'); if (box) box.focus(); return; }
+  const comment = {
+    id: crypto.randomUUID(),
+    text,
+    by: _rdWho(),
+    by_role: (typeof currentRoleUser !== 'undefined' && currentRoleUser && currentRoleUser.role) || '',
+    at: new Date().toISOString(),
+    item_id: lineId,
+  };
+  const comments = [...(typeof _taskComments === 'function' ? _taskComments(t) : []), comment];
+  if (box) box.disabled = true;
+  try {
+    const [updated] = await _dbUpdate('tasks', { comments }, { id: t.id });
+    if (!updated) throw new Error('No row was updated — you may not have permission to comment.');
+    Object.assign(t, updated);
+  } catch (e) {
+    if (box) box.disabled = false;
+    toast('Comment failed: ' + e.message, 'error');
+    return;
+  }
+  _rdUiToggle(_RD_REPLY_KEY, lineId, false);
+  toast('Comment posted', 'success');
+  _rdRefresh(t.id);
+  _cpSyncLinkedNote(t);
+}
+
+// Note that sits at the top of the running Comments thread, pointing at the
+// comments that now live in the checklist instead.
+function _cpLinkedThreadNote(t) {
+  const n = (typeof _taskComments === 'function' ? _taskComments(t) : []).filter(c => _cpCommentEmbedded(c, t)).length;
+  if (!n) return '';
+  return `<div id="cp-linked-note-${t.id}" style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--gray-500);padding:9px 14px;border-bottom:1px solid var(--gray-100);background:var(--gray-50);">
+    ${icon('comment')} ${n} comment${n !== 1 ? 's' : ''} ${n !== 1 ? 'are' : 'is'} shown in the readiness checklist above, under the item ${n !== 1 ? 'they belong' : 'it belongs'} to.</div>`;
+}
+// Keep that note current after an inline post without rebuilding the modal.
+function _cpSyncLinkedNote(t) {
+  const html = _cpLinkedThreadNote(t);
+  const note = document.getElementById('cp-linked-note-' + t.id);
+  if (note) { note.outerHTML = html; return; }
+  const tl = document.getElementById('task-timeline-' + t.id);
+  if (tl && html) {
+    tl.insertAdjacentHTML('afterbegin', html);
+    document.getElementById('task-timeline-empty-' + t.id)?.remove();
+  }
+}
+
+if (typeof CXActions !== 'undefined') {
+  CXActions.register('_rdChkThreadToggle', _rdChkThreadToggle)
+           .register('_rdChkReplyToggle', _rdChkReplyToggle)
+           .register('_rdChkPostComment', _rdChkPostComment);
+}
 
 // ── Checkpoint page (unified tasks + readiness workspace) ──────────────────
 function _rdSetFilter(k, v) { _rdFilter[k] = v; renderReadiness(); }
