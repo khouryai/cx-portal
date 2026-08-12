@@ -60,6 +60,7 @@ const suites = [
   { file: "tools/test_dyn_alloc_pack.js", needs: [] },     // aggressive duration-aware window packing
   { file: "tools/test_dyn_whatif.js", needs: [] },         // what-if scope/per-DOW extension/metrics
   { file: "tools/test_dyn_simulator.js", needs: [] },      // schedule simulator engine (conceptual planning)
+  { file: "tools/test_dyn_campaign_fit.js", needs: [] },   // campaign scope fit metrics (utilization/coverage/footprint)
   { file: "tools/test_db_update_guard.js", needs: [] }, // _dbUpdate optimistic-concurrency guard
   { file: "tools/test_tr_insights.js", needs: [] },     // blockers & failures insight analytics
   { file: "tools/test_print_report.js", needs: [] },    // shared branded print template + adoption

@@ -43315,7 +43315,7 @@ function _dynCampaignModal(camp) {
     sub: isEdit ? 'Update this campaign — generated shifts are reconciled to match' : 'Request zone access over a date range — one shift per zone per access day',
     size: 'large',
     body: `
-      <div style="padding:8px 22px 16px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div id="camp-form-body" style="padding:8px 22px 16px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div class="form-field" style="grid-column:1/-1;"><label>Campaign name</label>
           <input id="camp-name" style="${fld}" placeholder="e.g. W40 CBTC dynamic — Spring window" value="${escapeHtml(String(av('name', '')))}"></div>
         <div class="form-field" style="grid-column:1/-1;"><label>Zones <span style="color:var(--gray-500);font-weight:400;">(⌘/Ctrl for multiple)</span></label>
@@ -43363,7 +43363,7 @@ function _dynCampaignModal(camp) {
   // The day rows are built before the zone <select> is in the DOM, so the
   // per-day zone checkboxes can't read the palette yet. Re-render once mounted
   // so an edited campaign shows its zones immediately.
-  if (prefill) setTimeout(() => { try { _dynCampRerenderDays(); } catch (_) {} }, 0);
+  setTimeout(() => { try { if (prefill) _dynCampRerenderDays(); if (typeof _dynCampScopeInit === 'function') _dynCampScopeInit(); } catch (_) {} }, 0);
 }
 
 // Build the per-day shift window rows for a campaign — ONE window per access
@@ -45115,17 +45115,8 @@ function _dynCampScopeItems() {
   }).sort((a, b) => String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
 }
 function _dynCampScopeListHtml(q) {
-  const items = _dynCampScopeItems();
-  const sel = window._dynCampScope || new Set();
-  const ql = (q || '').toLowerCase();
-  const filtered = ql ? items.filter(i => (i.code + ' ' + i.name).toLowerCase().includes(ql)) : items.slice(0, 300);
-  if (!filtered.length) return '<div style="padding:14px;text-align:center;color:var(--gray-500);font-size:12px;">No matching dynamic test cases.</div>';
-  return '<table style="width:100%;font-size:12px;border-collapse:collapse;"><tbody>' + filtered.map(i =>
-    '<tr style="border-bottom:1px solid var(--gray-100);">' +
-      '<td style="padding:5px 10px;width:30px;"><input type="checkbox" ' + (sel.has(i.id) ? 'checked' : '') + ' onchange="_dynCampScopeToggle(\'' + escapeHtml(i.id) + '\',this.checked)"></td>' +
-      '<td style="padding:5px 10px;font-family:monospace;font-size:11px;">' + escapeHtml(i.code) + '</td>' +
-      '<td style="padding:5px 10px;">' + escapeHtml(String(i.name).slice(0, 60)) + '</td>' +
-    '</tr>').join('') + '</tbody></table>';
+  // Rich fit/metrics table lives in cx-dyn-campaign-fit.js (loaded after app.js).
+  return (typeof _dynCampScopeTableHtml === 'function') ? _dynCampScopeTableHtml(q) : '';
 }
 function _dynCampScopeFilter(q) {
   const el = document.getElementById('camp-scope-list');
@@ -45134,10 +45125,7 @@ function _dynCampScopeFilter(q) {
 function _dynCampScopeToggle(id, on) {
   const sel = window._dynCampScope = window._dynCampScope || new Set();
   if (on) sel.add(id); else sel.delete(id);
-  const sum = document.getElementById('camp-scope-summary');
-  if (sum) sum.textContent = sel.size
-    ? (sel.size + ' test case' + (sel.size === 1 ? '' : 's') + ' in scope.')
-    : '0 selected — all in-zone tests in scope.';
+  if (typeof _dynCampScopeSummaryRefresh === 'function') _dynCampScopeSummaryRefresh();
 }
 function _dynCampDowToggle(d, on) {
   for (const cls of ['camp-day-start', 'camp-day-end']) {
