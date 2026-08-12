@@ -20365,7 +20365,7 @@ function _vmReadiness(carId) {
   }
   const openPunch = _vmPunchFor(carId).filter(p => p.status !== 'closed').length;
   const allWf = wfTotal > 0 ? wfComplete === wfTotal : false;
-  const ready = allWf && !wfFailed && mismatch === 0 && incomplete === 0 && eqs.length > 0;
+  const ready = allWf && !wfFailed && mismatch === 0 && incomplete === 0;  // equipment optional — SW compliance is enforced only for equipment actually tied to the car
   // Status priority: a failed test BLOCKS; otherwise out-of-date software is its
   // own state; otherwise ready / in-progress.
   let status;

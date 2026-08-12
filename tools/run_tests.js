@@ -67,6 +67,7 @@ const suites = [
   { file: "tools/test_ui_can.js", needs: [] },          // UI permission gating + nav mapping integrity
   { file: "tools/test_team.js", needs: [] },            // team.js org helpers
   { file: "tools/test_readiness.js", needs: [] },       // readiness.js checklist engine + rollup
+  { file: "tools/test_vm_readiness.js", needs: [] },    // vehicle-management car-status rollup (equipment optional)
   { file: "tools/test_activity_stats.js", needs: [] },
   { file: "tools/markup_test.js", needs: [] },
   { file: "tools/test_copy_paste.js", needs: ["dayjs"] },
