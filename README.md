@@ -25,34 +25,68 @@ To run the tests you need Node installed — that is the only tool this repo use
 and only for tests:
 
 ```
-node tools/run_tests.js       # 50 assertions, must exit 0 before you commit
+node tools/run_tests.js       # 176 assertions, must exit 0 before you commit
 ```
 
 ## What is in here
 
 ```
-CLAUDE.md            ← conventions. Claude Code reads this every session.
-index.html           ← THE APP. Open this.
-cxc-model.js         ← THE FILE TO START ON: durations, windows, packer.
-cxc-store-local.js   ← the only file allowed to touch localStorage.
-cxc-ui-demo.js       ← throwaway starter UI; replace with real modules.
-tools/run_tests.js   ← test runner
-tools/test_cxc_model.js
-README.md            ← this file
+index.html            ← THE APP. Open this.
+cxc.css               one :root token block + every cxc- style
+
+  engine (pure — no DOM, no storage, fully unit-tested)
+cxc-model.js          durations, window budgets, constraints, the packer
+cxc-data.js           entity schema, seed dataset, CRUD, validation
+cxc-timeline.js       Gantt geometry: bars, sub-lanes, date axis, milestones
+
+  persistence
+cxc-store-local.js    the ONLY file that touches localStorage
+
+  screens (each registers itself with the shell)
+cxc-ui-shell.js       nav, state, recompute loop, modal, toast
+cxc-ui-plan.js        forecast, access-by-month, material take-off
+cxc-ui-timeline.js    the Gantt
+cxc-ui-manage.js      every management screen, generated from the schema
+cxc-boot.js           installs the views and starts the app
+
+  copied from cx-portal, unchanged — do not edit
+icons.js  format.js  cx-state.js  cx-store.js  cx-actions.js
+
+  tests
+tools/run_tests.js  tools/test_cxc_model.js
+tools/test_cxc_data.js  tools/test_cxc_timeline.js
+
+CLAUDE.md             conventions. Claude Code reads this every session.
 ```
 
-That is the entire project — it is deliberately standalone and shares no code or
-history with cx-portal.
+This is the entire project — standalone, sharing no history with cx-portal.
 
-### Grab these from cx-portal before you build UI
+## What it does today
 
-Copy them in **unchanged**, so both apps share the same primitives and the
-eventual merge is a file move rather than a rewrite:
+**Everything is managed in the app.** Sidebar screens with full add / edit /
+duplicate / delete for:
 
-`icons.js`, `format.js`, `cx-state.js`, `cx-store.js`, `cx-actions.js`,
-`DESIGN_TOKENS.md`, and the `:root` token block from the top of `styles.css`
-(a trimmed copy is already inlined in `index.html`). Load them in `index.html`
-**before** `cxc-model.js`.
+| Screen | What it drives |
+|---|---|
+| **Scope** | the work: location, phase, activity, quantity, crew pin, predecessors |
+| **Locations** | where crews mobilize to; relocating mid-shift costs time |
+| **Phases** | ordered stages; a phase can be blocked until the earlier one finishes at that location |
+| **Activities** | the rate library — minutes per unit at a reference crew size, setup time, how finely it splits, and its bill of materials |
+| **Materials** | on-hand quantity and on-site date — work cannot be scheduled before its material lands, and stops when tracked stock runs out |
+| **Crews** | size, efficiency, which activities they are qualified for, which vehicles they need, which shifts they may work |
+| **Work vehicles** | a vehicle serves ONE crew per window, so a shared hi-rail limits how many crews can work the same night |
+| **Shift windows** | start/end or an explicit duration, mobilization in/out, days of week, max crews |
+| **Assumptions** | productivity factor, crew scaling exponent, breaks, contingency, relocation, phase-order enforcement, blackout dates |
+
+Edits are inline and immediate — change a cell and the whole schedule re-runs.
+
+**Plan & forecast** — crew-hours, windows needed, access forecast by month and
+window type, material take-off with shortfalls, per-window utilization, and
+every unscheduled item with the reason it did not fit.
+
+**Timeline** — a Gantt of every run, grouped by location, crew, phase or
+activity, coloured by phase, with weekend shading and dated event markers for
+material deliveries and phase completions.
 
 ## Answers to the setup questions
 
@@ -85,52 +119,48 @@ permissions model and the database.
 drawings. cx-portal has all of it. Building parallel versions creates conflict
 work at the merge and buys nothing in the meantime.
 
-## What the model already does
+## How the engine decides things
 
-`cxc-model.js` is a complete, tested engine — not a stub. Every function is pure
-(data in, data out, no DOM, no storage), which is what makes it testable and
-what lets it merge untouched.
+All of it is pure and unit-tested (`cxc-model.js`, `cxc-timeline.js`), and all
+of it is driven by data you edit in the app.
 
-- **Duration per quantity.** Each activity type carries `minutesPerUnit` at a
-  reference crew size — conduit by linear foot, devices by type and count, fiber
-  pull and splice, power cable, terminations — plus a per-task `setupMin` for
-  rigging and staging.
+- **Duration per quantity.** Each activity carries `minutesPerUnit` at a
+  reference crew size, plus a per-task `setupMin` for rigging and staging.
 - **Crew efficiency, non-linearly.** Doubling a crew does not halve the
-  duration. `crewScalingExponent` makes that curve a dial: `1` is perfectly
-  linear, `0` means extra people add nothing, real trades sit around `0.75–0.9`.
-  Each crew also carries its own `efficiency` multiplier and a `skills` list.
-- **Shift windows, and what they actually buy.** A pattern declares clock times
-  (or an explicit duration for a 52-hour shutdown), `daysOfWeek`, `maxCrews`, and
-  **mobilization in/out** — the time the window is granted but no work happens.
-  `windowBudget()` takes gross time, subtracts mobilization, breaks and a
-  contingency reserve, and returns the productive minutes. This is what shows
-  that an 8-hour night is ~5 productive hours and a 2-hour window is ~30
-  productive minutes — often less than one device takes.
-- **Mapping to a schedule.** `generateWindows()` expands patterns across a date
-  range (honouring blackout dates); `packSchedule()` packs work into them
-  chronologically, per crew, respecting prerequisites, crew qualification,
-  location relocation cost, and how finely each activity may be split
-  (`continuous` / `unit` / `none`).
+  duration. `crewScalingExponent` is the dial: `1` is perfectly linear, `0`
+  means extra people add nothing, real trades sit around `0.75–0.9`. Each crew
+  also has its own efficiency multiplier and skill list.
+- **What a window actually buys.** Gross time minus mobilization in/out, minus
+  breaks, minus a contingency reserve. This is why an 8-hour night is ~5.2
+  productive hours — and why, with the sample numbers, a 2-hour window is worth
+  27 minutes and never gets used at all. That result is the tool working.
+- **Vehicles.** A vehicle serves one crew per window. Two crews sharing a
+  hi-rail means only one of them works that night.
+- **Materials.** Work cannot be scheduled before every material it consumes is
+  on site, and a tracked stock caps how much gets installed.
+- **Phases.** With phase order enforced, a phase cannot start at a location
+  until every earlier phase there is complete — per location, not project-wide.
+- **Splitting.** An activity splits `continuous` (cut conduit anywhere), by
+  `unit` (whole devices only), or `none` (must finish inside one window — a
+  cutover). This is what makes a weekend shutdown worth having.
 - **Every unplaced item gets a reason.** "no window long enough — a single ea
   needs 187 min of productive time" is more useful to a planner than any chart.
-  Never drop work silently.
-- **Nothing is hard-coded.** Every number lives in one `assumptions` object that
-  the UI edits and exports as JSON. `DEFAULT_ASSUMPTIONS` is a seed to overwrite,
-  not a source of truth. **The rates in it are placeholders — replace them with
-  real estimating data before anyone reads a forecast off this.**
+- **Nothing is hard-coded.** The seed in `cxc-data.js` is a worked example to
+  overwrite. **Its rates are placeholders — replace them with real estimating
+  data before anyone reads a forecast off this.**
 
-## Suggested build order
+## Where to take it next
 
-1. **Assumptions editors** — activity catalog, crews, shift patterns. Full CRUD,
-   JSON export/import. This is the product; the schedule is a report on it.
-2. **Scope import** — paste or CSV/XLSX from the estimate: location, activity,
-   quantity. cx-portal vendors SheetJS if you want spreadsheet import.
-3. **Schedule views** — the window table already exists; add a calendar/Gantt.
-   cx-portal vendors `vis-timeline` for exactly this.
-4. **Access forecast** — windows needed by type per month. This is the number
-   that gets negotiated with operations, so make it the headline.
-5. **Scenarios** — clone an assumption set, run both, show the delta. cx-portal's
-   dynamic-testing simulator does this; copy the pattern when you merge.
+1. **Real rates.** Replace the seed catalog with actual production data. Nothing
+   else matters until this is done.
+2. **Scope import** — CSV/XLSX paste from the estimate instead of typing rows.
+   cx-portal vendors SheetJS if you want spreadsheet parsing.
+3. **Scenarios** — clone a dataset, run both, show the delta ("what does losing
+   the weekend shutdown cost us?"). cx-portal's dynamic-testing simulator does
+   exactly this; copy that pattern when you merge.
+4. **Progress tracking** — actuals against plan, so the productivity factor gets
+   calibrated from real performance instead of guessed.
+5. **Printable forecast** — a one-page access request for operations.
 
 ## Why the conventions in CLAUDE.md are strict
 
@@ -149,7 +179,9 @@ same rescue later.
 The `cxc-` prefix on every file, global, CSS class, storage key and future table
 name is what makes this a copy rather than a merge. When the time comes:
 
-1. Copy `cxc-*.js` / `cxc-*.css` into the cx-portal root.
+1. Copy `cxc-*.js` and `cxc.css` into the cx-portal root. The five shared
+   primitives (`icons.js`, `format.js`, `cx-state.js`, `cx-store.js`,
+   `cx-actions.js`) are already cx-portal's — do not copy those back.
 2. Add them to `index.html` (after `app.js`), to `sw.js` `SHELL_ASSETS`, and to
    `SCRIPTS` in `tools/_load_app.js`.
 3. Append `tools/test_cxc_*.js` to the suite list in `tools/run_tests.js`.

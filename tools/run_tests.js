@@ -37,7 +37,11 @@ for (const f of SOURCES) {
 if (!SOURCES.length) console.log("\n(no cxc-*.js sources found at the repo root)");
 
 // 2) Unit suites.
-const SUITES = ["tools/test_cxc_model.js"];
+const SUITES = [
+  "tools/test_cxc_model.js",     // durations, window budgets, the packer
+  "tools/test_cxc_data.js",      // entity schema, seed, CRUD, validation
+  "tools/test_cxc_timeline.js",  // Gantt geometry: bars, sub-lanes, axis
+];
 
 const results = [];
 for (const s of SUITES) {

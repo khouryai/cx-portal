@@ -22,7 +22,9 @@
   'use strict';
 
   var PREFIX = 'cxc.';
-  var SLICES = ['assumptions', 'scope', 'schedule'];  // add new slices here
+  // The whole project is one slice: catalogs, scope and assumptions travel
+  // together, so an export is always a complete, self-consistent plan.
+  var SLICES = ['data'];
 
   function hasLS() {
     try { return typeof localStorage !== 'undefined' && localStorage !== null; }

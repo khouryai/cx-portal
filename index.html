@@ -4,194 +4,87 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Construction Planner</title>
+<link rel="stylesheet" href="cxc.css">
 <!--
-  Starter shell. No build step: open this file (or serve the folder with
-  `npx http-server -p 8124 .`) and it runs.
+  No build step. Open this file directly (file://) or serve the folder —
+  both work. Classic <script> tags in dependency order, same as cx-portal.
 
-  Script order matters — classic <script>, dependency order, same as cx-portal:
-    cxc-model.js        pure engine    (no DOM, no storage)
-    cxc-store-local.js  persistence    (the only localStorage caller)
-    cxc-ui-demo.js      render + wire  (replace this with real UI modules)
+  Shared primitives, copied verbatim from cx-portal so both apps behave the
+  same and the merge is a file move:
+    icons.js      inline SVG icon system — never emoji
+    format.js     escapeHtml + friends
+    cx-state.js   cxSkeleton / cxEmpty / cxError
+    cx-store.js   observable store (all hot state lives here)
+    cx-actions.js event delegation — no inline onclick= anywhere
 
-  When you copy icons.js / format.js / cx-state.js / cx-store.js / cx-actions.js
-  from cx-portal, load them BEFORE cxc-model.js.
+  Then this app, engine before UI:
+    cxc-model.js      durations, window budgets, the packer
+    cxc-data.js       entity schema, seed dataset, CRUD
+    cxc-timeline.js   Gantt geometry
+    cxc-store-local.js the only file that touches localStorage
+    cxc-ui-*.js       screens, each registering itself with the shell
 -->
-<style>
-/* ONE :root token block for the whole app — same rule as cx-portal.
-   Values copied from cx-portal's styles.css so the merge is seamless.
-   Add tokens here; never open a second :root {}. Never use raw hex below. */
-:root {
-  --primary: #e60012;
-  --primary-hover: #b80010;
-  --white: #ffffff;
-  --app-bg: #f6f7f9;
-  --surface: #ffffff;
-  --surface-2: #f9fafb;
-  --surface-3: #f3f4f6;
-  --text: #1a1a1a;
-  --text-muted: #6e7179;
-  --text-subtle: #697280;
-  --border: #ebebeb;
-  --border-strong: #d8d8d8;
-  --good: #0d7a4f;
-  --good-light: #e8f4ee;
-  --warn: #a8550a;
-  --warn-light: #fbf0e1;
-  --bad: #c01017;
-  --bad-light: #fdeaeb;
-  --info: #1d4eaf;
-  --info-light: #e8efff;
-  --radius: 8px;
-  --shadow-sm: 0 1px 2px rgba(0,0,0,.06);
-}
-
-* { box-sizing: border-box; }
-body {
-  margin: 0; background: var(--app-bg); color: var(--text);
-  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-}
-.cxc-header {
-  background: var(--surface); border-bottom: 1px solid var(--border);
-  padding: 16px 24px; display: flex; align-items: baseline; gap: 12px;
-}
-.cxc-header h1 { margin: 0; font-size: 18px; font-weight: 600; }
-.cxc-header .cxc-sub { color: var(--text-muted); font-size: 13px; }
-.cxc-wrap { max-width: 1180px; margin: 0 auto; padding: 24px; }
-.cxc-card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); box-shadow: var(--shadow-sm);
-  padding: 18px 20px; margin-bottom: 20px;
-}
-.cxc-card h2 {
-  margin: 0 0 4px; font-size: 15px; font-weight: 600;
-}
-.cxc-card .cxc-hint { margin: 0 0 16px; color: var(--text-muted); font-size: 13px; }
-
-.cxc-controls { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-end; }
-.cxc-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-muted); }
-.cxc-field input, .cxc-field select {
-  font: inherit; font-size: 13px; color: var(--text); padding: 6px 9px;
-  border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface);
-  min-width: 150px;
-}
-.cxc-btn {
-  font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
-  padding: 7px 16px; border-radius: 6px;
-  background: var(--primary); color: var(--white); border: 1px solid var(--primary);
-}
-.cxc-btn:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
-.cxc-btn.cxc-secondary { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
-.cxc-btn.cxc-secondary:hover { background: var(--surface-3); }
-
-.cxc-kpis { display: flex; flex-wrap: wrap; gap: 12px; }
-.cxc-kpi {
-  flex: 1 1 150px; background: var(--surface-2);
-  border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px;
-}
-.cxc-kpi .cxc-kpi-val { font-size: 22px; font-weight: 600; line-height: 1.2; }
-.cxc-kpi .cxc-kpi-lbl { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-
-table.cxc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-table.cxc-table th {
-  text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase;
-  letter-spacing: .04em; color: var(--text-subtle);
-  padding: 8px 10px; border-bottom: 1px solid var(--border-strong); white-space: nowrap;
-}
-table.cxc-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
-table.cxc-table tr:last-child td { border-bottom: 0; }
-.cxc-num { text-align: right; font-variant-numeric: tabular-nums; }
-.cxc-scroll { overflow-x: auto; }
-
-.cxc-bar { position: relative; height: 8px; border-radius: 4px; background: var(--surface-3); min-width: 90px; }
-.cxc-bar > span { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--good); }
-.cxc-bar.cxc-low > span  { background: var(--warn); }
-
-.cxc-tag {
-  display: inline-block; padding: 2px 8px; border-radius: 999px;
-  font-size: 11px; font-weight: 600;
-}
-.cxc-tag.cxc-ok   { background: var(--good-light); color: var(--good); }
-.cxc-tag.cxc-warn { background: var(--warn-light); color: var(--warn); }
-.cxc-tag.cxc-bad  { background: var(--bad-light);  color: var(--bad); }
-.cxc-tag.cxc-info { background: var(--info-light); color: var(--info); }
-
-.cxc-empty { padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px; }
-</style>
 </head>
 <body>
 
-<header class="cxc-header">
-  <h1>Construction Planner</h1>
-  <span class="cxc-sub">installation scope &rarr; shift windows &rarr; access forecast</span>
-</header>
+<div class="cxc-app">
 
-<div class="cxc-wrap">
-
-  <section class="cxc-card">
-    <h2>Assumptions</h2>
-    <p class="cxc-hint">
-      Nothing here is hard-coded &mdash; these dials drive every number below.
-      The real app makes the full activity, crew and shift-window catalogs
-      editable too; this panel is only the fastest way to feel the model move.
-    </p>
-    <div class="cxc-controls">
-      <label class="cxc-field">Productivity factor
-        <input type="number" id="cxc-prod" step="0.05" min="0.1" max="2" value="1">
-      </label>
-      <label class="cxc-field">Contingency %
-        <input type="number" id="cxc-cont" step="5" min="0" max="50" value="10">
-      </label>
-      <label class="cxc-field">Crew scaling exponent
-        <input type="number" id="cxc-exp" step="0.05" min="0" max="1" value="0.85">
-      </label>
-      <label class="cxc-field">Relocation min
-        <input type="number" id="cxc-reloc" step="5" min="0" value="15">
-      </label>
-      <label class="cxc-field">Shift patterns
-        <select id="cxc-patterns" multiple size="3"></select>
-      </label>
-      <label class="cxc-field">Plan from
-        <input type="date" id="cxc-from" value="2026-09-07">
-      </label>
-      <label class="cxc-field">Plan to
-        <input type="date" id="cxc-to" value="2026-12-31">
-      </label>
-      <button class="cxc-btn" id="cxc-run" type="button">Recalculate</button>
-      <button class="cxc-btn cxc-secondary" id="cxc-export" type="button">Export JSON</button>
+  <aside class="cxc-side">
+    <div class="cxc-brand">
+      <h1>Construction Planner</h1>
+      <p>Installation scope &amp; access forecast</p>
     </div>
-  </section>
+    <nav class="cxc-nav" id="cxc-nav" aria-label="Sections"></nav>
+  </aside>
 
-  <section class="cxc-card">
-    <h2>Forecast</h2>
-    <p class="cxc-hint">What the current scope needs, under the assumptions above.</p>
-    <div class="cxc-kpis" id="cxc-kpis"></div>
-  </section>
-
-  <section class="cxc-card">
-    <h2>Scope</h2>
-    <p class="cxc-hint">Quantity &times; duration per unit, priced for the crew that draws it.</p>
-    <div class="cxc-scroll"><table class="cxc-table" id="cxc-scope"></table></div>
-  </section>
-
-  <section class="cxc-card">
-    <h2>Window utilization</h2>
-    <p class="cxc-hint">
-      Gross window time is not work time: mobilization in/out, breaks and
-      contingency come off the top before anything gets installed.
-    </p>
-    <div class="cxc-scroll"><table class="cxc-table" id="cxc-windows"></table></div>
-  </section>
-
-  <section class="cxc-card">
-    <h2>Not scheduled</h2>
-    <p class="cxc-hint">Every item that did not fit, and why. Never drop work silently.</p>
-    <div class="cxc-scroll"><table class="cxc-table" id="cxc-unplaced"></table></div>
-  </section>
+  <main class="cxc-main">
+    <header class="cxc-topbar">
+      <div>
+        <h2 id="cxc-title">Plan</h2>
+        <div class="cxc-sub" id="cxc-subtitle"></div>
+      </div>
+      <div class="cxc-topbar-actions">
+        <button type="button" class="cxc-btn cxc-secondary" data-action="cxcImport">Import</button>
+        <button type="button" class="cxc-btn cxc-secondary" data-action="cxcExport">Export</button>
+      </div>
+    </header>
+    <div class="cxc-view" id="cxc-view"></div>
+  </main>
 
 </div>
 
+<div class="cxc-modal-back" id="cxc-modal-back" hidden>
+  <div class="cxc-modal" role="dialog" aria-modal="true" aria-labelledby="cxc-modal-title">
+    <div class="cxc-modal-head">
+      <h3 id="cxc-modal-title"></h3>
+      <div class="cxc-spacer"></div>
+      <button type="button" class="cxc-iconbtn" aria-label="Close" data-action="cxcModalClose">&times;</button>
+    </div>
+    <div class="cxc-modal-body" id="cxc-modal-body"></div>
+    <div class="cxc-modal-foot">
+      <button type="button" class="cxc-btn cxc-secondary" data-action="cxcModalClose">Cancel</button>
+      <button type="button" class="cxc-btn" id="cxc-modal-save" data-action="cxcModalSave">Done</button>
+    </div>
+  </div>
+</div>
+
+<div class="cxc-toast" id="cxc-toast" role="status" hidden></div>
+
+<script src="icons.js"></script>
+<script src="format.js"></script>
+<script src="cx-state.js"></script>
+<script src="cx-store.js"></script>
+<script src="cx-actions.js"></script>
+
 <script src="cxc-model.js"></script>
+<script src="cxc-data.js"></script>
+<script src="cxc-timeline.js"></script>
 <script src="cxc-store-local.js"></script>
-<script src="cxc-ui-demo.js"></script>
+
+<script src="cxc-ui-shell.js"></script>
+<script src="cxc-ui-plan.js"></script>
+<script src="cxc-ui-timeline.js"></script>
+<script src="cxc-ui-manage.js"></script>
+<script src="cxc-boot.js"></script>
 </body>
 </html>

@@ -10,17 +10,20 @@ even when a different approach would be marginally faster today.
 
 ## What this app is
 
-Construction planning and access forecasting for installation work: conduit,
-devices (by type), fiber, power cable, terminations. Scope items carry a
-**quantity**; the activity catalog carries a **duration per unit**; crews and
-**shift windows** (single-track 6–8 hr, short 2 hr windows, weekend shutdowns)
-convert that into a **dated schedule** and an **access forecast** — how many
-windows of each type the work actually needs.
+Construction planning and access forecasting for installation work. The user
+manages every input in the app — **locations, phases, activities, materials,
+crews, work vehicles, shift windows and scope** — and gets back a dated
+schedule, a timeline, and an access forecast.
 
-**The whole point is the assumptions are wrong and get corrected.** Every rate,
-crew size, mobilization allowance and window length must be editable in the UI
-and exportable as JSON. If a number appears in a `.js` file outside the
-assumptions object, it is a bug.
+The chain: scope items carry a **quantity**; the activity catalog carries a
+**duration per unit** at a reference crew size; crews, vehicles, materials and
+**shift windows** (single-track 6–8 hr, short 2 hr windows, weekend shutdowns)
+constrain when that work can actually happen.
+
+**The whole point is that the assumptions are wrong and get corrected.** Every
+rate, crew size, mobilization allowance and window length is editable in the UI
+and exportable as JSON. If a number appears in a `.js` file outside the seed in
+`cxc-data.js`, it is a bug.
 
 ## Stack — match cx-portal exactly
 
@@ -41,66 +44,97 @@ alongside `app.js` with zero collisions. Non-negotiable:
 
 | Thing | Rule | Example |
 |---|---|---|
-| Files | `cxc-*.js` / `cxc-*.css` | `cxc-model.js`, `cxc-schedule.js` |
-| Globals | ONE object, `window.CXC` | `CXC.packSchedule(...)` |
-| Functions | no bare globals; hang them off `CXC` | not `function packSchedule()` |
-| CSS classes | `cxc-` prefix | `.cxc-window-row` |
-| Store keys | `cxc.` prefix | `CXStore.set('cxc.scope', ...)` |
+| Files | `cxc-*.js` / `cxc*.css` | `cxc-model.js`, `cxc.css` |
+| Globals | one per module, `CXC*` | `CXC`, `CXCData`, `CXCApp` |
+| Functions | no bare globals; hang them off a module object | not `function packSchedule()` |
+| CSS classes | `cxc-` prefix | `.cxc-tl-bar` |
+| Store keys | `cxc.` prefix | `CXStore.set('cxc.data', …)` |
+| Actions | `cxc` prefix | `CXActions.register('cxcEdit', …)` |
 | Future DB tables | `cxc_` prefix | `cxc_activity_types` |
-| localStorage keys | `cxc.` prefix | `cxc.assumptions.v1` |
+| localStorage keys | `cxc.` prefix | `cxc.data` |
 
-## Architecture — pure core, thin shell
+## The layers — know which file you are in
 
-Split every file into one of three layers and never blur them:
+Never blur these. It is the whole reason the app stays workable:
 
-1. **Model / engine** (`cxc-model.js`) — pure functions. No DOM, no storage, no
-   `fetch`, no `Date.now()`, no globals read from outside. Data in, data out.
-   This is the layer that merges untouched and the layer that gets tested.
-2. **Persistence** (`cxc-store-local.js`) — the ONLY file that touches
-   localStorage / file import / export. One narrow interface
-   (`load()`, `save()`, `exportJson()`, `importJson()`), so swapping it for
-   Supabase at merge time is a single-file change. **No storage calls anywhere
-   else.**
-3. **UI / render** (`cxc-ui-*.js`) — builds HTML strings, reads from the model,
-   writes through the persistence layer.
+1. **Engine** — `cxc-model.js`, `cxc-timeline.js`. Pure functions. No DOM, no
+   storage, no `fetch`, no `Date.now()`. Data in, data out. All scheduling and
+   layout maths lives here and nowhere else, which is why it can be tested
+   headlessly and why it merges untouched.
+2. **Schema + data** — `cxc-data.js`. What every entity IS: its fields, their
+   types, the seed dataset, CRUD helpers and validation. Also pure.
+3. **Persistence** — `cxc-store-local.js`. **The only file in the app allowed
+   to touch localStorage or files.** Five functions. Swapping to Supabase at
+   merge time must stay a one-file change, so no storage call goes anywhere
+   else, ever.
+4. **UI** — `cxc-ui-*.js`. Builds HTML strings, reads the engine, writes through
+   the CRUD helpers, calls `CXCApp.save()`. Never does schedule maths.
 
-New features land in **new files**, not by growing an existing one. cx-portal
-learned this the hard way: `app.js` reached 50,000 lines and now has a
-CI-enforced line-count ratchet that only moves down (`tools/size_baseline.json`).
-Do not start a monolith that needs the same rescue.
+## Adding things — the paths that already exist
+
+Use these instead of inventing a new pattern; each is a one-liner because the
+generic machinery is already built.
+
+- **A new field on an entity** (say, a cost rate on activities): add one entry
+  to that entity's `fields` array in `cxc-data.js`. The table column, the right
+  input type, validation, persistence and export all follow automatically.
+  Do **not** hand-write a form.
+- **A whole new entity**: add it to `ENTITIES` + `ENTITY_ORDER` + `PREFIX` in
+  `cxc-data.js`. A management screen appears in the sidebar with full CRUD.
+- **A new screen** (a report, a chart): write `cxc-ui-<name>.js` exposing an
+  `install()` that calls `CXCApp.registerView(key, {title, icon, group, render})`,
+  load it in `index.html`, and add one `install()` call in `cxc-boot.js`.
+  The shell has no list of screens to update.
+- **A new field type** for the editor (a colour picker, a slider): add a `case`
+  to `cell()` in `cxc-ui-manage.js` and use it from the schema.
+- **New scheduling behaviour**: it goes in `cxc-model.js` with a test in the
+  same commit. If a UI file starts computing durations or dates, it is in the
+  wrong file.
+
+## State and events
+
+- **All hot state is in `CXStore`** under `cxc.*` keys — the dataset, the packed
+  result, the active tab, timeline grouping. Never add a loose `let _foo`.
+- **Every handler is a registered `CXAction`.** No inline `on*=` attributes
+  anywhere in this app, ever. Write `data-action`/`data-change` via
+  `cxAct(...)` / `cxOn(...)` and register the handler with
+  `CXActions.register('cxcThing', fn)`.
+- **`CXCApp.save()` is the single write path.** It persists, re-runs the
+  schedule and re-renders. Call it after any mutation; never re-render by hand.
+  It renders on a deferred tick on purpose — a synchronous re-render inside a
+  change handler rips the focused element out of the DOM mid-dispatch.
+- **Editable cells carry `data-focus-key`** so the shell can restore the cursor
+  across a re-render. Any new editable control needs one.
 
 ## Frontend conventions — copied from cx-portal verbatim
 
-Copy these files from cx-portal into this repo unchanged, and build on them.
-Do **not** reimplement them:
+`icons.js`, `format.js`, `cx-state.js`, `cx-store.js` and `cx-actions.js` are
+copied from cx-portal **unchanged and already in this repo**. Build on them; do
+not reimplement or edit them — an edit here becomes a merge conflict later. If
+one needs a fix, it belongs upstream in cx-portal.
 
 - **`icons.js`** — inline SVG icon system. **No emoji as icons, ever.**
   Use `${icon('name')}` inside template-literal HTML, `' + icon('name') + '`
   inside quoted strings. Add new glyphs to the `ICONS` map. Icons use
   `currentColor`, so they inherit text color. (Plain typographic arrows
   → ← and ✓/✗ are fine.)
-- **`format.js`** — `escapeHtml()`, `getLocationCode()`. **Every** value
-  interpolated into markup goes through `escapeHtml()`.
-- **`cx-state.js`** — `cxSkeleton()`, `cxEmpty()`, `cxError()` for loading /
-  empty / error states. Use them rather than inventing new ones.
-- **`cx-store.js`** — the observable store (`get`/`set`/`update`/`subscribe`).
-  Hot state goes here under `cxc.*` keys, **not** in loose `let _foo` globals.
-- **`cx-actions.js`** — event delegation. **No inline `onclick=`.** Write
-  `data-action="fn" data-args='["x"]'`, emitted with `cxAct('fn', x)` /
-  `cxOn('change', 'fn', '$cx.value')`. Module-local handlers register with
-  `CXActions.register('name', fn)`. cx-portal is retiring ~1,000 inline
-  handlers right now (they block a strict CSP and ES modules) — do not create
-  more debt to inherit.
-- **The `:root` token block** from the top of cx-portal's `styles.css`, and
-  `DESIGN_TOKENS.md`. Colors come from **semantic tokens only** — `--surface`,
-  `--text`, `--text-muted`, `--border`, plus the brand/status tokens
-  (`--primary`, `--good`, `--warn`, `--bad`, `--info`). **No raw hex** in
-  component CSS. Exactly ONE bare `:root {}` block in the whole stylesheet.
+- **`format.js`** — `escapeHtml()`. **Every** value interpolated into markup
+  goes through it. This app builds HTML from user-entered strings on every
+  screen; one unescaped interpolation is an XSS bug.
+- **`cx-state.js`** — `cxSkeleton()`, `cxEmpty()`, `cxError()`.
+- **`cx-store.js`** — the observable store. See "State and events" above.
+- **`cx-actions.js`** — event delegation. See "State and events" above.
+- **`cxc.css`** carries ONE bare `:root` token block, copied from cx-portal's
+  `styles.css`. Colors come from **semantic tokens only** — `--surface`,
+  `--text`, `--text-muted`, `--border`, the status tokens, and the
+  `--phase-*` palette. **No raw hex below the token block.** Never open a
+  second `:root {}`.
 - **Dark mode was deliberately removed from cx-portal. Do not add it here.**
 
-Accessibility rules that CI checks on the cx-portal side:
+Accessibility rules CI checks on the cx-portal side, so honour them here:
 - Icon-only buttons need an `aria-label` (icons are `aria-hidden`).
-- Every form control needs a real label.
+- Every input needs a real label or an `aria-label` — the generated table cells
+  do this from the schema, so keep it up in anything hand-written.
 
 ## Verify after every JS edit
 

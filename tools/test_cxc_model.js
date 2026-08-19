@@ -45,7 +45,8 @@ function fixture(over) {
       { id: "device", name: "Device", unit: "ea", minutesPerUnit: 120, refCrewSize: 2, setupMin: 0, divisible: "unit" },
       { id: "cutover", name: "Cutover", unit: "ea", minutesPerUnit: 120, refCrewSize: 2, setupMin: 0, divisible: "none" }
     ],
-    crews: [{ id: "c1", name: "Crew 1", size: 2, efficiency: 1, skills: [], shiftPatternIds: [] }],
+    crews: [{ id: "c1", name: "Crew 1", size: 2, efficiency: 1, skills: [], shiftPatternIds: [], vehicleIds: [] }],
+    locations: [], phases: [], materials: [], vehicles: [], scope: [],
     blackoutDates: []
   }, over || {});
 }
@@ -114,7 +115,7 @@ const wins = CXC.generateWindows("2026-09-07", "2026-09-13", a, ["night"]);
 eq("weekday pattern yields 5 windows in a week", wins.length, 5);
 eq("first window is the Monday", wins[0].date, "2026-09-07");
 ok("no weekend windows for a weekday pattern",
-  wins.every(w => [1, 2, 3, 4, 5].includes(CXC._dowOf(w.date))));
+  wins.every(w => [1, 2, 3, 4, 5].includes(CXC.dowOf(w.date))));
 
 const aBlack = fixture({ blackoutDates: ["2026-09-09"] });
 eq("blackout date removes its window",
@@ -127,9 +128,9 @@ eq("weekend pattern only lands on Saturday",
 console.log("\n── schedule packing ──");
 // 360 productive min/night. 300 lf of conduit = 600 min → 2 nights.
 let r = CXC.packSchedule({
-  items: [{ id: "i1", location: "MP 1.0", activityTypeId: "conduit", qty: 300 }],
+  items: [{ id: "i1", locationId: "MP 1.0", activityTypeId: "conduit", qty: 300 }],
   windows: CXC.generateWindows("2026-09-07", "2026-09-30", a, ["night"]),
-  assumptions: a
+  data: a
 });
 eq("splittable work spans two windows", r.assignments.length, 2);
 eq("first night is filled to the budget", r.assignments[0].minutes, 360);
@@ -140,9 +141,9 @@ eq("nothing left unplaced", r.unplaced.length, 0);
 
 // A 120-min device fits a night but never a 2hr window (30 productive min).
 r = CXC.packSchedule({
-  items: [{ id: "d1", location: "MP 2.0", activityTypeId: "device", qty: 1 }],
+  items: [{ id: "d1", locationId: "MP 2.0", activityTypeId: "device", qty: 1 }],
   windows: CXC.generateWindows("2026-09-07", "2026-09-11", a, ["short"]),
-  assumptions: a
+  data: a
 });
 eq("device does not fit a 2hr window", r.assignments.length, 0);
 eq("and it is reported, not dropped", r.unplaced.length, 1);
@@ -151,9 +152,9 @@ ok("with a reason naming the window length", /no window long enough/.test(r.unpl
 // divisible:'unit' — 4 devices = 480 min, more than one 360-min night, so they
 // split at WHOLE devices across two nights rather than blocking a crew.
 r = CXC.packSchedule({
-  items: [{ id: "d4", location: "MP 2.0", activityTypeId: "device", qty: 4 }],
+  items: [{ id: "d4", locationId: "MP 2.0", activityTypeId: "device", qty: 4 }],
   windows: CXC.generateWindows("2026-09-07", "2026-09-11", a, ["night"]),
-  assumptions: a
+  data: a
 });
 eq("4 devices split across two nights", r.assignments.length, 2);
 eq("3 whole devices the first night (360 min budget)", r.assignments[0].qty, 3);
@@ -163,9 +164,9 @@ eq("all 4 devices land", r.assignments.reduce((s, x) => s + x.qty, 0), 4);
 
 // divisible:'none' — must finish inside ONE window, so 4 x 120 min never fits.
 r = CXC.packSchedule({
-  items: [{ id: "co1", location: "MP 2.0", activityTypeId: "cutover", qty: 4 }],
+  items: [{ id: "co1", locationId: "MP 2.0", activityTypeId: "cutover", qty: 4 }],
   windows: CXC.generateWindows("2026-09-07", "2026-09-30", a, ["night"]),
-  assumptions: a
+  data: a
 });
 eq("indivisible work larger than a window never places", r.assignments.length, 0);
 ok("and says it must finish in one window",
@@ -173,9 +174,9 @@ ok("and says it must finish in one window",
 
 // ... but the same indivisible work DOES fit a weekend shutdown.
 r = CXC.packSchedule({
-  items: [{ id: "co2", location: "MP 2.0", activityTypeId: "cutover", qty: 4 }],
+  items: [{ id: "co2", locationId: "MP 2.0", activityTypeId: "cutover", qty: 4 }],
   windows: CXC.generateWindows("2026-09-07", "2026-09-30", a, ["shutdown"]),
-  assumptions: a
+  data: a
 });
 eq("a shutdown window absorbs it whole", r.assignments.length, 1);
 eq("in one placement, complete", r.unplaced.length, 0);
@@ -184,20 +185,20 @@ eq("in one placement, complete", r.unplaced.length, 0);
 const aLegacy = fixture();
 aLegacy.activityTypes = [{ id: "legacy", name: "Legacy", unit: "ea", minutesPerUnit: 120, refCrewSize: 2, setupMin: 0, splittable: false }];
 r = CXC.packSchedule({
-  items: [{ id: "l1", location: "MP 1.0", activityTypeId: "legacy", qty: 4 }],
+  items: [{ id: "l1", locationId: "MP 1.0", activityTypeId: "legacy", qty: 4 }],
   windows: CXC.generateWindows("2026-09-07", "2026-09-30", aLegacy, ["night"]),
-  assumptions: aLegacy
+  data: aLegacy
 });
 eq("splittable:false is honoured as divisible:'none'", r.assignments.length, 0);
 
 // Prerequisites gate the successor until the predecessor completes.
 r = CXC.packSchedule({
   items: [
-    { id: "p1", location: "MP 1.0", activityTypeId: "conduit", qty: 300 },
-    { id: "p2", location: "MP 1.0", activityTypeId: "device", qty: 1, prereqIds: ["p1"] }
+    { id: "p1", locationId: "MP 1.0", activityTypeId: "conduit", qty: 300 },
+    { id: "p2", locationId: "MP 1.0", activityTypeId: "device", qty: 1, prereqIds: ["p1"] }
   ],
   windows: CXC.generateWindows("2026-09-07", "2026-09-30", a, ["night"]),
-  assumptions: a
+  data: a
 });
 const firstDevice = r.assignments.find(x => x.itemId === "p2");
 const lastConduit = r.assignments.filter(x => x.itemId === "p1").pop();
@@ -208,9 +209,9 @@ ok("successor never starts before its prerequisite completes",
 const aSkill = fixture();
 aSkill.crews = [{ id: "cx", name: "Conduit only", size: 2, efficiency: 1, skills: ["conduit"], shiftPatternIds: [] }];
 r = CXC.packSchedule({
-  items: [{ id: "d2", location: "MP 3.0", activityTypeId: "device", qty: 1 }],
+  items: [{ id: "d2", locationId: "MP 3.0", activityTypeId: "device", qty: 1 }],
   windows: CXC.generateWindows("2026-09-07", "2026-09-11", aSkill, ["night"]),
-  assumptions: aSkill
+  data: aSkill
 });
 ok("unqualified crew leaves the item unplaced with a skills reason",
   r.unplaced.length === 1 && /no crew qualified/.test(r.unplaced[0].reason), JSON.stringify(r.unplaced));
@@ -224,11 +225,11 @@ aTwo.crews = [
 ];
 r = CXC.packSchedule({
   items: [
-    { id: "m1", location: "MP 1.0", activityTypeId: "conduit", qty: 180 },
-    { id: "m2", location: "MP 2.0", activityTypeId: "conduit", qty: 180 }
+    { id: "m1", locationId: "MP 1.0", activityTypeId: "conduit", qty: 180 },
+    { id: "m2", locationId: "MP 2.0", activityTypeId: "conduit", qty: 180 }
   ],
   windows: CXC.generateWindows("2026-09-07", "2026-09-07", aTwo, ["night"]),
-  assumptions: aTwo
+  data: aTwo
 });
 eq("two crews clear both scopes in one night", r.unplaced.length, 0);
 eq("and the window reports both crews", r.windows[0].crewCount, 2);
@@ -238,11 +239,11 @@ const aMove = fixture();
 aMove.globals.relocationMin = 60;
 r = CXC.packSchedule({
   items: [
-    { id: "x1", location: "MP 1.0", activityTypeId: "conduit", qty: 60 },
-    { id: "x2", location: "MP 9.0", activityTypeId: "conduit", qty: 60 }
+    { id: "x1", locationId: "MP 1.0", activityTypeId: "conduit", qty: 60 },
+    { id: "x2", locationId: "MP 9.0", activityTypeId: "conduit", qty: 60 }
   ],
   windows: CXC.generateWindows("2026-09-07", "2026-09-07", aMove, ["night"]),
-  assumptions: aMove
+  data: aMove
 });
 const moved = r.assignments.filter(x => x.relocationMin > 0);
 eq("changing location inside a shift costs relocation once", moved.length, 1);
@@ -250,12 +251,165 @@ eq("and it is charged at the configured rate", moved[0].relocationMin, 60);
 
 // Utilization reporting.
 r = CXC.packSchedule({
-  items: [{ id: "u1", location: "MP 1.0", activityTypeId: "conduit", qty: 180 }],
+  items: [{ id: "u1", locationId: "MP 1.0", activityTypeId: "conduit", qty: 180 }],
   windows: CXC.generateWindows("2026-09-07", "2026-09-07", a, ["night"]),
-  assumptions: a
+  data: a
 });
 eq("180 lf = 360 min = a full 8hr night", r.windows[0].utilization, 100);
 eq("summary counts the completed item", r.summary.completeCount, 1);
+
+// ── Vehicles ───────────────────────────────────────────────────────────────
+console.log("\n── vehicles ──");
+function fleetFixture() {
+  const f = fixture();
+  f.shiftPatterns[0].maxCrews = 2;
+  f.vehicles = [
+    { id: "v1", name: "Hi-rail 1", status: "active", availableFrom: "", availableTo: "" },
+    { id: "v2", name: "Hi-rail 2", status: "out of service", availableFrom: "", availableTo: "" }
+  ];
+  f.crews = [
+    { id: "c1", name: "Crew 1", size: 2, efficiency: 1, skills: [], shiftPatternIds: [], vehicleIds: ["v1"] },
+    { id: "c2", name: "Crew 2", size: 2, efficiency: 1, skills: [], shiftPatternIds: [], vehicleIds: ["v1"] }
+  ];
+  return f;
+}
+eq("an active vehicle with no dates is always available",
+  CXC.vehicleAvailableOn({ id: "v", status: "active" }, "2026-09-07"), true);
+eq("an out-of-service vehicle never is",
+  CXC.vehicleAvailableOn({ id: "v", status: "out of service" }, "2026-09-07"), false);
+eq("a vehicle is unavailable before its start date",
+  CXC.vehicleAvailableOn({ id: "v", status: "active", availableFrom: "2026-10-01" }, "2026-09-07"), false);
+eq("and available on it",
+  CXC.vehicleAvailableOn({ id: "v", status: "active", availableFrom: "2026-10-01" }, "2026-10-01"), true);
+
+const aFleet = fleetFixture();
+r = CXC.packSchedule({
+  items: [
+    { id: "f1", locationId: "L1", activityTypeId: "conduit", qty: 180 },
+    { id: "f2", locationId: "L2", activityTypeId: "conduit", qty: 180 }
+  ],
+  windows: CXC.generateWindows("2026-09-07", "2026-09-07", aFleet, ["night"]),
+  data: aFleet
+});
+eq("two crews sharing ONE truck means only one crew works", r.windows[0].crewCount, 1);
+ok("so the second scope slips past the single night", r.unplaced.length === 1, JSON.stringify(r.unplaced));
+
+const aFleet2 = fleetFixture();
+aFleet2.vehicles[1].status = "active";
+aFleet2.crews[1].vehicleIds = ["v2"];
+r = CXC.packSchedule({
+  items: [
+    { id: "f1", locationId: "L1", activityTypeId: "conduit", qty: 180 },
+    { id: "f2", locationId: "L2", activityTypeId: "conduit", qty: 180 }
+  ],
+  windows: CXC.generateWindows("2026-09-07", "2026-09-07", aFleet2, ["night"]),
+  data: aFleet2
+});
+eq("give each crew its own truck and both work", r.windows[0].crewCount, 2);
+eq("and the whole scope lands in one night", r.unplaced.length, 0);
+
+// ── Materials ──────────────────────────────────────────────────────────────
+console.log("\n── materials ──");
+function matFixture(over) {
+  const f = fixture();
+  f.materials = [{ id: "m1", code: "C-1", name: "Conduit stock", unit: "lf", onHand: 0, availableFrom: "" }];
+  f.activityTypes[0].materials = [{ materialId: "m1", qtyPerUnit: 1 }];
+  Object.assign(f.materials[0], over || {});
+  return f;
+}
+eq("no delivery date means no material constraint",
+  CXC.materialReadyDate(matFixture().activityTypes[0], matFixture()), "");
+
+const aLate = matFixture({ availableFrom: "2026-09-21" });
+eq("the ready date is the latest material delivery",
+  CXC.materialReadyDate(aLate.activityTypes[0], aLate), "2026-09-21");
+
+r = CXC.packSchedule({
+  items: [{ id: "m-1", locationId: "L1", activityTypeId: "conduit", qty: 180 }],
+  windows: CXC.generateWindows("2026-09-07", "2026-09-30", aLate, ["night"]),
+  data: aLate
+});
+ok("work cannot start before its material is on site",
+  r.assignments.length > 0 && r.assignments[0].date >= "2026-09-21", r.assignments[0] && r.assignments[0].date);
+
+const aShort = matFixture({ onHand: 100 });
+r = CXC.packSchedule({
+  items: [{ id: "m-2", locationId: "L1", activityTypeId: "conduit", qty: 300 }],
+  windows: CXC.generateWindows("2026-09-07", "2026-09-30", aShort, ["night"]),
+  data: aShort
+});
+eq("stock on hand caps how much gets installed",
+  r.assignments.reduce((s, x) => s + x.qty, 0), 100);
+ok("and the leftover says the stock ran out",
+  /stock exhausted/.test(r.unplaced[0].reason), r.unplaced[0].reason);
+eq("the take-off reports what the plan drew", r.materials[0].required, 100);
+
+const aPlenty = matFixture({ onHand: 100 });
+r = CXC.packSchedule({
+  items: [{ id: "m-3", locationId: "L1", activityTypeId: "conduit", qty: 60 }],
+  windows: CXC.generateWindows("2026-09-07", "2026-09-30", aPlenty, ["night"]),
+  data: aPlenty
+});
+eq("no shortfall when stock covers the scope", r.materials[0].shortfall, 0);
+
+// ── Phase order ────────────────────────────────────────────────────────────
+console.log("\n── phase order ──");
+// Two crews, each PINNED to one item, so the only thing that can stop crew 2
+// starting on night 1 is the phase rule itself.
+function phaseFixture(enforce) {
+  const f = fixture();
+  f.globals.enforcePhaseOrder = enforce;
+  f.shiftPatterns[0].maxCrews = 2;
+  f.phases = [
+    { id: "p1", seq: 1, name: "Rough-in" },
+    { id: "p2", seq: 2, name: "Cable pull" }
+  ];
+  f.crews = [
+    { id: "c1", name: "Crew 1", size: 2, efficiency: 1, skills: [], shiftPatternIds: [], vehicleIds: [] },
+    { id: "c2", name: "Crew 2", size: 2, efficiency: 1, skills: [], shiftPatternIds: [], vehicleIds: [] }
+  ];
+  return f;
+}
+// q1 is far too big to finish quickly; q2 is one night's work behind it.
+function phaseItems(loc2) {
+  return [
+    { id: "q1", locationId: "L1", phaseId: "p1", activityTypeId: "conduit", qty: 1440, crewId: "c1" },
+    { id: "q2", locationId: loc2, phaseId: "p2", activityTypeId: "conduit", qty: 90, crewId: "c2" }
+  ];
+}
+const worksNight1 = (res, id) => res.assignments.some(x => x.itemId === id && x.date === "2026-09-07");
+
+const aPhase = phaseFixture(true);
+r = CXC.packSchedule({
+  items: phaseItems("L1"),
+  windows: CXC.generateWindows("2026-09-07", "2026-10-30", aPhase, ["night"]),
+  data: aPhase
+});
+eq("phase 1 starts on night one", worksNight1(r, "q1"), true);
+eq("phase 2 at the SAME location is held back", worksNight1(r, "q2"), false);
+const lastP1 = r.assignments.filter(x => x.itemId === "q1").pop();
+const firstP2 = r.assignments.find(x => x.itemId === "q2");
+ok("and only starts once phase 1 there is complete",
+  firstP2 && lastP1 && firstP2.date >= lastP1.date,
+  JSON.stringify({ firstP2: firstP2 && firstP2.date, lastP1: lastP1 && lastP1.date }));
+
+// A different location is NOT blocked by another location's open phase.
+const aPhase2 = phaseFixture(true);
+r = CXC.packSchedule({
+  items: phaseItems("L2"),
+  windows: CXC.generateWindows("2026-09-07", "2026-10-30", aPhase2, ["night"]),
+  data: aPhase2
+});
+eq("phase order is per location, not project-wide", worksNight1(r, "q2"), true);
+
+// Switch the rule off and the same-location successor is free to run.
+const aFree = phaseFixture(false);
+r = CXC.packSchedule({
+  items: phaseItems("L1"),
+  windows: CXC.generateWindows("2026-09-07", "2026-10-30", aFree, ["night"]),
+  data: aFree
+});
+eq("turning phase order off releases it", worksNight1(r, "q2"), true);
 
 console.log("\n" + passed + " passed, " + failed + " failed");
 process.exit(failed ? 1 : 0);
