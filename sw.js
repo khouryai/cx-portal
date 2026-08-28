@@ -26,6 +26,7 @@ const SHELL_ASSETS = [
   './app.js',
   './cx-dyn-sim-fleet.js',
   './cx-dyn-campaign-fit.js',
+  './cx-closure-window.js',
   './perms-admin.js',
   './team.js',
   './markup.js',

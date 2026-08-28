@@ -56,6 +56,7 @@ const suites = [
   { file: "tools/test_dyn_cascade.js", needs: [] },     // dynamic-testing cascade auto-allocator
   { file: "tools/test_la_resource_picker.js", needs: [] }, // lookahead resource picker company filter
   { file: "tools/test_dyn_campaign_edit.js", needs: [] },  // dynamic-testing campaign edit + non-revenue hours
+  { file: "tools/test_dyn_closure_window.js", needs: [] }, // weekend / line-closure continuous access block
   { file: "tools/test_dyn_board_schedule.js", needs: [] }, // board schedules only onto eligible access windows
   { file: "tools/test_dyn_alloc_pack.js", needs: [] },     // aggressive duration-aware window packing
   { file: "tools/test_dyn_whatif.js", needs: [] },         // what-if scope/per-DOW extension/metrics

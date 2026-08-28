@@ -42902,7 +42902,7 @@ function _dynAccShiftMap(shifts) {
   const m = new Map();
   for (const s of shifts) {
     if (!s.shift_date) continue;
-    m.set(`${s.control_zone_code}|${_dynDayKey(s.shift_date)}`, s);
+    for (const k of (window.CXClosure ? CXClosure.coveredDayKeys(s) : [_dynDayKey(s.shift_date)])) m.set(`${s.control_zone_code}|${k}`, s);
   }
   return m;
 }
@@ -43058,7 +43058,7 @@ function _dynRenderAccess() {
 function _dynAccShiftChip(s, closureCamps, small) {
   const t = _DYN_SHIFT_TONE[s.status] || _DYN_SHIFT_TONE.planned;
   const fmtT = iso => new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-  const time = (s.start_at && s.end_at) ? `${fmtT(s.start_at)}–${fmtT(s.end_at)}` : '';
+  const time = (window.CXClosure && CXClosure.spanLabel(s)) || ((s.start_at && s.end_at) ? `${fmtT(s.start_at)}–${fmtT(s.end_at)}` : '');
   const extra = (s.access_zones || []).filter(x => x !== s.control_zone_code);
   const cls = `accx-shift is-${escapeHtml(s.status || 'planned')}${closureCamps && closureCamps.has(s.campaign_id) ? ' is-closure' : ''}${small ? ' sm' : ''}`;
   const title = `${s.control_zone_code} — ${t.label}${time ? ' · ' + time : ''}${extra.length ? ' · grants ' + extra.join(', ') : ''}${s.status === 'cancelled' && s.cancellation_category ? ' · ' + s.cancellation_category : ''} — click to manage`;
@@ -43090,8 +43090,7 @@ function _dynAccMonthGridHtml(shifts, anchor) {
   const todayKey = _dynDayKey(new Date());
   const closure = new Set((_dynPage.campaigns || []).filter(c => c.campaign_kind === 'closure').map(c => c.id));
   const byDay = new Map();
-  for (const s of (shifts || [])) {
-    const k = _dynDayKey(s.shift_date);
+  for (const s of (shifts || [])) for (const k of (window.CXClosure ? CXClosure.coveredDayKeys(s) : [_dynDayKey(s.shift_date)])) {
     if (!byDay.has(k)) byDay.set(k, []);
     byDay.get(k).push(s);
   }
@@ -43261,7 +43260,7 @@ function _dynCampSyncDays() {
     st[k].zones = (st[k].zones || []).filter(z => palette.has(z));
     if (st[k].on && !st[k].zones.length) st[k].zones = [...palette];
   }
-  _dynCampRerenderDays();
+  _dynCampRerenderDays(); if (window.CXClosure) CXClosure.rerender();   // the block's zone list follows the campaign palette
 }
 
 function _dynOpenNewCampaign() { _dynCampaignModal(null); }
@@ -43272,7 +43271,7 @@ function _dynEditCampaign(id) {
 }
 // Load the per-day editor state from an existing campaign's stored schedule.
 function _dynCampLoadDays(camp) {
-  const days = {};
+  const days = {}; if (window.CXClosure) CXClosure.loadFromCampaign(camp);
   const sched = camp.day_schedule || {};
   const dow = new Set((camp.days_of_week || []).map(Number));
   const t = (v, dflt) => (v ? String(v).slice(0, 5) : dflt);
@@ -43295,7 +43294,7 @@ function _dynCampaignModal(camp) {
   const isEdit = !!(camp && camp.id);
   const prefill = !!camp;
   window._dynCampScope = new Set(prefill ? (camp.test_case_ids || []) : []);
-  if (prefill) _dynCampLoadDays(camp); else _dynCampInitDays();
+  if (prefill) _dynCampLoadDays(camp); else { _dynCampInitDays(); if (window.CXClosure) CXClosure.loadFromCampaign(null); }
   const zoneOpts = _dynAccZoneOptions();
   const phaseOpts = (typeof LOCS !== 'undefined' ? LOCS : []).filter(l => l.level === 1)
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
@@ -43330,7 +43329,7 @@ function _dynCampaignModal(camp) {
             <button type="button" class="dyn-btn" style="font-size:10.5px;padding:2px 6px;" data-action="_dynNrhToggleSettings" title="Configure Non-Revenue Hours" aria-label="Configure Non-Revenue Hours">${icon('settings')}</button>
           </span>
           </label>
-          ${_dynNrhSettingsHtml()}
+          ${_dynNrhSettingsHtml()}<div id="camp-closure-wrap">${window.CXClosure ? CXClosure.editorHtml() : ''}</div>
           <div id="camp-day-rows" style="margin-top:6px;">${_dynCampDayRowsHtml()}</div>
         </div>
         <div class="form-field"><label>Trains requested <span style="color:var(--gray-500);font-weight:400;">(vehicles per shift)</span></label><input id="camp-trains" type="number" min="1" value="${escapeHtml(String(av('trains_requested', 2)))}" style="${fld}" ${cxOn('change', '_dynCampOnTrainsChange')}></div>
@@ -43347,7 +43346,7 @@ function _dynCampaignModal(camp) {
         <div class="form-field"><label>Phase</label>
           <select id="camp-phase" style="${fld}"><option value="">—</option>${phaseOpts.map(p=>`<option value="${escapeHtml(p.name)}" ${prefill && camp.phase === p.name ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}</select></div>
         <div class="form-field"><label>Access type</label>
-          <select id="camp-kind" style="${fld}"><option value="standard" ${prefill && camp.campaign_kind === 'standard' ? 'selected' : ''}>Standard non-revenue</option><option value="closure" ${prefill && camp.campaign_kind === 'closure' ? 'selected' : ''}>Weekend / line closure</option></select></div>
+          <select id="camp-kind" style="${fld}" ${cxOn('change', '_dynCampKindChange', '$cx.value')}><option value="standard" ${prefill && camp.campaign_kind === 'standard' ? 'selected' : ''}>Standard non-revenue</option><option value="closure" ${prefill && camp.campaign_kind === 'closure' ? 'selected' : ''}>Weekend / line closure</option></select></div>
         <div class="form-field"><label>BART permit / work order #</label><input id="camp-permit" style="${fld}" placeholder="optional" value="${escapeHtml(String(av('permit_no', '')))}"></div>
         <div class="form-field" style="grid-column:1/-1;"><label>Test case scope <span style="color:var(--gray-500);font-weight:400;">(which dynamic test cases this campaign covers — leave empty for all in-zone)</span></label>
           <input id="camp-scope-search" placeholder="Search test cases…" style="${fld};margin-bottom:6px;" ${cxOn('input', '_dynCampScopeFilter', '$cx.value')}>
@@ -43363,7 +43362,7 @@ function _dynCampaignModal(camp) {
   // The day rows are built before the zone <select> is in the DOM, so the
   // per-day zone checkboxes can't read the palette yet. Re-render once mounted
   // so an edited campaign shows its zones immediately.
-  setTimeout(() => { try { if (prefill) _dynCampRerenderDays(); if (typeof _dynCampScopeInit === 'function') _dynCampScopeInit(); } catch (_) {} }, 0);
+  setTimeout(() => { try { if (window.CXClosure) CXClosure.rerender(); if (prefill) _dynCampRerenderDays(); if (typeof _dynCampScopeInit === 'function') _dynCampScopeInit(); } catch (_) {} }, 0);
 }
 
 // Build the per-day shift window rows for a campaign — ONE window per access
@@ -43371,7 +43370,7 @@ function _dynCampaignModal(camp) {
 // zone. The control_zone_code is the day's primary (first) zone; access_zones
 // carries the full set, so a 2-location day is a single row/cell granting both.
 function _dynGenerateShiftRows(campaign) {
-  const rows = [];
+  const rows = []; if (window.CXClosure && CXClosure.isClosure(campaign)) rows.push(...CXClosure.generateShiftRows(campaign));
   const dow = new Set((campaign.days_of_week || []).map(Number));
   const start = _dynParseDate(campaign.start_date);
   const end = _dynParseDate(campaign.end_date);
@@ -43423,6 +43422,7 @@ async function _dynSaveCampaign(editId) {
     daySchedule[d] = { start: sd.start, end: sd.end, zones: dz };
     dz.forEach(z => _zoneUnion.add(z));
   }
+  if (window.CXClosure && !CXClosure.applyToSave(daySchedule, _zoneUnion, zonePalette)) return;   // closure block → day_schedule.closure (validates + alerts)
   const zones = [..._zoneUnion];
   const baseDow = dow.length ? dow[0] : null;
   const shiftStart = (baseDow != null && daySchedule[baseDow] && daySchedule[baseDow].start) || '07:00';
@@ -43445,8 +43445,7 @@ async function _dynSaveCampaign(editId) {
   if (!zones.length) { cxAlert('Pick at least one zone.'); return; }
   if (!startDate || !endDate) { cxAlert('Start and end dates are required.'); return; }
   if (_dynParseDate(endDate) < _dynParseDate(startDate)) { cxAlert('End date must be on or after start.'); return; }
-  if (!dow.length) { cxAlert('Pick at least one day of week.'); return; }
-  if (shiftEnd <= shiftStart) { cxAlert('Shift end must be after shift start.'); return; }
+  if (!dow.length && !daySchedule.closure) { cxAlert('Pick at least one access day, or set up the weekend closure block.'); return; }
 
   const fields = {
     name, zone_codes: zones, phase, subsystem,
@@ -43833,7 +43832,7 @@ async function _dynShiftCancel(id) {
 // ── Shift Builder (Phase 3): assign instances into a confirmed shift ─────
 function _dynShiftMinutes(s) {
   if (!s?.start_at || !s?.end_at) return null;
-  return Math.round((new Date(s.end_at) - new Date(s.start_at)) / 60000);
+  return Math.round(_dynWinMinutes(s));   // closure-aware (productive-hours cap)
 }
 
 function _dynBuildShift(shiftId) {
@@ -45134,14 +45133,14 @@ function _dynCampDowToggle(d, on) {
   }
 }
 function _dynCampShiftSummary(c) {
-  const sched = c.day_schedule || {};
-  const keys = Object.keys(sched);
+  const sched = c.day_schedule || {}, clo = (window.CXClosure && CXClosure.isClosure(c)) ? CXClosure.summaryLabel(c) : '';
+  const keys = Object.keys(sched).filter(k => /^[0-6]$/.test(k));
   if (keys.length) {
     const uniq = new Set(keys.map(k => sched[k].start + '-' + sched[k].end));
-    if (uniq.size === 1) return String(sched[keys[0]].start).slice(0, 5) + '–' + String(sched[keys[0]].end).slice(0, 5);
-    return 'times vary by day';
+    if (uniq.size === 1) return (clo ? clo + ' + ' : '') + String(sched[keys[0]].start).slice(0, 5) + '–' + String(sched[keys[0]].end).slice(0, 5);
+    return (clo ? clo + ' + ' : '') + 'times vary by day';
   }
-  return String(c.shift_start || '').slice(0, 5) + '–' + String(c.shift_end || '').slice(0, 5);
+  return clo || (String(c.shift_start || '').slice(0, 5) + '–' + String(c.shift_end || '').slice(0, 5));
 }
 
 // ── Cascade auto-allocation (Increment C) ───────────────────────────────
@@ -47590,11 +47589,11 @@ function _dynAllocCapacity(camp) {
   return 3;
 }
 
-// Per-window capacity from its own length (tests ≈ minutes / 40, clamped 1..8).
+// Per-window capacity from its own length (tests ≈ minutes / 40), clamped 1..8 — or 1..40 for a multi-day closure possession, since 8 is sized for a 2 h window.
 function _dynWindowCapacity(w) {
   if (w && w.start_at && w.end_at) {
-    const mins = (new Date(w.end_at) - new Date(w.start_at)) / 60000;
-    if (mins > 0) return Math.max(1, Math.min(8, Math.round(mins / 40)));
+    const mins = _dynWinMinutes(w);   // closure-aware (productive-hours cap)
+    if (mins > 0) return Math.max(1, Math.min(window.CXClosure && CXClosure.isClosureWindow(w) ? 40 : 8, Math.round(mins / 40)));
   }
   return 3;
 }
@@ -47617,7 +47616,7 @@ function _dynWindowPreload(w) {
 function _dynWinMinutes(w) {
   if (w && w.start_at && w.end_at) {
     const m = (new Date(w.end_at) - new Date(w.start_at)) / 60000;
-    return m > 0 ? m : 0;
+    return m > 0 ? (window.CXClosure ? CXClosure.productiveMinutes(w, m) : m) : 0;
   }
   return 0;
 }

@@ -31,7 +31,18 @@ function _dynCampDraftFromForm() {
     if (!dz.length) continue;
     daySchedule[d] = { start: sd.start, end: sd.end, zones: dz };
   }
-  const zones = [...new Set(Object.values(daySchedule).flatMap(s => s.zones))];
+  // The weekend closure block is part of the draft too — without it the fit
+  // panel would price a closure campaign as if it had no access at all.
+  const kind = (g('camp-kind') && g('camp-kind').value) || 'standard';
+  if (kind === 'closure' && window.CXClosure) {
+    const cw = window.CXClosure.normalize(window.CXClosure.current());
+    if (!window.CXClosure.validate(cw)) {
+      cw.zones = (cw.zones && cw.zones.length) ? cw.zones : zonePalette;
+      if (cw.zones.length) daySchedule.closure = cw;
+    }
+  }
+  const zones = [...new Set(Object.values(daySchedule)
+    .filter(s => Array.isArray(s.zones)).flatMap(s => s.zones))];
   const modes = Array.from(document.querySelectorAll('.camp-mode:checked')).map(c => c.value);
   const trains = parseInt(g('camp-trains') ? g('camp-trains').value : '', 10) || 1;
   const consistSizes = (typeof _dynReadConsistSizes === 'function')
@@ -40,7 +51,7 @@ function _dynCampDraftFromForm() {
   return {
     id: '__draft__', zone_codes: zones,
     start_date: g('camp-start').value, end_date: g('camp-end').value,
-    days_of_week: dow, day_schedule: daySchedule,
+    days_of_week: dow, day_schedule: daySchedule, campaign_kind: kind,
     shift_start: base ? base.start : '07:00', shift_end: base ? base.end : '15:00',
     allowed_modes: modes.length ? modes : ['CBTC', 'VATC'],
     trains_requested: trains, consist_size: consistSizes.find(x => x != null) ?? null,

@@ -1,0 +1,47 @@
+-- ============================================================
+-- Access campaign: the weekend / line-closure CONTINUOUS BLOCK
+--
+-- A planned closure is one continuous possession — e.g. Friday 21:00 straight
+-- through to Monday 04:00 — not a stack of per-day shifts a planner has to
+-- re-enter as 00:00–23:59 on each calendar day. Before this, campaign_kind
+-- 'closure' was visual classification only (see
+-- supabase_access_campaign_kind.sql), so a weekend had to be built by hand as
+-- N daily windows that the allocator and the Lookahead then treated as N
+-- separate, unrelated shifts.
+--
+-- NO COLUMN IS ADDED. The block is stored on the existing day_schedule jsonb
+-- under the non-numeric key "closure", alongside the "0".."6" per-day entries:
+--
+--   {
+--     "2":       { "start": "01:00", "end": "03:00", "zones": ["W40"] },
+--     "closure": { "startDow": 5, "startTime": "21:00",
+--                  "endDow":   1, "endTime":   "04:00",
+--                  "productiveHours": 24,
+--                  "zones": ["W40", "Y10"] }
+--   }
+--
+-- Every reader of day_schedule looks up a day of week ("0".."6"), so the
+-- "closure" key is inert to all of them and no migration is required to start
+-- writing it. This file exists to DOCUMENT the key on the column comment.
+--
+--   • startDow / endDow  — 0 = Sunday … 6 = Saturday.
+--   • The span is (endDow - startDow + 7) % 7 whole days; a block whose end
+--     day-of-week equals its start day and whose endTime is at or before
+--     startTime is a FULL WEEK possession, not a zero-length one.
+--   • productiveHours — OPTIONAL cap on the hours auto-allocation may fill.
+--     A 55 h possession is 55 h of ACCESS but rarely 55 h of testing, since
+--     crews work shifts. The calendar keeps the honest possession length while
+--     the allocator packs against this. null / absent = the whole block.
+--   • zones — the block's own zone subset. Empty = every campaign zone.
+--
+-- The block generates ONE zone_access_windows row per occurrence of startDow
+-- inside [start_date, end_date], spanning the whole possession, keyed on its
+-- START date — so the campaign-edit reconcile updates the block in place
+-- instead of duplicating it. It COEXISTS with the per-day rows: a campaign can
+-- run Tue/Wed non-revenue shifts AND a Fri→Mon closure each week.
+--
+-- Idempotent — comment-only, safe to re-run.
+-- ============================================================
+
+comment on column access_campaigns.day_schedule is
+  'Per-day-of-week access window times: { "<dow 0-6>": {"start":"HH:MM","end":"HH:MM","zones":[…]} }. Empty / missing day falls back to shift_start/shift_end. The non-numeric key "closure" carries a weekend/line-closure CONTINUOUS block for campaign_kind = ''closure'': {"startDow":0-6,"startTime":"HH:MM","endDow":0-6,"endTime":"HH:MM","productiveHours":<hours the allocator may fill, null = whole block>,"zones":[…]}. It generates ONE zone_access_windows row per weekend spanning the whole possession, and coexists with the per-day entries.';

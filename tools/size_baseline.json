@@ -1,7 +1,7 @@
 {
   "_comment": "Tier 3 #11 monolith ratchet. `cap` is the maximum line count for each file; tools/test_size_ratchet.js (run in CI via run_tests.js) FAILS the build if a file exceeds its cap. The cap only ever moves DOWN: new features land in NEW files (wired into index.html + sw.js + tools/_load_app.js), and after extracting code from a monolith you LOWER its cap in the same commit. Never raise a cap to make a build pass — that defeats the ratchet. Baseline captured 2026-07-21 at the start of the Tier 3 modularization program.",
   "files": {
-    "app.js": 50598
+    "app.js": 50597
   },
   "inlineHandlers": {
     "_comment": "Tier 3 #11 Stage B: total inline on*= handlers (onclick/onchange/…) across the listed files may only DECREASE as they move to data-action (cx-actions.js / the act() emitter). tools/test_inline_handler_ratchet.js fails if the count rises, so no new inline handler can be added — convert instead. Lower `cap` in the same commit that converts handlers.",

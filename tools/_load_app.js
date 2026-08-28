@@ -18,7 +18,7 @@ const vm = require("vm");
 const ROOT = path.resolve(__dirname, "..");
 
 // Classic-script order from index.html (extracted modules first, then app.js).
-const SCRIPTS = ["config.js", "data.js", "icons.js", "format.js", "cx-state.js", "cx-store.js", "cx-actions.js", "compute.js", "trackplan.js", "print-report.js", "app.js", "cx-dyn-sim-fleet.js", "cx-dyn-campaign-fit.js", "perms-admin.js", "team.js", "readiness.js", "mobile.js", "search.js", "notifications.js", "punch-actions.js", "dyn-actions.js", "tr-activities.js"];
+const SCRIPTS = ["config.js", "data.js", "icons.js", "format.js", "cx-state.js", "cx-store.js", "cx-actions.js", "compute.js", "trackplan.js", "print-report.js", "app.js", "cx-dyn-sim-fleet.js", "cx-dyn-campaign-fit.js", "cx-closure-window.js", "perms-admin.js", "team.js", "readiness.js", "mobile.js", "search.js", "notifications.js", "punch-actions.js", "dyn-actions.js", "tr-activities.js"];
 
 // A callable/constructable Proxy that answers ANY property access with another
 // universal mock, so arbitrary browser-API chains resolve without throwing.
