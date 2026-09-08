@@ -13142,7 +13142,7 @@ function _amDrilldownHTML(key) {
         </span>
       </div>
 
-      ${Object.entries(tpMap).map(([tp, tpItems]) => {
+      ${(typeof _trSortedSectionEntries === 'function' ? _trSortedSectionEntries(tpMap) : Object.entries(tpMap)).map(([tp, tpItems]) => {
         if (!tpItems.length && _trDrillStatusFilter) return ''; // hide empty sections when filtering
         // Decode composite key "Section~~Procedure" or plain procedure
         const tpHasSec  = tp.indexOf('~~') >= 0;

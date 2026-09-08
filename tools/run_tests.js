@@ -64,6 +64,7 @@ const suites = [
   { file: "tools/test_dyn_campaign_fit.js", needs: [] },   // campaign scope fit metrics (utilization/coverage/footprint)
   { file: "tools/test_db_update_guard.js", needs: [] }, // _dbUpdate optimistic-concurrency guard
   { file: "tools/test_tr_insights.js", needs: [] },     // blockers & failures insight analytics
+  { file: "tools/test_tr_section_order.js", needs: [] }, // drill-down procedure-card ordering
   { file: "tools/test_print_report.js", needs: [] },    // shared branded print template + adoption
   { file: "tools/test_perm_resolver.js", needs: [] },   // perms-admin effective-permission resolver
   { file: "tools/test_ui_can.js", needs: [] },          // UI permission gating + nav mapping integrity

@@ -55,6 +55,32 @@ function _trDupBtnHTML(key) {
   return `<button class="form-secondary tr-mini-btn" aria-label="Duplicate activity" title="Duplicate — copies this activity's test cases into a new activity, statuses reset" ${cxAct('_trDuplicateActivityModal', String(key))}>${icon('copy')}</button>`;
 }
 
+// ── Section ordering in the activity drill-down ───────────────────────────
+// _amDrilldownHTML groups an activity's test cases into procedure cards keyed
+// "Section~~Procedure" (or a bare procedure when the case carries no section).
+// Object.entries() would hand those back in first-seen order, i.e. whatever
+// order the CSV import / template deployment happened to write rows in, so the
+// same procedures sat in a different place in every activity. Order them by
+// procedure name instead — natural (numeric-aware) and case-insensitive, so
+// "TP-2" precedes "TP-10" — with the section name as the tie-breaker when one
+// procedure appears under two sections, and unnamed procedures ("(No
+// Procedure)") last. Called from _amDrilldownHTML in place of Object.entries.
+function _trSectionSortKey(key) {
+  const k = String(key);
+  const i = k.indexOf('~~');
+  if (i >= 0) return { section: k.slice(0, i), procedure: k.slice(i + 2) };
+  return { section: '', procedure: k === '(No Procedure)' ? '' : k };
+}
+
+function _trSortedSectionEntries(tpMap) {
+  const cmp = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+  return Object.entries(tpMap || {}).sort(([ka], [kb]) => {
+    const a = _trSectionSortKey(ka), b = _trSectionSortKey(kb);
+    if (!a.procedure !== !b.procedure) return a.procedure ? -1 : 1; // unnamed procedures last
+    return cmp(a.procedure, b.procedure) || cmp(a.section, b.section);
+  });
+}
+
 // ── The shared form ───────────────────────────────────────────────────────
 function _traPhaseOptions() {
   const fromLocs = (typeof LOCS !== 'undefined' ? LOCS : []).filter(l => l.level === 1).map(l => l.name);
