@@ -6,6 +6,29 @@
 -- inflate every activity's item count and completion %, so they come out of
 -- public.test_items entirely.
 --
+-- ── APPLIED 2026-09-08 (project uqtwiucxktljhukmgmxg) ───────────────────────
+-- Run against the live database. 104 rows deleted, 19 distinct names, every one
+-- subsystem IXL, spread over 9 activity/location instances of 4 activities.
+-- test_items went 1222 → 1118. Nothing cascaded: no child asset rows, no punch
+-- links, no form links, no dynamic instances, no status-history or test_results
+-- references, no prerequisite edges. The strict match and a broad
+-- ilike '%completion report%' scan returned the SAME 104 rows, so nothing was
+-- missed and nothing extra was taken.
+--
+-- Every deleted row was snapshotted first by migration
+-- archive_standard_completion_report_cases into private.archive_stcr_2026_09
+-- (private schema — not exposed through PostgREST). To undo the cleanup:
+--   insert into public.test_items select * from private.archive_stcr_2026_09;
+-- Drop that table once you are satisfied the removal is right.
+--
+-- Note for the record: 57 of the 104 carried status Pass, 7 Fail, 8 In Progress
+-- and 10 had notes — placeholder rows people had been ticking off. That state
+-- lives on only in the archive table.
+--
+-- The script below is kept as the reusable/repeatable form (the rows come back
+-- with any TestPlan_Master.xlsm re-sync).
+-- ────────────────────────────────────────────────────────────────────────────
+--
 -- HOW TO RUN (Supabase → SQL Editor, project uqtwiucxktljhukmgmxg):
 --   1. Run STEP 1 on its own and read the output. Nothing is modified.
 --      Confirm the names, the count, and that the subsystem breakdown is only
