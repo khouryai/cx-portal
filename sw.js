@@ -39,6 +39,7 @@ const SHELL_ASSETS = [
   './dyn-actions.js',
   './tr-activities.js',
   './tpl-deploy.js',
+  './cx-auth-hardening.js',
   './data.js',
   './styles.css',
   './photos.css',

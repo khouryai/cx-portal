@@ -4,6 +4,19 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="theme-color" content="#0a0a0c" />
+<!-- Content-Security-Policy (ITSD O.4 / ISRD public-access-server hardening).
+     Blocks script and connection origins we do not use, which is the class of
+     escalation an injected string would need. It CANNOT yet drop
+     'unsafe-inline' for scripts: ~550 inline on*= handlers remain (see the
+     ratchet in tools/size_baseline.json) — retiring those to data-action is
+     what makes a strict policy possible, and is why the ratchet exists.
+     'unsafe-eval' is required by Alpine.js.
+     The Supabase origin below must stay in step with config.js — the cutover
+     to IT-hosted infrastructure changes BOTH files. tools/test_csp.js fails
+     the build if they drift.
+     If a legitimate resource is ever blocked, the browser console names the
+     exact directive; widen that one directive rather than removing the tag. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; frame-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://uqtwiucxktljhukmgmxg.supabase.co; font-src 'self' data:; media-src 'self' blob: data:; connect-src 'self' blob: data: https://uqtwiucxktljhukmgmxg.supabase.co wss://uqtwiucxktljhukmgmxg.supabase.co" />
 <meta name="color-scheme" content="light" />
 <!-- iOS standalone / home-screen install -->
 <meta name="mobile-web-app-capable" content="yes" />
@@ -136,7 +149,7 @@
           <form class="signin-fields" onsubmit="submitChangePassword();return false;">
             <label class="signin-field">
               <span class="signin-label">New password</span>
-              <input type="password" id="cp-new-password" placeholder="Min. 8 characters" autocomplete="new-password"
+              <input type="password" id="cp-new-password" placeholder="Min. 12 characters" autocomplete="new-password"
                 onkeydown="if(event.key==='Enter')document.getElementById('cp-confirm-password').focus()">
             </label>
             <label class="signin-field">
@@ -144,11 +157,66 @@
               <input type="password" id="cp-confirm-password" placeholder="Re-enter new password" autocomplete="new-password"
                 onkeydown="if(event.key==='Enter')submitChangePassword()">
             </label>
+            <p class="cp-policy">At least 12 characters, mixing 3 of: lower case, upper case, numbers, symbols. Portal passwords must be changed every six months.</p>
             <div id="cp-error" class="signin-error" style="color:#ffb3b8;"></div>
             <button type="submit" id="cp-btn" class="login-btn signin-submit">Set Password &amp; Continue</button>
           </form>
         </div>
 
+
+        <!-- Two-step verification challenge — shown when the account has a
+             verified authenticator but this session is still single-factor.
+             ITSD I.2-1-1. Driven by cx-auth-hardening.js. -->
+        <div id="mfa-card" class="login-card signin-card" style="display:none;">
+          <span class="signin-kicker"><span class="signin-pulse"></span> Two-step verification</span>
+          <h1 class="signin-h1" style="font-size:34px;">Confirm it&rsquo;s you.</h1>
+          <p class="signin-sub">Open your authenticator app and enter the current 6-digit code for the T&amp;C Portal.</p>
+
+          <div class="signin-fields">
+            <label class="signin-field">
+              <span class="signin-label">Authentication code</span>
+              <input type="text" id="mfa-code" aria-label="Authentication code" inputmode="numeric"
+                autocomplete="one-time-code" maxlength="6" placeholder="000000" class="mfa-code-input">
+            </label>
+            <div id="mfa-error" class="signin-error"></div>
+            <button type="button" id="mfa-verify-btn" class="login-btn signin-submit" data-action="cxMfaVerify">Verify</button>
+            <div class="signin-request">Lost your device?
+              <button type="button" class="signin-linkbtn" data-action="cxAuthCancel">Sign out and contact an administrator</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- First-time authenticator enrolment. ITSD I.2-1-1: the portal will
+             not admit an account without a verified factor unless
+             profiles.mfa_enforced is explicitly false. -->
+        <div id="mfa-setup-card" class="login-card signin-card" style="display:none;">
+          <span class="signin-kicker"><span class="signin-pulse"></span> Set up two-step verification</span>
+          <h1 class="signin-h1" style="font-size:32px;">Secure your account.</h1>
+          <p class="signin-sub">This portal now requires an authenticator app. Scan the code below with Microsoft Authenticator, Google Authenticator or 1Password, then enter the 6-digit code it shows.</p>
+
+          <div class="mfa-enrol">
+            <img id="mfa-qr" class="mfa-qr" alt="QR code for adding this account to an authenticator app" width="164" height="164">
+            <div class="mfa-secret-wrap">
+              <span class="signin-label">Or type this key in by hand</span>
+              <code id="mfa-secret" class="mfa-secret"></code>
+            </div>
+          </div>
+
+          <div class="signin-fields">
+            <label class="signin-field">
+              <span class="signin-label">Code from the app</span>
+              <input type="text" id="mfa-setup-code" aria-label="Code from the authenticator app" inputmode="numeric"
+                autocomplete="one-time-code" maxlength="6" placeholder="000000" class="mfa-code-input">
+            </label>
+            <div id="mfa-setup-error" class="signin-error"></div>
+            <button type="button" id="mfa-activate-btn" class="login-btn signin-submit" data-action="cxMfaActivate">Activate</button>
+            <div class="signin-request">Code not working?
+              <button type="button" class="signin-linkbtn" data-action="cxMfaRestart">Generate a new key</button>
+              &nbsp;&middot;&nbsp;
+              <button type="button" class="signin-linkbtn" data-action="cxAuthCancel">Sign out</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1684,6 +1752,9 @@ function _signinTogglePw(){
 <script src="dyn-actions.js"></script>
 <script src="tr-activities.js"></script>
 <script src="tpl-deploy.js"></script>
+<!-- Loaded AFTER app.js on purpose: it wraps signIn / _loadCurrentProfile /
+     submitChangePassword to add the ITSD auth gates, so they must exist. -->
+<script src="cx-auth-hardening.js"></script>
 <link rel="manifest" href="./manifest.webmanifest">
 <script>
   if ('serviceWorker' in navigator) {

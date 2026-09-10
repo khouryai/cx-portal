@@ -21,6 +21,11 @@ const PROFILE = {
   id: USER.id, email: USER.email, full_name: "QA Automation Bot",
   role: "admin", subsystem: null, is_active: true, must_change_password: false,
   permission_template_id: null, company: "QA",
+  // cx-auth-hardening.js gates entry on the six-monthly password rotation
+  // (ITSD I.2-4-2) — a fixture account has to look like a compliant one or
+  // the boot stops on the "change your password" card instead of the app.
+  password_changed_at: new Date(Date.now() - 5 * 86400000).toISOString(),
+  mfa_enforced: false,
 };
 
 // ── locate playwright-core + a launchable Chromium; skip if missing ──────────

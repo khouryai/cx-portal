@@ -17,10 +17,16 @@
 ## Authentication
 
 - **Email + password** via Supabase Auth. No shared passwords, no PINs, no plaintext credentials anywhere in the codebase or database.
+- **Multifactor authentication (TOTP)** is required. An account with no verified authenticator is sent to an enrolment card before it can enter; an enrolled account must clear a 6-digit challenge on every sign-in. Enforced server-side, not just in the UI — `private.has_module_perm()` refuses every governed table to a session that has not reached AAL2, so an AAL1 session sees an empty app rather than data. Exceptions are per-account and explicit (`profiles.mfa_enforced = false`).
+- **Password policy** — at least 12 characters mixing 3 of {lower, upper, digit, symbol}, rejecting the user's own email name and common sequences.
+- **Password rotation** — six-monthly, tracked in `profiles.password_changed_at`. An account whose password is older than 180 days (or has no recorded change date) must set a new one before entering.
+- **Account lockout** — 5 failed attempts in 15 minutes locks the account for 15 minutes. Enforced in GoTrue itself via the `password_verification_attempt` auth hook, so it also covers callers that bypass the portal's own form; the sign-in screen additionally consults `auth_login_gate()` so the user is told what happened. Repeated MFA failures are locked the same way.
 - **Password reset** via Supabase email flow — users receive a secure reset link.
 - **Session tokens** are JWT-signed by Supabase, stored in `localStorage`, and expire automatically (configurable; default 1 hour).
 - **New user sign-ups are disabled** — only the administrator can create accounts via the admin portal.
 - **Account deactivation** — admins can deactivate or remove any account immediately from the portal. Deactivated users cannot sign in.
+
+Implementation: `cx-auth-hardening.js` (browser) + `supabase/sql/supabase_auth_hardening.sql` (server). Verified by `tools/test_auth_hardening.js` and `tools/pw_auth_gates.js`, which proves in a real browser that each non-compliant session is actually stopped at the login overlay.
 
 ---
 
@@ -58,6 +64,10 @@ All 16 third-party CDN resources (scripts + stylesheets) are:
 
 Libraries used: Supabase JS, SheetJS, Alpine.js, Flatpickr, Tom Select, Fuse.js, Day.js, Tippy.js, Quill, ExcelJS, vis-timeline.
 
+A **Content-Security-Policy** (meta tag in `index.html`) restricts script, connection, image and frame origins to this site plus the configured Supabase project and the single remaining SheetJS CDN tag. It cannot yet drop `'unsafe-inline'` for scripts — ~427 inline `on*=` handlers remain, and retiring them to `data-action` is exactly what the ratchet in `tools/size_baseline.json` drives. `tools/test_csp.js` fails the build if the policy and `config.js` drift apart.
+
+Adding that policy surfaced a **stale `@import` of Google Fonts** at the top of `styles.css` that survived the self-hosting pass in `MIGRATION.md` §6 — every page load was still calling `fonts.googleapis.com`. It has been removed and `--f-mono` now points at the self-hosted IBM Plex Mono.
+
 ---
 
 ## Audit Logging
@@ -69,6 +79,14 @@ Every significant user action is recorded in the `audit_log` table:
 - Timestamp
 
 Accessible to admins via the portal's Audit Log page.
+
+Authentication and privilege events are recorded separately in `auth_events`, because a failed sign-in has no session to attribute and must not be writable by ordinary users:
+- Sign-in success, failure, and lockout — including repeated failures
+- MFA enrolment and rejected authentication codes
+- Password changes
+- Privilege changes (role, permission template, activation), written by the `profiles` trigger itself so they cannot be missed
+
+The table has **no insert/update/delete policy at all** — every write goes through a `SECURITY DEFINER` routine, so the trail cannot be edited from a session. Reads require `audit.view`. Retention is 400 days (a weekly `pg_cron` purge), which exceeds the one-year minimum ITSD asks for. `audit_log` itself is never purged.
 
 ---
 
@@ -96,6 +114,22 @@ Supabase project region: **US East (Northern Virginia)**. Data does not leave US
 
 | Item | Priority | Notes |
 |---|---|---|
-| Multi-factor authentication (TOTP) | Medium | Supabase supports it — enable in Auth settings + add enrollment UI |
-| Content Security Policy headers | Low | Requires refactoring inline event handlers — planned |
-| Penetration test | Low | Recommended before broad rollout |
+| ~~Multi-factor authentication (TOTP)~~ | — | **Done** — see Authentication above |
+| ~~Content Security Policy~~ | — | **Done** as a meta-tag policy; a *strict* one still needs the inline handlers retired |
+| Enable the two auth hooks in the dashboard | **High** | Authentication → Hooks → `password_verification_attempt` and `mfa_verification_attempt`. Until these are on, lockout is client-side only |
+| Apply `supabase_auth_hardening.sql` | **High** | Ships the columns, `auth_events`, the RLS/MFA gate and the retention job |
+| Admin UI to reset a lost authenticator | Medium | Today an admin removes the factor from the Supabase dashboard |
+| Penetration test | Medium | Required to close ITSD C.2-2; recommended before broad rollout |
+
+## ITSD Public Clouds checklist
+
+This work closes the code-side items of the ITSD Public Clouds conformance review:
+
+| Requirement | What was delivered |
+|---|---|
+| I.2-1-1 User authentication | TOTP multifactor, enforced in RLS |
+| I.2-2-1 / I.2-3-1 | Unchanged by code — these need MFA enabled on the Supabase and GitHub consoles |
+| I.2-4-2 Password management | Policy, six-monthly rotation, lockout |
+| I.2-5-2 Account disposal | `access_review_due` view + `access_review_log` for the six-monthly review |
+| O.1-5 Access logs | `auth_events`, privilege-change capture, 400-day retention |
+| O.4 Public-access-server list | CSP; the rest of the ISRD list is still outstanding |
