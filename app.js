@@ -5174,28 +5174,13 @@ async function confirmDeploy(templateId) {
 
   try {
     // ── 1. Build test_items rows ──────────────────────────────────────────────
-    const rows = [];
-    for (const s of _deploySelections) {
-      for (const tcCode of s.tcCodes) {
-        const tc = tpl.testCases.find(t => t.code === tcCode);
-        rows.push({
-          test_id:        `${depId}-${s.locId}-${tcCode}`,
-          phase:          s.phaseName,
-          location:       s.locName,
-          subsystem:      tpl.subsystem,
-          activity:       tpl.name,
-          test_category:  null,
-          test_case_code: tcCode,
-          test_name:      tc?.name || tcCode,
-          test_procedure: tc?.procedure || '',
-          test_section:   tc?.section   || '',
-          scope_type:     (tc?.scopeType || tc?.scope_type || 'static') === 'dynamic' ? 'dynamic' : 'static',
-          status:         'Not Started',
-          weight:         1, // legacy per-row column; real weight lives in test_case_weights
-          synced_at:      now,
-        });
-      }
-    }
+    // Planned per template-case OCCURRENCE (tpl-deploy.js): a template may
+    // carry the same code on several cases, which used to collapse them onto
+    // one test_id and fail the insert with 23505.
+    const plan = _deploySelections.flatMap(s => _deployPlanRows(tpl, s, depId, now));
+    const rows = plan.map(p => p.row);
+    const dupIds = _deployDuplicateIds(plan);
+    if (dupIds.length) throw new Error(`template would create duplicate test IDs (${dupIds[0]})`);
 
     if (!rows.length) { toast('No test cases to deploy', 'warn'); return; }
 
@@ -5207,7 +5192,7 @@ async function confirmDeploy(templateId) {
 
     // ── 2b. Clone any template-attached PDFs once per deployed test case ──
     try {
-      const clonedCount = await _formsCloneTemplateForDeployment(templateId, depId, _deploySelections, tpl);
+      const clonedCount = await _formsCloneTemplateForDeployment(templateId, tpl, plan);
       if (clonedCount) console.log(`[confirmDeploy] cloned ${clonedCount} form copies for deployment ${depId}`);
     } catch (e) { console.warn('[confirmDeploy] form clone failed:', e.message); }
 
@@ -5225,31 +5210,27 @@ async function confirmDeploy(templateId) {
     await loadAssetData();
 
     // ── 6. Auto-create generic child assets defined in the template ───────────
-    for (const s of _deploySelections) {
-      for (const tcCode of s.tcCodes) {
-        const tc = tpl.testCases.find(t => t.code === tcCode);
-        if (!tc?.assets?.trim()) continue;
-        const parentId  = `${depId}-${s.locId}-${tcCode}`;
-        const parentRow = TI.find(r => String(r.TestID) === parentId);
-        if (!parentRow) continue;
-        const assetNames = tc.assets.split(',').map(a => a.trim()).filter(Boolean);
-        for (const aName of assetNames) {
-          try {
-            let [assetRow] = await _dbUpsert('assets', [{
-              name:            aName,
-              device_type:     'Generic',
-              location:        s.locName       || null,
-              subsystem:       tpl.subsystem   || null,
-              location_prefix: null,
-              import_batch_id: null,
-            }], 'name,location,subsystem');
-            if (!assetRow) assetRow = ASSETS.find(a => a.name === aName && (a.location||'') === (s.locName||'') && (a.subsystem||'') === (tpl.subsystem||''));
-            if (!assetRow) continue;
-            const aIdx = ASSETS.findIndex(a => a.id === assetRow.id);
-            if (aIdx >= 0) ASSETS[aIdx] = assetRow; else ASSETS.push(assetRow);
-            await _assetLinkToParent(assetRow, parentRow);
-          } catch(e) { console.warn('[deploy generic asset]', aName, e.message); }
-        }
+    for (const { tc, sel: s, row } of plan) {
+      if (!tc?.assets?.trim()) continue;
+      const parentRow = TI.find(r => String(r.TestID) === row.test_id);
+      if (!parentRow) continue;
+      const assetNames = tc.assets.split(',').map(a => a.trim()).filter(Boolean);
+      for (const aName of assetNames) {
+        try {
+          let [assetRow] = await _dbUpsert('assets', [{
+            name:            aName,
+            device_type:     'Generic',
+            location:        s.locName       || null,
+            subsystem:       tpl.subsystem   || null,
+            location_prefix: null,
+            import_batch_id: null,
+          }], 'name,location,subsystem');
+          if (!assetRow) assetRow = ASSETS.find(a => a.name === aName && (a.location||'') === (s.locName||'') && (a.subsystem||'') === (tpl.subsystem||''));
+          if (!assetRow) continue;
+          const aIdx = ASSETS.findIndex(a => a.id === assetRow.id);
+          if (aIdx >= 0) ASSETS[aIdx] = assetRow; else ASSETS.push(assetRow);
+          await _assetLinkToParent(assetRow, parentRow);
+        } catch(e) { console.warn('[deploy generic asset]', aName, e.message); }
       }
     }
 
@@ -34030,36 +34011,34 @@ async function _formsUnlinkFromTemplate(formId, templateId, testCaseCode) {
 }
 
 // Deployment clone — called from confirmDeploy after test_items are inserted.
-async function _formsCloneTemplateForDeployment(templateId, depId, selections, tpl) {
+async function _formsCloneTemplateForDeployment(templateId, tpl, plan) {
   const scopedLinks = FORM_TPL_LINKS.filter(l => l.template_id === templateId && String(l.test_case_code || '').trim());
   if (!scopedLinks.length) return 0;
   let cloned = 0;
-  for (const s of selections) {
-    for (const tcCode of s.tcCodes) {
-      const newTestId = `${depId}-${s.locId}-${tcCode}`;
-      const templateForms = _formsForTemplateTestCase(templateId, tcCode);
-      for (const src of templateForms) {
-        try {
-          const newId   = _formsNewId();
-          const newPath = `${newId}.pdf`;
-          await _formsStorage.copy(src.storage_path, newPath);
-          const actor = currentProfile?.full_name || currentRoleUser?.name || null;
-          const row = {
-            id: newId, name: src.name, description: src.description,
-            subsystem: tpl.subsystem || src.subsystem,
-            phase:     s.phaseName  || src.phase,
-            location:  s.locName    || src.location,
-            storage_path: newPath,
-            original_filename: src.original_filename, file_size: src.file_size,
-            is_template: false, source_form_id: src.id,
-            created_by: actor, updated_by: actor,
-          };
-          const [inserted] = await _dbInsert('forms', [row]);
-          FORMS.push(inserted);
-          await _formsLinkToTest(inserted.id, newTestId);
-          cloned += 1;
-        } catch (e) { console.warn('[_formsCloneTemplateForDeployment]', e.message); }
-      }
+  for (const { sel: s, row } of (plan || [])) {
+    const newTestId = row.test_id;
+    const templateForms = _formsForTemplateTestCase(templateId, row.test_case_code);
+    for (const src of templateForms) {
+      try {
+        const newId   = _formsNewId();
+        const newPath = `${newId}.pdf`;
+        await _formsStorage.copy(src.storage_path, newPath);
+        const actor = currentProfile?.full_name || currentRoleUser?.name || null;
+        const row = {
+          id: newId, name: src.name, description: src.description,
+          subsystem: tpl.subsystem || src.subsystem,
+          phase:     s.phaseName  || src.phase,
+          location:  s.locName    || src.location,
+          storage_path: newPath,
+          original_filename: src.original_filename, file_size: src.file_size,
+          is_template: false, source_form_id: src.id,
+          created_by: actor, updated_by: actor,
+        };
+        const [inserted] = await _dbInsert('forms', [row]);
+        FORMS.push(inserted);
+        await _formsLinkToTest(inserted.id, newTestId);
+        cloned += 1;
+      } catch (e) { console.warn('[_formsCloneTemplateForDeployment]', e.message); }
     }
   }
   return cloned;

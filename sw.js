@@ -38,6 +38,7 @@ const SHELL_ASSETS = [
   './punch-actions.js',
   './dyn-actions.js',
   './tr-activities.js',
+  './tpl-deploy.js',
   './data.js',
   './styles.css',
   './photos.css',
