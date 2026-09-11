@@ -46,7 +46,7 @@ Plus GitHub Pages stops being a second public cloud to account for.
 | Authorization | **In the database**: 349 RLS policies, `private.has_module_perm()` | **331 of 349 route through that one function** |
 | Database | PostgreSQL 17, ~59 MB, 53 triggers, 27 jsonb + 20 array columns | Region `us-west-2` |
 | Storage | 5 buckets, signed URLs | Behind `CXStorage` (see §4) |
-| Serverless | 3 Edge Functions + a `pg_cron` job | Small |
+| Serverless | A `pg_cron` job | The three Edge Functions were removed — see below |
 | Config seam | `config.js` | Backend URL + publishable key |
 
 ---
@@ -137,7 +137,7 @@ provides. Compiles clean (15 resources, no warnings). **Never deployed.**
 | Auth | **Microsoft Entra ID** via MSAL.js | Implement the `entra` provider; re-key `profiles` |
 | Photos, vehicle-files | **Azure Blob** + user-delegation SAS | Implement the `azure` storage provider + the SAS Function |
 | Forms, drawings | **SharePoint via Graph** | `_formsStorage` was designed for this swap |
-| Emails | **Azure Functions + Graph `sendMail`** | Replaces two Edge Functions |
+| Emails | **Azure Functions + Graph `sendMail`** | Nothing to port — to be built fresh on Azure |
 | Hosting | **Azure Static Web Apps** | Files move unchanged |
 | WAF | **Front Door Premium** | Must front the **API**, not just the static site |
 
@@ -173,6 +173,19 @@ provides. Compiles clean (15 resources, no warnings). **Never deployed.**
 
 ## 7. What the migration retires
 
+**Already retired.** The three Supabase Edge Functions — daily-log email, RMA
+email and SharePoint photo sync — were removed from the application before the
+move rather than ported. Two of them existed only in the Supabase dashboard and
+were never in version control, so porting them would have meant recovering
+source first in order to rewrite it immediately afterwards. The features they
+backed are to be rebuilt natively on Azure (Graph `sendMail` for notifications,
+Graph for SharePoint) when they are wanted.
+
+> The database may still hold a sync queue and `sharepoint_*` columns on
+> `photos` that nothing now reads. They were left in place deliberately — a
+> schema change is a separate decision from a code change, and they cost
+> nothing until the schema is next revised.
+
 Be aware that a chunk of recent work is deliberately temporary. Under Entra,
 **the identity half of `cx-auth-hardening.js` is retired**: the TOTP enrolment
 and challenge UI, password policy, rotation clock, lockout, and both GoTrue auth
@@ -198,7 +211,8 @@ The replacement is written and commented in `azure_auth_uid_shim.sql`.
    `auth.uid()` makes this possible.
 5. Implement the `entra` identity provider; re-key `profiles` to Entra object ids.
 6. Implement the `azure` storage provider + the SAS-minting Function.
-7. Emails to Azure Functions; Static Web Apps hosting; port CI.
+7. Static Web Apps hosting; port CI. Rebuild notification emails as Azure
+   Functions if and when they are wanted.
 8. Front Door + WAF in front of the API. **Closes I.2-6.**
 9. Column-level encryption for Confidential fields. **Closes I.3-1.**
 10. Re-verify the security posture against the new architecture.

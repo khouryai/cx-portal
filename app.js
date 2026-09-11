@@ -7571,45 +7571,6 @@ async function submitIntakeFinal() {
     const lData = await _dbInsert('delay_log', [logRow]);
     console.log('[submitIntakeFinal] ← delay_log returned:', lData?.length ?? 0, 'rows');
 
-    // Fire-and-forget email summary via Supabase Edge Function (non-blocking)
-    const _testSummary = allItems.map(item => ({
-      code:          item.testCode        || item.test_case_code || '',
-      name:          item.testName        || item.test_name      || '',
-      location:      item.location        || '',
-      subsystem:     item.subsystem       || '',
-      activity:      item.activity        || '',
-      fromStatus:    item.oldStatus       || item.prevStatus     || 'Not Started',
-      toStatus:      item.status          || '',
-      failedReason:  item.failedReason    || null,
-      blockedReason: item.blockedReason   || null,
-      notes:         item.notes           || null,
-      hours:         item.hours           || 0,
-    }));
-    (async () => {
-      try {
-        const _emailRes = await fetch(
-          'https://uqtwiucxktljhukmgmxg.supabase.co/functions/v1/send-daily-log-email',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              logRow,
-              submitterEmail: currentProfile?.email || '',
-              testSummary: _testSummary,
-            }),
-          }
-        );
-        const _emailJson = await _emailRes.json().catch(() => ({}));
-        if (_emailRes.ok) {
-          console.log('[submitIntakeFinal] email sent, id:', _emailJson.id);
-        } else {
-          console.warn('[submitIntakeFinal] email failed:', _emailJson);
-        }
-      } catch (_emailErr) {
-        console.warn('[submitIntakeFinal] email error (non-blocking):', _emailErr);
-      }
-    })();
-
     logAudit('Daily Log Submitted', `${allItems.length} test cases logged`, 'Daily report generated');
     _markSubmitted(allItems.map(i => i.testId));
     _sessionLog     = [];
@@ -22417,7 +22378,6 @@ async function saveRMA(editId) {
       const idx = RMAS.findIndex(r => r.id === editId);
       if (idx >= 0) RMAS[idx] = updated;
       toast('RMA updated', 'success');
-      if (oldStatus !== status) _rmaSendEmail(updated, 'status_changed', oldStatus).catch(()=>{});
     } else {
       payload.created_by       = currentRoleUser?.name  || '';
       payload.created_by_email = currentProfile?.email  || '';
@@ -22431,7 +22391,6 @@ async function saveRMA(editId) {
       if (!created) throw new Error('RMA was not created — you may not have permission.');
       RMAS.unshift(created);
       toast('RMA created', 'success');
-      _rmaSendEmail(created, 'created', null).catch(()=>{});
     }
     logAudit(editId ? 'RMA Updated' : 'RMA Created', rmaNumber, `Status: ${status} · ${location}`);
     renderRMA();
@@ -22545,17 +22504,6 @@ function _rmaCSVExport() {
   a.download = 'RMAs-' + new Date().toISOString().slice(0,10) + '.csv';
   a.click();
 }
-
-async function _rmaSendEmail(rma, eventType, oldStatus) {
-  try {
-    await fetch('https://uqtwiucxktljhukmgmxg.supabase.co/functions/v1/send-rma-email', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rma, creatorEmail: rma.created_by_email || '', eventType, oldStatus }),
-    });
-  } catch(e) { console.warn('[_rmaSendEmail]', e.message); }
-}
-
 
 // ==========================================================================
 // CHECKPOINT — unified tasks + activity-readiness workspace (module key 'tasks')
