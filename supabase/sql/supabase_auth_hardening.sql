@@ -1,20 +1,19 @@
 -- ============================================================
 -- supabase_auth_hardening.sql
 --
--- ITSD Public Clouds checklist remediation — the server half.
--- Closes, or provides the server-side half of, these requirements:
+-- Authentication hardening — the server half. Provides:
 --
---   I.2-1-1  User authentication ......... multifactor authentication (TOTP),
---                                          enforced server-side in has_module_perm
---   I.2-4-2  Password management ......... rotation clock (10) + (20),
---                                          account lockout on repeated failures (30)
---   I.2-5-2  Account disposal ............ six-monthly access-review evidence
---   O.1-5    Access log collection ....... authentication events, repeated
---                                          failures, and privilege escalation,
---                                          retained for more than one year
+--   Multifactor authentication .... TOTP, enforced server-side inside
+--                                   private.has_module_perm()
+--   Password management ........... six-monthly rotation clock, plus account
+--                                   lockout on repeated failures
+--   Account disposal .............. six-monthly access-review evidence
+--   Access logging ................ authentication events, repeated failures
+--                                   and privilege escalation, retained for
+--                                   more than one year
 --
 -- The browser half lives in cx-auth-hardening.js. Neither half depends on any
--- Hitachi-side system: this is all deliverable on the current platform.
+-- external identity system: this is all deliverable on the current platform.
 --
 -- Apply order: after supabase_perm_granular_catalog.sql and
 -- supabase_perm_rls_granular.sql (it re-creates functions defined there).
@@ -29,9 +28,9 @@ alter table public.profiles add column if not exists password_changed_at timesta
 alter table public.profiles add column if not exists mfa_enforced boolean not null default true;
 
 comment on column public.profiles.password_changed_at is
-  'Last password change (ITSD I.2-4-2(20), six-monthly rotation). Null = never changed since this column shipped; the client treats null as "rotate now".';
+  'Last password change (six-monthly rotation). Null = never changed since this column shipped; the client treats null as "rotate now".';
 comment on column public.profiles.mfa_enforced is
-  'When true the portal refuses to admit the account without a verified MFA factor (ITSD I.2-1-1). Set false only for a documented exception.';
+  'When true the portal refuses to admit the account without a verified MFA factor. Set false only for a documented exception.';
 
 -- These defaults are the policy for NEW accounts. For the accounts that already
 -- existed when this was applied, the roll-out was staged deliberately — see
@@ -57,7 +56,7 @@ create table if not exists public.auth_events (
 );
 
 comment on table public.auth_events is
-  'Authentication and privilege audit trail (ITSD O.1-5). Written only by SECURITY DEFINER functions; readable only with audit.view. Retention: 400 days (see the pg_cron job at the end of this file), which exceeds the one-year minimum.';
+  'Authentication and privilege audit trail. Written only by SECURITY DEFINER functions; readable only with audit.view. Retention: 400 days (see the pg_cron job at the end of this file), which exceeds the one-year minimum.';
 
 create index if not exists auth_events_email_time_idx on public.auth_events (email, created_at desc);
 create index if not exists auth_events_event_time_idx on public.auth_events (event, created_at desc);
@@ -182,9 +181,9 @@ grant execute on function public.auth_login_gate(text) to anon, authenticated;
 -- format check, a 60-rows-per-hour-per-address flood guard, and a response
 -- shape identical for addresses that do not exist.
 comment on function public.auth_record_event(text, text, text) is
-  'ITSD O.1-5. Deliberately anon-callable: failed sign-ins have no session. Append-only, fixed event vocabulary, flood-guarded.';
+  'Deliberately anon-callable: failed sign-ins have no session. Append-only, fixed event vocabulary, flood-guarded.';
 comment on function public.auth_login_gate(text) is
-  'ITSD I.2-4-2(30). Deliberately anon-callable: consulted by the sign-in screen before authentication. Returns an identical shape for unknown addresses so it cannot enumerate accounts.';
+  'Deliberately anon-callable: consulted by the sign-in screen before authentication. Returns an identical shape for unknown addresses so it cannot enumerate accounts.';
 
 
 -- ============================================================
@@ -352,7 +351,7 @@ as $function$
 $function$;
 
 comment on function private.mfa_ok() is
-  'ITSD I.2-1-1. True when the session has completed multifactor authentication, or when the user has no verified factor yet (graceful roll-out). Called by private.has_module_perm().';
+  'True when the session has completed multifactor authentication, or when the user has no verified factor yet (graceful roll-out). Called by private.has_module_perm().';
 
 -- Re-created verbatim from supabase_perm_granular_catalog.sql with ONE addition:
 -- the private.mfa_ok() gate immediately after the null-uid check.
@@ -371,7 +370,7 @@ declare
   v_eff boolean;
 begin
   if v_uid is null then return false; end if;
-  -- ITSD I.2-1-1: a session that has not cleared its second factor gets nothing.
+  -- a session that has not cleared its second factor gets nothing.
   if not private.mfa_ok() then return false; end if;
   if not exists (select 1 from profiles where id = v_uid and is_active) then
     return false;
@@ -520,7 +519,7 @@ create or replace view public.access_review_due as
 alter view public.access_review_due set (security_invoker = on);
 
 comment on view public.access_review_due is
-  'ITSD I.2-5-2(20). Drives the six-monthly access review: when it was last done, whether it is overdue, and which active accounts have not signed in for 90 days.';
+  'Drives the six-monthly access review: when it was last done, whether it is overdue, and which active accounts have not signed in for 90 days.';
 
 
 -- ============================================================
@@ -550,7 +549,7 @@ $function$;
 revoke execute on function public.purge_auth_events() from public, anon, authenticated;
 
 comment on function public.purge_auth_events() is
-  'ITSD O.1-5 retention (400 days). EXECUTE revoked from clients; invoked only by the purge-auth-events pg_cron job.';
+  'Audit-trail retention (400 days). EXECUTE revoked from clients; invoked only by the purge-auth-events pg_cron job.';
 
 create extension if not exists pg_cron;
 do $$

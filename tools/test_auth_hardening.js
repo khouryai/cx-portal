@@ -1,7 +1,7 @@
 "use strict";
 // Authentication hardening guard (cx-auth-hardening.js).
 //
-// Covers the decision logic behind the ITSD Public Clouds remediation, which is
+// Covers the decision logic behind the authentication hardening, which is
 // exactly the part that must not drift:
 //   I.2-4-2(10) password policy — length + character classes + inference
 //   I.2-4-2(20) six-monthly rotation, including the "never recorded" case
@@ -18,12 +18,12 @@ function ok(name, cond, extra) {
   else { fail++; console.log(`  ✗ ${name}${extra ? " — " + extra : ""}`); }
 }
 
-console.log("=== authentication hardening (ITSD I.2-1-1 / I.2-4-2) ===\n");
+console.log("=== authentication hardening ===\n");
 
 const CXAuth = require(path.resolve(__dirname, "..", "cx-auth-hardening.js"));
 
 // ── password policy — I.2-4-2(10) ────────────────────────────────────────────
-ok("policy minimum comfortably exceeds the ITSD floor of 6", CXAuth.POLICY.minLength >= 8);
+ok("policy minimum comfortably exceeds the six-character floor", CXAuth.POLICY.minLength >= 8);
 
 ok("counts character classes", CXAuth.passwordClasses("aB3$") === 4);
 ok("counts a single class", CXAuth.passwordClasses("aaaa") === 1);

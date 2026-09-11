@@ -21,7 +21,7 @@
 --   password_changed_at = now()   The six-month clock starts today instead of
 --                                 firing a forced reset for everyone at once.
 --                                 The mechanism is live and enforces on
---                                 schedule (ITSD I.2-4-2(20)).
+--                                 schedule.
 --   mfa_enforced = false          MFA is available but not yet demanded.
 --
 -- Everything else went live immediately and needed no staging: the audit trail,

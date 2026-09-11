@@ -44,7 +44,7 @@ const suites = [
   { file: "tools/test_cx_state.js", needs: [] },        // extracted cx* state helpers
   { file: "tools/test_cx_store.js", needs: [] },        // observable store seam (Tier 3 #12)
   { file: "tools/test_cx_actions.js", needs: [] },      // event-delegation dispatcher (Tier 3 #11)
-  { file: "tools/test_auth_hardening.js", needs: [] },  // ITSD auth gates: password policy, rotation, lockout
+  { file: "tools/test_auth_hardening.js", needs: [] },  // auth gates: password policy, rotation, lockout
   { file: "tools/test_csp.js", needs: [] },             // CSP present + in step with config.js
   { file: "tools/test_rls_portability.js", needs: [] }, // Azure migration: RLS works on plain Postgres + Entra
   { file: "tools/test_identity_seam.js", needs: [] },   // Azure migration: identity provider seam
@@ -81,7 +81,7 @@ const suites = [
   { file: "tools/test_copy_paste.js", needs: ["dayjs"] },
   { file: "tools/test_types.js", needs: ["typescript"] }, // JSDoc type-check (Tier 3 Stage D)
   { file: "tools/pw_smoke.js", needs: ["playwright-core"] }, // real-browser delegation smoke (Stage B QA)
-  { file: "tools/pw_auth_gates.js", needs: ["playwright-core"] }, // real-browser proof of the ITSD auth gates
+  { file: "tools/pw_auth_gates.js", needs: ["playwright-core"] }, // real-browser proof of the auth gates
 ];
 
 const results = [];

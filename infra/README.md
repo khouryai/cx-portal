@@ -8,7 +8,7 @@ first thing IT needs to provide.
 
 | File | What it is |
 |---|---|
-| `main.bicep` | Every resource the app needs, annotated with the ITSD Public Clouds requirement it satisfies |
+| `main.bicep` | Every resource the app needs, annotated with the security property it provides |
 | `main.parameters.json` | Placeholder values — **`dbAdminGroupObjectId` is a dummy** and must be a real Entra group |
 
 ## Status
@@ -35,10 +35,10 @@ Most of this template is negotiable. These are not:
   Proven portable by `tools/test_rls_portability.js`.
 - **A WAF in front of the API**, not just the static site. The front end holds
   no data — every Confidential record flows through PostgREST. This is the
-  resource that closes ITSD I.2-6, the one requirement the current
-  Supabase architecture cannot satisfy at all.
+  intrusion-prevention layer the current Supabase architecture cannot provide
+  at all.
 - **`pg_cron`**, which runs the weekly planning snapshot and the `auth_events`
-  retention purge (ITSD O.1-5).
+  retention purge.
 - **Entra JWKS on PostgREST.** That is what makes `auth.uid()` resolve — see
   `supabase/sql/azure_auth_uid_shim.sql`.
 

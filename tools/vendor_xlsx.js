@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 "use strict";
-// Vendor the last external CDN dependency — MIGRATION.md §4.1, ITSD O.4.
+// Vendor the last external CDN dependency — see MIGRATION.md §4.1.
 //
 // xlsx 0.20.3 is the ONE script the app still loads from a third-party origin
 // (cdn.sheetjs.com). SheetJS stopped publishing to the npm registry at 0.18.x,

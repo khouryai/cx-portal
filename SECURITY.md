@@ -86,7 +86,7 @@ Authentication and privilege events are recorded separately in `auth_events`, be
 - Password changes
 - Privilege changes (role, permission template, activation), written by the `profiles` trigger itself so they cannot be missed
 
-The table has **no insert/update/delete policy at all** — every write goes through a `SECURITY DEFINER` routine, so the trail cannot be edited from a session. Reads require `audit.view`. Retention is 400 days (a weekly `pg_cron` purge), which exceeds the one-year minimum ITSD asks for. `audit_log` itself is never purged.
+The table has **no insert/update/delete policy at all** — every write goes through a `SECURITY DEFINER` routine, so the trail cannot be edited from a session. Reads require `audit.view`. Retention is 400 days (a weekly `pg_cron` purge), which exceeds the one-year minimum. `audit_log` itself is never purged.
 
 ---
 
@@ -108,7 +108,7 @@ Roles enforced at both the UI layer (nav visibility) and the database layer (RLS
 
 Supabase project region: **US West (Oregon), `us-west-2`** — verified against the project itself on 2026-09-11. Data does not leave US jurisdiction.
 
-> This document previously said *US East (Northern Virginia)*. That was wrong, and it had been carried into the ITSD Public Clouds application. Corrected in both.
+> This document previously said *US East (Northern Virginia)*. That was wrong, and the error had been repeated elsewhere. Corrected.
 
 ---
 
@@ -124,7 +124,7 @@ Supabase project region: **US West (Oregon), `us-west-2`** — verified against 
 | Enable leaked-password protection | Medium | Auth settings; flagged by the Supabase security advisor. Checks new passwords against HaveIBeenPwned |
 | Turn on `mfa_enforced` per account | Medium | See `supabase/sql/supabase_auth_hardening_rollout.sql` for the order and the break-glass rule |
 | Admin UI to reset a lost authenticator | Medium | Today an admin removes the factor from the Supabase dashboard |
-| Penetration test | Medium | Required to close ITSD C.2-2; recommended before broad rollout |
+| Penetration test | Medium | Recommended before broad rollout |
 
 ### MFA roll-out status
 
@@ -135,15 +135,13 @@ once that account has a **verified** factor, so it costs nothing until enrolment
 begins. `supabase/sql/supabase_auth_hardening_rollout.sql` records why, and the
 order to switch accounts on.
 
-## ITSD Public Clouds checklist
+## Control summary
 
-This work closes the code-side items of the ITSD Public Clouds conformance review:
-
-| Requirement | What was delivered |
+| Control | What was delivered |
 |---|---|
-| I.2-1-1 User authentication | TOTP multifactor, enforced in RLS |
-| I.2-2-1 / I.2-3-1 | Unchanged by code — these need MFA enabled on the Supabase and GitHub consoles |
-| I.2-4-2 Password management | Policy, six-monthly rotation, lockout |
-| I.2-5-2 Account disposal | `access_review_due` view + `access_review_log` for the six-monthly review |
-| O.1-5 Access logs | `auth_events`, privilege-change capture, 400-day retention |
-| O.4 Public-access-server list | CSP; the rest of the ISRD list is still outstanding |
+| User authentication | TOTP multifactor, enforced in RLS |
+| Console access | Not addressable in code — needs MFA enabled on the Supabase and GitHub consoles |
+| Password management | Policy, six-monthly rotation, lockout |
+| Account disposal | `access_review_due` view + `access_review_log` for the six-monthly review |
+| Access logs | `auth_events`, privilege-change capture, 400-day retention |
+| Public-surface hardening | Content-Security-Policy; strict CSP still blocked on retiring inline handlers |

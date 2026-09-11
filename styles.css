@@ -13524,7 +13524,7 @@ a:focus-visible {
 #login-overlay .signin-request { text-align: center; margin-top: 8px; font-family: 'Inter', system-ui, sans-serif; font-size: 14px; color: #9aa6bd; }
 #login-overlay .signin-request a { color: #ff5a64; font-weight: 600; text-decoration: none; }
 
-/* Two-step verification cards (cx-auth-hardening.js — ITSD I.2-1-1).
+/* Two-step verification cards (cx-auth-hardening.js).
    Deliberately reuses the sign-in card palette above rather than the app
    token sheet: this overlay is a self-contained dark scene. */
 #login-overlay .signin-linkbtn {

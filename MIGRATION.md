@@ -13,22 +13,26 @@ genuinely unknown, and what the application needs from IT.
 ## 1. Why this is happening
 
 The portal runs on a **personal, free-tier Supabase organisation** and GitHub
-Pages. The ITSD Public Clouds checklist (filled in and submitted separately)
-records the consequence: requirement **B.4 fails outright**, because public
-cloud use under an individual contract is prohibited. That cannot be engineered
-around — only contracted around.
+Pages. Company policy requires cloud services to be held under a company
+contract. That is not something the application can be engineered around.
 
-Moving into the Hitachi Azure tenant closes B.4, and four other things with it:
+It is also still a **proof of concept** — a handful of test accounts, no
+customer users, nothing in production. Which makes now the cheapest moment this
+move will ever have: there is no production data to migrate and no user base to
+cut over.
 
-| ITSD requirement | Today | On Azure |
+Moving into the Hitachi Azure tenant settles the contracting question, and four
+technical gaps with it:
+
+| Concern | Today | On Azure |
 |---|---|---|
-| **B.4** Company contract | Personal free-tier account | Covered by the Microsoft agreement |
-| **I.2-1-1** Multifactor auth | Built in-app, TOTP | Entra ID — and **12 requirements** in the checklist say "answer Yes if you use ITSD IAM" |
-| **I.2-6** IPS/IDS | **Impossible** — Supabase exposes none | Front Door WAF |
-| **I.3-1** Encryption of Confidential data | Storage-level only, which the checklist rejects | pgcrypto column encryption + CMK |
-| **O.4** Public-access-server list | Internet-facing, partially hardened | Private endpoints + WAF |
+| **Contracting** | Personal free-tier account | Covered by the corporate Microsoft agreement |
+| **Multifactor auth** | Built in-app, TOTP | Entra ID, enforced centrally |
+| **Intrusion prevention** | **Impossible** — Supabase exposes none | Front Door WAF |
+| **Encryption of Confidential data** | Storage-level only, which does not cover these fields | pgcrypto column encryption + CMK |
+| **Public attack surface** | Internet-facing, partially hardened | Private endpoints + WAF |
 
-Plus GitHub Pages stops being a second public cloud needing its own application.
+Plus GitHub Pages stops being a second public cloud to account for.
 
 ---
 
@@ -110,8 +114,8 @@ the storage migration needs.**
 
 ### 4.4 Infrastructure as code
 
-`infra/main.bicep` — every resource, annotated with the ITSD requirement it
-satisfies. Compiles clean (15 resources, no warnings). **Never deployed.**
+`infra/main.bicep` — every resource, annotated with the security property it
+provides. Compiles clean (15 resources, no warnings). **Never deployed.**
 
 ### 4.5 Already done previously
 
@@ -172,8 +176,8 @@ satisfies. Compiles clean (15 resources, no warnings). **Never deployed.**
 Be aware that a chunk of recent work is deliberately temporary. Under Entra,
 **the identity half of `cx-auth-hardening.js` is retired**: the TOTP enrolment
 and challenge UI, password policy, rotation clock, lockout, and both GoTrue auth
-hooks. Entra does all of it — that is the point, and it is what collapses those
-12 checklist requirements.
+hooks. Entra does all of it centrally, and better than an application can — that is
+the point.
 
 **Surviving and still needed:** the `auth_events` privilege-change logging
 (Entra logs sign-ins, not this app's role and template changes), the
@@ -197,7 +201,7 @@ The replacement is written and commented in `azure_auth_uid_shim.sql`.
 7. Emails to Azure Functions; Static Web Apps hosting; port CI.
 8. Front Door + WAF in front of the API. **Closes I.2-6.**
 9. Column-level encryption for Confidential fields. **Closes I.3-1.**
-10. Re-run the ITSD checklist against the new architecture.
+10. Re-verify the security posture against the new architecture.
 
 ---
 
@@ -207,8 +211,8 @@ Ask for these **as part of the migration scope**. Retrofitting developer access
 after the environment is locked down is much harder than specifying it now.
 
 - **A dev/staging subscription the application team can deploy to freely.** The
-  single most important item. The app is currently developed against production —
-  which ITSD I.2-3-3 asks about — and this fixes that as a side effect.
+  single most important item. The app is currently developed against its only
+  backend, and this separates the two as a side effect.
 - **Repository access**, including the ability to open PRs, and the Claude GitHub
   App installed on the org if AI-assisted development continues.
 - **A named reviewer** on the repo, so a one-line fix does not wait on a stranger.

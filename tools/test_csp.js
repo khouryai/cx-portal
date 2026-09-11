@@ -1,5 +1,5 @@
 "use strict";
-// Content-Security-Policy guard (ITSD O.4 / ISRD public-access-server list).
+// Content-Security-Policy guard.
 //
 // The policy lives in index.html but names the backend origin, which is owned by
 // config.js — the single file the Microsoft/IT cutover is supposed to change.
@@ -17,7 +17,7 @@ function ok(name, cond, extra) {
   else { fail++; console.log(`  ✗ ${name}${extra ? " — " + extra : ""}`); }
 }
 
-console.log("=== content-security-policy guard (ITSD O.4) ===\n");
+console.log("=== content-security-policy guard ===\n");
 
 const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
 const configJs = fs.readFileSync(path.join(ROOT, "config.js"), "utf8");

@@ -1,5 +1,5 @@
 "use strict";
-// Browser proof for the ITSD authentication gates (cx-auth-hardening.js).
+// Browser proof for the authentication gates (cx-auth-hardening.js).
 //
 // tools/test_auth_hardening.js pins the DECISIONS; this pins the CONSEQUENCE —
 // that a session which should not reach the app really is stopped at the login
@@ -182,7 +182,7 @@ async function main() {
   const base = `http://127.0.0.1:${server.address().port}/`;
   const browser = await chromium.launch({ executablePath: exe, args: ["--no-sandbox"] });
 
-  console.log("=== ITSD authentication gates — browser proof ===\n");
+  console.log("=== authentication gates — browser proof ===\n");
 
   // ── D. the compliant baseline ────────────────────────────────────────────
   const okCase = await boot(browser, base, {

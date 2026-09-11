@@ -1,18 +1,17 @@
 // ==========================================
 // HITACHI Rail T&C Portal — Authentication hardening (cx-auth-hardening.js)
 //
-// The browser half of the ITSD Public Clouds checklist remediation. Pairs with
+// The browser half of the authentication hardening. Pairs with
 // supabase/sql/supabase_auth_hardening.sql, which carries the server-side half
 // (the real enforcement — see the note on gate failure below).
 //
-//   I.2-1-1  Multifactor authentication (TOTP) — forced enrolment, then a
-//            challenge on every sign-in until the session reaches AAL2.
-//   I.2-4-2  Password policy (10): length + character classes.
-//            Password rotation (20): six-monthly, tracked in
-//            profiles.password_changed_at.
-//            Lockout (30): the sign-in screen consults auth_login_gate().
-//   O.1-5    Authentication events (success, failure, blocked, MFA, password
-//            change) recorded in auth_events.
+//   Multifactor authentication (TOTP) — forced enrolment, then a challenge on
+//   every sign-in until the session reaches AAL2.
+//   Password policy: length + character classes.
+//   Password rotation: six-monthly, tracked in profiles.password_changed_at.
+//   Lockout: the sign-in screen consults auth_login_gate().
+//   Authentication events (success, failure, blocked, MFA, password change)
+//   recorded in auth_events.
 //
 // WHY THIS FILE LOADS *AFTER* app.js (the other extracted modules load before):
 // it does not add new surface, it CONSTRAINS existing surface. It wraps
@@ -33,8 +32,8 @@
   'use strict';
 
   // ── Policy ────────────────────────────────────────────────────────────────
-  // ITSD I.2-4-2(10) asks for six or more characters, "eight or more
-  // preferred". These are the portal's settings; keep them in step with the
+  // The corporate baseline is six or more characters, eight preferred; the
+  // portal sets a higher bar. Keep these in step with the
   // Supabase Auth password settings in the dashboard, which enforce the same
   // minimum server-side for password *reset* flows this file does not see.
   var POLICY = {
@@ -63,7 +62,7 @@
   }
 
   /**
-   * Validate a candidate password against the portal policy (ITSD I.2-4-2).
+   * Validate a candidate password against the portal policy.
    * @param {string} pw
    * @param {{email?: string, policy?: object}} [opts]
    * @returns {{ok: boolean, errors: string[]}}
@@ -209,7 +208,7 @@
   }
 
   /**
-   * Append an authentication event to the audit trail (ITSD O.1-5).
+   * Append an authentication event to the audit trail.
    * Fire-and-forget: an audit write must never block or fail a sign-in.
    * @param {string} email
    * @param {string} event

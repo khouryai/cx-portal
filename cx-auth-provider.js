@@ -189,8 +189,8 @@
   // silently — IT provisions accounts and Entra owns credential lifecycle. They
   // throw, so any surviving caller surfaces immediately rather than appearing
   // to succeed. cx-auth-hardening.js's password policy, rotation clock and
-  // lockout all retire at the same moment, because Entra enforces them and
-  // ITSD I.2-4-2 is then answered by reference to the corporate IAM service.
+  // lockout all retire at the same moment, because Entra enforces all three
+  // centrally and does it better than an application can.
   function notSupported(op) {
     return function () {
       return Promise.reject(new Error(

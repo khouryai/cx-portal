@@ -113,4 +113,4 @@ comment on function auth.uid() is
 -- Conditional Access should require MFA for this application, so in practice
 -- a token that reaches PostgREST at all has already satisfied it. Keeping the
 -- check makes that a defence in depth rather than an assumption, and keeps the
--- ITSD I.2-1-1 answer true by inspection rather than by policy configuration.
+-- multifactor assurance provable by inspection of the token.

@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="theme-color" content="#0a0a0c" />
-<!-- Content-Security-Policy (ITSD O.4 / ISRD public-access-server hardening).
+<!-- Content-Security-Policy.
      Blocks script and connection origins we do not use, which is the class of
      escalation an injected string would need. It CANNOT yet drop
      'unsafe-inline' for scripts: ~550 inline on*= handlers remain (see the
@@ -166,7 +166,7 @@
 
         <!-- Two-step verification challenge — shown when the account has a
              verified authenticator but this session is still single-factor.
-             ITSD I.2-1-1. Driven by cx-auth-hardening.js. -->
+             Driven by cx-auth-hardening.js. -->
         <div id="mfa-card" class="login-card signin-card" style="display:none;">
           <span class="signin-kicker"><span class="signin-pulse"></span> Two-step verification</span>
           <h1 class="signin-h1" style="font-size:34px;">Confirm it&rsquo;s you.</h1>
@@ -186,7 +186,7 @@
           </div>
         </div>
 
-        <!-- First-time authenticator enrolment. ITSD I.2-1-1: the portal will
+        <!-- First-time authenticator enrolment. The portal will
              not admit an account without a verified factor unless
              profiles.mfa_enforced is explicitly false. -->
         <div id="mfa-setup-card" class="login-card signin-card" style="display:none;">
@@ -1761,7 +1761,7 @@ function _signinTogglePw(){
 <script src="tr-activities.js"></script>
 <script src="tpl-deploy.js"></script>
 <!-- Loaded AFTER app.js on purpose: it wraps signIn / _loadCurrentProfile /
-     submitChangePassword to add the ITSD auth gates, so they must exist. -->
+     submitChangePassword to add the authentication gates, so they must exist. -->
 <script src="cx-auth-hardening.js"></script>
 <link rel="manifest" href="./manifest.webmanifest">
 <script>

@@ -2,9 +2,9 @@
 // main.bicep — Hitachi Rail T&C Portal on Azure
 //
 // A REVIEWABLE PROPOSAL, NOT A DEPLOYED ENVIRONMENT. It is written to be read
-// by the IT team that owns the subscription: every resource says which ITSD
-// Public Clouds requirement it exists to satisfy, so the security review and
-// the infrastructure review are the same conversation.
+// by the IT team that owns the subscription: every resource says what security
+// property it exists to provide, so the security review and the infrastructure
+// review are the same conversation.
 //
 // EXPECT TO CHANGE: naming, tags, region, SKUs and the networking model are
 // landing-zone decisions that belong to IT, not to this file. What is NOT
@@ -14,11 +14,11 @@
 //   az deployment group create -g <rg> -f infra/main.bicep -p @infra/main.parameters.json
 // ============================================================
 
-@description('Environment discriminator. Keep dev separate from prod: the app is currently developed against production, which ITSD I.2-3-3 asks about.')
+@description('Environment discriminator. Keep dev separate from prod: the app is currently developed against production, which this is intended to fix.')
 @allowed(['dev', 'test', 'prod'])
 param environment string = 'dev'
 
-@description('Azure region. Must satisfy the data-residency position recorded in the ITSD application — the data is US-jurisdiction.')
+@description('Azure region. The data is US-jurisdiction and must stay in a US region.')
 param location string = 'westus2'
 
 @description('Short name used to build resource names.')
@@ -36,7 +36,7 @@ param dbAdminGroupName string
 @description('PostgreSQL version. 17 matches what the app runs on today.')
 param postgresVersion string = '17'
 
-@description('Set false only for a documented exception: public network access on the database is what ITSD I.2-6 is about.')
+@description('Set false only for a documented exception: the database must not be reachable from the public internet.')
 param databasePublicAccess bool = false
 
 var suffix = '${appName}-${environment}'
@@ -45,14 +45,13 @@ var tags = {
   project: 'BART CBTC'
   environment: environment
   dataClassification: 'Confidential'
-  itsdApplication: 'ITSD Public Clouds — see docs/itsd/'
 }
 
 // ── Identity ────────────────────────────────────────────────────────────────
 // One user-assigned identity for the API and the Functions, so neither ever
 // holds a secret: they authenticate to Postgres, Blob and Key Vault as
 // themselves. This is what removes the service-role key that today sits in an
-// Edge Function secret (ITSD I.2-2-1).
+// Edge Function secret.
 resource appIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: 'id-${suffix}'
   location: location
@@ -97,7 +96,7 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview'
   properties: {
     version: postgresVersion
     storage: {
-      // ITSD I.1-1(20) / O.1-4: backups must be retrievable and restore-tested.
+      // Backups must be retrievable and restore-tested, not merely configured.
       storageSizeGB: 32
       autoGrow: 'Enabled'
     }
@@ -120,7 +119,7 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview'
 }
 
 // pg_cron carries the weekly planning snapshot and the auth_events retention
-// purge (ITSD O.1-5). Both exist today and must survive the move.
+// purge. Both exist today and must survive the move.
 resource pgCron 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = {
   parent: postgres
   name: 'azure.extensions'
@@ -130,8 +129,8 @@ resource pgCron 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-1
   }
 }
 
-// Force TLS. ITSD I.2-8 asks for TLS 1.2 or later with earlier versions
-// disabled, and this is where that answer becomes true rather than asserted.
+// Force TLS 1.2 or later with earlier versions disabled. This is where that
+// becomes true of the server rather than merely asserted of the client.
 resource requireTls 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = {
   parent: postgres
   name: 'require_secure_transport'
@@ -173,10 +172,10 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
         blob: { enabled: true, keyType: 'Account' }
       }
       keySource: 'Microsoft.Storage'
-      // ITSD I.3-1 note: this is STORAGE-level encryption, which the checklist
-      // explicitly says is not sufficient on its own for Confidential data.
-      // Column-level encryption in Postgres (pgcrypto) is the answer there —
-      // see docs and the free-text entry in the ITSD workbook.
+      // NOTE: this is STORAGE-level encryption only, which is not sufficient
+      // on its own for Confidential data — it protects the disk, not the row
+      // from anyone holding a database connection. Column-level encryption in
+      // Postgres (pgcrypto) is the control that actually covers those fields.
     }
   }
 }
@@ -220,7 +219,7 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   tags: tags
   properties: {
     sku: { name: 'PerGB2018' }
-    // ITSD O.1-5 asks for at least one year of access-log retention.
+    // At least one year of access-log retention.
     retentionInDays: 400
   }
 }
@@ -281,8 +280,8 @@ resource postgrest 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 // ── WAF ─────────────────────────────────────────────────────────────────────
-// THIS IS THE RESOURCE THAT CLOSES ITSD I.2-6, the one requirement the current
-// Supabase architecture cannot satisfy at all. It must front the API, not just
+// THIS IS THE INTRUSION-PREVENTION LAYER the current Supabase architecture
+// cannot provide at all. It must front the API, not just
 // the static site: the front end holds no data — every Confidential record
 // flows through PostgREST.
 resource wafPolicy 'Microsoft.Network/FrontDoorWebApplicationFirewallPolicies@2022-05-01' = {
