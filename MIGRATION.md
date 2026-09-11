@@ -222,6 +222,8 @@ The replacement is written and commented in `azure_auth_uid_shim.sql`.
 
 ## 8. Suggested sequence
 
+> Step-by-step commands for stages 2-7 below are in **`azure/RUNBOOK.md`**.
+
 1. ✅ *(done)* Vendor dependencies; `config.js`; identity and storage seams; the
    `auth.uid()` shim, proven on plain PostgreSQL; Bicep.
 2. **IT: provide a dev subscription.** Everything below is blocked on this.
