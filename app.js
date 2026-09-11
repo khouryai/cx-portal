@@ -37,77 +37,18 @@ setTimeout(() => { if (typeof _checkDbStatus === 'function') _checkDbStatus(); }
 // same reason: tab-switch + status change was silently dropping DB writes.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Read the JWT directly from localStorage — completely bypasses supabase-js auth client
-// which hangs indefinitely after signInWithPassword on this environment.
-// Supabase-js v2 stores the session under key: sb-{project_ref}-auth-token
-function _getSessionFromStorage() {
-  try {
-    const ref = SUPABASE_URL.replace('https://', '').split('.')[0]; // e.g. "uqtwiucxktljhukmgmxg"
-    const raw = localStorage.getItem(`sb-${ref}-auth-token`);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch { return null; }
-}
-
-// Synchronous — no await needed. Reads token from localStorage directly.
-function _getAuthHeader() {
-  const session = _getSessionFromStorage();
-  if (session?.access_token) {
-    const expiresAt = (session.expires_at || 0) * 1000;
-    const minsLeft  = ((expiresAt - Date.now()) / 60000).toFixed(1);
-    const expired   = Date.now() > expiresAt;
-    console.log(`[auth] token ${expired ? '⛔ EXPIRED' : '✓ valid'} | expires in ${minsLeft} min`);
-    return 'Bearer ' + session.access_token;
-  }
-  console.warn('[auth] ⚠ no session in localStorage — falling back to anon key');
-  return 'Bearer ' + SUPABASE_ANON_KEY;
-}
+// Token plumbing lives in cx-auth-provider.js (window.CXIdentity) so the
+// Microsoft Entra swap is one file, not a hunt through this one. The Supabase
+// behaviour is unchanged — including reading the session straight out of
+// localStorage, which exists because supabase-js's auth client can hang
+// indefinitely after signInWithPassword on this stack.
+function _getSessionFromStorage() { return window.CXIdentity.storedSession(); }
+function _getAuthHeader() { return window.CXIdentity.authHeader(); }
 
 // ── SESSION FRESHNESS ────────────────────────────────────────────────────────
-// supabase-js GoTrueClient auto-refresh can hang on this stack (see the
-// _getSessionFromStorage note), so every REST helper proactively refreshes the
-// JWT itself via GoTrue's REST endpoint once it is within 2 minutes of expiry.
-// If refresh fails and the token is already dead, a blocking banner tells the
-// user to sign in again instead of letting reads/saves fail silently.
-let _sessRefreshInflight = null;
-
-async function _ensureFreshSession() {
-  const s = _getSessionFromStorage();
-  if (!s?.access_token || !s?.refresh_token) return;
-  const msLeft = (s.expires_at || 0) * 1000 - Date.now();
-  if (msLeft > 120_000) return;
-  if (_sessRefreshInflight) return _sessRefreshInflight;
-  _sessRefreshInflight = (async () => {
-    try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 10000);
-      const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
-        method: 'POST',
-        signal: ctrl.signal,
-        headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: s.refresh_token }),
-      });
-      clearTimeout(timer);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const fresh = await res.json();
-      if (!fresh?.access_token) throw new Error('no access_token in refresh response');
-      if (!fresh.expires_at && fresh.expires_in) fresh.expires_at = Math.floor(Date.now() / 1000) + fresh.expires_in;
-      if (!fresh.user) fresh.user = s.user;
-      const ref = SUPABASE_URL.replace('https://', '').split('.')[0];
-      localStorage.setItem(`sb-${ref}-auth-token`, JSON.stringify(fresh));
-      console.log('[auth] token refreshed via direct GoTrue REST');
-      _hideSessionExpiredBanner();
-    } catch (e) {
-      console.warn('[auth] token refresh failed:', e.message);
-      const cur = _getSessionFromStorage();
-      if (!cur || Date.now() > (cur.expires_at || 0) * 1000) _showSessionExpiredBanner();
-    } finally {
-      _sessRefreshInflight = null;
-    }
-  })();
-  return _sessRefreshInflight;
-}
-
+// Proactive refresh also lives in the provider: under MSAL it becomes
+// acquireTokenSilent and this direct-to-GoTrue path disappears entirely.
+async function _ensureFreshSession() { return window.CXIdentity.ensureFresh(); }
 function _showSessionExpiredBanner() {
   if (!currentRoleUser) return; // not signed in — the login overlay is the UI
   if (document.getElementById('cx-session-expired-banner')) return;
@@ -3299,7 +3240,7 @@ function initAuth() {
   // We skip INITIAL_SESSION here — it's handled manually below via localStorage
   // because supabase-js GoTrueClient can hang during its internal init, which
   // would prevent INITIAL_SESSION from ever firing.
-  _sb.auth.onAuthStateChange(async (event, session) => {
+  window.CXIdentity.onAuthStateChange(async (event, session) => {
     console.log('[auth] event:', event);
     if (event === 'INITIAL_SESSION') return; // handled manually below
     if (event === 'TOKEN_REFRESHED') {
@@ -3373,7 +3314,7 @@ async function _loadCurrentProfile(user, accessToken) {
 
   try {
     // Use the access token passed in directly from onAuthStateChange — avoids calling
-    // _sb.auth.getSession() which can hang while supabase-js is still settling.
+    // CXIdentity.getSession(), which can hang while supabase-js is still settling.
     // Falls back to _getAuthHeader() for cases like session restore on page load.
     const authHeader = accessToken ? `Bearer ${accessToken}` : _getAuthHeader();
     const ctrl = new AbortController();
@@ -3389,13 +3330,13 @@ async function _loadCurrentProfile(user, accessToken) {
     const data = rows?.[0];
 
     if (!data) {
-      await _sb.auth.signOut();
+      await window.CXIdentity.signOut();
       showAuthError('Your account is not set up yet — contact your admin.');
       if (btn) { btn.textContent = 'Sign In'; btn.disabled = false; }
       return;
     }
     if (!data.is_active) {
-      await _sb.auth.signOut();
+      await window.CXIdentity.signOut();
       showAuthError('Your account has been deactivated — contact your admin.');
       if (btn) { btn.textContent = 'Sign In'; btn.disabled = false; }
       return;
@@ -3468,37 +3409,23 @@ async function signIn() {
   // deadlock, then persist the session where supabase-js expects it.
   try {
     const result = await Promise.race([
-      _sb.auth.signInWithPassword({ email, password }),
+      window.CXIdentity.signIn({ email, password }),
       new Promise((_, rej) => setTimeout(() => rej(new Error('__signin_hang__')), 12000)),
     ]);
     if (result && result.error) { showAuthError(result.error.message); resetBtn(); }
     // onAuthStateChange handles the rest on success
   } catch (e) {
     console.warn('[auth] signInWithPassword hung or threw — falling back to direct REST grant:', e && e.message);
-    try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 15000);
-      const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-        method: 'POST',
-        signal: ctrl.signal,
-        headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      clearTimeout(timer);
-      const j = await res.json();
-      if (!res.ok) { showAuthError(j.error_description || j.msg || 'Sign-in failed.'); resetBtn(); return; }
-      const ref = SUPABASE_URL.replace('https://', '').split('.')[0];
-      localStorage.setItem(`sb-${ref}-auth-token`, JSON.stringify(j));
-      location.reload();   // boot path restores the stored session
-    } catch (e2) {
-      showAuthError('Sign-in timed out. Close any other portal tabs (or restart the browser) and try again.');
-      resetBtn();
-    }
+    const out = await window.CXIdentity.directGrant(email, password);
+    if (out.ok) { location.reload(); return; }   // boot path restores the stored session
+    showAuthError(out.message ||
+      'Sign-in timed out. Close any other portal tabs (or restart the browser) and try again.');
+    resetBtn();
   }
 }
 
 async function signOut() {
-  await _sb.auth.signOut();
+  await window.CXIdentity.signOut();
   _sessionLog     = [];
   intakeAdditions = [];
   intakeStep      = 1;
@@ -3542,7 +3469,7 @@ async function submitPasswordReset() {
   // `window.location.href` since it may include unrelated hash/query state
   // that can collide with the auth params Supabase appends.
   const _redirectTo = `${window.location.origin}${window.location.pathname}?reset=1`;
-  const { error } = await _sb.auth.resetPasswordForEmail(email, { redirectTo: _redirectTo });
+  const { error } = await window.CXIdentity.resetPassword(email, { redirectTo: _redirectTo });
   if (error) {
     if (msg) { msg.textContent = error.message; msg.style.color = '#dc2626'; }
     if (btn) { btn.textContent = 'Send Reset Link'; btn.disabled = false; }
@@ -3627,7 +3554,7 @@ async function submitChangePassword() {
 
   if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
 
-  const { error: updErr } = await _sb.auth.updateUser({ password: pw1 });
+  const { error: updErr } = await window.CXIdentity.updatePassword(pw1);
   if (updErr) {
     if (err) err.textContent = updErr.message;
     if (btn) { btn.textContent = _pendingProfile ? 'Set Password & Continue' : 'Save New Password'; btn.disabled = false; }
@@ -3661,7 +3588,7 @@ async function submitChangePassword() {
   // The user is signed in via the recovery token. Fetch their profile directly
   // (bypassing _loadCurrentProfile's must_change_password intercept) and load the app.
   try {
-    const { data: { session } } = await _sb.auth.getSession();
+    const { data: { session } } = await window.CXIdentity.getSession();
     if (!session?.user) throw new Error('No session after password update.');
 
     const ctrl  = new AbortController();
@@ -6250,7 +6177,7 @@ async function inviteUser() {
   if (!name || !email || !password) { toast('Name, email, and password are all required', 'error'); return; }
   if (password.length < 6) { toast('Password must be at least 6 characters', 'error'); return; }
 
-  const { data, error } = await _sb.auth.signUp({
+  const { data, error } = await window.CXIdentity.createUser({
     email, password,
     options: {
       emailRedirectTo: window.location.origin + window.location.pathname,

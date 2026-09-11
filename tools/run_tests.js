@@ -46,6 +46,8 @@ const suites = [
   { file: "tools/test_cx_actions.js", needs: [] },      // event-delegation dispatcher (Tier 3 #11)
   { file: "tools/test_auth_hardening.js", needs: [] },  // ITSD auth gates: password policy, rotation, lockout
   { file: "tools/test_csp.js", needs: [] },             // CSP present + in step with config.js
+  { file: "tools/test_rls_portability.js", needs: [] }, // Azure migration: RLS works on plain Postgres + Entra
+  { file: "tools/test_identity_seam.js", needs: [] },   // Azure migration: identity provider seam
   { file: "tools/test_size_ratchet.js", needs: [] },    // monolith line-count ratchet (Tier 3 #11)
   { file: "tools/test_inline_handler_ratchet.js", needs: [] }, // inline on*= handler ratchet (Tier 3 #11 Stage B)
   { file: "tools/test_delegation_wiring.js", needs: [] },      // every data-action resolves (Tier 3 #11 Stage B)

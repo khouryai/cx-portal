@@ -1727,6 +1727,10 @@ function _signinTogglePw(){
 </div>
 
 <script src="config.js"></script>
+<!-- Identity provider seam: the ONE file that changes to move from Supabase
+     GoTrue to Microsoft Entra ID. Loads before app.js, which routes every
+     auth call and the token plumbing through window.CXIdentity. -->
+<script src="cx-auth-provider.js"></script>
 <script src="data.js"></script>
 <script src="icons.js"></script>
 <script src="format.js"></script>

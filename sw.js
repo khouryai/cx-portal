@@ -15,6 +15,7 @@ const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const SHELL_ASSETS = [
   './',
   './index.html',
+  './cx-auth-provider.js',
   './icons.js',
   './format.js',
   './cx-state.js',
