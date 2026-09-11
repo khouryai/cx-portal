@@ -135,27 +135,102 @@
     },
   };
 
-  // ── Azure Blob Storage (the migration target) ─────────────────────────────
-  // Set CX_CONFIG.STORAGE = 'azure' plus CX_CONFIG.BLOB_ACCOUNT and
-  // CX_CONFIG.SAS_ENDPOINT once the Function that mints SAS is deployed.
+  // ── Azure Blob Storage ────────────────────────────────────────────────────
+  // Set CX_CONFIG.STORAGE = 'azure' plus CX_CONFIG.SAS_ENDPOINT (the URL of the
+  // Function in azure/functions/sas). BLOB_ACCOUNT is not needed here — the
+  // Function returns absolute URLs, so the account name never has to be known
+  // to page script.
   //
-  //   upload   -> PUT https://<account>.blob.core.windows.net/<container>/<path>
-  //               headers: x-ms-blob-type: BlockBlob, Content-Type
-  //               authorized by the SAS returned for a write scope
-  //   remove   -> DELETE the same URL
-  //   signMany -> POST CX_CONFIG.SAS_ENDPOINT with the caller's Entra token and
-  //               the paths; the Function verifies the token, checks the same
-  //               module permission the RLS policy would, and returns
-  //               user-delegation SAS URLs. The account key stays server-side.
-  //
-  // Deliberately left unimplemented rather than half-written: it needs the real
-  // account name, container names and the Function's URL, none of which exist
-  // until the Azure subscription does.
+  // EVERY operation goes through the Function first, because every operation
+  // needs a credential and the browser may not hold one. That is one extra
+  // round trip per upload and per delete versus Supabase, and zero extra for
+  // reads (signMany was already a batch call). The upload round trip is the
+  // real cost, and it is the price of the account key never existing in the
+  // browser — which is not a trade, it is the correct design.
   var azureBlobStorage = {
     kind: 'azure-blob',
-    upload: function () { return Promise.reject(new Error('Azure Blob storage provider not implemented yet')); },
-    remove: function () { return Promise.reject(new Error('Azure Blob storage provider not implemented yet')); },
-    signMany: function () { return Promise.reject(new Error('Azure Blob storage provider not implemented yet')); },
+
+    /**
+     * Ask the Function to sign paths.
+     * @param {string} container
+     * @param {string[]} paths
+     * @param {string} permissions 'r', 'w', 'd' or a combination
+     * @param {number} expiresIn seconds
+     * @returns {Promise<Object<string,string>>} path -> absolute SAS URL
+     */
+    _sign: function (container, paths, permissions, expiresIn) {
+      var endpoint = cfg().SAS_ENDPOINT;
+      if (!endpoint) return Promise.reject(new Error('CX_CONFIG.SAS_ENDPOINT is not set'));
+      var to = withTimeout(20000);
+      return fetch(endpoint, {
+        method: 'POST', signal: to.signal, cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', Authorization: authHeader() },
+        body: JSON.stringify({
+          container: container, paths: paths,
+          permissions: permissions, expiresIn: expiresIn || 600,
+        }),
+      }).then(function (res) {
+        to.done();
+        if (!res.ok) {
+          return res.text().then(function (t) {
+            throw new Error('sas ' + res.status + ': ' + t);
+          });
+        }
+        return res.json().then(function (j) { return (j && j.urls) || {}; });
+      }, function (e) { to.done(); throw e; });
+    },
+
+    upload: function (bucket, path, body, contentType) {
+      return azureBlobStorage._sign(bucket, [path], 'w', 600).then(function (urls) {
+        var url = urls[path];
+        if (!url) throw new Error('storage upload: no SAS returned for ' + path);
+        var to = withTimeout(60000);
+        return fetch(url, {
+          method: 'PUT', signal: to.signal, cache: 'no-store',
+          headers: {
+            // Required by Azure for a single-shot block blob PUT. Files larger
+            // than 256 MiB need the staged-block API instead; nothing this app
+            // stores comes close, and the Function caps nothing here because the
+            // failure is loud and immediate.
+            'x-ms-blob-type': 'BlockBlob',
+            'Content-Type': contentType || 'application/octet-stream',
+          },
+          body: body,
+        }).then(function (res) {
+          to.done();
+          if (!res.ok) {
+            return res.text().then(function (t) {
+              throw new Error('storage upload ' + res.status + ': ' + t);
+            });
+          }
+          return path;
+        }, function (e) { to.done(); throw e; });
+      });
+    },
+
+    /**
+     * Delete objects. Best-effort by design, exactly as the Supabase provider
+     * is — a failed cleanup must never fail the user's action.
+     */
+    remove: function (bucket, paths) {
+      if (!paths || !paths.length) return Promise.resolve();
+      return azureBlobStorage._sign(bucket, paths, 'd', 600).then(function (urls) {
+        return Promise.all(paths.map(function (p) {
+          if (!urls[p]) return null;
+          return fetch(urls[p], { method: 'DELETE' }).catch(function () {});
+        }));
+      }).then(function () {}, function (e) {
+        try { console.warn('[storage] remove failed (non-fatal):', e && e.message); } catch (_) {}
+      });
+    },
+
+    signMany: function (bucket, paths, expiresIn) {
+      if (!paths || !paths.length) return Promise.resolve({});
+      return azureBlobStorage._sign(bucket, paths, 'r', expiresIn).catch(function (e) {
+        try { console.warn('[storage] sign failed:', e && e.message); } catch (_) {}
+        return {};
+      });
+    },
   };
 
   var providers = { supabase: supabaseStorage, azure: azureBlobStorage };

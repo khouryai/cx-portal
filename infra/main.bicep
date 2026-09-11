@@ -45,6 +45,12 @@ param deployWaf bool = true
 @description('Use the cheapest viable SKUs. Personal-subscription escape hatch ONLY: Static Web Apps drops to Free (no private endpoints, no custom auth) and log retention drops to 30 days. Ignored when environment == prod.')
 param cheapMode bool = false
 
+@description('Audience the SAS Function requires in caller tokens — the API app registration\'s application id or app id URI. Empty until the Entra app registration exists; the Function refuses every request until it is set.')
+param entraApiAudience string = ''
+
+@description('Origin allowed to call the SAS Function (the portal). Deliberately not a wildcard: this endpoint hands out credentials.')
+param allowedOrigin string = ''
+
 var isProd = environment == 'prod'
 // Guard rails: prod never gets the cheap path, whatever the parameter file says.
 var thrifty = cheapMode && !isProd
@@ -199,7 +205,7 @@ resource blobServices 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01
   }
 }
 
-var containers = ['photos', 'forms', 'drawings', 'vehicle-files', 'task-files']
+var containers = ['photos', 'forms', 'drawings', 'documents', 'vehicle-files', 'task-files']
 resource blobContainers 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = [for c in containers: {
   parent: blobServices
   name: c
@@ -292,6 +298,86 @@ resource postgrest 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
+// ── SAS-minting Function ────────────────────────────────────────────────────
+// Supabase let the BROWSER sign storage URLs. Azure cannot: a SAS needs a key,
+// and no key may reach page script. This Function verifies the caller's Entra
+// token and signs on their behalf, using a USER DELEGATION key obtained through
+// the managed identity below — the storage account key is never used, never
+// configured, and can stay disabled.
+//
+// Source: azure/functions/sas/. Its request-validation half is covered by
+// tools/test_sas_function.js, which needs no subscription.
+resource functionPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
+  name: 'plan-${suffix}'
+  location: location
+  tags: tags
+  kind: 'functionapp'
+  sku: { name: 'Y1', tier: 'Dynamic' }   // consumption: no idle cost
+  properties: { reserved: true }         // reserved => Linux
+}
+
+resource sasFunction 'Microsoft.Web/sites@2023-12-01' = {
+  name: 'func-sas-${suffix}'
+  location: location
+  tags: tags
+  kind: 'functionapp,linux'
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${appIdentity.id}': {} }
+  }
+  properties: {
+    serverFarmId: functionPlan.id
+    httpsOnly: true
+    keyVaultReferenceIdentity: appIdentity.id
+    siteConfig: {
+      linuxFxVersion: 'Node|20'
+      minTlsVersion: '1.2'
+      ftpsState: 'Disabled'
+      http20Enabled: true
+      cors: {
+        // The Function sets its own CORS headers from ALLOWED_ORIGIN; this is
+        // the platform-level belt to that braces. Never '*' on an endpoint that
+        // issues credentials.
+        allowedOrigins: empty(allowedOrigin) ? [] : [allowedOrigin]
+        supportCredentials: false
+      }
+      appSettings: [
+        { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
+        { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'node' }
+        { name: 'WEBSITE_NODE_DEFAULT_VERSION', value: '~20' }
+        // Identity-based connection for the runtime's own storage: no
+        // AzureWebJobsStorage connection string, so no account key anywhere.
+        { name: 'AzureWebJobsStorage__accountName', value: storage.name }
+        { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
+        { name: 'AzureWebJobsStorage__clientId', value: appIdentity.properties.clientId }
+        { name: 'AZURE_CLIENT_ID', value: appIdentity.properties.clientId }
+        { name: 'ENTRA_TENANT_ID', value: tenantId }
+        { name: 'ENTRA_API_AUDIENCE', value: entraApiAudience }
+        { name: 'BLOB_ACCOUNT', value: storage.name }
+        { name: 'ALLOWED_ORIGIN', value: allowedOrigin }
+        { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: '' }
+      ]
+    }
+  }
+}
+
+// Storage Blob Data Contributor on the storage account. This is what lets the
+// Function call getUserDelegationKey and sign read, write and delete SAS. It is
+// also the blast radius if the Function is ever compromised — scoped to this
+// one account, and revocable without rotating anything.
+var blobDataContributor = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+
+resource sasBlobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: storage
+  name: guid(storage.id, appIdentity.id, blobDataContributor)
+  properties: {
+    roleDefinitionId: blobDataContributor
+    principalId: appIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // ── WAF ─────────────────────────────────────────────────────────────────────
 // THIS IS THE INTRUSION-PREVENTION LAYER the current Supabase architecture
 // cannot provide at all. It must front the API, not just
@@ -323,5 +409,7 @@ output apiFqdn string = postgrest.properties.configuration.ingress.fqdn
 output appIdentityClientId string = appIdentity.properties.clientId
 output keyVaultName string = keyVault.name
 output wafPolicyId string = wantWaf ? wafPolicy.id : ''
+output sasFunctionName string = sasFunction.name
+output sasEndpoint string = 'https://${sasFunction.properties.defaultHostName}/api/sas'
 output wafDeployed bool = wantWaf
 output thriftyMode bool = thrifty

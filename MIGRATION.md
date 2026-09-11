@@ -92,9 +92,17 @@ a privilege-guard trigger firing under an Entra token.
 
 `cx-auth-provider.js` (`window.CXIdentity`) is the one file that changes to move
 identity, as `config.js` is for the backend. All 10 auth call sites plus the
-token plumbing route through it. The Entra provider is stubbed with its
-interface complete; `tools/test_identity_seam.js` fails the build if a direct
-`_sb.auth.*` call returns to the monolith.
+token plumbing route through it. `tools/test_identity_seam.js` fails the build if
+a direct `_sb.auth.*` call returns to the monolith.
+
+**The Entra provider is implemented**, against MSAL Browser (vendored at 5.21.0,
+loaded lazily so a Supabase deployment never pays the 275 KB). It uses
+`loginRedirect` rather than a popup — the PWA runs standalone on field tablets
+where a popup has nowhere to return to — and maps MSAL's result onto the session
+shape the app already reads, so no call site above it changes.
+`tools/test_entra_provider.js` fakes MSAL and pins that mapping, in particular
+that `user.id` is the `oid` claim: get that wrong and all 349 RLS policies
+silently deny.
 
 Under MSAL, two workarounds this stack currently needs disappear into
 `acquireTokenSilent`: reading the session straight from localStorage, and
@@ -107,15 +115,27 @@ client can hang here.
 cleanly (bucket→container, signed URL→SAS).
 
 **One real difference:** Supabase mints signed URLs in the browser; a SAS must be
-signed with an account key that must never reach the browser. Under Azure,
-`signMany` calls a small Function that mints user-delegation SAS after checking
-the caller's Entra token. **That Function is the only new server-side component
-the storage migration needs.**
+signed with a key that must never reach the browser. So `signMany` calls a small
+Function that verifies the caller's Entra token and signs on their behalf —
+**the only new server-side component the storage migration needs.**
+
+**Both are written.** `azure/functions/sas/` holds the Function; the `azure`
+provider in `cx-storage.js` calls it for reads, writes and deletes. It signs
+with a *user delegation* key via managed identity, so the storage account key is
+never used and can stay disabled. Its request-validation half is pure logic in
+`src/sas-core.js` and is covered by `tools/test_sas_function.js` (48 checks) —
+container allow-list, path-escape rejection, no `list` permission, expiry
+clamped to an hour. Neither has met a real storage account.
 
 ### 4.4 Infrastructure as code
 
 `infra/main.bicep` — every resource, annotated with the security property it
-provides. Compiles clean (15 resources, no warnings). **Never deployed.**
+provides. Compiles clean (18 resources, no warnings). **Never deployed.**
+
+`deployWaf` and `cheapMode` allow the same template to stand the stack up on a
+throwaway personal subscription for roughly USD 30-60/month instead of the
+USD 350+ the WAF alone costs; both are computed so `environment == 'prod'`
+cannot opt out. See `infra/README.md` and `infra/main.parameters.personal.json`.
 
 ### 4.5 Already done previously
 
@@ -209,8 +229,10 @@ The replacement is written and commented in `azure_auth_uid_shim.sql`.
 4. Stand up Postgres + PostgREST; restore a dump; apply the shim; point a staging
    copy of the frontend at it via `config.js`. **Parallel run** — the dual-claim
    `auth.uid()` makes this possible.
-5. Implement the `entra` identity provider; re-key `profiles` to Entra object ids.
-6. Implement the `azure` storage provider + the SAS-minting Function.
+5. ✅ *(done)* `entra` identity provider. Remaining at this step: create the app
+   registration, fill `config.js`, and re-key `profiles` to Entra object ids.
+6. ✅ *(done)* `azure` storage provider + the SAS Function. Remaining: deploy the
+   Function and set `SAS_ENDPOINT`.
 7. Static Web Apps hosting; port CI. Rebuild notification emails as Azure
    Functions if and when they are wanted.
 8. Front Door + WAF in front of the API. **Closes I.2-6.**
