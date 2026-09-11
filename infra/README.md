@@ -50,3 +50,40 @@ Most of this template is negotiable. These are not:
 - **The SAS-minting Function** the storage seam needs (see `cx-storage.js`) —
   it needs real container names and an app registration first.
 - **CI/CD.** Porting `deploy.yml` needs a federated credential IT must create.
+
+---
+
+## Deploying to a personal subscription (learning / spike only)
+
+`main.parameters.personal.json` exists so the same template can be stood up on a
+throwaway personal Azure subscription to rehearse the migration and validate the
+Entra sign-in flow. **Synthetic data only** — no customer content, no real
+project records. Tear it down afterwards.
+
+It differs from the corporate parameter file in four ways, all cost or access:
+
+| Parameter | Personal | Why |
+|---|---|---|
+| `deployWaf` | `false` | `Premium_AzureFrontDoor` is ~USD 330/month and teaches you nothing the rest of the stack doesn't |
+| `cheapMode` | `true` | Static Web Apps → Free, log retention → 30 days |
+| `databasePublicAccess` | `true` | So you can reach Postgres with `psql` from your laptop without standing up a VNet and a jumpbox |
+| `dbAdminGroupObjectId` | your own user | A personal tenant has no admin group; use your own object id (`az ad signed-in-user show --query id -o tsv`) |
+
+`environment` must stay `dev` or `test`. Both switches are ignored when
+`environment == 'prod'` — `thrifty` and `wantWaf` are computed so that
+production cannot accidentally deploy without a WAF or on Free SKUs, whatever a
+parameter file says.
+
+```bash
+az group create -n rg-cxportal-dev -l westus2
+az deployment group what-if -g rg-cxportal-dev \
+  -f infra/main.bicep -p infra/main.parameters.personal.json
+az deployment group create -g rg-cxportal-dev \
+  -f infra/main.bicep -p infra/main.parameters.personal.json
+```
+
+Rough running cost with these settings: **USD 30-60/month**, much of it covered
+by the free-trial credit. Stop the Postgres server when you are not using it
+(`az postgres flexible-server stop`) and it is less. Delete the whole resource
+group to stop all of it at once.
+

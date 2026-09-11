@@ -39,6 +39,16 @@ param postgresVersion string = '17'
 @description('Set false only for a documented exception: the database must not be reachable from the public internet.')
 param databasePublicAccess bool = false
 
+@description('Deploy the Front Door WAF. Leave true for anything internet-facing. Set FALSE only for a throwaway personal/learning subscription: Premium_AzureFrontDoor costs roughly USD 330/month and teaches you nothing the rest of the stack does not. Forced true when environment == prod.')
+param deployWaf bool = true
+
+@description('Use the cheapest viable SKUs. Personal-subscription escape hatch ONLY: Static Web Apps drops to Free (no private endpoints, no custom auth) and log retention drops to 30 days. Ignored when environment == prod.')
+param cheapMode bool = false
+
+var isProd = environment == 'prod'
+// Guard rails: prod never gets the cheap path, whatever the parameter file says.
+var thrifty = cheapMode && !isProd
+var wantWaf = deployWaf || isProd
 var suffix = '${appName}-${environment}'
 var tags = {
   application: 'Hitachi Rail T&C Portal'
@@ -203,7 +213,9 @@ resource staticSite 'Microsoft.Web/staticSites@2023-01-01' = {
   name: 'stapp-${suffix}'
   location: location
   tags: tags
-  sku: { name: 'Standard', tier: 'Standard' }   // Standard: needed for private endpoints + custom auth
+  // Standard is needed for private endpoints + custom auth. Free has neither,
+  // which is acceptable only on a throwaway learning subscription.
+  sku: thrifty ? { name: 'Free', tier: 'Free' } : { name: 'Standard', tier: 'Standard' }
   properties: {
     allowConfigFileUpdates: true
     stagingEnvironmentPolicy: 'Enabled'
@@ -219,8 +231,9 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   tags: tags
   properties: {
     sku: { name: 'PerGB2018' }
-    // At least one year of access-log retention.
-    retentionInDays: 400
+    // At least one year of access-log retention. Retention beyond 90 days is
+    // billed per GB/month, so a learning subscription drops to the free 30.
+    retentionInDays: thrifty ? 30 : 400
   }
 }
 
@@ -284,7 +297,7 @@ resource postgrest 'Microsoft.App/containerApps@2024-03-01' = {
 // cannot provide at all. It must front the API, not just
 // the static site: the front end holds no data — every Confidential record
 // flows through PostgREST.
-resource wafPolicy 'Microsoft.Network/FrontDoorWebApplicationFirewallPolicies@2022-05-01' = {
+resource wafPolicy 'Microsoft.Network/FrontDoorWebApplicationFirewallPolicies@2022-05-01' = if (wantWaf) {
   name: take('waf${replace(suffix, '-', '')}', 128)
   location: 'global'
   tags: tags
@@ -292,7 +305,7 @@ resource wafPolicy 'Microsoft.Network/FrontDoorWebApplicationFirewallPolicies@20
   properties: {
     policySettings: {
       enabledState: 'Enabled'
-      mode: 'Prevention'            // Detection first in dev, Prevention in prod
+      mode: isProd ? 'Prevention' : 'Detection'   // Detection first in dev, Prevention in prod
     }
     managedRules: {
       managedRuleSets: [
@@ -309,4 +322,6 @@ output storageAccountName string = storage.name
 output apiFqdn string = postgrest.properties.configuration.ingress.fqdn
 output appIdentityClientId string = appIdentity.properties.clientId
 output keyVaultName string = keyVault.name
-output wafPolicyId string = wafPolicy.id
+output wafPolicyId string = wantWaf ? wafPolicy.id : ''
+output wafDeployed bool = wantWaf
+output thriftyMode bool = thrifty

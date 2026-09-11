@@ -14,9 +14,15 @@
      The Supabase origin below must stay in step with config.js — the cutover
      to IT-hosted infrastructure changes BOTH files. tools/test_csp.js fails
      the build if they drift.
+     login.microsoftonline.com is present for Entra ID sign-in (connect-src for
+     the token endpoint, frame-src for MSAL's silent-renewal iframe). It is
+     harmless while CX_CONFIG.IDENTITY is 'supabase' — nothing contacts it —
+     and being here already is what allows a parallel run across both issuers.
+     STILL TO ADD AT CUTOVER: the Azure Blob account origin in img-src and
+     connect-src, once the storage account exists.
      If a legitimate resource is ever blocked, the browser console names the
      exact directive; widen that one directive rather than removing the tag. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; frame-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://uqtwiucxktljhukmgmxg.supabase.co; font-src 'self' data:; media-src 'self' blob: data:; connect-src 'self' blob: data: https://uqtwiucxktljhukmgmxg.supabase.co wss://uqtwiucxktljhukmgmxg.supabase.co" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; frame-src 'self' blob: https://login.microsoftonline.com; worker-src 'self' blob:; manifest-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://uqtwiucxktljhukmgmxg.supabase.co; font-src 'self' data:; media-src 'self' blob: data:; connect-src 'self' blob: data: https://uqtwiucxktljhukmgmxg.supabase.co wss://uqtwiucxktljhukmgmxg.supabase.co https://login.microsoftonline.com" />
 <meta name="color-scheme" content="light" />
 <!-- iOS standalone / home-screen install -->
 <meta name="mobile-web-app-capable" content="yes" />

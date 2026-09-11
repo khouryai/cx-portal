@@ -57,6 +57,14 @@ if (m) {
       (directive("img-src") || "").includes(origin));
   }
 
+  // Entra ID sign-in origins. Present ahead of the cutover so a parallel run
+  // across both issuers is possible; harmless while IDENTITY is 'supabase'.
+  const ENTRA = "https://login.microsoftonline.com";
+  ok("connect-src allows the Entra token endpoint", (directive("connect-src") || "").includes(ENTRA));
+  ok("frame-src allows MSAL's silent-renewal iframe", (directive("frame-src") || "").includes(ENTRA));
+  ok("form-action stays locked to self (MSAL redirects, it does not POST out)",
+    directive("form-action") === "'self'");
+
   // The one external script the app still loads (see MIGRATION.md §4.1).
   const usesSheetJs = /cdn\.sheetjs\.com/.test(html.replace(m[0], ""));
   if (usesSheetJs) {
