@@ -146,28 +146,16 @@
   // ── storage (native fetch — mirrors _formsStorage for tab-resume safety) ────
   function withTimeout(ms) { var c = new AbortController(); var t = setTimeout(function () { c.abort(); }, ms); return { signal: c.signal, done: function () { clearTimeout(t); } }; }
 
+  // Bucket-bound object storage. The Azure Blob swap happens in cx-storage.js,
+  // not here — these three functions are the whole surface photos uses.
+  var _store = window.CXStorage.forBucket(BUCKET);
+
   async function storageUpload(path, blob, contentType) {
-    var to = withTimeout(60000);
-    try {
-      var res = await fetch(SUPABASE_URL + '/storage/v1/object/' + BUCKET + '/' + encPath(path), {
-        method: 'POST', signal: to.signal, cache: 'no-store',
-        headers: restHeaders({ 'Content-Type': contentType || 'application/octet-stream', 'x-upsert': 'true' }),
-        body: blob,
-      });
-      to.done();
-      if (!res.ok) throw new Error('storage upload ' + res.status + ': ' + (await res.text()));
-      return path;
-    } catch (e) { to.done(); throw e; }
+    return _store.upload(path, blob, contentType);
   }
 
   async function storageRemove(paths) {
-    if (!paths || !paths.length) return;
-    try {
-      await fetch(SUPABASE_URL + '/storage/v1/object/' + BUCKET, {
-        method: 'DELETE', headers: restHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ prefixes: paths }),
-      });
-    } catch (e) { console.warn('[photos] storage remove failed (non-fatal):', e && e.message); }
+    return _store.remove(paths);
   }
 
   // Batch sign — caches, only signs what's missing/expired.
@@ -180,22 +168,13 @@
       else need.push(p);
     });
     if (!need.length) return out;
-    try {
-      var res = await fetch(SUPABASE_URL + '/storage/v1/object/sign/' + BUCKET, {
-        method: 'POST', headers: restHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ expiresIn: SIGN_TTL, paths: need }),
-      });
-      if (res.ok) {
-        var arr = await res.json();
-        arr.forEach(function (it) {
-          if (it && it.signedURL) {
-            var url = SUPABASE_URL + '/storage/v1' + it.signedURL;
-            S.signed.set(it.path, { url: url, exp: Date.now() + SIGN_TTL * 1000 });
-            out[it.path] = url;
-          }
-        });
-      }
-    } catch (e) { console.warn('[photos] sign failed:', e && e.message); }
+    // The signed-URL cache stays here (it is photos' own hot state); only the
+    // minting is delegated, because that is the part Azure does differently.
+    var signed = await _store.signMany(need, SIGN_TTL);
+    Object.keys(signed).forEach(function (pth) {
+      S.signed.set(pth, { url: signed[pth], exp: Date.now() + SIGN_TTL * 1000 });
+      out[pth] = signed[pth];
+    });
     return out;
   }
 
