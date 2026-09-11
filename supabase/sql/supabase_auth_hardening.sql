@@ -33,9 +33,9 @@ comment on column public.profiles.password_changed_at is
 comment on column public.profiles.mfa_enforced is
   'When true the portal refuses to admit the account without a verified MFA factor (ITSD I.2-1-1). Set false only for a documented exception.';
 
--- Existing accounts have no recorded change date. Stamping them "now" would
--- silently grant everyone a fresh six months; leaving them null forces a
--- rotation at next sign-in, which is the intended behaviour for a first roll-out.
+-- These defaults are the policy for NEW accounts. For the accounts that already
+-- existed when this was applied, the roll-out was staged deliberately — see
+-- supabase_auth_hardening_rollout.sql for what was set and why.
 
 
 -- ============================================================
@@ -175,6 +175,16 @@ end;
 $function$;
 
 grant execute on function public.auth_login_gate(text) to anon, authenticated;
+
+-- Both of the above are deliberately anon-callable and the Supabase security
+-- advisor flags them as such; that is accepted, because a failed sign-in has no
+-- session. They are hardened for it: a fixed event vocabulary, an address
+-- format check, a 60-rows-per-hour-per-address flood guard, and a response
+-- shape identical for addresses that do not exist.
+comment on function public.auth_record_event(text, text, text) is
+  'ITSD O.1-5. Deliberately anon-callable: failed sign-ins have no session. Append-only, fixed event vocabulary, flood-guarded.';
+comment on function public.auth_login_gate(text) is
+  'ITSD I.2-4-2(30). Deliberately anon-callable: consulted by the sign-in screen before authentication. Returns an identical shape for unknown addresses so it cannot enumerate accounts.';
 
 
 -- ============================================================
@@ -393,17 +403,57 @@ $function$;
 -- ============================================================
 -- 8. Privilege-change logging                                  (O.1-5)
 -- ============================================================
--- Re-created from supabase_perm_rls_granular.sql with the same rules, plus an
--- auth_events row for every privilege change that is ALLOWED through.
+-- Re-created from supabase_perm_rls_granular.sql (verified against the LIVE
+-- definition before replacing) with the same enforcement, plus an auth_events
+-- row for every privilege change.
+--
+-- Logging happens BEFORE the "service_role / internal: trusted" shortcut, so a
+-- change made directly against the database — the dashboard, a service-role
+-- key, a psql session — is recorded too. O.1-5 wants the record of privilege
+-- escalation regardless of who made it.
+--
 -- Denied attempts raise, which rolls back any row written in the same
 -- statement, so those are recorded from the client instead
--- (cx-auth-hardening.js → auth_record_event('privilege_change_denied', …)).
+-- (cx-auth-hardening.js -> auth_record_event('privilege_change_denied', ...)).
+--
+-- NOTE: profiles carries a SECOND, independent guard,
+-- public.profiles_guard_privileged_cols() — see
+-- supabase_profiles_guard_privileged_cols.sql. It fires after this one
+-- (alphabetical trigger order) and blocks role / is_active /
+-- permission_template changes outright without directory.edit.
 create or replace function private.guard_profile_privilege_changes()
 returns trigger language plpgsql security definer set search_path to 'public' as $function$
 declare
   v_actor uuid := (select auth.uid());
+  v_who   text := coalesce((select auth.uid())::text, coalesce((select auth.role()), 'system'));
 begin
-  if coalesce((select auth.role()), '') <> 'authenticated' then return new; end if;
+  -- 1. Record. Any actor, before any early return.
+  if new.role is distinct from old.role then
+    insert into auth_events (email, user_id, event, detail)
+    values (lower(new.email), new.id, 'privilege_change',
+            format('role %s -> %s (by %s)', coalesce(old.role,'null'), coalesce(new.role,'null'), v_who));
+  end if;
+  if new.permission_template_id is distinct from old.permission_template_id then
+    insert into auth_events (email, user_id, event, detail)
+    values (lower(new.email), new.id, 'privilege_change',
+            format('permission_template %s -> %s (by %s)', coalesce(old.permission_template_id::text,'null'),
+                   coalesce(new.permission_template_id::text,'null'), v_who));
+  end if;
+  if new.is_active is distinct from old.is_active then
+    insert into auth_events (email, user_id, event, detail)
+    values (lower(new.email), new.id, 'privilege_change',
+            format('is_active %s -> %s (by %s)', old.is_active, new.is_active, v_who));
+  end if;
+  if new.mfa_enforced is distinct from old.mfa_enforced then
+    insert into auth_events (email, user_id, event, detail)
+    values (lower(new.email), new.id, 'privilege_change',
+            format('mfa_enforced %s -> %s (by %s)', old.mfa_enforced, new.mfa_enforced, v_who));
+  end if;
+
+  -- 2. Enforce. Unchanged from the original guard.
+  if coalesce((select auth.role()), '') <> 'authenticated' then
+    return new;  -- service_role / internal: trusted
+  end if;
   if new.role is distinct from old.role
      and not private.has_module_perm('directory','grant_global_admin') then
     raise exception 'permission denied: changing role requires directory.grant_global_admin';
@@ -411,23 +461,6 @@ begin
   if new.permission_template_id is distinct from old.permission_template_id
      and not private.has_module_perm('directory','assign_template') then
     raise exception 'permission denied: changing permission_template_id requires directory.assign_template';
-  end if;
-
-  if new.role is distinct from old.role then
-    insert into auth_events (email, user_id, event, detail)
-    values (lower(new.email), new.id, 'privilege_change',
-            format('role %s -> %s (by %s)', coalesce(old.role,'null'), coalesce(new.role,'null'), coalesce(v_actor::text,'system')));
-  end if;
-  if new.permission_template_id is distinct from old.permission_template_id then
-    insert into auth_events (email, user_id, event, detail)
-    values (lower(new.email), new.id, 'privilege_change',
-            format('permission_template %s -> %s (by %s)', coalesce(old.permission_template_id::text,'null'),
-                   coalesce(new.permission_template_id::text,'null'), coalesce(v_actor::text,'system')));
-  end if;
-  if new.is_active is distinct from old.is_active then
-    insert into auth_events (email, user_id, event, detail)
-    values (lower(new.email), new.id, 'privilege_change',
-            format('is_active %s -> %s (by %s)', old.is_active, new.is_active, coalesce(v_actor::text,'system')));
   end if;
 
   return new;
@@ -509,6 +542,15 @@ begin
   return v_deleted;
 end;
 $function$;
+
+-- `create function` grants EXECUTE to PUBLIC by default, which made this
+-- reachable at /rest/v1/rpc/purge_auth_events — a tamper vector on the audit
+-- trail itself. Caught by the Supabase security advisor; only the cron job
+-- (running as the table owner) needs it.
+revoke execute on function public.purge_auth_events() from public, anon, authenticated;
+
+comment on function public.purge_auth_events() is
+  'ITSD O.1-5 retention (400 days). EXECUTE revoked from clients; invoked only by the purge-auth-events pg_cron job.';
 
 create extension if not exists pg_cron;
 do $$

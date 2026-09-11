@@ -106,7 +106,9 @@ Roles enforced at both the UI layer (nav visibility) and the database layer (RLS
 
 ## Data Residency
 
-Supabase project region: **US East (Northern Virginia)**. Data does not leave US jurisdiction.
+Supabase project region: **US West (Oregon), `us-west-2`** — verified against the project itself on 2026-09-11. Data does not leave US jurisdiction.
+
+> This document previously said *US East (Northern Virginia)*. That was wrong, and it had been carried into the ITSD Public Clouds application. Corrected in both.
 
 ---
 
@@ -114,12 +116,24 @@ Supabase project region: **US East (Northern Virginia)**. Data does not leave US
 
 | Item | Priority | Notes |
 |---|---|---|
-| ~~Multi-factor authentication (TOTP)~~ | — | **Done** — see Authentication above |
+| ~~Multi-factor authentication (TOTP)~~ | — | **Built** — see Authentication above. Not yet *demanded*: see the roll-out note below |
 | ~~Content Security Policy~~ | — | **Done** as a meta-tag policy; a *strict* one still needs the inline handlers retired |
+| ~~Apply `supabase_auth_hardening.sql`~~ | — | **Applied 2026-09-11.** Columns, `auth_events`, RPCs, the RLS/MFA gate, privilege logging and the retention job are all live |
+| Enable TOTP enrolment in the dashboard | **High** | Authentication → Providers/MFA. **Must be confirmed working before `mfa_enforced` is turned on for anyone** — the portal blocks entry until a factor is verified, so an account that cannot enrol cannot get in |
 | Enable the two auth hooks in the dashboard | **High** | Authentication → Hooks → `password_verification_attempt` and `mfa_verification_attempt`. Until these are on, lockout is client-side only |
-| Apply `supabase_auth_hardening.sql` | **High** | Ships the columns, `auth_events`, the RLS/MFA gate and the retention job |
+| Enable leaked-password protection | Medium | Auth settings; flagged by the Supabase security advisor. Checks new passwords against HaveIBeenPwned |
+| Turn on `mfa_enforced` per account | Medium | See `supabase/sql/supabase_auth_hardening_rollout.sql` for the order and the break-glass rule |
 | Admin UI to reset a lost authenticator | Medium | Today an admin removes the factor from the Supabase dashboard |
 | Penetration test | Medium | Required to close ITSD C.2-2; recommended before broad rollout |
+
+### MFA roll-out status
+
+The mechanism is live; enforcement is staged. Every pre-existing account was set
+`mfa_enforced = false` with the rotation clock started, so nobody is disrupted at
+their next sign-in. The RLS gate is live but dormant — it only refuses a session
+once that account has a **verified** factor, so it costs nothing until enrolment
+begins. `supabase/sql/supabase_auth_hardening_rollout.sql` records why, and the
+order to switch accounts on.
 
 ## ITSD Public Clouds checklist
 
