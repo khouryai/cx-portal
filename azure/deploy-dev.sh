@@ -22,8 +22,31 @@ die() { printf '\n\033[31mSTOPPED: %s\033[0m\n' "$*" >&2; exit 1; }
 [ -f infra/main.bicep ] || die "Run this from the repo root (infra/main.bicep not found)."
 
 mkdir -p azure
-: > "$OUT"
+# APPEND, never truncate. A previous run's transcript may hold the only copy of
+# a password you have not stored yet — losing a Cloud Shell is exactly when you
+# would re-run this, and exactly when you cannot afford to wipe that.
+printf '\n\n========== run at %s ==========\n' "$(date -u '+%Y-%m-%d %H:%M:%SZ')" >> "$OUT"
 exec > >(tee -a "$OUT") 2>&1
+
+say "0/6  What already exists (a restart or a re-run is fine — this is idempotent)"
+EXISTING="$(az resource list -g "$RG" --query "length(@)" -o tsv 2>/dev/null || echo 0)"
+echo "  $EXISTING resource(s) already in $RG"
+PG_EXISTING="$(az postgres flexible-server list -g "$RG" --query "[0].name" -o tsv 2>/dev/null || true)"
+if [ -n "$PG_EXISTING" ]; then
+  cat <<NOTE
+
+  The database server '$PG_EXISTING' ALREADY EXISTS.
+
+  Re-running this script generates a new password and will RESET the admin
+  password to it. That is harmless, but any password you saved earlier stops
+  working. To keep the existing one, stop now and re-run as:
+
+      DBPW='<the password you saved>' bash azure/deploy-dev.sh
+
+NOTE
+  read -r -p "  Continue and reset the password? Type 'yes', or anything else to stop: " C
+  [ "$C" = "yes" ] || { say "Stopped. Nothing changed."; exit 0; }
+fi
 
 say "1/6  Checking which subscription you are pointed at"
 az account set --subscription "$SUB"
@@ -81,6 +104,9 @@ if [ "$CONFIRM" != "yes" ]; then
 fi
 
 say "Deploying — this takes 10-15 minutes, mostly the database"
+echo "If Cloud Shell disconnects, THE DEPLOYMENT KEEPS RUNNING in Azure."
+echo "Reconnect and run: bash azure/status.sh"
+
 az deployment group create \
   -g "$RG" \
   -f infra/main.bicep \
