@@ -107,8 +107,23 @@ say "Deploying — this takes 10-15 minutes, mostly the database"
 echo "If Cloud Shell disconnects, THE DEPLOYMENT KEEPS RUNNING in Azure."
 echo "Reconnect and run: bash azure/status.sh"
 
+# NOWAIT=1 hands the deployment to Azure and returns immediately, so a Cloud
+# Shell that naps mid-deploy cannot cost you anything. You lose live error
+# reporting; run `bash azure/status.sh` to follow it and to read the outputs.
+if [ "${NOWAIT:-0}" = "1" ]; then
+  az deployment group create \
+    -g "$RG" -n main \
+    -f infra/main.bicep \
+    -p infra/main.parameters.personal.json \
+    -p administratorLoginPassword="$DBPW" \
+    --no-wait
+  say "Handed off to Azure. It is running now, with or without this shell."
+  echo "Follow it with:  bash azure/status.sh"
+  exit 0
+fi
+
 az deployment group create \
-  -g "$RG" \
+  -g "$RG" -n main \
   -f infra/main.bicep \
   -p infra/main.parameters.personal.json \
   -p administratorLoginPassword="$DBPW" \
