@@ -43,6 +43,16 @@ param postgresVersion string = '17'
 @description('Set false only for a documented exception: the database must not be reachable from the public internet.')
 param databasePublicAccess bool = false
 
+@description('Postgres admin username for password authentication. Needed during migration, because pg_restore authenticates with a password.')
+param administratorLogin string = 'cxadmin'
+
+@secure()
+@description('Password for administratorLogin. NEVER put this in a parameters file — pass it on the command line. Leave it EMPTY to deploy with Microsoft Entra authentication only, which is the target state once the migration is finished.')
+param administratorLoginPassword string = ''
+
+@description('Create the Microsoft Entra administrator on the database. Set FALSE when the admin principal is a guest (#EXT#) account — as it is on a personal subscription created with a Gmail/outlook address — because guest principals are not reliable as a Postgres Entra admin. A password admin is used instead. NOTE: do not set this false AND leave administratorLoginPassword empty, or the server has no administrator at all.')
+param deployDbEntraAdmin bool = true
+
 @description('Deploy the Front Door WAF. Leave true for anything internet-facing. Set FALSE only for a throwaway personal/learning subscription: Premium_AzureFrontDoor costs roughly USD 330/month and teaches you nothing the rest of the stack does not. Forced true when environment == prod.')
 param deployWaf bool = true
 
@@ -56,6 +66,7 @@ param entraApiAudience string = ''
 param allowedOrigin string = ''
 
 var isProd = environment == 'prod'
+var usePasswordAuth = !empty(administratorLoginPassword)
 // Guard rails: prod never gets the cheap path, whatever the parameter file says.
 var thrifty = cheapMode && !isProd
 var wantWaf = deployWaf || isProd
@@ -110,10 +121,17 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview'
   location: location
   tags: tags
   sku: {
-    name: environment == 'prod' ? 'Standard_D2ds_v5' : 'Standard_B2s'
-    tier: environment == 'prod' ? 'GeneralPurpose' : 'Burstable'
+    name: isProd ? 'Standard_D2ds_v5' : (thrifty ? 'Standard_B1ms' : 'Standard_B2s')
+    tier: isProd ? 'GeneralPurpose' : 'Burstable'
   }
   properties: {
+    // administratorLogin/Password are only legal when passwordAuth is Enabled,
+    // and are REQUIRED when it is — so the two move together or the create
+    // call is rejected.
+    ...(usePasswordAuth ? {
+      administratorLogin: administratorLogin
+      administratorLoginPassword: administratorLoginPassword
+    } : {})
     version: postgresVersion
     storage: {
       // Backups must be retrievable and restore-tested, not merely configured.
@@ -129,7 +147,7 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview'
     }
     authConfig: {
       activeDirectoryAuth: 'Enabled'
-      passwordAuth: 'Enabled'   // TODO(cutover): 'Disabled' once migration is done
+      passwordAuth: usePasswordAuth ? 'Enabled' : 'Disabled'   // cutover: redeploy with an empty password
       tenantId: tenantId
     }
     network: {
@@ -162,7 +180,7 @@ resource minTls 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-1
   properties: { value: 'TLSv1.2', source: 'user-override' }
 }
 
-resource dbAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-12-01-preview' = {
+resource dbAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-12-01-preview' = if (deployDbEntraAdmin) {
   parent: postgres
   name: dbAdminGroupObjectId
   properties: {

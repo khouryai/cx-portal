@@ -68,19 +68,37 @@ It differs from the corporate parameter file in four ways, all cost or access:
 | `cheapMode` | `true` | Static Web Apps → Free, log retention → 30 days |
 | `databasePublicAccess` | `true` | So you can reach Postgres with `psql` from your laptop without standing up a VNet and a jumpbox |
 | `dbAdminGroupObjectId` | your own user | A personal tenant has no admin group; use your own object id (`az ad signed-in-user show --query id -o tsv`) |
+| `dbAdminPrincipalType` | `User` | The default `Group` is right for IT's admin group and wrong for one person's account — Azure rejects the mismatch |
+| `deployDbEntraAdmin` | `false` | A personal subscription signed up with a Gmail address makes you a **guest** (`#EXT#`) in your own tenant, which is not reliable as a Postgres Entra admin. Password auth is used instead |
 
 `environment` must stay `dev` or `test`. Both switches are ignored when
 `environment == 'prod'` — `thrifty` and `wantWaf` are computed so that
 production cannot accidentally deploy without a WAF or on Free SKUs, whatever a
 parameter file says.
 
+The database password is the one value that must NOT live in the parameters
+file, so it is passed on the command line:
+
 ```bash
+# Generate one and keep it in your password manager — you need it for pg_restore.
+DBPW="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-20)Aa1!"
+echo "$DBPW"
+
 az group create -n rg-cxportal-dev -l westus2
+
 az deployment group what-if -g rg-cxportal-dev \
-  -f infra/main.bicep -p infra/main.parameters.personal.json
+  -f infra/main.bicep -p infra/main.parameters.personal.json \
+  -p administratorLoginPassword="$DBPW"
+
 az deployment group create -g rg-cxportal-dev \
-  -f infra/main.bicep -p infra/main.parameters.personal.json
+  -f infra/main.bicep -p infra/main.parameters.personal.json \
+  -p administratorLoginPassword="$DBPW" \
+  --query properties.outputs -o json
 ```
+
+Leaving `administratorLoginPassword` empty deploys the server **Entra-only** with
+no password login, which is the target state after cutover — but during the
+migration `pg_restore` needs a password, so set one now.
 
 Rough running cost with these settings: **USD 30-60/month**, much of it covered
 by the free-trial credit. Stop the Postgres server when you are not using it
