@@ -16,3 +16,6 @@ tools/.qa-credentials
 # azure/RUNBOOK.md. Keeps Azure test credentials out of the file GitHub
 # Pages serves live from config.js.
 config.local.js
+
+# Azure deployment transcript — contains the database password. Never commit.
+azure/.deploy-output.txt
