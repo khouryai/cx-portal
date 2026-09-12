@@ -18,8 +18,9 @@ jobs:
         with:
           node-version: '22'
       # This repo is package.json-free by design (static GitHub Pages deploy).
-      # Test-only deps installed transiently: dayjs (copy/paste suite) and
-      # typescript (Stage D JSDoc type-check). Suites self-skip if either is
+      # Test-only deps installed transiently: dayjs (tools/_load_app.js prefers
+      # the real library over its shim, so date logic behaves as in the browser)
+      # and typescript (Stage D JSDoc type-check). Suites self-skip if either is
       # absent, so a failed install never turns into a false red — but we want
       # them present so the deterministic suites actually run in CI.
       - name: Install test-only dependencies

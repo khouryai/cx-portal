@@ -4,8 +4,7 @@
 // Print windows are standalone documents that do NOT load styles.css, so
 // var(--token) references silently fail there. This module gives every export
 // ONE Hitachi-branded letterhead, footer and component CSS kit built from
-// concrete hex, so Daily Log / RMA / Meeting / Punch / Cancellation / Lookahead
-// PDFs all look identical. Builders assemble a body from the .cxr-* classes and
+// concrete hex, so Daily Log / RMA / Meeting / Punch PDFs all look identical. Builders assemble a body from the .cxr-* classes and
 // wrap it with cxReportShell(); cxPrintOpen()/cxPrintFrame() do the printing.
 //
 // Loaded as a classic script; pure string builders, no load-time side effects.

@@ -277,36 +277,10 @@ governs: meetings, meeting_*, meeting_action_items
 Today all of this is `role==='admin'`; the split lets a secretary record minutes +
 manage action items without full meeting CRUD.
 
-### Planning & Resources — `planning` (category: planning)
-governs: planning_resources, planning_activities, pto_requests, shift_templates, planning_week_snapshots
-
-| Key | Guards | Lvl |
-|---|---|---|
-| `view` | roster, conflicts, snapshots | R |
-| `pto_submit` | submit own PTO (requires a linked resource) | S |
-| `pto_approve` | approve/reject/reopen PTO | A |
-| `resolve_conflicts` | acknowledge + resolve unmatched resources/activities | A |
-| `manage_resources` | create/edit/(de)activate planning resources | A |
-
-Delegation value: `pto_approve` / `resolve_conflicts` can go to a planning lead who
-is not a global admin.
-
-### Look-ahead — `lookahead` (category: planning)
-governs: planning_events, planning_event_resources, planning_activity_resources, planning_conflicts
-
-| Key | Guards | Lvl |
-|---|---|---|
-| `view` | grid, snapshots | R |
-| `export` | PDF / XLSX / CSV export | R |
-| `create_event` | cell creator | S |
-| `edit_event` | drawer edit | S |
-| `cancel` | cancel event + reason | S |
-| `manage_activities` | activity row CRUD, status override, link to test schedule | S |
-| `assign_resources` | assign/remove resources on event or activity | S |
-| `bulk_edit` | bulk shift/location/hours/cancel | S **†** |
-| `lock` | lock / unlock events | A |
-| `delete` | hard-delete event | A |
-| `import` | `.xlsx` lookahead import | A |
+> **Removed (2026-09):** the `lookahead` and `planning` modules went with the
+> Lookahead / Planning feature — see `supabase/sql/supabase_drop_lookahead.sql`.
+> The build-plan notes further down still describe them; that section is a record
+> of what was migrated at the time, not the current catalog.
 
 ### P6 Schedule — `schedule_p6` (category: planning)
 governs: p6_*
@@ -446,8 +420,8 @@ the expanded set without changing anyone's reach):
   `override_workflow`) granted explicitly. (Global-admin `role='admin'` users still
   bypass templates entirely.)
 - **Field Engineer** ← `field_engineer`, `field` — `standard` on
-  testing/field/lookahead/drawings (incl. `bulk_edit` grants where they curate);
-  `read_only` on overview/planning/schedule/assets/locations; `none` on admin.
+  testing/field/drawings (incl. `bulk_edit` grants where they curate);
+  `read_only` on overview/schedule/assets/locations; `none` on admin.
 - **Punch Manager** ← `punch_manager` — `admin` on `punch_list` (incl.
   `override_workflow`) + `rma`; `standard` on `photos`/`forms`; `read_only` on
   overview/test_register; `none` on admin.

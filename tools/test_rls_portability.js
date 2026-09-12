@@ -145,16 +145,16 @@ $fn$;
 ok("private.has_module_perm and _perm_baseline port with no changes", true);
 
 // ── 3. representative policies, copied verbatim from the live pg_policies ───
-// One of each shape that exists in production: pure has_module_perm (331 of
-// 349 policies), auth.uid() ownership, and the profiles self-update case.
+// One of each shape that exists in production: pure has_module_perm (the large
+// majority of policies), auth.uid() ownership, and the profiles self-update case.
+// The old "own row OR capability" shape came only from pto_requests, which left
+// with the Lookahead module; drawing_markups still exercises uid() ownership.
 psql(`
 create table test_items (test_id text primary key, test_name text, custom_fields jsonb, linked_car_ids text[]);
-create table pto_requests (id bigserial primary key, user_id uuid, note text);
 create table drawing_markups (id bigserial primary key, created_by uuid, is_published boolean default false);
 create table audit_log (id text primary key, user_name text, action text);
 
 alter table test_items      enable row level security;
-alter table pto_requests    enable row level security;
 alter table drawing_markups enable row level security;
 alter table profiles        enable row level security;
 
@@ -162,17 +162,13 @@ alter table profiles        enable row level security;
 create policy test_items_sel on test_items for select to public
   using ( (select private.has_module_perm('test_register','view')) );
 
--- shape 2: own-row OR capability
-create policy pto_requests_sel on pto_requests for select to public
-  using ( (user_id = (select auth.uid())) or (select private.has_module_perm('planning','view')) );
-
--- shape 3: capability AND ownership, the drawings/photos pattern
+-- shape 2: capability AND ownership, the drawings/photos pattern
 create policy drawing_markups_sel on drawing_markups for select to public
   using ( (select private.has_module_perm('drawings','view'))
           and (is_published or (created_by = auth.uid())
                or (select private.has_module_perm('drawings','manage_markup_any'))) );
 
--- shape 4: self-update
+-- shape 3: self-update
 create policy profiles_update on profiles for update to public
   using ( ((select auth.uid()) = id) or (select private.has_module_perm('directory','edit_profile')) );
 create policy profiles_sel on profiles for select to public using (true);
@@ -186,7 +182,6 @@ const TEMPLATE = "99999999-8888-7777-6666-555555555555";
 psql(`
 insert into perm_modules(key, actions, action_meta) values
   ('test_register', array['view'], '{"view":{"m":"read_only"}}'::jsonb),
-  ('planning',      array['view'], '{"view":{"m":"read_only"}}'::jsonb),
   ('drawings',      array['view','manage_markup_any'],
      '{"view":{"m":"read_only"},"manage_markup_any":{"m":"admin"}}'::jsonb),
   ('directory',     array['edit_profile'], '{"edit_profile":{"m":"admin"}}'::jsonb);
@@ -199,7 +194,6 @@ insert into profiles(id,email,full_name,role,is_active,permission_template_id,cu
   ('${VIEWER}','viewer@hitachirail.com','Viewer User','readonly',true,'${TEMPLATE}',
      '{}'::jsonb, array[]::text[]);
 insert into test_items values ('T-1','Trackside SAT','{"k":"v"}'::jsonb, array['car-9']);
-insert into pto_requests(user_id, note) values ('${VIEWER}','viewer leave'), ('${ADMIN}','admin leave');
 insert into drawing_markups(created_by, is_published) values ('${VIEWER}', false), ('${ADMIN}', true);
 do $do$ begin
   -- roles are cluster-wide, so they outlive the per-run database
@@ -237,22 +231,19 @@ const entraToken    = (uid) => ({ oid: uid, role: "authenticated",
 const q = {
   uid:     "select coalesce(auth.uid()::text,'(null)');",
   items:   "select count(*) from test_items;",
-  pto:     "select count(*) from pto_requests;",
   markups: "select count(*) from drawing_markups;",
 };
 
 for (const [label, mk] of [["Supabase (sub)", supabaseToken], ["Entra (oid)", entraToken]]) {
   ok(`${label}: auth.uid() resolves the admin`, asUser(mk(ADMIN), q.uid).endsWith(ADMIN));
   ok(`${label}: admin sees the test item`,      asUser(mk(ADMIN), q.items) === "1");
-  ok(`${label}: admin sees both PTO rows`,      asUser(mk(ADMIN), q.pto) === "2");
   ok(`${label}: viewer sees the test item (read_only template)`, asUser(mk(VIEWER), q.items) === "1");
-  ok(`${label}: viewer sees ONLY their own PTO row`, asUser(mk(VIEWER), q.pto) === "1");
   ok(`${label}: viewer sees own unpublished + published markup`, asUser(mk(VIEWER), q.markups) === "2");
 }
 
 // The decisions must be identical between issuers — that is the whole claim.
-const cases = [[ADMIN, q.items], [ADMIN, q.pto], [ADMIN, q.markups],
-               [VIEWER, q.items], [VIEWER, q.pto], [VIEWER, q.markups]];
+const cases = [[ADMIN, q.items], [ADMIN, q.markups],
+               [VIEWER, q.items], [VIEWER, q.markups]];
 const diffs = cases.filter(([uid, sql]) =>
   asUser(supabaseToken(uid), sql) !== asUser(entraToken(uid), sql));
 ok("EVERY access decision is identical under both issuers", diffs.length === 0,

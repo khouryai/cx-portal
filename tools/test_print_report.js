@@ -61,13 +61,5 @@ vm.runInContext("_rmaPrintPDF('r1')", ctx);
 ok("RMA export is branded", isBranded(grab()));
 ok("RMA body uses the shared key/value table", grab().includes("cxr-kv") && grab().includes("RMA-004"));
 
-// Cancellation report
-vm.runInContext(
-  "_cancelRptBuildRows = function(){ return [{ _id:'1', _type:'cancellation', date:'2026-07-09', title:'X', location:'W40', subsystem:'ATS', reason:'Access', party:'BART', source:'Log', loggedBy:'A' }]; };" +
-  "_cancelRptApplyFilters = function(x){ return x; }; _cancelRptSel = new Set(); _cancelRpt = { type:'all' };", ctx);
-vm.runInContext("_cancelRptExportPDF()", ctx);
-ok("Cancellation report is branded", isBranded(grab()));
-ok("Cancellation report uses shared data table + landscape", grab().includes("cxr-table") && grab().includes("A4 landscape"));
-
 console.log(`\n${pass} passed, ${fail} failed.\n`);
 process.exit(fail === 0 ? 0 : 1);

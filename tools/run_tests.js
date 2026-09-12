@@ -12,11 +12,9 @@
  *   1. node --check on the hand-maintained browser sources (CLAUDE.md rule).
  *   2. Runs each headless unit suite under tools/ and aggregates by exit code.
  *
- * The only test-only dependency is `dayjs` (app.js uses it as a browser global;
- * test_copy_paste.js shims it via require). CI installs it with
- *   npm install --no-save dayjs@1.11.13
- * If dayjs is not resolvable locally, that one suite is SKIPPED (not failed) so
- * the deterministic suites still gate the run.
+ * Optional test-only dependencies (typescript, playwright-core) are declared
+ * per suite via `needs`. When one is not resolvable locally that suite is
+ * SKIPPED (not failed), so the deterministic suites still gate the run.
  */
 const { spawnSync } = require("child_process");
 const path = require("path");
@@ -56,11 +54,9 @@ const suites = [
   { file: "tools/test_action_args.js", needs: [] },            // no double-escaped delegation args (PS&TP key bug)
   { file: "tools/test_wgtstat.js", needs: [] },         // KPI weighting math (real app.js fn)
   { file: "tools/test_activity_compute.js", needs: [] },// activity status + completion math
-  { file: "tools/test_status_compute.js", needs: [] },  // status badges/buckets/lookahead status
+  { file: "tools/test_status_compute.js", needs: [] },  // status badges/buckets
   { file: "tools/test_trp_keys.js", needs: [] },        // report key normalization + lookup
-  { file: "tools/test_planning_badges.js", needs: [] }, // lookahead cell badges + progress chips
   { file: "tools/test_dyn_cascade.js", needs: [] },     // dynamic-testing cascade auto-allocator
-  { file: "tools/test_la_resource_picker.js", needs: [] }, // lookahead resource picker company filter
   { file: "tools/test_dyn_campaign_edit.js", needs: [] },  // dynamic-testing campaign edit + non-revenue hours
   { file: "tools/test_dyn_closure_window.js", needs: [] }, // weekend / line-closure continuous access block
   { file: "tools/test_dyn_board_schedule.js", needs: [] }, // board schedules only onto eligible access windows
@@ -78,9 +74,7 @@ const suites = [
   { file: "tools/test_team.js", needs: [] },            // team.js org helpers
   { file: "tools/test_readiness.js", needs: [] },       // readiness.js checklist engine + rollup
   { file: "tools/test_vm_readiness.js", needs: [] },    // vehicle-management car-status rollup (equipment optional)
-  { file: "tools/test_activity_stats.js", needs: [] },
   { file: "tools/markup_test.js", needs: [] },
-  { file: "tools/test_copy_paste.js", needs: ["dayjs"] },
   { file: "tools/test_types.js", needs: ["typescript"] }, // JSDoc type-check (Tier 3 Stage D)
   { file: "tools/pw_smoke.js", needs: ["playwright-core"] }, // real-browser delegation smoke (Stage B QA)
   { file: "tools/pw_auth_gates.js", needs: ["playwright-core"] }, // real-browser proof of the auth gates

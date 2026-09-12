@@ -28,7 +28,6 @@ Rules of engagement (also in CLAUDE.md):
 | Status | `--good`, `--warn`, `--bad`, `--info`, `--pending` (+ `-light` pair each), `--red-600`, `--red-300` | Badges, banners, validation |
 | Status mid-dots | `--good-dot`, `--warn-dot`, `--bad-dot`, `--info-dot`, `--pending-dot` | Small indicator dots/pills where the full status color is too dark |
 | Accents | `--accent-blue(-strong)`, `--brand-blue`, `--accent-indigo`, `--accent-amber`, `--green-700` | Charts, links, secondary emphasis |
-| Lookahead disciplines | `--disc-tc`, `--disc-cons`, `--disc-design`, `--disc-default` (+ `-bg` each) | Discipline bands on lookahead/calendar |
 | Typography | `--f-display`, `--f-ui`, `--f-mono`, `--f-input`, `--f-number`, `--input-size/weight`, `--number-size/weight` | `--f-mono` is REAL mono (Roboto Mono, imported in styles.css line 1) — used for eyebrows, KPI labels, table headers, metas. NOTE: app.js re-sets the input/number tokens at runtime from `_productionVisualDefaults` |
 | Elevation/shape/motion | `--shadow-sm/md/lg` (layered scale), `--radius-sm/md/lg/xl`, `--easing`, `--dur-fast` (140ms micro), `--dur` (220ms transitions) | Cards, modals, transitions — use the duration tokens, don't invent new timings |
 | Input focus ring | `--ring` | `box-shadow` focus halo for inputs/selects (pairs with a brand-tinted `border-color`) |

@@ -4,8 +4,6 @@
 //   getPriorityPill(priority)— priority → pill HTML
 //   _trpStatusCounts(items)  — case-insensitive status bucketing for test reports
 //   _liMatchKpiStatus(r)     — KPI-card filter predicate (module state via setter)
-//   _laAutoStatus(evs)       — schedule-derived lookahead status state-machine
-//   _laActStatus(a, evs)     — override-aware activity status
 //
 // Run: node tools/test_status_compute.js
 "use strict";
@@ -22,8 +20,8 @@ function eq(name, got, want) { ok(`${name} (=${JSON.stringify(want)})`, got === 
 
 const { sandbox, ctx, loadError, loadErrorFile } = loadApp();
 if (loadError) { console.error("FATAL: load —", loadErrorFile, loadError.message); process.exit(1); }
-const { getStatusBadge, getPriorityPill, _trpStatusCounts, _liMatchKpiStatus, _laAutoStatus, _laActStatus } = sandbox;
-for (const [n, f] of Object.entries({ getStatusBadge, getPriorityPill, _trpStatusCounts, _liMatchKpiStatus, _laAutoStatus, _laActStatus })) {
+const { getStatusBadge, getPriorityPill, _trpStatusCounts, _liMatchKpiStatus } = sandbox;
+for (const [n, f] of Object.entries({ getStatusBadge, getPriorityPill, _trpStatusCounts, _liMatchKpiStatus })) {
   if (typeof f !== "function") { console.error(`FATAL: ${n} not found`); process.exit(1); }
 }
 
@@ -97,28 +95,6 @@ ok("  notstarted: missing or Not Started",
    _liMatchKpiStatus({}) && _liMatchKpiStatus({ Status: "Not Started" }) &&
    !_liMatchKpiStatus({ Status: "Pass" }));
 setFilter("");
-
-// ── _laAutoStatus (schedule-derived; relative dates around today) ──
-console.log("\n_laAutoStatus:");
-const day = (offset) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
-eq("  no shifts → plan", _laAutoStatus([]), "plan");
-eq("  non-array → plan", _laAutoStatus(null), "plan");
-eq("  all past → done", _laAutoStatus([{ event_date: day(-3) }, { event_date: day(-1) }]), "done");
-eq("  future shift, none cancelled → ontrack", _laAutoStatus([{ event_date: day(2) }]), "ontrack");
-eq("  future shift + a cancellation → atrisk",
-   _laAutoStatus([{ event_date: day(2) }, { event_date: day(1), status: "cancelled" }]), "atrisk");
-eq("  only cancelled shifts → atrisk", _laAutoStatus([{ event_date: day(1), status: "cancelled" }]), "atrisk");
-eq("  all ACTIVE shifts past + a cancellation → done (done outranks cancel; per doc: 'all non-cancelled past → Complete')",
-   _laAutoStatus([{ event_date: day(-2) }, { event_date: day(-1), status: "cancelled" }]), "done");
-eq("  mixed: future active + past cancel → atrisk (cancel only matters while not done)",
-   _laAutoStatus([{ event_date: day(2) }, { event_date: day(-1), status: "cancelled" }]), "atrisk");
-
-// ── _laActStatus (override-aware) ──
-console.log("\n_laActStatus:");
-eq("  valid team override wins", _laActStatus({ status_override: "done" }, [{ event_date: day(5) }]), "done");
-eq("  invalid override falls back to schedule",
-   _laActStatus({ status_override: "bogus" }, [{ event_date: day(5) }]), "ontrack");
-eq("  no override → schedule", _laActStatus({}, []), "plan");
 
 console.log(`\n${pass} passed, ${fail} failed.\n`);
 process.exit(fail === 0 ? 0 : 1);

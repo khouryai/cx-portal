@@ -2,7 +2,7 @@
 
 Testing & Commissioning portal for the BART CBTC project: test register and
 weighted progress KPIs, dynamic-testing access planning (campaigns, access
-windows, cascade auto-allocation), lookahead planning, punch list, daily field
+windows, cascade auto-allocation), punch list, daily field
 logs, photos, drawings, RMAs, meetings, and a per-module permission system.
 
 **Stack:** vanilla JS/CSS/HTML (no build step), hosted on GitHub Pages,

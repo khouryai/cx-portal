@@ -73,7 +73,6 @@ assert(defs.has("--radius-sm") && defs.has("--radius-xl") && defs.has("--shadow-
 ["--space-1", "--space-2", "--space-3", "--space-4", "--space-5", "--space-6"]
   .forEach(n => assert(defs.has(n), n + " present (spacing scale)"));
 assert(defs.has("--focus-ring") && defs.has("--focus-ring-offset"), "focus-ring tokens present");
-assert(defs.has("--disc-tc") && defs.has("--disc-default-bg"), "lookahead discipline tokens present");
 
 // ---- the global focus style consumes the token (a11y invariant for P4-2)
 assert(css.includes("outline: var(--focus-ring);"),

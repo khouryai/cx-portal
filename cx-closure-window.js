@@ -14,8 +14,8 @@
 //     `day_schedule.closure` (a non-numeric key the 0–6 per-day readers ignore,
 //     so this ships with NO schema migration);
 //   • ONE zone_access_windows row per weekend spanning the whole block, so the
-//     Access Plan, the allocator and the Lookahead all see a single continuous
-//     window instead of N daily fragments.
+//     Access Plan and the allocator both see a single continuous window instead
+//     of N daily fragments.
 //
 // The closure block COEXISTS with the per-day rows: a campaign can run Tue/Wed
 // non-revenue shifts AND a Fri→Mon closure each week. Selecting the "Weekend /

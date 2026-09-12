@@ -81,15 +81,6 @@ const PERM_CATALOG = {
     ['manage_agenda','standard',false],['record_minutes','standard',false],['manage_action_items','standard',false],
     ['manage_attendees','standard',false],['create_followup','standard',false],['delete','admin',false],
   ],
-  planning: [
-    ['view','read_only',false],['pto_submit','standard',false],['pto_approve','admin',false],
-    ['resolve_conflicts','admin',false],['manage_resources','admin',false],
-  ],
-  lookahead: [
-    ['view','read_only',false],['export','read_only',false],['create_event','standard',false],['edit_event','standard',false],
-    ['cancel','standard',false],['manage_activities','standard',false],['assign_resources','standard',false],
-    ['bulk_edit','standard',true],['lock','admin',false],['delete','admin',false],['import','admin',false],
-  ],
   schedule_p6: [
     ['view','read_only',false],['import','admin',false],['rebaseline','admin',false],
     ['manage_links','admin',false],['remove_activities','admin',false],
@@ -207,7 +198,6 @@ const PAGE_MODULE = {
   'activity-readiness': 'tasks',
   'forms': 'forms',
   'meetings': 'meetings',
-  'lookahead': 'lookahead',
   'schedule': 'schedule_p6',
   'drawings': 'drawings',
   'documents': 'drawings',
@@ -225,7 +215,6 @@ const PAGE_MODULE = {
   'admin-p6': 'schedule_p6',
   'admin-assets': 'assets',
   'admin-config': 'config',
-  'admin-planning': 'planning',
 };
 
 let _myPerms = null;   // 'admin' | Map(moduleKey -> actions[]) | null (not loaded / failed)
@@ -330,7 +319,7 @@ window._paLinkDecision = _paLinkDecision;
 
 // Modules whose management pages live behind the Admin-mode toggle.
 const ADMIN_AREA_MODULES = ['templates', 'weights', 'locations', 'forms', 'directory',
-  'admin', 'audit', 'schedule_p6', 'assets', 'planning', 'config'];
+  'admin', 'audit', 'schedule_p6', 'assets', 'config'];
 
 function uiCanAnyAdmin() {
   return ADMIN_AREA_MODULES.some(m => uiCan(m, 'view'));
