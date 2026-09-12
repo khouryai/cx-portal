@@ -189,6 +189,25 @@ resource minTls 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-1
   properties: { value: 'TLSv1.2', source: 'user-override' }
 }
 
+// Public network access on its own grants NOTHING — Flexible Server denies every
+// connection until a firewall rule exists. Without this, psql from Cloud Shell
+// and PostgREST from Container Apps are both refused, which looks like a
+// hostname or credential problem and is neither.
+//
+// 0.0.0.0-0.0.0.0 is Azure's special idiom for "any Azure service", NOT "the
+// whole internet" (that would be 0.0.0.0-255.255.255.255). Cloud Shell and the
+// Container App both run inside Azure, so this is the tightest rule that lets
+// them in. Only created when public access is deliberately on; a private-
+// endpoint deployment needs none of it.
+resource allowAzureServices 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = if (databasePublicAccess) {
+  parent: postgres
+  name: 'AllowAllAzureServicesAndResourcesWithinAzureIps'
+  properties: {
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '0.0.0.0'
+  }
+}
+
 resource dbAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-12-01-preview' = if (deployDbEntraAdmin) {
   parent: postgres
   name: dbAdminGroupObjectId
