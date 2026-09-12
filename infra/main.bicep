@@ -14,6 +14,10 @@
 //   az deployment group create -g <rg> -f infra/main.bicep -p @infra/main.parameters.json
 // ============================================================
 
+@description('Type of the Postgres admin principal. \'Group\' for a corporate deployment with a real admin group (IT\'s norm); \'User\' for a personal subscription where dbAdminGroupObjectId is just your own account.')
+@allowed(['Group', 'User'])
+param dbAdminPrincipalType string = 'Group'
+
 @description('Environment discriminator. Keep dev separate from prod: the app is currently developed against production, which this is intended to fix.')
 @allowed(['dev', 'test', 'prod'])
 param environment string = 'dev'
@@ -162,7 +166,7 @@ resource dbAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-
   parent: postgres
   name: dbAdminGroupObjectId
   properties: {
-    principalType: 'Group'
+    principalType: dbAdminPrincipalType
     principalName: dbAdminGroupName
     tenantId: tenantId
   }
