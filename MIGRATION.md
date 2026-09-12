@@ -251,8 +251,15 @@ after the environment is locked down is much harder than specifying it now.
 - **A dev/staging subscription the application team can deploy to freely.** The
   single most important item. The app is currently developed against its only
   backend, and this separates the two as a side effect.
-- **Repository access**, including the ability to open PRs, and the Claude GitHub
-  App installed on the org if AI-assisted development continues.
+- **Repository access**, including the ability to open PRs.
+- **Approval to run Claude Code on a managed workstation**, if AI-assisted
+  development continues. This is a software/AI-tooling policy decision, not a
+  GitHub one, and it is the item with the longest lead time — worth raising
+  first. Claude Code edits a local checkout and pushes with the developer's own
+  credentials; it needs no special GitHub integration to do that.
+- *(Optional, lower priority)* the Claude GitHub App installed on the org. This
+  buys cloud-hosted sessions and PR-native automation. Useful, not required —
+  development continues without it.
 - **A named reviewer** on the repo, so a one-line fix does not wait on a stranger.
 - **Read access to App Insights / Log Analytics**, so the team can debug without
   filing a ticket.
