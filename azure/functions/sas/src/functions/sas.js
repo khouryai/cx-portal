@@ -49,7 +49,7 @@ let jwks = null;
 function keyStore() {
   if (!jwks) {
     jwks = createRemoteJWKSet(
-      new URL("https://login.microsoftonline.com/" + TENANT + "/discover/v2.0/keys")
+      new URL("https://login.microsoftonline.com/" + TENANT + "/discovery/v2.0/keys")
     );
   }
   return jwks;

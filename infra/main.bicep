@@ -53,6 +53,10 @@ param administratorLoginPassword string = ''
 @description('Create the Microsoft Entra administrator on the database. Set FALSE when the admin principal is a guest (#EXT#) account — as it is on a personal subscription created with a Gmail/outlook address — because guest principals are not reliable as a Postgres Entra admin. A password admin is used instead. NOTE: do not set this false AND leave administratorLoginPassword empty, or the server has no administrator at all.')
 param deployDbEntraAdmin bool = true
 
+@secure()
+@description('PostgREST connection string, as the `authenticator` role. Empty until the database is restored — the API container is deployed unconfigured and set later (azure/RUNBOOK.md step 4), because this value cannot exist before the server does.')
+param postgrestDbUri string = ''
+
 @description('Deploy the Front Door WAF. Leave true for anything internet-facing. Set FALSE only for a throwaway personal/learning subscription: Premium_AzureFrontDoor costs roughly USD 330/month and teaches you nothing the rest of the stack does not. Forced true when environment == prod.')
 param deployWaf bool = true
 
@@ -102,8 +106,13 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     sku: { family: 'A', name: 'standard' }
     enableRbacAuthorization: true
     enableSoftDelete: true
-    softDeleteRetentionInDays: 90
-    enablePurgeProtection: true
+    // Purge protection cannot be turned off once on, and a soft-deleted vault
+    // keeps its NAME reserved. Because that name is derived from the resource
+    // group id, deleting the group and redeploying it under the same name would
+    // collide with the tombstone and fail — for 90 days. Correct for prod,
+    // actively harmful for an environment meant to be torn down and rebuilt.
+    softDeleteRetentionInDays: thrifty ? 7 : 90
+    ...(isProd ? { enablePurgeProtection: true } : {})
     publicNetworkAccess: databasePublicAccess ? 'Enabled' : 'Disabled'
   }
 }
@@ -304,18 +313,33 @@ resource postgrest 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'postgrest'
           image: 'postgrest/postgrest:v12.2.3'   // pin; mirror to ACR before prod
           env: [
-            { name: 'PGRST_DB_URI', value: 'postgres://...' }      // via managed identity at deploy time
+            // Empty at deploy time; set once the database exists and has been
+            // restored. PostgREST will not serve until then, by design.
+            { name: 'PGRST_DB_URI', value: postgrestDbUri }
             { name: 'PGRST_DB_SCHEMAS', value: 'public' }
             { name: 'PGRST_DB_ANON_ROLE', value: 'anon' }
             // Entra's JWKS. This is what makes auth.uid() resolve — the shim in
             // supabase/sql/azure_auth_uid_shim.sql reads the `oid` claim out of
             // the token PostgREST validates here.
-            { name: 'PGRST_JWT_SECRET', value: '@{"jwks_uri":"${az.environment().authentication.loginEndpoint}${tenantId}/discovery/v2.0/keys"}' }
-            { name: 'PGRST_JWT_AUD', value: 'api://${appName}-${environment}' }
+            // NO leading '@' — PostgREST treats that as "read this from a file"
+            // and would try to open a path named after the JSON.
+            //
+            // UNVERIFIED: whether this PostgREST build fetches a remote
+            // jwks_uri at all, or requires the keys inline. If it does not,
+            // this is where the first sign-in fails, and the fix is to fetch
+            // Entra's JWKS and set it as a literal JWKS. See RUNBOOK step 4.
+            { name: 'PGRST_JWT_SECRET', value: '{"jwks_uri":"${az.environment().authentication.loginEndpoint}${tenantId}/discovery/v2.0/keys"}' }
+            // Must match the app registration exactly. entraApiAudience is
+            // empty until that registration exists; the placeholder below is a
+            // name-shaped guess that will NOT match a real token.
+            { name: 'PGRST_JWT_AUD', value: empty(entraApiAudience) ? 'api://${appName}-${environment}' : entraApiAudience }
           ]
         }
       ]
-      scale: { minReplicas: 1, maxReplicas: environment == 'prod' ? 3 : 1 }
+      // Scale to zero on a learning subscription: an unconfigured PostgREST
+      // will crash-loop, and there is no reason to pay for that. Costs a cold
+      // start on the first request.
+      scale: { minReplicas: thrifty ? 0 : 1, maxReplicas: isProd ? 3 : 1 }
     }
   }
 }
