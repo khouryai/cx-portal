@@ -11,3 +11,8 @@ _xlsm_extract/
 
 # Local QA test credentials (never commit)
 tools/.qa-credentials
+
+# Personal Azure learning-environment config — never committed. See
+# azure/RUNBOOK.md. Keeps Azure test credentials out of the file GitHub
+# Pages serves live from config.js.
+config.local.js
