@@ -52,7 +52,22 @@ if [ -n "$PG" ]; then
   echo "  Lost the admin password? It cannot be read back, but it CAN be reset:"
   echo "    az postgres flexible-server update -g $RG -n $PG --admin-password '<new one>'"
 else
-  echo "  not created yet"
+  echo "  no MANAGED database (expected on a free trial — the offer is restricted)"
+fi
+
+PGC="$(az containerapp list -g "$RG" --query "[?starts_with(name,'ca-postgres')].name" -o tsv 2>/dev/null)"
+if [ -n "$PGC" ]; then
+  say "Database (container)"
+  az containerapp show -g "$RG" -n "$PGC" \
+    --query "{name:name, fqdn:properties.configuration.ingress.fqdn, state:properties.provisioningState, replicas:properties.template.scale.minReplicas}" -o table
+  FQDN="$(az containerapp show -g "$RG" -n "$PGC" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null)"
+  if [ -n "$FQDN" ]; then
+    echo
+    echo "  Connect with:"
+    echo "    psql \"host=$FQDN port=5432 user=cxadmin dbname=postgres sslmode=disable\""
+    echo
+    echo "  NOTE: this database is EPHEMERAL. A restart loses everything in it."
+  fi
 fi
 
 say "If the last deployment succeeded, these are the values the app needs"

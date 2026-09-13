@@ -40,6 +40,12 @@
     },
     "deployFunctionApp": {
       "value": false
+    },
+    "deployManagedPostgres": {
+      "value": false
+    },
+    "deployContainerPostgres": {
+      "value": true
     }
   }
 }

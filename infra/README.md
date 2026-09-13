@@ -105,3 +105,23 @@ by the free-trial credit. Stop the Postgres server when you are not using it
 (`az postgres flexible-server stop`) and it is less. Delete the whole resource
 group to stop all of it at once.
 
+### Free-trial restrictions (found the hard way)
+
+A free-trial subscription refuses two things outright, and neither is a template
+error — the deployment is simply not permitted:
+
+| Blocked | Error | Parameter that works around it |
+|---|---|---|
+| Consumption Function plans | `Current Limit (Y1 VMs): 0` | `deployFunctionApp: false` |
+| Azure Database for PostgreSQL | `OfferRestricted`, `supportedServerEditions: []` in **every** region | `deployManagedPostgres: false` + `deployContainerPostgres: true` |
+
+The second substitutes the official `postgres:17` image running in the Container
+Apps environment. Same engine, so RLS, the `auth.uid()` shim, jsonb/array
+columns and PostgREST all behave identically — but no managed backups, no HA, no
+Entra-auth-to-database, and **the data does not survive a restart**. It exists so
+the migration can be rehearsed on a subscription that cannot have the real
+service. Never point it at anything real.
+
+Upgrading to Pay-As-You-Go lifts both restrictions, at the cost of the spending
+limit that otherwise makes it impossible to be charged.
+

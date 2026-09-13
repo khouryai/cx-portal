@@ -56,6 +56,12 @@ param deployDbEntraAdmin bool = true
 @description('Deploy the SAS-minting Function and its plan. Set FALSE on a free-trial subscription: consumption (Y1) plans have a quota of ZERO there, and the whole deployment fails on it. The Function is only needed once blob storage is in use, so turning it off unblocks everything else.')
 param deployFunctionApp bool = true
 
+@description('Deploy Azure Database for PostgreSQL. Set FALSE on a free-trial subscription: the managed offer is blocked outright there (OfferRestricted), in every region. Pair with deployContainerPostgres.')
+param deployManagedPostgres bool = true
+
+@description('Run PostgreSQL as a container in the Container Apps environment instead of the managed service. A DEVELOPMENT ESCAPE HATCH, not an architecture: same engine, so RLS, the auth.uid() shim and PostgREST behave identically, but there are no managed backups, no HA, no Entra-auth-to-database, and DATA DOES NOT SURVIVE A RESTART (see the note on the resource). Never set this true for anything holding real data.')
+param deployContainerPostgres bool = false
+
 @secure()
 @description('PostgREST connection string, as the `authenticator` role. Empty until the database is restored — the API container is deployed unconfigured and set later (azure/RUNBOOK.md step 4), because this value cannot exist before the server does.')
 param postgrestDbUri string = ''
@@ -128,7 +134,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 //
 // Entra authentication is enabled and password auth left ON only so the
 // migration can run; turn it off once cutover completes.
-resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview' = {
+resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview' = if (deployManagedPostgres) {
   name: 'psql-${suffix}'
   location: location
   tags: tags
@@ -170,7 +176,7 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview'
 
 // pg_cron carries the weekly planning snapshot and the auth_events retention
 // purge. Both exist today and must survive the move.
-resource pgCron 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = {
+resource pgCron 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = if (deployManagedPostgres) {
   parent: postgres
   name: 'azure.extensions'
   properties: {
@@ -181,12 +187,12 @@ resource pgCron 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-1
 
 // Force TLS 1.2 or later with earlier versions disabled. This is where that
 // becomes true of the server rather than merely asserted of the client.
-resource requireTls 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = {
+resource requireTls 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = if (deployManagedPostgres) {
   parent: postgres
   name: 'require_secure_transport'
   properties: { value: 'ON', source: 'user-override' }
 }
-resource minTls 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = {
+resource minTls 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = if (deployManagedPostgres) {
   parent: postgres
   name: 'ssl_min_protocol_version'
   properties: { value: 'TLSv1.2', source: 'user-override' }
@@ -202,7 +208,7 @@ resource minTls 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-1
 // Container App both run inside Azure, so this is the tightest rule that lets
 // them in. Only created when public access is deliberately on; a private-
 // endpoint deployment needs none of it.
-resource allowAzureServices 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = if (databasePublicAccess) {
+resource allowAzureServices 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = if (deployManagedPostgres && databasePublicAccess) {
   parent: postgres
   name: 'AllowAllAzureServicesAndResourcesWithinAzureIps'
   properties: {
@@ -211,7 +217,7 @@ resource allowAzureServices 'Microsoft.DBforPostgreSQL/flexibleServers/firewallR
   }
 }
 
-resource dbAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-12-01-preview' = if (deployDbEntraAdmin) {
+resource dbAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-12-01-preview' = if (deployManagedPostgres && deployDbEntraAdmin) {
   parent: postgres
   name: dbAdminGroupObjectId
   properties: {
@@ -307,6 +313,66 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
         customerId: logAnalytics.properties.customerId
         sharedKey: logAnalytics.listKeys().primarySharedKey
       }
+    }
+  }
+}
+
+// ── PostgreSQL as a container (DEVELOPMENT ESCAPE HATCH) ────────────────────
+// Azure free-trial subscriptions are blocked from provisioning Azure Database
+// for PostgreSQL at all — every region reports OfferRestricted with an empty
+// supportedServerEditions list. This runs the official postgres:17 image in the
+// Container Apps environment instead, so the migration can be rehearsed on a
+// subscription that cannot have the managed service.
+//
+// IT IS THE SAME DATABASE ENGINE. Every RLS policy, the auth.uid() shim, the
+// jsonb and array columns and PostgREST all behave exactly as they will on the
+// managed service. What is missing is the managed-service WRAPPER: automated
+// backups, point-in-time restore, high availability, Entra authentication to
+// the database, and TLS enforcement at the server.
+//
+// *** DATA DOES NOT SURVIVE A RESTART. *** Deliberately ephemeral: Postgres
+// refuses to start on an Azure Files (CIFS) mount because it demands 0700
+// ownership of its data directory, and working around that is more moving parts
+// than a throwaway environment deserves. Re-run the schema load after a restart.
+// Which is exactly why this must never hold anything real.
+resource pgContainer 'Microsoft.App/containerApps@2024-03-01' = if (deployContainerPostgres) {
+  name: 'ca-postgres-${environment}'
+  location: location
+  tags: tags
+  properties: {
+    managedEnvironmentId: containerEnv.id
+    configuration: {
+      // The password is a container-app secret, not a plain env var, so it does
+      // not appear in `az containerapp show` output.
+      secrets: [
+        { name: 'pg-password', value: administratorLoginPassword }
+      ]
+      ingress: {
+        // TCP, not HTTP — this speaks the Postgres wire protocol. External so
+        // Cloud Shell can reach it with psql to load the schema.
+        external: true
+        transport: 'tcp'
+        targetPort: 5432
+        exposedPort: 5432
+      }
+    }
+    template: {
+      containers: [
+        {
+          name: 'postgres'
+          image: 'postgres:17'
+          env: [
+            { name: 'POSTGRES_USER', value: administratorLogin }
+            { name: 'POSTGRES_PASSWORD', secretRef: 'pg-password' }
+            { name: 'POSTGRES_DB', value: 'postgres' }
+          ]
+          resources: { cpu: json('0.5'), memory: '1Gi' }
+        }
+      ]
+      // Exactly one replica, always on. Postgres is stateful: a second replica
+      // would be a second unrelated database, and scaling to zero would discard
+      // the first one.
+      scale: { minReplicas: 1, maxReplicas: 1 }
     }
   }
 }
@@ -471,7 +537,9 @@ resource wafPolicy 'Microsoft.Network/FrontDoorWebApplicationFirewallPolicies@20
 }
 
 output staticSiteName string = staticSite.name
-output postgresFqdn string = postgres.properties.fullyQualifiedDomainName
+output postgresFqdn string = deployManagedPostgres
+  ? (postgres.?properties.fullyQualifiedDomainName ?? '')
+  : (deployContainerPostgres ? (pgContainer.?properties.configuration.ingress.fqdn ?? '') : '')
 output storageAccountName string = storage.name
 output apiFqdn string = postgrest.properties.configuration.ingress.fqdn
 output appIdentityClientId string = appIdentity.properties.clientId
