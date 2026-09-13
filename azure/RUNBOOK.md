@@ -180,12 +180,33 @@ pg_dump "$SRC" --schema=public --schema=private \
 > The `postgres:17` image has no `curl`, so the shim is inlined above rather
 > than fetched from the repo.
 
+# 4. THE MFA GATE. private.mfa_ok() reads Supabase's `aal` claim and queries
+#    auth.mfa_factors — a GoTrue table that does not exist here. Every one of
+#    the 331 policies that route through has_module_perm() calls it FIRST, so
+#    leaving it alone means every read errors. The symptom is not a crash: the
+#    app signs in happily and shows empty lists.
+#
+#    Entra reports the factors actually used in `amr` instead. This replacement
+#    is written and commented in supabase/sql/azure_auth_uid_shim.sql, to be
+#    applied at the Entra cutover and not before.
+psql -U cxadmin -d postgres <<'SQL'
+create or replace function private.mfa_ok()
+returns boolean language sql stable security definer set search_path to 'public'
+as $function$
+  select coalesce(auth.jwt() -> 'amr' ? 'mfa', false)
+      or coalesce(auth.jwt() ->> 'acr', '') = 'mfa';
+$function$;
+SQL
+```
+
 Sanity check:
 
 ```bash
 psql -U cxadmin -d postgres -tAc "select 'policies: ' || count(*) from pg_policies;"
 psql -U cxadmin -d postgres -tAc "select 'tables:   ' || count(*) from pg_tables where schemaname='public';"
 psql -U cxadmin -d postgres -tAc "select 'auth.uid: ' || (to_regprocedure('auth.uid()') is not null);"
+psql -U cxadmin -d postgres -tAc "select 'mfa_ok:   ' || private.mfa_ok();"
+psql -U cxadmin -d postgres -tAc "select 'perm_fn:  ' || private.has_module_perm('tasks','view');"
 ```
 
 Around **349 policies and 90 tables** means the whole authorization model came
