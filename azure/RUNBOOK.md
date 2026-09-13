@@ -199,6 +199,21 @@ $function$;
 SQL
 ```
 
+# 5. THE TABLE GRANTS. `pg_dump --no-privileges` deliberately strips GRANTs,
+#    which includes the ones Supabase gives anon/authenticated on every table.
+#    Without them PostgREST returns 42501 "permission denied for table X" —
+#    a GRANT denial, not an RLS denial, and easy to misread as a policy problem.
+#    These are Supabase's defaults: broad table privileges with RLS as the gate.
+psql -U cxadmin -d postgres <<'SQL'
+grant usage on schema public, auth, private to anon, authenticated, service_role;
+grant all on all tables in schema public to anon, authenticated, service_role;
+grant all on all sequences in schema public to anon, authenticated, service_role;
+grant execute on all functions in schema public to anon, authenticated, service_role;
+alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+notify pgrst, 'reload schema';
+SQL
+```
+
 Sanity check:
 
 ```bash
