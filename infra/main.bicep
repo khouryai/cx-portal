@@ -62,6 +62,9 @@ param deployManagedPostgres bool = true
 @description('Run PostgreSQL as a container in the Container Apps environment instead of the managed service. A DEVELOPMENT ESCAPE HATCH, not an architecture: same engine, so RLS, the auth.uid() shim and PostgREST behave identically, but there are no managed backups, no HA, no Entra-auth-to-database, and DATA DOES NOT SURVIVE A RESTART (see the note on the resource). Never set this true for anything holding real data.')
 param deployContainerPostgres bool = false
 
+@description('Grant dbAdminGroupObjectId the Storage Blob Data Contributor role. Needed on a dev subscription because allowSharedKeyAccess is false, so a human cannot touch blobs without an RBAC assignment — owning the subscription is not data-plane access. Leave FALSE for anything else: production blob access belongs to the application identity, not a person.')
+param grantDeveloperBlobAccess bool = false
+
 @secure()
 @description('PostgREST connection string, as the `authenticator` role. Empty until the database is restored — the API container is deployed unconfigured and set later (azure/RUNBOOK.md step 4), because this value cannot exist before the server does.')
 param postgrestDbUri string = ''
@@ -348,9 +351,15 @@ resource pgContainer 'Microsoft.App/containerApps@2024-03-01' = if (deployContai
         { name: 'pg-password', value: administratorLoginPassword }
       ]
       ingress: {
-        // TCP, not HTTP — this speaks the Postgres wire protocol. External so
-        // Cloud Shell can reach it with psql to load the schema.
-        external: true
+        // TCP, not HTTP — this speaks the Postgres wire protocol.
+        //
+        // INTERNAL, not external: Azure refuses external TCP ingress on an
+        // environment without a custom VNet (ContainerAppTcpRequiresVnet), and
+        // adding one would mean destroying and recreating the environment. So
+        // the database is reachable from inside the environment — which is what
+        // PostgREST needs — and NOT from Cloud Shell. See azure/RUNBOOK.md for
+        // how the schema gets in without a direct psql connection.
+        external: false
         transport: 'tcp'
         targetPort: 5432
         exposedPort: 5432
@@ -501,6 +510,19 @@ resource sasFunction 'Microsoft.Web/sites@2023-12-01' = if (deployFunctionApp) {
 // one account, and revocable without rotating anything.
 var blobDataContributor = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+
+// The storage account has allowSharedKeyAccess: false, so there is no account
+// key to fall back on and Owner on the subscription grants nothing on the data
+// plane. Without this, a developer cannot upload or read a single blob.
+resource devBlobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (grantDeveloperBlobAccess) {
+  scope: storage
+  name: guid(storage.id, dbAdminGroupObjectId, blobDataContributor, 'dev')
+  properties: {
+    roleDefinitionId: blobDataContributor
+    principalId: dbAdminGroupObjectId
+    principalType: dbAdminPrincipalType == 'User' ? 'User' : 'Group'
+  }
+}
 
 resource sasBlobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: storage

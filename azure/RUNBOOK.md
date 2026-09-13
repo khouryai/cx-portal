@@ -99,20 +99,41 @@ id** and the **API scope**.
 
 ---
 
-## 3. Restore the database
+## 3. Load the database
+
+On a free-trial subscription the database is the `postgres:17` **container**, not
+the managed service (see `infra/README.md` for why). It has **internal ingress
+only** — Azure refuses external TCP ingress without a custom VNet — so Cloud
+Shell cannot reach it with `psql`.
+
+That turns out not to matter, because the container already has everything
+needed: PostgreSQL 17 client tools of exactly the right version, and outbound
+internet. So the dump and the restore both happen *inside* it, in one pipe,
+with nothing staged in between.
 
 ```bash
-# 3a. dump from Supabase. Only the application schemas — auth/storage/realtime
-#     are GoTrue's and Supabase Storage's, and are replaced rather than moved.
-pg_dump "postgresql://postgres:<pw>@db.<ref>.supabase.co:5432/postgres" \
-  --schema=public --schema=private \
-  --no-owner --no-privileges --no-publications --no-subscriptions \
-  -Fc -f cxportal.dump
+az containerapp exec -g rg-cxportal-dev -n ca-postgres-dev --command /bin/bash
 ```
 
+Then, inside the container:
+
 ```bash
-# 3b. the roles PostgREST switches to. GoTrue created these; here they are ours.
-psql "<azure connection string>" <<'SQL'
+# Pull the schema straight from Supabase and load it in one pass. Only the
+# application schemas: `auth` and `storage` belong to GoTrue and Supabase
+# Storage and are replaced, not moved.
+pg_dump "postgresql://postgres:<supabase-pw>@db.<ref>.supabase.co:5432/postgres" \
+  --schema=public --schema=private \
+  --no-owner --no-privileges --no-publications --no-subscriptions \
+| psql -U cxadmin -d postgres
+```
+
+Doing it inside the container avoids the version-mismatch failure you would hit
+running Cloud Shell's older `pg_dump` against a PostgreSQL 17 server.
+
+Then the roles PostgREST switches to, and the shim:
+
+```bash
+psql -U cxadmin -d postgres <<'SQL'
 do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'anon') then
     create role anon nologin noinherit;
@@ -125,20 +146,29 @@ do $$ begin
   end if;
 end $$;
 grant anon, authenticated to authenticator;
+create extension if not exists pgcrypto;
+create extension if not exists "uuid-ossp";
 SQL
+
+# THE LOAD-BEARING STEP — re-implement the auth schema over the JWT claims.
+# Fetched from the repo, which is why it has to be reachable from the container.
+curl -sL https://raw.githubusercontent.com/khouryai/cx-portal/main/supabase/sql/azure_auth_uid_shim.sql \
+  | psql -U cxadmin -d postgres
 ```
+
+> **This database is ephemeral.** A container restart loses all of it. Keep this
+> block to hand — you will run it again. That is the price of the free tier, and
+> the reason nothing real goes in here.
+
+Sanity check before moving on:
 
 ```bash
-# 3c. extensions, then the data
-psql "<conn>" -c "create extension if not exists pgcrypto; create extension if not exists \"uuid-ossp\"; create extension if not exists pg_cron;"
-pg_restore -d "<conn>" --no-owner --no-privileges cxportal.dump
-
-# 3d. THE LOAD-BEARING STEP — re-implement the auth schema over the JWT claims
-psql "<conn>" -f supabase/sql/azure_auth_uid_shim.sql
+psql -U cxadmin -d postgres -c "select count(*) from pg_policies;"
+psql -U cxadmin -d postgres -c "select auth.uid();"     -- null outside a request, but must EXIST
 ```
 
-**→ paste this back:** any errors from `pg_restore`. Some noise about missing
-roles is normal and harmless; anything mentioning a policy or a function is not.
+If `pg_policies` returns a few hundred rows and `auth.uid()` resolves rather
+than erroring, the whole authorization model came across intact.
 
 ---
 
