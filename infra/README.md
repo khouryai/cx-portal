@@ -125,3 +125,15 @@ service. Never point it at anything real.
 Upgrading to Pay-As-You-Go lifts both restrictions, at the cost of the spending
 limit that otherwise makes it impossible to be charged.
 
+### Container Apps: TCP ingress is not addressed like HTTP ingress
+
+The database container uses TCP ingress. From inside the environment it is
+reached at **`ca-postgres-dev:5432`** — the app name and the exposed port.
+
+**Not** `ca-postgres-dev.internal.<env-domain>`. That FQDN belongs to HTTP
+ingress. It resolves happily, to the environment's envoy endpoint, and then the
+connection to 5432 times out because nothing there is listening for it. What you
+see is PostgREST reporting `PGRST002 Could not query the database for the schema
+cache`, with `Operation timed out` buried in the container logs — which looks
+like a firewall rule or a bad password and is neither.
+

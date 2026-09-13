@@ -19,10 +19,17 @@ PGRST_PW="${PGRST_PW:?set PGRST_PW to the password you gave the authenticator ro
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
 say "1/5  finding the database and the API"
-PGHOST="$(az containerapp show -g "$RG" -n ca-postgres-dev \
-  --query properties.configuration.ingress.fqdn -o tsv)"
-[ -n "$PGHOST" ] || { echo "could not find ca-postgres-dev"; exit 1; }
-echo "  database: $PGHOST"
+# TCP ingress is addressed by APP NAME and exposed port from inside the
+# environment — NOT by the .internal.<domain> FQDN. That FQDN belongs to HTTP
+# ingress: it resolves (to the environment's envoy endpoint) and then times out,
+# because nothing there serves 5432. The symptom is PGRST002 "could not query
+# the database for the schema cache" with "Operation timed out" in the logs,
+# which reads like a firewall or a wrong password and is neither.
+PGAPP="ca-postgres-dev"
+az containerapp show -g "$RG" -n "$PGAPP" --query name -o tsv >/dev/null 2>&1 \
+  || { echo "could not find $PGAPP"; exit 1; }
+PGHOST="$PGAPP"
+echo "  database: $PGHOST:5432 (app name — TCP ingress is not addressed by FQDN)"
 
 say "2/5  fetching Entra's signing keys"
 # PostgREST wants JWK/JWKS *material*, not a URI to fetch it from — it has no
