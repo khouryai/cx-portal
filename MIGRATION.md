@@ -84,6 +84,30 @@ from `pg_policies`, and asserts a Supabase token and an Entra token produce
 **identical access decisions** — 22 checks, including jsonb/array round-trips and
 a privilege-guard trigger firing under an Entra token.
 
+### 4.1.1 Confirmed against a real restore
+
+The test above uses reconstructed policy shapes. On 2026-09-13 the whole thing
+was done for real: `pg_dump` from the live Supabase project into PostgreSQL 17
+on Azure, with the shim in place.
+
+| | Supabase | After restore |
+|---|---|---|
+| RLS policies | 349 | **349** |
+| Tables | 90 | **90** |
+| Functions | 77 | **77** |
+| Triggers | 32 | **32** |
+| `private.has_module_perm` | present | present |
+
+Exact. Two objects failed, both referencing `auth.users` — GoTrue's user table,
+which does not exist under Entra and should not. That is the design working, not
+a shortfall.
+
+**Order matters more than the commands do.** `psql` does not stop on error, so
+getting it wrong loses objects silently: roles created after the dump cost 325
+of the 349 policies, and the auth shim created after the dump cost a further 21
+plus one table whose column defaults to `auth.uid()`. Roles and shim both go
+first — see `azure/RUNBOOK.md` step 3.
+
 > **The one data step:** re-key `profiles.id` to each user's Entra object id at
 > cutover. Do it while the user count is small (currently 6). Every policy then
 > resolves unchanged.
