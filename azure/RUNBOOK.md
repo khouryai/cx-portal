@@ -115,46 +115,82 @@ with nothing staged in between.
 az containerapp exec -g rg-cxportal-dev -n ca-postgres-dev --command /bin/bash
 ```
 
-Then, inside the container:
+Then, inside the container. **The order below is not cosmetic** — it was
+established the hard way, and getting it wrong silently loses objects:
 
 ```bash
-# Pull the schema straight from Supabase and load it in one pass. Only the
-# application schemas: `auth` and `storage` belong to GoTrue and Supabase
-# Storage and are replaced, not moved.
-pg_dump "postgresql://postgres:<supabase-pw>@db.<ref>.supabase.co:5432/postgres" \
-  --schema=public --schema=private \
-  --no-owner --no-privileges --no-publications --no-subscriptions \
-| psql -U cxadmin -d postgres
-```
+PW='<supabase-password>'; REF='<project-ref>'
+SRC="postgresql://postgres.$REF:$PW@aws-1-us-west-2.pooler.supabase.com:5432/postgres"
 
-Doing it inside the container avoids the version-mismatch failure you would hit
-running Cloud Shell's older `pg_dump` against a PostgreSQL 17 server.
-
-Then the roles PostgREST switches to, and the shim:
-
-```bash
+# 1. ROLES FIRST. Every `create policy ... to authenticated` in the dump fails
+#    if the role does not exist yet, and pg_restore does not stop — it just
+#    keeps going and you end up with a fraction of your policies.
 psql -U cxadmin -d postgres <<'SQL'
 do $$ begin
-  if not exists (select 1 from pg_roles where rolname = 'anon') then
-    create role anon nologin noinherit;
-  end if;
-  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
-    create role authenticated nologin noinherit;
-  end if;
-  if not exists (select 1 from pg_roles where rolname = 'authenticator') then
-    create role authenticator login noinherit;
-  end if;
+  if not exists (select 1 from pg_roles where rolname='anon') then create role anon nologin noinherit; end if;
+  if not exists (select 1 from pg_roles where rolname='authenticated') then create role authenticated nologin noinherit; end if;
+  if not exists (select 1 from pg_roles where rolname='service_role') then create role service_role nologin noinherit bypassrls; end if;
+  if not exists (select 1 from pg_roles where rolname='authenticator') then create role authenticator login noinherit; end if;
 end $$;
-grant anon, authenticated to authenticator;
-create extension if not exists pgcrypto;
-create extension if not exists "uuid-ossp";
+grant anon, authenticated, service_role to authenticator;
 SQL
 
-# THE LOAD-BEARING STEP — re-implement the auth schema over the JWT claims.
-# Fetched from the repo, which is why it has to be reachable from the container.
-curl -sL https://raw.githubusercontent.com/khouryai/cx-portal/main/supabase/sql/azure_auth_uid_shim.sql \
-  | psql -U cxadmin -d postgres
+# 2. Clean slate, then THE AUTH SHIM — also before the dump. Policies and
+#    column defaults reference auth.uid(); if the schema is not there yet they
+#    fail exactly the same silent way the missing roles did.
+psql -U cxadmin -d postgres <<'SQL'
+drop schema if exists public cascade;
+drop schema if exists private cascade;
+create schema public;
+create schema private;
+grant usage on schema public to anon, authenticated, service_role;
+create extension if not exists pgcrypto;
+create extension if not exists "uuid-ossp";
+
+create schema if not exists auth;
+create or replace function auth.jwt() returns jsonb language sql stable as $f$
+  select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb;
+$f$;
+create or replace function auth.uid() returns uuid language sql stable as $f$
+  select nullif(coalesce(auth.jwt() ->> 'oid', auth.jwt() ->> 'sub'), '')::uuid;
+$f$;
+create or replace function auth.role() returns text language sql stable as $f$
+  select coalesce(auth.jwt() ->> 'role', current_setting('role', true));
+$f$;
+create or replace function auth.email() returns text language sql stable as $f$
+  select auth.jwt() ->> 'email';
+$f$;
+grant usage on schema auth to anon, authenticated, service_role;
+SQL
+
+# 3. Now the dump. Errors are grouped so 400 identical lines do not hide the
+#    two that matter.
+pg_dump "$SRC" --schema=public --schema=private \
+  --no-owner --no-privileges --no-publications --no-subscriptions \
+| psql -U cxadmin -d postgres 2>&1 | grep -E '^ERROR' | sort | uniq -c | sort -rn | head
 ```
+
+> The connection string is the **Session pooler** one from the Supabase
+> dashboard, not "Direct connection". Supabase dropped IPv4 for direct
+> connections on the free tier, and an Azure container has no IPv6 egress — the
+> direct host simply times out. Note the username is `postgres.<ref>` and the
+> port is 5432 (session mode); 6543 is transaction mode and `pg_dump` cannot
+> use it.
+>
+> The `postgres:17` image has no `curl`, so the shim is inlined above rather
+> than fetched from the repo.
+
+Sanity check:
+
+```bash
+psql -U cxadmin -d postgres -tAc "select 'policies: ' || count(*) from pg_policies;"
+psql -U cxadmin -d postgres -tAc "select 'tables:   ' || count(*) from pg_tables where schemaname='public';"
+psql -U cxadmin -d postgres -tAc "select 'auth.uid: ' || (to_regprocedure('auth.uid()') is not null);"
+```
+
+Around **349 policies and 90 tables** means the whole authorization model came
+across. A policy count in the 300s with `ERROR: schema "auth" does not exist`
+in the log means the shim ran too late — go back to step 2.
 
 > **This database is ephemeral.** A container restart loses all of it. Keep this
 > block to hand — you will run it again. That is the price of the free tier, and
