@@ -28,6 +28,15 @@ az deployment group list -g "$RG" \
   --query "[].{name:name, state:properties.provisioningState, timestamp:properties.timestamp}" \
   -o table 2>/dev/null || echo "  none"
 
+# A deployment that says only "Failed" is useless — the reason lives in the
+# per-operation log, which nobody remembers the command for. Print it here.
+if az deployment group list -g "$RG" --query "[?properties.provisioningState=='Failed'] | length(@)" -o tsv 2>/dev/null | grep -qv '^0$'; then
+  say "WHY THE LAST DEPLOYMENT FAILED"
+  az deployment operation group list -g "$RG" -n main \
+    --query "[?properties.provisioningState=='Failed'].{resource:properties.targetResource.resourceName, type:properties.targetResource.resourceType, error:properties.statusMessage}" \
+    -o json 2>/dev/null || echo "  (could not read operation log)"
+fi
+
 say "Resources that exist"
 az resource list -g "$RG" --query "[].{name:name, type:type}" -o table 2>/dev/null || echo "  none"
 
