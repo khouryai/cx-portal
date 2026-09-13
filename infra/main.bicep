@@ -53,6 +53,9 @@ param administratorLoginPassword string = ''
 @description('Create the Microsoft Entra administrator on the database. Set FALSE when the admin principal is a guest (#EXT#) account — as it is on a personal subscription created with a Gmail/outlook address — because guest principals are not reliable as a Postgres Entra admin. A password admin is used instead. NOTE: do not set this false AND leave administratorLoginPassword empty, or the server has no administrator at all.')
 param deployDbEntraAdmin bool = true
 
+@description('Deploy the SAS-minting Function and its plan. Set FALSE on a free-trial subscription: consumption (Y1) plans have a quota of ZERO there, and the whole deployment fails on it. The Function is only needed once blob storage is in use, so turning it off unblocks everything else.')
+param deployFunctionApp bool = true
+
 @secure()
 @description('PostgREST connection string, as the `authenticator` role. Empty until the database is restored — the API container is deployed unconfigured and set later (azure/RUNBOOK.md step 4), because this value cannot exist before the server does.')
 param postgrestDbUri string = ''
@@ -372,7 +375,7 @@ resource postgrest 'Microsoft.App/containerApps@2024-03-01' = {
 //
 // Source: azure/functions/sas/. Its request-validation half is covered by
 // tools/test_sas_function.js, which needs no subscription.
-resource functionPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
+resource functionPlan 'Microsoft.Web/serverfarms@2023-12-01' = if (deployFunctionApp) {
   name: 'plan-${suffix}'
   location: location
   tags: tags
@@ -381,7 +384,7 @@ resource functionPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   properties: { reserved: true }         // reserved => Linux
 }
 
-resource sasFunction 'Microsoft.Web/sites@2023-12-01' = {
+resource sasFunction 'Microsoft.Web/sites@2023-12-01' = if (deployFunctionApp) {
   name: 'func-sas-${suffix}'
   location: location
   tags: tags
@@ -474,7 +477,7 @@ output apiFqdn string = postgrest.properties.configuration.ingress.fqdn
 output appIdentityClientId string = appIdentity.properties.clientId
 output keyVaultName string = keyVault.name
 output wafPolicyId string = wantWaf ? wafPolicy.id : ''
-output sasFunctionName string = sasFunction.name
-output sasEndpoint string = 'https://${sasFunction.properties.defaultHostName}/api/sas'
+output sasFunctionName string = deployFunctionApp ? sasFunction.name : ''
+output sasEndpoint string = deployFunctionApp ? 'https://${sasFunction.?properties.defaultHostName ?? ''}/api/sas' : ''
 output wafDeployed bool = wantWaf
 output thriftyMode bool = thrifty

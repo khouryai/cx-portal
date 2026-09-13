@@ -2,20 +2,44 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "environment":          { "value": "dev" },
-    "location":             { "value": "westus2" },
-    "appName":              { "value": "cxportal" },
-
-    "dbAdminGroupObjectId": { "value": "3901feee-ccb2-4b06-927d-d6da92e68721" },
-    "dbAdminGroupName":     { "value": "aik.khoury_gmail.com#EXT#@aikkhourygmail.onmicrosoft.com" },
-    "dbAdminPrincipalType": { "value": "User" },
-
-    "deployDbEntraAdmin":   { "value": false },
-    "administratorLogin":   { "value": "cxadmin" },
-
-    "postgresVersion":      { "value": "17" },
-    "databasePublicAccess": { "value": true },
-    "deployWaf":            { "value": false },
-    "cheapMode":            { "value": true }
+    "environment": {
+      "value": "dev"
+    },
+    "location": {
+      "value": "westus2"
+    },
+    "appName": {
+      "value": "cxportal"
+    },
+    "dbAdminGroupObjectId": {
+      "value": "3901feee-ccb2-4b06-927d-d6da92e68721"
+    },
+    "dbAdminGroupName": {
+      "value": "aik.khoury_gmail.com#EXT#@aikkhourygmail.onmicrosoft.com"
+    },
+    "dbAdminPrincipalType": {
+      "value": "User"
+    },
+    "deployDbEntraAdmin": {
+      "value": false
+    },
+    "administratorLogin": {
+      "value": "cxadmin"
+    },
+    "postgresVersion": {
+      "value": "17"
+    },
+    "databasePublicAccess": {
+      "value": true
+    },
+    "deployWaf": {
+      "value": false
+    },
+    "cheapMode": {
+      "value": true
+    },
+    "deployFunctionApp": {
+      "value": false
+    }
   }
 }
