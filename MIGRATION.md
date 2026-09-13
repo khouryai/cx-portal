@@ -84,6 +84,39 @@ from `pg_policies`, and asserts a Supabase token and an Entra token produce
 **identical access decisions** — 22 checks, including jsonb/array round-trips and
 a privilege-guard trigger firing under an Entra token.
 
+### 4.1.0 The API path, running on Azure
+
+On 2026-09-13 the data path was stood up end to end on a personal Azure
+subscription and verified:
+
+```
+GET /  -> 200, PostgREST OpenAPI for all 90 tables
+GET /profiles (no token) -> 200, []
+```
+
+That empty array is the result worth having. PostgREST connected to PostgreSQL,
+resolved the schema, switched to the `anon` role, and RLS returned nothing —
+the authorization model enforcing itself on Azure infrastructure.
+
+Not yet proven: interactive Entra sign-in from a browser, and therefore whether
+the `roles` claim reaches PostgREST and switches the session to `authenticated`.
+That is the next milestone and the last genuinely unknown piece.
+
+Six problems surfaced doing this that no amount of reading the template would
+have found — each documented where it bit:
+
+| Problem | Symptom | Where |
+|---|---|---|
+| Roles created after the dump | 24 of 349 policies, no error | RUNBOOK §3 |
+| Auth shim after the dump | 328 of 349, no error | RUNBOOK §3 |
+| `mfa_ok()` reads a GoTrue table | every query errors | RUNBOOK §3 step 4 |
+| `--no-privileges` strips grants | `42501 permission denied`, looks like RLS | RUNBOOK §3 step 5 |
+| PostgREST has no remote JWKS | needs the key material inline | `configure-postgrest.sh` |
+| TCP ingress addressed by FQDN | connection times out, looks like a firewall | `infra/README.md` |
+
+Four of the six fail **silently or misleadingly** — they do not announce
+themselves, and three of them look like a different problem than they are.
+
 ### 4.1.1 Confirmed against a real restore
 
 The test above uses reconstructed policy shapes. On 2026-09-13 the whole thing
