@@ -84,13 +84,15 @@ say "6/6  Ready to deploy"
 cat <<'NOTE'
 Read the preview above. Lines marked + are resources that will be created.
 
-This is the point where billing starts. With the personal parameters file the
-expected cost is roughly USD 30-60/month, charged against your trial credit,
-and the database is the only part that costs money while idle — stop it with:
+This is the point where billing starts. With the personal parameters file —
+no WAF, no managed database, no Function plan — expect roughly USD 10-25/month
+against your trial credit. The always-on database container is the bulk of it.
 
-    az postgres flexible-server stop -g rg-cxportal-dev -n psql-cxportal-dev
+To pause the database container (it is stateless and ephemeral anyway):
 
-To remove absolutely everything later:
+    az containerapp update -g rg-cxportal-dev -n ca-postgres-dev --min-replicas 0
+
+To remove absolutely everything:
 
     az group delete --name rg-cxportal-dev
 
@@ -103,7 +105,7 @@ if [ "$CONFIRM" != "yes" ]; then
   exit 0
 fi
 
-say "Deploying — this takes 10-15 minutes, mostly the database"
+say "Deploying — a few minutes"
 echo "If Cloud Shell disconnects, THE DEPLOYMENT KEEPS RUNNING in Azure."
 echo "Reconnect and run: bash azure/status.sh"
 

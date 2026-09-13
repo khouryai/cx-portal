@@ -55,19 +55,18 @@ else
   echo "  no MANAGED database (expected on a free trial — the offer is restricted)"
 fi
 
-PGC="$(az containerapp list -g "$RG" --query "[?starts_with(name,'ca-postgres')].name" -o tsv 2>/dev/null)"
+PGC="$(az containerapp list -g "$RG" --query "[?name=='ca-postgres-dev'].name" -o tsv 2>/dev/null | head -1)"
 if [ -n "$PGC" ]; then
   say "Database (container)"
   az containerapp show -g "$RG" -n "$PGC" \
     --query "{name:name, fqdn:properties.configuration.ingress.fqdn, state:properties.provisioningState, replicas:properties.template.scale.minReplicas}" -o table
   FQDN="$(az containerapp show -g "$RG" -n "$PGC" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null)"
-  if [ -n "$FQDN" ]; then
-    echo
-    echo "  Connect with:"
-    echo "    psql \"host=$FQDN port=5432 user=cxadmin dbname=postgres sslmode=disable\""
-    echo
-    echo "  NOTE: this database is EPHEMERAL. A restart loses everything in it."
-  fi
+  echo
+  echo "  Internal ingress only — Cloud Shell CANNOT psql to this. Get a shell inside it:"
+  echo "    az containerapp exec -g $RG -n $PGC --command /bin/bash"
+  echo "  then, in the container:  psql -U cxadmin -d postgres"
+  echo
+  echo "  NOTE: this database is EPHEMERAL. A restart loses everything in it."
 fi
 
 say "If the last deployment succeeded, these are the values the app needs"
