@@ -182,7 +182,7 @@ configuration yet. It needs:
 | `PGRST_DB_URI` | the Postgres connection string, as `authenticator` |
 | `PGRST_DB_SCHEMAS` | `public` |
 | `PGRST_DB_ANON_ROLE` | `anon` |
-| `PGRST_JWT_SECRET` | `{"jwks_uri":"https://login.microsoftonline.com/<tenant>/discover/v2.0/keys"}` |
+| `PGRST_JWT_SECRET` | `{"jwks_uri":"https://login.microsoftonline.com/<tenant>/discovery/v2.0/keys"}` |
 | `PGRST_JWT_AUD` | `api://<appId>` |
 | `PGRST_JWT_ROLE_CLAIM_KEY` | `.role` |
 
