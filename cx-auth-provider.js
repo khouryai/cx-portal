@@ -204,6 +204,7 @@
     session: null,     // the Supabase-shaped view of the current MSAL token
     listeners: [],
     redirecting: false,
+    settled: false,   // has initEntra() finished at least once?
   };
 
   function entraCfg() {
@@ -336,7 +337,17 @@
         if (accounts.length) entra.app.setActiveAccount(accounts[0]);
       }
       return acquire().then(function () {
-        emit(result ? 'SIGNED_IN' : 'INITIAL_SESSION');
+        entra.settled = true;
+        // Emit on whether a SESSION EXISTS, not on whether this page load was a
+        // redirect return. app.js ignores INITIAL_SESSION by design (it restores
+        // synchronously from storage), so a cached MSAL session emitted as
+        // INITIAL_SESSION would leave the user staring at the sign-in screen
+        // with a perfectly good token in hand, every single load.
+        emit(entra.session ? 'SIGNED_IN' : 'INITIAL_SESSION');
+        if (result && !entra.session) {
+          warn('sign-in returned from Microsoft but no access token could be acquired — ' +
+               'check that the API scope is consented and matches CX_CONFIG.ENTRA_API_SCOPE');
+        }
         log('entra ready — ' + (entra.session ? 'signed in as ' + entra.session.user.email : 'no account'));
       });
     }).catch(function (err) {
@@ -453,6 +464,15 @@
      */
     onAuthStateChange: function (cb) {
       entra.listeners.push(cb);
+      // If initialisation already finished, this listener missed the event.
+      // Replay it — otherwise whether the app sees its own sign-in depends on
+      // the race between module load order and a network round trip.
+      if (entra.settled) {
+        setTimeout(function () {
+          try { cb(entra.session ? 'SIGNED_IN' : 'INITIAL_SESSION', entra.session); }
+          catch (e) { warn('auth listener threw on replay: ' + e.message); }
+        }, 0);
+      }
       initEntra().catch(function () {});
       return {
         data: {
