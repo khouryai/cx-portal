@@ -15,36 +15,15 @@ window.CX_CONFIG = {
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxdHdpdWN4a3Rsamh1a21nbXhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NDMxMDcsImV4cCI6MjA5MzUxOTEwN30.nJuQOOyvGpGphSqiNxrO2_p1oYroev8mVdNn9unxmdI'
 };
 
-// REST_PATH — the one difference between Supabase's gateway and a bare PostgREST.
+// DERIVED VALUES LIVE IN cx-config.js, NOT HERE — ON PURPOSE.
 //
-// Supabase mounts PostgREST under /rest/v1/, so a table is /rest/v1/profiles.
-// A self-hosted PostgREST serves at the root: /profiles. Set REST_PATH to ''
-// when pointing at your own PostgREST, and leave it unset for Supabase.
+// This file is replaced wholesale by every environment: azure/deploy-frontend.sh
+// generates one, and at the Hitachi cutover a human writes one. Anything but
+// plain values therefore gets silently deleted by a replacement that sets only
+// the values. window.REST_BASE used to be defined below, and the generated
+// Azure config dropped it, which turned every data call into a ReferenceError
+// and showed up as "SYSTEM OFFLINE" against a perfectly healthy API.
 //
-// Getting this wrong is a flat 404 on EVERY table while authentication works
-// perfectly — which reads like a missing database and is nothing of the kind.
-//   window.CX_CONFIG.REST_PATH = '';
-//
-// Declared here rather than in app.js because the monolith only shrinks
-// (CLAUDE.md), and because this is the backend seam.
-window.REST_BASE = (window.CX_CONFIG.SUPABASE_URL || '') +
-  (typeof window.CX_CONFIG.REST_PATH === 'string' ? window.CX_CONFIG.REST_PATH : '/rest/v1');
-
-// `apikey` is a SUPABASE GATEWAY header: Supabase's edge gateway uses it to
-// route and rate-limit. PostgREST itself has never read it, so off Supabase it
-// is dead weight on every request.
-//
-// It is not free dead weight. `apikey` is not a CORS-safelisted header, so
-// sending it forces a preflight OPTIONS round-trip on calls that would
-// otherwise be simple requests, and it puts a Supabase-shaped header on an API
-// that is no longer Supabase's.
-//
-// Spread rather than set, so with no key the header is ABSENT rather than
-// present-and-empty. Note for future debugging: PostgREST's CORS policy echoes
-// back whatever the browser asks for in Access-Control-Request-Headers, so an
-// unknown header name here does NOT by itself fail the preflight. If the API
-// looks unreachable, read the logged error in _checkDbStatus rather than
-// assuming a header is at fault.
-window.API_KEY_HEADER = window.CX_CONFIG.SUPABASE_ANON_KEY
-  ? { apikey: window.CX_CONFIG.SUPABASE_ANON_KEY }
-  : {};
+// Set REST_PATH: '' above when pointing at a bare PostgREST (it serves tables
+// at the root; Supabase mounts them under /rest/v1/). cx-config.js turns that
+// into window.REST_BASE. tools/test_config_seam.js fails if logic returns here.

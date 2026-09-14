@@ -1690,6 +1690,7 @@ function _signinTogglePw(){
 </div>
 
 <script src="config.js"></script>
+<script src="cx-config.js"></script>
 <!-- Identity provider seam: the ONE file that changes to move from Supabase
      GoTrue to Microsoft Entra ID. Loads before app.js, which routes every
      auth call and the token plumbing through window.CXIdentity. -->
@@ -1723,6 +1724,9 @@ function _signinTogglePw(){
 <script src="dyn-actions.js"></script>
 <script src="tr-activities.js"></script>
 <script src="tpl-deploy.js"></script>
+<!-- Loaded AFTER app.js: it overrides window.signIn when the identity
+     provider owns credentials (Entra), so app.js must have defined it. -->
+<script src="cx-entra-login.js"></script>
 <!-- Loaded AFTER app.js on purpose: it wraps signIn / _loadCurrentProfile /
      submitChangePassword to add the authentication gates, so they must exist. -->
 <script src="cx-auth-hardening.js"></script>

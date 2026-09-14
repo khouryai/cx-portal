@@ -46,6 +46,7 @@ const suites = [
   { file: "tools/test_csp.js", needs: [] },             // CSP present + in step with config.js
   { file: "tools/test_rls_portability.js", needs: [] }, // Azure migration: RLS works on plain Postgres + Entra
   { file: "tools/test_identity_seam.js", needs: [] },  // Azure migration: identity provider seam
+  { file: "tools/test_config_seam.js", needs: [] },    // Azure migration: config.js holds values, cx-config.js derives
   { file: "tools/test_entra_provider.js", needs: [] },  // Entra claim mapping — auth.uid() depends on it
   { file: "tools/test_sas_function.js", needs: [] },    // SAS Function: what may be signed, and for how long
   { file: "tools/test_size_ratchet.js", needs: [] },    // monolith line-count ratchet (Tier 3 #11)
@@ -78,6 +79,7 @@ const suites = [
   { file: "tools/test_types.js", needs: ["typescript"] }, // JSDoc type-check (Tier 3 Stage D)
   { file: "tools/pw_smoke.js", needs: ["playwright-core"] }, // real-browser delegation smoke (Stage B QA)
   { file: "tools/pw_auth_gates.js", needs: ["playwright-core"] }, // real-browser proof of the auth gates
+  { file: "tools/pw_entra_login.js", needs: ["playwright-core"] }, // real-browser proof of the Azure/Entra deployment shape
 ];
 
 const results = [];

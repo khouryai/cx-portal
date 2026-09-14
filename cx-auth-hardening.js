@@ -671,6 +671,25 @@
   function install() {
     var w = win();
     if (!w) return;
+    // STAND DOWN UNDER AN EXTERNAL IDENTITY PROVIDER. Everything this file
+    // enforces — password policy, the six-monthly rotation clock, lockout and
+    // MFA — belongs to Entra the moment Entra owns the credential, and it
+    // enforces all four centrally and better than an application can.
+    //
+    // Leaving it installed does not merely duplicate work, it LOCKS THE USER
+    // OUT: an Entra profile has no password_changed_at, passwordExpired()
+    // treats an unrecorded change date as expired (deliberately — see its
+    // docblock), so a correct Microsoft sign-in lands on the rotation card, and
+    // that card's submit calls updatePassword(), which the Entra provider
+    // rejects as not supported. A trap with no exit, after a sign-in that
+    // worked.
+    if (w.CXIdentity && w.CXIdentity.managesPasswords === false) {
+      try {
+        console.log('[auth] hardening stands down — ' + w.CXIdentity.kind +
+                    ' owns password policy, rotation, lockout and MFA');
+      } catch (e) {}
+      return;
+    }
     wrapSignIn(w);
     wrapLoadCurrentProfile(w);
     wrapSubmitChangePassword(w);
