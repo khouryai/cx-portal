@@ -77,6 +77,16 @@ TMP="$(mktemp)"
   cat "$SQL_FILE"
   printf '\n\n-- appended by azure/setup-local-auth.sh --\n'
   printf "select auth.set_jwt_secret('%s');\n" "$(esc "$JWT_SECRET")"
+  # Show whether the profile row exists BEFORE trying to use it. set_password()
+  # raises a clear error when it does not, but ON_ERROR_STOP means that error is
+  # the last thing printed — and "which addresses DO exist?" is then the next
+  # question, answerable only from inside the container. Answer it up front.
+  # printf '%s' and not a format string: printf reads \e as the ESC character,
+  # so a psql backslash command written as a format turns into escape-cho.
+  printf '%s\n' "\\echo '--- profiles matching that address ---'"
+  printf "select id, email, is_active from public.profiles where lower(email) = lower('%s');\n" "$(esc "$EMAIL")"
+  printf '%s\n' "\\echo '--- if that was empty, these are the first 20 that do exist ---'"
+  printf "select email, is_active from public.profiles order by email limit 20;\n"
   printf "select auth.set_password('%s', '%s');\n" "$(esc "$EMAIL")" "$(esc "$PW1")"
   printf "select 'credential set for ' || email from auth.users;\n"
 } > "$TMP"
