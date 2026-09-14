@@ -44,6 +44,15 @@ JWKS="$(curl -fsS "https://login.microsoftonline.com/$TENANT/discovery/v2.0/keys
 [ -n "$JWKS" ] || { echo "could not fetch JWKS"; exit 1; }
 echo "  got $(printf '%s' "$JWKS" | wc -c) bytes, $(printf '%s' "$JWKS" | grep -o '"kid"' | wc -l) keys"
 
+# THE AUDIENCE DEPENDS ON THE TOKEN VERSION, and getting it wrong gives
+# PGRST301 JWTNotInAudience — which looks like a broken token and is not: the
+# signature has already validated by that point.
+#   v1 access tokens: aud = the App ID URI,  api://<client-id>
+#   v2 access tokens: aud = the bare client-id GUID
+# The app registration sets requestedAccessTokenVersion: 2, so it is the GUID.
+JWT_AUD="${JWT_AUD:-$APPID}"
+echo "  jwt audience: $JWT_AUD  (v2 token = bare client id, not api://...)"
+
 say "3/5  configuring PostgREST"
 az containerapp update -g "$RG" -n ca-postgrest-dev \
   --min-replicas 1 \
@@ -51,7 +60,7 @@ az containerapp update -g "$RG" -n ca-postgrest-dev \
     "PGRST_DB_URI=postgres://authenticator:${PGRST_PW}@${PGHOST}:5432/postgres" \
     "PGRST_DB_SCHEMAS=public" \
     "PGRST_DB_ANON_ROLE=anon" \
-    "PGRST_JWT_AUD=api://${APPID}" \
+    "PGRST_JWT_AUD=${JWT_AUD}" \
     "PGRST_JWT_ROLE_CLAIM_KEY=.roles[0]" \
     "PGRST_JWT_SECRET=${JWKS}" \
     "PGRST_LOG_LEVEL=info" \
