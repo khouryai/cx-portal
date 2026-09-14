@@ -543,7 +543,7 @@ const _rdStorage = {
   async upload(path, file) {
     const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${this.bucket}/${path}`, {
       method: 'POST',
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': 'true' },
+      headers: { ...API_KEY_HEADER, Authorization: _getAuthHeader(), 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': 'true' },
       body: file,
     });
     if (!res.ok) throw new Error('upload failed (' + res.status + ')');
@@ -551,7 +551,7 @@ const _rdStorage = {
   async signedUrl(path) {
     const res = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/${this.bucket}/${path}`, {
       method: 'POST',
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), 'Content-Type': 'application/json' },
+      headers: { ...API_KEY_HEADER, Authorization: _getAuthHeader(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ expiresIn: 3600 }),
     });
     if (!res.ok) throw new Error('sign failed (' + res.status + ')');
@@ -561,7 +561,7 @@ const _rdStorage = {
   async remove(path) {
     const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${this.bucket}/${path}`, {
       method: 'DELETE',
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() },
+      headers: { ...API_KEY_HEADER, Authorization: _getAuthHeader() },
     });
     if (!res.ok && res.status !== 404) throw new Error('remove failed (' + res.status + ')');
   },

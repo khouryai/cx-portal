@@ -98,7 +98,7 @@
   function encPath(p) { return String(p).split('/').map(encodeURIComponent).join('/'); }
   function authHeader() { try { return (typeof _getAuthHeader === 'function') ? _getAuthHeader() : ('Bearer ' + SUPABASE_ANON_KEY); } catch (e) { return 'Bearer ' + SUPABASE_ANON_KEY; } }
   function restHeaders(extra) {
-    var h = { apikey: SUPABASE_ANON_KEY, Authorization: authHeader() };
+    var h = { ...API_KEY_HEADER, Authorization: authHeader() };
     if (extra) for (var k in extra) h[k] = extra[k];
     return h;
   }

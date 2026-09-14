@@ -32,6 +32,13 @@
   function cfg() {
     return (typeof window !== 'undefined' && window.CX_CONFIG) || {};
   }
+  // See config.js: `apikey` is a Supabase gateway header, meaningless to a
+  // self-hosted PostgREST. Spread so it is ABSENT off Supabase rather than
+  // present-and-empty.
+  function apiKeyHeader() {
+    var k = cfg().SUPABASE_ANON_KEY;
+    return k ? { apikey: k } : {};
+  }
   function sb() {
     return (typeof window !== 'undefined' && window._sb) || null;
   }
@@ -108,7 +115,7 @@
         return fetch(cfg().SUPABASE_URL + '/auth/v1/token?grant_type=refresh_token', {
           method: 'POST',
           signal: ctrl ? ctrl.signal : undefined,
-          headers: { apikey: cfg().SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+          headers: { ...apiKeyHeader(), 'Content-Type': 'application/json' },
           body: JSON.stringify({ refresh_token: s.refresh_token }),
         }).then(function (res) {
           clearTimeout(timer);
@@ -157,7 +164,7 @@
       return fetch(cfg().SUPABASE_URL + '/auth/v1/token?grant_type=password', {
         method: 'POST',
         signal: ctrl ? ctrl.signal : undefined,
-        headers: { apikey: cfg().SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+        headers: { ...apiKeyHeader(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email, password: password }),
       }).then(function (res) {
         clearTimeout(timer);

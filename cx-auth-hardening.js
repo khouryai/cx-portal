@@ -170,6 +170,12 @@
     }
     return c;
   }
+  // See config.js: `apikey` is a Supabase gateway header, meaningless to a
+  // self-hosted PostgREST. Absent, not empty.
+  function apiKeyHeader() {
+    var k = cfg().SUPABASE_ANON_KEY;
+    return k ? { apikey: k } : {};
+  }
   function el(id) { var d = doc(); return d && d.getElementById ? d.getElementById(id) : null; }
   function sb() { var w = win(); return w && w._sb ? w._sb : null; }
 
@@ -197,7 +203,7 @@
     }
     var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
     var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, timeoutMs || 6000);
-    var headers = { apikey: c.SUPABASE_ANON_KEY, 'Content-Type': 'application/json', Accept: 'application/json' };
+    var headers = { ...apiKeyHeader(), 'Content-Type': 'application/json', Accept: 'application/json' };
     var auth = typeof w._getAuthHeader === 'function' ? w._getAuthHeader() : null;
     if (auth) headers.Authorization = auth;
     else headers.Authorization = 'Bearer ' + c.SUPABASE_ANON_KEY;
@@ -257,7 +263,7 @@
     var url = c.restBase() + '/profiles?id=eq.' + encodeURIComponent(userId) +
       '&select=id,email,password_changed_at,mfa_enforced,must_change_password';
     return w.fetch(url, {
-      headers: { apikey: c.SUPABASE_ANON_KEY, Authorization: authHeader, Accept: 'application/json' },
+      headers: { ...apiKeyHeader(), Authorization: authHeader, Accept: 'application/json' },
       signal: ctrl ? ctrl.signal : undefined,
     }).then(function (res) {
       clearTimeout(timer);

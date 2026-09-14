@@ -143,7 +143,7 @@ async function _restGetAll(pathWithQuery, label) {
     try {
       res = await fetch(url, {
         signal: ctrl.signal,
-        headers: { apikey: SUPABASE_ANON_KEY, Authorization: authHeader, Accept: 'application/json' },
+        headers: { ...API_KEY_HEADER, Authorization: authHeader, Accept: 'application/json' },
       });
       clearTimeout(timer);
     } catch (e) {
@@ -197,7 +197,7 @@ function _reportClientError(kind, message, stack) {
       method: 'POST',
       keepalive: true,
       headers: {
-        apikey: SUPABASE_ANON_KEY,
+        ...API_KEY_HEADER,
         Authorization: 'Bearer ' + session.access_token,
         'Content-Type': 'application/json',
         Prefer: 'return=minimal',
@@ -234,7 +234,7 @@ async function _dbInsert(table, rows) {
       method: 'POST',
       signal: ctrl.signal,
       headers: {
-        apikey:        SUPABASE_ANON_KEY,
+        ...API_KEY_HEADER,
         Authorization: authHeader,
         'Content-Type':'application/json',
         Prefer:        'return=representation',
@@ -283,7 +283,7 @@ async function _dbUpdate(table, patch, match, opts = {}) {
       method: 'PATCH',
       signal: ctrl.signal,
       headers: {
-        apikey:        SUPABASE_ANON_KEY,
+        ...API_KEY_HEADER,
         Authorization: authHeader,
         'Content-Type':'application/json',
         Prefer:        'return=representation',
@@ -329,7 +329,7 @@ async function _dbUpdateIn(table, patch, col, values, chunkSize = 80) {
         method: 'PATCH',
         signal: ctrl.signal,
         headers: {
-          apikey:        SUPABASE_ANON_KEY,
+          ...API_KEY_HEADER,
           Authorization: _getAuthHeader(),
           'Content-Type':'application/json',
           Prefer:        'return=representation',
@@ -365,7 +365,7 @@ async function _dbDelete(table, match) {
       method: 'DELETE',
       signal: ctrl.signal,
       headers: {
-        apikey: SUPABASE_ANON_KEY,
+        ...API_KEY_HEADER,
         Authorization: authHeader,
         Prefer: 'return=representation',
       },
@@ -3281,7 +3281,7 @@ async function _loadCurrentProfile(user, accessToken) {
     const timer = setTimeout(() => ctrl.abort(), 15000);
     const res = await fetch(
       `${REST_BASE}/profiles?id=eq.${encodeURIComponent(user.id)}&select=*`,
-      { signal: ctrl.signal, headers: { apikey: SUPABASE_ANON_KEY, Authorization: authHeader, Accept: 'application/json' } }
+      { signal: ctrl.signal, headers: { ...API_KEY_HEADER, Authorization: authHeader, Accept: 'application/json' } }
     );
     clearTimeout(timer);
     if (!res.ok) throw new Error(`profiles fetch failed (${res.status}): ${await res.text()}`);
@@ -3555,7 +3555,7 @@ async function submitChangePassword() {
     const timer = setTimeout(() => ctrl.abort(), 12000);
     const res   = await fetch(
       `${REST_BASE}/profiles?id=eq.${encodeURIComponent(session.user.id)}&select=*`,
-      { signal: ctrl.signal, headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${session.access_token}`, Accept: 'application/json' } }
+      { signal: ctrl.signal, headers: { ...API_KEY_HEADER, Authorization: `Bearer ${session.access_token}`, Accept: 'application/json' } }
     );
     clearTimeout(timer);
     if (!res.ok) throw new Error(`Profile fetch failed (${res.status})`);
@@ -3603,7 +3603,7 @@ async function _checkDbStatus() {
     const res = await fetch(`${REST_BASE}/profiles?select=id&limit=1`, {
       method: 'GET',
       signal: ctrl.signal,
-      headers: { apikey: SUPABASE_ANON_KEY }
+      headers: { ...API_KEY_HEADER }
     });
     clearTimeout(timer);
     if (res.ok || res.status === 406) {
@@ -3614,7 +3614,7 @@ async function _checkDbStatus() {
       if (dot)   { dot.classList.add('offline'); dot.classList.remove('online'); }
       if (label) label.textContent = 'SYSTEM DEGRADED';
     }
-  } catch {
+  } catch (e) { try { console.warn('[db-status] ' + REST_BASE + ' -> ', e); } catch (_) {}
     if (dot)   { dot.classList.add('offline'); dot.classList.remove('online'); }
     if (label) label.textContent = 'SYSTEM OFFLINE';
   }
@@ -17146,7 +17146,7 @@ async function _dbUpsert(table, rows, onConflict) {
   const res = await fetch(url, {
     method: 'POST',
     headers: {
-      apikey: SUPABASE_ANON_KEY, Authorization: authHeader,
+      ...API_KEY_HEADER, Authorization: authHeader,
       'Content-Type': 'application/json',
       Prefer: 'resolution=merge-duplicates,return=representation',
     },
@@ -19021,7 +19021,7 @@ async function undoRegression(testId) {
   try {
     await fetch(`${REST_BASE}/test_items?test_id=eq.${encodeURIComponent(latest.TestID)}`, {
       method: 'DELETE',
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() },
+      headers: { ...API_KEY_HEADER, Authorization: _getAuthHeader() },
     });
     await _dbUpdate('test_items', { is_latest_attempt: true }, { test_id: prev.TestID });
     const idx = TI.findIndex(t => String(t.TestID) === String(latest.TestID));
@@ -19826,7 +19826,7 @@ async function deleteSwConfig(id) {
   try {
     await fetch(`${REST_BASE}/software_configs?id=eq.${id}`, {
       method: 'DELETE',
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() },
+      headers: { ...API_KEY_HEADER, Authorization: _getAuthHeader() },
     });
     if (typeof _vmPurgeDeletedConfig === 'function') { try { await _vmPurgeDeletedConfig(id); } catch (e) { console.warn('[vmPurge config]', e.message); } }
     SW_CONFIGS = SW_CONFIGS.filter(x => x.id !== id);
@@ -19925,7 +19925,7 @@ async function deleteSwEquip(id, configId) {
   try {
     await fetch(SUPABASE_URL + '/rest/v1/sw_equipment?id=eq.' + id, {
       method: 'DELETE',
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() },
+      headers: { ...API_KEY_HEADER, Authorization: _getAuthHeader() },
     });
     SW_EQUIPMENT = SW_EQUIPMENT.filter(e => e.id !== id);
     if (typeof _vmPurgeDeletedCIs === 'function') { try { await _vmPurgeDeletedCIs([id]); } catch (e) { console.warn('[vmPurge ci]', e.message); } }
@@ -20884,7 +20884,7 @@ async function _vmDeleteEquip(id) {
 async function _vmRpc(fn, body) {
   const res = await fetch(`${REST_BASE}/rpc/${fn}`, {
     method: 'POST',
-    headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), 'Content-Type': 'application/json' },
+    headers: { ...API_KEY_HEADER, Authorization: _getAuthHeader(), 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`${fn} (${res.status}): ${await res.text()}`);
@@ -21554,7 +21554,7 @@ async function deleteSwDeploy(id, configId) {
   try {
     await fetch(SUPABASE_URL + '/rest/v1/sw_deployments?id=eq.' + id, {
       method: 'DELETE',
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() },
+      headers: { ...API_KEY_HEADER, Authorization: _getAuthHeader() },
     });
     SW_DEPLOYMENTS = SW_DEPLOYMENTS.filter(x => x.id !== id);
     toast('Deployment record deleted', 'success');
@@ -21758,7 +21758,7 @@ const _vfStorage = {
   async upload(path, file) {
     const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${this.bucket}/${path}`, {
       method: 'POST',
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': 'true' },
+      headers: { ...API_KEY_HEADER, Authorization: _getAuthHeader(), 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': 'true' },
       body: file,
     });
     if (!res.ok) throw new Error('upload failed (' + res.status + ')');
@@ -21766,7 +21766,7 @@ const _vfStorage = {
   async signedUrl(path) {
     const res = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/${this.bucket}/${path}`, {
       method: 'POST',
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), 'Content-Type': 'application/json' },
+      headers: { ...API_KEY_HEADER, Authorization: _getAuthHeader(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ expiresIn: 3600 }),
     });
     if (!res.ok) return null;
@@ -22321,7 +22321,7 @@ async function saveRMA(editId) {
       const oldStatus = existing?.status;
       const res = await fetch(`${REST_BASE}/rmas?id=eq.${editId}`, {
         method: 'PATCH',
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': _getAuthHeader(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+        headers: { ...API_KEY_HEADER, 'Authorization': _getAuthHeader(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -22338,7 +22338,7 @@ async function saveRMA(editId) {
       payload.created_by_email = currentProfile?.email  || '';
       const res = await fetch(`${REST_BASE}/rmas`, {
         method: 'POST',
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': _getAuthHeader(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+        headers: { ...API_KEY_HEADER, 'Authorization': _getAuthHeader(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -22358,7 +22358,7 @@ async function deleteRMA(id) {
   if (!rma) return;
   if (!await cxConfirm(`Delete RMA "${rma.rma_number}"?\n\nThis cannot be undone.`)) return;
   const res = await fetch(`${REST_BASE}/rmas?id=eq.${id}`, {
-    method: 'DELETE', headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': _getAuthHeader() },
+    method: 'DELETE', headers: { ...API_KEY_HEADER, 'Authorization': _getAuthHeader() },
   });
   if (!res.ok) { toast('Delete failed', 'error'); return; }
   RMAS.splice(RMAS.findIndex(r => r.id === id), 1);
@@ -24228,7 +24228,7 @@ const _formsStorage = {
   },
   _headers(extra = {}) {
     return {
-      apikey: SUPABASE_ANON_KEY,
+      ...API_KEY_HEADER,
       Authorization: _getAuthHeader(),
       ...extra,
     };
@@ -27885,7 +27885,7 @@ const _drawStorage = {
     return `${SUPABASE_URL}/storage/v1/object/${this.bucket}/${clean}`;
   },
   _hdrs(extra = {}) {
-    return { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), ...extra };
+    return { ...API_KEY_HEADER, Authorization: _getAuthHeader(), ...extra };
   },
   async upload(path, file) {
     const ctrl = new AbortController();
@@ -35198,7 +35198,7 @@ async function _dynPlanRun() {
     const res = await fetch(`${REST_BASE}/rpc/fn_feasible_instances`, {
       method: 'POST',
       headers: {
-        apikey: SUPABASE_ANON_KEY,
+        ...API_KEY_HEADER,
         Authorization: _getAuthHeader(),
         'Content-Type': 'application/json',
       },
@@ -40125,7 +40125,7 @@ const _docsStorage = {
     return cacheBust ? `${url}?t=${Date.now()}` : url;
   },
   _hdrs(extra = {}) {
-    return { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), ...extra };
+    return { ...API_KEY_HEADER, Authorization: _getAuthHeader(), ...extra };
   },
   async upload(path, file, contentType) {
     const ctrl = new AbortController();

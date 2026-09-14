@@ -42,8 +42,14 @@
     return 'Bearer ' + (cfg().SUPABASE_ANON_KEY || '');
   }
 
+  // See config.js — absent rather than empty when there is no key.
+  function apiKeyHeader() {
+    var k = cfg().SUPABASE_ANON_KEY;
+    return k ? { apikey: k } : {};
+  }
+
   function headers(extra) {
-    var h = { apikey: cfg().SUPABASE_ANON_KEY, Authorization: authHeader() };
+    var h = { ...apiKeyHeader(), Authorization: authHeader() };
     if (extra) for (var k in extra) h[k] = extra[k];
     return h;
   }

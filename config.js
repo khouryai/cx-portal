@@ -29,3 +29,22 @@ window.CX_CONFIG = {
 // (CLAUDE.md), and because this is the backend seam.
 window.REST_BASE = (window.CX_CONFIG.SUPABASE_URL || '') +
   (typeof window.CX_CONFIG.REST_PATH === 'string' ? window.CX_CONFIG.REST_PATH : '/rest/v1');
+
+// `apikey` is a SUPABASE GATEWAY header: Supabase's edge gateway uses it to
+// route and rate-limit. PostgREST itself has never read it, so off Supabase it
+// is dead weight on every request.
+//
+// It is not free dead weight. `apikey` is not a CORS-safelisted header, so
+// sending it forces a preflight OPTIONS round-trip on calls that would
+// otherwise be simple requests, and it puts a Supabase-shaped header on an API
+// that is no longer Supabase's.
+//
+// Spread rather than set, so with no key the header is ABSENT rather than
+// present-and-empty. Note for future debugging: PostgREST's CORS policy echoes
+// back whatever the browser asks for in Access-Control-Request-Headers, so an
+// unknown header name here does NOT by itself fail the preflight. If the API
+// looks unreachable, read the logged error in _checkDbStatus rather than
+// assuming a header is at fault.
+window.API_KEY_HEADER = window.CX_CONFIG.SUPABASE_ANON_KEY
+  ? { apikey: window.CX_CONFIG.SUPABASE_ANON_KEY }
+  : {};
