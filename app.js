@@ -135,7 +135,7 @@ async function _restGetAll(pathWithQuery, label) {
   const out = [];
   const t0 = Date.now();
   for (let offset = 0; offset <= 200000; offset += _PG_PAGE) {
-    const url = `${SUPABASE_URL}/rest/v1/${pathWithQuery}` +
+    const url = `${REST_BASE}/${pathWithQuery}` +
       (hasOwnLimit ? '' : `${sep}limit=${_PG_PAGE}&offset=${offset}`);
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15000);
@@ -193,7 +193,7 @@ function _reportClientError(kind, message, stack) {
       user_agent: String(navigator.userAgent).slice(0, 300),
       email:      session.user?.email || null,
     };
-    fetch(`${SUPABASE_URL}/rest/v1/client_errors`, {
+    fetch(`${REST_BASE}/client_errors`, {
       method: 'POST',
       keepalive: true,
       headers: {
@@ -230,7 +230,7 @@ async function _dbInsert(table, rows) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+    const res = await fetch(`${REST_BASE}/${table}`, {
       method: 'POST',
       signal: ctrl.signal,
       headers: {
@@ -273,7 +273,7 @@ async function _dbUpdate(table, patch, match, opts = {}) {
   const qs = Object.entries(where)
     .map(([k, v]) => `${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`)
     .join('&');
-  const url = `${SUPABASE_URL}/rest/v1/${table}?${qs}`;
+  const url = `${REST_BASE}/${table}?${qs}`;
   console.log(`[_dbUpdate] PATCH ${table} WHERE ${JSON.stringify(where)} patch=${JSON.stringify(patch)}`);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
@@ -321,7 +321,7 @@ async function _dbUpdateIn(table, patch, col, values, chunkSize = 80) {
   for (let i = 0; i < values.length; i += chunkSize) {
     const chunk = values.slice(i, i + chunkSize);
     await _ensureFreshSession();
-    const url = `${SUPABASE_URL}/rest/v1/${table}?${encodeURIComponent(col)}=in.(${chunk.map(v => encodeURIComponent(v)).join(',')})`;
+    const url = `${REST_BASE}/${table}?${encodeURIComponent(col)}=in.(${chunk.map(v => encodeURIComponent(v)).join(',')})`;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15000);
     try {
@@ -361,7 +361,7 @@ async function _dbDelete(table, match) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${qs}`, {
+    const res = await fetch(`${REST_BASE}/${table}?${qs}`, {
       method: 'DELETE',
       signal: ctrl.signal,
       headers: {
@@ -3280,7 +3280,7 @@ async function _loadCurrentProfile(user, accessToken) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15000);
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}&select=*`,
+      `${REST_BASE}/profiles?id=eq.${encodeURIComponent(user.id)}&select=*`,
       { signal: ctrl.signal, headers: { apikey: SUPABASE_ANON_KEY, Authorization: authHeader, Accept: 'application/json' } }
     );
     clearTimeout(timer);
@@ -3554,7 +3554,7 @@ async function submitChangePassword() {
     const ctrl  = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 12000);
     const res   = await fetch(
-      `${SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(session.user.id)}&select=*`,
+      `${REST_BASE}/profiles?id=eq.${encodeURIComponent(session.user.id)}&select=*`,
       { signal: ctrl.signal, headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${session.access_token}`, Accept: 'application/json' } }
     );
     clearTimeout(timer);
@@ -3600,7 +3600,7 @@ async function _checkDbStatus() {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id&limit=1`, {
+    const res = await fetch(`${REST_BASE}/profiles?select=id&limit=1`, {
       method: 'GET',
       signal: ctrl.signal,
       headers: { apikey: SUPABASE_ANON_KEY }
@@ -17142,7 +17142,7 @@ _colRegister('assets', [
 // ── DB helpers ────────────────────────────────────────────────────────────────
 async function _dbUpsert(table, rows, onConflict) {
   const authHeader = _getAuthHeader();
-  const url = `${SUPABASE_URL}/rest/v1/${table}?on_conflict=${onConflict}`;
+  const url = `${REST_BASE}/${table}?on_conflict=${onConflict}`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -19019,7 +19019,7 @@ async function undoRegression(testId) {
   if (!await cxConfirm(`Undo regression?\n\nThis deletes the empty attempt #${latest.AttemptNumber} and restores attempt #${prev.AttemptNumber} (${prev.Status}) as the active one.`)) return;
 
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/test_items?test_id=eq.${encodeURIComponent(latest.TestID)}`, {
+    await fetch(`${REST_BASE}/test_items?test_id=eq.${encodeURIComponent(latest.TestID)}`, {
       method: 'DELETE',
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() },
     });
@@ -19824,7 +19824,7 @@ async function deleteSwConfig(id) {
   if (!c) return;
   if (!await cxConfirm(`Delete software config "${c.software_name} ${c.version}"?\n\nThis cannot be undone. Test cases already snapshotted keep their frozen copy.`)) return;
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/software_configs?id=eq.${id}`, {
+    await fetch(`${REST_BASE}/software_configs?id=eq.${id}`, {
       method: 'DELETE',
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader() },
     });
@@ -20882,7 +20882,7 @@ async function _vmDeleteEquip(id) {
 // ── Software patch — create a new patch-status release in Config Management,
 //    linked to the master VDD, and load it onto this car's equipment line. ────
 async function _vmRpc(fn, body) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+  const res = await fetch(`${REST_BASE}/rpc/${fn}`, {
     method: 'POST',
     headers: { apikey: SUPABASE_ANON_KEY, Authorization: _getAuthHeader(), 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -22319,7 +22319,7 @@ async function saveRMA(editId) {
     if (editId) {
       const existing  = RMAS.find(r => r.id === editId);
       const oldStatus = existing?.status;
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/rmas?id=eq.${editId}`, {
+      const res = await fetch(`${REST_BASE}/rmas?id=eq.${editId}`, {
         method: 'PATCH',
         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': _getAuthHeader(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
         body: JSON.stringify(payload),
@@ -22336,7 +22336,7 @@ async function saveRMA(editId) {
     } else {
       payload.created_by       = currentRoleUser?.name  || '';
       payload.created_by_email = currentProfile?.email  || '';
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/rmas`, {
+      const res = await fetch(`${REST_BASE}/rmas`, {
         method: 'POST',
         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': _getAuthHeader(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
         body: JSON.stringify(payload),
@@ -22357,7 +22357,7 @@ async function deleteRMA(id) {
   const rma = RMAS.find(r => r.id === id);
   if (!rma) return;
   if (!await cxConfirm(`Delete RMA "${rma.rma_number}"?\n\nThis cannot be undone.`)) return;
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rmas?id=eq.${id}`, {
+  const res = await fetch(`${REST_BASE}/rmas?id=eq.${id}`, {
     method: 'DELETE', headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': _getAuthHeader() },
   });
   if (!res.ok) { toast('Delete failed', 'error'); return; }
@@ -35195,7 +35195,7 @@ async function _dynPlanRun() {
     p_max_trains:    _dynPage.planMaxTrains ? parseInt(_dynPage.planMaxTrains, 10) : null,
   };
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/fn_feasible_instances`, {
+    const res = await fetch(`${REST_BASE}/rpc/fn_feasible_instances`, {
       method: 'POST',
       headers: {
         apikey: SUPABASE_ANON_KEY,

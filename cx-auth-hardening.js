@@ -158,7 +158,17 @@
   function doc() { var w = win(); return w && w.document ? w.document : null; }
   function cfg() {
     var w = win();
-    return (w && w.CX_CONFIG) || {};
+    var c = (w && w.CX_CONFIG) || {};
+    // Supabase mounts PostgREST under /rest/v1/; a self-hosted one serves at the
+    // root. REST_PATH carries that difference and lives in config.js with the
+    // rest of the backend seam.
+    if (typeof c.restBase !== 'function') {
+      c.restBase = function () {
+        return (c.SUPABASE_URL || '') +
+          (typeof c.REST_PATH === 'string' ? c.REST_PATH : '/rest/v1');
+      };
+    }
+    return c;
   }
   function el(id) { var d = doc(); return d && d.getElementById ? d.getElementById(id) : null; }
   function sb() { var w = win(); return w && w._sb ? w._sb : null; }
@@ -191,7 +201,7 @@
     var auth = typeof w._getAuthHeader === 'function' ? w._getAuthHeader() : null;
     if (auth) headers.Authorization = auth;
     else headers.Authorization = 'Bearer ' + c.SUPABASE_ANON_KEY;
-    return w.fetch(c.SUPABASE_URL + '/rest/v1/rpc/' + name, {
+    return w.fetch(c.restBase() + '/rpc/' + name, {
       method: 'POST',
       headers: headers,
       body: JSON.stringify(body || {}),
@@ -244,7 +254,7 @@
     if (!authHeader) return Promise.resolve(null);
     var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
     var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 8000);
-    var url = c.SUPABASE_URL + '/rest/v1/profiles?id=eq.' + encodeURIComponent(userId) +
+    var url = c.restBase() + '/profiles?id=eq.' + encodeURIComponent(userId) +
       '&select=id,email,password_changed_at,mfa_enforced,must_change_password';
     return w.fetch(url, {
       headers: { apikey: c.SUPABASE_ANON_KEY, Authorization: authHeader, Accept: 'application/json' },

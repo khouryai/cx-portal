@@ -42,6 +42,14 @@
   var SOURCE_LABELS = { punch: 'Punch List', daily_log: 'Daily Logs', tasks: 'Tasks', standalone: 'General' };
   var KIND_LABELS   = { before: 'Before', after: 'After', general: '' };
 
+  // Supabase mounts PostgREST under /rest/v1/; a self-hosted one serves at the
+  // root. CX_CONFIG.REST_PATH carries that difference.
+  function restBase() {
+    var c = (typeof window !== 'undefined' && window.CX_CONFIG) || {};
+    return (c.SUPABASE_URL || '') +
+      (typeof c.REST_PATH === 'string' ? c.REST_PATH : '/rest/v1');
+  }
+
   var S = {
     view: 'timeline',                // 'timeline' | 'albums' | 'album'
     photos: [],                      // accumulated page rows for current scope
@@ -183,7 +191,7 @@
   // PostgREST exact-count without pulling rows.
   async function countRows(table, qs) {
     try {
-      var res = await fetch(SUPABASE_URL + '/rest/v1/' + table + '?' + qs, {
+      var res = await fetch(restBase() + '/' + table + '?' + qs, {
         method: 'GET', headers: restHeaders({ Prefer: 'count=exact', Range: '0-0', 'Range-Unit': 'items' }),
       });
       var cr = res.headers.get('content-range') || '';
