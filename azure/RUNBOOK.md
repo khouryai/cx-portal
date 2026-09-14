@@ -10,6 +10,14 @@ differences are called out.
 > two or three fake users yes. No BART CBTC content, no real drawings, photos or
 > commissioning records. That distinction is what makes this a development spike
 > rather than a repeat of the problem the migration exists to solve.
+>
+> This is enforced by **`--schema-only`** in step 3, which is easy to leave out
+> and was, on the first run — the dump carried every row including real
+> colleagues' names. If that happens, the recovery is one command:
+>
+> ```bash
+> psql -U cxadmin -d postgres -tAc "select 'truncate table ' || string_agg(format('%I.%I', schemaname, tablename), ', ') || ' cascade;' from pg_tables where schemaname='public'" | psql -U cxadmin -d postgres
+> ```
 
 Everything here runs on **your** machine, not in the Claude session — this
 container has no Azure CLI and no credentials. Where a step produces a value the
@@ -165,7 +173,13 @@ SQL
 
 # 3. Now the dump. Errors are grouped so 400 identical lines do not hide the
 #    two that matter.
-pg_dump "$SRC" --schema=public --schema=private \
+# --schema-only IS NOT OPTIONAL HERE. Without it pg_dump brings every ROW as
+# well: real names, real records, real project content — into whatever
+# subscription you are pointing at. On a personal one that is the exact problem
+# this migration exists to solve, recreated by accident. Structure is what a dev
+# environment needs; drop the flag only when you have decided, deliberately,
+# that the destination may hold the data.
+pg_dump "$SRC" --schema=public --schema=private --schema-only \
   --no-owner --no-privileges --no-publications --no-subscriptions \
 | psql -U cxadmin -d postgres 2>&1 | grep -E '^ERROR' | sort | uniq -c | sort -rn | head
 ```
