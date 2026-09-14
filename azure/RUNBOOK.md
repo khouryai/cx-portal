@@ -194,7 +194,14 @@ create or replace function private.mfa_ok()
 returns boolean language sql stable security definer set search_path to 'public'
 as $function$
   select coalesce(auth.jwt() -> 'amr' ? 'mfa', false)
-      or coalesce(auth.jwt() ->> 'acr', '') = 'mfa';
+      or coalesce(auth.jwt() ->> 'acr', '') = 'mfa'
+      -- Graceful roll-out, same as the Supabase original: a profile that does
+      -- not require MFA passes. Without this clause any user in a tenant that
+      -- does not demand MFA gets amr:["pwd"], fails the gate, and sees an
+      -- entirely empty application after a successful sign-in.
+      or not coalesce(
+           (select p.mfa_enforced from public.profiles p where p.id = (select auth.uid())),
+           true);
 $function$;
 SQL
 ```

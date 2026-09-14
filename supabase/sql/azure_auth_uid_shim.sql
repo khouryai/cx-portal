@@ -99,6 +99,14 @@ comment on function auth.uid() is
 -- Apply this ONLY at the Entra cutover, not before: while still on Supabase the
 -- original definition is the correct one.
 --
+-- The THIRD clause is not optional. The Supabase original passed when the user
+-- had no verified factor yet — a graceful roll-out, so enabling the gate did
+-- not lock out everyone at once. Dropping that on the way to Entra means any
+-- user whose tenant does not demand MFA gets `amr: ["pwd"]`, mfa_ok() returns
+-- false, and has_module_perm() denies every module. They sign in perfectly and
+-- see an empty application. profiles.mfa_enforced carries the same intent, so
+-- the roll-out story survives the move.
+--
 -- create or replace function private.mfa_ok()
 -- returns boolean
 -- language sql
@@ -107,7 +115,10 @@ comment on function auth.uid() is
 -- set search_path to 'public'
 -- as $function$
 --   select coalesce(auth.jwt() -> 'amr' ? 'mfa', false)
---       or coalesce(auth.jwt() ->> 'acr', '') = 'mfa';
+--       or coalesce(auth.jwt() ->> 'acr', '') = 'mfa'
+--       or not coalesce(
+--            (select p.mfa_enforced from public.profiles p where p.id = (select auth.uid())),
+--            true);
 -- $function$;
 --
 -- Conditional Access should require MFA for this application, so in practice
