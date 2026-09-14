@@ -501,7 +501,16 @@
       // the challenge gate, which needs no policy to decide, runs without one.
       var policyKnown = !!profile;
 
-      var factors = (factorRes && (factorRes.totp || factorRes.all)) || [];
+      // TOTP enrolment and challenge below are written against GoTrue's
+      // auth.mfa.* API. A provider that does not supply one (Entra does MFA
+      // itself; the self-hosted PostgREST deployment has no TOTP at all) must
+      // skip both gates rather than send the user to a card that cannot
+      // complete. The rotation gate underneath still applies.
+      var gw = win();
+      var identity = gw && gw.CXIdentity;
+      var mfaCapable = !identity || identity.managesMfa !== false;
+
+      var factors = (mfaCapable && factorRes && (factorRes.totp || factorRes.all)) || [];
       var verified = factors.filter(function (f) { return f.status === 'verified'; });
 
       // 1. Enrolled but this session is still single-factor → challenge.
@@ -514,7 +523,7 @@
       }
 
       // 2. Not enrolled and MFA is required → enrol before entering.
-      if (!verified.length && policyKnown && mfaRequired(profile)) {
+      if (!verified.length && mfaCapable && policyKnown && mfaRequired(profile)) {
         showCard('mfa-setup-card');
         startMfaEnrolment();
         return true;

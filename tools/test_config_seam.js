@@ -73,36 +73,63 @@ ok('supabase: the apikey header is present',
   !!(supa.API_KEY_HEADER && supa.API_KEY_HEADER.apikey));
 
 // ── 4. THE ONE THAT MATTERS — the config the deploy script really writes ──
-// Extract the heredoc body from azure/deploy-frontend.sh instead of retyping
-// it, so drift in the script fails here rather than in production.
+// The generator is EXECUTED, not pattern-matched: a heredoc that stops
+// producing REST_PATH, or a shell variable that stops being substituted, has to
+// fail here rather than on the deployed site. Both identity modes are built,
+// because the script branches on IDENTITY and only one of them is ever the one
+// you are looking at when something breaks.
+const { execFileSync } = require('child_process');
+const os = require('os');
+
 const deploy = read('azure/deploy-frontend.sh');
-const m = deploy.match(/cat > "\$STAGE\/config\.js" <<CFG\n([\s\S]*?)\nCFG\n/);
-ok('azure/deploy-frontend.sh still generates config.js from a heredoc', !!m);
+const gen = deploy.match(/\{\ncat <<CFG\n[\s\S]*?\n\} > "\$STAGE\/config\.js"/);
+ok('the config generator is still a self-contained block in deploy-frontend.sh', !!gen);
 
-if (m) {
-  // Substitute the shell variables with representative values.
-  const generated = m[1]
-    .replace(/\$TENANT/g, 'e62c5154-d15d-4c22-a489-aa656aff64a4')
-    .replace(/\$APPID/g, 'a1301867-e12c-43c7-85e2-80cc5bd9d325')
-    .replace(/\$HOST/g, 'example.azurestaticapps.net')
-    .replace(/\$API/g, 'ca-postgrest-dev.example.azurecontainerapps.io');
-  ok('the generated config has no unsubstituted shell variables',
-    !/\$[A-Z_]+/.test(generated));
+function generate(identity) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cxcfg-'));
+  const script = [
+    'set -eu',
+    `STAGE=${JSON.stringify(dir)}`,
+    `IDENTITY=${JSON.stringify(identity)}`,
+    'TENANT=e62c5154-d15d-4c22-a489-aa656aff64a4',
+    'APPID=a1301867-e12c-43c7-85e2-80cc5bd9d325',
+    'HOST=example.azurestaticapps.net',
+    'API=ca-postgrest-dev.example.azurecontainerapps.io',
+    gen[0],
+  ].join('\n');
+  const file = path.join(dir, 'gen.sh');
+  fs.writeFileSync(file, script);
+  execFileSync('bash', [file], { stdio: 'pipe' });
+  return fs.readFileSync(path.join(dir, 'config.js'), 'utf8');
+}
 
-  const azure = derive(generated);
-  ok('azure: REST_BASE is defined at all',
-    typeof azure.REST_BASE === 'string' && azure.REST_BASE.length > 0,
-    'this is the exact failure that read as SYSTEM OFFLINE');
-  ok('azure: REST_BASE has NO /rest/v1 prefix (bare PostgREST serves at root)',
-    azure.REST_BASE === 'https://ca-postgrest-dev.example.azurecontainerapps.io',
-    'got ' + azure.REST_BASE);
-  ok('azure: API_KEY_HEADER is defined',
-    !!azure.API_KEY_HEADER && typeof azure.API_KEY_HEADER === 'object');
-  ok('azure: the apikey header is ABSENT, not empty',
-    !('apikey' in azure.API_KEY_HEADER),
-    'keys: ' + JSON.stringify(Object.keys(azure.API_KEY_HEADER)));
-  ok('azure: the identity provider is entra',
-    azure.CX_CONFIG && azure.CX_CONFIG.IDENTITY === 'entra');
+if (gen) {
+  for (const identity of ['postgrest', 'entra']) {
+    const src = generate(identity);
+    ok(`${identity}: the generated config has no unsubstituted shell variables`,
+      !/\$[A-Z_]+/.test(src), (src.match(/\$[A-Z_]+/) || [])[0]);
+    ok(`${identity}: it assigns ONLY window.CX_CONFIG`,
+      (src.match(/^\s*window\.([A-Za-z0-9_$]+)\s*=/gm) || []).length === 1);
+
+    const w = derive(src);
+    ok(`${identity}: REST_BASE is defined at all`,
+      typeof w.REST_BASE === 'string' && w.REST_BASE.length > 0,
+      'this is the exact failure that read as SYSTEM OFFLINE');
+    ok(`${identity}: REST_BASE has NO /rest/v1 prefix (bare PostgREST serves at root)`,
+      w.REST_BASE === 'https://ca-postgrest-dev.example.azurecontainerapps.io', w.REST_BASE);
+    ok(`${identity}: the apikey header is ABSENT, not empty`,
+      !!w.API_KEY_HEADER && !('apikey' in w.API_KEY_HEADER));
+    ok(`${identity}: IDENTITY is set to it`, w.CX_CONFIG.IDENTITY === identity, w.CX_CONFIG.IDENTITY);
+  }
+
+  // Entra needs its app-registration values; a password build must not carry
+  // them, or a stale client id outlives the decision to stop using Entra.
+  const entra = derive(generate('entra')).CX_CONFIG;
+  const local = derive(generate('postgrest')).CX_CONFIG;
+  ok('entra: the app registration values are present',
+    !!entra.ENTRA_TENANT_ID && !!entra.ENTRA_CLIENT_ID && !!entra.ENTRA_REDIRECT_URI);
+  ok('postgrest: no Entra values are emitted',
+    !local.ENTRA_TENANT_ID && !local.ENTRA_CLIENT_ID);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed.');

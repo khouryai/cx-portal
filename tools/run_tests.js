@@ -47,6 +47,7 @@ const suites = [
   { file: "tools/test_rls_portability.js", needs: [] }, // Azure migration: RLS works on plain Postgres + Entra
   { file: "tools/test_identity_seam.js", needs: [] },  // Azure migration: identity provider seam
   { file: "tools/test_config_seam.js", needs: [] },    // Azure migration: config.js holds values, cx-config.js derives
+  { file: "tools/test_local_auth.js", needs: [] },     // Azure migration: email/password login against a real PostgreSQL
   { file: "tools/test_entra_provider.js", needs: [] },  // Entra claim mapping — auth.uid() depends on it
   { file: "tools/test_sas_function.js", needs: [] },    // SAS Function: what may be signed, and for how long
   { file: "tools/test_size_ratchet.js", needs: [] },    // monolith line-count ratchet (Tier 3 #11)
@@ -80,6 +81,7 @@ const suites = [
   { file: "tools/pw_smoke.js", needs: ["playwright-core"] }, // real-browser delegation smoke (Stage B QA)
   { file: "tools/pw_auth_gates.js", needs: ["playwright-core"] }, // real-browser proof of the auth gates
   { file: "tools/pw_entra_login.js", needs: ["playwright-core"] }, // real-browser proof of the Azure/Entra deployment shape
+  { file: "tools/pw_local_login.js", needs: ["playwright-core"] }, // real-browser proof of the standard email/password sign-in
 ];
 
 const results = [];

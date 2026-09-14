@@ -31,6 +31,12 @@
 
 create schema if not exists auth;
 
+-- GoTrue granted this on Supabase, so no migration ever had to. Without it
+-- every policy that calls auth.uid() fails with "permission denied for schema
+-- auth" the moment PostgREST switches to `authenticated` — which reads as a
+-- broken policy and is a missing grant.
+grant usage on schema auth to anon, authenticated;
+
 -- The raw claim set PostgREST parsed out of the bearer token.
 -- `true` on current_setting is missing_ok: outside a request there is no GUC,
 -- and that must return an empty object rather than raising.

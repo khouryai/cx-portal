@@ -75,6 +75,10 @@ conversation, and it is expected the first time.
 
 ## 2. Register the application in Entra ID
 
+> **Skip this step if you are using email + password** (step 4a). It is only
+> needed for the Microsoft sign-in option, and nothing else in the runbook
+> depends on it.
+
 This is the part that has no `main.bicep` equivalent, because an app
 registration is a directory object rather than a resource.
 
@@ -265,7 +269,70 @@ than erroring, the whole authorization model came across intact.
 
 ---
 
-## 4. Point PostgREST at Entra
+## 4. Choose how people sign in
+
+**This is the one decision that changes the sign-in screen**, and both options
+are built and tested. PostgREST accepts exactly ONE JWT secret, so it is
+genuinely either/or — whichever issuer you configure is the only one whose
+tokens the database will accept.
+
+| | Email + password | Microsoft Entra |
+|---|---|---|
+| Sign-in screen | the normal card, as on Supabase | "Sign in with Microsoft" |
+| Who checks the credential | `public.login()` in your database | Microsoft |
+| `PGRST_JWT_SECRET` | a shared secret | Entra's JWKS |
+| `PGRST_JWT_AUD` | `cx-portal` | the application (client) id |
+| `auth.uid()` reads | `sub` | `oid` |
+| Password reset | an admin runs `auth.set_password()` in psql | Entra self-service |
+| Second factor | **not available** | enforced by Conditional Access |
+| Account offboarding | you remove the row | IT disables the directory account |
+
+Switching later is this script plus a redeploy. Nothing in the schema and none
+of the 349 RLS policies change, because the shim reads `oid` and falls back to
+`sub`.
+
+### 4a. Email + password (the standard sign-in card)
+
+Apply the SQL that replaces GoTrue — the piece the Azure build left behind:
+
+```bash
+az containerapp exec -g rg-cxportal-dev -n ca-postgres-dev --command /bin/bash
+# in the container:
+psql -U cxadmin -d postgres -f /tmp/azure_local_auth.sql
+```
+
+(Copy the file in the same way step 3 copies the dump.)
+
+Then configure PostgREST. The script generates the shared secret and prints the
+two commands that put the SAME value on both sides:
+
+```bash
+PGRST_PW='<authenticator password>' bash azure/configure-postgrest.sh --local
+```
+
+**The two halves of the secret must match exactly.** If they drift, every
+correct password is rejected — and the message you get is indistinguishable
+from a wrong password, which is a bad hour. `private.auth_secrets` holds one
+half; `PGRST_JWT_SECRET` holds the other.
+
+Give yourself a password. The profile row must already exist — its id is the
+identity every RLS policy already uses, which is why nothing needs re-keying:
+
+```sql
+select auth.set_password('you@hitachirail.com', 'a real passphrase');
+```
+
+Then deploy the front end to match:
+
+```bash
+IDENTITY=postgrest bash azure/deploy-frontend.sh
+```
+
+What you own by choosing this: the password hashes, the absence of a reset
+email, and no second factor. `tools/test_local_auth.js` proves the mechanism
+against a real PostgreSQL; it cannot prove the operational half.
+
+### 4b. Microsoft Entra
 
 The Container App deployed in step 1 runs PostgREST but has no JWT
 configuration yet. It needs:
@@ -277,15 +344,21 @@ configuration yet. It needs:
 | `PGRST_DB_ANON_ROLE` | `anon` |
 | `PGRST_JWT_SECRET` | `{"jwks_uri":"https://login.microsoftonline.com/<tenant>/discovery/v2.0/keys"}` |
 | `PGRST_JWT_AUD` | `api://<appId>` |
-| `PGRST_JWT_ROLE_CLAIM_KEY` | `.role` |
+| `PGRST_JWT_ROLE_CLAIM_KEY` | `.roles[0]` |
 
-The last one matters and is easy to miss: Entra tokens carry no `role` claim, so
-PostgREST falls back to the anon role for every request. Add an **app role** or
-an optional claim named `role` with value `authenticated` in the app
-registration, or map it in the shim.
+The last one matters and is easy to miss: Entra tokens carry no `role` claim,
+so without it PostgREST falls back to the anon role for every request and the
+app signs in perfectly but sees nothing. The app registration declares an **app
+role** named `authenticated`, which arrives as `roles: ["authenticated"]` —
+hence `.roles[0]` rather than `.role`.
 
-**→ tell me** when you hit this — it is the single most likely place for the
-first cutover to fail, and the fix depends on which approach IT prefers.
+`public.login()` emits `roles` as an array for exactly this reason, so the same
+setting serves both issuers and switching never touches it.
+
+```bash
+PGRST_PW='<authenticator password>' bash azure/configure-postgrest.sh --entra
+IDENTITY=entra bash azure/deploy-frontend.sh
+```
 
 ---
 

@@ -52,6 +52,9 @@
     /** Whether this provider manages passwords itself (Entra does not). */
     managesPasswords: true,
 
+    /** GoTrue's mfa.* API backs the enrolment and challenge cards. */
+    managesMfa: true,
+
     /** localStorage key supabase-js v2 keeps the session under. */
     storageKey: function () {
       var url = cfg().SUPABASE_URL || '';
@@ -383,6 +386,10 @@
     kind: 'entra',
     managesPasswords: false,
 
+    // Entra performs MFA itself, before it ever issues a token, and reports it
+    // in `amr`. The browser must not run its own enrolment flow on top.
+    managesMfa: false,
+
     /** MSAL keeps its own cache under its own keys; this names ours for parity. */
     storageKey: function () { return 'cx-entra-session'; },
 
@@ -502,7 +509,226 @@
     _internals: entra,
   };
 
-  var providers = { supabase: supabaseProvider, entra: entraProvider };
+
+  // ── Self-hosted PostgREST: email + password ───────────────────────────────
+  // Selected with CX_CONFIG.IDENTITY = 'postgrest'. Pairs with
+  // supabase/sql/azure_local_auth.sql, which holds the half that matters.
+  //
+  // WHAT THIS IS FOR. Supabase was two services: PostgREST served the data and
+  // GoTrue checked passwords. The Azure build kept PostgREST and left GoTrue
+  // behind, so nothing there could turn a password into a session. The SQL file
+  // puts that back as public.login(), and this provider is its client. The
+  // sign-in screen then behaves exactly as it did on Supabase — same card, same
+  // lockout, same rotation clock, no redirect to anywhere.
+  //
+  // WHY IT NEEDS NO WORKAROUNDS. The two Supabase quirks above (the auth client
+  // hanging on navigator.locks, the refresh that never returns) came from
+  // supabase-js, not from passwords. This talks to PostgREST with plain fetch,
+  // so signIn and directGrant are the same call and neither can deadlock.
+  //
+  // THERE IS NO REFRESH TOKEN, DELIBERATELY. Sessions last eight hours and
+  // renew through /rpc/auth_refresh, which PostgREST only reaches after it has
+  // already verified the bearer token. Possession of a live session is the
+  // credential, so nothing long-lived sits in localStorage waiting to be stolen.
+  var pgrestProvider = {
+    kind: 'postgrest',
+
+    /** It does: login(), change_password() and the policy all live in the DB. */
+    managesPasswords: true,
+
+    // NO TOTP ON THIS DEPLOYMENT, and this flag is what stops that becoming a
+    // dead end. Enrolment and challenge in cx-auth-hardening.js are written
+    // against GoTrue's auth.mfa.* API, which does not exist here; without this
+    // flag a profile with mfa_enforced set would be sent to an enrolment card
+    // that can never complete. private.mfa_ok() still passes server-side
+    // because auth.mfa_factors is empty (azure_local_auth.sql §3), so access is
+    // unaffected — but second-factor authentication is genuinely NOT available
+    // on a local-password deployment. It is one of the things Entra brings.
+    managesMfa: false,
+
+    storageKey: function () { return 'cx-portal-auth-token'; },
+
+    storedSession: function () {
+      try {
+        var raw = localStorage.getItem(pgrestProvider.storageKey());
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) { return null; }
+    },
+
+    storeSession: function (session) {
+      try { localStorage.setItem(pgrestProvider.storageKey(), JSON.stringify(session)); }
+      catch (e) { warn('could not persist session: ' + e.message); }
+    },
+
+    clearSession: function () {
+      try { localStorage.removeItem(pgrestProvider.storageKey()); } catch (e) {}
+    },
+
+    /** Synchronous by design — every `_db*` helper in app.js calls it inline. */
+    authHeader: function () {
+      var s = pgrestProvider.storedSession();
+      if (s && s.access_token) return 'Bearer ' + s.access_token;
+      // No anon-key fallback: there is no gateway key on this stack, and a
+      // malformed Authorization header is harder to read in the logs than none.
+      return '';
+    },
+
+    /** POST to a PostgREST RPC with the current session, if any. @private */
+    _rpc: function (fn, body, useAuth) {
+      var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+      var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 15000);
+      var headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+      if (useAuth) {
+        var h = pgrestProvider.authHeader();
+        if (h) headers.Authorization = h;
+      }
+      var base = (typeof window !== 'undefined' && window.REST_BASE) || '';
+      return fetch(base + '/rpc/' + fn, {
+        method: 'POST',
+        signal: ctrl ? ctrl.signal : undefined,
+        headers: headers,
+        body: JSON.stringify(body || {}),
+      }).then(function (res) {
+        clearTimeout(timer);
+        return res.text().then(function (text) {
+          var json = null;
+          try { json = text ? JSON.parse(text) : null; } catch (e) {}
+          if (!res.ok) {
+            // PostgREST surfaces a RAISE EXCEPTION as {message, code, details}.
+            // The message is written for the user in azure_local_auth.sql, so
+            // pass it through rather than inventing copy here.
+            var msg = (json && (json.message || json.hint || json.details)) ||
+                      ('Sign-in failed (HTTP ' + res.status + ').');
+            var err = new Error(msg);
+            err.code = json && json.code;
+            throw err;
+          }
+          return json;
+        });
+      }).catch(function (e) {
+        clearTimeout(timer);
+        if (e && e.name === 'AbortError') throw new Error('The server did not respond. Check your connection and try again.');
+        throw e;
+      });
+    },
+
+    ensureFresh: function () {
+      var s = pgrestProvider.storedSession();
+      if (!s || !s.access_token) return Promise.resolve();
+      var msLeft = (s.expires_at || 0) * 1000 - Date.now();
+      if (msLeft > 120000) return Promise.resolve();
+      if (pgrestProvider._inflight) return pgrestProvider._inflight;
+
+      pgrestProvider._inflight = pgrestProvider._rpc('auth_refresh', {}, true)
+        .then(function (fresh) {
+          if (!fresh || !fresh.access_token) throw new Error('no access_token in refresh response');
+          pgrestProvider.storeSession(fresh);
+          log('session renewed via /rpc/auth_refresh');
+          if (typeof window._hideSessionExpiredBanner === 'function') window._hideSessionExpiredBanner();
+        })
+        .catch(function (e) {
+          warn('session renewal failed: ' + e.message);
+          var cur = pgrestProvider.storedSession();
+          if ((!cur || Date.now() > (cur.expires_at || 0) * 1000) &&
+              typeof window._showSessionExpiredBanner === 'function') {
+            window._showSessionExpiredBanner();
+          }
+        })
+        .then(function () { pgrestProvider._inflight = null; });
+      return pgrestProvider._inflight;
+    },
+    _inflight: null,
+
+    // ── operations ──────────────────────────────────────────────────────────
+    /** supabase-js's {data, error} shape, so app.js's signIn() is unchanged. */
+    signIn: function (opts) {
+      return pgrestProvider._rpc('login', {
+        p_email: (opts && opts.email) || '',
+        p_password: (opts && opts.password) || '',
+      }, false).then(function (session) {
+        pgrestProvider.storeSession(session);
+        pgrestProvider._emit('SIGNED_IN', session);
+        return { data: { session: session, user: session.user }, error: null };
+      }).catch(function (e) {
+        return { data: { session: null, user: null }, error: { message: e.message } };
+      });
+    },
+
+    signOut: function () {
+      pgrestProvider.clearSession();
+      pgrestProvider._emit('SIGNED_OUT', null);
+      return Promise.resolve({ error: null });
+    },
+
+    getSession: function () {
+      return Promise.resolve({ data: { session: pgrestProvider.storedSession() }, error: null });
+    },
+
+    onAuthStateChange: function (cb) {
+      pgrestProvider._listeners.push(cb);
+      // The session is restored synchronously from localStorage, so INITIAL_SESSION
+      // is the honest event here — app.js ignores it and reads storage itself.
+      try { cb('INITIAL_SESSION', pgrestProvider.storedSession()); } catch (e) {}
+      return { data: { subscription: { unsubscribe: function () {
+        var i = pgrestProvider._listeners.indexOf(cb);
+        if (i >= 0) pgrestProvider._listeners.splice(i, 1);
+      } } } };
+    },
+    _listeners: [],
+    _emit: function (event, session) {
+      for (var i = 0; i < pgrestProvider._listeners.length; i++) {
+        try { pgrestProvider._listeners[i](event, session); }
+        catch (e) { warn('auth listener threw: ' + e.message); }
+      }
+    },
+
+    /**
+     * NOT SUPPORTED, and it fails loudly rather than pretending to send mail.
+     * Nothing in this stack can send email — there is no SMTP service and no
+     * Edge Function. A reset is an administrator running, in psql:
+     *     select auth.set_password('user@example.com', 'a new passphrase');
+     * That is the honest cost of holding passwords yourself; Entra is what
+     * removes it.
+     */
+    resetPassword: function () {
+      return Promise.reject(new Error(
+        'Password reset by email is not available on this deployment — nothing here can send mail. ' +
+        'Ask an administrator to set a new password for you.'));
+    },
+
+    updatePassword: function (password, current) {
+      return pgrestProvider._rpc('change_password', {
+        p_current: current || '',
+        p_new: password,
+      }, true).then(function () {
+        return { data: {}, error: null };
+      }).catch(function (e) {
+        return { data: {}, error: { message: e.message } };
+      });
+    },
+
+    /**
+     * Account creation is deliberately administrative: a profile row is created
+     * by the Team module, then an administrator sets the first password with
+     * auth.set_password() in psql. Self-service sign-up would mean an anonymous
+     * caller could mint credentials against this database.
+     */
+    createUser: function () {
+      return Promise.reject(new Error(
+        'Accounts are created by an administrator on this deployment. ' +
+        'Add the person in Team, then ask an administrator to set their first password.'));
+    },
+
+    /** Same call as signIn — plain fetch cannot deadlock, so there is nothing to fall back FROM. */
+    directGrant: function (email, password) {
+      return pgrestProvider.signIn({ email: email, password: password }).then(function (out) {
+        if (out.error) return { ok: false, message: out.error.message };
+        return { ok: true, session: out.data.session };
+      });
+    },
+  };
+
+  var providers = { supabase: supabaseProvider, entra: entraProvider, postgrest: pgrestProvider };
   var selected = providers[(cfg().IDENTITY || 'supabase')] || supabaseProvider;
 
   if (typeof window !== 'undefined') {
