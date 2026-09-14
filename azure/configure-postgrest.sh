@@ -53,23 +53,33 @@ if [ "$MODE" = "local" ]; then
   # with a shared secret that BOTH sides must hold. They are set from one value
   # here so they cannot drift; if they ever do, every correct password is
   # rejected with JWSError and it looks like the password is wrong.
-  JWT_SECRET="${JWT_SECRET:-$(openssl rand -base64 48 | tr -d '\n')}"
+  # azure/setup-local-auth.sh generated this and put the SAME value into the
+  # database. Reading it back is the whole point: a secret typed twice is a
+  # secret that eventually differs, and when it does, every correct password is
+  # rejected with a message indistinguishable from a wrong one.
+  SECRET_FILE="azure/.local-auth-secret"
+  if [ -n "${JWT_SECRET:-}" ]; then
+    echo "  using the JWT_SECRET from your environment"
+  elif [ -f "$SECRET_FILE" ]; then
+    JWT_SECRET="$(cat "$SECRET_FILE")"
+    echo "  using the secret from $SECRET_FILE"
+  else
+    cat <<NOTE
+
+  No secret found at $SECRET_FILE.
+
+  The database has to be holding the same value before PostgREST can accept a
+  single token, so generating one here would guarantee a mismatch. Run this
+  first — it creates the secret, loads the SQL and sets your first password:
+
+      bash azure/setup-local-auth.sh
+
+NOTE
+    exit 1
+  fi
   JWT_AUD="${JWT_AUD:-cx-portal}"
   echo "  mode: LOCAL PASSWORDS — the database issues the tokens"
   echo "  audience: $JWT_AUD"
-  cat <<NOTE
-
-  RUN THIS INSIDE THE DATABASE CONTAINER BEFORE ANYONE SIGNS IN, or the two
-  halves of the secret will not match:
-
-      az containerapp exec -g $RG -n ca-postgres-dev --command /bin/bash
-      psql -U cxadmin -d postgres -c "select auth.set_jwt_secret('$JWT_SECRET');"
-
-  Then give someone a password (the profile row must already exist):
-
-      psql -U cxadmin -d postgres -c "select auth.set_password('you@hitachirail.com','a real passphrase');"
-
-NOTE
 else
   # PostgREST wants JWK/JWKS *material*, not a URI to fetch it from — it has no
   # remote-JWKS support. So the key set is pinned here as a literal value.

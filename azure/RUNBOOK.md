@@ -293,40 +293,48 @@ of the 349 RLS policies change, because the shim reads `oid` and falls back to
 
 ### 4a. Email + password (the standard sign-in card)
 
-Apply the SQL that replaces GoTrue — the piece the Azure build left behind:
+**Everything below runs from the repo root in Cloud Shell**, not from `~` and
+not inside the container unless it says so:
+
+```bash
+cd ~/cx-portal && git pull
+```
+
+The database container has **internal ingress only**, so Cloud Shell cannot
+reach it with `psql` and there is no `docker cp` to hand it a file. This script
+works around that: it compresses `azure_local_auth.sql` plus your first password
+into a single line you paste into the container's own shell.
+
+```bash
+bash azure/setup-local-auth.sh
+```
+
+It asks for an email and a password, and prints exactly what to do next. The
+email must belong to a profile row that **already exists** — `auth.set_password()`
+takes the account id from it, which is what keeps `auth.uid()` resolving to the
+uuid all 349 RLS policies already compare against. Nothing is re-keyed.
+
+Then, in the container:
 
 ```bash
 az containerapp exec -g rg-cxportal-dev -n ca-postgres-dev --command /bin/bash
-# in the container:
-psql -U cxadmin -d postgres -f /tmp/azure_local_auth.sql
+# paste the one line the script wrote; it ends with:
+#   credential set for you@hitachirail.com
 ```
 
-(Copy the file in the same way step 3 copies the dump.)
-
-Then configure PostgREST. The script generates the shared secret and prints the
-two commands that put the SAME value on both sides:
+Back in Cloud Shell (`exit` first):
 
 ```bash
 PGRST_PW='<authenticator password>' bash azure/configure-postgrest.sh --local
-```
-
-**The two halves of the secret must match exactly.** If they drift, every
-correct password is rejected — and the message you get is indistinguishable
-from a wrong password, which is a bad hour. `private.auth_secrets` holds one
-half; `PGRST_JWT_SECRET` holds the other.
-
-Give yourself a password. The profile row must already exist — its id is the
-identity every RLS policy already uses, which is why nothing needs re-keying:
-
-```sql
-select auth.set_password('you@hitachirail.com', 'a real passphrase');
-```
-
-Then deploy the front end to match:
-
-```bash
 IDENTITY=postgrest bash azure/deploy-frontend.sh
 ```
+
+**Why the secret is never typed twice.** The signing secret has to be identical
+in `private.auth_secrets` and in `PGRST_JWT_SECRET`. If the two drift, every
+correct password is rejected — with a message indistinguishable from a wrong
+password, which is a bad hour. `setup-local-auth.sh` generates it once into
+`azure/.local-auth-secret` (gitignored) and `configure-postgrest.sh --local`
+reads it back, so they cannot disagree.
 
 What you own by choosing this: the password hashes, the absence of a reset
 email, and no second factor. `tools/test_local_auth.js` proves the mechanism

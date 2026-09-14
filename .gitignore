@@ -19,3 +19,6 @@ config.local.js
 
 # Azure deployment transcript — contains the database password. Never commit.
 azure/.deploy-output.txt
+
+# Local-auth JWT signing secret — must match PGRST_JWT_SECRET. Never commit.
+azure/.local-auth-secret
