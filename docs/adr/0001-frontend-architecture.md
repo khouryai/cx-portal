@@ -2,8 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-07-21
-- **Supersedes:** the informal "strangler now, revisit framework if we hit a wall"
-  note in `FABLE5_PROGRESS.md`.
+- **Supersedes:** an informal "strangler now, revisit framework if we hit a wall"
+  note from the July 2026 audit, since removed from the repository.
 
 ## Context
 

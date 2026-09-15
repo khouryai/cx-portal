@@ -33,7 +33,6 @@ There is no build. The repo root **is** the site:
 | `tools/` | Test harness + dev tools — `run_tests.js` runs all suites (CI: `.github/workflows/test.yml`); `ui_gallery.html` + `shot_gallery.js` for visual QA without signing in |
 | `CLAUDE.md` | Working conventions (CRLF rules, tokens, icon system, verification) |
 | `DESIGN_TOKENS.md`, `PERMISSIONS_MODEL.md`, `SECURITY.md`, `INTEGRATION_SHAREPOINT.md`, `DEMO_DATA.md` | Living docs |
-| `FABLE5_AUDIT_PROMPT.md`, `FABLE5_PROGRESS.md` | Audit engagement brief + progress ledger |
 
 ## Verify changes
 
