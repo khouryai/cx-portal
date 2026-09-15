@@ -25,10 +25,10 @@ if (typeof _teamInitials !== "function" || typeof _teamRows !== "function" ||
 console.log("=== team.js helpers ===\n");
 
 console.log("_teamInitials:");
-ok("  two-word name → first letters", _teamInitials("Christopher Burford") === "CB");
+ok("  two-word name → first letters", _teamInitials("Jordan Rivera") === "JR");
 ok("  single name → one letter", _teamInitials("Madonna") === "M");
 ok("  multi-person 'A / B' → first letter of first two tokens",
-   _teamInitials("Alex Khoury / Syed Rahman") === "AK");
+   _teamInitials("Jordan Rivera / Sam Okafor") === "JR");
 ok("  TBD → '?'", _teamInitials("TBD") === "?");
 ok("  empty/null → '?'", _teamInitials("") === "?" && _teamInitials(null) === "?");
 ok("  caps the result at 2", _teamInitials("a b c d e").length === 2);
