@@ -201,28 +201,6 @@ alter policy asset_import_batches_ins on public.asset_import_batches with check 
 alter policy asset_import_batches_upd on public.asset_import_batches using ( (select private.has_module_perm('assets','import')) ) with check ( (select private.has_module_perm('assets','import')) );
 alter policy asset_import_batches_del on public.asset_import_batches using ( (select private.has_module_perm('assets','import')) );
 
--- schedule_p6
-alter policy p6_activities_ins on public.p6_activities with check ( (select private.has_module_perm('schedule_p6','import')) );
-alter policy p6_activities_upd on public.p6_activities
-  using ( (select private.has_module_perm('schedule_p6','manage_links')) or (select private.has_module_perm('schedule_p6','rebaseline')) )
-  with check ( (select private.has_module_perm('schedule_p6','manage_links')) or (select private.has_module_perm('schedule_p6','rebaseline')) );
-alter policy p6_activities_del on public.p6_activities using ( (select private.has_module_perm('schedule_p6','remove_activities')) );
-alter policy p6_activity_map_ins on public.p6_activity_map with check ( (select private.has_module_perm('schedule_p6','manage_links')) );
-alter policy p6_activity_map_upd on public.p6_activity_map using ( (select private.has_module_perm('schedule_p6','manage_links')) ) with check ( (select private.has_module_perm('schedule_p6','manage_links')) );
-alter policy p6_activity_map_del on public.p6_activity_map using ( (select private.has_module_perm('schedule_p6','manage_links')) );
-alter policy p6_activity_dismissals_ins on public.p6_activity_dismissals with check ( (select private.has_module_perm('schedule_p6','manage_links')) );
-alter policy p6_activity_dismissals_upd on public.p6_activity_dismissals using ( (select private.has_module_perm('schedule_p6','manage_links')) ) with check ( (select private.has_module_perm('schedule_p6','manage_links')) );
-alter policy p6_activity_dismissals_del on public.p6_activity_dismissals using ( (select private.has_module_perm('schedule_p6','manage_links')) );
-alter policy p6_import_batches_ins on public.p6_import_batches with check ( (select private.has_module_perm('schedule_p6','import')) );
-alter policy p6_import_batches_upd on public.p6_import_batches
-  using ( (select private.has_module_perm('schedule_p6','import')) or (select private.has_module_perm('schedule_p6','rebaseline')) )
-  with check ( (select private.has_module_perm('schedule_p6','import')) or (select private.has_module_perm('schedule_p6','rebaseline')) );
-alter policy p6_import_batches_del on public.p6_import_batches
-  using ( (select private.has_module_perm('schedule_p6','remove_activities')) or (select private.has_module_perm('schedule_p6','import')) );
-alter policy p6_learn_patterns_ins on public.p6_learn_patterns with check ( (select private.has_module_perm('schedule_p6','manage_links')) );
-alter policy p6_learn_patterns_upd on public.p6_learn_patterns using ( (select private.has_module_perm('schedule_p6','manage_links')) ) with check ( (select private.has_module_perm('schedule_p6','manage_links')) );
-alter policy p6_learn_patterns_del on public.p6_learn_patterns using ( (select private.has_module_perm('schedule_p6','manage_links')) );
-
 -- NOTE: track_plan was removed (supabase_drop_track_plan.sql) — its tables and
 -- policies no longer exist; the prior 'track_plan'.'manage' RLS block is dropped.
 
@@ -315,9 +293,6 @@ alter policy profiles_delete on public.profiles using ( (select private.has_modu
 alter policy users_ins on public.users with check ( (select private.has_module_perm('directory','invite')) );
 alter policy users_upd on public.users using ( (select private.has_module_perm('directory','edit_profile')) ) with check ( (select private.has_module_perm('directory','edit_profile')) );
 alter policy users_del on public.users using ( (select private.has_module_perm('directory','remove')) );
-alter policy team_members_ins on public.team_members with check ( (select private.has_module_perm('directory','manage_org_chart')) );
-alter policy team_members_upd on public.team_members using ( (select private.has_module_perm('directory','manage_org_chart')) ) with check ( (select private.has_module_perm('directory','manage_org_chart')) );
-alter policy team_members_del on public.team_members using ( (select private.has_module_perm('directory','manage_org_chart')) );
 alter policy perm_modules_ins on public.perm_modules with check ( (select private.has_module_perm('admin','manage_templates')) );
 alter policy perm_modules_upd on public.perm_modules using ( (select private.has_module_perm('admin','manage_templates')) ) with check ( (select private.has_module_perm('admin','manage_templates')) );
 alter policy perm_modules_del on public.perm_modules using ( (select private.has_module_perm('admin','manage_templates')) );
