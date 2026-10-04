@@ -98,7 +98,7 @@ const PERM_CATALOG = {
     ['delete','admin',false],['import','admin',false],
   ],
   directory: [
-    ['view','read_only',false],['manage_org_chart','standard',false],['invite','admin',false],['edit_profile','admin',false],
+    ['view','read_only',false],['invite','admin',false],['edit_profile','admin',false],
     ['activate','admin',false],['remove','admin',false],['assign_template','admin',false],['grant_global_admin','admin',true],
   ],
   templates: [
@@ -204,7 +204,6 @@ const PAGE_MODULE = {
   'dynamic-testing': 'dynamic_testing',
   'vehicle-management': 'vehicle_mgmt',
   'locations': 'locations',
-  'team': 'directory',
   'audit': 'audit',
   'admin-templates': 'templates',
   'admin-weights': 'weights',

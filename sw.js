@@ -8,7 +8,7 @@
 //    so every deploy forces clients to fetch fresh assets. Manual bumps
 //    here are no longer required.
 
-const CACHE_VERSION = 'cxp-v80';
+const CACHE_VERSION = 'cxp-v81';
 const SHELL_CACHE   = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -30,7 +30,6 @@ const SHELL_ASSETS = [
   './cx-dyn-campaign-fit.js',
   './cx-closure-window.js',
   './perms-admin.js',
-  './team.js',
   './markup.js',
   './photos.js',
   './readiness.js',

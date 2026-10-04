@@ -339,8 +339,7 @@ governs: profiles, users
 
 | Key | Guards | Lvl |
 |---|---|---|
-| `view` | people directory + org chart | R |
-| `manage_org_chart` | add/edit/remove team-chart members | S |
+| `view` | people directory | R |
 | `invite` | create profile + auth account | A |
 | `edit_profile` | name/company/subsystem edits | A |
 | `activate` | toggle `is_active` (activate/deactivate) | A |

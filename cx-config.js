@@ -53,7 +53,7 @@
   // ── supabase-js hardcodes /rest/v1/, and 59 call sites still use it ───────
   //
   // app.js's own _dbInsert/_dbUpdate/_restGetAll helpers build URLs from
-  // REST_BASE and are already correct. But 59 places across app.js, team.js and
+  // REST_BASE and are already correct. But 59 places across app.js and
   // perms-admin.js still go through the supabase-js client (`_sb.from(...)`),
   // and that client appends '/rest/v1' to whatever URL it was constructed with.
   // Against a bare PostgREST, which serves tables at the root, every one of

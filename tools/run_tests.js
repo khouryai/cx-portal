@@ -73,7 +73,6 @@ const suites = [
   { file: "tools/test_print_report.js", needs: [] },    // shared branded print template + adoption
   { file: "tools/test_perm_resolver.js", needs: [] },   // perms-admin effective-permission resolver
   { file: "tools/test_ui_can.js", needs: [] },          // UI permission gating + nav mapping integrity
-  { file: "tools/test_team.js", needs: [] },            // team.js org helpers
   { file: "tools/test_readiness.js", needs: [] },       // readiness.js checklist engine + rollup
   { file: "tools/test_vm_readiness.js", needs: [] },    // vehicle-management car-status rollup (equipment optional)
   { file: "tools/markup_test.js", needs: [] },

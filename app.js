@@ -694,7 +694,6 @@ function showPage(name) {
   // Re-render pages that need fresh state on each visit
   if (name === 'dashboard')        refreshDashboard();
   if (name === 'locations')        initLocations();
-  if (name === 'team')             { if (typeof renderOrg === 'function') renderOrg(); }
   if (name === 'field-intake')     renderFieldIntake();
   if (name === 'daily-log-history') { _dlLoaded = false; renderDailyLogHistory(); }
   if (name === 'test-register')    renderTestRegister();
@@ -2359,11 +2358,6 @@ function _locFilterPhase(phase) {
 }
 
 // ==========================================
-// ORG TREE
-// ==========================================
-// ── initOrg + orgCard → extracted to team.js (Team is now a real, editable Supabase table) ──
-
-// ==========================================
 // CSV EXPORT
 // ==========================================
 function toCSV(rows, columns) {
@@ -2511,13 +2505,12 @@ function _initProductionVisualLayer() {
 document.addEventListener('DOMContentLoaded', async () => {
   _initProductionVisualLayer();
   // allSettled: one failed loader must not abort the rest of the bootstrap.
-  await Promise.allSettled([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs(), loadTasks(), loadForms(), loadDrawingsData(), (typeof loadReadinessData==='function'?loadReadinessData():Promise.resolve()), (typeof loadTeamMembers==='function'?loadTeamMembers():Promise.resolve())]);
+  await Promise.allSettled([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadP6Data(), loadAssetData(), loadRMAs(), loadTasks(), loadForms(), loadDrawingsData(), (typeof loadReadinessData==='function'?loadReadinessData():Promise.resolve())]);
   initDashboard();
   initActivities();
   initLineItems();
   initPunchList();
   initLocations();
-  initOrg();
   initAuth();
 });
 
@@ -3739,11 +3732,9 @@ function onLoggedIn() {
     loadForms(),
     loadDrawingsData(),
     _colLoadAll(),
-    (typeof loadTeamMembers==='function'?loadTeamMembers():Promise.resolve()),
   ]).then(() => {
     // Re-init views with freshly loaded data
     initLineItems();
-    if (typeof initOrg==='function') initOrg();
     initActivities();
     renderAdminPortal(); renderAdminTemplates(); renderTestRegister(); renderFieldIntake();
     renderPunchWorkflow(); renderAuditLog(); renderTestReporting();
