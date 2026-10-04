@@ -155,7 +155,6 @@ governs: test_items, test_results, test_item_status_history, test_item_prerequis
 | `delete_activity` | delete an activity (cascades cases + results) | A |
 | `bulk_delete` | bulk-delete selected cases / activities | A |
 | `deploy_field` | flip Future Test → Not Started (deploy to field) | A |
-| `manage_p6_links` | link/propagate/unlink P6 activity mappings | A |
 | `import` | CSV import of test items (**admin only**) | A |
 
 Decisions: status is a single flat key (no `_own/_any`); `import` is admin-only;
@@ -282,16 +281,9 @@ manage action items without full meeting CRUD.
 > The build-plan notes further down still describe them; that section is a record
 > of what was migrated at the time, not the current catalog.
 
-### P6 Schedule — `schedule_p6` (category: planning)
-governs: p6_*
-
-| Key | Guards | Lvl |
-|---|---|---|
-| `view` | schedule view | R |
-| `import` | baseline/current P6 import | A |
-| `rebaseline` | mark prior baseline superseded | A |
-| `manage_links` | link/unlink/propagate mappings, accept suggestions | A |
-| `remove_activities` | remove / bulk-remove P6 entries | A |
+> **Removed (2026-10):** the `schedule_p6` module (Schedule page + Admin › P6
+> Schedule) went with the P6 feature. Its `p6_*` tables are left in the database,
+> unused by the app.
 
 ### Assets — `assets` (category: data)
 governs: assets, asset_test_links, asset_import_batches

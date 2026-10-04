@@ -40,7 +40,7 @@ const PERM_CATALOG = {
     ['add_activity','standard',false],['add_test_case','standard',false],['edit_case','standard',false],
     ['set_status','standard',false],['field_intake','standard',false],['bulk_edit','standard',true],
     ['manage_assets','standard',false],['delete_case','admin',false],['delete_activity','admin',false],
-    ['bulk_delete','admin',false],['deploy_field','admin',false],['manage_p6_links','admin',false],['import','admin',false],
+    ['bulk_delete','admin',false],['deploy_field','admin',false],['import','admin',false],
   ],
   dynamic_testing: [
     ['view','read_only',false],['export','read_only',false],['create_instance','standard',false],
@@ -80,10 +80,6 @@ const PERM_CATALOG = {
     ['view','read_only',false],['export','read_only',false],['create','standard',false],['edit','standard',false],
     ['manage_agenda','standard',false],['record_minutes','standard',false],['manage_action_items','standard',false],
     ['manage_attendees','standard',false],['create_followup','standard',false],['delete','admin',false],
-  ],
-  schedule_p6: [
-    ['view','read_only',false],['import','admin',false],['rebaseline','admin',false],
-    ['manage_links','admin',false],['remove_activities','admin',false],
   ],
   assets: [
     ['view','read_only',false],['export','read_only',false],['add','standard',false],['edit','standard',false],
@@ -198,7 +194,6 @@ const PAGE_MODULE = {
   'activity-readiness': 'tasks',
   'forms': 'forms',
   'meetings': 'meetings',
-  'schedule': 'schedule_p6',
   'drawings': 'drawings',
   'documents': 'drawings',
   'dynamic-testing': 'dynamic_testing',
@@ -211,7 +206,6 @@ const PAGE_MODULE = {
   'admin-fieldconfig': 'forms',
   'admin-directory': 'directory',
   'admin-permissions': 'admin',
-  'admin-p6': 'schedule_p6',
   'admin-assets': 'assets',
   'admin-config': 'config',
 };
@@ -318,7 +312,7 @@ window._paLinkDecision = _paLinkDecision;
 
 // Modules whose management pages live behind the Admin-mode toggle.
 const ADMIN_AREA_MODULES = ['templates', 'weights', 'locations', 'forms', 'directory',
-  'admin', 'audit', 'schedule_p6', 'assets', 'config'];
+  'admin', 'audit', 'assets', 'config'];
 
 function uiCanAnyAdmin() {
   return ADMIN_AREA_MODULES.some(m => uiCan(m, 'view'));

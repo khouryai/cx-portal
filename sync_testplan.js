@@ -52,10 +52,6 @@ function mapRow(row) {
     // status intentionally excluded — owned by portal/CSV import, not Excel sync
     activity_id:            row['ActivityID']            ?? null,
     planned_date:           parseDate(row['PlannedDate']),
-    p6_start_date:          parseDate(row['P6StartDate']),
-    p6_finish_date:         parseDate(row['P6FinishDate']),
-    p6_start_date_current:  parseDate(row['P6StartDateCurrent']),
-    p6_finish_date_current: parseDate(row['P6FinishDateCurrent']),
     weight:                 row['Weight']                ?? null,
     actual_start_date:      parseDate(row['ActualStartDate']),
     actual_finish_date:     parseDate(row['ActualFinishDate']),

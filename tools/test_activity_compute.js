@@ -4,7 +4,7 @@
 //   _amComputeCompletion(act,tcw) — weighted completion {done,total,doneW,totalW,pct}
 //   _tcWeightFor(r,tcw) / _actWeightFor(r,aw) — pure weight resolvers
 //
-// These drive the activity matrix, P6 progress chips and completion %. Pinning
+// These drive the activity matrix and completion %. Pinning
 // them guards the business logic and makes a future extraction into a tested
 // `compute` module safe. Run: node tools/test_activity_compute.js
 "use strict";

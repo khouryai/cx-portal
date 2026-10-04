@@ -91,20 +91,6 @@ function _amComputeCompletion(act, tcw) {
   return { done, total, doneW, totalW, pct };
 }
 
-// Weighted completion (Layer 2 only) — used for P6 progress display.
-// Pass a shared `tcw` map when calling in a loop. Activity weight cancels in a
-// per-activity percentage, so we only need TC weights.
-const _P6_DONE_STATUSES = new Set(['Pass','Passed','Complete','Not Applicable']);
-function _p6WeightedCompletion(act, tcw) {
-  const eligible = act.items.filter(r => !r.IsParent && r.Status !== 'Future Test');
-  const _tcw     = tcw || _buildTestCaseWeightLookup();
-  const w        = r => _tcWeightFor(r, _tcw);
-  const totalW   = eligible.reduce((s, r) => s + w(r), 0);
-  const doneW    = eligible.filter(r => _P6_DONE_STATUSES.has(r.Status)).reduce((s, r) => s + w(r), 0);
-  const pct = totalW > 0 ? Math.round((doneW / totalW) * 100) : 0;
-  return { doneW, totalW, pct };
-}
-
 function _trpStatusCounts(items) {
   const counts = { total: items.length, passed: 0, failed: 0, blocked: 0, inProgress: 0, notStarted: 0, future: 0 };
   items.forEach(r => {

@@ -30,7 +30,7 @@ if (!PAGE_MODULE || typeof uiCan !== "function") { console.error("FATAL: gating 
 // The 20 module keys of the live perm_modules catalog (P1-2 seed + tasks).
 const CATALOG = new Set([
   "overview", "test_register", "dynamic_testing", "test_reporting", "punch_list",
-  "rma", "tasks", "forms", "photos", "meetings", "schedule_p6",
+  "rma", "tasks", "forms", "photos", "meetings",
   "assets", "drawings", "locations", "directory", "templates",
   "weights", "config", "vehicle_mgmt", "audit", "admin",
 ]);

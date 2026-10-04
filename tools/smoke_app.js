@@ -37,7 +37,7 @@ ok("cx* state helpers provided by cx-state.js",
    typeof sandbox.cxError === "function");
 ok("compute core provided by compute.js",
    ["getStatusBadge", "getPriorityPill", "_wgtStat", "_amComputeStatus", "_amComputeCompletion",
-    "_p6WeightedCompletion", "_trpStatusCounts", "_tcWeightFor", "_actWeightFor",
+    "_trpStatusCounts", "_tcWeightFor", "_actWeightFor",
     "_trpCleanReportValue", "_trpReportKey", "_trpInferCdrlNumber", "_trpRecordKeys"]
      .every((f) => typeof sandbox[f] === "function"));
 
