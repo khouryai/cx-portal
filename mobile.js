@@ -3,7 +3,7 @@
 
    Loaded as a classic <script> after app.js/photos.js so it shares the global
    lexical scope and reuses the app's primitives (showPage, uiCan, toast,
-   PhotosModule, PUNCH_DB, openNewPunchModal, openTaskModal, ...).
+   PhotosModule, PUNCH_DB, openNewPunchModal, ...).
 
    Capabilities (all inert on desktop — gated by the same media query the
    mobile chrome uses):
@@ -44,12 +44,6 @@
       icon: 'camera',
       when: function () { return !!(window.PhotosModule && PhotosModule.captureFor); },
       run: function () { PhotosModule.captureFor({ camera: true }); },
-    },
-    'tasks': {
-      label: 'New task',
-      icon: 'plus',
-      when: function () { return can('tasks', 'create') && typeof openTaskModal === 'function'; },
-      run: function () { openTaskModal(null); },
     },
     'test-register': {
       label: 'Log test result',

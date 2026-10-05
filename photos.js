@@ -39,7 +39,7 @@
   var MAX_THUMB    = 400;            // px, longest edge of stored thumbnail
   var JPEG_Q       = 0.82;
   var UPLOAD_ROLES = ['admin', 'field_engineer', 'technician', 'punch_manager'];
-  var SOURCE_LABELS = { punch: 'Punch List', daily_log: 'Daily Logs', tasks: 'Tasks', standalone: 'General' };
+  var SOURCE_LABELS = { punch: 'Punch List', daily_log: 'Daily Logs', standalone: 'General' };
   var KIND_LABELS   = { before: 'Before', after: 'After', general: '' };
 
   // Supabase mounts PostgREST under /rest/v1/; a self-hosted one serves at the
@@ -559,7 +559,7 @@
     };
     var anyFilter = f.source !== 'all' || f.kind !== 'all' || f.location !== 'all' || f.subsystem !== 'all' || (f.q || '').trim();
     return '<div class="pm-filters">' +
-      srcChip('all', 'All') + srcChip('punch', 'Punch List') + srcChip('daily_log', 'Daily Logs') + srcChip('tasks', 'Tasks') + srcChip('standalone', 'General') +
+      srcChip('all', 'All') + srcChip('punch', 'Punch List') + srcChip('daily_log', 'Daily Logs') + srcChip('standalone', 'General') +
       '<select class="pm-select" id="pm-f-kind">' +
         '<option value="all"' + (f.kind === 'all' ? ' selected' : '') + '>Any kind</option>' +
         kindOpt('before', 'Before') + kindOpt('after', 'After') + kindOpt('general', 'General') +
@@ -820,7 +820,6 @@
         '<option value="standalone"' + (!preset.source_type || preset.source_type === 'standalone' ? ' selected' : '') + '>General (standalone)</option>' +
         '<option value="punch"' + (preset.source_type === 'punch' ? ' selected' : '') + '>Punch List item</option>' +
         '<option value="daily_log"' + (preset.source_type === 'daily_log' ? ' selected' : '') + '>Daily Log</option>' +
-        '<option value="tasks"' + (preset.source_type === 'tasks' ? ' selected' : '') + '>Task</option>' +
       '</select></div>' +
       '<div class="pm-field" id="pm-kind-wrap" style="display:' + (preset.source_type === 'punch' ? '' : 'none') + '"><label>Before / after</label><select id="pm-kind">' +
         '<option value="general">General</option><option value="before"' + (preset.capture_kind === 'before' ? ' selected' : '') + '>Before</option><option value="after"' + (preset.capture_kind === 'after' ? ' selected' : '') + '>After</option>' +

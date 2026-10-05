@@ -581,11 +581,11 @@ function _syncMobileTabs(name) {
 // "More" sheet. Everything else (office / planning / analysis pages and all
 // Admin tools) is hidden on the phone. Admins — and only admins — get a
 // "Show all pages" toggle in the sheet that reveals the rest when config
-// access is genuinely needed from the field. ('tasks' is the merged
-// Checkpoint module; Log History is intentionally excluded as a review tool.)
+// access is genuinely needed from the field. (Log History is intentionally
+// excluded as a review tool.)
 const _MOBILE_FIELD_PAGES = new Set([
   'field-intake', 'test-register', 'punch-workflow', 'drawings', 'photos',
-  'forms', 'tasks', 'rma', 'documents', 'locations',
+  'forms', 'rma', 'documents', 'locations',
   'dynamic-testing', 'vehicle-management',
 ]);
 let _mobileSheetShowAll = false;   // admin-only escape hatch; reset on each open
@@ -681,9 +681,6 @@ function showPage(name) {
   // Permissions has been merged into the Directory module — keep the legacy
   // route (old bookmarks / history hashes) working by landing on its tab.
   if (name === 'admin-permissions') { name = 'admin-directory'; _dirTab = 'templates'; }
-  // Tasks + Activity Readiness merged into Checkpoint (page id stays 'tasks') —
-  // keep old readiness bookmarks/history hashes working.
-  if (name === 'activity-readiness') name = 'tasks';
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + name)?.classList.add('active');
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
@@ -708,7 +705,6 @@ function showPage(name) {
   if (name === 'admin-config')     renderConfigMgmt();
   if (name === 'forms')            renderFormsPage();
   if (name === 'rma')              renderRMA();
-  if (name === 'tasks')            renderTasks();
   if (name === 'drawings')         { loadDrawingsData().then(renderDrawingsPage); }
   if (name === 'documents')        { loadDocsData().then(renderDocumentsPage); }
   if (name === 'meetings')         { loadMeetings().then(() => { loadMtgTemplates(); renderMeetings(); }); }
@@ -804,8 +800,6 @@ async function refreshApp() {
   try { await loadPunchDB(); } catch(e) { console.warn('[refreshApp] punch reload failed:', e.message); }
   try { await loadAssetData(); } catch(e) { console.warn('[refreshApp] asset reload failed:', e.message); }
   try { await loadRMAs(); }     catch(e) { console.warn('[refreshApp] RMA reload failed:',   e.message); }
-  try { await loadTasks(); }    catch(e) { console.warn('[refreshApp] Tasks reload failed:', e.message); }
-  try { if (typeof loadReadinessData === 'function') await loadReadinessData(); } catch(e) { console.warn('[refreshApp] readiness reload failed:', e.message); }
   try { await loadSoftwareConfigs(); } catch(e) { console.warn('[refreshApp] SW config reload failed:', e.message); }
   try { await loadSwEquipment(); } catch(e) { console.warn('[refreshApp] SW equipment reload failed:', e.message); }
   try { await loadSwDeployments(); } catch(e) { console.warn('[refreshApp] SW deployments reload failed:', e.message); }
@@ -2502,7 +2496,7 @@ function _initProductionVisualLayer() {
 document.addEventListener('DOMContentLoaded', async () => {
   _initProductionVisualLayer();
   // allSettled: one failed loader must not abort the rest of the bootstrap.
-  await Promise.allSettled([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadAssetData(), loadRMAs(), loadTasks(), loadForms(), loadDrawingsData(), (typeof loadReadinessData==='function'?loadReadinessData():Promise.resolve())]);
+  await Promise.allSettled([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadAssetData(), loadRMAs(), loadForms(), loadDrawingsData()]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -3121,7 +3115,6 @@ let ASSET_LINKS   = [];  // asset_test_links table rows
 // ── RMA globals ───────────────────────────────────────────────────────────────
 let RMAS = [];
 let _rmaFilter = { status: '', location: '', search: '' };
-let TASKS = [];
 
 let _trpFilters = { search:'', status:'', subsystem:'', phase:'', location:'' };
 let _trpExpanded = new Set();
@@ -3706,8 +3699,6 @@ function onLoggedIn() {
     loadWeights(),
     loadAssetData(),
     loadRMAs(),
-    loadTasks(),
-    (typeof loadReadinessData==='function'?loadReadinessData():Promise.resolve()),
     loadSoftwareConfigs(),
     loadSwEquipment(),
     loadSwDeployments(),
@@ -5516,22 +5507,6 @@ const FIELDCONFIG_MODULES = [
     id: 'rma', label: 'RMA', icon: icon('refresh'),
     fields: [
       { key: 'rma_status', label: 'RMA Status', defaults: ['Open','Pending Replacement','Shipped','Awaiting Return','Closed','Cancelled'] },
-    ],
-  },
-  {
-    id: 'tasks', label: 'Tasks', icon: icon('check-circle'),
-    fields: [
-      { key: 'task_type',     label: 'Task Type',     defaults: ['Maintenance','Upgrade','Hardware','Procedure Development','Flashing','Test'],
-        hint: 'Drives the Task Type chips in the Tasks module. A task can carry more than one type.' },
-      { key: 'task_status',   label: 'Status',        defaults: ['Not Started','In Progress','Done'] },
-      { key: 'task_priority', label: 'Priority',      defaults: ['Low','Medium','High'] },
-      { key: 'task_effort',   label: 'Effort',        defaults: ['Small','Medium','Large'] },
-      { key: 'readiness_delay_reason', label: 'Readiness Delay Reason',
-        defaults: ['Need more time','Waiting on design input','Waiting on client','Material / equipment delay','Access not available','Plan resequenced','Other'],
-        hint: 'Required when a readiness checklist item’s due date is pushed later — feeds the per-item delay history.' },
-      { key: 'lookahead_phase', label: 'Phase',
-        defaults: ['Phase 1', 'Phase 2', 'Phase 3', 'All Phases'],
-        hint: 'Project phase vocabulary used by Checkpoint / Activity Readiness. The key is historical (it predates the Lookahead removal); renaming it would orphan the saved options.' },
     ],
   },
   {
@@ -14588,13 +14563,6 @@ async function loadRMAs() {
   } catch(e) { console.warn('[loadRMAs] failed:', e.message); }
 }
 
-async function loadTasks() {
-  try {
-    const data = await _fetchAnon('tasks?select=*&order=created_at.desc');
-    TASKS = data || [];
-  } catch(e) { console.warn('[loadTasks] failed:', e.message); }
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function _assetParsePrefix(name) {
   // e.g. "W40-AC01" → "W40", "ATS-W40-AC01" → try to match a known location prefix
@@ -19868,504 +19836,6 @@ function _rmaCSVExport() {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
   a.download = 'RMAs-' + new Date().toISOString().slice(0,10) + '.csv';
-  a.click();
-}
-
-// ==========================================================================
-// CHECKPOINT — unified tasks + activity-readiness workspace (module key 'tasks')
-//
-// One record type: tasks.kind is 'task' (work item) or 'activity' (readiness
-// activity with a gated checklist). The page itself renders in readiness.js
-// (renderWork); this file keeps the shared CRUD — edit/view modals, comments
-// (one thread, optionally linked to a checklist item), photos, CSV — and the
-// Field Config vocabularies (Task Type, Status, Priority, Effort).
-// ==========================================================================
-
-function _taskStatusTone(s) {
-  return ({ 'Not Started':'is-muted', 'In Progress':'is-info', 'Done':'is-good' })[s] || 'is-muted';
-}
-function _taskPriorityTone(p) {
-  return ({ 'Low':'is-muted', 'Medium':'is-warn', 'High':'is-bad' })[p] || 'is-muted';
-}
-function _taskEffortTone(e) {
-  return ({ 'Small':'is-good', 'Medium':'is-warn', 'Large':'is-bad' })[e] || 'is-muted';
-}
-
-// Vocabulary accessors — Field Config first, hardcoded fallback second.
-function _taskTypes()      { return _fsOptions('task_type'); }
-function _taskStatuses()   { return _fsOptions('task_status'); }
-function _taskPriorities() { return _fsOptions('task_priority'); }
-function _taskEfforts()    { return _fsOptions('task_effort'); }
-
-// task_type is multi-valued; normalize whatever shape the DB hands back
-// (text[], comma string, or null) into a clean array.
-function _taskTypeList(t) {
-  const raw = t?.task_type;
-  if (Array.isArray(raw)) return raw.filter(Boolean);
-  if (typeof raw === 'string' && raw.trim()) return raw.split(',').map(s => s.trim()).filter(Boolean);
-  return [];
-}
-
-// Comment thread: array of { id, text, by, by_role, at, photo? }. Tolerant of a
-// stringified payload (PostgREST occasionally hands jsonb back as text).
-function _taskComments(t) {
-  let raw = t?.comments;
-  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = []; } }
-  return Array.isArray(raw) ? raw : [];
-}
-// Flattened comment text — feeds the list search box.
-function _taskCommentText(t) {
-  return _taskComments(t).map(c => c.text || '').join(' ');
-}
-// Checkpoint merge: the unified tasks + readiness page renders in readiness.js
-// (renderWork). Every legacy renderTasks() call site lands there.
-function renderTasks() {
-  if (typeof renderWork === 'function') renderWork();
-}
-
-function _taskStatusBadge(s) {
-  return `<span class="v2-pill ${_taskStatusTone(s)}">${escapeHtml(s || '—')}</span>`;
-}
-
-function _truncate(s, n) {
-  s = String(s || '');
-  return s.length > n ? s.slice(0, n - 1) + '…' : s;
-}
-
-// Readiness dimension field (Location/Subsystem/Phase) — a datalist picks from
-// the existing vocabularies (readiness.js) but accepts new typed values.
-function _taskDimField(key, label, value) {
-  const fns = { location: '_rdLocationOptions', subsystem: '_rdSubsystemOptions', phase: '_rdPhaseOptions' };
-  const fn = window[fns[key]];
-  const opts = (typeof fn === 'function') ? fn() : [];
-  return `<div class="form-field"><label>${label}</label>` +
-    `<input id="task-${key}" class="form-input" list="task-${key}-dl" value="${escapeHtml(value || '')}" placeholder="pick or type" autocomplete="off">` +
-    `<datalist id="task-${key}-dl">${opts.map(o => `<option value="${escapeHtml(o)}"></option>`).join('')}</datalist></div>`;
-}
-
-function openTaskModal(taskId) {
-  const task    = taskId ? TASKS.find(t => t.id === taskId) : null;
-  const statuses = _taskStatuses();
-  const prios    = _taskPriorities();
-  const efforts  = _taskEfforts();
-  const types    = _taskTypes();
-  const selTypes = _taskTypeList(task);
-  const people   = _taskAssigneeOptions(task?.assignee);
-  const today    = new Date().toISOString().slice(0, 10);
-  const v        = (id, fallback) => escapeHtml(task?.[id] || fallback || '');
-
-  modal({
-    title: task ? `Edit Task — ${task.task_name}` : 'New Task',
-    size:  'large',
-    body:
-      `<div class="form-grid">` +
-      `<div class="form-field form-field-full"><label>Task Name <span style="color:var(--bad)">*</span></label>` +
-      `<input id="task-name" class="form-input" placeholder="e.g. Remove Transponder @ W40" value="${v('task_name')}"></div>` +
-      `<div class="form-field form-field-full"><label>Description</label>` +
-      `<textarea id="task-desc" class="form-input" rows="2" placeholder="What needs to be done…">${v('description')}</textarea></div>` +
-      // Checkpoint type — Task (work item) vs Readiness Activity (gated checklist).
-      `<div class="form-field"><label>Type</label>` +
-      `<select id="task-kind" class="form-input">` +
-      [['task', 'Task'], ['activity', 'Readiness Activity']].map(([val, lbl]) => `<option value="${val}" ${(typeof _rdKind === 'function' ? _rdKind(task) : 'task') === val ? 'selected' : ''}>${lbl}</option>`).join('') +
-      `</select></div>` +
-      `<div class="form-field"><label>Status <span style="color:var(--bad)">*</span></label>` +
-      `<select id="task-status" class="form-input">` +
-      statuses.map(s => `<option value="${escapeHtml(s)}" ${(task?.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('') +
-      `</select></div>` +
-      `<div class="form-field"><label>Priority</label>` +
-      `<select id="task-priority" class="form-input">` +
-      prios.map(p => `<option value="${escapeHtml(p)}" ${(task?.priority||'Medium')===p?'selected':''}>${escapeHtml(p)}</option>`).join('') +
-      `</select></div>` +
-      `<div class="form-field"><label>Effort</label>` +
-      `<select id="task-effort" class="form-input"><option value="">— None —</option>` +
-      efforts.map(e => `<option value="${escapeHtml(e)}" ${task?.effort===e?'selected':''}>${escapeHtml(e)}</option>`).join('') +
-      `</select></div>` +
-      `<div class="form-field"><label>Assignee</label>` +
-      `<select id="task-assignee" class="form-input"><option value="">— Unassigned —</option>` +
-      people.map(p => `<option value="${escapeHtml(p)}" ${task?.assignee===p?'selected':''}>${escapeHtml(p)}</option>`).join('') +
-      `</select></div>` +
-      `<div class="form-field"><label>Due Date</label><input id="task-due" type="date" class="form-input" value="${task?.due_date||''}"></div>` +
-      _taskDimField('location',  'Location',  task?.location)  +
-      _taskDimField('subsystem', 'Subsystem', task?.subsystem) +
-      _taskDimField('phase',     'Phase',     task?.phase)     +
-      `<div class="form-field form-field-full"><label>Task Type <span style="font-weight:400;color:var(--gray-500);font-size:11px;">(select one or more)</span></label>` +
-      `<div class="task-type-grid" style="display:flex;flex-wrap:wrap;gap:8px;">` +
-      types.map(ty => `<label style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--gray-300);border-radius:6px;cursor:pointer;font-size:13px;">` +
-        `<input type="checkbox" class="task-type-cb" value="${escapeHtml(ty)}" ${selTypes.includes(ty)?'checked':''}> ${escapeHtml(ty)}</label>`).join('') +
-      `</div></div>` +
-      (task
-        ? `<div class="form-field form-field-full"><label>Updates</label>` +
-          `<div style="font-size:12px;color:var(--gray-500);padding:8px 0;">Progress is tracked as a comment thread — open the task to read and post comments (with photos).</div></div>`
-        : `<div class="form-field form-field-full"><label>Photos <span style="font-weight:400;color:var(--gray-500);font-size:11px;">(optional — uploaded when the task is created)</span></label>` +
-          `<div class="punch-newphoto-row" id="task-newphoto-row"></div>` +
-          `<button type="button" class="form-secondary" style="margin-top:6px;" onclick="document.getElementById('task-newphoto-file').click()">${icon('camera')} Add photos</button>` +
-          `<input type="file" id="task-newphoto-file" accept="image/*" multiple style="display:none" ${cxOn('change', '_taskNewPhotoChosen', '$cx.el')}></div>`) +
-      `</div>`,
-    footer:
-      `<button class="form-secondary" data-action="closeModal">Cancel</button>` +
-      `<button class="form-submit" onclick="saveTask(${taskId ? `'${taskId}'` : 'null'})">${task ? 'Save Changes' : 'Create Task'}</button>`,
-  });
-  if (!task) { _taskNewPhotos = []; _taskRenderNewPhotoRow(); }
-}
-
-// ── Staged photos for a NEW task (uploaded after the task row exists) ─────────
-let _taskNewPhotos = [];
-function _taskNewPhotoChosen(input) {
-  const files = [...(input.files || [])];
-  files.forEach(f => { if (f.type && f.type.indexOf('image/') === 0) _taskNewPhotos.push(f); });
-  input.value = '';
-  _taskRenderNewPhotoRow();
-}
-function _taskRenderNewPhotoRow() {
-  const row = document.getElementById('task-newphoto-row');
-  if (!row) return;
-  row.innerHTML = _taskNewPhotos.map((f, i) =>
-    `<div class="punch-newphoto-tile"><img src="${URL.createObjectURL(f)}" alt=""><button type="button" onclick="_taskNewPhotoRemove(${i})" title="Remove">×</button></div>`
-  ).join('');
-}
-function _taskNewPhotoRemove(i) { _taskNewPhotos.splice(i, 1); _taskRenderNewPhotoRow(); }
-
-// Photo-link context — ties an uploaded photo to this task (source_type 'tasks').
-function _taskPhotoCtx(t) {
-  return {
-    source_type: 'tasks', source_id: t.id,
-    source_label: 'Task: ' + (t.task_name || t.id),
-    location: null, subsystem: null, phase: null,
-  };
-}
-
-// Assignee options: known directory users, plus the current task's assignee even
-// if they're not (or no longer) in the directory, so an imported name survives.
-function _taskAssigneeOptions(current) {
-  const set = new Set(_taUsersByFilter('all'));
-  if (current) set.add(current);
-  return [...set].sort((a, b) => a.localeCompare(b));
-}
-
-async function saveTask(editId) {
-  if (typeof uiCan === 'function' && !uiCan('tasks', editId ? 'edit' : 'create')) { toast('You do not have permission to save tasks', 'error'); return; }
-  const taskName = (document.getElementById('task-name')?.value || '').trim();
-  if (!taskName) { toast('Task Name is required', 'error'); return; }
-
-  const g = id => (document.getElementById(id)?.value || '').trim() || null;
-  const types = [...document.querySelectorAll('.task-type-cb:checked')].map(cb => cb.value);
-  const me = currentRoleUser?.name || currentProfile?.full_name || '';
-  const payload = {
-    task_name:     taskName,
-    description:   g('task-desc'),
-    kind:          document.getElementById('task-kind')?.value || 'task',
-    status:             document.getElementById('task-status')?.value   || 'Not Started',
-    priority:      document.getElementById('task-priority')?.value || 'Medium',
-    effort:        g('task-effort'),
-    assignee:      g('task-assignee'),
-    due_date:      document.getElementById('task-due')?.value || null,
-    location:      g('task-location'),
-    subsystem:     g('task-subsystem'),
-    phase:         g('task-phase'),
-    task_type:     types,
-    updated_by:    me,
-    updated_at:    new Date().toISOString(),
-  };
-  const stagedPhotos = editId ? [] : _taskNewPhotos.slice();
-
-  closeModal();
-  try {
-    if (editId) {
-      const [updated] = await _dbUpdate('tasks', payload, { id: editId });
-      if (!updated) throw new Error('No row was updated — you may not have permission to edit this task.');
-      const idx = TASKS.findIndex(t => t.id === editId);
-      if (idx >= 0) TASKS[idx] = updated;
-      toast('Task updated', 'success');
-    } else {
-      payload.created_by = me;
-      const [created] = await _dbInsert('tasks', [payload]);
-      if (!created) throw new Error('Task was not created — you may not have permission.');
-      TASKS.unshift(created);
-      toast('Task created', 'success');
-      // Upload any photos staged in the create dialog, linked to the new task.
-      if (stagedPhotos.length && window.PhotosModule && PhotosModule.uploadFile) {
-        const ctx = _taskPhotoCtx(created);
-        let ok = 0;
-        for (const f of stagedPhotos) { try { await PhotosModule.uploadFile(f, ctx); ok++; } catch (e) { console.error('[task photo] upload failed:', e); } }
-        if (ok) toast(ok + ' photo' + (ok !== 1 ? 's' : '') + ' added', 'success');
-      }
-      _taskNewPhotos = [];
-    }
-    logAudit(editId ? 'Task Updated' : 'Task Created', taskName, `Status: ${payload.status} · ${payload.priority}`);
-    renderTasks();
-  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
-}
-
-async function deleteTask(id) {
-  if (typeof uiCan === 'function' && !uiCan('tasks', 'delete')) { toast('You do not have permission to delete tasks', 'error'); return; }
-  const t = TASKS.find(x => x.id === id);
-  if (!t) return;
-  if (!await cxConfirm(`Delete task "${t.task_name}"?\n\nThis cannot be undone.`)) return;
-  try {
-    await _dbDelete('tasks', { id });
-    TASKS.splice(TASKS.findIndex(x => x.id === id), 1);
-    if (typeof _rdOnTaskDeleted === 'function') _rdOnTaskDeleted(id);
-    toast('Task deleted', 'success');
-    logAudit('Task Deleted', t.task_name);
-    renderTasks();
-  } catch(e) { toast('Delete failed: ' + e.message, 'error'); }
-}
-
-// Quick patch — save one or more fields from the view modal without opening edit.
-async function _taskQuickPatch(id, patch) {
-  if (typeof uiCan === 'function' && !uiCan('tasks', 'edit') && !uiCan('tasks', 'change_status')) { toast('You do not have permission', 'error'); return; }
-  const t = TASKS.find(x => x.id === id);
-  if (!t) return;
-  const me = currentRoleUser?.name || currentProfile?.full_name || '';
-  try {
-    const [updated] = await _dbUpdate('tasks', { ...patch, updated_by: me, updated_at: new Date().toISOString() }, { id });
-    if (!updated) throw new Error('Update failed — permission denied.');
-    Object.assign(t, updated);
-    renderTasks();
-    closeModal();
-    _taskViewModal(id);
-  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
-}
-
-// Returns inline style string for a status value so the select looks badge-like.
-function _taskStatusSelectStyle(status) {
-  const m = { 'Not Started': 'background:var(--surface-3);color:var(--text-subtle);border-color:var(--border-strong);',
-               'In Progress': 'background:#eef3ff;color:#1d4eaf;border-color:rgba(29,78,175,0.25);',
-               'Done':        'background:var(--good-light);color:var(--good);border-color:rgba(21,128,61,0.25);' };
-  return m[status] || m['Not Started'];
-}
-
-function _taskViewModal(id) {
-  const t = TASKS.find(x => x.id === id);
-  if (!t) return;
-  const row = (label, val) => val
-    ? `<tr><td style="padding:7px 16px 7px 0;font-size:13px;color:var(--text-subtle);font-weight:500;white-space:nowrap;width:210px;vertical-align:top;">${label}</td>` +
-      `<td style="padding:7px 0;font-size:13px;color:var(--text);">${val}</td></tr>`
-    : '';
-  const types          = _taskTypeList(t);
-  const comments       = _taskComments(t).slice().sort((a, b) => new Date(a.at) - new Date(b.at)).filter(c => !(typeof _cpCommentEmbedded === 'function' && _cpCommentEmbedded(c, t))); // linked ones render in the checklist (readiness.js)
-  const canComment     = uiCan('tasks', 'edit') || uiCan('tasks', 'create');
-  const canPhotos      = !!(window.PhotosModule && PhotosModule.uploadFile);
-  const isActivity     = (typeof _rdKind === 'function') && _rdKind(t) === 'activity';
-
-  const _buildCommentItem = c => {
-    const initials  = (c.by || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
-    const roleLabel = { admin:'Admin', field_engineer:'Field Engineer', client:'Client', readonly:'Read Only' }[c.by_role] || c.by_role || '';
-    // Chips: linked checklist item + migrated-prerequisite marker (readiness.js).
-    const chips = (typeof _cpCommentChips === 'function') ? _cpCommentChips(c) : '';
-    return `
-      <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border-bottom:1px solid var(--gray-100);">
-        <div style="width:30px;height:30px;border-radius:50%;background:var(--hitachi-red);color:var(--white);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${escapeHtml(initials)}</div>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:12px;font-weight:600;color:var(--gray-800);">${escapeHtml(c.by || '—')} <span style="font-weight:400;color:var(--gray-500);">${roleLabel ? '· ' + escapeHtml(roleLabel) + ' ' : ''}· ${dateAgo(c.at)}</span></div>
-          ${chips ? `<div style="margin-top:3px;">${chips}</div>` : ''}
-          ${c.text ? `<div style="font-size:13px;color:var(--gray-700);margin-top:3px;white-space:pre-wrap;">${escapeHtml(c.text)}</div>` : ''}
-          ${c.photo ? `<img class="punch-comment-photo" data-photo-thumb="${escapeHtml(c.photo.thumb_path||c.photo.storage_path)}" data-photo-full="${escapeHtml(c.photo.storage_path)}" alt="attached photo" loading="lazy">` : ''}
-        </div>
-      </div>`;
-  };
-
-  const commentsHTML     = ((typeof _cpLinkedThreadNote === 'function' ? _cpLinkedThreadNote(t) : '') || (comments.length ? '' : `<div id="task-timeline-empty-${id}" style="font-size:12px;color:var(--gray-400);padding:14px 16px;">No comments yet</div>`)) + comments.map(_buildCommentItem).join('');
-
-  modal({
-    title: `${isActivity ? 'Activity' : 'Task'} — ${escapeHtml(t.task_name)}`,
-    size:  'large',
-    body:
-      `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--line-soft);">` +
-      (uiCan('tasks','edit') || uiCan('tasks','change_status')
-        ? `<select onchange="_taskQuickPatch('${id}', {status: this.value}); this.style.cssText='border:1px solid;border-radius:20px;padding:3px 12px;font-size:12px;font-weight:600;cursor:pointer;appearance:auto;'+_taskStatusSelectStyle(this.value);"
-             style="border:1px solid;border-radius:20px;padding:3px 12px;font-size:12px;font-weight:600;cursor:pointer;appearance:auto;${_taskStatusSelectStyle(t.status || 'Not Started')}">` +
-          _taskStatuses().map(s => `<option value="${escapeHtml(s)}" ${(t.status||'Not Started')===s?'selected':''}>${escapeHtml(s)}</option>`).join('') +
-          `</select>`
-        : `${_taskStatusBadge(t.status || 'Not Started')}`) +
-      (typeof _rdKindPill === 'function' ? _rdKindPill(t) : '') +
-      `<span class="v2-pill ${_taskPriorityTone(t.priority)}">${escapeHtml(t.priority || '—')}</span>` +
-      `${t.effort ? `<span class="v2-pill ${_taskEffortTone(t.effort)}">${escapeHtml(t.effort)}</span>` : ''}` +
-      `<span style="font-size:12px;color:var(--gray-500);margin-left:auto;">Created ${t.created_at ? _fmtDate(t.created_at) : '—'} by ${escapeHtml(t.created_by||'—')}</span></div>` +
-      `<table style="width:100%;border-collapse:collapse;margin-bottom:4px;">` +
-      row('Assignee',     escapeHtml(t.assignee || '—')) +
-      row('Due Date',     t.due_date ? _fmtDate(t.due_date) : null) +
-      row('Location',     t.location ? escapeHtml(t.location) : null) +
-      row('Subsystem',    t.subsystem ? escapeHtml(t.subsystem) : null) +
-      row('Phase',        t.phase ? escapeHtml(t.phase) : null) +
-      row('Task Type',    types.length ? types.map(ty => `<span class="v2-pill is-muted">${escapeHtml(ty)}</span>`).join(' ') : null) +
-      row('Description',  t.description ? escapeHtml(t.description) : null) +
-      row('Last Edited',  t.updated_at ? `${_fmtDate(t.updated_at)}${t.updated_by ? ' by ' + escapeHtml(t.updated_by) : ''}` : null) +
-      `</table>` +
-      (t.updates ? `<div style="margin-top:14px;padding:12px 14px;background:var(--gray-50);border-radius:6px;font-size:13px;color:var(--gray-700);white-space:pre-wrap;"><strong>Earlier notes:</strong>\n${escapeHtml(t.updates)}</div>` : '') +
-
-      // ── Readiness checklist (structured prerequisites — readiness.js) ─────────
-      (typeof _rdTaskChecklistSection === 'function' ? _rdTaskChecklistSection(t) : '') +
-
-      // ── Photos ──
-      `<div style="margin:20px 0 8px;display:flex;align-items:center;justify-content:space-between;">` +
-      `<div style="font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:0.06em;">Photos</div>` +
-      (canPhotos ? `<button type="button" class="v2-btn-mini" ${cxAct('_taskAddPhotos', String(id))}>${icon('camera')} Add photos</button>` : '') +
-      `</div>` +
-      `<div class="punch-photo-grid" id="task-photos-${id}"><div style="font-size:12px;color:var(--gray-400);padding:8px 0;">Loading photos…</div></div>` +
-      `<input type="file" id="task-gallery-file-${id}" accept="image/*" multiple style="display:none" ${cxOn('change', '_taskGalleryFilesChosen', String(id), '$cx.el')}>` +
-
-      // ── Comments / activity ──
-      `<div style="margin:20px 0 8px;font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:0.06em;">Comments</div>` +
-      `<div style="display:flex;flex-direction:column;gap:0;max-height:340px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;padding:4px 0;" id="task-timeline-${id}">${commentsHTML}</div>` +
-      (canComment ? (
-        // Optional link: a comment can be about the whole item or one checklist line.
-        ((typeof _cpCommentItemSelectHTML === 'function') ? (() => {
-          const sel = _cpCommentItemSelectHTML(t, id);
-          return sel ? `<div style="margin-top:8px;">${sel}</div>` : '';
-        })() : '') +
-        `<div class="punch-comment-composer">` +
-          `<textarea id="task-comment-input-${id}" class="form-input" rows="2" placeholder="Write a comment…"></textarea>` +
-          `<button type="button" class="form-secondary punch-comment-attach" title="Attach a photo" aria-label="Attach a photo" onclick="document.getElementById('task-comment-file-${id}').click()">${icon('camera')}</button>` +
-          `<button class="form-submit punch-comment-post" ${cxAct('addTaskComment', String(id))}>Post</button>` +
-        `</div>` +
-        `<input type="file" id="task-comment-file-${id}" accept="image/*" style="display:none" ${cxOn('change', '_taskCommentPhotoChosen', String(id), '$cx.el')}>` +
-        `<div id="task-comment-preview-${id}" class="punch-comment-preview" style="display:none;"></div>`
-      ) : ''),
-    footer:
-      `<button class="form-secondary" data-action="closeModal">Close</button>` +
-      (uiCan('tasks','edit') ? `<button class="form-submit" ${cxSeq(['closeModal'], ['openTaskModal', String(id)])}>${icon('edit')} Edit</button>` : ''),
-  });
-  _taskHydratePhotos(id);
-}
-
-// ── Task photos: gallery in the detail view + inline comment attachments ──────
-let _taskCommentPhoto = {};   // task id -> File chosen for the next comment
-
-async function _taskHydratePhotos(id) {
-  await _taskRenderGallery(id);
-  if (typeof _rdChkHydratePhotos === 'function') _rdChkHydratePhotos(id);
-  const body = document.querySelector('.modal-overlay .modal-body') || document.querySelector('.modal-body');
-  if (body && typeof _punchSignImages === 'function') await _punchSignImages(body);
-}
-
-async function _taskRenderGallery(id) {
-  const wrap = document.getElementById('task-photos-' + id);
-  if (!wrap) return;
-  if (!window.PhotosModule || !PhotosModule.listFor) { wrap.innerHTML = '<div style="font-size:12px;color:var(--gray-400);padding:8px 0;">Photos module not loaded.</div>'; return; }
-  const photos = await PhotosModule.listFor({ source_type: 'tasks', source_id: id });
-  if (!photos.length) { wrap.innerHTML = '<div style="font-size:12px;color:var(--gray-400);padding:8px 0;">No photos linked yet.</div>'; return; }
-  wrap.innerHTML = photos.map(ph => {
-    const thumb = ph.thumb_path || ph.storage_path;
-    return `<div class="punch-photo-tile" title="${escapeHtml(ph.caption || ph.file_name || '')}">
-      <img data-photo-thumb="${escapeHtml(thumb)}" data-photo-full="${escapeHtml(ph.storage_path)}" alt="${escapeHtml(ph.caption || '')}" loading="lazy">
-      <button aria-label="Save photo" class="punch-photo-dl" title="Save photo" ${cxAct('_punchDownloadPhoto', String(ph.storage_path), String(ph.file_name || ''), '$cx.event')}>${icon('download')}</button>
-    </div>`;
-  }).join('');
-  if (typeof _punchSignImages === 'function') await _punchSignImages(wrap);
-}
-
-function _taskAddPhotos(id) { const i = document.getElementById('task-gallery-file-' + id); if (i) i.click(); }
-
-async function _taskGalleryFilesChosen(id, input) {
-  const files = [...(input.files || [])];
-  if (!files.length) return;
-  const t = TASKS.find(x => x.id === id);
-  if (!t) return;
-  if (!window.PhotosModule || !PhotosModule.uploadFile) { toast('Photos module not loaded', 'error'); return; }
-  const ctx = _taskPhotoCtx(t);
-  toast('Uploading ' + files.length + ' photo' + (files.length > 1 ? 's' : '') + '…');
-  let ok = 0;
-  for (const f of files) { try { await PhotosModule.uploadFile(f, ctx); ok++; } catch (e) { console.error('[task photo] upload failed:', e); } }
-  input.value = '';
-  toast(ok + ' photo' + (ok !== 1 ? 's' : '') + ' added', ok ? 'success' : 'error');
-  await _taskRenderGallery(id);
-  const body = document.querySelector('.modal-overlay .modal-body') || document.querySelector('.modal-body');
-  if (body && typeof _punchSignImages === 'function') await _punchSignImages(body);
-}
-
-function _taskCommentPhotoChosen(id, input) {
-  const f = input.files && input.files[0];
-  if (!f) return;
-  _taskCommentPhoto[id] = f;
-  const prev = document.getElementById('task-comment-preview-' + id);
-  if (prev) {
-    prev.style.display = '';
-    prev.innerHTML = `<div class="punch-comment-preview-item">
-      <img src="${URL.createObjectURL(f)}" alt="">
-      <span>${escapeHtml(f.name || 'photo')}</span>
-      <button type="button" ${cxAct('_taskCommentPhotoClear', String(id))} title="Remove">×</button>
-    </div>`;
-  }
-}
-
-function _taskCommentPhotoClear(id) {
-  delete _taskCommentPhoto[id];
-  const input = document.getElementById('task-comment-file-' + id);
-  const prev  = document.getElementById('task-comment-preview-' + id);
-  if (input) input.value = '';
-  if (prev) { prev.style.display = 'none'; prev.innerHTML = ''; }
-}
-
-async function addTaskComment(id) {
-  if (typeof uiCan === 'function' && !(uiCan('tasks', 'edit') || uiCan('tasks', 'create'))) { toast('You do not have permission to comment', 'error'); return; }
-  const input = document.getElementById(`task-comment-input-${id}`);
-  const text  = (input?.value || '').trim();
-  const file  = _taskCommentPhoto[id];
-  if (!text && !file) { toast('Add a comment or a photo', 'error'); return; }
-  const t = TASKS.find(x => x.id === id);
-  if (!t) return;
-
-  // Upload the attached photo first (linked to this task, so it also shows in the gallery).
-  let photoRef = null;
-  if (file) {
-    if (!window.PhotosModule || !PhotosModule.uploadFile) { toast('Photos module not loaded', 'error'); return; }
-    const postBtn = document.querySelector(`#task-comment-input-${id}`)?.closest('.punch-comment-composer')?.querySelector('.form-submit');
-    if (postBtn) postBtn.disabled = true;
-    try {
-      toast('Uploading photo…');
-      const ctx = _taskPhotoCtx(t);
-      ctx.caption = text || null;
-      const r = await PhotosModule.uploadFile(file, ctx);
-      photoRef = { id: r.id || null, storage_path: r.storage_path, thumb_path: r.thumb_path || null, file_name: r.file_name || null };
-    } catch (e) {
-      if (postBtn) postBtn.disabled = false;
-      toast('Photo upload failed: ' + (e && e.message || e), 'error');
-      return;
-    }
-  }
-
-  const comment = {
-    id: crypto.randomUUID(),
-    text: text || '',
-    by: currentRoleUser?.name || '',
-    by_role: currentRoleUser?.role || '',
-    at: new Date().toISOString(),
-  };
-  if (photoRef) comment.photo = photoRef;
-  // Optional checklist-item link chosen in the composer (readiness.js).
-  const itemId = (typeof _cpCommentItemId === 'function') ? _cpCommentItemId(id) : null;
-  if (itemId) comment.item_id = itemId;
-  const comments = [..._taskComments(t), comment];
-  try {
-    const [updated] = await _dbUpdate('tasks', { comments }, { id });
-    if (!updated) throw new Error('No row was updated — you may not have permission to comment on this task.');
-    Object.assign(t, updated);
-  } catch (e) { toast('Comment failed: ' + e.message, 'error'); return; }
-  _taskCommentPhotoClear(id);
-  toast('Comment posted', 'success');
-  closeModal();
-  _taskViewModal(id);
-  renderTasks();
-}
-
-function _taskCSVExport() {
-  const headers = ['Name','Type','Status','Priority','Effort','Assignee','Due Date','Task Type',
-    'Location','Subsystem','Phase','Checklist Progress','Description','Updates','Created By','Created At','Last Edited By','Last Edited'];
-  const rows = TASKS.map(t => {
-    const kind = (typeof _rdKind === 'function') ? _rdKind(t) : 'task';
-    const p = (typeof _rdTaskProgress === 'function') ? _rdTaskProgress(t.id) : { total: 0, pct: 0 };
-    return [
-      t.task_name||'', kind === 'activity' ? 'Readiness Activity' : 'Task', t.status||'Not Started', t.priority||'', t.effort||'', t.assignee||'',
-      t.due_date||'', _taskTypeList(t).join('; '), t.location||'', t.subsystem||'', t.phase||'',
-      p.total ? p.pct + '%' : '', t.description||'', t.updates||'',
-      t.created_by||'', t.created_at ? _fmtDate(t.created_at) : '', t.updated_by||'', t.updated_at ? _fmtDate(t.updated_at) : '',
-    ].map(v => '"' + String(v).replace(/"/g,'""') + '"');
-  });
-  const csv = [headers.map(h => '"' + h + '"').join(','), ...rows.map(r => r.join(','))].join('\n');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-  a.download = 'Tasks-' + new Date().toISOString().slice(0,10) + '.csv';
   a.click();
 }
 

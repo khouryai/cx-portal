@@ -55,7 +55,7 @@ DERIVED.forEach((name) => {
 
 // Consumers read these as BARE globals, so a file that uses one without
 // cx-config.js having defined it is a ReferenceError at runtime, not a 404.
-const CONSUMERS = ['app.js', 'photos.js', 'readiness.js'];
+const CONSUMERS = ['app.js', 'photos.js'];
 CONSUMERS.forEach((f) => {
   const src = read(f);
   DERIVED.forEach((name) => {

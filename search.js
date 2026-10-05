@@ -5,7 +5,7 @@
 // type on the left, a live preview of the highlighted record on the right —
 // enough context (status, people, dates, notes) to understand a result without
 // opening it. Searches everything already in memory (test cases, assets, punch
-// items, RMAs, tasks, documents, daily logs) plus the navigation itself.
+// items, RMAs, documents, daily logs) plus the navigation itself.
 //
 // Loaded as a classic script AFTER app.js, so it references app.js globals
 // (TI, ASSETS, showPage, openPunchDetail, …) by name at call time. Zero
@@ -16,7 +16,7 @@
 
   var overlay = null, input = null, resultsEl = null, previewEl = null, chipsEl = null;
   var INDEX = [], results = [], activeIdx = 0, query = '';
-  var KINDS = ['All', 'Page', 'Test', 'Asset', 'Punch', 'RMA', 'Task', 'Doc', 'Log'];
+  var KINDS = ['All', 'Page', 'Test', 'Asset', 'Punch', 'RMA', 'Doc', 'Log'];
   var kindFilter = 'All';
   var kindCounts = {};
 
@@ -72,7 +72,6 @@
         case 'ASSET_LINKS': v = (typeof ASSET_LINKS !== 'undefined') ? ASSET_LINKS : null; break;
         case 'PUNCH_DB':    v = (typeof PUNCH_DB    !== 'undefined') ? PUNCH_DB    : null; break;
         case 'RMAS':        v = (typeof RMAS        !== 'undefined') ? RMAS        : null; break;
-        case 'TASKS':       v = (typeof TASKS       !== 'undefined') ? TASKS       : null; break;
         case 'DOCUMENTS':   v = (typeof DOCUMENTS   !== 'undefined') ? DOCUMENTS   : null; break;
         case 'DAILY_LOGS':  v = (typeof DAILY_LOGS  !== 'undefined') ? DAILY_LOGS  : null; break;
       }
@@ -187,22 +186,6 @@
         ],
         page: 'rma',
         opener: (r.id != null) ? function () { if (typeof openRMAModal === 'function') openRMAModal(r.id); } : null,
-      });
-    });
-
-    _arr('TASKS').forEach(function (t) {
-      idx.push({
-        kind: 'Task', icon: 'target',
-        label: t.task_name || t.title || t.name || 'Task',
-        sub: [t.assignee, t.due_date ? 'due ' + _fdate(t.due_date) : ''].filter(Boolean).join(' · '),
-        status: t.status || '',
-        desc: t.description || '',
-        fields: [
-          ['Status', t.status], ['Assignee', t.assignee],
-          ['Due', t.due_date ? _fdate(t.due_date) : ''],
-          ['Created', t.created_at ? _ago(t.created_at) : ''],
-        ],
-        page: 'tasks',
       });
     });
 
@@ -339,7 +322,7 @@
       resultsEl.innerHTML = '<div class="cxs-empty">' +
         (query.trim() ? 'No matches for “' + _esc(query.trim()) + '”' +
           (kindFilter !== 'All' ? ' in ' + _esc(kindFilter) : '')
-          : 'Search test cases, assets, punch items, RMAs, tasks…') +
+          : 'Search test cases, assets, punch items, RMAs…') +
         '</div>';
       return;
     }

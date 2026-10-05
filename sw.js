@@ -32,7 +32,6 @@ const SHELL_ASSETS = [
   './perms-admin.js',
   './markup.js',
   './photos.js',
-  './readiness.js',
   './mobile.js',
   './search.js',
   './notifications.js',

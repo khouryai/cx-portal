@@ -3,8 +3,8 @@
 //
 // THE AZURE MIGRATION SEAM FOR FILES.
 //
-// Three of the five buckets already sat behind swappable adapters
-// (`_formsStorage`, `_vfStorage`, `_rdStorage`). Photos — much the highest
+// Two of the four buckets already sat behind swappable adapters
+// (`_formsStorage`, `_vfStorage`). Photos — much the highest
 // volume, and the one captured in the field — did not: photos.js talked to
 // Supabase Storage's REST API directly. This closes that gap, so every byte the
 // app stores now goes through one interface and Azure Blob Storage is a

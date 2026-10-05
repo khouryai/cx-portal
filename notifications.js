@@ -2,7 +2,7 @@
 // notifications.js — Activity feed / notification center
 // ==========================================================================
 // A lightweight cross-user "what changed recently" feed, sourced from tables
-// every role can already read (punch_items, rmas, delay_log, tasks) — no new
+// every role can already read (punch_items, rmas, delay_log) — no new
 // schema, no realtime. A bell in the sidenav + mobile topbar shows an unread
 // count; opening the panel marks everything seen (tracked per user in
 // localStorage). Loaded as a classic script AFTER app.js; all DOM/network work
@@ -39,9 +39,8 @@
       _fetch('punch_items?select=id,number,title,status,created_at,created_by&is_deleted=eq.false&order=created_at.desc&limit=15'),
       _fetch('rmas?select=id,rma_number,status,created_at&order=created_at.desc&limit=10'),
       _fetch('delay_log?select=id,log_date,location,subsystem,submitted_by,submitted_at&order=submitted_at.desc&limit=10'),
-      _fetch('tasks?select=id,task_name,status,created_at,assignee&order=created_at.desc&limit=10'),
     ]).then(function (res) {
-      var punch = res[0] || [], rmas = res[1] || [], logs = res[2] || [], tasks = res[3] || [];
+      var punch = res[0] || [], rmas = res[1] || [], logs = res[2] || [];
       var out = [];
       punch.forEach(function (p) {
         out.push({
@@ -66,13 +65,6 @@
           text: 'Daily log — ' + [l.location, l.subsystem].filter(Boolean).join(' '),
           meta: l.submitted_by ? 'by ' + l.submitted_by : '',
           page: 'daily-log-history',
-        });
-      });
-      tasks.forEach(function (t) {
-        out.push({
-          ts: t.created_at, actor: t.assignee || '', icon: 'target', kind: 'Task',
-          text: t.task_name || 'Task', meta: (t.status || '') + (t.assignee ? ' · ' + t.assignee : ''),
-          page: 'tasks',
         });
       });
       NOTIF = out.filter(function (n) { return n.ts; })

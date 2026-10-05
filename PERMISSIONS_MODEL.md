@@ -282,8 +282,11 @@ manage action items without full meeting CRUD.
 > of what was migrated at the time, not the current catalog.
 
 > **Removed (2026-10):** the `schedule_p6` module (Schedule page + Admin › P6
-> Schedule) went with the P6 feature. Its `p6_*` tables are left in the database,
-> unused by the app.
+> Schedule) went with the P6 feature. Its `p6_*` tables are dropped by
+> `supabase/sql/supabase_drop_p6_and_org_chart.sql`.
+
+> **Removed (2026-10):** the `tasks` module (Checkpoint / Activity Readiness)
+> went with that feature — see `supabase/sql/supabase_drop_checkpoint_and_assets.sql`.
 
 ### Assets — `assets` (category: data)
 governs: assets, asset_test_links, asset_import_batches

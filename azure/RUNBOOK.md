@@ -246,11 +246,12 @@ psql -U cxadmin -d postgres -tAc "select 'policies: ' || count(*) from pg_polici
 psql -U cxadmin -d postgres -tAc "select 'tables:   ' || count(*) from pg_tables where schemaname='public';"
 psql -U cxadmin -d postgres -tAc "select 'auth.uid: ' || (to_regprocedure('auth.uid()') is not null);"
 psql -U cxadmin -d postgres -tAc "select 'mfa_ok:   ' || private.mfa_ok();"
-psql -U cxadmin -d postgres -tAc "select 'perm_fn:  ' || private.has_module_perm('tasks','view');"
+psql -U cxadmin -d postgres -tAc "select 'perm_fn:  ' || private.has_module_perm('punch_list','view');"
 ```
 
 Around **349 policies and 90 tables** means the whole authorization model came
-across. A policy count in the 300s with `ERROR: schema "auth" does not exist`
+across (fewer once the 2026-10 module-removal migrations have run against the
+source database). A policy count in the 300s with `ERROR: schema "auth" does not exist`
 in the log means the shim ran too late — go back to step 2.
 
 > **This database is ephemeral.** A container restart loses all of it. Keep this
