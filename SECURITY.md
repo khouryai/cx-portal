@@ -36,7 +36,7 @@ Row Level Security (RLS) is enabled on **all 45 database tables**.
 
 | Policy | Tables |
 |---|---|
-| Authenticated users only — read + write | All 43 data tables (test items, planning, punch lists, assets, etc.) |
+| Authenticated users only — read + write | All data tables (test items, punch lists, forms, drawings, etc.) |
 | Authenticated read-all; admin-only write | `profiles` (user directory) |
 | Admin-only | `users` (legacy reference table) |
 | Blocked entirely for unauthenticated callers | Every table — the anon key alone returns no data |

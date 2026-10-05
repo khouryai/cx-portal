@@ -23,6 +23,7 @@ const SHELL_ASSETS = [
   './cx-store.js',
   './cx-actions.js',
   './compute.js',
+  './tr-children.js',
   './trackplan.js',
   './print-report.js',
   './app.js',

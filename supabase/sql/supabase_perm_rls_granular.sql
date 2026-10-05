@@ -26,13 +26,11 @@ alter policy test_items_upd on public.test_items
   using ( (select private.has_module_perm('test_register','edit_case'))
        or (select private.has_module_perm('test_register','set_status'))
        or (select private.has_module_perm('test_register','deploy_field'))
-       or (select private.has_module_perm('test_register','bulk_edit'))
-       or (select private.has_module_perm('test_register','manage_assets')) )
+       or (select private.has_module_perm('test_register','bulk_edit')) )
   with check ( (select private.has_module_perm('test_register','edit_case'))
        or (select private.has_module_perm('test_register','set_status'))
        or (select private.has_module_perm('test_register','deploy_field'))
-       or (select private.has_module_perm('test_register','bulk_edit'))
-       or (select private.has_module_perm('test_register','manage_assets')) );
+       or (select private.has_module_perm('test_register','bulk_edit')) );
 alter policy test_items_del on public.test_items
   using ( (select private.has_module_perm('test_register','delete_case'))
        or (select private.has_module_perm('test_register','delete_activity'))
@@ -187,19 +185,6 @@ alter policy drawing_sets_del on public.drawing_sets using ( (select private.has
 alter policy drawing_sheets_ins on public.drawing_sheets with check ( (select private.has_module_perm('drawings','upload_set')) );
 alter policy drawing_sheets_upd on public.drawing_sheets using ( (select private.has_module_perm('drawings','upload_set')) ) with check ( (select private.has_module_perm('drawings','upload_set')) );
 alter policy drawing_sheets_del on public.drawing_sheets using ( (select private.has_module_perm('drawings','delete_set')) );
-
--- assets
-alter policy assets_ins on public.assets with check ( (select private.has_module_perm('assets','add')) );
-alter policy assets_upd on public.assets
-  using ( (select private.has_module_perm('assets','edit')) or (select private.has_module_perm('assets','bulk_edit')) )
-  with check ( (select private.has_module_perm('assets','edit')) or (select private.has_module_perm('assets','bulk_edit')) );
-alter policy assets_del on public.assets using ( (select private.has_module_perm('assets','bulk_delete')) );
-alter policy asset_test_links_ins on public.asset_test_links with check ( (select private.has_module_perm('assets','link')) );
-alter policy asset_test_links_upd on public.asset_test_links using ( (select private.has_module_perm('assets','link')) ) with check ( (select private.has_module_perm('assets','link')) );
-alter policy asset_test_links_del on public.asset_test_links using ( (select private.has_module_perm('assets','link')) );
-alter policy asset_import_batches_ins on public.asset_import_batches with check ( (select private.has_module_perm('assets','import')) );
-alter policy asset_import_batches_upd on public.asset_import_batches using ( (select private.has_module_perm('assets','import')) ) with check ( (select private.has_module_perm('assets','import')) );
-alter policy asset_import_batches_del on public.asset_import_batches using ( (select private.has_module_perm('assets','import')) );
 
 -- NOTE: track_plan was removed (supabase_drop_track_plan.sql) — its tables and
 -- policies no longer exist; the prior 'track_plan'.'manage' RLS block is dropped.

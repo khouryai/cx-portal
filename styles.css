@@ -7501,17 +7501,6 @@ a:focus-visible {
   font-family: var(--f-mono);
 }
 
-/* asset chip (📦 ...) */
-#field-intake-content [style*="background:#dbeafe"] {
-  background: var(--info-light) !important;
-  color: var(--info) !important;
-  font-family: var(--f-mono) !important;
-  font-weight: 500 !important;
-  padding: 1px 8px !important;
-  border-radius: 6px !important;
-  border: 1px solid rgba(29,78,175,0.18);
-}
-
 /* hours input on review row */
 #field-intake-content .form-input[type="number"] {
   font-family: var(--f-mono);

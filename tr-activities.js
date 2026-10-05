@@ -194,7 +194,7 @@ function _trDuplicateActivityModal(key) {
         location: src.location === '—' ? '' : src.location, subsystem: src.subsystem === '—' ? '' : src.subsystem,
         report: src.testReport || '', extra,
       }) +
-      `<p style="font-size:12px;color:var(--gray-500);margin-top:12px;">The copy is a fresh run: every case comes across at Not Started, and results, status history, completion sign-off, blocked/failed reasons, photos and asset links stay with the original.${children ? ` ${children} asset/dynamic child row${children !== 1 ? 's are' : ' is'} not copied — they are regenerated from their parent case.` : ''} Change the location or name so the copy doesn’t collide with the original.</p>`,
+      `<p style="font-size:12px;color:var(--gray-500);margin-top:12px;">The copy is a fresh run: every case comes across at Not Started, and results, status history, completion sign-off, blocked/failed reasons and photos stay with the original.${children ? ` Its ${children} child test case${children !== 1 ? 's come' : ' comes'} across too, under the copied parent${children !== 1 ? 's' : ''}.` : ''} Change the location or name so the copy doesn’t collide with the original.</p>`,
     footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>` +
       `<button class="admin-action-btn" data-action="_traSave">${icon('copy')} Create Copy</button>`,
   });
@@ -243,11 +243,12 @@ async function _traSave() {
 
     const seed = `TC-${Date.now().toString(36)}`;
     const base = { phase, location, subsystem, activity: name, status: 'Not Started', ...reportPatch };
-    let rows;
+    let rows, childRows = [];
 
     if (mode === 'duplicate' && document.getElementById('tra-copy-cases')?.checked) {
       const keepNotes = !!document.getElementById('tra-copy-notes')?.checked;
-      rows = src.items.filter(r => !r.ParentTestId).map((r, i) => ({
+      const parents = src.items.filter(r => !r.ParentTestId);
+      rows = parents.map((r, i) => ({
         ...base,
         test_id:        _traUniqueId(seed, i + 1),
         test_case_code: r.TestCaseCode  || null,
@@ -261,6 +262,15 @@ async function _traSave() {
         notes:          keepNotes ? (r.Notes || null) : null,
         is_parent:      false,
       }));
+      // Child test cases (one per device) come across by name, Not Started,
+      // under their copied parent.
+      parents.forEach((r, i) => {
+        if (!r.IsParent || typeof _childrenOf !== 'function') return;
+        const names = [...new Set(_childrenOf(r.TestID).map(c => c.ChildLabel).filter(Boolean))];
+        if (!names.length) return;
+        rows[i].is_parent = true;
+        names.forEach((n, j) => childRows.push(_childDbRow(rows[i], n, `${rows[i].test_id}~c${j + 1}`)));
+      });
     } else {
       const proc = _traVal('tra-proc');
       const cases = mode === 'duplicate' ? [] : _traParseCases(_traVal('tra-cases'));
@@ -279,6 +289,7 @@ async function _traSave() {
 
     const BATCH = 50;
     for (let i = 0; i < rows.length; i += BATCH) await _dbInsert('test_items', rows.slice(i, i + BATCH));
+    for (let i = 0; i < childRows.length; i += BATCH) await _dbInsert('test_items', childRows.slice(i, i + BATCH));
 
     await loadTestItems();
     if (typeof currentRoleUser !== 'undefined' && currentRoleUser?.subsystem) {

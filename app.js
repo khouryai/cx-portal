@@ -515,7 +515,7 @@ _applyChartTheme();
 // ==========================================
 // ROUTING
 // ==========================================
-const _adminPages = new Set(['admin-templates','admin-weights','admin-locations','admin-fieldconfig','admin-directory','admin-permissions','audit','admin-assets','admin-config']);
+const _adminPages = new Set(['admin-templates','admin-weights','admin-locations','admin-fieldconfig','admin-directory','admin-permissions','audit','admin-config']);
 let _adminModeOn = false;
 
 // ── Mobile PWA tab bar ───────────────────────────────────────────────────────
@@ -701,7 +701,6 @@ function showPage(name) {
   if (name === 'admin-locations')  renderAdminLocations();
   if (name === 'admin-fieldconfig') renderAdminFieldConfig();
   if (name === 'admin-directory')  { _dirPermsLoaded = false; renderAdminDirectory(); }
-  if (name === 'admin-assets')     renderAdminAssets();
   if (name === 'admin-config')     renderConfigMgmt();
   if (name === 'forms')            renderFormsPage();
   if (name === 'rma')              renderRMA();
@@ -798,7 +797,6 @@ async function refreshApp() {
 
   // 2. Reload punch items (always safe — not mid-edit)
   try { await loadPunchDB(); } catch(e) { console.warn('[refreshApp] punch reload failed:', e.message); }
-  try { await loadAssetData(); } catch(e) { console.warn('[refreshApp] asset reload failed:', e.message); }
   try { await loadRMAs(); }     catch(e) { console.warn('[refreshApp] RMA reload failed:',   e.message); }
   try { await loadSoftwareConfigs(); } catch(e) { console.warn('[refreshApp] SW config reload failed:', e.message); }
   try { await loadSwEquipment(); } catch(e) { console.warn('[refreshApp] SW equipment reload failed:', e.message); }
@@ -2496,7 +2494,7 @@ function _initProductionVisualLayer() {
 document.addEventListener('DOMContentLoaded', async () => {
   _initProductionVisualLayer();
   // allSettled: one failed loader must not abort the rest of the bootstrap.
-  await Promise.allSettled([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadAssetData(), loadRMAs(), loadForms(), loadDrawingsData()]);
+  await Promise.allSettled([loadTestItems(), loadTemplates(), loadLocations(), loadPunchDB(), loadFieldsetConfig(), _loadProfileUsers(), loadTestReports(), loadActivityRecords(), loadWeights(), loadRMAs(), loadForms(), loadDrawingsData()]);
   initDashboard();
   initActivities();
   initLineItems();
@@ -2613,7 +2611,7 @@ async function loadTestItems() {
         TestReportID:  r.test_report_id || null,
         IsParent:      r.is_parent    || false,
         ParentTestId:  r.parent_test_id || null,
-        AssetId:       r.asset_id     || null,
+        ChildLabel:    r.child_label  || '',
         ScopeType:     r.scope_type   || 'static',
         TestScope:     r.test_scope   || '',
         ProcedureCode: r.procedure_code || '',
@@ -3106,11 +3104,6 @@ let AUDIT_LOG = DATA.auditLog || [];
 let DB_AUDIT_EVENTS = [];
 let _testReports = [];        // loaded from Supabase test_reports
 let _activityRecords = [];    // loaded from Supabase activity_records (future_test_reason store)
-
-// ── Asset management globals ──────────────────────────────────────────────────
-let ASSETS        = [];  // assets table rows
-let ASSET_BATCHES = [];  // asset_import_batches table rows
-let ASSET_LINKS   = [];  // asset_test_links table rows
 
 // ── RMA globals ───────────────────────────────────────────────────────────────
 let RMAS = [];
@@ -3697,7 +3690,6 @@ function onLoggedIn() {
     loadTestReports(),
     loadActivityRecords(),
     loadWeights(),
-    loadAssetData(),
     loadRMAs(),
     loadSoftwareConfigs(),
     loadSwEquipment(),
@@ -5032,7 +5024,10 @@ async function confirmDeploy(templateId) {
     // one test_id and fail the insert with 23505.
     const plan = _deploySelections.flatMap(s => _deployPlanRows(tpl, s, depId, now));
     const rows = plan.map(p => p.row);
-    const dupIds = _deployDuplicateIds(plan);
+    // Child test cases the template defines (one per device), inserted after
+    // their parents.
+    const childRows = _deployPlanChildRows(plan);
+    const dupIds = _deployDuplicateIds([...plan, ...childRows.map(row => ({ row }))]);
     if (dupIds.length) throw new Error(`template would create duplicate test IDs (${dupIds[0]})`);
 
     if (!rows.length) { toast('No test cases to deploy', 'warn'); return; }
@@ -5041,6 +5036,9 @@ async function confirmDeploy(templateId) {
     const BATCH = 50;
     for (let i = 0; i < rows.length; i += BATCH) {
       await _dbInsert('test_items', rows.slice(i, i + BATCH));
+    }
+    for (let i = 0; i < childRows.length; i += BATCH) {
+      await _dbInsert('test_items', childRows.slice(i, i + BATCH));
     }
 
     // ── 2b. Clone any template-attached PDFs once per deployed test case ──
@@ -5060,32 +5058,6 @@ async function confirmDeploy(templateId) {
 
     // ── 5. Reload TI from Supabase so the Test Register shows the new items ──
     await loadTestItems();
-    await loadAssetData();
-
-    // ── 6. Auto-create generic child assets defined in the template ───────────
-    for (const { tc, sel: s, row } of plan) {
-      if (!tc?.assets?.trim()) continue;
-      const parentRow = TI.find(r => String(r.TestID) === row.test_id);
-      if (!parentRow) continue;
-      const assetNames = tc.assets.split(',').map(a => a.trim()).filter(Boolean);
-      for (const aName of assetNames) {
-        try {
-          let [assetRow] = await _dbUpsert('assets', [{
-            name:            aName,
-            device_type:     'Generic',
-            location:        s.locName       || null,
-            subsystem:       tpl.subsystem   || null,
-            location_prefix: null,
-            import_batch_id: null,
-          }], 'name,location,subsystem');
-          if (!assetRow) assetRow = ASSETS.find(a => a.name === aName && (a.location||'') === (s.locName||'') && (a.subsystem||'') === (tpl.subsystem||''));
-          if (!assetRow) continue;
-          const aIdx = ASSETS.findIndex(a => a.id === assetRow.id);
-          if (aIdx >= 0) ASSETS[aIdx] = assetRow; else ASSETS.push(assetRow);
-          await _assetLinkToParent(assetRow, parentRow);
-        } catch(e) { console.warn('[deploy generic asset]', aName, e.message); }
-      }
-    }
 
     logAudit('Deployed Template',
       `${tpl.name} → ${enabledLocs.map(l => l.name).join(', ')}`,
@@ -5108,7 +5080,8 @@ async function confirmDeploy(templateId) {
 // ==========================================================================
 // TEMPLATE CREATION — Activity-based with multi-section / multi-procedure builder
 // ==========================================================================
-// Each section: { title:string, procedure:string, cases:[{code,name,scopeType,assets}] }
+// Each section: { title:string, procedure:string, cases:[{code,name,scopeType,children}] }
+// `children` is a comma-separated list of child test case names (one per device).
 let _templateSections = [];
 let _editTemplateId   = null;
 
@@ -5118,7 +5091,7 @@ let _editTemplateId   = null;
 // Old templates (no 'section' field) land in one unnamed section.
 function _tplCasesToSections(testCases) {
   if (!testCases?.length) {
-    return [{ title:'', procedure:'', cases:[{ code:'', name:'', scopeType:'static', assets:'' }] }];
+    return [{ title:'', procedure:'', cases:[{ code:'', name:'', scopeType:'static', children:'' }] }];
   }
   const map = new Map();
   for (const tc of testCases) {
@@ -5128,7 +5101,8 @@ function _tplCasesToSections(testCases) {
       code: tc.code || '',
       name: tc.name || '',
       scopeType: (tc.scopeType || tc.scope_type || 'static') === 'dynamic' ? 'dynamic' : 'static',
-      assets: tc.assets || '',
+      // Templates saved before 2026-10 kept this list under `assets`.
+      children: tc.children ?? tc.assets ?? '',
     });
   }
   return [...map.values()];
@@ -5144,7 +5118,7 @@ function _tplSectionsToTestCases(sections) {
         code:      tc.code.trim(),
         name:      tc.name.trim(),
         scopeType: (tc.scopeType || 'static') === 'dynamic' ? 'dynamic' : 'static',
-        assets:    (tc.assets || '').trim(),
+        children:  (tc.children || '').trim(),
         procedure: sec.procedure.trim(),
         section:   sec.title.trim(),
         duration:  1,
@@ -5183,7 +5157,7 @@ function _tplSectionsHTML() {
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Code</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Test Case Name</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Scope</div>
-        <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Assets (Generic)</div>
+        <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Child Test Cases</div>
         <div style="font-size:10px;color:var(--gray-500);font-weight:700;text-transform:uppercase;">Form PDF</div>
         <div></div><div></div>
       </div>
@@ -5208,9 +5182,9 @@ function _tplCaseRowsHTML(si) {
         <option value="static" ${(tc.scopeType || 'static') !== 'dynamic' ? 'selected' : ''}>Static</option>
         <option value="dynamic" ${(tc.scopeType || 'static') === 'dynamic' ? 'selected' : ''}>Dynamic</option>
       </select>
-      <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="Assets e.g. MLK A, MLK B"
-        value="${escapeHtml(tc.assets||'')}" oninput="_templateSections[${si}].cases[${ci}].assets=this.value"
-        title="Comma-separated generic asset names auto-linked as children on deploy">
+      <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;" placeholder="e.g. MLK A, MLK B"
+        value="${escapeHtml(tc.children||'')}" oninput="_templateSections[${si}].cases[${ci}].children=this.value"
+        title="Comma-separated child test cases created under this test case on deploy (one per device)">
       ${_tplCaseFormCellHTML(_editTemplateId, tc, si, ci)}
       <button class="form-secondary" style="padding:4px;font-size:13px;min-width:32px;" title="Duplicate"
         onclick="dupTplCase(${si},${ci})">⧉</button>
@@ -5244,7 +5218,7 @@ function _tplCaseFormCellHTML(templateId, tc, si, ci) {
 }
 
 function addTplSection() {
-  _templateSections.push({ title:'', procedure:'', cases:[{ code:'', name:'', scopeType:'static', assets:'' }] });
+  _templateSections.push({ title:'', procedure:'', cases:[{ code:'', name:'', scopeType:'static', children:'' }] });
   document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
 }
 
@@ -5256,7 +5230,7 @@ async function removeTplSection(si) {
 }
 
 function addTplCase(si) {
-  _templateSections[si].cases.push({ code:'', name:'', scopeType:'static', assets:'' });
+  _templateSections[si].cases.push({ code:'', name:'', scopeType:'static', children:'' });
   document.getElementById('tpl-sections').innerHTML = _tplSectionsHTML();
 }
 
@@ -5275,7 +5249,7 @@ function removeTplCase(si, ci) {
 
 function downloadTemplateCaseCSV() {
   const rows = [
-    ['Section','Code','Name','Scope','Assets','Procedure'],
+    ['Section','Code','Name','Scope','Child Test Cases','Procedure'],
     ['Hardware Verification','DCS-HW-01','Network Connectivity Test','Static','','Refer to CDRL 9.04.53 Section 4'],
     ['Hardware Verification','DCS-HW-02','Server Failover Test','Dynamic','Server A,Server B','Refer to CDRL 9.04.53 Section 4'],
     ['Software Testing','DCS-SW-01','Comms Latency Test','Static','','Refer to CDRL 9.04.53 Section 5'],
@@ -5302,13 +5276,13 @@ function handleTemplateCaseImport(input) {
       const name   = (r.Name         || r.TestName     || r['Test Case Name'] || '').trim();
       const scopeRaw = (r.Scope || r.scope || r.ScopeType || r['Scope Type'] || '').trim().toLowerCase();
       const scopeType = scopeRaw === 'dynamic' ? 'dynamic' : 'static';
-      const assets  = (r.Assets       || r.assets       || '').trim();
+      const children = (r['Child Test Cases'] || r.Children || r.children || r.Assets || r.assets || '').trim();
       if (!code && !name) continue;
       const key = sTitle || '__default__';
       if (!sectionMap.has(key)) sectionMap.set(key, { title: sTitle, procedure: proc, cases: [] });
       const sec = sectionMap.get(key);
       if (!sec.procedure && proc) sec.procedure = proc;
-      sec.cases.push({ code, name, scopeType, assets });
+      sec.cases.push({ code, name, scopeType, children });
     }
     if (!sectionMap.size) { toast('Could not parse any test cases from CSV', 'warn'); return; }
     _templateSections = [...sectionMap.values()];
@@ -5359,7 +5333,7 @@ function _tplModalBody() {
 
 function openNewTemplateModal() {
   _editTemplateId   = null;
-  _templateSections = [{ title:'', procedure:'', cases:[{ code:'', name:'', scopeType:'static', assets:'' }] }];
+  _templateSections = [{ title:'', procedure:'', cases:[{ code:'', name:'', scopeType:'static', children:'' }] }];
   modal({
     title:  'Create Activity Template',
     sub:    'Define reusable test sections and procedures for an activity',
@@ -6352,8 +6326,8 @@ async function _updateTestItemStatus(testId, status, opts = {}) {
   await _logTestItemStatusHistory(r, oldStatus, status, opts);
   // Record the attempt outcome (fire-and-forget) for attempt-level KPIs.
   if (oldStatus !== status) _logTestResult(r, status, opts).catch(() => {});
-  // If this is an asset child row, check whether the parent should auto-pass
-  if (r.ParentTestId) await _assetAutoPassCheck(r.ParentTestId).catch(() => {});
+  // A child test case's status drives its parent's derived status.
+  if (r.ParentTestId) await _parentRollupCheck(r.ParentTestId).catch(() => {});
   // Refresh dashboard KPIs if it is the active page
   _tryRefreshDashboard();
   return rows;
@@ -6364,9 +6338,6 @@ function _mxApplyStatusChange(testId, status, reason = '', el = null) {
   if (!r) return;
 
   const rawId = r.TestID;
-  // Resolve asset name if this is a child asset row
-  const assetRecord = r.AssetId ? ASSETS.find(a => a.id === r.AssetId) : null;
-  const assetName   = assetRecord ? assetRecord.name : null;
   const existing = _sessionLog.find(e => String(e.testId) === String(rawId));
   if (existing) {
     existing.newStatus     = status;
@@ -6377,8 +6348,8 @@ function _mxApplyStatusChange(testId, status, reason = '', el = null) {
     _sessionLog.push({
       testId: rawId, testCode: r.TestCaseCode, testName: r.TestName,
       phase: r.Phase, location: r.Location, subsystem: r.Subsystem, activity: r.Activity,
-      assetId: r.AssetId || null, assetName,
-      isAssetRow: !!r.ParentTestId,
+      childLabel: r.ParentTestId ? (r.ChildLabel || null) : null,
+      isChildRow: !!r.ParentTestId,
       prevStatus: r.Status || 'Not Started', newStatus: status,
       changedAt: new Date().toISOString(),
       failedReason:  status === 'Fail'    ? reason : '',
@@ -6615,7 +6586,7 @@ async function saveActivityEdit() {
 // ==========================================================================
 let intakeStep = 1;
 let intakeAdditions = [];
-let _s2Phase = '', _s2Loc = '', _s2Act = '', _s2TestId = '', _s2AssetId = '';
+let _s2Phase = '', _s2Loc = '', _s2Act = '', _s2TestId = '', _s2ChildId = '';
 
 // ──────────────────────────────────────────────────────────────────────────
 // DAILY LOG PERSISTENCE / REHYDRATION
@@ -6881,10 +6852,11 @@ function _updateSessionHours(idx, val) {
   _saveIntakeDraft();
 }
 
-function _s2SetPhase(v)  { _s2Phase=v; _s2Loc=''; _s2Act=''; _s2TestId=''; _s2AssetId=''; renderFieldIntake(); }
-function _s2SetLoc(v)    { _s2Loc=v; _s2Act=''; _s2TestId=''; _s2AssetId=''; renderFieldIntake(); }
-function _s2SetTestId(v) { _s2TestId=v; _s2AssetId=''; renderFieldIntake(); }
-function _s2SetAct(v)   { _s2Act=v; _s2TestId=''; _s2AssetId=''; renderFieldIntake(); }
+function _s2SetPhase(v)  { _s2Phase=v; _s2Loc=''; _s2Act=''; _s2TestId=''; _s2ChildId=''; renderFieldIntake(); }
+function _s2SetLoc(v)    { _s2Loc=v; _s2Act=''; _s2TestId=''; _s2ChildId=''; renderFieldIntake(); }
+function _s2SetTestId(v) { _s2TestId=v; _s2ChildId=''; renderFieldIntake(); }
+function _s2SetChild(v)   { _s2ChildId=v; }
+function _s2SetAct(v)   { _s2Act=v; _s2TestId=''; _s2ChildId=''; renderFieldIntake(); }
 
 function ai_toggleReasonFields() {
   const s = document.getElementById('ai-status')?.value;
@@ -7016,7 +6988,7 @@ function renderIntakeStep1() {
     return `
       <div style="background:var(--surface-2);border:1px solid var(--line-soft);border-radius:8px;padding:12px 16px;display:flex;gap:16px;align-items:center;">
         <div style="flex:1;min-width:0;">
-          <div style="font-weight:600;font-size:13px;margin-bottom:3px;">${escapeHtml(e.testCode)} · ${escapeHtml(e.testName)}${e.assetName ? ` <span style="background:var(--info-light);color:var(--info);font-size:11px;padding:1px 7px;border-radius:10px;font-weight:500;margin-left:4px;">${icon('package')} ${escapeHtml(e.assetName)}</span>` : ''}${e._rehydrated ? ` <span style="background:var(--good-light);color:var(--good);font-size:10px;padding:1px 7px;border-radius:10px;font-weight:600;margin-left:4px;">auto</span>` : ''}</div>
+          <div style="font-weight:600;font-size:13px;margin-bottom:3px;">${escapeHtml(e.testCode)} · ${escapeHtml(e.testName)}${e.childLabel ? ` <span style="background:var(--info-light);color:var(--info);font-size:11px;padding:1px 7px;border-radius:10px;font-weight:500;margin-left:4px;">${icon('git-branch')} ${escapeHtml(e.childLabel)}</span>` : ''}${e._rehydrated ? ` <span style="background:var(--good-light);color:var(--good);font-size:10px;padding:1px 7px;border-radius:10px;font-weight:600;margin-left:4px;">auto</span>` : ''}</div>
           <div style="font-size:11px;color:var(--gray-500);margin-bottom:5px;">${escapeHtml(e.phase || '—')} · ${escapeHtml(e.location || '—')} · ${escapeHtml(e.activity || '—')}</div>
           <div style="font-size:12px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
             ${ps ? `<span style="background:var(--surface-3);color:var(--text-muted);padding:2px 8px;border-radius:10px;">${escapeHtml(ps)}</span><span style="color:var(--gray-400);">→</span>` : ''}
@@ -7065,19 +7037,17 @@ function renderIntakeStep2() {
   const phases = [...new Set(TI.map(r=>r.Phase).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   const locs   = [...new Set(TI.filter(r=>!_s2Phase||r.Phase===_s2Phase).map(r=>r.Location).filter(Boolean))].sort();
   const acts   = [...new Set(TI.filter(r=>(!_s2Phase||r.Phase===_s2Phase)&&(!_s2Loc||r.Location===_s2Loc)).map(r=>r.Activity).filter(Boolean))].sort();
-  // Exclude child asset rows from the test case selector — user picks the parent, then picks the asset
+  // Child test cases are left out of the test case selector — pick the parent,
+  // then (optionally) one of its child test cases.
   const tests  = TI.filter(r=>
     !r.ParentTestId &&
     (!_s2Phase||r.Phase===_s2Phase)&&(!_s2Loc||r.Location===_s2Loc)&&(!_s2Act||r.Activity===_s2Act)
   );
-  // When a test case is selected, find its child asset rows
+  // When a test case is selected, offer its child test cases (latest attempts)
   const selectedTest = _s2TestId ? TI.find(r=>String(r.TestID)===String(_s2TestId)) : null;
-  const childAssets  = selectedTest ? TI.filter(r=>String(r.ParentTestId)===String(_s2TestId)) : [];
-  // Map child rows to their ASSETS records for display
-  const childAssetOptions = childAssets.map(c => {
-    const a = ASSETS.find(x=>x.id===c.AssetId);
-    return { tiRow: c, asset: a, label: a ? a.name : `Asset ${c.TestID}` };
-  }).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+  const childOptions = (selectedTest ? _childrenOf(_s2TestId) : [])
+    .map(c => ({ tiRow: c, label: c.ChildLabel || c.TestID }))
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
 
   return `
     <div class="form-card">
@@ -7126,12 +7096,12 @@ function renderIntakeStep2() {
             ${tests.map(t=>`<option value="${escapeHtml(t.TestID)}" ${_s2TestId===String(t.TestID)?'selected':''}>${escapeHtml(t.TestCaseCode)} · ${escapeHtml(t.TestName)}</option>`).join('')}
           </select>
         </div>
-        ${childAssetOptions.length > 0 ? `
+        ${childOptions.length > 0 ? `
         <div class="form-field">
-          <label>Asset <span style="font-size:11px;font-weight:400;color:var(--gray-500);">(this test case has ${childAssetOptions.length} asset${childAssetOptions.length!==1?'s':''})</span></label>
-          <select id="ai-assetid" class="filter-select" onchange="_s2AssetId=this.value">
-            <option value="">— Log for all assets / parent —</option>
-            ${childAssetOptions.map(o=>`<option value="${escapeHtml(String(o.tiRow.TestID))}" ${_s2AssetId===String(o.tiRow.TestID)?'selected':''}>${escapeHtml(o.label)}</option>`).join('')}
+          <label for="ai-childid">Child test case <span style="font-size:11px;font-weight:400;color:var(--gray-500);">(this test case has ${childOptions.length})</span></label>
+          <select id="ai-childid" class="filter-select" ${cxOn('change', '_s2SetChild', '$cx.value')}>
+            <option value="">— Log for the parent —</option>
+            ${childOptions.map(o=>`<option value="${escapeHtml(String(o.tiRow.TestID))}" ${_s2ChildId===String(o.tiRow.TestID)?'selected':''}>${escapeHtml(o.label)}</option>`).join('')}
           </select>
         </div>` : ''}
         <div class="form-field">
@@ -7269,18 +7239,16 @@ function _updateAdditionHours(idx, val) {
 
 function addIntakeAddition() {
   const tid      = document.getElementById('ai-testid')?.value;
-  const assetTid = document.getElementById('ai-assetid')?.value || _s2AssetId || '';
+  const childTid = document.getElementById('ai-childid')?.value || _s2ChildId || '';
   const status   = document.getElementById('ai-status')?.value;
   if (!tid || !status) {
     toast('Please select a test case and status', 'warn');
     return;
   }
-  // If a specific asset is selected, log against that child TI row instead
-  const effectiveTid = assetTid || tid;
+  // If a child test case is selected, log against that child row instead
+  const effectiveTid = childTid || tid;
   const t = TI.find(x => String(x.TestID) === String(effectiveTid));
   if (!t) return;
-  // For display, also resolve asset name if it's a child row
-  const assetRecord = t.AssetId ? ASSETS.find(a => a.id === t.AssetId) : null;
   const row = {
     testId:        t.TestID,
     testCode:      t.TestCaseCode,
@@ -7290,9 +7258,8 @@ function addIntakeAddition() {
     phase:         t.Phase,
     activity:      t.Activity,
     testProcedure: t.TestProcedure,
-    assetId:       t.AssetId || null,
-    assetName:     assetRecord ? assetRecord.name : null,
-    isAssetRow:    !!t.ParentTestId,
+    childLabel:    t.ParentTestId ? (t.ChildLabel || null) : null,
+    isChildRow:    !!t.ParentTestId,
     _isRealItem:   true,
     status,
     hours:         parseFloat(document.getElementById('ai-hours')?.value) || 0,
@@ -7302,7 +7269,7 @@ function addIntakeAddition() {
   const existingIdx = intakeAdditions.findIndex(a => String(a.testId) === String(effectiveTid));
   if (existingIdx >= 0) intakeAdditions[existingIdx] = row;
   else intakeAdditions.push(row);
-  _s2TestId = ''; _s2AssetId = '';
+  _s2TestId = ''; _s2ChildId = '';
   toast('Added to list', 'success');
   _saveIntakeDraft();
   renderFieldIntake();
@@ -7442,7 +7409,7 @@ async function submitIntakeFinal() {
     _sessionLog     = [];
     intakeAdditions = [];
     intakeStep      = 1;
-    _s2Phase = ''; _s2Loc = ''; _s2Act = ''; _s2TestId = ''; _s2AssetId = '';
+    _s2Phase = ''; _s2Loc = ''; _s2Act = ''; _s2TestId = ''; _s2ChildId = '';
     _resetIntakeRehydration({ clearDraft: true });
     cxAlert(`✓ Daily log submitted!\n\n${resultRows.length > 0 ? `${resultRows.length} test result(s) saved\n` : 'No test results logged (delay-only day)\n'}1 daily log row saved`);
     renderFieldIntake();
@@ -12183,8 +12150,8 @@ let _trBulkMsg = '';
 let _trBulkMode = false;
 let _trEmptySections = [];
 let _trDragId = null;
-let _trExpandedParents = new Set(); // TestIDs of expanded parent/asset groups (collapsed by default)
-// Per-parent filter state for child asset rows (search + status). Persists across re-renders
+let _trExpandedParents = new Set(); // TestIDs of expanded parent/child groups (collapsed by default)
+// Per-parent filter state for child test cases (search + status). Persists across re-renders
 // so a tester can keep their narrowing while updating statuses. Keyed by parent TestID.
 const _trChildFilter = new Map();
 function _trChildFilterGet(testId) {
@@ -12903,8 +12870,8 @@ function _amDrilldownHTML(key) {
                   if (r.IsParent) {
                     const children = _sortedViewItemsRef.filter(c => c.ParentTestId === r.TestID)
                       .sort((a, b) => {
-                        const an = (ASSETS.find(x => x.id === a.AssetId)?.name || '').toLowerCase();
-                        const bn = (ASSETS.find(x => x.id === b.AssetId)?.name || '').toLowerCase();
+                        const an = (a.ChildLabel || '').toLowerCase();
+                        const bn = (b.ChildLabel || '').toLowerCase();
                         return an.localeCompare(bn, undefined, { numeric: true });
                       });
                     return _trParentGroupRows(r, children, statuses, legacyMap, isAdmin);
@@ -12958,7 +12925,7 @@ function _amDrilldownHTML(key) {
                       ${_dtRenderScopeCell(r)}
                       <td>
                         <textarea class="form-input notes-input" rows="2" placeholder="Notes…" onblur="_mxSaveNotes('${tid}',this.value)">${escapeHtml(r.Notes||'')}</textarea>
-                        ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;"><button class="v2-btn-mini" ${cxAct('_trAddGenericChild', String(tid))}>＋ Asset</button><button class="v2-btn-mini" ${cxAct('_trOpenAssetPickerModal', String(tid))}>${icon('link')} Link Assets</button></div>` : ''}
+                        ${_trEditMode && isAdmin && !r.IsParent && !r.ParentTestId && !_trBulkMode ? `<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;"><button class="v2-btn-mini" ${cxAct('_trAddChildrenModal', String(r.TestID))}>${icon('plus')} Child test cases</button></div>` : ''}
                         <span id="regcell-${domId}">${_regressionCellHTML(r)}</span>
                       </td>
                       ${_trEditMode && isAdmin ? `<td style="white-space:nowrap;"><button class="v2-btn-mini" ${cxAct('_trCopyCase', String(tid))} title="Copy">⧉</button> <button title="Delete" aria-label="Delete" class="v2-btn-mini danger" ${cxAct('_trDeleteCase', String(tid))} data-tippy-content="Delete test case">${icon('trash')}</button></td>` : ''}
@@ -13168,21 +13135,18 @@ async function _trDeleteCase(testId) {
   }
 }
 
-// Delete a parent test case and ALL its linked child asset rows
+// Delete a parent test case and ALL its child test cases
 async function _trDeleteParentCase(testId) {
   if (typeof uiCan === 'function' && !uiCan('test_register', 'delete_case')) { toast('You do not have permission to delete test cases.', 'error'); return; }
   const parent   = TI.find(r => String(r.TestID) === String(testId));
   if (!parent) return;
   const children = TI.filter(r => String(r.ParentTestId) === String(testId));
   if (!await cxConfirm(
-    `Delete "${parent.TestCaseCode || parent.TestName || testId}" and all ${children.length} linked asset row${children.length !== 1 ? 's' : ''}?\n\nThis cannot be undone.`
+    `Delete "${parent.TestCaseCode || parent.TestName || testId}" and all ${children.length} child test case${children.length !== 1 ? 's' : ''}?\n\nThis cannot be undone.`
   )) return;
   try {
-    // 1. Remove asset links and child test_items
+    // 1. Remove the child test cases (results + history first)
     for (const c of children) {
-      if (c.AssetId) {
-        try { await _assetUnlink(c.AssetId, testId); } catch(e) { _logSwallowed('test delete: unlink child asset', e); }
-      }
       try {
         await _dbDelete('test_results',             { test_id: c.TestID });
         await _dbDelete('test_item_status_history', { test_id: c.TestID });
@@ -13197,38 +13161,11 @@ async function _trDeleteParentCase(testId) {
     const idsToRemove = new Set([String(testId), ...children.map(c => String(c.TestID))]);
     TI.splice(0, TI.length, ...TI.filter(r => !idsToRemove.has(String(r.TestID))));
     _trExpandedParents.delete(String(testId));
-    logAudit('Parent Test Case Deleted', parent.TestID, parent.TestName || '', `Deleted parent + ${children.length} asset rows`);
-    toast(`Deleted "${parent.TestCaseCode || parent.TestName}" + ${children.length} asset row${children.length !== 1 ? 's' : ''}`, 'success');
+    logAudit('Parent Test Case Deleted', parent.TestID, parent.TestName || '', `Deleted parent + ${children.length} child test cases`);
+    toast(`Deleted "${parent.TestCaseCode || parent.TestName}" + ${children.length} child test case${children.length !== 1 ? 's' : ''}`, 'success');
     _reRenderTR();
   } catch(e) {
     toast('Delete failed: ' + e.message, 'error');
-  }
-}
-
-// Delete a single asset child row (unlinks the asset and removes the test_item)
-async function _trDeleteAssetRow(childTestId) {
-  const child = TI.find(r => String(r.TestID) === String(childTestId));
-  if (!child) return;
-  const asset = child.AssetId ? ASSETS.find(a => a.id === child.AssetId) : null;
-  const label = asset ? asset.name : (child.TestCaseCode || childTestId);
-  if (!await cxConfirm(`Remove asset "${label}" from this test case? The asset record itself will be kept.\n\nThis cannot be undone.`)) return;
-  try {
-    // Unlink the asset (removes asset_test_links row and resets child test_item)
-    if (child.AssetId && child.ParentTestId) {
-      await _assetUnlink(child.AssetId, child.ParentTestId);
-    } else {
-      // Fallback: just delete the child test_item
-      try { await _dbDelete('test_results',             { test_id: child.TestID }); } catch(e) { _logSwallowed('asset row delete: prune results', e); }
-      try { await _dbDelete('test_item_status_history', { test_id: child.TestID }); } catch(e) { _logSwallowed('asset row delete: prune history', e); }
-      await _dbDelete('test_items', { test_id: child.TestID });
-      const idx = TI.findIndex(r => String(r.TestID) === String(childTestId));
-      if (idx !== -1) TI.splice(idx, 1);
-    }
-    toast(`Asset "${label}" removed from test case`, 'success');
-    _reRenderTR();
-    if (document.getElementById('admin-assets-content')) renderAdminAssets();
-  } catch(e) {
-    toast('Remove failed: ' + e.message, 'error');
   }
 }
 
@@ -13360,11 +13297,24 @@ async function _trBulkDelete() {
   if (!await cxConfirm(`Permanently delete ${ids.length} selected test case${ids.length===1?'':'s'}? This cannot be undone.`)) return;
   // Delete all in one pass — bypass _trDeleteCase's per-item confirm
   let deleted = 0;
+  const touchedParents = new Set();
   for (const id of ids) {
     const r = (_trDraftItems || []).find(x => String(x.TestID) === String(id)) || TI.find(x => String(x.TestID) === String(id));
     if (!r) continue;
     try {
-      if (!r._isNew) {
+      if (!r._isNew && r.ParentTestId) {
+        // A child test case goes with all its attempts, results and history.
+        await _childDelete(r.TestID);
+        touchedParents.add(String(r.ParentTestId));
+        logAudit('Test Case Deleted', r.TestID, r.TestName || '', `Bulk deleted child test case ${r.ChildLabel || r.TestID}`);
+      } else if (!r._isNew) {
+        // A parent takes its child test cases with it — on its own they would
+        // be orphaned: hidden from the register but still counted in KPIs.
+        if (r.IsParent) {
+          for (const c of TI.filter(x => String(x.ParentTestId) === String(r.TestID))) {
+            if (TI.includes(c)) await _childDelete(c.TestID);
+          }
+        }
         await _dbDelete('test_items', { test_id: r.TestID });
         logAudit('Test Case Deleted', r.TestID, r.TestName || '', `Bulk deleted ${r.TestID} ${r.TestName || ''}`);
         const idx = TI.findIndex(x => String(x.TestID) === String(r.TestID));
@@ -13375,6 +13325,9 @@ async function _trBulkDelete() {
     } catch(e) {
       toast(`Failed to delete ${r.TestCaseCode || id}: ${e.message}`, 'error');
     }
+  }
+  for (const pid of touchedParents) {
+    await _parentAfterChildrenChanged(pid).catch(e => _logSwallowed('bulk delete: settle parent', e));
   }
   _trSelected.clear();
   _trBulkMsg = '';
@@ -14278,7 +14231,7 @@ function _htmlPreserveFocus(container, html) {
   const ae  = document.activeElement;
   const tag = ae?.tagName;
   const isText = (tag === 'INPUT' && ae.type !== 'checkbox' && ae.type !== 'radio') || tag === 'TEXTAREA';
-  const focusCls  = isText ? (ae.className.split(' ').find(c => /tr-search|filter-input|mtg-search|rma-search|asset-search|pl-search/.test(c)) || null) : null;
+  const focusCls  = isText ? (ae.className.split(' ').find(c => /tr-search|filter-input|mtg-search|rma-search|pl-search/.test(c)) || null) : null;
   const focusId   = isText ? (ae.id || null) : null;
   const sel       = isText ? (ae.selectionStart ?? ae.value.length) : -1;
 
@@ -14500,31 +14453,6 @@ function _fmtDate(d) {
   return dt.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
 }
 
-// ==========================================================================
-// ASSET MANAGEMENT
-// ==========================================================================
-
-// ── Asset column definitions ──
-_colRegister('assets', [
-  { id: 'name',      label: 'Device Name', default: true },
-  { id: 'type',      label: 'Type',        default: true },
-  { id: 'location',  label: 'Location',    default: true },
-  { id: 'subsystem', label: 'Subsystem',   default: true },
-  { id: 'linked',    label: 'Linked',      default: true },
-  { id: 'progress',  label: 'Progress',    default: true },
-], function _assetRenderCell(colId, ctx) {
-  const { a, links, subDisplay, passCount, total, pct } = ctx;
-  switch (colId) {
-    case 'name':     return `<td style="font-weight:600;font-family:monospace;font-size:13px;">${escapeHtml(a.name)}</td>`;
-    case 'type':     return `<td style="font-size:13px;">${escapeHtml(a.device_type || '—')}</td>`;
-    case 'location': return `<td style="font-size:12px;color:var(--gray-600);">${escapeHtml(a.location || a.location_prefix || '—')}</td>`;
-    case 'subsystem':return `<td style="font-size:12px;color:var(--gray-600);">${subDisplay}</td>`;
-    case 'linked':   return `<td style="font-size:13px;">${links.length} link${links.length!==1?'s':''}</td>`;
-    case 'progress': return `<td>${total > 0 ? `<div style="display:flex;align-items:center;gap:8px;"><div style="flex:1;background:var(--surface-3);border-radius:4px;height:6px;min-width:60px;"><div style="width:${pct}%;background:${pct===100?'var(--good)':'var(--accent-blue)'};height:6px;border-radius:4px;"></div></div><span style="font-size:11px;color:var(--gray-600);">${passCount}/${total}</span></div>` : `<span style="color:var(--gray-400);font-size:12px;">—</span>`}</td>`;
-    default: return '<td>—</td>';
-  }
-});
-
 // ── DB helpers ────────────────────────────────────────────────────────────────
 async function _dbUpsert(table, rows, onConflict) {
   const authHeader = _getAuthHeader();
@@ -14542,1540 +14470,12 @@ async function _dbUpsert(table, rows, onConflict) {
   return await res.json();
 }
 
-// ── Data loader ───────────────────────────────────────────────────────────────
-async function loadAssetData() {
-  try {
-    const [batches, assets, links] = await Promise.all([
-      _fetchAnon('asset_import_batches?select=*&order=imported_at.desc'),
-      _fetchAnon('assets?select=*&order=name.asc'),
-      _fetchAnon('asset_test_links?select=*'),
-    ]);
-    ASSET_BATCHES = batches || [];
-    ASSETS        = assets  || [];
-    ASSET_LINKS   = links   || [];
-  } catch(e) { console.warn('[loadAssetData] failed:', e.message); }
-}
-
 async function loadRMAs() {
   try {
     const data = await _fetchAnon('rmas?select=*&order=created_at.desc');
     RMAS = data || [];
   } catch(e) { console.warn('[loadRMAs] failed:', e.message); }
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function _assetParsePrefix(name) {
-  // e.g. "W40-AC01" → "W40", "ATS-W40-AC01" → try to match a known location prefix
-  const knownPrefixes = [...new Set(TI.map(r => (r.Location||'').split(' ')[0]).filter(Boolean))];
-  const parts = (name || '').split('-');
-  for (let i = parts.length; i > 0; i--) {
-    const candidate = parts.slice(0, i).join('-').toUpperCase();
-    if (knownPrefixes.some(p => p.toUpperCase() === candidate)) return candidate;
-  }
-  return parts[0] || '';
-}
-
-function _assetNormalizeName(s) {
-  return (s || '').trim()
-    // all Unicode dash variants → plain hyphen
-    .replace(/[‐‑‒–—―−﹘﹣－]/g, '-')
-    .replace(/\s*-\s*/g, ' - ')  // normalise spaces around dashes
-    .replace(/\s+/g, ' ')        // collapse multiple spaces
-    .toLowerCase();
-}
-
-function _assetFindParentRow(testCaseName, locationPrefix, subsystem, exactLocation) {
-  const name  = _assetNormalizeName(testCaseName);
-  const prefix= (locationPrefix|| '').toUpperCase();
-  const sub   = (subsystem     || '').toLowerCase();
-  const loc   = (exactLocation || '').toLowerCase();
-
-  const locOk = r => {
-    if (loc)    return (r.Location || '').toLowerCase().startsWith(loc);
-    if (prefix) return (r.Location || '').toUpperCase().replace(/\s+/g,'').startsWith(prefix.replace(/\s+/g,''));
-    return true;
-  };
-
-  // Pass 1: name + location + subsystem
-  let hit = TI.find(r => !r.ParentTestId && _assetNormalizeName(r.TestName) === name && locOk(r) && (!sub || (r.Subsystem||'').toLowerCase() === sub));
-  if (hit) return hit;
-
-  // Pass 2: drop subsystem
-  hit = TI.find(r => !r.ParentTestId && _assetNormalizeName(r.TestName) === name && locOk(r));
-  if (hit) return hit;
-
-  // Pass 3: name only — location/prefix may be wrong in the CSV
-  hit = TI.find(r => !r.ParentTestId && _assetNormalizeName(r.TestName) === name);
-  return hit || null;
-}
-
-function _assetStatusColor(s) {
-  return ({Pass:'#16a34a',Fail:'#dc2626','In Progress':'#d97706',Blocked:'#7c3aed','Not Started':'#9ca3af','Not Applicable':'#6b7280','Future Test':'#3b82f6'})[s] || '#9ca3af';
-}
-
-// ── Auto-pass: derive parent status from children in real time ────────────────
-async function _assetAutoPassCheck(parentTestId) {
-  if (!parentTestId) return;
-  const parent = TI.find(r => String(r.TestID) === String(parentTestId));
-  if (!parent || !parent.IsParent) return;
-  const children = TI.filter(r => String(r.ParentTestId) === String(parentTestId));
-  if (!children.length) return;
-
-  const allFuture = children.every(c => c.Status === 'Future Test');
-  const allClosed = children.every(c => c.Status === 'Pass' || c.Status === 'Not Applicable');
-  const anyActive = children.some(c => c.Status !== 'Not Started' && c.Status !== 'Future Test');
-
-  const newStatus = allFuture  ? 'Future Test'
-                  : allClosed  ? 'Pass'
-                  : anyActive  ? 'In Progress'
-                  : 'Not Started';
-
-  if (parent.Status === newStatus) return;
-  parent.Status = newStatus;
-  await _dbUpdate('test_items', { status: newStatus }, { test_id: String(parentTestId) });
-
-  // Update the DOM badge directly — no full re-render needed
-  _assetUpdateParentDOMBadge(parentTestId, newStatus);
-}
-
-// Patch the parent badge + summary line in the live DOM after auto-pass
-function _assetUpdateParentDOMBadge(parentTestId, newStatus) {
-  const safeId   = String(parentTestId).replace(/[^a-zA-Z0-9]/g, '-');
-  const badgeEl  = document.getElementById(`apb-${safeId}`);
-  const sumEl    = document.getElementById(`aps-${safeId}`);
-  if (!badgeEl && !sumEl) return;
-
-  const badgeCls = {
-    'Pass':'badge-passed', 'Fail':'badge-failed', 'Blocked':'badge-warn',
-    'Not Applicable':'badge-notstarted', 'In Progress':'badge-inprog',
-    'Future Test':'badge-futuretest', 'Not Started':'badge-notstarted',
-  }[newStatus] || 'badge-notstarted';
-
-  if (badgeEl) {
-    badgeEl.className = `badge ${badgeCls}`;
-    badgeEl.textContent = newStatus;
-  }
-  if (sumEl) {
-    const children  = TI.filter(r => String(r.ParentTestId) === String(parentTestId));
-    const passCount = children.filter(c => c.Status === 'Pass').length;
-    const total     = children.length;
-    const pending   = total - passCount;
-    const isAdmin   = currentRoleUser?.role === 'admin';
-    const safePtid  = escapeHtml(String(parentTestId));
-    sumEl.innerHTML = `<span>${icon('package')} ${total} asset${total !== 1 ? 's' : ''} &nbsp;·&nbsp; `
-      + `<span style="color:var(--good);">${passCount} Pass</span>`
-      + (pending > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${pending} pending</span>` : '')
-      + `</span>`
-      + (_trEditMode && isAdmin && !_trBulkMode
-          ? ` <button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trAddGenericChild('${safePtid}')">＋ Asset</button>`
-            + ` <button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trOpenAssetPickerModal('${safePtid}')">${icon('link')} Link Assets</button>`
-          : '');
-  }
-}
-
-// ── Link an asset to a parent test_items row ──────────────────────────────────
-// Note: under the shared-weight model (keyed by TestCaseCode + TestName) every
-// child of a parent shares the same weight automatically — no per-row weight
-// redistribution is needed when adding/removing children.
-async function _assetLinkToParent(asset, parentRow) {
-  // Check if link already exists
-  const existing = ASSET_LINKS.find(l => l.asset_id === asset.id && l.parent_test_id === parentRow.TestID);
-  if (existing) return;
-
-  // Mark parent as is_parent if not already
-  if (!parentRow.IsParent) {
-    parentRow.IsParent = true;
-    await _dbUpdate('test_items', { is_parent: true }, { test_id: String(parentRow.TestID) });
-  }
-
-  // Generate unique child ID
-  const childId = `asc-${parentRow.TestID}-${asset.id.slice(0, 8)}`;
-
-  // Create child test_items row
-  const childRow = {
-    test_id:        childId,
-    phase:          parentRow.Phase        || null,
-    location:       parentRow.Location     || null,
-    subsystem:      parentRow.Subsystem    || null,
-    activity:       parentRow.Activity     || null,
-    test_category:  parentRow.TestCategory || null,
-    test_case_code: parentRow.TestCaseCode || null,
-    test_name:      parentRow.TestName     || null,
-    test_procedure: parentRow.TestProcedure|| null,
-    status:         'Not Started',
-    weight:         1, // legacy column — real weight lives in test_case_weights
-    asset_id:       asset.id,
-    parent_test_id: String(parentRow.TestID),
-    is_parent:      false,
-  };
-  await _dbInsert('test_items', [childRow]);
-
-  // Add to in-memory TI
-  TI.push({
-    TestID: childId, Phase: parentRow.Phase, Location: parentRow.Location,
-    Subsystem: parentRow.Subsystem, Activity: parentRow.Activity,
-    TestCategory: parentRow.TestCategory || '', TestCaseCode: parentRow.TestCaseCode,
-    TestName: parentRow.TestName, TestProcedure: parentRow.TestProcedure || '',
-    Status: 'Not Started', Weight: 1, // legacy field; real weight comes from test_case_weights
-    AssetId: asset.id, ParentTestId: String(parentRow.TestID), IsParent: false,
-    CompletedBy: null, CompletedDate: null, FailedReason: null, BlockedReason: null, Notes: null,
-  });
-
-  // Create link record
-  const linkRows = await _dbInsert('asset_test_links', [{ asset_id: asset.id, parent_test_id: String(parentRow.TestID) }]);
-  if (linkRows?.[0]) ASSET_LINKS.push(linkRows[0]);
-}
-
-// ── Unlink an asset from a parent row ────────────────────────────────────────
-async function _assetUnlink(assetId, parentTestId) {
-  const child = TI.find(r => r.AssetId === assetId && String(r.ParentTestId) === String(parentTestId));
-  if (child) {
-    // Delete child results/history first
-    try { await _dbDelete('test_results', { test_id: child.TestID }); } catch(e){ _logSwallowed('child delete: prune results', e); }
-    try { await _dbDelete('test_item_status_history', { test_id: child.TestID }); } catch(e){ _logSwallowed('child delete: prune status history', e); }
-    await _dbDelete('test_items', { test_id: child.TestID });
-    const idx = TI.findIndex(r => r.TestID === child.TestID);
-    if (idx >= 0) TI.splice(idx, 1);
-  }
-  // Remove link
-  const link = ASSET_LINKS.find(l => l.asset_id === assetId && l.parent_test_id === String(parentTestId));
-  if (link) {
-    await _dbDelete('asset_test_links', { id: link.id });
-    ASSET_LINKS = ASSET_LINKS.filter(l => l.id !== link.id);
-  }
-  // If no children remain, un-flag parent
-  const remainingChildren = TI.filter(r => String(r.ParentTestId) === String(parentTestId));
-  if (!remainingChildren.length) {
-    const parent = TI.find(r => String(r.TestID) === String(parentTestId));
-    if (parent) {
-      parent.IsParent = false;
-      await _dbUpdate('test_items', { is_parent: false }, { test_id: String(parentTestId) });
-    }
-  }
-  // (No weight redistribution needed — children share weight via shared lookup.)
-}
-
-// ── Bulk-link existing assets to a parent test case ───────────────────────────
-// "+ Asset" creates ONE generic asset on the fly. This is the picker for the
-// real workflow: a tester maintains the asset list separately (Admin → Assets,
-// or CSV import) and now wants to attach many of them to a test case at once.
-// Each pick still creates one child test_items row via _assetLinkToParent, so
-// per-asset status / completed_date / completed_by flows through unchanged.
-const _trAssetPicker = {
-  search: '', type: '', loc: '', sub: '',
-  selected: new Set(),
-  testId: null,
-};
-
-function _trOpenAssetPickerModal(testId) {
-  const parent = (_trDraftItems || []).find(r => String(r.TestID) === String(testId))
-              || TI.find(r => String(r.TestID) === String(testId));
-  if (!parent) { toast('Test case not found', 'error'); return; }
-
-  _trAssetPicker.search = '';
-  _trAssetPicker.type = '';
-  _trAssetPicker.loc = '';
-  _trAssetPicker.sub = '';
-  _trAssetPicker.selected = new Set();
-  _trAssetPicker.testId = String(testId);
-
-  modal({
-    title: 'Link Assets',
-    sub: parent.TestName || parent.TestCaseCode || parent.TestID,
-    body: `<div id="tr-asset-picker-body" style="padding:0 24px 16px;"></div>`,
-    footer: `
-      <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" id="tr-asset-picker-submit" data-action="_trBulkLinkAssets">Link 0 assets</button>
-    `,
-    size: 'large',
-  });
-  _trRenderAssetPickerBody();
-}
-
-function _trAssetPickerFiltered() {
-  const testId = _trAssetPicker.testId;
-  const linkedIds = new Set(
-    ASSET_LINKS.filter(l => String(l.parent_test_id) === testId).map(l => l.asset_id)
-  );
-  const all = ASSETS.filter(a => !linkedIds.has(a.id));
-  const s = _trAssetPicker.search.toLowerCase();
-  return all.filter(a => {
-    if (s
-        && !(a.name||'').toLowerCase().includes(s)
-        && !(a.device_type||'').toLowerCase().includes(s)) return false;
-    if (_trAssetPicker.type && a.device_type !== _trAssetPicker.type) return false;
-    if (_trAssetPicker.loc  && (a.location || a.location_prefix) !== _trAssetPicker.loc) return false;
-    if (_trAssetPicker.sub  && a.subsystem !== _trAssetPicker.sub) return false;
-    return true;
-  });
-}
-
-function _trRenderAssetPickerBody() {
-  const body = document.getElementById('tr-asset-picker-body');
-  if (!body) return;
-
-  const testId = _trAssetPicker.testId;
-  const linkedIds = new Set(
-    ASSET_LINKS.filter(l => String(l.parent_test_id) === testId).map(l => l.asset_id)
-  );
-  const all = ASSETS.filter(a => !linkedIds.has(a.id));
-  const types = [...new Set(all.map(a => a.device_type).filter(Boolean))].sort();
-  const locs  = [...new Set(all.map(a => a.location || a.location_prefix).filter(Boolean))].sort();
-  const subs  = [...new Set(all.map(a => a.subsystem).filter(Boolean))].sort();
-
-  const filtered = _trAssetPickerFiltered();
-
-  body.innerHTML = `
-    <p style="font-size:13px;color:var(--gray-600);margin:0 0 12px;">
-      Pick assets from the asset list. To add or import new assets, go to <b>Admin → Assets</b>.
-      ${all.length === 0
-        ? `<br><b style="color:var(--bad);">No unlinked assets available.</b>`
-        : ''}
-    </p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-      <input id="tr-ap-search"
-             placeholder="Search by name or type…"
-             value="${escapeHtml(_trAssetPicker.search)}"
-             style="flex:1;min-width:180px;padding:6px 10px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;"
-             oninput="_trAssetPicker.search=this.value;_trRenderAssetPickerBody()">
-      <select onchange="_trAssetPicker.type=this.value;_trRenderAssetPickerBody()"
-              style="padding:6px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
-        <option value="">All types</option>
-        ${types.map(t => `<option value="${escapeHtml(t)}" ${_trAssetPicker.type===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}
-      </select>
-      <select onchange="_trAssetPicker.loc=this.value;_trRenderAssetPickerBody()"
-              style="padding:6px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
-        <option value="">All locations</option>
-        ${locs.map(l => `<option value="${escapeHtml(l)}" ${_trAssetPicker.loc===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
-      </select>
-      <select onchange="_trAssetPicker.sub=this.value;_trRenderAssetPickerBody()"
-              style="padding:6px;border:1px solid var(--gray-300);border-radius:5px;font-size:13px;">
-        <option value="">All subsystems</option>
-        ${subs.map(sb => `<option value="${escapeHtml(sb)}" ${_trAssetPicker.sub===sb?'selected':''}>${escapeHtml(sb)}</option>`).join('')}
-      </select>
-    </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:12px;color:var(--gray-600);">
-      <span><b>${filtered.length}</b> shown · <b>${_trAssetPicker.selected.size}</b> selected</span>
-      <span style="display:flex;gap:6px;">
-        <button class="form-secondary" style="font-size:11px;padding:3px 8px;" data-action="_trAssetPickerSelectAll" data-args="[true]">Select all shown</button>
-        <button class="form-secondary" style="font-size:11px;padding:3px 8px;" data-action="_trAssetPickerSelectAll" data-args="[false]">Clear</button>
-      </span>
-    </div>
-    <div style="max-height:380px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;">
-      <table style="width:100%;font-size:12px;border-collapse:collapse;">
-        <thead style="background:var(--gray-50);position:sticky;top:0;z-index:1;">
-          <tr>
-            <th style="padding:6px 10px;text-align:left;width:32px;"></th>
-            <th style="padding:6px 10px;text-align:left;">Name</th>
-            <th style="padding:6px 10px;text-align:left;">Type</th>
-            <th style="padding:6px 10px;text-align:left;">Location</th>
-            <th style="padding:6px 10px;text-align:left;">Subsystem</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${filtered.length === 0
-            ? `<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--gray-500);">No matching assets.</td></tr>`
-            : filtered.map(a => `
-              <tr style="border-top:1px solid var(--gray-100);cursor:pointer;"
-                  ${cxAct('_trAssetPickerToggle', String(a.id))}>
-                <td style="padding:6px 10px;">
-                  <input type="checkbox" ${_trAssetPicker.selected.has(a.id)?'checked':''}
-                         onclick="event.stopPropagation();_trAssetPickerToggle('${a.id}')">
-                </td>
-                <td style="padding:6px 10px;font-weight:500;">${escapeHtml(a.name)}</td>
-                <td style="padding:6px 10px;color:var(--gray-700);">${escapeHtml(a.device_type||'')}</td>
-                <td style="padding:6px 10px;color:var(--gray-700);">${escapeHtml(a.location||a.location_prefix||'')}</td>
-                <td style="padding:6px 10px;color:var(--gray-700);">${escapeHtml(a.subsystem||'')}</td>
-              </tr>
-            `).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
-  const btn = document.getElementById('tr-asset-picker-submit');
-  if (btn) {
-    const n = _trAssetPicker.selected.size;
-    btn.textContent = `Link ${n} asset${n===1?'':'s'}`;
-    btn.disabled = n === 0;
-  }
-}
-
-function _trAssetPickerToggle(assetId) {
-  if (_trAssetPicker.selected.has(assetId)) _trAssetPicker.selected.delete(assetId);
-  else _trAssetPicker.selected.add(assetId);
-  _trRenderAssetPickerBody();
-}
-
-function _trAssetPickerSelectAll(yes) {
-  if (!yes) { _trAssetPicker.selected.clear(); _trRenderAssetPickerBody(); return; }
-  const filtered = _trAssetPickerFiltered();
-  filtered.forEach(a => _trAssetPicker.selected.add(a.id));
-  _trRenderAssetPickerBody();
-}
-
-async function _trBulkLinkAssets() {
-  const testId = _trAssetPicker.testId;
-  const ids = [..._trAssetPicker.selected];
-  if (!ids.length) { toast('Select at least one asset', 'error'); return; }
-  const parent = (_trDraftItems || []).find(r => String(r.TestID) === String(testId))
-              || TI.find(r => String(r.TestID) === String(testId));
-  if (!parent) { toast('Test case not found', 'error'); return; }
-
-  closeModal();
-
-  // Snapshot existing child IDs so we can identify newly created rows for draft mode.
-  const existingChildIds = new Set(
-    TI.filter(r => String(r.ParentTestId) === String(testId)).map(r => String(r.TestID))
-  );
-
-  let linked = 0, failed = 0;
-  for (const id of ids) {
-    const asset = ASSETS.find(a => a.id === id);
-    if (!asset) { failed++; continue; }
-    try {
-      await _assetLinkToParent(asset, parent);
-      linked++;
-    } catch (e) {
-      console.warn(`[link] ${asset.name}:`, e.message);
-      failed++;
-    }
-  }
-
-  // Push newly created child rows into the draft list so they show immediately in edit mode.
-  if (_trDraftItems) {
-    TI.filter(r => String(r.ParentTestId) === String(testId) && !existingChildIds.has(String(r.TestID)))
-      .forEach(r => _trDraftItems.push({ ...r, _isNew: false, _dirty: false }));
-  }
-
-  // Auto-expand the parent so the new children are visible right away.
-  _trExpandedParents.add(String(testId));
-
-  if (failed === 0) toast(`Linked ${linked} asset${linked===1?'':'s'}`, 'success');
-  else toast(`Linked ${linked}, ${failed} failed`, 'warn');
-  _reRenderTR();
-  if (document.getElementById('admin-assets-content')) renderAdminAssets();
-}
-
-// ── CSV import ────────────────────────────────────────────────────────────────
-// Read a CSV file to text, detecting Excel's Windows-1252 encoding (breaks
-// UTF-8 for dashes etc.). Shared by the import and its dry-run preview.
-async function _assetReadCsvText(file) {
-  const buf  = await file.arrayBuffer();
-  const utf8 = new TextDecoder('utf-8', { fatal: false }).decode(buf);
-  return utf8.includes('�') ? new TextDecoder('windows-1252').decode(buf) : utf8;
-}
-
-// Parse CSV text into structured rows. Returns { ok, error } or { ok, rows }.
-// Header: Device Type | Device Name | Location | Subsystem | Test Case Name.
-function _assetParseCsvText(text) {
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) return { ok: false, error: 'CSV has no data rows' };
-  const header = lines[0].split(',').map(h => h.trim().toLowerCase());
-  const iType  = header.findIndex(h => h.includes('type'));
-  const iName  = header.findIndex(h => h.includes('device name') || (h.includes('name') && !h.includes('test')));
-  const iLoc   = header.findIndex(h => h.includes('location'));
-  const iSub   = header.findIndex(h => h.includes('subsystem'));
-  const iTc    = header.findIndex(h => h.includes('test case') || h.includes('test name'));
-  if (iName < 0 || iTc < 0) return { ok: false, error: 'CSV must have "Device Name" and "Test Case Name" columns' };
-
-  const rows = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-    const deviceName = cols[iName] || '';
-    if (!deviceName) continue;
-    const subsystemRaw = iSub >= 0 ? (cols[iSub] || '') : '';
-    rows.push({
-      deviceName,
-      deviceType:   iType >= 0 ? (cols[iType] || '') : '',
-      location:     iLoc  >= 0 ? (cols[iLoc]  || '') : '',
-      subsystemRaw,
-      subsystems:   subsystemRaw.split('|').map(s => s.trim()).filter(Boolean),
-      tcCodes:      (cols[iTc] || '').split('|').map(t => t.trim()).filter(Boolean),
-      prefix:       _assetParsePrefix(deviceName),
-    });
-  }
-  return { ok: true, rows };
-}
-
-// Read-only simulation of an import: how many devices are new vs existing, how
-// many links will resolve, and which test cases can't be matched. Writes nothing.
-function _assetAnalyzeRows(rows) {
-  const newDevices = new Set(), existingDevices = new Set();
-  let resolved = 0, dup = 0;
-  const unresolved = [];
-  rows.forEach(r => {
-    const existing = ASSETS.find(a => a.name === r.deviceName && (a.location||'') === (r.location||''));
-    if (existing) existingDevices.add(existing.id);
-    else newDevices.add(`${r.deviceName}|||${r.location}`);
-    r.tcCodes.forEach(code => {
-      let parent = null;
-      for (const sub of (r.subsystems.length ? r.subsystems : [''])) {
-        parent = _assetFindParentRow(code, r.prefix, sub, r.location);
-        if (parent) break;
-      }
-      if (!parent) {
-        unresolved.push(`${r.deviceName} → "${code}" (loc: ${r.location||r.prefix||'?'}, sub: ${r.subsystemRaw||'any'})`);
-        return;
-      }
-      if (existing && ASSET_LINKS.some(l => l.asset_id === existing.id && String(l.parent_test_id) === String(parent.TestID))) {
-        dup++; return;
-      }
-      resolved++;
-    });
-  });
-  return {
-    totalRows: rows.length,
-    newDeviceCount: newDevices.size,
-    existingDeviceCount: existingDevices.size,
-    resolved, dup, unresolved,
-  };
-}
-
-// Dry-run: parse + analyze the chosen file and show a preview before committing.
-async function _assetPreviewCSV(file) {
-  if (!file) return;
-  let text;
-  try { text = await _assetReadCsvText(file); }
-  catch(e) { cxAlert('Could not read file: ' + e.message); return; }
-  const parsed = _assetParseCsvText(text);
-  if (!parsed.ok) { cxAlert('Import error: ' + parsed.error); return; }
-  if (!parsed.rows.length) { cxAlert('CSV has no data rows.'); return; }
-
-  const a = _assetAnalyzeRows(parsed.rows);
-  _assetPendingImportFile = file;
-
-  const card = (val, label, color) => `
-    <div style="flex:1;min-width:110px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 16px;">
-      <div style="font-size:22px;font-weight:700;color:${color};">${val}</div>
-      <div style="font-size:12px;color:var(--text-muted);">${label}</div>
-    </div>`;
-
-  modal({
-    title: 'Import Preview',
-    sub: escapeHtml(file.name),
-    body: `
-      <div style="padding:0 24px 8px;">
-        <p style="font-size:13px;color:var(--text-muted);margin:0 0 14px;">
-          Review before committing. Nothing has been written yet.
-        </p>
-        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
-          ${card(a.totalRows, 'Data rows', 'var(--text)')}
-          ${card(a.newDeviceCount, 'New devices', 'var(--good)')}
-          ${card(a.existingDeviceCount, 'Existing devices', 'var(--accent-blue)')}
-          ${card(a.resolved, 'Links to create', 'var(--good)')}
-          ${a.dup ? card(a.dup, 'Already linked', 'var(--text-muted)') : ''}
-          ${a.unresolved.length ? card(a.unresolved.length, 'Unresolved', 'var(--bad)') : ''}
-        </div>
-        ${a.unresolved.length ? `
-          <div style="font-size:12px;font-weight:700;color:var(--bad);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">
-            Unresolved test cases (${a.unresolved.length}) — check codes &amp; location prefix
-          </div>
-          <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:8px 12px;background:var(--surface);">
-            ${a.unresolved.map(u => `<div style="font-size:12px;color:var(--text-muted);padding:2px 0;">• ${escapeHtml(u)}</div>`).join('')}
-          </div>` : `<p style="font-size:13px;color:var(--good);margin:0;">${icon('check')} All test-case links resolved.</p>`}
-      </div>`,
-    footer: `
-      <button class="form-secondary" data-action="_assetCancelImport">Cancel</button>
-      <button class="admin-action-btn" data-action="_assetConfirmImport" ${a.resolved === 0 ? 'disabled' : ''}>
-        Import ${a.resolved} link${a.resolved !== 1 ? 's' : ''}
-      </button>`,
-    size: 'large',
-  });
-}
-
-function _assetCancelImport() {
-  _assetPendingImportFile = null;
-  closeModal();
-}
-
-function _assetConfirmImport() {
-  const file = _assetPendingImportFile;
-  _assetPendingImportFile = null;
-  closeModal();
-  if (file) _assetHandleFile(file);
-}
-
-async function _assetImportCSV(file, onProgress) {
-  const text   = await _assetReadCsvText(file);
-  const parsed = _assetParseCsvText(text);
-  if (!parsed.ok) { toast(parsed.error, 'error'); return; }
-  const rows = parsed.rows;
-  if (!rows.length) { toast('CSV has no data rows', 'error'); return; }
-
-  // Create import batch
-  const [batch] = await _dbInsert('asset_import_batches', [{
-    imported_by: currentRoleUser?.name || 'admin',
-    filename: file.name,
-    asset_count: rows.length,
-  }]);
-
-  let linkedCount = 0, skippedTc = [], skippedDup = 0;
-  const affectedParents = new Set();
-
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
-    if (onProgress) onProgress(i + 1, rows.length, `Processing: ${r.deviceName}`);
-
-    // Upsert asset by (name, location) — subsystem is intentionally omitted from the unique
-    // key so one physical device can link to test cases across multiple subsystems.
-    let [assetRow] = await _dbUpsert('assets', [{
-      device_type:     r.deviceType || null,
-      name:            r.deviceName,
-      location_prefix: r.prefix     || null,
-      location:        r.location   || null,
-      subsystem:       null,        // cleared — subsystem lives on the linked test cases now
-      import_batch_id: batch.id,
-    }], 'name,location');
-    if (!assetRow) {
-      // Fallback: look up existing by name + location
-      const found = ASSETS.find(a => a.name === r.deviceName && (a.location||'') === (r.location||''));
-      if (found) assetRow = found; else continue;
-    }
-    // Sync local ASSETS array
-    const aIdx = ASSETS.findIndex(a => a.id === assetRow.id);
-    if (aIdx >= 0) ASSETS[aIdx] = assetRow; else ASSETS.push(assetRow);
-
-    // Link each test case name (pipe-separated), try each subsystem
-    for (const code of r.tcCodes) {
-      let parentRow = null;
-      for (const sub of (r.subsystems.length ? r.subsystems : [''])) {
-        parentRow = _assetFindParentRow(code, r.prefix, sub, r.location);
-        if (parentRow) break;
-      }
-      if (!parentRow) { skippedTc.push(`${r.deviceName} → "${code}" (loc: ${r.location||r.prefix||'?'}, sub: ${r.subsystemRaw||'any'})`); continue; }
-      try {
-        await _assetLinkToParent(assetRow, parentRow);
-        affectedParents.add(String(parentRow.TestID));
-        linkedCount++;
-      } catch(e) {
-        if (String(e.message).includes('duplicate') || String(e.message).includes('409')) skippedDup++;
-        else skippedTc.push(`${r.deviceName} → ${code} (${e.message})`);
-      }
-    }
-  }
-
-  await loadAssetData();
-  renderAdminAssets();
-  _reRenderTR();
-
-  let msg = `Import complete: ${linkedCount} link(s) created.`;
-  if (skippedDup) msg += ` ${skippedDup} already linked (skipped).`;
-  if (skippedTc.length) msg += `\n\nUnresolved test cases (check codes & location prefix):\n• ${skippedTc.slice(0, 10).join('\n• ')}`;
-  cxAlert(msg);
-}
-
-// ── Manually add a generic child asset from the test register ─────────────────
-function _trAddGenericChild(testId) {
-  const parentRow = TI.find(r => String(r.TestID) === String(testId));
-  if (!parentRow) return;
-  modal({
-    title: '＋ Add Generic Asset',
-    sub: parentRow.TestName || testId,
-    body: `
-      <div class="form-grid">
-        <div class="form-field form-field-full">
-          <label>Asset Name <span style="color:var(--bad)">*</span></label>
-          <input id="gca-name" class="form-input" placeholder="e.g. MLK A" autofocus>
-        </div>
-        <div class="form-field form-field-full">
-          <label>Device Type <span style="font-weight:400;color:var(--gray-500);">(optional)</span></label>
-          <input id="gca-type" class="form-input" placeholder="e.g. Switch, AP, Relay…">
-        </div>
-      </div>`,
-    footer: `
-      <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="_trSaveGenericChild('${escapeHtml(String(testId))}')">Add Asset</button>`,
-  });
-}
-
-async function _trSaveGenericChild(testId) {
-  const assetName = (document.getElementById('gca-name')?.value || '').trim();
-  const assetType = (document.getElementById('gca-type')?.value || '').trim();
-  if (!assetName) { toast('Asset name is required', 'error'); return; }
-
-  const parentRow = TI.find(r => String(r.TestID) === String(testId));
-  if (!parentRow) { toast('Test case not found', 'error'); return; }
-
-  closeModal();
-  try {
-    let [assetRow] = await _dbUpsert('assets', [{
-      name:            assetName,
-      device_type:     assetType  || null,
-      location:        parentRow.Location  || null,
-      subsystem:       parentRow.Subsystem || null,
-      location_prefix: null,
-      import_batch_id: null,
-    }], 'name,location,subsystem');
-    if (!assetRow) {
-      assetRow = ASSETS.find(a => a.name === assetName && (a.location||'') === (parentRow.Location||'') && (a.subsystem||'') === (parentRow.Subsystem||''));
-    }
-    if (!assetRow) { toast('Failed to create asset', 'error'); return; }
-    const aIdx = ASSETS.findIndex(a => a.id === assetRow.id);
-    if (aIdx >= 0) ASSETS[aIdx] = assetRow; else ASSETS.push(assetRow);
-
-    // Snapshot existing child IDs before linking so we can find the new row
-    const existingChildIds = new Set(
-      (_trDraftItems || []).filter(r => String(r.ParentTestId) === String(testId)).map(r => String(r.TestID))
-    );
-    await _assetLinkToParent(assetRow, parentRow);
-    // Optimistically push the new child row into _trDraftItems so it shows immediately in edit mode
-    if (_trDraftItems) {
-      TI.filter(r => String(r.ParentTestId) === String(testId) && !existingChildIds.has(String(r.TestID)))
-        .forEach(r => _trDraftItems.push({ ...r, _isNew: false, _dirty: false }));
-    }
-    toast(`Asset "${assetName}" linked`, 'success');
-    _reRenderTR();
-    if (document.getElementById('admin-assets-content')) renderAdminAssets();
-  } catch(e) {
-    toast('Error: ' + e.message, 'error');
-  }
-}
-
-// ── Test register: render parent row + child asset rows (collapsible) ────────
-function _trParentGroupRows(parent, children, statuses, legacyMap, isAdmin) {
-  const passCount  = children.filter(c => c.Status === 'Pass').length;
-  const totalCount = children.length;
-  const parentCur  = legacyMap[parent.Status] || parent.Status || 'Not Started';
-  const badgeCls   = {'Pass':'badge-passed','Fail':'badge-failed','Blocked':'badge-warn','Not Applicable':'badge-notstarted','In Progress':'badge-inprog','Future Test':'badge-futuretest'}[parentCur] || 'badge-notstarted';
-  const safeId     = String(parent.TestID).replace(/[^a-zA-Z0-9]/g, '-');
-  const ptid       = escapeHtml(String(parent.TestID));
-  const expanded   = _trExpandedParents.has(String(parent.TestID));
-  const chevron    = expanded ? '▼' : '▶';
-
-  const parentRowHtml = `
-    <tr style="background:#f0f1f3;cursor:pointer;" ${cxAct('_trToggleParent', String(ptid))}>
-      ${_trBulkMode ? `<td onclick="event.stopPropagation()"></td>` : ''}
-      ${_trEditMode && isAdmin ? `<td onclick="event.stopPropagation()"></td>` : ''}
-      <td style="font-size:11px;font-family:monospace;color:var(--gray-700);min-width:140px;">
-        <span style="font-size:12px;margin-right:6px;color:var(--gray-500);transition:transform .15s;">${chevron}</span>
-        ${_trEditMode && isAdmin
-          ? `<input class="form-input" style="font-size:11px;font-family:monospace;min-width:120px;" value="${escapeHtml(parent.TestCaseCode||'')}" onclick="event.stopPropagation()" ${cxOn('change', '_trDraftChange', String(ptid), 'TestCaseCode', '$cx.value')}>`
-          : escapeHtml(parent.TestCaseCode || parent.TestID || '—')}
-      </td>
-      <td>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <div style="flex:1;min-width:0;">${_trEditMode && isAdmin
-            ? `<input class="form-input" style="font-weight:600;font-size:13px;" value="${escapeHtml(parent.TestName||'')}" onclick="event.stopPropagation()" ${cxOn('change', '_trDraftChange', String(ptid), 'TestName', '$cx.value')}>`
-            : `<div style="font-weight:600;font-size:13px;">${escapeHtml(parent.TestName || '—')}</div>`}</div>
-          ${_trEditMode && isAdmin ? '' : `<span onclick="event.stopPropagation()">${_formsBadgeHTML(parent)}</span>`}
-        </div>
-        <div id="aps-${safeId}" style="font-size:11px;color:var(--gray-500);margin-top:2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <span>${icon('package')} ${totalCount} asset${totalCount !== 1 ? 's' : ''} &nbsp;·&nbsp;
-          <span style="color:var(--good);">${passCount} Pass</span>${totalCount - passCount > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--gray-500);">${totalCount - passCount} pending</span>` : ''}</span>
-          ${_trEditMode && isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trAddGenericChild('${ptid}')">＋ Asset</button>` : ''}
-          ${_trEditMode && isAdmin && !_trBulkMode ? `<button class="form-secondary" style="font-size:10px;padding:2px 6px;line-height:1.4;" onclick="event.stopPropagation();_trOpenAssetPickerModal('${ptid}')">${icon('link')} Link Assets</button>` : ''}
-        </div>
-      </td>
-      <td>
-        <span class="badge ${badgeCls}" id="apb-${safeId}">${escapeHtml(parentCur)}</span>
-        <span style="font-size:10px;color:var(--gray-400);">auto</span>
-      </td>
-      ${_dtRenderScopeCell(parent)}
-      <td style="font-size:11px;color:var(--gray-400);font-style:italic;">${expanded ? 'Click to collapse' : 'Click to expand'}</td>
-      ${_trEditMode && isAdmin ? `<td onclick="event.stopPropagation();"><button title="Delete" aria-label="Delete" class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" onclick="event.stopPropagation();_trDeleteParentCase('${ptid}')" data-tippy-content="Delete parent + all assets">${icon('trash')}</button></td>` : ''}
-    </tr>`;
-
-  // Per-parent search/status filter on children. Shown when >5 assets to keep
-  // the test register tight, but still available for any expanded parent.
-  const childFilter = _trChildFilterGet(parent.TestID);
-  const filteredChildren = expanded ? children.filter(c => {
-    if (childFilter.status && (legacyMap[c.Status] || c.Status || 'Not Started') !== childFilter.status) return false;
-    if (childFilter.search) {
-      const asset = ASSETS.find(a => a.id === c.AssetId);
-      const s = childFilter.search.toLowerCase();
-      const hit = (asset?.name || '').toLowerCase().includes(s)
-               || (asset?.device_type || '').toLowerCase().includes(s);
-      if (!hit) return false;
-    }
-    return true;
-  }) : [];
-
-  const filterToolbarHtml = (expanded && children.length > 5) ? `
-    <tr style="background:#fafbfc;border-top:1px solid var(--gray-100);">
-      <td colspan="100" style="padding:6px 12px 6px 32px;">
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;">
-          <input placeholder="Search assets…" value="${escapeHtml(childFilter.search)}"
-                 style="padding:4px 8px;border:1px solid var(--gray-300);border-radius:4px;font-size:12px;flex:1;min-width:160px;max-width:260px;"
-                 ${cxOn('input', '_trChildFilterSet', String(ptid), 'search', '$cx.value')}>
-          <select style="padding:4px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:12px;"
-                  ${cxOn('change', '_trChildFilterSet', String(ptid), 'status', '$cx.value')}>
-            <option value="">All statuses</option>
-            ${statuses.map(s => `<option value="${s}" ${childFilter.status===s?'selected':''}>${s}</option>`).join('')}
-          </select>
-          <span style="color:var(--gray-500);">${filteredChildren.length} of ${children.length}</span>
-          ${(childFilter.search || childFilter.status) ? `<button class="form-secondary" style="font-size:11px;padding:2px 8px;" ${cxAct('_trChildFilterClear', String(ptid))}>Clear</button>` : ''}
-        </div>
-      </td>
-    </tr>` : '';
-
-  // Child rows only rendered when expanded
-  const childRowsHtml = expanded ? filteredChildren.map(c => {
-    const asset      = ASSETS.find(a => a.id === c.AssetId);
-    const assetName  = asset ? asset.name : '—';
-    const deviceType = asset ? (asset.device_type || '') : '';
-    const cur        = legacyMap[c.Status] || c.Status || 'Not Started';
-    const showReason = cur === 'Fail' || cur === 'Blocked';
-    const reasonVal  = cur === 'Fail' ? (c.FailedReason || '') : (c.BlockedReason || '');
-    const ctid       = escapeHtml(String(c.TestID));
-    const domId      = encodeURIComponent(String(c.TestID));
-    const sc         = _assetStatusColor(cur);
-    return `
-      <tr style="background:#fafafa;border-left:3px solid ${sc}40;">
-        ${_trBulkMode ? `<td style="padding-left:20px;"><input type="checkbox" ${_trSelected.has(String(c.TestID)) ? 'checked' : ''} ${cxOn('change', '_trToggleSelect', String(ctid), '$cx.checked')}></td>` : ''}
-        ${_trEditMode && isAdmin ? `<td></td>` : ''}
-        <td style="padding-left:24px;font-size:11px;font-family:monospace;color:var(--gray-500);">
-          <div style="display:flex;align-items:center;gap:6px;">
-            <div style="flex:1;min-width:0;">
-              <span style="color:var(--gray-300);">└</span> ${escapeHtml(assetName)}
-              ${deviceType ? `<div style="font-size:10px;color:var(--gray-400);margin-top:1px;padding-left:14px;">${escapeHtml(deviceType)}</div>` : ''}
-            </div>
-            ${_trEditMode && isAdmin ? '' : `<span onclick="event.stopPropagation()">${_formsBadgeHTML(c)}</span>`}
-          </div>
-        </td>
-        <td>
-          ${c.CompletedBy ? `<div style="font-size:11px;color:var(--gray-500);">By ${escapeHtml(c.CompletedBy)}</div>` : ''}
-          ${_swSnapshotChipHTML(c)}
-        </td>
-        <td>
-          ${uiCan('test_register','edit') ? `
-            <select class="form-input mx-status-select" style="font-size:12px;padding:4px 6px;" ${cxOn('change', '_mxStatusChange', String(ctid), '$cx.value', '$cx.el')}>
-              ${statuses.map(s => `<option value="${s}" ${cur === s ? 'selected' : ''}>${s}</option>`).join('')}
-            </select>
-            <div id="mx-reason-${domId}" class="mx-reason-wrap" style="${showReason ? '' : 'display:none;'}">
-              <input type="text" id="mx-ri-${domId}" class="form-input mx-reason-input" style="font-size:11px;padding:3px 6px;margin-top:4px;"
-                placeholder="${cur === 'Fail' ? 'Failure reason...' : 'Blocked reason...'}"
-                value="${escapeHtml(reasonVal)}" ${cxOn('input', '_mxSaveReason', String(ctid), '$cx.value')}>
-            </div>
-          ` : `<span class="badge" style="background:${sc}20;color:${sc};border:1px solid ${sc}40;">${escapeHtml(cur)}</span>`}
-          <div id="punch-actions-${domId}" style="margin-top:6px;display:${cur==='Fail'?'flex':'none'};flex-direction:column;gap:4px;">
-            <div style="display:flex;gap:4px;">
-              <button ${cxAct('openPunchFromTestCase', String(ctid))} style="flex:1;font-size:11px;padding:4px 6px;background:var(--bad-light);border:1px solid var(--bad-border);color:var(--bad);border-radius:5px;cursor:pointer;font-weight:600;">${icon('clipboard')} Create Punch</button>
-              <button ${cxAct('openLinkPunchModal', String(ctid))} style="flex:1;font-size:11px;padding:4px 6px;background:var(--white);border:1px solid var(--gray-300);color:var(--gray-700);border-radius:5px;cursor:pointer;font-weight:600;">${icon('link')} Link Existing</button>
-            </div>
-            <div id="punch-chips-${domId}">${_punchLinksForTestHTML(String(c.TestID))}</div>
-          </div>
-        </td>
-        <td><span style="font-size:11px;color:var(--gray-500);">Uses parent scope</span></td>
-        <td>
-          <input type="text" class="form-input" style="font-size:12px;padding:4px 8px;" placeholder="Notes…"
-            value="${escapeHtml(c.Notes || '')}" onblur="_mxSaveNotes('${ctid}',this.value)">
-          <span id="regcell-${domId}">${_regressionCellHTML(c)}</span>
-        </td>
-        ${_trEditMode && isAdmin ? `<td><button title="Delete" aria-label="Delete" class="form-secondary" style="font-size:13px;padding:4px 7px;color:var(--bad);" ${cxAct('_trDeleteAssetRow', String(ctid))} data-tippy-content="Remove asset from test case">${icon('trash')}</button></td>` : ''}
-      </tr>`;
-  }).join('') : '';
-
-  return parentRowHtml + filterToolbarHtml + childRowsHtml;
-}
-
-// ── Admin Asset page state ────────────────────────────────────────────────────
-let _assetFilter = { search: '', type: '', prefix: '', sub: '', quick: '' };
-let _assetSort = { col: 'name', dir: 'asc' }; // sortable asset table column + direction
-let _assetManagePanelId = null; // asset id whose link-panel is open (inline)
-let _assetSelected = new Set(); // asset ids checked for bulk ops
-let _assetPendingImportFile = null; // file staged by the import dry-run preview
-
-// ── Shared filter/sort helpers (single source of truth for the asset table) ────
-function _assetLinkCount(a) {
-  return ASSET_LINKS.filter(l => l.asset_id === a.id).length;
-}
-function _assetProgress(a) {
-  const childRows = TI.filter(r => r.AssetId === a.id);
-  const total = childRows.length;
-  const pass  = childRows.filter(r => r.Status === 'Pass').length;
-  return {
-    total, pass,
-    pct: total ? Math.round((pass / total) * 100) : 0,
-    hasFailing: childRows.some(r => r.Status === 'Fail'),
-  };
-}
-function _assetMatchesFilter(a) {
-  const s = _assetFilter.search.toLowerCase();
-  if (s && !a.name.toLowerCase().includes(s) && !(a.device_type||'').toLowerCase().includes(s)) return false;
-  if (_assetFilter.type   && a.device_type     !== _assetFilter.type)   return false;
-  if (_assetFilter.prefix && a.location_prefix !== _assetFilter.prefix) return false;
-  if (_assetFilter.sub    && a.subsystem        !== _assetFilter.sub)    return false;
-  if (_assetFilter.quick === 'unlinked' && _assetLinkCount(a) > 0)    return false;
-  if (_assetFilter.quick === 'failing'  && !_assetProgress(a).hasFailing) return false;
-  return true;
-}
-function _assetSortValue(a, col) {
-  switch (col) {
-    case 'type':      return (a.device_type||'').toLowerCase();
-    case 'location':  return (a.location||a.location_prefix||'').toLowerCase();
-    case 'subsystem': return (a.subsystem||'').toLowerCase();
-    case 'linked':    return _assetLinkCount(a);
-    case 'progress':  return _assetProgress(a).pct;
-    case 'name':
-    default:          return (a.name||'').toLowerCase();
-  }
-}
-// Filter + sort in one place — used by the table render and Select-all so the
-// two can never drift out of sync.
-function _assetFiltered() {
-  const out = ASSETS.filter(_assetMatchesFilter);
-  const { col, dir } = _assetSort;
-  const mul = dir === 'desc' ? -1 : 1;
-  out.sort((x, y) => {
-    const vx = _assetSortValue(x, col), vy = _assetSortValue(y, col);
-    if (vx < vy) return -1 * mul;
-    if (vx > vy) return  1 * mul;
-    return (x.name||'').localeCompare(y.name||''); // stable tiebreak
-  });
-  return out;
-}
-function _assetSetSort(col) {
-  if (_assetSort.col === col) _assetSort.dir = _assetSort.dir === 'asc' ? 'desc' : 'asc';
-  else { _assetSort.col = col; _assetSort.dir = 'asc'; }
-  renderAdminAssets();
-}
-// Sortable header row for the asset table (mirrors _colHeaders but clickable)
-function _assetColHeaders() {
-  const vis = _colGetVisible('assets');
-  const reg = _colRegistry['assets'];
-  if (!reg) return '';
-  return vis.map(c => {
-    const def   = reg.defs.find(d => d.id === c.id);
-    const label = def ? def.label : c.id;
-    const on    = _assetSort.col === c.id;
-    const arrow = on ? (_assetSort.dir === 'asc' ? ' ↑' : ' ↓') : '';
-    return `<th style="cursor:pointer;user-select:none;white-space:nowrap;" ${cxAct('_assetSetSort', String(c.id))} title="Sort by ${escapeHtml(label)}">${escapeHtml(label)}<span style="color:var(--primary);font-weight:700;">${arrow}</span></th>`;
-  }).join('');
-}
-
-function renderAdminAssets() {
-  const root = document.getElementById('admin-assets-content');
-  if (!root) return;
-  _htmlPreserveFocus(root, _assetPageHTML());
-}
-
-function _assetDownloadTemplate() {
-  const headers = 'Device Type,Device Name,Location,Subsystem,Test Case Name';
-  const example = [
-    'ATC Cabinet,W40-AC01,W40,DCS,DCS Functional Bit Verification Test',
-    'ATC Cabinet,W40-AC01,W40,PS&TP,PS&TP Initialization Test',
-    'Speed Sensor,W40-SS02,W40,ATS Hardware,Speed Sensor Calibration Test',
-    '# Pipe-separate multiple test cases: name,loc,sub,"TC1 | TC2 | TC3"',
-  ].join('\n');
-  const blob = new Blob([headers + '\n' + example], { type: 'text/csv' });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-  a.download = 'asset_import_template.csv'; a.click();
-}
-
-function _assetExportCSV() {
-  const f = v => `"${String(v||'').replace(/"/g,'""')}"`;
-  const header = 'Device Type,Device Name,Location,Subsystem,Test Case Name,Test Case Code,Activity';
-  const rows = [];
-  ASSETS.forEach(a => {
-    const links = ASSET_LINKS.filter(l => l.asset_id === a.id);
-    if (!links.length) {
-      rows.push([a.device_type||'', a.name, a.location||a.location_prefix||'', a.subsystem||'', '', '', ''].map(f).join(','));
-    } else {
-      links.forEach(l => {
-        const parent = TI.find(r => String(r.TestID) === String(l.parent_test_id));
-        rows.push([
-          a.device_type || '',
-          a.name,
-          parent?.Location || a.location || a.location_prefix || '',
-          parent?.Subsystem || a.subsystem || '',
-          parent?.TestName || '',
-          parent?.TestCaseCode || '',
-          parent?.Activity || '',
-        ].map(f).join(','));
-      });
-    }
-  });
-  const blob = new Blob([header + '\n' + rows.join('\n')], { type: 'text/csv' });
-  const el = document.createElement('a');
-  el.href = URL.createObjectURL(blob);
-  el.download = `asset_export_${new Date().toISOString().slice(0,10)}.csv`;
-  el.click();
-}
-
-function _assetPageHTML() {
-  const isAdmin = currentRoleUser?.role === 'admin';
-  if (!isAdmin) return `<div class="docs-empty"><h3>Admin access required</h3></div>`;
-
-  // Full cross-cascade: each dropdown offers only values present in the assets
-  // matching the other two active filters.
-  const _assetMatchExcept = (a, except) =>
-    (except === 'type'   || !_assetFilter.type   || a.device_type     === _assetFilter.type)   &&
-    (except === 'prefix' || !_assetFilter.prefix || a.location_prefix === _assetFilter.prefix) &&
-    (except === 'sub'    || !_assetFilter.sub    || a.subsystem       === _assetFilter.sub);
-  const types    = [...new Set(ASSETS.filter(a => _assetMatchExcept(a, 'type')).map(a => a.device_type).filter(Boolean))].sort();
-  const prefixes = [...new Set(ASSETS.filter(a => _assetMatchExcept(a, 'prefix')).map(a => a.location_prefix).filter(Boolean))].sort();
-  const subs     = [...new Set(ASSETS.filter(a => _assetMatchExcept(a, 'sub')).map(a => a.subsystem).filter(Boolean))].sort();
-  if (_assetFilter.type && !types.includes(_assetFilter.type)) _assetFilter.type = '';
-  if (_assetFilter.prefix && !prefixes.includes(_assetFilter.prefix)) _assetFilter.prefix = '';
-  if (_assetFilter.sub && !subs.includes(_assetFilter.sub)) _assetFilter.sub = '';
-  const allSubs  = [...new Set(TI.map(r => r.Subsystem).filter(Boolean))].sort();
-  const allLocs  = [...new Set(TI.map(r => r.Location).filter(Boolean))].sort();
-
-  const filtered = _assetFiltered();
-  const assetHasFilters = _assetFilter.search || _assetFilter.type || _assetFilter.prefix || _assetFilter.sub || _assetFilter.quick;
-
-  // Quick-filter chip counts (computed against the full asset list)
-  const unlinkedCount = ASSETS.filter(a => _assetLinkCount(a) === 0).length;
-  const failingCount  = ASSETS.filter(a => _assetProgress(a).hasFailing).length;
-  const _assetChip = (v, label, count) => {
-    const on = _assetFilter.quick === v;
-    return `<button ${cxAct('_assetSetFilter', 'quick', String(v))}
-      style="font-size:12px;padding:5px 12px;border-radius:14px;cursor:pointer;font-weight:${on?'600':'500'};
-             border:1px solid ${on?'var(--primary)':'var(--border)'};
-             background:${on?'var(--primary)':'var(--surface)'};
-             color:${on?'var(--white)':'var(--text-muted)'};">${label}${count!=null?` (${count})`:''}</button>`;
-  };
-
-  return `
-    <div style="display:flex;gap:20px;margin-bottom:24px;flex-wrap:wrap;align-items:flex-start;">
-      <!-- Import Card -->
-      <div class="admin-section" style="flex:1;min-width:320px;">
-        <div class="admin-section-header"><h3 class="admin-section-title">${icon('inbox')} Import Assets (CSV)</h3></div>
-        <div style="padding:16px;">
-          <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px;">
-            Columns: <code>Device Type, Device Name, Location, Subsystem, Test Case Name</code><br>
-            One row per link — same device can appear on multiple rows with different Subsystems.<br>
-            Multiple test cases in one row: separate with <code>|</code> in the Test Case Name cell.
-          </p>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <input type="file" id="asset-csv-input" accept=".csv" style="display:none;" onchange="_assetPreviewCSV(this.files[0]); this.value=''">
-            ${uiCan('assets','import') ? `<button class="admin-action-btn" onclick="document.getElementById('asset-csv-input').click()">${icon('folder')} Choose CSV File</button>` : ''}
-            <button class="form-secondary" data-action="_assetDownloadTemplate">${icon('download')} Template</button>
-            <button class="form-secondary" data-action="_assetExportCSV" title="Export all assets and their linked test cases">${icon('upload')} Export CSV</button>
-          </div>
-          <div id="asset-import-progress"></div>
-          ${ASSET_BATCHES.length ? `
-            <div style="margin-top:12px;font-size:12px;color:var(--gray-500);">
-              Last import: <strong>${escapeHtml(ASSET_BATCHES[0].filename||'—')}</strong> by ${escapeHtml(ASSET_BATCHES[0].imported_by||'—')}
-              on ${_fmtDate(ASSET_BATCHES[0].imported_at)} (${ASSET_BATCHES[0].asset_count} assets)
-            </div>` : ''}
-        </div>
-      </div>
-
-      <!-- Add Single Asset Card -->
-      <div class="admin-section" style="flex:1;min-width:280px;">
-        <div class="admin-section-header"><h3 class="admin-section-title">${icon('plus')} Add Asset Manually</h3></div>
-        <div style="padding:16px;display:flex;flex-direction:column;gap:8px;">
-          <input id="asset-add-type" class="form-input" placeholder="Device Type (e.g. ATC Cabinet)">
-          <input id="asset-add-name" class="form-input" placeholder="Device Name (e.g. W40-AC01)" ${cxOn('input', '_assetPreviewPrefix')}>
-          <select id="asset-add-loc" class="form-input">
-            <option value="">Location (optional)</option>
-            ${[...new Set(TI.map(r=>r.Location).filter(Boolean))].sort().map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('')}
-          </select>
-          <select id="asset-add-sub" class="form-input">
-            <option value="">Subsystem (optional)</option>
-            ${allSubs.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
-          </select>
-          <div id="asset-add-prefix-preview" style="font-size:12px;color:var(--gray-500);"></div>
-          ${uiCan('assets','add') ? `<button class="admin-action-btn" data-action="_assetAddManual">Add Asset</button>` : ''}
-        </div>
-      </div>
-    </div>
-
-    <!-- Summary Stats -->
-    <div style="display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap;">
-      ${[
-        { label:'Total Assets',    val: ASSETS.length },
-        { label:'Linked to Tests', val: [...new Set(ASSET_LINKS.map(l => l.asset_id))].length },
-        { label:'Total Links',     val: ASSET_LINKS.length },
-        { label:'Import Batches',  val: ASSET_BATCHES.length },
-      ].map(s => `
-        <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:8px;padding:14px 20px;min-width:130px;">
-          <div style="font-size:22px;font-weight:700;color:var(--primary);">${s.val}</div>
-          <div style="font-size:12px;color:var(--gray-500);">${s.label}</div>
-        </div>`).join('')}
-    </div>
-
-    <!-- Filter Bar -->
-    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
-      <input id="asset-search-input" class="form-input" style="max-width:220px;" placeholder="Search name or type…"
-        value="${escapeHtml(_assetFilter.search)}" ${cxOn('input', '_assetSetFilter', 'search', '$cx.value')}>
-      <select class="form-input" style="max-width:160px;" ${cxOn('change', '_assetSetFilter', 'type', '$cx.value')}>
-        <option value="">All Types</option>
-        ${types.map(t => `<option value="${escapeHtml(t)}" ${_assetFilter.type===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}
-      </select>
-      <select class="form-input" style="max-width:140px;" ${cxOn('change', '_assetSetFilter', 'prefix', '$cx.value')}>
-        <option value="">All Locations</option>
-        ${prefixes.map(p => `<option value="${escapeHtml(p)}" ${_assetFilter.prefix===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
-      </select>
-      <select class="form-input" style="max-width:220px;" ${cxOn('change', '_assetSetFilter', 'sub', '$cx.value')}>
-        <option value="">All Subsystems</option>
-        ${subs.map(s => `<option value="${escapeHtml(s)}" ${_assetFilter.sub===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
-      </select>
-      ${assetHasFilters ? `<button class="filter-clear" data-action="_assetClearFilters">Reset</button>` : ''}
-      <span style="font-size:13px;color:var(--gray-500);">${filtered.length} asset${filtered.length!==1?'s':''}</span>
-    </div>
-
-    <!-- Quick-filter chips -->
-    <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
-      ${_assetChip('', 'All', ASSETS.length)}
-      ${_assetChip('unlinked', 'Unlinked', unlinkedCount)}
-      ${_assetChip('failing', 'Has failing tests', failingCount)}
-    </div>
-
-    <!-- Bulk action bar -->
-    ${_assetSelected.size > 0 ? `
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--slate-800);color:var(--white);padding:10px 18px;border-radius:8px;margin-bottom:12px;">
-        <span style="font-size:13px;font-weight:600;">${_assetSelected.size} asset${_assetSelected.size!==1?'s':''} selected</span>
-        <span style="height:24px;border-left:1px solid var(--slate-600);align-self:center;"></span>
-        <span style="font-size:12px;color:var(--slate-300);white-space:nowrap;">Set Device Type:</span>
-        <input id="am-bulk-type" list="am-bulk-type-list" class="form-input"
-          placeholder="Type or choose…"
-          style="font-size:12px;max-width:190px;background:var(--slate-700);color:var(--white);border-color:var(--slate-600);caret-color:var(--white);">
-        <datalist id="am-bulk-type-list">
-          ${types.map(t => `<option value="${escapeHtml(t)}"></option>`).join('')}
-        </datalist>
-        <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" ${cxAct('_assetBulkEditField', 'device_type', 'am-bulk-type')}>Apply</button>
-        <span style="height:24px;border-left:1px solid var(--slate-600);align-self:center;"></span>
-        <span style="font-size:12px;color:var(--slate-300);white-space:nowrap;">Set Location:</span>
-        <select id="am-bulk-loc" class="form-input" style="font-size:12px;max-width:160px;background:var(--slate-700);color:var(--white);border-color:var(--slate-600);">
-          <option value="">— choose —</option>
-          ${allLocs.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('')}
-        </select>
-        <button class="admin-action-btn" style="font-size:12px;padding:5px 12px;" ${cxAct('_assetBulkEditField', 'location', 'am-bulk-loc')}>Apply</button>
-        <span style="height:24px;border-left:1px solid var(--slate-600);align-self:center;"></span>
-        ${uiCan('assets','bulk_delete') ? `<button class="admin-action-btn" style="background:var(--bad);font-size:12px;" data-action="_assetBulkDelete">${icon('trash')} Delete</button>` : ''}
-        <button class="btn-ghost-dark" style="font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;" data-action="_assetClearSelection">Clear</button>
-      </div>` : ''}
-
-    <!-- Asset Table -->
-    <div class="admin-section">
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr>
-            <th style="width:36px;"><input type="checkbox" title="Select all" ${cxOn('change', '_assetSelectAll', '$cx.checked')}></th>
-            ${_assetColHeaders()}
-            <th style="width:160px;">Actions
-              <button aria-label="Configure columns" onclick="_colOpenEditor('assets',renderAdminAssets)" title="Configure columns"
-                style="font-size:11px;padding:2px 6px;margin-left:4px;border:1px solid var(--gray-300);border-radius:4px;background:var(--gray-50);color:var(--gray-600);cursor:pointer;">${icon('settings')}</button>
-            </th>
-          </tr></thead>
-          <tbody>
-            ${filtered.length ? filtered.map(a => _assetRowHTML(a)).join('') : `
-              <tr><td colspan="${_colGetVisible('assets').length + 2}" style="text-align:center;color:var(--gray-400);padding:32px;">
-                No assets found. Import a CSV or add one manually.
-              </td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-}
-
-function _assetRowHTML(a) {
-  const links      = ASSET_LINKS.filter(l => l.asset_id === a.id);
-  const childRows  = TI.filter(r => r.AssetId === a.id);
-  const passCount  = childRows.filter(r => r.Status === 'Pass').length;
-  const total      = childRows.length;
-  const pct        = total > 0 ? Math.round((passCount / total) * 100) : 0;
-  const isOpen     = _assetManagePanelId === a.id;
-  const isChecked  = _assetSelected.has(a.id);
-
-  // Derive subsystems from linked test cases (may span multiple)
-  const linkedSubs = [...new Set(links.map(l => {
-    const parent = TI.find(r => String(r.TestID) === String(l.parent_test_id));
-    return parent?.Subsystem || '';
-  }).filter(Boolean))];
-  const subDisplay = linkedSubs.length > 1
-    ? `<span title="${escapeHtml(linkedSubs.join(', '))}" style="cursor:help;">${linkedSubs.length} subsystems ${icon('info')}</span>`
-    : escapeHtml(linkedSubs[0] || a.subsystem || '—');
-
-  const ctx = { a, links, subDisplay, passCount, total, pct };
-  const mainRow = `
-    <tr style="${isOpen ? 'background:var(--info-light);' : ''}">
-      <td><input type="checkbox" ${isChecked ? 'checked' : ''} ${cxOn('change', '_assetToggleSelect', String(a.id), '$cx.checked')}></td>
-      ${_colCells('assets', ctx)}
-      <td>
-        <button class="form-secondary tr-mini-btn${isOpen?' admin-action-btn':''}" ${cxAct('_assetOpenManageLinks', String(a.id))}>${isOpen? icon('link')+' Close' : icon('link')+' Links'}</button>
-        <button class="form-secondary tr-mini-btn" ${cxAct('_assetOpenEdit', String(a.id))}>${icon('edit')}️</button>
-        <button title="Delete" aria-label="Delete" class="form-secondary tr-mini-btn" style="color:var(--bad);" ${cxAct('_assetDelete', String(a.id))}>${icon('trash')}</button>
-      </td>
-    </tr>`;
-
-  // Inline expanded links panel — sits immediately below the asset row
-  const colSpan = _colGetVisible('assets').length + 2;
-  const panelRow = isOpen ? `
-    <tr>
-      <td colspan="${colSpan}" style="padding:0;border-bottom:2px solid var(--primary);">
-        <div style="padding:4px 0 12px 0;">${_assetManagePanelHTML(a.id)}</div>
-      </td>
-    </tr>` : '';
-
-  return mainRow + panelRow;
-}
-
-function _assetManagePanelHTML(assetId) {
-  const asset = ASSETS.find(a => a.id === assetId);
-  if (!asset) return '';
-  const links  = ASSET_LINKS.filter(l => l.asset_id === assetId);
-  const linked = links.map(l => {
-    const parent = TI.find(r => String(r.TestID) === String(l.parent_test_id));
-    const child  = TI.find(r => r.AssetId === assetId && String(r.ParentTestId) === String(l.parent_test_id));
-    return { link: l, parent, child };
-  }).filter(x => x.parent);
-
-  // All non-child items not already linked to this asset — NO subsystem restriction
-  const alreadyLinked = new Set(links.map(l => String(l.parent_test_id)));
-  const candidates = TI.filter(r => !r.ParentTestId && !alreadyLinked.has(String(r.TestID)));
-
-  // Unique subsystems and activities across all candidates (for optional filter dropdown)
-  const allCandidateSubs = [...new Set(candidates.map(r => r.Subsystem).filter(Boolean))].sort();
-  const allActivityOptions = [...new Set(candidates.map(r => r.Activity).filter(Boolean))].sort();
-
-  // Unique subsystems already linked (to show in the linked table header)
-  const linkedSubs = [...new Set(linked.map(x => x.parent?.Subsystem).filter(Boolean))];
-
-  const sc = s => _assetStatusColor(s);
-
-  return `
-    <div style="background:var(--info-light);border-top:1px solid var(--info-border);padding-bottom:4px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px 0;">
-        <div style="font-size:13px;font-weight:700;color:var(--primary);">${icon('link')} ${escapeHtml(asset.name)}
-          ${asset.location ? `<span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:8px;">${escapeHtml(asset.location)}</span>` : ''}
-          ${linkedSubs.length ? `<span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:4px;">· ${linkedSubs.map(s=>escapeHtml(s)).join(', ')}</span>` : ''}
-        </div>
-        <button class="form-secondary" style="font-size:11px;" data-action="_assetCloseManageLinks">Close ${icon('x')}</button>
-      </div>
-      <div style="padding:16px;">
-
-        <!-- Currently linked test cases (all subsystems) -->
-        ${linked.length ? `
-          <div style="margin-bottom:20px;">
-            <div style="font-size:12px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Currently Linked (${linked.length})</div>
-            <table class="data-table">
-              <thead><tr><th>Test Case</th><th>Subsystem</th><th>Activity</th><th>Status</th><th>Weight</th><th></th></tr></thead>
-              <tbody>
-                ${linked.map(({link, parent, child}) => `
-                  <tr>
-                    <td>
-                      <div style="font-weight:600;font-size:13px;">${escapeHtml(parent.TestName||'—')}</div>
-                      <div style="font-size:11px;font-family:monospace;color:var(--gray-500);">${escapeHtml(parent.TestCaseCode||'')}</div>
-                    </td>
-                    <td style="font-size:12px;font-weight:600;color:var(--primary);">${escapeHtml(parent.Subsystem||'—')}</td>
-                    <td style="font-size:12px;">${escapeHtml(parent.Activity||'—')}<br>
-                      <span style="font-size:11px;color:var(--gray-500);">${escapeHtml(parent.Location||'')} · ${escapeHtml(parent.Phase||'')}</span></td>
-                    <td><span style="font-size:12px;font-weight:600;color:${sc(child?.Status||'Not Started')}">${escapeHtml(child?.Status||'Not Started')}</span></td>
-                    <td style="font-size:12px;">${child ? (parseFloat(child.Weight)||0).toFixed(3) : '—'}</td>
-                    <td><button class="form-secondary tr-mini-btn" style="color:var(--bad);"
-                      ${cxAct('_assetUnlinkConfirm', String(assetId), String(link.parent_test_id))}>Unlink</button></td>
-                  </tr>`).join('')}
-              </tbody>
-            </table>
-          </div>` : `<p style="color:var(--gray-400);font-size:13px;margin-bottom:16px;">No test cases linked yet.</p>`}
-
-        <!-- Add new link: optional Subsystem filter → Activity → Test Case -->
-        <div style="font-size:12px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Link to a Test Case</div>
-        ${candidates.length === 0 ? `
-          <p style="font-size:12px;color:var(--gray-400);">All available test cases are already linked.</p>` : `
-          <div style="display:flex;flex-direction:column;gap:10px;max-width:580px;">
-            <div>
-              <label class="form-label" style="font-size:12px;">Filter by Subsystem <span style="font-weight:400;">(optional)</span></label>
-              <select id="aml-sub-${assetId}" class="form-input" ${cxOn('change', '_assetPopulateActSelect', String(assetId))}>
-                <option value="">All Subsystems</option>
-                ${allCandidateSubs.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
-              </select>
-            </div>
-            <div>
-              <label class="form-label" style="font-size:12px;">1. Select Test Activity</label>
-              <select id="aml-act-${assetId}" class="form-input" ${cxOn('change', '_assetPopulateTcSelect', String(assetId))}>
-                <option value="">— Select Activity —</option>
-                ${allActivityOptions.map(act => `<option value="${escapeHtml(act)}">${escapeHtml(act)}</option>`).join('')}
-              </select>
-            </div>
-            <div>
-              <label class="form-label" style="font-size:12px;">2. Select Test Case</label>
-              <select id="aml-tc-${assetId}" class="form-input">
-                <option value="">— Select Activity first —</option>
-              </select>
-            </div>
-            <div>
-              <button class="admin-action-btn" ${cxAct('_assetLinkFromPanel', String(assetId))}>Link to Test Case</button>
-            </div>
-          </div>`}
-      </div>
-    </div>`;
-}
-
-// Repopulate the activity dropdown when the subsystem filter changes
-function _assetPopulateActSelect(assetId) {
-  const sub    = document.getElementById(`aml-sub-${assetId}`)?.value || '';
-  const actSel = document.getElementById(`aml-act-${assetId}`);
-  const tcSel  = document.getElementById(`aml-tc-${assetId}`);
-  if (!actSel) return;
-  const linked = new Set(ASSET_LINKS.filter(l => l.asset_id === assetId).map(l => String(l.parent_test_id)));
-  const candidates = TI.filter(r => !r.ParentTestId && !linked.has(String(r.TestID)) && (!sub || r.Subsystem === sub));
-  const acts = [...new Set(candidates.map(r => r.Activity).filter(Boolean))].sort();
-  actSel.innerHTML = `<option value="">— Select Activity —</option>` + acts.map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('');
-  if (tcSel) tcSel.innerHTML = `<option value="">— Select Activity first —</option>`;
-}
-
-function _assetPopulateTcSelect(assetId) {
-  const sub    = document.getElementById(`aml-sub-${assetId}`)?.value || '';
-  const act    = document.getElementById(`aml-act-${assetId}`)?.value;
-  const tcSel  = document.getElementById(`aml-tc-${assetId}`);
-  if (!tcSel) return;
-  const linked = new Set(ASSET_LINKS.filter(l => l.asset_id === assetId).map(l => String(l.parent_test_id)));
-  // No subsystem restriction — show all test cases for this activity (filter by chosen subsystem only)
-  const options = TI.filter(r =>
-    !r.ParentTestId &&
-    !linked.has(String(r.TestID)) &&
-    r.Activity === act &&
-    (!sub || r.Subsystem === sub)
-  );
-  tcSel.innerHTML = options.length
-    ? `<option value="">— Select Test Case —</option>` +
-      options.map(r => {
-        const label = [r.TestCaseCode, r.TestName].filter(Boolean).join(' · ') || String(r.TestID);
-        const suffix = `[${escapeHtml(r.Subsystem||'?')}]${r.Location ? ` (${escapeHtml(r.Location)})` : ''}`;
-        return `<option value="${escapeHtml(String(r.TestID))}">${escapeHtml(label)} ${suffix}</option>`;
-      }).join('')
-    : `<option value="">No unlinked test cases in this activity</option>`;
-}
-
-// ── Asset page actions ────────────────────────────────────────────────────────
-function _assetSetFilter(key, val) {
-  _assetFilter[key] = val;
-  renderAdminAssets();
-}
-function _assetClearFilters() {
-  _assetFilter = { search: '', type: '', prefix: '', sub: '', quick: '' };
-  renderAdminAssets();
-}
-
-function _assetPreviewPrefix() {
-  const name = document.getElementById('asset-add-name')?.value || '';
-  const prefix = _assetParsePrefix(name);
-  const el = document.getElementById('asset-add-prefix-preview');
-  if (el) el.textContent = prefix ? `Location prefix: ${prefix}` : '';
-}
-
-function _assetUpdateProgress(current, total, label) {
-  const bar = document.getElementById('asset-import-progress');
-  if (!bar) return;
-  if (!total) { bar.innerHTML = ''; return; }
-  const pct = Math.round((current / total) * 100);
-  bar.innerHTML = `
-    <div style="margin-top:12px;">
-      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--gray-600);margin-bottom:4px;">
-        <span style="max-width:75%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(label)}</span>
-        <span>${current} / ${total} (${pct}%)</span>
-      </div>
-      <div style="background:var(--gray-200);border-radius:4px;height:8px;overflow:hidden;">
-        <div style="width:${pct}%;height:100%;background:var(--primary);border-radius:4px;transition:width 0.15s;"></div>
-      </div>
-    </div>`;
-}
-
-async function _assetHandleFile(file) {
-  if (!file) return;
-  const btn = document.querySelector('#admin-assets-content .admin-action-btn');
-  if (btn) btn.disabled = true;
-  try {
-    await _assetImportCSV(file, _assetUpdateProgress);
-  } catch(e) {
-    cxAlert('Import failed: ' + e.message);
-  } finally {
-    if (btn) btn.disabled = false;
-    document.getElementById('asset-csv-input').value = '';
-    _assetUpdateProgress(0, 0, '');
-  }
-}
-
-async function _assetAddManual() {
-  if (typeof uiCan === 'function' && !uiCan('assets', 'add')) { toast('You do not have permission to add assets', 'error'); return; }
-  const deviceType = document.getElementById('asset-add-type')?.value.trim() || '';
-  const deviceName = document.getElementById('asset-add-name')?.value.trim() || '';
-  const location   = document.getElementById('asset-add-loc')?.value  || '';
-  const subsystem  = document.getElementById('asset-add-sub')?.value  || '';
-  if (!deviceName) { toast('Device Name is required', 'error'); return; }
-  const prefix = _assetParsePrefix(deviceName);
-  try {
-    const [row] = await _dbUpsert('assets', [{
-      device_type: deviceType || null, name: deviceName,
-      location_prefix: prefix || null, location: location || null,
-      subsystem: subsystem || null, import_batch_id: null,
-    }], 'name,location');
-    const aIdx = ASSETS.findIndex(a => a.name === deviceName && (a.location||'') === (location||''));
-    if (aIdx >= 0) ASSETS[aIdx] = row; else ASSETS.push(row);
-    toast(`Asset "${deviceName}" added`, 'success');
-    document.getElementById('asset-add-type').value = '';
-    document.getElementById('asset-add-name').value = '';
-    const locEl = document.getElementById('asset-add-loc'); if (locEl) locEl.value = '';
-    const subEl = document.getElementById('asset-add-sub'); if (subEl) subEl.value = '';
-    renderAdminAssets();
-  } catch(e) { toast('Add failed: ' + e.message, 'error'); }
-}
-
-function _assetOpenEdit(assetId) {
-  const a = ASSETS.find(x => x.id === assetId);
-  if (!a) return;
-  const allSubs = [...new Set(TI.map(r => r.Subsystem).filter(Boolean))].sort();
-  const allLocs = [...new Set(TI.map(r => r.Location).filter(Boolean))].sort();
-  modal({
-    title: `Edit Asset — ${escapeHtml(a.name)}`,
-    body: `
-      <div style="display:flex;flex-direction:column;gap:12px;">
-        <div><label class="form-label">Device Type</label>
-          <input id="ae-type" class="form-input" value="${escapeHtml(a.device_type||'')}"></div>
-        <div><label class="form-label">Device Name</label>
-          <input id="ae-name" class="form-input" value="${escapeHtml(a.name)}" ${cxOn('input', '_assetEditPreviewPrefix')}></div>
-        <div><label class="form-label">Location</label>
-          <select id="ae-loc" class="form-input">
-            <option value="">— None —</option>
-            ${allLocs.map(l => `<option value="${escapeHtml(l)}" ${a.location===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
-          </select></div>
-        <div><label class="form-label">Subsystem</label>
-          <select id="ae-sub" class="form-input">
-            <option value="">— None —</option>
-            ${allSubs.map(s => `<option value="${escapeHtml(s)}" ${a.subsystem===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
-          </select></div>
-        <div id="ae-prefix-preview" style="font-size:12px;color:var(--gray-500);">Location prefix: ${escapeHtml(a.location_prefix||'—')}</div>
-      </div>`,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
-             <button class="admin-action-btn" ${cxAct('_assetSaveEdit', String(assetId))}>Save</button>`,
-  });
-}
-
-function _assetEditPreviewPrefix() {
-  const name = document.getElementById('ae-name')?.value || '';
-  const el   = document.getElementById('ae-prefix-preview');
-  if (el) el.textContent = `Location prefix: ${_assetParsePrefix(name) || '—'}`;
-}
-
-async function _assetSaveEdit(assetId) {
-  const deviceType = document.getElementById('ae-type')?.value.trim() || '';
-  const deviceName = document.getElementById('ae-name')?.value.trim() || '';
-  const location   = document.getElementById('ae-loc')?.value  || '';
-  const subsystem  = document.getElementById('ae-sub')?.value  || '';
-  if (!deviceName) { toast('Device Name required', 'error'); return; }
-  const prefix = _assetParsePrefix(deviceName);
-  try {
-    await _dbUpdate('assets', { device_type: deviceType||null, name: deviceName, location_prefix: prefix||null, location: location||null, subsystem: subsystem||null }, { id: assetId });
-    const a = ASSETS.find(x => x.id === assetId);
-    if (a) { a.device_type = deviceType; a.name = deviceName; a.location_prefix = prefix; a.location = location; a.subsystem = subsystem; }
-    closeModal(); renderAdminAssets(); toast('Asset saved', 'success');
-  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
-}
-
-async function _assetDelete(assetId) {
-  const a = ASSETS.find(x => x.id === assetId);
-  if (!a) return;
-  const childRows = TI.filter(r => r.AssetId === assetId);
-  if (!await cxConfirm(`Delete "${a.name}" and its ${childRows.length} linked test instance(s)? This cannot be undone.`)) return;
-  // Remove all links and child rows
-  const links = ASSET_LINKS.filter(l => l.asset_id === assetId);
-  for (const l of links) {
-    try { await _assetUnlink(assetId, l.parent_test_id); } catch(e){ _logSwallowed('asset unlink (assetId)', e); }
-  }
-  // Delete asset
-  await _dbDelete('assets', { id: assetId });
-  ASSETS = ASSETS.filter(a => a.id !== assetId);
-  ASSET_LINKS = ASSET_LINKS.filter(l => l.asset_id !== assetId);
-  renderAdminAssets(); _reRenderTR(); toast(`"${a.name}" deleted`, 'success');
-}
-
-function _assetOpenManageLinks(assetId) {
-  _assetManagePanelId = _assetManagePanelId === assetId ? null : assetId;
-  renderAdminAssets();
-  if (_assetManagePanelId) {
-    setTimeout(() => document.querySelector('.admin-section:last-of-type')?.scrollIntoView({ behavior:'smooth', block:'start' }), 100);
-  }
-}
-
-function _assetCloseManageLinks() {
-  _assetManagePanelId = null;
-  renderAdminAssets();
-}
-
-function _assetToggleSelect(id, checked) {
-  if (checked) _assetSelected.add(id); else _assetSelected.delete(id);
-  renderAdminAssets();
-}
-
-function _assetSelectAll(checked) {
-  // Select/deselect all currently visible (filtered) assets
-  _assetFiltered().forEach(a => { if (checked) _assetSelected.add(a.id); else _assetSelected.delete(a.id); });
-  renderAdminAssets();
-}
-
-function _assetClearSelection() {
-  _assetSelected.clear();
-  renderAdminAssets();
-}
-
-async function _assetBulkDelete() {
-  if (typeof uiCan === 'function' && !uiCan('assets', 'bulk_delete')) { toast('You do not have permission to delete assets', 'error'); return; }
-  const ids = [..._assetSelected];
-  if (!ids.length) return;
-  const names = ids.map(id => ASSETS.find(a => a.id === id)?.name || id).join(', ');
-  const totalChildren = ids.reduce((n, id) => n + TI.filter(r => r.AssetId === id).length, 0);
-  if (!await cxConfirm(`Permanently delete ${ids.length} asset${ids.length!==1?'s':''}:\n${names}\n\nThis will also remove ${totalChildren} linked test instance${totalChildren!==1?'s':''}. This cannot be undone.`)) return;
-
-  for (const id of ids) {
-    const links = ASSET_LINKS.filter(l => l.asset_id === id);
-    for (const l of links) {
-      try { await _assetUnlink(id, l.parent_test_id); } catch(e){ _logSwallowed('asset unlink (id)', e); }
-    }
-    await _dbDelete('assets', { id });
-    ASSETS = ASSETS.filter(a => a.id !== id);
-    ASSET_LINKS = ASSET_LINKS.filter(l => l.asset_id !== id);
-  }
-
-  _assetSelected.clear();
-  renderAdminAssets();
-  _reRenderTR();
-  toast(`${ids.length} asset${ids.length!==1?'s':''} deleted`, 'success');
-}
-
-async function _assetBulkEditField(field, selectId) {
-  if (typeof uiCan === 'function' && !uiCan('assets', 'bulk_edit')) { toast('You do not have permission to bulk-edit assets', 'error'); return; }
-  const val = document.getElementById(selectId)?.value;
-  if (!val) { toast('Please choose a value first', 'error'); return; }
-  const ids = [..._assetSelected];
-  if (!ids.length) return;
-  const label = field === 'device_type' ? 'Device Type' : 'Location';
-  if (!await cxConfirm(`Set ${label} to "${val}" for ${ids.length} asset${ids.length!==1?'s':''}?`)) return;
-  try {
-    // Batch update via individual upserts (assets table has no bulk endpoint, keep it simple)
-    for (const id of ids) {
-      await _dbUpdate('assets', { [field]: val }, { id });
-      const a = ASSETS.find(x => x.id === id);
-      if (a) a[field] = val;
-    }
-    renderAdminAssets();
-    toast(`${label} updated for ${ids.length} asset${ids.length!==1?'s':''}`, 'success');
-  } catch(e) {
-    toast('Bulk update failed: ' + e.message, 'error');
-  }
-}
-
-async function _assetUnlinkConfirm(assetId, parentTestId) {
-  const child = TI.find(r => r.AssetId === assetId && String(r.ParentTestId) === String(parentTestId));
-  const hasResults = child && (child.Status !== 'Not Started');
-  if (!await cxConfirm(`Unlink this asset from the test case?${hasResults ? '\n\nWarning: this asset has a recorded result that will be removed.' : ''}`)) return;
-  try {
-    await _assetUnlink(assetId, parentTestId);
-    await loadAssetData();
-    renderAdminAssets(); _reRenderTR();
-    toast('Asset unlinked', 'success');
-  } catch(e) { toast('Unlink failed: ' + e.message, 'error'); }
-}
-
-async function _assetLinkFromPanel(assetId) {
-  const sel = document.getElementById(`aml-tc-${assetId}`)?.value;
-  if (!sel) { toast('Select an Activity then a Test Case first', 'error'); return; }
-  const asset     = ASSETS.find(a => a.id === assetId);
-  const parentRow = TI.find(r => String(r.TestID) === String(sel));
-  if (!asset || !parentRow) { toast('Asset or test case not found', 'error'); return; }
-  try {
-    await _assetLinkToParent(asset, parentRow);
-    await loadAssetData();
-    renderAdminAssets(); _reRenderTR();
-    toast('Linked ✓', 'success');
-  } catch(e) { toast('Link failed: ' + e.message, 'error'); }
-}
-
-
 
 // ==========================================================================
 // CONFIGURATION MANAGEMENT — field software/firmware, versioned by
@@ -16344,7 +14744,7 @@ async function regressionTestCase(testId) {
     test_report_id: r.TestReportID || null,
     is_parent:      r.IsParent || false,
     parent_test_id: r.ParentTestId || null,
-    asset_id:       r.AssetId || null,
+    child_label:    r.ParentTestId ? (r.ChildLabel || null) : null,
     regression_group_id: groupId,
     attempt_number: nextNum,
     is_latest_attempt: true,
@@ -16369,11 +14769,13 @@ async function regressionTestCase(testId) {
       Status:'Not Started', ActivityID:r.ActivityID, Weight:r.Weight??1,
       CompletedBy:null, CompletedDate:null, BlockedReason:null, FailedReason:null, Notes:null,
       TestReport:r.TestReport||null, TestReportID:r.TestReportID||null,
-      IsParent:r.IsParent||false, ParentTestId:r.ParentTestId||null, AssetId:r.AssetId||null,
+      IsParent:r.IsParent||false, ParentTestId:r.ParentTestId||null, ChildLabel:r.ChildLabel||'',
       SwSnapshot:null, SwSnapshotAt:null,
       RegressionGroupId:groupId, AttemptNumber:nextNum, IsLatestAttempt:true,
     };
     TI.push(newTI);
+    // A retested child test case is Not Started again — its parent re-derives.
+    if (r.ParentTestId) await _parentRollupCheck(r.ParentTestId).catch(e => _logSwallowed('regression: parent roll-up', e));
     logAudit('Regression Created', `${r.TestCaseCode || r.TestName}`, `Attempt #${nextNum} @ ${r.Location}`);
     toast(`Regression attempt #${nextNum} created`, 'success');
     _reRenderTR();
@@ -16406,6 +14808,7 @@ async function undoRegression(testId) {
     const idx = TI.findIndex(t => String(t.TestID) === String(latest.TestID));
     if (idx >= 0) TI.splice(idx, 1);
     prev.IsLatestAttempt = true;
+    if (r.ParentTestId) await _parentRollupCheck(r.ParentTestId).catch(e => _logSwallowed('undo regression: parent roll-up', e));
     logAudit('Regression Undone', `${r.TestCaseCode || r.TestName}`, `Restored attempt #${prev.AttemptNumber}`);
     toast(`Regression undone — attempt #${prev.AttemptNumber} restored`, 'success');
     _reRenderTR();
@@ -17109,23 +15512,6 @@ function _swPhaseChange() {
     locSel.innerHTML = '<option value="">— Phase level (no specific location) —</option>' +
       kids.map(l=>`<option>${escapeHtml(l.name)}</option>`).join('');
   }
-}
-
-function _swPopulateDevices(selectId) {
-  const sub = document.getElementById('sw-subsystem')?.value || '';
-  const sel = document.getElementById('sw-device');
-  if (!sel) return;
-  const pool = ASSETS.filter(a => !sub || (a.subsystem||'').toLowerCase() === sub.toLowerCase())
-    .sort((a,b) => (a.name||'').localeCompare(b.name||''));
-  sel.innerHTML = '<option value="">— General / non-asset component —</option>' +
-    pool.map(a => `<option value="${a.id}" ${a.id===selectId?'selected':''}>${escapeHtml(a.name)}${a.device_type?' ('+escapeHtml(a.device_type)+')':''}</option>`).join('');
-}
-
-function _swDeviceChange() {
-  const sel = document.getElementById('sw-device');
-  const a = ASSETS.find(x => x.id === sel?.value);
-  // (device_label is derived on save from the selected asset; nothing to do live)
-  return a;
 }
 
 async function saveSwConfig() {
@@ -21405,36 +19791,26 @@ async function _formsDelete(formId) {
 }
 
 // ── Scope-aware form ↔ test linking ──────────────────────────────────────
-// A link row is keyed by (form_id, test_id, asset_id). The asset_id column
-// is nullable:
-//   • asset_id = NULL  → "parent-scope": link applies to the parent test case
-//                        as a whole. For a parent test case with N child
-//                        assets, the single PDF covers all of them. Statuses
-//                        remain per-asset; only the form is shared.
-//   • asset_id = <uuid> → "per-asset": link applies only to that specific
-//                        child asset row. Each asset can carry its own form.
-// For a standalone (non-parent) test case, asset_id is always NULL and
-// behaves exactly like before the migration.
-async function _formsLinkToTest(formId, testId, assetId = null) {
-  const norm = assetId || null;
-  if (FORM_TEST_LINKS.find(l => l.form_id === formId && l.test_id === testId && (l.asset_id || null) === norm)) return;
+// A link row is (form_id, test_id). On a test case with child test cases the
+// test_id carries the scope:
+//   • the parent's test_id     → "covers all child test cases": one PDF for
+//                                the whole test case; each child still keeps
+//                                its own status.
+//   • a child's _childKey()    → that child test case only. The key is the
+//                                child's ORIGINAL attempt id, so its data sheet
+//                                follows it across retests.
+// A standalone test case links on its own test_id, per attempt.
+async function _formsLinkToTest(formId, testId) {
+  if (FORM_TEST_LINKS.find(l => l.form_id === formId && l.test_id === testId)) return;
   const linkedBy = currentProfile?.full_name || currentRoleUser?.name || null;
   const [link] = await _dbInsert('form_test_item_links', [{
-    form_id: formId, test_id: testId, asset_id: norm, linked_by: linkedBy,
+    form_id: formId, test_id: testId, linked_by: linkedBy,
   }]);
   FORM_TEST_LINKS.push(link);
 }
-async function _formsUnlinkFromTest(formId, testId, assetId = undefined) {
-  // assetId === undefined → unlink ALL scopes for this (form, test) pair (legacy behavior).
-  // assetId === null      → unlink the parent-scope row only (asset_id IS NULL).
-  // assetId === <uuid>    → unlink that specific per-asset row only.
+async function _formsUnlinkFromTest(formId, testId) {
   // Delete by primary key id so PostgREST's eq.null limitation never bites us.
-  const norm = assetId === undefined ? undefined : (assetId || null);
-  const targets = FORM_TEST_LINKS.filter(l => {
-    if (l.form_id !== formId || l.test_id !== testId) return false;
-    if (norm === undefined) return true;
-    return (l.asset_id || null) === norm;
-  });
+  const targets = FORM_TEST_LINKS.filter(l => l.form_id === formId && l.test_id === testId);
   for (const link of targets) {
     if (!link.id) continue;
     try { await _dbDelete('form_test_item_links', { id: link.id }); }
@@ -21443,23 +19819,33 @@ async function _formsUnlinkFromTest(formId, testId, assetId = undefined) {
   FORM_TEST_LINKS = FORM_TEST_LINKS.filter(l => !targets.includes(l));
 }
 
+// The distinct child scopes under a parent: [{ key, label }], one per child
+// test case (retest attempts share a key).
+function _formsChildScopes(parentTestId) {
+  const byKey = new Map();
+  _childrenOf(parentTestId, { allAttempts: true }).forEach(c => {
+    const key = _childKey(c);
+    if (!byKey.has(key) || c.IsLatestAttempt !== false) byKey.set(key, { key, label: c.ChildLabel || key });
+  });
+  return [...byKey.values()].sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+}
+
 // Returns the forms relevant to a single TI row, taking parent/child scope
 // into account. Used by the test-register forms button and per-row counts.
+//   child      → the parent's links (covering all) + its own links
+//   parent     → its own links + every child's links
+//   standalone → its own links
 function _formsForTestRow(row) {
   if (!row) return [];
-  const isChild = row.ParentTestId && row.AssetId;
-  if (!isChild) {
-    // Parent or standalone test case: include every link for this test_id
-    // regardless of scope.
-    const ids = FORM_TEST_LINKS.filter(l => l.test_id === row.TestID).map(l => l.form_id);
-    return FORMS.filter(f => ids.includes(f.id));
+  const keys = new Set();
+  if (row.ParentTestId) {
+    keys.add(String(row.ParentTestId)); keys.add(_childKey(row));
+  } else {
+    keys.add(String(row.TestID));
+    if (row.IsParent) _formsChildScopes(row.TestID).forEach(s => keys.add(s.key));
   }
-  // Child asset row: parent-scoped links + this asset's own per-asset links.
-  const ids = FORM_TEST_LINKS
-    .filter(l => l.test_id === row.ParentTestId &&
-      (l.asset_id == null || String(l.asset_id) === String(row.AssetId)))
-    .map(l => l.form_id);
-  return FORMS.filter(f => ids.includes(f.id));
+  const ids = new Set(FORM_TEST_LINKS.filter(l => keys.has(String(l.test_id))).map(l => l.form_id));
+  return FORMS.filter(f => ids.has(f.id));
 }
 function _formsCountForTestRow(row) {
   return _formsForTestRow(row).length;
@@ -21469,40 +19855,47 @@ function _formsCountForTestRow(row) {
 // used by the Test Report Extract to decide what to bundle and how to label
 // each attachment. Children are NOT processed here — they share their
 // parent's plan.
-//   Each entry: { form, scope: 'parent'|'asset', assetId, assetName, scopeLabel, sortKey }
+//   Each entry: { form, scope: 'parent'|'child', childKey, childLabel, scopeLabel, sortKey }
 function _formsAttachmentPlanForTestCase(parentOrStandaloneRow) {
   if (!parentOrStandaloneRow) return [];
-  const links = FORM_TEST_LINKS.filter(l => l.test_id === parentOrStandaloneRow.TestID);
-  const plan = links.map(l => {
+  const p = parentOrStandaloneRow;
+  const plan = [];
+  FORM_TEST_LINKS.filter(l => l.test_id === p.TestID).forEach(l => {
     const form = FORMS.find(f => f.id === l.form_id);
-    if (!form) return null;
-    if (l.asset_id == null) {
-      return { form, scope: 'parent', assetId: null, assetName: null,
-        scopeLabel: parentOrStandaloneRow.IsParent ? 'Covers all assets' : '',
-        sortKey: `0_${form.name || ''}` };
-    }
-    const asset = (typeof ASSETS !== 'undefined' ? ASSETS : []).find(a => a.id === l.asset_id);
-    const assetName = asset?.name || `(asset ${String(l.asset_id).slice(0, 8)})`;
-    return { form, scope: 'asset', assetId: l.asset_id, assetName,
-      scopeLabel: `Asset: ${assetName}`,
-      sortKey: `1_${assetName}_${form.name || ''}` };
-  }).filter(Boolean);
+    if (form) plan.push({ form, scope: 'parent', childKey: null, childLabel: null,
+      scopeLabel: p.IsParent ? 'Covers all child test cases' : '',
+      sortKey: `0_${form.name || ''}` });
+  });
+  if (p.IsParent) {
+    _formsChildScopes(p.TestID).forEach(({ key, label }) => {
+      FORM_TEST_LINKS.filter(l => String(l.test_id) === key).forEach(l => {
+        const form = FORMS.find(f => f.id === l.form_id);
+        if (form) plan.push({ form, scope: 'child', childKey: key, childLabel: label,
+          scopeLabel: `Child: ${label}`,
+          sortKey: `1_${label}_${form.name || ''}` });
+      });
+    });
+  }
   plan.sort((a, b) => a.sortKey.localeCompare(b.sortKey, undefined, { numeric: true, sensitivity: 'base' }));
   return plan;
 }
 
 // Convenience: list all link rows for a test case with their resolved scope.
 // Used by the parent's form-picker UI to render the scope column + unlink
-// buttons that target the exact (form, asset) row.
+// buttons that target the exact link row.
 function _formsLinkRowsForTestCase(testId) {
-  return FORM_TEST_LINKS
+  const rows = FORM_TEST_LINKS
     .filter(l => l.test_id === testId)
-    .map(l => {
-      const form = FORMS.find(f => f.id === l.form_id);
-      const asset = l.asset_id ? (typeof ASSETS !== 'undefined' ? ASSETS : []).find(a => a.id === l.asset_id) : null;
-      return { link: l, form, asset, scope: l.asset_id ? 'asset' : 'parent' };
-    })
-    .filter(r => r.form);
+    .map(l => ({ link: l, form: FORMS.find(f => f.id === l.form_id), scope: 'parent', childKey: '', childLabel: '' }));
+  const parent = TI.find(r => String(r.TestID) === String(testId));
+  if (parent?.IsParent) {
+    _formsChildScopes(testId).forEach(({ key, label }) => {
+      FORM_TEST_LINKS.filter(l => String(l.test_id) === key).forEach(l => {
+        rows.push({ link: l, form: FORMS.find(f => f.id === l.form_id), scope: 'child', childKey: key, childLabel: label });
+      });
+    });
+  }
+  return rows.filter(r => r.form);
 }
 async function _formsLinkToTemplate(formId, templateId, testCaseCode = '') {
   const scopeCode = String(testCaseCode || '').trim();
@@ -21874,7 +20267,7 @@ async function openFormViewer(formId, backTo = null) {
     `,
     footer: `
       <div class="pdf-viewer-actions" style="display:flex;gap:6px;width:100%;">
-        ${backTo ? `<button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" onclick="_fpBackToForms('${escapeHtml(String(backTo.testId))}','${escapeHtml(String(backTo.assetId || ''))}')">← Back</button>` : ''}
+        ${backTo ? `<button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" ${cxAct('_fpBackToForms', String(backTo.testId), String(backTo.childKey || ''))}>← Back</button>` : ''}
         <button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" data-action="closeFormViewer">Close</button>
         <button class="form-secondary" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" ${cxAct('downloadFormPDF', String(form.id))}>↓ Download</button>
         <button class="form-submit" style="flex:1;min-width:0;padding:9px 4px;font-size:12px;white-space:nowrap;" id="form-viewer-save" ${cxAct('saveFormPDF', String(form.id))}>Save</button>
@@ -23204,105 +21597,101 @@ function closeFormViewer() {
 // quick-open shortcut so the user can still link / unlink / attach. Tears the
 // viewer down like closeFormViewer, then reopens the picker (forced open so it
 // doesn't bounce straight back into the PDF).
-function _fpBackToForms(testId, assetId) {
+function _fpBackToForms(testId, childKey) {
   _pdfViewerTeardown();
-  openFormPickerForTest(testId, assetId, { forcePicker: true });
+  openFormPickerForTest(testId, childKey, { forcePicker: true });
 }
 
 // ── FORM PICKER (per test case, scope-aware) ────────────────────────────
-// `testId`  → the *parent* (or standalone) test case id. For child asset
-//             rows we always use the parent's TestID and pass assetId
-//             separately, because all link rows live keyed to the parent.
-// `assetId` → '' (empty) means "open from parent context": list every link
-//             on this test case (parent-scope + every per-asset link) and
-//             allow scope to be chosen on attach/link.
-//             A uuid means "open from one child asset row": list parent-
-//             scope (read-only/inherited) + this asset's per-asset links;
-//             new attach/link calls auto-target this asset's scope.
-function _fpResolveContext(testIdOrChildId, assetIdArg) {
-  // Accept either a parent TestID + assetId, or a child TestID alone — and
-  // normalize to { parentRow, assetId, originalArg } so callers can hand us
-  // whichever they have.
+// `testId`   → the *parent* (or standalone) test case id. A child test case's
+//              row id is also accepted and promoted to its parent + scope.
+// `childKey` → '' (empty) means "open from parent context": list every link
+//              on this test case (covering all + every child's links) and
+//              allow scope to be chosen on attach/link.
+//              A child key means "open from one child test case": list the
+//              parent's links (read-only/inherited) + this child's own links;
+//              new attach/link calls auto-target this child.
+function _fpResolveContext(testIdOrChildId, childKeyArg) {
   let parentRow = TI.find(r => String(r.TestID) === String(testIdOrChildId));
-  let assetId = (assetIdArg || '') === '' ? '' : String(assetIdArg);
-  if (parentRow && parentRow.ParentTestId && parentRow.AssetId && !assetId) {
-    // A child row id was passed directly — promote to its parent + asset.
-    assetId = String(parentRow.AssetId);
+  let childKey = String(childKeyArg || '');
+  if (parentRow && parentRow.ParentTestId) {
+    // A child row id was passed directly — promote to its parent + child scope.
+    if (!childKey) childKey = _childKey(parentRow);
     parentRow = TI.find(r => String(r.TestID) === String(parentRow.ParentTestId)) || parentRow;
   }
-  return { parentRow, assetId, parentTestId: parentRow ? String(parentRow.TestID) : String(testIdOrChildId) };
+  const parentTestId = parentRow ? String(parentRow.TestID) : String(testIdOrChildId);
+  const scope = childKey ? _formsChildScopes(parentTestId).find(s => s.key === childKey) : null;
+  return { parentRow, childKey, childLabel: scope ? scope.label : '', parentTestId };
 }
-function openFormPickerForTest(testId, assetId = '', opts = {}) {
-  const ctx = _fpResolveContext(testId, assetId);
+function openFormPickerForTest(testId, childKey = '', opts = {}) {
+  const ctx = _fpResolveContext(testId, childKey);
   // Quick-open shortcut: if exactly ONE form is linked for this scope, open the
   // PDF straight away (the user presses "← Back to Forms" in the viewer to reach
   // this picker for linking/unlinking). forcePicker bypasses the shortcut so the
   // viewer's Back button and post-action returns always land on the list.
   if (!opts.forcePicker) {
-    const linked = _formPickerVisibleForms(ctx.parentTestId, ctx.assetId);
+    const linked = _formPickerVisibleForms(ctx.parentTestId, ctx.childKey);
     if (linked.length === 1) {
-      openFormViewer(linked[0].form.id, { testId: ctx.parentTestId, assetId: ctx.assetId });
+      openFormViewer(linked[0].form.id, { testId: ctx.parentTestId, childKey: ctx.childKey });
       return;
     }
   }
   const row = ctx.parentRow;
-  const asset = ctx.assetId ? (typeof ASSETS !== 'undefined' ? ASSETS : []).find(a => a.id === ctx.assetId) : null;
   const baseSub = row ? `${row.TestCaseCode || row.TestID} · ${row.Activity || ''}`.trim() : ctx.parentTestId;
-  const sub = asset ? `${baseSub}  ·  Asset: ${asset.name}` : baseSub;
+  const sub = ctx.childKey ? `${baseSub}  ·  Child: ${ctx.childLabel || ctx.childKey}` : baseSub;
   modal({
     title: 'Linked Forms', sub, size: 'large',
-    body: _formPickerBody(ctx.parentTestId, ctx.assetId),
+    body: _formPickerBody(ctx.parentTestId, ctx.childKey),
     footer: `<button class="form-secondary" data-action="closeModal">Close</button>`,
   });
 }
 
-// The forms visible in the picker for a test case (+ optional asset scope).
-function _formPickerVisibleForms(testId, assetId = '') {
+// The forms visible in the picker for a test case (+ optional child scope).
+function _formPickerVisibleForms(testId, childKey = '') {
   const allLinks = _formsLinkRowsForTestCase(testId);
-  return assetId
-    ? allLinks.filter(r => r.scope === 'parent' || String(r.link.asset_id) === String(assetId))
+  return childKey
+    ? allLinks.filter(r => r.scope === 'parent' || r.childKey === childKey)
     : allLinks;
 }
 
-function _formPickerBody(testId, assetId = '') {
+function _formPickerBody(testId, childKey = '') {
   const parentRow = TI.find(r => String(r.TestID) === String(testId));
   const isParentCase = !!(parentRow && parentRow.IsParent);
-  const childRows = isParentCase ? TI.filter(r => String(r.ParentTestId) === String(testId)) : [];
+  const childScopes = isParentCase ? _formsChildScopes(testId) : [];
   // Filter for the current scope view
-  const visible = _formPickerVisibleForms(testId, assetId);
-
-  const targetAsset = assetId ? (typeof ASSETS !== 'undefined' ? ASSETS : []).find(a => a.id === assetId) : null;
-  const tid = escapeHtml(String(testId));
-  const aid = escapeHtml(String(assetId || ''));
+  const visible = _formPickerVisibleForms(testId, childKey);
+  const childLabel = childKey ? (childScopes.find(s => s.key === childKey)?.label || 'this child test case') : '';
+  const tid = String(testId);
+  const ck = String(childKey || '');
 
   const scopeBanner = (() => {
-    if (assetId) {
+    if (childKey) {
       return `<div style="margin-bottom:12px;padding:10px 12px;border-radius:6px;background:var(--info-light);border:1px solid var(--info-border);font-size:12px;color:#1e3a8a;">
-        Showing forms for <strong>${escapeHtml(targetAsset?.name || 'this asset')}</strong>. Forms with scope <em>“Covers all assets”</em> are inherited from the parent test case and managed there.
+        Showing forms for <strong>${escapeHtml(childLabel)}</strong>. Forms with scope <em>“Covers all child test cases”</em> are inherited from the parent test case and managed there.
       </div>`;
     }
     if (isParentCase) {
       return `<div style="margin-bottom:12px;padding:10px 12px;border-radius:6px;background:var(--accent-purple-light);border:1px solid #ddd6fe;font-size:12px;color:#4c1d95;">
-        This test case has <strong>${childRows.length} child asset${childRows.length===1?'':'s'}</strong>. Forms can either <strong>cover all assets</strong> (one PDF for the whole test case) or be linked to a <strong>specific asset</strong>.
+        This test case has <strong>${childScopes.length} child test case${childScopes.length===1?'':'s'}</strong>. Forms can either <strong>cover all child test cases</strong> (one PDF for the whole test case) or be linked to a <strong>specific child test case</strong>.
       </div>`;
     }
     return '';
   })();
 
   const rowsHtml = visible.length === 0
-    ? `<div style="padding:24px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:6px;">No forms linked${assetId ? ' to this asset' : ' to this test case'} yet.</div>`
+    ? `<div style="padding:24px;text-align:center;color:var(--gray-500);border:1px dashed var(--gray-300);border-radius:6px;">No forms linked${childKey ? ' to this child test case' : ' to this test case'} yet.</div>`
     : `<table class="data-table fp-forms-table">
          <thead><tr><th>Name</th>${isParentCase ? '<th>Scope</th>' : ''}<th>Phase</th><th>Subsystem</th><th>Description</th><th style="width:200px;">Actions</th></tr></thead>
-         <tbody>${visible.map(({ form, scope, asset }) => {
-            const inherited = !!(assetId && scope === 'parent');
+         <tbody>${visible.map(({ form, scope, childKey: linkKey, childLabel: linkLabel }) => {
+            const inherited = !!(childKey && scope === 'parent');
             const scopeCell = isParentCase
               ? (scope === 'parent'
-                  ? `<span class="tag" style="background:var(--accent-purple-light);color:var(--accent-purple);border:1px solid #ddd6fe;">All assets</span>`
-                  : `<span class="tag" style="background:var(--info-light);color:var(--info);border:1px solid var(--info-border);">${escapeHtml(asset?.name || 'asset')}</span>`)
+                  ? `<span class="tag" style="background:var(--accent-purple-light);color:var(--accent-purple);border:1px solid #ddd6fe;">All child test cases</span>`
+                  : `<span class="tag" style="background:var(--info-light);color:var(--info);border:1px solid var(--info-border);">${escapeHtml(linkLabel || 'child test case')}</span>`)
               : '';
             const unlinkBtn = inherited
               ? `<span style="font-size:11px;color:var(--gray-500);font-style:italic;">inherited</span>`
-              : `<button class="form-secondary tr-mini-btn" onclick="unlinkFormFromTest('${form.id}','${tid}','${scope === 'asset' ? escapeHtml(String(asset?.id || '')) : ''}')">Unlink</button>`;
+              : `<button class="form-secondary tr-mini-btn" ${cxAct('unlinkFormFromTest', String(form.id), tid, scope === 'child' ? linkKey : '', ck)}>Unlink</button>`;
             return `
              <tr${inherited ? ' style="background:#fafafa;"' : ''}>
                <td class="fp-name" style="font-weight:600;">${escapeHtml(form.name)}</td>
@@ -23311,7 +21700,7 @@ function _formPickerBody(testId, assetId = '') {
                <td data-label="Subsystem"><span class="tag">${escapeHtml(form.subsystem || '—')}</span></td>
                <td data-label="Description" style="font-size:12px;color:var(--gray-600);">${escapeHtml(form.description || '')}</td>
                <td class="fp-actions" style="white-space:nowrap;">
-                 <button class="admin-action-btn tr-mini-btn" onclick="openFormViewer('${form.id}', { testId: '${tid}', assetId: '${aid}' })">Open</button>
+                 <button class="admin-action-btn tr-mini-btn" ${cxAct('openFormViewer', String(form.id), { testId: tid, childKey: ck })}>Open</button>
                  ${unlinkBtn}
                </td>
              </tr>`;
@@ -23322,47 +21711,52 @@ function _formPickerBody(testId, assetId = '') {
   return `
     ${scopeBanner}
     <div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;">
-      <button class="form-submit" ${cxAct('openAttachNewForm', String(tid), String(aid))}>+ Attach New PDF</button>
-      <button class="form-secondary" ${cxAct('openLinkExistingForm', String(tid), String(aid))}>Link Existing Form</button>
+      <button class="form-submit" ${cxAct('openAttachNewForm', tid, ck)}>+ Attach New PDF</button>
+      <button class="form-secondary" ${cxAct('openLinkExistingForm', tid, ck)}>Link Existing Form</button>
     </div>
     ${rowsHtml}
   `;
 }
 
-// Renders the scope picker shown when attaching/linking from a parent
-// test case that has child assets. Defaults to "Covers all assets" so the
-// historical behavior (one form on the parent) keeps working unchanged.
-function _fpScopeFieldHTML(testId, assetId, fieldId = 'frm-scope') {
+// Renders the scope picker shown when attaching/linking from a parent test
+// case that has child test cases. Defaults to "Covers all child test cases"
+// so one form on the parent keeps working unchanged.
+function _fpScopeFieldHTML(testId, childKey, fieldId = 'frm-scope') {
   const parentRow = TI.find(r => String(r.TestID) === String(testId));
-  const isParentCase = !!(parentRow && parentRow.IsParent);
-  const childRows = isParentCase ? TI.filter(r => String(r.ParentTestId) === String(testId)) : [];
-  if (!isParentCase) return ''; // standalone — scope is always implicit (NULL)
-  // If we already know which asset (called from a child row), force-select it.
-  const forced = assetId ? String(assetId) : '';
+  if (!(parentRow && parentRow.IsParent)) return ''; // standalone — no scope choice
+  // If we already know which child (called from a child row), force-select it.
+  const forced = childKey ? String(childKey) : '';
   const opts = [
-    `<option value="" ${!forced ? 'selected' : ''}>Covers all assets (parent-scope)</option>`,
-    ...childRows.map(c => {
-      const a = (typeof ASSETS !== 'undefined' ? ASSETS : []).find(x => x.id === c.AssetId);
-      const name = a?.name || c.TestID;
-      return `<option value="${escapeHtml(String(c.AssetId))}" ${forced && forced === String(c.AssetId) ? 'selected' : ''}>Asset: ${escapeHtml(name)}</option>`;
-    }),
+    `<option value="" ${!forced ? 'selected' : ''}>Covers all child test cases</option>`,
+    ..._formsChildScopes(testId).map(s =>
+      `<option value="${escapeHtml(s.key)}" ${forced === s.key ? 'selected' : ''}>Child: ${escapeHtml(s.label)}</option>`),
   ].join('');
   return `
     <div class="form-field form-field-full">
-      <label>Form Scope</label>
+      <label for="${fieldId}">Form Scope</label>
       <select id="${fieldId}" class="form-input">${opts}</select>
       <div style="font-size:11px;color:var(--gray-500);margin-top:4px;">
-        <strong>Covers all assets</strong>: one PDF used for the whole test case; per-asset statuses still tracked separately.<br>
-        <strong>Asset:&nbsp;…</strong>: this form is linked only to that child asset row.
+        <strong>Covers all child test cases</strong>: one PDF used for the whole test case; each child keeps its own status.<br>
+        <strong>Child:&nbsp;…</strong>: this form is linked only to that child test case.
       </div>
     </div>`;
 }
 
-function openAttachNewForm(testId, assetId = '') {
-  const ctx = _fpResolveContext(testId, assetId);
+// The scope a picker action targets: the chosen <select> value when the
+// scope field is shown, else the child the picker was opened from.
+function _fpChosenScope(fieldId, fallbackKey) {
+  const field = document.getElementById(fieldId);
+  return field ? (field.value || '') : (fallbackKey || '');
+}
+function _fpScopeNote(parentTestId, scopeKey) {
+  if (!scopeKey) return 'all child test cases';
+  const s = _formsChildScopes(parentTestId).find(x => x.key === scopeKey);
+  return `child:${s ? s.label : scopeKey}`;
+}
+
+function openAttachNewForm(testId, childKey = '') {
+  const ctx = _fpResolveContext(testId, childKey);
   const row = ctx.parentRow;
-  const tid = escapeHtml(ctx.parentTestId);
-  const aid = escapeHtml(ctx.assetId || '');
   modal({
     title: 'Attach New PDF',
     sub: row ? `${row.TestCaseCode || row.TestID}` : '',
@@ -23370,28 +21764,27 @@ function openAttachNewForm(testId, assetId = '') {
       <div class="form-grid">
         <div class="form-field form-field-full"><label>PDF File</label><input type="file" id="frm-file" accept="application/pdf" class="form-input"></div>
         <div class="form-field form-field-full"><label>Form Name</label><input type="text" id="frm-name" class="form-input" placeholder="e.g. PWR-001 Data Sheet"></div>
-        ${_fpScopeFieldHTML(ctx.parentTestId, ctx.assetId, 'frm-scope')}
+        ${_fpScopeFieldHTML(ctx.parentTestId, ctx.childKey, 'frm-scope')}
         <div class="form-field"><label>Subsystem</label><input type="text" id="frm-sub" class="form-input" value="${escapeHtml(row?.SubSystem || row?.Subsystem || '')}"></div>
         <div class="form-field"><label>Phase</label><input type="text" id="frm-phase" class="form-input" value="${escapeHtml(row?.Phase || '')}"></div>
         <div class="form-field form-field-full"><label>Location</label><input type="text" id="frm-loc" class="form-input" value="${escapeHtml(row?.Location || '')}"></div>
         <div class="form-field form-field-full"><label>Notes / Description</label><textarea id="frm-desc" class="form-input" rows="2" placeholder="Optional high-level description"></textarea></div>
       </div>
     `,
-    footer: `<button class="form-secondary" onclick="openFormPickerForTest('${tid}','${aid}',{forcePicker:true})">Cancel</button>
-             <button class="form-submit" ${cxAct('submitAttachNewForm', String(tid), String(aid))}>Upload &amp; Link</button>`,
+    footer: `<button class="form-secondary" ${cxAct('openFormPickerForTest', ctx.parentTestId, ctx.childKey, { forcePicker: true })}>Cancel</button>
+             <button class="form-submit" ${cxAct('submitAttachNewForm', ctx.parentTestId, ctx.childKey)}>Upload &amp; Link</button>`,
   });
 }
 
-async function submitAttachNewForm(testId, assetId = '') {
+async function submitAttachNewForm(testId, childKey = '') {
   if (typeof uiCan === 'function' && !uiCan('forms', 'upload')) { toast('You do not have permission to upload forms', 'error'); return; }
   const file = document.getElementById('frm-file')?.files?.[0];
   if (!file) { toast('Select a PDF', 'error'); return; }
   if (file.type !== 'application/pdf') { toast('File must be a PDF', 'error'); return; }
   const name = document.getElementById('frm-name')?.value.trim();
   if (!name) { toast('Name is required', 'error'); return; }
-  // Read scope: use form field if present (parent context), else use prefilled asset.
-  const scopeField = document.getElementById('frm-scope');
-  const scopeAssetId = scopeField ? (scopeField.value || '') : (assetId || '');
+  // Read scope: use form field if present (parent context), else the prefilled child.
+  const scopeKey = _fpChosenScope('frm-scope', childKey);
   const btn = document.querySelector('.modal-footer .form-submit');
   if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
   try {
@@ -23403,13 +21796,10 @@ async function submitAttachNewForm(testId, assetId = '') {
       location:    document.getElementById('frm-loc')?.value.trim(),
       isTemplate: false, originalFilename: file.name, fileSize: file.size, file,
     });
-    await _formsLinkToTest(created.id, testId, scopeAssetId || null);
-    const scopeNote = scopeAssetId
-      ? `asset:${(typeof ASSETS!=='undefined'?ASSETS:[]).find(a=>a.id===scopeAssetId)?.name || scopeAssetId}`
-      : 'all assets';
-    logAudit('Attached Form to Test Case', name, `${testId} · ${scopeNote}`);
+    await _formsLinkToTest(created.id, scopeKey || testId);
+    logAudit('Attached Form to Test Case', name, `${testId} · ${_fpScopeNote(testId, scopeKey)}`);
     toast('✓ Form attached', 'success');
-    openFormPickerForTest(testId, scopeAssetId, { forcePicker: true });
+    openFormPickerForTest(testId, scopeKey, { forcePicker: true });
     if (typeof _reRenderTR === 'function') _reRenderTR();
   } catch (e) {
     toast('Upload failed: ' + e.message, 'error');
@@ -23417,30 +21807,31 @@ async function submitAttachNewForm(testId, assetId = '') {
   }
 }
 
-function openLinkExistingForm(testId, assetId = '') {
-  const ctx = _fpResolveContext(testId, assetId);
-  const tid = escapeHtml(ctx.parentTestId);
-  const aid = escapeHtml(ctx.assetId || '');
-  // For per-asset context: hide forms already linked to *this asset* or as parent-scope.
-  // For parent context: hide forms with any link to this test case.
-  const scopeAssetId = ctx.assetId || '';
-  const linksHere = FORM_TEST_LINKS.filter(l => l.test_id === ctx.parentTestId);
-  const blocked = scopeAssetId
-    ? new Set(linksHere.filter(l => l.asset_id == null || String(l.asset_id) === String(scopeAssetId)).map(l => l.form_id))
-    : new Set(linksHere.map(l => l.form_id));
+// Forms the Link Existing picker hides: from a child, those already linked to
+// it or covering all; from the parent, those linked anywhere on the test case.
+function _lefBlockedFormIds(parentTestId, childKey) {
+  const keys = new Set([String(parentTestId)]);
+  if (childKey) keys.add(String(childKey));
+  else _formsChildScopes(parentTestId).forEach(s => keys.add(s.key));
+  return new Set(FORM_TEST_LINKS.filter(l => keys.has(String(l.test_id))).map(l => l.form_id));
+}
+
+function openLinkExistingForm(testId, childKey = '') {
+  const ctx = _fpResolveContext(testId, childKey);
+  const blocked = _lefBlockedFormIds(ctx.parentTestId, ctx.childKey);
   const candidates = FORMS.filter(f => !blocked.has(f.id) && !f.is_template);
   window._lefAll = candidates;
   window._lefTestId = ctx.parentTestId;
-  window._lefAssetId = scopeAssetId;
+  window._lefChildKey = ctx.childKey;
   modal({
     title: 'Link Existing Form', size: 'large',
     body: `
-      ${_fpScopeFieldHTML(ctx.parentTestId, ctx.assetId, 'lef-scope')}
+      ${_fpScopeFieldHTML(ctx.parentTestId, ctx.childKey, 'lef-scope')}
       <input type="text" class="form-input" placeholder="Search by name, subsystem, location…" style="margin-bottom:12px;"
              oninput="document.getElementById('lef-list').innerHTML = window._lefFilter(this.value)">
       <div id="lef-list" style="max-height:45vh;overflow:auto;">${_lefRenderList(candidates)}</div>
     `,
-    footer: `<button class="form-secondary" onclick="openFormPickerForTest('${tid}','${aid}',{forcePicker:true})">Cancel</button>`,
+    footer: `<button class="form-secondary" ${cxAct('openFormPickerForTest', ctx.parentTestId, ctx.childKey, { forcePicker: true })}>Cancel</button>`,
   });
   window._lefFilter = (q) => {
     q = (q || '').trim().toLowerCase();
@@ -23487,11 +21878,7 @@ function _lefEmptyState() {
 async function _lefReload(btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
   await loadForms();
-  const tid = window._lefTestId, sa = window._lefAssetId || '';
-  const linksHere = FORM_TEST_LINKS.filter(l => l.test_id === tid);
-  const blocked = sa
-    ? new Set(linksHere.filter(l => l.asset_id == null || String(l.asset_id) === String(sa)).map(l => l.form_id))
-    : new Set(linksHere.map(l => l.form_id));
+  const blocked = _lefBlockedFormIds(window._lefTestId, window._lefChildKey || '');
   window._lefAll = FORMS.filter(f => !blocked.has(f.id) && !f.is_template);
   const listEl = document.getElementById('lef-list');
   if (listEl) listEl.innerHTML = _lefRenderList(window._lefAll);
@@ -23502,61 +21889,48 @@ async function linkExistingFormToTest(formId, testId) {
   if (typeof uiCan === 'function' && !uiCan('forms', 'link')) { toast('You do not have permission to link forms', 'error'); return; }
   try {
     // Pick scope from the picker UI; fall back to whatever the picker was opened with.
-    const scopeField = document.getElementById('lef-scope');
-    const scopeAssetId = scopeField ? (scopeField.value || '') : (window._lefAssetId || '');
-    await _formsLinkToTest(formId, testId, scopeAssetId || null);
-    const scopeNote = scopeAssetId
-      ? `asset:${(typeof ASSETS!=='undefined'?ASSETS:[]).find(a=>a.id===scopeAssetId)?.name || scopeAssetId}`
-      : 'all assets';
-    logAudit('Linked Existing Form to Test Case', FORMS.find(f => f.id === formId)?.name || formId, `${testId} · ${scopeNote}`);
+    const scopeKey = _fpChosenScope('lef-scope', window._lefChildKey);
+    await _formsLinkToTest(formId, scopeKey || testId);
+    logAudit('Linked Existing Form to Test Case', FORMS.find(f => f.id === formId)?.name || formId, `${testId} · ${_fpScopeNote(testId, scopeKey)}`);
     toast('✓ Linked', 'success');
-    openFormPickerForTest(testId, scopeAssetId, { forcePicker: true });
+    openFormPickerForTest(testId, scopeKey, { forcePicker: true });
     if (typeof _reRenderTR === 'function') _reRenderTR();
   } catch (e) { toast('Link failed: ' + e.message, 'error'); }
 }
 
-async function unlinkFormFromTest(formId, testId, assetId = '') {
+// Unlink one link row: `linkKey` is the child key the link sits on ('' = the
+// test case itself); `ctxChildKey` is the scope the picker was showing.
+async function unlinkFormFromTest(formId, testId, linkKey = '', ctxChildKey = '') {
   if (typeof uiCan === 'function' && !uiCan('forms', 'link')) { toast('You do not have permission to unlink forms', 'error'); return; }
   if (!await cxConfirm('Unlink this form from the test case? The file itself is not deleted.')) return;
   try {
-    // assetId === '' from a non-parent (standalone) case → unlink the
-    // single (form, test) row. From a parent case the caller always sends
-    // the explicit scope (asset uuid or '' for parent-scope), and we pass
-    // that through. Note: '' here means parent-scope (NULL), not "any".
-    const scope = assetId === '' && (() => {
-      const r = TI.find(t => String(t.TestID) === String(testId));
-      return !!(r && r.IsParent);
-    })() ? null : (assetId || null);
-    await _formsUnlinkFromTest(formId, testId, scope);
-    logAudit('Unlinked Form from Test Case', FORMS.find(f => f.id === formId)?.name || formId, testId);
-    openFormPickerForTest(testId, assetId, { forcePicker: true });
+    await _formsUnlinkFromTest(formId, linkKey || testId);
+    logAudit('Unlinked Form from Test Case', FORMS.find(f => f.id === formId)?.name || formId, linkKey || testId);
+    openFormPickerForTest(testId, ctxChildKey, { forcePicker: true });
     if (typeof _reRenderTR === 'function') _reRenderTR();
   } catch (e) { toast('Unlink failed: ' + e.message, 'error'); }
 }
 
-function _formsBadgeHTML(testIdOrRow, assetId = '') {
+function _formsBadgeHTML(testIdOrRow, childKey = '') {
   // Back-compat: callers that pass a raw test_id string still work — we
   // resolve it to its TI row. New callers pass the row directly.
   const row = (typeof testIdOrRow === 'string')
     ? TI.find(r => String(r.TestID) === String(testIdOrRow))
     : testIdOrRow;
   if (!row) {
-    const tid = escapeHtml(String(testIdOrRow || ''));
-    return `<button aria-label="Attach form" class="form-secondary tr-mini-btn" title="Attach form" ${cxAct('openFormPickerForTest', String(tid))} style="font-size:13px;padding:2px 6px;color:var(--gray-500);">${icon('paperclip')}</button>`;
+    return `<button aria-label="Attach form" class="form-secondary tr-mini-btn" title="Attach form" ${cxAct('openFormPickerForTest', String(testIdOrRow || ''))} style="font-size:13px;padding:2px 6px;color:var(--gray-500);">${icon('paperclip')}</button>`;
   }
   const count = _formsCountForTestRow(row);
-  // Child asset row → open picker focused on this asset's scope.
-  const isChild = row.ParentTestId && row.AssetId;
+  // Child test case → open the picker focused on that child.
+  const isChild = !!row.ParentTestId;
   const targetTestId = isChild ? String(row.ParentTestId) : String(row.TestID);
-  const targetAsset  = isChild ? String(row.AssetId) : (assetId || '');
-  const tid = escapeHtml(targetTestId);
-  const aid = escapeHtml(targetAsset);
+  const targetKey    = isChild ? _childKey(row) : String(childKey || '');
   if (count === 0) {
-    return `<button aria-label="Attach form" class="form-secondary tr-mini-btn" title="Attach form" ${cxAct('openFormPickerForTest', String(tid), String(aid))} style="font-size:13px;padding:2px 6px;color:var(--gray-500);">${icon('paperclip')}</button>`;
+    return `<button aria-label="Attach form" class="form-secondary tr-mini-btn" title="Attach form" ${cxAct('openFormPickerForTest', targetTestId, targetKey)} style="font-size:13px;padding:2px 6px;color:var(--gray-500);">${icon('paperclip')}</button>`;
   }
   const titleBits = [`${count} form${count===1?'':'s'} linked`];
-  if (isChild) titleBits.push('(includes any covering all assets)');
-  return `<button class="admin-action-btn tr-mini-btn" title="${titleBits.join(' ')}" ${cxAct('openFormPickerForTest', String(tid), String(aid))} style="font-size:11px;padding:2px 7px;background:var(--info-light);color:var(--info);border:1px solid var(--info-border);">${icon('paperclip')} ${count}</button>`;
+  if (isChild) titleBits.push('(includes forms covering all child test cases)');
+  return `<button class="admin-action-btn tr-mini-btn" title="${titleBits.join(' ')}" ${cxAct('openFormPickerForTest', targetTestId, targetKey)} style="font-size:11px;padding:2px 7px;background:var(--info-light);color:var(--info);border:1px solid var(--info-border);">${icon('paperclip')} ${count}</button>`;
 }
 
 // ── TEMPLATE EDITOR INTEGRATION ─────────────────────────────────────────
@@ -23955,11 +22329,11 @@ function _extractBuildPayload(row, opts) {
         sec.items.forEach(item => {
           const include = statusFilter.has(_extractStatusKey(item.Status));
           item._extractInclude = include;
-          // Scope-aware attachments: child asset rows don't carry forms
+          // Scope-aware attachments: child test cases don't carry forms
           // directly — they are listed under their parent. Parent (or
-          // standalone) rows enumerate parent-scope + every per-asset link
-          // once, each with its own scope label so the bundle stays deduped.
-          const isChild = item.ParentTestId && item.AssetId;
+          // standalone) rows enumerate the covering-all links + every child's
+          // links once, each with its own scope label so the bundle stays deduped.
+          const isChild = !!item.ParentTestId;
           item._extractForms = isChild ? [] : _formsAttachmentPlanForTestCase(item);
           if (include) formCount += item._extractForms.length;
         });
@@ -35598,7 +33972,7 @@ function _dynCaseActions(testId, isPerLoc) {
 
 // Permanently delete a dynamic test case (admin-only). Removes the test_items
 // row, which also removes it from the Test Register, and cascades its dynamic
-// instances, prerequisites, form/asset links. test_item_status_history and
+// instances, prerequisites, form links. test_item_status_history and
 // test_results reference test_items with NO ACTION, so they must be cleared
 // first or the delete is rejected by the FK. Always behind a confirmation.
 function _dynDeleteTestCase(testId) {
@@ -35634,7 +34008,7 @@ async function _dynConfirmDeleteTestCase(testId) {
     // Clear NO ACTION references first so the test_items delete isn't rejected.
     await _dbDelete('test_item_status_history', { test_id: testId }).catch(() => {});
     await _dbDelete('test_results', { test_id: testId }).catch(() => {});
-    // Cascades dynamic_instances, test_item_prerequisites, form/asset links.
+    // Cascades dynamic_instances, test_item_prerequisites, form links.
     await _dbDelete('test_items', { test_id: testId });
 
     // Purge from in-memory caches so both areas update without a reload.

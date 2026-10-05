@@ -143,15 +143,14 @@ governs: test_items, test_results, test_item_status_history, test_item_prerequis
 | Key | Guards | Lvl |
 |---|---|---|
 | `view` | register, drilldowns, matrix | R |
-| `export` | line-item CSV export, template + asset CSV export | R |
+| `export` | line-item CSV export, template CSV export | R |
 | `add_activity` | create a new activity / register entry | S |
 | `add_test_case` | add/copy a test case, add section, generic child | S |
 | `edit_case` | edit case fields/status, reorder, edit activity metadata | S |
 | `set_status` | record Pass/Fail/Blocked verdict (**flat** — subsystem scope suffices) | S |
 | `field_intake` | submit daily field logs | S |
 | `bulk_edit` | bulk status/field apply across selected cases | S **†** |
-| `manage_assets` | link/unlink/bulk-link assets, asset CSV import | S |
-| `delete_case` | delete a single test case / parent / asset child | A |
+| `delete_case` | delete a single test case / parent / child test case | A |
 | `delete_activity` | delete an activity (cascades cases + results) | A |
 | `bulk_delete` | bulk-delete selected cases / activities | A |
 | `deploy_field` | flip Future Test → Not Started (deploy to field) | A |
@@ -286,21 +285,11 @@ manage action items without full meeting CRUD.
 > `supabase/sql/supabase_drop_p6_and_org_chart.sql`.
 
 > **Removed (2026-10):** the `tasks` module (Checkpoint / Activity Readiness)
-> went with that feature — see `supabase/sql/supabase_drop_checkpoint_and_assets.sql`.
-
-### Assets — `assets` (category: data)
-governs: assets, asset_test_links, asset_import_batches
-
-| Key | Guards | Lvl |
-|---|---|---|
-| `view` | table | R |
-| `export` | CSV export / template | R |
-| `add` | manual asset create | S |
-| `edit` | edit asset | S |
-| `link` | link/unlink asset ↔ test | S |
-| `bulk_edit` | bulk device-type / location | S **†** |
-| `import` | batch CSV import | A |
-| `bulk_delete` | bulk delete assets | A |
+> went with that feature, and the `assets` module (Admin › Asset Management)
+> plus `test_register.manage_assets` went with Asset Management — see
+> `supabase/sql/supabase_drop_checkpoint_and_assets.sql`. Child test cases stay
+> under `test_register`: adding one needs `add_test_case` + `edit_case` (the
+> parent is flagged `is_parent`), removing one needs `delete_case`.
 
 ### Drawings — `drawings` (category: data)
 governs: drawing_sets, drawing_sheets, drawing_markups

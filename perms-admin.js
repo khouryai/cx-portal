@@ -39,7 +39,7 @@ const PERM_CATALOG = {
     ['view','read_only',false],['export','read_only',false],
     ['add_activity','standard',false],['add_test_case','standard',false],['edit_case','standard',false],
     ['set_status','standard',false],['field_intake','standard',false],['bulk_edit','standard',true],
-    ['manage_assets','standard',false],['delete_case','admin',false],['delete_activity','admin',false],
+    ['delete_case','admin',false],['delete_activity','admin',false],
     ['bulk_delete','admin',false],['deploy_field','admin',false],['import','admin',false],
   ],
   dynamic_testing: [
@@ -76,10 +76,6 @@ const PERM_CATALOG = {
     ['view','read_only',false],['export','read_only',false],['create','standard',false],['edit','standard',false],
     ['manage_agenda','standard',false],['record_minutes','standard',false],['manage_action_items','standard',false],
     ['manage_attendees','standard',false],['create_followup','standard',false],['delete','admin',false],
-  ],
-  assets: [
-    ['view','read_only',false],['export','read_only',false],['add','standard',false],['edit','standard',false],
-    ['link','standard',false],['bulk_edit','standard',true],['import','admin',false],['bulk_delete','admin',false],
   ],
   drawings: [
     ['view','read_only',false],['create_markup','standard',false],['edit_markup_own','standard',false],
@@ -200,7 +196,6 @@ const PAGE_MODULE = {
   'admin-fieldconfig': 'forms',
   'admin-directory': 'directory',
   'admin-permissions': 'admin',
-  'admin-assets': 'assets',
   'admin-config': 'config',
 };
 
@@ -306,7 +301,7 @@ window._paLinkDecision = _paLinkDecision;
 
 // Modules whose management pages live behind the Admin-mode toggle.
 const ADMIN_AREA_MODULES = ['templates', 'weights', 'locations', 'forms', 'directory',
-  'admin', 'audit', 'assets', 'config'];
+  'admin', 'audit', 'config'];
 
 function uiCanAnyAdmin() {
   return ADMIN_AREA_MODULES.some(m => uiCan(m, 'view'));

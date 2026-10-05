@@ -70,6 +70,7 @@ const suites = [
   { file: "tools/test_tr_insights.js", needs: [] },     // blockers & failures insight analytics
   { file: "tools/test_tr_section_order.js", needs: [] }, // drill-down procedure-card ordering
   { file: "tools/test_tpl_deploy.js", needs: [] },      // template deploy row planning (dup codes)
+  { file: "tools/test_child_cases.js", needs: [] },     // child test cases: roll-up, deploy children, forms scope
   { file: "tools/test_print_report.js", needs: [] },    // shared branded print template + adoption
   { file: "tools/test_perm_resolver.js", needs: [] },   // perms-admin effective-permission resolver
   { file: "tools/test_ui_can.js", needs: [] },          // UI permission gating + nav mapping integrity

@@ -31,6 +31,9 @@ create table if not exists test_items (
   blocked_reason        text,
   failed_reason         text,
   notes                 text,
+  is_parent             boolean default false,
+  parent_test_id        text,
+  child_label           text,
   power_apps_id         text,
   synced_at             timestamptz default now()
 );

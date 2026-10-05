@@ -74,7 +74,7 @@ const partial = plan(lab, sel(["4.4"]), "dep-2", NOW);
 ok("selection still filters by code — both 4.4 cases deploy", partial.length === 2);
 ok("unselected codes are dropped", plan(lab, sel([]), "dep-3", NOW).length === 0);
 
-ok("plan carries tc + sel back to the caller (asset/form steps)",
+ok("plan carries tc + sel back to the caller (child/form steps)",
    p[0].tc === lab.testCases[0] && p[0].sel.locId === "W40");
 ok("row fields come from the selection and template",
    p[0].row.phase === "Phase 2" && p[0].row.location === "W40 Millbrae Station"

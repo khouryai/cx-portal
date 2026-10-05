@@ -4,11 +4,12 @@
 // A keyboard-first, two-pane "super search": ranked results grouped by record
 // type on the left, a live preview of the highlighted record on the right —
 // enough context (status, people, dates, notes) to understand a result without
-// opening it. Searches everything already in memory (test cases, assets, punch
-// items, RMAs, documents, daily logs) plus the navigation itself.
+// opening it. Searches everything already in memory (test cases and their
+// child test cases, punch items, RMAs, documents, daily logs) plus the
+// navigation itself.
 //
 // Loaded as a classic script AFTER app.js, so it references app.js globals
-// (TI, ASSETS, showPage, openPunchDetail, …) by name at call time. Zero
+// (TI, showPage, openPunchDetail, …) by name at call time. Zero
 // DOM/network work happens at load — the overlay is built lazily on first
 // open — so the headless smoke loader can require it safely.
 (function () {
@@ -16,7 +17,7 @@
 
   var overlay = null, input = null, resultsEl = null, previewEl = null, chipsEl = null;
   var INDEX = [], results = [], activeIdx = 0, query = '';
-  var KINDS = ['All', 'Page', 'Test', 'Asset', 'Punch', 'RMA', 'Doc', 'Log'];
+  var KINDS = ['All', 'Page', 'Test', 'Punch', 'RMA', 'Doc', 'Log'];
   var kindFilter = 'All';
   var kindCounts = {};
 
@@ -68,8 +69,6 @@
     try {
       switch (name) {
         case 'TI':          v = (typeof TI          !== 'undefined') ? TI          : null; break;
-        case 'ASSETS':      v = (typeof ASSETS      !== 'undefined') ? ASSETS      : null; break;
-        case 'ASSET_LINKS': v = (typeof ASSET_LINKS !== 'undefined') ? ASSET_LINKS : null; break;
         case 'PUNCH_DB':    v = (typeof PUNCH_DB    !== 'undefined') ? PUNCH_DB    : null; break;
         case 'RMAS':        v = (typeof RMAS        !== 'undefined') ? RMAS        : null; break;
         case 'DOCUMENTS':   v = (typeof DOCUMENTS   !== 'undefined') ? DOCUMENTS   : null; break;
@@ -101,24 +100,16 @@
       });
     } catch (_) {}
 
-    // Per-asset pass/total, precomputed in one TI pass (avoids O(assets×tests)).
     var tiRows = _arr('TI');
-    var passByAsset = {}, totByAsset = {};
-    tiRows.forEach(function (r) {
-      if (!r.AssetId) return;
-      totByAsset[r.AssetId] = (totByAsset[r.AssetId] || 0) + 1;
-      if (r.Status === 'Pass') passByAsset[r.AssetId] = (passByAsset[r.AssetId] || 0) + 1;
-    });
-    var linksByAsset = {};
-    _arr('ASSET_LINKS').forEach(function (l) {
-      linksByAsset[l.asset_id] = (linksByAsset[l.asset_id] || 0) + 1;
-    });
-
     tiRows.forEach(function (t) {
-      if (t.ParentTestId) return; // child asset rows are noise
+      // A child test case is found by its own name (e.g. a device) — only its
+      // latest attempt, so retests don't list it twice.
+      var isChild = !!t.ParentTestId;
+      if (isChild && (t.IsLatestAttempt === false || !t.ChildLabel)) return;
       idx.push({
         kind: 'Test', icon: 'clipboard',
-        label: t.TestName || t.TestCaseCode || ('Test ' + t.TestID),
+        label: isChild ? (t.ChildLabel + ' — ' + (t.TestName || t.TestCaseCode || ''))
+                       : (t.TestName || t.TestCaseCode || ('Test ' + t.TestID)),
         sub: [t.TestCaseCode, t.Location, t.Subsystem].filter(Boolean).join(' · '),
         status: t.Status || '',
         fields: [
@@ -129,26 +120,6 @@
           ['Completed by', t.CompletedBy],
         ],
         page: 'test-register',
-      });
-    });
-
-    _arr('ASSETS').forEach(function (a) {
-      var tot = totByAsset[a.id] || 0, pas = passByAsset[a.id] || 0;
-      idx.push({
-        kind: 'Asset', icon: 'package',
-        label: a.name || 'Asset',
-        sub: [a.device_type, a.location || a.location_prefix, a.subsystem].filter(Boolean).join(' · '),
-        status: tot ? (pas + '/' + tot + ' pass') : '',
-        fields: [
-          ['Device type', a.device_type],
-          ['Location', a.location || a.location_prefix], ['Subsystem', a.subsystem],
-          ['Linked test cases', String(linksByAsset[a.id] || 0)],
-          ['Test progress', tot ? pas + ' of ' + tot + ' passed' : 'No linked tests'],
-        ],
-        page: 'admin-assets',
-        opener: function () {
-          try { _assetFilter.search = a.name || ''; renderAdminAssets(); } catch (_) {}
-        },
       });
     });
 
@@ -322,7 +293,7 @@
       resultsEl.innerHTML = '<div class="cxs-empty">' +
         (query.trim() ? 'No matches for “' + _esc(query.trim()) + '”' +
           (kindFilter !== 'All' ? ' in ' + _esc(kindFilter) : '')
-          : 'Search test cases, assets, punch items, RMAs…') +
+          : 'Search test cases, punch items, RMAs…') +
         '</div>';
       return;
     }
@@ -421,7 +392,7 @@
         '<div class="cxs-input-row">' +
           '<span class="cxs-lead-icon">' + _ic('search') + '</span>' +
           '<input class="cxs-input" type="text" autocomplete="off" spellcheck="false" ' +
-            'placeholder="Search tests, assets, punch items, RMAs, pages…" aria-label="Search">' +
+            'placeholder="Search tests, punch items, RMAs, pages…" aria-label="Search">' +
           '<kbd class="cxs-kbd">Esc</kbd>' +
         '</div>' +
         '<div class="cxs-chips" role="tablist" aria-label="Filter by type"></div>' +

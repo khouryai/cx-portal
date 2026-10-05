@@ -27,11 +27,11 @@ if (loadError) { console.error("FATAL: load —", loadErrorFile, loadError.messa
 const { PAGE_MODULE, uiCan } = sandbox;
 if (!PAGE_MODULE || typeof uiCan !== "function") { console.error("FATAL: gating layer not found"); process.exit(1); }
 
-// The 19 module keys of the live perm_modules catalog (P1-2 seed).
+// The 18 module keys of the live perm_modules catalog (P1-2 seed).
 const CATALOG = new Set([
   "overview", "test_register", "dynamic_testing", "test_reporting", "punch_list",
   "rma", "forms", "photos", "meetings",
-  "assets", "drawings", "locations", "directory", "templates",
+  "drawings", "locations", "directory", "templates",
   "weights", "config", "vehicle_mgmt", "audit", "admin",
 ]);
 // Nav entries that intentionally have no permission module.
@@ -121,6 +121,8 @@ console.log("\nmodule presentation helpers (per-module relevant actions):");
   ok("  _paModulePages reverse-maps nav pages (test_register has several)",
      _paModulePages("test_register").includes("test-register") && _paModulePages("test_register").length >= 3);
   ok("  unmapped/removed module → no pages", _paModulePages("track_plan").length === 0);
+  ok("  removed modules (tasks, assets, schedule_p6) map to no pages",
+     ["tasks", "assets", "schedule_p6"].every((m) => _paModulePages(m).length === 0));
 }
 
 console.log("\nfeature predicates (real app.js fns now driven by uiCan):");

@@ -49,7 +49,7 @@ function _deployTestId(depId, locId, code, idx, dupCodes) {
 //   { row, tc, sel }  — the test_items row, the template case it came from,
 //                       and the location selection it belongs to.
 // Callers that need to reach back to the template case after the insert (the
-// generic-asset step, the form clone) use tc/sel instead of re-deriving an id
+// child test case step, the form clone) use tc/sel instead of re-deriving an id
 // from the code, which is exactly what could not be done unambiguously before.
 function _deployPlanRows(tpl, sel, depId, now) {
   const chosen = new Set(sel?.tcCodes || []);
@@ -74,6 +74,7 @@ function _deployPlanRows(tpl, sel, depId, now) {
         scope_type:     (tc?.scopeType || tc?.scope_type || 'static') === 'dynamic' ? 'dynamic' : 'static',
         status:         'Not Started',
         weight:         1, // legacy per-row column; real weight lives in test_case_weights
+        is_parent:      _deployChildNames(tc).length > 0,
         synced_at:      now,
       },
     });
@@ -91,4 +92,31 @@ function _deployDuplicateIds(plan) {
     if (seen.has(id)) dup.push(id); else seen.add(id);
   });
   return dup;
+}
+
+// The child test case names a template case defines ("Child test cases" in the
+// template builder — a comma-separated list, one child per device). Templates
+// saved before the 2026-10 child test case migration carry it under `assets`.
+function _deployChildNames(tc) {
+  const raw = tc?.children ?? tc?.assets ?? '';
+  const seen = new Set(), out = [];
+  String(raw).split(',').map(s => s.trim()).filter(Boolean).forEach(n => {
+    const k = n.toLowerCase();
+    if (!seen.has(k)) { seen.add(k); out.push(n); }
+  });
+  return out;
+}
+
+// One child test_items row per child name of every planned parent, built by
+// _childDbRow (tr-children.js) so a deployed child is identical to one added
+// from the Test Register. The parent is brand new, so a positional `~cN`
+// suffix on its id cannot collide with anything.
+function _deployPlanChildRows(plan) {
+  const out = [];
+  (plan || []).forEach(p => {
+    _deployChildNames(p?.tc).forEach((name, i) => {
+      out.push(_childDbRow(p.row, name, `${p.row.test_id}~c${i + 1}`));
+    });
+  });
+  return out;
 }
