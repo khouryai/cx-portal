@@ -21638,7 +21638,7 @@ function openFormPickerForTest(testId, childKey = '', opts = {}) {
   }
   const row = ctx.parentRow;
   const baseSub = row ? `${row.TestCaseCode || row.TestID} · ${row.Activity || ''}`.trim() : ctx.parentTestId;
-  const sub = ctx.childKey ? `${baseSub}  ·  Child: ${ctx.childLabel || ctx.childKey}` : baseSub;
+  const sub = escapeHtml(ctx.childKey ? `${baseSub}  ·  Child: ${ctx.childLabel || ctx.childKey}` : baseSub);
   modal({
     title: 'Linked Forms', sub, size: 'large',
     body: _formPickerBody(ctx.parentTestId, ctx.childKey),

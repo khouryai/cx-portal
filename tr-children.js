@@ -202,7 +202,7 @@ function _trAddChildrenModal(testId) {
   if (!parentRow) return;
   modal({
     title: 'Add child test cases',
-    sub: `${parentRow.TestCaseCode || ''} ${parentRow.TestName || ''}`.trim(),
+    sub: escapeHtml(`${parentRow.TestCaseCode || ''} ${parentRow.TestName || ''}`.trim()),
     body: `
       <div class="form-grid">
         <div class="form-field form-field-full">
@@ -244,6 +244,8 @@ async function _trSaveChildren(testId) {
     }
   } catch (e) {
     toast('Error: ' + e.message, 'error');
+    // A failed first insert must not leave the parent flagged with no children.
+    if (!added) await _parentAfterChildrenChanged(testId).catch(err => _logSwallowed('child add: un-flag parent', err));
   }
   if (added) {
     await _parentRollupCheck(testId).catch(e => _logSwallowed('child add: roll-up', e));
