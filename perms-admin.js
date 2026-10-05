@@ -183,7 +183,6 @@ const PAGE_MODULE = {
   'punch-workflow': 'punch_list',
   'rma': 'rma',
   'forms': 'forms',
-  'meetings': 'meetings',
   'drawings': 'drawings',
   'documents': 'drawings',
   'dynamic-testing': 'dynamic_testing',

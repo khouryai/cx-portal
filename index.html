@@ -72,7 +72,6 @@
 <link rel="stylesheet" href="photos.css" />
 <link rel="stylesheet" href="trackplan.css" />
 <link rel="stylesheet" href="search.css" />
-<link href="vendor/css/quill.snow.css" rel="stylesheet" />
 <!-- Flatpickr – date picker -->
 <link rel="stylesheet" href="vendor/css/flatpickr.min.css">
 <!-- Tom Select – enhanced dropdowns -->
@@ -392,11 +391,6 @@ function _signinTogglePw(){
         Test Activities
       </a>
 
-      <a href="#" class="nav-link nav-role" data-page="lineitems" data-role="field_engineer admin client readonly" style="display:none;">
-        <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5 4a3 3 0 00-3 3v6a3 3 0 003 3h10a3 3 0 003-3V7a3 3 0 00-3-3H5zm-1 9v-1h5v2H5a1 1 0 01-1-1zm7 1h4a1 1 0 001-1v-1h-5v2zm0-4h5V8h-5v2zM9 8H4v2h5V8z" clip-rule="evenodd"/></svg>
-        Test Cases
-      </a>
-
       <a href="#" class="nav-link nav-role" data-page="dynamic-testing" data-role="field_engineer admin client readonly" style="display:none;">
         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM7.293 7.707a1 1 0 011.414 0L10 8.999l1.293-1.292a1 1 0 111.414 1.414L11.414 10l1.293 1.293a1 1 0 01-1.414 1.414L10 11.414l-1.293 1.293a1 1 0 01-1.414-1.414L8.586 10 7.293 8.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
         Dynamic Testing
@@ -439,15 +433,6 @@ function _signinTogglePw(){
         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd"/></svg>
         Forms
       </a>
-
-
-      <div class="sidenav-section-label nav-role" data-role="field_engineer admin client readonly" style="display:none;">Planning</div>
-
-      <a href="#" class="nav-link nav-role" data-page="meetings" data-role="field_engineer admin client readonly" style="display:none;">
-        <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/></svg>
-        Meetings
-      </a>
-
 
 
       <div class="sidenav-section-label nav-role" data-role="field_engineer admin client readonly" style="display:none;">Project</div>
@@ -602,15 +587,6 @@ function _signinTogglePw(){
   <!-- TOP KPI ROW -->
   <div class="container">
 
-    <!-- VIEW SELECTOR -->
-    <div class="dash-view-switch" id="dash-view-switch">
-      <button class="dash-view-btn active" data-dview="overview"     onclick="setDashView('overview')">Overview</button>
-      <button class="dash-view-btn"        data-dview="velocity"     onclick="setDashView('velocity')">Velocity</button>
-      <button class="dash-view-btn"        data-dview="productivity" onclick="setDashView('productivity')">Field Productivity</button>
-      <button class="dash-view-btn"        data-dview="schedule"     onclick="setDashView('schedule')">Schedule</button>
-      <button class="dash-view-btn"        data-dview="quality"      onclick="setDashView('quality')">Quality &amp; Issues</button>
-    </div>
-
     <!-- ===================== OVERVIEW VIEW ===================== -->
     <div class="dash-view" id="dash-view-overview">
     <div class="kpi-grid">
@@ -711,14 +687,14 @@ function _signinTogglePw(){
         <div class="attention-card">
           <div class="attention-head">
             <span class="attention-tag tag-fail">Failed Tests</span>
-            <a href="#" class="link-arrow" data-goto="lineitems" data-filter="status:Failed">View all →</a>
+            <button type="button" class="link-arrow" data-action="showPage" data-args='["activities"]'>View activities →</button>
           </div>
           <div id="failed-list" class="mini-list"></div>
         </div>
         <div class="attention-card">
           <div class="attention-head">
             <span class="attention-tag tag-high">High Priority Punch</span>
-            <a href="#" class="link-arrow" data-goto="punchlist" data-filter="priority:high">View all →</a>
+            <button type="button" class="link-arrow" data-action="showPage" data-args='["punch-workflow"]'>View all →</button>
           </div>
           <div id="high-punch-list" class="mini-list"></div>
         </div>
@@ -726,82 +702,6 @@ function _signinTogglePw(){
     </div>
     </div><!-- /dash-view-overview -->
 
-    <!-- ===================== VELOCITY VIEW ===================== -->
-    <div class="dash-view" id="dash-view-velocity" style="display:none">
-      <div class="kpi-grid kpi-grid-mini">
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Completed (7d)</div><div class="kpi-value good" id="vel-7d">—</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Completed (30d)</div><div class="kpi-value good" id="vel-30d">—</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Avg / Week</div><div class="kpi-value" id="vel-avgwk">—</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Est. Completion</div><div class="kpi-value info" id="vel-eta">—</div></div>
-        <div class="kpi-card kpi-mini" title="Share of tested cases that passed without ever failing"><div class="kpi-label">First-Pass Yield</div><div class="kpi-value" id="vel-fpy">—</div></div>
-        <div class="kpi-card kpi-mini" title="Share of tested cases that failed at least once"><div class="kpi-label">Rework Rate</div><div class="kpi-value warn" id="vel-rework">—</div></div>
-      </div>
-      <div class="section-block">
-        <div class="section-head"><div>
-          <h2 class="section-title">Completion Burn-up</h2>
-          <p class="section-sub">Cumulative tests completed vs total scope, reconstructed from recorded status history</p>
-        </div></div>
-        <div class="chart-card"><div class="chart-wrap chart-wrap-tall"><canvas id="chart-burnup" role="img" aria-label="Completion burn-up"></canvas></div></div>
-      </div>
-      <div class="section-block">
-        <div class="section-head"><div>
-          <h2 class="section-title">Weekly Throughput</h2>
-          <p class="section-sub">Tests reaching a completed state each week</p>
-        </div></div>
-        <div class="chart-card"><div class="chart-wrap"><canvas id="chart-throughput" role="img" aria-label="Weekly throughput"></canvas></div></div>
-      </div>
-      <p class="dash-view-note">First-pass yield and rework are measured from status changes recorded in the portal. They become more accurate as more testing is logged here rather than bulk-imported.</p>
-    </div>
-
-    <!-- ===================== FIELD PRODUCTIVITY VIEW ===================== -->
-    <div class="dash-view" id="dash-view-productivity" style="display:none">
-      <div class="kpi-grid kpi-grid-mini">
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Field Days Logged</div><div class="kpi-value" id="prod-days">—</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Tests / Tester-Day</div><div class="kpi-value good" id="prod-ttd">—</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Total Idle Hours</div><div class="kpi-value warn" id="prod-idle">—</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Days w/ Delays</div><div class="kpi-value bad" id="prod-delaydays">—</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Field Pass Rate</div><div class="kpi-value" id="prod-passrate">—</div></div>
-      </div>
-      <div class="charts-grid">
-        <div class="chart-card"><div class="chart-title">Idle Hours by Delay Cause</div><div class="chart-wrap"><canvas id="chart-delay-cause" role="img" aria-label="Idle hours by delay cause"></canvas></div></div>
-        <div class="chart-card"><div class="chart-title">Daily Tests Logged vs Passed</div><div class="chart-wrap"><canvas id="chart-daily-tests" role="img" aria-label="Daily tests logged vs passed"></canvas></div></div>
-      </div>
-      <p class="dash-view-note" id="prod-empty" style="display:none">No field delay logs recorded yet. These KPIs populate from the daily field-intake submissions.</p>
-    </div>
-
-    <!-- ===================== SCHEDULE VIEW ===================== -->
-    <div class="dash-view" id="dash-view-schedule" style="display:none">
-      <div class="kpi-grid kpi-grid-mini">
-        <div class="kpi-card kpi-mini" title="Of completed tests with a planned date, share finished on or before plan"><div class="kpi-label">On-time Completion</div><div class="kpi-value good" id="sch-ontime">—</div></div>
-        <div class="kpi-card kpi-mini" title="Tests past their planned date and not yet completed"><div class="kpi-label">Behind Plan</div><div class="kpi-value bad" id="sch-behind">—</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Due Next 14d</div><div class="kpi-value info" id="sch-due14">—</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Last Planned Date</div><div class="kpi-value" id="sch-finish">—</div></div>
-      </div>
-      <div class="section-block">
-        <div class="section-head"><div>
-          <h2 class="section-title">Planned vs Actual (S-Curve)</h2>
-          <p class="section-sub">Cumulative planned completions vs actual, by date</p>
-        </div></div>
-        <div class="chart-card"><div class="chart-wrap chart-wrap-tall"><canvas id="chart-scurve" role="img" aria-label="Planned vs actual S-curve"></canvas></div></div>
-      </div>
-      <p class="dash-view-note" id="sch-empty" style="display:none">No tests have a planned date set yet. Populate <b>planned_date</b> on test cases to unlock schedule KPIs.</p>
-    </div>
-
-    <!-- ===================== QUALITY & ISSUES VIEW ===================== -->
-    <div class="dash-view" id="dash-view-quality" style="display:none">
-      <div class="kpi-grid kpi-grid-mini">
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Open Punch</div><div class="kpi-value" id="ql-punch-open">—</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Overdue Punch</div><div class="kpi-value bad" id="ql-punch-overdue">—</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Avg Punch Age</div><div class="kpi-value" id="ql-punch-age">—</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Open RMAs</div><div class="kpi-value warn" id="ql-rma-open">—</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Overdue RMAs</div><div class="kpi-value bad" id="ql-rma-overdue">—</div></div>
-        <div class="kpi-card kpi-mini"><div class="kpi-label">Failed Tests</div><div class="kpi-value bad" id="ql-fails">—</div></div>
-      </div>
-      <div class="charts-grid">
-        <div class="chart-card"><div class="chart-title">Open Punch Items by Age</div><div class="chart-wrap"><canvas id="chart-punch-age" role="img" aria-label="Open punch items by age"></canvas></div></div>
-        <div class="chart-card"><div class="chart-title">Failed Tests by Subsystem</div><div class="chart-wrap"><canvas id="chart-fail-subsys" role="img" aria-label="Failed tests by subsystem"></canvas></div></div>
-      </div>
-    </div>
 
   </div>
 </section>
@@ -816,74 +716,64 @@ function _signinTogglePw(){
     </div>
   </div>
   <div class="container">
-    <div class="filter-bar">
-      <input type="text" id="ap-search" aria-label="Search activities" placeholder="Search activities..." class="filter-input">
-      <select id="ap-status-filter" aria-label="Filter by status" class="filter-select"></select>
-      <select id="ap-subsys-filter" aria-label="Filter by subsystem" class="filter-select"></select>
-      <select id="ap-phase-filter" aria-label="Filter by phase" class="filter-select"></select>
-      <select id="ap-location-filter" aria-label="Filter by location" class="filter-select"></select>
-      <button class="filter-clear" onclick="clearAPFilters()">Reset</button>
-    </div>
-    <div class="data-card">
-      <div class="data-card-head">
-        <span id="ap-count" class="data-count">—</span>
-        <button class="export-btn" onclick="exportAP()">Export CSV</button>
+    <div id="ap-list-view">
+      <div class="filter-bar">
+        <input type="text" id="ap-search" aria-label="Search activities" placeholder="Search activities..." class="filter-input">
+        <select id="ap-status-filter" aria-label="Filter by status" class="filter-select"></select>
+        <select id="ap-subsys-filter" aria-label="Filter by subsystem" class="filter-select"></select>
+        <select id="ap-phase-filter" aria-label="Filter by phase" class="filter-select"></select>
+        <select id="ap-location-filter" aria-label="Filter by location" class="filter-select"></select>
+        <button class="filter-clear" onclick="clearAPFilters()">Reset</button>
       </div>
-      <div class="table-wrap">
-        <table class="data-table" id="ap-table">
-          <thead>
-            <tr>
-              <th data-sort="Name">Activity Name</th>
-              <th data-sort="SubSystem-">Subsystem</th>
-              <th data-sort="Phase">Phase</th>
-              <th data-sort="Test Level">Test Level</th>
-              <th data-sort="Location">Location</th>
-              <th data-sort="Progress">Progress</th>
-              <th data-sort="Status">Status</th>
-            </tr>
-          </thead>
-          <tbody id="ap-body"></tbody>
-        </table>
+      <div class="data-card">
+        <div class="data-card-head">
+          <span id="ap-count" class="data-count">—</span>
+          <button class="export-btn" onclick="exportAP()">Export CSV</button>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table" id="ap-table">
+            <thead>
+              <tr>
+                <th data-sort="Name">Activity Name</th>
+                <th data-sort="SubSystem-">Subsystem</th>
+                <th data-sort="Phase">Phase</th>
+                <th data-sort="Test Level">Test Level</th>
+                <th data-sort="Location">Location</th>
+                <th data-sort="Progress">Progress</th>
+                <th data-sort="Status">Status</th>
+              </tr>
+            </thead>
+            <tbody id="ap-body"></tbody>
+          </table>
+        </div>
       </div>
     </div>
-  </div>
-</section>
-
-<!-- ==== TEST CASES ==== -->
-<section class="page" id="page-lineitems">
-  <div class="page-hero">
-    <div class="container">
-      <div class="page-eyebrow">Testing</div>
-      <h1 class="page-title">Test Case Details</h1>
-      <p class="page-sub" id="li-summary">—</p>
-    </div>
-  </div>
-  <div class="container">
-    <div class="kpi-grid kpi-grid-mini">
-      <div class="kpi-card kpi-mini kpi-clickable" id="li-kpi-pass" onclick="_liSetKpiFilter('pass')" title="Click to filter by Complete"><div class="kpi-label">Complete</div><div class="kpi-value good" id="li-passed">—</div></div>
-      <div class="kpi-card kpi-mini kpi-clickable" id="li-kpi-inprog" onclick="_liSetKpiFilter('inprog')" title="Click to filter by In Progress"><div class="kpi-label">In Progress</div><div class="kpi-value info" id="li-inprog">—</div></div>
-      <div class="kpi-card kpi-mini kpi-clickable" id="li-kpi-blocked" onclick="_liSetKpiFilter('blocked')" title="Click to filter by Fail / Blocked"><div class="kpi-label">Fail / Blocked</div><div class="kpi-value bad" id="li-failed">—</div></div>
-      <div class="kpi-card kpi-mini kpi-clickable" id="li-kpi-notstarted" onclick="_liSetKpiFilter('notstarted')" title="Click to filter by Not Started"><div class="kpi-label">Not Started</div><div class="kpi-value" id="li-open">—</div></div>
-    </div>
-    <div class="filter-bar">
-      <input type="text" id="li-search" aria-label="Search test cases" placeholder="Search test cases..." class="filter-input">
-      <select id="li-subsys-filter" aria-label="Filter by subsystem" class="filter-select"></select>
-      <select id="li-phase-filter" aria-label="Filter by phase" class="filter-select"></select>
-      <select id="li-location-filter" aria-label="Filter by location" class="filter-select"></select>
-      <select id="li-activity-filter" aria-label="Filter by activity" class="filter-select"></select>
-      <select id="li-status-filter" aria-label="Filter by status" class="filter-select"></select>
-      <button class="filter-clear" onclick="clearLIFilters()">Reset</button>
-    </div>
-    <div class="data-card">
-      <div class="data-card-head">
-        <span id="li-count" class="data-count">—</span>
-        <button class="export-btn" onclick="exportLI()">Export CSV</button>
+    <div id="ap-detail-view" hidden>
+      <div id="ap-detail-head" class="ap-detail-head"></div>
+      <h3 class="ap-detail-sub">Test Cases</h3>
+      <div class="kpi-grid kpi-grid-mini">
+        <div class="kpi-card kpi-mini kpi-clickable" id="li-kpi-pass" onclick="_liSetKpiFilter('pass')" title="Click to filter by Complete"><div class="kpi-label">Complete</div><div class="kpi-value good" id="li-passed">—</div></div>
+        <div class="kpi-card kpi-mini kpi-clickable" id="li-kpi-inprog" onclick="_liSetKpiFilter('inprog')" title="Click to filter by In Progress"><div class="kpi-label">In Progress</div><div class="kpi-value info" id="li-inprog">—</div></div>
+        <div class="kpi-card kpi-mini kpi-clickable" id="li-kpi-blocked" onclick="_liSetKpiFilter('blocked')" title="Click to filter by Fail / Blocked"><div class="kpi-label">Fail / Blocked</div><div class="kpi-value bad" id="li-failed">—</div></div>
+        <div class="kpi-card kpi-mini kpi-clickable" id="li-kpi-notstarted" onclick="_liSetKpiFilter('notstarted')" title="Click to filter by Not Started"><div class="kpi-label">Not Started</div><div class="kpi-value" id="li-open">—</div></div>
       </div>
-      <div class="table-wrap">
-        <table class="data-table" id="li-table">
-          <thead id="li-thead"></thead>
-          <tbody id="li-body"></tbody>
-        </table>
+      <div class="filter-bar">
+        <input type="text" id="li-search" aria-label="Search test cases" placeholder="Search test cases..." class="filter-input">
+        <select id="li-status-filter" aria-label="Filter by status" class="filter-select"></select>
+        <button class="filter-clear" onclick="clearLIFilters()">Reset</button>
+        <div hidden><select id="li-subsys-filter" aria-label="Filter by subsystem" class="filter-select"></select><select id="li-phase-filter" aria-label="Filter by phase" class="filter-select"></select><select id="li-location-filter" aria-label="Filter by location" class="filter-select"></select><select id="li-activity-filter" aria-label="Filter by activity" class="filter-select"></select></div>
+      </div>
+      <div class="data-card">
+        <div class="data-card-head">
+          <span id="li-count" class="data-count">—</span>
+          <button class="export-btn" onclick="exportLI()">Export CSV</button>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table" id="li-table">
+            <thead id="li-thead"></thead>
+            <tbody id="li-body"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -1475,20 +1365,6 @@ function _signinTogglePw(){
   </div>
 </section>
 
-<!-- ── MEETINGS ──────────────────────────────────────────────── -->
-<section class="page" id="page-meetings">
-  <div class="page-hero">
-    <div class="container">
-      <div class="page-eyebrow">Planning</div>
-      <h1 class="page-title">Meetings</h1>
-      <p class="page-subtitle">Meeting agendas, minutes, attendees and action item tracking</p>
-    </div>
-  </div>
-  <div class="container" style="padding-bottom:120px;">
-    <div id="mtg-content"></div>
-  </div>
-</section>
-
 <!-- ── ADMIN: CONFIGURATION MANAGEMENT (admin only) ──────── -->
 <section class="page" id="page-admin-config">
   <div class="page-hero">
@@ -1547,8 +1423,6 @@ function _signinTogglePw(){
 <!-- Tippy.js – tooltips and popovers -->
 <script src="vendor/js/popper.min.js"></script>
 <script src="vendor/js/tippy.umd.min.js"></script>
-<!-- Quill rich text editor -->
-<script src="vendor/js/quill.js"></script>
 
 <!-- ── DRAWINGS SHEET VIEWER ──────────────────────────────── -->
 <div id="drw-viewer-overlay" style="display:none;position:fixed;inset:0;z-index:3800;background:#111;flex-direction:column;">
@@ -1637,6 +1511,8 @@ function _signinTogglePw(){
 <script src="punch-actions.js"></script>
 <script src="dyn-actions.js"></script>
 <script src="tr-activities.js"></script>
+<script src="ap-activity-detail.js"></script>
+<script src="forms-new.js"></script>
 <script src="tpl-deploy.js"></script>
 <!-- Loaded AFTER app.js: it overrides window.signIn when the identity
      provider owns credentials (Entra), so app.js must have defined it. -->

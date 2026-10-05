@@ -31,6 +31,12 @@
 // becomes `data-change="fn" data-args='["x","$cx.value"]'` and still calls
 // fn('x', el.value). A normal string arg is never one of these sentinels.
 //
+// CLICK BARRIER: an empty `data-action=""` on a container (e.g. a row's action
+// cell) swallows clicks on its blank space so they don't reach the row's own
+// data-action, while its buttons still dispatch. Never use an inline
+// `onclick="event.stopPropagation()"` for this — it stops the event before it
+// reaches this document-level listener, so every delegated button inside dies.
+//
 // Args come from `data-args` (a JSON array) or `data-arg` (a single string).
 // Emit them in template literals with cxAct()/cxOn(); see docs/adr/0001.
 // ==========================================

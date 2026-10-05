@@ -5290,50 +5290,6 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   .p6-health-grid { grid-template-columns: 1fr; }
 }
 
-/* ─── Quill Rich Text Editor (Meetings) ─────────────────────── */
-.mtg-quill-wrap .ql-toolbar.ql-snow {
-  border: none;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-2);
-  padding: 6px 10px;
-  font-family: inherit;
-}
-.mtg-quill-wrap .ql-container.ql-snow {
-  border: none;
-  font-family: inherit;
-  font-size: 14px;
-}
-.mtg-quill-wrap .ql-editor {
-  min-height: 200px;
-  padding: 14px 16px;
-  font-size: 14px;
-  line-height: 1.75;
-  color: var(--text);
-}
-.mtg-quill-wrap .ql-editor.ql-blank::before {
-  color: var(--gray-400);
-  font-style: normal;
-}
-.mtg-quill-wrap .ql-snow .ql-stroke { stroke: #555; }
-.mtg-quill-wrap .ql-snow .ql-fill  { fill: #555; }
-.mtg-quill-wrap .ql-snow.ql-toolbar button:hover,
-.mtg-quill-wrap .ql-snow.ql-toolbar button.ql-active {
-  color: var(--hitachi-red);
-}
-.mtg-quill-wrap .ql-snow.ql-toolbar button:hover .ql-stroke,
-.mtg-quill-wrap .ql-snow.ql-toolbar button.ql-active .ql-stroke {
-  stroke: var(--hitachi-red);
-}
-.mtg-quill-wrap .ql-snow.ql-toolbar button:hover .ql-fill,
-.mtg-quill-wrap .ql-snow.ql-toolbar button.ql-active .ql-fill {
-  fill: var(--hitachi-red);
-}
-/* Previous minutes rendered HTML */
-.mtg-prev-content { font-size: 13px; line-height: 1.75; color: var(--text-muted); }
-.mtg-prev-content ul, .mtg-prev-content ol { padding-left: 20px; margin: 4px 0; }
-.mtg-prev-content li { margin: 2px 0; }
-.mtg-prev-content p  { margin: 4px 0; }
-.mtg-prev-content strong { font-weight: 600; }
 
 /* ═══════════════════════════════════════════════════════════════
    MODERN UI LIBRARY OVERRIDES
@@ -5511,40 +5467,19 @@ body.sb-collapsed .sidenav-reopen-btn { display: flex; }
   box-shadow: 0 1px 4px rgba(0,0,0,.08);
 }
 
-/* ── Dashboard view selector ─────────────────────────────── */
-.dash-view-switch {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  /* Normal flow in the white area below the hero — no hero overlap, so the
-     tab bar never collides with the KPI cards or the hero meta. */
-  margin: 24px 0 16px;
-  position: relative;
-  z-index: 1;
-}
-.dash-view-btn {
-  padding: 8px 16px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-muted);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background .12s, color .12s, border-color .12s;
-}
-.dash-view-btn:hover { background: var(--surface-3); color: var(--text); }
-.dash-view-btn.active {
-  background: var(--near-black);
-  border-color: var(--text);
-  color: var(--white);
-}
-.dash-view-note {
-  font-size: 12px;
-  color: var(--text-subtle);
-  margin: 14px 2px 0;
-  line-height: 1.5;
-}
+/* ── Dashboard (single Overview view) ─────────────────────── */
+#dash-view-overview { margin-top: 24px; }
+button.link-arrow { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
+
+/* ── Test Activities: activity drill-in (ap-activity-detail.js) ── */
+#ap-table tbody tr.ap-row { cursor: pointer; }
+#ap-table tbody tr.ap-row:hover td { background: var(--surface-3); }
+.ap-detail-head { margin: 8px 0 20px; }
+.ap-detail-top { margin-bottom: 14px; }
+.ap-detail-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.ap-detail-title-row .section-title { margin: 0; }
+.ap-detail-meta { margin-bottom: 14px; }
+.ap-detail-sub { font-size: 14px; font-weight: 700; color: var(--text); margin: 0 0 10px; }
 
 /* ── Copy/Paste visual states ──────────────────────────────── */
 /* Marching-ants border on copied/cut cells (Excel style) */
