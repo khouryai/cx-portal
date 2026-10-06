@@ -63,19 +63,42 @@ CREATE INDEX IF NOT EXISTS idx_documents_type             ON documents(doc_type)
 CREATE INDEX IF NOT EXISTS idx_documents_location         ON documents(location);
 
 -- ── Row-Level Security ──────────────────────────────────────
--- Matches the drawings module: any authenticated user can read/write.
--- Field-level role gating (admin + field upload; everyone views) is enforced
--- in the app/UI layer, same convention as the rest of the portal.
+-- Same permission model as the Drawings module (the Documents page is gated
+-- by the 'drawings' permission module in PAGE_MODULE): reading needs
+-- drawings.view; adding / editing / archiving / deleting needs drawings.edit
+-- (standard level — admins and field engineers, matching _docsCanManage()).
 ALTER TABLE documents         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE document_versions ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS documents_auth_all ON documents;
-CREATE POLICY documents_auth_all ON documents
-  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS documents_sel ON documents;
+DROP POLICY IF EXISTS documents_ins ON documents;
+DROP POLICY IF EXISTS documents_upd ON documents;
+DROP POLICY IF EXISTS documents_del ON documents;
+CREATE POLICY documents_sel ON documents FOR SELECT TO authenticated
+  USING ((SELECT private.has_module_perm('drawings', 'view')));
+CREATE POLICY documents_ins ON documents FOR INSERT TO authenticated
+  WITH CHECK ((SELECT private.has_module_perm('drawings', 'edit')));
+CREATE POLICY documents_upd ON documents FOR UPDATE TO authenticated
+  USING ((SELECT private.has_module_perm('drawings', 'edit')))
+  WITH CHECK ((SELECT private.has_module_perm('drawings', 'edit')));
+CREATE POLICY documents_del ON documents FOR DELETE TO authenticated
+  USING ((SELECT private.has_module_perm('drawings', 'edit')));
 
 DROP POLICY IF EXISTS document_versions_auth_all ON document_versions;
-CREATE POLICY document_versions_auth_all ON document_versions
-  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS document_versions_sel ON document_versions;
+DROP POLICY IF EXISTS document_versions_ins ON document_versions;
+DROP POLICY IF EXISTS document_versions_upd ON document_versions;
+DROP POLICY IF EXISTS document_versions_del ON document_versions;
+CREATE POLICY document_versions_sel ON document_versions FOR SELECT TO authenticated
+  USING ((SELECT private.has_module_perm('drawings', 'view')));
+CREATE POLICY document_versions_ins ON document_versions FOR INSERT TO authenticated
+  WITH CHECK ((SELECT private.has_module_perm('drawings', 'edit')));
+CREATE POLICY document_versions_upd ON document_versions FOR UPDATE TO authenticated
+  USING ((SELECT private.has_module_perm('drawings', 'edit')))
+  WITH CHECK ((SELECT private.has_module_perm('drawings', 'edit')));
+CREATE POLICY document_versions_del ON document_versions FOR DELETE TO authenticated
+  USING ((SELECT private.has_module_perm('drawings', 'edit')));
 
 -- ── Data API grants ─────────────────────────────────────────
 GRANT USAGE ON SCHEMA public TO authenticated, service_role;
@@ -132,12 +155,23 @@ ALTER TABLE documents
 
 CREATE INDEX IF NOT EXISTS idx_documents_folder ON documents(folder_id);
 
--- ── Row-Level Security ──────────────────────────────────────
+-- ── Row-Level Security (same model as documents above) ─────
 ALTER TABLE document_folders ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS document_folders_auth_all ON document_folders;
-CREATE POLICY document_folders_auth_all ON document_folders
-  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS document_folders_sel ON document_folders;
+DROP POLICY IF EXISTS document_folders_ins ON document_folders;
+DROP POLICY IF EXISTS document_folders_upd ON document_folders;
+DROP POLICY IF EXISTS document_folders_del ON document_folders;
+CREATE POLICY document_folders_sel ON document_folders FOR SELECT TO authenticated
+  USING ((SELECT private.has_module_perm('drawings', 'view')));
+CREATE POLICY document_folders_ins ON document_folders FOR INSERT TO authenticated
+  WITH CHECK ((SELECT private.has_module_perm('drawings', 'edit')));
+CREATE POLICY document_folders_upd ON document_folders FOR UPDATE TO authenticated
+  USING ((SELECT private.has_module_perm('drawings', 'edit')))
+  WITH CHECK ((SELECT private.has_module_perm('drawings', 'edit')));
+CREATE POLICY document_folders_del ON document_folders FOR DELETE TO authenticated
+  USING ((SELECT private.has_module_perm('drawings', 'edit')));
 
 -- ── Data API grants ─────────────────────────────────────────
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE document_folders TO authenticated, service_role;
