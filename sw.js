@@ -41,6 +41,7 @@ const SHELL_ASSETS = [
   './tr-activities.js',
   './ap-activity-detail.js',
   './forms-new.js',
+  './drw-set-manage.js',
   './tpl-deploy.js',
   './cx-entra-login.js',
   './cx-auth-hardening.js',

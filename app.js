@@ -22377,7 +22377,8 @@ function _drwExportIndex(loc) {
 
 // ── Tab 2: Drawing Sets ────────────────────────────────────────────────────
 function _drwTabSets(loc, el) {
-  const sets = DRAWING_SETS.filter(s => s.location === loc && s.status === 'ready');
+  // Superseded sets stay listed so they can still be viewed and deleted.
+  const sets = DRAWING_SETS.filter(s => s.location === loc && (s.status === 'ready' || s.status === 'superseded'));
   if (!sets.length) {
     el.innerHTML = `<div class="docs-empty"><p>No drawing sets uploaded for this location yet.</p></div>`;
     return;
@@ -22440,7 +22441,7 @@ function _drwTabSets(loc, el) {
                 <td style="font-size:12px;">${escapeHtml(set.revision_date || '—')}</td>
                 <td style="font-size:12px;">${escapeHtml(set.release_date || '—')}</td>
                 <td style="font-size:12px;">${escapeHtml(set.uploaded_by || '—')}</td>
-                <td><span class="drw-status-pill is-current">Ready</span></td>
+                <td>${_drwSetStatusPill(set)}</td>
                 <td style="white-space:nowrap;">
                   <button class="admin-action-btn tr-mini-btn" ${cxAct('_drwOpenSet', String(loc), String(set.id))}>View</button>
                   <button class="form-secondary tr-mini-btn" style="margin-left:4px;" ${cxAct('_drwUploadRevision', String(set.id))} title="Upload a new revision — matching Drawing Numbers will be superseded automatically">+ Revision</button>
@@ -22484,34 +22485,7 @@ function _drwBackToSets(loc) {
   _drwRenderLocationView(loc, 'sets');
 }
 
-function _drwTabHistory(loc, el) {
-  const sets = DRAWING_SETS.filter(s => s.location === loc).sort((a,b) => b.created_at.localeCompare(a.created_at));
-  if (!sets.length) {
-    el.innerHTML = `<div class="docs-empty"><p>No upload history for this location.</p></div>`;
-    return;
-  }
-  el.innerHTML = `
-    <div class="data-card" style="padding:0;overflow:hidden;">
-      <table class="data-table">
-        <thead><tr>
-          <th>Title</th><th>Sheets</th><th>Import Date</th><th>Rev Date</th><th>Release Date</th><th>Uploaded By</th><th>Status</th>
-        </tr></thead>
-        <tbody>${sets.map(set => {
-          const sheetCount = DRAWING_SHEETS.filter(s => s.set_id === set.id).length;
-          const statusColor = set.status === 'ready' ? 'var(--good)' : set.status === 'error' ? 'var(--bad)' : 'var(--warn)';
-          return `<tr>
-            <td style="font-weight:600;">${escapeHtml(set.title)}</td>
-            <td>${sheetCount}</td>
-            <td style="font-size:12px;">${set.import_date || '—'}</td>
-            <td style="font-size:12px;">${set.revision_date || '—'}</td>
-            <td style="font-size:12px;">${set.release_date || '—'}</td>
-            <td style="font-size:12px;">${escapeHtml(set.uploaded_by || '—')}</td>
-            <td><span style="color:${statusColor};font-weight:600;font-size:12px;text-transform:capitalize;">${set.status}</span></td>
-          </tr>`;
-        }).join('')}</tbody>
-      </table>
-    </div>`;
-}
+// ── _drwTabHistory (Revision History tab with actions) → drw-set-manage.js
 
 function _drwSheetCard(sheet) {
   const markups = DRAWING_MARKUPS.filter(m => m.sheet_id === sheet.id);
@@ -24740,39 +24714,17 @@ async function _drwDeleteSheet(sheetId, loc, subtab) {
     const mk = DRAWING_MARKUPS.filter(m => m.sheet_id === sheetId);
     for (const m of mk) await _dbDelete('drawing_markups', { id: m.id });
     await _dbDelete('drawing_sheets', { id: sheetId });
+    DRAWING_SHEETS = DRAWING_SHEETS.filter(s => s.id !== sheetId);
+    const restored = await _drwRestorePriorRevisions([sheet]);
     logAudit?.('Drawing page deleted', label, `set ${sheet.set_id}`);
-    toast('Page deleted', 'success');
+    toast(restored.length ? 'Page deleted — previous revision is current again' : 'Page deleted', 'success');
     await loadDrawingsData();
     renderDrawingsPage();
     _drwRenderLocationView(loc || _drwActiveLocation, subtab || 'current');
   } catch (e) { toast('Delete failed: ' + (e.message || 'unknown error'), 'error'); }
 }
 
-// ── Delete an entire drawing set — its pages, their markups, and the PDF.
-async function _drwDeleteSet(setId, loc) {
-  if (typeof uiCan === 'function' && !uiCan('drawings', 'delete_set')) { toast('You do not have permission to delete drawing sets', 'error'); return; }
-  const set = DRAWING_SETS.find(s => s.id === setId);
-  if (!set) { toast('Drawing set not found', 'error'); return; }
-  const sheetsOfSet = DRAWING_SHEETS.filter(s => s.set_id === setId);
-  if (!await cxConfirm(`Delete drawing set "${set.title}"?\n\nThis permanently removes the set, all ${sheetsOfSet.length} of its page${sheetsOfSet.length === 1 ? '' : 's'}, their markups, and the uploaded PDF. This cannot be undone.`)) return;
-  try {
-    const sheetIds = new Set(sheetsOfSet.map(s => s.id));
-    const mk = DRAWING_MARKUPS.filter(m => sheetIds.has(m.sheet_id));
-    for (const m of mk) await _dbDelete('drawing_markups', { id: m.id });
-    if (sheetsOfSet.length) await _dbDelete('drawing_sheets', { set_id: setId });
-    await _dbDelete('drawing_sets', { id: setId });
-    if (set.storage_path) {
-      try { await _drawStorage.remove(set.storage_path); }
-      catch (e) { console.warn('[drw] storage remove failed:', e.message); }
-    }
-    logAudit?.('Drawing set deleted', set.title, `${sheetsOfSet.length} pages`);
-    toast('Drawing set deleted', 'success');
-    _drwActiveSetId = '';
-    await loadDrawingsData();
-    renderDrawingsPage();
-    _drwRenderLocationView(loc || _drwActiveLocation, 'sets');
-  } catch (e) { toast('Delete failed: ' + (e.message || 'unknown error'), 'error'); }
-}
+// ── _drwDeleteSet (delete + restore previous revisions) → drw-set-manage.js
 
 async function openTestCaseScopeModal(testId) {
   const tc = TI.find(r => (r.TestID || r.test_id) === testId);

@@ -5473,6 +5473,7 @@ button.link-arrow { background: none; border: 0; padding: 0; font: inherit; curs
 
 /* ── Test Activities: activity drill-in (ap-activity-detail.js) ── */
 #ap-table tbody tr.ap-row { cursor: pointer; }
+.drw-orphan-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 14px; margin: 0 0 12px; background: var(--warn-light); border: 1px solid var(--warn-border); border-radius: 8px; font-size: 13px; color: var(--text); }
 #ap-table tbody tr.ap-row:hover td { background: var(--surface-3); }
 .ap-detail-head { margin: 8px 0 20px; }
 .ap-detail-top { margin-bottom: 14px; }
