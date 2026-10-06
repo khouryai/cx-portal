@@ -21,3 +21,5 @@ sync_testplan.js           export-ignore
 config.local.js.example    export-ignore
 .gitignore                 export-ignore
 .gitattributes             export-ignore
+.mcp.json                  export-ignore
+.nojekyll                  export-ignore
