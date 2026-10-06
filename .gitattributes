@@ -1,0 +1,23 @@
+# Keep GitHub's "Code → Download ZIP" (git archive) to just what the app
+# needs to run: the root .html/.js/.css files, manifest, vendor/, assets/,
+# README.md and the run-local launchers. Everything below stays in the
+# repository (tests, CI, database scripts, Azure kit, docs) — it is only
+# left out of the downloaded ZIP.
+.github/                   export-ignore
+.claude/                   export-ignore
+tools/                     export-ignore
+supabase/                  export-ignore
+azure/                     export-ignore
+infra/                     export-ignore
+docs/                      export-ignore
+CLAUDE.md                  export-ignore
+DEMO_DATA.md               export-ignore
+DESIGN_TOKENS.md           export-ignore
+INTEGRATION_SHAREPOINT.md  export-ignore
+MIGRATION.md               export-ignore
+PERMISSIONS_MODEL.md       export-ignore
+SECURITY.md                export-ignore
+sync_testplan.js           export-ignore
+config.local.js.example    export-ignore
+.gitignore                 export-ignore
+.gitattributes             export-ignore
