@@ -72,11 +72,6 @@ const PERM_CATALOG = {
     ['create_album','standard',false],['manage_album_contents','standard',false],
     ['manage_album_own','standard',false],['manage_album_any','admin',false],
   ],
-  meetings: [
-    ['view','read_only',false],['export','read_only',false],['create','standard',false],['edit','standard',false],
-    ['manage_agenda','standard',false],['record_minutes','standard',false],['manage_action_items','standard',false],
-    ['manage_attendees','standard',false],['create_followup','standard',false],['delete','admin',false],
-  ],
   drawings: [
     ['view','read_only',false],['create_markup','standard',false],['edit_markup_own','standard',false],
     ['publish','standard',false],['manage_markup_any','admin',false],['upload_set','admin',false],['delete_set','admin',false],
@@ -177,7 +172,7 @@ window.PERM_CATALOG  = PERM_CATALOG;
 const PAGE_MODULE = {
   'dashboard': 'overview',
   'activities': 'test_register', 'lineitems': 'test_register',
-  'field-intake': 'test_register', 'test-register': 'test_register', 'tcv': 'test_register',
+  'field-intake': 'test_register', 'test-register': 'test_register',
   'daily-log-history': 'test_register',
   'test-reporting': 'test_reporting',
   'punch-workflow': 'punch_list',

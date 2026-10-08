@@ -56,6 +56,7 @@ const suites = [
   { file: "tools/test_relink_profile.js", needs: [] },  // Azure: move a profile onto its Entra object id (needs PostgreSQL)
   { file: "tools/test_export_files.js", needs: [] },    // Supabase file export for the hand-off
   { file: "tools/test_team_invite.js", needs: [] },     // Team: add a person under Supabase and under Microsoft sign-in
+  { file: "tools/test_audit_actor.js", needs: [] },     // change log names the person under Supabase and Entra (needs PostgreSQL)
   { file: "tools/test_size_ratchet.js", needs: [] },    // monolith line-count ratchet (Tier 3 #11)
   { file: "tools/test_inline_handler_ratchet.js", needs: [] }, // inline on*= handler ratchet (Tier 3 #11 Stage B)
   { file: "tools/test_delegation_wiring.js", needs: [] },      // every data-action resolves (Tier 3 #11 Stage B)
@@ -87,6 +88,7 @@ const suites = [
   { file: "tools/pw_auth_gates.js", needs: ["playwright-core"] }, // real-browser proof of the auth gates
   { file: "tools/pw_entra_login.js", needs: ["playwright-core"] }, // real-browser proof of the Azure/Entra deployment shape
   { file: "tools/pw_local_login.js", needs: ["playwright-core"] }, // real-browser proof of the standard email/password sign-in
+  { file: "tools/pw_page_walk.js", needs: ["playwright-core"] }, // every page opens, signed in, with no JavaScript errors
 ];
 
 const results = [];

@@ -697,7 +697,6 @@ function showPage(name) {
   if (name === 'field-intake')     renderFieldIntake();
   if (name === 'daily-log-history') { _dlLoaded = false; renderDailyLogHistory(); }
   if (name === 'test-register')    renderTestRegister();
-  if (name === 'tcv')              renderTCV();
   if (name === 'test-reporting')   renderTestReporting();
   if (name === 'admin-templates')  renderAdminTemplates();
   if (name === 'admin-weights')    renderAdminWeights();
@@ -2359,7 +2358,6 @@ let selectedResult = null;
 let selectedDelayOccurred = 'No';
 
 // LocalStorage keys
-const LS_USER = 'hitachi_field_user';
 const LS_QUEUE = 'hitachi_field_queue';
 
 function loadQueue() {
@@ -2370,19 +2368,6 @@ function saveQueue(q) { localStorage.setItem(LS_QUEUE, JSON.stringify(q)); }
 
 // initField / tryLogin / logout (V1 PIN auth) removed.
 // Authentication is now handled by Supabase Auth — see initAuth() / signIn() / signOut().
-
-// Cascading dropdowns - Test Result form
-function populateDropdownsResult() {
-  const phases = [...new Set(TI.map(t => t.Phase).filter(Boolean))].sort();
-  fillSelect('r-phase', phases, 'All Phases');
-
-  ['r-phase', 'r-location', 'r-subsystem', 'r-activity'].forEach(id => {
-    document.getElementById(id).addEventListener('change', cascadeResult);
-  });
-  document.getElementById('r-testid').addEventListener('change', updateTestInfo);
-
-  cascadeResult();
-}
 
 function cascadeResult() {
   const phase = document.getElementById('r-phase').value;
@@ -2434,14 +2419,6 @@ function fillSelect(id, options, allLabel, current = '') {
   const prev = current || sel.value;
   sel.innerHTML = `<option value="">${allLabel}</option>` +
     options.map(o => `<option value="${escapeHtml(o)}" ${o === prev ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('');
-}
-
-// Delay form dropdowns
-function populateDropdownsDelay() {
-  const locs = [...new Set(TI.map(t => t.Location).filter(Boolean))].sort();
-  const subs = [...new Set(TI.map(t => t.Subsystem).filter(Boolean))].sort();
-  fillSelect('d-location', locs, 'Select location...');
-  fillSelect('d-subsystem', subs, 'Select subsystem...');
 }
 
 // ==========================================
@@ -2812,7 +2789,6 @@ function renderQueue() {
 // PROTOTYPE V2 — Role-based features
 // ==========================================================================
 
-const USERS_V2 = DATA.users_v2 || [];
 const TEMPLATES = DATA.templates || [];
 const LOCATIONS = DATA.locations || [];
 let LOCS = []; // hierarchical locations loaded from Supabase
@@ -2820,8 +2796,6 @@ let FIELDSET_CONFIG = {}; // { punch_type:[], priority:[], ... } loaded from Sup
 let PROFILE_USERS = []; // { full_name, role } for typeahead
 const DEPLOYMENTS = DATA.deployments || [];
 let _adminTab = 'templates';
-let TEST_INSTANCES = DATA.testInstances || [];
-let PUNCH_ITEMS = DATA.punchItems || [];
 let AUDIT_LOG = DATA.auditLog || [];
 let DB_AUDIT_EVENTS = [];
 let _testReports = [];        // loaded from Supabase test_reports
@@ -2843,13 +2817,6 @@ const ROLE_LABELS = {
   punch_manager: 'Punch Mgr',
   technician: 'Tech',
   client: 'Client',
-};
-const ROLE_TITLES = {
-  admin: 'Administrator',
-  field: 'Field Engineer',
-  punch_manager: 'Punch List Manager',
-  technician: 'Technician',
-  client: 'Client / Inspector',
 };
 
 let currentRoleUser = null;
@@ -2878,9 +2845,10 @@ function initAuth() {
                              /[?&]type=recovery(?:&|$)/.test(_search);
   const _hasPkceCode       = /[?&]code=[^&]+/.test(_search);
   const _storedSessionPeek = _getSessionFromStorage();
-  const _isRecoveryUrl = _hasResetSentinel
+  // Only a provider with portal passwords has reset links; MSAL's own ?code= return must never look like one.
+  const _isRecoveryUrl = window.CXIdentity.managesPasswords !== false && (_hasResetSentinel
                       || _hasRecoveryMarker
-                      || (_hasPkceCode && !_storedSessionPeek?.access_token);
+                      || (_hasPkceCode && !_storedSessionPeek?.access_token));
 
   // onAuthStateChange handles SIGN_IN and SIGNED_OUT events.
   // We skip INITIAL_SESSION here — it's handled manually below via localStorage
@@ -2989,8 +2957,9 @@ async function _loadCurrentProfile(user, accessToken) {
       return;
     }
 
-    // First-login: admin set a temp password — user must create their own before entering
-    if (data.must_change_password) {
+    // First-login: admin set a temp password — user must create their own before entering.
+    // Not under Microsoft sign-in: there is no portal password to change, only a dead end.
+    if (data.must_change_password && window.CXIdentity.managesPasswords !== false) {
       _showChangePasswordPanel(data);
       return;
     }
@@ -3482,16 +3451,6 @@ function dateAgo(iso) {
   if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
   if (diff < 604800) return Math.floor(diff/86400) + 'd ago';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-
-// ==========================================================================
-// ADMIN PAGE RENDERS — one per nav section (replaces monolithic tab bar)
-// ==========================================================================
-function renderAdminAM() {
-  const root = document.getElementById('admin-am-content');
-  if (!root || !currentRoleUser) return;
-  if (currentRoleUser.role !== 'admin') { root.innerHTML = `<div class="docs-empty"><h3>Admins only</h3></div>`; return; }
-  root.innerHTML = _adminActivityManagerHTML();
 }
 
 // ==========================================================================
@@ -6145,74 +6104,6 @@ function _mxSaveNotes(testId, notes) {
   });
 }
 
-// Legacy wrappers
-function setTestStatusTI(testId, status) { _mxStatusChange(testId, status); }
-function setTestStatus(id, status) { _mxStatusChange(id, status); }
-
-let _pendingActivityEdit = null;
-
-function openEditActivityModal(idx) {
-  const data = (window._mxGroups || [])[idx];
-  if (!data) { toast('Could not load activity data', 'error'); return; }
-  _pendingActivityEdit = data;
-  const selectedReport = _trpFindRecordForActivity(data);
-  const customReport = selectedReport ? '' : (data.testReport || '');
-  modal({
-    title: 'Edit Activity',
-    size: 'medium',
-    body: `
-      <div class="form-field">
-        <label>Activity Name</label>
-        <input type="text" id="ea-name" class="form-input" value="${escapeHtml(data.activity||'')}">
-      </div>
-      <div class="form-field" style="margin-top:12px;">
-        <label>Test Report</label>
-        ${_trpReportSelectHTML(selectedReport?.id || '', customReport)}
-      </div>
-      <p style="font-size:12px;color:var(--gray-500);margin-top:12px;">Changes apply to all test cases under this activity: <b>${escapeHtml(data.phase)} · ${escapeHtml(data.location)} · ${escapeHtml(data.subsystem)}</b></p>
-    `,
-    footer: `
-      <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="admin-action-btn" data-action="saveActivityEdit">Save Changes</button>
-    `
-  });
-}
-
-async function saveActivityEdit() {
-  const data = _pendingActivityEdit;
-  if (!data) { toast('No activity selected','error'); return; }
-
-  const name   = document.getElementById('ea-name').value.trim();
-  const beforeLink = _trpCurrentActivityReportLink(data);
-  let afterLink = _trpReportLinkFromModal();
-  if (!name) { toast('Activity name required','error'); return; }
-
-  const rows = TI.filter(r => r.Activity===data.activity && r.Location===data.location && r.Phase===data.phase && r.Subsystem===data.subsystem);
-  if (!rows.length) { toast('No matching test cases found','error'); return; }
-
-  const btn = document.querySelector('.modal-footer .admin-action-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-
-  try {
-    afterLink = await _trpResolveReportLink(afterLink, { phase: data.phase, location: data.location, subsystem: data.subsystem, activity: name });
-    const patch = { activity: name, ..._trpReportLinkPatch(afterLink) };
-    await Promise.all(rows.map(r => _dbUpdate('test_items', patch, { test_id: r.TestID })));
-    rows.forEach(r => { r.Activity = name; });
-    _trpApplyReportLinkToItems(rows, afterLink);
-    const reportDetails = _trpReportLinkAuditDetails(beforeLink, afterLink, rows.length);
-    logAudit('Activity Edited', name, [reportDetails, `Phase: ${data.phase} · Location: ${data.location}`].filter(Boolean).join(' · '));
-    _trpLogActivityReportLinkChange(name, beforeLink, afterLink, rows.length, `Phase: ${data.phase} · Location: ${data.location}`);
-    toast(`Updated ${rows.length} test cases`, 'success');
-    _pendingActivityEdit = null;
-    closeModal();
-    renderTestRegister();
-    initLineItems();
-  } catch(e) {
-    toast('Save failed: ' + e.message, 'error');
-    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
-  }
-}
-
 // ==========================================================================
 // FIELD INTAKE — 3 step workflow
 // ==========================================================================
@@ -6847,22 +6738,6 @@ function renderIntakeStep3(items) {
 }
 
 function setIntakeStep(s) { intakeStep = s; renderFieldIntake(); }
-
-function selectAddStatus(btn, status) {
-  document.querySelectorAll('.result-btn').forEach(b => b.classList.remove('selected'));
-  btn.classList.add('selected');
-  document.getElementById('ai-blocked-block').style.display = status === 'blocked' ? '' : 'none';
-  document.getElementById('ai-failed-block').style.display = status === 'failed' ? '' : 'none';
-}
-
-function filterAddTestcases() {
-  const loc = document.getElementById('ai-location').value;
-  const sel = document.getElementById('ai-testid');
-  if (!loc) { sel.innerHTML = '<option value="">Select test case...</option>'; return; }
-  const items = TI.filter(t => t.Location === loc && _isLatestAttempt(t));
-  sel.innerHTML = '<option value="">Select test case...</option>' +
-    items.map(t => `<option value="${t.TestID}">${escapeHtml(t.TestCaseCode)} · ${escapeHtml(t.TestName)}</option>`).join('');
-}
 
 function _updateAdditionHours(idx, val) {
   if (intakeAdditions[idx]) intakeAdditions[idx].hours = parseFloat(val) || 0;
@@ -7614,8 +7489,6 @@ _colRegister('pl', [
   { id: 'rtc',          label: 'Test Code',        default: false },
 ], _plRenderCell);
 
-// Backward-compat aliases used by renderPunchWorkflow
-function _plActiveCols() { return _colGetVisible('pl'); }
 function openPlColEditor() { _colOpenEditor('pl', renderPunchWorkflow); }
 
 // Render a single <td> for a given column + punch item
@@ -10256,8 +10129,6 @@ Object.defineProperty(window, '_trpColVisible', { get() {
   return vis;
 }});
 
-function _trpOpenColConfig() { _colOpenEditor('trp', renderTestReporting); }
-
 const TRP_SOURCE_LABELS = {
   'master-linked': 'Master + TI',
   'master-only': 'Master Only',
@@ -10722,19 +10593,6 @@ function _trpClearFilters() {
   renderTestReporting();
 }
 
-function _trStatusBadge(s) {
-  const map = {
-    'Not Started':                'badge-notstarted',
-    'In Review':                  'badge-review',
-    'Accepted':                   'badge-accepted',
-    'Accepted as Noted':          'badge-accepted',
-    'Accepted as Noted Resubmit': 'badge-resubmit',
-    'Resubmit':                   'badge-resubmit',
-    'Rejected':                   'badge-rejected',
-  };
-  return `<span class="badge ${map[s]||'badge-notstarted'}">${escapeHtml(s||'Not Started')}</span>`;
-}
-
 function _trpStatusOptions(currentVal) {
   const current = _trpCleanReportValue(currentVal);
   const statuses = [...TR_STATUSES];
@@ -10770,26 +10628,6 @@ function _trpSummaryValue(values, fallback = '') {
   if (!clean.length) return fallback || '';
   if (clean.length === 1) return clean[0];
   return `${clean.length} Multiple`;
-}
-
-function _trpFormatDate(iso) {
-  if (!iso) return '-';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return escapeHtml(iso);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function _trpSourceBadge(row) {
-  const cls = row.source === 'derived' ? 'badge-review' : row.source === 'master-linked' ? 'badge-accepted' : 'badge-notstarted';
-  return `<span class="badge ${cls}">${escapeHtml(row.sourceLabel)}</span>`;
-}
-
-function _trpStatusControlHTML(row, canManage) {
-  if (!canManage) return _trStatusBadge(row.status);
-  const uid = encodeURIComponent(row.uid);
-  return `<select class="form-input trp-status-select" ${cxOn('change', '_trpUpdateStatus', String(uid), '$cx.el')}>
-    ${_trpStatusOptions(row.status).map(s => `<option value="${escapeHtml(s)}" ${row.status===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
-  </select>`;
 }
 
 // V2 status chip set for Test Reporting (matches actual TR_STATUSES values)
@@ -10933,9 +10771,6 @@ function _trpReportListHTML(rows, canManage) {
     ${rows.map(r => _trpReportRowHTML(r, canManage)).join('')}
   </div>`;
 }
-
-// Kept for backward-compat in case any caller references the old name
-function _trpReportTableHTML(rows, canManage) { return _trpReportListHTML(rows, canManage); }
 
 function _trpReportRowHTML(row, canManage) {
   const uid = encodeURIComponent(row.uid);
@@ -11573,35 +11408,6 @@ function _trpToggleLinks(uid) {
   renderTestReporting();
 }
 
-async function _trpUpdateStatus(uid, el) {
-  if (!_trpCanManage()) { toast('You do not have permission to update report status', 'error'); return; }
-  const row = _trpFindReportRow(uid);
-  if (!row) { toast('Report not found', 'error'); return; }
-  const newStatus = el?.value || 'Not Started';
-  const oldStatus = row.status || 'Not Started';
-  if (newStatus === oldStatus && !row.isDerived) return;
-  if (el) el.disabled = true;
-  try {
-    if (row.isDerived) {
-      await _trpCreateReportRecord(row, { status: newStatus, notes: row.notes });
-      toast('Report record created and status saved', 'success');
-    } else {
-      const patch = { status: newStatus, updated_by: currentRoleUser?.name, updated_at: new Date().toISOString() };
-      const updated = await _dbUpdate('test_reports', patch, { id: row.id });
-      if (!updated?.length) throw new Error('No report row was updated. Check test_reports RLS SELECT/UPDATE policies.');
-      const target = _testReports.find(r => r.id === row.id);
-      if (target) Object.assign(target, updated[0] || patch);
-      toast('Report status updated', 'success');
-    }
-    await _trpRefreshData();
-  } catch(e) {
-    if (el) el.value = oldStatus;
-    toast('Status update failed: ' + e.message, 'error');
-  } finally {
-    if (el) el.disabled = false;
-  }
-}
-
 // ==========================================================================
 // ==========================================================================
 // MODERN UI LIBRARIES — Alpine.js · Flatpickr · Tom Select · Fuse.js
@@ -11621,7 +11427,6 @@ function _dayFmt(d, fmt = 'MMM D, YYYY') {
 
 // ─── Fuse.js search instance for Test Register ───────────────────────────
 let _trFuse = null;
-let _trDrillSearch = '';        // search within drilldown view
 let _trDrillStatusFilter = '';  // status filter within drilldown view
 
 function _trBuildFuse(activities) {
@@ -11632,56 +11437,6 @@ function _trBuildFuse(activities) {
     includeScore: true,
     ignoreLocation: true,
   });
-}
-
-// ─── Tom Select — re-init after every re-render ──────────────────────────
-const _tomInstances = {}; // track live instances by element id
-
-function _trInitTomSelect() {
-  if (typeof TomSelect === 'undefined') return;
-  const filterDefs = [
-    { id: 'tr-filter-phase',     key: 'phase'     },
-    { id: 'tr-filter-location',  key: 'location'  },
-    { id: 'tr-filter-subsystem', key: 'subsystem' },
-    { id: 'tr-filter-status',    key: 'status'    },
-  ];
-  filterDefs.forEach(({ id, key }) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    if (el.tomselect) { el.tomselect.destroy(); }
-    new TomSelect(el, {
-      create: false,
-      allowEmptyOption: true,
-      maxOptions: 200,
-      onChange: (v) => _amSetFilter(key, v),
-    });
-  });
-}
-
-// ─── Tippy.js — init/refresh tooltips after each render ──────────────────
-function _trInitTippy() {
-  if (typeof tippy === 'undefined') return;
-  // Destroy stale instances first
-  document.querySelectorAll('[data-tippy-content]').forEach(el => {
-    if (el._tippy) el._tippy.destroy();
-  });
-  tippy('[data-tippy-content]', {
-    placement: 'top',
-    arrow: true,
-    animation: 'shift-away',
-    theme: 'portal',
-    delay: [300, 0],
-  });
-}
-
-// ─── AutoAnimate — apply to Test Register content wrapper ────────────────
-function _trInitAutoAnimate() {
-  if (typeof autoAnimate === 'undefined') return;
-  const el = document.getElementById('test-register-content');
-  if (el && !el._aaInit) {
-    autoAnimate(el, { duration: 180 });
-    el._aaInit = true;
-  }
 }
 
 // ─── GLOBAL init — called after every page render ────────────────────────
@@ -11752,13 +11507,6 @@ function _initPageLibraries() {
 
 // Keep old name as alias so existing calls don't break
 function _trInitModernUI() { _initPageLibraries(); }
-
-// ─── Fuse drilldown search handler ───────────────────────────────────────
-let _trDrillFuse = null;
-function _trDrillSearchInput(val) {
-  _trDrillSearch = val;
-  _reRenderTR();
-}
 
 function _trSetDrillStatusFilter(val) {
   _trDrillStatusFilter = val;
@@ -14159,53 +13907,6 @@ function _swItemKey(c) {
     (c.device_id    || c.device_label || '').toString().trim().toLowerCase(),
     (c.software_name|| '').trim().toLowerCase(),
   ].join('||');
-}
-
-// Resolve an ad-hoc location string ("W40") to its master location node name
-// ("W40 - Millbrae Station"). Matching is bidirectional and falls back to the
-// input unchanged when nothing in the master list lines up.
-function _resolveLocationPrefix(adHocLoc) {
-  if (!adHocLoc) return adHocLoc;
-  const loc    = adHocLoc.trim();
-  const lower  = loc.toLowerCase();
-  const master = LOCS || [];
-
-  // 1. Exact
-  const exact = master.find(l => l.name.trim().toLowerCase() === lower);
-  if (exact) return exact.name;
-
-  // 2. Master name starts with input (input is prefix of master)
-  const fwdPrefix = master.find(l => {
-    const n = l.name.trim().toLowerCase();
-    return n.startsWith(lower + ' ') || n.startsWith(lower + '-');
-  });
-  if (fwdPrefix) return fwdPrefix.name;
-
-  // 3. Input starts with master name (master is prefix of input)
-  const revPrefix = master.find(l => {
-    const n = l.name.trim().toLowerCase();
-    return lower.startsWith(n + ' ') || lower.startsWith(n + '-');
-  });
-  if (revPrefix) return revPrefix.name;
-
-  // 4. Station-code match: leading 2–4 alphanumeric chars before a space or dash.
-  //    e.g. "W40 TCR" → code "W40" → matches "W40 - Millbrae Station"
-  const codeMatch = loc.match(/^([A-Z0-9]{2,4})(?:\s|-)/i);
-  if (codeMatch) {
-    const code  = codeMatch[1].toUpperCase();
-    const stMaster = master.find(l => {
-      const n = l.name.trim().toUpperCase();
-      return n.startsWith(code + ' ') || n.startsWith(code + '-') || n === code;
-    });
-    if (stMaster) return stMaster.name;
-  }
-
-  return loc; // no match — return as-is
-}
-
-// Resolve a test-case location string to the master location node name
-function _resolveSwLocation(loc) {
-  try { return _resolveLocationPrefix(loc) || loc; } catch { return loc; }
 }
 
 function _swSnapshotChipHTML() { return ''; }
@@ -17151,13 +16852,6 @@ const _vfStorage = {
     try { await CXStorage.removeStrict(this.bucket, [path]); } catch (e) { _logSwallowed('storage: remove orphaned object', e); }
   },
 };
-async function _vmFileUpload(lineId, file) {
-  const safe = (file.name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
-  const path = lineId + '/' + Date.now() + '_' + safe;
-  await _vfStorage.upload(path, file);
-  const [row] = await _dbInsert('vehicle_files', [{ checklist_item_id: lineId, file_name: file.name || safe, storage_path: path, file_size: file.size || null, content_type: file.type || null, uploaded_by: _vmWho() }]);
-  if (row) VEH_FILES.push(row);
-}
 async function _vmFileSign(path) { return _vfStorage.signedUrl(path); }
 function _vmFileOpen(path) {
   _vmFileSign(path).then(u => { if (u) window.open(u, '_blank'); else toast('Could not open file', 'error'); });
@@ -17455,11 +17149,6 @@ function _rmaClearFilters() {
   renderRMA();
 }
 
-// Legacy badge kept for any callers outside the V2 page (audit/CSV preview, etc.)
-function _rmaStatusColor(s) {
-  return ({ 'Open':'#1d4eaf','Pending Replacement':'#c8741a','Shipped':'#6d28d9',
-            'Awaiting Return':'#db2777','Closed':'#15803d','Cancelled':'#777777' })[s] || '#374151';
-}
 function _rmaStatusBadge(s) {
   const tone = _rmaPillTone(s);
   return `<span class="v2-pill ${tone}">${escapeHtml(s||'—')}</span>`;
@@ -17887,26 +17576,6 @@ async function _sha256Hex(bytes) {
   return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function _inspectPdfBytes(bytes) {
-  const doc = await PDFLib.PDFDocument.load(bytes);
-  const form = doc.getForm();
-  return {
-    bytes: bytes.length,
-    fields: form.getFields().map(f => {
-      const name = f.getName();
-      const type = f.constructor.name;
-      let value = null;
-      try {
-        if (type === 'PDFTextField') value = f.getText();
-        else if (type === 'PDFCheckBox') value = f.isChecked();
-        else if (type === 'PDFRadioGroup') value = f.getSelected();
-        else if (type === 'PDFDropdown' || type === 'PDFOptionList') value = f.getSelected();
-      } catch { /* inspection only */ }
-      return { name, type, value };
-    }),
-  };
-}
-
 function _formsEditStatePath(form) {
   const path = form?.storage_path || `${form?.id || 'form'}.pdf`;
   return `${path}.edit-state.json`;
@@ -17979,14 +17648,6 @@ async function loadForms(attempt = 0) {
   }
 }
 
-function _formsForTest(testId) {
-  const ids = FORM_TEST_LINKS.filter(l => l.test_id === testId).map(l => l.form_id);
-  return FORMS.filter(f => ids.includes(f.id));
-}
-function _formsForTemplate(templateId) {
-  const ids = FORM_TPL_LINKS.filter(l => l.template_id === templateId).map(l => l.form_id);
-  return FORMS.filter(f => ids.includes(f.id));
-}
 function _formsForTemplateTestCase(templateId, testCaseCode) {
   const code = String(testCaseCode || '').trim();
   if (!templateId || !code) return [];
@@ -18000,9 +17661,6 @@ function _formsLegacyForTemplate(templateId) {
     .filter(l => l.template_id === templateId && !String(l.test_case_code || '').trim())
     .map(l => l.form_id);
   return FORMS.filter(f => ids.includes(f.id));
-}
-function _formsCountForTest(testId) {
-  return FORM_TEST_LINKS.filter(l => l.test_id === testId).length;
 }
 
 function _formsNewId() {
@@ -18036,18 +17694,6 @@ async function _formsUpdateMetadata(formId, patch) {
   const i = FORMS.findIndex(f => f.id === formId);
   if (i >= 0) FORMS[i] = updated;
   return updated;
-}
-
-async function _formsReuploadFile(formId, fileOrBlob, expectedBytes = null) {
-  if (typeof uiCan === 'function' && !uiCan('forms', 'upload')) { toast('You do not have permission to upload forms', 'error'); return; }
-  const form = FORMS.find(f => f.id === formId);
-  const storagePath = form?.storage_path || `${formId}.pdf`;
-  const bytesToVerify = expectedBytes
-    ? _clonePdfBytes(expectedBytes)
-    : new Uint8Array(await fileOrBlob.arrayBuffer());
-  await _formsStorage.uploadPath(storagePath, fileOrBlob);
-  await _formsStorage.verifyBytes(storagePath, bytesToVerify);
-  return _formsUpdateMetadata(formId, { file_size: fileOrBlob.size, storage_path: storagePath });
 }
 
 async function _formsDelete(formId) {
@@ -19502,20 +19148,6 @@ function openSignaturePad({ fieldName, pageIndex, rect, target }) {
     getStamp: () => document.getElementById('sig-stamp-check')?.checked,
   };
   document.getElementById('signature-pad-apply').onclick = applySignaturePad;
-}
-
-function clearSignaturePad() {
-  const overlay = document.getElementById('form-signature-overlay');
-  const s = overlay?._signatureContext;
-  if (!s) return;
-  s.ctx.clearRect(0, 0, s.cssWidth, s.cssHeight);
-  s.setInk?.(false);
-  delete _pdfViewerState.signatures[s.fieldName];
-  if (s.target) {
-    s.target.classList.remove('signed');
-    s.target.style.backgroundImage = '';
-    s.target.innerHTML = '<span>Click to sign</span>';
-  }
 }
 
 function closeSignaturePad() {
@@ -22222,20 +21854,6 @@ function _drwBackToSets(loc) {
 
 // ── _drwTabHistory (Revision History tab with actions) → drw-set-manage.js
 
-function _drwSheetCard(sheet) {
-  const markups = DRAWING_MARKUPS.filter(m => m.sheet_id === sheet.id);
-  const pubCount = markups.filter(m => m.is_published).length;
-  return `
-    <div class="drw-sheet-card" ${cxAct('_drwOpenSheet', String(sheet.id), String(sheet.set_id), sheet.page_index)} title="Open ${escapeHtml(sheet.sheet_number||'Sheet')}">
-      <div class="drw-sheet-num">${escapeHtml(sheet.sheet_number || '—')}</div>
-      <div class="drw-sheet-title">${escapeHtml(sheet.sheet_title || 'Untitled')}</div>
-      <div class="drw-sheet-meta">
-        ${sheet.revision ? `<span class="drw-rev-badge">Rev ${escapeHtml(sheet.revision)}</span>` : ''}
-        ${pubCount ? `<span class="drw-markup-badge">${pubCount} markup${pubCount>1?'s':''}</span>` : ''}
-      </div>
-    </div>`;
-}
-
 // ── Upload Flow ────────────────────────────────────────────────────────────
 let _drwUploadMeta    = null;
 let _drwParsedSheets  = [];
@@ -23579,16 +23197,6 @@ function _drwPointerUp(e) {
   _drwCurPath = [];
   _drwRedraw();
   if (shape?.type === 'text') _drwOpenTextEditor(_drwSelectedShape);
-}
-
-function _drwPlaceText(e) {
-  const { fx, fy } = _drwCanvasXY(e);
-  const shape = { type: 'text', x: fx, y: fy, w: 0.22, h: 0.055, text: '', color: _drwTool.color, size: 15 };
-  _drwMarkupShapes.push(shape);
-  _drwSelectedShape = _drwMarkupShapes.length - 1;
-  _drwMarkupDirty = true;
-  _drwRedraw();
-  _drwOpenTextEditor(_drwSelectedShape);
 }
 
 function _drwRedraw(opts = {}) {
@@ -29011,12 +28619,6 @@ function _dynCampScopeToggle(id, on) {
   if (on) sel.add(id); else sel.delete(id);
   if (typeof _dynCampScopeSummaryRefresh === 'function') _dynCampScopeSummaryRefresh();
 }
-function _dynCampDowToggle(d, on) {
-  for (const cls of ['camp-day-start', 'camp-day-end']) {
-    const el = document.querySelector('.' + cls + '[data-dow="' + d + '"]');
-    if (el) el.disabled = !on;
-  }
-}
 function _dynCampShiftSummary(c) {
   const sched = c.day_schedule || {}, clo = (window.CXClosure && CXClosure.isClosure(c)) ? CXClosure.summaryLabel(c) : '';
   const keys = Object.keys(sched).filter(k => /^[0-6]$/.test(k));
@@ -31461,18 +31063,6 @@ function _dynSimSetOv(wk, key, val) {
   });
   _dynRenderSimulator();
 }
-function _dynAllocCapacity(camp) {
-  // Tests per shift ≈ window length / 40 min, clamped 1..8; default 3.
-  try {
-    const s = String(camp?.shift_start || '').slice(0, 5), e = String(camp?.shift_end || '').slice(0, 5);
-    if (s && e) {
-      const mins = (parseInt(e.slice(0,2),10)*60 + parseInt(e.slice(3),10)) -
-                   (parseInt(s.slice(0,2),10)*60 + parseInt(s.slice(3),10));
-      if (mins > 0) return Math.max(1, Math.min(8, Math.round(mins / 40)));
-    }
-  } catch (_) {}
-  return 3;
-}
 
 // Per-window capacity from its own length (tests ≈ minutes / 40), clamped 1..8 — or 1..40 for a multi-day closure possession, since 8 is sized for a 2 h window.
 function _dynWindowCapacity(w) {
@@ -31588,41 +31178,6 @@ async function _dynAllocateInto(campIds, label) {
 // across campaigns (DCS → CBTC → ATC); each window still only takes runs its
 // campaign scopes in.
 async function _dynProgramAllocateRun() { return _dynAllocateInto(null, 'All active campaigns'); }
-
-// Auto-allocate campaign: ALWAYS ask which campaign to build for, then run the
-// SAME engine scoped to that one campaign.
-function _dynAutoAllocateRun() {
-  const camps = (_dynPage.campaigns || []).filter(c => c.status !== 'closed' && c.status !== 'archived');
-  if (!camps.length) { toast('No active campaigns to allocate into', 'error'); return; }
-  const cur = String(_dynPage.accCampaignFilter || '');
-  modal({
-    title: 'Auto-allocate — choose a campaign',
-    sub: 'Cascade-allocate this campaign’s unscheduled runs into its planned access windows. Same rules as Program allocate, scoped to one campaign.',
-    body: `<div style="padding:12px 24px 6px;">
-        <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:6px;">Campaign</label>
-        <select id="dyn-alloc-camp" style="width:100%;padding:8px 10px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px;">
-          ${camps.map(c => `<option value="${escapeHtml(String(c.id))}" ${String(c.id) === cur ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
-        </select>
-        <label style="display:block;font-size:12px;color:var(--gray-600);margin:12px 0 6px;">Slack to leave per shift
-          <span style="color:var(--gray-400);font-weight:400;">— lower packs tighter (tests done sooner)</span></label>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <input id="dyn-alloc-slack" type="number" min="0" max="50" step="5" value="${Math.round(_dynAllocSlack() * 100)}" style="width:80px;padding:7px 8px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px;">
-          <span style="font-size:13px;color:var(--gray-600);">% buffer (10–20% recommended)</span>
-        </div>
-      </div>`,
-    footer: `<button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" data-action="_dynAutoAllocatePick">Build allocation</button>`,
-  });
-}
-function _dynAutoAllocatePick() {
-  const v = document.getElementById('dyn-alloc-camp')?.value;
-  if (!v) return;
-  const sl = document.getElementById('dyn-alloc-slack')?.value;
-  if (sl != null && sl !== '') _dynSetAllocSlack(sl);
-  const c = (_dynPage.campaigns || []).find(x => String(x.id) === String(v));
-  closeModal();
-  _dynAllocateInto(new Set([String(v)]), c ? c.name : 'Campaign');
-}
 
 // Human-readable reason for runs the allocator couldn't place: the zone gap
 // (no planned window grants these zones) is the actionable one — surface it by
@@ -31773,18 +31328,6 @@ function _dynAdjacencyPairs(phase) {
   return (_dynPage.adjacency || [])
     .filter(e => (!phase || !e.phase || e.phase === phase) && e.zone_a && e.zone_b)
     .map(e => [_dynUZ(e.zone_a), _dynUZ(e.zone_b)]);
-}
-
-// Client-side mirror of vw_test_case_completion for dynamic cases:
-// a case is complete when it has ≥1 instance and all are Pass / Not Applicable.
-function _dynCaseComplete(testId) {
-  const inst = (_dynPage.instances || []).filter(i => i.test_id === testId);
-  if (!inst.length) return false;
-  return inst.every(i => i.status === 'Pass' || i.status === 'Not Applicable');
-}
-function _dynPrereqsMet(testId) {
-  const edges = (_dynPage.prereqs || []).filter(p => p.test_id === testId);
-  return edges.every(e => _dynCaseComplete(e.prerequisite_test_id));
 }
 
 // ── Zone adjacency editor ─────────────────────────────────────────────────
@@ -32357,78 +31900,6 @@ function _dynCaseFilterInstances(testId) {
   _dynPage.testFilter = testId;
   _dynPage.tab = 'instances';
   renderDynamicTestingPage();
-}
-
-// Branch a per_location procedure to another location: creates a sibling test
-// activity (same procedure_code) for the chosen section. The new activity starts
-// empty — its runs are added afterward, since routes differ per location.
-function _dynAddLocation(testId) {
-  const info = _dynPage.testItemsById.get(testId) || {};
-  const procCode = info.procedure_code || info.code || testId;
-  const procName = info.procedure_name || info.name || procCode;
-  // Locations already covered by this procedure's sibling activities.
-  const usedLocs = new Set();
-  for (const ti of (typeof TI !== 'undefined' ? TI : [])) {
-    const pc = ti.ProcedureCode || '';
-    if (pc && pc === procCode && ti.Location) usedLocs.add(String(ti.Location).toUpperCase());
-  }
-  const opts = _dynSectionOptions().filter(o => !usedLocs.has(o.code.toUpperCase()));
-  modal({
-    title: 'Add location',
-    sub: `${escapeHtml(procName)} — branch to a new location`,
-    body: `
-      <div style="padding:8px 24px 16px;">
-        <p style="font-size:12.5px;color:var(--gray-600);margin:0 0 12px;">
-          Creates a new per-location test activity for this procedure. Add its routes afterward.
-        </p>
-        <div class="form-field">
-          <label>Location</label>
-          <select id="dyn-addloc-sel">
-            <option value="">— select section —</option>
-            ${opts.map(o => `<option value="${escapeHtml(o.code)}">${escapeHtml(o.name)}</option>`).join('')}
-          </select>
-        </div>
-      </div>`,
-    footer: `
-      <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" onclick="_dynSaveAddLocation('${escapeHtml(testId)}')">Create activity</button>`,
-  });
-}
-
-async function _dynSaveAddLocation(testId) {
-  const info = _dynPage.testItemsById.get(testId) || {};
-  const procCode = info.procedure_code || info.code || testId;
-  const procName = info.procedure_name || info.name || procCode;
-  const loc = String(document.getElementById('dyn-addloc-sel')?.value || '').trim();
-  if (!loc) { cxAlert('Pick a location.'); return; }
-  const newId = `${loc}-${procCode}`;
-  if ((typeof TI !== 'undefined' ? TI : []).some(t => (t.TestID || t.test_id) === newId)) {
-    cxAlert(`An activity for ${loc} already exists (${newId}).`);
-    return;
-  }
-  const row = {
-    test_id: newId, test_case_code: newId, test_name: `${loc} ${procName}`,
-    location: loc, scope_type: 'dynamic', test_scope: 'per_location',
-    procedure_code: procCode, procedure_name: procName,
-    status: 'Not Started', weight: 1,
-  };
-  try {
-    await _dbInsert('test_items', [row]);
-    if (typeof TI !== 'undefined') {
-      TI.push({ TestID: newId, TestCaseCode: newId, TestName: row.test_name,
-                Location: loc, Status: 'Not Started', ScopeType: 'dynamic',
-                TestScope: 'per_location', ProcedureCode: procCode, ProcedureName: procName,
-                ApplicableLocations: [] });
-    }
-    if (typeof _dynBuildTestItemsIndex === 'function') _dynBuildTestItemsIndex();
-    closeModal();
-    if (typeof toast === 'function') toast(`Created ${row.test_name}`, 'success');
-    if (document.getElementById('dyn-content')) _dynRenderCases();
-    if (typeof renderLITable === 'function') renderLITable();
-    if (typeof _reRenderTR === 'function') _reRenderTR();
-  } catch (e) {
-    cxAlert(`Create failed: ${e.message}`);
-  }
 }
 
 const _DYN_SCOPE_LABELS = {
@@ -33368,12 +32839,6 @@ async function _drwDrawHighlights(pageIndex) {
       }
     }
   }
-}
-
-async function _drwFindPick(pageIndex, sheetId) {
-  // Legacy entry point — kept for any external callers.
-  if (sheetId) return _drwFindPickSheet(sheetId);
-  await _drwGotoPage(parseInt(pageIndex, 10) || 0);
 }
 
 // ── Upload Revision (per-set entry point) ─────────────────────────────────

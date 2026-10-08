@@ -13,7 +13,6 @@
 
 const CACHE_VERSION = 'cxp-v81';
 const SHELL_CACHE   = `${CACHE_VERSION}-shell`;
-const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
 const SHELL_ASSETS = [
   './',
@@ -106,20 +105,6 @@ self.addEventListener('activate', (event) => {
   })());
 });
 
-function isCdnAsset(url) {
-  return /(^|\.)jsdelivr\.net$/.test(url.hostname) || /(^|\.)cloudflare\.com$/.test(url.hostname);
-}
-
-async function staleWhileRevalidate(request) {
-  const cache = await caches.open(RUNTIME_CACHE);
-  const cached = await cache.match(request);
-  const fetchPromise = fetch(request).then((res) => {
-    if (res && res.ok) cache.put(request, res.clone());
-    return res;
-  }).catch(() => cached);
-  return cached || fetchPromise;
-}
-
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -152,11 +137,6 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // CDN libs: stale-while-revalidate.
-  if (isCdnAsset(url)) {
-    event.respondWith(staleWhileRevalidate(req));
-    return;
-  }
-
-  // Everything else: network only.
+  // Everything else (data API, storage, sign-in): network only. Every script
+  // the app loads is same-origin (vendor/), so there is no CDN to cache.
 });

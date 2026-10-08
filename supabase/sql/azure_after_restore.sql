@@ -27,6 +27,11 @@ $function$;
 alter table public.profiles alter column mfa_enforced set default false;
 update public.profiles set mfa_enforced = false where mfa_enforced;
 
+--    Same for temporary passwords: under Entra there is no portal password, so
+--    a profile still flagged "must change password" would land on a screen it
+--    can never complete. The app also ignores the flag under Entra.
+update public.profiles set must_change_password = false where must_change_password;
+
 -- 2. Table privileges. The backup is restored without Supabase's grants (they
 --    name Supabase-only roles). Without these the gateway answers 42501
 --    "permission denied for table" — a privilege error, not a policy one.
@@ -46,5 +51,9 @@ alter default privileges in schema public grant all on sequences to anon, authen
 --    adding people later).
 \ir azure_relink_profile.sql
 
--- 5. Tell a running gateway to re-read the schema.
+-- 5. The change log records who made each change from the profile, not from
+--    Supabase-only token claims.
+\ir azure_audit_actor.sql
+
+-- 6. Tell a running gateway to re-read the schema.
 notify pgrst, 'reload schema';

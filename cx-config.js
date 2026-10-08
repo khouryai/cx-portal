@@ -87,14 +87,45 @@
     } catch (e) { /* never block boot on this */ }
   }
 
+  // ── …and supabase-js signs every request with ITS OWN session ─────────────
+  //
+  // supabase-js attaches the token of the session its own auth client holds,
+  // and the anon key when it holds none. Under Microsoft Entra (or the
+  // local-password provider) the session lives in MSAL / CXIdentity, never in
+  // supabase-js, so all of those ~55 call sites would send the Supabase anon
+  // key — which the Azure gateway rejects. Team, permissions and templates
+  // would fail while the native-fetch screens beside them worked.
+  //
+  // So, off Supabase, the client's REST requests take their Authorization from
+  // CXIdentity, exactly as _dbInsert/_dbUpdate do, and drop the Supabase-only
+  // `apikey` header. On Supabase nothing changes. Pinned by
+  // tools/test_config_seam.js against the real vendored supabase-js.
+  function useIdentityToken(client) {
+    try {
+      var id = window.CXIdentity;
+      if (!client || !client.rest || !id || id.kind === 'supabase' || client.rest.__cxIdentity) return;
+      client.rest.fetch = function (input, init) {
+        var opts = Object.assign({}, init);
+        var headers = new Headers((init && init.headers) || {});
+        var auth = typeof id.authHeader === 'function' ? id.authHeader() : '';
+        if (auth) headers.set('Authorization', auth); else headers.delete('Authorization');
+        if (!c.SUPABASE_ANON_KEY) headers.delete('apikey');
+        opts.headers = headers;
+        return fetch(input, opts);
+      };
+      client.rest.__cxIdentity = true;
+      console.log('[config] supabase-js requests now carry the ' + id.kind + ' token');
+    } catch (e) { /* never block boot on this */ }
+  }
+
   var _client = null;
   try {
     Object.defineProperty(window, '_sb', {
       configurable: true,
       get: function () { return _client; },
-      set: function (v) { _client = v; alignRestUrl(v); },
+      set: function (v) { _client = v; alignRestUrl(v); useIdentityToken(v); },
     });
   } catch (e) { /* older engines: the native-fetch paths still work */ }
 
-  window.CXConfig = { alignRestUrl: alignRestUrl };
+  window.CXConfig = { alignRestUrl: alignRestUrl, useIdentityToken: useIdentityToken };
 })();

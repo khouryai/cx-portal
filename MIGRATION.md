@@ -73,6 +73,36 @@ All in the repository and covered by `node tools/run_tests.js`.
 6. **Offline files stay on the device after sign-out.** Decide whether shared
    field tablets should clear them.
 
+## Database inventory (2026-10 sweep)
+
+Every table, view and function on the live database compared against what the
+app and the database itself use.
+
+**Removed by `supabase/sql/supabase_cleanup_2026_10.sql`** (run before the
+backup): the Meetings module's 8 tables and its permission entries; `users`, a
+pre-`profiles` people table nothing reads; three trigger functions left by
+removed modules; change-log rows about tables that no longer exist.
+
+**Kept, on purpose:**
+
+| Object | Why it stays |
+|---|---|
+| `test_procedures` | Not named in app code, but `test_items` links to it and two report views read it |
+| `auth_events`, `access_review_log`, `access_review_due` | Written by the database (privilege changes) and used for the periodic access review; not app screens |
+| `demo_seed_log`, `fn_clear_dynamic_sim_demo` | The demo seed/teardown scripts (`DEMO_DATA.md`) |
+| Views `kpi_test_progress`, `vw_dynamic_case_coverage`, `vw_dynamic_global_coverage`, `vw_dynamic_procedure_coverage`, `vw_dynamic_units`, `vw_procedure_scope_rollup` | Not used by the app. Cheap to keep; drop if no outside report (Power BI, SQL) reads them |
+| `auth_login_gate`, `auth_record_event`, `password_verification_attempt`, `mfa_verification_attempt` | Used while sign-in is Supabase; obsolete after the Entra cutover |
+
+**Size:** `db_change_log` is 38 MB of the 60 MB database (19,900 rows, 97 % from
+`test_items`, mostly bulk imports). Each row stores the full old and new row.
+See the proposals in the sweep notes before it grows further.
+
+**Checked and safe for Azure:** every table has row-level security on, nothing
+is readable without signing in, all views respect it (`security_invoker`),
+every id default uses built-in `gen_random_uuid()`, no stored row contains a
+Supabase address, and only two foreign keys point at Supabase's user table
+(`profiles`, `user_column_prefs`) — the two expected restore errors.
+
 ## What the move retires
 
 After cutover these can be deleted, because Entra does them centrally:

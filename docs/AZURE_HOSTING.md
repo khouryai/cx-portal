@@ -283,8 +283,8 @@ function used next.
 ### 4.4 Check
 
 ```bash
-psql -tAc "select count(*) from pg_policies where schemaname = 'public'"   # about 260
-psql -tAc "select count(*) from pg_tables where schemaname = 'public'"     # about 68
+psql -tAc "select count(*) from pg_policies where schemaname = 'public'"   # 227 (263 if the cleanup in A.0 was skipped)
+psql -tAc "select count(*) from pg_tables where schemaname = 'public'"     # 59  (68 if the cleanup was skipped)
 psql -tAc "select to_regprocedure('auth.uid()') is not null"               # t
 ```
 
@@ -508,7 +508,7 @@ certificates to renew (Azure manages TLS), no secrets in the website.
 |---|---|
 | Who you are, MFA, guest access | Entra ID: assignment required, Conditional Access |
 | Linking a profile to a person | Once, on their first Microsoft sign-in, by the email Microsoft puts in their token — only to a profile an administrator created and that is still waiting. Linked profiles can never be claimed again, and every link is in the audit log. Email is never used for permissions. |
-| What each person may see or change | **Inside the database**, on every request, by row-level security (about 260 policies, per module and per action). A request that bypasses the website still cannot get past it. |
+| What each person may see or change | **Inside the database**, on every request, by row-level security (about 230 policies, per module and per action). A request that bypasses the website still cannot get past it. |
 | Files | Private containers, account key disabled. Only CX Portal Users members can obtain a link; each link covers one file and expires within an hour. |
 | The gateway's database login | Password, held only in the Container App's configuration; TLS required |
 | Signing keys | Public keys from Microsoft, refreshed automatically; a bad download cannot replace good keys |
@@ -537,7 +537,7 @@ likelihood:
 | Gateway returns `PGRST301 JWT not in audience` | Token version or audience mismatch | Manifest `requestedAccessTokenVersion: 2`, and `entraApiAudience` = the bare application ID |
 | Every sign-in refused with an invalid-signature error | Signing keys not loaded | Helper log (section 5); is `postgrestDbUri` set? |
 | `permission denied for table …` (42501) | Table privileges missing | Re-run `azure_after_restore.sql` |
-| Far fewer than ~260 policies after restore | `azure_before_restore.sql` ran after the restore, or not at all | Drop and recreate the database; run 4.1 → 4.3 in order |
+| Far fewer than ~227 policies after restore | `azure_before_restore.sql` ran after the restore, or not at all | Drop and recreate the database; run 4.1 → 4.3 in order |
 | "Your account is not set up yet" | No portal profile has this person's sign-in email: not added in Team, or added under a different address | Add them in Team (section 9) with the address they sign in with, or correct the email (4.5) |
 | "Account not set up yet" for one of two people sharing an email | Two waiting profiles have the same address; the portal will not guess | Correct one email, or link with `relink_profile` (4.5) |
 | Files fail to load; browser console mentions CORS | `allowedOrigin` not set to `siteUrl` | 3.4 |
@@ -552,6 +552,13 @@ gateway's log names the database error.
 ---
 
 ## Appendix A — the developer's exports
+
+### A.0 First, clear out what is no longer used
+
+In the Supabase SQL editor, run `supabase/sql/supabase_cleanup_2026_10.sql`
+(removed Meetings module, a legacy people table, orphaned functions) and
+`supabase/sql/supabase_drop_pg_cron.sql` (the switched-off scheduler), so none
+of it is carried to Azure.
 
 ### A.1 Database backup
 

@@ -132,5 +132,54 @@ if (gen) {
     !local.ENTRA_TENANT_ID && !local.ENTRA_CLIENT_ID);
 }
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed.');
-process.exit(fail ? 1 : 0);
+// ── supabase-js must carry the right token, against the REAL vendored client ──
+// Off Supabase the client's own session is empty, so without cx-config.js it
+// would sign every request with the Supabase anon key and the gateway would
+// refuse them all.
+async function supabaseJsRequest(cfgValues, identity) {
+  const calls = [];
+  const fakeFetch = async (url, init) => {
+    calls.push({ url: String(url), headers: new Headers((init && init.headers) || {}) });
+    return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const window = { CX_CONFIG: cfgValues, CXIdentity: identity, localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} } };
+  const ctx = vm.createContext({ window, console, fetch: fakeFetch, Headers, Request, Response, URL, URLSearchParams,
+    setTimeout, clearTimeout, setInterval, clearInterval, AbortController, TextEncoder, TextDecoder, navigator: {}, self: undefined,
+    location: { href: 'https://portal.test/', protocol: 'https:' },
+    document: { currentScript: { src: 'https://portal.test/vendor/js/supabase.js', tagName: 'SCRIPT' },
+                getElementsByTagName: () => [] } });
+  ctx.globalThis = ctx; ctx.self = ctx; window.fetch = fakeFetch;
+  vm.runInContext(read('cx-config.js'), ctx);
+  vm.runInContext(read('vendor/js/supabase.js'), ctx);
+  const lib = ctx.supabase || window.supabase;
+  window._sb = lib.createClient(window.CX_CONFIG.API_URL || window.CX_CONFIG.SUPABASE_URL, window.CX_CONFIG.SUPABASE_ANON_KEY || 'fallback-anon-key',
+    { auth: { persistSession: false, autoRefreshToken: false } });
+  await window._sb.from('profiles').select('id').eq('id', 'x');
+  await window._sb.rpc('fn_feasible_instances', { p: 1 });
+  return calls;
+}
+
+(async () => {
+  const azure = await supabaseJsRequest({ API_URL: 'https://api.azure.test', REST_PATH: '' },
+    { kind: 'entra', authHeader: () => 'Bearer entra-token' });
+  ok('Azure: supabase-js table reads go to the gateway root', azure[0] && azure[0].url.startsWith('https://api.azure.test/profiles?'), azure[0] && azure[0].url);
+  ok('Azure: …signed with the Microsoft token, not the Supabase anon key',
+    azure.length === 2 && azure.every((c) => c.headers.get('authorization') === 'Bearer entra-token'),
+    azure.map((c) => c.headers.get('authorization')).join(' | '));
+  ok('Azure: …and RPC calls too', azure[1] && azure[1].url === 'https://api.azure.test/rpc/fn_feasible_instances');
+  ok('Azure: no Supabase apikey header is sent', azure.every((c) => !c.headers.has('apikey')));
+
+  const signedOut = await supabaseJsRequest({ API_URL: 'https://api.azure.test', REST_PATH: '' },
+    { kind: 'entra', authHeader: () => '' });
+  ok('Azure, before sign-in: no Authorization at all (the gateway treats it as anonymous)',
+    signedOut.every((c) => !c.headers.has('authorization')));
+
+  const supa = await supabaseJsRequest({ API_URL: 'https://x.supabase.co', SUPABASE_ANON_KEY: 'anon-key' },
+    { kind: 'supabase', authHeader: () => 'Bearer should-not-be-used' });
+  ok('Supabase: unchanged — supabase-js signs its own requests with its key',
+    supa.length === 2 && supa[0].url.startsWith('https://x.supabase.co/rest/v1/profiles?') &&
+    supa.every((c) => c.headers.get('apikey') === 'anon-key' && c.headers.get('authorization') === 'Bearer anon-key'));
+
+  console.log('\n' + pass + ' passed, ' + fail + ' failed.');
+  process.exit(fail ? 1 : 0);
+})().catch((e) => { console.error(e); process.exit(1); });
