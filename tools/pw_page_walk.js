@@ -133,6 +133,8 @@ async function main() {
   ok("signed in with the seeded session", loggedIn);
   await page.waitForTimeout(1200);
   ok("no JavaScript errors while booting", !errors.boot, (errors.boot || []).join(" | "));
+  ok("the PDF libraries are not loaded at startup (cx-lazy.js)",
+    await page.evaluate(() => typeof window.pdfjsLib === "undefined" && typeof window.PDFLib === "undefined"));
 
   for (const p of pages) {
     current = p;
@@ -141,6 +143,23 @@ async function main() {
     await page.waitForTimeout(600);
     ok(`page "${p}" opens without errors`, !errors[p], (errors[p] || []).join(" | "));
   }
+
+  // PDF pages preloaded the libraries; prove both work: build a PDF with
+  // pdf-lib, render it with pdf.js (worker included).
+  const pdf = await page.evaluate(async () => {
+    const [pdfjs, PDFLib] = await Promise.all([CXLazy.pdfjs(), CXLazy.pdflib()]);
+    if (!pdfjs || !PDFLib) return { error: "not loaded" };
+    const doc = await PDFLib.PDFDocument.create();
+    const pg = doc.addPage([200, 100]);
+    pg.drawText("cx", { x: 20, y: 40, size: 24, font: await doc.embedFont(PDFLib.StandardFonts.Helvetica) });
+    const bytes = await doc.save();
+    const loaded = await pdfjs.getDocument({ data: bytes }).promise;
+    const p1 = await loaded.getPage(1);
+    const text = (await p1.getTextContent()).items.map((i) => i.str).join("");
+    return { pages: loaded.numPages, text, worker: pdfjs.GlobalWorkerOptions.workerSrc };
+  });
+  ok("on demand: pdf-lib builds a PDF and pdf.js renders it (worker set)",
+    pdf.pages === 1 && pdf.text === "cx" && /pdf\.worker\.min\.js$/.test(pdf.worker || ""), JSON.stringify(pdf));
 
   await browser.close();
   server.close();

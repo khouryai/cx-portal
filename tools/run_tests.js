@@ -56,7 +56,7 @@ const suites = [
   { file: "tools/test_relink_profile.js", needs: [] },  // Azure: move a profile onto its Entra object id (needs PostgreSQL)
   { file: "tools/test_export_files.js", needs: [] },    // Supabase file export for the hand-off
   { file: "tools/test_team_invite.js", needs: [] },     // Team: add a person under Supabase and under Microsoft sign-in
-  { file: "tools/test_audit_actor.js", needs: [] },     // change log names the person under Supabase and Entra (needs PostgreSQL)
+  { file: "tools/test_change_log.js", needs: [] },      // change log: who, and only what changed (needs PostgreSQL)
   { file: "tools/test_size_ratchet.js", needs: [] },    // monolith line-count ratchet (Tier 3 #11)
   { file: "tools/test_inline_handler_ratchet.js", needs: [] }, // inline on*= handler ratchet (Tier 3 #11 Stage B)
   { file: "tools/test_delegation_wiring.js", needs: [] },      // every data-action resolves (Tier 3 #11 Stage B)

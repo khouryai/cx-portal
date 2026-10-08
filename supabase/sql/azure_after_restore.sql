@@ -53,7 +53,7 @@ alter default privileges in schema public grant all on sequences to anon, authen
 
 -- 5. The change log records who made each change from the profile, not from
 --    Supabase-only token claims.
-\ir azure_audit_actor.sql
+\ir change_log_trigger.sql
 
 -- 6. Tell a running gateway to re-read the schema.
 notify pgrst, 'reload schema';

@@ -530,7 +530,14 @@
   }
 
   function loadPdf(entry, myLoad) {
-    if (!ensureWorker()) { setStatus("PDF viewer library not loaded.", true); return; }
+    // pdf.js loads on demand (cx-lazy.js); the first map may wait for it.
+    (window.CXLazy ? window.CXLazy.pdfjs() : Promise.resolve(null)).then(function () {
+      if (!ensureWorker()) { setStatus("Could not load the PDF viewer — check your connection.", true); return; }
+      loadPdfNow(entry, myLoad);
+    });
+  }
+
+  function loadPdfNow(entry, myLoad) {
     entryBytes(entry).then(function (bytes) {
       return pdfjsLib.getDocument({ data: bytes }).promise;
     }).then(function (doc) {

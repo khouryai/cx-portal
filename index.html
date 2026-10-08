@@ -35,12 +35,7 @@
 <!-- Self-hosted vendor dependencies (no SRI — same-origin files; the one external CDN tag below keeps its hash) -->
 <script src="chart.umd.js"></script>
 <script src="vendor/js/supabase.js"></script>
-<!-- pdf.js – renders PDFs in the Forms / Test Data Sheets module -->
-<!-- pdf-lib – fills AcroForm fields and saves the modified PDF back -->
-<!-- pdf.worker.min.js (loaded dynamically by pdf.js, pinned in app.js)
-     expected sha384-sS8B4COeBqzQV9DaPpp5cbpF+xz2jPcFbN3L8FL3/dx0RMC6WLUwTUOFm0iFb1lw -->
-<script src="vendor/js/pdf.min.js"></script>
-<script src="vendor/js/pdf-lib.min.js"></script>
+<!-- pdf.js and pdf-lib load on demand: cx-lazy.js -->
 <!-- JSZip — used by Test Reporting "Extract Report" feature for ZIP-mode output.
      Loaded lazily by _extractEnsureJSZip() the first time a user picks ZIP mode,
      so it never adds to first-paint cost. SRI hash is verified at load time
@@ -1469,6 +1464,7 @@ function _signinTogglePw(){
      Storage to Azure Blob. Loaded early because photos.js binds its bucket
      at module init. -->
 <script src="cx-storage.js"></script>
+<script src="cx-lazy.js"></script>
 <script src="data.js"></script>
 <script src="icons.js"></script>
 <script src="format.js"></script>

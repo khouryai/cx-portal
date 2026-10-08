@@ -684,6 +684,7 @@ function showPage(name) {
   // Test Cases was merged into Test Activities (open an activity to see its cases).
   if (name === 'lineitems') name = 'activities';
   if (name === 'activities' && typeof apCloseActivity === 'function') apCloseActivity();
+  if (/^(forms|drawings|dynamic-testing)$/.test(name) && window.CXLazy) CXLazy.warm();   // PDF libraries (cx-lazy.js)
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + name)?.classList.add('active');
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
@@ -9856,7 +9857,7 @@ async function loadDbAuditEvents() {
   try {
     // db_change_log grows on every trigger fire (18k+ rows already) — read only
     // the most recent slice instead of the whole table.
-    const rows = await _dbQuery('db_change_log', 'select=*&order=changed_at.desc&limit=5000');
+    const rows = await _dbQuery('db_change_log', 'select=id,table_name,record_id,operation,changed_at,changed_by,actor_email,actor_role,changed_columns,source&order=changed_at.desc&limit=5000');
     events.push(...(rows || []).map(_auditNormalizeDbChange));
   } catch (err) {
     console.warn('[audit] db change log load skipped:', err.message);
@@ -18100,11 +18101,7 @@ function _clonePdfBytes(bytes) {
 async function openFormViewer(formId, backTo = null) {
   const form = FORMS.find(f => f.id === formId);
   if (!form) { toast('Form not found', 'error'); return; }
-  if (typeof pdfjsLib === 'undefined') { toast('PDF viewer library not loaded', 'error'); return; }
-  if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'vendor/js/pdf.worker.min.js';
-  }
+  if (!await CXLazy.pdfjs()) { toast('Could not load the PDF viewer — check your connection', 'error'); return; }
   // Kick off pin + recents lookups in parallel — both are needed before render but
   // can run concurrently with the modal mount.
   const pinP    = _idbPinGet(formId).catch(() => null);
@@ -18548,7 +18545,7 @@ function _fmkModelForFlatten() {
 // the blob unchanged when there's no markup. Called automatically on download
 // so the saved file always carries the markups — no separate Flatten step.
 async function _fmkBakeMarkup(blob) {
-  if (typeof CXMarkup === 'undefined' || typeof PDFLib === 'undefined') return blob;
+  if (typeof CXMarkup === 'undefined' || !await CXLazy.pdflib()) return blob;
   const model = _fmkModelForFlatten();
   if (!Object.keys(model).length) return blob;
   try {
@@ -19379,7 +19376,7 @@ async function saveFormPDF(formId) {
 }
 
 async function _buildEditedFormPdfBlob(formRow, stateOverride = null) {
-  if (typeof PDFLib === 'undefined') throw new Error('pdf-lib not loaded');
+  if (!await CXLazy.pdflib()) throw new Error('pdf-lib could not be loaded');
   const state = stateOverride
     ? _normalizeFormEditState(stateOverride)
     : _normalizeFormEditState(await _formsLoadEditState(formRow));
@@ -20370,7 +20367,7 @@ function _extractSetProgress(label, pct) {
 }
 
 async function _extractRun(safeUid) {
-  if (typeof PDFLib === 'undefined') { toast('pdf-lib not loaded — refresh the page', 'error'); return; }
+  if (!await CXLazy.pdflib()) { toast('Could not load the PDF library — check your connection', 'error'); return; }
   const row = _trpFindReportRow(_trpDecodeUid(safeUid));
   if (!row) { toast('Report not found', 'error'); return; }
   const opts = _extractReadOpts();
@@ -21972,9 +21969,7 @@ async function _drwStep1Next() {
   document.querySelector('#modal-overlay .modal-footer').innerHTML = '';
 
   try {
-    if (typeof pdfjsLib === 'undefined') throw new Error('PDF.js not loaded');
-    if (!pdfjsLib.GlobalWorkerOptions.workerSrc)
-      pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/js/pdf.worker.min.js';
+    if (!await CXLazy.pdfjs()) throw new Error('PDF.js could not be loaded');
     _drwUploadPdfDoc = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
     await _drwShowCalibrate();
   } catch(e) {
@@ -22797,11 +22792,7 @@ async function _drwOpenSheet(sheetId, setId, pageIndex) {
 
   // Load PDF and render page
   try {
-    if (typeof pdfjsLib === 'undefined') throw new Error('PDF.js not loaded');
-    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc =
-        'vendor/js/pdf.worker.min.js';
-    }
+    if (!await CXLazy.pdfjs()) throw new Error('PDF.js could not be loaded');
     const bytes   = await _drawStorage.downloadBytes(set.storage_path);
     _drwPdfDoc    = await pdfjsLib.getDocument({ data: bytes }).promise;
     await _drwRenderPage(pageIndex);
@@ -23687,7 +23678,7 @@ async function _drwPublishMarkup() {
 //                (published markups + this user's own shapes), via pdf-lib.
 function _drwExportOpen() {
   if (!_drwCurSheet || !_drwCurSet) { toast('Open a drawing first', 'error'); return; }
-  if (typeof PDFLib === 'undefined') { toast('PDF library not loaded — reload the page', 'error'); return; }
+  CXLazy.pdflib();   // start loading now; _drwExportPdf waits for it
   const sub = escapeHtml([_drwCurSheet.sheet_number, _drwCurSheet.sheet_title].filter(Boolean).join(' · '));
   const hasMarkup = (_drwMarkupShapes && _drwMarkupShapes.length) ||
     DRAWING_MARKUPS.some(m => m.sheet_id === _drwCurSheet.id && m.is_published);
@@ -23713,7 +23704,7 @@ function _drwExportOpen() {
 
 async function _drwExportPdf(mode) {
   if (!_drwCurSheet || !_drwCurSet) return;
-  if (typeof PDFLib === 'undefined') { toast('PDF library not loaded', 'error'); return; }
+  if (!await CXLazy.pdflib()) { toast('Could not load the PDF library — check your connection', 'error'); return; }
   if (typeof closeModal === 'function') closeModal();
   const statusEl = document.getElementById('drw-markup-status');
   if (statusEl) { statusEl.style.color = ''; statusEl.textContent = 'Preparing export…'; }
