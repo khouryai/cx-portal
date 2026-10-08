@@ -2,9 +2,8 @@
 
 **For:** Hitachi Rail IT and cyber security. **Status:** proposal, not yet
 deployed. Every part is built and tested; nothing runs in a Hitachi
-subscription yet. **Companion documents:** the step-by-step handover
-[`AZURE_HOSTING.md`](AZURE_HOSTING.md), and the background and decision record
-[`MIGRATION.md`](../MIGRATION.md).
+subscription yet. **Companion document:** *cx Portal on Azure — IT Handover*,
+the step-by-step procedure (referred to below as "the handover").
 
 This document describes what will run, how the pieces trust each other, where
 each security control lives, and what is still open. Section 9 lists the
@@ -161,8 +160,7 @@ nothing from any third-party host.
    It identifies the person by the token's Entra object id (`oid`) and checks
    their permissions with `private.has_module_perm(module, action)`: 17
    modules, each with a level (none, read-only, standard, admin) from the
-   person's permission template, plus optional per-person overrides
-   (`PERMISSIONS_MODEL.md`).
+   person's permission template, plus optional per-person overrides.
 5. Data changes are recorded by a trigger in `db_change_log`: who (resolved
    from the token), what changed (only the changed columns), and when.
 
@@ -240,7 +238,7 @@ device after sign-out (see 9.9).
 | Who may administer permissions | The `admin` and `directory` modules' own permissions, enforced the same way | Database |
 | File access | Group role on the storage account; one-file, short-lived links; no account key; no anonymous access | Storage account |
 | Database access by people | Entra authentication for the *CX Portal DB Admins* group; password administrator `cxadmin` for the restore | PostgreSQL |
-| Database access by the gateway | Login `authenticator` with a password, TLS 1.2+ required; it can only switch to the `anon` and `authenticated` roles, both subject to row-level security (`tools/test_azure_roles.js`) | PostgreSQL |
+| Database access by the gateway | Login `authenticator` with a password, TLS 1.2+ required; it can only switch to the `anon` and `authenticated` roles, both subject to row-level security (checked by an automated test) | PostgreSQL |
 | Token trust | Signature, audience and expiry checked by the gateway; keys refreshed every 6 hours, and a failed or malformed download cannot replace good keys | Gateway, helper |
 | Web page | Content-Security-Policy listing exactly the API, storage and Microsoft sign-in addresses; `nosniff`, framing and referrer headers | `index.html`, `staticwebapp.config.json` |
 | Secrets in code or the website | None | n/a |
@@ -287,7 +285,7 @@ template (see 9.5).
 | # | Threat | Mitigation | Residual risk |
 |---|---|---|---|
 | T1 | Someone outside the project tries to use the portal | Assignment required: no token without *CX Portal Users* membership; MFA by Conditional Access | Depends on group hygiene; the periodic access review (`access_review_due` view) supports it |
-| T2 | A signed-in person calls the API directly to reach data the screens hide | Row-level security decides every row, whatever the client; the screens only mirror it | None identified; `tools/test_rls_portability.js` proves the same decisions under Entra tokens on a real PostgreSQL |
+| T2 | A signed-in person calls the API directly to reach data the screens hide | Row-level security decides every row, whatever the client; the screens only mirror it | None identified; an automated test proves the same decisions under Entra tokens on a real PostgreSQL |
 | T3 | Forged or altered token | Signature checked against Microsoft's keys; audience and expiry checked | None identified |
 | T4 | Signing keys go stale after Microsoft rotates them | Helper refreshes every 6 hours, retries every 5 minutes on failure, keeps current keys if a download is bad | If the helper stops for weeks, sign-ins fail (not open): visible in its log |
 | T5 | Script injection steals a token from the browser | CSP limits where scripts load from and where data can be sent; tokens are short-lived (about an hour) | CSP still allows inline scripts while about 290 inline handlers remain, and tokens sit in browser storage. Reduced step by step by the inline-handler ratchet (10) |

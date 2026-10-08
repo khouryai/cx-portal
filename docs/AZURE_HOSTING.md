@@ -1,16 +1,17 @@
 # cx Portal on Azure — handover to Hitachi IT
 
 This is the complete procedure for hosting cx Portal in the Hitachi Rail Azure
-tenant. **Every step in it is done by IT.** The developer's own part (preparing
-the database backup and the website package) is in a separate checklist; this
-document says exactly when you will receive each item from them.
+tenant. **Every step in it is done by IT.** The developer prepares two items,
+the database backup and the website package; this document says exactly when
+you will receive each.
 
 **What cx Portal is:** a folder of static web files plus a small PostgreSQL
 database. No application server, no custom server code, no scheduled jobs, no
 third-party scripts.
 
 For the architecture and security review (components, data flows, threat model,
-open decisions), see [`docs/ARCHITECTURE.md`](ARCHITECTURE.md).
+open decisions), see the companion document *cx Portal on Azure — Architecture
+for Review*.
 
 ---
 
@@ -567,6 +568,4 @@ gateway's log names the database error.
 
 ---
 
-*Architecture and security review: [`ARCHITECTURE.md`](ARCHITECTURE.md).
-Background and design decisions: [`MIGRATION.md`](../MIGRATION.md). The
-developer's own steps: [`DEVELOPER_STEPS.md`](DEVELOPER_STEPS.md).*
+*Companion document: cx Portal on Azure — Architecture for Review.*
