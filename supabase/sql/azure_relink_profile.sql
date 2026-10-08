@@ -167,3 +167,58 @@ $$;
 
 revoke all on function public.claim_profile() from public;
 grant execute on function public.claim_profile() to authenticated;
+
+-- ── 5. An administrator connects a waiting profile to a Microsoft account now
+--       (Directory → Add Person with that person's email; team-invite.js),
+--       instead of waiting for the person's first sign-in. The app has just
+--       looked the account up in Microsoft Graph and put the person in the
+--       portal users group; this moves the profile, and everything that refers
+--       to it, onto that account's object id. Needs the same right as adding a
+--       person; only a profile still waiting can be moved; audited.
+create or replace function public.admin_link_profile(p_profile_id uuid, p_oid uuid)
+returns public.profiles
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_row   public.profiles;
+  v_count integer;
+begin
+  if not (select private.has_module_perm('directory', 'invite')) then
+    raise exception 'admin_link_profile: not allowed to add people' using errcode = '42501';
+  end if;
+  if p_profile_id is null or p_oid is null then
+    raise exception 'admin_link_profile: profile id and Microsoft account id are both required';
+  end if;
+
+  select * into v_row from public.profiles where id = p_profile_id;
+  if not found then
+    raise exception 'admin_link_profile: no profile %', p_profile_id;
+  end if;
+  if not v_row.link_pending then
+    raise exception 'admin_link_profile: % is already connected to a Microsoft account', v_row.email;
+  end if;
+  if exists (select 1 from public.profiles where id = p_oid) then
+    raise exception 'admin_link_profile: that Microsoft account already has a profile';
+  end if;
+  select count(*) into v_count from public.profiles where lower(trim(email)) = lower(trim(v_row.email));
+  if v_count <> 1 then
+    raise exception 'admin_link_profile: % profiles use %; correct the duplicates first', v_count, v_row.email;
+  end if;
+
+  perform private.relink_profile(v_row.email, p_oid);
+
+  if to_regclass('public.auth_events') is not null then
+    insert into public.auth_events (email, user_id, event, detail)
+    values (lower(v_row.email), p_oid, 'entra_link',
+            'Connected to this Entra account by an administrator (' || coalesce((select auth.uid())::text, 'unknown') || ')');
+  end if;
+
+  select * into v_row from public.profiles where id = p_oid;
+  return v_row;
+end;
+$$;
+
+revoke all on function public.admin_link_profile(uuid, uuid) from public;
+grant execute on function public.admin_link_profile(uuid, uuid) to authenticated;

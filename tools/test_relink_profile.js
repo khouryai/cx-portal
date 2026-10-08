@@ -144,6 +144,44 @@ try {
     /^[0-9a-f-]{36}$/.test(claim({ oid: crypto.randomUUID(), email: "Tech@HitachiRail.com" })));
   ok("a Supabase-style token (sub, no oid) never claims", (pg(DB, `insert into public.profiles (id, email, full_name, link_pending) values ('${crypto.randomUUID()}', 'sub@example.com', 'Sub', true)`), claim({ sub: crypto.randomUUID(), email: "sub@example.com" })) === "null");
   ok("anon cannot call it", /permission denied/.test(fails(`set role anon; select public.claim_profile()`) || ""));
+
+  // ── An administrator connects a waiting profile now: public.admin_link_profile() ──
+  // The permission check is the real call shape; the stub grants exactly the
+  // right named in the test token, so "has it" and "lacks it" are both real.
+  pg(DB, `create or replace function private.has_module_perm(p_module text, p_action text) returns boolean language sql stable as $$
+            select coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'test_perm', '') = p_module || '.' || p_action $$`);
+  const ADMIN = "abababab-0000-0000-0000-000000000001";
+  const WAIT = "12121212-0000-0000-0000-000000000001", WAIT_OID = "34343434-1111-2222-3333-444444444444";
+  pg(DB, `insert into public.profiles (id, email, full_name, role, link_pending)
+          values ('${WAIT}', 'carried.over@hitachirail.com', 'Carried Over', 'readonly', true)`);
+  pg(DB, `insert into public.punch_items (created_by, title) values ('${WAIT}', 'carried item')`);
+  const adminLink = (perm, profileId, oid) => pg(DB, `set request.jwt.claims = '${JSON.stringify({ oid: ADMIN, test_perm: perm })}';
+    set role authenticated; select (public.admin_link_profile('${profileId}', '${oid}')).id`);
+  const adminFails = (perm, profileId, oid) => fails(`set request.jwt.claims = '${JSON.stringify({ oid: ADMIN, test_perm: perm })}';
+    set role authenticated; select public.admin_link_profile('${profileId}', '${oid}')`) || "";
+
+  ok("someone without the right to add people cannot connect a profile, and nothing changes",
+    /not allowed to add people/.test(adminFails("directory.view", WAIT, WAIT_OID)) &&
+    pg(DB, `select link_pending from public.profiles where id='${WAIT}'`) === "t");
+  ok("an administrator connects a waiting profile to the Microsoft account at once",
+    adminLink("directory.invite", WAIT, WAIT_OID) === WAIT_OID &&
+    pg(DB, `select link_pending || ',' || full_name from public.profiles where id='${WAIT_OID}'`) === "false,Carried Over");
+  ok("…and what was theirs moves with it",
+    pg(DB, `select count(*) from public.punch_items where created_by='${WAIT_OID}' and title='carried item'`) === "1");
+  ok("…and it is audited, naming the administrator",
+    pg(DB, `select count(*) from public.auth_events where event='entra_link' and user_id='${WAIT_OID}' and detail like '%administrator (${ADMIN})%'`) === "1");
+  ok("a profile already connected cannot be moved again",
+    /already connected/.test(adminFails("directory.invite", WAIT_OID, crypto.randomUUID())));
+  const W2 = crypto.randomUUID();
+  pg(DB, `insert into public.profiles (id, email, full_name, link_pending) values ('${W2}', 'second@hitachirail.com', 'Second', true)`);
+  ok("a Microsoft account that already has a profile is refused, and nothing changes",
+    /already has a profile/.test(adminFails("directory.invite", W2, WAIT_OID)) &&
+    pg(DB, `select link_pending from public.profiles where id='${W2}'`) === "t");
+  pg(DB, `insert into public.profiles (id, email, full_name, link_pending) values ('${crypto.randomUUID()}', 'SECOND@hitachirail.com', 'Second again', true)`);
+  ok("two waiting profiles with the same email are refused (no guessing)",
+    /2 profiles use/.test(adminFails("directory.invite", W2, crypto.randomUUID())));
+  ok("an unknown profile is refused", /no profile/.test(adminFails("directory.invite", crypto.randomUUID(), crypto.randomUUID())));
+  ok("anon cannot call it", /permission denied/.test(fails(`set role anon; select public.admin_link_profile('${W2}', '${crypto.randomUUID()}')`) || ""));
 } finally {
   try { pg("postgres", `drop database if exists ${DB} with (force)`); pg("postgres", "drop role if exists cx_tester_user"); } catch (e) { /* best effort */ }
 }

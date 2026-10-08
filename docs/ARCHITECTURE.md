@@ -181,16 +181,41 @@ nothing from any third-party host.
 There is no account key: it is disabled on the storage account, so no
 long-lived credential for the files exists.
 
-### 4.4 A person's first sign-in
+### 4.4 Adding and removing people
 
-An administrator adds the person in the portal (**Directory → Users → +
-Invite User**) with the email they sign in to Microsoft with; the profile is
-marked *waiting*. On their first sign-in, the database function
-`public.claim_profile()` matches the email in their Entra token to that
-waiting profile and re-keys it to their Entra object id, once and permanently,
-writing an `entra_link` event to `auth_events`. From then on only the object id
-is used; email never grants anything. Profiles carried over from Supabase link
-the same way.
+A portal administrator does it in one screen (**Directory → Users → + Invite
+User**, which opens **Add Person**); nothing is done separately in Microsoft's
+admin pages. The browser calls Microsoft Graph with the administrator's own
+delegated token (`cx-entra-admin.js`):
+
+1. **Find** the Microsoft account by email. None, and the address is on one of
+   Hitachi's own domains: a typo, refused. None, and it is an outside address
+   (BART): the administrator is asked, then Graph **invites** them as a B2B
+   guest and Microsoft emails the invitation.
+2. **Add** them to *CX Portal Users*. A just-invited guest takes a few seconds
+   to reach every directory replica, so the add is retried briefly.
+3. **Save** the profile under their Entra object id, so they can sign in at
+   once; nothing waits to be linked.
+4. If step 3 fails, step 2 is **undone**, so Microsoft and the portal never
+   disagree silently.
+
+**Inactive** and **Remove** take the person out of the group (they cannot sign
+in, and see no data at once); **Active** puts them back. An administrator
+cannot deactivate or remove themselves. Every removal uses Graph's
+membership-reference call (`…/members/{id}/$ref`), which can never delete the
+account itself.
+
+Microsoft enforces who may do this: membership changes only for **owners of
+CX Portal Users**, guest invitations only for people Hitachi's
+external-collaboration settings allow (2.2 in the handover). A portal user
+without those rights gets "access denied" from Microsoft whatever the page
+does.
+
+Profiles carried over from Supabase wait for their owner: an administrator
+connects one at once by adding that email again (`public.admin_link_profile()`),
+or it is linked on the person's first sign-in by the email in their token
+(`public.claim_profile()`). Either way it is re-keyed to the Entra object id
+once and audited (`entra_link` in `auth_events`); email never grants anything.
 
 ### 4.5 Offline use
 
@@ -208,6 +233,7 @@ device after sign-out (see 9.9).
 | Concern | Control | Where |
 |---|---|---|
 | Who can sign in | Assignment required; *CX Portal Users* group | Entra |
+| Who can add or remove people | Portal administrators who are **owners** of *CX Portal Users*, acting with their own delegated Microsoft Graph token; guest invitations as Hitachi's external-collaboration settings allow | Entra (enforced by Microsoft), the Directory screen |
 | How strongly | MFA, device and location rules | Entra Conditional Access |
 | BART access | B2B guest invitation | Entra, Hitachi's external-collaboration policy |
 | What each person may see or change | About 230 row-level security policies, per module and per action | Database, on every request |
@@ -273,7 +299,8 @@ template (see 9.5).
 | T11 | Malicious or tampered dependency | All libraries vendored and pinned in the repository; no CDN; container images pinned by version | Images come from Docker Hub until mirrored (9.4) |
 | T12 | Flooding or abusive traffic | Gateway scales 1 to 3 replicas; requests without a valid token get no data | No WAF in front of the gateway unless Front Door is added (9.2) |
 | T13 | A shared or lost tablet | Entra session controls; tokens expire | Files opened offline stay on the device after sign-out (9.9) |
-| T14 | Someone claims another person's waiting profile | Linking only matches the email in a token issued by Hitachi's tenant, only to a profile still waiting, only once; every link is audited | An administrator entering the wrong email would let that address's owner claim the profile: check the *Not signed in yet* list |
+| T14 | The wrong person is given access (a mistyped email) | The account is looked up in Microsoft before anything is saved; a Hitachi-domain address with no account is refused as a typo, and an outside address is invited only after the administrator confirms it; the profile is created under that account's object id | An administrator who confirms a guest invitation to the wrong outside address grants that address access; the Users list shows every person and their email |
+| T15 | A portal administrator's account is misused to add or remove people | MFA on that account; Microsoft limits it to membership of the one group it owns; every change is in Entra's audit log under the administrator's name | Anyone holding an owner's session can add or remove portal users until the session ends; keep the owner list small and review it with the access review |
 
 ---
 
@@ -321,8 +348,8 @@ database administrator.
 
 Nothing needs routine attention: no patching (all managed services), no
 scheduled jobs, no certificates (Azure manages TLS), no key rotation (no keys).
-Adding or removing people is an Entra group change plus one screen in the
-portal (handover section 9).
+Adding or removing people is one screen in the portal, which updates Entra
+itself (4.4; handover section 9).
 
 ---
 
@@ -335,7 +362,8 @@ portal (handover section 9).
 | Website hosting | Static Web Apps | App Service; Blob static website | Static files only; Static Web Apps adds managed TLS, custom domains and response headers with no server. |
 | File access | Browser signs user-delegation links with the person's own token | A signing function (Azure Functions); proxying files through the API | No server code and no stored key. The cost is that file access is decided per group, not per module (T7, 9.8). |
 | Identity | Entra ID workforce tenant with B2B guests | Entra External ID; the app's own passwords | Corporate accounts and BART guests in one place; MFA and Conditional Access managed centrally by IT. The app's own password, MFA and lockout code is retired after cutover. |
-| Linking people to profiles | Entra object id, linked once by email on first sign-in | Email as the key; pre-loading object ids | Object ids never change and are never reused; email is used once, only for a waiting profile, and audited. Administrators need no Entra ids. |
+| Managing people | From the Directory screen, through Microsoft Graph with the administrator's own delegated token | IT adds people in Entra by hand; a server-side function with application permissions | One step for the administrator and no ticket to IT. Delegated permissions never exceed what the administrator could do in Microsoft's own pages, and Microsoft limits that to the group they own. Application permissions would need a server, a stored secret, and rights over every group and user in the tenant. |
+| Linking people to profiles | Entra object id, from the moment a person is added; profiles carried over from Supabase linked once by email | Email as the key | Object ids never change and are never reused; email is used only to find the account, and every link is audited. Administrators never handle Entra ids. |
 | Gateway to database | Password login (`authenticator`) | Managed identity / Entra token | PostgREST cannot present an Entra token to PostgreSQL. The login is limited to switching into the two request roles. |
 | Scheduled work | None | pg_cron jobs | Both former jobs were removed; nothing in the design needs a schedule. |
 
@@ -378,7 +406,10 @@ the Log Analytics workspace, if cyber wants file and database access auditable
 centrally.
 
 **9.6 BART guest policy.** Whether BART staff can be B2B guests is a tenant
-policy decision. **Recommendation:** raise early; it has the longest lead time.
+policy decision, and so is whether portal administrators may invite them from
+the portal (the Guest Inviter role, or the external-collaboration settings).
+**Recommendation:** raise early; it has the longest lead time. Without invite
+rights, IT invites guests and the administrator then adds them in the portal.
 
 **9.7 Conditional Access details.** MFA is assumed. Device compliance for field
 tablets, sign-in frequency and location rules are IT's choice; test silent token
@@ -413,6 +444,11 @@ retention period if policy requires one; it is applied by a manual delete.
 **9.13 Environments.** The template supports `dev`, `test` and `prod`.
 **Recommendation:** a `dev` environment for changes before they reach `prod`
 (today the portal is developed against its only environment).
+
+**9.14 Owners of CX Portal Users.** The people who may add and remove portal
+users are the group's owners in Entra. **Recommendation:** the portal's
+administrators only (two or three people), with MFA, reviewed in the six-monthly
+access review (`access_review_due`).
 
 ---
 
@@ -462,7 +498,7 @@ Access (handover section 2); networking (9.1); Front Door profile (9.2).
 
 | From | To | Why |
 |---|---|---|
-| Browser | Static site, gateway, Blob, Entra | The only places the CSP allows |
+| Browser | Static site, gateway, Blob, Entra; Microsoft Graph for administrators managing people | The only places the CSP allows (`graph.microsoft.com` for data only) |
 | Key helper | `login.microsoftonline.com/<tenant>/discovery/v2.0/keys` | Microsoft's public signing keys |
 | Gateway | Database | Queries |
 

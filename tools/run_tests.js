@@ -59,6 +59,8 @@ const suites = [
   { file: "tools/test_change_log.js", needs: [] },      // change log: who, and only what changed (needs PostgreSQL)
   { file: "tools/test_cx_db.js", needs: [] },          // cx-db.js == supabase-js on every query shape (needs PostgreSQL + PostgREST)
   { file: "tools/test_azure_roles.js", needs: [] },     // Azure: the gateway login can never bypass row-level security
+  { file: "tools/test_entra_admin.js", needs: [] },     // Directory ↔ Entra: Graph calls against a simulated tenant
+  { file: "tools/test_directory_entra.js", needs: [] }, // Directory ↔ Entra: add/deactivate/remove, both sides kept in step
   { file: "tools/test_size_ratchet.js", needs: [] },    // monolith line-count ratchet (Tier 3 #11)
   { file: "tools/test_inline_handler_ratchet.js", needs: [] }, // inline on*= handler ratchet (Tier 3 #11 Stage B)
   { file: "tools/test_delegation_wiring.js", needs: [] },      // every data-action resolves (Tier 3 #11 Stage B)
@@ -90,6 +92,7 @@ const suites = [
   { file: "tools/pw_auth_gates.js", needs: ["playwright-core"] }, // real-browser proof of the auth gates
   { file: "tools/pw_entra_login.js", needs: ["playwright-core"] }, // real-browser proof of the Azure/Entra deployment shape
   { file: "tools/pw_local_login.js", needs: ["playwright-core"] }, // real-browser proof of the standard email/password sign-in
+  { file: "tools/pw_entra_admin.js", needs: ["playwright-core"] }, // real-browser proof: Directory adds/removes people in Entra (Azure package)
   { file: "tools/pw_page_walk.js", needs: ["playwright-core"] }, // every page opens, signed in, with no JavaScript errors
 ];
 

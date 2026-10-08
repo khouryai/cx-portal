@@ -5579,7 +5579,7 @@ function _renderDirectoryRows() {
             </td>
             <td class="dir-cell-actions">
               <button class="form-secondary" style="font-size:11px;padding:3px 8px;color:var(--red-600);"
-                onclick="deleteUserConfirm('${u.id}','${escapeHtml(u.full_name).replace(/'/g,'')}')">Remove</button>
+                ${cxAct('deleteUserConfirm', String(u.id), u.full_name || u.email || '')}>Remove</button>
             </td>
           </tr>`;
         }).join('')}
@@ -5617,21 +5617,7 @@ async function updateProfileCompany(id, company) {
   toast('Company updated', 'success');
 }
 
-async function updateProfileActive(id, is_active) {
-  const { error } = await _sb.from('profiles').update({ is_active }).eq('id', id);
-  if (error) toast('Update failed: ' + error.message, 'error');
-  else toast(is_active ? 'User activated' : 'User deactivated', 'success');
-}
-
-async function deleteUserConfirm(id, name) {
-  if (!await cxConfirm(`Remove "${name}" from the portal?\n\nThis removes their profile and access. Their Supabase auth account is preserved.`)) return;
-  const { error } = await _sb.from('profiles').delete().eq('id', id);
-  if (error) { toast('Remove failed: ' + error.message, 'error'); return; }
-  toast(`Removed ${name}`, 'success');
-  _loadDirectoryUsers();
-}
-
-// Invite User modal + inviteUser(): team-invite.js
+// Invite User modal, inviteUser(), updateProfileActive(), deleteUserConfirm(): team-invite.js
 
 // ==========================================================================
 // TEST MATRIX VIEW — Live status toggle scratchpad

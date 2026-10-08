@@ -27,7 +27,7 @@ an optional WAF, private networking and customer-managed keys.
 | **Keep PostgreSQL** (Azure Database for PostgreSQL – Flexible Server), not Azure SQL | Permissions are enforced in the database: about 230 row-level security policies, 18 triggers, 42 jsonb/array columns. Azure SQL would mean rewriting the security model. PostgreSQL takes a `pg_dump` restore unchanged. |
 | **PostgREST** as the API | The app already speaks the PostgREST protocol (that is what Supabase runs). Off-the-shelf container, no custom code. |
 | **Entra ID** for sign-in | Corporate accounts, BART as guests, MFA and Conditional Access set centrally. |
-| **Profiles keyed by Entra object id, linked once by email** | An admin adds a person in the Directory screen by email; their first Microsoft sign-in links the waiting profile to their Entra account (`public.claim_profile()`), and profiles carried over from Supabase link the same way. Permissions never use email. |
+| **People managed from the portal; profiles keyed by Entra object id** | An admin adds a person in the Directory screen by email. The portal finds their Microsoft account (or invites a BART guest), adds them to the CX Portal Users group through Microsoft Graph with the admin's own delegated rights (admins own that group), and saves the profile under their object id; Inactive and Remove take them out again. Profiles carried over from Supabase are linked once (by an admin, or on first sign-in). Permissions never use email. |
 | **All files in Azure Blob, signed in the browser** | Each user's browser gets a user delegation key from Azure with their own Microsoft sign-in, and signs short-lived links with it. Same behaviour as Supabase's signed URLs, no server code. Access = membership of the portal users' Entra group, which matches today's rule (any signed-in user, any file). |
 | **Static hosting** (Static Web Apps or Blob static website) | The site is plain files. `node tools/build.js` produces `dist/`, the one artifact for a pipeline or a hand-off zip. |
 
@@ -41,6 +41,12 @@ All in the repository and covered by `node tools/run_tests.js`.
 - **Sign-in is swappable.** `cx-auth-provider.js` is the only code that talks to
   an identity provider; the Entra provider is written (MSAL, redirect flow, so
   it works on field tablets) and its token mapping is tested.
+- **People are managed from the portal.** `cx-entra-admin.js` adds, deactivates
+  and removes people in Entra from the Directory screen, keeping Microsoft and
+  the portal in step (undoing one side when the other refuses). Proven against
+  a simulated tenant that follows Microsoft's documented Graph rules
+  (`tools/test_entra_admin.js`, `tools/test_directory_entra.js`) and click by
+  click in a real browser on the Azure package (`tools/pw_entra_admin.js`).
 - **Files are swappable.** `cx-storage.js` is the only code that touches file
   storage, for all five buckets. Its Azure signatures are pinned byte-for-byte
   against Microsoft's own SDK in `tools/test_storage_seam.js`.
@@ -74,7 +80,9 @@ All in the repository and covered by `node tools/run_tests.js`.
 3. **Guest access for BART** is a tenant policy decision. Raise it early.
 4. **First real Microsoft sign-in.** The chain (key helper → gateway → database
    roles → row-level security) is rehearsed locally with Entra-shaped tokens
-   and keys; a token issued by the real tenant is the first thing to verify.
+   and keys; a token issued by the real tenant is the first thing to verify,
+   followed by one Add Person and one Remove against the real tenant (handover
+   section 8, check 7).
 5. **Photo and album ownership** compares names, not user ids. Fragile if
    someone is renamed; worth fixing to a uuid while data is small.
 6. **Offline files stay on the device after sign-out.** Decide whether shared

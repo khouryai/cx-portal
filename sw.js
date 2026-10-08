@@ -21,6 +21,7 @@ const SHELL_ASSETS = [
   './cx-storage.js',
   './cx-lazy.js',
   './cx-db.js',
+  './cx-entra-admin.js',
   './icons.js',
   './format.js',
   './cx-state.js',

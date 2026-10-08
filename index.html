@@ -21,7 +21,7 @@
      and being here already is what allows a parallel run across both issuers.
      If a legitimate resource is ever blocked, the browser console names the
      exact directive; widen that one directive rather than removing the tag. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; frame-src 'self' blob: https://login.microsoftonline.com; worker-src 'self' blob:; manifest-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://uqtwiucxktljhukmgmxg.supabase.co; font-src 'self' data:; media-src 'self' blob: data:; connect-src 'self' blob: data: https://uqtwiucxktljhukmgmxg.supabase.co wss://uqtwiucxktljhukmgmxg.supabase.co https://login.microsoftonline.com" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; frame-src 'self' blob: https://login.microsoftonline.com; worker-src 'self' blob:; manifest-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://uqtwiucxktljhukmgmxg.supabase.co; font-src 'self' data:; media-src 'self' blob: data:; connect-src 'self' blob: data: https://uqtwiucxktljhukmgmxg.supabase.co wss://uqtwiucxktljhukmgmxg.supabase.co https://login.microsoftonline.com https://graph.microsoft.com" />
 <meta name="color-scheme" content="light" />
 <!-- iOS standalone / home-screen install -->
 <meta name="mobile-web-app-capable" content="yes" />
@@ -1466,6 +1466,7 @@ function _signinTogglePw(){
 <script src="cx-storage.js"></script>
 <script src="cx-lazy.js"></script>
 <script src="cx-db.js"></script>
+<script src="cx-entra-admin.js"></script>
 <script src="data.js"></script>
 <script src="icons.js"></script>
 <script src="format.js"></script>

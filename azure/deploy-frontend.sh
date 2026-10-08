@@ -17,6 +17,9 @@ SWA="${SWA:-stapp-cxportal-dev}"
 TENANT="${TENANT:-e62c5154-d15d-4c22-a489-aa656aff64a4}"
 APPID="${APPID:-a1301867-e12c-43c7-85e2-80cc5bd9d325}"
 STAGE="${STAGE:-$HOME/cx-portal-azure-staging}"
+# Object id of the CX Portal Users group. Set it (entra only) and Directory →
+# Add Person / Inactive / Remove manage that group in Microsoft directly.
+USERS_GROUP="${USERS_GROUP:-}"
 
 # WHICH SIGN-IN SCREEN THIS BUILD GETS.
 #   postgrest : email + password, exactly as on Supabase. Needs
@@ -67,6 +70,7 @@ cat <<CFG
   ENTRA_API_SCOPE: 'api://$APPID/access_as_user',
   ENTRA_REDIRECT_URI: 'https://$HOST/',
 CFG
+if [ -n "${USERS_GROUP:-}" ]; then echo "  ENTRA_USERS_GROUP_ID: '${USERS_GROUP}',"; fi
 fi
 cat <<CFG
 

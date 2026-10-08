@@ -36,6 +36,7 @@ open decisions), see [`docs/ARCHITECTURE.md`](ARCHITECTURE.md).
  Browser (staff laptops, field tablets, BART guests)
    │
    ├─ 1. Sign in ───────────────────────► Microsoft Entra ID (MFA, guests)
+   │     (administrators: add/remove people ► Microsoft Graph, CX Portal Users)
    │
    ├─ 2. Web page (static files) ───────► Azure Static Web Apps
    │
@@ -83,19 +84,36 @@ The repository contains everything referenced below: `infra/` (template),
 
 ### 2.1 Two security groups
 
-| Group | Members | Used for |
-|---|---|---|
-| **CX Portal Users** | Everyone who uses the portal, BART guests included | Sign-in to the app, and access to files |
-| **CX Portal DB Admins** | IT staff who administer the database | Entra administrator on PostgreSQL |
+| Group | Members | Owners | Used for |
+|---|---|---|---|
+| **CX Portal Users** | Everyone who uses the portal, BART guests included. **The portal fills it**: you only add the first administrator (yourself or the developer). | **The portal administrators** | Sign-in to the app, and access to files |
+| **CX Portal DB Admins** | IT staff who administer the database | IT | Entra administrator on PostgreSQL |
 
 Record both **object IDs**.
 
+**Why the portal administrators own CX Portal Users.** Administrators add and
+remove people in the portal (Directory), and the portal puts them in or takes
+them out of this group in Microsoft, with the administrator's own Microsoft
+sign-in. Microsoft allows that only to the group's owners (or to directory
+roles such as Groups Administrator, which are far broader). Ownership of this
+one group is the least privilege that works: an owner can change this group's
+membership and nothing else. The group must be an ordinary security group with
+assigned membership (not dynamic, not role-assignable).
+
 ### 2.2 BART guest users
 
-Invite each BART user as a B2B guest (Entra ID → Users → Invite external
-user), then add them to **CX Portal Users**. Guest access is governed by
-Hitachi's external-collaboration policy; that decision belongs to IT and
-cyber, not the app.
+A portal administrator adds a BART user in the portal like anyone else; when
+the address has no account in Hitachi's directory, the portal asks the
+administrator, then invites them as a B2B guest (Microsoft emails the
+invitation) and adds them to **CX Portal Users**.
+
+For that to work, Hitachi's external-collaboration settings must let the portal
+administrators invite guests: either members may invite, or give the portal
+administrators the **Guest Inviter** role (Entra ID → Roles and administrators).
+Guest access is governed by Hitachi's policy; that decision belongs to IT and
+cyber, not the app. If guests are not allowed to be invited this way, IT
+invites them (Entra ID → Users → Invite external user) and the administrator
+then adds them in the portal by the same address.
 
 ### 2.3 App registration
 
@@ -124,7 +142,14 @@ Then, on the registration:
    - **My APIs** → cx Portal → `access_as_user` (delegated).
    - **Azure Storage** → `user_impersonation` (delegated). This lets the
      browser create short-lived file links on the signed-in person's behalf.
-   - Microsoft Graph `User.Read` is present by default; keep it.
+   - **Microsoft Graph**, delegated: `User.Read` (present by default; keep it),
+     `User.ReadBasic.All`, `GroupMember.ReadWrite.All` and `User.Invite.All`.
+     These let the Directory screen find a person's account, invite a guest, and
+     add or remove them in **CX Portal Users**. Being delegated, they never let
+     anyone do more than they could already do in Microsoft's own admin pages:
+     a portal user who does not own the group gets "access denied" from
+     Microsoft. `User.Invite.All` is needed only if administrators may invite
+     guests from the portal (2.2); without it everything else still works.
    - **Grant admin consent** for the tenant.
 5. **Token configuration** → Add optional claim → token type **Access** →
    `email`. On first sign-in the portal matches this address to the profile an
@@ -310,6 +335,12 @@ person → Object ID):
 psql -c "select private.relink_profile('person@hitachirail.com', '<object id>')"
 ```
 
+A portal administrator can also connect a carried-over profile without waiting
+for that person to sign in: Directory → Users → + Invite User with the same
+email. The portal finds their Microsoft account, adds them to CX Portal Users and
+moves the existing profile onto it (`public.admin_link_profile()`), keeping its
+permissions and history.
+
 Test accounts that should not carry over can be switched off:
 
 ```bash
@@ -385,6 +416,7 @@ window.CX_CONFIG = {
   IDENTITY:        'entra',
   ENTRA_TENANT_ID: '<tenant id>',
   ENTRA_CLIENT_ID: '<application (client) id>',
+  ENTRA_USERS_GROUP_ID: '<object id of CX Portal Users>',
   STORAGE:         'azure',
   BLOB_ORIGIN:     '<blobOrigin>',
 };
@@ -466,26 +498,43 @@ Sign in as a linked person (4.5) and go through, in order:
 | 4 | A photo, a drawing and a document open | Storage CORS (`allowedOrigin`), group role, or Azure Storage permission (2.3) |
 | 5 | Upload a photo; delete it | Same as 4 |
 | 6 | A BART guest can sign in and sees only what their permissions allow | Guest invitation, group membership, Conditional Access |
+| 7 | In Directory, add a colleague, switch them to Inactive, then Remove them: each time they appear in or leave **CX Portal Users** in Entra | Group owners (2.1), Graph permissions and admin consent (2.3), `ENTRA_USERS_GROUP_ID` (7.1) |
 
 ---
 
 ## 9. Running it
 
-**Adding a person** — two steps, in either order:
+**Adding a person** — one step, by a portal administrator, in the portal:
+Admin menu → **Directory** → **Users** → **+ Invite User**, which opens **Add
+Person**: name, the email they sign in to Microsoft with, and their permission
+template. No password, no Microsoft id, no ticket to IT. The portal then:
 
-1. **IT, in Entra:** add them to **CX Portal Users** (invite them as a guest
-   first if they are BART staff). This is what lets them sign in at all.
-2. **A portal administrator, in the portal:** Admin menu → **Directory** →
-   **Users** → **+ Invite User**, which opens **Add Person** — name,
-   the email they sign in to Microsoft with, and their permission template. No
-   password and no Microsoft ID are needed. The Users list shows them as
-   *Not signed in yet*.
+1. finds their Microsoft account by that email; for someone outside Hitachi
+   (for example BART) with no account, it asks the administrator, then invites
+   them as a guest and Microsoft emails them the invitation;
+2. adds them to **CX Portal Users** in Entra;
+3. saves their portal profile under their Microsoft account.
 
-Their first Microsoft sign-in links the profile to their Entra account
-automatically (and writes an `entra_link` event to the audit log).
+They can sign in straight away; a guest once they accept the invitation. An
+address on Hitachi's own domain with no account is treated as a typo and never
+invited as a guest.
 
-**Removing a person:** remove them from CX Portal Users (they can no longer
-sign in), and set `is_active = false` on their profile to keep their history.
+**Removing a person:** Directory → Users → **Remove**, or switch them to
+**Inactive** to keep their profile and history. Either takes them out of CX
+Portal Users, so they can no longer sign in, and they see no data from that
+moment; switching back to **Active** puts them back. An administrator cannot
+remove or deactivate themselves.
+
+**If Microsoft refuses** (for example the administrator is not an owner of CX
+Portal Users), nothing is left half-done: when the portal's own save fails
+after Microsoft agreed, the Microsoft change is undone, and the administrator
+is told in plain words what to fix (section 11). Every change shows in Entra's
+audit log under the administrator's name, and the portal records privilege
+changes and profile links in `auth_events`.
+
+Without `ENTRA_USERS_GROUP_ID` in the settings file, the portal does not touch
+Entra: IT adds people to CX Portal Users, and the profile an administrator
+creates waits for that person's first sign-in (4.5).
 
 **Updating the app:** merge to the main branch (Option A), or build and
 upload a new `dist/` (Option B). Users get the new version on their next page
@@ -513,7 +562,8 @@ certificates to renew (Azure manages TLS), no secrets in the website.
 | Concern | Where it lives |
 |---|---|
 | Who you are, MFA, guest access | Entra ID: assignment required, Conditional Access |
-| Linking a profile to a person | Once, on their first Microsoft sign-in, by the email Microsoft puts in their token — only to a profile an administrator created and that is still waiting. Linked profiles can never be claimed again, and every link is in the audit log. Email is never used for permissions. |
+| Adding and removing people | Portal administrators, in the Directory screen. The portal changes CX Portal Users with the administrator's own Microsoft sign-in (delegated Graph permissions); Microsoft allows it only because they own that one group, so no one else can, and nothing beyond that group's membership can change. Logged in Entra's audit log. |
+| Linking a profile to a person | New people: their profile is created under their Microsoft object id when they are added. Profiles carried over from Supabase: linked once, by an administrator (Add Person) or on the person's first sign-in by the email in their token, and only while still waiting. Every link is in the audit log. Email is never used for permissions. |
 | What each person may see or change | **Inside the database**, on every request, by row-level security (about 230 policies, per module and per action). A request that bypasses the website still cannot get past it. |
 | Files | Private containers, account key disabled. Only CX Portal Users members can obtain a link; each link covers one file and expires within an hour. |
 | The gateway's database login | Can switch only to the two request roles, both under row-level security. Password, in the Container App's settings, readable by anyone with read access to that Container App (restrict it, or see the architecture document's open items); TLS required |
@@ -551,6 +601,13 @@ likelihood:
 | Far fewer than ~227 policies after restore | `azure_before_restore.sql` ran after the restore, or not at all | Drop and recreate the database; run 4.1 → 4.3 in order |
 | "Your account is not set up yet" | No portal profile has this person's sign-in email: not added in Directory, or added under a different address | Add them in Directory (section 9) with the address they sign in with, or correct the email (4.5) |
 | "Account not set up yet" for one of two people sharing an email | Two waiting profiles have the same address; the portal will not guess | Correct one email, or link with `relink_profile` (4.5) |
+| Add Person: "Your Microsoft account cannot change the CX Portal Users group" | The administrator is not an owner of the group | Add them as an owner of CX Portal Users (2.1) |
+| Add Person: "not allowed to invite guests" | Hitachi's external-collaboration settings | Guest Inviter role, or the settings (2.2); or IT invites the guest and the administrator adds them again |
+| "IT must grant admin consent for the portal's Microsoft Graph permissions" | The Graph permissions are missing or not consented | 2.3 step 4 |
+| "Allow pop-ups for this site" | Microsoft needed one extra confirmation and the browser blocked its window | Allow pop-ups for the portal's address and retry |
+| "No Microsoft account in your organisation has the address …" | A typo, or the staff account does not exist yet | Check the spelling; IT creates staff accounts |
+| A guest was added but cannot sign in | They have not accepted Microsoft's invitation email | Ask them to look for it (and in spam); IT can resend it (Entra ID → Users → the guest → Resend invitation) |
+| Add Person still says IT adds people to the group | `ENTRA_USERS_GROUP_ID` is not in the settings file | 7.1, then rebuild and deploy |
 | Files fail to load; browser console mentions CORS | `allowedOrigin` not set to `siteUrl` | 3.4 |
 | Files fail with 403 on `userdelegationkey` | Person not in CX Portal Users, or role assignment missing | `portalUsersGroupObjectId` |
 | Consent prompt or error on first file access | Azure Storage permission not admin-consented | 2.3 step 4 |

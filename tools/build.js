@@ -114,6 +114,8 @@ function rewriteCsp(csp, committedCfg, cfg) {
     const authority = origin(cfg.ENTRA_AUTHORITY || "https://login.microsoftonline.com");
     add("connect-src", authority);
     add("frame-src", authority);
+    // Directory -> add/remove people talks to Microsoft Graph (cx-entra-admin.js).
+    add("connect-src", "https://graph.microsoft.com");
   }
   return dirs.map((d) => [d.name, ...d.sources].join(" ")).join("; ");
 }

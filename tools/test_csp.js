@@ -62,6 +62,10 @@ if (m) {
   const ENTRA = "https://login.microsoftonline.com";
   ok("connect-src allows the Entra token endpoint", (directive("connect-src") || "").includes(ENTRA));
   ok("frame-src allows MSAL's silent-renewal iframe", (directive("frame-src") || "").includes(ENTRA));
+  ok("connect-src allows Microsoft Graph (Directory adds and removes people in Entra)",
+    (directive("connect-src") || "").includes("https://graph.microsoft.com"));
+  ok("…for data only: Graph is in no script, frame or image directive",
+    !["script-src", "frame-src", "img-src", "default-src"].some((d) => (directive(d) || "").includes("graph.microsoft.com")));
   ok("form-action stays locked to self (MSAL redirects, it does not POST out)",
     directive("form-action") === "'self'");
 

@@ -204,6 +204,9 @@
   //                      also be registered as a redirect URI (SPA platform).
   //   ENTRA_AUTHORITY    optional; defaults to login.microsoftonline.com/<tenant>.
   //                      Sovereign or B2C clouds override it.
+  //   ENTRA_USERS_GROUP_ID  object id of the CX Portal Users group. When set,
+  //                      Directory adds, deactivates and removes people in that
+  //                      group through Microsoft Graph (cx-entra-admin.js).
   //
   // WHY REDIRECT AND NOT POPUP: the PWA runs standalone on field tablets, where
   // a popup has no window chrome to return to and iOS may block it outright.
@@ -424,23 +427,34 @@
     },
 
     /**
-     * An access token for another Microsoft resource (Azure Storage, for
-     * cx-storage.js). Silent when MSAL already holds consent; otherwise the
-     * browser is sent to sign in once and comes back.
-     * @param {string} scope e.g. 'https://storage.azure.com/user_impersonation'
+     * An access token for another Microsoft resource (Azure Storage for
+     * cx-storage.js, Microsoft Graph for cx-entra-admin.js). Silent when MSAL
+     * already holds consent. Otherwise the browser is sent to sign in once and
+     * comes back — or, with { interactive: 'popup' }, a Microsoft window opens
+     * over the page instead, so a half-filled form is not lost (administrator
+     * actions; field tablets never take this path).
+     * @param {string|string[]} scope e.g. 'https://storage.azure.com/user_impersonation'
+     * @param {{interactive?: string}} [opts]
      * @returns {Promise<string>}
      */
-    tokenFor: function (scope) {
+    tokenFor: function (scope, opts) {
+      var scopes = Array.isArray(scope) ? scope : [scope];
+      var popup = !!(opts && opts.interactive === 'popup');
       return initEntra().then(function () {
         var account = entra.app && entra.app.getActiveAccount();
         if (!account) throw new Error('not signed in');
-        return entra.app.acquireTokenSilent({ scopes: [scope], account: account })
+        return entra.app.acquireTokenSilent({ scopes: scopes, account: account })
           .then(function (r) { return r.accessToken; }, function (err) {
             var name = (err && (err.errorCode || err.name)) || '';
-            if (/interaction_required|login_required|consent_required|InteractionRequired/i.test(name + ' ' + (err && err.message)) &&
-                !entra.redirecting) {
+            var needsUser = /interaction_required|login_required|consent_required|InteractionRequired/i
+              .test(name + ' ' + (err && err.message));
+            if (needsUser && popup) {
+              return entra.app.acquireTokenPopup({ scopes: scopes, account: account })
+                .then(function (r) { return r.accessToken; });
+            }
+            if (needsUser && !entra.redirecting) {
               entra.redirecting = true;
-              entra.app.acquireTokenRedirect({ scopes: [scope], account: account });
+              entra.app.acquireTokenRedirect({ scopes: scopes, account: account });
             }
             throw err;
           });

@@ -62,6 +62,8 @@ try {
     !fs.existsSync(path.join(r3.out, "vendor/js/supabase.js")) && !fs.existsSync(path.join(r3.out, "vendor/js/591.supabase.js")));
   ok("azure: the service worker does not try to cache them", !/supabase\.js/.test(sw3));
   ok("azure: the service worker still parses", !throws(() => new (require("vm").Script)(sw3)));
+  ok("azure: the page may call Microsoft Graph (Directory manages people in Entra)",
+    /connect-src[^;]*https:\/\/graph\.microsoft\.com/.test(html3));
   ok("azure: cx-db.js is loaded before app.js",
     html3.includes('<script src="cx-db.js">') && html3.indexOf("cx-db.js") < html3.indexOf('<script src="app.js'));
 

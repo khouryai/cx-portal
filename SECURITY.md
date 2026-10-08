@@ -101,7 +101,7 @@ The table has **no insert/update/delete policy at all** — every write goes thr
 
 | Capability | Who |
 |---|---|
-| Create new accounts | Admin only (Admin → Directory → Users → + Invite User) |
+| Create new accounts | Admin only (Admin → Directory → Users → + Invite User). Under Microsoft sign-in this also adds them to the Entra group that grants sign-in; Inactive and Remove take them out |
 | Assign roles (Admin / Field Engineer / Read Only / Client) | Admin only |
 | Restrict a user to a specific subsystem | Admin only |
 | Deactivate / remove access | Admin only |
