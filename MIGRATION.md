@@ -202,8 +202,8 @@ cannot opt out. See `infra/README.md` and `infra/main.parameters.personal.json`.
 
 ### 4.5 Already done previously
 
-- All third-party libraries self-hosted in `vendor/` at pinned versions, except
-  one (§6.1). A stale Google Fonts `@import` was also found and removed.
+- All third-party libraries self-hosted in `vendor/` at pinned versions (the
+  last external one, xlsx, was removed — §6.1). A stale Google Fonts `@import` was also found and removed.
 - Content-Security-Policy in `index.html`, pinned to `config.js` by `test_csp.js`.
 - `config.js` as the single backend seam.
 - Authentication hardening (`cx-auth-hardening.js` + `supabase_auth_hardening.sql`):
@@ -227,14 +227,10 @@ cannot opt out. See `infra/README.md` and `infra/main.parameters.personal.json`.
 
 ## 6. Known risks
 
-1. **xlsx 0.20.3** is the one remaining external script. SheetJS does not publish
-   0.20.x to npm, so it cannot be npm-installed, and downgrading to 0.18.x is not
-   acceptable. `tools/vendor_xlsx.js` fetches it, **verifies it against the
-   SHA-384 already pinned in `index.html`**, and rewrites the tag, the CSP and
-   `sw.js`. It could not be run from the development environment, whose egress
-   proxy blocks `cdn.sheetjs.com` — as corporate egress will. Run it from a
-   network that can reach the file, or `--from` a copy from an approved artifact
-   store.
+1. ~~xlsx 0.20.3, the one external script~~ **Resolved (2026-10):** removed.
+   Its only use was Excel import of dynamic-testing runs, which is now CSV-only.
+   Every script the app loads ships in `vendor/`; `tools/test_csp.js` fails the
+   build if a third-party script host returns.
 2. **Token lifetimes vs. field use.** The PWA and its IndexedDB photo queue
    assume long-lived sessions. **Test MSAL silent refresh on yard and tunnel
    devices with intermittent connectivity before cutover.** This is the risk most

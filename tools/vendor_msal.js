@@ -2,7 +2,7 @@
 "use strict";
 // Vendor @azure/msal-browser — the Entra ID sign-in library.
 //
-// Unlike xlsx (see vendor_xlsx.js), MSAL IS on the npm registry, so this needs
+// MSAL is on the npm registry, so this needs
 // no CDN and works from behind corporate egress. It is a script rather than a
 // build step because this repo has no build step: `npm pack`, take the one UMD
 // file, drop it in vendor/js/, record the hash.

@@ -115,7 +115,6 @@ function loadApp(opts = {}) {
     flatpickr: universal(),
     TomSelect: universal(),
     Fuse: universal(),
-    XLSX: universal(),
     pdfjsLib: universal(),
     PDFLib: universal(),
   };

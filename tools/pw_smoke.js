@@ -113,9 +113,6 @@ async function main() {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(session) }));
   await page.route(/\/auth\/v1\/user/i, (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(USER) }));
-  // The one external CDN script (xlsx, lazy at runtime): abort it so its SRI hash
-  // isn't checked against a stub body. Boot does not depend on it.
-  await page.route(/cdn\.sheetjs\.com/i, (route) => route.abort());
 
   const consoleErrors = [];
   page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
@@ -270,7 +267,7 @@ async function main() {
   // 5) No uncaught page errors during boot (console.error is our proxy).
   // Filter environment/network noise (mocked backend, aborted CDN script): we
   // assert on genuine app errors only, not the deterministic-mock artifacts.
-  const NOISE = /Failed to load resource|net::ERR|status of 4|status of 5|integrity|cdn\.sheetjs|Failed to fetch|supabase\.js/i;
+  const NOISE = /Failed to load resource|net::ERR|status of 4|status of 5|integrity|Failed to fetch|supabase\.js/i;
   const realErrors = consoleErrors.filter((t) => !NOISE.test(t));
   ok("no uncaught console errors during boot", realErrors.length === 0,
     realErrors.slice(0, 3).join(" | "));

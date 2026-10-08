@@ -65,12 +65,11 @@ if (m) {
   ok("form-action stays locked to self (MSAL redirects, it does not POST out)",
     directive("form-action") === "'self'");
 
-  // The one external script the app still loads (see MIGRATION.md §4.1).
-  const usesSheetJs = /cdn\.sheetjs\.com/.test(html.replace(m[0], ""));
-  if (usesSheetJs) {
-    ok("script-src allows the one remaining external CDN (cdn.sheetjs.com)",
-      (scriptSrc || "").includes("https://cdn.sheetjs.com"));
-  }
+  // Every script ships with the app (vendor/). No third-party script host may
+  // come back: corporate egress blocks them, and each is a supply-chain risk.
+  ok("script-src names no external host", scriptSrc && !/https?:\/\//.test(scriptSrc), scriptSrc);
+  ok("no <script> loads from another origin",
+    !/<script[^>]+src="(https?:)?\/\//i.test(html));
 
   // Blob URLs back the print/report path (print-report.js cxPrintFrame).
   ok("frame-src allows blob: (the hidden print iframe)", (directive("frame-src") || "").includes("blob:"));

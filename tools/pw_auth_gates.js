@@ -139,7 +139,6 @@ async function boot(browser, base, opts) {
     r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(session) }));
   await page.route(/\/auth\/v1\/user/i, (r) =>
     r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(user) }));
-  await page.route(/cdn\.sheetjs\.com/i, (r) => r.abort());
 
   const cspViolations = [];
   page.on("console", (m) => {

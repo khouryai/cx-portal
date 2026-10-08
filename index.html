@@ -21,7 +21,7 @@
      and being here already is what allows a parallel run across both issuers.
      If a legitimate resource is ever blocked, the browser console names the
      exact directive; widen that one directive rather than removing the tag. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; frame-src 'self' blob: https://login.microsoftonline.com; worker-src 'self' blob:; manifest-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://uqtwiucxktljhukmgmxg.supabase.co; font-src 'self' data:; media-src 'self' blob: data:; connect-src 'self' blob: data: https://uqtwiucxktljhukmgmxg.supabase.co wss://uqtwiucxktljhukmgmxg.supabase.co https://login.microsoftonline.com" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; frame-src 'self' blob: https://login.microsoftonline.com; worker-src 'self' blob:; manifest-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://uqtwiucxktljhukmgmxg.supabase.co; font-src 'self' data:; media-src 'self' blob: data:; connect-src 'self' blob: data: https://uqtwiucxktljhukmgmxg.supabase.co wss://uqtwiucxktljhukmgmxg.supabase.co https://login.microsoftonline.com" />
 <meta name="color-scheme" content="light" />
 <!-- iOS standalone / home-screen install -->
 <meta name="mobile-web-app-capable" content="yes" />
@@ -35,12 +35,6 @@
 <!-- Self-hosted vendor dependencies (no SRI — same-origin files; the one external CDN tag below keeps its hash) -->
 <script src="chart.umd.js"></script>
 <script src="vendor/js/supabase.js"></script>
-<!-- xlsx 0.20.3 is distributed only via cdn.sheetjs.com (npm registry stops at 0.18.x).
-     At the Microsoft migration cutover, mirror this exact file into vendor/js/ from an
-     approved artifact store instead of downgrading. -->
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
-  integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"
-  crossorigin="anonymous"></script>
 <!-- pdf.js – renders PDFs in the Forms / Test Data Sheets module -->
 <!-- pdf-lib – fills AcroForm fields and saves the modified PDF back -->
 <!-- pdf.worker.min.js (loaded dynamically by pdf.js, pinned in app.js)

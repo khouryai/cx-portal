@@ -25815,7 +25815,7 @@ async function _dynDeleteInstance(id, fromModal) {
 function _dynOpenCSVModal() {
   modal({
     title: 'Import dynamic instances',
-    sub: 'Paste CSV, drop a .csv / .xlsx file, or click Browse',
+    sub: 'Paste CSV, drop a .csv file, or click Browse',
     body: `
       <div style="padding:8px 24px 16px;">
         <p style="font-size:13px;color:var(--gray-600);margin:0 0 10px;">
@@ -25836,7 +25836,7 @@ function _dynOpenCSVModal() {
           column: it never creates a separate run or equivalence group.
         </p>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
-          <input id="dyn-csv-file" type="file" accept=".csv,.xlsx,.xls" style="font-size:12px;" />
+          <input id="dyn-csv-file" type="file" accept=".csv,text/csv" style="font-size:12px;" />
           <button class="dyn-btn" data-action="_dynCSVPasteSample" style="font-size:12px;">Insert sample</button>
           <button class="form-secondary" data-action="_dynDownloadCSVTemplate" style="font-size:12px;">${icon('download')} Template</button>
         </div>
@@ -25909,13 +25909,8 @@ async function _dynReadFileAsCSV(file) {
   if (name.endsWith('.csv') || file.type === 'text/csv') {
     return await file.text();
   }
-  // Excel — convert first sheet to CSV via SheetJS (already loaded globally).
-  if (typeof XLSX === 'undefined') throw new Error('Excel support requires SheetJS — refresh and try again.');
-  const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type: 'array' });
-  const sn = wb.SheetNames[0];
-  if (!sn) throw new Error('Workbook has no sheets.');
-  return XLSX.utils.sheet_to_csv(wb.Sheets[sn]);
+  // CSV only: no third-party spreadsheet library ships with the app.
+  throw new Error('Only .csv files can be imported. In Excel, use File → Save As → CSV, then import that file.');
 }
 
 function _dynParseCSV(text) {
