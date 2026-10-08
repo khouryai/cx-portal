@@ -557,10 +557,20 @@ gateway's log names the database error.
 
 ### A.0 First, clear out what is no longer used
 
-In the Supabase SQL editor, run `supabase/sql/supabase_cleanup_2026_10.sql`
-(removed Meetings module, a legacy people table, orphaned functions) and
-`supabase/sql/supabase_drop_pg_cron.sql` (the switched-off scheduler), so none
-of it is carried to Azure.
+In the Supabase SQL editor, run these from `supabase/sql/`, in this order, so
+none of what they remove is carried to Azure. Each is safe to run again.
+
+1. `change_log_trigger.sql`: the change log records only what changed, and
+   records who under Microsoft sign-in too.
+2. `supabase_change_log_compact.sql`: shrinks the rows already logged
+   (38 MB to 21 MB). If the editor refuses its last line, `vacuum full`, run
+   that line on its own.
+3. `supabase_cleanup_2026_10.sql`: the removed Meetings module, a legacy
+   people table, orphaned functions.
+4. `supabase_drop_pg_cron.sql`: the switched-off scheduler.
+
+On the live project, 1 and 2 and the data part of 3 were run on 2026-10-08;
+3 and 4 still need running for their table and extension removals.
 
 ### A.1 Database backup
 
