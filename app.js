@@ -2973,7 +2973,8 @@ async function _loadCurrentProfile(user, accessToken) {
     if (!res.ok) throw new Error(`profiles fetch failed (${res.status}): ${await res.text()}`);
     const rows = await res.json();
     console.log(`[_loadCurrentProfile] ✓ got ${rows.length} profile row(s)`);
-    const data = rows?.[0];
+    // Microsoft sign-in: a first-time user's invited profile is linked here (team-invite.js).
+    const data = rows?.[0] || (window.CXIdentity.claimProfile ? await window.CXIdentity.claimProfile(authHeader) : null);
 
     if (!data) {
       await window.CXIdentity.signOut();
@@ -5575,7 +5576,9 @@ function _renderDirectoryRows() {
         ${data.map(u => {
           const name = u.full_name || u.email || '?';
           const initials = name.split(' ').filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase() || '?';
-          const tempBadge = u.must_change_password
+          const tempBadge = u.link_pending
+            ? `<span title="Added, waiting for their first Microsoft sign-in (which links this profile to their account)" style="margin-left:6px;font-size:10px;font-weight:700;background:var(--surface);color:var(--text-muted);border:1px solid var(--border);border-radius:4px;padding:1px 5px;vertical-align:middle;">NOT SIGNED IN YET</span>`
+            : u.must_change_password
             ? `<span title="User hasn't set their own password yet" style="margin-left:6px;font-size:10px;font-weight:700;background:var(--warn-light);color:var(--warn);border:1px solid var(--warn-border);border-radius:4px;padding:1px 5px;vertical-align:middle;">TEMP PW</span>`
             : '';
           return `<tr>
@@ -5668,100 +5671,7 @@ async function deleteUserConfirm(id, name) {
   _loadDirectoryUsers();
 }
 
-async function openInviteUserModal() {
-  const { data: _invTpls } = await _sb.from('permission_templates').select('id,name').order('name');
-  const invTemplates = _invTpls || [];
-  modal({
-    title: 'Invite User',
-    sub: 'Create a new portal account',
-    size: 'medium',
-    body: `
-      <div class="form-grid">
-        <div class="form-field form-field-full">
-          <label>Full Name</label>
-          <input type="text" id="inv-name" class="form-input" placeholder="Jane Smith">
-        </div>
-        <div class="form-field form-field-full">
-          <label>Email</label>
-          <input type="email" id="inv-email" class="form-input" placeholder="jane@example.com">
-        </div>
-        <div class="form-field form-field-full">
-          <label>Temporary Password <span style="font-weight:400;color:var(--gray-500);">(share this securely with the user)</span></label>
-          <input type="text" id="inv-password" class="form-input" placeholder="At least 6 characters">
-        </div>
-        <div class="form-field">
-          <label>Permission template</label>
-          <select id="inv-template" class="form-input">
-            <option value="">— no template (no access until assigned) —</option>
-            ${invTemplates.map(t=>`<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}
-          </select>
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:6px;cursor:pointer;" title="Global admins bypass templates: every action on every module">
-            <input type="checkbox" id="inv-admin"> Global admin
-          </label>
-        </div>
-        <div class="form-field">
-          <label>Subsystem <span style="font-weight:400;color:var(--gray-500);">(optional — blank = all)</span></label>
-          <select id="inv-subsystem" class="form-input">
-            <option value="">All subsystems</option>
-            ${SUBSYSTEMS_LIST.map(s=>`<option value="${s}">${s}</option>`).join('')}
-          </select>
-        </div>
-        <div class="form-field">
-          <label>Company</label>
-          <select id="inv-company" class="form-input">
-            <option value="">— none —</option>
-            ${COMPANIES_LIST.map(c=>`<option value="${c}" ${c==='Hitachi Rail'?'selected':''}>${escapeHtml(c)}</option>`).join('')}
-          </select>
-        </div>
-      </div>
-      <p style="font-size:12px;color:var(--gray-500);margin-top:14px;line-height:1.5;">
-        Share the temporary password securely. On first sign-in, the user will be prompted to set their own password before accessing the portal.
-        If email confirmation is enabled in Supabase Auth settings, they must confirm their email first.
-      </p>
-    `,
-    footer: `
-      <button class="form-secondary" data-action="closeModal">Cancel</button>
-      <button class="form-submit" data-action="inviteUser">Create Account</button>
-    `,
-  });
-}
-
-async function inviteUser() {
-  if (typeof uiCan === 'function' && !uiCan('directory', 'invite')) { toast('You do not have permission to invite users', 'error'); return; }
-  const name      = document.getElementById('inv-name').value.trim();
-  const email     = document.getElementById('inv-email').value.trim();
-  const password  = document.getElementById('inv-password').value;
-  const tplId     = document.getElementById('inv-template').value;
-  const isAdmin   = document.getElementById('inv-admin').checked;
-  const subsystem = document.getElementById('inv-subsystem').value;
-  const company   = document.getElementById('inv-company').value;
-
-  if (!name || !email || !password) { toast('Name, email, and password are all required', 'error'); return; }
-  if (password.length < 6) { toast('Password must be at least 6 characters', 'error'); return; }
-
-  const { data, error } = await window.CXIdentity.createUser({
-    email, password,
-    options: {
-      emailRedirectTo: window.location.origin + window.location.pathname,
-      data: { full_name: name },
-    },
-  });
-  if (error) { toast('Account creation failed: ' + error.message, 'error'); return; }
-  if (!data.user) { toast('Unexpected error — no user returned', 'error'); return; }
-
-  const { error: profErr } = await _sb.from('profiles').insert({
-    id: data.user.id, email, full_name: name,
-    role: isAdmin ? 'admin' : 'readonly',   // role survives only as the global-admin flag
-    permission_template_id: tplId || null,
-    subsystem: subsystem || null, company: company || null, is_active: true,
-    must_change_password: true,
-  });
-  if (profErr) { toast('Profile save failed: ' + profErr.message, 'error'); return; }
-
-  closeModal();
-  toast(`Account created for ${name}. They'll be prompted to set a new password on first sign-in.`, 'success');
-  _loadDirectoryUsers();
-}
+// Invite User modal + inviteUser(): team-invite.js
 
 // ==========================================================================
 // TEST MATRIX VIEW — Live status toggle scratchpad

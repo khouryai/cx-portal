@@ -123,14 +123,18 @@ Then, on the registration:
      browser create short-lived file links on the signed-in person's behalf.
    - Microsoft Graph `User.Read` is present by default; keep it.
    - **Grant admin consent** for the tenant.
-5. **Authentication** — no client secret, no certificate. A browser app must
+5. **Token configuration** → Add optional claim → token type **Access** →
+   `email`. On first sign-in the portal matches this address to the profile an
+   administrator created for the person (section 9). Version-2 tokens also
+   carry `preferred_username`, which is used too.
+6. **Authentication** — no client secret, no certificate. A browser app must
    not hold one.
 
 Then Entra ID → **Enterprise applications** → cx Portal:
 
-6. **Properties** → **Assignment required: Yes**. Only assigned people can get
+7. **Properties** → **Assignment required: Yes**. Only assigned people can get
    a token at all.
-7. **Users and groups** → Add assignment → group **CX Portal Users**, role
+8. **Users and groups** → Add assignment → group **CX Portal Users**, role
    **Portal user**. (Assigning a *group* to an app role needs Entra ID P1.)
 
 Finally, **Conditional Access**: a policy requiring MFA for the cx Portal
@@ -284,19 +288,24 @@ psql -tAc "select count(*) from pg_tables where schemaname = 'public'"     # abo
 psql -tAc "select to_regprocedure('auth.uid()') is not null"               # t
 ```
 
-### 4.5 Link people to their Entra accounts
+### 4.5 People carried over: nothing to do
 
-Each person's portal profile must carry their **Entra object ID** (Entra ID →
-Users → the person → Object ID; for a BART guest, the guest account's object ID
-in the Hitachi tenant). For each person carried over from the old system:
+Every profile restored from the backup is marked as waiting for its owner. The
+first time each person signs in with Microsoft, the portal matches the email
+in their Microsoft sign-in to their profile and links it to their Entra account
+for good — permissions, history and ownership of photos and markups included.
+From then on only their Entra object ID is used; email is never used for
+permissions.
+
+This needs their portal email to be the address they sign in to Microsoft
+with. If it differs, either correct the email first
+(`update public.profiles set email = '<sign-in address>' where email = '<old>'`)
+or link them directly with their **Entra object ID** (Entra ID → Users → the
+person → Object ID):
 
 ```bash
 psql -c "select private.relink_profile('person@hitachirail.com', '<object id>')"
 ```
-
-It moves the profile and everything linked to it — permissions, history,
-ownership of photos and markups — onto the new ID, matched by email. It is safe
-to run twice.
 
 Test accounts that should not carry over can be switched off:
 
@@ -447,7 +456,7 @@ Sign in as a linked person (4.5) and go through, in order:
 | # | Check | If it fails |
 |---|---|---|
 | 1 | Opening `siteUrl` redirects to Microsoft and back | Redirect URI (3.4) |
-| 2 | The dashboard loads with your name | "Account not set up yet": profile not linked (4.5). Empty lists: see section 11 |
+| 2 | The dashboard loads with your name | "Account not set up yet": see section 11. Empty lists: see section 11 |
 | 3 | Lists show data in each module | Section 11 |
 | 4 | A photo, a drawing and a document open | Storage CORS (`allowedOrigin`), group role, or Azure Storage permission (2.3) |
 | 5 | Upload a photo; delete it | Same as 4 |
@@ -457,19 +466,17 @@ Sign in as a linked person (4.5) and go through, in order:
 
 ## 9. Running it
 
-**Adding a person**
+**Adding a person** — two steps, in either order:
 
-1. Entra: add them to **CX Portal Users** (invite them first if they are a
-   BART guest).
-2. Portal profile, with their Entra object ID:
-   ```sql
-   insert into public.profiles (id, email, full_name, permission_template_id)
-   values ('<object id>', 'person@example.com', 'Full Name',
-           (select id from public.permission_templates where name = 'Field Engineer'));
-   ```
-   Templates available: Administrator, Client Reviewer, Field Engineer, Punch
-   Manager, Read Only, Technician. Detailed permissions can then be adjusted in
-   the portal's Team screen by a portal administrator.
+1. **IT, in Entra:** add them to **CX Portal Users** (invite them as a guest
+   first if they are BART staff). This is what lets them sign in at all.
+2. **A portal administrator, in the portal:** Team → **Add Person** — name,
+   the email they sign in to Microsoft with, and their permission template. No
+   password and no Microsoft ID are needed. The Team list shows them as
+   *Not signed in yet*.
+
+Their first Microsoft sign-in links the profile to their Entra account
+automatically (and writes an `entra_link` event to the audit log).
 
 **Removing a person:** remove them from CX Portal Users (they can no longer
 sign in), and set `is_active = false` on their profile to keep their history.
@@ -500,6 +507,7 @@ certificates to renew (Azure manages TLS), no secrets in the website.
 | Concern | Where it lives |
 |---|---|
 | Who you are, MFA, guest access | Entra ID: assignment required, Conditional Access |
+| Linking a profile to a person | Once, on their first Microsoft sign-in, by the email Microsoft puts in their token — only to a profile an administrator created and that is still waiting. Linked profiles can never be claimed again, and every link is in the audit log. Email is never used for permissions. |
 | What each person may see or change | **Inside the database**, on every request, by row-level security (about 260 policies, per module and per action). A request that bypasses the website still cannot get past it. |
 | Files | Private containers, account key disabled. Only CX Portal Users members can obtain a link; each link covers one file and expires within an hour. |
 | The gateway's database login | Password, held only in the Container App's configuration; TLS required |
@@ -525,12 +533,13 @@ likelihood:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Signs in, then every list is empty | Token has no `roles: ["authenticated"]`, so the gateway treats the person as anonymous | App role value `authenticated` (2.3) and group assignment (2.3 step 7) |
+| Signs in, then every list is empty | Token has no `roles: ["authenticated"]`, so the gateway treats the person as anonymous | App role value `authenticated` (2.3) and group assignment (2.3 step 8) |
 | Gateway returns `PGRST301 JWT not in audience` | Token version or audience mismatch | Manifest `requestedAccessTokenVersion: 2`, and `entraApiAudience` = the bare application ID |
 | Every sign-in refused with an invalid-signature error | Signing keys not loaded | Helper log (section 5); is `postgrestDbUri` set? |
 | `permission denied for table …` (42501) | Table privileges missing | Re-run `azure_after_restore.sql` |
 | Far fewer than ~260 policies after restore | `azure_before_restore.sql` ran after the restore, or not at all | Drop and recreate the database; run 4.1 → 4.3 in order |
-| "Your account is not set up yet" | Profile not linked to this Entra object ID | 4.5 |
+| "Your account is not set up yet" | No portal profile has this person's sign-in email: not added in Team, or added under a different address | Add them in Team (section 9) with the address they sign in with, or correct the email (4.5) |
+| "Account not set up yet" for one of two people sharing an email | Two waiting profiles have the same address; the portal will not guess | Correct one email, or link with `relink_profile` (4.5) |
 | Files fail to load; browser console mentions CORS | `allowedOrigin` not set to `siteUrl` | 3.4 |
 | Files fail with 403 on `userdelegationkey` | Person not in CX Portal Users, or role assignment missing | `portalUsersGroupObjectId` |
 | Consent prompt or error on first file access | Azure Storage permission not admin-consented | 2.3 step 4 |

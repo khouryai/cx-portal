@@ -55,6 +55,7 @@ const suites = [
   { file: "tools/test_jwks_refresh.js", needs: [] },    // Azure: sign-in key refresh vs a real PostgREST (skips without one)
   { file: "tools/test_relink_profile.js", needs: [] },  // Azure: move a profile onto its Entra object id (needs PostgreSQL)
   { file: "tools/test_export_files.js", needs: [] },    // Supabase file export for the hand-off
+  { file: "tools/test_team_invite.js", needs: [] },     // Team: add a person under Supabase and under Microsoft sign-in
   { file: "tools/test_size_ratchet.js", needs: [] },    // monolith line-count ratchet (Tier 3 #11)
   { file: "tools/test_inline_handler_ratchet.js", needs: [] }, // inline on*= handler ratchet (Tier 3 #11 Stage B)
   { file: "tools/test_delegation_wiring.js", needs: [] },      // every data-action resolves (Tier 3 #11 Stage B)

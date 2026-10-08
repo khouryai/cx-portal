@@ -448,6 +448,38 @@
     },
 
     /**
+     * First Microsoft sign-in: link the profile an administrator invited (by
+     * email) to this Entra account. Asks the database to do it —
+     * public.claim_profile() in supabase/sql/azure_relink_profile.sql — which
+     * only ever links a profile still waiting for its owner, and writes an
+     * audit event. Called by app.js only when no profile has this person's id.
+     * @param {string} authHeader 'Bearer <token>', as app.js already holds it
+     * @returns {Promise<object|null>} the profile row, or null (never rejects)
+     */
+    claimProfile: function (authHeader) {
+      var base = (typeof window !== 'undefined' && window.REST_BASE) || '';
+      return fetch(base + '/rpc/claim_profile', {
+        method: 'POST', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json',
+                   Authorization: authHeader },
+        body: '{}',
+      }).then(function (res) {
+        if (!res.ok) {
+          return res.text().then(function (t) { warn('profile link refused: ' + t); return null; });
+        }
+        return res.json();
+      }).then(function (row) {
+        // A function returning a composite answers with all-null fields when
+        // nothing matched, rather than with null.
+        if (row && row.id) { log('linked this Microsoft account to the invited profile'); return row; }
+        return null;
+      }).catch(function (e) {
+        warn('profile link failed: ' + (e && e.message));
+        return null;
+      });
+    },
+
+    /**
      * Authorization header for a REST call. Synchronous by design.
      * @returns {string} '' when there is no token: PostgREST then treats the
      *   request as anonymous, which is what the pre-auth boot path expects.

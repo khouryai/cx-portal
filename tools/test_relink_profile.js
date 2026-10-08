@@ -1,15 +1,18 @@
 "use strict";
-// private.relink_profile() — moving a profile onto a person's Entra object id.
+// Linking portal profiles to Entra accounts (supabase/sql/azure_relink_profile.sql):
+// private.relink_profile() for IT, and public.claim_profile() for a person's
+// first Microsoft sign-in.
 //
-// Under Entra the app finds a profile by the token's `oid`. This function moves
-// a profile (and every reference to it) onto that id, keyed on email. It runs
-// on a real PostgreSQL against a schema with the same shapes the portal has:
-// foreign keys with and without ON DELETE CASCADE, plain uuid columns, uuid
-// arrays, a view, and the profiles privilege-guard trigger.
+// Under Entra the app finds a profile by the token's `oid`. These move a
+// profile (and every reference to it) onto that id. Runs on a real PostgreSQL
+// against a schema with the shapes the portal has: foreign keys with and
+// without ON DELETE CASCADE, plain uuid columns, uuid arrays, a view, the
+// profiles privilege-guard trigger, the audit table, and the real auth shim.
 //
 // Needs PostgreSQL on 127.0.0.1:5433 (superuser `postgres`, trust auth); skips
 // cleanly without.   Run: node tools/test_relink_profile.js
 const path = require("path");
+const crypto = require("crypto");
 const { execFileSync } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
@@ -37,7 +40,12 @@ pg("postgres", `drop database if exists ${DB}`);
 pg("postgres", `create database ${DB}`);
 try {
   pg(DB, `
+    do $$ begin
+      if not exists (select 1 from pg_roles where rolname='anon') then create role anon nologin; end if;
+      if not exists (select 1 from pg_roles where rolname='authenticated') then create role authenticated nologin; end if;
+    end $$;
     create schema private;
+    create table public.auth_events (id bigserial primary key, email text, user_id uuid, event text not null, detail text, created_at timestamptz default now());
     create table public.templates (id uuid primary key);
     create table public.profiles (
       id uuid primary key, email text unique, full_name text, role text,
@@ -65,14 +73,27 @@ try {
     insert into public.punch_items (created_by, title) values ('${OLD}', 'mine'), ('${OTHER}', 'theirs');
     insert into public.crews (member_ids) values (array['${OLD}', '${OTHER}']::uuid[]);
   `);
-  execFileSync("psql", ["-h", "127.0.0.1", "-p", "5433", "-U", "postgres", "-d", DB, "-v", "ON_ERROR_STOP=1", "-Xq",
-    "-f", path.join(ROOT, "supabase/sql/azure_relink_profile.sql")], { stdio: ["ignore", "pipe", "pipe"] });
+  const runFile = (f) => execFileSync("psql", ["-h", "127.0.0.1", "-p", "5433", "-U", "postgres", "-d", DB, "-v", "ON_ERROR_STOP=1", "-Xq",
+    "-f", path.join(ROOT, f)], { stdio: ["ignore", "pipe", "pipe"] });
+  runFile("supabase/sql/azure_auth_uid_shim.sql");
+  runFile("supabase/sql/azure_relink_profile.sql");
   const fkDefs = () => pg(DB, `select string_agg(conname || ' ' || pg_get_constraintdef(oid), ' | ' order by conname)
     from pg_constraint where contype='f' and confrelid='public.profiles'::regclass`);
+
+  ok("profiles carried over are marked as waiting for their owner",
+    pg(DB, "select count(*) filter (where link_pending) || '/' || count(*) from public.profiles") === "2/2");
+  ok("foreign keys to profiles now follow an id change, delete behaviour kept",
+    /drawing_markups_created_by_fkey FOREIGN KEY \(created_by\) REFERENCES profiles\(id\) ON UPDATE CASCADE/.test(fkDefs()) &&
+    /user_module_overrides_user_id_fkey .*ON UPDATE CASCADE ON DELETE CASCADE|user_module_overrides_user_id_fkey .*ON DELETE CASCADE ON UPDATE CASCADE/.test(fkDefs()), fkDefs());
+  runFile("supabase/sql/azure_relink_profile.sql");
+  ok("running the script again changes nothing (no re-marking, no FK churn)",
+    pg(DB, "select count(*) from public.profiles where link_pending") === "2" && /ON UPDATE CASCADE/.test(fkDefs()));
   const before = fkDefs();
 
   const n = Number(pg(DB, `select private.relink_profile('  aik.khoury@example.com ', '${NEW}')`));
-  ok("matches the email regardless of case and spaces, and reports what moved", n === 7, "changed " + n);
+  // 3 = the profile, a plain uuid column and an array; foreign-key columns follow on their own.
+  ok("IT can link directly: email matched regardless of case and spaces", n === 3, "changed " + n);
+  ok("a linked profile is no longer waiting", pg(DB, `select link_pending from public.profiles where id='${NEW}'`) === "f");
   ok("the profile now has the Entra id, with role, template and status intact",
     pg(DB, `select role || ',' || is_active || ',' || (permission_template_id is not null) from public.profiles where id='${NEW}'`) === "admin,true,true");
   ok("the old id is gone everywhere",
@@ -86,7 +107,7 @@ try {
   ok("another person's rows are untouched",
     pg(DB, `select count(*) from public.punch_items where created_by='${OTHER}'`) === "1" &&
     pg(DB, `select count(*) from public.user_module_overrides where user_id='${OTHER}'`) === "1");
-  ok("foreign keys are restored exactly, ON DELETE CASCADE included", fkDefs() === before, fkDefs());
+  ok("foreign keys are untouched by a link", fkDefs() === before, fkDefs());
   ok("running it again changes nothing", pg(DB, `select private.relink_profile('aik.khoury@example.com', '${NEW}')`) === "0");
   ok("an unknown email is refused", /no profile with email/.test(fails(`select private.relink_profile('nobody@example.com', '${NEW}')`) || ""));
   ok("an id another profile already uses is refused, and nothing changes",
@@ -95,6 +116,34 @@ try {
   pg(DB, "create role cx_tester_user nologin");
   ok("a signed-in user's role cannot run it",
     /permission denied/.test(fails(`set role cx_tester_user; select private.relink_profile('x', '${NEW}')`) || ""));
+
+  // ── First Microsoft sign-in: public.claim_profile(), as the gateway runs it ──
+  const claim = (claims) => pg(DB, `set request.jwt.claims = '${JSON.stringify(claims)}'; set role authenticated;
+    select coalesce((public.claim_profile()).id::text, 'null')`);
+  const INVITED = "eeeeeeee-0000-0000-0000-000000000005";   // placeholder id from the Team screen
+  const BART_OID = "ffffffff-1111-2222-3333-444444444444";
+  pg(DB, `insert into public.profiles (id, email, full_name, role, link_pending)
+          values ('${INVITED}', 'Reviewer@BART.gov', 'BART Reviewer', 'readonly', true)`);
+  pg(DB, `insert into public.punch_items (created_by, title) values ('${INVITED}', 'pre-assigned')`);
+
+  ok("an anonymous request cannot claim anything", claim({}) === "null");
+  ok("a stranger with no matching invite gets nothing", claim({ oid: crypto.randomUUID(), preferred_username: "stranger@example.com" }) === "null");
+  ok("first sign-in links the invited profile by the token's email",
+    claim({ oid: BART_OID, preferred_username: "reviewer@bart.gov" }) === BART_OID &&
+    pg(DB, `select link_pending || ',' || full_name from public.profiles where id='${BART_OID}'`) === "false,BART Reviewer");
+  ok("…and everything already assigned to them moves too",
+    pg(DB, `select count(*) from public.punch_items where created_by='${BART_OID}'`) === "1");
+  ok("…and the link is written to the audit trail",
+    pg(DB, `select count(*) from public.auth_events where event='entra_link' and user_id='${BART_OID}'`) === "1");
+  ok("signing in again just returns the same profile", claim({ oid: BART_OID, preferred_username: "reviewer@bart.gov" }) === BART_OID);
+  ok("a linked profile can never be claimed by another account with the same email",
+    claim({ oid: crypto.randomUUID(), email: "reviewer@bart.gov" }) === "null" &&
+    pg(DB, `select count(*) from public.profiles where id='${BART_OID}'`) === "1");
+  ok("the email claim works as well as preferred_username",
+    (pg(DB, `insert into public.profiles (id, email, full_name, link_pending) values ('${crypto.randomUUID()}', 'tech@hitachirail.com', 'Tech', true)`), true) &&
+    /^[0-9a-f-]{36}$/.test(claim({ oid: crypto.randomUUID(), email: "Tech@HitachiRail.com" })));
+  ok("a Supabase-style token (sub, no oid) never claims", (pg(DB, `insert into public.profiles (id, email, full_name, link_pending) values ('${crypto.randomUUID()}', 'sub@example.com', 'Sub', true)`), claim({ sub: crypto.randomUUID(), email: "sub@example.com" })) === "null");
+  ok("anon cannot call it", /permission denied/.test(fails(`set role anon; select public.claim_profile()`) || ""));
 } finally {
   try { pg("postgres", `drop database if exists ${DB} with (force)`); pg("postgres", "drop role if exists cx_tester_user"); } catch (e) { /* best effort */ }
 }

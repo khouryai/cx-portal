@@ -26,6 +26,7 @@ an optional WAF, private networking and customer-managed keys.
 | **Keep PostgreSQL** (Azure Database for PostgreSQL – Flexible Server), not Azure SQL | Permissions are enforced in the database: 349 row-level security policies, 53 triggers, 46 jsonb/array columns. Azure SQL would mean rewriting the security model. PostgreSQL takes a `pg_dump` restore unchanged. |
 | **PostgREST** as the API | The app already speaks the PostgREST protocol (that is what Supabase runs). Off-the-shelf container, no custom code. |
 | **Entra ID** for sign-in | Corporate accounts, BART as guests, MFA and Conditional Access set centrally. |
+| **Profiles keyed by Entra object id, linked once by email** | An admin adds a person in the Team screen by email; their first Microsoft sign-in links the waiting profile to their Entra account (`public.claim_profile()`), and profiles carried over from Supabase link the same way. Permissions never use email. |
 | **All files in Azure Blob, signed in the browser** | Each user's browser gets a user delegation key from Azure with their own Microsoft sign-in, and signs short-lived links with it. Same behaviour as Supabase's signed URLs, no server code. Access = membership of the portal users' Entra group, which matches today's rule (any signed-in user, any file). |
 | **Static hosting** (Static Web Apps or Blob static website) | The site is plain files. `node tools/build.js` produces `dist/`, the one artifact for a pipeline or a hand-off zip. |
 

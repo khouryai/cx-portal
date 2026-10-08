@@ -105,10 +105,31 @@ entra.getSession().then(({ data, error }) => {
     const pwOps = ["resetPassword", "updatePassword", "createUser", "directGrant"];
     return Promise.all(pwOps.map((op) =>
       Promise.resolve(entra[op]()).then(() => null, (e) => e.message)));
-  }).then((msgs) => {
+  }).then(async (msgs) => {
     ok("every credential operation still refuses, with actionable text",
       msgs.every((m) => m && /Entra ID/.test(m) && /managed by IT/.test(m)),
       JSON.stringify(msgs));
+
+    // First Microsoft sign-in: link the profile an admin invited by email.
+    ok("only Entra links invited profiles", typeof entra.claimProfile === "function" &&
+      providers.supabase.claimProfile === undefined && providers.postgrest.claimProfile === undefined);
+    const realFetch = global.fetch;
+    const calls = [];
+    global.window.REST_BASE = "https://api.example.com";
+    global.fetch = async (u, init) => { calls.push({ u, init });
+      return new Response(JSON.stringify({ id: OID, full_name: "Alex Khoury" }), { status: 200 }); };
+    const row = await entra.claimProfile("Bearer tok-abc123");
+    ok("claimProfile asks the database (rpc/claim_profile) with the user's token",
+      calls.length === 1 && calls[0].u === "https://api.example.com/rpc/claim_profile" &&
+      calls[0].init.method === "POST" && calls[0].init.headers.Authorization === "Bearer tok-abc123");
+    ok("…and returns the linked profile", row && row.id === OID);
+    global.fetch = async () => new Response(JSON.stringify({ id: null, email: null }), { status: 200 });
+    ok("no invited profile (an all-null row) means null", (await entra.claimProfile("Bearer t")) === null);
+    global.fetch = async () => new Response('{"message":"more than one invited profile"}', { status: 400 });
+    ok("a refusal means null, never an exception", (await entra.claimProfile("Bearer t")) === null);
+    global.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    ok("offline means null, never an exception", (await entra.claimProfile("Bearer t")) === null);
+    global.fetch = realFetch;
 
     console.log(`\n${pass} passed, ${fail} failed.\n`);
     process.exit(fail === 0 ? 0 : 1);
