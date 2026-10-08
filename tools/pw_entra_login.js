@@ -16,14 +16,22 @@
 //      expired, so a correct Microsoft sign-in landed on a rotation card whose
 //      submit calls updatePassword() — which the Entra provider rejects.
 //
+// It serves the AZURE PACKAGE (tools/build.js with a Microsoft sign-in
+// config), not the repo: that package leaves supabase-js out and the app runs
+// its queries through cx-db.js, so this is also the proof that it boots and
+// queries without supabase-js.
+//
 // Same shape as tools/pw_auth_gates.js: local static server, no network, skips
 // cleanly when playwright-core or Chromium is absent.
 //   Run: node tools/pw_entra_login.js
 const http = require("http");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
+const { build } = require("./build.js");
 
-const ROOT = path.resolve(__dirname, "..");
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "cx-entra-site-"));
+process.on("exit", () => fs.rmSync(TMP, { recursive: true, force: true }));
 const TENANT = "e62c5154-d15d-4c22-a489-aa656aff64a4";
 const APPID = "a1301867-e12c-43c7-85e2-80cc5bd9d325";
 
@@ -73,6 +81,7 @@ function serve() {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)));
 }
 
+let ROOT = null;   // the built site, set once it is built
 let pass = 0, fail = 0;
 function ok(name, cond, extra) {
   if (cond) { pass++; console.log(`  ✓ ${name}`); }
@@ -104,6 +113,9 @@ function azureConfig(base) {
     console.log("\n0 passed, 0 failed."); process.exit(0);
   }
 
+  const cfgFile = path.join(TMP, "azure.config.js");
+  fs.writeFileSync(cfgFile, "window.CX_CONFIG = { IDENTITY: 'entra', API_URL: 'https://api.example.test', REST_PATH: '' };\n");
+  ROOT = build({ out: path.join(TMP, "site"), config: cfgFile, version: "cxp-e2e" }).out;
   const server = await serve();
   const base = `http://127.0.0.1:${server.address().port}`;
   const browser = await chromium.launch({ executablePath: exe, args: ["--no-sandbox"] });
@@ -203,7 +215,25 @@ function azureConfig(base) {
   ok("cx-auth-hardening did not wrap the Entra sign-in path", !stoodDown.wrapped);
   ok("no password/MFA gate card is shown", stoodDown.gates.length === 0, stoodDown.gates.join(", "));
 
-  // ── 6. nothing broke on the way ──────────────────────────────────────────
+  // ── 6. no supabase-js: queries go through cx-db.js ─────────────────────
+  const db = await page.evaluate(async () => {
+    const seen = [];
+    const realFetch = window.fetch;
+    window.fetch = (u, init) => { seen.push({ url: String(u), headers: (init && init.headers) || {} }); return realFetch(u, init); };
+    const r = await window._sb.from("profiles").select("id,email").eq("email", "x@bart.gov");
+    window.fetch = realFetch;
+    return { supabase: typeof window.supabase, isCxDb: !!window._sb && window._sb.auth === null,
+      result: r, url: seen[0] && seen[0].url, apikey: !!(seen[0] && seen[0].headers.apikey) };
+  });
+  ok("supabase-js is not in the page", db.supabase === "undefined", db.supabase);
+  ok("the app's query client is cx-db.js", db.isCxDb);
+  ok("a query reaches the bare PostgREST at the root, filtered",
+    db.url === `${base}/profiles?select=id%2Cemail&email=eq.x%40bart.gov`, db.url);
+  ok("…returns rows the supabase-js way ({ data, error: null })",
+    Array.isArray(db.result.data) && db.result.error === null, JSON.stringify(db.result));
+  ok("…and sends no Supabase apikey", !db.apikey);
+
+  // ── 7. nothing broke on the way ──────────────────────────────────────────
   const fatal = consoleErrors.filter((e) => /ReferenceError|is not defined|TypeError/.test(e));
   ok("no ReferenceError or TypeError during boot", fatal.length === 0, fatal.slice(0, 3).join(" | "));
   ok("no CSP violations on the Azure login path", cspViolations.length === 0, cspViolations[0]);

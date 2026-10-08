@@ -8,12 +8,14 @@
 //     node tools/build.js --out out/ --version cxp-1234abcd
 //
 // There is NO compile step. This copies the files the browser needs, and only
-// those, then applies the three per-environment changes in one place:
+// those, then applies the per-environment changes in one place:
 //
 //   1. config.js         replaced by --config (backend, identity, storage)
 //   2. the CSP           in index.html: backend + storage hosts taken from that
 //                        config, so the browser may reach them and nothing else
 //   3. sw.js             cache version stamped, so every deploy reaches clients
+//   4. supabase-js       left out unless sign-in is Supabase (IDENTITY unset or
+//                        'supabase'); the app then queries through cx-db.js
 //
 // The same dist/ is what GitHub Pages deploys, what an Azure Static Web App
 // deploys, and what gets zipped and handed over if a pipeline is not allowed.
@@ -31,6 +33,8 @@ const ROOT = path.resolve(__dirname, "..");
 const ROOT_EXTS = new Set([".html", ".js", ".css", ".webmanifest", ".json"]);
 const ROOT_EXCLUDE = new Set(["sync_testplan.js", "config.local.js", "package.json", "package-lock.json"]);
 const DIRS = ["vendor", "assets"];
+// supabase-js and its lazily loaded chunk. Needed only for Supabase sign-in.
+const SUPABASE_JS = ["vendor/js/supabase.js", "vendor/js/591.supabase.js"];
 
 function parseArgs(argv) {
   const a = { out: path.join(ROOT, "dist"), config: null, version: null };
@@ -162,6 +166,13 @@ function build(opts) {
   const m = html.match(cspRe);
   if (!m) throw new Error("index.html has no Content-Security-Policy meta tag");
   html = html.replace(cspRe, (_, a, csp, c) => a + rewriteCsp(csp, committedCfg, cfg) + c);
+  const supabaseJs = !cfg.IDENTITY || cfg.IDENTITY === "supabase";
+  if (!supabaseJs) {
+    const tag = /[ \t]*<script src="vendor\/js\/supabase\.js"><\/script>\r?\n/;
+    if (!tag.test(html)) throw new Error("index.html: cannot find the supabase.js script tag to drop");
+    html = html.replace(tag, "");
+    for (const f of SUPABASE_JS) fs.rmSync(path.join(out, f), { force: true });
+  }
   fs.writeFileSync(htmlPath, html);
 
   // 4. Service worker cache version.
@@ -172,7 +183,8 @@ function build(opts) {
   }
   if (!/^cxp-[0-9A-Fa-f]+$/.test(version)) throw new Error("--version must look like cxp-<hex>");
   const swPath = path.join(out, "sw.js");
-  const sw = fs.readFileSync(swPath, "utf8").replace(/cxp-v?[0-9A-Fa-f]+/g, version);
+  let sw = fs.readFileSync(swPath, "utf8").replace(/cxp-v?[0-9A-Fa-f]+/g, version);
+  if (!supabaseJs) for (const f of SUPABASE_JS) sw = sw.replace(new RegExp("[ \\t]*'\\./" + f.replace(/\./g, "\\.") + "',\\r?\\n"), "");
   fs.writeFileSync(swPath, sw);
 
   // 5. Nothing the page loads may be missing.
@@ -186,14 +198,15 @@ function build(opts) {
       if (e.isDirectory()) walk(p); else { files++; bytes += fs.statSync(p).size; }
     }
   })(out);
-  return { out, files, bytes, version, cfg };
+  return { out, files, bytes, version, cfg, supabaseJs };
 }
 
 if (require.main === module) {
   try {
     const opts = parseArgs(process.argv.slice(2));
     if (opts.help) {
-      console.log(fs.readFileSync(__filename, "utf8").split("\n").slice(2, 23).join("\n").replace(/^\/\/ ?/gm, ""));
+      const lines = fs.readFileSync(__filename, "utf8").split("\n").slice(3);
+      console.log(lines.slice(0, lines.findIndex((l) => !l.startsWith("//") || /^\/\/ =+/.test(l))).join("\n").replace(/^\/\/ ?/gm, ""));
       process.exit(0);
     }
     const r = build(opts);
@@ -201,6 +214,7 @@ if (require.main === module) {
     console.log(`  data API : ${apiUrl(r.cfg)}`);
     console.log(`  sign-in  : ${r.cfg.IDENTITY || "supabase"}`);
     console.log(`  storage  : ${r.cfg.STORAGE || "supabase"}`);
+    console.log(`  queries  : ${r.supabaseJs ? "supabase-js" : "cx-db.js (supabase-js left out)"}`);
     console.log(`  version  : ${r.version}`);
   } catch (e) {
     console.error("build failed: " + e.message);

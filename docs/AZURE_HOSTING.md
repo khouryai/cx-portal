@@ -397,7 +397,9 @@ node tools/build.js --config config.hitachi.js
 
 This produces `dist/`: only the files the browser needs, with these settings
 applied and the page's security policy narrowed to exactly these addresses. It
-contains no tests, database scripts or internal documents.
+contains no tests, database scripts or internal documents, and no Supabase code:
+with Microsoft sign-in the Supabase client library is left out and the app talks
+to the database API through its own small client (`cx-db.js`).
 
 ### 7.3 Deploy — choose one
 

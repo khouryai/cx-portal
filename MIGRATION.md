@@ -109,6 +109,9 @@ After cutover these can be deleted, because Entra does them centrally:
 the in-app MFA (TOTP) screens, password policy, rotation and lockout in
 `cx-auth-hardening.js`, the GoTrue auth hooks, and the local-password
 `postgrest` sign-in provider (a stepping stone for testing without Entra).
+The Supabase client library (`vendor/js/supabase.js`) already stays out of the
+Azure package (`tools/build.js`); after cutover it can be deleted from the repo
+along with the `supabase` sign-in provider.
 
 Kept: the `auth_events` log of permission changes (Entra logs sign-ins, not the
 app's role changes), the access-review view, the CSP and the test suite. The
