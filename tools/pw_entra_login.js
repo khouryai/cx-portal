@@ -91,7 +91,7 @@ function azureConfig(base) {
   ENTRA_CLIENT_ID: '${APPID}',
   ENTRA_API_SCOPE: 'api://${APPID}/access_as_user',
   ENTRA_REDIRECT_URI: '${base}/',
-  SUPABASE_URL: '${base}',
+  API_URL: '${base}',
   SUPABASE_ANON_KEY: '',
   REST_PATH: '',
 };`;

@@ -13,7 +13,6 @@ docs/                      export-ignore
 CLAUDE.md                  export-ignore
 DEMO_DATA.md               export-ignore
 DESIGN_TOKENS.md           export-ignore
-INTEGRATION_SHAREPOINT.md  export-ignore
 MIGRATION.md               export-ignore
 PERMISSIONS_MODEL.md       export-ignore
 SECURITY.md                export-ignore

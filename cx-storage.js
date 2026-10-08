@@ -8,7 +8,7 @@
 // is one value in config.js:
 //
 //   STORAGE: 'supabase'   (default)  Supabase Storage
-//   STORAGE: 'azure'                 Azure Blob Storage, via SAS_ENDPOINT
+//   STORAGE: 'azure'                 Azure Blob Storage at BLOB_ORIGIN
 //
 // tools/test_storage_seam.js fails the build if any other file talks to a
 // storage service directly, so it stays that way.
@@ -23,11 +23,13 @@
 //   POST  /object/sign/<b>    a SAS token minted for the blob
 // Both are "PUT bytes at a path, hand out a short-lived read URL".
 //
-// SIGNING IS THE ONE REAL DIFFERENCE. Supabase mints signed URLs from the
-// caller's JWT, so the browser can do it. A SAS token must be signed with a
-// key that must never reach the browser — so under Azure every operation first
-// asks a small Function (azure/functions/sas) to sign it, after that Function
-// has checked the caller's Entra token.
+// SIGNING. Both providers sign short-lived URLs in the browser, from the
+// signed-in user's own credential. Supabase signs from the user's JWT. Azure
+// signs with a USER DELEGATION KEY: the browser asks Blob Storage for one using
+// the user's Microsoft token, and Azure only issues it if that user holds a
+// storage role (granted to the portal's Entra group). A SAS signed with it can
+// never exceed that user's own access, and the storage account key is never
+// used anywhere. No server component is involved.
 //
 // OFFLINE FILES are cached here, in the page, under a key that does not depend
 // on the provider (a SAS URL changes every time it is signed, so a cache keyed
@@ -160,35 +162,159 @@
   };
 
   // ── Azure Blob Storage ────────────────────────────────────────────────────
-  // Set CX_CONFIG.STORAGE = 'azure' plus CX_CONFIG.SAS_ENDPOINT (the URL of the
-  // Function in azure/functions/sas). The Function returns absolute URLs, so
-  // the storage account name never has to be known to page script, and the
-  // account key never exists in the browser.
+  // Set CX_CONFIG.STORAGE = 'azure' plus CX_CONFIG.BLOB_ORIGIN
+  // ('https://<account>.blob.core.windows.net'). Requires IDENTITY 'entra'.
+  //
+  // What Azure must allow (infra/main.bicep sets all three):
+  //   * the portal's Entra group holds 'Storage Blob Data Contributor' on the
+  //     account — that grant IS the access rule, exactly as broad as Supabase's
+  //     bucket policies were (any signed-in user, any object in these buckets);
+  //   * the app registration may request Azure Storage's user_impersonation;
+  //   * CORS on the account allows the portal's origin.
+  var SAS_VERSION = '2022-11-02';
+  var STORAGE_SCOPE = 'https://storage.azure.com/user_impersonation';
+  var CONTAINERS = ['photos', 'forms', 'drawings', 'documents', 'vehicle-files'];
+  var MAX_EXPIRY_S = 3600;
+  var DEFAULT_EXPIRY_S = 600;
+  // The key must outlive every SAS signed with it, or links die early.
+  var KEY_LIFETIME_MS = 2 * 3600 * 1000;
+  var KEY_MIN_REMAINING_MS = (MAX_EXPIRY_S + 300) * 1000;
+
+  function blobOrigin() { return String(cfg().BLOB_ORIGIN || '').replace(/\/+$/, ''); }
+  function accountName() {
+    var m = /^https:\/\/([a-z0-9]+)\./.exec(blobOrigin());
+    return m ? m[1] : '';
+  }
+  /** ISO 8601 to the second, as Azure writes and expects it. */
+  function isoSec(d) { return new Date(d).toISOString().replace(/\.\d{3}Z$/, 'Z'); }
+  function xmlTag(xml, tag) {
+    var m = new RegExp('<' + tag + '>([^<]*)</' + tag + '>').exec(xml);
+    return m ? m[1] : '';
+  }
+  function b64ToBytes(b64) {
+    var bin = atob(b64), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  function bytesToB64(buf) {
+    var bytes = new Uint8Array(buf), bin = '';
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  }
+  function hmacSha256B64(keyB64, text) {
+    var subtle = crypto.subtle;
+    return subtle.importKey('raw', b64ToBytes(keyB64), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+      .then(function (k) { return subtle.sign('HMAC', k, new TextEncoder().encode(text)); })
+      .then(bytesToB64);
+  }
+
+  // The same request rules the old signing Function enforced.
+  function checkPath(p) {
+    if (typeof p !== 'string' || !p.length || p.length > 1024) throw new Error('storage: bad path');
+    if (/[\u0000-\u001f\u007f]/.test(p) || p.charAt(0) === '/' || p.charAt(0) === '\\') throw new Error('storage: bad path ' + p);
+    if (p.split('/').some(function (s) { return s === '' || s === '.' || s === '..'; })) throw new Error('storage: bad path ' + p);
+    return p;
+  }
+
+  var delegation = { key: null, until: 0, pending: null };
+
+  /** A user delegation key, cached until it could no longer cover a new SAS. */
+  function delegationKey() {
+    var now = Date.now();
+    if (delegation.key && delegation.until - now > KEY_MIN_REMAINING_MS) return Promise.resolve(delegation.key);
+    if (delegation.pending) return delegation.pending;
+    var origin = blobOrigin();
+    if (!origin) return Promise.reject(new Error('CX_CONFIG.BLOB_ORIGIN is not set'));
+    var id = typeof window !== 'undefined' && window.CXIdentity;
+    if (!id || typeof id.tokenFor !== 'function') return Promise.reject(new Error('storage: no identity provider'));
+    var body = '<?xml version="1.0" encoding="utf-8"?><KeyInfo><Start>' + isoSec(now - 5 * 60 * 1000) +
+      '</Start><Expiry>' + isoSec(now + KEY_LIFETIME_MS) + '</Expiry></KeyInfo>';
+    delegation.pending = id.tokenFor(STORAGE_SCOPE).then(function (token) {
+      return timed('storage key', 20000, function (signal) {
+        return fetch(origin + '/?restype=service&comp=userdelegationkey', {
+          method: 'POST', signal: signal, cache: 'no-store',
+          headers: { Authorization: 'Bearer ' + token, 'x-ms-version': SAS_VERSION, 'Content-Type': 'application/xml' },
+          body: body,
+        });
+      });
+    }).then(function (res) { return res.text(); }).then(function (xml) {
+      var key = {
+        oid: xmlTag(xml, 'SignedOid'), tid: xmlTag(xml, 'SignedTid'),
+        start: isoSec(xmlTag(xml, 'SignedStart')), expiry: isoSec(xmlTag(xml, 'SignedExpiry')),
+        service: xmlTag(xml, 'SignedService'), version: xmlTag(xml, 'SignedVersion'),
+        value: xmlTag(xml, 'Value'),
+      };
+      if (!key.value || !key.oid) throw new Error('storage: malformed user delegation key');
+      delegation.key = key;
+      delegation.until = new Date(key.expiry).getTime();
+      return key;
+    });
+    var clear = function () { delegation.pending = null; };
+    delegation.pending.then(clear, clear);
+    return delegation.pending;
+  }
+
+  /**
+   * Sign one blob URL with a user delegation key. Field order is Azure's
+   * string-to-sign for service versions 2020-12-06 up to 2025-07-05;
+   * tools/test_storage_seam.js pins it against Microsoft's own SDK output.
+   * @returns {Promise<string>} absolute SAS URL
+   */
+  function signBlob(key, account, container, path, permissions, startsOn, expiresOn) {
+    var stringToSign = [
+      permissions, isoSec(startsOn), isoSec(expiresOn),
+      '/blob/' + account + '/' + container + '/' + path,
+      key.oid, key.tid, key.start, key.expiry, key.service, key.version,
+      '', '', '',          // authorized / unauthorized object id, correlation id
+      '', 'https', SAS_VERSION,
+      'b', '', '',         // resource = blob, snapshot time, encryption scope
+      '', '', '', '', '',  // response header overrides (none)
+    ].join('\n');
+    return hmacSha256B64(key.value, stringToSign).then(function (sig) {
+      var q = [
+        ['sv', SAS_VERSION], ['spr', 'https'], ['st', isoSec(startsOn)], ['se', isoSec(expiresOn)],
+        ['skoid', key.oid], ['sktid', key.tid], ['skt', key.start], ['ske', key.expiry],
+        ['sks', key.service], ['skv', key.version], ['sr', 'b'], ['sp', permissions], ['sig', sig],
+      ].map(function (kv) { return kv[0] + '=' + encodeURIComponent(kv[1]); }).join('&');
+      return blobOrigin() + '/' + container + '/' + encPath(path) + '?' + q;
+    });
+  }
+
   var azureBlobStorage = {
     kind: 'azure-blob',
 
     /**
-     * Ask the Function to sign paths.
+     * Sign paths for one container.
      * @param {string} container
      * @param {string[]} paths
      * @param {string} permissions 'r', 'w', 'd' or a combination
-     * @param {number} expiresIn seconds
+     * @param {number} expiresIn seconds (clamped to an hour)
      * @returns {Promise<Object<string,string>>} path -> absolute SAS URL
      */
     _sign: function (container, paths, permissions, expiresIn) {
-      var endpoint = cfg().SAS_ENDPOINT;
-      if (!endpoint) return Promise.reject(new Error('CX_CONFIG.SAS_ENDPOINT is not set'));
-      return timed('storage sign', 20000, function (signal) {
-        return fetch(endpoint, {
-          method: 'POST', signal: signal, cache: 'no-store',
-          headers: { 'Content-Type': 'application/json', Authorization: authHeader() },
-          body: JSON.stringify({
-            container: container, paths: paths,
-            permissions: permissions, expiresIn: expiresIn || 600,
-          }),
+      return Promise.resolve().then(function () {
+        if (CONTAINERS.indexOf(container) === -1) throw new Error('storage: unknown container ' + container);
+        if (!/^[rwd]+$/.test(permissions)) throw new Error('storage: bad permissions ' + permissions);
+        // Azure's canonical permission order.
+        var perms = 'rwd'.split('').filter(function (c) { return permissions.indexOf(c) !== -1; }).join('');
+        var secs = Math.min(Math.floor(Number(expiresIn) || DEFAULT_EXPIRY_S), MAX_EXPIRY_S);
+        if (secs <= 0) secs = DEFAULT_EXPIRY_S;
+        paths.forEach(checkPath);
+        var account = accountName();
+        if (!account) throw new Error('CX_CONFIG.BLOB_ORIGIN is not set');
+        return delegationKey().then(function (key) {
+          var now = Date.now();
+          var startsOn = now - 5 * 60 * 1000;   // clock-skew allowance
+          var expiresOn = now + secs * 1000;
+          return Promise.all(paths.map(function (p) {
+            return signBlob(key, account, container, p, perms, startsOn, expiresOn);
+          })).then(function (urls) {
+            var out = {};
+            paths.forEach(function (p, i) { out[p] = urls[i]; });
+            return out;
+          });
         });
-      }).then(function (res) { return res.json(); })
-        .then(function (j) { return (j && j.urls) || {}; });
+      });
     },
 
     _signOne: function (container, path, permissions) {
@@ -235,9 +361,8 @@
       });
     },
 
-    // Blob's server-side copy needs the source readable by the service; going
-    // through the browser keeps the container fully private and the Function
-    // unchanged. Forms PDFs are small, so the extra round trip is cheap.
+    // Read then write through the browser: simple, and the containers stay
+    // fully private. Only forms use copy, and those PDFs are small.
     copy: function (bucket, from, to, ms) {
       return azureBlobStorage.get(bucket, from, ms).then(function (blob) {
         return azureBlobStorage.put(bucket, to, blob, blob.type, ms);
@@ -418,6 +543,11 @@
   CXStorage.FILE_CACHE = FILE_CACHE;
   /** For tests: the same interface over a named provider. */
   CXStorage._withProvider = function (name) { return build(providers[name]); };
+  /** For tests: sign with a given key (no network), and forget any cached key. */
+  CXStorage._azure = {
+    signBlob: signBlob, SAS_VERSION: SAS_VERSION,
+    resetKey: function () { delegation.key = null; delegation.until = 0; delegation.pending = null; },
+  };
 
   if (typeof window !== 'undefined') window.CXStorage = CXStorage;
   if (typeof module !== 'undefined' && module.exports) module.exports = CXStorage;

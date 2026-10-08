@@ -1,332 +1,102 @@
-# Migration to the Hitachi Rail Microsoft Azure tenant
+# Migration to the Hitachi Rail Azure tenant: background and decisions
 
-> **Start with [`docs/AZURE_HOSTING.md`](docs/AZURE_HOSTING.md)**, a one-page
-> summary of what IT sets up. This document is the detailed background. Since
-> it was written: all five storage buckets now go through `CXStorage`,
-> `node tools/build.js` produces the single deployable folder (`dist/`), and
-> `pg_cron` is no longer needed at cutover (§2).
+> **For IT, start with [`docs/AZURE_HOSTING.md`](docs/AZURE_HOSTING.md)**, the
+> one-page summary of what to set up. Commands are in
+> [`azure/RUNBOOK.md`](azure/RUNBOOK.md). This file records *why* the design is
+> what it is, and what has already been proven.
 
-**Status: prepared, not started.** Every seam the move needs is built, and the
-riskiest unknown has been tested rather than assumed. What remains needs an
-Azure subscription, which IT owns.
-
-This document is the hand-off for the IT team executing the move. It says what
-exists today, what has already been done to make the move cheap, what is
-genuinely unknown, and what the application needs from IT.
+**Status: prepared, not started.** Every change the move needs is built and
+tested. What remains needs Azure access, which IT owns.
 
 ---
 
-## 1. Why this is happening
-
-The portal runs on a **personal, free-tier Supabase organisation** and GitHub
-Pages. Company policy requires cloud services to be held under a company
-contract. That is not something the application can be engineered around.
-
-It is also still a **proof of concept** — a handful of test accounts, no
-customer users, nothing in production. Which makes now the cheapest moment this
-move will ever have: there is no production data to migrate and no user base to
-cut over.
-
-Moving into the Hitachi Azure tenant settles the contracting question, and four
-technical gaps with it:
-
-| Concern | Today | On Azure |
-|---|---|---|
-| **Contracting** | Personal free-tier account | Covered by the corporate Microsoft agreement |
-| **Multifactor auth** | Built in-app, TOTP | Entra ID, enforced centrally |
-| **Intrusion prevention** | **Impossible** — Supabase exposes none | Front Door WAF |
-| **Encryption of Confidential data** | Storage-level only, which does not cover these fields | pgcrypto column encryption + CMK |
-| **Public attack surface** | Internet-facing, partially hardened | Private endpoints + WAF |
-
-Plus GitHub Pages stops being a second public cloud to account for.
-
----
-
-## 2. Current architecture
-
-| Layer | Today | Notes |
-|---|---|---|
-| Frontend | Static site, no build step; PWA service worker; GitHub Pages | **Verified host-portable** — no hardcoded host, relative PWA scope |
-| API | Supabase PostgREST | Client speaks plain PostgREST; supabase-js works against either |
-| Auth | Supabase GoTrue, email+password, TOTP MFA | Behind `CXIdentity` (see §4) |
-| Authorization | **In the database**: 349 RLS policies, `private.has_module_perm()` | **331 of 349 route through that one function** |
-| Database | PostgreSQL 17, ~59 MB, 53 triggers, 27 jsonb + 20 array columns | Region `us-west-2` |
-| Storage | 5 buckets, signed URLs | Behind `CXStorage` (see §4) |
-| Serverless | Two weekly `pg_cron` jobs, both optional at cutover: a planning snapshot nothing in the app reads, and a 400-day audit-log purge | The three Edge Functions were removed — see below |
-| Config seam | `config.js` | Backend URL + publishable key |
-
----
-
-## 3. The load-bearing decision: keep PostgreSQL
-
-Do **not** port to Azure SQL. The authorization model is 349 RLS policies, 53
-triggers of scheduling logic, and 46 jsonb/array columns. Arrays alone force a
-schema redesign, and RLS-based permissions would have to be reimplemented as API
-middleware — which is a rewrite of the security model, not a migration.
-
-**Azure Database for PostgreSQL Flexible Server** takes `pg_dump`/`pg_restore`
-verbatim.
-
----
-
-## 4. What has already been done
-
-All of it is in the repository, all of it is covered by the test suite (45
-suites, 0 failures), and none of it required an Azure subscription.
-
-### 4.1 RLS portability — *proven, not assumed*
-
-`supabase/sql/azure_auth_uid_shim.sql` re-implements the GoTrue-supplied `auth`
-schema as three small functions over `request.jwt.claims` — the GUC PostgREST
-sets from the bearer token, whoever issued it.
-
-`auth.uid()` reads Entra's **`oid`** claim first and falls back to `sub`, so one
-database serves both issuers and a **parallel run is possible instead of a hard
-cutover**.
-
-`tools/test_rls_portability.js` stands up a real PostgreSQL server, installs the
-shim, recreates the permission functions and the policy shapes taken verbatim
-from `pg_policies`, and asserts a Supabase token and an Entra token produce
-**identical access decisions** — 22 checks, including jsonb/array round-trips and
-a privilege-guard trigger firing under an Entra token.
-
-### 4.1.0 The API path, running on Azure
-
-On 2026-09-13 the data path was stood up end to end on a personal Azure
-subscription and verified:
-
-```
-GET /  -> 200, PostgREST OpenAPI for all 90 tables
-GET /profiles (no token) -> 200, []
-```
-
-That empty array is the result worth having. PostgREST connected to PostgreSQL,
-resolved the schema, switched to the `anon` role, and RLS returned nothing —
-the authorization model enforcing itself on Azure infrastructure.
-
-Not yet proven: interactive Entra sign-in from a browser, and therefore whether
-the `roles` claim reaches PostgREST and switches the session to `authenticated`.
-That is the next milestone and the last genuinely unknown piece.
-
-Six problems surfaced doing this that no amount of reading the template would
-have found — each documented where it bit:
-
-| Problem | Symptom | Where |
-|---|---|---|
-| Roles created after the dump | 24 of 349 policies, no error | RUNBOOK §3 |
-| Auth shim after the dump | 328 of 349, no error | RUNBOOK §3 |
-| `mfa_ok()` reads a GoTrue table | every query errors | RUNBOOK §3 step 4 |
-| `--no-privileges` strips grants | `42501 permission denied`, looks like RLS | RUNBOOK §3 step 5 |
-| PostgREST has no remote JWKS | needs the key material inline | `configure-postgrest.sh` |
-| TCP ingress addressed by FQDN | connection times out, looks like a firewall | `infra/README.md` |
-
-Four of the six fail **silently or misleadingly** — they do not announce
-themselves, and three of them look like a different problem than they are.
-
-### 4.1.1 Confirmed against a real restore
-
-The test above uses reconstructed policy shapes. On 2026-09-13 the whole thing
-was done for real: `pg_dump` from the live Supabase project into PostgreSQL 17
-on Azure, with the shim in place.
-
-| | Supabase | After restore |
-|---|---|---|
-| RLS policies | 349 | **349** |
-| Tables | 90 | **90** |
-| Functions | 77 | **77** |
-| Triggers | 32 | **32** |
-| `private.has_module_perm` | present | present |
-
-Exact. Two objects failed, both referencing `auth.users` — GoTrue's user table,
-which does not exist under Entra and should not. That is the design working, not
-a shortfall.
-
-**Order matters more than the commands do.** `psql` does not stop on error, so
-getting it wrong loses objects silently: roles created after the dump cost 325
-of the 349 policies, and the auth shim created after the dump cost a further 21
-plus one table whose column defaults to `auth.uid()`. Roles and shim both go
-first — see `azure/RUNBOOK.md` step 3.
-
-> **The one data step:** re-key `profiles.id` to each user's Entra object id at
-> cutover. Do it while the user count is small (currently 6). Every policy then
-> resolves unchanged.
-
-### 4.2 Identity seam
-
-`cx-auth-provider.js` (`window.CXIdentity`) is the one file that changes to move
-identity, as `config.js` is for the backend. All 10 auth call sites plus the
-token plumbing route through it. `tools/test_identity_seam.js` fails the build if
-a direct `_sb.auth.*` call returns to the monolith.
-
-**The Entra provider is implemented**, against MSAL Browser (vendored at 5.21.0,
-loaded lazily so a Supabase deployment never pays the 275 KB). It uses
-`loginRedirect` rather than a popup — the PWA runs standalone on field tablets
-where a popup has nowhere to return to — and maps MSAL's result onto the session
-shape the app already reads, so no call site above it changes.
-`tools/test_entra_provider.js` fakes MSAL and pins that mapping, in particular
-that `user.id` is the `oid` claim: get that wrong and all 349 RLS policies
-silently deny.
-
-Under MSAL, two workarounds this stack currently needs disappear into
-`acquireTokenSilent`: reading the session straight from localStorage, and
-refreshing against GoTrue's REST endpoint. Both exist because supabase-js's auth
-client can hang here.
-
-### 4.3 Storage seam
-
-`cx-storage.js` (`window.CXStorage`) covers all five buckets. The shapes map
-cleanly (bucket→container, signed URL→SAS).
-
-**One real difference:** Supabase mints signed URLs in the browser; a SAS must be
-signed with a key that must never reach the browser. So `signMany` calls a small
-Function that verifies the caller's Entra token and signs on their behalf —
-**the only new server-side component the storage migration needs.**
-
-**Both are written.** `azure/functions/sas/` holds the Function; the `azure`
-provider in `cx-storage.js` calls it for reads, writes and deletes. It signs
-with a *user delegation* key via managed identity, so the storage account key is
-never used and can stay disabled. Its request-validation half is pure logic in
-`src/sas-core.js` and is covered by `tools/test_sas_function.js` (48 checks) —
-container allow-list, path-escape rejection, no `list` permission, expiry
-clamped to an hour. Neither has met a real storage account.
-
-### 4.4 Infrastructure as code
-
-`infra/main.bicep` — every resource, annotated with the security property it
-provides. Compiles clean (18 resources, no warnings). **Never deployed.**
-
-`deployWaf` and `cheapMode` allow the same template to stand the stack up on a
-throwaway personal subscription for roughly USD 30-60/month instead of the
-USD 350+ the WAF alone costs; both are computed so `environment == 'prod'`
-cannot opt out. See `infra/README.md` and `infra/main.parameters.personal.json`.
-
-### 4.5 Already done previously
-
-- All third-party libraries self-hosted in `vendor/` at pinned versions (the
-  last external one, xlsx, was removed — §6.1). A stale Google Fonts `@import` was also found and removed.
-- Content-Security-Policy in `index.html`, pinned to `config.js` by `test_csp.js`.
-- `config.js` as the single backend seam.
-- Authentication hardening (`cx-auth-hardening.js` + `supabase_auth_hardening.sql`):
-  MFA, password policy/rotation/lockout, `auth_events` audit trail. **Note §7.**
-
----
-
-## 5. Target architecture
-
-| Concern | Target | Mechanics |
-|---|---|---|
-| Database | Azure Database for PostgreSQL Flexible Server | `pg_dump` → `pg_restore`; apply the shim |
-| API | Self-hosted **PostgREST** on Container Apps | Point it at Entra's JWKS |
-| Auth | **Microsoft Entra ID** via MSAL.js | Implement the `entra` provider; re-key `profiles` |
-| All files (photos, forms, drawings, documents, vehicle-files) | **Azure Blob** + user-delegation SAS | `STORAGE: 'azure'` in config.js + the SAS Function |
-| Emails | **Azure Functions + Graph `sendMail`** | Nothing to port — to be built fresh on Azure |
-| Hosting | **Azure Static Web Apps** | Deploy the `dist/` folder from `node tools/build.js` |
-| WAF | **Front Door Premium** | Must front the **API**, not just the static site |
-
----
-
-## 6. Known risks
-
-1. ~~xlsx 0.20.3, the one external script~~ **Resolved (2026-10):** removed.
-   Its only use was Excel import of dynamic-testing runs, which is now CSV-only.
-   Every script the app loads ships in `vendor/`; `tools/test_csp.js` fails the
-   build if a third-party script host returns.
-2. **Token lifetimes vs. field use.** The PWA and its IndexedDB photo queue
-   assume long-lived sessions. **Test MSAL silent refresh on yard and tunnel
-   devices with intermittent connectivity before cutover.** This is the risk most
-   likely to be discovered late and hurt.
-3. **Guest access for BART reviewers.** External reviewer accounts exist today.
-   Under Entra they become guest (B2B) accounts, which is a tenant policy
-   question, not an application one. **Raise it early** — it can be slow.
-4. **No anonymous reads.** PostgREST + Entra means no anon key. The app already
-   tolerates empty pre-auth loads.
-5. **Photo/album ownership keys on `full_name`, not the user id.** Two policies
-   compare `uploaded_by`/`created_by` to `profiles.full_name`. That is fragile
-   regardless of migration — renaming a person breaks their ownership — and worth
-   fixing to a uuid while the data is small.
-6. **Bicep is unvalidated against a real subscription.** It compiles; it has
-   never met Azure Policy.
-
----
-
-## 7. What the migration retires
-
-**Already retired.** The three Supabase Edge Functions — daily-log email, RMA
-email and SharePoint photo sync — were removed from the application before the
-move rather than ported. Two of them existed only in the Supabase dashboard and
-were never in version control, so porting them would have meant recovering
-source first in order to rewrite it immediately afterwards. The features they
-backed are to be rebuilt natively on Azure (Graph `sendMail` for notifications,
-Graph for SharePoint) when they are wanted.
-
-> The database may still hold a sync queue and `sharepoint_*` columns on
-> `photos` that nothing now reads. They were left in place deliberately — a
-> schema change is a separate decision from a code change, and they cost
-> nothing until the schema is next revised.
-
-Be aware that a chunk of recent work is deliberately temporary. Under Entra,
-**the identity half of `cx-auth-hardening.js` is retired**: the TOTP enrolment
-and challenge UI, password policy, rotation clock, lockout, and both GoTrue auth
-hooks. Entra does all of it centrally, and better than an application can — that is
-the point.
-
-**Surviving and still needed:** the `auth_events` privilege-change logging
-(Entra logs sign-ins, not this app's role and template changes), the
-access-review view, the CSP, the whole test suite, and the RLS MFA gate — whose
-`private.mfa_ok()` changes from reading Supabase's `aal` claim to Entra's `amr`.
-The replacement is written and commented in `azure_auth_uid_shim.sql`.
-
----
-
-## 8. Suggested sequence
-
-> Step-by-step commands for stages 2-7 below are in **`azure/RUNBOOK.md`**.
-
-1. ✅ *(done)* Vendor dependencies; `config.js`; identity and storage seams; the
-   `auth.uid()` shim, proven on plain PostgreSQL; Bicep.
-2. **IT: provide a dev subscription.** Everything below is blocked on this.
-3. Deploy `infra/main.bicep` to dev; `what-if` first, expect landing-zone edits.
-4. Stand up Postgres + PostgREST; restore a dump; apply the shim; point a staging
-   copy of the frontend at it via `config.js`. **Parallel run** — the dual-claim
-   `auth.uid()` makes this possible.
-5. ✅ *(done)* `entra` identity provider. Remaining at this step: create the app
-   registration, fill `config.js`, and point your one `profiles` row at your Entra object id.
-6. ✅ *(done)* `azure` storage provider + the SAS Function. Remaining: deploy the
-   Function and set `SAS_ENDPOINT` and `BLOB_ORIGIN`.
-7. Static Web Apps hosting; port CI. Rebuild notification emails as Azure
-   Functions if and when they are wanted.
-8. Front Door + WAF in front of the API. **Closes I.2-6.**
-9. Column-level encryption for Confidential fields. **Closes I.3-1.**
-10. Re-verify the security posture against the new architecture.
-
----
-
-## 9. What the application team needs from IT
-
-Ask for these **as part of the migration scope**. Retrofitting developer access
-after the environment is locked down is much harder than specifying it now.
-
-- **A dev/staging subscription the application team can deploy to freely.** The
-  single most important item. The app is currently developed against its only
-  backend, and this separates the two as a side effect.
-- **Repository access**, including the ability to open PRs.
-- **Approval to run Claude Code on a managed workstation**, if AI-assisted
-  development continues. This is a software/AI-tooling policy decision, not a
-  GitHub one, and it is the item with the longest lead time — worth raising
-  first. Claude Code edits a local checkout and pushes with the developer's own
-  credentials; it needs no special GitHub integration to do that.
-- *(Optional, lower priority)* the Claude GitHub App installed on the org. This
-  buys cloud-hosted sessions and PR-native automation. Useful, not required —
-  development continues without it.
-- **A named reviewer** on the repo, so a one-line fix does not wait on a stranger.
-- **Read access to App Insights / Log Analytics**, so the team can debug without
-  filing a ticket.
-- **A migration pipeline that runs from the repo**, so schema changes stay
-  code-reviewed rather than hand-applied.
-- **Decisions owned by IT:** region, landing-zone networking, naming and tagging,
-  SKUs, whether CI is GitHub Actions or Azure DevOps, and the Entra app
-  registration plus guest-access policy for BART reviewers.
-
-Expect push-to-main to be replaced by PR gates. That is appropriate for a system
-holding Confidential customer data, and the repo's test suite already gates every
-change.
+## Why
+
+The portal runs on a personal, free-tier Supabase account and GitHub Pages.
+Company policy requires cloud services under a company contract. It is a proof
+of concept with one test user, so now is the cheapest moment to move: no
+production data and no user base to cut over.
+
+Moving also closes gaps Supabase cannot: MFA and guest access through Entra,
+an optional WAF, private networking and customer-managed keys.
+
+## Decisions
+
+| Decision | Why |
+|---|---|
+| **Keep PostgreSQL** (Azure Database for PostgreSQL – Flexible Server), not Azure SQL | Permissions are enforced in the database: 349 row-level security policies, 53 triggers, 46 jsonb/array columns. Azure SQL would mean rewriting the security model. PostgreSQL takes a `pg_dump` restore unchanged. |
+| **PostgREST** as the API | The app already speaks the PostgREST protocol (that is what Supabase runs). Off-the-shelf container, no custom code. |
+| **Entra ID** for sign-in | Corporate accounts, BART as guests, MFA and Conditional Access set centrally. |
+| **All files in Azure Blob, signed in the browser** | Each user's browser gets a user delegation key from Azure with their own Microsoft sign-in, and signs short-lived links with it. Same behaviour as Supabase's signed URLs, no server code. Access = membership of the portal users' Entra group, which matches today's rule (any signed-in user, any file). |
+| **Static hosting** (Static Web Apps or Blob static website) | The site is plain files. `node tools/build.js` produces `dist/`, the one artifact for a pipeline or a hand-off zip. |
+
+## What is already done and proven
+
+All in the repository and covered by `node tools/run_tests.js`.
+
+- **One settings file per environment.** `config.js` holds values only;
+  `cx-config.js` derives the rest. The data API address is `API_URL` (old
+  configs using `SUPABASE_URL` still work).
+- **Sign-in is swappable.** `cx-auth-provider.js` is the only code that talks to
+  an identity provider; the Entra provider is written (MSAL, redirect flow, so
+  it works on field tablets) and its token mapping is tested.
+- **Files are swappable.** `cx-storage.js` is the only code that touches file
+  storage, for all five buckets. Its Azure signatures are pinned byte-for-byte
+  against Microsoft's own SDK in `tools/test_storage_seam.js`.
+- **Permissions survive the move.** `supabase/sql/azure_auth_uid_shim.sql` lets
+  the database read Entra's user id (`oid`) as well as Supabase's, so the same
+  349 policies work under both. `tools/test_rls_portability.js` proves identical
+  decisions on a real PostgreSQL server.
+- **A real restore matched exactly.** On 2026-09-13 the live Supabase database
+  was dumped and restored into PostgreSQL 17 on Azure: 349/349 policies, 90/90
+  tables, 77/77 functions, 32/32 triggers. PostgREST served it and RLS enforced
+  itself. **Order matters:** roles and the shim go in *before* the dump, or
+  objects are lost silently (RUNBOOK step 3).
+- **Infrastructure template.** `infra/main.bicep` compiles clean; never yet
+  deployed to a Hitachi subscription.
+- **No outside scripts.** Every library ships in `vendor/`; the CSP allows no
+  third-party script host, and a test keeps it that way.
+
+## Known risks
+
+1. **Microsoft's sign-in keys rotate** every few weeks, and PostgREST holds a
+   copy. Automate a daily refresh before go-live (`configure-postgrest.sh` does
+   it by hand today).
+2. **Sign-in on field tablets.** Test MSAL's silent token refresh on yard and
+   tunnel devices with poor signal before cutover.
+3. **Guest access for BART** is a tenant policy decision. Raise it early.
+4. **First interactive Entra sign-in** end to end (browser → PostgREST →
+   database role) has not yet been run. It is the first thing to verify.
+5. **Photo and album ownership** compares names, not user ids. Fragile if
+   someone is renamed; worth fixing to a uuid while data is small.
+6. **Offline files stay on the device after sign-out.** Decide whether shared
+   field tablets should clear them.
+
+## What the move retires
+
+After cutover these can be deleted, because Entra does them centrally:
+the in-app MFA (TOTP) screens, password policy, rotation and lockout in
+`cx-auth-hardening.js`, the GoTrue auth hooks, and the local-password
+`postgrest` sign-in provider (a stepping stone for testing without Entra).
+
+Kept: the `auth_events` log of permission changes (Entra logs sign-ins, not the
+app's role changes), the access-review view, the CSP and the test suite. The
+database's MFA check switches from Supabase's `aal` claim to Entra's `amr`; the
+replacement is written in `azure_auth_uid_shim.sql`.
+
+The three Supabase Edge Functions (daily-log email, RMA email, SharePoint photo
+sync) were removed before the move. If those features are wanted again they are
+rebuilt on Azure (Microsoft Graph). Unused `sharepoint_*` columns on `photos`
+stay until the schema is next revised.
+
+## What the application team needs from IT
+
+The three items in `docs/AZURE_HOSTING.md` ("The simplest ask"), plus:
+
+- Repository access, a named reviewer, and a pipeline that deploys on merge (or
+  agreement on the hand-off zip instead).
+- Read access to logs (Log Analytics) for debugging.
+- If AI-assisted development continues: approval to run Claude Code on a
+  managed workstation. Longest lead time, so worth raising first.
+- IT's own decisions: region, networking, naming and tagging, and whether CI is
+  GitHub Actions or Azure DevOps.

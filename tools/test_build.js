@@ -39,7 +39,7 @@ try {
 
   // ── Environment build: a different config replaces config.js ──
   const cfgFile = path.join(tmp, "env.config.js");
-  fs.writeFileSync(cfgFile, "window.CX_CONFIG = { SUPABASE_URL: 'https://api.example.test', REST_PATH: '' };\n");
+  fs.writeFileSync(cfgFile, "window.CX_CONFIG = { API_URL: 'https://api.example.test', REST_PATH: '' };\n");
   const r2 = build({ out: path.join(tmp, "site2"), config: cfgFile, version: "cxp-1" });
   ok("--config replaces config.js verbatim",
     fs.readFileSync(path.join(r2.out, "config.js"), "utf8") === fs.readFileSync(cfgFile, "utf8"));
@@ -57,17 +57,19 @@ const base = "default-src 'self'; img-src 'self' https://old.supabase.co; media-
   "frame-src 'self'; connect-src 'self' https://old.supabase.co wss://old.supabase.co";
 const committed = { SUPABASE_URL: "https://old.supabase.co" };
 const az = rewriteCsp(base, committed, {
-  SUPABASE_URL: "https://api.az.test", STORAGE: "azure",
-  SAS_ENDPOINT: "https://fn.az.test/api/sas", BLOB_ORIGIN: "https://acct.blob.core.windows.net",
+  API_URL: "https://api.az.test", STORAGE: "azure", IDENTITY: "entra",
+  BLOB_ORIGIN: "https://acct.blob.core.windows.net",
 });
 const dir = (csp, n) => (csp.split(";").map((d) => d.trim()).find((d) => d.startsWith(n + " ")) || "");
-ok("azure: SAS Function and blob host are allowed to connect",
-  dir(az, "connect-src").includes("https://fn.az.test") && dir(az, "connect-src").includes("https://acct.blob.core.windows.net"));
+ok("azure: the blob host is allowed to connect", dir(az, "connect-src").includes("https://acct.blob.core.windows.net"));
+ok("azure: the old Supabase origin is gone", !/old\.supabase\.co/.test(az));
 ok("azure: photos may load from the blob host", dir(az, "img-src").includes("https://acct.blob.core.windows.net"));
 ok("azure: default-src is left alone", dir(az, "default-src") === "default-src 'self'");
 ok("azure storage without BLOB_ORIGIN fails the build",
-  !!throws(() => rewriteCsp(base, committed, { SUPABASE_URL: "https://a.test", STORAGE: "azure", SAS_ENDPOINT: "https://f.test" })));
-ok("a config with no valid API URL fails the build", !!throws(() => rewriteCsp(base, committed, { SUPABASE_URL: "" })));
+  !!throws(() => rewriteCsp(base, committed, { API_URL: "https://a.test", STORAGE: "azure", IDENTITY: "entra" })));
+ok("azure storage without Entra sign-in fails the build",
+  !!throws(() => rewriteCsp(base, committed, { API_URL: "https://a.test", STORAGE: "azure", BLOB_ORIGIN: "https://acct.blob.core.windows.net" })));
+ok("a config with no valid API URL fails the build", !!throws(() => rewriteCsp(base, committed, { API_URL: "" })));
 const same = rewriteCsp(base, committed, committed);
 ok("building with the committed config leaves the API origins as they were",
   dir(same, "connect-src") === "connect-src 'self' https://old.supabase.co wss://old.supabase.co");

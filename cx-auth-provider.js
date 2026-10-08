@@ -45,6 +45,12 @@
   function log(msg) { try { console.log('[identity] ' + msg); } catch (e) {} }
   function warn(msg) { try { console.warn('[identity] ' + msg); } catch (e) {} }
 
+  // tokenFor(scope): an access token for ANOTHER Microsoft resource, e.g. Azure
+  // Storage (cx-storage.js). Only Entra can issue those.
+  function noForeignTokens() {
+    return Promise.reject(new Error('tokens for other resources need the entra identity provider'));
+  }
+
   // ── Supabase GoTrue ───────────────────────────────────────────────────────
   var supabaseProvider = {
     kind: 'supabase',
@@ -87,6 +93,8 @@
      * `_db*` helper in app.js calls it inline.
      * @returns {string}
      */
+    tokenFor: noForeignTokens,
+
     authHeader: function () {
       var session = supabaseProvider.storedSession();
       if (session && session.access_token) {
@@ -216,6 +224,8 @@
     redirecting: false,
     settled: false,   // has initEntra() finished at least once?
   };
+
+  var STORAGE_SCOPE = 'https://storage.azure.com/user_impersonation';
 
   function entraCfg() {
     var c = cfg();
@@ -414,6 +424,30 @@
     },
 
     /**
+     * An access token for another Microsoft resource (Azure Storage, for
+     * cx-storage.js). Silent when MSAL already holds consent; otherwise the
+     * browser is sent to sign in once and comes back.
+     * @param {string} scope e.g. 'https://storage.azure.com/user_impersonation'
+     * @returns {Promise<string>}
+     */
+    tokenFor: function (scope) {
+      return initEntra().then(function () {
+        var account = entra.app && entra.app.getActiveAccount();
+        if (!account) throw new Error('not signed in');
+        return entra.app.acquireTokenSilent({ scopes: [scope], account: account })
+          .then(function (r) { return r.accessToken; }, function (err) {
+            var name = (err && (err.errorCode || err.name)) || '';
+            if (/interaction_required|login_required|consent_required|InteractionRequired/i.test(name + ' ' + (err && err.message)) &&
+                !entra.redirecting) {
+              entra.redirecting = true;
+              entra.app.acquireTokenRedirect({ scopes: [scope], account: account });
+            }
+            throw err;
+          });
+      });
+    },
+
+    /**
      * Authorization header for a REST call. Synchronous by design.
      * @returns {string} '' when there is no token: PostgREST then treats the
      *   request as anonymous, which is what the pre-auth boot path expects.
@@ -448,7 +482,10 @@
       return initEntra().then(function () {
         var e = entraCfg();
         entra.redirecting = true;
-        entra.app.loginRedirect({ scopes: [e.scope] });
+        // Ask for Azure Storage consent up front when files live there, so the
+        // first photo or document does not trigger a second redirect.
+        var extra = cfg().STORAGE === 'azure' ? [STORAGE_SCOPE] : [];
+        entra.app.loginRedirect({ scopes: [e.scope], extraScopesToConsent: extra });
         // The navigation has been requested; nothing after this runs. Resolving
         // rather than hanging keeps app.js's sign-in timeout from firing and
         // falling through to directGrant, which Entra does not support.
@@ -563,6 +600,8 @@
     clearSession: function () {
       try { localStorage.removeItem(pgrestProvider.storageKey()); } catch (e) {}
     },
+
+    tokenFor: noForeignTokens,
 
     /** Synchronous by design — every `_db*` helper in app.js calls it inline. */
     authHeader: function () {

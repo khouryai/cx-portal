@@ -53,6 +53,9 @@ function readConfig(file) {
   return sandbox.window.CX_CONFIG;
 }
 
+/** The data API address. Named SUPABASE_URL before the Azure move; both accepted. */
+function apiUrl(c) { return c.API_URL || c.SUPABASE_URL || ""; }
+
 function origin(u) {
   try { return new URL(u).origin; } catch (e) { return null; }
 }
@@ -75,9 +78,9 @@ function copyDir(src, dst) {
  * @returns {string}
  */
 function rewriteCsp(csp, committedCfg, cfg) {
-  const oldApi = origin(committedCfg.SUPABASE_URL);
-  const newApi = origin(cfg.SUPABASE_URL);
-  if (!newApi) throw new Error("config: SUPABASE_URL (the data API address) is not a valid URL");
+  const oldApi = origin(apiUrl(committedCfg));
+  const newApi = origin(apiUrl(cfg));
+  if (!newApi) throw new Error("config: API_URL (the data API address) is not a valid URL");
 
   const dirs = csp.split(";").map((d) => d.trim()).filter(Boolean).map((d) => {
     const parts = d.split(/\s+/);
@@ -94,12 +97,11 @@ function rewriteCsp(csp, committedCfg, cfg) {
   add("connect-src", newApi);
 
   if (cfg.STORAGE === "azure") {
-    const sas = origin(cfg.SAS_ENDPOINT);
     const blob = origin(cfg.BLOB_ORIGIN);
-    if (!sas) throw new Error("config: STORAGE is 'azure' but SAS_ENDPOINT is not a valid URL");
     if (!blob) throw new Error("config: STORAGE is 'azure' but BLOB_ORIGIN is missing — " +
       "set it to https://<account>.blob.core.windows.net so the browser may load files");
-    add("connect-src", sas);
+    // Files are signed with the user's own Microsoft sign-in (cx-storage.js).
+    if (cfg.IDENTITY !== "entra") throw new Error("config: STORAGE 'azure' needs IDENTITY 'entra'");
     add("connect-src", blob);
     add("img-src", blob);
     add("media-src", blob);
@@ -196,7 +198,7 @@ if (require.main === module) {
     }
     const r = build(opts);
     console.log(`built ${path.relative(process.cwd(), r.out) || r.out}/  ${r.files} files, ${(r.bytes / 1048576).toFixed(1)} MB`);
-    console.log(`  data API : ${r.cfg.SUPABASE_URL}`);
+    console.log(`  data API : ${apiUrl(r.cfg)}`);
     console.log(`  sign-in  : ${r.cfg.IDENTITY || "supabase"}`);
     console.log(`  storage  : ${r.cfg.STORAGE || "supabase"}`);
     console.log(`  version  : ${r.version}`);

@@ -6,7 +6,8 @@ windows, cascade auto-allocation), punch list, daily field
 logs, photos, drawings, documents, forms, RMAs, and a per-module permission system.
 
 **Stack:** vanilla JS/CSS/HTML (no build step), hosted on GitHub Pages,
-backed by Supabase (Postgres + RLS, Auth, Storage, Edge Functions).
+backed by Supabase (Postgres + RLS, Auth, Storage). Moving to Azure: see
+[`docs/AZURE_HOSTING.md`](docs/AZURE_HOSTING.md).
 
 ## Run it on your computer
 
@@ -55,13 +56,12 @@ Web App, or a zip handed to IT. For the Azure move, see
 | `sw.js`, `manifest.webmanifest`, `assets/` | PWA shell + icons + login imagery |
 | `chart.umd.js`, `vendor/` | Vendored libraries and fonts (no CDN needed) |
 | `run-local.bat` / `run-local.ps1` / `run-local.sh` | Local launchers (see above) |
-| `supabase/functions/` | Edge Functions source (e.g. `photo-sharepoint-sync`) |
 | `supabase/sql/` | In-repo record of the base schema + every applied migration |
 | `sync_testplan.js` | Operational importer (test-plan master) |
 | `azure/`, `infra/`, `MIGRATION.md`, `docs/AZURE_HOSTING.md` | Azure migration kit (not used by the running app); start with `docs/AZURE_HOSTING.md` |
 | `tools/` | Test harness + dev tools — `run_tests.js` runs all suites (CI: `.github/workflows/test.yml`); `ui_gallery.html` + `shot_gallery.js` for visual QA without signing in |
 | `CLAUDE.md` | Working conventions (CRLF rules, tokens, icon system, verification) |
-| `DESIGN_TOKENS.md`, `PERMISSIONS_MODEL.md`, `SECURITY.md`, `INTEGRATION_SHAREPOINT.md`, `DEMO_DATA.md` | Living docs |
+| `DESIGN_TOKENS.md`, `PERMISSIONS_MODEL.md`, `SECURITY.md`, `DEMO_DATA.md` | Living docs |
 
 ## Verify changes
 

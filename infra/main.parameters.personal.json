@@ -38,9 +38,6 @@
     "cheapMode": {
       "value": true
     },
-    "deployFunctionApp": {
-      "value": false
-    },
     "deployManagedPostgres": {
       "value": false
     },

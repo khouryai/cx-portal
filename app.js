@@ -12,7 +12,7 @@ const PL = DATA.punchList;
 // inline fallbacks keep every mix of cached shell versions working (the PWA
 // shell updates files independently, so an old index.html can briefly pair
 // with a new app.js or vice versa). Remove fallbacks at migration cutover.
-const SUPABASE_URL      = (window.CX_CONFIG && window.CX_CONFIG.SUPABASE_URL) || 'https://uqtwiucxktljhukmgmxg.supabase.co';
+const SUPABASE_URL      = (window.CX_CONFIG && (window.CX_CONFIG.API_URL || window.CX_CONFIG.SUPABASE_URL)) || 'https://uqtwiucxktljhukmgmxg.supabase.co';
 const SUPABASE_ANON_KEY = (window.CX_CONFIG && window.CX_CONFIG.SUPABASE_ANON_KEY) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxdHdpdWN4a3Rsamh1a21nbXhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NDMxMDcsImV4cCI6MjA5MzUxOTEwN30.nJuQOOyvGpGphSqiNxrO2_p1oYroev8mVdNn9unxmdI';
 let _sb = null;
 try {
@@ -15410,10 +15410,7 @@ async function deleteSwEquip(id, configId) {
   if (!eq) return;
   if (!await cxConfirm('Delete "' + eq.equipment_name + ' (' + eq.sw_type + ': ' + eq.part_number + ')"?\n\nThis cannot be undone.')) return;
   try {
-    await fetch(SUPABASE_URL + '/rest/v1/sw_equipment?id=eq.' + id, {
-      method: 'DELETE',
-      headers: { ...API_KEY_HEADER, Authorization: _getAuthHeader() },
-    });
+    await _dbDelete('sw_equipment', { id });
     SW_EQUIPMENT = SW_EQUIPMENT.filter(e => e.id !== id);
     if (typeof _vmPurgeDeletedCIs === 'function') { try { await _vmPurgeDeletedCIs([id]); } catch (e) { console.warn('[vmPurge ci]', e.message); } }
     toast('Configuration item deleted', 'success');
@@ -17039,10 +17036,7 @@ async function deleteSwDeploy(id, configId) {
   if (!d) return;
   if (!await cxConfirm('Delete deployment record for "' + d.equipment_name + ' — ' + d.deployed_version + '"?')) return;
   try {
-    await fetch(SUPABASE_URL + '/rest/v1/sw_deployments?id=eq.' + id, {
-      method: 'DELETE',
-      headers: { ...API_KEY_HEADER, Authorization: _getAuthHeader() },
-    });
+    await _dbDelete('sw_deployments', { id });
     SW_DEPLOYMENTS = SW_DEPLOYMENTS.filter(x => x.id !== id);
     toast('Deployment record deleted', 'success');
     closeModal();

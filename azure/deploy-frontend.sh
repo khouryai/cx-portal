@@ -70,10 +70,8 @@ CFG
 fi
 cat <<CFG
 
-  // The PostgREST gateway. The app speaks plain PostgREST, so the variable
-  // keeps its old name — only the value moved.
-  SUPABASE_URL: 'https://$API',
-  SUPABASE_ANON_KEY: '',
+  // The PostgREST gateway. No anon key: that is a Supabase-only header.
+  API_URL: 'https://$API',
 
   // Supabase mounts PostgREST under /rest/v1/; a self-hosted one serves at the
   // root. Without this every table 404s while authentication works perfectly,

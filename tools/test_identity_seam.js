@@ -30,6 +30,7 @@ const REQUIRED = [
   "kind", "managesPasswords", "storageKey", "storedSession", "storeSession",
   "authHeader", "ensureFresh", "signIn", "signOut", "getSession",
   "onAuthStateChange", "resetPassword", "updatePassword", "createUser", "directGrant",
+  "tokenFor",
 ];
 for (const name of Object.keys(providers)) {
   const missing = REQUIRED.filter((k) => providers[name][k] === undefined);
@@ -68,7 +69,7 @@ Promise.all(pwOps.map((op) =>
 
   // The storage key must follow config.js, not a hardcoded project ref.
   const configJs = fs.readFileSync(path.join(ROOT, "config.js"), "utf8");
-  const ref = (configJs.match(/SUPABASE_URL:\s*'https:\/\/([a-z0-9]+)\./) || [])[1];
+  const ref = (configJs.match(/(?:API_URL|SUPABASE_URL):\s*'https:\/\/([a-z0-9]+)\./) || [])[1];
   global.window = { CX_CONFIG: { SUPABASE_URL: "https://" + ref + ".supabase.co" } };
   ok("the session storage key is derived from config.js",
     providers.supabase.storageKey() === `sb-${ref}-auth-token`,

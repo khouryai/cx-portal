@@ -50,7 +50,6 @@ const suites = [
   { file: "tools/test_config_seam.js", needs: [] },    // Azure migration: config.js holds values, cx-config.js derives
   { file: "tools/test_local_auth.js", needs: [] },     // Azure migration: email/password login against a real PostgreSQL
   { file: "tools/test_entra_provider.js", needs: [] },  // Entra claim mapping — auth.uid() depends on it
-  { file: "tools/test_sas_function.js", needs: [] },    // SAS Function: what may be signed, and for how long
   { file: "tools/test_storage_seam.js", needs: [] },    // Azure migration: every byte goes through cx-storage.js
   { file: "tools/test_build.js", needs: [] },           // dist/ packaging: nothing internal ships, per-env CSP
   { file: "tools/test_size_ratchet.js", needs: [] },    // monolith line-count ratchet (Tier 3 #11)

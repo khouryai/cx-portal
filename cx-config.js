@@ -26,6 +26,13 @@
   if (typeof window === 'undefined') return;
   var c = window.CX_CONFIG || {};
 
+  // API_URL is the data API (Supabase today, the PostgREST gateway on Azure).
+  // It was called SUPABASE_URL before the move, and every reader still accepts
+  // that name: whichever one config.js sets, both exist from here on, so an
+  // old config.js keeps working and no reader has to know about the rename.
+  if (!c.API_URL && c.SUPABASE_URL) c.API_URL = c.SUPABASE_URL;
+  if (!c.SUPABASE_URL && c.API_URL) c.SUPABASE_URL = c.API_URL;
+
   // REST_PATH — the one shape difference between Supabase's gateway and a bare
   // PostgREST. Supabase mounts PostgREST under /rest/v1/, so a table lives at
   // /rest/v1/profiles; a self-hosted PostgREST serves at the root: /profiles.
@@ -33,7 +40,7 @@
   // for Supabase. Getting it wrong is a flat 404 on EVERY table while
   // authentication works perfectly — which reads like an empty database and is
   // nothing but a URL prefix.
-  window.REST_BASE = (c.SUPABASE_URL || '') +
+  window.REST_BASE = (c.API_URL || '') +
     (typeof c.REST_PATH === 'string' ? c.REST_PATH : '/rest/v1');
 
   // `apikey` is a SUPABASE GATEWAY header: the gateway uses it to route and

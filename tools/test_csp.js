@@ -43,8 +43,8 @@ if (m) {
   ok("script-src does not allow arbitrary hosts", scriptSrc && !/\*(?!\.)/.test(scriptSrc), scriptSrc);
 
   // The backend origin must match config.js exactly — the cutover changes both.
-  const urlM = configJs.match(/SUPABASE_URL:\s*'([^']+)'/);
-  ok("config.js declares SUPABASE_URL", !!urlM);
+  const urlM = configJs.match(/(?:API_URL|SUPABASE_URL):\s*'([^']+)'/);
+  ok("config.js declares API_URL", !!urlM);
   if (urlM) {
     const origin = urlM[1].replace(/\/+$/, "");
     const wsOrigin = origin.replace(/^https:/, "wss:");

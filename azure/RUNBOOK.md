@@ -65,8 +65,8 @@ az deployment group create -g rg-cxportal-dev \
 ```
 
 **→ paste this back:** the whole outputs block. It carries `postgresFqdn`,
-`storageAccountName`, `apiFqdn`, `sasEndpoint` and `appIdentityClientId`, all of
-which end up in `config.js`.
+`storageAccountName`, `blobOrigin`, `apiFqdn` and `appIdentityClientId`; `apiFqdn`
+and `blobOrigin` end up in `config.js`.
 
 If `what-if` reports errors, paste those instead — that is the landing-zone
 conversation, and it is expected the first time.
@@ -371,20 +371,21 @@ IDENTITY=entra bash azure/deploy-frontend.sh
 
 ---
 
-## 5. Deploy the SAS Function
+## 5. Let portal users reach their files
 
-```bash
-cd azure/functions/sas
-npm install
-func azure functionapp publish func-sas-cxportal-dev
-```
+There is no server component for files. The browser signs short-lived links
+itself, with a user delegation key Azure issues to each signed-in user. That
+needs three settings, two of which the template applies:
 
-Then set the audience it was deployed without:
-
-```bash
-az functionapp config appsettings set -g rg-cxportal-dev -n func-sas-cxportal-dev \
-  --settings ENTRA_API_AUDIENCE="api://<appId>" ALLOWED_ORIGIN="https://<static-web-app-host>"
-```
+1. **The portal users' group** gets Storage Blob Data Contributor on the storage
+   account: redeploy with `portalUsersGroupObjectId` set to the Entra group that
+   holds Hitachi staff and BART guests.
+2. **Storage CORS** allows the portal: redeploy with `allowedOrigin` set to
+   `https://<static-web-app-host>`.
+3. **The app registration** may ask for Azure Storage on the user's behalf:
+   API permissions → Add → Azure Storage → Delegated → `user_impersonation`,
+   then Grant admin consent. (Not in the template: app registrations are Entra
+   objects, not Azure resources.)
 
 ---
 
@@ -400,22 +401,20 @@ window.CX_CONFIG = {
   ENTRA_API_SCOPE: 'api://<appId>/access_as_user',
 
   STORAGE: 'azure',
-  SAS_ENDPOINT: 'https://func-sas-cxportal-dev.azurewebsites.net/api/sas',
+  BLOB_ORIGIN: '<blobOrigin>',         // https://<account>.blob.core.windows.net
 
-  SUPABASE_URL: 'https://<apiFqdn>',   // now the PostgREST host
-  SUPABASE_ANON_KEY: '',               // no anon key under Entra
+  API_URL: 'https://<apiFqdn>',        // the PostgREST host
+  REST_PATH: '',                       // PostgREST serves tables at the root
 };
 ```
 
 Two things must change alongside it, or the app breaks in ways the console will
 explain but the code will not:
 
-1. **The CSP in `index.html`** — add the PostgREST host and the blob account
-   origin to `connect-src`, and the blob origin to `img-src`.
-   `tools/test_csp.js` fails the build if `config.js` and the CSP drift, which is
-   the point.
-2. **Re-key `profiles.id`** to each user's Entra object id. With two test users
-   this is two `update` statements. Every RLS policy then resolves unchanged.
+1. **Build with it, never hand-edit:** `node tools/build.js --config <that file>`.
+   The build points the page's CSP at the API and blob hosts named above.
+2. **Re-key `profiles.id`** to your Entra object id. With one test user this is
+   one `update` statement. Every RLS policy then resolves unchanged.
 
 ---
 
@@ -429,10 +428,12 @@ In order, because each step depends on the one before:
    and should match `profiles.id` for your row.
 3. Load any module list. If it is empty but the table has rows, PostgREST is
    resolving you as `anon` — go back to step 4.
-4. Open the photos page. If tiles render, the SAS Function, the delegation key
-   and the role assignment are all working together.
-5. Upload a photo. That exercises the write SAS path, which is the one with an
-   extra round trip.
+4. Open the photos page. If tiles render, the group role, the storage consent
+   and CORS are all working together. If not, the console names which: a 403 on
+   `comp=userdelegationkey` is the role, a consent error is step 5.3, a CORS
+   error is step 5.2.
+5. Upload a photo, then open a drawing and a document. That exercises write and
+   read links in every module.
 
 ---
 

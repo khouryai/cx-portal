@@ -116,7 +116,7 @@ function jwt(claims) {
     status: 200, contentType: "text/javascript",
     body: `window.CX_CONFIG = {
       IDENTITY: 'postgrest',
-      SUPABASE_URL: '${base}',
+      API_URL: '${base}',
       SUPABASE_ANON_KEY: '',
       REST_PATH: '',
     };`,

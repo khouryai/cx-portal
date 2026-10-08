@@ -11,7 +11,7 @@
 // ==========================================
 
 window.CX_CONFIG = {
-  SUPABASE_URL: 'https://uqtwiucxktljhukmgmxg.supabase.co',
+  API_URL: 'https://uqtwiucxktljhukmgmxg.supabase.co',
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxdHdpdWN4a3Rsamh1a21nbXhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NDMxMDcsImV4cCI6MjA5MzUxOTEwN30.nJuQOOyvGpGphSqiNxrO2_p1oYroev8mVdNn9unxmdI'
 };
 

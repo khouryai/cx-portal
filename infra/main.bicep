@@ -53,9 +53,6 @@ param administratorLoginPassword string = ''
 @description('Create the Microsoft Entra administrator on the database. Set FALSE when the admin principal is a guest (#EXT#) account — as it is on a personal subscription created with a Gmail/outlook address — because guest principals are not reliable as a Postgres Entra admin. A password admin is used instead. NOTE: do not set this false AND leave administratorLoginPassword empty, or the server has no administrator at all.')
 param deployDbEntraAdmin bool = true
 
-@description('Deploy the SAS-minting Function and its plan. Set FALSE on a free-trial subscription: consumption (Y1) plans have a quota of ZERO there, and the whole deployment fails on it. The Function is only needed once blob storage is in use, so turning it off unblocks everything else.')
-param deployFunctionApp bool = true
-
 @description('Deploy Azure Database for PostgreSQL. Set FALSE on a free-trial subscription: the managed offer is blocked outright there (OfferRestricted), in every region. Pair with deployContainerPostgres.')
 param deployManagedPostgres bool = true
 
@@ -75,11 +72,14 @@ param deployWaf bool = true
 @description('Use the cheapest viable SKUs. Personal-subscription escape hatch ONLY: Static Web Apps drops to Free (no private endpoints, no custom auth) and log retention drops to 30 days. Ignored when environment == prod.')
 param cheapMode bool = false
 
-@description('Audience the SAS Function requires in caller tokens — the API app registration\'s application id or app id URI. Empty until the Entra app registration exists; the Function refuses every request until it is set.')
+@description('Audience PostgREST requires in caller tokens — the API app registration\'s application id (v2 tokens) or app id URI. Empty until the Entra app registration exists.')
 param entraApiAudience string = ''
 
-@description('Origin allowed to call the SAS Function (the portal). Deliberately not a wildcard: this endpoint hands out credentials.')
+@description('The portal\'s web address, e.g. https://<name>.azurestaticapps.net. Storage CORS allows exactly this origin; empty means the browser cannot reach files yet.')
 param allowedOrigin string = ''
+
+@description('Object id of the Entra security group of portal users (Hitachi staff and BART guests). It is granted Storage Blob Data Contributor on the file storage account: the browser signs short-lived file links with each user\'s own delegation key, so this grant IS the file access rule. Empty until the group exists.')
+param portalUsersGroupObjectId string = ''
 
 var isProd = environment == 'prod'
 var usePasswordAuth = !empty(administratorLoginPassword)
@@ -95,8 +95,7 @@ var tags = {
 }
 
 // ── Identity ────────────────────────────────────────────────────────────────
-// One user-assigned identity for the API and the Functions, so neither ever
-// holds a secret: they authenticate to Postgres, Blob and Key Vault as
+// One user-assigned identity for the API, so it never holds a secret: they authenticate to Postgres, Blob and Key Vault as
 // themselves. This is what removes the service-role key that today sits in an
 // Edge Function secret.
 resource appIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
@@ -265,6 +264,20 @@ resource blobServices 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01
   properties: {
     deleteRetentionPolicy: { enabled: true, days: 30 }
     containerDeleteRetentionPolicy: { enabled: true, days: 30 }
+    // The browser talks to Blob Storage directly (cx-storage.js): it fetches a
+    // user delegation key with the user's Microsoft token, then GETs/PUTs/
+    // DELETEs through short-lived signed URLs. Exactly the portal's origin.
+    cors: {
+      corsRules: empty(allowedOrigin) ? [] : [
+        {
+          allowedOrigins: [allowedOrigin]
+          allowedMethods: ['GET', 'HEAD', 'PUT', 'DELETE', 'POST', 'OPTIONS']
+          allowedHeaders: ['authorization', 'content-type', 'x-ms-blob-type', 'x-ms-version']
+          exposedHeaders: ['content-type', 'content-length', 'etag']
+          maxAgeInSeconds: 3600
+        }
+      ]
+    }
   }
 }
 
@@ -276,8 +289,8 @@ resource blobContainers 'Microsoft.Storage/storageAccounts/blobServices/containe
 }]
 
 // ── Front end ───────────────────────────────────────────────────────────────
-// The repo root IS the site — no build step. Static Web Apps serves it as-is;
-// verified portable (no hardcoded host, relative PWA scope).
+// Static files only: deploy the dist/ folder from `node tools/build.js`.
+// Verified portable (no hardcoded host, relative PWA scope).
 resource staticSite 'Microsoft.Web/staticSites@2023-01-01' = {
   name: 'stapp-${suffix}'
   location: location
@@ -442,73 +455,11 @@ resource postgrest 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-// ── SAS-minting Function ────────────────────────────────────────────────────
-// Supabase let the BROWSER sign storage URLs. Azure cannot: a SAS needs a key,
-// and no key may reach page script. This Function verifies the caller's Entra
-// token and signs on their behalf, using a USER DELEGATION key obtained through
-// the managed identity below — the storage account key is never used, never
-// configured, and can stay disabled.
-//
-// Source: azure/functions/sas/. Its request-validation half is covered by
-// tools/test_sas_function.js, which needs no subscription.
-resource functionPlan 'Microsoft.Web/serverfarms@2023-12-01' = if (deployFunctionApp) {
-  name: 'plan-${suffix}'
-  location: location
-  tags: tags
-  kind: 'functionapp'
-  sku: { name: 'Y1', tier: 'Dynamic' }   // consumption: no idle cost
-  properties: { reserved: true }         // reserved => Linux
-}
-
-resource sasFunction 'Microsoft.Web/sites@2023-12-01' = if (deployFunctionApp) {
-  name: 'func-sas-${suffix}'
-  location: location
-  tags: tags
-  kind: 'functionapp,linux'
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: { '${appIdentity.id}': {} }
-  }
-  properties: {
-    serverFarmId: functionPlan.id
-    httpsOnly: true
-    keyVaultReferenceIdentity: appIdentity.id
-    siteConfig: {
-      linuxFxVersion: 'Node|20'
-      minTlsVersion: '1.2'
-      ftpsState: 'Disabled'
-      http20Enabled: true
-      cors: {
-        // The Function sets its own CORS headers from ALLOWED_ORIGIN; this is
-        // the platform-level belt to that braces. Never '*' on an endpoint that
-        // issues credentials.
-        allowedOrigins: empty(allowedOrigin) ? [] : [allowedOrigin]
-        supportCredentials: false
-      }
-      appSettings: [
-        { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
-        { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'node' }
-        { name: 'WEBSITE_NODE_DEFAULT_VERSION', value: '~20' }
-        // Identity-based connection for the runtime's own storage: no
-        // AzureWebJobsStorage connection string, so no account key anywhere.
-        { name: 'AzureWebJobsStorage__accountName', value: storage.name }
-        { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
-        { name: 'AzureWebJobsStorage__clientId', value: appIdentity.properties.clientId }
-        { name: 'AZURE_CLIENT_ID', value: appIdentity.properties.clientId }
-        { name: 'ENTRA_TENANT_ID', value: tenantId }
-        { name: 'ENTRA_API_AUDIENCE', value: entraApiAudience }
-        { name: 'BLOB_ACCOUNT', value: storage.name }
-        { name: 'ALLOWED_ORIGIN', value: allowedOrigin }
-        { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: '' }
-      ]
-    }
-  }
-}
-
-// Storage Blob Data Contributor on the storage account. This is what lets the
-// Function call getUserDelegationKey and sign read, write and delete SAS. It is
-// also the blast radius if the Function is ever compromised — scoped to this
-// one account, and revocable without rotating anything.
+// Storage Blob Data Contributor on the storage account. It includes
+// generateUserDelegationKey, which is what lets a portal user's browser sign
+// short-lived read/write/delete links for the files — and nothing beyond what
+// the role itself allows. Scoped to this one account, revocable by group
+// membership, and no key anywhere to rotate.
 var blobDataContributor = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
 
@@ -525,13 +476,13 @@ resource devBlobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (
   }
 }
 
-resource sasBlobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource portalUsersBlobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(portalUsersGroupObjectId)) {
   scope: storage
-  name: guid(storage.id, appIdentity.id, blobDataContributor)
+  name: guid(storage.id, portalUsersGroupObjectId, blobDataContributor)
   properties: {
     roleDefinitionId: blobDataContributor
-    principalId: appIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
+    principalId: portalUsersGroupObjectId
+    principalType: 'Group'
   }
 }
 
@@ -568,7 +519,7 @@ output apiFqdn string = postgrest.properties.configuration.ingress.fqdn
 output appIdentityClientId string = appIdentity.properties.clientId
 output keyVaultName string = keyVault.name
 output wafPolicyId string = wantWaf ? wafPolicy.id : ''
-output sasFunctionName string = deployFunctionApp ? sasFunction.name : ''
-output sasEndpoint string = deployFunctionApp ? 'https://${sasFunction.?properties.defaultHostName ?? ''}/api/sas' : ''
+// BLOB_ORIGIN for the portal's config.js (no trailing slash).
+output blobOrigin string = 'https://${storage.name}.blob.${az.environment().suffixes.storage}'
 output wafDeployed bool = wantWaf
 output thriftyMode bool = thrifty

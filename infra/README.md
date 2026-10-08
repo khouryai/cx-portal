@@ -48,8 +48,6 @@ Most of this template is negotiable. These are not:
 - **Networking** (VNet, subnets, private endpoints, DNS zones) — deliberately
   omitted, because it is entirely a landing-zone decision. `databasePublicAccess`
   defaults to `false` so the template does not quietly stand up a public database.
-- **The SAS-minting Function** the storage seam needs (see `cx-storage.js`) —
-  it needs real container names and an app registration first.
 - **CI/CD.** Porting `deploy.yml` needs a federated credential IT must create.
 
 ---
@@ -108,12 +106,11 @@ group to stop all of it at once.
 
 ### Free-trial restrictions (found the hard way)
 
-A free-trial subscription refuses two things outright, and neither is a template
+A free-trial subscription refuses managed PostgreSQL outright, and that is not a template
 error — the deployment is simply not permitted:
 
 | Blocked | Error | Parameter that works around it |
 |---|---|---|
-| Consumption Function plans | `Current Limit (Y1 VMs): 0` | `deployFunctionApp: false` |
 | Azure Database for PostgreSQL | `OfferRestricted`, `supportedServerEditions: []` in **every** region | `deployManagedPostgres: false` + `deployContainerPostgres: true` |
 
 The second substitutes the official `postgres:17` image running in the Container
