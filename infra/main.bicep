@@ -90,6 +90,11 @@ var usePasswordAuth = !empty(administratorLoginPassword)
 var thrifty = cheapMode && !isProd
 var wantWaf = deployWaf || isProd
 var suffix = '${appName}-${environment}'
+// The gateway's database connection string, as a Container Apps secret (see
+// the API section). Empty until the database is restored: then no secret, and
+// the gateway waits unconfigured.
+var pgrstSecrets = empty(postgrestDbUri) ? [] : [ { name: 'pgrst-db-uri', value: postgrestDbUri } ]
+var pgrstDbUriEnv = empty(postgrestDbUri) ? [] : [ { name: 'PGRST_DB_URI', secretRef: 'pgrst-db-uri' } ]
 
 // The 'jwks-refresh' sidecar beside PostgREST (see the API section). Keeps
 // PostgREST's copy of Microsoft's sign-in keys current: every REFRESH_SECONDS
@@ -443,6 +448,12 @@ resource postgrest 'Microsoft.App/containerApps@2024-03-01' = {
   properties: {
     managedEnvironmentId: containerEnv.id
     configuration: {
+      // The gateway's connection string (it holds the `authenticator` password)
+      // is a Container Apps SECRET, referenced by both containers below: it is
+      // not shown by `az containerapp show` or in the portal's environment
+      // variables, and reading it needs the listSecrets permission, which the
+      // Reader role does not have. Absent until the database exists (step 5).
+      secrets: pgrstSecrets
       ingress: {
         external: true
         targetPort: 3000
@@ -458,7 +469,7 @@ resource postgrest 'Microsoft.App/containerApps@2024-03-01' = {
           env: [
             // Empty at deploy time; set once the database exists and has been
             // restored. PostgREST will not serve until then, by design.
-            { name: 'PGRST_DB_URI', value: postgrestDbUri }
+            ...pgrstDbUriEnv
             { name: 'PGRST_DB_SCHEMAS', value: 'public' }
             { name: 'PGRST_DB_ANON_ROLE', value: 'anon' }
             // Microsoft's signing keys. PostgREST cannot fetch them from a URL,
@@ -484,7 +495,7 @@ resource postgrest 'Microsoft.App/containerApps@2024-03-01' = {
           image: 'postgres:17-alpine'   // pin; mirror to ACR before prod
           command: [ '/bin/sh', '-c', jwksRefreshScript ]
           env: [
-            { name: 'PGRST_DB_URI', value: postgrestDbUri }
+            ...pgrstDbUriEnv
             { name: 'JWKS_URL', value: '${az.environment().authentication.loginEndpoint}${tenantId}/discovery/v2.0/keys' }
             { name: 'REFRESH_SECONDS', value: '21600' }   // every 6 hours
           ]

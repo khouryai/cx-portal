@@ -1,7 +1,8 @@
 # Migration to the Hitachi Rail Azure tenant: background and decisions
 
 > **For IT, start with [`docs/AZURE_HOSTING.md`](docs/AZURE_HOSTING.md)**, the
-> complete handover procedure. For the architecture and security review, read
+> complete handover procedure. The developer's own steps, and when, are in
+> [`docs/DEVELOPER_STEPS.md`](docs/DEVELOPER_STEPS.md). For the architecture and security review, read
 > [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). This file records *why* the
 > design is what it is, and what has already been proven.
 
@@ -28,7 +29,7 @@ an optional WAF, private networking and customer-managed keys.
 | **PostgREST** as the API | The app already speaks the PostgREST protocol (that is what Supabase runs). Off-the-shelf container, no custom code. |
 | **Entra ID** for sign-in | Corporate accounts, BART as guests, MFA and Conditional Access set centrally. |
 | **People managed from the portal; profiles keyed by Entra object id** | An admin adds a person in the Directory screen by email. The portal finds their Microsoft account (or invites a BART guest), adds them to the CX Portal Users group through Microsoft Graph with the admin's own delegated rights (admins own that group), and saves the profile under their object id; Inactive and Remove take them out again. Profiles carried over from Supabase are linked once (by an admin, or on first sign-in). Permissions never use email. |
-| **All files in Azure Blob, signed in the browser** | Each user's browser gets a user delegation key from Azure with their own Microsoft sign-in, and signs short-lived links with it. Same behaviour as Supabase's signed URLs, no server code. Access = membership of the portal users' Entra group, which matches today's rule (any signed-in user, any file). |
+| **All files in Azure Blob, signed in the browser** | Each user's browser gets a user delegation key from Azure with their own Microsoft sign-in, and signs short-lived links with it. Same behaviour as Supabase's signed URLs, no server code. Access = membership of the portal users' Entra group, which matches today's rule (any signed-in user, any file). The few test files in Supabase are not carried over; storage starts empty. |
 | **Static hosting** (Static Web Apps or Blob static website) | The site is plain files. `node tools/build.js` produces `dist/`, the one artifact for a pipeline or a hand-off zip. |
 
 ## What is already done and proven
@@ -82,9 +83,11 @@ All in the repository and covered by `node tools/run_tests.js`.
    roles → row-level security) is rehearsed locally with Entra-shaped tokens
    and keys; a token issued by the real tenant is the first thing to verify,
    followed by one Add Person and one Remove against the real tenant (handover
-   section 8, check 7).
-5. **Photo and album ownership** compares names, not user ids. Fragile if
-   someone is renamed; worth fixing to a uuid while data is small.
+   section 7, check 6).
+5. ~~Photo and album ownership compares names~~ **Resolved:** ownership is
+   the uploader's account id, stamped by the database
+   (`supabase_photo_owner_ids.sql`, applied 2026-10-08;
+   `tools/test_photo_owner.js`).
 6. **Offline files stay on the device after sign-out.** Decide whether shared
    field tablets should clear them.
 
@@ -93,8 +96,8 @@ All in the repository and covered by `node tools/run_tests.js`.
 Every table, view and function on the live database compared against what the
 app and the database itself use.
 
-**Removed by `supabase/sql/supabase_cleanup_2026_10.sql`** (run before the
-backup): the Meetings module's 8 tables and its permission entries; `users`, a
+**Removed by `supabase/sql/supabase_cleanup_2026_10.sql`** (applied
+2026-10-08): the Meetings module's 8 tables and its permission entries; `users`, a
 pre-`profiles` people table nothing reads; three trigger functions left by
 removed modules; change-log rows about tables that no longer exist.
 

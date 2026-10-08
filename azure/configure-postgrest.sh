@@ -108,10 +108,14 @@ if [ "$MODE" = "local" ]; then
 else
   KEYS_VAR="PGRST_DB_PRE_CONFIG=private.pgrst_pre_config"; DROP_VAR="PGRST_JWT_SECRET"
 fi
+# The connection string carries the password: store it as a Container Apps
+# secret (not readable with Reader access) and point both containers at it.
+az containerapp secret set -g "$RG" -n ca-postgrest-dev \
+  --secrets "pgrst-db-uri=${DB_URI}" -o none || exit 1
 az containerapp update -g "$RG" -n ca-postgrest-dev --container-name postgrest \
   --min-replicas 1 \
   --set-env-vars \
-    "PGRST_DB_URI=${DB_URI}" \
+    "PGRST_DB_URI=secretref:pgrst-db-uri" \
     "PGRST_DB_SCHEMAS=public" \
     "PGRST_DB_ANON_ROLE=anon" \
     "PGRST_JWT_AUD=${JWT_AUD}" \
@@ -128,7 +132,7 @@ if [ "$MODE" = "entra" ]; then
   if az containerapp show -g "$RG" -n ca-postgrest-dev \
        --query "properties.template.containers[?name=='jwks-refresh'].name" -o tsv | grep -q jwks-refresh; then
     az containerapp update -g "$RG" -n ca-postgrest-dev --container-name jwks-refresh \
-      --set-env-vars "PGRST_DB_URI=${DB_URI}" \
+      --set-env-vars "PGRST_DB_URI=secretref:pgrst-db-uri" \
       --query "properties.provisioningState" -o tsv || exit 1
   else
     echo "  NOTE: no jwks-refresh container on this app. Redeploy infra/main.bicep to add it;"

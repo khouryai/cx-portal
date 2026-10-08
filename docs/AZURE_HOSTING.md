@@ -1,8 +1,9 @@
 # cx Portal on Azure — handover to Hitachi IT
 
 This is the complete procedure for hosting cx Portal in the Hitachi Rail Azure
-tenant. It is written so IT can do the whole move; the developer's part is
-limited to handing over three things (section 1) and testing at the end.
+tenant. **Every step in it is done by IT.** The developer's own part (preparing
+the database backup and the website package) is in a separate checklist; this
+document says exactly when you will receive each item from them.
 
 **What cx Portal is:** a folder of static web files plus a small PostgreSQL
 database. No application server, no custom server code, no scheduled jobs, no
@@ -16,17 +17,16 @@ open decisions), see [`docs/ARCHITECTURE.md`](ARCHITECTURE.md).
 ## Contents
 
 0. [How it fits together](#0-how-it-fits-together)
-1. [What the developer hands over](#1-what-the-developer-hands-over)
+1. [The order of work, and what the developer sends you](#1-the-order-of-work-and-what-the-developer-sends-you)
 2. [Entra ID: groups and the app registration](#2-entra-id-groups-and-the-app-registration)
 3. [Azure resources](#3-azure-resources)
 4. [The database](#4-the-database)
 5. [Connect the gateway to the database](#5-connect-the-gateway-to-the-database)
-6. [Files](#6-files)
-7. [The website](#7-the-website)
-8. [Check it works](#8-check-it-works)
-9. [Running it](#9-running-it)
-10. [Security summary](#10-security-summary)
-11. [Troubleshooting](#11-troubleshooting)
+6. [The website](#6-the-website)
+7. [Check it works](#7-check-it-works)
+8. [Running it](#8-running-it)
+9. [Security summary](#9-security-summary)
+10. [Troubleshooting](#10-troubleshooting)
 
 ---
 
@@ -55,7 +55,7 @@ open decisions), see [`docs/ARCHITECTURE.md`](ARCHITECTURE.md).
 | Website | Static Web Apps | 79 files, about 6 MB |
 | Database | Azure Database for PostgreSQL – Flexible Server, v17 | About 45 MB. All permission rules live in it. |
 | Database gateway | Container Apps: `postgrest/postgrest:v12.2.3` plus a `postgres:17-alpine` helper | Off-the-shelf images; configured by settings only |
-| Files | Storage account, 5 private containers | About 4 MB today |
+| Files | Storage account, 5 private containers | Start empty: no files are carried over |
 | Sign-in | Microsoft Entra ID | App registration, two groups, Conditional Access |
 | Supporting | Managed identity, Key Vault, Log Analytics | Created by the template |
 
@@ -63,20 +63,19 @@ Everything except Entra is created by one template, `infra/main.bicep`.
 
 ---
 
-## 1. What the developer hands over
+## 1. The order of work, and what the developer sends you
 
-| # | Item | How the developer makes it |
+| When | IT does | Exchange with the developer |
 |---|---|---|
-| 1 | **The repository** (source, template, scripts) | Git, or a zip of the repository |
-| 2 | **`cxportal.sql`** — the database backup | Appendix A.1 |
-| 3 | **`cxportal-files/`** — every stored file | Appendix A.2 |
+| Start | — | **You receive:** the repository (Git access or a zip). It holds the template (`infra/`), the database scripts (`supabase/sql/`) and this document. |
+| 1 | Section 2 (Entra) and section 3 (Azure resources) | **You send the developer** the six values in 3.5. |
+| 2 | — | **You receive** two files: `cxportal.sql` (the database backup) and `cx-portal-site.zip` (the website, already set up with your values). Usually within a day. |
+| 3 | Sections 4 to 7 | — |
+| 4 | — | **Tell the developer** the site is live; they sign in first as the portal's first administrator and add everyone else from the portal. |
 
-The repository contains everything referenced below: `infra/` (template),
-`supabase/sql/` (database scripts), `tools/build.js` (packages the website).
-
-> The backup and the files folder contain project data. Transfer them the way
-> Hitachi transfers Confidential material, and delete local copies after the
-> restore is checked.
+The database holds test data only today, nothing confidential. Transfer the
+backup through Hitachi's usual file sharing all the same, and delete copies once
+the restore is checked.
 
 ---
 
@@ -86,7 +85,7 @@ The repository contains everything referenced below: `infra/` (template),
 
 | Group | Members | Owners | Used for |
 |---|---|---|---|
-| **CX Portal Users** | Everyone who uses the portal, BART guests included. **The portal fills it**: you only add the first administrator (yourself or the developer). | **The portal administrators** | Sign-in to the app, and access to files |
+| **CX Portal Users** | Everyone who uses the portal, BART guests included. **The portal fills it**: you add only the developer, as the first administrator. | **The portal administrators** (the developer to begin with) | Sign-in to the app, and access to files |
 | **CX Portal DB Admins** | IT staff who administer the database | IT | Entra administrator on PostgreSQL |
 
 Record both **object IDs**.
@@ -152,9 +151,9 @@ Then, on the registration:
      guests from the portal (2.2); without it everything else still works.
    - **Grant admin consent** for the tenant.
 5. **Token configuration** → Add optional claim → token type **Access** →
-   `email`. On first sign-in the portal matches this address to the profile an
-   administrator created for the person (section 9). Version-2 tokens also
-   carry `preferred_username`, which is used too.
+   `email`. On first sign-in the portal matches this address to a profile
+   carried over from the old system (4.5). Version-2 tokens also carry
+   `preferred_username`, which is used too.
 6. **Authentication** — no client secret, no certificate. A browser app must
    not hold one.
 
@@ -182,26 +181,27 @@ Create a resource group in the chosen region. Fill in
 | Parameter | Value |
 |---|---|
 | `environment` | `prod` (zone-redundant database, geo-redundant backups, larger database size) or `dev` (single-zone, smaller, cheaper) |
-| `location` | the region |
+| `location` | the region (a US region) |
 | `dbAdminGroupObjectId` / `dbAdminGroupName` | the **CX Portal DB Admins** group |
 | `portalUsersGroupObjectId` | the **CX Portal Users** group |
 | `entraApiAudience` | the application (client) ID from 2.3 |
 | `databasePublicAccess` | see 3.2 |
 | `storagePublicAccess` | `true` (see 3.2) |
 | `allowedOrigin`, `postgrestDbUri` | leave empty now; set in 3.4 and step 5 |
-| `deployWaf` | `false`. In `prod` the template creates the WAF policy anyway; on its own it filters nothing (see 10.2) |
+| `deployWaf` | `false`. In `prod` the template creates the WAF policy anyway; on its own it filters nothing (see 9.2) |
 
-### 3.2 Two network decisions
+### 3.2 Network access
 
-**Database.** The gateway runs in Container Apps and must reach the database.
+**Database (`databasePublicAccess`).** The gateway runs in Container Apps and
+must reach the database.
 
-- **Simple path (`databasePublicAccess: true`)** — the database has a public
-  endpoint, but the template's firewall rule admits only Azure services, and
-  every connection needs a password and TLS. No network build-out.
-- **Private path (`false`)** — the database is reachable only from a virtual
-  network. Then the Container Apps environment must be VNet-integrated and the
-  database given a private endpoint (or VNet injection). The template does not
-  build that network; it is a landing-zone decision.
+- **`true`** — the database accepts connections only from inside Azure (the
+  gateway, Cloud Shell), and every connection needs a password and TLS 1.2 or
+  later. Nothing else to build.
+- **`false`** — the database has no public endpoint at all. Then IT connects
+  the Container Apps environment and the database to a virtual network (VNet
+  integration plus a private endpoint) before step 4; the template does not
+  build that network.
 
 **File storage (`storagePublicAccess: true`).** Browsers, including field
 tablets and BART guests, download and upload files directly. Access is still
@@ -224,15 +224,15 @@ az deployment group create  -g $RG -f infra/main.bicep -p infra/main.parameters.
   --query properties.outputs -o json
 ```
 
-> **Always pass `administratorLoginPassword`, on every deployment.** Leaving it
-> out switches the database's password sign-in off, and the gateway signs in
-> with a password — the portal would go dark. Keep the password in Key Vault.
+> **On every deployment, always pass `administratorLoginPassword` — and, from
+> step 5 on, `postgrestDbUri` too.** Leaving the password out switches the
+> database's password sign-in off; leaving the connection string out removes
+> it from the gateway. Either way the portal goes dark. Keep both in Key Vault.
 
-`what-if` first: Azure Policy in the landing zone may require changes (tags,
-SKUs, private endpoints). The template annotates the security purpose of each
-resource.
+Run `what-if` first and review the changes before `create`.
 
-**Record the outputs:** `siteUrl`, `apiFqdn`, `postgresFqdn`, `blobOrigin`.
+**Record the outputs:** `siteUrl`, `apiFqdn`, `postgresFqdn`, `blobOrigin`,
+`staticSiteName`.
 
 What it creates: the PostgreSQL server (TLS 1.2+, 35-day backups, Entra admin =
 DB Admins group), the storage account (5 private containers, no account key,
@@ -250,13 +250,29 @@ With `siteUrl` from the outputs:
 2. Set `allowedOrigin` to `<siteUrl>` in the parameters file and deploy again
    (3.3). This sets the storage CORS rule that lets the website reach files.
 
+### 3.5 Send the developer these six values
+
+None of them is a secret.
+
+| Value | Where it comes from |
+|---|---|
+| Tenant ID | Entra ID overview |
+| Application (client) ID | The app registration (2.3) |
+| Object ID of **CX Portal Users** | 2.1 |
+| `siteUrl` | Outputs (3.3) |
+| `apiFqdn` | Outputs (3.3) |
+| `blobOrigin` | Outputs (3.3) |
+
+The developer sends back `cxportal.sql` and `cx-portal-site.zip` (section 1).
+Steps 4 and 5 need only the backup; step 6 needs the zip.
+
 ---
 
 ## 4. The database
 
 All commands from Cloud Shell (or any machine with `psql`), connected as the
 database administrator created by the template (`cxadmin`), in the repository
-folder:
+folder, with `cxportal.sql` from the developer beside it:
 
 ```bash
 export PGHOST=<postgresFqdn> PGUSER=cxadmin PGDATABASE=postgres PGSSLMODE=require
@@ -306,45 +322,30 @@ psql -v ON_ERROR_STOP=1 -f supabase/sql/azure_after_restore.sql
 
 This adapts the MFA check to Entra, restores table privileges, creates the
 signing-key table the gateway's helper fills, and installs the profile-link
-function used next.
+functions.
 
 ### 4.4 Check
 
 ```bash
-psql -tAc "select count(*) from pg_policies where schemaname = 'public'"   # 227 (263 if the cleanup in A.0 was skipped)
-psql -tAc "select count(*) from pg_tables where schemaname = 'public'"     # 59  (68 if the cleanup was skipped)
+psql -tAc "select count(*) from pg_policies where schemaname = 'public'"   # about 227
+psql -tAc "select count(*) from pg_tables where schemaname = 'public'"     # 59
 psql -tAc "select to_regprocedure('auth.uid()') is not null"               # t
 ```
 
 ### 4.5 People carried over: nothing to do
 
-Every profile restored from the backup is marked as waiting for its owner. The
-first time each person signs in with Microsoft, the portal matches the email
-in their Microsoft sign-in to their profile and links it to their Entra account
-for good — permissions, history and ownership of photos and markups included.
-From then on only their Entra object ID is used; email is never used for
-permissions.
+Profiles carried over from the old system wait for their owner. The first time
+each person signs in with Microsoft, the portal matches the email in their
+Microsoft sign-in to their profile and links it to their Entra account for good,
+permissions and history included. A portal administrator can also do it at once
+by adding the same email in Directory. Email is never used for permissions.
 
-This needs their portal email to be the address they sign in to Microsoft
-with. If it differs, either correct the email first
-(`update public.profiles set email = '<sign-in address>' where email = '<old>'`)
-or link them directly with their **Entra object ID** (Entra ID → Users → the
+If someone's portal email is not the address they sign in to Microsoft with,
+link them directly with their **Entra object ID** (Entra ID → Users → the
 person → Object ID):
 
 ```bash
 psql -c "select private.relink_profile('person@hitachirail.com', '<object id>')"
-```
-
-A portal administrator can also connect a carried-over profile without waiting
-for that person to sign in: Directory → Users → + Invite User with the same
-email. The portal finds their Microsoft account, adds them to CX Portal Users and
-moves the existing profile onto it (`public.admin_link_profile()`), keeping its
-permissions and history.
-
-Test accounts that should not carry over can be switched off:
-
-```bash
-psql -c "update public.profiles set is_active = false where email = '<email>'"
 ```
 
 ---
@@ -360,8 +361,11 @@ Deploy the template again (3.3) with the connection string added:
 (URL-encode any special characters in the password: `@` → `%40`, `:` → `%3A`,
 `/` → `%2F`, `#` → `%23`.)
 
-Both containers in the gateway app receive it: PostgREST, and the
-`jwks-refresh` helper.
+The template stores it as a **Container Apps secret** (`pgrst-db-uri`), which
+both containers in the gateway app read: PostgREST and the `jwks-refresh`
+helper. It does not appear in the app's settings or in `az containerapp show`;
+reading it needs the `listSecrets` permission, which Reader does not have. From
+now on, pass `postgrestDbUri` on every deployment (3.3).
 
 **Check:**
 
@@ -385,60 +389,32 @@ other permission.
 
 ---
 
-## 6. Files
+## 6. The website
 
-Upload the developer's `cxportal-files/` folder, one container per subfolder.
-The person running this needs **Storage Blob Data Contributor** on the storage
-account (for example, temporary membership of CX Portal Users).
+### 6.1 Deploy the developer's package
 
-```bash
-ACCOUNT=<storage account name>     # the host part of blobOrigin
-for c in photos forms drawings documents vehicle-files; do
-  [ -d "cxportal-files/$c" ] && az storage blob upload-batch --auth-mode login \
-    --account-name $ACCOUNT -d "$c" -s "cxportal-files/$c"
-done
-```
+`cx-portal-site.zip` is the finished website, already pointed at your gateway,
+storage and app registration. It contains only the files the browser needs: no
+tests, database scripts, internal documents or secrets.
 
-The folder paths match what the database rows refer to; nothing needs renaming.
-
----
-
-## 7. The website
-
-### 7.1 Settings file
-
-Create `config.hitachi.js` (no secrets in it; it can live in the repository):
-
-```js
-window.CX_CONFIG = {
-  API_URL:         'https://<apiFqdn>',
-  REST_PATH:       '',
-  IDENTITY:        'entra',
-  ENTRA_TENANT_ID: '<tenant id>',
-  ENTRA_CLIENT_ID: '<application (client) id>',
-  ENTRA_USERS_GROUP_ID: '<object id of CX Portal Users>',
-  STORAGE:         'azure',
-  BLOB_ORIGIN:     '<blobOrigin>',
-};
-```
-
-### 7.2 Build
-
-Needs Node.js 18 or later, nothing else:
+In Cloud Shell, upload the zip (toolbar → Manage files → Upload), then:
 
 ```bash
-node tools/build.js --config config.hitachi.js
+unzip -o cx-portal-site.zip -d cx-portal-site
+TOKEN=$(az staticwebapp secrets list -g $RG -n <staticSiteName> --query properties.apiKey -o tsv)
+npx @azure/static-web-apps-cli deploy ./cx-portal-site --deployment-token "$TOKEN" --env production
 ```
 
-This produces `dist/`: only the files the browser needs, with these settings
-applied and the page's security policy narrowed to exactly these addresses. It
-contains no tests, database scripts or internal documents, and no Supabase code:
-with Microsoft sign-in the Supabase client library is left out and the app talks
-to the database API through its own small client (`cx-db.js`).
+Opening `siteUrl` now shows the sign-in page. Updates arrive the same way: the
+developer sends a new zip, and you repeat these three commands. There is no
+downtime; people get the new version on their next page load.
 
-### 7.3 Deploy — choose one
+### 6.2 Backup option: a pipeline on every merge
 
-**Option A: pipeline (on every merge).** With the repository in Hitachi's Git:
+If Hitachi later prefers deploying straight from its own Git, the repository
+supports it. The developer adds `config.hitachi.js` (your six values, no
+secrets) to the repository, and a pipeline builds and deploys on every merge
+to `main`. Store the deployment token (6.1) as a pipeline secret.
 
 GitHub Actions:
 
@@ -474,71 +450,43 @@ steps:
       azure_static_web_apps_api_token: $(SWA_TOKEN)
 ```
 
-The deployment token: Static Web App → **Manage deployment token**. Store it as
-a pipeline secret.
-
-**Option B: hand-off.** The developer (or IT) runs 7.2, zips `dist/`, and IT
-uploads it:
-
-```bash
-npx @azure/static-web-apps-cli deploy ./dist --deployment-token <token> --env production
-```
-
 ---
 
-## 8. Check it works
+## 7. Check it works
 
-Sign in as a linked person (4.5) and go through, in order:
+Tell the developer the site is live. They sign in first (they are the portal's
+first administrator and a member of CX Portal Users), then go through these with
+you, in order:
 
 | # | Check | If it fails |
 |---|---|---|
 | 1 | Opening `siteUrl` redirects to Microsoft and back | Redirect URI (3.4) |
-| 2 | The dashboard loads with your name | "Account not set up yet": see section 11. Empty lists: see section 11 |
-| 3 | Lists show data in each module | Section 11 |
-| 4 | A photo, a drawing and a document open | Storage CORS (`allowedOrigin`), group role, or Azure Storage permission (2.3) |
-| 5 | Upload a photo; delete it | Same as 4 |
-| 6 | A BART guest can sign in and sees only what their permissions allow | Guest invitation, group membership, Conditional Access |
-| 7 | In Directory, add a colleague, switch them to Inactive, then Remove them: each time they appear in or leave **CX Portal Users** in Entra | Group owners (2.1), Graph permissions and admin consent (2.3), `ENTRA_USERS_GROUP_ID` (7.1) |
+| 2 | The dashboard loads with their name | "Account not set up yet", or empty lists: section 10 |
+| 3 | Lists show data in each module | Section 10 |
+| 4 | Upload a photo and a document; both open | Storage CORS (`allowedOrigin`), group role, or Azure Storage permission (2.3) |
+| 5 | Delete them again | Same as 4 |
+| 6 | In Directory, add a colleague, switch them to Inactive, then Remove them: each time they appear in or leave **CX Portal Users** in Entra | Group owners (2.1), Graph permissions and admin consent (2.3) |
+| 7 | A BART guest added this way can sign in and sees only what their permissions allow | Guest invitation rights (2.2), Conditional Access |
 
 ---
 
-## 9. Running it
+## 8. Running it
 
-**Adding a person** — one step, by a portal administrator, in the portal:
-Admin menu → **Directory** → **Users** → **+ Invite User**, which opens **Add
-Person**: name, the email they sign in to Microsoft with, and their permission
-template. No password, no Microsoft id, no ticket to IT. The portal then:
+**Adding and removing people** is done by portal administrators in the portal,
+not by IT: Admin menu → **Directory** → **Users** → **+ Invite User** (opens
+**Add Person**) for name, email and permission template. The portal finds the
+person's Microsoft account (or, for someone outside Hitachi and after asking,
+invites them as a guest), adds them to **CX Portal Users** and saves their
+profile. **Remove**, or switching someone to **Inactive**, takes them out of
+the group. An address on Hitachi's own domain with no account is treated as a
+typo and never invited as a guest. If Microsoft refuses part of a change, the
+other part is undone and the administrator is told what to fix (section 10).
+Every change shows in Entra's audit log under the administrator's name.
 
-1. finds their Microsoft account by that email; for someone outside Hitachi
-   (for example BART) with no account, it asks the administrator, then invites
-   them as a guest and Microsoft emails them the invitation;
-2. adds them to **CX Portal Users** in Entra;
-3. saves their portal profile under their Microsoft account.
+What stays with IT: who **owns** CX Portal Users (that is who may add and
+remove people), the guest-invitation settings, and Conditional Access.
 
-They can sign in straight away; a guest once they accept the invitation. An
-address on Hitachi's own domain with no account is treated as a typo and never
-invited as a guest.
-
-**Removing a person:** Directory → Users → **Remove**, or switch them to
-**Inactive** to keep their profile and history. Either takes them out of CX
-Portal Users, so they can no longer sign in, and they see no data from that
-moment; switching back to **Active** puts them back. An administrator cannot
-remove or deactivate themselves.
-
-**If Microsoft refuses** (for example the administrator is not an owner of CX
-Portal Users), nothing is left half-done: when the portal's own save fails
-after Microsoft agreed, the Microsoft change is undone, and the administrator
-is told in plain words what to fix (section 11). Every change shows in Entra's
-audit log under the administrator's name, and the portal records privilege
-changes and profile links in `auth_events`.
-
-Without `ENTRA_USERS_GROUP_ID` in the settings file, the portal does not touch
-Entra: IT adds people to CX Portal Users, and the profile an administrator
-creates waits for that person's first sign-in (4.5).
-
-**Updating the app:** merge to the main branch (Option A), or build and
-upload a new `dist/` (Option B). Users get the new version on their next page
-load; no downtime.
+**Updating the app:** deploy the new zip the developer sends (6.1).
 
 **Backups:** the database has automatic backups with point-in-time restore for
 35 days (geo-redundant in `prod`). Deleted files and containers are recoverable
@@ -555,23 +503,23 @@ certificates to renew (Azure manages TLS), no secrets in the website.
 
 ---
 
-## 10. Security summary
+## 9. Security summary
 
-### 10.1 Where each control lives
+### 9.1 Where each control lives
 
 | Concern | Where it lives |
 |---|---|
 | Who you are, MFA, guest access | Entra ID: assignment required, Conditional Access |
 | Adding and removing people | Portal administrators, in the Directory screen. The portal changes CX Portal Users with the administrator's own Microsoft sign-in (delegated Graph permissions); Microsoft allows it only because they own that one group, so no one else can, and nothing beyond that group's membership can change. Logged in Entra's audit log. |
-| Linking a profile to a person | New people: their profile is created under their Microsoft object id when they are added. Profiles carried over from Supabase: linked once, by an administrator (Add Person) or on the person's first sign-in by the email in their token, and only while still waiting. Every link is in the audit log. Email is never used for permissions. |
+| Linking a profile to a person | New people: their profile is created under their Microsoft object id when they are added. Profiles carried over: linked once, by an administrator or on the person's first sign-in by the email in their token, and only while still waiting. Every link is in the audit log. Email is never used for permissions. |
 | What each person may see or change | **Inside the database**, on every request, by row-level security (about 230 policies, per module and per action). A request that bypasses the website still cannot get past it. |
 | Files | Private containers, account key disabled. Only CX Portal Users members can obtain a link; each link covers one file and expires within an hour. |
-| The gateway's database login | Can switch only to the two request roles, both under row-level security. Password, in the Container App's settings, readable by anyone with read access to that Container App (restrict it, or see the architecture document's open items); TLS required |
+| The gateway's database login | Can switch only to the two request roles, both under row-level security. Its password is in a Container Apps secret (not readable with Reader access) and in Key Vault; TLS required. |
 | Signing keys | Public keys from Microsoft, refreshed automatically; a bad download cannot replace good keys |
-| The web page | Content-Security-Policy limited to the exact addresses in 7.1; no third-party scripts; `nosniff`, framing and referrer headers from `staticwebapp.config.json` |
-| Secrets in the website | None. Every value in `config.hitachi.js` is public by nature. |
+| The web page | Content-Security-Policy limited to the portal's own gateway, storage, Microsoft sign-in and Microsoft Graph; no third-party scripts; `nosniff`, framing and referrer headers from `staticwebapp.config.json` |
+| Secrets in the website | None. Every value the website holds is public by nature. |
 
-### 10.2 Optional hardening — cyber's decision
+### 9.2 Optional hardening — cyber's decision
 
 - **Web application firewall.** The template creates a Front Door WAF policy
   (always in `prod`, otherwise with `deployWaf`), but not the Front Door profile
@@ -583,11 +531,11 @@ certificates to renew (Azure manages TLS), no secrets in the website.
   account. Add them if cyber wants database and file access logged centrally.
 - **Private networking** for the database and storage (3.2).
 - **Customer-managed keys** for database and storage encryption.
-- **Column encryption** for specific Confidential fields (`pgcrypto` is installed).
+- **Column encryption** for specific sensitive fields (`pgcrypto` is installed).
 
 ---
 
-## 11. Troubleshooting
+## 10. Troubleshooting
 
 Several failures here are silent or look like something else. In order of
 likelihood:
@@ -596,73 +544,29 @@ likelihood:
 |---|---|---|
 | Signs in, then every list is empty | Token has no `roles: ["authenticated"]`, so the gateway treats the person as anonymous | App role value `authenticated` (2.3) and group assignment (2.3 step 8) |
 | Gateway returns `PGRST301 JWT not in audience` | Token version or audience mismatch | Manifest `requestedAccessTokenVersion: 2`, and `entraApiAudience` = the bare application ID |
-| Every sign-in refused with an invalid-signature error | Signing keys not loaded | Helper log (section 5); is `postgrestDbUri` set? |
+| Every sign-in refused with an invalid-signature error | Signing keys not loaded | Helper log (section 5); was `postgrestDbUri` passed on the last deployment? |
 | `permission denied for table …` (42501) | Table privileges missing | Re-run `azure_after_restore.sql` |
 | Far fewer than ~227 policies after restore | `azure_before_restore.sql` ran after the restore, or not at all | Drop and recreate the database; run 4.1 → 4.3 in order |
-| "Your account is not set up yet" | No portal profile has this person's sign-in email: not added in Directory, or added under a different address | Add them in Directory (section 9) with the address they sign in with, or correct the email (4.5) |
-| "Account not set up yet" for one of two people sharing an email | Two waiting profiles have the same address; the portal will not guess | Correct one email, or link with `relink_profile` (4.5) |
+| "Your account is not set up yet" | No portal profile has this person's sign-in email | A portal administrator adds them in Directory, or link them (4.5) |
+| "Account not set up yet" for one of two people sharing an email | Two waiting profiles have the same address; the portal will not guess | Link with `relink_profile` (4.5) |
 | Add Person: "Your Microsoft account cannot change the CX Portal Users group" | The administrator is not an owner of the group | Add them as an owner of CX Portal Users (2.1) |
 | Add Person: "not allowed to invite guests" | Hitachi's external-collaboration settings | Guest Inviter role, or the settings (2.2); or IT invites the guest and the administrator adds them again |
 | "IT must grant admin consent for the portal's Microsoft Graph permissions" | The Graph permissions are missing or not consented | 2.3 step 4 |
 | "Allow pop-ups for this site" | Microsoft needed one extra confirmation and the browser blocked its window | Allow pop-ups for the portal's address and retry |
 | "No Microsoft account in your organisation has the address …" | A typo, or the staff account does not exist yet | Check the spelling; IT creates staff accounts |
 | A guest was added but cannot sign in | They have not accepted Microsoft's invitation email | Ask them to look for it (and in spam); IT can resend it (Entra ID → Users → the guest → Resend invitation) |
-| Add Person still says IT adds people to the group | `ENTRA_USERS_GROUP_ID` is not in the settings file | 7.1, then rebuild and deploy |
+| Add Person says IT adds people to the group | The website package was built without the CX Portal Users object ID | Ask the developer for a new zip with it (3.5) |
 | Files fail to load; browser console mentions CORS | `allowedOrigin` not set to `siteUrl` | 3.4 |
 | Files fail with 403 on `userdelegationkey` | Person not in CX Portal Users, or role assignment missing | `portalUsersGroupObjectId` |
 | Consent prompt or error on first file access | Azure Storage permission not admin-consented | 2.3 step 4 |
-| Portal stopped working after a redeploy | Deployment ran without `administratorLoginPassword`, which turned password sign-in off | Redeploy with it (3.3) |
-| Gateway logs "could not connect" | Network path: firewall rule, or private networking incomplete | 3.2 |
+| Portal stopped working after a redeploy | The deployment left out `administratorLoginPassword` or `postgrestDbUri` | Redeploy with both (3.3) |
+| Gateway logs "could not connect" | Database not reachable from the gateway | 3.2 |
 
 For anything else: the browser console names the failing request, and the
 gateway's log names the database error.
 
 ---
 
-## Appendix A — the developer's exports
-
-### A.0 First, clear out what is no longer used
-
-In the Supabase SQL editor, run these from `supabase/sql/`, in this order, so
-none of what they remove is carried to Azure. Each is safe to run again.
-
-1. `change_log_trigger.sql`: the change log records only what changed, and
-   records who under Microsoft sign-in too.
-2. `supabase_change_log_compact.sql`: shrinks the rows already logged
-   (38 MB to 21 MB). If the editor refuses its last line, `vacuum full`, run
-   that line on its own.
-3. `supabase_cleanup_2026_10.sql`: the removed Meetings module, a legacy
-   people table, orphaned functions.
-4. `supabase_drop_pg_cron.sql`: the switched-off scheduler.
-
-On the live project, 1 and 2 and the data part of 3 were run on 2026-10-08;
-3 and 4 still need running for their table and extension removals.
-
-### A.1 Database backup
-
-In the Supabase dashboard: **Connect → Session pooler**, copy the connection
-string (user `postgres.<project ref>`, port 5432). The backup tool must be
-PostgreSQL 17, which Docker provides:
-
-```bash
-docker run --rm -v "$PWD:/out" postgres:17 \
-  pg_dump "<session pooler connection string>" \
-  --schema=public --schema=private --no-owner --no-privileges \
-  -f /out/cxportal.sql
-```
-
-### A.2 Files
-
-```bash
-SUPABASE_URL=https://<project ref>.supabase.co \
-SUPABASE_SERVICE_ROLE_KEY=<Project Settings → API → service_role key> \
-node tools/export_supabase_files.js cxportal-files
-```
-
-It prints a count per container. Do not save the service role key anywhere.
-
----
-
 *Architecture and security review: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 Background and design decisions: [`MIGRATION.md`](../MIGRATION.md). The
-developer's own trial on a personal subscription: [`azure/RUNBOOK.md`](../azure/RUNBOOK.md).*
+developer's own steps: [`DEVELOPER_STEPS.md`](DEVELOPER_STEPS.md).*

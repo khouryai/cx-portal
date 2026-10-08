@@ -54,11 +54,11 @@ const suites = [
   { file: "tools/test_build.js", needs: [] },           // dist/ packaging: nothing internal ships, per-env CSP
   { file: "tools/test_jwks_refresh.js", needs: [] },    // Azure: sign-in key refresh vs a real PostgREST (skips without one)
   { file: "tools/test_relink_profile.js", needs: [] },  // Azure: move a profile onto its Entra object id (needs PostgreSQL)
-  { file: "tools/test_export_files.js", needs: [] },    // Supabase file export for the hand-off
   { file: "tools/test_team_invite.js", needs: [] },     // Team: add a person under Supabase and under Microsoft sign-in
   { file: "tools/test_change_log.js", needs: [] },      // change log: who, and only what changed (needs PostgreSQL)
   { file: "tools/test_cx_db.js", needs: [] },          // cx-db.js == supabase-js on every query shape (needs PostgreSQL + PostgREST)
   { file: "tools/test_azure_roles.js", needs: [] },     // Azure: the gateway login can never bypass row-level security
+  { file: "tools/test_photo_owner.js", needs: [] },     // photo and album ownership by account id (needs PostgreSQL)
   { file: "tools/test_entra_admin.js", needs: [] },     // Directory ↔ Entra: Graph calls against a simulated tenant
   { file: "tools/test_directory_entra.js", needs: [] }, // Directory ↔ Entra: add/deactivate/remove, both sides kept in step
   { file: "tools/test_size_ratchet.js", needs: [] },    // monolith line-count ratchet (Tier 3 #11)

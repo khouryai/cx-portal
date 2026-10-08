@@ -57,8 +57,8 @@ Everything except the Entra setup is created by one template,
 | | |
 |---|---|
 | **Users** | Hitachi Rail project staff and BART staff (as Entra B2B guests). Used on office laptops and on field tablets in yards and tunnels, often with weak signal. |
-| **Data** | Project test records, punch items, forms, photos, drawings and documents. Tagged **Confidential** in the template. US jurisdiction: the database and files stay in a US region. |
-| **Size today** | Database about 45 MB (59 tables); files about 4 MB in 5 containers. One real user (the developer) until cutover; designed for the project team, tens of concurrent users. |
+| **Data** | Project test records, punch items, forms, photos, drawings and documents. Today it holds test data only, nothing confidential; the template tags its resources **Confidential** for when real project data arrives. US jurisdiction: the database and files stay in a US region. |
+| **Size today** | Database about 45 MB (59 tables). Files are not carried over: storage starts empty. One real user (the developer) until cutover; designed for the project team, tens of concurrent users. |
 | **Integrations** | None. No email, no SharePoint, no outside systems (removed before the move; rebuilt on Microsoft Graph if wanted later). |
 
 ---
@@ -250,7 +250,7 @@ device after sign-out (see 9.9).
 | Secret | Where it lives | Who uses it |
 |---|---|---|
 | Database administrator password (`cxadmin`) | Key Vault (IT puts it there) | IT, for the restore and administration |
-| Gateway database password (`authenticator`) | Key Vault, and the Container App's settings (see 9.3) | PostgREST and its helper |
+| Gateway database password (`authenticator`) | Key Vault, and a Container Apps secret holding the gateway's connection string (not readable with Reader access) | PostgREST and its helper |
 | Static Web Apps deployment token | Pipeline secret | The CI/CD pipeline only |
 
 There is no client secret on the app registration, no storage account key, no
@@ -293,7 +293,7 @@ template (see 9.5).
 | T5 | Script injection steals a token from the browser | CSP limits where scripts load from and where data can be sent; tokens are short-lived (about an hour) | CSP still allows inline scripts while about 290 inline handlers remain, and tokens sit in browser storage. Reduced step by step by the inline-handler ratchet (10) |
 | T6 | A signed file link is forwarded | One file, one operation, HTTPS only, expires in 10 to 60 minutes | Anyone holding the link can use it until it expires (same as today's Supabase links) |
 | T7 | A portal user reads files of a module they have no rights to | Files are reached through the app, which only shows what the database allows | **The storage role is group-wide**: a determined portal user could sign a link for any file in the account. Same rule as today. See 9.8 |
-| T8 | The gateway's database password leaks | TLS required; the login can only take the `anon` and `authenticated` roles, so it is still subject to row-level security; firewall | Readable by anyone with read access to the Container App (9.3). On the public path the database accepts connections from any Azure-hosted address (9.1) |
+| T8 | The gateway's database password leaks | TLS required; the login can only take the `anon` and `authenticated` roles, so it is still subject to row-level security; firewall | Kept as a Container Apps secret, so only people allowed to list the app's secrets can read it. On the public path the database accepts connections from any Azure-hosted address (9.1) |
 | T9 | An administrator abuses rights or makes a mistake | Every data change and permission change is logged with the actor; Entra logs admin sign-ins | Database administrators can alter logs; separate their duties from portal administration if required |
 | T10 | Data loss or corruption | Point-in-time restore for 35 days; geo-redundant backups and zone-redundant HA in prod; 30-day soft delete for files and containers | Restores need a tested procedure (7.3) |
 | T11 | Malicious or tampered dependency | All libraries vendored and pinned in the repository; no CDN; container images pinned by version | Images come from Docker Hub until mirrored (9.4) |
@@ -337,10 +337,11 @@ live.
 
 ### 7.4 Deployment
 
-The website is built by `node tools/build.js --config config.hitachi.js` and
-deployed to Static Web Apps either by a pipeline on every merge to `main`
-(GitHub Actions or Azure DevOps; the test suite runs first) or as a zip handed
-to IT. Infrastructure changes go through the template with `what-if` first.
+The developer builds the website (`node tools/build.js --config
+config.hitachi.js`) and hands IT a zip, which IT deploys to Static Web Apps
+with three commands; each update is a new zip. A pipeline on every merge to
+`main` (GitHub Actions or Azure DevOps; the test suite runs first) is the
+backup option. Infrastructure changes go through the template with `what-if` first.
 Database schema changes are SQL scripts in `supabase/sql/`, applied by a
 database administrator.
 
@@ -349,7 +350,7 @@ database administrator.
 Nothing needs routine attention: no patching (all managed services), no
 scheduled jobs, no certificates (Azure manages TLS), no key rotation (no keys).
 Adding or removing people is one screen in the portal, which updates Entra
-itself (4.4; handover section 9).
+itself (4.4; handover section 8).
 
 ---
 
@@ -390,11 +391,11 @@ about USD 330 per month. **Recommendation:** cyber's call; for this audience
 (signed-in staff and guests only) Entra plus row-level security carry the main
 risk.
 
-**9.3 Where the gateway's database password lives.** Today it is a plain
-setting on the Container App, readable by anyone with read access to that
-resource. **Recommendation (before go-live):** a Container Apps secret, or a
-Key Vault reference read with the managed identity the template already
-attaches. A small template change.
+**9.3 Where the gateway's database password lives.** *Done:* the template
+keeps the gateway's connection string in a Container Apps secret, so Reader
+access no longer shows it. **Option:** a Key Vault reference read with the
+managed identity the template already attaches, if cyber wants the secret to
+live only in Key Vault.
 
 **9.4 Container images.** Both images come from Docker Hub, pinned by version.
 **Recommendation (before go-live):** mirror them into an Azure Container
@@ -457,7 +458,6 @@ access review (`access_review_due`).
 | Item | Status |
 |---|---|
 | Strict Content-Security-Policy (no inline scripts) | In progress: about 290 inline handlers remain; a build check prevents new ones and the count only goes down. `'unsafe-eval'` remains while Alpine.js is used. |
-| Photo and album ownership compares names, not user ids | To fix while data is small (affects who may edit or delete a photo) |
 | First token from the real tenant | The chain is rehearsed with Entra-shaped tokens and keys; the first real sign-in is the first check after deployment |
 | In-app password, MFA and lockout code (Supabase era) | Retired after cutover; Entra does these |
 | Penetration test | Recommended before broad roll-out |

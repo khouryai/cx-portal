@@ -79,6 +79,12 @@
   function elFrom(html) { var t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; }
   function role() { try { return (typeof currentRoleUser !== 'undefined' && currentRoleUser && currentRoleUser.role) || null; } catch (e) { return null; } }
   function userName() { try { return (typeof currentRoleUser !== 'undefined' && currentRoleUser && currentRoleUser.name) || 'unknown'; } catch (e) { return 'unknown'; } }
+  // Ownership is by account id (uploaded_by_id / created_by_id), stamped by the
+  // database from the signed-in session — supabase/sql/supabase_photo_owner_ids.sql.
+  // The names above are only what is displayed.
+  function userId() { try { return (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.id) || null; } catch (e) { return null; } }
+  function ownsPhoto(p) { var me = userId(); return !!(me && p && p.uploaded_by_id === me); }
+  function ownsAlbum(a) { var me = userId(); return !!(me && a && a.created_by_id === me); }
   function canUpload() { return UPLOAD_ROLES.indexOf(role()) !== -1; }
   // Granular gates (fall back to the legacy role check if the perms layer isn't
   // loaded — fail-open; RLS is authoritative). pCan = flat capability,
@@ -89,7 +95,7 @@
   // delete_own / delete_any). Owner = the uploader. Falls back to the legacy
   // role/owner check if the gate isn't loaded (fail-open; RLS is authoritative).
   function canDeletePhoto(p) {
-    var owner = !!(p && p.uploaded_by === userName());
+    var owner = ownsPhoto(p);
     if (typeof can === 'function') return can('photos', 'delete', owner);
     return role() === 'admin' || owner;
   }
@@ -621,7 +627,7 @@
     var head = toolbarHTML();
     if (isAlbum) {
       var a = S.activeAlbum;
-      var manageBtns = (a.kind === 'manual' && pCanOwn('manage_album', a.created_by === userName()))
+      var manageBtns = (a.kind === 'manual' && pCanOwn('manage_album', ownsAlbum(a)))
         ? '<button class="pm-btn" id="pm-album-rename">Rename</button><button class="pm-btn pm-btn-danger" id="pm-album-del">Delete album</button>'
         : '';
       head += '<div class="pm-toolbar"><button class="pm-btn" id="pm-album-back">‹ All albums</button><div class="pm-spacer"></div><strong style="font-size:16px">' + esc(a.name) + '</strong>' +
@@ -794,7 +800,7 @@
       ['Uploaded by', p.uploaded_by || '—'],
     ];
     var btns = '';
-    if (pCanOwn('edit_metadata', p.uploaded_by === userName())) btns += '<button class="pm-btn" id="pm-lb-edit">Edit</button>';
+    if (pCanOwn('edit_metadata', ownsPhoto(p))) btns += '<button class="pm-btn" id="pm-lb-edit">Edit</button>';
     if (pCan('manage_album_contents')) btns += '<button class="pm-btn" id="pm-lb-add">Add to album…</button>';
     if (S.view === 'album' && S.activeAlbum && S.activeAlbum.kind === 'manual' && pCan('manage_album_contents')) btns += '<button class="pm-btn" id="pm-lb-cover">Set as cover</button>';
     if (canDeletePhoto(p)) btns += '<button class="pm-btn pm-btn-danger" id="pm-lb-del">Delete</button>';
@@ -948,7 +954,7 @@
   }
   function renameActiveAlbum() {
     var a = S.activeAlbum; if (!a || a.kind !== 'manual') return;
-    if (!pCanOwn('manage_album', a.created_by === userName())) { toast('You cannot manage this album.'); return; }
+    if (!pCanOwn('manage_album', ownsAlbum(a))) { toast('You cannot manage this album.'); return; }
     modal({ title: 'Rename album', body: '<div class="pm-field"><label>Name</label><input id="pm-rn" value="' + esc(a.name) + '" /></div>', footer: '<button class="pm-btn" onclick="closeModal()">Cancel</button><button class="pm-btn pm-btn-primary" id="pm-rn-save">Save</button>' });
     bind('pm-rn-save', async function () {
       var name = document.getElementById('pm-rn').value.trim(); if (!name) return;
@@ -957,7 +963,7 @@
   }
   async function deleteActiveAlbum() {
     var a = S.activeAlbum; if (!a || a.kind !== 'manual') return;
-    if (!pCanOwn('manage_album', a.created_by === userName())) { toast('You cannot manage this album.'); return; }
+    if (!pCanOwn('manage_album', ownsAlbum(a))) { toast('You cannot manage this album.'); return; }
     if (!await cxConfirm('Delete album “' + a.name + '”? Photos are not deleted — only the album.')) return;
     try {
       await _dbUpdate('photo_albums', { is_deleted: true }, { id: a.id });

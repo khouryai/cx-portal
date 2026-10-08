@@ -33,5 +33,17 @@ ok("a database prepared by the old script has service_role revoked from the gate
 ok("the personal-trial runbook matches",
   !/grant anon, authenticated, service_role to authenticator/.test(fs.readFileSync(path.join(ROOT, "azure/RUNBOOK.md"), "utf8")));
 
+// The gateway's connection string carries the authenticator password: it must
+// be a Container Apps secret, never a plain setting anyone with Reader can see.
+const bicep = fs.readFileSync(path.join(ROOT, "infra/main.bicep"), "utf8");
+ok("the template never sets the gateway connection string as a plain value",
+  !/name:\s*'PGRST_DB_URI',\s*value:/.test(bicep));
+ok("…it is a Container Apps secret, referenced by both containers",
+  /name:\s*'PGRST_DB_URI',\s*secretRef:\s*'pgrst-db-uri'/.test(bicep) &&
+  (bicep.match(/\.\.\.pgrstDbUriEnv/g) || []).length === 2 && /secrets:\s*pgrstSecrets/.test(bicep));
+ok("the personal-trial script stores it as a secret too",
+  /secretref:pgrst-db-uri/.test(fs.readFileSync(path.join(ROOT, "azure/configure-postgrest.sh"), "utf8")) &&
+  !/"PGRST_DB_URI=\$\{DB_URI\}"/.test(fs.readFileSync(path.join(ROOT, "azure/configure-postgrest.sh"), "utf8")));
+
 console.log(`\n${pass} passed, ${fail} failed.`);
 process.exit(fail ? 1 : 0);

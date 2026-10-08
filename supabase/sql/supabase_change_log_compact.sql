@@ -9,10 +9,14 @@
 -- No information about WHAT changed, WHO changed it or WHEN is lost.
 --
 -- Run once on Supabase, after change_log_trigger.sql and before the backup for
--- Azure. Idempotent: a second run changes nothing.
+-- Azure. Idempotent: a second run changes nothing. Applied to the live project
+-- on 2026-10-08.
+--
+-- Safe to paste into the Supabase SQL editor as a whole: the editor already
+-- runs a script as one transaction, so it holds no BEGIN/COMMIT and no VACUUM
+-- (which cannot run inside one). Optionally afterwards, ON ITS OWN:
+--     vacuum full public.db_change_log;
 -- ============================================================================
-
-begin;
 
 delete from public.db_change_log
 where operation = 'UPDATE'
@@ -34,8 +38,3 @@ from (
 ) s
 where l.id = s.id
   and (select count(*) from jsonb_object_keys(l.new_row)) > (select count(*) from jsonb_object_keys(s.new_keep));
-
-commit;
-
--- Give the space back to the operating system (cannot run inside a transaction).
-vacuum full public.db_change_log;
