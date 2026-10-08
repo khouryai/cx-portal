@@ -17237,31 +17237,14 @@ function _vmChkOpenPhoto(path) {
   PhotosModule.sign([path]).then(m => { const u = m && m[path]; if (u) window.open(u, '_blank'); });
 }
 // ── Vehicle-files storage adapter ─────────────────────────────────────────
-// All checklist-attachment storage I/O flows through this adapter (same
-// pattern as _formsStorage): swap the internals for Azure Blob SAS or
-// MS Graph/SharePoint at migration cutover — callers above never change.
+// Bytes go through CXStorage (cx-storage.js), which picks Supabase Storage or
+// Azure Blob from config.js.
 const _vfStorage = {
   bucket: 'vehicle-files',
-  async upload(path, file) {
-    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${this.bucket}/${path}`, {
-      method: 'POST',
-      headers: { ...API_KEY_HEADER, Authorization: _getAuthHeader(), 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': 'true' },
-      body: file,
-    });
-    if (!res.ok) throw new Error('upload failed (' + res.status + ')');
-  },
-  async signedUrl(path) {
-    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/${this.bucket}/${path}`, {
-      method: 'POST',
-      headers: { ...API_KEY_HEADER, Authorization: _getAuthHeader(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expiresIn: 3600 }),
-    });
-    if (!res.ok) return null;
-    const j = await res.json();
-    return j && j.signedURL ? SUPABASE_URL + '/storage/v1' + j.signedURL : null;
-  },
+  upload(path, file) { return CXStorage.upload(this.bucket, path, file, file.type); },
+  signedUrl(path) { return CXStorage.signedUrl(this.bucket, path, 3600); },
   async remove(path) {
-    try { await _sb.storage.from(this.bucket).remove([path]); } catch (e) { _logSwallowed('storage: remove orphaned object', e); }
+    try { await CXStorage.removeStrict(this.bucket, [path]); } catch (e) { _logSwallowed('storage: remove orphaned object', e); }
   },
 };
 async function _vmFileUpload(lineId, file) {
@@ -17951,9 +17934,7 @@ function _rmaCSVExport() {
 // ╔════════════════════════════════════════════════════════════════════════╗
 // ║  FORMS — Test Data Sheets module                                       ║
 // ║                                                                        ║
-// ║  Storage today: Supabase Storage bucket "forms"                        ║
-// ║  Migration:     Swap _formsStorage adapter to MS Graph at SharePoint   ║
-// ║                 cutover — nothing above the adapter changes.           ║
+// ║  Storage: bucket "forms" via _formsStorage → CXStorage (cx-storage.js) ║
 // ║                                                                        ║
 // ║  Tables: forms, form_test_item_links, form_template_links              ║
 // ║  Schema: see supabase/sql/supabase_forms_schema.sql                    ║
@@ -17961,68 +17942,11 @@ function _rmaCSVExport() {
 
 const _formsStorage = {
   bucket: 'forms',
-  _objectUrl(path, cacheBust = false) {
-    const cleanPath = String(path || '').split('/').map(encodeURIComponent).join('/');
-    const url = `${SUPABASE_URL}/storage/v1/object/${this.bucket}/${cleanPath}`;
-    return cacheBust ? `${url}?t=${Date.now()}` : url;
+  upload(formId, file) { return this.uploadPath(`${formId}.pdf`, file); },
+  uploadPath(path, file, contentType = 'application/pdf') {
+    return CXStorage.upload(this.bucket, path, file, contentType, { timeoutMs: 30000 });
   },
-  _headers(extra = {}) {
-    return {
-      ...API_KEY_HEADER,
-      Authorization: _getAuthHeader(),
-      ...extra,
-    };
-  },
-  async upload(formId, file) {
-    const path = `${formId}.pdf`;
-    return this.uploadPath(path, file);
-  },
-  async uploadPath(path, file, contentType = 'application/pdf') {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 30000);
-    try {
-      const res = await fetch(this._objectUrl(path), {
-        method: 'POST',
-        signal: ctrl.signal,
-        cache: 'no-store',
-        headers: this._headers({
-          'Content-Type': contentType,
-          'x-upsert': 'true',
-        }),
-        body: file,
-      });
-      clearTimeout(timer);
-      if (!res.ok) throw new Error(`Storage upload failed (${res.status}): ${await res.text()}`);
-      return path;
-    } catch (e) {
-      clearTimeout(timer);
-      if (e.name === 'AbortError') throw new Error('Storage upload timed out after 30s');
-      throw e;
-    }
-  },
-  async downloadBlob(path) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 30000);
-    try {
-      const res = await fetch(this._objectUrl(path, true), {
-        method: 'GET',
-        signal: ctrl.signal,
-        cache: 'no-store',
-        headers: this._headers({
-          Accept: 'application/pdf',
-          'Cache-Control': 'no-cache',
-          Pragma: 'no-cache',
-        }),
-      });
-      clearTimeout(timer);
-      if (!res.ok) throw new Error(`Storage download failed (${res.status}): ${await res.text()}`);
-      return await res.blob();
-    } catch (e) {
-      clearTimeout(timer);
-      if (e.name === 'AbortError') throw new Error('Storage download timed out after 30s');
-      throw e;
-    }
-  },
+  downloadBlob(path) { return CXStorage.download(this.bucket, path, { timeoutMs: 30000 }); },
   async downloadBytes(path) {
     const blob = await this.downloadBlob(path);
     return new Uint8Array(await blob.arrayBuffer());
@@ -18036,28 +17960,9 @@ const _formsStorage = {
     return saved;
   },
   async downloadJson(path) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 30000);
-    try {
-      const res = await fetch(this._objectUrl(path, true), {
-        method: 'GET',
-        signal: ctrl.signal,
-        cache: 'no-store',
-        headers: this._headers({
-          Accept: 'application/json',
-          'Cache-Control': 'no-cache',
-          Pragma: 'no-cache',
-        }),
-      });
-      clearTimeout(timer);
-      if (res.status === 404) return null;
-      if (!res.ok) throw new Error(`Storage state download failed (${res.status}): ${await res.text()}`);
-      return await res.json();
-    } catch (e) {
-      clearTimeout(timer);
-      if (e.name === 'AbortError') throw new Error('Storage state download timed out after 30s');
-      throw e;
-    }
+    let blob;
+    try { blob = await this.downloadBlob(path); } catch (e) { if (e.status === 404) return null; throw e; }
+    return JSON.parse(await blob.text());
   },
   async verifyBytes(path, expectedBytes) {
     const actual = await this.downloadBytes(path);
@@ -18068,14 +17973,8 @@ const _formsStorage = {
     }
     return actual;
   },
-  async copy(sourcePath, destPath) {
-    const { error } = await _sb.storage.from(this.bucket).copy(sourcePath, destPath);
-    if (error) throw new Error('Storage copy failed: ' + error.message);
-  },
-  async remove(path) {
-    const { error } = await _sb.storage.from(this.bucket).remove([path]);
-    if (error) throw new Error('Storage delete failed: ' + error.message);
-  },
+  copy(sourcePath, destPath) { return CXStorage.copy(this.bucket, sourcePath, destPath); },
+  remove(path) { return CXStorage.removeStrict(this.bucket, [path]); },
 };
 
 async function _sha256Hex(bytes) {
@@ -18637,39 +18536,6 @@ async function _formsRenderRecentsRow() {
 function formViewerEvent(name, props = {}) {
   if (window.__cxFormsTelemetry) { try { window.__cxFormsTelemetry(name, props); } catch { /* noop */ } }
 }
-
-// ── Storage adapter contract (formalized for Azure/SharePoint cutover) ──
-// Required methods: upload(formId,file), uploadPath(path,file,contentType?),
-// downloadBlob(path), downloadBytes(path), uploadJson(path,data),
-// downloadJson(path), verifyBytes(path,expected), copy(src,dst), remove(path).
-// Optional: list(prefix), signedUrl(path).
-// _formsStorageAzure and _formsStorageGraph are stubs used at cutover.
-// eslint-disable-next-line no-unused-vars
-const _formsStorageAzure = {
-  bucket: 'forms',
-  async upload()        { throw new Error('Azure adapter not wired yet'); },
-  async uploadPath()    { throw new Error('Azure adapter not wired yet'); },
-  async downloadBlob()  { throw new Error('Azure adapter not wired yet'); },
-  async downloadBytes() { throw new Error('Azure adapter not wired yet'); },
-  async uploadJson()    { throw new Error('Azure adapter not wired yet'); },
-  async downloadJson()  { throw new Error('Azure adapter not wired yet'); },
-  async verifyBytes()   { throw new Error('Azure adapter not wired yet'); },
-  async copy()          { throw new Error('Azure adapter not wired yet'); },
-  async remove()        { throw new Error('Azure adapter not wired yet'); },
-};
-// eslint-disable-next-line no-unused-vars
-const _formsStorageGraph = {
-  bucket: 'forms',
-  async upload()        { throw new Error('SharePoint Graph adapter not wired yet'); },
-  async uploadPath()    { throw new Error('SharePoint Graph adapter not wired yet'); },
-  async downloadBlob()  { throw new Error('SharePoint Graph adapter not wired yet'); },
-  async downloadBytes() { throw new Error('SharePoint Graph adapter not wired yet'); },
-  async uploadJson()    { throw new Error('SharePoint Graph adapter not wired yet'); },
-  async downloadJson()  { throw new Error('SharePoint Graph adapter not wired yet'); },
-  async verifyBytes()   { throw new Error('SharePoint Graph adapter not wired yet'); },
-  async copy()          { throw new Error('SharePoint Graph adapter not wired yet'); },
-  async remove()        { throw new Error('SharePoint Graph adapter not wired yet'); },
-};
 
 function _formsViewerScale(baseViewport, pagesEl) {
   const availableWidth = Math.max(360, (pagesEl?.clientWidth || window.innerWidth) - 48);
@@ -21609,49 +21475,14 @@ let DRAWING_MARKUPS = [];
 // ── Storage helper ────────────────────────────────────────────────────────
 const _drawStorage = {
   bucket: 'drawings',
-  _url(path) {
-    const clean = String(path || '').split('/').map(encodeURIComponent).join('/');
-    return `${SUPABASE_URL}/storage/v1/object/${this.bucket}/${clean}`;
-  },
-  _hdrs(extra = {}) {
-    return { ...API_KEY_HEADER, Authorization: _getAuthHeader(), ...extra };
-  },
-  async upload(path, file) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 120000);
-    try {
-      const res = await fetch(this._url(path), {
-        method: 'POST', signal: ctrl.signal,
-        headers: this._hdrs({ 'Content-Type': 'application/pdf', 'x-upsert': 'true' }),
-        body: file,
-      });
-      clearTimeout(timer);
-      if (!res.ok) throw new Error(`Upload failed (${res.status}): ${await res.text()}`);
-      return path;
-    } catch(e) { clearTimeout(timer); throw e; }
+  upload(path, file) {
+    return CXStorage.upload(this.bucket, path, file, 'application/pdf', { timeoutMs: 120000 });
   },
   async downloadBytes(path) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 60000);
-    try {
-      const res = await fetch(this._url(path) + `?t=${Date.now()}`, {
-        method: 'GET', signal: ctrl.signal,
-        headers: this._hdrs({ Accept: 'application/pdf', 'Cache-Control': 'no-cache' }),
-      });
-      clearTimeout(timer);
-      if (!res.ok) throw new Error(`Download failed (${res.status})`);
-      return new Uint8Array(await res.arrayBuffer());
-    } catch(e) { clearTimeout(timer); throw e; }
+    const blob = await CXStorage.download(this.bucket, path, { timeoutMs: 60000 });
+    return new Uint8Array(await blob.arrayBuffer());
   },
-  async remove(path) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 30000);
-    try {
-      const res = await fetch(this._url(path), { method: 'DELETE', signal: ctrl.signal, headers: this._hdrs() });
-      clearTimeout(timer);
-      if (!res.ok && res.status !== 404) throw new Error(`Delete failed (${res.status}): ${await res.text()}`);
-    } catch(e) { clearTimeout(timer); throw e; }
-  },
+  remove(path) { return CXStorage.removeStrict(this.bucket, [path]); },
 };
 
 // ── Data loader ────────────────────────────────────────────────────────────
@@ -33763,19 +33594,14 @@ function _drwUploadRevision(setId) {
 // ╔════════════════════════════════════════════════════════════════════════╗
 // ║  DOCUMENTS — Controlled document library for the field team             ║
 // ║                                                                        ║
-// ║  Storage today: Supabase Storage bucket "documents" + tables           ║
-// ║                 documents / document_versions (see                     ║
-// ║                 supabase_documents_schema.sql).                        ║
-// ║                                                                        ║
-// ║  MIGRATION SEAM — everything the UI touches goes through DocsAPI and    ║
-// ║  _docsStorage below. At the Microsoft/Azure cutover, reimplement those  ║
-// ║  two objects against MS Graph (SharePoint doc library + list columns)  ║
-// ║  or Dataverse + Azure Blob; NOTHING above the seam changes.            ║
+// ║  Storage: bucket "documents" via _docsStorage → CXStorage, plus        ║
+// ║           tables documents / document_versions (see                    ║
+// ║           supabase_documents_schema.sql). DocsAPI below is the only    ║
+// ║           place that knows the tables.                                 ║
 // ║                                                                        ║
 // ║  Features: metadata filters (type/discipline/location/search),         ║
-// ║  version control with auto-supersede, and offline caching (the SW in   ║
-// ║  sw.js stale-while-revalidates storage GETs; "Make available offline"  ║
-// ║  pre-warms that cache).                                                 ║
+// ║  version control with auto-supersede, and offline files (CXStorage    ║
+// ║  keeps a device cache; "Make available offline" pre-warms it).         ║
 // ╚════════════════════════════════════════════════════════════════════════╝
 
 let DOCUMENTS    = [];
@@ -33800,56 +33626,13 @@ function _docsCanManage() {
 // ── Storage adapter (migration seam) ───────────────────────────────────────
 const _docsStorage = {
   bucket: 'documents',
-  _url(path, cacheBust = false) {
-    const clean = String(path || '').split('/').map(encodeURIComponent).join('/');
-    const url = `${SUPABASE_URL}/storage/v1/object/${this.bucket}/${clean}`;
-    return cacheBust ? `${url}?t=${Date.now()}` : url;
+  upload(path, file, contentType) {
+    return CXStorage.upload(this.bucket, path, file, contentType || file.type, { timeoutMs: 120000 });
   },
-  _hdrs(extra = {}) {
-    return { ...API_KEY_HEADER, Authorization: _getAuthHeader(), ...extra };
-  },
-  async upload(path, file, contentType) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 120000);
-    try {
-      const res = await fetch(this._url(path), {
-        method: 'POST', signal: ctrl.signal, cache: 'no-store',
-        headers: this._hdrs({ 'Content-Type': contentType || file.type || 'application/octet-stream', 'x-upsert': 'true' }),
-        body: file,
-      });
-      clearTimeout(timer);
-      if (!res.ok) throw new Error(`Upload failed (${res.status}): ${await res.text()}`);
-      return path;
-    } catch (e) {
-      clearTimeout(timer);
-      if (e.name === 'AbortError') throw new Error('Upload timed out after 120s');
-      throw e;
-    }
-  },
-  async downloadBlob(path) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 60000);
-    try {
-      const res = await fetch(this._url(path), { method: 'GET', signal: ctrl.signal, headers: this._hdrs() });
-      clearTimeout(timer);
-      if (!res.ok) throw new Error(`Download failed (${res.status})`);
-      return await res.blob();
-    } catch (e) {
-      clearTimeout(timer);
-      if (e.name === 'AbortError') throw new Error('Download timed out after 60s');
-      throw e;
-    }
-  },
-  // Warm the service-worker cache for this object so it opens with no signal.
-  async prefetch(path) {
-    const res = await fetch(this._url(path), { method: 'GET', headers: this._hdrs() });
-    if (!res.ok) throw new Error(`Prefetch failed (${res.status})`);
-    return true;
-  },
-  async remove(path) {
-    const { error } = await _sb.storage.from(this.bucket).remove([path]);
-    if (error) throw new Error('Storage delete failed: ' + error.message);
-  },
+  // Answered from the device's file cache first, so it opens with no signal.
+  downloadBlob(path) { return CXStorage.download(this.bucket, path, { timeoutMs: 60000, offline: true }); },
+  prefetch(path) { return CXStorage.makeOffline(this.bucket, path); },
+  remove(path) { return CXStorage.removeStrict(this.bucket, [path]); },
 };
 
 // ── Data-access layer (migration seam) ─────────────────────────────────────

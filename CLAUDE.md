@@ -45,6 +45,15 @@ The staged modernization is now policy, not a suggestion:
 - **New hot state goes in `CXStore`** (`cx-store.js`: get/set/update/subscribe),
   not a new loose `let _foo` global.
 
+## Storage + deploy seams (Azure migration)
+- **All file bytes go through `cx-storage.js` (`CXStorage`).** Never call
+  `/storage/v1`, `_sb.storage`, or a Blob URL from anywhere else —
+  `tools/test_storage_seam.js` fails the build.
+- **The deployable site is `dist/` from `node tools/build.js`** (no compile;
+  copies browser files only, applies `--config`, rewrites CSP hosts, stamps
+  the SW version). A new root file the browser needs must have a
+  `.html/.js/.css/.json/.webmanifest` extension or live in `vendor/`/`assets/`.
+
 ## Verify after JS edits
 - Run `node tools/run_tests.js` — syntax-checks app.js/photos.js/markup.js and
   runs every headless suite (boot smoke + unit + characterization). Must exit 0.

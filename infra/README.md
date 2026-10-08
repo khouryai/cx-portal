@@ -37,8 +37,9 @@ Most of this template is negotiable. These are not:
   no data — every Confidential record flows through PostgREST. This is the
   intrusion-prevention layer the current Supabase architecture cannot provide
   at all.
-- **`pg_cron`**, which runs the weekly planning snapshot and the `auth_events`
-  retention purge.
+- **`pg_cron`** is allow-listed but **optional at cutover**. Its two weekly
+  jobs are a planning snapshot nothing in the app reads and a 400-day
+  `auth_events` purge that has nothing to delete for over a year.
 - **Entra JWKS on PostgREST.** That is what makes `auth.uid()` resolve — see
   `supabase/sql/azure_auth_uid_shim.sql`.
 

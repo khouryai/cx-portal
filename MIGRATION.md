@@ -1,5 +1,11 @@
 # Migration to the Hitachi Rail Microsoft Azure tenant
 
+> **Start with [`docs/AZURE_HOSTING.md`](docs/AZURE_HOSTING.md)**, a one-page
+> summary of what IT sets up. This document is the detailed background. Since
+> it was written: all five storage buckets now go through `CXStorage`,
+> `node tools/build.js` produces the single deployable folder (`dist/`), and
+> `pg_cron` is no longer needed at cutover (§2).
+
 **Status: prepared, not started.** Every seam the move needs is built, and the
 riskiest unknown has been tested rather than assumed. What remains needs an
 Azure subscription, which IT owns.
@@ -46,7 +52,7 @@ Plus GitHub Pages stops being a second public cloud to account for.
 | Authorization | **In the database**: 349 RLS policies, `private.has_module_perm()` | **331 of 349 route through that one function** |
 | Database | PostgreSQL 17, ~59 MB, 53 triggers, 27 jsonb + 20 array columns | Region `us-west-2` |
 | Storage | 5 buckets, signed URLs | Behind `CXStorage` (see §4) |
-| Serverless | A `pg_cron` job | The three Edge Functions were removed — see below |
+| Serverless | Two weekly `pg_cron` jobs, both optional at cutover: a planning snapshot nothing in the app reads, and a 400-day audit-log purge | The three Edge Functions were removed — see below |
 | Config seam | `config.js` | Backend URL + publishable key |
 
 ---
@@ -212,10 +218,9 @@ cannot opt out. See `infra/README.md` and `infra/main.parameters.personal.json`.
 | Database | Azure Database for PostgreSQL Flexible Server | `pg_dump` → `pg_restore`; apply the shim |
 | API | Self-hosted **PostgREST** on Container Apps | Point it at Entra's JWKS |
 | Auth | **Microsoft Entra ID** via MSAL.js | Implement the `entra` provider; re-key `profiles` |
-| Photos, vehicle-files | **Azure Blob** + user-delegation SAS | Implement the `azure` storage provider + the SAS Function |
-| Forms, drawings | **SharePoint via Graph** | `_formsStorage` was designed for this swap |
+| All files (photos, forms, drawings, documents, vehicle-files) | **Azure Blob** + user-delegation SAS | `STORAGE: 'azure'` in config.js + the SAS Function |
 | Emails | **Azure Functions + Graph `sendMail`** | Nothing to port — to be built fresh on Azure |
-| Hosting | **Azure Static Web Apps** | Files move unchanged |
+| Hosting | **Azure Static Web Apps** | Deploy the `dist/` folder from `node tools/build.js` |
 | WAF | **Front Door Premium** | Must front the **API**, not just the static site |
 
 ---
@@ -289,9 +294,9 @@ The replacement is written and commented in `azure_auth_uid_shim.sql`.
    copy of the frontend at it via `config.js`. **Parallel run** — the dual-claim
    `auth.uid()` makes this possible.
 5. ✅ *(done)* `entra` identity provider. Remaining at this step: create the app
-   registration, fill `config.js`, and re-key `profiles` to Entra object ids.
+   registration, fill `config.js`, and point your one `profiles` row at your Entra object id.
 6. ✅ *(done)* `azure` storage provider + the SAS Function. Remaining: deploy the
-   Function and set `SAS_ENDPOINT`.
+   Function and set `SAS_ENDPOINT` and `BLOB_ORIGIN`.
 7. Static Web Apps hosting; port CI. Rebuild notification emails as Azure
    Functions if and when they are wanted.
 8. Front Door + WAF in front of the API. **Closes I.2-6.**

@@ -1,8 +1,11 @@
 // cx-portal Service Worker — desktop-first PWA shell with offline support.
 // Strategy:
 //  - Precache the app shell so the page boots offline.
-//  - Runtime: stale-while-revalidate for same-origin static + Supabase Storage GETs
-//    of PDFs and edit-state JSON; bypass everything else (auth, REST mutations, etc).
+//  - Runtime: stale-while-revalidate for same-origin static files; bypass
+//    everything else (auth, data API, storage). Offline FILES (documents etc.)
+//    are cached by cx-storage.js in its own 'cx-files-*' cache, which this
+//    worker never deletes — it works the same whichever storage provider is
+//    configured, which a URL-keyed cache here could not.
 //  - CACHE_VERSION below is a baseline; the GitHub Pages deploy workflow
 //    rewrites it to a unique per-commit value (cxp-<sha>) at deploy time,
 //    so every deploy forces clients to fetch fresh assets. Manual bumps
@@ -95,17 +98,12 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter(k => !k.startsWith(CACHE_VERSION)).map(k => caches.delete(k)));
+    // Old app-shell caches go; the offline file cache (cx-storage.js) stays.
+    await Promise.all(keys.filter(k => !k.startsWith(CACHE_VERSION) && !k.startsWith('cx-files'))
+      .map(k => caches.delete(k)));
     self.clients.claim();
   })());
 });
-
-function isSupabaseStorageGet(url) {
-  // Cache PDFs + edit-state JSON + document-library file types so the field team
-  // can open them offline. The Documents module pre-warms this cache via prefetch.
-  return /\/storage\/v1\/object\//.test(url.pathname) &&
-    /\.(pdf|json|docx?|xlsx?|pptx?|png|jpe?g|gif|webp|svg|txt|csv|dwg)$/i.test(url.pathname);
-}
 
 function isCdnAsset(url) {
   return /(^|\.)jsdelivr\.net$/.test(url.hostname) || /(^|\.)cloudflare\.com$/.test(url.hostname);
@@ -150,12 +148,6 @@ self.addEventListener('fetch', (event) => {
       }
       throw new Error('offline');
     })());
-    return;
-  }
-
-  // Supabase Storage GETs (PDFs + edit-state JSON): stale-while-revalidate.
-  if (isSupabaseStorageGet(url)) {
-    event.respondWith(staleWhileRevalidate(req));
     return;
   }
 

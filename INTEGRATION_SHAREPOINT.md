@@ -1,5 +1,10 @@
 # Photos Module → SharePoint Integration Plan
 
+> **Superseded (2026-10).** The `photo-sharepoint-sync` Edge Function was
+> removed (see MIGRATION.md §7), and all files now move to Azure Blob Storage
+> (docs/AZURE_HOSTING.md). Kept as background in case a SharePoint mirror is
+> wanted later.
+
 > Status: **built & deployed, awaiting IT credentials.** The Photos Module is
 > built, the database carries the `sp_*` columns (see
 > `supabase/sql/supabase_photos_schema.sql`), the sync worker is implemented AND deployed as

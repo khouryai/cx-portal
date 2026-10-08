@@ -6,10 +6,10 @@
 # Run from the repo root in Cloud Shell.
 #
 # IT NEVER TOUCHES THE REPO. config.js in git still points at Supabase, because
-# GitHub Pages serves that file to real users. This builds a staging copy,
-# writes an Azure config INTO THE COPY, and deploys that. Nothing tracked
-# changes, so there is no way to accidentally push an Azure config to the live
-# site.
+# GitHub Pages serves that file to real users. This writes an Azure config to a
+# scratch folder, builds the site with it (tools/build.js), and deploys that.
+# Nothing tracked changes, so there is no way to accidentally push an Azure
+# config to the live site.
 set -uo pipefail
 
 RG="${RG:-rg-cxportal-dev}"
@@ -31,20 +31,17 @@ say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
 [ -f index.html ] || { echo "run this from the repo root"; exit 1; }
 
-say "1/6  discovering endpoints"
+say "1/5  discovering endpoints"
 API="$(az containerapp show -g "$RG" -n ca-postgrest-dev \
   --query properties.configuration.ingress.fqdn -o tsv)" || exit 1
 HOST="$(az staticwebapp show -g "$RG" -n "$SWA" --query defaultHostname -o tsv)" || exit 1
 echo "  API : https://$API"
 echo "  site: https://$HOST"
 
-say "2/6  staging a copy (the repo is not modified)"
+say "2/5  preparing a scratch folder (the repo is not modified)"
 rm -rf "$STAGE"; mkdir -p "$STAGE"
-tar -c --exclude=.git --exclude=node_modules --exclude=azure --exclude=infra \
-       --exclude=tools --exclude=supabase --exclude='*.md' . | tar -x -C "$STAGE"
-echo "  staged $(find "$STAGE" -type f | wc -l) files in $STAGE"
 
-say "3/6  writing the Azure config into the staging copy"
+say "3/5  writing the Azure config"
 # THIS FILE IS REPLACED WHOLESALE, WHICH IS WHY config.js MUST HOLD ONLY VALUES.
 # window.REST_BASE used to be defined in the tracked config.js. This heredoc does
 # not reproduce it, so on Azure it did not exist — app.js reads REST_BASE as a
@@ -88,51 +85,18 @@ CFG
 } > "$STAGE/config.js"
 echo "  wrote $STAGE/config.js  (identity: $IDENTITY)"
 
-say "4/6  widening the CSP for the Azure endpoints"
-# The policy names the Supabase origin. Add the PostgREST host, or every API
-# call is blocked by the browser before it leaves the page — and the console
-# says "Refused to connect", which is easy to misread as the API being down.
-python3 - "$STAGE/index.html" "https://$API" <<'PY'
-import re, sys
-path, api = sys.argv[1], sys.argv[2]
-raw = open(path, 'rb').read()
-crlf = b'\r\n' in raw
-s = raw.decode('utf8')
-if crlf: s = s.replace('\r\n', '\n')
-m = re.search(r'(<meta http-equiv="Content-Security-Policy" content=")([^"]+)(")', s)
-if not m:
-    print('  no CSP meta tag found'); sys.exit(0)
-csp = m.group(2)
-if api not in csp:
-    csp = csp.replace('connect-src ', 'connect-src ' + api + ' ')
-    s = s[:m.start(2)] + csp + s[m.end(2):]
-    if crlf: s = s.replace('\n', '\r\n')
-    open(path, 'wb').write(s.encode('utf8'))
-    print('  added ' + api + ' to connect-src')
-else:
-    print('  already present')
-PY
+say "4/5  building the site for this environment"
+# tools/build.js copies only what the browser needs into $STAGE/site, swaps in
+# the config.js written above, points the CSP at the hosts that config names
+# (a policy naming only Supabase blocks every Azure call with "Refused to
+# connect", easily misread as the API being down), and stamps the service
+# worker's cache version so clients actually pick up the new build.
+node tools/build.js --config "$STAGE/config.js" --out "$STAGE/site" || exit 1
 
-say "5/5  cache-busting the service worker"
-# THIS STEP EXISTS IN .github/workflows/deploy.yml AND NOWHERE ELSE, which is
-# exactly why it was missed. The committed CACHE_VERSION is only a baseline;
-# the GitHub Pages workflow rewrites it per-commit at deploy time so clients
-# fetch fresh assets. Deploying to a different platform without reproducing
-# that ships the same version every time, the service worker sees no change,
-# and browsers keep serving the OLD app.js and config.js indefinitely — past a
-# hard refresh, because a claimed service worker is not bypassed by one.
-#
-# The symptom is a deploy that verifiably succeeded and an application that
-# stubbornly behaves like the previous build.
-VER="cxp-$(git rev-parse --short=8 HEAD 2>/dev/null || date -u +%Y%m%d%H%M%S)"
-sed -i -E "s/cxp-v?[0-9A-Fa-f]+/${VER}/g" "$STAGE/sw.js"
-echo "  service worker cache version: $VER"
-grep -n "CACHE_VERSION =" "$STAGE/sw.js" | head -1
-
-say "6/6  deploying"
+say "5/5  deploying"
 TOKEN="$(az staticwebapp secrets list -g "$RG" -n "$SWA" \
   --query properties.apiKey -o tsv)" || exit 1
-npx -y @azure/static-web-apps-cli deploy "$STAGE" \
+npx -y @azure/static-web-apps-cli deploy "$STAGE/site" \
   --deployment-token "$TOKEN" --env production --no-use-keychain 2>&1 | tail -20
 
 cat <<DONE

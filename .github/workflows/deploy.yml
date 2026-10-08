@@ -32,20 +32,15 @@ jobs:
           node --check photos.js
           node --check sw.js
           node tools/markup_test.js
-      # Cache-bust the service worker on every deploy so clients always pick
-      # up new app.js / styles.css / index.html instead of the SW's cached
-      # copies. The committed CACHE_VERSION is just a baseline; this rewrites
-      # it (in the deploy artifact only — no commit back) to a unique value
-      # derived from the commit SHA. Keeps the SW from ever serving stale code.
-      - name: Cache-bust service worker
-        run: |
-          ver="cxp-${GITHUB_SHA::8}"
-          sed -i -E "s/cxp-v?[0-9A-Fa-f]+/${ver}/g" sw.js
-          echo "Service worker cache version set to ${ver}"
-          grep -n "CACHE_VERSION =" sw.js
+      # The same packaging step every environment uses (Azure, hand-off zip):
+      # copies only what the browser needs into dist/ — no tests, SQL, infra
+      # scripts or internal docs — and stamps the service worker's cache
+      # version with this commit so clients always pick up the new build.
+      - name: Build site
+        run: node tools/build.js --version "cxp-${GITHUB_SHA::8}"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: 'dist'
       - id: deployment
         uses: actions/deploy-pages@v4

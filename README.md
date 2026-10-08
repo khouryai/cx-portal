@@ -28,9 +28,19 @@ Notes:
 
 ## Deploy
 
-There is no build. The repo root **is** the site:
+There is no compile step. One packaging command copies only what the browser
+needs into `dist/` and applies an environment's settings:
 
-- Production: every push to `main` deploys via GitHub Pages
+```
+node tools/build.js                          # this repo's config.js
+node tools/build.js --config other.config.js # another environment
+```
+
+`dist/` is what every environment deploys: GitHub Pages today, an Azure Static
+Web App, or a zip handed to IT. For the Azure move, see
+[`docs/AZURE_HOSTING.md`](docs/AZURE_HOSTING.md).
+
+- Production: every push to `main` builds and deploys via GitHub Pages
   (`.github/workflows/deploy.yml`).
 - Data lives in Supabase; the app signs in via Supabase Auth and talks to
   PostgREST directly (see the `_db*` helpers in `app.js`).
@@ -48,7 +58,7 @@ There is no build. The repo root **is** the site:
 | `supabase/functions/` | Edge Functions source (e.g. `photo-sharepoint-sync`) |
 | `supabase/sql/` | In-repo record of the base schema + every applied migration |
 | `sync_testplan.js` | Operational importer (test-plan master) |
-| `azure/`, `infra/`, `MIGRATION.md` | Prepared Azure migration kit (not used by the running app) |
+| `azure/`, `infra/`, `MIGRATION.md`, `docs/AZURE_HOSTING.md` | Azure migration kit (not used by the running app); start with `docs/AZURE_HOSTING.md` |
 | `tools/` | Test harness + dev tools — `run_tests.js` runs all suites (CI: `.github/workflows/test.yml`); `ui_gallery.html` + `shot_gallery.js` for visual QA without signing in |
 | `CLAUDE.md` | Working conventions (CRLF rules, tokens, icon system, verification) |
 | `DESIGN_TOKENS.md`, `PERMISSIONS_MODEL.md`, `SECURITY.md`, `INTEGRATION_SHAREPOINT.md`, `DEMO_DATA.md` | Living docs |

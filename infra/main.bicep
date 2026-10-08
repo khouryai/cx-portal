@@ -177,8 +177,9 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview'
   }
 }
 
-// pg_cron carries the weekly planning snapshot and the auth_events retention
-// purge. Both exist today and must survive the move.
+// pg_cron is allow-listed for the two optional weekly jobs (a planning snapshot
+// nothing in the app reads, and a 400-day auth_events purge). Neither is needed
+// at cutover; pgcrypto is for column encryption if cyber asks for it.
 resource pgCron 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = if (deployManagedPostgres) {
   parent: postgres
   name: 'azure.extensions'

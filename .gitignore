@@ -22,3 +22,6 @@ azure/.deploy-output.txt
 
 # Local-auth JWT signing secret — must match PGRST_JWT_SECRET. Never commit.
 azure/.local-auth-secret
+
+# Built site (node tools/build.js) — never committed.
+dist/
