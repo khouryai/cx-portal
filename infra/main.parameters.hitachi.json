@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment":              { "value": "prod" },
+    "location":                 { "value": "<Azure region, e.g. westus2>" },
+    "appName":                  { "value": "cxportal" },
+
+    "dbAdminGroupObjectId":     { "value": "<object id of the 'CX Portal DB Admins' Entra group>" },
+    "dbAdminGroupName":         { "value": "CX Portal DB Admins" },
+    "postgresVersion":          { "value": "17" },
+    "databasePublicAccess":     { "value": true },
+    "storagePublicAccess":      { "value": true },
+
+    "portalUsersGroupObjectId": { "value": "<object id of the 'CX Portal Users' Entra group>" },
+    "entraApiAudience":         { "value": "<application (client) id of the app registration>" },
+    "allowedOrigin":            { "value": "" },
+    "postgrestDbUri":           { "value": "" },
+
+    "deployWaf":                { "value": false }
+  }
+}

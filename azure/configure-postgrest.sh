@@ -81,18 +81,12 @@ NOTE
   echo "  mode: LOCAL PASSWORDS — the database issues the tokens"
   echo "  audience: $JWT_AUD"
 else
-  # PostgREST wants JWK/JWKS *material*, not a URI to fetch it from — it has no
-  # remote-JWKS support. So the key set is pinned here as a literal value.
-  #
-  # CONSEQUENCE WORTH KNOWING: Entra rotates these keys roughly every six weeks.
-  # When it does, this copy goes stale and every sign-in fails with an invalid
-  # signature. Fine for a rebuildable dev environment; in production this is the
-  # argument for a gateway that validates tokens, or a sidecar that refreshes the
-  # key set on a schedule. Re-run this script to refresh it by hand.
-  JWT_SECRET="$(curl -fsS "https://login.microsoftonline.com/$TENANT/discovery/v2.0/keys")"
-  [ -n "$JWT_SECRET" ] || { echo "could not fetch JWKS"; exit 1; }
+  # PostgREST cannot fetch Microsoft's signing keys from a URL, and Microsoft
+  # rotates them every few weeks. So PostgREST reads them from the database
+  # (PGRST_DB_PRE_CONFIG) and the 'jwks-refresh' sidecar keeps them current —
+  # supabase/sql/azure_pgrst_jwks.sql must already be applied (RUNBOOK step 3).
   echo "  mode: MICROSOFT ENTRA — Microsoft issues the tokens"
-  echo "  got $(printf '%s' "$JWT_SECRET" | wc -c) bytes, $(printf '%s' "$JWT_SECRET" | grep -o '"kid"' | wc -l) keys"
+  echo "  keys: read from the database, kept current by the jwks-refresh sidecar"
 
   # THE AUDIENCE DEPENDS ON THE TOKEN VERSION, and getting it wrong gives
   # PGRST301 JWTNotInAudience — which looks like a broken token and is not: the
@@ -105,18 +99,42 @@ else
 fi
 
 say "3/5  configuring PostgREST"
-az containerapp update -g "$RG" -n ca-postgrest-dev \
+DB_URI="postgres://authenticator:${PGRST_PW}@${PGHOST}:5432/postgres"
+# Exactly one source of keys per mode. Under Entra a leftover PGRST_JWT_SECRET
+# would be stale within weeks; under local passwords a key set left in the
+# database would override the shared secret and reject every password.
+if [ "$MODE" = "local" ]; then
+  KEYS_VAR="PGRST_JWT_SECRET=${JWT_SECRET}"; DROP_VAR="PGRST_DB_PRE_CONFIG"
+else
+  KEYS_VAR="PGRST_DB_PRE_CONFIG=private.pgrst_pre_config"; DROP_VAR="PGRST_JWT_SECRET"
+fi
+az containerapp update -g "$RG" -n ca-postgrest-dev --container-name postgrest \
   --min-replicas 1 \
   --set-env-vars \
-    "PGRST_DB_URI=postgres://authenticator:${PGRST_PW}@${PGHOST}:5432/postgres" \
+    "PGRST_DB_URI=${DB_URI}" \
     "PGRST_DB_SCHEMAS=public" \
     "PGRST_DB_ANON_ROLE=anon" \
     "PGRST_JWT_AUD=${JWT_AUD}" \
     "PGRST_JWT_ROLE_CLAIM_KEY=.roles[0]" \
-    "PGRST_JWT_SECRET=${JWT_SECRET}" \
+    "$KEYS_VAR" \
     "PGRST_LOG_LEVEL=info" \
     "PGRST_OPENAPI_MODE=ignore-privileges" \
+  --remove-env-vars "$DROP_VAR" \
   --query "properties.provisioningState" -o tsv || exit 1
+
+# The key refresher connects with the same login. It exists only on an app
+# deployed from the current infra/main.bicep.
+if [ "$MODE" = "entra" ]; then
+  if az containerapp show -g "$RG" -n ca-postgrest-dev \
+       --query "properties.template.containers[?name=='jwks-refresh'].name" -o tsv | grep -q jwks-refresh; then
+    az containerapp update -g "$RG" -n ca-postgrest-dev --container-name jwks-refresh \
+      --set-env-vars "PGRST_DB_URI=${DB_URI}" \
+      --query "properties.provisioningState" -o tsv || exit 1
+  else
+    echo "  NOTE: no jwks-refresh container on this app. Redeploy infra/main.bicep to add it;"
+    echo "        until then no keys are loaded and Entra sign-in is refused."
+  fi
+fi
 
 say "4/5  waiting for the new revision"
 sleep 45

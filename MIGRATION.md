@@ -1,9 +1,8 @@
 # Migration to the Hitachi Rail Azure tenant: background and decisions
 
 > **For IT, start with [`docs/AZURE_HOSTING.md`](docs/AZURE_HOSTING.md)**, the
-> one-page summary of what to set up. Commands are in
-> [`azure/RUNBOOK.md`](azure/RUNBOOK.md). This file records *why* the design is
-> what it is, and what has already been proven.
+> complete handover procedure. This file records *why* the design is what it
+> is, and what has already been proven.
 
 **Status: prepared, not started.** Every change the move needs is built and
 tested. What remains needs Azure access, which IT owns.
@@ -59,14 +58,15 @@ All in the repository and covered by `node tools/run_tests.js`.
 
 ## Known risks
 
-1. **Microsoft's sign-in keys rotate** every few weeks, and PostgREST holds a
-   copy. Automate a daily refresh before go-live (`configure-postgrest.sh` does
-   it by hand today).
+1. ~~Microsoft's sign-in keys rotate~~ **Resolved:** the `jwks-refresh` helper
+   beside the gateway reloads them every 6 hours with no restart
+   (`supabase/sql/azure_pgrst_jwks.sql`, `tools/test_jwks_refresh.js`).
 2. **Sign-in on field tablets.** Test MSAL's silent token refresh on yard and
    tunnel devices with poor signal before cutover.
 3. **Guest access for BART** is a tenant policy decision. Raise it early.
-4. **First interactive Entra sign-in** end to end (browser → PostgREST →
-   database role) has not yet been run. It is the first thing to verify.
+4. **First real Microsoft sign-in.** The chain (key helper → gateway → database
+   roles → row-level security) is rehearsed locally with Entra-shaped tokens
+   and keys; a token issued by the real tenant is the first thing to verify.
 5. **Photo and album ownership** compares names, not user ids. Fragile if
    someone is renamed; worth fixing to a uuid while data is small.
 6. **Offline files stay on the device after sign-out.** Decide whether shared
@@ -91,7 +91,7 @@ stay until the schema is next revised.
 
 ## What the application team needs from IT
 
-The three items in `docs/AZURE_HOSTING.md` ("The simplest ask"), plus:
+Everything in the handover, `docs/AZURE_HOSTING.md`, plus:
 
 - Repository access, a named reviewer, and a pipeline that deploys on merge (or
   agreement on the hand-off zip instead).

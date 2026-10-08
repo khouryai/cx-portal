@@ -1,4 +1,8 @@
-# Azure stand-up runbook
+# Azure stand-up runbook (developer's personal subscription)
+
+> **Handing over to IT? Use [`docs/AZURE_HOSTING.md`](../docs/AZURE_HOSTING.md)**,
+> the complete procedure for the Hitachi tenant. This runbook is the record of
+> the developer's own trial on a personal subscription.
 
 Step by step, from an empty Azure subscription to the portal running against it.
 
@@ -281,7 +285,7 @@ tokens the database will accept.
 |---|---|---|
 | Sign-in screen | the normal card, as on Supabase | "Sign in with Microsoft" |
 | Who checks the credential | `public.login()` in your database | Microsoft |
-| `PGRST_JWT_SECRET` | a shared secret | Entra's JWKS |
+| Signing keys | `PGRST_JWT_SECRET`, a shared secret | Microsoft's keys, read from the database (`PGRST_DB_PRE_CONFIG`) and kept current by the `jwks-refresh` sidecar |
 | `PGRST_JWT_AUD` | `cx-portal` | the application (client) id |
 | `auth.uid()` reads | `sub` | `oid` |
 | Password reset | an admin runs `auth.set_password()` in psql | Entra self-service |
@@ -351,7 +355,7 @@ configuration yet. It needs:
 | `PGRST_DB_URI` | the Postgres connection string, as `authenticator` |
 | `PGRST_DB_SCHEMAS` | `public` |
 | `PGRST_DB_ANON_ROLE` | `anon` |
-| `PGRST_JWT_SECRET` | `{"jwks_uri":"https://login.microsoftonline.com/<tenant>/discovery/v2.0/keys"}` |
+| `PGRST_DB_PRE_CONFIG` | `private.pgrst_pre_config` (keys come from the database; needs `supabase/sql/azure_pgrst_jwks.sql`) |
 | `PGRST_JWT_AUD` | `api://<appId>` |
 | `PGRST_JWT_ROLE_CLAIM_KEY` | `.roles[0]` |
 

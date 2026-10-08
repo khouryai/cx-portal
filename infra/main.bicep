@@ -75,6 +75,9 @@ param cheapMode bool = false
 @description('Audience PostgREST requires in caller tokens — the API app registration\'s application id (v2 tokens) or app id URI. Empty until the Entra app registration exists.')
 param entraApiAudience string = ''
 
+@description('Let browsers reach file storage over the internet. Leave TRUE unless every user (field tablets and BART guests included) reaches Azure over a private network: the browser downloads and uploads files directly, and access is still gated by Entra sign-in, group membership and short-lived signed links.')
+param storagePublicAccess bool = true
+
 @description('The portal\'s web address, e.g. https://<name>.azurestaticapps.net. Storage CORS allows exactly this origin; empty means the browser cannot reach files yet.')
 param allowedOrigin string = ''
 
@@ -87,6 +90,30 @@ var usePasswordAuth = !empty(administratorLoginPassword)
 var thrifty = cheapMode && !isProd
 var wantWaf = deployWaf || isProd
 var suffix = '${appName}-${environment}'
+
+// The 'jwks-refresh' sidecar beside PostgREST (see the API section). Keeps
+// PostgREST's copy of Microsoft's sign-in keys current: every REFRESH_SECONDS
+// it downloads them and hands them to private.set_pgrst_jwks(), which stores
+// them only if they changed and tells PostgREST to reload — no restart. A
+// failed download or a malformed key set changes nothing and retries in five
+// minutes. Database side: supabase/sql/azure_pgrst_jwks.sql. Tested end to end
+// against a real PostgREST by tools/test_jwks_refresh.js, which runs THIS text.
+var jwksRefreshScript = '''
+set -u
+while true; do
+  if jwks="$(wget -qO- -T 30 "$JWKS_URL")" && [ -n "$jwks" ] &&
+     changed="$(echo "select private.set_pgrst_jwks(:'jwks');" |
+       psql "$PGRST_DB_URI" -XAtq -v ON_ERROR_STOP=1 -v jwks="$jwks")"; then
+    if [ "$changed" = t ]; then echo "jwks-refresh: new keys loaded"; else echo "jwks-refresh: keys unchanged"; fi
+    wait_s="${REFRESH_SECONDS:-21600}"
+  else
+    echo "jwks-refresh: refresh failed; current keys stay in force; retrying in 5 minutes" >&2
+    wait_s=300
+  fi
+  [ "${RUN_ONCE:-}" = 1 ] && exit 0
+  sleep "$wait_s"
+done
+'''
 var tags = {
   application: 'Hitachi Rail T&C Portal'
   project: 'BART CBTC'
@@ -134,8 +161,10 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 // columns, which have no SQL Server equivalent. pg_dump/pg_restore moves all of
 // it verbatim — proven by tools/test_rls_portability.js.
 //
-// Entra authentication is enabled and password auth left ON only so the
-// migration can run; turn it off once cutover completes.
+// Entra authentication for people (administrators sign in with their Entra
+// account). Password authentication must STAY ON: PostgREST and its jwks-refresh
+// helper log in as `authenticator` with a password — PostgREST cannot use an
+// Entra token to reach the database. So always deploy with an admin password.
 resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview' = if (deployManagedPostgres) {
   name: 'psql-${suffix}'
   location: location
@@ -167,7 +196,7 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview'
     }
     authConfig: {
       activeDirectoryAuth: 'Enabled'
-      passwordAuth: usePasswordAuth ? 'Enabled' : 'Disabled'   // cutover: redeploy with an empty password
+      passwordAuth: usePasswordAuth ? 'Enabled' : 'Disabled'   // must be Enabled for the gateway's login
       tenantId: tenantId
     }
     network: {
@@ -176,14 +205,13 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview'
   }
 }
 
-// pg_cron is allow-listed for the two optional weekly jobs (a planning snapshot
-// nothing in the app reads, and a 400-day auth_events purge). Neither is needed
-// at cutover; pgcrypto is for column encryption if cyber asks for it.
-resource pgCron 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = if (deployManagedPostgres) {
+// Extensions the schema uses. No pg_cron: the app has no scheduled jobs.
+// pgcrypto also covers column encryption if cyber asks for it.
+resource pgExtensions 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = if (deployManagedPostgres) {
   parent: postgres
   name: 'azure.extensions'
   properties: {
-    value: 'PGCRYPTO,PG_CRON,UUID-OSSP'
+    value: 'PGCRYPTO,UUID-OSSP'
     source: 'user-override'
   }
 }
@@ -244,7 +272,7 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     supportsHttpsTrafficOnly: true
     allowBlobPublicAccess: false       // signed access only — never anonymous
     allowSharedKeyAccess: false        // forces user-delegation SAS via Entra
-    publicNetworkAccess: databasePublicAccess ? 'Enabled' : 'Disabled'
+    publicNetworkAccess: storagePublicAccess ? 'Enabled' : 'Disabled'
     encryption: {
       services: {
         blob: { enabled: true, keyType: 'Account' }
@@ -429,22 +457,34 @@ resource postgrest 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'PGRST_DB_URI', value: postgrestDbUri }
             { name: 'PGRST_DB_SCHEMAS', value: 'public' }
             { name: 'PGRST_DB_ANON_ROLE', value: 'anon' }
-            // Entra's JWKS. This is what makes auth.uid() resolve — the shim in
-            // supabase/sql/azure_auth_uid_shim.sql reads the `oid` claim out of
-            // the token PostgREST validates here.
-            // NO leading '@' — PostgREST treats that as "read this from a file"
-            // and would try to open a path named after the JSON.
-            //
-            // UNVERIFIED: whether this PostgREST build fetches a remote
-            // jwks_uri at all, or requires the keys inline. If it does not,
-            // this is where the first sign-in fails, and the fix is to fetch
-            // Entra's JWKS and set it as a literal JWKS. See RUNBOOK step 4.
-            { name: 'PGRST_JWT_SECRET', value: '{"jwks_uri":"${az.environment().authentication.loginEndpoint}${tenantId}/discovery/v2.0/keys"}' }
+            // Microsoft's signing keys. PostgREST cannot fetch them from a URL,
+            // so it reads them from the database whenever it loads its config;
+            // the jwks-refresh sidecar below keeps them current. This is what
+            // makes auth.uid() resolve — the shim in azure_auth_uid_shim.sql
+            // reads the `oid` claim out of the token validated with them.
+            { name: 'PGRST_DB_PRE_CONFIG', value: 'private.pgrst_pre_config' }
+            // The app registration's 'authenticated' app role arrives in the
+            // `roles` claim; PostgREST switches to that database role.
+            { name: 'PGRST_JWT_ROLE_CLAIM_KEY', value: '.roles[0]' }
             // Must match the app registration exactly. entraApiAudience is
             // empty until that registration exists; the placeholder below is a
             // name-shaped guess that will NOT match a real token.
             { name: 'PGRST_JWT_AUD', value: empty(entraApiAudience) ? 'api://${appName}-${environment}' : entraApiAudience }
           ]
+          resources: { cpu: json('0.5'), memory: '1Gi' }
+        }
+        {
+          // Keeps PostgREST's copy of Microsoft's sign-in keys current. Stock
+          // image (psql + wget); the script is jwksRefreshScript above.
+          name: 'jwks-refresh'
+          image: 'postgres:17-alpine'   // pin; mirror to ACR before prod
+          command: [ '/bin/sh', '-c', jwksRefreshScript ]
+          env: [
+            { name: 'PGRST_DB_URI', value: postgrestDbUri }
+            { name: 'JWKS_URL', value: '${az.environment().authentication.loginEndpoint}${tenantId}/discovery/v2.0/keys' }
+            { name: 'REFRESH_SECONDS', value: '21600' }   // every 6 hours
+          ]
+          resources: { cpu: json('0.25'), memory: '0.5Gi' }
         }
       ]
       // Scale to zero on a learning subscription: an unconfigured PostgREST
@@ -511,6 +551,8 @@ resource wafPolicy 'Microsoft.Network/FrontDoorWebApplicationFirewallPolicies@20
 }
 
 output staticSiteName string = staticSite.name
+// The portal's address: the app registration's redirect URI and allowedOrigin.
+output siteUrl string = 'https://${staticSite.properties.defaultHostname}'
 output postgresFqdn string = deployManagedPostgres
   ? (postgres.?properties.fullyQualifiedDomainName ?? '')
   : (deployContainerPostgres ? (pgContainer.?properties.configuration.ingress.fqdn ?? '') : '')

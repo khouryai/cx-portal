@@ -33,15 +33,13 @@ Most of this template is negotiable. These are not:
   53 triggers and 27 jsonb + 20 array columns. `pg_dump`/`pg_restore` carries
   them verbatim; a SQL Server port is a rewrite of the permission system.
   Proven portable by `tools/test_rls_portability.js`.
-- **A WAF in front of the API**, not just the static site. The front end holds
-  no data — every Confidential record flows through PostgREST. This is the
-  intrusion-prevention layer the current Supabase architecture cannot provide
-  at all.
-- **`pg_cron`** is allow-listed but **optional at cutover**. Its two weekly
-  jobs are a planning snapshot nothing in the app reads and a 400-day
-  `auth_events` purge that has nothing to delete for over a year.
-- **Entra JWKS on PostgREST.** That is what makes `auth.uid()` resolve — see
+- **A WAF policy** (`deployWaf`). Only the policy: attaching it needs a Front
+  Door profile in front of the API, which this template does not create.
+- **Microsoft's signing keys, kept current.** The `jwks-refresh` helper beside
+  PostgREST reloads them every 6 hours (`supabase/sql/azure_pgrst_jwks.sql`).
+  That is what makes `auth.uid()` resolve — see
   `supabase/sql/azure_auth_uid_shim.sql`.
+- **No scheduled jobs.** `pg_cron` is not used.
 
 ## Not in this template
 
