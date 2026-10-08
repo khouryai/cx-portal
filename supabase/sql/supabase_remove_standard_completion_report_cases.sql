@@ -55,9 +55,9 @@
 --     that array is inert in the UI but worth knowing about. (Skip 1e if this
 --     project's punch_items has no linked_test_ids column.)
 --
--- AFTERWARDS: sync_testplan.js upserts from TestPlan_Master.xlsm. If these rows
--- are still in that workbook, the next sync re-creates them — take them out
--- there too, or this cleanup only holds until the next import.
+-- AFTERWARDS: if these rows are still in the CSV you import test items from,
+-- the next import re-creates them — take them out there too, or this cleanup
+-- only holds until the next import.
 --
 -- RLS: deleting from test_items needs test_register.delete_case /
 -- delete_activity / bulk_delete (policy test_items_del). The Supabase SQL

@@ -28,7 +28,7 @@ try {
     ["index.html", "app.js", "sw.js", "config.js", "cx-storage.js", "manifest.webmanifest"].every(has));
   ok("vendor/ and assets/ are in the build", has("vendor/js/pdf.min.js") && has("assets"));
   const internal = ["tools", "supabase", "azure", "infra", "docs", ".github", ".claude",
-    "README.md", "SECURITY.md", "MIGRATION.md", "CLAUDE.md", "sync_testplan.js", ".mcp.json", ".gitignore"];
+    "README.md", "SECURITY.md", "MIGRATION.md", "CLAUDE.md", ".mcp.json", ".gitignore"];
   const leaked = internal.filter(has);
   ok("nothing internal ships (tests, SQL, infra, docs, dotfiles)", leaked.length === 0, leaked.join(", "));
   ok("no markdown file ships", !fs.readdirSync(r.out).some((f) => f.endsWith(".md")));

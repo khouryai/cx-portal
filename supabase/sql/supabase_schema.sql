@@ -7,7 +7,7 @@
 -- ============================================================
 -- CORE: test_items (synced from TestPlan_Master.xlsm)
 -- Source of truth for all test cases. Never written by the portal.
--- Updated via sync_testplan.js when the Excel file changes.
+-- Updated through the portal's CSV import (Admin → Test Items import).
 -- ============================================================
 create table if not exists test_items (
   test_id               text primary key,

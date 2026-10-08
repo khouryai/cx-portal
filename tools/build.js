@@ -31,7 +31,7 @@ const ROOT = path.resolve(__dirname, "..");
 
 // What the browser needs. Everything else in the repo stays out.
 const ROOT_EXTS = new Set([".html", ".js", ".css", ".webmanifest", ".json"]);
-const ROOT_EXCLUDE = new Set(["sync_testplan.js", "config.local.js", "package.json", "package-lock.json"]);
+const ROOT_EXCLUDE = new Set(["config.local.js", "package.json", "package-lock.json"]);
 const DIRS = ["vendor", "assets"];
 // supabase-js and its lazily loaded chunk. Needed only for Supabase sign-in.
 const SUPABASE_JS = ["vendor/js/supabase.js", "vendor/js/591.supabase.js"];

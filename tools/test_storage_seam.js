@@ -20,7 +20,7 @@ console.log("=== storage seam (Azure migration) ===\n");
 
 // ── 1. Nobody else talks to a storage service ───────────────────────────────
 const served = fs.readdirSync(ROOT).filter((f) => f.endsWith(".js") &&
-  !["cx-storage.js", "chart.umd.js", "sync_testplan.js"].includes(f));
+  !["cx-storage.js", "chart.umd.js"].includes(f));
 const offenders = [];
 for (const f of served) {
   const src = fs.readFileSync(path.join(ROOT, f), "utf8");

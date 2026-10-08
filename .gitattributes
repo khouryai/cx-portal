@@ -16,7 +16,6 @@ DESIGN_TOKENS.md           export-ignore
 MIGRATION.md               export-ignore
 PERMISSIONS_MODEL.md       export-ignore
 SECURITY.md                export-ignore
-sync_testplan.js           export-ignore
 config.local.js.example    export-ignore
 .gitignore                 export-ignore
 .gitattributes             export-ignore
