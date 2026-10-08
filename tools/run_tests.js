@@ -58,6 +58,7 @@ const suites = [
   { file: "tools/test_team_invite.js", needs: [] },     // Team: add a person under Supabase and under Microsoft sign-in
   { file: "tools/test_change_log.js", needs: [] },      // change log: who, and only what changed (needs PostgreSQL)
   { file: "tools/test_cx_db.js", needs: [] },          // cx-db.js == supabase-js on every query shape (needs PostgreSQL + PostgREST)
+  { file: "tools/test_azure_roles.js", needs: [] },     // Azure: the gateway login can never bypass row-level security
   { file: "tools/test_size_ratchet.js", needs: [] },    // monolith line-count ratchet (Tier 3 #11)
   { file: "tools/test_inline_handler_ratchet.js", needs: [] }, // inline on*= handler ratchet (Tier 3 #11 Stage B)
   { file: "tools/test_delegation_wiring.js", needs: [] },      // every data-action resolves (Tier 3 #11 Stage B)

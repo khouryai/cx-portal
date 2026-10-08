@@ -145,10 +145,10 @@ psql -U cxadmin -d postgres <<'SQL'
 do $$ begin
   if not exists (select 1 from pg_roles where rolname='anon') then create role anon nologin noinherit; end if;
   if not exists (select 1 from pg_roles where rolname='authenticated') then create role authenticated nologin noinherit; end if;
-  if not exists (select 1 from pg_roles where rolname='service_role') then create role service_role nologin noinherit bypassrls; end if;
+  if not exists (select 1 from pg_roles where rolname='service_role') then create role service_role nologin noinherit; end if;
   if not exists (select 1 from pg_roles where rolname='authenticator') then create role authenticator login noinherit; end if;
 end $$;
-grant anon, authenticated, service_role to authenticator;
+grant anon, authenticated to authenticator;   -- never service_role: see azure_before_restore.sql
 SQL
 
 # 2. Clean slate, then THE AUTH SHIM — also before the dump. Policies and
@@ -253,9 +253,9 @@ psql -U cxadmin -d postgres -tAc "select 'mfa_ok:   ' || private.mfa_ok();"
 psql -U cxadmin -d postgres -tAc "select 'perm_fn:  ' || private.has_module_perm('punch_list','view');"
 ```
 
-Around **349 policies and 90 tables** means the whole authorization model came
-across (fewer once the 2026-10 module-removal migrations have run against the
-source database). A policy count in the 300s with `ERROR: schema "auth" does not exist`
+Around **227 policies and 59 tables** means the whole authorization model came
+across (263 and 68 if the 2026-10 cleanup, `supabase_cleanup_2026_10.sql`, was
+not run on the source database first). Far fewer policies, with `ERROR: schema "auth" does not exist`
 in the log means the shim ran too late — go back to step 2.
 
 > **This database is ephemeral.** A container restart loses all of it. Keep this
@@ -293,7 +293,7 @@ tokens the database will accept.
 | Account offboarding | you remove the row | IT disables the directory account |
 
 Switching later is this script plus a redeploy. Nothing in the schema and none
-of the 349 RLS policies change, because the shim reads `oid` and falls back to
+of the RLS policies change, because the shim reads `oid` and falls back to
 `sub`.
 
 ### 4a. Email + password (the standard sign-in card)
@@ -317,7 +317,7 @@ bash azure/setup-local-auth.sh
 It asks for an email and a password, and prints exactly what to do next. The
 email must belong to a profile row that **already exists** — `auth.set_password()`
 takes the account id from it, which is what keeps `auth.uid()` resolving to the
-uuid all 349 RLS policies already compare against. Nothing is re-keyed.
+uuid every RLS policy already compares against. Nothing is re-keyed.
 
 Then, in the container:
 

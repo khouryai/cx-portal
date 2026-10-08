@@ -4,12 +4,12 @@
 -- Under Entra the app finds a person's profile by their Entra object id (the
 -- token's `oid`, which auth.uid() returns — see azure_auth_uid_shim.sql). A
 -- profile carried over from Supabase still has its Supabase id, and a person
--- invited in the Team screen has a placeholder id until they first sign in.
+-- invited in the Directory screen has a placeholder id until they first sign in.
 --
 -- HOW LINKING WORKS
 --   * A profile waiting for its owner has link_pending = true: every profile
 --     carried over from Supabase (marked when this script first runs), and
---     every person an admin invites in the Team screen.
+--     every person an admin invites in the Directory screen.
 --   * On first Microsoft sign-in the app calls public.claim_profile(). If no
 --     profile has this person's object id yet, it looks for a WAITING profile
 --     whose email matches the email Microsoft put in the token, moves it onto

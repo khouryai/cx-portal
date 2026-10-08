@@ -29,8 +29,8 @@ az deployment group what-if -g <rg> \
 
 Most of this template is negotiable. These are not:
 
-- **PostgreSQL, not Azure SQL.** The authorization model is 349 RLS policies,
-  53 triggers and 27 jsonb + 20 array columns. `pg_dump`/`pg_restore` carries
+- **PostgreSQL, not Azure SQL.** The authorization model is about 230 RLS
+  policies, 18 triggers and 42 jsonb and array columns. `pg_dump`/`pg_restore` carries
   them verbatim; a SQL Server port is a rewrite of the permission system.
   Proven portable by `tools/test_rls_portability.js`.
 - **A WAF policy** (`deployWaf`). Only the policy: attaching it needs a Front

@@ -122,9 +122,12 @@ var tags = {
 }
 
 // ── Identity ────────────────────────────────────────────────────────────────
-// One user-assigned identity for the API, so it never holds a secret: they authenticate to Postgres, Blob and Key Vault as
-// themselves. This is what removes the service-role key that today sits in an
-// Edge Function secret.
+// A user-assigned identity, attached to the API container app. NOT USED YET:
+// PostgREST and its key helper reach the database with a password (PostgREST
+// cannot present an Entra token to Postgres) and the browser reaches Blob with
+// each user's own token. Kept for the obvious next uses: pulling the two
+// images from a private registry (AcrPull) and reading the gateway's database
+// password from Key Vault instead of a plain setting.
 resource appIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: 'id-${suffix}'
   location: location
@@ -132,9 +135,9 @@ resource appIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-3
 }
 
 // ── Secrets ─────────────────────────────────────────────────────────────────
-// Key Vault exists for the few secrets that cannot be replaced by managed
-// identity — the SharePoint sync's client secret, mail credentials. RBAC
-// rather than access policies, so grants show up in Entra audit.
+// Key Vault holds the two database passwords (administrator, gateway) for IT.
+// Nothing reads it at run time yet (see the identity note above). RBAC rather
+// than access policies, so grants show up in Entra audit.
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: take('kv-${replace(suffix, '-', '')}${uniqueString(resourceGroup().id)}', 24)
   location: location
@@ -157,8 +160,8 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 
 // ── Database ────────────────────────────────────────────────────────────────
 // Azure Database for PostgreSQL Flexible Server. NOT Azure SQL: the
-// authorization model is 349 RLS policies, 53 triggers and 27 jsonb + 20 array
-// columns, which have no SQL Server equivalent. pg_dump/pg_restore moves all of
+// authorization model is about 230 RLS policies, 18 triggers and 42 jsonb and
+// array columns, which have no SQL Server equivalent. pg_dump/pg_restore moves all of
 // it verbatim — proven by tools/test_rls_portability.js.
 //
 // Entra authentication for people (administrators sign in with their Entra
@@ -333,8 +336,9 @@ resource staticSite 'Microsoft.Web/staticSites@2023-01-01' = {
 }
 
 // ── API ─────────────────────────────────────────────────────────────────────
-// Self-hosted PostgREST. The client already speaks plain PostgREST — supabase-js
-// talks to it unchanged — so this is a container, not a rewrite.
+// Self-hosted PostgREST. The app already speaks plain PostgREST (its query
+// client, cx-db.js, sends exactly what supabase-js sent), so this is a
+// container, not a rewrite.
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: 'log-${suffix}'
   location: location

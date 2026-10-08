@@ -1,6 +1,10 @@
 # Security Overview — HITACHI Rail T&C Portal
 *BART CBTC Testing & Commissioning · Internal Use Only*
 
+> This describes the **current** deployment (GitHub Pages + Supabase). The
+> Azure target, with Microsoft Entra sign-in and its threat model, is described
+> in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
 ---
 
 ## Architecture
@@ -8,7 +12,7 @@
 | Layer | Technology |
 |---|---|
 | Frontend | Static HTML/CSS/JS — hosted on GitHub Pages (HTTPS enforced) |
-| Backend / Database | Supabase (PostgreSQL) — US-East region |
+| Backend / Database | Supabase (PostgreSQL) — US West (Oregon) region |
 | Authentication | Supabase Auth — email + password, JWT sessions |
 | Transport | TLS 1.2+ on all connections (GitHub Pages + Supabase) |
 
@@ -32,16 +36,16 @@ Implementation: `cx-auth-hardening.js` (browser) + `supabase/sql/supabase_auth_h
 
 ## Authorization (Server-Side)
 
-Row Level Security (RLS) is enabled on **all 45 database tables**.
+Row Level Security (RLS) is enabled on **every database table** (59 after the
+2026-10 cleanup), with about 230 policies.
 
-| Policy | Tables |
+| Rule | Where |
 |---|---|
-| Authenticated users only — read + write | All data tables (test items, punch lists, forms, drawings, etc.) |
-| Authenticated read-all; admin-only write | `profiles` (user directory) |
-| Admin-only | `users` (legacy reference table) |
+| Per-module, per-action permissions (17 modules; a permission template per person plus optional per-person overrides) | Every governed table, through `private.has_module_perm()` — see `PERMISSIONS_MODEL.md` |
+| Everyone signed in may read the user directory; changes need Directory administration rights | `profiles` |
 | Blocked entirely for unauthenticated callers | Every table — the anon key alone returns no data |
 
-The database rejects unauthorized API calls at the server level — UI-level role checks are a secondary layer only.
+The database rejects unauthorized API calls at the server level — UI-level permission checks are a secondary layer only.
 
 ---
 
@@ -56,15 +60,18 @@ The database rejects unauthorized API calls at the server level — UI-level rol
 
 ---
 
-## Supply Chain (CDN Integrity)
+## Supply Chain
 
-All 16 third-party CDN resources (scripts + stylesheets) are:
-- **Pinned to specific versions** — no floating `@latest` tags
-- **Protected with SHA-384 Subresource Integrity (SRI) hashes** — the browser refuses to execute any file whose content has changed since the hash was verified
+**No CDN.** Every third-party library is a pinned copy in `vendor/` (or the site
+root), served from the portal's own origin, so the page loads no script from
+anywhere else. `tools/test_csp.js` fails the build if a third-party script host
+appears.
 
-Libraries used: Supabase JS, SheetJS, Alpine.js, Flatpickr, Tom Select, Fuse.js, Day.js, Tippy.js, Quill, ExcelJS, vis-timeline.
+Libraries used: Alpine.js, Chart.js, Day.js, Flatpickr, Fuse.js, JSZip, MSAL
+Browser (Microsoft sign-in), pdf.js, pdf-lib, Popper, Tippy.js, Tom Select, and
+Supabase JS (left out of the Azure build).
 
-A **Content-Security-Policy** (meta tag in `index.html`) restricts script, connection, image and frame origins to this site plus the configured Supabase project and the single remaining SheetJS CDN tag. It cannot yet drop `'unsafe-inline'` for scripts — ~427 inline `on*=` handlers remain, and retiring them to `data-action` is exactly what the ratchet in `tools/size_baseline.json` drives. `tools/test_csp.js` fails the build if the policy and `config.js` drift apart.
+A **Content-Security-Policy** (meta tag in `index.html`) restricts script, connection, image and frame origins to this site plus the configured Supabase project and Microsoft sign-in. It cannot yet drop `'unsafe-inline'` for scripts — about 290 inline `on*=` handlers remain, and retiring them to `data-action` is exactly what the ratchet in `tools/size_baseline.json` drives — and `'unsafe-eval'` is required by Alpine.js. `tools/test_csp.js` fails the build if the policy and `config.js` drift apart.
 
 Adding that policy surfaced a **stale `@import` of Google Fonts** at the top of `styles.css` that survived the self-hosting pass in `MIGRATION.md` §6 — every page load was still calling `fonts.googleapis.com`. It has been removed and `--f-mono` now points at the self-hosted IBM Plex Mono.
 
@@ -86,7 +93,7 @@ Authentication and privilege events are recorded separately in `auth_events`, be
 - Password changes
 - Privilege changes (role, permission template, activation), written by the `profiles` trigger itself so they cannot be missed
 
-The table has **no insert/update/delete policy at all** — every write goes through a `SECURITY DEFINER` routine, so the trail cannot be edited from a session. Reads require `audit.view`. Retention is 400 days (a weekly `pg_cron` purge), which exceeds the one-year minimum. `audit_log` itself is never purged.
+The table has **no insert/update/delete policy at all** — every write goes through a `SECURITY DEFINER` routine, so the trail cannot be edited from a session. Reads require `audit.view`. Rows are kept indefinitely: the weekly `pg_cron` purge (400 days) was removed in 2026-10 together with the scheduler, so the app needs no scheduled jobs. If a retention period is set, apply it with a manual delete. `audit_log` itself is never purged.
 
 ---
 
@@ -94,7 +101,7 @@ The table has **no insert/update/delete policy at all** — every write goes thr
 
 | Capability | Who |
 |---|---|
-| Create new accounts | Admin only (via Admin → Directory → Invite User) |
+| Create new accounts | Admin only (Admin → Directory → Users → + Invite User) |
 | Assign roles (Admin / Field Engineer / Read Only / Client) | Admin only |
 | Restrict a user to a specific subsystem | Admin only |
 | Deactivate / remove access | Admin only |
@@ -118,7 +125,7 @@ Supabase project region: **US West (Oregon), `us-west-2`** — verified against 
 |---|---|---|
 | ~~Multi-factor authentication (TOTP)~~ | — | **Built** — see Authentication above. Not yet *demanded*: see the roll-out note below |
 | ~~Content Security Policy~~ | — | **Done** as a meta-tag policy; a *strict* one still needs the inline handlers retired |
-| ~~Apply `supabase_auth_hardening.sql`~~ | — | **Applied 2026-09-11.** Columns, `auth_events`, RPCs, the RLS/MFA gate, privilege logging and the retention job are all live |
+| ~~Apply `supabase_auth_hardening.sql`~~ | — | **Applied 2026-09-11.** Columns, `auth_events`, RPCs, the RLS/MFA gate and privilege logging are live (the retention job was removed in 2026-10) |
 | Enable TOTP enrolment in the dashboard | **High** | Authentication → Providers/MFA. **Must be confirmed working before `mfa_enforced` is turned on for anyone** — the portal blocks entry until a factor is verified, so an account that cannot enrol cannot get in |
 | Enable the two auth hooks in the dashboard | **High** | Authentication → Hooks → `password_verification_attempt` and `mfa_verification_attempt`. Until these are on, lockout is client-side only |
 | Enable leaked-password protection | Medium | Auth settings; flagged by the Supabase security advisor. Checks new passwords against HaveIBeenPwned |
@@ -143,5 +150,5 @@ order to switch accounts on.
 | Console access | Not addressable in code — needs MFA enabled on the Supabase and GitHub consoles |
 | Password management | Policy, six-monthly rotation, lockout |
 | Account disposal | `access_review_due` view + `access_review_log` for the six-monthly review |
-| Access logs | `auth_events`, privilege-change capture, 400-day retention |
+| Access logs | `auth_events`, privilege-change capture, kept indefinitely |
 | Public-surface hardening | Content-Security-Policy; strict CSP still blocked on retiring inline handlers |

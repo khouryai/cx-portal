@@ -8,6 +8,9 @@ limited to handing over three things (section 1) and testing at the end.
 database. No application server, no custom server code, no scheduled jobs, no
 third-party scripts.
 
+For the architecture and security review (components, data flows, threat model,
+open decisions), see [`docs/ARCHITECTURE.md`](ARCHITECTURE.md).
+
 ---
 
 ## Contents
@@ -48,8 +51,8 @@ third-party scripts.
 
 | Piece | Azure service | Notes |
 |---|---|---|
-| Website | Static Web Apps | 78 files, about 6 MB |
-| Database | Azure Database for PostgreSQL – Flexible Server, v17 | About 60 MB. All permission rules live in it. |
+| Website | Static Web Apps | 79 files, about 6 MB |
+| Database | Azure Database for PostgreSQL – Flexible Server, v17 | About 45 MB. All permission rules live in it. |
 | Database gateway | Container Apps: `postgrest/postgrest:v12.2.3` plus a `postgres:17-alpine` helper | Off-the-shelf images; configured by settings only |
 | Files | Storage account, 5 private containers | About 4 MB today |
 | Sign-in | Microsoft Entra ID | App registration, two groups, Conditional Access |
@@ -161,7 +164,7 @@ Create a resource group in the chosen region. Fill in
 | `databasePublicAccess` | see 3.2 |
 | `storagePublicAccess` | `true` (see 3.2) |
 | `allowedOrigin`, `postgrestDbUri` | leave empty now; set in 3.4 and step 5 |
-| `deployWaf` | `false` unless cyber wants it (see 10.2) |
+| `deployWaf` | `false`. In `prod` the template creates the WAF policy anyway; on its own it filters nothing (see 10.2) |
 
 ### 3.2 Two network decisions
 
@@ -472,9 +475,10 @@ Sign in as a linked person (4.5) and go through, in order:
 
 1. **IT, in Entra:** add them to **CX Portal Users** (invite them as a guest
    first if they are BART staff). This is what lets them sign in at all.
-2. **A portal administrator, in the portal:** Team → **Add Person** — name,
+2. **A portal administrator, in the portal:** Admin menu → **Directory** →
+   **Users** → **+ Invite User**, which opens **Add Person** — name,
    the email they sign in to Microsoft with, and their permission template. No
-   password and no Microsoft ID are needed. The Team list shows them as
+   password and no Microsoft ID are needed. The Users list shows them as
    *Not signed in yet*.
 
 Their first Microsoft sign-in links the profile to their Entra account
@@ -512,16 +516,21 @@ certificates to renew (Azure manages TLS), no secrets in the website.
 | Linking a profile to a person | Once, on their first Microsoft sign-in, by the email Microsoft puts in their token — only to a profile an administrator created and that is still waiting. Linked profiles can never be claimed again, and every link is in the audit log. Email is never used for permissions. |
 | What each person may see or change | **Inside the database**, on every request, by row-level security (about 230 policies, per module and per action). A request that bypasses the website still cannot get past it. |
 | Files | Private containers, account key disabled. Only CX Portal Users members can obtain a link; each link covers one file and expires within an hour. |
-| The gateway's database login | Password, held only in the Container App's configuration; TLS required |
+| The gateway's database login | Can switch only to the two request roles, both under row-level security. Password, in the Container App's settings, readable by anyone with read access to that Container App (restrict it, or see the architecture document's open items); TLS required |
 | Signing keys | Public keys from Microsoft, refreshed automatically; a bad download cannot replace good keys |
-| The web page | Content-Security-Policy limited to the exact addresses in 7.1; no third-party scripts |
+| The web page | Content-Security-Policy limited to the exact addresses in 7.1; no third-party scripts; `nosniff`, framing and referrer headers from `staticwebapp.config.json` |
 | Secrets in the website | None. Every value in `config.hitachi.js` is public by nature. |
 
 ### 10.2 Optional hardening — cyber's decision
 
-- **Web application firewall.** `deployWaf` creates a Front Door WAF policy, but
-  not the Front Door profile that would carry it. Putting Front Door (Premium)
-  in front of the gateway is a separate step, about USD 330 per month.
+- **Web application firewall.** The template creates a Front Door WAF policy
+  (always in `prod`, otherwise with `deployWaf`), but not the Front Door profile
+  that would carry it, so it filters nothing until one exists. Putting Front
+  Door (Premium) in front of the gateway is a separate step, about USD 330 per
+  month.
+- **Central access logs.** The template sends the gateway's logs to Log
+  Analytics, but creates no diagnostic settings for the database or the storage
+  account. Add them if cyber wants database and file access logged centrally.
 - **Private networking** for the database and storage (3.2).
 - **Customer-managed keys** for database and storage encryption.
 - **Column encryption** for specific Confidential fields (`pgcrypto` is installed).
@@ -540,7 +549,7 @@ likelihood:
 | Every sign-in refused with an invalid-signature error | Signing keys not loaded | Helper log (section 5); is `postgrestDbUri` set? |
 | `permission denied for table …` (42501) | Table privileges missing | Re-run `azure_after_restore.sql` |
 | Far fewer than ~227 policies after restore | `azure_before_restore.sql` ran after the restore, or not at all | Drop and recreate the database; run 4.1 → 4.3 in order |
-| "Your account is not set up yet" | No portal profile has this person's sign-in email: not added in Team, or added under a different address | Add them in Team (section 9) with the address they sign in with, or correct the email (4.5) |
+| "Your account is not set up yet" | No portal profile has this person's sign-in email: not added in Directory, or added under a different address | Add them in Directory (section 9) with the address they sign in with, or correct the email (4.5) |
 | "Account not set up yet" for one of two people sharing an email | Two waiting profiles have the same address; the portal will not guess | Correct one email, or link with `relink_profile` (4.5) |
 | Files fail to load; browser console mentions CORS | `allowedOrigin` not set to `siteUrl` | 3.4 |
 | Files fail with 403 on `userdelegationkey` | Person not in CX Portal Users, or role assignment missing | `portalUsersGroupObjectId` |
@@ -597,5 +606,6 @@ It prints a count per container. Do not save the service role key anywhere.
 
 ---
 
-*Background and design decisions: [`MIGRATION.md`](../MIGRATION.md). The
+*Architecture and security review: [`ARCHITECTURE.md`](ARCHITECTURE.md).
+Background and design decisions: [`MIGRATION.md`](../MIGRATION.md). The
 developer's own trial on a personal subscription: [`azure/RUNBOOK.md`](../azure/RUNBOOK.md).*

@@ -57,7 +57,7 @@ Web App, or a zip handed to IT. For the Azure move, see
 | `chart.umd.js`, `vendor/` | Vendored libraries and fonts (no CDN needed) |
 | `run-local.bat` / `run-local.ps1` / `run-local.sh` | Local launchers (see above) |
 | `supabase/sql/` | In-repo record of the base schema + every applied migration |
-| `azure/`, `infra/`, `MIGRATION.md`, `docs/AZURE_HOSTING.md` | Azure migration kit (not used by the running app); start with `docs/AZURE_HOSTING.md` |
+| `azure/`, `infra/`, `MIGRATION.md`, `docs/AZURE_HOSTING.md`, `docs/ARCHITECTURE.md` | Azure migration kit (not used by the running app): `docs/AZURE_HOSTING.md` is the handover, `docs/ARCHITECTURE.md` the architecture for review |
 | `tools/` | Test harness + dev tools — `run_tests.js` runs all suites (CI: `.github/workflows/test.yml`); `ui_gallery.html` + `shot_gallery.js` for visual QA without signing in |
 | `CLAUDE.md` | Working conventions (CRLF rules, tokens, icon system, verification) |
 | `DESIGN_TOKENS.md`, `PERMISSIONS_MODEL.md`, `SECURITY.md`, `DEMO_DATA.md` | Living docs |

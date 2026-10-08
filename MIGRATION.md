@@ -1,8 +1,9 @@
 # Migration to the Hitachi Rail Azure tenant: background and decisions
 
 > **For IT, start with [`docs/AZURE_HOSTING.md`](docs/AZURE_HOSTING.md)**, the
-> complete handover procedure. This file records *why* the design is what it
-> is, and what has already been proven.
+> complete handover procedure. For the architecture and security review, read
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). This file records *why* the
+> design is what it is, and what has already been proven.
 
 **Status: prepared, not started.** Every change the move needs is built and
 tested. What remains needs Azure access, which IT owns.
@@ -23,10 +24,10 @@ an optional WAF, private networking and customer-managed keys.
 
 | Decision | Why |
 |---|---|
-| **Keep PostgreSQL** (Azure Database for PostgreSQL – Flexible Server), not Azure SQL | Permissions are enforced in the database: 349 row-level security policies, 53 triggers, 46 jsonb/array columns. Azure SQL would mean rewriting the security model. PostgreSQL takes a `pg_dump` restore unchanged. |
+| **Keep PostgreSQL** (Azure Database for PostgreSQL – Flexible Server), not Azure SQL | Permissions are enforced in the database: about 230 row-level security policies, 18 triggers, 42 jsonb/array columns. Azure SQL would mean rewriting the security model. PostgreSQL takes a `pg_dump` restore unchanged. |
 | **PostgREST** as the API | The app already speaks the PostgREST protocol (that is what Supabase runs). Off-the-shelf container, no custom code. |
 | **Entra ID** for sign-in | Corporate accounts, BART as guests, MFA and Conditional Access set centrally. |
-| **Profiles keyed by Entra object id, linked once by email** | An admin adds a person in the Team screen by email; their first Microsoft sign-in links the waiting profile to their Entra account (`public.claim_profile()`), and profiles carried over from Supabase link the same way. Permissions never use email. |
+| **Profiles keyed by Entra object id, linked once by email** | An admin adds a person in the Directory screen by email; their first Microsoft sign-in links the waiting profile to their Entra account (`public.claim_profile()`), and profiles carried over from Supabase link the same way. Permissions never use email. |
 | **All files in Azure Blob, signed in the browser** | Each user's browser gets a user delegation key from Azure with their own Microsoft sign-in, and signs short-lived links with it. Same behaviour as Supabase's signed URLs, no server code. Access = membership of the portal users' Entra group, which matches today's rule (any signed-in user, any file). |
 | **Static hosting** (Static Web Apps or Blob static website) | The site is plain files. `node tools/build.js` produces `dist/`, the one artifact for a pipeline or a hand-off zip. |
 
@@ -45,13 +46,19 @@ All in the repository and covered by `node tools/run_tests.js`.
   against Microsoft's own SDK in `tools/test_storage_seam.js`.
 - **Permissions survive the move.** `supabase/sql/azure_auth_uid_shim.sql` lets
   the database read Entra's user id (`oid`) as well as Supabase's, so the same
-  349 policies work under both. `tools/test_rls_portability.js` proves identical
+  policies work under both. `tools/test_rls_portability.js` proves identical
   decisions on a real PostgreSQL server.
 - **A real restore matched exactly.** On 2026-09-13 the live Supabase database
   was dumped and restored into PostgreSQL 17 on Azure: 349/349 policies, 90/90
-  tables, 77/77 functions, 32/32 triggers. PostgREST served it and RLS enforced
-  itself. **Order matters:** roles and the shim go in *before* the dump, or
-  objects are lost silently (RUNBOOK step 3).
+  tables, 77/77 functions, 32/32 triggers (the schema was larger then; modules
+  have been removed since). PostgREST served it and RLS enforced itself. In
+  2026-10 the full handover sequence (before-restore script, PostgreSQL 17
+  dump, after-restore script, first-sign-in linking) was rehearsed again,
+  ending in a signed request through a real PostgREST. The before-restore
+  script is also checked as a non-superuser administrator, as on Azure (an
+  earlier version created a role only a superuser may create). **Order matters:** roles
+  and the shim go in *before* the restore, or policies are lost silently
+  (handover step 4.1).
 - **Infrastructure template.** `infra/main.bicep` compiles clean; never yet
   deployed to a Hitachi subscription.
 - **No outside scripts.** Every library ships in `vendor/`; the CSP allows no
@@ -93,9 +100,11 @@ removed modules; change-log rows about tables that no longer exist.
 | Views `kpi_test_progress`, `vw_dynamic_case_coverage`, `vw_dynamic_global_coverage`, `vw_dynamic_procedure_coverage`, `vw_dynamic_units`, `vw_procedure_scope_rollup` | Not used by the app. Cheap to keep; drop if no outside report (Power BI, SQL) reads them |
 | `auth_login_gate`, `auth_record_event`, `password_verification_attempt`, `mfa_verification_attempt` | Used while sign-in is Supabase; obsolete after the Entra cutover |
 
-**Size:** `db_change_log` is 38 MB of the 60 MB database (19,900 rows, 97 % from
-`test_items`, mostly bulk imports). Each row stores the full old and new row.
-See the proposals in the sweep notes before it grows further.
+**Size:** the database is 43 MB. The change log (`db_change_log`) was 38 MB
+because every update stored the whole row twice; since 2026-10 it stores only
+the changed columns (plus the ones that identify the record), skips updates that
+change nothing, and the existing rows were compacted: 21 MB, 18,500 rows
+(`change_log_trigger.sql`, `supabase_change_log_compact.sql`).
 
 **Checked and safe for Azure:** every table has row-level security on, nothing
 is readable without signing in, all views respect it (`security_invoker`),
@@ -116,7 +125,7 @@ along with the `supabase` sign-in provider.
 Kept: the `auth_events` log of permission changes (Entra logs sign-ins, not the
 app's role changes), the access-review view, the CSP and the test suite. The
 database's MFA check switches from Supabase's `aal` claim to Entra's `amr`; the
-replacement is written in `azure_auth_uid_shim.sql`.
+replacement is applied by `azure_after_restore.sql`.
 
 The three Supabase Edge Functions (daily-log email, RMA email, SharePoint photo
 sync) were removed before the move. If those features are wanted again they are
