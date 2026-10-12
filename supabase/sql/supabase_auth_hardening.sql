@@ -56,7 +56,7 @@ create table if not exists public.auth_events (
 );
 
 comment on table public.auth_events is
-  'Authentication and privilege audit trail. Written only by SECURITY DEFINER functions; readable only with audit.view. Retention: 400 days (see the pg_cron job at the end of this file), which exceeds the one-year minimum.';
+  'Authentication and privilege audit trail. Written only by SECURITY DEFINER functions; readable only with audit.view. Kept indefinitely (no automatic purge); apply a retention period by manual delete if one is set.';
 
 create index if not exists auth_events_email_time_idx on public.auth_events (email, created_at desc);
 create index if not exists auth_events_event_time_idx on public.auth_events (event, created_at desc);
