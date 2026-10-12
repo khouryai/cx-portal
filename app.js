@@ -2299,7 +2299,7 @@ async function loadFieldsetConfig() {
 
 async function _loadProfileUsers() {
   try {
-    const data = await _fetchAnon('profiles?select=full_name,role&is_active=eq.true');
+    const data = await _fetchAnon('rpc/portal_people');   // names + roles only; the directory itself is private
     PROFILE_USERS = (data || []).filter(u => u.full_name).sort((a,b) => a.full_name.localeCompare(b.full_name));
   } catch (err) { console.warn('Profile users load failed:', err.message); }
 }

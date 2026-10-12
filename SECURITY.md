@@ -42,7 +42,7 @@ Row Level Security (RLS) is enabled on **every database table** (59 after the
 | Rule | Where |
 |---|---|
 | Per-module, per-action permissions (17 modules; a permission template per person plus optional per-person overrides) | Every governed table, through `private.has_module_perm()` — see `PERMISSIONS_MODEL.md` |
-| Everyone signed in may read the user directory; changes need Directory administration rights | `profiles` |
+| The user directory (emails, companies, roles, status) needs Directory or Admin rights; each person sees their own profile; other screens get only names and roles (`portal_people()`) | `profiles` |
 | Blocked entirely for unauthenticated callers | Every table — the anon key alone returns no data |
 
 The database rejects unauthorized API calls at the server level — UI-level permission checks are a secondary layer only.
