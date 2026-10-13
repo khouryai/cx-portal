@@ -27,7 +27,7 @@ ok("CXActions is available on the bundle", CXActions && typeof CXActions.has ===
 // Collect distinct, static action names from the shipped markup sources.
 const RE = /data-action="([a-zA-Z_$][\w$]*)"/g;
 const names = new Set();
-for (const file of ["app.js", "index.html"]) {
+for (const file of ["app.js", "index.html", "drw-upload.js"]) {
   const text = fs.readFileSync(path.join(ROOT, file), "utf8");
   let m;
   while ((m = RE.exec(text)) !== null) names.add(m[1]);
